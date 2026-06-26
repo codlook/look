@@ -3,16 +3,18 @@
 
 namespace look {
 
-// look install <pkg> — GitHub package installer
+// lk install <pkg> — GitHub package installer
 // pkg format: "github.com/user/repo[@ref]"
-//   github.com/ali/look-stripe        → downloads main branch
-//   github.com/ali/look-stripe@v1.2   → downloads tag v1.2
-//
-// Output: pkg/ali/look-stripe/
-// Lock:   look.lock
 int cmd_install(const std::string& pkg, bool verbose);
 
-// look install (no args) — re-install all packages from look.lock
+// lk install (no args) — re-install all packages from look.lock
 int cmd_install_all(bool verbose);
+
+// lk module install <name> — install official module from codlook/look-modules
+// Downloads <name>/<name>.lk → ~/.look/modules/<name>/
+int cmd_module_install(const std::string& name, bool verbose);
+
+// lk module list — list installed modules
+int cmd_module_list();
 
 } // namespace look

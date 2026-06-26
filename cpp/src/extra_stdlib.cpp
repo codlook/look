@@ -13,12 +13,19 @@
   #endif
   #include <windows.h>
   #include <bcrypt.h>
+  #include <ncrypt.h>
+  #include <wincrypt.h>
   #pragma comment(lib, "bcrypt.lib")
+  #pragma comment(lib, "ncrypt.lib")
+  #pragma comment(lib, "crypt32.lib")
   #ifdef ERROR
   #undef ERROR
   #endif
 #else
   #include <fstream>
+  #include <openssl/pem.h>
+  #include <openssl/evp.h>
+  #include <openssl/err.h>
 #endif
 
 namespace look {
@@ -464,6 +471,38 @@ Module make_array_module(Interpreter* interp) {
         return Value(result);
     };
 
+    // set($assoc, $key, $val) → updated assoc  [creates key if not exists]
+    m.functions["set"] = [](auto args) -> Value {
+        if (args.size() < 3 || args[0].type() != Value::ARRAY)
+            throw std::runtime_error("array::set() requires array, key, value");
+        auto result = std::make_shared<std::vector<Value>>(*args[0].as_array());
+        const std::string key = args[1].to_string();
+        Value val = args[2];
+        if (!result->empty() && (*result)[0].type() == Value::STRING &&
+            (*result)[0].as_string() == "__assoc__") {
+            for (size_t i = 1; i + 1 < result->size(); i += 2) {
+                if ((*result)[i].to_string() == key) { (*result)[i + 1] = val; return Value(result); }
+            }
+            result->push_back(Value(key));
+            result->push_back(val);
+        } else {
+            // Convert numeric array to assoc
+            auto assoc = std::make_shared<std::vector<Value>>();
+            assoc->push_back(Value(std::string("__assoc__")));
+            assoc->push_back(Value(key));
+            assoc->push_back(val);
+            return Value(assoc);
+        }
+        return Value(result);
+    };
+
+    // new_assoc() → empty assoc array
+    m.functions["new_assoc"] = [](auto args) -> Value {
+        auto result = std::make_shared<std::vector<Value>>();
+        result->push_back(Value(std::string("__assoc__")));
+        return Value(result);
+    };
+
     // keys($assoc) → array of keys
     m.functions["keys"] = [](auto args) -> Value {
         if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<std::vector<Value>>());
@@ -606,6 +645,323 @@ Module make_array_module(Interpreter* interp) {
     return m;
 }
 
+// ── crypto:: ─────────────────────────────────────────────────────────────────
+
+static std::string to_hex(const std::vector<uint8_t>& v) {
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(v.size() * 2);
+    for (uint8_t b : v) { out += hex[b >> 4]; out += hex[b & 0xF]; }
+    return out;
+}
+
+static std::vector<uint8_t> from_hex(const std::string& s) {
+    std::vector<uint8_t> out;
+    for (size_t i = 0; i + 1 < s.size(); i += 2) {
+        auto hv = [](char c) -> uint8_t {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return 0;
+        };
+        out.push_back((hv(s[i]) << 4) | hv(s[i+1]));
+    }
+    return out;
+}
+
+static std::string b64url_encode(const uint8_t* data, size_t len) {
+    std::string s = b64_encode(data, len);
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '+') out += '-';
+        else if (c == '/') out += '_';
+        else if (c == '=') {}  // strip padding
+        else out += c;
+    }
+    return out;
+}
+
+static std::vector<uint8_t> b64url_decode(const std::string& s) {
+    std::string padded;
+    padded.reserve(s.size() + 3);
+    for (char c : s) {
+        if (c == '-') padded += '+';
+        else if (c == '_') padded += '/';
+        else padded += c;
+    }
+    while (padded.size() % 4) padded += '=';
+    return b64_decode(padded);
+}
+
+// ── RS256 (RSA-SHA256) ────────────────────────────────────────────────────────
+
+static std::vector<uint8_t> pem_to_der_rsa(const std::string& pem) {
+    std::string b64;
+    std::istringstream ss(pem);
+    std::string line;
+    bool in_key = false;
+    while (std::getline(ss, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find("-----BEGIN") != std::string::npos) { in_key = true; continue; }
+        if (line.find("-----END")   != std::string::npos) break;
+        if (in_key) b64 += line;
+    }
+    return b64_decode(b64);
+}
+
+#ifdef _WIN32
+
+static std::vector<uint8_t> rs256_sha256_hash(const std::string& data) {
+    BCRYPT_ALG_HANDLE hAlg = NULL;
+    BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, NULL, 0);
+    DWORD hashLen = 0, cbRes = 0;
+    BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH, (PBYTE)&hashLen, sizeof(DWORD), &cbRes, 0);
+    BCRYPT_HASH_HANDLE hHash = NULL;
+    std::vector<uint8_t> hash(hashLen);
+    BCryptCreateHash(hAlg, &hHash, NULL, 0, NULL, 0, 0);
+    BCryptHashData(hHash, (PBYTE)data.data(), (ULONG)data.size(), 0);
+    BCryptFinishHash(hHash, hash.data(), hashLen, 0);
+    BCryptDestroyHash(hHash);
+    BCryptCloseAlgorithmProvider(hAlg, 0);
+    return hash;
+}
+
+static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::string& pem) {
+    auto der = pem_to_der_rsa(pem);
+    auto hash = rs256_sha256_hash(data);
+
+    NCRYPT_PROV_HANDLE hProv = 0;
+    NCRYPT_KEY_HANDLE  hKey  = 0;
+
+    SECURITY_STATUS st = NCryptOpenStorageProvider(&hProv, MS_KEY_STORAGE_PROVIDER, 0);
+    if (st != ERROR_SUCCESS)
+        throw std::runtime_error("crypto::rs256_sign() — NCrypt provider açılamadı");
+
+    st = NCryptImportKey(hProv, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NULL,
+                         &hKey, der.data(), (DWORD)der.size(), NCRYPT_SILENT_FLAG);
+    if (st != ERROR_SUCCESS) {
+        NCryptFreeObject(hProv);
+        throw std::runtime_error("crypto::rs256_sign() — RSA key import hatası (PKCS#8 PEM gerekli)");
+    }
+
+    BCRYPT_PKCS1_PADDING_INFO pad = { BCRYPT_SHA256_ALGORITHM };
+    DWORD sigLen = 0;
+    NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
+                   NULL, 0, &sigLen, BCRYPT_PAD_PKCS1);
+    std::vector<uint8_t> sig(sigLen);
+    NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
+                   sig.data(), sigLen, &sigLen, BCRYPT_PAD_PKCS1);
+    sig.resize(sigLen);
+
+    NCryptFreeObject(hKey);
+    NCryptFreeObject(hProv);
+    return sig;
+}
+
+static bool rs256_verify_impl(const std::string& data,
+                               const std::vector<uint8_t>& sig,
+                               const std::string& /*pem_pub*/) {
+    // Windows verify: NCrypt public key import — gelecek sürümde eklenecek
+    (void)data; (void)sig;
+    throw std::runtime_error("crypto::rs256_verify() — Windows'ta henüz desteklenmiyor");
+}
+
+#else
+// Linux: OpenSSL EVP API
+
+static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::string& pem) {
+    BIO* bio = BIO_new_mem_buf(pem.data(), (int)pem.size());
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    if (!pkey) { ERR_clear_error(); throw std::runtime_error("crypto::rs256_sign() — PEM key parse hatası"); }
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, pkey) != 1 ||
+        EVP_DigestSignUpdate(ctx, data.data(), data.size()) != 1) {
+        EVP_MD_CTX_free(ctx); EVP_PKEY_free(pkey); ERR_clear_error();
+        throw std::runtime_error("crypto::rs256_sign() — imzalama hatası");
+    }
+    size_t len = 0;
+    EVP_DigestSignFinal(ctx, NULL, &len);
+    std::vector<uint8_t> sig(len);
+    EVP_DigestSignFinal(ctx, sig.data(), &len);
+    sig.resize(len);
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return sig;
+}
+
+static bool rs256_verify_impl(const std::string& data,
+                               const std::vector<uint8_t>& sig,
+                               const std::string& pem_pub) {
+    BIO* bio = BIO_new_mem_buf(pem_pub.data(), (int)pem_pub.size());
+    EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    if (!pkey) { ERR_clear_error(); return false; }
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    bool ok = (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pkey) == 1 &&
+               EVP_DigestVerifyUpdate(ctx, data.data(), data.size()) == 1 &&
+               EVP_DigestVerifyFinal(ctx, sig.data(), sig.size()) == 1);
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    ERR_clear_error();
+    return ok;
+}
+
+#endif
+
+static Module make_crypto_module() {
+    Module m;
+    m.name = "crypto";
+
+    // crypto::sha256($data) → hex string
+    m.functions["sha256"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("crypto::sha256() — veri gerekli");
+        std::string s = args[0].to_string();
+        std::vector<uint8_t> data(s.begin(), s.end());
+        return Value(to_hex(sha256(data)));
+    };
+
+    // crypto::hmac_sha256($data, $key) → hex string
+    m.functions["hmac_sha256"] = [](auto args) -> Value {
+        if (args.size() < 2) throw std::runtime_error("crypto::hmac_sha256() — data ve key gerekli");
+        std::string d = args[0].to_string();
+        std::string k = args[1].to_string();
+        std::vector<uint8_t> data(d.begin(), d.end());
+        std::vector<uint8_t> key(k.begin(), k.end());
+        return Value(to_hex(hmac_sha256(key, data)));
+    };
+
+    // crypto::hmac_sha256_raw($data, $key) → raw bytes as string (JWT imzası için)
+    m.functions["hmac_sha256_raw"] = [](auto args) -> Value {
+        if (args.size() < 2) throw std::runtime_error("crypto::hmac_sha256_raw() — data ve key gerekli");
+        std::string d = args[0].to_string();
+        std::string k = args[1].to_string();
+        std::vector<uint8_t> data(d.begin(), d.end());
+        std::vector<uint8_t> key(k.begin(), k.end());
+        auto result = hmac_sha256(key, data);
+        return Value(std::string(result.begin(), result.end()));
+    };
+
+    // crypto::base64_encode($data) → standard base64
+    m.functions["base64_encode"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("crypto::base64_encode() — veri gerekli");
+        std::string s = args[0].to_string();
+        return Value(b64_encode((const uint8_t*)s.data(), s.size()));
+    };
+
+    // crypto::base64_decode($s) → decoded string
+    m.functions["base64_decode"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("crypto::base64_decode() — string gerekli");
+        auto v = b64_decode(args[0].to_string());
+        return Value(std::string(v.begin(), v.end()));
+    };
+
+    // crypto::base64url_encode($data) → URL-safe base64, padding yok (JWT için)
+    m.functions["base64url_encode"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("crypto::base64url_encode() — veri gerekli");
+        std::string s = args[0].to_string();
+        return Value(b64url_encode((const uint8_t*)s.data(), s.size()));
+    };
+
+    // crypto::base64url_decode($s) → decoded string
+    m.functions["base64url_decode"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("crypto::base64url_decode() — string gerekli");
+        auto v = b64url_decode(args[0].to_string());
+        return Value(std::string(v.begin(), v.end()));
+    };
+
+    // crypto::hex_encode($data) → hex string
+    m.functions["hex_encode"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("crypto::hex_encode() — veri gerekli");
+        std::string s = args[0].to_string();
+        std::vector<uint8_t> data(s.begin(), s.end());
+        return Value(to_hex(data));
+    };
+
+    // crypto::hex_decode($hex) → decoded string
+    m.functions["hex_decode"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("crypto::hex_decode() — hex string gerekli");
+        auto v = from_hex(args[0].to_string());
+        return Value(std::string(v.begin(), v.end()));
+    };
+
+    // crypto::random_bytes($n) → hex string (n bayt)
+    m.functions["random_bytes"] = [](auto args) -> Value {
+        int n = args.empty() ? 16 : args[0].to_int();
+        if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_bytes() — 1-4096 arası");
+        return Value(to_hex(random_bytes((size_t)n)));
+    };
+
+    // crypto::random_string($n) → URL-safe rastgele string (n bayt entropi)
+    m.functions["random_string"] = [](auto args) -> Value {
+        int n = args.empty() ? 16 : args[0].to_int();
+        if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_string() — 1-4096 arası");
+        auto bytes = random_bytes((size_t)n);
+        return Value(b64url_encode(bytes.data(), bytes.size()));
+    };
+
+    // crypto::uuid() → UUID v4 string
+    m.functions["uuid"] = [](auto args) -> Value {
+        (void)args;
+        auto b = random_bytes(16);
+        b[6] = (b[6] & 0x0F) | 0x40;  // version 4
+        b[8] = (b[8] & 0x3F) | 0x80;  // variant RFC 4122
+        static const char hex[] = "0123456789abcdef";
+        std::string uuid;
+        uuid.reserve(36);
+        for (int i = 0; i < 16; i++) {
+            if (i == 4 || i == 6 || i == 8 || i == 10) uuid += '-';
+            uuid += hex[b[i] >> 4];
+            uuid += hex[b[i] & 0xF];
+        }
+        return Value(uuid);
+    };
+
+    // crypto::rs256_sign($data, $pem_private_key) → raw imza bytes (string)
+    m.functions["rs256_sign"] = [](auto args) -> Value {
+        if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign() — data ve PEM key gerekli");
+        std::string data = args[0].to_string();
+        std::string pem  = args[1].to_string();
+        auto sig = rs256_sign_impl(data, pem);
+        return Value(std::string(sig.begin(), sig.end()));
+    };
+
+    // crypto::rs256_sign_b64url($data, $pem_private_key) → base64url imza (JWT için hazır)
+    m.functions["rs256_sign_b64url"] = [](auto args) -> Value {
+        if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign_b64url() — data ve PEM key gerekli");
+        std::string data = args[0].to_string();
+        std::string pem  = args[1].to_string();
+        auto sig = rs256_sign_impl(data, pem);
+        return Value(b64url_encode(sig.data(), sig.size()));
+    };
+
+    // crypto::rs256_verify($data, $sig_bytes, $pem_public_key) → bool
+    m.functions["rs256_verify"] = [](auto args) -> Value {
+        if (args.size() < 3) throw std::runtime_error("crypto::rs256_verify() — data, sig ve PEM public key gerekli");
+        std::string data = args[0].to_string();
+        std::string sig_str = args[1].to_string();
+        std::string pem  = args[2].to_string();
+        std::vector<uint8_t> sig(sig_str.begin(), sig_str.end());
+        return Value(rs256_verify_impl(data, sig, pem));
+    };
+
+    // crypto::constant_compare($a, $b) → timing-safe string karşılaştırma
+    m.functions["constant_compare"] = [](auto args) -> Value {
+        if (args.size() < 2) return Value(false);
+        std::string a = args[0].to_string();
+        std::string b = args[1].to_string();
+        if (a.size() != b.size()) return Value(false);
+        uint8_t diff = 0;
+        for (size_t i = 0; i < a.size(); i++) diff |= (uint8_t)a[i] ^ (uint8_t)b[i];
+        return Value(diff == 0);
+    };
+
+    return m;
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 // ── runtime:: ────────────────────────────────────────────────────────────────
@@ -679,6 +1035,7 @@ std::map<std::string, Module> make_extra_stdlib(Interpreter* interp) {
     std::map<std::string, Module> mods;
     auto add = [&](Module mod) { mods[mod.name] = std::move(mod); };
     add(make_auth());
+    add(make_crypto_module());
     add(make_validator());
     add(make_array_module(interp));
     add(make_runtime_module(interp));

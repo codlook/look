@@ -10,7 +10,7 @@
 #include <iostream>
 #include <iterator>
 
-#define LOOK_VERSION "1.0.0"
+#define LOOK_VERSION "1.0.1"
 
 #ifdef _WIN32
 #  define LOOK_PLATFORM "windows"
@@ -34,16 +34,18 @@
 
 static void print_usage() {
     std::cout << "Usage:\n";
-    std::cout << "  look <source.lk>              — run a script\n";
-    std::cout << "  look -c \"code\"                — run inline code\n";
-    std::cout << "  look test                     — run all tests in tests/\n";
-    std::cout << "  look test <pattern>           — run matching tests\n";
-    std::cout << "  look test --verbose           — verbose output\n";
-    std::cout << "  look repl                     — interactive REPL\n";
-    std::cout << "  look install <pkg>            — install package (e.g. github.com/user/repo)\n";
-    std::cout << "  look install <pkg@ref>        — install specific branch/tag\n";
-    std::cout << "  look install                  — install all from look.lock\n";
-    std::cout << "  look version                  — print version info\n";
+    std::cout << "  lk <source.lk>                  — run a script\n";
+    std::cout << "  lk -c \"code\"                    — run inline code\n";
+    std::cout << "  lk test                          — run all tests in tests/\n";
+    std::cout << "  lk test <pattern>                — run matching tests\n";
+    std::cout << "  lk test --verbose                — verbose output\n";
+    std::cout << "  lk repl                          — interactive REPL\n";
+    std::cout << "  lk module install <name>         — install module (e.g. jwt)\n";
+    std::cout << "  lk module list                   — list installed modules\n";
+    std::cout << "  lk install <pkg>                 — install package (e.g. github.com/codlook/look-packages/firebase)\n";
+    std::cout << "  lk install <pkg@ref>             — install specific branch/tag\n";
+    std::cout << "  lk install                       — install all from look.lock\n";
+    std::cout << "  lk version                       — print version info\n";
 }
 
 static std::string read_file(const std::filesystem::path& path) {
@@ -59,7 +61,6 @@ int main(int argc, char* argv[]) {
 
         std::string cmd = argv[1];
 
-        // ── look test [pattern] [--verbose] ──────────────────────────────────
         if (cmd == "version" || cmd == "--version" || cmd == "-v") {
             std::cout << "LOOK " << LOOK_VERSION
                       << " (" << LOOK_PLATFORM << "/" << LOOK_ARCH << ")"
@@ -82,7 +83,37 @@ int main(int argc, char* argv[]) {
             return look::run_test_mode(pattern, verbose);
         }
 
-        // ── look install [pkg] ────────────────────────────────────────────────
+        // ── lk module <sub> ──────────────────────────────────────────────────
+        if (cmd == "module") {
+            if (argc < 3) {
+                std::cout << "Kullanım:\n"
+                          << "  lk module install <name>   — modül yükle\n"
+                          << "  lk module list             — yüklü modülleri listele\n";
+                return 1;
+            }
+            std::string sub = argv[2];
+            bool verbose = false;
+            std::string name;
+            for (int i = 3; i < argc; ++i) {
+                std::string arg = argv[i];
+                if (arg == "--verbose" || arg == "-v") verbose = true;
+                else if (name.empty()) name = arg;
+            }
+            if (sub == "install") {
+                if (name.empty()) {
+                    std::cerr << "Hata: modül adı gerekli. Örnek: lk module install jwt\n";
+                    return 1;
+                }
+                return look::cmd_module_install(name, verbose);
+            }
+            if (sub == "list") {
+                return look::cmd_module_list();
+            }
+            std::cerr << "Bilinmeyen alt komut: " << sub << "\n";
+            return 1;
+        }
+
+        // ── lk install [pkg] ─────────────────────────────────────────────────
         if (cmd == "install") {
             bool verbose = false;
             std::string pkg;
@@ -95,7 +126,7 @@ int main(int argc, char* argv[]) {
             return look::cmd_install(pkg, verbose);
         }
 
-        // ── look <file> / look -c "code" ─────────────────────────────────────
+        // ── lk <file> / lk -c "code" ─────────────────────────────────────────
         std::string filename = (cmd != "-c") ? cmd : "<inline>";
         std::string source;
         if (cmd == "-c") {

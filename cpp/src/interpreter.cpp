@@ -395,11 +395,65 @@ void Interpreter::execute_statement(const Statement& stmt) {
 
     if (auto* s = dynamic_cast<const UseStatement*>(&stmt)) {
         auto it = stdlib_.find(s->module_name);
-        if (it == stdlib_.end())
-            throw std::runtime_error("Unknown module: '" + s->module_name + "'");
-        std::string key = s->alias.empty() ? s->module_name : s->alias;
-        modules_[key] = it->second;
-        return;
+        if (it != stdlib_.end()) {
+            std::string key = s->alias.empty() ? s->module_name : s->alias;
+            modules_[key] = it->second;
+            return;
+        }
+
+        // stdlib'de yok — ~/.look/modules/<name>/<name>.lk dosyasına bak
+        {
+            interp_fs::path module_file;
+#ifdef _WIN32
+            const char* home = std::getenv("USERPROFILE");
+            if (!home) home = std::getenv("HOMEDRIVE");
+#else
+            const char* home = std::getenv("HOME");
+#endif
+            if (home) {
+                module_file = interp_fs::path(home) / ".look" / "modules"
+                            / s->module_name / (s->module_name + ".lk");
+            }
+
+            if (!module_file.empty() && interp_fs::exists(module_file)) {
+                std::string abs_path = module_file.string();
+
+                if (included_files_.count(abs_path)) return; // zaten yüklendi
+                included_files_.insert(abs_path);
+
+                std::ifstream f(abs_path);
+                if (!f) throw std::runtime_error("Modül dosyası açılamadı: " + abs_path);
+                std::string src((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+
+                Lexer lx(src);
+                auto toks = lx.scan_tokens();
+                Parser p(std::move(toks));
+                auto prog = p.parse();
+
+                auto prev_file = current_file_;
+                current_file_ = abs_path;
+                auto prev_env  = current_;
+                auto isolated  = std::make_shared<Environment>(globals_);
+                current_ = isolated;
+                try {
+                    for (auto& sub : prog->statements) execute_statement(*sub);
+                } catch (...) {
+                    current_ = prev_env; current_file_ = prev_file; throw;
+                }
+                current_ = prev_env;
+                current_file_ = prev_file;
+                for (auto& [name, val] : isolated->entries()) {
+                    if (name.empty() || name[0] == '$') continue;
+                    globals_->define(name, val);
+                }
+                owned_programs_.push_back(std::move(prog));
+                return;
+            }
+        }
+
+        throw std::runtime_error("Unknown module: '" + s->module_name
+            + "'. Kurmak için: lk module install " + s->module_name);
     }
 
     // Phase 18.5 — dosya modül sistemi

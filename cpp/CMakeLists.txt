@@ -92,7 +92,7 @@ else()
     endif()
 
     # Linux'ta binary adlarında .exe uzantısı olmasın
-    set_target_properties(look      PROPERTIES OUTPUT_NAME "look")
-    set_target_properties(look-cgi  PROPERTIES OUTPUT_NAME "look-cgi")
-    set_target_properties(look-fcgi PROPERTIES OUTPUT_NAME "look-fcgi")
+    set_target_properties(look      PROPERTIES OUTPUT_NAME "lk")
+    set_target_properties(look-cgi  PROPERTIES OUTPUT_NAME "lk-cgi")
+    set_target_properties(look-fcgi PROPERTIES OUTPUT_NAME "lk-fcgi")
 endif()

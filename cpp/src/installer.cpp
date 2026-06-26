@@ -373,4 +373,117 @@ int cmd_install_all(bool verbose) {
     return 0;
 }
 
+// ── Module helpers ────────────────────────────────────────────────────────────
+
+static fs::path look_home() {
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+    if (!home) home = std::getenv("HOMEDRIVE");
+#else
+    const char* home = std::getenv("HOME");
+#endif
+    if (!home) throw std::runtime_error("HOME dizini bulunamadı");
+    return fs::path(home) / ".look";
+}
+
+static fs::path modules_dir() {
+    return look_home() / "modules";
+}
+
+// ── cmd_module_install ────────────────────────────────────────────────────────
+
+int cmd_module_install(const std::string& name, bool verbose) {
+    // Download single file from codlook/look-modules repo:
+    // https://raw.githubusercontent.com/codlook/look-modules/main/<name>/<name>.lk
+    const std::string base_url = "https://raw.githubusercontent.com/codlook/look-modules/main/";
+
+    fs::path dest_dir = modules_dir() / name;
+    fs::path dest_file = dest_dir / (name + ".lk");
+
+    std::cout << "Modül yükleniyor: " << name << "\n";
+
+    // Download the .lk file
+    std::string url = base_url + name + "/" + name + ".lk";
+    if (verbose) std::cout << "  " << url << "\n";
+
+    HttpOptions opts;
+    opts.timeout_ms = 15000;
+    std::map<std::string, std::string> hdrs;
+    hdrs["User-Agent"] = "LOOK-Module-Manager/1.0";
+    HttpResponse resp = http_request("GET", url, "", hdrs, opts);
+
+    if (!resp.error.empty()) {
+        std::cerr << "İndirme hatası: " << resp.error << "\n";
+        return 1;
+    }
+    if (resp.status == 404) {
+        std::cerr << "Modül bulunamadı: " << name << "\n";
+        std::cerr << "  Mevcut modüller: https://github.com/codlook/look-modules\n";
+        return 1;
+    }
+    if (resp.status != 200) {
+        std::cerr << "GitHub " << resp.status << " döndürdü\n";
+        return 1;
+    }
+
+    // Save to ~/.look/modules/<name>/<name>.lk
+    fs::create_directories(dest_dir);
+    std::ofstream out(dest_file, std::ios::binary);
+    if (!out) {
+        std::cerr << "Dosya yazılamadı: " << dest_file.string() << "\n";
+        return 1;
+    }
+    out.write(resp.body.data(), (std::streamsize)resp.body.size());
+    out.close();
+
+    std::cout << "  → " << dest_file.string() << "\n";
+
+    // Try to also download README.md (optional, ignore failure)
+    std::string readme_url = base_url + name + "/README.md";
+    HttpResponse readme_resp = http_request("GET", readme_url, "", hdrs, opts);
+    if (readme_resp.status == 200) {
+        fs::path readme_path = dest_dir / "README.md";
+        std::ofstream rf(readme_path, std::ios::binary);
+        if (rf) rf.write(readme_resp.body.data(), (std::streamsize)readme_resp.body.size());
+        if (verbose) std::cout << "  + README.md\n";
+    }
+
+    std::cout << "✓ " << name << " modülü kuruldu\n\n";
+    std::cout << "Kullanım:\n";
+    std::cout << "  use " << name << ";\n";
+
+    return 0;
+}
+
+// ── cmd_module_list ───────────────────────────────────────────────────────────
+
+int cmd_module_list() {
+    fs::path mdir = modules_dir();
+    if (!fs::exists(mdir)) {
+        std::cout << "Yüklü modül yok. Kurulum: lk module install <name>\n";
+        return 0;
+    }
+
+    std::vector<std::string> installed;
+    for (auto& entry : fs::directory_iterator(mdir)) {
+        if (entry.is_directory()) {
+            std::string mname = entry.path().filename().string();
+            fs::path lk = entry.path() / (mname + ".lk");
+            if (fs::exists(lk)) installed.push_back(mname);
+        }
+    }
+
+    if (installed.empty()) {
+        std::cout << "Yüklü modül yok. Kurulum: lk module install <name>\n";
+        return 0;
+    }
+
+    std::cout << "Yüklü modüller (" << installed.size() << "):\n";
+    for (auto& m : installed) {
+        std::cout << "  " << m << "\n";
+    }
+    std::cout << "\nModül dizini: " << mdir.string() << "\n";
+    return 0;
+}
+
 } // namespace look
