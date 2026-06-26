@@ -1,7 +1,7 @@
 # LOOK Language
 
 LOOK, C++23 ile yazılmış Apache/CGI+FastCGI uyumlu bir web scripting dilidir.
-Wlternatif Web dili olarak tasarlanmıştır — routing dile gömülü, framework kurma zorunluluğu yok.
+Alternatif Web dili olarak tasarlanmıştır — routing dile gömülü, framework kurma zorunluluğu yok.
 
 ---
 
