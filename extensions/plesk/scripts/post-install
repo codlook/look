@@ -1,4 +1,0 @@
-#!/bin/bash
-# Plesk tarafindan kurulum sonrasi calistirilir (root olarak)
-HTDOCS="/usr/local/psa/admin/htdocs/modules/look-lang"
-bash "$HTDOCS/scripts/install.sh"
