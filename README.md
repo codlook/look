@@ -1,7 +1,5 @@
 # LOOK Language
 
-> PHP kadar kolay dağıtılır, Go kadar sade yazılır, C++ kadar hızlı çalışır.
-
 LOOK, C++23 ile yazılmış Apache/CGI+FastCGI uyumlu bir web scripting dilidir.
 PHP'ye alternatif olarak tasarlanmıştır — routing dile gömülü, framework kurma zorunluluğu yok.
 
