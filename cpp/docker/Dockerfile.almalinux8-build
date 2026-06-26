@@ -1,19 +1,23 @@
 FROM almalinux:8
 
-RUN dnf install -y \
-    gcc-toolset-13 \
-    gcc-toolset-13-gcc \
-    gcc-toolset-13-gcc-c++ \
-    cmake \
-    make \
-    python3 \
+RUN dnf install -y --setopt=sslverify=false epel-release && \
+    dnf install -y --setopt=sslverify=false \
+    gcc-toolset-11 gcc-toolset-11-gcc-c++ \
+    cmake make git \
     openssl-devel \
     && dnf clean all
 
-# gcc-toolset-13 PATH'e ekle
-ENV PATH="/opt/rh/gcc-toolset-13/root/usr/bin:$PATH"
-ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-13/root/usr/lib64"
+WORKDIR /look
+COPY . /look/cpp
+WORKDIR /look/cpp
 
-WORKDIR /src
+RUN source /opt/rh/gcc-toolset-11/enable && \
+    rm -rf build && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_CXX_COMPILER=/opt/rh/gcc-toolset-11/root/usr/bin/g++ \
+          -DCMAKE_C_COMPILER=/opt/rh/gcc-toolset-11/root/usr/bin/gcc \
+          -DCMAKE_THREAD_PREFER_PTHREAD=TRUE \
+          -DTHREADS_PREFER_PTHREAD_FLAG=TRUE && \
+    cmake --build build --target look --target look-cgi --target look-fcgi -j$(nproc)
 
-CMD ["bash"]
+RUN ls -lh build/lk build/lk-cgi build/lk-fcgi

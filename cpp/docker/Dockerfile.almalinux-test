@@ -1,8 +1,8 @@
-FROM almalinux:8
+FROM almalinux:9
 
-RUN dnf install -y \
+RUN dnf install -y --setopt=sslverify=false \
     cmake gcc-c++ make git \
-    openssl-devel glibc-devel \
+    openssl-devel \
     && dnf clean all
 
 WORKDIR /look
