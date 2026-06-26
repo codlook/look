@@ -1,0 +1,29 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    cmake g++ make git \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /look
+COPY . /look/cpp
+WORKDIR /look/cpp
+
+# Build (Windows cache'ini temizle)
+RUN rm -rf build && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build --target look -j$(nproc)
+
+# Binary'yi PATH'e koy
+RUN cp build/lk /usr/local/bin/lk
+
+WORKDIR /test
+COPY docker/test_docker.lk /test/test_docker.lk
+
+CMD ["bash", "-c", \
+    "echo '=== LK VERSION ===' && lk version && \
+     echo '' && \
+     echo '=== MODULE INSTALL ===' && lk module install jwt && \
+     echo '' && \
+     echo '=== RUN TEST ===' && lk test_docker.lk"]

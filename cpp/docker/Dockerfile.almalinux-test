@@ -1,0 +1,28 @@
+FROM almalinux:8
+
+RUN dnf install -y \
+    cmake gcc-c++ make git \
+    openssl-devel glibc-devel \
+    && dnf clean all
+
+WORKDIR /look
+COPY . /look/cpp
+WORKDIR /look/cpp
+
+RUN rm -rf build && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_THREAD_PREFER_PTHREAD=TRUE \
+          -DTHREADS_PREFER_PTHREAD_FLAG=TRUE && \
+    cmake --build build --target look -j$(nproc)
+
+RUN cp build/lk /usr/local/bin/lk
+
+WORKDIR /test
+COPY docker/test_docker.lk /test/test_docker.lk
+
+CMD ["bash", "-c", \
+    "echo '=== LK VERSION ===' && lk version && \
+     echo '' && \
+     echo '=== MODULE INSTALL ===' && lk module install jwt && \
+     echo '' && \
+     echo '=== RUN TEST ===' && lk test_docker.lk"]

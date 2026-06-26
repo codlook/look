@@ -1,0 +1,39 @@
+FROM centos:7
+
+# CentOS 7 EOL — vault mirror
+RUN sed -i 's|^mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-*.repo && \
+    sed -i 's|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
+
+# SCL vault repo
+RUN echo '[centos-sclo-rh]' > /etc/yum.repos.d/CentOS-SCLo-rh.repo && \
+    echo 'name=CentOS-7 SCLo rh' >> /etc/yum.repos.d/CentOS-SCLo-rh.repo && \
+    echo 'baseurl=http://vault.centos.org/centos/7/sclo/x86_64/rh/' >> /etc/yum.repos.d/CentOS-SCLo-rh.repo && \
+    echo 'enabled=1' >> /etc/yum.repos.d/CentOS-SCLo-rh.repo && \
+    echo 'gpgcheck=0' >> /etc/yum.repos.d/CentOS-SCLo-rh.repo
+
+# Bağımlılıklar + devtoolset-11
+RUN yum install -y wget openssl-devel zlib-devel make \
+                   devtoolset-11-gcc devtoolset-11-gcc-c++ devtoolset-11-make && \
+    yum clean all
+
+ENV PATH=/opt/rh/devtoolset-11/root/usr/bin:$PATH
+
+# CMake 3.27 binary indir
+RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.sh \
+         -O /tmp/cmake.sh && \
+    chmod +x /tmp/cmake.sh && \
+    /tmp/cmake.sh --skip-license --prefix=/usr/local && \
+    rm /tmp/cmake.sh
+
+WORKDIR /src
+COPY . .
+
+RUN mkdir -p build-centos7 && cd build-centos7 && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER=/opt/rh/devtoolset-11/root/usr/bin/gcc \
+        -DCMAKE_CXX_COMPILER=/opt/rh/devtoolset-11/root/usr/bin/g++ \
+        -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" && \
+    make -j$(nproc) look look-cgi look-fcgi
+
+CMD ["/bin/bash"]
