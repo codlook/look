@@ -76,15 +76,23 @@ static void write_lock(const fs::path& lock_path,
 // ── Package name parsing ──────────────────────────────────────────────────────
 
 struct PkgSpec {
-    std::string host;   // "github.com"
+    std::string host;    // "github.com"
     std::string user;
     std::string repo;
-    std::string ref;    // branch/tag, default "main"
+    std::string subdir;  // optional: "firebase" from look-packages/firebase
+    std::string ref;     // branch/tag, default "main"
 
-    std::string lock_key()  const { return user + "/" + repo; }
-    std::string pkg_dir()   const { return "pkg/" + user + "/" + repo; }
-    std::string zip_url()   const {
-        // GitHub zipball: https://api.github.com/repos/{user}/{repo}/zipball/{ref}
+    // look.lock key: "user/repo" or "user/repo/subdir"
+    std::string lock_key() const {
+        return subdir.empty() ? (user + "/" + repo)
+                              : (user + "/" + repo + "/" + subdir);
+    }
+    // local install dir: "pkg/firebase" (subdir name) or "pkg/user/repo"
+    std::string pkg_dir() const {
+        return subdir.empty() ? ("pkg/" + user + "/" + repo)
+                              : ("pkg/" + subdir);
+    }
+    std::string zip_url() const {
         return "https://api.github.com/repos/" + user + "/" + repo + "/zipball/" + ref;
     }
 };
@@ -106,29 +114,44 @@ static PkgSpec parse_pkg(const std::string& input) {
         p.ref = "main";
     }
 
-    // host/user/repo
+    // host
     auto s1 = s.find('/');
     if (s1 == std::string::npos) throw std::runtime_error("Geçersiz paket: " + input);
     p.host = s.substr(0, s1);
     s      = s.substr(s1 + 1);
 
+    // user
     auto s2 = s.find('/');
     if (s2 == std::string::npos) throw std::runtime_error("Geçersiz paket (user/repo gerekli): " + input);
     p.user = s.substr(0, s2);
-    p.repo = s.substr(s2 + 1);
+    s      = s.substr(s2 + 1);
+
+    // repo[/subdir]
+    auto s3 = s.find('/');
+    if (s3 == std::string::npos) {
+        p.repo = s;  // whole repo, no subdir
+    } else {
+        p.repo   = s.substr(0, s3);
+        p.subdir = s.substr(s3 + 1);
+        // strip trailing slash if any
+        if (!p.subdir.empty() && p.subdir.back() == '/')
+            p.subdir.pop_back();
+    }
 
     if (p.host != "github.com")
-        throw std::runtime_error("Şu an sadece github.com destekleniyor. Registry (packages.codlook.com) v1.1'de gelecek.");
+        throw std::runtime_error("Şu an sadece github.com destekleniyor.");
 
     return p;
 }
 
 // ── ZIP extraction ────────────────────────────────────────────────────────────
 
-// GitHub zipball extracts as "{repo}-{sha}/" — we want pkg/user/repo/
+// GitHub zipball: "{repo}-{sha}/" prefix + optional subdir filter
+// subdir_filter: if non-empty, only extract files under that subdirectory
 static bool extract_zip(const std::vector<char>& data,
                          const fs::path& dest_dir,
-                         bool verbose)
+                         bool verbose,
+                         const std::string& subdir_filter = "")
 {
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_mem(&zip, data.data(), data.size(), 0)) {
@@ -150,7 +173,11 @@ static bool extract_zip(const std::vector<char>& data,
         }
     }
 
+    // subdir filter prefix: after stripping GitHub prefix, files must start with "subdir/"
+    std::string subdir_prefix = subdir_filter.empty() ? "" : (subdir_filter + "/");
+
     fs::create_directories(dest_dir);
+    int extracted = 0;
 
     for (int i = 0; i < n; ++i) {
         mz_zip_archive_file_stat st;
@@ -163,6 +190,14 @@ static bool extract_zip(const std::vector<char>& data,
             filename = filename.substr(strip_prefix.size());
         if (filename.empty()) continue;
 
+        // Subdir filter: skip files not under the requested subdirectory
+        if (!subdir_prefix.empty()) {
+            if (filename.substr(0, subdir_prefix.size()) != subdir_prefix) continue;
+            // Strip subdir prefix so files land directly in dest_dir
+            filename = filename.substr(subdir_prefix.size());
+            if (filename.empty()) continue;
+        }
+
         fs::path out_path = dest_dir / filename;
 
         if (mz_zip_reader_is_file_a_directory(&zip, i)) {
@@ -170,10 +205,8 @@ static bool extract_zip(const std::vector<char>& data,
             continue;
         }
 
-        // Ensure parent directory exists
         fs::create_directories(out_path.parent_path());
 
-        // Extract file
         size_t out_size = 0;
         void* buf = mz_zip_reader_extract_to_heap(&zip, i, &out_size, 0);
         if (!buf) {
@@ -184,11 +217,17 @@ static bool extract_zip(const std::vector<char>& data,
         std::ofstream ofs(out_path, std::ios::binary);
         if (ofs) ofs.write((char*)buf, (std::streamsize)out_size);
         mz_free(buf);
+        ++extracted;
 
         if (verbose) std::cout << "  + " << filename << "\n";
     }
 
     mz_zip_reader_end(&zip);
+
+    if (extracted == 0 && !subdir_filter.empty()) {
+        std::cerr << "Hata: '" << subdir_filter << "' klasörü repoda bulunamadı.\n";
+        return false;
+    }
     return true;
 }
 
@@ -265,8 +304,9 @@ int cmd_install(const std::string& pkg, bool verbose) {
         return 1;
     }
 
-    std::cout << "Yükleniyor: " << spec.user << "/" << spec.repo
-              << " (" << spec.ref << ")\n";
+    std::cout << "Yükleniyor: " << spec.user << "/" << spec.repo;
+    if (!spec.subdir.empty()) std::cout << "/" << spec.subdir;
+    std::cout << " (" << spec.ref << ")\n";
 
     // Download ZIP
     HttpResponse resp = download_follow(spec.zip_url(), verbose);
@@ -290,7 +330,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
     }
 
     std::vector<char> zip_data(resp.body.begin(), resp.body.end());
-    if (!extract_zip(zip_data, dest, verbose)) {
+    if (!extract_zip(zip_data, dest, verbose, spec.subdir)) {
         std::cerr << "ZIP çıkartma hatası\n";
         return 1;
     }
@@ -338,7 +378,12 @@ int cmd_install(const std::string& pkg, bool verbose) {
     std::cout << "  look.lock güncellendi\n";
     std::cout << "✓ " << spec.lock_key() << " kuruldu\n\n";
     std::cout << "Kullanım:\n";
-    std::cout << "  use \"" << spec.pkg_dir() << "/" << spec.repo << ".lk\";\n";
+    if (!spec.subdir.empty()) {
+        // pkg/firebase/firebase.lk
+        std::cout << "  use \"" << spec.pkg_dir() << "/" << spec.subdir << ".lk\";\n";
+    } else {
+        std::cout << "  use \"" << spec.pkg_dir() << "/" << spec.repo << ".lk\";\n";
+    }
 
     return 0;
 }
