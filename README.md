@@ -25,40 +25,6 @@ Dosyayı XAMPP `htdocs/` klasörüne at, look-fcgi başlat — bitti.
 
 ---
 
-## Kurulum
-
-### Linux (Ubuntu / AlmaLinux) — Tek Komut
-
-```bash
-curl -fsSL https://get.look-lang.org | sudo bash -- --with-service --with-nginx --with-cli
-```
-
-Kurulum otomatik yapar: distro algılama → binary indir → systemd servis → nginx config → hazır.
-
-### Windows + XAMPP
-
-Binary'leri `C:\xampp\cgi-bin\` altına kopyala, `httpd.conf`'u yapılandır — bkz: `xampp/setup.md`.
-
-### Versiyon doğrulama
-
-```bash
-look version       # LOOK 1.0.0 (linux/amd64)
-look-fcgi version  # LOOK 1.0.0 (linux/amd64)
-```
-
----
-
-## Binary'ler
-
-| Binary | Amaç |
-|--------|------|
-| `look-fcgi` | FastCGI — port 9000 (production) |
-| `look-fcgi --mode http` | HTTP/1.1 sunucu — Apache bypass, WebSocket, SSE |
-| `look-cgi` | CGI — yedek mod |
-| `look` | CLI — `look test`, `look repl`, `look install`, `look version` |
-
----
-
 ## Dil Özellikleri (v1.0.0)
 
 | Özellik | Durum |
