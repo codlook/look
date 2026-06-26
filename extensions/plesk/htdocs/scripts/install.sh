@@ -21,6 +21,10 @@ mkdir -p "$BINARY_DIR" "$LOG_DIR" "$CONF_DIR"
 chmod 755 "$BINARY_DIR"
 chown psaadm:psaadm "$CONF_DIR" 2>/dev/null || true
 chmod 755 "$CONF_DIR"
+# domains.json psaadm tarafindan yazilabilir olmali
+touch "$CONF_DIR/domains.json" 2>/dev/null || true
+chown psaadm:psaadm "$CONF_DIR/domains.json" 2>/dev/null || true
+chmod 664 "$CONF_DIR/domains.json" 2>/dev/null || true
 
 # 1. SUDOERS — en once yaz (root olarak calisiyoruz, sudo gerekmez)
 cat > /etc/sudoers.d/look-lang << SUDOEOF

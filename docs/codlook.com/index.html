@@ -1,0 +1,1585 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="LOOK — Web için tasarlanmış scripting dili. Routing dile gömülü, DB kalıcı, WebSocket + SSE + parallel() + jobs:: dahil. Framework yok, framework kurma.">
+<title>LOOK Language — codlook.com</title>
+<style>
+/* ============================================================
+   LOOK — Landing Page
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --blue:    #3b82f6;
+  --blue-d:  #1d4ed8;
+  --green:   #10b981;
+  --purple:  #8b5cf6;
+  --orange:  #f59e0b;
+  --dark:    #0f172a;
+  --dark2:   #1e293b;
+  --dark3:   #334155;
+  --muted:   #94a3b8;
+  --light:   #f1f5f9;
+  --white:   #ffffff;
+  --code-bg: #0d1117;
+  --radius:  10px;
+}
+
+html { scroll-behavior: smooth; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+       background: var(--white); color: #1e293b; line-height: 1.6; }
+
+/* ---- NAV ---- */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(15,23,42,.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding: 0 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 60px;
+}
+.nav-logo { font-size: 22px; font-weight: 800; color: var(--white); letter-spacing: -.5px; }
+.nav-logo span { color: var(--blue); }
+.nav-links { display: flex; gap: 28px; align-items: center; }
+.nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500;
+               transition: color .2s; }
+.nav-links a:hover { color: var(--white); }
+.nav-links .nav-cta { background: var(--blue); color: var(--white) !important;
+                      padding: 8px 18px; border-radius: 8px; font-weight: 600; }
+.nav-links .nav-cta:hover { background: var(--blue-d); }
+@media (max-width:640px) { .nav-links .hide-mob { display:none; } }
+
+/* ---- HERO ---- */
+.hero {
+  background: var(--dark);
+  padding: 100px 24px 80px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(59,130,246,.25) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(59,130,246,.15); border: 1px solid rgba(59,130,246,.3);
+  color: var(--blue); padding: 6px 16px; border-radius: 100px;
+  font-size: 13px; font-weight: 600; margin-bottom: 28px;
+}
+.hero-badge .dot { width: 7px; height: 7px; background: var(--blue);
+                   border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
+
+.hero h1 {
+  font-size: clamp(36px, 6vw, 24px);
+  font-weight: 800;
+  color: var(--white);
+  line-height: 1.1;
+  letter-spacing: -1.5px;
+  max-width: 860px;
+  margin: 0 auto 20px;
+}
+.hero h1 .hl { color: var(--blue); }
+
+.hero-sub {
+  font-size: clamp(16px, 2.5vw, 20px);
+  color: var(--muted);
+  max-width: 640px;
+  margin: 0 auto 40px;
+  line-height: 1.6;
+}
+
+.hero-ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 60px; }
+.btn-hero-primary {
+  background: var(--blue); color: var(--white);
+  padding: 14px 32px; border-radius: 10px;
+  font-size: 16px; font-weight: 700;
+  text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+  transition: background .2s, transform .15s;
+}
+.btn-hero-primary:hover { background: var(--blue-d); transform: translateY(-1px); }
+.btn-hero-sec {
+  background: rgba(255,255,255,.08); color: var(--white);
+  padding: 14px 32px; border-radius: 10px;
+  font-size: 16px; font-weight: 600;
+  text-decoration: none; border: 1px solid rgba(255,255,255,.15);
+  transition: background .2s;
+}
+.btn-hero-sec:hover { background: rgba(255,255,255,.14); }
+
+/* Hero code */
+.hero-code {
+  max-width: 950px; margin: 0 auto;
+  background: var(--code-bg);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px;
+  overflow: hidden;
+  text-align: left;
+  box-shadow: 0 40px 80px rgba(0,0,0,.5);
+}
+.hero-code-bar {
+  background: rgba(255,255,255,.05);
+  padding: 12px 16px;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.hero-code-bar .dot { width: 12px; height: 12px; border-radius: 50%; }
+.hero-code-bar .dot:nth-child(1){background:#ff5f56}
+.hero-code-bar .dot:nth-child(2){background:#ffbd2e}
+.hero-code-bar .dot:nth-child(3){background:#27c93f}
+.hero-code-bar span { margin-left: auto; font-size: 12px; color: var(--muted); font-family: monospace; }
+.hero-code pre {
+  padding: 24px;
+  font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 13.5px; line-height: 1.8;
+  overflow-x: auto;
+}
+/* Syntax highlight */
+.kw  { color: #c792ea; }
+.fn  { color: #82aaff; }
+.str { color: #c3e88d; }
+.cmt { color: #546e7a; font-style: italic; }
+.var { color: #f78c6c; }
+.num { color: #f78c6c; }
+.op  { color: #89ddff; }
+.ns  { color: #ffcb6b; }
+
+/* ---- RUNTIME STRIP ---- */
+.runtime-strip {
+  background: var(--dark2);
+  border-top: 1px solid rgba(255,255,255,.06);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  padding: 20px 24px;
+  overflow: hidden;
+}
+.runtime-strip-inner {
+  display: flex; gap: 40px; justify-content: center;
+  flex-wrap: wrap; align-items: center;
+}
+.runtime-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  white-space: nowrap;
+}
+.runtime-item .dot-g { width: 8px; height: 8px; border-radius: 50%;
+                        background: var(--green); flex-shrink: 0; }
+
+/* ---- WHAT IS LOOK ---- */
+.what { background: var(--white); padding: 100px 24px; }
+.what-inner { margin: 0 auto; }
+.section-label {
+  font-size: 12px; font-weight: 700; letter-spacing: .15em;
+  text-transform: uppercase; color: var(--blue); margin-bottom: 12px;
+}
+.section-title {
+  font-size: clamp(28px,4vw,44px); font-weight: 800;
+  color: #0f172a; margin-bottom: 14px; letter-spacing: -.5px;
+}
+.section-sub { color: #64748b; font-size: 17px; max-width: 600px; margin: 0 auto 56px; }
+
+.what-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+}
+.what-card {
+  border: 1px solid #e2e8f0; border-radius: 18px; padding: 32px;
+  transition: box-shadow .2s, border-color .2s;
+  position: relative; overflow: hidden;
+}
+.what-card::before {
+  content: "";
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--blue);
+}
+.what-card.green::before  { background: var(--green); }
+.what-card.purple::before { background: var(--purple); }
+.what-card.orange::before { background: var(--orange); }
+.what-card:hover { box-shadow: 0 12px 40px rgba(0,0,0,.1); border-color: #cbd5e1; }
+.what-icon { font-size: 32px; margin-bottom: 16px; }
+.what-card h3 { font-size: 18px; font-weight: 800; color: #0f172a; margin-bottom: 10px; }
+.what-card p  { font-size: 14px; color: #475569; line-height: 1.75; }
+.what-card code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
+                  font-family: monospace; font-size: 13px; color: #334155; }
+
+/* ---- BENCHMARKS ---- */
+.benchmarks {
+  background: var(--dark2);
+  padding: 80px 24px;
+  text-align: center;
+}
+.section-title-w { color: var(--white); }
+.section-sub-w { color: var(--muted); font-size: 17px; max-width: 540px; margin: 0 auto 56px; }
+
+.bench-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px; margin: 0 auto;
+}
+.bench-card {
+  background: var(--dark3);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  padding: 28px 24px;
+}
+.bench-num {
+  font-size: 42px; font-weight: 800; color: var(--blue);
+  letter-spacing: -1px; line-height: 1;
+}
+.bench-unit { font-size: 18px; color: var(--muted); font-weight: 500; }
+.bench-lbl  { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.bench-sub  { color: rgba(148,163,184,.6); font-size: 11px; margin-top: 4px; }
+
+.bench-note {
+  max-width: 640px; margin: 40px auto 0;
+  color: rgba(148,163,184,.7); font-size: 13px; line-height: 1.7;
+  border-top: 1px solid rgba(255,255,255,.08); padding-top: 28px;
+}
+.bench-note a { color: var(--blue); text-decoration: none; }
+
+/* ---- FEATURES ---- */
+.features { padding: 100px 24px; background: var(--light); }
+.features-inner {margin: 0 auto; }
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px; margin-top: 56px;
+}
+.feat-card {
+  background: var(--white);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 26px;
+  transition: box-shadow .2s, border-color .2s;
+}
+.feat-card:hover { box-shadow: 0 8px 32px rgba(0,0,0,.08); border-color: var(--blue); }
+.feat-icon {
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; margin-bottom: 14px;
+}
+.feat-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #0f172a; }
+.feat-card p  { font-size: 13px; color: #64748b; line-height: 1.65; }
+.feat-badge {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 4px;
+  background: rgba(59,130,246,.1); color: var(--blue); margin-bottom: 10px;
+}
+.feat-badge.g { background: rgba(16,185,129,.1); color: var(--green); }
+.feat-badge.p { background: rgba(139,92,246,.1); color: var(--purple); }
+
+/* ---- CODE EXAMPLES ---- */
+.code-section { background: var(--dark); padding: 100px 24px; }
+.code-inner { max-width: 960px; margin: 0 auto; }
+.code-tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; }
+.tab-btn {
+  padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 600;
+  background: rgba(255,255,255,.06); color: var(--muted);
+  transition: all .15s;
+}
+.tab-btn.active { background: var(--blue); color: var(--white); }
+.tab-btn:hover:not(.active) { background: rgba(255,255,255,.12); color: var(--white); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.code-block {
+  background: var(--code-bg);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.code-block-bar {
+  padding: 10px 16px;
+  background: rgba(255,255,255,.04);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  font-size: 12px; color: var(--muted); font-family: monospace;
+  display: flex; align-items: center; gap: 10px;
+}
+.code-block-bar .cbadge {
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
+  background: rgba(59,130,246,.2); color: var(--blue); margin-left: auto;
+}
+.code-block pre {
+  padding: 24px;
+  font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 13.5px; line-height: 1.8;
+  overflow-x: auto; color: #cdd6f4;
+}
+
+/* ---- PHILOSOPHY ---- */
+.philosophy { padding: 100px 24px; background: var(--white); }
+.philosophy-inner { max-width: 960px; margin: 0 auto; }
+.philosophy-pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 56px; }
+@media(max-width:700px){ .philosophy-pillars { grid-template-columns: 1fr; } }
+.pillar {
+  background: var(--light); border-radius: 20px; padding: 40px 32px;
+  text-align: center;
+  border-top: 4px solid var(--blue);
+}
+.pillar.g { border-top-color: var(--green); }
+.pillar.p { border-top-color: var(--purple); }
+.pillar-icon { font-size: 40px; margin-bottom: 16px; }
+.pillar-title { font-size: 20px; font-weight: 800; color: #0f172a; margin-bottom: 12px; }
+.pillar-desc { font-size: 14px; color: #64748b; line-height: 1.75; }
+.pillar-code {
+  margin-top: 20px; background: var(--dark2); border-radius: 10px;
+  padding: 14px 18px; font-family: 'Fira Code', monospace; font-size: 12.5px;
+  color: #cdd6f4; text-align: left; line-height: 1.7; overflow-x: auto;
+}
+
+/* ---- RUNTIME STACK ---- */
+.stack { background: var(--dark2); padding: 80px 24px; }
+.stack-inner {margin: 0 auto; }
+.stack-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px; margin-top: 48px;
+}
+.stack-card {
+  background: var(--dark3); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px; padding: 22px 20px;
+}
+.stack-card h4 { font-size: 14px; font-weight: 700; color: var(--white); margin-bottom: 6px; }
+.stack-card p  { font-size: 12px; color: var(--muted); line-height: 1.6; }
+.stack-card .stag {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 2px 7px; border-radius: 4px; margin-bottom: 8px;
+  background: rgba(59,130,246,.2); color: var(--blue);
+}
+.stack-card .stag.g { background: rgba(16,185,129,.2); color: var(--green); }
+.stack-card .stag.p { background: rgba(139,92,246,.2); color: var(--purple); }
+.stack-card .stag.o { background: rgba(245,158,11,.2); color: var(--orange); }
+
+/* ---- SETUP ---- */
+.setup { padding: 100px 24px; background: var(--light); }
+.setup-inner { max-width: 860px; margin: 0 auto; }
+.platform-tabs { display: flex; gap: 8px; margin-bottom: 28px; flex-wrap: wrap; }
+.platform-btn {
+  padding: 10px 22px; border-radius: 10px; border: 2px solid #e2e8f0;
+  cursor: pointer; font-size: 14px; font-weight: 600;
+  background: var(--white); color: #64748b; transition: all .15s;
+  display: flex; align-items: center; gap: 8px;
+}
+.platform-btn.active { border-color: var(--blue); color: var(--blue); background: rgba(59,130,246,.06); }
+.setup-content { display: none; }
+.setup-content.active { display: block; }
+.setup-steps { counter-reset: step; list-style: none; }
+.setup-steps li {
+  counter-increment: step;
+  display: flex; gap: 16px; align-items: flex-start;
+  margin-bottom: 20px;
+}
+.setup-steps li::before {
+  content: counter(step);
+  min-width: 32px; height: 32px;
+  background: var(--blue); color: var(--white);
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; flex-shrink: 0;
+}
+.setup-steps li .step-body { flex: 1; }
+.setup-steps li h4 { font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+.setup-steps li p  { font-size: 13px; color: #64748b; margin-bottom: 8px; }
+.cmd-block {
+  background: var(--code-bg); color: #cdd6f4;
+  font-family: "Fira Code","Consolas",monospace; font-size: 13px;
+  padding: 12px 16px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid rgba(255,255,255,.08);
+}
+.copy-btn {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 12px; padding: 2px 8px; border-radius: 4px;
+  transition: color .15s, background .15s;
+}
+.copy-btn:hover { color: var(--white); background: rgba(255,255,255,.1); }
+
+/* ---- DOWNLOAD ---- */
+.download { background: var(--dark); padding: 100px 24px; text-align: center; }
+.download-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;margin: 48px auto 0;
+}
+.dl-card {
+  background: var(--dark2);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px; padding: 28px;
+  text-align: left; transition: border-color .2s;
+}
+.dl-card:hover { border-color: var(--blue); }
+.dl-card h3 { font-size: 17px; font-weight: 700; color: var(--white); margin-bottom: 6px; }
+.dl-card p  { font-size: 13px; color: var(--muted); margin-bottom: 20px; line-height: 1.6; }
+.btn-dl {
+  display: block; background: var(--blue); color: var(--white);
+  padding: 10px 18px; border-radius: 8px; text-decoration: none;
+  font-size: 14px; font-weight: 700; text-align: center;
+  transition: background .2s;
+}
+.btn-dl:hover { background: var(--blue-d); }
+.btn-dl-outline {
+  display: block; background: transparent; color: var(--blue);
+  padding: 10px 18px; border-radius: 8px; text-decoration: none;
+  font-size: 14px; font-weight: 700; text-align: center;
+  border: 2px solid var(--blue); margin-top: 8px;
+  transition: background .2s;
+}
+.btn-dl-outline:hover { background: rgba(59,130,246,.1); }
+
+/* ---- FOOTER ---- */
+footer {
+  background: var(--dark);
+  border-top: 1px solid rgba(255,255,255,.08);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted); font-size: 13px;
+}
+footer a { color: var(--blue); text-decoration: none; }
+
+/* ---- UTILS ---- */
+.container { max-width: 1080px; margin: 0 auto; }
+.text-center { text-align: center; }
+</style>
+
+
+<meta name="yandex-verification" content="79a31a4811e022ad" />
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-S76WJQSTX0"></script>
+<script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-S76WJQSTX0');
+</script>
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=AW-11120116479"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'AW-11120116479');
+</script>
+
+<!-- Event snippet for Sayfa görüntüleme conversion page -->
+<script>
+  gtag('event', 'conversion', {'send_to': 'AW-11120116479/BtMdCPSlrOQYEP-FvrYp'});
+</script>
+
+</head>
+<body>
+
+<!-- ============================================================ NAV -->
+<nav>
+  <div class="nav-logo">&#9711; <span>LOOK</span></div>
+  <div class="nav-links">
+    <a href="#nedir" class="hide-mob">Ne Yapar?</a>
+    <a href="#ozellikler" class="hide-mob">Özellikler</a>
+    <a href="#vs-php" class="hide-mob">PHP vs LOOK</a>
+    <a href="#ornekler" class="hide-mob">Örnekler</a>
+    <a href="#kurulum" class="hide-mob">Kurulum</a>
+    <a href="https://codlook.com/docs" class="hide-mob" target="_blank">Docs</a>
+    <a href="https://github.com/codlook/look" class="hide-mob" target="_blank">GitHub</a>
+    <a href="#indir" class="nav-cta">İndir</a>
+  </div>
+</nav>
+
+<!-- ============================================================ HERO -->
+<section class="hero">
+  <div class="hero-badge">
+    <span class="dot"></span>
+    v1.0.0 — Kararlı Sürüm · Apache 2.0 · Açık Kaynak
+  </div>
+  <h1>
+    Web için yazılmış<br>
+    <span class="hl">bir scripting dili.</span>
+  </h1>
+  <p class="hero-sub">
+    Routing dile gömülü. DB bağlantısı kalıcı. WebSocket, SSE, parallel(), jobs::, template:: —
+    hepsi tek binary içinde. Framework kurma, sadece yaz.
+  </p>
+  <div class="hero-ctas">
+    <a href="#indir" class="btn-hero-primary">
+      &#8659; İndir — Ücretsiz
+    </a>
+    <a href="#ornekler" class="btn-hero-sec">Kod Örnekleri &rarr;</a>
+  </div>
+
+  <!-- Kod örneği -->
+  <div class="hero-code">
+    <div class="hero-code-bar">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span>index.lk — gerçek zamanlı dashboard</span>
+    </div>
+    <pre><span class="kw">use</span> <span class="ns">cache</span>;
+<span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/shop"</span>);
+
+<span class="cmt"># REST — JSON API</span>
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/api/dashboard"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$ch</span> <span class="op">=</span> <span class="fn">channel</span>(<span class="num">3</span>);
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) { <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT count(*) FROM orders"</span>, [])); });
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) { <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT sum(total) FROM orders"</span>, [])); });
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) { <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT count(*) FROM users"</span>, [])); });
+    <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"orders"</span> <span class="op">=></span> <span class="fn">receive</span>(<span class="var">$ch</span>), <span class="str">"revenue"</span> <span class="op">=></span> <span class="fn">receive</span>(<span class="var">$ch</span>), <span class="str">"users"</span> <span class="op">=></span> <span class="fn">receive</span>(<span class="var">$ch</span>)]));
+});
+
+<span class="cmt"># SSE — canlı bildirim akışı</span>
+<span class="fn">route</span>(<span class="str">"SSE"</span>, <span class="str">"/events"</span>, <span class="kw">function</span>(<span class="var">$sse</span>) {
+    <span class="var">$id</span> <span class="op">=</span> <span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">3000</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$sse</span>) {
+        <span class="ns">sse</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$sse</span>, <span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"t"</span> <span class="op">=></span> <span class="ns">date</span><span class="op">::</span><span class="fn">now</span>()]), <span class="str">"tick"</span>);
+    });
+    <span class="ns">sse</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$sse</span>, <span class="str">"close"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$id</span>) { <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$id</span>); });
+});</pre>
+  </div>
+</section>
+
+<!-- ============================================================ RUNTIME STRIP -->
+<div class="runtime-strip">
+  <div class="runtime-strip-inner">
+    <div class="runtime-item"><span class="dot-g"></span> Warm Start Runtime</div>
+    <div class="runtime-item"><span class="dot-g"></span> WebSocket + SSE</div>
+    <div class="runtime-item"><span class="dot-g"></span> parallel() + channel()</div>
+    <div class="runtime-item"><span class="dot-g"></span> SQLite · MySQL · PostgreSQL</div>
+    <div class="runtime-item"><span class="dot-g"></span> jobs:: + queue:: + cache::</div>
+    <div class="runtime-item"><span class="dot-g"></span> Bytecode VM · 7.8× hız</div>
+    <div class="runtime-item"><span class="dot-g"></span> Apache / nginx / standalone</div>
+  </div>
+</div>
+
+<!-- ============================================================ WHAT IS LOOK -->
+<section class="what" id="nedir">
+  <div class="what-inner text-center">
+    <div class="section-label">Ne Yapar?</div>
+    <div class="section-title">Bir web uygulaması için gerekenler</div>
+    <p class="section-sub">
+      LOOK, sunucu taraflı web geliştirme için tasarlanmış bir scripting dilidir.
+      Routing, DB, eşzamanlılık, gerçek zamanlı bağlantılar, arka plan işler ve şablon motoru —
+      hepsi tek binary içinde, sıfır bağımlılıkla.
+    </p>
+
+    <div class="what-grid" style="text-align:left">
+
+      <div class="what-card">
+        <div class="what-icon">⚡</div>
+        <h3>Warm Start Runtime</h3>
+        <p>
+          Uygulama bir kez başlar. DB bağlantısı, route kayıtları, setup kodu — hepsi bellekte kalır.
+          Her HTTP isteği sadece <code>dispatch_routes()</code> çalıştırır.
+          <br><br>
+          32 worker, 4.7 milyon istek, 10 dakika — <strong>0 hata, 8 MB RAM.</strong>
+        </p>
+      </div>
+
+      <div class="what-card green">
+        <div class="what-icon">🔀</div>
+        <h3>Routing Dile Gömülü</h3>
+        <p>
+          <code>route("GET", "/urun/{id}", fn)</code> — bu bir kütüphane çağrısı değil, dilin çekirdeği.
+          Router kurmak yok, config yok, middleware stack yok.
+          <br><br>
+          REST, WebSocket, SSE — hepsi aynı <code>route()</code> sözdizimi ile.
+        </p>
+      </div>
+
+      <div class="what-card purple">
+        <div class="what-icon">🚀</div>
+        <h3>parallel() + channel()</h3>
+        <p>
+          Go goroutine felsefesi, web scripting dilinde. 3 DB sorgusunu aynı anda çalıştır,
+          sonuçları <code>receive()</code> ile topla — toplam süre <strong>max(t₁, t₂, t₃)</strong>.
+          <br><br>
+          Eşzamanlılık için ek runtime, ek kütüphane, ek öğrenme yok.
+        </p>
+      </div>
+
+      <div class="what-card orange">
+        <div class="what-icon">📦</div>
+        <h3>Gerçek Zamanlı: WS + SSE</h3>
+        <p>
+          <code>route("WS", "/chat", fn)</code> — WebSocket, RFC 6455 tam uyumlu.
+          <code>route("SSE", "/events", fn)</code> — Server-Sent Events, <code>timer::every()</code> ile birlikte.
+          <br><br>
+          500 eşzamanlı WebSocket bağlantısı, 72 saat, 0 bellek sızıntısı.
+        </p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ BENCHMARKS -->
+<section class="benchmarks" id="benchmark">
+  <div class="section-label">Performans</div>
+  <div class="section-title section-title-w">Gerçek sayılar, gerçek sunucu</div>
+  <p class="section-sub-w">looktest.tobiyo.com.tr · AlmaLinux 8 · MariaDB · 32 worker ile ölçüldü.</p>
+
+  <div class="bench-grid">
+    <div class="bench-card">
+      <div class="bench-num" data-target="8276">0</div>
+      <div class="bench-unit">RPS</div>
+      <div class="bench-lbl">HTTP + VM, router</div>
+      <div class="bench-sub">c=100, 0 hata</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num" data-target="8685">0</div>
+      <div class="bench-unit">RPS</div>
+      <div class="bench-lbl">Hesaplama yoğun (fib40)</div>
+      <div class="bench-sub">VM bytecode, c=100</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num" data-target="7886">0</div>
+      <div class="bench-unit">RPS</div>
+      <div class="bench-lbl">Peak yük (c=1000)</div>
+      <div class="bench-sub">200K istek, 0 hata</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num"><span>7.8</span></div>
+      <div class="bench-unit">× hız</div>
+      <div class="bench-lbl">Bytecode VM speedup</div>
+      <div class="bench-sub">interpreter'a göre</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num">8</div>
+      <div class="bench-unit">MB</div>
+      <div class="bench-lbl">Bellek (32 worker)</div>
+      <div class="bench-sub">10 dakika, 4.7M istek</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num">0</div>
+      <div class="bench-unit">hata</div>
+      <div class="bench-lbl">72 saat WebSocket</div>
+      <div class="bench-sub">500 eşzamanlı bağlantı</div>
+    </div>
+  </div>
+
+  <p class="bench-note">
+    Tüm testler <a href="https://looktest.tobiyo.com.tr" target="_blank">looktest.tobiyo.com.tr</a> canlı ortamında
+    <code>wrk</code> / <code>ab</code> ile ölçülmüştür.
+    DB-bound endpoint'ler ~380 RPS — darboğaz MySQL RTT (~2.6ms), LOOK değil.
+    WebSocket: 500 eşzamanlı bot, 72 saat RSS sabit.
+  </p>
+</section>
+
+<!-- ============================================================ FEATURES -->
+<section class="features" id="ozellikler">
+  <div class="features-inner text-center">
+    <div class="section-label">Özellikler</div>
+    <div class="section-title">Tek binary, tam runtime</div>
+    <p class="section-sub">Hiçbir şey kurmadan, hiçbir şeyi öğrenmeden doğrudan yazın.</p>
+
+    <div class="features-grid">
+
+      <div class="feat-card">
+        <div class="feat-badge">Temel</div>
+        <div class="feat-icon" style="background:#eff6ff">🔀</div>
+        <h3>Routing Dile Gömülü</h3>
+        <p><code>route("GET", "/urun/{id}", fn)</code> — REST, WS, SSE aynı sözdizimi. URL parametresi otomatik parse.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Temel</div>
+        <div class="feat-icon" style="background:#f0fdf4">🗄️</div>
+        <h3>MySQL · SQLite · PostgreSQL</h3>
+        <p>Sıfır bağımlılık, wire protocol doğrudan implement. Aynı API: <code>db::query / db::exec / db::col</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge g">Eşzamanlılık</div>
+        <div class="feat-icon" style="background:#faf5ff">⚙️</div>
+        <h3>parallel() + channel()</h3>
+        <p>Go goroutine stili. Fan-out, pipeline, producer-consumer — kanal üzerinden. Blocking yok, callback yok.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge g">Gerçek Zamanlı</div>
+        <div class="feat-icon" style="background:#faf5ff">🔌</div>
+        <h3>WebSocket</h3>
+        <p><code>route("WS", "/chat", fn)</code> — RFC 6455, SHA-1+Base64 handshake. <code>ws::broadcast()</code> tüm bağlı istemcilere.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge g">Gerçek Zamanlı</div>
+        <div class="feat-icon" style="background:#f0fdf4">📡</div>
+        <h3>SSE + timer::</h3>
+        <p><code>route("SSE", "/events", fn)</code> — Server-Sent Events. <code>timer::every(3000, fn)</code> ile periyodik push.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge p">Arka Plan</div>
+        <div class="feat-icon" style="background:#fff7ed">📬</div>
+        <h3>jobs:: — İş Kuyruğu</h3>
+        <p>SQLite tabanlı kalıcı kuyruk. <code>jobs::push / worker / run</code>. Delayed jobs, retry, dead-letter. Process kapanınca kaybolmaz.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge p">Arka Plan</div>
+        <div class="feat-icon" style="background:#f0fdf4">📥</div>
+        <h3>queue:: — FIFO Kuyruk</h3>
+        <p>In-memory, thread-safe, isimlendirilmiş kuyruk. Request'ler arası veri aktarımı. <code>queue::push / pop / peek / size</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge p">Önbellek</div>
+        <div class="feat-icon" style="background:#eff6ff">🧠</div>
+        <h3>cache:: — In-Memory Cache</h3>
+        <p>TTL destekli, thread-safe singleton. Warm start'ta tüm worker'lar paylaşır. <code>cache::get / set / has / flush</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Şablon</div>
+        <div class="feat-icon" style="background:#fef2f2">🎨</div>
+        <h3>template:: — Şablon Motoru</h3>
+        <p>Layout kalıtımı, partial include, <code>{#each}</code> döngüsü, <code>{#if}</code> koşulu. Svelte gibi — runtime yok, sadece sunucu render.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">VM</div>
+        <div class="feat-icon" style="background:#fef2f2">🚀</div>
+        <h3>Bytecode VM</h3>
+        <p>AST → register-based bytecode → switch dispatch. Compute-heavy workload'da interpreter'a göre <strong>7.8× hız artışı</strong>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Modül</div>
+        <div class="feat-icon" style="background:#f0fdf4">📧</div>
+        <h3>mail:: — E-posta Gönderimi</h3>
+        <p>Mailgun, SendGrid, Postmark destekli. <code>mail::send / send_html</code>. MAIL_PROVIDER env ile provider seçimi.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Geliştirici</div>
+        <div class="feat-icon" style="background:#eff6ff">🧪</div>
+        <h3>Test + REPL + Package</h3>
+        <p><code>look test</code> — 10 assertion, before_each/after_each. <code>look repl</code> — interaktif. <code>look install github.com/user/pkg</code>.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ CODE EXAMPLES -->
+<section class="code-section" id="ornekler">
+  <div class="code-inner">
+    <div class="section-label" style="text-align:center;color:var(--blue)">Kod Örnekleri</div>
+    <div class="section-title section-title-w" style="text-align:center;margin-bottom:40px">Gerçek kodla tanışın</div>
+
+    <div class="code-tabs">
+      <button class="tab-btn active" onclick="showTab('t1',this)">REST + Auth</button>
+      <button class="tab-btn" onclick="showTab('t2',this)">WebSocket Chat</button>
+      <button class="tab-btn" onclick="showTab('t3',this)">Paralel DB</button>
+      <button class="tab-btn" onclick="showTab('t4',this)">SSE + Timer</button>
+      <button class="tab-btn" onclick="showTab('t5',this)">Arka Plan İşler</button>
+      <button class="tab-btn" onclick="showTab('t6',this)">Şablon + Struct</button>
+    </div>
+
+    <!-- REST + Auth -->
+    <div class="tab-content active" id="t1">
+      <div class="code-block">
+        <div class="code-block-bar">index.lk — REST API, auth, validator<span class="cbadge">Temel</span></div>
+        <pre><span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/blog"</span>);
+<span class="kw">use</span> <span class="ns">auth</span>;
+<span class="kw">use</span> <span class="ns">validator</span>;
+<span class="kw">use</span> <span class="ns">cache</span>;
+
+<span class="kw">function</span> <span class="fn">admin_kontrol</span>() {
+    <span class="ns">session</span><span class="op">::</span><span class="fn">start</span>();
+    <span class="kw">if</span> (<span class="ns">session</span><span class="op">::</span><span class="fn">get</span>(<span class="str">"admin_id"</span>) <span class="op">==</span> <span class="kw">null</span>) {
+        <span class="ns">response</span><span class="op">::</span><span class="fn">status</span>(<span class="num">401</span>);
+        <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">false</span>, <span class="str">"hata"</span> <span class="op">=></span> <span class="str">"Yetkisiz"</span>]));
+        <span class="kw">return</span> <span class="kw">false</span>;
+    }
+    <span class="kw">return</span> <span class="kw">true</span>;
+}
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/api/yazilar"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="cmt"># 5 dakika cache — aynı veriyi defalarca DB'den çekme</span>
+    <span class="var">$data</span> <span class="op">=</span> <span class="ns">cache</span><span class="op">::</span><span class="fn">get</span>(<span class="str">"yazilar"</span>);
+    <span class="kw">if</span> (<span class="var">$data</span> <span class="op">==</span> <span class="kw">null</span>) {
+        <span class="var">$data</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM yazilar ORDER BY id DESC"</span>, []);
+        <span class="ns">cache</span><span class="op">::</span><span class="fn">set</span>(<span class="str">"yazilar"</span>, <span class="var">$data</span>, <span class="num">300</span>);
+    }
+    <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>, <span class="str">"data"</span> <span class="op">=></span> <span class="var">$data</span>]));
+});
+
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/api/yazilar"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="kw">if</span> (!<span class="fn">admin_kontrol</span>()) { <span class="kw">return</span>; }
+    <span class="var">$v</span> <span class="op">=</span> <span class="ns">validator</span><span class="op">::</span><span class="fn">check</span>(<span class="ns">request</span><span class="op">::</span><span class="fn">json</span>(), [
+        <span class="str">"baslik"</span>  <span class="op">=></span> [<span class="str">"required"</span>, <span class="str">"min:3"</span>, <span class="str">"max:200"</span>],
+        <span class="str">"icerik"</span>  <span class="op">=></span> [<span class="str">"required"</span>, <span class="str">"min:10"</span>]
+    ]);
+    <span class="kw">if</span> (!<span class="var">$v</span>[<span class="str">"ok"</span>]) { <span class="ns">response</span><span class="op">::</span><span class="fn">status</span>(<span class="num">422</span>); <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>(<span class="var">$v</span>)); <span class="kw">return</span>; }
+    <span class="var">$data</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">json</span>();
+    <span class="ns">db</span><span class="op">::</span><span class="fn">exec</span>(<span class="var">$conn</span>, <span class="str">"INSERT INTO yazilar (baslik,icerik) VALUES (?,?)"</span>, [<span class="var">$data</span>[<span class="str">"baslik"</span>], <span class="var">$data</span>[<span class="str">"icerik"</span>]]);
+    <span class="ns">cache</span><span class="op">::</span><span class="fn">delete</span>(<span class="str">"yazilar"</span>);   <span class="cmt"># cache invalidate</span>
+    <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>, <span class="str">"id"</span> <span class="op">=></span> <span class="ns">db</span><span class="op">::</span><span class="fn">last_id</span>(<span class="var">$conn</span>)]));
+});</pre>
+      </div>
+    </div>
+
+    <!-- WebSocket Chat -->
+    <div class="tab-content" id="t2">
+      <div class="code-block">
+        <div class="code-block-bar">chat.lk — Gerçek zamanlı chat, broadcast hub<span class="cbadge">WebSocket</span></div>
+        <pre><span class="cmt"># Hub: tüm bağlantıların ortak yayın kanalı (setup fazında)</span>
+<span class="var">$hub</span> <span class="op">=</span> <span class="fn">channel</span>();
+
+<span class="fn">route</span>(<span class="str">"WS"</span>, <span class="str">"/chat"</span>, <span class="kw">function</span>(<span class="var">$ws</span>) <span class="kw">use</span> (<span class="var">$hub</span>) {
+
+    <span class="cmt"># Her bağlantı için bir goroutine: hub'dan dinle → bu client'a yaz</span>
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ws</span>, <span class="var">$hub</span>) {
+        <span class="kw">while</span> (<span class="kw">true</span>) {
+            <span class="var">$msg</span> <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$hub</span>);
+            <span class="kw">if</span> (<span class="var">$msg</span> <span class="op">==</span> <span class="kw">null</span>) { <span class="kw">break</span>; }
+            <span class="ns">ws</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$ws</span>, <span class="var">$msg</span>);
+        }
+    });
+
+    <span class="cmt"># Mesaj gelince hub'a gönder → tüm clientlar duyar</span>
+    <span class="ns">ws</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$ws</span>, <span class="str">"message"</span>, <span class="kw">function</span>(<span class="var">$data</span>) <span class="kw">use</span> (<span class="var">$hub</span>) {
+        <span class="var">$p</span> <span class="op">=</span> <span class="ns">json</span><span class="op">::</span><span class="fn">decode</span>(<span class="var">$data</span>);
+        <span class="fn">send</span>(<span class="var">$hub</span>, <span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"from"</span> <span class="op">=></span> <span class="ns">request</span><span class="op">::</span><span class="fn">ip</span>(), <span class="str">"msg"</span> <span class="op">=></span> <span class="var">$p</span>[<span class="str">"msg"</span>]]));
+    });
+
+    <span class="ns">ws</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$ws</span>, <span class="str">"close"</span>, <span class="kw">function</span>() {
+        <span class="ns">log</span><span class="op">::</span><span class="fn">info</span>(<span class="str">"Bağlantı kapandı — aktif: "</span> <span class="op">.</span> <span class="ns">ws</span><span class="op">::</span><span class="fn">clients</span>());
+    });
+});
+
+<span class="cmt"># Keepalive ping — her 30 saniyede tüm clientlara</span>
+<span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">30000</span>, <span class="kw">function</span>() {
+    <span class="ns">ws</span><span class="op">::</span><span class="fn">broadcast</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"type"</span> <span class="op">=></span> <span class="str">"ping"</span>]));
+});</pre>
+      </div>
+    </div>
+
+    <!-- Paralel DB -->
+    <div class="tab-content" id="t3">
+      <div class="code-block">
+        <div class="code-block-bar">parallel.lk — 3 sorgu aynı anda, toplam süre max(t1,t2,t3)<span class="cbadge">parallel()</span></div>
+        <pre><span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/shop"</span>);
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/panel/ozet"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+
+    <span class="var">$ch</span> <span class="op">=</span> <span class="fn">channel</span>(<span class="num">3</span>);   <span class="cmt"># 3 sonuç beklenecek</span>
+
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) {
+        <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT count(*) FROM siparisler"</span>, []));
+    });
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) {
+        <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT sum(toplam) FROM siparisler WHERE durum='odendi'"</span>, []));
+    });
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) {
+        <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT count(*) FROM kullanicilar WHERE aktif=1"</span>, []));
+    });
+
+    <span class="cmt"># Tüm goroutine'ler bitmeden devam etmez</span>
+    <span class="var">$siparisler</span>  <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$ch</span>);
+    <span class="var">$gelir</span>       <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$ch</span>);
+    <span class="var">$kullanicilar</span> <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$ch</span>);
+
+    <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([
+        <span class="str">"siparisler"</span>   <span class="op">=></span> <span class="var">$siparisler</span>,
+        <span class="str">"gelir"</span>        <span class="op">=></span> <span class="var">$gelir</span>,
+        <span class="str">"kullanicilar"</span> <span class="op">=></span> <span class="var">$kullanicilar</span>
+    ]));
+});</pre>
+      </div>
+    </div>
+
+    <!-- SSE + Timer -->
+    <div class="tab-content" id="t4">
+      <div class="code-block">
+        <div class="code-block-bar">sse.lk — Canlı bildirim akışı, periyodik push<span class="cbadge">SSE + timer::</span></div>
+        <pre><span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/shop"</span>);
+
+<span class="cmt"># SSE: tarayıcı bağlandığında sürekli veri akışı gönderilir</span>
+<span class="fn">route</span>(<span class="str">"SSE"</span>, <span class="str">"/canli/siparisler"</span>, <span class="kw">function</span>(<span class="var">$sse</span>) <span class="kw">use</span> (<span class="var">$conn</span>) {
+
+    <span class="cmt"># Her 2 saniyede yeni sipariş kontrolü</span>
+    <span class="var">$tick</span> <span class="op">=</span> <span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">2000</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$sse</span>, <span class="var">$conn</span>) {
+        <span class="var">$yeni</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>,
+            <span class="str">"SELECT * FROM siparisler WHERE olusturma > date_sub(now(), interval 5 second)"</span>, []);
+        <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$yeni</span>) <span class="op">></span> <span class="num">0</span>) {
+            <span class="var">$ok</span> <span class="op">=</span> <span class="ns">sse</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$sse</span>, <span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>(<span class="var">$yeni</span>), <span class="str">"yeni_siparis"</span>);
+            <span class="kw">if</span> (!<span class="var">$ok</span>) { <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$tick</span>); }   <span class="cmt"># bağlantı kapandı</span>
+        }
+    });
+
+    <span class="cmt"># 30s keepalive — tarayıcı timeout etmesin</span>
+    <span class="var">$ping</span> <span class="op">=</span> <span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">30000</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$sse</span>) {
+        <span class="ns">sse</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$sse</span>, <span class="str">"keepalive"</span>, <span class="str">"ping"</span>);
+    });
+
+    <span class="ns">sse</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$sse</span>, <span class="str">"close"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$tick</span>, <span class="var">$ping</span>) {
+        <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$tick</span>);
+        <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$ping</span>);
+        <span class="ns">log</span><span class="op">::</span><span class="fn">info</span>(<span class="str">"SSE kapandı — aktif: "</span> <span class="op">.</span> <span class="ns">sse</span><span class="op">::</span><span class="fn">clients</span>());
+    });
+});</pre>
+      </div>
+    </div>
+
+    <!-- Jobs -->
+    <div class="tab-content" id="t5">
+      <div class="code-block">
+        <div class="code-block-bar">jobs.lk — SQLite kalıcı kuyruk, retry, mail gönderimi<span class="cbadge">jobs::</span></div>
+        <pre><span class="kw">use</span> <span class="ns">jobs</span>;
+<span class="kw">use</span> <span class="ns">mail</span>;
+
+<span class="cmt"># Route: isteği anında yanıtla (1ms), işi kuyruğa at</span>
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/kayit"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$data</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">json</span>();
+    <span class="ns">db</span><span class="op">::</span><span class="fn">exec</span>(<span class="var">$conn</span>, <span class="str">"INSERT INTO kullanicilar (email,ad) VALUES (?,?)"</span>,
+             [<span class="var">$data</span>[<span class="str">"email"</span>], <span class="var">$data</span>[<span class="str">"ad"</span>]]);
+
+    <span class="cmt"># max 3 deneme, hemen işle (delay_sec=0)</span>
+    <span class="ns">jobs</span><span class="op">::</span><span class="fn">push</span>(<span class="str">"hosgeldin_email"</span>, [<span class="str">"to"</span> <span class="op">=></span> <span class="var">$data</span>[<span class="str">"email"</span>], <span class="str">"ad"</span> <span class="op">=></span> <span class="var">$data</span>[<span class="str">"ad"</span>]], <span class="num">3</span>, <span class="num">0</span>);
+
+    <span class="cmt"># 10 dakika sonra hatırlatma maili</span>
+    <span class="ns">jobs</span><span class="op">::</span><span class="fn">push</span>(<span class="str">"hatirlatma_email"</span>, [<span class="str">"to"</span> <span class="op">=></span> <span class="var">$data</span>[<span class="str">"email"</span>]], <span class="num">3</span>, <span class="num">600</span>);
+
+    <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>]));
+});
+
+<span class="cmt"># worker.lk — ayrı process (systemd servis olarak çalışır)</span>
+<span class="ns">jobs</span><span class="op">::</span><span class="fn">recover</span>(<span class="str">"hosgeldin_email"</span>);   <span class="cmt"># crash recovery</span>
+
+<span class="ns">jobs</span><span class="op">::</span><span class="fn">worker</span>(<span class="str">"hosgeldin_email"</span>, <span class="kw">function</span>(<span class="var">$job</span>) {
+    <span class="var">$r</span> <span class="op">=</span> <span class="ns">mail</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$job</span>[<span class="str">"payload"</span>][<span class="str">"to"</span>], <span class="str">"Hoş geldiniz!"</span>,
+                    <span class="str">"Merhaba "</span> <span class="op">.</span> <span class="var">$job</span>[<span class="str">"payload"</span>][<span class="str">"ad"</span>] <span class="op">.</span> <span class="str">", kaydınız tamamlandı."</span>);
+    <span class="kw">return</span> <span class="var">$r</span>[<span class="str">"ok"</span>];  <span class="cmt"># false → retry (max 3), sonra dead-letter</span>
+});
+
+<span class="ns">jobs</span><span class="op">::</span><span class="fn">run</span>(<span class="num">5000</span>);   <span class="cmt"># 5 saniyede bir poll</span></pre>
+      </div>
+    </div>
+
+    <!-- Struct + Template -->
+    <div class="tab-content" id="t6">
+      <div class="code-block">
+        <div class="code-block-bar">blog.lk — Struct + template engine (sunucu taraflı render)<span class="cbadge">template::</span></div>
+        <pre><span class="kw">use</span> <span class="ns">template</span>;
+
+<span class="cmt"># Struct — Go stili, method yok, sadece veri</span>
+<span class="kw">struct</span> Yazi {
+    id
+    baslik
+    icerik
+    tarih
+    begeni: <span class="num">0</span>
+    yayinda: <span class="kw">true</span>
+}
+
+<span class="var">$tpl</span> <span class="op">=</span> <span class="fn">env</span>(<span class="str">"VIEWS_DIR"</span>, <span class="str">"/app/views"</span>);
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/blog"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>, <span class="var">$tpl</span>) {
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM yazilar WHERE yayinda=1"</span>, []);
+    <span class="kw">print</span>(<span class="ns">template</span><span class="op">::</span><span class="fn">render</span>(<span class="var">$tpl</span> <span class="op">.</span> <span class="str">"/blog/index"</span>, [
+        <span class="str">"baslik"</span>  <span class="op">=></span> <span class="str">"Blog"</span>,
+        <span class="str">"yazilar"</span> <span class="op">=></span> <span class="var">$rows</span>
+    ]));
+});
+
+<span class="cmt">
+# views/blog/index.html — sunucu taraflı, JS yok
+# {#extends "views/layout/base"}
+# {#block "content"}
+# {#each $yazilar as $y}
+#   &lt;article&gt;
+#     &lt;h2&gt;{$y.baslik}&lt;/h2&gt;
+#     &lt;p&gt;{$y.tarih} · {$y.begeni} beğeni&lt;/p&gt;
+#     &lt;div&gt;{!$y.icerik}&lt;/div&gt;
+#   &lt;/article&gt;
+# {/each}
+# {#empty}&lt;p&gt;Henüz yazı yok.&lt;/p&gt;{/each}
+# {/block}</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ PHP vs LOOK -->
+<section style="background:var(--white);padding:100px 24px" id="vs-php">
+  <div class="container">
+    <div class="text-center">
+      <div class="section-label">Karşılaştırma</div>
+      <div class="section-title">PHP ile yan yana</div>
+      <p class="section-sub">Aynı iş, daha az kod, daha az sürpriz.</p>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:48px">
+
+      <!-- PHP -->
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="background:#8892bf;color:#fff;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">PHP</span>
+          <span style="font-size:13px;color:#64748b">index.php — login + veri çekme</span>
+        </div>
+        <div style="background:var(--code-bg);border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.08)">
+          <pre style="padding:20px;font-family:'Fira Code',monospace;font-size:12.5px;line-height:1.85;color:#cdd6f4;overflow-x:auto"><span style="color:#546e7a;font-style:italic">&lt;?php</span>
+<span style="color:#546e7a;font-style:italic">// Global değişkenler her yerde erişilebilir</span>
+<span style="color:#c792ea">session_start</span>();
+<span style="color:#c792ea">$conn</span> = <span style="color:#c792ea">new</span> <span style="color:#82aaff">mysqli</span>(<span style="color:#c3e88d">"localhost"</span>, <span style="color:#c3e88d">"root"</span>, <span style="color:#c3e88d">""</span>, <span style="color:#c3e88d">"blog"</span>);
+
+<span style="color:#c792ea">if</span> ($_SERVER[<span style="color:#c3e88d">"REQUEST_METHOD"</span>] === <span style="color:#c3e88d">"POST"</span>
+    &amp;&amp; $_SERVER[<span style="color:#c3e88d">"REQUEST_URI"</span>] === <span style="color:#c3e88d">"/giris"</span>) {
+
+    <span style="color:#546e7a;font-style:italic">// XSS temizleme — unutunca açık kapı</span>
+    <span style="color:#c792ea">$email</span> = <span style="color:#82aaff">htmlspecialchars</span>(<span style="color:#c792ea">$_POST</span>[<span style="color:#c3e88d">"email"</span>] ?? <span style="color:#c3e88d">""</span>);
+    <span style="color:#c792ea">$sifre</span> = <span style="color:#c792ea">$_POST</span>[<span style="color:#c3e88d">"sifre"</span>] ?? <span style="color:#c3e88d">""</span>;
+
+    <span style="color:#546e7a;font-style:italic">// Prepared statement — her seferinde tekrar</span>
+    <span style="color:#c792ea">$stmt</span> = <span style="color:#c792ea">$conn</span>-><span style="color:#82aaff">prepare</span>(<span style="color:#c3e88d">"SELECT * FROM users WHERE email=?"</span>);
+    <span style="color:#c792ea">$stmt</span>-><span style="color:#82aaff">bind_param</span>(<span style="color:#c3e88d">"s"</span>, <span style="color:#c792ea">$email</span>);
+    <span style="color:#c792ea">$stmt</span>-><span style="color:#82aaff">execute</span>();
+    <span style="color:#c792ea">$user</span> = <span style="color:#c792ea">$stmt</span>-><span style="color:#82aaff">get_result</span>()-><span style="color:#82aaff">fetch_assoc</span>();
+
+    <span style="color:#c792ea">if</span> (<span style="color:#c792ea">$user</span> &amp;&amp; <span style="color:#82aaff">password_verify</span>(<span style="color:#c792ea">$sifre</span>, <span style="color:#c792ea">$user</span>[<span style="color:#c3e88d">"sifre_hash"</span>])) {
+        <span style="color:#c792ea">$_SESSION</span>[<span style="color:#c3e88d">"user_id"</span>] = <span style="color:#c792ea">$user</span>[<span style="color:#c3e88d">"id"</span>];
+        <span style="color:#82aaff">header</span>(<span style="color:#c3e88d">"Location: /panel"</span>);
+    } <span style="color:#c792ea">else</span> {
+        <span style="color:#82aaff">http_response_code</span>(<span style="color:#f78c6c">401</span>);
+        <span style="color:#82aaff">echo</span> <span style="color:#82aaff">json_encode</span>([<span style="color:#c3e88d">"ok"</span> => <span style="color:#c792ea">false</span>]);
+    }
+}
+
+<span style="color:#c792ea">if</span> ($_SERVER[<span style="color:#c3e88d">"REQUEST_METHOD"</span>] === <span style="color:#c3e88d">"GET"</span>
+    &amp;&amp; $_SERVER[<span style="color:#c3e88d">"REQUEST_URI"</span>] === <span style="color:#c3e88d">"/yazilar"</span>) {
+
+    <span style="color:#c792ea">$rows</span> = <span style="color:#c792ea">$conn</span>-><span style="color:#82aaff">query</span>(<span style="color:#c3e88d">"SELECT * FROM yazilar"</span>)-><span style="color:#82aaff">fetch_all</span>(<span style="color:#82aaff">MYSQLI_ASSOC</span>);
+    <span style="color:#82aaff">echo</span> <span style="color:#82aaff">json_encode</span>(<span style="color:#c792ea">$rows</span>);
+}</pre>
+        </div>
+        <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">
+          <span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">$_GET / $_POST global</span>
+          <span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">Manuel XSS temizleme</span>
+          <span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">Her request'te DB bağlantısı</span>
+          <span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">bind_param boilerplate</span>
+        </div>
+      </div>
+
+      <!-- LOOK -->
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="background:var(--blue);color:#fff;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">LOOK</span>
+          <span style="font-size:13px;color:#64748b">index.lk — aynı işlev</span>
+        </div>
+        <div style="background:var(--code-bg);border-radius:12px;overflow:hidden;border:1px solid rgba(59,130,246,.3)">
+          <pre style="padding:20px;font-family:'Fira Code',monospace;font-size:12.5px;line-height:1.85;color:#cdd6f4;overflow-x:auto"><span class="kw">use</span> <span class="ns">auth</span>;
+
+<span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@localhost/blog"</span>);
+<span class="cmt"># Bir kez açılır — tüm isteklerde canlı kalır</span>
+
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/giris"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="ns">session</span><span class="op">::</span><span class="fn">start</span>();
+    <span class="var">$d</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">json</span>();
+
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>,
+        <span class="str">"SELECT * FROM users WHERE email=?"</span>, [<span class="var">$d</span>[<span class="str">"email"</span>]]);
+    <span class="cmt"># ? parametreli — SQL injection yok, XSS temizleme yok</span>
+
+    <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) <span class="op">==</span> <span class="num">0</span> <span class="op">||</span>
+        !<span class="ns">auth</span><span class="op">::</span><span class="fn">verify</span>(<span class="var">$d</span>[<span class="str">"sifre"</span>], <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"sifre_hash"</span>])) {
+        <span class="ns">response</span><span class="op">::</span><span class="fn">status</span>(<span class="num">401</span>);
+        <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">false</span>]));
+        <span class="kw">return</span>;
+    }
+    <span class="ns">session</span><span class="op">::</span><span class="fn">set</span>(<span class="str">"user_id"</span>, <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"id"</span>]);
+    <span class="ns">response</span><span class="op">::</span><span class="fn">redirect</span>(<span class="str">"/panel"</span>);
+});
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/yazilar"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM yazilar"</span>, []);
+    <span class="kw">print</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>(<span class="var">$rows</span>));
+});</pre>
+        </div>
+        <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">request:: — sıfır global</span>
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">Prepared stmt otomatik</span>
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">DB bağlantısı kalıcı</span>
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">auth:: PBKDF2 dahil</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fark tablosu -->
+    <div style="margin-top:48px;overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <tr style="border-bottom:2px solid #e2e8f0">
+          <th style="text-align:left;padding:10px 14px;color:#64748b;font-weight:600">Konu</th>
+          <th style="padding:10px 14px;color:#8892bf;font-weight:700">PHP</th>
+          <th style="padding:10px 14px;color:var(--blue);font-weight:700">LOOK</th>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">DB bağlantısı</td>
+          <td style="padding:10px 14px;text-align:center;color:#dc2626">Her request yeni bağlantı</td>
+          <td style="padding:10px 14px;text-align:center;color:#16a34a">Warm start — bir kez açılır</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Global değişken</td>
+          <td style="padding:10px 14px;text-align:center;color:#dc2626">$_GET, $_POST, $_SESSION...</td>
+          <td style="padding:10px 14px;text-align:center;color:#16a34a">Yok — request:: / session::</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Routing</td>
+          <td style="padding:10px 14px;text-align:center;color:#dc2626">Framework (Laravel, Slim...)</td>
+          <td style="padding:10px 14px;text-align:center;color:#16a34a">Dile gömülü — route()</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">SQL injection koruması</td>
+          <td style="padding:10px 14px;text-align:center;color:#dc2626">Manuel bind_param</td>
+          <td style="padding:10px 14px;text-align:center;color:#16a34a">db::query otomatik parametreli</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Eşzamanlılık</td>
+          <td style="padding:10px 14px;text-align:center;color:#dc2626">pcntl_fork / ext</td>
+          <td style="padding:10px 14px;text-align:center;color:#16a34a">parallel() + channel() dilde</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">WebSocket</td>
+          <td style="padding:10px 14px;text-align:center;color:#dc2626">Ratchet / Swoole gerekir</td>
+          <td style="padding:10px 14px;text-align:center;color:#16a34a">route("WS",...) — dahil</td>
+        </tr>
+        <tr style="background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Performans (router)</td>
+          <td style="padding:10px 14px;text-align:center;color:#dc2626">~500–2000 RPS (FPM)</td>
+          <td style="padding:10px 14px;text-align:center;color:#16a34a">8.276 RPS (VM, Apache bypass)</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ PHILOSOPHY -->
+<section class="philosophy" id="felsefe">
+  <div class="philosophy-inner text-center">
+    <div class="section-label">Felsefe</div>
+    <div class="section-title">Üç kural, asla değişmez</div>
+    <p style="color:#64748b;font-size:17px;max-width:680px;margin:16px auto 0;line-height:1.7;">
+      Her yeni özellik bu üç ilkeye hizmet etmek zorunda — yoksa dile girmez.
+    </p>
+
+    <div class="philosophy-pillars">
+      <div class="pillar">
+        <div class="pillar-icon">🗺️</div>
+        <div class="pillar-title">PHP gibi yükle</div>
+        <div class="pillar-desc">
+          Dosyayı sunucuya at, Apache yönlendirsin — bitti.
+          Hiçbir şey kurmak yok, hiçbir şeyi derlemek yok.
+          Paylaşımlı hosting, VPS, Plesk — aynı iş akışı.
+        </div>
+        <div class="pillar-code"><span class="cmt"># GitHub Releases → binary indir</span>
+cp look-fcgi /opt/look/ && chmod +x /opt/look/look-fcgi
+<span class="cmt"># → Apache .htaccess, systemd servis</span></div>
+      </div>
+
+      <div class="pillar g">
+        <div class="pillar-icon">⚡</div>
+        <div class="pillar-title">Go gibi düşün</div>
+        <div class="pillar-desc">
+          Temiz kapsam, açık bağımlılık, goroutine stili eşzamanlılık.
+          <code>use()</code> ile ne girdiği bildirilir.
+          Gizli global değişken yok, sürpriz yok.
+        </div>
+        <div class="pillar-code"><span class="kw">route</span>(<span class="str">"GET"</span>, <span class="str">"/urun/{id}"</span>,
+  <span class="kw">function</span>(<span class="var">$id</span>) <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="kw">print</span>(<span class="ns">json</span>::<span class="fn">encode</span>($row));
+});</div>
+      </div>
+
+      <div class="pillar p">
+        <div class="pillar-icon">🔒</div>
+        <div class="pillar-title">Framework kurma</div>
+        <div class="pillar-desc">
+          Routing, DB, auth, cache, jobs, WebSocket, SSE, template —
+          hepsi dilin içinde. Paket yöneticisi açma, dependency hell yok.
+        </div>
+        <div class="pillar-code"><span class="kw">use</span> <span class="ns">jobs</span>;   <span class="cmt"># SQLite iş kuyruğu</span>
+<span class="kw">use</span> <span class="ns">cache</span>;  <span class="cmt"># in-memory TTL cache</span>
+<span class="kw">use</span> <span class="ns">mail</span>;   <span class="cmt"># Mailgun/SendGrid</span>
+<span class="cmt"># Kurulum yok. Hepsi binary içinde.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ RUNTIME STACK -->
+<section class="stack">
+  <div class="stack-inner text-center">
+    <div class="section-label" style="color:var(--blue)">Runtime Katmanları</div>
+    <div class="section-title section-title-w">Ne kadar derin?</div>
+    <p class="section-sub-w">LOOK'un tüm bileşenleri sıfır bağımlılıkla C++23 ile yazılmıştır.</p>
+
+    <div class="stack-grid">
+      <div class="stack-card">
+        <div class="stag">Parser</div>
+        <h4>Lexer + Parser + AST</h4>
+        <p>Precedence-aware parser, tam operatör seti, string interpolation, SourceLocation ile hata konumu.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag">VM</div>
+        <h4>Bytecode VM</h4>
+        <p>AST → 3-adres register bytecode → switch dispatch. Compute workload'da 7.8× hız. Fallback: tree-walk interpreter.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag g">Eşzamanlılık</div>
+        <h4>ThreadPool + ConnPool</h4>
+        <p><code>--workers N</code>, per-request interpreter kopyası, per-DSN bağlantı havuzu. Hot reload: sıfır kesinti.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag g">Ağ</div>
+        <h4>HTTP/1.1 + WebSocket + SSE</h4>
+        <p>epoll (Linux), IOCP (Windows). RFC 6455 WS, SSE frame codec. Sınırsız eşzamanlı bağlantı.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag p">DB</div>
+        <h4>MySQL · SQLite · PostgreSQL</h4>
+        <p>Wire protocol sıfırdan. Sürücü yok, ORM yok. Aynı <code>db::</code> API, farklı DSN.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag o">Dağıtım</div>
+        <h4>CGI + FastCGI + HTTP</h4>
+        <p>Apache/nginx FastCGI, standalone HTTP, CGI fallback. Tek binary, üç mod.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ SETUP -->
+<section class="setup" id="kurulum">
+  <div class="setup-inner">
+    <div class="text-center">
+      <div class="section-label">Kurulum</div>
+      <div class="section-title">5 dakikada çalışır</div>
+      <p class="section-sub">Platform seçin:</p>
+    </div>
+
+    <div class="platform-tabs" style="justify-content:center;margin-bottom:36px">
+      <button class="platform-btn active" onclick="showPlatform('linux',this)">🐧 Linux</button>
+      <button class="platform-btn" onclick="showPlatform('windows',this)">🪟 Windows</button>
+      <button class="platform-btn" onclick="showPlatform('plesk',this)">🖥️ Plesk</button>
+      <button class="platform-btn" onclick="showPlatform('docker',this)">🐳 Docker</button>
+    </div>
+
+    <!-- Linux -->
+    <div class="setup-content active" id="p-linux">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>Binary'yi indir</h4>
+            <p><a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a>'tan platforma uygun arşivi indir ve çıkart.</p>
+            <div class="cmd-block">
+              <code>tar -xzf look-linux-x86_64.tar.gz</code>
+              <button class="copy-btn" onclick="copyCmd(this,'tar -xzf look-linux-x86_64.tar.gz')">Kopyala</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Binary'yi kopyala ve execute bit ver</h4>
+            <div class="cmd-block">
+              <code>cp look-fcgi /opt/look/ && chmod +x /opt/look/look-fcgi</code>
+              <button class="copy-btn" onclick="copyCmd(this,'cp look-fcgi /opt/look/ && chmod +x /opt/look/look-fcgi')">Kopyala</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>look-fcgi'yi başlat</h4>
+            <p>systemd servisi yaz (bkz. <a href="https://codlook.com/docs#fastcgi" target="_blank">Docs → FastCGI</a>) veya doğrudan:</p>
+            <div class="cmd-block">
+              <code>look-fcgi --port 9000 --workers 8</code>
+              <button class="copy-btn" onclick="copyCmd(this,'look-fcgi --port 9000 --workers 8')">Kopyala</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Versiyon doğrula</h4>
+            <div class="cmd-block">
+              <code>look-fcgi version  # LOOK 1.0.0 (linux/amd64)</code>
+              <button class="copy-btn" onclick="copyCmd(this,'look-fcgi version')">Kopyala</button>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </div>
+
+    <!-- Windows -->
+    <div class="setup-content" id="p-windows">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>XAMPP kurun</h4>
+            <p>XAMPP zaten kuruluysa bu adımı atlayın.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>install.bat'ı yönetici olarak çalıştırın</h4>
+            <p>Binary'leri kopyalar, Apache'yi yapılandırır, Task Scheduler servisi kaydeder.</p>
+            <div class="cmd-block">
+              <code>.\install.bat --xampp C:\xampp</code>
+              <button class="copy-btn" onclick="copyCmd(this,'.\\install.bat --xampp C:\\xampp')">Kopyala</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>XAMPP Apache'yi yeniden başlatın</h4>
+            <p>XAMPP Control Panel → Apache → Restart. <code>http://localhost/</code> açın — çalışıyor.</p>
+          </div>
+        </li>
+      </ol>
+    </div>
+
+    <!-- Plesk -->
+    <div class="setup-content" id="p-plesk">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>Plesk Terminal'i a&ccedil;&inodot;n</h4>
+            <p>Plesk Panel &rarr; <strong>Server Management &rarr; Terminal</strong></p>
+            <p style="font-size:12px;color:#64748b;margin-top:4px">SSH tercih ediyorsan&inodot;z: <code>ssh root@sunucu_ip</code></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Eklentiyi kurun</h4>
+            <div class="cmd-block">
+              <code>plesk bin extension --install-url https://github.com/codlook/look/releases/download/v1.0.3/look-plesk-extension-1.0.3.zip</code>
+              <button class="copy-btn" onclick="copyCmd(this,'plesk bin extension --install-url https://github.com/codlook/look/releases/download/v1.0.3/look-plesk-extension-1.0.3.zip')">Kopyala</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">"The extension was successfully installed." mesaj&inodot; g&ouml;r&uuml;n&uuml;r.</p>
+            <p style="font-size:12px;color:#64748b;margin-top:4px"><strong>Alternatif:</strong> Panelinizde "Upload Extension" butonu varsa ZIP dosyas&inodot;n&inodot; direkt y&uuml;kleyebilirsiniz.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>LOOK Language eklentisini a&ccedil;&inodot;n</h4>
+            <p>Plesk Panel &rarr; <strong>Extensions</strong> &rarr; <strong>My Extensions</strong> &rarr; <strong>LOOK Language &rarr; A&ccedil;</strong></p>
+            <p style="font-size:12px;color:#64748b;margin-top:4px"><strong>"LOOK Kurulum Gerekli"</strong> ekran&inodot; g&ouml;r&uuml;r&uuml;n&uuml;z &mdash; bu normal, devam edin.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Bootstrap komutunu &ccedil;al&inodot;&scedil;t&inodot;r&inodot;n (1 kez)</h4>
+            <p>Ekrandaki <strong>Kopyala</strong> butonuna bas&inodot;n, Terminal'e d&ouml;n&uuml;p yap&inodot;&scedil;t&inodot;r&inodot;n:</p>
+            <div class="cmd-block">
+              <code>bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/install.sh</code>
+              <button class="copy-btn" onclick="copyCmd(this,'bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/install.sh')">Kopyala</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">Binary kopyalan&inodot;r, izinler ayarlan&inodot;r. <strong>Sadece 1 kez &ccedil;al&inodot;&scedil;t&inodot;r&inodot;l&inodot;r.</strong></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Sayfay&inodot; yenileyin &rarr; Domain ekleyin</h4>
+            <p><strong>"Sayfay&inodot; Yenile"</strong> butonuna bas&inodot;n. Ana ekranda <strong>+ Domain Ekle</strong> &rarr; domain se&ccedil;in &rarr; <strong>Ekle ve Ba&scedil;lat</strong></p>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">&asymp;5 saniye sonra domain listesinde <strong>active</strong> g&ouml;r&uuml;n&uuml;r. systemd servisi otomatik olu&scedil;turulur.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>index.lk y&uuml;kleyin</h4>
+            <p>Domain'in <code>httpdocs/</code> klas&ouml;r&uuml;ne <code>index.lk</code> dosyan&inodot;z&inodot; koyun &mdash; LOOK otomatik alg&inodot;lar, restart gerekmez.</p>
+          </div>
+        </li>
+      </ol>
+      <p style="margin-top:16px;font-size:13px;color:#64748b;border-left:3px solid #3b82f6;padding-left:12px">
+        <strong>Toplam s&uuml;re: ~3 dakika &mdash; 2 terminal komutu, 1 kez.</strong><br>
+        Eklenti g&uuml;ncellemelerinde bootstrap yeniden &ccedil;al&inodot;&scedil;t&inodot;rmaya gerek yoktur.
+      </p>
+    </div>
+
+    <!-- Docker -->
+    <div class="setup-content" id="p-docker">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>Build image'ını çek</h4>
+            <p>Docker, LOOK binary'lerini derlemek için kullanılır. Ubuntu 24.04 ve AlmaLinux 8 için ayrı Dockerfile mevcuttur.</p>
+            <div class="cmd-block">
+              <code>docker build -f Dockerfile.linux-build -t look-builder .</code>
+              <button class="copy-btn" onclick="copyCmd(this,'docker build -f Dockerfile.linux-build -t look-builder .')">Kopyala</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Binary'yi derle</h4>
+            <div class="cmd-block">
+              <code>docker run --rm -v "${PWD}:/src" look-builder sh -c "cd /src/build-linux && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j4"</code>
+              <button class="copy-btn" onclick="copyCmd(this,'docker run --rm -v \"${PWD}:/src\" look-builder sh -c \"cd /src/build-linux && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j4\"')">Kopyala</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Çıktı binary'si</h4>
+            <div class="cmd-block">
+              <code>cpp/build-linux/look-fcgi  # hazır binary</code>
+            </div>
+            <p style="margin-top:8px;font-size:12px;color:#64748b">AlmaLinux 8 (Plesk) için <code>Dockerfile.almalinux8-build</code> kullanın — glibc farkı nedeniyle Ubuntu binary AlmaLinux'ta çalışmaz.</p>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ DOWNLOAD -->
+<section class="download" id="indir">
+  <div class="section-label">İndir</div>
+  <div class="section-title section-title-w">Web geliştiricileri için düşünüldü</div>
+  <p class="section-sub-w">v1.0.0 · Apache 2.0 · Tüm platformlar için kararlı sürüm.</p>
+
+  <div class="download-grid">
+    <div class="dl-card">
+      <h3>🐧 Linux — Ubuntu 22/24</h3>
+      <p>Ubuntu 22.04 / 24.04. Apache veya nginx ile. glibc 2.31+.</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; GitHub Releases →
+      </a>
+      <a href="https://codlook.com/docs#fastcgi" class="btn-dl-outline" target="_blank">
+        Kurulum Rehberi
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>🐧 Linux — AlmaLinux 8</h3>
+      <p>AlmaLinux 8 / RHEL 8. Plesk sunucuları için. glibc 2.17 uyumlu build.</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; GitHub Releases →
+      </a>
+      <a href="https://codlook.com/docs#platform" class="btn-dl-outline" target="_blank">
+        Plesk Kurulumu
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>🪟 Windows</h3>
+      <p>Windows 10/11 + XAMPP. IOCP — sınırsız bağlantı. Task Scheduler ile otomatik başlatma.</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; GitHub Releases →
+      </a>
+      <a href="https://codlook.com/docs#apache" class="btn-dl-outline" target="_blank">
+        XAMPP Kurulum Rehberi
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>🖥️ Plesk Extension</h3>
+      <p>Plesk 18+ için tek tıkla kurulum. Domain ekle, başlat — terminal yok, SSH yok.</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; look-lang-1.0.0.zip →
+      </a>
+      <a href="https://github.com/codlook/look" class="btn-dl-outline" target="_blank">GitHub →</a>
+    </div>
+
+    <div class="dl-card">
+      <h3>🧩 VS Code Extension</h3>
+      <p>Sözdizimi renklendirme, 30+ snippet, bracket matching. Tüm modüller dahil. v0.1.0</p>
+      <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" class="btn-dl" target="_blank">
+        &#8659; Marketplace'ten Kur →
+      </a>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl-outline" target="_blank">
+        VSIX İndir (Manuel)
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>📦 Kaynak Kod</h3>
+      <p>C++23, CMake 3.20+. Apache 2.0 lisansı. Katkı yapmak veya kendin derlemek için.</p>
+      <a href="https://github.com/codlook/look" class="btn-dl" target="_blank">
+        GitHub → codlook/look
+      </a>
+      <a href="https://github.com/codlook/look/releases" class="btn-dl-outline" target="_blank">
+        Tüm Sürümler
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ FOOTER -->
+<footer>
+  <p style="font-size:18px;font-weight:800;color:#fff;margin-bottom:8px">&#9711; LOOK Language</p>
+  <p style="margin-bottom:20px;color:var(--muted)">Web için yazılmış scripting dili · v1.0.0 · Apache 2.0</p>
+  <p style="margin-bottom:16px">
+    <a href="https://github.com/Codlook/look" target="_blank">GitHub</a> &nbsp;·&nbsp;
+    <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">VS Code</a> &nbsp;·&nbsp;
+    <a href="https://looktest.tobiyo.com.tr" target="_blank">Canlı Demo</a> &nbsp;·&nbsp;
+    <a href="/docs" target="_blank">Dokümantasyon</a>
+  </p>
+  <p style="margin-bottom:24px">
+    <a href="https://twitter.com/codlook" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:7px 16px;border-radius:8px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:500;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='rgba(255,255,255,.06)'">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+      @codlook
+    </a>
+    &nbsp;
+    <a href="https://instagram.com/codlook" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:7px 16px;border-radius:8px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:500;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='rgba(255,255,255,.06)'">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+      @codlook
+    </a>
+    &nbsp;
+    <a href="https://linkedin.com/company/codlook" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:7px 16px;border-radius:8px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:500;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='rgba(255,255,255,.06)'">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+      codlook
+    </a>
+  </p>
+  <p style="color:rgba(148,163,184,.5);font-size:12px">
+    v1.0.0 · C++23 · CMake 3.20+ · Apache 2.4+ / nginx · &copy; 2026 Codlook
+  </p>
+</footer>
+
+<script>
+function showTab(id, btn) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    btn.classList.add('active');
+}
+function showPlatform(id, btn) {
+    document.querySelectorAll('.setup-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.platform-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('p-' + id).classList.add('active');
+    btn.classList.add('active');
+}
+function copyCmd(btn, text) {
+    navigator.clipboard.writeText(text).then(function() {
+        var orig = btn.textContent;
+        btn.textContent = 'Kopyalandı ✓';
+        btn.style.color = '#10b981';
+        setTimeout(function() { btn.textContent = orig; btn.style.color = ''; }, 2000);
+    });
+}
+// Benchmark counter animation
+function animateCounters() {
+    document.querySelectorAll('.bench-num[data-target]').forEach(function(el) {
+        var target = parseInt(el.getAttribute('data-target'));
+        var current = 0;
+        var step = target / 60;
+        var timer = setInterval(function() {
+            current = Math.min(current + step, target);
+            el.textContent = Math.floor(current).toLocaleString('tr-TR');
+            if (current >= target) clearInterval(timer);
+        }, 16);
+    });
+}
+var observed = false;
+var observer = new IntersectionObserver(function(entries) {
+    if (!observed && entries[0].isIntersecting) { observed = true; animateCounters(); }
+}, { threshold: 0.3 });
+var benchEl = document.querySelector('.benchmarks');
+if (benchEl) observer.observe(benchEl);
+</script>
+</body>
+</html>
