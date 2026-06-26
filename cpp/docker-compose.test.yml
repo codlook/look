@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:5.7
+    environment:
+      MYSQL_ROOT_PASSWORD: testpass
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: looktest
+      MYSQL_PASSWORD: testpass
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-ptestpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  look-test:
+    image: look-builder
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - .:/src
+    working_dir: /src/build-linux
+    command: >
+      bash -c "
+        sleep 3 &&
+        echo '=== Phase 9.3: MySQL on Linux ===' &&
+        REQUEST_METHOD=GET REQUEST_URI=/ SCRIPT_FILENAME=/src/test_linux_mysql.lk APP_ENV=development ./look-cgi /src/test_linux_mysql.lk 2>/dev/null | grep -v 'Status:\|Content-Type\|Access-Control\|^$$'
+      "

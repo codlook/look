@@ -1,0 +1,70 @@
+[2026-06-08 18:08:45.247] [INFO ] [DB] SQLite opened: /tmp/look_test.db
+[2026-06-08 18:09:45.620] [INFO ] [DB] MySQL connected: mysql:3306/testdb
+[2026-06-08 18:09:45.648] [ERROR] [CGI] Uncaught exception: db: query error 1156: Got packets out of order | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:10:02.988] [INFO ] [DB] MySQL connected: mysql:3306/testdb
+[2026-06-08 18:10:03.006] [ERROR] [CGI] Uncaught exception: db: query error 1156: Got packets out of order | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:10:38.039] [INFO ] [DB] MySQL connected: mysql:3306/testdb
+[2026-06-08 18:10:38.051] [ERROR] [CGI] Uncaught exception: db: query error 1156: Got packets out of order | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:14:13.021] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'root'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:14:42.635] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'root'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:15:18.239] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'looktest'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:21:41.064] [ERROR] [CGI] Uncaught exception: db: cannot connect to mysql:3306 | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:22:07.302] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'looktest'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:22:41.099] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'looktest'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:23:19.402] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'looktest'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:25:15.898] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'root'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:25:50.099] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'root'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:26:25.043] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'looktest'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:27:02.348] [ERROR] [CGI] Uncaught exception: db: Access denied for user 'looktest'@'172.18.0.3' (using password: YES) | Script: /src/test_linux_mysql.lk
+[2026-06-08 18:31:28.867] [INFO ] [DB] MySQL connected: mysql:3306/testdb
+[2026-06-08 18:40:40.317] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 18:43:18.872] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 18:43:20.894] [INFO ] [FCGI] Warm start: /src/test_linux_fcgi.lk
+[2026-06-08 18:45:23.627] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 18:45:26.707] [INFO ] [FCGI] Warm start: /src/test_linux_fcgi_mysql.lk
+[2026-06-08 18:45:26.724] [INFO ] [DB] MySQL connected: mysql:3306/testdb
+[2026-06-08 19:43:22.023] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:43:24.042] [INFO ] [FCGI] Warm start: /src/test_linux_fcgi.lk
+[2026-06-08 19:51:30.548] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:51:33.597] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 19:52:24.789] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:52:27.963] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 19:52:49.149] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:52:52.245] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 19:53:49.411] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:53:52.458] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 19:55:25.593] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:55:28.652] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 19:56:47.241] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:57:37.510] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 19:57:39.009] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 20:02:22.410] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 20:02:26.855] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 20:30:37.986] [INFO ] [FCGI] look-fcgi TCP mode — listening on 127.0.0.1:9000
+[2026-06-08 20:30:50.701] [INFO ] [FCGI] Warm start: /var/www/html/index.lk
+[2026-06-08 20:58:09.368] [INFO ] [FCGI] look-fcgi pipe mode � waiting for requests via stdin/stdout
+[2026-06-08 20:58:09.369] [INFO ] [FCGI] look-fcgi exiting
+[2026-06-08 20:58:09.433] [INFO ] [FCGI] look-fcgi pipe mode � waiting for requests via stdin/stdout
+[2026-06-08 20:58:09.434] [INFO ] [FCGI] look-fcgi exiting
+[2026-06-08 22:32:42.269] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:32:50.602] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:33:12.786] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:34:34.657] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:35:49.293] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:36:18.981] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:38:13.782] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:43:52.552] [INFO ] [DB] SQLite opened: ./test_db_temp.sqlite3
+[2026-06-08 22:43:52.602] [INFO ] [DB] MySQL connected: 127.0.0.1:3307/looktest
+[2026-06-08 22:43:52.810] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:52:42.424] [INFO ] [DB] SQLite opened: ./test_db_temp.sqlite3
+[2026-06-08 22:52:42.483] [INFO ] [DB] MySQL connected: 127.0.0.1:3307/looktest
+[2026-06-08 22:52:42.692] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
+[2026-06-08 22:53:01.198] [INFO ] [DB] SQLite opened: ./debug_test.sqlite3
+[2026-06-08 22:55:19.214] [INFO ] [DB] SQLite opened: ./bind_debug.sqlite3
+[2026-06-08 22:55:28.642] [INFO ] [DB] SQLite opened: ./bind_debug.sqlite3
+[2026-06-08 22:56:52.516] [INFO ] [DB] SQLite opened: ./bind_debug.sqlite3
+[2026-06-08 22:57:50.176] [INFO ] [DB] SQLite opened: ./bind_debug.sqlite3
+[2026-06-08 22:58:21.687] [INFO ] [DB] SQLite opened: ./bind_debug.sqlite3
+[2026-06-08 22:59:54.585] [INFO ] [DB] SQLite opened: ./test_db_temp.sqlite3
+[2026-06-08 22:59:54.611] [INFO ] [DB] MySQL connected: 127.0.0.1:3307/looktest
+[2026-06-08 22:59:54.785] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest

@@ -1,0 +1,36 @@
+# Dockerfile.install-test — install.sh'yi Ubuntu + AlmaLinux'ta test eder
+# Kullanım: docker build -f cpp/Dockerfile.install-test --build-arg DISTRO=ubuntu -t look-install-test .
+#           docker build -f cpp/Dockerfile.install-test --build-arg DISTRO=almalinux -t look-install-test .
+
+ARG DISTRO=ubuntu
+
+# ── Ubuntu ─────────────────────────────────────────────────────────────────────
+FROM ubuntu:24.04 AS base-ubuntu
+RUN apt-get update -qq && apt-get install -y -qq curl nginx systemd 2>/dev/null; exit 0
+
+# ── AlmaLinux ─────────────────────────────────────────────────────────────────
+FROM almalinux:8 AS base-almalinux
+RUN dnf install -y -q curl nginx systemd 2>/dev/null; exit 0
+
+# ── Seçili distro ──────────────────────────────────────────────────────────────
+FROM base-${DISTRO} AS final
+
+WORKDIR /app
+
+# Linux binary'leri kopyala (build klasöründen)
+COPY cpp/build-linux/look-fcgi     /usr/local/bin/look-fcgi
+COPY cpp/build-linux/look          /usr/local/bin/look
+RUN chmod +x /usr/local/bin/look-fcgi /usr/local/bin/look 2>/dev/null; exit 0
+
+# Alternatif: AlmaLinux binary
+COPY cpp/build-almalinux8/look-fcgi /tmp/look-fcgi-almalinux 2>/dev/null; exit 0
+
+# install.sh kopyala
+COPY install.sh /app/install.sh
+RUN chmod +x /app/install.sh
+
+# Test: sadece binary zaten kurulu, service kurulum atla
+RUN /usr/local/bin/look version && echo "✅ look version OK"
+RUN /usr/local/bin/look-fcgi version && echo "✅ look-fcgi version OK"
+
+CMD ["/bin/bash"]

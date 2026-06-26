@@ -1,0 +1,74 @@
+# Build çıktıları
+cpp/build*/
+cpp/.look_cache/
+cpp/build.bat
+
+# Visual Studio
+.vs/
+*.slnx
+*.vcxproj.user
+
+# Gizli / credential
+.env
+.env.local
+.env.production
+.look_history
+.claude/
+
+# Log ve debug dosyaları
+logs/
+*.log
+dbg_*.txt
+plink_*.txt
+stress_*.txt
+*_results.txt
+*_debug.txt
+*_stderr.txt
+*_stdout.txt
+dbg.txt
+
+# Veritabanları
+*.db
+*.db-shm
+*.db-wal
+
+# Geçici test dosyaları (root düzeyindeki)
+test_*.lk
+test_*.py
+test_*.sh
+
+# Deploy / debug scriptleri
+deploy_*.sh
+check_*.sh
+debug*.sh
+stress*.sh
+leak-monitor.sh
+memory_72h.sh
+concurrency-test.sh
+run-tests*.sh
+save_results.sh
+ws_test.sh
+xss_test.sh
+mysql-recovery-test.sh
+regen_nginx.sh
+setup_chat_nginx*.sh
+find_plesk_cmd.sh
+
+# PowerShell geliştirme scriptleri
+deploy*.ps1
+fcgi_stress.ps1
+write_index.ps1
+stress_test.ps1
+
+# Python yardım scriptleri
+write_installer.py
+run_pg_test.bat
+
+# Binary / release dosyaları (bunlar GitHub Releases'e gider)
+*.zip
+*.tar.gz
+*.exe
+*.vsix
+
+# macOS
+.DS_Store
