@@ -1,0 +1,15 @@
+#!/bin/bash
+# Plesk bu scripti ZIP icindeki scripts/ klasorundan calistirir
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXT_DIR="$(dirname "$SCRIPT_DIR")"
+HTDOCS_SRC="$EXT_DIR/htdocs"
+HTDOCS_DST="/usr/local/psa/admin/htdocs/modules/look-lang"
+
+# htdocs'u dogru yere kopyala
+mkdir -p "$HTDOCS_DST"
+cp -r "$HTDOCS_SRC/." "$HTDOCS_DST/"
+chmod +x "$HTDOCS_DST/scripts/"*.sh
+chmod +x "$HTDOCS_DST/bin/"* 2>/dev/null || true
+
+# Kurulum scriptini calistir
+bash "$HTDOCS_DST/scripts/install.sh"

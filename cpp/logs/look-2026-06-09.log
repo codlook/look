@@ -1,9 +1,0 @@
-[2026-06-09 04:55:24.923] [INFO ] [DB] SQLite opened: ./ft_test.sqlite3
-[2026-06-09 04:55:24.953] [INFO ] [DB] MySQL connected: 127.0.0.1:3307/looktest
-[2026-06-09 04:55:25.193] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
-[2026-06-09 04:55:58.774] [INFO ] [DB] SQLite opened: ./ft_test.sqlite3
-[2026-06-09 04:55:58.833] [INFO ] [DB] MySQL connected: 127.0.0.1:3307/looktest
-[2026-06-09 04:55:59.195] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest
-[2026-06-09 04:56:23.892] [INFO ] [DB] SQLite opened: ./ft_test.sqlite3
-[2026-06-09 04:56:23.932] [INFO ] [DB] MySQL connected: 127.0.0.1:3307/looktest
-[2026-06-09 04:56:24.252] [INFO ] [DB] PostgreSQL connected: 127.0.0.1:5432/looktest

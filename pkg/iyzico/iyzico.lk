@@ -1,0 +1,228 @@
+use crypto;
+use json;
+use http;
+use string;
+
+// ── Yapılandırma ──────────────────────────────────────────────────────────────
+
+$IYZICO_SANDBOX_URL    = "https://sandbox-api.iyzipay.com";
+$IYZICO_PRODUCTION_URL = "https://api.iyzipay.com";
+
+// iyzico_config($api_key, $secret_key [, $sandbox])
+// Döner: config objesi — diğer fonksiyonlara geçirilir
+function iyzico_config($api_key, $secret_key, $sandbox) {
+    if ($sandbox == null) { $sandbox = true; }
+    $base_url = $IYZICO_SANDBOX_URL;
+    if (!$sandbox) {
+        $base_url = $IYZICO_PRODUCTION_URL;
+    }
+    return [
+        "api_key"    => $api_key,
+        "secret_key" => $secret_key,
+        "base_url"   => $base_url
+    ];
+}
+
+// ── İmza üretimi (IYZWSv2) ───────────────────────────────────────────────────
+// Authorization: "IYZWSv2 " + base64("apiKey:X&randomKey:Y&signature:Z")
+// signature = hmac_sha256(randomKey + uri_path + json_body, secretKey) → hex
+
+function _iyzico_auth_header($config, $uri_path, $body_json) {
+    $rnd = crypto::random_string(12);
+
+    $data_to_sign = $rnd . $uri_path;
+    if ($body_json != null && $body_json != "") {
+        $data_to_sign = $data_to_sign . $body_json;
+    }
+
+    $signature_hex = crypto::hmac_sha256($data_to_sign, $config["secret_key"]);
+    $signature_b64 = crypto::base64_encode($signature_hex);
+
+    $auth_str = "apiKey:" . $config["api_key"] . "&randomKey:" . $rnd . "&signature:" . $signature_b64;
+    $auth_b64 = crypto::base64_encode($auth_str);
+
+    return "IYZWSv2 " . $auth_b64;
+}
+
+function _iyzico_post($config, $path, $payload) {
+    $body = json::encode($payload);
+    $auth = _iyzico_auth_header($config, $path, $body);
+
+    $headers = [
+        "Content-Type"        => "application/json",
+        "Accept"              => "application/json",
+        "Authorization"       => $auth,
+        "x-iyzi-client-version" => "iyzipay-look-1.0"
+    ];
+
+    $res = http::post($config["base_url"] . $path, $body, $headers, ["timeout" => 30000]);
+
+    if ($res["error"] != null) {
+        return ["status" => "failure", "errorMessage" => $res["error"]];
+    }
+
+    $result = json::decode($res["body"]);
+    if ($result == null) {
+        return ["status" => "failure", "errorMessage" => "Geçersiz API yanıtı"];
+    }
+    return $result;
+}
+
+function _iyzico_get($config, $path) {
+    $auth = _iyzico_auth_header($config, $path, null);
+
+    $headers = [
+        "Content-Type"        => "application/json",
+        "Accept"              => "application/json",
+        "Authorization"       => $auth,
+        "x-iyzi-client-version" => "iyzipay-look-1.0"
+    ];
+
+    $res = http::get($config["base_url"] . $path, $headers, ["timeout" => 30000]);
+
+    if ($res["error"] != null) {
+        return ["status" => "failure", "errorMessage" => $res["error"]];
+    }
+
+    $result = json::decode($res["body"]);
+    if ($result == null) {
+        return ["status" => "failure", "errorMessage" => "Geçersiz API yanıtı"];
+    }
+    return $result;
+}
+
+// ── Ödeme ─────────────────────────────────────────────────────────────────────
+
+// iyzico_pay($config, $request) → result assoc
+// $request: tam ödeme isteği (buyer, shippingAddress, billingAddress, basketItems, paymentCard)
+function iyzico_pay($config, $request) {
+    if ($request["locale"] == null)        { $request["locale"] = "tr"; }
+    if ($request["currency"] == null)      { $request["currency"] = "TRY"; }
+    if ($request["paymentChannel"] == null) { $request["paymentChannel"] = "WEB"; }
+    if ($request["paymentGroup"] == null)  { $request["paymentGroup"] = "PRODUCT"; }
+    if ($request["installment"] == null)   { $request["installment"] = 1; }
+
+    return _iyzico_post($config, "/payment/auth", $request);
+}
+
+// iyzico_pay_retrieve($config, $payment_id, $conversation_id) → result
+function iyzico_pay_retrieve($config, $payment_id, $conversation_id) {
+    $req = [
+        "locale"         => "tr",
+        "conversationId" => $conversation_id,
+        "paymentId"      => $payment_id
+    ];
+    return _iyzico_post($config, "/payment/detail", $req);
+}
+
+// ── 3DS Ödeme ────────────────────────────────────────────────────────────────
+
+// iyzico_3ds_init($config, $request) → result (htmlContent içerir — forma gömülür)
+function iyzico_3ds_init($config, $request) {
+    if ($request["locale"] == null)        { $request["locale"] = "tr"; }
+    if ($request["currency"] == null)      { $request["currency"] = "TRY"; }
+    if ($request["paymentChannel"] == null) { $request["paymentChannel"] = "WEB"; }
+    if ($request["paymentGroup"] == null)  { $request["paymentGroup"] = "PRODUCT"; }
+    if ($request["installment"] == null)   { $request["installment"] = 1; }
+
+    return _iyzico_post($config, "/payment/3dsecure/initialize", $request);
+}
+
+// iyzico_3ds_complete($config, $conversation_id, $pay_with_3ds_result) → result
+function iyzico_3ds_complete($config, $conversation_id, $pay_with_3ds_result) {
+    $req = [
+        "locale"             => "tr",
+        "conversationId"     => $conversation_id,
+        "payWithNew3dsResult" => $pay_with_3ds_result
+    ];
+    return _iyzico_post($config, "/payment/3dsecure/auth", $req);
+}
+
+// ── İptal ve İade ─────────────────────────────────────────────────────────────
+
+// iyzico_cancel($config, $payment_id, $conversation_id, $reason) → result
+function iyzico_cancel($config, $payment_id, $conversation_id, $reason) {
+    $req = [
+        "locale"         => "tr",
+        "conversationId" => $conversation_id,
+        "paymentId"      => $payment_id,
+        "ip"             => "0.0.0.0"
+    ];
+    if ($reason != null) { $req["reason"] = $reason; }
+    return _iyzico_post($config, "/payment/cancel", $req);
+}
+
+// iyzico_refund($config, $payment_transaction_id, $price, $conversation_id) → result
+function iyzico_refund($config, $payment_transaction_id, $price, $conversation_id) {
+    $req = [
+        "locale"               => "tr",
+        "conversationId"       => $conversation_id,
+        "paymentTransactionId" => $payment_transaction_id,
+        "price"                => $price,
+        "currency"             => "TRY",
+        "ip"                   => "0.0.0.0"
+    ];
+    return _iyzico_post($config, "/payment/refund", $req);
+}
+
+// ── Kart Saklama ──────────────────────────────────────────────────────────────
+
+// iyzico_card_save($config, $external_id, $email, $card) → result (cardToken içerir)
+// $card: ["alias" => "Kartım", "holderName" => "Ad Soyad", "number" => "...", "expireMonth" => "12", "expireYear" => "2030"]
+function iyzico_card_save($config, $external_id, $email, $card) {
+    $req = [
+        "locale"         => "tr",
+        "conversationId" => crypto::uuid(),
+        "externalId"     => $external_id,
+        "email"          => $email,
+        "card"           => $card
+    ];
+    return _iyzico_post($config, "/cardstorage/card", $req);
+}
+
+// iyzico_card_list($config, $card_user_key) → result (cardDetails array)
+function iyzico_card_list($config, $card_user_key) {
+    $req = [
+        "locale"      => "tr",
+        "cardUserKey" => $card_user_key
+    ];
+    return _iyzico_post($config, "/cardstorage/cards", $req);
+}
+
+// iyzico_card_delete($config, $card_user_key, $card_token) → result
+function iyzico_card_delete($config, $card_user_key, $card_token) {
+    $req = [
+        "locale"      => "tr",
+        "cardUserKey" => $card_user_key,
+        "cardToken"   => $card_token
+    ];
+    return _iyzico_post($config, "/cardstorage/card/delete", $req);
+}
+
+// ── Taksit Sorgulama ─────────────────────────────────────────────────────────
+
+// iyzico_installments($config, $bin_number, $price) → result
+function iyzico_installments($config, $bin_number, $price) {
+    $req = [
+        "locale"    => "tr",
+        "binNumber" => $bin_number,
+        "price"     => $price,
+        "currency"  => "TRY"
+    ];
+    return _iyzico_post($config, "/payment/iyzipos/installment/list/request", $req);
+}
+
+// ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
+
+// iyzico_success($result) → true/false
+function iyzico_success($result) {
+    return $result["status"] == "success";
+}
+
+// iyzico_error($result) → hata mesajı string | null
+function iyzico_error($result) {
+    if ($result["status"] == "success") { return null; }
+    if ($result["errorMessage"] != null) { return $result["errorMessage"]; }
+    if ($result["errorCode"] != null)    { return "Hata kodu: " . $result["errorCode"]; }
+    return "Bilinmeyen hata";
+}

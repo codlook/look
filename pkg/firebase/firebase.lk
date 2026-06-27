@@ -1,0 +1,235 @@
+use crypto;
+use json;
+use http;
+use string;
+use type;
+use date;
+use array;
+
+// ── Yapılandırma ──────────────────────────────────────────────────────────────
+
+// firebase_init($sa_json_string, $project_id) → config  [Production]
+// $sa_json_string: Google Service Account JSON dosyasının içeriği
+function firebase_init($sa_json, $project_id) {
+    $sa = json::decode($sa_json);
+    return [
+        "mode"         => "production",
+        "project_id"   => $project_id,
+        "client_email" => $sa["client_email"],
+        "private_key"  => $sa["private_key"],
+        "_token"       => null,
+        "_token_exp"   => 0
+    ];
+}
+
+// firebase_emulator($project_id [, $host]) → config  [Docker/Test]
+function firebase_emulator($project_id, $host) {
+    if ($host == null) { $host = "http://localhost:8080"; }
+    return [
+        "mode"       => "emulator",
+        "project_id" => $project_id,
+        "_base"      => $host . "/v1/projects/" . $project_id . "/databases/(default)/documents",
+        "_token"     => "owner"
+    ];
+}
+
+// ── OAuth2 Token ──────────────────────────────────────────────────────────────
+
+function _firebase_token($config) {
+    if ($config["mode"] == "emulator") { return "owner"; }
+
+    $now = date::timestamp();
+    if ($config["_token"] != null && $config["_token_exp"] > $now + 60) {
+        return $config["_token"];
+    }
+
+    $header  = crypto::base64url_encode('{"alg":"RS256","typ":"JWT"}');
+    $payload = crypto::base64url_encode(json::encode([
+        "iss"   => $config["client_email"],
+        "scope" => "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform",
+        "aud"   => "https://oauth2.googleapis.com/token",
+        "iat"   => $now,
+        "exp"   => $now + 3600
+    ]));
+
+    $msg = $header . "." . $payload;
+    $sig = crypto::rs256_sign_b64url($msg, $config["private_key"]);
+    $jwt = $msg . "." . $sig;
+
+    $res = http::post(
+        "https://oauth2.googleapis.com/token",
+        "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=" . $jwt,
+        ["Content-Type" => "application/x-www-form-urlencoded"],
+        ["timeout" => 15000]
+    );
+
+    if ($res["error"] != null) { return null; }
+    $data = json::decode($res["body"]);
+    if ($data == null || $data["access_token"] == null) { return null; }
+    return $data["access_token"];
+}
+
+// ── URL ve Header ─────────────────────────────────────────────────────────────
+
+function _fs_base($config) {
+    if ($config["mode"] == "emulator") { return $config["_base"]; }
+    return "https://firestore.googleapis.com/v1/projects/" .
+           $config["project_id"] . "/databases/(default)/documents";
+}
+
+function _fs_hdrs($token) {
+    return [
+        "Content-Type"  => "application/json",
+        "Accept"        => "application/json",
+        "Authorization" => "Bearer " . $token
+    ];
+}
+
+// ── Firestore Tip Dönüştürücüler ─────────────────────────────────────────────
+
+function _fs_enc($v) {
+    if ($v == null)             { return ["nullValue"     => null]; }
+    if (type::is_bool($v))     { return ["booleanValue"  => $v]; }
+    if (type::is_int($v))      { return ["integerValue"  => string($v)]; }
+    if (type::is_float($v))    { return ["doubleValue"   => $v]; }
+    if (type::is_array($v)) {
+        $fields = array::new_assoc();
+        foreach ($v as $k => $val) { $fields = array::set($fields, $k, _fs_enc($val)); }
+        return ["mapValue" => ["fields" => $fields]];
+    }
+    return ["stringValue" => string($v)];
+}
+
+function _fs_dec($fv) {
+    if ($fv == null)                      { return null; }
+    if ($fv["nullValue"]     != null)     { return null; }
+    if ($fv["booleanValue"]  != null)     { return $fv["booleanValue"]; }
+    if ($fv["integerValue"]  != null)     { return type::to_int($fv["integerValue"]); }
+    if ($fv["doubleValue"]   != null)     { return $fv["doubleValue"]; }
+    if ($fv["stringValue"]   != null)     { return $fv["stringValue"]; }
+    if ($fv["timestampValue"] != null)    { return $fv["timestampValue"]; }
+    if ($fv["mapValue"] != null) {
+        $out = array::new_assoc();
+        foreach ($fv["mapValue"]["fields"] as $k => $val) { $out = array::set($out, $k, _fs_dec($val)); }
+        return $out;
+    }
+    if ($fv["arrayValue"] != null) {
+        $out = [];
+        $vals = $fv["arrayValue"]["values"];
+        if ($vals != null) { foreach ($vals as $val) { push($out, _fs_dec($val)); } }
+        return $out;
+    }
+    return null;
+}
+
+function _fs_encode_doc($data) {
+    $fields = array::new_assoc();
+    foreach ($data as $k => $v) { $fields = array::set($fields, $k, _fs_enc($v)); }
+    return ["fields" => $fields];
+}
+
+function _fs_decode_doc($doc) {
+    if ($doc == null || $doc["fields"] == null) { return null; }
+    $out = array::new_assoc();
+    foreach ($doc["fields"] as $k => $fv) { $out = array::set($out, $k, _fs_dec($fv)); }
+    if ($doc["name"] != null) {
+        $parts = string::split($doc["name"], "/");
+        $out = array::set($out, "__id__", $parts[count($parts) - 1]);
+    }
+    return $out;
+}
+
+// ── CRUD Operasyonları ────────────────────────────────────────────────────────
+
+// firebase_get($config, $collection, $doc_id) → assoc | null
+function firebase_get($config, $collection, $doc_id) {
+    $token = _firebase_token($config);
+    if ($token == null) { return null; }
+    $res = http::get(
+        _fs_base($config) . "/" . $collection . "/" . $doc_id,
+        _fs_hdrs($token), ["timeout" => 10000]
+    );
+    if ($res["error"] != null || $res["status"] != 200) { return null; }
+    return _fs_decode_doc(json::decode($res["body"]));
+}
+
+// firebase_set($config, $collection, $doc_id, $data) → bool  [upsert]
+function firebase_set($config, $collection, $doc_id, $data) {
+    $token = _firebase_token($config);
+    if ($token == null) { return false; }
+    $res = http::patch(
+        _fs_base($config) . "/" . $collection . "/" . $doc_id,
+        json::encode(_fs_encode_doc($data)),
+        _fs_hdrs($token), ["timeout" => 10000]
+    );
+    return $res["error"] == null && ($res["status"] == 200 || $res["status"] == 201);
+}
+
+// firebase_add($config, $collection, $data) → doc_id | null  [otomatik ID]
+function firebase_add($config, $collection, $data) {
+    $token = _firebase_token($config);
+    if ($token == null) { return null; }
+    $res = http::post(
+        _fs_base($config) . "/" . $collection,
+        json::encode(_fs_encode_doc($data)),
+        _fs_hdrs($token), ["timeout" => 10000]
+    );
+    if ($res["error"] != null || ($res["status"] != 200 && $res["status"] != 201)) { return null; }
+    $doc = json::decode($res["body"]);
+    if ($doc == null || $doc["name"] == null) { return null; }
+    $parts = string::split($doc["name"], "/");
+    return $parts[count($parts) - 1];
+}
+
+// firebase_update($config, $collection, $doc_id, $data) → bool  [kısmi güncelleme]
+function firebase_update($config, $collection, $doc_id, $data) {
+    $token = _firebase_token($config);
+    if ($token == null) { return false; }
+
+    $fields = array::new_assoc();
+    $masks  = [];
+    foreach ($data as $k => $v) {
+        $fields = array::set($fields, $k, _fs_enc($v));
+        push($masks, "updateMask.fieldPaths=" . $k);
+    }
+    $qs  = string::join($masks, "&");
+    $url = _fs_base($config) . "/" . $collection . "/" . $doc_id . "?" . $qs;
+
+    $res = http::patch($url, json::encode(["fields" => $fields]),
+                       _fs_hdrs($token), ["timeout" => 10000]);
+    return $res["error"] == null && $res["status"] == 200;
+}
+
+// firebase_delete($config, $collection, $doc_id) → bool
+function firebase_delete($config, $collection, $doc_id) {
+    $token = _firebase_token($config);
+    if ($token == null) { return false; }
+    $res = http::delete(
+        _fs_base($config) . "/" . $collection . "/" . $doc_id,
+        _fs_hdrs($token), ["timeout" => 10000]
+    );
+    return $res["error"] == null && $res["status"] == 200;
+}
+
+// firebase_list($config, $collection [, $limit]) → array
+function firebase_list($config, $collection, $limit) {
+    $token = _firebase_token($config);
+    if ($token == null) { return []; }
+    $url = _fs_base($config) . "/" . $collection;
+    if ($limit != null) { $url = $url . "?pageSize=" . $limit; }
+    $res = http::get($url, _fs_hdrs($token), ["timeout" => 10000]);
+    if ($res["error"] != null || $res["status"] != 200) { return []; }
+    $body = json::decode($res["body"]);
+    if ($body == null || $body["documents"] == null) { return []; }
+    $out = [];
+    foreach ($body["documents"] as $doc) {
+        $d = _fs_decode_doc($doc);
+        if ($d != null) { push($out, $d); }
+    }
+    return $out;
+}
+
+// ── Yardımcılar ───────────────────────────────────────────────────────────────
+
+function firebase_ok($r)  { return $r != null && $r != false; }
+function firebase_err($r) { return $r == null || $r == false; }

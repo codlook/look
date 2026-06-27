@@ -1,0 +1,15 @@
+services:
+  firestore:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./firebase.json:/app/firebase.json
+    ports:
+      - "8080:8080"
+    command: >
+      firebase emulators:start
+      --only firestore
+      --project demo-look
+    environment:
+      - FIREBASE_SKIP_LOGIN=true
+      - JAVA_TOOL_OPTIONS=-Xmx512m

@@ -1,0 +1,356 @@
+use file;
+use string;
+use date;
+use json;
+use html;
+
+response::header("Content-Type", "text/html; charset=utf-8");
+
+$now = date::now();
+
+# ── Uptime ───────────────────────────────────────────────────────────────
+$up_days = 0; $up_hours = 0; $up_mins = 0; $up_total = 0;
+if (file::exists("/proc/uptime")) {
+    $up_parts = string::split(string::trim(file::read("/proc/uptime")), " ");
+    $up_total = int(float($up_parts[0]));
+    $up_days  = int($up_total / 86400);
+    $up_hours = int(($up_total % 86400) / 3600);
+    $up_mins  = int(($up_total % 3600) / 60);
+}
+
+# ── Memory ───────────────────────────────────────────────────────────────
+$mem_total = 0; $mem_avail = 0; $mem_used = 0; $mem_pct = 0;
+if (file::exists("/proc/meminfo")) {
+    $mlines = string::split(file::read("/proc/meminfo"), "\n");
+    foreach ($mlines as $ml) {
+        if (string::starts_with($ml, "MemTotal:")) {
+            $p = string::split(string::trim($ml), ":");
+            $n = string::split(string::trim($p[1]), " ");
+            $mem_total = int(float($n[0]) / 1024);
+        }
+        if (string::starts_with($ml, "MemAvailable:")) {
+            $p = string::split(string::trim($ml), ":");
+            $n = string::split(string::trim($p[1]), " ");
+            $mem_avail = int(float($n[0]) / 1024);
+        }
+    }
+    $mem_used = $mem_total - $mem_avail;
+    if ($mem_total > 0) {
+        $mem_pct = int($mem_used * 100 / $mem_total);
+    }
+}
+$mem_bar_color = $mem_pct > 80 ? "#ef4444" : "#38bdf8";
+
+# ── Stress sonuçları ──────────────────────────────────────────────────────
+$st_ok        = false;
+$st_total     = 0;   $st_errors  = 0;   $st_rps      = "0";
+$st_elapsed   = 0;   $st_rem     = 0;   $st_updated  = "-";
+$st_ok_200    = 0;   $st_ok_401  = 0;   $st_ok_404   = 0;
+$st_avg_ms    = 0;   $st_min_ms  = 0;   $st_max_ms   = 0;
+$st_el_h      = 0;   $st_el_m    = 0;   $st_el_s     = 0;
+$st_rem_h     = 0;   $st_rem_m   = 0;
+$st_err_pct   = 0;   $st_prog    = 0;
+
+if (file::exists("/var/log/look/stress-results.json")) {
+    $sr = json::decode(file::read("/var/log/look/stress-results.json"));
+    if ($sr != null) {
+        $st_ok      = true;
+        $st_total   = $sr["total"];
+        $st_errors  = $sr["errors"];
+        $st_rps     = $sr["rps"];
+        $st_elapsed = int($sr["elapsed"]);
+        $st_rem     = int($sr["remaining"]);
+        $st_updated = $sr["updated"];
+        $st_ok_200  = $sr["ok_200"];
+        $st_ok_401  = $sr["ok_401"];
+        $st_ok_404  = $sr["ok_404"];
+        $st_avg_ms  = $sr["avg_ms"];
+        $st_min_ms  = $sr["min_ms"];
+        $st_max_ms  = $sr["max_ms"];
+        $st_el_h    = int($st_elapsed / 3600);
+        $st_el_m    = int(($st_elapsed % 3600) / 60);
+        $st_el_s    = $st_elapsed % 60;
+        $st_rem_h   = int($st_rem / 3600);
+        $st_rem_m   = int(($st_rem % 3600) / 60);
+        if ($st_total > 0) {
+            $st_err_pct = int($st_errors * 100 / $st_total);
+        }
+        $st_prog = int($st_elapsed * 100 / 36000);
+        if ($st_prog > 100) { $st_prog = 100; }
+    }
+}
+
+$st_err_color  = $st_errors > 0 ? "#ef4444" : "#10b981";
+$st_prog_color = $st_errors > 0 ? "#f59e0b" : "#10b981";
+$st_status_dot = $st_ok ? "#10b981" : "#64748b";
+$st_status_txt = $st_ok ? "ÇALIŞIYOR" : "BEKLENİYOR";
+
+# ── Look log (son 80 satır) ────────────────────────────────────────────────
+$log_html       = "";
+$log_err_count  = 0;
+$log_warn_count = 0;
+
+if (file::exists("/var/log/look/look.log")) {
+    $llines    = string::split(file::read("/var/log/look/look.log"), "\n");
+    $total_ll  = count($llines);
+    $si        = $total_ll - 80;
+    if ($si < 0) { $si = 0; }
+    $i = $si;
+    while ($i < $total_ll) {
+        $ln = html::escape($llines[$i]);
+        if (string::contains($llines[$i], "[ERROR]")) {
+            $log_err_count = $log_err_count + 1;
+            $log_html = $log_html . "<span class='le'>" . $ln . "</span>\n";
+        } elseif (string::contains($llines[$i], "[WARN]")) {
+            $log_warn_count = $log_warn_count + 1;
+            $log_html = $log_html . "<span class='lw'>" . $ln . "</span>\n";
+        } else {
+            $log_html = $log_html . $ln . "\n";
+        }
+        $i = $i + 1;
+    }
+}
+$log_badge_color = $log_err_count > 0 ? "#ef4444" : ($log_warn_count > 0 ? "#f59e0b" : "#10b981");
+
+# ── stress runner log (son 20 satır) ─────────────────────────────────────
+$slog_html = "";
+if (file::exists("/var/log/look/stress-runner.log")) {
+    $sllines   = string::split(file::read("/var/log/look/stress-runner.log"), "\n");
+    $total_sl  = count($sllines);
+    $ssi       = $total_sl - 20;
+    if ($ssi < 0) { $ssi = 0; }
+    $j = $ssi;
+    while ($j < $total_sl) {
+        $sln = html::escape($sllines[$j]);
+        if (string::contains($sllines[$j], "HATA") || string::contains($sllines[$j], "BEKLENMEDIK")) {
+            $slog_html = $slog_html . "<span class='le'>" . $sln . "</span>\n";
+        } else {
+            $slog_html = $slog_html . $sln . "\n";
+        }
+        $j = $j + 1;
+    }
+}
+
+write(`<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="5">
+<title>LOOK Monitor — looktest.tobiyo.com.tr</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0b0f1a;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px}
+a{color:inherit;text-decoration:none}
+.hdr{background:#111827;border-bottom:1px solid #1e293b;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.logo{font-size:18px;font-weight:800;letter-spacing:3px;color:#6ee7b7}
+.hdr-meta{color:#475569;font-size:11px;text-align:right;line-height:1.8}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;animation:blink 1.4s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;padding:18px 24px}
+.card{background:#111827;border:1px solid #1e293b;border-radius:10px;padding:14px 16px}
+.card-lbl{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px}
+.card-val{font-size:26px;font-weight:700}
+.card-sub{font-size:11px;color:#64748b;margin-top:3px}
+.bar-bg{background:#0b0f1a;border-radius:4px;height:6px;margin-top:8px;overflow:hidden}
+.bar{height:6px;border-radius:4px;transition:width .4s}
+.sec{margin:0 24px 18px}
+.sec-title{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid #1e293b;padding-bottom:6px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.badge{padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700}
+.log-box{background:#080b12;border:1px solid #1e293b;border-radius:8px;padding:12px 14px;font-family:'Courier New',monospace;font-size:11px;line-height:1.7;max-height:280px;overflow-y:auto;white-space:pre-wrap;color:#64748b}
+.log-box .le{color:#f87171}
+.log-box .lw{color:#fbbf24}
+.ep-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}
+.ep-row{background:#080b12;border:1px solid #1e293b;border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ep-url{font-family:monospace;color:#7dd3fc;font-size:11px}
+.ep-badge{padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700}
+.progress-wrap{background:#0b0f1a;border-radius:6px;height:10px;overflow:hidden;margin-top:6px}
+.progress-bar{height:10px;border-radius:6px;transition:width .5s}
+.stat-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.stat-pill{background:#0b0f1a;border:1px solid #1e293b;border-radius:20px;padding:3px 10px;font-size:11px;color:#94a3b8}
+.footer{text-align:center;color:#1e293b;font-size:10px;padding:16px;border-top:1px solid #111827;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="logo">&#9670; LOOK MONITOR</div>
+  <div class="hdr-meta">
+    <span class="dot" style="background:`);
+write($st_status_dot);
+write(`"></span>`);
+write($st_status_txt);
+write(` &nbsp;|&nbsp; `);
+write($now);
+write(` &nbsp;|&nbsp; Yenileme: 5s<br>
+    looktest.tobiyo.com.tr &nbsp;|&nbsp; AlmaLinux 8 &nbsp;|&nbsp; LOOK v0.11.0
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-lbl">Toplam İstek</div>
+    <div class="card-val" style="color:#6ee7b7">`);
+write(string($st_total));
+write(`</div>
+    <div class="card-sub">Tüm endpoint'lere</div>
+    <div class="stat-row">
+      <span class="stat-pill">200: `);
+write(string($st_ok_200));
+write(`</span><span class="stat-pill">401: `);
+write(string($st_ok_401));
+write(`</span><span class="stat-pill">404: `);
+write(string($st_ok_404));
+write(`</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Ortalama RPS</div>
+    <div class="card-val" style="color:#38bdf8">`);
+write($st_rps);
+write(`</div>
+    <div class="card-sub">İstek / saniye</div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Yanıt Süresi</div>
+    <div class="card-val" style="color:#a78bfa">`);
+write(string($st_avg_ms));
+write(`<span style="font-size:14px;color:#64748b"> ms</span></div>
+    <div class="card-sub">ort &nbsp;|&nbsp; min: `);
+write(string($st_min_ms));
+write(` ms &nbsp;|&nbsp; max: `);
+write(string($st_max_ms));
+write(` ms</div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Hatalar</div>
+    <div class="card-val" style="color:`);
+write($st_err_color);
+write(`">`);
+write(string($st_errors));
+write(`</div>
+    <div class="card-sub">Hata oranı: %`);
+write(string($st_err_pct));
+write(`</div>
+    <div class="bar-bg"><div class="bar" style="width:`);
+write(string($st_err_pct));
+write(`%;background:`);
+write($st_err_color);
+write(`"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Test Süresi</div>
+    <div class="card-val" style="color:#fbbf24">`);
+write(string($st_el_h));
+write(`<span style="font-size:14px">s</span> `);
+write(string($st_el_m));
+write(`<span style="font-size:14px">d</span></div>
+    <div class="card-sub">Kalan: `);
+write(string($st_rem_h));
+write(`s `);
+write(string($st_rem_m));
+write(`d / 10 saat</div>
+    <div class="progress-wrap"><div class="progress-bar" style="width:`);
+write(string($st_prog));
+write(`%;background:`);
+write($st_prog_color);
+write(`"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Sunucu Uptime</div>
+    <div class="card-val" style="color:#34d399">`);
+write(string($up_days));
+write(`<span style="font-size:14px">g</span> `);
+write(string($up_hours));
+write(`<span style="font-size:14px">s</span></div>
+    <div class="card-sub">`);
+write(string($up_mins));
+write(` dk &nbsp;|&nbsp; toplam `);
+write(string($up_total));
+write(` sn</div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">RAM Kullanımı</div>
+    <div class="card-val" style="color:`);
+write($mem_bar_color);
+write(`">%`);
+write(string($mem_pct));
+write(`</div>
+    <div class="card-sub">`);
+write(string($mem_used));
+write(` / `);
+write(string($mem_total));
+write(` MB &nbsp; Boş: `);
+write(string($mem_avail));
+write(` MB</div>
+    <div class="bar-bg"><div class="bar" style="width:`);
+write(string($mem_pct));
+write(`%;background:`);
+write($mem_bar_color);
+write(`"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Look Log Hataları</div>
+    <div class="card-val" style="color:`);
+write($log_badge_color);
+write(`">`);
+write(string($log_err_count));
+write(`</div>
+    <div class="card-sub">WARN: `);
+write(string($log_warn_count));
+write(`</div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-title">
+    <span>Test Endpoint'leri (8 URL)</span>
+    <span style="color:#475569">Son güncelleme: `);
+write($st_updated);
+write(`</span>
+  </div>
+  <div class="ep-grid">
+    <div class="ep-row"><span class="ep-url">GET /</span><span class="ep-badge" style="background:#064e3b;color:#10b981">200 OK</span></div>
+    <div class="ep-row"><span class="ep-url">GET /menu/bistro-city-42</span><span class="ep-badge" style="background:#064e3b;color:#10b981">200 OK</span></div>
+    <div class="ep-row"><span class="ep-url">GET /menu/bistro-city-42/tatlilar</span><span class="ep-badge" style="background:#064e3b;color:#10b981">200 OK</span></div>
+    <div class="ep-row"><span class="ep-url">GET /ara?q=burger</span><span class="ep-badge" style="background:#064e3b;color:#10b981">200 OK</span></div>
+    <div class="ep-row"><span class="ep-url">GET /kampanyalar/bistro-city-42</span><span class="ep-badge" style="background:#064e3b;color:#10b981">200 OK</span></div>
+    <div class="ep-row"><span class="ep-url">GET /admin/firmalar</span><span class="ep-badge" style="background:#1e3a5f;color:#38bdf8">401 Auth</span></div>
+    <div class="ep-row"><span class="ep-url">GET /admin/istatistik</span><span class="ep-badge" style="background:#1e3a5f;color:#38bdf8">401 Auth</span></div>
+    <div class="ep-row"><span class="ep-url">GET /admin/urunler</span><span class="ep-badge" style="background:#1e3a5f;color:#38bdf8">401 Auth</span></div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-title">
+    <span>LOOK Log (son 80 satır)</span>
+    <span class="badge" style="background:`);
+write($log_badge_color);
+write(`22;color:`);
+write($log_badge_color);
+write(`">ERR: `);
+write(string($log_err_count));
+write(` &nbsp; WARN: `);
+write(string($log_warn_count));
+write(`</span>
+  </div>
+  <div class="log-box">`);
+write($log_html);
+write(`</div>
+</div>
+`);
+
+if ($slog_html != "") {
+    write(`<div class="sec">
+  <div class="sec-title"><span>Stress Runner Log</span></div>
+  <div class="log-box">`);
+    write($slog_html);
+    write(`</div>
+</div>
+`);
+}
+
+write(`<div class="footer">
+  LOOK Monitor &nbsp;&#8226;&nbsp; v0.11.0 &nbsp;&#8226;&nbsp; looktest.tobiyo.com.tr &nbsp;&#8226;&nbsp; Sayfa 5 saniyede bir otomatik yenilenir
+</div>
+</body></html>
+`);

@@ -21,7 +21,7 @@ route("404", function() {
 });
 ```
 
-Dosyayı XAMPP `htdocs/` klasörüne at, look-fcgi başlat — bitti.
+Dosyayı XAMPP `htdocs/` klasörüne at, `install.bat` çalıştır — bitti.
 
 ---
  
@@ -50,6 +50,8 @@ Dosyayı XAMPP `htdocs/` klasörüne at, look-fcgi başlat — bitti.
 | mail:: — Mailgun / SendGrid / Postmark | ✅ |
 | look test runner + look repl + look install | ✅ |
 | jobs::recover() — crash recovery | ✅ |
+| crypto:: — SHA-256, HMAC-SHA256, base64url, UUID, random — sıfır bağımlılık | ✅ |
+| Modül sistemi — `use "pkg/jwt/jwt.lk"` · `modules/` dizini | ✅ |
 
 ---
 
@@ -65,10 +67,11 @@ use string;    # upper, lower, trim, split, replace, slugify...
 use array;     # sort, filter, map, reduce, find, any, all...
 use type;      # of, is_int, is_string, to_int, to_float...
 use auth;      # hash(), verify() — PBKDF2-SHA256
+use crypto;    # sha256, hmac_sha256, base64url, uuid, random_bytes — JWT ve ödeme için
 use validator; # required, email, min, max, in
 use html;      # escape, strip
 use template;  # render($path, $data) — layout, partial, {#if}, {#each}
-use http;      # GET/POST/PUT/DELETE — HTTP client, TLS
+use http;      # GET/POST/PUT/DELETE — outbound HTTP client, TLS
 use cache;     # set/get/has/delete — in-memory TTL, warm start global
 use queue;     # push/pop/peek — named FIFO, cross-request
 use jobs;      # push/next/done/fail/worker/run — SQLite kalıcı job queue
@@ -136,6 +139,55 @@ if (!$r["ok"]) { log::error($r["message"]); }
 
 ---
 
+## crypto:: — Kriptografi
+
+```lk
+use crypto;
+
+# SHA-256
+$hash = crypto::sha256("veri");                        # → hex string
+
+# HMAC-SHA256 (webhook imzası, ödeme doğrulama)
+$sig = crypto::hmac_sha256($payload, $api_secret);    # → hex string
+
+# Base64 URL-safe (JWT için)
+$enc = crypto::base64url_encode("look dili");
+$dec = crypto::base64url_decode($enc);
+
+# UUID v4
+$id = crypto::uuid();                                  # → "c60f195d-af1e-49de-..."
+
+# Güvenli rastgele token
+$token = crypto::random_string(32);                   # → URL-safe base64, 32 bayt entropi
+
+# Timing-safe karşılaştırma (timing attack koruması)
+$ok = crypto::constant_compare($given_sig, $expected_sig);
+```
+
+## jwt — Resmi JWT Modülü
+
+```lk
+use "pkg/jwt/jwt.lk";
+
+# Token üret (1 saat geçerli)
+$token = jwt_sign(
+    ["user_id" => 42, "rol" => "admin"],
+    "gizli-anahtar",
+    ["exp" => 3600]
+);
+
+# Doğrula — null döner: geçersiz imza veya süresi dolmuş
+$payload = jwt_verify($token, "gizli-anahtar");
+if ($payload == null) {
+    response::status(401);
+    print(json::encode(["error" => "Yetkisiz"]));
+    return;
+}
+print("Kullanıcı: " . $payload["user_id"]);
+```
+
+---
+
 ## jobs:: — Arka Plan İşleri
 
 ```lk
@@ -170,7 +222,7 @@ jobs::run(5000);   # 5 saniyede bir — blocking
 ```powershell
 cd cpp\build
 cmake --build . --config Release
-# Çıktı: cpp\build\Release\look-fcgi.exe, look-cgi.exe, look.exe
+# Çıktı: cpp\build\Release\lk.exe, lk-cgi.exe, lk-fcgi.exe
 ```
 
 ### Linux (Docker)
@@ -207,10 +259,10 @@ docker run --rm -v "${PWD}:/src" look-almalinux8-builder \
 
 | Platform | Rehber |
 |----------|--------|
-| Windows + XAMPP | `xampp/setup.md` |
+| Windows + XAMPP | `platforms/windows/xampp/` |
 | Ubuntu / AlmaLinux | `docs/ubuntu-deployment.md` |
 | Plesk + Apache | `docs/plesk-apache-deployment.md` |
-| Linux genel + Plesk hızlı başvuru | `LINUX_PLESK_SETUP.md` |
+| Plesk Extension | `docs/plesk-extension-kurulum.md` |
 
 ---
 

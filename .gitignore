@@ -12,6 +12,12 @@ cpp/build.bat
 .env
 .env.local
 .env.production
+.env.*
+tools/deploy/env.production
+tools/deploy/.env*
+*.json.key
+*firebase-adminsdk*.json
+*-firebase-adminsdk-*.json
 .look_history
 .claude/
 
@@ -72,3 +78,7 @@ run_pg_test.bat
 
 # macOS
 .DS_Store
+
+# IDE build dizinleri
+build/
+build-almalinux8/
