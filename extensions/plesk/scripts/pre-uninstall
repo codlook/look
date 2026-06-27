@@ -1,4 +1,0 @@
-#!/bin/bash
-# Plesk tarafindan kaldirma oncesi calistirilir (root olarak)
-HTDOCS="/usr/local/psa/admin/htdocs/modules/look-lang"
-bash "$HTDOCS/scripts/uninstall.sh"
