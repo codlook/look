@@ -8,17 +8,15 @@ Web için alternatif olarak tasarlanmıştır — routing dile gömülü, framew
 ## Hızlı Başlangıç
 
 ```lk
-$conn = db::connect("mysql://root:@127.0.0.1/mydb");
-
+$conn = db::connect("mysql://root:@127.0.0.1/mydb")
 route("GET", "/", function() use ($conn) {
-    $rows = db::query($conn, "SELECT * FROM urunler", []);
-    print(json::encode(["ok" => true, "data" => $rows]));
-});
-
+    $rows = db::query($conn, "SELECT * FROM urunler", [])
+    print(json::encode(["ok" => true, "data" => $rows]))
+})
 route("404", function() {
-    response::status(404);
-    print(json::encode(["ok" => false, "hata" => "Bulunamadi"]));
-});
+    response::status(404)
+    print(json::encode(["ok" => false, "hata" => "Bulunamadi"]))
+})
 ```
 
 Dosyayı XAMPP `htdocs/` klasörüne at, `install.bat` çalıştır — bitti.
@@ -62,20 +60,20 @@ Dosyayı XAMPP `htdocs/` klasörüne at, `install.bat` çalıştır — bitti.
 route() · request:: · response:: · db:: · json:: · session:: · cookie:: · log:: · file:: · date::
 
 # Standard
-use math;      # sqrt, pow, random, sin, cos...
-use string;    # upper, lower, trim, split, replace, slugify...
-use array;     # sort, filter, map, reduce, find, any, all...
-use type;      # of, is_int, is_string, to_int, to_float...
-use auth;      # hash(), verify() — PBKDF2-SHA256
-use crypto;    # sha256, hmac_sha256, base64url, uuid, random_bytes — JWT ve ödeme için
-use validator; # required, email, min, max, in
-use html;      # escape, strip
-use template;  # render($path, $data) — layout, partial, {#if}, {#each}
-use http;      # GET/POST/PUT/DELETE — outbound HTTP client, TLS
-use cache;     # set/get/has/delete — in-memory TTL, warm start global
-use queue;     # push/pop/peek — named FIFO, cross-request
-use jobs;      # push/next/done/fail/worker/run — SQLite kalıcı job queue
-use mail;      # send/send_html — Mailgun, SendGrid, Postmark
+use math  # sqrt, pow, random, sin, cos...
+use string  # upper, lower, trim, split, replace, slugify...
+use array  # sort, filter, map, reduce, find, any, all...
+use type  # of, is_int, is_string, to_int, to_float...
+use auth  # hash(), verify() — PBKDF2-SHA256
+use crypto  # sha256, hmac_sha256, base64url, uuid, random_bytes — JWT ve ödeme için
+use validator  # required, email, min, max, in
+use html  # escape, strip
+use template  # render($path, $data) — layout, partial, {#if}, {#each}
+use http  # GET/POST/PUT/DELETE — outbound HTTP client, TLS
+use cache  # set/get/has/delete — in-memory TTL, warm start global
+use queue  # push/pop/peek — named FIFO, cross-request
+use jobs  # push/next/done/fail/worker/run — SQLite kalıcı job queue
+use mail  # send/send_html — Mailgun, SendGrid, Postmark
 ```
 
 ---
@@ -84,21 +82,19 @@ use mail;      # send/send_html — Mailgun, SendGrid, Postmark
 
 ```lk
 # Fan-out: 3 paralel DB sorgusu
-$result = channel(3);
-
+$result = channel(3)
 parallel(function() use ($result, $conn) {
-    send($result, db::col($conn, "SELECT count(*) FROM urunler", []));
-});
+    send($result, db::col($conn, "SELECT count(*) FROM urunler", []))
+})
 parallel(function() use ($result, $conn) {
-    send($result, db::col($conn, "SELECT count(*) FROM kategoriler", []));
-});
+    send($result, db::col($conn, "SELECT count(*) FROM kategoriler", []))
+})
 parallel(function() use ($result, $conn) {
-    send($result, db::col($conn, "SELECT count(*) FROM firmalar", []));
-});
-
-$u = receive($result);
-$k = receive($result);
-$f = receive($result);
+    send($result, db::col($conn, "SELECT count(*) FROM firmalar", []))
+})
+$u = receive($result)
+$k = receive($result)
+$f = receive($result)
 ```
 
 ---
@@ -107,22 +103,20 @@ $f = receive($result);
 
 ```lk
 # Sadece --mode http'de çalışır
-$hub = channel();
-
+$hub = channel()
 route("WS", "/chat", function($ws) use ($hub) {
     parallel(function() use ($ws, $hub) {
         while (true) {
-            $msg = receive($hub);
-            if ($msg == null) { break; }
-            ws::send($ws, $msg);
+            $msg = receive($hub)
+            if ($msg == null) { break }
+            ws::send($ws, $msg)
         }
-    });
-
+    })
     ws::on($ws, "message", function($data) use ($hub) {
-        send($hub, $data);
-        ws::broadcast($data);
-    });
-});
+        send($hub, $data)
+        ws::broadcast($data)
+    })
+})
 ```
 
 ---
@@ -130,11 +124,10 @@ route("WS", "/chat", function($ws) use ($hub) {
 ## mail:: — E-posta
 
 ```lk
-use mail;
-
+use mail
 # .env: MAIL_PROVIDER=mailgun, MAIL_API_KEY=..., MAIL_FROM=...
-$r = mail::send("user@example.com", "Hoşgeldiniz!", "Kaydınız tamamlandı.");
-if (!$r["ok"]) { log::error($r["message"]); }
+$r = mail::send("user@example.com", "Hoşgeldiniz!", "Kaydınız tamamlandı.")
+if (!$r["ok"]) { log::error($r["message"]) }
 ```
 
 ---
@@ -142,48 +135,44 @@ if (!$r["ok"]) { log::error($r["message"]); }
 ## crypto:: — Kriptografi
 
 ```lk
-use crypto;
-
+use crypto
 # SHA-256
-$hash = crypto::sha256("veri");                        # → hex string
+$hash = crypto::sha256("veri")  # → hex string
 
 # HMAC-SHA256 (webhook imzası, ödeme doğrulama)
-$sig = crypto::hmac_sha256($payload, $api_secret);    # → hex string
+$sig = crypto::hmac_sha256($payload, $api_secret)  # → hex string
 
 # Base64 URL-safe (JWT için)
-$enc = crypto::base64url_encode("look dili");
-$dec = crypto::base64url_decode($enc);
-
+$enc = crypto::base64url_encode("look dili")
+$dec = crypto::base64url_decode($enc)
 # UUID v4
-$id = crypto::uuid();                                  # → "c60f195d-af1e-49de-..."
+$id = crypto::uuid()  # → "c60f195d-af1e-49de-..."
 
 # Güvenli rastgele token
-$token = crypto::random_string(32);                   # → URL-safe base64, 32 bayt entropi
+$token = crypto::random_string(32)  # → URL-safe base64, 32 bayt entropi
 
 # Timing-safe karşılaştırma (timing attack koruması)
-$ok = crypto::constant_compare($given_sig, $expected_sig);
+$ok = crypto::constant_compare($given_sig, $expected_sig)
 ```
 
 ## jwt — Resmi JWT Modülü
 
 ```lk
-use "pkg/jwt/jwt.lk";
-
+use "pkg/jwt/jwt.lk"
 # Token üret (1 saat geçerli)
 $token = jwt_sign(
     ["user_id" => 42, "rol" => "admin"],
     "gizli-anahtar",
     ["exp" => 3600]
-);
-
+)
 # Doğrula — null döner: geçersiz imza veya süresi dolmuş
-$payload = jwt_verify($token, "gizli-anahtar");
+$payload = jwt_verify($token, "gizli-anahtar")
 if ($payload == null) {
-    response::status(401);
-    print(json::encode(["error" => "Yetkisiz"]));
-    return;
+    response::status(401)
+    print(json::encode(["error" => "Yetkisiz"]))
+    return
 }
-print("Kullanıcı: " . $payload["user_id"]);
+print("Kullanıcı: " . $payload["user_id"])
 ```
 
 ---
@@ -191,26 +180,23 @@ print("Kullanıcı: " . $payload["user_id"]);
 ## jobs:: — Arka Plan İşleri
 
 ```lk
-use jobs;
-
+use jobs
 # Route: isteği hemen yanıtla, işi kuyruğa at
 route("POST", "/kayit", function() use ($conn) {
     # ... kullanıcı kaydet ...
-    jobs::push("email", ["to" => request::post("email")], 3, 0);
-    print(json::encode(["ok" => true]));
-});
-
+    jobs::push("email", ["to" => request::post("email")], 3, 0)
+    print(json::encode(["ok" => true]))
+})
 # worker.lk: ayrı process (systemd servis)
-use jobs;
-use mail;
-
-jobs::recover("email");   # crash recovery — startup'ta
+use jobs
+use mail
+jobs::recover("email")  # crash recovery — startup'ta
 
 jobs::worker("email", function($job) {
-    $r = mail::send($job["payload"]["to"], "Hoşgeldiniz!", "Kaydınız tamamlandı.");
-    return $r["ok"];   # false → retry (max 3)
-});
-jobs::run(5000);   # 5 saniyede bir — blocking
+    $r = mail::send($job["payload"]["to"], "Hoşgeldiniz!", "Kaydınız tamamlandı.")
+    return $r["ok"]  # false → retry (max 3)
+})
+jobs::run(5000)  # 5 saniyede bir — blocking
 ```
 
 ---
