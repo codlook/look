@@ -59,9 +59,27 @@ static bool is_ssrf_blocked(const struct addrinfo* res) {
             bool is_lo = true;
             for (int i = 0; i < 15; ++i) if (b[i] != 0) { is_lo = false; break; }
             if (is_lo && b[15] == 1) return true;
+            // ::/128 unspecified
+            bool all_zero = is_lo && b[15] == 0;
+            if (all_zero) return true;
             // fc00::/7 unique-local, fe80::/10 link-local
             if ((b[0] & 0xFE) == 0xFC) return true;
             if ((b[0] == 0xFE) && ((b[1] & 0xC0) == 0x80)) return true;
+            // ::ffff:0:0/96 — IPv4-mapped: SSRF bypass vektörü
+            // b[0..9]=0, b[10]=0xFF, b[11]=0xFF, b[12..15]=IPv4
+            bool is_v4mapped = true;
+            for (int i = 0; i < 10; ++i) if (b[i] != 0) { is_v4mapped = false; break; }
+            if (is_v4mapped && b[10] == 0xFF && b[11] == 0xFF) {
+                uint32_t ip = ((uint32_t)b[12] << 24) | ((uint32_t)b[13] << 16) |
+                              ((uint32_t)b[14] << 8)  | b[15];
+                if ((ip >> 24) == 127) return true;
+                if ((ip >> 24) == 10)  return true;
+                if ((ip >> 20) == (172 * 16 + 1)) return true;
+                if ((ip >> 16) == (192 * 256 + 168)) return true;
+                if ((ip >> 16) == (169 * 256 + 254)) return true;
+                if ((ip >> 22) == (100 * 4 + 1))     return true;
+                if ((ip >> 24) == 0) return true;
+            }
         }
     }
     return false;

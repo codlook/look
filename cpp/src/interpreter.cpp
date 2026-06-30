@@ -285,6 +285,10 @@ static void ensure_env_loaded() {
 
     auto log_dir_it = g_env_vars.find("LOG_DIR");
     std::string log_dir = (log_dir_it != g_env_vars.end()) ? log_dir_it->second : "logs";
+    // Path traversal koruması: ../ ve mutlak path reddedilir
+    if (log_dir.find("..") != std::string::npos ||
+        (!log_dir.empty() && (log_dir[0] == '/' || log_dir[0] == '\\')))
+        log_dir = "logs";
 
     bool verbose    = (app_env == "development") || debug;
     LogLevel level  = (app_env == "development" || debug) ? LogLevel::LOG_DEBUG : LogLevel::LOG_INFO;
@@ -1343,7 +1347,8 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             size_t cap = 128;
             if (argc >= 1) {
                 int n = evaluate_expression(*e->arguments[0]).to_int();
-                cap = (n <= 0) ? (size_t)-1 : (size_t)n;
+                if (n < 0) throw std::runtime_error("channel: kapasite negatif olamaz");
+                cap = (n == 0) ? (size_t)-1 : (size_t)n;
             }
             return Value(std::make_shared<LookChannel>(cap));
         }

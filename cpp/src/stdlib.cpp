@@ -199,7 +199,12 @@ static Module make_string() {
         check_args("string::repeat", args.size(), 2);
         std::string s = args[0].to_string();
         int n = args[1].to_int();
+        if (n < 0) throw std::runtime_error("string::repeat: tekrar sayısı negatif olamaz");
+        static constexpr int64_t MAX_REPEAT = 10 * 1024 * 1024; // 10 MB
+        if ((int64_t)n * (int64_t)s.size() > MAX_REPEAT)
+            throw std::runtime_error("string::repeat: sonuç 10 MB limitini aşıyor");
         std::string result;
+        result.reserve((size_t)n * s.size());
         for (int i = 0; i < n; i++) result += s;
         return Value(result);
     };
@@ -360,14 +365,16 @@ static Module make_string() {
     // ReDoS koruma yardımcısı: thread::detach + condition_variable (250ms timeout)
     // std::async kullanılmaz — destructor bloklayarak timeout'u etkisiz kılar.
     static std::atomic<int> g_regex_threads{0};
+    static constexpr int REGEX_MAX_THREADS = 8;
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
-        if (g_regex_threads.load() >= 32)
-            throw std::runtime_error("string::regex: eşzamanlı regex limiti aşıldı (max 32)");
+        if (g_regex_threads.load() >= REGEX_MAX_THREADS)
+            throw std::runtime_error("string::regex: eşzamanlı regex limiti aşıldı (max 8)");
         using T = decltype(fn());
         struct State {
             std::mutex              mtx;
             std::condition_variable cv;
-            bool                    done = false;
+            bool                    done       = false;
+            bool                    timed_out  = false; // kim sayacı azaltacak
             std::optional<T>        result;
             std::exception_ptr      ex;
         };
@@ -383,14 +390,23 @@ static Module make_string() {
                 std::lock_guard<std::mutex> lk(state->mtx);
                 state->ex = std::current_exception();
             }
-            g_regex_threads--;
-            state->done = true;
+            bool i_should_decrement;
+            {
+                std::lock_guard<std::mutex> lk(state->mtx);
+                i_should_decrement = !state->timed_out;
+                state->done = true;
+            }
+            if (i_should_decrement) g_regex_threads--;
             state->cv.notify_one();
         }).detach();
 
         std::unique_lock<std::mutex> lk(state->mtx);
-        if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; }))
+        if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; })) {
+            // Timeout: sayacı biz azaltıyoruz, thread tamamlandığında azaltmayacak
+            state->timed_out = true;
+            g_regex_threads--;
             throw std::runtime_error("string::regex: execution timeout (ReDoS koruması — pattern çok karmaşık)");
+        }
         if (state->ex) std::rethrow_exception(state->ex);
         return std::move(*state->result);
     };

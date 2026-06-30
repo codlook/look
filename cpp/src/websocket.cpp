@@ -151,6 +151,9 @@ WsFrame ws_try_decode_frame(const std::string& buf) {
         plen = 0;
         for (int i = 0; i < 8; i++) plen = (plen << 8) | (uint8_t)buf[2+i];
         pos = 10;
+        // RFC 6455 §5.2: sunucu 16 MB'ı aşan frame'leri reddeder
+        static constexpr size_t WS_MAX_FRAME = 16 * 1024 * 1024;
+        if (plen > WS_MAX_FRAME) { f.complete = false; f.consumed = 0; return f; }
     }
 
     if (masked) {

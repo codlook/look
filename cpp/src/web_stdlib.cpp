@@ -19,6 +19,9 @@
 #include <condition_variable>
 #include <thread>
 #include <atomic>
+#ifndef _WIN32
+#  include <sys/stat.h>
+#endif
 
 namespace look {
 
@@ -98,6 +101,7 @@ static std::string json_decode_str(const std::string& s, size_t& i) {
     while (i < s.size() && s[i] != '"') {
         if (s[i] == '\\') {
             i++;
+            if (i >= s.size()) break;
             switch (s[i]) {
                 case '"':  result += '"';  break;
                 case '\\': result += '\\'; break;
@@ -583,8 +587,13 @@ static Module make_cookie_module(WebContext* ctx) {
         if (expires > 0) {
             time_t exp = std::time(nullptr) + expires;
             char buf[64];
-            struct tm* tm_info = gmtime(&exp);
-            strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
+            struct tm tm_buf{};
+#ifdef _WIN32
+            gmtime_s(&tm_buf, &exp);
+#else
+            gmtime_r(&exp, &tm_buf);
+#endif
+            strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_buf);
             cookie += "; Expires=" + std::string(buf);
         }
         // Multiple Set-Cookie headers â€” append with unique key
@@ -660,6 +669,10 @@ static Module make_session_module(WebContext* ctx) {
         auto sf = session_file();
         if (sf.empty()) return Value();
         std::ofstream f(sf, std::ios::app);
+#ifndef _WIN32
+        // 0600 izni: paylaşımlı sistemlerde diğer kullanıcılar okuyamaz
+        chmod(sf.c_str(), 0600);
+#endif
         f << args[0].to_string() << "=" << args[1].to_string() << "\n";
         return Value();
     };
