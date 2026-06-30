@@ -8,6 +8,13 @@
 #include <cstdint>
 #include <iomanip>
 #include <filesystem>
+#ifdef _WIN32
+#  include <bcrypt.h>
+#  pragma comment(lib, "bcrypt.lib")
+#else
+#  include <fcntl.h>
+#  include <unistd.h>
+#endif
 
 namespace look_internal {
 
@@ -99,11 +106,18 @@ static std::string detect_mime(const std::string& data) {
 
 // ── Random hex filename ───────────────────────────────────────────────────────
 
+// CSPRNG tabanlı geçici dosya adı (rand() kaldırıldı — tahmin edilebilir rastgelelik düzeltmesi)
 static std::string random_hex(int bytes = 16) {
+    std::vector<unsigned char> buf(bytes);
+#ifdef _WIN32
+    BCryptGenRandom(nullptr, buf.data(), (ULONG)bytes, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+#else
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) { read(fd, buf.data(), bytes); close(fd); }
+#endif
     std::ostringstream oss;
-    for (int i = 0; i < bytes; ++i) {
-        oss << std::hex << std::setfill('0') << std::setw(2) << (rand() % 256);
-    }
+    for (int i = 0; i < bytes; ++i)
+        oss << std::hex << std::setfill('0') << std::setw(2) << (int)buf[i];
     return oss.str();
 }
 

@@ -114,45 +114,49 @@ static std::string json_decode_str(const std::string& s, size_t& i) {
     return result;
 }
 
-static Value json_decode_value(const std::string& s, size_t& i) {
+static constexpr int JSON_MAX_DEPTH = 64;
+
+static Value json_decode_value(const std::string& s, size_t& i, int depth = 0) {
+    if (depth > JSON_MAX_DEPTH)
+        throw std::runtime_error("JSON ayrıştırma hatası: iç içe yapı çok derin (max " + std::to_string(JSON_MAX_DEPTH) + ")");
     json_skip_ws(s, i);
     if (i >= s.size()) return Value();
 
-    if (s[i] == '"') {
+    if (s[i] == ‘"’) {
         return Value(json_decode_str(s, i));
     }
-    // JSON object { } â†’ assoc array
-    if (s[i] == '{') {
+    // JSON object { } → assoc array
+    if (s[i] == ‘{‘) {
         i++;
         auto arr = std::make_shared<std::vector<Value>>();
         arr->push_back(Value(std::string("__assoc__")));
         json_skip_ws(s, i);
-        while (i < s.size() && s[i] != '}') {
+        while (i < s.size() && s[i] != ‘}’) {
             // key
             std::string key = json_decode_str(s, i);
             json_skip_ws(s, i);
-            if (i < s.size() && s[i] == ':') i++;
+            if (i < s.size() && s[i] == ‘:’) i++;
             json_skip_ws(s, i);
             // value
-            Value val = json_decode_value(s, i);
+            Value val = json_decode_value(s, i, depth + 1);
             arr->push_back(Value(key));
             arr->push_back(val);
             json_skip_ws(s, i);
-            if (i < s.size() && s[i] == ',') i++;
+            if (i < s.size() && s[i] == ‘,’) i++;
             json_skip_ws(s, i);
         }
         if (i < s.size()) i++; // skip }
         return Value(arr);
     }
 
-    if (s[i] == '[') {
+    if (s[i] == ‘[‘) {
         i++;
         auto arr = std::make_shared<std::vector<Value>>();
         json_skip_ws(s, i);
-        while (i < s.size() && s[i] != ']') {
-            arr->push_back(json_decode_value(s, i));
+        while (i < s.size() && s[i] != ‘]’) {
+            arr->push_back(json_decode_value(s, i, depth + 1));
             json_skip_ws(s, i);
-            if (i < s.size() && s[i] == ',') i++;
+            if (i < s.size() && s[i] == ‘,’) i++;
             json_skip_ws(s, i);
         }
         if (i < s.size()) i++; // skip ]
@@ -436,12 +440,21 @@ static Module make_session_module(WebContext* ctx) {
     Module m;
     m.name = "session";
 
-    // File-based sessions â€” stored in system temp dir
-    auto session_file = [ctx]() -> std::string {
-        auto it = ctx->cookies_in.find("LOOK_SESSION");
-        if (it == ctx->cookies_in.end()) return "";
-        return std::string(std::getenv("TEMP") ? std::getenv("TEMP") : "/tmp") +
-               "/look_sess_" + it->second;
+    // File-based sessions — stored in system temp dir
+    // Cookie değeri sadece hex karakterleri içermelidir (path traversal önlemi)
+    auto session_id_valid = [](const std::string& sid) -> bool {
+        if (sid.empty() || sid.size() > 64) return false;
+        for (char c : sid)
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+                return false;
+        return true;
+    };
+    auto session_file = [ctx, session_id_valid]() -> std::string {
+        auto it = ctx->cookies_in.find(“LOOK_SESSION”);
+        if (it == ctx->cookies_in.end()) return “”;
+        if (!session_id_valid(it->second)) return “”;  // path traversal engeli
+        return std::string(std::getenv(“TEMP”) ? std::getenv(“TEMP”) : “/tmp”) +
+               “/look_sess_” + it->second;
     };
 
     m.functions["start"] = [ctx, session_file](auto) -> Value {

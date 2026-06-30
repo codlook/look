@@ -429,7 +429,19 @@ std::string TemplateEngine::resolve_path(const std::string& path) {
     if (p.is_absolute() && fs::exists(p)) return p.string();
 
     // Try relative to working directory
-    fs::path full = fs::current_path() / p;
+    fs::path base = fs::current_path();
+    fs::path full = base / p;
+
+    // Path traversal koruması: normalize edilmiş yolun proje dizini içinde kalması zorunlu
+    fs::path canonical_full = fs::weakly_canonical(full);
+    fs::path canonical_base = fs::weakly_canonical(base);
+    std::string base_str = canonical_base.string();
+    std::string full_str = canonical_full.string();
+    if (full_str.size() < base_str.size() ||
+        full_str.compare(0, base_str.size(), base_str) != 0) {
+        throw std::runtime_error("Template güvenlik hatası: proje dizini dışına çıkış engellendi: " + path);
+    }
+
     if (fs::exists(full)) return full.string();
 
     // Try TEMPLATE_DIR env variable

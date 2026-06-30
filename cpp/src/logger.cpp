@@ -111,7 +111,13 @@ void Logger::log(LogLevel level, const std::string& category, const std::string&
     auto& s = state();
     if (level < s.min_level) return;
 
-    std::string line = "[" + timestamp_str() + "] [" + level_str(level) + "] [" + category + "] " + message;
+    // Log injection koruması: \r \n ve kontrol karakterleri kaldır
+    std::string safe_msg;
+    safe_msg.reserve(message.size());
+    for (unsigned char c : message)
+        if (c >= 0x20 || c == '\t') safe_msg += c;  // tab dışındaki kontrol karakterlerini at
+        else safe_msg += ' ';
+    std::string line = "[" + timestamp_str() + "] [" + level_str(level) + "] [" + category + "] " + safe_msg;
 
     std::lock_guard<std::mutex> lock(s.mtx);
 

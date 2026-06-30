@@ -1,0 +1,558 @@
+{
+  "Route GET": {
+    "prefix": "route-get",
+    "body": [
+      "route(\"GET\", \"/${1:path}\", function() use (${2:\\$conn}) {",
+      "\t${0}",
+      "})"
+    ],
+    "description": "GET route handler"
+  },
+
+  "Route POST": {
+    "prefix": "route-post",
+    "body": [
+      "route(\"POST\", \"/${1:path}\", function() use (${2:\\$conn}) {",
+      "\t${0}",
+      "})"
+    ],
+    "description": "POST route handler"
+  },
+
+  "Route with param": {
+    "prefix": "route-param",
+    "body": [
+      "route(\"GET\", \"/${1:path}/{${2:id}}\", function(${3:\\$id}) use (${4:\\$conn}) {",
+      "\t${0}",
+      "})"
+    ],
+    "description": "Route with URL parameter"
+  },
+
+  "Route 404": {
+    "prefix": "route-404",
+    "body": [
+      "route(\"404\", function() {",
+      "\tresponse::status(404)",
+      "\tprint(json::encode([\"ok\" => false, \"hata\" => \"Sayfa bulunamadı\"]))",
+      "})"
+    ],
+    "description": "404 handler"
+  },
+
+  "Route WebSocket": {
+    "prefix": "route-ws",
+    "body": [
+      "\\$hub = channel()",
+      "",
+      "route(\"WS\", \"/${1:ws}\", function(\\$ws) use (\\$hub) {",
+      "\tparallel(function() use (\\$ws, \\$hub) {",
+      "\t\twhile (true) {",
+      "\t\t\t\\$msg = receive(\\$hub)",
+      "\t\t\tif (\\$msg == null) { break }",
+      "\t\t\tws::send(\\$ws, \\$msg)",
+      "\t\t}",
+      "\t})",
+      "",
+      "\tws::on(\\$ws, \"message\", function(\\$data) use (\\$hub) {",
+      "\t\tsend(\\$hub, \\$data)",
+      "\t\tws::broadcast(\\$data)",
+      "\t})",
+      "",
+      "\tws::on(\\$ws, \"close\", function() {",
+      "\t\t${0}",
+      "\t})",
+      "})"
+    ],
+    "description": "WebSocket route with hub channel"
+  },
+
+  "Route SSE": {
+    "prefix": "route-sse",
+    "body": [
+      "route(\"SSE\", \"/${1:events}\", function(\\$sse) {",
+      "\t\\$tick = timer::every(${2:1000}, function() use (\\$sse, \\$tick) {",
+      "\t\t\\$ok = sse::send(\\$sse, json::encode([\"t\" => date::now()]), \"${3:tick}\")",
+      "\t\tif (!\\$ok) { timer::cancel(\\$tick) }",
+      "\t})",
+      "",
+      "\tsse::on(\\$sse, \"close\", function() use (\\$tick) {",
+      "\t\ttimer::cancel(\\$tick)",
+      "\t\t${0}",
+      "\t})",
+      "})"
+    ],
+    "description": "SSE route with timer"
+  },
+
+  "DB Connect": {
+    "prefix": "db-connect",
+    "body": [
+      "\\$dsn = \"mysql://\" . env(\"DB_USER\", \"root\") . \":\" . env(\"DB_PASS\", \"\")",
+      "      . \"@\" . env(\"DB_HOST\", \"127.0.0.1\") . \"/\" . env(\"DB_NAME\", \"${1:mydb}\")",
+      "\\$conn = null",
+      "\\$db_try = 0",
+      "while (\\$conn == null && \\$db_try < 3) {",
+      "\ttry {",
+      "\t\t\\$conn = db::connect(\\$dsn)",
+      "\t} catch (\\$e) {",
+      "\t\t\\$db_try = \\$db_try + 1",
+      "\t\tlog::warn(\"DB bağlantı denemesi \" . \\$db_try . \"/3: \" . \\$e)",
+      "\t}",
+      "}",
+      "if (\\$conn == null) { log::error(\"DB 3 denemede bağlanılamadı\") }"
+    ],
+    "description": "DB connection with retry (db_check pattern)"
+  },
+
+  "DB Query": {
+    "prefix": "db-query",
+    "body": [
+      "\\$${1:rows} = db::query(\\$conn, \"SELECT * FROM ${2:tablo} WHERE ${3:id} = ?\", [${4:\\$id}])",
+      "if (count(\\$${1:rows}) == 0) {",
+      "\tresponse::status(404)",
+      "\tprint(json::encode([\"ok\" => false, \"hata\" => \"Bulunamadı\"]))",
+      "\treturn",
+      "}",
+      "\\$${5:satir} = \\$${1:rows}[0]"
+    ],
+    "description": "Parametrized DB query with not-found check"
+  },
+
+  "DB Exec": {
+    "prefix": "db-exec",
+    "body": [
+      "db::exec(\\$conn, \"${1:INSERT INTO tablo (alan) VALUES (?)}\", [${2:\\$deger}])"
+    ],
+    "description": "DB exec (INSERT/UPDATE/DELETE)"
+  },
+
+  "Parallel + Channel": {
+    "prefix": "parallel",
+    "body": [
+      "\\$ch = channel()",
+      "parallel(function() use (\\$ch${1:, \\$conn}) {",
+      "\t${2:\\$sonuc = db::query(\\$conn, \"SELECT * FROM tablo\", [])}",
+      "\tsend(\\$ch, ${3:\\$sonuc})",
+      "})",
+      "\\$${4:veri} = receive(\\$ch)"
+    ],
+    "description": "parallel() + channel() pattern"
+  },
+
+  "Fan-out parallel": {
+    "prefix": "parallel-fanout",
+    "body": [
+      "\\$${1:result} = channel(${2:3})",
+      "parallel(function() use (\\$${1:result}) { send(\\$${1:result}, ${3:heavy_1()}) })",
+      "parallel(function() use (\\$${1:result}) { send(\\$${1:result}, ${4:heavy_2()}) })",
+      "parallel(function() use (\\$${1:result}) { send(\\$${1:result}, ${5:heavy_3()}) })",
+      "\\$${6:a} = receive(\\$${1:result})",
+      "\\$${7:b} = receive(\\$${1:result})",
+      "\\$${8:c} = receive(\\$${1:result})"
+    ],
+    "description": "Fan-out pattern with 3 parallel goroutines"
+  },
+
+  "Timer every": {
+    "prefix": "timer-every",
+    "body": [
+      "\\$${1:tick} = timer::every(${2:1000}, function() use (\\$${1:tick}) {",
+      "\t${0}",
+      "})"
+    ],
+    "description": "Repeating timer"
+  },
+
+  "Timer after": {
+    "prefix": "timer-after",
+    "body": [
+      "timer::after(${1:5000}, function() {",
+      "\t${0}",
+      "})"
+    ],
+    "description": "One-shot timer"
+  },
+
+  "Template render": {
+    "prefix": "template",
+    "body": [
+      "print(template::render(\\$tpl . \"/${1:view}\", [",
+      "\t\"${2:title}\" => ${3:\"Başlık\"},",
+      "\t${0}",
+      "]))"
+    ],
+    "description": "template::render + print"
+  },
+
+  "Cache set/get": {
+    "prefix": "cache",
+    "body": [
+      "use cache",
+      "",
+      "cache::set(\"${1:anahtar}\", ${2:\\$deger}, ${3:300})",
+      "\\$${4:hit} = cache::get(\"${1:anahtar}\")",
+      "if (\\$${4:hit} != null) {",
+      "\tprint(json::encode([\"ok\" => true, \"data\" => \\$${4:hit}]))",
+      "\treturn",
+      "}"
+    ],
+    "description": "cache::set + cache::get with TTL (saniye)"
+  },
+
+  "Queue push/pop": {
+    "prefix": "queue",
+    "body": [
+      "use queue",
+      "",
+      "queue::push(\"${1:kuyruk}\", ${2:\\$veri})",
+      "\\$${3:item} = queue::pop(\"${1:kuyruk}\")"
+    ],
+    "description": "queue::push + queue::pop"
+  },
+
+  "Jobs push": {
+    "prefix": "jobs-push",
+    "body": [
+      "use jobs",
+      "",
+      "jobs::push(\"${1:email}\", [${2:\"to\" => \\$email}], ${3:3}, ${4:0})"
+    ],
+    "description": "jobs::push — kuyruğa iş at (retry, delay)"
+  },
+
+  "Jobs worker": {
+    "prefix": "jobs-worker",
+    "body": [
+      "use jobs",
+      "",
+      "jobs::recover(\"${1:email}\")",
+      "",
+      "jobs::worker(\"${1:email}\", function(\\$job) {",
+      "\t${0}",
+      "\treturn true",
+      "})",
+      "jobs::run(${2:5000})"
+    ],
+    "description": "jobs::worker + jobs::run (worker.lk için)"
+  },
+
+  "Mail send": {
+    "prefix": "mail",
+    "body": [
+      "use mail",
+      "",
+      "\\$r = mail::send(${1:\\$email}, \"${2:Konu}\", \"${3:Mesaj}\")",
+      "if (!\\$r[\"ok\"]) { log::error(\\$r[\"message\"]) }"
+    ],
+    "description": "mail::send — e-posta gönder"
+  },
+
+  "Mail send HTML": {
+    "prefix": "mail-html",
+    "body": [
+      "use mail",
+      "",
+      "\\$html = \"<h1>${1:Başlık}</h1><p>${2:İçerik}</p>\"",
+      "\\$r = mail::send_html(${3:\\$email}, \"${4:Konu}\", \\$html)",
+      "if (!\\$r[\"ok\"]) { log::error(\\$r[\"message\"]) }"
+    ],
+    "description": "mail::send_html — HTML e-posta gönder"
+  },
+
+  "HTTP GET": {
+    "prefix": "http-get",
+    "body": [
+      "use http",
+      "",
+      "\\$res = http::get(\"${1:https://api.example.com/endpoint}\")",
+      "if (!\\$res[\"ok\"]) {",
+      "\tlog::error(\"HTTP hata: \" . \\$res[\"status\"])",
+      "\treturn",
+      "}",
+      "\\$${2:data} = json::decode(\\$res[\"body\"])"
+    ],
+    "description": "http::get — dışa HTTP GET isteği"
+  },
+
+  "HTTP POST JSON": {
+    "prefix": "http-post",
+    "body": [
+      "use http",
+      "",
+      "\\$res = http::post(",
+      "\t\"${1:https://api.example.com/endpoint}\",",
+      "\tjson::encode(${2:\\$payload}),",
+      "\t[\"Content-Type\" => \"application/json\"]",
+      ")",
+      "if (!\\$res[\"ok\"]) { log::error(\\$res[\"status\"]) }"
+    ],
+    "description": "http::post — dışa HTTP POST (JSON body)"
+  },
+
+  "Crypto SHA-256": {
+    "prefix": "crypto-sha256",
+    "body": [
+      "use crypto",
+      "",
+      "\\$${1:hash} = crypto::sha256(${2:\\$veri})"
+    ],
+    "description": "crypto::sha256"
+  },
+
+  "Crypto HMAC": {
+    "prefix": "crypto-hmac",
+    "body": [
+      "use crypto",
+      "",
+      "\\$${1:sig} = crypto::hmac_sha256(${2:\\$payload}, env(\"API_SECRET\", \"\"))",
+      "if (!crypto::constant_compare(\\$${1:sig}, ${3:\\$given})) {",
+      "\tresponse::status(401)",
+      "\treturn",
+      "}"
+    ],
+    "description": "crypto::hmac_sha256 + constant_compare (webhook doğrulama)"
+  },
+
+  "Crypto UUID": {
+    "prefix": "crypto-uuid",
+    "body": [
+      "use crypto",
+      "",
+      "\\$${1:id} = crypto::uuid()"
+    ],
+    "description": "crypto::uuid — UUID v4 üret"
+  },
+
+  "JWT sign/verify": {
+    "prefix": "jwt",
+    "body": [
+      "use \"pkg/jwt/jwt.lk\"",
+      "",
+      "\\$${1:token} = jwt_sign(",
+      "\t[\"user_id\" => ${2:\\$id}, \"rol\" => \"${3:user}\"],",
+      "\tenv(\"JWT_SECRET\", \"gizli\"),",
+      "\t[\"exp\" => ${4:3600}]",
+      ")",
+      "",
+      "\\$${5:payload} = jwt_verify(\\$${1:token}, env(\"JWT_SECRET\", \"gizli\"))",
+      "if (\\$${5:payload} == null) {",
+      "\tresponse::status(401)",
+      "\tprint(json::encode([\"error\" => \"Yetkisiz\"]))",
+      "\treturn",
+      "}"
+    ],
+    "description": "JWT imzala + doğrula (pkg/jwt)"
+  },
+
+  "look install (package)": {
+    "prefix": "install",
+    "body": [
+      "# Terminal: look install ${1:paket-adi}"
+    ],
+    "description": "look install komutu (not)"
+  },
+
+  "Use module file": {
+    "prefix": "use-file",
+    "body": [
+      "use \"${1:helpers.lk}\""
+    ],
+    "description": "Yerel .lk modül dosyası dahil et"
+  },
+
+  "Use package": {
+    "prefix": "use-pkg",
+    "body": [
+      "use \"pkg/${1:jwt}/${1:jwt}.lk\""
+    ],
+    "description": "look install ile kurulan paketi dahil et"
+  },
+
+  "Struct definition": {
+    "prefix": "struct-def",
+    "body": [
+      "struct ${1:Name} {",
+      "\t${2:alan1}",
+      "\t${3:alan2}: ${4:0}",
+      "}"
+    ],
+    "description": "Struct definition"
+  },
+
+  "Struct literal": {
+    "prefix": "struct-lit",
+    "body": [
+      "\\$${1:obj} = ${2:Name}{${3:alan}: ${4:deger}}"
+    ],
+    "description": "Struct literal"
+  },
+
+  "Const iota": {
+    "prefix": "const-iota",
+    "body": [
+      "const {",
+      "\t${1:BIRINCI} = iota",
+      "\t${2:IKINCI}",
+      "\t${3:UCUNCU}",
+      "}"
+    ],
+    "description": "const block with iota"
+  },
+
+  "Const values": {
+    "prefix": "const-values",
+    "body": [
+      "const {",
+      "\t${1:SABIT_A} = \"${2:deger_a}\"",
+      "\t${3:SABIT_B} = ${4:200}",
+      "}"
+    ],
+    "description": "const block with fixed values"
+  },
+
+  "Try/catch/finally": {
+    "prefix": "try-catch",
+    "body": [
+      "try {",
+      "\t${1}",
+      "} catch (\\$e) {",
+      "\tlog::error(\\$e)",
+      "\t${2}",
+      "} finally {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "try/catch/finally block"
+  },
+
+  "Function definition": {
+    "prefix": "fn",
+    "body": [
+      "function ${1:isim}(${2:\\$param}) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Function definition"
+  },
+
+  "Closure with use": {
+    "prefix": "closure",
+    "body": [
+      "function() use (${1:\\$conn}) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Closure with use capture"
+  },
+
+  "Foreach": {
+    "prefix": "foreach",
+    "body": [
+      "foreach (\\$${1:liste} as \\$${2:item}) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "foreach loop"
+  },
+
+  "Foreach assoc": {
+    "prefix": "foreach-assoc",
+    "body": [
+      "foreach (\\$${1:map} as \\$${2:key} => \\$${3:val}) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "foreach over assoc array"
+  },
+
+  "JSON response": {
+    "prefix": "json-ok",
+    "body": [
+      "response::header(\"Content-Type\", \"application/json\")",
+      "print(json::encode([\"ok\" => true, \"${1:veri}\" => ${2:\\$veri}]))"
+    ],
+    "description": "JSON success response"
+  },
+
+  "JSON error": {
+    "prefix": "json-error",
+    "body": [
+      "response::status(${1:400})",
+      "print(json::encode([\"ok\" => false, \"hata\" => \"${2:Hata mesajı}\"]))",
+      "return"
+    ],
+    "description": "JSON error response + return"
+  },
+
+  "DB check": {
+    "prefix": "db-check",
+    "body": [
+      "function db_check(\\$conn) {",
+      "\tif (\\$conn == null) {",
+      "\t\tresponse::status(503)",
+      "\t\tprint(json::encode([\"ok\" => false, \"hata\" => \"Veritabanı müsait değil\"]))",
+      "\t\treturn false",
+      "\t}",
+      "\treturn true",
+      "}"
+    ],
+    "description": "db_check() helper function"
+  },
+
+  "Session admin check": {
+    "prefix": "session-check",
+    "body": [
+      "session::start()",
+      "if (session::get(\"${1:admin_id}\") == null) {",
+      "\tresponse::redirect(\"${2:/admin/giris}\")",
+      "\treturn",
+      "}"
+    ],
+    "description": "Session auth check pattern"
+  },
+
+  "Request validation": {
+    "prefix": "req-validate",
+    "body": [
+      "\\$${1:alan} = request::post(\"${1:alan}\") ?? \"\"",
+      "if (\\$${1:alan} == \"\") {",
+      "\tresponse::status(400)",
+      "\tprint(json::encode([\"ok\" => false, \"hata\" => \"${1:alan} gerekli\"]))",
+      "\treturn",
+      "}"
+    ],
+    "description": "POST field validation"
+  },
+
+  "Switch statement": {
+    "prefix": "switch",
+    "body": [
+      "switch (\\$${1:deger}) {",
+      "\tcase ${2:1}:",
+      "\t\t${3}",
+      "\tcase ${4:2}:",
+      "\t\t${5}",
+      "\tdefault:",
+      "\t\t${0}",
+      "}"
+    ],
+    "description": "switch statement (Go stili — break yok)"
+  },
+
+  "Log info": {
+    "prefix": "log",
+    "body": [
+      "log::${1|info,warn,error,debug|}(${2:\"mesaj\"})"
+    ],
+    "description": "log:: call"
+  },
+
+  "Use stdlib": {
+    "prefix": "use",
+    "body": [
+      "use ${1|string,math,array,type,auth,validator,html,file,date,template,http,cache,queue,jobs,mail,crypto|}"
+    ],
+    "description": "use stdlib modülü"
+  }
+}

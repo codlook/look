@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<module>
+    <id>look-lang</id>
+    <name>LOOK Language</name>
+    <description>LOOK programlama dili ile FastCGI web uygulamaları çalıştırın</description>
+    <version>1.2.0</version>
+    <release>1</release>
+    <vendor>
+        <name>Codlook</name>
+        <url>https://codlook.com</url>
+    </vendor>
+    <php>
+        <min>7.4</min>
+    </php>
+    <actions>
+        <install>scripts/post-install</install>
+        <uninstall>scripts/pre-uninstall</uninstall>
+    </actions>
+    <changelog>
+        <version release="1" number="1.2.0">paket ve modul sistemi, lk module install github linki, lk module list resmi liste</version>
+        <version release="1" number="1.1.0">lk binary (look yerine), modul sistemi, array iyilesmeleri</version>
+    </changelog>
+</module>

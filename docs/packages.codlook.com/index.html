@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="LOOK Language resmi paket ve modül dizini. Codlook onaylı, topluluk katkılı.">
+<title>packages.codlook.com — LOOK Ekosistemi</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --blue:   #3b82f6; --blue-d: #1d4ed8;
+  --green:  #10b981; --purple: #8b5cf6;
+  --orange: #f59e0b; --teal:   #06b6d4;
+  --red:    #ef4444;
+  --dark:   #0f172a; --dark2: #1e293b; --dark3: #334155;
+  --muted:  #94a3b8; --light: #f1f5f9;
+  --white:  #ffffff; --code-bg: #0d1117;
+  --border: #e2e8f0;
+}
+html { scroll-behavior: smooth; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       background: #f8fafc; color: #1e293b; line-height: 1.6; }
+
+/* NAV */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(15,23,42,.97); backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,.07);
+  padding: 0 28px; display: flex; align-items: center;
+  justify-content: space-between; height: 58px;
+}
+.nav-brand { display: flex; align-items: baseline; gap: 4px; text-decoration: none; }
+.nav-brand .logo { font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -.5px; }
+.nav-brand .logo span { color: var(--blue); }
+.nav-brand .sub { font-size: 12px; font-weight: 600; color: var(--muted);
+                  background: rgba(255,255,255,.07); padding: 2px 8px; border-radius: 4px; }
+.nav-right { display: flex; gap: 20px; align-items: center; }
+.nav-right a { color: var(--muted); text-decoration: none; font-size: 13.5px; font-weight: 500; transition: color .2s; }
+.nav-right a:hover { color: #fff; }
+.nav-btn { background: var(--blue) !important; color: #fff !important;
+           padding: 7px 16px; border-radius: 7px; font-weight: 600 !important; }
+.nav-btn:hover { background: var(--blue-d) !important; }
+@media(max-width:640px){ .nav-right .hide-mob { display:none; } }
+
+/* HERO */
+.hero {
+  background: var(--dark);
+  padding: 64px 24px 52px;
+  text-align: center;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  position: relative; overflow: hidden;
+}
+.hero::before {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(59,130,246,.18) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.25);
+  color: var(--green); padding: 5px 14px; border-radius: 100px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  margin-bottom: 22px;
+}
+.hero-badge .dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%;
+                   animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.5)} }
+.hero h1 {
+  font-size: clamp(30px,5vw,50px); font-weight: 800;
+  color: #fff; letter-spacing: -1.5px; line-height: 1.1;
+  max-width: 680px; margin: 0 auto 14px;
+}
+.hero h1 .c-blue { color: var(--blue); }
+.hero h1 .c-green { color: var(--green); }
+.hero-sub { color: var(--muted); font-size: 16px; max-width: 500px; margin: 0 auto 36px; }
+
+/* STATS */
+.hero-stats {
+  display: flex; gap: 32px; justify-content: center; flex-wrap: wrap;
+  margin-bottom: 36px;
+}
+.stat { text-align: center; }
+.stat-num { font-size: 26px; font-weight: 800; color: #fff; line-height: 1; }
+.stat-lbl { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+/* SEARCH BAR */
+.search-wrap {
+  max-width: 680px; margin: 0 auto;
+  position: relative;
+}
+.search-wrap input {
+  width: 100%; padding: 14px 50px 14px 48px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px; color: #fff; font-size: 15px; outline: none;
+  transition: border-color .2s, background .2s;
+}
+.search-wrap input::placeholder { color: var(--muted); }
+.search-wrap input:focus { border-color: rgba(59,130,246,.5); background: rgba(255,255,255,.09); }
+.search-wrap .search-icon {
+  position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none; font-size: 18px;
+}
+.search-clear {
+  position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 18px; padding: 4px; display: none; line-height: 1;
+}
+.search-clear.visible { display: block; }
+.search-clear:hover { color: #fff; }
+
+/* FILTER TABS */
+.filter-bar {
+  max-width: 1120px; margin: 28px auto 0;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 0 24px;
+}
+.filter-tabs { display: flex; gap: 6px; }
+.ftab {
+  padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; border: 1px solid var(--border); background: #fff;
+  color: #64748b; transition: all .15s; user-select: none;
+}
+.ftab:hover { border-color: #94a3b8; color: #1e293b; }
+.ftab.active { background: var(--dark); color: #fff; border-color: var(--dark); }
+.ftab .count {
+  display: inline-block; background: rgba(0,0,0,.12); color: inherit;
+  font-size: 11px; padding: 1px 6px; border-radius: 10px; margin-left: 5px; font-weight: 700;
+}
+.ftab.active .count { background: rgba(255,255,255,.15); }
+
+.filter-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
+.ftag {
+  padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  cursor: pointer; border: 1px solid var(--border); background: #fff; color: #64748b;
+  transition: all .15s; user-select: none;
+}
+.ftag:hover { border-color: var(--blue); color: var(--blue); }
+.ftag.active { background: rgba(59,130,246,.08); border-color: var(--blue); color: var(--blue); }
+
+.filter-right { margin-left: auto; }
+.sort-select {
+  padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: #fff; font-size: 13px; color: #475569; outline: none; cursor: pointer;
+}
+
+/* MAIN CONTENT */
+.main { max-width: 1120px; margin: 0 auto; padding: 28px 24px 60px; }
+
+/* SECTION HEADER */
+.sec-hdr {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 18px; padding-bottom: 12px;
+  border-bottom: 2px solid var(--border);
+}
+.sec-hdr h2 { font-size: 18px; font-weight: 800; color: var(--dark); }
+.sec-hdr .sec-count { font-size: 13px; color: var(--muted); font-weight: 600; }
+.sec-hdr .sec-badge {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+  padding: 3px 10px; border-radius: 5px;
+}
+.sec-badge.mod { background: rgba(139,92,246,.1); color: var(--purple); }
+.sec-badge.pkg { background: rgba(59,130,246,.1); color: var(--blue); }
+
+/* CARD GRID */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px,1fr)); gap: 16px; margin-bottom: 40px; }
+
+/* CARD */
+.pkg-card {
+  background: #fff; border: 1px solid var(--border); border-radius: 14px;
+  padding: 22px 24px; transition: box-shadow .2s, border-color .2s, transform .15s;
+  cursor: default; position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.pkg-card:hover { box-shadow: 0 6px 24px rgba(0,0,0,.09); border-color: #cbd5e1; transform: translateY(-2px); }
+.card-top-bar {
+  position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 14px 14px 0 0;
+}
+.bar-purple { background: linear-gradient(90deg,#8b5cf6,#a78bfa); }
+.bar-blue   { background: linear-gradient(90deg,#3b82f6,#60a5fa); }
+.bar-orange { background: linear-gradient(90deg,#f59e0b,#fbbf24); }
+.bar-teal   { background: linear-gradient(90deg,#06b6d4,#22d3ee); }
+.bar-green  { background: linear-gradient(90deg,#10b981,#34d399); }
+.bar-red    { background: linear-gradient(90deg,#ef4444,#f87171); }
+
+.card-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; margin-top: 4px; }
+.card-icon {
+  width: 40px; height: 40px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+}
+.icon-purple { background: rgba(139,92,246,.1); }
+.icon-blue   { background: rgba(59,130,246,.1); }
+.icon-orange { background: rgba(245,158,11,.1); }
+.icon-teal   { background: rgba(6,182,212,.1); }
+.icon-green  { background: rgba(16,185,129,.1); }
+
+.card-meta { flex: 1; min-width: 0; }
+.card-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+.card-name { font-size: 16px; font-weight: 800; color: var(--dark); }
+.type-badge {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+  padding: 2px 7px; border-radius: 4px;
+}
+.type-mod { background: rgba(139,92,246,.1); color: var(--purple); }
+.type-pkg { background: rgba(59,130,246,.1); color: var(--blue); }
+.approved { display: inline-flex; align-items: center; gap: 3px;
+            background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.2);
+            color: var(--green); font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+.card-author { font-size: 12px; color: var(--muted); }
+.card-author a { color: var(--blue); text-decoration: none; font-weight: 600; }
+.card-author a:hover { text-decoration: underline; }
+
+.card-desc { font-size: 13.5px; color: #475569; line-height: 1.6; margin-bottom: 14px; flex: 1; }
+
+/* CMD */
+.cmd-box {
+  background: var(--code-bg); border: 1px solid rgba(255,255,255,.07);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.cmd-box .cmd-label { font-size: 10px; color: #546e7a; font-weight: 700;
+                       text-transform: uppercase; letter-spacing: .07em; margin-bottom: 3px; }
+.cmd-box code {
+  flex: 1; font-family: "Fira Code","Cascadia Code","Consolas",monospace;
+  font-size: 12px; color: #cdd6f4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.copy-btn {
+  flex-shrink: 0; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+  color: var(--muted); padding: 4px 10px; border-radius: 5px; font-size: 11px;
+  cursor: pointer; transition: all .15s; font-weight: 600; white-space: nowrap;
+}
+.copy-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+.copy-btn.ok { color: var(--green); border-color: rgba(16,185,129,.35); }
+
+.use-line {
+  font-family: "Fira Code","Cascadia Code","Consolas",monospace;
+  font-size: 11.5px; color: #64748b; margin-bottom: 12px;
+}
+.use-line .kw { color: #8b5cf6; }
+.use-line .str { color: #10b981; }
+
+/* TAGS */
+.card-footer { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+.tag {
+  font-size: 11px; padding: 3px 9px; border-radius: 5px;
+  background: var(--light); color: #64748b; font-weight: 500; cursor: pointer;
+  border: 1px solid transparent; transition: all .15s;
+}
+.tag:hover { border-color: var(--blue); color: var(--blue); background: rgba(59,130,246,.05); }
+.card-gh {
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+  color: var(--muted); text-decoration: none; font-size: 12px; font-weight: 600;
+  transition: color .15s;
+}
+.card-gh:hover { color: var(--dark); }
+.card-gh svg { width: 14px; height: 14px; }
+
+/* EMPTY STATE */
+.empty { text-align: center; padding: 64px 24px; color: var(--muted); }
+.empty .emoji { font-size: 48px; margin-bottom: 16px; }
+.empty h3 { font-size: 18px; font-weight: 700; color: #64748b; margin-bottom: 8px; }
+.empty p { font-size: 14px; }
+
+/* SUBMIT BANNER */
+.submit-banner {
+  background: var(--dark2); border: 1px solid rgba(255,255,255,.07);
+  border-radius: 16px; padding: 40px 36px;
+  display: flex; align-items: center; gap: 32px; flex-wrap: wrap;
+  margin-top: 20px;
+}
+.submit-banner .sb-left { flex: 1; min-width: 260px; }
+.submit-banner h3 { font-size: 20px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+.submit-banner p { color: var(--muted); font-size: 14px; line-height: 1.6; }
+.submit-banner .sb-right { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--blue); color: #fff; padding: 11px 22px;
+  border-radius: 9px; font-size: 14px; font-weight: 700;
+  text-decoration: none; transition: background .15s, transform .1s;
+}
+.btn-primary:hover { background: var(--blue-d); transform: translateY(-1px); }
+.btn-outline {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: transparent; color: var(--muted); padding: 11px 22px;
+  border-radius: 9px; font-size: 14px; font-weight: 600;
+  text-decoration: none; border: 1px solid rgba(255,255,255,.12);
+  transition: all .15s;
+}
+.btn-outline:hover { color: #fff; border-color: rgba(255,255,255,.3); }
+
+/* HOW */
+.how-section { background: var(--dark); padding: 56px 24px; }
+.how-inner { max-width: 1120px; margin: 0 auto; }
+.how-head { text-align: center; margin-bottom: 36px; }
+.how-head h2 { font-size: 26px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+.how-head p { color: var(--muted); font-size: 15px; }
+.how-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap: 18px; }
+.how-card {
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07);
+  border-radius: 12px; padding: 24px;
+}
+.how-step { font-size: 12px; font-weight: 700; color: var(--blue); text-transform: uppercase;
+            letter-spacing: .1em; margin-bottom: 10px; }
+.how-title { font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+.how-desc { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 12px; }
+.how-code {
+  background: rgba(0,0,0,.3); border-radius: 7px; padding: 10px 14px;
+  font-family: "Fira Code","Cascadia Code","Consolas",monospace;
+  font-size: 11.5px; color: #cdd6f4; line-height: 1.7;
+}
+
+/* DIFF TABLE */
+.diff-section { padding: 56px 24px; background: var(--light); }
+.diff-inner { max-width: 860px; margin: 0 auto; }
+.diff-head { text-align: center; margin-bottom: 28px; }
+.diff-head h2 { font-size: 22px; font-weight: 800; color: var(--dark); margin-bottom: 6px; }
+.diff-head p { color: #64748b; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; background: #fff;
+        border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+th { padding: 12px 18px; text-align: left; background: var(--dark); color: #fff;
+     font-size: 13px; font-weight: 700; }
+td { padding: 11px 18px; font-size: 13.5px; color: #334155; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: none; }
+tr:nth-child(even) td { background: #f8fafc; }
+td code { background: #f1f5f9; padding: 2px 7px; border-radius: 4px;
+          font-family: "Fira Code","Consolas",monospace; font-size: 12px; }
+
+/* FOOTER */
+footer {
+  background: var(--dark); border-top: 1px solid rgba(255,255,255,.06);
+  padding: 32px 24px; text-align: center;
+}
+footer .f-logo { font-size: 17px; font-weight: 800; color: #fff; margin-bottom: 6px; }
+footer .f-logo span { color: var(--blue); }
+footer .f-sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+footer .f-links { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+footer .f-links a { color: var(--muted); text-decoration: none; font-size: 13px; transition: color .15s; }
+footer .f-links a:hover { color: #fff; }
+
+/* RESPONSIVE */
+@media(max-width:600px){
+  .card-grid { grid-template-columns: 1fr; }
+  .filter-bar { flex-direction: column; align-items: flex-start; }
+  .filter-right { margin-left: 0; }
+  .submit-banner { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="https://codlook.com">
+    <span class="logo">LOOK<span>.</span></span>
+    <span class="sub">packages</span>
+  </a>
+  <div class="nav-right">
+    <a href="#liste" class="hide-mob">Tümünü Gör</a>
+    <a href="#nasil" class="hide-mob">Nasıl Kurulur</a>
+    <a href="#gonder">Paket Gönder</a>
+    <a href="https://codlook.com" class="nav-btn hide-mob">codlook.com →</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-badge"><span class="dot"></span>Codlook Onaylı Ekosistem</div>
+  <h1>LOOK için<br><span class="c-blue">Paket</span> & <span class="c-green">Modül</span> Dizini</h1>
+  <p class="hero-sub">Codlook tarafından incelenmiş, üretime hazır açık kaynak ekosistem.</p>
+
+  <div class="hero-stats" id="hero-stats">
+    <div class="stat"><div class="stat-num" id="stat-total">—</div><div class="stat-lbl">Toplam</div></div>
+    <div class="stat"><div class="stat-num" id="stat-mod">—</div><div class="stat-lbl">Modül</div></div>
+    <div class="stat"><div class="stat-num" id="stat-pkg">—</div><div class="stat-lbl">Paket</div></div>
+    <div class="stat"><div class="stat-num" id="stat-approved">—</div><div class="stat-lbl">Onaylı</div></div>
+  </div>
+
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="search" placeholder="jwt, http, crypto, mail..." autocomplete="off" spellcheck="false">
+    <button class="search-clear" id="search-clear" onclick="clearSearch()">✕</button>
+  </div>
+</section>
+
+<div class="filter-bar" id="liste">
+  <div class="filter-tabs">
+    <div class="ftab active" data-type="all" onclick="setType('all')">
+      Tümü <span class="count" id="cnt-all">0</span>
+    </div>
+    <div class="ftab" data-type="module" onclick="setType('module')">
+      Modüller <span class="count" id="cnt-mod">0</span>
+    </div>
+    <div class="ftab" data-type="package" onclick="setType('package')">
+      Paketler <span class="count" id="cnt-pkg">0</span>
+    </div>
+  </div>
+  <div class="filter-tags" id="tag-filters"></div>
+  <div class="filter-right">
+    <select class="sort-select" id="sort-select" onchange="renderAll()">
+      <option value="approved">Önce Onaylılar</option>
+      <option value="name">Ada Göre</option>
+    </select>
+  </div>
+</div>
+
+<div class="main">
+  <div id="results-info" style="font-size:13px;color:#64748b;margin-bottom:18px;display:none"></div>
+
+  <div id="mod-section">
+    <div class="sec-hdr">
+      <h2>Modüller</h2>
+      <span class="sec-badge mod">lk module install</span>
+      <span class="sec-count" id="mod-count"></span>
+    </div>
+    <div class="card-grid" id="mod-grid"></div>
+  </div>
+
+  <div id="pkg-section">
+    <div class="sec-hdr">
+      <h2>Paketler</h2>
+      <span class="sec-badge pkg">lk install</span>
+      <span class="sec-count" id="pkg-count"></span>
+    </div>
+    <div class="card-grid" id="pkg-grid"></div>
+  </div>
+
+  <div id="empty-state" class="empty" style="display:none">
+    <div class="emoji">🔍</div>
+    <h3>Sonuç bulunamadı</h3>
+    <p>Farklı bir arama dene veya filtreni temizle.</p>
+  </div>
+
+  <div class="submit-banner" id="gonder">
+    <div class="sb-left">
+      <h3>Bir paket veya modül yaptın mı?</h3>
+      <p>GitHub'daki reponu PR ile gönder — Codlook ekibi inceler, onaylanırsa bu dizine eklenir ve tüm LOOK geliştiricileri seni bulabilir.</p>
+    </div>
+    <div class="sb-right">
+      <a href="https://github.com/codlook/look-modules" class="btn-primary" target="_blank">
+        Modül PR Gönder →
+      </a>
+      <a href="https://github.com/codlook/look-packages" class="btn-outline" target="_blank">
+        Paket Reposu →
+      </a>
+    </div>
+  </div>
+</div>
+
+<section class="diff-section">
+  <div class="diff-inner">
+    <div class="diff-head">
+      <h2>Modül mü, Paket mi?</h2>
+      <p>İkisi de GitHub'dan kurulur. Fark nerede depolandığı ve nasıl dahil edildiği.</p>
+    </div>
+    <table>
+      <thead><tr><th>Özellik</th><th>Modül</th><th>Paket</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Kapsam</strong></td><td>Global — tüm projelerde</td><td>Proje bazlı — sadece o projede</td></tr>
+        <tr><td><strong>Kurulum</strong></td><td><code>lk module install github.com/...</code></td><td><code>lk install github.com/...</code></td></tr>
+        <tr><td><strong>Kurulum yeri</strong></td><td><code>~/.look/modules/&lt;isim&gt;/</code></td><td><code>pkg/&lt;isim&gt;/</code></td></tr>
+        <tr><td><strong>Kod içinde</strong></td><td><code>use isim</code></td><td><code>use "pkg/isim"</code></td></tr>
+        <tr><td><strong>Ne için?</strong></td><td>Genel araçlar: crypto, mail, cache…</td><td>Projeye özgü: auth, CMS, SDK…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="how-section" id="nasil">
+  <div class="how-inner">
+    <div class="how-head">
+      <h2>Nasıl Kurulur</h2>
+      <p>GitHub hesabı bile gerekmez. Komutu kopyala, terminale yapıştır.</p>
+    </div>
+    <div class="how-grid">
+      <div class="how-card">
+        <div class="how-step">Adım 1</div>
+        <div class="how-title">Listeden seç</div>
+        <div class="how-desc">Bu sayfada ara, filtrele, kurulum komutunu kopyala.</div>
+      </div>
+      <div class="how-card">
+        <div class="how-step">Adım 2 — Modül</div>
+        <div class="how-title">Global kur</div>
+        <div class="how-desc">Tüm projelerde kullanmak için:</div>
+        <div class="how-code">lk module install github.com/codlook/look-modules/jwt</div>
+      </div>
+      <div class="how-card">
+        <div class="how-step">Adım 2 — Paket</div>
+        <div class="how-title">Projeye kur</div>
+        <div class="how-desc">Sadece o projenin pkg/ klasörüne:</div>
+        <div class="how-code">lk install github.com/codlook/look-jwt</div>
+      </div>
+      <div class="how-card">
+        <div class="how-step">Adım 3</div>
+        <div class="how-title">Kodunda kullan</div>
+        <div class="how-desc">use ile dahil et, hemen kullanmaya başla.</div>
+        <div class="how-code">use jwt<br><br>token = jwt_sign({"id": 1}, "secret")<br>data  = jwt_verify(token, "secret")</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="f-logo">LOOK<span>.</span></div>
+  <div class="f-sub">Web için tasarlanmış scripting dili</div>
+  <div class="f-links">
+    <a href="https://codlook.com">codlook.com</a>
+    <a href="https://codlook.com/docs">Dökümantasyon</a>
+    <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
+    <a href="https://github.com/codlook/look-modules" target="_blank">look-modules</a>
+    <a href="https://github.com/codlook/look-packages" target="_blank">look-packages</a>
+  </div>
+</footer>
+
+<script src="packages.js"></script>
+<script>
+const GH_SVG = `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+
+let allData = { modules: [], packages: [] };
+let activeType = 'all';
+let activeTag = null;
+let searchQ = '';
+
+// API'ye geçince bu fonksiyonu değiştir:
+// async function loadData() {
+//   const res = await fetch('/api/packages');
+//   allData = await res.json();
+//   initStats(); initTags(); renderAll();
+// }
+async function loadData() {
+  allData = PACKAGES_DATA;
+  initStats();
+  initTags();
+  renderAll();
+}
+
+function initStats() {
+  const total = allData.modules.length + allData.packages.length;
+  const approved = [...allData.modules, ...allData.packages].filter(x=>x.approved).length;
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-mod').textContent = allData.modules.length;
+  document.getElementById('stat-pkg').textContent = allData.packages.length;
+  document.getElementById('stat-approved').textContent = approved;
+  document.getElementById('cnt-all').textContent = total;
+  document.getElementById('cnt-mod').textContent = allData.modules.length;
+  document.getElementById('cnt-pkg').textContent = allData.packages.length;
+}
+
+function initTags() {
+  const all = [...allData.modules, ...allData.packages];
+  const tagSet = new Set();
+  all.forEach(p => (p.tags||[]).forEach(t => tagSet.add(t)));
+  const wrap = document.getElementById('tag-filters');
+  wrap.innerHTML = '';
+  [...tagSet].slice(0,10).forEach(tag => {
+    const el = document.createElement('div');
+    el.className = 'ftag';
+    el.textContent = tag;
+    el.dataset.tag = tag;
+    el.onclick = () => toggleTag(tag, el);
+    wrap.appendChild(el);
+  });
+}
+
+function setType(t) {
+  activeType = t;
+  document.querySelectorAll('.ftab').forEach(el => {
+    el.classList.toggle('active', el.dataset.type === t);
+  });
+  renderAll();
+}
+
+function toggleTag(tag, el) {
+  if (activeTag === tag) {
+    activeTag = null;
+    document.querySelectorAll('.ftag').forEach(e => e.classList.remove('active'));
+  } else {
+    activeTag = tag;
+    document.querySelectorAll('.ftag').forEach(e => e.classList.toggle('active', e.dataset.tag === tag));
+  }
+  renderAll();
+}
+
+function clearSearch() {
+  document.getElementById('search').value = '';
+  searchQ = '';
+  document.getElementById('search-clear').classList.remove('visible');
+  renderAll();
+}
+
+document.getElementById('search').addEventListener('input', function() {
+  searchQ = this.value.trim().toLowerCase();
+  document.getElementById('search-clear').classList.toggle('visible', searchQ.length > 0);
+  renderAll();
+});
+
+function filter(list) {
+  return list.filter(p => {
+    if (activeTag && !(p.tags||[]).includes(activeTag)) return false;
+    if (!searchQ) return true;
+    return p.name.toLowerCase().includes(searchQ)
+      || p.description.toLowerCase().includes(searchQ)
+      || (p.tags||[]).some(t => t.includes(searchQ))
+      || (p.author||'').toLowerCase().includes(searchQ);
+  });
+}
+
+function sort(list) {
+  const by = document.getElementById('sort-select').value;
+  if (by === 'name') return [...list].sort((a,b) => a.name.localeCompare(b.name));
+  return [...list].sort((a,b) => (b.approved?1:0) - (a.approved?1:0));
+}
+
+function renderAll() {
+  const mods = sort(filter(allData.modules));
+  const pkgs = sort(filter(allData.packages));
+
+  const showMod = activeType === 'all' || activeType === 'module';
+  const showPkg = activeType === 'all' || activeType === 'package';
+
+  const visibleMods = showMod ? mods : [];
+  const visiblePkgs = showPkg ? pkgs : [];
+
+  document.getElementById('mod-section').style.display = (showMod && mods.length > 0) ? '' : 'none';
+  document.getElementById('pkg-section').style.display = (showPkg && pkgs.length > 0) ? '' : 'none';
+
+  const isEmpty = visibleMods.length === 0 && visiblePkgs.length === 0;
+  document.getElementById('empty-state').style.display = isEmpty ? '' : 'none';
+
+  document.getElementById('mod-grid').innerHTML = visibleMods.map(cardHTML).join('');
+  document.getElementById('pkg-grid').innerHTML = visiblePkgs.map(cardHTML).join('');
+  document.getElementById('mod-count').textContent = visibleMods.length + ' sonuç';
+  document.getElementById('pkg-count').textContent = visiblePkgs.length + ' sonuç';
+
+  const info = document.getElementById('results-info');
+  if (searchQ || activeTag) {
+    const total = visibleMods.length + visiblePkgs.length;
+    info.style.display = '';
+    info.innerHTML = `<strong>${total}</strong> sonuç bulundu${searchQ ? ` "<strong>${searchQ}</strong>" için` : ''}${activeTag ? ` — etiket: <strong>${activeTag}</strong>` : ''} &nbsp;<a href="#" onclick="clearSearch();activeTag=null;document.querySelectorAll('.ftag').forEach(e=>e.classList.remove('active'));renderAll();return false" style="color:var(--blue);text-decoration:none;font-weight:600">Temizle</a>`;
+  } else {
+    info.style.display = 'none';
+  }
+}
+
+function cardHTML(p) {
+  const isModule = allData.modules.includes(p);
+  const typeCls  = isModule ? 'type-mod' : 'type-pkg';
+  const typeLabel = isModule ? 'Modül' : 'Paket';
+  const barCls   = 'bar-' + (p.color || 'blue');
+  const iconCls  = 'icon-' + (p.color || 'blue');
+  const ghUrl    = p.github || '#';
+  const useHtml  = isModule
+    ? `<span class="kw">use</span> <span class="str">${p.name}</span>`
+    : `<span class="kw">use</span> <span class="str">"pkg/${p.name.replace('look-','')}"</span>`;
+  const tags = (p.tags||[]).map(t =>
+    `<span class="tag" onclick="toggleTag('${t}',this)">${t}</span>`
+  ).join('');
+  const approvedBadge = p.approved ? `<span class="approved">✓ Onaylı</span>` : '';
+  const escapedCmd = p.install.replace(/"/g, '&quot;');
+
+  return `
+  <div class="pkg-card">
+    <div class="card-top-bar ${barCls}"></div>
+    <div class="card-header">
+      <div class="card-icon ${iconCls}">${p.icon||'📦'}</div>
+      <div class="card-meta">
+        <div class="card-name-row">
+          <span class="card-name">${p.name}</span>
+          <span class="type-badge ${typeCls}">${typeLabel}</span>
+          ${approvedBadge}
+        </div>
+        <div class="card-author">yayıncı: <a href="https://github.com/${p.author}" target="_blank">@${p.author}</a> · v${p.version||'1.0.0'}</div>
+      </div>
+    </div>
+    <p class="card-desc">${p.description}</p>
+    <div class="cmd-box">
+      <code>${p.install}</code>
+      <button class="copy-btn" onclick="copyCmd(this,'${escapedCmd}')">Kopyala</button>
+    </div>
+    <div class="use-line">${useHtml}</div>
+    <div class="card-footer">
+      ${tags}
+      <a href="${ghUrl}" class="card-gh" target="_blank">${GH_SVG} GitHub</a>
+    </div>
+  </div>`;
+}
+
+function copyCmd(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Kopyalandı!';
+    btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = 'Kopyala'; btn.classList.remove('ok'); }, 1800);
+  });
+}
+
+loadData();
+</script>
+</body>
+</html>

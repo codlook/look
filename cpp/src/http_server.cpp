@@ -156,12 +156,28 @@ public:
 
 // ── HttpServer::Impl ──────────────────────────────────────────────────────────
 
+static void send_ws_reject(int fd, const std::string& reason) {
+    std::string resp =
+        "HTTP/1.1 403 Forbidden\r\n"
+        "Content-Type: text/plain\r\n"
+        "Connection: close\r\n"
+        "Content-Length: " + std::to_string(reason.size()) + "\r\n"
+        "\r\n" + reason;
+#ifdef _WIN32
+    ::send(fd, resp.data(), (int)resp.size(), 0);
+#else
+    ::send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
+#endif
+}
+
 struct HttpServer::Impl {
     int  port    = 0;
     int  workers = 0;
     HttpHandler  handler;
     WsHandler    ws_handler;
     SseHandler   sse_handler;
+    // CSWSH koruması: boş = tüm originlere izin ver (geliştirme), dolu = sadece listedekilere
+    std::vector<std::string> allowed_origins;
 
     int  server_fd = -1;
     std::atomic<bool> running{false};
@@ -282,6 +298,24 @@ struct HttpServer::Impl {
 
     // ── WebSocket upgrade — worker thread'de çalışır ──────────────────────────
     void handle_ws_upgrade(int fd, const HttpRequest& req) {
+        // CSWSH koruması: Origin header'ını kontrol et
+        if (!allowed_origins.empty()) {
+            auto it = req.headers.find("origin");
+            if (it == req.headers.end()) {
+                send_ws_reject(fd, "403 Forbidden - Origin header gerekli");
+                ::close(fd);
+                return;
+            }
+            const std::string& origin = it->second;
+            bool ok = false;
+            for (const auto& allowed : allowed_origins)
+                if (allowed == "*" || allowed == origin) { ok = true; break; }
+            if (!ok) {
+                send_ws_reject(fd, "403 Forbidden - Origin izinli değil: " + origin);
+                ::close(fd);
+                return;
+            }
+        }
         std::string hs = ws_handshake_101(req.ws_key);
 #ifdef _WIN32
         ::send(fd, hs.data(), (int)hs.size(), 0);
@@ -449,6 +483,17 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
     impl_->ws_handler  = std::move(ws_handler);
     impl_->sse_handler = std::move(sse_handler);
     impl_->loop        = EventLoop::create();
+
+    // CSWSH koruması: LOOK_WS_ORIGINS=https://site.com,https://other.com
+    if (const char* env = std::getenv("LOOK_WS_ORIGINS")) {
+        std::string s = env;
+        size_t pos = 0, found;
+        while ((found = s.find(',', pos)) != std::string::npos) {
+            impl_->allowed_origins.push_back(s.substr(pos, found - pos));
+            pos = found + 1;
+        }
+        if (pos < s.size()) impl_->allowed_origins.push_back(s.substr(pos));
+    }
     impl_->pool        = std::make_unique<WorkerPool>(workers);
 
 #ifdef _WIN32

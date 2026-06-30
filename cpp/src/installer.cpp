@@ -198,7 +198,16 @@ static bool extract_zip(const std::vector<char>& data,
             if (filename.empty()) continue;
         }
 
-        fs::path out_path = dest_dir / filename;
+        // Zip Slip koruması: normalize edilmiş yolun dest_dir içinde kalması zorunlu
+        fs::path safe_dest = fs::weakly_canonical(dest_dir);
+        fs::path out_path  = fs::weakly_canonical(dest_dir / filename);
+        auto dest_str = safe_dest.string();
+        auto out_str  = out_path.string();
+        if (out_str.size() < dest_str.size() ||
+            out_str.compare(0, dest_str.size(), dest_str) != 0) {
+            if (verbose) std::cerr << "  ATLANDI (güvenlik): " << filename << "\n";
+            continue;
+        }
 
         if (mz_zip_reader_is_file_a_directory(&zip, i)) {
             fs::create_directories(out_path);
@@ -437,96 +446,162 @@ static fs::path modules_dir() {
 
 // ── cmd_module_install ────────────────────────────────────────────────────────
 
-int cmd_module_install(const std::string& name, bool verbose) {
-    // Download single file from codlook/look-modules repo:
-    // https://raw.githubusercontent.com/codlook/look-modules/main/<name>/<name>.lk
-    const std::string base_url = "https://raw.githubusercontent.com/codlook/look-modules/main/";
+int cmd_module_install(const std::string& pkg_url, bool verbose) {
+    PkgSpec spec;
+    try {
+        spec = parse_pkg(pkg_url);
+    } catch (const std::exception& e) {
+        std::cerr << "Hata: " << e.what() << "\n";
+        std::cerr << "Örnek: lk module install github.com/codlook/look-modules/jwt\n";
+        return 1;
+    }
 
-    fs::path dest_dir = modules_dir() / name;
-    fs::path dest_file = dest_dir / (name + ".lk");
+    // Module name = subdir if given, otherwise repo name
+    std::string mod_name = spec.subdir.empty() ? spec.repo : spec.subdir;
 
-    std::cout << "Modül yükleniyor: " << name << "\n";
+    std::cout << "Modül yükleniyor: " << spec.user << "/" << spec.repo;
+    if (!spec.subdir.empty()) std::cout << "/" << spec.subdir;
+    std::cout << " (" << spec.ref << ")\n";
 
-    // Download the .lk file
-    std::string url = base_url + name + "/" + name + ".lk";
-    if (verbose) std::cout << "  " << url << "\n";
-
-    HttpOptions opts;
-    opts.timeout_ms = 15000;
-    std::map<std::string, std::string> hdrs;
-    hdrs["User-Agent"] = "LOOK-Module-Manager/1.0";
-    HttpResponse resp = http_request("GET", url, "", hdrs, opts);
-
+    // Download ZIP from GitHub
+    HttpResponse resp = download_follow(spec.zip_url(), verbose);
     if (!resp.error.empty()) {
         std::cerr << "İndirme hatası: " << resp.error << "\n";
         return 1;
     }
-    if (resp.status == 404) {
-        std::cerr << "Modül bulunamadı: " << name << "\n";
-        std::cerr << "  Mevcut modüller: https://github.com/codlook/look-modules\n";
-        return 1;
-    }
     if (resp.status != 200) {
-        std::cerr << "GitHub " << resp.status << " döndürdü\n";
+        std::cerr << "GitHub " << resp.status << " döndürdü — modül bulunamadı: "
+                  << spec.user << "/" << spec.repo << "\n";
         return 1;
     }
 
-    // Save to ~/.look/modules/<name>/<name>.lk
-    fs::create_directories(dest_dir);
-    std::ofstream out(dest_file, std::ios::binary);
-    if (!out) {
-        std::cerr << "Dosya yazılamadı: " << dest_file.string() << "\n";
+    std::cout << "  " << (resp.body.size() / 1024) << " KB indirildi\n";
+
+    // Extract to ~/.look/modules/<mod_name>/
+    fs::path dest_dir = modules_dir() / mod_name;
+    if (fs::exists(dest_dir)) {
+        if (verbose) std::cout << "  Önceki kurulum temizleniyor...\n";
+        fs::remove_all(dest_dir);
+    }
+
+    std::vector<char> zip_data(resp.body.begin(), resp.body.end());
+    if (!extract_zip(zip_data, dest_dir, verbose, spec.subdir)) {
+        std::cerr << "ZIP çıkartma hatası\n";
         return 1;
     }
-    out.write(resp.body.data(), (std::streamsize)resp.body.size());
-    out.close();
 
-    std::cout << "  → " << dest_file.string() << "\n";
-
-    // Try to also download README.md (optional, ignore failure)
-    std::string readme_url = base_url + name + "/README.md";
-    HttpResponse readme_resp = http_request("GET", readme_url, "", hdrs, opts);
-    if (readme_resp.status == 200) {
-        fs::path readme_path = dest_dir / "README.md";
-        std::ofstream rf(readme_path, std::ios::binary);
-        if (rf) rf.write(readme_resp.body.data(), (std::streamsize)readme_resp.body.size());
-        if (verbose) std::cout << "  + README.md\n";
-    }
-
-    std::cout << "✓ " << name << " modülü kuruldu\n\n";
+    std::cout << "  → " << dest_dir.string() << "\n";
+    std::cout << "✓ " << mod_name << " modülü kuruldu\n\n";
     std::cout << "Kullanım:\n";
-    std::cout << "  use " << name << ";\n";
+    std::cout << "  use " << mod_name << "\n";
 
     return 0;
 }
 
 // ── cmd_module_list ───────────────────────────────────────────────────────────
 
+// Parse GitHub API JSON array of directory entries, extract "name" fields
+// Minimal hand-rolled parser — avoids any JSON dep
+static std::vector<std::string> parse_github_dir_names(const std::string& json) {
+    std::vector<std::string> names;
+    // Each entry: {"name":"jwt","type":"dir",...}
+    // We find all "name":"<value>" where the surrounding object has "type":"dir"
+    size_t pos = 0;
+    while (pos < json.size()) {
+        // Find next object boundary
+        auto obj_start = json.find('{', pos);
+        if (obj_start == std::string::npos) break;
+        auto obj_end = json.find('}', obj_start);
+        if (obj_end == std::string::npos) break;
+
+        std::string obj = json.substr(obj_start, obj_end - obj_start + 1);
+
+        // Only process directory entries
+        if (obj.find("\"type\":\"dir\"") != std::string::npos) {
+            auto name_pos = obj.find("\"name\":\"");
+            if (name_pos != std::string::npos) {
+                name_pos += 8;
+                auto name_end = obj.find('"', name_pos);
+                if (name_end != std::string::npos) {
+                    names.push_back(obj.substr(name_pos, name_end - name_pos));
+                }
+            }
+        }
+        pos = obj_end + 1;
+    }
+    return names;
+}
+
 int cmd_module_list() {
-    fs::path mdir = modules_dir();
-    if (!fs::exists(mdir)) {
-        std::cout << "Yüklü modül yok. Kurulum: lk module install <name>\n";
-        return 0;
+    // Fetch official module list from codlook/look-modules via GitHub Contents API
+    const std::string api_url =
+        "https://api.github.com/repos/codlook/look-modules/contents/";
+
+    std::cout << "Resmi modüller getiriliyor...\n";
+
+    HttpOptions opts;
+    opts.timeout_ms = 10000;
+    std::map<std::string, std::string> hdrs;
+    hdrs["Accept"]     = "application/vnd.github.v3+json";
+    hdrs["User-Agent"] = "LOOK-Module-Manager/1.0";
+
+    HttpResponse resp = http_request("GET", api_url, "", hdrs, opts);
+
+    if (!resp.error.empty()) {
+        std::cerr << "Bağlantı hatası: " << resp.error << "\n";
+        return 1;
+    }
+    if (resp.status != 200) {
+        std::cerr << "GitHub API " << resp.status << " döndürdü\n";
+        return 1;
     }
 
+    std::vector<std::string> official = parse_github_dir_names(resp.body);
+
+    // Collect locally installed modules
+    fs::path mdir = modules_dir();
     std::vector<std::string> installed;
-    for (auto& entry : fs::directory_iterator(mdir)) {
-        if (entry.is_directory()) {
-            std::string mname = entry.path().filename().string();
-            fs::path lk = entry.path() / (mname + ".lk");
-            if (fs::exists(lk)) installed.push_back(mname);
+    if (fs::exists(mdir)) {
+        for (auto& entry : fs::directory_iterator(mdir)) {
+            if (entry.is_directory()) {
+                std::string mname = entry.path().filename().string();
+                fs::path lk = entry.path() / (mname + ".lk");
+                if (fs::exists(lk)) installed.push_back(mname);
+            }
         }
     }
 
-    if (installed.empty()) {
-        std::cout << "Yüklü modül yok. Kurulum: lk module install <name>\n";
-        return 0;
+    auto is_installed = [&](const std::string& name) {
+        return std::find(installed.begin(), installed.end(), name) != installed.end();
+    };
+
+    // Print official modules with install status
+    if (official.empty()) {
+        std::cout << "Resmi modül bulunamadı.\n";
+    } else {
+        std::cout << "\nResmi modüller (github.com/codlook/look-modules):\n";
+        for (auto& name : official) {
+            std::string status = is_installed(name) ? " [kurulu]" : "";
+            std::cout << "  " << name << status << "\n";
+        }
+        std::cout << "\nKurulum: lk module install github.com/codlook/look-modules/<isim>\n";
     }
 
-    std::cout << "Yüklü modüller (" << installed.size() << "):\n";
+    // Print any extra locally installed (non-official) modules
+    std::vector<std::string> extra;
     for (auto& m : installed) {
-        std::cout << "  " << m << "\n";
+        if (std::find(official.begin(), official.end(), m) == official.end())
+            extra.push_back(m);
     }
+    if (!extra.empty()) {
+        std::cout << "\nÜçüncü taraf (yüklü):\n";
+        for (auto& m : extra) std::cout << "  " << m << "\n";
+    }
+
+    if (official.empty() && installed.empty()) {
+        std::cout << "Yüklü modül yok.\n";
+    }
+
     std::cout << "\nModül dizini: " << mdir.string() << "\n";
     return 0;
 }

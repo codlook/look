@@ -103,13 +103,19 @@ static MailResult send_sendgrid(const std::string& api_key,
 {
     MailResult r;
     // Build minimal JSON manually (no json:: dep from C++ side)
+    // JSON escape: tüm kontrol karakterleri dahil (RFC 7159 §7)
     auto esc = [](const std::string& s) {
         std::string out;
-        for (char c : s) {
-            if (c == '"')  out += "\\\"";
+        for (unsigned char c : s) {
+            if      (c == '"')  out += "\\\"";
             else if (c == '\\') out += "\\\\";
             else if (c == '\n') out += "\\n";
-            else out += c;
+            else if (c == '\r') out += "\\r";
+            else if (c == '\t') out += "\\t";
+            else if (c < 0x20) {
+                char buf[7]; snprintf(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            } else out += (char)c;
         }
         return out;
     };
@@ -148,13 +154,19 @@ static MailResult send_postmark(const std::string& api_key,
                                  const std::string& html)
 {
     MailResult r;
+    // JSON escape: tüm kontrol karakterleri dahil (RFC 7159 §7)
     auto esc = [](const std::string& s) {
         std::string out;
-        for (char c : s) {
-            if (c == '"')  out += "\\\"";
+        for (unsigned char c : s) {
+            if      (c == '"')  out += "\\\"";
             else if (c == '\\') out += "\\\\";
             else if (c == '\n') out += "\\n";
-            else out += c;
+            else if (c == '\r') out += "\\r";
+            else if (c == '\t') out += "\\t";
+            else if (c < 0x20) {
+                char buf[7]; snprintf(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            } else out += (char)c;
         }
         return out;
     };
