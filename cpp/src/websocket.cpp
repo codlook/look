@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <vector>
 #include <algorithm>
+#include <cstdlib>
+#include <string>
 
 #if defined(_WIN32)
 #  include <winsock2.h>
@@ -209,7 +211,14 @@ void WsConnection::close_conn() {
 WsRegistry g_ws_registry;
 
 void WsRegistry::add(std::shared_ptr<WsConnection> conn) {
+    // LOOK_WS_MAX_CONN env ile yapılandırılabilir (varsayılan: 1024)
+    static const size_t MAX_WS = []() -> size_t {
+        const char* e = std::getenv("LOOK_WS_MAX_CONN");
+        return (e && *e) ? (size_t)std::stoul(e) : 1024;
+    }();
     std::unique_lock<std::shared_mutex> lk(mutex_);
+    if (clients_.size() >= MAX_WS)
+        throw std::runtime_error("WebSocket bağlantı limiti aşıldı (" + std::to_string(MAX_WS) + ")");
     clients_[conn->fd] = std::move(conn);
 }
 

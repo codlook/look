@@ -149,6 +149,13 @@ public:
     // Included file'ların function/const tanımlarını caller scope'a aktarmak için
     const std::map<std::string, Value>& entries() const { return values_; }
 
+    // Dispatch kopyası için derin kopya — shared mutable state race kondisyonunu engeller
+    std::shared_ptr<Environment> clone() const {
+        auto e = std::make_shared<Environment>(parent_);
+        e->values_ = values_;
+        return e;
+    }
+
 private:
     std::map<std::string, Value> values_;
     std::shared_ptr<Environment> parent_;

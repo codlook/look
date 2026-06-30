@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <cstring>
+#include <cstdlib>
 #include <algorithm>
 #include <cctype>
 
@@ -32,6 +33,39 @@ static const sock_t INVALID = -1;
 #endif
 
 namespace look {
+
+// ── SSRF koruması — private/loopback IP'lere bağlantı engeli ─────────────────
+static bool is_ssrf_blocked(const struct addrinfo* res) {
+    // LOOK_ALLOW_SSRF=1 ile devre dışı bırakılabilir (iç ağ test ortamı için)
+    static const bool allow = (std::getenv("LOOK_ALLOW_SSRF") != nullptr &&
+                               std::string(std::getenv("LOOK_ALLOW_SSRF")) == "1");
+    if (allow) return false;
+
+    for (const struct addrinfo* p = res; p; p = p->ai_next) {
+        if (p->ai_family == AF_INET) {
+            uint32_t ip = ntohl(((struct sockaddr_in*)p->ai_addr)->sin_addr.s_addr);
+            // 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            // 169.254.0.0/16 (link-local), 100.64.0.0/10 (CGNAT), 0.0.0.0/8
+            if ((ip >> 24) == 127) return true;
+            if ((ip >> 24) == 10)  return true;
+            if ((ip >> 20) == (172*16 + 1)) return true; // 172.16–31
+            if ((ip >> 16) == (192*256 + 168)) return true;
+            if ((ip >> 16) == (169*256 + 254)) return true;
+            if ((ip >> 22) == (100*4 + 1))     return true; // 100.64/10
+            if ((ip >> 24) == 0)   return true;
+        } else if (p->ai_family == AF_INET6) {
+            const uint8_t* b = ((struct sockaddr_in6*)p->ai_addr)->sin6_addr.s6_addr;
+            // ::1 loopback
+            bool is_lo = true;
+            for (int i = 0; i < 15; ++i) if (b[i] != 0) { is_lo = false; break; }
+            if (is_lo && b[15] == 1) return true;
+            // fc00::/7 unique-local, fe80::/10 link-local
+            if ((b[0] & 0xFE) == 0xFC) return true;
+            if ((b[0] == 0xFE) && ((b[1] & 0xC0) == 0x80)) return true;
+        }
+    }
+    return false;
+}
 
 // ── URL parser ────────────────────────────────────────────────────────────────
 
@@ -181,6 +215,8 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     snprintf(port_str, sizeof(port_str), "%d", port);
 
     if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) return INVALID;
+
+    if (is_ssrf_blocked(res)) { freeaddrinfo(res); return INVALID; }
 
     sock_t s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (s == INVALID_SOCKET) { freeaddrinfo(res); return INVALID; }
@@ -418,6 +454,8 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     snprintf(port_str, sizeof(port_str), "%d", port);
 
     if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) return INVALID;
+
+    if (is_ssrf_blocked(res)) { freeaddrinfo(res); return INVALID; }
 
     sock_t s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (s < 0) { freeaddrinfo(res); return INVALID; }

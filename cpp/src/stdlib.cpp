@@ -355,18 +355,26 @@ static Module make_string() {
     // string::regex_match($str, $pattern) → bool
     m.functions["regex_match"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("string::regex_match() requires string and pattern");
+        std::string pat = args[1].to_string();
+        std::string str = args[0].to_string();
+        if (pat.size() > 2048) throw std::runtime_error("string::regex_match(): pattern too long (max 2048)");
+        if (str.size() > 65536) throw std::runtime_error("string::regex_match(): input too long (max 65536)");
         try {
-            std::regex re(args[1].to_string());
-            return Value(std::regex_search(args[0].to_string(), re));
+            std::regex re(pat);
+            return Value(std::regex_search(str, re));
         } catch (...) { return Value(false); }
     };
 
     // string::regex_replace($str, $pattern, $replacement) → string
     m.functions["regex_replace"] = [](auto args) -> Value {
         if (args.size() < 3) throw std::runtime_error("string::regex_replace() requires string, pattern, replacement");
+        std::string pat = args[1].to_string();
+        std::string str = args[0].to_string();
+        if (pat.size() > 2048) throw std::runtime_error("string::regex_replace(): pattern too long (max 2048)");
+        if (str.size() > 65536) throw std::runtime_error("string::regex_replace(): input too long (max 65536)");
         try {
-            std::regex re(args[1].to_string());
-            return Value(std::regex_replace(args[0].to_string(), re, args[2].to_string()));
+            std::regex re(pat);
+            return Value(std::regex_replace(str, re, args[2].to_string()));
         } catch (...) { return Value(args[0].to_string()); }
     };
 
@@ -376,7 +384,10 @@ static Module make_string() {
         auto result = std::make_shared<std::vector<Value>>();
         try {
             std::string s = args[0].to_string();
-            std::regex re(args[1].to_string());
+            std::string pat = args[1].to_string();
+            if (pat.size() > 2048) throw std::runtime_error("string::regex_match_all(): pattern too long (max 2048)");
+            if (s.size() > 65536) throw std::runtime_error("string::regex_match_all(): input too long (max 65536)");
+            std::regex re(pat);
             auto it  = std::sregex_iterator(s.begin(), s.end(), re);
             auto end_it = std::sregex_iterator();
             for (; it != end_it; ++it) {

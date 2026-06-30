@@ -185,6 +185,9 @@ void MySQLClient::do_connect() {
 
     set_socket_timeout(cfg_.query_timeout_ms);
     do_handshake(cfg_.user, cfg_.password, cfg_.database);
+    // NO_BACKSLASH_ESCAPES modunu devre dışı bırak — aksi hâlde escape() güvensiz olur
+    try { query("SET SESSION sql_mode = REPLACE(@@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES', '')"); }
+    catch (...) {}
 }
 
 // ── Ping ──────────────────────────────────────────────────────────────────────

@@ -212,7 +212,7 @@ call_dispatch:
         while (frame.ip < (int)proto->code.size()) {
             const Instruction& ins = proto->code[frame.ip++];
 
-#define R(x) regs_[base + (x)]
+#define R(x) regs_.at((size_t)(base + (x)))
 #define CONST(i) proto->constants[i]
 
             switch (ins.op) {

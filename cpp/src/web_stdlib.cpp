@@ -327,6 +327,56 @@ static Module make_request(WebContext* ctx) {
         if (uf.mime == "image/svg+xml" && !allow_svg)
             throw std::runtime_error("SVG upload requires allow_svg: true option");
 
+        // SVG XSS sanitizasyonu — <script>, javascript: ve on* event attribute'larını sil
+        if (uf.mime == "image/svg+xml" && allow_svg) {
+            std::ifstream svg_in(uf.temp_path, std::ios::binary);
+            if (svg_in) {
+                std::string content((std::istreambuf_iterator<char>(svg_in)),
+                                     std::istreambuf_iterator<char>());
+                svg_in.close();
+
+                // <script ...>...</script> blokları
+                {
+                    std::string out; out.reserve(content.size());
+                    size_t i = 0;
+                    while (i < content.size()) {
+                        if (content.size() - i >= 7) {
+                            std::string tag7(content.begin() + i, content.begin() + i + 7);
+                            std::string lower7; for (char c : tag7) lower7 += (char)std::tolower((unsigned char)c);
+                            if (lower7 == "<script") {
+                                size_t end = content.find("</script", i + 7);
+                                if (end == std::string::npos) end = content.size() - 1;
+                                else {
+                                    size_t gt = content.find('>', end + 8);
+                                    end = (gt == std::string::npos) ? content.size() : gt;
+                                }
+                                i = end + 1;
+                                continue;
+                            }
+                        }
+                        out += content[i++];
+                    }
+                    content = std::move(out);
+                }
+
+                // on* event attribute'ları (onclick, onload, onerror ...)
+                {
+                    std::regex on_attr(R"(\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))",
+                                       std::regex::icase);
+                    content = std::regex_replace(content, on_attr, "");
+                }
+
+                // javascript: URI
+                {
+                    std::regex js_uri(R"(javascript\s*:)", std::regex::icase);
+                    content = std::regex_replace(content, js_uri, "removed:");
+                }
+
+                std::ofstream svg_out(uf.temp_path, std::ios::binary | std::ios::trunc);
+                if (svg_out) svg_out.write(content.data(), (std::streamsize)content.size());
+            }
+        }
+
         // MIME kontrolü — allow_mime belirtilmişse listede olmalı
         if (!allow_mime.empty()) {
             bool found = false;

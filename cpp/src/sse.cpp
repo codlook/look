@@ -1,4 +1,7 @@
 #include "look/sse.h"
+#include <cstdlib>
+#include <string>
+#include <stdexcept>
 
 #if defined(__linux__)
 #  include <sys/socket.h>
@@ -59,7 +62,14 @@ void SseConnection::close_conn() {
 }
 
 void SseRegistry::add(std::shared_ptr<SseConnection> conn) {
+    // LOOK_SSE_MAX_CONN env ile yapılandırılabilir (varsayılan: 1024)
+    static const size_t MAX_SSE = []() -> size_t {
+        const char* e = std::getenv("LOOK_SSE_MAX_CONN");
+        return (e && *e) ? (size_t)std::stoul(e) : 1024;
+    }();
     std::unique_lock<std::shared_mutex> lk(mutex_);
+    if (clients_.size() >= MAX_SSE)
+        throw std::runtime_error("SSE bağlantı limiti aşıldı (" + std::to_string(MAX_SSE) + ")");
     clients_[conn->fd] = std::move(conn);
 }
 

@@ -230,8 +230,8 @@ void LookChannel::close_chan() {
 // Caller must call set_output() and set_web_context() before dispatch_routes().
 std::unique_ptr<Interpreter> Interpreter::make_dispatch_copy() const {
     auto c = std::make_unique<Interpreter>();   // initialises stdlib_ + fresh globals_
-    c->globals_        = globals_;              // share setup globals (read-only in dispatch)
-    c->current_        = std::make_shared<Environment>(globals_);  // fresh dispatch scope
+    c->globals_        = globals_->clone();    // snapshot — her dispatch kendi globals_ kopyasına yazar
+    c->current_        = std::make_shared<Environment>(c->globals_);  // fresh dispatch scope
     c->route_registry_ = route_registry_;       // copy (closures are read-only)
     c->struct_defs_    = struct_defs_;          // copy (user struct definitions)
     c->modules_        = modules_;              // copy (use X state from setup)
