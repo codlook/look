@@ -359,7 +359,10 @@ static Module make_string() {
 
     // ReDoS koruma yardımcısı: thread::detach + condition_variable (250ms timeout)
     // std::async kullanılmaz — destructor bloklayarak timeout'u etkisiz kılar.
+    static std::atomic<int> g_regex_threads{0};
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
+        if (g_regex_threads.load() >= 32)
+            throw std::runtime_error("string::regex: eşzamanlı regex limiti aşıldı (max 32)");
         using T = decltype(fn());
         struct State {
             std::mutex              mtx;
@@ -370,6 +373,7 @@ static Module make_string() {
         };
         auto state = std::make_shared<State>();
 
+        g_regex_threads++;
         std::thread([state, fn = std::move(fn)]() mutable {
             try {
                 T r = fn();
@@ -379,6 +383,7 @@ static Module make_string() {
                 std::lock_guard<std::mutex> lk(state->mtx);
                 state->ex = std::current_exception();
             }
+            g_regex_threads--;
             state->done = true;
             state->cv.notify_one();
         }).detach();

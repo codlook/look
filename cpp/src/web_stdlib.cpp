@@ -468,12 +468,17 @@ static Module make_request(WebContext* ctx) {
                         if (is_url && has_bad_scheme(aval)) continue;
                         // <use> yalnızca #fragment href'e izin ver
                         if (tagname == "use" && is_url && !aval.empty() && aval[0] != '#') continue;
-                        // style içinde javascript: / expression() → atla
+                        // style içinde javascript: / expression() / url(javascript|data:) → atla
                         if (aname_lo == "style") {
                             std::string slo = aval;
                             for (auto& c : slo) c = (char)std::tolower((unsigned char)c);
-                            if (slo.find("javascript:") != std::string::npos ||
-                                slo.find("expression(") != std::string::npos) continue;
+                            auto has_danger = [&](const std::string& needle) {
+                                return slo.find(needle) != std::string::npos;
+                            };
+                            if (has_danger("javascript:") || has_danger("expression(") ||
+                                has_danger("url(javascript:") || has_danger("url(data:") ||
+                                has_danger("url('javascript:") || has_danger("url('data:") ||
+                                has_danger("url(\"javascript:") || has_danger("url(\"data:")) continue;
                         }
 
                         char qc = q ? q : '"';
