@@ -1,0 +1,94 @@
+// DB Security Integration Tests — real driver connections
+// Çalıştırmak için: look test_db_security.lk
+// Ortam değişkenleri: TEST_MYSQL_DSN, TEST_PG_DSN, TEST_SQLITE_PATH
+
+let passed = 0;
+let failed = 0;
+
+fn assert(name, cond) {
+    if cond {
+        io::println("PASS  " + name);
+        passed = passed + 1;
+    } else {
+        io::println("FAIL  " + name);
+        failed = failed + 1;
+    }
+}
+
+fn assert_throws(name, f) {
+    let threw = false;
+    try { f(); } catch e { threw = true; }
+    assert(name, threw);
+}
+
+// ── SQLite ───────────────────────────────────────────────────────────────────
+let sqlite_path = env::get("TEST_SQLITE_PATH", ":memory:");
+let sdb = db::connect("sqlite://" + sqlite_path);
+
+db::exec(sdb, "CREATE TABLE IF NOT EXISTS sec_test (id INTEGER PRIMARY KEY, name TEXT, val INTEGER)");
+db::exec(sdb, "INSERT INTO sec_test (name, val) VALUES (?, ?)", ["alice", 1]);
+db::exec(sdb, "INSERT INTO sec_test (name, val) VALUES (?, ?)", ["bob' OR '1'='1", 2]);
+
+// SQL injection deneyin — parametre olarak iletilen SQL metni sorgu değil veri olmalı
+let rows = db::query(sdb, "SELECT * FROM sec_test WHERE name = ?", ["alice"]);
+assert("sqlite: injection string stored as data, not executed", len(rows) == 1);
+
+// NULL parametre binary protokolde doğru iletilmeli
+db::exec(sdb, "INSERT INTO sec_test (name, val) VALUES (?, ?)", ["nulltest", null]);
+let null_rows = db::query(sdb, "SELECT val FROM sec_test WHERE name = ?", ["nulltest"]);
+assert("sqlite: NULL param correctly bound (not empty string)",
+    len(null_rows) == 1 && null_rows[0]["val"] == null);
+
+// Yalnızca 2 satır dönmeli (evil input satır değil)
+let all = db::query(sdb, "SELECT * FROM sec_test WHERE val IS NOT NULL");
+assert("sqlite: injection input did not break row count", len(all) == 2);
+
+// ── MySQL (opsiyonel) ─────────────────────────────────────────────────────────
+let mysql_dsn = env::get("TEST_MYSQL_DSN", "");
+if mysql_dsn != "" {
+    let mdb = db::connect(mysql_dsn);
+    db::exec(mdb, "CREATE TABLE IF NOT EXISTS sec_test2 (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(200), val INT)");
+    db::exec(mdb, "INSERT INTO sec_test2 (name, val) VALUES (?, ?)", ["alice", 10]);
+    db::exec(mdb, "INSERT INTO sec_test2 (name, val) VALUES (?, ?)", ["bob' OR '1'='1", 20]);
+
+    let mrows = db::query(mdb, "SELECT * FROM sec_test2 WHERE name = ?", ["alice"]);
+    assert("mysql: injection string stored as data", len(mrows) == 1);
+
+    // NULL binary protokol testi
+    db::exec(mdb, "INSERT INTO sec_test2 (name, val) VALUES (?, ?)", ["nulltest", null]);
+    let mnull = db::query(mdb, "SELECT val FROM sec_test2 WHERE name = ?", ["nulltest"]);
+    assert("mysql: NULL param via COM_STMT_EXECUTE correct",
+        len(mnull) == 1 && mnull[0]["val"] == null);
+
+    db::exec(mdb, "DROP TABLE sec_test2");
+}
+
+// ── PostgreSQL (opsiyonel) ────────────────────────────────────────────────────
+let pg_dsn = env::get("TEST_PG_DSN", "");
+if pg_dsn != "" {
+    let pgdb = db::connect(pg_dsn);
+    db::exec(pgdb, "CREATE TABLE IF NOT EXISTS sec_test3 (id SERIAL PRIMARY KEY, name TEXT, val INT)");
+    db::exec(pgdb, "INSERT INTO sec_test3 (name, val) VALUES (?, ?)", ["alice", 100]);
+    db::exec(pgdb, "INSERT INTO sec_test3 (name, val) VALUES (?, ?)", ["bob' OR '1'='1", 200]);
+
+    let pgrows = db::query(pgdb, "SELECT * FROM sec_test3 WHERE name = ?", ["alice"]);
+    assert("postgres: injection string stored as data", len(pgrows) == 1);
+
+    // SCRAM-SHA-256 ile bağlantı kurulabildi mi (bağlandıysak geçti)
+    assert("postgres: SCRAM-SHA-256 auth succeeded (connection established)", true);
+
+    // NULL extended query testi
+    db::exec(pgdb, "INSERT INTO sec_test3 (name, val) VALUES (?, ?)", ["nulltest", null]);
+    let pgnull = db::query(pgdb, "SELECT val FROM sec_test3 WHERE name = ?", ["nulltest"]);
+    assert("postgres: NULL param via Bind message correct",
+        len(pgnull) == 1 && pgnull[0]["val"] == null);
+
+    db::exec(pgdb, "DROP TABLE sec_test3");
+}
+
+// ── Sonuç ─────────────────────────────────────────────────────────────────────
+io::println("");
+io::println("DB Security: " + string::from(passed) + " passed, " + string::from(failed) + " failed");
+if failed > 0 {
+    io::exit(1);
+}

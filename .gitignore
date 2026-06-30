@@ -38,10 +38,10 @@ dbg.txt
 *.db-shm
 *.db-wal
 
-# Geçici test dosyaları (root düzeyindeki)
-test_*.lk
-test_*.py
-test_*.sh
+# Geçici test dosyaları (sadece proje kökü — tests/ alt dizinleri hariç)
+/test_*.lk
+/test_*.py
+/test_*.sh
 
 # Deploy / debug scriptleri
 deploy_*.sh
