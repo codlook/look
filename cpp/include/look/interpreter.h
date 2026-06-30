@@ -68,6 +68,17 @@ public:
     int         to_int()    const;
     bool        is_truthy() const;
 
+    // ARRAY için recursive deep copy; diğer tipler (fn, channel, ws) read-only paylaşım
+    Value deep_clone() const {
+        if (type_ == ARRAY && arr_val) {
+            auto v = std::make_shared<std::vector<Value>>();
+            v->reserve(arr_val->size());
+            for (const auto& e : *arr_val) v->push_back(e.deep_clone());
+            return Value(v);
+        }
+        return *this;
+    }
+
     Value operator+(const Value& o) const;
     Value operator-(const Value& o) const;
     Value operator*(const Value& o) const;
@@ -152,7 +163,8 @@ public:
     // Dispatch kopyası için derin kopya — shared mutable state race kondisyonunu engeller
     std::shared_ptr<Environment> clone() const {
         auto e = std::make_shared<Environment>(parent_);
-        e->values_ = values_;
+        for (const auto& [k, v] : values_)
+            e->values_[k] = v.deep_clone();
         return e;
     }
 

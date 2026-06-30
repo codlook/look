@@ -327,7 +327,7 @@ static Module make_request(WebContext* ctx) {
         if (uf.mime == "image/svg+xml" && !allow_svg)
             throw std::runtime_error("SVG upload requires allow_svg: true option");
 
-        // SVG XSS sanitizasyonu — <script>, javascript: ve on* event attribute'larını sil
+        // SVG XSS sanitizasyonu — bilinen tüm vektörleri kapatan kapsamlı temizlik
         if (uf.mime == "image/svg+xml" && allow_svg) {
             std::ifstream svg_in(uf.temp_path, std::ios::binary);
             if (svg_in) {
@@ -335,41 +335,60 @@ static Module make_request(WebContext* ctx) {
                                      std::istreambuf_iterator<char>());
                 svg_in.close();
 
-                // <script ...>...</script> blokları
-                {
-                    std::string out; out.reserve(content.size());
+                // Yardımcı: büyük/küçük harf duyarsız blok silici
+                auto strip_block = [](std::string& s, const std::string& open_tag, const std::string& close_tag) {
+                    std::string lo_s = s;
+                    for (auto& c : lo_s) c = (char)std::tolower((unsigned char)c);
+                    std::string lo_open = open_tag, lo_close = close_tag;
+                    for (auto& c : lo_open)  c = (char)std::tolower((unsigned char)c);
+                    for (auto& c : lo_close) c = (char)std::tolower((unsigned char)c);
+                    std::string out; out.reserve(s.size());
                     size_t i = 0;
-                    while (i < content.size()) {
-                        if (content.size() - i >= 7) {
-                            std::string tag7(content.begin() + i, content.begin() + i + 7);
-                            std::string lower7; for (char c : tag7) lower7 += (char)std::tolower((unsigned char)c);
-                            if (lower7 == "<script") {
-                                size_t end = content.find("</script", i + 7);
-                                if (end == std::string::npos) end = content.size() - 1;
-                                else {
-                                    size_t gt = content.find('>', end + 8);
-                                    end = (gt == std::string::npos) ? content.size() : gt;
-                                }
-                                i = end + 1;
-                                continue;
-                            }
+                    while (i < s.size()) {
+                        if (lo_s.compare(i, lo_open.size(), lo_open) == 0) {
+                            size_t end = lo_s.find(lo_close, i + lo_open.size());
+                            if (end == std::string::npos) { i = s.size(); break; }
+                            i = end + lo_close.size();
+                        } else {
+                            out += s[i++];
                         }
-                        out += content[i++];
                     }
-                    content = std::move(out);
-                }
+                    s = std::move(out);
+                };
 
-                // on* event attribute'ları (onclick, onload, onerror ...)
+                // 1. <script>...</script>
+                strip_block(content, "<script", "</script>");
+                // 2. <foreignObject>...</foreignObject> — iframe/html gömme vektörü
+                strip_block(content, "<foreignobject", "</foreignobject>");
+                // 3. <set ...> — attributeName="onmouseover" vb.
+                strip_block(content, "<set ", "/>");
+                // 4. <animate attributeName="href" values="javascript:..."> vektörü
+                //    animate'i tamamen silmek yerine tehlikeli olanları filtrele
+                {
+                    std::regex anim_js(
+                        R"(<animate[^>]*\bvalues\s*=\s*["'][^"']*javascript:[^"']*["'][^>]*/>)",
+                        std::regex::icase);
+                    content = std::regex_replace(content, anim_js, "");
+                }
+                // 5. on* event attribute'ları (onclick, onload, onerror, onmouseover ...)
                 {
                     std::regex on_attr(R"(\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))",
                                        std::regex::icase);
                     content = std::regex_replace(content, on_attr, "");
                 }
-
-                // javascript: URI
+                // 6. href / xlink:href / src ile javascript: veya data: URI'ları
                 {
-                    std::regex js_uri(R"(javascript\s*:)", std::regex::icase);
-                    content = std::regex_replace(content, js_uri, "removed:");
+                    std::regex dangerous_href(
+                        R"(((?:xlink:)?href|src)\s*=\s*["']\s*(?:javascript|data)\s*:[^"']*["'])",
+                        std::regex::icase);
+                    content = std::regex_replace(content, dangerous_href, "");
+                }
+                // 7. <use href="data:..."> — recursive SVG gömme vektörü
+                {
+                    std::regex use_data(
+                        R"(<use\b[^>]*\bhref\s*=\s*["']data:[^"']*["'][^>]*>)",
+                        std::regex::icase);
+                    content = std::regex_replace(content, use_data, "");
                 }
 
                 std::ofstream svg_out(uf.temp_path, std::ios::binary | std::ios::trunc);

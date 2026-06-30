@@ -8,6 +8,8 @@
 #include <ctime>
 #include <regex>
 #include <iomanip>
+#include <future>
+#include <chrono>
 
 namespace look {
 
@@ -352,6 +354,14 @@ static Module make_string() {
         return Value(result);
     };
 
+    // ReDoS koruma yardımcısı: regex işlemini ayrı thread'de çalıştır, 250ms timeout uygula
+    static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
+        auto fut = std::async(std::launch::async, fn);
+        if (fut.wait_for(std::chrono::milliseconds(250)) == std::future_status::timeout)
+            throw std::runtime_error("string::regex: execution timeout (ReDoS koruması — pattern çok karmaşık)");
+        return fut.get();
+    };
+
     // string::regex_match($str, $pattern) → bool
     m.functions["regex_match"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("string::regex_match() requires string and pattern");
@@ -361,8 +371,9 @@ static Module make_string() {
         if (str.size() > 65536) throw std::runtime_error("string::regex_match(): input too long (max 65536)");
         try {
             std::regex re(pat);
-            return Value(std::regex_search(str, re));
-        } catch (...) { return Value(false); }
+            return Value(regex_with_timeout([str, re]{ return std::regex_search(str, re); }));
+        } catch (const std::runtime_error&) { throw; }
+          catch (...) { return Value(false); }
     };
 
     // string::regex_replace($str, $pattern, $replacement) → string
@@ -370,12 +381,14 @@ static Module make_string() {
         if (args.size() < 3) throw std::runtime_error("string::regex_replace() requires string, pattern, replacement");
         std::string pat = args[1].to_string();
         std::string str = args[0].to_string();
+        std::string rep = args[2].to_string();
         if (pat.size() > 2048) throw std::runtime_error("string::regex_replace(): pattern too long (max 2048)");
         if (str.size() > 65536) throw std::runtime_error("string::regex_replace(): input too long (max 65536)");
         try {
             std::regex re(pat);
-            return Value(std::regex_replace(str, re, args[2].to_string()));
-        } catch (...) { return Value(args[0].to_string()); }
+            return Value(regex_with_timeout([str, re, rep]{ return std::regex_replace(str, re, rep); }));
+        } catch (const std::runtime_error&) { throw; }
+          catch (...) { return Value(args[0].to_string()); }
     };
 
     // string::regex_match_all($str, $pattern) → [[tam_eşleşme, grup1, ...], ...]
@@ -388,15 +401,23 @@ static Module make_string() {
             if (pat.size() > 2048) throw std::runtime_error("string::regex_match_all(): pattern too long (max 2048)");
             if (s.size() > 65536) throw std::runtime_error("string::regex_match_all(): input too long (max 65536)");
             std::regex re(pat);
-            auto it  = std::sregex_iterator(s.begin(), s.end(), re);
-            auto end_it = std::sregex_iterator();
-            for (; it != end_it; ++it) {
+            auto matches = regex_with_timeout([s, re]{
+                std::vector<std::vector<std::string>> out;
+                auto it = std::sregex_iterator(s.begin(), s.end(), re);
+                for (auto end_it = std::sregex_iterator(); it != end_it; ++it) {
+                    std::vector<std::string> m;
+                    for (size_t i = 0; i < it->size(); ++i) m.push_back((*it)[i].str());
+                    out.push_back(std::move(m));
+                }
+                return out;
+            });
+            for (auto& m : matches) {
                 auto match = std::make_shared<std::vector<Value>>();
-                for (size_t i = 0; i < it->size(); ++i)
-                    match->push_back(Value((*it)[i].str()));
+                for (auto& s2 : m) match->push_back(Value(s2));
                 result->push_back(Value(match));
             }
-        } catch (...) {}
+        } catch (const std::runtime_error&) { throw; }
+          catch (...) {}
         return Value(result);
     };
 
