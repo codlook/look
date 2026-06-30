@@ -7,6 +7,7 @@
 #include "look/logger.h"
 #include <sstream>
 #include <fstream>
+#include <set>
 #include <stdexcept>
 #include <regex>
 #include <ctime>
@@ -327,7 +328,8 @@ static Module make_request(WebContext* ctx) {
         if (uf.mime == "image/svg+xml" && !allow_svg)
             throw std::runtime_error("SVG upload requires allow_svg: true option");
 
-        // SVG XSS sanitizasyonu — bilinen tüm vektörleri kapatan kapsamlı temizlik
+        // SVG XSS sanitizasyonu — whitelist tabanlı element + attribute parser
+        // Blacklist yaklaşımı yerine: sadece bilinen güvenli elementlere ve attribute'lara izin ver.
         if (uf.mime == "image/svg+xml" && allow_svg) {
             std::ifstream svg_in(uf.temp_path, std::ios::binary);
             if (svg_in) {
@@ -335,61 +337,154 @@ static Module make_request(WebContext* ctx) {
                                      std::istreambuf_iterator<char>());
                 svg_in.close();
 
-                // Yardımcı: büyük/küçük harf duyarsız blok silici
-                auto strip_block = [](std::string& s, const std::string& open_tag, const std::string& close_tag) {
-                    std::string lo_s = s;
-                    for (auto& c : lo_s) c = (char)std::tolower((unsigned char)c);
-                    std::string lo_open = open_tag, lo_close = close_tag;
-                    for (auto& c : lo_open)  c = (char)std::tolower((unsigned char)c);
-                    for (auto& c : lo_close) c = (char)std::tolower((unsigned char)c);
-                    std::string out; out.reserve(s.size());
-                    size_t i = 0;
-                    while (i < s.size()) {
-                        if (lo_s.compare(i, lo_open.size(), lo_open) == 0) {
-                            size_t end = lo_s.find(lo_close, i + lo_open.size());
-                            if (end == std::string::npos) { i = s.size(); break; }
-                            i = end + lo_close.size();
-                        } else {
-                            out += s[i++];
-                        }
-                    }
-                    s = std::move(out);
+                // Güvenli SVG elementleri (grafik + meta, script/embed/foreign yok)
+                static const std::set<std::string> SAFE_TAGS = {
+                    "svg","g","defs","symbol","path","circle","ellipse","rect",
+                    "line","polyline","polygon","text","tspan","textpath",
+                    "lineargradient","radialgradient","stop","clippath","mask",
+                    "pattern","marker","title","desc","use","a",
+                    "fegaussianblur","feblend","fecolormatrix","fecomposite",
+                    "feoffset","femerge","femergenode","fedisplacementmap","feflood","filter"
+                };
+                // Tehlikeli URL scheme'leri
+                auto has_bad_scheme = [](const std::string& val) {
+                    std::string lo = val;
+                    for (auto& c : lo) c = (char)std::tolower((unsigned char)c);
+                    // Boşluk/sekme soyma (javascript  :)
+                    size_t s = lo.find_first_not_of(" \t\r\n");
+                    if (s != std::string::npos) lo = lo.substr(s);
+                    return lo.rfind("javascript:", 0) == 0 ||
+                           lo.rfind("data:",       0) == 0 ||
+                           lo.rfind("vbscript:",   0) == 0;
                 };
 
-                // 1. <script>...</script>
-                strip_block(content, "<script", "</script>");
-                // 2. <foreignObject>...</foreignObject> — iframe/html gömme vektörü
-                strip_block(content, "<foreignobject", "</foreignobject>");
-                // 3. <set ...> — attributeName="onmouseover" vb.
-                strip_block(content, "<set ", "/>");
-                // 4. <animate attributeName="href" values="javascript:..."> vektörü
-                //    animate'i tamamen silmek yerine tehlikeli olanları filtrele
-                {
-                    std::regex anim_js(
-                        R"(<animate[^>]*\bvalues\s*=\s*["'][^"']*javascript:[^"']*["'][^>]*/>)",
-                        std::regex::icase);
-                    content = std::regex_replace(content, anim_js, "");
+                std::string out; out.reserve(content.size());
+                size_t i = 0;
+                while (i < content.size()) {
+                    if (content[i] != '<') { out += content[i++]; continue; }
+
+                    // '<' bulundu — tag başlangıcı
+                    size_t tag_open = i++;
+
+                    // Yorum: <!-- ... -->
+                    if (i + 2 < content.size() && content[i] == '!' &&
+                        content[i+1] == '-' && content[i+2] == '-') {
+                        size_t end = content.find("-->", i + 3);
+                        if (end == std::string::npos) end = content.size() - 3;
+                        out += content.substr(tag_open, (end + 3) - tag_open);
+                        i = end + 3; continue;
+                    }
+                    // CDATA: <![CDATA[...]]>
+                    if (content.substr(i, 8) == "![CDATA[") {
+                        size_t end = content.find("]]>", i + 8);
+                        if (end == std::string::npos) end = content.size() - 3;
+                        out += content.substr(tag_open, (end + 3) - tag_open);
+                        i = end + 3; continue;
+                    }
+                    // DOCTYPE / PI → sil
+                    if (i < content.size() && (content[i] == '!' || content[i] == '?')) {
+                        size_t end = content.find('>', i);
+                        i = (end == std::string::npos) ? content.size() : end + 1;
+                        continue;
+                    }
+
+                    bool is_close = (i < content.size() && content[i] == '/');
+                    if (is_close) i++;
+
+                    std::string tagname;
+                    while (i < content.size() && content[i] != '>' && content[i] != '/' &&
+                           !std::isspace((unsigned char)content[i]))
+                        tagname += (char)std::tolower((unsigned char)content[i++]);
+
+                    if (SAFE_TAGS.find(tagname) == SAFE_TAGS.end()) {
+                        // Güvensiz element: opening + body'yi atla
+                        size_t gt = content.find('>', i);
+                        if (gt == std::string::npos) { i = content.size(); break; }
+                        bool self_close = (gt > 0 && content[gt-1] == '/');
+                        i = gt + 1;
+                        if (!self_close && !is_close && !tagname.empty()) {
+                            // Kapanış tag'ini de atla
+                            std::string clo = "</" + tagname;
+                            size_t ci = i;
+                            while (ci < content.size()) {
+                                size_t pos = content.find(clo, ci);
+                                if (pos == std::string::npos) { i = content.size(); break; }
+                                // Etiket mi yoksa başka bir şey mi?
+                                size_t after = pos + clo.size();
+                                if (after < content.size() &&
+                                    (content[after] == '>' || std::isspace((unsigned char)content[after]))) {
+                                    size_t end = content.find('>', after);
+                                    i = (end == std::string::npos) ? content.size() : end + 1;
+                                    break;
+                                }
+                                ci = pos + 1;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Güvenli element — attribute'ları filtrele
+                    std::string rebuilt = "<";
+                    if (is_close) rebuilt += "/";
+                    rebuilt += tagname;
+
+                    while (i < content.size() && content[i] != '>' && content[i] != '/') {
+                        // Boşluk atla
+                        while (i < content.size() && std::isspace((unsigned char)content[i])) i++;
+                        if (i >= content.size() || content[i] == '>' || content[i] == '/') break;
+
+                        std::string aname;
+                        while (i < content.size() && content[i] != '=' &&
+                               content[i] != '>' && !std::isspace((unsigned char)content[i]))
+                            aname += content[i++];
+                        std::string aname_lo = aname;
+                        for (auto& c : aname_lo) c = (char)std::tolower((unsigned char)c);
+
+                        while (i < content.size() && std::isspace((unsigned char)content[i])) i++;
+                        if (i >= content.size() || content[i] != '=') {
+                            // Boolean attr — on* filtrele
+                            if (aname_lo.substr(0,2) != "on" && !aname_lo.empty())
+                                rebuilt += " " + aname;
+                            continue;
+                        }
+                        i++; // '='
+                        while (i < content.size() && std::isspace((unsigned char)content[i])) i++;
+
+                        char q = 0; std::string aval;
+                        if (i < content.size() && (content[i]=='"' || content[i]=='\'')) {
+                            q = content[i++];
+                            while (i < content.size() && content[i] != q) aval += content[i++];
+                            if (i < content.size()) i++;
+                        } else {
+                            while (i < content.size() && !std::isspace((unsigned char)content[i])
+                                   && content[i] != '>') aval += content[i++];
+                        }
+
+                        // on* event attribute → atla
+                        if (aname_lo.size() >= 2 && aname_lo.substr(0,2) == "on") continue;
+                        // URL attribute'larında tehlikeli scheme → atla
+                        bool is_url = (aname_lo == "href" || aname_lo == "src" ||
+                                       aname_lo == "xlink:href" || aname_lo == "action");
+                        if (is_url && has_bad_scheme(aval)) continue;
+                        // <use> yalnızca #fragment href'e izin ver
+                        if (tagname == "use" && is_url && !aval.empty() && aval[0] != '#') continue;
+                        // style içinde javascript: / expression() → atla
+                        if (aname_lo == "style") {
+                            std::string slo = aval;
+                            for (auto& c : slo) c = (char)std::tolower((unsigned char)c);
+                            if (slo.find("javascript:") != std::string::npos ||
+                                slo.find("expression(") != std::string::npos) continue;
+                        }
+
+                        char qc = q ? q : '"';
+                        rebuilt += " " + aname + "=" + qc + aval + qc;
+                    }
+
+                    if (i < content.size() && content[i] == '/') { rebuilt += "/"; i++; }
+                    if (i < content.size() && content[i] == '>') { rebuilt += ">"; i++; }
+                    out += rebuilt;
                 }
-                // 5. on* event attribute'ları (onclick, onload, onerror, onmouseover ...)
-                {
-                    std::regex on_attr(R"(\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))",
-                                       std::regex::icase);
-                    content = std::regex_replace(content, on_attr, "");
-                }
-                // 6. href / xlink:href / src ile javascript: veya data: URI'ları
-                {
-                    std::regex dangerous_href(
-                        R"(((?:xlink:)?href|src)\s*=\s*["']\s*(?:javascript|data)\s*:[^"']*["'])",
-                        std::regex::icase);
-                    content = std::regex_replace(content, dangerous_href, "");
-                }
-                // 7. <use href="data:..."> — recursive SVG gömme vektörü
-                {
-                    std::regex use_data(
-                        R"(<use\b[^>]*\bhref\s*=\s*["']data:[^"']*["'][^>]*>)",
-                        std::regex::icase);
-                    content = std::regex_replace(content, use_data, "");
-                }
+                content = std::move(out);
 
                 std::ofstream svg_out(uf.temp_path, std::ios::binary | std::ios::trunc);
                 if (svg_out) svg_out.write(content.data(), (std::streamsize)content.size());

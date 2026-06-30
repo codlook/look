@@ -68,16 +68,26 @@ public:
     int         to_int()    const;
     bool        is_truthy() const;
 
-    // ARRAY için recursive deep copy; diğer tipler (fn, channel, ws) read-only paylaşım
+    // ARRAY için recursive deep copy; döngüsel referans güvenli (visited set ile kırılır)
     Value deep_clone() const {
+        std::unordered_set<const void*> visited;
+        return deep_clone_impl(visited);
+    }
+
+private:
+    Value deep_clone_impl(std::unordered_set<const void*>& visited) const {
         if (type_ == ARRAY && arr_val) {
+            if (visited.count(arr_val.get())) return Value(); // döngü kır — null döndür
+            visited.insert(arr_val.get());
             auto v = std::make_shared<std::vector<Value>>();
             v->reserve(arr_val->size());
-            for (const auto& e : *arr_val) v->push_back(e.deep_clone());
+            for (const auto& e : *arr_val) v->push_back(e.deep_clone_impl(visited));
+            visited.erase(arr_val.get());
             return Value(v);
         }
-        return *this;
+        return *this; // scalar, fn, ws, sse — shallow copy yeterli
     }
+public:
 
     Value operator+(const Value& o) const;
     Value operator-(const Value& o) const;

@@ -8,8 +8,11 @@
 #include <ctime>
 #include <regex>
 #include <iomanip>
-#include <future>
+#include <optional>
 #include <chrono>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 namespace look {
 
@@ -354,12 +357,37 @@ static Module make_string() {
         return Value(result);
     };
 
-    // ReDoS koruma yardımcısı: regex işlemini ayrı thread'de çalıştır, 250ms timeout uygula
+    // ReDoS koruma yardımcısı: thread::detach + condition_variable (250ms timeout)
+    // std::async kullanılmaz — destructor bloklayarak timeout'u etkisiz kılar.
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
-        auto fut = std::async(std::launch::async, fn);
-        if (fut.wait_for(std::chrono::milliseconds(250)) == std::future_status::timeout)
+        using T = decltype(fn());
+        struct State {
+            std::mutex              mtx;
+            std::condition_variable cv;
+            bool                    done = false;
+            std::optional<T>        result;
+            std::exception_ptr      ex;
+        };
+        auto state = std::make_shared<State>();
+
+        std::thread([state, fn = std::move(fn)]() mutable {
+            try {
+                T r = fn();
+                std::lock_guard<std::mutex> lk(state->mtx);
+                state->result = std::move(r);
+            } catch (...) {
+                std::lock_guard<std::mutex> lk(state->mtx);
+                state->ex = std::current_exception();
+            }
+            state->done = true;
+            state->cv.notify_one();
+        }).detach();
+
+        std::unique_lock<std::mutex> lk(state->mtx);
+        if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; }))
             throw std::runtime_error("string::regex: execution timeout (ReDoS koruması — pattern çok karmaşık)");
-        return fut.get();
+        if (state->ex) std::rethrow_exception(state->ex);
+        return std::move(*state->result);
     };
 
     // string::regex_match($str, $pattern) → bool
