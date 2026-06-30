@@ -941,39 +941,21 @@ static std::string escape_str(const std::string& s, const char* driver) {
     return out;
 }
 
-// Prepared statement: ? parametrelerini locale-bağımsız, driver-doğru escape ile yerleştirir
-static std::string bind_params(const std::string& sql,
-                                const std::vector<Value>& params,
-                                const char* driver = "mysql") {
-    std::string result;
-    size_t param_idx = 0;
-    for (size_t i = 0; i < sql.size(); i++) {
-        if (sql[i] == '?' && param_idx < params.size()) {
-            Value p = params[param_idx++];
-            if (p.type() == Value::NONE) {
-                result += "NULL";
-            } else if (p.type() == Value::INT) {
-                result += std::to_string(p.as_int());
-            } else if (p.type() == Value::FLOAT) {
-                // Locale-bağımsız: Türkçe/Almanca sistemde "3,5" yerine "3.5" yazılır
-                std::ostringstream oss;
-                oss.imbue(std::locale::classic());
-                oss << p.as_float();
-                result += oss.str();
-            } else if (p.type() == Value::BOOL) {
-                // PostgreSQL: TRUE/FALSE literal; MySQL/SQLite: 1/0
-                if (std::string(driver) == "postgres")
-                    result += p.as_bool() ? "TRUE" : "FALSE";
-                else
-                    result += p.as_bool() ? "1" : "0";
-            } else {
-                result += "'" + escape_str(p.to_string(), driver) + "'";
-            }
-        } else {
-            result += sql[i];
-        }
+// LOOK Value → DbParam (driver-agnostik, gerçek prepared statement parametresi)
+static DbParam value_to_param(const Value& v) {
+    switch (v.type()) {
+        case Value::NONE:  return DbParam::null();
+        case Value::INT:   return DbParam::from_int(v.as_int());
+        case Value::FLOAT: return DbParam::from_float(v.as_float());
+        case Value::BOOL:  return DbParam::from_bool(v.as_bool());
+        default:           return DbParam::from_text(v.to_string());
     }
-    return result;
+}
+static std::vector<DbParam> values_to_params(const std::vector<Value>& vals) {
+    std::vector<DbParam> out;
+    out.reserve(vals.size());
+    for (const auto& v : vals) out.push_back(value_to_param(v));
+    return out;
 }
 
 static Module make_db_module() {
@@ -1020,8 +1002,7 @@ static Module make_db_module() {
         std::vector<Value> params;
         if (args.size() >= 3 && args[2].type() == Value::ARRAY)
             params = *args[2].as_array();
-        std::string bound = bind_params(sql, params, conn->driver_name());
-        auto rows = conn->query(bound);
+        auto rows = conn->execute(sql, values_to_params(params));
         return rows_to_value(rows);
     };
 
@@ -1033,8 +1014,7 @@ static Module make_db_module() {
         std::vector<Value> params;
         if (args.size() >= 3 && args[2].type() == Value::ARRAY)
             params = *args[2].as_array();
-        std::string bound = bind_params(sql, params, conn->driver_name());
-        conn->query(bound);
+        conn->execute(sql, values_to_params(params));
         return Value((int)conn->affected_rows());
     };
 
@@ -1081,8 +1061,7 @@ static Module make_db_module() {
             std::vector<Value> params;
             if (args.size() >= 3 && args[2].type() == Value::ARRAY)
                 params = *args[2].as_array();
-            std::string bound = bind_params(sql, params, conn->driver_name());
-            auto rows = conn->query(bound);
+            auto rows = conn->execute(sql, values_to_params(params));
             if (rows.empty() || rows[0].empty()) return Value();
             // İlk satırın ilk kolonunu dön
             const auto& dv = rows[0][0].second;

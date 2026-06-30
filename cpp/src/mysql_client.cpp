@@ -405,6 +405,207 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     return rows;
 }
 
+// ── Prepared Statements (COM_STMT_PREPARE + COM_STMT_EXECUTE) ────────────────
+
+MySQLClient::StmtMeta MySQLClient::stmt_prepare(const std::string& sql) {
+    ensure_connected();
+    std::vector<uint8_t> pkt;
+    pkt.push_back(0x16); // COM_STMT_PREPARE
+    pkt.insert(pkt.end(), sql.begin(), sql.end());
+    send_packet(pkt, 0);
+
+    uint8_t seq;
+    auto resp = read_packet(seq);
+    if (resp.empty()) throw std::runtime_error("db: stmt_prepare empty response");
+    if (resp[0] == 0xFF) {
+        const uint8_t* p = resp.data() + 1;
+        const uint8_t* end = p + resp.size() - 1;
+        uint16_t code; memcpy(&code, p, 2); p += 2;
+        if (p < end && *p == '#') p += 6;
+        throw std::runtime_error("db: " + std::string(p, end));
+    }
+    if (resp[0] != 0x00 || resp.size() < 12)
+        throw std::runtime_error("db: malformed STMT_PREPARE response");
+
+    const uint8_t* p = resp.data() + 1;
+    uint32_t stmt_id; memcpy(&stmt_id, p, 4); p += 4;
+    uint16_t num_cols;   memcpy(&num_cols,   p, 2); p += 2;
+    uint16_t num_params; memcpy(&num_params, p, 2);
+
+    // param defs + EOF
+    for (int i = 0; i < num_params; i++) read_packet(seq);
+    if (num_params > 0) read_packet(seq);
+    // col defs + EOF
+    for (int i = 0; i < num_cols; i++) read_packet(seq);
+    if (num_cols > 0) read_packet(seq);
+
+    return {stmt_id, num_cols, num_params};
+}
+
+void MySQLClient::stmt_close(uint32_t stmt_id) {
+    std::vector<uint8_t> pkt;
+    pkt.push_back(0x19); // COM_STMT_CLOSE
+    pkt.push_back(stmt_id & 0xFF); pkt.push_back((stmt_id>>8) & 0xFF);
+    pkt.push_back((stmt_id>>16) & 0xFF); pkt.push_back((stmt_id>>24) & 0xFF);
+    try { send_packet(pkt, 0); } catch (...) {}
+}
+
+std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
+                                              const std::vector<DbParam>& params) {
+    int n = (int)params.size();
+    std::vector<uint8_t> pkt;
+    pkt.push_back(0x17); // COM_STMT_EXECUTE
+    auto push_le32 = [&](uint32_t v) {
+        for (int b=0;b<4;b++) pkt.push_back((v>>(b*8))&0xFF);
+    };
+    push_le32(m.id);
+    pkt.push_back(0x00); // flags
+    push_le32(1); // iteration count
+
+    if (n > 0) {
+        // NULL bitmap
+        int nbytes = (n + 7) / 8;
+        std::vector<uint8_t> nbm(nbytes, 0);
+        for (int i = 0; i < n; i++)
+            if (params[i].kind == DbParam::NULL_VAL) nbm[i/8] |= (1 << (i%8));
+        pkt.insert(pkt.end(), nbm.begin(), nbm.end());
+        pkt.push_back(0x01); // new_params_bound_flag
+
+        // type codes (2 bytes each)
+        for (int i = 0; i < n; i++) {
+            uint8_t tc = 0xFE; // BLOB → string
+            if (params[i].kind == DbParam::INT_VAL)   tc = 0x08; // LONGLONG
+            if (params[i].kind == DbParam::FLOAT_VAL) tc = 0x05; // DOUBLE
+            if (params[i].kind == DbParam::BOOL_VAL)  tc = 0x10; // TINY
+            pkt.push_back(tc); pkt.push_back(0x00); // unsigned_flag=0
+        }
+
+        // values
+        for (int i = 0; i < n; i++) {
+            if (params[i].kind == DbParam::NULL_VAL) continue;
+            switch (params[i].kind) {
+                case DbParam::INT_VAL: {
+                    uint64_t v; memcpy(&v, &params[i].i, 8);
+                    for (int b=0;b<8;b++) pkt.push_back((v>>(b*8))&0xFF);
+                    break;
+                }
+                case DbParam::FLOAT_VAL: {
+                    uint64_t v; memcpy(&v, &params[i].d, 8);
+                    for (int b=0;b<8;b++) pkt.push_back((v>>(b*8))&0xFF);
+                    break;
+                }
+                case DbParam::BOOL_VAL:
+                    pkt.push_back(params[i].b ? 1 : 0);
+                    break;
+                default: { // TEXT
+                    const std::string& s = params[i].s;
+                    uint64_t len = s.size();
+                    if (len < 251)       { pkt.push_back((uint8_t)len); }
+                    else if (len < 65536){ pkt.push_back(0xFC); pkt.push_back(len&0xFF); pkt.push_back((len>>8)&0xFF); }
+                    else                 { pkt.push_back(0xFD); for(int b=0;b<3;b++) pkt.push_back((len>>(b*8))&0xFF); }
+                    pkt.insert(pkt.end(), s.begin(), s.end());
+                    break;
+                }
+            }
+        }
+    } else {
+        pkt.push_back(0x01); // new_params_bound_flag (no params)
+    }
+
+    send_packet(pkt, 0);
+
+    uint8_t seq;
+    auto resp = read_packet(seq);
+    if (resp.empty()) throw std::runtime_error("db: stmt_execute empty response");
+    if (resp[0] == 0xFF) {
+        const uint8_t* p = resp.data() + 1;
+        const uint8_t* end = resp.data() + resp.size();
+        uint16_t code; memcpy(&code, p, 2); p += 2;
+        if (p < end && *p == '#') p += 6;
+        throw std::runtime_error("db: " + std::string(p, end));
+    }
+    if (resp[0] == 0x00) { // OK (INSERT/UPDATE/DELETE)
+        const uint8_t* p = resp.data() + 1;
+        const uint8_t* end = resp.data() + resp.size();
+        affected_rows_  = read_lenenc(p, end);
+        last_insert_id_ = read_lenenc(p, end);
+        return {};
+    }
+
+    // Binary resultset
+    const uint8_t* p = resp.data();
+    const uint8_t* end = p + resp.size();
+    uint64_t col_count = read_lenenc(p, end);
+
+    struct ColInfo { std::string name; uint8_t type; };
+    std::vector<ColInfo> columns;
+    for (uint64_t i = 0; i < col_count; i++) {
+        auto col_pkt = read_packet(seq);
+        const uint8_t* cp = col_pkt.data();
+        const uint8_t* ce = cp + col_pkt.size();
+        read_lenenc_str(cp,ce); read_lenenc_str(cp,ce); // catalog, schema
+        read_lenenc_str(cp,ce); read_lenenc_str(cp,ce); // table, org_table
+        std::string name = read_lenenc_str(cp,ce);
+        read_lenenc_str(cp,ce); // org_name
+        if (cp<ce) cp++;       // filler
+        if (cp+2<=ce) cp+=2;   // charset
+        if (cp+4<=ce) cp+=4;   // col_len
+        uint8_t col_type = (cp<ce) ? *cp : 0xFE;
+        columns.push_back({std::move(name), col_type});
+    }
+    read_packet(seq); // EOF
+
+    std::vector<DbRow> rows;
+    while (true) {
+        auto row_pkt = read_packet(seq);
+        if (row_pkt.empty() || row_pkt[0]==0xFE || row_pkt[0]==0xFF) break;
+
+        // binary row: 0x00 header + null_bitmap
+        const uint8_t* rp = row_pkt.data();
+        const uint8_t* re = rp + row_pkt.size();
+        if (rp < re) rp++; // skip 0x00
+        int nb = ((int)col_count + 7 + 2) / 8;
+        std::vector<uint8_t> nbm(nb, 0);
+        for (int i=0; i<nb && rp<re; i++) nbm[i] = *rp++;
+
+        DbRow row;
+        for (size_t ci = 0; ci < col_count; ci++) {
+            bool is_null = (nbm[(ci+2)/8] >> ((ci+2)%8)) & 1;
+            DbValue dv; dv.type = columns[ci].type;
+            if (is_null) { dv.is_null = true; }
+            else {
+                uint8_t ct = columns[ci].type;
+                auto read_le = [&](int bytes) -> int64_t {
+                    uint64_t v = 0;
+                    for (int b=0; b<bytes && rp<re; b++,rp++) v |= ((uint64_t)*rp << (b*8));
+                    return (int64_t)v;
+                };
+                switch(ct) {
+                    case 0x01:           dv.str = std::to_string(read_le(1)); break;
+                    case 0x02: case 0x0D: dv.str = std::to_string(read_le(2)); break;
+                    case 0x03: case 0x09: dv.str = std::to_string(read_le(4)); break;
+                    case 0x08:            dv.str = std::to_string(read_le(8)); break;
+                    case 0x04: { float f; if(rp+4<=re){memcpy(&f,rp,4);rp+=4;} dv.str=std::to_string(f); break; }
+                    case 0x05: { double d; if(rp+8<=re){memcpy(&d,rp,8);rp+=8;} dv.str=std::to_string(d); break; }
+                    case 0x10:            dv.str = std::to_string(read_le(1)); break;
+                    default:              dv.str = read_lenenc_str(rp, re); break;
+                }
+            }
+            row.push_back({columns[ci].name, std::move(dv)});
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vector<DbParam>& params) {
+    ensure_connected();
+    auto meta = stmt_prepare(sql);
+    auto rows = stmt_execute(meta, params);
+    stmt_close(meta.id);
+    return rows;
+}
+
 // ── Escape ────────────────────────────────────────────────────────────────────
 
 std::string MySQLClient::escape(const std::string& s) {
