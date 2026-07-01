@@ -56,6 +56,7 @@ public:
 
     // DbConnection arayüzü
     std::vector<DbRow> query(const std::string& sql) override;
+    std::vector<DbRow> execute(const std::string& sql, const std::vector<DbParam>& params) override;
     int64_t last_insert_id() const override { return (int64_t)last_insert_id_; }
     int64_t affected_rows()  const override { return (int64_t)affected_rows_;  }
     void    close()          override       { disconnect(); }
@@ -76,6 +77,11 @@ private:
     uint64_t affected_rows_  = 0;
     int64_t  last_query_ms_  = 0;
     bool     wsock_init_     = false;
+
+    struct StmtMeta { uint32_t id; uint16_t cols; uint16_t params; };
+    StmtMeta             stmt_prepare(const std::string& sql);
+    std::vector<DbRow>   stmt_execute(const StmtMeta& m, const std::vector<DbParam>& params);
+    void                 stmt_close(uint32_t stmt_id);
 
     void ensure_connected();
     void do_connect();

@@ -40,8 +40,8 @@ static void print_usage() {
     std::cout << "  lk test <pattern>                — run matching tests\n";
     std::cout << "  lk test --verbose                — verbose output\n";
     std::cout << "  lk repl                          — interactive REPL\n";
-    std::cout << "  lk module install <name>         — install module (e.g. jwt)\n";
-    std::cout << "  lk module list                   — list installed modules\n";
+    std::cout << "  lk module install <github.com/user/repo>  — install module from GitHub\n";
+    std::cout << "  lk module list                            — list official modules\n";
     std::cout << "  lk install <pkg>                 — install package (e.g. github.com/codlook/look-packages/firebase)\n";
     std::cout << "  lk install <pkg@ref>             — install specific branch/tag\n";
     std::cout << "  lk install                       — install all from look.lock\n";
@@ -87,24 +87,25 @@ int main(int argc, char* argv[]) {
         if (cmd == "module") {
             if (argc < 3) {
                 std::cout << "Kullanım:\n"
-                          << "  lk module install <name>   — modül yükle\n"
-                          << "  lk module list             — yüklü modülleri listele\n";
+                          << "  lk module install <github.com/user/repo>  — modül yükle\n"
+                          << "  lk module list                             — resmi modülleri listele\n";
                 return 1;
             }
             std::string sub = argv[2];
             bool verbose = false;
-            std::string name;
+            std::string pkg_url;
             for (int i = 3; i < argc; ++i) {
                 std::string arg = argv[i];
                 if (arg == "--verbose" || arg == "-v") verbose = true;
-                else if (name.empty()) name = arg;
+                else if (pkg_url.empty()) pkg_url = arg;
             }
             if (sub == "install") {
-                if (name.empty()) {
-                    std::cerr << "Hata: modül adı gerekli. Örnek: lk module install jwt\n";
+                if (pkg_url.empty()) {
+                    std::cerr << "Hata: GitHub linki gerekli.\n"
+                              << "Örnek: lk module install github.com/codlook/look-modules/jwt\n";
                     return 1;
                 }
-                return look::cmd_module_install(name, verbose);
+                return look::cmd_module_install(pkg_url, verbose);
             }
             if (sub == "list") {
                 return look::cmd_module_list();

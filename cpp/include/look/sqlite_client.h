@@ -19,6 +19,7 @@ public:
 
     // DbConnection arayüzü
     std::vector<DbRow> query(const std::string& sql) override;
+    std::vector<DbRow> execute(const std::string& sql, const std::vector<DbParam>& params) override;
     int64_t last_insert_id() const override { return last_insert_id_; }
     int64_t affected_rows()  const override { return affected_rows_;  }
     void    close()          override;

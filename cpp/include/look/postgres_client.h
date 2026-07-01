@@ -51,6 +51,7 @@ public:
 
     // DbConnection arayüzü
     std::vector<DbRow> query(const std::string& sql) override;
+    std::vector<DbRow> execute(const std::string& sql, const std::vector<DbParam>& params) override;
     int64_t last_insert_id() const override { return last_insert_id_; }
     int64_t affected_rows()  const override { return affected_rows_; }
     void    close()          override       { disconnect(); }
@@ -80,9 +81,14 @@ private:
     void  send_message(char type, const std::vector<uint8_t>& body);
     void  send_startup();
     void  do_auth();
+    void  do_scram_sha256(const std::vector<uint8_t>& mechanisms_body);
 
     std::vector<DbRow> simple_query(const std::string& sql);
+    std::vector<DbRow> extended_query(const std::string& sql, const std::vector<DbParam>& params);
     std::vector<DbRow> do_lastval();
+    std::vector<DbRow> drain_rows(std::vector<ColInfo_>& columns);
+
+    struct ColInfo_ { std::string name; uint8_t type_code; };
 
     static uint32_t read_u32_be(const uint8_t* p);
     static int32_t  read_i32_be(const uint8_t* p);
@@ -94,6 +100,16 @@ private:
     static std::string            pg_md5_password(const std::string& password,
                                                    const std::string& user,
                                                    const uint8_t salt[4]);
+
+    // SCRAM-SHA-256 primitifleri (sıfır bağımlılık)
+    static std::array<uint8_t,32> sha256(const uint8_t* data, size_t len);
+    static std::array<uint8_t,32> hmac_sha256(const uint8_t* key, size_t klen,
+                                               const uint8_t* msg, size_t mlen);
+    static std::array<uint8_t,32> pbkdf2_sha256(const std::string& pass,
+                                                  const uint8_t* salt, size_t slen, int iters);
+    static std::string            base64_enc(const uint8_t* data, size_t len);
+    static std::vector<uint8_t>   base64_dec(const std::string& s);
+
     // PostgreSQL OID → LOOK type code
     static uint8_t oid_to_type(int32_t oid);
 };
