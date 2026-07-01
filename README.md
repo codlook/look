@@ -1,4 +1,11 @@
-﻿# LOOK Language
+﻿# LOOK Language 
+ 
+NOT: Güvenlik Önlemleri Tam Kapatılmamıştır. 
+Projenizi Test Amaçlı Kullanmanız Tavsiye Edilir. 
+Son tarih olan 10.07.2026 gününe kadar kararlı sürüm yayınlanmayacaktır.
+Look Yazılım Dili Şuan çalışmakta olup güvenlik açıkları Codlook Ekibi tarafından kapatılmaktadır.
+Güvenlik açıkları kapatılınca not kısmı otomatik olarak silinmiş olduğunda gönül rahatlılığı ile gerçek prpjelerde kullanabilirsiniz.
+10.07.2026 tarihine kadar bekleyin test ürünleri için look dilini kullanabilirsiniz.
 
 LOOK, C++23 ile yazılmış Apache/CGI+FastCGI uyumlu bir web scripting dilidir.
 Web için alternatif olarak tasarlanmıştır — routing dile gömülü, framework kurma zorunluluğu yok.
