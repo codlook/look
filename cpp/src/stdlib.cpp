@@ -1,4 +1,5 @@
 ﻿#include "look/stdlib.h"
+#include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include <cmath>
 #include <algorithm>
@@ -617,6 +618,34 @@ static Module make_log() {
 }
 
 // â"€â"€ Registry â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── parallel:: module ─────────────────────────────────────────────────────────
+// Observability + control for goroutines spawned with parallel().
+
+static Module make_parallel_module() {
+    Module m;
+    m.name = "parallel";
+
+    // parallel::active() → int — current goroutine count
+    m.functions["active"] = [](auto /*args*/) -> Value {
+        return Value(goroutine_active());
+    };
+
+    // parallel::wait([timeout_ms=5000]) → bool — true if all finished in time
+    m.functions["wait"] = [](auto args) -> Value {
+        int ms = 5000;
+        if (!args.empty() && args[0].type() == Value::INT)
+            ms = (int)args[0].as_int();
+        return Value(goroutine_wait(ms));
+    };
+
+    // parallel::limit() → int — max allowed goroutines
+    m.functions["limit"] = [](auto /*args*/) -> Value {
+        return Value(PARALLEL_MAX_GOROUTINES);
+    };
+
+    return m;
+}
+
 // Forward declarations — defined in their respective .cpp files
 Module make_http_module();
 Module make_cache_module();
@@ -640,6 +669,7 @@ std::map<std::string, Module> make_stdlib() {
     add(make_queue_module());
     add(make_jobs_module());
     add(make_mail_module());
+    add(make_parallel_module());
     return stdlib;
 }
 

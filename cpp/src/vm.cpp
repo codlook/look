@@ -7,6 +7,7 @@
 #include "look/vm.h"
 #include "look/bytecode.h"
 #include "look/web.h"
+#include "look/parallel_runtime.h"
 #include "look/logger.h"
 
 #include <sstream>
@@ -545,6 +546,7 @@ call_dispatch:
             case OpCode::PARALLEL_CALL: {
                 if (R(ins.a).type() != Value::BYTECODE_FN)
                     throw LookVmError("parallel(): BYTECODE_FN bekleniyor");
+                goroutine_acquire(); // throws if PARALLEL_MAX_GOROUTINES reached
                 auto cl_copy = R(ins.a).as_bytecode_fn();
                 SharedState sh = shared_;
                 std::unordered_map<std::string, Value> g_copy = globals_;
@@ -553,6 +555,7 @@ call_dispatch:
                 sh.builtins = nullptr;
                 sh.routes   = nullptr; // goroutine dispatch_routes çağırmaz
                 std::thread([cl_copy, sh, g_copy, builtins_copy = std::move(builtins_copy)]() mutable {
+                    GoroutineGuard _guard; // goroutine_release() on scope exit
                     std::ostringstream sink;
                     VM tvm(sh, sink);
                     tvm.set_globals(std::move(g_copy));
@@ -560,7 +563,10 @@ call_dispatch:
                     try { tvm.call_closure(*cl_copy, {}); }
                     catch (const std::exception& e) {
                         Logger::instance().log(LogLevel::LOG_ERROR, "VM",
-                            std::string("parallel() error: ") + e.what());
+                            std::string("parallel() panic: ") + e.what());
+                    } catch (...) {
+                        Logger::instance().log(LogLevel::LOG_ERROR, "VM",
+                            "parallel() panic: unknown error");
                     }
                 }).detach();
                 break;

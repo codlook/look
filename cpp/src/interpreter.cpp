@@ -1,6 +1,7 @@
 ﻿#include "look/interpreter.h"
 #include "look/stdlib.h"
 #include "look/web.h"
+#include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include "look/ast.h"
 #include "look/lexer.h"
@@ -1399,22 +1400,22 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             if (fn.type() != Value::FUNCTION)
                 throw std::runtime_error("parallel() requires a function");
 
+            goroutine_acquire(); // throws if PARALLEL_MAX_GOROUTINES reached
+
             auto copy = make_dispatch_copy();
             copy->set_web_context(nullptr);
             auto sink = std::make_shared<std::ostringstream>();
             copy->set_output(*sink);
 
             std::thread([c = std::move(copy), sink, fn]() mutable {
-                // Goroutine'de acquire_thread_connections() çağırma:
-                // Ana request thread pool bağlantısını zaten tutuyor olabilir.
-                // get_conn() fallback'i custom-deleter ile her sorgu için geçici acquire yapar.
+                GoroutineGuard _guard; // goroutine_release() on scope exit
                 try {
                     c->invoke(fn, {});
                 } catch (const std::exception& ex) {
-                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, "parallel",
+                    Logger::instance().log(LogLevel::LOG_ERROR, "parallel",
                         std::string("goroutine panic: ") + ex.what());
                 } catch (...) {
-                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, "parallel",
+                    Logger::instance().log(LogLevel::LOG_ERROR, "parallel",
                         "goroutine panic: unknown error");
                 }
             }).detach();

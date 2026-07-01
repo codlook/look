@@ -5,6 +5,7 @@
 #include "look/repl.h"
 #include "look/web.h"
 #include "look/installer.h"
+#include "look/parallel_runtime.h"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -170,9 +171,13 @@ int main(int argc, char* argv[]) {
             auto err = e;
             if (err.location.file.empty()) err.location.file = filename;
             std::cerr << err.format() << std::endl;
+            look::goroutine_wait(3000); // drain goroutines before exit on error
             return 1;
         }
 
+        // Wait for any background goroutines (parallel()) to finish.
+        // 5 s timeout — detached goroutines that overstay are abandoned.
+        look::goroutine_wait(5000);
         return 0;
     } catch (const look::LookRuntimeError& e) {
         std::cerr << e.format() << std::endl;
