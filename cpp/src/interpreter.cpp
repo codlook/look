@@ -1400,7 +1400,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             if (fn.type() != Value::FUNCTION)
                 throw std::runtime_error("parallel() requires a function");
 
-            goroutine_acquire(); // throws if PARALLEL_MAX_GOROUTINES reached
+            goroutine_acquire(); // THROW mode: throws if LOOK_GOROUTINE_LIMIT reached
 
             auto copy = make_dispatch_copy();
             copy->set_web_context(nullptr);

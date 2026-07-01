@@ -638,9 +638,22 @@ static Module make_parallel_module() {
         return Value(goroutine_wait(ms));
     };
 
-    // parallel::limit() → int — max allowed goroutines
+    // parallel::limit() → int — max allowed goroutines (LOOK_GOROUTINE_LIMIT)
     m.functions["limit"] = [](auto /*args*/) -> Value {
-        return Value(PARALLEL_MAX_GOROUTINES);
+        return Value(goroutine_limit());
+    };
+
+    // parallel::try_acquire() → bool — reserve a slot without throwing (TRY mode)
+    // Use when caller wants to shed load gracefully instead of crashing.
+    // Must be paired with parallel::release() if true is returned.
+    m.functions["try_acquire"] = [](auto /*args*/) -> Value {
+        return Value(goroutine_acquire(AcquireMode::TRY));
+    };
+
+    // parallel::release() — manually release a slot reserved by try_acquire()
+    m.functions["release"] = [](auto /*args*/) -> Value {
+        goroutine_release();
+        return Value();
     };
 
     return m;

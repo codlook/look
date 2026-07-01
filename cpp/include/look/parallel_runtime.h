@@ -6,15 +6,28 @@
 namespace look {
 
 // ── Goroutine lifecycle ───────────────────────────────────────────────────────
-// shared between interpreter.cpp (tree-walk) and vm.cpp (bytecode).
+// Shared between interpreter.cpp (tree-walk) and vm.cpp (bytecode).
+//
+// Default limit: 64.  Override with env var LOOK_GOROUTINE_LIMIT (integer).
+// Small server: 32.  CPU-bound batch workers: 128.
+// Note: SMTP / HTTP listeners are I/O-bound and must use event_loop, not parallel().
 
-static constexpr int PARALLEL_MAX_GOROUTINES = 64;
+// Returns the active goroutine limit (reads LOOK_GOROUTINE_LIMIT once, then caches).
+int goroutine_limit();
 
-// Increment counter; throws std::runtime_error if limit is reached.
-void goroutine_acquire();
+// Acquire modes for goroutine_acquire():
+//   THROW — throws std::runtime_error when limit is reached (default, fast fail)
+//   WAIT  — blocks until a slot is free (real backpressure, honours timeout_ms)
+//   TRY   — returns false immediately if no slot available (caller decides)
+enum class AcquireMode { THROW, WAIT, TRY };
 
-// Decrement counter and signal waiters.  Always call after goroutine_acquire(),
-// even on panic — use the RAII guard below instead of calling this directly.
+// Reserve a goroutine slot.
+//   THROW: throws on limit. WAIT: blocks up to timeout_ms. TRY: returns false on limit.
+// Returns true if acquired, false only in TRY mode when limit is full.
+bool goroutine_acquire(AcquireMode mode = AcquireMode::THROW, int timeout_ms = 0);
+
+// Release a goroutine slot and signal waiters.  Always pair with a successful acquire.
+// Prefer GoroutineGuard — it calls this automatically.
 void goroutine_release();
 
 // Active goroutine count (instantaneous snapshot).
@@ -24,7 +37,7 @@ int  goroutine_active();
 // Returns true if count reached 0, false on timeout.
 bool goroutine_wait(int timeout_ms = 5000);
 
-// RAII guard: decrements on scope exit regardless of exceptions.
+// RAII guard: calls goroutine_release() on scope exit regardless of exceptions.
 struct GoroutineGuard {
     ~GoroutineGuard() { goroutine_release(); }
 };

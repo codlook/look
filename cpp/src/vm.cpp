@@ -546,7 +546,7 @@ call_dispatch:
             case OpCode::PARALLEL_CALL: {
                 if (R(ins.a).type() != Value::BYTECODE_FN)
                     throw LookVmError("parallel(): BYTECODE_FN bekleniyor");
-                goroutine_acquire(); // throws if PARALLEL_MAX_GOROUTINES reached
+                goroutine_acquire(); // THROW mode: throws if LOOK_GOROUTINE_LIMIT reached
                 auto cl_copy = R(ins.a).as_bytecode_fn();
                 SharedState sh = shared_;
                 std::unordered_map<std::string, Value> g_copy = globals_;
