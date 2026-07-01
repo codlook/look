@@ -46,6 +46,7 @@ set(LOOK_CORE
     src/mail_stdlib.cpp
     src/smtp_server.cpp
     src/dns.cpp
+    src/dkim.cpp
     src/parallel_runtime.cpp
     src/installer.cpp
     src/miniz/miniz.c
