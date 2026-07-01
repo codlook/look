@@ -452,6 +452,14 @@ void MySQLClient::stmt_close(uint32_t stmt_id) {
 
 std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                                               const std::vector<DbParam>& params) {
+    // max_allowed_packet koruması: varsayılan 64 MB
+    static constexpr size_t MYSQL_MAX_PACKET = 64 * 1024 * 1024;
+    size_t total_str = 0;
+    for (const auto& p : params)
+        if (p.kind == DbParam::TEXT_VAL) total_str += p.s.size();
+    if (total_str > MYSQL_MAX_PACKET)
+        throw std::runtime_error("db mysql: parametre toplam boyutu max_allowed_packet limitini aşıyor (64 MB)");
+
     int n = (int)params.size();
     std::vector<uint8_t> pkt;
     pkt.push_back(0x17); // COM_STMT_EXECUTE
