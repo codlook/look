@@ -1,0 +1,63 @@
+name: Security Regression Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  security:
+    name: "26 Security Regression Tests"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev
+
+      - name: Build (Release)
+        run: |
+          cd cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel $(nproc)
+          echo "$(pwd)/build" >> $GITHUB_PATH
+
+      - name: Build (AddressSanitizer + UBSan)
+        run: |
+          cd cpp
+          cmake -B build_asan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake --build build_asan --parallel $(nproc)
+
+      - name: Run security regression tests (Release)
+        run: |
+          ./cpp/build/look test tests/security/regression.lk
+
+      - name: Run security regression tests (ASan + UBSan)
+        run: |
+          ./cpp/build_asan/look test tests/security/regression.lk
+        env:
+          ASAN_OPTIONS: "halt_on_error=1:detect_leaks=1"
+          UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+
+      - name: ThreadSanitizer — concurrent dispatch test
+        run: |
+          cd cpp
+          cmake -B build_tsan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          cmake --build build_tsan --parallel $(nproc)
+          # 50 parallel requests hitting a shared-state route
+          ./build_tsan/look test tests/security/regression.lk &
+          LOOK_PID=$!
+          sleep 2
+          for i in $(seq 1 50); do
+            curl -s http://localhost:7400/ping > /dev/null &
+          done
+          wait $LOOK_PID
+        continue-on-error: true  # TSan findings are warnings until baseline established
