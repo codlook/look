@@ -7,6 +7,11 @@
 // Fail: any red test means a regression was introduced
 // =============================================================================
 
+// Test-only modules — registered by the test runner, not available in production.
+use ws;      // ws::decode_frame() — WebSocket frame DoS test
+use html;    // html::sanitize_svg() — SVG XSS tests
+use assert;  // assert::ok / assert::eq / assert::throws
+
 // ---------------------------------------------------------------------------
 // GROUP 1 — Session / Path Traversal (#1 original audit)
 // ---------------------------------------------------------------------------
