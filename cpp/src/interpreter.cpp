@@ -1416,7 +1416,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                         std::string("goroutine panic: ") + ex.what());
                 } catch (...) {
                     Logger::instance().log(LogLevel::LOG_ERROR, "parallel",
-                        "goroutine panic: unknown error");
+                        "goroutine panic: unknown exception type");
                 }
             }).detach();
 

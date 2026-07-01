@@ -92,6 +92,89 @@ static std::string smtp_banner() {
     }();
     return v;
 }
+static int smtp_max_conns_per_ip() {
+    static int v = []() {
+        const char* e = std::getenv("LOOK_SMTP_MAX_CONNS_IP");
+        if (e && *e) { int x = std::atoi(e); if (x > 0) return x; }
+        return 10;
+    }();
+    return v;
+}
+
+// ── Per-IP connection tracking ────────────────────────────────────────────────
+static std::mutex                            g_ip_mutex;
+static std::unordered_map<std::string, int>  g_ip_conns;
+
+static bool ip_acquire(const std::string& ip) {
+    std::lock_guard<std::mutex> lk(g_ip_mutex);
+    int& n = g_ip_conns[ip];
+    if (n >= smtp_max_conns_per_ip()) return false;
+    ++n; return true;
+}
+static void ip_release(const std::string& ip) {
+    std::lock_guard<std::mutex> lk(g_ip_mutex);
+    auto it = g_ip_conns.find(ip);
+    if (it != g_ip_conns.end() && --it->second <= 0) g_ip_conns.erase(it);
+}
+
+// ── AUTH PLAIN validation ─────────────────────────────────────────────────────
+// RFC 4616 base64-decode "\0authcid\0passwd"
+static std::string smtp_b64_decode(const std::string& s) {
+    static const char* tbl =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    int val = 0, bits = -8;
+    for (unsigned char c : s) {
+        if (c == '=') break;
+        const char* p = std::strchr(tbl, c);
+        if (!p) continue;
+        val = (val << 6) | (int)(p - tbl);
+        bits += 6;
+        if (bits >= 0) { out += (char)((val >> bits) & 0xFF); bits -= 8; }
+    }
+    return out;
+}
+
+static bool smtp_validate_auth(const std::string& b64) {
+    const char* disabled = std::getenv("LOOK_SMTP_AUTH_DISABLED");
+    if (disabled && std::string(disabled) == "true") return false;
+
+    std::string plain = smtp_b64_decode(b64);
+    // Format: [authzid NUL] authcid NUL passwd
+    std::vector<std::string> parts;
+    std::string part;
+    for (char c : plain) {
+        if (c == '\0') { parts.push_back(part); part.clear(); }
+        else part += c;
+    }
+    parts.push_back(part);
+    if (parts.size() < 2) return false;
+    std::string passwd = parts.back();
+    if (passwd.empty()) return false;
+
+    const char* token = std::getenv("LOOK_SMTP_AUTH_TOKEN");
+    if (token && *token) return passwd == std::string(token);
+    return false; // no token configured → reject
+}
+
+// ── Local domain check for open relay prevention ─────────────────────────────
+static bool is_local_domain(const std::string& addr_domain) {
+    std::string cfg = []() -> std::string {
+        const char* e = std::getenv("LOOK_SMTP_LOCAL_DOMAINS");
+        if (e && *e) return e;
+        e = std::getenv("LOOK_MAIL_DOMAIN");
+        return (e && *e) ? e : "";
+    }();
+    if (cfg.empty()) return false; // no domains configured → reject all
+    std::istringstream ss(cfg);
+    std::string d;
+    while (std::getline(ss, d, ',')) {
+        while (!d.empty() && d.front() == ' ') d = d.substr(1);
+        while (!d.empty() && d.back()  == ' ') d.pop_back();
+        if (d == addr_domain) return true;
+    }
+    return false;
+}
 
 // ── SMTP session state machine ────────────────────────────────────────────────
 
@@ -115,6 +198,7 @@ struct SmtpSession {
     std::string ehlo_domain;   // client EHLO domain
     int         error_count = 0;
     bool        submission  = false; // connected on :587
+    bool        auth_ok     = false; // AUTH PLAIN succeeded
 
     // TLS — set after STARTTLS handshake completes
     SSL*        ssl      = nullptr;
@@ -441,8 +525,39 @@ struct SmtpServer::Impl {
 
     // ── Session I/O ──────────────────────────────────────────────────────────
     void on_accept(int fd, bool submission) {
+        // Extract remote IP via getpeername
+        std::string remote_ip = "unknown";
+        {
+            struct sockaddr_storage sa{};
+            socklen_t salen = sizeof(sa);
+            if (::getpeername(fd, (struct sockaddr*)&sa, &salen) == 0) {
+                char buf[INET6_ADDRSTRLEN] = {};
+                if (sa.ss_family == AF_INET6) {
+                    auto* s6 = (struct sockaddr_in6*)&sa;
+                    if (IN6_IS_ADDR_V4MAPPED(&s6->sin6_addr))
+                        inet_ntop(AF_INET, &s6->sin6_addr.s6_addr[12], buf, sizeof(buf));
+                    else
+                        inet_ntop(AF_INET6, &s6->sin6_addr, buf, sizeof(buf));
+                } else {
+                    inet_ntop(AF_INET, &((struct sockaddr_in*)&sa)->sin_addr, buf, sizeof(buf));
+                }
+                remote_ip = buf;
+            }
+        }
+
+        // Per-IP connection limit
+        if (!ip_acquire(remote_ip)) {
+            const char* msg = "421 4.3.2 Too many connections from your IP\r\n";
+#if defined(_WIN32)
+            send(fd, msg, (int)strlen(msg), 0);
+#else
+            ::send(fd, msg, strlen(msg), MSG_NOSIGNAL);
+#endif
+            close(fd); return;
+        }
+
         if (conn_count.load() >= smtp_max_conn()) {
-            // Too busy — immediate 421 and close
+            ip_release(remote_ip);
             const char* busy = "421 4.3.2 Service temporarily unavailable\r\n";
 #if defined(_WIN32)
             send(fd, busy, (int)strlen(busy), 0);
@@ -454,10 +569,11 @@ struct SmtpServer::Impl {
         conn_count.fetch_add(1);
 
         auto sess = std::make_shared<SmtpSession>();
-        sess->fd         = fd;
-        sess->state      = SmtpState::GREETING;
-        sess->submission = submission;
-        sessions[fd]     = sess;
+        sess->fd            = fd;
+        sess->state         = SmtpState::GREETING;
+        sess->submission    = submission;
+        sess->msg.remote_ip = remote_ip;
+        sessions[fd]        = sess;
 
         std::string banner = "220 " + smtp_banner() + " ESMTP LOOK\r\n";
         loop->async_write(fd, banner, [this, fd, sess](bool ok) {
@@ -470,7 +586,11 @@ struct SmtpServer::Impl {
     }
 
     void close_session(int fd) {
-        sessions.erase(fd);
+        auto it = sessions.find(fd);
+        if (it != sessions.end()) {
+            ip_release(it->second->msg.remote_ip);
+            sessions.erase(it);
+        }
         loop->close_fd(fd);
         conn_count.fetch_sub(1);
     }
@@ -573,9 +693,10 @@ struct SmtpServer::Impl {
                         "250-8BITMIME\r\n"
                         "250-PIPELINING\r\n"
                         "250-SMTPUTF8\r\n";
-        // Advertise STARTTLS only if TLS is configured and not already active
         if (ssl_ctx && !sess->tls_active)
             r += "250-STARTTLS\r\n";
+        if (sess->submission)
+            r += "250-AUTH PLAIN LOGIN\r\n";
         r += "250 OK\r\n";
         sess->state = SmtpState::READY;
         send_reply(fd, sess, r);
@@ -591,9 +712,34 @@ struct SmtpServer::Impl {
             if (!ssl_ctx) {
                 return error_reply(fd, sess, "454 4.7.0 TLS not configured\r\n");
             }
-            // RFC 3207 — reply 220, then upgrade socket to TLS
             send_reply(fd, sess, "220 2.0.0 Ready to start TLS\r\n",
                 [this, fd, sess]() { do_starttls(fd, sess); });
+            return false;
+        }
+        // AUTH PLAIN [initial-response]
+        if (verb == "AUTH") {
+            if (sess->auth_ok) {
+                return error_reply(fd, sess, "503 5.5.1 Already authenticated\r\n");
+            }
+            // Extract mechanism and optional initial response
+            // Line format: "AUTH PLAIN [base64]" or "AUTH PLAIN"
+            size_t mech_start = line.find(' ');
+            std::string rest = (mech_start != std::string::npos)
+                ? line.substr(mech_start + 1) : "";
+            // rest = "PLAIN" or "PLAIN <b64>" or "LOGIN ..."
+            size_t sp2 = rest.find(' ');
+            std::string mech    = (sp2 != std::string::npos) ? rest.substr(0, sp2) : rest;
+            std::string initial = (sp2 != std::string::npos) ? rest.substr(sp2 + 1) : "";
+            for (char& c : mech) c = (char)std::toupper((unsigned char)c);
+            if (mech != "PLAIN" && mech != "LOGIN") {
+                return error_reply(fd, sess, "504 5.7.4 AUTH mechanism not supported\r\n");
+            }
+            if (smtp_validate_auth(initial)) {
+                sess->auth_ok = true;
+                send_reply(fd, sess, "235 2.7.0 Authentication successful\r\n");
+            } else {
+                error_reply(fd, sess, "535 5.7.8 Authentication credentials invalid\r\n");
+            }
             return false;
         }
         if (verb == "MAIL") {
@@ -601,11 +747,16 @@ struct SmtpServer::Impl {
             if (sess->submission && !sess->tls_active && ssl_ctx) {
                 return error_reply(fd, sess, "530 5.7.0 Must issue STARTTLS first\r\n");
             }
+            // :587 requires AUTH before MAIL FROM
+            if (sess->submission && !sess->auth_ok) {
+                return error_reply(fd, sess, "530 5.7.0 Authentication required\r\n");
+            }
             std::string addr = extract_addr(line);
             if (addr.empty()) {
                 return error_reply(fd, sess, "501 5.1.7 Bad sender address\r\n");
             }
             sess->msg.mail_from = addr;
+            sess->msg.remote_ip = sess->msg.remote_ip; // already set on accept
             sess->state = SmtpState::MAIL_FROM;
             send_reply(fd, sess, "250 2.1.0 OK\r\n");
             return false;
@@ -678,18 +829,34 @@ struct SmtpServer::Impl {
         }
     }
 
+    // Validate recipient: open relay prevention + rcpt limit
+    bool validate_rcpt(int fd, std::shared_ptr<SmtpSession> sess,
+                       const std::string& addr) {
+        if (addr.empty())
+            return !error_reply(fd, sess, "501 5.1.3 Bad recipient address\r\n");
+        if ((int)sess->msg.rcpt_to.size() >= smtp_max_rcpt())
+            return !error_reply(fd, sess, "452 4.5.3 Too many recipients\r\n");
+
+        // Authenticated submission may relay outbound freely.
+        // Unauthenticated :25 MTA connections may only deliver to local domains.
+        if (!sess->auth_ok) {
+            size_t at = addr.rfind('@');
+            std::string domain = (at != std::string::npos) ? addr.substr(at + 1) : "";
+            if (!is_local_domain(domain)) {
+                return !error_reply(fd, sess, "550 5.7.1 Relay access denied — "
+                    "set LOOK_SMTP_LOCAL_DOMAINS\r\n");
+            }
+        }
+        return true;
+    }
+
     bool handle_mail_from_state(int fd, std::shared_ptr<SmtpSession> sess,
                                 const std::string& verb, const std::string& line) {
         if (verb != "RCPT") {
             return error_reply(fd, sess, "503 5.5.1 Need RCPT TO\r\n");
         }
         std::string addr = extract_addr(line);
-        if (addr.empty()) {
-            return error_reply(fd, sess, "501 5.1.3 Bad recipient address\r\n");
-        }
-        if ((int)sess->msg.rcpt_to.size() >= smtp_max_rcpt()) {
-            return error_reply(fd, sess, "452 4.5.3 Too many recipients\r\n");
-        }
+        if (!validate_rcpt(fd, sess, addr)) return false;
         sess->msg.rcpt_to.push_back(addr);
         sess->state = SmtpState::RCPT_TO;
         send_reply(fd, sess, "250 2.1.5 OK\r\n");
@@ -699,14 +866,8 @@ struct SmtpServer::Impl {
     bool handle_rcpt_to_state(int fd, std::shared_ptr<SmtpSession> sess,
                                const std::string& verb, const std::string& line) {
         if (verb == "RCPT") {
-            // Another RCPT TO
             std::string addr = extract_addr(line);
-            if (addr.empty()) {
-                return error_reply(fd, sess, "501 5.1.3 Bad recipient address\r\n");
-            }
-            if ((int)sess->msg.rcpt_to.size() >= smtp_max_rcpt()) {
-                return error_reply(fd, sess, "452 4.5.3 Too many recipients\r\n");
-            }
+            if (!validate_rcpt(fd, sess, addr)) return false;
             sess->msg.rcpt_to.push_back(addr);
             send_reply(fd, sess, "250 2.1.5 OK\r\n");
             return false;

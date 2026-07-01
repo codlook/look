@@ -643,17 +643,11 @@ static Module make_parallel_module() {
         return Value(goroutine_limit());
     };
 
-    // parallel::try_acquire() → bool — reserve a slot without throwing (TRY mode)
-    // Use when caller wants to shed load gracefully instead of crashing.
-    // Must be paired with parallel::release() if true is returned.
-    m.functions["try_acquire"] = [](auto /*args*/) -> Value {
-        return Value(goroutine_acquire(AcquireMode::TRY));
-    };
-
-    // parallel::release() — manually release a slot reserved by try_acquire()
-    m.functions["release"] = [](auto /*args*/) -> Value {
-        goroutine_release();
-        return Value();
+    // parallel::at_capacity() → bool — non-throwing capacity check
+    // Use to check before parallel() when you want to shed load gracefully:
+    //   if (!parallel::at_capacity()) { parallel(fn) }
+    m.functions["at_capacity"] = [](auto /*args*/) -> Value {
+        return Value(goroutine_active() >= goroutine_limit());
     };
 
     return m;
