@@ -3,6 +3,7 @@
 // Provider selection via env MAIL_PROVIDER (mailgun|sendgrid|smtp2go|postmark).
 // All providers share the same LOOK API — switch provider without code change.
 #include "look/mail.h"
+#include "look/smtp_server.h"
 #include "look/http_client.h"
 #include "look/logger.h"
 #include <stdexcept>
@@ -288,6 +289,20 @@ Module make_mail_module() {
     // mail::provider() → string (aktif provider adı)
     m.functions["provider"] = [](std::vector<Value>) -> Value {
         return Value(std::string(env_get("MAIL_PROVIDER", "mailgun")));
+    };
+
+    // mail::deliver_maildir($base_dir, $mailbox, $from, $data) → string (filename)
+    // Delivers a raw RFC 5322 message to Maildir format.
+    // Used inside smtp:: handler callbacks or job processors.
+    // Example: mail::deliver_maildir("/var/mail", "inbox", "sender@example.com", $raw)
+    m.functions["deliver_maildir"] = [](std::vector<Value> args) -> Value {
+        if (args.size() < 4)
+            throw std::runtime_error("mail::deliver_maildir() — (base_dir, mailbox, from, data) bekler");
+        SmtpMessage msg;
+        msg.mail_from = args[2].to_string();
+        msg.data      = args[3].to_string();
+        std::string fname = deliver_maildir(args[0].to_string(), args[1].to_string(), msg);
+        return Value(fname);
     };
 
     return m;

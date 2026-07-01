@@ -44,6 +44,7 @@ set(LOOK_CORE
     src/queue_stdlib.cpp
     src/jobs_stdlib.cpp
     src/mail_stdlib.cpp
+    src/smtp_server.cpp
     src/parallel_runtime.cpp
     src/installer.cpp
     src/miniz/miniz.c
