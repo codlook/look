@@ -145,7 +145,7 @@ static void run_setup_http(const fs::path& script) {
             // Setup builtins: route() (index 22) ve temel veri fonksiyonları
             // Diğer builtin'ler setup'ta çağrılmaz (db::query vb. HTTP context ister)
             auto vm_routes_ptr = &g_http_app.vm_routes;
-            std::vector<look::BuiltinFn> setup_builtins(113);
+            std::vector<look::BuiltinFn> setup_builtins(148);
 
             // print/write — setup çıktısı için (0, 1)
             auto* setup_out_ptr = &g_http_app.setup_out;
@@ -423,7 +423,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
 
         // Per-request builtins: module fonksiyonları interpreter copy'den alınır
         // (copy->set_web_context(&web) çağrıldığında modules_ yeni web'e bind edildi)
-        std::vector<look::BuiltinFn> req_builtins(113);
+        std::vector<look::BuiltinFn> req_builtins(148);
 
         // print/write (0, 1)
         req_builtins[0] = [&output](std::vector<look::Value>& args) -> look::Value {
@@ -597,6 +597,52 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
                 std::vector<look::Value> a = args; return f_cfg(a);
             };
         }
+
+        // ── VM parity: wire indices 113-147 ─────────────────────────────────
+        // http:: (113-119)
+        wire_module_fn(113,"http",     "get");
+        wire_module_fn(114,"http",     "post");
+        wire_module_fn(115,"http",     "put");
+        wire_module_fn(116,"http",     "delete");
+        wire_module_fn(117,"http",     "patch");
+        wire_module_fn(118,"http",     "head");
+        wire_module_fn(119,"http",     "request");
+        // template:: (120-123)
+        wire_module_fn(120,"template", "render");
+        wire_module_fn(121,"template", "include");
+        wire_module_fn(122,"template", "block");
+        wire_module_fn(123,"template", "extends");
+        // cache:: (124-128)
+        wire_module_fn(124,"cache",    "get");
+        wire_module_fn(125,"cache",    "set");
+        wire_module_fn(126,"cache",    "has");
+        wire_module_fn(127,"cache",    "delete");
+        wire_module_fn(128,"cache",    "flush");
+        // queue:: (129-132)
+        wire_module_fn(129,"queue",    "push");
+        wire_module_fn(130,"queue",    "pop");
+        wire_module_fn(131,"queue",    "size");
+        wire_module_fn(132,"queue",    "flush");
+        // mail:: (133-134)
+        wire_module_fn(133,"mail",     "send");
+        wire_module_fn(134,"mail",     "deliver_maildir");
+        // crypto:: (135-140)
+        wire_module_fn(135,"crypto",   "sha256");
+        wire_module_fn(136,"crypto",   "sha512");
+        wire_module_fn(137,"crypto",   "md5");
+        wire_module_fn(138,"crypto",   "hmac");
+        wire_module_fn(139,"crypto",   "random_bytes");
+        wire_module_fn(140,"crypto",   "random_hex");
+        // base64:: (141-142)
+        wire_module_fn(141,"base64",   "encode");
+        wire_module_fn(142,"base64",   "decode");
+        // uuid:: (143)
+        wire_module_fn(143,"uuid",     "v4");
+        // parallel:: (144-147)
+        wire_module_fn(144,"parallel", "active");
+        wire_module_fn(145,"parallel", "wait");
+        wire_module_fn(146,"parallel", "limit");
+        wire_module_fn(147,"parallel", "at_capacity");
 
         look::acquire_thread_connections();
         t_dispatch_start = std::chrono::steady_clock::now();

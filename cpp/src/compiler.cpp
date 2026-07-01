@@ -86,6 +86,26 @@ static const std::vector<std::string> BUILTIN_NAMES = {
     // 106-112: file::
     "file::read", "file::put", "file::append", "file::exists",
     "file::remove", "file::size", "file::store",
+    // 113-119: http:: client
+    "http::get", "http::post", "http::put", "http::delete",
+    "http::patch", "http::head", "http::request",
+    // 120-123: template::
+    "template::render", "template::include", "template::block", "template::extends",
+    // 124-128: cache::
+    "cache::get", "cache::set", "cache::has", "cache::delete", "cache::flush",
+    // 129-132: queue::
+    "queue::push", "queue::pop", "queue::size", "queue::flush",
+    // 133-134: mail::
+    "mail::send", "mail::deliver_maildir",
+    // 135-140: crypto::
+    "crypto::sha256", "crypto::sha512", "crypto::md5",
+    "crypto::hmac", "crypto::random_bytes", "crypto::random_hex",
+    // 141-142: base64::
+    "base64::encode", "base64::decode",
+    // 143: uuid::
+    "uuid::v4",
+    // 144-147: parallel:: observability (parallel() builtin has PARALLEL_CALL opcode)
+    "parallel::active", "parallel::wait", "parallel::limit", "parallel::at_capacity",
 };
 
 static int builtin_index(const std::string& name) {
