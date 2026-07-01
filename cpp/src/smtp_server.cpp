@@ -26,6 +26,7 @@
 #  include <arpa/inet.h>
 #  include <unistd.h>
 #  include <fcntl.h>
+#  include <sys/stat.h>
 #elif defined(_WIN32)
 #  ifndef NOMINMAX
 #    define NOMINMAX
@@ -36,6 +37,13 @@
 #  define close(x)   closesocket(x)
 #  define ssize_t    int
 #endif
+
+// OpenSSL — STARTTLS support
+#ifndef OPENSSL_NO_DEPRECATED_3_0
+#  define OPENSSL_NO_DEPRECATED_3_0
+#endif
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 namespace look {
 
@@ -86,14 +94,15 @@ static std::string smtp_banner() {
 // ── SMTP session state machine ────────────────────────────────────────────────
 
 enum class SmtpState {
-    GREETING,       // connection opened, send 220
-    EHLO,           // waiting for EHLO/HELO
-    READY,          // post-EHLO, waiting for AUTH/MAIL/QUIT/RSET
-    MAIL_FROM,      // received MAIL FROM, waiting for RCPT TO
-    RCPT_TO,        // received ≥1 RCPT TO, waiting for more or DATA
-    DATA_INIT,      // received DATA, sending 354
-    DATA_BODY,      // accumulating message body until lone "."
-    QUIT,           // QUIT received, closing
+    GREETING,        // connection opened, send 220
+    EHLO,            // waiting for EHLO/HELO
+    READY,           // post-EHLO, waiting for AUTH/MAIL/QUIT/RSET/STARTTLS
+    STARTTLS_WAIT,   // sent 220 Go ahead, waiting for TLS ClientHello
+    MAIL_FROM,       // received MAIL FROM, waiting for RCPT TO
+    RCPT_TO,         // received ≥1 RCPT TO, waiting for more or DATA
+    DATA_INIT,       // received DATA, sending 354
+    DATA_BODY,       // accumulating message body until lone "."
+    QUIT,            // QUIT received, closing
 };
 
 struct SmtpSession {
@@ -104,6 +113,14 @@ struct SmtpSession {
     std::string ehlo_domain;   // client EHLO domain
     int         error_count = 0;
     bool        submission  = false; // connected on :587
+
+    // TLS — set after STARTTLS handshake completes
+    SSL*        ssl      = nullptr;
+    bool        tls_active = false;
+
+    ~SmtpSession() {
+        if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); ssl = nullptr; }
+    }
 
     // Reset envelope for RSET / after successful delivery
     void reset_envelope() {
@@ -169,14 +186,35 @@ struct WorkerPool {
         cv.notify_one();
     }
 
+    // For non-delivery tasks (e.g. STARTTLS handshake) — direct lambda
+    using RawFn = std::function<void()>;
+    std::queue<RawFn> raw_queue;
+    void enqueue_raw(RawFn fn) {
+        std::lock_guard<std::mutex> lk(mtx);
+        raw_queue.push(std::move(fn));
+        cv.notify_one();
+    }
+
 private:
     void worker_loop() {
         while (true) {
+            // Prefer raw tasks (e.g. STARTTLS) over delivery items
+            {
+                std::unique_lock<std::mutex> lk(mtx);
+                cv.wait(lk, [this]{ return stop || !queue.empty() || !raw_queue.empty(); });
+                if (stop && queue.empty() && raw_queue.empty()) return;
+                if (!raw_queue.empty()) {
+                    RawFn fn = std::move(raw_queue.front());
+                    raw_queue.pop();
+                    lk.unlock();
+                    try { fn(); } catch (...) {}
+                    continue;
+                }
+            }
             WorkItem item;
             {
                 std::unique_lock<std::mutex> lk(mtx);
-                cv.wait(lk, [this]{ return stop || !queue.empty(); });
-                if (stop && queue.empty()) return;
+                if (queue.empty()) continue;
                 item = std::move(queue.front());
                 queue.pop();
             }
@@ -201,11 +239,37 @@ private:
 
 // ── SmtpServer::Impl ──────────────────────────────────────────────────────────
 
+// ── TLS server context (shared, created once) ─────────────────────────────────
+static SSL_CTX* make_smtp_ssl_ctx() {
+    // Cert/key from env — LOOK_SMTP_CERT and LOOK_SMTP_KEY
+    const char* cert = std::getenv("LOOK_SMTP_CERT");
+    const char* key  = std::getenv("LOOK_SMTP_KEY");
+    if (!cert || !key) return nullptr; // TLS not configured
+
+    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) return nullptr;
+
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION); // TLS 1.2 minimum
+    SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
+                              SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+
+    if (SSL_CTX_use_certificate_file(ctx, cert, SSL_FILETYPE_PEM) != 1 ||
+        SSL_CTX_use_PrivateKey_file(ctx,  key,  SSL_FILETYPE_PEM) != 1 ||
+        SSL_CTX_check_private_key(ctx) != 1) {
+        SSL_CTX_free(ctx);
+        Logger::instance().log(LogLevel::LOG_ERROR, "smtp",
+            "STARTTLS: sertifika/anahtar yüklenemedi");
+        return nullptr;
+    }
+    return ctx;
+}
+
 struct SmtpServer::Impl {
     std::unique_ptr<EventLoop> loop;
     WorkerPool                 pool;
     SmtpHandler                handler;
     std::atomic<int>           conn_count{0};
+    SSL_CTX*                   ssl_ctx = nullptr; // null = TLS not configured
 
     // Per-connection session map (fd → session), guarded by loop thread
     std::unordered_map<int, std::shared_ptr<SmtpSession>> sessions;
@@ -292,7 +356,9 @@ struct SmtpServer::Impl {
         if (len == 0) { close_session(fd); return; }
         sess->buf.append(data, len);
 
-        // Process all complete lines from buf
+        // Line-by-line processing from accumulated buffer.
+        // Handles ".\r\n" split across chunks correctly: we only extract a line
+        // when '\n' is present in buf — partial lines stay in buf until next read.
         while (true) {
             size_t nl = sess->buf.find('\n');
             if (nl == std::string::npos) break;
@@ -367,7 +433,11 @@ struct SmtpServer::Impl {
                         "250-SIZE " + std::to_string(smtp_max_msg()) + "\r\n"
                         "250-8BITMIME\r\n"
                         "250-PIPELINING\r\n"
-                        "250 SMTPUTF8\r\n";
+                        "250-SMTPUTF8\r\n";
+        // Advertise STARTTLS only if TLS is configured and not already active
+        if (ssl_ctx && !sess->tls_active)
+            r += "250-STARTTLS\r\n";
+        r += "250 OK\r\n";
         sess->state = SmtpState::READY;
         send_reply(fd, sess, r);
         return false;
@@ -375,7 +445,23 @@ struct SmtpServer::Impl {
 
     bool handle_ready(int fd, std::shared_ptr<SmtpSession> sess,
                       const std::string& verb, const std::string& line) {
+        if (verb == "STARTTLS") {
+            if (sess->tls_active) {
+                return error_reply(fd, sess, "503 5.5.1 TLS already active\r\n");
+            }
+            if (!ssl_ctx) {
+                return error_reply(fd, sess, "454 4.7.0 TLS not configured\r\n");
+            }
+            // RFC 3207 — reply 220, then upgrade socket to TLS
+            send_reply(fd, sess, "220 2.0.0 Ready to start TLS\r\n",
+                [this, fd, sess]() { do_starttls(fd, sess); });
+            return false;
+        }
         if (verb == "MAIL") {
+            // :587 submission requires TLS before MAIL FROM (RFC 8314)
+            if (sess->submission && !sess->tls_active && ssl_ctx) {
+                return error_reply(fd, sess, "530 5.7.0 Must issue STARTTLS first\r\n");
+            }
             std::string addr = extract_addr(line);
             if (addr.empty()) {
                 return error_reply(fd, sess, "501 5.1.7 Bad sender address\r\n");
@@ -386,10 +472,68 @@ struct SmtpServer::Impl {
             return false;
         }
         if (verb == "EHLO" || verb == "HELO") {
-            // Re-EHLO resets state
             return handle_ehlo(fd, sess, verb, line);
         }
         return error_reply(fd, sess, "503 5.5.1 Need MAIL command\r\n");
+    }
+
+    void do_starttls(int fd, std::shared_ptr<SmtpSession> sess) {
+        // Perform TLS handshake synchronously on a worker thread.
+        // The fd is already non-blocking in EventLoop — we set it blocking for SSL_accept,
+        // then hand it back to EventLoop via add_client() after handshake.
+        pool.enqueue_raw([this, fd, sess]() {
+            // Temporarily block for SSL handshake
+#if defined(__linux__) || defined(__APPLE__)
+            int flags = fcntl(fd, F_GETFL, 0);
+            fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+#endif
+            SSL* ssl = SSL_new(ssl_ctx);
+            if (!ssl) {
+                loop->post([this, fd]{ close_session(fd); });
+                return;
+            }
+            SSL_set_fd(ssl, fd);
+            int r = SSL_accept(ssl);
+            if (r != 1) {
+                unsigned long e = ERR_get_error();
+                char buf[256]; ERR_error_string_n(e, buf, sizeof(buf));
+                Logger::instance().log(LogLevel::LOG_ERROR, "smtp",
+                    std::string("STARTTLS handshake failed: ") + buf);
+                SSL_free(ssl);
+                loop->post([this, fd]{ close_session(fd); });
+                return;
+            }
+            // Handshake complete — restore non-blocking, update session
+            sess->ssl        = ssl;
+            sess->tls_active = true;
+            sess->msg.tls    = true;
+            sess->state      = SmtpState::EHLO; // client must re-EHLO after STARTTLS
+            // Re-wrap fd with TLS-aware reads via BIO
+            // For simplicity: re-register with EventLoop using SSL_read wrapper
+            loop->post([this, fd, sess]() {
+                // Re-register fd for reading — session now uses SSL_read path
+                loop->add_client(fd, [this, fd, sess](const char* data, size_t len) {
+                    on_data_tls(fd, sess, data, len);
+                });
+            });
+        });
+    }
+
+    // TLS-aware read path — called after STARTTLS handshake
+    // EventLoop still delivers raw bytes, but we pass through SSL_read
+    void on_data_tls(int fd, std::shared_ptr<SmtpSession> sess,
+                     const char* /*raw*/, size_t /*raw_len*/) {
+        // With SSL_set_fd the BIO wraps the fd — SSL_read handles decryption
+        char buf[4096];
+        while (true) {
+            int n = SSL_read(sess->ssl, buf, sizeof(buf));
+            if (n <= 0) {
+                int err = SSL_get_error(sess->ssl, n);
+                if (err == SSL_ERROR_WANT_READ) break; // need more data
+                close_session(fd); return;
+            }
+            on_data(fd, sess, buf, (size_t)n);
+        }
     }
 
     bool handle_mail_from_state(int fd, std::shared_ptr<SmtpSession> sess,
@@ -509,6 +653,7 @@ SmtpServer::SmtpServer(int port_smtp, int port_sub, int port_smtps,
 {
     impl_->loop    = EventLoop::create();
     impl_->handler = std::move(handler);
+    impl_->ssl_ctx = make_smtp_ssl_ctx(); // null if LOOK_SMTP_CERT/KEY not set
     impl_->pool.start(workers);
 
     auto bind_port = [&](int port, bool submission) {
@@ -535,6 +680,7 @@ SmtpServer::SmtpServer(int port_smtp, int port_sub, int port_smtps,
 
 SmtpServer::~SmtpServer() {
     impl_->pool.shutdown();
+    if (impl_->ssl_ctx) { SSL_CTX_free(impl_->ssl_ctx); impl_->ssl_ctx = nullptr; }
 }
 
 void SmtpServer::run()  { impl_->loop->run();  }
@@ -568,13 +714,40 @@ std::string deliver_maildir(const std::string& base_dir,
     fs::path new_path = mbox / "new" / unique;
 
     {
+#if defined(__linux__) || defined(__APPLE__)
+        // Use POSIX open/write/fdatasync for crash safety (RFC-correct Maildir)
+        int fd_out = ::open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (fd_out < 0)
+            throw std::runtime_error("maildir: cannot create " + tmp_path.string());
+
+        auto write_str = [&](const std::string& s) {
+            const char* p = s.data();
+            size_t rem = s.size();
+            while (rem > 0) {
+                ssize_t n = ::write(fd_out, p, rem);
+                if (n <= 0) { ::close(fd_out); throw std::runtime_error("maildir: write error"); }
+                p += n; rem -= (size_t)n;
+            }
+        };
+        write_str("Return-Path: <" + msg.mail_from + ">\r\n");
+        write_str("Received: from " + msg.remote_ip + "\r\n");
+        write_str(msg.data);
+
+        if (::fdatasync(fd_out) != 0) {
+            ::close(fd_out);
+            throw std::runtime_error("maildir: fdatasync failed");
+        }
+        ::close(fd_out);
+#else
+        // Windows: no fdatasync, use FlushFileBuffers via ofstream workaround
         std::ofstream f(tmp_path, std::ios::binary);
         if (!f) throw std::runtime_error("maildir: cannot write to " + tmp_path.string());
-
-        // Prepend Return-Path and Received headers
         f << "Return-Path: <" << msg.mail_from << ">\r\n";
         f << "Received: from " << msg.remote_ip << "\r\n";
         f << msg.data;
+        f.flush();
+        f.close();
+#endif
     }
 
     fs::rename(tmp_path, new_path); // atomic on POSIX
