@@ -41,6 +41,33 @@ static bool is_under_web_root(const std::string& path) {
     return it == wr_p.end();
 }
 
+// ── Path traversal guard ─────────────────────────────────────────────────────
+// LOOK_FILE_ROOT: restricts file:: operations to a directory subtree.
+// If unset: unrestricted (trusted server-side code — same as before).
+// If set: any path escaping the root throws 403.
+static std::string get_file_root() {
+    static std::string root = []() -> std::string {
+        const char* r = std::getenv("LOOK_FILE_ROOT");
+        if (!r || !*r) return "";
+        std::error_code ec;
+        auto p = fs::weakly_canonical(fs::path(r), ec);
+        return ec ? std::string(r) : p.string();
+    }();
+    return root;
+}
+
+static void assert_in_file_root(const std::string& path) {
+    std::string root = get_file_root();
+    if (root.empty()) return; // unrestricted
+    std::error_code ec;
+    fs::path resolved = fs::weakly_canonical(fs::path(path), ec);
+    if (ec) throw std::runtime_error("file: invalid path: " + path);
+    auto [it, end] = std::mismatch(
+        fs::path(root).begin(), fs::path(root).end(), resolved.begin());
+    if (it != fs::path(root).end())
+        throw std::runtime_error("file: access denied (path outside LOOK_FILE_ROOT): " + path);
+}
+
 // ── file:: Module ─────────────────────────────────────────────────────────────
 
 Module make_file_module() {
@@ -51,6 +78,7 @@ Module make_file_module() {
     m.functions["read"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("file::read() requires path");
         std::string path = args[0].to_string();
+        assert_in_file_root(path);
         std::ifstream f(path, std::ios::binary);
         if (!f) throw std::runtime_error("file::read(): cannot open: " + path);
         std::ostringstream ss;
@@ -62,6 +90,7 @@ Module make_file_module() {
     m.functions["put"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("file::put() requires path and content");
         std::string path    = args[0].to_string();
+        assert_in_file_root(path);
         std::string content = args[1].to_string();
         std::ofstream f(path, std::ios::binary);
         if (!f) throw std::runtime_error("file::put(): cannot open: " + path);
@@ -73,6 +102,7 @@ Module make_file_module() {
     m.functions["append"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("file::append() requires path and content");
         std::string path    = args[0].to_string();
+        assert_in_file_root(path);
         std::string content = args[1].to_string();
         std::ofstream f(path, std::ios::binary | std::ios::app);
         if (!f) throw std::runtime_error("file::append(): cannot open: " + path);
@@ -83,20 +113,26 @@ Module make_file_module() {
     // file::exists(path) → bool
     m.functions["exists"] = [](auto args) -> Value {
         if (args.empty()) return Value(false);
-        return Value(fs::exists(args[0].to_string()));
+        std::string path = args[0].to_string();
+        assert_in_file_root(path);
+        return Value(fs::exists(path));
     };
 
     // file::remove(path) → bool
     m.functions["remove"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("file::remove() requires path");
-        return Value(fs::remove(args[0].to_string()));
+        std::string path = args[0].to_string();
+        assert_in_file_root(path);
+        return Value(fs::remove(path));
     };
 
     // file::size(path) → int (bytes)
     m.functions["size"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("file::size() requires path");
+        std::string path = args[0].to_string();
+        assert_in_file_root(path);
         std::error_code ec;
-        auto sz = fs::file_size(args[0].to_string(), ec);
+        auto sz = fs::file_size(path, ec);
         if (ec) throw std::runtime_error("file::size(): " + ec.message());
         return Value((int)sz);
     };
