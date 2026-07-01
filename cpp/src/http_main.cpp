@@ -28,6 +28,8 @@
 #include <stdexcept>
 #include <iostream>
 #include <cstring>
+#include <deque>
+#include <unordered_map>
 
 #ifdef _WIN32
 #  include <direct.h>
@@ -37,6 +39,47 @@
 #endif
 
 namespace fs = std::filesystem;
+
+// ── HTTP rate limiter (sliding window, per-IP) ────────────────────────────────
+// LOOK_RATE_LIMIT_RPM: max requests per minute per IP (default 0 = disabled)
+// LOOK_RATE_LIMIT_BURST: max concurrent burst within window (default = RPM)
+//
+// Uses a deque of timestamps per IP (sliding window).
+// On limit: returns true (caller should send 429).
+
+static int http_rate_limit_rpm() {
+    static int v = []() {
+        const char* e = std::getenv("LOOK_RATE_LIMIT_RPM");
+        if (e && *e) { int x = std::atoi(e); if (x > 0) return x; }
+        return 0; // 0 = disabled
+    }();
+    return v;
+}
+
+struct RateLimiter {
+    struct IpState {
+        std::deque<std::chrono::steady_clock::time_point> hits;
+    };
+    std::unordered_map<std::string, IpState> states;
+    std::mutex mtx;
+
+    // Returns true if the IP is rate-limited (should be rejected).
+    bool check(const std::string& ip, int rpm) {
+        if (rpm <= 0) return false;
+        auto now = std::chrono::steady_clock::now();
+        auto window = std::chrono::seconds(60);
+        std::lock_guard<std::mutex> lk(mtx);
+        auto& s = states[ip];
+        // Evict entries outside the window
+        while (!s.hits.empty() && now - s.hits.front() > window)
+            s.hits.pop_front();
+        if ((int)s.hits.size() >= rpm) return true;
+        s.hits.push_back(now);
+        return false;
+    }
+};
+
+static RateLimiter g_rate_limiter;
 
 // ── Shared hot-reload state (mirrors WarmApp in fcgi_main) ───────────────────
 
@@ -388,6 +431,31 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
                     look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string("Hot reload hatası: ") + e.what());
                 }
             }
+        }
+    }
+
+    // ── Rate limit check ─────────────────────────────────────────────────────
+    {
+        // Prefer X-Real-IP (set by nginx), then X-Forwarded-For, then fallback
+        std::string client_ip;
+        auto ireal = req.headers.find("x-real-ip");
+        if (ireal != req.headers.end()) client_ip = ireal->second;
+        else {
+            auto ixff = req.headers.find("x-forwarded-for");
+            if (ixff != req.headers.end()) {
+                client_ip = ixff->second;
+                auto comma = client_ip.find(',');
+                if (comma != std::string::npos) client_ip = client_ip.substr(0, comma);
+            }
+        }
+        if (!client_ip.empty() &&
+            g_rate_limiter.check(client_ip, http_rate_limit_rpm())) {
+            res.status_code = 429;
+            res.status_text = "Too Many Requests";
+            res.headers["Content-Type"] = "text/plain";
+            res.headers["Retry-After"]  = "60";
+            res.body = "429 Too Many Requests";
+            return;
         }
     }
 
