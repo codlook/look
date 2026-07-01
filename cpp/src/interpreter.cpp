@@ -653,6 +653,16 @@ void Interpreter::execute_statement(const Statement& stmt) {
             // route() flow control — catch'e düşmemeli, yukarı ilet
             if (s->finally_block) execute_block(*s->finally_block, current_);
             throw;
+        } catch (const LookRuntimeError& e) {
+            caught = true;
+            if (s->catch_block) {
+                if (!s->catch_var.empty()) {
+                    // error::new() sets has_value — catch var gets the typed Value
+                    Value evar = e.has_value ? e.value : Value(std::string(e.message));
+                    current_->define(s->catch_var, std::move(evar));
+                }
+                execute_block(*s->catch_block, current_);
+            }
         } catch (const std::exception& e) {
             caught = true;
             if (s->catch_block) {

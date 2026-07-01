@@ -219,11 +219,17 @@ public:
     std::string              message;
     SourceLocation           location;
     std::vector<StackFrame>  stack;
+    Value                    value;   // set by error::new() — catch e gets this Value
+    bool                     has_value = false;
 
     LookRuntimeError(std::string msg,
                      SourceLocation loc = {},
                      std::vector<StackFrame> stk = {})
         : message(std::move(msg)), location(std::move(loc)), stack(std::move(stk)) {}
+
+    LookRuntimeError(Value v, SourceLocation loc = {}, std::vector<StackFrame> stk = {})
+        : message(v.to_string()), location(std::move(loc)), stack(std::move(stk))
+        , value(std::move(v)), has_value(true) {}
 
     const char* what() const noexcept override { return message.c_str(); }
 

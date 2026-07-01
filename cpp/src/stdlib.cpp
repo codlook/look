@@ -660,6 +660,81 @@ Module make_queue_module();
 Module make_jobs_module();
 Module make_mail_module();
 
+// ── error:: module ─────────────────────────────────────────────────────────────
+// Typed errors for .lk catch blocks.
+//
+// Usage:
+//   throw error::new("not_found", "User does not exist", 404);
+//
+// catch e {
+//   if e.type == "not_found" { response::status(404); }
+//   io::println(e.message);
+//   io::println(e.code);  // → 404
+// }
+
+static Module make_error_module() {
+    Module m;
+    m.name = "error";
+
+    // error::new(type, message [, code=0]) → throws LookRuntimeError with Value payload
+    m.functions["new"] = [](auto args) -> Value {
+        std::string type    = args.size() >= 1 ? args[0].to_string() : "error";
+        std::string message = args.size() >= 2 ? args[1].to_string() : "";
+        int         code    = args.size() >= 3 ? (int)args[2].to_int()  : 0;
+
+        // Build assoc array: {type, message, code}
+        auto arr = std::make_shared<std::vector<Value>>();
+        arr->push_back(Value(std::string("type")));    arr->push_back(Value(type));
+        arr->push_back(Value(std::string("message"))); arr->push_back(Value(message));
+        arr->push_back(Value(std::string("code")));    arr->push_back(Value(code));
+        Value payload(arr);
+
+        throw LookRuntimeError(payload);
+        return Value(); // unreachable
+    };
+
+    // error::is(e, type) → bool — safe type check in catch block
+    m.functions["is"] = [](auto args) -> Value {
+        if (args.size() < 2) return Value(false);
+        // e can be assoc array (from error::new) or plain string
+        Value& e = args[0];
+        if (e.type() == Value::ARRAY) {
+            auto& arr = *e.as_array();
+            for (size_t i = 0; i + 1 < arr.size(); i += 2) {
+                if (arr[i].to_string() == "type")
+                    return Value(arr[i+1].to_string() == args[1].to_string());
+            }
+        }
+        return Value(false);
+    };
+
+    // error::message(e) → string — safe message extraction
+    m.functions["message"] = [](auto args) -> Value {
+        if (args.empty()) return Value(std::string(""));
+        Value& e = args[0];
+        if (e.type() == Value::ARRAY) {
+            auto& arr = *e.as_array();
+            for (size_t i = 0; i + 1 < arr.size(); i += 2)
+                if (arr[i].to_string() == "message") return Value(arr[i+1].to_string());
+        }
+        return e.type() == Value::STRING ? e : Value(e.to_string());
+    };
+
+    // error::code(e) → int
+    m.functions["code"] = [](auto args) -> Value {
+        if (args.empty()) return Value(0);
+        Value& e = args[0];
+        if (e.type() == Value::ARRAY) {
+            auto& arr = *e.as_array();
+            for (size_t i = 0; i + 1 < arr.size(); i += 2)
+                if (arr[i].to_string() == "code") return Value((int)arr[i+1].to_int());
+        }
+        return Value(0);
+    };
+
+    return m;
+}
+
 std::map<std::string, Module> make_stdlib() {
     std::srand((unsigned)std::time(nullptr));
     std::map<std::string, Module> stdlib;
@@ -677,6 +752,7 @@ std::map<std::string, Module> make_stdlib() {
     add(make_jobs_module());
     add(make_mail_module());
     add(make_parallel_module());
+    add(make_error_module());
     return stdlib;
 }
 

@@ -69,6 +69,19 @@ struct RateLimiter {
         auto now = std::chrono::steady_clock::now();
         auto window = std::chrono::seconds(60);
         std::lock_guard<std::mutex> lk(mtx);
+
+        // Evict stale IPs when map grows too large (memory bound: ~50K IPs)
+        if (states.size() > 50000) {
+            for (auto it = states.begin(); it != states.end(); ) {
+                auto& hits = it->second.hits;
+                // Trim expired entries from this IP
+                while (!hits.empty() && now - hits.front() > window)
+                    hits.pop_front();
+                // Remove IPs with no recent hits
+                it = hits.empty() ? states.erase(it) : ++it;
+            }
+        }
+
         auto& s = states[ip];
         // Evict entries outside the window
         while (!s.hits.empty() && now - s.hits.front() > window)
