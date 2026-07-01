@@ -188,175 +188,20 @@ static Module make_ws_test_module() {
 }
 
 // ── html:: test module ───────────────────────────────────────────────────────
-// Exposes html::sanitize_svg(input) so SVG XSS regression tests can call it
-// directly without going through file::store().
+// Exposes html::sanitize_svg(input) to .lk test files.
 //
-// The whitelist-based SVG sanitizer was added in v1.2.1.  We re-implement the
-// same element + attribute whitelist here so the test module is self-contained
-// and does not depend on a specific internal symbol name.
+// Calls look::svg_sanitize() — the single source of truth defined in web.cpp.
+// SVG_SAFE_ELEMENTS whitelist lives in web.h; both production and test use the
+// same symbol.  When the whitelist changes, recompile — tests reflect the
+// change automatically without any manual sync.
 static Module make_html_test_module() {
     Module m;
     m.name = "html";
 
-    // Allowed SVG element names (safe structural/visual subset).
-    static const std::set<std::string> ELEM_WHITELIST = {
-        "svg", "g", "path", "circle", "rect", "ellipse",
-        "line", "polyline", "polygon", "text", "tspan",
-        "defs", "symbol", "title", "desc",
-        "linearGradient", "radialGradient", "stop",
-        "clipPath", "mask", "pattern",
-        // <use> is allowed only with fragment-only href — enforced in attr pass
-        "use"
-    };
-
-    // Returns true if an attribute value contains a dangerous protocol or
-    // CSS url() reference.
-    auto is_dangerous_value = [](const std::string& val) -> bool {
-        // Normalise: lower-case, strip whitespace and soft-hyphens
-        std::string v;
-        v.reserve(val.size());
-        for (unsigned char c : val)
-            if (!std::isspace(c)) v += (char)std::tolower(c);
-
-        // Protocol schemes
-        if (v.find("javascript:") != std::string::npos) return true;
-        if (v.find("vbscript:")   != std::string::npos) return true;
-        if (v.find("data:")       != std::string::npos) return true;
-
-        // CSS url() with dangerous targets
-        if (v.find("url(javascript:") != std::string::npos) return true;
-        if (v.find("url('javascript:") != std::string::npos) return true;
-        if (v.find("url(\"javascript:") != std::string::npos) return true;
-        if (v.find("url(data:")        != std::string::npos) return true;
-        if (v.find("url('data:")       != std::string::npos) return true;
-        if (v.find("url(\"data:")      != std::string::npos) return true;
-        if (v.find("expression(")      != std::string::npos) return true;
-        return false;
-    };
-
-    // Minimal tag-level SVG sanitizer.
-    // Strategy: scan the input for XML tags; skip any whose element name is
-    // not in the whitelist, skip event-handler (on*) attributes, skip
-    // attributes whose value is dangerous, and for <use> enforce that href /
-    // xlink:href begins with '#'.
-    auto sanitize_svg = [ELEM_WHITELIST, is_dangerous_value](const std::string& input) -> std::string {
-        std::string out;
-        out.reserve(input.size());
-        size_t i = 0;
-        const size_t n = input.size();
-
-        while (i < n) {
-            if (input[i] != '<') { out += input[i++]; continue; }
-
-            // Find tag end
-            size_t tag_start = i;
-            size_t tag_end   = input.find('>', i);
-            if (tag_end == std::string::npos) { out += input[i++]; continue; }
-
-            std::string tag = input.substr(tag_start + 1, tag_end - tag_start - 1);
-            // Handle closing tags and comments quickly
-            if (tag.empty()) { out += "<>"; i = tag_end + 1; continue; }
-            if (tag[0] == '!') { i = tag_end + 1; continue; }  // strip comments/CDATA
-
-            bool closing = (tag[0] == '/');
-            std::string_view tag_body = closing
-                ? std::string_view(tag).substr(1)
-                : std::string_view(tag);
-
-            // Extract element name
-            size_t name_end = 0;
-            while (name_end < tag_body.size() &&
-                   !std::isspace((unsigned char)tag_body[name_end]) &&
-                   tag_body[name_end] != '/' &&
-                   tag_body[name_end] != '>') ++name_end;
-            std::string elem_name(tag_body.substr(0, name_end));
-            // lower-case for comparison
-            std::string elem_lower;
-            for (char c : elem_name) elem_lower += (char)std::tolower(c);
-
-            if (ELEM_WHITELIST.find(elem_lower) == ELEM_WHITELIST.end()) {
-                // Skip entire element including its closing tag
-                i = tag_end + 1;
-                // If it has a body (not self-closing), skip until closing tag
-                if (!closing && tag.back() != '/') {
-                    std::string close_tag = "</" + elem_name;
-                    size_t close_pos = input.find(close_tag, i);
-                    if (close_pos != std::string::npos) {
-                        size_t close_end = input.find('>', close_pos);
-                        i = (close_end != std::string::npos) ? close_end + 1 : input.size();
-                    }
-                }
-                continue;
-            }
-
-            // Allowed element — filter attributes
-            bool is_use = (elem_lower == "use");
-            std::string safe_tag = (closing ? "</" : "<") + elem_name;
-            std::string_view attrs = tag_body.substr(name_end);
-            size_t ai = 0;
-
-            while (ai < attrs.size()) {
-                // Skip whitespace
-                while (ai < attrs.size() && std::isspace((unsigned char)attrs[ai])) ++ai;
-                if (ai >= attrs.size() || attrs[ai] == '/' || attrs[ai] == '>') break;
-
-                // Read attribute name
-                size_t an_start = ai;
-                while (ai < attrs.size() &&
-                       attrs[ai] != '=' &&
-                       !std::isspace((unsigned char)attrs[ai]) &&
-                       attrs[ai] != '/' &&
-                       attrs[ai] != '>') ++ai;
-                std::string attr_name(attrs.substr(an_start, ai - an_start));
-                std::string attr_lower;
-                for (char c : attr_name) attr_lower += (char)std::tolower(c);
-
-                // Skip = and read value
-                std::string attr_val;
-                if (ai < attrs.size() && attrs[ai] == '=') {
-                    ++ai;
-                    if (ai < attrs.size() && (attrs[ai] == '"' || attrs[ai] == '\'')) {
-                        char q = attrs[ai++];
-                        size_t vs = ai;
-                        while (ai < attrs.size() && attrs[ai] != q) ++ai;
-                        attr_val = std::string(attrs.substr(vs, ai - vs));
-                        if (ai < attrs.size()) ++ai; // skip closing quote
-                    } else {
-                        size_t vs = ai;
-                        while (ai < attrs.size() &&
-                               !std::isspace((unsigned char)attrs[ai]) &&
-                               attrs[ai] != '>') ++ai;
-                        attr_val = std::string(attrs.substr(vs, ai - vs));
-                    }
-                }
-
-                // Drop event handlers (on*)
-                if (attr_lower.size() >= 2 && attr_lower.substr(0, 2) == "on") continue;
-
-                // Drop dangerous values
-                if (is_dangerous_value(attr_val)) continue;
-
-                // For <use>, enforce fragment-only href / xlink:href
-                if (is_use && (attr_lower == "href" || attr_lower == "xlink:href")) {
-                    if (attr_val.empty() || attr_val[0] != '#') continue;
-                }
-
-                safe_tag += " " + attr_name + "=\"" + attr_val + "\"";
-            }
-
-            // Preserve self-closing slash
-            if (!tag.empty() && tag.back() == '/') safe_tag += "/";
-            safe_tag += ">";
-            out += safe_tag;
-            i = tag_end + 1;
-        }
-        return out;
-    };
-
-    m.functions["sanitize_svg"] = [sanitize_svg](auto args) -> Value {
+    m.functions["sanitize_svg"] = [](auto args) -> Value {
         if (args.empty())
             throw std::runtime_error("html::sanitize_svg() expects 1 argument");
-        return Value(sanitize_svg(args[0].to_string()));
+        return Value(look::svg_sanitize(args[0].to_string()));
     };
 
     return m;

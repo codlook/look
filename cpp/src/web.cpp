@@ -398,4 +398,125 @@ std::string WebContext::build_headers() const {
     return out;
 }
 
+// ── svg_sanitize — single source of truth ────────────────────────────────────
+
+static std::string svg_attr_lower(const std::string& s) {
+    std::string v;
+    v.reserve(s.size());
+    for (unsigned char c : s)
+        if (!std::isspace(c)) v += (char)std::tolower(c);
+    return v;
+}
+
+static bool svg_value_dangerous(const std::string& raw) {
+    const std::string v = svg_attr_lower(raw);
+    if (v.find("javascript:") != std::string::npos) return true;
+    if (v.find("vbscript:")   != std::string::npos) return true;
+    if (v.find("data:")       != std::string::npos) return true;
+    if (v.find("expression(") != std::string::npos) return true;
+    for (const char* scheme : {"javascript:", "data:", "vbscript:"}) {
+        std::string bare = std::string("url(")  + scheme;
+        std::string sq   = std::string("url('") + scheme;
+        std::string dq   = std::string("url(\"") + scheme;
+        if (v.find(bare) != std::string::npos) return true;
+        if (v.find(sq)   != std::string::npos) return true;
+        if (v.find(dq)   != std::string::npos) return true;
+    }
+    return false;
+}
+
+std::string svg_sanitize(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    const size_t n = input.size();
+    size_t i = 0;
+
+    while (i < n) {
+        if (input[i] != '<') { out += input[i++]; continue; }
+
+        size_t tag_end = input.find('>', i);
+        if (tag_end == std::string::npos) { out += input[i++]; continue; }
+
+        const std::string tag = input.substr(i + 1, tag_end - i - 1);
+        if (tag.empty())   { i = tag_end + 1; continue; }
+        if (tag[0] == '!') { i = tag_end + 1; continue; }
+
+        const bool closing = (tag[0] == '/');
+        const std::string_view body_sv = closing
+            ? std::string_view(tag).substr(1)
+            : std::string_view(tag);
+
+        size_t ne = 0;
+        while (ne < body_sv.size() &&
+               !std::isspace((unsigned char)body_sv[ne]) &&
+               body_sv[ne] != '/' && body_sv[ne] != '>') ++ne;
+        const std::string elem_raw(body_sv.substr(0, ne));
+        std::string elem;
+        for (char c : elem_raw) elem += (char)std::tolower(c);
+
+        if (SVG_SAFE_ELEMENTS.find(elem) == SVG_SAFE_ELEMENTS.end()) {
+            i = tag_end + 1;
+            if (!closing && !tag.empty() && tag.back() != '/') {
+                const std::string close_marker = "</" + elem_raw;
+                size_t cp = input.find(close_marker, i);
+                if (cp != std::string::npos) {
+                    size_t ce = input.find('>', cp);
+                    i = (ce != std::string::npos) ? ce + 1 : n;
+                }
+            }
+            continue;
+        }
+
+        const bool is_use = (elem == "use");
+        std::string safe = (closing ? "</" : "<") + elem_raw;
+        std::string_view attrs = body_sv.substr(ne);
+        size_t ai = 0;
+
+        while (ai < attrs.size()) {
+            while (ai < attrs.size() && std::isspace((unsigned char)attrs[ai])) ++ai;
+            if (ai >= attrs.size() || attrs[ai] == '/' || attrs[ai] == '>') break;
+
+            size_t an0 = ai;
+            while (ai < attrs.size() &&
+                   attrs[ai] != '=' &&
+                   !std::isspace((unsigned char)attrs[ai]) &&
+                   attrs[ai] != '/' && attrs[ai] != '>') ++ai;
+            const std::string attr_name(attrs.substr(an0, ai - an0));
+            std::string attr_lower;
+            for (char c : attr_name) attr_lower += (char)std::tolower(c);
+
+            std::string attr_val;
+            if (ai < attrs.size() && attrs[ai] == '=') {
+                ++ai;
+                if (ai < attrs.size() && (attrs[ai] == '"' || attrs[ai] == '\'')) {
+                    char q = attrs[ai++];
+                    size_t vs = ai;
+                    while (ai < attrs.size() && attrs[ai] != q) ++ai;
+                    attr_val = std::string(attrs.substr(vs, ai - vs));
+                    if (ai < attrs.size()) ++ai;
+                } else {
+                    size_t vs = ai;
+                    while (ai < attrs.size() &&
+                           !std::isspace((unsigned char)attrs[ai]) &&
+                           attrs[ai] != '>') ++ai;
+                    attr_val = std::string(attrs.substr(vs, ai - vs));
+                }
+            }
+
+            if (attr_lower.size() >= 2 && attr_lower.substr(0, 2) == "on") continue;
+            if (svg_value_dangerous(attr_val)) continue;
+            if (is_use && (attr_lower == "href" || attr_lower == "xlink:href"))
+                if (attr_val.empty() || attr_val[0] != '#') continue;
+
+            safe += ' ' + attr_name + "=\"" + attr_val + '"';
+        }
+
+        if (!tag.empty() && tag.back() == '/') safe += '/';
+        safe += '>';
+        out += safe;
+        i = tag_end + 1;
+    }
+    return out;
+}
+
 } // namespace look

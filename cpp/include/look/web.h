@@ -2,9 +2,32 @@
 
 #include <string>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace look {
+
+// ── SVG Sanitizer ─────────────────────────────────────────────────────────────
+// Single source of truth — used by both production (file::store allow_svg:true)
+// and the test runner (html::sanitize_svg).
+//
+// To add a safe element: add its lower-case name to SVG_SAFE_ELEMENTS and
+// recompile. Both production and test binaries pick up the change.
+
+inline const std::set<std::string> SVG_SAFE_ELEMENTS = {
+    "svg", "g", "path", "circle", "rect", "ellipse",
+    "line", "polyline", "polygon",
+    "text", "tspan",
+    "defs", "symbol", "title", "desc",
+    "lineargradient", "radialgradient", "stop",
+    "clippath", "mask", "pattern",
+    "use"
+    // Excluded: script, foreignobject, animate, set, image, feimage,
+    //           iframe, embed, object, style
+};
+
+// Sanitize raw SVG markup. Never throws on malformed input.
+std::string svg_sanitize(const std::string& input);
 
 // ── Uploaded File ─────────────────────────────────────────────────────────────
 
