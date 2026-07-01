@@ -167,6 +167,15 @@ void EpollEventLoop::close_fd(int fd) {
     ::close(fd);
 }
 
+void EpollEventLoop::detach_fd(int fd) {
+    // Remove from epoll and state map WITHOUT closing the socket.
+    // Used by STARTTLS: worker thread takes over the fd for SSL_accept(),
+    // then calls add_client() to return it to the loop.
+    epoll_ctl(impl_->epfd, EPOLL_CTL_DEL, fd, nullptr);
+    std::lock_guard<std::mutex> lk(impl_->map_mtx);
+    impl_->fds.erase(fd);
+}
+
 void EpollEventLoop::run() {
     impl_->running = true;
     constexpr int MAX_EVENTS = 512;
@@ -492,6 +501,25 @@ void IocpEventLoop::async_write(int fd, std::string data, WriteCb cb) {
 
 void IocpEventLoop::close_fd(int fd) {
     impl_->close_internal(static_cast<SOCKET>(fd));
+}
+
+void IocpEventLoop::detach_fd(int fd) {
+    // Cancel pending I/O and remove from state map WITHOUT closing the socket.
+    SOCKET s = static_cast<SOCKET>(fd);
+    std::shared_ptr<SockState> st;
+    {
+        std::lock_guard<std::mutex> lk(impl_->states_mtx);
+        auto it = impl_->states.find(s);
+        if (it == impl_->states.end()) return;
+        st = it->second;
+        impl_->states.erase(it);
+    }
+    {
+        std::lock_guard<std::mutex> lk(st->mtx);
+        st->closed = true;
+    }
+    CancelIoEx(reinterpret_cast<HANDLE>(s), nullptr);
+    // Do NOT closesocket(s) — caller owns the socket now
 }
 
 void IocpEventLoop::run() {

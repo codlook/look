@@ -45,6 +45,7 @@ set(LOOK_CORE
     src/jobs_stdlib.cpp
     src/mail_stdlib.cpp
     src/smtp_server.cpp
+    src/dns.cpp
     src/parallel_runtime.cpp
     src/installer.cpp
     src/miniz/miniz.c
@@ -83,11 +84,12 @@ if(WIN32)
     set_target_properties(look-fcgi PROPERTIES OUTPUT_NAME "lk-fcgi")
 else()
     # Linux: pthread (std::filesystem, socket), dl (sqlite3 dlopen), ssl+crypto (http:: TLS)
+    # resolv: dns_txt_lookup() via res_query() — DKIM + SPF
     find_package(Threads REQUIRED)
     find_package(OpenSSL REQUIRED)
-    target_link_libraries(look      Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto)
-    target_link_libraries(look-cgi  Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto)
-    target_link_libraries(look-fcgi Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto)
+    target_link_libraries(look      Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
+    target_link_libraries(look-cgi  Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
+    target_link_libraries(look-fcgi Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
 
     # GCC 8 ve altında filesystem ayrı kütüphane
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)

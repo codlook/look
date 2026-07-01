@@ -478,11 +478,14 @@ struct SmtpServer::Impl {
     }
 
     void do_starttls(int fd, std::shared_ptr<SmtpSession> sess) {
-        // Perform TLS handshake synchronously on a worker thread.
-        // The fd is already non-blocking in EventLoop — we set it blocking for SSL_accept,
-        // then hand it back to EventLoop via add_client() after handshake.
+        // Detach fd from EventLoop BEFORE handing it to the worker thread.
+        // This prevents epoll/IOCP from delivering events on the same fd
+        // while SSL_accept() is reading from it on the worker thread.
+        // add_client() re-registers the fd after the handshake completes.
+        loop->detach_fd(fd);
+
         pool.enqueue_raw([this, fd, sess]() {
-            // Temporarily block for SSL handshake
+            // fd is now owned exclusively by this worker thread — set blocking
 #if defined(__linux__) || defined(__APPLE__)
             int flags = fcntl(fd, F_GETFL, 0);
             fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);

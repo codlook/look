@@ -54,6 +54,11 @@ public:
     // Remove fd from the loop and close it.
     virtual void close_fd(int fd) = 0;
 
+    // Remove fd from the loop WITHOUT closing the socket.
+    // Used by STARTTLS: EventLoop relinquishes the fd to a worker thread for
+    // SSL_accept(), then the caller re-registers via add_client() afterwards.
+    virtual void detach_fd(int fd) = 0;
+
     // Factory — returns platform-appropriate implementation.
     static std::unique_ptr<EventLoop> create();
 };
@@ -76,6 +81,7 @@ public:
     void add_client(int fd, ReadCb cb) override;
     void async_write(int fd, std::string data, WriteCb cb) override;
     void close_fd(int fd) override;
+    void detach_fd(int fd) override;
 
 private:
     struct Impl;
@@ -98,6 +104,7 @@ public:
     void add_client(int fd, ReadCb cb) override;
     void async_write(int fd, std::string data, WriteCb cb) override;
     void close_fd(int fd) override;
+    void detach_fd(int fd) override;
 
 private:
     struct Impl;
