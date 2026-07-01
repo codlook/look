@@ -1,0 +1,17 @@
+route("GET", "/", function() {
+    print("merhaba");
+});
+
+route("GET", "/json", function() {
+    response::header("Content-Type", "application/json");
+    print(json::encode(["ok" => true]));
+});
+
+route("GET", "/urun/{id}", function($id) {
+    print("ID: " . $id);
+});
+
+route("404", function() {
+    response::status(404);
+    print("bulunamadi");
+});

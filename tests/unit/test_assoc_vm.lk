@@ -1,0 +1,10 @@
+$list = [];
+push($list, ["method" => "GET", "path" => "/"]);
+push($list, ["method" => "POST", "path" => "/admin"]);
+
+route("GET", "/debug", function() use ($list) {
+    foreach ($list as $r) {
+        print($r["method"] . " | " . $r["path"]);
+        print("\n");
+    }
+});

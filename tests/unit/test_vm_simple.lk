@@ -1,0 +1,19 @@
+﻿$conn = null;
+try {
+    $conn = db::connect("sqlite://:memory:");
+    db::exec($conn, "CREATE TABLE test (id INTEGER PRIMARY KEY, ad TEXT, sayi INTEGER)", []);
+    db::exec($conn, "INSERT INTO test (ad, sayi) VALUES (?, ?)", ["merhaba", 42]);
+} catch ($e) {
+    log::error("DB kurulum hatasi: " . $e);
+}
+
+route("GET", "/db-test", function() use ($conn) {
+    $rows = db::query($conn, "SELECT 1 as sayi", []);
+    response::header("Content-Type", "application/json");
+    print(json::encode($rows));
+});
+
+route("404", function() {
+    response::status(404);
+    print(json::encode(["ok" => false, "hata" => "bulunamadi"]));
+});

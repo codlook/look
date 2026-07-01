@@ -1,0 +1,25 @@
+$list = [];
+push($list, ["method" => "GET", "path" => "/"]);
+
+route("GET", "/debug", function() use ($list) {
+    # Test 1: direct key access
+    $r = $list[0];
+    print("direct[path]=" . $r["path"] . "\n");
+    
+    # Test 2: foreach with immediate print
+    foreach ($list as $item) {
+        print("foreach[path]=" . $item["path"] . "\n");
+        print("foreach[method]=" . $item["method"] . "\n");
+    }
+    
+    # Test 3: build inside route
+    $local = ["x" => "hello", "y" => "world"];
+    print("local[y]=" . $local["y"] . "\n");
+    
+    # Test 4: two-key access via foreach
+    foreach ($list as $v) {
+        $m = $v["method"];
+        $p = $v["path"];
+        print("m=" . $m . " p=" . $p . "\n");
+    }
+});

@@ -1,0 +1,8 @@
+﻿route("GET", "/ping", function() {
+    print(json::encode(["ok" => true, "msg" => "pong"]));
+});
+
+route("404", function() {
+    response::status(404);
+    print(json::encode(["ok" => false]));
+});

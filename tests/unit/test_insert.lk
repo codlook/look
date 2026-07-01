@@ -1,0 +1,15 @@
+﻿$conn = null;
+try {
+    $conn = db::connect("sqlite://:memory:");
+    db::exec($conn, "CREATE TABLE test (id INTEGER PRIMARY KEY, ad TEXT, sayi INTEGER)", []);
+    log::info("create OK");
+    db::exec($conn, "INSERT INTO test (ad, sayi) VALUES (?, ?)", ["merhaba", 42]);
+    log::info("insert1 OK");
+    db::exec($conn, "INSERT INTO test (ad, sayi) VALUES (?, ?)", ["dunya", 100]);
+    log::info("insert2 OK");
+} catch ($e) {
+    log::error("hata: " . $e);
+}
+
+route("GET", "/ping", function() use ($conn) { print(json::encode(["ok" => true])); });
+route("404", function() { response::status(404); print(json::encode(["ok" => false])); });

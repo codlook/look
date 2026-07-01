@@ -1,0 +1,28 @@
+$conn = db::connect("mysql://root:@127.0.0.1/qrmenu");
+
+route("GET", "/ping", function() {
+    response::header("Content-Type", "application/json");
+    print(json::encode(["pong" => true]));
+});
+
+route("GET", "/db/count", function() use ($conn) {
+    response::header("Content-Type", "application/json");
+    $rows = db::query($conn, "SELECT count(*) as n FROM urunler", []);
+    print(json::encode(["count" => $rows[0]["n"]]));
+});
+
+route("GET", "/db/urun/{id}", function($id) use ($conn) {
+    response::header("Content-Type", "application/json");
+    $rows = db::query($conn, "SELECT id, ad, fiyat FROM urunler WHERE id=? LIMIT 1", [$id]);
+    if (count($rows) == 0) {
+        response::status(404);
+        print(json::encode(["ok" => false, "hata" => "Bulunamadi"]));
+        return;
+    }
+    print(json::encode(["ok" => true, "urun" => $rows[0]]));
+});
+
+route("404", function() {
+    response::status(404);
+    print(json::encode(["ok" => false, "hata" => "Sayfa bulunamadi"]));
+});

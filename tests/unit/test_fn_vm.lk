@@ -1,0 +1,10 @@
+function greet($name) {
+    print("INSIDE_GREET: " . $name);
+    return "hello_" . $name;
+}
+
+route("GET", "/", function() {
+    print("before_call\n");
+    $r = greet("world");
+    print("after_call result=" . $r . "\n");
+});

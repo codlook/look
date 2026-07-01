@@ -1,0 +1,31 @@
+$conn = db::connect("mysql://root:@127.0.0.1/qrmenu");
+
+# Test 4b: parallel() + DB sorgusu
+route("GET", "/parallel/db", function() use ($conn) {
+    response::header("Content-Type", "application/json");
+    $ch1 = channel();
+    $ch2 = channel();
+
+    parallel(function() use ($conn, $ch1) {
+        $rows = db::query($conn, "SELECT count(*) as n FROM urunler", []);
+        send($ch1, $rows[0]["n"]);
+    });
+
+    parallel(function() use ($conn, $ch2) {
+        $rows = db::query($conn, "SELECT count(*) as n FROM firmalar", []);
+        send($ch2, $rows[0]["n"]);
+    });
+
+    $urun_count = receive($ch1);
+    $firma_count = receive($ch2);
+
+    print(json::encode([
+        "urunler" => $urun_count,
+        "firmalar" => $firma_count
+    ]));
+});
+
+route("404", function() {
+    response::status(404);
+    print(json::encode(["ok" => false]));
+});

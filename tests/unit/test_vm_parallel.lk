@@ -1,0 +1,63 @@
+# Test 4a: Basit channel + parallel
+route("GET", "/chan/basic", function() {
+    response::header("Content-Type", "application/json");
+    $ch = channel();
+    $result = channel();
+
+    parallel(function() use ($ch, $result) {
+        $val = receive($ch);
+        send($result, $val * 2);
+    });
+
+    send($ch, 21);
+    $answer = receive($result);
+    print(json::encode(["answer" => $answer]));
+});
+
+# Test 4b: Fan-out 3 goroutine
+route("GET", "/chan/fanout", function() {
+    response::header("Content-Type", "application/json");
+    $out = channel(3);
+
+    parallel(function() use ($out) { send($out, 10); });
+    parallel(function() use ($out) { send($out, 20); });
+    parallel(function() use ($out) { send($out, 30); });
+
+    $a = receive($out);
+    $b = receive($out);
+    $c = receive($out);
+    $total = $a + $b + $c;
+    print(json::encode(["total" => $total]));
+});
+
+# Test 4c: Pipeline — producer + consumer
+route("GET", "/chan/pipeline", function() {
+    response::header("Content-Type", "application/json");
+    $pipe = channel(10);
+    $done = channel();
+
+    parallel(function() use ($pipe) {
+        send($pipe, 1);
+        send($pipe, 2);
+        send($pipe, 3);
+        close($pipe);
+    });
+
+    parallel(function() use ($pipe, $done) {
+        $sum = 0;
+        while (true) {
+            $v = receive($pipe);
+            if ($v == null) { break; }
+            $sum = $sum + $v;
+        }
+        send($done, $sum);
+    });
+
+    $total = receive($done);
+    print(json::encode(["sum" => $total]));
+});
+
+route("404", function() {
+    response::status(404);
+    print(json::encode(["ok" => false]));
+});

@@ -1,0 +1,13 @@
+$list = [];
+push($list, ["method" => "GET", "path" => "/"]);
+
+route("GET", "/debug", function() use ($list) {
+    $r = $list[0];
+    print("count=" . count($list) . "\n");
+    print("method=" . $r["method"] . "\n");
+    print("path=" . $r["path"] . "\n");
+    
+    $x = ["a" => "alpha", "b" => "beta"];
+    print("a=" . $x["a"] . "\n");
+    print("b=" . $x["b"] . "\n");
+});

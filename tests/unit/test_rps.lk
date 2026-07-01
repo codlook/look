@@ -1,0 +1,12 @@
+﻿route("GET", "/router", function() {
+    response::header("Content-Type", "application/json");
+    print(json::encode(["ok" => true, "msg" => "router"]));
+});
+route("GET", "/ping", function() {
+    response::header("Content-Type", "application/json");
+    print(json::encode(["pong" => true]));
+});
+route("404", function() {
+    response::status(404);
+    print(json::encode(["ok" => false]));
+});

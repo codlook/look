@@ -1,0 +1,16 @@
+﻿$conn = null;
+try {
+    $conn = db::connect("sqlite://:memory:");
+    log::info("connect OK");
+} catch ($e) {
+    log::error("connect hatasi: " . $e);
+}
+
+route("GET", "/ping", function() use ($conn) {
+    print(json::encode(["ok" => true, "conn" => ($conn != null)]));
+});
+
+route("404", function() {
+    response::status(404);
+    print(json::encode(["ok" => false]));
+});

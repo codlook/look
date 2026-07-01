@@ -1,0 +1,11 @@
+$list = [];
+push($list, ["method" => "GET", "path" => "/"]);
+
+route("GET", "/debug", function() use ($list) {
+    foreach ($list as $item) {
+        $m = $item["method"];
+        $p = $item["path"];
+        print($m . "\n");
+        print($p . "\n");
+    }
+});
