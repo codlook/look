@@ -1,6 +1,8 @@
 #include "look/smtp_server.h"
 #include "look/event_loop.h"
 #include "look/logger.h"
+#include "look/dns.h"
+#include "look/dkim.h"
 
 #include <sstream>
 #include <thread>
@@ -154,6 +156,130 @@ static std::string smtp_verb(const std::string& line) {
     return v;
 }
 
+// ── SPF check (RFC 7208) ──────────────────────────────────────────────────────
+
+// Match IPv4 CIDR: ip4:A.B.C.D/N
+static bool spf_match_ip4(const std::string& mechanism,
+                           const std::string& remote_ip) {
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+    std::string cidr = mechanism.substr(4); // strip "ip4:"
+    size_t slash = cidr.find('/');
+    std::string net_str  = (slash != std::string::npos) ? cidr.substr(0, slash) : cidr;
+    int         prefix   = (slash != std::string::npos) ? std::atoi(cidr.c_str() + slash + 1) : 32;
+    if (prefix < 0 || prefix > 32) return false;
+
+    // Parse network address
+    struct in_addr net_addr{}, rem_addr{};
+#if defined(_WIN32)
+    if (InetPtonA(AF_INET, net_str.c_str(), &net_addr) != 1) return false;
+    if (InetPtonA(AF_INET, remote_ip.c_str(), &rem_addr) != 1) return false;
+#else
+    if (inet_pton(AF_INET, net_str.c_str(), &net_addr) != 1) return false;
+    if (inet_pton(AF_INET, remote_ip.c_str(), &rem_addr) != 1) return false;
+#endif
+    if (prefix == 0) return true;
+    uint32_t mask = prefix == 32 ? 0xFFFFFFFFu : (~0u << (32 - prefix));
+    uint32_t n = ntohl(net_addr.s_addr);
+    uint32_t r = ntohl(rem_addr.s_addr);
+    return (n & mask) == (r & mask);
+#else
+    (void)mechanism; (void)remote_ip;
+    return false;
+#endif
+}
+
+// Evaluate one level of SPF record for `remote_ip`.
+// Returns SpfResult — does NOT follow include: recursion beyond one level.
+static SpfResult spf_evaluate(const std::string& record,
+                               const std::string& remote_ip,
+                               int depth = 0) {
+    if (depth > 2) return SpfResult::NEUTRAL; // guard against infinite include loops
+
+    std::istringstream ss(record);
+    std::string token;
+    while (ss >> token) {
+        if (token == "v=spf1") continue;
+
+        // Qualifier: +pass -fail ~softfail ?neutral (default +)
+        char qual = '+';
+        std::string mech = token;
+        if (!token.empty() && (token[0]=='+' || token[0]=='-' ||
+                                token[0]=='~' || token[0]=='?')) {
+            qual = token[0];
+            mech = token.substr(1);
+        }
+        auto result_for = [&]() -> SpfResult {
+            switch (qual) {
+                case '+': return SpfResult::PASS;
+                case '-': return SpfResult::FAIL;
+                case '~': return SpfResult::SOFTFAIL;
+                default:  return SpfResult::NEUTRAL;
+            }
+        };
+
+        // Lowercase mechanism name for comparison
+        std::string ml = mech;
+        for (char& c : ml) c = (char)std::tolower((unsigned char)c);
+
+        if (ml == "all")  return result_for();
+        if (ml.substr(0, 4) == "ip4:") {
+            if (spf_match_ip4(ml, remote_ip)) return result_for();
+            continue;
+        }
+        if (ml.substr(0, 8) == "include:") {
+            std::string inc_domain = mech.substr(8);
+            try {
+                auto txts = dns_txt_lookup(inc_domain);
+                for (auto& t : txts) {
+                    if (t.find("v=spf1") != std::string::npos) {
+                        SpfResult r = spf_evaluate(t, remote_ip, depth + 1);
+                        if (r == SpfResult::PASS) return SpfResult::PASS;
+                        if (r == SpfResult::FAIL) return SpfResult::FAIL;
+                        break;
+                    }
+                }
+            } catch (...) {}
+            continue;
+        }
+        // redirect= modifier
+        if (ml.substr(0, 9) == "redirect=") {
+            std::string redir = mech.substr(9);
+            try {
+                auto txts = dns_txt_lookup(redir);
+                for (auto& t : txts) {
+                    if (t.find("v=spf1") != std::string::npos)
+                        return spf_evaluate(t, remote_ip, depth + 1);
+                }
+            } catch (...) {}
+            return SpfResult::NEUTRAL;
+        }
+        // ip6: — skip (IPv6 not yet in scope)
+        // mx:, a: — require additional DNS lookups; skip for minimal impl
+    }
+    return SpfResult::NEUTRAL;
+}
+
+static SpfResult spf_check(const std::string& mail_from,
+                            const std::string& remote_ip) {
+    // Extract domain from MAIL FROM address
+    size_t at = mail_from.rfind('@');
+    if (at == std::string::npos || at + 1 >= mail_from.size())
+        return SpfResult::NONE;
+    std::string domain = mail_from.substr(at + 1);
+    // Strip trailing '>' if present
+    if (!domain.empty() && domain.back() == '>') domain.pop_back();
+
+    std::vector<std::string> txts;
+    try { txts = dns_txt_lookup(domain); }
+    catch (...) { return SpfResult::NONE; }
+
+    for (auto& t : txts) {
+        if (t.find("v=spf1") != std::string::npos)
+            return spf_evaluate(t, remote_ip);
+    }
+    return SpfResult::NONE; // no SPF record
+}
+
 // ── Worker thread pool ────────────────────────────────────────────────────────
 
 struct WorkItem {
@@ -218,6 +344,19 @@ private:
                 item = std::move(queue.front());
                 queue.pop();
             }
+            // SPF — blocking DNS is safe here (worker thread, not EventLoop)
+            item.msg.spf = spf_check(item.msg.mail_from, item.msg.remote_ip);
+            if (item.msg.spf == SpfResult::FAIL) {
+                Logger::instance().log(LogLevel::LOG_WARN, "smtp",
+                    "SPF FAIL for " + item.msg.mail_from + " from " + item.msg.remote_ip);
+            }
+
+            // DKIM verify — also safe on worker thread
+            if (!item.msg.data.empty()) {
+                try { item.msg.dkim_ok = dkim_verify(item.msg.data); }
+                catch (...) { item.msg.dkim_ok = false; }
+            }
+
             bool ok = false;
             try { ok = item.handler(item.msg); }
             catch (const std::exception& e) {

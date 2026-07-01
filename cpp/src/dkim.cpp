@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <unordered_map>
 
 #ifndef OPENSSL_NO_DEPRECATED_3_0
 #  define OPENSSL_NO_DEPRECATED_3_0
@@ -243,10 +244,21 @@ bool dkim_verify(const std::string& raw_message) {
     std::string domain   = tag("d");
     std::string selector = tag("s");
     std::string bh_b64   = tag("bh");
-    (void)bh_b64; // used for body hash check (future)
     std::string b_b64    = tag("b");
 
-    if (domain.empty() || selector.empty() || b_b64.empty()) return false;
+    if (domain.empty() || selector.empty() || b_b64.empty() || bh_b64.empty()) return false;
+
+    // Verify body hash (bh=) — body starts after blank line
+    {
+        size_t body_start = raw_message.find("\r\n\r\n");
+        std::string body = (body_start != std::string::npos)
+            ? raw_message.substr(body_start + 4)
+            : "";
+        std::string canon_body = canon_body_relaxed(body);
+        auto bh_actual = sha256_digest(canon_body);
+        std::string bh_actual_b64 = b64_encode(bh_actual);
+        if (bh_actual_b64 != bh_b64) return false;
+    }
 
     // Fetch public key from DNS
     std::string dns_name = selector + "._domainkey." + domain;
@@ -330,16 +342,27 @@ bool dkim_verify(const std::string& raw_message) {
         ? raw_message.substr(0, hdr_end)
         : raw_message;
 
+    // RFC 6376 §5.4.2: for duplicate header names, take from bottom (rfind).
+    // Each occurrence in h= consumes one instance starting from the bottom.
+    // We track consumed positions so the second occurrence gets the next one up.
+    std::string hdr_lower = hdr_block;
+    for (char& c : hdr_lower) c = (char)std::tolower((unsigned char)c);
+
+    // For each name, keep a "search ceiling" (start from end, move up on repeats)
+    std::unordered_map<std::string, size_t> search_from;
+
     std::string data_to_verify;
     for (auto& hname : signed_hdrs) {
-        // Find header (case-insensitive)
-        std::string hdr_lower = hdr_block;
-        for (char& c : hdr_lower) c = (char)std::tolower((unsigned char)c);
         std::string search = hname + ":";
-        size_t p = hdr_lower.find(search);
+        size_t ceiling = search_from.count(hname)
+            ? search_from[hname]
+            : hdr_lower.size();
+        // rfind up to ceiling
+        size_t p = hdr_lower.rfind(search, ceiling > 0 ? ceiling - 1 : 0);
         if (p == std::string::npos) continue;
+        search_from[hname] = p; // next duplicate must be above this position
         size_t e = hdr_block.find("\r\n", p);
-        // Unfold
+        // Unfold continuation lines
         while (e != std::string::npos && e + 2 < hdr_block.size() &&
                (hdr_block[e+2] == ' ' || hdr_block[e+2] == '\t'))
             e = hdr_block.find("\r\n", e + 2);

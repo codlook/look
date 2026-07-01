@@ -10,12 +10,16 @@ namespace look {
 
 // ── Parsed inbound message ────────────────────────────────────────────────────
 
+enum class SpfResult { PASS, SOFTFAIL, FAIL, NEUTRAL, NONE };
+
 struct SmtpMessage {
     std::string         mail_from;      // MAIL FROM:<addr>
     std::vector<std::string> rcpt_to;  // RCPT TO:<addr> list
     std::string         data;           // raw RFC 5322 message body
     std::string         remote_ip;      // connecting client IP
     bool                tls = false;    // STARTTLS was negotiated
+    SpfResult           spf = SpfResult::NONE; // result of SPF check
+    bool                dkim_ok = false;       // DKIM-Signature verified
 };
 
 // ── Delivery handler ──────────────────────────────────────────────────────────
