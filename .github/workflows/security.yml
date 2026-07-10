@@ -1,0 +1,81 @@
+name: Security & Fuzzing
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  security:
+    name: "Regression + ASan/UBSan Fuzzing"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev curl
+
+      - name: Build (Release)
+        run: |
+          cd cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target look-fcgi --parallel $(nproc)
+
+      - name: Build (ASan + UBSan)
+        run: |
+          cd cpp
+          cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLOOK_SANITIZE=address,undefined
+          cmake --build build-asan --target look-fcgi --parallel $(nproc)
+
+      # ── 9 güvenlik/regresyon testi (Release binary) ──────────────────────────
+      # response::json body, VM strlen, connection leak, fiber c=200 race,
+      # malformed Content-Length, CL+TE smuggling, devasa body, canlılık.
+      - name: Regression suite (Release)
+        run: |
+          chmod +x tests/regression/run_regression.sh
+          tests/regression/run_regression.sh cpp/build/lk-fcgi
+
+      # ── HTTP parser fuzzing (ASan binary) ────────────────────────────────────
+      # 3000 rastgele/bozuk istek → 0 çökme/UB beklenir.
+      - name: HTTP fuzzing (ASan + UBSan)
+        run: |
+          chmod +x tests/security/fuzz_http.sh
+          # basit fuzz app'i inline oluştur (DB gerektirmez)
+          printf 'route("GET","/",function(){response::json(["ok"=>true])})\nroute("404",function(){response::status(404);response::json(["ok"=>false])})\n' > /tmp/fuzz_app.lk
+          tests/security/fuzz_http.sh cpp/build-asan/lk-fcgi /tmp/fuzz_app.lk 3000
+        env:
+          ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1"
+          UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+
+  tsan:
+    name: "ThreadSanitizer (blocking mode)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev curl
+
+      # TSan blocking-mode data race taraması. Fiber path'i ucontext annotation
+      # gerektirdiği için ayrı; burada production default (blocking) taranır.
+      - name: Build (TSan)
+        run: |
+          cd cpp
+          cmake -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DLOOK_SANITIZE=thread
+          cmake --build build-tsan --target look-fcgi --parallel $(nproc)
+
+      - name: Concurrent dispatch under TSan
+        run: |
+          printf 'route("GET","/ping",function(){response::json(["pong"=>true])})\n' > /tmp/tsan_app.lk
+          TSAN_OPTIONS="halt_on_error=0" cpp/build-tsan/lk-fcgi --mode http --port 7411 --workers 8 /tmp/tsan_app.lk &
+          SRV=$!
+          sleep 3
+          for i in $(seq 1 500); do curl -s "http://127.0.0.1:7411/ping" > /dev/null & done
+          wait
+          kill $SRV 2>/dev/null || true
+        continue-on-error: true  # TSan bulguları baseline kurulana dek uyarı

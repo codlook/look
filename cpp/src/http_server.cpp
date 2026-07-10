@@ -1,0 +1,811 @@
+#include "look/http_server.h"
+#include "look/websocket.h"
+#include "look/sse.h"
+#include "look/event_loop.h"
+#include "look/fiber.h"
+
+#include <sstream>
+#include <thread>
+#include <mutex>
+#include <queue>
+#include <condition_variable>
+#include <vector>
+#include <unordered_map>
+#include <cstring>
+#include <cstdlib>
+#include <stdexcept>
+#include <algorithm>
+
+#if defined(__linux__)
+#  include <sys/socket.h>
+#  include <netinet/in.h>
+#  include <netinet/tcp.h>
+#  include <arpa/inet.h>
+#  include <unistd.h>
+#  include <fcntl.h>
+#elif defined(_WIN32)
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#  pragma comment(lib, "ws2_32.lib")
+#  define close(x)   closesocket(x)
+#  define ssize_t    int
+#  define recv(f,b,l,fl) recv((SOCKET)(f),(b),(int)(l),(fl))
+#  define send(f,b,l,fl) send((SOCKET)(f),(b),(int)(l),(fl))
+#endif
+
+#if defined(__linux__)
+#  include <poll.h>
+#endif
+
+namespace look {
+
+// ── HTTP/1.1 parser ───────────────────────────────────────────────────────────
+
+static bool parse_request(const std::string& raw, HttpRequest& req) {
+    size_t pos = 0;
+
+    size_t line_end = raw.find("\r\n");
+    if (line_end == std::string::npos) return false;
+
+    std::string req_line = raw.substr(0, line_end);
+    size_t s1 = req_line.find(' ');
+    size_t s2 = req_line.rfind(' ');
+    if (s1 == std::string::npos || s1 == s2) return false;
+
+    req.method  = req_line.substr(0, s1);
+    req.version = req_line.substr(s2 + 1);
+    std::string full_path = req_line.substr(s1 + 1, s2 - s1 - 1);
+
+    size_t qpos = full_path.find('?');
+    if (qpos != std::string::npos) {
+        req.path         = full_path.substr(0, qpos);
+        req.query_string = full_path.substr(qpos + 1);
+    } else {
+        req.path = full_path;
+    }
+
+    pos = line_end + 2;
+
+    size_t header_end = raw.find("\r\n\r\n");
+    if (header_end == std::string::npos) return false;
+
+    while (pos < header_end) {
+        size_t end = raw.find("\r\n", pos);
+        if (end == std::string::npos || end > header_end) break;
+        std::string line = raw.substr(pos, end - pos);
+        size_t colon = line.find(':');
+        if (colon != std::string::npos) {
+            std::string key = line.substr(0, colon);
+            std::string val = line.substr(colon + 1);
+            while (!val.empty() && (val[0] == ' ' || val[0] == '\t')) val.erase(0, 1);
+            while (!key.empty() && key.back() == ' ') key.pop_back();
+            std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+            req.headers[key] = val;
+        }
+        pos = end + 2;
+    }
+
+    // WebSocket upgrade
+    auto it_up  = req.headers.find("upgrade");
+    auto it_key = req.headers.find("sec-websocket-key");
+    if (it_up != req.headers.end()) {
+        std::string up = it_up->second;
+        std::transform(up.begin(), up.end(), up.begin(), ::tolower);
+        if (up.find("websocket") != std::string::npos) {
+            req.upgrade_websocket = true;
+            if (it_key != req.headers.end()) req.ws_key = it_key->second;
+        }
+    }
+
+    // SSE detection
+    auto it_acc = req.headers.find("accept");
+    if (it_acc != req.headers.end()) {
+        if (it_acc->second.find("text/event-stream") != std::string::npos)
+            req.upgrade_sse = true;
+    }
+
+    return true;
+}
+
+// ── HTTP response builder ─────────────────────────────────────────────────────
+
+std::string HttpResponse::build() const {
+    std::ostringstream out;
+    out << "HTTP/1.1 " << status_code << " " << status_text << "\r\n";
+    for (auto& [k, v] : headers) out << k << ": " << v << "\r\n";
+    out << "Content-Length: " << body.size() << "\r\n";
+    out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
+    out << "\r\n";
+    out << body;
+    return out.str();
+}
+
+// ── Worker thread pool ────────────────────────────────────────────────────────
+
+class WorkerPool {
+    std::vector<std::thread> workers_;
+    std::queue<std::function<void()>> queue_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    bool stop_ = false;
+public:
+    explicit WorkerPool(int n) {
+        for (int i = 0; i < n; ++i) {
+            workers_.emplace_back([this] {
+                for (;;) {
+                    std::function<void()> fn;
+                    {
+                        std::unique_lock<std::mutex> lk(mtx_);
+                        cv_.wait(lk, [this]{ return stop_ || !queue_.empty(); });
+                        if (stop_ && queue_.empty()) return;
+                        fn = std::move(queue_.front());
+                        queue_.pop();
+                    }
+                    fn();
+                }
+            });
+        }
+    }
+    void submit(std::function<void()> fn) {
+        { std::lock_guard<std::mutex> lk(mtx_); queue_.push(std::move(fn)); }
+        cv_.notify_one();
+    }
+    ~WorkerPool() {
+        { std::lock_guard<std::mutex> lk(mtx_); stop_ = true; }
+        cv_.notify_all();
+        for (auto& t : workers_) t.join();
+    }
+};
+
+// ── HttpServer::Impl ──────────────────────────────────────────────────────────
+
+static void send_ws_reject(int fd, const std::string& reason) {
+    std::string resp =
+        "HTTP/1.1 403 Forbidden\r\n"
+        "Content-Type: text/plain\r\n"
+        "Connection: close\r\n"
+        "Content-Length: " + std::to_string(reason.size()) + "\r\n"
+        "\r\n" + reason;
+#ifdef _WIN32
+    ::send(fd, resp.data(), (int)resp.size(), 0);
+#else
+    ::send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
+#endif
+}
+
+struct HttpServer::Impl {
+    int  port    = 0;
+    int  workers = 0;
+    HttpHandler  handler;
+    WsHandler    ws_handler;
+    SseHandler   sse_handler;
+    // CSWSH koruması: boş = tüm originlere izin ver (geliştirme), dolu = sadece listedekilere
+    std::vector<std::string> allowed_origins;
+
+    int  server_fd = -1;
+    std::atomic<bool> running{false};
+
+    std::unique_ptr<WorkerPool> pool;
+
+    // Event loop — yalnızca WS/SSE async frame okuma için
+    std::unique_ptr<EventLoop> loop;
+    std::thread loop_thread;
+
+    // WS state
+    std::unordered_map<int, std::shared_ptr<WsConnection>> ws_clients;
+    std::unordered_map<int, std::string>                   ws_bufs;
+    std::mutex ws_mtx;
+
+    // SSE state
+    std::unordered_map<int, std::shared_ptr<SseConnection>> sse_clients;
+    std::mutex sse_mtx;
+
+    // Maksimum request body boyutu (byte) — LOOK_MAX_BODY_SIZE ile ayarlanır,
+    // varsayılan 10 MB. Sınırsız body bellek tüketimi DoS'unu engeller.
+    static size_t max_body_size() {
+        static const size_t v = []() -> size_t {
+            const char* e = std::getenv("LOOK_MAX_BODY_SIZE");
+            if (e && *e) { long long n = std::atoll(e); if (n > 0) return (size_t)n; }
+            return 10 * 1024 * 1024;
+        }();
+        return v;
+    }
+
+    // Header-only kısa yanıt — body okumadan önce reddetme yolları için.
+    static void send_simple(int fd, int code, const char* reason) {
+        std::string r = "HTTP/1.1 " + std::to_string(code) + " " + reason + "\r\n"
+                        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+#ifdef _WIN32
+        ::send(fd, r.data(), (int)r.size(), 0);
+#else
+        ssize_t n = ::send(fd, r.data(), r.size(), MSG_NOSIGNAL);
+        (void)n;
+#endif
+    }
+
+    // Transfer-Encoding: chunked gövdeyi çöz (RFC 7230 §4.1).
+    // buf: header'lar + gövdenin ilk parçası; start: gövde offset'i.
+    // Çözülen gövde out'a yazılır. Body cap ve malformed kontrolleri dahil.
+    // false → istek reddedildi (yanıt gönderildi), caller fd'yi kapatmalı.
+    static bool read_chunked_body(int fd, std::string& buf, size_t start,
+                                  char* tmp, size_t tmp_sz, std::string& out) {
+        std::string stream = buf.substr(start);   // gövde baytları (henüz çözülmemiş)
+        size_t p = 0;
+        const size_t cap    = max_body_size();
+        const size_t raw_lim = cap + 1024 * 1024; // ham akış tavanı (chunk header payı)
+
+        auto refill = [&]() -> bool {
+            ssize_t r = ::recv(fd, tmp, (int)tmp_sz, 0);
+            if (r <= 0) return false;
+            if (stream.size() + (size_t)r > raw_lim) return false; // akış patlaması
+            stream.append(tmp, (size_t)r);
+            return true;
+        };
+
+        while (true) {
+            // 1) chunk boyutu satırını al (hex, ; ile chunk-ext olabilir)
+            size_t nl;
+            while ((nl = stream.find("\r\n", p)) == std::string::npos) {
+                if (stream.size() - p > 64) { send_simple(fd, 400, "Bad Request"); return false; }
+                if (!refill()) { send_simple(fd, 400, "Bad Request"); return false; }
+            }
+            std::string sizeline = stream.substr(p, nl - p);
+            size_t semi = sizeline.find(';');            // chunk-ext'i at
+            if (semi != std::string::npos) sizeline = sizeline.substr(0, semi);
+            // hex parse (katı)
+            if (sizeline.empty() ||
+                sizeline.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+                send_simple(fd, 400, "Bad Request"); return false;
+            }
+            size_t chunk_sz = 0;
+            try { chunk_sz = std::stoull(sizeline, nullptr, 16); }
+            catch (...) { send_simple(fd, 400, "Bad Request"); return false; }
+            p = nl + 2;
+
+            if (chunk_sz == 0) break;                    // son chunk
+            if (out.size() + chunk_sz > cap) { send_simple(fd, 413, "Payload Too Large"); return false; }
+
+            // 2) chunk verisi + kapanış CRLF'i gelene kadar oku
+            while (stream.size() < p + chunk_sz + 2) {
+                if (!refill()) { send_simple(fd, 400, "Bad Request"); return false; }
+            }
+            out.append(stream, p, chunk_sz);
+            p += chunk_sz;
+            if (stream.compare(p, 2, "\r\n") != 0) { send_simple(fd, 400, "Bad Request"); return false; }
+            p += 2;
+        }
+        // trailer başlıklarını yut: boş satıra (\r\n) kadar. Keep-alive'da
+        // sonraki isteğin sınırı doğru olsun diye akıştan tüketilir.
+        while (true) {
+            size_t nl2 = stream.find("\r\n", p);
+            if (nl2 == std::string::npos) { if (!refill()) break; else continue; }
+            if (nl2 == p) { p += 2; break; }             // boş satır → gövde bitti
+            p = nl2 + 2;                                  // trailer satırını atla
+        }
+        return true;
+    }
+
+    // ── Blocking HTTP bağlantı yöneticisi — worker thread'de çalışır ──────────
+    //
+    // Her bağlantı için:
+    //   1. blocking recv() → headers tamamlanana dek oku
+    //   2. parse → WS/SSE upgrade tespiti
+    //   3. HTTP: handler → send() → keep-alive döngüsü
+    //   4. WS/SSE: event loop'a devret, worker serbest kalır
+    //
+    // Event loop yok — Apache ile aynı model.
+    void handle_connection(int fd, std::string remote_addr = "") {
+        // Boşta timeout — istemci 30sn yanıt vermezse kapat
+        timeval tv{30, 0};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+#ifndef _WIN32
+        // Nagle kapalı — küçük paketler hemen gönderilir
+        int nd = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nd, sizeof(nd));
+#endif
+
+        char tmp[65536];
+
+        while (true) {
+            // Headers gelene kadar blocking oku
+            std::string buf;
+            while (buf.find("\r\n\r\n") == std::string::npos) {
+                ssize_t r = ::recv(fd, tmp, sizeof(tmp), 0);
+                if (r <= 0) { ::close(fd); return; }
+                buf.append(tmp, (size_t)r);
+                if (buf.size() > 2 * 1024 * 1024) { ::close(fd); return; }
+            }
+
+            HttpRequest req;
+            req.remote_addr = remote_addr;
+            if (!parse_request(buf, req)) { ::close(fd); return; }
+
+            size_t header_end  = buf.find("\r\n\r\n") + 4;
+            size_t body_in_buf = buf.size() - header_end;
+            auto clen_it = req.headers.find("content-length");
+            auto te_it   = req.headers.find("transfer-encoding");
+
+            // HTTP Request Smuggling koruması: Content-Length ve Transfer-Encoding
+            // aynı anda gelirse istek belirsizdir (RFC 7230 §3.3.3) — katı ret.
+            if (te_it != req.headers.end() && clen_it != req.headers.end()) {
+                send_simple(fd, 400, "Bad Request"); ::close(fd); return;
+            }
+
+            // ── Transfer-Encoding: chunked gövde çözme ────────────────────────
+            if (te_it != req.headers.end()) {
+                std::string te = te_it->second;
+                std::transform(te.begin(), te.end(), te.begin(), ::tolower);
+                if (te.find("chunked") == std::string::npos) {
+                    // chunked dışında TE (gzip vb.) desteklenmez — belirsizlik yerine ret
+                    send_simple(fd, 400, "Bad Request"); ::close(fd); return;
+                }
+                if (!read_chunked_body(fd, buf, header_end, tmp, sizeof(tmp), req.body)) {
+                    // malformed chunk veya body cap aşımı → read_chunked_body yanıtı gönderdi
+                    ::close(fd); return;
+                }
+            } else if (clen_it != req.headers.end()) {
+                // Content-Length güvenli parse — bozuk/taşan değer worker'ı
+                // düşürmesin (std::stoul exception fırlatıyordu = DoS).
+                size_t content_len = 0;
+                {
+                    const std::string& cl = clen_it->second;
+                    if (cl.empty() || cl.size() > 19 ||
+                        cl.find_first_not_of("0123456789") != std::string::npos) {
+                        send_simple(fd, 400, "Bad Request"); ::close(fd); return;
+                    }
+                    try { content_len = std::stoull(cl); }
+                    catch (...) { send_simple(fd, 400, "Bad Request"); ::close(fd); return; }
+                }
+                // Maksimum body boyutu — sınırsız body bellek tüketimi DoS'u.
+                // LOOK_MAX_BODY_SIZE (byte) ile ayarlanır, varsayılan 10 MB.
+                if (content_len > max_body_size()) {
+                    send_simple(fd, 413, "Payload Too Large"); ::close(fd); return;
+                }
+                if (body_in_buf > 0)
+                    req.body = buf.substr(header_end,
+                                          std::min(body_in_buf, content_len));
+                while (req.body.size() < content_len) {
+                    ssize_t r = ::recv(fd, tmp, sizeof(tmp), 0);
+                    if (r <= 0) { ::close(fd); return; }
+                    req.body.append(tmp, (size_t)r);
+                }
+            }
+
+            // WS upgrade → event loop'a devret, worker serbest kalır
+            if (req.upgrade_websocket && ws_handler) {
+                handle_ws_upgrade(fd, req);
+                return;
+            }
+
+            // SSE upgrade → event loop'a devret
+            if (req.upgrade_sse && sse_handler) {
+                handle_sse_upgrade(fd, req);
+                return;
+            }
+
+            // Keep-alive tespiti (HTTP/1.1 default = keep-alive)
+            bool req_keep_alive = (req.version == "HTTP/1.1");
+            {
+                auto ci = req.headers.find("connection");
+                if (ci != req.headers.end()) {
+                    std::string cv = ci->second;
+                    std::transform(cv.begin(), cv.end(), cv.begin(), ::tolower);
+                    if (cv.find("close")      != std::string::npos) req_keep_alive = false;
+                    if (cv.find("keep-alive") != std::string::npos) req_keep_alive = true;
+                }
+            }
+
+            // Dispatch — worker thread doğrudan işler
+            HttpResponse resp;
+            resp.keep_alive = req_keep_alive;
+            resp.headers["Content-Type"] = "application/json; charset=utf-8";
+            try {
+                handler(req, resp);
+            } catch (...) {
+                resp.status_code = 500;
+                resp.status_text = "Internal Server Error";
+                resp.body        = "{\"ok\":false,\"hata\":\"Sunucu hatası\"}";
+                resp.keep_alive  = false;
+            }
+
+            std::string raw = resp.build();
+#ifdef _WIN32
+            ssize_t w = ::send(fd, raw.data(), (int)raw.size(), 0);
+#else
+            ssize_t w = ::send(fd, raw.data(), raw.size(), MSG_NOSIGNAL);
+#endif
+            if (w <= 0 || !resp.keep_alive) { ::close(fd); return; }
+            // keep-alive: sonraki isteği bekle
+        }
+    }
+
+    // ── WebSocket upgrade — worker thread'de çalışır ──────────────────────────
+    void handle_ws_upgrade(int fd, const HttpRequest& req) {
+        // CSWSH koruması: Origin header'ını kontrol et
+        if (!allowed_origins.empty()) {
+            auto it = req.headers.find("origin");
+            if (it == req.headers.end()) {
+                send_ws_reject(fd, "403 Forbidden - Origin header gerekli");
+                ::close(fd);
+                return;
+            }
+            const std::string& origin = it->second;
+            bool ok = false;
+            for (const auto& allowed : allowed_origins)
+                if (allowed == "*" || allowed == origin) { ok = true; break; }
+            if (!ok) {
+                send_ws_reject(fd, "403 Forbidden - Origin izinli değil: " + origin);
+                ::close(fd);
+                return;
+            }
+        }
+        std::string hs = ws_handshake_101(req.ws_key);
+#ifdef _WIN32
+        ::send(fd, hs.data(), (int)hs.size(), 0);
+#else
+        ::send(fd, hs.data(), hs.size(), MSG_NOSIGNAL);
+#endif
+        auto conn = std::make_shared<WsConnection>(fd);
+        {
+            std::lock_guard<std::mutex> lk(ws_mtx);
+            ws_clients[fd] = conn;
+            ws_bufs[fd]    = "";
+        }
+        look::g_ws_registry.add(conn);
+
+        ws_handler(conn, req);
+
+        // fd'yi event loop'a devret: blocking → non-blocking + EPOLL_CTL_ADD
+        loop->add_client(fd, [this, fd](const char* d, size_t l) {
+            on_ws_data(fd, d, l);
+        });
+    }
+
+    // ── SSE upgrade — worker thread'de çalışır ───────────────────────────────
+    void handle_sse_upgrade(int fd, const HttpRequest& req) {
+        const char* hdrs =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/event-stream\r\n"
+            "Cache-Control: no-cache\r\n"
+            "Connection: keep-alive\r\n"
+            "X-Accel-Buffering: no\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "\r\n";
+#ifdef _WIN32
+        ::send(fd, hdrs, (int)strlen(hdrs), 0);
+#else
+        ::send(fd, hdrs, strlen(hdrs), MSG_NOSIGNAL);
+#endif
+        auto conn = std::make_shared<SseConnection>(fd);
+        {
+            std::lock_guard<std::mutex> lk(sse_mtx);
+            sse_clients[fd] = conn;
+        }
+        look::g_sse_registry.add(conn);
+
+        sse_handler(conn, req);
+
+        // fd'yi event loop'a devret — disconnect tespiti için
+        loop->add_client(fd, [this, fd](const char* d, size_t l) {
+            on_sse_data(fd, d, l);
+        });
+    }
+
+    // ── SSE disconnect ────────────────────────────────────────────────────────
+    void on_sse_data(int fd, const char* /*data*/, size_t len) {
+        bool do_close = (len == 0);
+        if (!do_close) {
+            std::lock_guard<std::mutex> lk(sse_mtx);
+            auto it = sse_clients.find(fd);
+            do_close = (it == sse_clients.end() || it->second->closed.load());
+        }
+        if (do_close) { close_sse(fd); return; }
+        loop->async_read(fd, [this, fd](const char* d, size_t l) {
+            on_sse_data(fd, d, l);
+        });
+    }
+
+    void close_sse(int fd) {
+        std::shared_ptr<SseConnection> conn;
+        {
+            std::lock_guard<std::mutex> lk(sse_mtx);
+            auto it = sse_clients.find(fd);
+            if (it != sse_clients.end()) { conn = it->second; sse_clients.erase(it); }
+        }
+        look::g_sse_registry.remove(fd);
+        if (conn && !conn->closed.exchange(true)) {
+            if (conn->on_close_cb) {
+                auto cb = conn->on_close_cb;
+                pool->submit([cb]() { cb(); });
+            }
+        }
+        loop->close_fd(fd);
+    }
+
+    // ── WS frame I/O ─────────────────────────────────────────────────────────
+    void on_ws_data(int fd, const char* data, size_t len) {
+        std::shared_ptr<WsConnection> conn;
+        {
+            std::lock_guard<std::mutex> lk(ws_mtx);
+            auto it = ws_clients.find(fd);
+            if (it == ws_clients.end()) return;
+            conn = it->second;
+            ws_bufs[fd].append(data, len);
+        }
+        if (!conn || conn->closed.load()) { close_ws(fd); return; }
+
+        while (true) {
+            std::string snap;
+            {
+                std::lock_guard<std::mutex> lk(ws_mtx);
+                auto it = ws_bufs.find(fd);
+                if (it == ws_bufs.end()) break;
+                snap = it->second;
+            }
+            WsFrame frame = ws_try_decode_frame(snap);
+            if (!frame.complete) break;
+
+            {
+                std::lock_guard<std::mutex> lk(ws_mtx);
+                auto it = ws_bufs.find(fd);
+                if (it != ws_bufs.end()) it->second.erase(0, frame.consumed);
+            }
+
+            if (frame.opcode == 0x01 || frame.opcode == 0x02) {
+                if (conn->on_message) {
+                    auto cb  = conn->on_message;
+                    auto msg = frame.payload;
+                    pool->submit([cb, msg]() { cb(msg); });
+                }
+            } else if (frame.opcode == 0x09) {
+                std::string pong = ws_encode_pong_frame(frame.payload);
+                std::lock_guard<std::mutex> lk(conn->write_mutex);
+                conn->send_raw(pong);
+            } else if (frame.opcode == 0x08) {
+                std::string cf = ws_encode_close_frame();
+                { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
+                conn->closed.store(true);
+                if (conn->on_close) {
+                    auto cb = conn->on_close;
+                    pool->submit([cb]() { cb(); });
+                }
+                close_ws(fd);
+                return;
+            }
+        }
+
+        if (!conn->closed.load()) {
+            loop->async_read(fd, [this, fd](const char* d, size_t l) {
+                on_ws_data(fd, d, l);
+            });
+        } else {
+            close_ws(fd);
+        }
+    }
+
+    void close_ws(int fd) {
+        {
+            std::lock_guard<std::mutex> lk(ws_mtx);
+            ws_clients.erase(fd);
+            ws_bufs.erase(fd);
+        }
+        look::g_ws_registry.remove(fd);
+        loop->close_fd(fd);
+    }
+};
+
+// ── HttpServer public API ─────────────────────────────────────────────────────
+
+HttpServer::HttpServer(int port, int workers, HttpHandler handler,
+                       WsHandler ws_handler, SseHandler sse_handler)
+    : impl_(std::make_unique<Impl>())
+{
+    impl_->port        = port;
+    impl_->workers     = workers;
+    impl_->handler     = std::move(handler);
+    impl_->ws_handler  = std::move(ws_handler);
+    impl_->sse_handler = std::move(sse_handler);
+    impl_->loop        = EventLoop::create();
+
+    // CSWSH koruması: LOOK_WS_ORIGINS=https://site.com,https://other.com
+    if (const char* env = std::getenv("LOOK_WS_ORIGINS")) {
+        std::string s = env;
+        size_t pos = 0, found;
+        while ((found = s.find(',', pos)) != std::string::npos) {
+            impl_->allowed_origins.push_back(s.substr(pos, found - pos));
+            pos = found + 1;
+        }
+        if (pos < s.size()) impl_->allowed_origins.push_back(s.substr(pos));
+    }
+    impl_->pool        = std::make_unique<WorkerPool>(workers);
+
+#ifdef _WIN32
+    WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
+    int srv = (int)socket(AF_INET, SOCK_STREAM, 0);
+#else
+    int srv = socket(AF_INET, SOCK_STREAM, 0);
+#endif
+    if (srv < 0) throw std::runtime_error("socket() failed");
+
+    int opt = 1;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port        = htons((uint16_t)port);
+
+    if (bind(srv, (sockaddr*)&addr, sizeof(addr)) < 0)
+        throw std::runtime_error("bind() failed on port " + std::to_string(port));
+    if (::listen(srv, 16384) < 0)
+        throw std::runtime_error("listen() failed");
+
+    impl_->server_fd = srv;
+}
+
+HttpServer::~HttpServer() {
+    impl_->running = false;
+    if (impl_->server_fd >= 0) ::close(impl_->server_fd);
+}
+
+void HttpServer::run() {
+    impl_->running = true;
+
+    // Event loop — arka planda, sadece WS/SSE için
+    impl_->loop_thread = std::thread([this]() {
+        impl_->loop->run();
+    });
+
+    // SO_REUSEPORT + fiber burst-accept mode (LOOK_FIBER_DISPATCH=1, Linux only):
+    //   Each worker opens its own SO_REUSEPORT socket — kernel distributes
+    //   connections evenly across all workers (vs old model: single shared fd
+    //   → one worker grabs everything → only 1 CPU active).
+    //   Worker loop: poll → burst accept → spawn fibers → run_until_complete()
+    static const bool fiber_burst = []() {
+#ifdef __linux__
+        const char* v = std::getenv("LOOK_FIBER_DISPATCH");
+        return v && std::string(v) == "1";
+#else
+        return false;
+#endif
+    }();
+
+#ifdef __linux__
+    // SO_REUSEPORT mode: per-worker sockets replace the shared fd.
+    // Close shared socket now so its queue doesn't steal connections from workers.
+    int shared_port = impl_->port;
+    if (fiber_burst && impl_->server_fd >= 0) {
+        ::close(impl_->server_fd);
+        impl_->server_fd = -1;
+    }
+#endif
+
+    std::vector<std::thread> workers;
+    workers.reserve(impl_->workers);
+    for (int i = 0; i < impl_->workers; ++i) {
+#ifdef __linux__
+        workers.emplace_back([this, shared_port, i]() {
+#else
+        workers.emplace_back([this]() {
+#endif
+            look::set_thread_event_loop(impl_->loop.get());
+
+#ifdef __linux__
+            // Per-worker SO_REUSEPORT listen socket
+            int worker_fd = -1;
+            if (fiber_burst) {
+                worker_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+                if (worker_fd >= 0) {
+                    int opt = 1;
+                    ::setsockopt(worker_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+                    ::setsockopt(worker_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+                    sockaddr_in waddr{};
+                    waddr.sin_family      = AF_INET;
+                    waddr.sin_addr.s_addr = INADDR_ANY;
+                    waddr.sin_port        = htons((uint16_t)shared_port);
+                    if (::bind(worker_fd, (sockaddr*)&waddr, sizeof(waddr)) < 0 ||
+                        ::listen(worker_fd, 16384) < 0) {
+                        ::close(worker_fd);
+                        worker_fd = -1;
+                    } else {
+                        int flags = fcntl(worker_fd, F_GETFL, 0);
+                        fcntl(worker_fd, F_SETFL, flags | O_NONBLOCK);
+                    }
+                }
+            }
+
+            static thread_local look::FiberScheduler tl_srv_sched;
+            if (fiber_burst && worker_fd >= 0) look::set_thread_scheduler(&tl_srv_sched);
+#endif
+
+            while (impl_->running) {
+#ifdef __linux__
+                if (fiber_burst && worker_fd >= 0) {
+                    struct pollfd pfd{worker_fd, POLLIN, 0};
+                    if (::poll(&pfd, 1, 100) <= 0 || !(pfd.revents & POLLIN)) continue;
+
+                    constexpr int MAX_BURST = 64;
+                    while (impl_->running && (int)tl_srv_sched.total_count() < MAX_BURST) {
+                        sockaddr_storage peer{};
+                        socklen_t peer_len = sizeof(peer);
+                        int client = accept4(worker_fd,
+                            reinterpret_cast<sockaddr*>(&peer), &peer_len, 0);
+                        if (client < 0) break;  // EAGAIN — queue drained
+
+                        char peer_ip[INET6_ADDRSTRLEN] = {};
+                        if (peer.ss_family == AF_INET)
+                            inet_ntop(AF_INET,
+                                &reinterpret_cast<sockaddr_in*>(&peer)->sin_addr,
+                                peer_ip, sizeof(peer_ip));
+                        else if (peer.ss_family == AF_INET6)
+                            inet_ntop(AF_INET6,
+                                &reinterpret_cast<sockaddr_in6*>(&peer)->sin6_addr,
+                                peer_ip, sizeof(peer_ip));
+
+                        std::string ip_str = peer_ip;
+                        tl_srv_sched.spawn([this, client, ip_str]() {
+                            impl_->handle_connection(client, ip_str);
+                        });
+                    }
+
+                    if (tl_srv_sched.total_count() > 0)
+                        tl_srv_sched.run_until_complete();
+                    continue;
+                }
+#endif
+                // Blocking path (non-fiber or Windows)
+                sockaddr_storage peer{};
+                socklen_t peer_len = sizeof(peer);
+#ifdef __linux__
+                int srv_fd = (impl_->server_fd >= 0) ? impl_->server_fd : worker_fd;
+                int client = accept4(srv_fd,
+                    reinterpret_cast<sockaddr*>(&peer), &peer_len, 0);
+#else
+                int client = (int)accept((SOCKET)impl_->server_fd,
+                    reinterpret_cast<sockaddr*>(&peer), &peer_len);
+#endif
+                if (client < 0) {
+                    if (!impl_->running) break;
+                    continue;
+                }
+                char peer_ip[INET6_ADDRSTRLEN] = {};
+                if (peer.ss_family == AF_INET)
+                    inet_ntop(AF_INET,
+                        &reinterpret_cast<sockaddr_in*>(&peer)->sin_addr,
+                        peer_ip, sizeof(peer_ip));
+                else if (peer.ss_family == AF_INET6)
+                    inet_ntop(AF_INET6,
+                        &reinterpret_cast<sockaddr_in6*>(&peer)->sin6_addr,
+                        peer_ip, sizeof(peer_ip));
+                impl_->handle_connection(client, peer_ip);
+            }
+
+#ifdef __linux__
+            if (worker_fd >= 0) {
+                look::set_thread_scheduler(nullptr);
+                ::close(worker_fd);
+            }
+#endif
+        });
+    }
+
+    for (auto& t : workers) {
+        if (t.joinable()) t.join();
+    }
+
+    impl_->loop->stop();
+    if (impl_->loop_thread.joinable()) impl_->loop_thread.join();
+}
+
+void HttpServer::stop() {
+    impl_->running = false;
+    ::close(impl_->server_fd);
+    impl_->server_fd = -1;
+    impl_->loop->stop();
+}
+
+} // namespace look

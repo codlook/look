@@ -1,0 +1,111 @@
+# Build çıktıları
+cpp/build*/
+cpp/.look_cache/
+cpp/build.bat
+# Portatif build — kaynaktan statik OpenSSL cache'i (büyük, üretilir)
+cpp/.ssl-static/
+
+# Visual Studio
+.vs/
+*.slnx
+*.vcxproj.user
+
+# Gizli / credential
+.env
+.env.local
+.env.production
+.env.*
+tools/deploy/env.production
+tools/deploy/.env*
+*.json.key
+*firebase-adminsdk*.json
+*-firebase-adminsdk-*.json
+.look_history
+.claude/
+
+# Log ve debug dosyaları
+logs/
+*.log
+dbg_*.txt
+plink_*.txt
+stress_*.txt
+*_results.txt
+*_debug.txt
+*_stderr.txt
+*_stdout.txt
+dbg.txt
+
+# Veritabanları
+*.db
+*.db-shm
+*.db-wal
+
+# Geçici test dosyaları (sadece proje kökü — tests/ alt dizinleri hariç)
+/test_*.lk
+/test_*.py
+/test_*.sh
+
+# Deploy / debug scriptleri
+deploy_*.sh
+check_*.sh
+debug*.sh
+stress*.sh
+leak-monitor.sh
+memory_72h.sh
+concurrency-test.sh
+run-tests*.sh
+save_results.sh
+ws_test.sh
+xss_test.sh
+mysql-recovery-test.sh
+regen_nginx.sh
+setup_chat_nginx*.sh
+find_plesk_cmd.sh
+
+# PowerShell geliştirme scriptleri
+deploy*.ps1
+fcgi_stress.ps1
+write_index.ps1
+stress_test.ps1
+
+# Python yardım scriptleri
+write_installer.py
+run_pg_test.bat
+
+# Binary / release dosyaları (bunlar GitHub Releases'e gider)
+*.zip
+*.tar.gz
+*.exe
+*.vsix
+
+# Plesk extension binary'leri (GitHub Releases'e gider, repo'ya alınmaz)
+platforms/plesk/bin/
+
+# macOS
+.DS_Store
+
+# IDE build dizinleri
+build/
+build-almalinux8/
+
+# Derlenmiş binary çıktıları (build'den üretilir, commit edilmez)
+cpp/docker/bin_out/
+cpp/docker/.look_cache/
+platforms/plesk/htdocs/bin/
+platforms/plesk/bin/
+
+# curl test artifact'ları
+test_cookies.txt
+*_cookies.txt
+# RPM build ciktisi (uretilir)
+platforms/linux/rpm/out/
+cpp/build-rpm/
+node_modules/
+
+# Internal dev instructions (private — not published)
+CLAUDE.md
+
+# Repo disi (kendi yerinde): site kaynagi, kurulum/dagitim, docker build/test
+docs/
+platforms/
+cpp/docker/

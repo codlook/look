@@ -1,0 +1,30 @@
+LOOK Language
+Copyright 2026 Codlook (https://codlook.com)
+
+This product is licensed under the Apache License, Version 2.0.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRADEMARK NOTICE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"LOOK", "look-lang", and "Codlook" are trademarks of Codlook.
+This License does not grant permission to use these marks to endorse
+or promote products derived from this software without prior written
+permission from Codlook.
+
+Applications written using the LOOK runtime remain the sole property
+of their respective authors.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THIRD-PARTY COMPONENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This software incorporates the following third-party components:
+
+SQLite (https://sqlite.org)
+  Released into the public domain by its authors.
+
+miniz (https://github.com/richgel999/miniz)
+  Copyright (c) 2013-2014 RAD Game Tools and Valve Software
+  Copyright (c) 2010-2014 Rich Geldreich and Tenacious Software LLC
+  Licensed under the MIT License.
