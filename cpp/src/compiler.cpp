@@ -662,6 +662,22 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         }
         uint8_t idx = compile_expr(*e.index);
         uint8_t val = compile_expr(*e.value);
+        // Compound (+= -= …): mevcut arr[idx]'i oku, birleştir, sonra yaz.
+        if (e.op != "=") {
+            static const std::unordered_map<std::string, OpCode> COMPOUND = {
+                {"+=", OpCode::ADD},  {"-=", OpCode::SUB},  {"*=", OpCode::MUL},
+                {"/=", OpCode::DIV},  {"%=", OpCode::MOD},  {".=", OpCode::CONCAT},
+                {"&=", OpCode::BAND}, {"|=", OpCode::BOR},  {"^=", OpCode::BXOR},
+            };
+            auto it = COMPOUND.find(e.op);
+            if (it == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
+            uint8_t cur = alloc_temp();
+            emit(OpCode::ARRAY_GET, cur, arr, idx);
+            uint8_t res = alloc_temp();
+            emit(it->second, res, cur, val);
+            free_temp(cur); free_temp(val);
+            val = res;
+        }
         emit(OpCode::ARRAY_SET, arr, idx, val);
         free_temp(val); free_temp(idx); free_temp(arr);
         return;

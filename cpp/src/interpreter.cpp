@@ -165,7 +165,8 @@ Value Value::operator%(const Value& o) const {
 Value Value::pow(const Value& o) const { return Value(std::pow(to_float(), o.to_float())); }
 Value Value::concat(const Value& o)    const { return Value(to_string() + o.to_string()); }
 
-// Go/Python katı karşılaştırma: türler-arası coercion YOK.
+// Python-benzeri katı karşılaştırma: türler-arası coercion YOK. (Go değil — Go
+// int↔float'a bile derleme hatası verir; biz sayısal türleri kıyaslarız: 1==1.0.)
 //   0 == "abc"  → false   (eskiden true — "abc"→0 coerce ediyordu; footgun)
 //   "5" == 5    → false   (string ve sayı ayrı tür)
 //   5 == 5.0    → true    (INT/FLOAT tek "sayı" türü — ayırmak dinamik dilde
@@ -1094,24 +1095,42 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             Value idx = evaluate_expression(*e->index);
             auto& arr = *obj.as_array();
 
+            // Compound op (+= -= *= …) mevcut değeri okuyup birleştirir; "=" ise
+            // doğrudan val. ($arr[i] += 5, $arr[0].x *= 2, $m["k"] .= "!" — hepsi)
+            auto apply_op = [&](const Value& cur) -> Value {
+                const std::string& op = e->op;
+                if (op == "=")  return val;
+                if (op == "+=") return cur + val;
+                if (op == "-=") return cur - val;
+                if (op == "*=") return cur * val;
+                if (op == "/=") return cur / val;
+                if (op == "%=") return cur % val;
+                if (op == ".=") return cur.concat(val);
+                if (op == "&=") return cur.bitwise_and(val);
+                if (op == "|=") return cur.bitwise_or(val);
+                if (op == "^=") return cur.bitwise_xor(val);
+                return val;
+            };
+
             // Assoc array: string key
             if (!arr.empty() && arr[0].type() == Value::STRING &&
                 arr[0].as_string() == "__assoc__" && idx.type() == Value::STRING) {
                 const std::string& key = idx.as_string();
                 for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                    if (arr[i].to_string() == key) { arr[i + 1] = val; return val; }
+                    if (arr[i].to_string() == key) { arr[i + 1] = apply_op(arr[i + 1]); return arr[i + 1]; }
                 }
-                // Key yok — yeni key/value ekle
+                // Key yok — yeni key/value ekle (compound'da mevcut = null)
+                Value nv = apply_op(Value());
                 arr.push_back(Value(key));
-                arr.push_back(val);
-                return val;
+                arr.push_back(nv);
+                return nv;
             }
 
             // Numeric index
             int i = idx.to_int();
             if (i < 0) i = (int)arr.size() + i;
-            if (i == (int)arr.size()) arr.push_back(val);
-            else if (i >= 0 && i < (int)arr.size()) arr[i] = val;
+            if (i == (int)arr.size()) { Value nv = apply_op(Value()); arr.push_back(nv); return nv; }
+            else if (i >= 0 && i < (int)arr.size()) { arr[i] = apply_op(arr[i]); return arr[i]; }
             else throw std::runtime_error("Array index out of bounds");
             return val;
         }
@@ -1919,8 +1938,23 @@ Value Interpreter::call_function(std::shared_ptr<LookFunction> fn, std::vector<V
 
     if (fn->is_variadic) {
         size_t fixed = fn->parameters.size() - 1;
-        for (size_t i = 0; i < fixed && i < args.size(); ++i)
-            fn_env->define(fn->parameters[i], args[i]);
+        // Sabit paramları bağla; eksik olanlar için varsayılanı uygula (default×variadic).
+        bool has_defs = fn->defaults && fn->defaults->size() == fn->parameters.size();
+        auto saved = current_;
+        current_ = fn_env;
+        for (size_t i = 0; i < fixed; ++i) {
+            if (i < args.size()) {
+                fn_env->define(fn->parameters[i], args[i]);
+            } else if (has_defs && (*fn->defaults)[i]) {
+                fn_env->define(fn->parameters[i], evaluate_expression(*(*fn->defaults)[i]));
+            } else {
+                current_ = saved;
+                throw LookRuntimeError("Function '" + fn->name + "' expects at least " +
+                    std::to_string(fixed) + " args, got " + std::to_string(args.size()),
+                    current_loc_, call_stack_);
+            }
+        }
+        current_ = saved;
         auto rest = std::make_shared<std::vector<Value>>();
         for (size_t i = fixed; i < args.size(); ++i)
             rest->push_back(args[i]);

@@ -418,10 +418,23 @@ call_dispatch:
                 if (fn_val.type() != Value::BYTECODE_FN)
                     throw LookVmError("Çağrılabilir değil (BYTECODE_FN bekleniyor)");
                 auto cl = fn_val.as_bytecode_fn();
+                auto* cp = cl->proto.get();
                 int new_base = (int)regs_.size();
-                regs_.resize(new_base + cl->proto->reg_count);
-                for (int i = 0; i < argc; ++i)
-                    regs_[new_base + i] = R(ins.c + i);
+                regs_.resize(new_base + cp->reg_count);
+                if (!cp->variadic) {
+                    for (int i = 0; i < argc && i < cp->arity; ++i)
+                        regs_[new_base + i] = R(ins.c + i);
+                } else {
+                    // Variadic: sabit paramları bağla, kalanları rest ARRAY'ine topla
+                    // (call_closure ile aynı — CALL yolunda eksikti).
+                    int vfixed = cp->arity - 1;
+                    for (int i = 0; i < vfixed && i < argc; ++i)
+                        regs_[new_base + i] = R(ins.c + i);
+                    auto varr = std::make_shared<std::vector<look::Value>>();
+                    for (int i = vfixed; i < argc; ++i) varr->push_back(R(ins.c + i));
+                    if (vfixed >= 0 && cp->arity > 0)
+                        regs_[new_base + vfixed] = look::Value(varr);
+                }
                 int ret_abs = base + ins.a;
                 call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, ret_abs, (int)argc});
                 goto call_dispatch; // callee frame'e geç
@@ -478,10 +491,19 @@ call_dispatch:
                 if (fn_val.type() != Value::BYTECODE_FN)
                     throw LookVmError("TAIL_CALL: BYTECODE_FN bekleniyor");
                 auto cl = fn_val.as_bytecode_fn();
+                auto* cp = cl->proto.get();
                 int new_base = (int)regs_.size();
-                regs_.resize(new_base + cl->proto->reg_count);
-                for (int i = 0; i < argc3; ++i) regs_[new_base+i] = R(ins.c+i);
-                call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, base+ins.a, (int)argc3});
+                regs_.resize(new_base + cp->reg_count);
+                if (!cp->variadic) {
+                    for (int i = 0; i < argc3 && i < cp->arity; ++i) regs_[new_base+i] = R(ins.c+i);
+                } else {
+                    int vfixed = cp->arity - 1;
+                    for (int i = 0; i < vfixed && i < argc3; ++i) regs_[new_base+i] = R(ins.c+i);
+                    auto varr = std::make_shared<std::vector<look::Value>>();
+                    for (int i = vfixed; i < argc3; ++i) varr->push_back(R(ins.c+i));
+                    if (vfixed >= 0 && cp->arity > 0) regs_[new_base+vfixed] = look::Value(varr);
+                }
+                call_stack_.push_back({cp, cl.get(), 0, new_base, base+ins.a, (int)argc3});
                 goto call_dispatch; // callee frame'e geç
             }
 
