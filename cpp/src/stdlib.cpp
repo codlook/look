@@ -35,7 +35,11 @@ static Module make_math() {
 
     m.functions["sqrt"] = [](auto args) {
         check_args("math::sqrt", args.size(), 1);
-        return Value(std::sqrt(args[0].to_float()));
+        double x = args[0].to_float();
+        // Negatif → sessiz NaN yerine net hata. NaN sonradan JSON'a girerse
+        // geçersiz JSON (NaN yasak) üretirdi.
+        if (x < 0) throw std::runtime_error("math::sqrt: negatif sayının karekökü tanımsız");
+        return Value(std::sqrt(x));
     };
     m.functions["pow"] = [](auto args) {
         check_args("math::pow", args.size(), 2);
@@ -48,15 +52,15 @@ static Module make_math() {
     };
     m.functions["floor"] = [](auto args) {
         check_args("math::floor", args.size(), 1);
-        return Value((int)std::floor(args[0].to_float()));
+        return Value((int64_t)std::floor(args[0].to_float()));
     };
     m.functions["ceil"] = [](auto args) {
         check_args("math::ceil", args.size(), 1);
-        return Value((int)std::ceil(args[0].to_float()));
+        return Value((int64_t)std::ceil(args[0].to_float()));
     };
     m.functions["round"] = [](auto args) {
         check_args("math::round", args.size(), 1);
-        return Value((int)std::round(args[0].to_float()));
+        return Value((int64_t)std::round(args[0].to_float()));
     };
     m.functions["max"] = [](auto args) -> Value {
         if (args.size() == 1 && args[0].type() == Value::ARRAY) {
@@ -119,25 +123,101 @@ static Module make_math() {
 }
 
 // â"€â"€ string module â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── UTF-8 yardımcıları ──────────────────────────────────────────────────────
+// LOOK string'leri UTF-8. Byte-tabanlı len/upper/substr/reverse çok-byte
+// karakterleri (ç,ğ,İ,ı,ö,ş,ü…) parçalayıp geçersiz UTF-8 üretiyordu.
+// Bu yardımcılar codepoint-farkında çalışır; Türkiye pazarı için kritik.
+static std::vector<uint32_t> utf8_decode(const std::string& s) {
+    std::vector<uint32_t> cps;
+    size_t i = 0, n = s.size();
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+        uint32_t cp; int len;
+        if (c < 0x80)             { cp = c;        len = 1; }
+        else if ((c >> 5) == 0x6) { cp = c & 0x1F; len = 2; }
+        else if ((c >> 4) == 0xE) { cp = c & 0x0F; len = 3; }
+        else if ((c >> 3) == 0x1E){ cp = c & 0x07; len = 4; }
+        else                      { cps.push_back(0xFFFD); i++; continue; }
+        if (i + (size_t)len > n)  { cps.push_back(0xFFFD); break; }
+        bool ok = true;
+        for (int k = 1; k < len; k++) {
+            unsigned char cc = (unsigned char)s[i + k];
+            if ((cc >> 6) != 0x2) { ok = false; break; }
+            cp = (cp << 6) | (cc & 0x3F);
+        }
+        if (!ok) { cps.push_back(0xFFFD); i++; continue; }
+        cps.push_back(cp);
+        i += (size_t)len;
+    }
+    return cps;
+}
+static void utf8_encode_cp(uint32_t cp, std::string& out) {
+    if (cp < 0x80) out += (char)cp;
+    else if (cp < 0x800) {
+        out += (char)(0xC0 | (cp >> 6));
+        out += (char)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += (char)(0xE0 | (cp >> 12));
+        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+        out += (char)(0x80 | (cp & 0x3F));
+    } else {
+        out += (char)(0xF0 | (cp >> 18));
+        out += (char)(0x80 | ((cp >> 12) & 0x3F));
+        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+        out += (char)(0x80 | (cp & 0x3F));
+    }
+}
+static std::string utf8_encode(const std::vector<uint32_t>& cps) {
+    std::string out;
+    for (uint32_t cp : cps) utf8_encode_cp(cp, out);
+    return out;
+}
+// Codepoint büyük/küçük harf — locale-BAĞIMSIZ (klasik diller gibi): i↔I.
+// Türkçe'ye özgü i↔İ / ı↔I locale kuralı YOK (dil globaldir). Türkçe harfler
+// yine standart Unicode karşılığına gider: ç↔Ç, ğ↔Ğ, ö↔Ö, ş↔Ş, ü↔Ü, ı→I, İ→i.
+static uint32_t cp_upper(uint32_t c) {
+    if (c >= 'a' && c <= 'z') return c - 32;   // ASCII: i → I
+    if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return c - 32; // Latin-1 (à→À, ç→Ç, ö→Ö, ü→Ü…)
+    switch (c) {
+        case 0x131: return 'I';   // ı → I (standart Unicode)
+        case 0x11F: return 0x11E; // ğ → Ğ
+        case 0x15F: return 0x15E; // ş → Ş
+    }
+    return c;
+}
+static uint32_t cp_lower(uint32_t c) {
+    if (c >= 'A' && c <= 'Z') return c + 32;   // ASCII: I → i
+    if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32; // Latin-1 (À→à, Ç→ç, Ö→ö, Ü→ü…)
+    switch (c) {
+        case 0x130: return 'i';   // İ → i (standart Unicode)
+        case 0x11E: return 0x11F; // Ğ → ğ
+        case 0x15E: return 0x15F; // Ş → ş
+    }
+    return c;
+}
+
 static Module make_string() {
     Module m;
     m.name = "string";
 
+    // Karakter (codepoint) sayısı — byte değil. len("İstanbul") = 8.
     m.functions["len"] = [](auto args) {
         check_args("string::len", args.size(), 1);
-        return Value((int)args[0].to_string().size());
+        return Value((int64_t)utf8_decode(args[0].to_string()).size());
     };
+    // Büyük harf — locale-bağımsız (i→I). Çok-byte karakter bozulmaz.
     m.functions["upper"] = [](auto args) {
         check_args("string::upper", args.size(), 1);
-        std::string s = args[0].to_string();
-        for (char& c : s) c = (char)std::toupper((unsigned char)c);
-        return Value(s);
+        auto cps = utf8_decode(args[0].to_string());
+        for (auto& c : cps) c = cp_upper(c);
+        return Value(utf8_encode(cps));
     };
+    // Küçük harf — locale-bağımsız (I→i).
     m.functions["lower"] = [](auto args) {
         check_args("string::lower", args.size(), 1);
-        std::string s = args[0].to_string();
-        for (char& c : s) c = (char)std::tolower((unsigned char)c);
-        return Value(s);
+        auto cps = utf8_decode(args[0].to_string());
+        for (auto& c : cps) c = cp_lower(c);
+        return Value(utf8_encode(cps));
     };
     m.functions["trim"] = [](auto args) {
         check_args("string::trim", args.size(), 1);
@@ -184,17 +264,19 @@ static Module make_string() {
         std::string s = args[0].to_string(), suffix = args[1].to_string();
         return Value(s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix);
     };
+    // Codepoint-tabanlı: substr("çğü",0,2) = "çğ" (yarım karakter değil).
     m.functions["substr"] = [](auto args) {
         check_args_min("string::substr", args.size(), 2);
-        std::string s = args[0].to_string();
-        int start = args[1].to_int();
-        if (start < 0) start = std::max(0, (int)s.size() + start);
-        if (start >= (int)s.size()) return Value(std::string(""));
-        if (args.size() == 3) {
-            int len = args[2].to_int();
-            return Value(s.substr(start, len));
-        }
-        return Value(s.substr(start));
+        auto cps = utf8_decode(args[0].to_string());
+        int64_t n = (int64_t)cps.size();
+        int64_t start = args[1].to_int();
+        if (start < 0) start = std::max((int64_t)0, n + start);
+        if (start >= n) return Value(std::string(""));
+        int64_t count = (args.size() == 3) ? args[2].to_int() : (n - start);
+        if (count < 0) count = 0;
+        int64_t end = std::min(n, start + count);
+        std::vector<uint32_t> sub(cps.begin() + start, cps.begin() + end);
+        return Value(utf8_encode(sub));
     };
     m.functions["repeat"] = [](auto args) {
         check_args("string::repeat", args.size(), 2);
@@ -209,11 +291,12 @@ static Module make_string() {
         for (int i = 0; i < n; i++) result += s;
         return Value(result);
     };
+    // Codepoint-tabanlı: reverse("abç") = "çba" (byte değil karakter ters).
     m.functions["reverse"] = [](auto args) {
         check_args("string::reverse", args.size(), 1);
-        std::string s = args[0].to_string();
-        std::reverse(s.begin(), s.end());
-        return Value(s);
+        auto cps = utf8_decode(args[0].to_string());
+        std::reverse(cps.begin(), cps.end());
+        return Value(utf8_encode(cps));
     };
     m.functions["index_of"] = [](auto args) {
         check_args("string::index_of", args.size(), 2);
@@ -654,7 +737,7 @@ static Module make_parallel_module() {
 }
 
 // Forward declarations — defined in their respective .cpp files
-Module make_http_module();
+Module make_http_module(Interpreter* interp);
 Module make_cache_module();
 Module make_queue_module();
 Module make_jobs_module();
@@ -735,7 +818,7 @@ static Module make_error_module() {
     return m;
 }
 
-std::map<std::string, Module> make_stdlib() {
+std::map<std::string, Module> make_stdlib(Interpreter* interp) {
     std::srand((unsigned)std::time(nullptr));
     std::map<std::string, Module> stdlib;
     auto add = [&](Module mod) { stdlib[mod.name] = std::move(mod); };
@@ -746,7 +829,7 @@ std::map<std::string, Module> make_stdlib() {
     add(make_log());
     add(make_file_module());
     add(make_date_module());
-    add(make_http_module());
+    add(make_http_module(interp));
     add(make_cache_module());
     add(make_queue_module());
     add(make_jobs_module());

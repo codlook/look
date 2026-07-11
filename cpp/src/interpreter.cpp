@@ -19,6 +19,7 @@
 #include <cmath>
 #include <climits>
 #include <cstdint>
+#include <charconv>
 #include <stdexcept>
 #include <thread>
 
@@ -28,15 +29,22 @@ namespace look {
 
 // â"€â"€ Value â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
+// Double → string: kısa ama tam round-trip gösterim (std::to_chars shortest).
+// Varsayilan ostream 6 anlamli basamakla keser ve buyuk/kucuk sayida bilimsel
+// gosterime kacar (123456789.123 → "1.23457e+08") — para/ID icin veri kaybi.
+// to_chars shortest: gereken en az basamak, makul buyuklukte sabit gosterim.
+std::string look_format_double(double d) {
+    if (std::isnan(d)) return "NaN";
+    if (std::isinf(d)) return d < 0 ? "-Infinity" : "Infinity";
+    char buf[64];
+    auto res = std::to_chars(buf, buf + sizeof(buf), d);
+    return std::string(buf, res.ptr);
+}
+
 std::string Value::to_string() const {
     switch (type_) {
         case INT:    return std::to_string(int_val);
-        case FLOAT: {
-            std::ostringstream oss;
-            oss.imbue(std::locale::classic()); // locale-bağımsız: "3.5" değil "3,5"
-            oss << float_val;
-            return oss.str();
-        }
+        case FLOAT:  return look_format_double(float_val);
         case STRING: return str_val;
         case BOOL:   return bool_val ? "true" : "false";
         case NONE:   return "null";
@@ -80,84 +88,130 @@ double Value::to_float() const {
     }
 }
 
-int Value::to_int() const {
+int64_t Value::to_int() const {
     switch (type_) {
         case INT:    return int_val;
-        case FLOAT:  return (int)float_val;
-        case STRING: try { return std::stoi(str_val); } catch(...) { return 0; }
+        case FLOAT:  return (int64_t)float_val;
+        case STRING: try { return std::stoll(str_val); } catch(...) { return 0; }
         case BOOL:   return bool_val ? 1 : 0;
         default:     return 0;
     }
 }
 
-// int32 aritmetiği taşarsa signed-overflow UB olur (2000000000+2000000000).
-// Taşmayı int64 genişletmeyle tespit edip float'a promote — parser'ın büyük
-// literal → float davranışıyla tutarlı, UB yok. Yoksa int sonucu döner.
-// Portatif (GCC/Clang/MSVC): __builtin_*_overflow MSVC'de yok, int64 kullanılır.
-static inline bool i32_add_ovf(int a, int b, int* r) { long long s = (long long)a + b; *r = (int)s; return (long long)*r != s; }
-static inline bool i32_sub_ovf(int a, int b, int* r) { long long s = (long long)a - b; *r = (int)s; return (long long)*r != s; }
-static inline bool i32_mul_ovf(int a, int b, int* r) { long long s = (long long)a * b; *r = (int)s; return (long long)*r != s; }
+// int64 aritmetiği taşarsa signed-overflow UB olur (9e18+9e18).
+// Taşmayı tespit edip float'a promote — büyük literal → float davranışıyla
+// tutarlı, UB yok. Yoksa int64 sonucu döner.
+// Portatif (GCC/Clang: __builtin_*_overflow; MSVC: unsigned/bölme kontrolü).
+static inline bool i64_add_ovf(int64_t a, int64_t b, int64_t* r) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_add_overflow(a, b, r);
+#else
+    uint64_t ur = (uint64_t)a + (uint64_t)b; *r = (int64_t)ur;
+    return ((a ^ *r) & (b ^ *r)) < 0;
+#endif
+}
+static inline bool i64_sub_ovf(int64_t a, int64_t b, int64_t* r) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_sub_overflow(a, b, r);
+#else
+    uint64_t ur = (uint64_t)a - (uint64_t)b; *r = (int64_t)ur;
+    return ((a ^ b) & (a ^ *r)) < 0;
+#endif
+}
+static inline bool i64_mul_ovf(int64_t a, int64_t b, int64_t* r) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_mul_overflow(a, b, r);
+#else
+    *r = (int64_t)((uint64_t)a * (uint64_t)b);
+    if (a != 0 && (*r / a != b || (a == -1 && b == INT64_MIN))) return true;
+    return false;
+#endif
+}
 Value Value::operator+(const Value& o) const {
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() + o.to_float());
-    int a = to_int(), b = o.to_int(), r;
-    if (i32_add_ovf(a, b, &r)) return Value((double)a + (double)b);
+    int64_t a = to_int(), b = o.to_int(), r;
+    if (i64_add_ovf(a, b, &r)) return Value((double)a + (double)b);
     return Value(r);
 }
 Value Value::operator-(const Value& o) const {
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() - o.to_float());
-    int a = to_int(), b = o.to_int(), r;
-    if (i32_sub_ovf(a, b, &r)) return Value((double)a - (double)b);
+    int64_t a = to_int(), b = o.to_int(), r;
+    if (i64_sub_ovf(a, b, &r)) return Value((double)a - (double)b);
     return Value(r);
 }
 Value Value::operator*(const Value& o) const {
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() * o.to_float());
-    int a = to_int(), b = o.to_int(), r;
-    if (i32_mul_ovf(a, b, &r)) return Value((double)a * (double)b);
+    int64_t a = to_int(), b = o.to_int(), r;
+    if (i64_mul_ovf(a, b, &r)) return Value((double)a * (double)b);
     return Value(r);
 }
 Value Value::operator/(const Value& o) const {
     double d = o.to_float();
     if (d == 0.0) throw std::runtime_error("Division by zero");  // caught and enriched by interpreter
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() / d);
-    int i = o.to_int();
-    int self_i = to_int();  // ham int_val değil — STRING/BOOL de doğru çevrilsin ("6"/2=3)
-    // INT_MIN / -1 signed-overflow UB — float'a promote
-    if (i == -1 && self_i == INT_MIN) return Value(-(double)self_i);
+    int64_t i = o.to_int();
+    int64_t self_i = to_int();  // ham int_val değil — STRING/BOOL de doğru çevrilsin ("6"/2=3)
+    // INT64_MIN / -1 signed-overflow UB — float'a promote
+    if (i == -1 && self_i == INT64_MIN) return Value(-(double)self_i);
     if (i != 0 && self_i % i == 0) return Value(self_i / i);
     return Value(to_float() / d);
 }
 Value Value::operator%(const Value& o) const {
-    int i = o.to_int();
+    int64_t i = o.to_int();
     if (i == 0) throw std::runtime_error("Modulo by zero");
-    if (i == -1) return Value(0);  // INT_MIN % -1 UB; a % -1 daima 0
+    if (i == -1) return Value((int64_t)0);  // INT64_MIN % -1 UB; a % -1 daima 0
     return Value(to_int() % i);
 }
 Value Value::pow(const Value& o) const { return Value(std::pow(to_float(), o.to_float())); }
 Value Value::concat(const Value& o)    const { return Value(to_string() + o.to_string()); }
 
+// Go/Python katı karşılaştırma: türler-arası coercion YOK.
+//   0 == "abc"  → false   (eskiden true — "abc"→0 coerce ediyordu; footgun)
+//   "5" == 5    → false   (string ve sayı ayrı tür)
+//   5 == 5.0    → true    (INT/FLOAT tek "sayı" türü — ayırmak dinamik dilde
+//                          daha kötü footgun olurdu: DB 5, hesap 5.0 verir)
+// Form girdisi string gelir; sayıyla karşılaştırmak için önce int()/float() ile
+// dönüştürülür (açık ve güvenli — Go'nun statik tip zorunluluğunun dinamik karşılığı).
+static inline bool val_is_number(Value::Type t) { return t == Value::INT || t == Value::FLOAT; }
+
 bool Value::operator==(const Value& o) const {
-    if (type_ == NONE && o.type_ == NONE) return true;
-    if (type_ == NONE || o.type_ == NONE) return false; // null sadece null'a esit
-    if (type_ == ARRAY || o.type_ == ARRAY) return false; // array karsilastirmasi desteklenmiyor
-    if (type_ == BOOL || o.type_ == BOOL) return is_truthy() == o.is_truthy();
-    if (type_ == STRING && o.type_ == STRING) return str_val == o.str_val;
-    return to_float() == o.to_float();
+    bool a_num = val_is_number(type_), b_num = val_is_number(o.type_);
+    if (a_num && b_num) return to_float() == o.to_float();  // sayı ↔ sayı
+    if (type_ != o.type_) return false;                     // farklı tür → asla eşit
+    switch (type_) {
+        case STRING: return str_val == o.str_val;
+        case BOOL:   return bool_val == o.bool_val;
+        case NONE:   return true;                           // null == null
+        case ARRAY:  return false;                          // referans karşılaştırması desteklenmiyor
+        default:     return ptr_val == o.ptr_val;           // fn/channel/ws: kimlik
+    }
+}
+// Sıralama: yalnız sayı↔sayı ve string↔string. Karışık tür → hata (sessizce
+// string'i 0'a coerce edip yanlış sonuç vermek yerine bug'ı yüzeye çıkar).
+[[noreturn]] static void cmp_type_error() {
+    throw std::runtime_error(
+        "Karşılaştırılamayan türler: '<'/'>' yalnız sayı↔sayı ve string↔string için — "
+        "farklı türleri kıyaslamadan önce int()/float()/string() ile dönüştürün");
 }
 bool Value::operator<(const Value& o)  const {
+    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() < o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_val < o.str_val;
-    return to_float() < o.to_float();
+    cmp_type_error();
 }
 bool Value::operator<=(const Value& o) const {
+    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() <= o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_val <= o.str_val;
-    return to_float() <= o.to_float();
+    cmp_type_error();
 }
 bool Value::operator>(const Value& o)  const {
+    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() > o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_val > o.str_val;
-    return to_float() > o.to_float();
+    cmp_type_error();
 }
 bool Value::operator>=(const Value& o) const {
+    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() >= o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_val >= o.str_val;
-    return to_float() >= o.to_float();
+    cmp_type_error();
 }
 int  Value::spaceship(const Value& o)  const { return (*this == o) ? 0 : (*this < o ? -1 : 1); }
 
@@ -165,17 +219,17 @@ Value Value::bitwise_and(const Value& o) const { return Value(to_int() & o.to_in
 Value Value::bitwise_or(const Value& o)  const { return Value(to_int() | o.to_int()); }
 Value Value::bitwise_xor(const Value& o) const { return Value(to_int() ^ o.to_int()); }
 Value Value::bitwise_not()               const { return Value(~to_int()); }
-// Shift miktarı [0,31] dışındaysa (1<<64, 1<<-1) UB — aralık dışı → 0.
+// Shift miktarı [0,63] dışındaysa (1<<64, 1<<-1) UB — aralık dışı → 0.
 // Sol kaydırmada unsigned kullanılır (signed-overflow UB'sini önler).
 Value Value::shift_left(const Value& o)  const {
-    int a = to_int(), n = o.to_int();
-    if (n < 0 || n >= 32) return Value(0);
-    return Value((int)((uint32_t)a << n));
+    int64_t a = to_int(), n = o.to_int();
+    if (n < 0 || n >= 64) return Value((int64_t)0);
+    return Value((int64_t)((uint64_t)a << n));
 }
 Value Value::shift_right(const Value& o) const {
-    int a = to_int(), n = o.to_int();
-    if (n < 0 || n >= 32) return Value(0);
-    return Value(a >> n);
+    int64_t a = to_int(), n = o.to_int();
+    if (n < 0 || n >= 64) return Value((int64_t)0);
+    return Value((int64_t)(a >> n));
 }
 
 // â"€â"€ Interpreter â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -195,7 +249,7 @@ Interpreter::Interpreter() {
     globals_ = std::make_shared<Environment>();
     current_ = globals_;
     output_stream_ = &std::cout;
-    stdlib_ = make_stdlib();
+    stdlib_ = make_stdlib(this);
     auto extra = make_extra_stdlib(this);
     for (auto& [k,v] : extra) stdlib_[k] = std::move(v);
     init_core_modules(stdlib_, modules_);
@@ -206,7 +260,7 @@ Interpreter::Interpreter(std::ostream& out) {
     globals_ = std::make_shared<Environment>();
     current_ = globals_;
     output_stream_ = &out;
-    stdlib_ = make_stdlib();
+    stdlib_ = make_stdlib(this);
     auto extra = make_extra_stdlib(this);
     for (auto& [k,v] : extra) stdlib_[k] = std::move(v);
     init_core_modules(stdlib_, modules_);
@@ -277,6 +331,13 @@ void LookChannel::send_val(Value val) {
     if (closed) throw std::runtime_error("send on closed channel");
     queue.push(std::move(val));
     not_empty.notify_one();
+    if (unbuffered) {
+        // Rendezvous: alıcı BU öğeyi alana dek bloke ol (Go unbuffered channel).
+        // recv_gen ile kendi öğemizin alındığını izleriz; yanlış uyandırmada
+        // (başka gönderici) bekleme sürer.
+        uint64_t gen = recv_gen;
+        not_full.wait(lk, [this, gen]{ return closed || recv_gen > gen; });
+    }
 }
 
 Value LookChannel::recv_val() {
@@ -285,7 +346,8 @@ Value LookChannel::recv_val() {
     if (queue.empty()) return Value();  // closed + empty → null
     Value v = std::move(queue.front());
     queue.pop();
-    not_full.notify_one();
+    ++recv_gen;                 // rendezvous: bekleyen göndericiyi serbest bırak
+    not_full.notify_all();      // birden çok gönderici bekliyor olabilir
     return v;
 }
 
@@ -758,6 +820,13 @@ void Interpreter::execute_statement(const Statement& stmt) {
             try {
                 for (const auto& body_stmt : sc.body)
                     execute_statement(*body_stmt);
+            } catch (const BreakException&) {
+                // switch içindeki `break` yalnızca case'i sonlandırır (LOOK'ta
+                // fall-through yok — case zaten sonlanıyor). C-benzeri dillerde
+                // alışkanlıkla yazılır; döngüye SIZDIRMA / dışarı fırlatma.
+                // continue/return yakalanmaz → döngüye/fonksiyona doğru geçer.
+                current_ = prev;
+                return;
             } catch (...) { current_ = prev; throw; }
             current_ = prev;
         };
@@ -779,7 +848,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
     if (dynamic_cast<const BreakStatement*>(&stmt))    { throw BreakException(); }
     if (dynamic_cast<const ContinueStatement*>(&stmt)) { throw ContinueException(); }
     if (auto* s = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
-        auto fn = std::make_shared<LookFunction>(s->name, s->parameters, s->is_variadic, s->body.get(), current_);
+        auto fn = std::make_shared<LookFunction>(s->name, s->parameters, s->is_variadic, s->body.get(), current_, &s->defaults);
         current_->define(s->name, Value(fn));
         return;
     }
@@ -822,6 +891,11 @@ void Interpreter::execute_statement(const Statement& stmt) {
     if (auto* s = dynamic_cast<const ReturnStatement*>(&stmt)) {
         Value v = s->expression ? evaluate_expression(*s->expression) : Value();
         throw ReturnException(v);
+    }
+    if (auto* s = dynamic_cast<const ThrowStatement*>(&stmt)) {
+        // Değeri fırlat — try/catch has_value ile catch var'a bu Value'yu bağlar.
+        Value v = evaluate_expression(*s->expression);
+        throw LookRuntimeError(v, current_loc_, call_stack_);
     }
     throw std::runtime_error("Unknown statement type");
 }
@@ -946,7 +1020,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             }
             closure_env = captured;
         }
-        auto fn = std::make_shared<LookFunction>("__anonymous__", e->parameters, e->is_variadic, e->body.get(), closure_env);
+        auto fn = std::make_shared<LookFunction>("__anonymous__", e->parameters, e->is_variadic, e->body.get(), closure_env, &e->defaults);
         return Value(fn);
     }
 
@@ -1010,11 +1084,13 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
     if (auto* e = dynamic_cast<const AssignmentExpression*>(&expr)) {
         Value val = evaluate_expression(*e->value);
 
-        // $arr[i] = val  /  $assoc["key"] = val
+        // $arr[i] = val  /  $assoc["key"] = val  /  zincirli $l.s.x, $arr[0].x
         if (e->index) {
-            Value obj = current_->get(e->name);
+            // Container: zincirli ise object ifadesinden (referans), değilse isimden.
+            Value obj = e->object ? evaluate_expression(*e->object) : current_->get(e->name);
             if (obj.type() != Value::ARRAY)
-                throw std::runtime_error(e->name + " is not an array");
+                throw std::runtime_error((e->object ? std::string("assignment target")
+                                                    : e->name) + " is not an array");
             Value idx = evaluate_expression(*e->index);
             auto& arr = *obj.as_array();
 
@@ -1839,6 +1915,7 @@ Value Interpreter::call_function(std::shared_ptr<LookFunction> fn, std::vector<V
                                current_loc_, call_stack_);
 
     auto fn_env = std::make_shared<Environment>(fn->closure);
+    fn_env->mark_fn_boundary();  // yazma (set) global'e sızamaz — scope izolasyonu
 
     if (fn->is_variadic) {
         size_t fixed = fn->parameters.size() - 1;
@@ -1849,12 +1926,28 @@ Value Interpreter::call_function(std::shared_ptr<LookFunction> fn, std::vector<V
             rest->push_back(args[i]);
         fn_env->define(fn->parameters[fixed], Value(rest));
     } else {
-        if (args.size() != fn->parameters.size())
-            throw LookRuntimeError("Function '" + fn->name + "' expects " +
+        if (args.size() > fn->parameters.size())
+            throw LookRuntimeError("Function '" + fn->name + "' expects at most " +
                 std::to_string(fn->parameters.size()) + " args, got " + std::to_string(args.size()),
                 current_loc_, call_stack_);
-        for (size_t i = 0; i < fn->parameters.size(); ++i)
-            fn_env->define(fn->parameters[i], args[i]);
+        // Sağlanan arg'ları bağla; eksik olanlar için varsayılanı değerlendir.
+        // Varsayılan ifadeler önceki paramları/global'i görebilsin diye fn_env'de.
+        bool has_defs = fn->defaults && fn->defaults->size() == fn->parameters.size();
+        auto saved = current_;
+        current_ = fn_env;
+        for (size_t i = 0; i < fn->parameters.size(); ++i) {
+            if (i < args.size()) {
+                fn_env->define(fn->parameters[i], args[i]);
+            } else if (has_defs && (*fn->defaults)[i]) {
+                fn_env->define(fn->parameters[i], evaluate_expression(*(*fn->defaults)[i]));
+            } else {
+                current_ = saved;
+                throw LookRuntimeError("Function '" + fn->name + "' expects " +
+                    std::to_string(fn->parameters.size()) + " args, got " + std::to_string(args.size()),
+                    current_loc_, call_stack_);
+            }
+        }
+        current_ = saved;
     }
 
     // Push call frame
@@ -1909,9 +2002,14 @@ void Interpreter::dispatch_routes() {
         }
     }
 
-    // Eslesen route'u bul ve cagir
+    // Eslesen route'u bul ve cagir — statik route'lar ({param} içermeyenler)
+    // dinamiklerden ÖNCE denenir (iki geçiş): /user/new, /user/{id}'den önce
+    // eşleşsin (deterministik, kayıt sırasından bağımsız).
+    for (int pass = 0; pass < 2; ++pass)
     for (auto& entry : route_registry_) {
         if (entry.is_404) continue;
+        bool is_static = entry.param_names.empty();
+        if ((pass == 0) != is_static) continue;  // pass 0: statik, pass 1: dinamik
         if (entry.method != web_ctx_->method && entry.method != "*") continue;
 
         std::smatch match;

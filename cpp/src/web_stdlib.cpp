@@ -2,6 +2,8 @@
 #include "look/stdlib.h"
 #include "look/web.h"
 #include "look/fiber.h"
+#include <cmath>
+#include <cstdint>
 #include "look/interpreter.h"
 #include "look/mysql_client.h"
 #include "look/sqlite_client.h"
@@ -12,6 +14,7 @@
 #include <stdexcept>
 #include <regex>
 #include <ctime>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +23,13 @@
 #include <condition_variable>
 #include <thread>
 #include <atomic>
+#include <filesystem>
+#include <system_error>
+#ifdef _WIN32
+  #include <windows.h>
+#else
+  #include <unistd.h>
+#endif
 
 namespace look {
 
@@ -52,7 +62,12 @@ static std::string json_encode_string(const std::string& s) {
 static std::string json_encode(const Value& v) {
     switch (v.type()) {
         case Value::INT:    return std::to_string(v.as_int());
-        case Value::FLOAT:  { std::ostringstream oss; oss << v.as_float(); return oss.str(); }
+        case Value::FLOAT:  {
+            double d = v.as_float();
+            // NaN/Infinity JSON'da geçersiz — null olarak serileştir.
+            if (!std::isfinite(d)) return "null";
+            return look_format_double(d);
+        }
         case Value::STRING: return json_encode_string(v.as_string());
         case Value::BOOL:   return v.as_bool() ? "true" : "false";
         case Value::NONE:   return "null";
@@ -97,6 +112,40 @@ static void json_skip_ws(const std::string& s, size_t& i) {
     while (i < s.size() && (s[i]==' '||s[i]=='\t'||s[i]=='\n'||s[i]=='\r')) i++;
 }
 
+static void json_append_utf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) out += (char)cp;
+    else if (cp < 0x800) {
+        out += (char)(0xC0 | (cp >> 6));
+        out += (char)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += (char)(0xE0 | (cp >> 12));
+        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+        out += (char)(0x80 | (cp & 0x3F));
+    } else {
+        out += (char)(0xF0 | (cp >> 18));
+        out += (char)(0x80 | ((cp >> 12) & 0x3F));
+        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+        out += (char)(0x80 | (cp & 0x3F));
+    }
+}
+static int json_hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+// \uXXXX'ten 4 hane hex oku (i, 'u'nun sonrasına konumlanır); geçersizse -1.
+static int json_read_u4(const std::string& s, size_t& i) {
+    if (i + 4 > s.size()) return -1;
+    int cp = 0;
+    for (int k = 0; k < 4; k++) {
+        int h = json_hexval(s[i + k]);
+        if (h < 0) return -1;
+        cp = (cp << 4) | h;
+    }
+    i += 4;
+    return cp;
+}
 static std::string json_decode_str(const std::string& s, size_t& i) {
     i++; // skip "
     std::string result;
@@ -106,9 +155,28 @@ static std::string json_decode_str(const std::string& s, size_t& i) {
             switch (s[i]) {
                 case '"':  result += '"';  break;
                 case '\\': result += '\\'; break;
+                case '/':  result += '/';  break;
                 case 'n':  result += '\n'; break;
                 case 't':  result += '\t'; break;
                 case 'r':  result += '\r'; break;
+                case 'b':  result += '\b'; break;
+                case 'f':  result += '\f'; break;
+                case 'u': {
+                    // \uXXXX unicode escape — surrogate çifti (emoji vb.) birleştir
+                    i++;  // 'u'yu geç
+                    int cp = json_read_u4(s, i);
+                    if (cp < 0) { result += "\\u"; break; }
+                    if (cp >= 0xD800 && cp <= 0xDBFF &&
+                        i + 1 < s.size() && s[i] == '\\' && s[i+1] == 'u') {
+                        size_t save = i; i += 2;
+                        int lo = json_read_u4(s, i);
+                        if (lo >= 0xDC00 && lo <= 0xDFFF)
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                        else { i = save; }  // eşleşmeyen — yalnız yüksek surrogate
+                    }
+                    json_append_utf8(result, (uint32_t)cp);
+                    continue;  // i zaten ilerledi; sondaki i++ atla
+                }
                 default:   result += s[i]; break;
             }
         } else {
@@ -120,8 +188,13 @@ static std::string json_decode_str(const std::string& s, size_t& i) {
     return result;
 }
 
+// Derinlik aşımında TÜM parse iptal edilir (yalnız o dalı null'lamak yetmez:
+// pozisyon i ilerlemediği için dış döngü sonsuza dek null push edip bad_alloc/
+// hang yapardı). Public giriş noktalarında yakalanır → temiz null döner.
+struct JsonTooDeep {};
+
 static Value json_decode_value(const std::string& s, size_t& i, int depth) {
-    if (depth > JSON_MAX_DEPTH) return Value();  // derinlik aşımı — stack taşmasını önle
+    if (depth > JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS savunması
     json_skip_ws(s, i);
     if (i >= s.size()) return Value();
 
@@ -177,11 +250,14 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         i++;
     }
     std::string num = s.substr(start, i - start);
-    if (num.empty() || num == "-") return Value(0);
+    if (num.empty() || num == "-") return Value((int64_t)0);
     try {
         if (is_float) return Value(std::stod(num));
-        return Value(std::stoi(num));
-    } catch (...) { return Value(0); }
+        return Value((int64_t)std::stoll(num));   // 32-bit stoi taşıp 0 döndürüyordu
+    } catch (...) {
+        // int64 aralığını da aşan devasa tamsayı → float'a düş (0 değil)
+        try { return Value(std::stod(num)); } catch (...) { return Value((int64_t)0); }
+    }
 }
 
 // â”€â”€ Route matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -280,7 +356,8 @@ static Module make_request(WebContext* ctx) {
     m.functions["json"] = [ctx](auto) -> Value {
         if (ctx->body.empty()) return Value();
         size_t i = 0;
-        return json_decode_value(ctx->body, i);
+        try { return json_decode_value(ctx->body, i); }
+        catch (const JsonTooDeep&) { return Value(); }   // aşırı derin gövde → null (DoS savunması)
     };
     // request::all() â€” GET + POST params birleÅŸik
     m.functions["all"] = [ctx](auto) -> Value {
@@ -360,12 +437,25 @@ static Module make_request(WebContext* ctx) {
         result->push_back(Value(std::string("__assoc__")));
         result->push_back(Value(std::string("path")));   result->push_back(Value(uf.temp_path));
         result->push_back(Value(std::string("mime")));   result->push_back(Value(uf.mime));
-        result->push_back(Value(std::string("size")));   result->push_back(Value((int)uf.size));
+        result->push_back(Value(std::string("size")));   result->push_back(Value((int64_t)uf.size));
         result->push_back(Value(std::string("sha256"))); result->push_back(Value(uf.sha256));
         return Value(result);
     };
 
     return m;
+}
+
+// HTTP response header CRLF injection savunması: header adı/değerindeki CR/LF
+// (ve diğer kontrol karakterleri) response splitting / Set-Cookie enjeksiyonu /
+// open-redirect+CRLF sağlar. İlk CR/LF/NUL'da kes — sonrası enjeksiyon yükü.
+// (Serileştirme katmanında da tekrar uygulanır — defense-in-depth.)
+static std::string sanitize_header(const std::string& s) {
+    size_t cut = s.find_first_of("\r\n");
+    std::string v = (cut == std::string::npos) ? s : s.substr(0, cut);
+    // Kalan CR/LF/NUL'ları da temizle (paranoya) — normalde cut zaten kesti.
+    v.erase(std::remove_if(v.begin(), v.end(),
+        [](unsigned char c){ return c == '\r' || c == '\n' || c == '\0'; }), v.end());
+    return v;
 }
 
 static Module make_response_module(WebContext* ctx) {
@@ -378,13 +468,14 @@ static Module make_response_module(WebContext* ctx) {
     };
     m.functions["header"] = [ctx](auto args) -> Value {
         if (args.size() >= 2)
-            ctx->headers_out[args[0].to_string()] = args[1].to_string();
+            ctx->headers_out[sanitize_header(args[0].to_string())] =
+                sanitize_header(args[1].to_string());
         return Value();
     };
     m.functions["redirect"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
         ctx->set_status(args.size() >= 2 ? args[1].to_int() : 302);
-        ctx->headers_out["Location"] = args[0].to_string();
+        ctx->headers_out["Location"] = sanitize_header(args[0].to_string());
         return Value();
     };
     // response::json/text/html — body'yi ctx->response_body'ye yazar (web.h sözleşmesi).
@@ -442,7 +533,8 @@ static Module make_json_module() {
         if (args.empty()) return Value();
         std::string s = args[0].to_string();
         size_t i = 0;
-        return json_decode_value(s, i);
+        try { return json_decode_value(s, i); }
+        catch (const JsonTooDeep&) { return Value(); }   // aşırı derin → null (DoS savunması)
     };
 
     return m;
@@ -459,10 +551,10 @@ static Module make_cookie_module(WebContext* ctx) {
     };
     m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();
-        std::string name    = args[0].to_string();
-        std::string value   = args[1].to_string();
+        std::string name    = sanitize_header(args[0].to_string());
+        std::string value   = sanitize_header(args[1].to_string());
         int expires         = args.size() >= 3 ? args[2].to_int() : 0;
-        std::string path_c  = args.size() >= 4 ? args[3].to_string() : "/";
+        std::string path_c  = sanitize_header(args.size() >= 4 ? args[3].to_string() : "/");
 
         std::string cookie = name + "=" + value + "; Path=" + path_c;
         if (expires > 0) {
@@ -478,14 +570,14 @@ static Module make_cookie_module(WebContext* ctx) {
             strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_buf);
             cookie += "; Expires=" + std::string(buf);
         }
-        // Multiple Set-Cookie headers â€” append with unique key
-        ctx->headers_out["Set-Cookie"] = cookie;
+        // Her çerez ayrı Set-Cookie satırı — std::map tek anahtarı ezerdi.
+        ctx->set_cookies_out.push_back(cookie);
         return Value();
     };
     m.functions["delete"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
-        ctx->headers_out["Set-Cookie"] =
-            args[0].to_string() + "=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        ctx->set_cookies_out.push_back(
+            sanitize_header(args[0].to_string()) + "=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
         return Value();
     };
     m.functions["has"] = [ctx](auto args) -> Value {
@@ -533,7 +625,7 @@ static Module make_session_module(WebContext* ctx) {
             id[32] = 0;
             std::string sid(id);
             ctx->cookies_in["LOOK_SESSION"] = sid;
-            ctx->headers_out["Set-Cookie"] = "LOOK_SESSION=" + sid + "; Path=/; HttpOnly; Secure; SameSite=Lax";
+            ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly; Secure; SameSite=Lax");
         }
         return Value(ctx->cookies_in["LOOK_SESSION"]);
     };
@@ -563,8 +655,8 @@ static Module make_session_module(WebContext* ctx) {
         auto sf = session_file();
         if (!sf.empty()) std::remove(sf.c_str());
         ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
-        ctx->headers_out["Set-Cookie"] =
-            "LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax";
+        ctx->set_cookies_out.push_back(
+            "LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax");
         return Value();
     };
 
@@ -906,7 +998,7 @@ static Value rows_to_value(const std::vector<DbRow>& rows) {
                 // PostgreSQL BOOL: "t" = true, "f" = false
                 row_arr->push_back(Value(dv.str == "t" || dv.str == "true" || dv.str == "1"));
             } else if (mysql_is_int(dv.type) || sqlite_is_int(dv.type) || pg_is_int(dv.type)) {
-                try { row_arr->push_back(Value((int)std::stoll(dv.str))); }
+                try { row_arr->push_back(Value((int64_t)std::stoll(dv.str))); }
                 catch (...) { row_arr->push_back(Value(dv.str)); }
             } else if (mysql_is_float(dv.type) || sqlite_is_float(dv.type) || pg_is_float(dv.type)) {
                 try { row_arr->push_back(Value(std::stod(dv.str))); }
@@ -998,10 +1090,38 @@ static Module make_db_module(Interpreter* interp) {
         if (sz < 2)  sz = 2;
         if (is_sqlite) { if (sz > 4) sz = 4; if (sz < 2) sz = 2; }  // SQLite: WAL concurrent reads, up to 4
 
+        // SQLite `:memory:` her bağlantıya özeldir — çok bağlantılı pool'da
+        // (ve her worker thread'in kendi bağlantısını sabitlediği modelde) setup'ta
+        // bir bağlantıda yaratılan tablo diğerlerinde YOK ("no such table").
+        // Çözüm: :memory:'yi süreç-ömürlü geçici bir DOSYAYA yönlendir — tüm pool
+        // bağlantıları aynı DB'yi paylaşır (tablo görünür), pool=N korunur,
+        // ayrı bağlantılar SQLITE_THREADSAFE=0 ile güvenlidir. Kullanıcının
+        // :memory:'den beklediği "tek paylaşımlı geçici DB" davranışı budur.
+        // İdempotency anahtarı ORİJİNAL dsn kalır; sadece açılan yol değişir.
+        std::string effective_dsn = dsn;
+        if (is_sqlite && dsn.find(":memory:") != std::string::npos) {
+            std::error_code ec;
+            auto tmp = std::filesystem::temp_directory_path(ec);
+            std::string path = (tmp / ("look_mem_" + std::to_string(
+#ifdef _WIN32
+                (unsigned long)GetCurrentProcessId()
+#else
+                (unsigned long)getpid()
+#endif
+            ) + ".db")).string();
+            // Taze başlangıç: eski geçici DB + WAL/SHM artıklarını sil.
+            std::remove(path.c_str());
+            std::remove((path + "-wal").c_str());
+            std::remove((path + "-shm").c_str());
+            effective_dsn = "sqlite://" + path;
+            Logger::instance().log(LogLevel::LOG_INFO, "DB",
+                ":memory: → süreç-ömürlü geçici dosyaya yönlendirildi (paylaşımlı, ephemeral)");
+        }
+
         auto pool = std::make_shared<ConnPool>();
-        pool->dsn = dsn;
+        pool->dsn = effective_dsn;
         for (int i = 0; i < sz; i++) {
-            auto c = open_one_connection(dsn, args);
+            auto c = open_one_connection(effective_dsn, args);
             pool->all.push_back(c);
             pool->available.push_back(c);
         }
@@ -1046,19 +1166,19 @@ static Module make_db_module(Interpreter* interp) {
             params = *args[2].as_array();
         std::string bound = bind_params(sql, params, conn->driver_name());
         conn->query(bound);
-        return Value((int)conn->affected_rows());
+        return Value((int64_t)conn->affected_rows());
     };
 
     // db::last_id($conn) — uses thread-local connection (same as exec in this request)
     m.functions["last_id"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("db::last_id() requires connection");
-        return Value((int)get_conn(args[0])->last_insert_id());
+        return Value((int64_t)get_conn(args[0])->last_insert_id());
     };
 
     // db::affected($conn)
     m.functions["affected"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("db::affected() requires connection");
-        return Value((int)get_conn(args[0])->affected_rows());
+        return Value((int64_t)get_conn(args[0])->affected_rows());
     };
 
     // db::escape($conn, $str)
@@ -1154,7 +1274,7 @@ static Module make_db_module(Interpreter* interp) {
             const auto& dv = rows[0][0].second;
             if (dv.is_null || sqlite_is_null(dv.type) || pg_is_null(dv.type)) return Value();
             if (mysql_is_int(dv.type) || sqlite_is_int(dv.type) || pg_is_int(dv.type)) {
-                try { return Value((int)std::stoll(dv.str)); } catch (...) {}
+                try { return Value((int64_t)std::stoll(dv.str)); } catch (...) {}
             }
             if (mysql_is_float(dv.type) || sqlite_is_float(dv.type) || pg_is_float(dv.type)) {
                 try { return Value(std::stod(dv.str)); } catch (...) {}

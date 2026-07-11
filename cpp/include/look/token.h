@@ -107,6 +107,7 @@ enum class TokenType {
     TRY,
     CATCH,
     FINALLY,
+    THROW,
     GLOBAL,
     SWITCH,
     CASE,

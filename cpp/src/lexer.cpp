@@ -28,6 +28,7 @@ static const std::unordered_map<std::string, TokenType> keywords = {
     {"try",      TokenType::TRY},
     {"catch",    TokenType::CATCH},
     {"finally",  TokenType::FINALLY},
+    {"throw",    TokenType::THROW},
     {"switch",   TokenType::SWITCH},
     {"case",     TokenType::CASE},
     {"default",  TokenType::DEFAULT},
@@ -314,6 +315,19 @@ void Lexer::scan_token() {
     }
 }
 
+static int lex_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+static void lex_append_utf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) out += (char)cp;
+    else if (cp < 0x800) { out += (char)(0xC0|(cp>>6)); out += (char)(0x80|(cp&0x3F)); }
+    else if (cp < 0x10000) { out += (char)(0xE0|(cp>>12)); out += (char)(0x80|((cp>>6)&0x3F)); out += (char)(0x80|(cp&0x3F)); }
+    else { out += (char)(0xF0|(cp>>18)); out += (char)(0x80|((cp>>12)&0x3F)); out += (char)(0x80|((cp>>6)&0x3F)); out += (char)(0x80|(cp&0x3F)); }
+}
+
 void Lexer::string(char quote) {
     std::string value;
     while (!is_at_end() && peek() != quote) {
@@ -332,6 +346,32 @@ void Lexer::string(char quote) {
                 case '"':  value += '"';  break;
                 case '\'': value += '\''; break;
                 case '$':  value += '$';  break;
+                case 'b':  value += '\b'; break;
+                case 'f':  value += '\f'; break;
+                case '0':  value += '\0'; break;
+                case 'u': {
+                    // \uXXXX unicode escape (surrogate çifti → emoji dahil)
+                    uint32_t cp = 0; bool ok = true;
+                    for (int k = 0; k < 4; k++) {
+                        int h = lex_hex(peek());
+                        if (h < 0) { ok = false; break; }
+                        cp = (cp << 4) | (uint32_t)h; advance();
+                    }
+                    if (!ok) { value += "\\u"; break; }
+                    if (cp >= 0xD800 && cp <= 0xDBFF && peek() == '\\' && peek_next() == 'u') {
+                        advance(); advance(); // '\' 'u'
+                        uint32_t lo = 0; bool ok2 = true;
+                        for (int k = 0; k < 4; k++) {
+                            int h = lex_hex(peek());
+                            if (h < 0) { ok2 = false; break; }
+                            lo = (lo << 4) | (uint32_t)h; advance();
+                        }
+                        if (ok2 && lo >= 0xDC00 && lo <= 0xDFFF)
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    }
+                    lex_append_utf8(value, cp);
+                    break;
+                }
                 default:   value += '\\'; value += esc; break;
             }
             continue;
@@ -360,13 +400,43 @@ void Lexer::raw_string() {
 }
 
 void Lexer::number() {
-    while (!is_at_end() && std::isdigit(peek())) advance();
+    // Hex (0xFF) / binary (0b1010) taban — girişte current_==start_, peek()=ilk rakam.
+    // Rakam gruplama için '_' (1_000, 0xFF_FF) her tabanda kabul edilir; parser ayırır.
+    if (peek() == '0' && (peek_next() == 'x' || peek_next() == 'X')) {
+        advance(); advance();  // '0' 'x'
+        while (!is_at_end() && (std::isxdigit((unsigned char)peek()) || peek() == '_')) advance();
+        add_token(TokenType::NUMBER, source_.substr(start_, current_ - start_));
+        return;
+    }
+    if (peek() == '0' && (peek_next() == 'b' || peek_next() == 'B')) {
+        advance(); advance();  // '0' 'b'
+        while (!is_at_end() && (peek() == '0' || peek() == '1' || peek() == '_')) advance();
+        add_token(TokenType::NUMBER, source_.substr(start_, current_ - start_));
+        return;
+    }
+
+    while (!is_at_end() && (std::isdigit(peek()) || peek() == '_')) advance();
 
     bool is_float = false;
     if (peek() == '.' && std::isdigit(peek_next())) {
         is_float = true;
         advance(); // consume '.'
-        while (!is_at_end() && std::isdigit(peek())) advance();
+        while (!is_at_end() && (std::isdigit(peek()) || peek() == '_')) advance();
+    }
+
+    // Bilimsel gösterim: 1e3, 1.5e-2, 2E+10 — mantissa'dan sonra e/E [+/-] rakam.
+    // (to_chars büyük/küçük float'ı bu formatta üretiyor; round-trip için gerekli.)
+    if (peek() == 'e' || peek() == 'E') {
+        char c1 = peek_next();
+        bool valid = std::isdigit((unsigned char)c1) ||
+            ((c1 == '+' || c1 == '-') && (current_ + 2 < source_.length()) &&
+             std::isdigit((unsigned char)source_[current_ + 2]));
+        if (valid) {
+            is_float = true;
+            advance();                                   // 'e' / 'E'
+            if (peek() == '+' || peek() == '-') advance();
+            while (!is_at_end() && std::isdigit(peek())) advance();
+        }
     }
 
     std::string text = source_.substr(start_, current_ - start_);

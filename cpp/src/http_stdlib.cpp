@@ -58,9 +58,31 @@ static HttpOptions extract_opts(const Value& v) {
     return opts;
 }
 
-Module make_http_module() {
+Module make_http_module(Interpreter* interp) {
     Module m;
     m.name = "http";
+
+    // http::stream($method, $url, $body, $headers, $callback [, $opts])
+    // Streaming istek — govde parcalari (chunked cozulmus) geldikce $callback($chunk)
+    // cagrilir. SSE/token akisi icin. Doner: response assoc (status, headers, error).
+    m.functions["stream"] = [interp](std::vector<Value> args) -> Value {
+        if (args.size() < 5)
+            throw std::runtime_error("http::stream() — method, url, body, headers, callback gerekli");
+        std::string method = args[0].to_string();
+        std::string url    = args[1].to_string();
+        std::string reqbody = args[2].to_string();
+        auto hdrs = extract_headers(args[3]);
+        Value cb  = args[4];
+        HttpOptions opts = (args.size() >= 6) ? extract_opts(args[5]) : HttpOptions();
+        if (cb.type() != Value::FUNCTION && cb.type() != Value::BYTECODE_FN)
+            throw std::runtime_error("http::stream() — 5. arg (callback) bir fonksiyon olmali");
+
+        HttpChunkCallback on_chunk = [interp, cb](const std::string& chunk) {
+            interp->invoke(cb, { Value(chunk) });
+        };
+        HttpResponse resp = http_request_stream(method, url, reqbody, hdrs, opts, on_chunk);
+        return response_to_value(resp);
+    };
 
     // http::get($url [, $headers [, $opts]])
     m.functions["get"] = [](auto args) -> Value {

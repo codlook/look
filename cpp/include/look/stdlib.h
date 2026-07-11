@@ -8,7 +8,7 @@ namespace look {
 
 struct WebContext;
 
-std::map<std::string, Module> make_stdlib();
+std::map<std::string, Module> make_stdlib(Interpreter* interp);
 std::map<std::string, Module> make_web_modules(WebContext* ctx, Interpreter* interp);
 std::map<std::string, Module> make_extra_stdlib(Interpreter* interp);
 Module make_file_module();

@@ -31,18 +31,23 @@ surface is auditable and hardened in one place. Defense is layered: manual revie
 | Path traversal | `../` in file / mailbox / recipient | `weakly_canonical` + root-confinement, `..`/absolute/control-char rejection |
 | Integer parsing | Malformed literals in wire protocols | Guarded `stol`/`stoull` (try/catch) everywhere |
 | JSON depth | Deeply nested `[[[…]]]` → stack overflow | `JSON_MAX_DEPTH` (256) |
+| Parser depth | Deeply nested `((…))` / `[[…]]` in source → stack overflow | `MAX_EXPR_DEPTH` / `MAX_STMT_DEPTH` (150) parser guards |
+| Response splitting | CR/LF injected into a response header (`response::header`, `redirect`, cookies) | CR/LF stripped at the setter **and** at header serialization |
 | RESP2 OOM | Unbounded bulk / line | `LOOK_REDIS_MAX_BULK` (64 MB), `RESP_MAX_LINE` (64 KB) |
 | IMAP OOM | `APPEND {huge}` / infinite line | Size validated before read: `LOOK_IMAP_MAX_LITERAL` (32 MB), `LOOK_IMAP_MAX_LINE` (8 KB) |
 | Credential leak | Plaintext IMAP/SMTP login | `LOGINDISABLED` until TLS; auth uses PBKDF2, constant-time compare |
 | Recursion | Runtime / VM call depth | `MAX_CALL_DEPTH` guards |
 | WebSocket | Oversized frames | RFC 6455 bounds + 16 MB cap |
+| WebSocket | Unmasked client frame (RFC 6455 §5.1) | Connection closed with 1002 — no silent accept (cache-poisoning / proxy defense) |
 
 ### Additional protections
 
 - **Supply chain:** zero 3rd-party dependencies; TLS via a pinned OpenSSL (statically
   linked in release binaries; dnf-managed in the RPM so `dnf update openssl-libs`
   applies OS security patches).
-- **File sandbox:** `LOOK_FILE_ROOT` confines `file::` access; path traversal blocked.
+- **File sandbox (secure by default):** `file::` access is confined to the current
+  working directory when `LOOK_FILE_ROOT` is unset; set it to widen the sandbox, or
+  `LOOK_FILE_ROOT=*` to explicitly opt out. Path traversal (`../`) is always blocked.
 - **Rate limiting:** two-layer token bucket — global (botnet) + per-IP —
   `LOOK_RATE_LIMIT_RPM` / `_GLOBAL_RPM` / `_BURST`, with `LOOK_TRUSTED_PROXY` for
   real-IP detection behind a reverse proxy.

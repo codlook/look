@@ -1,11 +1,17 @@
 #include "look/stdlib.h"
 #include "look/interpreter.h"
 #include "look/logger.h"
+#include "look/lexer.h"
+#include "look/parser.h"
+#include "look/ast.h"
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
 #include <regex>
 #include <cstring>
+#include <set>
+#include <functional>
+#include <memory>
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -215,7 +221,13 @@ static Module make_auth() {
 
         if (parts.size() < 5 || parts[0] != "pbkdf2") return Value(false);
 
-        uint32_t iter    = (uint32_t)std::stoi(parts[2]);
+        // İterasyon sayısı hash string'inden gelir. Kötü niyetli/bozuk bir hash
+        // devasa değer koyarsa milyarlarca PBKDF2 turu worker'ı kilitler (DoS);
+        // stoi geçersiz/taşan girdide exception fırlatır. Güvenli parse + sınır.
+        uint32_t iter = 0;
+        try { iter = (uint32_t)std::stoul(parts[2]); } catch (...) { return Value(false); }
+        static constexpr uint32_t MAX_PBKDF2_ITER = 10'000'000;  // makul üst sınır
+        if (iter == 0 || iter > MAX_PBKDF2_ITER) return Value(false);
         auto     salt    = b64_decode(parts[3]);
         auto     stored  = b64_decode(parts[4]);
         auto     derived = pbkdf2_sha256(pwd, salt, iter, 32);
@@ -1031,12 +1043,144 @@ static Module make_runtime_module(Interpreter* interp) {
     return mod;
 }
 
+// ── look:: — dilin kendi sozdizimi kontrolu (in-process; `lk --check` esdegeri) ──
+// LOOKY gibi araclarin, alt-surece ihtiyac duymadan LOOK kodunu dogrulayabilmesi
+// icin. main.cpp'deki --check mantiginin birebir ayni AST tabanli kopyasi.
+
+static void chk_walk_expr(const Expression* e, const std::function<void(const Expression*)>& v);
+static void chk_walk_block(const BlockStatement* b, const std::function<void(const Expression*)>& v);
+
+static void chk_walk_stmt(const Statement* s, const std::function<void(const Expression*)>& v) {
+    if (!s) return;
+    if (auto* x = dynamic_cast<const ExpressionStatement*>(s)) chk_walk_expr(x->expression.get(), v);
+    else if (auto* x = dynamic_cast<const PrintStatement*>(s)) { for (auto& e : x->expressions) chk_walk_expr(e.get(), v); }
+    else if (auto* x = dynamic_cast<const WriteStatement*>(s)) { for (auto& e : x->expressions) chk_walk_expr(e.get(), v); }
+    else if (auto* x = dynamic_cast<const ReturnStatement*>(s)) chk_walk_expr(x->expression.get(), v);
+    else if (auto* x = dynamic_cast<const BlockStatement*>(s)) chk_walk_block(x, v);
+    else if (auto* x = dynamic_cast<const IfStatement*>(s)) { chk_walk_expr(x->condition.get(), v); chk_walk_block(x->then_branch.get(), v); chk_walk_block(x->else_branch.get(), v); }
+    else if (auto* x = dynamic_cast<const WhileStatement*>(s)) { chk_walk_expr(x->condition.get(), v); chk_walk_block(x->body.get(), v); }
+    else if (auto* x = dynamic_cast<const ForStatement*>(s)) { chk_walk_stmt(x->init.get(), v); chk_walk_expr(x->condition.get(), v); chk_walk_expr(x->post.get(), v); chk_walk_block(x->body.get(), v); }
+    else if (auto* x = dynamic_cast<const ForeachStatement*>(s)) { chk_walk_expr(x->iterable.get(), v); chk_walk_block(x->body.get(), v); }
+    else if (auto* x = dynamic_cast<const TryCatchStatement*>(s)) { chk_walk_block(x->try_block.get(), v); chk_walk_block(x->catch_block.get(), v); chk_walk_block(x->finally_block.get(), v); }
+    else if (auto* x = dynamic_cast<const SwitchStatement*>(s)) { chk_walk_expr(x->subject.get(), v); for (auto& c : x->cases) { for (auto& val : c.values) chk_walk_expr(val.get(), v); for (auto& st : c.body) chk_walk_stmt(st.get(), v); } }
+    else if (auto* x = dynamic_cast<const FunctionDeclaration*>(s)) chk_walk_block(x->body.get(), v);
+}
+
+static void chk_walk_block(const BlockStatement* b, const std::function<void(const Expression*)>& v) {
+    if (!b) return;
+    for (auto& s : b->statements) chk_walk_stmt(s.get(), v);
+}
+
+static void chk_walk_expr(const Expression* e, const std::function<void(const Expression*)>& v) {
+    if (!e) return;
+    v(e);
+    if (auto* x = dynamic_cast<const ArrayLiteral*>(e)) { for (auto& el : x->elements) chk_walk_expr(el.get(), v); }
+    else if (auto* x = dynamic_cast<const AssocArrayLiteral*>(e)) { for (auto& p : x->pairs) { chk_walk_expr(p.first.get(), v); chk_walk_expr(p.second.get(), v); } }
+    else if (auto* x = dynamic_cast<const FunctionExpression*>(e)) chk_walk_block(x->body.get(), v);
+    else if (auto* x = dynamic_cast<const IndexExpression*>(e)) { chk_walk_expr(x->object.get(), v); chk_walk_expr(x->index.get(), v); }
+    else if (auto* x = dynamic_cast<const UnaryExpression*>(e)) chk_walk_expr(x->right.get(), v);
+    else if (auto* x = dynamic_cast<const BinaryExpression*>(e)) { chk_walk_expr(x->left.get(), v); chk_walk_expr(x->right.get(), v); }
+    else if (auto* x = dynamic_cast<const AssignmentExpression*>(e)) { chk_walk_expr(x->object.get(), v); chk_walk_expr(x->index.get(), v); chk_walk_expr(x->value.get(), v); }
+    else if (auto* x = dynamic_cast<const CallExpression*>(e)) { chk_walk_expr(x->callee.get(), v); for (auto& a : x->arguments) chk_walk_expr(a.get(), v); }
+    else if (auto* x = dynamic_cast<const TernaryExpression*>(e)) { chk_walk_expr(x->condition.get(), v); chk_walk_expr(x->then_expr.get(), v); chk_walk_expr(x->else_expr.get(), v); }
+    else if (auto* x = dynamic_cast<const MemberAccessExpression*>(e)) chk_walk_expr(x->object.get(), v);
+    else if (auto* x = dynamic_cast<const StructLiteralExpression*>(e)) { for (auto& f : x->fields) chk_walk_expr(f.second.get(), v); }
+}
+
+static void chk_collect_decls(const Statement* s, std::set<std::string>& d) {
+    if (!s) return;
+    if (auto* f = dynamic_cast<const FunctionDeclaration*>(s)) { d.insert(f->name); if (f->body) for (auto& st : f->body->statements) chk_collect_decls(st.get(), d); }
+    else if (auto* st = dynamic_cast<const StructDeclaration*>(s)) d.insert(st->name);
+    else if (auto* cb = dynamic_cast<const ConstBlock*>(s)) { for (auto& it : cb->items) d.insert(it.name); }
+    else if (auto* b = dynamic_cast<const BlockStatement*>(s)) { for (auto& x : b->statements) chk_collect_decls(x.get(), d); }
+    else if (auto* i = dynamic_cast<const IfStatement*>(s)) { if (i->then_branch) for (auto& x : i->then_branch->statements) chk_collect_decls(x.get(), d); if (i->else_branch) for (auto& x : i->else_branch->statements) chk_collect_decls(x.get(), d); }
+    else if (auto* w = dynamic_cast<const WhileStatement*>(s)) { if (w->body) for (auto& x : w->body->statements) chk_collect_decls(x.get(), d); }
+    else if (auto* fr = dynamic_cast<const ForStatement*>(s)) { if (fr->body) for (auto& x : fr->body->statements) chk_collect_decls(x.get(), d); }
+    else if (auto* fe = dynamic_cast<const ForeachStatement*>(s)) { if (fe->body) for (auto& x : fe->body->statements) chk_collect_decls(x.get(), d); }
+    else if (auto* t = dynamic_cast<const TryCatchStatement*>(s)) { if (t->try_block) for (auto& x : t->try_block->statements) chk_collect_decls(x.get(), d); if (t->catch_block) for (auto& x : t->catch_block->statements) chk_collect_decls(x.get(), d); if (t->finally_block) for (auto& x : t->finally_block->statements) chk_collect_decls(x.get(), d); }
+    else if (auto* sw = dynamic_cast<const SwitchStatement*>(s)) { for (auto& c : sw->cases) for (auto& st : c.body) chk_collect_decls(st.get(), d); }
+}
+
+static bool chk_find_undefined(const Program& prog, std::string& name, int& line, int& col) {
+    for (auto& s : prog.statements)
+        if (dynamic_cast<const UseStatement*>(s.get()) || dynamic_cast<const UseFileStatement*>(s.get()))
+            return false;   // import var → cross-file isimler bilinemez
+    std::set<std::string> valid = {
+        "abs","before_route","bool","boolval","chan_size","channel","close","config","count",
+        "die","env","exit","float","floatval","header","int","intval","join","json","len","max",
+        "min","parallel","pop","push","receive","redirect","response","route","send","sqrt","stop",
+        "str","string","strlen","strtolower","strtoupper","strval",
+        "print","write","is_array","is_bool","is_float","is_int","is_null","is_string",
+        "json_encode","json_decode",
+        "keys","values","type","range","isset","unset","sort","reverse","map","filter","reduce",
+        "slice","contains","jwt_sign","jwt_verify","jwt_decode"
+    };
+    for (auto& s : prog.statements) chk_collect_decls(s.get(), valid);
+    bool found = false;
+    std::function<void(const Expression*)> visit = [&](const Expression* e) {
+        if (found) return;
+        auto* call = dynamic_cast<const CallExpression*>(e);
+        if (!call) return;
+        auto* var = dynamic_cast<const Variable*>(call->callee.get());
+        if (!var) return;
+        const std::string& n = var->name;
+        if (n.empty() || n[0] == '$') return;
+        if (n.find("::") != std::string::npos) return;
+        if (valid.count(n)) return;
+        found = true; name = n; line = var->loc.line; col = var->loc.column;
+    };
+    for (auto& s : prog.statements) chk_walk_stmt(s.get(), visit);
+    return found;
+}
+
+static Module make_look_module() {
+    Module mod;
+    mod.name = "look";
+
+    // look::check($src) → ["ok"=>bool, "line"=>int, "col"=>int, "msg"=>string]
+    // Kodu CALISTIRMAZ — yalniz lex + parse + tanimsiz-cagri kontrolu. Guvenli.
+    mod.functions["check"] = [](std::vector<Value> args) -> Value {
+        std::string src = args.empty() ? std::string() : args[0].to_string();
+
+        auto result = [](bool ok, int line, int col, const std::string& msg) -> Value {
+            auto arr = std::make_shared<std::vector<Value>>();
+            arr->push_back(Value(std::string("__assoc__")));
+            arr->push_back(Value(std::string("ok")));   arr->push_back(Value(ok));
+            arr->push_back(Value(std::string("line"))); arr->push_back(Value(line));
+            arr->push_back(Value(std::string("col")));  arr->push_back(Value(col));
+            arr->push_back(Value(std::string("msg")));  arr->push_back(Value(msg));
+            return Value(arr);
+        };
+
+        try {
+            Lexer  lexer(src);
+            auto   tokens = lexer.scan_tokens();
+            Parser parser(std::move(tokens));
+            std::unique_ptr<Program> program = parser.parse();
+
+            std::string bad; int bl = 0, bc = 0;
+            if (chk_find_undefined(*program, bad, bl, bc))
+                return result(false, bl > 0 ? bl : 1, bc > 0 ? bc : 1,
+                              "Undefined function: " + bad);
+            return result(true, 0, 0, "OK");
+        } catch (const LookParseError& e) {
+            return result(false, e.line > 0 ? e.line : 1,
+                          e.column > 0 ? e.column : 1, e.message);
+        } catch (const std::exception& e) {
+            return result(false, 1, 1, e.what());
+        }
+    };
+
+    return mod;
+}
+
 std::map<std::string, Module> make_extra_stdlib(Interpreter* interp) {
     std::map<std::string, Module> mods;
     auto add = [&](Module mod) { mods[mod.name] = std::move(mod); };
     add(make_auth());
     add(make_crypto_module());
     add(make_validator());
+    add(make_look_module());
     add(make_array_module(interp));
     add(make_runtime_module(interp));
     add(make_template_module(interp));

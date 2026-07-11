@@ -87,6 +87,7 @@ private:
         int                  ip;
         int                  base;
         int                  ret_reg;
+        int                  argc = 0;   // çağrıda sağlanan arg sayısı (varsayılan param prologue'u)
     };
     std::vector<Frame> call_stack_;
 

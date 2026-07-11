@@ -1,6 +1,7 @@
 #pragma once
 
 #include "look/ast.h"
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -17,7 +18,11 @@
 #include <condition_variable>
 #include <thread>
 
-namespace look { struct WebContext; }
+namespace look { struct WebContext;
+
+// Double → kısa round-trip string (std::to_chars shortest). to_string() ve
+// JSON serileştirme ortak kullanır — bilimsel gösterim/veri kaybını önler.
+std::string look_format_double(double d); }
 
 namespace look {
 
@@ -40,6 +45,7 @@ public:
     enum Type { INT, FLOAT, STRING, BOOL, FUNCTION, ARRAY, CHANNEL, WEBSOCKET, SSE_CONN, BYTECODE_FN, NONE };
 
     Value()                                         : type_(NONE)     {}
+    explicit Value(int64_t i)                       : type_(INT),      int_val(i)   {}
     explicit Value(int i)                           : type_(INT),      int_val(i)   {}
     explicit Value(double d)                        : type_(FLOAT),    float_val(d) {}
     explicit Value(const std::string& s)            : type_(STRING),   str_val(s)   {}
@@ -52,7 +58,7 @@ public:
     explicit Value(std::shared_ptr<Closure>            c) : type_(BYTECODE_FN), ptr_val(std::move(c)) {}
 
     Type        type()      const { return type_; }
-    int         as_int()    const { return int_val; }
+    int64_t     as_int()    const { return int_val; }
     double      as_float()  const { return float_val; }
     std::string as_string() const { return str_val; }
     bool        as_bool()   const { return bool_val; }
@@ -66,7 +72,7 @@ public:
 
     std::string to_string() const;
     double      to_float()  const;
-    int         to_int()    const;
+    int64_t     to_int()    const;
     bool        is_truthy() const;
 
     // ARRAY için recursive deep copy; döngüsel referans güvenli (visited set ile kırılır)
@@ -118,7 +124,7 @@ private:
     // indirildi: aynı anda yalnız biri aktif (type_ belirler). sizeof(Value)
     // 152→~64 byte; op başına 5 gereksiz shared_ptr ctor/dtor elendi.
     Type        type_;
-    int         int_val   = 0;
+    int64_t     int_val   = 0;
     double      float_val = 0.0;
     std::string str_val;
     bool        bool_val  = false;
@@ -133,9 +139,14 @@ struct LookChannel {
     std::condition_variable not_full;   // senders wait when full
     size_t                  capacity;
     bool                    closed = false;
+    bool                    unbuffered = false;  // channel(0): Go rendezvous
+    uint64_t                recv_gen = 0;         // her recv'de artar (rendezvous)
 
+    // channel(0) = unbuffered/senkron (Go semantiği): gönderici alıcı öğeyi
+    // alana dek bloke olur. Eskiden 0 = SINIRSIZ buffer'dı → backpressure yok,
+    // hızlı üretici + yavaş tüketici = OOM. Artık kapasite 1 + rendezvous.
     explicit LookChannel(size_t cap = 128)
-        : capacity(cap == 0 ? (size_t)-1 : cap) {}
+        : capacity(cap == 0 ? 1 : cap), unbuffered(cap == 0) {}
 
     void  send_val(Value val);
     Value recv_val();
@@ -163,9 +174,16 @@ public:
     void set(const std::string& name, const Value& val) {
         auto it = values_.find(name);
         if (it != values_.end()) { it->second = val; return; }
-        if (parent_)             { parent_->set(name, val); return; }
-        throw std::runtime_error("Undefined variable: " + name);
+        // Fonksiyon sınırını YAZMA için geçme: dıştaki (global) değişkeni implicit
+        // ezmeyi engeller. Bulunamazsa çağıran define() ile local yaratır — Python
+        // semantiği: okuma (get) yukarı düşer, yazma fonksiyon içinde local kalır.
+        // Blok sınırları şeffaftır (fn_boundary_ yalnız fonksiyon çağrısında set).
+        if (fn_boundary_ || !parent_)
+            throw std::runtime_error("Undefined variable: " + name);
+        parent_->set(name, val);
     }
+
+    void mark_fn_boundary() { fn_boundary_ = true; }
 
     // Included file'ların function/const tanımlarını caller scope'a aktarmak için
     const std::map<std::string, Value>& entries() const { return values_; }
@@ -181,6 +199,7 @@ public:
 private:
     std::map<std::string, Value> values_;
     std::shared_ptr<Environment> parent_;
+    bool fn_boundary_ = false;   // true: yazma (set) bu env'i geçip global'e ulaşamaz
 };
 
 // ── LookFunction ──────────────────────────────────────────────────────────────
@@ -191,11 +210,14 @@ struct LookFunction {
     bool is_variadic = false;
     const BlockStatement* body;
     std::shared_ptr<Environment> closure;
+    // Varsayılan parametre ifadeleri (AST'den ödünç; paralel, nullptr = yok).
+    const std::vector<std::unique_ptr<Expression>>* defaults = nullptr;
 
     LookFunction(std::string n, std::vector<std::string> p, bool variadic,
-                 const BlockStatement* b, std::shared_ptr<Environment> c)
+                 const BlockStatement* b, std::shared_ptr<Environment> c,
+                 const std::vector<std::unique_ptr<Expression>>* defs = nullptr)
         : name(std::move(n)), parameters(std::move(p)), is_variadic(variadic),
-          body(b), closure(std::move(c)) {}
+          body(b), closure(std::move(c)), defaults(defs) {}
 };
 
 // ── Module ────────────────────────────────────────────────────────────────────

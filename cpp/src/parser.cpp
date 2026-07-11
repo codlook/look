@@ -1,6 +1,7 @@
 #include "look/parser.h"
 #include "look/interpreter.h"
 #include <stdexcept>
+#include <algorithm>
 
 namespace look {
 
@@ -19,6 +20,18 @@ std::unique_ptr<Program> Parser::parse() {
 // ── Statements ────────────────────────────────────────────────────────────────
 
 std::unique_ptr<Statement> Parser::statement() {
+    // Recursion guard: derin iç içe blok/if/while ({{{...}}}) parser yığınını
+    // taşırır — ifade guard'ıyla aynı gerekçe. RAII ile sayaç azaltılır.
+    static constexpr int MAX_STMT_DEPTH = 150;
+    struct DepthGuard {
+        int& d;
+        explicit DepthGuard(int& x) : d(x) { ++d; }
+        ~DepthGuard() { --d; }
+    } guard(stmt_depth_);
+    if (stmt_depth_ > MAX_STMT_DEPTH)
+        throw look::LookParseError("İfade/blok çok derin iç içe (max " +
+                                   std::to_string(MAX_STMT_DEPTH) + ")",
+                                   peek().line, peek().column);
     auto loc = cur_loc();
     auto set_loc = [&](std::unique_ptr<Statement> s) -> std::unique_ptr<Statement> {
         if (s) s->loc = loc;
@@ -32,6 +45,7 @@ std::unique_ptr<Statement> Parser::statement() {
     if (match(TokenType::FOR))      return set_loc(for_statement());
     if (match(TokenType::FOREACH))  return set_loc(foreach_statement());
     if (match(TokenType::RETURN))   return set_loc(return_statement());
+    if (match(TokenType::THROW))    return set_loc(throw_statement());
     if (match(TokenType::FUNCTION)) return set_loc(function_declaration());
     if (match(TokenType::TRY))      return set_loc(try_statement());
     if (match(TokenType::SWITCH))   return set_loc(switch_statement());
@@ -306,17 +320,22 @@ std::unique_ptr<Statement> Parser::function_declaration() {
     consume(TokenType::LPAREN, "Expect '(' after function name.");
 
     std::vector<std::string> params;
+    std::vector<std::unique_ptr<Expression>> defaults;
     bool is_variadic = false;
     if (!check(TokenType::RPAREN)) {
         do {
             if (match(TokenType::ELLIPSIS)) {
                 auto p = consume(TokenType::IDENT, "Expect parameter name after '...'.");
                 params.push_back(p.lexeme);
+                defaults.push_back(nullptr);
                 is_variadic = true;
                 break; // variadic son parametre olmak zorunda
             }
             auto p = consume(TokenType::IDENT, "Expect parameter name.");
             params.push_back(p.lexeme);
+            // Varsayılan değer: $param = <ifade>
+            if (match(TokenType::ASSIGN)) defaults.push_back(assignment());
+            else                          defaults.push_back(nullptr);
         } while (match(TokenType::COMMA));
     }
     consume(TokenType::RPAREN, "Expect ')' after parameters.");
@@ -324,7 +343,9 @@ std::unique_ptr<Statement> Parser::function_declaration() {
     scope_depth_++;
     auto body = block();
     scope_depth_--;
-    return std::make_unique<FunctionDeclaration>(name_tok.lexeme, std::move(params), is_variadic, std::move(body));
+    auto fn = std::make_unique<FunctionDeclaration>(name_tok.lexeme, std::move(params), is_variadic, std::move(body));
+    fn->defaults = std::move(defaults);
+    return fn;
 }
 
 std::unique_ptr<Statement> Parser::return_statement() {
@@ -333,6 +354,18 @@ std::unique_ptr<Statement> Parser::return_statement() {
         val = expression();
     consume_semi();
     return std::make_unique<ReturnStatement>(std::move(val));
+}
+
+// throw <ifade>  — kullanıcı iş-mantığı hatası fırlatır; try/catch yakalar.
+//   throw "Yetkisiz"            → catch($e) { $e == "Yetkisiz" }
+//   throw error::new("x","msg") → catch($e) { error::is($e, "x") }
+std::unique_ptr<Statement> Parser::throw_statement() {
+    if (check(TokenType::SEMICOLON) || check(TokenType::RBRACE) || is_at_end())
+        throw look::LookParseError("throw sonrası bir ifade gerekli",
+                                   peek().line, peek().column);
+    auto val = expression();
+    consume_semi();
+    return std::make_unique<ThrowStatement>(std::move(val));
 }
 
 std::unique_ptr<BlockStatement> Parser::block() {
@@ -349,6 +382,23 @@ std::unique_ptr<BlockStatement> Parser::block() {
 // ── Expressions ───────────────────────────────────────────────────────────────
 
 std::unique_ptr<Expression> Parser::expression() {
+    // Recursion guard: derin iç içe ifade (((((...))))) veya [[[[...]]]]
+    // recursive-descent yığınını taşırıp SIGSEGV/worker crash yapar. Kod
+    // üretici (Looky AI), kullanıcı-yüklenen .lk veya use "dosya.lk" bu yoldan
+    // geçer. Her expression() seviyesi ~14 C++ frame demek; Windows'un 1MB
+    // stack'inde ~250 seviyede fiziksel taşma olur. 150 gerçek kod için
+    // fazlasıyla yeterli (en derin iç içe ifade ~10-20) ve tüm platformlarda
+    // fiziksel stack tükenmeden önce keser.
+    static constexpr int MAX_EXPR_DEPTH = 150;
+    struct DepthGuard {
+        int& d;
+        explicit DepthGuard(int& x) : d(x) { ++d; }
+        ~DepthGuard() { --d; }
+    } guard(expr_depth_);
+    if (expr_depth_ > MAX_EXPR_DEPTH)
+        throw look::LookParseError("İfade çok derin iç içe (max " +
+                                   std::to_string(MAX_EXPR_DEPTH) + ")",
+                                   peek().line, peek().column);
     auto loc = cur_loc();
     auto e = assignment();
     if (e) e->loc = loc;
@@ -371,19 +421,23 @@ std::unique_ptr<Expression> Parser::assignment() {
             std::string op = previous().lexeme;
             auto val = assignment();
 
-            // $arr[i] = val
+            // $arr[i] = val   (i basit değişken VEYA zincir: $a[0][1], $m[k].x'in tabanı)
             if (auto* idx = dynamic_cast<IndexExpression*>(expr.get())) {
-                auto* var = dynamic_cast<Variable*>(idx->object.get());
-                if (!var) throw look::LookParseError("Invalid assignment target.", previous().line, previous().column);
                 auto index = std::move(const_cast<std::unique_ptr<Expression>&>(idx->index));
-                return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
+                if (auto* var = dynamic_cast<Variable*>(idx->object.get()))
+                    return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
+                // Zincirli: object bir ifade ($arr[0], $l.s, ...) — in-place mutasyon
+                auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(idx->object));
+                return std::make_unique<AssignmentExpression>("", op, std::move(val), std::move(index), std::move(obj));
             }
-            // $obj.field = val  → rewritten as $obj["field"] = val
+            // $obj.field = val  → $obj["field"] = val  (obj basit değişken VEYA zincir)
             if (auto* ma = dynamic_cast<MemberAccessExpression*>(expr.get())) {
-                auto* var = dynamic_cast<Variable*>(ma->object.get());
-                if (!var) throw look::LookParseError("Invalid assignment target.", previous().line, previous().column);
                 auto index = std::make_unique<StringLiteral>(ma->field);
-                return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
+                if (auto* var = dynamic_cast<Variable*>(ma->object.get()))
+                    return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
+                // Zincirli: $l.s.x = 9, $arr[0].x = 7, $map["k"].x = 3
+                auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(ma->object));
+                return std::make_unique<AssignmentExpression>("", op, std::move(val), std::move(index), std::move(obj));
             }
             // $var = val
             if (auto* var = dynamic_cast<Variable*>(expr.get()))
@@ -578,17 +632,29 @@ std::unique_ptr<Expression> Parser::primary() {
     if (match(TokenType::FALSE_KW))      return std::make_unique<BooleanLiteral>(false);
     if (match(TokenType::NULL_TOKEN)) return std::make_unique<NullLiteral>();
     if (match(TokenType::NUMBER)) {
-        // Integer literal — int aralığını aşarsa (99999999999) std::stoi
-        // out_of_range fırlatıp compiler'ı çökertiyordu. Aşımda float'a promote.
-        const std::string& lit = previous().literal.value();
-        try { return std::make_unique<NumberLiteral>(std::stoi(lit)); }
-        catch (...) {
+        // Integer literal — underscore ayırıcıları (1_000) at, hex/binary tabanı çöz.
+        // int64 aralığını aşarsa (99999999999999999999) std::stoll out_of_range
+        // fırlatır → float'a promote (yalnızca ~9.2e18 üstü decimal için).
+        std::string lit = previous().literal.value();
+        lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());
+        try {
+            int64_t v;
+            if (lit.size() > 2 && lit[0] == '0' && (lit[1] == 'x' || lit[1] == 'X'))
+                v = (int64_t)std::stoull(lit.substr(2), nullptr, 16);   // hex
+            else if (lit.size() > 2 && lit[0] == '0' && (lit[1] == 'b' || lit[1] == 'B'))
+                v = (int64_t)std::stoull(lit.substr(2), nullptr, 2);    // binary
+            else
+                v = (int64_t)std::stoll(lit);                           // decimal
+            return std::make_unique<NumberLiteral>(v);
+        } catch (...) {
             try { return std::make_unique<FloatLiteral>(std::stod(lit)); }
-            catch (...) { return std::make_unique<NumberLiteral>(0); }
+            catch (...) { return std::make_unique<NumberLiteral>((int64_t)0); }
         }
     }
     if (match(TokenType::FLOAT_NUM)) {
-        try { return std::make_unique<FloatLiteral>(std::stod(previous().literal.value())); }
+        std::string lit = previous().literal.value();
+        lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());  // 1_000.5 → 1000.5
+        try { return std::make_unique<FloatLiteral>(std::stod(lit)); }
         catch (...) { return std::make_unique<FloatLiteral>(0.0); }
     }
     if (match(TokenType::STRING))     return std::make_unique<StringLiteral>(previous().literal.value());
@@ -597,17 +663,21 @@ std::unique_ptr<Expression> Parser::primary() {
     if (match(TokenType::FUNCTION)) {
         consume(TokenType::LPAREN, "Expect '(' after 'function'.");
         std::vector<std::string> params;
+        std::vector<std::unique_ptr<Expression>> defaults;
         bool is_variadic = false;
         if (!check(TokenType::RPAREN)) {
             do {
                 if (match(TokenType::ELLIPSIS)) {
                     auto p = consume(TokenType::IDENT, "Expect parameter name after '...'.");
                     params.push_back(p.lexeme);
+                    defaults.push_back(nullptr);
                     is_variadic = true;
                     break;
                 }
                 auto p = consume(TokenType::IDENT, "Expect parameter name.");
                 params.push_back(p.lexeme);
+                if (match(TokenType::ASSIGN)) defaults.push_back(assignment());
+                else                          defaults.push_back(nullptr);
             } while (match(TokenType::COMMA));
         }
         consume(TokenType::RPAREN, "Expect ')' after parameters.");
@@ -640,6 +710,7 @@ std::unique_ptr<Expression> Parser::primary() {
         }
         auto fn = std::make_unique<FunctionExpression>();
         fn->parameters  = std::move(params);
+        fn->defaults    = std::move(defaults);
         fn->captures    = std::move(captures);
         fn->is_variadic = is_variadic;
         fn->body = std::move(body);

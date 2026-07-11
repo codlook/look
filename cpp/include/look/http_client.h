@@ -1,8 +1,12 @@
 #pragma once
 #include <string>
 #include <map>
+#include <functional>
 
 namespace look {
+
+// Streaming: govde parcalari (chunked cozulmus) geldikce cagrilir.
+using HttpChunkCallback = std::function<void(const std::string&)>;
 
 struct HttpResponse {
     int         status  = 0;
@@ -30,6 +34,17 @@ HttpResponse http_request(
     const std::string& body,
     const std::map<std::string, std::string>& req_headers,
     const HttpOptions& opts
+);
+
+// Streaming istek: govde parcalari geldikce on_chunk cagrilir (SSE/token akisi).
+// Doner: status + headers (body genelde bostur — parcalar callback'e gitti).
+HttpResponse http_request_stream(
+    const std::string& method,
+    const std::string& url,
+    const std::string& body,
+    const std::map<std::string, std::string>& req_headers,
+    const HttpOptions& opts,
+    const HttpChunkCallback& on_chunk
 );
 
 // Sistem CA bundle'ını (SSL_CERT_FILE/DIR) tespit et — statik OpenSSL binary'nin

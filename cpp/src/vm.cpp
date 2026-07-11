@@ -51,6 +51,7 @@ Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
 
     // Argümanları register'lara yaz
     int argc = (int)args.size();
+    call_stack_.back().argc = argc;   // varsayılan param prologue'u için
     if (!proto->variadic) {
         for (int i = 0; i < proto->arity && i < argc; ++i)
             regs_[base + i] = std::move(args[i]);
@@ -131,11 +132,19 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
     };
     auto pp = split(pattern), rp = split(path);
     if (pp.size() != rp.size()) return false;
+    // İsimli param'ları topla; yalnız TAM eşleşmede web_ctx_'e yaz (kısmi
+    // eşleşme route_params'ı kirletmesin).
+    std::vector<std::pair<std::string, std::string>> named;
     for (size_t i = 0; i < pp.size(); ++i) {
-        if (pp[i].size() > 2 && pp[i].front() == '{' && pp[i].back() == '}')
+        if (pp[i].size() > 2 && pp[i].front() == '{' && pp[i].back() == '}') {
             params.push_back(Value(rp[i]));
-        else if (pp[i] != rp[i]) return false;
+            named.emplace_back(pp[i].substr(1, pp[i].size() - 2), rp[i]);
+        } else if (pp[i] != rp[i]) return false;
     }
+    // request::param("id") / route::param("id") VM yolunda da çalışsın
+    // (interpreter route_params'ı dolduruyor — divergence giderildi).
+    if (web_ctx_)
+        for (auto& [k, v] : named) web_ctx_->route_params[k] = v;
     return true;
 }
 
@@ -414,7 +423,7 @@ call_dispatch:
                 for (int i = 0; i < argc; ++i)
                     regs_[new_base + i] = R(ins.c + i);
                 int ret_abs = base + ins.a;
-                call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, ret_abs});
+                call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, ret_abs, (int)argc});
                 goto call_dispatch; // callee frame'e geç
             }
 
@@ -472,7 +481,7 @@ call_dispatch:
                 int new_base = (int)regs_.size();
                 regs_.resize(new_base + cl->proto->reg_count);
                 for (int i = 0; i < argc3; ++i) regs_[new_base+i] = R(ins.c+i);
-                call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, base+ins.a});
+                call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, base+ins.a, (int)argc3});
                 goto call_dispatch; // callee frame'e geç
             }
 
@@ -559,6 +568,9 @@ call_dispatch:
             }
             case OpCode::LOAD_EXC:
                 R(ins.a) = current_exception_;
+                break;
+            case OpCode::LOAD_ARGC:
+                R(ins.a) = Value((int64_t)frame.argc);
                 break;
 
             // ── LOOK'a özgü ───────────────────────────────────────────────────

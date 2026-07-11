@@ -65,6 +65,7 @@ struct WsFrame {
     std::string payload;
     size_t      consumed = 0;
     bool        complete = false;
+    bool        protocol_error = false;  // RFC 6455 §5.1 ihlali (ör. maskesiz client frame)
 };
 
 // Try to decode one frame from buf — returns complete=false if more data needed.

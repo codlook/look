@@ -126,7 +126,7 @@ void FunctionCompiler::push_scope() {
 void FunctionCompiler::pop_scope() {
     // Scope'a ait local'ları listeden çıkar — register'lar serbest kalır
     while (!locals_.empty() && locals_.back().depth == scope_depth_) {
-        regs_->free(locals_.back().reg);
+        regs_->free_local(locals_.back().reg);
         locals_.pop_back();
     }
     --scope_depth_;
@@ -139,8 +139,9 @@ uint8_t FunctionCompiler::declare_local(const std::string& name, int line) {
         if (it->name == name)
             throw LookCompileError("'" + name + "' bu scope'ta zaten tanımlı", line);
     }
-    // Yeni sabit slot — locals her zaman sıralı
-    uint8_t slot = regs_->alloc();
+    // Yeni korumalı local slot — free() bunu havuza atmaz (aksi halde compile_expr'in
+    // "local slot'unu doğrudan döndür" optimizasyonu + free_temp local'i bozardı).
+    uint8_t slot = regs_->alloc_local();
     locals_.push_back({name, slot, scope_depth_});
     return slot;
 }
@@ -160,7 +161,31 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name) 
 
 // ── compile — entry point ─────────────────────────────────────────────────────
 
-std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& body) {
+std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& body,
+        const std::vector<std::unique_ptr<Expression>>* defaults) {
+    // ── Prologue: varsayılan parametreler ────────────────────────────────────
+    // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
+    // ilk yerel register'ları (0..arity-1) tutar. Varsayılan ifade önceki
+    // param'ları görebilir (soldan sağa). Interpreter ile aynı arity semantiği.
+    if (defaults) {
+        for (size_t i = 0; i < defaults->size() && i < proto_.arity; ++i) {
+            if (!(*defaults)[i]) continue;
+            uint8_t ac = alloc_temp();
+            emit(OpCode::LOAD_ARGC, ac);
+            uint8_t lim = alloc_temp();
+            emit_load_const(lim, Value((int64_t)i), 0);
+            uint8_t cond = alloc_temp();
+            emit(OpCode::LTE, cond, ac, lim);         // argc <= i  → param i sağlanmadı
+            free_temp(ac); free_temp(lim);
+            int skip = emit_jump(OpCode::JUMP_IF_FALSE, cond);  // sağlandıysa varsayılanı atla
+            free_temp(cond);
+            uint8_t dr = compile_expr(*(*defaults)[i]); // varsayılan değeri
+            emit(OpCode::MOVE, (uint8_t)i, dr);          // param i = varsayılan (reg i)
+            free_temp(dr);
+            patch_jump(skip, current_ip());
+        }
+    }
+
     compile_block(body);
 
     // Implicit return null
@@ -204,23 +229,33 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
     else if (auto* s = dynamic_cast<const ReturnStatement*>(&stmt)) {
         compile_return(*s);
     }
+    else if (auto* s = dynamic_cast<const ThrowStatement*>(&stmt)) {
+        // throw <ifade> → değeri hesapla, THROW opcode (try_stack_ / LOAD_EXC yakalar)
+        uint8_t r = compile_expr(*s->expression);
+        emit(OpCode::THROW, r);
+        free_temp(r);
+    }
     else if (dynamic_cast<const BreakStatement*>(&stmt)) {
+        // break en yakın breakable bağlama gider — switch veya döngü.
         if (loop_stack_.empty())
-            throw LookCompileError("break döngü dışında");
+            throw LookCompileError("break döngü/switch dışında");
         int p = emit_jump(OpCode::JUMP);
-        loop_stack_.top().break_patches.push_back(p);
+        loop_stack_.back().break_patches.push_back(p);
     }
     else if (dynamic_cast<const ContinueStatement*>(&stmt)) {
-        if (loop_stack_.empty())
+        // continue switch'i ATLAR — en yakın gerçek DÖNGÜYE gider (C semantiği).
+        int idx = -1;
+        for (int i = (int)loop_stack_.size() - 1; i >= 0; --i)
+            if (!loop_stack_[i].is_switch) { idx = i; break; }
+        if (idx < 0)
             throw LookCompileError("continue döngü dışında");
-        int target = loop_stack_.top().continue_target;
+        int target = loop_stack_[idx].continue_target;
         if (target >= 0) {
-            // Hedef biliniyor (while/for)
-            int p = emit(OpCode::JUMP, 0, (uint8_t)(target >> 8), (uint8_t)(target & 0xFF));
-            (void)p;
+            // Hedef biliniyor (while/foreach)
+            emit(OpCode::JUMP, 0, (uint8_t)(target >> 8), (uint8_t)(target & 0xFF));
         } else {
             int p = emit_jump(OpCode::JUMP);
-            loop_stack_.top().continue_patches.push_back(p);
+            loop_stack_[idx].continue_patches.push_back(p);
         }
     }
     else if (auto* s = dynamic_cast<const IfStatement*>(&stmt)) {
@@ -302,10 +337,10 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
     int exit_jump = emit_jump(OpCode::JUMP_IF_FALSE, cond);
     free_temp(cond);
 
-    loop_stack_.push({.continue_target = loop_start});
+    loop_stack_.push_back({.continue_target = loop_start});
     compile_block(*s.body);
-    auto ctx = loop_stack_.top();
-    loop_stack_.pop();
+    auto ctx = loop_stack_.back();
+    loop_stack_.pop_back();
 
     // continue → loop_start
     for (int p : ctx.continue_patches) patch_jump(p, loop_start);
@@ -331,10 +366,10 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
         free_temp(cond);
     }
 
-    loop_stack_.push({.continue_target = -1}); // continue hedefi post sonrası
+    loop_stack_.push_back({.continue_target = -1}); // continue hedefi post sonrası
     compile_block(*s.body);
-    auto ctx = loop_stack_.top();
-    loop_stack_.pop();
+    auto ctx = loop_stack_.back();
+    loop_stack_.pop_back();
 
     int post_ip = current_ip();
     if (s.post) {
@@ -385,10 +420,10 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     // FOR_STEP: a=r_iter, b=exit_hi, c=exit_lo (sonradan patch)
     int step_ip = emit(OpCode::FOR_STEP, r_iter, 0, 0);
 
-    loop_stack_.push({.continue_target = loop_start});
+    loop_stack_.push_back({.continue_target = loop_start});
     compile_block(*s.body);
-    auto ctx = loop_stack_.top();
-    loop_stack_.pop();
+    auto ctx = loop_stack_.back();
+    loop_stack_.pop_back();
 
     for (int p : ctx.continue_patches) patch_jump(p, loop_start);
     emit(OpCode::JUMP, 0, (uint8_t)(loop_start >> 8), (uint8_t)(loop_start & 0xFF));
@@ -451,7 +486,7 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
 void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
     // İç fonksiyon derle
     FunctionCompiler inner(s.name, s.parameters, s.is_variadic, this);
-    auto proto = inner.compile(*s.body);
+    auto proto = inner.compile(*s.body, &s.defaults);
     int fn_idx = (int)proto_.nested.size();
     proto_.nested.push_back(proto);
 
@@ -503,6 +538,10 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
     // Hiçbir case eşleşmedi → default veya sona
     int no_match_jump = emit_jump(OpCode::JUMP);
 
+    // switch bağlamı: case içindeki `break` switch sonuna atlar (dıştaki döngüye
+    // DEĞİL). is_switch=true → continue bu bağlamı atlar, dıştaki döngüye gider.
+    loop_stack_.push_back({.is_switch = true});
+
     // İkinci pass: body'ler
     for (size_t i = 0; i < s.cases.size(); ++i) {
         auto& c    = s.cases[i];
@@ -522,6 +561,9 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
         end_jumps.push_back(emit_jump(OpCode::JUMP));
     }
 
+    auto sctx = loop_stack_.back();
+    loop_stack_.pop_back();
+
     int after = current_ip();
 
     // default yoksa no_match_jump → after
@@ -529,7 +571,8 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
     for (auto& e : entries) if (e.is_default) { has_default = true; break; }
     if (!has_default) patch_jump(no_match_jump, after);
 
-    for (int p : end_jumps) patch_jump(p, after);
+    for (int p : end_jumps)          patch_jump(p, after);
+    for (int p : sctx.break_patches) patch_jump(p, after);  // break → switch sonu
     free_temp(subj);
 }
 
@@ -602,13 +645,20 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     auto loc = resolve_var(e.name);
 
     if (e.index) {
-        // $arr[i] = val
-        uint8_t arr  = alloc_temp();
-        if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE,        arr, loc.index);
-        else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, arr, loc.index);
-        else {
-            uint16_t ni = add_const(Value(e.name));
-            emit(OpCode::LOAD_GLOBAL, arr, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+        // $arr[i] = val  ·  zincirli $l.s.x = v / $arr[0].x = v (object ifadeden)
+        uint8_t arr;
+        if (e.object) {
+            // Zincirli: container ifadeyi derle — ARRAY/assoc referans olduğu için
+            // ARRAY_SET yerinde mutasyon yapar, orijinali etkiler.
+            arr = compile_expr(*e.object);
+        } else {
+            arr = alloc_temp();
+            if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE,        arr, loc.index);
+            else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, arr, loc.index);
+            else {
+                uint16_t ni = add_const(Value(e.name));
+                emit(OpCode::LOAD_GLOBAL, arr, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+            }
         }
         uint8_t idx = compile_expr(*e.index);
         uint8_t val = compile_expr(*e.value);
@@ -642,8 +692,36 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     } else if (loc.kind == VarKind::CAPTURE) {
         // LOOK by-value capture — capture değiştirilemiyor (felsefe)
         throw LookCompileError("Capture edilen değişken değiştirilemez: $" + e.name);
+    } else if (parent_ != nullptr) {
+        // Fonksiyon içi + isim local/capture değil → yeni FONKSIYON-LOCAL yarat.
+        // Scope izolasyonu: fonksiyon dıştaki (global) değişkeni implicit ezemez
+        // (interpreter ile aynı; VM'de eskiden STORE_GLOBAL ile sızıyordu — route
+        // gövdesi local'leri global olduğundan eş zamanlı isteklerde de race'liydi).
+        // Okuma hâlâ global'e düşer; val (RHS) yukarıda compile edildiği için
+        // aynı-isim okuması doğru şekilde global'i gördü.
+        uint8_t result = val;
+        if (e.op != "=") {
+            // compound: mevcut değeri GLOBAL'den oku (isim henüz local değil)
+            uint16_t ni = add_const(Value(e.name));
+            uint8_t cur = alloc_temp();
+            emit(OpCode::LOAD_GLOBAL, cur, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+            uint8_t tmp = alloc_temp();
+            static const std::unordered_map<std::string, OpCode> COMPOUND = {
+                {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
+                {"/=", OpCode::DIV}, {"%=", OpCode::MOD}, {".=", OpCode::CONCAT},
+            };
+            auto cit = COMPOUND.find(e.op);
+            if (cit == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
+            emit(cit->second, tmp, cur, val);
+            free_temp(cur); free_temp(val);
+            result = tmp;
+        }
+        uint8_t slot = declare_local(e.name, 0);
+        emit(OpCode::MOVE, slot, result);
+        free_temp(result);
     } else {
-        // Global
+        // Top-level (script global) → STORE_GLOBAL. Route/setup global'leri, app::
+        // servisleri ve module referansları burada yaşar; davranış korunur.
         uint16_t ni = add_const(Value(e.name));
         emit(OpCode::STORE_GLOBAL, val, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
         free_temp(val);
@@ -991,7 +1069,7 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
         inner.captures_.push_back({e.captures[i], (uint8_t)i});
     }
 
-    auto proto = inner.compile(*e.body);
+    auto proto = inner.compile(*e.body, &e.defaults);
     int fn_idx = (int)proto_.nested.size();
     proto_.nested.push_back(proto);
 

@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cctype>
+#include <memory>
 #ifndef _WIN32
 #  include <sys/stat.h>
 #endif
@@ -244,6 +245,69 @@ static HttpResponse parse_response(const std::string& raw) {
     return resp;
 }
 
+// ── Streaming: artimli chunked-decoder + sink ────────────────────────────────
+// Govde baytlari geldikce (recv/decrypt/SSL_read) bu sink'e beslenir. Once
+// basliklar tamamlanana kadar biriktirir, sonra chunked'i cozup callback'e verir.
+
+struct ChunkedDecoder {
+    std::string buf;
+    bool done = false;
+    void feed(const std::string& data, const HttpChunkCallback& emit) {
+        buf += data;
+        while (!done) {
+            size_t cr = buf.find("\r\n");
+            if (cr == std::string::npos) return;               // boyut satiri henuz tam degil
+            std::string hex = buf.substr(0, cr);
+            size_t semi = hex.find(';');
+            if (semi != std::string::npos) hex = hex.substr(0, semi);  // chunk-extension at
+            while (!hex.empty() && (hex.back() == ' ' || hex.back() == '\t')) hex.pop_back();
+            size_t sz = 0;
+            try { sz = std::stoul(hex, nullptr, 16); } catch (...) { done = true; return; }
+            if (sz == 0) { done = true; return; }              // son chunk
+            if (buf.size() < cr + 2 + sz + 2) return;          // tum chunk + CRLF henuz yok
+            emit(buf.substr(cr + 2, sz));
+            buf.erase(0, cr + 2 + sz + 2);
+        }
+    }
+};
+
+struct StreamSink {
+    const HttpChunkCallback& cb;
+    std::string  head;
+    bool         headers_done = false;
+    bool         is_chunked   = false;
+    HttpResponse resp;
+    ChunkedDecoder chunked;
+
+    explicit StreamSink(const HttpChunkCallback& c) : cb(c) {}
+
+    void feed(const char* data, size_t n) {
+        if (headers_done) { emit(std::string(data, n)); return; }
+        head.append(data, n);
+        size_t he = head.find("\r\n\r\n");
+        if (he == std::string::npos) return;                   // basliklar henuz tam degil
+        headers_done = true;
+        // Baslik blogunu (bos govdeyle) parse_response ile coz — status + headers.
+        HttpResponse hp = parse_response(head.substr(0, he + 4));
+        resp.status  = hp.status;
+        resp.headers = hp.headers;
+        std::string te = resp.headers.count("transfer-encoding") ? resp.headers["transfer-encoding"] : "";
+        std::transform(te.begin(), te.end(), te.begin(), [](unsigned char c){ return std::tolower(c); });
+        is_chunked = te.find("chunked") != std::string::npos;
+        std::string leftover = head.substr(he + 4);
+        head.clear();
+        emit(leftover);
+    }
+    void emit(const std::string& bytes) {
+        if (bytes.empty()) return;
+        if (is_chunked) chunked.feed(bytes, cb);
+        else cb(bytes);
+    }
+    void finalize() {
+        if (!headers_done && resp.error.empty()) resp.error = "no response";
+    }
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // PLATFORM IMPLEMENTATIONS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -288,7 +352,8 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
 static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
                               const std::string& body,
                               const std::map<std::string, std::string>& hdrs,
-                              const HttpOptions& opts)
+                              const HttpOptions& opts,
+                              const HttpChunkCallback* on_chunk = nullptr)
 {
     HttpResponse resp;
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
@@ -299,10 +364,14 @@ static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
         closesocket(s); resp.error = "send failed"; return resp;
     }
 
+    std::unique_ptr<StreamSink> sink;
+    if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
     std::string raw;
     char buf[8192];
     int n;
-    while ((n = recv(s, buf, sizeof(buf), 0)) > 0) raw.append(buf, n);
+    while ((n = recv(s, buf, sizeof(buf), 0)) > 0) {
+        if (sink) sink->feed(buf, n); else raw.append(buf, n);
+    }
     if (n == SOCKET_ERROR) {
         int e = WSAGetLastError();
         if (e == WSAETIMEDOUT) resp.error = "timeout";
@@ -311,15 +380,19 @@ static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
         return resp;
     }
     closesocket(s);
+    if (sink) { sink->finalize(); sink->resp.error = resp.error; return sink->resp; }
     return parse_response(raw);
 }
 
 static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
                             const std::string& body,
                             const std::map<std::string, std::string>& hdrs,
-                            const HttpOptions& opts)
+                            const HttpOptions& opts,
+                            const HttpChunkCallback* on_chunk = nullptr)
 {
     HttpResponse resp;
+    std::unique_ptr<StreamSink> sink;
+    if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = "connection failed"; return resp; }
 
@@ -466,8 +539,10 @@ static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
 
                 // Find decrypted data buffer
                 for (int i = 0; i < 4; ++i) {
-                    if (dec_bufs[i].BufferType == SECBUFFER_DATA && dec_bufs[i].pvBuffer)
-                        decrypted.append((char*)dec_bufs[i].pvBuffer, dec_bufs[i].cbBuffer);
+                    if (dec_bufs[i].BufferType == SECBUFFER_DATA && dec_bufs[i].pvBuffer) {
+                        if (sink) sink->feed((char*)dec_bufs[i].pvBuffer, dec_bufs[i].cbBuffer);
+                        else decrypted.append((char*)dec_bufs[i].pvBuffer, dec_bufs[i].cbBuffer);
+                    }
                 }
                 // Extra data after this record
                 std::string leftover;
@@ -478,7 +553,8 @@ static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
                 raw_enc = leftover;
             }
         }
-        resp = parse_response(decrypted);
+        if (sink) { sink->finalize(); resp = sink->resp; }
+        else resp = parse_response(decrypted);
         goto cleanup2;
     }
 
@@ -550,7 +626,8 @@ static SSL_CTX* get_ssl_ctx() {
 static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
                               const std::string& body,
                               const std::map<std::string, std::string>& hdrs,
-                              const HttpOptions& opts)
+                              const HttpOptions& opts,
+                              const HttpChunkCallback* on_chunk = nullptr)
 {
     HttpResponse resp;
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
@@ -561,20 +638,26 @@ static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
         close(s); resp.error = "send failed"; return resp;
     }
 
+    std::unique_ptr<StreamSink> sink;
+    if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
     std::string raw;
     char buf[8192];
     ssize_t n;
-    while ((n = recv(s, buf, sizeof(buf), 0)) > 0) raw.append(buf, n);
+    while ((n = recv(s, buf, sizeof(buf), 0)) > 0) {
+        if (sink) sink->feed(buf, n); else raw.append(buf, n);
+    }
     if (n < 0) resp.error = "timeout";
     close(s);
     if (!resp.error.empty()) return resp;
+    if (sink) { sink->finalize(); return sink->resp; }
     return parse_response(raw);
 }
 
 static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
                             const std::string& body,
                             const std::map<std::string, std::string>& hdrs,
-                            const HttpOptions& opts)
+                            const HttpOptions& opts,
+                            const HttpChunkCallback* on_chunk = nullptr)
 {
     HttpResponse resp;
     SSL_CTX* ctx = get_ssl_ctx();
@@ -605,10 +688,14 @@ static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
         resp.error = "SSL_write failed"; return resp;
     }
 
+    std::unique_ptr<StreamSink> sink;
+    if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
     std::string raw;
     char buf[8192];
     int n;
-    while ((n = SSL_read(ssl, buf, sizeof(buf))) > 0) raw.append(buf, n);
+    while ((n = SSL_read(ssl, buf, sizeof(buf))) > 0) {
+        if (sink) sink->feed(buf, n); else raw.append(buf, n);
+    }
     if (n < 0) {
         int err = SSL_get_error(ssl, n);
         if (err == SSL_ERROR_SYSCALL) resp.error = "timeout";
@@ -618,6 +705,7 @@ static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
     SSL_free(ssl);
     close(s);
     if (!resp.error.empty()) return resp;
+    if (sink) { sink->finalize(); return sink->resp; }
     return parse_response(raw);
 }
 
@@ -639,6 +727,27 @@ HttpResponse http_request(const std::string& method,
     try {
         if (url.tls) return do_tls(method, url, body, req_headers, opts);
         else         return do_plain(method, url, body, req_headers, opts);
+    } catch (std::exception& e) {
+        resp.error = e.what();
+        return resp;
+    }
+}
+
+HttpResponse http_request_stream(const std::string& method,
+                                  const std::string& url_str,
+                                  const std::string& body,
+                                  const std::map<std::string, std::string>& req_headers,
+                                  const HttpOptions& opts,
+                                  const HttpChunkCallback& on_chunk)
+{
+    HttpResponse resp;
+    ParsedUrl url;
+    try { url = parse_url(url_str); }
+    catch (std::exception& e) { resp.error = e.what(); return resp; }
+
+    try {
+        if (url.tls) return do_tls(method, url, body, req_headers, opts, &on_chunk);
+        else         return do_plain(method, url, body, req_headers, opts, &on_chunk);
     } catch (std::exception& e) {
         resp.error = e.what();
         return resp;

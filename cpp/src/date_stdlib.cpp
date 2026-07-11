@@ -151,17 +151,25 @@ Module make_date_module() {
 
     // date::timestamp() → int (Unix epoch saniye)
     m.functions["timestamp"] = [](auto) -> Value {
-        return Value((int)std::time(nullptr));
+        return Value((int64_t)std::time(nullptr));
     };
 
     // date::format(tarih, format_str) → string
-    // tarih: "YYYY-MM-DD" veya "YYYY-MM-DD HH:MM:SS"
-    // format: "d.m.Y", "Y/m/d H:i:s", vb.
+    // tarih: Unix timestamp (int) VEYA "YYYY-MM-DD [HH:MM:SS]" ISO string.
+    //   DB/API'den gelen en yaygın format Unix timestamp'tir — INT/FLOAT ise
+    //   doğrudan zaman damgası olarak yorumlanır (önceden sessizce "1699..." gibi
+    //   yanlış tarih üretiyordu). String ise ISO olarak parse edilir.
+    // format: "d.m.Y", "Y/m/d H:i:s", vb. (PHP-tarzı).
     m.functions["format"] = [](auto args) -> Value {
         if (args.size() < 2)
             throw std::runtime_error("date::format() requires (date, format)");
-        std::tm t = parse_iso(args[0].to_string());
-        mktime(&t);  // tm_wday, tm_yday normalize et
+        std::tm t{};
+        if (args[0].type() == Value::INT || args[0].type() == Value::FLOAT) {
+            t = look_localtime((std::time_t)args[0].to_int());  // Unix timestamp
+        } else {
+            t = parse_iso(args[0].to_string());                 // ISO string
+            mktime(&t);  // tm_wday, tm_yday normalize et
+        }
         return Value(format_date(args[1].to_string(), t));
     };
 
@@ -267,9 +275,9 @@ Module make_date_module() {
             throw std::runtime_error("date::diff() requires (date1, date2, unit)");
         std::tm t1 = parse_iso(args[0].to_string()); t1.tm_isdst = -1;
         std::tm t2 = parse_iso(args[1].to_string()); t2.tm_isdst = -1;
-        long secs  = (long)(mktime(&t1) - mktime(&t2));
-        long div   = unit_to_seconds(args[2].to_string());
-        return Value((int)(secs / div));
+        int64_t secs = (int64_t)(mktime(&t1) - mktime(&t2));
+        int64_t div  = (int64_t)unit_to_seconds(args[2].to_string());
+        return Value((int64_t)(div != 0 ? secs / div : 0));
     };
 
     // date::from_timestamp(unix_ts) → "YYYY-MM-DD HH:MM:SS"

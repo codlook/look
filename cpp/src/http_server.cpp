@@ -115,7 +115,15 @@ static bool parse_request(const std::string& raw, HttpRequest& req) {
 std::string HttpResponse::build() const {
     std::ostringstream out;
     out << "HTTP/1.1 " << status_code << " " << status_text << "\r\n";
-    for (auto& [k, v] : headers) out << k << ": " << v << "\r\n";
+    // Defense-in-depth: CR/LF strip — HTTP response splitting engellenir
+    // (giriş katmanı response::header/redirect/cookie zaten sanitize eder).
+    auto strip_crlf = [](const std::string& s) {
+        size_t cut = s.find_first_of("\r\n");
+        return cut == std::string::npos ? s : s.substr(0, cut);
+    };
+    for (auto& [k, v] : headers) out << strip_crlf(k) << ": " << strip_crlf(v) << "\r\n";
+    // Her çerez ayrı Set-Cookie satırı (std::map birden fazla aynı-anahtarı tutamaz)
+    for (auto& c : set_cookies) out << "Set-Cookie: " << strip_crlf(c) << "\r\n";
     out << "Content-Length: " << body.size() << "\r\n";
     out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
     out << "\r\n";
@@ -547,6 +555,13 @@ struct HttpServer::Impl {
                 snap = it->second;
             }
             WsFrame frame = ws_try_decode_frame(snap);
+            if (frame.protocol_error) {
+                // RFC 6455 §5.1: maskesiz client frame → 1002 ile kapat
+                std::string cf = ws_encode_close_frame();
+                { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
+                conn->closed.store(true);
+                break;
+            }
             if (!frame.complete) break;
 
             {

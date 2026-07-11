@@ -184,12 +184,12 @@ Value JobStore::next(const std::string& queue) {
     sqlite3_finalize(upd);
 
     return make_assoc({
-        {"id",          Value((int)id)},
+        {"id",          Value((int64_t)id)},
         {"payload",     Value(payload)},
         {"queue",       Value(queue)},
         {"retry_count", Value(retry_count)},
         {"max_retries", Value(max_retries)},
-        {"run_after",   Value((int)run_after)},
+        {"run_after",   Value((int64_t)run_after)},
     });
 }
 
@@ -281,14 +281,14 @@ Value JobStore::list(const std::string& queue, const std::string& status, int li
         int64_t     up  = sqlite3_column_int64(stmt, 6);
 
         result->push_back(make_assoc({
-            {"id",          Value((int)id)},
+            {"id",          Value((int64_t)id)},
             {"payload",     Value(pay)},
             {"status",      Value(status)},
             {"retry_count", Value(rc)},
             {"max_retries", Value(mr)},
-            {"run_after",   Value((int)ra)},
-            {"created_at",  Value((int)cr)},
-            {"updated_at",  Value((int)up)},
+            {"run_after",   Value((int64_t)ra)},
+            {"created_at",  Value((int64_t)cr)},
+            {"updated_at",  Value((int64_t)up)},
         }));
     }
     sqlite3_finalize(stmt);
@@ -367,7 +367,7 @@ Module make_jobs_module() {
         std::string payload     = args[1].to_string();
         int         max_retries = (args.size() >= 3) ? (int)args[2].to_float() : 3;
         int         delay       = (args.size() >= 4) ? (int)args[3].to_float() : 0;
-        return Value((int)JobStore::instance().push(q, payload, max_retries, delay));
+        return Value((int64_t)JobStore::instance().push(q, payload, max_retries, delay));
     };
 
     // jobs::next($queue) → assoc | null
@@ -413,7 +413,7 @@ Module make_jobs_module() {
     // jobs::purge($queue, $status) → int
     m.functions["purge"] = [](std::vector<Value> args) -> Value {
         if (args.size() < 2) throw std::runtime_error("jobs::purge() — (queue, status) bekler");
-        return Value((int)JobStore::instance().purge(args[0].to_string(), args[1].to_string()));
+        return Value((int64_t)JobStore::instance().purge(args[0].to_string(), args[1].to_string()));
     };
 
     // jobs::recover($queue [, $min_age_seconds=0]) → int (recovered count)
@@ -428,7 +428,7 @@ Module make_jobs_module() {
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "jobs::recover",
                 "Crash recovery: " + std::to_string(n) + " processing job(s) → pending");
         }
-        return Value((int)n);
+        return Value((int64_t)n);
     };
 
     // jobs::failed($queue [, $limit=100]) → alias for jobs::list($queue, "failed")

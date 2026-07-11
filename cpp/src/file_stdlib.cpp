@@ -41,17 +41,28 @@ static bool is_under_web_root(const std::string& path) {
     return it == wr_p.end();
 }
 
-// ── Path traversal guard ─────────────────────────────────────────────────────
-// LOOK_FILE_ROOT: restricts file:: operations to a directory subtree.
-// If unset: unrestricted (trusted server-side code — same as before).
-// If set: any path escaping the root throws 403.
+// ── Path traversal guard — GÜVENLİ VARSAYILAN ────────────────────────────────
+// file:: işlemleri bir dizin ağacına kısıtlanır (kullanıcı girdisiyle
+// `../../etc/passwd` okunmasını engeller). "PHP gibi dağıtılan ama Go gibi
+// düşünen" bir dilde varsayılan güvenli olmalı:
+//   • LOOK_FILE_ROOT set DEĞİLSE → çalışma dizinine (cwd) kısıtla (güvenli).
+//   • LOOK_FILE_ROOT=<yol>       → o dizine kısıtla (genişletme, opt-in).
+//   • LOOK_FILE_ROOT=*           → kısıtsız (açık opt-out; tüm sorumluluk sizde).
+// (İç modüller — session/cache/jobs — file:: kullanmaz, bu kısıttan etkilenmez.)
 static std::string get_file_root() {
     static std::string root = []() -> std::string {
         const char* r = std::getenv("LOOK_FILE_ROOT");
-        if (!r || !*r) return "";
+        if (r && std::string(r) == "*") return "";     // açık kısıtsız
+        std::string base;
+        if (r && *r) base = r;                          // kullanıcı kökü
+        else {                                          // VARSAYILAN: cwd
+            std::error_code ec;
+            base = fs::current_path(ec).string();
+            if (ec) return "";                          // cwd alınamadı → kısıtsız
+        }
         std::error_code ec;
-        auto p = fs::weakly_canonical(fs::path(r), ec);
-        return ec ? std::string(r) : p.string();
+        auto p = fs::weakly_canonical(fs::path(base), ec);
+        return ec ? base : p.string();
     }();
     return root;
 }
@@ -137,7 +148,7 @@ Module make_file_module() {
         std::error_code ec;
         auto sz = fs::file_size(path, ec);
         if (ec) throw std::runtime_error("file::size(): " + ec.message());
-        return Value((int)sz);
+        return Value((int64_t)sz);
     };
 
     // file::store(file_array, subdir) → assoc array {path, url, sha256}

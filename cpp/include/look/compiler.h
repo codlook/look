@@ -47,7 +47,23 @@ public:
     }
 
     void free(uint8_t r) {
-        if (r >= locals_end_) free_.push(r);
+        // Pinned (aktif local) register'lar havuza dönmez: compile_expr bir
+        // local'in slot'unu doğrudan döndürüp çağıran free_temp edince, o slot
+        // yanlışlıkla yeniden kullanılıp local'i bozardı (fonksiyon-local'ler
+        // temp aralığında olduğundan locals_end_ koruması yetmiyor).
+        if (r >= locals_end_ && !pinned_[r]) free_.push(r);
+    }
+
+    // Korumalı local slot ayır — free() bunu havuza atmaz (pop_scope'ta çözülür).
+    uint8_t alloc_local() {
+        uint8_t r = alloc();
+        pinned_[r] = true;
+        return r;
+    }
+    // Local scope'tan çıkınca: pin'i kaldır + register'ı havuza iade et.
+    void free_local(uint8_t r) {
+        pinned_[r] = false;
+        free(r);
     }
 
     // Allocate n consecutive registers from next_ (ignores free pool — guarantees contiguity)
@@ -72,6 +88,7 @@ private:
     uint8_t next_;
     uint8_t max_;
     std::stack<uint8_t> free_;
+    bool    pinned_[256] = {false};  // aktif local register'lar (free() atlar)
 };
 
 // ── LocalVar — lexical scope içindeki değişken ───────────────────────────────
@@ -94,7 +111,9 @@ struct CaptureInfo {
 struct LoopContext {
     std::vector<int> break_patches;
     std::vector<int> continue_patches;
-    int              continue_target; // loop başı IP
+    int              continue_target = -1; // loop başı IP
+    bool             is_switch = false;    // switch: break'i yakalar, continue'yu
+                                           // dıştaki döngüye geçirir (C semantiği)
 };
 
 // ── FunctionCompiler — tek fonksiyon/closure için ───────────────────────────
@@ -106,7 +125,8 @@ public:
                      bool variadic,
                      FunctionCompiler* parent = nullptr);
 
-    std::shared_ptr<FunctionProto> compile(const BlockStatement& body);
+    std::shared_ptr<FunctionProto> compile(const BlockStatement& body,
+        const std::vector<std::unique_ptr<Expression>>* defaults = nullptr);
     std::shared_ptr<FunctionProto> compile_stmts(const std::vector<std::unique_ptr<Statement>>& stmts);
 
 private:
@@ -170,7 +190,7 @@ private:
     int                              scope_depth_ = 0;
     std::vector<CaptureInfo>         captures_;  // use() listesi
 
-    std::stack<LoopContext>          loop_stack_;
+    std::vector<LoopContext>         loop_stack_;  // back() = en iç bağlam
 
     // iota state — const block içinde
     int                              iota_val_  = 0;

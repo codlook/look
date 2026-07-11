@@ -101,6 +101,7 @@ enum class OpCode : uint8_t {
     TRY_POP,         // catch_stack.pop()
     THROW,           // throw r[a]
     LOAD_EXC,        // r[a] = current_exception (catch bloğu başında)
+    LOAD_ARGC,       // r[a] = çağrıda sağlanan arg sayısı (varsayılan param prologue'u)
 
     // ── LOOK'a özgü ───────────────────────────────────────────────────────────
     PARALLEL_CALL,   // spawn thread: closure=r[a]     — fire and forget

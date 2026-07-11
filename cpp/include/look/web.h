@@ -61,6 +61,8 @@ struct WebContext {
     int status_code = 200;
     std::string status_text = "OK";
     std::map<std::string, std::string> headers_out;
+    std::vector<std::string> set_cookies_out;  // Set-Cookie: std::map tek anahtarı
+                                               // ezerdi; her çerez ayrı satır olur.
     std::string response_body;   // response::json/text/html tarafından set edilir
     bool headers_sent = false;
 

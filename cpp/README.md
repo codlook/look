@@ -46,7 +46,8 @@ docker rm look-tmp
 | `stdlib.cpp` | math::, string::, type::, array::, parallel:: |
 | `web.cpp` | route(), request::, response::, json::, session::, cookie:: |
 | `web_stdlib.cpp` | db::, auth::, validator::, html::, template::, cache::, queue::, jobs:: |
-| `extra_stdlib.cpp` | env(), config(), crypto::, mail::, http::, rate limiter |
+| `extra_stdlib.cpp` | env(), config(), crypto::, mail::, http::, look:: (kod-check), rate limiter |
+| `http_client.cpp` | HTTP/HTTPS istemci (Schannel/OpenSSL) — `http::stream` canlı akış dahil, sıfır bağımlılık |
 | `mysql_client.cpp` | MySQL/MariaDB wire protocol — sıfır bağımlılık |
 | `sqlite_client.cpp` | SQLite — sqlite3 amalgamation |
 | `postgres_client.cpp` | PostgreSQL wire protocol v3 |
@@ -67,5 +68,10 @@ look docs/test/test_lang_deep.lk   # 160 dil testi
 look docs/test/test_full.lk        # 177 modül testi
 look docs/test/test_db_full.lk     # 204 DB testi (MySQL+SQLite+PostgreSQL)
 ```
+
+## Yeni
+
+- **`http::stream($method,$url,$body,$headers,$callback[,$opts])`** — canlı streaming HTTP istemcisi. Body parçaları (chunked-decoded) geldikçe `$callback($chunk)` çağrılır. SSE / LLM token akışı için. `route("SSE")` + `channel()` ile eşleşir.
+- **`look::check($source)`** — LOOK kaynağını in-process doğrular (çalıştırmadan): `["ok"=>bool,"line"=>int,"col"=>int,"msg"=>string]`. `lk --check` ile aynı motor. LLM/editör araçları için.
 
 **v1.3.0** | Temmuz 2026

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <map>
+#include <vector>
 #include <functional>
 #include <memory>
 #include "look/event_loop.h"
@@ -31,6 +32,7 @@ struct HttpResponse {
     int status_code       = 200;
     std::string status_text = "OK";
     std::map<std::string, std::string> headers;
+    std::vector<std::string> set_cookies;  // her çerez ayrı Set-Cookie satırı
     std::string body;
     bool keep_alive = false;
 

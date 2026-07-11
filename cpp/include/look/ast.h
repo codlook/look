@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,8 +31,8 @@ struct StringLiteral final : Expression {
 };
 
 struct NumberLiteral final : Expression {
-    int value;
-    explicit NumberLiteral(int v) : value(v) {}
+    int64_t value;
+    explicit NumberLiteral(int64_t v) : value(v) {}
 };
 
 struct FloatLiteral final : Expression {
@@ -62,6 +63,7 @@ struct BlockStatement;
 // function($a, $b) use ($conn, $db) { ... }  — closure with explicit capture
 struct FunctionExpression final : Expression {
     std::vector<std::string> parameters;
+    std::vector<std::unique_ptr<Expression>> defaults;  // paralel; nullptr = varsayılan yok
     std::vector<std::string> captures;   // use ($conn, $db) listesi
     bool is_variadic = false;            // son param ...$args ise true
     std::unique_ptr<BlockStatement> body;
@@ -102,13 +104,17 @@ struct BinaryExpression final : Expression {
 struct AssignmentExpression final : Expression {
     std::string name;
     std::string op;
+    std::unique_ptr<Expression> object;  // nullable — zincirli lvalue container
+                                         // ($l.s.x → object=$l.s, index="x").
+                                         // set ise `name` kullanılmaz.
     std::unique_ptr<Expression> index;   // nullable — set for $arr[i] = ...
     std::unique_ptr<Expression> value;
     AssignmentExpression(std::string name, std::string op,
                          std::unique_ptr<Expression> val,
-                         std::unique_ptr<Expression> idx = nullptr)
+                         std::unique_ptr<Expression> idx = nullptr,
+                         std::unique_ptr<Expression> obj = nullptr)
         : name(std::move(name)), op(std::move(op)),
-          index(std::move(idx)), value(std::move(val)) {}
+          object(std::move(obj)), index(std::move(idx)), value(std::move(val)) {}
 };
 
 struct CallExpression final : Expression {
@@ -160,6 +166,11 @@ struct WriteStatement final : Statement {
 struct ReturnStatement final : Statement {
     std::unique_ptr<Expression> expression;
     explicit ReturnStatement(std::unique_ptr<Expression> e) : expression(std::move(e)) {}
+};
+
+struct ThrowStatement final : Statement {
+    std::unique_ptr<Expression> expression;   // fırlatılan değer (string, error::new, vb.)
+    explicit ThrowStatement(std::unique_ptr<Expression> e) : expression(std::move(e)) {}
 };
 
 struct BreakStatement    final : Statement {};
@@ -277,6 +288,7 @@ struct ConstBlock final : Statement {
 struct FunctionDeclaration final : Statement {
     std::string name;
     std::vector<std::string> parameters;
+    std::vector<std::unique_ptr<Expression>> defaults;  // paralel; nullptr = varsayılan yok
     bool is_variadic = false;            // son param ...$args ise true
     std::unique_ptr<BlockStatement> body;
     FunctionDeclaration(std::string name, std::vector<std::string> params, bool variadic, std::unique_ptr<BlockStatement> body)

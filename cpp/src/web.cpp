@@ -395,10 +395,19 @@ std::string WebContext::build_headers() const {
     std::string out = "Status: " + std::to_string(status_code) + " " + status_text + "\r\n";
     // Content-Type default
     bool has_ct = false;
+    // Defense-in-depth: CR/LF içeren header adı/değerini yaz — response splitting
+    // engellenir (giriş katmanı da sanitize eder; bu son savunma hattı).
+    auto strip_crlf = [](const std::string& s) {
+        size_t cut = s.find_first_of("\r\n");
+        return cut == std::string::npos ? s : s.substr(0, cut);
+    };
     for (auto& [k, v] : headers_out) {
-        out += k + ": " + v + "\r\n";
+        out += strip_crlf(k) + ": " + strip_crlf(v) + "\r\n";
         if (k == "Content-Type") has_ct = true;
     }
+    // Her çerez ayrı Set-Cookie satırı (std::map birden fazla aynı-anahtarı tutamaz)
+    for (auto& c : set_cookies_out)
+        out += "Set-Cookie: " + strip_crlf(c) + "\r\n";
     if (!has_ct)
         out += "Content-Type: text/html; charset=utf-8\r\n";
     out += "\r\n";

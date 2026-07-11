@@ -156,20 +156,19 @@ WsFrame ws_try_decode_frame(const std::string& buf) {
         if (plen > WS_MAX_FRAME) { f.complete = false; f.consumed = 0; return f; }
     }
 
-    if (masked) {
-        if (buf.size() < pos + 4 + plen) return f;
-        uint8_t mask[4] = {
-            (uint8_t)buf[pos], (uint8_t)buf[pos+1],
-            (uint8_t)buf[pos+2], (uint8_t)buf[pos+3]
-        };
-        pos += 4;
-        f.payload.resize(plen);
-        for (size_t i = 0; i < plen; i++)
-            f.payload[i] = (char)((uint8_t)buf[pos+i] ^ mask[i % 4]);
-    } else {
-        if (buf.size() < pos + plen) return f;
-        f.payload  = buf.substr(pos, plen);
-    }
+    // RFC 6455 §5.1: client→server frame'leri MUTLAKA maskeli olmalı. Maskesiz
+    // frame gelirse sunucu bağlantıyı 1002 (protocol error) ile kapatmalı —
+    // cache poisoning / proxy zehirlenmesi savunması. Sessizce kabul edilmez.
+    if (!masked) { f.protocol_error = true; return f; }
+    if (buf.size() < pos + 4 + plen) return f;
+    uint8_t mask[4] = {
+        (uint8_t)buf[pos], (uint8_t)buf[pos+1],
+        (uint8_t)buf[pos+2], (uint8_t)buf[pos+3]
+    };
+    pos += 4;
+    f.payload.resize(plen);
+    for (size_t i = 0; i < plen; i++)
+        f.payload[i] = (char)((uint8_t)buf[pos+i] ^ mask[i % 4]);
 
     f.consumed = pos + plen;
     f.complete  = true;

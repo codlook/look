@@ -8,6 +8,7 @@
 
 #include "look/builtins.h"
 #include "look/http_server.h"
+#include <algorithm>
 #include "look/db_async_pool.h"
 #include "look/lexer.h"
 #include "look/parser.h"
@@ -374,7 +375,7 @@ static void run_setup_http(const fs::path& script) {
             // int (6)
             setup_builtins[6] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value(0);
-                try { return look::Value((int)std::stoll(args[0].to_string())); }
+                try { return look::Value((int64_t)std::stoll(args[0].to_string())); }
                 catch (...) { return look::Value(0); }
             };
             // float (7)
@@ -507,6 +508,61 @@ static void run_setup_http(const fs::path& script) {
                 if (idx >= 0 && f) setup_builtins[idx] = [f](std::vector<look::Value>& args) -> look::Value {
                     std::vector<look::Value> a = args; return f(a);
                 };
+            }
+
+            // ── Boş slot güvenlik ağı — VM'in sessizce devre dışı kalmasını önler ──
+            // Setup fazında, yukarıda açıkça bağlanmamış herhangi bir builtin
+            // çağrılırsa (örn. db::exec, crypto::uuid, json::encode), boş bir
+            // std::function çağrılır → std::bad_function_call → catch → tüm VM
+            // devre dışı → en yaygın kalıpta (setup'ta DB) VM sessizce kapanırdı.
+            // Çözüm: kalan tüm slotları doldur.
+            //   • Yan etkili modüller (db yazma, http, mail, queue, jobs, cache,
+            //     ws, sse) → NO-OP: interpreter setup'ı (satır ~285) bu yan
+            //     etkileri ZATEN çalıştırdı; VM tekrarında ikinci kez çalışması
+            //     çift INSERT / çift istek / "table exists" hatası yapardı.
+            //   • Saf fonksiyonlar (string, json, crypto, math, date…) →
+            //     interpreter'a fallback (gerçek değer döner; dinamik route
+            //     path'i bunlara dayanırsa VM route'u interpreter'la eşleşir).
+            {
+                const auto& bnames = look::builtin_names();
+                auto starts_with = [](const std::string& s, const char* p) {
+                    return s.rfind(p, 0) == 0;
+                };
+                auto is_side_effect = [&](const std::string& n) {
+                    // db::connect hariç db:: yan etkilidir (setup'ta zaten çalıştı)
+                    if (starts_with(n, "db::")) return n != "db::connect";
+                    return starts_with(n, "http::") || starts_with(n, "mail::") ||
+                           starts_with(n, "queue::") || starts_with(n, "jobs::") ||
+                           starts_with(n, "cache::") || starts_with(n, "ws::") ||
+                           starts_with(n, "sse::");
+                };
+                for (size_t i = 0; i < setup_builtins.size() && i < bnames.size(); ++i) {
+                    if (setup_builtins[i]) continue;           // zaten bağlı
+                    const std::string& name = bnames[i];
+                    if (is_side_effect(name)) {
+                        setup_builtins[i] = [](std::vector<look::Value>&) -> look::Value {
+                            return look::Value();              // setup'ta no-op
+                        };
+                        continue;
+                    }
+                    auto colon = name.find("::");
+                    if (colon != std::string::npos) {
+                        std::string mod = name.substr(0, colon);
+                        std::string fn  = name.substr(colon + 2);
+                        auto f = g_http_app.interp->get_module_fn(mod, fn);
+                        if (f) {
+                            setup_builtins[i] = [f](std::vector<look::Value>& args) -> look::Value {
+                                std::vector<look::Value> a = args;
+                                return f(a);
+                            };
+                            continue;
+                        }
+                    }
+                    // Modülsüz veya bulunamayan builtin → güvenli no-op (crash yerine)
+                    setup_builtins[i] = [](std::vector<look::Value>&) -> look::Value {
+                        return look::Value();
+                    };
+                }
             }
 
             look::VM::SharedState setup_sh;
@@ -724,6 +780,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
     resp.status_code = web.status_code;
     resp.status_text = web.status_text;
     for (auto& [k, v] : web.headers_out) resp.headers[k] = v;
+    resp.set_cookies = web.set_cookies_out;   // her çerez ayrı Set-Cookie satırı
     resp.body = web.response_body.empty() ? output.str() : web.response_body;
 
     // Content-Type default
@@ -775,6 +832,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     vr.middlewares.push_back(mw.as_bytecode_fn().get());
             route_closures.push_back(std::move(vr));
         }
+        // Statik route'ları ({param} içermeyenler) dinamiklerden ÖNCE sırala:
+        // /user/new, /user/{id}'den önce eşleşsin (kayıt sırasından bağımsız,
+        // deterministik routing). stable_partition grup-içi sırayı korur.
+        std::stable_partition(route_closures.begin(), route_closures.end(),
+            [](const look::VmRoute& r){ return r.pattern.find('{') == std::string::npos; });
         sl.unlock();
 
         // Per-request builtins: module fonksiyonları interpreter copy'den alınır

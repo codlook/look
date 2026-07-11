@@ -133,7 +133,7 @@ static Value parse_rhs(const std::string& rhs, const TplContext& ctx) {
         return Value(r.substr(1, r.size() - 2));
     if (!r.empty() && r[0] == '$')
         return TemplateEngine::resolve(r.substr(1), ctx);
-    try { return Value((int)std::stoll(r)); } catch (...) {}
+    try { return Value((int64_t)std::stoll(r)); } catch (...) {}
     try { return Value(std::stod(r)); }        catch (...) {}
     return Value(r);
 }

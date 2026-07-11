@@ -16,6 +16,11 @@ private:
     std::vector<Token> tokens_;
     size_t current_ = 0;
     int    scope_depth_ = 0;  // fonksiyon iç içeliği — use "file" top-level guard için
+    int    expr_depth_  = 0;  // ifade özyineleme derinliği — derin iç içe paren/array
+                              // parser'ın recursive-descent yığınını taşırıp SIGSEGV
+                              // yapmasını engeller (JSON parser'daki koruma gibi).
+    int    stmt_depth_  = 0;  // statement/blok iç içeliği — derin iç içe {}/if/while
+                              // aynı stack-taşma riskini taşır; ayrı sayaçla korunur.
 
     // Statements
     std::unique_ptr<Statement>      statement();
@@ -28,6 +33,7 @@ private:
     std::unique_ptr<Statement>      foreach_statement();
     std::unique_ptr<Statement>      function_declaration();
     std::unique_ptr<Statement>      return_statement();
+    std::unique_ptr<Statement>      throw_statement();
     std::unique_ptr<Statement>      use_statement();
     std::unique_ptr<Statement>      try_statement();
     std::unique_ptr<Statement>      switch_statement();
