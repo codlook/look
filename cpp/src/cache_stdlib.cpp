@@ -1,6 +1,7 @@
 // cache_stdlib.cpp — cache:: module (in-memory, TTL, thread-safe warm start)
 #include "look/cache.h"
 #include <algorithm>
+#include <cstdlib>
 
 namespace look {
 
@@ -24,8 +25,29 @@ void CacheStore::evict_expired_locked() {
     }
 }
 
+// Girdi tavanı — sınırsız büyümeyi (saldırgan-etkili anahtarlarla OOM DoS)
+// engeller. LOOK_CACHE_MAX_ENTRIES ile ayarlanır, varsayılan 100k.
+// (Aynı kod tabanında SSE/WS/Redis/JSON/SMTP tavanlarıyla tutarlı.)
+static size_t cache_max_entries() {
+    static const size_t v = []() -> size_t {
+        const char* e = std::getenv("LOOK_CACHE_MAX_ENTRIES");
+        if (e && *e) { long long n = std::atoll(e); if (n > 0) return (size_t)n; }
+        return 100000;
+    }();
+    return v;
+}
+
 void CacheStore::set(const std::string& key, Value val, int ttl_seconds) {
     std::lock_guard<std::mutex> lk(mtx_);
+    // Yeni anahtar tavanı aşıyorsa: önce süresi dolanları at; hâlâ doluysa
+    // rastgele eviction (Redis allkeys-random benzeri) — bellek sınırlı kalır.
+    // (Var olan anahtarın güncellenmesi büyümediği için kapıya takılmaz.)
+    if (store_.find(key) == store_.end()) {
+        size_t cap = cache_max_entries();
+        if (store_.size() >= cap) evict_expired_locked();
+        while (store_.size() >= cap && !store_.empty())
+            store_.erase(store_.begin());
+    }
     CacheEntry e;
     e.value   = std::move(val);
     e.has_ttl = (ttl_seconds > 0);
