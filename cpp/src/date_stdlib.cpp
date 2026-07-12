@@ -1,4 +1,5 @@
 #include "look/stdlib.h"
+#include <cstdint>
 #include <stdexcept>
 #include <ctime>
 #include <sstream>

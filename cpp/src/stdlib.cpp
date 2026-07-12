@@ -1,6 +1,7 @@
 #include "look/stdlib.h"
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
+#include <cstdint>
 #include <cmath>
 #include <algorithm>
 #include <sstream>

@@ -1,6 +1,7 @@
 #include "look/stdlib.h"
 #include "look/interpreter.h"
 #include "look/logger.h"
+#include <cstdint>
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/ast.h"

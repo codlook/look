@@ -1,5 +1,6 @@
 #include "look/stdlib.h"
 #include "look/web.h"
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>

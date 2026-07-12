@@ -1,5 +1,6 @@
 #include "look/lexer.h"
 #include <cctype>
+#include <cstdint>
 #include <unordered_map>
 #include <stdexcept>
 
