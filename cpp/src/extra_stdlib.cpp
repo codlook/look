@@ -469,13 +469,19 @@ Module make_array_module(Interpreter* interp) {
         if (args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::slice() requires array");
         auto& src = *args[0].as_array();
-        int offset = args.size() >= 2 ? args[1].to_int() : 0;
-        int length = args.size() >= 3 ? args[2].to_int() : (int)src.size();
-        if (offset < 0) offset = (int)src.size() + offset;
-        if (offset > (int)src.size()) offset = (int)src.size();
-        int end = offset + length;
-        if (end > (int)src.size()) end = (int)src.size();
-        auto result = std::make_shared<std::vector<Value>>(src.begin() + offset, src.begin() + end);
+        int64_t n = (int64_t)src.size();
+        int64_t offset = args.size() >= 2 ? (int64_t)args[1].to_int() : 0;
+        int64_t length = args.size() >= 3 ? (int64_t)args[2].to_int() : n;
+        if (offset < 0) offset = n + offset;
+        // -n'den daha negatif offset → tekrar clamp yoksa `begin()+negatif` OOB
+        // (segfault). Negatif length → end<offset geçersiz iterator aralığı.
+        if (offset < 0) offset = 0;
+        if (offset > n) offset = n;
+        if (length < 0) length = 0;
+        int64_t end = offset + length;
+        if (end > n) end = n;                 // end ∈ [offset, n] garantili
+        auto result = std::make_shared<std::vector<Value>>(
+            src.begin() + offset, src.begin() + end);
         return Value(result);
     };
 
