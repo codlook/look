@@ -99,13 +99,20 @@ static Module make_math() {
     m.functions["random"] = [](auto args) -> Value {
         if (args.size() == 2) {
             int lo = args[0].to_int(), hi = args[1].to_int();
+            // hi < lo → aralık boyutu ≤0; `rand() % 0` tamsayı sıfıra bölme
+            // (SIGFPE crash), negatif aralık ise tanımsız modulus. Net hata ver.
+            if (hi < lo) throw std::runtime_error("math::random: hi < lo (geçersiz aralık)");
             return Value(lo + std::rand() % (hi - lo + 1));
         }
         return Value((double)std::rand() / RAND_MAX);
     };
     m.functions["log"] = [](auto args) {
         check_args("math::log", args.size(), 1);
-        return Value(std::log(args[0].to_float()));
+        double x = args[0].to_float();
+        // x ≤ 0 → log(0)=-Inf, log(negatif)=NaN. sqrt gibi net hata ver — aksi
+        // halde NaN/Inf sonradan JSON'a girip geçersiz JSON üretir.
+        if (x <= 0) throw std::runtime_error("math::log: pozitif olmayan sayının logaritması tanımsız");
+        return Value(std::log(x));
     };
     m.functions["sin"] = [](auto args) {
         check_args("math::sin", args.size(), 1);
