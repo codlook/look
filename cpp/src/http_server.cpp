@@ -570,11 +570,41 @@ struct HttpServer::Impl {
                 if (it != ws_bufs.end()) it->second.erase(0, frame.consumed);
             }
 
-            if (frame.opcode == 0x01 || frame.opcode == 0x02) {
+            // RFC 6455 §5.4 parça birleştirme + §5.1 protokol ihlallerinde 1002.
+            auto ws_deliver = [&](const std::string& msg) {
                 if (conn->on_message) {
-                    auto cb  = conn->on_message;
-                    auto msg = frame.payload;
+                    auto cb = conn->on_message;
                     pool->submit([cb, msg]() { cb(msg); });
+                }
+            };
+            auto ws_proto_close = [&]() {
+                std::string cf = ws_encode_close_frame();
+                { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
+                conn->closed.store(true);
+            };
+
+            uint8_t op = frame.opcode;
+            if (op == 0x00 || op == 0x01 || op == 0x02) {
+                // Birleştirilmiş mesaj tavanı — parça yığma DoS'una karşı.
+                static constexpr size_t WS_MAX_MESSAGE = 16 * 1024 * 1024;
+                if (op == 0x00) {
+                    // Continuation — aktif bir parçalı mesaj olmalı (RFC §5.4).
+                    if (!conn->frag_active) { ws_proto_close(); break; }
+                    conn->frag_buf += frame.payload;
+                } else {
+                    // Yeni text/binary — önceki parça bitmeden yenisi başlayamaz.
+                    if (conn->frag_active) { ws_proto_close(); break; }
+                    if (frame.fin) { ws_deliver(frame.payload); continue; }  // tek-frame
+                    conn->frag_active = true;
+                    conn->frag_opcode = op;
+                    conn->frag_buf    = frame.payload;
+                }
+                if (conn->frag_buf.size() > WS_MAX_MESSAGE) { ws_proto_close(); break; }
+                if (frame.fin) {                       // parçalı mesaj tamamlandı
+                    std::string msg = std::move(conn->frag_buf);
+                    conn->frag_buf.clear();
+                    conn->frag_active = false;
+                    ws_deliver(msg);
                 }
             } else if (frame.opcode == 0x09) {
                 std::string pong = ws_encode_pong_frame(frame.payload);

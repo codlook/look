@@ -122,9 +122,14 @@ std::string ws_encode_close_frame() {
 
 std::string ws_encode_pong_frame(const std::string& payload) {
     std::string f;
+    // RFC 6455 §5.5: kontrol frame payload'u ≤125 bayt. Decoder zaten aşırı boy
+    // ping'i reddediyor ama savunma amaçlı burada da kısıtla — aksi halde
+    // uzunluk baytı (7-bit) gerçek gövdeyle uyuşmayıp wire'ı desync ederdi.
+    size_t n = payload.size();
+    if (n > 125) n = 125;
     f += (char)0x8A;  // FIN + pong
-    f += (char)(payload.size() & 0x7F);
-    f += payload;
+    f += (char)(n & 0x7F);
+    f.append(payload.data(), n);
     return f;
 }
 
@@ -154,6 +159,15 @@ WsFrame ws_try_decode_frame(const std::string& buf) {
         // RFC 6455 §5.2: sunucu 16 MB'ı aşan frame'leri reddeder
         static constexpr size_t WS_MAX_FRAME = 16 * 1024 * 1024;
         if (plen > WS_MAX_FRAME) { f.complete = false; f.consumed = 0; return f; }
+    }
+
+    // RFC 6455 §5.5: kontrol frame'leri (close 0x8 / ping 0x9 / pong 0xA) ≤125
+    // bayt olmalı ve parçalanamaz (FIN=1). Aşırı boy/parçalı kontrol frame →
+    // protokol hatası. (Aksi halde >125 ping'e üretilecek pong'un 7-bit uzunluğu
+    // taşıp wire'ı desync ederdi.)
+    if ((f.opcode & 0x08) != 0 && (plen > 125 || !f.fin)) {
+        f.protocol_error = true;
+        return f;
     }
 
     // RFC 6455 §5.1: client→server frame'leri MUTLAKA maskeli olmalı. Maskesiz

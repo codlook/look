@@ -23,6 +23,12 @@ struct WsConnection {
     std::function<void(const std::string&)> on_message;
     std::function<void()>                   on_close;
 
+    // Parça birleştirme durumu (RFC 6455 §5.4) — sadece tek-akışlı ws okuma
+    // callback'inden erişilir (fd başına tek in-flight recv), kilit gerekmez.
+    std::string frag_buf;
+    uint8_t     frag_opcode = 0;
+    bool        frag_active = false;
+
     explicit WsConnection(int fd_, std::string ip = "")
         : fd(fd_), client_ip(std::move(ip)) {}
 
