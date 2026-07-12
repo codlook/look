@@ -868,9 +868,21 @@ struct SmtpServer::Impl {
         // Line-by-line processing from accumulated buffer.
         // Handles ".\r\n" split across chunks correctly: we only extract a line
         // when '\n' is present in buf — partial lines stay in buf until next read.
+        // RFC 5321 §4.5.3.1: satır uzunluğu sınırlıdır. Newline gelmeden buf'ın
+        // sınırsız büyümesi = kimlik doğrulamasız OOM DoS. Tek satır tavanı 64 KB
+        // (meşru uzun başlık/base64 satırlarına bol gelir; RFC min. 1000 oktet).
+        static constexpr size_t SMTP_LINE_MAX = 64 * 1024;
+
         while (true) {
             size_t nl = sess->buf.find('\n');
-            if (nl == std::string::npos) break;
+            if (nl == std::string::npos) {
+                if (sess->buf.size() > SMTP_LINE_MAX) {
+                    send_reply(fd, sess, "500 5.5.2 Line too long\r\n",
+                               [this, fd]{ close_session(fd); });
+                    return;
+                }
+                break;
+            }
 
             std::string line = sess->buf.substr(0, nl);
             sess->buf.erase(0, nl + 1);
