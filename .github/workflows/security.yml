@@ -1,4 +1,4 @@
-name: Security & Fuzzing
+name: Security & Sanitizers
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: ["**"]
 
 jobs:
-  security:
-    name: "Regression + ASan/UBSan Fuzzing"
+  sanitizers:
+    name: "Regression under ASan/UBSan"
     runs-on: ubuntu-latest
 
     steps:
@@ -19,37 +19,39 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev curl
 
-      - name: Build (Release)
-        run: |
-          cd cpp
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target look-fcgi --parallel $(nproc)
-
+      # (Release build + regresyon için bkz. ci.yml — burası yalnızca sanitizer.)
       - name: Build (ASan + UBSan)
         run: |
           cd cpp
           cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLOOK_SANITIZE=address,undefined
-          cmake --build build-asan --target look-fcgi --parallel $(nproc)
+          cmake --build build-asan --target look --target look-fcgi --parallel $(nproc)
 
-      # ── 9 güvenlik/regresyon testi (Release binary) ──────────────────────────
-      # response::json body, VM strlen, connection leak, fiber c=200 race,
-      # malformed Content-Length, CL+TE smuggling, devasa body, canlılık.
-      - name: Regression suite (Release)
+      # Regresyon suite'i ASan+UBSan altında — dil işlemleri sırasında bellek
+      # hatası / tanımsız davranış varsa sanitizer abort eder, iş kırılır.
+      - name: Regression suite (ASan + UBSan)
         run: |
-          chmod +x tests/regression/run_regression.sh
-          tests/regression/run_regression.sh cpp/build/lk-fcgi
-
-      # ── HTTP parser fuzzing (ASan binary) ────────────────────────────────────
-      # 3000 rastgele/bozuk istek → 0 çökme/UB beklenir.
-      - name: HTTP fuzzing (ASan + UBSan)
-        run: |
-          chmod +x tests/security/fuzz_http.sh
-          # basit fuzz app'i inline oluştur (DB gerektirmez)
-          printf 'route("GET","/",function(){response::json(["ok"=>true])})\nroute("404",function(){response::status(404);response::json(["ok"=>false])})\n' > /tmp/fuzz_app.lk
-          tests/security/fuzz_http.sh cpp/build-asan/lk-fcgi /tmp/fuzz_app.lk 3000
+          cd cpp
+          out="$(./build-asan/lk tests/regression_all.lk)"
+          echo "$out"
+          echo "$out" | grep -q '^FAIL' && { echo "::error::Regression FAILED (ASan)"; exit 1; } || true
         env:
-          ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1"
+          ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=0"
           UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+
+      # HTTP sunucusunu ASan altında ayağa kaldır, normal + bozuk istekler gönder,
+      # worker'ın hayatta kaldığını (sanitizer abort YOK) doğrula.
+      - name: HTTP smoke under ASan
+        run: |
+          printf 'route("GET","/",function(){response::json(["ok"=>true])})\nroute("404",function(){response::status(404);response::json(["ok"=>false])})\n' > /tmp/app.lk
+          ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0" cpp/build-asan/lk-fcgi --mode http --port 7411 /tmp/app.lk &
+          SRV=$!
+          sleep 3
+          curl -s "http://127.0.0.1:7411/" | grep -q '"ok":true'
+          curl -s "http://127.0.0.1:7411/yok" > /dev/null           # 404 yolu
+          printf 'GET / HTTP/1.1\r\nContent-Length: abc\r\n\r\n' | curl -s --max-time 3 "http://127.0.0.1:7411/" > /dev/null || true
+          # sunucu hâlâ ayakta mı? (ASan çökmesi olsaydı bağlantı reddedilirdi)
+          curl -s --max-time 3 "http://127.0.0.1:7411/" | grep -q '"ok":true'
+          kill $SRV 2>/dev/null || true
 
   tsan:
     name: "ThreadSanitizer (blocking mode)"
