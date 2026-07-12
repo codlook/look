@@ -146,14 +146,24 @@ ParsedUrl parse_url(const std::string& url) {
 
 // ── Request builder ───────────────────────────────────────────────────────────
 
+// CRLF sıyırma — giden isteğe request-splitting / header injection engeli.
+// Kullanıcı-kontrollü URL yolu, host veya header değeri \r\n içerirse sahte
+// header ya da istek sınırı enjekte edemesin (sunucu tarafı response header'da
+// aynı savunmayı yapıyor; client de aynı disiplini uygular).
+static std::string hc_strip_crlf(const std::string& s) {
+    std::string r; r.reserve(s.size());
+    for (char c : s) if (c != '\r' && c != '\n') r += c;
+    return r;
+}
+
 static std::string build_request(const std::string& method,
                                   const ParsedUrl& url,
                                   const std::string& body,
                                   const std::map<std::string, std::string>& extra_headers)
 {
     std::ostringstream req;
-    req << method << " " << url.path << " HTTP/1.1\r\n";
-    req << "Host: " << url.host;
+    req << hc_strip_crlf(method) << " " << hc_strip_crlf(url.path) << " HTTP/1.1\r\n";
+    req << "Host: " << hc_strip_crlf(url.host);
     if ((url.tls && url.port != 443) || (!url.tls && url.port != 80))
         req << ":" << url.port;
     req << "\r\n";
@@ -162,7 +172,7 @@ static std::string build_request(const std::string& method,
     req << "Accept: */*\r\n";
 
     for (auto& [k, v] : extra_headers)
-        req << k << ": " << v << "\r\n";
+        req << hc_strip_crlf(k) << ": " << hc_strip_crlf(v) << "\r\n";
 
     if (!body.empty()) {
         req << "Content-Length: " << body.size() << "\r\n";
