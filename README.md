@@ -1,10 +1,9 @@
 # LOOK
 
-**LOOK** is a fast, **zero-dependency** web scripting language written in C++23.
-It is designed for the web: routing, databases, sessions, JWT, validation,
-caching, a mail server, WebSockets and SSE all ship **inside the language** and
-compile to a single self-contained binary. No framework to set up, no package
-tree, no separate runtime.
+**LOOK** is a fast web scripting language written in C++23. It is designed for
+the web: routing, databases, sessions, JWT, validation, caching, a mail server,
+WebSockets and SSE all ship **inside the language**. No framework to set up, no
+separate runtime — write a `.lk` file and run it.
 
 ```lk
 use jwt
@@ -37,13 +36,13 @@ route("404", fn() => response::error(404, "Not found"))
 
 ## Why LOOK
 
-- 🪶 **Zero dependency** — one static binary. Copy it to a VPS, systemd, Plesk or
-  XAMPP and run. No `composer`/`npm`, no dependency tree, no surprises.
+- 🪶 **Simple to deploy** — a single binary. Copy it to a VPS, systemd, Plesk or
+  XAMPP and run — no `composer`/`npm` install step, no package tree.
 - ⚡ **Fast** — FastCGI warm start; **~9,800 req/s** direct port, **28 MB RAM steady
   over 1M+ requests** (no leak).
 - 🔋 **Batteries included** — MySQL / PostgreSQL / SQLite, sessions, JWT, cache,
   queue, background jobs, an embedded **SMTP + IMAP** mail server, WebSocket & SSE —
-  all built in, zero third-party libraries.
+  all built in.
 - 🧩 **Ergonomic** — `fn() => …` arrows, `$row.col` access, `module::method`,
   no required semicolons.
 
@@ -70,7 +69,7 @@ cmake --build cpp/build -j
 ```
 
 Requires a C++23 compiler and CMake 3.20+. OpenSSL is used for TLS; the release
-binaries bundle it statically for a truly dependency-free build.
+binaries bundle it statically, so the result is a single self-contained binary.
 
 ## Install (prebuilt)
 
@@ -98,9 +97,9 @@ This repository is **the LOOK language core** only. Everything else lives on its
 
 ## Security
 
-See [SECURITY.md](SECURITY.md). Zero third-party dependencies mean the entire
-attack surface is auditable; parsers are hardened and fuzzed (ASan/UBSan/TSan),
-with regression tests run on every build.
+See [SECURITY.md](SECURITY.md). The protocol parsers are our own code and kept
+in one place, so the attack surface is auditable; parsers are hardened and fuzzed
+(ASan/UBSan/TSan), with regression tests run on every build.
 
 ## License
 

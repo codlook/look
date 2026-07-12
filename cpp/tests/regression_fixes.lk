@@ -1,0 +1,26 @@
+use string
+
+# ── int64 sayısal model ──────────────────────────────────────────
+print("--- int64 ---")
+print(5551234567)              # telefon: 5551234567 (eski: 5.55123e+09)
+print(9007199254740993)        # büyük int: tam (eski: 9.0072e+15)
+print(1 << 40)                 # 1099511627776 (eski: 0)
+print(1 << 62)                 # 4611686018427387904
+print(2000000000 + 2000000000) # 4000000000 (int, taşma yok)
+print(1000000 * 1000000)       # 1000000000000
+
+# ── float formatı (round-trip, bilimsel gösterim yok) ────────────
+print("--- float ---")
+print(10 / 3)                  # 3.3333333333333335
+print(123456789.123)           # 123456789.123 (eski: 1.23457e+08)
+print(0.1 + 0.2)               # 0.30000000000000004
+
+# ── UTF-8 string ─────────────────────────────────────────────────
+print("--- utf8 ---")
+print(string::len("İstanbul"))   # 8 (eski: 9)
+print(string::len("çğıöşü"))     # 6 (eski: 12)
+print(string::upper("çayır"))    # ÇAYIR
+print(string::lower("İSTANBUL")) # istanbul
+print(string::upper("istanbul")) # ISTANBUL (locale-bağımsız, i→I)
+print(string::reverse("abç"))    # çba
+print(string::substr("çğüş", 0, 2)) # çğ

@@ -14,10 +14,10 @@ Supported version: the latest release on the `main` branch.
 
 ## Security posture
 
-LOOK has **zero third-party dependencies** — every protocol parser (HTTP, RESP2,
-MySQL/PostgreSQL wire, SMTP, IMAP, JSON) is our own code, so the entire attack
-surface is auditable and hardened in one place. Defense is layered: manual review
-+ fuzzing (ASan / UBSan / TSan) + regression tests run on every build + CI.
+Every protocol parser (HTTP, RESP2, MySQL/PostgreSQL wire, SMTP, IMAP, JSON) is
+our own code kept in one place, so the attack surface is auditable and hardened
+in a single spot. Defense is layered: manual review + fuzzing (ASan / UBSan /
+TSan) + regression tests run on every build + CI.
 
 ### Hardened against
 

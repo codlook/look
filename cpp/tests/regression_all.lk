@@ -1,0 +1,74 @@
+# LOOK — kapsamlı regresyon suite (analizcinin 8 turdaki bulguları)
+# Çalıştır: lk tests/regression_all.lk   (interpreter yolu)
+# VM yolu için: bu fonksiyonları bir route içinde çağır (aşağıda not).
+use string
+use json
+
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+
+# ── #1/#2/#3/#5/#6 int64 (tek kök neden) ──
+chk("int64 phone",        5551234567, 5551234567)
+chk("int64 big",          9007199254740993, 9007199254740993)
+chk("shift 1<<40",        1 << 40, 1099511627776)
+chk("json int64",         json::decode("{\"id\":5551234567}")["id"], 5551234567)
+
+# ── #4 + #31 float format + bilimsel literal round-trip ──
+chk("float roundtrip",    123456789.123, 123456789.123)
+chk("sci literal",        1e3, 1000)
+chk("sci roundtrip eq",   1e20 == 100000000000000000000, true)
+
+# ── #30 hex/binary/underscore ──
+chk("hex",                0xFF, 255)
+chk("binary",             0b1010, 10)
+chk("underscore",         1_000_000, 1000000)
+
+# ── #8/#9/#10 UTF-8 ──
+chk("utf8 len",           string::len("İstanbul"), 8)
+chk("utf8 upper",         string::upper("cafe"), "CAFE")
+chk("utf8 reverse",       string::reverse("abc"), "cba")
+chk("json unicode",       json::decode("{\"m\":\"\\u011f\"}")["m"], "ğ")
+
+# ── #26 == katı model (Go/Python) ──
+chk("eq num==float",      1 == 1.0, true)
+chk("eq footgun off",     0 == "abc", false)
+chk("eq no coerce",       "5" == 5, false)
+chk("eq string",          "x" == "x", true)
+chk("eq null",            null == null, true)
+
+# ── #23 switch-break (döngü içinde) ──
+$sw = ""
+for ($i = 0; $i < 4; $i = $i + 1) {
+    switch ($i) { case 1: $sw = $sw . "B"; break; default: $sw = $sw . $i }
+}
+chk("switch-break",       $sw, "0B23")
+
+# ── #24 zincirli lvalue ──
+$arr = [[1, 2], [3, 4]]
+$arr[0][1] = 99
+chk("chained lvalue",     $arr[0][1], 99)
+
+# ── #21 fonksiyon scope izolasyonu ──
+$gv = 100
+function noleak() { $gv = 999 }
+noleak()
+chk("scope no-leak",      $gv, 100)
+
+# ── #28 throw ──
+$err = "yok"
+try { throw "hata!" } catch ($e) { $err = $e }
+chk("throw string",       $err, "hata!")
+
+# ── #29 varsayılan parametre ──
+function box($w, $h = 10) { return $w . "x" . $h }
+chk("default param",      box(5), "5x10")
+chk("default override",   box(5, 20), "5x20")
+
+# ── #16 JSON decode derinlik DoS (temiz null, hang yok) ──
+$deep = "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["
+chk("json depth DoS null", json::decode($deep) == null, true)
+
+print("")
+print("=== interpreter yolu tamam ===")

@@ -1,0 +1,42 @@
+name: CI — Build & Regression
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build-and-test:
+    name: "Clean Linux build + regression suite"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev
+
+      # Temiz bir GCC/Linux ortamında derleme — portability regresyonlarını
+      # (ör. eksik <cstdint>) burada yakalar; MSVC'nin transitive include'ları
+      # gizleyebildiği sorunlar CI'da ortaya çıkar.
+      - name: Build lk + lk-fcgi (Release)
+        run: |
+          cd cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target look --target look-fcgi --parallel $(nproc)
+
+      # Interpreter regresyon suite — assertion dosyası "OK/FAIL" basar.
+      # Herhangi bir FAIL satırı işi kırar.
+      - name: Regression suite (interpreter)
+        run: |
+          cd cpp
+          out="$(./build/lk tests/regression_all.lk)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL'; then
+            echo "::error::Regression FAILED"
+            exit 1
+          fi
+          echo "All assertions passed."

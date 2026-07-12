@@ -47,8 +47,8 @@ docker rm look-tmp
 | `web.cpp` | route(), request::, response::, json::, session::, cookie:: |
 | `web_stdlib.cpp` | db::, auth::, validator::, html::, template::, cache::, queue::, jobs:: |
 | `extra_stdlib.cpp` | env(), config(), crypto::, mail::, http::, look:: (kod-check), rate limiter |
-| `http_client.cpp` | HTTP/HTTPS istemci (Schannel/OpenSSL) — `http::stream` canlı akış dahil, sıfır bağımlılık |
-| `mysql_client.cpp` | MySQL/MariaDB wire protocol — sıfır bağımlılık |
+| `http_client.cpp` | HTTP/HTTPS istemci (Schannel/OpenSSL) — `http::stream` canlı akış dahil |
+| `mysql_client.cpp` | MySQL/MariaDB wire protocol istemcisi |
 | `sqlite_client.cpp` | SQLite — sqlite3 amalgamation |
 | `postgres_client.cpp` | PostgreSQL wire protocol v3 |
 | `smtp_server.cpp` | Gömülü SMTP — event loop, DKIM, SPF, DB auth (PBKDF2), per-user Maildir teslim + ortak `mail_user_auth` |

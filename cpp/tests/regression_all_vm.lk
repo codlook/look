@@ -1,0 +1,50 @@
+# VM yolu regresyon — aynı düzeltmeler bytecode VM'de. Çalıştır:
+#   lk-fcgi --mode http --port 7450 --script tests/regression_all_vm.lk
+#   curl http://127.0.0.1:7450/verify
+use string
+use json
+
+function noleak() { $gv = 999 }
+function box($w, $h = 10) { return $w . "x" . $h }
+app::set("db", db::connect("sqlite://:memory:"))
+db::exec(app::db(), "CREATE TABLE t(id INTEGER PRIMARY KEY, n INTEGER)", [])
+db::exec(app::db(), "INSERT INTO t VALUES(1, 5551234567)", [])
+
+route("GET", "/verify", function() {
+    $gv = 100
+    noleak()                                  # #21 scope
+
+    $sw = ""                                  # #23 switch-break
+    for ($i = 0; $i < 4; $i = $i + 1) {
+        switch ($i) { case 1: $sw = $sw . "B"; break; default: $sw = $sw . $i }
+    }
+
+    $arr = [[1, 2], [3, 4]]                    # #24 chained lvalue
+    $arr[0][1] = 99
+
+    $err = "yok"                              # #28 throw
+    try { throw "hata!" } catch ($e) { $err = $e }
+
+    $rows = db::query(app::db(), "SELECT n FROM t WHERE id=1", [])  # #2 int64 DB round-trip
+
+    response::json([
+        "int64_phone"   => 5551234567,
+        "shift"         => 1 << 40,
+        "json_int64"    => json::decode("{\"id\":5551234567}")["id"],
+        "sci_literal"   => 1e3,
+        "sci_roundtrip" => (1e20 == 100000000000000000000),
+        "hex"           => 0xFF,
+        "underscore"    => 1_000_000,
+        "utf8_len"      => string::len("İstanbul"),
+        "json_unicode"  => json::decode("{\"m\":\"\\u011f\"}")["m"],
+        "eq_num_float"  => (1 == 1.0),
+        "eq_footgun"    => (0 == "abc"),
+        "eq_no_coerce"  => ("5" == 5),
+        "switch_break"  => $sw,
+        "chained_lval"  => $arr[0][1],
+        "scope_noleak"  => $gv,
+        "throw"         => $err,
+        "default_param" => box(5),
+        "db_int64"      => $rows[0].n
+    ])
+})
