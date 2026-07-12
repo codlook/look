@@ -46,6 +46,7 @@ struct FdEntry {
     std::string write_buf;
     size_t      write_pos = 0;
     std::mutex  mtx;
+    std::atomic<bool> closed{false};   // close_fd sonrası read-loop'un tekrar okumasını/çift-close'u önler
 };
 
 struct EpollEventLoop::Impl {
@@ -159,11 +160,19 @@ void EpollEventLoop::async_write(int fd, std::string data, WriteCb cb) {
 }
 
 void EpollEventLoop::close_fd(int fd) {
-    epoll_ctl(impl_->epfd, EPOLL_CTL_DEL, fd, nullptr);
+    // İdempotent: fd map'ten çıkarılmış (zaten kapalı) ise erken dön — çift
+    // ::close(fd)'yi önle. Çok-thread'li sunucuda araya giren accept aynı fd
+    // numarasını yeniden kullanmışsa, ikinci ::close YANLIŞ bağlantıyı kapatırdı.
+    std::shared_ptr<FdEntry> entry;
     {
         std::lock_guard<std::mutex> lk(impl_->map_mtx);
-        impl_->fds.erase(fd);
+        auto it = impl_->fds.find(fd);
+        if (it == impl_->fds.end()) return;
+        entry = it->second;
+        impl_->fds.erase(it);
     }
+    entry->closed.store(true);
+    epoll_ctl(impl_->epfd, EPOLL_CTL_DEL, fd, nullptr);
     ::close(fd);
 }
 
@@ -173,7 +182,8 @@ void EpollEventLoop::detach_fd(int fd) {
     // then calls add_client() to return it to the loop.
     epoll_ctl(impl_->epfd, EPOLL_CTL_DEL, fd, nullptr);
     std::lock_guard<std::mutex> lk(impl_->map_mtx);
-    impl_->fds.erase(fd);
+    auto it = impl_->fds.find(fd);
+    if (it != impl_->fds.end()) { it->second->closed.store(true); impl_->fds.erase(it); }
 }
 
 void EpollEventLoop::run() {
@@ -235,6 +245,10 @@ void EpollEventLoop::run() {
                     ssize_t r = read(fd, read_buf, sizeof(read_buf));
                     if (r > 0) {
                         if (cb) cb(read_buf, (size_t)r);
+                        // cb kendi fd'sini kapatmış olabilir (ör. WS close frame).
+                        // Kapalıysa döngüyü kes: kapalı/yeniden-açılmış fd'den
+                        // tekrar okuyup başka bağlantıya veri teslimini önle.
+                        if (entry->closed.load()) break;
                     } else if (r == 0) {
                         close_fd(fd); break;
                     } else {
@@ -244,7 +258,7 @@ void EpollEventLoop::run() {
                 }
             }
 
-            if (events[i].events & EPOLLOUT) {
+            if ((events[i].events & EPOLLOUT) && !entry->closed.load()) {
                 WriteCb cb;
                 bool done = false;
                 {
