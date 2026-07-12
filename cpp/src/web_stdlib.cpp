@@ -688,6 +688,11 @@ static Module make_session_module(WebContext* ctx) {
                 std::ifstream urandom("/dev/urandom", std::ios::binary);
                 uint8_t bytes[16];
                 urandom.read(reinterpret_cast<char*>(bytes), 16);
+                // FAIL-CLOSED: /dev/urandom açılamaz/eksik okursa (chroot/sandbox)
+                // bytes[] başlatılmamış stack belleği kalır → tahmin edilebilir
+                // session ID (auth bypass). Zayıf ID yaymak yerine hata fırlat.
+                if (!urandom || urandom.gcount() != 16)
+                    throw std::runtime_error("session: güvenli rastgelelik alınamadı (/dev/urandom)");
                 for (int i = 0; i < 16; i++) {
                     id[i*2]   = "0123456789abcdef"[(bytes[i] >> 4) & 0xf];
                     id[i*2+1] = "0123456789abcdef"[bytes[i] & 0xf];
