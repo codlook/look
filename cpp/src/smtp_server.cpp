@@ -244,6 +244,16 @@ static bool smtp_pbkdf2_verify(const std::string& password, const std::string& s
     return diff == 0;
 }
 
+// Sabit-zamanlı string eşitlik — erken çıkış yok. Auth token/parola karşılaştırmada
+// düz `==` (ilk farklı byte'ta döner) timing attack ile byte-byte tahmine açıktır.
+static bool smtp_ct_equal(const std::string& a, const std::string& b) {
+    uint8_t diff = (uint8_t)(a.size() ^ b.size());
+    size_t n = a.size() > b.size() ? a.size() : b.size();
+    for (size_t i = 0; i < n; i++)
+        diff |= (uint8_t)((i < a.size() ? a[i] : 0) ^ (i < b.size() ? b[i] : 0));
+    return diff == 0;
+}
+
 // DSN'den MySQL baglantisi olustur — smtp_validate_auth icin
 static std::shared_ptr<MySQLClient> smtp_make_db_conn(const std::string& dsn) {
     std::string user, pass, host, db;
@@ -320,7 +330,7 @@ static bool smtp_validate_auth(const std::string& b64) {
 
     // Fallback: tek token (gelistirme / basit deployment)
     const char* token = std::getenv("LOOK_SMTP_AUTH_TOKEN");
-    if (token && *token) return passwd == std::string(token);
+    if (token && *token) return smtp_ct_equal(passwd, std::string(token));  // sabit-zaman
     return false;
 }
 
