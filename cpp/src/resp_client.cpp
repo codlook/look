@@ -179,22 +179,29 @@ static size_t resp_max_bulk() {
     return v;
 }
 
-std::string RespClient::read_bulk(int len) {
+std::string RespClient::read_bulk(long len) {
     if (len < 0) return "";  // null bulk
+    // Sınır kontrolü int'e DARALTMADAN önce — $5000000000 gibi >INT_MAX değer
+    // (int)len ile negatife taşıp sessizce null dönüp socket'i desync ederdi.
     if ((size_t)len > resp_max_bulk())
         throw std::runtime_error("Redis: bulk yanıt sınırı aşıldı (LOOK_REDIS_MAX_BULK)");
-    std::string buf(len, '\0');
-    int got = 0;
-    while (got < len) {
-        int n = (int)::recv(fd_, &buf[got], len - got, 0);
+    std::string buf((size_t)len, '\0');
+    size_t got = 0, need = (size_t)len;
+    while (got < need) {
+        int n = (int)::recv(fd_, &buf[got], need - got, 0);
         if (n <= 0) throw std::runtime_error("Redis: connection closed reading bulk");
-        got += n;
+        got += (size_t)n;
     }
     read_line();  // trailing \r\n
     return buf;
 }
 
-std::string RespClient::read_response() {
+std::string RespClient::read_response(int depth) {
+    // Derin iç içe dizi (*1\r\n*1\r\n...) recursive parse'ı stack'i taşırabilir —
+    // kötü niyetli/bozuk sunucuya karşı derinlik sınırı.
+    static constexpr int RESP_MAX_DEPTH = 64;
+    if (depth > RESP_MAX_DEPTH)
+        throw std::runtime_error("Redis: yanıt çok derin iç içe (dizi)");
     auto line = read_line();
     if (line.empty()) throw std::runtime_error("Redis: empty response");
 
@@ -210,7 +217,7 @@ std::string RespClient::read_response() {
             try { len = std::stol(payload); }            // bozuk uzunluk → protokol hatası
             catch (...) { throw std::runtime_error("Redis: geçersiz bulk uzunluğu"); }
             if (len == -1) return "";                    // nil
-            return read_bulk((int)len);
+            return read_bulk(len);
         }
         case '*': {                                      // Array — flatten for our use
             long count = 0;
@@ -219,7 +226,7 @@ std::string RespClient::read_response() {
             if (count <= 0) return "";
             std::string first;
             for (int i = 0; i < count; i++) {
-                auto v = read_response();
+                auto v = read_response(depth + 1);
                 if (i == 0) first = v;
             }
             return first;

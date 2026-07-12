@@ -834,7 +834,12 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
     for (size_t i = 0; i < sql.size(); i++) {
         char c = sql[i];
         if (!in_str && (c == '\'' || c == '"')) { in_str = true; str_ch = c; pg_sql += c; continue; }
-        if (in_str && c == str_ch) { in_str = false; pg_sql += c; continue; }
+        if (in_str && c == str_ch) {
+            // SQL kaçışı: '' (veya "") = literal tırnak — string KAPANMAZ. Aksi halde
+            // 'it''s ? here' içindeki ? yanlışlıkla parametre sanılıp bind kayardı.
+            if (i + 1 < sql.size() && sql[i + 1] == str_ch) { pg_sql += c; pg_sql += sql[++i]; continue; }
+            in_str = false; pg_sql += c; continue;
+        }
         if (!in_str && c == '?') { pg_sql += '$'; pg_sql += std::to_string(++param_idx); }
         else pg_sql += c;
     }

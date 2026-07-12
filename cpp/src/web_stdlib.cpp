@@ -8,6 +8,7 @@
 #include "look/mysql_client.h"
 #include "look/sqlite_client.h"
 #include "look/postgres_client.h"
+#include "look/resp_client.h"
 #include "look/logger.h"
 #include <sstream>
 #include <fstream>
@@ -588,19 +589,90 @@ static Module make_cookie_module(WebContext* ctx) {
     return m;
 }
 
+// ── Session depolama backend'i ────────────────────────────────────────────────
+// LOOK_SESSION_DRIVER=redis + LOOK_REDIS_URL → Redis (multi-server session —
+// load balancer arkasında session'lar paylaşılır). Aksi halde dosya (tek sunucu).
+// Blob formatı iki backend'de de aynı: "key=value\n" satırları.
+static bool session_use_redis() {
+    static const bool v = []() {
+        const char* d = std::getenv("LOOK_SESSION_DRIVER");
+        const char* u = std::getenv("LOOK_REDIS_URL");
+        return d && std::string(d) == "redis" && u && *u;
+    }();
+    return v;
+}
+static int session_ttl() {
+    static const int v = []() {
+        const char* t = std::getenv("LOOK_SESSION_TTL");
+        int n = t ? std::atoi(t) : 0;
+        return n > 0 ? n : 86400;   // varsayılan 1 gün
+    }();
+    return v;
+}
+// Her worker thread kendi Redis bağlantısını tutar (RespClient thread-safe değil).
+static RespClient* session_redis() {
+    static thread_local std::unique_ptr<RespClient> cli;
+    if (!cli) {
+        const char* u = std::getenv("LOOK_REDIS_URL");
+        cli = std::make_unique<RespClient>(u ? std::string(u) : std::string("redis://127.0.0.1:6379"));
+    }
+    return cli.get();
+}
+static std::string sess_file_path(const std::string& sid) {
+    return std::string(std::getenv("TEMP") ? std::getenv("TEMP") : "/tmp") + "/look_sess_" + sid;
+}
+static bool sess_blob_get(const std::string& blob, const std::string& key, std::string& out) {
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t nl = blob.find('\n', pos);
+        std::string line = blob.substr(pos, (nl == std::string::npos ? blob.size() : nl) - pos);
+        size_t eq = line.find('=');
+        if (eq != std::string::npos && line.substr(0, eq) == key) { out = line.substr(eq + 1); return true; }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return false;
+}
+// key'i güncelle (varsa değiştir, yoksa ekle) — dosya backend'inin "append edip
+// get ilk eşleşmeyi döndürme" nedeniyle set'in overwrite etmeme bug'ını da giderir.
+static void sess_blob_set(std::string& blob, const std::string& key, const std::string& val) {
+    std::string out; size_t pos = 0; bool replaced = false;
+    while (pos < blob.size()) {
+        size_t nl = blob.find('\n', pos);
+        std::string line = blob.substr(pos, (nl == std::string::npos ? blob.size() : nl) - pos);
+        if (!line.empty()) {
+            size_t eq = line.find('=');
+            if (eq != std::string::npos && line.substr(0, eq) == key) { out += key + "=" + val + "\n"; replaced = true; }
+            else out += line + "\n";
+        }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    if (!replaced) out += key + "=" + val + "\n";
+    blob = out;
+}
+static std::string sess_load(const std::string& sid) {
+    if (session_use_redis()) {
+        try { return session_redis()->get("look_sess:" + sid); }
+        catch (...) { return ""; }   // Redis erişilemezse crash yerine boş session
+    }
+    std::ifstream f(sess_file_path(sid));
+    std::stringstream ss; ss << f.rdbuf(); return ss.str();
+}
+static void sess_store(const std::string& sid, const std::string& blob) {
+    if (session_use_redis()) { try { session_redis()->set("look_sess:" + sid, blob, session_ttl()); } catch (...) {} return; }
+    std::ofstream f(sess_file_path(sid), std::ios::trunc); f << blob;   // overwrite
+}
+static void sess_remove(const std::string& sid) {
+    if (session_use_redis()) { try { session_redis()->del("look_sess:" + sid); } catch (...) {} return; }
+    std::remove(sess_file_path(sid).c_str());
+}
+
 static Module make_session_module(WebContext* ctx) {
     Module m;
     m.name = "session";
 
-    // File-based sessions â€” stored in system temp dir
-    auto session_file = [ctx]() -> std::string {
-        auto it = ctx->cookies_in.find("LOOK_SESSION");
-        if (it == ctx->cookies_in.end()) return "";
-        return std::string(std::getenv("TEMP") ? std::getenv("TEMP") : "/tmp") +
-               "/look_sess_" + it->second;
-    };
-
-    m.functions["start"] = [ctx, session_file](auto) -> Value {
+    m.functions["start"] = [ctx](auto) -> Value {
         // Generate session ID if not exists
         if (!ctx->cookies_in.count("LOOK_SESSION")) {
             // Cryptographically secure random bytes — /dev/urandom (Linux) or rand_s (Windows)
@@ -629,31 +701,25 @@ static Module make_session_module(WebContext* ctx) {
         }
         return Value(ctx->cookies_in["LOOK_SESSION"]);
     };
-    m.functions["set"] = [ctx, session_file](auto args) -> Value {
+    m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();
-        auto sf = session_file();
-        if (sf.empty()) return Value();
-        std::ofstream f(sf, std::ios::app);
-        f << args[0].to_string() << "=" << args[1].to_string() << "\n";
+        auto it = ctx->cookies_in.find("LOOK_SESSION");
+        if (it == ctx->cookies_in.end()) return Value();
+        std::string blob = sess_load(it->second);
+        sess_blob_set(blob, args[0].to_string(), args[1].to_string());
+        sess_store(it->second, blob);
         return Value();
     };
-    m.functions["get"] = [ctx, session_file](auto args) -> Value {
+    m.functions["get"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
-        auto sf = session_file();
-        if (sf.empty()) return Value();
-        std::ifstream f(sf);
-        std::string line;
-        std::string key = args[0].to_string();
-        while (std::getline(f, line)) {
-            auto eq = line.find('=');
-            if (eq != std::string::npos && line.substr(0, eq) == key)
-                return Value(line.substr(eq + 1));
-        }
-        return Value();
+        auto it = ctx->cookies_in.find("LOOK_SESSION");
+        if (it == ctx->cookies_in.end()) return Value();
+        std::string blob = sess_load(it->second), out;
+        return sess_blob_get(blob, args[0].to_string(), out) ? Value(out) : Value();
     };
-    m.functions["destroy"] = [ctx, session_file](auto) -> Value {
-        auto sf = session_file();
-        if (!sf.empty()) std::remove(sf.c_str());
+    m.functions["destroy"] = [ctx](auto) -> Value {
+        auto it = ctx->cookies_in.find("LOOK_SESSION");
+        if (it != ctx->cookies_in.end()) sess_remove(it->second);
         ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
         ctx->set_cookies_out.push_back(
             "LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax");

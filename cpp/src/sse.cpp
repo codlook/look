@@ -19,14 +19,43 @@ namespace look {
 
 SseRegistry g_sse_registry;
 
+// SSE event injection savunması. SSE'de \n satır, \n\n event ayırıcıdır; ham
+// kullanıcı verisi sahte event/id/data alanı enjekte edebilir (CRLF header
+// injection'ın SSE karşılığı).
+//   • Tek-satırlık alanlar (event, id, comment): \r ve \n tamamen sıyrılır.
+//   • data: çok-satırlı olabilir — SSE spec'ine göre HER satır ayrı "data: "
+//     ile gönderilir. Böylece içerikteki satır-sonu sahte alan yaratamaz; her
+//     satır zorunlu olarak data içeriği olur (meşru çok-satırlı data korunur).
+static std::string sse_strip_nl(const std::string& s) {
+    std::string out; out.reserve(s.size());
+    for (char c : s) if (c != '\r' && c != '\n') out += c;
+    return out;
+}
+static std::string sse_encode_data(const std::string& data) {
+    // Satır-sonlarını normalize et (\r\n, \r, \n → \n), sonra her satır "data: ".
+    std::string norm; norm.reserve(data.size());
+    for (size_t i = 0; i < data.size(); ++i) {
+        if (data[i] == '\r') { norm += '\n'; if (i + 1 < data.size() && data[i+1] == '\n') ++i; }
+        else norm += data[i];
+    }
+    std::string out; size_t start = 0;
+    while (true) {
+        size_t nl = norm.find('\n', start);
+        out += "data: " + norm.substr(start, (nl == std::string::npos ? norm.size() : nl) - start) + "\n";
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    return out;
+}
+
 bool SseConnection::send(const std::string& data, const std::string& event_name) {
     if (closed.load()) return false;
 
     std::string frame;
     if (!event_name.empty())
-        frame = "event: " + event_name + "\ndata: " + data + "\n\n";
-    else
-        frame = "data: " + data + "\n\n";
+        frame = "event: " + sse_strip_nl(event_name) + "\n";
+    frame += sse_encode_data(data);   // çok-satırlı data → satır-başına "data: "
+    frame += "\n";                    // event'i bitiren boş satır
 
     std::lock_guard<std::mutex> lk(write_mutex);
     if (closed.load()) return false;
@@ -44,7 +73,7 @@ bool SseConnection::send(const std::string& data, const std::string& event_name)
 
 bool SseConnection::send_comment(const std::string& comment) {
     if (closed.load()) return false;
-    std::string frame = ": " + comment + "\n\n";
+    std::string frame = ": " + sse_strip_nl(comment) + "\n\n";   // \r\n sıyrılır — stream bozulmaz
     std::lock_guard<std::mutex> lk(write_mutex);
     if (closed.load()) return false;
 #if defined(_WIN32)

@@ -36,8 +36,8 @@ private:
 
     void        send_command(const std::vector<std::string>& args);
     std::string read_line();
-    std::string read_bulk(int len);
-    std::string read_response();   // döner: tam değer string; hata → throw
+    std::string read_bulk(long len);          // long: >INT_MAX bulk int'e taşmasın
+    std::string read_response(int depth = 0);  // depth: derin dizi → stack overflow guard
 };
 
 } // namespace look
