@@ -432,10 +432,22 @@ struct HttpServer::Impl {
     }
 
     // ── WebSocket upgrade — worker thread'de çalışır ──────────────────────────
+    // Origin başlığından host[:port] kısmını çıkar (scheme:// ve yolu at).
+    static std::string ws_origin_host(const std::string& origin) {
+        auto p = origin.find("://");
+        std::string h = (p == std::string::npos) ? origin : origin.substr(p + 3);
+        auto slash = h.find('/');
+        if (slash != std::string::npos) h = h.substr(0, slash);
+        auto colon = h.rfind(':');           // :port'u at — host bazlı karşılaştır
+        if (colon != std::string::npos) h = h.substr(0, colon);
+        return h;
+    }
+
     void handle_ws_upgrade(int fd, const HttpRequest& req) {
-        // CSWSH koruması: Origin header'ını kontrol et
+        // CSWSH (Cross-Site WebSocket Hijacking) koruması.
+        auto it = req.headers.find("origin");
         if (!allowed_origins.empty()) {
-            auto it = req.headers.find("origin");
+            // Açık allowlist yapılandırılmış (LOOK_WS_ORIGINS) — tam eşleşme.
             if (it == req.headers.end()) {
                 send_ws_reject(fd, "403 Forbidden - Origin header gerekli");
                 ::close(fd);
@@ -447,6 +459,27 @@ struct HttpServer::Impl {
                 if (allowed == "*" || allowed == origin) { ok = true; break; }
             if (!ok) {
                 send_ws_reject(fd, "403 Forbidden - Origin izinli değil: " + origin);
+                ::close(fd);
+                return;
+            }
+        } else if (it != req.headers.end()) {
+            // Allowlist yok → güvenli varsayılan: SAME-ORIGIN uygula. Tarayıcı
+            // isteği (Origin başlığı var) ancak host'u Host başlığıyla eşleşirse
+            // kabul edilir; cross-origin tarayıcı isteği (asıl CSWSH vektörü)
+            // reddedilir. Origin başlığı OLMAYAN istekler (backend servis, wscat
+            // gibi tarayıcı-dışı client'lar) etkilenmez — çapraz-site riski yok.
+            // Allow-all'a dönmek için: LOOK_WS_ORIGINS=*
+            std::string oh = ws_origin_host(it->second);
+            auto host_it = req.headers.find("host");
+            std::string hh;
+            if (host_it != req.headers.end()) {
+                hh = host_it->second;                    // "host[:port]"
+                auto c = hh.rfind(':');
+                if (c != std::string::npos) hh = hh.substr(0, c);
+            }
+            if (oh.empty() || hh.empty() || oh != hh) {
+                send_ws_reject(fd, "403 Forbidden - Cross-origin WebSocket reddedildi "
+                                   "(same-origin varsayilan; izin icin LOOK_WS_ORIGINS)");
                 ::close(fd);
                 return;
             }

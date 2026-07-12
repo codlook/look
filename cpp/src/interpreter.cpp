@@ -326,9 +326,31 @@ void Interpreter::register_builtin(const std::string& name, std::function<Value(
 
 // ── LookChannel methods ───────────────────────────────────────────────────────
 
+// Kanal işlemi watchdog'u — LOOK_CHANNEL_TIMEOUT_MS set edilirse (>0) send/recv
+// bu süreyi aşınca sonsuza asılmak yerine yakalanabilir bir hata fırlatır. Böylece
+// eşleşecek gönderici/alıcı yoksa (mantık hatası kaynaklı deadlock) worker ebediyen
+// kilitlenmez; kurtulur. Unset/0 = sonsuz blok (Go unbuffered rendezvous varsayılanı).
+// Tek noktada — hem tree-walk interpreter hem bytecode VM (CHAN_SEND/RECV) bu
+// metotları çağırdığı için iki yol da otomatik kapsanır.
+static long channel_timeout_ms() {
+    static const long v = []() -> long {
+        const char* e = std::getenv("LOOK_CHANNEL_TIMEOUT_MS");
+        if (e && *e) { long n = std::atol(e); if (n > 0) return n; }
+        return 0;
+    }();
+    return v;
+}
+
 void LookChannel::send_val(Value val) {
     std::unique_lock<std::mutex> lk(mtx);
-    not_full.wait(lk, [this]{ return closed || queue.size() < capacity; });
+    long to = channel_timeout_ms();
+    auto has_room = [this]{ return closed || queue.size() < capacity; };
+    if (to > 0) {
+        if (!not_full.wait_for(lk, std::chrono::milliseconds(to), has_room))
+            throw std::runtime_error("channel send zaman aşımı (olası deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
+    } else {
+        not_full.wait(lk, has_room);
+    }
     if (closed) throw std::runtime_error("send on closed channel");
     queue.push(std::move(val));
     not_empty.notify_one();
@@ -337,13 +359,26 @@ void LookChannel::send_val(Value val) {
         // recv_gen ile kendi öğemizin alındığını izleriz; yanlış uyandırmada
         // (başka gönderici) bekleme sürer.
         uint64_t gen = recv_gen;
-        not_full.wait(lk, [this, gen]{ return closed || recv_gen > gen; });
+        auto taken = [this, gen]{ return closed || recv_gen > gen; };
+        if (to > 0) {
+            if (!not_full.wait_for(lk, std::chrono::milliseconds(to), taken))
+                throw std::runtime_error("channel send (rendezvous) zaman aşımı (olası deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
+        } else {
+            not_full.wait(lk, taken);
+        }
     }
 }
 
 Value LookChannel::recv_val() {
     std::unique_lock<std::mutex> lk(mtx);
-    not_empty.wait(lk, [this]{ return closed || !queue.empty(); });
+    long to = channel_timeout_ms();
+    auto has_item = [this]{ return closed || !queue.empty(); };
+    if (to > 0) {
+        if (!not_empty.wait_for(lk, std::chrono::milliseconds(to), has_item))
+            throw std::runtime_error("channel receive zaman aşımı (olası deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
+    } else {
+        not_empty.wait(lk, has_item);
+    }
     if (queue.empty()) return Value();  // closed + empty → null
     Value v = std::move(queue.front());
     queue.pop();
