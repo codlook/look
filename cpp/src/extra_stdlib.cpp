@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <regex>
 #include <cstring>
+#include <cctype>
 #include <set>
 #include <functional>
 #include <memory>
@@ -258,8 +259,30 @@ static std::string get_field(const Value& data, const std::string& key) {
 }
 
 static bool is_email(const std::string& s) {
+    // RFC 5321 azami e-posta uzunluğu 254; uzun girdiyi baştan reddet (regex'e
+    // devasa string sokup yavaşlatmayı da engeller — defense-in-depth).
+    if (s.empty() || s.size() > 254) return false;
     static const std::regex re(R"([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})");
     return std::regex_match(s, re);
+}
+
+// Katı tam-sayı/sayı kontrolü — std::stoi/stod baştaki rakamları alıp kalıntıyı
+// yok sayar ("123abc"→123, "5; DROP TABLE"→5). Doğrulamada bu bir BYPASS'tır:
+// değer "integer"/"numeric" geçer ama içinde çöp/enjeksiyon kalır. TÜM string
+// (sondaki boşluk hariç) tüketilmeli.
+static bool str_is_integer(const std::string& s) {
+    if (s.empty()) return false;
+    size_t pos = 0;
+    try { (void)std::stoll(s, &pos); } catch (...) { return false; }
+    while (pos < s.size() && std::isspace((unsigned char)s[pos])) ++pos;
+    return pos == s.size();
+}
+static bool str_is_numeric(const std::string& s) {
+    if (s.empty()) return false;
+    size_t pos = 0;
+    try { (void)std::stod(s, &pos); } catch (...) { return false; }
+    while (pos < s.size() && std::isspace((unsigned char)s[pos])) ++pos;
+    return pos == s.size();
 }
 
 static Module make_validator() {
@@ -306,9 +329,9 @@ static Module make_validator() {
                 } else if (rule == "email" && !value.empty() && !is_email(value)) {
                     error = field + " gecersiz e-posta";
                 } else if (rule == "integer" && !value.empty()) {
-                    try { std::stoi(value); } catch(...) { error = field + " tam sayi olmali"; }
+                    if (!str_is_integer(value)) error = field + " tam sayi olmali";
                 } else if (rule == "numeric" && !value.empty()) {
-                    try { std::stod(value); } catch(...) { error = field + " sayi olmali"; }
+                    if (!str_is_numeric(value)) error = field + " sayi olmali";
                 } else if (rule.substr(0,4) == "min:" && !value.empty()) {
                     int minv = std::stoi(rule.substr(4));
                     try {
