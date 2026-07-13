@@ -142,6 +142,15 @@ if(WIN32)
     target_link_libraries(look      ws2_32 bcrypt)
     target_link_libraries(look-cgi  ws2_32 bcrypt)
     target_link_libraries(look-fcgi ws2_32 bcrypt)
+    # Ana thread + std::thread worker'ları 8 MB stack (Linux varsayılanıyla aynı).
+    # Windows default 1 MB, tree-walk interpreter'ın MAX_CALL_DEPTH=500 recursion
+    # guard'ı ateşlemeden native stack'i taşırıp çökertiyordu (STATUS_STACK_OVERFLOW).
+    # 8 MB'da guard 500'de temiz ateşler → derin/sonsuz recursion yakalanabilir hata.
+    if(MSVC)
+        target_link_options(look      PRIVATE /STACK:8388608)
+        target_link_options(look-cgi  PRIVATE /STACK:8388608)
+        target_link_options(look-fcgi PRIVATE /STACK:8388608)
+    endif()
     set_target_properties(look      PROPERTIES OUTPUT_NAME "lk")
     set_target_properties(look-cgi  PROPERTIES OUTPUT_NAME "lk-cgi")
     set_target_properties(look-fcgi PROPERTIES OUTPUT_NAME "lk-fcgi")

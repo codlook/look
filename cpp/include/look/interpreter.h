@@ -407,7 +407,13 @@ public:
         return (long)std::chrono::duration_cast<std::chrono::seconds>(now - start_time_).count();
     }
 
-    static constexpr int MAX_CALL_DEPTH = 500;
+    // Tree-walk interpreter her LOOK çağrısında çok sayıda native C++ frame
+    // kullanır (~16KB/çağrı). 8 MB thread stack'te native limit ~500 civarı; 500
+    // guard'ı tam limitte olduğu için guard ateşlerken throw'un kendisi stack'i
+    // taşırıp çökertiyordu (STATUS_STACK_OVERFLOW, Linux worker'ları dahil). 256
+    // native limitin güvenli ~2x altında → guard temiz ateşler, yakalanabilir hata.
+    // (VM heap-based call_stack kullandığı için kendi 500 limiti güvenli kalır.)
+    static constexpr int MAX_CALL_DEPTH = 256;
 
     void set_file(const std::string& file) { current_file_ = file; if (main_script_.empty()) main_script_ = file; }
 
