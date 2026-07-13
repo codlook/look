@@ -635,14 +635,21 @@ static Module make_html() {
         if (args.empty()) return Value(std::string(""));
         std::string s = args[0].to_string();
         std::string out;
+        out.reserve(s.size() * 4);
+        // OWASP attribute-encode: alfanümerik DIŞINDAKİ tüm ASCII karakterleri
+        // &#xHH; ile kodla. html::escape sadece `<>&"'` kaçar — bu TIRNAKSIZ
+        // attribute'ta yetersiz (boşluk/=/backtick/tab enjekte edilerek yeni
+        // event-handler açılabilir → XSS). Burada boşluk/=/backtick dahil her şey
+        // kodlanır → hem tırnaklı hem tırnaksız attribute bağlamında güvenli.
+        // Tarayıcı entity'yi çözdüğü için meşru değer bozulmaz (URL/veri çalışır).
         for (unsigned char c : s) {
-            switch (c) {
-                case '&':  out += "&amp;";  break;
-                case '"':  out += "&quot;"; break;
-                case '\'': out += "&#39;";  break;
-                case '<':  out += "&lt;";   break;
-                case '>':  out += "&gt;";   break;
-                default:   out += (char)c;
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c >= 0x80) {
+                out += (char)c;                  // alfanümerik + çok-baytlı UTF-8: güvenli
+            } else {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "&#x%02X;", c);
+                out += buf;
             }
         }
         return Value(out);
