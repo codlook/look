@@ -416,15 +416,24 @@ static Module make_string() {
             if (fmt[i] != '%' || i + 1 >= fmt.size()) { result += fmt[i]; continue; }
             ++i;
             if (fmt[i] == '%') { result += '%'; continue; }
+            // Width/precision üst sınırı — `%2000000000d` gibi devasa genişlik
+            // setw ile yüz-MB'lık dolgu ayırıp bellek-amplifikasyon DoS'u (ve int
+            // taşması UB'si) yapardı. 1M fazlasıyla yeterli; string::repeat 10MB
+            // cap'iyle aynı disiplin.
+            static constexpr int FMT_MAX = 1000000;
             bool zero_pad = (fmt[i] == '0');
             int width = 0;
-            while (i < fmt.size() && std::isdigit((unsigned char)fmt[i]))
+            while (i < fmt.size() && std::isdigit((unsigned char)fmt[i])) {
                 width = width * 10 + (fmt[i++] - '0');
+                if (width > FMT_MAX) width = FMT_MAX;   // clamp — taşmadan önce
+            }
             int precision = -1;
             if (i < fmt.size() && fmt[i] == '.') {
                 ++i; precision = 0;
-                while (i < fmt.size() && std::isdigit((unsigned char)fmt[i]))
+                while (i < fmt.size() && std::isdigit((unsigned char)fmt[i])) {
                     precision = precision * 10 + (fmt[i++] - '0');
+                    if (precision > FMT_MAX) precision = FMT_MAX;
+                }
             }
             if (i >= fmt.size()) break;
             char spec = fmt[i];
