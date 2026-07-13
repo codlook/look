@@ -198,13 +198,21 @@ static bool extract_zip(const std::vector<char>& data,
             if (filename.empty()) continue;
         }
 
-        // Zip Slip koruması: normalize edilmiş yolun dest_dir içinde kalması zorunlu
+        // Zip Slip koruması: normalize edilmiş yolun dest_dir içinde kalması zorunlu.
+        // DÜZ string-prefix YETMEZ: "/pkg/user/repo" öneki "/pkg/user/repo-evil"
+        // ile de eşleşir (sibling-prefix escape → hedef dizin DIŞINA yazma). Önek
+        // eşleşmesinden sonra ayırıcı sınırını da zorunlu kıl (ya tam eşit, ya da
+        // sonraki karakter '/' — file:: modülüyle aynı disiplin).
         fs::path safe_dest = fs::weakly_canonical(dest_dir);
         fs::path out_path  = fs::weakly_canonical(dest_dir / filename);
         auto dest_str = safe_dest.string();
         auto out_str  = out_path.string();
-        if (out_str.size() < dest_str.size() ||
-            out_str.compare(0, dest_str.size(), dest_str) != 0) {
+        bool inside = out_str.size() >= dest_str.size() &&
+                      out_str.compare(0, dest_str.size(), dest_str) == 0 &&
+                      (out_str.size() == dest_str.size() ||
+                       out_str[dest_str.size()] == '/' ||
+                       out_str[dest_str.size()] == '\\');
+        if (!inside) {
             if (verbose) std::cerr << "  ATLANDI (güvenlik): " << filename << "\n";
             continue;
         }
