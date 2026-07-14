@@ -351,13 +351,19 @@ void MySQLClient::do_handshake(const std::string& user,
                                 const std::string& database) {
     uint8_t seq;
     auto pkt = read_packet(seq);
+    if (pkt.empty()) throw std::runtime_error("db: boş handshake paketi");
     const uint8_t* p = pkt.data();
     const uint8_t* end = p + pkt.size();
 
-    if (*p == 0xFF) { p++; uint16_t e=read_u16(p); throw std::runtime_error("db: server error "+std::to_string(e)); }
+    if (*p == 0xFF) { p++; uint16_t e=(p+2<=end)?read_u16(p):0; throw std::runtime_error("db: server error "+std::to_string(e)); }
 
     p++; // protocol version
-    while (p < end && *p) p++; p++; // server version
+    while (p < end && *p) p++; if (p < end) p++; // server version (null-terminated)
+    // Sınır-güvenli: kısa/kötü niyetli handshake paketi kontrolsüz okumalarla
+    // (challenge 8 bayt, auth_len, cap flags) buffer sonrasını overread edebilirdi
+    // (MITM/kötü sunucu — TLS yok). Sabit blok = thread(4)+challenge(8)+filler(1)+
+    // cap1(2)+charset+status(3)+cap2(2)+auth_len(1)+reserved(10) = 31 bayt.
+    if (end - p < 31) throw std::runtime_error("db: bozuk handshake paketi (kısa)");
     p += 4; // thread id
 
     std::string challenge(p, p + 8); p += 8;
@@ -492,9 +498,12 @@ MySQLClient::StmtMeta MySQLClient::stmt_prepare(const std::string& sql) {
     if (resp.empty()) throw std::runtime_error("db: stmt_prepare empty response");
     if (resp[0] == 0xFF) {
         const uint8_t* p = resp.data() + 1;
-        const uint8_t* end = p + resp.size() - 1;
-        uint16_t code; memcpy(&code, p, 2); p += 2;
-        if (p < end && *p == '#') p += 6;
+        const uint8_t* end = resp.data() + resp.size();
+        // Sınır-güvenli: kısa 0xFF paketinde (sadece FF) memcpy 2-bayt overread
+        // yapıp p'yi end'in ötesine taşırdı → std::string(p,end) UB. Kötü niyetli/
+        // MITM sunucu tetikler. error-code (2) ve '#SQLSTATE' (6) sınır-kontrollü atla.
+        if (p + 2 <= end) p += 2; else p = end;             // error code (kullanılmıyor)
+        if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE' işareti
         throw std::runtime_error("db: " + std::string(p, end));
     }
     if (resp[0] != 0x00 || resp.size() < 12)
@@ -721,8 +730,13 @@ std::string MySQLClient::read_lenenc_str(const uint8_t*& p, const uint8_t* end) 
     if (p>=end) return "";
     if (*p==0xFB){p++;return "";}
     uint64_t len=read_lenenc(p,end);
-    if (p+len>end) len=end-p;
-    std::string s(p,p+len); p+=len;
+    // TAŞMA-GÜVENLİ: `p+len>end` — len sunucudan gelir ve 0xFE formatında ~2^64
+    // olabilir → `p+len` işaretçi taşması (UB) yapıp wrap'lar → kontrol atlanır →
+    // ~2^64 baytlık overread/crash. Kötü niyetli/MITM sunucu (TLS yok) tetikler.
+    // p<=end invariantı gereği `end-p` güvenli; len'i mevcut bayta clamp'le.
+    uint64_t avail = (uint64_t)(end - p);
+    if (len > avail) len = avail;
+    std::string s(p, p + (size_t)len); p += len;
     return s;
 }
 

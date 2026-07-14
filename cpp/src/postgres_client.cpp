@@ -485,6 +485,16 @@ PostgresClient::PgMsg PostgresClient::read_message() {
     uint32_t len = read_u32_be(lb);
     if (len < 4) throw std::runtime_error("db postgres: invalid message length");
     size_t body_len = len - 4;
+    // Sunucu-kontrollü len ~4GB'a kadar olabilir → std::vector(body_len) sınırsız
+    // allocation → OOM/crash (kötü niyetli/MITM sunucu, TLS yok). Makul üst sınır
+    // (varsayılan 256MB, LOOK_PG_MAX_MSG ile ayarlanır).
+    static const size_t PG_MAX_MSG = []() -> size_t {
+        const char* e = std::getenv("LOOK_PG_MAX_MSG");
+        if (e && *e) { long long n = std::atoll(e); if (n > 0) return (size_t)n; }
+        return 256ull * 1024 * 1024;
+    }();
+    if (body_len > PG_MAX_MSG)
+        throw std::runtime_error("db postgres: mesaj boyutu sınırı aşıldı (LOOK_PG_MAX_MSG)");
     std::vector<uint8_t> body(body_len);
     if (body_len > 0 && !recv_bytes(body.data(), body_len))
         throw std::runtime_error("db postgres: connection lost reading body");
