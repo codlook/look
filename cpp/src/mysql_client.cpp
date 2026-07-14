@@ -20,6 +20,10 @@
 
 namespace look {
 
+// Sunucu-verili sütun sayısı üst sınırı — kötü niyetli/MITM sunucunun devasa
+// col_count'la kaynak tükettiği DoS'a karşı. Gerçek query'ler ≪65535 sütun.
+static constexpr uint64_t MYSQL_MAX_COLUMNS = 65535;
+
 // ── Pure C++ SHA1 — platform bagimsiz ────────────────────────────────────────
 
 std::vector<uint8_t> MySQLClient::sha1(const std::vector<uint8_t>& data) {
@@ -441,6 +445,10 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     }
 
     uint64_t col_count = read_lenenc(p, end);
+    // Sunucu-verili col_count sanity cap — kötü niyetli sunucu 2^64 verirse
+    // kolon-okuma döngüsü kaynak tüketir/asılır. Gerçek query'ler ≪65535 sütun.
+    if (col_count > MYSQL_MAX_COLUMNS)
+        throw std::runtime_error("db mysql: sütun sayısı sınırı aşıldı (kötü niyetli sunucu?)");
     struct ColInfo { std::string name; uint8_t type; };
     std::vector<ColInfo> columns;
     for (uint64_t i = 0; i < col_count; i++) {
@@ -610,8 +618,10 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     if (resp[0] == 0xFF) {
         const uint8_t* p = resp.data() + 1;
         const uint8_t* end = resp.data() + resp.size();
-        uint16_t code; memcpy(&code, p, 2); p += 2;
-        if (p < end && *p == '#') p += 6;
+        // Sınır-güvenli (stmt_prepare error-path ile aynı): kısa 0xFF paketinde
+        // memcpy 2-bayt overread + std::string(p,end) UB'sini önle.
+        if (p + 2 <= end) p += 2; else p = end;             // error code (kullanılmıyor)
+        if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE'
         throw std::runtime_error("db: " + std::string(p, end));
     }
     if (resp[0] == 0x00) { // OK (INSERT/UPDATE/DELETE)
@@ -626,6 +636,10 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     const uint8_t* p = resp.data();
     const uint8_t* end = p + resp.size();
     uint64_t col_count = read_lenenc(p, end);
+    // Sanity cap — kötü niyetli sunucu 2^64 col_count verirse döngü + `(int)col_count`
+    // null-bitmap boyutu (satır ~657) taşar/kaynak tüketir.
+    if (col_count > MYSQL_MAX_COLUMNS)
+        throw std::runtime_error("db mysql: sütun sayısı sınırı aşıldı (kötü niyetli sunucu?)");
 
     struct ColInfo { std::string name; uint8_t type; };
     std::vector<ColInfo> columns;
