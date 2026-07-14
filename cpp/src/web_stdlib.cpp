@@ -193,6 +193,11 @@ static std::string json_decode_str(const std::string& s, size_t& i) {
 // pozisyon i ilerlemediği için dış döngü sonsuza dek null push edip bad_alloc/
 // hang yapardı). Public giriş noktalarında yakalanır → temiz null döner.
 struct JsonTooDeep {};
+// Bozuk JSON (ilerleme sağlamayan karakter) → parse'ı iptal et. Aksi halde array/
+// object döngüsünde `i` ilerlemez ve SONSUZ DÖNGÜ olur (auth gerektirmeyen uzaktan
+// DoS: tek `[a]` isteği worker'ı %100 CPU'da kilitler). Public giriş noktalarında
+// yakalanır → temiz null döner.
+struct JsonParseError {};
 
 static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     if (depth > JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS savunması
@@ -209,7 +214,9 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         arr->push_back(Value(std::string("__assoc__")));
         json_skip_ws(s, i);
         while (i < s.size() && s[i] != '}') {
-            // key
+            size_t before = i;                       // ilerleme güvencesi
+            // key — açılış tırnağı yoksa bozuk (aksi halde ilerlemeyebilir)
+            if (s[i] != '"') throw JsonParseError{};
             std::string key = json_decode_str(s, i);
             json_skip_ws(s, i);
             if (i < s.size() && s[i] == ':') i++;
@@ -221,6 +228,7 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
             json_skip_ws(s, i);
             if (i < s.size() && s[i] == ',') i++;
             json_skip_ws(s, i);
+            if (i == before) throw JsonParseError{};  // ilerleme yok → sonsuz döngü engeli
         }
         if (i < s.size()) i++; // skip }
         return Value(arr);
@@ -231,10 +239,12 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         auto arr = std::make_shared<std::vector<Value>>();
         json_skip_ws(s, i);
         while (i < s.size() && s[i] != ']') {
+            size_t before = i;                       // ilerleme güvencesi
             arr->push_back(json_decode_value(s, i, depth + 1));
             json_skip_ws(s, i);
             if (i < s.size() && s[i] == ',') i++;
             json_skip_ws(s, i);
+            if (i == before) throw JsonParseError{};  // ilerleme yok → sonsuz döngü engeli
         }
         if (i < s.size()) i++; // skip ]
         return Value(arr);
@@ -242,6 +252,11 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     if (s.substr(i, 4) == "true")  { i += 4; return Value(true); }
     if (s.substr(i, 5) == "false") { i += 5; return Value(false); }
     if (s.substr(i, 4) == "null")  { i += 4; return Value(); }
+    // Number — geçerli bir sayı başlangıcı DEĞİLSE reddet. Aksi halde `i`
+    // ilerlemeden Value(0) dönerdi → çağıran döngüde sonsuz döngü (DoS). Ayrıca
+    // json::decode("garbage")→0 correctness bug'ını da giderir.
+    if (s[i] != '-' && !std::isdigit((unsigned char)s[i]))
+        throw JsonParseError{};
     // Number
     size_t start = i;
     bool is_float = false;
@@ -359,6 +374,7 @@ static Module make_request(WebContext* ctx) {
         size_t i = 0;
         try { return json_decode_value(ctx->body, i); }
         catch (const JsonTooDeep&) { return Value(); }   // aşırı derin gövde → null (DoS savunması)
+        catch (const JsonParseError&) { return Value(); } // bozuk gövde → null (sonsuz döngü DoS savunması)
     };
     // request::all() â€” GET + POST params birleÅŸik
     m.functions["all"] = [ctx](auto) -> Value {
@@ -536,6 +552,7 @@ static Module make_json_module() {
         size_t i = 0;
         try { return json_decode_value(s, i); }
         catch (const JsonTooDeep&) { return Value(); }   // aşırı derin → null (DoS savunması)
+        catch (const JsonParseError&) { return Value(); } // bozuk → null (sonsuz döngü DoS savunması)
     };
 
     return m;
