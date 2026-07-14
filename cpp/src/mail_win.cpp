@@ -18,6 +18,14 @@ namespace look {
 std::string deliver_maildir(const std::string& base_dir,
                             const std::string& mailbox,
                             const SmtpMessage& msg) {
+    // GÜVENLİK: mailbox doğrulaması — smtp_server.cpp'deki Linux ikizi ile AYNI.
+    // userland mail::deliver_maildir üzerinden kullanıcı girdisi gelirse
+    // "../.." / mutlak yol → hedef DIŞINA yazma (arbitrary file write) engellenir.
+    if (mailbox.empty() || mailbox.find("..") != std::string::npos)
+        throw std::runtime_error("deliver_maildir: geçersiz mailbox (traversal)");
+    for (unsigned char c : mailbox)
+        if (c == '/' || c == '\\' || c == '\0' || c < 0x20)
+            throw std::runtime_error("deliver_maildir: geçersiz mailbox (yasak karakter)");
     fs::path mbox = fs::path(base_dir) / mailbox;
     std::error_code ec;
     fs::create_directories(mbox / "new", ec);

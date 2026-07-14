@@ -224,6 +224,13 @@ std::string RespClient::read_response(int depth) {
             try { count = std::stol(payload); }
             catch (...) { throw std::runtime_error("Redis: geçersiz dizi sayısı"); }
             if (count <= 0) return "";
+            // Sunucu-verili count sanity cap — kötü niyetli/MITM sunucu (TLS yok)
+            // `*2000000000` verirse döngü kaynak tüketir. Session subset'i küçük
+            // dizilerle çalışır; makul üst sınır. (MySQL col_count / RESP_MAX_DEPTH
+            // ile tutarlı.)
+            static constexpr long RESP_MAX_ARRAY = 1024 * 1024;
+            if (count > RESP_MAX_ARRAY)
+                throw std::runtime_error("Redis: dizi eleman sayısı sınırı aşıldı");
             std::string first;
             for (int i = 0; i < count; i++) {
                 auto v = read_response(depth + 1);

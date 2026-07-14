@@ -1279,6 +1279,16 @@ void SmtpServer::stop() { impl_->loop->stop(); }
 std::string deliver_maildir(const std::string& base_dir,
                             const std::string& mailbox,
                             const SmtpMessage& msg) {
+    // GÜVENLİK: mailbox base_dir'e yol bileşeni olarak ekleniyor ve bu fonksiyon
+    // userland'den de çağrılabiliyor (mail::deliver_maildir). Doğrulanmazsa
+    // "../../etc/..." veya mutlak yol → hedef dizin DIŞINA Maildir + mesaj yazma
+    // (arbitrary file write). Çağırana güvenme; burada zorla (mail_user_auth'un
+    // user doğrulamasıyla aynı disiplin).
+    if (mailbox.empty() || mailbox.find("..") != std::string::npos)
+        throw std::runtime_error("deliver_maildir: geçersiz mailbox (traversal)");
+    for (unsigned char c : mailbox)
+        if (c == '/' || c == '\\' || c == '\0' || c < 0x20)
+            throw std::runtime_error("deliver_maildir: geçersiz mailbox (yasak karakter)");
     fs::path mbox = fs::path(base_dir) / mailbox;
     fs::create_directories(mbox / "new");
     fs::create_directories(mbox / "cur");

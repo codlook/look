@@ -69,6 +69,26 @@ void configure_system_ca_bundle() {
 }
 
 // ── SSRF koruması — private/loopback IP'lere bağlantı engeli ─────────────────
+
+// Tek noktada IPv4 private/özel-blok kontrolü — hem ham v4 hem IPv6'ya gömülü
+// v4 formları (v4-mapped, NAT64, 6to4, v4-compat) için ORTAK. Aksi halde
+// gömülü-v4 formları v4 blocklist'ini atlar (IPv6-only/NAT64 ağlarında gerçek).
+static bool is_private_v4(uint32_t ip) {
+    if ((ip >> 24) == 127) return true;             // 127/8 loopback
+    if ((ip >> 24) == 10)  return true;             // 10/8
+    if ((ip >> 20) == (172*16 + 1)) return true;    // 172.16–31/12
+    if ((ip >> 16) == (192*256 + 168)) return true; // 192.168/16
+    if ((ip >> 16) == (169*256 + 254)) return true; // 169.254/16 (cloud metadata)
+    if ((ip >> 22) == (100*4 + 1))     return true; // 100.64/10 CGNAT
+    if ((ip >> 24) == 0)   return true;             // 0/8
+    if ((ip >> 28) == 0xE) return true;             // 224/4 multicast
+    if ((ip >> 28) == 0xF) return true;             // 240/4 reserved (255.255.255.255 dahil)
+    return false;
+}
+static inline uint32_t rd32(const uint8_t* b) {
+    return ((uint32_t)b[0]<<24)|((uint32_t)b[1]<<16)|((uint32_t)b[2]<<8)|b[3];
+}
+
 static bool is_ssrf_blocked(const struct addrinfo* res) {
     // LOOK_ALLOW_SSRF=1 ile devre dışı bırakılabilir (iç ağ test ortamı için)
     static const bool allow = (std::getenv("LOOK_ALLOW_SSRF") != nullptr &&
@@ -78,15 +98,7 @@ static bool is_ssrf_blocked(const struct addrinfo* res) {
     for (const struct addrinfo* p = res; p; p = p->ai_next) {
         if (p->ai_family == AF_INET) {
             uint32_t ip = ntohl(((struct sockaddr_in*)p->ai_addr)->sin_addr.s_addr);
-            // 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-            // 169.254.0.0/16 (link-local), 100.64.0.0/10 (CGNAT), 0.0.0.0/8
-            if ((ip >> 24) == 127) return true;
-            if ((ip >> 24) == 10)  return true;
-            if ((ip >> 20) == (172*16 + 1)) return true; // 172.16–31
-            if ((ip >> 16) == (192*256 + 168)) return true;
-            if ((ip >> 16) == (169*256 + 254)) return true;
-            if ((ip >> 22) == (100*4 + 1))     return true; // 100.64/10
-            if ((ip >> 24) == 0)   return true;
+            if (is_private_v4(ip)) return true;
         } else if (p->ai_family == AF_INET6) {
             const uint8_t* b = ((struct sockaddr_in6*)p->ai_addr)->sin6_addr.s6_addr;
             // ::1 loopback
@@ -94,26 +106,25 @@ static bool is_ssrf_blocked(const struct addrinfo* res) {
             for (int i = 0; i < 15; ++i) if (b[i] != 0) { is_lo = false; break; }
             if (is_lo && b[15] == 1) return true;
             // ::/128 unspecified
-            bool all_zero = is_lo && b[15] == 0;
-            if (all_zero) return true;
+            if (is_lo && b[15] == 0) return true;
             // fc00::/7 unique-local, fe80::/10 link-local
             if ((b[0] & 0xFE) == 0xFC) return true;
             if ((b[0] == 0xFE) && ((b[1] & 0xC0) == 0x80)) return true;
-            // ::ffff:0:0/96 — IPv4-mapped: SSRF bypass vektörü
-            // b[0..9]=0, b[10]=0xFF, b[11]=0xFF, b[12..15]=IPv4
-            bool is_v4mapped = true;
-            for (int i = 0; i < 10; ++i) if (b[i] != 0) { is_v4mapped = false; break; }
-            if (is_v4mapped && b[10] == 0xFF && b[11] == 0xFF) {
-                uint32_t ip = ((uint32_t)b[12] << 24) | ((uint32_t)b[13] << 16) |
-                              ((uint32_t)b[14] << 8)  | b[15];
-                if ((ip >> 24) == 127) return true;
-                if ((ip >> 24) == 10)  return true;
-                if ((ip >> 20) == (172 * 16 + 1)) return true;
-                if ((ip >> 16) == (192 * 256 + 168)) return true;
-                if ((ip >> 16) == (169 * 256 + 254)) return true;
-                if ((ip >> 22) == (100 * 4 + 1))     return true;
-                if ((ip >> 24) == 0) return true;
-            }
+
+            // Gömülü-IPv4 formları — hepsi v4 blocklist'ine karşı kontrol edilmeli:
+            bool hi80_zero = true;
+            for (int i = 0; i < 10; ++i) if (b[i]) { hi80_zero = false; break; }
+            // ::ffff:a.b.c.d — IPv4-mapped
+            if (hi80_zero && b[10]==0xFF && b[11]==0xFF && is_private_v4(rd32(b+12))) return true;
+            // ::a.b.c.d — IPv4-compatible (deprecated ama defense-in-depth)
+            if (hi80_zero && b[10]==0 && b[11]==0 && (b[12]|b[13]|b[14]|b[15]) &&
+                is_private_v4(rd32(b+12))) return true;
+            // 64:ff9b::/96 — NAT64 (IPv6-only/cloud ağlarda gerçek bypass)
+            if (b[0]==0 && b[1]==0x64 && b[2]==0xFF && b[3]==0x9B &&
+                !b[4]&&!b[5]&&!b[6]&&!b[7]&&!b[8]&&!b[9]&&!b[10]&&!b[11] &&
+                is_private_v4(rd32(b+12))) return true;
+            // 2002::/16 — 6to4 (gömülü v4: b[2..5])
+            if (b[0]==0x20 && b[1]==0x02 && is_private_v4(rd32(b+2))) return true;
         }
     }
     return false;
