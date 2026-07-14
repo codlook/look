@@ -2,6 +2,7 @@
 #include "look/interpreter.h"
 #include <stdexcept>
 #include <algorithm>
+#include <cstdlib>
 
 namespace look {
 
@@ -647,15 +648,18 @@ std::unique_ptr<Expression> Parser::primary() {
                 v = (int64_t)std::stoll(lit);                           // decimal
             return std::make_unique<NumberLiteral>(v);
         } catch (...) {
-            try { return std::make_unique<FloatLiteral>(std::stod(lit)); }
-            catch (...) { return std::make_unique<NumberLiteral>((int64_t)0); }
+            // int64'ü aşan tamsayı → float. `strtod`: taşma→±inf, underflow→0,
+            // işaret korunur (stod out_of_range'i 0'a çevirip devasa değeri sessizce
+            // sıfırlıyordu → limit/eşik bypass'ı).
+            return std::make_unique<FloatLiteral>(std::strtod(lit.c_str(), nullptr));
         }
     }
     if (match(TokenType::FLOAT_NUM)) {
         std::string lit = previous().literal.value();
         lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());  // 1_000.5 → 1000.5
-        try { return std::make_unique<FloatLiteral>(std::stod(lit)); }
-        catch (...) { return std::make_unique<FloatLiteral>(0.0); }
+        // `strtod`: `1e309` gibi taşan literal → ±Infinity (stod out_of_range'i
+        // 0.0 yapıyordu → sessizce yanlış/tehlikeli değer). IEEE-754 doğru.
+        return std::make_unique<FloatLiteral>(std::strtod(lit.c_str(), nullptr));
     }
     if (match(TokenType::STRING))     return std::make_unique<StringLiteral>(previous().literal.value());
 

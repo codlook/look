@@ -1205,8 +1205,10 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         Value right = evaluate_expression(*e->right);
         if (op == "-") {
             if (right.type()==Value::FLOAT) return Value(-right.as_float());
-            int v = right.to_int();
-            return (v == INT_MIN) ? Value(-(double)v) : Value(-v);  // -INT_MIN UB → float
+            int64_t v = right.to_int();   // int(32-bit) DEĞİL: -9999999999 gibi büyük
+            // negatif sayı 32-bit'e taşıp sessizce bozuluyordu (int64 ailesinin
+            // kaçmış üyesi). -INT64_MIN taşması → float'a promote.
+            return (v == INT64_MIN) ? Value(-(double)v) : Value(-v);
         }
         if (op == "!") return Value(!right.is_truthy());
         if (op == "~") return right.bitwise_not();

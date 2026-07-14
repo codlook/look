@@ -280,8 +280,8 @@ call_dispatch:
             case OpCode::UNM: {
                 const Value& b = R(ins.b);
                 if (b.type()==Value::INT) {
-                    int v = b.as_int();
-                    R(ins.a) = (v == INT_MIN) ? Value(-(double)v) : Value(-v);  // -INT_MIN UB
+                    int64_t v = b.as_int();   // int(32-bit) DEĞİL — büyük negatif bozulmasın (İ ile aynı)
+                    R(ins.a) = (v == INT64_MIN) ? Value(-(double)v) : Value(-v);
                 } else {
                     R(ins.a) = Value(-b.as_float());
                 }
