@@ -422,37 +422,45 @@ std::vector<TplNode> TemplateEngine::parse(const std::string& src, const std::st
     return nodes;
 }
 
+// Ayırıcı-sınırlı containment: f, b'nin kendisi VEYA altında mı. Düz string-prefix
+// YETMEZ — "/proj" öneki "/proj-evil" ile de eşleşir (sibling-prefix escape).
+// (installer zip-slip ve file:: ile aynı disiplin.)
+static bool tpl_within(const std::string& b, const std::string& f) {
+    return f.size() >= b.size() && f.compare(0, b.size(), b) == 0 &&
+           (f.size() == b.size() || f[b.size()] == '/' || f[b.size()] == '\\');
+}
+
 std::string TemplateEngine::resolve_path(const std::string& path) {
     fs::path p(path);
     // Add .html extension if no extension given
     if (!p.has_extension()) p += ".html";
-    if (p.is_absolute() && fs::exists(p)) return p.string();
 
-    // Try relative to working directory
-    fs::path base = fs::current_path();
-    fs::path full = base / p;
-
-    // Path traversal koruması: normalize edilmiş yolun proje dizini içinde kalması zorunlu
-    fs::path canonical_full = fs::weakly_canonical(full);
-    fs::path canonical_base = fs::weakly_canonical(base);
-    std::string base_str = canonical_base.string();
-    std::string full_str = canonical_full.string();
-    if (full_str.size() < base_str.size() ||
-        full_str.compare(0, base_str.size(), base_str) != 0) {
-        throw std::runtime_error("Template güvenlik hatası: proje dizini dışına çıkış engellendi: " + path);
-    }
-
-    if (fs::exists(full)) return full.string();
-
-    // Try TEMPLATE_DIR env variable
+    // İzinli kökler: çalışma dizini + (varsa) TEMPLATE_DIR. Çözülen yol bunlardan
+    // birinin ALTINDA olmalı — aksi halde template::render(user_input) ile
+    // "../.." veya mutlak yol üzerinden arbitrary .html file read (içerik client'a
+    // döner → bilgi sızıntısı). Mutlak yol da containment'tan muaf DEĞİL.
+    std::vector<fs::path> roots;
+    roots.push_back(fs::current_path());
     const char* tdir = std::getenv("TEMPLATE_DIR");
-    if (tdir && *tdir) {
-        fs::path tp = fs::path(tdir) / p;
-        if (fs::exists(tp)) return tp.string();
+    if (tdir && *tdir) roots.push_back(fs::path(tdir));
+
+    for (const auto& root : roots) {
+        fs::path cand = p.is_absolute() ? p : (root / p);
+        std::string root_str = fs::weakly_canonical(root).string();
+        std::string cand_str = fs::weakly_canonical(cand).string();
+        if (tpl_within(root_str, cand_str) && fs::exists(cand))
+            return cand.string();
     }
 
-    // Return best-guess path (will produce a clear error on open)
-    return full.string();
+    // Hiçbir izinli kök altında bulunamadı. Yolun bir kök içinde KALIP kalmadığını
+    // kontrol et: kalıyorsa "bulunamadı" (best-guess), çıkıyorsa güvenlik hatası.
+    fs::path base = fs::current_path();
+    std::string base_str = fs::weakly_canonical(base).string();
+    std::string full_str = fs::weakly_canonical(base / p).string();
+    if (!p.is_absolute() && tpl_within(base_str, full_str))
+        return (base / p).string();   // kök içinde ama yok → açılışta net hata
+
+    throw std::runtime_error("Template güvenlik hatası: izinli dizin dışına çıkış engellendi: " + path);
 }
 
 void TemplateEngine::collect_blocks(const std::vector<TplNode>& nodes, TplBlocks& out) {
