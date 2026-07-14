@@ -618,6 +618,19 @@ static RespClient* session_redis() {
     }
     return cli.get();
 }
+// GÜVENLİK: Session ID doğrulama — üretilen format TAM 32 hex karakter. sid
+// client'ın LOOK_SESSION cookie'sinden gelir ve doğrudan dosya yoluna girer
+// (sess_file_path). Doğrulanmazsa "x/../../../etc/cron.d/pwn" gibi bir değer
+// path traversal → arbitrary file read (session::get) ve write/truncate
+// (session::set → ofstream trunc) sağlar. Katı allowlist: yalnız 32 hex kabul.
+static bool valid_sid(const std::string& s) {
+    if (s.size() != 32) return false;
+    for (char c : s) {
+        bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (!hex) return false;
+    }
+    return true;
+}
 static std::string sess_file_path(const std::string& sid) {
     return std::string(std::getenv("TEMP") ? std::getenv("TEMP") : "/tmp") + "/look_sess_" + sid;
 }
@@ -673,8 +686,11 @@ static Module make_session_module(WebContext* ctx) {
     m.name = "session";
 
     m.functions["start"] = [ctx](auto) -> Value {
-        // Generate session ID if not exists
-        if (!ctx->cookies_in.count("LOOK_SESSION")) {
+        // Cookie yoksa VEYA client geçersiz/kötü niyetli bir SID gönderdiyse
+        // (path traversal denemesi dahil) yeni CSPRNG ID üret — client değerine
+        // asla güvenme.
+        auto sit = ctx->cookies_in.find("LOOK_SESSION");
+        if (sit == ctx->cookies_in.end() || !valid_sid(sit->second)) {
             // Cryptographically secure random bytes — /dev/urandom (Linux) or rand_s (Windows)
             char id[33];
 #if defined(_WIN32)
@@ -709,7 +725,7 @@ static Module make_session_module(WebContext* ctx) {
     m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();
         auto it = ctx->cookies_in.find("LOOK_SESSION");
-        if (it == ctx->cookies_in.end()) return Value();
+        if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value();  // traversal guard
         std::string blob = sess_load(it->second);
         sess_blob_set(blob, args[0].to_string(), args[1].to_string());
         sess_store(it->second, blob);
@@ -718,13 +734,13 @@ static Module make_session_module(WebContext* ctx) {
     m.functions["get"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
         auto it = ctx->cookies_in.find("LOOK_SESSION");
-        if (it == ctx->cookies_in.end()) return Value();
+        if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value();  // traversal guard
         std::string blob = sess_load(it->second), out;
         return sess_blob_get(blob, args[0].to_string(), out) ? Value(out) : Value();
     };
     m.functions["destroy"] = [ctx](auto) -> Value {
         auto it = ctx->cookies_in.find("LOOK_SESSION");
-        if (it != ctx->cookies_in.end()) sess_remove(it->second);
+        if (it != ctx->cookies_in.end() && valid_sid(it->second)) sess_remove(it->second);
         ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
         ctx->set_cookies_out.push_back(
             "LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax");
