@@ -332,9 +332,14 @@ struct ImapServer::Impl {
         fs::path target = fs::path(root) / ("." + mb);
         fs::path target_c = fs::weakly_canonical(target, ec);
         if (ec) return "";
-        // target_c kesinlikle root_c altında olmalı (traversal kilidi)
+        // target_c kesinlikle root_c altında olmalı (traversal kilidi). Düz
+        // string-prefix YETMEZ ("/root" öneki "/root-evil" ile eşleşir); ayırıcı-
+        // sınırı da zorunlu — üstteki ".." reddine bağlı kalmayan, kendi başına
+        // doğru containment (installer/template ile aynı disiplin).
         auto rs = root_c.string(), ts = target_c.string();
-        if (ts.size() < rs.size() || ts.compare(0, rs.size(), rs) != 0) return "";
+        bool within = ts.size() >= rs.size() && ts.compare(0, rs.size(), rs) == 0 &&
+                      (ts.size() == rs.size() || ts[rs.size()] == '/' || ts[rs.size()] == '\\');
+        if (!within) return "";
         return target_c.string();
     }
 
