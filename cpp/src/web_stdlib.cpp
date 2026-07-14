@@ -680,6 +680,27 @@ static void sess_remove(const std::string& sid) {
     if (session_use_redis()) { try { session_redis()->del("look_sess:" + sid); } catch (...) {} return; }
     std::remove(sess_file_path(sid).c_str());
 }
+// 32-hex CSPRNG session ID üret (fail-closed) — session::start ve regenerate
+// paylaşır. /dev/urandom (Linux) veya rand_s (Windows). Güvenli kaynak yoksa
+// zayıf ID yaymak yerine hata fırlat.
+static std::string gen_session_id() {
+    char id[33];
+#if defined(_WIN32)
+    for (int i = 0; i < 32; i++) { unsigned int r = 0; rand_s(&r); id[i] = "0123456789abcdef"[r % 16]; }
+#else
+    std::ifstream urandom("/dev/urandom", std::ios::binary);
+    uint8_t bytes[16];
+    urandom.read(reinterpret_cast<char*>(bytes), 16);
+    if (!urandom || urandom.gcount() != 16)
+        throw std::runtime_error("session: güvenli rastgelelik alınamadı (/dev/urandom)");
+    for (int i = 0; i < 16; i++) {
+        id[i*2]   = "0123456789abcdef"[(bytes[i] >> 4) & 0xf];
+        id[i*2+1] = "0123456789abcdef"[bytes[i] & 0xf];
+    }
+#endif
+    id[32] = 0;
+    return std::string(id);
+}
 
 static Module make_session_module(WebContext* ctx) {
     Module m;
@@ -691,36 +712,28 @@ static Module make_session_module(WebContext* ctx) {
         // asla güvenme.
         auto sit = ctx->cookies_in.find("LOOK_SESSION");
         if (sit == ctx->cookies_in.end() || !valid_sid(sit->second)) {
-            // Cryptographically secure random bytes — /dev/urandom (Linux) or rand_s (Windows)
-            char id[33];
-#if defined(_WIN32)
-            for (int i = 0; i < 32; i++) {
-                unsigned int r = 0;
-                rand_s(&r);
-                id[i] = "0123456789abcdef"[r % 16];
-            }
-#else
-            {
-                std::ifstream urandom("/dev/urandom", std::ios::binary);
-                uint8_t bytes[16];
-                urandom.read(reinterpret_cast<char*>(bytes), 16);
-                // FAIL-CLOSED: /dev/urandom açılamaz/eksik okursa (chroot/sandbox)
-                // bytes[] başlatılmamış stack belleği kalır → tahmin edilebilir
-                // session ID (auth bypass). Zayıf ID yaymak yerine hata fırlat.
-                if (!urandom || urandom.gcount() != 16)
-                    throw std::runtime_error("session: güvenli rastgelelik alınamadı (/dev/urandom)");
-                for (int i = 0; i < 16; i++) {
-                    id[i*2]   = "0123456789abcdef"[(bytes[i] >> 4) & 0xf];
-                    id[i*2+1] = "0123456789abcdef"[bytes[i] & 0xf];
-                }
-            }
-#endif
-            id[32] = 0;
-            std::string sid(id);
+            std::string sid = gen_session_id();
             ctx->cookies_in["LOOK_SESSION"] = sid;
             ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly; Secure; SameSite=Lax");
         }
         return Value(ctx->cookies_in["LOOK_SESSION"]);
+    };
+    // session::regenerate() — session fixation koruması. Login / yetki değişiminde
+    // çağrılır: mevcut session verisini KORUYARAK yeni bir SID'e taşır, eskisini
+    // siler, yeni cookie set eder. Saldırganın önceden sabitlediği (fixation) SID
+    // login sonrası geçersiz kalır. OWASP: privilege change'de SID yenile.
+    m.functions["regenerate"] = [ctx](auto) -> Value {
+        std::string blob;
+        auto it = ctx->cookies_in.find("LOOK_SESSION");
+        if (it != ctx->cookies_in.end() && valid_sid(it->second)) {
+            blob = sess_load(it->second);   // mevcut veriyi al
+            sess_remove(it->second);        // eski session'ı geçersizleştir
+        }
+        std::string sid = gen_session_id();
+        ctx->cookies_in["LOOK_SESSION"] = sid;
+        ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly; Secure; SameSite=Lax");
+        if (!blob.empty()) sess_store(sid, blob);   // veriyi yeni SID'e taşı
+        return Value(sid);
     };
     m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();

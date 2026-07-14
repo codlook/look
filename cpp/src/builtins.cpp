@@ -31,7 +31,7 @@ const std::vector<std::string>& builtin_names() {
         // 43-47: log
         "log::info", "log::warn", "log::error", "log::debug", "log::query",
         // 48-51: session
-        "session::start", "session::get", "session::set", "session::destroy",
+        "session::start", "session::get", "session::set", "session::destroy", "session::regenerate",
         // 52-55: cookie
         "cookie::get", "cookie::set", "cookie::delete", "cookie::has",
         // 56: db::connect (setup'ta çalışır — pool oluşturur, key string döner)
