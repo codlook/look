@@ -384,6 +384,18 @@ bool mail_user_auth(const std::string& user, const std::string& pass,
 }
 
 // ── Local domain check for open relay prevention ─────────────────────────────
+// RFC 5321 §2.4: domain adları case-INSENSITIVE; FQDN sonundaki nokta
+// (example.com.) geçerli. Katı case-sensitive + trim'siz eşleşme, meşru inbound
+// maili (user@EXAMPLE.COM / user@example.com.) yanlışlıkla reddedip bounce
+// ettiriyordu (availability/interop — güvenlik değil, fail-closed korunuyor).
+// İki tarafı da normalize et.
+static std::string smtp_norm_domain(std::string d) {
+    size_t s = d.find_first_not_of(" \t");
+    d = (s == std::string::npos) ? "" : d.substr(s);
+    while (!d.empty() && (d.back() == ' ' || d.back() == '\t' || d.back() == '.')) d.pop_back();
+    for (char& c : d) c = (char)std::tolower((unsigned char)c);
+    return d;
+}
 static bool is_local_domain(const std::string& addr_domain) {
     std::string cfg = []() -> std::string {
         const char* e = std::getenv("LOOK_SMTP_LOCAL_DOMAINS");
@@ -392,12 +404,12 @@ static bool is_local_domain(const std::string& addr_domain) {
         return (e && *e) ? e : "";
     }();
     if (cfg.empty()) return false; // no domains configured → reject all
+    std::string want = smtp_norm_domain(addr_domain);
+    if (want.empty()) return false;
     std::istringstream ss(cfg);
     std::string d;
     while (std::getline(ss, d, ',')) {
-        while (!d.empty() && d.front() == ' ') d = d.substr(1);
-        while (!d.empty() && d.back()  == ' ') d.pop_back();
-        if (d == addr_domain) return true;
+        if (smtp_norm_domain(d) == want) return true;
     }
     return false;
 }
