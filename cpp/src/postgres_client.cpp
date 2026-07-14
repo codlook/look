@@ -618,6 +618,12 @@ void PostgresClient::send_startup() {
     append_param("user", user_);
     append_param("database", database_);
     append_param("client_encoding", "UTF8");
+    // GÜVENLİK: string literal escape'i (bind_params → '' ile tek-tırnak) yalnız
+    // standard_conforming_strings=on iken TAM güvenlidir; kapalıysa backslash bir
+    // escape karakteri olur ve `\'` ile injection mümkün olur. Bağlantı düzeyinde
+    // zorla (PG 9.1+ varsayılanı on ama enforce etmek MySQL'in NO_BACKSLASH_ESCAPES
+    // temizlemesiyle aynı disiplin — server/rol config'inden bağımsız güvence).
+    append_param("standard_conforming_strings", "on");
     body.push_back('\0'); // param list sonu
 
     // Startup mesajı: type byte YOK, sadece len + body
