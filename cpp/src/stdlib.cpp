@@ -15,8 +15,33 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <vector>
+#if defined(_WIN32)
+#  include <windows.h>
+#  include <bcrypt.h>
+#else
+#  include <fstream>
+#endif
 
 namespace look {
+
+// CSPRNG bayt üretimi — string::random gibi token/anahtar üretmeye davetkâr
+// yollar için. std::rand() KRİPTOGRAFİK DEĞİL (saniye-seed + LCG = tahmin
+// edilebilir → API key/reset token üretilirse auth bypass). Fail-closed:
+// güvenli kaynak yoksa zayıf çıktı yaymak yerine hata fırlat. (web.cpp
+// random_hex ve session ID ile aynı disiplin.)
+static void secure_random_fill(uint8_t* buf, size_t n) {
+    if (n == 0) return;
+#if defined(_WIN32)
+    if (BCryptGenRandom(nullptr, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+        throw std::runtime_error("string::random: CSPRNG erişilemedi (BCryptGenRandom)");
+#else
+    std::ifstream urandom("/dev/urandom", std::ios::binary);
+    urandom.read(reinterpret_cast<char*>(buf), (std::streamsize)n);
+    if (!urandom || (size_t)urandom.gcount() != n)
+        throw std::runtime_error("string::random: CSPRNG erişilemedi (/dev/urandom)");
+#endif
+}
 
 static void check_args(const std::string& fn, size_t got, size_t expected) {
     if (got != expected)
@@ -396,13 +421,18 @@ static Module make_string() {
     };
 
     m.functions["random"] = [](auto args) -> Value {
-        int length = args.size() >= 1 ? args[0].to_int() : 8;
+        int length = args.size() >= 1 ? (int)args[0].to_int() : 8;
+        if (length < 0) length = 0;
+        static constexpr int MAX_RANDOM = 1 << 20;   // 1 MB üst sınır (OOM DoS)
+        if (length > MAX_RANDOM) length = MAX_RANDOM;
         static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
-        static bool seeded = false;
-        if (!seeded) { std::srand((unsigned)std::time(nullptr)); seeded = true; }
-        std::string result;
-        for (int i = 0; i < length; ++i)
-            result += chars[std::rand() % (sizeof(chars) - 1)];
+        std::string result((size_t)length, '\0');
+        if (length > 0) {
+            std::vector<uint8_t> buf((size_t)length);
+            secure_random_fill(buf.data(), buf.size());   // CSPRNG (fail-closed)
+            for (int i = 0; i < length; ++i)
+                result[(size_t)i] = chars[buf[(size_t)i] % (sizeof(chars) - 1)];
+        }
         return Value(result);
     };
 
