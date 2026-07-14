@@ -6,14 +6,32 @@
 #include <random>
 
 #ifdef _WIN32
+  #include <windows.h>
+  #include <bcrypt.h>
   #pragma comment(lib, "ws2_32.lib")
 #else
   #include <netinet/tcp.h>
+  #include <fstream>
 #endif
 
 namespace look {
 
 static std::string pg_parse_error(const std::vector<uint8_t>& body);
+
+// SCRAM-SHA-256 client nonce'u KRİPTOGRAFİK olmalı (RFC 5802 §5.1: nonce
+// unpredictable olmalı). std::mt19937 tahmin edilebilir (32-bit random_device
+// seed) → CSPRNG değil. Fail-closed güvenli kaynak kullan.
+static void pg_secure_random(uint8_t* buf, size_t n) {
+#ifdef _WIN32
+    if (BCryptGenRandom(nullptr, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+        throw std::runtime_error("PostgreSQL SCRAM: CSPRNG erişilemedi (BCryptGenRandom)");
+#else
+    std::ifstream u("/dev/urandom", std::ios::binary);
+    u.read(reinterpret_cast<char*>(buf), (std::streamsize)n);
+    if (!u || (size_t)u.gcount() != n)
+        throw std::runtime_error("PostgreSQL SCRAM: CSPRNG erişilemedi (/dev/urandom)");
+#endif
+}
 
 // ── MD5 (RFC 1321) ────────────────────────────────────────────────────────────
 
@@ -233,12 +251,9 @@ std::vector<uint8_t> PostgresClient::base64_dec(const std::string& s) {
 // ── SCRAM-SHA-256 (RFC 7677) ──────────────────────────────────────────────────
 
 void PostgresClient::do_scram_sha256(const std::vector<uint8_t>& /*mechanisms_body*/) {
-    // Generate 18-byte random nonce
-    std::random_device rd;
-    std::mt19937 rng(rd());
-    std::uniform_int_distribution<int> dist(0, 255);
+    // 18-byte CSPRNG nonce (RFC 5802: unpredictable olmalı — mt19937 değil)
     std::vector<uint8_t> nonce_raw(18);
-    for (auto& b : nonce_raw) b = (uint8_t)dist(rng);
+    pg_secure_random(nonce_raw.data(), nonce_raw.size());
     std::string c_nonce = base64_enc(nonce_raw.data(), nonce_raw.size());
 
     // client-first-message-bare
