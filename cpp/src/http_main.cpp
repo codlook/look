@@ -399,15 +399,18 @@ static void run_setup_http(const fs::path& script) {
                 };
             }
 
-            // before_route() (153) — setup'ta middleware closure'ı kaydet
-            setup_builtins[153] = [vm_before_routes_ptr](std::vector<look::Value>& args) -> look::Value {
+            // before_route() — setup'ta middleware closure'ı kaydet. İndeks İSİMDEN
+            // (builtin_index) — hard-coded sayı builtin listesi büyüyünce kayıyordu.
+            setup_builtins[(size_t)look::builtin_index("before_route")] =
+                [vm_before_routes_ptr](std::vector<look::Value>& args) -> look::Value {
                 if (!args.empty() && args[0].type() == look::Value::BYTECODE_FN)
                     vm_before_routes_ptr->push_back(args[0]);
                 return look::Value();
             };
 
-            // stop() (154) — setup'ta no-op (sadece dispatch'te anlamlı)
-            setup_builtins[154] = [](std::vector<look::Value>&) -> look::Value {
+            // stop() — setup'ta no-op (sadece dispatch'te anlamlı)
+            setup_builtins[(size_t)look::builtin_index("stop")] =
+                [](std::vector<look::Value>&) -> look::Value {
                 return look::Value();
             };
 
@@ -913,14 +916,21 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             }
         }
 
-        // channel() (57) — req_builtins'de doğrudan oluştur
-        req_builtins[57] = [](std::vector<look::Value>& args) -> look::Value {
+        // KRİTİK: manuel override indeksleri artık İSİMDEN çözülüyor (builtin_index).
+        // Eskiden hard-coded sayılardı; builtin_names() listesine bir giriş eklenince
+        // tüm indeksler kayıyor ve bu override'lar YANLIŞ builtin'i eziyordu
+        // (ör. before_route no-op'u response::json'ı ezip JSON API'lerini boş
+        // döndürüyordu). İsim-tabanlı çözüm bu senkron-kopukluğu sınıfını kapatır.
+        auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
+
+        // channel()
+        req_builtins[BI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
             int buf = args.empty() ? 128 : (args[0].type() == look::Value::INT ? args[0].as_int() : 128);
             if (buf <= 0) buf = (1 << 20);
             return look::Value(std::make_shared<look::LookChannel>(buf));
         };
-        // env() (58) ve config() (59)
-        req_builtins[58] = [](std::vector<look::Value>& args) -> look::Value {
+        // env() ve config()
+        req_builtins[BI("env")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value();
             std::string key = args[0].to_string();
             std::string def = (args.size() >= 2) ? args[1].to_string() : "";
@@ -928,46 +938,46 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         };
         {
             auto f_cfg = copy->get_module_fn("", "config");
-            if (f_cfg) req_builtins[59] = [f_cfg](std::vector<look::Value>& args) -> look::Value {
+            if (f_cfg) req_builtins[BI("config")] = [f_cfg](std::vector<look::Value>& args) -> look::Value {
                 std::vector<look::Value> a = args; return f_cfg(a);
             };
         }
 
-        // before_route() (153) — dispatch'te no-op (setup'ta kaydedildi)
-        req_builtins[153] = [](std::vector<look::Value>&) -> look::Value { return look::Value(); };
+        // before_route() — dispatch'te no-op (setup'ta kaydedildi)
+        req_builtins[BI("before_route")] = [](std::vector<look::Value>&) -> look::Value { return look::Value(); };
 
-        // stop() (154) — before_route middleware içinden route execution'ı iptal et
-        req_builtins[154] = [](std::vector<look::Value>&) -> look::Value {
+        // stop() — before_route middleware içinden route execution'ı iptal et
+        req_builtins[BI("stop")] = [](std::vector<look::Value>&) -> look::Value {
             throw look::RouteStopException();
         };
 
-        // 155-161: skaler core builtins — interpreter satır 1719-1729 ile birebir
-        req_builtins[155] = [](std::vector<look::Value>& args) -> look::Value { // strlen
+        // skaler core builtins — interpreter ile birebir
+        req_builtins[BI("strlen")] = [](std::vector<look::Value>& args) -> look::Value {
             return look::Value(args.empty() ? 0 : (int)args[0].to_string().size());
         };
-        req_builtins[156] = [](std::vector<look::Value>& args) -> look::Value { // abs
+        req_builtins[BI("abs")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0);
             auto& v = args[0];
             if (v.type() == look::Value::FLOAT) return look::Value(std::abs(v.as_float()));
             return look::Value(std::abs(v.to_int()));
         };
-        req_builtins[157] = [](std::vector<look::Value>& args) -> look::Value { // max
+        req_builtins[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.size() < 2) return args.empty() ? look::Value() : args[0];
             return args[0] >= args[1] ? args[0] : args[1];
         };
-        req_builtins[158] = [](std::vector<look::Value>& args) -> look::Value { // min
+        req_builtins[BI("min")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.size() < 2) return args.empty() ? look::Value() : args[0];
             return args[0] <= args[1] ? args[0] : args[1];
         };
-        req_builtins[159] = [](std::vector<look::Value>& args) -> look::Value { // sqrt
+        req_builtins[BI("sqrt")] = [](std::vector<look::Value>& args) -> look::Value {
             return look::Value(args.empty() ? 0.0 : std::sqrt(args[0].to_float()));
         };
-        req_builtins[160] = [](std::vector<look::Value>& args) -> look::Value { // strtoupper
+        req_builtins[BI("strtoupper")] = [](std::vector<look::Value>& args) -> look::Value {
             std::string s = args.empty() ? "" : args[0].to_string();
             for (char& c : s) c = (char)std::toupper((unsigned char)c);
             return look::Value(s);
         };
-        req_builtins[161] = [](std::vector<look::Value>& args) -> look::Value { // strtolower
+        req_builtins[BI("strtolower")] = [](std::vector<look::Value>& args) -> look::Value {
             std::string s = args.empty() ? "" : args[0].to_string();
             for (char& c : s) c = (char)std::tolower((unsigned char)c);
             return look::Value(s);
