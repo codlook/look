@@ -274,7 +274,12 @@ struct HttpServer::Impl {
             p = nl + 2;
 
             if (chunk_sz == 0) break;                    // son chunk
-            if (out.size() + chunk_sz > cap) { send_simple(fd, 413, "Payload Too Large"); return false; }
+            // Taşma-güvenli: `out.size() + chunk_sz` chunk_sz ~2^64 (hex
+            // fffffffffffffffb) ile wrap yapıp cap kontrolünü atlayabilirdi.
+            // out.size() <= cap invariantı gereği `cap - out.size()` güvenli;
+            // bu ayrıca chunk_sz'yi ≤cap'e sınırlayıp 280'deki `p+chunk_sz+2`
+            // taşmasını da önler.
+            if (chunk_sz > cap - out.size()) { send_simple(fd, 413, "Payload Too Large"); return false; }
 
             // 2) chunk verisi + kapanış CRLF'i gelene kadar oku
             while (stream.size() < p + chunk_sz + 2) {
