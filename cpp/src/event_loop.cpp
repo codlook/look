@@ -250,9 +250,14 @@ void EpollEventLoop::run() {
                         // tekrar okuyup başka bağlantıya veri teslimini önle.
                         if (entry->closed.load()) break;
                     } else if (r == 0) {
+                        // Temiz FIN — callback'e len==0 bildir ki üst katman
+                        // (WS/SSE) registry+buffer cleanup'ını yapsın (aksi halde
+                        // her disconnect'te sızıntı → cap-hit DoS + stale-fd).
+                        if (cb) cb(read_buf, 0);
                         close_fd(fd); break;
                     } else {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                        if (cb) cb(read_buf, 0);   // hata da disconnect — cleanup bildir
                         close_fd(fd); break;
                     }
                 }

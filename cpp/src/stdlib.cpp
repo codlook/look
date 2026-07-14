@@ -373,25 +373,37 @@ static Module make_string() {
         return Value(result);
     };
 
+    // Hedef uzunluk üst sınırı — `pad_left("x", 2000000000, " ")` sınırsız/O(n²)
+    // allocation (her tur `pad + s` yeniden kopyalar) → hang/OOM DoS. string::repeat
+    // (10MB) ve string::random (1MB) ile aynı disiplin.
+    static constexpr int PAD_MAX = 10 * 1024 * 1024;
     m.functions["pad_left"] = [](auto args) -> Value {
         check_args("string::pad_left", args.size(), 3);
         std::string s   = args[0].to_string();
-        int         len = (int)args[1].as_int();
+        int64_t     len = args[1].as_int();
+        if (len < 0) len = 0;
+        if (len > PAD_MAX) throw std::runtime_error("string::pad_left: hedef uzunluk 10MB sınırını aşıyor");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
-        while ((int)s.size() < len) s = pad + s;
-        if ((int)s.size() > len) s = s.substr(s.size() - len);
+        if ((int64_t)s.size() < len) {
+            std::string prefix; prefix.reserve((size_t)len - s.size());
+            while ((int64_t)(prefix.size() + s.size()) < len) prefix += pad;
+            s = prefix.substr(0, (size_t)len - s.size()) + s;
+        } else if ((int64_t)s.size() > len) s = s.substr(s.size() - (size_t)len);
         return Value(s);
     };
 
     m.functions["pad_right"] = [](auto args) -> Value {
         check_args("string::pad_right", args.size(), 3);
         std::string s   = args[0].to_string();
-        int         len = (int)args[1].as_int();
+        int64_t     len = args[1].as_int();
+        if (len < 0) len = 0;
+        if (len > PAD_MAX) throw std::runtime_error("string::pad_right: hedef uzunluk 10MB sınırını aşıyor");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
-        while ((int)s.size() < len) s = s + pad;
-        if ((int)s.size() > len) s = s.substr(0, len);
+        s.reserve((size_t)len);
+        while ((int64_t)s.size() < len) s += pad;
+        if ((int64_t)s.size() > len) s = s.substr(0, (size_t)len);
         return Value(s);
     };
 

@@ -81,8 +81,16 @@ static bool parse_request(const std::string& raw, HttpRequest& req) {
             std::string key = line.substr(0, colon);
             std::string val = line.substr(colon + 1);
             while (!val.empty() && (val[0] == ' ' || val[0] == '\t')) val.erase(0, 1);
+            while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
             while (!key.empty() && key.back() == ' ') key.pop_back();
             std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+            // RFC 7230 §3.3.3: çift/tutarsız Content-Length request smuggling'e yol
+            // açar (front-end ilk değeri, LOOK sonuncuyu kullanırsa desync). Çakışan
+            // ikinci CL → isteği reddet.
+            if (key == "content-length") {
+                auto ex = req.headers.find("content-length");
+                if (ex != req.headers.end() && ex->second != val) return false;
+            }
             req.headers[key] = val;
         }
         pos = end + 2;
@@ -574,6 +582,11 @@ struct HttpServer::Impl {
 
     // ── WS frame I/O ─────────────────────────────────────────────────────────
     void on_ws_data(int fd, const char* data, size_t len) {
+        // len==0 = bağlantı kapandı (event loop clean-FIN/hata bildirimi). Registry
+        // + buffer'ı reap et — aksi halde her temiz disconnect'te ws_clients/ws_bufs/
+        // g_ws_registry sızar → MAX_WS'e ulaşınca yeni upgrade'ler kalıcı reddedilir
+        // + broadcast kapalı/yeniden-açılmış fd'ye yazmaya devam eder.
+        if (len == 0) { close_ws(fd); return; }
         std::shared_ptr<WsConnection> conn;
         {
             std::lock_guard<std::mutex> lk(ws_mtx);
@@ -671,11 +684,17 @@ struct HttpServer::Impl {
     }
 
     void close_ws(int fd) {
+        std::shared_ptr<WsConnection> conn;
         {
             std::lock_guard<std::mutex> lk(ws_mtx);
+            auto it = ws_clients.find(fd);
+            if (it != ws_clients.end()) conn = it->second;
             ws_clients.erase(fd);
             ws_bufs.erase(fd);
         }
+        // closed'ı set et — broadcast/send'in kapalı fd'ye yazmasını (fd-reuse
+        // race) send_text'in closed kontrolüyle daralt.
+        if (conn) conn->closed.store(true);
         look::g_ws_registry.remove(fd);
         loop->close_fd(fd);
     }

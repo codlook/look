@@ -36,7 +36,7 @@ namespace look {
 
 // â”€â”€ JSON encode/decode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-static std::string json_encode(const Value& v);
+static std::string json_encode(const Value& v, int depth = 0);
 
 static std::string json_encode_string(const std::string& s) {
     std::string out = "\"";
@@ -60,7 +60,11 @@ static std::string json_encode_string(const std::string& s) {
     return out + "\"";
 }
 
-static std::string json_encode(const Value& v) {
+static std::string json_encode(const Value& v, int depth) {
+    // Cycle/derinlik guard — LOOK dizileri referans tipi (shared_ptr); `$a[0]=$a`
+    // ile kendine-referanslı yapı kurulabilir → decode'da guard vardı ama encode'da
+    // YOKTU → sonsuz özyineleme → SIGSEGV/worker crash. 256 derinlikte kes.
+    if (depth > 256) return "null";
     switch (v.type()) {
         case Value::INT:    return std::to_string(v.as_int());
         case Value::FLOAT:  {
@@ -86,7 +90,7 @@ static std::string json_encode(const Value& v) {
                     first = false;
                     out += json_encode_string(arr[i].to_string());
                     out += ":";
-                    out += json_encode(arr[i + 1]);
+                    out += json_encode(arr[i + 1], depth + 1);
                 }
                 return out + "}";
             }
@@ -94,7 +98,7 @@ static std::string json_encode(const Value& v) {
             std::string out = "[";
             for (size_t i = 0; i < arr.size(); ++i) {
                 if (i) out += ",";
-                out += json_encode(arr[i]);
+                out += json_encode(arr[i], depth + 1);
             }
             return out + "]";
         }

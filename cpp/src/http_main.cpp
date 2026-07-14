@@ -453,50 +453,50 @@ static void run_setup_http(const fs::path& script) {
             // db::connect (56) — interpreter'ın mevcut pool key'ini döndür (aynı DSN için yeni
             // pool açmaz). VM route closures bu key'i capture eder; acquire_thread_connections()
             // bu pool'dan bağlantı alır. Farklı DSN için yeni pool açmak gerekmez (index.lk tek DSN).
-            setup_builtins[56] = [](std::vector<look::Value>& args) -> look::Value {
-                // Interpreter'ın $conn global'ını al — setup'ta oluşturulmuş pool key
+            // KRİTİK: bu override'lar artık İSİMDEN indeksleniyor (builtin_index).
+            // Eskiden hard-coded sayılardı; builtin_names()'e giriş eklenince
+            // (ör. session::regenerate) tüm indeksler kaydı ve db::connect setup'ta
+            // channel lambda'sını çalıştırıyordu (sessiz VM/interpreter divergence).
+            auto SBI = [](const char* n) { return (size_t)look::builtin_index(n); };
+            setup_builtins[SBI("db::connect")] = [](std::vector<look::Value>& args) -> look::Value {
                 look::Value existing = g_http_app.interp->get_global("conn");
                 if (existing.type() == look::Value::STRING) return existing;
-                // Fallback: interpreter'ın db::connect'ini çağır (interpreter pool'una ekler)
                 auto f = g_http_app.interp->get_module_fn("db", "connect");
                 if (!f) return look::Value();
                 std::vector<look::Value> a = args;
                 return f(a);
             };
-            // channel (57) — LookChannel oluşturur (setup'ta da kullanılabilir: $hub = channel())
-            setup_builtins[57] = [](std::vector<look::Value>& args) -> look::Value {
+            setup_builtins[SBI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
                 int buf = args.empty() ? 128 : (args[0].type() == look::Value::INT ? args[0].as_int() : 128);
-                if (buf <= 0) buf = (1 << 20); // 0 = sınırsız ~ 1M
+                if (buf <= 0) buf = (1 << 20);
                 return look::Value(std::make_shared<look::LookChannel>(buf));
             };
-            // env (58) — setup'ta DB DSN oluşturmak için çağrılır (.env-aware)
-            setup_builtins[58] = [](std::vector<look::Value>& args) -> look::Value {
+            setup_builtins[SBI("env")] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value();
                 std::string key = args[0].to_string();
                 std::string def = (args.size() >= 2) ? args[1].to_string() : "";
                 return look::Value(look::look_get_env(key, def));
             };
-            // config (59) — setup'ta kullanılabilir
             {
                 auto f = g_http_app.interp->get_module_fn("", "config");
-                if (f) setup_builtins[59] = [f](std::vector<look::Value>& args) -> look::Value {
+                if (f) setup_builtins[SBI("config")] = [f](std::vector<look::Value>& args) -> look::Value {
                     std::vector<look::Value> a = args;
                     return f(a);
                 };
             }
-            // date::timestamp (105) + file:: (106-112) — setup'ta çağrılabilir
             {
                 auto f = g_http_app.interp->get_module_fn("date", "timestamp");
-                if (f) setup_builtins[105] = [f](std::vector<look::Value>& args) -> look::Value {
+                if (f) setup_builtins[SBI("date::timestamp")] = [f](std::vector<look::Value>& args) -> look::Value {
                     std::vector<look::Value> a = args; return f(a);
                 };
             }
-            for (auto& [idx, mod, fn] : std::vector<std::tuple<int,std::string,std::string>>{
-                {106,"file","read"},{107,"file","put"},{108,"file","append"},
-                {109,"file","exists"},{110,"file","remove"},{111,"file","size"},{112,"file","store"}
+            for (auto& [nm, mod, fn] : std::vector<std::tuple<std::string,std::string,std::string>>{
+                {"file::read","file","read"},{"file::put","file","put"},{"file::append","file","append"},
+                {"file::exists","file","exists"},{"file::remove","file","remove"},
+                {"file::size","file","size"},{"file::store","file","store"}
             }) {
                 auto f = g_http_app.interp->get_module_fn(mod, fn);
-                if (f) setup_builtins[idx] = [f](std::vector<look::Value>& args) -> look::Value {
+                if (f) setup_builtins[SBI(nm.c_str())] = [f](std::vector<look::Value>& args) -> look::Value {
                     std::vector<look::Value> a = args; return f(a);
                 };
             }

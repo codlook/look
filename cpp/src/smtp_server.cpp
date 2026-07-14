@@ -1059,6 +1059,13 @@ struct SmtpServer::Impl {
     }
 
     void do_starttls(int fd, std::shared_ptr<SmtpSession> sess) {
+        // GÜVENLİK (RFC 3207 §4): STARTTLS'ten sonra, TLS handshake'inden ÖNCE
+        // buffer'da kalan plaintext komutlar ATILMALI. Aksi halde saldırgan
+        // `STARTTLS\r\nMAIL FROM:<x>\r\nRCPT TO:<y>\r\n`'i tek plaintext segment'te
+        // yollayıp, bu satırların TLS içinde gelmiş gibi işlenmesini sağlar
+        // (STARTTLS command injection / auth-boundary bypass — CVE-2011-0411 sınıfı).
+        sess->buf.clear();
+        sess->reset_envelope();
         // Detach fd from EventLoop BEFORE handing it to the worker thread.
         // This prevents epoll/IOCP from delivering events on the same fd
         // while SSL_accept() is reading from it on the worker thread.

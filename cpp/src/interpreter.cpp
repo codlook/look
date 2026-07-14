@@ -1108,12 +1108,13 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             return Value(); // null if not found
         }
 
-        // Regular numeric index
-        int i = idx.to_int();
-        if (i < 0) i = (int)arr.size() + i;
-        if (i < 0 || i >= (int)arr.size())
+        // Regular numeric index — int64 (int'e daraltma `$arr[2^32]`'yi 0'a
+        // wrap'layıp yanlış eleman döndürüyordu; bounds bypass).
+        int64_t i = idx.to_int();
+        if (i < 0) i = (int64_t)arr.size() + i;
+        if (i < 0 || i >= (int64_t)arr.size())
             throw std::runtime_error("Array index " + std::to_string(i) + " out of bounds");
-        return arr[i];
+        return arr[(size_t)i];
     }
 
     // Assignment
@@ -1161,11 +1162,11 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 return nv;
             }
 
-            // Numeric index
-            int i = idx.to_int();
-            if (i < 0) i = (int)arr.size() + i;
-            if (i == (int)arr.size()) { Value nv = apply_op(Value()); arr.push_back(nv); return nv; }
-            else if (i >= 0 && i < (int)arr.size()) { arr[i] = apply_op(arr[i]); return arr[i]; }
+            // Numeric index — int64 (int daraltma bounds bypass'ı → yanlış eleman yazma)
+            int64_t i = idx.to_int();
+            if (i < 0) i = (int64_t)arr.size() + i;
+            if (i == (int64_t)arr.size()) { Value nv = apply_op(Value()); arr.push_back(nv); return nv; }
+            else if (i >= 0 && i < (int64_t)arr.size()) { arr[(size_t)i] = apply_op(arr[(size_t)i]); return arr[(size_t)i]; }
             else throw std::runtime_error("Array index out of bounds");
             return val;
         }

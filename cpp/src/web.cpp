@@ -314,7 +314,13 @@ void WebContext::parse_multipart(const std::string& boundary) {
     size_t pos = body.find(delim);
     if (pos == std::string::npos) return;
 
+    // Parça sayısı tavanı — 10MB gövde ~40-baytlık dosya parçalarıyla ~250K parça
+    // içerebilir → her biri SHA-256 + temp dosya = disk/CPU amplifikasyon DoS.
+    int part_count = 0;
+    static constexpr int MAX_PARTS = 1000;
+
     while (true) {
+        if (++part_count > MAX_PARTS) break;   // amplifikasyon DoS koruması
         pos += delim.size();
         if (pos + 2 <= body.size() && body.substr(pos, 2) == "--") break;
         if (pos < body.size() && body[pos] == '\r') pos++;
@@ -377,6 +383,9 @@ void WebContext::parse_multipart(const std::string& boundary) {
             if (out) {
                 out.write(part_data.data(), (std::streamsize)part_data.size());
                 uf.valid = true;
+                // RAII cleanup: tüketilmeyen temp dosya WebContext ölünce silinir.
+                uf.temp_cleanup = std::make_shared<TempFileGuard>();
+                uf.temp_cleanup->path = uf.temp_path;
             }
             uploaded_files[field_name] = std::move(uf);
         } else if (!field_name.empty()) {

@@ -4,6 +4,8 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <cstdio>
+#include <memory>
 
 namespace look {
 
@@ -31,6 +33,14 @@ std::string svg_sanitize(const std::string& input);
 
 // ── Uploaded File ─────────────────────────────────────────────────────────────
 
+// Temp dosya RAII bekçisi — son referans (shared_ptr) yok olunca dosyayı siler.
+// UploadedFile kopyalanabilir kalır (WebContext kopyalanıyor); shared refcount
+// sayesinde dosya yalnız TÜM kopyalar gidince silinir (erken silme yok).
+struct TempFileGuard {
+    std::string path;
+    ~TempFileGuard() { if (!path.empty()) std::remove(path.c_str()); }
+};
+
 struct UploadedFile {
     std::string field_name;     // form field adı
     std::string temp_path;      // temp dosya yolu
@@ -38,6 +48,10 @@ struct UploadedFile {
     std::string sha256;         // dosya içeriğinin SHA-256 hex hash'i
     size_t      size = 0;       // byte
     bool        valid = false;  // parse başarılı mı
+    // WebContext yıkılınca uygulama file::store() ile TÜKETMEDİĞİ temp dosya silinir
+    // (aksi halde disk/inode tükenmesi). file::store dosyayı taşımışsa std::remove
+    // no-op olur → zararsız. Parser her yeni temp dosya için bunu set eder.
+    std::shared_ptr<TempFileGuard> temp_cleanup;
 };
 
 // ── Web Context ───────────────────────────────────────────────────────────────
