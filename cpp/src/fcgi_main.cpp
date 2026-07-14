@@ -452,11 +452,21 @@ static std::string resolve_script(const std::map<std::string, std::string>& para
     auto get = [&](const std::string& k) {
         auto it = params.find(k); return it != params.end() ? it->second : "";
     };
-    auto is_real_lk = [](const std::string& s) {
+    // Path traversal reddi — çözülen yol client-etkili CGI değişkenlerinden
+    // (SCRIPT_NAME/PATH_INFO/PATH_TRANSLATED) türer; LOOK bu .lk dosyasını KOD
+    // olarak yürütür. ".." segmenti doc-root dışına çıkıp arbitrary .lk çalıştırma
+    // (RCE) sağlayabilir. Traversal içeren adayı reddet.
+    auto no_traversal = [](const std::string& s) {
+        return s.find("../") == std::string::npos &&
+               s.find("..\\") == std::string::npos &&
+               !(s.size() >= 2 && s.substr(s.size() - 2) == "..");
+    };
+    auto is_real_lk = [&](const std::string& s) {
         // proxy:fcgi://... gibi sahte yollar disla
         if (s.empty()) return false;
         if (s.rfind("proxy:", 0) == 0) return false;
         if (s.rfind("fcgi:",  0) == 0) return false;
+        if (!no_traversal(s)) return false;   // ".." traversal → reddet
         return s.size() > 3 && s.substr(s.size() - 3) == ".lk";
     };
 
@@ -472,13 +482,14 @@ static std::string resolve_script(const std::map<std::string, std::string>& para
     //    ornek: SCRIPT_NAME=/index.lk, DOCUMENT_ROOT=C:/xampp/htdocs
     std::string doc = get("DOCUMENT_ROOT");
     std::string sn  = get("SCRIPT_NAME");
-    if (!doc.empty() && !sn.empty() && sn.size() > 3 && sn.substr(sn.size()-3) == ".lk") {
+    if (!doc.empty() && !sn.empty() && no_traversal(sn) &&
+        sn.size() > 3 && sn.substr(sn.size()-3) == ".lk") {
         return doc + sn;
     }
 
     // 4. PATH_INFO'dan .lk coz (Apache Action + PATH_INFO modeli)
     std::string pi = get("PATH_INFO");
-    if (!doc.empty() && !pi.empty()) {
+    if (!doc.empty() && !pi.empty() && no_traversal(pi)) {
         size_t pos = pi.find(".lk");
         if (pos != std::string::npos) return doc + pi.substr(0, pos + 3);
     }
