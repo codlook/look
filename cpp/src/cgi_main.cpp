@@ -83,9 +83,18 @@ static std::string read_file(const fs::path& path) {
 // ── Resolve script path ───────────────────────────────────────────────────────
 
 static std::string resolve_script(int argc, char* argv[]) {
-    auto ends_lk = [](const char* s) -> bool {
+    // Path traversal reddi — çözülen .lk client-etkili CGI env'lerinden türer ve
+    // LOOK tarafından KOD olarak yürütülür; ".." doc-root dışına çıkıp arbitrary
+    // .lk çalıştırma (RCE) sağlar. (fcgi_main.cpp resolve_script ile aynı guard.)
+    auto no_traversal = [](const std::string& s) {
+        return s.find("../") == std::string::npos &&
+               s.find("..\\") == std::string::npos &&
+               !(s.size() >= 2 && s.substr(s.size() - 2) == "..");
+    };
+    auto ends_lk = [&](const char* s) -> bool {
         if (!s || !*s) return false;
         std::string str(s);
+        if (!no_traversal(str)) return false;
         return str.size() > 3 && str.substr(str.size() - 3) == ".lk";
     };
 
@@ -99,7 +108,7 @@ static std::string resolve_script(int argc, char* argv[]) {
 
     // Apache Action directive: PATH_INFO = /index.lk/menu/burger-cafe
     // Extract just the .lk script part: DOCUMENT_ROOT + /index.lk
-    if (path_info && *path_info && document_root && *document_root) {
+    if (path_info && *path_info && document_root && *document_root && no_traversal(path_info)) {
         std::string pi(path_info);
         size_t lk_pos = pi.find(".lk");
         if (lk_pos != std::string::npos) {
