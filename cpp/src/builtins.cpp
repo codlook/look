@@ -115,6 +115,10 @@ const std::vector<std::string>& builtin_names() {
         "array::any", "array::push", "array::pop", "array::set", "array::new_assoc",
         "array::random_bytes", "array::random_string", "array::hex_encode", "array::hex_decode",
         "array::constant_compare", "array::uuid",
+        // bare join — interpreter'da global (fn_name=="join", use gerektirmez); VM'de
+        // yoktu → route içinde CALL'a düşüp fallback ediyordu. Global builtin olarak
+        // bağlanır (string::join'e alias DEĞİL — o `use string` gerektirir → divergence).
+        "join",
     };
     return NAMES;
 }

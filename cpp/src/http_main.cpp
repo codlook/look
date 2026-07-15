@@ -1001,6 +1001,16 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             a->pop_back();
             return last;
         };
+        // bare join(arr, sep="") — interpreter global builtin'i (fn_name=="join").
+        req_builtins[BI("join")] = [](std::vector<look::Value>& args) -> look::Value {
+            if (args.empty() || args[0].type() != look::Value::ARRAY)
+                return look::Value(args.empty() ? std::string() : args[0].to_string());
+            std::string sep = args.size() >= 2 ? args[1].to_string() : "";
+            std::string result;
+            auto& arr = *args[0].as_array();
+            for (size_t i = 0; i < arr.size(); ++i) { if (i) result += sep; result += arr[i].to_string(); }
+            return look::Value(result);
+        };
 
         // before_route closures: route_closures ile aynı yapıda
         std::vector<look::Closure*> before_closures;
