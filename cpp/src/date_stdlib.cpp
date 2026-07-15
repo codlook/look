@@ -213,6 +213,17 @@ Module make_date_module() {
             }
         }
 
+        // Alan doğrulama — eskiden hiç kontrol yoktu: parse("2023-60-99") sessizce
+        // "2023-60-99" (ay 60, gün 99), parse("hello") → "0000-00-00" döndürüyordu
+        // (tm_to_iso normalize etmez). Bozuk tarih sessizce aritmetiğe akıp
+        // expiry/abonelik mantığını bozuyordu. Şimdi net hata fırlatır (is_valid ile tutarlı).
+        if (t.tm_mon  < 0  || t.tm_mon  > 11 ||
+            t.tm_mday < 1  || t.tm_mday > 31 ||
+            t.tm_hour < 0  || t.tm_hour > 23 ||
+            t.tm_min  < 0  || t.tm_min  > 59 ||
+            t.tm_sec  < 0  || t.tm_sec  > 60)  // 60: artık saniye
+            throw std::runtime_error("date::parse(): geçersiz tarih — '" + input + "'");
+
         t.tm_isdst = -1;
         bool has_time = fmt.find('H') != std::string::npos;
         return Value(tm_to_iso(t, has_time));

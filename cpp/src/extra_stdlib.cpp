@@ -413,10 +413,31 @@ Module make_array_module(Interpreter* interp) {
         auto result = std::make_shared<std::vector<Value>>(*args[0].as_array());
         if (args.size() >= 2 && args[1].type() == Value::FUNCTION) {
             auto fn = args[1];
-            std::sort(result->begin(), result->end(), [&](const Value& a, const Value& b) {
-                Value r = interp->invoke(fn, {a, b});
-                return r.to_int() < 0;
-            });
+            auto less = [&](const Value& a, const Value& b) {
+                return interp->invoke(fn, {a, b}).to_int() < 0;
+            };
+            // Kullanıcı comparator'ı strict-weak-ordering sağlamayabilir (random/NaN/
+            // buggy). std::sort böyle bir comparator'da UB → libstdc++ insertion-sort
+            // dizinin başının ötesine taşar (ASan: heap-buffer-overflow, extra_stdlib:416).
+            // Bottom-up stable merge sort her erişimi geçerli alt-aralıkta tutar —
+            // tutarsız comparator OOB YAPAMAZ, en fazla yanlış-ama-güvenli sıra üretir
+            // (Python timsort / Java / düzeltilmiş V8 ile aynı güvenlik garantisi).
+            std::vector<Value>& v = *result;
+            size_t n = v.size();
+            if (n > 1) {
+                std::vector<Value> buf(n);
+                for (size_t w = 1; w < n; w <<= 1) {
+                    for (size_t lo = 0; lo + w < n; lo += (w << 1)) {
+                        size_t mid = lo + w;
+                        size_t hi  = std::min(lo + (w << 1), n);
+                        size_t i = lo, j = mid, k = lo;
+                        while (i < mid && j < hi) buf[k++] = less(v[j], v[i]) ? v[j++] : v[i++];
+                        while (i < mid) buf[k++] = v[i++];
+                        while (j < hi)  buf[k++] = v[j++];
+                        std::copy(buf.begin() + lo, buf.begin() + hi, v.begin() + lo);
+                    }
+                }
+            }
         } else {
             std::sort(result->begin(), result->end(), [](const Value& a, const Value& b) {
                 return a < b;
