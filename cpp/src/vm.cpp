@@ -172,14 +172,17 @@ Value VM::array_get(const Value& arr, const Value& key) {
     auto& vec = *arr.as_array();
 
     // Assoc: ["__assoc__", k0, v0, k1, v1, ...] — sentinel at position 0 (interpreter convention)
-    if (!vec.empty() && vec[0].type() == Value::STRING && vec[0].as_string() == "__assoc__") {
+    // str_ref(): B5'te string pointer arkasında — as_string()/to_string() her erişimde
+    // kopya döndürür. Sentinel ve key karşılaştırmaları kopyasız (nesne-lookup sıcak yolu).
+    if (!vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__") {
         std::string k = key.to_string();
         // Also handle __struct__ tag: ["__assoc__", "__struct__", "Name", k, v, ...]
         size_t start = 1;
-        if (vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].as_string() == "__struct__")
+        if (vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__")
             start = 3;
         for (size_t i = start; i + 1 < vec.size(); i += 2) {
-            if (vec[i].to_string() == k) return vec[i+1];
+            if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
+                return vec[i+1];
         }
         return Value();
     }
@@ -203,15 +206,16 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
     auto& vec = *arr.as_array();
 
     // Assoc: ["__assoc__", k0, v0, ...] — sentinel at position 0 (interpreter convention)
-    bool is_assoc = !vec.empty() && vec[0].type() == Value::STRING && vec[0].as_string() == "__assoc__";
+    bool is_assoc = !vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__";
     if (is_assoc || key.type() == Value::STRING) {
         std::string k = key.to_string();
         // Find existing (skip sentinel at [0] and optional struct tags)
         size_t start = is_assoc ? 1 : 0;
-        if (is_assoc && vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].as_string() == "__struct__")
+        if (is_assoc && vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__")
             start = 3;
         for (size_t i = start; i + 1 < vec.size(); i += 2) {
-            if (vec[i].to_string() == k) { vec[i+1] = val; return; }
+            if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
+                { vec[i+1] = val; return; }
         }
         // New entry
         if (!is_assoc) {
@@ -286,14 +290,16 @@ call_dispatch:
 
             case OpCode::LOAD_GLOBAL: {
                 uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
-                auto it = globals_.find(CONST(ni).as_string());
+                // str_ref(): as_string() kopyasını önle (B5'te string pointer arkasında;
+                // her global erişimi bir string kopyası ödemeliydi). find const& alır.
+                auto it = globals_.find(CONST(ni).str_ref());
                 R(ins.a) = (it != globals_.end()) ? it->second : Value();
                 break;
             }
             case OpCode::STORE_GLOBAL: {
                 // a=src_reg, b=name_hi, c=name_lo (16-bit constant pool index)
                 uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
-                const std::string& name = CONST(ni).as_string();
+                const std::string& name = CONST(ni).str_ref();  // kopyasız
                 globals_[name] = R(ins.a);
                 break;
             }
