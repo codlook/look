@@ -303,7 +303,12 @@ call_dispatch:
             case OpCode::BNOT:   R(ins.a) = R(ins.b).bitwise_not();         break;
             case OpCode::SHL:    R(ins.a) = R(ins.b).shift_left(R(ins.c));  break;
             case OpCode::SHR:    R(ins.a) = R(ins.b).shift_right(R(ins.c)); break;
-            case OpCode::CONCAT: R(ins.a) = R(ins.b).concat(R(ins.c));      break;
+            case OpCode::CONCAT:
+                // B7: dst==sol operand ise akümülatöre yerinde ekle (amortize O(1)).
+                // `.=` ve `$s=$s.x` bu yolu üretir; genel `a.b` (a!=b) eski yolda.
+                if (ins.a == ins.b) R(ins.a).append_in_place(R(ins.c));
+                else                R(ins.a) = R(ins.b).concat(R(ins.c));
+                break;
 
             // ── Karşılaştırma ─────────────────────────────────────────────────
             case OpCode::EQ:  R(ins.a) = Value(R(ins.b) == R(ins.c)); break;

@@ -208,9 +208,16 @@ void FunctionCompiler::compile_block(const BlockStatement& block) {
 
 void FunctionCompiler::compile_stmt(const Statement& stmt) {
     if (auto* s = dynamic_cast<const ExpressionStatement*>(&stmt)) {
-        // Sonuç kullanılmıyor — geçici register al, hemen bırak
-        uint8_t r = compile_expr(*s->expression);
-        free_temp(r);
+        // Atama statement olarak kullanılıyorsa sonuç atılır → değeri geri-okuyan
+        // MOVE'u atla. Aksi halde compile_expr(Assignment) her seferinde slot'u temp'e
+        // kopyalar; `$s .= x` gibi akümülatörde bu O(n²) yaratır (kopya = tüm string).
+        if (auto* a = dynamic_cast<const AssignmentExpression*>(s->expression.get())) {
+            compile_assign_expr(*a);
+        } else {
+            // Sonuç kullanılmıyor — geçici register al, hemen bırak
+            uint8_t r = compile_expr(*s->expression);
+            free_temp(r);
+        }
     }
     else if (auto* s = dynamic_cast<const PrintStatement*>(&stmt)) {
         for (auto& e : s->expressions) {
@@ -686,8 +693,14 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     uint8_t val = compile_expr(*e.value);
 
     if (loc.kind == VarKind::LOCAL) {
+        // B7: `$s .= x` → yerinde CONCAT (dst==b==slot). VM append_in_place ile
+        // amortize O(1); ayrıca cur/tmp MOVE'ları (iki O(n) kopya) elenir.
+        if (e.op == ".=") {
+            emit(OpCode::CONCAT, loc.index, loc.index, val);
+            free_temp(val);
+        }
         // Compound assign için mevcut değeri oku
-        if (e.op != "=") {
+        else if (e.op != "=") {
             uint8_t cur = alloc_temp();
             emit(OpCode::MOVE, cur, loc.index);
             uint8_t tmp = alloc_temp();

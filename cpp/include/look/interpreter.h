@@ -104,6 +104,10 @@ public:
     Value operator%(const Value& o) const;
     Value pow(const Value& o)       const;
     Value concat(const Value& o)    const;
+    // B7: akümülatör string'ine yerinde ekleme (amortize O(1)). `$s .= x` / `$s=$s.x`
+    // döngüsünde her adımda tüm string'i kopyalayan O(n²) davranışı O(n)'e indirir.
+    // STRING inline saklandığı ve register'lar bağımsız olduğu için mutasyon güvenli.
+    void append_in_place(const Value& o);
 
     bool operator==(const Value& o) const;
     bool operator<(const Value& o)  const;

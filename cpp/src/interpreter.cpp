@@ -165,6 +165,13 @@ Value Value::operator%(const Value& o) const {
 Value Value::pow(const Value& o) const { return Value(std::pow(to_float(), o.to_float())); }
 Value Value::concat(const Value& o)    const { return Value(to_string() + o.to_string()); }
 
+void Value::append_in_place(const Value& o) {
+    // o.to_string() önce kopyalanır → `$s .= $s` gibi aliasing güvenli.
+    std::string rhs = o.to_string();
+    if (type_ != STRING) { str_val = to_string(); type_ = STRING; ptr_val.reset(); }
+    str_val += rhs;   // std::string amortize kapasite büyümesi → O(1) amortize
+}
+
 // Python-benzeri katı karşılaştırma: türler-arası coercion YOK. (Go değil — Go
 // int↔float'a bile derleme hatası verir; biz sayısal türleri kıyaslarız: 1==1.0.)
 //   0 == "abc"  → false   (eskiden true — "abc"→0 coerce ediyordu; footgun)
