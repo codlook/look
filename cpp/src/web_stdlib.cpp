@@ -971,6 +971,42 @@ static inline std::map<std::string, std::shared_ptr<DbConnection>>& active_conns
 
 void set_db_pool_size(int n) { g_pool_size.store(n > 0 ? n : 0); }
 
+// Kullanılabilir CPU — cgroup CPU limitini dikkate alır (container/systemd CPUQuota).
+// hardware_concurrency() fizikseldir; 8-core makinede 2-CPU cgroup'ta 32 worker
+// açmak yerine 8 açar (benchmark'ta bulunan optimum) → kısıtlı ortamda az RAM + doğru CPU.
+int available_cpus() {
+    int hw = (int)std::thread::hardware_concurrency();
+    if (hw < 1) hw = 1;
+#ifdef __linux__
+    double c = -1.0;
+    // cgroup v2: /sys/fs/cgroup/cpu.max = "quota period" (quota="max" → limit yok)
+    {
+        std::ifstream f("/sys/fs/cgroup/cpu.max");
+        std::string a, b;
+        if (f && (f >> a >> b) && a != "max") {
+            double q = std::atof(a.c_str());
+            double p = b.empty() ? 100000.0 : std::atof(b.c_str());
+            if (q > 0 && p > 0) c = q / p;
+        }
+    }
+    // cgroup v1: cpu.cfs_quota_us / cpu.cfs_period_us
+    if (c < 0) {
+        std::ifstream fq("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us");
+        std::ifstream fp("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us");
+        long q = -1, p = -1;
+        if (fq) fq >> q;
+        if (fp) fp >> p;
+        if (q > 0 && p > 0) c = (double)q / (double)p;
+    }
+    if (c > 0) {
+        int lim = (int)(c + 0.5);       // en yakın tam CPU'ya yuvarla
+        if (lim < 1) lim = 1;
+        if (lim < hw) hw = lim;          // fiziksel ile cgroup'un küçüğü
+    }
+#endif
+    return hw;
+}
+
 void acquire_thread_connections() {
     // Copy pool list under lock, then release before blocking on acquire().
     // Holding g_pools_mtx during pool->acquire() deadlocks: a releasing thread
@@ -1208,7 +1244,7 @@ static Module make_db_module(Interpreter* interp) {
 
         bool is_sqlite = (dsn.substr(0, 9) == "sqlite://");
         int sz = g_pool_size.load();
-        if (sz <= 0) sz = (int)std::thread::hardware_concurrency();
+        if (sz <= 0) sz = look::available_cpus();
         if (sz < 2)  sz = 2;
         if (is_sqlite) { if (sz > 4) sz = 4; if (sz < 2) sz = 2; }  // SQLite: WAL concurrent reads, up to 4
 

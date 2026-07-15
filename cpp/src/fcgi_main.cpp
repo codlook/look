@@ -785,7 +785,7 @@ int main(int argc, char* argv[]) {
         if (env) workers = std::max(1, std::atoi(env));
         else {
             // I/O-bound default: CPU * 4, max 64
-            workers = (int)std::thread::hardware_concurrency() * 4;
+            workers = look::available_cpus() * 4;
             if (workers > 64) workers = 64;
         }
     }
@@ -797,7 +797,7 @@ int main(int argc, char* argv[]) {
             const char* env = std::getenv("LOOK_WORKERS");
             if (env) workers = std::max(1, std::atoi(env));
             else {
-                workers = (int)std::thread::hardware_concurrency() * 4;
+                workers = look::available_cpus() * 4;
                 if (workers > 64) workers = 64;
             }
         }

@@ -118,4 +118,10 @@ void release_thread_connections();   // return all thread-local conns to pools
 void set_db_pool_size(int n);        // set pool size before any db::connect call
 void clear_db_pools();               // close all pools — called before hot reload
 
+// Kullanılabilir CPU sayısı — cgroup CPU limitini (container/Docker/systemd CPUQuota,
+// kısıtlı cloud vCPU) dikkate alır. std::thread::hardware_concurrency() FİZİKSEL
+// çekirdeği döndürür; kısıtlı ortamda worker/pool default'u aşırı thread açıp boşa
+// RAM harcardı. Worker ve DB-pool default'ları bunu kullanır → ortama otomatik uyum.
+int available_cpus();
+
 } // namespace look
