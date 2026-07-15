@@ -103,6 +103,18 @@ const std::vector<std::string>& builtin_names() {
         "app::set", "app::get", "app::has", "app::db",
         // 169-170: response:: govde yardimcilari (VM-native dispatch)
         "response::text", "response::html",
+        // 171+: array:: modulu — eskiden builtin_names'de HIC yoktu → route icinde
+        // array::map/keys/sort vb. cagirinca compiler CALL_BUILTIN uretemeyip genel
+        // CALL'a dusuyor, runtime'da "Cagirilabilir degil" firlatiyor ve route KALICI
+        // interpreter'a dusuyordu (veri-agirlikli route'lar tamamen yavas yolda).
+        // Sona eklendi (mevcut indexler kaymaz); `use array` ile auto-wire olur (satir ~905),
+        // interpreter ile parity (o da `use array` gerektirir).
+        "array::map", "array::filter", "array::reduce", "array::find", "array::keys",
+        "array::values", "array::sort", "array::reverse", "array::slice", "array::contains",
+        "array::unique", "array::flatten", "array::chunk", "array::zip", "array::all",
+        "array::any", "array::push", "array::pop", "array::set", "array::new_assoc",
+        "array::random_bytes", "array::random_string", "array::hex_encode", "array::hex_decode",
+        "array::constant_compare", "array::uuid",
     };
     return NAMES;
 }
