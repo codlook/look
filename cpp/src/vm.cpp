@@ -236,7 +236,14 @@ call_dispatch:
         while (frame.ip < (int)proto->code.size()) {
             const Instruction& ins = proto->code[frame.ip++];
 
+// A1: Sıcak yol register erişimi. Compiler register indekslerini derleme-zamanı
+// garanti ettiği için release'de bounds-check ölü maliyet → operator[]. Debug/ASan
+// build'de .at() korunur (bytecode üretimi bug'ı taşarsa yakalanır, sessiz UB olmaz).
+#ifdef NDEBUG
+#define R(x) regs_[(size_t)(base + (x))]
+#else
 #define R(x) regs_.at((size_t)(base + (x)))
+#endif
 #define CONST(i) proto->constants[i]
 
             switch (ins.op) {
