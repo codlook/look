@@ -1113,6 +1113,11 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             {"len", "count"}, {"intval", "int"}, {"floatval", "float"},
             {"strval", "string"}, {"boolval", "bool"},
             {"json", "json::encode"},
+            // Web: bare header()/redirect() interpreter global'iydi ama VM'de fallback
+            // ediyordu. response::header/redirect module fonksiyonları ZATEN var ve
+            // per-request web_ctx_'e bağlanıyor (response::text gibi) + CRLF-sanitize
+            // ediyor (bonus). Alias → route interpreter'a düşmez.
+            {"header", "response::header"}, {"redirect", "response::redirect"},
         };
         std::string bname = var->name;
         if (auto ai = BUILTIN_ALIAS.find(bname); ai != BUILTIN_ALIAS.end())
