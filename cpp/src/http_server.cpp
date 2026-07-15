@@ -242,6 +242,35 @@ struct HttpServer::Impl {
 #endif
     }
 
+    // ── Fiber-aware recv (Go netpoller) ──────────────────────────────────────
+    // Fiber içindeyse ve soket veri yoksa BLOKLAMAZ: wait_readable ile yield eder,
+    // scheduler başka fiber (goroutine) koşturur; veri gelince epoll resume eder.
+    // Eskiden düz ::recv() worker thread'ini bloklyordu → keep-alive'da sonraki
+    // isteği beklerken tüm worker kilitleniyor, diğer bağlantılar açlıkta kalıyordu
+    // (fiber dispatch'in c=100 hang'inin KÖK NEDENİ). Fiber dışında düz blocking recv.
+    static ssize_t fiber_aware_recv(int fd, char* buf, size_t len) {
+#ifdef __linux__
+        look::FiberScheduler* sched = look::get_thread_scheduler();
+        look::Fiber*          cur   = look::Fiber::current();
+        if (sched && cur) {
+            auto self = cur->shared_from_this_fiber();
+            while (true) {
+                ssize_t r = ::recv(fd, buf, len, MSG_DONTWAIT);
+                if (r >= 0) return r;
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // Veri yok → yield. wait_readable epoll'a park eder, fd okunabilir
+                    // olunca resume. Bu arada scheduler diğer fiber'ları koşturur.
+                    if (self && sched->wait_readable(self, fd)) continue;
+                    return ::recv(fd, buf, len, 0);  // epoll yok → blocking fallback
+                }
+                return r;  // gerçek hata
+            }
+        }
+#endif
+        return ::recv(fd, buf, len, 0);  // fiber dışı: blocking (mevcut davranış)
+    }
+
     // Transfer-Encoding: chunked gövdeyi çöz (RFC 7230 §4.1).
     // buf: header'lar + gövdenin ilk parçası; start: gövde offset'i.
     // Çözülen gövde out'a yazılır. Body cap ve malformed kontrolleri dahil.
@@ -254,7 +283,7 @@ struct HttpServer::Impl {
         const size_t raw_lim = cap + 1024 * 1024; // ham akış tavanı (chunk header payı)
 
         auto refill = [&]() -> bool {
-            ssize_t r = ::recv(fd, tmp, (int)tmp_sz, 0);
+            ssize_t r = fiber_aware_recv(fd, tmp, tmp_sz);
             if (r <= 0) return false;
             if (stream.size() + (size_t)r > raw_lim) return false; // akış patlaması
             stream.append(tmp, (size_t)r);
@@ -335,7 +364,7 @@ struct HttpServer::Impl {
             // Headers gelene kadar blocking oku
             std::string buf;
             while (buf.find("\r\n\r\n") == std::string::npos) {
-                ssize_t r = ::recv(fd, tmp, sizeof(tmp), 0);
+                ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
                 if (r <= 0) { ::close(fd); return; }
                 buf.append(tmp, (size_t)r);
                 if (buf.size() > 2 * 1024 * 1024) { ::close(fd); return; }
@@ -390,7 +419,7 @@ struct HttpServer::Impl {
                     req.body = buf.substr(header_end,
                                           std::min(body_in_buf, content_len));
                 while (req.body.size() < content_len) {
-                    ssize_t r = ::recv(fd, tmp, sizeof(tmp), 0);
+                    ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
                     if (r <= 0) { ::close(fd); return; }
                     req.body.append(tmp, (size_t)r);
                 }
