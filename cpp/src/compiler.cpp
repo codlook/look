@@ -146,16 +146,31 @@ uint8_t FunctionCompiler::declare_local(const std::string& name, int line) {
     return slot;
 }
 
-FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name) {
+FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, bool for_write) {
     // 1. Local
     for (auto it = locals_.rbegin(); it != locals_.rend(); ++it)
         if (it->name == name) return {VarKind::LOCAL, it->reg};
 
-    // 2. Capture (use() listesinden gelen)
+    // 2. Capture (use() listesinden VEYA daha önce otomatik yakalanan)
     for (auto& c : captures_)
         if (c.name == name) return {VarKind::CAPTURE, c.capture_index};
 
-    // 3. Global
+    // 3. Otomatik (implicit) capture — OKUMA'da: isim dış fonksiyonun local/capture'ı
+    //    ise closure'a by-value snapshot olarak yakala. Eskiden GLOBAL'e düşüyordu →
+    //    `$m=3; array::map($a, fn($x)=>$x*$m)` VM'de $m'i göremeyip 0 veriyordu
+    //    (interpreter lexical scope ile 3 görüyordu — sessiz divergence). YAZMA'da
+    //    yakalamayız: dış değişkene atama yeni local yaratır (Python-benzeri, mevcut
+    //    davranış korunur; capture'lar zaten değiştirilemez).
+    if (!for_write && parent_) {
+        VarLoc pl = parent_->resolve_var(name, /*for_write=*/false);
+        if (pl.kind != VarKind::GLOBAL) {
+            uint8_t idx = (uint8_t)captures_.size();
+            captures_.push_back({name, idx});
+            return {VarKind::CAPTURE, idx};
+        }
+    }
+
+    // 4. Global
     return {VarKind::GLOBAL, 0};
 }
 
@@ -649,7 +664,10 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
 // ── compile_assign_expr ───────────────────────────────────────────────────────
 
 void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
-    auto loc = resolve_var(e.name);
+    // Plain `$x = v` yazma target'ı (auto-capture YOK → dış değişkene atama yeni
+    // local yaratır). `$arr[i]=v` ise $arr container'ı OKUNUP yerinde mutasyona
+    // uğrar → auto-capture gerekir (referans tipi paylaşılır).
+    auto loc = resolve_var(e.name, /*for_write=*/(e.index == nullptr));
 
     if (e.index) {
         // $arr[i] = val  ·  zincirli $l.s.x = v / $arr[0].x = v (object ifadeden)
@@ -1155,8 +1173,11 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
 
     // Capture değerlerini MAKE_CLOSURE'dan ÖNCE yükle — VM MAKE_CLOSURE'dan hemen
     // sonra art arda LOAD_CAPTURE(0, cr) hint'lerini bekler; araya MOVE giremez.
+    // inner.captures_ = explicit use() (0..k-1) + gövde derlenirken keşfedilen
+    // otomatik capture'lar (k..). Hepsini index sırasında parent scope'tan yükle.
     std::vector<uint8_t> cap_regs;
-    for (auto& cap_name : e.captures) {
+    for (auto& cap : inner.captures_) {
+        const std::string& cap_name = cap.name;
         auto loc = resolve_var(cap_name);
         uint8_t cr = alloc_temp();
         if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE,        cr, loc.index);

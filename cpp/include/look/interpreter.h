@@ -159,6 +159,14 @@ struct LookChannel {
     int   sz()        { std::unique_lock<std::mutex> lk(mtx); return (int)queue.size(); }
 };
 
+// ── VM/interpreter callback köprüsü ───────────────────────────────────────────
+// Higher-order builtin'ler (array::map/filter/reduce…) callback'i interpreter'ın
+// invoke'uyla çağırıyor; VM route'unda callback bir BYTECODE_FN (VM closure) olur.
+// Aktif VM kendini thread-local kaydeder; interpreter BYTECODE_FN gelince buraya
+// delege eder. vm.cpp tanımlar. Kayıtlı VM yoksa available()==false → fallback.
+bool  vm_bridge_available();
+Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args);
+
 // ── Environment ───────────────────────────────────────────────────────────────
 
 class Environment {

@@ -151,7 +151,7 @@ private:
 
     enum class VarKind { LOCAL, CAPTURE, GLOBAL };
     struct VarLoc { VarKind kind; uint8_t index; };
-    VarLoc  resolve_var(const std::string& name);
+    VarLoc  resolve_var(const std::string& name, bool for_write = false);
 
     // ── Expression → register ─────────────────────────────────────────────────
     // dest=255 → compiler geçici register seçer; caller free_temp() çağırmalı

@@ -1968,6 +1968,13 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
 }
 
 Value Interpreter::invoke(const Value& fn, std::vector<Value> args) {
+    // VM closure (BYTECODE_FN): higher-order builtin bir VM route'undan çağrıldı →
+    // callback'i aktif VM'e delege et. Eskiden "not a function" fırlatıp route'u
+    // interpreter'a düşürüyordu (array::map/filter/reduce bu yüzden fallback ediyordu).
+    if (fn.type() == Value::BYTECODE_FN) {
+        if (vm_bridge_available()) return vm_bridge_invoke(fn, args);
+        throw std::runtime_error("invoke: VM closure — aktif VM yok");
+    }
     if (fn.type() != Value::FUNCTION)
         throw std::runtime_error("invoke: not a function");
     return call_function(fn.as_function(), std::move(args));

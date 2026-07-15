@@ -18,6 +18,21 @@
 
 namespace look {
 
+// ── VM/interpreter callback köprüsü ───────────────────────────────────────────
+// Aktif VM (run() içinde) buraya kaydolur; interpreter bir BYTECODE_FN çağırması
+// gerektiğinde (higher-order builtin callback'i) bu VM'e delege eder.
+static thread_local VM* t_active_vm = nullptr;
+
+bool vm_bridge_available() { return t_active_vm != nullptr; }
+
+Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args) {
+    if (!t_active_vm)
+        throw LookVmError("vm_bridge_invoke: aktif VM yok");
+    if (fn.type() != Value::BYTECODE_FN)
+        throw LookVmError("vm_bridge_invoke: BYTECODE_FN bekleniyor");
+    return t_active_vm->call_closure(*fn.as_bytecode_fn(), args);
+}
+
 // ── VM ctor ───────────────────────────────────────────────────────────────────
 
 VM::VM(SharedState shared, std::ostream& output)
@@ -227,6 +242,13 @@ void VM::set_field(Value& obj, const std::string& field, const Value& val) {
 // ── run — dispatch döngüsü ────────────────────────────────────────────────────
 
 Value VM::run() {
+    // Callback köprüsü: bu VM'i aktif olarak kaydet (RAII ile geri al). Nested
+    // run() aynı VM'e set eder — zararsız. array::map gibi builtin'ler callback'i
+    // interpreter->invoke → vm_bridge_invoke → bu VM'in call_closure'ıyla çalıştırır.
+    VM* _prev_active = t_active_vm;
+    t_active_vm = this;
+    struct ActiveGuard { VM* prev; ~ActiveGuard() { t_active_vm = prev; } } _ag{_prev_active};
+
 call_dispatch:
     while (!call_stack_.empty()) {
         Frame& frame = call_stack_.back();
@@ -468,7 +490,11 @@ call_dispatch:
                 args.reserve(argc2);
                 for (int i = 0; i < argc2; ++i) args.push_back(R(ins.c + i));
                 R(ins.a) = (*shared_.builtins)[ins.b](args);
-                break;
+                // Re-entrancy güvenliği: builtin (ör. array::map) callback aracılığıyla
+                // call_closure ile VM'e geri girip call_stack_'i realloc etmiş olabilir
+                // → dıştaki frame/proto referansları geçersizleşir. call_dispatch'e
+                // dönerek yeniden bağla (frame.ip zaten builtin+NOP'un ötesinde).
+                goto call_dispatch;
             }
 
             case OpCode::RETURN: {
