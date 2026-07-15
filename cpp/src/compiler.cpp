@@ -1086,8 +1086,21 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             free_temp(ch);
             return r;
         }
+        // Interpreter global builtin alias'ları → VM builtin karşılığı.
+        // Bu isimler interpreter'da inline çözülüyordu ama VM builtin listesinde
+        // yoktu → route çağırınca CALL (bytecode-fn) olarak derlenip runtime'da
+        // "Çağrılabilir değil" fırlatıyor, route KALICI interpreter'a düşüyordu
+        // (O(n²) string dahil tüm VM optimizasyonları o route'ta boşa gidiyordu).
+        static const std::unordered_map<std::string, std::string> BUILTIN_ALIAS = {
+            {"len", "count"}, {"intval", "int"}, {"floatval", "float"},
+            {"strval", "string"}, {"boolval", "bool"},
+            {"json", "json::encode"},
+        };
+        std::string bname = var->name;
+        if (auto ai = BUILTIN_ALIAS.find(bname); ai != BUILTIN_ALIAS.end())
+            bname = ai->second;
         // Bilinen built-in?
-        int bidx = builtin_index(var->name);
+        int bidx = builtin_index(bname);
         if (bidx >= 0) {
             // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
             uint8_t argc = (uint8_t)e.arguments.size();
