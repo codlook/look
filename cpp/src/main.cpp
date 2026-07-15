@@ -8,6 +8,10 @@
 #include "look/installer.h"
 #include "look/parallel_runtime.h"
 #include "look/ast.h"
+#include "look/builtins.h"
+#include "look/compiler.h"
+#include "look/vm.h"
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -158,6 +162,71 @@ bool find_undefined_call(const Program& prog, std::string& name, int& line, int&
     for (auto& s : prog.statements) walk_stmt(s.get(), visit);
     return found;
 }
+// ── C9 (CLI-VM, opt-in) — CLI top-level script'i bytecode VM'de çalıştırmak için
+// builtin tablosu. http_main req_builtins ile aynı semantik; çıktı `out`'a gider.
+// Modül fn'leri interpreter'ın YÜKLÜ modüllerinden auto-wire olur (use gerektirir).
+static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp, std::ostream& out) {
+    using look::Value;
+    std::vector<look::BuiltinFn> b(look::builtin_names().size());
+    auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
+    b[0] = [&out](std::vector<Value>& a) -> Value { for (auto& x : a) out << x.to_string(); return Value(); };
+    b[1] = b[0];  // print/write
+    b[2] = [](std::vector<Value>& a) -> Value {   // count
+        if (a.empty()) return Value(0);
+        if (a[0].type()==Value::ARRAY)  return Value((int)a[0].as_array()->size());
+        if (a[0].type()==Value::STRING) return Value((int)a[0].as_string().size());
+        return Value(0);
+    };
+    b[5] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? std::string() : a[0].to_string()); };  // str
+    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); try { return Value((int)std::stoll(a[0].to_string())); } catch(...) { return Value(0); } };  // int
+    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); try { return Value(std::stod(a[0].to_string())); } catch(...) { return Value(0.0); } };  // float
+    b[8] = [](std::vector<Value>& a) -> Value {   // bool
+        if (a.empty()) return Value(false);
+        auto& v = a[0];
+        if (v.type()==Value::BOOL) return v;
+        if (v.type()==Value::INT)  return Value(v.as_int()!=0);
+        if (v.type()==Value::FLOAT)return Value(v.as_float()!=0.0);
+        if (v.type()==Value::STRING)return Value(!v.as_string().empty());
+        if (v.type()==Value::NONE) return Value(false);
+        return Value(true);
+    };
+    b[9] = b[5];  // string alias
+    b[22] = [](std::vector<Value>&) -> Value { return Value(); };  // route — CLI'da dispatch yok
+    b[BI("strlen")] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? 0 : (int)a[0].to_string().size()); };
+    b[BI("abs")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); if (a[0].type()==Value::FLOAT) return Value(std::abs(a[0].as_float())); return Value(std::abs(a[0].to_int())); };
+    b[BI("max")] = [](std::vector<Value>& a) -> Value { if (a.size()<2) return a.empty()?Value():a[0]; return a[0]>=a[1]?a[0]:a[1]; };
+    b[BI("min")] = [](std::vector<Value>& a) -> Value { if (a.size()<2) return a.empty()?Value():a[0]; return a[0]<=a[1]?a[0]:a[1]; };
+    b[BI("sqrt")] = [](std::vector<Value>& a) -> Value { return Value(a.empty()?0.0:std::sqrt(a[0].to_float())); };
+    b[BI("strtoupper")] = [](std::vector<Value>& a) -> Value { std::string s=a.empty()?"":a[0].to_string(); for(char&c:s)c=(char)std::toupper((unsigned char)c); return Value(s); };
+    b[BI("strtolower")] = [](std::vector<Value>& a) -> Value { std::string s=a.empty()?"":a[0].to_string(); for(char&c:s)c=(char)std::tolower((unsigned char)c); return Value(s); };
+    b[BI("push")] = [](std::vector<Value>& a) -> Value { if (a.size()<2||a[0].type()!=Value::ARRAY) throw std::runtime_error("push() requires array and value"); a[0].as_array()->push_back(a[1]); return a[0]; };
+    b[BI("pop")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) throw std::runtime_error("pop() requires array"); auto ar=a[0].as_array(); if (ar->empty()) return Value(); Value l=ar->back(); ar->pop_back(); return l; };
+    b[BI("join")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) return Value(a.empty()?std::string():a[0].to_string()); std::string sep=a.size()>=2?a[1].to_string():""; std::string r; auto& ar=*a[0].as_array(); for(size_t i=0;i<ar.size();++i){ if(i)r+=sep; r+=ar[i].to_string(); } return Value(r); };
+    b[BI("stop")] = [](std::vector<Value>&) -> Value { return Value(); };
+    b[BI("before_route")] = [](std::vector<Value>&) -> Value { return Value(); };
+    b[BI("env")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(); const char* e=std::getenv(a[0].to_string().c_str()); if (e) return Value(std::string(e)); return a.size()>=2?Value(a[1].to_string()):Value(std::string()); };
+    // Modül fn'leri: builtin_names'deki her "mod::fn" → interpreter'ın YÜKLÜ modülü
+    const auto& names = look::builtin_names();
+    for (size_t i = 0; i < names.size(); ++i) {
+        auto pos = names[i].find("::");
+        if (pos == std::string::npos) continue;
+        auto f = interp.get_module_fn(names[i].substr(0, pos), names[i].substr(pos + 2));
+        if (f) b[i] = [f](std::vector<Value>& args) -> Value { std::vector<Value> aa = args; return f(aa); };
+    }
+    return b;
+}
+
+// Programın top-level `use` modüllerini interpreter'a yükle. Hepsi stdlib ise true
+// (CLI-VM güvenli); dış/paket modül varsa false (caller tree-walk'a düşer — semantik korunur).
+static bool preload_uses_for_vm(look::Interpreter& interp, const look::Program& prog) {
+    for (auto& s : prog.statements) {
+        if (auto* u = dynamic_cast<const look::UseStatement*>(s.get())) {
+            if (!interp.load_stdlib_module(u->module_name)) return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -297,7 +366,29 @@ int main(int argc, char* argv[]) {
         interpreter.set_file(filename);
 
         try {
-            interpreter.interpret(*program);
+            // C9 (opt-in): LOOK_CLI_VM=1 → top-level'i bytecode VM'de çalıştır (CLI 400×).
+            // Güvenli: sadece tüm `use`'lar stdlib ise ve compile başarılıysa (ikisi de
+            // EXECUTION ÖNCESİ) VM yolu; aksi halde tree-walk. Çıktı taahhüt edildikten
+            // sonra fallback YOK (çift çıktı olmaz). Default CLI değişmez.
+            bool ran_vm = false;
+            const char* cvm = std::getenv("LOOK_CLI_VM");
+            if (cvm && cvm[0] == '1' && preload_uses_for_vm(interpreter, *program)) {
+                look::CompiledProgram compiled;
+                bool compiled_ok = true;
+                try { compiled = look::Compiler::compile(*program); }
+                catch (...) { compiled_ok = false; }   // compile hatası → tree-walk
+                if (compiled_ok) {
+                    auto cli_builtins = build_cli_builtins(interpreter, std::cout);
+                    look::VM::SharedState sh;
+                    sh.builtins = &cli_builtins;
+                    look::VM vm(sh, std::cout);
+                    vm.set_web_context(&web_ctx);
+                    vm.execute(compiled);
+                    ran_vm = true;
+                }
+            }
+            if (!ran_vm)
+                interpreter.interpret(*program);
         } catch (const look::RouteMatchedException&) {
             // route() flow control — normal
         } catch (const look::LookRuntimeError& e) {

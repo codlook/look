@@ -499,6 +499,13 @@ void Interpreter::set_web_context(WebContext* ctx) {
     }
 }
 
+bool Interpreter::load_stdlib_module(const std::string& name) {
+    auto it = stdlib_.find(name);
+    if (it == stdlib_.end()) return false;   // dış/paket modül — CLI-VM kapsam dışı
+    modules_[name] = it->second;
+    return true;
+}
+
 NativeFn Interpreter::get_module_fn(const std::string& module_name, const std::string& fn_name) const {
     auto mit = modules_.find(module_name);
     if (mit == modules_.end()) return nullptr;

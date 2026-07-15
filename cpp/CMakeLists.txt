@@ -105,6 +105,9 @@ endif()
 add_executable(look
     src/main.cpp
     src/event_loop.cpp
+    src/compiler.cpp   # C9: CLI-VM (opt-in LOOK_CLI_VM) — bytecode derleyici
+    src/vm.cpp         # C9: CLI-VM — bytecode yürütücü
+    src/builtins.cpp   # C9: builtin_names/builtin_index (VM builtin tablosu)
     ${LOOK_CORE}
 )
 

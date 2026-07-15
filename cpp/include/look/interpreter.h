@@ -465,6 +465,11 @@ public:
     // Bulunamazsa null std::function döner.
     NativeFn get_module_fn(const std::string& module_name, const std::string& fn_name) const;
 
+    // C9 (CLI-VM): bir stdlib modülünü modules_'a yükler (use semantiği) — VM builtin
+    // wiring get_module_fn ile bunları görebilsin diye. Dış/paket modüller kapsam dışı
+    // → false (caller tree-walk'a düşer). Default CLI'ı etkilemez (opt-in yol).
+    bool load_stdlib_module(const std::string& name);
+
     // VM builtin wiring: route_registry_ erişimi — VM dispatch için closure ptr'ları al.
     const std::vector<RouteEntry>& get_route_registry() const { return route_registry_; }
 
