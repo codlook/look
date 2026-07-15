@@ -8,6 +8,7 @@
 #include "look/vm.h"
 #include "look/bytecode.h"
 #include "look/web.h"
+#include "look/interpreter.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
 
@@ -258,6 +259,7 @@ call_dispatch:
         const FunctionProto* proto = frame.proto;
         int base = frame.base;
 
+        try {
         while (frame.ip < (int)proto->code.size()) {
             const Instruction& ins = proto->code[frame.ip++];
 
@@ -718,6 +720,28 @@ call_dispatch:
 #undef CONST
             } // switch
         } // inner while
+        }
+        // ── C++ exception → LOOK try/catch köprüsü ────────────────────────────
+        // Operatör/builtin'lerin fırlattığı runtime hatası (bölme sıfıra, tip
+        // hatası...) try_stack_'e yönlendirilir — interpreter semantiğiyle birebir:
+        // kontrol-akışı exception'ları (exit/route/stop/route-disabled) sızdırılır,
+        // geri kalan std::exception mesajıyla catch bloğuna düşer. try_stack_ boşsa
+        // yukarı iletilir (web'de route fallback, CLI-VM'de üst seviye hata).
+        catch (const VmRouteDisabled&)      { throw; }
+        catch (const RouteStopException&)   { throw; }
+        catch (const RouteMatchedException&){ throw; }
+        catch (const ExitException&)        { throw; }
+        catch (const std::exception& e) {
+            if (try_stack_.empty()) throw;
+            auto entry = try_stack_.back(); try_stack_.pop_back();
+            current_exception_ = Value(std::string(e.what()));
+            while ((int)call_stack_.size() > entry.frame_depth) {
+                regs_.resize(call_stack_.back().base);
+                call_stack_.pop_back();
+            }
+            call_stack_.back().ip = entry.catch_ip;
+            goto call_dispatch;
+        }
 
         // Implicit return null
         int ret_reg = frame.ret_reg;

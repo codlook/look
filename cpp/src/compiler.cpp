@@ -11,6 +11,8 @@
 #include "look/compiler.h"
 #include "look/builtins.h"
 #include "look/interpreter.h"
+#include "look/lexer.h"
+#include "look/parser.h"
 
 #include <cassert>
 #include <sstream>
@@ -1218,42 +1220,72 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
         return r;
     }
 
-    // Parçalara böl: sabit string + değişken adı dönüşümlü
-    // CALL_BUILTIN TO_STR + CONCAT ile birleştir
+    // Parçalara böl: sabit string + interpolation dönüşümlü. Interpreter'ın
+    // interpolate_string() semantiğiyle BİREBİR: tetikleyici {$ · {harf · {_
+    // (template {# değil), iç içe brace'lere saygı, fragment TAM expression olarak
+    // lex+parse+compile ({$a + $b}, {$arr[1]}, {count($x)}, {mod::f()}...), parse
+    // hatasında {…} literal olarak kalır. Aksi halde VM sessizce "null" üretirdi.
+    // Tetikleyici SADECE '{$' — '$'-önekli formlar iki motorda da kesin
+    // interpolation'dır (undefined '$var' → her ikisinde null). Dolarsız
+    // '{identifier}' BİLİNÇLİ dışarıda: interpreter onu eval-hatasında literal'e
+    // düşürür (runtime karar), VM derleyip null üretirdi → '{renk}' gibi şablon
+    // string'lerinde web davranışını değiştirir. Güvenli/tutarlı sınır: '{$...}'.
+    auto is_interp_start = [](const std::string& s, size_t p) -> bool {
+        return s[p] == '{' && p + 1 < s.size() && s[p + 1] == '$';
+    };
     std::vector<uint8_t> parts;
+    std::vector<std::unique_ptr<Program>> keepalive; // parse edilen AST'ler compile bitene dek yaşamalı
     size_t i = 0;
     while (i < raw.size()) {
-        if (raw[i] == '{' && i + 1 < raw.size() && raw[i+1] == '$') {
-            size_t end = raw.find('}', i);
-            if (end == std::string::npos) break;
-            std::string expr_str = raw.substr(i + 1, end - i - 1);
-            // $var erişimi
-            if (!expr_str.empty() && expr_str[0] == '$') {
-                std::string var_name = expr_str.substr(1);
-                uint8_t pr = alloc_temp();
-                auto loc = resolve_var(var_name);
-                if (loc.kind == VarKind::LOCAL) {
-                    emit(OpCode::MOVE, pr, loc.index);
-                } else if (loc.kind == VarKind::CAPTURE) {
-                    emit(OpCode::LOAD_CAPTURE, pr, loc.index);
-                } else {
-                    uint16_t ni = add_const(Value(var_name));
-                    emit(OpCode::LOAD_GLOBAL, pr, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
-                }
-                emit(OpCode::TO_STR, pr, pr);
-                parts.push_back(pr);
+        if (is_interp_start(raw, i)) {
+            // Eşleşen '}' — iç içe brace'lere saygı
+            size_t depth = 1, j = i + 1;
+            while (j < raw.size() && depth > 0) {
+                if (raw[j] == '{') depth++;
+                else if (raw[j] == '}') { if (--depth == 0) break; }
+                ++j;
             }
-            i = end + 1;
+            if (depth != 0) {  // kapanmayan brace → '{' literal, ilerle
+                uint8_t pr = alloc_temp();
+                emit_load_const(pr, Value(std::string(1, raw[i])), line);
+                parts.push_back(pr);
+                ++i;
+                continue;
+            }
+            std::string expr_src = raw.substr(i + 1, j - i - 1);
+            uint8_t pr = 255;
+            try {
+                Lexer lex(expr_src + ";");
+                Parser par(lex.scan_tokens());
+                auto prog = par.parse();
+                if (!prog->statements.empty()) {
+                    if (auto* es = dynamic_cast<ExpressionStatement*>(prog->statements[0].get())) {
+                        // Doğal register'a derle (dest=255): CALL sonucu arg-register
+                        // düzenine bağlı, sabit dest zorlamak bozar. Sonra temp'e MOVE
+                        // + TO_STR — local slot dönerse üstüne yazmayız.
+                        uint8_t src = compile_expr(*es->expression);
+                        pr = alloc_temp();
+                        emit(OpCode::MOVE, pr, src);
+                        emit(OpCode::TO_STR, pr, pr);
+                        keepalive.push_back(std::move(prog));
+                    }
+                }
+            } catch (...) { pr = 255; }
+            if (pr == 255) {  // parse hatası → interpreter gibi {…} literal
+                pr = alloc_temp();
+                emit_load_const(pr, Value(raw.substr(i, j - i + 1)), line);
+            }
+            parts.push_back(pr);
+            i = j + 1;
         } else {
-            // {$ olmayan bölüm — sonraki {$ ye kadar literal
-            size_t end = raw.find("{$", i);
-            std::string literal = (end == std::string::npos) ? raw.substr(i) : raw.substr(i, end - i);
+            // Literal — sonraki interpolation tetikleyicisine kadar
+            std::string literal;
+            while (i < raw.size() && !is_interp_start(raw, i)) literal += raw[i++];
             if (!literal.empty()) {
                 uint8_t pr = alloc_temp();
                 emit_load_const(pr, Value(literal), line);
                 parts.push_back(pr);
             }
-            i = (end == std::string::npos) ? raw.size() : end;
         }
     }
 
