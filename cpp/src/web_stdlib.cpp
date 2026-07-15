@@ -11,6 +11,7 @@
 #include "look/resp_client.h"
 #include "look/logger.h"
 #include <sstream>
+#include <iomanip>
 #include <fstream>
 #include <stdexcept>
 #include <regex>
@@ -1164,7 +1165,7 @@ static std::string bind_params(const std::string& sql,
                 // Locale-bağımsız: Türkçe/Almanca sistemde "3,5" yerine "3.5" yazılır
                 std::ostringstream oss;
                 oss.imbue(std::locale::classic());
-                oss << p.as_float();
+                oss << std::setprecision(17) << p.as_float();  // round-trip-güvenli; default 6 hane veri bozardı
                 result += oss.str();
             } else if (p.type() == Value::BOOL) {
                 // PostgreSQL: TRUE/FALSE literal; MySQL/SQLite: 1/0
@@ -1302,10 +1303,14 @@ static Module make_db_module(Interpreter* interp) {
         return Value((int64_t)get_conn(args[0])->affected_rows());
     };
 
-    // db::escape($conn, $str)
+    // db::escape($conn, $str) — DRIVER-AWARE. Eskiden HER sürücü için MySQL
+    // backslash escaping (`\'`) kullanıyordu; ama SQLite/PostgreSQL standart
+    // SQL'de backslash'i escape saymaz → `\'` içindeki `'` string'i kapatıp
+    // INJECTION açardı. escape_str sürücüye göre doğru escaper'ı seçer
+    // (MySQL: backslash; SQLite/PG: `''` ikilemesi).
     m.functions["escape"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("db::escape() requires connection and string");
-        return Value(MySQLClient::escape(args[1].to_string()));
+        return Value(escape_str(args[1].to_string(), get_conn(args[0])->driver_name()));
     };
 
     // db::close($conn) — removes the pool; existing borrowed conns complete normally

@@ -1,8 +1,19 @@
 #include "look/sqlite_client.h"
 #include "sqlite3/sqlite-amalgamation-3470200/sqlite3.h"
 #include <stdexcept>
+#include <cstdio>
+#include <string>
 
 namespace look {
+
+// Tam-hassasiyet double formatı — std::to_string %f (6 hane) kullanıp
+// 3.14159265358979 → "3.141593" gibi sessizce yuvarlıyordu (veri bozulması).
+// %.17g round-trip-güvenli (IEEE-754 double'ı tam temsil eder).
+static std::string sqlite_fmt_double(double d) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.17g", d);
+    return std::string(buf);
+}
 
 SqliteClient::SqliteClient() = default;
 
@@ -57,7 +68,7 @@ std::vector<DbRow> SqliteClient::query(const std::string& sql) {
                     dv.type = sqlite_type::INTEGER;
                     break;
                 case SQLITE_FLOAT:
-                    dv.str  = std::to_string(sqlite3_column_double(stmt, i));
+                    dv.str  = sqlite_fmt_double(sqlite3_column_double(stmt, i));
                     dv.type = sqlite_type::FLOAT;
                     break;
                 case SQLITE_NULL:
@@ -84,7 +95,8 @@ std::vector<DbRow> SqliteClient::query(const std::string& sql) {
                 default: // SQLITE_TEXT
                     {
                         const char* txt = (const char*)sqlite3_column_text(stmt, i);
-                        dv.str  = txt ? txt : "";
+                        int tb = sqlite3_column_bytes(stmt, i);
+                        dv.str  = txt ? std::string(txt, (size_t)tb) : "";  // NUL-safe (length-aware)
                         dv.type = sqlite_type::TEXT;
                     }
                     break;
@@ -143,13 +155,14 @@ std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vect
                     dv.str  = std::to_string(sqlite3_column_int64(stmt, i));
                     dv.type = sqlite_type::INTEGER; break;
                 case SQLITE_FLOAT:
-                    dv.str  = std::to_string(sqlite3_column_double(stmt, i));
+                    dv.str  = sqlite_fmt_double(sqlite3_column_double(stmt, i));
                     dv.type = sqlite_type::FLOAT; break;
                 case SQLITE_NULL:
                     dv.is_null = true; dv.type = sqlite_type::NUL; break;
                 default: {
                     const char* txt = (const char*)sqlite3_column_text(stmt, i);
-                    dv.str  = txt ? txt : "";
+                        int tb = sqlite3_column_bytes(stmt, i);
+                        dv.str  = txt ? std::string(txt, (size_t)tb) : "";  // NUL-safe (length-aware)
                     dv.type = sqlite_type::TEXT; break;
                 }
             }

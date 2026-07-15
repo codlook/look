@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdint>
 #include <iomanip>
+#include <stdexcept>
 #include <filesystem>
 #ifdef _WIN32
 #  ifndef NOMINMAX
@@ -116,11 +117,21 @@ static std::string detect_mime(const std::string& data) {
 // CSPRNG tabanlı geçici dosya adı (rand() kaldırıldı — tahmin edilebilir rastgelelik düzeltmesi)
 static std::string random_hex(int bytes = 16) {
     std::vector<unsigned char> buf(bytes);
+    // Fail-closed: CSPRNG başarısızsa sıfır-buffer ile tahmin edilebilir ad üretmek yerine hata fırlat.
 #ifdef _WIN32
-    BCryptGenRandom(nullptr, buf.data(), (ULONG)bytes, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (BCryptGenRandom(nullptr, buf.data(), (ULONG)bytes,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+        throw std::runtime_error("random_hex: CSPRNG (BCryptGenRandom) başarısız");
 #else
     int fd = open("/dev/urandom", O_RDONLY);
-    if (fd >= 0) { read(fd, buf.data(), bytes); close(fd); }
+    if (fd < 0) throw std::runtime_error("random_hex: /dev/urandom açılamadı");
+    int got = 0;
+    while (got < bytes) {
+        ssize_t n = read(fd, buf.data() + got, bytes - got);
+        if (n <= 0) { close(fd); throw std::runtime_error("random_hex: /dev/urandom okuma hatası"); }
+        got += (int)n;
+    }
+    close(fd);
 #endif
     std::ostringstream oss;
     for (int i = 0; i < bytes; ++i)

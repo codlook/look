@@ -279,11 +279,14 @@ call_dispatch:
             case OpCode::POW:    R(ins.a) = R(ins.b).pow(R(ins.c));     break;
             case OpCode::UNM: {
                 const Value& b = R(ins.b);
-                if (b.type()==Value::INT) {
-                    int64_t v = b.as_int();   // int(32-bit) DEĞİL — büyük negatif bozulmasın (İ ile aynı)
-                    R(ins.a) = (v == INT64_MIN) ? Value(-(double)v) : Value(-v);
-                } else {
+                if (b.type()==Value::FLOAT) {
                     R(ins.a) = Value(-b.as_float());
+                } else {
+                    // İ ile aynı: INT dışı (STRING/BOOL/NONE) tip to_int ile çevrilir.
+                    // Eski `-b.as_float()` ham float_val(0.0)'ı okuyup `-"5"`→-0
+                    // veriyordu (İ ile divergence). to_int → -"5"=-5, -true=-1.
+                    int64_t v = b.to_int();
+                    R(ins.a) = (v == INT64_MIN) ? Value(-(double)v) : Value(-v);
                 }
                 break;
             }

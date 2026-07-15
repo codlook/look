@@ -233,8 +233,9 @@ static bool smtp_pbkdf2_verify(const std::string& password, const std::string& s
     while (std::getline(ss, tok, '$')) parts.push_back(tok);
     if (parts.size() < 5 || parts[0] != "pbkdf2") return false;
     uint32_t iter = 0;
-    try { iter = (uint32_t)std::stoi(parts[2]); } catch (...) { return false; }  // bozuk hash → doğrulama başarısız
-    if (iter == 0) return false;
+    try { iter = (uint32_t)std::stoul(parts[2]); } catch (...) { return false; }  // bozuk hash → doğrulama başarısız
+    // DoS koruması: kötü niyetli/bozuk hash aşırı iterasyonla CPU'yu kilitleyebilir.
+    if (iter == 0 || iter > 1000000) return false;
     auto     salt   = smtp_b64_decode_bytes(parts[3]);
     auto     stored = smtp_b64_decode_bytes(parts[4]);
     auto     derived = smtp_pbkdf2_sha256(password, salt, iter, 32);

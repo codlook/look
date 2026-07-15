@@ -694,6 +694,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
                 {"/=", OpCode::DIV}, {"%=", OpCode::MOD}, {".=", OpCode::CONCAT},
+                {"&=", OpCode::BAND}, {"|=", OpCode::BOR}, {"^=", OpCode::BXOR},
             };
             auto it = COMPOUND.find(e.op);
             if (it == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
@@ -725,6 +726,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
                 {"/=", OpCode::DIV}, {"%=", OpCode::MOD}, {".=", OpCode::CONCAT},
+                {"&=", OpCode::BAND}, {"|=", OpCode::BOR}, {"^=", OpCode::BXOR},
             };
             auto cit = COMPOUND.find(e.op);
             if (cit == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
@@ -818,6 +820,40 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     }
 
     if (auto* e = dynamic_cast<const UnaryExpression*>(&expr)) {
+        // ++/-- — VM'de eskiden desteklenmiyordu (compile hatası → interpreter'a
+        // görünmez sapma). Interpreter ile aynı semantik: prefix yeni değeri,
+        // postfix eski değeri döndürür; değişkene geri yazılır.
+        if (e->op == "++" || e->op == "--") {
+            auto* var = dynamic_cast<const Variable*>(e->right.get());
+            if (!var) throw LookCompileError("++/-- bir değişken gerektirir");
+            OpCode delta_op = (e->op == "++") ? OpCode::ADD : OpCode::SUB;
+            uint8_t one = alloc_temp();
+            emit_load_const(one, Value((int64_t)1), expr.loc.line);
+            auto loc = resolve_var(var->name);
+            if (loc.kind == VarKind::CAPTURE)
+                throw LookCompileError("Capture edilen değişken değiştirilemez: $" + var->name);
+
+            uint8_t r = ensure_dest();
+            if (loc.kind == VarKind::LOCAL) {
+                emit(OpCode::MOVE, r, loc.index);          // eski değer (postfix için)
+                uint8_t nv = alloc_temp();
+                emit(delta_op, nv, loc.index, one);
+                emit(OpCode::MOVE, loc.index, nv);
+                if (e->prefix) emit(OpCode::MOVE, r, nv);   // prefix → yeni değer
+                free_temp(nv);
+            } else {
+                // GLOBAL
+                uint16_t ni = add_const(Value(var->name));
+                emit(OpCode::LOAD_GLOBAL, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+                uint8_t nv = alloc_temp();
+                emit(delta_op, nv, r, one);
+                emit(OpCode::STORE_GLOBAL, nv, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+                if (e->prefix) emit(OpCode::MOVE, r, nv);
+                free_temp(nv);
+            }
+            free_temp(one);
+            return r;
+        }
         uint8_t operand = compile_expr(*e->right);
         uint8_t r = ensure_dest();
         if (e->op == "-")  emit(OpCode::UNM, r, operand);
