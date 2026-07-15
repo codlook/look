@@ -982,6 +982,25 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             for (char& c : s) c = (char)std::tolower((unsigned char)c);
             return look::Value(s);
         };
+        // push/pop: builtin_names'de vardı ama req_builtins'de bağlı DEĞİLDİ →
+        // route içinde bare push/pop "bad function call" fırlatıp interpreter'a
+        // düşürüyordu. In-place mutasyon: args[0] çağıranın $arr'ıyla shared_ptr
+        // paylaşır (kopya olsa da aynı vector) → $arr yerinde büyür/küçülür.
+        req_builtins[BI("push")] = [](std::vector<look::Value>& args) -> look::Value {
+            if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
+                throw std::runtime_error("push() requires array and value");
+            args[0].as_array()->push_back(args[1]);
+            return args[0];
+        };
+        req_builtins[BI("pop")] = [](std::vector<look::Value>& args) -> look::Value {
+            if (args.empty() || args[0].type() != look::Value::ARRAY)
+                throw std::runtime_error("pop() requires array");
+            auto a = args[0].as_array();
+            if (a->empty()) return look::Value();
+            look::Value last = a->back();
+            a->pop_back();
+            return last;
+        };
 
         // before_route closures: route_closures ile aynı yapıda
         std::vector<look::Closure*> before_closures;
