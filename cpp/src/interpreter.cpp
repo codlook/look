@@ -45,7 +45,7 @@ std::string Value::to_string() const {
     switch (type_) {
         case INT:    return std::to_string(int_val);
         case FLOAT:  return look_format_double(float_val);
-        case STRING: return str_val;
+        case STRING: return str_ref();
         case BOOL:   return bool_val ? "true" : "false";
         case NONE:   return "null";
         case ARRAY: {
@@ -69,7 +69,7 @@ bool Value::is_truthy() const {
         case BOOL:   return bool_val;
         case INT:    return int_val != 0;
         case FLOAT:  return float_val != 0.0;
-        case STRING: return !str_val.empty() && str_val != "0";
+        case STRING: return !str_ref().empty() && str_ref() != "0";
         case NONE:   return false;
         case ARRAY:   return !as_array()->empty();
         case CHANNEL:   return ptr_val != nullptr;
@@ -82,7 +82,7 @@ double Value::to_float() const {
     switch (type_) {
         case INT:    return (double)int_val;
         case FLOAT:  return float_val;
-        case STRING: try { return std::stod(str_val); } catch(...) { return 0.0; }
+        case STRING: try { return std::stod(str_ref()); } catch(...) { return 0.0; }
         case BOOL:   return bool_val ? 1.0 : 0.0;
         default:     return 0.0;
     }
@@ -92,7 +92,7 @@ int64_t Value::to_int() const {
     switch (type_) {
         case INT:    return int_val;
         case FLOAT:  return (int64_t)float_val;
-        case STRING: try { return std::stoll(str_val); } catch(...) { return 0; }
+        case STRING: try { return std::stoll(str_ref()); } catch(...) { return 0; }
         case BOOL:   return bool_val ? 1 : 0;
         default:     return 0;
     }
@@ -168,8 +168,19 @@ Value Value::concat(const Value& o)    const { return Value(to_string() + o.to_s
 void Value::append_in_place(const Value& o) {
     // o.to_string() önce kopyalanır → `$s .= $s` gibi aliasing güvenli.
     std::string rhs = o.to_string();
-    if (type_ != STRING) { str_val = to_string(); type_ = STRING; ptr_val.reset(); }
-    str_val += rhs;   // std::string amortize kapasite büyümesi → O(1) amortize
+    if (type_ != STRING || !ptr_val) {
+        ptr_val = std::make_shared<std::string>(to_string());  // sayı/none → yeni tampon
+        type_ = STRING;
+    } else {
+        // COW: string paylaşılıyorsa (constant pool / aliased register) mutasyondan
+        // önce özel kopya al — B5'te string pointer arkasında, in-place mutasyon
+        // paylaşan diğer Value'ları bozardı. İlk append'ten sonra tekil → amortize O(1).
+        // NOT: ptr_val.use_count() doğrudan kullanılır — ara shared_ptr kopyası
+        // ekstra owner yaratıp use_count'u daima >1 yapar (→ her adım COW = O(n²)).
+        if (ptr_val.use_count() > 1)
+            ptr_val = std::make_shared<std::string>(*static_cast<std::string*>(ptr_val.get()));
+    }
+    static_cast<std::string*>(ptr_val.get())->append(rhs);
 }
 
 // Python-benzeri katı karşılaştırma: türler-arası coercion YOK. (Go değil — Go
@@ -187,7 +198,7 @@ bool Value::operator==(const Value& o) const {
     if (a_num && b_num) return to_float() == o.to_float();  // sayı ↔ sayı
     if (type_ != o.type_) return false;                     // farklı tür → asla eşit
     switch (type_) {
-        case STRING: return str_val == o.str_val;
+        case STRING: return str_ref() == o.str_ref();
         case BOOL:   return bool_val == o.bool_val;
         case NONE:   return true;                           // null == null
         case ARRAY:  return false;                          // referans karşılaştırması desteklenmiyor
@@ -203,22 +214,22 @@ bool Value::operator==(const Value& o) const {
 }
 bool Value::operator<(const Value& o)  const {
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() < o.to_float();
-    if (type_ == STRING && o.type_ == STRING) return str_val < o.str_val;
+    if (type_ == STRING && o.type_ == STRING) return str_ref() < o.str_ref();
     cmp_type_error();
 }
 bool Value::operator<=(const Value& o) const {
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() <= o.to_float();
-    if (type_ == STRING && o.type_ == STRING) return str_val <= o.str_val;
+    if (type_ == STRING && o.type_ == STRING) return str_ref() <= o.str_ref();
     cmp_type_error();
 }
 bool Value::operator>(const Value& o)  const {
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() > o.to_float();
-    if (type_ == STRING && o.type_ == STRING) return str_val > o.str_val;
+    if (type_ == STRING && o.type_ == STRING) return str_ref() > o.str_ref();
     cmp_type_error();
 }
 bool Value::operator>=(const Value& o) const {
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() >= o.to_float();
-    if (type_ == STRING && o.type_ == STRING) return str_val >= o.str_val;
+    if (type_ == STRING && o.type_ == STRING) return str_ref() >= o.str_ref();
     cmp_type_error();
 }
 int  Value::spaceship(const Value& o)  const { return (*this == o) ? 0 : (*this < o ? -1 : 1); }
@@ -1965,6 +1976,17 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
     }
 
     throw std::runtime_error("Unknown expression type");
+}
+
+// ── VM/interpreter callback köprüsü (bridge tarafı) ───────────────────────────
+// interpreter.cpp hem CLI hem fcgi'ye linklenir. VM (vm.cpp) run() içinde hook'unu
+// register_vm_bridge ile kaydeder; CLI'da hiç kaydolmaz → available()==false.
+namespace { thread_local Value (*g_vm_bridge)(const Value&, std::vector<Value>&) = nullptr; }
+void  register_vm_bridge(Value (*hook)(const Value&, std::vector<Value>&)) { g_vm_bridge = hook; }
+bool  vm_bridge_available() { return g_vm_bridge != nullptr; }
+Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args) {
+    if (!g_vm_bridge) throw std::runtime_error("vm_bridge_invoke: VM hook kayıtlı değil");
+    return g_vm_bridge(fn, args);
 }
 
 Value Interpreter::invoke(const Value& fn, std::vector<Value> args) {

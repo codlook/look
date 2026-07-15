@@ -18,18 +18,16 @@
 
 namespace look {
 
-// ── VM/interpreter callback köprüsü ───────────────────────────────────────────
-// Aktif VM (run() içinde) buraya kaydolur; interpreter bir BYTECODE_FN çağırması
-// gerektiğinde (higher-order builtin callback'i) bu VM'e delege eder.
+// ── VM/interpreter callback köprüsü (hook tarafı) ─────────────────────────────
+// Bridge fonksiyonları interpreter.cpp'de (hem CLI hem fcgi linkler); VM burada
+// yalnızca hook'unu kaydeder. Aktif VM run() içinde thread-local set edilir.
 static thread_local VM* t_active_vm = nullptr;
 
-bool vm_bridge_available() { return t_active_vm != nullptr; }
-
-Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args) {
+static Value vm_bridge_hook(const Value& fn, std::vector<Value>& args) {
     if (!t_active_vm)
-        throw LookVmError("vm_bridge_invoke: aktif VM yok");
+        throw LookVmError("vm_bridge_hook: aktif VM yok");
     if (fn.type() != Value::BYTECODE_FN)
-        throw LookVmError("vm_bridge_invoke: BYTECODE_FN bekleniyor");
+        throw LookVmError("vm_bridge_hook: BYTECODE_FN bekleniyor");
     return t_active_vm->call_closure(*fn.as_bytecode_fn(), args);
 }
 
@@ -247,6 +245,7 @@ Value VM::run() {
     // interpreter->invoke → vm_bridge_invoke → bu VM'in call_closure'ıyla çalıştırır.
     VM* _prev_active = t_active_vm;
     t_active_vm = this;
+    register_vm_bridge(&vm_bridge_hook);   // thread-local hook'u kaydet (idempotent)
     struct ActiveGuard { VM* prev; ~ActiveGuard() { t_active_vm = prev; } } _ag{_prev_active};
 
 call_dispatch:

@@ -44,23 +44,30 @@ class Value {
 public:
     enum Type { INT, FLOAT, STRING, BOOL, FUNCTION, ARRAY, CHANNEL, WEBSOCKET, SSE_CONN, BYTECODE_FN, NONE };
 
-    Value()                                         : type_(NONE)     {}
+    // B5: skalerler union'da (8 byte), STRING pointer arkasında → sizeof 80→32,
+    // skaler kopyada string ctor/dtor yok. String literal'leri constant pool'dan
+    // LOAD_CONST ile paylaşılır (refcount-bump, kopya yok) → RAM + hız.
+    Value()                                         : type_(NONE),     int_val(0)   {}
     explicit Value(int64_t i)                       : type_(INT),      int_val(i)   {}
-    explicit Value(int i)                           : type_(INT),      int_val(i)   {}
+    explicit Value(int i)                           : type_(INT),      int_val((int64_t)i) {}
     explicit Value(double d)                        : type_(FLOAT),    float_val(d) {}
-    explicit Value(const std::string& s)            : type_(STRING),   str_val(s)   {}
     explicit Value(bool b)                          : type_(BOOL),     bool_val(b)  {}
-    explicit Value(std::shared_ptr<LookFunction> f) : type_(FUNCTION),    ptr_val(std::move(f)) {}
-    explicit Value(std::shared_ptr<std::vector<Value>> a) : type_(ARRAY), ptr_val(std::move(a)) {}
-    explicit Value(std::shared_ptr<LookChannel>        c) : type_(CHANNEL),   ptr_val(std::move(c)) {}
-    explicit Value(std::shared_ptr<WsConnection>       w) : type_(WEBSOCKET), ptr_val(std::move(w)) {}
-    explicit Value(std::shared_ptr<SseConnection>      s) : type_(SSE_CONN),  ptr_val(std::move(s)) {}
-    explicit Value(std::shared_ptr<Closure>            c) : type_(BYTECODE_FN), ptr_val(std::move(c)) {}
+    explicit Value(const std::string& s)            : type_(STRING),   int_val(0), ptr_val(std::make_shared<std::string>(s)) {}
+    explicit Value(std::string&& s)                 : type_(STRING),   int_val(0), ptr_val(std::make_shared<std::string>(std::move(s))) {}
+    explicit Value(std::shared_ptr<LookFunction> f) : type_(FUNCTION),    int_val(0), ptr_val(std::move(f)) {}
+    explicit Value(std::shared_ptr<std::vector<Value>> a) : type_(ARRAY), int_val(0), ptr_val(std::move(a)) {}
+    explicit Value(std::shared_ptr<LookChannel>        c) : type_(CHANNEL),   int_val(0), ptr_val(std::move(c)) {}
+    explicit Value(std::shared_ptr<WsConnection>       w) : type_(WEBSOCKET), int_val(0), ptr_val(std::move(w)) {}
+    explicit Value(std::shared_ptr<SseConnection>      s) : type_(SSE_CONN),  int_val(0), ptr_val(std::move(s)) {}
+    explicit Value(std::shared_ptr<Closure>            c) : type_(BYTECODE_FN), int_val(0), ptr_val(std::move(c)) {}
 
     Type        type()      const { return type_; }
     int64_t     as_int()    const { return int_val; }
     double      as_float()  const { return float_val; }
-    std::string as_string() const { return str_val; }
+    std::string as_string() const {
+        return (type_ == STRING && ptr_val)
+            ? *static_cast<const std::string*>(ptr_val.get()) : std::string();
+    }
     bool        as_bool()   const { return bool_val; }
     // Tek shared_ptr<void>'dan tipli erişim — type_ hangi tipin aktif olduğunu garanti eder.
     std::shared_ptr<LookFunction>        as_function() const { return std::static_pointer_cast<LookFunction>(ptr_val); }
@@ -123,16 +130,27 @@ public:
     Value shift_left(const Value& o)  const;
     Value shift_right(const Value& o) const;
 
+    // STRING içeriğine kopyasız erişim (yalnız type_==STRING; diğerlerinde boş).
+    // İç metodlar (to_string/operatörler) str_val yerine bunu kullanır.
+    const std::string& str_ref() const {
+        static const std::string kEmpty;
+        return (type_ == STRING && ptr_val)
+            ? *static_cast<const std::string*>(ptr_val.get()) : kEmpty;
+    }
+
 private:
-    // Value depolama — 6 ayrı shared_ptr (96 byte) tek shared_ptr<void>'a (16 byte)
-    // indirildi: aynı anda yalnız biri aktif (type_ belirler). sizeof(Value)
-    // 152→~64 byte; op başına 5 gereksiz shared_ptr ctor/dtor elendi.
-    Type        type_;
-    int64_t     int_val   = 0;
-    double      float_val = 0.0;
-    std::string str_val;
-    bool        bool_val  = false;
-    std::shared_ptr<void> ptr_val;   // FUNCTION/ARRAY/CHANNEL/WEBSOCKET/SSE_CONN/BYTECODE_FN
+    // B5: Value depolama — skalerler (int/float/bool) union'da tek 8-byte payload;
+    // STRING ve tüm referans tipleri ptr_val arkasında. sizeof(Value) 80→32:
+    //   type_(4)+pad(4) + union(8) + shared_ptr(16). Skaler kopya trivial-ucuz
+    //   (string ctor/dtor yok, null shared_ptr kopyası atomiksiz).
+    Type type_ = NONE;
+    union {
+        int64_t int_val;
+        double  float_val;
+        bool    bool_val;
+    };
+    // STRING → shared_ptr<std::string>; ARRAY/FUNCTION/CHANNEL/WS/SSE/BYTECODE_FN → ilgili tip
+    std::shared_ptr<void> ptr_val;
 };
 
 // ── LookChannel — Go-style channel (defined after Value — queue<Value> needs complete type)
@@ -166,6 +184,9 @@ struct LookChannel {
 // delege eder. vm.cpp tanımlar. Kayıtlı VM yoksa available()==false → fallback.
 bool  vm_bridge_available();
 Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args);
+// VM (vm.cpp) çalışırken kendi closure-invoker hook'unu kaydeder. CLI (tree-walk)
+// bunu hiç çağırmaz → hook null → vm_bridge_available()==false.
+void  register_vm_bridge(Value (*hook)(const Value& fn, std::vector<Value>& args));
 
 // ── Environment ───────────────────────────────────────────────────────────────
 
