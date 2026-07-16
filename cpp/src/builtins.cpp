@@ -128,6 +128,19 @@ const std::vector<std::string>& builtin_names() {
         // string:: tamamlama — format + regex (aynı landmine; regex/format'lı route'lar
         // fallback ediyordu). Auto-wire string modülünden bağlar.
         "string::format", "string::regex_match", "string::regex_replace", "string::regex_match_all",
+        // type:: modülü — builtin_names'de HİÇ yoktu (bare is_int/is_string ayrı, index
+        // 10-15). `use type` ile type::is_int/of/to_int çağıran route fallback ediyordu.
+        "type::is_null", "type::is_int", "type::is_float", "type::is_string", "type::is_bool",
+        "type::is_array", "type::is_function", "type::of",
+        "type::to_int", "type::to_float", "type::to_string", "type::to_bool",
+        // crypto:: tamamlama — base64/hex/hmac_sha256/constant_compare/random_string/
+        // uuid/rs256 (JWT imzalama). Hepsi interpreter crypto modülünde DOĞRULANDI.
+        "crypto::base64_encode", "crypto::base64_decode",
+        "crypto::base64url_encode", "crypto::base64url_decode",
+        "crypto::hex_encode", "crypto::hex_decode",
+        "crypto::hmac_sha256", "crypto::hmac_sha256_raw", "crypto::constant_compare",
+        "crypto::random_string", "crypto::uuid",
+        "crypto::rs256_sign", "crypto::rs256_sign_b64url", "crypto::rs256_verify",
     };
     return NAMES;
 }

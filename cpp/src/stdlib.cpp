@@ -640,7 +640,11 @@ static Module make_type() {
     m.functions["is_float"]    = [](auto a) { check_args("type::is_float",    a.size(),1); return Value(a[0].type()==Value::FLOAT); };
     m.functions["is_bool"]     = [](auto a) { check_args("type::is_bool",     a.size(),1); return Value(a[0].type()==Value::BOOL); };
     m.functions["is_array"]    = [](auto a) { check_args("type::is_array",    a.size(),1); return Value(a[0].type()==Value::ARRAY); };
-    m.functions["is_function"] = [](auto a) { check_args("type::is_function", a.size(),1); return Value(a[0].type()==Value::FUNCTION); };
+    // BYTECODE_FN de fonksiyondur: VM'de derlenen closure bu tiple gelir. Yalnız
+    // FUNCTION'a bakmak iki motoru ayırıyordu (interpreter true / VM false) —
+    // TYPE_OF opcode'u da ikisine "function" der; is_function onunla hizalı olmalı.
+    m.functions["is_function"] = [](auto a) { check_args("type::is_function", a.size(),1);
+        return Value(a[0].type()==Value::FUNCTION || a[0].type()==Value::BYTECODE_FN); };
     m.functions["to_int"]    = [](auto a) { check_args("type::to_int",    a.size(),1); return Value(a[0].to_int()); };
     m.functions["to_float"]  = [](auto a) { check_args("type::to_float",  a.size(),1); return Value(a[0].to_float()); };
     m.functions["to_string"] = [](auto a) { check_args("type::to_string", a.size(),1); return Value(a[0].to_string()); };
