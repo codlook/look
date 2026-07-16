@@ -176,6 +176,9 @@ private:
     void compile_foreach(const ForeachStatement& s);
     void compile_return(const ReturnStatement& s);
     void compile_try(const TryCatchStatement& s);
+    // print/write ortak yolu: argümanları " " ile ayırıp yazar, newline=true ise "\n" ekler
+    // (interpreter build_output + PrintStatement semantiğiyle birebir).
+    void emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs, bool newline);
     void compile_func_decl(const FunctionDeclaration& s);
     void compile_switch(const SwitchStatement& s);
     void compile_const_block(const ConstBlock& s);

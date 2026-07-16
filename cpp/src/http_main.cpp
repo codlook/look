@@ -951,6 +951,19 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             throw look::RouteStopException();
         };
 
+        // exit()/die() — interpreter ile aynı semantik (ExitException). Bağlanmazsa
+        // builtin slot'u boş kalır → std::bad_function_call → route KALICI interpreter'a
+        // düşerdi. Web'de exit() zaten nadir; davranış interpreter yolundakiyle aynı.
+        {
+            auto do_exit = [](std::vector<look::Value>& a) -> look::Value {
+                int code = 0;
+                if (!a.empty() && a[0].type() == look::Value::INT) code = (int)a[0].as_int();
+                throw look::ExitException(code);
+            };
+            req_builtins[BI("exit")] = do_exit;
+            req_builtins[BI("die")]  = do_exit;
+        }
+
         // skaler core builtins — interpreter ile birebir
         req_builtins[BI("strlen")] = [](std::vector<look::Value>& args) -> look::Value {
             return look::Value(args.empty() ? 0 : (int)args[0].to_string().size());
@@ -1052,6 +1065,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     throw;
                 } catch (const look::RouteStopException&) {
                     throw;
+                } catch (const look::ExitException&) {
+                    throw;   // exit()/die() — normal akış, VM hatası DEĞİL (route'u suçlama)
                 } catch (...) {
                     vm_failed_route = vm.last_matched_route();
                     throw;
@@ -1060,6 +1075,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             vm_ok = true;
         } catch (const look::RouteStopException&) {
             vm_ok = true;  // stop() route handler içinde çağrıldı — normal akış
+        } catch (const look::ExitException&) {
+            // exit()/die() — script'i sonlandırır, VM hatası DEĞİL. Genel catch'e
+            // düşerse route KALICI interpreter'a sabitlenirdi (yanlış suçlama).
+            // O ana dek yazılmış çıktı yanıt olur — interpreter semantiğiyle aynı.
+            vm_ok = true;
         } catch (const look::VmRouteDisabled&) {
             // beklenen akış — interpreter fallback'e düş (aşağıda)
         } catch (const std::exception& vm_e) {

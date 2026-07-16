@@ -203,6 +203,17 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     b[BI("pop")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) throw std::runtime_error("pop() requires array"); auto ar=a[0].as_array(); if (ar->empty()) return Value(); Value l=ar->back(); ar->pop_back(); return l; };
     b[BI("join")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) return Value(a.empty()?std::string():a[0].to_string()); std::string sep=a.size()>=2?a[1].to_string():""; std::string r; auto& ar=*a[0].as_array(); for(size_t i=0;i<ar.size();++i){ if(i)r+=sep; r+=ar[i].to_string(); } return Value(r); };
     b[BI("stop")] = [](std::vector<Value>&) -> Value { return Value(); };
+    // exit()/die() — CLI-VM'de bağlı değildi ("Çağrılabilir değil" fırlatıyordu).
+    // interpreter ile birebir: ilk argüman INT ise çıkış kodu, yoksa 0.
+    {
+        auto do_exit = [](std::vector<Value>& a) -> Value {
+            int code = 0;
+            if (!a.empty() && a[0].type() == Value::INT) code = (int)a[0].as_int();
+            throw look::ExitException(code);
+        };
+        if (look::builtin_index("exit") >= 0) b[BI("exit")] = do_exit;
+        if (look::builtin_index("die")  >= 0) b[BI("die")]  = do_exit;
+    }
     b[BI("before_route")] = [](std::vector<Value>&) -> Value { return Value(); };
     b[BI("env")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(); const char* e=std::getenv(a[0].to_string().c_str()); if (e) return Value(std::string(e)); return a.size()>=2?Value(a[1].to_string()):Value(std::string()); };
     // Modül fn'leri: builtin_names'deki her "mod::fn" → interpreter'ın YÜKLÜ modülü.
@@ -395,6 +406,12 @@ int main(int argc, char* argv[]) {
                 interpreter.interpret(*program);
         } catch (const look::RouteMatchedException&) {
             // route() flow control — normal
+        } catch (const look::ExitException& e) {
+            // exit()/die() — NORMAL sonlanma, hata değil. Yakalanmıyordu: dıştaki genel
+            // catch'e düşüp "Error: exit" basıyor ve kodu 1 döndürüyordu (exit(3) → 1).
+            // cgi_main/fcgi_main zaten yakalıyordu — CLI eksikti.
+            look::task_wait(5000);   // arka plan parallel() task'larını bekle
+            return e.code();
         } catch (const look::LookRuntimeError& e) {
             auto err = e;
             if (err.location.file.empty()) err.location.file = filename;

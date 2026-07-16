@@ -148,6 +148,10 @@ const std::vector<std::string>& builtin_names() {
         // db:: tamamlama — transaction/begin/commit/rollback/escape. transaction()
         // closure alır: VM'den BYTECODE_FN gelir, interp->invoke() köprüyle çalıştırır.
         "db::transaction", "db::begin", "db::commit", "db::rollback", "db::escape",
+        // exit()/die() — VM'de YOKTU: CLI-VM'de "Çağrılabilir değil" fırlatıyordu (CLI
+        // script'lerinde exit kodu yaygın), web'de route'u kalıcı interpreter'a düşürüyordu.
+        // Her iki motorda ExitException'a bağlanır (interpreter ile aynı semantik).
+        "exit", "die",
     };
     return NAMES;
 }

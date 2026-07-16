@@ -236,19 +236,17 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             free_temp(r);
         }
     }
+    // print/write — interpreter semantiği (interpreter.cpp: build_output + PrintStatement):
+    //   build_output: argümanlar " " ile AYRILIR;  print: sonuna "\n" EKLER;  write: eklemez.
+    // Eskiden burada her argüman için tek tek builtin çağrılıyordu → ayraç da newline de
+    // yoktu: print($a,$b) interpreter'da "a b\n", VM'de "ab" üretiyordu (hem CLI-VM hem
+    // web-VM). Differential kaçırmıştı: gövde tek argümanla print ediyor ve $(...) zaten
+    // trailing newline'ı yutuyor.
     else if (auto* s = dynamic_cast<const PrintStatement*>(&stmt)) {
-        for (auto& e : s->expressions) {
-            uint8_t r = compile_expr(*e);
-            emit(OpCode::CALL_BUILTIN, r, 0 /*print*/, r); // result reg = arg reg (sonuç atılır)
-            free_temp(r);
-        }
+        emit_output_args(s->expressions, /*newline=*/true);
     }
     else if (auto* s = dynamic_cast<const WriteStatement*>(&stmt)) {
-        for (auto& e : s->expressions) {
-            uint8_t r = compile_expr(*e);
-            emit(OpCode::CALL_BUILTIN, r, 1 /*write*/, r); // result reg = arg reg (sonuç atılır)
-            free_temp(r);
-        }
+        emit_output_args(s->expressions, /*newline=*/false);
     }
     else if (auto* s = dynamic_cast<const ReturnStatement*>(&stmt)) {
         compile_return(*s);
@@ -469,6 +467,25 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
 // Kritik 3. nokta: catch bloğuna girerken sadece STORE_VAR olanlar geçerli.
 // Temp register'lar try bloğu bitince serbest bırakılmış olur (normal akış).
 // catch bloğu ayrı scope — try içindeki temp'ler zaten geri verilmiş.
+
+void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs,
+                                        bool newline) {
+    // builtin 0 (print) ve 1 (write) ikisi de argümanı HAM yazar (newline/ayraç eklemez)
+    // → ayraç ve newline burada, interpreter'la aynı kuralla üretilir.
+    auto emit_literal = [&](const char* text) {
+        uint8_t r = alloc_temp();
+        emit_load_const(r, Value(std::string(text)), 0);
+        emit(OpCode::CALL_BUILTIN, r, 1 /*write*/, r);
+        free_temp(r);
+    };
+    for (size_t i = 0; i < exprs.size(); ++i) {
+        if (i > 0) emit_literal(" ");            // build_output: argümanlar arası " "
+        uint8_t r = compile_expr(*exprs[i]);
+        emit(OpCode::CALL_BUILTIN, r, 1 /*write*/, r);  // sonuç atılır
+        free_temp(r);
+    }
+    if (newline) emit_literal("\n");             // PrintStatement: sonda "\n"
+}
 
 void FunctionCompiler::compile_try(const TryCatchStatement& s) {
     // TRY_PUSH: catch IP'si sonradan patch edilecek (b,c = catch_ip)
