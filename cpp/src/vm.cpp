@@ -764,6 +764,22 @@ call_dispatch:
             call_stack_.back().ip = entry.catch_ip;
             goto call_dispatch;
         }
+        catch (const LookRuntimeError& e) {
+            // error::new() DEĞER DÖNDÜRMEZ — doğrudan LookRuntimeError(payload) fırlatır.
+            // Tipli payload'ı korumak ZORUNLU: e.what() string'ine düşürmek catch
+            // değişkenini "[type, E_DB, message, ...]" string'i yapar → error::is()
+            // false döner, error::message() tüm nesneyi verir (sessizce yanlış hata
+            // yönetimi). interpreter.cpp'deki catch ile birebir: has_value ? value : message.
+            if (try_stack_.size() <= try_floor_) throw;
+            auto entry = try_stack_.back(); try_stack_.pop_back();
+            current_exception_ = e.has_value ? e.value : Value(e.message);
+            while ((int)call_stack_.size() > entry.frame_depth) {
+                regs_.resize(call_stack_.back().base);
+                call_stack_.pop_back();
+            }
+            call_stack_.back().ip = entry.catch_ip;
+            goto call_dispatch;
+        }
         catch (const std::exception& e) {
             if (try_stack_.size() <= try_floor_) throw;
             auto entry = try_stack_.back(); try_stack_.pop_back();
