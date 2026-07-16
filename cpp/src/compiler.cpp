@@ -61,7 +61,7 @@ FunctionCompiler::FunctionCompiler(const std::string& name,
 int FunctionCompiler::emit(OpCode op, uint8_t a, uint8_t b, uint8_t c) {
     int ip = (int)proto_.code.size();
     proto_.code.push_back(Instruction::make(op, a, b, c));
-    proto_.lines.push_back(0); // satır bilgisi sonradan eklenecek
+    proto_.lines.push_back(cur_line_); // satır tablosu — VM hata konumu için (compile_stmt doldurur)
     return ip;
 }
 
@@ -224,6 +224,10 @@ void FunctionCompiler::compile_block(const BlockStatement& block) {
 // ── compile_stmt — dispatch ───────────────────────────────────────────────────
 
 void FunctionCompiler::compile_stmt(const Statement& stmt) {
+    // Satır takibi: bundan sonra emit edilen opcode'lar bu statement'ın satırına yazılır.
+    // proto_.lines ZATEN vardı ama emit() hep 0 basıyordu ("sonradan eklenecek") → VM
+    // hataları satır/konum veremiyordu (tree-walk "File/Line" veriyor, VM sadece mesaj).
+    if (stmt.loc.line > 0) cur_line_ = stmt.loc.line;
     if (auto* s = dynamic_cast<const ExpressionStatement*>(&stmt)) {
         // Atama statement olarak kullanılıyorsa sonuç atılır → değeri geri-okuyan
         // MOVE'u atla. Aksi halde compile_expr(Assignment) her seferinde slot'u temp'e

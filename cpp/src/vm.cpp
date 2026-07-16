@@ -787,7 +787,7 @@ call_dispatch:
         catch (const LookVmThrow& t) {
             // C++ sınırını geçmiş LOOK throw (iç run() → builtin/interpreter → buraya).
             // DEĞER korunur (error::new gibi tipli değerler dahil) — e.what() değil.
-            if (try_stack_.size() <= try_floor_) throw;
+            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = t.value;
             while ((int)call_stack_.size() > entry.frame_depth) {
@@ -803,7 +803,7 @@ call_dispatch:
             // değişkenini "[type, E_DB, message, ...]" string'i yapar → error::is()
             // false döner, error::message() tüm nesneyi verir (sessizce yanlış hata
             // yönetimi). interpreter.cpp'deki catch ile birebir: has_value ? value : message.
-            if (try_stack_.size() <= try_floor_) throw;
+            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = e.has_value ? e.value : Value(e.message);
             while ((int)call_stack_.size() > entry.frame_depth) {
@@ -814,7 +814,7 @@ call_dispatch:
             goto call_dispatch;
         }
         catch (const std::exception& e) {
-            if (try_stack_.size() <= try_floor_) throw;
+            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = Value(std::string(e.what()));
             while ((int)call_stack_.size() > entry.frame_depth) {

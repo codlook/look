@@ -135,6 +135,8 @@ private:
     int  emit_jump(OpCode op, uint8_t cond_reg=0);  // hedef sonradan patch edilir
     void patch_jump(int offset, int target);
     int  current_ip() const { return (int)proto_.code.size(); }
+    // Derlenen statement satiri — emit() proto_.lines'a bunu yazar (VM hata konumu).
+    int  cur_line_ = 0;
 
     // ── Constant pool ──────────────────────────────────────────────────────────
     uint16_t add_const(Value v);

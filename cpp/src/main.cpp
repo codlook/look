@@ -381,13 +381,22 @@ int main(int argc, char* argv[]) {
         interpreter.set_file(filename);
 
         try {
-            // C9 (opt-in): LOOK_CLI_VM=1 → top-level'i bytecode VM'de çalıştır (CLI 400×).
-            // Güvenli: sadece tüm `use`'lar stdlib ise ve compile başarılıysa (ikisi de
-            // EXECUTION ÖNCESİ) VM yolu; aksi halde tree-walk. Çıktı taahhüt edildikten
-            // sonra fallback YOK (çift çıktı olmaz). Default CLI değişmez.
+            // C9: CLI top-level artık DEFAULT olarak bytecode VM'de çalışır (~37×).
+            // Kaçış kapağı: LOOK_CLI_VM=0 → tree-walk (sorun görülürse anında geri dönüş).
+            //
+            // Güvenlik: VM yoluna ancak tüm `use`'lar stdlib ise VE compile başarılıysa
+            // girilir — İKİSİ DE EXECUTION ÖNCESİ. Dış/paket modül veya compile hatası →
+            // sessizce tree-walk. Çıktı taahhüt edildikten SONRA fallback YOK (çift çıktı
+            // riski yok).
+            //
+            // Default'a alınabilmesinin dayanağı: 3 motor differential (19 kategori,
+            // tree-walk == CLI-VM == web-VM) + CLI'ye özgü yüzey (print/write bayt-bayt,
+            // exit kodu) + hata raporu artık tree-walk formatında (File/Line — bkz. aşağı).
+            // Bilinen tek fark: hata çıktısında Column yok (VM sütun tablosu tutmuyor).
             bool ran_vm = false;
             const char* cvm = std::getenv("LOOK_CLI_VM");
-            if (cvm && cvm[0] == '1' && preload_uses_for_vm(interpreter, *program)) {
+            const bool want_vm = !(cvm && cvm[0] == '0');   // default AÇIK; sadece "0" kapatır
+            if (want_vm && preload_uses_for_vm(interpreter, *program)) {
                 look::CompiledProgram compiled;
                 bool compiled_ok = true;
                 try { compiled = look::Compiler::compile(*program); }
@@ -398,7 +407,23 @@ int main(int argc, char* argv[]) {
                     sh.builtins = &cli_builtins;
                     look::VM vm(sh, std::cout);
                     vm.set_web_context(&web_ctx);
-                    vm.execute(compiled);
+                    // Hata raporu tree-walk ile aynı biçimde olmalı: yakalanmamış hatada
+                    // VM'in kaydettiği satırı (proto.lines — compile_stmt doldurur) alıp
+                    // LookRuntimeError'a sarıyoruz. Aksi halde CLI-VM sadece "Error: msg"
+                    // basardı; tree-walk "Runtime Error ... File/Line" veriyor → VM'i
+                    // default yapmak hata kalitesini DÜŞÜRÜRDÜ ("developer için çalış").
+                    // ExitException/RouteMatched kontrol akışıdır — sarılmaz, geçer.
+                    try {
+                        vm.execute(compiled);
+                    } catch (const look::ExitException&)         { throw; }
+                      catch (const look::RouteMatchedException&) { throw; }
+                      catch (const look::LookRuntimeError&)      { throw; }  // zaten konumlu
+                      catch (const std::exception& ex) {
+                        look::SourceLocation loc;
+                        loc.file = filename;
+                        loc.line = vm.last_error_line();
+                        throw look::LookRuntimeError(ex.what(), loc, {});
+                    }
                     ran_vm = true;
                 }
             }

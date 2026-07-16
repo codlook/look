@@ -86,6 +86,9 @@ public:
     // Son dispatch'te eşleşen route'un app_index'i (-1 = eşleşme yok/404).
     // VM hatasında hangi route'un interpreter'a sabitleneceğini söyler.
     int   last_matched_route() const { return last_matched_route_; }
+    // Dışarı sızan (yakalanmamış) hata anındaki kaynak satırı — 0 = bilinmiyor.
+    // Çağıran, tree-walk'ın "Runtime Error ... File/Line" formatını üretebilsin diye.
+    int   last_error_line() const { return last_error_line_; }
     Value call_closure(const Closure& closure, std::vector<Value> args);
     const std::unordered_map<std::string, Value>& get_globals() const { return globals_; }
 
@@ -128,6 +131,16 @@ private:
     void        set_field(Value& obj, const std::string& field, const Value& val);
 
     int last_matched_route_ = -1;
+    int last_error_line_ = 0;   // yakalanmamış hatanın satırı (proto->lines[ip-1])
+
+    // Hata dışarı sızarken çalışan opcode'un satırını kaydet. frame.ip zaten bir sonraki
+    // komutu gösterir (fetch sırasında ip++) → hatalı komut ip-1'dedir.
+    template <class F, class P>
+    void note_error_line(const F& frame, const P* proto) {
+        int i = frame.ip - 1;
+        if (proto && i >= 0 && i < (int)proto->lines.size() && proto->lines[i] > 0)
+            last_error_line_ = proto->lines[i];
+    }
 
     // Shared read-only state
     SharedState                              shared_;
