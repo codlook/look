@@ -472,6 +472,21 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
 // Temp register'lar try bloğu bitince serbest bırakılmış olur (normal akış).
 // catch bloğu ayrı scope — try içindeki temp'ler zaten geri verilmiş.
 
+// CALL_BUILTIN'in builtin-indeks alanı 8-bit (ins.b) → 255 ÜSTÜ SESSİZCE KIRPILIR ve
+// TAMAMEN YANLIŞ builtin çağrılır (ör. index 256 → 0 → print: hesap yerine çıktı basar,
+// null döner). Ampirik: builtin_names 285'e çıkarıldığında cache::size (256) print'i
+// çağırdı. builtin_names ŞU AN 255/256 DOLU — bir sonraki giriş bu duvara çarpar.
+// Sessiz yanlışı gürültülü hataya çeviriyoruz (bu turun ana ilkesi).
+// Daha fazla builtin gerekiyorsa: CALL_BUILTIN indeksini 16-bit'e genişlet (b+c) —
+// bytecode format değişimi, .lkc cache invalidasyonu gerektirir.
+void FunctionCompiler::check_builtin_index(int bidx, const std::string& name) {
+    if (bidx > 255)
+        throw LookCompileError("builtin_names 256 sınırını aştı: '" + name + "' index=" +
+                               std::to_string(bidx) + " — CALL_BUILTIN indeks alanı 8-bit; "
+                               "indeks kırpılır ve YANLIŞ builtin çağrılır. İndeksi 16-bit'e "
+                               "genişletmeden yeni builtin eklenemez.");
+}
+
 void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs,
                                         bool newline) {
     // builtin 0 (print) ve 1 (write) ikisi de argümanı HAM yazar (newline/ayraç eklemez)
@@ -1074,12 +1089,18 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
                 if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
+            check_builtin_index(bidx, full);
             emit(OpCode::CALL_BUILTIN, r, (uint8_t)bidx, base);
             emit(OpCode::NOP, argc);   // VM argc hint
             for (int k = 0; k < argc; ++k) regs_->free(base + k);
             return r;
         }
-        // Bilinmeyen modül fonksiyonu → genel CALL yolu
+        // Bilinmeyen modül fonksiyonu → genel CALL yolu.
+        // İŞARETLE: bu çağrı derlenir ama RUNTIME'da "Çağrılabilir değil" fırlatır
+        // (LOAD_GLOBAL "mod::fn" → null → CALL). Web'de route interpreter'a düşüp
+        // kurtulur; CLI-VM'de fallback YOK → script çökerdi. CLI bayrağı görüp
+        // tree-walk'a düşer (bkz. CompiledProgram::uses_non_builtin_module_fn).
+        mark_non_builtin_module_fn();
     }
     if (auto* var = dynamic_cast<const Variable*>(e.callee.get())) {
         if (var->name == "parallel") {
@@ -1156,6 +1177,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
                 if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
+            check_builtin_index(bidx, bname);
             emit(OpCode::CALL_BUILTIN, r, (uint8_t)bidx, base);
             emit(OpCode::NOP, argc);   // VM argc hint
             for (int k = 0; k < argc; ++k) regs_->free(base + k);
@@ -1407,6 +1429,7 @@ CompiledProgram Compiler::compile(const Program& program) {
 
     CompiledProgram out;
     out.main_proto = proto;
+    out.uses_non_builtin_module_fn = main_compiler.used_non_builtin_module_fn();
     return out;
 }
 

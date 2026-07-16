@@ -129,6 +129,10 @@ public:
         const std::vector<std::unique_ptr<Expression>>* defaults = nullptr);
     std::shared_ptr<FunctionProto> compile_stmts(const std::vector<std::unique_ptr<Statement>>& stmts);
 
+    // Programda builtin OLMAYAN "mod::fn" cagrisi goruldu mu? Compiler::compile bunu
+    // CompiledProgram'a tasir → CLI-VM tree-walk'a duser (bkz. bytecode.h aciklamasi).
+    bool used_non_builtin_module_fn() const { return non_builtin_module_fn_; }
+
 private:
     // ── Emit ──────────────────────────────────────────────────────────────────
     int  emit(OpCode op, uint8_t a=0, uint8_t b=0, uint8_t c=0);
@@ -181,6 +185,20 @@ private:
     // print/write ortak yolu: argümanları " " ile ayırıp yazar, newline=true ise "\n" ekler
     // (interpreter build_output + PrintStatement semantiğiyle birebir).
     void emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs, bool newline);
+    // CALL_BUILTIN indeks alani 8-bit: 255 ustu SESSIZCE kirpilir → yanlis builtin.
+    // builtin_names 255/256 DOLU; yeni giris eklenirse burasi gurultulu hata verir.
+    static void check_builtin_index(int bidx, const std::string& name);
+
+    // Builtin OLMAYAN "mod::fn" cagrisi gorulunce KOK compiler'da isaretle (closure'lar
+    // alt-compiler'da derlenir → parent_ zinciriyle koke cikilir). Compiler::compile bunu
+    // CompiledProgram'a tasir; CLI-VM bayragi gorunce tree-walk'a duser (runtime'da
+    // "Cagirilabilir degil" ile cokmek yerine).
+    void mark_non_builtin_module_fn() {
+        FunctionCompiler* c = this;
+        while (c->parent_) c = c->parent_;
+        c->non_builtin_module_fn_ = true;
+    }
+    bool non_builtin_module_fn_ = false;
     void compile_func_decl(const FunctionDeclaration& s);
     void compile_switch(const SwitchStatement& s);
     void compile_const_block(const ConstBlock& s);

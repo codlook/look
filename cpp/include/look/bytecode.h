@@ -197,6 +197,12 @@ struct CallFrame {
 
 struct CompiledProgram {
     std::shared_ptr<FunctionProto> main_proto; // top-level
+    // Programda builtin OLMAYAN bir "mod::fn" çağrısı var mı? (ör. cache::keys —
+    // interpreter modülünde var ama builtin_names'de yok). Böyle bir çağrı derlenir ama
+    // RUNTIME'da "Çağrılabilir değil" fırlatır: web'de route interpreter'a düşüp kurtulur,
+    // CLI-VM'de fallback YOKTUR → script çöker. CLI bu bayrağı görünce tree-walk'a düşer
+    // (karar EXECUTION ÖNCESİ — çıktı taahhüt edilmeden).
+    bool uses_non_builtin_module_fn = false;
     // Struct tanımları, route kayıtları setup fazında çalıştırılarak kurulur.
     // Bytecode yorumda StructDef ve route_registry_ mevcut interpreter
     // altyapısını kullanmaya devam eder — Phase 17'de taşınabilir.

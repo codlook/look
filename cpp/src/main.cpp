@@ -401,6 +401,11 @@ int main(int argc, char* argv[]) {
                 bool compiled_ok = true;
                 try { compiled = look::Compiler::compile(*program); }
                 catch (...) { compiled_ok = false; }   // compile hatası → tree-walk
+                // Builtin OLMAYAN "mod::fn" (ör. cache::keys, template::escape) → o çağrı
+                // RUNTIME'da "Çağrılabilir değil" fırlatır ve CLI-VM'de fallback YOKTUR
+                // (web'de route interpreter'a düşüp kurtulur). Bayrak varsa daha en baştan
+                // tree-walk — böylece VM default'u ÇALIŞAN script'leri kırmaz.
+                if (compiled_ok && compiled.uses_non_builtin_module_fn) compiled_ok = false;
                 if (compiled_ok) {
                     auto cli_builtins = build_cli_builtins(interpreter, std::cout);
                     look::VM::SharedState sh;
