@@ -16,6 +16,16 @@
 #include <cmath>
 #include <cassert>
 #include <thread>
+#include <cstdlib>
+
+namespace {
+// LOOK_WARN_UNDEF=1 → tanımsız değişken okumalarını logla (davranışı DEĞİŞTİRMEZ).
+// Bir kez okunur; LOAD_GLOBAL'in yalnız ıska dalında bakılır → sıcak yola maliyeti yok.
+const bool g_warn_undef = [] {
+    const char* e = std::getenv("LOOK_WARN_UNDEF");
+    return e && e[0] == '1';
+}();
+} // namespace
 
 namespace look {
 
@@ -306,8 +316,23 @@ call_dispatch:
                 uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
                 // str_ref(): as_string() kopyasını önle (B5'te string pointer arkasında;
                 // her global erişimi bir string kopyası ödemeliydi). find const& alır.
-                auto it = globals_.find(CONST(ni).str_ref());
-                R(ins.a) = (it != globals_.end()) ? it->second : Value();
+                const std::string& gname = CONST(ni).str_ref();
+                auto it = globals_.find(gname);
+                if (it != globals_.end()) {
+                    R(ins.a) = it->second;
+                } else {
+                    R(ins.a) = Value();
+                    // LOOK_WARN_UNDEF=1 → tanımsız değişken okumasını RAPORLA.
+                    // DAVRANIŞ DEĞİŞMEZ (yine null) — bu bir teşhis aracı: VM lenient
+                    // (null), interpreter strict (hata fırlatır); hangisinin doğru
+                    // olduğuna karar vermeden önce gerçek uygulamalar tanımsız değişken
+                    // okuyor mu ÖLÇMEK için. Ayrıca geliştiriciye latent bug avlatır.
+                    // Yalnız '$'-önekli GERÇEK değişkenler: "mod::fn" isimleri burada
+                    // normal olarak ıskalar (genel CALL yoluna düşer) → gürültü olurdu.
+                    if (g_warn_undef && !gname.empty() && gname[0] == '$')
+                        Logger::instance().log(LogLevel::LOG_WARN, "VM",
+                            "Tanimsiz degisken okundu (null dondu): " + gname);
+                }
                 break;
             }
             case OpCode::STORE_GLOBAL: {
