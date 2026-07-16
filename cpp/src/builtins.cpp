@@ -119,6 +119,15 @@ const std::vector<std::string>& builtin_names() {
         // yoktu → route içinde CALL'a düşüp fallback ediyordu. Global builtin olarak
         // bağlanır (string::join'e alias DEĞİL — o `use string` gerektirir → divergence).
         "join",
+        // math:: tamamlama — interpreter math modülünde vardı ama builtin_names'de
+        // YOKTU → route içinde CALL'a düşüp KALICI interpreter'a iniyordu (array:: ile
+        // aynı fallback landmine; math-yoğun route sessizce yavaş yola/koda düşüyordu).
+        // Sona eklendi (mevcut indexler kaymaz); auto-wire math modülünden bağlar.
+        "math::round", "math::pow", "math::sqrt", "math::min", "math::max",
+        "math::sin", "math::cos", "math::tan", "math::log", "math::pi", "math::random",
+        // string:: tamamlama — format + regex (aynı landmine; regex/format'lı route'lar
+        // fallback ediyordu). Auto-wire string modülünden bağlar.
+        "string::format", "string::regex_match", "string::regex_replace", "string::regex_match_all",
     };
     return NAMES;
 }

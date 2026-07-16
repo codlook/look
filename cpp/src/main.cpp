@@ -205,7 +205,11 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     b[BI("stop")] = [](std::vector<Value>&) -> Value { return Value(); };
     b[BI("before_route")] = [](std::vector<Value>&) -> Value { return Value(); };
     b[BI("env")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(); const char* e=std::getenv(a[0].to_string().c_str()); if (e) return Value(std::string(e)); return a.size()>=2?Value(a[1].to_string()):Value(std::string()); };
-    // Modül fn'leri: builtin_names'deki her "mod::fn" → interpreter'ın YÜKLÜ modülü
+    // Modül fn'leri: builtin_names'deki her "mod::fn" → interpreter'ın YÜKLÜ modülü.
+    // YALNIZCA `use` edilmiş modüller auto-wire olur — interpreter ile parity: interpreter
+    // de string::/math::/array:: için `use` gerektirir (json:: gibi her-zaman-açık olanlar
+    // ayrı, index-tabanlı wire edilir). Preload YOK — aksi halde VM `use`'suz çalışıp
+    // interpreter hata verirdi (divergence).
     const auto& names = look::builtin_names();
     for (size_t i = 0; i < names.size(); ++i) {
         auto pos = names[i].find("::");
