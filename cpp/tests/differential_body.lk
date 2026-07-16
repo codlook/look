@@ -1,0 +1,109 @@
+use array;
+use cache;
+use queue;
+use template;
+use validator;
+use type;
+use crypto;
+function dif_fib($n) { if ($n < 2) { return $n } return dif_fib($n-1) + dif_fib($n-2) }
+function run_all() {
+  $o = "";
+  # aritmetik + taşma + INT64 uç + bölme/modulo
+  $o .= "A:" . (3+4*2) . "," . (10/3) . "," . (10%3) . "," . (2**10) . "," . (-9999999999) . "," . (7/2) . ";";
+  # string + COW aliasing + concat
+  $s="ab"; $t=$s; $s.="cd"; $u="x"; $u.=$u; $u.=$u;
+  $o .= "B:" . $s . "," . $t . "," . $u . ";";
+  # karşılaştırma + coercion
+  $o .= "C:" . (5==5.0) . "," . ("5"==5) . "," . ("a"<"b") . "," . (0=="") . "," . (1<2) . ";";
+  # bitwise/shift
+  $o .= "D:" . (12&10) . "," . (12|1) . "," . (12^5) . "," . (1<<4) . "," . (256>>2) . "," . (~5) . ";";
+  # array + push/pop + index + nested
+  $a=[1,2,3]; push($a,4); $last=pop($a); $a[0]=99; $n=[[1,2],[3,4]];
+  $o .= "E:" . json::encode($a) . "," . $last . "," . $n[1][0] . ";";
+  # object + member + index atama
+  $m=["name"=>"ali","age"=>30]; $m.age=31; $m["city"]="ist";
+  $o .= "F:" . $m.name . "," . $m.age . "," . $m["city"] . ";";
+  # higher-order + implicit capture + explicit use + user-fn callback
+  $mul=3; $mp=array::map([1,2,3], fn($x)=>$x*$mul);
+  $fl=array::filter([1,2,3,4,5], fn($x)=>$x>2);
+  $rd=array::reduce([1,2,3,4], fn($ac,$x)=>$ac+$x, 0);
+  $base=100; $f=fn($x) use($base) => $base+$x;
+  $o .= "G:" . json::encode($mp) . "," . json::encode($fl) . "," . $rd . "," . $f(5) . ";";
+  # control flow: while+continue+break, if/else, ternary
+  $sum=0; $i=0; while($i<6){ if($i==2){$i=$i+1; continue;} if($i==5){break;} $sum=$sum+$i; $i=$i+1; }
+  $o .= "H:" . $sum . "," . (5>3?"y":"n") . ";";
+  # string fonksiyonları + builtin alias
+  $o .= "I:" . len("merhaba") . "," . count([1,2,3]) . "," . intval("42") . "," . strtoupper("abc") . ";";
+  # join
+  $o .= "J:" . join(["a","b","c"], "-") . ";";
+  # try/catch — C++ runtime hata (bölme/mod sıfır) + LOOK throw + finally + iç içe
+  # (VM try/catch operatör exception'larını da yakalamalı — interpreter gibi)
+  $k=""; try{ $qx=10/0 }catch($e){ $k.="d" }
+  try{ $qy=10%0 }catch($e){ $k.="m" }
+  try{ throw "boom" }catch($e){ $k.=$e }
+  $fin=""; try{ $qz=1/0 }catch($e){ $fin.="c" }finally{ $fin.="f" }
+  $o .= "K:" . $k . "|" . $fin . ";";
+  # string interpolation — '$'-önekli expression formları (VM==interpreter)
+  $ia=5; $ib=3; $iarr=[10,20,30]; $im=["name"=>"ali","age"=>30];
+  $o .= "L:{$ia}-{$ia + $ib}-{$iarr[1]}-{$im.name}-{$im.age * 2};";
+  # type:: — is_function VM closure'ı (BYTECODE_FN) da tanımalı
+  $o .= "M:" . type::is_int(5) . "," . type::is_string("a") . "," . type::is_array([1]) . ","
+             . type::is_function(fn($x)=>$x) . "," . type::of(1.5) . "," . type::to_int("42") . ";";
+  # crypto:: — deterministik olanlar (random/uuid hariç: değer karşılaştırılamaz)
+  $o .= "N:" . crypto::base64_encode("merhaba") . "," . crypto::base64_decode("bWVyaGFiYQ==") . ","
+             . crypto::hex_encode("ab") . "," . crypto::hmac_sha256("msg","key") . ","
+             . crypto::constant_compare("a","b") . ";";
+  # VM↔interpreter köprüsü üzerinden exception: array::map callback'i iç run()'da çalışır.
+  # throw/runtime-hata DIŞ try/catch'e ulaşmalı (try_floor_ + LookVmThrow). Taban yoksa
+  # iç run() dış handler'a atlar → call stack bozulur, aradaki C++ catch (ör. db::transaction
+  # ROLLBACK) atlanır. Değer de korunmalı ("stop" — e.what() değil).
+  $bo = "";
+  try { $bm = array::map([1,2,3], function($x){ if ($x == 2) { throw "stop" } return $x }); $bo .= "no" }
+  catch ($e) { $bo .= "caught:" . $e }
+  try { $bm2 = array::map([1,0], function($x){ return 10 / $x }); $bo .= "|no" }
+  catch ($e) { $bo .= "|rt" }
+  $o .= "O:" . $bo . "|" . json::encode(array::map([1,2], function($x){ return $x * 10 })) . ";";
+  # Higher-order kapsam tamamlama: sort(comparator)/find/any/all — guard'da YOKTU,
+  # bu yüzden array::sort'un comparator'ı VM'de SESSİZCE yok sayması kaçmıştı
+  # (callback FUNCTION-only kontrolü BYTECODE_FN'i reddediyordu → varsayılan sıra).
+  $o .= "P:" . json::encode(array::sort([3,1,4,1,5], function($a,$b){ return $b - $a })) . ","
+             . array::find([1,2,3,4], function($x){ return $x > 2 }) . ","
+             . array::any([1,2,3], function($x){ return $x == 9 }) . ","
+             . array::all([2,4], function($x){ return $x % 2 == 0 }) . ","
+             . json::encode(array::sort([3,1,2])) . ";";
+  # error::new TİPLİ throw — error::new DEĞER DÖNDÜRMEZ, LookRuntimeError(payload) fırlatır.
+  # VM dispatch'i payload'ı korumalı (has_value ? value : message); e.what() string'ine
+  # düşürülürse error::is() false döner, error::message() tüm nesneyi verir → sessizce
+  # yanlış hata yönetimi. Köprü üzerinden (array::map callback) de korunmalı.
+  $eo = "";
+  try { throw error::new("E_DB", "baglanti yok") }
+  catch ($e) { $eo .= error::message($e) . "," . error::is($e, "E_DB") . "," . error::is($e, "E_X") }
+  try { $em = array::map([1,2], function($x){ if ($x == 2) { throw error::new("E_MAP", "iki") } return $x }) }
+  catch ($e) { $eo .= "|" . error::message($e) . "," . error::is($e, "E_MAP") }
+  $o .= "Q:" . $eo . ";";
+  # Çekirdek dil kapsamı: recursion, iç içe closure, döngü-değişkeni yakalama, foreach assoc
+  $mk = function($base){ return function($x) use ($base) { return $base + $x } }
+  $add10 = $mk(10)
+  $fns = []; $ri = 0
+  while ($ri < 3) { $rv = $ri; push($fns, function() use ($rv) { return $rv * 100 }); $ri = $ri + 1 }
+  $rm = ["a"=>1, "b"=>2]; $rs = ""
+  foreach ($rm as $rk => $rvv) { $rs .= $rk . $rvv }
+  $o .= "R:" . dif_fib(12) . "," . $add10(5) . "," . $fns[0]() . $fns[1]() . $fns[2]() . "," . $rs . ";";
+  # Tanımsız değişken — STRICT (Go/Node bandı; PHP'den yalnız dağıtım alınıyor, semantik
+  # değil). Eskiden VM sessizce null dönüyordu = bu turun bug sınıfının ta kendisi.
+  # İnterpolasyonda ise interpreter fragment eval-hatasını yakalayıp LİTERAL döner →
+  # VM de fragment'ı runtime try/catch ile sarar (parity). Tanımlı olan bozulmamalı.
+  $su = "";
+  try { $sx = $kesinlikle_yok; $su .= "SIZDI" } catch ($e) { $su .= $e }
+  $sd = 5;
+  $o .= "S:" . $su . "|{$hic_yok}|{$sd}-{$sd * 2};";
+  # 256+ indeks bölgesi — CALL_BUILTIN indeksi 16-bit (NOP hint'in b alanı yüksek byte).
+  # 8-bit çağdan kalan sessiz-kırpılma bug'ının regresyon kilidi: liste 285'e çıktığında
+  # cache::size (index 256 → 0) PRINT'i çağırıp null dönmüştü. Bu kategori 256+ indeksli
+  # builtin'lerin DOĞRU fonksiyona gittiğini üç motorda birden doğrular.
+  cache::set("dk1", "v1"); cache::set("dk2", "v2")
+  queue::clear("dq"); queue::push("dq", "is1")
+  $o .= "T:" . cache::size() . "," . count(cache::keys()) . "," . queue::peek("dq") . ","
+             . template::escape("<x>") . "," . validator::check("a@b.co", "email") . ";";
+  return $o;
+}
