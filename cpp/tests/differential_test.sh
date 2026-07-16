@@ -61,12 +61,21 @@ print("son")
 LK
 LOOK_CLI_VM=0 "$LK" "$TMP/io.lk" > "$TMP/io_tree.out" 2>&1
 "$LK" "$TMP/io.lk" > "$TMP/io_vm.out" 2>&1
-cmp -s "$TMP/io_tree.out" "$TMP/io_vm.out" || {
+# Bayt-bayt karsilastirma HARICI ARACA BAGLI OLMAMALI: `cmp`/`diff` (diffutils) minimal
+# konteynerlerde YOK — komut bulunamayinca non-zero doner ve "baytlar farkli" sanilir
+# (YANLIS ALARM: bu tam olarak yasandi, AlmaLinux 8 minimal'da cmp yok). od + $(...)
+# de guvenli degil: $(...) trailing newline'i yutar. Cozum: od dump'larini DOSYAYA yaz,
+# shell string karsilastirmasi yap — od her yerde var (coreutils).
+od -c < "$TMP/io_tree.out" > "$TMP/io_tree.od"
+od -c < "$TMP/io_vm.out"   > "$TMP/io_vm.od"
+io_tree_dump=$(cat "$TMP/io_tree.od")
+io_vm_dump=$(cat "$TMP/io_vm.od")
+if [ "$io_tree_dump" != "$io_vm_dump" ]; then
   echo "FAIL: print/write BAYT BAYT ayrisiyor (newline / ' ' ayraci)"
-  echo "  tree : $(od -c < "$TMP/io_tree.out" | head -2 | tr '\n' ' ')"
-  echo "  CLIVM: $(od -c < "$TMP/io_vm.out"   | head -2 | tr '\n' ' ')"
+  echo "  tree : $(echo "$io_tree_dump" | head -2 | tr '\n' ' ')"
+  echo "  CLIVM: $(echo "$io_vm_dump"   | head -2 | tr '\n' ' ')"
   fail=1
-}
+fi
 printf 'print("basla")\nexit(3)\nprint("OLMAMALI")\n' > "$TMP/ex.lk"
 LOOK_CLI_VM=0 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; t_code=$?
 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; v_code=$?
@@ -75,8 +84,36 @@ if [ "$t_code" != "3" ] || [ "$v_code" != "3" ]; then
   fail=1
 fi
 
+
+# ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
+# Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
+# yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).
+# Sözleşme: (1) fallback olursa log seviyesi ERROR + "VM BUG" ibaresi,
+#           (2) LOOK_VM_STRICT=1 → maskeleme YOK, hata yüzeye çıkar (CI/staging).
+cat > "$TMP/fb.lk" <<'LK'
+use jobs
+route("GET","/w",  function(){ jobs::worker("q", function($j){ return 1 }); return response::text("ok") })
+route("GET","/ok", function(){ return response::text("saglam") })
+LK
+FB_PORT=9612
+"$FCGI" --mode http --port $FB_PORT "$TMP/fb.lk" >"$TMP/fb1.log" 2>&1 &
+FB=$!
+sleep 2
+w_def=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/w")
+kill $FB 2>/dev/null; sleep 1; kill -9 $FB 2>/dev/null
+grep -q "VM BUG" "$TMP/fb1.log" || { echo "FAIL: fallback SESSİZ (ERROR+'VM BUG' logu yok) — bug maskelenir"; fail=1; }
+[ "$w_def" = "ok" ] || { echo "FAIL: default fallback calismiyor (guvenlik agi bozuk): [$w_def]"; fail=1; }
+
+LOOK_VM_STRICT=1 "$FCGI" --mode http --port $FB_PORT "$TMP/fb.lk" >"$TMP/fb2.log" 2>&1 &
+FB=$!
+sleep 2
+w_str=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/w")
+ok_str=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/ok")
+kill $FB 2>/dev/null; sleep 1; kill -9 $FB 2>/dev/null
+[ "$w_str" = "ok" ] && { echo "FAIL: LOOK_VM_STRICT=1 hala MASKELIYOR (fallback calisti)"; fail=1; }
+[ "$ok_str" = "saglam" ] || { echo "FAIL: strict modda saglam route bozuldu: [$ok_str]"; fail=1; }
 if [ $fail -eq 0 ]; then
-  echo "PASS: tree-walk == CLI-VM == web-VM (3 motor differential + CLI print/exit)"
+  echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 20 kategori + CLI print/exit + fallback-gurultulu)"
   echo "  $TREE"
   exit 0
 else

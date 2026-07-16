@@ -1085,17 +1085,32 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         } catch (const std::exception& vm_e) {
             // İlk hata: route'u kalıcı interpreter'a sabitle — bu route için
             // her istekte dene→hata→fallback döngüsü bir daha yaşanmaz.
+            //
+            // C9 felsefe adımı: fallback bir GÜVENLİK AĞI, ama yıllarca BUG MASKELEDİ —
+            // route sessizce yavaş yola düşüp DOĞRU sonuç döndüğü için kimse fark etmiyordu
+            // (2026-07-16 turunda bulunan 10 bug'ın çoğu böyle saklanmıştı). Artık:
+            //   • seviye WARN değil ERROR — log filtrelerinde görünür,
+            //   • mesaj net eylem çağrısı içerir (bu bir BUG'dır, "bilgi" değil),
+            //   • LOOK_VM_STRICT=1 → fallback KAPALI: hata 500 olarak yüzeye çıkar
+            //     (CI/staging için; prod'da default AÇIK kalır — kullanıcı sitesi düşmesin).
+            static const bool vm_strict = []{
+                const char* v = std::getenv("LOOK_VM_STRICT");
+                return v && v[0] == '1';
+            }();
             if (vm_failed_route >= 0 &&
                 vm_failed_route < (int)g_http_app.vm_route_disabled.size() &&
                 !g_http_app.vm_route_disabled[vm_failed_route]) {
-                g_http_app.vm_route_disabled[vm_failed_route] = 1;
-                look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                    "Route VM'den çıkarıldı (kalıcı interpreter): " +
+                if (!vm_strict) g_http_app.vm_route_disabled[vm_failed_route] = 1;
+                look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
+                    std::string("VM BUG — route kalıcı interpreter'a düştü (YAVAŞ YOL; "
+                                "bu bir hatadır, bildirin): ") +
                     g_http_app.vm_routes[vm_failed_route].pattern + " — " + vm_e.what());
             } else {
-                look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                    std::string("VM hata, interpreter fallback: ") + vm_e.what());
+                look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
+                    std::string("VM BUG — interpreter fallback (bu bir hatadır, bildirin): ")
+                    + vm_e.what());
             }
+            if (vm_strict) throw;   // strict: maskeleme yok — hata yüzeye çıksın
         }
 
         if (!vm_ok) {
