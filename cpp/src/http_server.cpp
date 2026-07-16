@@ -259,9 +259,16 @@ struct HttpServer::Impl {
                 if (r >= 0) return r;
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // Veri yok → yield. wait_readable epoll'a park eder, fd okunabilir
-                    // olunca resume. Bu arada scheduler diğer fiber'ları koşturur.
-                    if (self && sched->wait_readable(self, fd)) continue;
+                    // Veri yok → yield. wait_readable_tmo epoll'a park eder + 15s idle
+                    // sınırı (D Fix #2): keep-alive'da istemci sonraki isteği hiç
+                    // göndermezse fiber SÜRESİZ askıda kalmaz — timeout'ta 0 döneriz
+                    // (peer-kapandı gibi) → bağlantı kapanır, fiber biter. ab -k
+                    // wind-down stall'ının ve kapanışta fiber birikmesinin çözümü.
+                    if (self) {
+                        int w = sched->wait_readable_tmo(self, fd, 15000);
+                        if (w == 1) continue;      // okunabilir — recv'i tekrar dene
+                        if (w == 0) return 0;      // idle timeout → bağlantıyı kapat
+                    }
                     return ::recv(fd, buf, len, 0);  // epoll yok → blocking fallback
                 }
                 return r;  // gerçek hata
@@ -856,36 +863,63 @@ void HttpServer::run() {
             while (impl_->running) {
 #ifdef __linux__
                 if (fiber_burst && worker_fd >= 0) {
-                    struct pollfd pfd{worker_fd, POLLIN, 0};
-                    if (::poll(&pfd, 1, 100) <= 0 || !(pfd.revents & POLLIN)) continue;
-
-                    constexpr int MAX_BURST = 64;
-                    while (impl_->running && (int)tl_srv_sched.total_count() < MAX_BURST) {
-                        sockaddr_storage peer{};
-                        socklen_t peer_len = sizeof(peer);
-                        int client = accept4(worker_fd,
-                            reinterpret_cast<sockaddr*>(&peer), &peer_len, 0);
-                        if (client < 0) break;  // EAGAIN — queue drained
-
-                        char peer_ip[INET6_ADDRSTRLEN] = {};
-                        if (peer.ss_family == AF_INET)
-                            inet_ntop(AF_INET,
-                                &reinterpret_cast<sockaddr_in*>(&peer)->sin_addr,
-                                peer_ip, sizeof(peer_ip));
-                        else if (peer.ss_family == AF_INET6)
-                            inet_ntop(AF_INET6,
-                                &reinterpret_cast<sockaddr_in6*>(&peer)->sin6_addr,
-                                peer_ip, sizeof(peer_ip));
-
-                        std::string ip_str = peer_ip;
-                        tl_srv_sched.spawn([this, client, ip_str]() {
-                            impl_->handle_connection(client, ip_str);
-                        });
-                    }
-
-                    if (tl_srv_sched.total_count() > 0)
-                        tl_srv_sched.run_until_complete();
-                    continue;
+                    // ── D Fix #2: acceptor artık BİR FİBER — accept fd, bağlantı
+                    // fd'leriyle AYNI scheduler epoll'unda multiplex edilir (Go
+                    // netpoller modeli). Eski model: poll(accept) DIŞARIDA +
+                    // run_until_complete() TÜM fiber'lar bitene dek bloklar →
+                    // keep-alive fiber'ları beklerken YENİ bağlantılar hiç accept
+                    // edilmiyordu (c=100 hang'inin accept ayağı). Şimdi acceptor
+                    // yield eder etmez scheduler bağlantı fiber'larını koşturur;
+                    // yeni bağlantı gelince epoll acceptor'ı uyandırır.
+                    constexpr int FIBER_CAP = 1024;  // worker başına fiber üst sınırı
+                    FiberScheduler* sched = &tl_srv_sched;
+                    sched->spawn([this, worker_fd, sched]() {
+                        auto self = look::Fiber::current()->shared_from_this_fiber();
+                        while (impl_->running) {
+                            // Backpressure: fiber tavanındayken accept'i durdur,
+                            // saf zamanlayıcıyla kısa çekil (fd<0 → epoll kaydı yok,
+                            // accept-ready spin'i imkansız); bağlantılar bu arada biter.
+                            if ((int)sched->total_count() > FIBER_CAP) {
+                                sched->wait_readable_tmo(self, -1, 5);
+                                continue;
+                            }
+                            sockaddr_storage peer{};
+                            socklen_t peer_len = sizeof(peer);
+                            int client = accept4(worker_fd,
+                                reinterpret_cast<sockaddr*>(&peer), &peer_len, 0);
+                            if (client >= 0) {
+                                char peer_ip[INET6_ADDRSTRLEN] = {};
+                                if (peer.ss_family == AF_INET)
+                                    inet_ntop(AF_INET,
+                                        &reinterpret_cast<sockaddr_in*>(&peer)->sin_addr,
+                                        peer_ip, sizeof(peer_ip));
+                                else if (peer.ss_family == AF_INET6)
+                                    inet_ntop(AF_INET6,
+                                        &reinterpret_cast<sockaddr_in6*>(&peer)->sin6_addr,
+                                        peer_ip, sizeof(peer_ip));
+                                std::string ip_str = peer_ip;
+                                sched->spawn([this, client, ip_str]() {
+                                    impl_->handle_connection(client, ip_str);
+                                });
+                                continue;   // kuyruk boşalana dek accept'e devam
+                            }
+                            if (errno == EINTR) continue;
+                            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                // Kuyruk boş → accept fd'yi scheduler epoll'una park et.
+                                // 200ms tavan: kapanışta (running=false) en geç 200ms'de
+                                // uyanıp çıkarız (eskiden süresiz bekleme riski vardı).
+                                if (sched->wait_readable_tmo(self, worker_fd, 200) < 0)
+                                    break;   // epoll yok (olmamalı) — fiber modu bırak
+                                continue;
+                            }
+                            break;   // gerçek accept hatası
+                        }
+                    });
+                    // Acceptor + tüm bağlantı fiber'ları bitene dek çalış.
+                    // Acceptor running=false görünce (≤200ms) çıkar; bağlantı
+                    // fiber'ları idle-timeout ile kapanır → temiz wind-down.
+                    tl_srv_sched.run_until_complete();
+                    continue;   // running hâlâ true ise (olağandışı) yeniden kur
                 }
 #endif
                 // Blocking path (non-fiber or Windows)

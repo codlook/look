@@ -22,6 +22,7 @@
 //   f->resume();   // continue
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <condition_variable>
 #include <functional>
@@ -152,6 +153,10 @@ private:
     enum class SchedState : uint8_t { READY, RUNNING, SUSPENDING, WAITING, DONE };
     std::atomic<SchedState> sched_state_{SchedState::READY};
 
+    // wait_readable_tmo deadline'ı dolarak resume edildiyse true — fiber yield
+    // dönüşünde okuyup sıfırlar (fd okunabilir DEĞİL, süre doldu demektir).
+    bool io_timed_out_ = false;
+
     // resume_fiber() SUSPENDING penceresine denk gelirse (fiber waiting_'de ama
     // yield dönüşü run_one'da henüz işlenmedi) ready_'ye TAŞIMAZ — bu bayrağı
     // bırakır. run_one() dönüşte bayrağı görüp fiber'ı ready_'ye kendisi alır.
@@ -210,6 +215,16 @@ public:
     // Returns false if not supported on this platform (caller should use blocking recv).
     bool wait_readable(std::shared_ptr<Fiber> f, int fd);
 
+    // wait_readable + SÜRE SINIRI (D Fix #2). Dönüş: 1 = fd okunabilir, 0 = süre
+    // doldu (fd okunabilir DEĞİL), -1 = platform desteklemiyor (blocking fallback).
+    //   fd >= 0 → fd'yi scheduler epoll'una kaydeder + deadline kurar.
+    //   fd <  0 → SAF ZAMANLAYICI (epoll kaydı yok): fiber timeout_ms uyur — accept
+    //             backpressure gibi "kısa süre çekil" ihtiyaçları için (spin yok).
+    // timeout_ms < 0 = süresiz (wait_readable ile aynı). İdle keep-alive bağlantı
+    // fiber'ları ve acceptor'ın kapanış kontrolü buna dayanır — süresiz bekleme,
+    // ab -k wind-down stall'ının ve kapanışta takılmanın köküydü.
+    int wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms);
+
     // Called from I/O completion (epoll callback) to wake a suspended fiber
     void resume_fiber(std::shared_ptr<Fiber> f);
 
@@ -242,7 +257,13 @@ private:
     std::vector<std::shared_ptr<Fiber>> pool_waiters_;
 
     // fd → waiting fiber — for fiber-owned epoll I/O wait
+    // (anahtar: gerçek fd >= 0, ya da saf-zamanlayıcı için sentetik negatif anahtar)
     std::unordered_map<int, std::shared_ptr<Fiber>> fd_to_fiber_;
+
+    // anahtar → deadline (wait_readable_tmo). run_until_complete epoll timeout'unu
+    // en yakın deadline'a göre kısar; dolanları io_timed_out_=true ile resume eder.
+    std::unordered_map<int, std::chrono::steady_clock::time_point> fd_deadline_;
+    int timer_key_seq_ = -2;   // saf-zamanlayıcı sentetik anahtarları (-2, -3, ...)
 
     // Fiber-owned epoll fd for MySQL/DB socket readability — platform-specific
     // On POSIX: epoll fd; on Windows: unused (-1)

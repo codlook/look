@@ -270,21 +270,39 @@ void FiberScheduler::run_until_idle() {
 }
 
 bool FiberScheduler::wait_readable(std::shared_ptr<Fiber> f, int fd) {
-    if (epfd_ < 0) return false;
+    return wait_readable_tmo(std::move(f), fd, -1) == 1;
+}
+
+// D Fix #2: süre sınırlı bekleme. fd>=0 → epoll + (ops.) deadline; fd<0 → saf
+// zamanlayıcı (sentetik anahtar, epoll kaydı yok — acceptor backpressure uykusu).
+// Dönüş: 1 okunabilir, 0 süre doldu, -1 desteklenmiyor.
+int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
+    if (epfd_ < 0) return -1;
+    if (fd < 0 && timeout_ms < 0) return -1;   // fd'siz süresiz bekleme anlamsız
+    int key = fd;
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        fd_to_fiber_[fd] = f;
+        if (fd < 0) key = timer_key_seq_--;    // saf zamanlayıcı: çakışmasız anahtar
+        fd_to_fiber_[key] = f;
+        if (timeout_ms >= 0)
+            fd_deadline_[key] = std::chrono::steady_clock::now()
+                              + std::chrono::milliseconds(timeout_ms);
         waiting_.push_back(f);
         f->sched_state_.store(Fiber::SchedState::SUSPENDING, std::memory_order_release);
     }
-    epoll_event ev{};
-    ev.events  = EPOLLIN | EPOLLONESHOT;
-    ev.data.fd = fd;
-    // EPOLL_CTL_ADD: if fd already tracked (same connection, retry), use MOD
-    if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) < 0 && errno == EEXIST)
-        epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev);
-    Fiber::yield();  // suspend — resumes from run_until_complete() after epoll fires
-    return true;     // we were suspended and resumed — fd is now readable
+    if (fd >= 0) {
+        epoll_event ev{};
+        ev.events  = EPOLLIN | EPOLLONESHOT;
+        ev.data.fd = fd;
+        // EPOLL_CTL_ADD: if fd already tracked (same connection, retry), use MOD
+        if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) < 0 && errno == EEXIST)
+            epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev);
+    }
+    Fiber::yield();  // suspend — epoll event YA DA deadline expiry resume eder
+    Fiber* cur = Fiber::current();
+    bool timed_out = cur && cur->io_timed_out_;
+    if (cur) cur->io_timed_out_ = false;
+    return timed_out ? 0 : 1;
 }
 
 void FiberScheduler::run_until_complete() {
@@ -298,11 +316,19 @@ void FiberScheduler::run_until_complete() {
 
         // Ready varsa bekleme — hemen işle. Yoksa event bekle:
         // eventfd (cross-thread resume) veya DB soketi bizi anında uyandırır.
-        // 20ms sadece güvenlik ağı (kaçan wakeup'a karşı üst sınır).
+        // 20ms güvenlik ağı; en yakın wait_readable_tmo deadline'ı daha yakınsa
+        // ona kadar kısalt (deadline hassasiyeti ≤20ms — idle timeout için bol).
         int timeout_ms;
         {
             std::lock_guard<std::mutex> lk(mtx_);
             timeout_ms = ready_.empty() ? 20 : 0;
+            if (timeout_ms > 0 && !fd_deadline_.empty()) {
+                auto now = std::chrono::steady_clock::now();
+                for (auto& [k, dl] : fd_deadline_) {
+                    auto ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(dl - now).count();
+                    if (ms < timeout_ms) timeout_ms = ms < 0 ? 0 : ms;
+                }
+            }
         }
 
         epoll_event events[16];
@@ -327,8 +353,37 @@ void FiberScheduler::run_until_complete() {
                     f = it->second;
                     fd_to_fiber_.erase(it);
                 }
+                fd_deadline_.erase(fd);   // event geldi → deadline iptal
             }
             if (f) resume_fiber(std::move(f));
+        }
+
+        // Deadline süpürmesi (D Fix #2): süresi dolanları io_timed_out_ ile resume et.
+        // Event yukarıda geldiyse girdileri zaten silindi → çifte-resume imkansız.
+        {
+            std::vector<std::pair<int, std::shared_ptr<Fiber>>> expired;
+            {
+                std::lock_guard<std::mutex> lk(mtx_);
+                if (!fd_deadline_.empty()) {
+                    auto now = std::chrono::steady_clock::now();
+                    for (auto it = fd_deadline_.begin(); it != fd_deadline_.end(); ) {
+                        if (it->second <= now) {
+                            int key = it->first;
+                            auto fit = fd_to_fiber_.find(key);
+                            if (fit != fd_to_fiber_.end()) {
+                                expired.emplace_back(key, fit->second);
+                                fd_to_fiber_.erase(fit);
+                            }
+                            it = fd_deadline_.erase(it);
+                        } else ++it;
+                    }
+                }
+            }
+            for (auto& [key, f] : expired) {
+                if (key >= 0) epoll_ctl(epfd_, EPOLL_CTL_DEL, key, nullptr); // saf zamanlayıcıda kayıt yok
+                f->io_timed_out_ = true;
+                resume_fiber(std::move(f));
+            }
         }
     }
 }

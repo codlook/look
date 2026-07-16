@@ -209,6 +209,12 @@ bool FiberScheduler::wait_readable(std::shared_ptr<Fiber> f, int fd) {
     return false;
 }
 
+int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
+    // Windows: epoll yok — desteklenmiyor (çağıran blocking yola düşer).
+    (void)f; (void)fd; (void)timeout_ms;
+    return -1;
+}
+
 void FiberScheduler::run_until_complete() {
     while (true) {
         while (run_one()) {}
