@@ -672,6 +672,11 @@ call_dispatch:
                 sh.routes   = nullptr; // parallel task dispatch_routes çağırmaz
                 std::thread([cl_copy, sh, g_copy, builtins_copy = std::move(builtins_copy)]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
+                    // DB bağlantısı iadesi — interpreter parallel() ile birebir: task
+                    // içinde db::query çağrılırsa get_conn bu thread'e tembel bir conn
+                    // alır; bırakılmazsa havuzdan KALICI sızar (birkaç istek sonra
+                    // havuz tükenir, endpoint sonsuza dek asılır).
+                    struct DbGuard { ~DbGuard() { look::release_thread_connections(); } } _db;
                     std::ostringstream sink;
                     VM tvm(sh, sink);
                     tvm.set_globals(std::move(g_copy));

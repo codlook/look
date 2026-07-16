@@ -1655,6 +1655,12 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
 
                 std::thread([c = std::move(copy), sink, fn]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
+                    // DB bağlantısı iadesi: task içinde db::query çağrılırsa get_conn
+                    // bu thread'in thread_local'ine TEMBEL bir conn alır (istek
+                    // thread'i gibi acquire_thread_connections() çağrılmaz). Bırakılmazsa
+                    // her parallel+DB task'ı havuzdan KALICI bir conn sızdırır → birkaç
+                    // istek sonra havuz tükenir ve endpoint sonsuza dek asılır.
+                    struct DbGuard { ~DbGuard() { look::release_thread_connections(); } } _db;
                     try {
                         c->invoke(fn, {});
                     } catch (const std::exception& ex) {
