@@ -530,18 +530,24 @@ call_dispatch:
             }
 
             case OpCode::CALL_BUILTIN: {
+                // 16-bit builtin indeksi: dusuk 8 bit ins.b'de, YUKSEK 8 bit takip eden
+                // NOP hint'inin b alaninda (a=argc). Eski kodlamayla bit-uyumlu: idx<=255
+                // icin NOP.b hep 0'di. 8-bit'ken 256. giris SESSIZCE kirpilip yanlis
+                // builtin'i cagiriyordu (index 256 → 0 → print) — duvar boyle asildi.
                 uint8_t argc2 = 1;
+                uint16_t bidx = ins.b;
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
                     argc2 = proto->code[frame.ip].a;
+                    bidx |= (uint16_t)proto->code[frame.ip].b << 8;
                     ++frame.ip;
                 }
-                if (!shared_.builtins || ins.b >= shared_.builtins->size())
-                    throw LookVmError("Bilinmeyen built-in: " + std::to_string(ins.b));
+                if (!shared_.builtins || bidx >= shared_.builtins->size())
+                    throw LookVmError("Bilinmeyen built-in: " + std::to_string(bidx));
                 std::vector<Value> args;
                 args.reserve(argc2);
                 for (int i = 0; i < argc2; ++i) args.push_back(R(ins.c + i));
-                R(ins.a) = (*shared_.builtins)[ins.b](args);
+                R(ins.a) = (*shared_.builtins)[bidx](args);
                 // Re-entrancy güvenliği: builtin (ör. array::map) callback aracılığıyla
                 // call_closure ile VM'e geri girip call_stack_'i realloc etmiş olabilir
                 // → dıştaki frame/proto referansları geçersizleşir. call_dispatch'e

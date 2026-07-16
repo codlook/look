@@ -152,6 +152,26 @@ const std::vector<std::string>& builtin_names() {
         // script'lerinde exit kodu yaygın), web'de route'u kalıcı interpreter'a düşürüyordu.
         // Her iki motorda ExitException'a bağlanır (interpreter ile aynı semantik).
         "exit", "die",
+        // ── 256+ bölge: CALL_BUILTIN indeksi artık 16-bit (NOP hint'in b alanı yüksek
+        // 8 biti taşır) — 8-bit duvar kalktı. Aşağıdakiler interpreter modüllerinde vardı
+        // ama builtin_names'de yoktu → kullanan route KALICI interpreter'a düşüyordu
+        // (çıktı doğru ama ~40× yavaş; CLI-VM'de execution-öncesi tree-walk'a düşüyordu).
+        // Denetlendi: callback alan yalnız http::stream (BYTECODE_FN'i zaten tanır).
+        "cache::keys", "cache::size",
+        "queue::clear", "queue::names", "queue::peek",
+        "template::escape", "template::render_string",
+        "validator::check",
+        "log::configure", "log::memory",
+        "http::post_json", "http::stream",
+        "mail::provider", "mail::send_html",
+        "file::upload_dir",
+        "route::matched", "route::param",
+        "runtime::gc", "runtime::stats",
+        "look::check",
+        // jobs:: — worker HARİÇ: jobs::worker($q,$fn) setup'ta handler kaydeder, job'lar
+        // istek/VM bağlamı DIŞINDA çalışır → VM closure kaydedilirse "aktif VM yok".
+        "jobs::push", "jobs::next", "jobs::done", "jobs::fail", "jobs::failed",
+        "jobs::list", "jobs::stats", "jobs::retry", "jobs::purge", "jobs::recover",
     };
     return NAMES;
 }

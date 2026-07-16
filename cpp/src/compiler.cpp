@@ -472,19 +472,16 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
 // Temp register'lar try bloğu bitince serbest bırakılmış olur (normal akış).
 // catch bloğu ayrı scope — try içindeki temp'ler zaten geri verilmiş.
 
-// CALL_BUILTIN'in builtin-indeks alanı 8-bit (ins.b) → 255 ÜSTÜ SESSİZCE KIRPILIR ve
-// TAMAMEN YANLIŞ builtin çağrılır (ör. index 256 → 0 → print: hesap yerine çıktı basar,
-// null döner). Ampirik: builtin_names 285'e çıkarıldığında cache::size (256) print'i
-// çağırdı. builtin_names ŞU AN 255/256 DOLU — bir sonraki giriş bu duvara çarpar.
-// Sessiz yanlışı gürültülü hataya çeviriyoruz (bu turun ana ilkesi).
-// Daha fazla builtin gerekiyorsa: CALL_BUILTIN indeksini 16-bit'e genişlet (b+c) —
-// bytecode format değişimi, .lkc cache invalidasyonu gerektirir.
+// Builtin indeksi artık 16-BİT: düşük 8 bit CALL_BUILTIN.b'de, yüksek 8 bit takip eden
+// NOP hint'inin b alanında (bit-uyumlu: idx<=255 için NOP.b=0 = eski kodlama).
+// Tarih: alan 8-bit'ken 255 üstü SESSİZCE kırpılıp YANLIŞ builtin çağrılıyordu
+// (ampirik: liste 285'e çıkınca cache::size index 256 → 0 → print'i çağırdı, null döndü).
+// Bu guard artık yalnız 16-bit tavanını (65535) korur — pratikte ulaşılmaz, ama sessiz
+// kırpılma sınıfı bir daha ASLA sessiz olmasın diye duruyor.
 void FunctionCompiler::check_builtin_index(int bidx, const std::string& name) {
-    if (bidx > 255)
-        throw LookCompileError("builtin_names 256 sınırını aştı: '" + name + "' index=" +
-                               std::to_string(bidx) + " — CALL_BUILTIN indeks alanı 8-bit; "
-                               "indeks kırpılır ve YANLIŞ builtin çağrılır. İndeksi 16-bit'e "
-                               "genişletmeden yeni builtin eklenemez.");
+    if (bidx > 65535)
+        throw LookCompileError("builtin indeksi 16-bit tavanını aştı: '" + name + "' index=" +
+                               std::to_string(bidx));
 }
 
 void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs,
@@ -1090,8 +1087,10 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
             check_builtin_index(bidx, full);
-            emit(OpCode::CALL_BUILTIN, r, (uint8_t)bidx, base);
-            emit(OpCode::NOP, argc);   // VM argc hint
+            emit(OpCode::CALL_BUILTIN, r, (uint8_t)(bidx & 0xFF), base);
+            // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
+            // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
+            emit(OpCode::NOP, argc, (uint8_t)(bidx >> 8));
             for (int k = 0; k < argc; ++k) regs_->free(base + k);
             return r;
         }
@@ -1178,8 +1177,10 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
             check_builtin_index(bidx, bname);
-            emit(OpCode::CALL_BUILTIN, r, (uint8_t)bidx, base);
-            emit(OpCode::NOP, argc);   // VM argc hint
+            emit(OpCode::CALL_BUILTIN, r, (uint8_t)(bidx & 0xFF), base);
+            // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
+            // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
+            emit(OpCode::NOP, argc, (uint8_t)(bidx >> 8));
             for (int k = 0; k < argc; ++k) regs_->free(base + k);
             return r;
         }
