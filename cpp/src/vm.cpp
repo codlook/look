@@ -253,6 +253,18 @@ Value VM::run() {
     register_vm_bridge(&vm_bridge_hook);   // thread-local hook'u kaydet (idempotent)
     struct ActiveGuard { VM* prev; ~ActiveGuard() { t_active_vm = prev; } } _ag{_prev_active};
 
+    // Try tabanı: bu run() yalnız kendi push ettiği handler'ları kullanır. İç içe
+    // run() (köprüden gelen closure çağrısı) dış handler'a atlayamaz → LookVmThrow ile
+    // C++ sınırından propagate eder. Çıkışta taban ve artık handler'lar geri alınır.
+    struct FloorGuard {
+        VM* vm; size_t prev_floor; size_t entry_size;
+        ~FloorGuard() {
+            if (vm->try_stack_.size() > entry_size) vm->try_stack_.resize(entry_size);
+            vm->try_floor_ = prev_floor;
+        }
+    } _fg{this, try_floor_, try_stack_.size()};
+    try_floor_ = try_stack_.size();
+
 call_dispatch:
     while (!call_stack_.empty()) {
         Frame& frame = call_stack_.back();
@@ -626,8 +638,11 @@ call_dispatch:
                 break;
             case OpCode::THROW: {
                 current_exception_ = R(ins.a);
-                if (try_stack_.empty())
-                    throw LookVmError("Yakalanmamış: " + current_exception_.to_string());
+                // Bu run()'a ait handler yoksa: değeri C++ sınırından propagate et.
+                // (Dış run()'ın handler'ına atlamak call stack'i bozar ve aradaki
+                //  C++ katmanının catch'ini — ör. db::transaction ROLLBACK — atlar.)
+                if (try_stack_.size() <= try_floor_)
+                    throw LookVmThrow(current_exception_);
                 auto entry = try_stack_.back(); try_stack_.pop_back();
                 while ((int)call_stack_.size() > entry.frame_depth) {
                     regs_.resize(call_stack_.back().base);
@@ -731,8 +746,21 @@ call_dispatch:
         catch (const RouteStopException&)   { throw; }
         catch (const RouteMatchedException&){ throw; }
         catch (const ExitException&)        { throw; }
+        catch (const LookVmThrow& t) {
+            // C++ sınırını geçmiş LOOK throw (iç run() → builtin/interpreter → buraya).
+            // DEĞER korunur (error::new gibi tipli değerler dahil) — e.what() değil.
+            if (try_stack_.size() <= try_floor_) throw;
+            auto entry = try_stack_.back(); try_stack_.pop_back();
+            current_exception_ = t.value;
+            while ((int)call_stack_.size() > entry.frame_depth) {
+                regs_.resize(call_stack_.back().base);
+                call_stack_.pop_back();
+            }
+            call_stack_.back().ip = entry.catch_ip;
+            goto call_dispatch;
+        }
         catch (const std::exception& e) {
-            if (try_stack_.empty()) throw;
+            if (try_stack_.size() <= try_floor_) throw;
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = Value(std::string(e.what()));
             while ((int)call_stack_.size() > entry.frame_depth) {

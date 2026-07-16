@@ -141,6 +141,13 @@ const std::vector<std::string>& builtin_names() {
         "crypto::hmac_sha256", "crypto::hmac_sha256_raw", "crypto::constant_compare",
         "crypto::random_string", "crypto::uuid",
         "crypto::rs256_sign", "crypto::rs256_sign_b64url", "crypto::rs256_verify",
+        // request:: tamamlama — is_get/is_post/... method kısayolları + file (upload).
+        // Yoktular → bunları kullanan her route KALICI interpreter'a düşüyordu.
+        "request::is_get", "request::is_post", "request::is_put", "request::is_delete",
+        "request::is_head", "request::is_options", "request::is_patch", "request::file",
+        // db:: tamamlama — transaction/begin/commit/rollback/escape. transaction()
+        // closure alır: VM'den BYTECODE_FN gelir, interp->invoke() köprüyle çalıştırır.
+        "db::transaction", "db::begin", "db::commit", "db::rollback", "db::escape",
     };
     return NAMES;
 }

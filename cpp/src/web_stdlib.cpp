@@ -1387,10 +1387,13 @@ static Module make_db_module(Interpreter* interp) {
         }
         conn->tx_depth++;
         try {
-            Value result;
-            if (args[1].type() == Value::FUNCTION) {
-                result = interp->invoke(args[1], {});
-            }
+            // invoke() FUNCTION'ı da VM closure'ını da (BYTECODE_FN → köprü) ele alır.
+            // Eski "sadece FUNCTION" koruması VM closure'ını SESSİZCE atlayıp COMMIT
+            // ediyordu (transaction gövdesi hiç çalışmadan commit → veri kaybı). Şu an
+            // fallback maskeliyor (db::transaction builtin değildi) ama builtin olarak
+            // eklenince tetiklenirdi. Fonksiyon olmayan argüman invoke içinde hata
+            // fırlatır → aşağıdaki catch → ROLLBACK (sessiz commit yerine).
+            Value result = interp->invoke(args[1], {});
             conn->tx_depth--;
             if (nested) {
                 conn->query("RELEASE SAVEPOINT " + sp);

@@ -21,6 +21,19 @@ public:
         : std::runtime_error(msg), line(line) {}
 };
 
+// LOOK `throw` bir C++ sınırını geçerken (VM → CALL_BUILTIN → interpreter native fn →
+// köprü → iç VM run()) fırlatılan DEĞERİ taşır. İç run() kendi try tabanının altındaki
+// handler'a atlayamaz (dış frame'leri iç çağrının içinde çalıştırıp call stack'i bozardı
+// ve aradaki C++ katmanının catch'i — ör. db::transaction ROLLBACK'i — hiç çalışmazdı).
+// Bunun yerine bu exception propagate olur; dış VM dispatch'i yakalayıp değeri
+// current_exception_'a koyar ve kendi catch handler'ına yönlendirir.
+class LookVmThrow : public std::runtime_error {
+public:
+    Value value;
+    explicit LookVmThrow(Value v)
+        : std::runtime_error(v.to_string()), value(std::move(v)) {}
+};
+
 // ── BuiltinFn ─────────────────────────────────────────────────────────────────
 
 using BuiltinFn = std::function<Value(std::vector<Value>&)>;
@@ -93,6 +106,10 @@ private:
 
     struct TryCatchEntry { int catch_ip; int frame_depth; int reg_base; };
     std::vector<TryCatchEntry> try_stack_;
+    // İç içe run() tabanı: bu run() çağrısı YALNIZCA try_stack_[try_floor_..] içindeki
+    // handler'ları kullanabilir. Altındakiler dış run() çağrılarına aittir — oraya
+    // atlamak yerine LookVmThrow ile C++ sınırından propagate edilir (bkz. LookVmThrow).
+    size_t try_floor_ = 0;
     Value current_exception_;
 
     Value run();
