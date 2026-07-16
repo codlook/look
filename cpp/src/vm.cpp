@@ -320,18 +320,26 @@ call_dispatch:
                 auto it = globals_.find(gname);
                 if (it != globals_.end()) {
                     R(ins.a) = it->second;
-                } else {
-                    R(ins.a) = Value();
-                    // LOOK_WARN_UNDEF=1 → tanımsız değişken okumasını RAPORLA.
-                    // DAVRANIŞ DEĞİŞMEZ (yine null) — bu bir teşhis aracı: VM lenient
-                    // (null), interpreter strict (hata fırlatır); hangisinin doğru
-                    // olduğuna karar vermeden önce gerçek uygulamalar tanımsız değişken
-                    // okuyor mu ÖLÇMEK için. Ayrıca geliştiriciye latent bug avlatır.
-                    // Yalnız '$'-önekli GERÇEK değişkenler: "mod::fn" isimleri burada
-                    // normal olarak ıskalar (genel CALL yoluna düşer) → gürültü olurdu.
-                    if (g_warn_undef && !gname.empty() && gname[0] == '$')
+                } else if (!gname.empty() && gname[0] == '$') {
+                    // Tanımsız DEĞİŞKEN — STRICT (interpreter ile birebir mesaj).
+                    // Karar gerekçesi: hedef bandın iki ucu da strict (Go: derleme hatası,
+                    // Node: ReferenceError); PHP'den yalnız dağıtım/kitle alınıyor, semantik
+                    // değil. İnterpreter (referans motor) zaten strict — sapan taraf VM'di
+                    // ve sessiz null üretiyordu (bu turun tüm bug'ları o sınıftandı).
+                    // LOOK_WARN_UNDEF=1 → GEÇİŞ MODU: eski lenient davranış + uyarı
+                    // (yalnız migration için; interpreter her hâlükârda strict → bu modda
+                    // motorlar AYRIŞIR, kalıcı kullanım için değildir).
+                    if (g_warn_undef) {
+                        R(ins.a) = Value();
                         Logger::instance().log(LogLevel::LOG_WARN, "VM",
-                            "Tanimsiz degisken okundu (null dondu): " + gname);
+                            "Tanimsiz degisken okundu (LOOK_WARN_UNDEF gecis modu, null dondu): " + gname);
+                    } else {
+                        throw LookVmError("Undefined variable: " + gname);
+                    }
+                } else {
+                    // "mod::fn" gibi değişken-olmayan isimler: burada ıskalamak NORMAL
+                    // (genel CALL yoluna düşer) → fırlatmak yanlış olurdu.
+                    R(ins.a) = Value();
                 }
                 break;
             }

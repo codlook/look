@@ -1253,6 +1253,7 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
                 continue;
             }
             std::string expr_src = raw.substr(i + 1, j - i - 1);
+            const std::string literal_src = raw.substr(i, j - i + 1);  // "{$x}" — hata hâlinde
             uint8_t pr = 255;
             try {
                 Lexer lex(expr_src + ";");
@@ -1260,20 +1261,32 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
                 auto prog = par.parse();
                 if (!prog->statements.empty()) {
                     if (auto* es = dynamic_cast<ExpressionStatement*>(prog->statements[0].get())) {
+                        // Fragment RUNTIME try/catch ile sarılır — interpreter parity:
+                        // interpolate_string() fragment'ı eval ederken hata olursa (ör.
+                        // tanımsız değişken → strict LOAD_GLOBAL fırlatır) "{…}" literal
+                        // olarak bırakır. Sarmazsak strict VM fırlatır, interpreter literal
+                        // döner → sapma. Parse hataları zaten aşağıda derleme-zamanı ele
+                        // alınıyor; bu sarmalayıcı EVAL hataları içindir.
+                        pr = alloc_temp();
+                        int try_push_ip = emit(OpCode::TRY_PUSH, 0, 0, 0);
                         // Doğal register'a derle (dest=255): CALL sonucu arg-register
                         // düzenine bağlı, sabit dest zorlamak bozar. Sonra temp'e MOVE
                         // + TO_STR — local slot dönerse üstüne yazmayız.
                         uint8_t src = compile_expr(*es->expression);
-                        pr = alloc_temp();
                         emit(OpCode::MOVE, pr, src);
                         emit(OpCode::TO_STR, pr, pr);
+                        emit(OpCode::TRY_POP);
+                        int jump_end = emit_jump(OpCode::JUMP);
+                        patch_jump(try_push_ip, current_ip());          // catch girişi
+                        emit_load_const(pr, Value(literal_src), line);  // hata → literal
+                        patch_jump(jump_end, current_ip());
                         keepalive.push_back(std::move(prog));
                     }
                 }
             } catch (...) { pr = 255; }
             if (pr == 255) {  // parse hatası → interpreter gibi {…} literal
                 pr = alloc_temp();
-                emit_load_const(pr, Value(raw.substr(i, j - i + 1)), line);
+                emit_load_const(pr, Value(literal_src), line);
             }
             parts.push_back(pr);
             i = j + 1;
