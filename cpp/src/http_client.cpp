@@ -13,6 +13,9 @@
 #ifndef _WIN32
 #  include <sys/stat.h>
 #endif
+#ifdef __linux__
+#  include "look/fiber.h"   // fiber-aware recv (Go netpoller) — yalnız Linux --mode http
+#endif
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -644,6 +647,30 @@ static SSL_CTX* get_ssl_ctx() {
     return guard.ctx;
 }
 
+// ── Fiber-aware bekleme (Go netpoller) ──────────────────────────────────────────
+// http::get bir web route'undan çağrıldığında, YAVAŞ dış API'nin yanıtını beklerken
+// (recv/SSL_read) worker thread'ini bloklamamalı: fiber içindeysek fd okunabilir olana
+// dek YIELD ederiz (scheduler başka goroutine koşturur), veri gelince epoll resume eder.
+// Bu, fiber'in tek gerçek değer önerisi olan "eşzamanlı dış I/O"yu açar (bkz. PROJE_DURUMU
+// §9). Kapsam BİLİNÇLİ olarak recv yoluyla sınırlı: connect/handshake/send zaten hızlı ve
+// SO_*TIMEO ile sınırlı; onları non-blocking'e çevirmek risk/getiri açısından değmez
+// (wait_writable yok). Soket blocking kalır → yield'den sonraki okuma anında döner.
+// Dönüş: 1 = okunabilir (oku), 0 = timeout (dış API yanıt vermedi), -1 = fiber/epoll yok
+// (caller mevcut düz-blocking davranışına düşer → DEFAULT pool yolu birebir korunur).
+static int client_wait_readable(int fd, int timeout_ms) {
+#ifdef __linux__
+    look::FiberScheduler* sched = look::get_thread_scheduler();
+    look::Fiber*          cur   = look::Fiber::current();
+    if (sched && cur) {
+        auto self = cur->shared_from_this_fiber();
+        if (self) return sched->wait_readable_tmo(self, fd, timeout_ms > 0 ? timeout_ms : 30000);
+    }
+#else
+    (void)fd; (void)timeout_ms;
+#endif
+    return -1;  // fiber dışı → caller blocking okur (mevcut davranış)
+}
+
 static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& url,
                               const std::string& body,
                               const std::map<std::string, std::string>& hdrs,
@@ -664,10 +691,16 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     std::string raw;
     char buf[8192];
     ssize_t n;
-    while ((n = recv(s, buf, sizeof(buf), 0)) > 0) {
-        if (sink) sink->feed(buf, n); else raw.append(buf, n);
+    for (;;) {
+        // Fiber içindeysek: veriyi beklerken YIELD et (worker'ı bloklama). Fiber dışında
+        // client_wait_readable -1 döner → doğrudan blocking recv (mevcut davranış birebir).
+        int w = client_wait_readable(s, opts.timeout_ms);
+        if (w == 0) { resp.error = "timeout"; break; }
+        n = recv(s, buf, sizeof(buf), 0);
+        if (n > 0) { if (sink) sink->feed(buf, n); else raw.append(buf, n); continue; }
+        if (n < 0) resp.error = "timeout";
+        break;
     }
-    if (n < 0) resp.error = "timeout";
     close(s);
     if (!resp.error.empty()) return resp;
     if (sink) { sink->finalize(); return sink->resp; }
@@ -714,12 +747,23 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     std::string raw;
     char buf[8192];
     int n;
-    while ((n = SSL_read(ssl, buf, sizeof(buf))) > 0) {
-        if (sink) sink->feed(buf, n); else raw.append(buf, n);
-    }
-    if (n < 0) {
-        int err = SSL_get_error(ssl, n);
-        if (err == SSL_ERROR_SYSCALL) resp.error = "timeout";
+    for (;;) {
+        // Fiber-aware yield: SSL_pending>0 ise OpenSSL'in tamponunda çözülmüş bayt var →
+        // fd okunabilir olmayabilir, BEKLEME (yoksa kilitlenir). Tampon boşsa fd okunabilir
+        // olana dek yield et. Soket blocking kaldığı için SSL_read yield sonrası okur;
+        // SO_RCVTIMEO ile sınırlı. Fiber dışında client_wait_readable -1 → hemen SSL_read.
+        if (SSL_pending(ssl) == 0) {
+            int w = client_wait_readable(s, opts.timeout_ms);
+            if (w == 0) { resp.error = "timeout"; break; }
+        }
+        n = SSL_read(ssl, buf, sizeof(buf));
+        if (n > 0) { if (sink) sink->feed(buf, n); else raw.append(buf, n); continue; }
+        if (n < 0) {
+            int err = SSL_get_error(ssl, n);
+            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) continue;  // devam et → yield
+            if (err == SSL_ERROR_SYSCALL) resp.error = "timeout";
+        }
+        break;
     }
 
     SSL_shutdown(ssl);
