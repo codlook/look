@@ -344,7 +344,7 @@ SchedState makinesi. Substrat ciddi ve doğru — **sadece kapalıydı**.
 |---|---|---|
 | Fix #1 — `recv` fiber-aware | ✅ | c=100 **hang kök nedeni**: `handle_connection` bloklayan `::recv()` kullanıyordu → keep-alive'da fiber sonraki isteği beklerken **tüm worker** bloklaniyordu (`ec8dc12`) |
 | Fix #2 — acceptor fiber + 15s idle-timeout | ✅ | c=200 / c=500 / c=1000 → **0 hata** (eski: c=100 hang) (`4b311c0`) |
-| **`http_client` fiber-aware** | ⬜ **SIRADAKİ** | thread'i blokluyor → fiber'in "dış API" değeri bunsuz ölçülemez |
+| **`http_client` fiber-aware** | ✅ | recv/SSL_read yield eder (Go netpoller). Ölçüm (yavaş upstream 0.5s, 1 worker, 10 eşz): POOL 5.53s/3.62 r/s → **FIBER 1.52s/13.19 r/s** (upstream tavanı 13.21 — **tek thread'le tavana ulaştı**), 0 hata (`d5919ce`) |
 | `parallel()` ↔ DB köprüsü (fiber task) | ⬜ | intra-request paralel query — artık **zorunlu değil** (sızıntı `3459c3e` ile çözüldü), opsiyonel iyileştirme |
 | Fiber default kararı | ⏸ **verilmedi** | aşağıda |
 | `go { }` ergonomisi + channel select | ⬜ | — |
@@ -454,8 +454,9 @@ değil, **production'ın kullandığı MySQL'de** de doğrulandı.
 
 | Sıra | İş | Neden şimdi |
 |---|---|---|
-| **1** | **`http_client` fiber-aware** | Fiber'in tek gerçek değer önerisi (yavaş dış I/O) bunsuz ölçülemez. ODR fix'i bu yolu yeni açtı |
-| **2** | Fiber default kararı | ConnPool tavanı (§9) çözülmeden fiber'in anlamı yok |
+| ✅ | ~~`http_client` fiber-aware~~ | **BİTTİ** (`d5919ce`) — tek thread'le upstream tavanına ulaştı, 3.6× throughput |
+| **1** | Fiber default kararı | Artık ölçülebilir: yavaş dış I/O'da fiber 3.6× (kanıtlandı), ama CPU-bound'da 2× yavaş + p95 kötü → **yük tipine göre** karar |
+| **2** | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel iyileştirme) |
 | 3 | A2 inline cache | `str_ref` var, cache yok — yarım iş |
 | 4 | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
 | 5 | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) |
