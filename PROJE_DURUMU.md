@@ -319,7 +319,7 @@ hot-reload tazelemesi. İzolasyon: interpreter yolunda `reset_globals_from`.
 |---|---|---|---|
 | Apache `enablereuse` | keep-alive kazancı | Apache serileştirmesi → baseline'dan **yavaş** | ❌ Kapalı |
 | stdlib "preload" | VM'i `use`'suz çalıştır | interpreter `use` zorunlu tutuyor → **yeni divergence** | ❌ Geri alındı |
-| Fiber default | eşzamanlılık | Eşzamanlılığı fiber değil **ConnPool** sınırlıyor (§9) | ⏸ Karar verilmedi |
+| Fiber'i **her yerde** default yap | tek model kolaylığı | Hızlı route'ta POOL ~%15 hızlı + daha iyi kuyruk (§9) | ❌ Reddedildi — default POOL kalır, FIBER yük-tipine göre opt-in |
 
 > **DERS (dört kez tekrarlandı):** A1/B5/B7 gerçek DB-bound yükte throughput'a **nötr** çıktı ·
 > B6'nın "en yüksek etki" tahmini **çürüdü** · asıl engel **per-request sabit maliyet**ti ·
@@ -346,25 +346,37 @@ SchedState makinesi. Substrat ciddi ve doğru — **sadece kapalıydı**.
 | Fix #2 — acceptor fiber + 15s idle-timeout | ✅ | c=200 / c=500 / c=1000 → **0 hata** (eski: c=100 hang) (`4b311c0`) |
 | **`http_client` fiber-aware** | ✅ | recv/SSL_read yield eder (Go netpoller). Ölçüm (yavaş upstream 0.5s, 1 worker, 10 eşz): POOL 5.53s/3.62 r/s → **FIBER 1.52s/13.19 r/s** (upstream tavanı 13.21 — **tek thread'le tavana ulaştı**), 0 hata (`d5919ce`) |
 | `parallel()` ↔ DB köprüsü (fiber task) | ⬜ | intra-request paralel query — artık **zorunlu değil** (sızıntı `3459c3e` ile çözüldü), opsiyonel iyileştirme |
-| Fiber default kararı | ⏸ **verilmedi** | aşağıda |
+| **Fiber default kararı** | ✅ **VERİLDİ** | Default **POOL**, FIBER yük-tipine göre opt-in (aşağıda) |
 | `go { }` ergonomisi + channel select | ⬜ | — |
 
-### Fiber default neden hâlâ kapalı (dürüst tablo)
+### ✅ Fiber default KARARI (ölçümle verildi, 2026-07-17)
 
-| Ölçüm | Sonuç |
-|---|---|
-| Eşzamanlılık tavanı | **fiber sayısı değil, ConnPool (= CPU sayısı) belirliyor.** Pool=64 iken FIBER w=8 → 1154 r/s (~58 eşzamanlı) **yalnız 8 thread'le**; pool bunun için w=64 gerektiriyor |
-| Non-keepalive throughput | fiber 8.1k vs pool 8.5k → **parite** |
-| Keep-alive | 13.6k r/s |
-| p95 gecikme | fiber **~2× kötü** |
-| RSS | fiber **daha yüksek** |
-| CPU-bound | fiber **2× yavaş** → default OFF doğru |
+`http_client` fiber-aware olunca (`d5919ce`) iki uç da ölçülebilir hale geldi. Aynı 4-worker,
+hızlı JSON route (dış I/O yok) vs yavaş dış API senaryosunda:
 
-→ **Default pool kalıyor.** Fiber'in değeri **yavaş/uzun I/O eşzamanlılığında** — ve o değer
-`http_client` fiber-aware olmadan ortaya çıkmıyor. Sıralama bu yüzden. Opt-in: `LOOK_FIBER_DISPATCH=1`.
+| Senaryo | POOL | FIBER | Kim kazanır |
+|---|---|---|---|
+| Hızlı route, c=50 (dış I/O yok) | **11506 r/s**, p95 6ms | 9724 r/s, p95 8ms | POOL **+%18** |
+| Hızlı route, c=200 | **9210 r/s**, p95 28ms | 8097 r/s, p95 31ms | POOL **+%14** |
+| **Yavaş dış API** (0.5s), 1 worker, 10 eşz. | 3.62 r/s, 5.53s | **13.19 r/s**, 1.52s | **FIBER 3.6×** |
+
+**KARAR: Default POOL kalır; FIBER opt-in (`LOOK_FIBER_DISPATCH=1`).**
+
+- **Neden default POOL:** Tipik KOBİ web yükü (hızlı/DB-bound route) POOL'da ~%15 daha hızlı ve
+  kuyruğu (p95/p99) daha iyi. Bu, hedef kitlenin **ortalama** isteği.
+- **Ne zaman FIBER aç:** Route'un çoğu zamanını **yavaş dış çağrıda** geçirdiğinde (dış API,
+  webhook, yavaş upstream) — orada 3.6× kazanç POOL'un %15'ini kat kat aşar. Fiber c=200/500/1000'de
+  **0 hata** (D Fix #2), yani stabilitesi kanıtlı.
+- **Basit eşik kuralı:** route ağırlıklı `http::*` ile yavaş dış servis bekliyorsa → **FIBER**;
+  CPU/DB-bound ve hızlıysa → **POOL** (default).
+
+> **Düzeltilen kayıt:** Eski not "fiber CPU-bound'da **2× yavaş**" diyordu; o rakam sentetik
+> CPU-bound mikro-bench'tendi. Gerçekçi hızlı JSON route'ta ceza **~%15** — çok daha ılımlı.
+> (Yine "ölç, tahmin etme": eski tahmini taze ölçüm düzeltti.)
 
 **Neden fiber DB-yükünde kazanmıyor:** **Async DB pool zaten concurrency sağlıyor.** LOOK'un iki
 eşzamanlılık alt-sistemi (`parallel()` = compute, async-DB-pool = request-arası) birbirine bağlı değil.
+Fiber'in kattığı yeni eksen: **`http_client` üzerinden yavaş dış I/O** — DB değil, dış servis.
 
 ### ⛔ B8 neden "güvenli değil"
 
@@ -455,13 +467,13 @@ değil, **production'ın kullandığı MySQL'de** de doğrulandı.
 | Sıra | İş | Neden şimdi |
 |---|---|---|
 | ✅ | ~~`http_client` fiber-aware~~ | **BİTTİ** (`d5919ce`) — tek thread'le upstream tavanına ulaştı, 3.6× throughput |
-| **1** | Fiber default kararı | Artık ölçülebilir: yavaş dış I/O'da fiber 3.6× (kanıtlandı), ama CPU-bound'da 2× yavaş + p95 kötü → **yük tipine göre** karar |
-| **2** | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel iyileştirme) |
-| 3 | A2 inline cache | `str_ref` var, cache yok — yarım iş |
-| 4 | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
-| 5 | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) |
-| 6 | DB katmanı: sorgu cache + prepared reuse | **Gerçek** web-throughput buradan gelir (motor dışı) |
-| 7 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
+| ✅ | ~~Fiber default kararı~~ | **VERİLDİ** — default POOL, FIBER yük-tipine göre opt-in (§9); hızlı route'ta ceza sanılan 2× değil ~%15 çıktı |
+| **1** | A2 inline cache | `str_ref` var, cache yok — yarım iş |
+| **2** | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
+| 3 | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) — **tasarım onayı gerekir** |
+| 4 | DB katmanı: sorgu cache + prepared reuse | **Gerçek** web-throughput buradan gelir (motor dışı) |
+| 5 | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel) |
+| 6 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
 | — | A4 / B8 | ertelendi (B8 güvenli değil) |
 
 **Kalan builtin boşluğu (~16, düşük öncelik):** `jobs::` (11), `queue::` (3), `template::` (2),
