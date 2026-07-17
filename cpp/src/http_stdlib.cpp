@@ -6,8 +6,8 @@
 
 namespace look {
 
-// Build Value assoc-array from HttpResponse
-static Value response_to_value(const HttpResponse& resp) {
+// Build Value assoc-array from HttpClientResponse
+static Value response_to_value(const HttpClientResponse& resp) {
     auto arr = std::make_shared<std::vector<Value>>();
     arr->push_back(Value(std::string("__assoc__")));  // sentinel
 
@@ -80,7 +80,7 @@ Module make_http_module(Interpreter* interp) {
         HttpChunkCallback on_chunk = [interp, cb](const std::string& chunk) {
             interp->invoke(cb, { Value(chunk) });
         };
-        HttpResponse resp = http_request_stream(method, url, reqbody, hdrs, opts, on_chunk);
+        HttpClientResponse resp = http_request_stream(method, url, reqbody, hdrs, opts, on_chunk);
         return response_to_value(resp);
     };
 

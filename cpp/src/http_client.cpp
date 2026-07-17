@@ -198,8 +198,8 @@ static std::string build_request(const std::string& method,
 
 // ── Response parser ───────────────────────────────────────────────────────────
 
-static HttpResponse parse_response(const std::string& raw) {
-    HttpResponse resp;
+static HttpClientResponse parse_response(const std::string& raw) {
+    HttpClientResponse resp;
     if (raw.empty()) { resp.error = "empty response"; return resp; }
 
     // Status line
@@ -297,7 +297,7 @@ struct StreamSink {
     std::string  head;
     bool         headers_done = false;
     bool         is_chunked   = false;
-    HttpResponse resp;
+    HttpClientResponse resp;
     ChunkedDecoder chunked;
 
     explicit StreamSink(const HttpChunkCallback& c) : cb(c) {}
@@ -309,7 +309,7 @@ struct StreamSink {
         if (he == std::string::npos) return;                   // basliklar henuz tam degil
         headers_done = true;
         // Baslik blogunu (bos govdeyle) parse_response ile coz — status + headers.
-        HttpResponse hp = parse_response(head.substr(0, he + 4));
+        HttpClientResponse hp = parse_response(head.substr(0, he + 4));
         resp.status  = hp.status;
         resp.headers = hp.headers;
         std::string te = resp.headers.count("transfer-encoding") ? resp.headers["transfer-encoding"] : "";
@@ -370,13 +370,13 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     return s;
 }
 
-static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
+static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& url,
                               const std::string& body,
                               const std::map<std::string, std::string>& hdrs,
                               const HttpOptions& opts,
                               const HttpChunkCallback* on_chunk = nullptr)
 {
-    HttpResponse resp;
+    HttpClientResponse resp;
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = "connection failed"; return resp; }
 
@@ -405,13 +405,13 @@ static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
     return parse_response(raw);
 }
 
-static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
+static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url,
                             const std::string& body,
                             const std::map<std::string, std::string>& hdrs,
                             const HttpOptions& opts,
                             const HttpChunkCallback* on_chunk = nullptr)
 {
-    HttpResponse resp;
+    HttpClientResponse resp;
     std::unique_ptr<StreamSink> sink;
     if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
@@ -644,13 +644,13 @@ static SSL_CTX* get_ssl_ctx() {
     return guard.ctx;
 }
 
-static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
+static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& url,
                               const std::string& body,
                               const std::map<std::string, std::string>& hdrs,
                               const HttpOptions& opts,
                               const HttpChunkCallback* on_chunk = nullptr)
 {
-    HttpResponse resp;
+    HttpClientResponse resp;
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = "connection failed"; return resp; }
 
@@ -674,13 +674,13 @@ static HttpResponse do_plain(const std::string& method, const ParsedUrl& url,
     return parse_response(raw);
 }
 
-static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
+static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url,
                             const std::string& body,
                             const std::map<std::string, std::string>& hdrs,
                             const HttpOptions& opts,
                             const HttpChunkCallback* on_chunk = nullptr)
 {
-    HttpResponse resp;
+    HttpClientResponse resp;
     SSL_CTX* ctx = get_ssl_ctx();
     if (!ctx) { resp.error = "SSL_CTX init failed"; return resp; }
 
@@ -734,13 +734,13 @@ static HttpResponse do_tls(const std::string& method, const ParsedUrl& url,
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-HttpResponse http_request(const std::string& method,
+HttpClientResponse http_request(const std::string& method,
                            const std::string& url_str,
                            const std::string& body,
                            const std::map<std::string, std::string>& req_headers,
                            const HttpOptions& opts)
 {
-    HttpResponse resp;
+    HttpClientResponse resp;
     ParsedUrl url;
     try { url = parse_url(url_str); }
     catch (std::exception& e) { resp.error = e.what(); return resp; }
@@ -754,14 +754,14 @@ HttpResponse http_request(const std::string& method,
     }
 }
 
-HttpResponse http_request_stream(const std::string& method,
+HttpClientResponse http_request_stream(const std::string& method,
                                   const std::string& url_str,
                                   const std::string& body,
                                   const std::map<std::string, std::string>& req_headers,
                                   const HttpOptions& opts,
                                   const HttpChunkCallback& on_chunk)
 {
-    HttpResponse resp;
+    HttpClientResponse resp;
     ParsedUrl url;
     try { url = parse_url(url_str); }
     catch (std::exception& e) { resp.error = e.what(); return resp; }

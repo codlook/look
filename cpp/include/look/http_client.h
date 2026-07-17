@@ -8,7 +8,14 @@ namespace look {
 // Streaming: govde parcalari (chunked cozulmus) geldikce cagrilir.
 using HttpChunkCallback = std::function<void(const std::string&)>;
 
-struct HttpResponse {
+// ODR KRITIK: bu tip ISTEMCI tarafina aittir ve adi http_server.hdeki
+// look::HttpResponse ile ASLA ayni olmamali. Eskiden ikisi de "look::HttpResponse"
+// idi → look-fcgi ikisini de linkledigi icin (look/CLI yalnizca istemciyi linkler)
+// TANIMSIZ DAVRANIS; LTO acikken iki farkli layout tek tip sanilip birlestiriliyor,
+// nesne bir duzenle kurulup digeriyle yikiliyordu → "free(): invalid pointer" /
+// segfault. Web routeundan http::get cagirmak sunucuyu COKERTIYORDU (CLIde degil,
+// ASanda degil — ASan buildinde LTO kapali oldugu icin gizleniyordu).
+struct HttpClientResponse {
     int         status  = 0;
     std::string body;
     std::map<std::string, std::string> headers;
@@ -28,7 +35,7 @@ struct ParsedUrl {
 };
 
 ParsedUrl   parse_url(const std::string& url);
-HttpResponse http_request(
+HttpClientResponse http_request(
     const std::string& method,
     const std::string& url,
     const std::string& body,
@@ -38,7 +45,7 @@ HttpResponse http_request(
 
 // Streaming istek: govde parcalari geldikce on_chunk cagrilir (SSE/token akisi).
 // Doner: status + headers (body genelde bostur — parcalar callback'e gitti).
-HttpResponse http_request_stream(
+HttpClientResponse http_request_stream(
     const std::string& method,
     const std::string& url,
     const std::string& body,

@@ -85,7 +85,7 @@ static MailResult send_mailgun(const std::string& api_key,
     hdrs["Content-Type"]  = "application/x-www-form-urlencoded";
 
     HttpOptions opts; opts.timeout_ms = 15000;
-    HttpResponse resp = http_request("POST", url, body, hdrs, opts);
+    HttpClientResponse resp = http_request("POST", url, body, hdrs, opts);
 
     r.status  = resp.status;
     r.ok      = (resp.status == 200);
@@ -137,7 +137,7 @@ static MailResult send_sendgrid(const std::string& api_key,
     hdrs["Content-Type"]  = "application/json";
 
     HttpOptions opts; opts.timeout_ms = 15000;
-    HttpResponse resp = http_request("POST", "https://api.sendgrid.com/v3/mail/send",
+    HttpClientResponse resp = http_request("POST", "https://api.sendgrid.com/v3/mail/send",
                                      body, hdrs, opts);
     r.status  = resp.status;
     r.ok      = (resp.status == 202);
@@ -185,7 +185,7 @@ static MailResult send_postmark(const std::string& api_key,
     hdrs["Accept"]                  = "application/json";
 
     HttpOptions opts; opts.timeout_ms = 15000;
-    HttpResponse resp = http_request("POST", "https://api.postmarkapp.com/email",
+    HttpClientResponse resp = http_request("POST", "https://api.postmarkapp.com/email",
                                      body, hdrs, opts);
     r.status  = resp.status;
     r.ok      = (resp.status == 200);

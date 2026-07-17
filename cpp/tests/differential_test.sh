@@ -131,6 +131,35 @@ iso_all=""
 for i in 1 2 3 4 5; do iso_all="$iso_all$(curl -s --max-time 8 "http://127.0.0.1:$ISO_PORT/inc")"; done
 kill $IS 2>/dev/null; sleep 1; kill -9 $IS 2>/dev/null
 [ "$iso_all" = "s=1s=1s=1s=1s=1" ] || { echo "FAIL: dispatch kopyasi izolasyonu BOZUK (global sizinti): [$iso_all] (beklenen s=1 x5)"; fail=1; }
+
+# ── ODR: istemci/sunucu tip cakismasi (LTO ile CRASH) ────────────────────────
+# look::HttpResponse HEM http_client.h HEM http_server.h'de FARKLI tanimliydi (ayni
+# namespace!). look-fcgi ikisini de linkler → TANIMSIZ DAVRANIS; LTO acikken iki
+# layout tek tip sanilip birlestiriliyor → nesne bir duzenle kurulup digeriyle
+# yikiliyor → "free(): invalid pointer"/segfault. Web route'undan http::get cagirmak
+# sunucuyu COKERTIYORDU (tek istek yetiyordu). CLI'de yoktu (http_server.cpp linkli
+# degil), ASan'da yoktu (o build'de LTO kapali) — bu yuzden aylarca gorunmedi.
+# Sozlesme: http::get web route'unda calismali ve sunucu AYAKTA kalmali.
+cat > "$TMP/odr_up.lk" <<'LK'
+route("GET","/u", function(){ response::json(["ok" => true]) })
+LK
+cat > "$TMP/odr_call.lk" <<'LK'
+use http
+route("GET","/call", function(){ $r = http::get("http://127.0.0.1:9614/u"); response::json(["st" => $r["status"]]) })
+LK
+"$FCGI" --mode http --port 9614 "$TMP/odr_up.lk" >/dev/null 2>&1 &
+OU=$!
+sleep 2
+LOOK_ALLOW_SSRF=1 "$FCGI" --mode http --port 9615 "$TMP/odr_call.lk" >/dev/null 2>&1 &
+OC=$!
+sleep 2
+odr_r=$(curl -s --max-time 10 "http://127.0.0.1:9615/call")
+sleep 1
+odr_alive=no
+curl -s -o /dev/null --max-time 5 "http://127.0.0.1:9615/call" && odr_alive=yes
+kill $OC $OU 2>/dev/null; sleep 1; kill -9 $OC $OU 2>/dev/null
+[ "$odr_r" = '{"st":200}' ] || { echo "FAIL: web route'ta http::get bozuk: [$odr_r] (ODR/crash?)"; fail=1; }
+[ "$odr_alive" = "yes" ] || { echo "FAIL: http::get sonrasi SUNUCU COKTU (look::HttpResponse ODR ihlali geri geldi mi?)"; fail=1; }
 if [ $fail -eq 0 ]; then
   echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 20 kategori + CLI print/exit + fallback-gurultulu)"
   echo "  $TREE"

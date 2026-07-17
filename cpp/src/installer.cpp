@@ -250,7 +250,7 @@ static bool extract_zip(const std::vector<char>& data,
 
 // ── Download with redirect follow ─────────────────────────────────────────────
 
-static HttpResponse download_follow(const std::string& url, bool verbose, int max_redirects = 5) {
+static HttpClientResponse download_follow(const std::string& url, bool verbose, int max_redirects = 5) {
     std::string current = url;
     HttpOptions opts;
     opts.timeout_ms = 30000;  // 30s for large ZIPs
@@ -262,7 +262,7 @@ static HttpResponse download_follow(const std::string& url, bool verbose, int ma
         headers["Accept"]     = "application/zip";
         headers["User-Agent"] = "LOOK-Package-Manager/0.25";
 
-        HttpResponse resp = http_request("GET", current, "", headers, opts);
+        HttpClientResponse resp = http_request("GET", current, "", headers, opts);
 
         if (!resp.error.empty()) return resp;
 
@@ -279,7 +279,7 @@ static HttpResponse download_follow(const std::string& url, bool verbose, int ma
         return resp;
     }
 
-    HttpResponse r;
+    HttpClientResponse r;
     r.error = "çok fazla yönlendirme";
     return r;
 }
@@ -298,7 +298,7 @@ static std::string resolve_sha(const PkgSpec& spec, bool verbose) {
 
     HttpOptions opts;
     opts.timeout_ms = 10000;
-    HttpResponse resp = http_request("GET", url, "", hdrs, opts);
+    HttpClientResponse resp = http_request("GET", url, "", hdrs, opts);
     if (!resp.error.empty() || resp.status != 200) return "";
 
     // Response body is just the 40-char SHA when Accept: application/vnd.github.sha
@@ -326,7 +326,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
     std::cout << " (" << spec.ref << ")\n";
 
     // Download ZIP
-    HttpResponse resp = download_follow(spec.zip_url(), verbose);
+    HttpClientResponse resp = download_follow(spec.zip_url(), verbose);
     if (!resp.error.empty()) {
         std::cerr << "İndirme hatası: " << resp.error << "\n";
         return 1;
@@ -472,7 +472,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
     std::cout << " (" << spec.ref << ")\n";
 
     // Download ZIP from GitHub
-    HttpResponse resp = download_follow(spec.zip_url(), verbose);
+    HttpClientResponse resp = download_follow(spec.zip_url(), verbose);
     if (!resp.error.empty()) {
         std::cerr << "İndirme hatası: " << resp.error << "\n";
         return 1;
@@ -553,7 +553,7 @@ int cmd_module_list() {
     hdrs["Accept"]     = "application/vnd.github.v3+json";
     hdrs["User-Agent"] = "LOOK-Module-Manager/1.0";
 
-    HttpResponse resp = http_request("GET", api_url, "", hdrs, opts);
+    HttpClientResponse resp = http_request("GET", api_url, "", hdrs, opts);
 
     if (!resp.error.empty()) {
         std::cerr << "Bağlantı hatası: " << resp.error << "\n";
