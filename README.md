@@ -95,6 +95,12 @@ This repository is **the LOOK language core** only. Everything else lives on its
 | Package & module directory | [packages.codlook.com](https://packages.codlook.com) |
 | Documentation | [codlook.com/docs](https://codlook.com/docs) |
 
+## Project status
+
+See [PROJE_DURUMU.md](PROJE_DURUMU.md) (Turkish) for the honest, up-to-date state of
+the project: what is done, what is left, what we measured and **rejected**, the known
+limits and open risks, and the benchmark methodology behind the numbers.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md). The protocol parsers are our own code and kept
