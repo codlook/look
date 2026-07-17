@@ -217,6 +217,11 @@ static bool is_trusted_proxy(const std::string& ip) {
 // ── Shared hot-reload state (mirrors WarmApp in fcgi_main) ───────────────────
 
 struct HttpApp {
+    // Setup/hot-reload sayacı — her yeniden kurulumda artar. Worker'lardaki
+    // thread_local dispatch kopyası bunu görüp kendini tazeler (bkz. per-request
+    // yolundaki tl_copy). Sayaç olmadan hot-reload sonrası eski kopya kullanılırdı.
+    std::atomic<uint64_t>                    generation{0};
+
     // ── Tree-walk interpreter (her zaman mevcut — fallback) ───────────────────
     std::unique_ptr<look::Interpreter>       interp;
     std::unique_ptr<look::Program>           program;
@@ -603,6 +608,10 @@ static void run_setup_http(const fs::path& script) {
     }
     g_http_app.mtime       = fs::last_write_time(script);
 
+    // Kurulum/hot-reload tamamlandı → worker'lardaki thread_local dispatch kopyaları
+    // bu artışı görüp kendilerini yeniden kuracak (eski interp'e asılı kalmasınlar).
+    g_http_app.generation.fetch_add(1, std::memory_order_release);
+
     g_http_ready = true;
 }
 
@@ -809,9 +818,30 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
     if (use_bc) {
         // ── VM path ───────────────────────────────────────────────────────────
-        // Per-request: interpreter copy → set_web_context → extract module fns as builtins
+        // ── Dispatch kopyası: worker thread başına BİR KEZ (per-request DEĞİL) ────
+        // Ölçüm (docker, 2 worker): make_dispatch_copy() her istekte 30µs (global'siz
+        // app) — route'u ÇALIŞTIRMAKTAN (12µs) 2.5× pahalı; global-ağır app'te 63µs ve
+        // throughput 21.2k→12.8k düşüyordu (route AYNI olmasına rağmen). Sebep:
+        // make_dispatch_copy → make_unique<Interpreter>() TÜM stdlib'i (yüzlerce
+        // std::function) her istekte yeniden kuruyor + globals_ deep-clone.
+        // PHP-FPM istek başına böyle bir bedel ödemez — "PHP'yi geç" hedefinin önündeki
+        // asıl engel buydu, motor hızı değil.
+        //
+        // Güvenlik: her worker tek isteği aynı anda işler → thread_local kopya güvenli.
+        // Hot-reload'da generation artar → kopya tazelenir.
+        // İZOLASYON: VM route'u interpreter globals'ını KULLANMAZ (VM kendi globals'ını
+        // g_http_app.vm_setup_globals'tan alır) → klon gereksiz. Interpreter fallback'i
+        // kullanıcı kodu çalıştırdığı için globals'ı TAZE snapshot'a resetler (aşağıda) —
+        // yoksa bir isteğin yazdığı global sonraki isteğe sızardı.
         t_copy_start = std::chrono::steady_clock::now();
-        auto copy = g_http_app.interp->make_dispatch_copy();
+        static thread_local std::unique_ptr<look::Interpreter> tl_copy;
+        static thread_local uint64_t tl_gen = (uint64_t)-1;
+        const uint64_t cur_gen = g_http_app.generation.load(std::memory_order_acquire);
+        if (!tl_copy || tl_gen != cur_gen) {
+            tl_copy = g_http_app.interp->make_dispatch_copy();
+            tl_gen  = cur_gen;
+        }
+        look::Interpreter* copy = tl_copy.get();
         t_copy_end = std::chrono::steady_clock::now();
         copy->set_output(output);
         copy->set_web_context(&web);
@@ -1117,6 +1147,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // Fallback — interpreter (web'i bozulmamış kopyadan sıfırla)
             output.str(""); output.clear();
             web = web0;
+            // Kopya worker'da yeniden kullanılıyor → kullanıcı kodu çalışmadan ÖNCE
+            // globals'ı taze snapshot'a döndür (istekler arası sızıntı olmasın).
+            copy->reset_globals_from(*g_http_app.interp);
             copy->set_web_context(&web);
             try {
                 copy->dispatch_routes();
@@ -1136,9 +1169,23 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // sonrası tüm worker'ların deadlock olmasına neden oluyordu.
         look::release_thread_connections();
     } else {
-        // ── Interpreter path ──────────────────────────────────────────────────
+        // ── Interpreter path (bytecode kapalı: LOOK_BYTECODE=0 veya compile hatası) ──
+        // Burada da kopya worker başına bir kez kurulur (VM yolundaki ölçümün aynısı:
+        // per-request make_dispatch_copy = 30-63µs). Fark: bu yolda kullanıcı kodu HER
+        // istekte interpreter'da çalışır → globals'ı her istekte taze snapshot'a
+        // resetlemek ZORUNLU (izolasyon). Yine de Interpreter kurulumu (tüm stdlib'in
+        // yeniden inşası) artık istek başına ödenmiyor.
         t_copy_start = std::chrono::steady_clock::now();
-        auto copy = g_http_app.interp->make_dispatch_copy();
+        static thread_local std::unique_ptr<look::Interpreter> tl_icopy;
+        static thread_local uint64_t tl_igen = (uint64_t)-1;
+        const uint64_t cur_igen = g_http_app.generation.load(std::memory_order_acquire);
+        if (!tl_icopy || tl_igen != cur_igen) {
+            tl_icopy = g_http_app.interp->make_dispatch_copy();
+            tl_igen  = cur_igen;
+        } else {
+            tl_icopy->reset_globals_from(*g_http_app.interp);   // izolasyon
+        }
+        look::Interpreter* copy = tl_icopy.get();
         t_copy_end = std::chrono::steady_clock::now();
 
         copy->set_output(output);

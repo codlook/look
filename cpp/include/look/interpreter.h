@@ -460,6 +460,16 @@ public:
     // Call set_output() and set_web_context() on the copy before dispatch_routes().
     std::unique_ptr<Interpreter> make_dispatch_copy() const;
 
+    // Dispatch kopyası worker thread'inde YENİDEN KULLANILIYOR (per-request kurulum
+    // 30-63µs'ydi — route'u çalıştırmaktan pahalı). Kopya paylaşıldığı için, kullanıcı
+    // kodu interpreter'da çalışacaksa globals ÖNCE taze snapshot'a dönmeli — yoksa bir
+    // isteğin yazdığı global sonraki isteğe SIZAR. VM route'u interpreter globals'ını
+    // kullanmadığından bu maliyeti ödemez (yalnız fallback/interpreter yolu çağırır).
+    void reset_globals_from(const Interpreter& base) {
+        globals_ = base.globals_->clone();
+        current_ = std::make_shared<Environment>(globals_);
+    }
+
     // VM builtin wiring: set_web_context() sonrası modules_'dan fonksiyon al.
     // module = "response", fn = "header" → modules_["response"].functions["header"]
     // Bulunamazsa null std::function döner.

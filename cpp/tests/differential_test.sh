@@ -112,6 +112,25 @@ ok_str=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/ok")
 kill $FB 2>/dev/null; sleep 1; kill -9 $FB 2>/dev/null
 [ "$w_str" = "ok" ] && { echo "FAIL: LOOK_VM_STRICT=1 hala MASKELIYOR (fallback calisti)"; fail=1; }
 [ "$ok_str" = "saglam" ] || { echo "FAIL: strict modda saglam route bozuldu: [$ok_str]"; fail=1; }
+
+# ── Dispatch kopyasi worker'da YENIDEN KULLANILIYOR mu, izolasyon bozuldu mu? ──
+# Kopya artik thread_local (per-request make_dispatch_copy 30-63us idi — route'u
+# calistirmaktan pahali). Sozlesme: paylasilan kopya istekler arasi SIZINTI yapmamali.
+#   $sayac = $sayac + 1  → fonksiyon-local (her istek 1)  — atama izole
+#   push($liste, ...)    → yakalanan diziyi paylasir (LOOK modeli: $db gibi) — DEGISMEMELI
+# Bu degerler thread_local optimizasyonu ONCESI ile BIREBIR ayni olmali.
+cat > "$TMP/iso.lk" <<'LK'
+$sayac = 0
+route("GET","/inc", function(){ $sayac = $sayac + 1; return response::text("s=" . $sayac) })
+LK
+ISO_PORT=9613
+"$FCGI" --mode http --port $ISO_PORT "$TMP/iso.lk" >/dev/null 2>&1 &
+IS=$!
+sleep 2
+iso_all=""
+for i in 1 2 3 4 5; do iso_all="$iso_all$(curl -s --max-time 8 "http://127.0.0.1:$ISO_PORT/inc")"; done
+kill $IS 2>/dev/null; sleep 1; kill -9 $IS 2>/dev/null
+[ "$iso_all" = "s=1s=1s=1s=1s=1" ] || { echo "FAIL: dispatch kopyasi izolasyonu BOZUK (global sizinti): [$iso_all] (beklenen s=1 x5)"; fail=1; }
 if [ $fail -eq 0 ]; then
   echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 20 kategori + CLI print/exit + fallback-gurultulu)"
   echo "  $TREE"
