@@ -177,6 +177,16 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
 
 // ── Value helpers ─────────────────────────────────────────────────────────────
 
+// "12" / "-3" gibi TAM SAYI metni mi? Dizi anahtari sayisal indeks mi yoksa
+// assoc anahtari mi diye ayirmak icin. (interpreter.cpp'de ayni kural var.)
+static bool look_is_int_key(const std::string& s) {
+    if (s.empty()) return false;
+    size_t i = (s[0] == '-' || s[0] == '+') ? 1 : 0;
+    if (i >= s.size()) return false;
+    for (; i < s.size(); ++i) if (s[i] < '0' || s[i] > '9') return false;
+    return true;
+}
+
 bool VM::val_truthy(const Value& v) { return v.is_truthy(); }
 
 std::string VM::val_to_str(const Value& v) { return v.to_string(); }
@@ -221,30 +231,44 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
 
     // Assoc: ["__assoc__", k0, v0, ...] — sentinel at position 0 (interpreter convention)
     bool is_assoc = !vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__";
-    if (is_assoc || key.type() == Value::STRING) {
+    // "12"/"-3" gibi tam sayi METNI sayisal indekstir, assoc anahtari degil
+    // (interpreter bu metinleri hep sayisal indeks sayiyordu — motorlar ayrisiyordu).
+    bool str_key = key.type() == Value::STRING && !look_is_int_key(key.str_ref());
+    if (is_assoc || str_key) {
         std::string k = key.to_string();
+        // ESKI HATA: liste henuz assoc DEGILKEN asagidaki dongu onu cift listesi
+        // sanip tariyor (start=0), sonra basina yalnizca sentinel ekliyordu:
+        //   $a=[1,2,3]; $a["k"]="X"  ->  ["__assoc__",1,2,3,"k","X"]
+        // cift olarak okununca 1->2, 3->"k" cikiyor: TUM VERI YOK OLUYOR ve yeni
+        // deger de erisilemiyor. Once elemanlari SAYISAL INDEKSLERIYLE anahtarlayarak
+        // donustur (array::set ile ayni sozlesme).
+        if (!is_assoc) {
+            std::vector<Value> conv;
+            conv.reserve(vec.size() * 2 + 1);
+            conv.push_back(Value(std::string("__assoc__")));
+            for (size_t i = 0; i < vec.size(); ++i) {
+                conv.push_back(Value(std::to_string(i)));
+                conv.push_back(vec[i]);
+            }
+            vec.swap(conv);
+        }
         // Find existing (skip sentinel at [0] and optional struct tags)
-        size_t start = is_assoc ? 1 : 0;
-        if (is_assoc && vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__")
+        size_t start = 1;
+        if (vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__")
             start = 3;
         for (size_t i = start; i + 1 < vec.size(); i += 2) {
             if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
                 { vec[i+1] = val; return; }
         }
-        // New entry
-        if (!is_assoc) {
-            // Convert to assoc: insert sentinel at position 0
-            vec.insert(vec.begin(), Value(std::string("__assoc__")));
-        }
-        // Append key, value at end
+        // New entry — append key, value at end
         vec.push_back(Value(k));
         vec.push_back(val);
         return;
     }
-    // Numeric
-    int idx = key.as_int();
-    if (idx >= 0 && idx < (int)vec.size()) vec[idx] = val;
-    else if (idx == (int)vec.size()) vec.push_back(val);
+    // Numeric — to_int(): "12" gibi metin anahtarlar da buraya dusebilir
+    int64_t idx = key.to_int();
+    if (idx >= 0 && idx < (int64_t)vec.size()) vec[(size_t)idx] = val;
+    else if (idx == (int64_t)vec.size()) vec.push_back(val);
 }
 
 Value VM::get_field(const Value& obj, const std::string& field) {

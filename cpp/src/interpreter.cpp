@@ -27,6 +27,17 @@ namespace interp_fs = std::filesystem;
 
 namespace look {
 
+// "12" / "-3" gibi TAM SAYI metni mi? Dizi anahtarinin sayisal indeks mi yoksa
+// assoc anahtari mi oldugunu ayirir. (vm.cpp'de ayni kural var — iki motorun
+// ayni sozlesmeyi uygulamasi icin.)
+static bool look_is_int_key(const std::string& s) {
+    if (s.empty()) return false;
+    size_t i = (s[0] == '-' || s[0] == '+') ? 1 : 0;
+    if (i >= s.size()) return false;
+    for (; i < s.size(); ++i) if (s[i] < '0' || s[i] > '9') return false;
+    return true;
+}
+
 // â"€â"€ Value â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 // Double → string: kısa ama tam round-trip gösterim (std::to_chars shortest).
@@ -1133,6 +1144,14 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             return Value(); // null if not found
         }
 
+        // Sayısal LİSTE + tam-sayı-olmayan string anahtar → böyle bir anahtar yok.
+        // ESKİ HATA: buraya girmeyip aşağıdaki sayısal dala düşüyordu ve
+        // to_int("k") = 0 olduğu için $a["k"] SESSİZCE $a[0]'ı döndürüyordu —
+        // var olmayan bir anahtar için yanlış veri (VM burada null dönüyordu:
+        // motor ayrışması). Assoc'ta bulunamayan anahtarla aynı: null.
+        if (idx.type() == Value::STRING && !look_is_int_key(idx.as_string()))
+            return Value();
+
         // Regular numeric index — int64 (int'e daraltma `$arr[2^32]`'yi 0'a
         // wrap'layıp yanlış eleman döndürüyordu; bounds bypass).
         int64_t i = idx.to_int();
@@ -1172,6 +1191,26 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 if (op == "^=") return cur.bitwise_xor(val);
                 return val;
             };
+
+            // Sayısal LİSTE + tam-sayı-olmayan string anahtar → listeyi assoc'a
+            // DÖNÜŞTÜR, mevcut elemanları sayısal indeksleriyle anahtarlayarak KORU.
+            // ESKİ HATA: dönüştürme yoktu; aşağıdaki sayısal dala düşüyor ve
+            // to_int("k") = 0 olduğu için $a=[1,2,3]; $a["k"]="X" SESSİZCE
+            // ["X",2,3] üretiyordu — hem yanlış eleman eziliyor hem anahtar
+            // kayboluyordu. (VM tarafı aynı ifadede veriyi tümden yok ediyordu.)
+            // array::set ve VM::array_set ile aynı sözleşme.
+            if (idx.type() == Value::STRING && !look_is_int_key(idx.as_string()) &&
+                !(!arr.empty() && arr[0].type() == Value::STRING &&
+                  arr[0].as_string() == "__assoc__")) {
+                std::vector<Value> conv;
+                conv.reserve(arr.size() * 2 + 1);
+                conv.push_back(Value(std::string("__assoc__")));
+                for (size_t n = 0; n < arr.size(); ++n) {
+                    conv.push_back(Value(std::to_string(n)));
+                    conv.push_back(arr[n]);
+                }
+                arr.swap(conv);
+            }
 
             // Assoc array: string key
             if (!arr.empty() && arr[0].type() == Value::STRING &&

@@ -165,6 +165,35 @@ as_bek='[1,"X",3]|[1,2,3,"X"]|{"0":1,"1":2,"2":3,"k":"X"}|{"k":"X"}|{"a":9,"b":2
 [ "$as_tree" = "$as_bek" ] || { echo "FAIL: array::set tree-walk: [$as_tree] (beklenen $as_bek) — sayisal dizide veri yok ediliyor olabilir"; fail=1; }
 [ "$as_vm"   = "$as_bek" ] || { echo "FAIL: array::set CLI-VM: [$as_vm] (beklenen $as_bek)"; fail=1; }
 
+# ── $arr["anahtar"] — SAYISAL listeye string anahtar ─────────────────────────────
+# NEDEN: iki motor da yanlisti, farkli sekilde (guard'da bu vaka HIC yoktu):
+#   VM        : listeyi cift listesi sanip basina sentinel ekliyordu ->
+#               $a=[1,2,3]; $a["k"]="X"  =>  {"1":2,"3":"k"}  TUM VERI YOK OLUYOR,
+#               yazilan deger bile erisilemez ($a["k"] -> null)
+#   tree-walk : assoc dalina girmeyip sayisal dala dusuyor, to_int("k")=0 ->
+#               ["X",2,3]  yanlis eleman eziliyor, anahtar kayboluyor
+# Ikisi de SESSIZ. Sozlesme: listeyi assoc'a donustur ama MEVCUT ELEMANLARI
+# sayisal indeksleriyle anahtarlayarak KORU (array::set ile ayni).
+# Ayrica "1" gibi TAM SAYI metni sayisal indekstir, assoc anahtari degil —
+# eskiden VM assoc'a cevirip tree-walk indekse yaziyordu (ayrisma).
+cat > "$TMP/ikey.lk" <<'LK'
+$a = [1,2,3]
+$a["k"] = "X"
+$b = []
+$b["k"] = "X"
+$c = [1,2,3]
+$c["1"] = "X"
+$d = [1,2,3]
+print(json::encode($a) . "|" . $a["k"] . "|" . $a["1"] . "|" .
+      json::encode($b) . "|" . json::encode($c) . "|" .
+      json::encode($d["k"]) . "|" . $d["1"])
+LK
+ik_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/ikey.lk" 2>&1)
+ik_vm=$("$LK" "$TMP/ikey.lk" 2>&1)
+ik_bek='{"0":1,"1":2,"2":3,"k":"X"}|X|2|{"k":"X"}|[1,"X",3]|null|2'
+[ "$ik_tree" = "$ik_bek" ] || { echo "FAIL: \$arr[str] tree-walk: [$ik_tree] (beklenen $ik_bek) — string anahtar sayisal indekse zorlaniyor olabilir"; fail=1; }
+[ "$ik_vm"   = "$ik_bek" ] || { echo "FAIL: \$arr[str] CLI-VM: [$ik_vm] (beklenen $ik_bek) — liste assoc'a cevrilirken elemanlar korunmuyor olabilir"; fail=1; }
+
 
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
