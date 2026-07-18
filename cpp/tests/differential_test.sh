@@ -219,7 +219,7 @@ kill $OC $OU 2>/dev/null; sleep 1; kill -9 $OC $OU 2>/dev/null
 [ "$odr_r" = '{"st":200}' ] || { echo "FAIL: web route'ta http::get bozuk: [$odr_r] (ODR/crash?)"; fail=1; }
 [ "$odr_alive" = "yes" ] || { echo "FAIL: http::get sonrasi SUNUCU COKTU (look::HttpResponse ODR ihlali geri geldi mi?)"; fail=1; }
 if [ $fail -eq 0 ]; then
-  echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 21 kategori + CLI print/exit + fallback-gurultulu)"
+  echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 22 kategori + CLI print/exit + fallback-gurultulu)"
   echo "  $TREE"
   exit 0
 else

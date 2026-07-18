@@ -5,7 +5,9 @@ use template;
 use validator;
 use type;
 use crypto;
+use date;
 function dif_fib($n) { if ($n < 2) { return $n } return dif_fib($n-1) + dif_fib($n-2) }
+
 function run_all() {
   $o = "";
   # aritmetik + taşma + INT64 uç + bölme/modulo
@@ -116,6 +118,17 @@ function run_all() {
   $ut = 0; $uk = 0;
   while ($uk < 5) { $ut += $uk; $uk = $uk + 1 }                   # döngüde birikim
   $ul = [10]; $ul[0] += 5;                                        # dizi elemanı
+  # V — date:: TAKVIM dogrulamasi + isaretli diff. Guard'da date:: HIC yoktu.
+  # parse() kaba aralik kontrolu yapiyordu (gun <= 31) → 2024-04-31 / 2023-02-29 gecip
+  # mktime ile SESSIZCE 1 Mayis / 1 Mart'a kayiyordu (is_valid ise false diyordu —
+  # kodun kendi hedefi "is_valid ile tutarli" idi ama ay-ozgu gun siniri yoktu).
+  # Sozlesme: imkansiz tarih HATA, gecerli tarih aynen, diff ISARETLI kalir.
+  $vb = "";
+  try { date::parse("2024-04-31", "Y-m-d"); $vb .= "KACTI" } catch ($e) { $vb .= "red" }
+  try { date::parse("2023-02-29", "Y-m-d"); $vb .= "KACTI" } catch ($e) { $vb .= "-red" }
+  $o .= "V:" . $vb . "," . date::parse("2024-02-29", "Y-m-d") . ","
+             . date::is_valid("2024-04-31") . "," . date::is_valid("2024-02-29") . ","
+             . date::diff(date::parse("2024-01-01","Y-m-d"), date::parse("2024-01-10","Y-m-d"), "days") . ";";
   $o .= "U:" . $ug . "," . $us . "," . $ut . "," . $ul[0] . "," . dif_compound() . ";";
   return $o;
 }

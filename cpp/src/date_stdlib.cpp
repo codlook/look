@@ -224,6 +224,24 @@ Module make_date_module() {
             t.tm_sec  < 0  || t.tm_sec  > 60)  // 60: artık saniye
             throw std::runtime_error("date::parse(): geçersiz tarih — '" + input + "'");
 
+        // TAKVIM doğrulaması — yukarıdaki aralık kontrolü KABA: "gün ≤ 31" olduğu için
+        // 2024-04-31 (Nisan 30 çeker) ve 2023-02-29 (artık değil) geçiyordu, sonra
+        // mktime bunları sessizce 1 Mayıs / 1 Mart'a KAYDIRIYORDU. Yani parse başarılı
+        // dönüp YANLIŞ tarih veriyordu — üstelik is_valid aynı girdilere false diyor
+        // (bu bloğun kendi yorumu "is_valid ile tutarlı" olmayı hedefliyordu ama
+        // ay-özgü gün sınırları kontrol edilmediği için hedefe ulaşmamıştı).
+        // is_valid'in tekniğini uygula: mktime ile normalize et, alanlar DEĞİŞTİYSE
+        // girdi takvimsel olarak imkânsızdı → hata. (Ay/gün/yıl karşılaştırılır; saat
+        // DST nedeniyle kayabileceği için karşılaştırmaya dahil edilmez.)
+        {
+            std::tm chk = t;
+            chk.tm_isdst = -1;
+            std::time_t ts = mktime(&chk);
+            if (ts == (std::time_t)-1 ||
+                chk.tm_year != t.tm_year || chk.tm_mon != t.tm_mon || chk.tm_mday != t.tm_mday)
+                throw std::runtime_error("date::parse(): geçersiz tarih — '" + input + "'");
+        }
+
         t.tm_isdst = -1;
         bool has_time = fmt.find('H') != std::string::npos;
         return Value(tm_to_iso(t, has_time));
