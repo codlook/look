@@ -563,6 +563,49 @@ static Module make_json_module() {
     return m;
 }
 
+// Cerez adi/degeri icin yuzde-kodlama.
+//
+// ESKI HATA: sanitize_header() yalnizca CR/LF/NUL temizliyordu — genel basliklar
+// icin dogru, ama cerezde ';' YAPISAL AYRACTIR. Kullanici kontrolundeki deger
+// cereze yazilinca (dil/tema tercihi gibi cok yaygin kalip) saldirgan CEREZ
+// OZNITELIKLERINI kontrol edebiliyordu:
+//   ?v=x; HttpOnly; Domain=evil.com
+//   -> Set-Cookie: tercih=x; HttpOnly; Domain=evil.com; Path=/
+// Etki: Domain'i ust alan adina cekip cerezi TUM alt alan adlarina sizdirmak,
+// Max-Age ile kalicilastirmak, Path/Secure ile uygulamanin niyetini degistirmek.
+// (CRLF enjeksiyonu zaten engelliydi — bu ondan farkli bir kanal.)
+//
+// Cozum PHP setcookie() ile ayni: yazarken kodla, okurken coz. Mesru veri
+// (';' iceren bir deger) gidis-donuste korunur ama yapi anlami tasiyamaz.
+static std::string cookie_enc(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string o; o.reserve(s.size());
+    for (unsigned char c : s) {
+        bool safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
+        if (safe) o += (char)c;
+        else { o += '%'; o += hex[c >> 4]; o += hex[c & 0xF]; }
+    }
+    return o;
+}
+static std::string cookie_dec(const std::string& s) {
+    auto hexval = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string o; o.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            int h = hexval(s[i+1]), l = hexval(s[i+2]);
+            if (h >= 0 && l >= 0) { o += (char)((h << 4) | l); i += 2; continue; }
+        }
+        o += s[i];
+    }
+    return o;
+}
+
 static Module make_cookie_module(WebContext* ctx) {
     Module m;
     m.name = "cookie";
@@ -570,12 +613,13 @@ static Module make_cookie_module(WebContext* ctx) {
     m.functions["get"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
         auto it = ctx->cookies_in.find(args[0].to_string());
-        return it != ctx->cookies_in.end() ? Value(it->second) : Value();
+        return it != ctx->cookies_in.end() ? Value(cookie_dec(it->second)) : Value();
     };
     m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();
-        std::string name    = sanitize_header(args[0].to_string());
-        std::string value   = sanitize_header(args[1].to_string());
+        // Yuzde-kodla: ';' ve diger yapisal karakterler oznitelik enjekte edemesin.
+        std::string name    = cookie_enc(args[0].to_string());
+        std::string value   = cookie_enc(args[1].to_string());
         int expires         = args.size() >= 3 ? args[2].to_int() : 0;
         std::string path_c  = sanitize_header(args.size() >= 4 ? args[3].to_string() : "/");
 
@@ -600,7 +644,7 @@ static Module make_cookie_module(WebContext* ctx) {
     m.functions["delete"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
         ctx->set_cookies_out.push_back(
-            sanitize_header(args[0].to_string()) + "=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+            cookie_enc(args[0].to_string()) + "=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
         return Value();
     };
     m.functions["has"] = [ctx](auto args) -> Value {

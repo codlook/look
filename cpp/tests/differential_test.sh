@@ -326,6 +326,33 @@ kill $SSPID 2>/dev/null; wait $SSPID 2>/dev/null
 [ "$ss_out" = '"uye"|null' ] || { echo "FAIL: GUVENLIK — session verisi ENJEKTE EDILEBILIYOR: [$ss_out] (beklenen \"uye\"|null; deger icindeki satir sonu yeni alan tanimliyor olabilir)"; fail=1; }
 
 
+# ── GUVENLIK: cookie::set oznitelik enjeksiyonu ─────────────────────────────────
+# NEDEN: sanitize_header() yalnizca CR/LF/NUL temizliyordu; cerezde ';' YAPISAL
+# AYRAC oldugu icin kullanici kontrolundeki deger oznitelik enjekte edebiliyordu:
+#   ?v=x; HttpOnly; Domain=evil.com
+#   -> Set-Cookie: tercih=x; HttpOnly; Domain=evil.com; Path=/
+# Domain'i ust alan adina cekip cerezi tum alt alan adlarina sizdirmak mumkundu.
+# Sozlesme: PHP setcookie() gibi — yazarken yuzde-kodla, okurken coz. Mesru
+# deger korunur ama yapi anlami tasiyamaz.
+CK_PORT=9618
+cat > "$TMP/ck.lk" <<'LK'
+route("GET", "/c", function(){ cookie::set("tercih", request::get("v")); return response::text("ok") })
+route("GET", "/r", function(){ return response::text(json::encode(cookie::get("tercih"))) })
+LK
+"$FCGI" --mode http --port $CK_PORT "$TMP/ck.lk" >/dev/null 2>&1 &
+CKPID=$!
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$CK_PORT/r" && break; sleep 0.3; done
+ck_hdr=$(curl -s -D - -o /dev/null "http://127.0.0.1:$CK_PORT/c?v=x%3B%20HttpOnly%3B%20Domain%3Devil.com" | grep -i "^set-cookie")
+ck_rt=$(curl -s -c "$TMP/ckj" "http://127.0.0.1:$CK_PORT/c?v=a%3Bb" >/dev/null; curl -s -b "$TMP/ckj" "http://127.0.0.1:$CK_PORT/r")
+kill $CKPID 2>/dev/null; wait $CKPID 2>/dev/null
+# DIKKAT: kelimeyi basligin tamaminda ARAMA — kodlanmis deger "HttpOnly" metnini
+# duz metin olarak icerir (x%3B%20HttpOnly%3B%20...) ve bu GUVENLIDIR. Enjeksiyon
+# ancak GERCEK ';' ayraciyla olur, o yuzden OZNITELIK BICIMI aranir.
+echo "$ck_hdr" | grep -qi "; *Domain=" && { echo "FAIL: GUVENLIK — cookie::set OZNITELIK ENJEKTE EDILEBILIYOR: [$ck_hdr]"; fail=1; }
+echo "$ck_hdr" | grep -qi "; *HttpOnly" && { echo "FAIL: GUVENLIK — cookie degeri ';' ile oznitelik ekleyebiliyor: [$ck_hdr]"; fail=1; }
+[ "$ck_rt" = '"a;b"' ] || { echo "FAIL: cookie gidis-donus bozuk: [$ck_rt] (beklenen \"a;b\" — kodlama var ama cozme yok olabilir)"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).
