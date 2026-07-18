@@ -299,6 +299,33 @@ kill $IPPID 2>/dev/null; wait $IPPID 2>/dev/null
 [ "$ip_real"  = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() X-Real-IP'ye guveniyor: [$ip_real]"; fail=1; }
 
 
+# ── GUVENLIK: session verisi enjekte edilebiliyor mu? ───────────────────────────
+# NEDEN: session blob'u satir tabanli "anahtar=deger\n" formatinda ve anahtar/deger
+# HIC KACIRILMIYORDU -> degerin icindeki \n YENI BIR ALAN tanimliyordu.
+# Uygulama kullanici verisini oturuma yaziyorsa (isim/not/arama — cok yaygin):
+#   ?isim=bob\nrol=admin\nadmin=1  ->  session::get("admin") = "1"
+# HIC VAR OLMAYAN yetki alani enjekte ediliyordu (login oncesi istekte bile).
+# Sozlesme: kacirarak sakla — mesru satir sonu VERI olarak korunur, ayrac anlami
+# tasimaz. Guard hem saldiriyi hem gidis-donusu kontrol eder.
+SS_PORT=9617
+cat > "$TMP/sess.lk" <<'LK'
+route("GET", "/s", function(){
+  session::start()
+  session::set("rol", "uye")
+  session::set("isim", request::get("isim"))
+  return response::text(json::encode(session::get("rol")) . "|" . json::encode(session::get("admin")))
+})
+LK
+"$FCGI" --mode http --port $SS_PORT "$TMP/sess.lk" >/dev/null 2>&1 &
+SSPID=$!
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$SS_PORT/s?isim=x" && break; sleep 0.3; done
+ss_out=$(curl -s -c "$TMP/ck" -b "$TMP/ck" --get --data-urlencode 'isim=bob
+rol=admin
+admin=1' "http://127.0.0.1:$SS_PORT/s")
+kill $SSPID 2>/dev/null; wait $SSPID 2>/dev/null
+[ "$ss_out" = '"uye"|null' ] || { echo "FAIL: GUVENLIK — session verisi ENJEKTE EDILEBILIYOR: [$ss_out] (beklenen \"uye\"|null; deger icindeki satir sonu yeni alan tanimliyor olabilir)"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).
