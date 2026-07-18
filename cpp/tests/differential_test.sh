@@ -353,6 +353,35 @@ echo "$ck_hdr" | grep -qi "; *HttpOnly" && { echo "FAIL: GUVENLIK — cookie deg
 [ "$ck_rt" = '"a;b"' ] || { echo "FAIL: cookie gidis-donus bozuk: [$ck_rt] (beklenen \"a;b\" — kodlama var ama cozme yok olabilir)"; fail=1; }
 
 
+# ── db:: parametre baglama — literal icindeki '?' + sayi uyusmazligi ────────────
+# NEDEN: bind_params TUM '?' karakterlerini kor sekilde degistiriyordu; string
+# literali/tanimlayici/yorum icindeki '?' de placeholder saniliyordu:
+#   "SELECT 'Hazir mi?' AS s, ? AS p" + ["DEGER"]
+#   -> SELECT 'Hazir mi'DEGER'' AS s, ? AS p   (literal bozuldu, param kaydi)
+# Icinde soru isareti gecen HERHANGI bir metin SQL literalinde kullanilamiyordu
+# (Turkce cumlelerde cok yaygin; PostgreSQL'de '?' ayrica JSONB operatorudur).
+# Parametre sayisi uyusmazligi da IKI YONDE SESSIZDI: fazla param atiliyordu,
+# eksik param '?' birakiyor ve SQLite onu kendi placeholder'i sayip NULL veriyordu.
+# Sozlesme: '?' yalnizca SQL GOVDESINDE placeholder; sayi uyusmazligi HATA (Go'da
+# db.Query da hata doner). SQL ENJEKSIYONU kontrolu de burada kilitleniyor.
+cat > "$TMP/db.lk" <<'LK'
+$c = db::connect("sqlite://:memory:")
+db::exec($c, "CREATE TABLE k (ad TEXT)")
+db::exec($c, "INSERT INTO k (ad) VALUES (?)", ["ali"])
+$lit = db::query($c, "SELECT 'Hazir mi?' AS s, ? AS p", ["D"])
+$inj = db::query($c, "SELECT * FROM k WHERE ad = ?", ["' OR '1'='1"])
+$hep = db::query($c, "SELECT * FROM k")
+$mis = "yok"
+try { db::query($c, "SELECT ? AS a", ["bir", "fazla"]); $mis = "SESSIZ" } catch ($e) { $mis = "hata" }
+$mis2 = "yok"
+try { db::query($c, "SELECT ? AS a, ? AS b", ["tek"]); $mis2 = "SESSIZ" } catch ($e) { $mis2 = "hata" }
+print($lit[0].s . "|" . $lit[0].p . "|" . count($inj) . "|" . count($hep) . "|" . $mis . "|" . $mis2)
+LK
+db_out=$(timeout 20 "$LK" "$TMP/db.lk" 2>&1 | grep -v '^\[20')
+db_bek='Hazir mi?|D|0|1|hata|hata'
+[ "$db_out" = "$db_bek" ] || { echo "FAIL: db:: parametre baglama: [$db_out] (beklenen $db_bek) — literal icindeki '?' placeholder saniliyor veya sayi uyusmazligi SESSIZ olabilir"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).
