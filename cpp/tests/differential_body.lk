@@ -105,5 +105,24 @@ function run_all() {
   queue::clear("dq"); queue::push("dq", "is1")
   $o .= "T:" . cache::size() . "," . count(cache::keys()) . "," . queue::peek("dq") . ","
              . template::escape("<x>") . "," . validator::check("a@b.co", "email") . ";";
+  # U — BİLEŞİK ATAMA (+= -= *= /= %= .=) her kapsamda. Guard'da YOKTU ve tam bu yüzden
+  # kaçtı: compiler'ın TOP-LEVEL GLOBAL dalı e.op'u yok sayıyordu → "$t += $i" sadece
+  # "$t = $i" derleniyordu. Sonuç: interpreter DOĞRU, VM SESSİZCE YANLIŞ (toplamlar/
+  # string birikimleri bozuk, hata yok). Diğer üç dal (index, local, fonksiyon-içi)
+  # doğruydu — o yüzden web route'ları çalışıyor, top-level script'ler bozuktu.
+  # Dört kapsamı da kilitler: global, local, fonksiyon-içi, dizi-elemanı + döngüde birikim.
+  $ug = 1; $ug += 2; $ug *= 3; $ug -= 1; $ug /= 4; $ug %= 3;      # global zinciri
+  $us = "a"; $us .= "b"; $us .= "c";                              # global string birikimi
+  $ut = 0; $uk = 0;
+  while ($uk < 5) { $ut += $uk; $uk = $uk + 1 }                   # döngüde birikim
+  $ul = [10]; $ul[0] += 5;                                        # dizi elemanı
+  $o .= "U:" . $ug . "," . $us . "," . $ut . "," . $ul[0] . "," . dif_compound() . ";";
   return $o;
+}
+
+# Fonksiyon-içi (local) bileşik atama — global dalıyla aynı sonucu vermeli.
+function dif_compound() {
+  $x = 1; $x += 2; $x *= 3;
+  $y = "p"; $y .= "q";
+  return $x . $y;
 }

@@ -807,6 +807,27 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // Top-level (script global) → STORE_GLOBAL. Route/setup global'leri, app::
         // servisleri ve module referansları burada yaşar; davranış korunur.
         uint16_t ni = add_const(Value(e.name));
+        // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
+        // "$t = $i" olarak derleniyordu (sol operand atılıyor). Diğer üç dal
+        // (index, local, fonksiyon-içi) compound'u doğru yapıyordu; yalnız GLOBAL
+        // yolu bozuktu → interpreter DOĞRU, VM SESSİZCE YANLIŞ (motor ayrışması).
+        // Örn. top-level: $t=0; $t+=5 → VM'de 5 yerine... 5 (doğru sanılır) ama
+        // $t=1; $t+=2 → 2 (3 değil); $s="x"; $s.="y" → "y" ("xy" değil).
+        if (e.op != "=") {
+            uint8_t cur = alloc_temp();
+            emit(OpCode::LOAD_GLOBAL, cur, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+            uint8_t tmp = alloc_temp();
+            static const std::unordered_map<std::string, OpCode> COMPOUND = {
+                {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
+                {"/=", OpCode::DIV}, {"%=", OpCode::MOD}, {".=", OpCode::CONCAT},
+                {"&=", OpCode::BAND}, {"|=", OpCode::BOR}, {"^=", OpCode::BXOR},
+            };
+            auto cit = COMPOUND.find(e.op);
+            if (cit == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
+            emit(cit->second, tmp, cur, val);
+            free_temp(cur); free_temp(val);
+            val = tmp;
+        }
         emit(OpCode::STORE_GLOBAL, val, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
         free_temp(val);
     }

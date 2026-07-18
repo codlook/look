@@ -84,6 +84,37 @@ if [ "$t_code" != "3" ] || [ "$v_code" != "3" ]; then
   fail=1
 fi
 
+# ── TOP-LEVEL bileşik atama (+= -= *= /= %= .=) — GLOBAL kapsam ──────────────────
+# NEDEN AYRI: differential gövdesi run_all() FONKSİYONU içinde çalışır → oradaki
+# bileşik atamalar fonksiyon-local yolunu test eder ve o yol ZATEN doğruydu.
+# Bug compiler'ın TOP-LEVEL GLOBAL dalındaydı: e.op yok sayılıyordu → "$t += $i"
+# sadece "$t = $i" derleniyordu. Sonuç: interpreter DOĞRU, VM SESSİZCE YANLIŞ
+# (toplam/string birikimi bozuk, hata yok). Bu yüzden kontrol TOP-LEVEL olmalı —
+# gövdeye eklemek bug'ı YAKALAMAZDI. (Guard'ın kapsamadığı yüzey = bug'ın yeri.)
+cat > "$TMP/ca.lk" <<'LK'
+$a = "x"
+$a .= "y"
+$n = 1
+$n += 2
+$m = 10
+$m -= 3
+$p = 4
+$p *= 3
+$q = 12
+$q /= 4
+$r = 17
+$r %= 5
+$t = 0
+$i = 0
+while ($i < 5) { $t += $i; $i = $i + 1 }
+print($a . "|" . $n . "|" . $m . "|" . $p . "|" . $q . "|" . $r . "|" . $t)
+LK
+ca_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/ca.lk" 2>&1)
+ca_vm=$("$LK" "$TMP/ca.lk" 2>&1)
+ca_bek="xy|3|7|12|3|2|10"
+[ "$ca_tree" = "$ca_bek" ] || { echo "FAIL: top-level compound tree-walk: [$ca_tree] (beklenen $ca_bek)"; fail=1; }
+[ "$ca_vm"   = "$ca_bek" ] || { echo "FAIL: top-level compound CLI-VM: [$ca_vm] (beklenen $ca_bek) — compiler global dalinda e.op yok sayiliyor olabilir"; fail=1; }
+
 
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
@@ -161,7 +192,7 @@ kill $OC $OU 2>/dev/null; sleep 1; kill -9 $OC $OU 2>/dev/null
 [ "$odr_r" = '{"st":200}' ] || { echo "FAIL: web route'ta http::get bozuk: [$odr_r] (ODR/crash?)"; fail=1; }
 [ "$odr_alive" = "yes" ] || { echo "FAIL: http::get sonrasi SUNUCU COKTU (look::HttpResponse ODR ihlali geri geldi mi?)"; fail=1; }
 if [ $fail -eq 0 ]; then
-  echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 20 kategori + CLI print/exit + fallback-gurultulu)"
+  echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 21 kategori + CLI print/exit + fallback-gurultulu)"
   echo "  $TREE"
   exit 0
 else
