@@ -23,7 +23,7 @@ değil; her iddia bir commit'e bağlı. Tahmin ile ölçüm çeliştiğinde **ö
 | **Hedef kitle** | Küçük ve orta işletmeler (KOBİ) |
 | **Bağımlılık** | **Sıfır** (OpenSSL/sqlite hariç) — MySQL/PostgreSQL/SQLite/RESP2 gömülü, flag yok |
 | **Durum** | **Üretimde çalışıyor.** İki canlı site aynı binary'yi paylaşıyor |
-| **Ana açık** | `http_client` fiber-aware değil; fiber default kararı verilmedi |
+| **Ana açık** | Web asıl hedefi için **yok** (üretimde çalışıyor). Vizyon-ilerlemesi: `go{}`/`select` **ertelendi** (§9 mimari karar); tek latent teknik açık = fiber modunda kanallar fiber-aware değil (default POOL'da devre dışı) |
 
 ---
 
@@ -336,9 +336,12 @@ değerleri yalnız CPU-bound edge-case + doğruluk. **Asıl kazanç: tutarlılı
 **Hedef Go modeli** — Node taklidi değil: goroutine'ler (ucuz yeşil-thread), channel'larla CSP, kod
 düz-blocking yazılır, runtime ucuzca multiplex eder. `async/await` **yok** (colored functions yok).
 
-**Mimari zaten Go-goroutine:** stackful fiber (guard-page), per-fiber local, `wait_readable`
-(epoll-park/resume = **Go netpoller**), channel/pool entegrasyonu, double-enqueue race'ini kapatan
-SchedState makinesi. Substrat ciddi ve doğru — **sadece kapalıydı**.
+**Substrat kısmen Go-goroutine:** stackful fiber (guard-page), per-fiber local, `wait_readable`
+(epoll-park/resume = **Go netpoller**), double-enqueue race'ini kapatan SchedState makinesi,
+**HTTP soket katmanı** fiber-aware (Fix#1/#2 + http_client). Ciddi ve doğru — ama **eksik**:
+⚠️ **kanal primitifi fiber-aware DEĞİL** (`interpreter.cpp` `cv.wait` thread bloklar) ve per-fiber
+DB izolasyonu yok. Yani "substrat tam" değil, "I/O katmanı fiber-aware, kanal+DB katmanı değil".
+Bu, gerçek go-substratının ilk adımı ve go{} maliyetinin bir parçası (bkz. karar, aşağı).
 
 | İş | Durum | Kanıt / not |
 |---|---|---|
