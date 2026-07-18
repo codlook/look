@@ -207,12 +207,13 @@ okur → min(fiziksel, cgroup)×4. **Naive kullanıcı tam performansı otomatik
 
 ---
 
-## 7. Bug avı — kapatılan 17 bug
+## 7. Bug avı — kapatılan 18 bug
 
 🔴 = üretimde veri/erişim kaybı · 🟠 = yanlış davranış · 🟡 = sessiz yavaşlama
 
 | Bug | Sınıf | Commit |
 |---|---|---|
+| **Compiler: TOP-LEVEL bileşik atama sol operandı SESSİZCE atıyordu** — `$t=1; $t+=2` → VM'de **2** (3 değil), `$s="x"; $s.="y"` → **"y"** ("xy" değil); interpreter doğruydu → **sessiz motor ayrışması**. Yalnız global dal bozuktu (fonksiyon-local doğruydu → web route'ları etkilenmedi, bu yüzden yıllarca görünmedi) | 🔴 veri | `3892f5e` |
 | **Parser: `$x = $x . fn(...)` parse HATASI** — `.` concat/üye-erişim ikililiği; `$out . html::escape(...)` → `$out.html` üye erişimi sanılıp `::`'de patlıyordu; idiomatik string-building bozuktu (analist yakaladı) | 🟠 parse | `be6b72b` |
 | **ODR: `look::HttpResponse` iki farklı tip** — web'de `http::get` **sunucuyu çökertiyordu** | 🔴 crash | `d2df9d3` |
 | `array::sort()` comparator'ı VM route'unda **sessizce yok sayılıyordu** — canlı yanlış sıralama | 🔴 veri | `6a58a8a` |
@@ -480,7 +481,7 @@ bash cpp/tests/parallel_db_test.sh  <lk-fcgi>        # tek istek YETMEZ
 
 | Guard | Kapsam |
 |---|---|
-| `differential_test.sh` | **3 motor × 20 kategori (A–T)** — tree-walk == CLI-VM == web-VM **birebir** |
+| `differential_test.sh` | **3 motor × 21 kategori (A–U)** — tree-walk == CLI-VM == web-VM **birebir** |
 | ↳ CLI yüzeyi | `print`/`write` **bayt-bayt** (od) + `exit(3)` kodu |
 | ↳ fallback gürültüsü | ERROR + "VM BUG"; `LOOK_VM_STRICT=1` maskelemiyor |
 | ↳ izolasyon | thread_local dispatch kopyası istekler arası **sızmamalı** (`s=1` ×5) |
