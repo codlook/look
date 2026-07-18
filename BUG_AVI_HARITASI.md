@@ -313,8 +313,6 @@ bozulma yalnızca çalışma ağacındaydı. Guard'ın kendisi de av alanıdır.
 | 3 | 🟠 **`pad_*` bayt sayıyor, kod noktası değil** — modülün geri kalanı (`len`/`substr`/`upper`/`reverse`) kod noktası farkındalıklı; `pad` değil → görünen genişlik yanlış | `pad_left("ş",3,"x")` = `"xş"`, `len()` = **2** (beklenen 3) | S2 |
 | 4 | 🟠 **`upper`/`lower` "global" iddiası kodda karşılanmıyor** — kural doğru şekilde locale-bağımsız (Türkçe i↔İ yok ✓) ama TABLO yalnızca ASCII + Latin-1 + 3 Türkçe kod noktası (`ı ğ ş`). Kiril, Yunan ve Latin Ext-A'nın kalan ~125 karakteri sessizce dönüşmeden geçiyor | `upper("привет")`=`привет` (değişmiyor), `upper("ελλάδα")`=`ελλάδα`, `upper("łódź")`=**`łÓDź`** (yarım dönüşüm) | S2 |
 
-</details>
-
 Not: 4 numara felsefe açısından önemli — `stdlib.cpp:209` yorumu "dil globaldir" diyor,
 yani kod kendi beyan ettiği sözleşmeyi tutmuyor. Kural global, tablo Türkiye'ye özel.
 
