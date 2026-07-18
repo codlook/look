@@ -248,6 +248,29 @@ if command -v iconv >/dev/null 2>&1; then
 fi
 
 
+# ── string::upper/lower — "global" iddiasi + Turkce locale OLMAMASI ─────────────
+# IKI YONLU KILIT:
+# 1) TURKCE LOCALE YOK (dil global): upper("i") = "I" olmali, "İ" DEGIL.
+#    ı → I, İ → i (standart Unicode). Bu bilincli bir karar — Latin Ext-A'nin
+#    genel cift/tek kurali ı(0x131) -> İ(0x130) verir, yani kural yanlis sirayla
+#    yazilirsa Turkce locale SESSIZCE geri gelir. Bu kontrol onu yakalar.
+# 2) KAPSAM gercekten global mi: eskiden tablo ASCII + Latin-1 + 3 Turkce kod
+#    noktasindan ibaretti; Kiril/Yunan/Latin Ext-A sessizce donusmeden geciyordu
+#    (upper("привет") = "привет", upper("łódź") = "łÓDź" — YARIM donusum).
+cat > "$TMP/case.lk" <<'LK'
+use string
+print(string::upper("i") . string::lower("I") . string::upper("ı") . string::lower("İ") . "|" .
+      string::upper("çğöşü") . "|" . string::upper("привет") . "|" . string::lower("ПРИВЕТ") . "|" .
+      string::upper("ελλάδα") . "|" . string::upper("łódź") . "|" . string::upper("čeština") . "|" .
+      string::lower(string::upper("привет")))
+LK
+cs_bek='IiIi|ÇĞÖŞÜ|ПРИВЕТ|привет|ΕΛΛΆΔΑ|ŁÓDŹ|ČEŠTINA|привет'
+cs_tree=$(timeout 10 env LOOK_CLI_VM=0 "$LK" "$TMP/case.lk" 2>&1)
+cs_vm=$(timeout 10 "$LK" "$TMP/case.lk" 2>&1)
+[ "$cs_tree" = "$cs_bek" ] || { echo "FAIL: string::upper/lower tree-walk: [$cs_tree] (beklenen $cs_bek) — Turkce locale geri gelmis veya kapsam eksik olabilir"; fail=1; }
+[ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (beklenen $cs_bek)"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

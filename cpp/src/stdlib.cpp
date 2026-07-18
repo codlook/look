@@ -208,24 +208,65 @@ static std::string utf8_encode(const std::vector<uint32_t>& cps) {
 // Codepoint büyük/küçük harf — locale-BAĞIMSIZ (klasik diller gibi): i↔I.
 // Türkçe'ye özgü i↔İ / ı↔I locale kuralı YOK (dil globaldir). Türkçe harfler
 // yine standart Unicode karşılığına gider: ç↔Ç, ğ↔Ğ, ö↔Ö, ş↔Ş, ü↔Ü, ı→I, İ→i.
+// KAPSAM: eskiden yalnizca ASCII + Latin-1 + 3 Turkce kod noktasi (ı ğ ş) vardi.
+// Yani KURAL globaldi ama TABLO Turkiye'ye ozeldi: Kiril, Yunan ve Latin Ext-A'nin
+// kalan ~125 karakteri sessizce donusmeden geciyordu —
+//   upper("привет") = "привет"  (hic degismiyor)
+//   upper("ελλάδα") = "ελλάδα"
+//   upper("łódź")   = "łÓDź"    (YARIM donusum: o,d dondu; ł,ź donmedi)
+// Hata yok, uyari yok: sessiz yanlis/karisik metin. Asagidaki araliklar eklendi.
+//
+// DIKKAT: Latin Ext-A'nin genel cift/tek kurali ı(0x131) -> İ(0x130) verir, yani
+// TURKCE locale davranisini geri getirir. Turkce istisnalari bu yuzden kuraldan
+// ONCE ele aliniyor (dil global kalmali: ı → I, İ → i).
 static uint32_t cp_upper(uint32_t c) {
     if (c >= 'a' && c <= 'z') return c - 32;   // ASCII: i → I
     if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return c - 32; // Latin-1 (à→À, ç→Ç, ö→Ö, ü→Ü…)
     switch (c) {
-        case 0x131: return 'I';   // ı → I (standart Unicode)
+        case 0x131: return 'I';   // ı → I (standart Unicode — Turkce'de İ olurdu)
         case 0x11F: return 0x11E; // ğ → Ğ
         case 0x15F: return 0x15E; // ş → Ş
+        case 0x17F: return 'S';   // ſ (uzun s) → S
+        case 0x3C2: return 0x3A3; // ς (son sigma) → Σ
+        case 0x3AC: return 0x386; // ά → Ά
+        case 0x3CC: return 0x38C; // ό → Ό
     }
+    // Latin Extended-A (0x100–0x17F): cogunlukla ikili eslesme.
+    // 0x100–0x137 ve 0x14A–0x177: CIFT = buyuk, TEK = kucuk
+    // 0x139–0x148 ve 0x179–0x17E: TEK = buyuk, CIFT = kucuk
+    if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
+        return (c % 2) ? c - 1 : c;
+    if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E))
+        return (c % 2 == 0) ? c - 1 : c;
+    // Yunan: α–ρ, σ–ϋ  (0x3B1–0x3C1, 0x3C3–0x3CB)
+    if ((c >= 0x3B1 && c <= 0x3C1) || (c >= 0x3C3 && c <= 0x3CB)) return c - 0x20;
+    if (c >= 0x3AD && c <= 0x3AF) return c - 0x25; // έ ή ί → Έ Ή Ί
+    if (c >= 0x3CD && c <= 0x3CE) return c - 0x3F; // ύ ώ → Ύ Ώ
+    // Kiril: а–я (0x430–0x44F), ѐ–џ (0x450–0x45F)
+    if (c >= 0x430 && c <= 0x44F) return c - 0x20;
+    if (c >= 0x450 && c <= 0x45F) return c - 0x50;
     return c;
 }
 static uint32_t cp_lower(uint32_t c) {
     if (c >= 'A' && c <= 'Z') return c + 32;   // ASCII: I → i
     if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32; // Latin-1 (À→à, Ç→ç, Ö→ö, Ü→ü…)
     switch (c) {
-        case 0x130: return 'i';   // İ → i (standart Unicode)
+        case 0x130: return 'i';   // İ → i (standart Unicode — Turkce'de ı olurdu)
         case 0x11E: return 0x11F; // Ğ → ğ
         case 0x15E: return 0x15F; // Ş → ş
+        case 0x178: return 0xFF;  // Ÿ → ÿ
+        case 0x386: return 0x3AC; // Ά → ά
+        case 0x38C: return 0x3CC; // Ό → ό
     }
+    if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
+        return (c % 2 == 0) ? c + 1 : c;
+    if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E))
+        return (c % 2) ? c + 1 : c;
+    if ((c >= 0x391 && c <= 0x3A1) || (c >= 0x3A3 && c <= 0x3AB)) return c + 0x20;
+    if (c >= 0x388 && c <= 0x38A) return c + 0x25; // Έ Ή Ί → έ ή ί
+    if (c >= 0x38E && c <= 0x38F) return c + 0x3F; // Ύ Ώ → ύ ώ
+    if (c >= 0x410 && c <= 0x42F) return c + 0x20;
+    if (c >= 0x400 && c <= 0x40F) return c + 0x50;
     return c;
 }
 
