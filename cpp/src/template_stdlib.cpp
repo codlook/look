@@ -41,14 +41,12 @@ std::string TemplateEngine::html_escape(const std::string& s) {
 std::string TemplateEngine::to_str(const Value& v) {
     switch (v.type()) {
         case Value::INT:    return std::to_string(v.as_int());
-        case Value::FLOAT: {
-            std::ostringstream oss;
-            double d = v.as_float();
-            long long li = (long long)d;
-            if ((double)li == d) oss << li;
-            else                 oss << d;
-            return oss.str();
-        }
+        // BUG FIX: buradaki elle-yazılmış float biçimlemesi dilden SAPIYORDU. Tam-sayı
+        // olmayan büyük değerlerde `oss << d` varsayılan 6 anlamlı basamağa düşüp
+        // BİLİMSEL gösterime geçiyordu: 1234567.5 → "1.23457e+06" (dil: "1234567.5").
+        // Yani şablonda basılan fiyat/toplam hem okunamaz hem YANLIŞ (1.23457e+06 =
+        // 1234570). Dilin biçimleyicisine delege et — tek kaynak, ayrışma imkânsız.
+        case Value::FLOAT: return look_format_double(v.as_float());
         case Value::BOOL:   return v.as_bool() ? "true" : "false";
         case Value::STRING: return v.as_string();
         default:            return "";
@@ -56,15 +54,13 @@ std::string TemplateEngine::to_str(const Value& v) {
 }
 
 bool TemplateEngine::is_truthy(const Value& v) {
-    switch (v.type()) {
-        case Value::INT:    return v.as_int() != 0;
-        case Value::FLOAT:  return v.as_float() != 0.0;
-        case Value::STRING: return !v.as_string().empty();
-        case Value::BOOL:   return v.as_bool();
-        case Value::ARRAY:  return v.as_array() && !v.as_array()->empty();
-        case Value::NONE:   return false;
-        default:            return true;
-    }
+    // BUG FIX: burada dilin truthiness'i KOPYALANMIŞTI ve bir kural atlanmıştı —
+    // STRING dalı `!empty()` diyordu, oysa dil (Value::is_truthy) `!empty() && != "0"`
+    // uygular. Sonuç: `{#if $x}` ile `if ($x)` string "0" için ZIT karar veriyordu
+    // (DB'den string dönen stock="0" / active="0" alanları kodda falsy, şablonda truthy
+    // → sessizce yanlış dal render ediliyordu). Kopya semantik = kaçınılmaz ayrışma;
+    // tek kaynağa delege et ki dilin truthiness'i değişirse şablon otomatik hizalansın.
+    return v.is_truthy();
 }
 
 // Resolve "varname", "varname.field", "varname.field.sub"

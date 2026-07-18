@@ -115,6 +115,33 @@ ca_bek="xy|3|7|12|3|2|10"
 [ "$ca_tree" = "$ca_bek" ] || { echo "FAIL: top-level compound tree-walk: [$ca_tree] (beklenen $ca_bek)"; fail=1; }
 [ "$ca_vm"   = "$ca_bek" ] || { echo "FAIL: top-level compound CLI-VM: [$ca_vm] (beklenen $ca_bek) — compiler global dalinda e.op yok sayiliyor olabilir"; fail=1; }
 
+# ── TEMPLATE motoru: dil semantigiyle AYNI olmali ────────────────────────────────
+# NEDEN: sablon motoru truthiness'i ve float bicimlemesini DILDEN KOPYALAMISTI ve
+# ikisinde de sapmisti:
+#   {#if "0"}      → sablon TRUE, dil FALSE  (DB'den string "0" gelen alanlar!)
+#   {$1234567.5}   → sablon "1.23457e+06" (bilimsel + HASSASIYET KAYBI), dil "1234567.5"
+# Ikisi de SESSIZ: hata yok, yalnizca yanlis dal / yanlis sayi. Sablon motorunun
+# guard'i HIC YOKTU — bu yuzden kacti. Artik dile delege ediyor; bu kontrol kilitler.
+cat > "$TMP/tpl.html" <<'TPLEOF'
+if0:{#if s0}T{#else}F{/if} ifs:{#if ss}T{#else}F{/if} f:{$big} esc:{$xss}
+TPLEOF
+cat > "$TMP/tpl.lk" <<'TPLLK'
+use template
+function b($v) { if ($v) { return "T" } return "F" }
+$s0 = "0"
+$ss = "x"
+$big = 1234567.5
+$xss = "<b>&'''\"" 
+print("KOD:if0:" . b($s0) . " ifs:" . b($ss) . " f:" . $big)
+print(template::render("tpl", ["s0"=>$s0,"ss"=>$ss,"big"=>$big,"xss"=>$xss]))
+TPLLK
+tpl_out=$(cd "$TMP" && LOOK_CLI_VM=0 "$LK" tpl.lk 2>&1)
+tpl_vm=$(cd "$TMP" && "$LK" tpl.lk 2>&1)
+echo "$tpl_out" | grep -q 'KOD:if0:F ifs:T f:1234567.5' || { echo "FAIL: template guard — KOD satiri beklenmedik: [$tpl_out]"; fail=1; }
+echo "$tpl_out" | grep -q 'if0:F ifs:T f:1234567.5' || { echo "FAIL: TEMPLATE dil semantiginden SAPIYOR (truthiness \"0\" veya float formati): [$tpl_out]"; fail=1; }
+echo "$tpl_out" | grep -q 'esc:&lt;b&gt;&amp;' || { echo "FAIL: template HTML escaping bozuk (XSS riski): [$tpl_out]"; fail=1; }
+[ "$tpl_out" = "$tpl_vm" ] || { echo "FAIL: template tree-walk != CLI-VM"; fail=1; }
+
 
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
