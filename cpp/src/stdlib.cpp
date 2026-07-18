@@ -276,6 +276,22 @@ static Module make_string() {
         std::string s     = args[0].to_string();
         std::string from  = args[1].to_string();
         std::string to    = args[2].to_string();
+        // BOS arama dizesi — Go semantigi (strings.Replace(s, "", new, -1)):
+        // metnin BASINDA ve her UTF-8 dizisinden SONRA eslesir; k kod noktasi icin
+        // k+1 ekleme. "abc" + "X" -> "XaXbXcX". Sinirli ve tanimli.
+        // ESKI HATA: asagidaki dongu bos 'from' ile SONSUZA kadar donuyordu —
+        // s.find("", pos) her zaman pos'u dondurur, her turda araya 'to' eklenir,
+        // string surekli buyur. Sonsuz dongu + SINIRSIZ BELLEK. Web'de
+        // string::replace($metin, $kullaniciGirdisi, $x) cagrisinda kullanici bos
+        // string gonderirse worker kilitleniyordu: tek istekle DoS.
+        if (from.empty()) {
+            auto cps = utf8_decode(s);
+            std::string out;
+            out.reserve(s.size() + to.size() * (cps.size() + 1));
+            out += to;
+            for (uint32_t cp : cps) { utf8_encode_cp(cp, out); out += to; }
+            return Value(out);
+        }
         size_t pos = 0;
         while ((pos = s.find(from, pos)) != std::string::npos) {
             s.replace(pos, from.size(), to);

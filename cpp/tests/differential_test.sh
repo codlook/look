@@ -195,6 +195,30 @@ ik_bek='{"0":1,"1":2,"2":3,"k":"X"}|X|2|{"k":"X"}|[1,"X",3]|null|2'
 [ "$ik_vm"   = "$ik_bek" ] || { echo "FAIL: \$arr[str] CLI-VM: [$ik_vm] (beklenen $ik_bek) — liste assoc'a cevrilirken elemanlar korunmuyor olabilir"; fail=1; }
 
 
+# ── string::replace — BOS arama dizesi ASIYORDU (DoS) ───────────────────────────
+# NEDEN: s.find("", pos) her zaman pos'u dondurur -> dongu her turda araya 'to'
+# ekliyor, string surekli buyuyor: SONSUZ DONGU + SINIRSIZ BELLEK. Web'de
+# string::replace($metin, $kullaniciGirdisi, $x) cagrisinda kullanici bos string
+# gonderirse worker sonsuza kadar kilitleniyordu — tek istekle DoS.
+# Sozlesme: Go (strings.Replace(s,"",new,-1)) — bos arama dizesi metnin BASINDA
+# ve her UTF-8 dizisinden SONRA eslesir, k kod noktasi icin k+1 ekleme.
+# TIMEOUT ile kosuluyor: asilma regresyonu FAIL olarak gorunsun (sessizce
+# bekleyip CI'yi kilitlemesin).
+cat > "$TMP/rep.lk" <<'LK'
+use string
+print(string::replace("abc", "", "X") . "|" . string::replace("abc", "", "") . "|" .
+      string::replace("şğ", "", "-") . "|" . string::replace("", "", "X") . "|" .
+      string::replace("aXbXc", "X", "-"))
+LK
+rp_bek='XaXbXcX|abc|-ş-ğ-|X|a-b-c'
+rp_tree=$(timeout 10 env LOOK_CLI_VM=0 "$LK" "$TMP/rep.lk" 2>&1); rp_rc=$?
+[ $rp_rc -eq 124 ] && { echo "FAIL: string::replace tree-walk ASILDI (bos arama dizesi sonsuz dongu)"; fail=1; }
+rp_vm=$(timeout 10 "$LK" "$TMP/rep.lk" 2>&1); rp_rc2=$?
+[ $rp_rc2 -eq 124 ] && { echo "FAIL: string::replace CLI-VM ASILDI (bos arama dizesi sonsuz dongu)"; fail=1; }
+[ $rp_rc -eq 124 ] || [ "$rp_tree" = "$rp_bek" ] || { echo "FAIL: string::replace tree-walk: [$rp_tree] (beklenen $rp_bek)"; fail=1; }
+[ $rp_rc2 -eq 124 ] || [ "$rp_vm" = "$rp_bek" ] || { echo "FAIL: string::replace CLI-VM: [$rp_vm] (beklenen $rp_bek)"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

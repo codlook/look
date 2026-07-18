@@ -1,0 +1,5 @@
+# Shell scriptleri Linux'te calisir — Windows checkout'unda bile LF kalmali.
+# core.autocrlf=true CRLF yazarsa bash $'{' diye patlar ve GUARD SESSIZCE
+# CALISMAZ (koruma yok saniliyor ama yok).
+*.sh text eol=lf
+*.lk text eol=lf
