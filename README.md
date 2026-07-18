@@ -38,13 +38,51 @@ route("404", fn() => response::error(404, "Not found"))
 
 - 🪶 **Simple to deploy** — a single binary. Copy it to a VPS, systemd, Plesk or
   XAMPP and run — no `composer`/`npm` install step, no package tree.
-- ⚡ **Fast** — FastCGI warm start; **~9,800 req/s** direct port, **28 MB RAM steady
-  over 1M+ requests** (no leak).
+- ⚡ **Fast** — **~9,800 req/s** on a direct port. On a real DB-bound workload
+  (QR-menu JOIN over 50k rows, 1 CPU / 1 GB, best-of-3): **LOOK 2,837 req/s vs
+  PHP 8.3 + JIT + FPM 2,184** — and **9–29 MB RAM against PHP's 43–47 MB**
+  (3–5× less), with the lowest CPU per request. Numbers and method in
+  [PROJE_DURUMU.md](PROJE_DURUMU.md) §5.
 - 🔋 **Batteries included** — MySQL / PostgreSQL / SQLite, sessions, JWT, cache,
   queue, background jobs, an embedded **SMTP + IMAP** mail server, WebSocket & SSE —
   all built in.
 - 🧩 **Ergonomic** — `fn() => …` arrows, `$row.col` access, `module::method`,
   no required semicolons.
+
+## See it running
+
+Five real applications, all served by a **single** LOOK process, each with its own
+database — **[test.codlook.com](https://test.codlook.com)**:
+
+| | |
+|---|---|
+| **/blog** | Posts, admin panel, categories, cover-image upload |
+| **/qrmenu** | Visual restaurant menu **+ REST API + a route listing page** |
+| **/chat** | Nickname + emoji, near-instant messaging |
+| **/products** | Products, categories, brands, variants, extra attributes — create & edit |
+| **/ai** | Claude API with in-memory conversation (deliberately **no** database) |
+
+They are laid out the way a real project should be — logic separate from markup:
+
+```
+index.lk          # router: config + routes; each route renders a view
+config/app.json   # settings (DSNs, limits) — outside the code
+views/layout.html # base layout  {#block content}
+views/blog/…      # one template per page
+```
+
+```lk
+route("GET", "/blog", function() use ($db) {
+    $posts = db::query($db, "SELECT slug,title FROM posts ORDER BY id DESC", [])
+    response::html(template::render("views/blog/index", ["posts" => $posts]))
+})
+```
+```html
+{#extends "views/layout"}
+{#block content}
+  {#each posts as p}<h2><a href="/blog/{$p.slug}">{$p.title}</a></h2>{#empty}No posts.{/each}
+{/block}
+```
 
 ## Features
 
@@ -60,6 +98,18 @@ route("404", fn() => response::error(404, "Not found"))
 | Rate limiting (token bucket, per-IP + global), file sandbox | ✅ |
 | Test runner + REPL — `lk test` · `lk repl` · `lk --check` (parse-only) | ✅ |
 
+## Known limits (worth knowing up front)
+
+- **One entry file.** There is no project-local `include`/`require`; `use` resolves
+  built-ins and installed modules (`~/.look/modules`), not your own files. So your
+  routes live in one `.lk` file — but **views belong in `views/*.html`** via the
+  template engine, and settings in a config file, which is what keeps it readable.
+- **`request::file` (multipart) works under FastCGI, not `--mode http`.** In
+  `--mode http` send uploads as base64 in a JSON body instead.
+- **Persistent-process model.** Unlike PHP-FPM there is no per-request reset: a
+  segfault takes the worker down and global state is shared, so it must be
+  thread-safe. That is the trade for the speed and the low memory.
+
 ## Build
 
 ```bash
@@ -68,8 +118,19 @@ cmake --build cpp/build -j
 # → lk (CLI) · lk-fcgi (FastCGI/HTTP server) · lk-cgi (CGI)
 ```
 
-Requires a C++23 compiler and CMake 3.20+. OpenSSL is used for TLS; the release
-binaries bundle it statically, so the result is a single self-contained binary.
+Requires a C++23 compiler and CMake 3.20+.
+
+Two things that will otherwise cost you an afternoon:
+
+- **Target names are not the binary names.** To build one thing, use
+  `--target look` (→ `lk`), `--target look-fcgi` (→ `lk-fcgi`),
+  `--target look-cgi` (→ `lk-cgi`). `--target lk` fails with
+  *“No rule to make target”*.
+- **Static OpenSSL is the default** (`LOOK_STATIC_SSL=ON`) so the release binary is
+  self-contained. That needs `libssl.a`/`libcrypto.a`, which AlmaLinux/RHEL
+  `openssl-devel` does **not** ship — a fresh configure there fails in
+  `find_package(OpenSSL)`. Either install static OpenSSL, or configure with
+  `-DLOOK_STATIC_SSL=OFF` for a dynamically linked build.
 
 ## Install (prebuilt)
 
