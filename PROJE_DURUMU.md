@@ -469,11 +469,12 @@ değil, **production'ın kullandığı MySQL'de** de doğrulandı.
 | ✅ | ~~`http_client` fiber-aware~~ | **BİTTİ** (`d5919ce`) — tek thread'le upstream tavanına ulaştı, 3.6× throughput |
 | ✅ | ~~Fiber default kararı~~ | **VERİLDİ** — default POOL, FIBER yük-tipine göre opt-in (§9); hızlı route'ta ceza sanılan 2× değil ~%15 çıktı |
 | ✅ | ~~A2 inline cache~~ | **BİTTİ** (`c524b32`) — global-ağır 2.3×, güvenli (nested-run doğrulandı) |
-| **1** | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
-| 2 | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) — **tasarım onayı gerekir** |
-| 3 | DB katmanı: sorgu cache + prepared reuse | **Gerçek** web-throughput buradan gelir (motor dışı) |
-| 4 | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel) |
-| 5 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
+| **1** | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) — **tasarım onayı + önce B8 cross-thread Value güvenliği gerekir** |
+| 2 | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
+| 3 | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel) |
+| 4 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
+| ❌ | ~~DB prepared-statement reuse~~ | **İncelendi ve REDDEDİLDİ (2026-07-18):** hot yol `query()` text protokolü kullanıyor (prepared değil); prepared yalnız parse/plan'ı kurtarır, darboğaz MySQL JOIN execution (~6900/s) → dokunmuyor. Bkz. §8 |
+| ⏸ | DB otomatik result cache | App sorumluluğu (`cache::` modülü var); otomatik = bayat-veri/veri-bütünlüğü riski |
 | — | A4 / B8 | ertelendi (B8 güvenli değil) |
 
 **Kalan builtin boşluğu (~16, düşük öncelik):** `jobs::` (11), `queue::` (3), `template::` (2),
