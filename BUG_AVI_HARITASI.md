@@ -286,7 +286,36 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-18 | **`array::` uçları (P1.2)** | 3f düşmanca girdi + 3a differential | **1 bug DÜZELTİLDİ** (S9/S14) — `array::set` sayısal dizide veriyi yok ediyordu, geçerli indekste bile: `set([1,2,3],1,"X")` = `{"1":"X"}`. `slice`/`chunk`/`zip`/`flatten`/`unique`/`reverse` uçlarda temiz. **+6 bulgu AÇIK** (aşağıdaki S3 kümesi) |
 | 07-18 | Guard'ın kendisi | 3b pozitif kontrol | **1 kırılganlık** (S14) — `differential_test.sh`'a **göreli** binary yolu verilirse TEMPLATE bölümü `cd $TMP` sonrası binary'yi bulamayıp sahte FAIL üretiyor. Mutlak yol zorunlu; script bunu doğrulamıyor |
 | 07-19 | **`string::` (22 fn, P1.3)** | 3f düşmanca girdi + Unicode ekseni | **4 bulgu AÇIK** (aşağıda 5b). Motor ayrışması YOK (hepsi C++ builtin). `substr`/`split`/`index_of`/`repeat`/`contains`/`trim` uçlarda temiz |
-| — | `request::` çapraz-mod, `session::`, `jobs::`, `db::` | — | **SIRADA** |
+| 07-19 | **`request::` (19 fn, P1.4)** | 3f düşmanca HTTP girdisi + 3e çapraz-mod | **1 GÜVENLİK bug** (5c) + 1 minör. `header()` büyük/küçük harf duyarsız ✓, URL çözme (Türkçe/`%20`) ✓, boş `""` ↔ eksik `null` ayrımı ✓, `all()`/`method`/`path`/POST form/JSON ✓ |
+| — | `session::`, `cookie::`, `jobs::`, `db::` | — | **SIRADA** |
+
+### 5c. 🔴 GÜVENLİK — `request::ip()` sahtelenebilir (`--mode http`)
+
+`http_main.cpp:675` `ctx.remote_addr`'ı **yalnızca** `X-Forwarded-For` başlığından dolduruyor;
+`http_server.cpp`'nin doğru şekilde doldurduğu gerçek peer IP'ye (`req.remote_addr`) hiç
+düşmüyor ve **güvenilir-proxy kontrolü yok**:
+
+| istek | `request::ip()` |
+|---|---|
+| başlık yok | `''` — gerçek peer yok sayılıyor |
+| `X-Forwarded-For: 9.9.9.9` | `'9.9.9.9'` — **istemci kendi IP'sini seçiyor** |
+| `X-Forwarded-For: 1.1.1.1, 2.2.2.2` | zincir ayrıştırılmıyor |
+| `X-Forwarded-For: not-an-ip; DROP TABLE` | çöp aynen geçiyor (log/sorgu/ban listesi) |
+
+**Etki:** IP'ye dayalı yetkilendirme, ban listesi ve denetim kaydı güvenilmez. Uygulama
+`request::ip()` ile rate-limit yapıyorsa saldırgan her istekte IP değiştirip sınırı aşar.
+
+**Doğrusu AYNI DOSYADA zaten var** (`http_main.cpp:727–737`, rate limiter yolu):
+`req.remote_addr`'dan başla → yalnız `is_trusted_proxy()` ise XFF/X-Real-IP'ye bak →
+zinciri virgülden böl. Mantık kopyalanmış ve kopya sapmış (**S2**). Aynı kusur WS/SSE
+yollarında da var (`1358`, `1388`).
+
+**Kapsam:** Üretim FastCGI modunda (`fcgi_main.cpp:562` → `REMOTE_ADDR`) — canlı siteler
+**etkilenmiyor**. Açık `--mode http` ve WS/SSE yollarında.
+
+Minör (🟡, düzeltilmedi): `request::get("k", "varsayılan")` ikinci argümanı sessizce yok
+sayıyor. Belgelenmemiş ve hiçbir örnekte kullanılmıyor, yani vaat edilmiş özellik değil —
+ama `check_args` ile arity dayatan diğer builtin'lerden farklı davranıyor.
 
 ### 5b. `string::` bulguları — **4'ü de KAPANDI** (24–26. bug)
 
