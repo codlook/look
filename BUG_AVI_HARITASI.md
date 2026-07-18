@@ -383,12 +383,31 @@ index okuma + index atama dalları. Sözleşme kararı verilmeden dokunulmayacak
 
 ## 6. Bug bulunca akış (zorunlu adımlar)
 
+0. **ARACI DOĞRULA** (altın kural 7 — ölçümden ÖNCE, her seferinde)
+   - **Binary taze mi?** Hedef bazlı bak: `lk` ≠ `lk-fcgi`. `lk` hedefi `http_main.cpp`
+     içermez; global "en yeni kaynak" karşılaştırması yanlış alarm verir.
+     Derleyici konteynerde kurulu değilse `cmake --build` **sessizce hiçbir şey yapmaz**
+     ve eski binary'yi ölçersin.
+   - **Test girdisi gerçekten yazdığın şey mi?** Kabuk `\\`'yi yutar (heredoc, `printf`).
+     Şüphelenirsen `od -c` ile dosyanın baytlarına bak; ters bölü/tırnak içeren
+     probe'ları `Write` ile oluştur, kabuktan geçirme.
+   - **Guard gerçekten koşuyor mu?** CRLF'e dönmüş `.sh` bash'te çalışmaz ve PASS/FAIL
+     hiç basmadan düşer — "PASS görmedim" ile "FAIL görmedim" aynı şey değildir.
+     Çıktıda `PASS:` satırını **gördüğünü** doğrula. Script'e **mutlak** binary yolu ver
+     (bazı bölümler `cd $TMP` yapar, göreli yol orada kırılır).
 1. **İzole et** — en küçük tekrar üreten örnek, gerçek binary'de doğrula
 2. **Sınıfını belirle** (bölüm 2) → **kardeşlerini ara** (3c)
-3. **Kök nedeni kaynakta göster** — semptomu değil, satırı
+3. **Kök nedeni kaynakta göster** — semptomu değil, satırı.
+   Kod doğru görünüyorsa **0. adıma dön**: büyük ihtimalle aracın yanıltıyor
+   (`json::encode` böyle boşuna suçlandı).
 4. **Düzelt** — mümkünse tek kaynağa delege et (S2'yi önler)
-5. **Guard ekle** — doğru yere (3a notu) + **pozitif kontrol** (3b)
+5. **Guard ekle** — doğru yere (3a notu) + **pozitif kontrol** (3b).
+   Guard'ın kendisi de yanılır: kontrolün *yapıyı* mı yoksa yalnız *metni* mi
+   aradığına dikkat et (kodlanmış değer içindeki `HttpOnly` kelimesi zararsızdır,
+   `; HttpOnly` ise özniteliktir — ilk yazdığım kontrol tam bunu karıştırmıştı).
 6. **Tam guard koş** — differential + parallel_db, ikisi de PASS
 7. **Commit** — Türkçe, `Fix:` öneki, kök neden + neden kaçtığı + doğrulama. **Yalnız `Codlook` kimliği**
-8. **Deploy** — yedekli + otomatik geri-alma, canlı doğrula
-9. **Kaydet** — PROJE_DURUMU §7 bug tablosu + bu dosyanın §5 av defteri
+8. **Deploy** — yedekli + otomatik geri-alma, canlı doğrula.
+   *(Motor/stdlib düzeltmeleri canlı iki siteyi birden etkiler — binary paylaşılıyor.
+   Deploy edilmediyse commit'te belirt: "deploy EDİLMEDİ" yazmak, sessiz bırakmaktan iyidir.)*
+9. **Kaydet** — bu dosyanın §5 av defteri (`PROJE_DURUMU.md` artık **yerel**, repoda değil)
