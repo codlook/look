@@ -219,6 +219,35 @@ rp_vm=$(timeout 10 "$LK" "$TMP/rep.lk" 2>&1); rp_rc2=$?
 [ $rp_rc2 -eq 124 ] || [ "$rp_vm" = "$rp_bek" ] || { echo "FAIL: string::replace CLI-VM: [$rp_vm] (beklenen $rp_bek)"; fail=1; }
 
 
+# ── string::pad_* — GECERSIZ UTF-8 uretiyordu + bayt/kod-noktasi tutarsizligi ───
+# NEDEN (uc bug tek kokten):
+#   1) Uzun metni KIRPIYORDU: pad_left("abcdef",3,"0") = "def" (sessiz veri kaybi;
+#      PHP str_pad / Python ljust / Go fmt kirpmaz — genislik ASGARI'dir)
+#   2) Kirpma BAYT tabanliydi -> cok baytli karakteri ortadan boluyordu:
+#      pad_left("şğü",3,"x") = 0x9F 0xC3 0xBC — oksuz devam baytiyla baslayan
+#      GECERSIZ UTF-8. Bozuk metin JSON'a/DB'ye/HTTP yanitina aynen gidiyordu.
+#   3) Genislik BAYT sayiyordu, oysa len/substr/upper/reverse kod noktasi sayar:
+#      pad_left("ş",3,"x") = "xş", gorunen uzunluk 2 (beklenen 3) — modul kendi
+#      icinde tutarsizdi.
+# Sozlesme: Go fmt "%Ns" — genislik ASGARI ve KOD NOKTASI. Kirpma yok.
+# Guard cikti gecerli UTF-8 mi diye de bakar (iconv) — 2. bugin dogrudan kilidi.
+cat > "$TMP/pad.lk" <<'LK'
+use string
+print(string::pad_left("ş",3,"x") . "|" . string::len(string::pad_left("ş",3,"x")) . "|" .
+      string::pad_right("ş",3,"x") . "|" . string::pad_left("a",4,"ş") . "|" .
+      string::pad_left("abcdef",3,"0") . "|" . string::pad_left("şğü",3,"x") . "|" .
+      string::pad_left("",3,"x") . "|" . string::pad_left("ab",0,"x"))
+LK
+pd_bek='xxş|3|şxx|şşşa|abcdef|şğü|xxx|ab'
+pd_tree=$(timeout 10 env LOOK_CLI_VM=0 "$LK" "$TMP/pad.lk" 2>&1)
+pd_vm=$(timeout 10 "$LK" "$TMP/pad.lk" 2>&1)
+[ "$pd_tree" = "$pd_bek" ] || { echo "FAIL: string::pad_* tree-walk: [$pd_tree] (beklenen $pd_bek) — bayt tabanli genislik veya kirpma geri gelmis olabilir"; fail=1; }
+[ "$pd_vm"   = "$pd_bek" ] || { echo "FAIL: string::pad_* CLI-VM: [$pd_vm] (beklenen $pd_bek)"; fail=1; }
+if command -v iconv >/dev/null 2>&1; then
+  printf '%s' "$pd_vm" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || { echo "FAIL: string::pad_* GECERSIZ UTF-8 uretiyor (cok baytli karakter ortadan bolunuyor)"; fail=1; }
+fi
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

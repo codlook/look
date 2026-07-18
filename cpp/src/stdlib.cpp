@@ -229,6 +229,35 @@ static uint32_t cp_lower(uint32_t c) {
     return c;
 }
 
+// Dolgu — Go semantigi (fmt "%Ns"): hedef genislik ASGARI'dir ve KOD NOKTASI
+// sayilir. Metin zaten uzunsa OLDUGU GIBI doner; dolgu fonksiyonu asla kirpmaz.
+//
+// ESKI HATA 1 (sessiz veri kaybi): uzun metin kirpiliyordu —
+//   pad_left("abcdef", 3, "0") = "def"   (PHP str_pad / Python ljust kirpmaz)
+// ESKI HATA 2 (bozuk cikti): kirpma BAYT tabanliydi, cok baytli karakteri
+//   ortadan boluyordu — pad_left("şğü", 3, "x") = 0x9F 0xC3 0xBC, oksuz devam
+//   baytiyla baslayan GECERSIZ UTF-8. Bu bozuk metin JSON'a, veritabanina ve
+//   HTTP yanitina aynen gidiyordu.
+// ESKI HATA 3 (tutarsizlik): genislik BAYT sayiyordu, oysa len/substr/upper/
+//   reverse hepsi kod noktasi farkindalikli — pad_left("ş", 3, "x") = "xş",
+//   gorunen uzunluk 2 (beklenen 3).
+static std::string pad_to(const std::string& s, int64_t len,
+                          const std::string& pad, bool left) {
+    int64_t cur = (int64_t)utf8_decode(s).size();
+    if (cur >= len) return s;                 // ASGARI genislik: kirpma YOK
+    auto padcps = utf8_decode(pad);
+    if (padcps.empty()) return s;             // bos dolgu -> sonsuz donguye girme
+    std::string fill;
+    int64_t need = len - cur;
+    while (need > 0)
+        for (uint32_t cp : padcps) {
+            if (need <= 0) break;
+            utf8_encode_cp(cp, fill);
+            --need;
+        }
+    return left ? fill + s : s + fill;
+}
+
 static Module make_string() {
     Module m;
     m.name = "string";
@@ -401,12 +430,7 @@ static Module make_string() {
         if (len > PAD_MAX) throw std::runtime_error("string::pad_left: hedef uzunluk 10MB sınırını aşıyor");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
-        if ((int64_t)s.size() < len) {
-            std::string prefix; prefix.reserve((size_t)len - s.size());
-            while ((int64_t)(prefix.size() + s.size()) < len) prefix += pad;
-            s = prefix.substr(0, (size_t)len - s.size()) + s;
-        } else if ((int64_t)s.size() > len) s = s.substr(s.size() - (size_t)len);
-        return Value(s);
+        return Value(pad_to(s, len, pad, true));
     };
 
     m.functions["pad_right"] = [](auto args) -> Value {
@@ -417,10 +441,7 @@ static Module make_string() {
         if (len > PAD_MAX) throw std::runtime_error("string::pad_right: hedef uzunluk 10MB sınırını aşıyor");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
-        s.reserve((size_t)len);
-        while ((int64_t)s.size() < len) s += pad;
-        if ((int64_t)s.size() > len) s = s.substr(0, (size_t)len);
-        return Value(s);
+        return Value(pad_to(s, len, pad, false));
     };
 
     m.functions["slugify"] = [](auto args) -> Value {
