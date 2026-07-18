@@ -207,12 +207,13 @@ okur → min(fiziksel, cgroup)×4. **Naive kullanıcı tam performansı otomatik
 
 ---
 
-## 7. Bug avı — kapatılan 16 bug
+## 7. Bug avı — kapatılan 17 bug
 
 🔴 = üretimde veri/erişim kaybı · 🟠 = yanlış davranış · 🟡 = sessiz yavaşlama
 
 | Bug | Sınıf | Commit |
 |---|---|---|
+| **Parser: `$x = $x . fn(...)` parse HATASI** — `.` concat/üye-erişim ikililiği; `$out . html::escape(...)` → `$out.html` üye erişimi sanılıp `::`'de patlıyordu; idiomatik string-building bozuktu (analist yakaladı) | 🟠 parse | `be6b72b` |
 | **ODR: `look::HttpResponse` iki farklı tip** — web'de `http::get` **sunucuyu çökertiyordu** | 🔴 crash | `d2df9d3` |
 | `array::sort()` comparator'ı VM route'unda **sessizce yok sayılıyordu** — canlı yanlış sıralama | 🔴 veri | `6a58a8a` |
 | `parallel()` DB bağlantısını **iade etmiyordu** — kalıcı sızıntı, endpoint donması | 🔴 erişim | `3459c3e` |
