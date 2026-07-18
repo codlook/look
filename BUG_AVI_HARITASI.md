@@ -2,7 +2,7 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **26** · Guard: 3 motor × 22 kategori + 25 özel kontrol
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **29** · Guard: 3 motor × 22 kategori + 29 özel kontrol (3 güvenlik kilidi dahil)
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (ne bitti/ne kaldı, **yerel**) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -10,7 +10,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 6 kural 20 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 29 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -20,6 +20,7 @@ Bu 6 kural 20 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | 4 | **Bir bug bulduysan SINIFINI ara.** Tek tek düzeltme, deseni grep'le | `== Value::FUNCTION` taraması 3 bug birden çıkardı |
 | 5 | **Pozitif kontrol olmadan "temiz" demek anlamsız.** Testin bug'ı yakalayabildiğini kanıtla | U kategorisini fonksiyon içine yazmıştım → bug'ı yakalamazdı, fark edip taşıdım |
 | 6 | **Listede yazıyor ≠ kodda öyle.** Her iddiayı kaynakta doğrula | packages.js "http modülünü kur" diyordu, http gömülüydü |
+| 7 | **Şüpheli sonuçta önce KENDİ ARACINI doğrula.** Kodu suçlamadan önce "test ettiğim şey gerçekten test etmek istediğim şey mi?" | `json::encode` ters bölüyü bozuyor sandım — heredoc ve `printf` `\\`'yi iki kez yutmuş, LOOK'a giden kaynak zaten `"a\b"` (backspace) oluyordu. LOOK doğruydu. Ayrıca **bayat binary** ile ölçüp "düzelmedi" sanmıştım (→ hedef bazlı tazelik kontrolü), ve CRLF'e dönmüş guard script'i sessizce hiç koşmuyordu |
 
 ---
 
@@ -287,7 +288,9 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-18 | Guard'ın kendisi | 3b pozitif kontrol | **1 kırılganlık** (S14) — `differential_test.sh`'a **göreli** binary yolu verilirse TEMPLATE bölümü `cd $TMP` sonrası binary'yi bulamayıp sahte FAIL üretiyor. Mutlak yol zorunlu; script bunu doğrulamıyor |
 | 07-19 | **`string::` (22 fn, P1.3)** | 3f düşmanca girdi + Unicode ekseni | **4 bulgu AÇIK** (aşağıda 5b). Motor ayrışması YOK (hepsi C++ builtin). `substr`/`split`/`index_of`/`repeat`/`contains`/`trim` uçlarda temiz |
 | 07-19 | **`request::` (19 fn, P1.4)** | 3f düşmanca HTTP girdisi + 3e çapraz-mod | **1 GÜVENLİK bug** (5c) + 1 minör. `header()` büyük/küçük harf duyarsız ✓, URL çözme (Türkçe/`%20`) ✓, boş `""` ↔ eksik `null` ayrımı ✓, `all()`/`method`/`path`/POST form/JSON ✓ |
-| — | `session::`, `cookie::`, `jobs::`, `db::` | — | **SIRADA** |
+| 07-19 | **`session::` + `cookie::` (9 fn, P1.5)** | 3f düşmanca girdi (enjeksiyon ekseni) | **2 GÜVENLİK bug DÜZELTİLDİ** (28, 29) — session verisi enjeksiyonu (`\n` ile yetki alanı uydurma) + çerez öznitelik enjeksiyonu (`;` ile `Domain=`). Geri kalanı sağlam: `valid_sid` traversal guard'ı her fonksiyonda, `gen_session_id` `/dev/urandom` (yetersiz okumada **hata fırlatıyor**), `regenerate` fixation savunması doğru, oturum çerezinde `HttpOnly+Secure+SameSite`, CRLF enjeksiyonu zaten engelliydi |
+| 07-19 | `json::encode` kaçışları | 3f | **TEMİZ** — ters bölü/tırnak/satır sonu/Türkçe hepsi doğru. (Şüphelendim ama suçlu kendi test aracımdı, bkz. altın kural 7) |
+| — | `jobs::`, `db::`, `file::`, `http::` | — | **SIRADA** |
 
 ### 5c. 🔴 GÜVENLİK — `request::ip()` sahtelenebilir (`--mode http`)
 
