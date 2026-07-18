@@ -603,6 +603,17 @@ std::unique_ptr<Expression> Parser::call() {
                    tokens_[current_ + 1].type == TokenType::IDENT &&
                    !tokens_[current_ + 1].lexeme.empty() &&
                    tokens_[current_ + 1].lexeme[0] != '$' &&
+                   // BUG FIX ('.' concat/üye-erişim ikililiği): '.' sonrası gelen IDENT
+                   // '(' veya '::' ile devam ediyorsa bu ÜYE ERİŞİMİ DEĞİL — string concat +
+                   // fonksiyon çağrısı ($out . helper(...)) ya da modül referansı
+                   // ($out . html::escape(...)). Eskiden bunlar "$out.helper" / "$out.html"
+                   // üye erişimi olarak yutulup parse hatası veriyordu (idiomatik
+                   // "$x = $x . fn(...)" string-building kalıbı BOZUKTU). LOOK'ta metot
+                   // çağrısı ($obj.method()) yok → bu form her zaman concat'tır, dışlamak
+                   // güvenli. Concat'ı üst seviyedeki '.' operatörüne (binary) bırak.
+                   !(current_ + 2 < tokens_.size() &&
+                     (tokens_[current_ + 2].type == TokenType::LPAREN ||
+                      tokens_[current_ + 2].type == TokenType::COLON_COLON)) &&
                    // Only member access on expressions that can be containers
                    // (Variable, IndexExpression, CallExpression, MemberAccessExpression)
                    // NOT on literals — those use '.' for string concat
