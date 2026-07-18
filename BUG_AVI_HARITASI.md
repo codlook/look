@@ -283,7 +283,29 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-18 | Bileşik atama | 3e çapraz-kapsam | **1 bug** (S4) — global dal |
 | 07-18 | Template motoru | 3e (kod↔şablon karşılaştırma) | **2 bug** (S2) — truthiness + float |
 | 07-18 | **`date::` (12 fn, P1.1)** | 3f düşmanca girdi + 3e çapraz-motor | **1 bug** (S11/S14) — `parse` imkânsız takvim tarihlerini sessizce kaydırıyordu (31 Nis → 1 May). `is_valid` titiz çıktı, `diff` işaretli, motor ayrışması yok, uçlarda çökme yok |
-| — | `array::` uçları, `request::` çapraz-mod, `session::`, `jobs::`, `string::` | — | **SIRADA** |
+| 07-18 | **`array::` uçları (P1.2)** | 3f düşmanca girdi + 3a differential | **1 bug DÜZELTİLDİ** (S9/S14) — `array::set` sayısal dizide veriyi yok ediyordu, geçerli indekste bile: `set([1,2,3],1,"X")` = `{"1":"X"}`. `slice`/`chunk`/`zip`/`flatten`/`unique`/`reverse` uçlarda temiz. **+6 bulgu AÇIK** (aşağıdaki S3 kümesi) |
+| 07-18 | Guard'ın kendisi | 3b pozitif kontrol | **1 kırılganlık** (S14) — `differential_test.sh`'a **göreli** binary yolu verilirse TEMPLATE bölümü `cd $TMP` sonrası binary'yi bulamayıp sahte FAIL üretiyor. Mutlak yol zorunlu; script bunu doğrulamıyor |
+| — | `string::` (22 fn, Türkçe/Unicode ekseni), `request::` çapraz-mod, `session::`, `jobs::` | — | **SIRADA** |
+
+### 5a. AÇIK bulgular — `$arr[idx]` operatör kümesi (S3, düzeltilmedi)
+
+Dizi **indeks operatörünün** kendisi iki motorda ayrışıyor. `array::set` düzeltildi ama
+bunlar **kasıtlı olarak bekletiliyor**: dilin en sıcak yolu (`vm.cpp` `array_get`/`array_set`,
+`interpreter.cpp` okuma+yazma) ve davranış değişikliği canlı uygulamaları etkiler
+(ör. VM'de aralık dışı okuma `null`→hata olursa mevcut route'lar 500 döner).
+Ayrı bir karar + ayrı bir kapsam olarak ele alınacak.
+
+| # | İfade | CLI-VM | tree-walk | Not |
+|---|---|---|---|---|
+| 1 | `$a=[1,2,3]; $a["k"]="X"` | `{"1":2,"3":"k"}` | `["X",2,3]` | VM **veriyi yok ediyor** (sentinel'siz ekleme → çiftler yanlış okunuyor); tree-walk `to_int("k")=0` ile indeks 0'a yazıyor |
+| 2 | `$a[99]="X"` | sessizce yok sayar | hata | |
+| 3 | `$a[-1]="X"` | sessizce yok sayar | `[1,2,"X"]` (sondan) | |
+| 4 | `$a[99]` oku | `null` | hata | |
+| 5 | `$a[-1]` oku | `null` | `3` (sondan) | |
+| 6 | `$a["k"]` oku | `null` | `1` (indeks 0) | |
+
+Kök neden yerleri: `cpp/src/vm.cpp` `array_get`/`array_set`, `cpp/src/interpreter.cpp`
+index okuma + index atama dalları. Sözleşme kararı verilmeden dokunulmayacak.
 
 ---
 
