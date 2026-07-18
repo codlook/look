@@ -285,7 +285,20 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-18 | **`date::` (12 fn, P1.1)** | 3f düşmanca girdi + 3e çapraz-motor | **1 bug** (S11/S14) — `parse` imkânsız takvim tarihlerini sessizce kaydırıyordu (31 Nis → 1 May). `is_valid` titiz çıktı, `diff` işaretli, motor ayrışması yok, uçlarda çökme yok |
 | 07-18 | **`array::` uçları (P1.2)** | 3f düşmanca girdi + 3a differential | **1 bug DÜZELTİLDİ** (S9/S14) — `array::set` sayısal dizide veriyi yok ediyordu, geçerli indekste bile: `set([1,2,3],1,"X")` = `{"1":"X"}`. `slice`/`chunk`/`zip`/`flatten`/`unique`/`reverse` uçlarda temiz. **+6 bulgu AÇIK** (aşağıdaki S3 kümesi) |
 | 07-18 | Guard'ın kendisi | 3b pozitif kontrol | **1 kırılganlık** (S14) — `differential_test.sh`'a **göreli** binary yolu verilirse TEMPLATE bölümü `cd $TMP` sonrası binary'yi bulamayıp sahte FAIL üretiyor. Mutlak yol zorunlu; script bunu doğrulamıyor |
-| — | `string::` (22 fn, Türkçe/Unicode ekseni), `request::` çapraz-mod, `session::`, `jobs::` | — | **SIRADA** |
+| 07-19 | **`string::` (22 fn, P1.3)** | 3f düşmanca girdi + Unicode ekseni | **4 bulgu AÇIK** (aşağıda 5b). Motor ayrışması YOK (hepsi C++ builtin). `substr`/`split`/`index_of`/`repeat`/`contains`/`trim` uçlarda temiz |
+| — | `request::` çapraz-mod, `session::`, `jobs::`, `db::` | — | **SIRADA** |
+
+### 5b. AÇIK bulgular — `string::` (düzeltilmedi)
+
+| # | Bulgu | Kanıt | Sınıf |
+|---|---|---|---|
+| 1 | 🔴 **`replace` sonsuz döngü + sınırsız bellek** — `from` boşken `s.find("",pos)` her zaman eşleşir, her turda araya `to` eklenir, string sonsuza kadar büyür (`to` da boşsa `pos` hiç ilerlemez) | `string::replace("abc","","X")` → **asılıyor** (5 sn timeout) | S8 |
+| 2 | 🔴 **`pad_left`/`pad_right` GEÇERSİZ UTF-8 üretiyor** — kırpma `s.substr(s.size()-len)` bayt tabanlı, çok baytlı karakteri ortadan bölüyor | `pad_left("şğü",3,"x")` → `0x9F 0xC3 0xBC` (öksüz devam baytı) — `iconv` reddediyor | S9 |
+| 3 | 🟠 **`pad_*` bayt sayıyor, kod noktası değil** — modülün geri kalanı (`len`/`substr`/`upper`/`reverse`) kod noktası farkındalıklı; `pad` değil → görünen genişlik yanlış | `pad_left("ş",3,"x")` = `"xş"`, `len()` = **2** (beklenen 3) | S2 |
+| 4 | 🟠 **`upper`/`lower` "global" iddiası kodda karşılanmıyor** — kural doğru şekilde locale-bağımsız (Türkçe i↔İ yok ✓) ama TABLO yalnızca ASCII + Latin-1 + 3 Türkçe kod noktası (`ı ğ ş`). Kiril, Yunan ve Latin Ext-A'nın kalan ~125 karakteri sessizce dönüşmeden geçiyor | `upper("привет")`=`привет` (değişmiyor), `upper("ελλάδα")`=`ελλάδα`, `upper("łódź")`=**`łÓDź`** (yarım dönüşüm) | S2 |
+
+Not: 4 numara felsefe açısından önemli — `stdlib.cpp:209` yorumu "dil globaldir" diyor,
+yani kod kendi beyan ettiği sözleşmeyi tutmuyor. Kural global, tablo Türkiye'ye özel.
 
 ### 5a. `$arr[idx]` operatör kümesi (S3) — 2 kapandı, 4 açık
 
