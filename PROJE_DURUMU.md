@@ -191,7 +191,7 @@ ile ölçüldü (dev SAPI değil).
 | — | **dispatch kopyası → thread_local** | ✅ | web **2–3×**, qrmenu **+%26** | `adfc3c0` |
 | — | 16-bit `CALL_BUILTIN` (256 duvarı) + 30 builtin | ✅ | fallback sınıfı kapandı | `edfdaa5` |
 | — | worker/DB-pool cgroup CPU limitine uyar | ✅ | tutarlılık | `9da6c2a` |
-| A2 | global inline cache | 🟡 **yarım** | `str_ref` var, **cache yok** | — |
+| A2 | global inline cache | ✅ | LOAD/STORE_GLOBAL slot çivileme → global-ağır **4.16s→1.81s (2.3×)**, register hızına yakın; web DB-bound'da nötr ama sıfır downside | `c524b32` |
 | A3 | computed-goto dispatch | ⬜ | ~%20 bekleniyor | — |
 | A4 | builtin arg allocation | ⬜ | düşük-orta | — |
 | B8 | arena + non-atomic refcount | ⛔ **güvenli değil** (§9) | — | — |
@@ -468,12 +468,12 @@ değil, **production'ın kullandığı MySQL'de** de doğrulandı.
 |---|---|---|
 | ✅ | ~~`http_client` fiber-aware~~ | **BİTTİ** (`d5919ce`) — tek thread'le upstream tavanına ulaştı, 3.6× throughput |
 | ✅ | ~~Fiber default kararı~~ | **VERİLDİ** — default POOL, FIBER yük-tipine göre opt-in (§9); hızlı route'ta ceza sanılan 2× değil ~%15 çıktı |
-| **1** | A2 inline cache | `str_ref` var, cache yok — yarım iş |
-| **2** | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
-| 3 | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) — **tasarım onayı gerekir** |
-| 4 | DB katmanı: sorgu cache + prepared reuse | **Gerçek** web-throughput buradan gelir (motor dışı) |
-| 5 | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel) |
-| 6 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
+| ✅ | ~~A2 inline cache~~ | **BİTTİ** (`c524b32`) — global-ağır 2.3×, güvenli (nested-run doğrulandı) |
+| **1** | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
+| 2 | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) — **tasarım onayı gerekir** |
+| 3 | DB katmanı: sorgu cache + prepared reuse | **Gerçek** web-throughput buradan gelir (motor dışı) |
+| 4 | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel) |
+| 5 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
 | — | A4 / B8 | ertelendi (B8 güvenli değil) |
 
 **Kalan builtin boşluğu (~16, düşük öncelik):** `jobs::` (11), `queue::` (3), `template::` (2),
