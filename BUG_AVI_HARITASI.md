@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-18 · Kapatılan bug: **21** · Guard: 3 motor × 22 kategori + 20 özel kontrol
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **26** · Guard: 3 motor × 22 kategori + 25 özel kontrol
 >
-> **Kardeş dosyalar:** [PROJE_DURUMU.md](PROJE_DURUMU.md) (ne bitti/ne kaldı) · `DENETIM.md` (güvenlik denetimi, yerel)
+> **Kardeş dosyalar:** `PROJE_DURUMU.md` (ne bitti/ne kaldı, **yerel**) · `DENETIM.md` (güvenlik denetimi, yerel)
 
 ---
 
@@ -288,7 +288,23 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-19 | **`string::` (22 fn, P1.3)** | 3f düşmanca girdi + Unicode ekseni | **4 bulgu AÇIK** (aşağıda 5b). Motor ayrışması YOK (hepsi C++ builtin). `substr`/`split`/`index_of`/`repeat`/`contains`/`trim` uçlarda temiz |
 | — | `request::` çapraz-mod, `session::`, `jobs::`, `db::` | — | **SIRADA** |
 
-### 5b. AÇIK bulgular — `string::` (düzeltilmedi)
+### 5b. `string::` bulguları — **4'ü de KAPANDI** (24–26. bug)
+
+Çözüm ekseni **Go**: bu dört sorunun da Go'da tanımlı bir cevabı vardı ve
+tutarlı bir bütün oluşturdular.
+
+| # | Bug | Go sözleşmesi | Commit |
+|---|---|---|---|
+| 1 | `replace` boş arama dizesiyle asılıyordu (DoS) | `strings.Replace(s,"",new,-1)` — başta ve her UTF-8 dizisinden sonra eşleşir, `k+1` ekleme, **sınırlı** | `e125dad` |
+| 2+3 | `pad_*` geçersiz UTF-8 + bayt/kod noktası | `fmt "%Ns"` — genişlik **asgari** ve **kod noktası**; kırpma yok → bölünecek yer de yok, 2 bug tek kökten öldü ve **kod azaldı** | `071bc27` |
+| 4 | `upper/lower` global kapsam eksik | `unicode.ToUpper` yarım tablo ile çıkmaz — Latin Ext-A + Yunan + Kiril eklendi | `24fec50` |
+
+**Kalıcı ders (S14):** `.gitattributes` eklendi. `core.autocrlf=true` rebase
+sonrası `differential_test.sh`'i CRLF yapmıştı ve bash onu çalıştıramıyordu —
+**guard sessizce koşmuyordu**, ben ise PASS sanıyordum. Git'te saklanan hâl LF'ti,
+bozulma yalnızca çalışma ağacındaydı. Guard'ın kendisi de av alanıdır.
+
+<details><summary>Bulguların ilk kaydı (tarama anı)</summary>
 
 | # | Bulgu | Kanıt | Sınıf |
 |---|---|---|---|
@@ -297,8 +313,12 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 3 | 🟠 **`pad_*` bayt sayıyor, kod noktası değil** — modülün geri kalanı (`len`/`substr`/`upper`/`reverse`) kod noktası farkındalıklı; `pad` değil → görünen genişlik yanlış | `pad_left("ş",3,"x")` = `"xş"`, `len()` = **2** (beklenen 3) | S2 |
 | 4 | 🟠 **`upper`/`lower` "global" iddiası kodda karşılanmıyor** — kural doğru şekilde locale-bağımsız (Türkçe i↔İ yok ✓) ama TABLO yalnızca ASCII + Latin-1 + 3 Türkçe kod noktası (`ı ğ ş`). Kiril, Yunan ve Latin Ext-A'nın kalan ~125 karakteri sessizce dönüşmeden geçiyor | `upper("привет")`=`привет` (değişmiyor), `upper("ελλάδα")`=`ελλάδα`, `upper("łódź")`=**`łÓDź`** (yarım dönüşüm) | S2 |
 
+</details>
+
 Not: 4 numara felsefe açısından önemli — `stdlib.cpp:209` yorumu "dil globaldir" diyor,
 yani kod kendi beyan ettiği sözleşmeyi tutmuyor. Kural global, tablo Türkiye'ye özel.
+
+</details>
 
 ### 5a. `$arr[idx]` operatör kümesi (S3) — 2 kapandı, 4 açık
 
