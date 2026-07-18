@@ -347,7 +347,52 @@ SchedState makinesi. Substrat ciddi ve doğru — **sadece kapalıydı**.
 | **`http_client` fiber-aware** | ✅ | recv/SSL_read yield eder (Go netpoller). Ölçüm (yavaş upstream 0.5s, 1 worker, 10 eşz): POOL 5.53s/3.62 r/s → **FIBER 1.52s/13.19 r/s** (upstream tavanı 13.21 — **tek thread'le tavana ulaştı**), 0 hata (`d5919ce`) |
 | `parallel()` ↔ DB köprüsü (fiber task) | ⬜ | intra-request paralel query — artık **zorunlu değil** (sızıntı `3459c3e` ile çözüldü), opsiyonel iyileştirme |
 | **Fiber default kararı** | ✅ **VERİLDİ** | Default **POOL**, FIBER yük-tipine göre opt-in (aşağıda) |
-| `go { }` ergonomisi + channel select | ⬜ | — |
+| **`go { }` + `select` + paylaşımlı kanal** | 🔴 **ERTELENDİ (karar, 2026-07-18)** | Aşağıda — mimari karar, talep bekliyor |
+| `await_all` (thread+kopya, gather) | 📐 **Hazır tasarım** | Talep gelince — aşağıda |
+
+### 🔴 go{}/select KARARI (mimari, 2026-07-18) — ERTELE, spekülatif inşa etme
+
+Üç iddia **kodda doğrulandı** (liste değil, gerçek): (1) kanallar **thread-blocking** —
+`interpreter.cpp` `not_empty.wait`/`not_full.wait` (`condition_variable`), fiber-aware değil →
+fiber modunda boş kanaldan recv **tüm OS thread'i bloklar**, o thread'in goroutine'leri açlıkta;
+(2) DB bağlantısı **`thread_local`** (`web_stdlib.cpp` `thread_local std::map<..., DbConnection>`)
+→ aynı thread'teki 2 fiber **aynı bağlantıyı** paylaşır → MySQL stateful protokol bozulur =
+**sessiz veri bozulması**; (3) Value içeriği **kilitsiz** (`shared_ptr<vector<Value>>`, refcount
+atomic ama container değil) → 2 fiber/thread aynı array'i mutate → heap bozulması. `parallel()`
+bunu **deep-copy** ile aşıyor (vm.cpp:725,736).
+
+**KARAR: go{}/select YAPILMAYACAK (şimdilik).** Gerekçe (dört ayak):
+1. **Hedef pazar istemiyor** — KOBİ/PHP-yerine geliştiricisi tek request'te 50 API'yi eşzamanlı
+   çağırmaz. go{}/select bu pazarın **kullanmayacağı** özellik.
+2. **Öldürdüğümüz sınıfı geri getirir** — bu turun her kazancı *sessiz-bozulmayı öldür* ekseninde
+   (ODR, sort comparator, DB sızıntı, STRICT). DB `thread_local`→fiber-paylaşımı **yeni** sessiz-
+   bozulma vektörü açar. **Kopya modeli bunu ÇÖZMEZ** (per-fiber DB izolasyonu ayrı, tüm stdlib'i
+   etkileyen yeniden-yapılanma).
+3. **Proje asıl hedefi için bitti** — go{} bir *eksik* değil, *vizyon-genişletmesi*.
+4. **Talep kanıtı yok** — kullanıcı/yıldız yokken 20-30 saatlik ileri eşzamanlılık = **erken
+   optimizasyon**. Doğru sıra: biteni yayınla → kullanıcı edin → gerçek talep karar versin.
+
+### 📐 await_all — in-request fan-out'un HAZIR tasarımı (talep gelince, ~6-10s)
+
+go{}'nun alıntılanan tek gerçek kullanım durumu ("bir request'te N dış API'yi eşzamanlı çağır")
+bir **fan-out/gather** desenidir — kanala/select'e/paylaşımlı belleğe **gerek yok**. Tasarım:
+
+- **`await_all([closure,...], timeout_ms?)` → sonuç dizisi.** Kanal yok, select yok.
+- **`parallel()`'in thread+kopya modeli üstüne** (yeni değil): bounded pool (task_acquire /
+  `LOOK_PARALLEL_LIMIT` zaten var) + her closure kendi thread'inde + `DbGuard` ile per-thread DB
+  iadesi (vm.cpp:736 — kanıtlı). **await_all'ı FIBER üstüne kurma** — o zaman per-fiber DB belasını
+  miras alır; thread modeli izolasyonu zaten çözüyor.
+- **Kopya semantiği, paylaşımsız** → Value data-race yapısal olarak **yok**. **SIFIR yeni güvenlik
+  yüzeyi** (kanıtlı izolasyonu yeniden kullanır).
+- KOBİ ölçeği (5-10 eşzamanlı dış çağrı) için thread maliyeti önemsiz; "ucuz fiber" avantajı yalnız
+  50+ fan-out'ta önemli (KOBİ yapmaz). Eksik olan tek şey `select` kompozisyonu — onu da
+  `timeout_ms` parametresi fan-in'in %90'ını karşılar.
+
+### 🟡 Kanal fiber-aware (latent bug — spekülatif düzeltme değil, kayıt)
+
+Kanallar fiber modunda thread bloklıyor (yukarıda #1). Ama fiber **default OFF** ve fiber+kanal
+**nadir kombo** → şimdilik **bilinen-latent-sorun** olarak kaydedildi; go{}/await_all gündeme
+gelmeden düzeltmek spekülatif. Gerçek go-substratı istenirse ilk adım budur (park/resume).
 
 ### ✅ Fiber default KARARI (ölçümle verildi, 2026-07-17)
 
@@ -469,10 +514,11 @@ değil, **production'ın kullandığı MySQL'de** de doğrulandı.
 | ✅ | ~~`http_client` fiber-aware~~ | **BİTTİ** (`d5919ce`) — tek thread'le upstream tavanına ulaştı, 3.6× throughput |
 | ✅ | ~~Fiber default kararı~~ | **VERİLDİ** — default POOL, FIBER yük-tipine göre opt-in (§9); hızlı route'ta ceza sanılan 2× değil ~%15 çıktı |
 | ✅ | ~~A2 inline cache~~ | **BİTTİ** (`c524b32`) — global-ağır 2.3×, güvenli (nested-run doğrulandı) |
-| **1** | `go { }` ergonomisi + channel select | Go-eşzamanlılık ergonomisi (vizyonun kalbi) — **tasarım onayı + önce B8 cross-thread Value güvenliği gerekir** |
-| 2 | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
+| **1** | `lk-cgi` / REPL / `lk test` → VM | C9'un kapanışı; motor ikiliğini bitirir |
+| 2 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
 | 3 | `parallel()` ↔ DB köprüsü (fiber task) | intra-request paralel query (opsiyonel) |
-| 4 | A3 computed-goto | ~%20, düşük risk, DB-bound'da görünmez |
+| 🔴 | ~~`go { }` + `select`~~ | **ERTELENDİ** (§9 mimari karar) — pazar kullanmıyor, felsefeyi ters çeviriyor, talep kanıtı yok |
+| 📐 | `await_all` fan-out-gather | **Hazır tasarım** (§9) — talep gelince, thread+kopya, sıfır yeni risk |
 | ❌ | ~~DB prepared-statement reuse~~ | **İncelendi ve REDDEDİLDİ (2026-07-18):** hot yol `query()` text protokolü kullanıyor (prepared değil); prepared yalnız parse/plan'ı kurtarır, darboğaz MySQL JOIN execution (~6900/s) → dokunmuyor. Bkz. §8 |
 | ⏸ | DB otomatik result cache | App sorumluluğu (`cache::` modülü var); otomatik = bayat-veri/veri-bütünlüğü riski |
 | — | A4 / B8 | ertelendi (B8 güvenli değil) |
