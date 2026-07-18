@@ -2,7 +2,7 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **29** · Guard: 3 motor × 22 kategori + 29 özel kontrol (3 güvenlik kilidi dahil)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **30** · Guard: 3 motor × 22 kategori + 30 özel kontrol (4 güvenlik kilidi dahil)
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (ne bitti/ne kaldı, **yerel**) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -10,7 +10,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 29 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 30 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -290,7 +290,14 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-19 | **`request::` (19 fn, P1.4)** | 3f düşmanca HTTP girdisi + 3e çapraz-mod | **1 GÜVENLİK bug** (5c) + 1 minör. `header()` büyük/küçük harf duyarsız ✓, URL çözme (Türkçe/`%20`) ✓, boş `""` ↔ eksik `null` ayrımı ✓, `all()`/`method`/`path`/POST form/JSON ✓ |
 | 07-19 | **`session::` + `cookie::` (9 fn, P1.5)** | 3f düşmanca girdi (enjeksiyon ekseni) | **2 GÜVENLİK bug DÜZELTİLDİ** (28, 29) — session verisi enjeksiyonu (`\n` ile yetki alanı uydurma) + çerez öznitelik enjeksiyonu (`;` ile `Domain=`). Geri kalanı sağlam: `valid_sid` traversal guard'ı her fonksiyonda, `gen_session_id` `/dev/urandom` (yetersiz okumada **hata fırlatıyor**), `regenerate` fixation savunması doğru, oturum çerezinde `HttpOnly+Secure+SameSite`, CRLF enjeksiyonu zaten engelliydi |
 | 07-19 | `json::encode` kaçışları | 3f | **TEMİZ** — ters bölü/tırnak/satır sonu/Türkçe hepsi doğru. (Şüphelendim ama suçlu kendi test aracımdı, bkz. altın kural 7) |
-| — | `jobs::`, `db::`, `file::`, `http::` | — | **SIRADA** |
+| 07-19 | **`db::` (12 fn, P2)** | 3f enjeksiyon matrisi + parametre kenar durumları (SQLite `:memory:`, sunucusuz) | **2 bug DÜZELTİLDİ** (30) — literal içindeki `?` placeholder sanılıyordu + parametre sayısı uyuşmazlığı iki yönde de sessizdi. **SQL enjeksiyonu TEMİZ**: `' OR '1'='1`, UNION, DROP, ters bölülü yük — altısı da engelli, `escape_str` doğru. Tipler doğru (int/float locale-güvenli/bool/null/Türkçe) |
+| — | `jobs::`, `file::`, `http::`, lexer, `installer::` | — | **SIRADA** |
+
+**`db::` notu (bug değil, sözleşme):** parametreler wire-protocol prepared statement
+değil, **kaçırılıp metin olarak** SQL'e gömülüyor. Güvenlik tümüyle `escape_str`'e
+dayanıyor ve o doğru çalışıyor. İki uç durum haritada dursun:
+- **MySQL** `NO_BACKSLASH_ESCAPES` modundaysa `\'` kaçış sayılmaz → şema kırılır (sıra dışı mod)
+- **PostgreSQL** `standard_conforming_strings` kapalıysa (9.1 öncesi varsayılan) ters bölü aktifleşir
 
 ### 5c. 🔴 GÜVENLİK — `request::ip()` sahtelenebilir (`--mode http`)
 
