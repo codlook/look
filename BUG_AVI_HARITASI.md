@@ -2,7 +2,7 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-18 · Kapatılan bug: **20** · Guard: 3 motor × 21 kategori + 18 özel kontrol
+> **Son güncelleme:** 2026-07-18 · Kapatılan bug: **21** · Guard: 3 motor × 22 kategori + 20 özel kontrol
 >
 > **Kardeş dosyalar:** [PROJE_DURUMU.md](PROJE_DURUMU.md) (ne bitti/ne kaldı) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -69,7 +69,7 @@ Sayı = o modüldeki builtin adedi. **Guard sütunu**: differential gövdesinde 
 | `math::` | 14 | 🟡 A | `mail::` | 4 | ⬜ |
 | `type::` | 12 | ✅ M | `error::` | 4 | ✅ Q |
 | `db::` | 12 | 🟡 parallel_db | `cookie::` | 4 | ⬜ |
-| `date::` | 12 | ⬜ | `app::` | 4 | ⬜ |
+| `date::` | 12 | ✅ V | `app::` | 4 | ⬜ |
 | `jobs::` | 10 | ⬜ | `html::` | 3 | ⬜ |
 | `http::` | 9 | 🟡 ODR | `runtime::` | 2 | ⬜ |
 | `file::` | 8 | ⬜ | `route::` | 2 | ⬜ |
@@ -238,7 +238,7 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 
 | # | Hedef | Aranacak sınıf | Somut test |
 |---|---|---|---|
-| 1.1 | **`date::` (12 fn)** | S3, S9, S11 | Artık yıl (29 Şubat), DST geçişi, ay-sonu taşması (31 Ocak +1 ay), negatif diff, `parse` çöp girdi, timezone, 1970 öncesi, 2038 |
+| ~~1.1~~ | ~~**`date::`**~~ ✅ **TARANDI** (1 bug) | S3, S9, S11 | Artık yıl (29 Şubat), DST geçişi, ay-sonu taşması (31 Ocak +1 ay), negatif diff, `parse` çöp girdi, timezone, 1970 öncesi, 2038 |
 | 1.2 | **`array::` (26 fn)** | S9, S3 | Negatif/taşan indeks × slice/chunk/zip/flatten/slice; boş dizi; tek eleman; assoc karışık; iç içe 1000 derinlik |
 | 1.3 | **`string::` (24 fn)** | S9, S2, S8 | `substr` negatif/taşan; `pad` çok büyük genişlik; `repeat` büyük N (OOM); `format` `%N` uçları; regex catastrophic backtracking; UTF-8 kesme (emoji ortasından) |
 | 1.4 | **`request::` (19 fn)** | S12, S3 | Her fonksiyonu FastCGI **ve** `--mode http`'de çağır — fark = bug (multipart böyle bulundu) |
@@ -282,7 +282,8 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-18 | Parser `.` operatörü | 3d sonda (22 vaka) | **1 bug** (S6) — 21/22 temiz |
 | 07-18 | Bileşik atama | 3e çapraz-kapsam | **1 bug** (S4) — global dal |
 | 07-18 | Template motoru | 3e (kod↔şablon karşılaştırma) | **2 bug** (S2) — truthiness + float |
-| — | `date::`, `array::` uçları, `request::` çapraz-mod, `session::`, `jobs::` | — | **SIRADA** |
+| 07-18 | **`date::` (12 fn, P1.1)** | 3f düşmanca girdi + 3e çapraz-motor | **1 bug** (S11/S14) — `parse` imkânsız takvim tarihlerini sessizce kaydırıyordu (31 Nis → 1 May). `is_valid` titiz çıktı, `diff` işaretli, motor ayrışması yok, uçlarda çökme yok |
+| — | `array::` uçları, `request::` çapraz-mod, `session::`, `jobs::`, `string::` | — | **SIRADA** |
 
 ---
 

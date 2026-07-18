@@ -207,12 +207,13 @@ okur → min(fiziksel, cgroup)×4. **Naive kullanıcı tam performansı otomatik
 
 ---
 
-## 7. Bug avı — kapatılan 20 bug
+## 7. Bug avı — kapatılan 21 bug
 
 🔴 = üretimde veri/erişim kaybı · 🟠 = yanlış davranış · 🟡 = sessiz yavaşlama
 
 | Bug | Sınıf | Commit |
 |---|---|---|
+| **`date::parse` imkânsız takvim tarihlerini sessizce kaydırıyordu** — `2024-04-31` → `2024-05-01`, `2023-02-29` → `2023-03-01` (parse başarılı dönüp YANLIŞ tarih); `is_valid` aynı girdilere false diyordu → eksik kalmış fix. Guard'da `date::` hiç yoktu | 🟠 veri | `4b7b338` |
 | **Template motoru dil semantiğinden sapıyordu (2 ayrışma)** — `{#if "0"}` şablonda TRUE / kodda FALSE (DB'den string dönen `stock="0"` alanları sessizce yanlış dal); float `1234567.5` → **`1.23457e+06`** (bilimsel + hassasiyet kaybı, fatura/toplam bozuk). Kök: dilin truthiness+format'ı KOPYALANMIŞTI → dile delege edildi. Şablon motorunun guard'ı hiç yoktu | 🔴 veri | `69dcd50` |
 | **Compiler: TOP-LEVEL bileşik atama sol operandı SESSİZCE atıyordu** — `$t=1; $t+=2` → VM'de **2** (3 değil), `$s="x"; $s.="y"` → **"y"** ("xy" değil); interpreter doğruydu → **sessiz motor ayrışması**. Yalnız global dal bozuktu (fonksiyon-local doğruydu → web route'ları etkilenmedi, bu yüzden yıllarca görünmedi) | 🔴 veri | `3892f5e` |
 | **Parser: `$x = $x . fn(...)` parse HATASI** — `.` concat/üye-erişim ikililiği; `$out . html::escape(...)` → `$out.html` üye erişimi sanılıp `::`'de patlıyordu; idiomatik string-building bozuktu (analist yakaladı) | 🟠 parse | `be6b72b` |
