@@ -142,6 +142,29 @@ echo "$tpl_out" | grep -q 'if0:F ifs:T f:1234567.5' || { echo "FAIL: TEMPLATE di
 echo "$tpl_out" | grep -q 'esc:&lt;b&gt;&amp;' || { echo "FAIL: template HTML escaping bozuk (XSS riski): [$tpl_out]"; fail=1; }
 [ "$tpl_out" = "$tpl_vm" ] || { echo "FAIL: template tree-walk != CLI-VM"; fail=1; }
 
+# ── array::set — SAYISAL dizide veri yok ediyordu ────────────────────────────────
+# NEDEN: "Convert numeric array to assoc" dali donusturmuyor, DEGISTIRIYORDU —
+# yalniz yeni anahtar/degeri iceren yepyeni bir assoc kurup orijinal elemanlari
+# atiyordu. GECERLI indekste bile:
+#   array::set([1,2,3], 1, "X") = {"1":"X"}   (beklenen [1,"X",3])
+# Sessiz veri kaybi: hata yok, count degisiyor, eski elemanlar erisilemez.
+# Guard'da array::set HIC yoktu (assoc yolu dogruydu, yalniz o kullaniliyordu).
+# Sozlesme: gecerli indeks → yerinde degistir; size'a esit → sona ekle; string
+# anahtar / aralik disi → assoc'a donustur ama MEVCUT ELEMANLARI KORU.
+cat > "$TMP/aset.lk" <<'LK'
+use array
+print(json::encode(array::set([1,2,3], 1, "X")) . "|" .
+      json::encode(array::set([1,2,3], 3, "X")) . "|" .
+      json::encode(array::set([1,2,3], "k", "X")) . "|" .
+      json::encode(array::set([], "k", "X")) . "|" .
+      json::encode(array::set(["a"=>1,"b"=>2], "a", 9)))
+LK
+as_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/aset.lk" 2>&1)
+as_vm=$("$LK" "$TMP/aset.lk" 2>&1)
+as_bek='[1,"X",3]|[1,2,3,"X"]|{"0":1,"1":2,"2":3,"k":"X"}|{"k":"X"}|{"a":9,"b":2}'
+[ "$as_tree" = "$as_bek" ] || { echo "FAIL: array::set tree-walk: [$as_tree] (beklenen $as_bek) — sayisal dizide veri yok ediliyor olabilir"; fail=1; }
+[ "$as_vm"   = "$as_bek" ] || { echo "FAIL: array::set CLI-VM: [$as_vm] (beklenen $as_bek)"; fail=1; }
+
 
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug

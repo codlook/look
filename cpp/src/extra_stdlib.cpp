@@ -554,9 +554,33 @@ Module make_array_module(Interpreter* interp) {
             result->push_back(Value(key));
             result->push_back(val);
         } else {
-            // Convert numeric array to assoc
+            // Sayisal liste.
+            // ESKI HATA: bu dal yalniz yeni anahtar/degeri iceren YEPYENI bir assoc
+            // kuruyor, orijinal elemanlari atiyordu — gecerli indekste bile:
+            //   array::set([1,2,3], 1, "X") = {"1":"X"}   (beklenen [1,"X",3])
+            // Sessiz veri kaybi; hata yok.
+            // Sozlesme: gecerli indeks → yerinde degistir, size'a esit → sona ekle
+            // ($arr[i] = v ile ayni, iki motor da bu iki durumda hemfikir).
+            if (args[1].type() == Value::INT) {
+                int64_t i = args[1].as_int();
+                if (i >= 0 && i < (int64_t)result->size()) {
+                    (*result)[(size_t)i] = val;
+                    return Value(result);
+                }
+                if (i == (int64_t)result->size()) {
+                    result->push_back(val);
+                    return Value(result);
+                }
+            }
+            // String anahtar / aralik disi indeks → assoc'a donustur, ama mevcut
+            // elemanlari sayisal indeksleriyle anahtarlayarak KORU.
             auto assoc = std::make_shared<std::vector<Value>>();
+            assoc->reserve(result->size() * 2 + 3);
             assoc->push_back(Value(std::string("__assoc__")));
+            for (size_t i = 0; i < result->size(); ++i) {
+                assoc->push_back(Value(std::to_string(i)));
+                assoc->push_back((*result)[i]);
+            }
             assoc->push_back(Value(key));
             assoc->push_back(val);
             return Value(assoc);
