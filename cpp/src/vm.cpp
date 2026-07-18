@@ -51,7 +51,10 @@ VM::VM(SharedState shared, std::ostream& output)
     call_stack_.reserve(64);
 }
 
-void VM::set_globals(std::unordered_map<std::string, Value> g) { globals_ = std::move(g); }
+void VM::set_globals(std::unordered_map<std::string, Value> g) {
+    globals_ = std::move(g);
+    global_cache_.clear();   // A2: globals_ tümden değişti → önbelleklenen Value*'lar geçersiz
+}
 void VM::set_web_context(WebContext* ctx)                        { web_ctx_ = ctx; }
 void VM::set_ws_connection(std::shared_ptr<WsConnection> ws)    { ws_conn_ = ws; }
 void VM::set_sse_connection(std::shared_ptr<SseConnection> sse) { sse_conn_ = sse; }
@@ -281,6 +284,13 @@ call_dispatch:
         const FunctionProto* proto = frame.proto;
         int base = frame.base;
 
+        // A2: bu proto'nun global inline cache vektörü (frame girişinde bir kez — frame'ler
+        // instruction'lardan çok daha seyrek değişir). unordered_map rehash mapped-value
+        // referansını geçersiz kılmaz → gcache pointer'ı frame boyunca stabildir.
+        std::vector<Value*>* gcache = &global_cache_[proto];
+        if (gcache->size() != proto->constants.size())
+            gcache->assign(proto->constants.size(), nullptr);
+
         try {
         while (frame.ip < (int)proto->code.size()) {
             const Instruction& ins = proto->code[frame.ip++];
@@ -314,11 +324,14 @@ call_dispatch:
 
             case OpCode::LOAD_GLOBAL: {
                 uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
+                // A2 inline cache: bu ni için çivilenmiş slot varsa doğrudan oku (register hızı).
+                if (Value* hit = (*gcache)[ni]) { R(ins.a) = *hit; break; }
                 // str_ref(): as_string() kopyasını önle (B5'te string pointer arkasında;
                 // her global erişimi bir string kopyası ödemeliydi). find const& alır.
                 const std::string& gname = CONST(ni).str_ref();
                 auto it = globals_.find(gname);
                 if (it != globals_.end()) {
+                    (*gcache)[ni] = &it->second;   // slot'u çivile — sonraki erişimler ıskasız
                     R(ins.a) = it->second;
                 } else if (!gname.empty() && gname[0] == '$') {
                     // Tanımsız DEĞİŞKEN — STRICT (interpreter ile birebir mesaj).
@@ -346,8 +359,13 @@ call_dispatch:
             case OpCode::STORE_GLOBAL: {
                 // a=src_reg, b=name_hi, c=name_lo (16-bit constant pool index)
                 uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
+                // A2: çivilenmiş slot varsa doğrudan yaz (hash yok). Yalnız MEVCUT slot'a
+                // yazar (cache ilk find/insert'ten sonra doldurulur → daima geçerli adres).
+                if (Value* hit = (*gcache)[ni]) { *hit = R(ins.a); break; }
                 const std::string& name = CONST(ni).str_ref();  // kopyasız
-                globals_[name] = R(ins.a);
+                Value& slot = globals_[name];   // yoksa oluştur, varsa bul
+                slot = R(ins.a);
+                (*gcache)[ni] = &slot;          // sonraki yazma/okuma için çivile
                 break;
             }
 

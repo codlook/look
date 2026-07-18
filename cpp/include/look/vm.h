@@ -145,6 +145,15 @@ private:
     // Shared read-only state
     SharedState                              shared_;
     std::unordered_map<std::string, Value>   globals_;
+    // A2 inline cache: LOAD_GLOBAL her erişimde globals_.find (hash + probe) ödüyordu —
+    // global-ağır CPU döngüsünde ~2.77× (ölçüldü). Proto başına, sabit-havuz indeksiyle
+    // (ni) adreslenen Value* önbelleği: ilk isabette globals_ slot'unun adresini çivileriz,
+    // sonraki erişimler register hızında. GÜVENLİ çünkü: (1) VM per-request/per-run (thread
+    // paylaşımı YOK — bytecode paylaşılır, bu önbellek VM'e ait), (2) globals_ silme YOK
+    // (unset/erase yok → Value* dangling olmaz), (3) unordered_map rehash element pointer'ını
+    // GEÇERSİZ KILMAZ (insert güvenli). Tek invalidasyon: set_globals → clear (globals_
+    // tümden değişir). ni→isim eşlemesi proto'ya özgü olduğu için anahtar proto pointer'ı.
+    std::unordered_map<const FunctionProto*, std::vector<Value*>> global_cache_;
     WebContext*                              web_ctx_ = nullptr;
     std::ostream&                            output_;
     std::shared_ptr<WsConnection>            ws_conn_;
