@@ -287,7 +287,16 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-18 | Guard'ın kendisi | 3b pozitif kontrol | **1 kırılganlık** (S14) — `differential_test.sh`'a **göreli** binary yolu verilirse TEMPLATE bölümü `cd $TMP` sonrası binary'yi bulamayıp sahte FAIL üretiyor. Mutlak yol zorunlu; script bunu doğrulamıyor |
 | — | `string::` (22 fn, Türkçe/Unicode ekseni), `request::` çapraz-mod, `session::`, `jobs::` | — | **SIRADA** |
 
-### 5a. AÇIK bulgular — `$arr[idx]` operatör kümesi (S3, düzeltilmedi)
+### 5a. `$arr[idx]` operatör kümesi (S3) — 2 kapandı, 4 açık
+
+**DÜZELTİLDİ (23. bug, `90b4487`):** string anahtar vakaları (#1 ve #6). Sözleşme:
+sayısal listeye tam-sayı-olmayan string anahtar → listeyi assoc'a **dönüştür ama
+mevcut elemanları sayısal indeksleriyle anahtarlayarak koru**; `"1"` gibi tam sayı
+metni sayısal indekstir (`look_is_int_key`, iki motorda aynı kural); listede
+bulunmayan string anahtar okuması → `null`. `array::set` ile aynı sözleşme →
+dil kendi içinde tutarlı. Guard: `differential_test.sh` `$arr[str]` bölümü.
+
+**AÇIK (#2–#5):** sayısal indeks uçları — taşan/negatif indeks.
 
 Dizi **indeks operatörünün** kendisi iki motorda ayrışıyor. `array::set` düzeltildi ama
 bunlar **kasıtlı olarak bekletiliyor**: dilin en sıcak yolu (`vm.cpp` `array_get`/`array_set`,
@@ -297,12 +306,12 @@ Ayrı bir karar + ayrı bir kapsam olarak ele alınacak.
 
 | # | İfade | CLI-VM | tree-walk | Not |
 |---|---|---|---|---|
-| 1 | `$a=[1,2,3]; $a["k"]="X"` | `{"1":2,"3":"k"}` | `["X",2,3]` | VM **veriyi yok ediyor** (sentinel'siz ekleme → çiftler yanlış okunuyor); tree-walk `to_int("k")=0` ile indeks 0'a yazıyor |
+| ~~1~~ | ~~`$a=[1,2,3]; $a["k"]="X"`~~ | ~~`{"1":2,"3":"k"}`~~ | ~~`["X",2,3]`~~ | ✅ **DÜZELTİLDİ** → `{"0":1,"1":2,"2":3,"k":"X"}` (iki motor) |
 | 2 | `$a[99]="X"` | sessizce yok sayar | hata | |
 | 3 | `$a[-1]="X"` | sessizce yok sayar | `[1,2,"X"]` (sondan) | |
 | 4 | `$a[99]` oku | `null` | hata | |
 | 5 | `$a[-1]` oku | `null` | `3` (sondan) | |
-| 6 | `$a["k"]` oku | `null` | `1` (indeks 0) | |
+| ~~6~~ | ~~`$a["k"]` oku~~ | ~~`null`~~ | ~~`1` (indeks 0)~~ | ✅ **DÜZELTİLDİ** → `null` (iki motor) |
 
 Kök neden yerleri: `cpp/src/vm.cpp` `array_get`/`array_set`, `cpp/src/interpreter.cpp`
 index okuma + index atama dalları. Sözleşme kararı verilmeden dokunulmayacak.
