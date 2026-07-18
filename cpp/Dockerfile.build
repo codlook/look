@@ -1,0 +1,24 @@
+# LOOK derleme/test ortami — AlmaLinux 8 (VPS ile ayni taban).
+#
+# NEDEN: her `docker run --rm almalinux:8` cagrisinda toolchain'i bastan kurmak
+# build basina dakikalar goturuyordu. Bu imaj bir kez pisirilir, sonra tum
+# derleme ve guard kosumlari saniyeler icinde baslar.
+#
+# Kur (bir kez):
+#   docker build -t look-build -f cpp/Dockerfile.build cpp/
+# Kullan:
+#   docker run --rm -v "%USERPROFILE%\Desktop\look\cpp:/look/cpp" -w /look/cpp look-build \
+#     bash -c "source /opt/rh/gcc-toolset-12/enable && cmake --build build --target look-fcgi -j8"
+FROM almalinux:8
+
+RUN dnf install -y --setopt=sslverify=false \
+        gcc-toolset-12 cmake make openssl-devel \
+        curl glibc-common python3 procps-ng \
+    && dnf clean all
+
+# Guard script'leri iconv (UTF-8 dogrulama), curl (HTTP probe'lari) ve
+# python3 (JSON dogrulama) kullanir — hepsi yukarida.
+
+ENV BASH_ENV=/opt/rh/gcc-toolset-12/enable
+SHELL ["/bin/bash", "-c"]
+WORKDIR /look/cpp
