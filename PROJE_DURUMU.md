@@ -207,12 +207,13 @@ okur → min(fiziksel, cgroup)×4. **Naive kullanıcı tam performansı otomatik
 
 ---
 
-## 7. Bug avı — kapatılan 18 bug
+## 7. Bug avı — kapatılan 20 bug
 
 🔴 = üretimde veri/erişim kaybı · 🟠 = yanlış davranış · 🟡 = sessiz yavaşlama
 
 | Bug | Sınıf | Commit |
 |---|---|---|
+| **Template motoru dil semantiğinden sapıyordu (2 ayrışma)** — `{#if "0"}` şablonda TRUE / kodda FALSE (DB'den string dönen `stock="0"` alanları sessizce yanlış dal); float `1234567.5` → **`1.23457e+06`** (bilimsel + hassasiyet kaybı, fatura/toplam bozuk). Kök: dilin truthiness+format'ı KOPYALANMIŞTI → dile delege edildi. Şablon motorunun guard'ı hiç yoktu | 🔴 veri | `69dcd50` |
 | **Compiler: TOP-LEVEL bileşik atama sol operandı SESSİZCE atıyordu** — `$t=1; $t+=2` → VM'de **2** (3 değil), `$s="x"; $s.="y"` → **"y"** ("xy" değil); interpreter doğruydu → **sessiz motor ayrışması**. Yalnız global dal bozuktu (fonksiyon-local doğruydu → web route'ları etkilenmedi, bu yüzden yıllarca görünmedi) | 🔴 veri | `3892f5e` |
 | **Parser: `$x = $x . fn(...)` parse HATASI** — `.` concat/üye-erişim ikililiği; `$out . html::escape(...)` → `$out.html` üye erişimi sanılıp `::`'de patlıyordu; idiomatik string-building bozuktu (analist yakaladı) | 🟠 parse | `be6b72b` |
 | **ODR: `look::HttpResponse` iki farklı tip** — web'de `http::get` **sunucuyu çökertiyordu** | 🔴 crash | `d2df9d3` |
