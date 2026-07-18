@@ -271,6 +271,34 @@ cs_vm=$(timeout 10 "$LK" "$TMP/case.lk" 2>&1)
 [ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (beklenen $cs_bek)"; fail=1; }
 
 
+# ── GUVENLIK: request::ip() sahtelenemez mi? ────────────────────────────────────
+# NEDEN: ctx.remote_addr yalnizca X-Forwarded-For basligindan dolduruluyordu ve
+# guvenilir-proxy kontrolu YOKTU. Istemci kendi IP'sini seciyordu:
+#   curl -H "X-Forwarded-For: 9.9.9.9"  ->  request::ip() = "9.9.9.9"
+# IP'ye dayali yetkilendirme, ban listesi ve rate-limit bypass edilebiliyordu.
+# Baslik hic yoksa da "" donuyordu (gercek peer yok sayiliyor).
+# Sozlesme: GERCEK TCP peer esastir; X-Real-IP / X-Forwarded-For'a yalnizca
+# baglanan IP LOOK_TRUSTED_PROXY listesindeyse bakilir; zincirin ILKI alinir.
+# Bu kontrol LOOK_TRUSTED_PROXY OLMADAN kosar: baslik ne gonderilirse gonderilsin
+# sonuc gercek peer olmali.
+IP_PORT=9616
+cat > "$TMP/ip.lk" <<'LK'
+route("GET", "/ip", function(){ return response::text(request::ip()) })
+LK
+"$FCGI" --mode http --port $IP_PORT "$TMP/ip.lk" >/dev/null 2>&1 &
+IPPID=$!
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$IP_PORT/ip" && break; sleep 0.3; done
+ip_plain=$(curl -s "http://127.0.0.1:$IP_PORT/ip")
+ip_spoof=$(curl -s "http://127.0.0.1:$IP_PORT/ip" -H "X-Forwarded-For: 9.9.9.9")
+ip_chain=$(curl -s "http://127.0.0.1:$IP_PORT/ip" -H "X-Forwarded-For: 1.1.1.1, 2.2.2.2")
+ip_real=$(curl -s "http://127.0.0.1:$IP_PORT/ip" -H "X-Real-IP: 8.8.8.8")
+kill $IPPID 2>/dev/null; wait $IPPID 2>/dev/null
+[ "$ip_plain" = "127.0.0.1" ] || { echo "FAIL: request::ip() baslik yokken gercek peer'i vermiyor: [$ip_plain]"; fail=1; }
+[ "$ip_spoof" = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() SAHTELENEBILIYOR: X-Forwarded-For ile [$ip_spoof] donduruldu (guvenilir proxy tanimli degilken gercek peer olmaliydi)"; fail=1; }
+[ "$ip_chain" = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() XFF zincirine guveniyor: [$ip_chain]"; fail=1; }
+[ "$ip_real"  = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() X-Real-IP'ye guveniyor: [$ip_real]"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

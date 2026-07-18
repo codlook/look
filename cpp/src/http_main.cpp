@@ -214,6 +214,36 @@ static bool is_trusted_proxy(const std::string& ip) {
     return false;
 }
 
+// İstemci IP'sini çöz — GERÇEK TCP peer'dan başla, proxy başlıklarına yalnız
+// bağlanan IP LOOK_TRUSTED_PROXY listesindeyse güven.
+//
+// ESKİ HATA: bu mantık rate limiter yolunda DOĞRU yazılmıştı ama request::ip()'yi
+// besleyen yerlerde (ctx.remote_addr) KOPYALANMAMIŞ, yerine tek satır konmuştu:
+//     if (req.headers.count("x-forwarded-for")) ctx.remote_addr = <baslik>;
+// Sonucu (--mode http, ölçüldü):
+//   başlık yok                  -> request::ip() = ""        (gerçek peer yok sayılıyor)
+//   X-Forwarded-For: 9.9.9.9    -> request::ip() = "9.9.9.9" (İSTEMCİ KENDİ IP'SİNİ SEÇİYOR)
+//   X-Forwarded-For: a, b       -> zincir ayrıştırılmıyor
+//   X-Forwarded-For: <çöp>      -> doğrulanmadan log'a/sorguya/ban listesine
+// IP'ye dayalı yetkilendirme, ban ve denetim kaydı güvenilmez hale geliyordu.
+// Artık tek kaynak: üç çağrı yeri de bu fonksiyonu kullanıyor (S2 — kopya sapar).
+template <typename Req>
+static std::string resolve_client_ip(const Req& req) {
+    std::string ip = req.remote_addr;              // gerçek TCP peer
+    if (!is_trusted_proxy(ip)) return ip;          // güvenilmeyen kaynak: başlıklara BAKMA
+    auto ireal = req.headers.find("x-real-ip");
+    if (ireal != req.headers.end()) return ireal->second;
+    auto ixff = req.headers.find("x-forwarded-for");
+    if (ixff == req.headers.end()) return ip;
+    std::string xff = ixff->second;
+    auto comma = xff.find(',');                    // "istemci, proxy1, proxy2" → ilki
+    if (comma != std::string::npos) xff = xff.substr(0, comma);
+    xff.erase(0, xff.find_first_not_of(" \t"));
+    auto last = xff.find_last_not_of(" \t");
+    xff.erase(last == std::string::npos ? 0 : last + 1);
+    return xff.empty() ? ip : xff;
+}
+
 // ── Shared hot-reload state (mirrors WarmApp in fcgi_main) ───────────────────
 
 struct HttpApp {
@@ -671,9 +701,10 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
     auto ict = req.headers.find("content-type");
     if (ict != req.headers.end()) ctx.content_type = ict->second;
 
-    // Remote addr
-    auto iip = req.headers.find("x-forwarded-for");
-    if (iip != req.headers.end()) ctx.remote_addr = iip->second;
+    // Remote addr — request::ip() bunu okur. Gerçek peer'dan başlar, proxy
+    // başlıklarına yalnız güvenilir proxy arkasındaysa güvenir (bkz.
+    // resolve_client_ip: eskiden burada başlık KOŞULSUZ kabul ediliyordu).
+    ctx.remote_addr = resolve_client_ip(req);
 
     // POST body parse
     if (req.method == "POST" && !req.body.empty()) {
@@ -722,22 +753,11 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
 
     // ── Rate limit check ─────────────────────────────────────────────────────
     {
-        // Use real TCP peer IP from socket.  Only trust proxy headers (X-Real-IP /
-        // X-Forwarded-For) when the connecting IP is in LOOK_TRUSTED_PROXY list.
-        std::string client_ip = req.remote_addr;
-        if (is_trusted_proxy(req.remote_addr)) {
-            auto ireal = req.headers.find("x-real-ip");
-            if (ireal != req.headers.end()) {
-                client_ip = ireal->second;
-            } else {
-                auto ixff = req.headers.find("x-forwarded-for");
-                if (ixff != req.headers.end()) {
-                    client_ip = ixff->second;
-                    auto comma = client_ip.find(',');
-                    if (comma != std::string::npos) client_ip = client_ip.substr(0, comma);
-                }
-            }
-        }
+        // Gerçek TCP peer'dan başla; proxy başlıklarına yalnız bağlanan IP
+        // LOOK_TRUSTED_PROXY listesindeyse güven. Bu mantık burada DOĞRUYDU ama
+        // request::ip() yolunda kopyalanmamıştı ve o kopya sapmıştı — artık her
+        // ikisi de tek kaynağı (resolve_client_ip) kullanıyor.
+        std::string client_ip = resolve_client_ip(req);
         const auto& rlc = rl_config();
 
         // Global limit — önce kontrol et, dolu ise per-IP'ye bakma.
@@ -1354,8 +1374,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.path   = req.path;
         web.query_string = req.query_string;
         web.get_params   = look::WebContext::parse_query(req.query_string);
-        auto iip = req.headers.find("x-forwarded-for");
-        if (iip != req.headers.end()) web.remote_addr = iip->second;
+        web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
 
         std::ostringstream sink;
         copy->set_output(sink);
@@ -1384,8 +1403,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.path   = req.path;
         web.query_string = req.query_string;
         web.get_params   = look::WebContext::parse_query(req.query_string);
-        auto iip = req.headers.find("x-forwarded-for");
-        if (iip != req.headers.end()) web.remote_addr = iip->second;
+        web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
 
         std::ostringstream sink;
         copy->set_output(sink);
