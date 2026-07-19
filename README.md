@@ -41,8 +41,10 @@ route("404", fn() => response::error(404, "Not found"))
 - ⚡ **Fast** — **~9,800 req/s** on a direct port. On a real DB-bound workload
   (QR-menu JOIN over 50k rows, 1 CPU / 1 GB, best-of-3): **LOOK 2,837 req/s vs
   PHP 8.3 + JIT + FPM 2,184** — and **9–29 MB RAM against PHP's 43–47 MB**
-  (3–5× less), with the lowest CPU per request. Numbers and method in
-  [PROJE_DURUMU.md](PROJE_DURUMU.md) §5.
+  (3–5× less), with the lowest CPU per request. Method: same host, same schema and
+  query, `CPUQuota=100%` + `MemoryMax=1G` on both, equal pool sizes (32), no TLS,
+  `c=100`, best-of-3 runs (a single run is ~2× noisy). PHP ran under FPM, not
+  `php -S` — the built-in server is single-process and would have understated it.
 - 🔋 **Batteries included** — MySQL / PostgreSQL / SQLite, sessions, JWT, cache,
   queue, background jobs, an embedded **SMTP + IMAP** mail server, WebSocket & SSE —
   all built in.
@@ -109,6 +111,12 @@ route("GET", "/blog", function() use ($db) {
 - **Persistent-process model.** Unlike PHP-FPM there is no per-request reset: a
   segfault takes the worker down and global state is shared, so it must be
   thread-safe. That is the trade for the speed and the low memory.
+- **Strict, not forgiving.** LOOK sits in the Go/Node band, not the PHP one: an
+  undefined variable and an out-of-range index (`$a[99]`, and `$a[99] = "x"`) are
+  **errors**, not a silent `null` or a silently skipped write. Negative indices count
+  from the end (`$a[-1]`). Missing *keys* are different from missing *slots*: an
+  absent assoc key returns `null`, and accessors take a default —
+  `request::get("page", 1)`, like `env(key, default)`.
 
 ## Build
 
@@ -158,9 +166,10 @@ This repository is **the LOOK language core** only. Everything else lives on its
 
 ## Project status
 
-See [PROJE_DURUMU.md](PROJE_DURUMU.md) (Turkish) for the honest, up-to-date state of
-the project: what is done, what is left, what we measured and **rejected**, the known
-limits and open risks, and the benchmark methodology behind the numbers.
+See [BUG_AVI_HARITASI.md](BUG_AVI_HARITASI.md) (Turkish) for the honest, up-to-date
+engineering log: the systematic bug-hunt map, every bug we closed and **why it hid for
+so long**, the bug-class catalogue, and the rules we work by. Each fix lands with a
+regression guard, so the list doubles as a record of what is now locked down.
 
 ## Security
 

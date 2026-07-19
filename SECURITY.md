@@ -26,7 +26,10 @@ TSan) + regression tests run on every build + CI.
 | Body DoS | Unbounded request body | `LOOK_MAX_BODY_SIZE` (10 MB default) → 413 |
 | Malformed `Content-Length` | Parser exception → worker crash | 400 Bad Request |
 | Request smuggling | CL + TE ambiguity | 400 (RFC 7230 §3.3.3) |
-| SQL injection | — | Parameterised `?` placeholders + driver-correct escaping |
+| SQL injection | `' OR '1'='1`, `UNION SELECT`, `'; DROP TABLE` | Parameterised `?` placeholders + driver-correct escaping. `?` is bound **only in the SQL body** — a `?` inside a string literal, quoted identifier or comment is data, and a placeholder/parameter count mismatch is an **error**, never a silent bind |
+| Cookie attribute injection | `;` in a cookie value forging attributes (`Domain=`, `Max-Age`, `Path`) to widen scope to sibling subdomains | Name and value percent-encoded on write, decoded on read — a `;` can no longer terminate the value. Distinct from CR/LF splitting below, and it was a **separate channel** |
+| Session data injection | `\n` in a stored value forging extra fields (`admin=1`) in the session blob — privilege escalation when user input is stored alongside authorization fields | Key and value escaped on write, unescaped on read: a newline round-trips as data and cannot act as a record separator |
+| Client-IP spoofing | Attacker sets `X-Forwarded-For` to choose their own IP, bypassing IP allow/deny lists, bans and per-IP rate limits | The real TCP peer is authoritative. `X-Forwarded-For` / `X-Real-IP` are honoured **only** when the connecting address is in `LOOK_TRUSTED_PROXY`; the chain's first hop is taken. One shared resolver feeds `request::ip()`, the rate limiter, and the WS/SSE paths |
 | Slowloris | Slow / idle connections | `SO_RCVTIMEO/SNDTIMEO`, large kernel backlog |
 | Path traversal | `../` in file / mailbox / recipient | `weakly_canonical` + root-confinement, `..`/absolute/control-char rejection |
 | Integer parsing | Malformed literals in wire protocols | Guarded `stol`/`stoull` (try/catch) everywhere |
@@ -60,3 +63,14 @@ Parsers are exercised with ASan/UBSan/TSan fuzzing (16k+ iterations, 0 undefined
 behaviour, 0 crashes), end-to-end SMTP→IMAP interop tests, TLS handshake tests
 (STARTTLS/IMAPS), and a regression suite gating every build. CI runs the sanitizer
 builds on every push.
+
+Every entry in the table above is locked by a regression guard, and the security
+ones carry the original attack payload — the cookie check sends
+`?v=x; HttpOnly; Domain=evil.com`, the session check sends a newline-forged
+`admin=1`, and the IP check sends a spoofed `X-Forwarded-For` **without**
+`LOOK_TRUSTED_PROXY` set and requires the real peer back. A guard that cannot fail
+on the original bug is not a guard, so each one was verified against the pre-fix
+behaviour. The suite runs the same program through all three engines (tree-walk
+interpreter, CLI bytecode VM, web VM) and fails on any divergence: a security fix
+that only lands in one engine is itself a vulnerability. See
+[BUG_AVI_HARITASI.md](BUG_AVI_HARITASI.md) for the method and the full log.
