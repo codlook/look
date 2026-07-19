@@ -133,6 +133,15 @@ static bool is_ssrf_blocked(const struct addrinfo* res) {
     return false;
 }
 
+// Bağlantı hatasının NEDENİ — tcp_connect'ten çağırana taşınır.
+// ESKİ HATA: tcp_connect DNS hatası, SSRF engeli, socket hatası ve gerçek bağlantı
+// hatası için AYNI INVALID'i döndürüyordu; çağıran taraf da hepsine "connection
+// failed" diyordu. Sonuç: SSRF ENGELİ ile GERÇEK AĞ HATASI ayırt edilemiyordu —
+// iç servisine ulaşamayan geliştirici isteği bir güvenlik politikasının
+// engellediğini göremiyor, boşuna ağ/DNS/firewall araştırıyordu.
+// (33. bug ile aynı sınıf: davranış doğru, mesaj teşhis ettirmiyor.)
+static thread_local const char* t_conn_error = nullptr;
+
 // ── URL parser ────────────────────────────────────────────────────────────────
 
 ParsedUrl parse_url(const std::string& url) {
@@ -146,6 +155,26 @@ ParsedUrl parse_url(const std::string& url) {
     auto path_pos = s.find('/');
     std::string host_port = (path_pos != std::string::npos) ? s.substr(0, path_pos) : s;
     r.path = (path_pos != std::string::npos) ? s.substr(path_pos) : "/";
+
+    // IPv6 literal: RFC 3986 gereği köşeli parantez içinde — "[::1]", "[::1]:8080".
+    // ESKİ HATA: parantezler sıyrılmıyordu ve port ayracı `rfind(':')` ile
+    // aranıyordu. Sonuç:
+    //   "[::1]:8080" -> host "[::1]"   (parantezli → getaddrinfo başarısız)
+    //   "[::1]"      -> host "[:"      (adresin İÇİNDEKİ iki nokta port sanıldı)
+    // Yani hiçbir IPv6 literal URL'i çalışmıyordu; hata da "DNS çözümlenemedi"
+    // olduğu için sebep görünmüyordu (bu bug zaten gizliydi; SSRF hata mesajları
+    // ayrıştırılınca ortaya çıktı).
+    if (!host_port.empty() && host_port[0] == '[') {
+        auto rb = host_port.find(']');
+        if (rb == std::string::npos)
+            throw std::runtime_error("http:: Geçersiz IPv6 URL (kapanış ']' yok): " + url);
+        r.host = host_port.substr(1, rb - 1);          // parantezler host'a DAHİL DEĞİL
+        if (rb + 1 < host_port.size() && host_port[rb + 1] == ':') {
+            try { r.port = std::stoi(host_port.substr(rb + 2)); }
+            catch (...) { r.port = r.tls ? 443 : 80; }  // bozuk port → varsayılan
+        }
+        return r;
+    }
 
     auto colon = host_port.rfind(':');
     if (colon != std::string::npos) {
@@ -354,9 +383,18 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     char port_str[16];
     snprintf(port_str, sizeof(port_str), "%d", port);
 
-    if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) return INVALID;
+    t_conn_error = nullptr;
+    if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) {
+        t_conn_error = "DNS cozumlenemedi";
+        return INVALID;
+    }
 
-    if (is_ssrf_blocked(res)) { freeaddrinfo(res); return INVALID; }
+    if (is_ssrf_blocked(res)) {
+        freeaddrinfo(res);
+        t_conn_error = "SSRF korumasi: ozel/ic ag adresine istek engellendi "
+                       "(gerekliyse LOOK_ALLOW_SSRF=1)";
+        return INVALID;
+    }
 
     sock_t s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (s == INVALID_SOCKET) { freeaddrinfo(res); return INVALID; }
@@ -381,7 +419,7 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
 {
     HttpClientResponse resp;
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
-    if (s == INVALID) { resp.error = "connection failed"; return resp; }
+    if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     std::string req = build_request(method, url, body, hdrs);
     if (send(s, req.c_str(), (int)req.size(), 0) == SOCKET_ERROR) {
@@ -418,7 +456,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     std::unique_ptr<StreamSink> sink;
     if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
-    if (s == INVALID) { resp.error = "connection failed"; return resp; }
+    if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     // Schannel credential
     SCHANNEL_CRED sc_cred{};
@@ -605,9 +643,18 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     char port_str[16];
     snprintf(port_str, sizeof(port_str), "%d", port);
 
-    if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) return INVALID;
+    t_conn_error = nullptr;
+    if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) {
+        t_conn_error = "DNS cozumlenemedi";
+        return INVALID;
+    }
 
-    if (is_ssrf_blocked(res)) { freeaddrinfo(res); return INVALID; }
+    if (is_ssrf_blocked(res)) {
+        freeaddrinfo(res);
+        t_conn_error = "SSRF korumasi: ozel/ic ag adresine istek engellendi "
+                       "(gerekliyse LOOK_ALLOW_SSRF=1)";
+        return INVALID;
+    }
 
     sock_t s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (s < 0) { freeaddrinfo(res); return INVALID; }
@@ -679,7 +726,7 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
 {
     HttpClientResponse resp;
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
-    if (s == INVALID) { resp.error = "connection failed"; return resp; }
+    if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     std::string req = build_request(method, url, body, hdrs);
     if (::send(s, req.data(), req.size(), 0) < 0) {
@@ -718,7 +765,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     if (!ctx) { resp.error = "SSL_CTX init failed"; return resp; }
 
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
-    if (s == INVALID) { resp.error = "connection failed"; return resp; }
+    if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     SSL* ssl = SSL_new(ctx);
     if (!ssl) { close(s); resp.error = "SSL_new failed"; return resp; }

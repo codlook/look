@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **35** · Guard: 3 motor × 22 kategori + 34 özel kontrol (4 güvenlik kilidi + PG wire sahte sunucusu + mod paritesi)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **37** · Guard: 3 motor × 22 kategori + 35 özel kontrol (5 güvenlik kilidi + PG wire sahte sunucusu + mod paritesi)
 >
-> **Bölüm 7 = kapatılan 35 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 37 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 35 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 37 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -45,7 +45,7 @@ Bu 7 kural 35 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | **VM (bytecode yürütücü)** | `vm.cpp` | 863 | ✅ differential | **Yüksek** |
 | FCGI main | `fcgi_main.cpp` | 860 | ⬜ yok | Orta |
 | **Parser** | `parser.cpp` | 838 | 🟡 22 kenar durum | **Yüksek** |
-| HTTP client | `http_client.cpp` | 822 | 🟡 ODR + fiber | Orta |
+| HTTP client | `http_client.cpp` | 822 | ✅ SSRF + IPv6 (yeni) | Orta |
 | MySQL wire | `mysql_client.cpp` | 761 | 🟡 parallel_db | **Yüksek** |
 | Template motoru | `template_stdlib.cpp` | 702 | ✅ yeni eklendi | Orta |
 | Event loop | `event_loop.cpp` | 658 | ⬜ yok | Orta |
@@ -295,6 +295,7 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-19 | **`db::` (12 fn, P2)** | 3f enjeksiyon matrisi + parametre kenar durumları (SQLite `:memory:`, sunucusuz) | **2 bug DÜZELTİLDİ** (30) — literal içindeki `?` placeholder sanılıyordu + parametre sayısı uyuşmazlığı iki yönde de sessizdi. **SQL enjeksiyonu TEMİZ**: `' OR '1'='1`, UNION, DROP, ters bölülü yük — altısı da engelli, `escape_str` doğru. Tipler doğru (int/float locale-güvenli/bool/null/Türkçe) |
 | 07-19 | **`file::` (8 fn) — sandbox iddiası** | 3f düşmanca yol + **sembolik link** (gerçek Linux dizininde) | **TEMİZ** — `SECURITY.md`'nin iddiası doğrulandı. `../`, mutlak yol, iç içe `..`, `....//`, ve **sembolik link** (dosya + dizin) hepsi reddedildi; link üzerine **yazma** da engellendi (`/etc/passwd` bozulmadı). Guard 8 fonksiyonun 6'sında; `store`/`upload_dir` kullanıcı yolu almıyor (kendi `subdir` doğrulaması var). `LOOK_FILE_ROOT=*` opt-out'u çalışıyor. Önek karşılaştırması **bileşen bazlı** → S10 sınıfı doğru yapılmış |
 | 07-19 | Hata mesajı kalitesi | 3a differential (kazara — kendi probe'umda `use` unuttum) | **1 bug DÜZELTİLDİ** (33) — `use` unutulunca VM `bad_function_call` (C++ iç terimi) sızdırıyordu, tree-walk ise doğrusunu diyordu. **1 bulgu AÇIK** (aşağıda) |
+| 07-19 | **`http::` (9 fn) — SSRF ekseni** | 3f düşmanca URL (11 bypass varyantı) + gerçek IPv6/IPv4 sunucusu | **2 bug DÜZELTİLDİ** (36, 37). **SSRF koruması TEMİZ**: kısa form, ondalık, sekizlik, IPv6, IPv4-mapped, metadata (169.254), 10.x, 192.168 — hepsi engelli. Çözümlenmiş adres kontrol ediliyor (string değil) → hostname/kodlama hileleri otomatik düşüyor; bağlantı **kontrol edilen adrese** yapılıyor → DNS rebinding yok. Yönlendirme takibi hiç yok → redirect bypass da yok |
 | 07-19 | **PostgreSQL wire (1023 satır, guard YOKTU)** | 3f düşmanca girdi + **sahte PG sunucusu** (`tests/fake_pg_server.py`) | **1 bug DÜZELTİLDİ** (34) — bozuk DataRow sessizce yanlış veri üretiyordu. Mesaj okuma yolu sağlam çıktı (uzunluk `<4` red, `LOOK_PG_MAX_MSG` tavanı). Çökme yok, bellek güvenliği sorunu yok |
 | — | `jobs::`, `http::`, lexer, `installer::`, SMTP/IMAP | — | **SIRADA** |
 
@@ -489,6 +490,8 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 33 | **`use` unutulunca VM `bad_function_call` sızdırıyordu** — C++ iç terimi; ne modülü ne fonksiyonu söylüyor. tree-walk ise `Module 'string' not loaded.` diyordu | 🟠 | `use` unutmak **en sık yapılan hata**, yani varsayılan motor en kötü mesajı veriyordu. `builtin_names()` ile ad çözülüp **aynı metin** üretiliyor — hata metni de sözleşmenin parçası | `d6c7e5a` |
 | 34 | **PostgreSQL wire: bozuk DataRow sessizce yanlış veri üretiyordu** — uzunluk 100 der 2 bayt gönderir → alan `""`; int32-max uzunluk → `""`; 3 alan vaat 1 alan gönderir → satır 1 sütunla döner. Hiçbirinde hata yok | 🔴 | Çökme yoktu (sınır kontrolü tutuyordu) ama uygulama boş değeri gerçek veri sanıyordu. Bozuk satır artık **net hata**; ayrıca `p + field_len <= end` işaretçi taşmasına açıktı → `field_len > end - p`. **Sahte PG sunucusuyla** bulundu ve o sunucu kalıcı guard oldu — bu dosyanın ilk guard'ı | bu commit |
 | 35 | **`request::file` (multipart) `--mode http`'te YOKTU** — FastCGI'de çalışıyor, aynı uygulama `--mode http`'te "requires multipart/form-data request" hatası veriyordu. Ayrıca `http_main` gövde ayrıştırmaya POST kapısı koyuyordu, FastCGI koymuyordu → PUT/PATCH gövdeleri de modlara göre ayrışıyordu | 🟠 | Gövde ayrıştırma AYNI 6 SATIR **üç yerde** yazılıydı; `http_main` kopyasında multipart dalı hiç yoktu (S2 → S12). `WebContext::parse_post_body()` tek kaynağı; üç giriş noktası da ona bağlandı. README'de "bilinen sınır" diye duruyordu — sınır değil, unutulmuş daldı | bu commit |
+| 36 | **IPv6 literal URL'ler HİÇ çalışmıyordu** — `parse_url` köşeli parantezleri sıyırmıyor, port ayracını `rfind(':')` ile arıyordu: `"[::1]:8080"` → host `"[::1]"` (parantezli, çözümlenemez); `"[::1]"` → host `"[:"` (adresin İÇİNDEKİ iki nokta port sanıldı) | 🟠 | Hata "DNS çözümlenemedi" olduğu için sebep görünmüyordu. RFC 3986 biçimi ayrıştırılıyor; kapanış `]` yoksa net hata. Doğrulama: gerçek IPv6 sunucusuna `status=200` (aynı adrese curl ile teyitli) | bu commit |
+| 37 | **SSRF engeli gerçek ağ hatasından ayırt edilemiyordu** — `tcp_connect` DNS hatası, SSRF engeli, socket ve bağlantı hatası için aynı `INVALID`'i dönüyor, çağıran hepsine `"connection failed"` diyordu | 🟠 | İç servisine ulaşamayan geliştirici bir **güvenlik politikasının** engellediğini göremiyor, boşuna ağ/DNS/firewall araştırıyordu (33. bug ile aynı sınıf). Sebep `t_conn_error` ile taşınıyor. **36. bug bu düzeltme sayesinde görünür oldu** — mesajlar ayrışınca IPv6'nın "DNS hatası" verdiği fark edildi | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 

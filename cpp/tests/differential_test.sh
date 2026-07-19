@@ -495,6 +495,46 @@ kill $MPPID 2>/dev/null; wait $MPPID 2>/dev/null
 [ "$put_out" = '"putdan"' ] || { echo "FAIL: --mode http'de PUT govdesi ayrismiyor (FastCGI ile parite yok): [$put_out]"; fail=1; }
 
 
+# ── http:: SSRF + IPv6 URL ayristirma ───────────────────────────────────────────
+# IKI SEY KILITLENIYOR:
+# 1) SSRF ENGELI ile GERCEK AG HATASI ayirt edilebilmeli. tcp_connect DNS hatasi,
+#    SSRF engeli ve baglanti hatasi icin ayni INVALID'i donduruyor, cagiran da
+#    hepsine "connection failed" diyordu -> ic servisine ulasamayan gelistirici
+#    bir GUVENLIK POLITIKASININ engelledigini goremiyordu.
+# 2) IPv6 literal URL'ler HIC CALISMIYORDU: parse_url kosleli parantezleri
+#    siyirmiyor, port ayracini rfind(':') ile ariyordu ->
+#      "[::1]:8080" -> host "[::1]"  (parantezli, getaddrinfo basarisiz)
+#      "[::1]"      -> host "[:"     (adresin ICINDEKI iki nokta port sanildi)
+#    Hata "DNS cozumlenemedi" oldugu icin sebep gorunmuyordu; ancak (1) yapilip
+#    mesajlar ayrisinca ortaya cikti.
+# Bu kontrol SUNUCU GEREKTIRMEZ: SSRF korumasi ACIKKEN [::1] icin beklenen hata
+# SSRF'tir. Parse tekrar bozulursa hata "DNS cozumlenemedi"ye doner ve FAIL olur.
+cat > "$TMP/ssrf.lk" <<'LK'
+use http
+$a = http::get("http://[::1]:9/")
+$b = http::get("http://127.0.0.1:9/")
+$r = http::get("http://[::1:9/")
+$c = $r.error
+print($a.error . "|" . $b.error . "|" . $c)
+LK
+sf_out=$(timeout 30 "$LK" "$TMP/ssrf.lk" 2>&1 | tail -1)
+# Tek regex yerine UC AYRI kosul — grep'te '|' duz karakterdir, alternation
+# beklemek yanlis alarm uretir (bu kontrolu yazarken tam bunu yasadim).
+sf_ok=1
+if echo "$sf_out" | grep -q "DNS cozumlenemedi"; then
+  echo "FAIL: IPv6 literal URL ayristirma bozuk — [::1] icin DNS hatasi doniyor,"
+  echo "      demek ki kosleli parantezler siyrilmiyor (host \"[::1]\" olarak gidiyor)"
+  sf_ok=0
+fi
+if echo "$sf_out" | grep -q "connection failed"; then
+  echo "FAIL: GUVENLIK TESHISI — SSRF engeli gercek ag hatasindan ayirt edilemiyor"
+  sf_ok=0
+fi
+echo "$sf_out" | grep -qi "ipv6" || {
+  echo "FAIL: bozuk IPv6 URL ('[::1:9/') net hata vermiyor"; sf_ok=0; }
+[ $sf_ok = 1 ] || { echo "  cikti: [$sf_out]"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).
