@@ -551,13 +551,7 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
 
     web.body         = req.body;
     web.content_type = param("CONTENT_TYPE");
-    if (web.content_type.find("application/x-www-form-urlencoded") != std::string::npos) {
-        web.post_params = look::WebContext::parse_query(req.body);
-    } else if (web.content_type.find("multipart/form-data") != std::string::npos) {
-        size_t bpos = web.content_type.find("boundary=");
-        if (bpos != std::string::npos)
-            web.parse_multipart(web.content_type.substr(bpos + 9));
-    }
+    web.parse_post_body();   // urlencoded + multipart — tek kaynak (web.cpp)
 
     web.remote_addr = param("REMOTE_ADDR");
     std::string ck  = param("HTTP_COOKIE");

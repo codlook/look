@@ -706,11 +706,15 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
     // resolve_client_ip: eskiden burada başlık KOŞULSUZ kabul ediliyordu).
     ctx.remote_addr = resolve_client_ip(req);
 
-    // POST body parse
-    if (req.method == "POST" && !req.body.empty()) {
-        if (ctx.content_type.find("application/x-www-form-urlencoded") != std::string::npos)
-            ctx.post_params = look::WebContext::parse_query(req.body);
-    }
+    // Gövde ayrıştırma — urlencoded VE multipart, tek kaynaktan (web.cpp).
+    // ESKİ HATA: burada yalnızca urlencoded dalı vardı, multipart hiç yoktu →
+    // `request::file()` FastCGI'de çalışıyor, `--mode http`'de "requires
+    // multipart/form-data request" hatası veriyordu. Aynı uygulama moda göre
+    // farklı davranıyordu (S12 — moda özgü boşluk); README'de "bilinen sınır"
+    // diye yazılmıştı, oysa unutulmuş bir daldı.
+    // Method kapısı da kaldırıldı: FastCGI tarafı hiç method kontrol etmiyordu,
+    // bu yüzden PUT/PATCH gövdeleri iki modda farklı davranıyordu.
+    if (!req.body.empty()) ctx.parse_post_body();
 
     return ctx;
 }

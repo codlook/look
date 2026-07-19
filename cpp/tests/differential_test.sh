@@ -467,6 +467,34 @@ else
 fi
 
 
+# ── MOD PARITESI: multipart yukleme --mode http'de de calisiyor mu? ─────────────
+# NEDEN: govde ayristirma UC yerde ayri yaziliydi ve http_main'deki kopyada
+# multipart dali HIC YOKTU -> request::file() FastCGI'de calisiyor, --mode http'de
+# "requires multipart/form-data request" hatasi veriyordu. Ayni uygulama moda gore
+# farkli davraniyordu (S12). README'de "bilinen sinir" diye yaziliydi; oysa
+# unutulmus bir daldi. Ayrica http_main method kapisi koyuyordu (POST-only),
+# FastCGI koymuyordu -> PUT/PATCH govdeleri de modlara gore ayrisiyordu.
+# Sozlesme: govde ayristirma TEK kaynaktan (WebContext::parse_post_body).
+MP_PORT=9619
+cat > "$TMP/up.lk" <<'LK'
+route("POST","/u", function(){
+  try { $f = request::file("dosya")
+        return response::text("OK|" . $f.size . "|" . request::post("not")) }
+  catch ($e) { return response::text("HATA") }
+})
+route("PUT","/p", function(){ return response::text(json::encode(request::post("a"))) })
+LK
+printf 'multipart test icerigi\n' > "$TMP/mp.txt"
+"$FCGI" --mode http --port $MP_PORT "$TMP/up.lk" >/dev/null 2>&1 &
+MPPID=$!
+for i in $(seq 1 30); do curl -s -o /dev/null -X PUT "http://127.0.0.1:$MP_PORT/p" -d "a=1" && break; sleep 0.3; done
+mp_out=$(curl -s -X POST "http://127.0.0.1:$MP_PORT/u" -F "dosya=@$TMP/mp.txt" -F "not=merhaba")
+put_out=$(curl -s -X PUT "http://127.0.0.1:$MP_PORT/p" -d "a=putdan")
+kill $MPPID 2>/dev/null; wait $MPPID 2>/dev/null
+[ "$mp_out" = "OK|23|merhaba" ] || { echo "FAIL: --mode http'de multipart/request::file calismiyor: [$mp_out] (beklenen OK|23|merhaba — 23 = "multipart test icerigi" + satir sonu)"; fail=1; }
+[ "$put_out" = '"putdan"' ] || { echo "FAIL: --mode http'de PUT govdesi ayrismiyor (FastCGI ile parite yok): [$put_out]"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

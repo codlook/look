@@ -229,14 +229,7 @@ void WebContext::init_from_cgi() {
     // POST params
     const char* ct = std::getenv("CONTENT_TYPE");
     content_type = ct ? ct : "";
-    if (content_type.find("application/x-www-form-urlencoded") != std::string::npos)
-        post_params = parse_query(body);
-    else if (content_type.find("multipart/form-data") != std::string::npos) {
-        // boundary=... kısmını çıkar
-        size_t bpos = content_type.find("boundary=");
-        if (bpos != std::string::npos)
-            parse_multipart(content_type.substr(bpos + 9));
-    }
+    parse_post_body();
 
     // Remote addr
     const char* ra = std::getenv("REMOTE_ADDR");
@@ -314,6 +307,18 @@ void WebContext::set_status(int code) {
         case 422: status_text = "Unprocessable Entity"; break;
         case 500: status_text = "Internal Server Error"; break;
         default:  status_text = "Unknown"; break;
+    }
+}
+
+// POST gövdesi — content_type'a göre. TEK kaynak; FastCGI, --mode http ve CGI
+// giriş noktalarının hepsi bunu çağırır (bkz. web.h).
+void WebContext::parse_post_body() {
+    if (content_type.find("application/x-www-form-urlencoded") != std::string::npos) {
+        post_params = parse_query(body);
+    } else if (content_type.find("multipart/form-data") != std::string::npos) {
+        size_t bpos = content_type.find("boundary=");
+        if (bpos != std::string::npos)
+            parse_multipart(content_type.substr(bpos + 9));
     }
 }
 

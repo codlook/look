@@ -106,8 +106,10 @@ route("GET", "/blog", function() use ($db) {
   built-ins and installed modules (`~/.look/modules`), not your own files. So your
   routes live in one `.lk` file — but **views belong in `views/*.html`** via the
   template engine, and settings in a config file, which is what keeps it readable.
-- **`request::file` (multipart) works under FastCGI, not `--mode http`.** In
-  `--mode http` send uploads as base64 in a JSON body instead.
+- **Uploads are sniffed, not trusted.** `request::file` reports the MIME from the
+  file's magic bytes, not from the client's `Content-Type` — a `.php` renamed to
+  `.png` is reported for what it is. Unknown/plain content comes back as
+  `application/octet-stream`.
 - **Persistent-process model.** Unlike PHP-FPM there is no per-request reset: a
   segfault takes the worker down and global state is shared, so it must be
   thread-safe. That is the trade for the speed and the low memory.

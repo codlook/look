@@ -91,6 +91,14 @@ struct WebContext {
     // Multipart parser — init_from_cgi tarafından çağrılır
     void parse_multipart(const std::string& boundary);
 
+    // POST gövdesini content_type'a göre ayrıştır: urlencoded → post_params,
+    // multipart/form-data → parse_multipart (dosyalar + alanlar).
+    // TEK KAYNAK: üç giriş noktası da (FastCGI, --mode http, CGI) bunu çağırır.
+    // Eskiden aynı 6 satır fcgi_main ve web.cpp'de KOPYALANMIŞTI, http_main'de ise
+    // yalnızca urlencoded dalı vardı → `request::file` FastCGI'de çalışıp
+    // `--mode http`'de çalışmıyordu (mod-özgü boşluk, S12).
+    void parse_post_body();
+
     // Helpers
     static std::string url_decode(const std::string& s);
     static std::map<std::string, std::string> parse_query(const std::string& qs);

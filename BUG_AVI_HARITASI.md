@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **34** · Guard: 3 motor × 22 kategori + 33 özel kontrol (4 güvenlik kilidi + PG wire sahte sunucusu)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **35** · Guard: 3 motor × 22 kategori + 34 özel kontrol (4 güvenlik kilidi + PG wire sahte sunucusu + mod paritesi)
 >
-> **Bölüm 7 = kapatılan 34 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 35 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 34 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 35 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -488,6 +488,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 32 | **Erişimci varsayılan argümanı yutuluyordu** — `request::get("sayfa", 1)` → `null` | 🟡 | Dilin **kendi kalıbı** zaten `env(key, varsayılan)`. 4. kural gereği tek fonksiyon değil **aile**: `request::get`/`post`/`header`, `cookie::get`, `session::get`. Geriye dönük uyumlu | `8e363e0` |
 | 33 | **`use` unutulunca VM `bad_function_call` sızdırıyordu** — C++ iç terimi; ne modülü ne fonksiyonu söylüyor. tree-walk ise `Module 'string' not loaded.` diyordu | 🟠 | `use` unutmak **en sık yapılan hata**, yani varsayılan motor en kötü mesajı veriyordu. `builtin_names()` ile ad çözülüp **aynı metin** üretiliyor — hata metni de sözleşmenin parçası | `d6c7e5a` |
 | 34 | **PostgreSQL wire: bozuk DataRow sessizce yanlış veri üretiyordu** — uzunluk 100 der 2 bayt gönderir → alan `""`; int32-max uzunluk → `""`; 3 alan vaat 1 alan gönderir → satır 1 sütunla döner. Hiçbirinde hata yok | 🔴 | Çökme yoktu (sınır kontrolü tutuyordu) ama uygulama boş değeri gerçek veri sanıyordu. Bozuk satır artık **net hata**; ayrıca `p + field_len <= end` işaretçi taşmasına açıktı → `field_len > end - p`. **Sahte PG sunucusuyla** bulundu ve o sunucu kalıcı guard oldu — bu dosyanın ilk guard'ı | bu commit |
+| 35 | **`request::file` (multipart) `--mode http`'te YOKTU** — FastCGI'de çalışıyor, aynı uygulama `--mode http`'te "requires multipart/form-data request" hatası veriyordu. Ayrıca `http_main` gövde ayrıştırmaya POST kapısı koyuyordu, FastCGI koymuyordu → PUT/PATCH gövdeleri de modlara göre ayrışıyordu | 🟠 | Gövde ayrıştırma AYNI 6 SATIR **üç yerde** yazılıydı; `http_main` kopyasında multipart dalı hiç yoktu (S2 → S12). `WebContext::parse_post_body()` tek kaynağı; üç giriş noktası da ona bağlandı. README'de "bilinen sınır" diye duruyordu — sınır değil, unutulmuş daldı | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 
