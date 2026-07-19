@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **33** · Guard: 3 motor × 22 kategori + 32 özel kontrol (4 güvenlik kilidi dahil)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **34** · Guard: 3 motor × 22 kategori + 33 özel kontrol (4 güvenlik kilidi + PG wire sahte sunucusu)
 >
-> **Bölüm 7 = kapatılan 33 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 34 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 33 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 34 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -38,7 +38,7 @@ Bu 7 kural 33 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | **Compiler (AST→bytecode)** | `compiler.cpp` | 1458 | 🟡 kısmi | **Yüksek** |
 | SMTP server | `smtp_server.cpp` | 1373 | ⬜ yok | Orta |
 | Extra stdlib | `extra_stdlib.cpp` | 1246 | 🟡 kısmi | Orta |
-| PostgreSQL wire | `postgres_client.cpp` | 1023 | ⬜ yok | **Yüksek** |
+| PostgreSQL wire | `postgres_client.cpp` | 1023 | ✅ sahte sunucu (yeni) | **Yüksek** |
 | IMAP server | `imap_server.cpp` | 1013 | ⬜ yok | Orta |
 | HTTP server | `http_server.cpp` | 976 | 🟡 kısmi | **Yüksek** |
 | Stdlib (çekirdek) | `stdlib.cpp` | 914 | 🟡 kısmi | Orta |
@@ -295,7 +295,8 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-19 | **`db::` (12 fn, P2)** | 3f enjeksiyon matrisi + parametre kenar durumları (SQLite `:memory:`, sunucusuz) | **2 bug DÜZELTİLDİ** (30) — literal içindeki `?` placeholder sanılıyordu + parametre sayısı uyuşmazlığı iki yönde de sessizdi. **SQL enjeksiyonu TEMİZ**: `' OR '1'='1`, UNION, DROP, ters bölülü yük — altısı da engelli, `escape_str` doğru. Tipler doğru (int/float locale-güvenli/bool/null/Türkçe) |
 | 07-19 | **`file::` (8 fn) — sandbox iddiası** | 3f düşmanca yol + **sembolik link** (gerçek Linux dizininde) | **TEMİZ** — `SECURITY.md`'nin iddiası doğrulandı. `../`, mutlak yol, iç içe `..`, `....//`, ve **sembolik link** (dosya + dizin) hepsi reddedildi; link üzerine **yazma** da engellendi (`/etc/passwd` bozulmadı). Guard 8 fonksiyonun 6'sında; `store`/`upload_dir` kullanıcı yolu almıyor (kendi `subdir` doğrulaması var). `LOOK_FILE_ROOT=*` opt-out'u çalışıyor. Önek karşılaştırması **bileşen bazlı** → S10 sınıfı doğru yapılmış |
 | 07-19 | Hata mesajı kalitesi | 3a differential (kazara — kendi probe'umda `use` unuttum) | **1 bug DÜZELTİLDİ** (33) — `use` unutulunca VM `bad_function_call` (C++ iç terimi) sızdırıyordu, tree-walk ise doğrusunu diyordu. **1 bulgu AÇIK** (aşağıda) |
-| — | `jobs::`, `http::`, lexer, `installer::`, PostgreSQL wire | — | **SIRADA** |
+| 07-19 | **PostgreSQL wire (1023 satır, guard YOKTU)** | 3f düşmanca girdi + **sahte PG sunucusu** (`tests/fake_pg_server.py`) | **1 bug DÜZELTİLDİ** (34) — bozuk DataRow sessizce yanlış veri üretiyordu. Mesaj okuma yolu sağlam çıktı (uzunluk `<4` red, `LOOK_PG_MAX_MSG` tavanı). Çökme yok, bellek güvenliği sorunu yok |
+| — | `jobs::`, `http::`, lexer, `installer::`, SMTP/IMAP | — | **SIRADA** |
 
 **AÇIK (düşük öncelik) — çağrılamayan ad mesajı:** olmayan bir fonksiyon adıyla çağrıda
 CLI-VM `Çağrılabilir değil (BYTECODE_FN bekleniyor)` derken tree-walk
@@ -486,6 +487,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 31 | **VM dizi indeks uçları sessizdi** — `$a[99]` → `null` (tree-walk hata), `$a[-1]` → `null` (tree-walk sondan), **`$a[99]="X"` yazmayı sessizce atlıyordu** ("yazdım ama yazılmadı") | 🔴 | VM referans semantiğe (tree-walk) hizalandı: negatif sondan, `size`'a eşit ekleme, aksi **hata**. Gerekçe tanımsız-değişken STRICT kararıyla aynı | `8e363e0` |
 | 32 | **Erişimci varsayılan argümanı yutuluyordu** — `request::get("sayfa", 1)` → `null` | 🟡 | Dilin **kendi kalıbı** zaten `env(key, varsayılan)`. 4. kural gereği tek fonksiyon değil **aile**: `request::get`/`post`/`header`, `cookie::get`, `session::get`. Geriye dönük uyumlu | `8e363e0` |
 | 33 | **`use` unutulunca VM `bad_function_call` sızdırıyordu** — C++ iç terimi; ne modülü ne fonksiyonu söylüyor. tree-walk ise `Module 'string' not loaded.` diyordu | 🟠 | `use` unutmak **en sık yapılan hata**, yani varsayılan motor en kötü mesajı veriyordu. `builtin_names()` ile ad çözülüp **aynı metin** üretiliyor — hata metni de sözleşmenin parçası | `d6c7e5a` |
+| 34 | **PostgreSQL wire: bozuk DataRow sessizce yanlış veri üretiyordu** — uzunluk 100 der 2 bayt gönderir → alan `""`; int32-max uzunluk → `""`; 3 alan vaat 1 alan gönderir → satır 1 sütunla döner. Hiçbirinde hata yok | 🔴 | Çökme yoktu (sınır kontrolü tutuyordu) ama uygulama boş değeri gerçek veri sanıyordu. Bozuk satır artık **net hata**; ayrıca `p + field_len <= end` işaretçi taşmasına açıktı → `field_len > end - p`. **Sahte PG sunucusuyla** bulundu ve o sunucu kalıcı guard oldu — bu dosyanın ilk guard'ı | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 

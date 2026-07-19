@@ -431,6 +431,42 @@ echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM
 [ "$uo_vm" = "3" ] || { echo "FAIL: 'use' VARKEN modul cagrisi bozuldu (pozitif kontrol): [$uo_vm]"; fail=1; }
 
 
+# ── PostgreSQL wire — BOZUK DataRow sessizce yanlis veri uretiyor mu? ───────────
+# NEDEN: postgres_client.cpp'nin (1023 satir) HIC guard'i yoktu. Sahte sunucuyla
+# olculdu — bozuk DataRow'da LOOK sessizce yanlis veri donduruyordu:
+#   uzunluk 100 der, 2 bayt gonderir  -> alan "" (bos string), HATA YOK
+#   int32-max uzunluk                 -> alan "" , HATA YOK
+#   3 alan vaat eder, 1 tane gonderir -> satir 1 sutunla doner, HATA YOK
+# Cokme yoktu (sinir kontrolu tutuyordu) ama uygulama bos degeri gercek veri
+# sanip ona gore davraniyordu. Sessiz yanlis veri bu projede cokmeden tehlikeli.
+# Ayrica 'p + field_len <= end' isaretci TASMASINA acikti.
+# Sozlesme: bozuk DataRow -> NET HATA; gecerli satir bozulmadan calisir.
+if command -v python3 >/dev/null 2>&1 && [ -f "$(dirname "$0")/fake_pg_server.py" ]; then
+  FPG="$(dirname "$0")/fake_pg_server.py"
+  cat > "$TMP/pg.lk" <<'LK'
+try {
+  $c = db::connect(env("PGDSN", ""))
+  print("SONUC=" . json::encode(db::query($c, "SELECT col FROM t")))
+} catch ($e) { print("HATA") }
+LK
+  pg_sonuc=""
+  for mod in saglam truncated negatif dev_uzunluk eksik_alan; do
+    pgport=$((55700 + RANDOM % 200))
+    python3 "$FPG" $mod $pgport > "$TMP/fpg.log" 2>&1 &
+    fpgpid=$!
+    for i in $(seq 1 25); do grep -q hazir "$TMP/fpg.log" 2>/dev/null && break; sleep 0.2; done
+    out=$(PGDSN="postgres://u:p@127.0.0.1:$pgport/test" timeout 15 "$LK" "$TMP/pg.lk" 2>&1 | grep -E '^(SONUC|HATA)' | head -1)
+    kill $fpgpid 2>/dev/null; wait $fpgpid 2>/dev/null
+    pg_sonuc="$pg_sonuc${out%%=*}|"
+  done
+  # saglam=SONUC, digerlerinin HEPSI hata vermeli
+  pg_bek='SONUC|HATA|HATA|HATA|HATA|'
+  [ "$pg_sonuc" = "$pg_bek" ] || { echo "FAIL: PostgreSQL wire — bozuk DataRow sessizce veri donduruyor olabilir: [$pg_sonuc] (beklenen $pg_bek)"; fail=1; }
+else
+  echo "  (atlandi: PostgreSQL wire testi python3 gerektirir)"
+fi
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

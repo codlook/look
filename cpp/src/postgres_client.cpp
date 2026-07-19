@@ -777,16 +777,38 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
             const uint8_t* p = msg.body.data() + 2;
             const uint8_t* end = msg.body.data() + msg.body.size();
             DbRow row;
-            for (int i = 0; i < (int)ncols && p + 4 <= end; i++) {
+            // Bozuk DataRow SESSIZCE yanlis veri uretiyordu (sahte sunucuyla olculdu):
+            //   uzunluk 100 der, 2 bayt gonderir  -> alan "" (bos string), hata YOK
+            //   int32-max uzunluk                 -> alan "" , hata YOK
+            //   3 alan vaat eder, 1 tane gonderir -> satir 1 sutunla doner, hata YOK
+            // Uygulama bos degeri gercek veri sanip ona gore davraniyordu (bos yetki
+            // dizesi, bos bakiye...). Cokme yoktu — sinir kontrolu tutuyordu — ama
+            // sessiz yanlis veri bu projede cokmeden daha tehlikeli sayilir.
+            // Ayrica 'p + field_len <= end' isaretci TASMASINA acikti (field_len
+            // int32-max iken p+field_len tanimsiz davranis); 'field_len > end - p'
+            // tasma-guvenli bicim.
+            for (int i = 0; i < (int)ncols; i++) {
+                if (end - p < 4)
+                    throw std::runtime_error("db postgres: bozuk DataRow — " +
+                        std::to_string(ncols) + " alan bildirildi, " + std::to_string(i) + " alan geldi");
                 int32_t field_len = read_i32_be(p); p += 4;
                 std::string val;
-                if (field_len >= 0 && p + field_len <= end) {
-                    val = std::string((const char*)p, field_len);
+                bool is_null = false;
+                if (field_len == -1) {
+                    is_null = true;                       // protokolde NULL yalnizca -1
+                } else if (field_len < 0) {
+                    throw std::runtime_error("db postgres: bozuk DataRow — gecersiz alan uzunlugu " +
+                                             std::to_string(field_len));
+                } else if ((size_t)field_len > (size_t)(end - p)) {
+                    throw std::runtime_error("db postgres: bozuk DataRow — alan uzunlugu " +
+                        std::to_string(field_len) + " govdede kalan " +
+                        std::to_string(end - p) + " bayti asiyor");
+                } else {
+                    val.assign((const char*)p, (size_t)field_len);
                     p += field_len;
                 }
                 uint8_t tc = (i < (int)columns.size()) ? columns[i].type_code : 0xFE;
                 std::string name = (i < (int)columns.size()) ? columns[i].name : "col" + std::to_string(i);
-                bool is_null = (field_len < 0);
                 if (is_null) tc = pg_type::NUL;
                 row.push_back({name, DbValue{val, tc, is_null}});
             }
