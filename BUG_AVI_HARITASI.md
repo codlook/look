@@ -2,7 +2,7 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **30** · Guard: 3 motor × 22 kategori + 30 özel kontrol (4 güvenlik kilidi dahil)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **32** · Guard: 3 motor × 22 kategori + 31 özel kontrol (4 güvenlik kilidi dahil)
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (ne bitti/ne kaldı, **yerel**) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -10,7 +10,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 30 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 32 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -284,9 +284,9 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-18 | Bileşik atama | 3e çapraz-kapsam | **1 bug** (S4) — global dal |
 | 07-18 | Template motoru | 3e (kod↔şablon karşılaştırma) | **2 bug** (S2) — truthiness + float |
 | 07-18 | **`date::` (12 fn, P1.1)** | 3f düşmanca girdi + 3e çapraz-motor | **1 bug** (S11/S14) — `parse` imkânsız takvim tarihlerini sessizce kaydırıyordu (31 Nis → 1 May). `is_valid` titiz çıktı, `diff` işaretli, motor ayrışması yok, uçlarda çökme yok |
-| 07-18 | **`array::` uçları (P1.2)** | 3f düşmanca girdi + 3a differential | **1 bug DÜZELTİLDİ** (S9/S14) — `array::set` sayısal dizide veriyi yok ediyordu, geçerli indekste bile: `set([1,2,3],1,"X")` = `{"1":"X"}`. `slice`/`chunk`/`zip`/`flatten`/`unique`/`reverse` uçlarda temiz. **+6 bulgu AÇIK** (aşağıdaki S3 kümesi) |
+| 07-18 | **`array::` uçları (P1.2)** | 3f düşmanca girdi + 3a differential | **1 bug DÜZELTİLDİ** (S9/S14) — `array::set` sayısal dizide veriyi yok ediyordu, geçerli indekste bile: `set([1,2,3],1,"X")` = `{"1":"X"}`. `slice`/`chunk`/`zip`/`flatten`/`unique`/`reverse` uçlarda temiz. **+6 bulgu** (S3 kümesi, 5a) — **hepsi kapandı** (23 ve 31. bug) |
 | 07-18 | Guard'ın kendisi | 3b pozitif kontrol | **1 kırılganlık** (S14) — `differential_test.sh`'a **göreli** binary yolu verilirse TEMPLATE bölümü `cd $TMP` sonrası binary'yi bulamayıp sahte FAIL üretiyor. Mutlak yol zorunlu; script bunu doğrulamıyor |
-| 07-19 | **`string::` (22 fn, P1.3)** | 3f düşmanca girdi + Unicode ekseni | **4 bulgu AÇIK** (aşağıda 5b). Motor ayrışması YOK (hepsi C++ builtin). `substr`/`split`/`index_of`/`repeat`/`contains`/`trim` uçlarda temiz |
+| 07-19 | **`string::` (22 fn, P1.3)** | 3f düşmanca girdi + Unicode ekseni | **4 bulgu — hepsi DÜZELTİLDİ** (24–26, ayrıntı 5b). Motor ayrışması YOK (hepsi C++ builtin). `substr`/`split`/`index_of`/`repeat`/`contains`/`trim` uçlarda temiz |
 | 07-19 | **`request::` (19 fn, P1.4)** | 3f düşmanca HTTP girdisi + 3e çapraz-mod | **1 GÜVENLİK bug** (5c) + 1 minör. `header()` büyük/küçük harf duyarsız ✓, URL çözme (Türkçe/`%20`) ✓, boş `""` ↔ eksik `null` ayrımı ✓, `all()`/`method`/`path`/POST form/JSON ✓ |
 | 07-19 | **`session::` + `cookie::` (9 fn, P1.5)** | 3f düşmanca girdi (enjeksiyon ekseni) | **2 GÜVENLİK bug DÜZELTİLDİ** (28, 29) — session verisi enjeksiyonu (`\n` ile yetki alanı uydurma) + çerez öznitelik enjeksiyonu (`;` ile `Domain=`). Geri kalanı sağlam: `valid_sid` traversal guard'ı her fonksiyonda, `gen_session_id` `/dev/urandom` (yetersiz okumada **hata fırlatıyor**), `regenerate` fixation savunması doğru, oturum çerezinde `HttpOnly+Secure+SameSite`, CRLF enjeksiyonu zaten engelliydi |
 | 07-19 | `json::encode` kaçışları | 3f | **TEMİZ** — ters bölü/tırnak/satır sonu/Türkçe hepsi doğru. (Şüphelendim ama suçlu kendi test aracımdı, bkz. altın kural 7) |
@@ -323,9 +323,11 @@ yollarında da var (`1358`, `1388`).
 **Kapsam:** Üretim FastCGI modunda (`fcgi_main.cpp:562` → `REMOTE_ADDR`) — canlı siteler
 **etkilenmiyor**. Açık `--mode http` ve WS/SSE yollarında.
 
-Minör (🟡, düzeltilmedi): `request::get("k", "varsayılan")` ikinci argümanı sessizce yok
-sayıyor. Belgelenmemiş ve hiçbir örnekte kullanılmıyor, yani vaat edilmiş özellik değil —
-ama `check_args` ile arity dayatan diğer builtin'lerden farklı davranıyor.
+**DÜZELTİLDİ (32. bug, `8e363e0`):** `request::get("k", "varsayılan")` ikinci argümanı
+sessizce yok sayıyordu. Dilin **kendi kalıbı** zaten buydu — `env(key, varsayılan)` ve
+`config(key, varsayılan)` destekliyor — yani tutarsızlıktı. 4. altın kural gereği tek
+fonksiyon değil **erişimci ailesi**: `request::get` / `request::post` / `request::header` /
+`cookie::get` / `session::get`. Geriye dönük uyumlu: varsayılan verilmezse yine `null`.
 
 ### 5b. `string::` bulguları — **4'ü de KAPANDI** (24–26. bug)
 
@@ -366,7 +368,11 @@ metni sayısal indekstir (`look_is_int_key`, iki motorda aynı kural); listede
 bulunmayan string anahtar okuması → `null`. `array::set` ile aynı sözleşme →
 dil kendi içinde tutarlı. Guard: `differential_test.sh` `$arr[str]` bölümü.
 
-**AÇIK (#2–#5):** sayısal indeks uçları — taşan/negatif indeks.
+**DÜZELTİLDİ (31. bug, `8e363e0`):** sayısal indeks uçları (#2–#5). VM tree-walk'a
+(referans semantik) hizalandı — negatif = sondan, `size`'a eşit yazma = sona ekleme,
+diğerleri **hata**. VM bunlarda sessizdi: aralık dışı okuma `null` dönüyor, aralık dışı
+yazma **sessizce atlanıyordu** ("yazdım ama yazılmadı"). Gerekçe tanımsız-değişken
+STRICT kararıyla aynı. Guard: `$arr[sayi]` uçları bölümü, iki motor.
 
 Dizi **indeks operatörünün** kendisi iki motorda ayrışıyor. `array::set` düzeltildi ama
 bunlar **kasıtlı olarak bekletiliyor**: dilin en sıcak yolu (`vm.cpp` `array_get`/`array_set`,
