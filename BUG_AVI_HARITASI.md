@@ -4,7 +4,9 @@
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
 > **Son güncelleme:** 2026-07-19 · Kapatılan bug: **33** · Guard: 3 motor × 22 kategori + 32 özel kontrol (4 güvenlik kilidi dahil)
 >
-> **Kardeş dosyalar:** `PROJE_DURUMU.md` (ne bitti/ne kaldı, **yerel**) · `DENETIM.md` (güvenlik denetimi, yerel)
+> **Bölüm 7 = kapatılan 33 bug'ın tam listesi** (kök neden + çözüm + commit).
+>
+> **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
 ---
 
@@ -367,7 +369,7 @@ yani kod kendi beyan ettiği sözleşmeyi tutmuyor. Kural global, tablo Türkiye
 
 </details>
 
-### 5a. `$arr[idx]` operatör kümesi (S3) — 2 kapandı, 4 açık
+### 5a. `$arr[idx]` operatör kümesi (S3) — hepsi kapandı (23 ve 31. bug)
 
 **DÜZELTİLDİ (23. bug, `90b4487`):** string anahtar vakaları (#1 ve #6). Sözleşme:
 sayısal listeye tam-sayı-olmayan string anahtar → listeyi assoc'a **dönüştür ama
@@ -432,3 +434,77 @@ index okuma + index atama dalları. Sözleşme kararı verilmeden dokunulmayacak
    *(Motor/stdlib düzeltmeleri canlı iki siteyi birden etkiler — binary paylaşılıyor.
    Deploy edilmediyse commit'te belirt: "deploy EDİLMEDİ" yazmak, sessiz bırakmaktan iyidir.)*
 9. **Kaydet** — bu dosyanın §5 av defteri (`PROJE_DURUMU.md` artık **yerel**, repoda değil)
+
+---
+
+## 7. Kapatılan bugların tam listesi — **33 bug, kök neden + çözüm**
+
+Tek kaynak. Ayrıntılı analiz ilgili **commit mesajında**; burada her bug tek satırda:
+neydi, neden kaçtı, nasıl çözüldü.
+
+🔴 = veri kaybı/bozulma veya erişim kaybı · 🛡️ = güvenlik · 🟠 = yanlış davranış · 🟡 = sessiz eksiklik
+
+### 7a. Motor ayrışması ve derleyici turu (1–21)
+
+| # | Bug | Sınıf | Çözüm | Commit |
+|---|---|---|---|---|
+| 1 | `array::sort()` comparator'ı VM route'unda **sessizce yok sayılıyordu** — canlı yanlış sıralama | 🔴 | Callback `FUNCTION`-only kontrolü kaldırıldı; köprü iki tipi de alıyor | `6a58a8a` |
+| 2 | `db::transaction` VM closure'ını çalıştırmıyordu → **sessiz COMMIT** | 🔴 | Aynı sınıf (S1) | `4c68f8e` |
+| 3 | LOOK `throw`'u C++ sınırını geçiyordu (try tabanı yok) | 🔴 | `try_floor_` + `LookVmThrow` | `4c68f8e` |
+| 4 | `parallel()` DB bağlantısını **iade etmiyordu** → havuz tükeniyor, endpoint donuyor | 🔴 | Mutlu-olmayan yolda `release()` (S7) | `3459c3e` |
+| 5 | `type::is_function` VM closure'ını tanımıyordu | 🟠 | Aynı sınıf (S1) | `2b09b8a` |
+| 6 | `error::new` tipli payload string'e düşüyordu → `error::is()` sessizce `false` | 🟠 | Payload korundu | `235df9e` |
+| 7 | VM `print`/`write` ayraç+newline yok; `exit()`/`die()` yok; CLI çıkış kodu | 🟠 | Dile hizalandı | `4110cbf` |
+| 8 | Implicit closure capture — `fn($x)=>$x*$m` VM'de `$m`'i görmüyordu | 🟠 | Capture düzeltildi | `58eb033` |
+| 9 | `{$var}` interpolation **tüm VM route'larında sessizce `"null"`** | 🟠 | Fragment eval'i hizalandı | `04a9552` |
+| 10 | Tanımsız değişken iki motorda ayrışıyordu | 🟠 | **STRICT** hizalandı (Go/Node bandı) | `9f45233` |
+| 11 | VM `try/catch` C++ runtime hatalarını yakalamıyordu | 🟡 | Operatör istisnaları da yakalanıyor | `04a9552` |
+| 12 | CLI-VM `mod::fn` + **256 indeks sınırı**: index 256 sessizce 0'a kırpılıp `print` çağrılıyordu | 🟠 | 16-bit builtin indeksi | `7af8a6c` |
+| 13 | `type::`/`crypto::`, `math::`/`string::` `builtin_names`'de yoktu → route kalıcı interpreter'a düşüyordu | 🟡 | Tabloya eklendi | `2b09b8a`, `29de18a` |
+| 14 | bare `header`/`redirect`, `join`, `push`/`pop` eksikti | 🟡 | Eklendi | `0bb9895`, `a3682be`, `2fc47ee` |
+| 15 | higher-order `array::map/filter/reduce`, `len`/`json`/`intval` | 🟡 | Eklendi | `58eb033`, `22b8a70`, `c8dfdf0` |
+| 16 | **ODR: `look::HttpResponse` iki farklı tip** → web'de `http::get` **sunucuyu çökertiyordu** | 🔴 çökme | Tip tekilleştirildi. **Ders: ASan bunu göremez** (o build'de LTO kapalı) | `d2df9d3` |
+| 17 | **Parser `.` ikililiği** — `$out . html::escape(...)` parse hatası (concat mı üye erişimi mi) | 🟠 | İleriye bakış: `(` veya `::` geliyorsa concat | `be6b72b` |
+| 18 | **Compiler top-level bileşik atamada sol operandı atıyordu** — `$t=1; $t+=2` → VM'de **2**. Yalnız global dal bozuktu → web route'ları etkilenmiyordu, bu yüzden yıllarca görünmedi | 🔴 | `e.op` global dalda da işleniyor | `3892f5e` |
+| 19 | **Template motoru dilden sapmıştı (2 ayrışma)** — `{#if "0"}` şablonda TRUE/kodda FALSE (DB'den gelen `"0"`); float `1234567.5` → `1.23457e+06` (hassasiyet kaybı, fatura bozar) | 🔴 | Kopya semantik silindi, **dile delege** edildi (S2) | `69dcd50` |
+| 20 | **`date::parse` imkânsız tarihleri sessizce kaydırıyordu** — `2024-04-31` → 1 Mayıs; `is_valid` aynı girdiye `false` diyordu (yarım kalmış fix) | 🟠 | `mktime` sonrası takvim doğrulaması | `4b7b338` |
+| 21 | `$arr[2^32]` — `int` daraltması bounds kontrolünü baypas ediyordu | 🟠 | `int64_t` | `9f45233` |
+
+### 7b. Sistematik tarama turu (22–33) — bu tur haritayla yapıldı
+
+| # | Bug | Sınıf | Kök neden → çözüm | Commit |
+|---|---|---|---|---|
+| 22 | **`array::set` sayısal dizide veriyi YOK EDİYORDU** — geçerli indekste bile: `set([1,2,3],1,"X")` = `{"1":"X"}` | 🔴 | "Convert to assoc" dalı dönüştürmüyor **değiştiriyordu**: yalnız yeni anahtar/değeri içeren yeni assoc kurup orijinali atıyordu → geçerli indekste yerinde değiştir, `size`'a eşitte ekle, aksi hâlde **elemanları koruyarak** çevir | `18e5170` |
+| 23 | **`$a=[1,2,3]; $a["k"]="X"` iki motorda İKİ FARKLI ŞEKİLDE bozuyordu** — VM `{"1":2,"3":"k"}` (veri uçuyor, yazılan değer bile erişilemez), tree-walk `["X",2,3]` (`to_int("k")=0` → indeks 0 eziliyor) | 🔴 | Liste→assoc dönüşümü elemanları **sayısal indeksleriyle** korur; `"1"` gibi tam sayı metni sayısal indekstir (iki motorda aynı kural) | `90b4487` |
+| 24 | **`string::replace("abc","","X")` ASILIYORDU** — sonsuz döngü + sınırsız bellek | 🛡️ DoS | `s.find("",pos)` hep eşleşiyor, her turda `to` ekleniyordu. Web'de `replace($metin, $kullanıcıGirdisi, $x)` yaygın → tek istekle worker kilitleniyordu. **Go sözleşmesi**: boş arama başta ve her UTF-8 dizisinden sonra, `k+1` ekleme, **sınırlı** | `e125dad` |
+| 25 | **`string::pad_*` GEÇERSİZ UTF-8 üretiyordu** — `pad_left("şğü",3,"x")` → `0x9F C3 BC` (öksüz devam baytı); ayrıca uzun metni **kırpıyor**, genişliği **bayt** sayıyordu | 🔴 | **Go `fmt "%Ns"`**: genişlik ASGARİ ve KOD NOKTASI. Kırpma kalkınca bölünecek yer kalmadı — 3 sorun tek kökten öldü, **kod azaldı** (12 satır → 3) | `071bc27` |
+| 26 | **`upper`/`lower` "global" iddiasını karşılamıyordu** — Kiril/Yunan hiç dönmüyor, Lehçe **yarım**: `upper("łódź")` = `łÓDź` | 🟠 | Kural globaldi ama **tablo Türkiye'ye özeldi** (ASCII+Latin-1+3 kod noktası). Latin Ext-A + Yunan + Kiril eklendi. **Dikkat**: Ext-A'nın genel kuralı `ı`→`İ` verir (Türkçe locale'i geri getirir) → istisnalar kuraldan ÖNCE | `24fec50` |
+| 27 | **`request::ip()` SAHTELENEBİLİYORDU** — `X-Forwarded-For: 9.9.9.9` gönderen istemci kendi IP'sini seçiyordu → IP'ye dayalı yetki/ban/rate-limit bypass | 🛡️ | Doğru mantık **aynı dosyada** (rate limiter yolunda) vardı; `request::ip()` yoluna koşulsuz tek satır konmuştu (S2). `resolve_client_ip()` tek kaynağı — **4 çağrı yeri** bağlandı | `716db47` |
+| 28 | **Session verisi ENJEKTE EDİLEBİLİYORDU** — `?isim=bob␊rol=admin␊admin=1` → `session::get("admin")` = `"1"`; hiç var olmayan yetki alanı uyduruluyordu | 🛡️ | Blob `anahtar=değer␊` biçiminde ve **hiç kaçış yoktu**. Kaçırarak sakla: meşru satır sonu (textarea) veri olarak korunur, ayraç anlamı taşımaz | `3658cb0` |
+| 29 | **Çerez ÖZNİTELİK enjeksiyonu** — `?v=x; HttpOnly; Domain=evil.com` → çerez tüm alt alan adlarına sızabiliyordu | 🛡️ | CR/LF kapalıydı ama `;` **ayrı bir kanaldı** ve açıktı. PHP `setcookie()` gibi: yazarken yüzde-kodla, okurken çöz | `d60179c` |
+| 30 | **SQL literalindeki `?` parametre sanılıyordu** — `"SELECT 'Hazır mı?' AS s, ? AS p"` patlıyordu. Ayrıca parametre sayısı uyuşmazlığı **iki yönde de sessizdi** (fazlası atılıyor, eksiği `null` veriyordu) | 🔴 | Tırnak/yorum durumu izlenip yalnız **gövdedeki** `?` bağlanıyor; sayı uyuşmazlığı **hata** (Go `db.Query` gibi). **Enjeksiyon zaten temizdi** — 6 yük denendi | `d7d85cf` |
+| 31 | **VM dizi indeks uçları sessizdi** — `$a[99]` → `null` (tree-walk hata), `$a[-1]` → `null` (tree-walk sondan), **`$a[99]="X"` yazmayı sessizce atlıyordu** ("yazdım ama yazılmadı") | 🔴 | VM referans semantiğe (tree-walk) hizalandı: negatif sondan, `size`'a eşit ekleme, aksi **hata**. Gerekçe tanımsız-değişken STRICT kararıyla aynı | `8e363e0` |
+| 32 | **Erişimci varsayılan argümanı yutuluyordu** — `request::get("sayfa", 1)` → `null` | 🟡 | Dilin **kendi kalıbı** zaten `env(key, varsayılan)`. 4. kural gereği tek fonksiyon değil **aile**: `request::get`/`post`/`header`, `cookie::get`, `session::get`. Geriye dönük uyumlu | `8e363e0` |
+| 33 | **`use` unutulunca VM `bad_function_call` sızdırıyordu** — C++ iç terimi; ne modülü ne fonksiyonu söylüyor. tree-walk ise `Module 'string' not loaded.` diyordu | 🟠 | `use` unutmak **en sık yapılan hata**, yani varsayılan motor en kötü mesajı veriyordu. `builtin_names()` ile ad çözülüp **aynı metin** üretiliyor — hata metni de sözleşmenin parçası | `d6c7e5a` |
+
+### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
+
+Bug bulunamaması da sonuçtur — nereye bakıldığı kaydedilmezse aynı yere tekrar bakılır.
+
+| Yüzey | Sonuç |
+|---|---|
+| **SQL enjeksiyonu** (`db::`) | 6 yük (`OR 1=1`, `UNION`, `DROP`, ters bölülü, alt sorgu, yorumla kesme) — hepsi engelli, tablo yerinde. `escape_str` doğru |
+| **`file::` sandbox** | `../`, mutlak yol, iç içe `..`, `....//`, **sembolik link (dosya + dizin)**, link üzerine yazma — hepsi reddedildi. Önek karşılaştırması **bileşen bazlı** (S10 doğru). `LOOK_FILE_ROOT=*` opt-out'u çalışıyor |
+| **`session::` çekirdeği** | `valid_sid` traversal guard'ı her fonksiyonda; `gen_session_id` `/dev/urandom` ve **yetersiz okumada hata fırlatıyor** (zayıf rastgelelik yaymıyor); `regenerate` fixation savunması doğru; `HttpOnly+Secure+SameSite` |
+| **`json::encode` kaçışları** | Ters bölü/tırnak/satır sonu/Türkçe hepsi doğru. Şüphelenmiştim — suçlu kendi test aracımdı (7. kural) |
+| **`string::` geri kalanı** | `substr`, `split`, `index_of`, `repeat`, `contains`, `trim` uçlarda temiz |
+| **`request::` geri kalanı** | `header()` harf duyarsız, URL çözme (Türkçe/`%20`), boş `""` ↔ eksik `null` ayrımı, `all()`/`method`/`path`/POST form/JSON |
+| **`array::` geri kalanı** | `slice` negatif/taşma, `chunk(0)`/`chunk(-1)` hata, `zip`/`flatten`/`unique`/`reverse` |
+
+### 7d. Bilinen, açık bırakılanlar
+
+| Konu | Neden bekliyor |
+|---|---|
+| Çağrılamayan ad mesajı: CLI-VM `Çağrılabilir değil (BYTECODE_FN bekleniyor)` / tree-walk `Undefined variable: <ad>` | VM'in `CALL` noktasında **isim yok**; düzeltmesi compiler'ın adı taşımasını gerektiriyor — ayrı iş |
+| `db::` parametreleri prepared statement değil, kaçırılıp **metin olarak** gömülüyor | Güvenlik `escape_str`'e dayanıyor ve doğru çalışıyor. İki uç durum: MySQL `NO_BACKSLASH_ESCAPES` modu, PostgreSQL `standard_conforming_strings=off` (9.1 öncesi) |
+| **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), `http::` (9 fn), lexer, `installer::`, SMTP/IMAP sunucuları, **PostgreSQL wire** (1023 satır, guard'ı yok, envanterde "yüksek risk"), event loop, REPL |
