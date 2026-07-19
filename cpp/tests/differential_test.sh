@@ -407,6 +407,30 @@ db_bek='Hazir mi?|D|0|1|hata|hata'
 [ "$db_out" = "$db_bek" ] || { echo "FAIL: db:: parametre baglama: [$db_out] (beklenen $db_bek) — literal icindeki '?' placeholder saniliyor veya sayi uyusmazligi SESSIZ olabilir"; fail=1; }
 
 
+# ── HATA MESAJI paritesi — 'use' unutuldugunda ──────────────────────────────────
+# NEDEN: modul 'use' edilmemisse VM builtin tablosundaki giris BOS std::function'dir;
+# cagrilinca C++ std::bad_function_call firlatiyor ve kullaniciya OLDUGU GIBI
+# ciktiyordu:
+#   print(string::len("abc"))  ->  "Runtime Error: bad_function_call"
+# Ne modulu ne fonksiyonu soyluyor, ustelik bir C++ ic terimi. tree-walk (REFERANS)
+# ise dogru mesaji veriyordu: "Module 'string' not loaded."
+# 'use' unutmak LOOK'ta EN SIK yapilan hata, yani VARSAYILAN motor en kotu mesaji
+# veriyordu. Hata metni de sozlesmenin parcasidir (S3): iki motor ayni demeli.
+cat > "$TMP/uerr.lk" <<'LK'
+print(string::len("abc"))
+LK
+cat > "$TMP/uok.lk" <<'LK'
+use string
+print(string::len("abc"))
+LK
+ue_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
+ue_vm=$("$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
+uo_vm=$("$LK" "$TMP/uok.lk" 2>&1 | tail -1)
+echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM C++ ic istisnasini sizdiriyor: [$ue_vm]"; fail=1; }
+[ "$ue_tree" = "$ue_vm" ] || { echo "FAIL: hata mesaji motorlar arasi ayrisiyor — tree-walk: [$ue_tree] / CLI-VM: [$ue_vm]"; fail=1; }
+[ "$uo_vm" = "3" ] || { echo "FAIL: 'use' VARKEN modul cagrisi bozuldu (pozitif kontrol): [$uo_vm]"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

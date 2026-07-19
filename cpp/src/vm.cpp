@@ -11,6 +11,7 @@
 #include "look/interpreter.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
+#include "look/builtins.h"      // builtin_names() — hata mesajinda modul/fonksiyon adi
 
 #include <sstream>
 #include <cmath>
@@ -606,7 +607,28 @@ call_dispatch:
                 std::vector<Value> args;
                 args.reserve(argc2);
                 for (int i = 0; i < argc2; ++i) args.push_back(R(ins.c + i));
-                R(ins.a) = (*shared_.builtins)[bidx](args);
+                // Modul 'use' edilmemisse tablodaki giris BOS std::function'dir ve
+                // cagirmak C++ std::bad_function_call firlatir.
+                // ESKI HATA: bu istisna kullaniciya oldugu gibi ciktiyordu:
+                //   print(string::len("abc"))   ->  "Runtime Error: bad_function_call"
+                // Ne modulu ne fonksiyonu soyluyor, ustelik bir C++ ic terimi. Oysa
+                // tree-walk (REFERANS) dogru mesaji veriyordu: "Module 'string' not
+                // loaded." — 'use' unutmak LOOK'ta en sik yapilan hata oldugu icin
+                // varsayilan motor en kotu mesaji veriyordu. Ayni metin kullaniliyor
+                // ki iki motor birebir ayni hatayi versin (S3).
+                {
+                    const auto& bfn = (*shared_.builtins)[bidx];
+                    if (!bfn) {
+                        const auto& names = builtin_names();
+                        std::string nm = bidx < names.size() ? names[bidx] : std::string();
+                        size_t sep = nm.find("::");
+                        if (sep != std::string::npos)
+                            throw LookVmError("Module '" + nm.substr(0, sep) + "' not loaded.");
+                        throw LookVmError("Built-in '" + (nm.empty() ? std::to_string(bidx) : nm) +
+                                          "' kullanilamiyor (baglanmamis)");
+                    }
+                    R(ins.a) = bfn(args);
+                }
                 // Re-entrancy güvenliği: builtin (ör. array::map) callback aracılığıyla
                 // call_closure ile VM'e geri girip call_stack_'i realloc etmiş olabilir
                 // → dıştaki frame/proto referansları geçersizleşir. call_dispatch'e
