@@ -2,7 +2,7 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **32** · Guard: 3 motor × 22 kategori + 31 özel kontrol (4 güvenlik kilidi dahil)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **33** · Guard: 3 motor × 22 kategori + 32 özel kontrol (4 güvenlik kilidi dahil)
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (ne bitti/ne kaldı, **yerel**) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -10,7 +10,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 32 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 33 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -291,7 +291,15 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-19 | **`session::` + `cookie::` (9 fn, P1.5)** | 3f düşmanca girdi (enjeksiyon ekseni) | **2 GÜVENLİK bug DÜZELTİLDİ** (28, 29) — session verisi enjeksiyonu (`\n` ile yetki alanı uydurma) + çerez öznitelik enjeksiyonu (`;` ile `Domain=`). Geri kalanı sağlam: `valid_sid` traversal guard'ı her fonksiyonda, `gen_session_id` `/dev/urandom` (yetersiz okumada **hata fırlatıyor**), `regenerate` fixation savunması doğru, oturum çerezinde `HttpOnly+Secure+SameSite`, CRLF enjeksiyonu zaten engelliydi |
 | 07-19 | `json::encode` kaçışları | 3f | **TEMİZ** — ters bölü/tırnak/satır sonu/Türkçe hepsi doğru. (Şüphelendim ama suçlu kendi test aracımdı, bkz. altın kural 7) |
 | 07-19 | **`db::` (12 fn, P2)** | 3f enjeksiyon matrisi + parametre kenar durumları (SQLite `:memory:`, sunucusuz) | **2 bug DÜZELTİLDİ** (30) — literal içindeki `?` placeholder sanılıyordu + parametre sayısı uyuşmazlığı iki yönde de sessizdi. **SQL enjeksiyonu TEMİZ**: `' OR '1'='1`, UNION, DROP, ters bölülü yük — altısı da engelli, `escape_str` doğru. Tipler doğru (int/float locale-güvenli/bool/null/Türkçe) |
-| — | `jobs::`, `file::`, `http::`, lexer, `installer::` | — | **SIRADA** |
+| 07-19 | **`file::` (8 fn) — sandbox iddiası** | 3f düşmanca yol + **sembolik link** (gerçek Linux dizininde) | **TEMİZ** — `SECURITY.md`'nin iddiası doğrulandı. `../`, mutlak yol, iç içe `..`, `....//`, ve **sembolik link** (dosya + dizin) hepsi reddedildi; link üzerine **yazma** da engellendi (`/etc/passwd` bozulmadı). Guard 8 fonksiyonun 6'sında; `store`/`upload_dir` kullanıcı yolu almıyor (kendi `subdir` doğrulaması var). `LOOK_FILE_ROOT=*` opt-out'u çalışıyor. Önek karşılaştırması **bileşen bazlı** → S10 sınıfı doğru yapılmış |
+| 07-19 | Hata mesajı kalitesi | 3a differential (kazara — kendi probe'umda `use` unuttum) | **1 bug DÜZELTİLDİ** (33) — `use` unutulunca VM `bad_function_call` (C++ iç terimi) sızdırıyordu, tree-walk ise doğrusunu diyordu. **1 bulgu AÇIK** (aşağıda) |
+| — | `jobs::`, `http::`, lexer, `installer::`, PostgreSQL wire | — | **SIRADA** |
+
+**AÇIK (düşük öncelik) — çağrılamayan ad mesajı:** olmayan bir fonksiyon adıyla çağrıda
+CLI-VM `Çağrılabilir değil (BYTECODE_FN bekleniyor)` derken tree-walk
+`Undefined variable: <ad>` diyor. VM'in `CALL` noktasında **isim yok** (yalnız register
+değeri var); düzeltmesi compiler'ın adı taşımasını gerektiriyor — ayrı iş, bilerek
+bekletiliyor.
 
 **`db::` notu (bug değil, sözleşme):** parametreler wire-protocol prepared statement
 değil, **kaçırılıp metin olarak** SQL'e gömülüyor. Güvenlik tümüyle `escape_str`'e
