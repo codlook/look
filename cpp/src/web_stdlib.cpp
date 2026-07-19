@@ -332,7 +332,11 @@ static Module make_request(WebContext* ctx) {
             return Value(arr);
         }
         auto it = ctx->get_params.find(args[0].to_string());
-        return it != ctx->get_params.end() ? Value(it->second) : Value();
+        // Ikinci argüman VARSAYILAN deger — env(key,varsayilan) / config(key,varsayilan)
+        // ile ayni kalip. ESKI HATA: ikinci argüman SESSIZCE YOK SAYILIYORDU;
+        // request::get("sayfa", 1) yazan gelistirici null aliyordu.
+        if (it != ctx->get_params.end()) return Value(it->second);
+        return args.size() >= 2 ? args[1] : Value();
     };
     m.functions["post"] = [ctx](auto args) -> Value {
         if (args.empty()) {
@@ -341,7 +345,8 @@ static Module make_request(WebContext* ctx) {
             return Value(arr);
         }
         auto it = ctx->post_params.find(args[0].to_string());
-        return it != ctx->post_params.end() ? Value(it->second) : Value();
+        if (it != ctx->post_params.end()) return Value(it->second);
+        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
     };
     m.functions["body"] = [ctx](auto) -> Value {
         return Value(ctx->body);
@@ -357,7 +362,8 @@ static Module make_request(WebContext* ctx) {
         std::string key = args[0].to_string();
         for (auto& c : key) c = (char)std::tolower((unsigned char)c);
         auto it = ctx->headers_in.find(key);
-        return it != ctx->headers_in.end() ? Value(it->second) : Value();
+        if (it != ctx->headers_in.end()) return Value(it->second);
+        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
     };
     // request::headers() — tüm header'ları assoc array olarak döner
     m.functions["headers"] = [ctx](auto) -> Value {
@@ -613,7 +619,8 @@ static Module make_cookie_module(WebContext* ctx) {
     m.functions["get"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
         auto it = ctx->cookies_in.find(args[0].to_string());
-        return it != ctx->cookies_in.end() ? Value(cookie_dec(it->second)) : Value();
+        if (it != ctx->cookies_in.end()) return Value(cookie_dec(it->second));
+        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
     };
     m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();
@@ -862,7 +869,8 @@ static Module make_session_module(WebContext* ctx) {
         auto it = ctx->cookies_in.find("LOOK_SESSION");
         if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value();  // traversal guard
         std::string blob = sess_load(it->second), out;
-        return sess_blob_get(blob, args[0].to_string(), out) ? Value(out) : Value();
+        if (sess_blob_get(blob, args[0].to_string(), out)) return Value(out);
+        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
     };
     m.functions["destroy"] = [ctx](auto) -> Value {
         auto it = ctx->cookies_in.find("LOOK_SESSION");

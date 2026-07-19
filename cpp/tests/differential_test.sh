@@ -188,6 +188,31 @@ print(json::encode($a) . "|" . $a["k"] . "|" . $a["1"] . "|" .
       json::encode($b) . "|" . json::encode($c) . "|" .
       json::encode($d["k"]) . "|" . $d["1"])
 LK
+# SAYISAL indeks uclari — VM tree-walk'a (referans semantik) hizalandi.
+# ESKI HATA: VM aralik disinda ve negatifte SESSIZDI, interpreter ise hata
+# firlatiyor/sondan sayiyordu — ayni program iki motorda iki farkli sonuc:
+#   $a[99] oku    -> VM null / tree-walk HATA
+#   $a[-1] oku    -> VM null / tree-walk 3
+#   $a[99]="X"    -> VM atamayi SESSIZCE ATLIYOR / tree-walk HATA
+#   $a[-1]="X"    -> VM atamayi SESSIZCE ATLIYOR / tree-walk [1,2,"X"]
+# "Yazdim ama yazilmadi" ve "okudum, null geldi (oysa hata olmaliydi)" ayni
+# sinif: sessiz yanlis veri. Sozlesme: negatif = sondan, aralik disi = HATA,
+# size'a esit yazma = sona ekleme.
+cat > "$TMP/inum.lk" <<'LK'
+function t($f) { try { return json::encode($f()) } catch ($e) { return "HATA" } }
+print(t(function(){ $a=[1,2,3]; return $a[-1] }) . "|" .
+      t(function(){ $a=[1,2,3]; return $a[-4] }) . "|" .
+      t(function(){ $a=[1,2,3]; return $a[99] }) . "|" .
+      t(function(){ $a=[1,2,3]; $a[-1]="X"; return $a }) . "|" .
+      t(function(){ $a=[1,2,3]; $a[3]="X"; return $a }) . "|" .
+      t(function(){ $a=[1,2,3]; $a[99]="X"; return $a }))
+LK
+in_bek='3|HATA|HATA|[1,2,"X"]|[1,2,3,"X"]|HATA'
+in_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/inum.lk" 2>&1)
+in_vm=$("$LK" "$TMP/inum.lk" 2>&1)
+[ "$in_tree" = "$in_bek" ] || { echo "FAIL: \$arr[sayi] uclari tree-walk: [$in_tree] (beklenen $in_bek)"; fail=1; }
+[ "$in_vm"   = "$in_bek" ] || { echo "FAIL: \$arr[sayi] uclari CLI-VM: [$in_vm] (beklenen $in_bek) — VM aralik disinda/negatifte SESSIZ olabilir"; fail=1; }
+
 ik_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/ikey.lk" 2>&1)
 ik_vm=$("$LK" "$TMP/ikey.lk" 2>&1)
 ik_bek='{"0":1,"1":2,"2":3,"k":"X"}|X|2|{"k":"X"}|[1,"X",3]|null|2'

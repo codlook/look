@@ -210,16 +210,24 @@ Value VM::array_get(const Value& arr, const Value& key) {
         }
         return Value();
     }
-    // Numeric
-    if (key.type() == Value::INT) {
-        int idx = key.as_int();
-        if (idx >= 0 && idx < (int)vec.size()) return vec[idx];
-    } else if (key.type() == Value::STRING) {
-        try { int idx = std::stoi(key.as_string());
-              if (idx >= 0 && idx < (int)vec.size()) return vec[idx]; }
-        catch(...) {}
-    }
-    return Value();
+    // Liste + tam-sayi-olmayan string anahtar: boyle bir anahtar yok (assoc'ta
+    // bulunamayan anahtarla ayni sozlesme). $obj.alan erisimi de buraya duser.
+    if (key.type() == Value::STRING && !look_is_int_key(key.str_ref())) return Value();
+
+    // Sayisal indeks — TREE-WALK REFERANS SEMANTIGI (interpreter.cpp ile ayni):
+    // negatif = sondan, aralik disi = HATA.
+    // ESKI HATA: VM aralik disinda ve negatifte SESSIZCE null donuyordu, oysa
+    // interpreter hata firlatiyor/sondan sayiyordu — ayni program iki motorda iki
+    // farkli sonuc veriyordu:
+    //   $a=[1,2,3]; $a[99]  ->  VM null   / tree-walk HATA
+    //   $a=[1,2,3]; $a[-1]  ->  VM null   / tree-walk 3 (sondan)
+    // Sessiz null, yanlis veriyi gizleyen sinifin ta kendisi (tanimsiz degisken
+    // STRICT karariyla ayni gerekce): dongude siniri asan erisim hata vermeli.
+    int64_t i = key.to_int();
+    if (i < 0) i += (int64_t)vec.size();
+    if (i < 0 || i >= (int64_t)vec.size())
+        throw LookVmError("Array index " + std::to_string(key.to_int()) + " out of bounds");
+    return vec[(size_t)i];
 }
 
 void VM::array_set(Value& arr, const Value& key, const Value& val) {
@@ -265,10 +273,19 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
         vec.push_back(val);
         return;
     }
-    // Numeric — to_int(): "12" gibi metin anahtarlar da buraya dusebilir
+    // Sayisal indeks — TREE-WALK REFERANS SEMANTIGI (interpreter.cpp ile ayni):
+    // negatif = sondan, size'a esit = sona ekleme, digerleri HATA.
+    // ESKI HATA: VM aralik disinda ve negatifte YAZMAYI SESSIZCE ATLIYORDU —
+    // atama hicbir sey yapmiyor, hata da vermiyordu:
+    //   $a=[1,2,3]; $a[99]="X"  ->  VM [1,2,3] (atama kayboldu) / tree-walk HATA
+    //   $a=[1,2,3]; $a[-1]="X"  ->  VM [1,2,3] (atama kayboldu) / tree-walk [1,2,"X"]
+    // "Yazdim ama yazilmadi" en sinsi sinif: veri kaybi, hata yok.
     int64_t idx = key.to_int();
-    if (idx >= 0 && idx < (int64_t)vec.size()) vec[(size_t)idx] = val;
-    else if (idx == (int64_t)vec.size()) vec.push_back(val);
+    if (idx < 0) idx += (int64_t)vec.size();
+    if (idx == (int64_t)vec.size()) { vec.push_back(val); return; }
+    if (idx < 0 || idx > (int64_t)vec.size())
+        throw LookVmError("Array index " + std::to_string(key.to_int()) + " out of bounds");
+    vec[(size_t)idx] = val;
 }
 
 Value VM::get_field(const Value& obj, const std::string& field) {
