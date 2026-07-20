@@ -1,5 +1,14 @@
 #include "look/mysql_client.h"
 #include "look/fiber.h"
+#ifndef _WIN32
+// caching_sha2_password (MySQL 8+ varsayilan): SHA-256 + RSA-OAEP.
+// OpenSSL zaten linkli (POSIX); Windows'ta yalniz ws2_32+bcrypt linkleniyor —
+// oradaki durum do_handshake icinde acikca ele aliniyor.
+#  include <openssl/sha.h>
+#  include <openssl/evp.h>
+#  include <openssl/pem.h>
+#  include <openssl/rsa.h>
+#endif
 #include <cstring>
 #include <sstream>
 #include <algorithm>
@@ -336,6 +345,76 @@ void MySQLClient::send_packet(const std::vector<uint8_t>& data, uint8_t seq) {
 
 // ── MySQL authentication ───────────────────────────────────────────────────────
 
+// ── caching_sha2_password (MySQL 8.0+ VARSAYILAN eklentisi) ──────────────────
+//
+// ESKİ DURUM: yalnızca `mysql_native_password` uygulanmıştı ve eklenti adı
+// handshake yanıtına SABİT yazılıyordu. Sunucunun bildirdiği eklenti okunmuyor,
+// AuthSwitchRequest (0xFE) hiç ele alınmıyordu. Sonuç:
+//   MySQL 5.7 / MariaDB  → çalışıyor
+//   MySQL 8.0 (2018'den beri VARSAYILAN caching_sha2_password) → BAĞLANAMIYOR
+//   MySQL 8.4 (native eklenti kapalı) / 9.x (kaldırıldı)       → BAĞLANAMIYOR
+// Yani dil pratikte MySQL 5.7 dilindeydi.
+//
+// Hızlı yol:  XOR( SHA256(şifre), SHA256( SHA256(SHA256(şifre)) + nonce ) )
+// Tam yol:    sunucu 0x04 ister → TLS yoksa sunucudan RSA açık anahtarı istenir
+//             (0x02) ve (şifre+NUL) XOR nonce, RSA-OAEP ile şifrelenir.
+// Taze sunucuda önbellek boş olduğu için İLK bağlantı daima tam yoldan geçer.
+//
+// Kripto OpenSSL'den alınıyor — kod tabanında SHA-256'nın 8 ayrı kopyası var
+// (S2 kümesi, haritada kayıtlı); dokuzuncuyu eklemiyoruz.
+#ifndef _WIN32
+static std::vector<uint8_t> caching_sha2_scramble(const std::string& password,
+                                                  const std::string& nonce) {
+    if (password.empty()) return {};
+    unsigned char d1[SHA256_DIGEST_LENGTH], d2[SHA256_DIGEST_LENGTH], d3[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(password.data()), password.size(), d1);
+    SHA256(d1, sizeof(d1), d2);
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    SHA256_Update(&ctx, d2, sizeof(d2));
+    SHA256_Update(&ctx, nonce.data(), nonce.size());
+    SHA256_Final(d3, &ctx);
+    std::vector<uint8_t> out(SHA256_DIGEST_LENGTH);
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) out[i] = d1[i] ^ d3[i];
+    return out;
+}
+
+// (şifre + NUL) XOR nonce → sunucunun RSA açık anahtarıyla OAEP şifrele.
+static std::vector<uint8_t> caching_sha2_rsa_encrypt(const std::string& password,
+                                                     const std::string& nonce,
+                                                     const std::string& pem) {
+    std::string buf = password;
+    buf.push_back('\0');
+    if (!nonce.empty())
+        for (size_t i = 0; i < buf.size(); ++i)
+            buf[i] = (char)(buf[i] ^ nonce[i % nonce.size()]);
+
+    BIO* bio = BIO_new_mem_buf(pem.data(), (int)pem.size());
+    if (!bio) throw std::runtime_error("db mysql: RSA anahtarı okunamadı (BIO)");
+    EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
+    if (!pkey) throw std::runtime_error("db mysql: sunucunun RSA açık anahtarı ayrıştırılamadı");
+
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, nullptr);
+    std::vector<uint8_t> out;
+    size_t outlen = 0;
+    bool ok = ctx && EVP_PKEY_encrypt_init(ctx) > 0 &&
+              EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) > 0 &&
+              EVP_PKEY_encrypt(ctx, nullptr, &outlen,
+                               reinterpret_cast<const unsigned char*>(buf.data()), buf.size()) > 0;
+    if (ok) {
+        out.resize(outlen);
+        ok = EVP_PKEY_encrypt(ctx, out.data(), &outlen,
+                              reinterpret_cast<const unsigned char*>(buf.data()), buf.size()) > 0;
+        out.resize(ok ? outlen : 0);
+    }
+    if (ctx) EVP_PKEY_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    if (!ok) throw std::runtime_error("db mysql: RSA şifreleme başarısız");
+    return out;
+}
+#endif // !_WIN32
+
 std::vector<uint8_t> MySQLClient::native_password(const std::string& password,
                                                     const std::string& challenge) {
     if (password.empty()) return {};
@@ -383,7 +462,32 @@ void MySQLClient::do_handshake(const std::string& user,
     int part2_len = ((int)auth_len - 8) > 13 ? (int)auth_len - 8 : 13;
     if (p + part2_len <= end) { challenge += std::string(p, p + part2_len - 1); p += part2_len; }
 
-    auto token = native_password(password, challenge);
+    // Sunucunun bildirdiği kimlik doğrulama eklentisi (CLIENT_PLUGIN_AUTH ile gelir).
+    // ESKİ HATA: bu alan HİÇ okunmuyordu; cevap her zaman mysql_native_password
+    // olarak gönderiliyordu. MySQL 8'in varsayılanı caching_sha2_password olduğu
+    // için bağlantı kurulamıyordu.
+    std::string srv_plugin;
+    while (p < end && *p) srv_plugin.push_back((char)*p++);
+    if (srv_plugin.empty()) srv_plugin = "mysql_native_password";
+
+    auto make_token = [&](const std::string& plugin, const std::string& nonce)
+                      -> std::vector<uint8_t> {
+        if (plugin == "mysql_native_password") return native_password(password, nonce);
+        if (plugin == "caching_sha2_password") {
+#ifndef _WIN32
+            return caching_sha2_scramble(password, nonce);
+#else
+            throw std::runtime_error(
+                "db mysql: caching_sha2_password bu yapida desteklenmiyor (Windows yapisi "
+                "OpenSSL'siz derlenir). Cozum: kullaniciyi mysql_native_password ile "
+                "olusturun ya da Linux yapisini kullanin.");
+#endif
+        }
+        throw std::runtime_error("db mysql: desteklenmeyen kimlik dogrulama eklentisi: " + plugin);
+    };
+
+    std::string cur_plugin = srv_plugin;
+    auto token = make_token(cur_plugin, challenge);
     uint32_t client_flags = 0x000FA685;
     if (!database.empty()) client_flags |= 0x00000008;
 
@@ -397,20 +501,74 @@ void MySQLClient::do_handshake(const std::string& user,
     auth_pkt.push_back((uint8_t)token.size());
     auth_pkt.insert(auth_pkt.end(), token.begin(), token.end());
     if (!database.empty()) { auth_pkt.insert(auth_pkt.end(), database.begin(), database.end()); auth_pkt.push_back(0); }
-    const char* plugin = "mysql_native_password";
-    auth_pkt.insert(auth_pkt.end(), plugin, plugin + strlen(plugin)); auth_pkt.push_back(0);
+    auth_pkt.insert(auth_pkt.end(), cur_plugin.begin(), cur_plugin.end()); auth_pkt.push_back(0);
 
     send_packet(auth_pkt, 1);
-    auto resp = read_packet(seq);
-    if (resp.empty() || resp[0] == 0xFF) {
+
+    // Kimlik doğrulama diyaloğu. ESKİ HATA: yalnızca 0xFF (hata) kontrol ediliyor,
+    // 0xFE (AuthSwitchRequest) ve 0x01 (AuthMoreData) HİÇ ele alınmıyordu — oysa
+    // CLIENT_PLUGIN_AUTH bayrağı set edildiği için sunucu bunları göndermeye
+    // yetkiliydi. MySQL 8 tam olarak bunu yapıyor ve diyalog kopuyordu.
+    auto auth_error = [&](const std::vector<uint8_t>& r) {
         std::string msg = "db: authentication failed";
-        if (resp.size() > 3) {
+        if (r.size() > 3) {
             size_t off = 3;
-            if (resp[off] == '#') off += 6;
-            msg = "db: " + std::string(resp.begin() + off, resp.end());
+            if (r[off] == '#') off += 6;
+            msg = "db: " + std::string(r.begin() + off, r.end());
         }
         throw std::runtime_error(msg);
+    };
+
+    for (int round = 0; round < 5; ++round) {   // sonsuz diyaloğa karşı tavan
+        auto resp = read_packet(seq);
+        if (resp.empty()) throw std::runtime_error("db: boş kimlik doğrulama yanıtı");
+        if (resp[0] == 0xFF) auth_error(resp);
+        if (resp[0] == 0x00) return;            // OK — doğrulandı
+
+        if (resp[0] == 0xFE) {
+            // AuthSwitchRequest: [0xFE][plugin adı NUL][yeni nonce]
+            size_t i = 1;
+            std::string np;
+            while (i < resp.size() && resp[i]) np.push_back((char)resp[i++]);
+            ++i;
+            std::string nonce;
+            while (i < resp.size() && resp[i]) nonce.push_back((char)resp[i++]);
+            cur_plugin = np.empty() ? cur_plugin : np;
+            challenge  = nonce;
+            auto t = make_token(cur_plugin, challenge);
+            send_packet(t, (uint8_t)(seq + 1));
+            continue;
+        }
+
+        if (resp[0] == 0x01) {
+            // AuthMoreData — caching_sha2_password akışı
+            uint8_t code = resp.size() > 1 ? resp[1] : 0;
+            if (code == 0x03) continue;         // fast auth başarılı → sıradaki paket OK
+            if (code == 0x04) {
+                // Tam kimlik doğrulama. TLS olmadığı için sunucudan RSA açık
+                // anahtarı istenir (0x02) ve şifre onunla şifrelenir.
+#ifdef _WIN32
+                throw std::runtime_error(
+                    "db mysql: caching_sha2_password tam kimlik dogrulamasi bu yapida "
+                    "desteklenmiyor (Windows yapisi OpenSSL'siz derlenir). Cozum: "
+                    "kullaniciyi mysql_native_password ile olusturun ya da Linux yapisini kullanin.");
+#else
+                send_packet(std::vector<uint8_t>{0x02}, (uint8_t)(seq + 1));
+                auto keypkt = read_packet(seq);
+                if (keypkt.size() < 2 || keypkt[0] != 0x01)
+                    throw std::runtime_error("db mysql: sunucu RSA açık anahtarı vermedi");
+                std::string pem(keypkt.begin() + 1, keypkt.end());
+                auto enc = caching_sha2_rsa_encrypt(password, challenge, pem);
+                send_packet(enc, (uint8_t)(seq + 1));
+                continue;
+#endif
+            }
+            throw std::runtime_error("db mysql: beklenmeyen kimlik dogrulama verisi (0x" +
+                                     std::to_string((int)code) + ")");
+        }
+        throw std::runtime_error("db mysql: beklenmeyen kimlik dogrulama paketi");
     }
+    throw std::runtime_error("db mysql: kimlik dogrulama tamamlanmadi (tur siniri asildi)");
 }
 
 // ── Query ─────────────────────────────────────────────────────────────────────

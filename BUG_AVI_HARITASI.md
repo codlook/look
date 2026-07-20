@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **37** · Guard: 3 motor × 22 kategori + 35 özel kontrol (5 güvenlik kilidi + PG wire sahte sunucusu + mod paritesi)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **39** · Guard: 3 motor × 22 kategori + 36 özel kontrol + MySQL iki-sürüm auth testi
 >
-> **Bölüm 7 = kapatılan 37 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 39 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 37 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 39 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -46,7 +46,7 @@ Bu 7 kural 37 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | FCGI main | `fcgi_main.cpp` | 860 | ⬜ yok | Orta |
 | **Parser** | `parser.cpp` | 838 | 🟡 22 kenar durum | **Yüksek** |
 | HTTP client | `http_client.cpp` | 822 | ✅ SSRF + IPv6 (yeni) | Orta |
-| MySQL wire | `mysql_client.cpp` | 761 | 🟡 parallel_db | **Yüksek** |
+| MySQL wire | `mysql_client.cpp` | 761 | ✅ iki-sürüm auth (yeni) | **Yüksek** |
 | Template motoru | `template_stdlib.cpp` | 702 | ✅ yeni eklendi | Orta |
 | Event loop | `event_loop.cpp` | 658 | ⬜ yok | Orta |
 | Installer (paket/modül) | `installer.cpp` | 617 | ⬜ yok | Orta |
@@ -492,6 +492,8 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 35 | **`request::file` (multipart) `--mode http`'te YOKTU** — FastCGI'de çalışıyor, aynı uygulama `--mode http`'te "requires multipart/form-data request" hatası veriyordu. Ayrıca `http_main` gövde ayrıştırmaya POST kapısı koyuyordu, FastCGI koymuyordu → PUT/PATCH gövdeleri de modlara göre ayrışıyordu | 🟠 | Gövde ayrıştırma AYNI 6 SATIR **üç yerde** yazılıydı; `http_main` kopyasında multipart dalı hiç yoktu (S2 → S12). `WebContext::parse_post_body()` tek kaynağı; üç giriş noktası da ona bağlandı. README'de "bilinen sınır" diye duruyordu — sınır değil, unutulmuş daldı | bu commit |
 | 36 | **IPv6 literal URL'ler HİÇ çalışmıyordu** — `parse_url` köşeli parantezleri sıyırmıyor, port ayracını `rfind(':')` ile arıyordu: `"[::1]:8080"` → host `"[::1]"` (parantezli, çözümlenemez); `"[::1]"` → host `"[:"` (adresin İÇİNDEKİ iki nokta port sanıldı) | 🟠 | Hata "DNS çözümlenemedi" olduğu için sebep görünmüyordu. RFC 3986 biçimi ayrıştırılıyor; kapanış `]` yoksa net hata. Doğrulama: gerçek IPv6 sunucusuna `status=200` (aynı adrese curl ile teyitli) | bu commit |
 | 37 | **SSRF engeli gerçek ağ hatasından ayırt edilemiyordu** — `tcp_connect` DNS hatası, SSRF engeli, socket ve bağlantı hatası için aynı `INVALID`'i dönüyor, çağıran hepsine `"connection failed"` diyordu | 🟠 | İç servisine ulaşamayan geliştirici bir **güvenlik politikasının** engellediğini göremiyor, boşuna ağ/DNS/firewall araştırıyordu (33. bug ile aynı sınıf). Sebep `t_conn_error` ile taşınıyor. **36. bug bu düzeltme sayesinde görünür oldu** — mesajlar ayrışınca IPv6'nın "DNS hatası" verdiği fark edildi | bu commit |
+| 38 | **Çağrılamayan ad hatası — VM adı söylemiyordu, tree-walk YANILTIYORDU** — `olmayan_fn(1)` VM'de `"Çağrılabilir değil (BYTECODE_FN bekleniyor)"` (hangi ad?); `$x=5; $x(1)` tree-walk'ta `"'$x' is not defined"` (yanlış — `$x` **tanımlı**) | 🟠 | Bu vakada **referans motor da yanılıyordu**, o yüzden yön tek taraflı alınmadı: iki durum ayrıldı, iki motor aynı metni kullanıyor. Ad `LOAD_GLOBAL`'da kaybediyordu (`$`'sız adlar orada ıskalamak **zorunda** — `mod::fn` genel CALL yoluna düşsün diye); compiler adı `NOP` hint'ine gömüp VM'e taşıyor | `31ee310` |
+| 39 | **MySQL 8+ ile HİÇ bağlanılamıyordu** — yalnızca `mysql_native_password` uygulanmış, eklenti adı handshake yanıtına **sabit** yazılmış, sunucunun bildirdiği eklenti okunmuyor, `AuthSwitchRequest` (0xFE) hiç ele alınmıyordu. `CLIENT_PLUGIN_AUTH` bayrağı set edilmesine rağmen | 🔴 | Dil pratikte **MySQL 5.7 diliydi**: 8.0 (2018'den beri varsayılan `caching_sha2_password`), 8.4 (native kapalı), 9.x (kaldırıldı) — hiçbirine bağlanamıyordu. Eklenti adı okunuyor, 0xFE/0x01 diyaloğu işleniyor, `caching_sha2_password` hızlı + **RSA tam yol** uygulandı. Kripto OpenSSL'den (9. SHA-256 kopyası açılmadı) | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 
