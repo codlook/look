@@ -57,13 +57,19 @@ kontrol() {
   esac
 }
 
-echo "MySQL kimlik dogrulama guard'i (iki surum)"
-kontrol "MySQL 8.x  (caching_sha2_password)" "$MY8"  "8."
-kontrol "MySQL 5.7  (mysql_native_password)" "$MY57" "5.7"
+echo "MySQL/MariaDB kimlik dogrulama guard'i (surum matrisi)"
+kontrol "MySQL 5.7   (mysql_native_password)"  "$MY57" "5.7"
+kontrol "MySQL 8.0   (caching_sha2_password)"  "$MY8"  "8.0"
+[ -n "${LOOK_MY82_DSN:-}"  ] && kontrol "MySQL 8.2   (caching_sha2)"                "$LOOK_MY82_DSN"  "8.2"
+[ -n "${LOOK_MY84_DSN:-}"  ] && kontrol "MySQL 8.4   (native DISABLED)"             "$LOOK_MY84_DSN"  "8.4"
+[ -n "${LOOK_MY91_DSN:-}"  ] && kontrol "MySQL 9.x   (native KALDIRILDI)"           "$LOOK_MY91_DSN"  "9."
+[ -n "${LOOK_MDB_DSN:-}"   ] && kontrol "MariaDB     (native)"                      "$LOOK_MDB_DSN"   "1"
 
 # Ikinci tur: 8.x'te sunucu onbellegi artik dolu -> HIZLI yol (farkli kod dali).
-# Ilk tur RSA tam yolunu, bu tur hizli yolu dogrular.
-kontrol "MySQL 8.x  (hizli yol, onbellek dolu)" "$MY8" "8."
+# Ilk tur RSA tam yolunu, bu tur hizli yolu dogrular. IKISI DE kosulmali:
+# yalniz hizli yol test edilseydi, RSA yolu bozuk olsa bile gecerdi (taze
+# sunucuda ilk baglanti DAIMA RSA'dan gecer).
+kontrol "MySQL 8.0   (hizli yol, onbellek dolu)" "$MY8" "8.0"
 
-[ $fail = 0 ] && echo "PASS: MySQL auth — iki surum de baglaniyor" || echo "FAIL: MySQL auth"
+[ $fail = 0 ] && echo "PASS: MySQL/MariaDB auth — surum matrisi temiz" || echo "FAIL: MySQL auth"
 exit $fail
