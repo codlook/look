@@ -45,7 +45,7 @@ route("404", fn() => response::error(404, "Not found"))
   query, `CPUQuota=100%` + `MemoryMax=1G` on both, equal pool sizes (32), no TLS,
   `c=100`, best-of-3 runs (a single run is ~2× noisy). PHP ran under FPM, not
   `php -S` — the built-in server is single-process and would have understated it.
-- 🔋 **Batteries included** — MySQL / PostgreSQL / SQLite, sessions, JWT, cache,
+- 🔋 **Batteries included** — MySQL / MariaDB / PostgreSQL / SQLite, sessions, JWT, cache,
   queue, background jobs, an embedded **SMTP + IMAP** mail server, WebSocket & SSE —
   all built in.
 - 🧩 **Ergonomic** — `fn() => …` arrows, `$row.col` access, `module::method`,
@@ -105,12 +105,19 @@ route("GET", "/blog", function() use ($db) {
 These are exercised against **real servers** in CI (`cpp/tests/db_latest_test.sh`
 tracks `latest`, `mysql_auth_test.sh` pins the matrix) — not assumed:
 
+The four relational engines are **built into the core** — the wire protocol is
+implemented inside the language, no external driver:
+
 | Engine | Verified | Auth |
 |---|---|---|
 | MySQL | 5.7 · 8.0 · 8.2 · 8.4 · 9.x | `caching_sha2_password` (incl. RSA full-auth over a non-TLS socket) **and** `mysql_native_password` — the plugin the server advertises is honoured, so 8.4 (native *disabled*) and 9.x (native *removed*) work |
 | MariaDB | 10.11 · 11.4 · 12.x | `mysql_native_password` |
 | PostgreSQL | 14 · 18 | SCRAM-SHA-256 / md5 (protocol 3.0, frozen since 2003) |
 | SQLite | 3.47.2 (embedded) | file format is forward/backward compatible since 2004 |
+
+Beyond the core, **Firebase** is available as an installable package (Firestore
+CRUD, Authentication, Realtime Database) — see Ecosystem below. Payments (**iyzico**)
+ship the same way. The core stays zero-dependency; optional integrations are opt-in.
 
 Windows builds link no OpenSSL by design (zero DLLs), so MySQL
 `caching_sha2_password` **full** auth is unavailable there — create the user with
@@ -179,7 +186,7 @@ This repository is **the LOOK language core** only. Everything else lives on its
 |---|---|
 | Prebuilt binaries + VS Code extension | [Releases](https://github.com/codlook/look/releases) · [Marketplace](https://marketplace.visualstudio.com/items?itemName=codlook.look-lang) |
 | Modules (jwt, http, crypto, mail…) | [github.com/codlook/look-modules](https://github.com/codlook/look-modules) |
-| Packages | [github.com/codlook/look-packages](https://github.com/codlook/look-packages) |
+| Packages (Firebase, iyzico…) | [github.com/codlook/look-packages](https://github.com/codlook/look-packages) |
 | Package & module directory | [packages.codlook.com](https://packages.codlook.com) |
 | Documentation | [codlook.com/docs](https://codlook.com/docs) |
 
