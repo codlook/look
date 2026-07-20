@@ -1218,8 +1218,20 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     }
     uint8_t r = (dest == 255) ? alloc_temp() : dest;
     emit(OpCode::CALL, r, fn, base);
-    // argc ek byte olarak NOP'a gömülür — VM okur
-    emit(OpCode::NOP, argc);
+    // argc ek byte olarak NOP'a gömülür — VM okur.
+    // Callee basit bir AD ise adın sabit indeksi de (ni+1, 16-bit) NOP'un b/c
+    // alanlarına gömülür — VM hata mesajında adı SÖYLEYEBİLSİN diye.
+    // ESKİ HATA: VM'in CALL noktasında yalnız register değeri vardı, ad yoktu:
+    //   olmayan_fonksiyon(1)
+    //   VM        -> "Çağrılabilir değil (BYTECODE_FN bekleniyor)"   (hangi ad?)
+    //   tree-walk -> "Undefined variable: olmayan_fonksiyon"
+    // LOAD_GLOBAL bu adda fırlatamıyor çünkü "mod::fn" isimleri orada ıskalamak
+    // ZORUNDA (genel CALL yoluna düşsünler diye) — o yüzden çözüm adı buraya
+    // taşımak. 0 = ad yok (CALL_BUILTIN'in 16-bit indeks kalıbıyla aynı yöntem).
+    uint16_t cname = 0;
+    if (auto* cv = dynamic_cast<const Variable*>(e.callee.get()))
+        cname = (uint16_t)(add_const(Value(cv->name)) + 1);
+    emit(OpCode::NOP, argc, (uint8_t)(cname >> 8), (uint8_t)(cname & 0xFF));
     for (int k = 0; k < argc; ++k) regs_->free(base + k);
     free_temp(fn);
     return r;

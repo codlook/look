@@ -558,14 +558,27 @@ call_dispatch:
             case OpCode::CALL: {
                 // a=ret_reg, b=fn_reg, c=args_base; sonraki NOP(argc)
                 uint8_t argc = 0;
+                uint16_t cname = 0;   // callee adinin sabit indeksi + 1 (0 = ad yok)
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
-                    argc = proto->code[frame.ip].a;
+                    argc  = proto->code[frame.ip].a;
+                    cname = (uint16_t)((proto->code[frame.ip].b << 8) | proto->code[frame.ip].c);
                     ++frame.ip;
                 }
                 const Value& fn_val = R(ins.b);
-                if (fn_val.type() != Value::BYTECODE_FN)
-                    throw LookVmError("Çağrılabilir değil (BYTECODE_FN bekleniyor)");
+                if (fn_val.type() != Value::BYTECODE_FN) {
+                    // ESKI HATA: mesaj adi soylemiyordu — "Cagrilabilir degil
+                    // (BYTECODE_FN bekleniyor)". Hangi ad? tree-walk (REFERANS)
+                    // "Undefined variable: <ad>" diyordu; motorlar hem mesajda hem
+                    // teshis edilebilirlikte ayrisiyordu (S3).
+                    if (cname) {
+                        const std::string& nm = CONST((uint16_t)(cname - 1)).str_ref();
+                        if (fn_val.type() == Value::NONE)
+                            throw LookVmError("Undefined variable: " + nm);
+                        throw LookVmError("'" + nm + "' cagrilabilir degil (fonksiyon bekleniyor)");
+                    }
+                    throw LookVmError("Çağrılabilir değil (fonksiyon bekleniyor)");
+                }
                 auto cl = fn_val.as_bytecode_fn();
                 auto* cp = cl->proto.get();
                 int new_base = (int)regs_.size();

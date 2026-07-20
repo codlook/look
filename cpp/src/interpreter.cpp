@@ -2014,8 +2014,16 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         }
 
         Value callee_val = evaluate_expression(*e->callee);
-        if (callee_val.type() != Value::FUNCTION && callee_val.type() != Value::BYTECODE_FN)
-            throw std::runtime_error("'" + fn_name + "' is not defined");
+        if (callee_val.type() != Value::FUNCTION && callee_val.type() != Value::BYTECODE_FN) {
+            // ESKİ HATA: mesaj her durumda "is not defined" diyordu — oysa değer
+            // TANIMLI olabilir, yalnızca çağrılabilir değildir:
+            //   $x = 5; $x(1)   ->  "'$x' is not defined"   (yanlış: $x tanımlı!)
+            // Burada REFERANS MOTOR yanılıyordu; VM daha doğrusunu söylüyordu.
+            // İki durum ayrıldı ve iki motor aynı metni kullanıyor (S3).
+            if (callee_val.type() == Value::NONE)
+                throw std::runtime_error("Undefined variable: " + fn_name);
+            throw std::runtime_error("'" + fn_name + "' cagrilabilir degil (fonksiyon bekleniyor)");
+        }
 
         if (callee_val.type() == Value::BYTECODE_FN)
             return invoke(callee_val, {});  // VM closure called as bare function

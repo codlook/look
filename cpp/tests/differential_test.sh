@@ -430,6 +430,23 @@ echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM
 [ "$ue_tree" = "$ue_vm" ] || { echo "FAIL: hata mesaji motorlar arasi ayrisiyor — tree-walk: [$ue_tree] / CLI-VM: [$ue_vm]"; fail=1; }
 [ "$uo_vm" = "3" ] || { echo "FAIL: 'use' VARKEN modul cagrisi bozuldu (pozitif kontrol): [$uo_vm]"; fail=1; }
 
+# Cagrilamayan AD — mesaj adi soylemeli ve iki motor ayni demeli.
+# ESKI HATA (iki yonlu): VM adi bilmiyordu ("Cagrilabilir degil (BYTECODE_FN
+# bekleniyor)" — hangi ad?); tree-walk ise her durumda "is not defined" diyordu,
+# oysa deger TANIMLI olabilir ve yalnizca cagrilabilir degildir ($x = 5; $x(1)).
+# Yani REFERANS MOTOR da yaniliyordu. Ad, compiler tarafindan NOP hint'ine
+# gomulup VM'e tasiniyor (CALL_BUILTIN'in 16-bit indeks kalibi).
+printf 'print(olmayan_fonksiyon(1))\n' > "$TMP/c1.lk"
+printf '$x = 5\nprint($x(1))\n'        > "$TMP/c2.lk"
+for cf in c1 c2; do
+  cv=$("$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
+  ct=$(LOOK_CLI_VM=0 "$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
+  [ "$cv" = "$ct" ] || { echo "FAIL: cagri hatasi motorlar arasi ayrisiyor ($cf) — CLI-VM: [$cv] / tree-walk: [$ct]"; fail=1; }
+  echo "$cv" | grep -q "BYTECODE_FN" && { echo "FAIL: cagri hatasi ic terim sizdiriyor (ad soylenmiyor): [$cv]"; fail=1; }
+done
+echo "$(LOOK_CLI_VM=0 "$LK" "$TMP/c2.lk" 2>&1)" | grep -q "is not defined" && {
+  echo "FAIL: tanimli ama cagrilamayan deger icin yaniltici 'is not defined' mesaji"; fail=1; }
+
 
 # ── PostgreSQL wire — BOZUK DataRow sessizce yanlis veri uretiyor mu? ───────────
 # NEDEN: postgres_client.cpp'nin (1023 satir) HIC guard'i yoktu. Sahte sunucuyla
