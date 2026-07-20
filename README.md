@@ -100,6 +100,23 @@ route("GET", "/blog", function() use ($db) {
 | Rate limiting (token bucket, per-IP + global), file sandbox | ✅ |
 | Test runner + REPL — `lk test` · `lk repl` · `lk --check` (parse-only) | ✅ |
 
+### Tested database versions
+
+These are exercised against **real servers** in CI (`cpp/tests/db_latest_test.sh`
+tracks `latest`, `mysql_auth_test.sh` pins the matrix) — not assumed:
+
+| Engine | Verified | Auth |
+|---|---|---|
+| MySQL | 5.7 · 8.0 · 8.2 · 8.4 · 9.x | `caching_sha2_password` (incl. RSA full-auth over a non-TLS socket) **and** `mysql_native_password` — the plugin the server advertises is honoured, so 8.4 (native *disabled*) and 9.x (native *removed*) work |
+| MariaDB | 10.11 · 11.4 · 12.x | `mysql_native_password` |
+| PostgreSQL | 14 · 18 | SCRAM-SHA-256 / md5 (protocol 3.0, frozen since 2003) |
+| SQLite | 3.47.2 (embedded) | file format is forward/backward compatible since 2004 |
+
+Windows builds link no OpenSSL by design (zero DLLs), so MySQL
+`caching_sha2_password` **full** auth is unavailable there — create the user with
+`mysql_native_password`, or use the Linux build. LOOK says so explicitly instead of
+failing obscurely.
+
 ## Known limits (worth knowing up front)
 
 - **One entry file.** There is no project-local `include`/`require`; `use` resolves
