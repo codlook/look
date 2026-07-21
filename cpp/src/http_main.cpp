@@ -1464,9 +1464,21 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
                     return any;
                 }
             );
-            smtp_thread = std::thread([&smtp_srv] { smtp_srv->run(); });
-            look::Logger::instance().log(look::LogLevel::LOG_INFO, "smtp",
-                std::string("SMTP server started on port ") + smtp_port_env);
+            // "started" logu GERÇEK duruma bağlı olmalı. Eskiden koşulsuzdu:
+            // bind başarısız olduğunda log şöyle görünüyordu (ölçüldü) —
+            //   [ERROR] port 7171 dinlenemedi
+            //   [INFO ] IMAP server started on port 7171   ← yanıltıcı
+            // Kullanıcı log'a bakıp çalıştığını sanıyordu; sessiz başarısızlık.
+            if (smtp_srv->listening()) {
+                smtp_thread = std::thread([&smtp_srv] { smtp_srv->run(); });
+                look::Logger::instance().log(look::LogLevel::LOG_INFO, "smtp",
+                    std::string("SMTP server started on port ") + smtp_port_env);
+            } else {
+                look::Logger::instance().log(look::LogLevel::LOG_ERROR, "smtp",
+                    std::string("SMTP BAŞLATILAMADI — port ") + smtp_port_env +
+                    " dinlenemedi (port meşgul mü? yetki? IPv6/IPv4?)");
+                smtp_srv.reset();
+            }
         }
     }
 
@@ -1490,9 +1502,17 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
                     }
                     return r;
                 });
-            imap_srv->start();  // kendi accept thread'lerini yönetir
-            look::Logger::instance().log(look::LogLevel::LOG_INFO, "imap",
-                std::string("IMAP server started on port ") + imap_port_env);
+            // start() artık bool döner — "started" logu gerçek duruma bağlı
+            // (bkz. SMTP'deki aynı düzeltme: bind hatasından sonra "started" yazıyordu).
+            if (imap_srv->start()) {
+                look::Logger::instance().log(look::LogLevel::LOG_INFO, "imap",
+                    std::string("IMAP server started on port ") + imap_port_env);
+            } else {
+                look::Logger::instance().log(look::LogLevel::LOG_ERROR, "imap",
+                    std::string("IMAP BAŞLATILAMADI — port ") + imap_port_env +
+                    " dinlenemedi (port meşgul mü? yetki? IPv6/IPv4?)");
+                imap_srv.reset();
+            }
         }
     }
 #endif  // _WIN32 — mail sunucuları

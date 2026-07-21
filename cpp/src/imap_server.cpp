@@ -123,7 +123,13 @@ struct ImapServer::Impl {
         return true;
     }
 
-    // ── Güvenli dinleme soketi (SMTP ile aynı desen: dual-stack IPv6) ─────────
+    // ── Güvenli dinleme soketi (dual-stack IPv6, IPv4 YEDEKLİ) ───────────────
+    // ESKİ HATA: yalnız AF_INET6 deneniyordu. IPv6 desteği DERLENMEMİŞ/kapalı
+    // ortamlarda (sertleştirilmiş VPS, bazı konteyner kurulumları) `socket()`
+    // EAFNOSUPPORT ile başarısız olur ve mail sunucusu HİÇ BAŞLAMAZ — üstelik
+    // http_main "started" logunu basmaya devam ettiği için sessizce.
+    // HTTP sunucusu AF_INET kullandığı için o ortamlarda çalışıyor, mail
+    // sunucuları çalışmıyordu; fark buradan geliyordu.
     static int make_server_fd(int port) {
 #if defined(_WIN32)
         WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
@@ -131,7 +137,7 @@ struct ImapServer::Impl {
 #else
         int fd = socket(AF_INET6, SOCK_STREAM, 0);
 #endif
-        if (fd < 0) return -1;
+        if (fd < 0) return make_server_fd_v4(port);   // IPv6 yok → IPv4 ile dene
         int yes = 1;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, sizeof(yes));
         int no = 0;
@@ -140,7 +146,27 @@ struct ImapServer::Impl {
         addr.sin6_family = AF_INET6;
         addr.sin6_port   = htons((uint16_t)port);
         addr.sin6_addr   = in6addr_any;
-        if (::bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
+        // bind de başarısız olabilir (IPv6 arayüzü kapalı ama soket açılıyor) → IPv4
+        if (::bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return make_server_fd_v4(port); }
+        if (::listen(fd, 128) < 0) { close(fd); return -1; }
+        return fd;
+    }
+
+    // IPv4-yalnız dinleme soketi — IPv6 kullanılamadığında yedek.
+    static int make_server_fd_v4(int port) {
+#if defined(_WIN32)
+        int fd = (int)socket(AF_INET, SOCK_STREAM, 0);
+#else
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+#endif
+        if (fd < 0) return -1;
+        int yes = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, sizeof(yes));
+        struct sockaddr_in a4{};
+        a4.sin_family      = AF_INET;
+        a4.sin_port        = htons((uint16_t)port);
+        a4.sin_addr.s_addr = INADDR_ANY;
+        if (::bind(fd, (struct sockaddr*)&a4, sizeof(a4)) < 0) { close(fd); return -1; }
         if (::listen(fd, 128) < 0) { close(fd); return -1; }
         return fd;
     }
@@ -1026,12 +1052,12 @@ ImapServer::ImapServer(int port_imap, int port_imaps, int workers, ImapAuthHandl
 
 ImapServer::~ImapServer() { stop(); }
 
-void ImapServer::start() {
+bool ImapServer::start() {
     impl_->listen_fd = Impl::make_server_fd(impl_->port_imap);
     if (impl_->listen_fd < 0) {
         Logger::instance().log(LogLevel::LOG_ERROR, "IMAP",
             "port " + std::to_string(impl_->port_imap) + " dinlenemedi");
-        return;
+        return false;
     }
     impl_->ssl_ctx = Impl::make_ssl_ctx();   // null = sertifika env yok (düz-metin dev)
     impl_->running = true;
@@ -1049,6 +1075,7 @@ void ImapServer::start() {
     Logger::instance().log(LogLevel::LOG_INFO, "IMAP",
         std::string("IMAP4rev1 dinliyor — port ") + std::to_string(impl_->port_imap) +
         (impl_->ssl_ctx ? " (STARTTLS aktif)" : " (TLS yapılandırılmamış — düz-metin)"));
+    return true;
 }
 
 void ImapServer::stop() {

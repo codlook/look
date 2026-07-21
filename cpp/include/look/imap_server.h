@@ -58,7 +58,7 @@ public:
     ImapServer(const ImapServer&)            = delete;
     ImapServer& operator=(const ImapServer&) = delete;
 
-    void start();   // listener'ları aç, EventLoop'a bağla
+    bool start();   // listener'ları aç; dinlemeye BAŞLADIYSA true (yanıltıcı "started" logunu önler)
     void stop();
 
 private:

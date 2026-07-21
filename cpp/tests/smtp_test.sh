@@ -102,5 +102,37 @@ case "$rp" in
   *)                echo "  FAIL Return-Path beklenmedik: $rp"; fail=1 ;;
 esac
 
+# Bind BASARISIZ oldugunda "started" YALANI basilmamali (45. bug).
+# Olculmustu: bind hatasindan SONRA "IMAP server started on port X" yaziliyordu;
+# kullanici log'a bakip calistigini saniyordu (sessiz basarisizlik).
+BUSY_PORT=$((PORT + 50))
+BUSY_HTTP=$((HTTP_PORT + 50))
+python3 - "$BUSY_PORT" <<'PYEOF' >/dev/null 2>&1 &
+import socket, sys, time
+p = int(sys.argv[1])
+s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("::", p)); s.listen(1); time.sleep(25)
+PYEOF
+BLK=$!
+sleep 1
+mkdir -p "$TMP/md2"
+LOOK_SMTP_PORT=$BUSY_PORT LOOK_MAIL_DIR="$TMP/md2" \
+  "$FCGI" --mode http --port $BUSY_HTTP "$TMP/app.lk" >"$TMP/busy.log" 2>&1 &
+BSRV=$!
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$BUSY_HTTP/" 2>/dev/null && break; sleep 0.5; done
+sleep 1
+kill $BSRV 2>/dev/null; kill $BLK 2>/dev/null
+if grep -qi "cannot bind\|dinlenemedi\|BAŞLATILAMADI" "$TMP/busy.log"; then
+  if grep -q "SMTP server started" "$TMP/busy.log"; then
+    echo "  FAIL bind BASARISIZ oldugu halde 'SMTP server started' yazildi (yaniltici log)"
+    fail=1
+  else
+    echo "  PASS bind hatasinda yaniltici 'started' logu yok"
+  fi
+else
+  echo "  (atlandi: bind hatasi tetiklenemedi)"
+fi
+
 [ $fail = 0 ] && echo "PASS: SMTP sunucusu" || echo "FAIL: SMTP sunucusu"
 exit $fail

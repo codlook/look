@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **44** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **45** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 44 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 45 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 44 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 45 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -499,6 +499,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 42 | **SMTP adres ayrıştırma TERS yönde gevşekti — çöp veri DİSKE yazılıyordu** — `extract_addr` ilk boşluktan sonrasını alıyordu: `MAIL FROM:` (adressiz) → adres **`"FROM:"`** → maildir'e `Return-Path: <FROM:>`; `MAIL FROM: bare@x.com` → `<FROM: bare@x.com>` (bare adres desteği kırık); `MAIL FROM:<a@b<c>` → bozuk adres kabul. Buna karşılık **`MAIL FROM:<>` (null sender) REDDEDİLİYORDU** — oysa RFC 5321 §4.5.5'te bounce/DSN için kabulü zorunlu | 🟠 | Yani çöpü alıp meşru olanı reddediyordu. Bozuk `Return-Path` bounce'ları yanlış yönlendirir ve başlığı ayrıştıran alıcı yazılımı şaşırtır (adres içinde boşluk/`<` olabiliyordu). Çözüm: SMTP komut sözdizimine göre ayrıştırma (`:` sonrası, açı parantezi kapanmalı, iç içe `<`/boşluk red, ESMTP parametreleri atlanır); null sender boş-ama-geçerli olarak ayırt ediliyor. `validate_rcpt` boş adresi zaten reddettiği için RCPT tarafı etkilenmedi. **`smtp_server.cpp`'nin (1373 satır) İLK guard'ı** — gerçek sunucu ayağa kaldırılıp ham SMTP konuşuluyor | bu commit |
 | 43 | **IMAP mailbox adı doğrulaması eksikti + var olmayan mailbox `OK` dönüyordu** — `SELECT "INBOX; rm -rf /"` **kabul ediliyordu** (diğer traversal denemeleri reddedilirken); kontroller yalnız `\0`, baştaki ayırıcı ve `..` bakıyor, `;`/boşluk/**içerideki** ayırıcı geçiyordu. Ayrıca var olmayan mailbox `OK (0 EXISTS)` dönüyordu — RFC 3501 §6.3.1: `NO` olmalı | 🟠 | Mailbox adı bir **yol bileşeni** olarak dizin adına dönüşüyor; kabuk üzerinden işlenen bir yedekleme/log betiği için tehlike, en iyi ihtimalle çöp dizin. Var olmayan kutunun `OK` dönmesi istemciyi yanıltıyordu ("Sent" seçilir, boş kutu görünür — oysa kutu yok). Çözüm: ayırıcı/`;`/kontrol karakteri reddi + `is_directory` kontrolü. **`imap_server.cpp`'nin (1013 satır) İLK guard'ı** | bu commit |
 | 44 | **IMAP kalıcı olmayan UID'yi "UID" diye döndürüyordu** — `FETCH n (UID)` o anki *sequence* numarasını veriyordu. Ölçüldü: 3 mesaj `UID 1,2,3` → ortadaki silindi → kalanlar `UID 1,2` (olması gereken `1,3`); **UID 2 artık başka bir mesaj** (önce M1, sonra M2) | 🔴 | Bunu önbelleğe alan istemci/webmail silinen mesajı görmeye devam eder ve açınca **başka mesajın içeriğini** alır — sessiz veri bozulması. Kalıcı UID deposu gelene kadar doğru davranış **gürültülü hata**: `UID` veri öğesi ve `UID` komutu artık `NO [CANNOT] … (Milestone 1)` ile reddediliyor; `CREATE/DELETE/RENAME/SUBSCRIBE` de kapsamı söyleyerek reddediliyor (eskiden `BAD bilinmeyen komut` — teşhis ettirmiyordu). Yetenek kontrolü sequence-set kontrolünden **önce**: boş INBOX'ta bile istemci "UID var mı" cevabını alır. **README gerçekle hizalandı** — IMAP `✅` yerine `🟡 Milestone 1`, standart MUA istemcilerinin çalışmayacağı açıkça yazıldı | bu commit |
+| 45 | **Mail sunucuları IPv6'sız ortamda hiç başlamıyordu + "started" logu YALAN söylüyordu** — SMTP/IMAP yalnız `socket(AF_INET6, …)` deniyordu (IPv4 yedeği yok); IPv6 desteği derlenmemiş/kapalı ortamlarda (sertleştirilmiş VPS, bazı konteynerler) `EAFNOSUPPORT` ile başlamıyorlardı. HTTP `AF_INET` kullandığı için o ortamlarda **çalışıyordu** — fark buradan geliyordu. Üstelik `http_main` "server started" logunu **koşulsuz** basıyordu | 🔴 | Ölçüldü (port meşgul edilerek, IPv6'dan bağımsız): `[ERROR] port 7171 dinlenemedi` hemen ardından `[INFO] IMAP server started on port 7171`. Kullanıcı log'a bakıp çalıştığını sanıyordu — bu turun ekseni olan **sessiz/yanıltıcı başarısızlık**. Çözüm: her iki sunucuda IPv4 yedeği (`socket()` ve `bind()` başarısızlığında), `ImapServer::start()` artık `bool`, `SmtpServer::listening()` eklendi, "started" logu **gerçek duruma bağlandı** (başarısızsa `ERROR … (port meşgul mü? yetki? IPv6/IPv4?)` + nesne serbest bırakılıyor). **Analizci bağımsız ortamında buldu** (onun konteynerinde IPv6 yoktu, bende vardı — bu yüzden benim testlerim geçmişti) | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 

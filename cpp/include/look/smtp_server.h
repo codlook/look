@@ -52,6 +52,10 @@ public:
     ~SmtpServer();
 
     void run();
+    // En az bir port gerçekten dinlemede mi? Constructor bind başarısız olsa da
+    // nesne kurulur; çağıranın "started" logu basmadan önce bunu sorması gerekir
+    // (aksi hâlde bind hatasından SONRA "SMTP server started" yazılıyordu).
+    bool listening() const;
     void stop();
 
 private:

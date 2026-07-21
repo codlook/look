@@ -798,8 +798,30 @@ struct SmtpServer::Impl {
 
     // Per-connection session map (fd → session), guarded by loop thread
     std::unordered_map<int, std::shared_ptr<SmtpSession>> sessions;
+    int bound_ports = 0;   // kac port GERCEKTEN dinlemede (yaniltici "started" logunu onler)
 
     // ── Server socket helpers ────────────────────────────────────────────────
+    // ESKİ HATA: yalnız AF_INET6 deneniyordu. IPv6 desteği derlenmemiş/kapalı
+    // ortamlarda socket() EAFNOSUPPORT verir ve SMTP HİÇ BAŞLAMAZ — http_main
+    // "started" logunu bastığı için sessizce. HTTP AF_INET kullandığından o
+    // ortamlarda çalışıyordu; fark buradan geliyordu. IPv4 yedeği eklendi.
+    static int make_server_fd_v4(int port) {
+#if defined(_WIN32)
+        int fd = (int)socket(AF_INET, SOCK_STREAM, 0);
+#else
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+#endif
+        if (fd < 0) return -1;
+        int yes = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, sizeof(yes));
+        struct sockaddr_in a4{};
+        a4.sin_family      = AF_INET;
+        a4.sin_port        = htons((uint16_t)port);
+        a4.sin_addr.s_addr = INADDR_ANY;
+        if (::bind(fd, (struct sockaddr*)&a4, sizeof(a4)) < 0) { close(fd); return -1; }
+        if (::listen(fd, 128) < 0) { close(fd); return -1; }
+        return fd;
+    }
     static int make_server_fd(int port) {
 #if defined(_WIN32)
         WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
@@ -807,7 +829,7 @@ struct SmtpServer::Impl {
 #else
         int fd = socket(AF_INET6, SOCK_STREAM, 0);
 #endif
-        if (fd < 0) return -1;
+        if (fd < 0) return make_server_fd_v4(port);   // IPv6 yok → IPv4
         int yes = 1;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, sizeof(yes));
         // Dual-stack: accept both IPv4 and IPv6
@@ -819,7 +841,7 @@ struct SmtpServer::Impl {
         addr.sin6_port   = htons((uint16_t)port);
         addr.sin6_addr   = in6addr_any;
         if (::bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            close(fd); return -1;
+            close(fd); return make_server_fd_v4(port);   // IPv6 arayüzü kapalı → IPv4
         }
         if (::listen(fd, 128) < 0) { close(fd); return -1; }
         return fd;
@@ -1307,6 +1329,7 @@ SmtpServer::SmtpServer(int port_smtp, int port_sub, int port_smtps,
         impl_->loop->listen(fd, [this, sub](int client_fd) {
             impl_->on_accept(client_fd, sub);
         });
+        impl_->bound_ports++;   // gerçekten dinlemede — listening() bunu raporlar
         Logger::instance().log(LogLevel::LOG_INFO, "smtp",
             "listening on :" + std::to_string(port));
     };
@@ -1322,6 +1345,7 @@ SmtpServer::~SmtpServer() {
     if (impl_->ssl_ctx) { SSL_CTX_free(impl_->ssl_ctx); impl_->ssl_ctx = nullptr; }
 }
 
+bool SmtpServer::listening() const { return impl_->bound_ports > 0; }
 void SmtpServer::run()  { impl_->loop->run();  }
 void SmtpServer::stop() { impl_->loop->stop(); }
 
