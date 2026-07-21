@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **42** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **43** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 42 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 43 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 42 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 43 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -39,7 +39,7 @@ Bu 7 kural 42 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | SMTP server | `smtp_server.cpp` | 1373 | ✅ smtp_test (yeni) | Orta |
 | Extra stdlib | `extra_stdlib.cpp` | 1246 | 🟡 kısmi | Orta |
 | PostgreSQL wire | `postgres_client.cpp` | 1023 | ✅ sahte sunucu (yeni) | **Yüksek** |
-| IMAP server | `imap_server.cpp` | 1013 | ⬜ yok | Orta |
+| IMAP server | `imap_server.cpp` | 1013 | ✅ imap_test (yeni) | Orta |
 | HTTP server | `http_server.cpp` | 976 | 🟡 kısmi | **Yüksek** |
 | Stdlib (çekirdek) | `stdlib.cpp` | 914 | 🟡 kısmi | Orta |
 | **VM (bytecode yürütücü)** | `vm.cpp` | 863 | ✅ differential | **Yüksek** |
@@ -497,6 +497,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 40 | **PostgreSQL: transaction içinde sequence'siz tabloya INSERT sessizce VERİ KAYBEDİYORDU** — `db::exec` her INSERT sonrası otomatik `SELECT lastval()` çağırıyor (last_insert_id için); tablo SERIAL/sequence kullanmıyorsa `lastval()` hata verir, **açık transaction'ı ABORTED yapar**, sonraki `COMMIT` sessizce ROLLBACK'e döner → INSERT kaybolur | 🔴 | Autocommit'te zararsızdı (INSERT ayrı statement'ta kalıcı); yalnız `BEGIN…COMMIT` içinde. MySQL/SQLite'ta yok. C++ `catch(...)` hatayı yutuyordu ama PG bağlantısı zaten zehirli. Çözüm: transaction bloğundaysak (`ReadyForQuery` status='T') `lastval`'i **SAVEPOINT ile koru** — hata olsa da savepoint'e dönüp transaction'ı kurtar; autocommit'te doğrudan çağır. `affected_rows_`/`last_insert_id_` savepoint komutlarınca ezilmesin diye yerelde tutulup en sonda yazılıyor. **Gerçek PG sunucusu + sunucu logu** ile bulundu | bu commit |
 | 41 | 🛡️ **MySQL kaçışı `\'` kullanıyordu — `NO_BACKSLASH_ESCAPES` modunda SQL ENJEKSİYONU** — o modda MySQL ters bölüyü kaçış karakteri saymaz, `\'` tırnağı **kapatır**. Ölçüldü: oturum o moda alınınca `' OR 1=1 -- ` yükü **tüm tabloyu** döndürdü (3/3 satır) | 🛡️ | Güvenliği tutan tek şey `do_connect()`'teki `SET SESSION sql_mode = REPLACE(...)`'ın başarılı olmasıydı — yeterli zemin değil: ProxySQL/bağlantı çoklayıcıları oturum durumunu sessizce kaybedebilir (SET başarılı olur, koruma yok olur); tek ifadenin reddedilmesi bağlantının bozuk olduğu anlamına gelmez. **Asimetri belirleyici: düzeltme tek satır, yanılmanın bedeli enjeksiyon.** Çözüm: `''` (standart SQL) — her iki modda güvenli, `SET`'ten **bağımsız**; PostgreSQL zaten `''` kullanıyordu, iki sürücü artık aynı zeminde. `SET` kalıyor ama artık güvenlik için değil **veri sadakati** için (NBE'de `\\` ikilemesi veriyi bozar). 6 özel-karakter vakası gidiş-dönüşte korunuyor | bu commit |
 | 42 | **SMTP adres ayrıştırma TERS yönde gevşekti — çöp veri DİSKE yazılıyordu** — `extract_addr` ilk boşluktan sonrasını alıyordu: `MAIL FROM:` (adressiz) → adres **`"FROM:"`** → maildir'e `Return-Path: <FROM:>`; `MAIL FROM: bare@x.com` → `<FROM: bare@x.com>` (bare adres desteği kırık); `MAIL FROM:<a@b<c>` → bozuk adres kabul. Buna karşılık **`MAIL FROM:<>` (null sender) REDDEDİLİYORDU** — oysa RFC 5321 §4.5.5'te bounce/DSN için kabulü zorunlu | 🟠 | Yani çöpü alıp meşru olanı reddediyordu. Bozuk `Return-Path` bounce'ları yanlış yönlendirir ve başlığı ayrıştıran alıcı yazılımı şaşırtır (adres içinde boşluk/`<` olabiliyordu). Çözüm: SMTP komut sözdizimine göre ayrıştırma (`:` sonrası, açı parantezi kapanmalı, iç içe `<`/boşluk red, ESMTP parametreleri atlanır); null sender boş-ama-geçerli olarak ayırt ediliyor. `validate_rcpt` boş adresi zaten reddettiği için RCPT tarafı etkilenmedi. **`smtp_server.cpp`'nin (1373 satır) İLK guard'ı** — gerçek sunucu ayağa kaldırılıp ham SMTP konuşuluyor | bu commit |
+| 43 | **IMAP mailbox adı doğrulaması eksikti + var olmayan mailbox `OK` dönüyordu** — `SELECT "INBOX; rm -rf /"` **kabul ediliyordu** (diğer traversal denemeleri reddedilirken); kontroller yalnız `\0`, baştaki ayırıcı ve `..` bakıyor, `;`/boşluk/**içerideki** ayırıcı geçiyordu. Ayrıca var olmayan mailbox `OK (0 EXISTS)` dönüyordu — RFC 3501 §6.3.1: `NO` olmalı | 🟠 | Mailbox adı bir **yol bileşeni** olarak dizin adına dönüşüyor; kabuk üzerinden işlenen bir yedekleme/log betiği için tehlike, en iyi ihtimalle çöp dizin. Var olmayan kutunun `OK` dönmesi istemciyi yanıltıyordu ("Sent" seçilir, boş kutu görünür — oysa kutu yok). Çözüm: ayırıcı/`;`/kontrol karakteri reddi + `is_directory` kontrolü. **`imap_server.cpp`'nin (1013 satır) İLK guard'ı** | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 
@@ -541,4 +542,33 @@ tek bir `SET` komutunun başarısıydı. 41. bug bu yüzden açıldı ve kapatı
 farklı sorulardır. İkincisi sorulmazsa, tek bir komutun sessiz başarısızlığına dayanan
 savunmalar sağlam sanılır. Guard artık korumayı **kasten kaldırıp** saldırıyor.
 **Kalan not:** MySQL'deki `SET SESSION` `catch(...)` ile sessizce yutuluyor — ama artık **güvenlik ona bağlı değil** (41. bug). `SET` yalnızca veri sadakati için: NBE modunda `\` ikilemesi veriyi bozardı.
+
+### 7e. IMAP4rev1 uyumluluk açığı — **ÖLÇÜLDÜ, DÜZELTİLMEDİ** (2026-07-21)
+
+CAPABILITY'de `IMAP4rev1` ilan ediliyor ama sözleşmenin zorunlu parçaları eksik.
+Bu bir "ilan edip desteklememek" durumu — SIZE/literal sınırlarının aksine (onlar
+ilan edilip **zorlanıyor**, ölçüldü).
+
+| # | Eksik | Ölçülen davranış | Etki |
+|---|---|---|---|
+| 1 | **UID kalıcı değil** (RFC 3501 §2.3.1.1) | `UID` = o anki sequence numarası (`imap_server.cpp` FETCH: `"UID " + std::to_string(i)`). Ölçüm: 3 mesaj `UID 1,2,3` → ortadaki silindi → kalan mesajlar `UID 1,2` (beklenen `1,3`). **UID 2 artık BAŞKA bir mesaj**: önce `M1`, sonra `M2` | 🔴 İstemci önbelleği sessizce bozulur: silinmiş mesaj görünmeye devam eder, açılınca başka mesajın içeriği gelir |
+| 2 | **`UID` komutu yok** (RFC 3501 §6.4.8, zorunlu) | `UID FETCH 1` → `BAD bilinmeyen komut`. Komut dağıtımında `cmd == "UID"` dalı hiç yok; UID yalnızca *veri öğesi* ve *arama ölçütü* olarak var | 🔴 Thunderbird/Outlook/iOS Mail neredeyse hep `UID FETCH` kullanır → bağlanamazlar |
+| 3 | `CREATE`/`DELETE`/`RENAME` yok | Komut listesinde yok; kullanıcı yeni kutu oluşturamaz (yalnız INBOX) | 🟠 İstemci "Sent"/"Drafts" oluşturamaz |
+| 4 | `BODY[HEADER.FIELDS (...)]` desteklenmiyor | `FETCH 1 BODY[HEADER.FIELDS (SUBJECT)]` → `* 1 FETCH ()` (boş). `BODY[HEADER]` (tümü) çalışıyor | 🟠 İstemcilerin liste görünümü için en çok kullandığı biçim budur |
+
+**Neden düzeltilmedi:** 1 ve 2 mimari — kalıcı UID için mailbox'ta bir UID deposu
+gerekir (Dovecot'un `dovecot-uidlist`'i / Courier'in dosya adına `,U=N` gömmesi
+gibi), ve SMTP teslim tarafıyla birlikte tasarlanmalı. Küçük diff'le çözülmez;
+"değişiklik kapsamını küçük tut" kuralına göre ayrı bir iş turu.
+
+**Bu turda ölçülüp TEMİZ çıkanlar:** kimlik doğrulama zorunluluğu (auth'suz
+SELECT/FETCH/APPEND hepsi `NO`), APPEND literal sınırı **zorlanıyor** (2GB →
+`TOOBIG`, negatif/bozuk → `BAD`), SEARCH bozuk ölçüt → `BAD`, FETCH sınır
+durumları çökmüyor (0 / 99999 / -1 / 2^63 / `abc`), traversal 6/7 varyant
+reddedilmişti (7.'si 43. bugla kapandı), LOGIN brute-force gecikmesi var,
+oturum sonrası sunucu sağlam, RSS 8.8 MB.
+
+**Dürüst özet:** LOOK'un IMAP'i şu an **temel okuma** seviyesinde (webmail
+arka ucu için yeterli), tam IMAP4rev1 istemci uyumluluğu için 1–4 gerekir.
+`CAPABILITY`'de `IMAP4rev1` ilan etmek bu hâliyle yanıltıcı.
 | **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, **SMTP sunucusu** (1373 satır) + **IMAP sunucusu** (1013 satır) — ikisi de guard'sız, en büyük kör nokta, event loop, REPL. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |

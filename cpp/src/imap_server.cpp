@@ -324,6 +324,14 @@ struct ImapServer::Impl {
         if (mb.find('\0') != std::string::npos) return "";
         if (mb.front() == '/' || mb.front() == '\\') return "";
         if (mb.find("..") != std::string::npos) return "";
+        // Ölçüldü: `SELECT "INBOX; rm -rf /"` KABUL ediliyordu (diğer traversal
+        // denemeleri reddedilirken). Kontroller yalnız `\0`, baştaki ayırıcı ve
+        // `..` bakıyordu; `;`, boşluk ve İÇERİDEKİ ayırıcı geçiyordu. Bu ad
+        // dosya sisteminde dizin adı olur — kabuk üzerinden işlenen bir yedekleme/
+        // log betiği için tehlike, en iyi ihtimalle çöp dizin.
+        // Mailbox adı bir YOL BİLEŞENİ; ayırıcı ve kontrol karakteri içeremez.
+        for (unsigned char c : mb)
+            if (c == '/' || c == '\\' || c == ';' || c < 0x20 || c == 0x7F) return "";
 
         std::error_code ec;
         fs::path root_c = fs::weakly_canonical(fs::path(root), ec);
@@ -340,6 +348,12 @@ struct ImapServer::Impl {
         bool within = ts.size() >= rs.size() && ts.compare(0, rs.size(), rs) == 0 &&
                       (ts.size() == rs.size() || ts[rs.size()] == '/' || ts[rs.size()] == '\\');
         if (!within) return "";
+        // Var OLMAYAN mailbox `OK (0 EXISTS)` dönüyordu — RFC 3501 §6.3.1'e göre
+        // SELECT/EXAMINE var olmayan mailbox için `NO` vermeli. `weakly_canonical`
+        // var olmayan yolu da çözdüğü için ayrım kayboluyordu: istemci "Sent"i
+        // seçip OK alıyor ve boş kutu görüyordu — oysa kutu hiç yok.
+        // (INBOX yukarıda erken dönüyor; o her zaman vardır.)
+        if (!fs::is_directory(target_c, ec) || ec) return "";
         return target_c.string();
     }
 
