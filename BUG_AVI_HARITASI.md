@@ -503,6 +503,7 @@ Bug bulunamaması da sonuçtur — nereye bakıldığı kaydedilmezse aynı yere
 | Yüzey | Sonuç |
 |---|---|
 | **SQL enjeksiyonu** (`db::`) | 6 yük (`OR 1=1`, `UNION`, `DROP`, ters bölülü, alt sorgu, yorumla kesme) — hepsi engelli, tablo yerinde. `escape_str` doğru |
+| **SQL kaçış uç durumları** | MySQL `NO_BACKSLASH_ESCAPES` ve PG `standard_conforming_strings=off` sunucularında **gerçek ölçüm**: LOOK ikisini de bağlantı düzeyinde kapatıyor (session `SET` / startup parametresi), 7 ters-bölü yükü engelli. Önceden "açık uç durum" sanılıyordu — değilmiş |
 | **`file::` sandbox** | `../`, mutlak yol, iç içe `..`, `....//`, **sembolik link (dosya + dizin)**, link üzerine yazma — hepsi reddedildi. Önek karşılaştırması **bileşen bazlı** (S10 doğru). `LOOK_FILE_ROOT=*` opt-out'u çalışıyor |
 | **`session::` çekirdeği** | `valid_sid` traversal guard'ı her fonksiyonda; `gen_session_id` `/dev/urandom` ve **yetersiz okumada hata fırlatıyor** (zayıf rastgelelik yaymıyor); `regenerate` fixation savunması doğru; `HttpOnly+Secure+SameSite` |
 | **`json::encode` kaçışları** | Ters bölü/tırnak/satır sonu/Türkçe hepsi doğru. Şüphelenmiştim — suçlu kendi test aracımdı (7. kural) |
@@ -515,5 +516,19 @@ Bug bulunamaması da sonuçtur — nereye bakıldığı kaydedilmezse aynı yere
 | Konu | Neden bekliyor |
 |---|---|
 | Manuel `db::begin/commit/rollback` nested davranışı: MySQL `[1,3]`, PG `[3]` (aynı kod, iki DB farklı) | **KARAR (2026-07-20): belgelendi, değiştirilmedi.** Manuel API bilinçli olarak **düz** transaction (klasik SQL/PHP alışkanlığı); nested/savepoint isteyen `db::transaction($c, fn)` closure'ını kullanmalı — o `tx_depth`+`SAVEPOINT` ile doğru çalışır (web_stdlib.cpp:1520). Düz API'yi sessizce savepoint'e çevirmek yeni sürprizler doğururdu. README'de belirtildi |
-| `db::` parametreleri prepared statement değil, kaçırılıp **metin olarak** gömülüyor | **KARAR (2026-07-20): ertelendi.** `execute()` prepared yolu üç sürücüde de **yazılı ama `db::query` onu çağırmıyor** (tek kullanıcı SMTP). Bağlamak kaçış bug sınıfını tümden siler (Go/Rust'ın yolu) ama: (1) sıcak yol — her web isteği buradan geçer; (2) `execute()` gerçek yükte hiç test edilmedi, önce 3 DB'de adversarial doğrulama gerekir; (3) statement cache olmadan sorgu başına ek round-trip. Güvenlik şu an `escape_str`'e dayanıyor ve **ölçüldü, doğru çalışıyor** (40. bug turu: 6 enjeksiyon yükü engelli). Ayrı bir iş turu olarak ele alınacak |
+| `db::` parametreleri prepared statement değil, kaçırılıp **metin olarak** gömülüyor | **KARAR (2026-07-21): ertelendi — ve gerekçe ÖLÇÜMLE güçlendi.** `execute()` prepared yolu üç sürücüde de yazılı ama `db::query` çağırmıyor (tek kullanıcı SMTP). Bağlamak bir bug sınıfını kökten silerdi (Go/Rust'ın yolu) ama: (1) sıcak yol — her web isteği buradan geçer; (2) `execute()` gerçek yükte hiç test edilmedi; (3) statement cache olmadan sorgu başına ek round-trip. **Kaçış katmanı ölçüldü ve sanılandan sağlam çıktı** — bkz. aşağıdaki not |
+
+**ÖLÇÜM (2026-07-21) — "kaçış kırılgan" varsayımı ÇÜRÜTÜLDÜ.** Bu tabloda daha önce
+"iki uç durum açık: MySQL `NO_BACKSLASH_ESCAPES`, PG `standard_conforming_strings=off`"
+yazıyordu. **Yanlıştı** — LOOK ikisini de proaktif kapatıyor ve gerçek sunucularla
+doğrulandı:
+
+| uç durum | LOOK'un savunması | ölçüm |
+|---|---|---|
+| MySQL `NO_BACKSLASH_ESCAPES` | bağlanırken kendi *session*'ında modu kaldırıyor (`mysql_client.cpp:221`, her reconnect'te tekrar; global'e dokunmuyor) | Sunucu o modda başlatıldı → LOOK bağlantısında mod **yok**, 4 ters-bölü yükü engelli |
+| PG `standard_conforming_strings=off` | **startup paketinde** `on` gönderiyor (`postgres_client.cpp:636`) — sonradan `SET`'e bile gerek yok | Sunucu global `off` → LOOK bağlantısında `on`, 3 yük engelli |
+
+Kalan teorik zayıflık: MySQL'deki `SET` `catch(...)` ile sessizce yutuluyor — başarısız
+olursa kaçış güvensiz kalır (pratikte düşük risk: `SET` başarısızsa bağlantı zaten
+bozuktur, ve `do_connect` her yeniden bağlanmada tekrar dener).
 | **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, **SMTP sunucusu** (1373 satır) + **IMAP sunucusu** (1013 satır) — ikisi de guard'sız, en büyük kör nokta, event loop, REPL. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |
