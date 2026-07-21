@@ -297,13 +297,13 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-19 | Hata mesajı kalitesi | 3a differential (kazara — kendi probe'umda `use` unuttum) | **1 bug DÜZELTİLDİ** (33) — `use` unutulunca VM `bad_function_call` (C++ iç terimi) sızdırıyordu, tree-walk ise doğrusunu diyordu. **1 bulgu AÇIK** (aşağıda) |
 | 07-19 | **`http::` (9 fn) — SSRF ekseni** | 3f düşmanca URL (11 bypass varyantı) + gerçek IPv6/IPv4 sunucusu | **2 bug DÜZELTİLDİ** (36, 37). **SSRF koruması TEMİZ**: kısa form, ondalık, sekizlik, IPv6, IPv4-mapped, metadata (169.254), 10.x, 192.168 — hepsi engelli. Çözümlenmiş adres kontrol ediliyor (string değil) → hostname/kodlama hileleri otomatik düşüyor; bağlantı **kontrol edilen adrese** yapılıyor → DNS rebinding yok. Yönlendirme takibi hiç yok → redirect bypass da yok |
 | 07-19 | **PostgreSQL wire (1023 satır, guard YOKTU)** | 3f düşmanca girdi + **sahte PG sunucusu** (`tests/fake_pg_server.py`) | **1 bug DÜZELTİLDİ** (34) — bozuk DataRow sessizce yanlış veri üretiyordu. Mesaj okuma yolu sağlam çıktı (uzunluk `<4` red, `LOOK_PG_MAX_MSG` tavanı). Çökme yok, bellek güvenliği sorunu yok |
-| — | `jobs::`, `http::`, lexer, `installer::`, SMTP/IMAP | — | **SIRADA** |
+| 07-20 | **MySQL auth (39) + PG transaction (40)** | gerçek sürüm konteynerleri + sunucu logu | MySQL 8.0–9.x `caching_sha2_password` (RSA tam yol) — 5 sürüm + MariaDB doğrulandı; PG transaction içinde sequence'siz INSERT veri kaybı kapandı |
+| — | manuel `db::begin` nested tutarlılığı, prepared statement bağlama, `jobs::`, lexer, `installer::`, SMTP/IMAP | — | **SIRADA** |
 
-**AÇIK (düşük öncelik) — çağrılamayan ad mesajı:** olmayan bir fonksiyon adıyla çağrıda
-CLI-VM `Çağrılabilir değil (BYTECODE_FN bekleniyor)` derken tree-walk
-`Undefined variable: <ad>` diyor. VM'in `CALL` noktasında **isim yok** (yalnız register
-değeri var); düzeltmesi compiler'ın adı taşımasını gerektiriyor — ayrı iş, bilerek
-bekletiliyor.
+**~~AÇIK — çağrılamayan ad mesajı~~ → DÜZELTİLDİ (38. bug, `31ee310`):** `olmayan_fn(1)`
+artık iki motorda `Undefined variable: <ad>`; `$x=5; $x(1)` iki motorda
+`'$x' çağrılabilir değil`. Ad, compiler tarafından `NOP` hint'ine gömülüp VM'e taşınıyor.
+(Bu vakada tree-walk **da** yanılıyordu — tanımlı değere "is not defined" diyordu.)
 
 **`db::` notu (bug değil, sözleşme):** parametreler wire-protocol prepared statement
 değil, **kaçırılıp metin olarak** SQL'e gömülüyor. Güvenlik tümüyle `escape_str`'e
@@ -514,6 +514,6 @@ Bug bulunamaması da sonuçtur — nereye bakıldığı kaydedilmezse aynı yere
 
 | Konu | Neden bekliyor |
 |---|---|
-| Çağrılamayan ad mesajı: CLI-VM `Çağrılabilir değil (BYTECODE_FN bekleniyor)` / tree-walk `Undefined variable: <ad>` | VM'in `CALL` noktasında **isim yok**; düzeltmesi compiler'ın adı taşımasını gerektiriyor — ayrı iş |
-| `db::` parametreleri prepared statement değil, kaçırılıp **metin olarak** gömülüyor | Güvenlik `escape_str`'e dayanıyor ve doğru çalışıyor. İki uç durum: MySQL `NO_BACKSLASH_ESCAPES` modu, PostgreSQL `standard_conforming_strings=off` (9.1 öncesi) |
-| **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), `http::` (9 fn), lexer, `installer::`, SMTP/IMAP sunucuları, **PostgreSQL wire** (1023 satır, guard'ı yok, envanterde "yüksek risk"), event loop, REPL |
+| Manuel `db::begin/commit/rollback` nested davranışı: MySQL `[1,3]`, PG `[3]` (aynı kod, iki DB farklı) | Manuel API düz `BEGIN` gönderiyor; nested/savepoint isteyen `db::transaction($c, fn)` closure'ını kullanmalı (o savepoint'li). Tutarlılık kararı — düz API'yi de savepoint'e çevirmek ayrı bir karar |
+| `db::` parametreleri prepared statement değil, kaçırılıp **metin olarak** gömülüyor | `execute()` prepared yolu üç sürücüde de **yazılı ama `db::query` onu çağırmıyor**. Bağlamak kaçış sınıfını tümden siler (Go/Rust'ın yolu). Güvenlik şu an `escape_str`'e dayanıyor ve doğru çalışıyor; uç durum: MySQL `NO_BACKSLASH_ESCAPES`, PG `standard_conforming_strings=off` |
+| **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, **SMTP sunucusu** (1373 satır) + **IMAP sunucusu** (1013 satır) — ikisi de guard'sız, en büyük kör nokta, event loop, REPL. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |
