@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **41** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **42** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 41 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 42 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 41 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 42 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -36,7 +36,7 @@ Bu 7 kural 41 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | Web stdlib (request/response/db/session) | `web_stdlib.cpp` | 1495 | 🟡 kısmi | **Yüksek** |
 | HTTP main (dispatch, hot-reload, rate-limit) | `http_main.cpp` | 1493 | 🟡 kısmi | **Yüksek** |
 | **Compiler (AST→bytecode)** | `compiler.cpp` | 1458 | 🟡 kısmi | **Yüksek** |
-| SMTP server | `smtp_server.cpp` | 1373 | ⬜ yok | Orta |
+| SMTP server | `smtp_server.cpp` | 1373 | ✅ smtp_test (yeni) | Orta |
 | Extra stdlib | `extra_stdlib.cpp` | 1246 | 🟡 kısmi | Orta |
 | PostgreSQL wire | `postgres_client.cpp` | 1023 | ✅ sahte sunucu (yeni) | **Yüksek** |
 | IMAP server | `imap_server.cpp` | 1013 | ⬜ yok | Orta |
@@ -496,6 +496,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 39 | **MySQL 8.0–9.x ile HİÇ bağlanılamıyordu** — yalnızca `mysql_native_password` uygulanmış, eklenti adı handshake yanıtına **sabit** yazılmış, sunucunun bildirdiği eklenti okunmuyor, `AuthSwitchRequest` (0xFE) hiç ele alınmıyordu. `CLIENT_PLUGIN_AUTH` bayrağı set edilmesine rağmen | 🔴 | Dil pratikte **MySQL 5.7 diliydi**: 8.0 (2018'den beri varsayılan `caching_sha2_password`), 8.4 (native kapalı), 9.x (kaldırıldı) — hiçbirine bağlanamıyordu. Eklenti adı okunuyor, 0xFE/0x01 diyaloğu işleniyor, `caching_sha2_password` hızlı + **RSA tam yol** uygulandı. **Doğrulanan matris:** 5.7.44, 8.0.46, 8.2.0, 8.4.10 (native DISABLED), 9.1.0 (native kaldırılmış), MariaDB 10.11 + 11.4 — hepsi bağlanıyor. Kripto OpenSSL'den (9. SHA-256 kopyası açılmadı) | bu commit |
 | 40 | **PostgreSQL: transaction içinde sequence'siz tabloya INSERT sessizce VERİ KAYBEDİYORDU** — `db::exec` her INSERT sonrası otomatik `SELECT lastval()` çağırıyor (last_insert_id için); tablo SERIAL/sequence kullanmıyorsa `lastval()` hata verir, **açık transaction'ı ABORTED yapar**, sonraki `COMMIT` sessizce ROLLBACK'e döner → INSERT kaybolur | 🔴 | Autocommit'te zararsızdı (INSERT ayrı statement'ta kalıcı); yalnız `BEGIN…COMMIT` içinde. MySQL/SQLite'ta yok. C++ `catch(...)` hatayı yutuyordu ama PG bağlantısı zaten zehirli. Çözüm: transaction bloğundaysak (`ReadyForQuery` status='T') `lastval`'i **SAVEPOINT ile koru** — hata olsa da savepoint'e dönüp transaction'ı kurtar; autocommit'te doğrudan çağır. `affected_rows_`/`last_insert_id_` savepoint komutlarınca ezilmesin diye yerelde tutulup en sonda yazılıyor. **Gerçek PG sunucusu + sunucu logu** ile bulundu | bu commit |
 | 41 | 🛡️ **MySQL kaçışı `\'` kullanıyordu — `NO_BACKSLASH_ESCAPES` modunda SQL ENJEKSİYONU** — o modda MySQL ters bölüyü kaçış karakteri saymaz, `\'` tırnağı **kapatır**. Ölçüldü: oturum o moda alınınca `' OR 1=1 -- ` yükü **tüm tabloyu** döndürdü (3/3 satır) | 🛡️ | Güvenliği tutan tek şey `do_connect()`'teki `SET SESSION sql_mode = REPLACE(...)`'ın başarılı olmasıydı — yeterli zemin değil: ProxySQL/bağlantı çoklayıcıları oturum durumunu sessizce kaybedebilir (SET başarılı olur, koruma yok olur); tek ifadenin reddedilmesi bağlantının bozuk olduğu anlamına gelmez. **Asimetri belirleyici: düzeltme tek satır, yanılmanın bedeli enjeksiyon.** Çözüm: `''` (standart SQL) — her iki modda güvenli, `SET`'ten **bağımsız**; PostgreSQL zaten `''` kullanıyordu, iki sürücü artık aynı zeminde. `SET` kalıyor ama artık güvenlik için değil **veri sadakati** için (NBE'de `\\` ikilemesi veriyi bozar). 6 özel-karakter vakası gidiş-dönüşte korunuyor | bu commit |
+| 42 | **SMTP adres ayrıştırma TERS yönde gevşekti — çöp veri DİSKE yazılıyordu** — `extract_addr` ilk boşluktan sonrasını alıyordu: `MAIL FROM:` (adressiz) → adres **`"FROM:"`** → maildir'e `Return-Path: <FROM:>`; `MAIL FROM: bare@x.com` → `<FROM: bare@x.com>` (bare adres desteği kırık); `MAIL FROM:<a@b<c>` → bozuk adres kabul. Buna karşılık **`MAIL FROM:<>` (null sender) REDDEDİLİYORDU** — oysa RFC 5321 §4.5.5'te bounce/DSN için kabulü zorunlu | 🟠 | Yani çöpü alıp meşru olanı reddediyordu. Bozuk `Return-Path` bounce'ları yanlış yönlendirir ve başlığı ayrıştıran alıcı yazılımı şaşırtır (adres içinde boşluk/`<` olabiliyordu). Çözüm: SMTP komut sözdizimine göre ayrıştırma (`:` sonrası, açı parantezi kapanmalı, iç içe `<`/boşluk red, ESMTP parametreleri atlanır); null sender boş-ama-geçerli olarak ayırt ediliyor. `validate_rcpt` boş adresi zaten reddettiği için RCPT tarafı etkilenmedi. **`smtp_server.cpp`'nin (1373 satır) İLK guard'ı** — gerçek sunucu ayağa kaldırılıp ham SMTP konuşuluyor | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 

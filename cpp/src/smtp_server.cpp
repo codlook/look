@@ -458,15 +458,44 @@ struct SmtpSession {
 
 // ── Address extraction ─────────────────────────────────────────────────────────
 // Extract <addr> from "MAIL FROM:<addr>" or "RCPT TO:<addr>".
-static std::string extract_addr(const std::string& line) {
-    size_t lt = line.find('<');
-    size_t gt = line.find('>');
-    if (lt != std::string::npos && gt != std::string::npos && gt > lt)
-        return line.substr(lt + 1, gt - lt - 1);
-    // Bare address without angle brackets
-    size_t sp = line.find(' ');
-    if (sp != std::string::npos) return line.substr(sp + 1);
-    return "";
+// "MAIL FROM:<addr>" / "RCPT TO:<addr>" parametresini ayrıştır (RFC 5321 §4.1.2).
+// Dönüş: sözdizimi geçerli mi. `addr` boş + geçerli = null sender (`<>`).
+//
+// ESKİ HATA — ölçüldü, çöp veri DİSKE yazılıyordu:
+//   `MAIL FROM:`            → ilk boşluktan sonrası alınıyordu → adres "FROM:"
+//                             → Return-Path: <FROM:>   (maildir'e böyle yazıldı)
+//   `MAIL FROM: bare@x.com` → adres "FROM: bare@x.com"  (bare adres desteği KIRIK)
+//   `MAIL FROM:<a@b<c>`     → bozuk adres olduğu gibi kabul
+//   `MAIL FROM:<>`          → boş döndüğü için REDDEDİLİYORDU — oysa null sender
+//                             RFC 5321 §4.5.5'te bounce/DSN için ZORUNLU kabul edilir
+// Yani ayrıştırma ters yönde gevşekti: çöpü alıyor, meşru olanı reddediyordu.
+// Bozuk Return-Path bounce'ları yanlış yönlendirir ve başlığı ayrıştıran alıcı
+// yazılımları şaşırtır (adres içinde boşluk/`<` olabiliyordu).
+static bool extract_addr(const std::string& line, std::string& addr) {
+    addr.clear();
+    size_t colon = line.find(':');
+    if (colon == std::string::npos) return false;          // "MAIL FROM" — parametre yok
+    std::string rest = line.substr(colon + 1);
+    size_t b = rest.find_first_not_of(" \t");
+    if (b == std::string::npos) return false;              // "MAIL FROM:" — adres yok
+    rest = rest.substr(b);
+
+    if (rest[0] == '<') {
+        size_t gt = rest.find('>');
+        if (gt == std::string::npos) return false;         // kapanmamış açı parantezi
+        addr = rest.substr(1, gt - 1);
+        // İç içe '<' veya boşluk = bozuk adres (RFC'de yol/adres içinde olamaz)
+        if (addr.find('<') != std::string::npos ||
+            addr.find(' ') != std::string::npos) { addr.clear(); return false; }
+        return true;                                       // addr boş olabilir → null sender
+    }
+    // Açı parantezsiz (bare) adres — ESMTP parametrelerinden (SIZE=, BODY=) önceki ilk token
+    size_t sp = rest.find_first_of(" \t");
+    addr = (sp == std::string::npos) ? rest : rest.substr(0, sp);
+    if (addr.empty() ||
+        addr.find('<') != std::string::npos ||
+        addr.find('>') != std::string::npos) { addr.clear(); return false; }
+    return true;
 }
 
 // ── SMTP command tokenizer ────────────────────────────────────────────────────
@@ -1043,8 +1072,10 @@ struct SmtpServer::Impl {
             if (sess->submission && !sess->auth_ok) {
                 return error_reply(fd, sess, "530 5.7.0 Authentication required\r\n");
             }
-            std::string addr = extract_addr(line);
-            if (addr.empty()) {
+            std::string addr;
+            // Sözdizimi geçersizse reddet. BOŞ ama geçerli = null sender (`<>`),
+            // RFC 5321 §4.5.5 gereği bounce/DSN için kabul edilmeli.
+            if (!extract_addr(line, addr)) {
                 return error_reply(fd, sess, "501 5.1.7 Bad sender address\r\n");
             }
             sess->msg.mail_from = addr;
@@ -1158,7 +1189,8 @@ struct SmtpServer::Impl {
         if (verb != "RCPT") {
             return error_reply(fd, sess, "503 5.5.1 Need RCPT TO\r\n");
         }
-        std::string addr = extract_addr(line);
+        std::string addr;
+        extract_addr(line, addr);   // bozuk sözdizimi → addr boş → validate_rcpt 501 verir
         if (!validate_rcpt(fd, sess, addr)) return false;
         sess->msg.rcpt_to.push_back(addr);
         sess->state = SmtpState::RCPT_TO;
@@ -1169,7 +1201,8 @@ struct SmtpServer::Impl {
     bool handle_rcpt_to_state(int fd, std::shared_ptr<SmtpSession> sess,
                                const std::string& verb, const std::string& line) {
         if (verb == "RCPT") {
-            std::string addr = extract_addr(line);
+            std::string addr;
+            extract_addr(line, addr);   // bozuk sözdizimi → addr boş → 501
             if (!validate_rcpt(fd, sess, addr)) return false;
             sess->msg.rcpt_to.push_back(addr);
             send_reply(fd, sess, "250 2.1.5 OK\r\n");
