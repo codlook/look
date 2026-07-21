@@ -143,6 +143,10 @@ failing obscurely.
   from the end (`$a[-1]`). Missing *keys* are different from missing *slots*: an
   absent assoc key returns `null`, and accessors take a default —
   `request::get("page", 1)`, like `env(key, default)`.
+- **Nested transactions:** `db::begin/commit/rollback` are *flat* — a second
+  `db::begin` is not a nesting level (MySQL and PostgreSQL disagree on what it means).
+  For nested / partial rollback use `db::transaction($c, fn)`, which uses real
+  `SAVEPOINT`s and behaves the same on every engine.
 
 ## Build
 
