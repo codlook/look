@@ -48,7 +48,7 @@ Bu 7 kural 45 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | HTTP client | `http_client.cpp` | 822 | ✅ SSRF + IPv6 (yeni) | Orta |
 | MySQL wire | `mysql_client.cpp` | 761 | ✅ iki-sürüm auth (yeni) | **Yüksek** |
 | Template motoru | `template_stdlib.cpp` | 702 | ✅ yeni eklendi | Orta |
-| Event loop | `event_loop.cpp` | 658 | ⬜ yok | Orta |
+| Event loop | `event_loop.cpp` | 658 | ✅ fd sızıntı + per-IP (yeni) | Orta |
 | Installer (paket/modül) | `installer.cpp` | 617 | ⬜ yok | Orta |
 | Test runner | `test_runner.cpp` | 593 | ⬜ yok | Düşük |
 | Web context (multipart, cookie) | `web.cpp` | 558 | 🟡 kısmi | **Yüksek** |
@@ -298,6 +298,7 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-19 | **`http::` (9 fn) — SSRF ekseni** | 3f düşmanca URL (11 bypass varyantı) + gerçek IPv6/IPv4 sunucusu | **2 bug DÜZELTİLDİ** (36, 37). **SSRF koruması TEMİZ**: kısa form, ondalık, sekizlik, IPv6, IPv4-mapped, metadata (169.254), 10.x, 192.168 — hepsi engelli. Çözümlenmiş adres kontrol ediliyor (string değil) → hostname/kodlama hileleri otomatik düşüyor; bağlantı **kontrol edilen adrese** yapılıyor → DNS rebinding yok. Yönlendirme takibi hiç yok → redirect bypass da yok |
 | 07-19 | **PostgreSQL wire (1023 satır, guard YOKTU)** | 3f düşmanca girdi + **sahte PG sunucusu** (`tests/fake_pg_server.py`) | **1 bug DÜZELTİLDİ** (34) — bozuk DataRow sessizce yanlış veri üretiyordu. Mesaj okuma yolu sağlam çıktı (uzunluk `<4` red, `LOOK_PG_MAX_MSG` tavanı). Çökme yok, bellek güvenliği sorunu yok |
 | 07-20 | **MySQL auth (39) + PG transaction (40)** | gerçek sürüm konteynerleri + sunucu logu | MySQL 8.0–9.x `caching_sha2_password` (RSA tam yol) — 5 sürüm + MariaDB doğrulandı; PG transaction içinde sequence'siz INSERT veri kaybı kapandı |
+| 07-21 | **Event loop (`event_loop.cpp`, 658 satır — guard'ı YOKTU)** | 3h yük/sızıntı: 240 anormal kopma + 320 paralel bağlantı + per-IP sınırı | **TEMİZ — bug yok.** fd yaşam döngüsü kusursuz: RST (SO_LINGER 0), yarım komut (CRLF'siz), DATA ortasında kopma, 150 eşzamanlı bağlantı — hepsinde **fd sızıntısı 0**. 8 thread × 40 tur = 320 bağlantı 0.1 sn'de, **0 hata**, log temiz, RSS 8.6 MB sabit. `close_fd` idempotent ve fd-yeniden-kullanım yarışına karşı korumalı (kaynakta belgeli). Per-IP limiti **doğru uygulanıyor**: varsayılan 10 → `220 kabul: 10 / 421 red: 20`; `LOOK_SMTP_MAX_CONNS_IP=3` → `3/27`; bağlantı kapanınca sayaç serbest. **Kendi ölçüm hatam:** ilk turda `recv`'den geleni "banner" saydım ve `421` reddini kabul sanıp "limit çalışmıyor" sonucuna varmıştım — `220`/`421` ayırt edilince kodun doğru olduğu görüldü (7. altın kural) |
 | — | manuel `db::begin` nested tutarlılığı, prepared statement bağlama, `jobs::`, lexer, `installer::`, SMTP/IMAP | — | **SIRADA** |
 
 **~~AÇIK — çağrılamayan ad mesajı~~ → DÜZELTİLDİ (38. bug, `31ee310`):** `olmayan_fn(1)`
@@ -573,4 +574,4 @@ oturum sonrası sunucu sağlam, RSS 8.8 MB.
 **Dürüst özet:** LOOK'un IMAP'i şu an **temel okuma** seviyesinde (webmail
 arka ucu için yeterli), tam IMAP4rev1 istemci uyumluluğu için 1–4 gerekir.
 `CAPABILITY`'de `IMAP4rev1` ilan etmek bu hâliyle yanıltıcı.
-| **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, **SMTP sunucusu** (1373 satır) + **IMAP sunucusu** (1013 satır) — ikisi de guard'sız, en büyük kör nokta, event loop, REPL. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |
+| **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, lexer, `installer::`, REPL, test runner. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |

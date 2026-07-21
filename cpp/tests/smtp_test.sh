@@ -102,6 +102,66 @@ case "$rp" in
   *)                echo "  FAIL Return-Path beklenmedik: $rp"; fail=1 ;;
 esac
 
+# ── EVENT LOOP: fd yasam dongusu + per-IP limiti ────────────────────────────────
+# event_loop.cpp (658 satir) tum sunucularin altinda yatiyor ve guard'i yoktu.
+# Anormal kopmalarda (RST, yarim komut, DATA ortasi) fd SIZMAMALI — sizinti
+# uzun omurlu bir sunucuda fd tukenmesine, yani tam kesintiye goturur.
+# Per-IP limiti de burada kilitleniyor: 220 (kabul) ile 421 (red) AYIRT EDILEREK
+# olculur — recv'den gelen her seyi "banner" saymak yaniltir (bu tam olarak
+# yasandi: 421 reddi banner sanilip "limit calismiyor" sonucu cikarilmisti).
+cat > "$TMP/fd.py" <<'PYEOF'
+import socket, sys, os, time, struct
+HOST="127.0.0.1"; PORT=int(sys.argv[1]); PID=sys.argv[2]
+def fd():
+    try: return len(os.listdir("/proc/%s/fd" % PID))
+    except Exception: return -1
+def kirli():
+    s=socket.create_connection((HOST,PORT),timeout=4); s.settimeout(4)
+    try:
+        s.recv(200); s.sendall(b"EHLO t\r\n"); s.recv(400)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii",1,0))
+    finally: s.close()
+def yarim():
+    s=socket.create_connection((HOST,PORT),timeout=4); s.settimeout(4)
+    try: s.recv(200); s.sendall(b"MAIL FROM:<a@b.c")   # CRLF yok
+    finally: s.close()
+taban=fd()
+for _ in range(40): kirli()
+for _ in range(40): yarim()
+time.sleep(1.5)
+sizinti = fd() - taban
+# per-IP limiti: 220 kabul vs 421 red
+kabul=0; red=0; acik=[]
+for i in range(25):
+    try:
+        s=socket.create_connection((HOST,PORT),timeout=3); s.settimeout(3)
+        d=s.recv(200).decode("utf-8","replace")
+        if d.startswith("220"): kabul+=1; acik.append(s)
+        elif d.startswith("421"): red+=1; s.close()
+        else: s.close()
+    except Exception: pass
+for s in acik:
+    try: s.close()
+    except Exception: pass
+print("%d|%d|%d" % (sizinti, kabul, red))
+PYEOF
+if [ -d /proc ]; then
+  fdout=$(timeout 120 python3 "$TMP/fd.py" $PORT $SRV 2>&1 | tail -1)
+  sz=$(echo "$fdout" | cut -d'|' -f1); kb=$(echo "$fdout" | cut -d'|' -f2); rd=$(echo "$fdout" | cut -d'|' -f3)
+  if [ "${sz:-99}" -le 2 ] 2>/dev/null; then
+    echo "  PASS event loop: 80 anormal kopma sonrasi fd sizintisi yok (fark ${sz})"
+  else
+    echo "  FAIL event loop fd SIZINTISI: +${sz} fd (RST/yarim komut sonrasi temizlenmiyor)"; fail=1
+  fi
+  if [ "${kb:-0}" -gt 0 ] && [ "${rd:-0}" -gt 0 ]; then
+    echo "  PASS per-IP limiti: ${kb} kabul (220) / ${rd} red (421)"
+  else
+    echo "  FAIL per-IP limiti uygulanmiyor: kabul=${kb} red=${rd} (hepsi kabul mu?)"; fail=1
+  fi
+else
+  echo "  (atlandi: fd sayimi /proc gerektirir)"
+fi
+
 # Bind BASARISIZ oldugunda "started" YALANI basilmamali (45. bug).
 # Olculmustu: bind hatasindan SONRA "IMAP server started on port X" yaziliyordu;
 # kullanici log'a bakip calistigini saniyordu (sessiz basarisizlik).
