@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **40** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **41** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 40 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 41 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 40 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 41 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -495,6 +495,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 38 | **Çağrılamayan ad hatası — VM adı söylemiyordu, tree-walk YANILTIYORDU** — `olmayan_fn(1)` VM'de `"Çağrılabilir değil (BYTECODE_FN bekleniyor)"` (hangi ad?); `$x=5; $x(1)` tree-walk'ta `"'$x' is not defined"` (yanlış — `$x` **tanımlı**) | 🟠 | Bu vakada **referans motor da yanılıyordu**, o yüzden yön tek taraflı alınmadı: iki durum ayrıldı, iki motor aynı metni kullanıyor. Ad `LOAD_GLOBAL`'da kaybediyordu (`$`'sız adlar orada ıskalamak **zorunda** — `mod::fn` genel CALL yoluna düşsün diye); compiler adı `NOP` hint'ine gömüp VM'e taşıyor | `31ee310` |
 | 39 | **MySQL 8.0–9.x ile HİÇ bağlanılamıyordu** — yalnızca `mysql_native_password` uygulanmış, eklenti adı handshake yanıtına **sabit** yazılmış, sunucunun bildirdiği eklenti okunmuyor, `AuthSwitchRequest` (0xFE) hiç ele alınmıyordu. `CLIENT_PLUGIN_AUTH` bayrağı set edilmesine rağmen | 🔴 | Dil pratikte **MySQL 5.7 diliydi**: 8.0 (2018'den beri varsayılan `caching_sha2_password`), 8.4 (native kapalı), 9.x (kaldırıldı) — hiçbirine bağlanamıyordu. Eklenti adı okunuyor, 0xFE/0x01 diyaloğu işleniyor, `caching_sha2_password` hızlı + **RSA tam yol** uygulandı. **Doğrulanan matris:** 5.7.44, 8.0.46, 8.2.0, 8.4.10 (native DISABLED), 9.1.0 (native kaldırılmış), MariaDB 10.11 + 11.4 — hepsi bağlanıyor. Kripto OpenSSL'den (9. SHA-256 kopyası açılmadı) | bu commit |
 | 40 | **PostgreSQL: transaction içinde sequence'siz tabloya INSERT sessizce VERİ KAYBEDİYORDU** — `db::exec` her INSERT sonrası otomatik `SELECT lastval()` çağırıyor (last_insert_id için); tablo SERIAL/sequence kullanmıyorsa `lastval()` hata verir, **açık transaction'ı ABORTED yapar**, sonraki `COMMIT` sessizce ROLLBACK'e döner → INSERT kaybolur | 🔴 | Autocommit'te zararsızdı (INSERT ayrı statement'ta kalıcı); yalnız `BEGIN…COMMIT` içinde. MySQL/SQLite'ta yok. C++ `catch(...)` hatayı yutuyordu ama PG bağlantısı zaten zehirli. Çözüm: transaction bloğundaysak (`ReadyForQuery` status='T') `lastval`'i **SAVEPOINT ile koru** — hata olsa da savepoint'e dönüp transaction'ı kurtar; autocommit'te doğrudan çağır. `affected_rows_`/`last_insert_id_` savepoint komutlarınca ezilmesin diye yerelde tutulup en sonda yazılıyor. **Gerçek PG sunucusu + sunucu logu** ile bulundu | bu commit |
+| 41 | 🛡️ **MySQL kaçışı `\'` kullanıyordu — `NO_BACKSLASH_ESCAPES` modunda SQL ENJEKSİYONU** — o modda MySQL ters bölüyü kaçış karakteri saymaz, `\'` tırnağı **kapatır**. Ölçüldü: oturum o moda alınınca `' OR 1=1 -- ` yükü **tüm tabloyu** döndürdü (3/3 satır) | 🛡️ | Güvenliği tutan tek şey `do_connect()`'teki `SET SESSION sql_mode = REPLACE(...)`'ın başarılı olmasıydı — yeterli zemin değil: ProxySQL/bağlantı çoklayıcıları oturum durumunu sessizce kaybedebilir (SET başarılı olur, koruma yok olur); tek ifadenin reddedilmesi bağlantının bozuk olduğu anlamına gelmez. **Asimetri belirleyici: düzeltme tek satır, yanılmanın bedeli enjeksiyon.** Çözüm: `''` (standart SQL) — her iki modda güvenli, `SET`'ten **bağımsız**; PostgreSQL zaten `''` kullanıyordu, iki sürücü artık aynı zeminde. `SET` kalıyor ama artık güvenlik için değil **veri sadakati** için (NBE'de `\\` ikilemesi veriyi bozar). 6 özel-karakter vakası gidiş-dönüşte korunuyor | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 
@@ -518,7 +519,7 @@ Bug bulunamaması da sonuçtur — nereye bakıldığı kaydedilmezse aynı yere
 | Manuel `db::begin/commit/rollback` nested davranışı: MySQL `[1,3]`, PG `[3]` (aynı kod, iki DB farklı) | **KARAR (2026-07-20): belgelendi, değiştirilmedi.** Manuel API bilinçli olarak **düz** transaction (klasik SQL/PHP alışkanlığı); nested/savepoint isteyen `db::transaction($c, fn)` closure'ını kullanmalı — o `tx_depth`+`SAVEPOINT` ile doğru çalışır (web_stdlib.cpp:1520). Düz API'yi sessizce savepoint'e çevirmek yeni sürprizler doğururdu. README'de belirtildi |
 | `db::` parametreleri prepared statement değil, kaçırılıp **metin olarak** gömülüyor | **KARAR (2026-07-21): ertelendi — ve gerekçe ÖLÇÜMLE güçlendi.** `execute()` prepared yolu üç sürücüde de yazılı ama `db::query` çağırmıyor (tek kullanıcı SMTP). Bağlamak bir bug sınıfını kökten silerdi (Go/Rust'ın yolu) ama: (1) sıcak yol — her web isteği buradan geçer; (2) `execute()` gerçek yükte hiç test edilmedi; (3) statement cache olmadan sorgu başına ek round-trip. **Kaçış katmanı ölçüldü ve sanılandan sağlam çıktı** — bkz. aşağıdaki not |
 
-**ÖLÇÜM (2026-07-21) — "kaçış kırılgan" varsayımı ÇÜRÜTÜLDÜ.** Bu tabloda daha önce
+**ÖLÇÜM (2026-07-21) — iki aşamalı: önce varsayım çürüdü, sonra DAHA DERİN bir bug çıktı.** Bu tabloda daha önce
 "iki uç durum açık: MySQL `NO_BACKSLASH_ESCAPES`, PG `standard_conforming_strings=off`"
 yazıyordu. **Yanlıştı** — LOOK ikisini de proaktif kapatıyor ve gerçek sunucularla
 doğrulandı:
@@ -528,7 +529,17 @@ doğrulandı:
 | MySQL `NO_BACKSLASH_ESCAPES` | bağlanırken kendi *session*'ında modu kaldırıyor (`mysql_client.cpp:221`, her reconnect'te tekrar; global'e dokunmuyor) | Sunucu o modda başlatıldı → LOOK bağlantısında mod **yok**, 4 ters-bölü yükü engelli |
 | PG `standard_conforming_strings=off` | **startup paketinde** `on` gönderiyor (`postgres_client.cpp:636`) — sonradan `SET`'e bile gerek yok | Sunucu global `off` → LOOK bağlantısında `on`, 3 yük engelli |
 
-Kalan teorik zayıflık: MySQL'deki `SET` `catch(...)` ile sessizce yutuluyor — başarısız
+
+**Neden iki aşama:** İlk ölçüm *korumanın çalıştığını* gösterdi (sunucu NBE modundayken
+LOOK'un oturumunda mod yok, yükler engelli) — bu doğru ama **eksik soru**ydu. Analizci
+farkı yakaladı: *koruma olmasaydı* ne olurdu? Oturum elle NBE'ye alınıp saldırıldığında
+`' OR 1=1 -- ` **tüm tabloyu döndürdü**. Yani zafiyet teorik değildi; onu tutan tek şey
+tek bir `SET` komutunun başarısıydı. 41. bug bu yüzden açıldı ve kapatıldı.
+
+**Ders (guard'a da işlendi):** "koruma çalışıyor mu?" ile "koruma olmasaydı ne olurdu?"
+farklı sorulardır. İkincisi sorulmazsa, tek bir komutun sessiz başarısızlığına dayanan
+savunmalar sağlam sanılır. Guard artık korumayı **kasten kaldırıp** saldırıyor.
+**Kalan not:** MySQL'deki `SET SESSION` `catch(...)` ile sessizce yutuluyor — ama artık **güvenlik ona bağlı değil** (41. bug). `SET` yalnızca veri sadakati için: NBE modunda `\` ikilemesi veriyi bozardı.
 olursa kaçış güvensiz kalır (pratikte düşük risk: `SET` başarısızsa bağlantı zaten
 bozuktur, ve `do_connect` her yeniden bağlanmada tekrar dener).
 | **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, **SMTP sunucusu** (1373 satır) + **IMAP sunucusu** (1013 satır) — ikisi de guard'sız, en büyük kör nokta, event loop, REPL. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |

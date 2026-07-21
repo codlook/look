@@ -57,6 +57,44 @@ kontrol() {
   esac
 }
 
+# ── GUVENLIK: kacis, SET SESSION'a BAGLI OLMADAN guvenli mi? ────────────────────
+# NEDEN: escape() tirnagi `\'` ile kaciriyordu. MySQL NO_BACKSLASH_ESCAPES modunda
+# ters bolu kacis karakteri DEGILDIR -> `\'` tirnagi kapatir -> SQL ENJEKSIYONU.
+# OLCULDU: oturum o moda alininca `' OR 1=1 -- ` yuku TUM TABLOYU dondurdu (3/3).
+# Bunu tutan tek sey do_connect()'teki `SET SESSION sql_mode = REPLACE(...)`
+# komutunun basarili olmasiydi — yeterli zemin degil (ProxySQL gibi baglanti
+# coklayicilari oturum durumunu sessizce kaybedebilir; SET basarili olur, koruma
+# yok olur). Cozum: `''` (standart SQL) — her iki modda guvenli, SET'ten bagimsiz.
+# Bu kontrol korumayi KASTEN kaldirip saldiriyor: guvenlik SET'e bagli olmamali.
+kacis_kontrol() {
+  dsn="$1"
+  [ -z "$dsn" ] && return
+  cat > "$TMP/esc.lk" <<'LK'
+$c = db::connect(env("MYDSN",""))
+db::exec($c, "DROP TABLE IF EXISTS look_esc")
+db::exec($c, "CREATE TABLE look_esc (ad VARCHAR(100)) CHARACTER SET utf8mb4")
+db::exec($c, "INSERT INTO look_esc (ad) VALUES ('a')")
+db::exec($c, "INSERT INTO look_esc (ad) VALUES ('b')")
+db::exec($c, "INSERT INTO look_esc (ad) VALUES ('c')")
+# korumayi KASTEN kaldir — kacis kendi basina guvenli olmali
+db::exec($c, "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'")
+$n1 = count(db::query($c, "SELECT * FROM look_esc WHERE ad = ?", ["' OR 1=1 -- "]))
+$n2 = count(db::query($c, "SELECT * FROM look_esc WHERE ad = ?", ["\\' OR 1=1 -- "]))
+db::exec($c, "SET SESSION sql_mode = 'STRICT_TRANS_TABLES'")
+db::exec($c, "INSERT INTO look_esc (ad) VALUES (?)", ["O'Brien"])
+$rt = db::query($c, "SELECT ad FROM look_esc WHERE ad = ?", ["O'Brien"])
+print($n1 . "|" . $n2 . "|" . count($rt))
+LK
+  out=$(MYDSN="$dsn" timeout 40 "$LK" "$TMP/esc.lk" 2>&1 | grep -E '^[0-9]+\|' | head -1)
+  if [ "$out" = "0|0|1" ]; then
+    echo "  PASS kacis SET'ten bagimsiz guvenli (NBE modunda bile enjeksiyon yok, veri korunuyor)"
+  else
+    echo "  FAIL GUVENLIK: kacis NO_BACKSLASH_ESCAPES modunda kiriliyor: [$out] (beklenen 0|0|1)"
+    echo "       -> escape() tirnagi '\\'' ile mi kaciriyor? Standart SQL '' kullanilmali"
+    fail=1
+  fi
+}
+
 echo "MySQL/MariaDB kimlik dogrulama guard'i (surum matrisi)"
 kontrol "MySQL 5.7   (mysql_native_password)"  "$MY57" "5.7"
 kontrol "MySQL 8.0   (caching_sha2_password)"  "$MY8"  "8.0"
@@ -70,6 +108,9 @@ kontrol "MySQL 8.0   (caching_sha2_password)"  "$MY8"  "8.0"
 # yalniz hizli yol test edilseydi, RSA yolu bozuk olsa bile gecerdi (taze
 # sunucuda ilk baglanti DAIMA RSA'dan gecer).
 kontrol "MySQL 8.0   (hizli yol, onbellek dolu)" "$MY8" "8.0"
+
+# Kacis guvenligi — kimlik dogrulamadan bagimsiz, ayni sunucu uzerinde
+kacis_kontrol "$MY8"
 
 [ $fail = 0 ] && echo "PASS: MySQL/MariaDB auth — surum matrisi temiz" || echo "FAIL: MySQL auth"
 exit $fail

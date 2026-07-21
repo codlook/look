@@ -870,11 +870,34 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
 
 // ── Escape ────────────────────────────────────────────────────────────────────
 
+// Tırnak kaçışı `''` (STANDART SQL) — `\'` DEĞİL.
+//
+// ESKİ HATA: `'` → `\'` yazılıyordu. MySQL `NO_BACKSLASH_ESCAPES` modunda ters
+// bölüyü kaçış karakteri SAYMAZ; o modda `\'` = "ters bölü + tırnak" demektir →
+// TIRNAK KAPANIR → SQL enjeksiyonu. ÖLÇÜLDÜ (gerçek sunucu, oturum o moda
+// alınarak): `' OR 1=1 -- ` yükü **tüm tabloyu** döndürdü (3/3 satır).
+//
+// Bunu tutan tek şey do_connect()'teki `SET SESSION sql_mode = REPLACE(...)`
+// komutunun BAŞARILI olmasıydı. Bu yeterli bir güvenlik zemini değil:
+//   * ProxySQL / bağlantı çoklayıcıları arka uç bağlantılarını multiplex eder —
+//     SET başarılı olur, sonra oturum durumu sessizce kaybolabilir; bağlantı
+//     bozulmaz, yalnızca koruma yok olur.
+//   * Bir ifadenin reddedilmesi bağlantının bozuk olduğu anlamına gelmez
+//     (vekil filtresi, audit eklentisi, governor tek ifadeyi reddedebilir).
+// Asimetri belirleyici: düzeltme tek satır, yanılmanın bedeli SQL enjeksiyonu.
+//
+// `''` HER İKİ modda da güvenlidir (standart SQL; MySQL normal modda da kabul
+// eder) → güvenlik artık `SET`'in başarısına BAĞLI DEĞİL. PostgreSQL tarafı
+// zaten `''` kullanıyordu; bu değişiklik iki sürücüyü aynı zemine getirir.
+//
+// `SET SESSION` KALIYOR — ama artık güvenlik için değil, VERİ SADAKATİ için:
+// NBE modunda aşağıdaki `\\` ikilemesi veriyi bozar (iki ters bölü saklanır).
+// O bir doğruluk meselesi, güvenlik değil.
 std::string MySQLClient::escape(const std::string& s) {
     std::string out; out.reserve(s.size() * 2);
     for (char c : s) {
         switch (c) {
-            case '\'': out += "\\'";  break;
+            case '\'': out += "''";   break;   // standart SQL — NBE modunda da güvenli
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
             case '\n': out += "\\n";  break;
