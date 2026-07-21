@@ -540,6 +540,4 @@ tek bir `SET` komutunun başarısıydı. 41. bug bu yüzden açıldı ve kapatı
 farklı sorulardır. İkincisi sorulmazsa, tek bir komutun sessiz başarısızlığına dayanan
 savunmalar sağlam sanılır. Guard artık korumayı **kasten kaldırıp** saldırıyor.
 **Kalan not:** MySQL'deki `SET SESSION` `catch(...)` ile sessizce yutuluyor — ama artık **güvenlik ona bağlı değil** (41. bug). `SET` yalnızca veri sadakati için: NBE modunda `\` ikilemesi veriyi bozardı.
-olursa kaçış güvensiz kalır (pratikte düşük risk: `SET` başarısızsa bağlantı zaten
-bozuktur, ve `do_connect` her yeniden bağlanmada tekrar dener).
 | **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, **SMTP sunucusu** (1373 satır) + **IMAP sunucusu** (1013 satır) — ikisi de guard'sız, en büyük kör nokta, event loop, REPL. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |
