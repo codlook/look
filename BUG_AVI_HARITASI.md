@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **43** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **44** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 43 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 44 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 43 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 44 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -498,6 +498,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 41 | 🛡️ **MySQL kaçışı `\'` kullanıyordu — `NO_BACKSLASH_ESCAPES` modunda SQL ENJEKSİYONU** — o modda MySQL ters bölüyü kaçış karakteri saymaz, `\'` tırnağı **kapatır**. Ölçüldü: oturum o moda alınınca `' OR 1=1 -- ` yükü **tüm tabloyu** döndürdü (3/3 satır) | 🛡️ | Güvenliği tutan tek şey `do_connect()`'teki `SET SESSION sql_mode = REPLACE(...)`'ın başarılı olmasıydı — yeterli zemin değil: ProxySQL/bağlantı çoklayıcıları oturum durumunu sessizce kaybedebilir (SET başarılı olur, koruma yok olur); tek ifadenin reddedilmesi bağlantının bozuk olduğu anlamına gelmez. **Asimetri belirleyici: düzeltme tek satır, yanılmanın bedeli enjeksiyon.** Çözüm: `''` (standart SQL) — her iki modda güvenli, `SET`'ten **bağımsız**; PostgreSQL zaten `''` kullanıyordu, iki sürücü artık aynı zeminde. `SET` kalıyor ama artık güvenlik için değil **veri sadakati** için (NBE'de `\\` ikilemesi veriyi bozar). 6 özel-karakter vakası gidiş-dönüşte korunuyor | bu commit |
 | 42 | **SMTP adres ayrıştırma TERS yönde gevşekti — çöp veri DİSKE yazılıyordu** — `extract_addr` ilk boşluktan sonrasını alıyordu: `MAIL FROM:` (adressiz) → adres **`"FROM:"`** → maildir'e `Return-Path: <FROM:>`; `MAIL FROM: bare@x.com` → `<FROM: bare@x.com>` (bare adres desteği kırık); `MAIL FROM:<a@b<c>` → bozuk adres kabul. Buna karşılık **`MAIL FROM:<>` (null sender) REDDEDİLİYORDU** — oysa RFC 5321 §4.5.5'te bounce/DSN için kabulü zorunlu | 🟠 | Yani çöpü alıp meşru olanı reddediyordu. Bozuk `Return-Path` bounce'ları yanlış yönlendirir ve başlığı ayrıştıran alıcı yazılımı şaşırtır (adres içinde boşluk/`<` olabiliyordu). Çözüm: SMTP komut sözdizimine göre ayrıştırma (`:` sonrası, açı parantezi kapanmalı, iç içe `<`/boşluk red, ESMTP parametreleri atlanır); null sender boş-ama-geçerli olarak ayırt ediliyor. `validate_rcpt` boş adresi zaten reddettiği için RCPT tarafı etkilenmedi. **`smtp_server.cpp`'nin (1373 satır) İLK guard'ı** — gerçek sunucu ayağa kaldırılıp ham SMTP konuşuluyor | bu commit |
 | 43 | **IMAP mailbox adı doğrulaması eksikti + var olmayan mailbox `OK` dönüyordu** — `SELECT "INBOX; rm -rf /"` **kabul ediliyordu** (diğer traversal denemeleri reddedilirken); kontroller yalnız `\0`, baştaki ayırıcı ve `..` bakıyor, `;`/boşluk/**içerideki** ayırıcı geçiyordu. Ayrıca var olmayan mailbox `OK (0 EXISTS)` dönüyordu — RFC 3501 §6.3.1: `NO` olmalı | 🟠 | Mailbox adı bir **yol bileşeni** olarak dizin adına dönüşüyor; kabuk üzerinden işlenen bir yedekleme/log betiği için tehlike, en iyi ihtimalle çöp dizin. Var olmayan kutunun `OK` dönmesi istemciyi yanıltıyordu ("Sent" seçilir, boş kutu görünür — oysa kutu yok). Çözüm: ayırıcı/`;`/kontrol karakteri reddi + `is_directory` kontrolü. **`imap_server.cpp`'nin (1013 satır) İLK guard'ı** | bu commit |
+| 44 | **IMAP kalıcı olmayan UID'yi "UID" diye döndürüyordu** — `FETCH n (UID)` o anki *sequence* numarasını veriyordu. Ölçüldü: 3 mesaj `UID 1,2,3` → ortadaki silindi → kalanlar `UID 1,2` (olması gereken `1,3`); **UID 2 artık başka bir mesaj** (önce M1, sonra M2) | 🔴 | Bunu önbelleğe alan istemci/webmail silinen mesajı görmeye devam eder ve açınca **başka mesajın içeriğini** alır — sessiz veri bozulması. Kalıcı UID deposu gelene kadar doğru davranış **gürültülü hata**: `UID` veri öğesi ve `UID` komutu artık `NO [CANNOT] … (Milestone 1)` ile reddediliyor; `CREATE/DELETE/RENAME/SUBSCRIBE` de kapsamı söyleyerek reddediliyor (eskiden `BAD bilinmeyen komut` — teşhis ettirmiyordu). Yetenek kontrolü sequence-set kontrolünden **önce**: boş INBOX'ta bile istemci "UID var mı" cevabını alır. **README gerçekle hizalandı** — IMAP `✅` yerine `🟡 Milestone 1`, standart MUA istemcilerinin çalışmayacağı açıkça yazıldı | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 
@@ -551,8 +552,8 @@ ilan edilip **zorlanıyor**, ölçüldü).
 
 | # | Eksik | Ölçülen davranış | Etki |
 |---|---|---|---|
-| 1 | **UID kalıcı değil** (RFC 3501 §2.3.1.1) | `UID` = o anki sequence numarası (`imap_server.cpp` FETCH: `"UID " + std::to_string(i)`). Ölçüm: 3 mesaj `UID 1,2,3` → ortadaki silindi → kalan mesajlar `UID 1,2` (beklenen `1,3`). **UID 2 artık BAŞKA bir mesaj**: önce `M1`, sonra `M2` | 🔴 İstemci önbelleği sessizce bozulur: silinmiş mesaj görünmeye devam eder, açılınca başka mesajın içeriği gelir |
-| 2 | **`UID` komutu yok** (RFC 3501 §6.4.8, zorunlu) | `UID FETCH 1` → `BAD bilinmeyen komut`. Komut dağıtımında `cmd == "UID"` dalı hiç yok; UID yalnızca *veri öğesi* ve *arama ölçütü* olarak var | 🔴 Thunderbird/Outlook/iOS Mail neredeyse hep `UID FETCH` kullanır → bağlanamazlar |
+| ~~1~~ | ~~**UID kalıcı değil**~~ → **44. bugla kapatıldı: artık reddediliyor** (RFC 3501 §2.3.1.1) | `UID` = o anki sequence numarası (`imap_server.cpp` FETCH: `"UID " + std::to_string(i)`). Ölçüm: 3 mesaj `UID 1,2,3` → ortadaki silindi → kalan mesajlar `UID 1,2` (beklenen `1,3`). **UID 2 artık BAŞKA bir mesaj**: önce `M1`, sonra `M2` | 🔴 İstemci önbelleği sessizce bozulur: silinmiş mesaj görünmeye devam eder, açılınca başka mesajın içeriği gelir |
+| ~~2~~ | ~~**`UID` komutu yok**~~ → **açıklayıcı `NO [CANNOT]` veriyor** (RFC 3501 §6.4.8) | `UID FETCH 1` → `BAD bilinmeyen komut`. Komut dağıtımında `cmd == "UID"` dalı hiç yok; UID yalnızca *veri öğesi* ve *arama ölçütü* olarak var | 🔴 Thunderbird/Outlook/iOS Mail neredeyse hep `UID FETCH` kullanır → bağlanamazlar |
 | 3 | `CREATE`/`DELETE`/`RENAME` yok | Komut listesinde yok; kullanıcı yeni kutu oluşturamaz (yalnız INBOX) | 🟠 İstemci "Sent"/"Drafts" oluşturamaz |
 | 4 | `BODY[HEADER.FIELDS (...)]` desteklenmiyor | `FETCH 1 BODY[HEADER.FIELDS (SUBJECT)]` → `* 1 FETCH ()` (boş). `BODY[HEADER]` (tümü) çalışıyor | 🟠 İstemcilerin liste görünümü için en çok kullandığı biçim budur |
 

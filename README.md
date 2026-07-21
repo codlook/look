@@ -46,7 +46,7 @@ route("404", fn() => response::error(404, "Not found"))
   `c=100`, best-of-3 runs (a single run is ~2× noisy). PHP ran under FPM, not
   `php -S` — the built-in server is single-process and would have understated it.
 - 🔋 **Batteries included** — MySQL / MariaDB / PostgreSQL / SQLite, sessions, JWT, cache,
-  queue, background jobs, an embedded **SMTP + IMAP** mail server, WebSocket & SSE —
+  queue, background jobs, an embedded **SMTP** server (+ Milestone-1 IMAP), WebSocket & SSE —
   all built in.
 - 🧩 **Ergonomic** — `fn() => …` arrows, `$row.col` access, `module::method`,
   no required semicolons.
@@ -94,8 +94,8 @@ route("GET", "/blog", function() use ($db) {
 | Databases — MySQL/MariaDB, PostgreSQL (wire protocol), SQLite | ✅ |
 | Sessions (file or Redis/RESP2), cookies, JWT, validation, templates | ✅ |
 | Concurrency — `parallel()` + channels; FastCGI multi-worker | ✅ |
-| Embedded SMTP server (25/587/465, STARTTLS, DKIM) | ✅ |
-| Embedded IMAP server (143/993, STARTTLS, SEARCH, IDLE) | ✅ |
+| Embedded SMTP server (25/587/465, STARTTLS, DKIM sign **and** verify, SPF check) | ✅ |
+| Embedded IMAP server — **Milestone 1**: read-only INBOX (see note below) | 🟡 |
 | `crypto::` — SHA-256, HMAC, base64url, UUID, secure random | ✅ |
 | Rate limiting (token bucket, per-IP + global), file sandbox | ✅ |
 | Test runner + REPL — `lk test` · `lk repl` · `lk --check` (parse-only) | ✅ |
@@ -143,6 +143,18 @@ failing obscurely.
   from the end (`$a[-1]`). Missing *keys* are different from missing *slots*: an
   absent assoc key returns `null`, and accessors take a default —
   `request::get("page", 1)`, like `env(key, default)`.
+- **Mail servers are opt-in and unequal in maturity.** Neither listens unless you
+  set `LOOK_SMTP_PORT` / `LOOK_IMAP_PORT`.
+  **SMTP is production-shaped**: relay is denied to unauthenticated senders, `SIZE`
+  and recipient caps are *enforced* (not just advertised), SPF is checked and DKIM
+  is both signed and verified — but there is no greylisting or spam scoring, so
+  put it behind a filter if you accept mail from the open internet.
+  **IMAP is Milestone 1**: it serves a read-only INBOX (SELECT/FETCH/SEARCH/STORE/
+  EXPUNGE/APPEND/IDLE) and is meant as a webmail backend. It has **no persistent
+  UIDs**, so `UID`, `CREATE`, `DELETE` and `RENAME` are answered with an explicit
+  `NO [CANNOT] … (Milestone 1)` rather than wrong data. Standard desktop/mobile
+  mail clients (Thunderbird, Outlook, iOS Mail) rely on `UID` and will **not** work
+  against it yet.
 - **Nested transactions:** `db::begin/commit/rollback` are *flat* — a second
   `db::begin` is not a nesting level (MySQL and PostgreSQL disagree on what it means).
   For nested / partial rollback use `db::transaction($c, fn)`, which uses real

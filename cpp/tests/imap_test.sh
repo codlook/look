@@ -74,7 +74,10 @@ testler = [
     ("c5", 'SELECT "/etc/passwd"'),            # NO  — mutlak yol
     ("c6", "APPEND INBOX {2147483647}"),       # NO  — literal siniri
     ("c7", "APPEND INBOX {-5}"),               # BAD — bozuk literal
-    ("c8", "SELECT INBOX"),                    # OK  — hala saglam
+    ("c8", "FETCH 1 (UID)"),                   # NO  — kalici UID yok, sessiz bozulma yerine gurultulu hata
+    ("c9", "UID FETCH 1 BODY[]"),              # NO  — UID komutu M1 kapsaminda degil
+    ("c10", "CREATE Sent"),                    # NO  — M1 kapsaminda degil
+    ("c11", "SELECT INBOX"),                   # OK  — hala saglam
 ]
 for t, k in testler:
     s.sendall(("%s %s\r\n" % (t, k)).encode()); sonuc.append(kod(rd(s), t))
@@ -83,13 +86,13 @@ print("|".join(sonuc))
 PYEOF
 
 out=$(timeout 90 python3 "$TMP/p.py" $IMAP_PORT 2>&1 | tail -1)
-bek="NO|NO|NO|OK|OK|NO|NO|NO|NO|NO|BAD|OK"
+bek="NO|NO|NO|OK|OK|NO|NO|NO|NO|NO|BAD|NO|NO|NO|OK"
 if [ "$out" = "$bek" ]; then
   echo "  PASS IMAP: auth zorunlu + mailbox dogrulama + traversal + literal siniri"
 else
   echo "  FAIL IMAP yanit dizisi: [$out]"
   echo "       beklenen          : [$bek]"
-  echo "       sira: authsuz(SELECT|FETCH|APPEND) login INBOX 'rm-rf' yok-mailbox traversal mutlak literal-2GB literal-negatif INBOX-tekrar"
+  echo "       sira: authsuz(SELECT|FETCH|APPEND) login INBOX 'rm-rf' yok-mailbox traversal mutlak literal-2GB literal-negatif UID-veri UID-komut CREATE INBOX-tekrar"
   fail=1
 fi
 

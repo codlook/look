@@ -694,13 +694,33 @@ struct ImapServer::Impl {
                 std::string items  = args.substr(sp + 1);
                 for (char& ch : items) ch = (char)std::toupper((unsigned char)ch);
 
+                // YETENEK kontrolü VERİ kontrolünden ÖNCE gelmeli: boş mailbox'ta
+                // sequence-set eşleşmese de istemci "UID destekleniyor mu" sorusunun
+                // cevabını almalı. (Aksi hâlde boş INBOX'ta `FETCH 1 (UID)` → "OK (boş)"
+                // dönüyordu ve istemci UID'in desteklendiğini sanıyordu.)
+                //
+                // UID veri öğesi — M1'de KALICI UID YOK, bu yüzden REDDEDİLİR.
+                //
+                // ESKİ HATA (ölçüldü): `UID` istendiğinde o anki SEQUENCE numarası
+                // dönüyordu. RFC 3501 §2.3.1.1 UID'in kalıcı olmasını şart koşar:
+                //   3 mesaj → UID 1,2,3 → ortadaki silinir → kalanlar UID 1,2
+                //   (olması gereken 1,3). UID 2 artık BAŞKA bir mesaj: önce M1, sonra M2.
+                // Bunu önbelleğe alan bir istemci/webmail silinen mesajı görmeye devam
+                // eder ve açınca başka mesajın içeriğini alır — SESSİZ VERİ BOZULMASI.
+                // Kalıcı UID deposu (dovecot-uidlist / `,U=N` kalıbı) gelene kadar
+                // GÜRÜLTÜLÜ HATA doğru davranış: yanlış UID vermektense hiç vermemek.
+                if (items.find("UID") != std::string::npos) {
+                    send_all(fd, tag + " NO [CANNOT] UID desteklenmiyor — kalıcı UID yok "
+                                       "(Milestone 1). Sequence numarası kullanın.\r\n");
+                    continue;
+                }
+
                 auto& msgs = messages;   // kararlı snapshot
                 size_t lo = 0, hi = 0;
                 if (!parse_seqset(seqset, msgs.size(), lo, hi)) {
                     send_all(fd, tag + " OK FETCH tamamlandı (boş)\r\n"); continue;
                 }
                 bool want_flags = items.find("FLAGS") != std::string::npos;
-                bool want_uid   = items.find("UID")   != std::string::npos;
                 bool want_size  = items.find("RFC822.SIZE") != std::string::npos;
                 // "RFC822" tam gövde ister; "RFC822.SIZE"/"RFC822.HEADER" içermez.
                 bool rfc822_full = (items.find("RFC822") != std::string::npos &&
@@ -718,7 +738,8 @@ struct ImapServer::Impl {
                     std::string parts;
                     // TÜM flag'leri raporla (STORE ile tutarlı) — sadece \Seen değil
                     if (want_flags) parts += "FLAGS " + maildir_to_imap_flags(maildir_flags(msgs[i-1])) + " ";
-                    if (want_uid)   parts += "UID " + std::to_string(i) + " ";
+                    // (UID yukarıda reddediliyor — kalıcı UID yokken sequence
+                    //  numarasını UID diye vermek sessiz veri bozulmasıydı.)
                     if (want_size)  parts += "RFC822.SIZE " + std::to_string(raw.size()) + " ";
                     std::string literal;
                     if (want_full)      { parts += "BODY[] ";       literal = raw;  }
@@ -852,6 +873,21 @@ struct ImapServer::Impl {
                     send_all(fd, tag + " NO APPEND yazılamadı\r\n");
             }
             // ── M4c: SEARCH — ölçütlere uyan mesaj sıra numaralarını döndür ──
+            // UID FETCH/STORE/SEARCH/COPY — RFC 3501 §6.4.8'de zorunlu ama M1'de YOK.
+            // Kalıcı UID olmadan uygulanamaz (bkz. FETCH'teki UID reddi).
+            // `BAD bilinmeyen komut` yerine NEDENİ söyle: Thunderbird'ü debug eden
+            // geliştirici "komut yok mu, sözdizimi mi yanlış" diye aramasın.
+            else if (cmd == "UID") {
+                send_all(fd, tag + " NO [CANNOT] UID komutu desteklenmiyor — kalıcı UID yok "
+                                   "(Milestone 1). Sequence tabanlı FETCH/STORE/SEARCH kullanın.\r\n");
+            }
+            // CREATE/DELETE/RENAME de M1 kapsamında değil — sessiz "bilinmeyen komut"
+            // yerine kapsamı söyle.
+            else if (cmd == "CREATE" || cmd == "DELETE" || cmd == "RENAME" ||
+                     cmd == "SUBSCRIBE" || cmd == "UNSUBSCRIBE") {
+                send_all(fd, tag + " NO [CANNOT] " + cmd + " desteklenmiyor (Milestone 1: "
+                                   "yalnız mevcut INBOX okunur).\r\n");
+            }
             else if (cmd == "SEARCH") {
                 if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
                 if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
