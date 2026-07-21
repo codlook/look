@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **39** · Guard: 3 motor × 22 kategori + 36 özel kontrol + MySQL iki-sürüm auth testi
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **40** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 39 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 40 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 39 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 40 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -494,6 +494,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 37 | **SSRF engeli gerçek ağ hatasından ayırt edilemiyordu** — `tcp_connect` DNS hatası, SSRF engeli, socket ve bağlantı hatası için aynı `INVALID`'i dönüyor, çağıran hepsine `"connection failed"` diyordu | 🟠 | İç servisine ulaşamayan geliştirici bir **güvenlik politikasının** engellediğini göremiyor, boşuna ağ/DNS/firewall araştırıyordu (33. bug ile aynı sınıf). Sebep `t_conn_error` ile taşınıyor. **36. bug bu düzeltme sayesinde görünür oldu** — mesajlar ayrışınca IPv6'nın "DNS hatası" verdiği fark edildi | bu commit |
 | 38 | **Çağrılamayan ad hatası — VM adı söylemiyordu, tree-walk YANILTIYORDU** — `olmayan_fn(1)` VM'de `"Çağrılabilir değil (BYTECODE_FN bekleniyor)"` (hangi ad?); `$x=5; $x(1)` tree-walk'ta `"'$x' is not defined"` (yanlış — `$x` **tanımlı**) | 🟠 | Bu vakada **referans motor da yanılıyordu**, o yüzden yön tek taraflı alınmadı: iki durum ayrıldı, iki motor aynı metni kullanıyor. Ad `LOAD_GLOBAL`'da kaybediyordu (`$`'sız adlar orada ıskalamak **zorunda** — `mod::fn` genel CALL yoluna düşsün diye); compiler adı `NOP` hint'ine gömüp VM'e taşıyor | `31ee310` |
 | 39 | **MySQL 8.0–9.x ile HİÇ bağlanılamıyordu** — yalnızca `mysql_native_password` uygulanmış, eklenti adı handshake yanıtına **sabit** yazılmış, sunucunun bildirdiği eklenti okunmuyor, `AuthSwitchRequest` (0xFE) hiç ele alınmıyordu. `CLIENT_PLUGIN_AUTH` bayrağı set edilmesine rağmen | 🔴 | Dil pratikte **MySQL 5.7 diliydi**: 8.0 (2018'den beri varsayılan `caching_sha2_password`), 8.4 (native kapalı), 9.x (kaldırıldı) — hiçbirine bağlanamıyordu. Eklenti adı okunuyor, 0xFE/0x01 diyaloğu işleniyor, `caching_sha2_password` hızlı + **RSA tam yol** uygulandı. **Doğrulanan matris:** 5.7.44, 8.0.46, 8.2.0, 8.4.10 (native DISABLED), 9.1.0 (native kaldırılmış), MariaDB 10.11 + 11.4 — hepsi bağlanıyor. Kripto OpenSSL'den (9. SHA-256 kopyası açılmadı) | bu commit |
+| 40 | **PostgreSQL: transaction içinde sequence'siz tabloya INSERT sessizce VERİ KAYBEDİYORDU** — `db::exec` her INSERT sonrası otomatik `SELECT lastval()` çağırıyor (last_insert_id için); tablo SERIAL/sequence kullanmıyorsa `lastval()` hata verir, **açık transaction'ı ABORTED yapar**, sonraki `COMMIT` sessizce ROLLBACK'e döner → INSERT kaybolur | 🔴 | Autocommit'te zararsızdı (INSERT ayrı statement'ta kalıcı); yalnız `BEGIN…COMMIT` içinde. MySQL/SQLite'ta yok. C++ `catch(...)` hatayı yutuyordu ama PG bağlantısı zaten zehirli. Çözüm: transaction bloğundaysak (`ReadyForQuery` status='T') `lastval`'i **SAVEPOINT ile koru** — hata olsa da savepoint'e dönüp transaction'ı kurtar; autocommit'te doğrudan çağır. `affected_rows_`/`last_insert_id_` savepoint komutlarınca ezilmesin diye yerelde tutulup en sonda yazılıyor. **Gerçek PG sunucusu + sunucu logu** ile bulundu | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 

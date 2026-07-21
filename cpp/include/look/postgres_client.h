@@ -67,6 +67,10 @@ private:
     std::string database_;
     int64_t     last_insert_id_     = 0;
     int64_t     affected_rows_      = 0;
+    // ReadyForQuery'nin transaction durum baytı: 'I'=idle (autocommit),
+    // 'T'=transaction bloğunda, 'E'=başarısız transaction. INSERT sonrası
+    // lastval()'i güvenli çağırmak için (bkz. simple_query).
+    char        tx_status_          = 'I';
     bool        wsock_init_         = false;
     int         connect_timeout_ms_ = 5000;
     int         query_timeout_ms_   = 30000;

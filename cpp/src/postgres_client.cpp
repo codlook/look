@@ -822,7 +822,8 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
                 try { affected_rows_ = std::stoll(tag.substr(sp + 1)); } catch (...) {}
             }
         } else if (msg.type == 'Z') {
-            // ReadyForQuery — bitti
+            // ReadyForQuery — bitti. Body[0] = transaction durum baytı.
+            if (!msg.body.empty()) tx_status_ = (char)msg.body[0];
             break;
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
@@ -835,15 +836,43 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
         // 'N' (Notice), 'I' (EmptyQuery) → yoksay
     }
 
-    // INSERT sonrası lastval() ile son ID'yi al
+    // INSERT sonrası lastval() ile son ID'yi al.
+    //
+    // ESKİ HATA — sessiz VERİ KAYBI (gerçek PG sunucusuyla + sunucu loguyla bulundu):
+    // Tablo SERIAL/sequence KULLANMIYORSA `SELECT lastval()` hata verir
+    // ("lastval is not yet defined in this session"). Autocommit'te zararsız —
+    // INSERT ayrı statement'ta zaten kalıcı. AMA açık transaction içinde bu hata
+    // TÜM transaction'ı ABORTED yapar; sonraki COMMIT sessizce ROLLBACK'e döner:
+    //   BEGIN; INSERT INTO t(n) VALUES(8);  -- affected=1
+    //   SELECT lastval();                   -- HATA → transaction aborted
+    //   COMMIT;                             -- aborted → ROLLBACK → INSERT KAYBOLUR
+    // C++ tarafında catch(...) hatayı yutuyordu ama PG bağlantısı zaten zehirli.
+    // sequence'siz tabloya transaction içinde INSERT yapan HERKES verisini
+    // kaybediyordu (MySQL/SQLite'ta yok — lastval hataları oraya özgü değil).
+    //
+    // Çözüm: transaction bloğundaysak (tx_status_ == 'T') lastval'i SAVEPOINT ile
+    // koru — hata olsa da transaction kurtulur. Autocommit'te ('I') doğrudan çağır.
     if (is_insert && affected_rows_ > 0) {
+        // simple_query her çağrı başında affected_rows_/last_insert_id_'yi SIFIRLAR;
+        // aşağıdaki SAVEPOINT/ROLLBACK/RELEASE çağrıları da simple_query olduğu için
+        // INSERT'in değerlerini ezerdi → yereli tut, en sonda yaz.
+        const int64_t saved_affected = affected_rows_;
+        const bool in_tx = (tx_status_ == 'T');
+        if (in_tx) { try { simple_query("SAVEPOINT look_lv"); } catch (...) {} }
+        int64_t new_id = 0;
         try {
             auto lv = do_lastval();
             if (!lv.empty() && !lv[0].empty())
-                last_insert_id_ = std::stoll(lv[0][0].second.str);
-        } catch (...) {
-            last_insert_id_ = 0;
+                new_id = std::stoll(lv[0][0].second.str);
+        } catch (...) {}
+        if (in_tx) {
+            // lastval hata verdiyse transaction aborted — savepoint'e dönerek kurtar.
+            // Başarılıysa da geri dönmek zararsız (lastval yalnızca okuma).
+            try { simple_query("ROLLBACK TO SAVEPOINT look_lv"); } catch (...) {}
+            try { simple_query("RELEASE SAVEPOINT look_lv"); } catch (...) {}
         }
+        last_insert_id_ = new_id;
+        affected_rows_  = saved_affected;  // savepoint komutları ezmesin
     }
 
     return rows;

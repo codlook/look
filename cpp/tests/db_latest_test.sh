@@ -34,11 +34,27 @@ try {
 } catch ($e) { print("HATA|" . $e) }
 LK
 
-# PostgreSQL — SERIAL/TEXT
+# PostgreSQL — SERIAL/TEXT + sequence'SIZ tablo transaction (39... lastval veri kaybi)
+# NEDEN: PG'de INSERT sonrasi otomatik SELECT lastval() cagriliyor; tablo SERIAL
+# kullanmiyorsa lastval hata verir ve ACIK TRANSACTION'i abort eder -> COMMIT
+# sessizce ROLLBACK olur -> veri kaybolur. Bu kontrol sequence'SIZ bir tabloya
+# transaction icinde INSERT + COMMIT yapip verinin KALDIGINI dogrular.
 cat > "$TMP/pg.lk" <<'LK'
 use string
 try {
   $c = db::connect(env("D",""))
+  # sequence'SIZ tablo + transaction — lastval veri kaybi tuzagi.
+  # DIKKAT: bu test SERIAL insert'ten ONCE olmali. Aksi halde SERIAL insert
+  # session'da lastval'i TANIMLAR ve sequence'siz insert'te lastval artik hata
+  # vermez -> bug tetiklenmez (guard yaniltici PASS verir — bu tam olarak yasandi).
+  db::exec($c, "DROP TABLE IF EXISTS look_notx")
+  db::exec($c, "CREATE TABLE look_notx (n INT)")
+  db::begin($c)
+  db::exec($c, "INSERT INTO look_notx (n) VALUES (1)")
+  db::commit($c)
+  $kaldi = count(db::query($c, "SELECT n FROM look_notx"))
+  if ($kaldi != 1) { print("HATA|sequence'siz tabloda tx-ici INSERT kayboldu (lastval abort): " . $kaldi . " satir"); return }
+  # SERIAL testi (last_id + version)
   db::exec($c, "CREATE TABLE IF NOT EXISTS look_lt (id SERIAL PRIMARY KEY, ad TEXT)")
   db::exec($c, "DELETE FROM look_lt")
   db::exec($c, "INSERT INTO look_lt (ad) VALUES (?)", ["şğü"])
