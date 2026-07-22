@@ -41,6 +41,13 @@ void JobStore::init(const std::string& db_path) {
 
     sqlite3_exec(db_, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
     sqlite3_exec(db_, "PRAGMA foreign_keys=OFF;", nullptr, nullptr, nullptr);
+    // ÇOK SÜREÇLİ erişim (FastCGI multi-worker = ayrı SÜREÇLER, ortak jobs.db):
+    //   WAL         → okuyucu yazarı, yazar okuyucuyu bloke etmez
+    //   busy_timeout→ kilit çekişmesinde ANINDA "database is locked" yerine bekle
+    // Ölçüldü (düzeltme öncesi, 4 süreç 40 iş): süreçlerden biri HİÇ iş alamadı
+    // (0), biri 30 aldı — kilit çekişmesi işi tek sürece yığıyordu.
+    sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
+    sqlite3_busy_timeout(db_, 5000);
 
     create_schema();
     initialized_ = true;
@@ -154,33 +161,42 @@ Value JobStore::next(const std::string& queue) {
     ensure_init();
     std::lock_guard<std::mutex> lk(mtx_);
 
-    // Only jobs whose run_after <= now (delayed jobs wait)
-    sqlite3_stmt* sel = prepare(db_,
-        "SELECT id,payload,retry_count,max_retries,run_after FROM look_jobs"
-        " WHERE queue=? AND status='pending' AND run_after<=?"
-        " ORDER BY id ASC LIMIT 1");
+    // ATOMİK CLAIM — tek ifade (SQLite RETURNING, 3.35+; gömülü sürüm 3.47.2).
+    //
+    // ESKİ HATA — ÇİFT İŞLEME (ölçüldü: 4 süreç, 40 iş → 34 claim / 29 tekil,
+    // yani 5 iş birden fazla sürece verildi):
+    //   SELECT ... WHERE status='pending' LIMIT 1     ← A ve B aynı id'yi görür
+    //   UPDATE ... SET status='processing' WHERE id=? ← status kontrolü YOK
+    // Aradaki `std::lock_guard` yalnız SÜREÇ İÇİ mutex'tir; FastCGI multi-worker'da
+    // her worker AYRI SÜREÇ olduğu için hiçbir koruma sağlamaz. Sonuç: aynı iş iki
+    // kez işlenir — aynı e-posta iki kez gider, aynı ödeme iki kez çekilir.
+    //
+    // Çözüm: seçme ve claim TEK ifadede + `AND status='pending'` koruması.
+    // İkinci süreç aynı satırı hedeflese bile durum artık 'processing' olduğu için
+    // 0 satır günceller ve RETURNING satır döndürmez → o süreç boş döner (doğru).
+    sqlite3_stmt* upd = prepare(db_,
+        "UPDATE look_jobs SET status='processing', updated_at=?"
+        " WHERE id = (SELECT id FROM look_jobs"
+        "             WHERE queue=? AND status='pending' AND run_after<=?"
+        "             ORDER BY id ASC LIMIT 1)"
+        "   AND status='pending'"
+        " RETURNING id,payload,retry_count,max_retries,run_after");
     int64_t ts = now_ts();
-    sqlite3_bind_text (sel, 1, queue.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(sel, 2, ts);
+    sqlite3_bind_int64(upd, 1, ts);
+    sqlite3_bind_text (upd, 2, queue.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(upd, 3, ts);
 
-    int rc = sqlite3_step(sel);
-    if (rc != SQLITE_ROW) {
-        sqlite3_finalize(sel);
+    int rc = sqlite3_step(upd);
+    if (rc != SQLITE_ROW) {          // iş yok VEYA başka süreç kaptı
+        sqlite3_finalize(upd);
         return Value();
     }
-    int64_t     id          = sqlite3_column_int64(sel, 0);
-    std::string payload     = reinterpret_cast<const char*>(sqlite3_column_text(sel, 1));
-    int         retry_count = sqlite3_column_int(sel, 2);
-    int         max_retries = sqlite3_column_int(sel, 3);
-    int64_t     run_after   = sqlite3_column_int64(sel, 4);
-    sqlite3_finalize(sel);
-
-    // Claim: pending → processing
-    sqlite3_stmt* upd = prepare(db_,
-        "UPDATE look_jobs SET status='processing', updated_at=? WHERE id=?");
-    sqlite3_bind_int64(upd, 1, now_ts());
-    sqlite3_bind_int64(upd, 2, id);
-    sqlite3_step(upd);
+    int64_t     id          = sqlite3_column_int64(upd, 0);
+    const char* pl          = reinterpret_cast<const char*>(sqlite3_column_text(upd, 1));
+    std::string payload     = pl ? pl : "";
+    int         retry_count = sqlite3_column_int(upd, 2);
+    int         max_retries = sqlite3_column_int(upd, 3);
+    int64_t     run_after   = sqlite3_column_int64(upd, 4);
     sqlite3_finalize(upd);
 
     return make_assoc({

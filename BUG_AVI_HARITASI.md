@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **45** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **46** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 45 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 46 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 45 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 46 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -54,7 +54,7 @@ Bu 7 kural 45 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | Web context (multipart, cookie) | `web.cpp` | 558 | 🟡 kısmi | **Yüksek** |
 | Fiber scheduler | `fiber_posix.cpp` | 483 | 🟡 yük testi | Orta |
 | **Lexer** | `lexer.cpp` | 458 | ⬜ yok | Orta |
-| Jobs | `jobs_stdlib.cpp` | 457 | ⬜ yok | Orta |
+| Jobs | `jobs_stdlib.cpp` | 457 | ✅ jobs_test — çok süreçli claim (yeni) | Orta |
 | DKIM | `dkim.cpp` | 413 | ⬜ yok | Düşük |
 | Date | `date_stdlib.cpp` | 348 | ⬜ yok | Orta |
 | REPL | `repl.cpp` | 336 | ⬜ yok | Düşük |
@@ -501,6 +501,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 43 | **IMAP mailbox adı doğrulaması eksikti + var olmayan mailbox `OK` dönüyordu** — `SELECT "INBOX; rm -rf /"` **kabul ediliyordu** (diğer traversal denemeleri reddedilirken); kontroller yalnız `\0`, baştaki ayırıcı ve `..` bakıyor, `;`/boşluk/**içerideki** ayırıcı geçiyordu. Ayrıca var olmayan mailbox `OK (0 EXISTS)` dönüyordu — RFC 3501 §6.3.1: `NO` olmalı | 🟠 | Mailbox adı bir **yol bileşeni** olarak dizin adına dönüşüyor; kabuk üzerinden işlenen bir yedekleme/log betiği için tehlike, en iyi ihtimalle çöp dizin. Var olmayan kutunun `OK` dönmesi istemciyi yanıltıyordu ("Sent" seçilir, boş kutu görünür — oysa kutu yok). Çözüm: ayırıcı/`;`/kontrol karakteri reddi + `is_directory` kontrolü. **`imap_server.cpp`'nin (1013 satır) İLK guard'ı** | bu commit |
 | 44 | **IMAP kalıcı olmayan UID'yi "UID" diye döndürüyordu** — `FETCH n (UID)` o anki *sequence* numarasını veriyordu. Ölçüldü: 3 mesaj `UID 1,2,3` → ortadaki silindi → kalanlar `UID 1,2` (olması gereken `1,3`); **UID 2 artık başka bir mesaj** (önce M1, sonra M2) | 🔴 | Bunu önbelleğe alan istemci/webmail silinen mesajı görmeye devam eder ve açınca **başka mesajın içeriğini** alır — sessiz veri bozulması. Kalıcı UID deposu gelene kadar doğru davranış **gürültülü hata**: `UID` veri öğesi ve `UID` komutu artık `NO [CANNOT] … (Milestone 1)` ile reddediliyor; `CREATE/DELETE/RENAME/SUBSCRIBE` de kapsamı söyleyerek reddediliyor (eskiden `BAD bilinmeyen komut` — teşhis ettirmiyordu). Yetenek kontrolü sequence-set kontrolünden **önce**: boş INBOX'ta bile istemci "UID var mı" cevabını alır. **README gerçekle hizalandı** — IMAP `✅` yerine `🟡 Milestone 1`, standart MUA istemcilerinin çalışmayacağı açıkça yazıldı | bu commit |
 | 45 | **Mail sunucuları IPv6'sız ortamda hiç başlamıyordu + "started" logu YALAN söylüyordu** — SMTP/IMAP yalnız `socket(AF_INET6, …)` deniyordu (IPv4 yedeği yok); IPv6 desteği derlenmemiş/kapalı ortamlarda (sertleştirilmiş VPS, bazı konteynerler) `EAFNOSUPPORT` ile başlamıyorlardı. HTTP `AF_INET` kullandığı için o ortamlarda **çalışıyordu** — fark buradan geliyordu. Üstelik `http_main` "server started" logunu **koşulsuz** basıyordu | 🔴 | Ölçüldü (port meşgul edilerek, IPv6'dan bağımsız): `[ERROR] port 7171 dinlenemedi` hemen ardından `[INFO] IMAP server started on port 7171`. Kullanıcı log'a bakıp çalıştığını sanıyordu — bu turun ekseni olan **sessiz/yanıltıcı başarısızlık**. Çözüm: her iki sunucuda IPv4 yedeği (`socket()` ve `bind()` başarısızlığında), `ImapServer::start()` artık `bool`, `SmtpServer::listening()` eklendi, "started" logu **gerçek duruma bağlandı** (başarısızsa `ERROR … (port meşgul mü? yetki? IPv6/IPv4?)` + nesne serbest bırakılıyor). **Analizci bağımsız ortamında buldu** (onun konteynerinde IPv6 yoktu, bende vardı — bu yüzden benim testlerim geçmişti) | bu commit |
+| 46 | **`jobs::next()` ÇOK SÜREÇLİ ortamda aynı işi birden fazla worker'a veriyordu (ÇİFT İŞLEME)** — claim `SELECT … WHERE status='pending' LIMIT 1` + ayrı `UPDATE … WHERE id=?` şeklindeydi; UPDATE'te durum kontrolü yoktu, transaction yoktu, aradaki `std::lock_guard` yalnız **süreç içi** mutex (FastCGI multi-worker'da her worker **ayrı süreç**). Ayrıca `busy_timeout` ve `WAL` yoktu | 🔴 | **Ölçüldü** (4 süreç / 40 iş, ortak `jobs.db`): düzeltme öncesi **42 claim / 30 tekil → 12 iş çift işlendi**, üstelik 10 iş hiç alınamadı (kilit çekişmesi). Gerçek etkisi: aynı e-posta iki kez gider, aynı ödeme iki kez çekilir. Çözüm: **tek ifadelik atomik claim** — `UPDATE … WHERE id=(SELECT … LIMIT 1) AND status='pending' RETURNING …` (SQLite 3.35+, gömülü sürüm 3.47.2) + `journal_mode=WAL` + `busy_timeout=5000`. Sonra: **40 claim / 40 tekil**, kayıp yok. Analizcinin okul sisteminde açık bıraktığı soru buydu | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 
@@ -574,4 +575,4 @@ oturum sonrası sunucu sağlam, RSS 8.8 MB.
 **Dürüst özet:** LOOK'un IMAP'i şu an **temel okuma** seviyesinde (webmail
 arka ucu için yeterli), tam IMAP4rev1 istemci uyumluluğu için 1–4 gerekir.
 `CAPABILITY`'de `IMAP4rev1` ilan etmek bu hâliyle yanıltıcı.
-| **Hiç taranmamış yüzeyler** | `jobs::` (10 fn), lexer, `installer::`, lexer, `installer::`, REPL, test runner. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |
+| **Hiç taranmamış yüzeyler** | lexer, `installer::`, lexer, `installer::`, REPL, test runner. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |
