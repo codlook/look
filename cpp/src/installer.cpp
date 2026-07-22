@@ -1,6 +1,7 @@
 // installer.cpp — look install <github.com/user/repo[@ref]>
 // Downloads ZIP from GitHub, extracts to pkg/user/repo/, updates look.lock.
 // Zero dependencies: uses existing http_client (Schannel/OpenSSL) + miniz.
+#include <cstring>
 #include "look/installer.h"
 #include "look/http_client.h"
 #include "miniz/miniz.h"
@@ -273,7 +274,41 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
                 resp.error = "redirect konum başlığı yok";
                 return resp;
             }
-            current = it->second;
+            // Yönlendirme HEDEFİ doğrulanmalı — eskiden körlemesine takip ediliyordu.
+            // İlk istek güvenli (zip_url() https sabit, parse_pkg host'u github.com'a
+            // kısıtlı, TLS'te SSL_VERIFY_PEER + SSL_set1_host var). Ama yönlendirme
+            // zinciri korumasızdı:
+            //   * `Location: http://…`  → ŞEMA DÜŞÜRME: sonraki istek düz metin,
+            //     yani TLS'in sağladığı bütünlük garantisi kaybolur (MITM penceresi).
+            //   * `Location: https://baska-host/…` → tamamen farklı bir kaynaktan
+            //     indirme.
+            // Paket = ÇALIŞTIRILABİLİR LOOK KODU olduğu için bu bir tedarik zinciri
+            // riski; savunma katmanı ucuz, bedeli ağır (asimetri).
+            std::string next = it->second;
+            if (next.rfind("https://", 0) != 0) {
+                resp.error = "güvensiz yönlendirme reddedildi (yalnız https): " + next;
+                return resp;
+            }
+            // Host allowlist — GitHub zipball'ı codeload/objects alt alanlarına yönlendirir.
+            {
+                std::string rest = next.substr(8);           // "https://" sonrası
+                size_t slash = rest.find('/');
+                std::string host = (slash == std::string::npos) ? rest : rest.substr(0, slash);
+                size_t colon = host.find(':');
+                if (colon != std::string::npos) host = host.substr(0, colon);
+                auto ends_with = [](const std::string& s, const char* suf) {
+                    size_t n = std::strlen(suf);
+                    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+                };
+                bool ok = host == "github.com" || host == "api.github.com" ||
+                          ends_with(host, ".github.com") ||
+                          ends_with(host, ".githubusercontent.com");
+                if (!ok) {
+                    resp.error = "yönlendirme beklenmeyen host'a gidiyor, reddedildi: " + host;
+                    return resp;
+                }
+            }
+            current = next;
             continue;
         }
         return resp;

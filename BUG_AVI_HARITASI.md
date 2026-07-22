@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **47** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **48** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 47 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 48 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 47 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 48 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -49,7 +49,7 @@ Bu 7 kural 47 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | MySQL wire | `mysql_client.cpp` | 761 | ✅ iki-sürüm auth (yeni) | **Yüksek** |
 | Template motoru | `template_stdlib.cpp` | 702 | ✅ yeni eklendi | Orta |
 | Event loop | `event_loop.cpp` | 658 | ✅ fd sızıntı + per-IP (yeni) | Orta |
-| Installer (paket/modül) | `installer.cpp` | 617 | ⬜ yok | Orta |
+| Installer (paket/modül) | `installer.cpp` | 617 | ✅ installer_test (yeni) | Orta |
 | Test runner | `test_runner.cpp` | 593 | ⬜ yok | Düşük |
 | Web context (multipart, cookie) | `web.cpp` | 558 | 🟡 kısmi | **Yüksek** |
 | Fiber scheduler | `fiber_posix.cpp` | 483 | 🟡 yük testi | Orta |
@@ -503,6 +503,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 45 | **Mail sunucuları IPv6'sız ortamda hiç başlamıyordu + "started" logu YALAN söylüyordu** — SMTP/IMAP yalnız `socket(AF_INET6, …)` deniyordu (IPv4 yedeği yok); IPv6 desteği derlenmemiş/kapalı ortamlarda (sertleştirilmiş VPS, bazı konteynerler) `EAFNOSUPPORT` ile başlamıyorlardı. HTTP `AF_INET` kullandığı için o ortamlarda **çalışıyordu** — fark buradan geliyordu. Üstelik `http_main` "server started" logunu **koşulsuz** basıyordu | 🔴 | Ölçüldü (port meşgul edilerek, IPv6'dan bağımsız): `[ERROR] port 7171 dinlenemedi` hemen ardından `[INFO] IMAP server started on port 7171`. Kullanıcı log'a bakıp çalıştığını sanıyordu — bu turun ekseni olan **sessiz/yanıltıcı başarısızlık**. Çözüm: her iki sunucuda IPv4 yedeği (`socket()` ve `bind()` başarısızlığında), `ImapServer::start()` artık `bool`, `SmtpServer::listening()` eklendi, "started" logu **gerçek duruma bağlandı** (başarısızsa `ERROR … (port meşgul mü? yetki? IPv6/IPv4?)` + nesne serbest bırakılıyor). **Analizci bağımsız ortamında buldu** (onun konteynerinde IPv6 yoktu, bende vardı — bu yüzden benim testlerim geçmişti) | bu commit |
 | 46 | **`jobs::next()` ÇOK SÜREÇLİ ortamda aynı işi birden fazla worker'a veriyordu (ÇİFT İŞLEME)** — claim `SELECT … WHERE status='pending' LIMIT 1` + ayrı `UPDATE … WHERE id=?` şeklindeydi; UPDATE'te durum kontrolü yoktu, transaction yoktu, aradaki `std::lock_guard` yalnız **süreç içi** mutex (FastCGI multi-worker'da her worker **ayrı süreç**). Ayrıca `busy_timeout` ve `WAL` yoktu | 🔴 | **Ölçüldü** (4 süreç / 40 iş, ortak `jobs.db`): düzeltme öncesi **42 claim / 30 tekil → 12 iş çift işlendi**, üstelik 10 iş hiç alınamadı (kilit çekişmesi). Gerçek etkisi: aynı e-posta iki kez gider, aynı ödeme iki kez çekilir. Çözüm: **tek ifadelik atomik claim** — `UPDATE … WHERE id=(SELECT … LIMIT 1) AND status='pending' RETURNING …` (SQLite 3.35+, gömülü sürüm 3.47.2) + `journal_mode=WAL` + `busy_timeout=5000`. Sonra: **40 claim / 40 tekil**, kayıp yok. Analizcinin okul sisteminde açık bıraktığı soru buydu | bu commit |
 | 47 | **`sqlite3_busy_timeout()` çok geç çağrılıyordu — worker'lar açılışta çöküyordu** — sıra `open → PRAGMA synchronous → PRAGMA foreign_keys → PRAGMA journal_mode=WAL → busy_timeout → create_schema` şeklindeydi. WAL geçişi ve `create_schema()` **özel kilit** ister; `busy_timeout` henüz ayarlı olmadığı için çekişmede anında `SQLITE_BUSY` → süreç `"jobs:: schema hatası: database is locked"` ile ölüyordu | 🔴 | **Analizcinin ortamında ölçüldü: 48 denemede 37 kilit hatası (%77) + 3 çift claim.** İki katmanlı sonuç: (a) worker'lar açılışta ölüyor, (b) **ölen worker'lar claim yarışını maskeliyor** — az süreç kalınca yarış görünmez olur; hayatta kalan sayısı artınca çift-claim ortaya çıkar (WAL geçişi başarısız olan süreç rollback-journal modunda kalır, izolasyon farklılaşır). Düzeltme: `busy_timeout` `sqlite3_open`'dan **hemen sonra**, tüm PRAGMA'lardan önce + WAL'ın gerçekten etkin olduğu okunup doğrulanıyor (değilse uyarı — sessizce rollback modunda kalmasın). **Benim ortamımda tekrar üretilemedi** (48/48 temiz) — yarış penceresi I/O hızına bağlı; asimetri belirleyici oldu: düzeltme tek satır taşıma, bedeli süreç çökmesi + çift işleme | bu commit |
+| 48 | 🛡️ **Paket kurulumunda yönlendirme hedefi doğrulanmıyordu** — `download_follow` gelen `Location` başlığını **körlemesine** takip ediyordu: `http://…` (şema düşürme → sonraki istek düz metin, TLS bütünlüğü kaybolur) ve **farklı host** kabul ediliyordu | 🛡️ | Paket = **çalıştırılabilir LOOK kodu**, yani tedarik zinciri riski. İlk istek zaten güvenliydi (`zip_url()` https sabit, `parse_pkg` host'u `github.com`'a kısıtlı, TLS'te `SSL_VERIFY_PEER` + `SSL_set1_host`) — açık yalnız yönlendirme zincirindeydi. Çözüm: yönlendirmede **https zorunlu** + host allowlist (`github.com`, `*.github.com`, `*.githubusercontent.com`). **Ölçüldü:** meşru zincir (`api.github.com` → `codeload.github.com`) bozulmadan çalışıyor, modül gerçekten kuruluyor. Kötü yönlendirmenin reddi **ölçülemedi** (sahte GitHub geçerli TLS sertifikası gerektirir) — mantık + asimetri gerekçesiyle uygulandı | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 
@@ -577,3 +578,30 @@ oturum sonrası sunucu sağlam, RSS 8.8 MB.
 arka ucu için yeterli), tam IMAP4rev1 istemci uyumluluğu için 1–4 gerekir.
 `CAPABILITY`'de `IMAP4rev1` ilan etmek bu hâliyle yanıltıcı.
 | **Hiç taranmamış yüzeyler** | lexer, `installer::`, lexer, `installer::`, REPL, test runner. *(`http::`, PostgreSQL wire, `file::`, `session/cookie`, `request::`, `db::` çekirdeği bu turda tarandı.)* |
+
+### 7f. `installer::` — AÇIK: indirilen paketin bütünlüğü doğrulanmıyor (2026-07-22)
+
+Tarama sonucu: yönlendirme açığı kapatıldı (48. bug), ama **checksum/imza yok**.
+
+| Katman | Durum |
+|---|---|
+| İlk isteğin şeması | `zip_url()` **https sabit** ✅ |
+| Host kısıtı | `parse_pkg` yalnız `github.com` ✅ |
+| TLS | `SSL_VERIFY_PEER` + `SSL_set1_host` (hostname doğrulama) ✅ |
+| Yönlendirme | https zorunlu + host allowlist ✅ *(48. bug)* |
+| Zip-Slip | `weakly_canonical` + **bileşen sınırı** (sibling-prefix escape'e karşı) ✅ |
+| **İndirilen ZIP'in checksum/imzası** | **YOK** ❌ |
+| Atomik kurulum | `remove_all` → çıkar; yarıda kesilirse hem eski hem yeni yarım kalır 🟡 |
+
+**Neden şimdi düzeltilmedi:** bütünlük doğrulaması bir *altyapı* kararı — paketlerin
+nasıl imzalanacağı (yayıncı anahtarı? `look.lock`'a SHA256 sabitleme?) ve anahtarın
+nasıl dağıtılacağı belirlenmeden kod yazmak yanlış olur. `resolve_sha` GitHub commit
+SHA'sını çözüyor ama bu **sürüm sabitleme**, indirilen ZIP'in bütünlük kanıtı değil.
+
+**Bugünkü güvence:** GitHub'a doğrulanmış TLS + host kısıtı + yönlendirme allowlist.
+Yani "GitHub'a ve TLS'e güveniyoruz" — makul bir taban, ama `look.lock`'a ZIP SHA256
+yazıp sonraki kurulumlarda karşılaştırmak ucuz ve büyük kazanç olurdu (TOFU modeli).
+
+**Ölçülemeyen:** kötü yönlendirmenin gerçekten reddedildiği canlı olarak
+doğrulanamadı — sahte GitHub geçerli sertifika ister. Meşru zincirin bozulmadığı
+ise ölçüldü (gerçek kurulum yapıldı).
