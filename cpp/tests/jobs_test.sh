@@ -88,5 +88,29 @@ else
   fail=1
 fi
 
+# SOGUK ACILIS: DB HIC YOKKEN N surec ayni anda schema olusturur.
+# busy_timeout sqlite3_open'dan HEMEN SONRA ayarlanmazsa, WAL gecisi ve
+# create_schema() ozel kilit isterken aninda SQLITE_BUSY doner ve surecler
+# 'schema hatasi: database is locked' ile COKER. Daha kotusu: olen surecler
+# claim yarisini MASKELER (az surec kalinca yaris gorunmez).
+rm -f "$TMP/cold.db"*
+export JOBS_DB="$TMP/cold.db"
+cat > cold.lk <<'LK'
+use jobs
+$j = jobs::next("q")
+print("ok")
+LK
+for i in 1 2 3 4 5 6; do "$LK" cold.lk > "c$i.out" 2> "c$i.err" & done
+wait
+kilit=0
+for i in 1 2 3 4 5 6; do grep -qi "locked" "c$i.err" 2>/dev/null && kilit=$((kilit+1)); done
+if [ "$kilit" = "0" ]; then
+  echo "  PASS soguk acilis: 6 surec es zamanli schema olusturdu, kilit hatasi yok"
+else
+  echo "  FAIL soguk acilis: 6 surecten $kilit tanesi 'database is locked' ile coktu"
+  echo "       -> sqlite3_busy_timeout() sqlite3_open'dan HEMEN SONRA cagrilmali (WAL/schema oncesi)"
+  fail=1
+fi
+
 [ $fail = 0 ] && echo "PASS: jobs::" || echo "FAIL: jobs::"
 exit $fail

@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **46** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **47** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 46 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 47 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 46 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 47 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -502,6 +502,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 44 | **IMAP kalıcı olmayan UID'yi "UID" diye döndürüyordu** — `FETCH n (UID)` o anki *sequence* numarasını veriyordu. Ölçüldü: 3 mesaj `UID 1,2,3` → ortadaki silindi → kalanlar `UID 1,2` (olması gereken `1,3`); **UID 2 artık başka bir mesaj** (önce M1, sonra M2) | 🔴 | Bunu önbelleğe alan istemci/webmail silinen mesajı görmeye devam eder ve açınca **başka mesajın içeriğini** alır — sessiz veri bozulması. Kalıcı UID deposu gelene kadar doğru davranış **gürültülü hata**: `UID` veri öğesi ve `UID` komutu artık `NO [CANNOT] … (Milestone 1)` ile reddediliyor; `CREATE/DELETE/RENAME/SUBSCRIBE` de kapsamı söyleyerek reddediliyor (eskiden `BAD bilinmeyen komut` — teşhis ettirmiyordu). Yetenek kontrolü sequence-set kontrolünden **önce**: boş INBOX'ta bile istemci "UID var mı" cevabını alır. **README gerçekle hizalandı** — IMAP `✅` yerine `🟡 Milestone 1`, standart MUA istemcilerinin çalışmayacağı açıkça yazıldı | bu commit |
 | 45 | **Mail sunucuları IPv6'sız ortamda hiç başlamıyordu + "started" logu YALAN söylüyordu** — SMTP/IMAP yalnız `socket(AF_INET6, …)` deniyordu (IPv4 yedeği yok); IPv6 desteği derlenmemiş/kapalı ortamlarda (sertleştirilmiş VPS, bazı konteynerler) `EAFNOSUPPORT` ile başlamıyorlardı. HTTP `AF_INET` kullandığı için o ortamlarda **çalışıyordu** — fark buradan geliyordu. Üstelik `http_main` "server started" logunu **koşulsuz** basıyordu | 🔴 | Ölçüldü (port meşgul edilerek, IPv6'dan bağımsız): `[ERROR] port 7171 dinlenemedi` hemen ardından `[INFO] IMAP server started on port 7171`. Kullanıcı log'a bakıp çalıştığını sanıyordu — bu turun ekseni olan **sessiz/yanıltıcı başarısızlık**. Çözüm: her iki sunucuda IPv4 yedeği (`socket()` ve `bind()` başarısızlığında), `ImapServer::start()` artık `bool`, `SmtpServer::listening()` eklendi, "started" logu **gerçek duruma bağlandı** (başarısızsa `ERROR … (port meşgul mü? yetki? IPv6/IPv4?)` + nesne serbest bırakılıyor). **Analizci bağımsız ortamında buldu** (onun konteynerinde IPv6 yoktu, bende vardı — bu yüzden benim testlerim geçmişti) | bu commit |
 | 46 | **`jobs::next()` ÇOK SÜREÇLİ ortamda aynı işi birden fazla worker'a veriyordu (ÇİFT İŞLEME)** — claim `SELECT … WHERE status='pending' LIMIT 1` + ayrı `UPDATE … WHERE id=?` şeklindeydi; UPDATE'te durum kontrolü yoktu, transaction yoktu, aradaki `std::lock_guard` yalnız **süreç içi** mutex (FastCGI multi-worker'da her worker **ayrı süreç**). Ayrıca `busy_timeout` ve `WAL` yoktu | 🔴 | **Ölçüldü** (4 süreç / 40 iş, ortak `jobs.db`): düzeltme öncesi **42 claim / 30 tekil → 12 iş çift işlendi**, üstelik 10 iş hiç alınamadı (kilit çekişmesi). Gerçek etkisi: aynı e-posta iki kez gider, aynı ödeme iki kez çekilir. Çözüm: **tek ifadelik atomik claim** — `UPDATE … WHERE id=(SELECT … LIMIT 1) AND status='pending' RETURNING …` (SQLite 3.35+, gömülü sürüm 3.47.2) + `journal_mode=WAL` + `busy_timeout=5000`. Sonra: **40 claim / 40 tekil**, kayıp yok. Analizcinin okul sisteminde açık bıraktığı soru buydu | bu commit |
+| 47 | **`sqlite3_busy_timeout()` çok geç çağrılıyordu — worker'lar açılışta çöküyordu** — sıra `open → PRAGMA synchronous → PRAGMA foreign_keys → PRAGMA journal_mode=WAL → busy_timeout → create_schema` şeklindeydi. WAL geçişi ve `create_schema()` **özel kilit** ister; `busy_timeout` henüz ayarlı olmadığı için çekişmede anında `SQLITE_BUSY` → süreç `"jobs:: schema hatası: database is locked"` ile ölüyordu | 🔴 | **Analizcinin ortamında ölçüldü: 48 denemede 37 kilit hatası (%77) + 3 çift claim.** İki katmanlı sonuç: (a) worker'lar açılışta ölüyor, (b) **ölen worker'lar claim yarışını maskeliyor** — az süreç kalınca yarış görünmez olur; hayatta kalan sayısı artınca çift-claim ortaya çıkar (WAL geçişi başarısız olan süreç rollback-journal modunda kalır, izolasyon farklılaşır). Düzeltme: `busy_timeout` `sqlite3_open`'dan **hemen sonra**, tüm PRAGMA'lardan önce + WAL'ın gerçekten etkin olduğu okunup doğrulanıyor (değilse uyarı — sessizce rollback modunda kalmasın). **Benim ortamımda tekrar üretilemedi** (48/48 temiz) — yarış penceresi I/O hızına bağlı; asimetri belirleyici oldu: düzeltme tek satır taşıma, bedeli süreç çökmesi + çift işleme | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 

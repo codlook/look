@@ -39,15 +39,37 @@ void JobStore::init(const std::string& db_path) {
         throw std::runtime_error("jobs:: DB açılamadı (" + db_path + "): " + err);
     }
 
+    // busy_timeout İLK İŞ olmalı — SONRAKİ her adımdan önce.
+    //
+    // ESKİ HATA (bu satır aşağıdaydı): `PRAGMA journal_mode=WAL` geçişi ÖZEL KİLİT
+    // ister; busy_timeout henüz ayarlı olmadığı için çekişmede anında SQLITE_BUSY
+    // döner ve süreç "jobs:: schema hatası: database is locked" ile ÇÖKER.
+    // create_schema() de aynı pencerede.
+    // İki katmanlı sonuç: (a) worker'lar açılışta ölür, (b) ÖLEN worker'lar claim
+    // yarışını MASKELER — az sayıda süreç hayatta kalınca yarış görünmez olur;
+    // hayatta kalan sayısı arttığında çift-claim ortaya çıkar (WAL geçişi
+    // başarısız olan süreç rollback-journal modunda kalır → izolasyon farklılaşır).
+    // Bu, ölçümü yapan ortamın I/O hızına göre açılıp kapanan bir yarış penceresi.
+    sqlite3_busy_timeout(db_, 5000);
     sqlite3_exec(db_, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
     sqlite3_exec(db_, "PRAGMA foreign_keys=OFF;", nullptr, nullptr, nullptr);
-    // ÇOK SÜREÇLİ erişim (FastCGI multi-worker = ayrı SÜREÇLER, ortak jobs.db):
-    //   WAL         → okuyucu yazarı, yazar okuyucuyu bloke etmez
-    //   busy_timeout→ kilit çekişmesinde ANINDA "database is locked" yerine bekle
-    // Ölçüldü (düzeltme öncesi, 4 süreç 40 iş): süreçlerden biri HİÇ iş alamadı
-    // (0), biri 30 aldı — kilit çekişmesi işi tek sürece yığıyordu.
+    // WAL: okuyucu yazarı, yazar okuyucuyu bloke etmez (çok süreçli erişim şart).
     sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
-    sqlite3_busy_timeout(db_, 5000);
+    // WAL gerçekten etkin mi — SESSİZCE rollback modunda kalmasın. Kalırsa
+    // çok süreçli davranış farklılaşır ve bunu ancak üretimde fark ederiz.
+    {
+        sqlite3_stmt* jm = nullptr;
+        if (sqlite3_prepare_v2(db_, "PRAGMA journal_mode;", -1, &jm, nullptr) == SQLITE_OK) {
+            if (sqlite3_step(jm) == SQLITE_ROW) {
+                const char* mode = reinterpret_cast<const char*>(sqlite3_column_text(jm, 0));
+                if (mode && std::string(mode) != "wal")
+                    Logger::instance().log(LogLevel::LOG_WARN, "jobs",
+                        std::string("WAL etkinlestirilemedi (mod: ") + mode +
+                        ") — cok surecli kuyruk davranisi farklilasabilir");
+            }
+            sqlite3_finalize(jm);
+        }
+    }
 
     create_schema();
     initialized_ = true;
