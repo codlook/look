@@ -552,6 +552,39 @@ echo "$sf_out" | grep -qi "ipv6" || {
 [ $sf_ok = 1 ] || { echo "  cikti: [$sf_out]"; fail=1; }
 
 
+# ── KULLANICI MODÜLÜ (`use`) VM'de de yükleniyor mu? ────────────────────────────
+# NEDEN: `use <ad>` iki şeyi karşılar — stdlib modülü (builtin tablosunda zaten
+# bağlı) ve KULLANICI MODÜLÜ (~/.look/modules/<ad>/<ad>.lk). Compiler ikisinde de
+# NOP üretiyordu; kullanıcı modülünün fonksiyonları VM globals'ında hiç oluşmuyor,
+# route "Undefined variable: <fn>" verip KALICI olarak interpreter'a düşüyordu.
+# Çıktı DOĞRU çıktığı için sessiz kalıyordu — fallback bug'ı maskeliyor (1. kural).
+# Yani dilin "use ile çok dosyalı proje" yolu web'de HIZINI kaybediyordu.
+# Bu kontrol hem çıktıyı hem "VM BUG yok"u doğrular.
+UM_HOME="$TMP/umhome"
+mkdir -p "$UM_HOME/.look/modules/umtest"
+cat > "$UM_HOME/.look/modules/umtest/umtest.lk" <<'LK'
+function um_topla($a, $b) { return $a + $b }
+LK
+cat > "$TMP/um.lk" <<'LK'
+use umtest
+route("GET","/um", function(){ return response::text("um=" . um_topla(20, 22)) })
+LK
+UM_PORT=9620
+HOME="$UM_HOME" "$FCGI" --mode http --port $UM_PORT "$TMP/um.lk" >"$TMP/um.log" 2>&1 &
+UMPID=$!
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$UM_PORT/um" 2>/dev/null && break; sleep 0.3; done
+um_out=$(curl -s "http://127.0.0.1:$UM_PORT/um")
+kill $UMPID 2>/dev/null; wait $UMPID 2>/dev/null
+um_cli=$(cd "$TMP" && HOME="$UM_HOME" "$LK" -c 'use umtest
+print(um_topla(20, 22))' 2>&1 | tail -1)
+[ "$um_out" = "um=42" ] || { echo "FAIL: kullanici modulu web'de calismiyor: [$um_out] (beklenen um=42)"; fail=1; }
+if grep -q "VM BUG" "$TMP/um.log" 2>/dev/null; then
+  echo "FAIL: kullanici modulu VM'de yuklenmiyor — route KALICI interpreter'a dustu (yavas yol):"
+  grep -m1 "VM BUG" "$TMP/um.log" | sed 's/^/       /'
+  fail=1
+fi
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

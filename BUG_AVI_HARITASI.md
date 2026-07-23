@@ -2,9 +2,9 @@
 
 > **Amaç:** Rastgele arama yerine **sistematik av**. Bu dosya "nereye bakılacak, hangi
 > yöntemle, hangi testle" sorularının tek kaynağıdır.
-> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **48** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
+> **Son güncelleme:** 2026-07-19 · Kapatılan bug: **49** · Guard: 3 motor × 22 kategori + 36 özel kontrol + DB sürüm-farkındalık (MySQL matris + PG transaction)
 >
-> **Bölüm 7 = kapatılan 48 bug'ın tam listesi** (kök neden + çözüm + commit).
+> **Bölüm 7 = kapatılan 49 bug'ın tam listesi** (kök neden + çözüm + commit).
 >
 > **Kardeş dosyalar:** `PROJE_DURUMU.md` (yerel) · `DENETIM.md` (güvenlik denetimi, yerel)
 
@@ -12,7 +12,7 @@
 
 ## 0. Avın altın kuralları
 
-Bu 7 kural 48 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
+Bu 7 kural 49 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 
 | # | Kural | Nereden öğrendik |
 |---|---|---|
@@ -504,6 +504,7 @@ neydi, neden kaçtı, nasıl çözüldü.
 | 46 | **`jobs::next()` ÇOK SÜREÇLİ ortamda aynı işi birden fazla worker'a veriyordu (ÇİFT İŞLEME)** — claim `SELECT … WHERE status='pending' LIMIT 1` + ayrı `UPDATE … WHERE id=?` şeklindeydi; UPDATE'te durum kontrolü yoktu, transaction yoktu, aradaki `std::lock_guard` yalnız **süreç içi** mutex (FastCGI multi-worker'da her worker **ayrı süreç**). Ayrıca `busy_timeout` ve `WAL` yoktu | 🔴 | **Ölçüldü** (4 süreç / 40 iş, ortak `jobs.db`): düzeltme öncesi **42 claim / 30 tekil → 12 iş çift işlendi**, üstelik 10 iş hiç alınamadı (kilit çekişmesi). Gerçek etkisi: aynı e-posta iki kez gider, aynı ödeme iki kez çekilir. Çözüm: **tek ifadelik atomik claim** — `UPDATE … WHERE id=(SELECT … LIMIT 1) AND status='pending' RETURNING …` (SQLite 3.35+, gömülü sürüm 3.47.2) + `journal_mode=WAL` + `busy_timeout=5000`. Sonra: **40 claim / 40 tekil**, kayıp yok. Analizcinin okul sisteminde açık bıraktığı soru buydu | bu commit |
 | 47 | **`sqlite3_busy_timeout()` çok geç çağrılıyordu — worker'lar açılışta çöküyordu** — sıra `open → PRAGMA synchronous → PRAGMA foreign_keys → PRAGMA journal_mode=WAL → busy_timeout → create_schema` şeklindeydi. WAL geçişi ve `create_schema()` **özel kilit** ister; `busy_timeout` henüz ayarlı olmadığı için çekişmede anında `SQLITE_BUSY` → süreç `"jobs:: schema hatası: database is locked"` ile ölüyordu | 🔴 | **Analizcinin ortamında ölçüldü: 48 denemede 37 kilit hatası (%77) + 3 çift claim.** İki katmanlı sonuç: (a) worker'lar açılışta ölüyor, (b) **ölen worker'lar claim yarışını maskeliyor** — az süreç kalınca yarış görünmez olur; hayatta kalan sayısı artınca çift-claim ortaya çıkar (WAL geçişi başarısız olan süreç rollback-journal modunda kalır, izolasyon farklılaşır). Düzeltme: `busy_timeout` `sqlite3_open`'dan **hemen sonra**, tüm PRAGMA'lardan önce + WAL'ın gerçekten etkin olduğu okunup doğrulanıyor (değilse uyarı — sessizce rollback modunda kalmasın). **Benim ortamımda tekrar üretilemedi** (48/48 temiz) — yarış penceresi I/O hızına bağlı; asimetri belirleyici oldu: düzeltme tek satır taşıma, bedeli süreç çökmesi + çift işleme | bu commit |
 | 48 | 🛡️ **Paket kurulumunda yönlendirme hedefi doğrulanmıyordu** — `download_follow` gelen `Location` başlığını **körlemesine** takip ediyordu: `http://…` (şema düşürme → sonraki istek düz metin, TLS bütünlüğü kaybolur) ve **farklı host** kabul ediliyordu | 🛡️ | Paket = **çalıştırılabilir LOOK kodu**, yani tedarik zinciri riski. İlk istek zaten güvenliydi (`zip_url()` https sabit, `parse_pkg` host'u `github.com`'a kısıtlı, TLS'te `SSL_VERIFY_PEER` + `SSL_set1_host`) — açık yalnız yönlendirme zincirindeydi. Çözüm: yönlendirmede **https zorunlu** + host allowlist (`github.com`, `*.github.com`, `*.githubusercontent.com`). **Ölçüldü:** meşru zincir (`api.github.com` → `codeload.github.com`) bozulmadan çalışıyor, modül gerçekten kuruluyor. Kötü yönlendirmenin reddi **ölçülemedi** (sahte GitHub geçerli TLS sertifikası gerektirir) — mantık + asimetri gerekçesiyle uygulandı | bu commit |
+| 49 | **Kullanıcı modülleri (`use`) VM'de hiç yüklenmiyordu — çok dosyalı proje web'de KALICI yavaş yola düşüyordu** — `compiler.cpp` `UseStatement` için her durumda `NOP` üretiyordu. Stdlib için doğru (builtin tablosunda zaten bağlı), ama kullanıcı modülünün (`~/.look/modules/<ad>/<ad>.lk`) fonksiyonları VM globals'ında hiç oluşmuyordu | 🔴 | Ölçüldü (2 modül + `app::` + views ile gerçek proje): çıktı **doğru** (`[urun-42] @ belediye`) ama log'da `[ERROR] VM BUG — route KALICI interpreter'a düştü (YAVAŞ YOL): Undefined variable: urun_getir`. Yani dilin **"use ile çok dosyalı proje"** yolu web'de hızını kaybediyordu ve **fallback bunu maskeliyordu** (1. altın kural: fallback bug saklar). Çözüm: compiler `use` görünce kullanıcı modülü dosyasını parse edip **aynı derleme birimine katıyor** → fonksiyonlar VM'de `BYTECODE_FN` olarak var; aynı modül iki kez `use` edilirse tekrar derlenmiyor. Sonra: **VM BUG = 0**, CLI'de regresyon yok. **README de düzeltildi** — "routes live in one `.lk` file" ifadesi yanlış izlenim veriyordu; artık **Project layout** bölümü çok dosyalı düzeni gösteriyor | bu commit |
 
 ### 7c. Bu turda TEMİZ çıkanlar (aynı derecede önemli)
 

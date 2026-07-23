@@ -86,6 +86,46 @@ route("GET", "/blog", function() use ($db) {
 {/block}
 ```
 
+## Project layout
+
+LOOK is **not a one-file language**. A `.lk` file is a program you can run on its own
+(`lk report.lk`), and a real project is split the way you would expect — the entry file
+only wires things together:
+
+```
+myapp/
+├── index.lk              # entry: routes + service wiring
+├── config/app.json       # settings
+├── views/                # templates — {$var}, {#if}, {#each}, {#extends}
+│   ├── layout.html
+│   └── product.html
+└── ~/.look/modules/      # your own modules, loaded with `use`
+    ├── model/model.lk
+    └── util/util.lk
+```
+
+```lk
+use model                 # ~/.look/modules/model/model.lk
+use util
+use template
+
+app::set("db", db::connect(env("DB_DSN")))     # register once, use anywhere
+
+route("GET", "/product/{id}", function() {
+    $p = product_find(request::param("id"))     # from model — plain name, no prefix
+    return response::html(template::render("views/product", ["p" => $p]))
+})
+```
+
+Three things worth knowing:
+
+- **Your module functions are called by their plain name** (`product_find`), not
+  `model::product_find`. The `mod::fn` form is for built-ins (`string::upper`).
+- **`app::set` / `app::get`** share services (DB handle, config) across routes without
+  passing them around or capturing them with `use`.
+- **Each file still runs standalone** — a module or a script can be executed directly,
+  which makes CLI tools and cron jobs trivial (`lk tools/import.lk`).
+
 ## Features
 
 | Feature | |
@@ -126,10 +166,10 @@ failing obscurely.
 
 ## Known limits (worth knowing up front)
 
-- **One entry file.** There is no project-local `include`/`require`; `use` resolves
-  built-ins and installed modules (`~/.look/modules`), not your own files. So your
-  routes live in one `.lk` file — but **views belong in `views/*.html`** via the
-  template engine, and settings in a config file, which is what keeps it readable.
+- **Modules live in the module directory, not in relative paths.** There is no
+  `include "./lib/foo.lk"` — you split code into *modules* (see **Project layout**
+  above), which `use` loads from `~/.look/modules/`. One entry file starts the app;
+  everything else can be a module, a view, or config.
 - **Uploads are sniffed, not trusted.** `request::file` reports the MIME from the
   file's magic bytes, not from the client's `Content-Type` — a `.php` renamed to
   `.png` is reported for what it is. Unknown/plain content comes back as

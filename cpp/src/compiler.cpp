@@ -14,6 +14,7 @@
 #include "look/lexer.h"
 #include "look/parser.h"
 
+#include <fstream>
 #include <cassert>
 #include <sstream>
 #include <stdexcept>
@@ -314,9 +315,64 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
     else if (auto* s = dynamic_cast<const BlockStatement*>(&stmt)) {
         compile_block(*s);
     }
-    else if (dynamic_cast<const UseStatement*>(&stmt)) {
-        // use math; — modül yükleme VM'de setup fazında yapılır, bytecode'da NOP
-        emit(OpCode::NOP);
+    else if (auto* us = dynamic_cast<const UseStatement*>(&stmt)) {
+        // `use <ad>` iki farklı şeyi karşılar:
+        //   1) stdlib modülü (string, jobs, template…) → builtin tablosunda ZATEN
+        //      bağlı; bytecode'da yapılacak bir şey yok → NOP (eski davranış doğru).
+        //   2) KULLANICI MODÜLÜ (~/.look/modules/<ad>/<ad>.lk) → dosya yüklenip
+        //      fonksiyonları global olarak TANIMLANMALI.
+        //
+        // ESKİ HATA: her iki durumda da NOP vardı. Kullanıcı modülünün fonksiyonları
+        // VM globals'ında hiç oluşmuyordu; interpreter onları yüklediği için çıktı
+        // DOĞRU çıkıyor ama web'de route "Undefined variable: <fn>" verip KALICI
+        // olarak interpreter'a düşüyordu. Ölçüldü (çok dosyalı proje, use model):
+        //   [ERROR] VM BUG — route kalıcı interpreter'a düştü (YAVAŞ YOL):
+        //           GET:/urun/{id} — Undefined variable: urun_getir
+        // Yani dilin "use ile çok dosyalı proje" yolu web'de HIZINI kaybediyordu —
+        // sonuç doğru olduğu için de sessiz kalıyordu (fallback maskeliyor).
+        //
+        // Çözüm: modül dosyasını burada parse edip statement'larını AYNI derleme
+        // birimine kat. Böylece fonksiyonlar VM globals'ında BYTECODE_FN olur.
+        // Ayrım basit: kullanıcı modülünün DOSYASI vardır, stdlib'inki yoktur.
+        bool loaded = false;
+        {
+#ifdef _WIN32
+            const char* home = std::getenv("USERPROFILE");
+            if (!home) home = std::getenv("HOMEDRIVE");
+#else
+            const char* home = std::getenv("HOME");
+#endif
+            if (home && *home) {
+                std::string path = std::string(home) + "/.look/modules/" +
+                                   us->module_name + "/" + us->module_name + ".lk";
+                // Aynı modül iki kez use edilirse tekrar derleme (interpreter'ın
+                // included_files_ mantığıyla aynı) — çift tanım ve şişme olmasın.
+                static std::vector<std::string> g_loaded;
+                static std::vector<std::shared_ptr<Program>> g_module_asts;  // AST ömrü
+                bool already = false;
+                for (auto& p : g_loaded) if (p == path) { already = true; break; }
+                if (already) { emit(OpCode::NOP); return; }
+
+                std::ifstream f(path);
+                if (f) {
+                    std::string src((std::istreambuf_iterator<char>(f)),
+                                     std::istreambuf_iterator<char>());
+                    try {
+                        Lexer lx(src);
+                        Parser p(lx.scan_tokens());
+                        auto prog = std::shared_ptr<Program>(p.parse().release());
+                        g_loaded.push_back(path);
+                        g_module_asts.push_back(prog);
+                        for (auto& sub : prog->statements) compile_stmt(*sub);
+                        loaded = true;
+                    } catch (...) {
+                        // Modül derlenemedi → NOP; interpreter yolu yine çalışır
+                        // (fallback), sessiz yanlış davranış üretmeyiz.
+                    }
+                }
+            }
+        }
+        if (!loaded) emit(OpCode::NOP);
     }
     else {
         throw LookCompileError("Bilinmeyen statement tipi: " + std::string(typeid(stmt).name()));
