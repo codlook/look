@@ -627,3 +627,18 @@ float) değil, **`9223372036854775809 → ...808` (makul tamsayı gibi görünü
 **Not:** `0o17` (sekizlik) ve `.5` desteklenmiyor ama **açık parse hatası**
 veriyorlar (fail-loud, sorun değil — analizci teyit etti). JSON yolu (dış veri,
 gerçek risk) kapatıldı; kalan iki madde kaynak-kontrollü/uç, düşük öncelik.
+
+**52'nin iki yan etkisi (analizci ölçtü — belgelendi, docs json:: callout):**
+1. **Round-trip tip değişimi:** decode→encode büyük tamsayıyı JSON string olarak
+   yeniden yazar (`9223…809` → `"9223…809"`). LOOK'ta bignum tipi yok → kaçınılmaz;
+   JSON'u aynen ileten proxy/webhook için önemli. Belgeye eklendi.
+2. **Aritmetikte sessiz 0:** `"9223372036854775809" + 0 → 0` (`to_int()`,
+   interpreter.cpp:106 — `stoll` taşması yakalanıp `0` döner). Takas doğru yönde
+   (bu ID'lerde aritmetik anlamsız; `0` en azından `...808`'den göze batar).
+
+**AÇIK KARAR (ayrı, genel coercion):** `to_int()` int64-aşan **sayısal** string'i
+sessizce `0`'a çeviriyor — "abc"→0 gibi lenient davranışın parçası ama sayısal-ama-
+taşan string için özellikle yanıltıcı (geçerli veri gibi görünür). Fail-loud (hata)
+veya saturasyon (INT64_MAX) yapılabilir; ama `to_int()` sıcak+yaygın (dizi indeksi,
+karşılaştırma) → global davranış değişikliği, kullanıcı kararı bekliyor. Bug 52'den
+bağımsız (fix onu sadece daha erişilebilir yaptı).
