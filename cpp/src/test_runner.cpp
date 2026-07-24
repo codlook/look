@@ -46,7 +46,7 @@ static std::string read_file(const fs::path& path) {
 }
 
 // assert:: module — uses TestAssertionError to signal failure
-static Module make_assert_module() {
+static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
     Module m;
     m.name = "assert";
 
@@ -147,17 +147,26 @@ static Module make_assert_module() {
         return Value();
     };
 
-    m.functions["throws"] = [fail](auto args) -> Value {
+    m.functions["throws"] = [fail, &interp, &web_ctx](auto args) -> Value {
         if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
             fail("assert::throws() fonksiyon bekler");
-        // Note: actual invocation must happen in the test runner context
-        // This flag tells the runner to call the fn and expect an exception
-        // We use a special return value to signal this
-        // Simpler: just return the fn wrapped in a marker array ["__throws__", fn]
-        auto marker = std::make_shared<std::vector<Value>>();
-        marker->push_back(Value(std::string("__assert_throws__")));
-        marker->push_back(args[0]);
-        return Value(marker);
+        // Fonksiyonu HEMEN çağır ve hata fırlatmasını bekle. (Eskiden bir marker
+        // array döndürüp runner'ın kontrol etmesini beklerdi — ama LOOK son ifadeyi
+        // örtük DÖNDÜRMEDIĞI için marker atılıyordu; assert::throws() son ifade
+        // olsa bile hiçbir zaman assert etmiyordu → sessiz yalancı geçiş.)
+        // İzole bir dispatch kopyasında çalıştır ki yan etkiler ne parent interp'e
+        // ne de sonraki testlere sızsın.
+        bool threw = false;
+        try {
+            auto tmp = interp.make_dispatch_copy();
+            std::ostringstream sink;
+            tmp->set_output(sink);
+            tmp->set_web_context(&web_ctx);
+            tmp->invoke(args[0], {});
+        } catch (...) { threw = true; }
+        if (!threw)
+            fail("assert::throws() başarısız — çağrı hata fırlatmadı");
+        return Value();
     };
 
     return m;
@@ -298,7 +307,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     interp.set_file(file_path.string());
 
     // Register assert:: module (for "use assert;" syntax)
-    auto assert_mod = make_assert_module();
+    auto assert_mod = make_assert_module(interp, web_ctx);
     interp.register_use_module("assert", assert_mod);
 
     // Register ws:: test module — exposes ws::decode_frame() for WS frame DoS tests
@@ -402,13 +411,24 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         return Value();
     });
 
-    interp.register_builtin("assert_throws", [fail](std::vector<Value> args) -> Value {
+    interp.register_builtin("assert_throws", [fail, &interp, &web_ctx](std::vector<Value> args) -> Value {
         if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
             fail("assert_throws() fonksiyon bekler");
-        auto marker = std::make_shared<std::vector<Value>>();
-        marker->push_back(Value(std::string("__assert_throws__")));
-        marker->push_back(args[0]);
-        return Value(marker);
+        // Fonksiyonu HEMEN çağır (izole kopyada) ve hata fırlatmasını bekle.
+        // Eski marker mekanizması yalnız testin DÖNÜŞ değeriyken çalışıyordu; LOOK
+        // son ifadeyi örtük döndürmediği için belgelenen kullanım dahil hiçbir
+        // zaman assert etmiyordu (sessiz yalancı geçiş).
+        bool threw = false;
+        try {
+            auto tmp = interp.make_dispatch_copy();
+            std::ostringstream sink;
+            tmp->set_output(sink);
+            tmp->set_web_context(&web_ctx);
+            tmp->invoke(args[0], {});
+        } catch (...) { threw = true; }
+        if (!threw)
+            fail("assert_throws() başarısız — çağrı hata fırlatmadı");
+        return Value();
     });
 
     interp.register_builtin("assert_match", [fail](std::vector<Value> args) -> Value {
@@ -454,22 +474,10 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
                 interp.before_each().type() == Value::BYTECODE_FN)
                 copy->invoke(interp.before_each(), {});
 
-            Value ret = copy->invoke(tc.fn, {});
-
-            // Check for assert::throws marker
-            if (ret.type() == Value::ARRAY) {
-                auto& arr = *ret.as_array();
-                if (!arr.empty() && arr[0].type() == Value::STRING &&
-                    arr[0].as_string() == "__assert_throws__" && arr.size() >= 2)
-                {
-                    // Call the wrapped function — expect it to throw
-                    bool threw = false;
-                    try { copy->invoke(arr[1], {}); }
-                    catch (...) { threw = true; }
-                    if (!threw)
-                        throw TestAssertionError("assert::throws() başarısız — hata fırlatılmadı");
-                }
-            }
+            // assert_throws() / assert::throws() artık çağrıldıkları yerde HEMEN
+            // çalışıp fırlatmayı doğruluyor (marker mekanizması kaldırıldı — son
+            // ifade örtük döndürülmediği için sessizce çalışmıyordu).
+            copy->invoke(tc.fn, {});
 
             res.passed = true;
         } catch (const TestAssertionError& e) {
