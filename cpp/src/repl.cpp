@@ -43,8 +43,11 @@ static std::string cyan(const std::string& s)   { return colored("36", s); }
 static std::string yellow(const std::string& s) { return colored("33", s); }
 static std::string gray(const std::string& s)   { return colored("90", s); }
 
-// ── Open-brace counter — determines if input is complete ─────────────────
-// Returns > 0 if there are unclosed { } blocks
+// ── Open-delimiter counter — determines if input is complete ─────────────
+// Returns > 0 if there are unclosed {} [] () — the REPL keeps collecting
+// lines until all are balanced. Eskiden yalnız {} sayılırdı; çok satırlı
+// paren/bracket ifadeleri (foo(\n...\n) veya dizi literali) ilk satırda erken
+// çalıştırılıp parse hatası veriyordu. Parantez/köşeli de aynı mantıkla sayılır.
 static int open_braces(const std::string& src) {
     int depth = 0;
     bool in_str = false;
@@ -59,8 +62,8 @@ static int open_braces(const std::string& src) {
         } else if (c == '#') {
             // Line comment — skip to end
             while (i < src.size() && src[i] != '\n') ++i;
-        } else if (c == '{') depth++;
-        else if (c == '}') depth--;
+        } else if (c == '{' || c == '[' || c == '(') depth++;
+        else if (c == '}' || c == ']' || c == ')') depth--;
     }
     return depth;
 }
