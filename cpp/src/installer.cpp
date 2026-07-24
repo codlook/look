@@ -458,7 +458,13 @@ int cmd_install_all(bool verbose) {
     std::cout << lock.size() << " paket yükleniyor...\n";
     int failed = 0;
     for (auto& [key, entry] : lock) {
-        std::string pkg_str = "github.com/" + key + "@" + entry.ref;
+        // Kilit dosyasının amacı YENİDEN-ÜRETİLEBİLİRLİK: kayıtlı commit sha'sına
+        // sabitle. Eskiden entry.ref (dal/etiket) kullanılıyordu → `look install`
+        // her koşumda ref'i yeniden çözüyordu; dal HEAD'i ilerlerse (veya etiket
+        // yeniden basılırsa) look.lock'ta sha yazılı olmasına rağmen FARKLI kod
+        // kurulurdu — yani kilit hiç kilitlemiyordu. sha yoksa (eski lock) ref'e düş.
+        const std::string& pin = entry.sha.empty() ? entry.ref : entry.sha;
+        std::string pkg_str = "github.com/" + key + "@" + pin;
         if (cmd_install(pkg_str, verbose) != 0) ++failed;
     }
 

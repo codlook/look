@@ -53,6 +53,29 @@ if timeout 10 curl -s -o /dev/null https://api.github.com 2>/dev/null; then
   else
     echo "  FAIL Zip-Slip: $disari dosya hedef dizin DISINA yazildi"; fail=1
   fi
+  # 4) look.lock SHA-PIN (51. bug): PAKET install look.lock'a "ref@sha" yazar;
+  #    `look install` (install-all) kayitli commit SHA'sina sabitlenmeli, dal/
+  #    etikete degil. Temiz bir dizinde paket kur, sonra install-all'un o SHA'yi
+  #    indirdigini (dal HEAD'ini degil) verbose zipball URL'inden dogrula.
+  #    NOT: 'module install' look.lock YAZMAZ (~/.look/modules'a kurar) — bu test
+  #    'install' (paket) formunu kullanmali.
+  pdir="$TMP/pkgpin"; mkdir -p "$pdir"
+  ( cd "$pdir" && HOME="$pdir" timeout 120 "$LK" install github.com/codlook/look-modules/jwt >/dev/null 2>&1 )
+  sha=$(grep -o '@[0-9a-f]\{7,40\}' "$pdir/look.lock" 2>/dev/null | head -1 | tr -d '@')
+  if [ -n "$sha" ]; then
+    allout=$( cd "$pdir" && HOME="$pdir" timeout 120 "$LK" install -v 2>&1 )
+    if echo "$allout" | grep -q "zipball/$sha"; then
+      echo "  PASS look.lock sha-pin: install-all kayitli commit'e sabitliyor (${sha:0:12})"
+    elif echo "$allout" | grep -q "zipball/main"; then
+      echo "  FAIL look.lock sha-pin: install-all dal HEAD'ini (main) cozuyor — kilit kilitlemiyor"; fail=1
+    else
+      echo "  FAIL look.lock sha-pin: beklenen zipball/$sha URL'i verbose ciktida yok:"
+      echo "$allout" | grep -i "zipball\|indir" | head -3 | sed 's/^/       /'
+      fail=1
+    fi
+  else
+    echo "  (atlandi: paket look.lock'ta sha yok — sha cozumleme calismiyor olabilir)"
+  fi
 else
   echo "  (atlandi: gercek kurulum testi ag gerektirir)"
 fi
