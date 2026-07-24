@@ -53,7 +53,7 @@ Bu 7 kural 49 bug'ın hepsinden çıkarıldı. Her ava başlarken oku.
 | Test runner | `test_runner.cpp` | 593 | ⬜ yok | Düşük |
 | Web context (multipart, cookie) | `web.cpp` | 558 | 🟡 kısmi | **Yüksek** |
 | Fiber scheduler | `fiber_posix.cpp` | 483 | 🟡 yük testi | Orta |
-| **Lexer** | `lexer.cpp` | 458 | ⬜ yok | Orta |
+| **Lexer** | `lexer.cpp` | 458 | ✅ differential (sonlanma/derinlik/unicode) | Orta |
 | Jobs | `jobs_stdlib.cpp` | 457 | ✅ jobs_test — çok süreçli claim (yeni) | Orta |
 | DKIM | `dkim.cpp` | 413 | ⬜ yok | Düşük |
 | Date | `date_stdlib.cpp` | 348 | ⬜ yok | Orta |
@@ -300,7 +300,7 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-20 | **MySQL auth (39) + PG transaction (40)** | gerçek sürüm konteynerleri + sunucu logu | MySQL 8.0–9.x `caching_sha2_password` (RSA tam yol) — 5 sürüm + MariaDB doğrulandı; PG transaction içinde sequence'siz INSERT veri kaybı kapandı |
 | 07-21 | **Event loop (`event_loop.cpp`, 658 satır — guard'ı YOKTU)** | 3h yük/sızıntı: 240 anormal kopma + 320 paralel bağlantı + per-IP sınırı | **TEMİZ — bug yok.** fd yaşam döngüsü kusursuz: RST (SO_LINGER 0), yarım komut (CRLF'siz), DATA ortasında kopma, 150 eşzamanlı bağlantı — hepsinde **fd sızıntısı 0**. 8 thread × 40 tur = 320 bağlantı 0.1 sn'de, **0 hata**, log temiz, RSS 8.6 MB sabit. `close_fd` idempotent ve fd-yeniden-kullanım yarışına karşı korumalı (kaynakta belgeli). Per-IP limiti **doğru uygulanıyor**: varsayılan 10 → `220 kabul: 10 / 421 red: 20`; `LOOK_SMTP_MAX_CONNS_IP=3` → `3/27`; bağlantı kapanınca sayaç serbest. **Kendi ölçüm hatam:** ilk turda `recv`'den geleni "banner" saydım ve `421` reddini kabul sanıp "limit çalışmıyor" sonucuna varmıştım — `220`/`421` ayırt edilince kodun doğru olduğu görüldü (7. altın kural) |
 | 07-21/22 | **Mail + altyapı turu**: SMTP, IMAP, event loop, `jobs::`, `installer::` | 3f düşmanca protokol + 3h yük/sızıntı + gerçek sunucu + çok-süreç + analizci çapraz-doğrulama | **7 bug** (42–48): SMTP adres ayrıştırma (çöp Return-Path), IMAP mailbox doğrulama + kalıcı-olmayan UID reddi, mail sunucuları IPv6'sız başlamama + yalancı "started" logu, `jobs::next()` çok-süreçli çift işleme, `busy_timeout` sırası (worker çökmesi), installer yönlendirme doğrulaması. **TEMİZ:** event loop fd yaşam döngüsü (240 anormal kopma, 0 sızıntı), Zip-Slip, TLS doğrulama, per-IP limiti. **AÇIK (altyapı kararı):** IMAP4rev1 tam uyumluluk (7e), paket bütünlük imzası (7f) || — | manuel `db::begin` nested tutarlılığı, prepared statement bağlama, `jobs::`, lexer, `installer::`, SMTP/IMAP | — | **SIRADA** |
-
+| 07-22 | **Lexer (`lexer.cpp`, 458 satır — guard'ı YOKTU)** | 3f düşmanca kaynak + 3d parser sondası | **TEMİZ — ciddi bug yok.** Sonlanmamış string/raw → `throw` (sonsuz okuma yok); derin iç içe (50k paren/bracket) → parser guard `max 150` (stack overflow yok); NUL bayt + geçersiz UTF-8 dizisi → hata; **unicode surrogate doğru** (tek `\uD800` güvenli, çift `😀` → tek kod noktası); `\uZZZZ` geçersiz hex → literal korunur; `1.2.3` → `1.23` (doğru: `.` concat). **İki sessiz davranış (7g'de, düşük öncelik):** int64-taşan literal → sessiz float, `0x` rakamsız → `0` |
 **~~AÇIK — çağrılamayan ad mesajı~~ → DÜZELTİLDİ (38. bug, `31ee310`):** `olmayan_fn(1)`
 artık iki motorda `Undefined variable: <ad>`; `$x=5; $x(1)` iki motorda
 `'$x' çağrılabilir değil`. Ad, compiler tarafından `NOP` hint'ine gömülüp VM'e taşınıyor.
@@ -606,3 +606,20 @@ yazıp sonraki kurulumlarda karşılaştırmak ucuz ve büyük kazanç olurdu (T
 **Ölçülemeyen:** kötü yönlendirmenin gerçekten reddedildiği canlı olarak
 doğrulanamadı — sahte GitHub geçerli sertifika ister. Meşru zincirin bozulmadığı
 ise ölçüldü (gerçek kurulum yapıldı).
+
+### 7g. Lexer — sessiz sayı davranışları (AÇIK, düşük öncelik, 2026-07-22)
+
+Lexer taramasında çıkan iki uç davranış. **Bug numarası verilmedi** — etki düşük,
+girdi uç, ve biri yaygın dil davranışı. Ama bu oturumun ekseni "sessiz yanlış veri"
+olduğu için kayda geçti.
+
+| Girdi | Sonuç | Değerlendirme |
+|---|---|---|
+| `999999999999999999999999999` (int64 > 9.2×10¹⁸) | sessizce `1e+27` **float** | Çoğu dilde aynı (JS). Ama 19+ haneli bir ID/tutar sessizce hassasiyet kaybeder. Uç ama sessiz |
+| `0x` (rakamsız hex öneki) | sessizce `0` | Net bozukluk — geçersiz literal `0` üretiyor, hata olmalı. Ama kimse kazara `0x` yazmaz |
+
+**Neden şimdi düzeltilmedi:** ikisi de gerçek uygulamada ~hiç görülmez ve
+düzeltmek davranış değişikliği (taşan literal'e güvenen kod olması pek olası değil
+ama sıfır değil). Kullanıcıya sunuldu; talep gelirse: taşan int literal → hata
+(veya açık `BigInt` yokluğu belgelensin), `0x` rakamsız → parse hatası.
+Guard bunları test ETMİYOR (davranış kararı verilmeden kilitlemek yanlış olur).

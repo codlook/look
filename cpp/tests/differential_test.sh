@@ -585,6 +585,27 @@ if grep -q "VM BUG" "$TMP/um.log" 2>/dev/null; then
 fi
 
 
+# ── LEXER — bozuk/kötü niyetli kaynağa dayanıklılık ─────────────────────────────
+# Dilin girdi kapısı; guard'ı yoktu. Tarandı, ciddi bug ÇIKMADI — bu kontrol
+# sağlam çıkan davranışları REGRESYONA karşı kilitler:
+#   sonlanmama -> hata (sonsuz okuma değil), derin iç içe -> parser guard (stack
+#   overflow değil), unicode surrogate -> doğru (tek surrogate güvenli, çift
+#   birleşiyor). Hepsi tek motorda (lexer paylaşımlı) — 3 motora gerek yok.
+lx_fail=0
+printf 'print("acik' > "$TMP/lx_str.lk"
+"$LK" --check "$TMP/lx_str.lk" 2>&1 | grep -qi "Unterminated\|sonland" || { echo "FAIL: lexer sonlanmamis string'i yakalamiyor"; lx_fail=1; }
+# derin ic ice — stack overflow degil, net hata
+python3 -c 'open("'"$TMP"'/lx_deep.lk","w").write("print(" + "("*20000 + "1" + ")"*20000 + ")")' 2>/dev/null && {
+  dc=$(timeout 10 "$LK" --check "$TMP/lx_deep.lk" 2>&1 | head -1)
+  echo "$dc" | grep -qi "derin\|deep\|max" || { echo "FAIL: derin ic ice parser guard'i yok: [$dc]"; lx_fail=1; }
+}
+# unicode surrogate cifti -> tek kod noktasi
+printf 'use string\nprint(string::len("\\uD83D\\uDE00"))' > "$TMP/lx_emoji.lk"
+em=$("$LK" "$TMP/lx_emoji.lk" 2>&1 | tail -1)
+[ "$em" = "1" ] || { echo "FAIL: surrogate cifti tek kod noktasina birlesmiyor: [$em] (beklenen 1)"; lx_fail=1; }
+[ $lx_fail = 0 ] || fail=1
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).
