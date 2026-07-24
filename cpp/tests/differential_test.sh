@@ -606,6 +606,16 @@ em=$("$LK" "$TMP/lx_emoji.lk" 2>&1 | tail -1)
 [ $lx_fail = 0 ] || fail=1
 
 
+# ── JSON int64-aşan tamsayı KESİNLİĞİ (52. bug) ─────────────────────────────
+# json::decode int64'ü aşan tamsayıyı sessizce float'a düşürüyordu → ID sessizce
+# bozuluyordu (9223372036854775809 -> ...808). Kesinlik korunmalı: string olarak
+# birebir dönmeli. json_decode_value tek kaynak (stdlib) — tek motorda test yeterli.
+printf 'use json\n$d = json::decode("{\\"id\\": 9223372036854775809, \\"big\\": 18446744073709551615}")\nprint($d["id"])\nprint($d["big"])' > "$TMP/js_int.lk"
+ji=$("$LK" "$TMP/js_int.lk" 2>&1)
+echo "$ji" | grep -q "9223372036854775809" || { echo "FAIL: json int64-asan id KESINLIK kaybi (beklenen 9223372036854775809): [$ji]"; fail=1; }
+echo "$ji" | grep -q "18446744073709551615" || { echo "FAIL: json uint64-max KESINLIK kaybi (beklenen 18446744073709551615): [$ji]"; fail=1; }
+
+
 # ── VM fallback GÜRÜLTÜLÜ mü? (C9 felsefe adımı) ─────────────────────────────
 # Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
 # yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).

@@ -304,6 +304,7 @@ Sızıntı **tek istekte görünmez** — havuz boyutundan fazla istek şart (S7
 | 07-24 | **Test runner (`test_runner.cpp`, `lk test`)** | assert_throws konum sondası | **50. bug — assert_throws()/assert::throws() HİÇBİR ZAMAN assert etmiyordu.** Marker array döndürüp runner'ın testin DÖNÜŞ değerinde bulmasını beklerdi; ama LOOK son ifadeyi örtük döndürmez → marker atılır → belgelenen kullanım dahil yakalanması gereken hata sessizce kaçar, test YALANCI YEŞİL. Fix: marker atıldı; fonksiyon çağrıldığı yerde HEMEN (izole dispatch kopyasında) çalışıp fırlatma doğrulanıyor — konumdan bağımsız. Guard: `test_runner_test.sh` |
 | 07-24 | **REPL (`repl.cpp`, `lk repl`)** | düşmanca girdi + çok satır sondası | **Ciddi (sessiz-veri) bug YOK.** Tree-walk, etkileşimli, düşük riskli yüzey. Parse/runtime hataları yakalanıp gösteriliyor, çökme yok; string içi `#`/kaçış doğru. **Minör UX düzeltmesi:** `open_braces()` yalnız `{}` sayıyordu → çok satırlı `foo(…)` ve dizi literali erken çalışıp parse hatası veriyordu; `()`/`[]` de aynı mantıkla sayıldı (görünür hata, sessiz veri değildi) |
 | 07-24 | **installer look.lock (2. geçiş, analizci)** | yeniden-üretilebilirlik | **51. bug — look.lock gerçekten kilitlemiyordu.** `cmd_install_all` kayıtlı `sha` yerine `ref`i (dal/etiket) kullanıyordu → `look install` her koşumda ref'i yeniden çözüyor; dal HEAD'i ilerlerse look.lock'ta sha yazılı olmasına rağmen FARKLI kod kurulur. Fix: install-all kayıtlı commit sha'sına sabitler (sha yoksa ref'e düşer). Guard: installer_test.sh sha-pin adımı (verbose zipball URL = sha) |
+| 07-24 | **JSON int64 kesinliği (2. geçiş, analizci)** | dış veri / ID bozulması | **52. bug — json::decode int64'ü aşan tamsayıyı sessizce float'a düşürüyordu.** `...809 → ...808` (1 eksik), uint64-max `...615 → ...616`. Snowflake/Discord/Twitter ID, MySQL BIGINT UNSIGNED anahtarları sessizce bozulur, yanlış kayıt eşleşir. `1e+27`den tehlikeli çünkü makul tamsayı gibi görünür. Fix: int64 aşan tamsayı orijinal metniyle STRING olarak korunur (kayıpsız). Guard: differential JSON int64 |
 **~~AÇIK — çağrılamayan ad mesajı~~ → DÜZELTİLDİ (38. bug, `31ee310`):** `olmayan_fn(1)`
 artık iki motorda `Undefined variable: <ad>`; `$x=5; $x(1)` iki motorda
 `'$x' çağrılabilir değil`. Ad, compiler tarafından `NOP` hint'ine gömülüp VM'e taşınıyor.
@@ -610,19 +611,19 @@ yazıp sonraki kurulumlarda karşılaştırmak ucuz ve büyük kazanç olurdu (T
 doğrulanamadı — sahte GitHub geçerli sertifika ister. Meşru zincirin bozulmadığı
 ise ölçüldü (gerçek kurulum yapıldı).
 
-### 7g. Lexer — sessiz sayı davranışları (AÇIK, düşük öncelik, 2026-07-22)
+### 7g. Sayı literal davranışları (int64 taşması — kısmen kapatıldı)
 
-Lexer taramasında çıkan iki uç davranış. **Bug numarası verilmedi** — etki düşük,
-girdi uç, ve biri yaygın dil davranışı. Ama bu oturumun ekseni "sessiz yanlış veri"
-olduğu için kayda geçti.
+Lexer taramasında iki davranış çıktı. Analizci **ilk değerlendirmenin eksik
+ölçtüğünü** haklı olarak belirtti: asıl tehlikeli biçim `10^27 → 1e+27` (bariz
+float) değil, **`9223372036854775809 → ...808` (makul tamsayı gibi görünüp sessizce
+1 eksik)** — dış API'den JSON ID'si bunu vurur.
 
-| Girdi | Sonuç | Değerlendirme |
+| Girdi | Eski sonuç | Durum |
 |---|---|---|
-| `999999999999999999999999999` (int64 > 9.2×10¹⁸) | sessizce `1e+27` **float** | Çoğu dilde aynı (JS). Ama 19+ haneli bir ID/tutar sessizce hassasiyet kaybeder. Uç ama sessiz |
-| `0x` (rakamsız hex öneki) | sessizce `0` | Net bozukluk — geçersiz literal `0` üretiyor, hata olmalı. Ama kimse kazara `0x` yazmaz |
+| **JSON** `{"id": 9223372036854775809}` | sessizce `...808` (float, 1 eksik) | ✅ **52. bug kapatıldı** — int64 aşan tamsayı string olarak birebir korunur (uint64-max `...615` dahil). Guard: differential JSON int64 |
+| Kaynak literal `9223...809` | sessizce `...808` (float promote) | 🟡 AÇIK-bilinçli: parser float-promote'u kasıtlı (JS-pariteli, `strtod` ile; kaynağı sen yazarsın, görünür). VM==tree-walk (parite bug'ı YOK). Düşük öncelik: kaynakta 19+ haneli literal ~hiç yok |
+| `0x` (rakamsız hex) | sessizce `0` | 🟡 AÇIK: net bozukluk ama kimse kazara yazmaz. Fail-loud yapılabilir |
 
-**Neden şimdi düzeltilmedi:** ikisi de gerçek uygulamada ~hiç görülmez ve
-düzeltmek davranış değişikliği (taşan literal'e güvenen kod olması pek olası değil
-ama sıfır değil). Kullanıcıya sunuldu; talep gelirse: taşan int literal → hata
-(veya açık `BigInt` yokluğu belgelensin), `0x` rakamsız → parse hatası.
-Guard bunları test ETMİYOR (davranış kararı verilmeden kilitlemek yanlış olur).
+**Not:** `0o17` (sekizlik) ve `.5` desteklenmiyor ama **açık parse hatası**
+veriyorlar (fail-loud, sorun değil — analizci teyit etti). JSON yolu (dış veri,
+gerçek risk) kapatıldı; kalan iki madde kaynak-kontrollü/uç, düşük öncelik.

@@ -276,7 +276,16 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         if (is_float) return Value(std::stod(num));
         return Value((int64_t)std::stoll(num));   // 32-bit stoi taşıp 0 döndürüyordu
     } catch (...) {
-        // int64 aralığını da aşan devasa tamsayı → float'a düş (0 değil)
+        // int64 aralığını AŞAN tamsayı: float'a düşmek SESSİZ kesinlik kaybıdır.
+        // 9223372036854775809 → 9223372036854775808 (1 eksik), uint64-max
+        // 18446744073709551615 → ...616 (1 fazla). Snowflake/Discord/Twitter ID,
+        // MySQL BIGINT UNSIGNED anahtar bu aralıkta — ID sessizce bozulur, yanlış
+        // kayıt eşleşir. `...808` makul bir tamsayı gibi göründüğü için `1e+27`den
+        // çok daha tehlikeli. KESİNLİĞİ KORU: orijinal metni STRING olarak döndür
+        // (LOOK'ta uint64/bignum tipi yok; string tam kimliği kayıpsız taşır ve
+        // DB'ye/karşılaştırmaya birebir gider). Float form (is_float) zaten
+        // kesinlik kaybını göze aldığı için double kalır.
+        if (!is_float) return Value(num);
         try { return Value(std::stod(num)); } catch (...) { return Value((int64_t)0); }
     }
 }
