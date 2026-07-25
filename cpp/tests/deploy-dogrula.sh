@@ -128,6 +128,24 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK" ]; then
   fi
 fi
 
+# ── 58. bug: closure capture parity — CLI, yerel binary (dış kanıt) ──────────
+# VM by-value snapshot bug'ı fix'liyse döngü-içi tanımlı yakalanan var per-iter
+# cell olur: fns[0..2]() → 0,1,2 → "012". Fix YOKSA hepsi son değeri görür → "222".
+# C1 senaryosu (analizci canlı-doğrulama önerisi): 58'in canlı binary'de gerçekten
+# olduğunu dışarıdan kanıtlar. VM DEFAULT olduğundan LOOK_CLI_VM sarmalamaya gerek yok.
+RECLK58="$LK"; [ -x "$RECLK58" ] || RECLK58="$LKFCGI"
+if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
+  printf '$fns=[]\n$i=0\nwhile($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }\nprint($fns[0]() . $fns[1]() . $fns[2]())\n' > "$TMP/clo.lk"
+  cout=$(timeout 10 "$RECLK58" "$TMP/clo.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
+  if [ "$cout" = "012" ]; then
+    echo "  PASS 58 (closure capture): per-iter cell canli — fns[0..2]()=012"
+  elif [ "$cout" = "222" ]; then
+    echo "  FAIL 58: closure=222 — VM by-value snapshot bug'i CANLI DEGIL (fix eksik)"; fail=1
+  else
+    echo "  (58 atlandi: beklenmedik cikti: [$cout])"
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail
