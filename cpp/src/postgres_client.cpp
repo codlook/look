@@ -448,11 +448,21 @@ bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
     return true;
 }
 
+// İstek SUNUCUYA ULAŞMADAN kopmayı ("at-most-once güvenli") yanıt-okuma
+// aşamasındaki kopmadan ayıran özel tip. query()/execute() YALNIZCA bu tipte
+// retry eder — gönderilemeyen istek sunucuda işlenMEMİŞtir, tekrar güvenlidir.
+// Yanıt okunurken kopma bu tipte DEĞİLdir → retry edilmez (sunucu INSERT'i
+// işlemiş olabilir; kör retry sessiz çift-yazma üretir — 53. bug, sahte-sunucu
+// "commit_kopar" ile kanıtlandı).
+struct PgSendError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
     size_t sent = 0;
     while (sent < len) {
         int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), 0);
-        if (r <= 0) throw std::runtime_error("db postgres: send failed — connection lost");
+        if (r <= 0) throw PgSendError("db postgres: send failed — connection lost");
         sent += r;
     }
 }
@@ -713,8 +723,10 @@ std::vector<DbRow> PostgresClient::query(const std::string& sql) {
 
     try {
         return simple_query(sql);
-    } catch (const std::runtime_error&) {
-        // Bir kez reconnect dene
+    } catch (const PgSendError&) {
+        // Yalnız GÖNDERİM başarısızsa retry — istek sunucuya ulaşmadı, güvenli.
+        // Yanıt-okuma aşamasındaki kopma buraya DÜŞMEZ (std::runtime_error) →
+        // propagate eder, retry edilmez (sunucu işlemiş olabilir → çift-yazma).
         try { do_connect(); } catch (...) { throw; }
         return simple_query(sql);
     }
@@ -1065,7 +1077,9 @@ std::vector<DbRow> PostgresClient::execute(const std::string& sql, const std::ve
     }
     try {
         return extended_query(sql, params);
-    } catch (const std::runtime_error&) {
+    } catch (const PgSendError&) {
+        // Yalnız gönderim başarısızsa retry (bkz. query()/53. bug). Yanıt-okuma
+        // kopması retry EDİLMEZ — sunucu statement'ı işlemiş olabilir.
         try { do_connect(); } catch (...) { throw; }
         return extended_query(sql, params);
     }

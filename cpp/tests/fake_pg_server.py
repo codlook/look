@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 # Sahte PostgreSQL sunucusu — LOOK'un wire ayristiricisina DUSMANCA mesaj gonderir.
 # Amac: bozuk DataRow'da LOOK sessizce bos veri mi donduruyor, yoksa hata mi veriyor?
-import socket, struct, sys, threading
+import socket, struct, sys, threading, os
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "truncated"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 55432
+
+# commit_kopar modu: INSERT sayacini surecler-arasi (retry yeni baglanti acar)
+# paylasmak icin dosyaya yaz.
+COUNT_FILE = os.environ.get("PG_COUNT_FILE", "/tmp/pg_insert_count")
+_insert_lock = threading.Lock()
+def record_insert():
+    with _insert_lock:
+        try: n = int(open(COUNT_FILE).read().strip())
+        except Exception: n = 0
+        n += 1
+        open(COUNT_FILE, "w").write(str(n))
+        return n
 
 def msg(t, body):            # tip + uzunluk(kendisi dahil) + govde
     return t + struct.pack("!I", len(body) + 4) + body
@@ -47,8 +59,29 @@ def handle(c):
         t = c.recv(1)
         if not t: return
         ln = struct.unpack("!I", c.recv(4))[0]
-        c.recv(ln - 4)
+        body = b""
+        need = ln - 4
+        while len(body) < need:
+            chunk = c.recv(need - len(body))
+            if not chunk: return
+            body += chunk
         if t == b"Q":
+            q = body.decode("utf-8", "replace").upper()
+            if MODE == "commit_kopar":
+                # Durum-dizili saldiri: INSERT'i "isle" (sayac++), sonra YANIT
+                # GONDERMEDEN soketi kapat — "gonderildi-ama-yanit-gelmedi".
+                # Istemci retry ederse ikinci INSERT gelir → sayac 2 → cift-yazma.
+                if "INSERT" in q:
+                    n = record_insert()
+                    if n == 1:
+                        c.close(); return          # commit-sonra-kopar
+                    c.sendall(msg(b"C", cstr("INSERT 0 1")))
+                    c.sendall(msg(b"Z", b"I"))
+                    continue
+                # INSERT disi (BEGIN/SELECT vs) → normal yanit
+                c.sendall(msg(b"C", cstr("SELECT 0")))
+                c.sendall(msg(b"Z", b"I"))
+                continue
             c.sendall(row_desc())
             c.sendall(data_row(MODE))
             c.sendall(msg(b"C", cstr("SELECT 1")))
