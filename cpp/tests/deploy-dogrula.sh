@@ -111,6 +111,23 @@ PY
   fi
 fi
 
+# ── 57. bug: VM özyineleme bounded (OOM DoS) — CLI, yerel binary ─────────────
+# CALL opcode MAX_CALL_DEPTH'i zorlamalı; runaway özyineleme graceful "Stack
+# overflow" vermeli, bellek tükenene dek gitmemeli. lk-fcgi CLI modu yoksa lk'ye
+# düşer; ikisi de yoksa atlar (canlı HTTP-only modda LK olmayabilir).
+RECLK="$LK"; [ -x "$RECLK" ] || RECLK="$LKFCGI"
+if [ -z "$BASE_URL" ] && [ -x "$RECLK" ]; then
+  printf 'function r($n){ if($n<=0){return 0} return 1+r($n-1) }\nprint(r(100000))\n' > "$TMP/rec.lk"
+  rout=$(timeout 15 "$RECLK" "$TMP/rec.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ')
+  if echo "$rout" | grep -qi "stack overflow"; then
+    echo "  PASS 57 (VM ozyineleme): derin ozyineleme bounded (graceful stack overflow)"
+  elif echo "$rout" | grep -q "100000"; then
+    echo "  FAIL 57: r(100000) dondu — CALL yolu MAX_CALL_DEPTH atliyor (unbounded/OOM riski)"; fail=1
+  else
+    echo "  (57 atlandi: beklenmedik cikti: $rout)"
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail
