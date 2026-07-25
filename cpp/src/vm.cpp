@@ -597,6 +597,13 @@ call_dispatch:
                     if (vfixed >= 0 && cp->arity > 0)
                         regs_[new_base + vfixed] = look::Value(varr);
                 }
+                // MAX_CALL_DEPTH bytecode CALL yolunda da zorlanmalı (57. bug):
+                // eskiden yalnız call_closure (host→VM) kontrol ediyordu; doğrudan
+                // LOOK özyinelemesi (CALL opcode) SINIRSIZDI → runaway/derin
+                // özyineleme graceful hata yerine bellek tükenene dek gidiyordu
+                // (OOM DoS) ve tree-walk'un 256 sınırından ayrışıyordu.
+                if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
+                    throw LookVmError("Stack overflow (max " + std::to_string(MAX_CALL_DEPTH) + ")");
                 int ret_abs = base + ins.a;
                 call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, ret_abs, (int)argc});
                 goto call_dispatch; // callee frame'e geç
@@ -696,6 +703,9 @@ call_dispatch:
                     for (int i = vfixed; i < argc3; ++i) varr->push_back(R(ins.c+i));
                     if (vfixed >= 0 && cp->arity > 0) regs_[new_base+vfixed] = look::Value(varr);
                 }
+                // MAX_CALL_DEPTH — CALL_METHOD/ikinci CALL yolu (57. bug, bkz. yukarı)
+                if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
+                    throw LookVmError("Stack overflow (max " + std::to_string(MAX_CALL_DEPTH) + ")");
                 call_stack_.push_back({cp, cl.get(), 0, new_base, base+ins.a, (int)argc3});
                 goto call_dispatch; // callee frame'e geç
             }
