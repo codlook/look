@@ -27,6 +27,7 @@ cases = [
     (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, gzip\r\n\r\n"+CH, 400, "TE chunked,gzip ret"),
     (b"POST /e HTTP/1.1\r\nHost: x\r\nContent-Length : 5\r\n\r\nhello", 0, "CL bosluk-once-kolon ret"),
     (b"POST /e HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello", 200, "CL 5 gecerli"),
+    (b"POST /e HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n 6\r\n\r\nhello!", 0, "obs-fold CL ret"),
 ]
 fail = 0
 for req, exp, label in cases:

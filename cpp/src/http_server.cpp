@@ -76,6 +76,11 @@ static bool parse_request(const std::string& raw, HttpRequest& req) {
         size_t end = raw.find("\r\n", pos);
         if (end == std::string::npos || end > header_end) break;
         std::string line = raw.substr(pos, end - pos);
+        // RFC 7230 §3.2.4: obs-fold (SP/HTAB ile başlayan devam satırı) istekte
+        // YASAK. Eskiden colon içermediği için sessizce DÜŞÜRÜLÜYORDU → katlanmış
+        // bir framing header'ı (CL/TE) katı bir front-end farklı çözerse desync
+        // (request smuggling). Katı ret.
+        if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) return false;
         size_t colon = line.find(':');
         if (colon != std::string::npos) {
             std::string key = line.substr(0, colon);
