@@ -9,6 +9,7 @@
 #include <stack>
 #include <memory>
 #include <stdexcept>
+#include <set>
 
 namespace look {
 
@@ -218,6 +219,17 @@ private:
     std::vector<LocalVar>            locals_;
     int                              scope_depth_ = 0;
     std::vector<CaptureInfo>         captures_;  // use() listesi
+
+    // ── 58. bug closure fix: escape-analiz (Adım 2a) ──────────────────────────
+    // no_discovery_: keşif-geçişinde true → kendi alt-keşfini yapmaz (sonsuz
+    //   özyineleme önlenir). escaping_names_: BU fonksiyonun bir closure tarafından
+    //   yakalanan local'leri (capture-load sitesinde toplanır). boxed_names_:
+    //   keşif-geçişinden gelen, cell'e taşınacak isimler. boxed_slots_: o isimlerin
+    //   register slot'ları (declare_local doldurur; Adım 2b helper'da kullanılacak).
+    bool                             no_discovery_ = false;
+    std::set<std::string>            escaping_names_;
+    std::set<std::string>            boxed_names_;
+    std::set<uint8_t>                boxed_slots_;
 
     std::vector<LoopContext>         loop_stack_;  // back() = en iç bağlam
 

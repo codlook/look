@@ -146,6 +146,9 @@ uint8_t FunctionCompiler::declare_local(const std::string& name, int line) {
     // "local slot'unu doğrudan döndür" optimizasyonu + free_temp local'i bozardı).
     uint8_t slot = regs_->alloc_local();
     locals_.push_back({name, slot, scope_depth_});
+    // 58 Adım 2a: keşif-geçişi bu ismi "kaçan local" bulduysa slot'unu boxed işaretle.
+    // (Adım 2b'de helper'lar boxed slot'lar için cell_get/cell_set yayacak.)
+    if (boxed_names_.count(name)) boxed_slots_.insert(slot);
     return slot;
 }
 
@@ -192,6 +195,23 @@ void FunctionCompiler::emit_write_local(uint8_t slot, uint8_t src) {
 
 std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& body,
         const std::vector<std::unique_ptr<Expression>>* defaults) {
+    // ── Adım 2a: escape-analiz keşif-geçişi ───────────────────────────────────
+    // Ayrı throwaway FC ile gövdeyi derle (state reset yok); hangi local'lerin
+    // closure'lar tarafından yakalandığını topla. ÜRETİLEN KOD ATILIR — yalnız
+    // boxed_names_ okunur. no_discovery_ sonsuz özyinelemeyi önler.
+    // ŞU AN (2a) boxed_slots_ codegen'de KULLANILMAZ → davranış-değişmez.
+    if (!no_discovery_) {
+        FunctionCompiler disc(proto_.name, proto_.params, proto_.variadic, parent_);
+        disc.captures_     = captures_;   // use() capture'larını miras al
+        disc.no_discovery_ = true;
+        disc.compile(body, defaults);     // derle (atılır) → disc.escaping_names_ dolar
+        boxed_names_ = std::move(disc.escaping_names_);
+        if (std::getenv("LOOK_DEBUG_BOXED") && !boxed_names_.empty()) {
+            std::string s; for (auto& n : boxed_names_) s += n + " ";
+            fprintf(stderr, "[BOXED] %s: %s\n", proto_.name.c_str(), s.c_str());
+        }
+    }
+
     // ── Prologue: varsayılan parametreler ────────────────────────────────────
     // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
     // ilk yerel register'ları (0..arity-1) tutar. Varsayılan ifade önceki
@@ -1331,7 +1351,12 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
         const std::string& cap_name = cap.name;
         auto loc = resolve_var(cap_name);
         uint8_t cr = alloc_temp();
-        if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE,        cr, loc.index);
+        if      (loc.kind == VarKind::LOCAL) {
+            // 58 Adım 2a: bir closure BU fonksiyonun local'ini yakalıyor → o local
+            // "kaçıyor" (escape), cell'e taşınmalı. İsmi topla (keşif-geçişi okur).
+            escaping_names_.insert(cap_name);
+            emit(OpCode::MOVE, cr, loc.index);
+        }
         else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, cr, loc.index);
         else {
             uint16_t ni = add_const(Value(cap_name));
