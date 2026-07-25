@@ -462,7 +462,17 @@ void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
     size_t sent = 0;
     while (sent < len) {
         int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), 0);
-        if (r <= 0) throw PgSendError("db postgres: send failed — connection lost");
+        if (r <= 0) {
+            // read yollariyla SIMETRIK: gonderim kopmasinda soketi kapat ve sock_'u
+            // INVALID yap ki "kapali ama gecerli gorunen fd" havuza donup sonraki
+            // sorguda zehirlemesin. (query()/execute() basindaki
+            // `if sock_==INVALID → do_connect()` bunu otomatik yakalar.) Analizci
+            // kaynak denetiminde bu asimetriyi buldu; gozlemlenebilir bug
+            // uretilemedi — PgSendError retry'i kurtarilabilir vakalari zaten
+            // kurtariyor — ama simetri savunma-derinligi.
+            pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+            throw PgSendError("db postgres: send failed — connection lost");
+        }
         sent += r;
     }
 }

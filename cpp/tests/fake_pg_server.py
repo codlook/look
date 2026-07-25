@@ -67,6 +67,14 @@ def handle(c):
             body += chunk
         if t == b"Q":
             q = body.decode("utf-8", "replace").upper()
+            if MODE == "hs_rst":
+                # Havuz zehri: 1. sorguya normal yanit ver, sonra RST ile kapan
+                # (SO_LINGER 0). Baglanti havuza doner; 2. sorgu onu alinca send
+                # kirilir. Amac: retry zehri kurtariyor mu, yoksa 2. sorgu bozuluyor mu?
+                c.sendall(row_desc()); c.sendall(data_row("saglam"))
+                c.sendall(msg(b"C", cstr("SELECT 1"))); c.sendall(msg(b"Z", b"I"))
+                c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                c.close(); return
             if MODE == "commit_kopar":
                 # Durum-dizili saldiri: INSERT'i "isle" (sayac++), sonra YANIT
                 # GONDERMEDEN soketi kapat — "gonderildi-ama-yanit-gelmedi".
