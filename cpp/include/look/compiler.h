@@ -159,6 +159,12 @@ private:
     struct VarLoc { VarKind kind; uint8_t index; };
     VarLoc  resolve_var(const std::string& name, bool for_write = false);
 
+    // ── Local erişim helper'ları (58. bug closure fix hazırlığı) ──────────────
+    // Tüm local okuma/yazma bu iki noktadan geçer → "boxed local" (cell) desteği
+    // buraya lokalize edilecek. ŞU AN davranış-değişmez: düz MOVE (register).
+    void emit_read_local(uint8_t dest, uint8_t slot);   // dest = local(slot)
+    void emit_write_local(uint8_t slot, uint8_t src);   // local(slot) = src
+
     // ── Expression → register ─────────────────────────────────────────────────
     // dest=255 → compiler geçici register seçer; caller free_temp() çağırmalı
     uint8_t compile_expr(const Expression& expr, uint8_t dest = 255);

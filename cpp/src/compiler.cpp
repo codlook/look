@@ -177,6 +177,17 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     return {VarKind::GLOBAL, 0};
 }
 
+// ── Local erişim helper'ları (58. bug closure fix hazırlığı) ──────────────────
+// ŞU AN davranış-değişmez: düz MOVE. Sonraki adımda "boxed" (cell) local'ler için
+// bu iki nokta cell_get/cell_set yayacak — tüm local erişimi buradan geçtiği için
+// boxing kararı TEK yere lokalize olur (dağınık değil).
+void FunctionCompiler::emit_read_local(uint8_t dest, uint8_t slot) {
+    emit(OpCode::MOVE, dest, slot);
+}
+void FunctionCompiler::emit_write_local(uint8_t slot, uint8_t src) {
+    emit(OpCode::MOVE, slot, src);
+}
+
 // ── compile — entry point ─────────────────────────────────────────────────────
 
 std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& body,
@@ -769,7 +780,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             arr = compile_expr(*e.object);
         } else {
             arr = alloc_temp();
-            if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE,        arr, loc.index);
+            if      (loc.kind == VarKind::LOCAL)   emit_read_local(arr, loc.index);
             else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, arr, loc.index);
             else {
                 uint16_t ni = add_const(Value(e.name));
@@ -811,7 +822,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // Compound assign için mevcut değeri oku
         else if (e.op != "=") {
             uint8_t cur = alloc_temp();
-            emit(OpCode::MOVE, cur, loc.index);
+            emit_read_local(cur, loc.index);
             uint8_t tmp = alloc_temp();
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
@@ -822,10 +833,10 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             if (it == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
             emit(it->second, tmp, cur, val);
             free_temp(cur); free_temp(val);
-            emit(OpCode::MOVE, loc.index, tmp);
+            emit_write_local(loc.index, tmp);
             free_temp(tmp);
         } else {
-            emit(OpCode::MOVE, loc.index, val);
+            emit_write_local(loc.index, val);
             free_temp(val);
         }
     } else if (loc.kind == VarKind::CAPTURE) {
@@ -932,7 +943,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         auto loc = resolve_var(e->name);
         if (loc.kind == VarKind::LOCAL) {
             if (dest == 255) return loc.index; // direkt slot — kopyalamaya gerek yok
-            emit(OpCode::MOVE, dest, loc.index);
+            emit_read_local(dest, loc.index);
             return dest;
         }
         uint8_t r = ensure_dest();
@@ -950,7 +961,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         // Atama expression olarak kullanılmış — değeri oku
         auto loc = resolve_var(e->name);
         uint8_t r = ensure_dest();
-        if (loc.kind == VarKind::LOCAL) emit(OpCode::MOVE, r, loc.index);
+        if (loc.kind == VarKind::LOCAL) emit_read_local(r, loc.index);
         else {
             uint16_t ni = add_const(Value(e->name));
             emit(OpCode::LOAD_GLOBAL, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
@@ -978,10 +989,10 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
 
             uint8_t r = ensure_dest();
             if (loc.kind == VarKind::LOCAL) {
-                emit(OpCode::MOVE, r, loc.index);          // eski değer (postfix için)
+                emit_read_local(r, loc.index);              // eski değer (postfix için)
                 uint8_t nv = alloc_temp();
                 emit(delta_op, nv, loc.index, one);
-                emit(OpCode::MOVE, loc.index, nv);
+                emit_write_local(loc.index, nv);
                 if (e->prefix) emit(OpCode::MOVE, r, nv);   // prefix → yeni değer
                 free_temp(nv);
             } else {
