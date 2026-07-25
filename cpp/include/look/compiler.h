@@ -105,6 +105,8 @@ struct LocalVar {
 struct CaptureInfo {
     std::string name;
     uint8_t     capture_index; // Closure.captures[] sırası
+    bool        is_cell = false; // 58: yakalanan değer bir CELL (boxed local) mı →
+                                 // closure gövdesi okurken [0] deref etmeli (by-ref)
 };
 
 // ── Loop stack — break/continue patch ────────────────────────────────────────
@@ -163,8 +165,10 @@ private:
     // ── Local erişim helper'ları (58. bug closure fix hazırlığı) ──────────────
     // Tüm local okuma/yazma bu iki noktadan geçer → "boxed local" (cell) desteği
     // buraya lokalize edilecek. ŞU AN davranış-değişmez: düz MOVE (register).
-    void emit_read_local(uint8_t dest, uint8_t slot);   // dest = local(slot)
-    void emit_write_local(uint8_t slot, uint8_t src);   // local(slot) = src
+    void emit_read_local(uint8_t dest, uint8_t slot);   // dest = local(slot) [boxed→cell[0]]
+    void emit_write_local(uint8_t slot, uint8_t src);   // local(slot) = src [boxed→cell[0]]
+    void emit_read_capture(uint8_t dest, uint8_t cap_index); // dest = capture [cell→[0]]
+    bool is_cell_var(const VarLoc& loc) const;          // bu var boxed cell mi
 
     // ── Expression → register ─────────────────────────────────────────────────
     // dest=255 → compiler geçici register seçer; caller free_temp() çağırmalı

@@ -171,7 +171,10 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
         VarLoc pl = parent_->resolve_var(name, /*for_write=*/false);
         if (pl.kind != VarKind::GLOBAL) {
             uint8_t idx = (uint8_t)captures_.size();
-            captures_.push_back({name, idx});
+            // 58: parent'ta bu isim boxed local (veya boxed capture) ise, yakalanan
+            // şey CELL'dir → closure gövdesi okurken [0] deref etmeli (by-ref).
+            bool is_cell = parent_->is_cell_var(pl);
+            captures_.push_back({name, idx, is_cell});
             return {VarKind::CAPTURE, idx};
         }
     }
@@ -185,10 +188,44 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
 // bu iki nokta cell_get/cell_set yayacak — tüm local erişimi buradan geçtiği için
 // boxing kararı TEK yere lokalize olur (dağınık değil).
 void FunctionCompiler::emit_read_local(uint8_t dest, uint8_t slot) {
-    emit(OpCode::MOVE, dest, slot);
+    if (boxed_slots_.count(slot)) {          // boxed → cell: dest = slot[0]
+        uint8_t z = alloc_temp();
+        emit_load_const(z, Value((int64_t)0), cur_line_);
+        emit(OpCode::ARRAY_GET, dest, slot, z);
+        free_temp(z);
+    } else {
+        emit(OpCode::MOVE, dest, slot);
+    }
 }
 void FunctionCompiler::emit_write_local(uint8_t slot, uint8_t src) {
-    emit(OpCode::MOVE, slot, src);
+    if (boxed_slots_.count(slot)) {          // boxed → cell: slot[0] = src
+        uint8_t z = alloc_temp();
+        emit_load_const(z, Value((int64_t)0), cur_line_);
+        emit(OpCode::ARRAY_SET, slot, z, src);
+        free_temp(z);
+    } else {
+        emit(OpCode::MOVE, slot, src);
+    }
+}
+// Closure gövdesinde bir capture okunuyor. is_cell ise capture bir CELL (boxed
+// local referansı) → LOAD_CAPTURE ile cell'i al, sonra [0] deref et (by-ref).
+void FunctionCompiler::emit_read_capture(uint8_t dest, uint8_t cap_index) {
+    if (cap_index < captures_.size() && captures_[cap_index].is_cell) {
+        uint8_t c = alloc_temp();
+        emit(OpCode::LOAD_CAPTURE, c, cap_index);
+        uint8_t z = alloc_temp();
+        emit_load_const(z, Value((int64_t)0), cur_line_);
+        emit(OpCode::ARRAY_GET, dest, c, z);
+        free_temp(z); free_temp(c);
+    } else {
+        emit(OpCode::LOAD_CAPTURE, dest, cap_index);
+    }
+}
+// Bir VarLoc boxed cell mi: LOCAL ise boxed_slots_'ta mı; CAPTURE ise is_cell mi.
+bool FunctionCompiler::is_cell_var(const VarLoc& loc) const {
+    if (loc.kind == VarKind::LOCAL)   return boxed_slots_.count(loc.index) > 0;
+    if (loc.kind == VarKind::CAPTURE) return loc.index < captures_.size() && captures_[loc.index].is_cell;
+    return false;
 }
 
 // ── compile — entry point ─────────────────────────────────────────────────────
@@ -801,7 +838,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         } else {
             arr = alloc_temp();
             if      (loc.kind == VarKind::LOCAL)   emit_read_local(arr, loc.index);
-            else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, arr, loc.index);
+            else if (loc.kind == VarKind::CAPTURE) emit_read_capture(arr, loc.index);
             else {
                 uint16_t ni = add_const(Value(e.name));
                 emit(OpCode::LOAD_GLOBAL, arr, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
@@ -836,8 +873,19 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // B7: `$s .= x` → yerinde CONCAT (dst==b==slot). VM append_in_place ile
         // amortize O(1); ayrıca cur/tmp MOVE'ları (iki O(n) kopya) elenir.
         if (e.op == ".=") {
-            emit(OpCode::CONCAT, loc.index, loc.index, val);
-            free_temp(val);
+            if (boxed_slots_.count(loc.index)) {
+                // boxed: yerinde CONCAT yapılamaz (slot cell tutar) → cell[0] oku,
+                // birleştir, cell[0]'a yaz.
+                uint8_t cur = alloc_temp();
+                emit_read_local(cur, loc.index);
+                uint8_t res = alloc_temp();
+                emit(OpCode::CONCAT, res, cur, val);
+                emit_write_local(loc.index, res);
+                free_temp(res); free_temp(cur); free_temp(val);
+            } else {
+                emit(OpCode::CONCAT, loc.index, loc.index, val);
+                free_temp(val);
+            }
         }
         // Compound assign için mevcut değeri oku
         else if (e.op != "=") {
@@ -888,7 +936,14 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             result = tmp;
         }
         uint8_t slot = declare_local(e.name, 0);
-        emit(OpCode::MOVE, slot, result);
+        if (boxed_slots_.count(slot)) {
+            // 58: boxed local → cell = [result] (1-elemanlı array). Bu kod DÖNGÜ
+            // gövdesindeyse her iterasyon çalışır → per-iterasyon TAZE cell (bedava).
+            emit(OpCode::NEW_ARRAY, slot, 1);
+            emit(OpCode::ARRAY_PUSH, slot, result);
+        } else {
+            emit(OpCode::MOVE, slot, result);
+        }
         free_temp(result);
     } else {
         // Top-level (script global) → STORE_GLOBAL. Route/setup global'leri, app::
@@ -962,13 +1017,16 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     if (auto* e = dynamic_cast<const Variable*>(&expr)) {
         auto loc = resolve_var(e->name);
         if (loc.kind == VarKind::LOCAL) {
-            if (dest == 255) return loc.index; // direkt slot — kopyalamaya gerek yok
-            emit_read_local(dest, loc.index);
-            return dest;
+            // boxed (cell) local için doğrudan slot DÖNDÜRÜLEMEZ — slot cell'i tutar,
+            // caller değeri bekler. emit_read_local cell[0] deref eder.
+            if (dest == 255 && !boxed_slots_.count(loc.index)) return loc.index;
+            uint8_t r = ensure_dest();
+            emit_read_local(r, loc.index);
+            return r;
         }
         uint8_t r = ensure_dest();
         if (loc.kind == VarKind::CAPTURE) {
-            emit(OpCode::LOAD_CAPTURE, r, loc.index);
+            emit_read_capture(r, loc.index);
         } else {
             uint16_t ni = add_const(Value(e->name));
             emit(OpCode::LOAD_GLOBAL, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
@@ -1009,9 +1067,9 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
 
             uint8_t r = ensure_dest();
             if (loc.kind == VarKind::LOCAL) {
-                emit_read_local(r, loc.index);              // eski değer (postfix için)
+                emit_read_local(r, loc.index);              // eski değer (postfix için; cell-farkında)
                 uint8_t nv = alloc_temp();
-                emit(delta_op, nv, loc.index, one);
+                emit(delta_op, nv, r, one);                 // r değeri tutar → boxed/unboxed ikisi de doğru
                 emit_write_local(loc.index, nv);
                 if (e->prefix) emit(OpCode::MOVE, r, nv);   // prefix → yeni değer
                 free_temp(nv);
