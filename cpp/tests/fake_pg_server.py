@@ -53,8 +53,20 @@ def handle(c):
     if len(hdr) < 4: return
     n = struct.unpack("!I", hdr)[0]
     c.recv(n - 4)
-    c.sendall(msg(b"R", struct.pack("!I", 0)))        # AuthenticationOk
-    c.sendall(msg(b"Z", b"I"))                        # ReadyForQuery
+    # ── Handshake-fazı durum-dizili saldırılar (kategori 1) ──────────────────
+    if MODE == "hs_error":
+        # AuthenticationOk yerine ErrorResponse
+        eb = b"SFATAL\x00C28000\x00Mtest reddi\x00\x00"
+        c.sendall(msg(b"E", eb)); c.close(); return
+    if MODE == "param_seli":
+        c.sendall(msg(b"R", struct.pack("!I", 0)))    # AuthenticationOk
+        for _ in range(200000):                        # ParameterStatus seli (bellek?)
+            c.sendall(msg(b"S", cstr("k") + cstr("v")))
+        c.sendall(msg(b"Z", b"I"));
+        # sonra normal sorgu dongusune dus
+    else:
+        c.sendall(msg(b"R", struct.pack("!I", 0)))    # AuthenticationOk
+        c.sendall(msg(b"Z", b"I"))                     # ReadyForQuery
     while True:
         t = c.recv(1)
         if not t: return
@@ -89,6 +101,16 @@ def handle(c):
                 # INSERT disi (BEGIN/SELECT vs) → normal yanit
                 c.sendall(msg(b"C", cstr("SELECT 0")))
                 c.sendall(msg(b"Z", b"I"))
+                continue
+            if MODE == "sirasiz":
+                # Yanit SIRASI yanlis: DataRow, RowDescription'DAN ONCE (columns bos)
+                c.sendall(data_row("saglam"))          # once DataRow
+                c.sendall(row_desc())                  # sonra RowDescription
+                c.sendall(msg(b"C", cstr("SELECT 1"))); c.sendall(msg(b"Z", b"I"))
+                continue
+            if MODE == "erken_c":
+                # CommandComplete, hic DataRow/RowDescription OLMADAN
+                c.sendall(msg(b"C", cstr("SELECT 0"))); c.sendall(msg(b"Z", b"I"))
                 continue
             c.sendall(row_desc())
             c.sendall(data_row(MODE))
