@@ -53,8 +53,19 @@ cat > "$TMP/G.lk" <<'LK'
 function m(){ $v=5; $g=function(){ $v=99 }; $g(); return $v }
 print(m())
 LK
+# H = C2: değişken döngü DIŞINDA tanımlı → per-iter YOK, tüm closure'lar son değeri
+# görür (222). Fix'in 2c-narrow koşulu (döngü-body'de tanımlı) TETİKLENMEMELİ →
+# $v global kalır → parite. Bu, fix'in route/setup var'larını (döngü-dışı) bozmadığını
+# kilitler (analizci güvenlik koşulu a).
+cat > "$TMP/H.lk" <<'LK'
+$v=99
+$fns=[]
+$i=0
+while($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }
+print($fns[0]() . $fns[1]() . $fns[2]())
+LK
 
-for c in A B C D E F G; do
+for c in A B C D E F G H; do
   tw=$(LOOK_CLI_VM=0 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   vm=$(timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   if [ "$tw" = "$vm" ]; then
@@ -63,5 +74,5 @@ for c in A B C D E F G; do
     echo "  FAIL [$c] AYRISMA: tree-walk=[$tw] vm=[$vm]"; fail=1
   fi
 done
-[ $fail = 0 ] && echo "PASS: closure semantics (58 — 7 vaka parite)" || echo "FAIL: closure semantics (58 — B/C fix bekliyor)"
+[ $fail = 0 ] && echo "PASS: closure semantics (58 — 8 vaka parite (C2 dahil))" || echo "FAIL: closure semantics (58 — B/C fix bekliyor)"
 exit $fail

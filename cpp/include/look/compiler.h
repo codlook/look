@@ -222,6 +222,11 @@ private:
 
     std::vector<LocalVar>            locals_;
     int                              scope_depth_ = 0;
+    int                              loop_depth_  = 0; // 58/2c: döngü-body içinde mi
+                                                       // (top-level loop-local cell kararı)
+    std::set<std::string>            outer_globals_;   // 2c: döngü-DIŞI tanımlı top-level
+                                                       // var'lar → döngü-içi reassignment
+                                                       // onları cell YAPMAZ (C2 paritesi)
     std::vector<CaptureInfo>         captures_;  // use() listesi
 
     // ── 58. bug closure fix: escape-analiz (Adım 2a) ──────────────────────────

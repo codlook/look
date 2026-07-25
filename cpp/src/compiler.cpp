@@ -387,6 +387,12 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         compile_block(*s);
     }
     else if (auto* us = dynamic_cast<const UseStatement*>(&stmt)) {
+        // 2c: keşif-geçişinde `use` İŞLENMEZ. Modül yükleme (bug 49) g_loaded dedup'ı
+        // ile yan etkilidir; discovery pass onu tetiklerse REAL pass "zaten yüklü"
+        // deyip modül kodunu atlar → route kalıcı interpreter'a düşer. Discovery
+        // yalnız closure capture arar; modül (ayrı dosya) mevcut dosyanın top-level
+        // loop-local'ini yakalamaz → `use`'u atlamak capture tespitini etkilemez.
+        if (no_discovery_) return;
         // `use <ad>` iki farklı şeyi karşılar:
         //   1) stdlib modülü (string, jobs, template…) → builtin tablosunda ZATEN
         //      bağlı; bytecode'da yapılacak bir şey yok → NOP (eski davranış doğru).
@@ -491,7 +497,9 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
     free_temp(cond);
 
     loop_stack_.push_back({.continue_target = loop_start});
+    ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
+    --loop_depth_;
     auto ctx = loop_stack_.back();
     loop_stack_.pop_back();
 
@@ -520,7 +528,9 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
     }
 
     loop_stack_.push_back({.continue_target = -1}); // continue hedefi post sonrası
+    ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
+    --loop_depth_;
     auto ctx = loop_stack_.back();
     loop_stack_.pop_back();
 
@@ -574,7 +584,9 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     int step_ip = emit(OpCode::FOR_STEP, r_iter, 0, 0);
 
     loop_stack_.push_back({.continue_target = loop_start});
+    ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
+    --loop_depth_;
     auto ctx = loop_stack_.back();
     loop_stack_.pop_back();
 
@@ -913,7 +925,15 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     } else if (loc.kind == VarKind::CAPTURE) {
         // LOOK by-value capture — capture değiştirilemiyor (felsefe)
         throw LookCompileError("Capture edilen değişken değiştirilemez: $" + e.name);
-    } else if (parent_ != nullptr) {
+    } else if (parent_ != nullptr ||
+               (loop_depth_ > 0 && !outer_globals_.count(e.name) &&
+                (no_discovery_ || boxed_names_.count(e.name)))) {
+        // Fonksiyon içi VEYA (2c) top-level DÖNGÜ-BODY'de tanımlı + closure-yakalanan
+        // top-level var → LOCAL (cell). Dar koşul: yalnız döngü-body'de tanımlı VE
+        // yakalanan (boxed_names_). Discovery'de (no_discovery_) tüm döngü-body
+        // top-level var'lar geçici local olur ki capture tespit edilsin; real'de
+        // yalnız yakalananlar cell olur, gerisi STORE_GLOBAL kalır (route güvenli:
+        // setup var'ları döngü-DIŞI → koşul tetiklenmez → global kalır).
         // Fonksiyon içi + isim local/capture değil → yeni FONKSIYON-LOCAL yarat.
         // Scope izolasyonu: fonksiyon dıştaki (global) değişkeni implicit ezemez
         // (interpreter ile aynı; VM'de eskiden STORE_GLOBAL ile sızıyordu — route
@@ -951,6 +971,10 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     } else {
         // Top-level (script global) → STORE_GLOBAL. Route/setup global'leri, app::
         // servisleri ve module referansları burada yaşar; davranış korunur.
+        // 2c: döngü-DIŞI (loop_depth_==0) tanımlı top-level var → "outer global".
+        // Döngü içindeki reassignment'ı cell YAPMAMALI (C2 paritesi — tree-walk
+        // tek binding tutar). outer_globals_ bu ayrımı taşır.
+        if (loop_depth_ == 0) outer_globals_.insert(e.name);
         uint16_t ni = add_const(Value(e.name));
         // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
         // "$t = $i" olarak derleniyordu (sol operand atılıyor). Diğer üç dal
@@ -1600,11 +1624,25 @@ uint8_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, u
 std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
     const std::vector<std::unique_ptr<Statement>>& stmts)
 {
+    // 2c: top-level de escape-analiz keşif-geçişinden geçmeli (compile() gibi) —
+    // yoksa top-level döngü-body-captured var'lar cell olmaz (C ayrışması kapanmaz).
+    if (!no_discovery_) {
+        FunctionCompiler disc(proto_.name, proto_.params, proto_.variadic, parent_);
+        disc.captures_     = captures_;
+        disc.no_discovery_ = true;
+        disc.compile_stmts(stmts);
+        boxed_names_ = std::move(disc.escaping_names_);
+        if (std::getenv("LOOK_DEBUG_BOXED") && !boxed_names_.empty()) {
+            std::string s; for (auto& n : boxed_names_) s += n + " ";
+            fprintf(stderr, "[BOXED] %s: %s\n", proto_.name.c_str(), s.c_str());
+        }
+    }
     push_scope();
     for (auto& s : stmts) compile_stmt(*s);
     pop_scope();
     emit(OpCode::RETURN_NULL);
     proto_.reg_count = regs_->max_used();
+    for (auto& c : captures_) proto_.capture_is_cell.push_back(c.is_cell ? 1 : 0);
     return std::make_shared<FunctionProto>(std::move(proto_));
 }
 
