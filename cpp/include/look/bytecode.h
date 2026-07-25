@@ -170,6 +170,11 @@ struct FunctionProto {
 
     // Parametre isimleri (hata mesajı için)
     std::vector<std::string>             params;
+
+    // 58: hangi capture'lar CELL (boxed, by-ref) — parallel() thread'e taşırken
+    // cell'ler deep-clone edilmeli (paylaşılan cell → thread'ler arası veri yarışı).
+    // captures ile paralel (index i). Boş ise hiç cell yok (hızlı yol).
+    std::vector<uint8_t>                 capture_is_cell;
 };
 
 // ── Closure object — runtime ──────────────────────────────────────────────────

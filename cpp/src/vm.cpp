@@ -806,7 +806,25 @@ call_dispatch:
                 if (R(ins.a).type() != Value::BYTECODE_FN)
                     throw LookVmError("parallel(): BYTECODE_FN bekleniyor");
                 task_acquire(); // THROW mode: throws if LOOK_PARALLEL_LIMIT reached
-                auto cl_copy = R(ins.a).as_bytecode_fn();
+                auto src_cl = R(ins.a).as_bytecode_fn();
+                // 58: CELL captures'ı deep-clone et. Eskiden captures salt-okunur
+                // snapshot'tı (thread-safe). By-ref cell'e geçince, aynı closure iki
+                // thread'de paylaşılan cell'i (aynı shared_ptr array) görür; biri
+                // cell[0]'a yazarsa sessiz veri yarışı. proto.capture_is_cell hangi
+                // capture'ın cell olduğunu söyler; yalnız onları deep-clone et.
+                std::shared_ptr<Closure> cl_copy = src_cl;
+                {
+                    const auto& isc = src_cl->proto->capture_is_cell;
+                    bool has_cell = false;
+                    for (auto b : isc) if (b) { has_cell = true; break; }
+                    if (has_cell) {
+                        cl_copy = std::make_shared<Closure>(src_cl->proto);
+                        cl_copy->captures = src_cl->captures;   // sığ (shared_ptr paylaşır)
+                        for (size_t i = 0; i < cl_copy->captures.size(); ++i)
+                            if (i < isc.size() && isc[i])
+                                cl_copy->captures[i] = cl_copy->captures[i].deep_clone();
+                    }
+                }
                 SharedState sh = shared_;
                 std::unordered_map<std::string, Value> g_copy = globals_;
                 // builtins ve routes local pointer'lara işaret eder — parallel task için deep copy

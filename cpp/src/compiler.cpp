@@ -278,6 +278,9 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
     emit(OpCode::RETURN_NULL);
 
     proto_.reg_count = regs_->max_used();
+    // 58: capture'ların cell olup olmadığını proto'ya yaz → parallel() runtime'da
+    // hangi capture'ı deep-clone edeceğini bilir (thread-safety).
+    for (auto& c : captures_) proto_.capture_is_cell.push_back(c.is_cell ? 1 : 0);
     return std::make_shared<FunctionProto>(std::move(proto_));
 }
 
