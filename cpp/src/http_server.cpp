@@ -371,14 +371,33 @@ struct HttpServer::Impl {
 
         char tmp[65536];
 
+        // Slowloris savunması: bir istek BAŞLADIKTAN (ilk bayt) sonra header'lar
+        // toplam bu süre içinde tamamlanmalı. idle timeout (15s/30s) her baytta
+        // sıfırlandığı için tek başına yetmez — yavaş-damla (idle altında bayt/6s)
+        // bağlantıyı süresiz tutup pool modunda worker thread'i tüketir (DoS).
+        // LOOK_HEADER_TIMEOUT ms ile ayarlanır (varsayılan 15s). Keep-alive'da
+        // istekLER ARASI boşta bekleme buna dahil DEĞİL (timer ilk baytta başlar).
+        static const auto HDR_TMO = []() -> std::chrono::milliseconds {
+            const char* e = std::getenv("LOOK_HEADER_TIMEOUT");
+            long ms = (e && *e) ? std::atol(e) : 15000;
+            if (ms <= 0) ms = 15000;
+            return std::chrono::milliseconds(ms);
+        }();
+
         while (true) {
             // Headers gelene kadar blocking oku
             std::string buf;
+            std::chrono::steady_clock::time_point rd_start{};   // ilk baytta set
             while (buf.find("\r\n\r\n") == std::string::npos) {
                 ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
                 if (r <= 0) { ::close(fd); return; }
+                if (rd_start == std::chrono::steady_clock::time_point{})
+                    rd_start = std::chrono::steady_clock::now();
                 buf.append(tmp, (size_t)r);
                 if (buf.size() > 2 * 1024 * 1024) { ::close(fd); return; }
+                if (std::chrono::steady_clock::now() - rd_start > HDR_TMO) {
+                    send_simple(fd, 408, "Request Timeout"); ::close(fd); return;
+                }
             }
 
             HttpRequest req;
