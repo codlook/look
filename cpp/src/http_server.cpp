@@ -82,7 +82,11 @@ static bool parse_request(const std::string& raw, HttpRequest& req) {
             std::string val = line.substr(colon + 1);
             while (!val.empty() && (val[0] == ' ' || val[0] == '\t')) val.erase(0, 1);
             while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
-            while (!key.empty() && key.back() == ' ') key.pop_back();
+            // RFC 7230 §3.2.4: field-name ile ':' arasında boşluk YASAK. Eskiden
+            // trailing boşluk sessizce kırpılıyordu → "Content-Length : 5" geçerli
+            // CL sayılıyordu; katı bir front-end onu reddedip LOOK kabul edince
+            // gövde-çerçeve desync'i (request smuggling). Katı ret.
+            if (!key.empty() && (key.back() == ' ' || key.back() == '\t')) return false;
             std::transform(key.begin(), key.end(), key.begin(), ::tolower);
             // RFC 7230 §3.3.3: çift/tutarsız Content-Length request smuggling'e yol
             // açar (front-end ilk değeri, LOOK sonuncuyu kullanırsa desync). Çakışan
@@ -396,8 +400,13 @@ struct HttpServer::Impl {
             if (te_it != req.headers.end()) {
                 std::string te = te_it->second;
                 std::transform(te.begin(), te.end(), te.begin(), ::tolower);
-                if (te.find("chunked") == std::string::npos) {
-                    // chunked dışında TE (gzip vb.) desteklenmez — belirsizlik yerine ret
+                // RFC 7230 §3.3.1: TE token-listesidir; "chunked" son coding olmalı.
+                // Eskiden `find("chunked")` SUBSTRING eşliyordu → "xchunked",
+                // "chunkedx", "chunked, gzip" hepsi chunked sanılıyordu (ölçüldü:
+                // 200/blen=5). Bir front-end bunları farklı çerçevelerse desync
+                // (request smuggling). LOOK yalnız chunked destekler → TAM eşleşme:
+                // değer birebir "chunked" değilse reddet (gzip/compress zaten çözülemez).
+                if (te != "chunked") {
                     send_simple(fd, 400, "Bad Request"); ::close(fd); return;
                 }
                 if (!read_chunked_body(fd, buf, header_end, tmp, sizeof(tmp), req.body)) {

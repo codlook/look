@@ -1,0 +1,4 @@
+route("POST", "/e", function() {
+    response::json(["blen" => strlen(request::body())])
+})
+route("GET", "/h", function() { print("ok") })
