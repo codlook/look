@@ -437,7 +437,14 @@ struct HttpServer::Impl {
                 while (req.body.size() < content_len) {
                     ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
                     if (r <= 0) { ::close(fd); return; }
-                    req.body.append(tmp, (size_t)r);
+                    // Content-Length KESİN üst sınır (55. bug): body ayrı segmentte
+                    // gelip son recv fazla bayt getirirse (pipeline'daki sonraki
+                    // isteğin başlangıcı), o baytları body'ye YUTMA — yoksa gövde
+                    // CL'yi aşar (app bozuk gövde görür + smuggling-bitişik: sonraki
+                    // istek bu gövdeye karışır). İlk-buffer yolu (yukarıda) zaten
+                    // min() ile kırpıyordu; bu döngü kırpmıyordu.
+                    size_t need = content_len - req.body.size();
+                    req.body.append(tmp, std::min((size_t)r, need));
                 }
             }
 
