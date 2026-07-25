@@ -73,6 +73,44 @@ EOF
   fi
 fi
 
+# ── 56. bug: Slowloris header deadline — CANLI ortamda (zamanlama-duyarlı) ────
+# Yalnız yerel binary ile (kendi instance'ını düşük deadline ile başlatır).
+if [ -z "$BASE_URL" ]; then
+  SLPORT=7598
+  LOOK_HEADER_TIMEOUT=3000 "$LKFCGI" --mode http --port "$SLPORT" --workers 2 "$TMP/app.lk" >"$TMP/sl.log" 2>&1 &
+  SLPID=$!
+  for _ in $(seq 1 20); do
+    curl -s --max-time 2 "http://127.0.0.1:$SLPORT/_health" 2>/dev/null | grep -q ok && break; sleep 0.3
+  done
+  sl=$(python3 - "$SLPORT" <<'PY'
+import socket, sys, time
+P = int(sys.argv[1]); s = socket.socket(); s.connect(("127.0.0.1", P))
+cut = False
+try:
+    for p in [b"GET / HTTP/1.1\r\n", b"H1: a\r\n", b"H2: b\r\n", b"H3: c\r\n", b"H4: d\r\n", b"H5: e\r\n"]:
+        s.sendall(p); time.sleep(1.0)
+except Exception:
+    cut = True
+if not cut:
+    s.settimeout(2.0)
+    try:
+        d = s.recv(64); cut = (d == b"" or b"408" in d)
+    except socket.timeout:
+        cut = False
+    except Exception:
+        cut = True
+s.close()
+print("KESILDI" if cut else "TUTULUYOR")
+PY
+)
+  kill "$SLPID" 2>/dev/null
+  if [ "$sl" = "KESILDI" ]; then
+    echo "  PASS 56 (Slowloris): surekli-damla deadline'da kesildi (canli ortam, deadline=3s)"
+  else
+    echo "  FAIL 56 (Slowloris): yavas-damla TUTULDU ($sl) — deadline canli calismiyor"; fail=1
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail
