@@ -231,6 +231,22 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
             }
             return Value(std::make_shared<look::LookChannel>(cap));
         };
+    // config() — channel ile AYNI SINIF: web'de (http_main) bağlı, CLI-VM'de eksikti →
+    // tree-walk "def" dönerken VM "kullanilamiyor" veriyordu. tree-walk (interpreter.cpp:1802)
+    // "section.key" → "SECTION_KEY" env anahtarına çevirip g_env_vars+getenv'e bakar; look_get_env
+    // AYNI kaynağı kullanır → birebir parite. Bulunamaz+default-yok → null (sentinel ile ayırt).
+    if (look::builtin_index("config") >= 0)
+        b[BI("config")] = [](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value();
+            std::string dk = a[0].to_string();
+            auto dot = dk.find('.');
+            std::string ek = (dot != std::string::npos) ? (dk.substr(0, dot) + "_" + dk.substr(dot + 1)) : dk;
+            std::transform(ek.begin(), ek.end(), ek.begin(), ::toupper);
+            if (a.size() >= 2) return Value(look::look_get_env(ek, a[1].to_string()));
+            static const std::string NF = std::string("\x01__look_config_nf__");
+            std::string v = look::look_get_env(ek, NF);
+            return v == NF ? Value() : Value(v);
+        };
     // Modül fn'leri: builtin_names'deki her "mod::fn" → interpreter'ın YÜKLÜ modülü.
     // YALNIZCA `use` edilmiş modüller auto-wire olur — interpreter ile parity: interpreter
     // de string::/math::/array:: için `use` gerektirir (json:: gibi her-zaman-açık olanlar
