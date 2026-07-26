@@ -146,6 +146,22 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
+# ── 58+ closure guard: 12 vaka (catch/param/foreach/named-fn dahil) ──────────
+# 58 C1 tek senaryo; closure_semantics_test.sh 12 vakanın TAMAMINI (A-L) iki motorda
+# karşılaştırır → bu turda eklenen catch(I)/param(J)/foreach(K)/named-fn(L) fix'lerini
+# de deploy edilen binary'de guard'lar (analizci önerisi). Yalnız yerel binary + guard
+# script mevcutsa (canlı HTTP-only modda atlanır).
+if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
+  GUARD="$(dirname "$0")/closure_semantics_test.sh"
+  if [ -f "$GUARD" ]; then
+    if bash "$GUARD" "$RECLK58" >"$TMP/clo_guard.log" 2>&1; then
+      echo "  PASS 58+ (closure guard): 12 vaka parite (A-L, catch/param/foreach/named-fn)"
+    else
+      echo "  FAIL 58+ (closure guard): $(grep -m1 FAIL "$TMP/clo_guard.log")"; fail=1
+    fi
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail
