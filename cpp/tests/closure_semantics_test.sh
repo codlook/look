@@ -64,8 +64,21 @@ $i=0
 while($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }
 print($fns[0]() . $fns[1]() . $fns[2]())
 LK
+# I = catch değişkeni yakalama (58 simetri). $err catch-var'ı declare_local'dan geçer
+# ama LOAD_EXC ham değeri yazardı → boxed slot cell sanılıp capture null okurdu.
+# Fix: boxed catch-var'a cell tahsis + exception cell[0]'a. Döngü-içi → per-iter →
+# e0e1e2 (fix ÖNCESİ VM null null null verirdi). Cell'in atama-DIŞI bildirim yollarını kilitler.
+cat > "$TMP/I.lk" <<'LK'
+$fns=[]
+$i=0
+while($i<3){
+  try { throw ("e" . $i) } catch($err) { push($fns, fn()=>$err) }
+  $i=$i+1
+}
+print($fns[0]() . $fns[1]() . $fns[2]())
+LK
 
-for c in A B C D E F G H; do
+for c in A B C D E F G H I; do
   tw=$(LOOK_CLI_VM=0 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   vm=$(timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   if [ "$tw" = "$vm" ]; then
@@ -74,5 +87,5 @@ for c in A B C D E F G H; do
     echo "  FAIL [$c] AYRISMA: tree-walk=[$tw] vm=[$vm]"; fail=1
   fi
 done
-[ $fail = 0 ] && echo "PASS: closure semantics (58 — 8 vaka parite (C2 dahil))" || echo "FAIL: closure semantics (58 — B/C fix bekliyor)"
+[ $fail = 0 ] && echo "PASS: closure semantics (58 — 9 vaka parite (C2 + catch-var dahil))" || echo "FAIL: closure semantics (58 — B/C fix bekliyor)"
 exit $fail

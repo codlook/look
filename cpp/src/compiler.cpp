@@ -662,7 +662,19 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
         // catch değişkeni ($e) — exception değeri LOAD_EXC ile gelir
         if (!s.catch_var.empty()) {
             uint8_t e_reg = declare_local(s.catch_var, 0);
-            emit(OpCode::LOAD_EXC, e_reg);
+            if (boxed_slots_.count(e_reg)) {
+                // 58 simetri: catch değişkeni bir closure tarafından yakalanıyorsa
+                // (boxed) → cell tahsis et ve exception'ı cell[0]'a koy. Aksi halde
+                // LOAD_EXC ham değeri slot'a yazar, boxed_slots slot'u cell sanır,
+                // capture ARRAY_GET[0]'da null okurdu (atama-bildirimi 961-966 aynası).
+                uint8_t tmp = alloc_temp();
+                emit(OpCode::LOAD_EXC, tmp);
+                emit(OpCode::NEW_ARRAY, e_reg, 1);
+                emit(OpCode::ARRAY_PUSH, e_reg, tmp);
+                free_temp(tmp);
+            } else {
+                emit(OpCode::LOAD_EXC, e_reg);
+            }
         }
         compile_block(*s.catch_block);
         pop_scope();
