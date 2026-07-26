@@ -729,8 +729,24 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
     // Fonksiyon adı global scope'a kaydedilir
     uint16_t name_idx = add_const(Value(s.name));
     uint8_t  r        = alloc_temp();
+
+    // İç fonksiyon dıştaki local/capture'ları yakalıyorsa (implicit capture —
+    // inner.compile sırasında toplandı) compile_closure ile AYNI capture kurulumunu
+    // yap. Eskiden bu blok YOKTU → proto gövdesindeki LOAD_CAPTURE'lar runtime'da
+    // "Capture index dışı" ile ÇÖKÜYORDU (named nested fn capture, tree-walk çalışırken
+    // VM crash). Capture yükleme MAKE_CLOSURE'dan hemen önce; hint'ler hemen sonra.
+    std::vector<uint8_t> cap_regs;
+    for (auto& cap : inner.captures_) {
+        auto loc = resolve_var(cap.name);
+        uint8_t cr = alloc_temp();
+        if      (loc.kind == VarKind::LOCAL)   { escaping_names_.insert(cap.name); emit(OpCode::MOVE, cr, loc.index); }
+        else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, cr, loc.index);
+        else { uint16_t ni = add_const(Value(cap.name)); emit(OpCode::LOAD_GLOBAL, cr, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF)); }
+        cap_regs.push_back(cr);
+    }
     // MAKE_CLOSURE: a=r, b=fn_idx (nested index)
     emit(OpCode::MAKE_CLOSURE, r, (uint8_t)fn_idx);
+    for (uint8_t cr : cap_regs) { emit(OpCode::LOAD_CAPTURE, 0, cr); free_temp(cr); }
     // Global'e kaydet — top-level function declaration (16-bit const index)
     emit(OpCode::STORE_GLOBAL, r, (uint8_t)(name_idx >> 8), (uint8_t)(name_idx & 0xFF));
     free_temp(r);

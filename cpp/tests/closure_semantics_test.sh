@@ -95,7 +95,17 @@ foreach([1,2] as $v){ push($fns, fn()=>$v); $v=$v+100 }
 print($fns[0]() . "," . $fns[1]())
 LK
 
-for c in A B C D E F G H I J K; do
+# L = NAMED nested fonksiyon dıştaki değişkeni yakalar + capture-sonrası mutasyon.
+# compile_func_decl MAKE_CLOSURE'u capture kurulumu OLMADAN emit ediyordu → proto'daki
+# LOAD_CAPTURE runtime'da "Capture index dışı" ile ÇÖKÜYORDU (VM crash, tw çalışırken).
+# Fix: compile_closure'ın capture yükleme bloğu compile_func_decl'e de eklendi. 17 parite
+# (fix ÖNCESİ vm crash). Anonim closure DEĞİL named-fn capture yolunu kilitler.
+cat > "$TMP/L.lk" <<'LK'
+function outer($p){ function inner(){ return $p } $p=$p+7; return inner() }
+print(outer(10))
+LK
+
+for c in A B C D E F G H I J K L; do
   tw=$(LOOK_CLI_VM=0 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   vm=$(timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   if [ "$tw" = "$vm" ]; then
@@ -104,5 +114,5 @@ for c in A B C D E F G H I J K; do
     echo "  FAIL [$c] AYRISMA: tree-walk=[$tw] vm=[$vm]"; fail=1
   fi
 done
-[ $fail = 0 ] && echo "PASS: closure semantics (58 — 11 vaka parite (C2+catch+param+foreach))" || echo "FAIL: closure semantics (58 — B/C fix bekliyor)"
+[ $fail = 0 ] && echo "PASS: closure semantics (58 — 12 vaka parite (C2+catch+param+foreach+named))" || echo "FAIL: closure semantics (58 — B/C fix bekliyor)"
 exit $fail
