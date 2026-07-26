@@ -162,6 +162,20 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
+# ── channel(): CLI-VM'de bağlı mı — CLI, yerel binary ────────────────────────
+# channel() builtin'i CLI-VM'de (main.cpp build_cli_builtins) BAĞLI DEĞİLDİ →
+# "kullanilamiyor (baglanmamis)". tree-walk çalışırken VM (DEFAULT) çöküyordu.
+# Fix'liyse channel+send+receive CLI-VM'de 42 döner (fix yoksa hata/boş).
+if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
+  printf '$ch=channel(1)\nsend($ch, 42)\nprint(receive($ch))\n' > "$TMP/ch.lk"
+  chout=$(timeout 10 "$RECLK58" "$TMP/ch.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
+  if [ "$chout" = "42" ]; then
+    echo "  PASS channel (CLI-VM): channel/send/receive bagli — 42"
+  else
+    echo "  FAIL channel: CLI-VM channel() calismadi (beklenen 42): [$chout]"; fail=1
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail

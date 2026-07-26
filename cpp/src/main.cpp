@@ -216,6 +216,21 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     }
     b[BI("before_route")] = [](std::vector<Value>&) -> Value { return Value(); };
     b[BI("env")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(); const char* e=std::getenv(a[0].to_string().c_str()); if (e) return Value(std::string(e)); return a.size()>=2?Value(a[1].to_string()):Value(std::string()); };
+    // channel() — CLI-VM'de BAĞLI DEĞİLDİ: send/receive'in CHAN_* opcode'ları var ama
+    // kanal OLUŞTURMA düz builtin çağrısı → VM tablosunda boş → "kullanilamiyor
+    // (baglanmamis)". tree-walk (interpreter.cpp:1631) inline hallettiği için CLI'da
+    // parallel+channel tree-walk'ta çalışıp VM'de (DEFAULT) çöküyordu. Semantik birebir:
+    // default 128, n<0 hata, n==0 → unbuffered ((size_t)-1).
+    if (look::builtin_index("channel") >= 0)
+        b[BI("channel")] = [](std::vector<Value>& a) -> Value {
+            size_t cap = 128;
+            if (!a.empty()) {
+                int n = a[0].to_int();
+                if (n < 0) throw std::runtime_error("channel: kapasite negatif olamaz");
+                cap = (n == 0) ? (size_t)-1 : (size_t)n;
+            }
+            return Value(std::make_shared<look::LookChannel>(cap));
+        };
     // Modül fn'leri: builtin_names'deki her "mod::fn" → interpreter'ın YÜKLÜ modülü.
     // YALNIZCA `use` edilmiş modüller auto-wire olur — interpreter ile parity: interpreter
     // de string::/math::/array:: için `use` gerektirir (json:: gibi her-zaman-açık olanlar
