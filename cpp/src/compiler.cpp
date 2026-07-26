@@ -272,6 +272,22 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
         }
     }
 
+    // 58 simetri: closure tarafından yakalanan PARAMETRELER cell'e kutulanır.
+    // Param'lar constructor'da declare_local'ı ATLAYIP slot alır (satır 50-56) →
+    // boxed_slots_'a hiç girmezler; catch değişkeniyle aynı sınıf. Cell olmadan
+    // capture snapshot okur → closure kurulduktan SONRA mutasyon ayrışır (tw by-ref
+    // 105, vm snapshot 5). Defaults doldurulduktan SONRA kutula: defaults MOVE'u ham
+    // slot bekler; burada slot nihai param değerini (verilen ya da varsayılan) tutar.
+    for (int i = 0; i < proto_.arity; ++i) {
+        if (!boxed_names_.count(proto_.params[i])) continue;
+        boxed_slots_.insert((uint8_t)i);
+        uint8_t tmp = alloc_temp();
+        emit(OpCode::MOVE,       tmp, (uint8_t)i);   // gelen param değeri
+        emit(OpCode::NEW_ARRAY,  (uint8_t)i, 1);     // slot = []
+        emit(OpCode::ARRAY_PUSH, (uint8_t)i, tmp);   // slot = [value] (cell)
+        free_temp(tmp);
+    }
+
     compile_block(body);
 
     // Implicit return null
@@ -575,13 +591,25 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     uint8_t r_val = r_iter + 2;
     uint8_t r_key = r_iter + 3;
 
-    // Manuel local kayıt — declare_local kullanmıyoruz (slot sabit)
-    if (!s.value_var.empty()) locals_.push_back({s.value_var, r_val, scope_depth_});
-    if (!s.key_var.empty())   locals_.push_back({s.key_var,   r_key, scope_depth_});
+    // 58 simetri: value/key var closure tarafından yakalanıyorsa (boxed) ayrı cell-slot
+    // al; değilse sabit r_val/r_key'e map et (mevcut hızlı yol). Manuel kayıt declare_local'ı
+    // atladığından foreach var'ı cell'i kaçırırdı → capture-sonrası mutasyon ayrışırdı
+    // (tw by-ref 101, vm snapshot 1). Boxed cell FOR_STEP sonrası her iterasyon TAZE tahsis
+    // edilir (per-iter, catch/param aynası).
+    bool val_boxed = !s.value_var.empty() && boxed_names_.count(s.value_var) > 0;
+    bool key_boxed = !s.key_var.empty()   && boxed_names_.count(s.key_var)   > 0;
+    uint8_t val_cell = 0, key_cell = 0;
+    if (val_boxed)                 val_cell = declare_local(s.value_var, 0);
+    else if (!s.value_var.empty()) locals_.push_back({s.value_var, r_val, scope_depth_});
+    if (key_boxed)                 key_cell = declare_local(s.key_var, 0);
+    else if (!s.key_var.empty())   locals_.push_back({s.key_var,   r_key, scope_depth_});
 
     int loop_start = current_ip();
     // FOR_STEP: a=r_iter, b=exit_hi, c=exit_lo (sonradan patch)
     int step_ip = emit(OpCode::FOR_STEP, r_iter, 0, 0);
+    // per-iter cell: FOR_STEP değeri r_val/r_key'e yazdıktan sonra taze cell'e kutula
+    if (val_boxed) { emit(OpCode::NEW_ARRAY, val_cell, 1); emit(OpCode::ARRAY_PUSH, val_cell, r_val); }
+    if (key_boxed) { emit(OpCode::NEW_ARRAY, key_cell, 1); emit(OpCode::ARRAY_PUSH, key_cell, r_key); }
 
     loop_stack_.push_back({.continue_target = loop_start});
     ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
