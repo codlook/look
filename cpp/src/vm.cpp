@@ -18,6 +18,7 @@
 #include <cassert>
 #include <thread>
 #include <cstdlib>
+#include <unordered_set>
 
 namespace {
 // LOOK_WARN_UNDEF=1 → tanımsız değişken okumalarını logla (davranışı DEĞİŞTİRMEZ).
@@ -29,6 +30,32 @@ const bool g_warn_undef = [] {
 } // namespace
 
 namespace look {
+
+// 58 parallel transitif deep-clone hook'u. interpreter.h Closure'ı göremez (bytecode.h
+// onu sonra tanımlar) → deep_clone_impl BYTECODE_FN görünce burada kayıtlı cloner'ı çağırır.
+// Bir Closure klonlanırken cell-capture'ları VE iç closure'ları özyineli klonlanır; aksi
+// halde parallel task'ın yakaladığı closure'ın içindeki cell parent'la paylaşımlı kalır
+// (np1 veri yarışı). Channel/scalar capture'lar paylaşımlı kalır (deep_clone_impl *this).
+static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& visited) {
+    auto src = v.as_bytecode_fn();
+    if (!src) return v;
+    if (visited.count(src.get())) return Value(); // döngü kır
+    visited.insert(src.get());
+    auto nc = std::make_shared<Closure>(src->proto);
+    nc->captures = src->captures;                  // sığ; aşağıda cell/closure olanlar derinleşir
+    const auto& isc = src->proto->capture_is_cell;
+    for (size_t j = 0; j < nc->captures.size(); ++j) {
+        bool cell = (j < isc.size() && isc[j]);
+        if (cell || nc->captures[j].type() == Value::BYTECODE_FN)
+            nc->captures[j] = nc->captures[j].deep_clone_tracked(visited);
+    }
+    visited.erase(src.get());
+    return Value(nc);
+}
+static const bool s_bc_cloner_registered = [] {
+    Value::bc_fn_cloner() = &clone_bytecode_fn;
+    return true;
+}();
 
 // ── VM/interpreter callback köprüsü (hook tarafı) ─────────────────────────────
 // Bridge fonksiyonları interpreter.cpp'de (hem CLI hem fcgi linkler); VM burada
@@ -815,14 +842,27 @@ call_dispatch:
                 std::shared_ptr<Closure> cl_copy = src_cl;
                 {
                     const auto& isc = src_cl->proto->capture_is_cell;
-                    bool has_cell = false;
-                    for (auto b : isc) if (b) { has_cell = true; break; }
-                    if (has_cell) {
+                    // Klonlanacak capture: CELL (mutable → paylaşım=yarış) VEYA CLOSURE
+                    // (BYTECODE_FN). Closure'ı klonlamak şart çünkü içindeki cell'ler aksi
+                    // halde parent'la paylaşımlı kalır (np1: parallel task bir closure
+                    // yakalar, closure-içi cell'i parent değiştirir → veri yarışı). deep_clone
+                    // BYTECODE_FN'i transitif klonlar (bc_fn_cloner hook, aşağıda kayıtlı).
+#ifdef LOOK_NO_TRANSITIVE_CLONE
+                    constexpr bool CLONE_CLOSURES = false; // TSan pozitif kontrol: eski (yarışlı) hâl
+#else
+                    constexpr bool CLONE_CLOSURES = true;
+#endif
+                    bool needs = false;
+                    for (size_t i = 0; i < src_cl->captures.size(); ++i)
+                        if ((i < isc.size() && isc[i]) || (CLONE_CLOSURES && src_cl->captures[i].type() == Value::BYTECODE_FN)) { needs = true; break; }
+                    if (needs) {
                         cl_copy = std::make_shared<Closure>(src_cl->proto);
                         cl_copy->captures = src_cl->captures;   // sığ (shared_ptr paylaşır)
-                        for (size_t i = 0; i < cl_copy->captures.size(); ++i)
-                            if (i < isc.size() && isc[i])
+                        for (size_t i = 0; i < cl_copy->captures.size(); ++i) {
+                            bool cell = (i < isc.size() && isc[i]);
+                            if (cell || (CLONE_CLOSURES && cl_copy->captures[i].type() == Value::BYTECODE_FN))
                                 cl_copy->captures[i] = cl_copy->captures[i].deep_clone();
+                        }
                     }
                 }
                 SharedState sh = shared_;

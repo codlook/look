@@ -15,7 +15,12 @@ if(LOOK_SANITIZE)
     add_compile_options(-fsanitize=${LOOK_SANITIZE} -fno-omit-frame-pointer -g)
     # Sanitizer runtime'ını statik linkle — binary self-contained olur, toolset
     # kurulu olmayan container/VPS'te de çalışır (libasan.so bağımlılığı olmaz).
-    add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libasan -static-libubsan)
+    # TSan ve ASan farklı statik-runtime bayrakları ister (karıştırılamaz).
+    if(LOOK_SANITIZE MATCHES "thread")
+        add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libtsan)
+    else()
+        add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libasan -static-libubsan)
+    endif()
 else()
     # ── Aşama A1: Link-Time Optimization ─────────────────────────────────────
     # Sanitizer YOKken LTO aç — modüller arası inline (VM ↔ Value ↔ builtin).

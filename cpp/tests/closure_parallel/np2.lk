@@ -1,0 +1,9 @@
+# np2: parallel task DOĞRUDAN cell yakalar ($arr reassign). Her iki hâlde izole → 123.
+function race(){
+  $arr = [1,2,3]
+  $ch = channel(1)
+  parallel(function(){ send($ch, $arr[0].$arr[1].$arr[2]) })
+  $arr = [7,8,9]
+  return receive($ch)
+}
+print(race())

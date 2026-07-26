@@ -88,6 +88,16 @@ public:
         return deep_clone_impl(visited);
     }
 
+    // BYTECODE_FN (Closure) transitif deep-clone hook'u. interpreter.h Closure'ı GÖREMEZ
+    // (bytecode.h bunu sonra include eder) → vm katmanı bir cloner kaydeder. Kayıtsızsa
+    // eski davranış (shallow). 58 parallel: bir closure yakalanınca, deep_clone onu shallow
+    // kopyalarsa closure-içi cell'ler parent'la PAYLAŞIMLI kalır → veri yarışı (np1). Cloner
+    // closure'ı klonlayıp cell-capture'larını + iç closure'ları özyineli klonlar.
+    using BcFnCloner = Value(*)(const Value&, std::unordered_set<const void*>&);
+    static BcFnCloner& bc_fn_cloner() { static BcFnCloner h = nullptr; return h; }
+    // Hook özyinelemesi için visited-paylaşımlı deep-clone (deep_clone_impl private).
+    Value deep_clone_tracked(std::unordered_set<const void*>& visited) const { return deep_clone_impl(visited); }
+
 private:
     Value deep_clone_impl(std::unordered_set<const void*>& visited) const {
         if (type_ == ARRAY && ptr_val) {
@@ -100,7 +110,11 @@ private:
             visited.erase(arr.get());
             return Value(v);
         }
-        return *this; // scalar, fn, ws, sse — shallow copy yeterli
+        if (type_ == BYTECODE_FN && ptr_val) {
+            // Closure → transitif klonla (cloner kayıtlıysa). Yoksa shallow (eski).
+            if (auto h = bc_fn_cloner()) return h(*this, visited);
+        }
+        return *this; // scalar, channel, ws, sse — shallow copy yeterli (paylaşım kasıtlı)
     }
 public:
 

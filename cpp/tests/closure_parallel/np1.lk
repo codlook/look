@@ -1,0 +1,11 @@
+# np1: parallel task bir CLOSURE yakalar ($reader), o closure mutable cell $c tutar.
+# FIX (transitif deep-clone): task izole cell görür → 0. BUG (cell-only): paylaşımlı → yarış.
+function race(){
+  $c = 0
+  $reader = fn() => $c
+  $ch = channel(1)
+  parallel(function(){ send($ch, $reader()) })
+  $c = 999
+  return receive($ch)
+}
+print(race())
