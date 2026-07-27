@@ -72,7 +72,12 @@ static void assert_in_file_root(const std::string& path) {
     std::string root = get_file_root();
     if (root.empty()) return; // unrestricted
     std::error_code ec;
-    fs::path resolved = fs::weakly_canonical(fs::path(path), ec);
+    // Yol ÖNCE cwd-tabanlı mutlağa çevrilmeli. weakly_canonical, var-olmayan ÇIPLAK
+    // göreli bir isim ("out.txt") için yolu GÖRELİ bırakır (cwd eklemez) → mutlak kökle
+    // ("/…/cwd") mismatch → kök-içi meşru YENİ dosya (file::put/exists) yanlışça reddedilirdi
+    // (alt-dizinli "sub/x.txt" tesadüfen çalışıyordu — "sub" çözülüp mutlaklaşınca). fs::absolute
+    // göreli yolu cwd'ye göre mutlaklaştırır (OS ile aynı çözüm) → kök kontrolü doğru işler.
+    fs::path resolved = fs::weakly_canonical(fs::absolute(fs::path(path), ec), ec);
     if (ec) throw std::runtime_error("file: invalid path: " + path);
     // Store root as a named variable — iterators from temporaries dangle.
     // Use 4-arg mismatch to guard against resolved being shorter than root.

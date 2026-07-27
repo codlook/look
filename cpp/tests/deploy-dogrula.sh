@@ -206,6 +206,23 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
+# ── file:: path-root guard: meşru göreli çalışır + traversal bloklu — CLI ────
+# assert_in_file_root çıplak göreli ismi (file::put("x.txt")) yanlışça reddediyordu
+# (weakly_canonical göreli bırakıyor → mutlak kökle mismatch). fs::absolute ile düzeldi.
+# Fix'liyse: göreli put çalışır (OK) VE ../etc/passwd bloklanır. İkisi de gerekli.
+if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
+  printf 'use file\nfile::put("_dogrula_rel.txt","ok")\nprint(file::read("_dogrula_rel.txt"))\n' > "$TMP/frel.lk"
+  ( cd "$TMP" && timeout 10 "$RECLK58" "$TMP/frel.lk" 2>&1 | grep -v "INFO\|Pool" ) > "$TMP/frel.out"
+  printf 'use file\nfile::read("../../../../etc/passwd")\n' > "$TMP/ftrav.lk"
+  ( cd "$TMP" && timeout 10 "$RECLK58" "$TMP/ftrav.lk" 2>&1 | grep -v "INFO\|Pool" ) > "$TMP/ftrav.out"
+  rm -f "$TMP/_dogrula_rel.txt"
+  if grep -q "^ok$" "$TMP/frel.out" && grep -qi "access denied" "$TMP/ftrav.out"; then
+    echo "  PASS file-root: göreli put/read çalışır + ../etc/passwd bloklu"
+  else
+    echo "  FAIL file-root: göreli=[$(cat $TMP/frel.out)] traversal=[$(cat $TMP/ftrav.out)]"; fail=1
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail
