@@ -410,14 +410,18 @@ static void run_setup_http(const fs::path& script) {
             // int (6)
             setup_builtins[6] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value(0);
-                try { return look::Value((int64_t)std::stoll(args[0].to_string())); }
-                catch (...) { return look::Value(0); }
+                // to_int() KULLAN — stoll(to_string(float)) BOZUK: to_string büyük float'ı
+                // bilimsel gösterime çevirir ("1e+06"), stoll 'e'de durup 1 döndürür →
+                // int(float>~1e6) sessizce yanlış. to_int() FLOAT'ı doğrudan (int64_t) cast
+                // eder (tree-walk to_int ile BİREBİR → parite), STRING'i aynı stoll ile parse eder.
+                return look::Value(args[0].to_int());
             };
             // float (7)
             setup_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value(0.0);
-                try { return look::Value(std::stod(args[0].to_string())); }
-                catch (...) { return look::Value(0.0); }
+                // to_float(): int()'teki gibi to_string() round-trip'i ele (FLOAT doğrudan,
+                // string round-trip hassasiyet kaybı yok) → tree-walk to_float ile birebir.
+                return look::Value(args[0].to_float());
             };
 
             // log::info/warn/error/debug (43-46) — setup logları
@@ -924,13 +928,13 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         };
         req_builtins[6] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0);
-            try { return look::Value((int)std::stoll(args[0].to_string())); }
-            catch (...) { return look::Value(0); }
+            // to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + (int) int32 daralması
+            // ikisini de kapatır (tree-walk to_int ile birebir parite). Bkz. setup_builtins[6].
+            return look::Value(args[0].to_int());
         };
         req_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0.0);
-            try { return look::Value(std::stod(args[0].to_string())); }
-            catch (...) { return look::Value(0.0); }
+            return look::Value(args[0].to_float());  // to_float(): to_string() round-trip yok, tree-walk parite
         };
         req_builtins[8] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(false);

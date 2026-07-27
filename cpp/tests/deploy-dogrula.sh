@@ -190,6 +190,22 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
+# ── int(float>~1e6): to_string() bilimsel-gösterim bug'ı — CLI ───────────────
+# int() = stoll(to_string(float)) idi → to_string(1e6)="1e+06", stoll 'e'de durup 1
+# döndürürdü → int(1000000.0)=1 (SESSİZ bozulma, timestamp/para/ID aritmetiği). Fix:
+# to_int() doğrudan cast. Fix'liyse int(1000000.0)=1000000, fix yoksa 1.
+if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
+  printf 'print(int(1700000000.0 * 1000.0))\n' > "$TMP/int.lk"
+  iout=$(timeout 10 "$RECLK58" "$TMP/int.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
+  if [ "$iout" = "1700000000000" ]; then
+    echo "  PASS int(float>1e6): büyük float→int doğru (ms-timestamp 1700000000000)"
+  elif [ "$iout" = "1" ]; then
+    echo "  FAIL int(): stoll(to_string(float)) bug'ı CANLI — int(1.7e12)=1 (bilimsel-gösterim)"; fail=1
+  else
+    echo "  (int atlandi: beklenmedik: [$iout])"
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail

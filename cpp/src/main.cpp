@@ -178,8 +178,8 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
         return Value(0);
     };
     b[5] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? std::string() : a[0].to_string()); };  // str
-    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); try { return Value((int)std::stoll(a[0].to_string())); } catch(...) { return Value(0); } };  // int
-    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); try { return Value(std::stod(a[0].to_string())); } catch(...) { return Value(0.0); } };  // float
+    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return Value(a[0].to_int()); };  // int — to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + int32 daralması kapandı (tree-walk parite)
+    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); return Value(a[0].to_float()); };  // float — to_float(): to_string() round-trip yok (tree-walk parite)
     b[8] = [](std::vector<Value>& a) -> Value {   // bool
         if (a.empty()) return Value(false);
         auto& v = a[0];
