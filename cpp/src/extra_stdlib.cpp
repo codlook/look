@@ -504,8 +504,11 @@ Module make_array_module(Interpreter* interp) {
         if (offset < 0) offset = 0;
         if (offset > n) offset = n;
         if (length < 0) length = 0;
-        int64_t end = offset + length;
-        if (end > n) end = n;                 // end ∈ [offset, n] garantili
+        // TAŞMA önle: length kalan uzunluğa (n-offset) kırpılır ÖNCE — aksi halde
+        // offset+length int64 taşıp negatif end üretir (>n kontrolü negatifi yakalamaz →
+        // vector(first>last) → length_error). Kırpınca doğru: kalanı döndür.
+        if (length > n - offset) length = n - offset;
+        int64_t end = offset + length;        // artık taşmaz; end ∈ [offset, n]
         auto result = std::make_shared<std::vector<Value>>(
             src.begin() + offset, src.begin() + end);
         return Value(result);

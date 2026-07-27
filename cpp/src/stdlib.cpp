@@ -393,7 +393,11 @@ static Module make_string() {
         if (start >= n) return Value(std::string(""));
         int64_t count = (args.size() == 3) ? args[2].to_int() : (n - start);
         if (count < 0) count = 0;
-        int64_t end = std::min(n, start + count);
+        // TAŞMA önle: count kalan uzunluğa (n-start) kırpılır ÖNCE — aksi halde
+        // start+count int64 taşıp negatif end üretir (vector(first>last) → length_error,
+        // memory-safety değil ama UB iterator aritmetiği). Kırpınca doğru: kalanı döndür.
+        if (count > n - start) count = n - start;
+        int64_t end = start + count;   // artık taşmaz (count ≤ n-start)
         std::vector<uint32_t> sub(cps.begin() + start, cps.begin() + end);
         return Value(utf8_encode(sub));
     };
