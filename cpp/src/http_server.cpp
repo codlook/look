@@ -663,12 +663,16 @@ struct HttpServer::Impl {
         bool fire_cb = false;
         if (conn) {
             fire_cb = !conn->closed.exchange(true);
-            // WS close_ws (0525ba7) ile SİMETRİK drain: close_fd ÖNCESİ write_mutex'i al.
-            // SseConnection::send() (registry broadcast) write_mutex altında closed'ı
-            // kontrol edip ::send(fd) yapıyor; close_sse write_mutex almadan close_fd
-            // çağırırsa, send() closed-kontrolü (bak sse.cpp:61) ile ::send arasındayken
-            // fd kapanır/yeniden-kullanılır → yazma-kapalı-fd yarışı. write_mutex uçuştaki
-            // send'in bitmesini bekletir; sonraki send closed=true görüp bail eder.
+            // SAVUNMA (close_ws 0525ba7 drain'inin aynası): close_fd ÖNCESİ write_mutex'i al.
+            // Handler send'i timer::every / parallel ile ERTELERSE (doğal SSE push kalıbı),
+            // o callback AYRI thread'de SseConnection::send() → write_mutex altında closed'ı
+            // kontrol edip ::send(fd) yapar. Drain olmadan: send() closed-kontrolü (sse.cpp:61)
+            // ile ::send(63) arasındayken close_sse (event-loop) close_fd(fd) → use-after-close
+            // (fd yeniden kullanıldıysa yanlış istemciye yazma). write_mutex uçuştaki send'i
+            // bekletir; sonraki send closed=true görür.
+            // NOT: fd-YAŞAM-SÜRESİ semantik yarışı — kernel fd üzerinde, kullanıcı-belleğinde
+            // DEĞİL → TSan GÖREMEZ (pozitif kontrol iki variantta da 0, bkz [[tsan-heap-yaris-atfi]]).
+            // Kanıt: kod-mantığı + threading. Şiddet DÜŞÜK-ORTA (bozulma değil, yanlış-fd yazımı).
             std::lock_guard<std::mutex> wlk(conn->write_mutex);
             loop->close_fd(fd);
         } else {
