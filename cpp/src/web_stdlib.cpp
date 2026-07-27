@@ -1201,13 +1201,17 @@ static std::shared_ptr<DbConnection> open_one_connection(
     int port = 3306;
     std::string scheme = parse_dsn_part(dsn, user, pass, host, port, db_name);
     // TLS: mysqls://.../mariadbs:// şeması VEYA db-adında ?tls=1 / ?ssl=... sorgu paramı.
+    // ?tls=verify / ?ssl=verify → ayrıca sertifika+hostname doğrulaması (MITM'e karşı).
     bool tls = (scheme == "mysqls" || scheme == "mariadbs");
+    bool tls_verify = false;
     { size_t q = db_name.find('?');
       if (q != std::string::npos) {
         std::string query = db_name.substr(q + 1);
         db_name = db_name.substr(0, q);   // sorgu dizisini db adından ayıkla
-        if (query.find("tls=1") != std::string::npos || query.find("tls=true") != std::string::npos ||
-            query.find("ssl=") != std::string::npos)
+        if (query.find("tls=verify") != std::string::npos || query.find("ssl=verify") != std::string::npos ||
+            query.find("ssl=verify_identity") != std::string::npos) { tls = true; tls_verify = true; }
+        else if (query.find("tls=1") != std::string::npos || query.find("tls=true") != std::string::npos ||
+                 query.find("ssl=") != std::string::npos)
             tls = true;
       } }
     if (scheme == "mysqls")   scheme = "mysql";
@@ -1216,7 +1220,7 @@ static std::shared_ptr<DbConnection> open_one_connection(
         throw std::runtime_error("db::connect() unsupported DSN scheme: " + scheme);
     DbConfig cfg;
     cfg.host = host; cfg.port = port; cfg.user = user;
-    cfg.password = pass; cfg.database = db_name; cfg.tls = tls;
+    cfg.password = pass; cfg.database = db_name; cfg.tls = tls; cfg.tls_verify = tls_verify;
     if (args.size() >= 2 && args[1].type() == Value::ARRAY) {
         auto& arr = *args[1].as_array();
         for (size_t i = 1; i + 1 < arr.size(); i += 2) {

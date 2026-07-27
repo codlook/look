@@ -36,7 +36,10 @@ struct DbConfig {
     std::string user;
     std::string password;
     std::string database;
-    bool        tls = false;   // mysqls:// veya ?tls=1 → TLS (SSLRequest + SSL_connect, --ssl-mode=REQUIRED)
+    bool        tls = false;        // mysqls:// veya ?tls=1 → TLS (SSLRequest + SSL_connect)
+    bool        tls_verify = false;  // ?tls=verify → SSL_VERIFY_PEER + hostname (MITM'e karşı).
+                                     // tls && !tls_verify = --ssl-mode=REQUIRED (şifrele, doğrulama yok,
+                                     // self-signed dostu); tls_verify = --ssl-mode=VERIFY_IDENTITY.
 
     int connect_timeout_ms = 5000;
     int query_timeout_ms   = 30000;

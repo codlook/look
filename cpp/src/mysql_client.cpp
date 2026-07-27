@@ -48,7 +48,14 @@ static SSL_CTX* mysql_ssl_ctx() {
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         SSL_CTX* c = SSL_CTX_new(TLS_client_method());
-        if (c) SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr);
+        if (c) {
+            // CTX default: doğrulama YOK. verify modu (?tls=verify) per-SSL açılır.
+            SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr);
+            // Trust store'u yükle ki verify modu sistem CA'larına karşı doğrulayabilsin
+            // (SSL_CERT_FILE/DIR env'i de okur — statik OpenSSL için configure_system_ca_bundle
+            // http_client'ta yapılıyor; burada default paths yeterli).
+            SSL_CTX_set_default_verify_paths(c);
+        }
         return c;
     }();
     return ctx;
@@ -568,6 +575,15 @@ void MySQLClient::do_handshake(const std::string& user,
         SSL* s = SSL_new(ctx);
         if (!s) throw std::runtime_error("db mysql: SSL_new başarısız (TLS)");
         SSL_set_fd(s, (int)sock_);
+        // SNI — sunucunun doğru sertifikayı seçmesi için host adını gönder (her modda).
+        SSL_set_tlsext_host_name(s, cfg_.host.c_str());
+        if (cfg_.tls_verify) {
+            // ?tls=verify → sertifika + hostname doğrula (MITM'e karşı). SSL_set1_host
+            // hostname eşleşmesini zorlar; SSL_VERIFY_PEER kötü/güvenilmez cert'te
+            // SSL_connect'i başarısız kılar. Self-signed/yanlış-host → bağlantı REDDEDİLİR.
+            SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
+            SSL_set1_host(s, cfg_.host.c_str());
+        }
         if (SSL_connect(s) != 1) {
             unsigned long e = ERR_get_error();
             char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));

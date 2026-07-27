@@ -20,3 +20,12 @@ Redis'te (rediss stub, aslında yok) vardı sanılıyordu; MySQL'de gerçek TLS 
     # hazır olunca:
     docker run --rm --network looknet -v <repo>/cpp:/look/cpp -w /look/cpp look-build \
       bash -lc "/look/cpp/build/lk tests/db_tls/tls_on.lk"   # → TLS_AES_256_GCM_SHA384
+
+## İki mod (?tls=1 vs ?tls=verify)
+- `?tls=1` (veya mysqls://): şifreleme, SSL_VERIFY_NONE — pasif dinlemeye karşı korur,
+  AKTİF MITM'e karşı DEĞİL (sunucu cert'i doğrulanmaz). Self-signed DB cert'lerle çalışır
+  (--ssl-mode=REQUIRED). Kanıt: mysql:8 → Ssl_cipher=TLS_AES_256_GCM_SHA384.
+- `?tls=verify`: şifreleme + SSL_VERIFY_PEER + SSL_set1_host (hostname) — MITM'e karşı korur
+  (--ssl-mode=VERIFY_IDENTITY). Güvenilmez/self-signed/yanlış-host cert → bağlantı REDDEDİLİR.
+  Pozitif kontrol (tls_verify.lk): mysql:8 self-signed → "certificate verify failed" (verify aktif).
+- Downgrade YOK: TLS handshake başarısız → throw (plaintext'e sessizce düşmez).
