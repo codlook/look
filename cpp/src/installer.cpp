@@ -142,6 +142,34 @@ static PkgSpec parse_pkg(const std::string& input) {
     if (p.host != "github.com")
         throw std::runtime_error("Şu an sadece github.com destekleniyor.");
 
+    // Path-traversal koruması: user/repo/subdir doğrudan yerel hedef yola akıyor
+    // (pkg_dir()="pkg/"+subdir, modules_dir()/mod_name). Kötü niyetli look.lock (klonlanmış
+    // güvenilmeyen proje) veya CLI arg'ında `../` → dest_dir proje/modül kökünün DIŞINA
+    // kaçar; extract_zip'in Zip-Slip kontrolü kaçmış dest_dir'i güvenli-taban sayar →
+    // proje-dışına attacker-içerikli dosya yazımı. Her bileşeni katı doğrula.
+    auto validate_component = [&input](const std::string& c, const char* what) {
+        if (c.empty())
+            throw std::runtime_error(std::string("Geçersiz paket (boş ") + what + "): " + input);
+        if (c == "." || c == ".." || c.find("..") != std::string::npos ||
+            c.find('/') != std::string::npos || c.find('\\') != std::string::npos ||
+            c.find(':') != std::string::npos || c.front() == '.' ||
+            c.find('\0') != std::string::npos)
+            throw std::runtime_error(std::string("Geçersiz paket ") + what +
+                                     " (yol-kaçış karakteri): " + input);
+    };
+    validate_component(p.user, "user");
+    validate_component(p.repo, "repo");
+    // subdir çok-seviyeli olabilir (a/b) — her segmenti ayrı doğrula
+    if (!p.subdir.empty()) {
+        size_t seg = 0, nx;
+        do {
+            nx = p.subdir.find('/', seg);
+            std::string part = p.subdir.substr(seg, nx == std::string::npos ? nx : nx - seg);
+            validate_component(part, "subdir");
+            seg = nx + 1;
+        } while (nx != std::string::npos);
+    }
+
     return p;
 }
 
