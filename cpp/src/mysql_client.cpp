@@ -582,7 +582,14 @@ void MySQLClient::do_handshake(const std::string& user,
             // hostname eşleşmesini zorlar; SSL_VERIFY_PEER kötü/güvenilmez cert'te
             // SSL_connect'i başarısız kılar. Self-signed/yanlış-host → bağlantı REDDEDİLİR.
             SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
-            SSL_set1_host(s, cfg_.host.c_str());
+            // SSL_set1_host dönüşü KONTROL EDİLMELİ: başarısız olursa (nadir — bellek/bozuk
+            // string) VERIFY_PEER zinciri doğrular ama hostname kontrolü SESSİZCE kapanır →
+            // "geçerli CA cert'i + yanlış host" MITM'i mümkün olur. verify modu her zaman
+            // gerçekten hostname doğrulasın diye kurulamıyorsa bağlantıyı reddet.
+            if (SSL_set1_host(s, cfg_.host.c_str()) != 1) {
+                SSL_free(s);
+                throw std::runtime_error("db mysql: TLS hostname doğrulaması kurulamadı (verify)");
+            }
         }
         if (SSL_connect(s) != 1) {
             unsigned long e = ERR_get_error();
