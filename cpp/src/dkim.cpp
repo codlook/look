@@ -259,13 +259,20 @@ bool dkim_verify(const std::string& raw_message) {
                 size_t end = raw_message.find_first_of(" \t\r\n>", at + 1);
                 std::string from_domain = raw_message.substr(at + 1,
                     end != std::string::npos ? end - at - 1 : std::string::npos);
-                // Case-insensitive: d= must be a suffix of from_domain (parent or exact)
+                // Case-insensitive: d= from_domain ile AYNI olmali ya da onun PARENT'i
+                // (From: sub.example.com, d=example.com geçerli). Eski boyut-kapisi
+                // (fd.size() > dd.size()+1) suffix kontrolunu ESIT/YAKIN uzunlukta
+                // atliyordu → saldirgan kendi d=evildom.co ile From: paypal.com'u
+                // (ayni uzunluk) imzalayip alignment'i geçiriyordu (spoofing). Katı:
+                // ya tam eşit, ya da fd, "."+dd ile bitmeli (dd, fd'nin gerçek üst-domaini).
                 std::string fd = from_domain, dd = domain;
                 for (char& c : fd) c = (char)std::tolower((unsigned char)c);
                 for (char& c : dd) c = (char)std::tolower((unsigned char)c);
-                if (fd != dd && fd.size() > dd.size() + 1
-                    && fd.substr(fd.size() - dd.size() - 1) != "." + dd) return false;
-                if (fd.size() < dd.size()) return false;
+                if (fd.empty() || dd.empty()) return false;
+                bool aligned = (fd == dd) ||
+                    (fd.size() > dd.size() &&
+                     fd.compare(fd.size() - dd.size() - 1, dd.size() + 1, "." + dd) == 0);
+                if (!aligned) return false;
             }
         }
     }
