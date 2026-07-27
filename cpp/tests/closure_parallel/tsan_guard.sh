@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# closure_parallel/tsan_guard.sh — parallel task closure-capture deep-clone yarışı guard'ı.
+# closure_parallel/tsan_guard.sh — parallel closure-capture deep-clone guard'ı.
 #
-# BULGU (58 capture+parallel ekseni): parallel task bir CLOSURE yakaladığında,
-# PARALLEL_CALL deep-clone o closure'ı SIĞ kopyalıyordu (deep_clone_impl fn için *this)
-# → closure-içi cell parent'la PAYLAŞIMLI → veri yarışı (np1). 2b'nin thread-safety'si
-# bir seviye derinde delik veriyordu. FIX: deep-clone transitif — closure capture'ları da
-# klonlanır (vm.cpp bc_fn_cloner hook + PARALLEL_CALL closure clone).
+# BULGU (58 capture+parallel ekseni): kaynak analizi — parallel task bir CLOSURE
+# yakaladığında, PARALLEL_CALL deep-clone o closure'ı SIĞ kopyalıyordu (deep_clone_impl
+# fn için `return *this`) → closure-içi cell parent'la MEKANİK olarak PAYLAŞIMLI kalıyordu.
+# FIX: deep-clone transitif — closure capture'ları da klonlanır (bc_fn_cloner hook +
+# PARALLEL_CALL closure clone). 2b'nin izolasyon niyetiyle tutarlı savunmacı sertleştirme.
 #
-# POZİTİF KONTROL: -DLOOK_NO_TRANSITIVE_CLONE eski (yarışlı) hâli derler.
-#   FIX (default):               np1 TSan TEMİZ, fonksiyonel izole (0)
-#   BUG (-DLOOK_NO_TRANSITIVE_CLONE): np1 TSan YARIŞ (heap cell), fonksiyonel racy
-# np2 (doğrudan cell) her iki hâlde izole (123) — kontrast.
+# KANIT DÜZEYİ (DÜRÜST): Bu MEKANİK/SAVUNMACI bir fix — GÖZLEMLENEBİLİR YARIŞ bağımsız
+# ÜRETİLEMEDİ. Hem analizci hem yazılımcı 15+ koşum, çok senaryo (read-write, write-write,
+# channel'lı/channel'sız) denedi; BUG variant (LOOK_NO_TRANSITIVE_CLONE, md5-doğrulandı)
+# bile TSan-temiz çıktı. Önceki "np1 cell yarışı" atfı muhtemelen s_cv shutdown yarışının
+# (o da heap'te, her parallel+çıkışta) yanlış-atfıydı — GERİ ÇEKİLDİ. Kaynak sığ-kopyayı
+# gösteriyor (izolasyon eksik) ama pratikte yarış tetiklenemedi. DERS: TSan "heap yarışı"
+# atfında allocation stack ile s_cv/cell AYRIMI şart.
+#
+# POZİTİF KONTROL: -DLOOK_NO_TRANSITIVE_CLONE eski (sığ) hâli derler. FIX np1 fonksiyonel
+# izole (0), np2 izole (123). BUG'da gözlemlenebilir fark üretilemedi (bkz. yukarı).
 #
 # Kullanım (Docker, gcc-toolset-12 + libtsan):
 #   dnf install -y gcc-toolset-12-libtsan-devel; source /opt/rh/gcc-toolset-12/enable
