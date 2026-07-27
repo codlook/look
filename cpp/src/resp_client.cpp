@@ -19,7 +19,30 @@
 #  define CLOSESOCKET(fd) ::closesocket(fd)
 #endif
 
+#ifndef _WIN32
+#  include <openssl/ssl.h>
+#  include <openssl/err.h>
+#endif
+
 namespace look {
+
+#ifndef _WIN32
+// ── Redis TLS: client SSL_CTX (mysql_client ile aynı kalıp) ──────────────────
+// rediss:// / ?tls=1 → şifreleme (VERIFY_NONE, self-signed dostu); ?tls=verify →
+// SSL_VERIFY_PEER + hostname (MITM'e karşı). Managed Redis (Upstash/ElastiCache/Redis
+// Cloud) TLS ZORUNLU tutar — eski stub-throw hepsini blokluyordu.
+static SSL_CTX* redis_ssl_ctx() {
+    static SSL_CTX* ctx = [] {
+        SSL_library_init();
+        SSL_load_error_strings();
+        OpenSSL_add_all_algorithms();
+        SSL_CTX* c = SSL_CTX_new(TLS_client_method());
+        if (c) { SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr); SSL_CTX_set_default_verify_paths(c); }
+        return c;
+    }();
+    return ctx;
+}
+#endif
 
 // ── URL parser ───────────────────────────────────────────────────────────────
 // redis://[:password@]host[:port][/db]
@@ -27,18 +50,32 @@ namespace look {
 
 static void parse_url(const std::string& url,
                       std::string& host, int& port,
-                      std::string& pass, int& db, bool& tls)
+                      std::string& pass, int& db, bool& tls, bool& tls_verify)
 {
     host = "127.0.0.1";
     port = 6379;
     pass = "";
     db   = 0;
     tls  = false;
+    tls_verify = false;
 
     std::string rest;
-    if (url.substr(0, 8) == "rediss://") { tls = true;  rest = url.substr(8); }
-    else if (url.substr(0, 8) == "redis://")             rest = url.substr(8);
-    else                                                  rest = url;
+    // ESKİ HATA: substr(0,8)=="rediss://" — "rediss://" 9 karakter → 8-karakter substr ASLA
+    // eşleşmezdi (rediss:// TLS'i hiç tetiklenmiyordu; stub-throw olduğu için gizli kaldı).
+    // rfind(...,0)==0 = doğru "başlıyor mu" kontrolü.
+    if (url.rfind("rediss://", 0) == 0) { tls = true; rest = url.substr(9); }
+    else if (url.rfind("redis://", 0) == 0)             rest = url.substr(8);
+    else                                                 rest = url;
+
+    // ?tls=verify / ?ssl=verify → şifreleme + sertifika/hostname doğrulaması (MITM'e karşı).
+    // ?tls=1 → yalnız şifreleme. Sorgu dizisini rest'ten ayıkla.
+    { auto q = rest.find('?');
+      if (q != std::string::npos) {
+        std::string query = rest.substr(q + 1);
+        rest = rest.substr(0, q);
+        if (query.find("tls=verify") != std::string::npos || query.find("ssl=verify") != std::string::npos) { tls = true; tls_verify = true; }
+        else if (query.find("tls=1") != std::string::npos || query.find("ssl=") != std::string::npos) tls = true;
+      } }
 
     // password: :pass@
     auto at = rest.rfind('@');
@@ -70,17 +107,23 @@ static void parse_url(const std::string& url,
 // ── Constructor / Destructor ─────────────────────────────────────────────────
 
 RespClient::RespClient(const std::string& url) {
-    parse_url(url, host_, port_, pass_, db_, tls_);
+    parse_url(url, host_, port_, pass_, db_, tls_, tls_verify_);
     connect();
 }
 
 RespClient::~RespClient() {
+#ifndef _WIN32
+    if (ssl_) { SSL_shutdown((SSL*)ssl_); SSL_free((SSL*)ssl_); ssl_ = nullptr; }
+#endif
     if (fd_ >= 0) { CLOSESOCKET(fd_); fd_ = -1; }
 }
 
 // ── TCP connect ──────────────────────────────────────────────────────────────
 
 void RespClient::connect() {
+#ifndef _WIN32
+    if (ssl_) { SSL_shutdown((SSL*)ssl_); SSL_free((SSL*)ssl_); ssl_ = nullptr; }
+#endif
     if (fd_ >= 0) { CLOSESOCKET(fd_); fd_ = -1; }
 
 #ifdef _WIN32
@@ -114,8 +157,37 @@ void RespClient::connect() {
 #endif
     }
 
-    if (tls_)
-        throw std::runtime_error("Redis TLS (rediss://) requires OpenSSL — not compiled in this build");
+    if (tls_) {
+#ifndef _WIN32
+        // TLS: TCP kurulduktan hemen sonra SSL handshake (MySQL'in aksine mid-stream
+        // SSLRequest YOK — Redis TLS bağlantı başında). ssl_ set edilince tüm I/O SSL'den.
+        SSL_CTX* ctx = redis_ssl_ctx();
+        if (!ctx) throw std::runtime_error("Redis: SSL_CTX oluşturulamadı (TLS)");
+        SSL* s = SSL_new(ctx);
+        if (!s) throw std::runtime_error("Redis: SSL_new başarısız (TLS)");
+        SSL_set_fd(s, fd_);
+        SSL_set_tlsext_host_name(s, host_.c_str());   // SNI
+        if (tls_verify_) {
+            // ?tls=verify → sertifika + hostname doğrula (MITM'e karşı). set1_host dönüşü
+            // KONTROL EDİLİR (başarısızsa hostname kontrolü sessizce kapanmasın — bkz mysql_client).
+            SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
+            if (SSL_set1_host(s, host_.c_str()) != 1) {
+                SSL_free(s);
+                throw std::runtime_error("Redis: TLS hostname doğrulaması kurulamadı (verify)");
+            }
+        }
+        if (SSL_connect(s) != 1) {
+            unsigned long e = ERR_get_error();
+            char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
+            SSL_free(s);
+            throw std::runtime_error(std::string("Redis: TLS handshake başarısız: ") + eb);
+        }
+        ssl_ = s;   // bundan sonra send_command/read_* SSL üstünden
+#else
+        throw std::runtime_error("Redis TLS (rediss://) bu yapida desteklenmiyor "
+                                 "(Windows yapisi OpenSSL'siz derlenir). Linux yapisini kullanin.");
+#endif
+    }
 
     // AUTH
     if (!pass_.empty()) {
@@ -141,7 +213,12 @@ void RespClient::send_command(const std::vector<std::string>& args) {
     const char* p = buf.data();
     size_t rem = buf.size();
     while (rem > 0) {
-        int sent = (int)::send(fd_, p, (int)rem, 0);
+        int sent;
+#ifndef _WIN32
+        if (ssl_) sent = SSL_write((SSL*)ssl_, p, (int)rem);
+        else
+#endif
+            sent = (int)::send(fd_, p, (int)rem, 0);
         if (sent <= 0) throw std::runtime_error("Redis: send error");
         p += sent; rem -= sent;
     }
@@ -156,7 +233,12 @@ std::string RespClient::read_line() {
     std::string line;
     char c;
     while (true) {
-        int n = (int)::recv(fd_, &c, 1, 0);
+        int n;
+#ifndef _WIN32
+        if (ssl_) n = SSL_read((SSL*)ssl_, &c, 1);
+        else
+#endif
+            n = (int)::recv(fd_, &c, 1, 0);
         if (n <= 0) throw std::runtime_error("Redis: connection closed");
         if (c == '\r') continue;
         if (c == '\n') break;
@@ -188,7 +270,12 @@ std::string RespClient::read_bulk(long len) {
     std::string buf((size_t)len, '\0');
     size_t got = 0, need = (size_t)len;
     while (got < need) {
-        int n = (int)::recv(fd_, &buf[got], need - got, 0);
+        int n;
+#ifndef _WIN32
+        if (ssl_) n = SSL_read((SSL*)ssl_, &buf[got], (int)(need - got));
+        else
+#endif
+            n = (int)::recv(fd_, &buf[got], need - got, 0);
         if (n <= 0) throw std::runtime_error("Redis: connection closed reading bulk");
         got += (size_t)n;
     }

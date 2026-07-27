@@ -31,8 +31,10 @@ private:
     int         port_  = 6379;
     int         db_    = 0;
     std::string pass_;
-    bool        tls_   = false;
+    bool        tls_        = false;  // rediss:// veya ?tls=1 → TLS (SSL_connect bağlantı başında)
+    bool        tls_verify_ = false;  // ?tls=verify → SSL_VERIFY_PEER + hostname (MITM'e karşı)
     int         fd_    = -1;
+    void*       ssl_   = nullptr;     // SSL* (POSIX/OpenSSL); TLS aktifse tüm I/O buradan geçer
 
     void        send_command(const std::vector<std::string>& args);
     std::string read_line();
