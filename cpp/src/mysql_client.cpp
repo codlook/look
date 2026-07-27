@@ -720,9 +720,15 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     const uint8_t* end = p + resp.size();
 
     if (resp[0] == 0xFF) {
-        p++; uint16_t code=read_u16(p);
-        if (p < end && *p == '#') p += 6;
-        throw std::runtime_error("db: query error " + std::to_string(code) + ": " + std::string(p, end));
+        // BOUNDS: kötü/MITM sunucu kısa hata paketi ({0xFF} veya kırpık) gönderirse
+        // read_u16 (guard'sız p[0]|p[1]) buffer sonrasını OKUR (OOB) — handshake yolu
+        // (:505) korunmuş ama query yolu değildi (denetçi #6). p+=6 ve std::string(p,end)
+        // de aşabilir. Hepsini sınırla.
+        p++;
+        uint16_t code = (p + 2 <= end) ? read_u16(p) : 0;
+        if (p < end && *p == '#') { p += 6; if (p > end) p = end; }
+        throw std::runtime_error("db: query error " + std::to_string(code) + ": " +
+                                 std::string(p <= end ? p : end, end));
     }
     if (resp[0] == 0x00) {
         p++; affected_rows_=read_lenenc(p,end); last_insert_id_=read_lenenc(p,end);
