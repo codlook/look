@@ -363,7 +363,22 @@ FcgiServer::FcgiServer(int port) : port_(port) {
 
     struct sockaddr_in addr{};
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);       // 0.0.0.0 — tum interface
+    // FastCGI portu YALNIZ yerel web-sunucu (Apache/nginx 127.0.0.1) icindir. 0.0.0.0'a
+    // bind etmek ham FastCGI protokolunu aga acar → front-end filtreleme/auth atlanir ve
+    // FastCGI parametre-injeksiyonu (SCRIPT_FILENAME vb.) uzaktan mumkun olur. Default
+    // loopback; cok-host proxy kurulumu icin acikca opt-in: LOOK_FCGI_BIND.
+    //   (bos/unset)      → 127.0.0.1 (guvenli default)
+    //   "0.0.0.0"/"any"  → tum interface (bilincli acilim)
+    //   "1.2.3.4"        → belirli adres
+    const char* bind_env = std::getenv("LOOK_FCGI_BIND");
+    if (bind_env && (std::string(bind_env) == "0.0.0.0" || std::string(bind_env) == "any")) {
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    } else if (bind_env && *bind_env) {
+        if (inet_pton(AF_INET, bind_env, &addr.sin_addr) != 1)
+            throw std::runtime_error("look-fcgi: gecersiz LOOK_FCGI_BIND adresi: " + std::string(bind_env));
+    } else {
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 — guvenli default
+    }
     addr.sin_port        = htons((uint16_t)port_);
 
 #ifdef _WIN32
@@ -811,9 +826,11 @@ int main(int argc, char* argv[]) {
 
     if (tcp_port > 0) {
         // ── TCP modu — concurrent dispatch ───────────────────────────────────
-        look::Logger::instance().log(look::LogLevel::LOG_INFO, "FCGI",
-            "look-fcgi TCP mode — 0.0.0.0:" + std::to_string(tcp_port) +
-            " | workers=" + std::to_string(workers));
+        { const char* be = std::getenv("LOOK_FCGI_BIND");
+          std::string bindaddr = (be && *be) ? std::string(be) : "127.0.0.1";
+          look::Logger::instance().log(look::LogLevel::LOG_INFO, "FCGI",
+            "look-fcgi TCP mode — " + bindaddr + ":" + std::to_string(tcp_port) +
+            " | workers=" + std::to_string(workers)); }
 
         try {
             look::FcgiServer server(tcp_port);
