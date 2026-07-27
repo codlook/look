@@ -207,7 +207,11 @@ struct HttpServer::Impl {
     HttpHandler  handler;
     WsHandler    ws_handler;
     SseHandler   sse_handler;
-    // CSWSH koruması: boş = tüm originlere izin ver (geliştirme), dolu = sadece listedekilere
+    // CSWSH koruması (gerçek davranış — handle_ws_upgrade): BOŞ = güvenli-varsayılan
+    // SAME-ORIGIN (Origin varsa Host'la eşleşmeli; cross-origin tarayıcı isteği=CSWSH
+    // vektörü reddedilir; Origin'siz backend/wscat izinli). DOLU (LOOK_WS_ORIGINS) = yalnız
+    // listedeki origin'ler (Origin zorunlu). NOT: "boş=tüm originlere izin" DEĞİL (eski
+    // yorum yanıltıcıydı; same-origin eklenmeden önceki davranışı anlatıyordu).
     std::vector<std::string> allowed_origins;
 
     int  server_fd = -1;
