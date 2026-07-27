@@ -390,7 +390,6 @@ std::unique_ptr<Expression> Parser::expression() {
     // stack'inde ~250 seviyede fiziksel taşma olur. 150 gerçek kod için
     // fazlasıyla yeterli (en derin iç içe ifade ~10-20) ve tüm platformlarda
     // fiziksel stack tükenmeden önce keser.
-    static constexpr int MAX_EXPR_DEPTH = 150;
     struct DepthGuard {
         int& d;
         explicit DepthGuard(int& x) : d(x) { ++d; }
@@ -560,6 +559,14 @@ std::unique_ptr<Expression> Parser::multiplication() {
 }
 
 std::unique_ptr<Expression> Parser::power() {
+    // DERİNLİK GUARD'I — power() `**` için sağ-özyinelemeli; unary()'nin guard'ı
+    // power() recurse'den ÖNCE RAII ile çözüldüğünden power zincirini sınırlamaz.
+    // "2**2**…**2" bu yüzden ayrı guard ister (aksi halde stack-overflow).
+    struct DepthGuard { int& d; explicit DepthGuard(int& x):d(x){++d;} ~DepthGuard(){--d;} } guard(expr_depth_);
+    if (expr_depth_ > MAX_EXPR_DEPTH)
+        throw look::LookParseError("İfade çok derin iç içe (max " +
+                                   std::to_string(MAX_EXPR_DEPTH) + ")",
+                                   peek().line, peek().column);
     auto expr = unary();
     if (match(TokenType::STAR_STAR))
         return std::make_unique<BinaryExpression>(std::move(expr), "**", power());
@@ -567,6 +574,14 @@ std::unique_ptr<Expression> Parser::power() {
 }
 
 std::unique_ptr<Expression> Parser::unary() {
+    // DERİNLİK GUARD'I — unary() sağ-özyinelemeli (!/~/- kendine unary() çağırır),
+    // expression()'daki guard'ı ATLIYORDU → "~"×N / "!"×N C++ stack'ini fiziksel
+    // taşırıyordu (ASan stack-overflow, parse-zamanı DoS). Aynı expr_depth_ sayacı.
+    struct DepthGuard { int& d; explicit DepthGuard(int& x):d(x){++d;} ~DepthGuard(){--d;} } guard(expr_depth_);
+    if (expr_depth_ > MAX_EXPR_DEPTH)
+        throw look::LookParseError("İfade çok derin iç içe (max " +
+                                   std::to_string(MAX_EXPR_DEPTH) + ")",
+                                   peek().line, peek().column);
     if (match(TokenType::PLUS_PLUS)) {
         auto right = primary();
         return std::make_unique<UnaryExpression>("++", std::move(right), true);

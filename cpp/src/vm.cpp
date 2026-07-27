@@ -893,24 +893,34 @@ call_dispatch:
                 }).detach();
                 break;
             }
+            // CHAN_* — TİP KONTROLÜ ŞART: as_channel() type_ bakmadan static_pointer_cast
+            // yapar; argüman ARRAY/STRING/FN ise (compiler send/receive/close/chan_size'ı
+            // tipe bakmadan üretir) o nesnenin belleği LookChannel sanılır → TYPE CONFUSION
+            // → heap-buffer-overflow (ASan-kanıtlı). interpreter.cpp:1646 zaten kontrol
+            // ediyordu; VM'de yoktu (motor ayrışması, S3). send([1,2,3],42) gibi.
             case OpCode::CHAN_SEND: {
-                auto ch = R(ins.a).as_channel();
-                if (ch) ch->send_val(R(ins.b));
+                if (R(ins.a).type() != Value::CHANNEL)
+                    throw LookVmError("send(): argüman kanal değil");
+                R(ins.a).as_channel()->send_val(R(ins.b));
                 break;
             }
             case OpCode::CHAN_RECV: {
-                auto ch = R(ins.b).as_channel();
-                R(ins.a) = ch ? ch->recv_val() : Value();
+                if (R(ins.b).type() != Value::CHANNEL)
+                    throw LookVmError("receive(): argüman kanal değil");
+                R(ins.a) = R(ins.b).as_channel()->recv_val();
                 break;
             }
             case OpCode::CHAN_CLOSE: {
+                if (R(ins.a).type() != Value::CHANNEL)
+                    throw LookVmError("close(): argüman kanal değil");
                 auto ch = R(ins.a).as_channel();
-                if (ch) { std::unique_lock<std::mutex> lk(ch->mtx); ch->closed = true; ch->not_empty.notify_all(); }
+                { std::unique_lock<std::mutex> lk(ch->mtx); ch->closed = true; ch->not_empty.notify_all(); }
                 break;
             }
             case OpCode::CHAN_SIZE: {
-                auto ch = R(ins.b).as_channel();
-                R(ins.a) = ch ? Value(ch->sz()) : Value(0);
+                if (R(ins.b).type() != Value::CHANNEL)
+                    throw LookVmError("chan_size(): argüman kanal değil");
+                R(ins.a) = Value(R(ins.b).as_channel()->sz());
                 break;
             }
 

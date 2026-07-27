@@ -16,6 +16,7 @@ private:
     std::vector<Token> tokens_;
     size_t current_ = 0;
     int    scope_depth_ = 0;  // fonksiyon iç içeliği — use "file" top-level guard için
+    static constexpr int MAX_EXPR_DEPTH = 150;  // ifade özyineleme tavanı (expression+unary+power ortak)
     int    expr_depth_  = 0;  // ifade özyineleme derinliği — derin iç içe paren/array
                               // parser'ın recursive-descent yığınını taşırıp SIGSEGV
                               // yapmasını engeller (JSON parser'daki koruma gibi).
