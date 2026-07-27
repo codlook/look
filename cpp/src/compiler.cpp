@@ -1382,6 +1382,11 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             return r;
         }
         if (var->name == "close") {
+            // Argüman-sayısı kontrolü YOKTU → close() argümansız çağrılınca e.arguments[0]
+            // boş vektörde null deref → DERLEME-ZAMANI SEGFAULT (tree-walk graceful hata
+            // veriyordu → divergence). send/receive kalıbıyla doğrula.
+            if (e.arguments.size() != 1)
+                throw LookCompileError("close() 1 argüman alır", e.loc.line);
             uint8_t ch = compile_expr(*e.arguments[0]);
             emit(OpCode::CHAN_CLOSE, ch);
             free_temp(ch);
@@ -1390,6 +1395,8 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             return r;
         }
         if (var->name == "chan_size") {
+            if (e.arguments.size() != 1)
+                throw LookCompileError("chan_size() 1 argüman alır", e.loc.line);
             uint8_t ch = compile_expr(*e.arguments[0]);
             uint8_t r  = (dest == 255) ? alloc_temp() : dest;
             emit(OpCode::CHAN_SIZE, r, ch);

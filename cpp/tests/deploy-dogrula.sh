@@ -176,6 +176,20 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
+# ── close()/chan_size() argümansız → graceful (SEGFAULT değil) — CLI ─────────
+# compiler close/chan_size için argüman-sayısı doğrulamıyordu → argümansız çağrı
+# e.arguments[0] null deref → DERLEME-ZAMANI SEGFAULT (tree-walk graceful hata).
+# Fix'liyse graceful hata (exit<128), fix yoksa SIGSEGV (exit>=128).
+if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
+  printf 'close()\n' > "$TMP/cl.lk"
+  timeout 10 "$RECLK58" "$TMP/cl.lk" >/dev/null 2>&1; crc=$?
+  if [ $crc -lt 128 ]; then
+    echo "  PASS close/chan_size (arg-check): argümansız graceful (exit $crc, segfault yok)"
+  else
+    echo "  FAIL close(): argümansız SEGFAULT (exit $crc) — arg-sayısı kontrolü eksik"; fail=1
+  fi
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail
