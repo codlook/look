@@ -72,6 +72,15 @@ static bool parse_request(const std::string& raw, HttpRequest& req) {
     size_t header_end = raw.find("\r\n\r\n");
     if (header_end == std::string::npos) return false;
 
+    // RFC 9112 §2.2 KATI CRLF: başlık bloğunda \r\n çifti DIŞINDA çıplak \n veya \r
+    // → request smuggling (parser \r\n'de böler, çıplak \n value'da korunur → gömülü
+    // ikinci CL/TE yutulur; LF-toleranslı front-end onu ayrı header sayar → gövde-çerçeve
+    // desync). obs-fold/çift-CL/boşluk zaten sıkılaştırılmış; çıplak-LF eksikti. Katı ret.
+    for (size_t i = 0; i < header_end; ++i) {
+        if (raw[i] == '\r') { if (i + 1 >= raw.size() || raw[i + 1] != '\n') return false; }
+        else if (raw[i] == '\n') { if (i == 0 || raw[i - 1] != '\r') return false; }
+    }
+
     while (pos < header_end) {
         size_t end = raw.find("\r\n", pos);
         if (end == std::string::npos || end > header_end) break;
