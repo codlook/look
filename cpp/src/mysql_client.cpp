@@ -8,6 +8,8 @@
 #  include <openssl/evp.h>
 #  include <openssl/pem.h>
 #  include <openssl/rsa.h>
+#  include <openssl/ssl.h>
+#  include <openssl/err.h>
 #endif
 #include <cstring>
 #include <sstream>
@@ -32,6 +34,26 @@ namespace look {
 // Sunucu-verili sütun sayısı üst sınırı — kötü niyetli/MITM sunucunun devasa
 // col_count'la kaynak tükettiği DoS'a karşı. Gerçek query'ler ≪65535 sütun.
 static constexpr uint64_t MYSQL_MAX_COLUMNS = 65535;
+
+#ifndef _WIN32
+// ── DB-TLS: client SSL_CTX ───────────────────────────────────────────────────
+// MySQL protokolünde SSL, initial handshake'ten SONRA / auth'tan ÖNCE kurulur
+// (SSLRequest paketi → TLS upgrade → auth artık şifreli). Amaç kablo şifreleme
+// (--ssl-mode=REQUIRED): DB sertifikaları çoğu kez self-signed olduğundan PEER
+// doğrulaması YAPMIYORUZ (aksi halde tipik kurulumda bağlantı kırılır); pasif
+// dinlemeye karşı korur. Sertifika doğrulama gelecekte ayrı bir mod olabilir.
+static SSL_CTX* mysql_ssl_ctx() {
+    static SSL_CTX* ctx = [] {
+        SSL_library_init();
+        SSL_load_error_strings();
+        OpenSSL_add_all_algorithms();
+        SSL_CTX* c = SSL_CTX_new(TLS_client_method());
+        if (c) SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr);
+        return c;
+    }();
+    return ctx;
+}
+#endif
 
 // ── Pure C++ SHA1 — platform bagimsiz ────────────────────────────────────────
 
@@ -94,6 +116,14 @@ MySQLClient::~MySQLClient() {
 }
 
 void MySQLClient::disconnect() {
+#ifndef _WIN32
+    if (ssl_) {
+        SSL* s = (SSL*)ssl_;
+        SSL_shutdown(s);   // TLS close_notify (best-effort)
+        SSL_free(s);       // socket'i kapatmaz — sock_ ayrıca kapatılır
+        ssl_ = nullptr;
+    }
+#endif
     if (sock_ != SOCK_INVALID) {
         close_sock(sock_);
         sock_ = SOCK_INVALID;
@@ -253,6 +283,22 @@ void MySQLClient::ensure_connected() {
 bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
     size_t received = 0;
 
+#ifndef _WIN32
+    // ── TLS path: bloklayan SSL_read ──────────────────────────────────────────
+    // TLS aktifse fiber non-blocking optimizasyonunu ATLA (SSL_read + SSL_ERROR_WANT_*
+    // + fiber yield karmaşık; TLS remote-DB'dir, latency ağ-baskın → düz blocking doğru
+    // ve yeterli). Localhost hızlı yolu (non-TLS) fiber path'te korunur.
+    if (ssl_) {
+        SSL* s = (SSL*)ssl_;
+        while (received < len) {
+            int r = SSL_read(s, buf + received, (int)(len - received));
+            if (r <= 0) { disconnect(); return false; }
+            received += (size_t)r;
+        }
+        return true;
+    }
+#endif
+
     // ── Fiber path: non-blocking recv + cooperative yield ─────────────────────
     if (Fiber* fiber = Fiber::current()) {
         while (received < len) {
@@ -317,6 +363,17 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
 
 void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
     size_t sent = 0;
+#ifndef _WIN32
+    if (ssl_) {
+        SSL* s = (SSL*)ssl_;
+        while (sent < len) {
+            int r = SSL_write(s, buf + sent, (int)(len - sent));
+            if (r <= 0) { disconnect(); throw std::runtime_error("db: SSL send failed — connection lost"); }
+            sent += (size_t)r;
+        }
+        return;
+    }
+#endif
     while (sent < len) {
         int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), 0);
         if (r <= 0) { disconnect(); throw std::runtime_error("db: send failed — connection lost"); }
@@ -487,9 +544,45 @@ void MySQLClient::do_handshake(const std::string& user,
     };
 
     std::string cur_plugin = srv_plugin;
-    auto token = make_token(cur_plugin, challenge);
     uint32_t client_flags = 0x000FA685;
     if (!database.empty()) client_flags |= 0x00000008;
+
+    uint8_t auth_seq = 1;
+    if (cfg_.tls) {
+#ifndef _WIN32
+        // ── MySQL SSLRequest → TLS upgrade (SIRA KRİTİK) ─────────────────────────
+        // Sıra: initial handshake (yukarıda okundu, plaintext) → SSLRequest (CLIENT_SSL
+        // flag, auth verisi YOK, seq 1) → SSL_connect (upgrade) → auth artık TLS üstünde
+        // (seq 2). Auth KESİNLİKLE SSL_connect'ten SONRA gönderilir (ssl_ set edilince
+        // send_bytes SSL_write'a geçer) — aksi halde credentials plaintext sızardı.
+        client_flags |= 0x00000800;  // CLIENT_SSL
+        std::vector<uint8_t> ssl_req;
+        ssl_req.push_back(client_flags&0xFF); ssl_req.push_back((client_flags>>8)&0xFF);
+        ssl_req.push_back((client_flags>>16)&0xFF); ssl_req.push_back((client_flags>>24)&0xFF);
+        ssl_req.insert(ssl_req.end(), {0xFF,0xFF,0xFF,0x00}); // max packet size
+        ssl_req.push_back(45);                                // charset (utf8mb4)
+        ssl_req.insert(ssl_req.end(), 23, 0);                 // reserved
+        send_packet(ssl_req, 1);                              // plaintext — henüz ssl_ yok
+        SSL_CTX* ctx = mysql_ssl_ctx();
+        if (!ctx) throw std::runtime_error("db mysql: SSL_CTX oluşturulamadı (TLS)");
+        SSL* s = SSL_new(ctx);
+        if (!s) throw std::runtime_error("db mysql: SSL_new başarısız (TLS)");
+        SSL_set_fd(s, (int)sock_);
+        if (SSL_connect(s) != 1) {
+            unsigned long e = ERR_get_error();
+            char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
+            SSL_free(s);
+            throw std::runtime_error(std::string("db mysql: TLS handshake başarısız: ") + eb);
+        }
+        ssl_     = s;   // bundan sonra send/recv_bytes SSL üstünden (auth dahil)
+        auth_seq = 2;   // auth paketi TLS içinde, SSLRequest'ten sonraki seq
+#else
+        throw std::runtime_error("db mysql: TLS (mysqls://) bu yapida desteklenmiyor "
+                                 "(Windows yapisi OpenSSL'siz derlenir). Linux yapisini kullanin.");
+#endif
+    }
+
+    auto token = make_token(cur_plugin, challenge);
 
     std::vector<uint8_t> auth_pkt;
     auth_pkt.push_back(client_flags&0xFF); auth_pkt.push_back((client_flags>>8)&0xFF);
@@ -503,7 +596,7 @@ void MySQLClient::do_handshake(const std::string& user,
     if (!database.empty()) { auth_pkt.insert(auth_pkt.end(), database.begin(), database.end()); auth_pkt.push_back(0); }
     auth_pkt.insert(auth_pkt.end(), cur_plugin.begin(), cur_plugin.end()); auth_pkt.push_back(0);
 
-    send_packet(auth_pkt, 1);
+    send_packet(auth_pkt, auth_seq);
 
     // Kimlik doğrulama diyaloğu. ESKİ HATA: yalnızca 0xFF (hata) kontrol ediliyor,
     // 0xFE (AuthSwitchRequest) ve 0x01 (AuthMoreData) HİÇ ele alınmıyordu — oysa
@@ -545,8 +638,19 @@ void MySQLClient::do_handshake(const std::string& user,
             uint8_t code = resp.size() > 1 ? resp[1] : 0;
             if (code == 0x03) continue;         // fast auth başarılı → sıradaki paket OK
             if (code == 0x04) {
-                // Tam kimlik doğrulama. TLS olmadığı için sunucudan RSA açık
-                // anahtarı istenir (0x02) ve şifre onunla şifrelenir.
+                // Tam kimlik doğrulama (önbellek boş → ilk bağlantı).
+#ifndef _WIN32
+                if (ssl_) {
+                    // TLS AKTİF → kanal zaten şifreli; şifre CLEARTEXT (NUL-sonlu) gönderilir.
+                    // RSA açık-anahtar dansı YAPILMAZ (sunucu TLS'te RSA vermez → eski kod
+                    // "RSA açık anahtarı vermedi" ile çökerdi). MySQL protokolü tam bunu ister.
+                    std::vector<uint8_t> cleartext(password.begin(), password.end());
+                    cleartext.push_back(0x00);
+                    send_packet(cleartext, (uint8_t)(seq + 1));
+                    continue;
+                }
+#endif
+                // TLS yok → sunucudan RSA açık anahtarı istenir (0x02), şifre RSA-OAEP ile.
 #ifdef _WIN32
                 throw std::runtime_error(
                     "db mysql: caching_sha2_password tam kimlik dogrulamasi bu yapida "

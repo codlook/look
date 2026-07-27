@@ -36,6 +36,7 @@ struct DbConfig {
     std::string user;
     std::string password;
     std::string database;
+    bool        tls = false;   // mysqls:// veya ?tls=1 → TLS (SSLRequest + SSL_connect, --ssl-mode=REQUIRED)
 
     int connect_timeout_ms = 5000;
     int query_timeout_ms   = 30000;
@@ -72,6 +73,7 @@ public:
 
 private:
     sock_t   sock_           = SOCK_INVALID;
+    void*    ssl_            = nullptr;  // SSL* (POSIX/OpenSSL); TLS aktifse send/recv_bytes buradan geçer
     DbConfig cfg_;
     uint64_t last_insert_id_ = 0;
     uint64_t affected_rows_  = 0;

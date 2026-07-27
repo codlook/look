@@ -1,0 +1,4 @@
+# DB-TLS: mysqls:// / ?tls=1 → SSLRequest + SSL_connect + auth TLS üstünde.
+# Ssl_cipher DOLU olmalı (TLS aktif kanıtı). Bağlan: mysql://user:pass@host/db?tls=1
+$db = db::connect("mysql://looktest:testpass@look-mysql8/testdb?tls=1")
+print(db::query($db, "SHOW STATUS LIKE 'Ssl_cipher'")[0]["Value"])

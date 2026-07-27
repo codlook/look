@@ -1200,11 +1200,23 @@ static std::shared_ptr<DbConnection> open_one_connection(
     std::string user, pass, host = "127.0.0.1", db_name;
     int port = 3306;
     std::string scheme = parse_dsn_part(dsn, user, pass, host, port, db_name);
+    // TLS: mysqls://.../mariadbs:// şeması VEYA db-adında ?tls=1 / ?ssl=... sorgu paramı.
+    bool tls = (scheme == "mysqls" || scheme == "mariadbs");
+    { size_t q = db_name.find('?');
+      if (q != std::string::npos) {
+        std::string query = db_name.substr(q + 1);
+        db_name = db_name.substr(0, q);   // sorgu dizisini db adından ayıkla
+        if (query.find("tls=1") != std::string::npos || query.find("tls=true") != std::string::npos ||
+            query.find("ssl=") != std::string::npos)
+            tls = true;
+      } }
+    if (scheme == "mysqls")   scheme = "mysql";
+    if (scheme == "mariadbs") scheme = "mariadb";
     if (scheme != "mysql" && scheme != "mariadb")
         throw std::runtime_error("db::connect() unsupported DSN scheme: " + scheme);
     DbConfig cfg;
     cfg.host = host; cfg.port = port; cfg.user = user;
-    cfg.password = pass; cfg.database = db_name;
+    cfg.password = pass; cfg.database = db_name; cfg.tls = tls;
     if (args.size() >= 2 && args[1].type() == Value::ARRAY) {
         auto& arr = *args[1].as_array();
         for (size_t i = 1; i + 1 < arr.size(); i += 2) {
