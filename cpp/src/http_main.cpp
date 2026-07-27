@@ -1155,10 +1155,12 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 const char* v = std::getenv("LOOK_VM_STRICT");
                 return v && v[0] == '1';
             }();
+            // route_disabled byte-flag'i eşzamanlı request-thread'leri okur (vm.cpp dispatch)
+            // → atomic_ref ile eriş (data race/UB önle; relaxed — advisory flag).
             if (vm_failed_route >= 0 &&
                 vm_failed_route < (int)g_http_app.vm_route_disabled.size() &&
-                !g_http_app.vm_route_disabled[vm_failed_route]) {
-                if (!vm_strict) g_http_app.vm_route_disabled[vm_failed_route] = 1;
+                !std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).load(std::memory_order_relaxed)) {
+                if (!vm_strict) std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).store(1, std::memory_order_relaxed);
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                     std::string("VM BUG — route kalıcı interpreter'a düştü (YAVAŞ YOL; "
                                 "bu bir hatadır, bildirin): ") +

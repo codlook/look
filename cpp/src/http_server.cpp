@@ -772,11 +772,20 @@ struct HttpServer::Impl {
             ws_clients.erase(fd);
             ws_bufs.erase(fd);
         }
-        // closed'ı set et — broadcast/send'in kapalı fd'ye yazmasını (fd-reuse
-        // race) send_text'in closed kontrolüyle daralt.
-        if (conn) conn->closed.store(true);
-        look::g_ws_registry.remove(fd);
-        loop->close_fd(fd);
+        // fd close-vs-send yarışı (TSan-kanıtlı): broadcast/send_raw ::send(fd) yaparken
+        // close_fd(fd) fd'yi kapatırsa → kapalı/yeniden-kullanılan fd'ye yazma (cross-talk).
+        // Çözüm: closed=true (yeni send başlamaz — send_raw/send_text closed kontrolü) SONRA
+        // write_mutex'i DRAIN et (uçuştaki send bitene kadar bekle) — write_mutex tutulurken
+        // hiçbir send_raw ::send içinde olamaz → close_fd güvenli. Kilit close_fd'yi de kapsar.
+        if (conn) {
+            conn->closed.store(true);
+            std::lock_guard<std::mutex> wlk(conn->write_mutex);  // uçuştaki send'i drain et
+            look::g_ws_registry.remove(fd);
+            loop->close_fd(fd);
+        } else {
+            look::g_ws_registry.remove(fd);
+            loop->close_fd(fd);
+        }
     }
 };
 

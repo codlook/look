@@ -4,6 +4,7 @@
 // Value tipi interpreter.h ile aynı — tam uyumluluk.
 // Struct convention: ARRAY + __struct__ sentinel (interpreter ile aynı).
 
+#include <atomic>
 #include <climits>
 #include "look/vm.h"
 #include "look/bytecode.h"
@@ -147,9 +148,11 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
         if (route_match(p, path, params)) {
             last_matched_route_ = entry.app_index;
             // Route daha önce VM'de hata verdiyse kalıcı interpreter'a sabitli
+            // route_disabled byte-flag'i başka request-thread'i (http_main VM-fallback yolu)
+            // yazabilir → atomic_ref ile oku (data race/UB önle; relaxed — advisory flag).
             if (shared_.route_disabled && entry.app_index >= 0 &&
                 entry.app_index < (int)shared_.route_disabled->size() &&
-                (*shared_.route_disabled)[entry.app_index])
+                std::atomic_ref<uint8_t>(const_cast<uint8_t&>((*shared_.route_disabled)[entry.app_index])).load(std::memory_order_relaxed))
                 throw VmRouteDisabled();
             // Route-level middleware'leri çalıştır
             bool stopped = false;
