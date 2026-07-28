@@ -381,7 +381,14 @@ void LookChannel::send_val(Value val) {
         not_full.wait(lk, has_room);
     }
     if (closed) throw std::runtime_error("send on closed channel");
-    queue.push(std::move(val));
+    // İZOLASYON (cache/parallel deep_clone disiplini ile aynı): channel parallel'in
+    // cross-thread iletişim primitive'i. Value ARRAY/MAP ise shared_ptr<container>'ı
+    // gönderenle PAYLAŞIR — gönderen send sonrası $arr'ı hâlâ tutar (LOOK by-reference),
+    // alıcı da aynı vector'ü alır → gönderen+alıcı aynı vector'e eşzamanlı mutasyon =
+    // heap race (cache'in ikizi; TSan push_back/_M_realloc_insert). deep_clone snapshot
+    // → queue izole değer tutar, gönderen ve alıcı ayrışır. Tek-alıcılı (pop) olduğu için
+    // send'de tek klon yeter (cache multi-reader olduğundan get'te de klonluyordu).
+    queue.push(val.deep_clone());
     not_empty.notify_one();
     if (unbuffered) {
         // Rendezvous: alıcı BU öğeyi alana dek bloke ol (Go unbuffered channel).
