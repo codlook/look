@@ -174,6 +174,10 @@ else()
     option(LOOK_STATIC_SSL "OpenSSL'i statik linkle (portatif binary)" ON)
     if(LOOK_STATIC_SSL)
         set(OPENSSL_USE_STATIC_LIBS TRUE)
+        # Statik libcrypto.a zlib'e bağlı olabilir; FindOpenSSL bağımlılık olarak
+        # ZLIB::ZLIB IMPORTED target'ını referanslar — find_package(ZLIB) onu yaratmazsa
+        # generate adımı "ALIAS target missing" ile patlar. (Dinamik build'de gerekmez.)
+        find_package(ZLIB QUIET)
     endif()
     find_package(OpenSSL REQUIRED)
     # Statik libcrypto.a dlopen + zlib gerektirebilir → dl, z ekli

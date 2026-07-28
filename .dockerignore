@@ -1,0 +1,21 @@
+# Docker build context — ağır/gereksiz dosyaları hariç tut (Dockerfile.production COPY .)
+.git
+releases
+look-packages
+look-modules
+node_modules
+**/node_modules
+cpp/build
+cpp/build-win
+cpp/build-portable
+cpp/build-tsan
+cpp/build-linux
+cpp/build-almalinux8
+cpp/_ssl-static
+cpp/bin_out
+platforms/**/*.zip
+platforms/**/bin
+*.zip
+*.patch
+baglanti
+parse_request

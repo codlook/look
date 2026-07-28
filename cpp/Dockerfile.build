@@ -14,10 +14,26 @@ FROM almalinux:8
 RUN dnf install -y --setopt=sslverify=false \
         gcc-toolset-12 cmake make openssl-devel \
         curl glibc-common python3 procps-ng \
+        perl-core zip \
     && dnf clean all
 
 # Guard script'leri iconv (UTF-8 dogrulama), curl (HTTP probe'lari) ve
-# python3 (JSON dogrulama) kullanir — hepsi yukarida.
+# python3 (JSON dogrulama) kullanir. perl-core + zip: portatif plugin build'i icin
+# (statik OpenSSL Configure perl ister; build.sh zip ile paketler).
+
+# ── Statik OpenSSL 1.1.1 (portatif binary reçetesi) ───────────────────────────
+# LOOK_STATIC_SSL=ON ile derlenen binary OpenSSL'i statik linkler → libssl.so.1.1'e
+# BAGIMLI DEGIL → AlmaLinux 8 (OpenSSL 1.1) VE AlmaLinux 9/Ubuntu (OpenSSL 3.x)
+# HEPSINDE calisir. Sistem openssl-devel'de statik .a YOK; kaynaktan derlenir.
+# Kullanim: cmake ... -DLOOK_STATIC_SSL=ON -DOPENSSL_ROOT_DIR=/opt/openssl-static \
+#   -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+RUN source /opt/rh/gcc-toolset-12/enable && cd /tmp \
+    && curl -sL -o o.tgz https://www.openssl.org/source/openssl-1.1.1w.tar.gz \
+    && tar xzf o.tgz && cd openssl-1.1.1w \
+    && ./config no-shared no-tests no-zlib --prefix=/opt/openssl-static >/dev/null 2>&1 \
+    && make -j"$(nproc)" >/dev/null 2>&1 && make install_sw >/dev/null 2>&1 \
+    && cd /tmp && rm -rf openssl-1.1.1w o.tgz
+ENV OPENSSL_STATIC_ROOT=/opt/openssl-static
 
 ENV BASH_ENV=/opt/rh/gcc-toolset-12/enable
 SHELL ["/bin/bash", "-c"]

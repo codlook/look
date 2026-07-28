@@ -23,8 +23,10 @@ cmake --build . --config Release
 ### Linux — Docker (önerilen)
 
 ```bash
-# Production image (AlmaLinux 8 tabanlı — Plesk uyumlu)
-# Repo kökünden çalıştır:
+# En kolay — Docker Hub'daki hazır imaj (derleme yok, kaynak gerekmez):
+docker run -p 7400:7400 -v "${PWD}/app:/app" codlook/look
+
+# Ya da kaynaktan kendin derle (AlmaLinux 8 tabanlı — Plesk uyumlu):
 docker build -f cpp/docker/Dockerfile.production -t look-prod .
 docker run -p 7400:7400 --env-file .env look-prod
 
