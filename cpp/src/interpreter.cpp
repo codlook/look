@@ -206,7 +206,15 @@ static inline bool val_is_number(Value::Type t) { return t == Value::INT || t ==
 
 bool Value::operator==(const Value& o) const {
     bool a_num = val_is_number(type_), b_num = val_is_number(o.type_);
-    if (a_num && b_num) return to_float() == o.to_float();  // sayı ↔ sayı
+    if (a_num && b_num) {
+        // int↔int: KESİN int64 karşılaştır. to_float() ile double'a çevirmek 2^53 üstü
+        // ayrık int64'leri eşitler (9007199254740993==...992, INT64_MAX-1==INT64_MAX →
+        // true) — hem dil-düzeyi == yanlışı (her iki motor, differential-görünmez), hem
+        // VM constant-pool dedup korupsiyonu (compiler.cpp dedup bu =='i kullanır → int
+        // literalleri çakışıp bozulur). Karışık int/float double kalır (kaçınılmaz).
+        if (type_ == INT && o.type_ == INT) return int_val == o.int_val;
+        return to_float() == o.to_float();
+    }
     if (type_ != o.type_) return false;                     // farklı tür → asla eşit
     switch (type_) {
         case STRING: return str_ref() == o.str_ref();
@@ -223,22 +231,28 @@ bool Value::operator==(const Value& o) const {
         "Karşılaştırılamayan türler: '<'/'>' yalnız sayı↔sayı ve string↔string için — "
         "farklı türleri kıyaslamadan önce int()/float()/string() ile dönüştürün");
 }
+// Sayısal sıralama: int↔int KESİN int64 (2^53 üstü ayrık int64 double'da eşitlenir →
+// yanlış sıralama, bkz operator==). Karışık int/float double.
 bool Value::operator<(const Value& o)  const {
+    if (type_ == INT && o.type_ == INT) return int_val < o.int_val;
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() < o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_ref() < o.str_ref();
     cmp_type_error();
 }
 bool Value::operator<=(const Value& o) const {
+    if (type_ == INT && o.type_ == INT) return int_val <= o.int_val;
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() <= o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_ref() <= o.str_ref();
     cmp_type_error();
 }
 bool Value::operator>(const Value& o)  const {
+    if (type_ == INT && o.type_ == INT) return int_val > o.int_val;
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() > o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_ref() > o.str_ref();
     cmp_type_error();
 }
 bool Value::operator>=(const Value& o) const {
+    if (type_ == INT && o.type_ == INT) return int_val >= o.int_val;
     if (val_is_number(type_) && val_is_number(o.type_)) return to_float() >= o.to_float();
     if (type_ == STRING && o.type_ == STRING) return str_ref() >= o.str_ref();
     cmp_type_error();
