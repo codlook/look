@@ -874,30 +874,39 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         copy->set_output(output);
         copy->set_web_context(&web);
 
-        // VM routes'u shared_lock altında alıyoruz (g_http_app read-only erişim)
-        std::vector<look::VmRoute> route_closures;
-        route_closures.reserve(g_http_app.vm_routes.size());
-        for (size_t ri = 0; ri < g_http_app.vm_routes.size(); ++ri) {
-            auto& r = g_http_app.vm_routes[ri];
-            if (r.fn.type() != look::Value::BYTECODE_FN) continue;
-            // app_index: hata durumunda route'u kalıcı interpreter'a sabitlemek
-            // için g_http_app.vm_route_disabled ile eşleşen kalıcı indeks.
-            // Sabitli route listede KALIR — dispatch eşleştirir, VmRouteDisabled
-            // fırlatır, caller sessizce interpreter'a düşer (404'e düşmesin diye).
-            look::VmRoute vr;
-            vr.pattern   = r.pattern;
-            vr.fn        = r.fn.as_bytecode_fn().get();
-            vr.app_index = (int)ri;
-            for (auto& mw : r.middlewares)
-                if (mw.type() == look::Value::BYTECODE_FN)
-                    vr.middlewares.push_back(mw.as_bytecode_fn().get());
-            route_closures.push_back(std::move(vr));
+        // VM routes'u shared_lock altında alıyoruz (g_http_app read-only erişim).
+        // PERF: route_closures listesi vm_routes'tan türetilir (istek-bağımsız, yalnız
+        // hot-reload'da değişir) — tl_copy gibi thread_local + generation-cache. Eskiden
+        // HER İSTEKTE N VmRoute (pattern string kopyası + middleware vector) + stable_partition
+        // kuruluyordu (N-route app'te O(N) per request). Artık yalnız generation değişince
+        // yeniden kurulur. Ham pointer'lar (vr.fn) generation-içi geçerli (vm_routes sabit);
+        // generation artınca cache tazelenir — tl_copy ile aynı güvenlik.
+        static thread_local std::vector<look::VmRoute> tl_route_closures;
+        static thread_local uint64_t tl_routes_gen = (uint64_t)-1;
+        if (tl_routes_gen != cur_gen) {
+            tl_route_closures.clear();
+            tl_route_closures.reserve(g_http_app.vm_routes.size());
+            for (size_t ri = 0; ri < g_http_app.vm_routes.size(); ++ri) {
+                auto& r = g_http_app.vm_routes[ri];
+                if (r.fn.type() != look::Value::BYTECODE_FN) continue;
+                // app_index: hata durumunda route'u kalıcı interpreter'a sabitlemek
+                // için g_http_app.vm_route_disabled ile eşleşen kalıcı indeks.
+                look::VmRoute vr;
+                vr.pattern   = r.pattern;
+                vr.fn        = r.fn.as_bytecode_fn().get();
+                vr.app_index = (int)ri;
+                for (auto& mw : r.middlewares)
+                    if (mw.type() == look::Value::BYTECODE_FN)
+                        vr.middlewares.push_back(mw.as_bytecode_fn().get());
+                tl_route_closures.push_back(std::move(vr));
+            }
+            // Statik route'ları ({param} içermeyenler) dinamiklerden ÖNCE sırala:
+            // /user/new, /user/{id}'den önce eşleşsin (deterministik routing).
+            std::stable_partition(tl_route_closures.begin(), tl_route_closures.end(),
+                [](const look::VmRoute& r){ return r.pattern.find('{') == std::string::npos; });
+            tl_routes_gen = cur_gen;
         }
-        // Statik route'ları ({param} içermeyenler) dinamiklerden ÖNCE sırala:
-        // /user/new, /user/{id}'den önce eşleşsin (kayıt sırasından bağımsız,
-        // deterministik routing). stable_partition grup-içi sırayı korur.
-        std::stable_partition(route_closures.begin(), route_closures.end(),
-            [](const look::VmRoute& r){ return r.pattern.find('{') == std::string::npos; });
+        std::vector<look::VmRoute>& route_closures = tl_route_closures;
         sl.unlock();
 
         // Per-request builtins: module fonksiyonları interpreter copy'den alınır
