@@ -49,7 +49,13 @@ void CacheStore::set(const std::string& key, Value val, int ttl_seconds) {
             store_.erase(store_.begin());
     }
     CacheEntry e;
-    e.value   = std::move(val);
+    // İZOLASYON (parallel deep_clone disiplini ile aynı): cache global + cross-thread.
+    // Value ARRAY/MAP ise shared_ptr<container>'ı PAYLAŞIR → set edilen değişkenin
+    // altındaki vector cache'le aynı kalırdı; get eden her istek de aynı vector'ü
+    // paylaşırdı → (1) tek-thread: get sonrası mutasyon cache'i sessizce bozar
+    // (cross-request kontaminasyon), (2) çok-thread: paylaşımlı vector'e eşzamanlı
+    // push_back → heap data race. deep_clone snapshot alır → caller'dan izole.
+    e.value   = val.deep_clone();
     e.has_ttl = (ttl_seconds > 0);
     if (e.has_ttl)
         e.expires = clock::now() + std::chrono::seconds(ttl_seconds);
@@ -69,7 +75,10 @@ Value CacheStore::get(const std::string& key) {
     auto it = store_.find(key);
     if (it == store_.end()) return Value();
     if (is_expired(it->second)) { store_.erase(it); return Value(); }
-    return it->second.value;
+    // Her okuyucuya İZOLE kopya (kilit altında): getter'lar birbiriyle ve cache'le
+    // aynı container'ı paylaşmaz → get sonrası mutasyon ne cache'i ne diğer okuyucuyu
+    // bozar. Cached vector'e tüm erişim mtx_ altında (set/get deep_clone) → yarış yok.
+    return it->second.value.deep_clone();
 }
 
 bool CacheStore::del(const std::string& key) {
