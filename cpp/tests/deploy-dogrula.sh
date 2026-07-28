@@ -223,6 +223,35 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
+# ── Oturum guard'lari (2026-07-28): differential-GORUNMEZ regresyonlar ────────
+# Bu 3 fix iki motorda da ayni yanlisi verebilir → differential YAKALAMAZ. Dis-oracle/
+# davranis guard'i sart. int64 kiyas: operator== int'i double'a cevirirse 2^53 ustu ayrik
+# int64 esitlenir (d752afe). cache/channel izolasyon: deep_clone kalkarsa (biri "gereksiz
+# kopya" diye optimize ederse) cross-thread paylasim + heap race geri gelir (c7c7427/9670c18).
+# encoding-safe (tr -d + exact match, Turkce-grep yok); mutlak $TMP; her iki motor.
+printf '$a=9007199254740992+1\n$b=9007199254740992\nprint($a==$b)\n' > "$TMP/g_int.lk"
+iv=$("$RECLK58" "$TMP/g_int.lk" 2>&1 | tr -d '[:space:]')
+it=$(LOOK_CLI_VM=0 "$RECLK58" "$TMP/g_int.lk" 2>&1 | tr -d '[:space:]')
+if [ "$iv" = "false" ] && [ "$it" = "false" ]; then
+  echo "  PASS int64-kiyas: 2^53+1 != 2^53 (dis-oracle, differential-gorunmez)"
+else
+  echo "  FAIL int64-kiyas: VM=[$iv] TW=[$it] beklenen false — d752afe regresyonu"; fail=1
+fi
+printf 'use cache\ncache::set("k",[1,2,3])\n$a=cache::get("k")\npush($a,9)\nprint(count(cache::get("k")))\n' > "$TMP/g_cache.lk"
+cv=$("$RECLK58" "$TMP/g_cache.lk" 2>&1 | tr -d '[:space:]')
+if [ "$cv" = "3" ]; then
+  echo "  PASS cache-izolasyon: get+mutate cache'i bozmuyor (c7c7427)"
+else
+  echo "  FAIL cache-izolasyon: [$cv] beklenen 3 — deep_clone regresyonu"; fail=1
+fi
+printf '$ch=channel(1)\n$arr=[1,2,3]\nsend($ch,$arr)\npush($arr,9)\nprint(count(receive($ch)))\n' > "$TMP/g_chan.lk"
+chv=$("$RECLK58" "$TMP/g_chan.lk" 2>&1 | tr -d '[:space:]')
+if [ "$chv" = "3" ]; then
+  echo "  PASS channel-izolasyon: send+mutate paylasmiyor (9670c18)"
+else
+  echo "  FAIL channel-izolasyon: [$chv] beklenen 3 — deep_clone regresyonu"; fail=1
+fi
+
 echo "─────────────────────────────────────────────────────────────"
 [ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
 exit $fail
