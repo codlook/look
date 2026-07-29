@@ -47,9 +47,14 @@ set_source_files_properties(
     PROPERTIES LANGUAGE C
 )
 
-# SQLite: thread-safe modu kapat (single-thread warm start)
-# -DSQLITE_THREADSAFE=0 → küçük binary, mutex overhead yok
-add_compile_definitions(SQLITE_THREADSAFE=0)
+# SQLite: multi-thread modu (2) — çok thread'li worker havuzu ZORUNLU kılıyor.
+# =0 (single-thread) SQLite'ın GLOBAL statiklerinin (sqlite3StatusUp sayaçları,
+# sqlite3_randomness PRNG durumu, sqlite3_initialize, page cache) mutex'lerini de
+# kaldırır. Ayrı bağlantılar per-connection state'i ayırır ama global state'i AYIRMAZ;
+# iki thread eşzamanlı open/query çağırınca bu global statikler yarışır (TSan: 241 rapor,
+# t4_sqlite_connect regresyon testi). =2 "multi-thread" = statikler korunur, per-connection
+# mutex YOK → çalışma zamanı deseni (her bağlantı tek thread'de) korunduğu için perf-nötr.
+add_compile_definitions(SQLITE_THREADSAFE=2)
 
 # Platform-specific fiber backend
 if(WIN32)

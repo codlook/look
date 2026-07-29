@@ -59,6 +59,12 @@ public:
     virtual void    close()                = 0;
     virtual bool    is_connected()   const = 0;
     virtual const char* driver_name() const = 0;
+
+    // Transaction başlangıç deyimi — sürücüye özgü. SQLite WAL modunda düz "BEGIN"
+    // (=DEFERRED) ilk yazımda SQLITE_BUSY_SNAPSHOT üretir ve busy_timeout bunu retry
+    // EDEMEZ (snapshot izolasyonunu bozardı). SQLite "BEGIN IMMEDIATE" ile write
+    // kilidini baştan alır. MySQL/PG'de "BEGIN IMMEDIATE" geçersiz → varsayılan "BEGIN".
+    virtual const char* begin_stmt() const { return "BEGIN"; }
 };
 
 } // namespace look

@@ -1,0 +1,11 @@
+# T3: queue:: cross-thread FIFO
+use queue
+$done = channel(8)
+for ($i=0; $i<8; $i=$i+1) {
+  parallel(function() use ($done, $i) {
+    for ($j=0; $j<200; $j=$j+1) { queue::push("q", [$i,$j]); queue::pop("q"); queue::size("q") }
+    send($done, 1)
+  })
+}
+for ($k=0; $k<8; $k=$k+1) { receive($done) }
+print("T3 bitti")

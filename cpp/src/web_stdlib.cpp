@@ -1420,10 +1420,13 @@ static Module make_db_module(Interpreter* interp) {
         // (ve her worker thread'in kendi bağlantısını sabitlediği modelde) setup'ta
         // bir bağlantıda yaratılan tablo diğerlerinde YOK ("no such table").
         // Çözüm: :memory:'yi süreç-ömürlü geçici bir DOSYAYA yönlendir — tüm pool
-        // bağlantıları aynı DB'yi paylaşır (tablo görünür), pool=N korunur,
-        // ayrı bağlantılar SQLITE_THREADSAFE=0 ile güvenlidir. Kullanıcının
-        // :memory:'den beklediği "tek paylaşımlı geçici DB" davranışı budur.
+        // bağlantıları aynı DB'yi paylaşır (tablo görünür), pool=N korunur. Thread
+        // güvenliği per-connection ayrımdan DEĞİL, SQLITE_THREADSAFE=2'nin koruduğu
+        // global statiklerden gelir (bkz. CMakeLists; eski =0 yorumu yanlıştı).
+        // Kullanıcının :memory:'den beklediği "tek paylaşımlı geçici DB" davranışı budur.
         // İdempotency anahtarı ORİJİNAL dsn kalır; sadece açılan yol değişir.
+        // NOT (S3): aşağıdaki yol öngörülebilir (look_mem_<pid>.db, dünya-yazılabilir
+        // dizinde) → symlink/TOCTOU. Bir sonraki diff'te mkdtemp 0700'e taşınacak.
         std::string effective_dsn = dsn;
         if (is_sqlite && dsn.find(":memory:") != std::string::npos) {
             std::error_code ec;
@@ -1528,7 +1531,8 @@ static Module make_db_module(Interpreter* interp) {
     // db::begin/commit/rollback — manuel transaction kontrolü
     m.functions["begin"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("db::begin() requires connection");
-        get_conn(args[0])->query("BEGIN");
+        auto c = get_conn(args[0]);
+        c->query(c->begin_stmt());   // SQLite: BEGIN IMMEDIATE (D-01)
         return Value();
     };
     m.functions["commit"] = [](auto args) -> Value {
@@ -1551,7 +1555,7 @@ static Module make_db_module(Interpreter* interp) {
         if (nested) {
             conn->query("SAVEPOINT " + sp);
         } else {
-            conn->query("BEGIN");
+            conn->query(conn->begin_stmt());   // SQLite: BEGIN IMMEDIATE (D-01)
         }
         conn->tx_depth++;
         try {

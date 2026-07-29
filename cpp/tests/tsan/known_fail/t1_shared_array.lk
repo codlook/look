@@ -1,0 +1,11 @@
+# T1: paylasilan mutable array'e 8 paralel yazma (kanal disi paylasim)
+$shared = [0,0,0,0,0,0,0,0]
+$done = channel(8)
+for ($i=0; $i<8; $i=$i+1) {
+  parallel(function() use ($shared, $done, $i) {
+    for ($j=0; $j<300; $j=$j+1) { $shared[$i] = $shared[$i] + 1 }
+    send($done, 1)
+  })
+}
+for ($k=0; $k<8; $k=$k+1) { receive($done) }
+print("T1 bitti")

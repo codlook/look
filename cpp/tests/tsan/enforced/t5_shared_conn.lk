@@ -1,0 +1,13 @@
+# T5: TEK paylasilan baglanti + havuz, 8 paralel sorgu
+$c = db::connect("sqlite://./t5.db")
+db::query($c, "CREATE TABLE IF NOT EXISTS t (a INTEGER)", [])
+$done = channel(8)
+for ($i=0; $i<8; $i=$i+1) {
+  parallel(function() use ($done, $c, $i) {
+    for ($j=0; $j<50; $j=$j+1) { db::query($c, "INSERT INTO t (a) VALUES (?)", [$i]) }
+    db::query($c, "SELECT count(*) FROM t", [])
+    send($done, 1)
+  })
+}
+for ($k=0; $k<8; $k=$k+1) { receive($done) }
+print("T5 bitti")

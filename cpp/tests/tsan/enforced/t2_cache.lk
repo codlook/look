@@ -1,0 +1,15 @@
+# T2: cache:: uzerinden 8 paralel okuma/yazma (ayni anahtar)
+use cache
+$done = channel(8)
+for ($i=0; $i<8; $i=$i+1) {
+  parallel(function() use ($done, $i) {
+    for ($j=0; $j<200; $j=$j+1) {
+      cache::set("k", [$i,$j,"x"], 60)
+      cache::get("k")
+      cache::has("k")
+    }
+    send($done, 1)
+  })
+}
+for ($k=0; $k<8; $k=$k+1) { receive($done) }
+print("T2 bitti")

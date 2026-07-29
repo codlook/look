@@ -25,6 +25,7 @@ public:
     void    close()          override;
     bool    is_connected()   const override { return db_ != nullptr; }
     const char* driver_name() const override { return "sqlite"; }
+    const char* begin_stmt()  const override { return "BEGIN IMMEDIATE"; }
 
 private:
     sqlite3* db_             = nullptr;

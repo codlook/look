@@ -22,6 +22,12 @@ SqliteClient::~SqliteClient() {
 }
 
 void SqliteClient::open(const std::string& path) {
+    // Fail-loud: SQLITE_THREADSAFE derleme bayrağı sessizce =0'a dönerse, çok thread'li
+    // worker havuzu SQLite global statiklerini bozar (bkz. CMakeLists =2). Ucuz kontrol.
+    if (sqlite3_threadsafe() == 0)
+        throw std::runtime_error(
+            "sqlite: kütüphane SQLITE_THREADSAFE=0 ile derlenmiş — çok thread'li worker "
+            "havuzuyla GÜVENSİZ. CMakeLists'te SQLITE_THREADSAFE=2 olmalı.");
     if (db_) close();
     int rc = sqlite3_open(path.c_str(), &db_);
     if (rc != SQLITE_OK) {
@@ -30,8 +36,21 @@ void SqliteClient::open(const std::string& path) {
         db_ = nullptr;
         throw std::runtime_error("sqlite: cannot open database '" + path + "': " + err);
     }
+    // D-01: busy_timeout İLK İŞ — eşzamanlı yazıcı BUSY'de anında hata almak yerine bekler.
+    // WAL tek yazıcıya izin verir; busy_timeout olmadan pool'daki ikinci bağlantı "database
+    // is locked" ile hemen döner. İSTEK YOLU (db::) için 2000 ms — agresif: 32 worker'ın
+    // 5 sn donup upstream timeout/havuz tükenmesi cascade'i yaratmasındansa hızlı geri
+    // basınç yeğ. (jobs:: arka plan olduğu için kendi 5000'ini korur.) İmplicit-transaction
+    // INSERT'ler bununla kapanır; explicit BEGIN için begin_stmt() "BEGIN IMMEDIATE" verir —
+    // SQLITE_BUSY_SNAPSHOT busy_timeout ile retry EDİLEMEZ.
+    // TODO: DSN ?busy_timeout=<ms> ile ayarlanabilir yapılabilir.
+    sqlite3_busy_timeout(db_, 2000);
     // WAL modu — okuma/yazma çakışmasını azaltır
     sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
+    // NOT: synchronous varsayılan (FULL) BIRAKILDI. synchronous=NORMAL dayanıklılığı
+    // (ACID-D) sessizce düşürür — güç kesintisi/OS çökmesinde son commit'ler kaybolabilir
+    // (bozulma değil, KAYIP). Bir web framework'ünün varsayılanı bunu kullanıcıya sormadan
+    // almamalı. Perf isteyen ileride bilinçli+belgeli DSN ?synchronous=NORMAL ile açar.
     // Foreign key kontrolünü etkinleştir
     sqlite3_exec(db_, "PRAGMA foreign_keys=ON;", nullptr, nullptr, nullptr);
 }

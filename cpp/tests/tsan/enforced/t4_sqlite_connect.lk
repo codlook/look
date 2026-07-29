@@ -1,0 +1,14 @@
+# T4: SQLITE_THREADSAFE=0 hipotezi — paralel thread'lerden sqlite3_open + query
+# Bu, SQLITE_THREADSAFE=2 duzeltmesinin REGRESYON testidir: duzeltmeden sonra 0 rapor.
+$done = channel(6)
+for ($i=0; $i<6; $i=$i+1) {
+  parallel(function() use ($done, $i) {
+    $c = db::connect("sqlite://./t4_" . $i . ".db")
+    db::query($c, "CREATE TABLE IF NOT EXISTS t (a INTEGER)", [])
+    for ($j=0; $j<40; $j=$j+1) { db::query($c, "INSERT INTO t (a) VALUES (?)", [$j]) }
+    db::query($c, "SELECT count(*) FROM t", [])
+    send($done, 1)
+  })
+}
+for ($k=0; $k<6; $k=$k+1) { receive($done) }
+print("T4 bitti")

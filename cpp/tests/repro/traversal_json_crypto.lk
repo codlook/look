@@ -1,0 +1,49 @@
+use string
+use array
+use json
+use crypto
+use html
+function chk($l,$g,$w){ if($g==$w){print("OK   ".$l)}else{print("FAIL ".$l." got[".$g."] want[".$w."]")} }
+function show($l,$v){ print("INFO ".$l." => ".$v) }
+
+# ── Path traversal ──
+try { $x = file::read("../../../../etc/passwd"); show("P1 traversal","OKUNDU! len=".string::len($x)) }
+catch ($e) { show("P1 traversal","engellendi") }
+try { $x = file::read("/etc/passwd"); show("P2 mutlak yol","OKUNDU! len=".string::len($x)) }
+catch ($e) { show("P2 mutlak yol","engellendi") }
+try { $x = file::read("./x/../../../etc/passwd"); show("P3 karisik","OKUNDU!") }
+catch ($e) { show("P3 karisik","engellendi") }
+try { file::put("/tmp/look_pwn.txt","x"); show("P4 tmp yazma","YAZILDI") }
+catch ($e) { show("P4 tmp yazma","engellendi") }
+
+# ── Integer overflow / sinir ──
+show("I1 substr negatif", string::substr("abcdef", -9223372036854775808, 5))
+show("I2 substr buyuk",   string::substr("abcdef", 0, 9223372036854775807))
+show("I3 slice tasma",    json::encode(array::slice([1,2,3], -9223372036854775808, 9223372036854775807)))
+show("I4 int max +1",     9223372036854775807 + 1)
+show("I5 bolme sifira",   "test")
+try { show("I6 mod sifir", 5 % 0) } catch ($e) { show("I6 mod sifir","exception (dogru)") }
+try { show("I7 div sifir", 5 / 0) } catch ($e) { show("I7 div sifir","exception (dogru)") }
+show("I8 shift 1<<200", 1 << 200)
+show("I9 shift negatif", 1 << -1)
+
+# ── JSON parser ──
+show("J1 derin", json::decode("[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]") == null)
+show("J2 bozuk utf8", json::encode(json::decode("{\"a\":\"\\ud800\"}")))
+show("J3 buyuk sayi", json::encode(json::decode("{\"n\":123456789012345678901234567890}")))
+show("J4 dup key", json::encode(json::decode("{\"a\":1,\"a\":2}")))
+
+# ── html::escape kapsamı (XSS) ──
+show("X1 escape", html::escape("<script>alert(1)</script>"))
+show("X2 tirnak", html::escape("\" ' & < > /"))
+show("X3 backtick", html::escape("`onload=x`"))
+
+# ── crypto ──
+show("C1 sha256", crypto::sha256("abc"))
+show("C2 uuid", crypto::uuid())
+show("C3 rand32", crypto::random_string(32))
+show("C4 cc esit", crypto::constant_compare("abc","abc"))
+show("C5 cc farkli", crypto::constant_compare("abc","abd"))
+show("C6 cc uzunluk", crypto::constant_compare("abc","abcdef"))
+show("C7 hmac", crypto::hmac_sha256("veri","gizli"))
+print("=== misc bitti ===")

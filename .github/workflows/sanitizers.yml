@@ -1,0 +1,67 @@
+# .github/workflows/sanitizers.yml
+# Release build'in yakalayamadigi siniftaki hatalari (data race, stack overflow, UB)
+# yakalar. Tasarim: CI ILK GUNDEN YESIL baslar. Bilinen-acik bulgular (R-02/R-03 VM
+# yarislari, B-01 eval-guard) ayri, continue-on-error adimlarda RAPORLANIR ama job'i
+# KIRMAZ. Her duzeltme = bir testi known_fail/'dan enforced/'a terfi ettirmek.
+name: sanitizers
+on: [push, pull_request]
+
+jobs:
+  asan-ubsan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
+      - name: Build (ASan+UBSan)
+        working-directory: cpp
+        run: |
+          cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                -DLOOK_SANITIZE=address,undefined -DLOOK_STATIC_SSL=OFF
+          cmake --build build-asan --target look -j"$(nproc)"
+      - name: Regression (zorunlu — yesil olmali)
+        working-directory: cpp
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ./build-asan/lk tests/regression_all.lk
+      - name: B-01 eval-guard (BILINEN ACIK — raporla, kirma)
+        working-directory: cpp
+        continue-on-error: true
+        env: { ASAN_OPTIONS: detect_leaks=0:abort_on_error=1 }
+        run: |
+          # Duzeltildikten SONRA: temiz 'cok derin' hatasi (rc=1), CRASH degil.
+          # Simdilik eval ozyinelemesi sinirsiz -> SIGABRT bekleniyor (continue-on-error).
+          python3 -c "print('\$x = ' + '+'.join(['1']*20000))" > /tmp/b01.lk
+          ./build-asan/lk /tmp/b01.lk; echo "VM rc=$?"
+          LOOK_CLI_VM=0 ./build-asan/lk /tmp/b01.lk; echo "interp rc=$?"
+
+  tsan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
+      - name: Build (TSan)
+        working-directory: cpp
+        run: |
+          cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                -DLOOK_SANITIZE=thread -DLOOK_STATIC_SSL=OFF
+          cmake --build build-tsan --target look -j"$(nproc)"
+      - name: Yaris testleri — ENFORCED (yesil olmali; kirilirsa CI kirmizi)
+        working-directory: cpp
+        env:
+          TSAN_OPTIONS: halt_on_error=1:exitcode=66:history_size=7:report_thread_leaks=0
+        run: |
+          # t4 = SQLITE_THREADSAFE=2 regresyonu (0 yaris vermeli). ext4 runner'da
+          # overlayfs kilit belirsizligi yok — asil temiz A/B ortami burasi.
+          for f in tests/tsan/enforced/*.lk; do
+            echo "== $f"; ./build-tsan/lk "$f" || exit 1
+            LOOK_CLI_VM=0 ./build-tsan/lk "$f" || exit 1   # her iki motor da temiz
+          done
+      - name: Bilinen acik yarislar — R-02/R-03 (raporla, kirma)
+        working-directory: cpp
+        continue-on-error: true
+        env: { TSAN_OPTIONS: "halt_on_error=0:exitcode=0:history_size=7:report_thread_leaks=0" }
+        run: |
+          # t1 (VM array capture) ve t6 (shared_ptr<void> type-confusion) — mimari,
+          # S1 ile ayni masada. Duzeltilince enforced/'a tasinir.
+          for f in tests/tsan/known_fail/*.lk; do echo "== $f"; ./build-tsan/lk "$f"; done
