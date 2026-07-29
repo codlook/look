@@ -44,10 +44,22 @@ static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& 
     visited.insert(src.get());
     auto nc = std::make_shared<Closure>(src->proto);
     nc->captures = src->captures;                  // sığ; aşağıda cell/closure olanlar derinleşir
-    const auto& isc = src->proto->capture_is_cell;
+    // R-02: parallel task'a verilen closure'un capture izolasyonu — İZİN LİSTESİ
+    // (fail-open) yerine YASAK LİSTESİ (fail-safe). Paylaşımı KASITLI olan handle tipleri
+    // (channel/ws/sse — cross-thread iletişim primitifleri) DIŞINDA her capture deep_clone
+    // edilir. Böylece `use ($dizi)` gibi düz ARRAY capture'ı da izole olur (eski hâl yalnız
+    // cell + iç-closure klonluyordu; düz dizi sığ shared_ptr'la PAYLAŞILIP parallel task'lar
+    // aynı vector'ü eşzamanlı mutasyona uğratıp YARIŞIYORDU — t1, TSan). Kritik: Value'ya
+    // yeni bir tip eklendiğinde otomatik GÜVENLİ tarafta başlar — izin listesi olsaydı her
+    // yeni tip sessiz-paylaşım bug'ı olurdu (bu sınıfın 3. yaması). deep_clone_impl her tipi
+    // doğru ele alır: ARRAY özyineli klon, closure hook'la klon, scalar/string *this (ucuz,
+    // immutable). Interpreter'ın zaten yaptığı izolasyonla parite (differential-güvenli).
+    // (cell flag'i artık gereksiz — cell'ler de handle olmadıkça klonlanır.)
     for (size_t j = 0; j < nc->captures.size(); ++j) {
-        bool cell = (j < isc.size() && isc[j]);
-        if (cell || nc->captures[j].type() == Value::BYTECODE_FN)
+        Value::Type t = nc->captures[j].type();
+        bool shared_by_design = (t == Value::CHANNEL || t == Value::WEBSOCKET
+                              || t == Value::SSE_CONN);
+        if (!shared_by_design)
             nc->captures[j] = nc->captures[j].deep_clone_tracked(visited);
     }
     visited.erase(src.get());
@@ -855,15 +867,28 @@ call_dispatch:
 #else
                     constexpr bool CLONE_CLOSURES = true;
 #endif
+                    // R-02: capture izolasyonu — İZİN LİSTESİ (yalnız cell+closure klonla)
+                    // yerine YASAK LİSTESİ (fail-safe). Paylaşımı KASITLI handle'lar
+                    // (CHANNEL/WS/SSE — cross-thread iletişim) DIŞINDA her capture klonlanır.
+                    // Eski hâl düz ARRAY capture'ı sığ paylaşıyordu → parallel task'lar aynı
+                    // vector'ü mutasyona uğratıp YARIŞIYORDU (t1b VM, TSan). deep_clone_impl
+                    // her tipi doğru ele alır (array özyineli, handle *this). Yeni Value tipi
+                    // eklenince otomatik güvenli tarafta başlar. (CLONE_CLOSURES=false =
+                    // LOOK_NO_TRANSITIVE_CLONE pozitif-kontrol: eski yarışlı hâl.)
+                    auto must_clone = [](Value::Type t) {
+                        return t != Value::CHANNEL && t != Value::WEBSOCKET && t != Value::SSE_CONN;
+                    };
                     bool needs = false;
-                    for (size_t i = 0; i < src_cl->captures.size(); ++i)
-                        if ((i < isc.size() && isc[i]) || (CLONE_CLOSURES && src_cl->captures[i].type() == Value::BYTECODE_FN)) { needs = true; break; }
+                    for (size_t i = 0; i < src_cl->captures.size(); ++i) {
+                        bool cell = (i < isc.size() && isc[i]);
+                        if (cell || (CLONE_CLOSURES && must_clone(src_cl->captures[i].type()))) { needs = true; break; }
+                    }
                     if (needs) {
                         cl_copy = std::make_shared<Closure>(src_cl->proto);
                         cl_copy->captures = src_cl->captures;   // sığ (shared_ptr paylaşır)
                         for (size_t i = 0; i < cl_copy->captures.size(); ++i) {
                             bool cell = (i < isc.size() && isc[i]);
-                            if (cell || (CLONE_CLOSURES && cl_copy->captures[i].type() == Value::BYTECODE_FN))
+                            if (cell || (CLONE_CLOSURES && must_clone(cl_copy->captures[i].type())))
                                 cl_copy->captures[i] = cl_copy->captures[i].deep_clone();
                         }
                     }
