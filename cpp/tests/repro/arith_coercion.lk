@@ -1,0 +1,29 @@
+# B-05 arith_check davranış sabitleme (regresyon guard).
+# Aritmetikte (+,-,*,/,%) sayısal olmayan operand SESSİZCE 0'a düşmesin (fail-loud).
+# == tip-katı ("5"==5 → false) iken + de tutarlı olmalı.
+# Çalıştır: build/lk tests/repro/arith_coercion.lk
+use json
+function ok($l, $g, $w)  { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . " got[" . $g . "] want[" . $w . "]") } }
+function thr($l, $fn)    { try { $fn(); print("FAIL " . $l . " (hata bekleniyordu, gecti)") } catch ($e) { print("OK   " . $l . " (fail-loud)") } }
+
+# --- GEÇERLİ: sayısal string ve sayısal tipler korunur ---
+ok("\"5\" + 1 = 6",      "5" + 1, 6)
+ok("true + 1 = 2",       true + 1, 2)
+ok("false + 1 = 1",      false + 1, 1)
+ok("2 * 3 = 6",          2 * 3, 6)
+
+# --- FAIL-LOUD: sessiz-0 veri bozulması kapandı ---
+thr("\"abc\" + 1",       fn() => "abc" + 1)
+thr("bignum(str) + 1",   fn() => json::decode("{\"n\":123456789012345678901234567890}")["n"] + 1)
+thr("null + 1 (eksik anahtar)", fn() => json::decode("{\"a\":1}")["yok"] + 1)
+thr("[] + 1",            fn() => [] + 1)
+thr("\" 5 \" + 1 (bosluk)", fn() => " 5 " + 1)
+thr("\"1e-400\" + 1 (underflow)", fn() => "1e-400" + 1)
+
+# --- SABİTLENEN egzotik davranış (veri bozulması DEĞİL, ama değişirse fark edilsin) ---
+# std::stod bunları kabul ediyor; operator+ string'i int-yolundan işlediği için 0+1=1.
+# Gerçek JSON/kullanıcı verisinde bu string'ler görülmez; tightening ayrı bir karar.
+ok("\"inf\" + 1  = 1 (egzotik, pinned)",  "inf" + 1, 1)
+ok("\"nan\" + 1  = 1 (egzotik, pinned)",  "nan" + 1, 1)
+ok("\"0x10\" + 1 = 1 (egzotik, pinned)",  "0x10" + 1, 1)
+print("=== arith_coercion bitti ===")

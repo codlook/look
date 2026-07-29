@@ -144,7 +144,16 @@ static inline bool i64_mul_ovf(int64_t a, int64_t b, int64_t* r) {
 // sessiz VERİ BOZULMASI. Tam sayısal string ("5") çalışmaya devam eder; çöp string atar.
 // to_int/to_float GENEL kalır (başka yerlerde lenient-0 istenir); yalnız aritmetik katı.
 static void arith_check(const Value& v) {
-    if (v.type() != Value::STRING) return;
+    switch (v.type()) {
+        case Value::INT: case Value::FLOAT: case Value::BOOL:
+            return;                    // sayısal — serbest (true=1/false=0, çoğu dilde böyle)
+        case Value::STRING: break;     // içeriği aşağıda doğrula
+        default:
+            // NONE(null — EKSİK ASSOC ANAHTARI!), ARRAY, FUNCTION, CHANNEL/WS/SSE:
+            // sayı değil. null+1=1 ve []+1=1, "abc"+1=1 sessiz-0 bug'ının kardeşi —
+            // ve eksik anahtar çok daha yaygın. Fail-loud (== tip-katıyken + de olsun).
+            throw std::runtime_error("Aritmetik islem sayisal olmayan deger uzerinde (null/dizi/nesne)");
+    }
     std::string s = v.to_string();
     if (s.empty())
         throw std::runtime_error("Aritmetik islem bos string uzerinde");
