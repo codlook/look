@@ -753,6 +753,7 @@ static Module make_html() {
                 case '>':  out += "&gt;";   break;
                 case '"':  out += "&quot;"; break;
                 case '\'': out += "&#39;";  break;
+                case '`':  out += "&#96;";  break;   // B-08: JS template-literal XSS
                 default:   out += (char)c;
             }
         }

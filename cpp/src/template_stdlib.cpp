@@ -32,6 +32,7 @@ std::string TemplateEngine::html_escape(const std::string& s) {
             case '>':  r += "&gt;";   break;
             case '"':  r += "&quot;"; break;
             case '\'': r += "&#39;";  break;
+            case '`':  r += "&#96;";  break;   // B-08: JS template-literal `{$x}` XSS'i kapatır
             default:   r += c;
         }
     }

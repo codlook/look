@@ -138,25 +138,58 @@ static inline bool i64_mul_ovf(int64_t a, int64_t b, int64_t* r) {
     return false;
 #endif
 }
+// B-05: aritmetikte sayıya çevrilemeyen string'i SESSİZCE 0 kabul etmek yerine hata ver.
+// LOOK'ta == tip-katı ("5"==5 → false) ama + gevşekti: to_int("abc") catch→0 yüzünden
+// "abc"+1=1 ve (JSON'da int64-taşan sayı STRING olduğundan) bignum-string+1=1 —
+// sessiz VERİ BOZULMASI. Tam sayısal string ("5") çalışmaya devam eder; çöp string atar.
+// to_int/to_float GENEL kalır (başka yerlerde lenient-0 istenir); yalnız aritmetik katı.
+static void arith_check(const Value& v) {
+    if (v.type() != Value::STRING) return;
+    std::string s = v.to_string();
+    if (s.empty())
+        throw std::runtime_error("Aritmetik islem bos string uzerinde");
+    size_t pos = 0;
+    // 1) Tam int64 string'i → geçerli (operator+ int yoluyla doğru işler: "5"+1=6)
+    try {
+        (void)std::stoll(s, &pos);
+        if (pos == s.size()) return;
+    } catch (const std::out_of_range&) {
+        // int64'ü AŞAN TAMSAYI string'i (bignum / Snowflake ID / BIGINT UNSIGNED).
+        // JSON int64-taşan sayıyı kesinlik için STRING tutuyor; onunla aritmetik
+        // to_int→0'a düşüp SESSİZCE yanlış sonuç veriyordu ("bignum + 1 = 1"). Reddet.
+        throw std::runtime_error("Aritmetik: int64 sinirini asan sayi string'i uzerinde (bignum/ID): '" + s + "'");
+    } catch (...) {}
+    // 2) Ondalık/üslü sayı string'i ("5.5", "1e3") → geçerli (float yolu)
+    try {
+        (void)std::stod(s, &pos);
+        if (pos == s.size()) return;
+    } catch (...) {}
+    // 3) Sayı değil ("abc", "12x") → reddet (== tip-katıyken + sessiz 0 vermesin)
+    throw std::runtime_error("Aritmetik islem sayiya cevrilemeyen string uzerinde: '" + s + "'");
+}
 Value Value::operator+(const Value& o) const {
+    arith_check(*this); arith_check(o);
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() + o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_add_ovf(a, b, &r)) return Value((double)a + (double)b);
     return Value(r);
 }
 Value Value::operator-(const Value& o) const {
+    arith_check(*this); arith_check(o);
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() - o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_sub_ovf(a, b, &r)) return Value((double)a - (double)b);
     return Value(r);
 }
 Value Value::operator*(const Value& o) const {
+    arith_check(*this); arith_check(o);
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() * o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_mul_ovf(a, b, &r)) return Value((double)a * (double)b);
     return Value(r);
 }
 Value Value::operator/(const Value& o) const {
+    arith_check(*this); arith_check(o);
     double d = o.to_float();
     if (d == 0.0) throw std::runtime_error("Division by zero");  // caught and enriched by interpreter
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() / d);
@@ -168,6 +201,7 @@ Value Value::operator/(const Value& o) const {
     return Value(to_float() / d);
 }
 Value Value::operator%(const Value& o) const {
+    arith_check(*this); arith_check(o);
     int64_t i = o.to_int();
     if (i == 0) throw std::runtime_error("Modulo by zero");
     if (i == -1) return Value((int64_t)0);  // INT64_MIN % -1 UB; a % -1 daima 0

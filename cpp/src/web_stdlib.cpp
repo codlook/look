@@ -22,6 +22,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <condition_variable>
 #include <thread>
 #include <atomic>
@@ -228,8 +229,19 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
             json_skip_ws(s, i);
             // value
             Value val = json_decode_value(s, i, depth + 1);
-            arr->push_back(Value(key));
-            arr->push_back(val);
+            // B-04: yinelenen anahtar → SON kazanır, anahtar KONUMU korunur
+            // (JS/Go/Python/PHP ile aynı). Eski davranış "ilk kazanır + ikisini de tut"
+            // idi → gateway "user" görüp geçirir, backend "admin" görür (JSON interop
+            // yetki atlatma). Yerinde güncelle: anahtar sona kaymasın (o da uyumsuzluk).
+            bool dup = false;
+            for (size_t k = 1; k + 1 < arr->size(); k += 2) {
+                if ((*arr)[k].type() == Value::STRING && (*arr)[k].to_string() == key) {
+                    (*arr)[k + 1] = val;   // konum sabit, değer güncellenir
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) { arr->push_back(Value(key)); arr->push_back(val); }
             json_skip_ws(s, i);
             if (i < s.size() && s[i] == ',') i++;
             json_skip_ws(s, i);
@@ -1425,26 +1437,42 @@ static Module make_db_module(Interpreter* interp) {
         // global statiklerden gelir (bkz. CMakeLists; eski =0 yorumu yanlıştı).
         // Kullanıcının :memory:'den beklediği "tek paylaşımlı geçici DB" davranışı budur.
         // İdempotency anahtarı ORİJİNAL dsn kalır; sadece açılan yol değişir.
-        // NOT (S3): aşağıdaki yol öngörülebilir (look_mem_<pid>.db, dünya-yazılabilir
-        // dizinde) → symlink/TOCTOU. Bir sonraki diff'te mkdtemp 0700'e taşınacak.
+        // S3: yol süreç-ömürlü ÖZEL bir dizinin içinde. Eski look_mem_<pid>.db yolu
+        // öngörülebilir + dünya-yazılabilir /tmp'deydi → yerel saldırgan önceden symlink
+        // koyup TOCTOU (std::remove sonra open) ile başka dosyaya yazdırabilirdi (paylaşımlı
+        // hosting). Fix: dizini mkdtemp (POSIX, atomik 0700 + yalnız-sahip) / tahmin-edilemez
+        // ad (Windows, temp zaten kullanıcıya-özel ACL'li) ile aç, DB'yi İÇİNE koy. Dizin
+        // bize ait ve 0700 olduğu için içindeki dosya O_EXCL|O_NOFOLLOW gerektirmez —
+        // saldırgan var olmayan özel dizine symlink koyamaz. Bir kez oluştur, pool paylaşır.
         std::string effective_dsn = dsn;
         if (is_sqlite && dsn.find(":memory:") != std::string::npos) {
-            std::error_code ec;
-            auto tmp = std::filesystem::temp_directory_path(ec);
-            std::string path = (tmp / ("look_mem_" + std::to_string(
+            static std::mutex memdb_mtx;
+            static std::string memdb_path;
+            {
+                std::lock_guard<std::mutex> lk(memdb_mtx);
+                if (memdb_path.empty()) {
+                    std::error_code ec;
+                    auto tmp = std::filesystem::temp_directory_path(ec);
 #ifdef _WIN32
-                (unsigned long)GetCurrentProcessId()
+                    std::random_device rd;
+                    char nm[48];
+                    std::snprintf(nm, sizeof(nm), "look_mem_%08x%08x%08x",
+                                  (unsigned)rd(), (unsigned)rd(), (unsigned)rd());
+                    auto dir = tmp / nm;
+                    if (!std::filesystem::create_directory(dir, ec))
+                        throw std::runtime_error(":memory: icin guvenli gecici dizin acilamadi");
+                    memdb_path = (dir / "db.sqlite").string();
 #else
-                (unsigned long)getpid()
+                    std::string tpl = (tmp / "look_mem_XXXXXX").string();
+                    if (::mkdtemp(tpl.data()) == nullptr)
+                        throw std::runtime_error(":memory: icin guvenli gecici dizin acilamadi (mkdtemp)");
+                    memdb_path = tpl + "/db.sqlite";
 #endif
-            ) + ".db")).string();
-            // Taze başlangıç: eski geçici DB + WAL/SHM artıklarını sil.
-            std::remove(path.c_str());
-            std::remove((path + "-wal").c_str());
-            std::remove((path + "-shm").c_str());
-            effective_dsn = "sqlite://" + path;
+                }
+            }
+            effective_dsn = "sqlite://" + memdb_path;
             Logger::instance().log(LogLevel::LOG_INFO, "DB",
-                ":memory: → süreç-ömürlü geçici dosyaya yönlendirildi (paylaşımlı, ephemeral)");
+                ":memory: → süreç-ömürlü ÖZEL (0700) geçici dosyaya yönlendirildi");
         }
 
         auto pool = std::make_shared<ConnPool>();
