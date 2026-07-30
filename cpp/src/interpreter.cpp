@@ -491,15 +491,44 @@ void LookChannel::close_chan() {
 // Shares read-only setup state (route_registry, struct_defs, globals).
 // Each copy has its own output, web_ctx, call_depth, call_stack, current env.
 // Caller must call set_output() and set_web_context() before dispatch_routes().
+// FUNCTION (tree-walk closure) THREAD-klonu — Value::fn_cloner hook'una kaydedilir.
+// clone_for_thread bir FUNCTION görünce burayı çağırır (deep_clone DEĞİL — sıcak yol korunur).
+// LookFunction alanları kopyalanır; closure Environment izole edilir (values_ deep,
+// parent PAYLAŞIMLI kalır — closure'ın parent'ı setup-zamanı globals_, klonlanırsa global
+// okumaları bozulur). Böylece parallel/timer/ws/sse'de yakalanan closure'ın kendi env'i olur.
+static Value clone_look_function(const Value& v, std::unordered_set<const void*>& visited) {
+    auto src = v.as_function();
+    if (!src) return v;
+    if (visited.count(src.get())) return Value();   // döngüsel referans kır
+    visited.insert(src.get());
+    auto nf = std::make_shared<LookFunction>(*src); // name/params/body/defaults kopyala
+    if (nf->closure) nf->closure = nf->closure->clone();  // capture env izole (parent=globals paylaşımlı)
+    visited.erase(src.get());
+    return Value(nf);
+}
+static const bool s_fn_cloner_registered = [] {
+    Value::fn_cloner() = &clone_look_function;
+    return true;
+}();
+
 std::unique_ptr<Interpreter> Interpreter::make_dispatch_copy() const {
     auto c = std::make_unique<Interpreter>();   // initialises stdlib_ + fresh globals_
     c->globals_        = globals_->clone();    // snapshot — her dispatch kendi globals_ kopyasına yazar
     c->current_        = std::make_shared<Environment>(c->globals_);  // fresh dispatch scope
-    c->route_registry_        = route_registry_;        // copy (closures are read-only)
-    c->before_route_registry_ = before_route_registry_; // copy middleware list
+    // EŞZAMANLILIK SÖZLEŞMESİ (route_registry_/services_ worker thread'lerle PAYLAŞILIR):
+    // Handler closure'ları sığ kopyalanır → LookFunction+Environment tüm worker'larda ortak.
+    // SKALER capture'lara yazma DİL GARANTİSİYLE güvenli: `$n = $n+1` fonksiyon sınırını
+    // geçemez (Environment::set fn_boundary_ throw eder) → local shadow yaratır, paylaşılan
+    // env'e yazılmaz. AMA heap-arkalı mutable capture (ARRAY/nesne) İNDEKS mutasyonu
+    // (`$arr[0] = x`) set'i atlar, paylaşılan vector'ü YERİNDE değiştirir → eşzamanlı istekte
+    // YARIŞ. SÖZLEŞME: (1) handler capture'ları immutable olmalı; (2) paylaşılan mutable durum
+    // için cache::/queue:: (mutex'li, thread-güvenli); (3) app:: servisleri thread'ler arası
+    // paylaşılır — mutable state TUTMAYIN. (parallel/timer/ws/sse İZOLASYONLUdur: clone_for_thread.)
+    c->route_registry_        = route_registry_;        // PAYLAŞ (bkz. sözleşme yukarıda)
+    c->before_route_registry_ = before_route_registry_; // PAYLAŞ (middleware)
     c->struct_defs_           = struct_defs_;            // copy (user struct definitions)
     c->modules_        = modules_;              // copy (use X state from setup)
-    c->services_       = services_;             // PAYLAŞ — setup'ta kaydedilen servisler (app::)
+    c->services_       = services_;             // PAYLAŞ (app:: — sözleşme: mutable state tutma)
     c->setup_mode_     = false;
     c->main_script_    = main_script_;
     c->current_file_   = current_file_;
@@ -1404,7 +1433,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                     // Create a base interpreter copy — each event invocation gets its own copy.
                     auto base = std::shared_ptr<Interpreter>(make_dispatch_copy().release());
                     if (ev == "message") {
-                        conn->on_message = [base, cb_v](const std::string& msg) {
+                        conn->on_message = [base, cb_v = cb_v.clone_for_thread()](const std::string& msg) {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
                             look::acquire_thread_connections();
@@ -1412,7 +1441,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             look::release_thread_connections();
                         };
                     } else if (ev == "close") {
-                        conn->on_close = [base, cb_v]() {
+                        conn->on_close = [base, cb_v = cb_v.clone_for_thread()]() {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
                             look::acquire_thread_connections();
@@ -1475,7 +1504,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                     auto base = std::shared_ptr<Interpreter>(make_dispatch_copy().release());
                     auto sink = std::make_shared<std::ostringstream>();
 
-                    auto callback = [base, sink, cb_v]() mutable {
+                    auto callback = [base, sink, cb_v = cb_v.clone_for_thread()]() mutable {
                         look::WebContext ctx;
                         ctx.method = "__TIMER__";
                         sink->str(""); sink->clear();
@@ -1544,7 +1573,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                     if (ev == "close") {
                         auto base = std::shared_ptr<Interpreter>(make_dispatch_copy().release());
                         auto sink = std::make_shared<std::ostringstream>();
-                        conn->on_close_cb = [base, sink, cb_v]() mutable {
+                        conn->on_close_cb = [base, sink, cb_v = cb_v.clone_for_thread()]() mutable {
                             look::WebContext ctx;
                             ctx.method = "__SSE_CLOSE__";
                             base->set_output(*sink);
@@ -1756,7 +1785,11 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 auto sink = std::make_shared<std::ostringstream>();
                 copy->set_output(*sink);
 
-                std::thread([c = std::move(copy), sink, fn]() mutable {
+                // R-02 (interpreter): fn'i THREAD-klonla — closure'ın Environment'ı (içindeki
+                // ARRAY/STRING capture'lar) her task'a izole olsun. Klonsuz: 8 task aynı
+                // LookFunction+Environment'ı paylaşıp $shared'ı eşzamanlı mutasyona uğratıp
+                // yarışıyordu (t1b interp=8). clone_for_thread FUNCTION dalı bunu kapatır.
+                std::thread([c = std::move(copy), sink, fn = fn.clone_for_thread()]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
                     // DB bağlantısı iadesi: task içinde db::query çağrılırsa get_conn
                     // bu thread'in thread_local'ine TEMBEL bir conn alır (istek

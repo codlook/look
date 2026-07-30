@@ -98,6 +98,24 @@ public:
     // Hook özyinelemesi için visited-paylaşımlı deep-clone (deep_clone_impl private).
     Value deep_clone_tracked(std::unordered_set<const void*>& visited) const { return deep_clone_impl(visited); }
 
+    // FUNCTION (tree-walk interpreter closure = LookFunction + Environment) hook'u. interpreter.h
+    // LookFunction'ı TAM göremez (aşağıda tanımlı) → interpreter.cpp bir cloner kaydeder.
+    using FnCloner = Value(*)(const Value&, std::unordered_set<const void*>&);
+    static FnCloner& fn_cloner() { static FnCloner h = nullptr; return h; }
+
+    // THREAD-SINIRI klonu: deep_clone gibi AMA FUNCTION + STRING dahil. ÖNEMLİ: deep_clone()
+    // SICAK YOLDA (Environment::clone → make_dispatch_copy, HER WS MESAJINDA) çağrıldığı için
+    // ona FUNCTION dalı EKLENMEZ (her mesajda tüm global fn'leri derin klonlar = felaket).
+    // Bu ayrı yol YALNIZ thread-crossing site'larda (parallel/timer/ws/sse/channel/cache)
+    // çağrılır — deep_clone semantiği değişmez, sıcak yol maliyeti aynı kalır.
+    Value clone_for_thread() const {
+        std::unordered_set<const void*> visited;
+        return clone_for_thread_impl(visited);
+    }
+    Value clone_for_thread_tracked(std::unordered_set<const void*>& visited) const {
+        return clone_for_thread_impl(visited);
+    }
+
 private:
     Value deep_clone_impl(std::unordered_set<const void*>& visited) const {
         if (type_ == ARRAY && ptr_val) {
@@ -115,6 +133,39 @@ private:
             if (auto h = bc_fn_cloner()) return h(*this, visited);
         }
         return *this; // scalar, channel, ws, sse — shallow copy yeterli (paylaşım kasıtlı)
+    }
+
+    // Thread-sınırı klonu (yalnız clone_for_thread'den). deep_clone_impl'in kopyası +
+    // FUNCTION (interpreter closure) + STRING dalları. deep_clone SICAK YOLDA olduğu için
+    // ayrı tutuluyor; buraya eklenen dallar sıcak yolu ETKİLEMEZ.
+    Value clone_for_thread_impl(std::unordered_set<const void*>& visited) const {
+        switch (type_) {
+            case INT: case FLOAT: case BOOL: case NONE:
+            case CHANNEL: case WEBSOCKET: case SSE_CONN:
+                return *this;   // değer tipleri + paylaşımı KASITLI handle'lar
+            case STRING:
+                // append_in_place YERİNDE mutasyon → paylaşılan capture'da yarış; izole et.
+                return ptr_val ? Value(*static_cast<const std::string*>(ptr_val.get())) : *this;
+            case ARRAY: {
+                if (!ptr_val) return *this;
+                auto arr = std::static_pointer_cast<std::vector<Value>>(ptr_val);
+                if (visited.count(arr.get())) return Value();
+                visited.insert(arr.get());
+                auto v = std::make_shared<std::vector<Value>>();
+                v->reserve(arr->size());
+                for (const auto& e : *arr) v->push_back(e.clone_for_thread_impl(visited));
+                visited.erase(arr.get());
+                return Value(v);
+            }
+            case BYTECODE_FN:
+                if (ptr_val) { if (auto h = bc_fn_cloner()) return h(*this, visited); }
+                return *this;
+            case FUNCTION:
+                // interpreter.cpp'de kayıtlı: LookFunction + closure Environment klonu.
+                if (ptr_val) { if (auto h = fn_cloner()) return h(*this, visited); }
+                return *this;
+        }
+        return *this; // unreachable — tüm Type'lar kapsandı (default YOK: yeni tip -> -Wswitch)
     }
 public:
 

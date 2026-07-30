@@ -889,7 +889,7 @@ call_dispatch:
                         for (size_t i = 0; i < cl_copy->captures.size(); ++i) {
                             bool cell = (i < isc.size() && isc[i]);
                             if (cell || (CLONE_CLOSURES && must_clone(cl_copy->captures[i].type())))
-                                cl_copy->captures[i] = cl_copy->captures[i].deep_clone();
+                                cl_copy->captures[i] = cl_copy->captures[i].clone_for_thread();
                         }
                     }
                 }
