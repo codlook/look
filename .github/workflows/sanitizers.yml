@@ -57,11 +57,14 @@ jobs:
             echo "== $f"; ./build-tsan/lk "$f" || exit 1
             LOOK_CLI_VM=0 ./build-tsan/lk "$f" || exit 1   # her iki motor da temiz
           done
-      - name: Bilinen acik yarislar — R-02/R-03 (raporla, kirma)
+      - name: Bilinen acik yarislar (raporla, kirma)
         working-directory: cpp
         continue-on-error: true
         env: { TSAN_OPTIONS: "halt_on_error=0:exitcode=0:history_size=7:report_thread_leaks=0" }
         run: |
-          # t1 (VM array capture) ve t6 (shared_ptr<void> type-confusion) — mimari,
-          # S1 ile ayni masada. Duzeltilince enforced/'a tasinir.
+          # known_fail/ su an BOS (R-02/R-03 kapandi -> hepsi enforced'a tasindi). Yeni bir
+          # bilinen-acik test eklenirse burada raporlanir. Bos dizinde glob literal kalip
+          # yaniltici kirmizi X birakmasin diye compgen guard'i (continue-on-error olsa da
+          # temiz kalsin -- yesil sanilan kirmizinin kucuk hali).
+          compgen -G "tests/tsan/known_fail/*.lk" > /dev/null || { echo "known_fail bos — atlaniyor"; exit 0; }
           for f in tests/tsan/known_fail/*.lk; do echo "== $f"; ./build-tsan/lk "$f"; done
