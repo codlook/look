@@ -502,7 +502,7 @@ static Value clone_look_function(const Value& v, std::unordered_set<const void*>
     if (visited.count(src.get())) return Value();   // döngüsel referans kır
     visited.insert(src.get());
     auto nf = std::make_shared<LookFunction>(*src); // name/params/body/defaults kopyala
-    if (nf->closure) nf->closure = nf->closure->clone();  // capture env izole (parent=globals paylaşımlı)
+    if (nf->closure) nf->closure = nf->closure->clone_for_thread(visited);  // İÇ İÇE closure dahil izole (t8); parent=globals paylaşımlı
     visited.erase(src.get());
     return Value(nf);
 }

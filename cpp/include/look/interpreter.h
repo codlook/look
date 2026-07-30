@@ -294,6 +294,19 @@ public:
         return e;
     }
 
+    // THREAD-SINIRI klonu: clone() gibi AMA değerleri clone_for_thread ile klonlar (FUNCTION
+    // dahil). clone() `deep_clone` kullanır ve o FUNCTION'ı bilmez → İÇ İÇE closure capture'ı
+    // (`use ($inner)` — $inner kendisi closure) ikinci seviyede sığ kalıp $big'i paylaşıyordu
+    // (t8 interp). parent_ PAYLAŞIMLI kalır (closure'ın parent'ı setup-zamanı globals_;
+    // klonlarsak global okumaları bozulur). visited sınır ötesine taşınır → döngü koruması.
+    std::shared_ptr<Environment> clone_for_thread(std::unordered_set<const void*>& visited) const {
+        auto e = std::make_shared<Environment>(parent_);
+        for (const auto& [k, v] : values_)
+            e->values_[k] = v.clone_for_thread_tracked(visited);
+        e->fn_boundary_ = fn_boundary_;
+        return e;
+    }
+
 private:
     std::map<std::string, Value> values_;
     std::shared_ptr<Environment> parent_;

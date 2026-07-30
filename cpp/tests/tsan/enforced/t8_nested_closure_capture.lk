@@ -1,0 +1,28 @@
+# t8 — IC ICE CLOSURE CAPTURE'i (clone_for_thread'in bir seviyede durup durmadigi)
+#
+# Zincir: outer.clone_for_thread() -> clone_look_function -> closure->clone()
+#         -> Environment::clone() -> $inner.deep_clone() -> FUNCTION -> return *this (SIG)
+#         -> $inner'in env'i paylasimli -> icindeki $big paylasimli -> YARIS
+#
+# t6'dan farki: orada `fn() => $big` thread'in ICINDE yaratiliyordu; burada
+# closure'in KENDISI capture ediliyor (`use ($inner)`).
+#
+# BEKLENTI (mevcut fix ile): YARISIR (VM ve interpreter)
+# BEKLENTI (Environment::clone_for_thread eklendikten sonra): 0
+$big   = [[0]]
+$inner = function() use ($big) { return $big }
+$gate  = channel(8)
+$done  = channel(8)
+for ($i=0; $i<8; $i=$i+1) {
+  parallel(function() use ($inner, $gate, $done) {
+    receive($gate)                                   # es-anli baslasinlar
+    for ($j=0; $j<2000; $j=$j+1) {
+      $x = $inner()
+      $x[0][0] = $j
+    }
+    send($done, 1)
+  })
+}
+for ($k=0; $k<8; $k=$k+1) { send($gate, 1) }
+for ($k=0; $k<8; $k=$k+1) { receive($done) }
+print("T8 bitti")
