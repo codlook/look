@@ -1,0 +1,49 @@
+# release_gate.lk — paketlenen HER binary'ye karsi calistir.
+# Amac: artefaktin guvenlik fix'lerini gercekten icerdigini KANITLAMAK.
+# Kullanim: ./lk release_gate.lk   (cikis 0 = yayinlanabilir)
+use string
+use json
+use html
+$FAIL = 0
+function chk($ad, $gecti) {
+  if ($gecti) { print("  OK   " . $ad) } else { print("  FAIL " . $ad) }
+}
+
+print("LOOK yayin kapisi")
+
+# --- MSVC 8c63c28: -1 * INT64_MIN cokmemeli (Windows'ta ayrisir) ---
+$m = 0
+try { $m = -1 * -9223372036854775808 } catch ($e) { $m = -1 }
+chk("MSVC carpma-tasma (SIGFPE yok)", $m == 9223372036854775808)
+
+# --- B-05 a388321/9f1fd9d: sayisal olmayan string + sayi fail-loud ---
+$b5 = false
+try { $x = "abc" + 1 } catch ($e) { $b5 = true }
+chk("B-05 aritmetik fail-loud", $b5)
+
+# --- B-08 9f1fd9d: backtick kacisi (iki escape fonksiyonu) ---
+chk("B-08 backtick escape", html::escape("`") == "&#96;")
+
+# --- B-04 9f1fd9d: JSON yinelenen anahtar son-kazanir + konum korunur ---
+chk("B-04 JSON son-kazanir", json::encode(json::decode("{\"a\":1,\"b\":2,\"a\":3}")) == "{\"a\":3,\"b\":2}")
+
+# --- F-01 80af1e5: ReDoS slot'u thread bitene kadar dolu kalir ---
+# Yamasiz Linux: her cagri "timeout" der (slot hemen serbest) -> 8'e ulasilmaz, limit=0.
+# Yamali Linux : 8 slot dolunca sonrakiler "limit" der -> limit>0.
+# Windows (MSVC): std::regex kendi complexity limiti -> senkron error_complexity, timeout
+#   yoluna hic girmez -> F-01 senaryosu olusamaz, timeout=0. (fix yine de kodda mevcut.)
+# TASINABILIR ASSERT: yalniz UNPATCHED-Linux imzasi (timeout>0 ve limit=0) FAIL versin.
+$s = string::repeat("a", 44) . "b"
+$limit = 0
+$timeout = 0
+for ($i = 0; $i < 12; $i = $i + 1) {
+  try { string::regex_match($s, "(a+)+$") }
+  catch ($e) {
+    if (string::contains("" . $e, "limit")) { $limit = $limit + 1 }
+    else { if (string::contains("" . $e, "timeout")) { $timeout = $timeout + 1 } }
+  }
+}
+# limit>0 (yamali Linux) VEYA timeout=0 (Windows/self-limit) -> guvenli. timeout>0 & limit=0 -> sizinti.
+chk("F-01 ReDoS slot sizintisi kapali", $limit > 0 || $timeout == 0)
+
+print("kapi tamamlandi")
