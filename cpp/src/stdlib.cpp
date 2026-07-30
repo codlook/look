@@ -615,21 +615,26 @@ static Module make_string() {
                 std::lock_guard<std::mutex> lk(state->mtx);
                 state->ex = std::current_exception();
             }
-            bool i_should_decrement;
             {
                 std::lock_guard<std::mutex> lk(state->mtx);
-                i_should_decrement = !state->timed_out;
                 state->done = true;
             }
-            if (i_should_decrement) g_regex_threads--;
+            // F-01: slot'u HER ZAMAN worker (bu thread) gerçekten bitince serbest bırak —
+            // main-thread timeout'ta DEĞİL. Aksi halde slot boşalır ama kaçak thread fn()'i
+            // (catastrophic regex) yakmaya devam eder → 8 limiti CANLI thread'leri sınırlamaz
+            // (N istek → N yanan thread → uzaktan DoS). Bu satır tek decrement noktası:
+            // main azaltmadığı için çift-azaltma yok, ve worker azalttığı için sızıntı da yok.
+            g_regex_threads--;
             state->cv.notify_one();
         }).detach();
 
         std::unique_lock<std::mutex> lk(state->mtx);
         if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; })) {
-            // Timeout: sayacı biz azaltıyoruz, thread tamamlandığında azaltmayacak
+            // Timeout: isteği hızlıca sonlandır AMA sayacı AZALTMA — kaçak thread hâlâ
+            // çalışıyor; slot yalnız o thread bitince (yukarıda) serbest kalır → aynı anda
+            // en fazla 8 CANLI regex thread'i olur, 9.'su 596'da reddedilir (sistem yavaşlar
+            // ama ölmez). timed_out yalnız sonuç/notify sırasında anlamlı.
             state->timed_out = true;
-            g_regex_threads--;
             throw std::runtime_error("string::regex: execution timeout (ReDoS koruması — pattern çok karmaşık)");
         }
         if (state->ex) std::rethrow_exception(state->ex);
