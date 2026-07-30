@@ -20,6 +20,9 @@
 #include <functional>
 
 #define LOOK_VERSION "1.0.0"
+#ifndef LOOK_BUILD          // CMake damgası yoksa (ham derleme) güvenli varsayılan
+#define LOOK_BUILD "src"
+#endif
 
 #ifdef _WIN32
 #  define LOOK_PLATFORM "windows"
@@ -293,7 +296,7 @@ int main(int argc, char* argv[]) {
 
         if (cmd == "version" || cmd == "--version" || cmd == "-v") {
             std::cout << "LOOK " << LOOK_VERSION
-                      << " (" << LOOK_PLATFORM << "/" << LOOK_ARCH << ")"
+                      << " (" << LOOK_BUILD << ", " << LOOK_PLATFORM << "/" << LOOK_ARCH << ")"
                       << "\n";
             return 0;
         }

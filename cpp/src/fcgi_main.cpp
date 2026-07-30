@@ -42,6 +42,10 @@
 #include <functional>
 #include <atomic>
 
+#ifndef LOOK_BUILD          // CMake damgası yoksa (ham derleme) güvenli varsayılan
+#define LOOK_BUILD "src"
+#endif
+
 #ifdef _WIN32
   #include <direct.h>
 #else
@@ -770,7 +774,7 @@ int main(int argc, char* argv[]) {
 #else
             "unknown";
 #endif
-        std::cout << "LOOK 1.0.0 (" << platform << "/" << arch << ")\n";
+        std::cout << "LOOK 1.0.0 (" << LOOK_BUILD << ", " << platform << "/" << arch << ")\n";
         return 0;
     }
 

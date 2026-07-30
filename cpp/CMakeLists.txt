@@ -56,6 +56,24 @@ set_source_files_properties(
 # mutex YOK → çalışma zamanı deseni (her bağlantı tek thread'de) korunduğu için perf-nötr.
 add_compile_definitions(SQLITE_THREADSAFE=2)
 
+# Build damgası: git kısa SHA → `lk --version` ile yayınlanan artefakt ASLA ayrışamaz.
+# Ürün sürümü 1.0.0 SABİT kalır; damga yalnız "hangi derleme" sorusunu cevaplar (aynı
+# adlı iki zip'i ayırt etmek için). .git'siz ortamlar (Docker: .dockerignore .git'i hariç
+# tutar) `-DLOOK_BUILD=<sha>` ile override eder; hiçbiri yoksa "src".
+if(NOT DEFINED LOOK_BUILD)
+    execute_process(
+        COMMAND git rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE LOOK_BUILD
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+endif()
+if(NOT LOOK_BUILD)
+    set(LOOK_BUILD "src")
+endif()
+add_compile_definitions(LOOK_BUILD="${LOOK_BUILD}")
+message(STATUS "LOOK build damgasi: ${LOOK_BUILD}")
+
 # Platform-specific fiber backend
 if(WIN32)
     set(LOOK_FIBER src/fiber_win.cpp)
