@@ -134,7 +134,11 @@ static inline bool i64_mul_ovf(int64_t a, int64_t b, int64_t* r) {
     return __builtin_mul_overflow(a, b, r);
 #else
     *r = (int64_t)((uint64_t)a * (uint64_t)b);
-    if (a != 0 && (*r / a != b || (a == -1 && b == INT64_MIN))) return true;
+    // INT64_MIN / -1 matematiksel sonucu 2^63 → int64'e sığmaz → x86 idiv #DE (SIGFPE).
+    // Bu guard'ı BÖLMEDEN ÖNCE koy: kısa-devreli || içinde bölmeden sonra gelirse, guard'a
+    // ulaşmadan sürec çöker (-1 * INT64_MIN). Yalnız MSVC dalı — GCC/Clang __builtin kullanır.
+    if (a == -1 && b == INT64_MIN) return true;
+    if (a != 0 && *r / a != b)     return true;
     return false;
 #endif
 }
