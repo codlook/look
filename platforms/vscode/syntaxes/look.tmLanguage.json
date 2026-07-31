@@ -1,0 +1,167 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "LOOK",
+  "scopeName": "source.look",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#function-definition" },
+    { "include": "#keywords" },
+    { "include": "#module-call" },
+    { "include": "#global-builtins" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#strings" },
+    { "include": "#variables" },
+    { "include": "#function-call" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.look",
+          "begin": "//",
+          "end": "$"
+        },
+        {
+          "name": "comment.line.number-sign.look",
+          "begin": "#",
+          "end": "$"
+        },
+        {
+          "name": "comment.block.look",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.look",
+          "match": "\\b(if|else|elseif|while|for|foreach|as|break|continue|return|switch|case|default|try|catch|finally|throw)\\b"
+        },
+        {
+          "name": "keyword.other.look",
+          "match": "\\b(use|global|const)\\b"
+        },
+        {
+          "name": "storage.type.function.look",
+          "match": "\\b(function|fn)\\b"
+        },
+        {
+          "name": "storage.type.struct.look",
+          "match": "\\b(struct)\\b"
+        },
+        {
+          "name": "keyword.other.print.look",
+          "match": "\\b(print|write)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.boolean.look", "match": "\\b(true|false)\\b" },
+        { "name": "constant.language.null.look", "match": "\\b(null)\\b" },
+        { "name": "constant.language.iota.look", "match": "\\b(iota)\\b" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.look", "match": "\\b0[xX][0-9a-fA-F_]+\\b" },
+        { "name": "constant.numeric.binary.look", "match": "\\b0[bB][01_]+\\b" },
+        { "name": "constant.numeric.float.look", "match": "\\b[0-9][0-9_]*\\.[0-9_]+([eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.integer.look", "match": "\\b[0-9][0-9_]*([eE][+-]?[0-9]+)?\\b" }
+      ]
+    },
+    "module-call": {
+      "match": "\\b(app|array|auth|cache|cookie|crypto|date|db|error|file|html|http|jobs|json|log|look|mail|math|mod|module|parallel|queue|request|response|route|runtime|session|sse|string|template|timer|type|validator|ws)\\b(::)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "support.class.module.look" },
+        "2": { "name": "punctuation.separator.namespace.look" },
+        "3": { "name": "support.function.builtin.look" }
+      }
+    },
+    "global-builtins": {
+      "name": "support.function.builtin.global.look",
+      "match": "\\b(route|parallel|channel|range|len|count|keys|values|env|exit)\\b(?=\\s*\\()"
+    },
+    "function-definition": {
+      "match": "\\b(function|fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.function.look" },
+        "2": { "name": "entity.name.function.look" }
+      }
+    },
+    "function-call": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "name": "entity.name.function.call.look"
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "variable.other.look",
+          "match": "\\$[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.look",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "include": "#escapes" },
+            { "include": "#interpolation" }
+          ]
+        },
+        {
+          "name": "string.quoted.single.look",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "include": "#escapes" }
+          ]
+        },
+        {
+          "name": "string.quoted.raw.backtick.look",
+          "begin": "`",
+          "end": "`"
+        }
+      ]
+    },
+    "escapes": {
+      "name": "constant.character.escape.look",
+      "match": "\\\\(n|t|r|\\\\|\"|'|`|0|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|\\{)"
+    },
+    "interpolation": {
+      "name": "meta.interpolation.look",
+      "begin": "\\{(?=\\$|[A-Za-z_])",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.look" } },
+      "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.look" } },
+      "patterns": [
+        { "include": "#module-call" },
+        { "include": "#global-builtins" },
+        { "include": "#constants" },
+        { "include": "#numbers" },
+        { "include": "#variables" },
+        { "include": "#function-call" },
+        { "include": "#operators" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.look", "match": "=>|->" },
+        { "name": "keyword.operator.comparison.look", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.logical.look", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.assignment.look", "match": "=|\\+=|-=|\\*=|/=|%=|\\.=" },
+        { "name": "keyword.operator.increment.look", "match": "\\+\\+|--" },
+        { "name": "keyword.operator.arithmetic.look", "match": "\\+|-|\\*|/|%" },
+        { "name": "keyword.operator.concat.look", "match": "\\." },
+        { "name": "keyword.operator.ternary.look", "match": "\\?|:" }
+      ]
+    }
+  }
+}

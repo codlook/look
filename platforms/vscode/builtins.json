@@ -1,0 +1,2066 @@
+[
+ {
+  "name": "app::db",
+  "module": "app",
+  "fn": "db",
+  "sig": "app::db()",
+  "detail": "Uygulama durumu modülü",
+  "documented": true
+ },
+ {
+  "name": "app::get",
+  "module": "app",
+  "fn": "get",
+  "sig": "app::get()",
+  "detail": "Uygulama durumu modülü",
+  "documented": true
+ },
+ {
+  "name": "app::has",
+  "module": "app",
+  "fn": "has",
+  "sig": "app::has(\"name\")",
+  "detail": "Uygulama durumu modülü",
+  "documented": true
+ },
+ {
+  "name": "app::set",
+  "module": "app",
+  "fn": "set",
+  "sig": "app::set(\"name\", $value)",
+  "detail": "Uygulama durumu modülü",
+  "documented": true
+ },
+ {
+  "name": "array::all",
+  "module": "array",
+  "fn": "all",
+  "sig": "array::all($arr, $fn)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::any",
+  "module": "array",
+  "fn": "any",
+  "sig": "array::any($arr, $fn)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::chunk",
+  "module": "array",
+  "fn": "chunk",
+  "sig": "array::chunk($arr, $n)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::constant_compare",
+  "module": "array",
+  "fn": "constant_compare",
+  "sig": "array::constant_compare(…)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": false
+ },
+ {
+  "name": "array::contains",
+  "module": "array",
+  "fn": "contains",
+  "sig": "array::contains($arr, $v)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::filter",
+  "module": "array",
+  "fn": "filter",
+  "sig": "array::filter($arr, $fn)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::find",
+  "module": "array",
+  "fn": "find",
+  "sig": "array::find($arr, $fn)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::flatten",
+  "module": "array",
+  "fn": "flatten",
+  "sig": "array::flatten($arr [,$depth])",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::hex_decode",
+  "module": "array",
+  "fn": "hex_decode",
+  "sig": "array::hex_decode(…)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": false
+ },
+ {
+  "name": "array::hex_encode",
+  "module": "array",
+  "fn": "hex_encode",
+  "sig": "array::hex_encode(…)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": false
+ },
+ {
+  "name": "array::keys",
+  "module": "array",
+  "fn": "keys",
+  "sig": "array::keys($arr)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::map",
+  "module": "array",
+  "fn": "map",
+  "sig": "array::map($arr, $fn)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::new_assoc",
+  "module": "array",
+  "fn": "new_assoc",
+  "sig": "array::new_assoc()",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::pop",
+  "module": "array",
+  "fn": "pop",
+  "sig": "array::pop($arr)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::push",
+  "module": "array",
+  "fn": "push",
+  "sig": "array::push($arr, $v)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::random_bytes",
+  "module": "array",
+  "fn": "random_bytes",
+  "sig": "array::random_bytes(…)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": false
+ },
+ {
+  "name": "array::random_string",
+  "module": "array",
+  "fn": "random_string",
+  "sig": "array::random_string(…)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": false
+ },
+ {
+  "name": "array::reduce",
+  "module": "array",
+  "fn": "reduce",
+  "sig": "array::reduce($arr, $fn, $init)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::reverse",
+  "module": "array",
+  "fn": "reverse",
+  "sig": "array::reverse($arr)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::set",
+  "module": "array",
+  "fn": "set",
+  "sig": "array::set($arr, $key, $val)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::slice",
+  "module": "array",
+  "fn": "slice",
+  "sig": "array::slice($arr, $start, $len)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::sort",
+  "module": "array",
+  "fn": "sort",
+  "sig": "array::sort($numbers)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::unique",
+  "module": "array",
+  "fn": "unique",
+  "sig": "array::unique($arr)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::uuid",
+  "module": "array",
+  "fn": "uuid",
+  "sig": "array::uuid(…)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": false
+ },
+ {
+  "name": "array::values",
+  "module": "array",
+  "fn": "values",
+  "sig": "array::values($arr)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "array::zip",
+  "module": "array",
+  "fn": "zip",
+  "sig": "array::zip($arr1, $arr2, ...)",
+  "detail": "Dizi/koleksiyon modülü",
+  "documented": true
+ },
+ {
+  "name": "auth::hash",
+  "module": "auth",
+  "fn": "hash",
+  "sig": "auth::hash($data[\"password\"])",
+  "detail": "Kimlik doğrulama modülü",
+  "documented": true
+ },
+ {
+  "name": "auth::verify",
+  "module": "auth",
+  "fn": "verify",
+  "sig": "auth::verify($password, $rows[0][\"password_hash\"])",
+  "detail": "Kimlik doğrulama modülü",
+  "documented": true
+ },
+ {
+  "name": "cache::delete",
+  "module": "cache",
+  "fn": "delete",
+  "sig": "cache::delete($key)",
+  "detail": "Önbellek modülü",
+  "documented": true
+ },
+ {
+  "name": "cache::flush",
+  "module": "cache",
+  "fn": "flush",
+  "sig": "cache::flush()",
+  "detail": "Önbellek modülü",
+  "documented": true
+ },
+ {
+  "name": "cache::get",
+  "module": "cache",
+  "fn": "get",
+  "sig": "cache::get($key)",
+  "detail": "Önbellek modülü",
+  "documented": true
+ },
+ {
+  "name": "cache::has",
+  "module": "cache",
+  "fn": "has",
+  "sig": "cache::has($key)",
+  "detail": "Önbellek modülü",
+  "documented": true
+ },
+ {
+  "name": "cache::keys",
+  "module": "cache",
+  "fn": "keys",
+  "sig": "cache::keys()",
+  "detail": "Önbellek modülü",
+  "documented": true
+ },
+ {
+  "name": "cache::set",
+  "module": "cache",
+  "fn": "set",
+  "sig": "cache::set($key, $val [, $ttl])",
+  "detail": "Önbellek modülü",
+  "documented": true
+ },
+ {
+  "name": "cache::size",
+  "module": "cache",
+  "fn": "size",
+  "sig": "cache::size()",
+  "detail": "Önbellek modülü",
+  "documented": true
+ },
+ {
+  "name": "cookie::delete",
+  "module": "cookie",
+  "fn": "delete",
+  "sig": "cookie::delete(\"k\")",
+  "detail": "Çerez modülü",
+  "documented": true
+ },
+ {
+  "name": "cookie::get",
+  "module": "cookie",
+  "fn": "get",
+  "sig": "cookie::get(\"theme\")",
+  "detail": "Çerez modülü",
+  "documented": true
+ },
+ {
+  "name": "cookie::has",
+  "module": "cookie",
+  "fn": "has",
+  "sig": "cookie::has(\"k\")",
+  "detail": "Çerez modülü",
+  "documented": true
+ },
+ {
+  "name": "cookie::set",
+  "module": "cookie",
+  "fn": "set",
+  "sig": "cookie::set(\"theme\", \"dark\", 604800)",
+  "detail": "Çerez modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::base64_decode",
+  "module": "crypto",
+  "fn": "base64_decode",
+  "sig": "crypto::base64_decode($s)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::base64_encode",
+  "module": "crypto",
+  "fn": "base64_encode",
+  "sig": "crypto::base64_encode($s)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::base64url_decode",
+  "module": "crypto",
+  "fn": "base64url_decode",
+  "sig": "crypto::base64url_decode($s)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::base64url_encode",
+  "module": "crypto",
+  "fn": "base64url_encode",
+  "sig": "crypto::base64url_encode($s)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::constant_compare",
+  "module": "crypto",
+  "fn": "constant_compare",
+  "sig": "crypto::constant_compare($given, $expected)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::hex_decode",
+  "module": "crypto",
+  "fn": "hex_decode",
+  "sig": "crypto::hex_decode($hex)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::hex_encode",
+  "module": "crypto",
+  "fn": "hex_encode",
+  "sig": "crypto::hex_encode($s)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::hmac",
+  "module": "crypto",
+  "fn": "hmac",
+  "sig": "crypto::hmac(…)",
+  "detail": "Kriptografi modülü",
+  "documented": false
+ },
+ {
+  "name": "crypto::hmac_sha256",
+  "module": "crypto",
+  "fn": "hmac_sha256",
+  "sig": "crypto::hmac_sha256($data, $key)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::hmac_sha256_raw",
+  "module": "crypto",
+  "fn": "hmac_sha256_raw",
+  "sig": "crypto::hmac_sha256_raw($data, $key)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::random_bytes",
+  "module": "crypto",
+  "fn": "random_bytes",
+  "sig": "crypto::random_bytes($n)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::random_hex",
+  "module": "crypto",
+  "fn": "random_hex",
+  "sig": "crypto::random_hex(…)",
+  "detail": "Kriptografi modülü",
+  "documented": false
+ },
+ {
+  "name": "crypto::random_string",
+  "module": "crypto",
+  "fn": "random_string",
+  "sig": "crypto::random_string($n)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::rs256_sign",
+  "module": "crypto",
+  "fn": "rs256_sign",
+  "sig": "crypto::rs256_sign($data, $pem_key)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::rs256_sign_b64url",
+  "module": "crypto",
+  "fn": "rs256_sign_b64url",
+  "sig": "crypto::rs256_sign_b64url($data, $pem_key)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::rs256_verify",
+  "module": "crypto",
+  "fn": "rs256_verify",
+  "sig": "crypto::rs256_verify($data, $sig, $pem_key)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::sha256",
+  "module": "crypto",
+  "fn": "sha256",
+  "sig": "crypto::sha256($data)",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "crypto::uuid",
+  "module": "crypto",
+  "fn": "uuid",
+  "sig": "crypto::uuid()",
+  "detail": "Kriptografi modülü",
+  "documented": true
+ },
+ {
+  "name": "date::add",
+  "module": "date",
+  "fn": "add",
+  "sig": "date::add($date, $n, $unit)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::diff",
+  "module": "date",
+  "fn": "diff",
+  "sig": "date::diff($t1, $t2, $unit)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::format",
+  "module": "date",
+  "fn": "format",
+  "sig": "date::format($date, $fmt)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::from_timestamp",
+  "module": "date",
+  "fn": "from_timestamp",
+  "sig": "date::from_timestamp($ts)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::is_valid",
+  "module": "date",
+  "fn": "is_valid",
+  "sig": "date::is_valid($date)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::now",
+  "module": "date",
+  "fn": "now",
+  "sig": "date::now()",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::parse",
+  "module": "date",
+  "fn": "parse",
+  "sig": "date::parse($str, $fmt)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::sub",
+  "module": "date",
+  "fn": "sub",
+  "sig": "date::sub($date, $n, $unit)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::timestamp",
+  "module": "date",
+  "fn": "timestamp",
+  "sig": "date::timestamp()",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::today",
+  "module": "date",
+  "fn": "today",
+  "sig": "date::today()",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::week",
+  "module": "date",
+  "fn": "week",
+  "sig": "date::week($date)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::weekday",
+  "module": "date",
+  "fn": "weekday",
+  "sig": "date::weekday($date)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "db::affected",
+  "module": "db",
+  "fn": "affected",
+  "sig": "db::affected($conn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::begin",
+  "module": "db",
+  "fn": "begin",
+  "sig": "db::begin($conn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::close",
+  "module": "db",
+  "fn": "close",
+  "sig": "db::close($conn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::col",
+  "module": "db",
+  "fn": "col",
+  "sig": "db::col($conn, $sql, $params)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::commit",
+  "module": "db",
+  "fn": "commit",
+  "sig": "db::commit($conn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::connect",
+  "module": "db",
+  "fn": "connect",
+  "sig": "db::connect()",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::escape",
+  "module": "db",
+  "fn": "escape",
+  "sig": "db::escape($conn, $str)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::exec",
+  "module": "db",
+  "fn": "exec",
+  "sig": "db::exec($conn, \"UPDATE products SET price=? WHERE id=?\", [$price, $id])",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::last_id",
+  "module": "db",
+  "fn": "last_id",
+  "sig": "db::last_id($conn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::query",
+  "module": "db",
+  "fn": "query",
+  "sig": "db::query($conn, \"SELECT * FROM p WHERE company_id=? AND active=?\", [$fid, 1])",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::rollback",
+  "module": "db",
+  "fn": "rollback",
+  "sig": "db::rollback($conn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "db::transaction",
+  "module": "db",
+  "fn": "transaction",
+  "sig": "db::transaction($conn, fn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
+  "name": "error::code",
+  "module": "error",
+  "fn": "code",
+  "sig": "error::code($e)",
+  "detail": "Hata modülü",
+  "documented": true
+ },
+ {
+  "name": "error::is",
+  "module": "error",
+  "fn": "is",
+  "sig": "error::is($e, $type)",
+  "detail": "Hata modülü",
+  "documented": true
+ },
+ {
+  "name": "error::message",
+  "module": "error",
+  "fn": "message",
+  "sig": "error::message($e)",
+  "detail": "Hata modülü",
+  "documented": true
+ },
+ {
+  "name": "error::new",
+  "module": "error",
+  "fn": "new",
+  "sig": "error::new($type, $msg [,$code])",
+  "detail": "Hata modülü",
+  "documented": true
+ },
+ {
+  "name": "file::append",
+  "module": "file",
+  "fn": "append",
+  "sig": "file::append($path, $content)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::exists",
+  "module": "file",
+  "fn": "exists",
+  "sig": "file::exists($path)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::put",
+  "module": "file",
+  "fn": "put",
+  "sig": "file::put($path, $content)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::read",
+  "module": "file",
+  "fn": "read",
+  "sig": "file::read($path)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::remove",
+  "module": "file",
+  "fn": "remove",
+  "sig": "file::remove($path)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::size",
+  "module": "file",
+  "fn": "size",
+  "sig": "file::size($path)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::store",
+  "module": "file",
+  "fn": "store",
+  "sig": "file::store($file, $subdir)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::upload_dir",
+  "module": "file",
+  "fn": "upload_dir",
+  "sig": "file::upload_dir()",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "html::attr",
+  "module": "html",
+  "fn": "attr",
+  "sig": "html::attr($title)",
+  "detail": "HTML modülü",
+  "documented": true
+ },
+ {
+  "name": "html::escape",
+  "module": "html",
+  "fn": "escape",
+  "sig": "html::escape($user_input)",
+  "detail": "HTML modülü",
+  "documented": true
+ },
+ {
+  "name": "html::strip",
+  "module": "html",
+  "fn": "strip",
+  "sig": "html::strip($html_content)",
+  "detail": "HTML modülü",
+  "documented": true
+ },
+ {
+  "name": "http::delete",
+  "module": "http",
+  "fn": "delete",
+  "sig": "http::delete($url [,$headers [,$opts]])",
+  "detail": "HTTP istemci modülü",
+  "documented": true
+ },
+ {
+  "name": "http::get",
+  "module": "http",
+  "fn": "get",
+  "sig": "http::get($url [,$headers [,$opts]])",
+  "detail": "HTTP istemci modülü",
+  "documented": true
+ },
+ {
+  "name": "http::head",
+  "module": "http",
+  "fn": "head",
+  "sig": "http::head(…)",
+  "detail": "HTTP istemci modülü",
+  "documented": false
+ },
+ {
+  "name": "http::patch",
+  "module": "http",
+  "fn": "patch",
+  "sig": "http::patch($url, $body [,$headers [,$opts]])",
+  "detail": "HTTP istemci modülü",
+  "documented": true
+ },
+ {
+  "name": "http::post",
+  "module": "http",
+  "fn": "post",
+  "sig": "http::post($url, $body [,$headers [,$opts]])",
+  "detail": "HTTP istemci modülü",
+  "documented": true
+ },
+ {
+  "name": "http::post_json",
+  "module": "http",
+  "fn": "post_json",
+  "sig": "http::post_json($url, $data [,$headers [,$opts]])",
+  "detail": "HTTP istemci modülü",
+  "documented": true
+ },
+ {
+  "name": "http::put",
+  "module": "http",
+  "fn": "put",
+  "sig": "http::put($url, $body [,$headers [,$opts]])",
+  "detail": "HTTP istemci modülü",
+  "documented": true
+ },
+ {
+  "name": "http::request",
+  "module": "http",
+  "fn": "request",
+  "sig": "http::request(…)",
+  "detail": "HTTP istemci modülü",
+  "documented": false
+ },
+ {
+  "name": "http::stream",
+  "module": "http",
+  "fn": "stream",
+  "sig": "http::stream($method, $url, $body, $headers, $callback [,$opts])",
+  "detail": "HTTP istemci modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::done",
+  "module": "jobs",
+  "fn": "done",
+  "sig": "jobs::done($id)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::fail",
+  "module": "jobs",
+  "fn": "fail",
+  "sig": "jobs::fail($id)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::failed",
+  "module": "jobs",
+  "fn": "failed",
+  "sig": "jobs::failed($queue [, $limit=100])",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::list",
+  "module": "jobs",
+  "fn": "list",
+  "sig": "jobs::list($queue, $status [, $limit=100])",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::next",
+  "module": "jobs",
+  "fn": "next",
+  "sig": "jobs::next($queue)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::purge",
+  "module": "jobs",
+  "fn": "purge",
+  "sig": "jobs::purge($queue, $status)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::push",
+  "module": "jobs",
+  "fn": "push",
+  "sig": "jobs::push($queue, $payload [, $max_retries=3 [, $delay_sec=0]])",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::recover",
+  "module": "jobs",
+  "fn": "recover",
+  "sig": "jobs::recover($queue, $min_age)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::retry",
+  "module": "jobs",
+  "fn": "retry",
+  "sig": "jobs::retry($id)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::run",
+  "module": "jobs",
+  "fn": "run",
+  "sig": "jobs::run([$interval_ms=5000])",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::stats",
+  "module": "jobs",
+  "fn": "stats",
+  "sig": "jobs::stats($queue)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "jobs::worker",
+  "module": "jobs",
+  "fn": "worker",
+  "sig": "jobs::worker($name, $fn)",
+  "detail": "Arka plan işleri modülü",
+  "documented": true
+ },
+ {
+  "name": "json::decode",
+  "module": "json",
+  "fn": "decode",
+  "sig": "json::decode($job[\"payload\"])",
+  "detail": "JSON modülü",
+  "documented": true
+ },
+ {
+  "name": "json::encode",
+  "module": "json",
+  "fn": "encode",
+  "sig": "json::encode($products)",
+  "detail": "JSON modülü",
+  "documented": true
+ },
+ {
+  "name": "log::configure",
+  "module": "log",
+  "fn": "configure",
+  "sig": "log::configure($dir, $verbose, $level)",
+  "detail": "Günlükleme modülü",
+  "documented": true
+ },
+ {
+  "name": "log::debug",
+  "module": "log",
+  "fn": "debug",
+  "sig": "log::debug(\"msg\")",
+  "detail": "Günlükleme modülü",
+  "documented": true
+ },
+ {
+  "name": "log::error",
+  "module": "log",
+  "fn": "error",
+  "sig": "log::error(\"Network error: \" . $resp[\"error\"])",
+  "detail": "Günlükleme modülü",
+  "documented": true
+ },
+ {
+  "name": "log::info",
+  "module": "log",
+  "fn": "info",
+  "sig": "log::info(\"User logged in: {$email}\")",
+  "detail": "Günlükleme modülü",
+  "documented": true
+ },
+ {
+  "name": "log::memory",
+  "module": "log",
+  "fn": "memory",
+  "sig": "log::memory(\"msg\")",
+  "detail": "Günlükleme modülü",
+  "documented": true
+ },
+ {
+  "name": "log::query",
+  "module": "log",
+  "fn": "query",
+  "sig": "log::query($sql, $ms)",
+  "detail": "Günlükleme modülü",
+  "documented": true
+ },
+ {
+  "name": "log::warn",
+  "module": "log",
+  "fn": "warn",
+  "sig": "log::warn(\"High memory: {$stats[\\\"working_mb\\\"]}MB\")",
+  "detail": "Günlükleme modülü",
+  "documented": true
+ },
+ {
+  "name": "look::check",
+  "module": "look",
+  "fn": "check",
+  "sig": "look::check($user_code)",
+  "detail": "LOOK modülü",
+  "documented": true
+ },
+ {
+  "name": "mail::deliver_maildir",
+  "module": "mail",
+  "fn": "deliver_maildir",
+  "sig": "mail::deliver_maildir($base_dir, $mailbox, $from, $data)",
+  "detail": "E-posta (SMTP) modülü",
+  "documented": true
+ },
+ {
+  "name": "mail::provider",
+  "module": "mail",
+  "fn": "provider",
+  "sig": "mail::provider()",
+  "detail": "E-posta (SMTP) modülü",
+  "documented": true
+ },
+ {
+  "name": "mail::send",
+  "module": "mail",
+  "fn": "send",
+  "sig": "mail::send($to, $subject, $text [,$html [,$from]])",
+  "detail": "E-posta (SMTP) modülü",
+  "documented": true
+ },
+ {
+  "name": "mail::send_html",
+  "module": "mail",
+  "fn": "send_html",
+  "sig": "mail::send_html($to, $subject, $html [,$from])",
+  "detail": "E-posta (SMTP) modülü",
+  "documented": true
+ },
+ {
+  "name": "math::abs",
+  "module": "math",
+  "fn": "abs",
+  "sig": "math::abs($n)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::ceil",
+  "module": "math",
+  "fn": "ceil",
+  "sig": "math::ceil($n)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::cos",
+  "module": "math",
+  "fn": "cos",
+  "sig": "math::cos($r)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::floor",
+  "module": "math",
+  "fn": "floor",
+  "sig": "math::floor($n)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::log",
+  "module": "math",
+  "fn": "log",
+  "sig": "math::log($n)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::max",
+  "module": "math",
+  "fn": "max",
+  "sig": "math::max($a, $b, $c, ...)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::min",
+  "module": "math",
+  "fn": "min",
+  "sig": "math::min($a, $b, $c, ...)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::pi",
+  "module": "math",
+  "fn": "pi",
+  "sig": "math::pi()",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::pow",
+  "module": "math",
+  "fn": "pow",
+  "sig": "math::pow($b, $e)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::random",
+  "module": "math",
+  "fn": "random",
+  "sig": "math::random($min,$max)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::round",
+  "module": "math",
+  "fn": "round",
+  "sig": "math::round($n)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::sin",
+  "module": "math",
+  "fn": "sin",
+  "sig": "math::sin($r)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::sqrt",
+  "module": "math",
+  "fn": "sqrt",
+  "sig": "math::sqrt($n)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "math::tan",
+  "module": "math",
+  "fn": "tan",
+  "sig": "math::tan($r)",
+  "detail": "Matematik modülü",
+  "documented": true
+ },
+ {
+  "name": "mod::fn",
+  "module": "mod",
+  "fn": "fn",
+  "sig": "mod::fn(…)",
+  "detail": "Modül modülü",
+  "documented": false
+ },
+ {
+  "name": "module::func",
+  "module": "module",
+  "fn": "func",
+  "sig": "module::func(…)",
+  "detail": "Modül modülü",
+  "documented": false
+ },
+ {
+  "name": "parallel::active",
+  "module": "parallel",
+  "fn": "active",
+  "sig": "parallel::active()",
+  "detail": "Paralel çalıştırma modülü",
+  "documented": true
+ },
+ {
+  "name": "parallel::at_capacity",
+  "module": "parallel",
+  "fn": "at_capacity",
+  "sig": "parallel::at_capacity()",
+  "detail": "Paralel çalıştırma modülü",
+  "documented": true
+ },
+ {
+  "name": "parallel::limit",
+  "module": "parallel",
+  "fn": "limit",
+  "sig": "parallel::limit()",
+  "detail": "Paralel çalıştırma modülü",
+  "documented": true
+ },
+ {
+  "name": "parallel::wait",
+  "module": "parallel",
+  "fn": "wait",
+  "sig": "parallel::wait($timeout_ms)",
+  "detail": "Paralel çalıştırma modülü",
+  "documented": true
+ },
+ {
+  "name": "queue::clear",
+  "module": "queue",
+  "fn": "clear",
+  "sig": "queue::clear($name)",
+  "detail": "Kuyruk modülü",
+  "documented": true
+ },
+ {
+  "name": "queue::flush",
+  "module": "queue",
+  "fn": "flush",
+  "sig": "queue::flush(…)",
+  "detail": "Kuyruk modülü",
+  "documented": false
+ },
+ {
+  "name": "queue::names",
+  "module": "queue",
+  "fn": "names",
+  "sig": "queue::names()",
+  "detail": "Kuyruk modülü",
+  "documented": true
+ },
+ {
+  "name": "queue::peek",
+  "module": "queue",
+  "fn": "peek",
+  "sig": "queue::peek($name)",
+  "detail": "Kuyruk modülü",
+  "documented": true
+ },
+ {
+  "name": "queue::pop",
+  "module": "queue",
+  "fn": "pop",
+  "sig": "queue::pop($name)",
+  "detail": "Kuyruk modülü",
+  "documented": true
+ },
+ {
+  "name": "queue::push",
+  "module": "queue",
+  "fn": "push",
+  "sig": "queue::push($name, $val)",
+  "detail": "Kuyruk modülü",
+  "documented": true
+ },
+ {
+  "name": "queue::size",
+  "module": "queue",
+  "fn": "size",
+  "sig": "queue::size($name)",
+  "detail": "Kuyruk modülü",
+  "documented": true
+ },
+ {
+  "name": "request::all",
+  "module": "request",
+  "fn": "all",
+  "sig": "request::all()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::body",
+  "module": "request",
+  "fn": "body",
+  "sig": "request::body()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::file",
+  "module": "request",
+  "fn": "file",
+  "sig": "request::file()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::get",
+  "module": "request",
+  "fn": "get",
+  "sig": "request::get()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::header",
+  "module": "request",
+  "fn": "header",
+  "sig": "request::header(\"X-Hub-Signature-256\")",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::headers",
+  "module": "request",
+  "fn": "headers",
+  "sig": "request::headers(…)",
+  "detail": "HTTP istek verisi modülü",
+  "documented": false
+ },
+ {
+  "name": "request::ip",
+  "module": "request",
+  "fn": "ip",
+  "sig": "request::ip()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::is_delete",
+  "module": "request",
+  "fn": "is_delete",
+  "sig": "request::is_delete()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::is_get",
+  "module": "request",
+  "fn": "is_get",
+  "sig": "request::is_get()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::is_head",
+  "module": "request",
+  "fn": "is_head",
+  "sig": "request::is_head()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::is_options",
+  "module": "request",
+  "fn": "is_options",
+  "sig": "request::is_options()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::is_patch",
+  "module": "request",
+  "fn": "is_patch",
+  "sig": "request::is_patch()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::is_post",
+  "module": "request",
+  "fn": "is_post",
+  "sig": "request::is_post()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::is_put",
+  "module": "request",
+  "fn": "is_put",
+  "sig": "request::is_put()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::json",
+  "module": "request",
+  "fn": "json",
+  "sig": "request::json()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::method",
+  "module": "request",
+  "fn": "method",
+  "sig": "request::method()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::param",
+  "module": "request",
+  "fn": "param",
+  "sig": "request::param()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::path",
+  "module": "request",
+  "fn": "path",
+  "sig": "request::path()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::post",
+  "module": "request",
+  "fn": "post",
+  "sig": "request::post()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "response::error",
+  "module": "response",
+  "fn": "error",
+  "sig": "response::error($code, $message)",
+  "detail": "HTTP yanıt modülü",
+  "documented": true
+ },
+ {
+  "name": "response::header",
+  "module": "response",
+  "fn": "header",
+  "sig": "response::header(\"Content-Type\", \"application/json\")",
+  "detail": "HTTP yanıt modülü",
+  "documented": true
+ },
+ {
+  "name": "response::html",
+  "module": "response",
+  "fn": "html",
+  "sig": "response::html($str)",
+  "detail": "HTTP yanıt modülü",
+  "documented": true
+ },
+ {
+  "name": "response::json",
+  "module": "response",
+  "fn": "json",
+  "sig": "response::json($data, 201)",
+  "detail": "HTTP yanıt modülü",
+  "documented": true
+ },
+ {
+  "name": "response::redirect",
+  "module": "response",
+  "fn": "redirect",
+  "sig": "response::redirect(\"/admin/login\")",
+  "detail": "HTTP yanıt modülü",
+  "documented": true
+ },
+ {
+  "name": "response::status",
+  "module": "response",
+  "fn": "status",
+  "sig": "response::status($code)",
+  "detail": "HTTP yanıt modülü",
+  "documented": true
+ },
+ {
+  "name": "response::text",
+  "module": "response",
+  "fn": "text",
+  "sig": "response::text($str)",
+  "detail": "HTTP yanıt modülü",
+  "documented": true
+ },
+ {
+  "name": "route::matched",
+  "module": "route",
+  "fn": "matched",
+  "sig": "route::matched()",
+  "detail": "Yönlendirme modülü",
+  "documented": true
+ },
+ {
+  "name": "route::param",
+  "module": "route",
+  "fn": "param",
+  "sig": "route::param(\"id\")",
+  "detail": "Yönlendirme modülü",
+  "documented": true
+ },
+ {
+  "name": "runtime::gc",
+  "module": "runtime",
+  "fn": "gc",
+  "sig": "runtime::gc()",
+  "detail": "Çalışma zamanı modülü",
+  "documented": true
+ },
+ {
+  "name": "runtime::stats",
+  "module": "runtime",
+  "fn": "stats",
+  "sig": "runtime::stats()",
+  "detail": "Çalışma zamanı modülü",
+  "documented": true
+ },
+ {
+  "name": "session::destroy",
+  "module": "session",
+  "fn": "destroy",
+  "sig": "session::destroy()",
+  "detail": "Oturum modülü",
+  "documented": true
+ },
+ {
+  "name": "session::get",
+  "module": "session",
+  "fn": "get",
+  "sig": "session::get(\"admin_id\")",
+  "detail": "Oturum modülü",
+  "documented": true
+ },
+ {
+  "name": "session::regenerate",
+  "module": "session",
+  "fn": "regenerate",
+  "sig": "session::regenerate(…)",
+  "detail": "Oturum modülü",
+  "documented": false
+ },
+ {
+  "name": "session::set",
+  "module": "session",
+  "fn": "set",
+  "sig": "session::set(\"user_id\", $rows[0][\"id\"])",
+  "detail": "Oturum modülü",
+  "documented": true
+ },
+ {
+  "name": "session::start",
+  "module": "session",
+  "fn": "start",
+  "sig": "session::start()",
+  "detail": "Oturum modülü",
+  "documented": true
+ },
+ {
+  "name": "sse::clients",
+  "module": "sse",
+  "fn": "clients",
+  "sig": "sse::clients()",
+  "detail": "Server-Sent Events modülü",
+  "documented": true
+ },
+ {
+  "name": "sse::close",
+  "module": "sse",
+  "fn": "close",
+  "sig": "sse::close($sse)",
+  "detail": "Server-Sent Events modülü",
+  "documented": true
+ },
+ {
+  "name": "sse::on",
+  "module": "sse",
+  "fn": "on",
+  "sig": "sse::on($sse, \"close\", $fn)",
+  "detail": "Server-Sent Events modülü",
+  "documented": true
+ },
+ {
+  "name": "sse::send",
+  "module": "sse",
+  "fn": "send",
+  "sig": "sse::send($sse, $data [, $event])",
+  "detail": "Server-Sent Events modülü",
+  "documented": true
+ },
+ {
+  "name": "string::contains",
+  "module": "string",
+  "fn": "contains",
+  "sig": "string::contains($s,$search)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::ends_with",
+  "module": "string",
+  "fn": "ends_with",
+  "sig": "string::ends_with($s,$suf)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::format",
+  "module": "string",
+  "fn": "format",
+  "sig": "string::format(\"Name: %s, Age: %d, Price: %.2f USD\", $name, $age, $price)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::index_of",
+  "module": "string",
+  "fn": "index_of",
+  "sig": "string::index_of($s,$search)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::join",
+  "module": "string",
+  "fn": "join",
+  "sig": "string::join($arr,$sep)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::len",
+  "module": "string",
+  "fn": "len",
+  "sig": "string::len($s)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::lower",
+  "module": "string",
+  "fn": "lower",
+  "sig": "string::lower($s)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::ltrim",
+  "module": "string",
+  "fn": "ltrim",
+  "sig": "string::ltrim($s)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::pad_left",
+  "module": "string",
+  "fn": "pad_left",
+  "sig": "string::pad_left($s,$len,$pad)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::pad_right",
+  "module": "string",
+  "fn": "pad_right",
+  "sig": "string::pad_right($s,$len,$pad)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::random",
+  "module": "string",
+  "fn": "random",
+  "sig": "string::random($n)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::regex_match",
+  "module": "string",
+  "fn": "regex_match",
+  "sig": "string::regex_match($v, \"^[0-9]+$\")",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::regex_match_all",
+  "module": "string",
+  "fn": "regex_match_all",
+  "sig": "string::regex_match_all($s, $pat)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::regex_replace",
+  "module": "string",
+  "fn": "regex_replace",
+  "sig": "string::regex_replace($s, $pat, $rep)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::repeat",
+  "module": "string",
+  "fn": "repeat",
+  "sig": "string::repeat($s,$n)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::replace",
+  "module": "string",
+  "fn": "replace",
+  "sig": "string::replace($s,$search,$with)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::reverse",
+  "module": "string",
+  "fn": "reverse",
+  "sig": "string::reverse($s)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::rtrim",
+  "module": "string",
+  "fn": "rtrim",
+  "sig": "string::rtrim($s)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::slugify",
+  "module": "string",
+  "fn": "slugify",
+  "sig": "string::slugify($s)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::split",
+  "module": "string",
+  "fn": "split",
+  "sig": "string::split($s,$sep)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::starts_with",
+  "module": "string",
+  "fn": "starts_with",
+  "sig": "string::starts_with($s,$pre)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::substr",
+  "module": "string",
+  "fn": "substr",
+  "sig": "string::substr($s,$start,$len)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::trim",
+  "module": "string",
+  "fn": "trim",
+  "sig": "string::trim($input)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::upper",
+  "module": "string",
+  "fn": "upper",
+  "sig": "string::upper($s)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "template::block",
+  "module": "template",
+  "fn": "block",
+  "sig": "template::block(…)",
+  "detail": "Şablon modülü",
+  "documented": false
+ },
+ {
+  "name": "template::escape",
+  "module": "template",
+  "fn": "escape",
+  "sig": "template::escape($str)",
+  "detail": "Şablon modülü",
+  "documented": true
+ },
+ {
+  "name": "template::extends",
+  "module": "template",
+  "fn": "extends",
+  "sig": "template::extends(…)",
+  "detail": "Şablon modülü",
+  "documented": false
+ },
+ {
+  "name": "template::include",
+  "module": "template",
+  "fn": "include",
+  "sig": "template::include(…)",
+  "detail": "Şablon modülü",
+  "documented": false
+ },
+ {
+  "name": "template::render",
+  "module": "template",
+  "fn": "render",
+  "sig": "template::render($path, $data)",
+  "detail": "Şablon modülü",
+  "documented": true
+ },
+ {
+  "name": "template::render_string",
+  "module": "template",
+  "fn": "render_string",
+  "sig": "template::render_string($tpl, $data)",
+  "detail": "Şablon modülü",
+  "documented": true
+ },
+ {
+  "name": "timer::after",
+  "module": "timer",
+  "fn": "after",
+  "sig": "timer::after($ms, $fn)",
+  "detail": "Zamanlayıcı modülü",
+  "documented": true
+ },
+ {
+  "name": "timer::cancel",
+  "module": "timer",
+  "fn": "cancel",
+  "sig": "timer::cancel($id)",
+  "detail": "Zamanlayıcı modülü",
+  "documented": true
+ },
+ {
+  "name": "timer::every",
+  "module": "timer",
+  "fn": "every",
+  "sig": "timer::every($ms, $fn)",
+  "detail": "Zamanlayıcı modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_array",
+  "module": "type",
+  "fn": "is_array",
+  "sig": "type::is_array($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_bool",
+  "module": "type",
+  "fn": "is_bool",
+  "sig": "type::is_bool($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_float",
+  "module": "type",
+  "fn": "is_float",
+  "sig": "type::is_float($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_function",
+  "module": "type",
+  "fn": "is_function",
+  "sig": "type::is_function($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_int",
+  "module": "type",
+  "fn": "is_int",
+  "sig": "type::is_int($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_null",
+  "module": "type",
+  "fn": "is_null",
+  "sig": "type::is_null($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_string",
+  "module": "type",
+  "fn": "is_string",
+  "sig": "type::is_string($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::of",
+  "module": "type",
+  "fn": "of",
+  "sig": "type::of($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::to_bool",
+  "module": "type",
+  "fn": "to_bool",
+  "sig": "type::to_bool($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::to_float",
+  "module": "type",
+  "fn": "to_float",
+  "sig": "type::to_float($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::to_int",
+  "module": "type",
+  "fn": "to_int",
+  "sig": "type::to_int($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::to_string",
+  "module": "type",
+  "fn": "to_string",
+  "sig": "type::to_string($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "validator::check",
+  "module": "validator",
+  "fn": "check",
+  "sig": "validator::check($data, $rules)",
+  "detail": "Doğrulama modülü",
+  "documented": true
+ },
+ {
+  "name": "validator::email",
+  "module": "validator",
+  "fn": "email",
+  "sig": "validator::email(…)",
+  "detail": "Doğrulama modülü",
+  "documented": false
+ },
+ {
+  "name": "validator::integer",
+  "module": "validator",
+  "fn": "integer",
+  "sig": "validator::integer(…)",
+  "detail": "Doğrulama modülü",
+  "documented": false
+ },
+ {
+  "name": "validator::max",
+  "module": "validator",
+  "fn": "max",
+  "sig": "validator::max(…)",
+  "detail": "Doğrulama modülü",
+  "documented": false
+ },
+ {
+  "name": "validator::min",
+  "module": "validator",
+  "fn": "min",
+  "sig": "validator::min(…)",
+  "detail": "Doğrulama modülü",
+  "documented": false
+ },
+ {
+  "name": "validator::numeric",
+  "module": "validator",
+  "fn": "numeric",
+  "sig": "validator::numeric(…)",
+  "detail": "Doğrulama modülü",
+  "documented": false
+ },
+ {
+  "name": "validator::required",
+  "module": "validator",
+  "fn": "required",
+  "sig": "validator::required(…)",
+  "detail": "Doğrulama modülü",
+  "documented": false
+ },
+ {
+  "name": "ws::broadcast",
+  "module": "ws",
+  "fn": "broadcast",
+  "sig": "ws::broadcast($msg)",
+  "detail": "WebSocket modülü",
+  "documented": true
+ },
+ {
+  "name": "ws::clients",
+  "module": "ws",
+  "fn": "clients",
+  "sig": "ws::clients()",
+  "detail": "WebSocket modülü",
+  "documented": true
+ },
+ {
+  "name": "ws::close",
+  "module": "ws",
+  "fn": "close",
+  "sig": "ws::close($ws)",
+  "detail": "WebSocket modülü",
+  "documented": true
+ },
+ {
+  "name": "ws::on",
+  "module": "ws",
+  "fn": "on",
+  "sig": "ws::on($ws, \"message\", $fn)",
+  "detail": "WebSocket modülü",
+  "documented": true
+ },
+ {
+  "name": "ws::send",
+  "module": "ws",
+  "fn": "send",
+  "sig": "ws::send($ws, $msg)",
+  "detail": "WebSocket modülü",
+  "documented": true
+ }
+]

@@ -1,0 +1,89 @@
+{
+  "name": "look-lang",
+  "displayName": "LOOK Language",
+  "description": "LOOK dili için tam destek: sözdizimi vurgusu, canlı hata denetimi (lk --check), otomatik tamamlama, hover imzaları, snippet'ler ve Çalıştır/Servis/REPL kısayolları.",
+  "version": "2.0.1",
+  "publisher": "codlook",
+  "license": "Apache-2.0",
+  "icon": "icon.png",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages", "Snippets", "Linters", "Formatters"],
+  "keywords": ["look", "lk", "look-lang", "web", "scripting"],
+  "homepage": "https://codlook.com",
+  "repository": { "type": "git", "url": "https://github.com/codlook/look" },
+  "bugs": { "url": "https://github.com/codlook/look/issues" },
+  "galleryBanner": { "color": "#0f172a", "theme": "dark" },
+  "activationEvents": ["onLanguage:look"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "look",
+        "aliases": ["LOOK", "look", "lk"],
+        "extensions": [".lk"],
+        "configuration": "./language-configuration.json",
+        "icon": { "light": "./file-icon.svg", "dark": "./file-icon.svg" }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "look",
+        "scopeName": "source.look",
+        "path": "./syntaxes/look.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      { "language": "look", "path": "./snippets/look.json" }
+    ],
+    "commands": [
+      { "command": "look.run",   "title": "LOOK: Dosyayı Çalıştır (lk)",           "icon": "$(play)" },
+      { "command": "look.serve", "title": "LOOK: Web Sunucusu Başlat (lk-fcgi http)", "icon": "$(server-process)" },
+      { "command": "look.repl",  "title": "LOOK: REPL Aç (lk repl)",                "icon": "$(terminal)" },
+      { "command": "look.check", "title": "LOOK: Bu Dosyayı Denetle (lk --check)" }
+    ],
+    "menus": {
+      "editor/title/run": [
+        { "command": "look.run",   "when": "resourceLangId == look", "group": "navigation@1" },
+        { "command": "look.serve", "when": "resourceLangId == look", "group": "navigation@2" }
+      ],
+      "editor/context": [
+        { "command": "look.run",   "when": "resourceLangId == look", "group": "look@1" },
+        { "command": "look.repl",  "when": "resourceLangId == look", "group": "look@2" }
+      ]
+    },
+    "keybindings": [
+      { "command": "look.run", "key": "ctrl+f5", "when": "resourceLangId == look" }
+    ],
+    "configuration": {
+      "title": "LOOK",
+      "properties": {
+        "look.binaryPath": {
+          "type": "string",
+          "default": "lk",
+          "description": "'lk' çalıştırılabilir dosyasının yolu. PATH'te değilse tam yol verin (ör. C:\\\\look\\\\lk.exe veya /usr/local/bin/lk)."
+        },
+        "look.fcgiPath": {
+          "type": "string",
+          "default": "lk-fcgi",
+          "description": "'lk-fcgi' web sunucusu çalıştırılabilir dosyasının yolu (LOOK: Web Sunucusu Başlat komutu için)."
+        },
+        "look.serve.port": {
+          "type": "number",
+          "default": 7400,
+          "description": "LOOK: Web Sunucusu Başlat komutunun kullanacağı port."
+        },
+        "look.diagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Canlı hata denetimini aç (lk --check ile parse + tanımsız fonksiyon çağrısı)."
+        },
+        "look.diagnostics.run": {
+          "type": "string",
+          "enum": ["onType", "onSave"],
+          "default": "onType",
+          "description": "Denetimin ne zaman çalışacağı: yazarken (onType, ~400ms gecikmeli) veya kaydederken (onSave)."
+        }
+      }
+    }
+  }
+}

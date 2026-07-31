@@ -1,0 +1,10 @@
+.vscode/**
+.gitignore
+_vsix_tmp/**
+build.ps1
+build.sh
+**/*.map
+**/.DS_Store
+node_modules/**
+tools/**
+LICENSE.tmp

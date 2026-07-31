@@ -1,0 +1,155 @@
+{
+  "Route (GET)": {
+    "prefix": "route",
+    "body": [
+      "route(\"${1|GET,POST,PUT,DELETE,PATCH|}\", \"${2:/path}\", function(\\$req) {",
+      "\treturn response::json([\"${3:ok}\" => true])",
+      "})"
+    ],
+    "description": "HTTP route tanımı"
+  },
+  "Route (arrow / kısa)": {
+    "prefix": "routefn",
+    "body": [
+      "route(\"${1|GET,POST|}\", \"${2:/path}\", fn(\\$req) => response::json([\"${3:ok}\" => true]))"
+    ],
+    "description": "Tek satır arrow route"
+  },
+  "WebSocket route": {
+    "prefix": "routews",
+    "body": [
+      "route(\"WS\", \"${1:/ws}\", function(\\$conn) {",
+      "\tws::on(\\$conn, \"message\", function(\\$msg) {",
+      "\t\tws::send(\\$conn, \"echo:\" . \\$msg)",
+      "\t})",
+      "})"
+    ],
+    "description": "WebSocket route (ws::on / ws::send)"
+  },
+  "SSE route": {
+    "prefix": "routesse",
+    "body": [
+      "route(\"SSE\", \"${1:/events}\", function(\\$conn) {",
+      "\tsse::send(\\$conn, \"${2:hello}\")",
+      "})"
+    ],
+    "description": "Server-Sent Events route"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "function ${1:name}(${2:\\$arg}) {",
+      "\t$0",
+      "\treturn ${3:null}",
+      "}"
+    ],
+    "description": "Fonksiyon tanımı"
+  },
+  "Foreach": {
+    "prefix": "foreach",
+    "body": [
+      "foreach (\\$${1:items} as \\$${2:item}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "foreach döngüsü"
+  },
+  "Foreach (key => value)": {
+    "prefix": "foreachkv",
+    "body": [
+      "foreach (\\$${1:map} as \\$${2:key} => \\$${3:value}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "foreach anahtar => değer"
+  },
+  "For": {
+    "prefix": "for",
+    "body": [
+      "for (\\$${1:i} = 0 \\$${1:i} < ${2:10} \\$${1:i}++) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "for döngüsü (boşlukla ayrılır, ; yok)"
+  },
+  "While": {
+    "prefix": "while",
+    "body": ["while (${1:condition}) {", "\t$0", "}"],
+    "description": "while döngüsü"
+  },
+  "If": {
+    "prefix": "if",
+    "body": ["if (${1:condition}) {", "\t$0", "}"],
+    "description": "if bloğu"
+  },
+  "If / else": {
+    "prefix": "ifelse",
+    "body": ["if (${1:condition}) {", "\t$2", "} else {", "\t$0", "}"],
+    "description": "if / else"
+  },
+  "Try / catch": {
+    "prefix": "try",
+    "body": [
+      "try {",
+      "\t$1",
+      "} catch (\\$${2:err}) {",
+      "\tlog::error(\\$${2:err})",
+      "}"
+    ],
+    "description": "try / catch"
+  },
+  "Switch (Go-tipi, break yok)": {
+    "prefix": "switch",
+    "body": [
+      "switch (\\$${1:value}) {",
+      "\tcase ${2:1}:",
+      "\t\t$3",
+      "\tcase ${4:2}, ${5:3}:",
+      "\t\t$6",
+      "\tdefault:",
+      "\t\t$0",
+      "}"
+    ],
+    "description": "switch / case (her case otomatik çıkar, break gerekmez)"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": ["struct ${1:Name} {", "\t${2:field},", "}"],
+    "description": "struct tanımı"
+  },
+  "DB query": {
+    "prefix": "dbquery",
+    "body": [
+      "\\$${1:rows} = db::query(\"SELECT * FROM ${2:table} WHERE id = ?\", [\\$${3:id}])"
+    ],
+    "description": "Parametreli DB sorgusu"
+  },
+  "HTTP GET": {
+    "prefix": "httpget",
+    "body": ["\\$${1:res} = http::get(\"${2:https://api.example.com}\")"],
+    "description": "HTTP GET isteği"
+  },
+  "Session start + get": {
+    "prefix": "session",
+    "body": [
+      "session::start()",
+      "\\$${1:user} = session::get(\"${2:user}\")"
+    ],
+    "description": "Oturum başlat + oku"
+  },
+  "JSON response": {
+    "prefix": "resjson",
+    "body": ["return response::json([\"${1:key}\" => \\$${2:value}])"],
+    "description": "JSON yanıtı"
+  },
+  "404 / error response": {
+    "prefix": "reserror",
+    "body": ["return response::error(${1:404}, \"${2:bulunamadı}\")"],
+    "description": "Hata yanıtı"
+  },
+  "Use import": {
+    "prefix": "use",
+    "body": ["use ${1|http,json,string,db,mail,crypto|}"],
+    "description": "Modül içe aktar"
+  }
+}

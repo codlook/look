@@ -1,0 +1,49 @@
+// LOOK örnek — küçük JSON API. Eklentiyi denemek için bu dosyayı aç:
+//   • yaz  → otomatik tamamlama (modül:: , $değişken) + canlı hata denetimi
+//   • üzerine gel → hover imzası
+//   • Ctrl+F5 → çalıştır   ·   komut paleti "LOOK: Web Sunucusu Başlat"
+// Not: LOOK'ta ifade sonu noktalı virgül YOKTUR.
+use json
+use string
+
+// GET /health → durum kontrolü (tek satır arrow route)
+route("GET", "/health", fn($req) => response::json(["ok" => true, "zaman" => date::now()]))
+
+// POST /notlar → yeni not ekle  (gövde: {"metin": "..."} )
+// Paylaşılan durum app:: ile tutulur (istekler arası kalıcı).
+route("POST", "/notlar", function($req) {
+    $body = request::json()
+    if ($body == null || $body["metin"] == null) {
+        return response::error(400, "metin alanı gerekli")
+    }
+    $notlar = app::get("notlar")
+    if ($notlar == null) {
+        $notlar = []
+    }
+    array::push($notlar, [
+        "id"    => len($notlar) + 1,
+        "metin" => string::trim($body["metin"]),
+    ])
+    app::set("notlar", $notlar)
+    return response::json(["eklendi" => $notlar[len($notlar) - 1]], 201)
+})
+
+// GET /notlar → tümünü listele
+route("GET", "/notlar", function($req) {
+    $notlar = app::get("notlar")
+    if ($notlar == null) {
+        $notlar = []
+    }
+    return response::json(["toplam" => len($notlar), "notlar" => $notlar])
+})
+
+// GET /ara?q=... → metinde arama
+route("GET", "/ara", function($req) {
+    $notlar = app::get("notlar")
+    if ($notlar == null) {
+        $notlar = []
+    }
+    $q = request::get("q")
+    $bulunan = array::filter($notlar, fn($n) => string::contains($n["metin"], $q))
+    return response::json($bulunan)
+})

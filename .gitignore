@@ -113,8 +113,11 @@ docs/
 # Surum kontrolu ilk git status'ta gorurdu. Build script + paket kaynagi IZLENIR;
 # derlenmis ikili/zip/rpm/dist CIKTIDIR, yok sayilir.
 # (NOT: gitignore satir-ici yorum desteklemez — yorumlar ayri satirda.)
-# Ayri urun (VSCode eklentisi) — kendi surum dongusu, repoda degil:
-platforms/vscode/
+# VSCode eklentisi: KAYNAK izlenir; cikti (vsix paketi, node_modules, gecici) yok sayilir:
+platforms/vscode/node_modules/
+platforms/vscode/_vsix_tmp/
+platforms/vscode/*.vsix
+platforms/vscode/*.map
 # Paket ciktilari:
 platforms/**/*.zip
 platforms/**/*.rpm
