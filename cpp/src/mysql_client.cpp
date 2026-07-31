@@ -390,14 +390,31 @@ void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
 }
 
 std::vector<uint8_t> MySQLClient::read_packet(uint8_t& seq) {
-    uint8_t hdr[4];
-    if (!recv_bytes(hdr, 4))
-        throw std::runtime_error("db: connection lost or query timeout");
-    uint32_t len = hdr[0] | (hdr[1] << 8) | (hdr[2] << 16);
-    seq = hdr[3];
-    std::vector<uint8_t> payload(len);
-    if (len > 0 && !recv_bytes(payload.data(), len))
-        throw std::runtime_error("db: connection lost reading payload");
+    // Multi-packet devam (0xFFFFFF): 16 MB'i asan payload sunucu tarafindan TAM-0xFFFFFF
+    // paketlere bolunur; alici, uzunlugu 0xFFFFFF'ten KUCUK bir paket gelene kadar okuyup
+    // BIRLESTIRMELI. Bu mantik olmadan read_packet ilk 16 MB'i tam paket sanip doner,
+    // sonraki cagri ayni payload'in devam baytlarini BASLIK okur -> akis desenkronize ->
+    // havuzdaki baglanti sessizce YANLIS VERI doner (LONGBLOB / genis SELECT * / buyuk
+    // GROUP_CONCAT ile tetiklenir). Normal <0xFFFFFF paket: donguyu bir kez doner, break
+    // -> davranis onceki tek-paket haliyle ayni.
+    // Toplam cap: multi-packet ile 24-bit alan artik ust sinir DEGIL -> WS disiplini gibi
+    // acik cap (yoksa kotu niyetli sunucu sonsuz 0xFFFFFF devamiyla bellek tuketir).
+    static constexpr size_t MYSQL_MAX_RECV = 256ull * 1024 * 1024;
+    std::vector<uint8_t> payload;
+    for (;;) {
+        uint8_t hdr[4];
+        if (!recv_bytes(hdr, 4))
+            throw std::runtime_error("db: connection lost or query timeout");
+        uint32_t len = hdr[0] | (hdr[1] << 8) | (hdr[2] << 16);
+        seq = hdr[3];
+        size_t off = payload.size();
+        if (off + (size_t)len > MYSQL_MAX_RECV)
+            throw std::runtime_error("db mysql: yanit boyutu guvenlik sinirini asti (256 MB)");
+        payload.resize(off + len);
+        if (len > 0 && !recv_bytes(payload.data() + off, len))
+            throw std::runtime_error("db: connection lost reading payload");
+        if (len < 0xFFFFFF) break;   // son parca (0-uzunluk dahil)
+    }
     return payload;
 }
 
