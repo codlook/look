@@ -18,6 +18,7 @@ fi
 
 rm -rf build-portable
 cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release -DLOOK_STATIC_SSL=ON \
+  -DLOOK_BUILD="${LOOK_BUILD:-src}" \
   -DOPENSSL_INCLUDE_DIR="$S/include" \
   -DOPENSSL_SSL_LIBRARY="$S/lib/libssl.a" \
   -DOPENSSL_CRYPTO_LIBRARY="$S/lib/libcrypto.a" \
