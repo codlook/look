@@ -1,4 +1,5 @@
 #include "look/mysql_client.h"
+#include "look/mysql_wire_parse.h"   // saf ayristirici tek tanim (member'lar forward eder)
 #include "look/fiber.h"
 #ifndef _WIN32
 // caching_sha2_password (MySQL 8+ varsayilan): SHA-256 + RSA-OAEP.
@@ -1044,32 +1045,12 @@ std::string MySQLClient::escape(const std::string& s) {
 
 // ── Packet readers ────────────────────────────────────────────────────────────
 
-uint64_t MySQLClient::read_lenenc(const uint8_t*& p, const uint8_t* end) {
-    if (p>=end) return 0;
-    uint8_t first=*p++;
-    if (first<0xFB) return first;
-    if (first==0xFC&&p+2<=end){uint64_t v=p[0]|((uint64_t)p[1]<<8);p+=2;return v;}
-    if (first==0xFD&&p+3<=end){uint64_t v=p[0]|((uint64_t)p[1]<<8)|((uint64_t)p[2]<<16);p+=3;return v;}
-    if (first==0xFE&&p+8<=end){uint64_t v;memcpy(&v,p,8);p+=8;return v;}
-    return 0;
-}
-
-std::string MySQLClient::read_lenenc_str(const uint8_t*& p, const uint8_t* end) {
-    if (p>=end) return "";
-    if (*p==0xFB){p++;return "";}
-    uint64_t len=read_lenenc(p,end);
-    // TAŞMA-GÜVENLİ: `p+len>end` — len sunucudan gelir ve 0xFE formatında ~2^64
-    // olabilir → `p+len` işaretçi taşması (UB) yapıp wrap'lar → kontrol atlanır →
-    // ~2^64 baytlık overread/crash. Kötü niyetli/MITM sunucu (TLS yok) tetikler.
-    // p<=end invariantı gereği `end-p` güvenli; len'i mevcut bayta clamp'le.
-    uint64_t avail = (uint64_t)(end - p);
-    if (len > avail) len = avail;
-    std::string s(p, p + (size_t)len); p += len;
-    return s;
-}
-
-uint16_t MySQLClient::read_u16(const uint8_t*& p){uint16_t v=p[0]|(p[1]<<8);p+=2;return v;}
-uint32_t MySQLClient::read_u32(const uint8_t*& p){uint32_t v;memcpy(&v,p,4);p+=4;return v;}
-uint64_t MySQLClient::read_u64(const uint8_t*& p){uint64_t v;memcpy(&v,p,8);p+=8;return v;}
+// Bu ayrıştırıcılar look/mysql_wire_parse.h'a çıkarıldı (saf, fuzz ile paylaşılan tek
+// tanım). Member'lar tek-satır forwarder — çağrı yerleri değişmez, drift yok.
+uint64_t    MySQLClient::read_lenenc(const uint8_t*& p, const uint8_t* end) { return mysql_read_lenenc(p, end); }
+std::string MySQLClient::read_lenenc_str(const uint8_t*& p, const uint8_t* end) { return mysql_read_lenenc_str(p, end); }
+uint16_t    MySQLClient::read_u16(const uint8_t*& p) { return mysql_read_u16(p); }
+uint32_t    MySQLClient::read_u32(const uint8_t*& p) { return mysql_read_u32(p); }
+uint64_t    MySQLClient::read_u64(const uint8_t*& p) { return mysql_read_u64(p); }
 
 } // namespace look
