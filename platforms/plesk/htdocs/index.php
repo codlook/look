@@ -324,7 +324,7 @@ if ($action !== '') {
     // Servis loglari (journalctl — logs.sh sudo ile)
     if ($action === 'logs') {
         $svc = trim($_POST['svc'] ?? $_GET['svc'] ?? '');
-        if (!preg_match('/^look-[a-z0-9-]+$/', $svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
+        if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         $n   = min(1000, max(20, (int)($_POST['n'] ?? 200)));
         $out = shell_exec('sudo /bin/bash ' . escapeshellarg(SCRIPTS_DIR . '/logs.sh') . ' ' . escapeshellarg($svc) . ' ' . (int)$n . ' 2>&1');
         echo json_encode(['ok'=>true,'log'=>trim($out ?? '')]); exit;
@@ -332,7 +332,7 @@ if ($action !== '') {
     // Canli servis monitoru (durum, PID, uptime, RSS, CPU%, restart, port, baglanti)
     if ($action === 'monitor') {
         $svc = trim($_POST['svc'] ?? $_GET['svc'] ?? '');
-        if (!preg_match('/^look-[a-z0-9-]+$/', $svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
+        if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         $raw = shell_exec('sudo /bin/bash ' . escapeshellarg(SCRIPTS_DIR . '/monitor.sh') . ' ' . escapeshellarg($svc) . ' 2>&1');
         $m = [];
         foreach (explode("\n", trim($raw ?? '')) as $ln) {
