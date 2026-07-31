@@ -133,6 +133,12 @@ platforms/plesk;C/
 # cpp/docker: yalniz uretim tarifi izlensin; test infra + cikti disarda:
 cpp/docker/*
 !cpp/docker/Dockerfile.production
+!cpp/docker/Dockerfile.fuzz
+# Fuzz cikti (corpus fuzzer'in urettigi + crash tekrar-uretilebilir; seed'ler harness yorumunda)
+cpp/tests/fuzz/corpus_*/
+cpp/tests/fuzz/crash-*
+cpp/tests/fuzz/leak-*
+cpp/tests/fuzz/timeout-*
 
 # Yerel calisma notlari (repoda tutulmuyor)
 PROJE_DURUMU.md

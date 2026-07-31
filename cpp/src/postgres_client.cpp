@@ -1,4 +1,5 @@
 #include "look/postgres_client.h"
+#include "look/pg_parse.h"   // saf pg_parse_error (fuzz/test ile paylasilan tek tanim)
 #include <cstring>
 #include <cctype>
 #include <sstream>
@@ -15,8 +16,6 @@
 #endif
 
 namespace look {
-
-static std::string pg_parse_error(const std::vector<uint8_t>& body);
 
 // SCRAM-SHA-256 client nonce'u KRİPTOGRAFİK olmalı (RFC 5802 §5.1: nonce
 // unpredictable olmalı). std::mt19937 tahmin edilebilir (32-bit random_device
@@ -666,18 +665,7 @@ void PostgresClient::send_startup() {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-static std::string pg_parse_error(const std::vector<uint8_t>& body) {
-    const uint8_t* p = body.data();
-    const uint8_t* end = p + body.size();
-    while (p < end && *p != '\0') {
-        char ft = (char)*p++;
-        std::string fv;
-        while (p < end && *p != '\0') fv += (char)*p++;
-        if (p < end) p++;
-        if (ft == 'M') return fv;
-    }
-    return "unknown error";
-}
+// pg_parse_error → look/pg_parse.h (saf, fuzz ile paylasilir)
 
 void PostgresClient::do_auth() {
     while (true) {

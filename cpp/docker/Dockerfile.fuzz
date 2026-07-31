@@ -1,0 +1,7 @@
+# LOOK fuzzing toolchain — clang + libFuzzer + sanitizer'lar (GCC'de -fsanitize=fuzzer YOK).
+# AlmaLinux 8 (prod imajiyla ayni glibc/toolchain sinifi).
+#   docker build -t look-fuzz -f cpp/docker/Dockerfile.fuzz cpp/
+FROM almalinux:8
+RUN dnf install -y --setopt=sslverify=false clang compiler-rt libasan libubsan \
+    && dnf clean all
+WORKDIR /look/cpp
