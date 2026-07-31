@@ -84,13 +84,15 @@ jobs:
           ASAN_OPTIONS: abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: |
-          for h in fuzz_pg_parse_error fuzz_mysql_lenenc; do
+          declare -A C=( [fuzz_pg_parse_error]=corpus_pgerr \
+                         [fuzz_mysql_lenenc]=corpus_mysql \
+                         [fuzz_json_str]=corpus_json )
+          for h in "${!C[@]}"; do
             echo "== derle $h =="
             clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
                     -fno-sanitize-recover=all -I../../include "$h.cpp" -o "$h"
             echo "== kosum $h (30s) =="
-            seeds="corpus_$( [ "$h" = fuzz_pg_parse_error ] && echo pgerr || echo mysql )"
-            mkdir -p "$seeds"
-            ./"$h" -max_len=8192 -max_total_time=30 "$seeds" || {
+            mkdir -p "${C[$h]}"
+            ./"$h" -max_len=8192 -max_total_time=30 "${C[$h]}" || {
               echo "!!! $h fuzz bulgusu — crash artefakti yukarida"; exit 1; }
           done
