@@ -68,3 +68,29 @@ jobs:
           # temiz kalsin -- yesil sanilan kirmizinin kucuk hali).
           compgen -G "tests/tsan/known_fail/*.lk" > /dev/null || { echo "known_fail bos — atlaniyor"; exit 0; }
           for f in tests/tsan/known_fail/*.lk; do echo "== $f"; ./build-tsan/lk "$f"; done
+
+  fuzz:
+    # Surdurulebilirlik: wire-protocol parser'lari her push'ta kisa fuzzlanir (libFuzzer,
+    # clang zorunlu — GCC'de -fsanitize=fuzzer yok). Tek-seferlik denetim yerine surekli
+    # tarama; bir regresyon (parser'a sinir-disi erisim) aninda CI'i kirar. Uzun kampanya
+    # nightly/manuel. Hedefler saf ayristiricilar (look/*_parse.h) — socket'siz.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Fuzz — PG + MySQL wire parser (kisa, yesil olmali)
+        working-directory: cpp/tests/fuzz
+        env:
+          ASAN_OPTIONS: abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          for h in fuzz_pg_parse_error fuzz_mysql_lenenc; do
+            echo "== derle $h =="
+            clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
+                    -fno-sanitize-recover=all -I../../include "$h.cpp" -o "$h"
+            echo "== kosum $h (30s) =="
+            seeds="corpus_$( [ "$h" = fuzz_pg_parse_error ] && echo pgerr || echo mysql )"
+            mkdir -p "$seeds"
+            ./"$h" -max_len=8192 -max_total_time=30 "$seeds" || {
+              echo "!!! $h fuzz bulgusu — crash artefakti yukarida"; exit 1; }
+          done
