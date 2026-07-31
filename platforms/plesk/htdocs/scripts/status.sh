@@ -10,6 +10,10 @@ if [ -z "$SVC_NAME" ]; then
     exit 0
 fi
 
+# GUVENLIK (logs/monitor/disable ile tutarli): yalnizca look-* servisleri sorgula.
+SVC_NAME=$(printf '%s' "$SVC_NAME" | tr -cd 'A-Za-z0-9.-')
+case "$SVC_NAME" in look-*) ;; *) echo "unknown"; exit 0 ;; esac
+
 STATE=$(sudo /bin/systemctl is-active "$SVC_NAME" 2>/dev/null || echo "unknown")
 
 if [ "$STATE" = "active" ]; then

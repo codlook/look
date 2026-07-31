@@ -187,6 +187,17 @@ if ($action !== '') {
         $mode    = in_array($_POST['mode'] ?? 'fcgi', ['fcgi','http']) ? $_POST['mode'] : 'fcgi';
         $port    = (int)($_POST['port']   ?? next_free_port($domains));
         if (!$domain) { echo json_encode(['ok'=>false,'error'=>'Domain is required']); exit; }
+        // GUVENLIK: domain/script HAM olarak enable.sh'a, oradan tirnaksiz heredoc ile
+        // systemd unit'ine geciyor (sudo systemctl restart -> root). Format dogrulamasi
+        // olmadan gomulu satir-sonu iceren bir domain, unit'e kendi [Service]/ExecStartPre
+        // direktifini yazip root komut kosturur (panel kullanicisi -> root). Kati dogrula:
+        if (!preg_match('/^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i', $domain)) {
+            echo json_encode(['ok'=>false,'error'=>'Invalid domain']); exit;
+        }
+        if ($script !== '' &&
+            (!preg_match('#^/var/www/vhosts/[A-Za-z0-9._/-]+\.lk$#', $script) || str_contains($script, '..'))) {
+            echo json_encode(['ok'=>false,'error'=>'Invalid script path']); exit;
+        }
         if (!$script) {
             $parent = implode('.', array_slice(explode('.', $domain), 1));
             $script = is_dir("/var/www/vhosts/$parent/$domain")

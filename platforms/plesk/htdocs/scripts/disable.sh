@@ -12,6 +12,16 @@ if [ -z "$SVC_NAME" ]; then
     exit 1
 fi
 
+# GUVENLIK: SVC_NAME sudo systemctl stop/disable'a gidiyor. look-* kisitlamasi olmadan
+# panel kullanicisi ARBITRARY servisi (sshd, mariadb) root olarak durdurabilir (cok-kiracili
+# DoS). look-* zorunlu + gecerli unit karakterlerine daralt. DOMAIN de dosya yolu/rm'e giriyor.
+SVC_NAME=$(printf '%s' "$SVC_NAME" | tr -cd 'A-Za-z0-9.-')
+DOMAIN=$(printf '%s' "$DOMAIN" | tr -cd 'A-Za-z0-9.-')
+case "$SVC_NAME" in
+    look-*) ;;
+    *) echo "ERROR: only look-* services allowed" >&2; exit 1 ;;
+esac
+
 sudo /bin/systemctl stop "$SVC_NAME" 2>/dev/null || true
 sudo /bin/systemctl disable "$SVC_NAME" 2>/dev/null || true
 

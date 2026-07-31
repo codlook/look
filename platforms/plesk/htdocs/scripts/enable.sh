@@ -16,6 +16,24 @@ if [ -z "$DOMAIN" ] || [ -z "$SCRIPT" ] || [ -z "$PORT" ]; then
     exit 1
 fi
 
+# GUVENLIK (derinlemesine savunma): cagiranin (PHP) dogruladigina GUVENME. Bu script
+# sudoers'ta '*' joker'iyle cagrilabilir ve icerigi asagida TIRNAKSIZ heredoc ile systemd
+# unit'ine yaziliyor; sanitizasyon olmadan gomulu satir-sonu iceren bir arg, unit'e kendi
+# direktifini enjekte edip 'sudo systemctl restart' ile root komut kosturur. Kaynagi ne
+# olursa olsun arglari daralt:
+DOMAIN=$(printf '%s' "$DOMAIN" | tr -cd 'A-Za-z0-9.-')
+SCRIPT=$(printf '%s' "$SCRIPT" | tr -cd 'A-Za-z0-9._/-')
+WORKERS=$(printf '%s' "$WORKERS" | tr -cd '0-9'); WORKERS="${WORKERS:-4}"
+PORT=$(printf '%s' "$PORT" | tr -cd '0-9')
+case "$MODE" in http|fcgi) ;; *) MODE="fcgi" ;; esac
+[ -n "$DOMAIN" ] || { echo "ERROR: invalid domain" >&2; exit 1; }
+[ -n "$PORT" ]   || { echo "ERROR: invalid port"   >&2; exit 1; }
+case "$SCRIPT" in
+    /var/www/vhosts/*) ;;
+    *) echo "ERROR: script must be under /var/www/vhosts" >&2; exit 1 ;;
+esac
+case "$SCRIPT" in *..*) echo "ERROR: path traversal" >&2; exit 1 ;; esac
+
 LK_FCGI="/opt/look/lk-fcgi"
 LK_BIN="/opt/look/lk"
 
@@ -45,6 +63,9 @@ fi
 if [ -z "$DOC_ROOT" ] || [ ! -d "$DOC_ROOT" ]; then
     DOC_ROOT=$(dirname "$SCRIPT")
 fi
+# DOC_ROOT de heredoc'a (WorkingDirectory/LOOK_FILE_ROOT) giriyor — Plesk API ciktisi veya
+# dirname olsa bile son bir kez daralt (satir-sonu enjeksiyonuna karsi):
+DOC_ROOT=$(printf '%s' "$DOC_ROOT" | tr -cd 'A-Za-z0-9._/-')
 
 # Script dosyasi yoksa index.lk olustur
 if [ ! -f "$SCRIPT" ]; then
