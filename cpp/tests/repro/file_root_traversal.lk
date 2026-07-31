@@ -1,0 +1,18 @@
+use file
+// assert_in_file_root tablo testi: her traversal payload REDDEDILMELI, kontrol IZINLI.
+function try_read($label, $path, $should_allow) {
+    $ok = false
+    try { file::read($path); $ok = true } catch ($e) { $ok = false }
+    $verdict = ($ok == $should_allow) ? "PASS" : "FAIL"
+    $act = $ok ? "IZIN" : "RED"
+    print("{$verdict}  {$label}: {$act}")
+}
+// kontrol: kok-ici mevcut dosya -> IZIN
+try_read("kontrol kok-ici ok.txt", "ok.txt", true)
+// traversal payload'lari -> REDDEDILMELI
+try_read("literal ../secret", "../secret.txt", false)
+try_read("cift ../../etc/passwd", "../../etc/passwd", false)
+try_read("kok-ici .. escape", "sub/../../secret.txt", false)
+try_read("mutlak /etc/passwd", "/etc/passwd", false)
+try_read("percent-encoded literal", "%2e%2e%2fsecret.txt", false)
+try_read("cift-encoded", "%252e%252e%252fsecret.txt", false)
