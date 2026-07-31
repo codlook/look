@@ -109,6 +109,14 @@ function svc_status(string $svc): array {
     if (str_starts_with($out, 'active:')) return ['state'=>'active','pid'=>substr($out,7)];
     return ['state' => $out ?: 'unknown', 'pid' => ''];
 }
+// GUVENLIK: svc her zaman 'look-' + alfanumerik/dash (enable.sh SVC_NAME uretimi:
+// domain'deki [^a-z0-9] -> '-'). 'start' eylemi svc'yi HAM 'sudo systemctl start'a
+// veriyor; sudoers 'systemctl start look-*' wildcard'inda '*' argumanda '/' de eslesir,
+// systemctl '/' iceren argi PATH olarak yukler -> 'look-../../tmp/evil.service' saldirgan
+// unit'ini ROOT baslatir. Slash/'..' iceren svc'yi reddet (path-injection kapanir).
+function valid_svc(string $svc): bool {
+    return (bool)preg_match('/^look-[a-z0-9-]+$/', $svc);
+}
 function next_free_port(array $domains): int {
     $used = array_column($domains, 'port');
     $sys  = array_map(fn($l) => (int)(explode(':', trim($l))[1] ?? 0),
@@ -195,7 +203,7 @@ if ($action !== '') {
 
     if ($action === 'status') {
         $svc = trim($_POST['svc'] ?? $_GET['svc'] ?? '');
-        if (!$svc) { echo json_encode(['ok'=>false,'error'=>'svc required']); exit; }
+        if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         echo json_encode(['ok'=>true] + svc_status($svc)); exit;
     }
     if ($action === 'list') {
@@ -251,7 +259,7 @@ if ($action !== '') {
     }
     if ($action === 'start') {
         $svc = trim($_POST['svc'] ?? '');
-        if (!$svc) { echo json_encode(['ok'=>false,'error'=>'svc required']); exit; }
+        if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         shell_exec('sudo /bin/systemctl start ' . escapeshellarg($svc) . ' 2>&1');
         $st = svc_status($svc);
         echo json_encode(['ok' => $st['state']==='active', 'state'=>$st['state']]); exit;
@@ -259,7 +267,7 @@ if ($action !== '') {
     if ($action === 'stop') {
         $svc    = trim($_POST['svc']    ?? '');
         $domain = trim($_POST['domain'] ?? '');
-        if (!$svc) { echo json_encode(['ok'=>false,'error'=>'svc required']); exit; }
+        if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         $result = run_script('disable.sh', escapeshellarg($svc) . ' ' . escapeshellarg($domain));
         $st     = svc_status($svc);
         echo json_encode(['ok'=>true,'state'=>$st['state'],'out'=>$result['output']]); exit;
@@ -278,6 +286,7 @@ if ($action !== '') {
     if ($action === 'delete') {
         $domain = trim($_POST['domain'] ?? '');
         $svc    = trim($_POST['svc']    ?? '');
+        if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         run_script('disable.sh', escapeshellarg($svc) . ' ' . escapeshellarg($domain));
         $domains = array_values(array_filter($domains, fn($d) => $d['domain'] !== $domain));
         save_domains($domains);
