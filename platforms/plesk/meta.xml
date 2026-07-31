@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<module>
+    <id>look-lang</id>
+    <name>LOOK Language</name>
+    <description>LOOK web scripting language — one-click LOOK server per domain (portable static binary: AlmaLinux 8/9 + Ubuntu, zero dependencies)</description>
+    <version>1.1.0</version>
+    <plesk_min_version>18.0.0</plesk_min_version>
+    <author>Codlook Bilisim</author>
+    <url>https://codlook.com</url>
+</module>

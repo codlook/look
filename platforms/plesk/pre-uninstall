@@ -1,0 +1,20 @@
+#!/bin/bash
+# Plesk extension pre-uninstall hook
+
+# Tum look servislerini durdur
+for svc in $(systemctl list-units --type=service --all | grep 'look-' | awk '{print $1}'); do
+    systemctl stop "$svc" 2>/dev/null || true
+    systemctl disable "$svc" 2>/dev/null || true
+done
+
+# Sudoers temizle
+rm -f /etc/sudoers.d/look-lang
+rm -f /etc/profile.d/look.sh
+
+# RPM ile kurulduysa kaldır (dnf-yönetimli); /opt/look symlink/kopyalarını temizle
+if rpm -q look-lang >/dev/null 2>&1; then
+    (command -v dnf >/dev/null 2>&1 && dnf remove -y look-lang || yum remove -y look-lang) >/dev/null 2>&1 || true
+fi
+rm -f /opt/look/lk /opt/look/lk-fcgi /opt/look/lk-cgi
+
+echo "LOOK Language extension removed."

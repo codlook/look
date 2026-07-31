@@ -1,0 +1,782 @@
+<?php
+// index.php'den gelen degiskenler: $domains, $plesk_domains, $look_ver, $bin_ok, $stats
+$pleskDoms  = $plesk_domains ?? ['example.com'];
+$lookVer    = $look_ver      ?? '—';
+$binOk      = $bin_ok        ?? false;
+$st         = $stats         ?? ['cpu'=>0,'ram_used'=>0,'ram_total'=>0,'ram_pct'=>0,'disk_pct'=>0,'load'=>'—','uptime'=>'—','os'=>'Linux','cores'=>1];
+$domCount   = count($domains ?? []);
+$bcls = function($p){ return $p>=90?'crit':($p>=75?'warn':''); };
+$icons = [
+  'cpu'  => '<rect x="4" y="4" width="10" height="10" rx="1.5"/><path d="M6.5 1.5v2M11.5 1.5v2M6.5 14.5v2M11.5 14.5v2M1.5 6.5h2M1.5 11.5h2M14.5 6.5h2M14.5 11.5h2"/>',
+  'ram'  => '<rect x="2" y="5" width="14" height="8" rx="1"/><path d="M5 13v2M9 13v2M13 13v2M6 8h1M9 8h1M12 8h1"/>',
+  'disk' => '<circle cx="9" cy="9" r="7"/><circle cx="9" cy="9" r="1.5"/>',
+  'clock'=> '<circle cx="9" cy="9" r="7"/><path d="M9 5v4l2.5 1.5"/>',
+];
+?>
+<style>
+/* ══════════════════════════════════════════════════════════════════════════
+   LOOK Language — Plesk Extension · workspace UI (sidebar + views)
+   minimal / kurumsal · Light + Dark · her sey .lk-app altinda scope'lu
+═══════════════════════════════════════════════════════════════════════════ */
+.lk-app{
+  --bg:#fbfbfd; --card:#ffffff; --ink:#1f2430; --ink2:#727a8a; --ink3:#9aa1b0;
+  --line:#eceef2; --line2:#f2f4f7; --soft:#f7f8fa; --nav:#f8f9fb;
+  --accent:#4f5bd5; --accent-ink:#4f5bd5; --accent-soft:#eef0fb;
+  --ok:#16a34a; --warn:#d18f00; --crit:#dc2626;
+  --radius:12px; --radius-sm:9px;
+  --shadow:0 1px 2px rgba(20,25,40,.05);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --mono:'SFMono-Regular',ui-monospace,'JetBrains Mono',Consolas,monospace;
+  color:var(--ink); font-family:var(--font); font-size:14px; -webkit-font-smoothing:antialiased;
+}
+@media (prefers-color-scheme:dark){
+  .lk-app{
+    --bg:#0e1117; --card:#161b24; --ink:#e6e9ef; --ink2:#8b94a5; --ink3:#6b7385;
+    --line:#232a36; --line2:#1c222c; --soft:#1a202b; --nav:#12161f;
+    --accent:#7b86ec; --accent-ink:#9aa2f0; --accent-soft:#1c2133;
+    --shadow:0 1px 2px rgba(0,0,0,.25);
+  }
+}
+.lk-app *{box-sizing:border-box}
+.lk-app a{color:var(--accent-ink);text-decoration:none}
+.lk-app button{font-family:inherit}
+
+/* ── SHELL ────────────────────────────────────────────────────────────────── */
+.lk-shell{display:flex;gap:0;height:100vh;background:var(--card);overflow:hidden}
+/* Sidebar */
+.lk-side{width:224px;flex-shrink:0;background:var(--nav);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:16px 12px;overflow-y:auto}
+.lk-brand{display:flex;align-items:center;gap:10px;padding:6px 8px 16px;margin-bottom:8px;
+  border-bottom:1px solid var(--line)}
+.lk-brand .m{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:grid;place-items:center;
+  background:var(--accent);color:#fff}
+.lk-brand .t{font-size:14px;font-weight:600;letter-spacing:-.2px}
+.lk-brand .t small{display:block;font-size:11px;font-weight:500;color:var(--ink2);font-family:var(--mono)}
+.lk-nav{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.lk-navi{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;
+  font-size:13px;font-weight:500;color:var(--ink2);border:none;background:none;text-align:left;
+  transition:background .12s,color .12s;width:100%}
+.lk-navi svg{width:16px;height:16px;flex-shrink:0;opacity:.9}
+.lk-navi:hover{background:var(--soft);color:var(--ink)}
+.lk-navi.active{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
+.lk-side-foot{margin-top:auto;padding:10px 8px 2px;border-top:1px solid var(--line);
+  font-size:11px;color:var(--ink3)}
+.lk-side-foot a{color:var(--ink3)}
+
+/* Main */
+.lk-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.lk-top{display:flex;align-items:center;gap:12px;padding:15px 22px;border-bottom:1px solid var(--line);flex-shrink:0}
+.lk-top h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-.2px}
+.lk-top .desc{font-size:12.5px;color:var(--ink2)}
+.lk-top .spacer{flex:1}
+.lk-back{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;
+  font-size:13px;font-weight:500;color:var(--ink2);border:1px solid var(--line);background:var(--card);
+  transition:background .13s,color .13s}
+.lk-back:hover{background:var(--soft);color:var(--ink)}
+.lk-body{padding:22px;flex:1;min-height:0;overflow:auto}
+
+/* Views */
+.lk-view{display:none;animation:lk-vin .2s ease}
+.lk-view.active{display:block}
+@keyframes lk-vin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.lk-sec-h{font-size:13px;font-weight:600;color:var(--ink);margin:0 0 12px;letter-spacing:-.1px}
+
+/* ── STAT CARDS + sparkline ───────────────────────────────────────────────── */
+.lk-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px}
+.lk-stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px}
+.lk-stat-top{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--ink2)}
+.lk-stat-top svg{width:15px;height:15px}.lk-stat-lbl{font-size:12px;font-weight:500}
+.lk-stat-row{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
+.lk-stat-val{font-size:22px;font-weight:600;letter-spacing:-.5px;line-height:1}
+.lk-stat-val small{font-size:13px;font-weight:500;color:var(--ink2)}
+.lk-spark{width:88px;height:30px;flex-shrink:0}
+.lk-spark polyline{fill:none;stroke:var(--accent);stroke-width:1.6;opacity:.85;
+  stroke-linejoin:round;stroke-linecap:round}
+.lk-spark .fill{fill:var(--accent);opacity:.08;stroke:none}
+.lk-stat-sub{font-size:11.5px;color:var(--ink2);margin-top:7px}
+.lk-track{height:4px;background:var(--line2);border-radius:4px;margin-top:9px;overflow:hidden}
+.lk-track>i{display:block;height:100%;border-radius:4px;background:var(--accent);opacity:.85;
+  transition:width .6s cubic-bezier(.3,.7,.3,1)}
+.lk-track.warn>i{background:var(--warn)}.lk-track.crit>i{background:var(--crit)}
+
+/* ── PANEL / TABLE ────────────────────────────────────────────────────────── */
+.lk-panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:18px}
+.lk-panel-head{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--line2)}
+.lk-panel-head h2{margin:0;font-size:14px;font-weight:600}
+.lk-count{font-size:11.5px;font-weight:600;color:var(--ink2);background:var(--soft);border:1px solid var(--line);
+  min-width:20px;text-align:center;padding:0 6px;height:20px;line-height:19px;border-radius:20px}
+.lk-panel-head .spacer{flex:1}
+
+.lk-btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;
+  font-size:12.5px;font-weight:500;cursor:pointer;border:1px solid var(--line);background:var(--card);
+  color:var(--ink);white-space:nowrap;transition:background .13s,border-color .13s;vertical-align:middle}
+.lk-btn:hover:not(:disabled){background:var(--soft);border-color:#dcdfe6}
+.lk-btn:disabled{opacity:.5;cursor:not-allowed}
+.lk-btn-sm{height:29px;padding:0 10px;font-size:12px}
+.lk-btn-primary{background:var(--accent);color:#fff;border-color:transparent}
+.lk-btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 88%,#000)}
+.lk-btn-success{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,var(--line))}
+.lk-btn-danger{color:var(--crit)}
+.lk-btn-danger:hover:not(:disabled){background:color-mix(in srgb,var(--crit) 7%,var(--card))}
+
+.lk-table{width:100%;border-collapse:collapse}
+.lk-table thead th{padding:9px 18px;text-align:left;font-size:11px;font-weight:600;color:var(--ink2);
+  text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;border-bottom:1px solid var(--line2)}
+.lk-table tbody tr{border-bottom:1px solid var(--line2)}
+.lk-table tbody tr:last-child{border-bottom:none}.lk-table tbody tr:hover{background:var(--soft)}
+.lk-table td{padding:12px 18px;vertical-align:middle;font-size:13px}
+.lk-dom{font-weight:500;color:var(--ink);display:inline-flex;align-items:center;gap:8px}
+.lk-dom::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ink3)}
+.lk-dom:hover{color:var(--accent-ink)}
+.lk-code{font-family:var(--mono);font-size:11.5px;color:var(--ink2)}
+.lk-code-box{font-family:var(--mono);font-size:11.5px;background:var(--soft);border:1px solid var(--line);
+  padding:2px 7px;border-radius:6px;color:var(--ink2)}
+.lk-cfg{font-size:12px;color:var(--ink2)}
+.lk-empty{text-align:center;padding:44px 20px;color:var(--ink2)}
+.lk-empty .em-t{font-size:13.5px;font-weight:600;color:var(--ink)}.lk-empty .em-s{font-size:12.5px;margin-top:4px}
+
+/* status */
+.lk-status{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500}
+.lk-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.lk-st-active .lk-dot{background:var(--ok)} .lk-st-active .lk-slabel{color:var(--ok)}
+.lk-st-inactive .lk-dot{background:var(--ink3)} .lk-st-inactive .lk-slabel{color:var(--ink2)}
+.lk-st-failed .lk-dot{background:var(--crit)} .lk-st-failed .lk-slabel{color:var(--crit)}
+.lk-st-loading .lk-dot{background:var(--accent);animation:lk-pulse 1.1s infinite} .lk-st-loading .lk-slabel{color:var(--ink2)}
+.lk-st-unknown .lk-dot{background:var(--ink3)} .lk-st-unknown .lk-slabel{color:var(--ink2)}
+@keyframes lk-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* actions dropdown */
+.lk-actions{text-align:right;white-space:nowrap;position:relative}
+.lk-menu-wrap{position:relative;display:inline-block}
+.lk-menu{position:fixed;z-index:9500;min-width:178px;background:var(--card);
+  border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px -10px rgba(15,20,40,.28);
+  padding:5px;display:none}
+.lk-menu.open{display:block}
+.lk-mi{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:7px;border:none;
+  background:none;font-size:12.5px;color:var(--ink);cursor:pointer;text-align:left}
+.lk-mi:hover{background:var(--soft)}.lk-mi.danger{color:var(--crit)}
+.lk-mi svg{width:14px;height:14px;opacity:.8;flex-shrink:0}
+.lk-mi-sep{height:1px;background:var(--line2);margin:4px 2px}
+
+/* notice */
+.lk-notice{display:flex;align-items:center;gap:9px;padding:11px 15px;border-radius:var(--radius-sm);
+  background:color-mix(in srgb,var(--warn) 8%,var(--card));
+  border:1px solid color-mix(in srgb,var(--warn) 25%,var(--line));color:var(--ink);font-size:13px;margin-bottom:18px}
+
+/* add form */
+.lk-form-body{padding:16px 18px}
+.lk-grid{display:grid;grid-template-columns:2fr 3fr 84px 118px 84px auto;gap:12px;align-items:end}
+@media (max-width:960px){.lk-grid{grid-template-columns:1fr 1fr}}
+.lk-fg{display:flex;flex-direction:column;gap:6px;min-width:0}
+.lk-fg label{font-size:12px;color:var(--ink2);font-weight:500}
+.lk-fg input,.lk-fg select{height:36px;padding:0 11px;border:1px solid var(--line);border-radius:8px;
+  background:var(--card);color:var(--ink);font-size:13px;outline:none;width:100%;
+  transition:border-color .13s,box-shadow .13s}
+.lk-fg input:focus,.lk-fg select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+.lk-fg-btn{display:flex;flex-direction:column;justify-content:flex-end}.lk-fg-btn .lk-btn{height:36px}
+.lk-log{font-family:var(--mono);font-size:11.5px;background:var(--soft);color:var(--ink2);padding:10px 12px;
+  border-radius:8px;max-height:120px;overflow-y:auto;white-space:pre-wrap;display:none;margin-top:13px;
+  border:1px solid var(--line);line-height:1.6}
+
+/* logs view */
+.lk-logbar{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.lk-logbar select{height:34px;padding:0 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);
+  color:var(--ink);font-size:13px;outline:none;min-width:220px}
+.lk-logout{font-family:var(--mono);font-size:12px;line-height:1.65;background:#0d1117;color:#c9d3e0;
+  border:1px solid #1e2733;border-radius:var(--radius-sm);padding:14px 16px;height:460px;overflow:auto;
+  white-space:pre-wrap;word-break:break-word}
+.lk-logout .warn{color:#f0b429}.lk-logout .err{color:#f47174}.lk-logout .ok{color:#4ade80}
+
+/* docs */
+.lk-docs{max-width:760px}
+.lk-docs h3{font-size:15px;font-weight:600;margin:22px 0 8px}.lk-docs h3:first-child{margin-top:0}
+.lk-docs p{color:var(--ink2);font-size:13px;line-height:1.7;margin:0 0 10px}
+.lk-docs pre{background:#0d1117;color:#c9d3e0;font-family:var(--mono);font-size:12px;line-height:1.6;
+  padding:14px 16px;border-radius:9px;overflow-x:auto;border:1px solid #1e2733;margin:0 0 12px}
+.lk-docs code{font-family:var(--mono);font-size:12px;background:var(--soft);border:1px solid var(--line);
+  padding:1px 6px;border-radius:5px;color:var(--accent-ink)}
+.lk-docs pre code{background:none;border:none;padding:0;color:inherit}
+.lk-kv{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:13px;margin:0 0 12px}
+.lk-kv .k{color:var(--ink2)}.lk-kv .v{font-family:var(--mono);font-size:12px}
+
+/* modal / editor */
+.lk-overlay{display:none;position:fixed;inset:0;background:rgba(15,20,30,.42);backdrop-filter:blur(2px);
+  z-index:9000;align-items:center;justify-content:center}
+.lk-overlay.open{display:flex}
+.lk-modal{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:0 24px 60px -18px rgba(15,20,40,.4);width:520px;max-width:94vw;animation:lk-pop .16s ease}
+.lk-modal.wide{width:820px}
+@keyframes lk-pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.lk-modal-head{padding:15px 20px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between}
+.lk-modal-head h3{margin:0;font-size:15px;font-weight:600;display:flex;align-items:center;gap:9px}
+.lk-modal-head .sub{font-size:12px;color:var(--ink2);font-family:var(--mono)}
+.lk-modal-x{background:none;border:none;cursor:pointer;font-size:20px;color:var(--ink2);width:30px;height:30px;
+  border-radius:7px;line-height:1;transition:background .12s}.lk-modal-x:hover{background:var(--soft);color:var(--ink)}
+.lk-modal-body{padding:18px 20px}
+.lk-mfg{margin-bottom:14px}.lk-mfg label{display:block;font-size:12px;color:var(--ink2);font-weight:500;margin-bottom:6px}
+.lk-mfg input,.lk-mfg select{width:100%;height:38px;padding:0 11px;border:1px solid var(--line);border-radius:8px;
+  font-size:13px;color:var(--ink);background:var(--card);outline:none;transition:border-color .13s,box-shadow .13s}
+.lk-mfg input:focus,.lk-mfg select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+.lk-mfg input[readonly]{background:var(--soft);color:var(--ink2);cursor:not-allowed}
+.lk-mfg-row{display:flex;gap:11px}.lk-mfg-row .lk-mfg{flex:1}
+.lk-modal-foot{padding:14px 20px;border-top:1px solid var(--line2);display:flex;align-items:center;gap:8px}
+.lk-modal-foot .spacer{flex:1}
+.lk-editor{width:100%;height:400px;border:1px solid var(--line);border-radius:9px;background:#0d1117;color:#c9d3e0;
+  font-family:var(--mono);font-size:12.5px;line-height:1.6;padding:13px 15px;outline:none;resize:vertical;
+  tab-size:2;white-space:pre;overflow:auto}
+.lk-editor:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+
+/* monitor */
+.lk-mon-head{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.lk-mon-head .lk-status{font-size:13px}
+.lk-mon-head .up{font-size:12px;color:var(--ink2);margin-left:auto;font-family:var(--mono)}
+.lk-mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px}
+.lk-mcard{background:var(--soft);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+.lk-mcard .k{font-size:11px;color:var(--ink2);font-weight:500;text-transform:uppercase;letter-spacing:.4px}
+.lk-mcard .v{font-size:19px;font-weight:600;letter-spacing:-.4px;margin-top:4px}
+.lk-mcard .v small{font-size:12px;font-weight:500;color:var(--ink2)}
+.lk-mon-log{font-family:var(--mono);font-size:11.5px;line-height:1.6;background:#0d1117;color:#c9d3e0;
+  border:1px solid #1e2733;border-radius:9px;padding:11px 13px;height:180px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.lk-mon-log .err{color:#f47174}.lk-mon-log .warn{color:#f0b429}.lk-mon-log .ok{color:#4ade80}
+.lk-mlbl{font-size:12px;color:var(--ink2);font-weight:500;margin:0 0 7px}
+
+/* toast */
+.lk-toasts{position:fixed;top:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.lk-toast{display:flex;align-items:center;gap:9px;padding:11px 15px;border-radius:9px;font-size:13px;font-weight:500;
+  background:var(--card);border:1px solid var(--line);color:var(--ink);box-shadow:0 8px 24px -8px rgba(15,20,40,.25);
+  max-width:340px;animation:lk-tin .18s ease}
+.lk-toast::before{content:"";width:8px;height:8px;border-radius:50%;flex-shrink:0}
+@keyframes lk-tin{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+.lk-tok::before{background:var(--ok)}.lk-terr::before{background:var(--crit)}
+</style>
+
+<div class="lk-app">
+<div class="lk-shell">
+
+  <!-- ══ SIDEBAR ══ -->
+  <aside class="lk-side">
+    <div class="lk-brand">
+      <div class="m"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M10 2L4 10h4l-1 6 6-8h-4l1-6z"/></svg></div>
+      <div class="t">LOOK Language<small>v<?= htmlspecialchars($lookVer) ?></small></div>
+    </div>
+    <nav class="lk-nav">
+      <button class="lk-navi active" data-view="dash" onclick="lkNav('dash')">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="10" y="2" width="6" height="6" rx="1"/><rect x="2" y="10" width="6" height="6" rx="1"/><rect x="10" y="10" width="6" height="6" rx="1"/></svg>
+        Dashboard
+      </button>
+      <button class="lk-navi" data-view="apps" onclick="lkNav('apps')">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 5h14M2 9h14M2 13h14"/></svg>
+        Applications
+      </button>
+      <button class="lk-navi" data-view="logs" onclick="lkNav('logs')">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="13" height="13" rx="2"/><path d="M5.5 6.5l2 2-2 2M9.5 11.5h3"/></svg>
+        Logs
+      </button>
+      <button class="lk-navi" data-view="docs" onclick="lkNav('docs')">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2.5h7l3 3V15a.5.5 0 0 1-.5.5h-9A.5.5 0 0 1 4 15V2.5z"/><path d="M10.5 2.5V6h3.5"/></svg>
+        Documentation
+      </button>
+    </nav>
+    <div class="lk-side-foot">Zero-dependency runtime<br><a href="https://codlook.com" target="_blank" rel="noopener">codlook.com</a></div>
+  </aside>
+
+  <!-- ══ MAIN ══ -->
+  <div class="lk-main">
+    <div class="lk-top">
+      <div>
+        <h1 id="lkTitle">Dashboard</h1>
+        <div class="desc" id="lkDesc"><?= $domCount ?> domain(s) configured</div>
+      </div>
+      <div class="spacer"></div>
+      <a class="lk-back" href="/smb/web/view">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M8.5 3L4.5 7l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Back to Plesk
+      </a>
+    </div>
+
+    <div class="lk-body">
+
+      <?php if (!$binOk): ?>
+      <div class="lk-notice"><strong>/opt/look/lk-fcgi not found.</strong>&nbsp;Binary installation required — please reinstall the extension.</div>
+      <?php endif; ?>
+
+      <!-- ─────────── DASHBOARD ─────────── -->
+      <section class="lk-view active" id="view-dash">
+        <?php
+        $stat = function($id,$lbl,$icon,$valHtml,$sub,$pct=null) use ($bcls,$icons){
+          echo '<div class="lk-stat"><div class="lk-stat-top">';
+          echo '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'.$icons[$icon].'</svg>';
+          echo '<span class="lk-stat-lbl">'.$lbl.'</span></div>';
+          echo '<div class="lk-stat-row"><div class="lk-stat-val" id="sv-'.$id.'">'.$valHtml.'</div>';
+          echo '<svg class="lk-spark" id="sp-'.$id.'" viewBox="0 0 88 30" preserveAspectRatio="none"><polygon class="fill" points=""/><polyline points=""/></svg></div>';
+          echo '<div class="lk-stat-sub" id="ss-'.$id.'">'.$sub.'</div>';
+          if ($pct!==null) echo '<div class="lk-track '.$bcls($pct).'" id="tr-'.$id.'"><i style="width:'.max(2,$pct).'%"></i></div>';
+          echo '</div>';
+        };
+        ?>
+        <div class="lk-stats">
+          <?php $stat('cpu','CPU','cpu',(int)$st['cpu'].'<small>%</small>',(int)$st['cores'].' cores · load '.htmlspecialchars($st['load']),(int)$st['cpu']); ?>
+          <?php $stat('ram','Memory','ram',(int)$st['ram_pct'].'<small>%</small>',(int)$st['ram_used'].' / '.(int)$st['ram_total'].' MB',(int)$st['ram_pct']); ?>
+          <?php $stat('disk','Disk','disk',(int)$st['disk_pct'].'<small>%</small>','root partition ( / )',(int)$st['disk_pct']); ?>
+          <?php $stat('up','Uptime','clock','<span style="font-size:17px">'.htmlspecialchars($st['uptime']).'</span>',htmlspecialchars($st['os'])); ?>
+        </div>
+
+        <div class="lk-panel">
+          <div class="lk-panel-head">
+            <h2>Applications</h2><span class="lk-count"><?= $domCount ?></span>
+            <span class="spacer"></span>
+            <button class="lk-btn lk-btn-sm" onclick="lkRefresh()">Refresh</button>
+            <button class="lk-btn lk-btn-sm lk-btn-primary" onclick="lkNav('apps');lkScrollAdd()">New Domain</button>
+          </div>
+          <div style="overflow-x:auto"><table class="lk-table">
+            <thead><tr><th>Domain</th><th>Status</th><th>Port</th><th>Last Deploy</th><th>Configuration</th></tr></thead>
+            <tbody id="lkDash">
+            <?php if (empty($domains)): ?>
+              <tr><td class="lk-empty" colspan="5"><div class="em-t">No applications yet</div><div class="em-s">Add a domain from the “Applications” tab.</div></td></tr>
+            <?php else: foreach ($domains as $d): $sv=htmlspecialchars($d['svc']); $mt=@filemtime($d['script']); ?>
+              <tr>
+                <td><a class="lk-dom" href="https://<?= htmlspecialchars($d['domain']) ?>" target="_blank" rel="noopener"><?= htmlspecialchars($d['domain']) ?></a></td>
+                <td><span class="lk-status lk-st-loading" id="lkdst-<?= $sv ?>"><span class="lk-dot"></span><span class="lk-slabel">…</span></span></td>
+                <td><span class="lk-code-box">:<?= (int)$d['port'] ?></span></td>
+                <td><span class="lk-cfg"><?= $mt?date('d.m.Y H:i',$mt):'—' ?></span></td>
+                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?></span></td>
+              </tr>
+            <?php endforeach; endif; ?>
+            </tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- ─────────── UYGULAMALAR ─────────── -->
+      <section class="lk-view" id="view-apps">
+        <div class="lk-panel" id="lkAddBox">
+          <div class="lk-panel-head"><h2>Add New Domain</h2></div>
+          <div class="lk-form-body">
+            <div class="lk-grid">
+              <div class="lk-fg"><label>Domain</label>
+                <select id="lkFdom" onchange="lkDomChange()">
+                  <?php foreach ($pleskDoms as $pd): ?><option value="<?= htmlspecialchars($pd) ?>"><?= htmlspecialchars($pd) ?></option><?php endforeach; ?>
+                </select></div>
+              <div class="lk-fg"><label>Script (index.lk path)</label><input type="text" id="lkFscript" placeholder="/var/www/vhosts/.../index.lk"></div>
+              <div class="lk-fg"><label>Workers</label><input type="number" id="lkFwork" value="4" min="1" max="64"></div>
+              <div class="lk-fg"><label>Mode</label><select id="lkFmode"><option value="fcgi">FastCGI</option><option value="http">HTTP</option></select></div>
+              <div class="lk-fg"><label>Port</label><input type="number" id="lkFport" value="9100" min="1025" max="65535"></div>
+              <div class="lk-fg lk-fg-btn"><button class="lk-btn lk-btn-primary" id="lkAddBtn" onclick="lkAdd()">Add &amp; Start</button></div>
+            </div>
+            <div class="lk-log" id="lkAddLog"></div>
+          </div>
+        </div>
+        <div class="lk-panel">
+          <div class="lk-panel-head">
+            <h2>Application Manager</h2><span class="lk-count"><?= $domCount ?></span>
+            <span class="spacer"></span>
+            <button class="lk-btn lk-btn-sm" onclick="lkRefresh()">Refresh</button>
+            <button class="lk-btn lk-btn-sm lk-btn-primary" onclick="lkScrollAdd()">Add Domain</button>
+          </div>
+          <div style="overflow-x:auto"><table class="lk-table">
+            <thead><tr><th>Domain</th><th>Status</th><th>Port</th><th>Script</th><th>Configuration</th><th style="text-align:right">Actions</th></tr></thead>
+            <tbody id="lkTbody">
+            <?php if (empty($domains)): ?>
+              <tr><td class="lk-empty" colspan="6"><div class="em-t">No domains added yet</div><div class="em-s">Add a domain from the form above to deploy your LOOK app.</div></td></tr>
+            <?php else: foreach ($domains as $d): $sv=htmlspecialchars($d['svc']); $dj=htmlspecialchars(json_encode($d)); ?>
+              <tr id="lkrow-<?= $sv ?>" data-domain="<?= htmlspecialchars($d['domain']) ?>" data-svc="<?= $sv ?>">
+                <td><a class="lk-dom" href="https://<?= htmlspecialchars($d['domain']) ?>" target="_blank" rel="noopener"><?= htmlspecialchars($d['domain']) ?></a></td>
+                <td><span class="lk-status lk-st-loading" id="lkst-<?= $sv ?>"><span class="lk-dot"></span><span class="lk-slabel">loading…</span></span></td>
+                <td><span class="lk-code-box">:<?= (int)$d['port'] ?></span></td>
+                <td><span class="lk-code" title="<?= htmlspecialchars($d['script']) ?>"><?= htmlspecialchars(basename($d['script'])) ?></span></td>
+                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?></span></td>
+                <td class="lk-actions">
+                  <button class="lk-btn lk-btn-sm lk-btn-primary" onclick='lkOpenEditor(<?= $dj ?>)'>Edit Code</button>
+                  <div class="lk-menu-wrap">
+                    <button class="lk-btn lk-btn-sm" onclick="lkMenu(event,'<?= $sv ?>')">Actions ▾</button>
+                    <div class="lk-menu" id="lkmenu-<?= $sv ?>">
+                      <button class="lk-mi" onclick='lkCloseMenus();lkEdit(<?= $dj ?>)'>⚙ Configure</button>
+                      <button class="lk-mi" onclick="lkCloseMenus();lkRestart('<?= htmlspecialchars($d['domain']) ?>','<?= $sv ?>')">↺ Restart</button>
+                      <button class="lk-mi" id="lktog-<?= $sv ?>" onclick="lkCloseMenus();lkToggle('<?= $sv ?>','<?= htmlspecialchars($d['domain']) ?>')">■ Stop / Start</button>
+                      <button class="lk-mi" onclick="lkCloseMenus();lkMonitor('<?= $sv ?>','<?= htmlspecialchars($d['domain']) ?>')">📈 Monitor</button>
+                      <button class="lk-mi" onclick="lkCloseMenus();lkViewLogs('<?= $sv ?>')">▤ View Logs</button>
+                      <div class="lk-mi-sep"></div>
+                      <button class="lk-mi danger" onclick="lkCloseMenus();lkDelete('<?= htmlspecialchars($d['domain']) ?>','<?= $sv ?>')">✕ Remove</button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            <?php endforeach; endif; ?>
+            </tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- ─────────── LOGLAR ─────────── -->
+      <section class="lk-view" id="view-logs">
+        <div class="lk-logbar">
+          <select id="lkLogSvc">
+            <?php if (empty($domains)): ?><option value="">— no applications —</option>
+            <?php else: foreach ($domains as $d): ?><option value="<?= htmlspecialchars($d['svc']) ?>"><?= htmlspecialchars($d['domain']) ?></option><?php endforeach; endif; ?>
+          </select>
+          <button class="lk-btn lk-btn-sm lk-btn-primary" onclick="lkFetchLogs()">Fetch</button>
+          <button class="lk-btn lk-btn-sm" onclick="lkFetchLogs()">↻ Refresh</button>
+          <button class="lk-btn lk-btn-sm" onclick="lkCopyLog('lkLogOut')">⧉ Copy</button>
+          <span class="lk-cfg">journalctl · last 200 lines</span>
+        </div>
+        <div class="lk-logout" id="lkLogOut">Select an application and click “Fetch” to view logs.</div>
+      </section>
+
+      <!-- ─────────── DOKÜMANTASYON ─────────── -->
+      <section class="lk-view" id="view-docs">
+        <div class="lk-docs">
+          <h3>What is LOOK?</h3>
+          <p>LOOK is a high-performance, zero-dependency web runtime with embedded database and mail servers. Each domain is published as its own systemd service running its <code>index.lk</code> file; Apache/nginx proxies to that service.</p>
+
+          <h3>Quick start</h3>
+          <p><b>1.</b> Add a domain from the “Applications” tab. <b>2.</b> Edit the generated <code>index.lk</code> with “Edit Code”. <b>3.</b> On save, the service is automatically redeployed.</p>
+
+          <h3>Example app</h3>
+          <pre><code>route("GET", "/", fn() =&gt; response::json(["ok" =&gt; true, "app" =&gt; "LOOK"]))
+
+route("GET", "/ping", fn() =&gt; response::json(["status" =&gt; "ok"]))
+
+route("404", fn() =&gt; response::error(404, "Not found"))</code></pre>
+
+          <h3>Modes</h3>
+          <div class="lk-kv">
+            <span class="k">FastCGI</span><span class="v">Via Apache mod_proxy_fcgi — recommended for production</span>
+            <span class="k">HTTP</span><span class="v">Direct HTTP port — nginx/Apache reverse proxy</span>
+            <span class="k">Workers</span><span class="v">Number of concurrent request-handling processes (recommended: CPU cores)</span>
+          </div>
+
+          <h3>Service management</h3>
+          <p>Each app is a systemd service named <code>look-&lt;domain&gt;</code>. Restart / Stop / Logs actions in the panel manage this service. Logs are read via <code>journalctl</code>.</p>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- ══ EDIT (yapılandırma) MODAL ══ -->
+<div class="lk-overlay" id="lkModal">
+  <div class="lk-modal">
+    <div class="lk-modal-head"><h3>Configure Domain</h3><button class="lk-modal-x" onclick="lkCloseModal()">&times;</button></div>
+    <div class="lk-modal-body">
+      <input type="hidden" id="lkESvc">
+      <div class="lk-mfg"><label>Domain</label><input type="text" id="lkEDom" readonly></div>
+      <div class="lk-mfg"><label>Script Path</label><input type="text" id="lkEScript"></div>
+      <div class="lk-mfg-row">
+        <div class="lk-mfg"><label>Workers</label><input type="number" id="lkEWork" min="1" max="64"></div>
+        <div class="lk-mfg"><label>Mode</label><select id="lkEMode"><option value="fcgi">FastCGI</option><option value="http">HTTP</option></select></div>
+        <div class="lk-mfg"><label>Port</label><input type="number" id="lkEPort" min="1025" max="65535"></div>
+      </div>
+      <div class="lk-log" id="lkEditLog"></div>
+    </div>
+    <div class="lk-modal-foot"><span class="spacer"></span>
+      <button class="lk-btn" onclick="lkCloseModal()">Cancel</button>
+      <button class="lk-btn lk-btn-primary" id="lkESave" onclick="lkSaveEdit()">Save &amp; Restart</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ CODE EDITOR MODAL ══ -->
+<div class="lk-overlay" id="lkEdModal">
+  <div class="lk-modal wide">
+    <div class="lk-modal-head">
+      <h3>Code Editor <span class="sub" id="lkEdPath">index.lk</span></h3>
+      <button class="lk-modal-x" onclick="lkCloseEditor()">&times;</button>
+    </div>
+    <div class="lk-modal-body">
+      <input type="hidden" id="lkEdDom">
+      <textarea class="lk-editor" id="lkEdArea" spellcheck="false" placeholder="# loading index.lk…"></textarea>
+      <div class="lk-log" id="lkEdLog"></div>
+    </div>
+    <div class="lk-modal-foot">
+      <span class="lk-cfg" id="lkEdInfo"></span><span class="spacer"></span>
+      <button class="lk-btn" onclick="lkCloseEditor()">Close</button>
+      <button class="lk-btn lk-btn-primary" id="lkEdSave" onclick="lkSaveScript()">Save &amp; Redeploy</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MONITOR MODAL ══ -->
+<div class="lk-overlay" id="lkMonModal">
+  <div class="lk-modal wide">
+    <div class="lk-modal-head">
+      <h3>Monitor <span class="sub" id="lkMonDom"></span></h3>
+      <button class="lk-modal-x" onclick="lkMonClose()">&times;</button>
+    </div>
+    <div class="lk-modal-body">
+      <div class="lk-mon-head">
+        <span class="lk-status lk-st-loading" id="lkMonStatus"><span class="lk-dot"></span><span class="lk-slabel">loading…</span></span>
+        <span class="up" id="lkMonUp"></span>
+      </div>
+      <div class="lk-mgrid">
+        <div class="lk-mcard"><div class="k">CPU</div><div class="v" id="mon-cpu">—</div></div>
+        <div class="lk-mcard"><div class="k">Memory (RSS)</div><div class="v" id="mon-rss">—</div></div>
+        <div class="lk-mcard"><div class="k">PID</div><div class="v" id="mon-pid">—</div></div>
+        <div class="lk-mcard"><div class="k">Connections</div><div class="v" id="mon-conn">—</div></div>
+        <div class="lk-mcard"><div class="k">Port</div><div class="v" id="mon-port">—</div></div>
+        <div class="lk-mcard"><div class="k">Restarts</div><div class="v" id="mon-restart">—</div></div>
+      </div>
+      <div class="lk-mlbl" style="display:flex;align-items:center">Live log tail
+        <button class="lk-btn lk-btn-sm" style="margin-left:auto;height:26px" onclick="lkCopyLog('lkMonLog')">⧉ Copy</button>
+      </div>
+      <div class="lk-mon-log" id="lkMonLog">loading…</div>
+    </div>
+    <div class="lk-modal-foot">
+      <span class="lk-cfg">Live — refreshes every 3 seconds</span><span class="spacer"></span>
+      <button class="lk-btn" onclick="lkMonRestart()">↺ Restart</button>
+      <button class="lk-btn lk-btn-primary" onclick="lkMonClose()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="lk-toasts" id="lkToasts"></div>
+</div>
+
+<script>
+const LK_BASE = location.pathname.replace(/\/+$/, '') + '/index.php';
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+const LK_TITLES = { dash:['Dashboard','system status & applications'], apps:['Application Manager','manage your domains'], logs:['Logs','service journals'], docs:['Documentation','LOOK usage guide'] };
+function lkNav(v){
+  document.querySelectorAll('.lk-view').forEach(s=>s.classList.remove('active'));
+  document.getElementById('view-'+v).classList.add('active');
+  document.querySelectorAll('.lk-navi').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
+  document.getElementById('lkTitle').textContent=LK_TITLES[v][0];
+  document.getElementById('lkDesc').textContent=LK_TITLES[v][1];
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function lkToast(msg, ok=true){
+  const w=document.getElementById('lkToasts'), el=document.createElement('div');
+  el.className='lk-toast '+(ok?'lk-tok':'lk-terr'); el.append(msg); w.appendChild(el);
+  setTimeout(()=>{el.style.transition='opacity .3s,transform .3s';el.style.opacity='0';el.style.transform='translateX(16px)';setTimeout(()=>el.remove(),320);},2600);
+}
+async function lkApi(data){
+  const r=await fetch(LK_BASE,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)});
+  return r.json();
+}
+
+// ── Status (hem dashboard hem apps satirlari) ──────────────────────────────────
+const ST_LABELS={active:'Running',inactive:'Stopped',failed:'Failed',unknown:'Unknown'};
+function lkPaintStatus(id,state){
+  const el=document.getElementById(id); if(!el) return;
+  el.className='lk-status lk-st-'+(ST_LABELS[state]?state:'unknown');
+  el.querySelector('.lk-slabel').textContent=ST_LABELS[state]||state;
+}
+function lkSetStatus(svc,state){
+  lkPaintStatus('lkst-'+svc,state); lkPaintStatus('lkdst-'+svc,state);
+  const tb=document.getElementById('lktog-'+svc);
+  if(tb) tb.textContent = state==='active' ? '■ Stop' : '▶ Start';
+}
+async function lkLoadStatus(svc){
+  try{const d=await lkApi({action:'status',svc});lkSetStatus(svc,d.state||'unknown');}
+  catch{lkSetStatus(svc,'unknown');}
+}
+function lkRefresh(){
+  document.querySelectorAll('tr[data-svc]').forEach(row=>lkLoadStatus(row.dataset.svc));
+}
+document.addEventListener('DOMContentLoaded',lkRefresh);
+
+// ── Live sparklines (gercek veri, periyodik ornekleme) ─────────────────────────
+const LK_HIST={cpu:[],ram:[],disk:[]};
+function lkSpark(id,val){
+  const h=LK_HIST[id]; if(!h) return;
+  h.push(val); if(h.length>28) h.shift();
+  const svg=document.getElementById('sp-'+id); if(!svg) return;
+  const W=88,H=30,n=h.length; if(n<2){return;}
+  const pts=h.map((v,i)=>[ (i/(n-1))*W, H-2-(Math.max(0,Math.min(100,v))/100)*(H-4) ]);
+  const line=pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+  svg.querySelector('polyline').setAttribute('points',line);
+  svg.querySelector('polygon').setAttribute('points','0,'+H+' '+line+' '+W+','+H);
+}
+async function lkPollStats(){
+  try{
+    const s=await lkApi({action:'sysstats'});
+    const set=(id,val,sub,pct)=>{
+      const sv=document.getElementById('sv-'+id); if(sv) sv.innerHTML=val;
+      const ss=document.getElementById('ss-'+id); if(ss) ss.textContent=sub;
+      const tr=document.getElementById('tr-'+id);
+      if(tr){tr.className='lk-track'+(pct>=90?' crit':(pct>=75?' warn':''));tr.querySelector('i').style.width=Math.max(2,pct)+'%';}
+    };
+    set('cpu',(s.cpu|0)+'<small>%</small>',(s.cores|0)+' cores · load '+(s.load||''),s.cpu|0);
+    set('ram',(s.ram_pct|0)+'<small>%</small>',(s.ram_used|0)+' / '+(s.ram_total|0)+' MB',s.ram_pct|0);
+    set('disk',(s.disk_pct|0)+'<small>%</small>','root partition ( / )',s.disk_pct|0);
+    lkSpark('cpu',s.cpu|0); lkSpark('ram',s.ram_pct|0); lkSpark('disk',s.disk_pct|0);
+  }catch{}
+}
+lkPollStats(); setInterval(lkPollStats,4000);
+
+// ── Add form ──────────────────────────────────────────────────────────────────
+function lkDomChange(){
+  const d=document.getElementById('lkFdom').value, p=d.split('.').slice(1).join('.');
+  document.getElementById('lkFscript').value=`/var/www/vhosts/${p}/${d}/index.lk`;
+  lkApi({action:'next_port'}).then(r=>{document.getElementById('lkFport').value=r.port;});
+}
+function lkScrollAdd(){document.getElementById('lkAddBox').scrollIntoView({behavior:'smooth'});document.getElementById('lkFdom').focus();}
+document.addEventListener('DOMContentLoaded',lkDomChange);
+async function lkAdd(){
+  const btn=document.getElementById('lkAddBtn'),log=document.getElementById('lkAddLog');
+  btn.disabled=true;btn.textContent='Starting…';log.style.display='block';log.textContent='$ enable.sh…';
+  const d=await lkApi({action:'add',domain:lkV('lkFdom'),script:lkV('lkFscript'),workers:lkV('lkFwork'),mode:lkV('lkFmode'),port:lkV('lkFport')});
+  log.textContent=d.out||d.error||'';btn.disabled=false;btn.textContent='Add & Start';
+  if(d.ok){lkToast('Domain added');setTimeout(()=>location.reload(),1000);}else lkToast(d.error||'Error',false);
+}
+const lkV=id=>document.getElementById(id).value;
+
+// ── Actions dropdown ───────────────────────────────────────────────────────────
+function lkCloseMenus(){document.querySelectorAll('.lk-menu.open').forEach(m=>m.classList.remove('open'));}
+function lkMenu(e,svc){
+  e.stopPropagation();
+  const m=document.getElementById('lkmenu-'+svc), open=m.classList.contains('open');
+  lkCloseMenus(); if(open) return;
+  const r=e.currentTarget.getBoundingClientRect();
+  m.classList.add('open');                 // önce göster ki ölçülebilsin
+  const mw=m.offsetWidth, mh=m.offsetHeight;
+  let left=Math.max(8, r.right-mw);
+  let top=r.bottom+4;
+  if(top+mh>window.innerHeight-8) top=Math.max(8, r.top-4-mh); // alta sığmazsa yukarı aç
+  m.style.left=left+'px'; m.style.top=top+'px';
+}
+document.addEventListener('click',lkCloseMenus);
+// içerik/pencere kaydırılınca menü kapansın (fixed konum kaymasın)
+window.addEventListener('scroll',lkCloseMenus,true);
+document.addEventListener('DOMContentLoaded',()=>{const b=document.querySelector('.lk-body');if(b)b.addEventListener('scroll',lkCloseMenus);});
+
+async function lkToggle(svc,domain){
+  const el=document.getElementById('lkst-'+svc), active=el?.classList.contains('lk-st-active');
+  if(el){el.className='lk-status lk-st-loading';el.querySelector('.lk-slabel').textContent='working…';}
+  const d=active?await lkApi({action:'stop',svc,domain}):await lkApi({action:'start',svc});
+  if(d.state||d.ok){lkSetStatus(svc,d.state||(active?'inactive':'active'));lkToast(active?'Stopped':'Started');}
+  else{lkToast(d.error||'Error',false);lkLoadStatus(svc);}
+}
+async function lkRestart(domain,svc){
+  const el=document.getElementById('lkst-'+svc);
+  if(el){el.className='lk-status lk-st-loading';el.querySelector('.lk-slabel').textContent='restarting…';}
+  const d=await lkApi({action:'restart',domain});
+  lkSetStatus(svc,d.state||(d.ok?'active':'unknown'));lkToast(d.ok?'Restarted':(d.error||'Error'),d.ok);
+}
+async function lkDelete(domain,svc){
+  if(!confirm(`Remove "${domain}"?\nThe service will be stopped.`))return;
+  const row=document.getElementById('lkrow-'+svc); if(row)row.style.opacity='.4';
+  const d=await lkApi({action:'delete',domain,svc});
+  if(d.ok){row?.remove();lkToast('Removed');if(!document.querySelector('tr[data-svc]'))location.reload();}
+  else{if(row)row.style.opacity='';lkToast(d.error||'Error',false);}
+}
+
+// ── Edit (config) modal ────────────────────────────────────────────────────────
+function lkEdit(data){
+  document.getElementById('lkESvc').value=data.svc;document.getElementById('lkEDom').value=data.domain;
+  document.getElementById('lkEScript').value=data.script;document.getElementById('lkEWork').value=data.workers;
+  document.getElementById('lkEMode').value=data.mode;document.getElementById('lkEPort').value=data.port;
+  document.getElementById('lkEditLog').style.display='none';document.getElementById('lkModal').classList.add('open');
+}
+function lkCloseModal(){document.getElementById('lkModal').classList.remove('open');}
+document.getElementById('lkModal').addEventListener('click',e=>{if(e.target===e.currentTarget)lkCloseModal();});
+async function lkSaveEdit(){
+  const btn=document.getElementById('lkESave'),log=document.getElementById('lkEditLog');
+  btn.disabled=true;btn.textContent='Saving…';log.style.display='block';log.textContent='$ enable.sh…';
+  const d=await lkApi({action:'edit',domain:lkV('lkEDom'),script:lkV('lkEScript'),workers:lkV('lkEWork'),mode:lkV('lkEMode'),port:lkV('lkEPort')});
+  log.textContent=d.out||d.error||'';btn.disabled=false;btn.textContent='Save & Restart';
+  if(d.ok){lkToast('Saved');setTimeout(()=>location.reload(),900);}else lkToast(d.error||'Error',false);
+}
+
+// ── Code editor ────────────────────────────────────────────────────────────────
+async function lkOpenEditor(data){
+  document.getElementById('lkEdDom').value=data.domain;
+  document.getElementById('lkEdPath').textContent=data.script;
+  document.getElementById('lkEdInfo').textContent=data.domain;
+  const area=document.getElementById('lkEdArea'); area.value='# loading…'; area.disabled=true;
+  document.getElementById('lkEdLog').style.display='none';
+  document.getElementById('lkEdModal').classList.add('open');
+  const d=await lkApi({action:'read_script',domain:data.domain});
+  area.disabled=false;
+  if(d.ok){area.value=d.content||''; if(!d.exists) lkToast('File does not exist — it will be created on save',true);}
+  else{area.value='';lkToast(d.error||'Failed to read',false);}
+  area.focus();
+}
+function lkCloseEditor(){document.getElementById('lkEdModal').classList.remove('open');}
+document.getElementById('lkEdModal').addEventListener('click',e=>{if(e.target===e.currentTarget)lkCloseEditor();});
+// TAB tuşu editörde girinti eklesin
+document.getElementById('lkEdArea').addEventListener('keydown',function(e){
+  if(e.key==='Tab'){e.preventDefault();const s=this.selectionStart,en=this.selectionEnd;
+    this.value=this.value.slice(0,s)+'  '+this.value.slice(en);this.selectionStart=this.selectionEnd=s+2;}
+});
+async function lkSaveScript(){
+  const btn=document.getElementById('lkEdSave'),log=document.getElementById('lkEdLog');
+  btn.disabled=true;btn.textContent='Deploying…';log.style.display='block';log.textContent='$ saving + redeploying…';
+  const d=await lkApi({action:'save_script',domain:document.getElementById('lkEdDom').value,content:document.getElementById('lkEdArea').value});
+  log.textContent=d.out||d.error||'';btn.disabled=false;btn.textContent='Save & Redeploy';
+  if(d.ok){lkToast('Saved & redeployed');}else lkToast(d.error||'Error',false);
+}
+
+// ── Monitor modal ──────────────────────────────────────────────────────────────
+let LK_MON=null;  // {svc,domain,timer}
+function lkFmtUptime(sec){sec=parseInt(sec)||0;const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);
+  if(d)return d+'d '+h+'h';if(h)return h+'h '+m+'m';return m+'m';}
+function lkMonitor(svc,domain){
+  LK_MON={svc,domain};
+  document.getElementById('lkMonDom').textContent=domain;
+  document.getElementById('lkMonModal').classList.add('open');
+  ['mon-cpu','mon-rss','mon-pid','mon-conn','mon-port','mon-restart'].forEach(id=>document.getElementById(id).textContent='—');
+  document.getElementById('lkMonLog').textContent='loading…';
+  lkMonTick();
+  LK_MON.timer=setInterval(lkMonTick,3000);
+}
+function lkMonClose(){document.getElementById('lkMonModal').classList.remove('open');if(LK_MON&&LK_MON.timer)clearInterval(LK_MON.timer);LK_MON=null;}
+document.getElementById('lkMonModal').addEventListener('click',e=>{if(e.target===e.currentTarget)lkMonClose();});
+async function lkMonRestart(){if(!LK_MON)return;const s=LK_MON;lkToast('Restarting…');await lkApi({action:'restart',domain:s.domain});setTimeout(lkMonTick,600);}
+async function lkMonTick(){
+  if(!LK_MON)return; const s=LK_MON;
+  try{
+    const d=await lkApi({action:'monitor',svc:s.svc}); if(!LK_MON||LK_MON.svc!==s.svc)return;
+    const m=d.m||{};
+    const active=(m.ActiveState==='active');
+    lkPaintStatus('lkMonStatus',active?'active':(m.ActiveState==='failed'?'failed':'inactive'));
+    const rss=parseInt(m.RSS)||0;
+    document.getElementById('mon-cpu').innerHTML=(m.PCPU!==undefined?m.PCPU:'0')+'<small>%</small>';
+    document.getElementById('mon-rss').innerHTML=rss>1024?(rss/1024).toFixed(1)+'<small> MB</small>':rss+'<small> KB</small>';
+    document.getElementById('mon-pid').textContent=(m.MainPID&&m.MainPID!=='0')?m.MainPID:'—';
+    document.getElementById('mon-conn').textContent=m.CONN!==undefined?m.CONN:'0';
+    document.getElementById('mon-port').innerHTML=m.PORT?':'+m.PORT:'—';
+    document.getElementById('mon-restart').textContent=m.NRestarts!==undefined?m.NRestarts:'0';
+    document.getElementById('lkMonUp').textContent=active?('uptime '+lkFmtUptime(m.ETIMES)):(m.SubState||m.ActiveState||'');
+    // log kuyrugu (son 30)
+    const lg=await lkApi({action:'logs',svc:s.svc,n:30}); if(!LK_MON||LK_MON.svc!==s.svc)return;
+    if(lg.ok){const el=document.getElementById('lkMonLog');const near=el.scrollTop+el.clientHeight>=el.scrollHeight-30;
+      el.innerHTML=lkEsc(lg.log||'').split('\n').map(l=>/\b(ERR|ERROR|hata|failed|Fatal)\b/i.test(l)?'<span class="err">'+l+'</span>':/\b(WARN|uyar|warning)\b/i.test(l)?'<span class="warn">'+l+'</span>':/\b(OK|aktif|Listening|Started|haz)\b/i.test(l)?'<span class="ok">'+l+'</span>':l).join('\n');
+      if(near)el.scrollTop=el.scrollHeight;}
+  }catch{}
+}
+
+// ── Log kopyala (clipboard API + fallback) ─────────────────────────────────────
+async function lkCopyLog(id){
+  const el=document.getElementById(id); if(!el)return;
+  const txt=el.innerText||el.textContent||'';
+  if(!txt.trim()){lkToast('No logs to copy',false);return;}
+  try{
+    if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(txt);}
+    else{const ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.opacity='0';
+      document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();}
+    lkToast('Logs copied to clipboard');
+  }catch{lkToast('Copy failed',false);}
+}
+
+// ── Logs view ──────────────────────────────────────────────────────────────────
+function lkViewLogs(svc){lkNav('logs');const sel=document.getElementById('lkLogSvc');if(sel)sel.value=svc;lkFetchLogs();}
+function lkEsc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+async function lkFetchLogs(){
+  const svc=document.getElementById('lkLogSvc').value, out=document.getElementById('lkLogOut');
+  if(!svc){out.textContent='No application.';return;}
+  out.textContent='loading…';
+  const d=await lkApi({action:'logs',svc,n:200});
+  if(d.ok){
+    const html=lkEsc(d.log||'(no logs)').split('\n').map(l=>{
+      if(/\b(ERR|ERROR|hata|failed|Fatal)\b/i.test(l))return '<span class="err">'+l+'</span>';
+      if(/\b(WARN|uyar|warning)\b/i.test(l))return '<span class="warn">'+l+'</span>';
+      if(/\b(OK|aktif|ready|hazır|Listening|Started)\b/i.test(l))return '<span class="ok">'+l+'</span>';
+      return l;
+    }).join('\n');
+    out.innerHTML=html; out.scrollTop=out.scrollHeight;
+  }else out.textContent=d.error||'Failed to fetch logs';
+}
+</script>

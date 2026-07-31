@@ -105,10 +105,31 @@ node_modules/
 # Internal dev instructions (private — not published)
 CLAUDE.md
 
-# Repo disi (kendi yerinde): site kaynagi, kurulum/dagitim, docker build/test
+# Site kaynagi — repo disi (kendi yerinde, ayri redesign)
 docs/
-platforms/
-cpp/docker/
+
+# --- Yayin hatti: TARIFI izle, CIKTIYI yok say ---
+# Drift kok-nedeni: izlenmeyen plesk/bin gunlerce stale kaldi -> yamasiz zip uretildi.
+# Surum kontrolu ilk git status'ta gorurdu. Build script + paket kaynagi IZLENIR;
+# derlenmis ikili/zip/rpm/dist CIKTIDIR, yok sayilir.
+# (NOT: gitignore satir-ici yorum desteklemez — yorumlar ayri satirda.)
+# Ayri urun (VSCode eklentisi) — kendi surum dongusu, repoda degil:
+platforms/vscode/
+# Paket ciktilari:
+platforms/**/*.zip
+platforms/**/*.rpm
+platforms/**/*.exe
+platforms/**/*.vsix
+# Derlenmis ikili (drift buradan cikti) + frontend cikti:
+platforms/plesk/bin/
+platforms/plesk/htdocs/bin/
+platforms/plesk/htdocs/dist/
+# Yerel kurulum testi + junk (bozuk komuttan kalma bos dizin):
+platforms/plesk/test/
+platforms/plesk;C/
+# cpp/docker: yalniz uretim tarifi izlensin; test infra + cikti disarda:
+cpp/docker/*
+!cpp/docker/Dockerfile.production
 
 # Yerel calisma notlari (repoda tutulmuyor)
 PROJE_DURUMU.md

@@ -1,0 +1,96 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LOOK Language — Production Image
+# Base: AlmaLinux 8 (matches Plesk VPS: GCC 12 / GLIBC 2.28)
+#
+# Published: docker run -p 7400:7400 codlook/look   (Docker Hub — no build needed)
+# Build:     docker build -f cpp/docker/Dockerfile.production -t look:latest .
+# Run:       docker run -p 7400:7400 --env-file .env look:latest
+# Publish:   docker tag look:latest codlook/look:latest && docker push codlook/look:latest
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: Builder ──────────────────────────────────────────────────────────
+FROM almalinux:8 AS builder
+
+# gcc-toolset-12: GCC 12 + binutils, matches Plesk VPS toolchain (GLIBC 2.28)
+RUN dnf install -y \
+        gcc-toolset-12 \
+        cmake \
+        make \
+        openssl-devel \
+        git \
+    && dnf clean all
+
+# Activate gcc-toolset-12 for all subsequent RUN commands
+ENV PATH="/opt/rh/gcc-toolset-12/root/usr/bin:${PATH}"
+
+WORKDIR /build
+COPY . /build/
+
+WORKDIR /build/cpp
+
+# Build damgasi: .dockerignore .git'i haric tuttugu icin container icinde git yok;
+# SHA'yi disaridan gecir:  docker build --build-arg LOOK_BUILD=$(git rev-parse --short HEAD)
+ARG LOOK_BUILD=docker
+
+# Release build — all three binaries
+# SQLite: amalgamation bundled, no external dep
+# OpenSSL: system (openssl-devel), linked shared
+# PostgreSQL: hand-written wire protocol, no libpq needed
+# Redis: RESP2 hand-written, no hiredis needed
+RUN rm -rf build && cmake -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLOOK_STATIC_SSL=OFF \
+        -DLOOK_BUILD=${LOOK_BUILD} \
+        -DCMAKE_THREAD_PREFER_PTHREAD=TRUE \
+        -DTHREADS_PREFER_PTHREAD_FLAG=TRUE \
+    && cmake --build build \
+        --target look look-cgi look-fcgi \
+        --parallel "$(nproc)"
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+# Minimal AlmaLinux 8 — only runtime deps
+FROM almalinux:8-minimal AS runtime
+
+# openssl-libs: TLS for http::, SMTP STARTTLS
+# curl-minimal: healthcheck (HTTP /health endpoint)
+# No -devel packages, no compilers
+RUN microdnf install -y \
+        openssl-libs \
+        curl \
+        shadow-utils \
+    && microdnf clean all
+
+# Non-root user for security
+RUN groupadd -r look && useradd -r -g look -s /sbin/nologin look
+
+# Copy binaries from builder (CMake OUTPUT_NAME: lk / lk-cgi / lk-fcgi)
+COPY --from=builder /build/cpp/build/lk      /usr/local/bin/lk
+COPY --from=builder /build/cpp/build/lk-cgi  /usr/local/bin/lk-cgi
+COPY --from=builder /build/cpp/build/lk-fcgi /usr/local/bin/lk-fcgi
+
+# App directory — mounted at runtime via volume
+RUN mkdir -p /app /app/storage /var/mail/look /var/log/look \
+    && chown -R look:look /app /var/mail/look /var/log/look
+
+WORKDIR /app
+
+# ── Ports ─────────────────────────────────────────────────────────────────────
+# 7400  — HTTP standalone / FastCGI
+# 587   — SMTP submission (authenticated, STARTTLS required)
+# 465   — SMTPS (implicit TLS)
+# 25 intentionally NOT exposed in production:
+#   - Blocked by default on AWS / GCP / Hetzner
+#   - Plesk's own Postfix occupies :25 on the host
+# 2525 — alternative MTA port for testing (no OS privilege required)
+EXPOSE 7400 587 465 2525
+
+# ── Health check ──────────────────────────────────────────────────────────────
+# HTTP GET /health — app must respond 200. lk-fcgi HTTP mode serves this.
+# Override HEALTHCHECK in compose if using FastCGI-only mode (no HTTP port).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fs http://localhost:7400/health || exit 1
+
+# ── Default command ───────────────────────────────────────────────────────────
+# lk-fcgi HTTP mode: handles both FastCGI and direct HTTP on same binary
+USER look
+CMD ["/usr/local/bin/lk-fcgi", "--mode", "http", "--port", "7400", "--workers", "4"]
