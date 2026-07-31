@@ -165,30 +165,30 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 if ($action !== '') {
     header('Content-Type: application/json; charset=utf-8');
 
-    // GUVENLIK — CSRF: durum-degistiren eylemler (servis kurar/siler, root scriptleri
-    // cagirir) token korumasi olmadan, oturumu acik bir yoneticiye kotu sayfa actirarak
-    // tetiklenebilirdi. Ustelik $action GET'ten de okunuyordu -> <img src=?action=remove>
-    // yeterdi. Iki katman: (1) mutasyon YALNIZ POST; (2) same-origin (Origin/Referer host
-    // == Host). Panelin kendi AJAX'i same-origin POST -> gecer; capraz-site -> reddedilir.
-    // (Tam cozum Plesk pm_Form token'i; bu, test edilemeyen Plesk'e bagimli olmadan
-    //  saldiri yuzeyini "panel hesabi olan"a geri indirir.)
-    $MUTATING = ['add','edit','start','stop','restart','remove','setup','install'];
-    if (in_array($action, $MUTATING, true)) {
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            http_response_code(405);
-            echo json_encode(['ok'=>false,'error'=>'POST required']); exit;
-        }
-        // HTTP_HOST porti icerir (host:8443) ama parse_url(...HOST) PORTSUZ doner ->
-        // ikisini de host-only'ye indir, yoksa mesru panel istegi (8443) bloke olur.
-        $host   = preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST'] ?? '');
-        $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-        $ref    = $_SERVER['HTTP_REFERER'] ?? '';
-        $src_host = $origin !== '' ? parse_url($origin, PHP_URL_HOST)
-                  : ($ref !== '' ? parse_url($ref, PHP_URL_HOST) : '');
-        if ($host === '' || !$src_host || strcasecmp((string)$src_host, $host) !== 0) {
-            http_response_code(403);
-            echo json_encode(['ok'=>false,'error'=>'Cross-origin request blocked']); exit;
-        }
+    // GUVENLIK — CSRF: eylemler servis kurar/siler, root scriptleri cagirir, site .lk
+    // dosyasina yazar (save_script -> enable.sh restart -> yazilan kod calisir). Token
+    // korumasi olmadan, oturumu acik yoneticiye kotu sayfa actirarak capraz-site tetiklenebilir.
+    // Ustelik $action GET'ten de okunuyordu (<img src=?action=delete>).
+    // FAIL-SAFE (denylist DEGIL allowlist): guard'i ISTISNASIZ HER eyleme uygula. Eylem
+    // adlarini saymak yerine ('$MUTATING' listesi save_script/delete'i kacirmisti — allowlist
+    // fail-open) tersine cevir: lkApi() zaten TUM eylemleri POST+same-origin gonderiyor, o
+    // yuzden guard-all paneli KIRMAZ ve gelecekte eklenecek her eylem otomatik korunur.
+    // read_script'i de kapsar (site kaynagi capraz-site okunamaz). (1) YALNIZ POST;
+    // (2) same-origin (Origin/Referer host == Host); ikisi de yoksa fail-closed 403.
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['ok'=>false,'error'=>'POST required']); exit;
+    }
+    // HTTP_HOST porti icerir (host:8443) ama parse_url(...HOST) PORTSUZ doner ->
+    // ikisini de host-only'ye indir, yoksa mesru panel istegi (8443) bloke olur.
+    $host   = preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST'] ?? '');
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    $ref    = $_SERVER['HTTP_REFERER'] ?? '';
+    $src_host = $origin !== '' ? parse_url($origin, PHP_URL_HOST)
+              : ($ref !== '' ? parse_url($ref, PHP_URL_HOST) : '');
+    if ($host === '' || !$src_host || strcasecmp((string)$src_host, $host) !== 0) {
+        http_response_code(403);
+        echo json_encode(['ok'=>false,'error'=>'Cross-origin request blocked']); exit;
     }
 
     $domains = load_domains();
