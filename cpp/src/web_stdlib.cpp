@@ -1257,7 +1257,16 @@ static std::vector<DbParam> values_to_db_params(const std::vector<Value>& params
         switch (p.type()) {
             case Value::NONE:  out.push_back(DbParam::null());                break;
             case Value::INT:   out.push_back(DbParam::from_int(p.as_int()));  break;
-            case Value::FLOAT: out.push_back(DbParam::from_float(p.as_float())); break;
+            case Value::FLOAT: {
+                double d = p.as_float();
+                // NaN/Infinity: sqlite/pg SESSIZCE null yapar, mysql "Out of range" verir —
+                // üçü tutarsız + ikisi sessiz-veri-kaybı (Cephe 2). LOOK 0.0/0.0'da fail-loud;
+                // DB bind'de de fail-loud + TUTARLI: temiz hata (sessiz-null yerine).
+                if (!std::isfinite(d))
+                    throw std::runtime_error("db: NaN/Infinity float parametre olarak bind edilemez");
+                out.push_back(DbParam::from_float(d));
+                break;
+            }
             case Value::BOOL:  out.push_back(DbParam::from_bool(p.as_bool())); break;
             default:           out.push_back(DbParam::from_text(p.to_string())); break;
         }

@@ -4,6 +4,7 @@
 // hiç çalışmamış olabilir) sessizce yanlış veri üretmiyor mu — Cephe 2 sınıfı.
 use json
 use array
+use math
 $fail = 0
 function chk($l, $g, $w) {
     if ($g == $w) { print("OK   " . $l) }
@@ -49,6 +50,12 @@ chk("injection yorum bloklu", len($q2), 0)
 $caught = false
 try { db::query($c, "SELECT * FROM t_bind WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
 chk("sayim uyusmazligi reddi", $caught, true)
+
+// Non-finite (Infinity) bind → fail-loud (sqlite/pg sessizce null yapardi, mysql cryptic
+// "Out of range" — 3'u tutarsiz + sessiz-veri-kaybi; LOOK 0.0/0.0 fail-loud'la tutarli).
+$inf_caught = false
+try { db::exec($c, "INSERT INTO t_bind (f) VALUES (?)", [math::pow(10, 400)]) } catch ($e) { $inf_caught = true }
+chk("Inf bind fail-loud (3 surucude tutarli)", $inf_caught, true)
 
 db::exec($c, "DROP TABLE IF EXISTS t_bind", [])
 print("=== matris bitti ===")
