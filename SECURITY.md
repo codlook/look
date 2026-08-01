@@ -23,15 +23,17 @@ TSan) + regression tests run on every build + CI.
 
 Honesty about what LOOK does **not** protect yet — so you can decide before deploying, not discover after:
 
-- **PostgreSQL connections are not encrypted.** The PostgreSQL client has no TLS support at all,
-  and there is no `postgresqls://` scheme. Managed hosts that **require** TLS — Supabase, Neon,
-  Heroku Postgres, Azure Database for PostgreSQL, most AWS RDS setups — will **refuse the connection**
-  (this is a compatibility wall, not only a security note). Use an SSH tunnel or a private network
-  for remote PostgreSQL. Adding native TLS is a committed roadmap item.
+- **PostgreSQL TLS verifies by default (secure default).** Use `postgresqls://` (or `?tls=verify`)
+  to connect to managed hosts that require TLS — Supabase, Neon, Heroku Postgres, Azure Database
+  for PostgreSQL, AWS RDS. The certificate chain **and** hostname are verified (`SSL_VERIFY_PEER` +
+  `SSL_set1_host`), so a MITM is rejected. If the server does not offer TLS, the connection is
+  **refused with a clear error** — it never silently falls back to plaintext. `?tls=insecure`
+  encrypts without verifying (for a self-signed dev cert). Because PostgreSQL TLS is new, there is
+  no back-compat pressure to weaken this default — unlike the MySQL/Redis clients below.
 - **MySQL / MariaDB / Redis default to plaintext.** Use `mysqls://` / `rediss://` (or `?tls=1`) to
   encrypt. Even then, the certificate is **not verified by default** — add `?tls=verify` to
   authenticate the server. Without `verify`, the connection is encrypted but a MITM is still possible.
-- The `http::` client verifies certificates by default (`SSL_VERIFY_PEER`). The database clients do not.
+- The `http::` and PostgreSQL clients verify certificates by default (`SSL_VERIFY_PEER`). The MySQL/Redis clients do not (opt in with `?tls=verify`).
 
 On loopback / same-host / a trusted private network, none of the above is exposed. The runtime logs a
 one-time warning per connection pool when a database connection is unencrypted or unverified.

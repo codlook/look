@@ -1,0 +1,9 @@
+# PG-TLS matris 1/4: sunucu TLS DESTEKLEMIYOR (ssl=off) → postgresqls:// istendi.
+# SSLRequest'e 'N' gelir → SESSIZCE plaintext'e DUSULMEZ, temiz hata verilir.
+try {
+  $db = db::connect("postgresqls://looktest:testpass@look-pg-plain/testdb")
+  db::query($db, "SELECT 1")
+  print("HATA: TLS-siz sunucuya postgresqls:// baglandi (plaintext'e dusuldu!)")
+} catch($e) {
+  print("OK reddedildi (TLS-siz sunucu): " . $e)
+}

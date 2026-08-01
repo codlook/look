@@ -1,0 +1,5 @@
+# PG-TLS pozitif kontrol: ?tls=insecure → sifreli ama DOGRULANMAMIS.
+# Guvenilmeyen cert'e RAGMEN baglanir (verify kapali) → 2/4'un reddinin verify'dan
+# geldigini, bozuk handshake'ten degil, kanitlar.
+$db = db::connect("postgresqls://looktest:testpass@look-pg/testdb?tls=insecure")
+print(db::query($db, "SELECT 42 AS n")[0]["n"])

@@ -49,6 +49,11 @@ public:
                  const std::string& database);
     void disconnect();
 
+    // TLS iste (postgresqls:// / ?tls=). verify=true (DOĞRU VARSAYILAN): sertifika +
+    // hostname doğrula. connect()'ten ÖNCE çağrılır. Yeni özellik olduğu için PG'de
+    // kırılacak TLS kullanıcısı yok → doğrudan güvenli varsayılanla başlanır.
+    void set_tls(bool enable, bool verify) { tls_ = enable; tls_verify_ = verify; }
+
     // DbConnection arayüzü
     std::vector<DbRow> query(const std::string& sql) override;
     std::vector<DbRow> execute(const std::string& sql, const std::vector<DbParam>& params) override;
@@ -74,6 +79,9 @@ private:
     bool        wsock_init_         = false;
     int         connect_timeout_ms_ = 5000;
     int         query_timeout_ms_   = 30000;
+    void*       ssl_                = nullptr;   // SSL* — TLS aktifse (void*: header OpenSSL'siz kalır)
+    bool        tls_                = false;     // TLS iste
+    bool        tls_verify_         = true;      // sertifika+hostname doğrula (doğru varsayılan)
 
     void do_connect();
     void set_socket_timeout(int ms);

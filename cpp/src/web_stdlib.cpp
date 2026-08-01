@@ -1127,11 +1127,31 @@ static std::shared_ptr<DbConnection> open_one_connection(
         c->open(path);
         return c;
     }
-    if (dsn.substr(0, 11) == "postgres://" || dsn.substr(0, 14) == "postgresql://") {
+    if (dsn.substr(0, 11) == "postgres://"  || dsn.substr(0, 14) == "postgresql://" ||
+        dsn.substr(0, 14) == "postgresqls://") {
         std::string user, pass, host = "127.0.0.1", db_name;
         int port = 5432;
-        parse_dsn_part(dsn, user, pass, host, port, db_name);
+        std::string scheme = parse_dsn_part(dsn, user, pass, host, port, db_name);
+        // TLS: postgresqls:// şeması VEYA db-adında ?tls=... sorgu paramı.
+        // PG'de TLS YENİ → verify DOĞRU VARSAYILAN (postgresqls:// / ?tls=verify → doğrulanmış,
+        // ?tls=insecure → şifreli ama doğrulanmamış). mysql/redis'in tersine güvenli başlar.
+        bool tls = (scheme == "postgresqls");
+        bool tls_verify = true;   // güvenli varsayılan
+        { size_t q = db_name.find('?');
+          if (q != std::string::npos) {
+            std::string query = db_name.substr(q + 1);
+            db_name = db_name.substr(0, q);
+            if (query.find("tls=insecure") != std::string::npos ||
+                query.find("ssl=insecure")  != std::string::npos ||
+                query.find("sslmode=require") != std::string::npos) { tls = true; tls_verify = false; }
+            else if (query.find("tls=verify") != std::string::npos ||
+                     query.find("ssl=verify")  != std::string::npos ||
+                     query.find("sslmode=verify-full") != std::string::npos ||
+                     query.find("tls=1") != std::string::npos ||
+                     query.find("tls=true") != std::string::npos) { tls = true; tls_verify = true; }
+          } }
         auto c = std::make_shared<PostgresClient>();
+        if (tls) c->set_tls(true, tls_verify);
         c->connect(host, port, user, pass, db_name);
         return c;
     }
@@ -1385,8 +1405,21 @@ static Module make_db_module(Interpreter* interp) {
             bool encrypted  = secure_sch ||
                 (has_tls && (sch == "mysql" || sch == "mariadb" || sch == "redis"));
             std::string w;
-            if (sch == "postgres" || sch == "postgresql")
-                w = "PostgreSQL baglantisi SIFRELENMEMIS (TLS henuz desteklenmiyor) — sorgu VE sonuclar ag'da ACIK gider. Guvenilmez agda kullanmayin.";
+            // PostgreSQL: TLS artik VAR (postgresqls:// / ?tls=). verify DOGRU VARSAYILAN →
+            // yalniz ACIK plaintext'te veya insecure opt-out'ta uyar.
+            bool pg = (sch == "postgres" || sch == "postgresql" || sch == "postgresqls");
+            bool pg_encrypted = (sch == "postgresqls") ||
+                (has_tls && (dsn.find("tls=") != std::string::npos || dsn.find("sslmode=") != std::string::npos));
+            bool pg_insecure = dsn.find("tls=insecure") != std::string::npos ||
+                               dsn.find("ssl=insecure")  != std::string::npos ||
+                               dsn.find("sslmode=require") != std::string::npos;
+            if (pg) {
+                if (!pg_encrypted)
+                    w = "PostgreSQL baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: postgresqls://... veya DSN'e ?tls=verify.";
+                else if (pg_insecure)
+                    w = "PostgreSQL TLS sertifikasi DOGRULANMIYOR (MITM riski) — ?tls=insecure yerine postgresqls:// veya ?tls=verify kullanin.";
+                // aksi halde postgresqls:// / ?tls=verify → sifreli+dogrulanmis → uyari yok
+            }
             else if ((sch == "mysql" || sch == "mariadb" || secure_sch) && !encrypted && sch[0] == 'm')
                 w = "MySQL baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: mysqls://... veya DSN'e ?tls=verify.";
             else if ((sch == "redis" || sch == "rediss") && !encrypted)

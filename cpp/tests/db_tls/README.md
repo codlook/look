@@ -1,4 +1,30 @@
-# DB-TLS guard (mysql:8 gerektirir)
+# DB-TLS guard (mysql:8 / postgres:16 gerektirir)
+
+## PostgreSQL TLS (pg_*.lk) — 4 durum matrisi + pozitif kontrol
+
+postgres_client'a TLS eklendi: `postgresqls://` / `?tls=verify` → SSLRequest → 'S' → SSL_connect
+→ (verify) SSL_VERIFY_PEER + SSL_set1_host. **verify DOGRU VARSAYILAN** (PG'de eski TLS
+kullanicisi yok → guvenli baslar; mysql/redis'in tersine). Sunucu TLS vermezse ('N') SESSIZCE
+plaintext'e DUSMEZ — temiz hata. `?tls=insecure` → sifreli ama dogrulanmamis (self-signed dev).
+
+Ampirik matris (postgres:16, CA-imzali cert SAN=look-pg, look-build openssl):
+- `pg_reject_tls.lk`  — ssl=off sunucu → 'N' → temiz hata (plaintext'e dusmez). ✓
+- `pg_untrusted.lk`   — guvenilmeyen CA + verify(varsayilan) → certificate verify failed → reddet. ✓
+- `pg_valid.lk`       — SSL_CERT_FILE=ca.crt + hostname eslesir → baglanti + SELECT 1. ✓
+- `pg_mismatch.lk`    — gecerli CA ama IP ile baglan (SAN uyusmaz) → SSL_set1_host reddet. ✓
+- `pg_insecure.lk`    — POZITIF KONTROL: ?tls=insecure → guvenilmeyen cert'e RAGMEN baglanir (42);
+                        2/4 reddinin verify'dan geldigini, bozuk handshake'ten degil, kanitlar. ✓
+
+Kosum (network looknet + postgres:16 ssl=on, cert SAN=look-pg):
+    build/lk tests/db_tls/pg_reject_tls.lk        # OK reddedildi (TLS-siz sunucu)
+    build/lk tests/db_tls/pg_untrusted.lk         # OK reddedildi (guvenilmeyen cert)
+    SSL_CERT_FILE=/certs/ca.crt build/lk tests/db_tls/pg_valid.lk    # 1
+    SSL_CERT_FILE=/certs/ca.crt PG_MISMATCH_DSN=postgresqls://.../@<IP>/testdb \
+        build/lk tests/db_tls/pg_mismatch.lk      # OK reddedildi (hostname)
+
+---
+
+# DB-TLS guard: MySQL (mysql:8 gerektirir)
 
 MySQL DB-TLS implementasyonu (mysqls:// / ?tls=1) — SSLRequest→SSL_connect→auth+data TLS üstünde.
 Redis'te (rediss stub, aslında yok) vardı sanılıyordu; MySQL'de gerçek TLS eklendi (asimetri kapandı).

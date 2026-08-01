@@ -1,0 +1,4 @@
+# PG-TLS matris 3/4: gecerli CA-imzali cert + hostname (SAN=look-pg) ESLESIYOR.
+# SSL_CERT_FILE=/certs/ca.crt ile bizim CA guvenilir → baglanti KABUL, SELECT doner.
+$db = db::connect("postgresqls://looktest:testpass@look-pg/testdb")
+print(db::query($db, "SELECT 1 AS n")[0]["n"])

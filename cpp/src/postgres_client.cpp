@@ -14,6 +14,9 @@
 #else
   #include <netinet/tcp.h>
   #include <fstream>
+  // DB-TLS: PostgreSQL SSLRequest → TLS upgrade (Linux; Windows OpenSSL'siz derlenir).
+  #include <openssl/ssl.h>
+  #include <openssl/err.h>
 #endif
 
 namespace look {
@@ -32,6 +35,24 @@ static void pg_secure_random(uint8_t* buf, size_t n) {
         throw std::runtime_error("PostgreSQL SCRAM: CSPRNG erişilemedi (/dev/urandom)");
 #endif
 }
+
+#ifndef _WIN32
+// ── DB-TLS: client SSL_CTX ───────────────────────────────────────────────────
+// PostgreSQL'de TLS YENİ (kırılacak kullanıcı yok) → per-SSL verify DOĞRU varsayılanla
+// (SSL_VERIFY_PEER + SSL_set1_host) açılır. CTX yalnız trust store'u yükler; verify modu
+// bağlantı başına set edilir (mysql_client:601 deseni, :55'in VERIFY_NONE'ı DEĞİL).
+static SSL_CTX* pg_ssl_ctx() {
+    static SSL_CTX* ctx = [] {
+        SSL_library_init();
+        SSL_load_error_strings();
+        OpenSSL_add_all_algorithms();
+        SSL_CTX* c = SSL_CTX_new(TLS_client_method());
+        if (c) SSL_CTX_set_default_verify_paths(c);   // sistem CA'ları (verify modu için)
+        return c;
+    }();
+    return ctx;
+}
+#endif
 
 // ── MD5 (RFC 1321) ────────────────────────────────────────────────────────────
 
@@ -422,11 +443,19 @@ PostgresClient::~PostgresClient() {
 
 void PostgresClient::disconnect() {
     if (sock_ != PG_SOCK_INVALID) {
-        // Terminate mesajı gönder (best effort)
+        // Terminate mesajı gönder (best effort) — TLS aktifse send_bytes SSL üstünden yollar
         try {
             uint8_t msg[5] = {'X', 0, 0, 0, 4};
-            send(sock_, (const char*)msg, 5, 0);
+            send_bytes(msg, 5);
         } catch (...) {}
+#ifndef _WIN32
+        if (ssl_) {
+            SSL* s = (SSL*)ssl_;
+            SSL_shutdown(s);
+            SSL_free(s);
+            ssl_ = nullptr;
+        }
+#endif
         pg_close_sock(sock_);
         sock_ = PG_SOCK_INVALID;
     }
@@ -436,6 +465,17 @@ void PostgresClient::disconnect() {
 
 bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
     size_t received = 0;
+#ifndef _WIN32
+    if (ssl_) {   // TLS aktif → SSL_read (bloklayan)
+        SSL* s = (SSL*)ssl_;
+        while (received < len) {
+            int r = SSL_read(s, buf + received, (int)(len - received));
+            if (r <= 0) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID; return false; }
+            received += r;
+        }
+        return true;
+    }
+#endif
     while (received < len) {
         int r = recv(sock_, (char*)(buf + received), (int)(len - received), 0);
         if (r <= 0) {
@@ -460,6 +500,20 @@ struct PgSendError : std::runtime_error {
 
 void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
     size_t sent = 0;
+#ifndef _WIN32
+    if (ssl_) {   // TLS aktif → SSL_write
+        SSL* s = (SSL*)ssl_;
+        while (sent < len) {
+            int r = SSL_write(s, buf + sent, (int)(len - sent));
+            if (r <= 0) {
+                pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+                throw PgSendError("db postgres: TLS send failed — connection lost");
+            }
+            sent += r;
+        }
+        return;
+    }
+#endif
     while (sent < len) {
         int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), 0);
         if (r <= 0) {
@@ -626,6 +680,55 @@ void PostgresClient::do_connect() {
     }
 
     set_socket_timeout(query_timeout_ms_);
+
+#ifndef _WIN32
+    if (tls_) {
+        // ── SSLRequest → TLS upgrade ─────────────────────────────────────────
+        // SSLRequest (len=8, code=80877103=0x04D2162F) → sunucu 1 bayt: 'S' kabul / 'N' yok.
+        // 'N' ise SESSİZCE DÜZ METNE DÜŞME — TLS'i hiç eklememekten kötü olur (kullanıcı
+        // şifreli sanır). tls_ istendiyse temiz hata ver.
+        uint8_t sslreq[8] = {0,0,0,8, 0x04,0xD2,0x16,0x2F};
+        send_bytes(sslreq, 8);   // ssl_ henüz yok → plaintext
+        uint8_t resp = 0;
+        if (!recv_bytes(&resp, 1)) {
+            pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+            throw std::runtime_error("db postgres: SSLRequest yanıtı okunamadı");
+        }
+        if (resp != 'S') {
+            pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+            throw std::runtime_error(std::string("db postgres: sunucu TLS desteklemiyor "
+                "(SSLRequest yanıtı '") + (char)resp + "') — düz metne DÜŞÜLMEDİ. "
+                "Şifresiz bağlanmak istiyorsanız postgres:// kullanın.");
+        }
+        SSL_CTX* ctx = pg_ssl_ctx();
+        SSL* s = ctx ? SSL_new(ctx) : nullptr;
+        if (!s) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+                  throw std::runtime_error("db postgres: SSL_new başarısız (TLS)"); }
+        SSL_set_fd(s, (int)sock_);
+        SSL_set_tlsext_host_name(s, host_.c_str());   // SNI
+        if (tls_verify_) {
+            // Sertifika zinciri + HOSTNAME doğrula (MITM'e karşı). SSL_set1_host başarısızsa
+            // hostname kontrolü sessizce kapanır → "geçerli CA + yanlış host" MITM'i açılır → reddet.
+            SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
+            if (SSL_set1_host(s, host_.c_str()) != 1) {
+                SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+                throw std::runtime_error("db postgres: TLS hostname doğrulaması kurulamadı");
+            }
+        }
+        if (SSL_connect(s) != 1) {
+            unsigned long e = ERR_get_error();
+            char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
+            SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+            throw std::runtime_error(std::string("db postgres: TLS handshake başarısız: ") + eb);
+        }
+        ssl_ = s;   // bundan sonra send/recv_bytes SSL üstünden (startup+auth+sorgu dahil)
+    }
+#else
+    if (tls_)
+        throw std::runtime_error("db postgres: TLS (postgresqls://) bu yapıda desteklenmiyor "
+                                 "(Windows OpenSSL'siz derlenir). Linux yapısını kullanın.");
+#endif
+
     send_startup();
     do_auth();
 }

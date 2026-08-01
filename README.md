@@ -152,13 +152,15 @@ implemented inside the language, no external driver:
 |---|---|---|
 | MySQL | 5.7 · 8.0 · 8.2 · 8.4 · 9.x | `caching_sha2_password` (incl. RSA full-auth over a non-TLS socket) **and** `mysql_native_password` — the plugin the server advertises is honoured, so 8.4 (native *disabled*) and 9.x (native *removed*) work |
 | MariaDB | 10.11 · 11.4 · 12.x | `mysql_native_password` |
-| PostgreSQL | 14 · 18 | SCRAM-SHA-256 / md5 (protocol 3.0). **⚠️ TLS not yet supported** — managed hosts that require TLS (Supabase, Neon, Heroku, Azure, most AWS RDS) do **not** work today; use an SSH tunnel or a private network. Tracked as a roadmap item — see [SECURITY.md](SECURITY.md#known-limitations). |
+| PostgreSQL | 14 · 18 | SCRAM-SHA-256 / md5 (protocol 3.0). **TLS supported** — `postgresqls://` (or `?tls=verify`) connects to managed hosts that require it (Supabase, Neon, Heroku, Azure, AWS RDS). Unlike MySQL/Redis, PostgreSQL **verifies the certificate + hostname by default** (`?tls=insecure` opts out). |
 | SQLite | 3.47.2 (embedded) | file format is forward/backward compatible since 2004 |
 
 > **Connecting to a remote database?** MySQL/MariaDB and Redis connect in **plaintext by
 > default** — use `mysqls://` / `rediss://` to encrypt and add `?tls=verify` to authenticate
-> the server (without `verify` the channel is encrypted but MITM is still possible). **PostgreSQL
-> has no TLS yet** (see the note above). On loopback / a private network this doesn't apply.
+> the server (without `verify` the channel is encrypted but MITM is still possible).
+> **PostgreSQL is the exception: `postgresqls://` (or `?tls=verify`) encrypts *and* verifies
+> the certificate + hostname by default** — add `?tls=insecure` only to accept a self-signed
+> cert. On loopback / a private network none of this applies.
 > Full detail: [SECURITY.md → Known limitations](SECURITY.md#known-limitations).
 
 Beyond the core, **Firebase** is available as an installable package (Firestore

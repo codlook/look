@@ -1,0 +1,10 @@
+# PG-TLS matris 2/4: sunucu cert'i GUVENILMEYEN CA'dan (client trust store'da yok).
+# verify DOGRU VARSAYILAN (postgresqls://) → sertifika dogrulanamaz → REDDEDILIR.
+# (SSL_CERT_FILE ayarlanmadan kosulur → bizim CA sistemde yok.)
+try {
+  $db = db::connect("postgresqls://looktest:testpass@look-pg/testdb")
+  db::query($db, "SELECT 1")
+  print("HATA: guvenilmeyen cert KABUL edildi — verify calismiyor")
+} catch($e) {
+  print("OK reddedildi (guvenilmeyen cert): " . $e)
+}

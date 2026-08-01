@@ -1,0 +1,11 @@
+# PG-TLS matris 4/4: gecerli CA-imzali cert AMA yanlis host (IP ile baglan, SAN=look-pg).
+# SSL_CERT_FILE ile CA guvenilir olsa da hostname (SSL_set1_host) uyusmuyor → REDDEDILIR.
+# Host argumani disaridan gelir: db::connect DSN'i env'den PG_MISMATCH_DSN
+$dsn = env("PG_MISMATCH_DSN")
+try {
+  $db = db::connect($dsn)
+  db::query($db, "SELECT 1")
+  print("HATA: hostname uyusmazligi KABUL edildi — SSL_set1_host calismiyor")
+} catch($e) {
+  print("OK reddedildi (hostname uyusmazligi): " . $e)
+}
