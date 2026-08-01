@@ -1,4 +1,5 @@
 #include "look/stdlib.h"
+#include "look/html_escape.h"
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include <cstdint>
@@ -748,21 +749,7 @@ static Module make_html() {
 
     m.functions["escape"] = [](auto args) -> Value {
         if (args.empty()) return Value(std::string(""));
-        std::string s = args[0].to_string();
-        std::string out;
-        out.reserve(s.size() * 2);
-        for (unsigned char c : s) {
-            switch (c) {
-                case '&':  out += "&amp;";  break;
-                case '<':  out += "&lt;";   break;
-                case '>':  out += "&gt;";   break;
-                case '"':  out += "&quot;"; break;
-                case '\'': out += "&#39;";  break;
-                case '`':  out += "&#96;";  break;   // B-08: JS template-literal XSS
-                default:   out += (char)c;
-            }
-        }
-        return Value(out);
+        return Value(look::html_escape(args[0].to_string()));   // tek tanım: look/html_escape.h
     };
 
     m.functions["attr"] = [](auto args) -> Value {

@@ -1,5 +1,6 @@
 #include "look/template.h"
 #include "look/stdlib.h"
+#include "look/html_escape.h"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -23,20 +24,7 @@ static std::string tpl_trim(const std::string& s) {
 }
 
 std::string TemplateEngine::html_escape(const std::string& s) {
-    std::string r;
-    r.reserve(s.size() + 16);
-    for (char c : s) {
-        switch (c) {
-            case '&':  r += "&amp;";  break;
-            case '<':  r += "&lt;";   break;
-            case '>':  r += "&gt;";   break;
-            case '"':  r += "&quot;"; break;
-            case '\'': r += "&#39;";  break;
-            case '`':  r += "&#96;";  break;   // B-08: JS template-literal `{$x}` XSS'i kapatır
-            default:   r += c;
-        }
-    }
-    return r;
+    return look::html_escape(s);   // tek tanım: look/html_escape.h (member forwarder)
 }
 
 std::string TemplateEngine::to_str(const Value& v) {
