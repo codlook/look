@@ -14,6 +14,7 @@
 #endif
 #include <cstring>
 #include <sstream>
+#include <charconv>   // std::to_chars — double→string kısa round-trip (to_string %f 6-hane değil)
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -883,7 +884,7 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
             uint8_t tc = 0xFE; // BLOB → string
             if (params[i].kind == DbParam::INT_VAL)   tc = 0x08; // LONGLONG
             if (params[i].kind == DbParam::FLOAT_VAL) tc = 0x05; // DOUBLE
-            if (params[i].kind == DbParam::BOOL_VAL)  tc = 0x10; // TINY
+            if (params[i].kind == DbParam::BOOL_VAL)  tc = 0x01; // MYSQL_TYPE_TINY (0x10=BIT'ti — YANLIŞ; BIT lenenc bekler, deger 1-bayt gonderiliyordu → "Incorrect arguments")
             pkt.push_back(tc); pkt.push_back(0x00); // unsigned_flag=0
         }
 
@@ -998,8 +999,10 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                     case 0x02: case 0x0D: dv.str = std::to_string(read_le(2)); break;
                     case 0x03: case 0x09: dv.str = std::to_string(read_le(4)); break;
                     case 0x08:            dv.str = std::to_string(read_le(8)); break;
-                    case 0x04: { float f; if(rp+4<=re){memcpy(&f,rp,4);rp+=4;} dv.str=std::to_string(f); break; }
-                    case 0x05: { double d; if(rp+8<=re){memcpy(&d,rp,8);rp+=8;} dv.str=std::to_string(d); break; }
+                    // to_string(float/double) = %f 6-hane → HASSASIYET KAYBI. to_chars kısa
+                    // round-trip + locale-bağımsız ('.'), tam değeri geri verir (%.17g disiplini).
+                    case 0x04: { float f; if(rp+4<=re){memcpy(&f,rp,4);rp+=4;} char b[40]; auto r=std::to_chars(b,b+sizeof(b),f); dv.str.assign(b,r.ptr); break; }
+                    case 0x05: { double d; if(rp+8<=re){memcpy(&d,rp,8);rp+=8;} char b[40]; auto r=std::to_chars(b,b+sizeof(b),d); dv.str.assign(b,r.ptr); break; }
                     case 0x10:            dv.str = std::to_string(read_le(1)); break;
                     default:              dv.str = read_lenenc_str(rp, re); break;
                 }

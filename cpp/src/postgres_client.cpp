@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cctype>
 #include <sstream>
+#include <locale>
 #include <algorithm>
 #include <random>
 
@@ -965,7 +966,14 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
                 std::string vs;
                 switch (params[i].kind) {
                     case DbParam::INT_VAL:   vs = std::to_string(params[i].i); break;
-                    case DbParam::FLOAT_VAL: vs = std::to_string(params[i].d); break;
+                    case DbParam::FLOAT_VAL: {
+                        // std::to_string(double) = %f 6-hane → HASSASIYET KAYBI (3.141593).
+                        // PG Bind text-format: round-trip-güvenli precision(17) + locale::classic
+                        // ('.' ondalık, Türkçe locale'de ',' olmasın). bind_params ile aynı disiplin.
+                        std::ostringstream oss; oss.imbue(std::locale::classic());
+                        oss.precision(17); oss << params[i].d; vs = oss.str();
+                        break;
+                    }
                     case DbParam::BOOL_VAL:  vs = params[i].b ? "true" : "false"; break;
                     default:                 vs = params[i].s; break;
                 }

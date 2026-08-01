@@ -1,0 +1,54 @@
+// Native prepared-statement tip round-trip + injection matrisi — HER sürücüde koşulur.
+// DSN env'den: LOOK_TEST_DSN=mysql://... / postgres://... / sqlite://:memory:
+// Amaç: from_int/float/bool/null yolları (smtp yalnız from_text kullanıyordu → mysql/pg'de
+// hiç çalışmamış olabilir) sessizce yanlış veri üretmiyor mu — Cephe 2 sınıfı.
+use json
+use array
+$fail = 0
+function chk($l, $g, $w) {
+    if ($g == $w) { print("OK   " . $l) }
+    else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]"); }
+}
+
+$dsn = env("LOOK_TEST_DSN")
+print("=== DSN: " . $dsn . " ===")
+$c = db::connect($dsn)
+
+db::exec($c, "DROP TABLE IF EXISTS t_bind", [])
+db::exec($c, "CREATE TABLE t_bind (i BIGINT, f DOUBLE PRECISION, b BOOLEAN, s TEXT, n TEXT)", [])
+
+// Tipli parametreler — from_int(2^63-1), from_float, from_bool(true), from_text(injection-benzeri), null()
+db::exec($c, "INSERT INTO t_bind (i,f,b,s,n) VALUES (?,?,?,?,?)",
+    [9223372036854775807, 3.141592653589793, true, "o'zel \" karakter \\ son", null])
+
+$r = db::query($c, "SELECT i, f, b, s, n FROM t_bind", [])
+print("ham satir: " . json::encode($r[0]))
+$row = $r[0]
+
+// int64 TAM (2^53 üstü — bilinçli korunan) — bazı sürücü string döndürebilir, sayısal eşitlik
+chk("int64 tam (2^63-1)", "" . $row["i"], "9223372036854775807")
+// float round-trip (%.17g disiplini)
+chk("float round-trip", "" . $row["f"], "3.141592653589793")
+// bool → 1/true/t (sürücüye göre) — biri olmalı
+$bv = "" . $row["b"]
+$bok = ($bv == "1" || $bv == "true" || $bv == "t")
+chk("bool dogru (1/true/t)", $bok, true)
+// text tırnak/backslash bozulmadan
+chk("text ozel-karakter", $row["s"], "o'zel \" karakter \\ son")
+// null → GERÇEK null (boş string DEĞİL)
+chk("null gercek-null", $row["n"] == null, true)
+
+// ── Injection (T1-T4 üç sürücüde de) ──
+db::exec($c, "INSERT INTO t_bind (s) VALUES (?)", ["admin"])
+$q1 = db::query($c, "SELECT * FROM t_bind WHERE s = ?", ["' OR '1'='1"])
+chk("injection tautoloji bloklu", len($q1), 0)
+$q2 = db::query($c, "SELECT * FROM t_bind WHERE s = ?", ["admin' --"])
+chk("injection yorum bloklu", len($q2), 0)
+
+// Sayım fail-loud (her sürücü)
+$caught = false
+try { db::query($c, "SELECT * FROM t_bind WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
+chk("sayim uyusmazligi reddi", $caught, true)
+
+db::exec($c, "DROP TABLE IF EXISTS t_bind", [])
+print("=== matris bitti ===")
