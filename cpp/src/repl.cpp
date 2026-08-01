@@ -181,7 +181,7 @@ int run_repl() {
     const char* hist_file = ".look_history";
     linenoiseHistoryLoad(hist_file);
 
-    std::cout << cyan("LOOK v0.20 REPL") << "\n";
+    std::cout << cyan("LOOK v1.0.0 REPL") << "\n";
     std::cout << gray("Çıkmak için :exit veya Ctrl+C") << "\n\n";
 
     // Shared persistent interpreter — state survives between lines

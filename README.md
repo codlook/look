@@ -49,7 +49,7 @@ route("404", fn() => response::error(404, "Not found"))
   queue, background jobs, an embedded **SMTP** server (+ Milestone-1 IMAP), WebSocket & SSE —
   all built in.
 - 🧩 **Ergonomic** — `fn() => …` arrows, `$row.col` access, `module::method`,
-  no required semicolons.
+  clean `use` module imports.
 
 ## See it running
 
