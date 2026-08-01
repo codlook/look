@@ -19,6 +19,7 @@
 
 #include <ctime>
 #include "look/fcgi.h"
+#include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
 #include "look/http_client.h"
 #include "look/lexer.h"
 #include "look/parser.h"
@@ -503,14 +504,21 @@ static std::string resolve_script(const std::map<std::string, std::string>& para
     std::string sn  = get("SCRIPT_NAME");
     if (!doc.empty() && !sn.empty() && no_traversal(sn) &&
         sn.size() > 3 && sn.substr(sn.size()-3) == ".lk") {
-        return doc + sn;
+        // KANONIK KAPI: doc+sn yolunu LOOK kurar, Apache dosyaya dokunmaz (mod_proxy_fcgi
+        // [P]) → SymLinksIfOwnerMatch uygulanmaz. String no_traversal symlink'i goremez;
+        // weakly_canonical symlink+".." cozup doc disina cikan adayi reddeder (cok-kiraci).
+        std::string cand = doc + sn;
+        if (look::path_under_root(doc, cand)) return cand;
     }
 
     // 4. PATH_INFO'dan .lk coz (Apache Action + PATH_INFO modeli)
     std::string pi = get("PATH_INFO");
     if (!doc.empty() && !pi.empty() && no_traversal(pi)) {
         size_t pos = pi.find(".lk");
-        if (pos != std::string::npos) return doc + pi.substr(0, pos + 3);
+        if (pos != std::string::npos) {
+            std::string cand = doc + pi.substr(0, pos + 3);
+            if (look::path_under_root(doc, cand)) return cand;   // kanonik kapi (symlink)
+        }
     }
 
     // 5. Fallback: DOCUMENT_ROOT/index.lk — RewriteRule [P] ile gelen tum istekler

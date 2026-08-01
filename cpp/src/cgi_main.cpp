@@ -82,6 +82,8 @@ static std::string read_file(const fs::path& path) {
 
 // ── Resolve script path ───────────────────────────────────────────────────────
 
+#include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
+
 static std::string resolve_script(int argc, char* argv[]) {
     // Path traversal reddi — çözülen .lk client-etkili CGI env'lerinden türer ve
     // LOOK tarafından KOD olarak yürütülür; ".." doc-root dışına çıkıp arbitrary
@@ -111,11 +113,13 @@ static std::string resolve_script(int argc, char* argv[]) {
     if (path_info && *path_info && document_root && *document_root && no_traversal(path_info)) {
         std::string pi(path_info);
         size_t lk_pos = pi.find(".lk");
-        if (lk_pos != std::string::npos) {
-            // Script is DOCUMENT_ROOT + /index.lk (up to and including .lk)
-            return std::string(document_root) + pi.substr(0, lk_pos + 3);
-        }
-        return std::string(document_root) + pi;
+        // KANONIK KAPI: yol DOCUMENT_ROOT+PATH_INFO'dan LOOK'ca kurulur; string no_traversal
+        // symlink'i goremez → weakly_canonical doc disina cikan (symlink/..) adayi reddeder.
+        std::string cand = (lk_pos != std::string::npos)
+            ? std::string(document_root) + pi.substr(0, lk_pos + 3)
+            : std::string(document_root) + pi;
+        if (look::path_under_root(document_root, cand)) return cand;
+        return "";
     }
 
     if (argc >= 2) return argv[1];
