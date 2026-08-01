@@ -44,13 +44,7 @@ static bool look_is_int_key(const std::string& s) {
 // Varsayilan ostream 6 anlamli basamakla keser ve buyuk/kucuk sayida bilimsel
 // gosterime kacar (123456789.123 → "1.23457e+08") — para/ID icin veri kaybi.
 // to_chars shortest: gereken en az basamak, makul buyuklukte sabit gosterim.
-std::string look_format_double(double d) {
-    if (std::isnan(d)) return "NaN";
-    if (std::isinf(d)) return d < 0 ? "-Infinity" : "Infinity";
-    char buf[64];
-    auto res = std::to_chars(buf, buf + sizeof(buf), d);
-    return std::string(buf, res.ptr);
-}
+// look_format_double → look/format.h (dilin tek double formatı; DB sürücüleri de kullanır)
 
 std::string Value::to_string() const {
     switch (type_) {

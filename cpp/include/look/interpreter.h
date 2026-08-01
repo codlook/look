@@ -1,6 +1,7 @@
 #pragma once
 
 #include "look/ast.h"
+#include "look/format.h"   // look_format_double — dilin tek double formatlayıcısı
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -18,11 +19,7 @@
 #include <condition_variable>
 #include <thread>
 
-namespace look { struct WebContext;
-
-// Double → kısa round-trip string (std::to_chars shortest). to_string() ve
-// JSON serileştirme ortak kullanır — bilimsel gösterim/veri kaybını önler.
-std::string look_format_double(double d); }
+namespace look { struct WebContext; }
 
 namespace look {
 
