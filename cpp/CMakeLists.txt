@@ -56,10 +56,12 @@ set_source_files_properties(
 # mutex YOK → çalışma zamanı deseni (her bağlantı tek thread'de) korunduğu için perf-nötr.
 add_compile_definitions(SQLITE_THREADSAFE=2)
 
-# Build damgası: git kısa SHA → `lk --version` ile yayınlanan artefakt ASLA ayrışamaz.
-# Ürün sürümü 1.0.0 SABİT kalır; damga yalnız "hangi derleme" sorusunu cevaplar (aynı
-# adlı iki zip'i ayırt etmek için). .git'siz ortamlar (Docker: .dockerignore .git'i hariç
-# tutar) `-DLOOK_BUILD=<sha>` ile override eder; hiçbiri yoksa "src".
+# Build damgası: git kısa SHA → `lk --version`. Ürün sürümü 1.0.0 SABİT; damga "hangi
+# derleme" sorusunu cevaplar (Go'nun `-ldflags -X` felsefesi: sürüm release-anında AÇIKÇA
+# enjekte edilir, her build'e makine yüklenmez). Release yolu `-DLOOK_BUILD=<sha>` geçer +
+# FRESH derler (portable/Docker `rm -rf` yapar → damga doğru). Dev build git'ten okur (ucuz).
+# ÖNEMLİ: release build FRESH olmalı (incremental configure-damgayı bayatlatır) VE artefaktın
+# `--version`'ı paketten çıkarılıp GÖZLENMELİ — asıl güvence "artefaktı ölç", [[look-yayin-kapisi-drift]].
 if(NOT DEFINED LOOK_BUILD)
     execute_process(
         COMMAND git rev-parse --short HEAD
