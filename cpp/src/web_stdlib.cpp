@@ -1325,6 +1325,25 @@ static std::string bind_params(const std::string& sql,
     return result;
 }
 
+// Value listesi → DbParam listesi — GERÇEK native binding (bind_params escape-enterpolasyonunun
+// yerine). Veri SQL metnine HİÇ girmez; driver protokol-seviye bind eder (sqlite3_bind_* / MySQL
+// COM_STMT / PG extended-query). Tip eşlemesi bind_params'ınkiyle aynı. Placeholder SAYIM kontrolü
+// artık driver-native (sqlite3_bind_parameter_count / PG-mysql server) → backtick/'#' kör-noktası yok.
+static std::vector<DbParam> values_to_db_params(const std::vector<Value>& params) {
+    std::vector<DbParam> out;
+    out.reserve(params.size());
+    for (const auto& p : params) {
+        switch (p.type()) {
+            case Value::NONE:  out.push_back(DbParam::null());                break;
+            case Value::INT:   out.push_back(DbParam::from_int(p.as_int()));  break;
+            case Value::FLOAT: out.push_back(DbParam::from_float(p.as_float())); break;
+            case Value::BOOL:  out.push_back(DbParam::from_bool(p.as_bool())); break;
+            default:           out.push_back(DbParam::from_text(p.to_string())); break;
+        }
+    }
+    return out;
+}
+
 static Module make_db_module(Interpreter* interp) {
     Module m;
     m.name = "db";
@@ -1434,8 +1453,7 @@ static Module make_db_module(Interpreter* interp) {
         std::vector<Value> params;
         if (args.size() >= 3 && args[2].type() == Value::ARRAY)
             params = *args[2].as_array();
-        std::string bound = bind_params(sql, params, conn->driver_name());
-        auto rows = conn->query(bound);
+        auto rows = conn->execute(sql, values_to_db_params(params));   // gerçek native binding
         return rows_to_value(rows);
     };
 
@@ -1447,8 +1465,7 @@ static Module make_db_module(Interpreter* interp) {
         std::vector<Value> params;
         if (args.size() >= 3 && args[2].type() == Value::ARRAY)
             params = *args[2].as_array();
-        std::string bound = bind_params(sql, params, conn->driver_name());
-        conn->query(bound);
+        conn->execute(sql, values_to_db_params(params));   // gerçek native binding
         return Value((int64_t)conn->affected_rows());
     };
 
@@ -1558,8 +1575,7 @@ static Module make_db_module(Interpreter* interp) {
             std::vector<Value> params;
             if (args.size() >= 3 && args[2].type() == Value::ARRAY)
                 params = *args[2].as_array();
-            std::string bound = bind_params(sql, params, conn->driver_name());
-            auto rows = conn->query(bound);
+            auto rows = conn->execute(sql, values_to_db_params(params));   // gerçek native binding
             if (rows.empty() || rows[0].empty()) return Value();
             // İlk satırın ilk kolonunu dön
             const auto& dv = rows[0][0].second;

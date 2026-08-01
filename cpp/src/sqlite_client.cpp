@@ -148,6 +148,16 @@ std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vect
     if (rc != SQLITE_OK)
         throw std::runtime_error(std::string("sqlite: ") + sqlite3_errmsg(db_));
 
+    // Placeholder SAYIM kontrolü (fail-loud, Go db.Query gibi) — SQLite bind edilmeyen '?'yi
+    // sessizce NULL sayar; eksik/fazla parametre gizli bug yapardı. SQLite'ın KENDİ sayımı
+    // (backtick-ident, string, yorum içindeki '?' hariç) → eski lehçe-parser'ın kör-noktası yok.
+    int want = sqlite3_bind_parameter_count(stmt);
+    if (want != (int)params.size()) {
+        sqlite3_finalize(stmt);
+        throw std::runtime_error("db: parametre sayisi uyusmuyor — SQL " + std::to_string(want) +
+            " placeholder ('?') iceriyor, " + std::to_string(params.size()) + " parametre verildi.");
+    }
+
     // Parametre binding — gerçek prepared statement, string escape yok
     for (int i = 0; i < (int)params.size(); i++) {
         const auto& p = params[i];
