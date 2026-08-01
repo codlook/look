@@ -67,6 +67,35 @@ def handle(c):
     else:
         c.sendall(msg(b"R", struct.pack("!I", 0)))    # AuthenticationOk
         c.sendall(msg(b"Z", b"I"))                     # ReadyForQuery
+    # Bir sorgunun (simple 'Q' VEYA extended P/B/D/E/S) yanit dizisini uretir.
+    # ext=True → once ParseComplete('1')+BindComplete('2') gonderilir (extended akis).
+    # LOOK'un db::query/exec/one'i artik NATIVE PREPARED (extended) kullaniyor, bu yuzden
+    # sahte sunucu ikisini de konusmali; kotu-DataRow modlari her iki akista ayni.
+    # Doner: True = baglanti kapandi (return), False = devam.
+    def respond(q, ext):
+        pre = (msg(b"1", b"") + msg(b"2", b"")) if ext else b""
+        if MODE == "hs_rst":
+            c.sendall(pre + row_desc() + data_row("saglam") +
+                      msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I"))
+            c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            c.close(); return True
+        if MODE == "commit_kopar":
+            if "INSERT" in q:
+                n = record_insert()
+                if n == 1:
+                    c.close(); return True          # commit-sonra-kopar
+                c.sendall(pre + msg(b"C", cstr("INSERT 0 1")) + msg(b"Z", b"I")); return False
+            c.sendall(pre + msg(b"C", cstr("SELECT 0")) + msg(b"Z", b"I")); return False
+        if MODE == "sirasiz":
+            # DataRow, RowDescription'DAN ONCE (columns bos)
+            c.sendall(pre + data_row("saglam") + row_desc() +
+                      msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
+        if MODE == "erken_c":
+            c.sendall(pre + msg(b"C", cstr("SELECT 0")) + msg(b"Z", b"I")); return False
+        c.sendall(pre + row_desc() + data_row(MODE) +
+                  msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
+
+    ext_query = ""   # extended akista Parse('P')'den alinan sorgu metni
     while True:
         t = c.recv(1)
         if not t: return
@@ -77,45 +106,19 @@ def handle(c):
             chunk = c.recv(need - len(body))
             if not chunk: return
             body += chunk
-        if t == b"Q":
+        if t == b"Q":                       # simple query
             q = body.decode("utf-8", "replace").upper()
-            if MODE == "hs_rst":
-                # Havuz zehri: 1. sorguya normal yanit ver, sonra RST ile kapan
-                # (SO_LINGER 0). Baglanti havuza doner; 2. sorgu onu alinca send
-                # kirilir. Amac: retry zehri kurtariyor mu, yoksa 2. sorgu bozuluyor mu?
-                c.sendall(row_desc()); c.sendall(data_row("saglam"))
-                c.sendall(msg(b"C", cstr("SELECT 1"))); c.sendall(msg(b"Z", b"I"))
-                c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
-                c.close(); return
-            if MODE == "commit_kopar":
-                # Durum-dizili saldiri: INSERT'i "isle" (sayac++), sonra YANIT
-                # GONDERMEDEN soketi kapat — "gonderildi-ama-yanit-gelmedi".
-                # Istemci retry ederse ikinci INSERT gelir → sayac 2 → cift-yazma.
-                if "INSERT" in q:
-                    n = record_insert()
-                    if n == 1:
-                        c.close(); return          # commit-sonra-kopar
-                    c.sendall(msg(b"C", cstr("INSERT 0 1")))
-                    c.sendall(msg(b"Z", b"I"))
-                    continue
-                # INSERT disi (BEGIN/SELECT vs) → normal yanit
-                c.sendall(msg(b"C", cstr("SELECT 0")))
-                c.sendall(msg(b"Z", b"I"))
-                continue
-            if MODE == "sirasiz":
-                # Yanit SIRASI yanlis: DataRow, RowDescription'DAN ONCE (columns bos)
-                c.sendall(data_row("saglam"))          # once DataRow
-                c.sendall(row_desc())                  # sonra RowDescription
-                c.sendall(msg(b"C", cstr("SELECT 1"))); c.sendall(msg(b"Z", b"I"))
-                continue
-            if MODE == "erken_c":
-                # CommandComplete, hic DataRow/RowDescription OLMADAN
-                c.sendall(msg(b"C", cstr("SELECT 0"))); c.sendall(msg(b"Z", b"I"))
-                continue
-            c.sendall(row_desc())
-            c.sendall(data_row(MODE))
-            c.sendall(msg(b"C", cstr("SELECT 1")))
-            c.sendall(msg(b"Z", b"I"))
+            if respond(q, False): return
+        elif t == b"P":                     # Parse: stmt_name\0 query\0 ...
+            z1 = body.find(b"\x00")
+            z2 = body.find(b"\x00", z1 + 1)
+            ext_query = body[z1 + 1:z2].decode("utf-8", "replace").upper()
+        elif t in (b"B", b"D"):             # Bind / Describe — yanit Sync'te
+            pass
+        elif t == b"E":                     # Execute — yanit Sync'te (basit model)
+            pass
+        elif t == b"S":                     # Sync → tum extended yaniti burada gonder
+            if respond(ext_query, True): return
         elif t == b"X":
             return
 

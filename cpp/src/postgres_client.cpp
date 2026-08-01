@@ -1130,16 +1130,34 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
                 columns.push_back({std::move(name), oid_to_type(oid)});
             }
         } else if (msg.type == 'D') {
+            // DataRow — simple_query ile AYNI guard'lar (bozuk DataRow sessizce yanlis
+            // veri uretmesin). db::query/exec/one artik bu extended yolu kullaniyor;
+            // guard'lar yalniz simple_query'deydi → burada da olmali (differential yakaladi).
             if (msg.body.size() < 2) continue;
             uint16_t ncols = read_u16_be(msg.body.data());
             const uint8_t* p = msg.body.data() + 2;
             const uint8_t* end = msg.body.data() + msg.body.size();
             DbRow row;
-            for (int i = 0; i < (int)ncols && p + 4 <= end; i++) {
-                int32_t flen = read_i32_be(p); p += 4;
-                bool is_null = (flen < 0);
+            for (int i = 0; i < (int)ncols; i++) {
+                if (end - p < 4)
+                    throw std::runtime_error("db postgres: bozuk DataRow — " +
+                        std::to_string(ncols) + " alan bildirildi, " + std::to_string(i) + " alan geldi");
+                int32_t field_len = read_i32_be(p); p += 4;
                 std::string val;
-                if (!is_null && p + flen <= end) { val = std::string((const char*)p, flen); p += flen; }
+                bool is_null = false;
+                if (field_len == -1) {
+                    is_null = true;                       // protokolde NULL yalnizca -1
+                } else if (field_len < 0) {
+                    throw std::runtime_error("db postgres: bozuk DataRow — gecersiz alan uzunlugu " +
+                                             std::to_string(field_len));
+                } else if ((size_t)field_len > (size_t)(end - p)) {   // tasma-guvenli
+                    throw std::runtime_error("db postgres: bozuk DataRow — alan uzunlugu " +
+                        std::to_string(field_len) + " govdede kalan " +
+                        std::to_string(end - p) + " bayti asiyor");
+                } else {
+                    val.assign((const char*)p, (size_t)field_len);
+                    p += field_len;
+                }
                 uint8_t tc  = (i < (int)columns.size()) ? columns[i].type_code : 0xFE;
                 std::string name = (i < (int)columns.size()) ? columns[i].name : "col" + std::to_string(i);
                 if (is_null) tc = pg_type::NUL;
