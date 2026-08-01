@@ -53,16 +53,16 @@ $nb = false
 try { db::query($c, "SELECT 1 AS `soru?isareti` WHERE 1 = ?", [1]); $nb = true } catch ($e) { }
 chk("S1 native prepared binding (backtick)", $nb)
 
-# 973e21e: non-finite float (Inf) bind fail-loud — sqlite/pg sessizce null yapardi (Cephe 2).
-$nf = false
-try { db::query($c, "SELECT ? AS v", [math::pow(10, 400)]) } catch ($e) { $nf = true }
-chk("non-finite bind fail-loud", $nf)
+# 973e21e: non-finite float (Inf) bind fail-loud. AYIRT EDICI: "throw oldu mu" DEGIL "DOGRU
+# hata mi" — eski binary escape'te to_string(inf) cipdak gomup sqlite "no such column: Infinity"
+# THROW eder (yanlis sebeple gecer). Bizim hatamiz "...bind edilemez" -> ona bak.
+# (Pozitif kontrol: analizci yamasiz binary'de bu satirin FAIL verdigini dogruladi.)
+$nfmsg = ""
+try { db::query($c, "SELECT ? AS v", [math::pow(10, 400)]) } catch ($e) { $nfmsg = "" . $e }
+chk("non-finite bind fail-loud", string::contains($nfmsg, "bind edilemez"))
 
-# 9a58962: float round-trip tam (look_format_double birlestirmesi; eski %f 6-hane yuvarlardi).
-db::query($c, "CREATE TABLE g (f REAL)", [])
-db::exec($c, "INSERT INTO g VALUES (?)", [3.141592653589793])
-$gr = db::query($c, "SELECT f FROM g", [])
-$fv = "" . $gr[0]["f"]
-chk("float round-trip tam", $fv == "3.141592653589793")
+# NOT: "float round-trip" assertion'i CIKARILDI — SQLite'ta ayirt edici degildi (eski yol da
+# %.17g ile dogruydu -> yamasiz binary'de de gecerdi = sahte assertion, t1 dersi). Asil duzelen
+# PG/MySQL BIND'iydi; o kapida (canli DB) test edilemez -> yerine yanlis guven vermeyin, DAMGA'ya guven.
 
 print("kapi tamamlandi")
