@@ -24,8 +24,6 @@ foreach ($b in $exes) {
 New-Item -ItemType Directory -Force -Path (Join-Path $Tmp "bin") | Out-Null
 foreach ($s in $scripts) { Copy-Item (Join-Path $Here $s) (Join-Path $Tmp $s) }
 foreach ($b in $exes)    { Copy-Item (Join-Path $BinSrc $b) (Join-Path $Tmp "bin\$b") }
-# Yayin kapisi: bin\lk.exe release_gate.lk ile artefakti dogrula
-Copy-Item ([System.IO.Path]::GetFullPath((Join-Path $Here "..\..\..\cpp\tests\release_gate.lk"))) (Join-Path $Tmp "release_gate.lk")
 
 if (Test-Path $Out) { Remove-Item $Out -Force }
 Compress-Archive -Path (Join-Path $Tmp "*") -DestinationPath $Out

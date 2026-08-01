@@ -58,7 +58,6 @@ if [ "$1" = "--with-binaries" ] || [ -d "bin" ]; then
     done
 fi
 
-cp ../../cpp/tests/release_gate.lk "$TMP/htdocs/"   # yayin kapisi: htdocs/bin/lk htdocs/release_gate.lk
 
 # RPM — RHEL/AlmaLinux birincil yol (dnf update look-lang). post-install önce
 # bunu dener; yoksa yukarıdaki static binary'ye düşer.

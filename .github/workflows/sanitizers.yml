@@ -1,8 +1,9 @@
 # .github/workflows/sanitizers.yml
 # Release build'in yakalayamadigi siniftaki hatalari (data race, stack overflow, UB)
-# yakalar. Tasarim: CI ILK GUNDEN YESIL baslar. Bilinen-acik bulgular (R-02/R-03 VM
-# yarislari, B-01 eval-guard) ayri, continue-on-error adimlarda RAPORLANIR ama job'i
-# KIRMAZ. Her duzeltme = bir testi known_fail/'dan enforced/'a terfi ettirmek.
+# yakalar. Tasarim: yaris testleri enforced/ altinda ZORUNLU (kirilirsa CI kirmizi).
+# (Onceki "known_fail/ + continue-on-error" bolgesi kaldirildi: fail-loud prensibinin
+#  tersi bir "basarisizligin kabul edildigi yer"di; R-02/R-03 kapaninca bosaldi. Yeni bir
+#  yaris cikarsa enforced/'a eklenir ve HEMEN kirar — "simdilik oraya koyalim" yok.)
 name: sanitizers
 on: [push, pull_request]
 
@@ -57,17 +58,6 @@ jobs:
             echo "== $f"; ./build-tsan/lk "$f" || exit 1
             LOOK_CLI_VM=0 ./build-tsan/lk "$f" || exit 1   # her iki motor da temiz
           done
-      - name: Bilinen acik yarislar (raporla, kirma)
-        working-directory: cpp
-        continue-on-error: true
-        env: { TSAN_OPTIONS: "halt_on_error=0:exitcode=0:history_size=7:report_thread_leaks=0" }
-        run: |
-          # known_fail/ su an BOS (R-02/R-03 kapandi -> hepsi enforced'a tasindi). Yeni bir
-          # bilinen-acik test eklenirse burada raporlanir. Bos dizinde glob literal kalip
-          # yaniltici kirmizi X birakmasin diye compgen guard'i (continue-on-error olsa da
-          # temiz kalsin -- yesil sanilan kirmizinin kucuk hali).
-          compgen -G "tests/tsan/known_fail/*.lk" > /dev/null || { echo "known_fail bos — atlaniyor"; exit 0; }
-          for f in tests/tsan/known_fail/*.lk; do echo "== $f"; ./build-tsan/lk "$f"; done
 
   fuzz:
     # Surdurulebilirlik: wire-protocol parser'lari her push'ta kisa fuzzlanir (libFuzzer,

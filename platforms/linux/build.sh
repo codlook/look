@@ -20,7 +20,6 @@ done
 echo "Building LOOK Linux package v$VERSION..."
 mkdir -p "$TMP/bin"
 cp ubuntu/install.sh ubuntu/start.sh ubuntu/README.md "$TMP/"
-cp ../../cpp/tests/release_gate.lk "$TMP/"   # yayin kapisi: bin/lk release_gate.lk ile dogrula
 chmod +x "$TMP/install.sh" "$TMP/start.sh"
 for b in lk lk-fcgi; do
     cp "$PORT/$b" "$TMP/bin/$b"
