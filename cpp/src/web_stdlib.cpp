@@ -1372,6 +1372,31 @@ static Module make_db_module(Interpreter* interp) {
         Logger::instance().log(LogLevel::LOG_INFO, "DB",
             "Pool[" + std::to_string(sz) + "] created: " +
             dsn.substr(0, dsn.find('@') == std::string::npos ? dsn.size() : dsn.find('@')));
+
+        // S4 Faz 1: DB-TLS güvenlik uyarısı — POOL BASINA BİR KEZ (sorgu başına değil → spam yok).
+        // El-yazması wire parser'a ağdaki herkes bayt besliyor; kullanıcı şifreleme/doğrulama
+        // durumunu bilmeli ve NE YAPACAĞINI görmeli. Davranış değişmez (yalnız log). Faz 2: verify
+        // varsayılan + ?tls=insecure opt-out (sürüm kapısı, ayrı karar).
+        {
+            std::string sch = dsn.substr(0, dsn.find(':'));
+            bool has_tls = dsn.find("tls=") != std::string::npos || dsn.find("ssl=") != std::string::npos;
+            bool vfy     = dsn.find("tls=verify") != std::string::npos || dsn.find("ssl=verify") != std::string::npos;
+            bool secure_sch = (sch == "mysqls" || sch == "mariadbs" || sch == "rediss");
+            bool encrypted  = secure_sch ||
+                (has_tls && (sch == "mysql" || sch == "mariadb" || sch == "redis"));
+            std::string w;
+            if (sch == "postgres" || sch == "postgresql")
+                w = "PostgreSQL baglantisi SIFRELENMEMIS (TLS henuz desteklenmiyor) — sorgu VE sonuclar ag'da ACIK gider. Guvenilmez agda kullanmayin.";
+            else if ((sch == "mysql" || sch == "mariadb" || secure_sch) && !encrypted && sch[0] == 'm')
+                w = "MySQL baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: mysqls://... veya DSN'e ?tls=verify.";
+            else if ((sch == "redis" || sch == "rediss") && !encrypted)
+                w = "Redis baglantisi SIFRELENMEMIS (plaintext) — sifreli icin rediss://, dogrulanmis icin ?tls=verify.";
+            else if (encrypted && !vfy)
+                w = std::string(sch[0] == 'r' ? "Redis" : "MySQL") +
+                    " TLS sertifikasi DOGRULANMIYOR (MITM riski) — DSN'e ?tls=verify ekleyin.";
+            if (!w.empty())
+                Logger::instance().log(LogLevel::LOG_WARN, "DB-TLS", w);
+        }
         return Value(key);
     };
 
