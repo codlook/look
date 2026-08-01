@@ -19,6 +19,23 @@ our own code kept in one place, so the attack surface is auditable and hardened
 in a single spot. Defense is layered: manual review + fuzzing (ASan / UBSan /
 TSan) + regression tests run on every build + CI.
 
+### Known limitations
+
+Honesty about what LOOK does **not** protect yet — so you can decide before deploying, not discover after:
+
+- **PostgreSQL connections are not encrypted.** The PostgreSQL client has no TLS support at all,
+  and there is no `postgresqls://` scheme. Managed hosts that **require** TLS — Supabase, Neon,
+  Heroku Postgres, Azure Database for PostgreSQL, most AWS RDS setups — will **refuse the connection**
+  (this is a compatibility wall, not only a security note). Use an SSH tunnel or a private network
+  for remote PostgreSQL. Adding native TLS is a committed roadmap item.
+- **MySQL / MariaDB / Redis default to plaintext.** Use `mysqls://` / `rediss://` (or `?tls=1`) to
+  encrypt. Even then, the certificate is **not verified by default** — add `?tls=verify` to
+  authenticate the server. Without `verify`, the connection is encrypted but a MITM is still possible.
+- The `http::` client verifies certificates by default (`SSL_VERIFY_PEER`). The database clients do not.
+
+On loopback / same-host / a trusted private network, none of the above is exposed. The runtime logs a
+one-time warning per connection pool when a database connection is unencrypted or unverified.
+
 ### Hardened against
 
 | Class | Attack | Defense |
@@ -26,7 +43,7 @@ TSan) + regression tests run on every build + CI.
 | Body DoS | Unbounded request body | `LOOK_MAX_BODY_SIZE` (10 MB default) → 413 |
 | Malformed `Content-Length` | Parser exception → worker crash | 400 Bad Request |
 | Request smuggling | CL + TE ambiguity | 400 (RFC 7230 §3.3.3) |
-| SQL injection | `' OR '1'='1`, `UNION SELECT`, `'; DROP TABLE` | Parameterised `?` placeholders + driver-correct escaping. `?` is bound **only in the SQL body** — a `?` inside a string literal, quoted identifier or comment is data, and a placeholder/parameter count mismatch is an **error**, never a silent bind |
+| SQL injection | `' OR '1'='1`, `UNION SELECT`, `'; DROP TABLE` | Real **native driver binding** (SQLite `sqlite3_bind_*`, MySQL `COM_STMT`, PostgreSQL extended-query) — parameter data never enters the SQL text. `?` is bound **only in the SQL body** — a `?` inside a string literal, quoted identifier or comment is data, and a placeholder/parameter count mismatch is an **error**, never a silent bind |
 | Cookie attribute injection | `;` in a cookie value forging attributes (`Domain=`, `Max-Age`, `Path`) to widen scope to sibling subdomains | Name and value percent-encoded on write, decoded on read — a `;` can no longer terminate the value. Distinct from CR/LF splitting below, and it was a **separate channel** |
 | Session data injection | `\n` in a stored value forging extra fields (`admin=1`) in the session blob — privilege escalation when user input is stored alongside authorization fields | Key and value escaped on write, unescaped on read: a newline round-trips as data and cannot act as a record separator |
 | Client-IP spoofing | Attacker sets `X-Forwarded-For` to choose their own IP, bypassing IP allow/deny lists, bans and per-IP rate limits | The real TCP peer is authoritative. `X-Forwarded-For` / `X-Real-IP` are honoured **only** when the connecting address is in `LOOK_TRUSTED_PROXY`; the chain's first hop is taken. One shared resolver feeds `request::ip()`, the rate limiter, and the WS/SSE paths |
