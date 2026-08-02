@@ -3,6 +3,7 @@
 #include "look/interpreter.h"
 #include "look/logger.h"
 #include "look/web.h"
+#include "look/http_client.h"   // configure_system_ca_bundle (statik OpenSSL CA probe)
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -134,6 +135,12 @@ int main(int argc, char* argv[]) {
     // yapısını bozar (kodda zaten \r\n var → \r\r\n olur, body kaybolur).
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
+    // Statik OpenSSL: gömülü CA yolu derleme dağıtımına (AlmaLinux) sabitlenir; başka
+    // dağıtımda (Ubuntu) o yol yok → default_verify_paths CA bulamaz, GEÇERLİ sertifika
+    // bile reddedilir. main.cpp/fcgi_main.cpp bunu startup'ta yapıyordu; cgi_main ATLIYORDU
+    // → CGI modunda http:: + PostgreSQL TLS (verify VARSAYILAN) dağıtımlar arası kırıktı.
+    // SSL_CERT_FILE'i process-global set eder; DB istemcilerinin default_verify_paths'i okur.
+    look::configure_system_ca_bundle();
     std::string script_path = resolve_script(argc, argv);
 
     if (script_path.empty()) {

@@ -38,6 +38,15 @@ Honesty about what LOOK does **not** protect yet — so you can decide before de
 On loopback / same-host / a trusted private network, none of the above is exposed. The runtime logs a
 one-time warning per connection pool when a database connection is unencrypted or unverified.
 
+**Why isn't verification the default for MySQL/Redis?** This is a deliberate decision, not an
+oversight. Verification is available today via `?tls=verify`, and unverified connections emit a
+runtime warning (once per pool) that names the fix. Flipping the default to *on* would break
+existing deployments that encrypt with their own (self-signed / internal-CA) certificate — which
+conflicts with LOOK's "deploy as easily as PHP" principle for the sake of a default preference,
+not a capability gap. PostgreSQL verifies by default because TLS there is a **new** feature with
+no existing deployments to break. If a future major (2.0) collects breaking changes, aligning the
+three drivers on verify-by-default belongs in that bucket — as a decided item, not silent drift.
+
 ### Hardened against
 
 | Class | Attack | Defense |
