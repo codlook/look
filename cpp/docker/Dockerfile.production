@@ -68,9 +68,11 @@ COPY --from=builder /build/cpp/build/lk      /usr/local/bin/lk
 COPY --from=builder /build/cpp/build/lk-cgi  /usr/local/bin/lk-cgi
 COPY --from=builder /build/cpp/build/lk-fcgi /usr/local/bin/lk-fcgi
 
-# App directory — mounted at runtime via volume
-RUN mkdir -p /app /app/storage /var/mail/look /var/log/look \
-    && chown -R look:look /app /var/mail/look /var/log/look
+# App directory. Ships a default index.lk so `docker run codlook/look` works out of
+# the box (serves / and /health). Mount your own app to override: -v ./app:/app
+RUN mkdir -p /app /app/storage /var/mail/look /var/log/look
+COPY cpp/docker/default-app.lk /app/index.lk
+RUN chown -R look:look /app /var/mail/look /var/log/look
 
 WORKDIR /app
 
