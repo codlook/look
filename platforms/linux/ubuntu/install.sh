@@ -41,9 +41,13 @@ die()  { echo -e "${c_r}✗ $*${c_0}" >&2; exit 1; }
 # curl yalnizca indirme (LOOK_BIN_URL) yolunda gerekir; self-contained zip'te bin/
 # gomulu oldugundan cogu zaman hic kullanilmaz. Yoksa distro-bagimsiz kur.
 if ! command -v curl >/dev/null 2>&1; then
-  if   command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq curl
-  elif command -v dnf     >/dev/null 2>&1; then dnf install -y -q curl
-  elif command -v yum     >/dev/null 2>&1; then yum install -y -q curl
+  # curl KURULUMU opsiyonel/kolaylık — self-contained zip'te (bin/ gömülü) hiç kullanılmaz.
+  # set -e altında ağ yoksa 'apt-get install' patlar ve KRİTİK binary kurulumundan ÖNCE tüm
+  # script'i düşürür (XAMPP install.ps1 bug'ının kardeşi). '|| true' ile best-effort yap;
+  # curl gerçekten gerekiyorsa (indirme yolu) install_bin'in kendi 'die'ı net hata verir.
+  if   command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq curl || true
+  elif command -v dnf     >/dev/null 2>&1; then dnf install -y -q curl || true
+  elif command -v yum     >/dev/null 2>&1; then yum install -y -q curl || true
   fi
 fi
 ARCH="$(uname -m)"; [ "$ARCH" = "x86_64" ] || warn "test edilen mimari x86_64 (senin: $ARCH)"

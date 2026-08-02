@@ -21,6 +21,7 @@ cd /look/cpp
 rm -rf build-rpm
 cmake -S . -B build-rpm -DCMAKE_BUILD_TYPE=Release \
       -DLOOK_STATIC_SSL=OFF \
+      -DLOOK_BUILD="${LOOK_BUILD:-src}" \
       -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" > /tmp/cmake.log 2>&1
 cmake --build build-rpm --target look look-fcgi look-cgi -j8 > /tmp/build.log 2>&1
 echo "[rpm] binary derlendi (dinamik OpenSSL):"

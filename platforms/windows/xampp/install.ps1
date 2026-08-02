@@ -47,10 +47,19 @@ Log "Kopyalandi: lk-cgi.exe -> $CgiBinDir"
 # Eski .look_cache temizle (stale bytecode)
 Remove-Item (Join-Path $HtdocsDir ".look_cache") -Recurse -Force -ErrorAction SilentlyContinue
 
-# lk.exe de kopyala (komut satiri icin)
+# lk.exe de kopyala (komut satiri icin). C:\look YOKSA once olustur — aksi halde
+# $ErrorActionPreference=Stop ile Copy-Item DirectoryNotFound firlatir ve kurulumu
+# httpd.conf yamasindan ONCE durdurur (binary kopyalanmis ama handler yok = calismaz).
+# Bu kopya ISTEGE BAGLI (yalniz CLI kolayligi) → hatasi kurulumu ASLA durdurmamali.
+# Gercek XAMPP testinde bulundu (2026-08-02): temiz makinede C:\look yoktu, kurulum yarim kaldi.
 $LkSrc = Join-Path $BuildDir "lk.exe"
 if (Test-Path $LkSrc) {
-    Copy-Item $LkSrc "C:\look\lk.exe" -Force -ErrorAction SilentlyContinue
+    try {
+        New-Item -ItemType Directory -Force "C:\look" | Out-Null
+        Copy-Item $LkSrc "C:\look\lk.exe" -Force
+    } catch {
+        Log "uyari: C:\look\lk.exe kopyalanamadi (CLI lk.exe atlandi, kurulum devam ediyor): $($_.Exception.Message)"
+    }
 }
 
 # 3. httpd.conf — onceki LOOK blogunu temizle
