@@ -108,25 +108,29 @@ that only lands in one engine is itself a vulnerability. See
 Following the Rust/Go model, platform support is a **declared capability, not a wish** — a tier
 says what CI actually proves, so you know what you are getting before you deploy.
 
-| Tier | Platform | Guarantee | CI coverage |
+| Tier | Platform | Guarantee | Coverage |
 |---|---|---|---|
-| **Tier 1** | Linux x86_64 | Full suite passes; **blocks the release**. This is the production target. | Regression, differential (3 engines), TSan, fuzz (ASan/UBSan), crypto KATs, release gate |
-| **Supported** | Docker (Linux image) | Same environment as Tier 1 — the recommended way to run LOOK anywhere, including on a Windows/macOS dev box | Image built + smoke-tested at release |
-| **Tier 3** | Windows x86_64 (MSVC) | Builds from source; **no CI, no shipped artifact, no guarantee**. Best-effort dev convenience. | None |
+| **Tier 1** | Linux x86_64 | Full suite passes; **blocks the release**. Production target. | CI every push: regression, differential (3 engines), TSan, fuzz (ASan/UBSan), crypto KATs, release gate |
+| **Supported** | Docker (Linux image) | Same environment as Tier 1 — the way to run LOOK anywhere, incl. a Windows/macOS box | Image built + smoke-tested at release |
+| **Tier 2** | Windows x86_64 (MSVC) | Plain-binary zip ships (`lk.exe` + `lk-fcgi.exe`, **no installer**); core test suite passes, verified before every release | Manual pre-release: `release_gate` 7/7 · `crypto_vectors` 17/17 · live `lk-fcgi --mode http` → 200 |
 
-**Why Windows is Tier 3, not a supported target.** LOOK's production target is Linux (native or
-Docker). A native Windows build is a *second* platform surface — its own TLS stack (Schannel), its
-own crypto backend (BCrypt/NCrypt vs OpenSSL), and ~138 `#ifdef _WIN32` branches — that exists only
-to let someone *try* LOOK on Windows. **Docker already covers that use case, and covers it better:**
-the same Linux image as production, with zero platform divergence. Investing a CI matrix, a
-cross-platform RSA KAT, and a branch-visibility refactor into a surface no one ships to production is
-disproportionate for a project this size. The "deploy as easily as PHP" claim is about *production*,
-and Windows is not a production target.
+**Windows is a plain binary, not a stack integration.** The earlier mistake was shipping XAMPP
+plumbing (an `install.ps1` that patched Apache's `httpd.conf`) — work PHP itself does not do (PHP
+ships `php.exe`; XAMPP is third-party). LOOK does not need it: **`lk-fcgi.exe --mode http --port 8080`
+is a complete web server** — no Apache, no XAMPP, no config. That is the whole Windows story, and it
+is *better* than the single-exe story of Go/Rust (a binary but you write the server) — closer to
+`php -S`, with the server built in. So the Windows artifact is just the binaries: download, run, done.
 
-**What Tier 3 means concretely:** the Windows sources stay in the tree and compile, but there is no
-Windows CI, the release ships **no** `xampp` artifact by default, and nothing is guaranteed to work.
-To run LOOK on Windows, **use Docker.** The code is kept (not deleted) so the path stays open.
+**Out of scope on Windows** — these tools do not exist for MSVC (a technical limit, not neglect):
+ThreadSanitizer, libFuzzer, the bash differential/interop suites, **and UBSan** (so the undefined-
+arithmetic class, e.g. `-1 * INT64_MIN`, is not caught on Windows — it is caught on Linux). Memory
+errors are covered by MSVC AddressSanitizer. This is honest for a dev/small-deploy binary.
 
-**Windows is promoted to Tier 2/1 only when a real Windows user asks for it** — at which point a CI
-matrix and the branch-visibility refactor become worth their maintenance cost. Until a user exists,
-committing to Windows CI would be speculative machinery, not capacity. The tier is demand-driven.
+**Pre-release Windows checklist (mandatory — the `--mode http` line especially):** the release gate
+runs the CLI `lk`, but the whole Windows value proposition is `lk-fcgi --mode http`, which the gate
+does not exercise. So each Windows release must also start `lk-fcgi.exe --mode http` and confirm a
+live `200` — otherwise a non-booting server could ship (the sibling of the Docker `bare docker run`
+bug, which only surfaced when actually run).
+
+**Windows → Tier 1** when the differential/interop suite is portable off bash and a maintainer commits
+to a Windows CI matrix. Until then, Tier 2 with a manual pre-release check is the honest floor.

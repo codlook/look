@@ -36,8 +36,9 @@ route("404", fn() => response::error(404, "Not found"))
 
 ## Why LOOK
 
-- 🪶 **Simple to deploy** — a single binary. Copy it to a VPS, systemd, Plesk or
-  XAMPP and run — no `composer`/`npm` install step, no package tree.
+- 🪶 **Simple to deploy** — a single binary. Copy it to a VPS, systemd, Plesk, Docker or a
+  bare Windows box and run — no `composer`/`npm` install step, no package tree. On Windows,
+  `lk-fcgi.exe --mode http` is a complete web server: no Apache, no XAMPP, no config.
 - ⚡ **Fast** — **~9,800 req/s** on a direct port. On a real DB-bound workload
   (QR-menu JOIN over 50k rows, 1 CPU / 1 GB, best-of-3): **LOOK 2,837 req/s vs
   PHP 8.3 + JIT + FPM 2,184** — and **9–29 MB RAM against PHP's 43–47 MB**
@@ -239,13 +240,15 @@ Grab a package from **[Releases](https://github.com/codlook/look/releases)**:
 | Linux (Ubuntu / AlmaLinux / RHEL) | `look-lang-linux-1.0.0.zip` → `sudo bash install.sh` |
 | AlmaLinux / RHEL (dnf) | `look-lang-1.0.0-1.el8.x86_64.rpm` |
 | Plesk panel | `look-lang-plesk-1.0.0.zip` → `plesk bin extension --install …` |
-| Docker (any OS, incl. Windows/macOS dev) | `docker run -p 7400:7400 codlook/look` |
+| Docker (any OS) | `docker run -p 7400:7400 codlook/look` |
+| Windows | `look-lang-windows-1.0.0.zip` → unzip → `lk-fcgi.exe --mode http --port 8080` (no installer) |
 | VS Code editor support | [Marketplace](https://marketplace.visualstudio.com/items?itemName=codlook.look-lang) |
 
 > **Platform tiers:** Linux x86_64 is **Tier 1** (full test suite gates every release; the production
-> target). **Docker** is the supported way to run LOOK anywhere — including a Windows/macOS dev box —
-> with the same environment as production. **Windows native (MSVC) is Tier 3:** it builds from source
-> but ships no artifact, has no CI, and carries no guarantee — **use Docker to run LOOK on Windows.**
+> target). **Docker** runs the same environment anywhere. **Windows is Tier 2:** a plain-binary zip
+> (`lk.exe` + `lk-fcgi.exe`, **no installer** — `lk-fcgi.exe --mode http` is a complete web server, no
+> Apache/XAMPP), with the core test suite verified manually before each release. TSan/fuzz/differential
+> and UBSan are not run on Windows (those tools do not exist for MSVC).
 > See [SECURITY.md → Platform support tiers](SECURITY.md#platform-support-tiers).
 >
 > **Running behind Apache / nginx / IIS?** LOOK is a standard **CGI / FastCGI binary** — it wires into
