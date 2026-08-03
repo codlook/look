@@ -12,14 +12,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Kullanım: cmake -B build-asan -DLOOK_SANITIZE=address,undefined
 if(LOOK_SANITIZE)
     message(STATUS "Sanitizer aktif: ${LOOK_SANITIZE}")
-    add_compile_options(-fsanitize=${LOOK_SANITIZE} -fno-omit-frame-pointer -g)
-    # Sanitizer runtime'ını statik linkle — binary self-contained olur, toolset
-    # kurulu olmayan container/VPS'te de çalışır (libasan.so bağımlılığı olmaz).
-    # TSan ve ASan farklı statik-runtime bayrakları ister (karıştırılamaz).
-    if(LOOK_SANITIZE MATCHES "thread")
-        add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libtsan)
+    if(MSVC)
+        # MSVC AddressSanitizer (VS 2019 16.9+): /fsanitize=address. Yalnız 'address'
+        # desteklenir (UBSan/TSan MSVC'de yok). LTCG(/GL) ile ÇAKIŞIR → bu dalda IPO
+        # zaten açılmıyor (else dalında). ASan runtime DLL'i PATH'te olmalı (MSVC bin).
+        add_compile_options(/fsanitize=address)
+        # LTCG'yi Release bayraklarindan cikar (CMake Release default'u /GL koyabilir).
+        string(REPLACE "/GL" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+        string(REPLACE "/GL" "" CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}")
     else()
-        add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libasan -static-libubsan)
+        add_compile_options(-fsanitize=${LOOK_SANITIZE} -fno-omit-frame-pointer -g)
+        # Sanitizer runtime'ını statik linkle — binary self-contained olur, toolset
+        # kurulu olmayan container/VPS'te de çalışır (libasan.so bağımlılığı olmaz).
+        # TSan ve ASan farklı statik-runtime bayrakları ister (karıştırılamaz).
+        if(LOOK_SANITIZE MATCHES "thread")
+            add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libtsan)
+        else()
+            add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libasan -static-libubsan)
+        endif()
     endif()
 else()
     # ── Aşama A1: Link-Time Optimization ─────────────────────────────────────
