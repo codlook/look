@@ -7,9 +7,12 @@ use string
 use json
 use html
 use math
-$FAIL = 0
+# FAIL-LOUD: chk başarısızlıkta ANINDA exit(1) — LOOK'ta fonksiyon global sayacı
+# artıramaz (açık>örtük scope), o yüzden "$FAIL say + sonda kontrol et" DESENİ ÇALIŞMAZ
+# (eski hali $FAIL'i hiç artırmıyordu → kapı FAIL basıp exit 0 dönüyordu = sahte-yeşil,
+# t1/crypto_vectors dersinin kardeşi). exit() builtin, fonksiyondan çağrılabilir.
 function chk($ad, $gecti) {
-  if ($gecti) { print("  OK   " . $ad) } else { print("  FAIL " . $ad) }
+  if ($gecti) { print("  OK   " . $ad) } else { print("  FAIL " . $ad); exit(1) }
 }
 
 print("LOOK yayin kapisi")
