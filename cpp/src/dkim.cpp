@@ -1,5 +1,6 @@
 #include "look/dkim.h"
 #include "look/dns.h"
+#include "look/dkim_tag.h"   // ① fix: RFC-uyumlu tag ayrıştırma (saf, testlenebilir)
 #include <stdexcept>
 #include <sstream>
 #include <algorithm>
@@ -225,20 +226,11 @@ bool dkim_verify(const std::string& raw_message) {
         : raw_message.substr(sig_start);
 
     // Extract tags: d=, s=, b=, bh=, h=
+    // ① FIX: RFC-uyumlu tag ayrıştırma (look/dkim_tag.h). Eski find(name+"=") tag adını
+    // ALT DİZE olarak arıyordu → tag("h") "bh=" içindeki "h="e çarpardı (bh= önce gelince
+    // From: imza kapsamı dışı). Artık ';' ile böl, tag adını TAM eşleştir. Çağrı yerleri aynı.
     auto tag = [&](const std::string& name) -> std::string {
-        std::string pat = name + "=";
-        size_t p = dkim_hdr_raw.find(pat);
-        if (p == std::string::npos) return "";
-        p += pat.size();
-        size_t e = dkim_hdr_raw.find_first_of(";", p);
-        std::string v = (e != std::string::npos)
-            ? dkim_hdr_raw.substr(p, e - p)
-            : dkim_hdr_raw.substr(p);
-        // Strip whitespace
-        v.erase(std::remove_if(v.begin(), v.end(),
-                               [](char c){ return c==' '||c=='\t'||c=='\r'||c=='\n'; }),
-                v.end());
-        return v;
+        return dkim_tag(dkim_hdr_raw, name);
     };
 
     std::string domain   = tag("d");

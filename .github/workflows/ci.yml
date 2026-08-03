@@ -48,3 +48,11 @@ jobs:
         run: |
           cd cpp
           ./build/lk tests/crypto_vectors.lk
+
+      # DKIM tag-parser ① KAT — RFC 6376 tag ayirma dogru mu (bh= icindeki h='e carpmasin).
+      # Saf parser (look/dkim_tag.h), pozitif kontrollu: eski find() parser'i ①'de bozuk.
+      - name: DKIM tag-parser KAT
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/dkim_tag_test.cpp -o /tmp/dkim_tag_test
+          /tmp/dkim_tag_test
