@@ -40,3 +40,11 @@ jobs:
             exit 1
           fi
           echo "All assertions passed."
+
+      # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
+      # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
+      # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
+      - name: Crypto known-answer vectors
+        run: |
+          cd cpp
+          ./build/lk tests/crypto_vectors.lk

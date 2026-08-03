@@ -1,0 +1,157 @@
+# crypto_vectors.lk — KNOWN-ANSWER TESTS for LOOK's hand-rolled crypto.
+#
+# WHY THIS FILE EXISTS
+#   differential_test.sh compares the three ENGINES against each other. If all
+#   three compute the same WRONG hash, it still passes. That test proves
+#   consistency, not correctness.
+#
+#   LOOK deliberately ships its own SHA-256 / HMAC / PBKDF2 (pure C++, no
+#   #ifdef) so that the Windows build stays dependency-free (ws2_32 + bcrypt
+#   only). That is a sound architectural call — but it means these primitives
+#   are load-bearing on every platform and must be pinned to the SPEC, not to
+#   our own past output.
+#
+#   Run: lk tests/crypto_vectors.lk        (exit 0 = all pass, exit 1 = a vector failed)
+#   Wire into CI next to differential_test.sh. Positive control (MUST show red
+#   before trusting green): corrupt any expected value below -> exit code 1.
+#
+# SOURCES
+#   SHA-256      — NIST FIPS 180-4 examples
+#   HMAC-SHA256  — RFC 4231 test cases 1, 2, 4, 6
+#   Base64       — RFC 4648 section 10
+#
+# NOT COVERED HERE (need a different mechanism)
+#   crypto::random_bytes / random_string / uuid   — platform-split, non-deterministic
+#   crypto::rs256_sign / rs256_verify             — platform-split (Win BCrypt/NCrypt vs
+#                                                    POSIX OpenSSL), byte-identical RSA sig
+#                                                    required across two stacks, UNTESTED.
+#                                                    RSA PKCS#1 v1.5 is deterministic ->
+#                                                    KAT IS possible with a fixed test PEM.
+#                                                    Highest cross-platform divergence risk.
+
+use crypto
+use string
+
+$fail = 0
+$run  = 0
+
+# ── SHA-256 — NIST FIPS 180-4 ────────────────────────────────────────────────
+$cases_sha = [
+    ["abc",
+     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"],
+    ["",
+     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
+    ["abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+     "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"],
+    ["The quick brown fox jumps over the lazy dog",
+     "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"]
+]
+
+foreach ($cases_sha as $c) {
+    $run = $run + 1
+    $got = crypto::sha256($c[0])
+    if ($got == $c[1]) {
+        print("PASS  sha256  len=" . string::len($c[0]))
+    } else {
+        $fail = $fail + 1
+        print("FAIL  sha256  len=" . string::len($c[0]))
+        print("        want " . $c[1])
+        print("        got  " . $got)
+    }
+}
+
+# ── HMAC-SHA256 — RFC 4231 ───────────────────────────────────────────────────
+# Keys/data given as hex where the spec uses binary; decoded with hex_decode.
+$cases_hmac = [
+    # case 1: key = 20 x 0x0b, data = "Hi There"
+    ["0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+     "4869205468657265",
+     "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"],
+    # case 2: key = "Jefe", data = "what do ya want for nothing?"
+    ["4a656665",
+     "7768617420646f2079612077616e7420666f72206e6f7468696e673f",
+     "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"],
+    # case 4: key = 25 incrementing bytes, data = 50 x 0xcd
+    ["0102030405060708090a0b0c0d0e0f10111213141516171819",
+     "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+     "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b"],
+    # case 6: key = 131 x 0xaa (longer than the block size -> key gets hashed)
+    # Generated, not hand-typed: a 262-char hex literal is a transcription trap.
+    [string::repeat("aa", 131),
+     "54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374",
+     "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"]
+]
+
+foreach ($cases_hmac as $c) {
+    $run = $run + 1
+    $key  = crypto::hex_decode($c[0])
+    $data = crypto::hex_decode($c[1])
+    $got  = crypto::hmac_sha256($data, $key)
+    if ($got == $c[2]) {
+        print("PASS  hmac_sha256  keylen=" . string::len($key))
+    } else {
+        $fail = $fail + 1
+        print("FAIL  hmac_sha256  keylen=" . string::len($key))
+        print("        want " . $c[2])
+        print("        got  " . $got)
+    }
+}
+
+# ── Base64 — RFC 4648 section 10 ─────────────────────────────────────────────
+$cases_b64 = [
+    ["", ""],
+    ["f", "Zg=="],
+    ["fo", "Zm8="],
+    ["foo", "Zm9v"],
+    ["foob", "Zm9vYg=="],
+    ["fooba", "Zm9vYmE="],
+    ["foobar", "Zm9vYmFy"]
+]
+
+foreach ($cases_b64 as $c) {
+    $run = $run + 1
+    $enc = crypto::base64_encode($c[0])
+    $dec = crypto::base64_decode($enc)
+    if ($enc == $c[1] && $dec == $c[0]) {
+        print("PASS  base64  \"" . $c[0] . "\"")
+    } else {
+        $fail = $fail + 1
+        print("FAIL  base64  \"" . $c[0] . "\"  want " . $c[1] . "  got " . $enc)
+    }
+}
+
+# ── auth:: round-trip — PBKDF2 is not exported raw, so verify behaviourally ──
+# A raw crypto::pbkdf2($pass,$salt,$iter,$dklen) export would let us pin
+# RFC 7914 section 11 vectors here. Until then: salt uniqueness + verify contract.
+$run = $run + 1
+$h1 = auth::hash("correct horse battery staple")
+$h2 = auth::hash("correct horse battery staple")
+if ($h1 != $h2
+    && auth::verify("correct horse battery staple", $h1)
+    && auth::verify("correct horse battery staple", $h2)
+    && !auth::verify("wrong password", $h1)) {
+    print("PASS  auth  distinct salts + verify contract")
+} else {
+    $fail = $fail + 1
+    print("FAIL  auth  salt/verify contract broken")
+}
+
+# ── RNG sanity — cannot be a known-answer test, so assert properties ─────────
+$run = $run + 1
+$r1 = crypto::random_bytes(32)
+$r2 = crypto::random_bytes(32)
+$zeros = "0000000000000000000000000000000000000000000000000000000000000000"
+if (string::len($r1) == 64 && $r1 != $r2 && $r1 != $zeros) {
+    print("PASS  random_bytes  length + distinctness + non-zero")
+} else {
+    $fail = $fail + 1
+    print("FAIL  random_bytes  length=" . string::len($r1))
+}
+
+print("")
+if ($fail == 0) {
+    print("PASS: " . $run . "/" . $run . " crypto vectors (NIST FIPS 180-4, RFC 4231, RFC 4648)")
+} else {
+    print("FAIL: " . $fail . "/" . $run . " crypto vectors failed")
+    exit(1)
+}
