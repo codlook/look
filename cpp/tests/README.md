@@ -24,6 +24,14 @@ guard'ın **koşturulmayan yollarını** denetlemez. Kural: yeni guard eklerken 
 göster — (a) bir değeri boz → kırmızı; (b) test dizisini boşalt → kırmızı. Sayaç-sabiti
 (`EXPECTED_VECTORS`) ikincisini kapatır: vektör eklerken sayacı bilerek artırmak zorunda kalırsın.
 
+**SINIR (sonsuz gerileme yok): guard'lar KAZAYA karşıdır, KASDA değil.** "İki yönde pozitif kontrol"
+evet; "guard'ın guard'ının guard'ı" HAYIR — getiri sıfıra düşer. Yakalanmayacak ve yakalanmaya
+ÇALIŞILMAYACAK sınıflar: (a) beklenen değerin kendisi yanlış olabilir → zaten FAIL üretir (güvenli
+yön; HMAC case-6'da 131/134 bir kez oldu, yakalandı); (b) biri beklenen değeri buggy çıktıya uydurabilir
+veya sayaç+vektörü birlikte silebilir → KASIT, guard değil SÜREÇ (kod inceleme/commit) meselesi.
+`EXPECTED_VECTORS` doğru durma noktası: kazara boşalmayı yakalar, kasıtlı sabotajı yakalamaz — ve
+yakalamamalı. **Dördüncü tuzak arayışını burada bitir.**
+
 **Pratik:** Yeni bir assertion eklerken, onu yamasız (bug'lı) bir durumda koştur:
 - Fix'i geçici geri al → test KIRMIZI olmalı → fix'i koy → YEŞİL olmalı (pozitif kontrol).
 - `release_gate.lk` için: **eski bir binary sakla** (ör. bu turun DB işi öncesi). Kapıya her
