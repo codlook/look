@@ -6,13 +6,23 @@
 _var olduğu_ bir durumda **FAIL verdiği gösterilmeden** eklenmez. Yeşil geçen ama hiç
 kırmızı görülmemiş bir assertion, aslında hiçbir şey test etmiyor olabilir.
 
-Bu desen bu projede **en az üç kez** aynı biçimde ısırdı:
+Bu desen bu projede **en az dört kez** aynı biçimde ısırdı:
 
 | Ne zaman | Sahte yeşil |
 |----------|-------------|
 | `t1` (TSan yarış) | Her thread AYRI indekse yazıyordu → hiç yarışmıyordu; CI yeşildi ama bir şey test etmiyordu. Deterministik `t1b` (hepsi aynı elemana + kapı) ile düzeltildi. |
 | `t4=24` / ASLR | Yerel libtsan sahte sayı üretti; "0" da sahteydi. CI (ext4) otoriter. |
 | `release_gate.lk` non-finite/float | Assertion'lar YAMASIZ binary'de de geçiyordu (yanlış sebeple throw / eski yol da doğruydu) → sahte gate. Ayırt edici mesaj-kontrolüne çevrildi / çıkarıldı. |
+| `crypto_vectors.lk` (2026-08-03) | İki KATMAN: (1) `exit(1)` yoktu → bozuk vektörde bile exit 0, CI yeşil (dış-katkı hali). (2) `exit(1)` eklendikten SONRA bile bir dizi boşaltılınca `$run` düşüp "PASS: 13/13" diyordu → **boş-yeşil**. `EXPECTED_VECTORS` sabitiyle kapandı. |
+
+## ⚠️ KURAL 2: Guard eklerken, GUARD'IN KENDİSİ için pozitif kontrol yaz
+
+Bir guard "başarısızlıkta gürültülü" olmak yetmez — "hiç koşmadığında da gürültülü" olmalı.
+`exit(1)` fail-loud'u verir ama **boş-yeşil**'i (dizi boşaldı / `foreach` kırıldı / hiç vektör
+koşmadı → "PASS: 2/2") vermez. Zincirin her katmanı bir öncekinin _çıktısını_ denetler; kimse
+guard'ın **koşturulmayan yollarını** denetlemez. Kural: yeni guard eklerken **iki yönde** kırmızı
+göster — (a) bir değeri boz → kırmızı; (b) test dizisini boşalt → kırmızı. Sayaç-sabiti
+(`EXPECTED_VECTORS`) ikincisini kapatır: vektör eklerken sayacı bilerek artırmak zorunda kalırsın.
 
 **Pratik:** Yeni bir assertion eklerken, onu yamasız (bug'lı) bir durumda koştur:
 - Fix'i geçici geri al → test KIRMIZI olmalı → fix'i koy → YEŞİL olmalı (pozitif kontrol).

@@ -11,9 +11,16 @@
 #   are load-bearing on every platform and must be pinned to the SPEC, not to
 #   our own past output.
 #
-#   Run: lk tests/crypto_vectors.lk        (exit 0 = all pass, exit 1 = a vector failed)
-#   Wire into CI next to differential_test.sh. Positive control (MUST show red
-#   before trusting green): corrupt any expected value below -> exit code 1.
+#   Run: lk tests/crypto_vectors.lk    (exit 0 = all ran AND all passed; exit 1 otherwise)
+#   Wire into CI next to differential_test.sh. Already in .github/workflows/ci.yml.
+#
+# TWO GUARDS — both needed, both have their own positive control (README rule):
+#   Guard 1 (EXPECTED_VECTORS): catches VACUOUS green — if a case list is emptied
+#     or a foreach breaks, $run drops and "PASS: 13/13" would lie. Pin the count.
+#   Guard 2 (exit 1 on $fail): catches LOUD failure — a wrong hash exits non-zero
+#     so CI turns red instead of just printing a FAIL line.
+#   Positive control (MUST show red before trusting green): (a) corrupt an expected
+#     value -> exit 1; (b) empty a $cases_* array -> exit 1. Both were demonstrated.
 #
 # SOURCES
 #   SHA-256      — NIST FIPS 180-4 examples
@@ -23,11 +30,13 @@
 # NOT COVERED HERE (need a different mechanism)
 #   crypto::random_bytes / random_string / uuid   — platform-split, non-deterministic
 #   crypto::rs256_sign / rs256_verify             — platform-split (Win BCrypt/NCrypt vs
-#                                                    POSIX OpenSSL), byte-identical RSA sig
-#                                                    required across two stacks, UNTESTED.
-#                                                    RSA PKCS#1 v1.5 is deterministic ->
-#                                                    KAT IS possible with a fixed test PEM.
-#                                                    Highest cross-platform divergence risk.
+#                                                    POSIX OpenSSL): two stacks must emit a
+#                                                    byte-identical RSA sig, UNTESTED, highest
+#                                                    cross-platform divergence risk. RSA PKCS#1
+#                                                    v1.5 is deterministic -> KAT possible with a
+#                                                    fixed test PEM + fixed expected signature
+#                                                    (NOT sign->verify: one stack self-verifies).
+#                                                    Must run on BOTH ubuntu + windows CI runners.
 
 use crypto
 use string
@@ -149,9 +158,21 @@ if (string::len($r1) == 64 && $r1 != $r2 && $r1 != $zeros) {
 }
 
 print("")
-if ($fail == 0) {
-    print("PASS: " . $run . "/" . $run . " crypto vectors (NIST FIPS 180-4, RFC 4231, RFC 4648)")
-} else {
+
+# Guard 1 — vacuous green. Without this, emptying a vector array (or a broken
+# foreach) reports "PASS: 13/13" and exits 0 while silently testing fewer specs.
+# The count is pinned; bump it deliberately when you add a vector.
+const { EXPECTED_VECTORS = 17 }
+if ($run != EXPECTED_VECTORS) {
+    print("FAIL: expected " . EXPECTED_VECTORS . " vectors, ran " . $run
+          . " — a case list was emptied or a loop broke")
+    exit(1)
+}
+
+# Guard 2 — fail loud. exit(1) is what makes this a CI gate rather than a log line.
+if ($fail != 0) {
     print("FAIL: " . $fail . "/" . $run . " crypto vectors failed")
     exit(1)
 }
+
+print("PASS: " . $run . "/" . $run . " crypto vectors (NIST FIPS 180-4, RFC 4231, RFC 4648)")
