@@ -110,18 +110,23 @@ says what CI actually proves, so you know what you are getting before you deploy
 
 | Tier | Platform | Guarantee | CI coverage |
 |---|---|---|---|
-| **Tier 1** | Linux x86_64 | Full suite passes; **blocks the release** | Regression, differential (3 engines), TSan, fuzz (ASan/UBSan), crypto KATs, release gate |
-| **Tier 2** | Windows x86_64 (MSVC) | Compiles, and the platform-independent core passes; **does not block the release** | Build + `regression_all` / `crypto_vectors` / `release_gate` via MSVC; AddressSanitizer for memory errors |
+| **Tier 1** | Linux x86_64 | Full suite passes; **blocks the release**. This is the production target. | Regression, differential (3 engines), TSan, fuzz (ASan/UBSan), crypto KATs, release gate |
+| **Supported** | Docker (Linux image) | Same environment as Tier 1 — the recommended way to run LOOK anywhere, including on a Windows/macOS dev box | Image built + smoke-tested at release |
+| **Tier 3** | Windows x86_64 (MSVC) | Builds from source; **no CI, no shipped artifact, no guarantee**. Best-effort dev convenience. | None |
 
-**Out of scope on Windows** — these tools do not exist for MSVC (a technical limit, not neglect):
-ThreadSanitizer concurrency guards, libFuzzer harnesses, and the bash-driven differential / interop
-suites. Windows memory-safety is covered by MSVC AddressSanitizer instead.
+**Why Windows is Tier 3, not a supported target.** LOOK's production target is Linux (native or
+Docker). A native Windows build is a *second* platform surface — its own TLS stack (Schannel), its
+own crypto backend (BCrypt/NCrypt vs OpenSSL), and ~138 `#ifdef _WIN32` branches — that exists only
+to let someone *try* LOOK on Windows. **Docker already covers that use case, and covers it better:**
+the same Linux image as production, with zero platform divergence. Investing a CI matrix, a
+cross-platform RSA KAT, and a branch-visibility refactor into a surface no one ships to production is
+disproportionate for a project this size. The "deploy as easily as PHP" claim is about *production*,
+and Windows is not a production target.
 
-**What "does not block the release" means:** a red Windows check blocks a *merge* — it must be
-looked at — but does **not** block a *release*: if Linux (Tier 1) is green, the release ships.
-Tier 2 blocks attention, not shipping. It is the honest floor for a single-maintainer project that
-publishes a Windows/XAMPP artifact but cannot promise full-suite-green on every push.
+**What Tier 3 means concretely:** the Windows sources stay in the tree and compile, but there is no
+Windows CI, the release ships **no** `xampp` artifact by default, and nothing is guaranteed to work.
+To run LOOK on Windows, **use Docker.** The code is kept (not deleted) so the path stays open.
 
-**Windows is promoted to Tier 1 when both hold:** (a) the differential / interop suite is ported off
-bash to a portable runner (e.g. PowerShell), and (b) a maintainer commits to keeping Windows CI
-green. Until then Windows stays Tier 2 by design — the tier is a measurable gate, not a status.
+**Windows is promoted to Tier 2/1 only when a real Windows user asks for it** — at which point a CI
+matrix and the branch-visibility refactor become worth their maintenance cost. Until a user exists,
+committing to Windows CI would be speculative machinery, not capacity. The tier is demand-driven.

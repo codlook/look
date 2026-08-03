@@ -239,13 +239,18 @@ Grab a package from **[Releases](https://github.com/codlook/look/releases)**:
 | Linux (Ubuntu / AlmaLinux / RHEL) | `look-lang-linux-1.0.0.zip` → `sudo bash install.sh` |
 | AlmaLinux / RHEL (dnf) | `look-lang-1.0.0-1.el8.x86_64.rpm` |
 | Plesk panel | `look-lang-plesk-1.0.0.zip` → `plesk bin extension --install …` |
-| Windows + XAMPP | `look-lang-xampp-1.0.0.zip` → `.\install.ps1` |
+| Docker (any OS, incl. Windows/macOS dev) | `docker run -p 7400:7400 codlook/look` |
 | VS Code editor support | [Marketplace](https://marketplace.visualstudio.com/items?itemName=codlook.look-lang) |
 
-> **Platform tiers:** Linux x86_64 is **Tier 1** (full test suite gates every release). Windows x86_64
-> is **Tier 2** — it compiles and the platform-independent core tests pass, but TSan/fuzz/differential
-> are not run there (those tools do not exist for MSVC). A red Windows check blocks a merge, not a
-> release. See [SECURITY.md → Platform support tiers](SECURITY.md#platform-support-tiers).
+> **Platform tiers:** Linux x86_64 is **Tier 1** (full test suite gates every release; the production
+> target). **Docker** is the supported way to run LOOK anywhere — including a Windows/macOS dev box —
+> with the same environment as production. **Windows native (MSVC) is Tier 3:** it builds from source
+> but ships no artifact, has no CI, and carries no guarantee — **use Docker to run LOOK on Windows.**
+> See [SECURITY.md → Platform support tiers](SECURITY.md#platform-support-tiers).
+>
+> **Running behind Apache / nginx / IIS?** LOOK is a standard **CGI / FastCGI binary** — it wires into
+> any web server (XAMPP, Laragon, WAMP, MAMP, plain Apache/nginx) with ordinary CGI configuration; the
+> stack does not matter. LOOK ships the binary, not per-stack installers. See the deployment docs.
 
 ## Ecosystem
 
