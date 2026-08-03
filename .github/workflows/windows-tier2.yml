@@ -8,8 +8,12 @@ name: Windows Tier 2 (manual)
 # fail on ENVIRONMENT (MSVC generator, .lk paths, line endings) not on code —
 # that is setup work, iterate here freely.
 #
-# ONCE this is reliably green, add the push trigger below and it becomes the
-# Tier 2 gate (blocks a merge, NOT a release — see SECURITY.md#platform-support-tiers):
+# ONCE this is reliably green, DO NOT leave this as a 4th permanent workflow file
+# (a solo project already has ci.yml / sanitizers.yml / security.yml — a 4th one is
+# maintenance surface that rots and gets "what did this do?" in six months = the
+# known_fail/ trap). Instead: MOVE this job into ci.yml as a matrix/second job,
+# add the push trigger there, and DELETE this file. Separate file = experimental
+# phase only. The Tier 2 gate belongs next to the Tier 1 gate, not beside it.
 #   on:
 #     workflow_dispatch:
 #     push:
