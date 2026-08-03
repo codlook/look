@@ -102,3 +102,26 @@ behaviour. The suite runs the same program through all three engines (tree-walk
 interpreter, CLI bytecode VM, web VM) and fails on any divergence: a security fix
 that only lands in one engine is itself a vulnerability. See
 [BUG_AVI_HARITASI.md](BUG_AVI_HARITASI.md) for the method and the full log.
+
+### Platform support tiers
+
+Following the Rust/Go model, platform support is a **declared capability, not a wish** — a tier
+says what CI actually proves, so you know what you are getting before you deploy.
+
+| Tier | Platform | Guarantee | CI coverage |
+|---|---|---|---|
+| **Tier 1** | Linux x86_64 | Full suite passes; **blocks the release** | Regression, differential (3 engines), TSan, fuzz (ASan/UBSan), crypto KATs, release gate |
+| **Tier 2** | Windows x86_64 (MSVC) | Compiles, and the platform-independent core passes; **does not block the release** | Build + `regression_all` / `crypto_vectors` / `release_gate` via MSVC; AddressSanitizer for memory errors |
+
+**Out of scope on Windows** — these tools do not exist for MSVC (a technical limit, not neglect):
+ThreadSanitizer concurrency guards, libFuzzer harnesses, and the bash-driven differential / interop
+suites. Windows memory-safety is covered by MSVC AddressSanitizer instead.
+
+**What "does not block the release" means:** a red Windows check blocks a *merge* — it must be
+looked at — but does **not** block a *release*: if Linux (Tier 1) is green, the release ships.
+Tier 2 blocks attention, not shipping. It is the honest floor for a single-maintainer project that
+publishes a Windows/XAMPP artifact but cannot promise full-suite-green on every push.
+
+**Windows is promoted to Tier 1 when both hold:** (a) the differential / interop suite is ported off
+bash to a portable runner (e.g. PowerShell), and (b) a maintainer commits to keeping Windows CI
+green. Until then Windows stays Tier 2 by design — the tier is a measurable gate, not a status.

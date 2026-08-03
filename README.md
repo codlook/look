@@ -242,6 +242,11 @@ Grab a package from **[Releases](https://github.com/codlook/look/releases)**:
 | Windows + XAMPP | `look-lang-xampp-1.0.0.zip` → `.\install.ps1` |
 | VS Code editor support | [Marketplace](https://marketplace.visualstudio.com/items?itemName=codlook.look-lang) |
 
+> **Platform tiers:** Linux x86_64 is **Tier 1** (full test suite gates every release). Windows x86_64
+> is **Tier 2** — it compiles and the platform-independent core tests pass, but TSan/fuzz/differential
+> are not run there (those tools do not exist for MSVC). A red Windows check blocks a merge, not a
+> release. See [SECURITY.md → Platform support tiers](SECURITY.md#platform-support-tiers).
+
 ## Ecosystem
 
 This repository is **the LOOK language core** only. Everything else lives on its own:
