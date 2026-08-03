@@ -1,37 +1,43 @@
 # release_gate.lk — paketlenen HER binary'ye karsi calistir.
 # Amac: artefaktin guvenlik+dogruluk fix'lerini gercekten icerdigini KANITLAMAK.
-# Kullanim: ./lk release_gate.lk   (cikis 0 = yayinlanabilir)
+# Kullanim: ./lk release_gate.lk   (cikis 0 = yayinlanabilir, cikis 1 = bir fix eksik)
 # NOT: paketten CIKARILDI (Faz D #4) — repo'da durur, artefakt dogrulamasinda
 #      "zip'i ac, REPODAKI bu dosyayi cikarilan lk ile kos" akisiyla kullanilir.
 use string
 use json
 use html
 use math
-# FAIL-LOUD: chk başarısızlıkta ANINDA exit(1) — LOOK'ta fonksiyon global sayacı
-# artıramaz (açık>örtük scope), o yüzden "$FAIL say + sonda kontrol et" DESENİ ÇALIŞMAZ
-# (eski hali $FAIL'i hiç artırmıyordu → kapı FAIL basıp exit 0 dönüyordu = sahte-yeşil,
-# t1/crypto_vectors dersinin kardeşi). exit() builtin, fonksiyondan çağrılabilir.
+
+# FAIL-LOUD ama TUM hatalar gorunur: chk() 0 (gecti) / 1 (kaldi) DONER, cagri yerinde
+# toplanir ($FAIL = $FAIL + chk(...)), sonda tek exit(1). LOOK'ta fonksiyon global sayaci
+# ARTIRAMAZ (acik>ortuk scope; olculdu: bump()->0) — o yuzden dönus-degeri deseni dile
+# uygun cozum (crypto_vectors.lk ile ayni: kavram basina tek yapi). Ilk-hatada-exit
+# YANLIS olurdu: "hangi fix'ler eksik" -> "ilk eksik hangisi"ye duserdi (kapida geri gidis).
 function chk($ad, $gecti) {
-  if ($gecti) { print("  OK   " . $ad) } else { print("  FAIL " . $ad); exit(1) }
+  if ($gecti) { print("  OK   " . $ad); return 0 }
+  print("  FAIL " . $ad)
+  return 1
 }
+
+$FAIL = 0
 
 print("LOOK yayin kapisi")
 
 # --- MSVC 8c63c28: -1 * INT64_MIN cokmemeli (Windows'ta ayrisir) ---
 $m = 0
 try { $m = -1 * -9223372036854775808 } catch ($e) { $m = -1 }
-chk("MSVC carpma-tasma (SIGFPE yok)", $m == 9223372036854775808)
+$FAIL = $FAIL + chk("MSVC carpma-tasma (SIGFPE yok)", $m == 9223372036854775808)
 
 # --- B-05: sayisal olmayan string + sayi fail-loud ---
 $b5 = false
 try { $x = "abc" + 1 } catch ($e) { $b5 = true }
-chk("B-05 aritmetik fail-loud", $b5)
+$FAIL = $FAIL + chk("B-05 aritmetik fail-loud", $b5)
 
 # --- B-08: backtick kacisi (html_escape) ---
-chk("B-08 backtick escape", html::escape("`") == "&#96;")
+$FAIL = $FAIL + chk("B-08 backtick escape", html::escape("`") == "&#96;")
 
 # --- B-04: JSON yinelenen anahtar son-kazanir + konum korunur ---
-chk("B-04 JSON son-kazanir", json::encode(json::decode("{\"a\":1,\"b\":2,\"a\":3}")) == "{\"a\":3,\"b\":2}")
+$FAIL = $FAIL + chk("B-04 JSON son-kazanir", json::encode(json::decode("{\"a\":1,\"b\":2,\"a\":3}")) == "{\"a\":3,\"b\":2}")
 
 # --- F-01: ReDoS slot sizintisi (tasinabilir: yalniz unpatched-Linux imzasi FAIL) ---
 $s = string::repeat("a", 44) . "b"
@@ -44,7 +50,7 @@ for ($i = 0; $i < 12; $i = $i + 1) {
     else { if (string::contains("" . $e, "timeout")) { $timeout = $timeout + 1 } }
   }
 }
-chk("F-01 ReDoS slot sizintisi kapali", $limit > 0 || $timeout == 0)
+$FAIL = $FAIL + chk("F-01 ReDoS slot sizintisi kapali", $limit > 0 || $timeout == 0)
 
 # ── Bu turun DB fix'leri (SQLite ile test edilebilir; canli DB gerekmez) ──
 $c = db::connect("sqlite://:memory:")
@@ -54,7 +60,7 @@ $c = db::connect("sqlite://:memory:")
 # kendi sayar. Bu tek assert native-binding'i kanitlar (escape yolu burada patlardi).
 $nb = false
 try { db::query($c, "SELECT 1 AS `soru?isareti` WHERE 1 = ?", [1]); $nb = true } catch ($e) { }
-chk("S1 native prepared binding (backtick)", $nb)
+$FAIL = $FAIL + chk("S1 native prepared binding (backtick)", $nb)
 
 # 973e21e: non-finite float (Inf) bind fail-loud. AYIRT EDICI: "throw oldu mu" DEGIL "DOGRU
 # hata mi" — eski binary escape'te to_string(inf) cipdak gomup sqlite "no such column: Infinity"
@@ -62,10 +68,15 @@ chk("S1 native prepared binding (backtick)", $nb)
 # (Pozitif kontrol: analizci yamasiz binary'de bu satirin FAIL verdigini dogruladi.)
 $nfmsg = ""
 try { db::query($c, "SELECT ? AS v", [math::pow(10, 400)]) } catch ($e) { $nfmsg = "" . $e }
-chk("non-finite bind fail-loud", string::contains($nfmsg, "bind edilemez"))
+$FAIL = $FAIL + chk("non-finite bind fail-loud", string::contains($nfmsg, "bind edilemez"))
 
 # NOT: "float round-trip" assertion'i CIKARILDI — SQLite'ta ayirt edici degildi (eski yol da
 # %.17g ile dogruydu -> yamasiz binary'de de gecerdi = sahte assertion, t1 dersi). Asil duzelen
 # PG/MySQL BIND'iydi; o kapida (canli DB) test edilemez -> yerine yanlis guven vermeyin, DAMGA'ya guven.
 
+print("")
+if ($FAIL > 0) {
+  print("FAIL: " . $FAIL . " kontrol basarisiz — yayinlanamaz")
+  exit(1)
+}
 print("kapi tamamlandi")
