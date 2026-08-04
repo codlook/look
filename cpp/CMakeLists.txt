@@ -101,6 +101,9 @@ set(LOOK_CORE
     src/lexer.cpp
     src/parser.cpp
     src/interpreter.cpp
+    src/builtins.cpp   # interpreter.cpp is_reserved_builtin() çağırır → HER target'a lazım
+                       # (look-cgi LOOK_CORE kullanıp builtins'i ayrıca eklemiyordu → link fail,
+                       # yalnız 3-target portatif build'de görüldü; ci/build-win 2-target kaçırdı)
     src/runtime_init.cpp
     src/stdlib.cpp
     src/web.cpp
@@ -148,8 +151,7 @@ add_executable(look
     src/event_loop.cpp
     src/compiler.cpp   # C9: CLI-VM (opt-in LOOK_CLI_VM) — bytecode derleyici
     src/vm.cpp         # C9: CLI-VM — bytecode yürütücü
-    src/builtins.cpp   # C9: builtin_names/builtin_index (VM builtin tablosu)
-    ${LOOK_CORE}
+    ${LOOK_CORE}       # builtins.cpp artık LOOK_CORE'da (interpreter bağımlılığı)
 )
 
 add_executable(look-cgi
@@ -176,7 +178,6 @@ add_executable(look-fcgi
     src/http_server.cpp
     src/event_loop.cpp
     src/compiler.cpp
-    src/builtins.cpp
     src/vm.cpp
     ${LOOK_CORE}
 )

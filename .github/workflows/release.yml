@@ -43,20 +43,21 @@ jobs:
       - name: Portable static build @ HEAD
         run: |
           docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh
-          echo "--- ldd (glibc-only olmalı; ssl/crypto/stdc++ dinamik OLMAMALI) ---"
-          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash -c \
-            'ldd cpp/build-portable/lk-fcgi 2>&1 || true' || true
+          # FAIL-LOUD: recipe'in "cmake | grep"i exit kodunu yutuyor → binary'yi ELLE doğrula
+          # (yoksa link hatası success görünür = sahte-yeşil, bu turda kapatılan sınıf).
+          for b in lk lk-fcgi lk-cgi; do
+            test -x "cpp/build-portable/$b" || { echo "LINK FAIL: cpp/build-portable/$b uretilmedi"; exit 1; }
+          done
+          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build \
+            bash -c "ldd cpp/build-portable/lk-fcgi 2>&1 || true" || true
 
       # 3) ── KAPI (fail → sonraki adımlar çalışmaz, upload YOK) ──
+      # NOT: bash -c ÇİFT tırnak + apostrofsuz (Türkçe "binary'ye" apostrofu tek-tırnaklı
+      # bash -c'yi bozup "syntax error near )" veriyordu — rc1'de görüldü).
       - name: GATE — release_gate 7/7 + crypto KAT 17/17
         run: |
-          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash -c '
-            set -e
-            echo "=== release_gate.lk (paketlenen binary'ye karşı) ==="
-            build-portable/lk tests/release_gate.lk
-            echo "=== crypto_vectors.lk (17/17 NIST/RFC KAT) ==="
-            build-portable/lk tests/crypto_vectors.lk
-          '
+          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build \
+            bash -c "set -e; ./build-portable/lk tests/release_gate.lk; ./build-portable/lk tests/crypto_vectors.lk"
 
       # 4) Paketle — Linux zip + Plesk zip (binary gömülü)
       - name: Package Linux + Plesk zips
