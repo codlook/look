@@ -720,6 +720,10 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
 // ── compile_func_decl ─────────────────────────────────────────────────────────
 
 void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
+    // Builtin gölgeleme = hata (interpreter ile parity — orada da tanım anında fırlatılır).
+    // Compile hatası CLI'da tree-walk'a düşer, o da AYNI hatayı fırlatır → tutarlı.
+    if (is_reserved_builtin(s.name))
+        throw std::runtime_error("'" + s.name + "' bir builtin — yeniden tanimlanamaz");
     // İç fonksiyon derle
     FunctionCompiler inner(s.name, s.parameters, s.is_variadic, this);
     auto proto = inner.compile(*s.body, &s.defaults);

@@ -3,6 +3,7 @@
 #include "look/builtins.h"
 
 #include <unordered_map>
+#include <unordered_set>
 
 namespace look {
 
@@ -185,6 +186,18 @@ int builtin_index(const std::string& name) {
     }();
     auto it = INDEX.find(name);
     return it == INDEX.end() ? -1 : it->second;
+}
+
+bool is_reserved_builtin(const std::string& name) {
+    // Rezerve = builtin_names()'in bare (":: içermeyen") girdileri. Tek kaynak,
+    // el-listesi yok → yeni bare builtin eklenince otomatik dahil olur.
+    static const std::unordered_set<std::string> RESERVED = [] {
+        std::unordered_set<std::string> s;
+        for (const auto& n : builtin_names())
+            if (n.find("::") == std::string::npos) s.insert(n);
+        return s;
+    }();
+    return RESERVED.count(name) != 0;
 }
 
 } // namespace look

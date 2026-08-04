@@ -7,6 +7,7 @@
 // Aynı .lk kodu her iki modda çalışır.
 
 #include "look/builtins.h"
+#include "look/array_count.h"
 #include "look/http_server.h"
 #include <algorithm>
 #include "look/db_async_pool.h"
@@ -377,14 +378,8 @@ static void run_setup_http(const fs::path& script) {
             setup_builtins[1] = setup_builtins[0];
 
             // count (2)
-            setup_builtins[2] = [](std::vector<look::Value>& args) -> look::Value {
-                if (args.empty()) return look::Value(0);
-                auto& v = args[0];
-                if (v.type() == look::Value::ARRAY)
-                    return look::Value((int)v.as_array()->size());
-                if (v.type() == look::Value::STRING)
-                    return look::Value((int)v.as_string().size());
-                return look::Value(0);
+            setup_builtins[2] = [](std::vector<look::Value>& args) -> look::Value {  // count/len
+                return look::Value(args.empty() ? 0 : look::look_count(args[0]));  // tek tanım (array_count.h)
             };
 
             // push (3) — setup'ta $routes_list push'ları için
@@ -921,14 +916,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         req_builtins[1] = req_builtins[0];
 
         // count (2)
-        req_builtins[2] = [](std::vector<look::Value>& args) -> look::Value {
-            if (args.empty()) return look::Value(0);
-            auto& v = args[0];
-            if (v.type() == look::Value::ARRAY)
-                return look::Value((int)v.as_array()->size());
-            if (v.type() == look::Value::STRING)
-                return look::Value((int)v.as_string().size());
-            return look::Value(0);
+        req_builtins[2] = [](std::vector<look::Value>& args) -> look::Value {  // count/len
+            return look::Value(args.empty() ? 0 : look::look_count(args[0]));  // tek tanım (array_count.h)
         };
 
         // str/int/float/bool (5-8)

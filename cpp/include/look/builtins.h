@@ -25,4 +25,15 @@ const std::vector<std::string>& builtin_names();
 // İsim → index; bulunamazsa -1. O(1) (ilk çağrıda hash map kurulur).
 int builtin_index(const std::string& name);
 
+// Rezerve bare builtin adı mı? (kullanıcı fonksiyonu bu adı GÖLGELEYEMEZ)
+//
+// Kaynak PROGRAMATİK: builtin_names()'in "::" İÇERMEYEN girdileri (print, count,
+// route, config, env, stop, before_route, strlen, abs...). El-listesi TUTULMAZ —
+// dispatcher'ın tek kaynağından türer; yeni bare builtin eklenince otomatik kapsanır.
+//
+// NEDEN: interpreter+compiler bare builtin'i kullanıcı fonksiyonundan ÖNCE dispatch
+// eder → `function config() {...}` SESSİZCE ölü koda dönüşüyordu. Artık tanım anında
+// her iki motor da hata fırlatır (parity).
+bool is_reserved_builtin(const std::string& name);
+
 } // namespace look

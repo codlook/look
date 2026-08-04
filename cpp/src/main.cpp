@@ -1,6 +1,7 @@
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/interpreter.h"
+#include "look/array_count.h"
 #include "look/http_client.h"
 #include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
 #include "look/test_runner.h"
@@ -175,11 +176,8 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
     b[0] = [&out](std::vector<Value>& a) -> Value { for (auto& x : a) out << x.to_string(); return Value(); };
     b[1] = b[0];  // print/write
-    b[2] = [](std::vector<Value>& a) -> Value {   // count
-        if (a.empty()) return Value(0);
-        if (a[0].type()==Value::ARRAY)  return Value((int)a[0].as_array()->size());
-        if (a[0].type()==Value::STRING) return Value((int)a[0].as_string().size());
-        return Value(0);
+    b[2] = [](std::vector<Value>& a) -> Value {   // count/len — tek tanım (array_count.h)
+        return Value(a.empty() ? 0 : look_count(a[0]));   // assoc: (size-1)/2 (sentinel atlanır)
     };
     b[5] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? std::string() : a[0].to_string()); };  // str
     b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return Value(a[0].to_int()); };  // int — to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + int32 daralması kapandı (tree-walk parite)

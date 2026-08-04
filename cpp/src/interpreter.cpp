@@ -1,4 +1,6 @@
 #include "look/interpreter.h"
+#include "look/array_count.h"
+#include "look/builtins.h"
 #include "look/stdlib.h"
 #include "look/web.h"
 #include "look/parallel_runtime.h"
@@ -1011,6 +1013,9 @@ void Interpreter::execute_statement(const Statement& stmt) {
     if (dynamic_cast<const BreakStatement*>(&stmt))    { throw BreakException(); }
     if (dynamic_cast<const ContinueStatement*>(&stmt)) { throw ContinueException(); }
     if (auto* s = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
+        // Builtin gölgeleme = hata (yoksa bare builtin dispatch'i kazanır, tanım ölü kod olur)
+        if (is_reserved_builtin(s->name))
+            throw std::runtime_error("'" + s->name + "' bir builtin — yeniden tanimlanamaz");
         auto fn = std::make_shared<LookFunction>(s->name, s->parameters, s->is_variadic, s->body.get(), current_, &s->defaults);
         current_->define(s->name, Value(fn));
         return;
@@ -1677,15 +1682,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         if (fn_name == "count" || fn_name == "len") {
             if (argc != 1) throw std::runtime_error(fn_name + "() takes 1 argument");
             Value v = evaluate_expression(*e->arguments[0]);
-            if (v.type() == Value::ARRAY) {
-                auto& arr = *v.as_array();
-                // Assoc arrays store __assoc__ sentinel + key-value pairs
-                if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__")
-                    return Value((int)((arr.size() - 1) / 2));
-                return Value((int)arr.size());
-            }
-            if (v.type() == Value::STRING) return Value((int)v.to_string().size());
-            return Value(0);
+            return Value(look_count(v));   // tek tanım (array_count.h) — VM builtin'leriyle birebir
         }
         if (fn_name == "push") {
             if (argc != 2) throw std::runtime_error("push() takes 2 arguments");

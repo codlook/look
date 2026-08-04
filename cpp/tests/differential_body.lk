@@ -130,6 +130,11 @@ function run_all() {
              . date::is_valid("2024-04-31") . "," . date::is_valid("2024-02-29") . ","
              . date::diff(date::parse("2024-01-01","Y-m-d"), date::parse("2024-01-10","Y-m-d"), "days") . ";";
   $o .= "U:" . $ug . "," . $us . "," . $ut . "," . $ul[0] . "," . dif_compound() . ";";
+  # count/len — assoc sentinel'i SAYMAMALI. VM builtin'leri (main b[2], http_main setup/req[2])
+  # __assoc__ kontrolunu ATLIYORDU → count(["x"=>1])=3 (sentinel+2n), interpreter=1 ile ayrisir.
+  # Bu case eskiden RED verirdi (assoc testi yoktu, bug differential-gorunmezdi). Beklenen: 2,2,4,0,3.
+  $ca = ["x"=>1, "y"=>2]; $cp = [1,2,3,4];
+  $o .= "W:" . count($ca) . "," . len($ca) . "," . count($cp) . "," . count([]) . "," . len("abc") . ";";
   return $o;
 }
 
