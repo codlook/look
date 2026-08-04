@@ -1,0 +1,109 @@
+name: Release — build, gate & publish (Linux Tier-1 core)
+
+# Yayın otomasyonu (#5). Üç yayın elle yapıldı, üçünde de drift birikti (yayın HEAD'den
+# 36 commit geride kalabildi). Tag push → build + KAPI + yayın. Sürüm 1.0.0 SABİT kalır;
+# ayrım damgada (lk --version → git-sha). v1.0 etiketi yerinde, asset'ler HEAD'e yenilenir.
+#
+# KAPI İÇERİDE (kritik): release_gate.lk 7/7 + crypto_vectors.lk 17/17 build'den SONRA,
+# upload'dan ÖNCE çalışır. Kapı düşerse iş orada durur → upload adımına HİÇ geçilmez.
+# Bu, otomasyonun tek gerçek riskini (doğrulanmamış artefaktı otomatik yayınlamak) kapatır.
+# POZİTİF KONTROL: kapıyı bilerek boz (ör. release_gate'e yanlış assert) → workflow upload
+# ETMEMELİ. rc-tag provasında bir kez gösterilmeli (kırmızı görülmeden yeşile güvenilmez).
+#
+# PROVA: gerçek v1.0'ı ezmeden önce `v1.0.0-rc1` gibi bir pre-release tag ile tüm hattı koştur
+# (aşağıda -rc* → ayrı prerelease; v1.0 → mevcut asset'leri --clobber ile yeniler).
+#
+# NOT: Windows (Tier 2) bu workflow'da YOK — MSVC/OpenSSL CI yolu ayrıca doğrulanmalı,
+# kör eklenmeyecek. Linux/Docker/Plesk = Tier-1 prod hedefi (36-commit'in asıl değeri).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # gh release upload/create için
+
+jobs:
+  linux:
+    name: Linux/Docker/Plesk — build, gate, publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) Toolchain imajı (gcc-toolset-12 + cmake gömülü)
+      - name: Build look-build image
+        run: docker build -t look-build -f cpp/Dockerfile.build cpp/
+
+      # 2) Portatif statik build (glibc-2.28-only; statik OpenSSL/libstdc++)
+      - name: Portable static build @ HEAD
+        run: |
+          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh
+          echo "--- ldd (glibc-only olmalı; ssl/crypto/stdc++ dinamik OLMAMALI) ---"
+          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash -c \
+            'ldd cpp/build-portable/lk-fcgi 2>&1 || true' || true
+
+      # 3) ── KAPI (fail → sonraki adımlar çalışmaz, upload YOK) ──
+      - name: GATE — release_gate 7/7 + crypto KAT 17/17
+        run: |
+          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash -c '
+            set -e
+            echo "=== release_gate.lk (paketlenen binary'ye karşı) ==="
+            build-portable/lk tests/release_gate.lk
+            echo "=== crypto_vectors.lk (17/17 NIST/RFC KAT) ==="
+            build-portable/lk tests/crypto_vectors.lk
+          '
+
+      # 4) Paketle — Linux zip + Plesk zip (binary gömülü)
+      - name: Package Linux + Plesk zips
+        run: |
+          bash platforms/linux/build.sh
+          mkdir -p platforms/plesk/bin
+          cp cpp/build-portable/lk cpp/build-portable/lk-fcgi platforms/plesk/bin/
+          bash platforms/plesk/build.sh --with-binaries
+
+      # 5) Docker imajı → tarball (docker load ile Hub olmadan da kurulur)
+      - name: Docker image → look-docker.tar.gz
+        run: |
+          docker build -t codlook/look:1.0.0 -t codlook/look:latest \
+            -f cpp/docker/Dockerfile.production .
+          docker save codlook/look:1.0.0 | gzip > look-docker.tar.gz
+
+      # 6) Artefaktları topla + SHA256SUMS
+      - name: Collect artifacts + SHA256SUMS
+        run: |
+          mkdir -p dist
+          cp platforms/linux/look-lang-linux-1.0.0.zip dist/
+          cp platforms/plesk/look-lang-plesk-1.0.0.zip dist/
+          cp look-docker.tar.gz dist/
+          cd dist && sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          echo "=== SHA256SUMS ==="; cat dist/SHA256SUMS.txt
+
+      # 7) Yayınla — rc* → ayrı prerelease (prova); v1.0 → mevcut asset'leri yenile
+      - name: Publish to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          cd dist
+          if [[ "$TAG" == *-rc* || "$TAG" == *rc* ]]; then
+            echo "PROVA — pre-release $TAG (gerçek v1.0 ezilmez)"
+            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+              --title "LOOK $TAG (release automation prova)" \
+              --notes "release.yml prova koşumu — kapı geçti, artefaktlar üretildi. Damga: $GITHUB_SHA" \
+              *.zip *.tar.gz SHA256SUMS.txt
+          else
+            echo "GERÇEK YAYIN — $TAG asset'leri HEAD'e yenileniyor (sürüm 1.0.0 sabit, damga=$GITHUB_SHA)"
+            gh release upload "$TAG" *.zip *.tar.gz SHA256SUMS.txt --clobber
+          fi
+
+      # 8) Docker Hub push — yalnız secret varsa (yoksa atla; kullanıcı elle push eder)
+      - name: Docker Hub push (secret varsa)
+        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          docker push codlook/look:1.0.0
+          docker push codlook/look:latest
