@@ -2,7 +2,7 @@
 #include "look/parser.h"
 #include "look/interpreter.h"
 #include "look/http_client.h"
-#include "look/sqlite_client.h"   // sqlite_global_init (startup, thread'lerden önce)
+#include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
 #include "look/test_runner.h"
 #include "look/repl.h"
 #include "look/web.h"
@@ -280,8 +280,7 @@ static bool preload_uses_for_vm(look::Interpreter& interp, const look::Program& 
 } // namespace
 
 int main(int argc, char* argv[]) {
-    look::configure_system_ca_bundle();  // statik OpenSSL: sistem CA'sını bul (TLS'ten önce)
-    look::sqlite_global_init();           // SQLite bir-kez init'i thread'lerden ÖNCE (t4 race fix)
+    look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
     try {
         if (argc < 2) { print_usage(); return 1; }
 

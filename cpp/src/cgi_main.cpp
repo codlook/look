@@ -3,7 +3,7 @@
 #include "look/interpreter.h"
 #include "look/logger.h"
 #include "look/web.h"
-#include "look/http_client.h"   // configure_system_ca_bundle (statik OpenSSL CA probe)
+#include "look/runtime_init.h"   // runtime_init (CA probe + SQLite init, süreç başı — 3 giriş noktası ortak)
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -140,7 +140,7 @@ int main(int argc, char* argv[]) {
     // bile reddedilir. main.cpp/fcgi_main.cpp bunu startup'ta yapıyordu; cgi_main ATLIYORDU
     // → CGI modunda http:: + PostgreSQL TLS (verify VARSAYILAN) dağıtımlar arası kırıktı.
     // SSL_CERT_FILE'i process-global set eder; DB istemcilerinin default_verify_paths'i okur.
-    look::configure_system_ca_bundle();
+    look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
     std::string script_path = resolve_script(argc, argv);
 
     if (script_path.empty()) {

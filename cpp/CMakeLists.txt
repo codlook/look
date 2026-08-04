@@ -101,6 +101,7 @@ set(LOOK_CORE
     src/lexer.cpp
     src/parser.cpp
     src/interpreter.cpp
+    src/runtime_init.cpp
     src/stdlib.cpp
     src/web.cpp
     src/web_stdlib.cpp
