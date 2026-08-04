@@ -17,6 +17,23 @@ Kapsam (dikey dilim, 5 ekran):
 
 <!-- Her bulgu: [KATMAN] ne yapmaya çalıştım → ne oldu → doküman ne diyordu → workaround/fix -->
 
+### BULGU #5 — Yayınlanan release HEAD'den ~1 ay geride (deployment dogfooding, VPS'e dokunmadan)
+
+**Katman:** dağıtım / release süreci / kaynak↔artefakt drift
+**Ne yaptım:** Görev yöneticisini gerçek kullanıcı gibi deploy etmek için README "Install (prebuilt)"
+yolunu izledim: Releases'ten `look-lang-linux-1.0.0.zip` → `sudo bash install.sh`.
+**Ne oldu:** Release v1.0 (`look-lang-linux-1.0.0.zip` + rpm/plesk/docker) GERÇEKTEN var (docs doğru
+işaret ediyor) — ama **published 2026-07-09**, HEAD'den ~1 ay geride. O tarihten sonra girenler:
+session::has (bu oturum), count/len fix, array:: fantom kaldırma, güvenlik fix'leri.
+**Sonuç:** Bugün README'yi takip eden kullanıcı, **session::has içermeyen** binary indirir →
+dokümandaki auth örneğini (session::has) yazınca 500. Dokümanla yönlendirilen install yolu,
+dokümandaki özelliği çalıştıramayan binary veriyor. Memory "yayın kapısı drift"in canlı tekrarı.
+**Kök:** Release manuel + seyrek; her fix'te yeni release yok, versiyon 1.0.0 sabit (SHA256SUMS'ta
+bile aynı sürüm). CI'da build var ama otomatik release-asset güncellemesi yok.
+**Engel (ölçüldü):** güncel binary deploy etmek için Linux build şart, ama **docker DOWN** → yerelde
+Linux lk-fcgi üretilemiyor. Seçenekler: (a) VPS'te kaynaktan derle, (b) CI artefaktı indir, (c) yeni
+release kes. Bu, deployment turunun ilk gerçek karar noktası (canlı test.codlook.com — teyit gerekli).
+
 ### BULGU #1 — `session::has()` doküman var, implementasyon YOK (500)
 
 **Katman:** session / doküman-implementasyon uyuşmazlığı
