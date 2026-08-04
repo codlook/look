@@ -74,11 +74,6 @@ $FAIL = $FAIL + chk("non-finite bind fail-loud", string::contains($nfmsg, "bind 
 # %.17g ile dogruydu -> yamasiz binary'de de gecerdi = sahte assertion, t1 dersi). Asil duzelen
 # PG/MySQL BIND'iydi; o kapida (canli DB) test edilemez -> yerine yanlis guven vermeyin, DAMGA'ya guven.
 
-# ── POZİTİF KONTROL (GEÇİCİ — rc0 provası): kapının GERÇEKTEN upload'ı durdurduğunu
-# kanıtlamak için bilerek yanlış bir assert. rc0 tag'i KIRMIZI olmalı ve release.yml
-# upload adımına HİÇ geçmemeli (prerelease OLUŞMAMALI). Kanıtlandıktan sonra GERİ ALINIR (rc1).
-$FAIL = $FAIL + chk("POZITIF KONTROL (bilerek yanlis — rc1'de geri alinacak)", false)
-
 print("")
 if ($FAIL > 0) {
   print("FAIL: " . $FAIL . " kontrol basarisiz — yayinlanamaz")
