@@ -150,3 +150,7 @@ cpp/tests/fuzz/timeout-*
 # Yerel calisma notlari (repoda tutulmuyor)
 PROJE_DURUMU.md
 DENETIM.md
+
+# Build cache (CI yeniden uretir) — asla commit etme
+cpp/_ssl-static/
+cpp/build-portable/
