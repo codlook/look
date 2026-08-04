@@ -28,6 +28,10 @@ jobs:
   linux:
     name: Linux/Docker/Plesk — build, gate, publish
     runs-on: ubuntu-latest
+    # secrets context 'if:' içinde KULLANILAMAZ → job-level env'e al, if'te env'i kontrol et.
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -99,10 +103,7 @@ jobs:
 
       # 8) Docker Hub push — yalnız secret varsa (yoksa atla; kullanıcı elle push eder)
       - name: Docker Hub push (secret varsa)
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
         run: |
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
           docker push codlook/look:1.0.0
