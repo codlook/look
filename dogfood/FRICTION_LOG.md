@@ -71,3 +71,16 @@ enctype=multipart/form-data>` çalışmıyor. Kullanıcı ya JS+base64 (düz HTM
   (2) sınırı dürüst kabul et: request::file() null DÖNSÜN (docs'a uy, A'yı kapat) + docs'u netleştir,
   (3) her hâlde B'yi (bağlantı reset) düzelt: throw eden route gövdeyi drain edip temiz 500 dönmeli.
   B, upload kararından BAĞIMSIZ bir robustluk bug'ı (herhangi bir hata → RST kabul edilemez).
+
+**GÜNCELLEME — A ÇÖZÜLDÜ, B kesinleşti (ayrı tura):**
+- **A ÇÖZÜLDÜ:** `web_stdlib.cpp` request::file() artık non-multipart istekte throw yerine null
+  döner (docs sözleşmesi). Doğrulandı: JSON/urlencoded POST → `file=null`, temiz HTTP 200.
+- **B KESİN REPRO (ayrı odaklı tura — analizcinin dediği güvenlik yüzeyi):** İlk sandığım "throw→RST"
+  DEĞİL. Deterministik: multipart dosya part'ı **kendi `Content-Type` başlığını** içerince
+  (`curl -F "doc=@f;type=text/plain"`) → **5/5 HTTP 000** (worker hang/reset, log yok, process
+  ayakta). Başlıksız (`-F doc=@f`) → 5/5 HTTP 200. **KRİTİK: gerçek TARAYICILAR dosya part'ında
+  HER ZAMAN Content-Type gönderir** → bu curl edge-case değil, NORMAL tarayıcı upload yolu worker'ı
+  düşürüyor (`--mode http`). Muhtemel worker-tükenme DoS'u (N eşzamanlı upload → N hung worker).
+  parse_multipart header-loop'u Content-Type satırını yok sayıyor gibi görünüyor ama davranış
+  aksini söylüyor — parser gövde-offset veya Windows-özgü. Multipart TURUNDA teşhis: (a) hang mı
+  crash mı, (b) worker-tükenme DoS ölç, (c) Linux'ta tekrarlanıyor mu (docker gelince).

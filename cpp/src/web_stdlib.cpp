@@ -354,9 +354,13 @@ static Module make_request(WebContext* ctx) {
     m.functions["file"] = [ctx](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("request::file() requires field name");
 
-        // multipart/form-data kontrolü
+        // multipart/form-data DEĞİLSE dosya YOK demektir → docs sözleşmesi: null döner
+        // (kullanıcı `if ($f == null)` ile ele alır). ESKİ HATA: throw ediyordu → docs
+        // "null döner" derken kod exception atıyordu; dokümanı takip eden `if($f==null)`
+        // dalına HİÇ ulaşamıyordu (dogfooding #3-A, session::has'ın kardeşi). Ayrıca ileride
+        // multipart --mode http'ye tam bağlanınca da doğru sözleşme: dosya-yoksa-null.
         if (ctx->content_type.find("multipart/form-data") == std::string::npos)
-            throw std::runtime_error("request::file() requires multipart/form-data request");
+            return Value();  // null — dosya yok
 
         std::string field = args[0].to_string();
         auto it = ctx->uploaded_files.find(field);
