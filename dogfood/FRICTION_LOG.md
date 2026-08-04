@@ -72,7 +72,30 @@ enctype=multipart/form-data>` çalışmıyor. Kullanıcı ya JS+base64 (düz HTM
   (3) her hâlde B'yi (bağlantı reset) düzelt: throw eden route gövdeyi drain edip temiz 500 dönmeli.
   B, upload kararından BAĞIMSIZ bir robustluk bug'ı (herhangi bir hata → RST kabul edilemez).
 
-**GÜNCELLEME — A ÇÖZÜLDÜ, B kesinleşti (ayrı tura):**
+**SON GÜNCELLEME — B GERİ ÇEKİLDİ (test artefaktı), ASIL BULGU: DOCS BAYAT.**
+Ölçüm-önce disiplini (analizcinin ısrarı) üç hipotezi de çürüttü:
+- **B YOK — TEST ARTEFAKTI.** "5/5 crash" sanılan `curl -F "@f;type=text/plain"` bu Windows/git-bash
+  curl'ünde **exit 26** veriyor (curl dosyayı okuyamıyor — `;type=` soneki path-parse'ı bozuyor),
+  istek server'a HİÇ ulaşmıyor → HTTP 000. Server crash'i DEĞİL. UTF-8 mojibake'nin ikizi.
+  Doğru ölçümler: hand-crafted `/dev/tcp` (200), `--data-binary @multipart_body` (200), ASan
+  SESSİZ (bellek hatası yok), server 20+ isteğe dayandı (hang/DoS yok), parser well-formed
+  multipart'ı doğru işliyor.
+- **Multipart `--mode http`'de ZATEN ÇALIŞIYOR.** `request::file()` gerçek multipart POST'ta dosyayı
+  DÖNDÜ (`{"got":"file","size":11}`, 0 fallback). Kod yorumu (http_main.cpp:708-716) de doğruluyor:
+  parse eklendi, "README'de 'bilinen sınır' diye yazılmıştı oysa unutulmuş bir daldı".
+- **ASIL BULGU (docs↔impl, ters yön): DOCS BAYAT.** Upload bölümü (docs/index.html:2432) hâlâ
+  "`--mode http` multipart parse ETMEZ, request::file() null döner, base64/FastCGI kullan" diyor —
+  ama parse EDİYOR. Kullanıcı gereksiz yere base64-workaround'a veya FastCGI'ye yönlendiriliyor,
+  ya da tek-exe upload'ı çalışmaz sanıp kaçınıyor. docs/ gitignored (website) → kullanıcı düzeltmeli.
+- **A ÇÖZÜLDÜ (kalıcı, `8fb8267`):** request::file() non-multipart'ta null döner (docs sözleşmesi).
+  Multipart çalışan yolu etkilemez (o content-type multipart → dosyayı döner, kanıtlandı).
+
+**META DERS:** analizcinin "ölçüm-önce, spekülatif güvenlik kodu yazma" ısrarı beni (1) var olmayan
+bug'a fix, (2) zaten biten özellik için koca tur, (3) sahte DoS eskalasyonundan kurtardı. Ölçüm
+bu turda 4. kez hipotezi çürüttü (mojibake, count-görünürlük, ceil-papercut, şimdi B).
+
+--- (aşağısı geri çekilen B analizinin kaydı — tarihsel) ---
+**B kesinleşti (ayrı tura):**
 - **A ÇÖZÜLDÜ:** `web_stdlib.cpp` request::file() artık non-multipart istekte throw yerine null
   döner (docs sözleşmesi). Doğrulandı: JSON/urlencoded POST → `file=null`, temiz HTTP 200.
 - **B KESİN REPRO (ayrı odaklı tura — analizcinin dediği güvenlik yüzeyi):** İlk sandığım "throw→RST"
