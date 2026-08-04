@@ -206,7 +206,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/var/www/myapp
-ExecStart=/usr/local/bin/lk --mode http --port 7400 --workers 8
+ExecStart=/usr/local/bin/lk-fcgi --mode http --port 7400 --workers 8
 Restart=on-failure
 RestartSec=3
 EnvironmentFile=/var/www/myapp/.env
@@ -226,7 +226,23 @@ sudo systemctl start look-fcgi
 
 # Kontrol
 sudo systemctl status look-fcgi
+
+# Uygulama logları / hata teşhisi (500 vb.) — LOOK'un INFO/ERROR satırları buraya gider
+sudo journalctl -u look-fcgi -f          # canlı takip
+sudo journalctl -u look-fcgi -n 50 --no-pager   # son 50 satır
 ```
+
+> **AlmaLinux / RHEL — servis kullanıcısı:** yukarıdaki şablonlar `User=www-data`/`Group=www-data`
+> kullanır; bu **Debian/Ubuntu** kullanıcısıdır. AlmaLinux/RHEL'de web kullanıcısı **`apache`**'dir
+> (`www-data` yoktur → servis "no such user" ile başlamaz). AlmaLinux'ta `User=apache`/`Group=apache`
+> yazın.
+>
+> **Dizin izinleri:** servis root değil, `apache` (veya `www-data`) olarak çalışır — bu yüzden
+> uygulamanın YAZDIĞI dizinler (session, upload, SQLite DB) servis kullanıcısına ait olmalı:
+> `sudo chown -R apache:apache /var/www/myapp` (yoksa session/DB yazımı sessizce başarısız olur).
+>
+> **HTTP modu binary:** `--mode http` **`lk-fcgi`** ile çalışır (yukarıdaki B şablonu). CLI `lk`
+> binary'si `--mode http`'yi servis etmez (script'i CLI'da çalıştırır, HTTP dinlemez).
 
 ---
 
