@@ -3,6 +3,16 @@
 <h1>Görevlerim</h1>
 {#if $flash}<p class="flash">{$flash}</p>{/if}
 <p><a href="/tasks/new">+ Yeni görev</a></p>
+<form method="GET" action="/tasks" class="search">
+  <input type="text" name="q" value="{$q}" placeholder="Başlıkta ara...">
+  <select name="status">
+    <option value="all" {#if $status == "all"}selected{/if}>Tümü</option>
+    <option value="active" {#if $status == "active"}selected{/if}>Aktif</option>
+    <option value="done" {#if $status == "done"}selected{/if}>Biten</option>
+  </select>
+  <button type="submit">Ara</button>
+  {#if $q}<a href="/tasks">Temizle</a>{/if}
+</form>
 <ul class="tasks">
 {#each $tasks as $t}
   <li>
@@ -24,8 +34,8 @@
 {/each}
 </ul>
 <div class="pager">
-  {#if $has_prev}<a href="/tasks?page={$prev_page}">← Önceki</a>{/if}
+  {#if $has_prev}<a href="/tasks?page={$prev_page}{$filter_qs}">← Önceki</a>{/if}
   <span>Sayfa {$page} / {$total_pages}</span>
-  {#if $has_next}<a href="/tasks?page={$next_page}">Sonraki →</a>{/if}
+  {#if $has_next}<a href="/tasks?page={$next_page}{$filter_qs}">Sonraki →</a>{/if}
 </div>
 {/block}

@@ -134,15 +134,32 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
 
     $page = int(request::get("page") ?? "1")
     if ($page < 1) { $page = 1 }
-    $total = db::col($conn, "SELECT COUNT(*) FROM tasks WHERE user_id=?", [$uid])
+
+    # Arama/filtre — dinamik WHERE (opsiyonel param'lar). LIKE + durum filtresi.
+    $q = request::get("q") ?? ""
+    $status = request::get("status") ?? "all"
+    $where = "user_id=?"
+    $params = [$uid]
+    if ($q != "") {
+        $where = $where . " AND title LIKE ?"
+        push($params, "%" . $q . "%")
+    }
+    if ($status == "active") { $where = $where . " AND done=0" }
+    if ($status == "done")   { $where = $where . " AND done=1" }
+
+    $total = db::col($conn, "SELECT COUNT(*) FROM tasks WHERE " . $where, $params)
     # int/int → float (belgeli); ceil-bölme için int() ile taban al, yoksa "2.2 sayfa" sızar
     $total_pages = int(($total + $PER_PAGE - 1) / $PER_PAGE)
     if ($total_pages < 1) { $total_pages = 1 }
     $offset = ($page - 1) * $PER_PAGE
 
+    # Sorgu param'ları = filtre param'ları + LIMIT/OFFSET
+    $qparams = $params
+    push($qparams, $PER_PAGE)
+    push($qparams, $offset)
     $rows = db::query($conn,
-        "SELECT id, title, done FROM tasks WHERE user_id=? ORDER BY id DESC LIMIT ? OFFSET ?",
-        [$uid, $PER_PAGE, $offset])
+        "SELECT id, title, done FROM tasks WHERE " . $where . " ORDER BY id DESC LIMIT ? OFFSET ?",
+        $qparams)
 
     # Görünüm için satırları hazırla (template'te hesap yapılamaz).
     $tasks = []
@@ -157,9 +174,12 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
     }
 
     $flash = request::get("flash") ?? ""
+    # Pager linklerinde filtreyi koru (query-string parçası)
+    $filter_qs = "&q=" . $q . "&status=" . $status
     response::html(template::render("views/tasks/list", [
         "title" => "Görevler", "user" => $email, "csrf" => csrf_token(),
         "tasks" => $tasks, "flash" => $flash,
+        "q" => $q, "status" => $status, "filter_qs" => $filter_qs,
         "page" => $page, "total_pages" => $total_pages,
         "has_prev" => ($page > 1), "prev_page" => $page - 1,
         "has_next" => ($page < $total_pages), "next_page" => $page + 1
