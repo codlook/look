@@ -4,6 +4,7 @@ use template
 use auth
 use validator
 use crypto
+use file
 
 # ── Kurulum ────────────────────────────────────────────────────────────────
 $conn = db::connect(env("DB_DSN", "sqlite://./data.db"))
@@ -19,6 +20,7 @@ db::exec($conn, "CREATE TABLE IF NOT EXISTS tasks (
     user_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     done INTEGER NOT NULL DEFAULT 0,
+    attachment TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )", [])
 
@@ -158,7 +160,7 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
     push($qparams, $PER_PAGE)
     push($qparams, $offset)
     $rows = db::query($conn,
-        "SELECT id, title, done FROM tasks WHERE " . $where . " ORDER BY id DESC LIMIT ? OFFSET ?",
+        "SELECT id, title, done, attachment FROM tasks WHERE " . $where . " ORDER BY id DESC LIMIT ? OFFSET ?",
         $qparams)
 
     # Görünüm için satırları hazırla (template'te hesap yapılamaz).
@@ -169,7 +171,9 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
             "id"    => $r["id"],
             "title" => $r["title"],
             "cls"   => ($r["done"] == 1) ? "done" : "",
-            "toggle_label" => ($r["done"] == 1) ? "Geri al" : "Bitti"
+            "toggle_label" => ($r["done"] == 1) ? "Geri al" : "Bitti",
+            "has_attach" => ($r["attachment"] != null),
+            "attach_url" => $r["attachment"] ?? ""
         ])
     }
 
@@ -256,6 +260,50 @@ route("POST", "/tasks/{id}/delete", function($id) use ($conn) {
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     db::exec($conn, "DELETE FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
     response::redirect("/tasks?flash=Görev silindi")
+})
+
+# ── Dosya eki (upload) ─────────────────────────────────────────────────────
+route("GET", "/tasks/{id}/attach", function($id) use ($conn) {
+    if (!require_login()) { return }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
+    $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
+    if (count($rows) == 0) { return response::error(404, "Görev yok") }
+    response::html(template::render("views/tasks/attach", [
+        "title" => "Dosya Ekle", "user" => current_user(), "csrf" => csrf_token(),
+        "task_title" => $rows[0]["title"], "action" => "/tasks/" . $id . "/attach",
+        "error" => ""
+    ]))
+})
+
+route("POST", "/tasks/{id}/attach", function($id) use ($conn) {
+    if (!require_login()) { return }
+    if (!csrf_ok()) { return response::error(419, "CSRF") }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
+    $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
+    if (count($rows) == 0) { return response::error(404, "Görev yok") }
+
+    $err = ""
+    try {
+        $f = request::file("file", [
+            "max_size"   => 1048576,
+            "allow_mime" => ["image/png", "image/jpeg", "text/plain", "application/pdf"]
+        ])
+        if ($f == null) {
+            $err = "Dosya seçilmedi."
+        } else {
+            $record = file::store($f, "task-" . $id)
+            db::exec($conn, "UPDATE tasks SET attachment=? WHERE id=? AND user_id=?",
+                [$record["url"], int($id), $uid])
+            return response::redirect("/tasks?flash=Dosya eklendi")
+        }
+    } catch ($e) {
+        $err = "" . $e
+    }
+    response::html(template::render("views/tasks/attach", [
+        "title" => "Dosya Ekle", "user" => current_user(), "csrf" => csrf_token(),
+        "task_title" => $rows[0]["title"], "action" => "/tasks/" . $id . "/attach",
+        "error" => $err
+    ]))
 })
 
 # ── JSON endpoint (assoc round-trip) ───────────────────────────────────────

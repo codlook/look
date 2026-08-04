@@ -94,6 +94,29 @@ enctype=multipart/form-data>` çalışmıyor. Kullanıcı ya JS+base64 (düz HTM
 bug'a fix, (2) zaten biten özellik için koca tur, (3) sahte DoS eskalasyonundan kurtardı. Ölçüm
 bu turda 4. kez hipotezi çürüttü (mojibake, count-görünürlük, ceil-papercut, şimdi B).
 
+### BULGU #4 — Upload KULLANILABİLİR ama magic-byte MIME düz metni reddediyor
+
+**Katman:** file:: / request::file / MIME doğrulama / DX
+**Ne yaptım:** Göreve dosya-ekleme ekranı yazdım (attach.html multipart form + request::file +
+file::store + allow_mime + boyut sınırı + hata gösterimi). "Parse ediliyor mu"yu değil
+"KULLANILABİLİR mi"yi ölçtüm (analizcinin dediği).
+**Happy path ÇALIŞIYOR (PNG, magic-byte):** upload→302 flash, storage/task-1/<sha256>.png yazıldı,
+DB url kaydedildi, 📎 listede, 0 fallback. Tam yol (request::file + file::store + web-root koruması
++ DB) `--mode http`'de tam çalışıyor → docs:2432 uyarısı KESİN bayat (tam yol doğrulandı).
+**Ne oldu (BULGU):** `allow_mime:["text/plain"]` ile .txt yükleyince → **"File type not allowed:
+application/octet-stream"**. Magic-byte dedektörü düz metni (magic-byte'ı YOK) octet-stream görüyor
+→ text/plain asla eşleşmiyor. Docs örnekleri hep RESİM kullandığı için (jpeg/png magic-byte'lı) bu
+kör-nokta maskeleniyor. **Sonuç:** metin/csv/log gibi magic-byte'sız formatları allow_mime ile izin
+vermek İMKANSIZ (tek yol "application/octet-stream" eklemek = her binary'ye izin = güvenlik amacını
+bozar).
+**Öneri (dil, DEĞERLENDİR):** (a) magic-byte eşleşmezse "tümü yazdırılabilir bayt → text/plain"
+heuristiği, VEYA (b) text-tabanlı tipler için beyan edilen Content-Type'a güvenme opsiyonu, VEYA
+(c) docs'ta "allow_mime yalnız magic-byte'lı formatlarda çalışır" notu. En azından docs örneği
+sadece resim kullanarak yanıltıyor.
+**Test-harness notu:** curl `-F "@f;type=..."` bu ortamda exit 26 → upload testleri hand-crafted
+multipart + `--data-binary` ile yapıldı (güvenilir). Ayrıca data.db'yi silmeyi unutunca "email
+zaten kayıtlı" sessiz register-fail → 302/login (yine kendi state hatam, LOOK değil).
+
 --- (aşağısı geri çekilen B analizinin kaydı — tarihsel) ---
 **B kesinleşti (ayrı tura):**
 - **A ÇÖZÜLDÜ:** `web_stdlib.cpp` request::file() artık non-multipart istekte throw yerine null

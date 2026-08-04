@@ -1,0 +1,13 @@
+{#extends "views/layout/base"}
+{#block "content"}
+<h1>Dosya Ekle</h1>
+<p><strong>{$task_title}</strong></p>
+{#if $error}<p class="err">{$error}</p>{/if}
+<form method="POST" action="{$action}" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{$csrf}">
+  <label>Dosya (png/jpeg/txt/pdf, en fazla 1MB)</label>
+  <input type="file" name="file">
+  <button type="submit">Yükle</button>
+  <a href="/tasks">Vazgeç</a>
+</form>
+{/block}
