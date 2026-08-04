@@ -40,6 +40,13 @@ look version
 - MySQL 8.0+ / MariaDB 10.6+ / PostgreSQL 14+ (opsiyonel)
 - Root veya sudo erişimi
 
+> **AlmaLinux / RHEL — SELinux:** Taze kurulumda SELinux genellikle **enforcing** modundadır. Bu modda
+> uygulamanın yazdığı upload dizini ile SQLite DB dosyasının doğru SELinux context'ine sahip olması,
+> ve `--mode http`'nin standart-dışı bir porta bağlanması için ek yapılandırma gerekebilir
+> (`semanage fcontext` / `restorecon`, port için `semanage port`, veya reverse-proxy senaryosunda
+> `httpd_can_network_connect`). *Not: bu adımlar enforcing bir ortamda ayrıca doğrulanmalıdır;
+> `getenforce` ile modu kontrol edin.*
+
 ---
 
 ## 1. Apache Kurulumu

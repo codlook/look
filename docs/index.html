@@ -1550,6 +1550,16 @@ Stack trace:
     <tr><td>session::destroy()</td><td>Delete the session</td></tr>
   </table>
 
+  <div class="callout warn">
+    <p><strong>The session cookie is always <code>Secure</code>.</strong> It is sent by the browser
+    only over HTTPS (or to <code>localhost</code>, which browsers treat as a secure context). Behind an
+    HTTPS reverse proxy — the recommended production setup — this is exactly right and sessions work
+    normally. But if you expose <code>--mode http</code> <strong>directly over plain HTTP on a real
+    host</strong> (non-localhost, no TLS), the browser won't send the cookie back, so the session never
+    persists. Put a TLS-terminating proxy (nginx/Apache) in front, or use <code>localhost</code> for
+    local development.</p>
+  </div>
+
   <h3>Multi-Server / Load Balancer — Redis Session</h3>
   <p>Your LOOK code doesn't change. The driver is selected via env var only:</p>
   <pre><code><span class="cm"># add to the systemd service file</span>
