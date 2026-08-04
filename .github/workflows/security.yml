@@ -42,11 +42,13 @@ jobs:
       # worker'ın hayatta kaldığını (sanitizer abort YOK) doğrula.
       - name: HTTP smoke under ASan
         run: |
-          printf 'route("GET","/",function(){response::json(["ok"=>true])})\nroute("404",function(){response::status(404);response::json(["ok"=>false])})\n' > /tmp/app.lk
+          printf 'route("GET","/",function(){response::json(["ok"=>true])})\nroute("GET","/sess",function(){session::start();session::set("k","v");response::json(["has"=>session::has("k"),"no"=>session::has("z")])})\nroute("404",function(){response::status(404);response::json(["ok"=>false])})\n' > /tmp/app.lk
           ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0" cpp/build-asan/lk-fcgi --mode http --port 7411 /tmp/app.lk &
           SRV=$!
           sleep 3
           curl -s "http://127.0.0.1:7411/" | grep -q '"ok":true'
+          # session::has — docs'ta belgeli, bir dönem EKSİKTİ (dogfooding #1). set→has=true, olmayan=false.
+          curl -s "http://127.0.0.1:7411/sess" | grep -q '"has":true,"no":false' || { echo "::error::session::has KIRIK"; exit 1; }
           curl -s "http://127.0.0.1:7411/yok" > /dev/null           # 404 yolu
           printf 'GET / HTTP/1.1\r\nContent-Length: abc\r\n\r\n' | curl -s --max-time 3 "http://127.0.0.1:7411/" > /dev/null || true
           # sunucu hâlâ ayakta mı? (ASan çökmesi olsaydı bağlantı reddedilirdi)

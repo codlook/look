@@ -819,6 +819,15 @@ static Module make_session_module(WebContext* ctx) {
         if (sess_blob_get(blob, args[0].to_string(), out)) return Value(out);
         return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
     };
+    // session::has(key) — anahtar oturumda var mı? (docs'ta belgeli; get default'undan
+    // ayrı: değeri boş string olan anahtar da VAR sayılır)
+    m.functions["has"] = [ctx](auto args) -> Value {
+        if (args.empty()) return Value(false);
+        auto it = ctx->cookies_in.find("LOOK_SESSION");
+        if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value(false);
+        std::string blob = sess_load(it->second), out;
+        return Value(sess_blob_get(blob, args[0].to_string(), out));
+    };
     m.functions["destroy"] = [ctx](auto) -> Value {
         auto it = ctx->cookies_in.find("LOOK_SESSION");
         if (it != ctx->cookies_in.end() && valid_sid(it->second)) sess_remove(it->second);

@@ -173,6 +173,10 @@ const std::vector<std::string>& builtin_names() {
         // istek/VM bağlamı DIŞINDA çalışır → VM closure kaydedilirse "aktif VM yok".
         "jobs::push", "jobs::next", "jobs::done", "jobs::fail", "jobs::failed",
         "jobs::list", "jobs::stats", "jobs::retry", "jobs::purge", "jobs::recover",
+        // session::has — docs'ta belgeliydi ama eksikti (dogfooding #1). SONA eklendi:
+        // session:: bloğu 48-52'de; araya koymak sonraki tüm index'leri kaydırıp .lkc
+        // cache'lerini bozardı. Auto-wire name→index dinamik, konum önemsiz.
+        "session::has",
     };
     return NAMES;
 }
