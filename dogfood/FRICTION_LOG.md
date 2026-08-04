@@ -17,22 +17,70 @@ Kapsam (dikey dilim, 5 ekran):
 
 <!-- Her bulgu: [KATMAN] ne yapmaya çalıştım → ne oldu → doküman ne diyordu → workaround/fix -->
 
-### BULGU #5 — Yayınlanan release HEAD'den ~1 ay geride (deployment dogfooding, VPS'e dokunmadan)
+### BULGU #5 — Yayınlanan release asset'leri HEAD'den 30 commit geride (deployment dogfooding, VPS'e dokunmadan)
 
 **Katman:** dağıtım / release süreci / kaynak↔artefakt drift
 **Ne yaptım:** Görev yöneticisini gerçek kullanıcı gibi deploy etmek için README "Install (prebuilt)"
 yolunu izledim: Releases'ten `look-lang-linux-1.0.0.zip` → `sudo bash install.sh`.
-**Ne oldu:** Release v1.0 (`look-lang-linux-1.0.0.zip` + rpm/plesk/docker) GERÇEKTEN var (docs doğru
-işaret ediyor) — ama **published 2026-07-09**, HEAD'den ~1 ay geride. O tarihten sonra girenler:
-session::has (bu oturum), count/len fix, array:: fantom kaldırma, güvenlik fix'leri.
-**Sonuç:** Bugün README'yi takip eden kullanıcı, **session::has içermeyen** binary indirir →
-dokümandaki auth örneğini (session::has) yazınca 500. Dokümanla yönlendirilen install yolu,
-dokümandaki özelliği çalıştıramayan binary veriyor. Memory "yayın kapısı drift"in canlı tekrarı.
-**Kök:** Release manuel + seyrek; her fix'te yeni release yok, versiyon 1.0.0 sabit (SHA256SUMS'ta
-bile aynı sürüm). CI'da build var ama otomatik release-asset güncellemesi yok.
-**Engel (ölçüldü):** güncel binary deploy etmek için Linux build şart, ama **docker DOWN** → yerelde
-Linux lk-fcgi üretilemiyor. Seçenekler: (a) VPS'te kaynaktan derle, (b) CI artefaktı indir, (c) yeni
-release kes. Bu, deployment turunun ilk gerçek karar noktası (canlı test.codlook.com — teyit gerekli).
+**Ne oldu (ÖLÇÜLDÜ, düzeltilmiş):** Release v1.0 asset'leri GERÇEKTEN var (docs doğru işaret ediyor).
+Release *tag* tarihi 2026-07-09 ama **asset'ler `5465074`'e yenilenmiş (2026-08-02)** — yani "bir ay
+geride" DEĞİL. Ölçüm: `git rev-list --count 5465074..HEAD` = **30 commit / 2 gün** (HEAD=e47b80b, Aug 4).
+İlk yazdığım "~1 ay geride" YANLIŞTI (release tag tarihini asset tarihiyle karıştırdım) — bu turun
+"ölçmeden iddia etme" kuralı bulgu metnine de uygulandı, düzeltildi.
+**Sonuç (öz tutuyor):** session::has (18bf8f4) o 30-commit farkın İÇİNDE → bugün README'yi takip eden
+kullanıcı **session::has içermeyen** binary indirir → dokümandaki auth örneğini yazınca 500.
+Dokümanla yönlendirilen install yolu, dokümandaki özelliği çalıştıramayan binary veriyor.
+**Kök:** Release asset güncellemesi manuel; her HEAD'de değil. Versiyon 1.0.0 sabit. Memory "yayın
+kapısı drift". → release otomasyonu ihtiyacının gerçek gerekçesi (deployment turundan SONRA sıraya).
+**Deploy kararı:** VPS'te kaynaktan derle (belgelenmiş ama hiç test edilmemiş yol; docker gerekmez).
+Kısıt: canlı `look-test-codlook-com`'a DOKUNMA — ayrı dizin `/opt/dogfood` + ayrı port `:7700`,
+`/usr/bin/lk-fcgi` değişmez, mevcut servis durmaz.
+
+### BULGU #6 — Kaynaktan derleme: AlmaLinux 8 default gcc C++23 yapamaz, README demiyor
+
+**Katman:** dağıtım / build-from-source / doküman eksik ön koşul
+**Ne yaptım:** README:215 "Build from source": `cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release`.
+Gereksinim: "C++23 compiler + CMake 3.20+".
+**Ne oldu:** AlmaLinux 8.10 default `g++ 8.5.0` → `-std=c++23` **"unrecognized command line option"**.
+Tier-1 platformunun default derleyicisi C++23 yapamıyor. Çözüm `gcc-toolset-12/13`
+(`source /opt/rh/gcc-toolset-12/enable`) ama README bunu SÖYLEMİYOR (bilgi sadece CLAUDE.md'de).
+Taze AlmaLinux'ta `dnf install gcc-toolset-12` de gerekir. Doğrulandı: gcc-toolset-12 ile C++23 OK.
+**Fix:** README/deployment docs'a "AlmaLinux/RHEL 8: `dnf install gcc-toolset-12` + enable" ön koşulu.
+
+### BULGU #7 — README'nin birincil build komutu kutudan ÇALIŞMIYOR (statik SSL default ON)
+
+**Katman:** dağıtım / build-from-source / CMake default
+**Ne oldu:** `cmake -S cpp -B cpp/build` (README:215 birebir) → **"Could NOT find OpenSSL (missing:
+OPENSSL_CRYPTO_LIBRARY)"** — `openssl-devel` KURULU olmasına rağmen. Kök: `CMakeLists:210
+LOOK_STATIC_SSL=ON` (default) → `OPENSSL_USE_STATIC_LIBS TRUE` → `libcrypto.a` arıyor; `openssl-devel`
+sadece `.so` veriyor, `.a` yok. README:231 ince yazıda "install static OpenSSL, or configure with..."
+diyor ama **birincil/kopyalanan komut kırık**. Çözüm: `dnf install openssl-static` VEYA
+`-DLOOK_STATIC_SSL=OFF` (dinamik — VPS deploy'da yeterli). İkincisiyle build OK (70s, lk-fcgi 4.3MB).
+**Fix:** README'nin birincil komutu ya `-DLOOK_STATIC_SSL=OFF` içermeli ya statik-libs ön koşulu net
+yazılmalı. "Kopyala-yapıştır çalışsın" — şu an ilk deneyimde patlıyor.
+
+### BULGU #8 — Secure session cookie + düz-http → eski curl'de session kırılıyor
+
+**Katman:** session / cookie / --mode http doğrudan senaryo
+**Ne oldu:** VPS'te :7700 (düz http) app'i test ederken kayıt **419 (CSRF)** — GET/POST arası session
+tutmadı. Kök: session cookie `Secure` işaretli (`Set-Cookie: ...; HttpOnly; Secure; SameSite=Lax`);
+**curl 7.61.1 (RHEL8) Secure cookie'yi düz-http'de göndermiyor** → her istek yeni SID → csrf mismatch.
+(Yerel curl 8.x localhost'a Secure gönderiyor → yerelde çalışmıştı; sürüm farkı.) Cookie'yi elle
+`-H "Cookie:"` ile geçince TAM akış çalıştı (kayıt/görev/JSON, 0 fallback).
+**Değerlendirme:** Üretimde SORUN DEĞİL (test.codlook.com HTTPS/Apache arkasında → tarayıcı cookie'yi
+HTTPS'te alır). AMA `--mode http`'yi DOĞRUDAN (TLS'siz, dev/basit-deploy) kullanan biri için gerçek
+gotcha: Secure cookie düz-http'de session'ı bozar. Docs "--mode http complete web server" derken bu
+sınırı belirtmeli, VEYA localhost/http'de Secure'ı koşullu bırakmayı değerlendir (TLS ardında Secure,
+düz-http'de değil — ama bu güvenlik kararı, ölçülmeli).
+
+### DEPLOYMENT TURU SONUÇ (kaynaktan derleme + çalıştırma dogfood edildi)
+
+Görev yöneticisi VPS'te (AlmaLinux 8.10) kaynaktan derlenip :7700'de ÇALIŞTIRILDI, tam CRUD+auth+JSON
+akışı doğrulandı (session::has dahil — yayın binary'de yok), canlı `look-test-codlook-com` :9100 +
+test.codlook.com→200 DOKUNULMADI (PID-kill temizlik). **3 belgesiz varsayım çıktı** (#6 gcc-toolset,
+#7 statik-SSL default, #8 Secure-cookie/http) — analizcinin öngördüğü gibi "deploy her zaman
+belgelenmemiş varsayım taşır; kod yazmak dokümanla yönlendirilir ama deploy etmek değil". KALAN
+(bu tur yapılmadı): systemd unit kalıcılığı, Apache HTTPS wiring, log/izin/DB-yolu belgelenmesi.
 
 ### BULGU #1 — `session::has()` doküman var, implementasyon YOK (500)
 
