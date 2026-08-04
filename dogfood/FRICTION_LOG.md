@@ -73,6 +73,44 @@ gotcha: Secure cookie düz-http'de session'ı bozar. Docs "--mode http complete 
 sınırı belirtmeli, VEYA localhost/http'de Secure'ı koşullu bırakmayı değerlendir (TLS ardında Secure,
 düz-http'de değil — ama bu güvenlik kararı, ölçülmeli).
 
+### BULGU #9 — systemd şablonu Ubuntu-only (AlmaLinux'ta patlar) + HTTP-mode yanlış binary
+
+**Katman:** dağıtım / systemd / doküman platform-varsayımı
+**Ne yaptım:** ubuntu-deployment.md §5 systemd şablonunu (rehber başlığı "Ubuntu/AlmaLinux") izledim.
+**Ne oldu (çoklu):**
+- `User=www-data` / `Group=www-data` → AlmaLinux'ta **www-data YOK** (`no such user`), web kullanıcısı
+  `apache` (uid 48). Şablonu birebir kopyalayan AlmaLinux kullanıcısı servisi başlatamaz.
+- **HTTP-mode şablonu `ExecStart=/usr/local/bin/lk --mode http`** — CLI binary'si `lk`, ama `--mode http`
+  `lk-fcgi` özelliği. `lk --mode http` → HTTP 000 (bağlanmıyor). Doğru: `lk-fcgi --mode http`.
+  Kullanıcı HTTP-mode şablonunu izlerse ÇALIŞMAYAN servis alır.
+- **İzinler belgesiz:** servis `User=apache` ile çalışınca session/upload/DB dizinlerine yazamıyor →
+  `chown -R apache:apache /opt/dogfood` gerekti; docs bunu söylemiyor.
+**Uyarlamayla ÇALIŞTI:** apache user + lk-fcgi + chown → systemd servisi active, boot'ta enable,
+:7700→302, uçtan uca (kayıt/görev/JSON) apache-sahipli tasks.db, 0 fallback.
+**Fix:** systemd şablonu AlmaLinux için `User=apache`, HTTP-mode `lk-fcgi`, ve chown/izin adımı.
+
+### BULGU #10 — Secure cookie koşulsuz + X-Forwarded-Proto okunmuyor (#8'in üretim analizi)
+
+**Katman:** session / reverse-proxy / TLS
+**Kaynak analizi:** `Secure` bayrağı web_stdlib.cpp'de **koşulsuz hardcoded** (788/805/840);
+kod hiçbir yerde **X-Forwarded-Proto / scheme okumuyor** (grep temiz). Secure'ı kapatan env YOK.
+**Sonuç:** Üretimde (HTTPS reverse-proxy: tarayıcı↔proxy TLS) DOĞRU çalışır — cookie HTTPS'te alınır.
+localhost düz-http de çalışır (tarayıcı/modern-curl localhost'u güvenli sayar). KIRILAN tek senaryo:
+non-localhost düz-http (TLS'siz gerçek dağıtım) — zaten güvensiz config. Yani #10 DÜŞÜK ciddiyet,
+ama docs "--mode http complete web server" derken "session için HTTPS veya localhost gerekir" notunu
+düşmeli. X-Forwarded-Proto okunmadığından LOOK kendi şemasını bilmiyor (cookie için gerekmez çünkü
+koşulsuz Secure; başka yerde de şema kullanılmıyor — redirect'ler göreli, UPLOAD_URL elle).
+
+### BULGU #11/#12 — SELinux docs'ta hiç yok · app log'ları journalctl'e gidiyor (belgesiz)
+
+**#11 (SELinux):** Bu VPS `Permissive` (Plesk-ayarlı) → enforcing duvarını test EDEMEDİM. Ama taze
+AlmaLinux **Enforcing** default → upload dizini/DB/port-bind için SELinux context/bool'lar gerekebilir.
+docs SELinux'tan HİÇ bahsetmiyor → taze-kurulum kullanıcısı için olası duvar (ölçülemedi, işaretlendi).
+**#12 (log/teşhis):** systemd `--mode http` app'inin INFO/ERROR log'ları **journald**'a gidiyor →
+`journalctl -u <servis>`. Çalışıyor ama docs §5 yalnız `systemctl status` gösteriyor; hata-teşhis
+yolu (journalctl -u, log satırları) açıkça belgelenmiyor. İkinci-analizcinin "teşhis katmanı zayıf"
+tespitinin dağıtım hâli.
+
 ### DEPLOYMENT TURU SONUÇ (kaynaktan derleme + çalıştırma dogfood edildi)
 
 Görev yöneticisi VPS'te (AlmaLinux 8.10) kaynaktan derlenip :7700'de ÇALIŞTIRILDI, tam CRUD+auth+JSON
