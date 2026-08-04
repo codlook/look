@@ -105,8 +105,15 @@ node_modules/
 # Internal dev instructions (private — not published)
 CLAUDE.md
 
-# Site kaynagi — repo disi (kendi yerinde, ayri redesign)
-docs/
+# Dil dokumantasyonu IZLENIR (docs/index.html = otoriter API referansi + conformance
+# fixture kaynagi; docs/*.md = deployment/protokol). Neden: 12 dogfooding bulgusunun
+# yarisi dokuman<->gerceklik drift'i (session::has, multipart, systemd www-data/lk...);
+# conformance guard yalniz FONKSIYON VARLIGINI gorur, DAVRANIS/TALIMAT iddialarini degil.
+# docs/ sürüm-disi kaldikca kod degisir dokuman ayri kalir, kimse diff'te yan yana gormez.
+# AYRI web property'ler (pazarlama ana sayfasi + paket dizini) IGNORE kalir — bu repo
+# "dil cekirdegi": alt siteler kendi yerinde.
+docs/codlook.com/
+docs/packages.codlook.com/
 
 # --- Yayin hatti: TARIFI izle, CIKTIYI yok say ---
 # Drift kok-nedeni: izlenmeyen plesk/bin gunlerce stale kaldi -> yamasiz zip uretildi.
