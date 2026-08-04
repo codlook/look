@@ -109,6 +109,18 @@ static std::string detect_mime(const std::string& data) {
     // SVG — text based, check content
     if (data.find("<svg") != std::string::npos ||
         data.find("<?xml") != std::string::npos)    return "image/svg+xml";
+    // Düz metin — magic-byte'ı YOK (SVG içerik-kontrolü deseninin tamamlanması, dogfooding #4):
+    // magic-byte'sız text/csv/log allow_mime:["text/plain"] ile eşleşemiyordu (octet-stream dönüyordu).
+    // Muhafazakâr sezgi: boş değil + NUL yok + C0 kontrol karakteri yok (TAB/CR/LF hariç).
+    // Binary formatlar zaten yukarıda yakalandı; NUL/kontrol içeren ikili octet-stream kalır.
+    if (!data.empty()) {
+        bool is_text = true;
+        for (unsigned char c : data) {
+            if (c == 0x00) { is_text = false; break; }                    // NUL → binary
+            if (c < 0x09 || (c > 0x0D && c < 0x20)) { is_text = false; break; } // C0 kontrol → binary
+        }
+        if (is_text) return "text/plain";
+    }
     return "application/octet-stream";
 }
 

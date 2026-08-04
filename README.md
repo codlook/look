@@ -211,13 +211,22 @@ failing obscurely.
 
 ## Build
 
+Requires a C++23 compiler and CMake 3.20+.
+
+**AlmaLinux / RHEL 8 (and Rocky/CentOS 8):** the default `gcc` (8.5) has **no C++23** —
+`-std=c++23` fails with *“unrecognized command line option”*. Install a newer toolchain
+and `openssl-devel` first, then enable the toolchain in your shell:
+
 ```bash
-cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+sudo dnf install -y gcc-toolset-12 openssl-devel
+source /opt/rh/gcc-toolset-12/enable
+```
+
+```bash
+cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release -DLOOK_STATIC_SSL=OFF
 cmake --build cpp/build -j
 # → lk (CLI) · lk-fcgi (FastCGI/HTTP server) · lk-cgi (CGI)
 ```
-
-Requires a C++23 compiler and CMake 3.20+.
 
 Two things that will otherwise cost you an afternoon:
 
@@ -225,11 +234,11 @@ Two things that will otherwise cost you an afternoon:
   `--target look` (→ `lk`), `--target look-fcgi` (→ `lk-fcgi`),
   `--target look-cgi` (→ `lk-cgi`). `--target lk` fails with
   *“No rule to make target”*.
-- **Static OpenSSL is the default** (`LOOK_STATIC_SSL=ON`) so the release binary is
-  self-contained. That needs `libssl.a`/`libcrypto.a`, which AlmaLinux/RHEL
-  `openssl-devel` does **not** ship — a fresh configure there fails in
-  `find_package(OpenSSL)`. Either install static OpenSSL, or configure with
-  `-DLOOK_STATIC_SSL=OFF` for a dynamically linked build.
+- **`-DLOOK_STATIC_SSL=OFF` above is the from-source path.** The default is
+  `LOOK_STATIC_SSL=ON` — used to package a self-contained *release* binary — which needs
+  `libssl.a`/`libcrypto.a`. AlmaLinux/RHEL `openssl-devel` ships only the `.so`, so a
+  **default** configure fails in `find_package(OpenSSL)`. Keep `OFF` for a normal
+  dynamically-linked build; install static OpenSSL only when packaging a portable binary.
 
 ## Install (prebuilt)
 
