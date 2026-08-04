@@ -9,8 +9,20 @@ namespace look {
 
 // double formatı → look/format.h look_format_double (dilin tek formatı, NaN/Inf dahil)
 
-// SQLite bir-kez global init'i thread'lerden ÖNCE serialize et (bkz. sqlite_client.h).
-void sqlite_global_init() { sqlite3_initialize(); }
+// SQLite'in TÜM lazy bir-kez global init'lerini SÜREÇ BAŞINDA, thread'lerden ÖNCE seri
+// tetikle (bkz. sqlite_client.h). sqlite3_initialize() isInit'i; ":memory:" aç + randomblob
+// PRNG seed'ini (unixRandomness) + pcache/VFS'i seri kurar. Aksi halde concurrent-open, bu
+// benign double-checked-locking fast-path'lerinde TSan data-race verir (t4 enforced guard CI'da
+// yakaladı: önce sqlite3_initialize, sonra unixRandomness). Seri warm-up → global yazımlar tüm
+// worker okumalarından happens-before olur → yarış yok. Idempotent.
+void sqlite_global_init() {
+    sqlite3_initialize();
+    sqlite3* db = nullptr;
+    if (sqlite3_open(":memory:", &db) == SQLITE_OK && db) {
+        sqlite3_exec(db, "SELECT randomblob(32)", nullptr, nullptr, nullptr);  // PRNG seed
+        sqlite3_close(db);
+    }
+}
 
 SqliteClient::SqliteClient() = default;
 
