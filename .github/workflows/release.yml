@@ -77,11 +77,13 @@ jobs:
       # 6) Artefaktları topla + SHA256SUMS
       - name: Collect artifacts + SHA256SUMS
         run: |
+          set -e
           mkdir -p dist
           cp platforms/linux/look-lang-linux-1.0.0.zip dist/
           cp platforms/plesk/look-lang-plesk-1.0.0.zip dist/
           cp look-docker.tar.gz dist/
-          cd dist && sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          # subshell → dış kabuk repo kökünde kalır; 'cat dist/...' (cd sonrası dist/dist DEĞİL) çalışır
+          ( cd dist && sha256sum *.zip *.tar.gz > SHA256SUMS.txt )
           echo "=== SHA256SUMS ==="; cat dist/SHA256SUMS.txt
 
       # 7) Yayınla — rc* → ayrı prerelease (prova); v1.0 → mevcut asset'leri yenile
