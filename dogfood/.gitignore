@@ -1,0 +1,8 @@
+# Çalışma-zamanı artefaktları (uygulama kaynağı değil)
+data.db
+sessions/
+server.log
+*.html
+cookies.txt
+cj.txt
+!views/**/*.html

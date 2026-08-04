@@ -1,0 +1,12 @@
+{#extends "views/layout/base"}
+{#block "content"}
+<h1>{$heading}</h1>
+<form method="POST" action="{$action}">
+  <input type="hidden" name="csrf" value="{$csrf}">
+  <label>Başlık</label>
+  <input type="text" name="title" value="{$title_val}">
+  {#if $errors.title}<p class="err">{$errors.title}</p>{/if}
+  <button type="submit">Kaydet</button>
+  <a href="/tasks">Vazgeç</a>
+</form>
+{/block}

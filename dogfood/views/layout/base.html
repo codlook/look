@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{$title} — Görev Yöneticisi</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: .5rem; }
+    .err { color: #b00; font-size: .9rem; }
+    .flash { background: #e8f5e9; padding: .5rem .75rem; border-radius: 4px; }
+    ul.tasks { list-style: none; padding: 0; }
+    ul.tasks li { display: flex; justify-content: space-between; padding: .5rem 0; border-bottom: 1px solid #eee; }
+    .done { text-decoration: line-through; color: #999; }
+    form.inline { display: inline; }
+    input[type=text], input[type=email], input[type=password] { width: 100%; padding: .4rem; margin: .2rem 0 .6rem; }
+    .pager a { margin-right: .5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Görev Yöneticisi</strong>
+    <nav>
+      {#if $user}
+        {$user} · <a href="/tasks">Görevler</a> · <a href="/logout">Çıkış</a>
+      {#else}
+        <a href="/login">Giriş</a> · <a href="/register">Kayıt</a>
+      {/if}
+    </nav>
+  </header>
+  {#block "content"}{/block}
+</body>
+</html>

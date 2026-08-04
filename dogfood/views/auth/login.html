@@ -1,0 +1,14 @@
+{#extends "views/layout/base"}
+{#block "content"}
+<h1>Giriş</h1>
+{#if $error}<p class="err">{$error}</p>{/if}
+<form method="POST" action="/login">
+  <input type="hidden" name="csrf" value="{$csrf}">
+  <label>E-posta</label>
+  <input type="email" name="email" value="{$email}">
+  <label>Parola</label>
+  <input type="password" name="password">
+  <button type="submit">Giriş yap</button>
+</form>
+<p><a href="/register">Hesabın yok mu? Kayıt ol</a></p>
+{/block}

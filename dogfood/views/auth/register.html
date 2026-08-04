@@ -1,0 +1,16 @@
+{#extends "views/layout/base"}
+{#block "content"}
+<h1>Kayıt</h1>
+{#if $error}<p class="err">{$error}</p>{/if}
+<form method="POST" action="/register">
+  <input type="hidden" name="csrf" value="{$csrf}">
+  <label>E-posta</label>
+  <input type="email" name="email" value="{$email}">
+  {#if $errors.email}<p class="err">{$errors.email}</p>{/if}
+  <label>Parola (en az 6)</label>
+  <input type="password" name="password">
+  {#if $errors.password}<p class="err">{$errors.password}</p>{/if}
+  <button type="submit">Kayıt ol</button>
+</form>
+<p><a href="/login">Zaten hesabın var mı? Giriş yap</a></p>
+{/block}

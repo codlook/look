@@ -1,0 +1,250 @@
+# Görev Yöneticisi — LOOK dogfooding uygulaması.
+# Çalıştır: lk-fcgi --mode http --port 7600 app.lk
+use template
+use auth
+use validator
+use crypto
+
+# ── Kurulum ────────────────────────────────────────────────────────────────
+$conn = db::connect(env("DB_DSN", "sqlite://./data.db"))
+
+db::exec($conn, "CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL
+)", [])
+
+db::exec($conn, "CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)", [])
+
+$PER_PAGE = 5
+
+# ── Yardımcılar ────────────────────────────────────────────────────────────
+# Oturumdaki CSRF token'ı döndür (yoksa üret + sakla).
+function csrf_token() {
+    if (!session::has("csrf")) {
+        session::set("csrf", crypto::random_string(32))
+    }
+    return session::get("csrf")
+}
+
+# POST'taki csrf alanı oturumdakiyle eşleşiyor mu?
+function csrf_ok() {
+    $given = request::post("csrf")
+    if (!session::has("csrf")) { return false }
+    return crypto::constant_compare($given, session::get("csrf"))
+}
+
+# Giriş yapılmışsa e-posta, değilse null.
+function current_user() {
+    session::start()
+    if (session::has("user_email")) { return session::get("user_email") }
+    return null
+}
+
+# Giriş zorunlu — değilse /login'e yönlendir, false döner.
+function require_login() {
+    if (current_user() == null) {
+        response::redirect("/login")
+        return false
+    }
+    return true
+}
+
+# ── Rotalar: kimlik ────────────────────────────────────────────────────────
+route("GET", "/", fn() => response::redirect("/tasks"))
+
+route("GET", "/register", function() {
+    session::start()
+    response::html(template::render("views/auth/register", [
+        "title" => "Kayıt", "user" => current_user(),
+        "csrf" => csrf_token(), "error" => "", "email" => "",
+        "errors" => []
+    ]))
+})
+
+route("POST", "/register", function() use ($conn) {
+    session::start()
+    if (!csrf_ok()) { return response::error(419, "CSRF") }
+    $data = request::all()
+    $result = validator::check($data, [
+        "email"    => ["required", "email"],
+        "password" => ["required", "min:6"]
+    ])
+    if (!$result["ok"]) {
+        return response::html(template::render("views/auth/register", [
+            "title" => "Kayıt", "user" => null, "csrf" => csrf_token(),
+            "error" => "", "email" => $data["email"] ?? "",
+            "errors" => $result["errors"]
+        ]))
+    }
+    $exists = db::query($conn, "SELECT id FROM users WHERE email=?", [$data["email"]])
+    if (count($exists) > 0) {
+        return response::html(template::render("views/auth/register", [
+            "title" => "Kayıt", "user" => null, "csrf" => csrf_token(),
+            "error" => "Bu e-posta zaten kayıtlı.", "email" => $data["email"],
+            "errors" => []
+        ]))
+    }
+    db::exec($conn, "INSERT INTO users (email, password) VALUES (?,?)",
+        [$data["email"], auth::hash($data["password"])])
+    session::set("user_email", $data["email"])
+    response::redirect("/tasks")
+})
+
+route("GET", "/login", function() {
+    session::start()
+    response::html(template::render("views/auth/login", [
+        "title" => "Giriş", "user" => current_user(),
+        "csrf" => csrf_token(), "error" => "", "email" => ""
+    ]))
+})
+
+route("POST", "/login", function() use ($conn) {
+    session::start()
+    if (!csrf_ok()) { return response::error(419, "CSRF") }
+    $data = request::all()
+    $rows = db::query($conn, "SELECT password FROM users WHERE email=?", [$data["email"] ?? ""])
+    if (count($rows) == 0 || !auth::verify($data["password"] ?? "", $rows[0]["password"])) {
+        return response::html(template::render("views/auth/login", [
+            "title" => "Giriş", "user" => null, "csrf" => csrf_token(),
+            "error" => "E-posta veya parola hatalı.", "email" => $data["email"] ?? ""
+        ]))
+    }
+    session::set("user_email", $data["email"])
+    response::redirect("/tasks")
+})
+
+route("GET", "/logout", function() {
+    session::start()
+    session::destroy()
+    response::redirect("/login")
+})
+
+# ── Rotalar: görevler (CRUD) ───────────────────────────────────────────────
+route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
+    if (!require_login()) { return }
+    $email = current_user()
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [$email])
+
+    $page = int(request::get("page") ?? "1")
+    if ($page < 1) { $page = 1 }
+    $total = db::col($conn, "SELECT COUNT(*) FROM tasks WHERE user_id=?", [$uid])
+    # int/int → float (belgeli); ceil-bölme için int() ile taban al, yoksa "2.2 sayfa" sızar
+    $total_pages = int(($total + $PER_PAGE - 1) / $PER_PAGE)
+    if ($total_pages < 1) { $total_pages = 1 }
+    $offset = ($page - 1) * $PER_PAGE
+
+    $rows = db::query($conn,
+        "SELECT id, title, done FROM tasks WHERE user_id=? ORDER BY id DESC LIMIT ? OFFSET ?",
+        [$uid, $PER_PAGE, $offset])
+
+    # Görünüm için satırları hazırla (template'te hesap yapılamaz).
+    $tasks = []
+    for ($i = 0; $i < count($rows); $i = $i + 1) {
+        $r = $rows[$i]
+        push($tasks, [
+            "id"    => $r["id"],
+            "title" => $r["title"],
+            "cls"   => ($r["done"] == 1) ? "done" : "",
+            "toggle_label" => ($r["done"] == 1) ? "Geri al" : "Bitti"
+        ])
+    }
+
+    $flash = request::get("flash") ?? ""
+    response::html(template::render("views/tasks/list", [
+        "title" => "Görevler", "user" => $email, "csrf" => csrf_token(),
+        "tasks" => $tasks, "flash" => $flash,
+        "page" => $page, "total_pages" => $total_pages,
+        "has_prev" => ($page > 1), "prev_page" => $page - 1,
+        "has_next" => ($page < $total_pages), "next_page" => $page + 1
+    ]))
+})
+
+route("GET", "/tasks/new", function() {
+    if (!require_login()) { return }
+    response::html(template::render("views/tasks/form", [
+        "title" => "Yeni Görev", "user" => current_user(), "csrf" => csrf_token(),
+        "heading" => "Yeni Görev", "action" => "/tasks", "title_val" => "",
+        "errors" => []
+    ]))
+})
+
+route("POST", "/tasks", function() use ($conn) {
+    if (!require_login()) { return }
+    if (!csrf_ok()) { return response::error(419, "CSRF") }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
+    $data = request::all()
+    $result = validator::check($data, ["title" => ["required", "min:1"]])
+    if (!$result["ok"]) {
+        return response::html(template::render("views/tasks/form", [
+            "title" => "Yeni Görev", "user" => current_user(), "csrf" => csrf_token(),
+            "heading" => "Yeni Görev", "action" => "/tasks",
+            "title_val" => $data["title"] ?? "", "errors" => $result["errors"]
+        ]))
+    }
+    db::exec($conn, "INSERT INTO tasks (user_id, title) VALUES (?,?)", [$uid, $data["title"]])
+    response::redirect("/tasks?flash=Görev eklendi")
+})
+
+route("GET", "/tasks/{id}/edit", function($id) use ($conn) {
+    if (!require_login()) { return }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
+    $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
+    if (count($rows) == 0) { return response::error(404, "Görev yok") }
+    response::html(template::render("views/tasks/form", [
+        "title" => "Düzenle", "user" => current_user(), "csrf" => csrf_token(),
+        "heading" => "Görevi Düzenle", "action" => "/tasks/" . $id . "/edit",
+        "title_val" => $rows[0]["title"], "errors" => []
+    ]))
+})
+
+route("POST", "/tasks/{id}/edit", function($id) use ($conn) {
+    if (!require_login()) { return }
+    if (!csrf_ok()) { return response::error(419, "CSRF") }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
+    $data = request::all()
+    $result = validator::check($data, ["title" => ["required", "min:1"]])
+    if (!$result["ok"]) {
+        return response::html(template::render("views/tasks/form", [
+            "title" => "Düzenle", "user" => current_user(), "csrf" => csrf_token(),
+            "heading" => "Görevi Düzenle", "action" => "/tasks/" . $id . "/edit",
+            "title_val" => $data["title"] ?? "", "errors" => $result["errors"]
+        ]))
+    }
+    db::exec($conn, "UPDATE tasks SET title=? WHERE id=? AND user_id=?",
+        [$data["title"], int($id), $uid])
+    response::redirect("/tasks?flash=Görev güncellendi")
+})
+
+route("POST", "/tasks/{id}/toggle", function($id) use ($conn) {
+    if (!require_login()) { return }
+    if (!csrf_ok()) { return response::error(419, "CSRF") }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
+    db::exec($conn, "UPDATE tasks SET done = 1 - done WHERE id=? AND user_id=?", [int($id), $uid])
+    response::redirect("/tasks")
+})
+
+route("POST", "/tasks/{id}/delete", function($id) use ($conn) {
+    if (!require_login()) { return }
+    if (!csrf_ok()) { return response::error(419, "CSRF") }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
+    db::exec($conn, "DELETE FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
+    response::redirect("/tasks?flash=Görev silindi")
+})
+
+# ── JSON endpoint (assoc round-trip) ───────────────────────────────────────
+route("GET", "/api/tasks", function() use ($conn) {
+    $email = current_user()
+    if ($email == null) { return response::json(["ok" => false, "error" => "auth"], 401) }
+    $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [$email])
+    $rows = db::query($conn, "SELECT id, title, done FROM tasks WHERE user_id=? ORDER BY id DESC", [$uid])
+    response::json(["ok" => true, "count" => count($rows), "tasks" => $rows])
+})
+
+route("404", fn() => response::error(404, "Sayfa bulunamadı"))

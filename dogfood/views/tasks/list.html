@@ -1,0 +1,31 @@
+{#extends "views/layout/base"}
+{#block "content"}
+<h1>Görevlerim</h1>
+{#if $flash}<p class="flash">{$flash}</p>{/if}
+<p><a href="/tasks/new">+ Yeni görev</a></p>
+<ul class="tasks">
+{#each $tasks as $t}
+  <li>
+    <span class="{$t.cls}">{$t.title}</span>
+    <span>
+      <form class="inline" method="POST" action="/tasks/{$t.id}/toggle">
+        <input type="hidden" name="csrf" value="{$csrf}">
+        <button type="submit">{$t.toggle_label}</button>
+      </form>
+      <a href="/tasks/{$t.id}/edit">Düzenle</a>
+      <form class="inline" method="POST" action="/tasks/{$t.id}/delete" onsubmit="return confirm('Silinsin mi?')">
+        <input type="hidden" name="csrf" value="{$csrf}">
+        <button type="submit">Sil</button>
+      </form>
+    </span>
+  </li>
+{#empty}
+  <li>Henüz görev yok.</li>
+{/each}
+</ul>
+<div class="pager">
+  {#if $has_prev}<a href="/tasks?page={$prev_page}">← Önceki</a>{/if}
+  <span>Sayfa {$page} / {$total_pages}</span>
+  {#if $has_next}<a href="/tasks?page={$next_page}">Sonraki →</a>{/if}
+</div>
+{/block}
