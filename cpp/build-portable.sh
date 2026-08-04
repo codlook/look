@@ -9,7 +9,10 @@ if [ ! -f "$S/lib/libcrypto.a" ]; then
   cd openssl-1.1.1w; ./config no-shared no-tests no-zlib --prefix="$S" >/dev/null 2>&1; make -j8 >/dev/null 2>&1; make install_sw >/dev/null 2>&1
 fi
 cd /look/cpp; rm -rf build-portable
+# LOOK_BUILD env varsa damgayı ONA sabitle (container'da .git yok → git rev-parse "src"e düşer,
+# ama release "1.0.0 sabit, ayrım damgada" modeli git-sha ister). Env yoksa CMakeLists git/src'e düşer.
 cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release -DLOOK_STATIC_SSL=ON \
+  ${LOOK_BUILD:+-DLOOK_BUILD="$LOOK_BUILD"} \
   -DOPENSSL_INCLUDE_DIR="$S/include" -DOPENSSL_SSL_LIBRARY="$S/lib/libssl.a" -DOPENSSL_CRYPTO_LIBRARY="$S/lib/libcrypto.a" \
   -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" >/tmp/cfg.log 2>&1 && echo "CONFIG OK" || { echo CFG_FAIL; tail -12 /tmp/cfg.log; exit 1; }
 cmake --build build-portable --target look look-fcgi look-cgi -j8 2>&1 | grep -iE 'error:|Built target'

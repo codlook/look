@@ -42,7 +42,10 @@ jobs:
       # 2) Portatif statik build (glibc-2.28-only; statik OpenSSL/libstdc++)
       - name: Portable static build @ HEAD
         run: |
-          docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh
+          # Damga = kısa git-sha (container'da .git yok → env ile geçir; yoksa binary "src" damgalanır
+          # ve "1.0.0 sabit, ayrım damgada" modeli çöker — rc3'te görüldü).
+          docker run --rm -e LOOK_BUILD="${GITHUB_SHA::7}" \
+            -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh
           # FAIL-LOUD: recipe'in "cmake | grep"i exit kodunu yutuyor → binary'yi ELLE doğrula
           # (yoksa link hatası success görünür = sahte-yeşil, bu turda kapatılan sınıf).
           for b in lk lk-fcgi lk-cgi; do
@@ -70,7 +73,10 @@ jobs:
       # 5) Docker imajı → tarball (docker load ile Hub olmadan da kurulur)
       - name: Docker image → look-docker.tar.gz
         run: |
-          docker build -t codlook/look:1.0.0 -t codlook/look:latest \
+          # --build-arg LOOK_BUILD: .dockerignore .git'i attığı için container'da git yok;
+          # sha'yı geçmezsek imaj "docker" damgalanır (portable "src" ile aynı sınıf sorun).
+          docker build --build-arg LOOK_BUILD="${GITHUB_SHA::7}" \
+            -t codlook/look:1.0.0 -t codlook/look:latest \
             -f cpp/docker/Dockerfile.production .
           docker save codlook/look:1.0.0 | gzip > look-docker.tar.gz
 
