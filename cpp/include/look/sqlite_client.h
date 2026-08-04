@@ -9,6 +9,13 @@ struct sqlite3;
 
 namespace look {
 
+// SQLite'in bir-kez global init'ini (sqlite3_initialize) SÜREÇ BAŞINDA, thread'lerden
+// ÖNCE serialize et. Aksi halde iki worker aynı anda ilk sqlite3_open'ı çağırınca
+// sqlite3_initialize içindeki isInit bayrağı üzerinde TSan DATA RACE oluşur (t4 enforced
+// guard'ı CI'da bunu yakaladı). Startup'ta bir kez çağrılırsa, isInit yazımı tüm worker
+// okumalarından happens-before olur → yarış yok. Idempotent (tekrar çağrı zararsız).
+void sqlite_global_init();
+
 class SqliteClient : public DbConnection {
 public:
     SqliteClient();

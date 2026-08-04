@@ -21,6 +21,7 @@
 #include "look/fcgi.h"
 #include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
 #include "look/http_client.h"
+#include "look/sqlite_client.h"   // sqlite_global_init (startup, thread'lerden önce)
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/interpreter.h"
@@ -750,6 +751,7 @@ int main(int argc, char* argv[]) {
     tzset();
 #endif
     look::configure_system_ca_bundle();  // statik OpenSSL: sistem CA'sını bul (TLS'ten önce)
+    look::sqlite_global_init();           // SQLite bir-kez init'i thread'lerden ÖNCE (t4 race fix)
     // --port NNNN     → TCP modu (fcgi) veya http modu
     // --workers N     → concurrent dispatch thread sayısı (default: CPU çekirdeği)
     // --mode fcgi     → FastCGI modu (default)

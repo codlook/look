@@ -9,6 +9,9 @@ namespace look {
 
 // double formatı → look/format.h look_format_double (dilin tek formatı, NaN/Inf dahil)
 
+// SQLite bir-kez global init'i thread'lerden ÖNCE serialize et (bkz. sqlite_client.h).
+void sqlite_global_init() { sqlite3_initialize(); }
+
 SqliteClient::SqliteClient() = default;
 
 SqliteClient::~SqliteClient() {
