@@ -56,3 +56,9 @@ jobs:
           cd cpp
           g++ -std=c++17 -Iinclude tests/dkim_tag_test.cpp -o /tmp/dkim_tag_test
           /tmp/dkim_tag_test
+
+      # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
+      # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
+      # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
+      - name: docs-conformance (docs API ↔ builtin_names)
+        run: bash cpp/tests/docs_conformance.sh

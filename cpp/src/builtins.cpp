@@ -114,8 +114,12 @@ const std::vector<std::string>& builtin_names() {
         "array::values", "array::sort", "array::reverse", "array::slice", "array::contains",
         "array::unique", "array::flatten", "array::chunk", "array::zip", "array::all",
         "array::any", "array::push", "array::pop", "array::set", "array::new_assoc",
-        "array::random_bytes", "array::random_string", "array::hex_encode", "array::hex_decode",
-        "array::constant_compare", "array::uuid",
+        // NOT: array::random_bytes/random_string/hex_encode/hex_decode/constant_compare/uuid
+        // KALDIRILDI (docs-conformance taraması buldu) — bunlar crypto:: fonksiyonlarının
+        // array:: namespace'ine yanlış kopyasıydı; array modülünde karşılıkları YOK →
+        // çağrılınca "'array' has no function" / "Module not loaded" (fantom builtin).
+        // Kaldırma güvenli: bytecode diske serileştirilmiyor (eski .lkc cache kaldırıldı,
+        // bkz. cgi_main.cpp), index'ler process-içi geçici; VM her başlangıçta yeniden derler.
         // bare join — interpreter'da global (fn_name=="join", use gerektirmez); VM'de
         // yoktu → route içinde CALL'a düşüp fallback ediyordu. Global builtin olarak
         // bağlanır (string::join'e alias DEĞİL — o `use string` gerektirir → divergence).
@@ -173,9 +177,9 @@ const std::vector<std::string>& builtin_names() {
         // istek/VM bağlamı DIŞINDA çalışır → VM closure kaydedilirse "aktif VM yok".
         "jobs::push", "jobs::next", "jobs::done", "jobs::fail", "jobs::failed",
         "jobs::list", "jobs::stats", "jobs::retry", "jobs::purge", "jobs::recover",
-        // session::has — docs'ta belgeliydi ama eksikti (dogfooding #1). SONA eklendi:
-        // session:: bloğu 48-52'de; araya koymak sonraki tüm index'leri kaydırıp .lkc
-        // cache'lerini bozardı. Auto-wire name→index dinamik, konum önemsiz.
+        // session::has — docs'ta belgeliydi ama eksikti (dogfooding #1). Auto-wire
+        // name→index dinamik, konum önemsiz; bytecode diske yazılmadığından (bkz. yukarı)
+        // araya da eklenebilirdi — sona eklemek yalnızca diff temizliği için.
         "session::has",
     };
     return NAMES;
