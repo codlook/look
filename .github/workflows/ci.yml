@@ -22,11 +22,14 @@ jobs:
       # Temiz bir GCC/Linux ortamında derleme — portability regresyonlarını
       # (ör. eksik <cstdint>) burada yakalar; MSVC'nin transitive include'ları
       # gizleyebildiği sorunlar CI'da ortaya çıkar.
-      - name: Build lk + lk-fcgi (Release)
+      - name: Build lk + lk-fcgi + lk-cgi (Release)
         run: |
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target look --target look-fcgi --parallel $(nproc)
+          # look-cgi DE derlenir: yalnız look+look-fcgi derlemek look-cgi'yi kör bırakıyordu —
+          # Katman 0 (is_reserved_builtin) look-cgi link'ini sessizce kırdı, yalnız 3-target
+          # release build yakaladı (kırık lk-cgi = Plesk CGI yolu yayınlanacaktı). 3 target = kapalı.
+          cmake --build build --target look --target look-fcgi --target look-cgi --parallel $(nproc)
 
       # Interpreter regresyon suite — assertion dosyası "OK/FAIL" basar.
       # Herhangi bir FAIL satırı işi kırar.
