@@ -39,6 +39,27 @@ yakalamamalı. **Dördüncü tuzak arayışını burada bitir.**
 - Daha da güçlüsü: assertion, yalnız yamalı kodun ürettiği bir imzayı (ör. yeni bir hata mesajı
   substring'i) kontrol etsin → _inşa gereği_ hiçbir eski binary geçemez.
 
+## ⚠️ KURAL 3: Sonuca güvenmeden önce, ÖLÇÜMÜN KOŞTUĞUNU doğrula
+
+Kural 1 **sahte-yeşil**'e (bozuk ama yeşil), Kural 2 **boş-yeşil**'e (hiç koşmadı ama yeşil) karşıydı.
+Kural 3 her iki yöne de çalışır ve **sahte-kırmızı**'yı da ekler: ölçüm aracının kendisi doğrulanmadan
+çıktısına güvenmek. Bir ölçüm boş/negatif dönerse, bu "yok" demek değildir — önce **araç gerçekten
+koştu mu** diye bak.
+
+**Beklenen değeri ÖNCEDEN söyle ve şekli de kontrol et.** Çıktı beklenen forma uymuyorsa
+(satır numarası, format, exit kodu, boş çıktı) — sonuç değil, ARAÇ şüphelidir. Örnek: "edit satır 32'ye
+uygulandıysa `grep -n --target` **32** demeli". `29` görürsen edit değil, okuduğun ağaç şüphelidir.
+
+**Bu turda ikimizi de yakaladı (2026-08-04):**
+- `git fetch` yapıldı ama working-tree sıfırlanmadı → `grep` commit ÖNCESİ dosyayı okudu → "look-cgi YOK"
+  (sahte-kırmızı). Satır numarası (29 vs 32) ele veriyordu, görülmedi.
+- git-bash `git show origin/main:path` sözdizimindeki `:`yi `;`ye çevirir (MSYS path-conversion) →
+  `git show` sessizce fail → grep boş çıktı üstünde koşar → sahte "HAYIR". Doğrusu: `MSYS_NO_PATHCONV=1`.
+
+**Sahte-kırmızı bazen daha pahalı** — var olmayan bir işi yaptırır (yeniden derle, yeniden ölç). Panzehir
+Kural 1/2 ile aynı: **beklenen-değerle koş** (pozitif kontrol, ölçümün KENDİSİNE uygulanmış). "İddiadan
+önce ölç" → "ölçtüğün aracın çalıştığını da ölç".
+
 ## release_gate.lk — yayın kapısı
 
 Paketlenen HER binary'nin fix'leri gerçekten içerdiğini KANITLAR. Pakete konmaz (repo'da durur):
