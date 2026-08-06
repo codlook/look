@@ -50,12 +50,18 @@ jobs:
           echo "Referans damga (linux): $REF"
 
           fail=0
-          # --- Plesk: içindeki lk --version ---
+          # --- Plesk: binary htdocs/bin/lk'de (ÖLÇÜLDÜ — 'bin/lk' değil; ilk guard yanlış yola
+          #     bakıp SESSİZCE ATLIYORDU = boş-yeşil, Kural 2 ihlali). Bulunamazsa FAIL: Plesk
+          #     drift geçmişi en kötü artefakt, sessiz skip bırakılmaz. Paketleme bilerek binary
+          #     taşımaz olursa guard KIRMIZI → guard'ı GÜNCELLEME kararı zorlanır. ---
           unzip -oq look-lang-plesk-*.zip -d plesk
-          if [ -x plesk/bin/lk ]; then
-            P=$(plesk/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+          if [ -f plesk/htdocs/bin/lk ]; then
+            chmod +x plesk/htdocs/bin/lk
+            P=$(plesk/htdocs/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
             [ "$P" = "$REF" ] && echo "  OK   plesk  $P" || { echo "  FAIL plesk  $P != $REF"; fail=1; }
-          else echo "  ATLA plesk (bin/lk yok — --with-binaries ile paketlenmemiş)"; fi
+          else
+            echo "  FAIL plesk: htdocs/bin/lk YOK — paketleme bozuk (binary bekleniyordu, sessiz-skip YOK)"; fail=1
+          fi
 
           # --- Docker: load + run ---
           docker load < look-docker.tar.gz >/dev/null
