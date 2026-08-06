@@ -1,0 +1,78 @@
+name: Release consistency — tüm asset'ler AYNI damga mı?
+
+# Yayın-sonrası guard: bir release'in TÜM binary asset'leri (linux/plesk/windows/docker)
+# aynı git-sha damgasını taşımalı. Windows ELLE derlenip yüklendiği için (Tier 2, otomasyonda
+# değil) diğerlerinden AYRIŞABİLİR — ve bu OTURUMDA BİR KEZ OLDU: 403d2dd yayınında Linux/Plesk/
+# Docker güncellendi, Windows 5465074'te kaldı, elle işaret edilene kadar fark edilmedi.
+# Bu guard o sınıfı kapatır — MSVC CI kurmadan (Windows binary Linux runner'da ÇALIŞTIRILMAZ,
+# `grep` ile referans damganın .exe içinde olduğu doğrulanır).
+#
+# Pozitif kontrol: bir asset'e eski-damgalı binary koy → guard KIRMIZI olmalı.
+
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Kontrol edilecek release tag'i"
+        required: false
+        default: "v1.0"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Asset'leri indir
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern 'look-lang-linux-*.zip' --pattern 'look-lang-plesk-*.zip' \
+            --pattern 'look-lang-windows-*.zip' --pattern 'look-docker.tar.gz' \
+            --dir assets --clobber
+          ls -lh assets
+
+      - name: Damgaları çıkar + AYNI mı doğrula (fail-loud)
+        run: |
+          set -e
+          cd assets
+          # --- REFERANS: Linux binary (CI-üretimi, otoriter) ---
+          unzip -oq look-lang-linux-*.zip -d linux
+          REF=$(linux/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+          [ -n "$REF" ] || { echo "::error::Linux damgası okunamadı"; exit 1; }
+          echo "Referans damga (linux): $REF"
+
+          fail=0
+          # --- Plesk: içindeki lk --version ---
+          unzip -oq look-lang-plesk-*.zip -d plesk
+          if [ -x plesk/bin/lk ]; then
+            P=$(plesk/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+            [ "$P" = "$REF" ] && echo "  OK   plesk  $P" || { echo "  FAIL plesk  $P != $REF"; fail=1; }
+          else echo "  ATLA plesk (bin/lk yok — --with-binaries ile paketlenmemiş)"; fi
+
+          # --- Docker: load + run ---
+          docker load < look-docker.tar.gz >/dev/null
+          D=$(docker run --rm codlook/look:1.0.0 lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+          [ "$D" = "$REF" ] && echo "  OK   docker $D" || { echo "  FAIL docker $D != $REF"; fail=1; }
+
+          # --- Windows: ÇALIŞTIRMADAN — referans damga .exe içinde geçiyor mu (strings/grep) ---
+          unzip -oq look-lang-windows-*.zip -d win
+          if grep -aq "$REF" win/lk.exe && grep -aq "$REF" win/lk-fcgi.exe; then
+            echo "  OK   windows (damga $REF .exe içinde)"
+          else
+            echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe içinde YOK (eski elle-derleme?)"; fail=1
+          fi
+
+          echo ""
+          if [ "$fail" != 0 ]; then
+            echo "::error::Asset damgaları AYRIŞIYOR — yayın tutarsız (Windows elle-adım unutulmuş olabilir)"
+            exit 1
+          fi
+          echo "TUTARLI: tüm asset'ler $REF"
