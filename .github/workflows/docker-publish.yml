@@ -8,7 +8,9 @@ name: Docker Hub publish (tarball → load → push, rebuild YOK)
 # Elle tetiklenir (Actions → Run workflow) VEYA API ile. Secret YOKSA login/push atlanır
 # (kuru-prova: tarball load + tag doğrulanır, "eklendi ama çalışıyor mu?" açık kalmaz).
 #
-# ÖN KOŞUL: repo secret'ları DOCKERHUB_USERNAME + DOCKERHUB_TOKEN (Settings → Secrets → Actions).
+# ÖN KOŞUL: repo secret'ı DOCKERHUB_TOKEN (Settings → Secrets → Actions). Kullanıcı adı sabit (codlook).
+# ⚠️ TOKEN İZNİ **Read & Write** OLMALI. Read-only token push'ta kriptik "denied/insufficient scopes"
+#    verir (2026-08-06'da bir kez oldu: ilk token Public-Repo-Read-only'di). Token yenilerken kontrol et.
 
 on:
   workflow_dispatch:
