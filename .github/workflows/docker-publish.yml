@@ -1,0 +1,64 @@
+name: Docker Hub publish (tarball → load → push, rebuild YOK)
+
+# Docker Hub'ı GitHub v1.0'daki GÜNCEL look-docker.tar.gz'den yayınlar — YENİDEN DERLEMEZ
+# (release.yml'in koşullu Hub adımı tag başına ~10dk build ister; bu, doğrulanmış tarball'ı
+# doğrudan kullanır). Neden ayrı: Docker Hub, GitHub v1.0'dan bağımsız bir dağıtım yüzeyi ve
+# kolayca bayatlıyor (`docker run codlook/look` eski imajı alır) — GitHub drift'inin ikizi.
+#
+# Elle tetiklenir (Actions → Run workflow) VEYA API ile. Secret YOKSA login/push atlanır
+# (kuru-prova: tarball load + tag doğrulanır, "eklendi ama çalışıyor mu?" açık kalmaz).
+#
+# ÖN KOŞUL: repo secret'ları DOCKERHUB_USERNAME + DOCKERHUB_TOKEN (Settings → Secrets → Actions).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Hangi GitHub release tag'inden çekilsin (varsayılan v1.0)"
+        required: false
+        default: "v1.0"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: look-docker.tar.gz indir (release tarball, güncel)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="${{ github.event.inputs.tag }}"
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern 'look-docker.tar.gz' --dir . --clobber
+          ls -lh look-docker.tar.gz
+
+      - name: docker load + tag doğrula (secret olmadan da koşar)
+        run: |
+          set -e
+          docker load < look-docker.tar.gz
+          echo "=== yüklenen imaj + LOOK damgası ==="
+          docker images codlook/look
+          # damgayı imajdan oku (git-sha; "src"/"docker" ise release.yml stamp bug'ı geri gelmiş)
+          docker run --rm codlook/look:1.0.0 lk --version || true
+
+      - name: Docker Hub push (secret varsa; yoksa atla)
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        run: |
+          set -e
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          docker tag codlook/look:1.0.0 codlook/look:latest
+          docker push codlook/look:1.0.0
+          docker push codlook/look:latest
+          echo "Docker Hub güncellendi: codlook/look:1.0.0 + :latest"
+
+      - name: Secret yoksa uyar (kuru-prova sonucu)
+        if: ${{ env.DOCKERHUB_TOKEN == '' }}
+        run: |
+          echo "::warning::DOCKERHUB_TOKEN secret'ı yok — tarball load+tag DOĞRULANDI ama push ATLANDI."
+          echo "Settings → Secrets → Actions: DOCKERHUB_USERNAME + DOCKERHUB_TOKEN ekleyip tekrar çalıştır."
