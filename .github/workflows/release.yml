@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     # secrets context 'if:' içinde KULLANILAMAZ → job-level env'e al, if'te env'i kontrol et.
     env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_USERNAME: codlook   # public namespace — sabit; sadece TOKEN secret
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
