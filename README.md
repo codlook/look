@@ -209,6 +209,23 @@ failing obscurely.
   For nested / partial rollback use `db::transaction($c, fn)`, which uses real
   `SAVEPOINT`s and behaves the same on every engine.
 
+## Compatibility (1.x)
+
+LOOK follows semantic versioning, with a deliberately **narrow** promise for the 1.x line — enough to
+build on without waiting for a full behavioral spec:
+
+- **The documented `mod::fn` API surface is stable.** A function listed in the docs will not be removed
+  or have its signature changed within 1.x. New functions may be added.
+- **Breaking changes are collected into the next major (2.0)** — never shipped silently in a 1.x update.
+- **Bug fixes ship within 1.x.** Correcting a behavior that produced a *wrong* result (e.g. `count()` on
+  an associative array returning the wrong number) is a fix, not a breaking change — it isn't held for a major.
+- **Not promised yet:** semantic edge cases that are still open *design* choices (associative-array
+  internals, integer-vs-float division). These settle with real-world use before they are frozen.
+
+This is not a hand-wave. The API surface is checked on **every push** by `docs_conformance` (docs ↔
+implementation), `differential` (both engines produce identical output), and the regression suite — so
+the promise is simply the name for a guard that already runs.
+
 ## Build
 
 Requires a C++23 compiler and CMake 3.20+.

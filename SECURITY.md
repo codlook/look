@@ -47,6 +47,16 @@ not a capability gap. PostgreSQL verifies by default because TLS there is a **ne
 no existing deployments to break. If a future major (2.0) collects breaking changes, aligning the
 three drivers on verify-by-default belongs in that bucket — as a decided item, not silent drift.
 
+**The embedded SMTP / IMAP server is off by default and has not had an adversarial security audit.**
+The mail servers only listen when you explicitly set `LOOK_SMTP_PORT` / `LOOK_IMAP_PORT` — with no
+such env set, no mail thread starts and no port is opened, so a default LOOK deployment exposes no
+mail surface. When enabled they ship with real hardening (size caps, `LOGINDISABLED` until TLS,
+path-traversal confinement, SMTP relay protection, PBKDF2 + constant-time auth) and pass interop and
+fuzz tests. But the ~2,900-line, network-facing, **pre-authentication** parser has not yet been
+through a dedicated adversarial audit the way the HTTP / DB / crypto surfaces have. Treat mail as
+**experimental**: fine on a trusted or internal network, but have it audited (or keep it behind a
+vetted MTA such as Postfix) before exposing SMTP/IMAP to the public internet.
+
 ### Hardened against
 
 | Class | Attack | Defense |
