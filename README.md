@@ -1,9 +1,9 @@
 # LOOK
 
-**LOOK** is a fast web scripting language written in C++23. It is designed for
-the web: routing, databases, sessions, JWT, validation, caching, a mail server,
-WebSockets and SSE all ship **inside the language**. No framework to set up, no
-separate runtime — write a `.lk` file and run it.
+**LOOK** is a web scripting language written in C++23. It is designed for
+the web: routing, databases, sessions, JWT, validation, caching, WebSockets, SSE —
+and an *(experimental)* mail server — all ship **inside the language**. No framework
+to set up, no separate runtime — write a `.lk` file and run it.
 
 ```lk
 use jwt
