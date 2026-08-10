@@ -5,6 +5,35 @@ the web: routing, databases, sessions, JWT, validation, caching, WebSockets, SSE
 and an *(experimental)* mail server — all ship **inside the language**. No framework
 to set up, no separate runtime — write a `.lk` file and run it.
 
+## Try it in 60 seconds
+
+No install, no config. With Docker, start a LOOK web server:
+
+```bash
+docker run -p 8080:7400 codlook/look
+```
+
+Then, in another terminal, hit it:
+
+```bash
+curl localhost:8080
+```
+
+You'll get a live JSON response:
+
+```json
+{"ok":true,"mesaj":"Merhaba LOOK! Kendi uygulamanız için /app'i mount edin.","docs":"https://github.com/codlook/look"}
+```
+
+That's a complete web server — routing and JSON out of a single binary, no framework
+and no runtime to install. To run your own app instead, mount it (LOOK serves `/app/index.lk`):
+
+```bash
+docker run -p 8080:7400 -v "$PWD/app:/app" codlook/look
+```
+
+---
+
 ```lk
 use jwt
 
