@@ -209,7 +209,10 @@ std::string dkim_sign(const std::vector<DkimHeader>& headers,
 
 // ── dkim_verify ───────────────────────────────────────────────────────────────
 
-bool dkim_verify(const std::string& raw_message) {
+// SEAM (2026-08-06): DNS crypto'dan ayrıldı. dkim_verify_with_key public key'i DOĞRUDAN alır
+// (DNS yok) → test/bypass-tablosu gerçek DNS olmadan, sabit anahtarla imza kurup doğrulayabilir.
+// dkim_verify (aşağıda) d=/s parse edip DNS'ten key çeker, buraya delege eder.
+bool dkim_verify_with_key(const std::string& raw_message, const std::string& pubkey_pem) {
     // Parse DKIM-Signature header from raw message
     size_t sig_start = raw_message.find("DKIM-Signature:");
     if (sig_start == std::string::npos) return false;
@@ -281,29 +284,7 @@ bool dkim_verify(const std::string& raw_message) {
         if (bh_actual_b64 != bh_b64) return false;
     }
 
-    // Fetch public key from DNS
-    std::string dns_name = selector + "._domainkey." + domain;
-    std::vector<std::string> txts;
-    try { txts = dns_txt_lookup(dns_name); }
-    catch (...) { return false; }
-
-    std::string pubkey_pem;
-    for (auto& t : txts) {
-        size_t p = t.find("p=");
-        if (p == std::string::npos) continue;
-        std::string b64key = t.substr(p + 2);
-        // Strip whitespace
-        b64key.erase(std::remove_if(b64key.begin(), b64key.end(),
-                                    [](char c){ return c==' '||c=='\t'||c=='\r'||c=='\n'||c==';'; }),
-                     b64key.end());
-        if (b64key.empty()) continue;
-        // Wrap in PEM
-        pubkey_pem = "-----BEGIN PUBLIC KEY-----\n";
-        for (size_t i = 0; i < b64key.size(); i += 64)
-            pubkey_pem += b64key.substr(i, 64) + "\n";
-        pubkey_pem += "-----END PUBLIC KEY-----\n";
-        break;
-    }
+    // pubkey_pem PARAMETRE olarak geldi — DNS çekimi dkim_verify'a taşındı (seam).
     if (pubkey_pem.empty()) return false;
 
     // Decode signature
@@ -407,6 +388,45 @@ bool dkim_verify(const std::string& raw_message) {
     EVP_PKEY_free(pkey);
     ERR_clear_error();
     return ok;
+}
+
+// ── DNS'ten public key çek (seam'in DNS-bağlı yarısı) ─────────────────────────
+static std::string dkim_pubkey_from_dns(const std::string& domain, const std::string& selector) {
+    std::string dns_name = selector + "._domainkey." + domain;
+    std::vector<std::string> txts;
+    try { txts = dns_txt_lookup(dns_name); } catch (...) { return ""; }
+    for (auto& t : txts) {
+        size_t p = t.find("p=");
+        if (p == std::string::npos) continue;
+        std::string b64key = t.substr(p + 2);
+        b64key.erase(std::remove_if(b64key.begin(), b64key.end(),
+                                    [](char c){ return c==' '||c=='\t'||c=='\r'||c=='\n'||c==';'; }),
+                     b64key.end());
+        if (b64key.empty()) continue;
+        std::string pem = "-----BEGIN PUBLIC KEY-----\n";
+        for (size_t i = 0; i < b64key.size(); i += 64) pem += b64key.substr(i, 64) + "\n";
+        pem += "-----END PUBLIC KEY-----\n";
+        return pem;
+    }
+    return "";
+}
+
+// ── dkim_verify — DNS-bağlı giriş (üretim yolu): d=/s parse → DNS → with_key ──
+bool dkim_verify(const std::string& raw_message) {
+    size_t sig_start = raw_message.find("DKIM-Signature:");
+    if (sig_start == std::string::npos) return false;
+    size_t sig_end = raw_message.find("\r\n", sig_start);
+    while (sig_end != std::string::npos && sig_end + 2 < raw_message.size() &&
+           (raw_message[sig_end+2] == ' ' || raw_message[sig_end+2] == '\t'))
+        sig_end = raw_message.find("\r\n", sig_end + 2);
+    std::string hdr = (sig_end != std::string::npos)
+        ? raw_message.substr(sig_start, sig_end - sig_start)
+        : raw_message.substr(sig_start);
+    std::string domain = dkim_tag(hdr, "d"), selector = dkim_tag(hdr, "s");
+    if (domain.empty() || selector.empty()) return false;
+    std::string pubkey_pem = dkim_pubkey_from_dns(domain, selector);
+    if (pubkey_pem.empty()) return false;
+    return dkim_verify_with_key(raw_message, pubkey_pem);
 }
 
 } // namespace look
