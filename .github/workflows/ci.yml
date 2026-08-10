@@ -70,6 +70,16 @@ jobs:
             -lssl -lcrypto -lresolv -o /tmp/dkim_verify_test
           /tmp/dkim_verify_test
 
+      # SMTP adres parser tablo testi — seam (look/smtp_parse.h) + geçmiş bug'lar (bare
+      # adres, <> null-sender, iç içe '<') kilitli. ASan+UBSan: adversarial + 100K girdide
+      # OOB/çökme yok. Ağa açık PRE-AUTH kod; bir refactor sağlamlığı bozarsa KIRMIZI.
+      - name: SMTP addr parser table (seam + adversarial)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/smtp_parse_test.cpp -o /tmp/smtp_parse_test
+          /tmp/smtp_parse_test
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.

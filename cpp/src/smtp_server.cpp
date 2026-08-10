@@ -3,6 +3,7 @@
 #include "look/logger.h"
 #include "look/dns.h"
 #include "look/dkim.h"
+#include "look/smtp_parse.h"   // smtp_extract_addr + smtp_verb (dikişi aç — saf, fuzz'lanır)
 #include "look/mysql_client.h"
 
 #include <sstream>
@@ -471,42 +472,10 @@ struct SmtpSession {
 // Yani ayrıştırma ters yönde gevşekti: çöpü alıyor, meşru olanı reddediyordu.
 // Bozuk Return-Path bounce'ları yanlış yönlendirir ve başlığı ayrıştıran alıcı
 // yazılımları şaşırtır (adres içinde boşluk/`<` olabiliyordu).
-static bool extract_addr(const std::string& line, std::string& addr) {
-    addr.clear();
-    size_t colon = line.find(':');
-    if (colon == std::string::npos) return false;          // "MAIL FROM" — parametre yok
-    std::string rest = line.substr(colon + 1);
-    size_t b = rest.find_first_not_of(" \t");
-    if (b == std::string::npos) return false;              // "MAIL FROM:" — adres yok
-    rest = rest.substr(b);
+// smtp_extract_addr() → look/smtp_parse.h ("dikişi aç": saf parser, fuzz + tablo test edilir).
+// Yukarıdaki yorum bloğu extract davranışının/geçmiş bug'larının kaydı olarak kaldı.
 
-    if (rest[0] == '<') {
-        size_t gt = rest.find('>');
-        if (gt == std::string::npos) return false;         // kapanmamış açı parantezi
-        addr = rest.substr(1, gt - 1);
-        // İç içe '<' veya boşluk = bozuk adres (RFC'de yol/adres içinde olamaz)
-        if (addr.find('<') != std::string::npos ||
-            addr.find(' ') != std::string::npos) { addr.clear(); return false; }
-        return true;                                       // addr boş olabilir → null sender
-    }
-    // Açı parantezsiz (bare) adres — ESMTP parametrelerinden (SIZE=, BODY=) önceki ilk token
-    size_t sp = rest.find_first_of(" \t");
-    addr = (sp == std::string::npos) ? rest : rest.substr(0, sp);
-    if (addr.empty() ||
-        addr.find('<') != std::string::npos ||
-        addr.find('>') != std::string::npos) { addr.clear(); return false; }
-    return true;
-}
-
-// ── SMTP command tokenizer ────────────────────────────────────────────────────
-static std::string smtp_verb(const std::string& line) {
-    std::string v;
-    for (char c : line) {
-        if (c == ' ' || c == '\r' || c == '\n') break;
-        v += (char)std::toupper((unsigned char)c);
-    }
-    return v;
-}
+// ── SMTP command tokenizer → look/smtp_parse.h (smtp_verb) ─────────────────────
 
 // ── SPF check (RFC 7208) ──────────────────────────────────────────────────────
 
@@ -1097,7 +1066,7 @@ struct SmtpServer::Impl {
             std::string addr;
             // Sözdizimi geçersizse reddet. BOŞ ama geçerli = null sender (`<>`),
             // RFC 5321 §4.5.5 gereği bounce/DSN için kabul edilmeli.
-            if (!extract_addr(line, addr)) {
+            if (!smtp_extract_addr(line, addr)) {
                 return error_reply(fd, sess, "501 5.1.7 Bad sender address\r\n");
             }
             sess->msg.mail_from = addr;
@@ -1212,7 +1181,7 @@ struct SmtpServer::Impl {
             return error_reply(fd, sess, "503 5.5.1 Need RCPT TO\r\n");
         }
         std::string addr;
-        extract_addr(line, addr);   // bozuk sözdizimi → addr boş → validate_rcpt 501 verir
+        smtp_extract_addr(line, addr);   // bozuk sözdizimi → addr boş → validate_rcpt 501 verir
         if (!validate_rcpt(fd, sess, addr)) return false;
         sess->msg.rcpt_to.push_back(addr);
         sess->state = SmtpState::RCPT_TO;
@@ -1224,7 +1193,7 @@ struct SmtpServer::Impl {
                                const std::string& verb, const std::string& line) {
         if (verb == "RCPT") {
             std::string addr;
-            extract_addr(line, addr);   // bozuk sözdizimi → addr boş → 501
+            smtp_extract_addr(line, addr);   // bozuk sözdizimi → addr boş → 501
             if (!validate_rcpt(fd, sess, addr)) return false;
             sess->msg.rcpt_to.push_back(addr);
             send_reply(fd, sess, "250 2.1.5 OK\r\n");
