@@ -60,6 +60,16 @@ jobs:
           g++ -std=c++17 -Iinclude tests/dkim_tag_test.cpp -o /tmp/dkim_tag_test
           /tmp/dkim_tag_test
 
+      # DKIM verify tablo testi — seam (dkim_verify_with_key) + ② çoklu-From FAIL-SAFE.
+      # Pozitif kontrol (geçerli imza→TRUE) + iki yön çoklu-From→FALSE. Bir refactor bu
+      # fail-safe davranışı bozarsa (find/rfind aynı From'a yaklaşırken) KIRMIZI.
+      - name: DKIM verify table (seam + çoklu-From)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/dkim_verify_test.cpp src/dkim.cpp src/dns.cpp \
+            -lssl -lcrypto -lresolv -o /tmp/dkim_verify_test
+          /tmp/dkim_verify_test
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
