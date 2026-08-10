@@ -75,6 +75,30 @@ int main() {
         chk("3a-B imzali attacker UST, fake paypal ALT -> FALSE bekleniyor", dkim_verify_with_key(raw, pub), false);
     }
 
-    printf(fails ? "\n%d FAIL — incele\n" : "\nTUM VAKALAR GECTI (tutarsizlik fail-safe: bypass YOK)\n", fails);
+    // --- 3b-KRİTİK: h= omission — From İMZALANMAMIŞ (h= sadece Subject) ---
+    //   İmza From'u korumuyor → saldırgan From'u değiştirebilir. Alignment yine de mesajdaki
+    //   From'u d='ye karşı kontrol ediyor mu (h='den bağımsız)? Ölç:
+    {
+        std::vector<DkimHeader> h2 = { {"Subject", "hi"} };   // From YOK → h=subject
+        std::string sig2 = dkim_sign(h2, body, "attacker.com", "sel", priv);
+        // raw'a From: paypal EKLE (imzasız). crypto: subject imzalı→PASS. alignment: d=attacker vs paypal→?
+        std::string raw = sig2 + "\r\n" + "From: victim@paypal.com\r\n" + subj + "\r\n" + body;
+        // BYPASS olsaydı TRUE (From imzasız + alignment atlanır/yanlış). Fail-safe ise FALSE.
+        chk("3b h= omission (From imzasiz, d=attacker vs From=paypal) -> FALSE bekleniyor",
+            dkim_verify_with_key(raw, pub), false);
+    }
+    // --- 3b: trailing-dot — From: attacker.com. (kök nokta) d=attacker.com, düzgün imzalı ---
+    //   Legit trailing-dot From REDDEDİLİRSE false-negative (bypass değil ama uyumluluk). Ölç:
+    {
+        std::vector<DkimHeader> h3 = { {"From", "u@attacker.com."}, {"Subject", "hi"} };
+        std::string sig3 = dkim_sign(h3, body, "attacker.com", "sel", priv);
+        std::string raw = sig3 + "\r\n" + "From: u@attacker.com.\r\n" + subj + "\r\n" + body;
+        // NOT: bu bir GÜVENLİK testi değil (fail-safe yön); trailing-dot davranışını KAYDEDER.
+        bool r = dkim_verify_with_key(raw, pub);
+        printf("  %-52s got=%d  (kayit: trailing-dot legit From %s)\n",
+               "3b trailing-dot (legit, davranis kaydi)", r, r?"KABUL":"RED-false-negative");
+    }
+
+    printf(fails ? "\n%d FAIL — incele\n" : "\nTUM VAKALAR GECTI (② temel+coklu-From+h=omission FAIL-SAFE)\n", fails);
     return fails ? 1 : 0;
 }
