@@ -77,7 +77,8 @@ jobs:
           declare -A C=( [fuzz_pg_parse_error]=corpus_pgerr \
                          [fuzz_mysql_lenenc]=corpus_mysql \
                          [fuzz_json_str]=corpus_json \
-                         [fuzz_smtp_addr]=corpus_smtp )
+                         [fuzz_smtp_addr]=corpus_smtp \
+                         [fuzz_imap_parse]=corpus_imap )
           for h in "${!C[@]}"; do
             echo "== derle $h =="
             clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \

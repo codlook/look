@@ -80,6 +80,16 @@ jobs:
             tests/smtp_parse_test.cpp -o /tmp/smtp_parse_test
           /tmp/smtp_parse_test
 
+      # IMAP parser tablo testi — seam (look/imap_parse.h): parse_command/split_two +
+      # mailbox_name_ok GÜVENLİK guard'ı. Belgeli geçmiş bug `INBOX; rm -rf /` KABUL'dü;
+      # artık RED (kilitli). ASan+UBSan: adversarial + 100K çökme yok.
+      - name: IMAP parser table (seam + mailbox guard)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/imap_parse_test.cpp -o /tmp/imap_parse_test
+          /tmp/imap_parse_test
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.

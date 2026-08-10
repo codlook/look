@@ -12,6 +12,7 @@
 //   • Eşzamanlı bağlantı + oturum-başına hata sınırı (DoS)
 
 #include "look/imap_server.h"
+#include "look/imap_parse.h"   // saf parse dikişi: imap_parse_command / imap_split_two / imap_mailbox_name_ok
 #include "look/logger.h"
 
 #include <string>
@@ -291,46 +292,8 @@ struct ImapServer::Impl {
         }
     }
 
-    // "tag SP command SP args" ayrıştır. tag ve command döner, kalan args.
-    static void parse_command(const std::string& line, std::string& tag,
-                              std::string& cmd, std::string& args) {
-        tag.clear(); cmd.clear(); args.clear();
-        size_t sp1 = line.find(' ');
-        if (sp1 == std::string::npos) { tag = line; return; }
-        tag = line.substr(0, sp1);
-        size_t sp2 = line.find(' ', sp1 + 1);
-        if (sp2 == std::string::npos) { cmd = line.substr(sp1 + 1); }
-        else { cmd = line.substr(sp1 + 1, sp2 - sp1 - 1); args = line.substr(sp2 + 1); }
-        for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);  // komut case-insensitive
-    }
-
-    // İki tırnak-içi argümanı çıkar (LOGIN "user" "pass" veya LOGIN user pass).
-    static void split_two(const std::string& args, std::string& a, std::string& b) {
-        a.clear(); b.clear();
-        auto unquote = [](std::string s) {
-            if (s.size() >= 2 && s.front() == '"' && s.back() == '"') s = s.substr(1, s.size() - 2);
-            return s;
-        };
-        // basit: tırnaklıysa tırnak-sınırlarına, değilse boşluğa göre böl
-        size_t i = 0;
-        auto next_token = [&](std::string& tok) {
-            while (i < args.size() && args[i] == ' ') i++;
-            if (i >= args.size()) return false;
-            if (args[i] == '"') {
-                size_t e = args.find('"', i + 1);
-                if (e == std::string::npos) { tok = args.substr(i); i = args.size(); }
-                else { tok = args.substr(i, e - i + 1); i = e + 1; }
-            } else {
-                size_t e = args.find(' ', i);
-                if (e == std::string::npos) { tok = args.substr(i); i = args.size(); }
-                else { tok = args.substr(i, e - i); i = e; }
-            }
-            return true;
-        };
-        std::string t1, t2;
-        if (next_token(t1)) a = unquote(t1);
-        if (next_token(t2)) b = unquote(t2);
-    }
+    // parse_command / split_two → look/imap_parse.h (imap_parse_command / imap_split_two).
+    // Saf string ayrıştırıcılar dikişe taşındı (fuzz + tablo testi; tek tanım, drift yok).
 
     // ── GÜVENLİK: mailbox adı → Maildir yolu (path traversal koruması) ───────
     // Kullanıcı "SELECT ../../etc" veya "SELECT /etc/passwd" diyemez.
@@ -339,25 +302,12 @@ struct ImapServer::Impl {
     // Dönen: geçerli yol; boş = geçersiz/traversal.
     static std::string resolve_mailbox(const std::string& root, const std::string& name) {
         if (root.empty()) return "";
-        // Tırnakları temizle
-        std::string mb = name;
-        if (mb.size() >= 2 && mb.front() == '"' && mb.back() == '"') mb = mb.substr(1, mb.size() - 2);
-        if (mb.empty() || mb == "INBOX") return root;   // INBOX = kök Maildir
-
-        // Tehlikeli bileşenleri baştan ele — netlik + defense-in-depth:
-        // mutlak yol, ".." segmenti, null byte. (Canonical check zaten kökü
-        // koruyor; bu, geçersiz ismi net "NO" ile reddeder.)
-        if (mb.find('\0') != std::string::npos) return "";
-        if (mb.front() == '/' || mb.front() == '\\') return "";
-        if (mb.find("..") != std::string::npos) return "";
-        // Ölçüldü: `SELECT "INBOX; rm -rf /"` KABUL ediliyordu (diğer traversal
-        // denemeleri reddedilirken). Kontroller yalnız `\0`, baştaki ayırıcı ve
-        // `..` bakıyordu; `;`, boşluk ve İÇERİDEKİ ayırıcı geçiyordu. Bu ad
-        // dosya sisteminde dizin adı olur — kabuk üzerinden işlenen bir yedekleme/
-        // log betiği için tehlike, en iyi ihtimalle çöp dizin.
-        // Mailbox adı bir YOL BİLEŞENİ; ayırıcı ve kontrol karakteri içeremez.
-        for (unsigned char c : mb)
-            if (c == '/' || c == '\\' || c == ';' || c < 0x20 || c == 0x7F) return "";
+        // SAF string kapısı (tırnak-temizleme + traversal/enjeksiyon guard) → dikiş.
+        // Belgeli geçmiş bug (`INBOX; rm -rf /` KABUL) ve tüm ayırıcı/kontrol reddi
+        // orada tablo+fuzz ile kilitli. INBOX/boş → kök Maildir.
+        std::string mb;
+        if (!imap_mailbox_name_ok(name, mb)) return "";
+        if (mb == "INBOX") return root;
 
         std::error_code ec;
         fs::path root_c = fs::weakly_canonical(fs::path(root), ec);
@@ -580,7 +530,7 @@ struct ImapServer::Impl {
 
         while (running.load()) {
             if (!read_line(fd, line)) break;
-            parse_command(line, tag, cmd, args);
+            imap_parse_command(line, tag, cmd, args);
             if (tag.empty()) { send_all(fd, "* BAD boş komut\r\n"); if (++errors >= imap_max_errors()) break; continue; }
 
             if (cmd == "CAPABILITY") {
@@ -650,7 +600,7 @@ struct ImapServer::Impl {
                     continue;
                 }
                 std::string user, pass;
-                split_two(args, user, pass);
+                imap_split_two(args, user, pass);
                 ImapAuthResult r = auth ? auth(user, pass) : ImapAuthResult{};
                 if (r.ok) {
                     authenticated = true;
