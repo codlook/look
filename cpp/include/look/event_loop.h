@@ -54,6 +54,14 @@ public:
     // Remove fd from the loop and close it.
     virtual void close_fd(int fd) = 0;
 
+    // Idle/slowloris koruması: bu fd `seconds` boyunca hiç veri göndermezse loop
+    // onu kendisi kapatır (close_fd → üst katmanın read cb'sine len==0 gelir).
+    // OPT-IN: yalnız bu çağrıyı yapan fd'ler taranır; HTTP/WS/SSE gibi meşru
+    // uzun-idle bağlantılar etkilenmez. seconds<=0 → devre dışı (varsayılan).
+    // Epoll ET + non-blocking soketlerde SO_RCVTIMEO çalışmadığı için timeout
+    // mantığı bu katmanda (loop thread'inde, I/O cb'siyle aynı thread → yarışmaz).
+    virtual void set_idle_timeout(int fd, int seconds) = 0;
+
     // Remove fd from the loop WITHOUT closing the socket.
     // Used by STARTTLS: EventLoop relinquishes the fd to a worker thread for
     // SSL_accept(), then the caller re-registers via add_client() afterwards.
@@ -81,6 +89,7 @@ public:
     void add_client(int fd, ReadCb cb) override;
     void async_write(int fd, std::string data, WriteCb cb) override;
     void close_fd(int fd) override;
+    void set_idle_timeout(int fd, int seconds) override;
     void detach_fd(int fd) override;
 
 private:
@@ -104,6 +113,7 @@ public:
     void add_client(int fd, ReadCb cb) override;
     void async_write(int fd, std::string data, WriteCb cb) override;
     void close_fd(int fd) override;
+    void set_idle_timeout(int fd, int seconds) override;
     void detach_fd(int fd) override;
 
 private:

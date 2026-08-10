@@ -6,6 +6,7 @@
 #include <queue>
 #include <vector>
 #include <cstring>
+#include <chrono>
 
 // ── Platform headers ──────────────────────────────────────────────────────────
 
@@ -47,6 +48,11 @@ struct FdEntry {
     size_t      write_pos = 0;
     std::mutex  mtx;
     std::atomic<bool> closed{false};   // close_fd sonrası read-loop'un tekrar okumasını/çift-close'u önler
+
+    // Idle/slowloris takibi (opt-in). idle_timeout_sec>0 ise loop bu fd'yi tarar.
+    // last_activity yalnız loop thread'inde (accept + her read) yazılır → kilit yok.
+    int idle_timeout_sec = 0;
+    std::chrono::steady_clock::time_point last_activity{};
 };
 
 struct EpollEventLoop::Impl {
@@ -59,6 +65,10 @@ struct EpollEventLoop::Impl {
 
     std::queue<TaskFn> tasks;
     std::mutex tasks_mtx;
+
+    // Kaç fd idle-timeout izliyor. 0 ise epoll_wait sonsuz bekler (HTTP-only
+    // dağıtımda ekstra wakeup yok — regresyonsuz); >0 ise sonlu tick + tarama.
+    std::atomic<int> idle_watch_count{0};
 
     std::shared_ptr<FdEntry> get(int fd) {
         std::lock_guard<std::mutex> lk(map_mtx);
@@ -121,6 +131,7 @@ void EpollEventLoop::add_client(int fd, ReadCb cb) {
     auto entry     = std::make_shared<FdEntry>();
     entry->kind    = FdEntry::Kind::CLIENT;
     entry->read_cb = std::move(cb);
+    entry->last_activity = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lk(impl_->map_mtx);
         impl_->fds[fd] = entry;
@@ -172,8 +183,19 @@ void EpollEventLoop::close_fd(int fd) {
         impl_->fds.erase(it);
     }
     entry->closed.store(true);
+    if (entry->idle_timeout_sec > 0) impl_->idle_watch_count.fetch_sub(1);
     epoll_ctl(impl_->epfd, EPOLL_CTL_DEL, fd, nullptr);
     ::close(fd);
+}
+
+void EpollEventLoop::set_idle_timeout(int fd, int seconds) {
+    auto entry = impl_->get(fd);
+    if (!entry) return;
+    int old = entry->idle_timeout_sec;
+    entry->idle_timeout_sec = seconds;
+    entry->last_activity    = std::chrono::steady_clock::now();
+    if (seconds > 0 && old <= 0)      impl_->idle_watch_count.fetch_add(1);
+    else if (seconds <= 0 && old > 0) impl_->idle_watch_count.fetch_sub(1);
 }
 
 void EpollEventLoop::detach_fd(int fd) {
@@ -183,7 +205,11 @@ void EpollEventLoop::detach_fd(int fd) {
     epoll_ctl(impl_->epfd, EPOLL_CTL_DEL, fd, nullptr);
     std::lock_guard<std::mutex> lk(impl_->map_mtx);
     auto it = impl_->fds.find(fd);
-    if (it != impl_->fds.end()) { it->second->closed.store(true); impl_->fds.erase(it); }
+    if (it != impl_->fds.end()) {
+        it->second->closed.store(true);
+        if (it->second->idle_timeout_sec > 0) impl_->idle_watch_count.fetch_sub(1);
+        impl_->fds.erase(it);
+    }
 }
 
 void EpollEventLoop::run() {
@@ -193,10 +219,39 @@ void EpollEventLoop::run() {
     char read_buf[65536];
 
     while (impl_->running) {
-        int n = epoll_wait(impl_->epfd, events, MAX_EVENTS, -1);
+        // idle-timeout izleyen fd varsa sonlu tick (1 sn) — her wakeup'ta tara.
+        // Hiç yoksa -1 (sonsuz): HTTP-only dağıtımda ekstra wakeup yok.
+        int wait_ms = impl_->idle_watch_count.load() > 0 ? 1000 : -1;
+        int n = epoll_wait(impl_->epfd, events, MAX_EVENTS, wait_ms);
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
+        }
+
+        // ── Idle tarama (loop thread — I/O cb'siyle aynı thread → yarışmaz) ──
+        // Timeout wakeup'ta (n==0) veya normal wakeup'ta çalışır. idle_timeout_sec>0
+        // olan CLIENT fd'lerden son aktiviteden bu yana süresi dolmuş olanları kapat.
+        if (impl_->idle_watch_count.load() > 0) {
+            auto now = std::chrono::steady_clock::now();
+            std::vector<int> expired;
+            {
+                std::lock_guard<std::mutex> lk(impl_->map_mtx);
+                for (auto& kv : impl_->fds) {
+                    auto& e = kv.second;
+                    if (e->idle_timeout_sec <= 0 || e->closed.load()) continue;
+                    auto idle = std::chrono::duration_cast<std::chrono::seconds>(
+                                    now - e->last_activity).count();
+                    if (idle >= e->idle_timeout_sec) expired.push_back(kv.first);
+                }
+            }
+            for (int efd : expired) {
+                auto e = impl_->get(efd);
+                if (!e) continue;
+                ReadCb cb;
+                { std::lock_guard<std::mutex> lk(e->mtx); cb = e->read_cb; }
+                if (cb) cb(read_buf, 0);   // üst katmana disconnect bildir (cleanup)
+                close_fd(efd);             // fd+conn_count temizliği üst katmanda
+            }
         }
 
         for (int i = 0; i < n; ++i) {
@@ -225,6 +280,7 @@ void EpollEventLoop::run() {
                     if (client < 0) break;
                     auto ce   = std::make_shared<FdEntry>();
                     ce->kind  = FdEntry::Kind::CLIENT;
+                    ce->last_activity = std::chrono::steady_clock::now();
                     {
                         std::lock_guard<std::mutex> lk(impl_->map_mtx);
                         impl_->fds[client] = ce;
@@ -244,6 +300,8 @@ void EpollEventLoop::run() {
                 while (true) {
                     ssize_t r = read(fd, read_buf, sizeof(read_buf));
                     if (r > 0) {
+                        if (entry->idle_timeout_sec > 0)
+                            entry->last_activity = std::chrono::steady_clock::now();
                         if (cb) cb(read_buf, (size_t)r);
                         // cb kendi fd'sini kapatmış olabilir (ör. WS close frame).
                         // Kapalıysa döngüyü kes: kapalı/yeniden-açılmış fd'den
@@ -339,6 +397,10 @@ struct SockState {
     AcceptCb accept_cb;
     ReadCb   read_cb;
     std::mutex mtx;
+
+    // Idle/slowloris takibi (opt-in) — Linux EpollEventLoop ile paralel.
+    int idle_timeout_sec = 0;
+    std::chrono::steady_clock::time_point last_activity{};
 };
 
 struct IocpEventLoop::Impl {
@@ -350,6 +412,9 @@ struct IocpEventLoop::Impl {
 
     std::queue<TaskFn> tasks;
     std::mutex tasks_mtx;
+
+    // Idle-timeout izleyen soket sayısı — 0 ise GQCS INFINITE, >0 ise sonlu tick.
+    std::atomic<int> idle_watch_count{0};
 
     LPFN_ACCEPTEX fn_acceptex = nullptr;
 
@@ -411,6 +476,7 @@ struct IocpEventLoop::Impl {
         {
             std::lock_guard<std::mutex> lk(st->mtx);
             st->closed = true;
+            if (st->idle_timeout_sec > 0) idle_watch_count.fetch_sub(1);
         }
         CancelIoEx(reinterpret_cast<HANDLE>(s), nullptr);
         closesocket(s);
@@ -482,6 +548,7 @@ void IocpEventLoop::add_client(int fd, ReadCb cb) {
     auto st = std::make_shared<SockState>();
     st->sock    = s;
     st->read_cb = std::move(cb);
+    st->last_activity = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lk(impl_->states_mtx);
         impl_->states[s] = st;
@@ -536,9 +603,21 @@ void IocpEventLoop::detach_fd(int fd) {
     {
         std::lock_guard<std::mutex> lk(st->mtx);
         st->closed = true;
+        if (st->idle_timeout_sec > 0) impl_->idle_watch_count.fetch_sub(1);
     }
     CancelIoEx(reinterpret_cast<HANDLE>(s), nullptr);
     // Do NOT closesocket(s) — caller owns the socket now
+}
+
+void IocpEventLoop::set_idle_timeout(int fd, int seconds) {
+    auto st = impl_->get_state(static_cast<SOCKET>(fd));
+    if (!st) return;
+    std::lock_guard<std::mutex> lk(st->mtx);
+    int old = st->idle_timeout_sec;
+    st->idle_timeout_sec = seconds;
+    st->last_activity    = std::chrono::steady_clock::now();
+    if (seconds > 0 && old <= 0)      impl_->idle_watch_count.fetch_add(1);
+    else if (seconds <= 0 && old > 0) impl_->idle_watch_count.fetch_sub(1);
 }
 
 void IocpEventLoop::run() {
@@ -549,7 +628,41 @@ void IocpEventLoop::run() {
         ULONG_PTR  key   = 0;
         OVERLAPPED* pov  = nullptr;
 
-        BOOL ok = GetQueuedCompletionStatus(impl_->iocp, &bytes, &key, &pov, INFINITE);
+        // idle-timeout izleyen soket varsa sonlu tick (1 sn), yoksa INFINITE.
+        DWORD wait_ms = impl_->idle_watch_count.load() > 0 ? 1000 : INFINITE;
+        BOOL ok = GetQueuedCompletionStatus(impl_->iocp, &bytes, &key, &pov, wait_ms);
+
+        // ── Idle tarama (loop thread — I/O cb'siyle aynı thread → yarışmaz) ──
+        // GQCS zaman aşımı (ok==FALSE, pov==NULL, WAIT_TIMEOUT) veya normal
+        // wakeup sonrası çalışır. Süresi dolan soketleri kapat.
+        if (impl_->idle_watch_count.load() > 0) {
+            auto now = std::chrono::steady_clock::now();
+            std::vector<SOCKET> expired;
+            {
+                std::lock_guard<std::mutex> lk(impl_->states_mtx);
+                for (auto& kv : impl_->states) {
+                    auto& st = kv.second;
+                    std::lock_guard<std::mutex> slk(st->mtx);
+                    if (st->idle_timeout_sec <= 0 || st->closed) continue;
+                    auto idle = std::chrono::duration_cast<std::chrono::seconds>(
+                                    now - st->last_activity).count();
+                    if (idle >= st->idle_timeout_sec) expired.push_back(kv.first);
+                }
+            }
+            for (SOCKET es : expired) {
+                auto st = impl_->get_state(es);
+                if (!st) continue;
+                ReadCb cb;
+                { std::lock_guard<std::mutex> slk(st->mtx); cb = st->read_cb; }
+                if (cb) cb(nullptr, 0);      // üst katmana disconnect bildir
+                impl_->close_internal(es);
+            }
+        }
+
+        if (!ok && pov == nullptr) {
+            // Zaman aşımı (WAIT_TIMEOUT) veya sahipsiz tamamlanma — döngüye dön.
+            if (GetLastError() == WAIT_TIMEOUT) continue;
+        }
 
         if (key == STOP_KEY) break;
 
@@ -590,6 +703,7 @@ void IocpEventLoop::run() {
 
             auto client_st  = std::make_shared<SockState>();
             client_st->sock = client_s;
+            client_st->last_activity = std::chrono::steady_clock::now();
             {
                 std::lock_guard<std::mutex> lk(impl_->states_mtx);
                 impl_->states[client_s] = client_st;
@@ -621,7 +735,12 @@ void IocpEventLoop::run() {
 
             if (st && !st->closed) {
                 ReadCb cb;
-                { std::lock_guard<std::mutex> lk(st->mtx); cb = st->read_cb; }
+                {
+                    std::lock_guard<std::mutex> lk(st->mtx);
+                    cb = st->read_cb;
+                    if (st->idle_timeout_sec > 0)
+                        st->last_activity = std::chrono::steady_clock::now();
+                }
                 if (cb) cb(ov->buf, static_cast<size_t>(bytes));
                 if (!st->closed) impl_->post_read(st);
             }

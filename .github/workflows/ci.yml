@@ -90,6 +90,17 @@ jobs:
             tests/imap_parse_test.cpp -o /tmp/imap_parse_test
           /tmp/imap_parse_test
 
+      # SMTP runtime guard'ları — gerçek sunucu ayağa kaldırılıp ham SMTP konuşulur.
+      #  1) smtp_test.sh: adres ayrıştırma + relay + per-IP limit + fd sızıntısı.
+      #  2) smtp_slowloris_test.sh: EventLoop idle-timeout POZİTİF KONTROL — idle
+      #     bağlantı timeout sonra kapanır, aktif bağlantı kapanmaz, conn_count sızmaz.
+      #     (Non-blocking ET soketinde SO_RCVTIMEO çalışmaz → koruma EventLoop katmanında.)
+      - name: SMTP runtime (parser + relay + slowloris idle-timeout)
+        run: |
+          cd cpp
+          bash tests/smtp_test.sh build/lk-fcgi 7826
+          bash tests/smtp_slowloris_test.sh build/lk-fcgi 7830
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.

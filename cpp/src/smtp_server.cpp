@@ -125,6 +125,18 @@ static int smtp_max_conns_per_ip() {
     }();
     return v;
 }
+// Slowloris koruması: bağlantı bu süre boyunca hiç veri göndermezse EventLoop
+// onu kapatır (IMAP LOOK_IMAP_IDLE_TIMEOUT ile paralel). SMTP oturumları IMAP'e
+// göre çok daha kısa ömürlü olduğundan default 300 sn (5 dk) makul; RFC 5321
+// §4.5.3.2 komut/veri timeout tavanları da bu aralıkta. <=0 → devre dışı.
+static int smtp_idle_timeout() {
+    static int v = []() {
+        const char* e = std::getenv("LOOK_SMTP_IDLE_TIMEOUT");
+        if (e && *e) { int x = std::atoi(e); return x; }  // 0/negatif = kapalı
+        return 300;
+    }();
+    return v;
+}
 
 // ── Per-IP connection tracking ────────────────────────────────────────────────
 static std::mutex                            g_ip_mutex;
@@ -868,6 +880,11 @@ struct SmtpServer::Impl {
         sess->msg.remote_ip = remote_ip;
         sessions[fd]        = sess;
 
+        // Slowloris koruması: bağlantıyı idle-timeout takibine al. Non-blocking
+        // ET soketinde SO_RCVTIMEO çalışmadığından koruma EventLoop katmanında.
+        if (smtp_idle_timeout() > 0)
+            loop->set_idle_timeout(fd, smtp_idle_timeout());
+
         std::string banner = "220 " + smtp_banner() + " ESMTP LOOK\r\n";
         loop->async_write(fd, banner, [this, fd, sess](bool ok) {
             if (!ok) { close_session(fd); return; }
@@ -1129,6 +1146,10 @@ struct SmtpServer::Impl {
                 loop->add_client(fd, [this, fd, sess](const char* data, size_t len) {
                     on_data_tls(fd, sess, data, len);
                 });
+                // detach_fd + add_client yeni FdEntry yarattı → idle takibini
+                // yeniden uygula (STARTTLS sonrası da slowloris korumalı kalsın).
+                if (smtp_idle_timeout() > 0)
+                    loop->set_idle_timeout(fd, smtp_idle_timeout());
             });
         });
     }
@@ -1136,7 +1157,13 @@ struct SmtpServer::Impl {
     // TLS-aware read path — called after STARTTLS handshake
     // EventLoop still delivers raw bytes, but we pass through SSL_read
     void on_data_tls(int fd, std::shared_ptr<SmtpSession> sess,
-                     const char* /*raw*/, size_t /*raw_len*/) {
+                     const char* /*raw*/, size_t raw_len) {
+        // len==0 = EventLoop "bağlantı bitti" sinyali (FIN / hata / idle-timeout
+        // sweep). Idle timeout'ta soket açık ama veri yok → SSL_read WANT_READ
+        // döner ve close_session'ı ÇAĞIRMAZDI; conn_count/sessions sızardı.
+        // Terminal sinyali doğrudan ele al ki üst-katman temizliği (ip_release,
+        // sessions.erase, conn_count--) her yolda çalışsın.
+        if (raw_len == 0) { close_session(fd); return; }
         // With SSL_set_fd the BIO wraps the fd — SSL_read handles decryption
         char buf[4096];
         while (true) {
