@@ -4,6 +4,7 @@
 #include <cstring>
 #include "look/installer.h"
 #include "look/http_client.h"
+#include "look/zip_safe.h"   // zip_entry_inside_dest (Zip-Slip containment dikişi)
 #include "miniz/miniz.h"
 
 #include <iostream>
@@ -227,21 +228,10 @@ static bool extract_zip(const std::vector<char>& data,
             if (filename.empty()) continue;
         }
 
-        // Zip Slip koruması: normalize edilmiş yolun dest_dir içinde kalması zorunlu.
-        // DÜZ string-prefix YETMEZ: "/pkg/user/repo" öneki "/pkg/user/repo-evil"
-        // ile de eşleşir (sibling-prefix escape → hedef dizin DIŞINA yazma). Önek
-        // eşleşmesinden sonra ayırıcı sınırını da zorunlu kıl (ya tam eşit, ya da
-        // sonraki karakter '/' — file:: modülüyle aynı disiplin).
-        fs::path safe_dest = fs::weakly_canonical(dest_dir);
-        fs::path out_path  = fs::weakly_canonical(dest_dir / filename);
-        auto dest_str = safe_dest.string();
-        auto out_str  = out_path.string();
-        bool inside = out_str.size() >= dest_str.size() &&
-                      out_str.compare(0, dest_str.size(), dest_str) == 0 &&
-                      (out_str.size() == dest_str.size() ||
-                       out_str[dest_str.size()] == '/' ||
-                       out_str[dest_str.size()] == '\\');
-        if (!inside) {
+        // Zip Slip koruması → saf dikişe taşındı (look/zip_safe.h; installer_zipslip_test
+        // ağsız tablo-test eder, sibling-prefix kaçışı dahil pozitif-kontrollü).
+        fs::path out_path = fs::weakly_canonical(dest_dir / filename);
+        if (!look::zip_entry_inside_dest(filename, dest_dir)) {
             if (verbose) std::cerr << "  ATLANDI (güvenlik): " << filename << "\n";
             continue;
         }

@@ -197,6 +197,15 @@ jobs:
           cd cpp
           bash tests/installer_parse_test.sh build/lk
 
+      # installer:: Zip-Slip containment — güvenlik-kararı seam (look/zip_safe.h). Gerçek
+      # extract/miniz OLMADAN: entry dest içine mi açılır. Sibling-prefix kaçışı (repo→repo-evil,
+      # ayırıcı-sınır zorunlu) dahil, POZİTİF-KONTROLLÜ (sınır kaldırılırsa sibling-prefix kaçar→FAIL).
+      - name: installer:: Zip-Slip containment (seam tablosu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/installer_zipslip_test.cpp -o /tmp/izt
+          /tmp/izt
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
