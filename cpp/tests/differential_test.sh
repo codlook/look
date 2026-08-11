@@ -16,6 +16,11 @@ set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LK="${1:-$DIR/../build/lk}"
 FCGI="${2:-$DIR/../build/lk-fcgi}"
+# Mutlak yola çevir: alt-testler $TMP'ye cd ediyor; göreli "build/lk" argümanı orada
+# çözülmez (template/array::set testi "No such file" ile YANLIŞ FAIL veriyordu). CI
+# guard'ı build/lk gibi göreli yol geçtiğinde de sağlam çalışsın.
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"
+FCGI="$(cd "$(dirname "$FCGI")" && pwd)/$(basename "$FCGI")"
 BODY="$DIR/differential_body.lk"
 PORT=9611
 TMP=$(mktemp -d)

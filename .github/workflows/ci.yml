@@ -101,6 +101,38 @@ jobs:
           bash tests/smtp_test.sh build/lk-fcgi 7826
           bash tests/smtp_slowloris_test.sh build/lk-fcgi 7830
 
+      # Motor paritesi — bu guard'lar repoda vardı ama HİÇBİR workflow'da koşmuyordu
+      # (olgunluk denetimi 2026-08-11: "guard var, CI'da yok" = regresyon manuel-koşuma
+      # bağlı). Şimdi bağlandı. differential = tree-walk/CLI-VM/web-VM 22 kat×3 birebir;
+      # closure = 12 vaka parite; recursion = graceful stack-overflow; parallel_db = iki
+      # motorda conn-sızıntısı + havuz baskısı. (differential yol-çözme bug'ı düzeltildi:
+      # alt-testler $TMP'ye cd ediyordu, göreli build/lk çözülmüyordu.)
+      - name: Motor paritesi (differential + closure + recursion + parallel)
+        run: |
+          cd cpp
+          bash tests/differential_test.sh build/lk build/lk-fcgi
+          bash tests/closure_semantics_test.sh build/lk
+          bash tests/vm_recursion_test.sh build/lk
+          bash tests/parallel_db_test.sh build/lk-fcgi
+
+      # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
+      # slowloris header-deadline. Testler vardı, CI'da değildi.
+      - name: HTTP sertleştirme (smuggling + slowloris)
+        run: |
+          cd cpp
+          bash tests/http_smuggle_test.sh build/lk-fcgi
+          bash tests/http_slowloris_test.sh build/lk-fcgi 7622
+
+      # Güvenlik repro'ları — ReDoS/F-01 thread sızıntısı, file-root path-traversal
+      # (encoded/çift-encoded), i64 overflow. NOT: msvc_mul_ovf Linux yolunu kilitler;
+      # MSVC dalı Windows CI gerektirir (olgunluk denetimi Tema B).
+      - name: Güvenlik repro'ları (ReDoS + traversal + i64)
+        run: |
+          cd cpp
+          build/lk tests/repro/regex_leak_check.lk
+          build/lk tests/repro/file_root_traversal.lk
+          build/lk tests/repro/msvc_mul_ovf.lk
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
