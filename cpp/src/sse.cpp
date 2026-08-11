@@ -85,9 +85,19 @@ bool SseConnection::send_comment(const std::string& comment) {
 }
 
 void SseConnection::close_conn() {
-    if (closed.exchange(true)) return;  // already closed
-    g_sse_registry.remove(fd);
-    if (on_close_cb) on_close_cb();
+    if (closed.exchange(true)) return;  // already closed (send-gate + idempotent)
+    // Loop thread'inde TAM temizlik yaptır (fd close + sse_clients erase + epoll DEL +
+    // on_close_cb). Eskiden yalnız closed+registry+cb yapılıyordu → fd/epoll/map, istemci
+    // TCP-kopana kadar SIZIYORDU (ölçüldü: sse::close sonrası fd base+1 kalıyor). Ayrıca
+    // soket kapanmadığı için istemci akışın bittiğini bilmiyordu. request_loop_close,
+    // close_sse'yi loop->post ile loop thread'ine devreder (own-once → çift-close yok).
+    if (request_loop_close) {
+        request_loop_close();
+    } else {
+        // Loop yok (CLI/test bağlamı): en azından registry + cb.
+        g_sse_registry.remove(fd);
+        if (on_close_cb) on_close_cb();
+    }
 }
 
 void SseRegistry::add(std::shared_ptr<SseConnection> conn) {

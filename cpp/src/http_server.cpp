@@ -624,6 +624,10 @@ struct HttpServer::Impl {
         ::send(fd, hdrs, strlen(hdrs), MSG_NOSIGNAL);
 #endif
         auto conn = std::make_shared<SseConnection>(fd);
+        // sse::close (worker thread) → close_sse'yi loop thread'inde koştur (fd/epoll/map
+        // temizliği loop'a ait). Bu köprü olmadan sse::close yalnız closed işaretliyordu →
+        // kaynak istemci TCP-kopana kadar sızıyordu (ölçüldü).
+        conn->request_loop_close = [this, fd]() { loop->post([this, fd]() { close_sse(fd); }); };
         {
             std::lock_guard<std::mutex> lk(sse_mtx);
             sse_clients[fd] = conn;
@@ -654,14 +658,21 @@ struct HttpServer::Impl {
 
     void close_sse(int fd) {
         std::shared_ptr<SseConnection> conn;
+        bool owned = false;
         {
             std::lock_guard<std::mutex> lk(sse_mtx);
             auto it = sse_clients.find(fd);
-            if (it != sse_clients.end()) { conn = it->second; sse_clients.erase(it); }
+            if (it != sse_clients.end()) { conn = it->second; sse_clients.erase(it); owned = true; }
         }
+        // OWN-ONCE: bu fd'yi map'ten erase eden TEK çağrı temizler. İki close_sse yolu var —
+        // client-FIN (on_sse_data read-event) ve sse::close (loop->post). Her ikisi de loop
+        // thread'inde sıralı koşar; ilki sahiplenir, ikincisi buradan çıkar. Eski kod conn
+        // bulunamayınca yine `loop->close_fd(fd)` çağırıyordu → ÇİFT close_fd = fd yeniden
+        // kullanıldıysa YANLIŞ-fd kapatma. O tehlikeli dal kaldırıldı (own-once ile yapısal).
+        if (!owned) return;
         look::g_sse_registry.remove(fd);
         bool fire_cb = false;
-        if (conn) {
+        {
             fire_cb = !conn->closed.exchange(true);
             // SAVUNMA (close_ws 0525ba7 drain'inin aynası): close_fd ÖNCESİ write_mutex'i al.
             // Handler send'i timer::every / parallel ile ERTELERSE (doğal SSE push kalıbı),
@@ -674,11 +685,9 @@ struct HttpServer::Impl {
             // DEĞİL → TSan GÖREMEZ (pozitif kontrol iki variantta da 0, bkz [[tsan-heap-yaris-atfi]]).
             // Kanıt: kod-mantığı + threading. Şiddet DÜŞÜK-ORTA (bozulma değil, yanlış-fd yazımı).
             std::lock_guard<std::mutex> wlk(conn->write_mutex);
-            loop->close_fd(fd);
-        } else {
-            loop->close_fd(fd);
+            loop->close_fd(fd);   // own-once → tam bir kez (çift-close yok)
         }
-        if (fire_cb && conn && conn->on_close_cb) {
+        if (fire_cb && conn->on_close_cb) {
             auto cb = conn->on_close_cb;
             pool->submit([cb]() { cb(); });
         }

@@ -17,6 +17,10 @@ struct SseConnection {
     std::atomic<bool> closed{false};
     std::mutex write_mutex;
     std::function<void()> on_close_cb;
+    // Sunucu-tetikli kapatma (sse::close) worker thread'inden gelir; fd/epoll/map temizliği
+    // loop thread'ine AİT → bu köprü close_sse'yi loop->post ile oraya devreder (yarış yok).
+    // http_server bağlantı kurulurken set eder; loop yoksa (CLI) boş → close_conn fallback.
+    std::function<void()> request_loop_close;
 
     explicit SseConnection(int fd_, std::string ip = "")
         : fd(fd_), client_ip(std::move(ip)) {}
