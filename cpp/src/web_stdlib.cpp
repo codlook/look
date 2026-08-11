@@ -2,6 +2,7 @@
 #include "look/stdlib.h"
 #include "look/web.h"
 #include "look/db_dsn.h"   // pg_resolve_tls (saf TLS-karar dikişi)
+#include "look/session_esc.h"   // valid_sid + sess_esc/blob (saf, tablo-test edilebilir)
 #include "look/fiber.h"
 #include <cmath>
 #include <cstdint>
@@ -648,14 +649,7 @@ static RespClient* session_redis() {
 // (sess_file_path). Doğrulanmazsa "x/../../../etc/cron.d/pwn" gibi bir değer
 // path traversal → arbitrary file read (session::get) ve write/truncate
 // (session::set → ofstream trunc) sağlar. Katı allowlist: yalnız 32 hex kabul.
-static bool valid_sid(const std::string& s) {
-    if (s.size() != 32) return false;
-    for (char c : s) {
-        bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-        if (!hex) return false;
-    }
-    return true;
-}
+using look::valid_sid;
 static std::string sess_file_path(const std::string& sid) {
     return std::string(std::getenv("TEMP") ? std::getenv("TEMP") : "/tmp") + "/look_sess_" + sid;
 }
@@ -676,66 +670,11 @@ static std::string sess_file_path(const std::string& sid) {
 // olabilir (textarea), o yuzden reddetmek degil kacirmak dogru — veri
 // gidis-donuste aynen korunur, ayrac anlami tasimaz.
 // Geriye donuk uyumlu: eski blob'larda ters bolu yok, unescape kimlik islevi gorur.
-static std::string sess_esc(const std::string& s, bool is_key) {
-    std::string o; o.reserve(s.size());
-    for (char c : s) {
-        if      (c == '\\') o += "\\\\";
-        else if (c == '\n') o += "\\n";
-        else if (c == '\r') o += "\\r";
-        else if (c == '='  && is_key) o += "\\e";
-        else o += c;
-    }
-    return o;
-}
-static std::string sess_unesc(const std::string& s) {
-    std::string o; o.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] != '\\' || i + 1 >= s.size()) { o += s[i]; continue; }
-        char n = s[++i];
-        if      (n == 'n')  o += '\n';
-        else if (n == 'r')  o += '\r';
-        else if (n == 'e')  o += '=';
-        else if (n == '\\') o += '\\';
-        else { o += '\\'; o += n; }
-    }
-    return o;
-}
-
-static bool sess_blob_get(const std::string& blob, const std::string& key, std::string& out) {
-    size_t pos = 0;
-    while (pos < blob.size()) {
-        size_t nl = blob.find('\n', pos);
-        std::string line = blob.substr(pos, (nl == std::string::npos ? blob.size() : nl) - pos);
-        size_t eq = line.find('=');
-        if (eq != std::string::npos && line.substr(0, eq) == sess_esc(key, true)) {
-            out = sess_unesc(line.substr(eq + 1));
-            return true;
-        }
-        if (nl == std::string::npos) break;
-        pos = nl + 1;
-    }
-    return false;
-}
-// key'i güncelle (varsa değiştir, yoksa ekle) — dosya backend'inin "append edip
-// get ilk eşleşmeyi döndürme" nedeniyle set'in overwrite etmeme bug'ını da giderir.
-static void sess_blob_set(std::string& blob, const std::string& key, const std::string& val) {
-    const std::string ek = sess_esc(key, true);    // ayrac anlami tasiyamaz
-    const std::string ev = sess_esc(val, false);   // \n enjeksiyonu burada olurdu
-    std::string out; size_t pos = 0; bool replaced = false;
-    while (pos < blob.size()) {
-        size_t nl = blob.find('\n', pos);
-        std::string line = blob.substr(pos, (nl == std::string::npos ? blob.size() : nl) - pos);
-        if (!line.empty()) {
-            size_t eq = line.find('=');
-            if (eq != std::string::npos && line.substr(0, eq) == ek) { out += ek + "=" + ev + "\n"; replaced = true; }
-            else out += line + "\n";
-        }
-        if (nl == std::string::npos) break;
-        pos = nl + 1;
-    }
-    if (!replaced) out += ek + "=" + ev + "\n";
-    blob = out;
-}
+// sess_esc/unesc/blob_get/blob_set → look/session_esc.h (saf, tablo-test edilebilir).
+using look::sess_esc;
+using look::sess_unesc;
+using look::sess_blob_get;
+using look::sess_blob_set;
 static std::string sess_load(const std::string& sid) {
     if (session_use_redis()) {
         try { return session_redis()->get("look_sess:" + sid); }

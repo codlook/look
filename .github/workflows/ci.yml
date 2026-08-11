@@ -242,6 +242,15 @@ jobs:
           g++ -std=c++17 -Iinclude tests/int_overflow_test.cpp -o /tmp/iov
           /tmp/iov
 
+      # session:: SID doğrulama + blob enjeksiyon savunması — seam (look/session_esc.h).
+      # Ağsız: 32-hex allowlist (traversal reddi) + \n/= enjeksiyonu ile uydurma yetki-alanı
+      # (admin=1) ENJEKTE EDİLEMEZ. POZİTİF-KONTROLLÜ (değer-kaçırma kalkarsa enjeksiyon geçer).
+      - name: session:: SID + blob enjeksiyon (seam tablosu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/session_esc_test.cpp -o /tmp/sess
+          /tmp/sess
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
