@@ -142,6 +142,14 @@ jobs:
           bash tests/http_smuggle_test.sh build/lk-fcgi
           bash tests/http_slowloris_test.sh build/lk-fcgi 7622
 
+      # SSE sse::close() fd-sızıntısı — bug-avı bulgusu (957d11e). Sunucu sse::close çağırınca
+      # fd/epoll/map istemci TCP-kopana kadar sızıyordu (+ soket kapanmadığı için istemci asılı).
+      # fd-sayacı guard'ı (TSan bu fd-yaşam yarışına kör). Pozitif kontrol: fix öncesi fd=base+1.
+      - name: SSE sse::close fd-sızıntısı (runtime)
+        run: |
+          cd cpp
+          bash tests/sse_close_test.sh build/lk-fcgi 7768
+
       # Güvenlik repro'ları — ReDoS/F-01 thread sızıntısı, file-root path-traversal
       # (encoded/çift-encoded), i64 overflow. NOT: msvc_mul_ovf Linux yolunu kilitler;
       # MSVC dalı Windows CI gerektirir (olgunluk denetimi Tema B).
