@@ -188,6 +188,15 @@ jobs:
           g++ -std=c++17 -Iinclude tests/pg_dsn_test.cpp -o /tmp/pg_dsn_test
           /tmp/pg_dsn_test
 
+      # installer:: parse-katmanı — AĞSIZ (parse_pkg redleri indirmeden ÖNCE): host kısıtı
+      # (yalnız github.com), geçersiz ad, path-traversal (user + subdir). Pozitif-kontrol:
+      # meşru ad parse'ı geçmeli. (Zip-slip/redirect gerçek indirme ister → C++ unit-test
+      # hedefli-takip; tam installer_test.sh ağlı → manuel/nightly.)
+      - name: installer:: parse-katmanı (host/ad/traversal, ağsız)
+        run: |
+          cd cpp
+          bash tests/installer_parse_test.sh build/lk
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
