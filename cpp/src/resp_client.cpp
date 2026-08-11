@@ -1,4 +1,5 @@
 #include "look/resp_client.h"
+#include "look/db_dsn.h"   // redis_resolve_tls (saf TLS-karar dikişi)
 #include <sstream>
 #include <cstring>
 #include <cerrno>
@@ -70,12 +71,13 @@ static void parse_url(const std::string& url,
     // ?tls=verify / ?ssl=verify → şifreleme + sertifika/hostname doğrulaması (MITM'e karşı).
     // ?tls=1 → yalnız şifreleme. Sorgu dizisini rest'ten ayıkla.
     { auto q = rest.find('?');
+      std::string query;
       if (q != std::string::npos) {
-        std::string query = rest.substr(q + 1);
+        query = rest.substr(q + 1);
         rest = rest.substr(0, q);
-        if (query.find("tls=verify") != std::string::npos || query.find("ssl=verify") != std::string::npos) { tls = true; tls_verify = true; }
-        else if (query.find("tls=1") != std::string::npos || query.find("ssl=") != std::string::npos) tls = true;
-      } }
+      }
+      // TLS-karar look/db_dsn.h'de (saf, tablo-test edilebilir).
+      look::redis_resolve_tls(query, tls, tls, tls_verify); }
 
     // password: :pass@
     auto at = rest.rfind('@');

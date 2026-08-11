@@ -1111,15 +1111,13 @@ static std::shared_ptr<DbConnection> open_one_connection(
     bool tls = (scheme == "mysqls" || scheme == "mariadbs");
     bool tls_verify = false;
     { size_t q = db_name.find('?');
+      std::string query;
       if (q != std::string::npos) {
-        std::string query = db_name.substr(q + 1);
+        query = db_name.substr(q + 1);
         db_name = db_name.substr(0, q);   // sorgu dizisini db adından ayıkla
-        if (query.find("tls=verify") != std::string::npos || query.find("ssl=verify") != std::string::npos ||
-            query.find("ssl=verify_identity") != std::string::npos) { tls = true; tls_verify = true; }
-        else if (query.find("tls=1") != std::string::npos || query.find("tls=true") != std::string::npos ||
-                 query.find("ssl=") != std::string::npos)
-            tls = true;
-      } }
+      }
+      // TLS-karar look/db_dsn.h'de (saf, tablo-test edilebilir).
+      look::mysql_resolve_tls(query, tls, tls, tls_verify); }
     if (scheme == "mysqls")   scheme = "mysql";
     if (scheme == "mariadbs") scheme = "mariadb";
     if (scheme != "mysql" && scheme != "mariadb")

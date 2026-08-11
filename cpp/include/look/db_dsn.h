@@ -31,4 +31,42 @@ inline void pg_resolve_tls(const std::string& query, bool scheme_secure,
     }
 }
 
+// MySQL/MariaDB DSN query'sinden TLS kararı. scheme_secure = "mysqls://"/"mariadbs://" mi.
+// PG'NİN TERSİNE: verify=false VARSAYILAN — DB sertifikaları çoğu kez self-signed, amaç
+// kablo-şifreleme (--ssl-mode=REQUIRED). Doğrulama açıkça istenir (?tls=verify).
+//   tls=verify / ssl=verify / ssl=verify_identity → tls, verify=true (CA+hostname, MITM'e karşı)
+//   tls=1 / tls=true / herhangi ssl=...            → tls, verify=false (yalnız şifreleme)
+// NOT: verify=false varsayılanı BİLİNÇLİ karar; değiştirmek kullanıcı-kararıdır (kırıcı).
+inline void mysql_resolve_tls(const std::string& query, bool scheme_secure,
+                              bool& tls, bool& verify) {
+    tls = scheme_secure;
+    verify = false;
+    if (query.find("tls=verify")        != std::string::npos ||
+        query.find("ssl=verify")        != std::string::npos ||
+        query.find("ssl=verify_identity")!= std::string::npos) {
+        tls = true; verify = true;
+    } else if (query.find("tls=1")    != std::string::npos ||
+               query.find("tls=true") != std::string::npos ||
+               query.find("ssl=")     != std::string::npos) {
+        tls = true;
+    }
+}
+
+// Redis DSN query'sinden TLS kararı. scheme_secure = "rediss://" mi. MySQL ile aynı
+// felsefe (verify=false varsayılan); MySQL'den farkı: ssl=verify_identity ve tls=true
+// şifreleme-yalnız dalında yok (mevcut davranış aynen korunur).
+//   tls=verify / ssl=verify → tls, verify=true · tls=1 / herhangi ssl=... → tls (şifreleme)
+inline void redis_resolve_tls(const std::string& query, bool scheme_secure,
+                              bool& tls, bool& verify) {
+    tls = scheme_secure;
+    verify = false;
+    if (query.find("tls=verify") != std::string::npos ||
+        query.find("ssl=verify") != std::string::npos) {
+        tls = true; verify = true;
+    } else if (query.find("tls=1") != std::string::npos ||
+               query.find("ssl=")  != std::string::npos) {
+        tls = true;
+    }
+}
+
 } // namespace look

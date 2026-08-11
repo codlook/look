@@ -188,6 +188,15 @@ jobs:
           g++ -std=c++17 -Iinclude tests/pg_dsn_test.cpp -o /tmp/pg_dsn_test
           /tmp/pg_dsn_test
 
+      # MySQL/Redis DSN TLS-karar — seam (look/db_dsn.h). PG'den fark: verify=false VARSAYILAN
+      # (DB cert self-signed; kablo-şifreleme amaç). Ağsız tablo mevcut kararı kilitler; varsayılan
+      # bir gün değişirse (kırıcı-karar) RED. POZİTİF-KONTROLLÜ.
+      - name: MySQL/Redis DSN TLS-karar (seam tablosu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/mysql_redis_dsn_test.cpp -o /tmp/mrdsn
+          /tmp/mrdsn
+
       # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
       # verify-full untrusted cert'i REDDEDER (SSL_VERIFY_PEER çalışıyor mu) + insecure kabul
       # eder (pozitif-kontrol: red verify'dan; verify kırık olsa insecure gibi davranırdı).
