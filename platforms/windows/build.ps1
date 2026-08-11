@@ -22,6 +22,30 @@ foreach ($b in $exes) {
     }
 }
 
+# -- Pre-release verification gate (Windows analog of release_gate.lk) ------------
+# Windows Tier-2 has NO CI, so this gate is the only regression protection. The
+# MSVC-only branches (NCrypt rs256, BCrypt random/sha256, MSVC i64-overflow, IOCP)
+# run ONLY here. If any is red, packaging STOPS (no silent hole gets shipped). Tests
+# run against the real MSVC binary -- the sole proof rs256/crypto/date work on Windows.
+# NOTE: keep this file ASCII-only (Windows PowerShell 5.1 reads .ps1 as ANSI).
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $Here "..\.."))
+$LkExe    = Join-Path $BinSrc "lk.exe"
+$Gate = @(
+    "tests\crypto_vectors.lk",   # SHA/HMAC/base64 + BCrypt random (NIST/RFC)
+    "tests\rs256_kat.lk",        # NCrypt rs256 verify+sign, pinned to openssl oracle
+    "tests\date_dst_test.lk"     # calendar arithmetic (MSVC CRT branch)
+)
+Write-Host "Pre-release gate (against MSVC binary)..."
+foreach ($t in $Gate) {
+    $tp = Join-Path $RepoRoot (Join-Path "cpp" $t)
+    & $LkExe $tp | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "GATE RED: $t FAILED on Windows binary (exit $LASTEXITCODE) - packaging stopped."
+    }
+    Write-Host "  PASS $t"
+}
+Write-Host "Gate green: MSVC branches (rs256/crypto/date) verified."
+
 New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
 foreach ($b in $exes) { Copy-Item (Join-Path $BinSrc $b) (Join-Path $Tmp $b) }
 Copy-Item (Join-Path $Here "README.md") (Join-Path $Tmp "README.md")
