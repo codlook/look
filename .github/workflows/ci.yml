@@ -52,6 +52,16 @@ jobs:
           cd cpp
           ./build/lk tests/crypto_vectors.lk
 
+      # RS256 known-answer — crypto_vectors sha/hmac/base64'ü kapsıyordu ama rs256'yı
+      # kapsamıyordu (olgunluk denetimi 2026-08-11 boşluğu). Sabit imza (openssl dış
+      # oracle, PKCS#1 v1.5 deterministik) + reddetme tarafı (bozuk mesaj/imza). POSIX
+      # yolu burada TAM doğrulanır; Windows verify STUB (throw) — bu KAT, Windows NCrypt
+      # impl'i geldiğinde onu AYNI imzaya karşı doğrulayacak silahtır.
+      - name: RS256 known-answer (verify + reject + deterministik sign)
+        run: |
+          cd cpp
+          ./build/lk tests/rs256_kat.lk
+
       # DKIM tag-parser ① KAT — RFC 6376 tag ayirma dogru mu (bh= icindeki h='e carpmasin).
       # Saf parser (look/dkim_tag.h), pozitif kontrollu: eski find() parser'i ①'de bozuk.
       - name: DKIM tag-parser KAT
