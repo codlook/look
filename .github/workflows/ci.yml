@@ -223,6 +223,16 @@ jobs:
           g++ -std=c++17 -Iinclude tests/installer_redirect_test.cpp -o /tmp/irt
           /tmp/irt
 
+      # SSRF private/özel-blok kararı — seam (look/ssrf_safe.h). http_client'ın getaddrinfo
+      # döngüsü bu predikatlara delege eder. Ağsız/DNS'siz: ham byte'tan karar tablosu
+      # (metadata 169.254.169.254 · NAT64 64:ff9b · 6to4 2002 · v4-mapped bypass'ları).
+      # POZİTİF-KONTROLLÜ (bir dal silinirse ilgili satır RED).
+      - name: SSRF private/özel-blok kararı (seam tablosu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/ssrf_safe_test.cpp -o /tmp/ssrf
+          /tmp/ssrf
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
