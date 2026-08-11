@@ -25,6 +25,11 @@ run_lk "db:: CRUD+tx"          db_crud.lk
 run_lk "prepared bind matrisi" db_bind_sqlite.lk
 run_lk "jobs:: lifecycle"      jobs_lifecycle.lk  "JOBS_DB=$TMP/jobs.db"
 run_lk "parallel() fan-out"    parallel_fanout.lk
+run_lk "string:: ops"          string_ops.lk
+run_lk "array:: ops"           array_ops.lk
+run_lk "type:: ops"            type_ops.lk
+run_lk "queue:: FIFO"          queue_ops.lk
+run_lk "file:: FS+traversal"   file_ops.lk  "LOOK_FILE_ROOT=$TMP" "BT_DIR=$TMP"
 
 [ $fail = 0 ] && echo "PASS: davranissal (db/jobs/parallel/prepared, SQLite CI)" || echo "FAIL: davranissal"
 exit $fail

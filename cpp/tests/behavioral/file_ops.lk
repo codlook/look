@@ -1,0 +1,27 @@
+# file:: davranışsal test — yerel FS (sunucu YOK). CI-koşabilir. LOOK_FILE_ROOT + BT_DIR runner'dan.
+# put/read/append/exists/remove/size + traversal-guard reddi. Yol mutlak (kök-içi) olsun.
+use file
+$ran = 0
+function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
+
+$f = env("BT_DIR") . "/bt_file.txt"
+chk("exists yok", file::exists($f), false); $ran = $ran + 1
+chk("put", file::put($f, "hello"), true); $ran = $ran + 1
+chk("exists var", file::exists($f), true); $ran = $ran + 1
+chk("read", file::read($f), "hello"); $ran = $ran + 1
+chk("size", file::size($f), 5); $ran = $ran + 1
+chk("append", file::append($f, " world"), true); $ran = $ran + 1
+chk("read append", file::read($f), "hello world"); $ran = $ran + 1
+chk("size append", file::size($f), 11); $ran = $ran + 1
+file::put($f, "çğ")
+chk("size unicode-byte", file::size($f), 4); $ran = $ran + 1
+chk("remove", file::remove($f), true); $ran = $ran + 1
+chk("exists silindi", file::exists($f), false); $ran = $ran + 1
+# kök-DIŞI erişim reddedilmeli (traversal guard)
+$denied = false
+try { file::read("../../etc/passwd") } catch($e) { $denied = true }
+chk("traversal reddedildi", $denied, true); $ran = $ran + 1
+
+const { EXPECTED = 12 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " != " . EXPECTED) }
+print("=== file ran=" . $ran . " ===")

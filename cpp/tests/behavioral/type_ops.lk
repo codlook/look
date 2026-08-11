@@ -1,0 +1,24 @@
+# type:: davranışsal test — saf (sunucu YOK). CI-koşabilir. is_*/of/to_*.
+use type
+$ran = 0
+function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
+
+chk("is_int", type::is_int(5), true); $ran = $ran + 1
+chk("is_float", type::is_float(1.5), true); $ran = $ran + 1
+chk("is_string", type::is_string("x"), true); $ran = $ran + 1
+chk("is_bool", type::is_bool(true), true); $ran = $ran + 1
+chk("is_array", type::is_array([1]), true); $ran = $ran + 1
+chk("is_null", type::is_null(null), true); $ran = $ran + 1
+chk("is_function", type::is_function(fn() => 1), true); $ran = $ran + 1
+chk("is_int float→false", type::is_int(1.0), false); $ran = $ran + 1
+chk("of int", type::of(5), "int"); $ran = $ran + 1
+chk("of array", type::of([1]), "array"); $ran = $ran + 1
+chk("to_int str", type::to_int("42"), 42); $ran = $ran + 1
+chk("to_float str", type::to_float("3.14"), 3.14); $ran = $ran + 1
+chk("to_bool bos→false", type::to_bool(""), false); $ran = $ran + 1
+chk("to_bool 0→false", type::to_bool(0), false); $ran = $ran + 1
+chk("to_string int", type::to_string(7), "7"); $ran = $ran + 1
+
+const { EXPECTED = 15 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " != " . EXPECTED) }
+print("=== type ran=" . $ran . " ===")

@@ -1,0 +1,29 @@
+# queue:: davranışsal test — in-process FIFO (sunucu YOK). CI-koşabilir.
+use queue
+use array
+use type
+$ran = 0
+function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
+
+$q = "bt_queue"
+queue::clear($q)
+chk("bos size 0", queue::size($q), 0); $ran = $ran + 1
+chk("bos pop→null", type::is_null(queue::pop($q)), true); $ran = $ran + 1
+queue::push($q, "a"); queue::push($q, "b")
+chk("size 2", queue::size($q), 2); $ran = $ran + 1
+chk("peek kaldirmaz", queue::peek($q), "a"); $ran = $ran + 1
+chk("peek size sabit", queue::size($q), 2); $ran = $ran + 1
+chk("FIFO pop1", queue::pop($q), "a"); $ran = $ran + 1
+chk("FIFO pop2", queue::pop($q), "b"); $ran = $ran + 1
+chk("bosaldi", queue::size($q), 0); $ran = $ran + 1
+queue::push($q, "x")
+chk("names icerir", array::contains(queue::names(), $q), true); $ran = $ran + 1
+# tip-korunumu (array değer)
+queue::push($q, [1, 2, 3])
+queue::pop($q)
+chk("array degeri korunur", len(queue::pop($q)), 3); $ran = $ran + 1
+queue::clear($q)
+
+const { EXPECTED = 10 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " != " . EXPECTED) }
+print("=== queue ran=" . $ran . " ===")

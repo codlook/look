@@ -1,0 +1,28 @@
+# string:: davranışsal test — saf (sunucu YOK). CI-koşabilir. Sınır: boş/unicode/negatif.
+use string
+$ran = 0
+function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
+
+chk("split+join", string::join(string::split("a,b,c", ","), "|"), "a|b|c"); $ran = $ran + 1
+chk("split bos-sep→char", len(string::split("ab", "")), 2); $ran = $ran + 1
+chk("replace", string::replace("aXbXc", "X", "-"), "a-b-c"); $ran = $ran + 1
+chk("replace bos-from", string::replace("ab", "", "."), ".a.b."); $ran = $ran + 1
+chk("trim", string::trim("  hi \t"), "hi"); $ran = $ran + 1
+chk("trim tumu-bosluk", string::trim("   "), ""); $ran = $ran + 1
+chk("pad_left", string::pad_left("7", 3, "0"), "007"); $ran = $ran + 1
+chk("pad_right", string::pad_right("7", 3, "0"), "700"); $ran = $ran + 1
+chk("upper", string::upper("aBc"), "ABC"); $ran = $ran + 1
+chk("lower", string::lower("AbC"), "abc"); $ran = $ran + 1
+chk("len unicode-codepoint", string::len("çğü"), 3); $ran = $ran + 1
+chk("substr unicode", string::substr("çğü", 0, 2), "çğ"); $ran = $ran + 1
+chk("reverse unicode", string::reverse("abç"), "çba"); $ran = $ran + 1
+chk("slugify TR-fold", string::slugify("Merhaba Dünya!"), "merhaba-dunya"); $ran = $ran + 1
+chk("format", string::format("%s=%d", "x", 5), "x=5"); $ran = $ran + 1
+chk("regex_replace", string::regex_replace("a1b2", "[0-9]", "#"), "a#b#"); $ran = $ran + 1
+chk("starts_with", string::starts_with("hello", "he"), true); $ran = $ran + 1
+chk("contains", string::contains("hello", "ell"), true); $ran = $ran + 1
+chk("contains yok", string::contains("hello", "zz"), false); $ran = $ran + 1
+
+const { EXPECTED = 19 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " != " . EXPECTED) }
+print("=== string ran=" . $ran . " ===")
