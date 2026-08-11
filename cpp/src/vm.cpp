@@ -834,7 +834,10 @@ call_dispatch:
                     call_stack_.pop_back();
                 }
                 call_stack_.back().ip = entry.catch_ip;
-                break;
+                // frame/proto/base'i catch'in bulunduğu frame'e YENİDEN BAĞLA (RETURN ile
+                // aynı). Salt `break` inner loop'u bayat `proto` + sarkan `frame` referansıyla
+                // sürdürüyordu (fonksiyon-sınırını geçen throw → sessiz duruş/UB; VM≠interpreter).
+                goto call_dispatch;
             }
             case OpCode::LOAD_EXC:
                 R(ins.a) = current_exception_;

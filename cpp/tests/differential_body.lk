@@ -44,6 +44,12 @@ function run_all() {
   try{ $qy=10%0 }catch($e){ $k.="m" }
   try{ throw "boom" }catch($e){ $k.=$e }
   $fin=""; try{ $qz=1/0 }catch($e){ $fin.="c" }finally{ $fin.="f" }
+  # fonksiyon-sınırını geçen throw: doğrudan çağrılan LOOK fn içinde throw → çağıranın
+  # catch'i yakalamalı. VM THROW opcode frame-pop + goto call_dispatch (salt break bayat
+  # proto/sarkan frame → sessiz duruş, VM≠interpreter; 2026-08-11 fix). C++ builtin callback
+  # yolu (aşağıda array::map, satır ~63) FARKLI eksen — bu doğrudan-CALL yolunu kilitler.
+  function _thrower() { throw "xfn" }
+  try { _thrower() } catch($e) { $k .= "|" . $e }
   $o .= "K:" . $k . "|" . $fin . ";";
   # string interpolation — '$'-önekli expression formları (VM==interpreter)
   $ia=5; $ib=3; $iarr=[10,20,30]; $im=["name"=>"ali","age"=>30];
