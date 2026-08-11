@@ -1339,14 +1339,17 @@ static Module make_db_module(Interpreter* interp) {
             "Pool[" + std::to_string(sz) + "] created: " +
             dsn.substr(0, dsn.find('@') == std::string::npos ? dsn.size() : dsn.find('@')));
 
-        // S4 Faz 1: DB-TLS güvenlik uyarısı — POOL BASINA BİR KEZ (sorgu başına değil → spam yok).
+        // S4: DB-TLS güvenlik uyarısı — POOL BASINA BİR KEZ (sorgu başına değil → spam yok).
         // El-yazması wire parser'a ağdaki herkes bayt besliyor; kullanıcı şifreleme/doğrulama
-        // durumunu bilmeli ve NE YAPACAĞINI görmeli. Davranış değişmez (yalnız log). Faz 2: verify
-        // varsayılan + ?tls=insecure opt-out (sürüm kapısı, ayrı karar).
+        // durumunu bilmeli ve NE YAPACAĞINI görmeli. 2026-08-11 flip sonrası: MySQL/Redis'te
+        // verify=true GÜVENLİ-VARSAYILAN → yalnız AÇIK plaintext'te veya ?tls=insecure opt-out'ta uyar.
         {
             std::string sch = dsn.substr(0, dsn.find(':'));
             bool has_tls = dsn.find("tls=") != std::string::npos || dsn.find("ssl=") != std::string::npos;
-            bool vfy     = dsn.find("tls=verify") != std::string::npos || dsn.find("ssl=verify") != std::string::npos;
+            // verify artık varsayılan true; yalnız insecure opt-out doğrulamayı kapatır.
+            bool insecure = dsn.find("tls=insecure") != std::string::npos ||
+                            dsn.find("ssl=insecure")  != std::string::npos;
+            bool vfy     = !insecure;
             bool secure_sch = (sch == "mysqls" || sch == "mariadbs" || sch == "rediss");
             bool encrypted  = secure_sch ||
                 (has_tls && (sch == "mysql" || sch == "mariadb" || sch == "redis"));
@@ -1367,12 +1370,12 @@ static Module make_db_module(Interpreter* interp) {
                 // aksi halde postgresqls:// / ?tls=verify → sifreli+dogrulanmis → uyari yok
             }
             else if ((sch == "mysql" || sch == "mariadb" || secure_sch) && !encrypted && sch[0] == 'm')
-                w = "MySQL baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: mysqls://... veya DSN'e ?tls=verify.";
+                w = "MySQL baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: mysqls://...";
             else if ((sch == "redis" || sch == "rediss") && !encrypted)
-                w = "Redis baglantisi SIFRELENMEMIS (plaintext) — sifreli icin rediss://, dogrulanmis icin ?tls=verify.";
-            else if (encrypted && !vfy)
+                w = "Redis baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: rediss://...";
+            else if (encrypted && insecure)
                 w = std::string(sch[0] == 'r' ? "Redis" : "MySQL") +
-                    " TLS sertifikasi DOGRULANMIYOR (MITM riski) — DSN'e ?tls=verify ekleyin.";
+                    " TLS sertifikasi ?tls=insecure ile DOGRULANMIYOR (MITM riski) — mumkunse insecure'u kaldirin (verify artik varsayilan).";
             if (!w.empty())
                 Logger::instance().log(LogLevel::LOG_WARN, "DB-TLS", w);
         }

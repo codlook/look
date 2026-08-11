@@ -30,22 +30,26 @@ Honesty about what LOOK does **not** protect yet — so you can decide before de
   **refused with a clear error** — it never silently falls back to plaintext. `?tls=insecure`
   encrypts without verifying (for a self-signed dev cert). Because PostgreSQL TLS is new, there is
   no back-compat pressure to weaken this default — unlike the MySQL/Redis clients below.
-- **MySQL / MariaDB / Redis default to plaintext.** Use `mysqls://` / `rediss://` (or `?tls=1`) to
-  encrypt. Even then, the certificate is **not verified by default** — add `?tls=verify` to
-  authenticate the server. Without `verify`, the connection is encrypted but a MITM is still possible.
-- The `http::` and PostgreSQL clients verify certificates by default (`SSL_VERIFY_PEER`). The MySQL/Redis clients do not (opt in with `?tls=verify`).
+- **MySQL / MariaDB / Redis verify by default (secure default).** Use `mysqls://` / `rediss://`
+  (or `?tls=1`) to encrypt; the certificate chain **and** hostname are then verified so a MITM is
+  rejected. To connect to a server with a self-signed / internal-CA certificate, opt out explicitly
+  with `?tls=insecure` (encrypts without verifying) — this is the only switch that disables
+  verification, and it emits a one-time runtime warning naming the risk.
+- The `http::`, PostgreSQL, **and MySQL/Redis** clients now all verify certificates by default
+  (`SSL_VERIFY_PEER` + hostname). The three drivers are aligned.
 
 On loopback / same-host / a trusted private network, none of the above is exposed. The runtime logs a
-one-time warning per connection pool when a database connection is unencrypted or unverified.
+one-time warning per connection pool when a database connection is unencrypted or explicitly `?tls=insecure`.
 
-**Why isn't verification the default for MySQL/Redis?** This is a deliberate decision, not an
-oversight. Verification is available today via `?tls=verify`, and unverified connections emit a
-runtime warning (once per pool) that names the fix. Flipping the default to *on* would break
-existing deployments that encrypt with their own (self-signed / internal-CA) certificate — which
-conflicts with LOOK's "deploy as easily as PHP" principle for the sake of a default preference,
-not a capability gap. PostgreSQL verifies by default because TLS there is a **new** feature with
-no existing deployments to break. If a future major (2.0) collects breaking changes, aligning the
-three drivers on verify-by-default belongs in that bucket — as a decided item, not silent drift.
+**Verify-by-default alignment (2026-08 flip).** MySQL/Redis previously defaulted to *encrypt but
+don't verify*, out of step with `http::` and PostgreSQL. That inconsistency was silent: a user who
+learned "LOOK verifies TLS" was wrong on MySQL and never told so. The default was flipped to
+verify-on during the zero-user window (measured: the only known deployment uses plaintext
+`mysql://` on localhost — unaffected), with an explicit `?tls=insecure` escape hatch already wired
+for self-signed dev/internal certs. The client-side decision (default + escape hatch) is
+table-tested in CI (`mysql_redis_dsn_test`, positive-controlled both directions). The real
+server-interop matrix (valid-CA / self-signed / hostname-mismatch × MySQL + Redis) is a nightly
+gate, not proven by the unit table — same standing as the PostgreSQL TLS interop matrix.
 
 **The embedded SMTP / IMAP server is off by default and has not had an adversarial security audit.**
 The mail servers only listen when you explicitly set `LOOK_SMTP_PORT` / `LOOK_IMAP_PORT` — with no
