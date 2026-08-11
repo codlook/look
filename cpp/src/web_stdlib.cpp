@@ -1,6 +1,7 @@
 ﻿#define _CRT_RAND_S
 #include "look/stdlib.h"
 #include "look/web.h"
+#include "look/db_dsn.h"   // pg_resolve_tls (saf TLS-karar dikişi)
 #include "look/fiber.h"
 #include <cmath>
 #include <cstdint>
@@ -1148,25 +1149,15 @@ static std::shared_ptr<DbConnection> open_one_connection(
         // TLS: postgresqls:// şeması VEYA db-adında ?tls=... sorgu paramı.
         // PG'de TLS YENİ → verify DOĞRU VARSAYILAN (postgresqls:// / ?tls=verify → doğrulanmış,
         // ?tls=insecure → şifreli ama doğrulanmamış). mysql/redis'in tersine güvenli başlar.
+        // TLS kararı saf dikişe taşındı (look/db_dsn.h) → tablo-testi (pg_dsn_test) ağsız
+        // kilitler; verify-ca sessiz-plaintext regresyonu (558d735) o testte pozitif-kontrollü.
         bool tls = (scheme == "postgresqls");
-        bool tls_verify = true;   // güvenli varsayılan
+        bool tls_verify = true;
         { size_t q = db_name.find('?');
           if (q != std::string::npos) {
             std::string query = db_name.substr(q + 1);
             db_name = db_name.substr(0, q);
-            if (query.find("tls=insecure") != std::string::npos ||
-                query.find("ssl=insecure")  != std::string::npos ||
-                query.find("sslmode=require") != std::string::npos) { tls = true; tls_verify = false; }
-            else if (query.find("tls=verify") != std::string::npos ||
-                     query.find("ssl=verify")  != std::string::npos ||
-                     query.find("sslmode=verify-full") != std::string::npos ||
-                     // verify-ca: libpq'da CA-doğrulanmış TLS. Eskiden HİÇBİR dala uymuyor,
-                     // postgres:// şemasında tls=false kalıyordu → SESSİZCE PLAINTEXT (kullanıcı
-                     // CA-doğrulama isterken). LOOK'un verify=true'su CA+hostname (verify-ca'dan
-                     // katı) — güvenli yön, plaintext düşüşünü kapatır.
-                     query.find("sslmode=verify-ca") != std::string::npos ||
-                     query.find("tls=1") != std::string::npos ||
-                     query.find("tls=true") != std::string::npos) { tls = true; tls_verify = true; }
+            look::pg_resolve_tls(query, scheme == "postgresqls", tls, tls_verify);
           } }
         auto c = std::make_shared<PostgresClient>();
         if (tls) c->set_tls(true, tls_verify);

@@ -178,6 +178,16 @@ jobs:
           cd cpp
           bash tests/behavioral_test.sh build/lk
 
+      # PG DSN TLS-karar tablo testi — seam (look/db_dsn.h). sslmode/tls→(tls,verify) mantığı
+      # ağsız kilitlenir; verify-ca sessiz-plaintext regresyonu (558d735) POZİTİF-KONTROLLÜ
+      # (verify-ca dalı silinirse verify-ca vakası tls=false → FAIL). Gerçek TLS-handshake
+      # matrisi (db_tls/, Docker+cert) ayrı/nightly kalır — bu yalnız parse ekseni.
+      - name: PG DSN TLS-karar tablosu (seam + verify-ca regresyonu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/pg_dsn_test.cpp -o /tmp/pg_dsn_test
+          /tmp/pg_dsn_test
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
