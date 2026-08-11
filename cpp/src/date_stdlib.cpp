@@ -129,6 +129,19 @@ static long unit_to_seconds(const std::string& unit) {
                              "' (second/minute/hour/day/week/month/year)");
 }
 
+// 1970-01-01'den bu yana TAKVİM gün sayısı (proleptik Gregoryen, Howard Hinnant
+// days_from_civil). TZ/DST'den TAMAMEN bağımsız — date::diff'in gün/hafta farkı
+// bununla hesaplanır; eski (mktime-mktime)/86400 yolu spring-forward'ı kapsayan
+// farkı 1 eksik veriyordu (3 gün → 2). y=tam yıl, m=1..12, d=1..31.
+static long days_from_civil(int y, int m, int d) {
+    y -= (m <= 2);
+    long era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + (unsigned)d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (long)doe - 719468;
+}
+
 // ── date:: Module ─────────────────────────────────────────────────────────────
 
 Module make_date_module() {
@@ -263,7 +276,16 @@ Module make_date_module() {
             // mktime ay taşmasını normalize eder (örn. ay=13 → yıl+1, ay=1)
         } else if (unit == "year" || unit == "years") {
             t.tm_year += amount;
+        } else if (unit == "day" || unit == "days") {
+            // TAKVİM günü — DST-güvenli. Eski 86400-saniye yolu DST fall-back'te
+            // (25 saatlik gün) +1 günü AYNI güne kaydırıyordu (sessiz 1-gün hatası:
+            // abonelik/rezervasyon/hatırlatma). "1 gün" = 1 takvim günü; mktime
+            // (tm_isdst=-1) normalizasyonu DST'den bağımsız doğru sonucu verir.
+            t.tm_mday += amount;
+        } else if (unit == "week" || unit == "weeks") {
+            t.tm_mday += amount * 7;
         } else {
+            // hour/minute/second: GERÇEK süre → saniye ekleme DST-doğru.
             long secs = (long)amount * unit_to_seconds(unit);
             std::time_t ts = mktime(&t) + secs;
             std::tm _r = look_localtime(ts); std::tm* r = &_r;
@@ -288,7 +310,12 @@ Module make_date_module() {
             t.tm_mon -= amount;
         } else if (unit == "year" || unit == "years") {
             t.tm_year -= amount;
+        } else if (unit == "day" || unit == "days") {
+            t.tm_mday -= amount;                 // TAKVİM günü — DST-güvenli (bkz. add)
+        } else if (unit == "week" || unit == "weeks") {
+            t.tm_mday -= amount * 7;
         } else {
+            // hour/minute/second: gerçek süre → saniye çıkarma DST-doğru.
             long secs = (long)amount * unit_to_seconds(unit);
             std::time_t ts = mktime(&t) - secs;
             std::tm _r = look_localtime(ts); std::tm* r = &_r;
@@ -303,10 +330,20 @@ Module make_date_module() {
     m.functions["diff"] = [](auto args) -> Value {
         if (args.size() < 3)
             throw std::runtime_error("date::diff() requires (date1, date2, unit)");
-        std::tm t1 = parse_iso(args[0].to_string()); t1.tm_isdst = -1;
-        std::tm t2 = parse_iso(args[1].to_string()); t2.tm_isdst = -1;
+        std::string unit = args[2].to_string();
+        std::tm t1 = parse_iso(args[0].to_string());
+        std::tm t2 = parse_iso(args[1].to_string());
+        // day/week: TAKVİM farkı — DST-bağımsız (civil-day). Saniye/86400 yolu
+        // spring-forward'ı (23s gün) kapsayan farkı 1 eksik veriyordu.
+        if (unit == "day" || unit == "days" || unit == "week" || unit == "weeks") {
+            long days = days_from_civil(t1.tm_year + 1900, t1.tm_mon + 1, t1.tm_mday)
+                      - days_from_civil(t2.tm_year + 1900, t2.tm_mon + 1, t2.tm_mday);
+            return Value((int64_t)(unit[0] == 'w' ? days / 7 : days));
+        }
+        // hour/minute/second: gerçek süre → saniye farkı DST-doğru.
+        t1.tm_isdst = -1; t2.tm_isdst = -1;
         int64_t secs = (int64_t)(mktime(&t1) - mktime(&t2));
-        int64_t div  = (int64_t)unit_to_seconds(args[2].to_string());
+        int64_t div  = (int64_t)unit_to_seconds(unit);
         return Value((int64_t)(div != 0 ? secs / div : 0));
     };
 

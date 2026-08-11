@@ -1,0 +1,65 @@
+# date:: DST regresyon testi — add/sub/diff gün-aritmetiği TAKVİM-tabanlı (DST-güvenli) mi.
+#
+# BUG (olgunluk denetimi 2026-08-11, analizci kardeş-yol sezgisi): add/sub "day" 86400-saniye,
+# diff "day" (mktime-mktime)/86400 kullanıyordu → DST fall-back (25s gün) +1 günü AYNI güne
+# kaydırıyor, spring-forward (23s gün) diff'i 1 eksik veriyordu. Sessiz 1-gün sınıfı
+# (abonelik/rezervasyon/hatırlatma). Fix: day/week takvim (tm_mday / civil-day); hour/min/sec
+# gerçek-süre saniye kalır.
+#
+# ÖNEMLİ: DST'li TZ altında koşmalı (US 2024: spring 03-10, fall 11-03). CI:
+#   TZ=America/New_York build/lk cpp/tests/date_dst_test.lk
+# UTC'de de koşar (DST yok → zaten doğruydu; regresyon çift-eksende kilitli).
+
+use date
+
+$run = 0
+$fail = 0
+
+# add: fall-back gününe (25s) +1 gün → ertesi takvim günü (86400s AYNI günü veriyordu)
+$run = $run + 1
+if (date::add("2024-11-03", 1, "day") != "2024-11-04") {
+    print("FAIL add: 11-03 +1gun != 11-04 (DST fall-back kaymasi) -> " . date::add("2024-11-03", 1, "day")); $fail = $fail + 1
+}
+# add: 25s günü KAPSAYAN 2 gün
+$run = $run + 1
+if (date::add("2024-11-02", 2, "day") != "2024-11-04") {
+    print("FAIL add: 11-02 +2gun != 11-04 -> " . date::add("2024-11-02", 2, "day")); $fail = $fail + 1
+}
+# add hafta
+$run = $run + 1
+if (date::add("2024-11-01", 1, "week") != "2024-11-08") {
+    print("FAIL add: 11-01 +1hafta != 11-08 -> " . date::add("2024-11-01", 1, "week")); $fail = $fail + 1
+}
+# sub gün
+$run = $run + 1
+if (date::sub("2024-11-04", 1, "day") != "2024-11-03") {
+    print("FAIL sub: 11-04 -1gun != 11-03 -> " . date::sub("2024-11-04", 1, "day")); $fail = $fail + 1
+}
+# diff: spring-forward (23s) kapsayan 3 gün (86400 yolu 2 veriyordu)
+$run = $run + 1
+if (date::diff("2024-03-12", "2024-03-09", "day") != 3) {
+    print("FAIL diff: 03-12..03-09 != 3 (spring-forward budama) -> " . date::diff("2024-03-12", "2024-03-09", "day")); $fail = $fail + 1
+}
+# diff: fall-back kapsayan 3 gün
+$run = $run + 1
+if (date::diff("2024-11-04", "2024-11-01", "day") != 3) {
+    print("FAIL diff: 11-04..11-01 != 3 -> " . date::diff("2024-11-04", "2024-11-01", "day")); $fail = $fail + 1
+}
+# hour: GERÇEK süre yolu bozulmadi (DST-doğru saniye)
+$run = $run + 1
+if (date::diff("2024-06-15 14:00:00", "2024-06-15 12:00:00", "hour") != 2) {
+    print("FAIL diff hour: 2 saat farki yanlis -> " . date::diff("2024-06-15 14:00:00", "2024-06-15 12:00:00", "hour")); $fail = $fail + 1
+}
+
+# Guard 1 — empty-green: 7 kontrol koştu mu?
+const { EXPECTED = 7 }
+if ($run != EXPECTED) {
+    print("FAIL: " . EXPECTED . " kontrol beklendi, " . $run . " kostu — bir dal atlandi")
+    exit(1)
+}
+# Guard 2 — fail-loud.
+if ($fail != 0) {
+    print("FAIL: " . $fail . "/" . $run . " date DST kontrolu basarisiz")
+    exit(1)
+}
+print("PASS: date DST " . $run . "/" . $run . " (add/sub/diff takvim-tabanli, DST-guvenli)")

@@ -62,6 +62,15 @@ jobs:
           cd cpp
           ./build/lk tests/rs256_kat.lk
 
+      # date:: DST regresyon — add/sub/diff gün-aritmetiği TAKVİM-tabanlı mı. Eski
+      # 86400-saniye yolu DST fall-back'te (25s gün) +1 günü AYNI güne kaydırıyordu
+      # (sessiz 1-gün: abonelik/rezervasyon). DST'li TZ ŞART — UTC tek başına görmez.
+      - name: date DST (calendar arithmetic, TZ=America/New_York)
+        run: |
+          cd cpp
+          TZ=America/New_York ./build/lk tests/date_dst_test.lk
+          TZ=UTC ./build/lk tests/date_dst_test.lk
+
       # DKIM tag-parser ① KAT — RFC 6376 tag ayirma dogru mu (bh= icindeki h='e carpmasin).
       # Saf parser (look/dkim_tag.h), pozitif kontrollu: eski find() parser'i ①'de bozuk.
       - name: DKIM tag-parser KAT
