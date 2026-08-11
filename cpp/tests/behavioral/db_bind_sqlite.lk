@@ -1,0 +1,41 @@
+# prepared statements (native) — SQLite bind matrisi (gömülü, sunucu YOK). CI-koşabilir.
+# Çekirdek round-trip: int64 sınır · float · bool · null-gerçek · UTF-8/özel-karakter ·
+# injection (bind escape) · param-sayısı reddi · Inf/NaN fail-loud. (Sunucu-lehçesi
+# davranışları — MySQL/PG wire — SQLite'ta test EDİLEMEZ, ayrı canlı-DSN matrisi kalır.)
+use math
+
+$ran = 0
+function chk($l, $g, $w) {
+    if ($g == $w) { print("OK   " . $l) }
+    else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") }
+}
+
+$c = db::connect("sqlite://:memory:")
+db::exec($c, "CREATE TABLE t (i BIGINT, f DOUBLE PRECISION, b BOOLEAN, s TEXT, n TEXT)", [])
+db::exec($c, "INSERT INTO t (i,f,b,s,n) VALUES (?,?,?,?,?)",
+    [9223372036854775807, 3.141592653589793, true, "o'zel \" karakter \\ 日本 son", null])
+$r = db::query($c, "SELECT i,f,b,s,n FROM t", [])[0]
+
+chk("int64 tam", "" . db::col($r, "i"), "9223372036854775807"); $ran = $ran + 1
+chk("float round-trip", "" . db::col($r, "f"), "3.141592653589793"); $ran = $ran + 1
+$bv = "" . db::col($r, "b")
+chk("bool", ($bv == "1" || $bv == "true" || $bv == "t"), true); $ran = $ran + 1
+chk("utf8+ozel-karakter", db::col($r, "s"), "o'zel \" karakter \\ 日本 son"); $ran = $ran + 1
+chk("null gercek-null", db::col($r, "n") == null, true); $ran = $ran + 1
+
+# injection: bind'li ' OR '1'='1 literal eşleşme arar → 0 satır (escape değil, parametreli)
+chk("injection tautoloji", len(db::query($c, "SELECT * FROM t WHERE s=?", ["' OR '1'='1"])), 0); $ran = $ran + 1
+
+# param-sayısı reddi (2 placeholder, 1 param)
+$caught = false
+try { db::query($c, "SELECT * FROM t WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
+chk("param-sayim reddi", $caught, true); $ran = $ran + 1
+
+# Inf/NaN fail-loud (non-finite bind reddi)
+$inf = false
+try { db::exec($c, "INSERT INTO t (f) VALUES (?)", [math::pow(10, 400)]) } catch ($e) { $inf = true }
+chk("Inf fail-loud", $inf, true); $ran = $ran + 1
+
+const { EXPECTED = 8 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
+print("=== bind ran=" . $ran . " ===")

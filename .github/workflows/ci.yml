@@ -160,6 +160,16 @@ jobs:
           build/lk tests/repro/file_root_traversal.lk
           build/lk tests/repro/msvc_mul_ovf.lk
 
+      # Davranışsal .lk testleri — gömülü SQLite / in-process (harici sunucu YOK). Bu
+      # kalemler eskiden "TEST-EDİLMİŞ ama CI-dışı"ydı (env-DSN/canlı-DB isterdi); SQLite
+      # backend + in-process thread ile çekirdek davranış CI'da KANITLANIR. db:: CRUD+tx,
+      # jobs:: lifecycle+retry, parallel() fan-out+izolasyon, prepared bind matrisi.
+      # (mail:: harici HTTP-provider ister → CI-dışı; MySQL/PG wire-lehçesi ayrı canlı-DSN.)
+      - name: Davranışsal (db/jobs/parallel/prepared, SQLite)
+        run: |
+          cd cpp
+          bash tests/behavioral_test.sh build/lk
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.

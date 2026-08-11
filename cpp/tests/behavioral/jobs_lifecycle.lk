@@ -1,0 +1,47 @@
+# jobs:: davranışsal test — SQLite durable queue (gömülü, sunucu YOK). CI-koşabilir.
+# push→next→done · fail→retry sayacı · delayed görünmezlik · retry(failed→pending).
+# JOBS_DB env ile izole geçici DB (runner verir). fail-loud + empty-green ($ran==EXPECTED).
+use jobs
+
+$ran = 0
+$fail = 0
+function chk($l, $g, $w) {
+    if ($g == $w) { print("OK   " . $l) }
+    else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") }
+}
+
+jobs::purge("q", "pending"); jobs::purge("q", "done"); jobs::purge("q", "failed"); jobs::purge("q", "processing")
+
+# T1 — push → next → done
+$id = jobs::push("q", "payload-1")
+chk("T1 push id>0", $id > 0, true); $ran = $ran + 1
+$j = jobs::next("q")
+chk("T1 next payload", db::col($j, "payload"), "payload-1"); $ran = $ran + 1
+jobs::done(db::col($j, "id"))
+chk("T1 done sayaci", db::col(jobs::stats("q"), "done"), 1); $ran = $ran + 1
+chk("T1 pending bos", db::col(jobs::stats("q"), "pending"), 0); $ran = $ran + 1
+
+# T2 — boş kuyruk → null
+chk("T2 bos kuyruk null", jobs::next("q") == null, true); $ran = $ran + 1
+
+# T3 — fail → retry sayacı (max_retries=2: 1.fail→pending, 2.fail→failed)
+$id2 = jobs::push("q", "retryable", 2)
+$a = jobs::next("q"); jobs::fail(db::col($a, "id"))
+chk("T3 1.fail→pending", db::col(jobs::stats("q"), "pending"), 1); $ran = $ran + 1
+$b = jobs::next("q")
+chk("T3 retry_count artti", db::col($b, "retry_count"), 1); $ran = $ran + 1
+jobs::fail(db::col($b, "id"))
+chk("T3 2.fail→failed", db::col(jobs::stats("q"), "failed"), 1); $ran = $ran + 1
+
+# T4 — retry (failed → pending)
+$f = jobs::failed("q"); jobs::retry(db::col($f[0], "id"))
+chk("T4 retry geri pending", db::col(jobs::stats("q"), "pending"), 1); $ran = $ran + 1
+
+# T5 — delayed: delay=3600 → next() hemen görmemeli
+jobs::purge("q", "pending"); jobs::purge("q", "processing")
+jobs::push("q", "later", 3, 3600)
+chk("T5 gecikmeli gorunmez", jobs::next("q") == null, true); $ran = $ran + 1
+
+const { EXPECTED = 10 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
+print("=== jobs ran=" . $ran . " ===")
