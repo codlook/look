@@ -206,6 +206,15 @@ jobs:
           g++ -std=c++17 -Iinclude tests/installer_zipslip_test.cpp -o /tmp/izt
           /tmp/izt
 
+      # installer:: redirect güvenlik-kararı seam (look/url_safe.h). Gerçek HTTP/3xx OLMADAN:
+      # şema-düşürme (http://) + host-kaçışı (evilgithub.com / github.com.evil.com) reddi.
+      # POZİTİF-KONTROLLÜ (https zorunluluğu kaldırılırsa http:// kaçar→FAIL).
+      - name: installer:: redirect güvenlik-kararı (seam tablosu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/installer_redirect_test.cpp -o /tmp/irt
+          /tmp/irt
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.

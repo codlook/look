@@ -5,6 +5,7 @@
 #include "look/installer.h"
 #include "look/http_client.h"
 #include "look/zip_safe.h"   // zip_entry_inside_dest (Zip-Slip containment dikişi)
+#include "look/url_safe.h"   // redirect_allowed (yönlendirme güvenlik-kararı dikişi)
 #include "miniz/miniz.h"
 
 #include <iostream>
@@ -303,29 +304,9 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
             // Paket = ÇALIŞTIRILABİLİR LOOK KODU olduğu için bu bir tedarik zinciri
             // riski; savunma katmanı ucuz, bedeli ağır (asimetri).
             std::string next = it->second;
-            if (next.rfind("https://", 0) != 0) {
-                resp.error = "güvensiz yönlendirme reddedildi (yalnız https): " + next;
-                return resp;
-            }
-            // Host allowlist — GitHub zipball'ı codeload/objects alt alanlarına yönlendirir.
-            {
-                std::string rest = next.substr(8);           // "https://" sonrası
-                size_t slash = rest.find('/');
-                std::string host = (slash == std::string::npos) ? rest : rest.substr(0, slash);
-                size_t colon = host.find(':');
-                if (colon != std::string::npos) host = host.substr(0, colon);
-                auto ends_with = [](const std::string& s, const char* suf) {
-                    size_t n = std::strlen(suf);
-                    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
-                };
-                bool ok = host == "github.com" || host == "api.github.com" ||
-                          ends_with(host, ".github.com") ||
-                          ends_with(host, ".githubusercontent.com");
-                if (!ok) {
-                    resp.error = "yönlendirme beklenmeyen host'a gidiyor, reddedildi: " + host;
-                    return resp;
-                }
-            }
+            // Redirect güvenlik-kararı → saf dikişe taşındı (look/url_safe.h; installer_redirect_test
+            // ağsız tablo-test eder, şema-düşürme + host-kaçışı pozitif-kontrollü).
+            if (!look::redirect_allowed(next, resp.error)) return resp;
             current = next;
             continue;
         }
