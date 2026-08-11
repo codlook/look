@@ -38,8 +38,12 @@ struct WsConnection {
     // Send close frame and mark as closed
     void close_conn();
 
-    // Raw send (for pong etc.) — caller must hold write_mutex
+    // Raw send (for pong etc.) — caller must hold write_mutex. closed ise düşürür.
     bool send_raw(const std::string& frame);
+
+    // Ham socket yazımı — closed guard'ı YOK. close_conn kendi close-frame'ini
+    // closed=true iken de yazabilmeli (send_raw onu düşürürdü). Kilit çağıranın.
+    bool write_all(const std::string& frame);
 
     WsConnection(const WsConnection&)            = delete;
     WsConnection& operator=(const WsConnection&) = delete;

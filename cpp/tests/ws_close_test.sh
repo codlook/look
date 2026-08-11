@@ -17,7 +17,10 @@ fail=0
 
 cat > "$TMP/app.lk" <<'LKEOF'
 route("WS", "/ws", function($conn) {
-    ws::on($conn, "message", function($m) { ws::send($conn, "echo:" . $m) })
+    ws::on($conn, "message", function($m) {
+        if ($m == "bye") { ws::close($conn) }   // SUNUCU-taraflı kapatma
+        else { ws::send($conn, "echo:" . $m) }
+    })
 })
 route("GET", "/", function() { print("ok") })
 LKEOF
@@ -68,6 +71,43 @@ else echo "  OK handshake 101 + echo:ping + bağlı fd=$conn"; fi
 # Asıl: close sonrası fd base'e döndü mü (sızıntı yok)
 if [ "${after:-99}" -eq "$base" ]; then echo "  OK close sonrası fd base'e döndü ($after) — sızıntı yok"
 else echo "  FAIL: close sonrası fd=$after (base=$base) — SIZINTI"; fail=1; fi
+
+# SUNUCU-taraflı close (ws::close): istemci "bye" yollar, SUNUCU kapatır → istemci close-frame
+# (opcode 0x8) alır ve fd base'e döner (SSE server-close ikizi). İstemci close-frame BAŞLATMAZ.
+sout=$(PORT="$PORT" python3 - "$SRV" "$base" <<'PYEOF'
+import socket, os, base64, sys, time
+pid, base = sys.argv[1], int(sys.argv[2])
+port = int(os.environ["PORT"])
+def fdcount():
+    try: return len(os.listdir("/proc/%s/fd" % pid))
+    except Exception: return -1
+def masked(op, payload=b""):
+    m = os.urandom(4)
+    mp = bytes(b ^ m[i % 4] for i, b in enumerate(payload))
+    return bytes([0x80 | op, 0x80 | len(payload)]) + m + mp
+s = socket.create_connection(("127.0.0.1", port), timeout=5); s.settimeout(5)
+key = base64.b64encode(os.urandom(16)).decode()
+s.sendall(("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+           "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % key).encode())
+r = s.recv(1024); ok101 = b"101" in r.split(b"\r\n")[0]
+s.sendall(masked(0x1, b"bye"))                  # sunucu bunda ws::close çağırır
+got_close = False
+try:
+    fr = s.recv(256)                             # sunucu close-frame'i (unmasked, opcode 0x8)
+    if fr and (fr[0] & 0x0F) == 0x8: got_close = True
+except Exception: pass
+s.close(); time.sleep(1); after = fdcount()
+print("OK101=%s SRVCLOSE=%s AFTER=%d BASE=%d" % (ok101, got_close, after, base))
+PYEOF
+)
+echo "  $sout"
+sok101=$(echo "$sout" | grep -o 'OK101=True'); srvclose=$(echo "$sout" | grep -o 'SRVCLOSE=True')
+safter=$(echo "$sout" | sed -n 's/.*AFTER=\([0-9]*\).*/\1/p')
+if [ -z "$sok101" ] || [ -z "$srvclose" ]; then
+  echo "  FAIL server-close: ws::close istemciye close-frame göndermedi"; fail=1
+else echo "  OK ws::close → istemci close-frame aldı (server-başlatan)"; fi
+if [ "${safter:-99}" -eq "$base" ]; then echo "  OK server-close sonrası fd base'e döndü ($safter)"
+else echo "  FAIL: server-close sonrası fd=$safter (base=$base) — SIZINTI"; fail=1; fi
 
 # Regresyon: 3 ani-kopma (close-frame'siz abandon) → sızıntı/crash yok
 python3 - "$PORT" <<'PYEOF'

@@ -191,8 +191,7 @@ WsFrame ws_try_decode_frame(const std::string& buf) {
 
 // ── WsConnection ─────────────────────────────────────────────────────────────
 
-bool WsConnection::send_raw(const std::string& frame) {
-    if (closed.load()) return false;
+bool WsConnection::write_all(const std::string& frame) {
     const char* p = frame.data();
     size_t remaining = frame.size();
     while (remaining > 0) {
@@ -207,6 +206,11 @@ bool WsConnection::send_raw(const std::string& frame) {
     return true;
 }
 
+bool WsConnection::send_raw(const std::string& frame) {
+    if (closed.load()) return false;
+    return write_all(frame);
+}
+
 bool WsConnection::send_text(const std::string& msg) {
     if (closed.load()) return false;
     std::string frame = ws_encode_text_frame(msg);
@@ -215,10 +219,13 @@ bool WsConnection::send_text(const std::string& msg) {
 }
 
 void WsConnection::close_conn() {
-    if (closed.exchange(true)) return;  // already closed
+    if (closed.exchange(true)) return;  // already closed — yalnız ilk çağıran ilerler
     std::string frame = ws_encode_close_frame();
     std::lock_guard<std::mutex> lk(write_mutex);
-    send_raw(frame);
+    // BUG (düzeltildi): closed ARTIK true → send_raw close-frame'i düşürürdü; sunucu-başlatan
+    // ws::close istemciye HİÇ close-frame göndermiyordu (RFC 6455 §5.5.1 ihlali, SSE ikizinin
+    // kapatılmamış hali). write_all closed-guard'sız → close-frame gerçekten telde.
+    write_all(frame);
     // fd will be closed by HttpServer::close_ws()
 }
 
