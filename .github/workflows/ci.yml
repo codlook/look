@@ -233,6 +233,15 @@ jobs:
           g++ -std=c++17 -Iinclude tests/ssrf_safe_test.cpp -o /tmp/ssrf
           /tmp/ssrf
 
+      # int64 taşma-tespiti — seam (look/int_overflow.h). operator+/-/* taşınca float promote
+      # (signed-overflow UB YOK). Taşma sınırları + INT64_MIN*-1 #DE(SIGFPE) tuzağı tablo-test.
+      # POZİTİF-KONTROLLÜ. (Linux/CI __builtin dalı; MSVC dalı Tier-2 Windows.)
+      - name: int64 taşma-tespiti (seam tablosu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/int_overflow_test.cpp -o /tmp/iov
+          /tmp/iov
+
       # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
