@@ -55,8 +55,19 @@ if (crypto::base64_encode(crypto::rs256_sign($msg, $priv)) != $SIG_B64) {
     print("FAIL 4: rs256_sign dis-oracle imzasindan SAPTI (PKCS#1 v1.5 determinizmi bozuk)"); $fail = $fail + 1
 }
 
-# Guard 1 — empty-green: 4 kontrol koştu mu (bir dal atlanmadi)?
-const { EXPECTED = 4 }
+# 5) EC (RSA-olmayan) key REDDEDİLMELİ — rs256 = RSA-only. POSIX EVP EC'yi ECDSA olarak
+# imzalardı (yanlış-alg, boş-olmayan, sessiz); Windows sessizce BOŞ imza dönerdi. İkisi de
+# fail-loud'a çekildi → çapraz-platform simetri (2026-08-11 bug-avı). throw beklenir.
+$run = $run + 1
+$ec = crypto::base64_decode("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JR0hBZ0VBTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5QXdFSEJHMHdhd0lCQVFRZ3MxK2cvUzFiMzF6OHRxc1oKMXVxMlJPOFlRZmlPRUMxRFpjalE5aXR3UlptaFJBTkNBQVRVdjZTN01DSEdFelZuZ0J5VkExSUNMQTJCNStNKwplNE1wb0hhNW1UaHJjRTErdTlsTm9TRTJpSmF1NXNrZ1o1cGg1R29vMlFCa2REd2xEN1h6NjFMRQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==")
+$ec_rejected = false
+try { crypto::rs256_sign($msg, $ec) } catch($e) { $ec_rejected = true }
+if ($ec_rejected != true) {
+    print("FAIL 5: EC key rs256_sign'da REDDEDILMEDI (RSA-only ihlali; POSIX ECDSA / Win bos-imza)"); $fail = $fail + 1
+}
+
+# Guard 1 — empty-green: 5 kontrol koştu mu (bir dal atlanmadi)?
+const { EXPECTED = 5 }
 if ($run != EXPECTED) {
     print("FAIL: " . EXPECTED . " kontrol beklendi, " . $run . " kostu — bir dal atlandi")
     exit(1)

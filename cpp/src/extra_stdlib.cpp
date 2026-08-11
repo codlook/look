@@ -842,11 +842,22 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
 
     BCRYPT_PKCS1_PADDING_INFO pad = { BCRYPT_SHA256_ALGORITHM };
     DWORD sigLen = 0;
-    NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
-                   NULL, 0, &sigLen, BCRYPT_PAD_PKCS1);
+    // NCryptSignHash SECURITY_STATUS'u KONTROL ET: eskiden yok sayılıyordu → RSA-olmayan
+    // key (ör. EC) PKCS8 olarak import olup PKCS1-RSA sign başarısız oluyor, sigLen 0 kalıp
+    // SESSİZCE BOŞ imza dönüyordu (POSIX throw eder). Fail-loud: hata/boş → throw.
+    SECURITY_STATUS ss = NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
+                                        NULL, 0, &sigLen, BCRYPT_PAD_PKCS1);
+    if (ss != ERROR_SUCCESS || sigLen == 0) {
+        NCryptFreeObject(hKey); NCryptFreeObject(hProv);
+        throw std::runtime_error("crypto::rs256_sign() — imzalama hatası (RSA anahtar mı? EC/uyumsuz key reddedildi)");
+    }
     std::vector<uint8_t> sig(sigLen);
-    NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
-                   sig.data(), sigLen, &sigLen, BCRYPT_PAD_PKCS1);
+    ss = NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
+                        sig.data(), sigLen, &sigLen, BCRYPT_PAD_PKCS1);
+    if (ss != ERROR_SUCCESS) {
+        NCryptFreeObject(hKey); NCryptFreeObject(hProv);
+        throw std::runtime_error("crypto::rs256_sign() — imzalama hatası");
+    }
     sig.resize(sigLen);
 
     NCryptFreeObject(hKey);
@@ -893,6 +904,13 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
     EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
     BIO_free(bio);
     if (!pkey) { ERR_clear_error(); throw std::runtime_error("crypto::rs256_sign() — PEM key parse hatası"); }
+    // rs256 = RSA-only. EC/uyumsuz key'i REDDET (yoksa EVP EC'yi ECDSA-SHA256 olarak imzalar
+    // → yanlış-alg, boş-olmayan sig, sessiz). Windows dalı (NCryptSignHash status) da reddeder
+    // → çapraz-platform simetri (2026-08-11 bug-avı).
+    if (EVP_PKEY_base_id(pkey) != EVP_PKEY_RSA) {
+        EVP_PKEY_free(pkey);
+        throw std::runtime_error("crypto::rs256_sign() — RSA anahtar gerekli (EC/uyumsuz key reddedildi)");
+    }
 
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, pkey) != 1 ||

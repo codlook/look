@@ -83,6 +83,18 @@ jobs::run
 jobs::worker
 ALLOW
 
+# Vacuous-green guard (Kural 2): boş/kesik fixture hiçbir şey test etmeden GEÇER —
+# CI'da docs/ gitignore olduğundan staleness kontrolü (satır 44) atlanır, geriye yalnız
+# aşağıdaki üyelik kontrolü kalır; fixture boşsa violations de boş → exit 0 (sahte-yeşil).
+# ÖLÇÜLDÜ (2026-08-11): docs yok + boş fixture → "GEÇTİ" hiçbir şey test etmeden.
+# Fixture satır sayısını tabana pinle (gerçek ~239); truncation/bozuk-merge fail-loud.
+FIXTURE_MIN=200
+fixture_lines=$(grep -c . "$FIXTURE")
+if [ "$fixture_lines" -lt "$FIXTURE_MIN" ]; then
+  echo "=== HATA: docs_api.txt yalnız $fixture_lines satır (min $FIXTURE_MIN) — boş/kesik fixture, vacuous-green riski ==="
+  exit 1
+fi
+
 # YÖN 1 — fixture var, vm yok, allowlist'te de yok → HATA (kullanıcı 500 riski)
 comm -23 "$FIXTURE" "$TMP/vm.txt" > "$TMP/docs_only.txt"
 comm -23 "$TMP/docs_only.txt" "$TMP/allow.txt" > "$TMP/violations.txt"
