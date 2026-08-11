@@ -1160,6 +1160,11 @@ static std::shared_ptr<DbConnection> open_one_connection(
             else if (query.find("tls=verify") != std::string::npos ||
                      query.find("ssl=verify")  != std::string::npos ||
                      query.find("sslmode=verify-full") != std::string::npos ||
+                     // verify-ca: libpq'da CA-doğrulanmış TLS. Eskiden HİÇBİR dala uymuyor,
+                     // postgres:// şemasında tls=false kalıyordu → SESSİZCE PLAINTEXT (kullanıcı
+                     // CA-doğrulama isterken). LOOK'un verify=true'su CA+hostname (verify-ca'dan
+                     // katı) — güvenli yön, plaintext düşüşünü kapatır.
+                     query.find("sslmode=verify-ca") != std::string::npos ||
                      query.find("tls=1") != std::string::npos ||
                      query.find("tls=true") != std::string::npos) { tls = true; tls_verify = true; }
           } }
