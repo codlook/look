@@ -188,6 +188,14 @@ jobs:
           g++ -std=c++17 -Iinclude tests/pg_dsn_test.cpp -o /tmp/pg_dsn_test
           /tmp/pg_dsn_test
 
+      # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
+      # verify-full untrusted cert'i REDDEDER (SSL_VERIFY_PEER çalışıyor mu) + insecure kabul
+      # eder (pozitif-kontrol: red verify'dan; verify kırık olsa insecure gibi davranırdı).
+      - name: PG TLS gerçek-handshake verify (mock, Docker'sız)
+        run: |
+          cd cpp
+          bash tests/pg_tls_handshake_test.sh build/lk 7799
+
       # installer:: parse-katmanı — AĞSIZ (parse_pkg redleri indirmeden ÖNCE): host kısıtı
       # (yalnız github.com), geçersiz ad, path-traversal (user + subdir). Pozitif-kontrol:
       # meşru ad parse'ı geçmeli. (Zip-slip/redirect gerçek indirme ister → C++ unit-test
