@@ -206,6 +206,15 @@ jobs:
           g++ -std=c++17 -Iinclude tests/mysql_reassemble_test.cpp -o /tmp/mra
           /tmp/mra
 
+      # SHA-256 / HMAC / PBKDF2 RFC known-answer — seam (look/crypto_sha256.h). Bu üçlü
+      # JWT(HS256)/DKIM/session/auth'u besler; "kendi çıktısına değil SPEC'e pinle": NIST SHA-256
+      # + RFC 4231 HMAC + RFC 7914 PBKDF2 vektörleri. POZİTİF-KONTROLLÜ. Yeni builtin YOK.
+      - name: SHA-256/HMAC/PBKDF2 RFC-KAT (seam)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/crypto_sha256_test.cpp -o /tmp/csha
+          /tmp/csha
+
       # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
       # verify-full untrusted cert'i REDDEDER (SSL_VERIFY_PEER çalışıyor mu) + insecure kabul
       # eder (pozitif-kontrol: red verify'dan; verify kırık olsa insecure gibi davranırdı).
