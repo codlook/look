@@ -6,6 +6,9 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
+#include <functional>
+#include <stdexcept>
 
 namespace look {
 
@@ -31,6 +34,33 @@ inline std::string mysql_read_lenenc_str(const uint8_t*& p, const uint8_t* end) 
     if (len > avail) len = avail;
     std::string s(p, p + (size_t)len); p += len;
     return s;
+}
+
+// Multi-packet birleştirme (RFC yok — MySQL wire): 16 MB'i aşan payload sunucu tarafından
+// TAM-0xFFFFFF paketlere bölünür; alıcı, uzunluğu 0xFFFFFF'ten KÜÇÜK bir paket gelene kadar
+// okuyup BİRLEŞTİRMELİ. Bu mantık olmadan ilk 16 MB tam-paket sanılır → akış desenkronize →
+// havuzdaki bağlantı sessizce YANLIŞ VERİ döner (LONGBLOB / geniş SELECT * / büyük GROUP_CONCAT).
+// Toplam cap: 24-bit alan artık üst-sınır DEĞİL → açık cap (kötü niyetli sunucu sonsuz 0xFFFFFF
+// devamıyla bellek tüketmesin). read: hedefe N bayt oku, başarısızsa false. Socket'ten AYRI →
+// tablo-test edilebilir (canlı MySQL YOK). seq son paketin sequence'ını döndürür.
+inline std::vector<uint8_t> mysql_reassemble(
+        const std::function<bool(uint8_t*, size_t)>& read,
+        uint8_t& seq, size_t max_recv = 256ull * 1024 * 1024) {
+    std::vector<uint8_t> payload;
+    for (;;) {
+        uint8_t hdr[4];
+        if (!read(hdr, 4)) throw std::runtime_error("db: connection lost or query timeout");
+        uint32_t len = hdr[0] | (hdr[1] << 8) | (hdr[2] << 16);
+        seq = hdr[3];
+        size_t off = payload.size();
+        if (off + (size_t)len > max_recv)
+            throw std::runtime_error("db mysql: yanit boyutu guvenlik sinirini asti (256 MB)");
+        payload.resize(off + len);
+        if (len > 0 && !read(payload.data() + off, len))
+            throw std::runtime_error("db: connection lost reading payload");
+        if (len < 0xFFFFFF) break;   // son parça (0-uzunluk dahil)
+    }
+    return payload;
 }
 
 // Sabit-genişlik okuyucular — end YOK, çağıran p+N<=end guard'lamalı (fixed-layout yollar).

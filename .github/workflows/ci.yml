@@ -197,6 +197,15 @@ jobs:
           g++ -std=c++17 -Iinclude tests/mysql_redis_dsn_test.cpp -o /tmp/mrdsn
           /tmp/mrdsn
 
+      # MySQL multi-packet birleştirme — seam (look/mysql_wire_parse.h). read_packet 0xFFFFFF
+      # devam paketlerini birleştirmeli (yoksa 16MB+ payload'da havuz-bağlantısı YANLIŞ VERİ döner).
+      # Reader bellek-tamponu → canlı MySQL YOK. cap/0-terminatör/kopuk-akış POZİTİF-KONTROLLÜ.
+      - name: MySQL multi-packet birleştirme (seam tablosu)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/mysql_reassemble_test.cpp -o /tmp/mra
+          /tmp/mra
+
       # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
       # verify-full untrusted cert'i REDDEDER (SSL_VERIFY_PEER çalışıyor mu) + insecure kabul
       # eder (pozitif-kontrol: red verify'dan; verify kırık olsa insecure gibi davranırdı).

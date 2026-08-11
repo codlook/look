@@ -400,23 +400,10 @@ std::vector<uint8_t> MySQLClient::read_packet(uint8_t& seq) {
     // -> davranis onceki tek-paket haliyle ayni.
     // Toplam cap: multi-packet ile 24-bit alan artik ust sinir DEGIL -> WS disiplini gibi
     // acik cap (yoksa kotu niyetli sunucu sonsuz 0xFFFFFF devamiyla bellek tuketir).
-    static constexpr size_t MYSQL_MAX_RECV = 256ull * 1024 * 1024;
-    std::vector<uint8_t> payload;
-    for (;;) {
-        uint8_t hdr[4];
-        if (!recv_bytes(hdr, 4))
-            throw std::runtime_error("db: connection lost or query timeout");
-        uint32_t len = hdr[0] | (hdr[1] << 8) | (hdr[2] << 16);
-        seq = hdr[3];
-        size_t off = payload.size();
-        if (off + (size_t)len > MYSQL_MAX_RECV)
-            throw std::runtime_error("db mysql: yanit boyutu guvenlik sinirini asti (256 MB)");
-        payload.resize(off + len);
-        if (len > 0 && !recv_bytes(payload.data() + off, len))
-            throw std::runtime_error("db: connection lost reading payload");
-        if (len < 0xFFFFFF) break;   // son parca (0-uzunluk dahil)
-    }
-    return payload;
+    // Birleştirme mantığı look/mysql_wire_parse.h'de (saf, tablo-test edilebilir). Buradaki
+    // reader yalnız socket recv'i sağlar; cap + 0xFFFFFF devam kararı header'da tek noktada.
+    return look::mysql_reassemble(
+        [this](uint8_t* buf, size_t n) { return recv_bytes(buf, n); }, seq);
 }
 
 void MySQLClient::send_packet(const std::vector<uint8_t>& data, uint8_t seq) {
