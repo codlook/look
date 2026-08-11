@@ -856,10 +856,33 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
 
 static bool rs256_verify_impl(const std::string& data,
                                const std::vector<uint8_t>& sig,
-                               const std::string& /*pem_pub*/) {
-    // Windows verify: NCrypt public key import — gelecek sürümde eklenecek
-    (void)data; (void)sig;
-    throw std::runtime_error("crypto::rs256_verify() — Windows'ta henüz desteklenmiyor");
+                               const std::string& pem_pub) {
+    // SPKI public PEM → DER → CERT_PUBLIC_KEY_INFO → BCRYPT_KEY_HANDLE → BCryptVerifySignature.
+    // RSASSA-PKCS#1 v1.5 + SHA-256 (RS256), POSIX EVP_DigestVerify ile davranış-özdeş.
+    auto der  = pem_to_der_rsa(pem_pub);
+    if (der.empty()) return false;
+    auto hash = rs256_sha256_hash(data);
+
+    CERT_PUBLIC_KEY_INFO* pki = nullptr;
+    DWORD pkiLen = 0;
+    if (!CryptDecodeObjectEx(X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO,
+                             der.data(), (DWORD)der.size(),
+                             CRYPT_DECODE_ALLOC_FLAG, nullptr, &pki, &pkiLen)) {
+        return false;                          // geçersiz/parse edilemeyen public key
+    }
+
+    BCRYPT_KEY_HANDLE hKey = nullptr;
+    BOOL imported = CryptImportPublicKeyInfoEx2(X509_ASN_ENCODING, pki, 0, nullptr, &hKey);
+    LocalFree(pki);
+    if (!imported || !hKey) return false;
+
+    BCRYPT_PKCS1_PADDING_INFO pad = { BCRYPT_SHA256_ALGORITHM };
+    NTSTATUS st = BCryptVerifySignature(hKey, &pad,
+                        (PBYTE)hash.data(), (ULONG)hash.size(),
+                        (PBYTE)sig.data(),  (ULONG)sig.size(),
+                        BCRYPT_PAD_PKCS1);
+    BCryptDestroyKey(hKey);
+    return st == 0;                            // STATUS_SUCCESS; geçersiz imza → nonzero → false
 }
 
 #else
