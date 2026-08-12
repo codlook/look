@@ -53,3 +53,19 @@ jobs:
           cl /nologo /std:c++17 /EHsc /I cpp\include cpp\tests\int_overflow_test.cpp /Fe:iov_msvc.exe /Fo:iov_msvc.obj
           if errorlevel 1 exit /b 1
           iov_msvc.exe
+
+      # --mode http HTTP sunucusu Windows'ta gerçekten koşuyor mu: 200 + idle-timeout close.
+      # İlk step'te üretilen (düzeltilmiş SO_RCVTIMEO DWORD-ms dalı) MSVC binary'sini egzersiz eder.
+      # LOOK_HTTP_IDLE_MS=1000 → idle-close ~1s (test hızı; default 30s). Süreç PID ile öldürülür
+      # (broad kill yok). Pozitif-kontrol: yanlış port reddi + gövde doğrulama + idle ÖNCE canlı SONRA
+      # kapalı. continue-on-error YOK. (ESKİ BUG: Win'de timeval→30ms; DWORD-ms fix'iyle düzeltildi.)
+      - name: "--mode http + idle-timeout (Windows HTTP sunucu kanıtı)"
+        shell: pwsh
+        env:
+          LOOK_HTTP_IDLE_MS: "1000"
+        run: |
+          & cpp/tests/win_http_idle.ps1 `
+            -Exe cpp/build-win/Release/lk-fcgi.exe `
+            -Script cpp/tests/win_http_idle_app.lk `
+            -Port 7788
+          if ($LASTEXITCODE -ne 0) { throw "GATE RED: Windows --mode http idle-timeout FAIL (exit $LASTEXITCODE)" }
