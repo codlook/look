@@ -341,6 +341,14 @@ jobs:
           if timeout 30 /tmp/fcgi_posctl; then echo "::error::POSCTL dişsiz"; exit 1; \
           else echo "POSCTL ASan yakaladı (beklenen)"; fi
 
+      # cookie:: güvenli-varsayılan (2026-08 flip) — HttpOnly + SameSite=Lax VARSAYILAN (session::
+      # ile hizalı; Secure değil, düz-HTTP dev kırılmasın). Opt-out options assoc'u ile. lk-fcgi
+      # --mode http'ye karşı Set-Cookie başlığı doğrulanır. Pozitif-kontrollü (varsayılan kalkarsa RED).
+      - name: "cookie:: güvenli-varsayılan flag'leri (runtime)"
+        run: |
+          cd cpp
+          bash tests/cookie_flags_test.sh build/lk-fcgi 7793
+
   # ── Canlı DB job'u: gerçek MySQL 8 + PostgreSQL 16 servis-container'ları ──────────
   # caching_sha2_password (MySQL 8 VARSAYILAN auth) + native prepared-bind (MySQL
   # COM_STMT_EXECUTE + PG extended-query) — üç KISMİ item'ın "canlı-DSN/nightly" boşluğu.

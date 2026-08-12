@@ -51,6 +51,18 @@ table-tested in CI (`mysql_redis_dsn_test`, positive-controlled both directions)
 server-interop matrix (valid-CA / self-signed / hostname-mismatch × MySQL + Redis) is a nightly
 gate, not proven by the unit table — same standing as the PostgreSQL TLS interop matrix.
 
+**Cookies are secure-by-default (2026-08 flip).** `cookie::set(name, value)` now emits `HttpOnly`
+and `SameSite=Lax` by default — the same alignment reasoning as the DB-TLS flip above: the
+`LOOK_SESSION` session cookie already hardcoded those flags, but `cookie::set` set none, so a user
+who learned "LOOK cookies are safe" was wrong for application cookies (an auth token stored via
+`cookie::set` was JS-readable, stealable through XSS). `HttpOnly` (no JS access) and `SameSite=Lax`
+(CSRF mitigation) are now the floor. `Secure` is **not** a default — it would silently break
+plain-HTTP dev environments; opt in with `cookie::set(k, v, ["secure" => true])`. Opt out of any
+flag with the options map (`["httponly" => false]` when JS must read the cookie, `["samesite" => false]`
+to omit it). Positional `expires`/`path` arguments still work unchanged. Verified in CI against a
+live `lk-fcgi --mode http` `Set-Cookie` header (`cookie_flags_test`, positive-controlled). This is a
+breaking change (a cookie read from JS by name breaks), landed in the zero-user window like the DB-TLS flip.
+
 **The embedded SMTP / IMAP server is off by default and has not had an adversarial security audit.**
 The mail servers only listen when you explicitly set `LOOK_SMTP_PORT` / `LOOK_IMAP_PORT` — with no
 such env set, no mail thread starts and no port is opened, so a default LOOK deployment exposes no

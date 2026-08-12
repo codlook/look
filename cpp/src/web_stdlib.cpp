@@ -580,8 +580,34 @@ static Module make_cookie_module(WebContext* ctx) {
         // Yuzde-kodla: ';' ve diger yapisal karakterler oznitelik enjekte edemesin.
         std::string name    = cookie_enc(args[0].to_string());
         std::string value   = cookie_enc(args[1].to_string());
-        int expires         = args.size() >= 3 ? args[2].to_int() : 0;
-        std::string path_c  = sanitize_header(args.size() >= 4 ? args[3].to_string() : "/");
+
+        // GÜVENLİ-VARSAYILAN (2026-08 flip): HttpOnly + SameSite=Lax VARSAYILAN — session:: ile
+        // hizalı (o üçünü zaten hardcoded alıyordu; cookie:: hiçbirini almıyordu → tutarsızlık,
+        // "LOOK cookie'leri güvenli" öğrenen kullanıcı cookie::set ile yanılıyordu). Secure DEĞİL
+        // varsayılan (düz-HTTP dev'i sessizce kırardı). Opt-out: options assoc'u ["httponly"=>false].
+        int expires = 0;
+        std::string path_c = "/";
+        bool httponly = true, secure = false;
+        std::string samesite = "Lax";
+        // Kalan argümanlar TİP-BAZLI: ARRAY=options assoc · int=expires · string=path.
+        // Böylece set(k,v) · set(k,v,3600) · set(k,v,3600,"/") · set(k,v,["httponly"=>false]) çalışır.
+        for (size_t i = 2; i < args.size(); ++i) {
+            if (args[i].type() == Value::ARRAY) {
+                auto& a = *args[i].as_array();
+                size_t s = (!a.empty() && a[0].to_string() == "__assoc__") ? 1 : 0;
+                for (size_t j = s; j + 1 < a.size(); j += 2) {
+                    std::string k = a[j].to_string();
+                    if      (k == "httponly") httponly = a[j+1].is_truthy();
+                    else if (k == "secure")   secure   = a[j+1].is_truthy();
+                    else if (k == "samesite") samesite = a[j+1].to_string(); // "" / "false" → atla
+                }
+            } else if (args[i].type() == Value::INT) {
+                expires = (int)args[i].to_int();
+            } else if (args[i].type() == Value::STRING) {
+                path_c = args[i].to_string();
+            }
+        }
+        path_c = sanitize_header(path_c);
 
         std::string cookie = name + "=" + value + "; Path=" + path_c;
         if (expires > 0) {
@@ -597,6 +623,11 @@ static Module make_cookie_module(WebContext* ctx) {
             strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_buf);
             cookie += "; Expires=" + std::string(buf);
         }
+        // Güvenlik öznitelikleri (varsayılan HttpOnly+SameSite=Lax; opt-out ile kapatılır).
+        if (httponly) cookie += "; HttpOnly";
+        if (secure)   cookie += "; Secure";
+        if (!samesite.empty() && samesite != "false" && samesite != "0")
+            cookie += "; SameSite=" + sanitize_header(samesite);
         // Her çerez ayrı Set-Cookie satırı — std::map tek anahtarı ezerdi.
         ctx->set_cookies_out.push_back(cookie);
         return Value();

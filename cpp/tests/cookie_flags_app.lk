@@ -1,0 +1,22 @@
+# cookie:: güvenli-varsayılan flag testi — lk-fcgi --mode http ile koşar.
+# Varsayılan: HttpOnly + SameSite=Lax (Secure DEĞİL). Opt-out: options assoc.
+route("GET", "/default", function() {
+    cookie::set("sid", "abc")                                   # varsayılan flag'ler
+    print("ok")
+})
+route("GET", "/optout", function() {
+    cookie::set("jsread", "xyz", ["httponly" => false])         # HttpOnly opt-out (JS erişimi)
+    print("ok")
+})
+route("GET", "/secure", function() {
+    cookie::set("s", "v", ["secure" => true, "samesite" => "Strict"])
+    print("ok")
+})
+route("GET", "/expires", function() {
+    cookie::set("e", "v", 3600, "/app")                         # eski pozisyonel (expires+path) hâlâ çalışır
+    print("ok")
+})
+route("GET", "/nosamesite", function() {
+    cookie::set("n", "v", ["samesite" => false])                # SameSite opt-out
+    print("ok")
+})
