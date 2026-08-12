@@ -126,7 +126,7 @@ says what CI actually proves, so you know what you are getting before you deploy
 |---|---|---|---|
 | **Tier 1** | Linux x86_64 | Full suite passes; **blocks the release**. Production target. | CI every push: regression, differential (3 engines), TSan, fuzz (ASan/UBSan), crypto KATs, release gate |
 | **Supported** | Docker (Linux image) | Same environment as Tier 1 — the way to run LOOK anywhere, incl. a Windows/macOS box | Image built + smoke-tested at release |
-| **Tier 2** | Windows x86_64 (MSVC) | Plain-binary zip ships (`lk.exe` + `lk-fcgi.exe`, **no installer**); core test suite passes, verified before every release | Manual pre-release: `release_gate` 7/7 · `crypto_vectors` 17/17 · live `lk-fcgi --mode http` → 200 |
+| **Tier 2** | Windows x86_64 (MSVC) | Plain-binary zip ships (`lk.exe` + `lk-fcgi.exe`, **no installer**); core test suite runs in CI, blocks attention (not shipping) | CI (`windows-tier2`) on every `main` push + manual dispatch: MSVC build (`look` + `look-fcgi`) → `crypto_vectors` 17/17 · `rs256_kat` 5/5 · `date_dst` 7/7. Pre-release still adds live `lk-fcgi --mode http` → 200 (gate doesn't exercise it) |
 
 **Windows is a plain binary, not a stack integration.** The earlier mistake was shipping XAMPP
 plumbing (an `install.ps1` that patched Apache's `httpd.conf`) — work PHP itself does not do (PHP
@@ -146,5 +146,8 @@ does not exercise. So each Windows release must also start `lk-fcgi.exe --mode h
 live `200` — otherwise a non-booting server could ship (the sibling of the Docker `bare docker run`
 bug, which only surfaced when actually run).
 
-**Windows → Tier 1** when the differential/interop suite is portable off bash and a maintainer commits
-to a Windows CI matrix. Until then, Tier 2 with a manual pre-release check is the honest floor.
+**Windows → Tier 1** when the differential/interop suite is portable off bash. The Windows CI matrix
+now exists (`windows-tier2`: MSVC build + crypto/rs256/date KATs on every `main` push), so the
+MSVC-only branches (NCrypt rs256, BCrypt random, MSVC CRT date) are no longer manual-only. What still
+blocks Tier 1 is the bash-bound differential/interop/TSan/fuzz suites (MSVC has no libFuzzer/TSan);
+until those are portable, Windows stays Tier 2 — but now with an automated core gate, not a manual one.

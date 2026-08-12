@@ -3,12 +3,14 @@
 # MSVC binary'sine karşı crypto_vectors (SHA/HMAC/base64 + BCrypt random) · rs256_kat (NCrypt
 # rs256 verify/sign) · date_dst (MSVC CRT takvim). Bu dallar Linux CI'da HİÇ egzersizde değil.
 #
-# ŞİMDİLİK yalnız workflow_dispatch (elle tetik): runner kurulumu (MSVC yolu/generator) yeşil
-# görülene dek main'i kırmızı tutmasın. Yeşil doğrulanınca push tetikleyicisi + SECURITY.md
-# güncellemesi ayrı adımda eklenecek. continue-on-error YOK — yeşil olamıyorsa bu iş kalmalı.
+# 2026-08-12: ilk workflow_dispatch koşumu İLK denemede yeşil (MSVC build + gate 17/17·5/5·7/7,
+# ortam hatası yok) → push tetikleyicisi eklendi. main'e her push'ta koşar (release main'den çıkar);
+# feature-branch'ler yavaş MSVC ile yorulmasın diye yalnız main + elle-tetik. continue-on-error YOK.
 name: windows-tier2
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch: {}
 
 jobs:
