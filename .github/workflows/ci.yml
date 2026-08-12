@@ -294,3 +294,95 @@ jobs:
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
       - name: docs-conformance (docs API ↔ builtin_names)
         run: bash cpp/tests/docs_conformance.sh
+
+  # ── Canlı DB job'u: gerçek MySQL 8 + PostgreSQL 16 servis-container'ları ──────────
+  # caching_sha2_password (MySQL 8 VARSAYILAN auth) + native prepared-bind (MySQL
+  # COM_STMT_EXECUTE + PG extended-query) — üç KISMİ item'ın "canlı-DSN/nightly" boşluğu.
+  # Taze mysql:8 = boş önbellek → ilk bağlantı full-auth (RSA) yolu; bind matrisi gerçek
+  # binary protokolü egzersiz eder. Gömülü sürücüler (libmysqlclient/libpq YOK) → yalnız lk.
+  db-live:
+    name: "Canlı DB — caching_sha2 (MySQL 8) + prepared bind (MySQL 8 + PG 16)"
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: lookci
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lookci
+          POSTGRES_PASSWORD: lookci
+          POSTGRES_DB: lookci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U lookci -d lookci"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev
+      - name: Build lk (Release)
+        run: |
+          cd cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target look --parallel $(nproc)
+      # caching_sha2: root@mysql:8 TLS'siz TCP → taze önbellek → full-auth RSA yolu (sonra fast).
+      - name: "caching_sha2_password — gerçek MySQL 8 (full-auth RSA + fast yol)"
+        env:
+          MYDSN: "mysql://root:rootpw@127.0.0.1:3306/lookci"
+          MYUSER: root
+          MYHOST: 127.0.0.1
+          MYPORT: "3306"
+          MYDB: lookci
+        run: |
+          cd cpp
+          bash tests/mysql_caching_sha2_ci.sh ./build/lk
+      # native prepared bind matrisi — MySQL COM_STMT_EXECUTE + PG extended-query.
+      - name: "Prepared bind matrisi — MySQL 8 + PostgreSQL 16 (native)"
+        env:
+          MYSQL_DSN: "mysql://root:rootpw@127.0.0.1:3306/lookci"
+          PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"
+        run: |
+          cd cpp
+          for f in db_bind_mysql db_bind_pg; do
+            echo "== $f =="
+            out="$(timeout 60 ./build/lk tests/behavioral/$f.lk 2>&1)"; echo "$out"
+            echo "$out" | grep -q 'ran='  || { echo "::error::$f erken oldu (ran= yok)"; exit 1; }
+            echo "$out" | grep -q '^FAIL' && { echo "::error::$f bind assert kirildi"; exit 1; }
+            true
+          done
+          echo "Native prepared-bind matrisi (MySQL+PG) YESIL."
+
+  # ── PG TLS gerçek-sunucu interop job'u ───────────────────────────────────────────
+  # mock (pg_tls_handshake_test) yalnız client verify-kararını ölçer; bu, apt postgres'i
+  # initdb ile (TLS-on + TLS-off cluster, CA-imzalı SAN=localhost cert, scram) ayağa kaldırıp
+  # GERÇEK SSLRequest→'S'→TLS→startup→SCRAM-auth→SELECT roundtrip'ini uçtan uca kanıtlar.
+  pg-tls-live:
+    name: "PG TLS gerçek-sunucu interop (SSLRequest→TLS→startup→SCRAM)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build + postgres + openssl
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev postgresql openssl
+      - name: Build lk (Release)
+        run: |
+          cd cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target look --parallel $(nproc)
+      # Vacuous-green guard (Rule-2): harness postgres/openssl yoksa exit 0 ile ATLAR;
+      # gerçek PASS satırını zorunlu kıl — atlanırsa job KIRILIR (sessiz-yeşil yok).
+      - name: PG TLS gerçek-sunucu interop (6-vaka + pozitif-kontrol)
+        run: |
+          cd cpp
+          out="$(bash tests/pg_tls_realserver_test.sh build/lk 54330 54331)"; echo "$out"
+          echo "$out" | grep -q '^PASS: PG TLS' || { echo "::error::PG TLS testi ATLANDI veya kirildi (vacuous-green guard)"; exit 1; }

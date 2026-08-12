@@ -1,0 +1,54 @@
+# prepared statements (native) — PostgreSQL extended-query (Parse/Bind/Execute/Sync) bind
+# matrisi. GERÇEK postgres:16 sunucusu ŞART (CI servis-container'ı; DSN = PG_DSN env).
+# SQLite bind matrisiyle (db_bind_sqlite.lk) TİP-PARİTE: int64 sınır · negatif int64 ·
+# float · bool · UTF-8/özel-karakter · gerçek-NULL · injection(bind escape) · param-sayısı
+# reddi. `?`→`$1` dönüşümü + text-format param kodlaması (NULL=-1 uzunluk) burada canlı
+# doğrulanır. fail-loud + empty-green.
+$ran = 0
+function chk($l, $g, $w) {
+    if ($g == $w) { print("OK   " . $l) }
+    else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") }
+}
+
+$dsn = env("PG_DSN", "")
+if ($dsn == "") { print("FAIL harness: PG_DSN bos — canli postgres:16 DSN gerekli"); print("=== bind ran=0 ==="); exit(1) }
+$c = db::connect($dsn)
+
+db::exec($c, "DROP TABLE IF EXISTS bindp", [])
+db::exec($c, "CREATE TABLE bindp (i BIGINT, ni BIGINT, f DOUBLE PRECISION, b BOOLEAN, s TEXT, n TEXT)", [])
+# TÜM sütunlar parametreli bind (literal-interpolation DEĞİL — pozitif kontrol: injection satırı).
+db::exec($c, "INSERT INTO bindp (i,ni,f,b,s,n) VALUES (?,?,?,?,?,?)",
+    [9223372036854775807, -9223372036854775807, 3.141592653589793, true, "o'zel \" karakter \\ 日本 son", null])
+$r = db::query($c, "SELECT i,ni,f,b,s,n FROM bindp", [])[0]
+
+# int64 SINIR (2^63-1) — 2^53 üstü; double-promosyon bug'ı (look-int64-karsilastirma-double)
+# bu tam-sayıyı bozardı. text-format param + BIGINT parse bit-tam taşımalı.
+chk("int64 sinir 2^63-1", "" . db::col($r, "i"), "9223372036854775807"); $ran = $ran + 1
+chk("int64 negatif buyuk", "" . db::col($r, "ni"), "-9223372036854775807"); $ran = $ran + 1
+chk("float/ondalik round-trip", "" . db::col($r, "f"), "3.141592653589793"); $ran = $ran + 1
+$bv = "" . db::col($r, "b")
+chk("bool", ($bv == "1" || $bv == "true" || $bv == "t"), true); $ran = $ran + 1
+chk("utf8+ozel-karakter", db::col($r, "s"), "o'zel \" karakter \\ 日本 son"); $ran = $ran + 1
+chk("null gercek-null", db::col($r, "n") == null, true); $ran = $ran + 1
+
+# POZİTİF KONTROL — parametreli bind ≠ string-interpolation. Param SQL'e gömülseydi
+# `' OR '1'='1` tautoloji TÜM satırları döndürürdü; bind literal eşleşme aradığından 0.
+chk("injection tautoloji→0", len(db::query($c, "SELECT * FROM bindp WHERE s=?", ["' OR '1'='1"])), 0); $ran = $ran + 1
+
+# POZİTİF KONTROL — SQL-metakarakterli payload VERİ olarak saklanıp aynen geri gelir.
+$payload = "'); DROP TABLE bindp;--"
+db::exec($c, "INSERT INTO bindp (s) VALUES (?)", [$payload])
+$q = db::query($c, "SELECT s FROM bindp WHERE s=?", [$payload])
+chk("metakarakter payload veri-olarak", len($q), 1); $ran = $ran + 1
+chk("metakarakter payload aynen", db::col($q[0], "s"), $payload); $ran = $ran + 1
+# tablo hâlâ var (DROP çalışmadı) — injection gerçekten etkisiz
+chk("tablo hayatta (injection etkisiz)", len(db::query($c, "SELECT i FROM bindp", []) ) >= 1, true); $ran = $ran + 1
+
+# param-sayısı reddi (2 placeholder, 1 param) — sunucu Bind mesajında RED etmeli
+$caught = false
+try { db::query($c, "SELECT * FROM bindp WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
+chk("param-sayim reddi", $caught, true); $ran = $ran + 1
+
+const { EXPECTED = 11 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
+print("=== bind ran=" . $ran . " ===")

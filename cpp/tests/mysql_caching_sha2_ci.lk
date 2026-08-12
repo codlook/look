@@ -1,0 +1,53 @@
+# caching_sha2_password (MySQL 8 VARSAYILAN eklentisi) — CI roundtrip + auth kaniti.
+#
+# Bu program TEK bir mysql:8 servisine karsi kosar (GitHub Actions service container).
+# Amac: caching_sha2_password auth yolunun (TLS'siz localhost = once RSA/cleartext
+# TAM yol, taze sunucuda onbellek bos oldugu icin) GERCEK bir sunucuya karsi
+# calistigini KANITLAMAK — kaynak degismedi, yalnizca CI-disi shell guard'daki
+# kapsam CI'ya tasindi.
+#
+# Cikti sozlesmesi (fail-loud, EXPECTED-pin):
+#   dogru kimlik   -> "AUTH_OK|<version>|<utf8-deger>"
+#   yanlis sifre   -> "AUTH_REJECT" (POZITIF KONTROL — auth gercekten dogruluyor)
+# Kosucu .sh her iki satiri de sabit degerlere pinler.
+
+$dsn  = env("MYDSN", "")
+$user = env("MYUSER", "")
+$host = env("MYHOST", "127.0.0.1")
+$port = env("MYPORT", "3306")
+$db   = env("MYDB", "testdb")
+
+# ── 1) DOGRU kimlik: caching_sha2 kullanici ile tam roundtrip ────────────────────
+# Taze sunucu + TLS yok => AuthMoreData 0x04 (TAM yol) tetiklenir: RSA acik anahtar
+# istegi (0x02) + RSA-OAEP sifreli parola. Onbellek dolduktan sonra 2. baglanti
+# HIZLI yolu (0x03) kullanir; iki baglanti da burada egzersiz edilir.
+try {
+  $c = db::connect($dsn)
+  db::exec($c, "CREATE TABLE IF NOT EXISTS look_csha2_ci (id INT PRIMARY KEY AUTO_INCREMENT, ad VARCHAR(64)) CHARACTER SET utf8mb4")
+  db::exec($c, "DELETE FROM look_csha2_ci")
+  # Literal değer (prepared-bind DEĞİL) — bu test AUTH yolunu izole eder; bind kapsamı
+  # ayrı testte (db_bind_mysql). caching_sha2 fail'i bind fail'iyle karışmasın.
+  db::exec($c, "INSERT INTO look_csha2_ci (ad) VALUES ('şğü-caching')")
+  $v = db::query($c, "SELECT VERSION() AS v")
+
+  # 2. baglanti — sunucu onbellegi artik dolu => HIZLI yol (0x03). Ayri kod dali;
+  # ilk baglanti RSA/TAM yolunu, bu HIZLI yolu dogrular.
+  $c2 = db::connect($dsn)
+  $r  = db::query($c2, "SELECT ad FROM look_csha2_ci")
+
+  print("AUTH_OK|" . $v[0].v . "|" . $r[0].ad)
+} catch ($e) {
+  print("AUTH_FAIL|" . $e)
+}
+
+# ── 2) POZITIF KONTROL: YANLIS sifre => baglanti REDDEDILMELI ────────────────────
+# Auth-yolunun gercekten dogrulama yaptigini kanitlar. Eger yanlis sifreyle de
+# baglaniyorsak scramble/RSA adimi ATLANIYOR demektir (test vacuous olurdu).
+$bad = "mysql://" . $user . ":yanlis_sifre_zzz@" . $host . ":" . $port . "/" . $db
+try {
+  $bc = db::connect($bad)
+  db::query($bc, "SELECT 1")
+  print("AUTH_REJECT_FAIL|yanlis sifre KABUL EDILDI (auth dogrulamiyor)")
+} catch ($e) {
+  print("AUTH_REJECT")
+}
