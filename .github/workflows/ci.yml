@@ -238,7 +238,7 @@ jobs:
       # (yalnız github.com), geçersiz ad, path-traversal (user + subdir). Pozitif-kontrol:
       # meşru ad parse'ı geçmeli. (Zip-slip/redirect gerçek indirme ister → C++ unit-test
       # hedefli-takip; tam installer_test.sh ağlı → manuel/nightly.)
-      - name: installer:: parse-katmanı (host/ad/traversal, ağsız)
+      - name: "installer:: parse-katmanı (host/ad/traversal, ağsız)"
         run: |
           cd cpp
           bash tests/installer_parse_test.sh build/lk
@@ -246,7 +246,7 @@ jobs:
       # installer:: Zip-Slip containment — güvenlik-kararı seam (look/zip_safe.h). Gerçek
       # extract/miniz OLMADAN: entry dest içine mi açılır. Sibling-prefix kaçışı (repo→repo-evil,
       # ayırıcı-sınır zorunlu) dahil, POZİTİF-KONTROLLÜ (sınır kaldırılırsa sibling-prefix kaçar→FAIL).
-      - name: installer:: Zip-Slip containment (seam tablosu)
+      - name: "installer:: Zip-Slip containment (seam tablosu)"
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/installer_zipslip_test.cpp -o /tmp/izt
@@ -255,7 +255,7 @@ jobs:
       # installer:: redirect güvenlik-kararı seam (look/url_safe.h). Gerçek HTTP/3xx OLMADAN:
       # şema-düşürme (http://) + host-kaçışı (evilgithub.com / github.com.evil.com) reddi.
       # POZİTİF-KONTROLLÜ (https zorunluluğu kaldırılırsa http:// kaçar→FAIL).
-      - name: installer:: redirect güvenlik-kararı (seam tablosu)
+      - name: "installer:: redirect güvenlik-kararı (seam tablosu)"
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/installer_redirect_test.cpp -o /tmp/irt
@@ -283,7 +283,7 @@ jobs:
       # session:: SID doğrulama + blob enjeksiyon savunması — seam (look/session_esc.h).
       # Ağsız: 32-hex allowlist (traversal reddi) + \n/= enjeksiyonu ile uydurma yetki-alanı
       # (admin=1) ENJEKTE EDİLEMEZ. POZİTİF-KONTROLLÜ (değer-kaçırma kalkarsa enjeksiyon geçer).
-      - name: session:: SID + blob enjeksiyon (seam tablosu)
+      - name: "session:: SID + blob enjeksiyon (seam tablosu)"
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/session_esc_test.cpp -o /tmp/sess

@@ -28,7 +28,7 @@ jobs:
       - name: B-01 eval-guard (BILINEN ACIK — raporla, kirma)
         working-directory: cpp
         continue-on-error: true
-        env: { ASAN_OPTIONS: detect_leaks=0:abort_on_error=1 }
+        env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1" }
         run: |
           # Duzeltildikten SONRA: temiz 'cok derin' hatasi (rc=1), CRASH degil.
           # Simdilik eval ozyinelemesi sinirsiz -> SIGABRT bekleniyor (continue-on-error).
