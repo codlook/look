@@ -399,10 +399,21 @@ std::unique_ptr<Expression> Parser::expression() {
         throw look::LookParseError("İfade çok derin iç içe (max " +
                                    std::to_string(MAX_EXPR_DEPTH) + ")",
                                    peek().line, peek().column);
+    // En dıştaki ifade girişinde ikili-zincir sayacını sıfırla (her top-level ifade
+    // taze başlar; iç içe paren'lar accumulate ederek toplam sol-spine derinliğini kapsar).
+    if (expr_depth_ == 1) binop_depth_ = 0;
     auto loc = cur_loc();
     auto e = assignment();
     if (e) e->loc = loc;
     return e;
+}
+
+void Parser::check_binop_chain() {
+    if (++binop_depth_ > MAX_BINOP_CHAIN)
+        throw look::LookParseError("İfade zinciri çok uzun (max " +
+                                   std::to_string(MAX_BINOP_CHAIN) +
+                                   " ardışık ikili operatör)",
+                                   peek().line, peek().column);
 }
 
 std::unique_ptr<Expression> Parser::assignment() {
@@ -462,14 +473,17 @@ std::unique_ptr<Expression> Parser::ternary() {
 
 std::unique_ptr<Expression> Parser::null_coalescing() {
     auto expr = logical_or();
-    while (match(TokenType::QUESTION_QUESTION))
+    while (match(TokenType::QUESTION_QUESTION)) {
+        check_binop_chain();
         expr = std::make_unique<BinaryExpression>(std::move(expr), "??", logical_or());
+    }
     return expr;
 }
 
 std::unique_ptr<Expression> Parser::logical_or() {
     auto expr = logical_and();
     while (match(TokenType::PIPE_PIPE)) {
+        check_binop_chain();
         expr = std::make_unique<BinaryExpression>(std::move(expr), "||", logical_and());
     }
     return expr;
@@ -478,6 +492,7 @@ std::unique_ptr<Expression> Parser::logical_or() {
 std::unique_ptr<Expression> Parser::logical_and() {
     auto expr = bitwise_or();
     while (match(TokenType::AMP_AMP)) {
+        check_binop_chain();
         expr = std::make_unique<BinaryExpression>(std::move(expr), "&&", bitwise_or());
     }
     return expr;
@@ -485,28 +500,35 @@ std::unique_ptr<Expression> Parser::logical_and() {
 
 std::unique_ptr<Expression> Parser::bitwise_or() {
     auto expr = bitwise_xor();
-    while (match(TokenType::PIPE))
+    while (match(TokenType::PIPE)) {
+        check_binop_chain();
         expr = std::make_unique<BinaryExpression>(std::move(expr), "|", bitwise_xor());
+    }
     return expr;
 }
 
 std::unique_ptr<Expression> Parser::bitwise_xor() {
     auto expr = bitwise_and();
-    while (match(TokenType::CARET))
+    while (match(TokenType::CARET)) {
+        check_binop_chain();
         expr = std::make_unique<BinaryExpression>(std::move(expr), "^", bitwise_and());
+    }
     return expr;
 }
 
 std::unique_ptr<Expression> Parser::bitwise_and() {
     auto expr = equality();
-    while (match(TokenType::AMP))
+    while (match(TokenType::AMP)) {
+        check_binop_chain();
         expr = std::make_unique<BinaryExpression>(std::move(expr), "&", equality());
+    }
     return expr;
 }
 
 std::unique_ptr<Expression> Parser::equality() {
     auto expr = comparison();
     while (match(TokenType::EQUAL_EQUAL) || match(TokenType::BANG_EQUAL)) {
+        check_binop_chain();
         std::string op = previous().lexeme;
         expr = std::make_unique<BinaryExpression>(std::move(expr), op, comparison());
     }
@@ -518,6 +540,7 @@ std::unique_ptr<Expression> Parser::comparison() {
     while (match(TokenType::SPACESHIP) ||
            match(TokenType::GREATER) || match(TokenType::GREATER_EQUAL) ||
            match(TokenType::LESS)    || match(TokenType::LESS_EQUAL)) {
+        check_binop_chain();
         std::string op = previous().lexeme;
         expr = std::make_unique<BinaryExpression>(std::move(expr), op, shift());
     }
@@ -527,6 +550,7 @@ std::unique_ptr<Expression> Parser::comparison() {
 std::unique_ptr<Expression> Parser::shift() {
     auto expr = concatenation();
     while (match(TokenType::LESS_LESS) || match(TokenType::GREATER_GREATER)) {
+        check_binop_chain();
         std::string op = previous().lexeme;
         expr = std::make_unique<BinaryExpression>(std::move(expr), op, concatenation());
     }
@@ -535,14 +559,17 @@ std::unique_ptr<Expression> Parser::shift() {
 
 std::unique_ptr<Expression> Parser::concatenation() {
     auto expr = addition();
-    while (match(TokenType::DOT))
+    while (match(TokenType::DOT)) {
+        check_binop_chain();
         expr = std::make_unique<BinaryExpression>(std::move(expr), ".", addition());
+    }
     return expr;
 }
 
 std::unique_ptr<Expression> Parser::addition() {
     auto expr = multiplication();
     while (match(TokenType::PLUS) || match(TokenType::MINUS)) {
+        check_binop_chain();
         std::string op = previous().lexeme;
         expr = std::make_unique<BinaryExpression>(std::move(expr), op, multiplication());
     }
@@ -552,6 +579,7 @@ std::unique_ptr<Expression> Parser::addition() {
 std::unique_ptr<Expression> Parser::multiplication() {
     auto expr = power();
     while (match(TokenType::STAR) || match(TokenType::SLASH) || match(TokenType::PERCENT)) {
+        check_binop_chain();
         std::string op = previous().lexeme;
         expr = std::make_unique<BinaryExpression>(std::move(expr), op, power());
     }

@@ -19,6 +19,7 @@
 
 #include <ctime>
 #include "look/fcgi.h"
+#include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
 #include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
 #include "look/http_client.h"
 #include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
@@ -218,16 +219,15 @@ bool FcgiConn::read_record(uint8_t& type, uint16_t& req_id,
                              std::vector<uint8_t>& content) {
     uint8_t hdr[8];
     if (!raw_read(hdr, 8)) return false;
-    type   = hdr[1];
-    req_id = (uint16_t)((hdr[2] << 8) | hdr[3]);
-    uint16_t content_len = (uint16_t)((hdr[4] << 8) | hdr[5]);
-    uint8_t  padding_len = hdr[6];
+    FcgiRecordHeader h = fcgi_decode_header(hdr);  // saf çözme (fcgi_parse.h)
+    type   = h.type;
+    req_id = h.req_id;
 
-    content.resize(content_len);
-    if (content_len > 0 && !raw_read(content.data(), content_len)) return false;
-    if (padding_len > 0) {
+    content.resize(h.content_len);
+    if (h.content_len > 0 && !raw_read(content.data(), h.content_len)) return false;
+    if (h.padding_len > 0) {
         uint8_t pad[255];
-        if (!raw_read(pad, padding_len)) return false;
+        if (!raw_read(pad, h.padding_len)) return false;
     }
     return true;
 }
@@ -253,26 +253,12 @@ void FcgiConn::write_record(uint8_t type, uint16_t req_id,
 }
 
 uint32_t FcgiConn::read_len(const uint8_t*& p, const uint8_t* end) {
-    if (p >= end) return 0;
-    if (*p >> 7 == 0) return *p++;
-    if (p + 4 > end) return 0;
-    uint32_t v = ((uint32_t)(p[0] & 0x7F) << 24) | ((uint32_t)p[1] << 16) |
-                 ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-    p += 4;
-    return v;
+    return fcgi_read_len(p, end);   // saf dikiş (fcgi_parse.h) — drift yok
 }
 
 void FcgiConn::parse_params(const uint8_t* p, size_t len,
                               std::map<std::string, std::string>& out) {
-    const uint8_t* end = p + len;
-    while (p < end) {
-        uint32_t nlen = read_len(p, end);
-        uint32_t vlen = read_len(p, end);
-        if (p + nlen + vlen > end) break;
-        std::string name (p, p + nlen); p += nlen;
-        std::string value(p, p + vlen); p += vlen;
-        out[name] = value;
-    }
+    fcgi_parse_params(p, len, out); // saf dikiş (fcgi_parse.h) — drift yok
 }
 
 bool FcgiConn::accept(FcgiRequest& req) {
@@ -287,7 +273,7 @@ bool FcgiConn::accept(FcgiRequest& req) {
             case FCGI_BEGIN_REQUEST:
                 if (content.size() >= 8) {
                     req.id        = rid;
-                    req.keep_conn = (content[2] & 0x01) != 0;
+                    req.keep_conn = fcgi_begin_keep_conn(content.data(), content.size());
                     in_request    = true;
                 }
                 break;

@@ -1,0 +1,44 @@
+# template:: HTML-kaçış davranışsal testi — XSS sınırı (saf, sunucu YOK). CI-koşabilir.
+# Amaç: kullanıcı verisi HTML'e girerken tehlikeli karakterler kaçırılıyor mu.
+# POZİTİF KONTROL: escape kaldırılırsa (want'ı ham payload'a çevir) → FAIL basar,
+# yani bu test gerçekten kaçışı doğruluyor (yeşil-boşluk değil).
+use template
+$ran = 0
+function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
+
+# Tekil meta-karakterler — html_escape.h'deki 6 kural (& < > " ' `)
+chk("amp",        template::escape("a&b"),   "a&amp;b"); $ran = $ran + 1
+chk("lt",         template::escape("a<b"),   "a&lt;b"); $ran = $ran + 1
+chk("gt",         template::escape("a>b"),   "a&gt;b"); $ran = $ran + 1
+chk("dquote",     template::escape("a\"b"),  "a&quot;b"); $ran = $ran + 1
+chk("squote",     template::escape("a'b"),   "a&#39;b"); $ran = $ran + 1
+chk("backtick",   template::escape("a`b"),   "a&#96;b"); $ran = $ran + 1
+
+# KaçırılMAYAN güvenli karakterler aynen geçmeli
+chk("safe-plain", template::escape("Merhaba Dunya 123"), "Merhaba Dunya 123"); $ran = $ran + 1
+chk("bos",        template::escape(""), ""); $ran = $ran + 1
+
+# XSS PAYLOAD — script etiketi tamamen etkisizleşmeli (< > " ' hepsi kaçmalı)
+chk("xss-script", template::escape("<script>alert('x')</script>"),
+    "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"); $ran = $ran + 1
+# img onerror XSS — attribute-break denemesi (" ve > kaçmalı)
+chk("xss-img-onerror", template::escape("<img src=x onerror=\"alert(1)\">"),
+    "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"); $ran = $ran + 1
+# JS template-literal enjeksiyonu — backtick + ${} (B-08 kuralı: backtick kaçar)
+chk("xss-template-literal", template::escape("`${alert(1)}`"),
+    "&#96;${alert(1)}&#96;"); $ran = $ran + 1
+# Ampersan çift-kaçış OLMAMALI — & bir kez &amp; olur (idempotent değil, tek geçiş)
+chk("entity-once", template::escape("&amp;"), "&amp;amp;"); $ran = $ran + 1
+
+# template::render_string — {$var} otomatik kaçmalı (auto-escape)
+chk("render-autoescape", template::render_string("<p>{$c}</p>",
+    ["__assoc__", "c", "<script>x</script>"]),
+    "<p>&lt;script&gt;x&lt;/script&gt;</p>"); $ran = $ran + 1
+# {!$var} ham (kaçışsız) — bilinçli raw çıkış (tasarım gereği kaçmaz)
+chk("render-rawvar", template::render_string("<p>{!$c}</p>",
+    ["__assoc__", "c", "<b>ok</b>"]),
+    "<p><b>ok</b></p>"); $ran = $ran + 1
+
+const { EXPECTED = 14 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " != " . EXPECTED) }
+print("=== template ran=" . $ran . " ===")

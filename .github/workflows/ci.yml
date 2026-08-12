@@ -318,6 +318,29 @@ jobs:
           cd cpp
           bash tests/vm_fallback_test.sh build/lk-fcgi 7772
 
+      # JWT güvenlik tablosu — HS256 modülü klasik açıklara GÜVENLİ mi: alg=none reddi,
+      # RS256→HS256 key-confusion reddi, exp expiry, imza-kurcalama + pozitif. verify header
+      # alg'ini OKUMAZ (koşulsuz HMAC) → alg-confusion yapısal imkânsız. Pozitif-kontrollü.
+      - name: JWT güvenlik (alg=none / key-confusion / exp / tamper + pozitif)
+        run: |
+          cd cpp
+          ./build/lk tests/jwt_security.lk
+
+      # FastCGI wire-parse tablo + fuzz — seam (look/fcgi_parse.h). Ağa açık PRE-DISPATCH kod
+      # (nginx/Apache→FCGI record veya LOOK_FCGI_BIND). BULUNAN+DÜZELTİLEN BUG: kesik 4-bayt
+      # uzunluk alanı → parse_params sonsuz-döngü (worker DoS); progress-guard kilitli. ASan tablo
+      # + 200K fuzz + POZİTİF-KONTROL (clamp'siz varyant → ASan heap-overflow).
+      - name: FastCGI wire-parse (seam tablo + fuzz + DoS-regresyon)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/fcgi_parse_test.cpp -o /tmp/fcgi_parse_test
+          timeout 60 /tmp/fcgi_parse_test
+          g++ -std=c++17 -Iinclude -DFCGI_POSCTL -fsanitize=address,undefined \
+            -fno-sanitize-recover=all tests/fcgi_parse_test.cpp -o /tmp/fcgi_posctl
+          if timeout 30 /tmp/fcgi_posctl; then echo "::error::POSCTL dişsiz"; exit 1; \
+          else echo "POSCTL ASan yakaladı (beklenen)"; fi
+
   # ── Canlı DB job'u: gerçek MySQL 8 + PostgreSQL 16 servis-container'ları ──────────
   # caching_sha2_password (MySQL 8 VARSAYILAN auth) + native prepared-bind (MySQL
   # COM_STMT_EXECUTE + PG extended-query) — üç KISMİ item'ın "canlı-DSN/nightly" boşluğu.

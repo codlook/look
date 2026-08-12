@@ -25,16 +25,13 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ./build-asan/lk tests/regression_all.lk
-      - name: B-01 eval-guard (BILINEN ACIK — raporla, kirma)
+      # B-01 DÜZELTİLDİ (parser MAX_BINOP_CHAIN=1000): derin ikili zincir + derin paren artık
+      # AST kurulmadan parser'da TEMİZ hata verir (çökme DEĞİL) — saldırgan-kontrollü derin girdi
+      # DoS'u kapalı. continue-on-error KALDIRILDI → enforced (guard tetiklenmezse/çökerse CI kırmızı).
+      - name: B-01 eval-guard — ENFORCED (derin girdi temiz-hata, çökme değil)
         working-directory: cpp
-        continue-on-error: true
         env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1" }
-        run: |
-          # Duzeltildikten SONRA: temiz 'cok derin' hatasi (rc=1), CRASH degil.
-          # Simdilik eval ozyinelemesi sinirsiz -> SIGABRT bekleniyor (continue-on-error).
-          python3 -c "print('\$x = ' + '+'.join(['1']*20000))" > /tmp/b01.lk
-          ./build-asan/lk /tmp/b01.lk; echo "VM rc=$?"
-          LOOK_CLI_VM=0 ./build-asan/lk /tmp/b01.lk; echo "interp rc=$?"
+        run: bash tests/eval_depth_guard.sh ./build-asan/lk
 
   tsan:
     runs-on: ubuntu-24.04
@@ -68,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y clang
-      - name: Fuzz — PG + MySQL wire parser (kisa, yesil olmali)
+      - name: Fuzz — PG + MySQL + HTTP istek/wire parser (kisa, yesil olmali)
         working-directory: cpp/tests/fuzz
         env:
           ASAN_OPTIONS: abort_on_error=1
@@ -78,7 +75,8 @@ jobs:
                          [fuzz_mysql_lenenc]=corpus_mysql \
                          [fuzz_json_str]=corpus_json \
                          [fuzz_smtp_addr]=corpus_smtp \
-                         [fuzz_imap_parse]=corpus_imap )
+                         [fuzz_imap_parse]=corpus_imap \
+                         [fuzz_http_request]=corpus_http )
           for h in "${!C[@]}"; do
             echo "== derle $h =="
             clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \

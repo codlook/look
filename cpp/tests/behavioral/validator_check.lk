@@ -1,0 +1,60 @@
+# validator:: girdi-doğrulama davranışsal testi — güvenlik sınırı (saf). CI-koşabilir.
+# Kural sözleşmesi (extra_stdlib.cpp make_validator): required, email, integer,
+# numeric, min:N, max:N, in:a,b,c. Sonuç ["ok"=>bool, "errors"=>assoc].
+# ÖNEMLİ: str_is_integer/numeric KATI'dır — "123abc" / "5; DROP" REDDEDİLMELİ
+# (stoi baştan-alma bypass'ı kapalı). POZİTİF KONTROL: bir want'ı ters çevir → FAIL.
+use validator
+$ran = 0
+function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
+
+# Yardımcı: validator::check sonucundan "ok" bool'unu al
+function vok($data, $rules) { $r = validator::check($data, $rules); return $r["ok"] }
+
+# ── email ──
+chk("email gecerli", vok(["__assoc__", "e", "a@b.com"], ["__assoc__", "e", ["email"]]), true); $ran = $ran + 1
+chk("email nokta-yok", vok(["__assoc__", "e", "a@b"], ["__assoc__", "e", ["email"]]), false); $ran = $ran + 1
+chk("email at-yok", vok(["__assoc__", "e", "ab.com"], ["__assoc__", "e", ["email"]]), false); $ran = $ran + 1
+chk("email bosluk", vok(["__assoc__", "e", "a b@c.com"], ["__assoc__", "e", ["email"]]), false); $ran = $ran + 1
+
+# ── required ── (boş değer reddedilmeli)
+chk("required bos", vok(["__assoc__", "n", ""], ["__assoc__", "n", ["required"]]), false); $ran = $ran + 1
+chk("required dolu", vok(["__assoc__", "n", "x"], ["__assoc__", "n", ["required"]]), true); $ran = $ran + 1
+# eksik alan da required'ı geçmemeli (get_field boş döner)
+chk("required eksik-alan", vok(["__assoc__"], ["__assoc__", "n", ["required"]]), false); $ran = $ran + 1
+
+# ── integer (KATI — bypass kapalı) ──
+chk("integer temiz", vok(["__assoc__", "a", "42"], ["__assoc__", "a", ["integer"]]), true); $ran = $ran + 1
+chk("integer negatif", vok(["__assoc__", "a", "-7"], ["__assoc__", "a", ["integer"]]), true); $ran = $ran + 1
+# GÜVENLİK: "123abc" tam-sayı SAYILMAMALI (stoi baştan-alma bypass'ı olmamalı)
+chk("integer coplu-RED", vok(["__assoc__", "a", "123abc"], ["__assoc__", "a", ["integer"]]), false); $ran = $ran + 1
+# GÜVENLİK: SQL-injection kuyruğu integer'a sızmamalı
+chk("integer sqli-RED", vok(["__assoc__", "a", "5; DROP TABLE t"], ["__assoc__", "a", ["integer"]]), false); $ran = $ran + 1
+
+# ── numeric ──
+chk("numeric ondalik", vok(["__assoc__", "a", "3.14"], ["__assoc__", "a", ["numeric"]]), true); $ran = $ran + 1
+chk("numeric coplu-RED", vok(["__assoc__", "a", "3.14xx"], ["__assoc__", "a", ["numeric"]]), false); $ran = $ran + 1
+
+# ── min / max (sayısal değer sınırı) ──
+chk("min gecerli", vok(["__assoc__", "y", "18"], ["__assoc__", "y", ["min:18"]]), true); $ran = $ran + 1
+chk("min ihlal", vok(["__assoc__", "y", "17"], ["__assoc__", "y", ["min:18"]]), false); $ran = $ran + 1
+chk("max gecerli", vok(["__assoc__", "y", "99"], ["__assoc__", "y", ["max:100"]]), true); $ran = $ran + 1
+chk("max ihlal", vok(["__assoc__", "y", "101"], ["__assoc__", "y", ["max:100"]]), false); $ran = $ran + 1
+
+# ── in: (whitelist) ──
+chk("in gecerli", vok(["__assoc__", "r", "admin"], ["__assoc__", "r", ["in:admin,user"]]), true); $ran = $ran + 1
+chk("in disinda", vok(["__assoc__", "r", "root"], ["__assoc__", "r", ["in:admin,user"]]), false); $ran = $ran + 1
+
+# ── kombine kural + hata mesajı yüzeyi ──
+chk("required+email zincir", vok(["__assoc__", "e", ""], ["__assoc__", "e", ["required", "email"]]), false); $ran = $ran + 1
+# çok alan: biri hatalıysa toplam ok=false
+chk("cok-alan biri-hatali",
+    vok(["__assoc__", "e", "a@b.com", "y", "abc"],
+        ["__assoc__", "e", ["email"], "y", ["integer"]]), false); $ran = $ran + 1
+# hepsi geçerli → ok=true
+chk("cok-alan hepsi-ok",
+    vok(["__assoc__", "e", "a@b.com", "y", "30"],
+        ["__assoc__", "e", ["email"], "y", ["integer"]]), true); $ran = $ran + 1
+
+const { EXPECTED = 22 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " != " . EXPECTED) }
+print("=== validator ran=" . $ran . " ===")
