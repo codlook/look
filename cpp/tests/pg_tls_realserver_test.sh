@@ -77,6 +77,7 @@ chmod 600 "$TLSDIR/server.key"
 cat >> "$TLSDIR/postgresql.conf" <<EOF
 listen_addresses = 'localhost'
 port = $TLS_PORT
+unix_socket_directories = '$TLSDIR'
 ssl = on
 ssl_cert_file = 'server.crt'
 ssl_key_file = 'server.key'
@@ -93,6 +94,7 @@ EOF
 cat >> "$PLAINDIR/postgresql.conf" <<EOF
 listen_addresses = 'localhost'
 port = $PLAIN_PORT
+unix_socket_directories = '$PLAINDIR'
 ssl = off
 password_encryption = scram-sha-256
 EOF
