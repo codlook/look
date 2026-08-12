@@ -295,6 +295,29 @@ jobs:
       - name: docs-conformance (docs API ↔ builtin_names)
         run: bash cpp/tests/docs_conformance.sh
 
+      # SSRF DNS-rebinding pin değişmezi — ölçüldü: is_ssrf_blocked + connect AYNI çözümlenmiş
+      # res->ai_addr'ı kullanır (resolve-once, yeniden-çözme yok → rebinding imkânsız). Bu guard
+      # kaynak-değişmezini kilitler; biri connect'i yeniden-çözmeye çevirirse RED. Pozitif-kontrollü.
+      - name: SSRF DNS-rebinding pin değişmezi (kaynak guard)
+        run: bash cpp/tests/ssrf_pin_guard.sh
+
+      # Plesk installer privesc-sağlamlaştırma — ağsız, Plesk'siz. Domain/script/svc sanitizasyonu
+      # (PHP regex + bash tr -cd + case guard) enjeksiyonu (satır-sonu→systemd unit root-komut)
+      # engelliyor mu? Pozitif-kontrollü (sanitizasyon kalkarsa privesc payload'ı 2-satır unit üretir).
+      - name: "Plesk installer enjeksiyon-guard'ları (ağsız)"
+        run: |
+          sudo apt-get install -y php-cli
+          bash cpp/tests/plesk_inject_test.sh
+          php  cpp/tests/plesk_php_domain_test.php
+
+      # VM→interpreter fallback DOĞRULUK — LOOK_VM_FORCE_FAIL test-hook'u bir route'u VM'de kasıtlı
+      # fail ettirir; fallback yanıtı VM'inkiyle AYNI olmalı + 'VM BUG' loglamalı; STRICT=1 ile 500.
+      # Pozitif-kontrollü (fallback yanlış hesaplarsa RED). Hook prod-inert (env yoksa tek pointer testi).
+      - name: VM→interpreter fallback doğruluk (runtime)
+        run: |
+          cd cpp
+          bash tests/vm_fallback_test.sh build/lk-fcgi 7772
+
   # ── Canlı DB job'u: gerçek MySQL 8 + PostgreSQL 16 servis-container'ları ──────────
   # caching_sha2_password (MySQL 8 VARSAYILAN auth) + native prepared-bind (MySQL
   # COM_STMT_EXECUTE + PG extended-query) — üç KISMİ item'ın "canlı-DSN/nightly" boşluğu.
@@ -386,3 +409,25 @@ jobs:
           cd cpp
           out="$(bash tests/pg_tls_realserver_test.sh build/lk 54330 54331)"; echo "$out"
           echo "$out" | grep -q '^PASS: PG TLS' || { echo "::error::PG TLS testi ATLANDI veya kirildi (vacuous-green guard)"; exit 1; }
+
+  # ── Eşzamanlılık hang smoke job'u (worker-pool + fiber) ──────────────────────────
+  # c=100 hang regresyonu (acceptor açlığı, D Fix #2) için bounded-concurrency guard'ı: c=50
+  # eşzamanlı × 20 keep-alive istek, iki dispatch modunda (pool + fiber), TÜMÜ 200 + sunucu
+  # canlı. Pozitif-kontrollü (dead-port + accept-only-hang sunucu → RED). c=100 üst-ucu nightly
+  # (yük makine-gürültüsüne duyarlı); c=50 mantık-starvation'ını CI'da güvenilir egzersiz eder.
+  concurrency-smoke:
+    name: "Eşzamanlılık hang smoke (pool + fiber, c=50)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev python3
+      - name: Build lk-fcgi (Release)
+        run: |
+          cd cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target look-fcgi --parallel $(nproc)
+      - name: Concurrency hang smoke (c=50 × 20, pool + fiber)
+        run: bash cpp/tests/concurrency_smoke.sh cpp/build/lk-fcgi 50 20

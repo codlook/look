@@ -377,8 +377,20 @@ struct HttpServer::Impl {
     //
     // Event loop yok — Apache ile aynı model.
     void handle_connection(int fd, std::string remote_addr = "") {
-        // Boşta timeout — istemci 30sn yanıt vermezse kapat
-        timeval tv{30, 0};
+        // Boşta timeout — istemci N ms yanıt vermezse kapat (default 30s). LOOK_HTTP_IDLE_MS
+        // ile ayarlanabilir (test hızı için). PLATFORM-DOĞRU TİP: Windows SO_RCVTIMEO bir
+        // DWORD-milisaniye bekler, POSIX timeval bekler. ESKİ BUG: Windows'a timeval{30,0}
+        // geçiliyordu → Winsock ilk DWORD'ü (=30) okuyup 30sn'yi 30ms'ye çeviriyordu (idle
+        // keep-alive Win'de ~30ms'de düşüyordu). Ampirik ölçüldü (~34ms), düzeltildi.
+        static const long idle_ms = []{
+            const char* e = std::getenv("LOOK_HTTP_IDLE_MS");
+            return (e && *e) ? std::atol(e) : 30000L;
+        }();
+#ifdef _WIN32
+        DWORD tv = (DWORD)idle_ms;
+#else
+        timeval tv{ (time_t)(idle_ms/1000), (suseconds_t)((idle_ms%1000)*1000) };
+#endif
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 #ifndef _WIN32
