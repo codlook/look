@@ -1,6 +1,7 @@
 #include "look/postgres_client.h"
 #include "look/pg_parse.h"   // saf pg_parse_error (fuzz/test ile paylasilan tek tanim)
 #include "look/format.h"     // look_format_double (dilin tek double formati)
+#include "look/crypto_sha256.h" // SCRAM primitifleri: look::sha256/hmac_sha256/pbkdf2_sha256 (tek impl)
 #include <cstring>
 #include <cctype>
 #include <sstream>
@@ -133,102 +134,34 @@ std::string PostgresClient::pg_md5_password(const std::string& password,
 }
 
 // ── SHA-256 (FIPS 180-4) ──────────────────────────────────────────────────────
+// BİRLEŞTİRİLDİ: SCRAM primitifleri artık look::crypto_sha256.h'deki TEK impl'e delege eder.
+// Önceden burada PARALEL bir sha256/hmac/pbkdf2 kopyası vardı ("aynı kural iki yerde"); RFC-KAT
+// (tests/pg_scram_crypto_kat.cpp) iki kopyanın AYRIŞMADIĞINI kanıtladıktan sonra kaldırıldı →
+// tek tanım → drift yok. Bu üç metot yalnız array<32>↔vector adaptörü; do_scram_sha256'nın
+// birleştirme mantığı (canlı auth yolu) DEĞİŞMEDİ (hâlâ array<32> alır). Ayrıntı: crypto_sha256.h.
 
-static const uint32_t SHA256_K[64] = {
-    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-};
+static inline std::array<uint8_t,32> to_arr32(const std::vector<uint8_t>& v) {
+    std::array<uint8_t,32> out{};
+    for (int i = 0; i < 32 && i < (int)v.size(); i++) out[i] = v[i];
+    return out;
+}
 
 std::array<uint8_t,32> PostgresClient::sha256(const uint8_t* data, size_t len) {
-    uint32_t h[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
-                     0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
-
-    std::vector<uint8_t> msg(data, data + len);
-    uint64_t bit_len = (uint64_t)len * 8;
-    msg.push_back(0x80);
-    while ((msg.size() % 64) != 56) msg.push_back(0);
-    for (int i = 7; i >= 0; i--) msg.push_back((uint8_t)(bit_len >> (i * 8)));
-
-    auto rotr = [](uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
-    for (size_t i = 0; i < msg.size(); i += 64) {
-        uint32_t w[64];
-        for (int j = 0; j < 16; j++)
-            w[j] = ((uint32_t)msg[i+j*4]<<24)|((uint32_t)msg[i+j*4+1]<<16)|
-                   ((uint32_t)msg[i+j*4+2]<<8)|(uint32_t)msg[i+j*4+3];
-        for (int j = 16; j < 64; j++) {
-            uint32_t s0 = rotr(w[j-15],7)^rotr(w[j-15],18)^(w[j-15]>>3);
-            uint32_t s1 = rotr(w[j-2],17)^rotr(w[j-2],19)^(w[j-2]>>10);
-            w[j] = w[j-16] + s0 + w[j-7] + s1;
-        }
-        uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
-        for (int j = 0; j < 64; j++) {
-            uint32_t S1   = rotr(e,6)^rotr(e,11)^rotr(e,25);
-            uint32_t ch   = (e&f)^(~e&g);
-            uint32_t tmp1 = hh + S1 + ch + SHA256_K[j] + w[j];
-            uint32_t S0   = rotr(a,2)^rotr(a,13)^rotr(a,22);
-            uint32_t maj  = (a&b)^(a&c)^(b&c);
-            uint32_t tmp2 = S0 + maj;
-            hh=g; g=f; f=e; e=d+tmp1; d=c; c=b; b=a; a=tmp1+tmp2;
-        }
-        h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d;
-        h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
-    }
-
-    std::array<uint8_t,32> out{};
-    for (int i = 0; i < 8; i++) {
-        out[i*4]=(h[i]>>24)&0xFF; out[i*4+1]=(h[i]>>16)&0xFF;
-        out[i*4+2]=(h[i]>>8)&0xFF; out[i*4+3]=h[i]&0xFF;
-    }
-    return out;
+    return to_arr32(look::sha256(std::vector<uint8_t>(data, data + len)));
 }
 
 std::array<uint8_t,32> PostgresClient::hmac_sha256(const uint8_t* key, size_t klen,
                                                      const uint8_t* msg, size_t mlen) {
-    const int BLOCK = 64;
-    uint8_t k[64] = {};
-    if (klen > (size_t)BLOCK) {
-        auto kh = sha256(key, klen);
-        memcpy(k, kh.data(), 32);
-    } else {
-        memcpy(k, key, klen);
-    }
-    uint8_t ipad[64], opad[64];
-    for (int i = 0; i < BLOCK; i++) { ipad[i] = k[i] ^ 0x36; opad[i] = k[i] ^ 0x5C; }
-
-    std::vector<uint8_t> inner(BLOCK + mlen);
-    memcpy(inner.data(), ipad, BLOCK);
-    memcpy(inner.data() + BLOCK, msg, mlen);
-    auto inner_hash = sha256(inner.data(), inner.size());
-
-    std::vector<uint8_t> outer(BLOCK + 32);
-    memcpy(outer.data(), opad, BLOCK);
-    memcpy(outer.data() + BLOCK, inner_hash.data(), 32);
-    return sha256(outer.data(), outer.size());
+    return to_arr32(look::hmac_sha256(std::vector<uint8_t>(key, key + klen),
+                                      std::vector<uint8_t>(msg, msg + mlen)));
 }
 
 std::array<uint8_t,32> PostgresClient::pbkdf2_sha256(const std::string& pass,
                                                        const uint8_t* salt, size_t slen, int iters) {
-    // PRF = HMAC-SHA-256, block index = 1 (32 bytes output — one block yeterli)
-    const uint8_t* pk  = (const uint8_t*)pass.data();
-    size_t         pklen = pass.size();
-
-    std::vector<uint8_t> s1(slen + 4);
-    memcpy(s1.data(), salt, slen);
-    s1[slen]=0; s1[slen+1]=0; s1[slen+2]=0; s1[slen+3]=1; // INT(1) big-endian
-
-    auto u = hmac_sha256(pk, pklen, s1.data(), s1.size());
-    auto out = u;
-    for (int i = 1; i < iters; i++) {
-        u = hmac_sha256(pk, pklen, u.data(), u.size());
-        for (int j = 0; j < 32; j++) out[j] ^= u[j];
-    }
-    return out;
+    // PRF = HMAC-SHA-256; PG SCRAM tek-block (dkLen=32). look::pbkdf2 çok-block'u da bilir ama
+    // burada 32 istenir → tek-block yol (INT(1) big-endian) birebir.
+    return to_arr32(look::pbkdf2_sha256(pass, std::vector<uint8_t>(salt, salt + slen),
+                                        (uint32_t)iters, 32));
 }
 
 static const char B64_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

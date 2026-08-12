@@ -1,0 +1,5 @@
+# PG SCRAM-SHA-256 canlı auth roundtrip — gerçek PostgreSQL'e (pg_hba scram-sha-256) bağlanır.
+# SCRAM el sıkışması look::pbkdf2/hmac/sha256 (birleştirilmiş) üzerinden geçer; parola YANLIŞSA
+# veya crypto sessizce kırılırsa auth ÇÖKER (bağlantı red) → bu script bir sonuç basmaz.
+$db = db::connect("postgres://looktest_scram:testpass_scram_2026@127.0.0.1/looktestdb_scram")
+print(db::query($db, "SELECT 4242 AS n")[0]["n"])

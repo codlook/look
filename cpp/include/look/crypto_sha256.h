@@ -2,8 +2,10 @@
 // Bu üçlü JWT (HS256), DKIM, session imzası, auth::hash yollarını besler. Saf + kendine-yeten
 // (yalnız std) → RFC known-answer test edilebilir (NIST SHA-256 · RFC 4231 HMAC · RFC 7914 PBKDF2).
 // extra_stdlib.cpp bunları using-alias ile forward eder; tek tanım → drift yok.
-// NOT: postgres_client.cpp SCRAM için PARALEL bir pbkdf2/sha256 (array<32>, tek-block) taşır —
-// birleştirme adayı; KAT vektörleri ortak oracle'dır (bkz. crypto_sha256_test.cpp).
+// BİRLEŞTİRİLDİ (2026-08-12): postgres_client.cpp SCRAM eskiden PARALEL bir pbkdf2/sha256
+// (array<32>, tek-block) taşıyordu; RFC-KAT iki kopyanın AYRIŞMADIĞINI kanıtlayınca kaldırıldı →
+// PG artık bu üçlüye array<32>↔vector adaptörüyle delege eder (tek tanım, drift yok).
+// PG-agreement oracle'ı: tests/pg_scram_crypto_kat.cpp (gerçek PostgresClient:: statiklerini pinler).
 #pragma once
 #include <cstdint>
 #include <vector>

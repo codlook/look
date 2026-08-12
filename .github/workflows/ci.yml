@@ -215,6 +215,17 @@ jobs:
           g++ -std=c++17 -Iinclude tests/crypto_sha256_test.cpp -o /tmp/csha
           /tmp/csha
 
+      # PG SCRAM crypto agreement — GERÇEK PostgresClient::sha256/hmac/pbkdf2 (postgres_client.cpp)
+      # aynı RFC vektörlerine pinli mi? Bu üçlü artık look::crypto_sha256.h'ye array<32>↔vector
+      # adaptörüyle DELEGE eder (paralel kopya birleştirildi); test regresyon-guard'ı: adaptör bağı
+      # koparsa/tek-block yol kayarsa vektör tutmaz → RED. postgres_client.cpp + OpenSSL link eder.
+      - name: PG SCRAM crypto agreement RFC-KAT (seam)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/pg_scram_crypto_kat.cpp src/postgres_client.cpp \
+              -lssl -lcrypto -o /tmp/pgkat
+          /tmp/pgkat
+
       # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
       # verify-full untrusted cert'i REDDEDER (SSL_VERIFY_PEER çalışıyor mu) + insecure kabul
       # eder (pozitif-kontrol: red verify'dan; verify kırık olsa insecure gibi davranırdı).
