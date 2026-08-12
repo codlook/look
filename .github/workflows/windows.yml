@@ -64,8 +64,11 @@ jobs:
         env:
           LOOK_HTTP_IDLE_MS: "1000"
         run: |
+          # win_http_idle.ps1 tüm hata vakalarında throw eder (exit kullanmaz) → terminating
+          # error pwsh step'ini kırar. $LASTEXITCODE kontrolü YANLIŞTI: başarıda ps1 exit set
+          # etmez ($null kalır), $null -ne 0 → true → sahte throw. Kontrol kaldırıldı.
+          $ErrorActionPreference = "Stop"
           & cpp/tests/win_http_idle.ps1 `
             -Exe cpp/build-win/Release/lk-fcgi.exe `
             -Script cpp/tests/win_http_idle_app.lk `
             -Port 7788
-          if ($LASTEXITCODE -ne 0) { throw "GATE RED: Windows --mode http idle-timeout FAIL (exit $LASTEXITCODE)" }
