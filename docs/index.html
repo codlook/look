@@ -1611,8 +1611,9 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
   <table>
     <tr><th>Function</th><th>Description</th></tr>
     <tr><td>cookie::get("k")</td><td>Read a cookie</td></tr>
-    <tr><td>cookie::set("k","v")</td><td>Write a cookie (session)</td></tr>
-    <tr><td>cookie::set("k","v",3600)</td><td>Write a cookie (1-hour TTL)</td></tr>
+    <tr><td>cookie::set("k","v")</td><td>Write a cookie — <b>HttpOnly + SameSite=Lax by default</b> (secure default)</td></tr>
+    <tr><td>cookie::set("k","v",3600)</td><td>Write a cookie (1-hour TTL); positional path also supported: <code>set("k","v",3600,"/app")</code></td></tr>
+    <tr><td>cookie::set("k","v",["httponly"=>false])</td><td>Opt out: JS-readable cookie. Also <code>["secure"=>true]</code> (opt in, off by default for plain-HTTP dev) / <code>["samesite"=>"Strict"|false]</code></td></tr>
     <tr><td>cookie::delete("k")</td><td>Delete a cookie</td></tr>
     <tr><td>cookie::has("k")</td><td>Does the cookie exist?</td></tr>
   </table>
