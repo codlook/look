@@ -1451,6 +1451,12 @@ Stack trace:
     themselves organised under a prefix with shared middleware. Use a <code>before_route()</code> prefix
     guard (above) when the shared logic is broader than a middleware chain, or when you want one check
     to cover routes that are registered in several places.</p>
+    <p><strong>Coverage differs.</strong> <code>before_route()</code> runs on every request, including
+    paths that match no route (a request to <code>/admin/typo</code> still hits the guard, then 404s).
+    Group middleware runs only on a matched route — an unmatched path under a grouped prefix returns 404
+    without the middleware running. For a uniform auth boundary over a whole namespace, prefer a
+    <code>before_route()</code> prefix guard; for middleware attached to a specific set of routes, use
+    the group.</p>
   </div>
 </section>
 

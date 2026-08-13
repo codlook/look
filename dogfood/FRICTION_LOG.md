@@ -17,6 +17,24 @@ Kapsam (dikey dilim, 5 ekran):
 
 <!-- Her bulgu: [KATMAN] ne yapmaya çalıştım → ne oldu → doküman ne diyordu → workaround/fix -->
 
+### BULGU #14 — route::group DAR BANT: dogfood'a churn'e değmez (refactor = DOĞRULAMA, gösteri değil)
+**[DX + KARAR]** route::group eklendikten sonra: dogfood'u before_route → route::group'a çevirmek daha
+mı iyi? Refactor'ü ölçüm olarak yaptım (gösteri değil). Sonuç: **kabaca başa baş, churn'e değmez.**
+- `""` yol: route::group("/tasks", ...) içinde /tasks'ın kendisi `route("GET", "", ...)` — açık
+  "/tasks"'tan daha az okunur. +1 girinti seviyesi, daha büyük diff.
+- **KAPSAM FARKI (asıl bulgu):** before_route her istekte çalışır (eşleşmeyen yollar dahil →
+  /tasks/yokboyle oturumsuz **302 /login**). Group mw'si sadece eşleşen rotada → /tasks/yokboyle
+  **404** (auth'suz). Ölçüldü (iki motor). Bu bir GÜVENLİK açığı DEĞİL (rota kalıpları statik açık
+  yüzey, sır değil; kayıt-bazlı sızıntı yok — mw "task var mı?"dan önce çalışır). Tekdüze auth sınırı
+  için before_route hafif daha muhafazakâr → churn için sebep yok, mevcut çözüm zaten yerinde.
+- **ÖNEMLİ ÖZ-DÜZELTME:** İlk taslakta "route::group use boilerplate'i ÇOĞALTIYOR" yazmıştım — YANLIŞ.
+  Scratch'te dogfood'un (gereksiz) `use ($conn)` desenini kopyalayıp ölçüm sandım. Ölçünce (TEST A/B,
+  iki motor): closure `$conn`'u `use` OLMADAN görüyor → grup use katlamaya zorlamıyor. DERS: elle
+  yazılmış hipotez-kodu ölçüm DEĞİL; "bu gerçekten böyle mi?" ile ayrıştır (bu turda 3. kez: jwt_verify
+  imzası, before_route örneği, use iddiası — hepsi kendinden-emin düzyazı ama ölçülmemişti).
+**Sonuç:** route::group'un tatlı noktası TEMİZ API'ler (çok rota, ortak mw, hafif gövde, sıfır use —
+bkz. docs örneği); sunucu-render CRUD'da before_route + inline zaten temiz. Özellik var, her yere değil.
+
 ### BULGU #13 — Grup koruması: YETENEK vardı, DOKÜMAN yoktu (dış eleştiri "yok" sanmıştı)
 **[DOKÜMAN + DX]** Dış bir eleştiri: *"LOOK'ta global interceptor/middleware zinciri yok; proje
 büyüyünce 50 rotanın başına elle `jwt_verify` yazarsın, bu no-framework avantajını sabote eder."*
