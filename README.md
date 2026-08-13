@@ -248,6 +248,12 @@ build on without waiting for a full behavioral spec:
 - **Breaking changes are collected into the next major (2.0)** — never shipped silently in a 1.x update.
 - **Bug fixes ship within 1.x.** Correcting a behavior that produced a *wrong* result (e.g. `count()` on
   an associative array returning the wrong number) is a fix, not a breaking change — it isn't held for a major.
+- **Security-default hardening may ship within 1.x** when the previous default is a known risk, and an
+  explicit opt-out is always provided. This is narrower than a general breaking change: it only tightens a
+  default, never removes a capability. Precedents: MySQL/Redis TLS now verifies by default (opt out with
+  `?tls=insecure`); `cookie::set` now sends `HttpOnly` + `SameSite=Lax` by default (opt out with the options
+  map, e.g. `["httponly" => false]`). A cookie read from JS by name, or a connection to a self-signed DB, is
+  the affected case — each has a one-argument opt-out.
 - **Not promised yet:** semantic edge cases that are still open *design* choices (associative-array
   internals, integer-vs-float division). These settle with real-world use before they are frozen.
 
