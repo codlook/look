@@ -169,6 +169,7 @@ Three things worth knowing:
 | `crypto::` — SHA-256, HMAC, base64url, UUID, secure random | ✅ |
 | Rate limiting (token bucket, per-IP + global), file sandbox | ✅ |
 | Test runner + REPL — `lk test` · `lk repl` · `lk --check` (parse-only) | ✅ |
+| Formatter — `lk fmt` (one canonical style, no options; `--check` for CI; meaning-preserving) | ✅ |
 
 ### Tested database versions
 

@@ -434,8 +434,10 @@ tr:hover td{background:var(--bg3)}
     <tr><td>Interactive shell</td><td><code>lk repl</code></td><td><code>lk repl</code></td></tr>
     <tr><td>Run tests</td><td><code>lk test</code></td><td><code>lk test tests/ --verbose</code></td></tr>
     <tr><td>Install a package</td><td><code>lk install</code></td><td><code>lk install github.com/user/repo</code></td></tr>
+    <tr><td>Format source (one canonical style — <strong>no options</strong>)</td><td><code>lk fmt</code></td><td><code>lk fmt script.lk</code> · <code>lk fmt --check script.lk</code> (CI: exit 1 if unformatted)</td></tr>
   </table>
   <p style="color:var(--muted);margin-top:.6rem"><code>lk --check</code> only parses and reports undefined function calls (e.g. <code>echo(...)</code>) — it <strong>does not run the code</strong> (no DB/mail is triggered). The VS Code extension uses this for live error checking.</p>
+  <p style="color:var(--muted);margin-top:.4rem"><code>lk fmt</code> rewrites source in one canonical style — like <code>gofmt</code>, there are <strong>no configuration options</strong>. V1 normalizes indentation (4 spaces per nesting level), trims trailing whitespace, and collapses blank-line runs; comments and multi-line strings are preserved. It never changes program meaning: the formatted output is re-tokenized and compared to the input, and if the token stream differs, formatting is aborted and the file is left untouched. Use <code>lk fmt --check</code> in CI to reject unformatted code.</p>
 </section>
 
 <!-- ══════════════════════════════════════════════════════ -->
