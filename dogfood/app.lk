@@ -5,6 +5,7 @@ use auth
 use validator
 use crypto
 use file
+use string
 
 # ── Kurulum ────────────────────────────────────────────────────────────────
 $conn = db::connect(env("DB_DSN", "sqlite://./data.db"))
@@ -49,14 +50,18 @@ function current_user() {
     return null
 }
 
-# Giriş zorunlu — değilse /login'e yönlendir, false döner.
-function require_login() {
-    if (current_user() == null) {
-        response::redirect("/login")
-        return false
+# Grup koruması — /tasks* altındaki HER rota giriş ister, TEK yerde.
+# before_route her istekte route eşleşmeden önce koşar; prefix tutarsa ve kullanıcı
+# yoksa /login'e yönlendirip stop() ile route'u iptal eder. Eskiden bu kontrol 9
+# ayrı handler'da elle (`if (!require_login()) { return }`) tekrarlanıyordu — artık 1.
+before_route(function() {
+    if (string::starts_with(request::path(), "/tasks")) {
+        if (current_user() == null) {
+            response::redirect("/login")
+            stop()
+        }
     }
-    return true
-}
+})
 
 # ── Rotalar: kimlik ────────────────────────────────────────────────────────
 route("GET", "/", fn() => response::redirect("/tasks"))
@@ -130,7 +135,6 @@ route("GET", "/logout", function() {
 
 # ── Rotalar: görevler (CRUD) ───────────────────────────────────────────────
 route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
-    if (!require_login()) { return }
     $email = current_user()
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [$email])
 
@@ -191,7 +195,6 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
 })
 
 route("GET", "/tasks/new", function() {
-    if (!require_login()) { return }
     response::html(template::render("views/tasks/form", [
         "title" => "Yeni Görev", "user" => current_user(), "csrf" => csrf_token(),
         "heading" => "Yeni Görev", "action" => "/tasks", "title_val" => "",
@@ -200,7 +203,6 @@ route("GET", "/tasks/new", function() {
 })
 
 route("POST", "/tasks", function() use ($conn) {
-    if (!require_login()) { return }
     if (!csrf_ok()) { return response::error(419, "CSRF") }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $data = request::all()
@@ -217,7 +219,6 @@ route("POST", "/tasks", function() use ($conn) {
 })
 
 route("GET", "/tasks/{id}/edit", function($id) use ($conn) {
-    if (!require_login()) { return }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
     if (count($rows) == 0) { return response::error(404, "Görev yok") }
@@ -229,7 +230,6 @@ route("GET", "/tasks/{id}/edit", function($id) use ($conn) {
 })
 
 route("POST", "/tasks/{id}/edit", function($id) use ($conn) {
-    if (!require_login()) { return }
     if (!csrf_ok()) { return response::error(419, "CSRF") }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $data = request::all()
@@ -247,7 +247,6 @@ route("POST", "/tasks/{id}/edit", function($id) use ($conn) {
 })
 
 route("POST", "/tasks/{id}/toggle", function($id) use ($conn) {
-    if (!require_login()) { return }
     if (!csrf_ok()) { return response::error(419, "CSRF") }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     db::exec($conn, "UPDATE tasks SET done = 1 - done WHERE id=? AND user_id=?", [int($id), $uid])
@@ -255,7 +254,6 @@ route("POST", "/tasks/{id}/toggle", function($id) use ($conn) {
 })
 
 route("POST", "/tasks/{id}/delete", function($id) use ($conn) {
-    if (!require_login()) { return }
     if (!csrf_ok()) { return response::error(419, "CSRF") }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     db::exec($conn, "DELETE FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
@@ -264,7 +262,6 @@ route("POST", "/tasks/{id}/delete", function($id) use ($conn) {
 
 # ── Dosya eki (upload) ─────────────────────────────────────────────────────
 route("GET", "/tasks/{id}/attach", function($id) use ($conn) {
-    if (!require_login()) { return }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
     if (count($rows) == 0) { return response::error(404, "Görev yok") }
@@ -276,7 +273,6 @@ route("GET", "/tasks/{id}/attach", function($id) use ($conn) {
 })
 
 route("POST", "/tasks/{id}/attach", function($id) use ($conn) {
-    if (!require_login()) { return }
     if (!csrf_ok()) { return response::error(419, "CSRF") }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])

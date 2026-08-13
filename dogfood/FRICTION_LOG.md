@@ -17,6 +17,23 @@ Kapsam (dikey dilim, 5 ekran):
 
 <!-- Her bulgu: [KATMAN] ne yapmaya çalıştım → ne oldu → doküman ne diyordu → workaround/fix -->
 
+### BULGU #13 — Grup koruması: YETENEK vardı, DOKÜMAN yoktu (dış eleştiri "yok" sanmıştı)
+**[DOKÜMAN + DX]** Dış bir eleştiri: *"LOOK'ta global interceptor/middleware zinciri yok; proje
+büyüyünce 50 rotanın başına elle `jwt_verify` yazarsın, bu no-framework avantajını sabote eder."*
+**Ölçüm bunun yarısını çürüttü:** middleware İKİ seviyede zaten var — `before_route()` (global) +
+`route(m, p, [mw], fn)` (route-level), stdlib'de, `stop()` ile zincir kesme dahil. Eksik olan tek
+şey **sözdizimsel `route::group()`** — ama ona da gerek yok: tek `before_route` + `request::path()`
+prefix kontrolü tüm bir bölümü kapatıyor.
+**Bu app'te ölçülen gerçek tekrar:** `if (!require_login()) { return }` — **9 handler'da** elle.
+Prefix guard'a çevirince **9 → 1** (`before_route` `/tasks` prefix'ini korur). Uçtan uca kanıtlandı
+(lk-fcgi `--mode http`, Docker): `/tasks` & `/tasks/new` oturumsuz → 302 `/login`; girişli → 200;
+public (`/login`,`/register`) → 200; VM dispatch temiz (fallback yok).
+**Asıl bulgu (sürtünme kaynağı):** yetenek değil, **görünürlük**. docs middleware bölümü sadece
+route-level örnek veriyordu; "tüm `/admin/*`'ı tek yerde koru" kalıbı ve "neden `route::group` yok"
+kararı YAZILI DEĞİLDİ → eleştiri tam da o boşluktan doğdu. **Fix:** docs'a "Protecting a whole
+section — prefix guards" alt-bölümü + tasarım-kararı callout'u eklendi (router-DSL katmanı bilinçli
+yok: en kısa yol, hiçbir şey gizli değil). Kod değişmedi — sadece doküman + dogfood refactor.
+
 ### BULGU #5 — Yayınlanan release asset'leri HEAD'den 30 commit geride (deployment dogfooding, VPS'e dokunmadan)
 
 **Katman:** dağıtım / release süreci / kaynak↔artefakt drift

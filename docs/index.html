@@ -1390,6 +1390,40 @@ Stack trace:
   <div class="callout info">
     <p><strong>Dispatch order:</strong> <code>before_route()</code> → route-level middleware → route handler. <code>stop()</code> breaks the chain at any point; it means the response has already been set.</p>
   </div>
+
+  <h3>Protecting a whole section — prefix guards</h3>
+  <p>A common need is "every route under <code>/admin</code> requires auth." You do <strong>not</strong>
+  repeat the check on each route, and there is no separate <code>route::group()</code> construct — a
+  single <code>before_route()</code> that matches on the request path covers the entire prefix in one
+  place:</p>
+
+  <pre><code><span class="kw">use</span> <span class="str">string</span>
+
+<span class="fn">before_route</span>(<span class="kw">function</span>() {
+    <span class="kw">if</span> (<span class="ns">string::</span><span class="fn">starts_with</span>(<span class="ns">request::</span><span class="fn">path</span>(), <span class="str">"/admin"</span>)) {
+        <span class="var">$token</span> = <span class="ns">request::</span><span class="fn">header</span>(<span class="str">"Authorization"</span>)
+        <span class="var">$payload</span> = <span class="fn">jwt_verify</span>(<span class="ns">string::</span><span class="fn">replace</span>(<span class="var">$token</span>, <span class="str">"Bearer "</span>, <span class="str">""</span>), <span class="fn">env</span>(<span class="str">"JWT_SECRET"</span>, <span class="str">""</span>))
+        <span class="kw">if</span> (<span class="var">$payload</span> == <span class="lit">null</span>) {
+            <span class="ns">response::</span><span class="fn">json</span>([<span class="str">"error"</span> => <span class="str">"forbidden"</span>], <span class="num">403</span>)
+            <span class="fn">stop</span>()
+        }
+    }
+})
+
+<span class="cm"># These need no per-route auth — the prefix guard already covers them</span>
+<span class="fn">route</span>(<span class="str">"GET"</span>,    <span class="str">"/admin/users"</span>,     <span class="kw">function</span>() { <span class="cm">/* ... */</span> })
+<span class="fn">route</span>(<span class="str">"POST"</span>,   <span class="str">"/admin/users"</span>,     <span class="kw">function</span>() { <span class="cm">/* ... */</span> })
+<span class="fn">route</span>(<span class="str">"DELETE"</span>, <span class="str">"/admin/users/{id}"</span>, <span class="kw">function</span>(<span class="var">$id</span>) { <span class="cm">/* ... */</span> })</code></pre>
+
+  <div class="callout">
+    <p><strong>Why no <code>route::group()</code>?</strong> A prefix guard already gives you the one thing
+    grouping is for — a single shared check across many routes — using tools that are already in the
+    language (<code>before_route</code>, <code>request::path()</code>, <code>stop()</code>). LOOK
+    deliberately omits a router-DSL layer (<code>group</code>/<code>prefix</code>/<code>name</code>/<code>namespace</code>):
+    it is the shortest path from request to response, with nothing hidden. Use route-level middleware
+    (the 4-argument form) when a check applies to a handful of specific routes; use a prefix guard when
+    it applies to a whole section of the URL space.</p>
+  </div>
 </section>
 
 <!-- ══════════════════════════════════════════════════════ -->
