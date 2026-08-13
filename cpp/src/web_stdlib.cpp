@@ -1001,6 +1001,24 @@ static inline std::map<std::string, std::shared_ptr<DbConnection>>& active_conns
 
 void set_db_pool_size(int n) { g_pool_size.store(n > 0 ? n : 0); }
 
+// runtime::stats için: tüm DB havuzlarının toplam bağlantı sayısı + meşgul (checked-out) sayısı.
+// busy = all - available (havuz mutex'i altında anlık). Salt-okunur gözlemlenebilirlik.
+void db_pool_stats(int& total_size, int& busy) {
+    total_size = 0; busy = 0;
+    std::vector<std::shared_ptr<ConnPool>> snap;
+    {
+        std::lock_guard<std::mutex> lk(g_pools_mtx);
+        for (auto& [key, pool] : g_pools) if (pool) snap.push_back(pool);
+    }
+    for (auto& pool : snap) {
+        std::lock_guard<std::mutex> plk(pool->mtx);
+        int sz = (int)pool->all.size();
+        int avail = (int)pool->available.size();
+        total_size += sz;
+        busy += (sz - avail);
+    }
+}
+
 // Kullanılabilir CPU — cgroup CPU limitini dikkate alır (container/systemd CPUQuota).
 // hardware_concurrency() fizikseldir; 8-core makinede 2-CPU cgroup'ta 32 worker
 // açmak yerine 8 açar (benchmark'ta bulunan optimum) → kısıtlı ortamda az RAM + doğru CPU.

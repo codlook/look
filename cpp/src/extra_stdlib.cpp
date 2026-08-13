@@ -1076,6 +1076,20 @@ static Module make_runtime_module(Interpreter* interp) {
         arr->push_back(Value(std::string("route_count")));  arr->push_back(Value(routes));
         arr->push_back(Value(std::string("working_mb")));   arr->push_back(Value(working_mb));
         arr->push_back(Value(std::string("private_mb")));   arr->push_back(Value(private_mb));
+
+        // ── Gözlemlenebilirlik sayaçları (sessiz-sorun göstergeleri) ──
+        uint64_t http_reqs = look::g_http_request_count().load(std::memory_order_relaxed);
+        uint64_t lat_sum   = look::g_latency_us_sum().load(std::memory_order_relaxed);
+        int      lat_avg   = http_reqs ? (int)(lat_sum / http_reqs) : 0;
+        int      pool_size = 0, pool_busy = 0;
+        look::db_pool_stats(pool_size, pool_busy);
+
+        arr->push_back(Value(std::string("vm_disabled_routes"))); arr->push_back(Value((int)look::g_vm_disabled_routes().load(std::memory_order_relaxed)));
+        arr->push_back(Value(std::string("errors_5xx")));      arr->push_back(Value((int)look::g_error_5xx_count().load(std::memory_order_relaxed)));
+        arr->push_back(Value(std::string("latency_last_us"))); arr->push_back(Value((int)look::g_latency_us_last().load(std::memory_order_relaxed)));
+        arr->push_back(Value(std::string("latency_avg_us")));  arr->push_back(Value(lat_avg));
+        arr->push_back(Value(std::string("db_pool_size")));    arr->push_back(Value(pool_size));
+        arr->push_back(Value(std::string("db_pool_busy")));    arr->push_back(Value(pool_busy));
         return Value(arr);
     };
 

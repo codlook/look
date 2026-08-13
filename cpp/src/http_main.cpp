@@ -1185,7 +1185,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             if (vm_failed_route >= 0 &&
                 vm_failed_route < (int)g_http_app.vm_route_disabled.size() &&
                 !std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).load(std::memory_order_relaxed)) {
-                if (!vm_strict) std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).store(1, std::memory_order_relaxed);
+                if (!vm_strict) {
+                    std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).store(1, std::memory_order_relaxed);
+                    look::g_vm_disabled_routes().fetch_add(1, std::memory_order_relaxed);  // distinct disabled-route sayısı
+                }
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                     std::string("VM BUG — route kalıcı interpreter'a düştü (YAVAŞ YOL; "
                                 "bu bir hatadır, bildirin): ") +
@@ -1329,17 +1332,22 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     } // end interpreter path
 
     auto t_dispatch_end = std::chrono::steady_clock::now();
+    auto us_dispatch = std::chrono::duration_cast<std::chrono::microseconds>(t_dispatch_end - t_dispatch_start).count();
 
-    // Süreç-global istek sayacı (runtime::stats için) — HER dispatch'te artar. Setup interpreter'ın
-    // request_count_'u web'de artmadığından (VM yolu) bu global gerçek HTTP istek sayısını taşır.
+    // Süreç-global sayaçlar (runtime::stats için, salt-okunur gözlemlenebilirlik). Setup interpreter'ın
+    // request_count_'u web'de artmaz (VM yolu) → bu global'ler gerçek HTTP durumunu taşır. Clock'lar
+    // zaten çağrıldı → latency toplama sıcak yola yeni clock EKLEMEZ (sadece relaxed atomik).
     look::g_http_request_count().fetch_add(1, std::memory_order_relaxed);
+    look::g_latency_us_sum().fetch_add((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
+    look::g_latency_us_last().store((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
+    if (web.status_code >= 500)
+        look::g_error_5xx_count().fetch_add(1, std::memory_order_relaxed);
 
     // İlk 200 istekte zamanlama logla — profiling için
     static std::atomic<int> prof_count{0};
     int n = ++prof_count;
     if (n <= 200) {
-        auto us_copy     = std::chrono::duration_cast<std::chrono::microseconds>(t_copy_end - t_copy_start).count();
-        auto us_dispatch = std::chrono::duration_cast<std::chrono::microseconds>(t_dispatch_end - t_dispatch_start).count();
+        auto us_copy = std::chrono::duration_cast<std::chrono::microseconds>(t_copy_end - t_copy_start).count();
         if (n % 50 == 0) {
             look::Logger::instance().log(look::LogLevel::LOG_INFO, "PROF",
                 "copy=" + std::to_string(us_copy) + "us dispatch=" + std::to_string(us_dispatch) + "us path=" + prof_path);

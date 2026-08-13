@@ -367,6 +367,14 @@ jobs:
           cd cpp
           bash tests/route_group_test.sh build/lk-fcgi 7715
 
+      # runtime::stats() gözlemlenebilirlik sayaçları — request_count/errors_5xx/latency/db_pool.
+      # request_count bir kez web'de 0'a kırılmıştı (setup interpreter vs VM yolu). Kendinden-ayırt-edici
+      # delta assertion'ları: sayaç no-op'a kırılırsa değer düz kalır → RED (sabote→0 delta doğrulandı).
+      - name: "runtime::stats sayaçları (sessiz-sorun göstergeleri)"
+        run: |
+          cd cpp
+          bash tests/runtime_stats_test.sh build/lk-fcgi 7778
+
       # lk fmt — kaynak biçimlendirici (gofmt modeli). Girinti/boşluk kanonikleştirir; token
       # dizisi değişirse İPTAL eder (anlam-koruma). Guard: idempotency + anlam-koruma + --check
       # exit kodları + yorum/çok-satırlı-string koruma. Pozitif-kontrollü (string-içi bozulursa RED).

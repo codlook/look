@@ -1898,10 +1898,16 @@ LOG_DIR=C:/xampp/htdocs/logs</code></pre>
   <table>
     <tr><th>Field</th><th>Type</th><th>Description</th></tr>
     <tr><td><code>uptime_sec</code></td><td>int</td><td>Seconds elapsed since process start</td></tr>
-    <tr><td><code>request_count</code></td><td>int</td><td>Total requests handled by this process</td></tr>
+    <tr><td><code>request_count</code></td><td>int</td><td>Total requests handled by this process (all dispatch paths)</td></tr>
     <tr><td><code>route_count</code></td><td>int</td><td>Number of registered routes</td></tr>
-    <tr><td><code>working_mb</code></td><td>float</td><td>Working Set memory usage (MB)</td></tr>
-    <tr><td><code>private_mb</code></td><td>float</td><td>Private memory usage (MB)</td></tr>
+    <tr><td><code>working_mb</code></td><td>float</td><td>Resident set size — RSS (MB)</td></tr>
+    <tr><td><code>private_mb</code></td><td>float</td><td>Private resident memory — RssAnon on Linux, PrivateUsage on Windows (MB)</td></tr>
+    <tr><td><code>vm_disabled_routes</code></td><td>int</td><td>Distinct routes that permanently fell back from the VM to the interpreter (not total fallbacks — one per route). <strong>&gt; 0 means a VM bug degraded those routes (~37% slower); investigate.</strong></td></tr>
+    <tr><td><code>errors_5xx</code></td><td>int</td><td>Count of 5xx responses served (silent server errors)</td></tr>
+    <tr><td><code>latency_last_us</code></td><td>int</td><td>Dispatch time of the most recent request (microseconds)</td></tr>
+    <tr><td><code>latency_avg_us</code></td><td>int</td><td>Average dispatch time across all requests (microseconds). Percentiles (p50/p99) are intentionally not here — compute them in a package by polling, so the hot path stays free of per-request histograms.</td></tr>
+    <tr><td><code>db_pool_size</code></td><td>int</td><td>Total DB connections across all pools</td></tr>
+    <tr><td><code>db_pool_busy</code></td><td>int</td><td>Checked-out (in-use) DB connections. When <code>busy</code> reaches <code>size</code>, further requests wait for a connection.</td></tr>
   </table>
 
   <pre><code><span class="cm"># /monitor endpoint — protect with auth in production</span>

@@ -1,0 +1,8 @@
+# runtime::stats() gözlemlenebilirlik sayaçları — CI guard app. Deterministik.
+use runtime
+$c = db::connect(env("DB_DSN", "sqlite://./_rstats.db"))
+db::exec($c, "CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)", [])
+route("GET", "/stats", function() { response::json(runtime::stats()) })
+route("GET", "/ping",  function() { response::json(["ok" => true]) })
+route("GET", "/boom",  function() { response::error(500, "hata") })
+route("GET", "/db",    function() use ($c) { response::json(["n" => db::col($c, "SELECT COUNT(*) FROM t", [])]) })
