@@ -55,6 +55,17 @@ route("POST", "/login", function() {
     response::json(["token" => $token])
 })
 
+# Route group — shared prefix + middleware, written once (nestable)
+$auth = function() {
+    if (request::header("X-Api-Key") != env("API_KEY")) {
+        response::json(["error" => "forbidden"], 403); stop()
+    }
+}
+route::group("/admin", [$auth], function() {
+    route("GET",    "/users", function() { /* -> /admin/users, $auth inherited */ })
+    route("DELETE", "/users/{id}", function($id) { /* -> /admin/users/{id} */ })
+})
+
 route("404", fn() => response::error(404, "Not found"))
 ```
 
@@ -161,6 +172,7 @@ Three things worth knowing:
 | Feature | |
 |---|---|
 | Routing — GET/POST/PUT/DELETE, path params, `404`, WebSocket, SSE | ✅ |
+| Middleware — global `before_route()`, per-route chains, `route::group()` (prefix + shared middleware, nestable) | ✅ |
 | Databases — MySQL/MariaDB, PostgreSQL (wire protocol), SQLite | ✅ |
 | Sessions (file or Redis/RESP2), cookies, JWT, validation, templates | ✅ |
 | Concurrency — `parallel()` + channels; FastCGI multi-worker | ✅ |
