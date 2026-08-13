@@ -1,0 +1,20 @@
+# route::group() guard app — prefix + middleware kalıtımı + nesting. Deterministik (header-token).
+# Kendinden-ayırt-edici: prefix kırılırsa /solo bare-path'te açılır; mw kırılırsa no-token 200 döner.
+use string
+
+$auth = function() {
+    if (request::header("X-Token") != "sekret") {
+        response::json(["error" => "forbidden"], 403)
+        stop()
+    }
+}
+
+route::group("/admin", [$auth], function() {
+    route("GET", "/users", function() { response::json(["zone" => "admin-users"]) })
+    route("GET", "/solo",  function() { response::json(["zone" => "admin-solo"]) })
+    route::group("/deep", function() {
+        route("GET", "/x", function() { response::json(["zone" => "admin-deep-x"]) })
+    })
+})
+
+route("GET", "/public", function() { response::json(["zone" => "public"]) })

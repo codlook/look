@@ -7,6 +7,7 @@
 // Aynı .lk kodu her iki modda çalışır.
 
 #include "look/builtins.h"
+#include "look/route_group.h"
 #include "look/array_count.h"
 #include "look/http_server.h"
 #include <algorithm>
@@ -448,6 +449,27 @@ static void run_setup_http(const fs::path& script) {
                 return look::Value();
             };
 
+            // route::group(prefix, [mw], fn) — grup context'ini it, closure'ı çağır (invoke aktif
+            // setup VM'e köprüler), çıkar. İçindeki route() çağrıları prefix+mw miras alır.
+            setup_builtins[(size_t)look::builtin_index("route::group")] =
+                [](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() < 2) return look::Value();
+                std::string prefix = args[0].to_string();
+                std::vector<look::Value> gmws;
+                look::Value cb;
+                if (args.size() >= 3) {
+                    if (args[1].type() == look::Value::ARRAY) gmws = *args[1].as_array();
+                    cb = args[2];
+                } else {
+                    cb = args[1];
+                }
+                look::route_group_push(prefix, std::move(gmws));
+                try { g_http_app.interp->invoke(cb, {}); }
+                catch (...) { look::route_group_pop(); throw; }
+                look::route_group_pop();
+                return look::Value();
+            };
+
             // db::connect (setup'ta çağrılır) — interpreter fallback ile
             // NOT: db:: fonksiyonları setup'ta interpreter tarafından çalıştırıldı.
             // VM setup fazında db:: yok — sadece route() kayıt önemli.
@@ -460,19 +482,23 @@ static void run_setup_http(const fs::path& script) {
                 if (args.size() >= 4) {
                     // 4-arg: method, pattern, middlewares, fn
                     std::string method  = args[0].to_string();
-                    std::string pattern = args[1].to_string();
-                    std::vector<look::Value> middlewares;
-                    if (args[2].type() == look::Value::ARRAY)
-                        middlewares = *args[2].as_array();
+                    std::string pattern = look::route_group_prefix() + args[1].to_string();
+                    // grup middleware'leri (dış→iç) ÖNE, sonra route'un kendi mw'leri
+                    std::vector<look::Value> middlewares = look::route_group_middlewares();
+                    if (args[2].type() == look::Value::ARRAY) {
+                        auto& own = *args[2].as_array();
+                        middlewares.insert(middlewares.end(), own.begin(), own.end());
+                    }
                     if (args[3].type() == look::Value::BYTECODE_FN) {
                         vm_routes_ptr->push_back({method + ":" + pattern, args[3], std::move(middlewares)});
                     }
                 } else if (args.size() >= 3) {
                     // 3-arg: method, pattern, fn
                     std::string method  = args[0].to_string();
-                    std::string pattern = args[1].to_string();
+                    std::string pattern = look::route_group_prefix() + args[1].to_string();
+                    std::vector<look::Value> middlewares = look::route_group_middlewares();
                     if (args[2].type() == look::Value::BYTECODE_FN) {
-                        vm_routes_ptr->push_back({method + ":" + pattern, args[2], {}});
+                        vm_routes_ptr->push_back({method + ":" + pattern, args[2], std::move(middlewares)});
                     }
                 } else if (args.size() >= 2) {
                     // 2-arg: "404" + fn

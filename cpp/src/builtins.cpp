@@ -181,6 +181,9 @@ const std::vector<std::string>& builtin_names() {
         // name→index dinamik, konum önemsiz; bytecode diske yazılmadığından (bkz. yukarı)
         // araya da eklenebilirdi — sona eklemek yalnızca diff temizliği için.
         "session::has",
+        // route::group — setup-zamanı prefix+middleware kalıtımı (Go/chi tarzı). Closure alır,
+        // içindeki route() çağrıları grup prefix'ini/mw'lerini miras alır. Bkz. route_group.h.
+        "route::group",
     };
     return NAMES;
 }

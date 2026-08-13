@@ -2,6 +2,7 @@
 #include "look/int_overflow.h"
 #include "look/array_count.h"
 #include "look/builtins.h"
+#include "look/route_group.h"
 #include "look/stdlib.h"
 #include "look/web.h"
 #include "look/parallel_runtime.h"
@@ -1655,6 +1656,29 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 return Value(); // unreachable
             }
 
+            // ── route::group(prefix, [mw], fn) — Go/chi tarzı prefix+middleware kalıtımı ──
+            // invoke() erişimi gerektiği için burada (jobs::run gibi), generic dispatch'ten önce.
+            // Closure'ı çağırır; içindeki route() çağrıları grup prefix'ini/mw'lerini miras alır.
+            if (sr->module_name == "route" && sr->member_name == "group") {
+                if (e->arguments.size() < 2)
+                    throw std::runtime_error("route::group() requires prefix and callback");
+                std::string prefix = evaluate_expression(*e->arguments[0]).to_string();
+                std::vector<Value> gmws;
+                Value cb;
+                if (e->arguments.size() >= 3) {
+                    Value mw_arg = evaluate_expression(*e->arguments[1]);
+                    if (mw_arg.type() == Value::ARRAY) gmws = *mw_arg.as_array();
+                    cb = evaluate_expression(*e->arguments[2]);
+                } else {
+                    cb = evaluate_expression(*e->arguments[1]);
+                }
+                route_group_push(prefix, std::move(gmws));
+                try { invoke(cb, {}); }
+                catch (...) { route_group_pop(); throw; }
+                route_group_pop();
+                return Value();
+            }
+
             auto mod_it = modules_.find(sr->module_name);
             if (mod_it == modules_.end())
                 throw std::runtime_error("Module '" + sr->module_name + "' not loaded.");
@@ -1962,6 +1986,17 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 callback = evaluate_expression(*e->arguments[3]);
             } else {
                 callback = evaluate_expression(*e->arguments[2]);
+            }
+
+            // route::group() aktifse: prefix'i başa ekle, grup middleware'lerini route'unkilerin
+            // ÖNÜNE koy (dış→iç sırayla, sonra route'un kendi mw'leri). Bkz. route_group.h.
+            if (route_group_active()) {
+                pattern = route_group_prefix() + pattern;
+                auto gmw = route_group_middlewares();
+                if (!gmw.empty()) {
+                    gmw.insert(gmw.end(), route_middlewares.begin(), route_middlewares.end());
+                    route_middlewares = std::move(gmw);
+                }
             }
 
             if (setup_mode_) {

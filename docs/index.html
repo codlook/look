@@ -1415,14 +1415,42 @@ Stack trace:
 <span class="fn">route</span>(<span class="str">"POST"</span>,   <span class="str">"/admin/users"</span>,     <span class="kw">function</span>() { <span class="cm">/* ... */</span> })
 <span class="fn">route</span>(<span class="str">"DELETE"</span>, <span class="str">"/admin/users/{id}"</span>, <span class="kw">function</span>(<span class="var">$id</span>) { <span class="cm">/* ... */</span> })</code></pre>
 
+  <h3>Route groups — <code>route::group()</code></h3>
+  <p><code>route::group(prefix, [middlewares], fn)</code> registers a set of routes under a shared path
+  prefix, with shared middleware. Every <code>route()</code> call inside the callback inherits the
+  prefix and the group's middleware chain — you write the shared part once. Groups nest (prefixes
+  concatenate, middleware accumulates outer-to-inner):</p>
+
+  <pre><code><span class="var">$auth</span> = <span class="kw">function</span>() {
+    <span class="kw">if</span> (<span class="fn">jwt_verify</span>(<span class="ns">request::</span><span class="fn">header</span>(<span class="str">"Authorization"</span>), <span class="fn">env</span>(<span class="str">"JWT_SECRET"</span>, <span class="str">""</span>)) == <span class="lit">null</span>) {
+        <span class="ns">response::</span><span class="fn">json</span>([<span class="str">"error"</span> => <span class="str">"forbidden"</span>], <span class="num">403</span>)
+        <span class="fn">stop</span>()
+    }
+}
+
+<span class="ns">route::</span><span class="fn">group</span>(<span class="str">"/admin"</span>, [<span class="var">$auth</span>], <span class="kw">function</span>() {
+    <span class="fn">route</span>(<span class="str">"GET"</span>,  <span class="str">"/users"</span>, <span class="kw">function</span>() { <span class="cm">/* → /admin/users, $auth inherited */</span> })
+    <span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/users"</span>, <span class="kw">function</span>() { <span class="cm">/* → /admin/users */</span> })
+
+    <span class="ns">route::</span><span class="fn">group</span>(<span class="str">"/reports"</span>, <span class="kw">function</span>() {         <span class="cm"># nested — prefix stacks</span>
+        <span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/daily"</span>, <span class="kw">function</span>() { <span class="cm">/* → /admin/reports/daily, still $auth */</span> })
+    })
+})
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/public"</span>, <span class="kw">function</span>() { <span class="cm"># outside the group — no prefix, no $auth</span> })</code></pre>
+
   <div class="callout">
-    <p><strong>Why no <code>route::group()</code>?</strong> A prefix guard already gives you the one thing
-    grouping is for — a single shared check across many routes — using tools that are already in the
-    language (<code>before_route</code>, <code>request::path()</code>, <code>stop()</code>). LOOK
-    deliberately omits a router-DSL layer (<code>group</code>/<code>prefix</code>/<code>name</code>/<code>namespace</code>):
-    it is the shortest path from request to response, with nothing hidden. Use route-level middleware
-    (the 4-argument form) when a check applies to a handful of specific routes; use a prefix guard when
-    it applies to a whole section of the URL space.</p>
+    <p><strong>Deliberately minimal.</strong> <code>route::group()</code> does exactly two things —
+    <strong>prefix</strong> and <strong>middleware inheritance</strong> — and nothing else. There is no
+    <code>name</code>, <code>namespace</code>, <code>domain</code>, or route-naming layer: LOOK is the
+    shortest path from request to response, with nothing hidden, and a full router-DSL is the kind of
+    hidden machinery it avoids. The middleware you pass is an ordinary function chain (same as the
+    4-argument <code>route()</code> form), and the group is resolved once at startup — it adds no
+    per-request cost.</p>
+    <p><strong>Group vs. prefix guard.</strong> Use <code>route::group()</code> when you want the routes
+    themselves organised under a prefix with shared middleware. Use a <code>before_route()</code> prefix
+    guard (above) when the shared logic is broader than a middleware chain, or when you want one check
+    to cover routes that are registered in several places.</p>
   </div>
 </section>
 

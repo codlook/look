@@ -101,6 +101,7 @@ set(LOOK_CORE
     src/lexer.cpp
     src/parser.cpp
     src/format_src.cpp   # lk fmt — kaynak biçimlendirici (lexer'a bağlı)
+    src/route_group.cpp  # route::group() setup-zamanı prefix+mw kalıtımı context'i
     src/interpreter.cpp
     src/builtins.cpp   # interpreter.cpp is_reserved_builtin() çağırır → HER target'a lazım
                        # (look-cgi LOOK_CORE kullanıp builtins'i ayrıca eklemiyordu → link fail,

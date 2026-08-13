@@ -359,6 +359,14 @@ jobs:
           cd cpp
           bash tests/middleware_guard_test.sh build/lk-fcgi 7795
 
+      # route::group() — Go/chi tarzı prefix + middleware kalıtımı (name/namespace YOK, bilinçli
+      # minimal). İki motorda parity, lk-fcgi --mode http'ye karşı. Kendinden-ayırt-edici: prefix
+      # kırılırsa bare /solo açılır (404 değil 200), mw kırılırsa no-token 200 döner → test RED.
+      - name: "route::group prefix + middleware kalıtımı (VM+interp parity)"
+        run: |
+          cd cpp
+          bash tests/route_group_test.sh build/lk-fcgi 7715
+
       # lk fmt — kaynak biçimlendirici (gofmt modeli). Girinti/boşluk kanonikleştirir; token
       # dizisi değişirse İPTAL eder (anlam-koruma). Guard: idempotency + anlam-koruma + --check
       # exit kodları + yorum/çok-satırlı-string koruma. Pozitif-kontrollü (string-içi bozulursa RED).
