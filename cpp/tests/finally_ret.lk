@@ -53,3 +53,8 @@ while ($j < 3) {
 # 8. uncaught throw (catch yok) → finally çalışır, sonra propagate
 function unc() { try { throw "boom" } finally { print("U-FIN") } }
 try { unc() } catch($e) { print("U-CATCH:" . $e) }
+
+# 9. finally İÇİNDE throw → orijinal exception'ı DEĞİŞTİRİR (Java/JS semantiği)
+function fit() { try { throw "ORIG" } finally { throw "FINT" } }
+try { fit() } catch($e) { print("FIT:" . $e) }
+

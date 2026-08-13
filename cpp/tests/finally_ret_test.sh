@@ -32,6 +32,7 @@ chk "B-FIN 1"       # break-out-of-try finally çalıştı
 chk "K-FIN 2"       # continue-out-of-try finally çalıştı
 chk "U-FIN"         # uncaught-throw finally çalıştı
 chk "U-CATCH:boom"  # bug #2 fix: finally-catch'siz throw PROPAGATE eder (yutulmaz) → dışta yakalanır
+chk "FIT:FINT"      # finally İÇİNDE throw → orijinali (ORIG) değiştirir (FINT dışta yakalanır)
 
 # 3. finally BİR kez (çift-çalışma yok) — normal yolda NORMAL-FIN tam 1 kere
 n=$(echo "$vm" | grep -cF "NORMAL-FIN")
