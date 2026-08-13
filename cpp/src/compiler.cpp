@@ -732,16 +732,29 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
         pop_scope();
     }
 
-    int after_catch = current_ip();
-    patch_jump(jump_end, after_catch);
-
-    // return-yolu için "bekleyen" durumdan çıkar (normal yol inline finally kullanır).
+    // return-yolu "bekleyen" finally'yi burada bırak — try+catch derlendi (return-in-catch onu
+    // kullandı). Bundan SONRAki finally emission'ları return için değil, normal/throw yol içindir.
     if (s.finally_block && !pending_finally_.empty() && pending_finally_.back() == s.finally_block.get())
         pending_finally_.pop_back();
 
-    // finally — NORMAL yol (return yok): her iki daldan sonra inline çalışır.
-    if (s.finally_block) {
-        compile_block(*s.finally_block);
+    if (s.catch_block) {
+        // catch YAKALADI → normal akış: finally (paylaşımlı) çalışır, re-raise YOK.
+        int after_catch = current_ip();
+        patch_jump(jump_end, after_catch);
+        if (s.finally_block) compile_block(*s.finally_block);
+    } else {
+        // BUG #2 FIX: catch YOK. Eskiden throw catch_ip'e atlayıp inline finally'yi çalıştırıp
+        // devam ediyordu → exception SESSİZCE YUTULUYORDU. Şimdi: throw-yolu (catch_ip'te)
+        // exception'ı LOAD_EXC ile yakalar, finally çalıştırır, THROW ile YENİDEN fırlatır
+        // (dıştaki try'a/C++'a propagate). Normal-yol AYRI finally kopyası çalıştırıp devam eder.
+        uint8_t exc = alloc_temp();
+        emit(OpCode::LOAD_EXC, exc);                        // orijinal exception (finally'den önce)
+        if (s.finally_block) compile_block(*s.finally_block);  // throw-yolu finally
+        emit(OpCode::THROW, exc);                           // re-raise
+        free_temp(exc);
+        int after = current_ip();
+        patch_jump(jump_end, after);                        // normal-yol buraya iner
+        if (s.finally_block) compile_block(*s.finally_block);  // normal-yol finally (ayrı kopya)
     }
 }
 

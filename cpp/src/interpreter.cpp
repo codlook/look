@@ -946,6 +946,10 @@ void Interpreter::execute_statement(const Statement& stmt) {
                     current_->define(s->catch_var, std::move(evar));
                 }
                 run_catch();   // control-flow escape → finally, sonra propagate
+            } else {
+                // BUG #2 FIX: catch YOK → finally çalıştır + exception'ı PROPAGATE et (yutMA).
+                // Eskiden sessizce yutuluyordu → program hatalı durumda devam ediyordu.
+                fin(); throw;
             }
         } catch (const std::exception& e) {
             caught = true;
@@ -953,6 +957,8 @@ void Interpreter::execute_statement(const Statement& stmt) {
                 if (!s->catch_var.empty())
                     current_->define(s->catch_var, Value(std::string(e.what())));
                 run_catch();
+            } else {
+                fin(); throw;
             }
         }
         if (s->finally_block) execute_block(*s->finally_block, current_);
