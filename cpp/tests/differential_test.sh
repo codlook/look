@@ -378,8 +378,12 @@ kill $CKPID 2>/dev/null; wait $CKPID 2>/dev/null
 # DIKKAT: kelimeyi basligin tamaminda ARAMA — kodlanmis deger "HttpOnly" metnini
 # duz metin olarak icerir (x%3B%20HttpOnly%3B%20...) ve bu GUVENLIDIR. Enjeksiyon
 # ancak GERCEK ';' ayraciyla olur, o yuzden OZNITELIK BICIMI aranir.
+# NOT (2026-08 flip): cookie::set artik VARSAYILAN "; HttpOnly; SameSite=Lax" ekliyor →
+# "; HttpOnly" kanaryasi mesru-defaultla cakisir, kullanilamaz. Domain ENJEKSIYON kanaryasi
+# (asagida) kalir (Domain default DEGIL → varligi = enjeksiyon). HttpOnly icin: degerin
+# GERCEKTEN encode edildigini POZITIF dogrula (deger icindeki ';' %3B olmali).
 echo "$ck_hdr" | grep -qi "; *Domain=" && { echo "FAIL: GUVENLIK — cookie::set OZNITELIK ENJEKTE EDILEBILIYOR: [$ck_hdr]"; fail=1; }
-echo "$ck_hdr" | grep -qi "; *HttpOnly" && { echo "FAIL: GUVENLIK — cookie degeri ';' ile oznitelik ekleyebiliyor: [$ck_hdr]"; fail=1; }
+echo "$ck_hdr" | grep -qi "tercih=x%3b" || { echo "FAIL: GUVENLIK — cookie deger ';' ENCODE EDILMEDI (enjeksiyon acik): [$ck_hdr]"; fail=1; }
 [ "$ck_rt" = '"a;b"' ] || { echo "FAIL: cookie gidis-donus bozuk: [$ck_rt] (beklenen \"a;b\" — kodlama var ama cozme yok olabilir)"; fail=1; }
 
 
