@@ -42,5 +42,15 @@ chkge "db_pool_size > 0"     "$psize" "1"
 # vm_disabled_routes 0 olmalı (bozuk route yok) — VM sağlık kanaryası
 chk   "vm_disabled_routes (VM sağlıklı)" "$(field vm_disabled_routes)" "0"
 
-[ $fail = 0 ] && echo "PASS: runtime::stats sayaçları (request_count/errors/latency/db_pool)" || echo "FAIL: runtime::stats"
+# ── ALAN SÖZLEŞMESİ: monitor paketi (look-packages/monitor, AYRI repo) bu alan adlarına bağlı.
+# Biri yeniden adlandırılırsa (bugün vm_fallbacks→vm_disabled_routes yapıldığı gibi) paket sessizce
+# BOŞ metrik verir — eksik metrik yanlış metrikten sinsi (Grafana grafiği boş, kimse fark etmez).
+# Bu döngü sözleşmeyi ana repo CI'sında kilitler: core rename → burada RED (paket kırılmadan yakalanır).
+for f in uptime_sec request_count route_count working_mb private_mb \
+         vm_disabled_routes errors_5xx latency_last_us latency_avg_us db_pool_size db_pool_busy; do
+  if [ -n "$(field "$f")" ]; then echo "  OK   sözleşme: $f"; else
+    echo "  FAIL sözleşme: '$f' alanı YOK — monitor paketi bu ada bağlı, sessizce kırılır"; fail=1; fi
+done
+
+[ $fail = 0 ] && echo "PASS: runtime::stats sayaçları + monitor alan sözleşmesi" || echo "FAIL: runtime::stats"
 exit $fail
