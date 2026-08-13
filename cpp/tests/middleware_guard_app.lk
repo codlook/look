@@ -1,0 +1,17 @@
+# before_route prefix guard'ı — CI kilidi. /admin/* X-Token ister; /public serbest.
+# Deterministik (header-tabanlı, cookie/db yok). Kırılırsa /admin auth'suz açılır = sessiz
+# yetki atlatması → middleware_guard_test.sh RED verir.
+use string
+
+before_route(function() {
+    if (string::starts_with(request::path(), "/admin")) {
+        if (request::header("X-Token") != "sekret") {
+            response::json(["error" => "forbidden"], 403)
+            stop()
+        }
+    }
+})
+
+route("GET", "/public/hello",  function() { response::json(["zone" => "public"]) })
+route("GET", "/admin/secret",  function() { response::json(["zone" => "admin"]) })
+route("GET", "/admin/deep/x",  function() { response::json(["zone" => "admin-nested"]) })

@@ -350,6 +350,15 @@ jobs:
           cd cpp
           bash tests/cookie_flags_test.sh build/lk-fcgi 7793
 
+      # before_route prefix guard — GÜVENLİK-KRİTİK. Dogfood'un kimlik doğrulaması artık tek
+      # before_route + request::path() prefix'i (9 elle require_login → 1). Kırılırsa /admin (dogfood'da
+      # /tasks) auth'suz açılır = sessiz yetki atlatması. lk-fcgi --mode http'ye karşı 403/200 + nested
+      # doğrular. POZİTİF-KONTROLLÜ: guard'sız varyant /admin=200 (test discriminador — sabote→RED).
+      - name: before_route prefix guard (yetki atlatma regresyonu)
+        run: |
+          cd cpp
+          bash tests/middleware_guard_test.sh build/lk-fcgi 7795
+
       # lk fmt — kaynak biçimlendirici (gofmt modeli). Girinti/boşluk kanonikleştirir; token
       # dizisi değişirse İPTAL eder (anlam-koruma). Guard: idempotency + anlam-koruma + --check
       # exit kodları + yorum/çok-satırlı-string koruma. Pozitif-kontrollü (string-içi bozulursa RED).
