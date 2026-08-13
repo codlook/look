@@ -1,5 +1,6 @@
 #include "look/lexer.h"
 #include "look/parser.h"
+#include "look/format_src.h"   // lk fmt
 #include "look/interpreter.h"
 #include "look/array_count.h"
 #include "look/http_client.h"
@@ -313,6 +314,19 @@ int main(int argc, char* argv[]) {
                 else if (pattern.empty()) pattern = arg;
             }
             return look::run_test_mode(pattern, verbose);
+        }
+
+        // ── lk fmt <file...> [--check] : kaynağı kanonik biçime getir (gofmt modeli) ──
+        // --check → CI modu: biçimsiz dosya varsa exit 1, yazMAZ. Dosyasız → stdin/stdout.
+        if (cmd == "fmt") {
+            bool fmt_check = false;
+            std::vector<std::string> files;
+            for (int i = 2; i < argc; ++i) {
+                std::string arg = argv[i];
+                if (arg == "--check") fmt_check = true;
+                else files.push_back(arg);
+            }
+            return look::run_fmt(files, fmt_check);
         }
 
         // ── lk module <sub> ──────────────────────────────────────────────────

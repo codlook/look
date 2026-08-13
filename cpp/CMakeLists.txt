@@ -100,6 +100,7 @@ set(LOOK_CORE
     src/token.cpp
     src/lexer.cpp
     src/parser.cpp
+    src/format_src.cpp   # lk fmt — kaynak biçimlendirici (lexer'a bağlı)
     src/interpreter.cpp
     src/builtins.cpp   # interpreter.cpp is_reserved_builtin() çağırır → HER target'a lazım
                        # (look-cgi LOOK_CORE kullanıp builtins'i ayrıca eklemiyordu → link fail,

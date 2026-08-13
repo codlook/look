@@ -349,6 +349,14 @@ jobs:
           cd cpp
           bash tests/cookie_flags_test.sh build/lk-fcgi 7793
 
+      # lk fmt — kaynak biçimlendirici (gofmt modeli). Girinti/boşluk kanonikleştirir; token
+      # dizisi değişirse İPTAL eder (anlam-koruma). Guard: idempotency + anlam-koruma + --check
+      # exit kodları + yorum/çok-satırlı-string koruma. Pozitif-kontrollü (string-içi bozulursa RED).
+      - name: lk fmt (idempotent + anlam-koruma + yorum/string)
+        run: |
+          cd cpp
+          bash tests/fmt_test.sh build/lk
+
   # ── Canlı DB job'u: gerçek MySQL 8 + PostgreSQL 16 servis-container'ları ──────────
   # caching_sha2_password (MySQL 8 VARSAYILAN auth) + native prepared-bind (MySQL
   # COM_STMT_EXECUTE + PG extended-query) — üç KISMİ item'ın "canlı-DSN/nightly" boşluğu.
