@@ -966,6 +966,18 @@ tr:hover td{background:var(--bg3)}
     <p><strong>catch variable:</strong> use <code>catch ($e)</code> to capture the error message as a string.</p>
   </div>
 
+  <div class="callout">
+    <p><strong><code>finally</code> is guaranteed on every exit.</strong> It runs on normal completion,
+    <code>return</code>, <code>break</code>, <code>continue</code>, and a thrown exception — caught or
+    not. An <em>uncaught</em> exception runs <code>finally</code> and then keeps propagating (it is not
+    swallowed). This makes <code>try/finally</code> the tool for guaranteed cleanup — closing a
+    connection, releasing a lock, restoring state.</p>
+    <p><strong>There is no <code>defer</code> — <code>try/finally</code> covers guaranteed cleanup.</strong>
+    LOOK deliberately omits Go's <code>defer</code>: <code>finally</code> already guarantees a block runs
+    on every exit path, so a second cleanup mechanism would be redundant. (Same reasoning as
+    <a href="#const-iota">no <code>enum</code> keyword — <code>const</code> + <code>iota</code> is enough</a>.)</p>
+  </div>
+
   <h3>Standard Pattern — db_check()</h3>
   <pre><code><span class="var">$conn</span> = <span class="lit">null</span>
 <span class="kw">try</span> {
