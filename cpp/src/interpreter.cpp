@@ -907,6 +907,17 @@ void Interpreter::execute_statement(const Statement& stmt) {
     }
     if (auto* s = dynamic_cast<const TryCatchStatement*>(&stmt)) {
         bool caught = false;
+        // catch bloğunu control-flow (return/break/continue/exit) ile terk edince de
+        // finally çalışmalı — yoksa `catch { return X }` finally'yi atlar (VM fix'iyle parity).
+        auto fin = [&]{ if (s->finally_block) execute_block(*s->finally_block, current_); };
+        auto run_catch = [&]{
+            try { execute_block(*s->catch_block, current_); }
+            catch (const ReturnException&)      { fin(); throw; }
+            catch (const BreakException&)       { fin(); throw; }
+            catch (const ContinueException&)    { fin(); throw; }
+            catch (const ExitException&)        { fin(); throw; }
+            catch (const RouteMatchedException&){ fin(); throw; }
+        };
         try {
             execute_block(*s->try_block, current_);
         } catch (const ReturnException&) {
@@ -934,14 +945,14 @@ void Interpreter::execute_statement(const Statement& stmt) {
                     Value evar = e.has_value ? e.value : Value(std::string(e.message));
                     current_->define(s->catch_var, std::move(evar));
                 }
-                execute_block(*s->catch_block, current_);
+                run_catch();   // control-flow escape → finally, sonra propagate
             }
         } catch (const std::exception& e) {
             caught = true;
             if (s->catch_block) {
                 if (!s->catch_var.empty())
                     current_->define(s->catch_var, Value(std::string(e.what())));
-                execute_block(*s->catch_block, current_);
+                run_catch();
             }
         }
         if (s->finally_block) execute_block(*s->finally_block, current_);

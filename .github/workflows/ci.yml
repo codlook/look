@@ -133,6 +133,7 @@ jobs:
           bash tests/closure_semantics_test.sh build/lk
           bash tests/vm_recursion_test.sh build/lk
           bash tests/parallel_db_test.sh build/lk-fcgi
+          bash tests/finally_ret_test.sh build/lk   # finally return/break/continue (VM+interp parity)
 
       # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
       # slowloris header-deadline. Testler vardı, CI'da değildi.

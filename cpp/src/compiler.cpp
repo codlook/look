@@ -353,6 +353,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         // break en yakın breakable bağlama gider — switch veya döngü.
         if (loop_stack_.empty())
             throw LookCompileError("break döngü/switch dışında");
+        // döngü-içi try-finally'leri çalıştır (loop'un floor'una kadar), SONRA sıçra.
+        emit_pending_finallys(loop_stack_.back().finally_floor);
         int p = emit_jump(OpCode::JUMP);
         loop_stack_.back().break_patches.push_back(p);
     }
@@ -363,6 +365,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             if (!loop_stack_[i].is_switch) { idx = i; break; }
         if (idx < 0)
             throw LookCompileError("continue döngü dışında");
+        // hedef döngünün floor'una kadarki finally'leri çalıştır, SONRA sıçra.
+        emit_pending_finallys(loop_stack_[idx].finally_floor);
         int target = loop_stack_[idx].continue_target;
         if (target >= 0) {
             // Hedef biliniyor (while/foreach)
@@ -474,12 +478,28 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
 
 // ── compile_return ────────────────────────────────────────────────────────────
 
+// try/catch içindeki return, RETURN'den ÖNCE bekleyen finally'leri içten-dışa çalıştırmalı.
+// pending_finally_ geçici temizlenir ki finally-içi return kendini tekrar tetiklemesin.
+void FunctionCompiler::emit_pending_finallys(size_t floor) {
+    if (pending_finally_.size() <= floor) return;
+    // [floor..end) suffix'ini içten-dışa çalıştır; geçici çıkar ki finally-içi return/break
+    // kendini tekrar tetiklemesin, sonra geri koy.
+    std::vector<const BlockStatement*> suffix(pending_finally_.begin() + (long)floor, pending_finally_.end());
+    pending_finally_.resize(floor);
+    for (auto it = suffix.rbegin(); it != suffix.rend(); ++it)
+        if (*it) compile_block(**it);
+    pending_finally_.insert(pending_finally_.end(), suffix.begin(), suffix.end());
+}
+
 void FunctionCompiler::compile_return(const ReturnStatement& s) {
     if (!s.expression) {
+        emit_pending_finallys();
         emit(OpCode::RETURN_NULL);
         return;
     }
     uint8_t r = compile_expr(*s.expression);
+    // r TAHSİSLİ kalır → emit_pending_finallys'ın temp'leri onu ezmez (temp'ler üstte).
+    emit_pending_finallys();
     emit(OpCode::RETURN, r);
     free_temp(r);
 }
@@ -512,7 +532,7 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
     int exit_jump = emit_jump(OpCode::JUMP_IF_FALSE, cond);
     free_temp(cond);
 
-    loop_stack_.push_back({.continue_target = loop_start});
+    loop_stack_.push_back({.continue_target = loop_start, .finally_floor = pending_finally_.size()});
     ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
     --loop_depth_;
@@ -543,7 +563,7 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
         free_temp(cond);
     }
 
-    loop_stack_.push_back({.continue_target = -1}); // continue hedefi post sonrası
+    loop_stack_.push_back({.continue_target = -1, .finally_floor = pending_finally_.size()}); // continue hedefi post sonrası
     ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
     --loop_depth_;
@@ -611,7 +631,7 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     if (val_boxed) { emit(OpCode::NEW_ARRAY, val_cell, 1); emit(OpCode::ARRAY_PUSH, val_cell, r_val); }
     if (key_boxed) { emit(OpCode::NEW_ARRAY, key_cell, 1); emit(OpCode::ARRAY_PUSH, key_cell, r_key); }
 
-    loop_stack_.push_back({.continue_target = loop_start});
+    loop_stack_.push_back({.continue_target = loop_start, .finally_floor = pending_finally_.size()});
     ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
     --loop_depth_;
@@ -671,6 +691,10 @@ void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expres
 }
 
 void FunctionCompiler::compile_try(const TryCatchStatement& s) {
+    // finally'yi return-yolu için "bekleyen" yap: try+catch içindeki return önce onu çalıştırır.
+    // Normal yol için ayrıca inline emit edilir (aşağıda). Yalnız try+catch derlenirken aktif.
+    if (s.finally_block) pending_finally_.push_back(s.finally_block.get());
+
     // TRY_PUSH: catch IP'si sonradan patch edilecek (b,c = catch_ip)
     int try_push_ip = emit(OpCode::TRY_PUSH, 0, 0, 0);
 
@@ -711,7 +735,11 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
     int after_catch = current_ip();
     patch_jump(jump_end, after_catch);
 
-    // finally — her iki daldan sonra çalışır
+    // return-yolu için "bekleyen" durumdan çıkar (normal yol inline finally kullanır).
+    if (s.finally_block && !pending_finally_.empty() && pending_finally_.back() == s.finally_block.get())
+        pending_finally_.pop_back();
+
+    // finally — NORMAL yol (return yok): her iki daldan sonra inline çalışır.
     if (s.finally_block) {
         compile_block(*s.finally_block);
     }
@@ -796,7 +824,7 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
 
     // switch bağlamı: case içindeki `break` switch sonuna atlar (dıştaki döngüye
     // DEĞİL). is_switch=true → continue bu bağlamı atlar, dıştaki döngüye gider.
-    loop_stack_.push_back({.is_switch = true});
+    loop_stack_.push_back({.is_switch = true, .finally_floor = pending_finally_.size()});
 
     // İkinci pass: body'ler
     for (size_t i = 0; i < s.cases.size(); ++i) {

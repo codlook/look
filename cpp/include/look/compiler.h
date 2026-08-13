@@ -117,6 +117,9 @@ struct LoopContext {
     int              continue_target = -1; // loop başı IP
     bool             is_switch = false;    // switch: break'i yakalar, continue'yu
                                            // dıştaki döngüye geçirir (C semantiği)
+    size_t           finally_floor = 0;    // loop girişindeki pending_finally_ derinliği;
+                                           // break/continue bu dereye kadarki finally'leri çalıştırır
+                                           // (döngü-içi try-finally), dıştakileri DEĞİL (return farkı).
 };
 
 // ── FunctionCompiler — tek fonksiyon/closure için ───────────────────────────
@@ -193,6 +196,13 @@ private:
     void compile_foreach(const ForeachStatement& s);
     void compile_return(const ReturnStatement& s);
     void compile_try(const TryCatchStatement& s);
+    // BUG FIX (VM finally-on-return): try/catch içinde AKTİF finally blokları. `return`
+    // RETURN'den ÖNCE bunları (içten-dışa) emit eder — yoksa RETURN inline finally'yi atlar
+    // (interpreter'da finally return'de çalışır; VM'de çalışmıyordu → differential ayrışma).
+    std::vector<const BlockStatement*> pending_finally_;
+    // floor'a kadarki (dahil değil) bekleyen finally'leri içten-dışa emit et. return→floor=0
+    // (fonksiyona kadar hepsi); break/continue→loop'un finally_floor'u (yalnız döngü-içi).
+    void emit_pending_finallys(size_t floor = 0);
     // print/write ortak yolu: argümanları " " ile ayırıp yazar, newline=true ise "\n" ekler
     // (interpreter build_output + PrintStatement semantiğiyle birebir).
     void emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs, bool newline);

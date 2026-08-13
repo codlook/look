@@ -1,0 +1,55 @@
+# finally-on-return davranışı — deterministik sıra. Runner iki motorda koşup çıktıyı + parity'yi
+# doğrular. BUG (düzeltildi): VM `try { return X } finally { ... }`'de finally'yi atlıyordu
+# (interpreter ise catch-içi return'de atlıyordu). İkisi de düzeltildi; bu test regresyon guard'ı.
+
+# 1. return-in-try → finally çalışır, dönüş değeri korunur
+function ret_try() { try { return 42 } finally { print("T-FIN") } }
+print("1:" . ret_try())
+
+# 2. nested — içten dışa
+function nested() {
+  try { try { return "R" } finally { print("N-IC") } } finally { print("N-DIS") }
+}
+print("2:" . nested())
+
+# 3. return-in-catch → finally çalışır
+function ret_catch() {
+  try { throw "x" } catch($e) { return "C" } finally { print("C-FIN") }
+}
+print("3:" . ret_catch())
+
+# 4. normal yol (return yok) → finally BİR kez
+function normal() { try { print("NORMAL-TRY") } finally { print("NORMAL-FIN") } }
+normal()
+
+# 5. caught throw → finally
+function thrown() { try { throw "e" } catch($e) { print("CATCH") } finally { print("THROW-FIN") } }
+thrown()
+
+# 6. break out of try-finally → döngü-içi finally çalışır
+$i = 0
+while ($i < 3) {
+  try {
+    if ($i == 1) { break }
+    print("B-ITER " . $i)
+  } finally {
+    print("B-FIN " . $i)
+  }
+  $i = $i + 1
+}
+
+# 7. continue out of try-finally → finally çalışır
+$j = 0
+while ($j < 3) {
+  $j = $j + 1
+  try {
+    if ($j == 2) { continue }
+    print("K-ITER " . $j)
+  } finally {
+    print("K-FIN " . $j)
+  }
+}
+
+# 8. uncaught throw (catch yok) → finally çalışır, sonra propagate
+function unc() { try { throw "boom" } finally { print("U-FIN") } }
+try { unc() } catch($e) { print("U-CATCH:" . $e) }
