@@ -8,6 +8,7 @@
 
 #include "look/builtins.h"
 #include "look/route_group.h"
+#include "look/metrics.h"
 #include "look/array_count.h"
 #include "look/http_server.h"
 #include <algorithm>
@@ -1328,6 +1329,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     } // end interpreter path
 
     auto t_dispatch_end = std::chrono::steady_clock::now();
+
+    // Süreç-global istek sayacı (runtime::stats için) — HER dispatch'te artar. Setup interpreter'ın
+    // request_count_'u web'de artmadığından (VM yolu) bu global gerçek HTTP istek sayısını taşır.
+    look::g_http_request_count().fetch_add(1, std::memory_order_relaxed);
 
     // İlk 200 istekte zamanlama logla — profiling için
     static std::atomic<int> prof_count{0};

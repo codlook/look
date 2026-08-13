@@ -1,5 +1,6 @@
 #include "look/stdlib.h"
 #include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (saf, RFC-KAT edilebilir)
+#include "look/metrics.h"         // g_http_request_count() — web dispatch istek sayacı
 #include "look/interpreter.h"
 #include "look/logger.h"
 #include <cstdint>
@@ -1028,7 +1029,10 @@ static Module make_runtime_module(Interpreter* interp) {
     mod.functions["stats"] = [interp](std::vector<Value> args) -> Value {
         long uptime  = interp->get_uptime_sec();
         int  routes  = interp->get_route_count();
-        int  reqs    = interp->get_request_count();
+        // CLI/CGI: interpreter dispatch sayacı. Web: setup interpreter'ın sayacı artmaz (VM yolu) →
+        // süreç-global HTTP sayacını EKLE. Biri her zaman 0 (mod başına tek yol aktif) → çift-sayım yok.
+        int  reqs    = interp->get_request_count()
+                     + (int)look::g_http_request_count().load(std::memory_order_relaxed);
 
         double working_mb = 0.0;
         double private_mb = 0.0;
@@ -1050,8 +1054,11 @@ static Module make_runtime_module(Interpreter* interp) {
                 long kb = 0; sscanf(line.c_str(), "VmRSS: %ld", &kb);
                 working_mb = kb / 1024.0;
             }
-            if (line.find("VmSize:") == 0) {
-                long kb = 0; sscanf(line.c_str(), "VmSize: %ld", &kb);
+            // private_mb = private RESIDENT (anonim) bellek. Eskiden VmSize (SANAL adres alanı)
+            // okunuyordu → çok-thread'li süreçte ~9.5GB gibi inandırıcı-ama-yanlış değer. RssAnon
+            // gerçek private-resident (Windows PrivateUsage analoğu).
+            if (line.find("RssAnon:") == 0) {
+                long kb = 0; sscanf(line.c_str(), "RssAnon: %ld", &kb);
                 private_mb = kb / 1024.0;
             }
         }
