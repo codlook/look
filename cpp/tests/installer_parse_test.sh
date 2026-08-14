@@ -14,15 +14,16 @@ expect_reject() {  # $1=etiket $2=paket $3=beklenen-mesaj-parçası
   else echo "  FAIL $1: red beklendi ('$3'), gelen: [$out]"; fail=1; fi
 }
 
-expect_reject "host kısıtı (github.com dışı)"  "evil.com/user/repo"                 "sadece github.com"
-expect_reject "geçersiz ad (tek bileşen)"       "github.com/tekbasina"               "geçersiz\|gecersiz\|user/repo"
-expect_reject "traversal (user bileşeni)"        "github.com/../../etc/passwd"        "yol-kaçış\|yol-kacis"
-expect_reject "traversal (subdir bileşeni)"      "github.com/user/repo/../../../evil" "yol-kaçış\|yol-kacis"
+# NOT: parçalar installer.cpp'nin İNGİLİZCE runtime string'leriyle eşleşir (dil politikası).
+expect_reject "host kısıtı (github.com dışı)"  "evil.com/user/repo"                 "Only github.com"
+expect_reject "geçersiz ad (tek bileşen)"       "github.com/tekbasina"               "user/repo required\|Invalid package"
+expect_reject "traversal (user bileşeni)"        "github.com/../../etc/passwd"        "path-escape"
+expect_reject "traversal (subdir bileşeni)"      "github.com/user/repo/../../../evil" "path-escape"
 
 # POZİTİF KONTROL (Kural 1): meşru paket adı parse'ı GEÇMELİ (red aşamasını değil, indirme/404'ü
 # görmeli). Aksi halde parse her şeyi reddediyordur → yukarıdaki redler anlamsız (yanlış-yeşil).
 out=$("$LK" module install "github.com/codlook/look-modules/jwt" 2>&1 | head -3)
-if echo "$out" | grep -qiE "yol-kaçış|yol-kacis|sadece github.com|geçersiz paket"; then
+if echo "$out" | grep -qiE "path-escape|Only github.com|Invalid package"; then
   echo "  FAIL pozitif-kontrol: meşru ad parse'ta REDDEDİLDİ (parse aşırı-red): [$out]"; fail=1
 else
   echo "  OK pozitif-kontrol: meşru ad parse'ı geçti (indirme/404 aşamasına ulaştı)"
