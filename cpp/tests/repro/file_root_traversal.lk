@@ -1,18 +1,28 @@
 use file
 // assert_in_file_root tablo testi: her traversal payload REDDEDILMELI, kontrol IZINLI.
+// try_read FAIL'de 1, PASS'te 0 DONER (fonksiyon disardaki degiskeni degistiremez —
+// LOOK'ta cagiran-kapsam yazilamaz); cagiran topluyor. Sonunda >0 ise non-zero cikilir
+// (vacuous-green'i onler: allow-yolu bozulursa CI RED olur).
 function try_read($label, $path, $should_allow) {
     $ok = false
     try { file::read($path); $ok = true } catch ($e) { $ok = false }
     $verdict = ($ok == $should_allow) ? "PASS" : "FAIL"
     $act = $ok ? "IZIN" : "RED"
     print("{$verdict}  {$label}: {$act}")
+    return ($verdict == "FAIL") ? 1 : 0
 }
-// kontrol: kok-ici mevcut dosya -> IZIN
-try_read("kontrol kok-ici ok.txt", "ok.txt", true)
+// kontrol dosyasini kok-icinde OLUSTUR (yoksa allow-yolu hic denenmez → vacuous green).
+file::put("ok.txt", "x")
+$fails = 0
+// kontrol: kok-ici mevcut dosya -> IZIN (allow-yolunu gercekten egzersiz eder)
+$fails = $fails + try_read("kontrol kok-ici ok.txt", "ok.txt", true)
 // traversal payload'lari -> REDDEDILMELI
-try_read("literal ../secret", "../secret.txt", false)
-try_read("cift ../../etc/passwd", "../../etc/passwd", false)
-try_read("kok-ici .. escape", "sub/../../secret.txt", false)
-try_read("mutlak /etc/passwd", "/etc/passwd", false)
-try_read("percent-encoded literal", "%2e%2e%2fsecret.txt", false)
-try_read("cift-encoded", "%252e%252e%252fsecret.txt", false)
+$fails = $fails + try_read("literal ../secret", "../secret.txt", false)
+$fails = $fails + try_read("cift ../../etc/passwd", "../../etc/passwd", false)
+$fails = $fails + try_read("kok-ici .. escape", "sub/../../secret.txt", false)
+$fails = $fails + try_read("mutlak /etc/passwd", "/etc/passwd", false)
+$fails = $fails + try_read("percent-encoded literal", "%2e%2e%2fsecret.txt", false)
+$fails = $fails + try_read("cift-encoded", "%252e%252e%252fsecret.txt", false)
+// temizlik + kesin sonuc: herhangi bir FAIL varsa non-zero cik (CI yakalar).
+file::remove("ok.txt")
+if ($fails > 0) { exit(1) }
