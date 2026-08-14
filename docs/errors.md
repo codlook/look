@@ -6,18 +6,27 @@ language, so the message alone may not be familiar — find it below.
 
 ## How to read a LOOK error
 
-A LOOK error has three useful parts:
+Every LOOK error tells you **what** went wrong and **where**:
 
 ```
 Runtime Error: Undefined variable: $userr
-  at app.lk:42
+  File: app.lk
+  Line: 42
 ```
 
-- **The kind** — `Compile Error` / `Parse Error` happen *before* your code runs (syntax);
+Parse/compile errors also give the **column**:
+
+```
+Parse Error: Unexpected token: ')'
+  File: app.lk
+  Line: 2, Column: 12
+```
+
+- **The kind** — `Parse Error` happens *before* your code runs (syntax);
   `Runtime Error` happens *while* it runs (bad value, missing file, failed connection).
 - **The message** — the specific problem. Everything below is organized by this text.
-- **The location** (`file:line`) — where it happened. Compile/parse errors point at the
-  exact token; runtime errors point at the line being executed.
+- **`File:` / `Line:` (and `Column:` for parse errors)** — exactly where it happened.
+  Parse errors point at the offending token; runtime errors point at the line being executed.
 
 > Messages are matched by their **leading text**. Where a message ends with `…` or a
 > value (`Undefined variable: $x`), look it up by the part before the value.
