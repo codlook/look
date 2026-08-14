@@ -110,9 +110,12 @@ jobs:
             gh release upload "$TAG" *.zip *.tar.gz SHA256SUMS.txt --clobber
           fi
 
-      # 8) Docker Hub push — yalnız secret varsa (yoksa atla; kullanıcı elle push eder)
-      - name: Docker Hub push (secret varsa)
-        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+      # 8) Docker Hub push — yalnız secret varsa (yoksa atla; kullanıcı elle push eder).
+      # rc* tag'lerinde ATLANIR: Docker Hub'da tag izolasyonu yok → rc :latest'i ezerdi
+      # ve prova "gerçek yayını ezmeden" sözünü Docker tarafında bozardı (GitHub'da prerelease
+      # izole, Docker'da değil). rc = sadece kapı+build+asset provası; gerçek push yalnız v* (rc'siz).
+      - name: Docker Hub push (secret varsa, rc değilse)
+        if: ${{ env.DOCKERHUB_TOKEN != '' && !contains(github.ref_name, 'rc') }}
         run: |
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
           docker push codlook/look:1.0.0
