@@ -296,6 +296,12 @@ jobs:
       - name: docs-conformance (docs API ↔ builtin_names)
         run: bash cpp/tests/docs_conformance.sh
 
+      # TERS-YÖN: builtin_names()'teki her namespaced mod::fn docs/index.html'de belgeli mi?
+      # docs_conformance'ın eksik yarısı — yeni builtin belgelenmeden CI'dan geçemez.
+      # Dışlama listesi gerekçeli (validator kuralları + template {#} sözdizimi), known_fail değil.
+      - name: docs-conformance TERS-YÖN (builtin_names ↔ docs API)
+        run: bash cpp/tests/doc_conformance_reverse.sh
+
       # SSRF DNS-rebinding pin değişmezi — ölçüldü: is_ssrf_blocked + connect AYNI çözümlenmiş
       # res->ai_addr'ı kullanır (resolve-once, yeniden-çözme yok → rebinding imkânsız). Bu guard
       # kaynak-değişmezini kilitler; biri connect'i yeniden-çözmeye çevirirse RED. Pozitif-kontrollü.
