@@ -2438,7 +2438,24 @@ look install github.com/Codlook/look-packages
     <tr><td>validator::check($data, $rules)</td><td>Batch validation — validates all fields at once</td><td><code>["ok" => bool, "errors" => assoc]</code></td></tr>
   </table>
 
-  <p><strong>Rule strings:</strong> <code>"required"</code>, <code>"email"</code>, <code>"integer"</code>, <code>"numeric"</code>, <code>"min:N"</code>, <code>"max:N"</code>, <code>"in:a,b,c"</code> — these are rule names passed to <code>check()</code>, not independently callable functions.</p>
+  <p><strong>Rule strings</strong> are passed to <code>check()</code> in an array per field (e.g.
+  <code>"age" =&gt; ["required", "integer", "min:0", "max:120"]</code>) — they are rule names, not
+  independently callable functions:</p>
+
+  <table>
+    <tr><th>Rule</th><th>Passes when…</th></tr>
+    <tr><td><code>required</code></td><td>the field is present and not empty</td></tr>
+    <tr><td><code>email</code></td><td>the value is a valid email address</td></tr>
+    <tr><td><code>integer</code></td><td>the value is a whole number (strict — rejects <code>"12abc"</code>)</td></tr>
+    <tr><td><code>numeric</code></td><td>the value is a number, integer or decimal (strict)</td></tr>
+    <tr><td><code>min:N</code></td><td>a number is ≥ N; a string is at least N characters long</td></tr>
+    <tr><td><code>max:N</code></td><td>a number is ≤ N; a string is at most N characters long</td></tr>
+    <tr><td><code>in:a,b,c</code></td><td>the value is exactly one of the comma-separated options</td></tr>
+  </table>
+
+  <p>An empty value only fails <code>required</code> — the other rules skip empty fields, so an optional
+  field with <code>["email"]</code> passes when left blank. Combine <code>["required", "email"]</code> to
+  require a valid value.</p>
 
   <h3>validator::check — Batch Validation</h3>
   <pre><code><span class="kw">use</span> <span class="ns">validator</span>
