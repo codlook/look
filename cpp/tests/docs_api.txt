@@ -155,6 +155,7 @@ request::body
 request::file
 request::get
 request::header
+request::headers
 request::ip
 request::is_delete
 request::is_get
@@ -175,6 +176,7 @@ response::json
 response::redirect
 response::status
 response::text
+route::group
 route::matched
 route::param
 route::run
@@ -183,6 +185,7 @@ runtime::stats
 session::destroy
 session::get
 session::has
+session::regenerate
 session::set
 session::start
 sse::clients
