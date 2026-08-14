@@ -164,10 +164,10 @@ static bool handle_colon_command(const std::string& s, Interpreter& interp) {
     if (s == ":clear") { linenoiseClearScreen(); return true; }
     // :time <expr> — placeholder (future)
     if (s.substr(0,5) == ":time") {
-        std::cout << yellow("  :time henüz implement edilmedi\n");
+        std::cout << yellow("  :time not yet implemented\n");
         return true;
     }
-    std::cout << red("  Bilinmeyen komut: ") << s << "\n";
+    std::cout << red("  Unknown command: ") << s << "\n";
     std::cout << gray("  Type :help to see the commands\n");
     return true;
 }
@@ -307,7 +307,7 @@ int run_repl() {
         } catch (const RouteMatchedException&) {
             // fine
         } catch (const LookRuntimeError& e) {
-            std::cout << red("Hata: ") << e.what() << "\n";
+            std::cout << red("Error: ") << e.what() << "\n";
             interp.set_output(std::cout);
             continue;
         } catch (const ExitException& e) {
@@ -315,7 +315,7 @@ int run_repl() {
             interp.set_output(std::cout);
             continue;
         } catch (const std::exception& e) {
-            std::cout << red("Hata: ") << e.what() << "\n";
+            std::cout << red("Error: ") << e.what() << "\n";
             interp.set_output(std::cout);
             continue;
         }

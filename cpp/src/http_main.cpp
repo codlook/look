@@ -239,7 +239,7 @@ static std::string resolve_client_ip(const Req& req) {
     auto ixff = req.headers.find("x-forwarded-for");
     if (ixff == req.headers.end()) return ip;
     std::string xff = ixff->second;
-    auto comma = xff.find(',');                    // "istemci, proxy1, proxy2" → ilki
+    auto comma = xff.find(',');                    // "client, proxy1, proxy2" → ilki
     if (comma != std::string::npos) xff = xff.substr(0, comma);
     xff.erase(0, xff.find_first_not_of(" \t"));
     auto last = xff.find_last_not_of(" \t");

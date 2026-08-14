@@ -553,7 +553,7 @@ void MySQLClient::do_handshake(const std::string& user,
                 "create it, or use the Linux build.");
 #endif
         }
-        throw std::runtime_error("db mysql: desteklenmeyen kimlik dogrulama eklentisi: " + plugin);
+        throw std::runtime_error("db mysql: unsupported authentication plugin: " + plugin);
     };
 
     std::string cur_plugin = srv_plugin;
@@ -682,7 +682,7 @@ void MySQLClient::do_handshake(const std::string& user,
                 // TLS yok → sunucudan RSA açık anahtarı istenir (0x02), şifre RSA-OAEP ile.
 #ifdef _WIN32
                 throw std::runtime_error(
-                    "db mysql: caching_sha2_password tam kimlik dogrulamasi bu yapida "
+                    "db mysql: caching_sha2_password full authentication is not supported in this build "
                     "not supported (the Windows build is compiled without OpenSSL). Fix: "
                     "create the user with mysql_native_password, or use the Linux build.");
 #else
@@ -696,12 +696,12 @@ void MySQLClient::do_handshake(const std::string& user,
                 continue;
 #endif
             }
-            throw std::runtime_error("db mysql: beklenmeyen kimlik dogrulama verisi (0x" +
+            throw std::runtime_error("db mysql: unexpected authentication data (0x" +
                                      std::to_string((int)code) + ")");
         }
-        throw std::runtime_error("db mysql: beklenmeyen kimlik dogrulama paketi");
+        throw std::runtime_error("db mysql: unexpected authentication packet");
     }
-    throw std::runtime_error("db mysql: kimlik dogrulama tamamlanmadi (tur siniri asildi)");
+    throw std::runtime_error("db mysql: authentication did not complete (round limit exceeded)");
 }
 
 // ── Query ─────────────────────────────────────────────────────────────────────
@@ -1016,7 +1016,7 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
 // ESKİ HATA: `'` → `\'` yazılıyordu. MySQL `NO_BACKSLASH_ESCAPES` modunda ters
 // bölüyü kaçış karakteri SAYMAZ; o modda `\'` = "ters bölü + tırnak" demektir →
 // TIRNAK KAPANIR → SQL enjeksiyonu. ÖLÇÜLDÜ (gerçek sunucu, oturum o moda
-// alınarak): `' OR 1=1 -- ` yükü **tüm tabloyu** döndürdü (3/3 satır).
+// alınarak): `' OR 1=1 -- ` yükü **tüm tabloyu** returned (3/3 satır).
 //
 // Bunu tutan tek şey do_connect()'teki `SET SESSION sql_mode = REPLACE(...)`
 // komutunun BAŞARILI olmasıydı. Bu yeterli bir güvenlik zemini değil:

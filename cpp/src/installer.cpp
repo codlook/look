@@ -351,11 +351,11 @@ int cmd_install(const std::string& pkg, bool verbose) {
     try {
         spec = parse_pkg(pkg);
     } catch (const std::exception& e) {
-        std::cerr << "Hata: " << e.what() << "\n";
+        std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
 
-    std::cout << "Yükleniyor: " << spec.user << "/" << spec.repo;
+    std::cout << "Loading: " << spec.user << "/" << spec.repo;
     if (!spec.subdir.empty()) std::cout << "/" << spec.subdir;
     std::cout << " (" << spec.ref << ")\n";
 
@@ -376,7 +376,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
     // Extract
     fs::path dest = spec.pkg_dir();
     if (fs::exists(dest)) {
-        if (verbose) std::cout << "  Önceki kurulum temizleniyor...\n";
+        if (verbose) std::cout << "  Cleaning up the previous installation...\n";
         fs::remove_all(dest);
     }
 
@@ -426,7 +426,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
     lock[spec.lock_key()] = entry;
     write_lock(lock_path, lock);
 
-    std::cout << "  look.lock güncellendi\n";
+    std::cout << "  look.lock updated\n";
     std::cout << "✓ " << spec.lock_key() << " kuruldu\n\n";
     std::cout << "Usage:\n";
     if (!spec.subdir.empty()) {
@@ -454,7 +454,7 @@ int cmd_install_all(bool verbose) {
         return 0;
     }
 
-    std::cout << lock.size() << " paket yükleniyor...\n";
+    std::cout << lock.size() << " installing package...\n";
     int failed = 0;
     for (auto& [key, entry] : lock) {
         // Kilit dosyasının amacı YENİDEN-ÜRETİLEBİLİRLİK: kayıtlı commit sha'sına
@@ -468,10 +468,10 @@ int cmd_install_all(bool verbose) {
     }
 
     if (failed > 0) {
-        std::cerr << failed << " paket yüklenemedi.\n";
+        std::cerr << failed << " package could not be installed.\n";
         return 1;
     }
-    std::cout << "Tüm paketler yüklendi.\n";
+    std::cout << "All packages installed.\n";
     return 0;
 }
 
@@ -499,7 +499,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
     try {
         spec = parse_pkg(pkg_url);
     } catch (const std::exception& e) {
-        std::cerr << "Hata: " << e.what() << "\n";
+        std::cerr << "Error: " << e.what() << "\n";
         std::cerr << "Örnek: lk module install github.com/codlook/look-modules/jwt\n";
         return 1;
     }
@@ -507,7 +507,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
     // Module name = subdir if given, otherwise repo name
     std::string mod_name = spec.subdir.empty() ? spec.repo : spec.subdir;
 
-    std::cout << "Modül yükleniyor: " << spec.user << "/" << spec.repo;
+    std::cout << "Loading module: " << spec.user << "/" << spec.repo;
     if (!spec.subdir.empty()) std::cout << "/" << spec.subdir;
     std::cout << " (" << spec.ref << ")\n";
 
@@ -528,7 +528,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
     // Extract to ~/.look/modules/<mod_name>/
     fs::path dest_dir = modules_dir() / mod_name;
     if (fs::exists(dest_dir)) {
-        if (verbose) std::cout << "  Önceki kurulum temizleniyor...\n";
+        if (verbose) std::cout << "  Cleaning up the previous installation...\n";
         fs::remove_all(dest_dir);
     }
 
@@ -585,7 +585,7 @@ int cmd_module_list() {
     const std::string api_url =
         "https://api.github.com/repos/codlook/look-modules/contents/";
 
-    std::cout << "Resmi modüller getiriliyor...\n";
+    std::cout << "Fetching official modules...\n";
 
     HttpOptions opts;
     opts.timeout_ms = 10000;
@@ -600,7 +600,7 @@ int cmd_module_list() {
         return 1;
     }
     if (resp.status != 200) {
-        std::cerr << "GitHub API " << resp.status << " döndürdü\n";
+        std::cerr << "GitHub API " << resp.status << " returned\n";
         return 1;
     }
 
@@ -629,7 +629,7 @@ int cmd_module_list() {
     } else {
         std::cout << "\nResmi modüller (github.com/codlook/look-modules):\n";
         for (auto& name : official) {
-            std::string status = is_installed(name) ? " [kurulu]" : "";
+            std::string status = is_installed(name) ? " [installed]" : "";
             std::cout << "  " << name << status << "\n";
         }
         std::cout << "\nKurulum: lk module install github.com/codlook/look-modules/<isim>\n";
@@ -650,7 +650,7 @@ int cmd_module_list() {
         std::cout << "No modules loaded.\n";
     }
 
-    std::cout << "\nModül dizini: " << mdir.string() << "\n";
+    std::cout << "\nModule directory: " << mdir.string() << "\n";
     return 0;
 }
 

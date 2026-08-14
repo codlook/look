@@ -629,7 +629,7 @@ void PostgresClient::do_connect() {
         }
         if (resp != 'S') {
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-            throw std::runtime_error(std::string("db postgres: sunucu TLS desteklemiyor "
+            throw std::runtime_error(std::string("db postgres: server does not support TLS "
                 "(SSLRequest response '") + (char)resp + "') — did NOT fall back to plaintext. "
                 "If you want to connect without encryption, use postgres://.");
         }
@@ -837,7 +837,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
             for (int i = 0; i < (int)ncols; i++) {
                 if (end - p < 4)
                     throw std::runtime_error("db postgres: bozuk DataRow — " +
-                        std::to_string(ncols) + " alan bildirildi, " + std::to_string(i) + " alan geldi");
+                        std::to_string(ncols) + " fields declared, " + std::to_string(i) + " fields received");
                 int32_t field_len = read_i32_be(p); p += 4;
                 std::string val;
                 bool is_null = false;
@@ -1074,7 +1074,7 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
             for (int i = 0; i < (int)ncols; i++) {
                 if (end - p < 4)
                     throw std::runtime_error("db postgres: bozuk DataRow — " +
-                        std::to_string(ncols) + " alan bildirildi, " + std::to_string(i) + " alan geldi");
+                        std::to_string(ncols) + " fields declared, " + std::to_string(i) + " fields received");
                 int32_t field_len = read_i32_be(p); p += 4;
                 std::string val;
                 bool is_null = false;

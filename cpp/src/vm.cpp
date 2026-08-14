@@ -444,7 +444,7 @@ call_dispatch:
                     if (g_warn_undef) {
                         R(ins.a) = Value();
                         Logger::instance().log(LogLevel::LOG_WARN, "VM",
-                            "Tanimsiz degisken okundu (LOOK_WARN_UNDEF gecis modu, null dondu): " + gname);
+                            "Undefined variable read (LOOK_WARN_UNDEF transition mode, returned null): " + gname);
                     } else {
                         throw LookVmError("Undefined variable: " + gname);
                     }
@@ -680,7 +680,7 @@ call_dispatch:
                     ++frame.ip;
                 }
                 if (!shared_.builtins || bidx >= shared_.builtins->size())
-                    throw LookVmError("Bilinmeyen built-in: " + std::to_string(bidx));
+                    throw LookVmError("Unknown built-in: " + std::to_string(bidx));
                 std::vector<Value> args;
                 args.reserve(argc2);
                 for (int i = 0; i < argc2; ++i) args.push_back(R(ins.c + i));
@@ -991,7 +991,7 @@ call_dispatch:
                 break;
 
             default:
-                throw LookVmError("Bilinmeyen opcode: " + std::to_string((int)ins.op));
+                throw LookVmError("Unknown opcode: " + std::to_string((int)ins.op));
 
 #undef R
 #undef CONST

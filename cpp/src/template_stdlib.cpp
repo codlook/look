@@ -383,11 +383,11 @@ struct TplParser {
             else if (kind[0] == '/' || kind == "#else" || kind == "#empty") {
                 // Unexpected stop directive
                 throw std::runtime_error(
-                    "Template error (" + origin + "): beklenmeyen direktif '{" + kind + "}'");
+                    "Template error (" + origin + "): unexpected directive '{" + kind + "}'");
             }
             else {
                 throw std::runtime_error(
-                    "Template error (" + origin + "): bilinmeyen direktif '{" + kind + "}'");
+                    "Template error (" + origin + "): unknown directive '{" + kind + "}'");
             }
         }
 

@@ -472,7 +472,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         if (!loaded) emit(OpCode::NOP);
     }
     else {
-        throw LookCompileError("Bilinmeyen statement tipi: " + std::string(typeid(stmt).name()));
+        throw LookCompileError("Unknown statement type: " + std::string(typeid(stmt).name()));
     }
 }
 
@@ -970,7 +970,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 {"&=", OpCode::BAND}, {"|=", OpCode::BOR},  {"^=", OpCode::BXOR},
             };
             auto it = COMPOUND.find(e.op);
-            if (it == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
+            if (it == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
             uint8_t cur = alloc_temp();
             emit(OpCode::ARRAY_GET, cur, arr, idx);
             uint8_t res = alloc_temp();
@@ -1014,7 +1014,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 {"&=", OpCode::BAND}, {"|=", OpCode::BOR}, {"^=", OpCode::BXOR},
             };
             auto it = COMPOUND.find(e.op);
-            if (it == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
+            if (it == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
             emit(it->second, tmp, cur, val);
             free_temp(cur); free_temp(val);
             emit_write_local(loc.index, tmp);
@@ -1054,7 +1054,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 {"&=", OpCode::BAND}, {"|=", OpCode::BOR}, {"^=", OpCode::BXOR},
             };
             auto cit = COMPOUND.find(e.op);
-            if (cit == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
+            if (cit == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
             emit(cit->second, tmp, cur, val);
             free_temp(cur); free_temp(val);
             result = tmp;
@@ -1093,7 +1093,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 {"&=", OpCode::BAND}, {"|=", OpCode::BOR}, {"^=", OpCode::BXOR},
             };
             auto cit = COMPOUND.find(e.op);
-            if (cit == COMPOUND.end()) throw LookCompileError("Bilinmeyen compound op: " + e.op);
+            if (cit == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
             emit(cit->second, tmp, cur, val);
             free_temp(cur); free_temp(val);
             val = tmp;
@@ -1219,7 +1219,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         if (e->op == "-")  emit(OpCode::UNM, r, operand);
         else if (e->op == "!") emit(OpCode::NOT, r, operand);
         else if (e->op == "~") emit(OpCode::BNOT, r, operand);
-        else throw LookCompileError("Bilinmeyen unary op: " + e->op);
+        else throw LookCompileError("Unknown unary op: " + e->op);
         free_temp(operand);
         return r;
     }
@@ -1287,7 +1287,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         return r;
     }
 
-    throw LookCompileError("Bilinmeyen expression tipi: " + std::string(typeid(expr).name()),
+    throw LookCompileError("Unknown expression type: " + std::string(typeid(expr).name()),
                            expr.loc.line);
 }
 
@@ -1332,7 +1332,7 @@ uint8_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint8_t dest
     };
     auto it = OPS.find(e.op);
     if (it == OPS.end())
-        throw LookCompileError("Bilinmeyen binary op: " + e.op, e.loc.line);
+        throw LookCompileError("Unknown binary op: " + e.op, e.loc.line);
 
     emit(it->second, r, l, r2);
     free_temp(r2); free_temp(l);
@@ -1388,7 +1388,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             for (int k = 0; k < argc; ++k) regs_->free(base + k);
             return r;
         }
-        // Bilinmeyen modül fonksiyonu → genel CALL yolu.
+        // Unknown modül fonksiyonu → genel CALL yolu.
         // İŞARETLE: bu çağrı derlenir ama RUNTIME'da "Not callable" fırlatır
         // (LOAD_GLOBAL "mod::fn" → null → CALL). Web'de route interpreter'a düşüp
         // kurtulur; CLI-VM'de fallback YOK → script çökerdi. CLI bayrağı görüp

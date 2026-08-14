@@ -356,7 +356,7 @@ int main(int argc, char* argv[]) {
             if (sub == "list") {
                 return look::cmd_module_list();
             }
-            std::cerr << "Bilinmeyen alt komut: " << sub << "\n";
+            std::cerr << "Unknown subcommand: " << sub << "\n";
             return 1;
         }
 

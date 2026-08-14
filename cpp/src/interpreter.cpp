@@ -130,7 +130,7 @@ static void arith_check(const Value& v) {
     }
     std::string s = v.to_string();
     if (s.empty())
-        throw std::runtime_error("Aritmetik islem bos string uzerinde");
+        throw std::runtime_error("Arithmetic on an empty string");
     size_t pos = 0;
     // 1) Tam int64 string'i → geçerli (operator+ int yoluyla doğru işler: "5"+1=6)
     try {

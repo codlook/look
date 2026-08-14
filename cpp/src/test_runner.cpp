@@ -77,7 +77,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
             eq = (a.to_string() == b.to_string());
         }
         if (!eq)
-            fail("assert::eq() failed:\n    beklenen: " + b.to_string() +
+            fail("assert::eq() failed:\n    expected: " + b.to_string() +
                  "\n    gerçek:   " + a.to_string());
         return Value();
     };
@@ -375,7 +375,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
             else eq = a.to_string() == b.to_string();
         } else eq = a.to_string() == b.to_string();
         if (!eq)
-            fail("assert_eq() failed:\n    beklenen: " + b.to_string() + "\n    gerçek:   " + a.to_string());
+            fail("assert_eq() failed:\n    expected: " + b.to_string() + "\n    gerçek:   " + a.to_string());
         return Value();
     });
 

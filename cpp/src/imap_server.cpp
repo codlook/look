@@ -537,7 +537,7 @@ struct ImapServer::Impl {
                 send_all(fd, "* CAPABILITY " + cap_line() + "\r\n" + tag + " OK CAPABILITY completed\r\n");
             }
             else if (cmd == "STARTTLS") {
-                if (g_tls) { send_all(fd, tag + " NO TLS zaten aktif\r\n"); continue; }
+                if (g_tls) { send_all(fd, tag + " NO TLS already active\r\n"); continue; }
                 if (!ssl_ctx) { send_all(fd, tag + " NO STARTTLS not configured\r\n"); continue; }
                 // Önce OK gönder (plaintext), sonra el sıkış (RFC 3501 6.2.1).
                 if (!send_all(fd, tag + " OK beginning TLS handshake\r\n")) break;
@@ -628,7 +628,7 @@ struct ImapServer::Impl {
                 std::string resp =
                     "* " + std::to_string(total)  + " EXISTS\r\n"
                     "* " + std::to_string(recent) + " RECENT\r\n"
-                    "* OK [UIDVALIDITY 1] UID geçerlilik\r\n"
+                    "* OK [UIDVALIDITY 1] UID validity\r\n"
                     "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n"
                     "* OK [PERMANENTFLAGS (\\Seen \\Deleted)] permanent flags\r\n"
                     + tag + " OK [" + ro + "] " + cmd + " completed\r\n";
@@ -815,7 +815,7 @@ struct ImapServer::Impl {
                     send_all(fd, tag + " BAD APPEND invalid literal size\r\n"); continue;
                 }
                 try { litsize = std::stoull(szs); }
-                catch (...) { send_all(fd, tag + " BAD APPEND literal boyutu\r\n"); continue; }
+                catch (...) { send_all(fd, tag + " BAD APPEND literal size\r\n"); continue; }
                 // OOM koruması — cap aşımı: veriyi HİÇ okumadan reddet
                 if (litsize > imap_max_literal()) {
                     send_all(fd, tag + " NO [TOOBIG] APPEND mesaj çok büyük\r\n"); continue;
@@ -851,13 +851,13 @@ struct ImapServer::Impl {
             // ── M4c: SEARCH — ölçütlere uyan mesaj sıra numaralarını döndür ──
             // UID FETCH/STORE/SEARCH/COPY — RFC 3501 §6.4.8'de is required ama M1'de YOK.
             // Kalıcı UID olmadan uygulanamaz (bkz. FETCH'teki UID reddi).
-            // `BAD bilinmeyen komut` yerine NEDENİ söyle: Thunderbird'ü debug eden
-            // geliştirici "komut yok mu, sözdizimi mi yanlış" diye aramasın.
+            // `BAD unknown command` yerine NEDENİ söyle: Thunderbird'ü debug eden
+            // geliştirici "no command, or syntax error" diye aramasın.
             else if (cmd == "UID") {
                 send_all(fd, tag + " NO [CANNOT] UID command not supported — no persistent UID "
                                    "(Milestone 1). Use sequence-based FETCH/STORE/SEARCH.\r\n");
             }
-            // CREATE/DELETE/RENAME de M1 kapsamında değil — sessiz "bilinmeyen komut"
+            // CREATE/DELETE/RENAME de M1 kapsamında değil — sessiz "unknown command"
             // yerine kapsamı söyle.
             else if (cmd == "CREATE" || cmd == "DELETE" || cmd == "RENAME" ||
                      cmd == "SUBSCRIBE" || cmd == "UNSUBSCRIBE") {
@@ -966,7 +966,7 @@ struct ImapServer::Impl {
                 send_all(fd, result + "\r\n" + tag + " OK SEARCH completed\r\n");
             }
             else {
-                send_all(fd, tag + " BAD bilinmeyen komut\r\n");
+                send_all(fd, tag + " BAD unknown command\r\n");
                 if (++errors >= imap_max_errors()) break;
             }
         }

@@ -227,7 +227,7 @@ static MailResult dispatch_send(const std::string& to,
     if (provider == "postmark")
         return send_postmark(api_key, from, to, subject, text, html);
 
-    throw std::runtime_error("mail:: — Bilinmeyen provider: " + provider
+    throw std::runtime_error("mail:: — Unknown provider: " + provider
         + " (mailgun|sendgrid|postmark)");
 }
 
