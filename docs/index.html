@@ -1497,6 +1497,7 @@ Stack trace:
     <tr><td>request::param("k")</td><td>URL parameter (from the route)</td><td>{id} → "42"</td></tr>
     <tr><td>request::all()</td><td>GET + POST combined</td><td>assoc array</td></tr>
     <tr><td>request::header("k")</td><td>HTTP header value</td><td>"Bearer ..."</td></tr>
+    <tr><td>request::headers()</td><td>All request headers as an assoc</td><td>["Host" => ...]</td></tr>
     <tr><td>request::is_get()</td><td>Is the method GET?</td><td>bool</td></tr>
     <tr><td>request::is_post()</td><td>Is the method POST?</td><td>bool</td></tr>
     <tr><td>request::is_put()</td><td>Is the method PUT?</td><td>bool</td></tr>
@@ -1629,6 +1630,7 @@ Stack trace:
     <tr><td>session::get("k")</td><td>Read a session value</td></tr>
     <tr><td>session::set("k","v")</td><td>Write a session value</td></tr>
     <tr><td>session::has("k")</td><td>Does the key exist?</td></tr>
+    <tr><td>session::regenerate()</td><td>Issue a fresh session ID, migrate the existing data to it, and invalidate the old ID. Returns the new ID. <strong>Call it right after a privilege change (login, role change) to prevent session fixation.</strong></td></tr>
     <tr><td>session::destroy()</td><td>Delete the session</td></tr>
   </table>
 
