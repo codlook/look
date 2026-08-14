@@ -460,10 +460,10 @@ static std::vector<uint8_t> caching_sha2_rsa_encrypt(const std::string& password
             buf[i] = (char)(buf[i] ^ nonce[i % nonce.size()]);
 
     BIO* bio = BIO_new_mem_buf(pem.data(), (int)pem.size());
-    if (!bio) throw std::runtime_error("db mysql: RSA anahtarı okunamadı (BIO)");
+    if (!bio) throw std::runtime_error("db mysql: could not read RSA key (BIO)");
     EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
-    if (!pkey) throw std::runtime_error("db mysql: sunucunun RSA açık anahtarı ayrıştırılamadı");
+    if (!pkey) throw std::runtime_error("db mysql: could not parse the server's RSA public key");
 
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, nullptr);
     std::vector<uint8_t> out;
@@ -480,7 +480,7 @@ static std::vector<uint8_t> caching_sha2_rsa_encrypt(const std::string& password
     }
     if (ctx) EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(pkey);
-    if (!ok) throw std::runtime_error("db mysql: RSA şifreleme başarısız");
+    if (!ok) throw std::runtime_error("db mysql: RSA encryption failed");
     return out;
 }
 #endif // !_WIN32
@@ -504,7 +504,7 @@ void MySQLClient::do_handshake(const std::string& user,
                                 const std::string& database) {
     uint8_t seq;
     auto pkt = read_packet(seq);
-    if (pkt.empty()) throw std::runtime_error("db: boş handshake paketi");
+    if (pkt.empty()) throw std::runtime_error("db: empty handshake packet");
     const uint8_t* p = pkt.data();
     const uint8_t* end = p + pkt.size();
 
@@ -516,7 +516,7 @@ void MySQLClient::do_handshake(const std::string& user,
     // (challenge 8 bayt, auth_len, cap flags) buffer sonrasını overread edebilirdi
     // (MITM/kötü sunucu — TLS yok). Sabit blok = thread(4)+challenge(8)+filler(1)+
     // cap1(2)+charset+status(3)+cap2(2)+auth_len(1)+reserved(10) = 31 bayt.
-    if (end - p < 31) throw std::runtime_error("db: bozuk handshake paketi (kısa)");
+    if (end - p < 31) throw std::runtime_error("db: malformed handshake packet (too short)");
     p += 4; // thread id
 
     std::string challenge(p, p + 8); p += 8;
@@ -577,9 +577,9 @@ void MySQLClient::do_handshake(const std::string& user,
         ssl_req.insert(ssl_req.end(), 23, 0);                 // reserved
         send_packet(ssl_req, 1);                              // plaintext — henüz ssl_ yok
         SSL_CTX* ctx = mysql_ssl_ctx();
-        if (!ctx) throw std::runtime_error("db mysql: SSL_CTX oluşturulamadı (TLS)");
+        if (!ctx) throw std::runtime_error("db mysql: could not create SSL_CTX (TLS)");
         SSL* s = SSL_new(ctx);
-        if (!s) throw std::runtime_error("db mysql: SSL_new başarısız (TLS)");
+        if (!s) throw std::runtime_error("db mysql: SSL_new failed (TLS)");
         SSL_set_fd(s, (int)sock_);
         // SNI — sunucunun doğru sertifikayı seçmesi için host adını gönder (her modda).
         SSL_set_tlsext_host_name(s, cfg_.host.c_str());
@@ -594,14 +594,14 @@ void MySQLClient::do_handshake(const std::string& user,
             // gerçekten hostname doğrulasın diye kurulamıyorsa bağlantıyı reddet.
             if (SSL_set1_host(s, cfg_.host.c_str()) != 1) {
                 SSL_free(s);
-                throw std::runtime_error("db mysql: TLS hostname doğrulaması kurulamadı (verify)");
+                throw std::runtime_error("db mysql: could not set up TLS hostname verification (verify)");
             }
         }
         if (SSL_connect(s) != 1) {
             unsigned long e = ERR_get_error();
             char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
             SSL_free(s);
-            throw std::runtime_error(std::string("db mysql: TLS handshake başarısız: ") + eb);
+            throw std::runtime_error(std::string("db mysql: TLS handshake failed: ") + eb);
         }
         ssl_     = s;   // bundan sonra send/recv_bytes SSL üstünden (auth dahil)
         auth_seq = 2;   // auth paketi TLS içinde, SSLRequest'ten sonraki seq
@@ -643,7 +643,7 @@ void MySQLClient::do_handshake(const std::string& user,
 
     for (int round = 0; round < 5; ++round) {   // sonsuz diyaloğa karşı tavan
         auto resp = read_packet(seq);
-        if (resp.empty()) throw std::runtime_error("db: boş kimlik doğrulama yanıtı");
+        if (resp.empty()) throw std::runtime_error("db: empty authentication response");
         if (resp[0] == 0xFF) auth_error(resp);
         if (resp[0] == 0x00) return;            // OK — doğrulandı
 
@@ -689,7 +689,7 @@ void MySQLClient::do_handshake(const std::string& user,
                 send_packet(std::vector<uint8_t>{0x02}, (uint8_t)(seq + 1));
                 auto keypkt = read_packet(seq);
                 if (keypkt.size() < 2 || keypkt[0] != 0x01)
-                    throw std::runtime_error("db mysql: sunucu RSA açık anahtarı vermedi");
+                    throw std::runtime_error("db mysql: server did not provide an RSA public key");
                 std::string pem(keypkt.begin() + 1, keypkt.end());
                 auto enc = caching_sha2_rsa_encrypt(password, challenge, pem);
                 send_packet(enc, (uint8_t)(seq + 1));
@@ -745,7 +745,7 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     // Sunucu-verili col_count sanity cap — kötü niyetli sunucu 2^64 verirse
     // kolon-okuma döngüsü kaynak tüketir/asılır. Gerçek query'ler ≪65535 sütun.
     if (col_count > MYSQL_MAX_COLUMNS)
-        throw std::runtime_error("db mysql: sütun sayısı sınırı aşıldı (kötü niyetli sunucu?)");
+        throw std::runtime_error("db mysql: column count limit exceeded (malicious server?)");
     struct ColInfo { std::string name; uint8_t type; };
     std::vector<ColInfo> columns;
     for (uint64_t i = 0; i < col_count; i++) {
@@ -845,7 +845,7 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     for (const auto& p : params)
         if (p.kind == DbParam::TEXT_VAL) total_str += p.s.size();
     if (total_str > MYSQL_MAX_PACKET)
-        throw std::runtime_error("db mysql: parametre toplam boyutu max_allowed_packet limitini aşıyor (64 MB)");
+        throw std::runtime_error("db mysql: total parameter size exceeds the max_allowed_packet limit (64 MB)");
 
     int n = (int)params.size();
     std::vector<uint8_t> pkt;
@@ -936,7 +936,7 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     // Sanity cap — kötü niyetli sunucu 2^64 col_count verirse döngü + `(int)col_count`
     // null-bitmap boyutu (satır ~657) taşar/kaynak tüketir.
     if (col_count > MYSQL_MAX_COLUMNS)
-        throw std::runtime_error("db mysql: sütun sayısı sınırı aşıldı (kötü niyetli sunucu?)");
+        throw std::runtime_error("db mysql: column count limit exceeded (malicious server?)");
 
     struct ColInfo { std::string name; uint8_t type; };
     std::vector<ColInfo> columns;

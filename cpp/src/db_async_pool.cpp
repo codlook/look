@@ -9,7 +9,7 @@ AsyncDbPool::AsyncDbPool(int thread_count) {
     for (int i = 0; i < thread_count; ++i)
         threads_.emplace_back([this] { worker_loop(); });
     Logger::instance().log(LogLevel::LOG_INFO, "DB",
-        "AsyncDbPool[" + std::to_string(thread_count) + "] başlatıldı");
+        "AsyncDbPool[" + std::to_string(thread_count) + "] started");
 }
 
 AsyncDbPool::~AsyncDbPool() {

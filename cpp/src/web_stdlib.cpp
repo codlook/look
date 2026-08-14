@@ -473,7 +473,7 @@ static Module make_response_module(WebContext* ctx) {
         return Value();
     };
     // response::error(kod, mesaj) — durum kodu + {"ok":false,"hata":mesaj} JSON gövdesi.
-    // Tek satırda hata dönüşü: return response::error(404, "Bulunamadı")
+    // Tek satırda hata dönüşü: return response::error(404, "Not found")
     // 3 satırlık status+json+return kalıbının yerine geçer.
     m.functions["error"] = [ctx](auto args) -> Value {
         int code = args.empty() ? 500 : args[0].to_int();
@@ -734,7 +734,7 @@ static std::string gen_session_id() {
     uint8_t bytes[16];
     urandom.read(reinterpret_cast<char*>(bytes), 16);
     if (!urandom || urandom.gcount() != 16)
-        throw std::runtime_error("session: güvenli rastgelelik alınamadı (/dev/urandom)");
+        throw std::runtime_error("session: could not obtain secure randomness (/dev/urandom)");
     for (int i = 0; i < 16; i++) {
         id[i*2]   = "0123456789abcdef"[(bytes[i] >> 4) & 0xf];
         id[i*2+1] = "0123456789abcdef"[bytes[i] & 0xf];

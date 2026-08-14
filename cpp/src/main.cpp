@@ -332,7 +332,7 @@ int main(int argc, char* argv[]) {
         // ── lk module <sub> ──────────────────────────────────────────────────
         if (cmd == "module") {
             if (argc < 3) {
-                std::cout << "Kullanım:\n"
+                std::cout << "Usage:\n"
                           << "  lk module install <github.com/user/repo>  — modül yükle\n"
                           << "  lk module list                             — resmi modülleri listele\n";
                 return 1;

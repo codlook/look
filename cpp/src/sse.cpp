@@ -108,7 +108,7 @@ void SseRegistry::add(std::shared_ptr<SseConnection> conn) {
     }();
     std::unique_lock<std::shared_mutex> lk(mutex_);
     if (clients_.size() >= MAX_SSE)
-        throw std::runtime_error("SSE bağlantı limiti aşıldı (" + std::to_string(MAX_SSE) + ")");
+        throw std::runtime_error("SSE connection limit exceeded (" + std::to_string(MAX_SSE) + ")");
     clients_[conn->fd] = std::move(conn);
 }
 

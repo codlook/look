@@ -634,7 +634,7 @@ call_dispatch:
                             throw LookVmError("Undefined variable: " + nm);
                         throw LookVmError("'" + nm + "' cagrilabilir degil (fonksiyon bekleniyor)");
                     }
-                    throw LookVmError("Çağrılabilir değil (fonksiyon bekleniyor)");
+                    throw LookVmError("Not callable (function expected)");
                 }
                 auto cl = fn_val.as_bytecode_fn();
                 auto* cp = cl->proto.get();
@@ -783,7 +783,7 @@ call_dispatch:
             }
             case OpCode::LOAD_CAPTURE: {
                 if (!frame.closure || ins.b >= frame.closure->captures.size())
-                    throw LookVmError("Capture index dışı: " + std::to_string(ins.b));
+                    throw LookVmError("Capture index out of range: " + std::to_string(ins.b));
                 R(ins.a) = frame.closure->captures[ins.b];
                 break;
             }
@@ -946,26 +946,26 @@ call_dispatch:
             // ediyordu; VM'de yoktu (motor ayrışması, S3). send([1,2,3],42) gibi.
             case OpCode::CHAN_SEND: {
                 if (R(ins.a).type() != Value::CHANNEL)
-                    throw LookVmError("send(): argüman kanal değil");
+                    throw LookVmError("send(): argument is not a channel");
                 R(ins.a).as_channel()->send_val(R(ins.b));
                 break;
             }
             case OpCode::CHAN_RECV: {
                 if (R(ins.b).type() != Value::CHANNEL)
-                    throw LookVmError("receive(): argüman kanal değil");
+                    throw LookVmError("receive(): argument is not a channel");
                 R(ins.a) = R(ins.b).as_channel()->recv_val();
                 break;
             }
             case OpCode::CHAN_CLOSE: {
                 if (R(ins.a).type() != Value::CHANNEL)
-                    throw LookVmError("close(): argüman kanal değil");
+                    throw LookVmError("close(): argument is not a channel");
                 auto ch = R(ins.a).as_channel();
                 { std::unique_lock<std::mutex> lk(ch->mtx); ch->closed = true; ch->not_empty.notify_all(); }
                 break;
             }
             case OpCode::CHAN_SIZE: {
                 if (R(ins.b).type() != Value::CHANNEL)
-                    throw LookVmError("chan_size(): argüman kanal değil");
+                    throw LookVmError("chan_size(): argument is not a channel");
                 R(ins.a) = Value(R(ins.b).as_channel()->sz());
                 break;
             }

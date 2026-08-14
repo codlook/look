@@ -86,7 +86,7 @@ uint16_t FunctionCompiler::add_const(Value v) {
     for (size_t i = 0; i < proto_.constants.size(); ++i)
         if (proto_.constants[i] == v) return (uint16_t)i;
     if (proto_.constants.size() >= 0xFFFF)
-        throw LookCompileError("Constant pool taştı (max 65535)");
+        throw LookCompileError("Constant pool overflow (max 65535)");
     proto_.constants.push_back(v);
     return (uint16_t)(proto_.constants.size() - 1);
 }
@@ -140,7 +140,7 @@ uint8_t FunctionCompiler::declare_local(const std::string& name, int line) {
     for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
         if (it->depth < scope_depth_) break;
         if (it->name == name)
-            throw LookCompileError("'" + name + "' bu scope'ta zaten tanımlı", line);
+            throw LookCompileError("'" + name + "' already defined in this scope", line);
     }
     // Yeni korumalı local slot — free() bunu havuza atmaz (aksi halde compile_expr'in
     // "local slot'unu doğrudan döndür" optimizasyonu + free_temp local'i bozardı).
@@ -352,7 +352,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
     else if (dynamic_cast<const BreakStatement*>(&stmt)) {
         // break en yakın breakable bağlama gider — switch veya döngü.
         if (loop_stack_.empty())
-            throw LookCompileError("break döngü/switch dışında");
+            throw LookCompileError("break outside a loop/switch");
         // döngü-içi try-finally'leri çalıştır (loop'un floor'una kadar), SONRA sıçra.
         emit_pending_finallys(loop_stack_.back().finally_floor);
         int p = emit_jump(OpCode::JUMP);
@@ -364,7 +364,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         for (int i = (int)loop_stack_.size() - 1; i >= 0; --i)
             if (!loop_stack_[i].is_switch) { idx = i; break; }
         if (idx < 0)
-            throw LookCompileError("continue döngü dışında");
+            throw LookCompileError("continue outside a loop");
         // hedef döngünün floor'una kadarki finally'leri çalıştır, SONRA sıçra.
         emit_pending_finallys(loop_stack_[idx].finally_floor);
         int target = loop_stack_[idx].continue_target;
@@ -667,7 +667,7 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
 // kırpılma sınıfı bir daha ASLA sessiz olmasın diye duruyor.
 void FunctionCompiler::check_builtin_index(int bidx, const std::string& name) {
     if (bidx > 65535)
-        throw LookCompileError("builtin indeksi 16-bit tavanını aştı: '" + name + "' index=" +
+        throw LookCompileError("builtin index exceeded 16-bit ceiling: '" + name + "' index=" +
                                std::to_string(bidx));
 }
 
@@ -778,7 +778,7 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
     // İç fonksiyon dıştaki local/capture'ları yakalıyorsa (implicit capture —
     // inner.compile sırasında toplandı) compile_closure ile AYNI capture kurulumunu
     // yap. Eskiden bu blok YOKTU → proto gövdesindeki LOAD_CAPTURE'lar runtime'da
-    // "Capture index dışı" ile ÇÖKÜYORDU (named nested fn capture, tree-walk çalışırken
+    // "Capture index out of range" ile ÇÖKÜYORDU (named nested fn capture, tree-walk çalışırken
     // VM crash). Capture yükleme MAKE_CLOSURE'dan hemen önce; hint'ler hemen sonra.
     std::vector<uint8_t> cap_regs;
     for (auto& cap : inner.captures_) {
@@ -1025,7 +1025,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         }
     } else if (loc.kind == VarKind::CAPTURE) {
         // LOOK by-value capture — capture değiştirilemiyor (felsefe)
-        throw LookCompileError("Capture edilen değişken değiştirilemez: $" + e.name);
+        throw LookCompileError("Captured variable cannot be reassigned: $" + e.name);
     } else if (parent_ != nullptr ||
                (loop_depth_ > 0 && !outer_globals_.count(e.name) &&
                 (no_discovery_ || boxed_names_.count(e.name)))) {
@@ -1185,13 +1185,13 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         // postfix eski değeri döndürür; değişkene geri yazılır.
         if (e->op == "++" || e->op == "--") {
             auto* var = dynamic_cast<const Variable*>(e->right.get());
-            if (!var) throw LookCompileError("++/-- bir değişken gerektirir");
+            if (!var) throw LookCompileError("++/-- requires a variable");
             OpCode delta_op = (e->op == "++") ? OpCode::ADD : OpCode::SUB;
             uint8_t one = alloc_temp();
             emit_load_const(one, Value((int64_t)1), expr.loc.line);
             auto loc = resolve_var(var->name);
             if (loc.kind == VarKind::CAPTURE)
-                throw LookCompileError("Capture edilen değişken değiştirilemez: $" + var->name);
+                throw LookCompileError("Captured variable cannot be reassigned: $" + var->name);
 
             uint8_t r = ensure_dest();
             if (loc.kind == VarKind::LOCAL) {
@@ -1389,7 +1389,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             return r;
         }
         // Bilinmeyen modül fonksiyonu → genel CALL yolu.
-        // İŞARETLE: bu çağrı derlenir ama RUNTIME'da "Çağrılabilir değil" fırlatır
+        // İŞARETLE: bu çağrı derlenir ama RUNTIME'da "Not callable" fırlatır
         // (LOAD_GLOBAL "mod::fn" → null → CALL). Web'de route interpreter'a düşüp
         // kurtulur; CLI-VM'de fallback YOK → script çökerdi. CLI bayrağı görüp
         // tree-walk'a düşer (bkz. CompiledProgram::uses_non_builtin_module_fn).
@@ -1398,7 +1398,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     if (auto* var = dynamic_cast<const Variable*>(e.callee.get())) {
         if (var->name == "parallel") {
             if (e.arguments.size() != 1)
-                throw LookCompileError("parallel() tek argüman alır", e.loc.line);
+                throw LookCompileError("parallel() takes one argument", e.loc.line);
             uint8_t closure = compile_expr(*e.arguments[0]);
             emit(OpCode::PARALLEL_CALL, closure);
             free_temp(closure);
@@ -1408,7 +1408,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         }
         if (var->name == "send") {
             if (e.arguments.size() != 2)
-                throw LookCompileError("send() 2 argüman alır", e.loc.line);
+                throw LookCompileError("send() takes 2 arguments", e.loc.line);
             uint8_t ch  = compile_expr(*e.arguments[0]);
             uint8_t val = compile_expr(*e.arguments[1]);
             emit(OpCode::CHAN_SEND, ch, val);
@@ -1419,7 +1419,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         }
         if (var->name == "receive") {
             if (e.arguments.size() != 1)
-                throw LookCompileError("receive() 1 argüman alır", e.loc.line);
+                throw LookCompileError("receive() takes 1 argument", e.loc.line);
             uint8_t ch = compile_expr(*e.arguments[0]);
             uint8_t r  = (dest == 255) ? alloc_temp() : dest;
             emit(OpCode::CHAN_RECV, r, ch);
@@ -1431,7 +1431,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // boş vektörde null deref → DERLEME-ZAMANI SEGFAULT (tree-walk graceful hata
             // veriyordu → divergence). send/receive kalıbıyla doğrula.
             if (e.arguments.size() != 1)
-                throw LookCompileError("close() 1 argüman alır", e.loc.line);
+                throw LookCompileError("close() takes 1 argument", e.loc.line);
             uint8_t ch = compile_expr(*e.arguments[0]);
             emit(OpCode::CHAN_CLOSE, ch);
             free_temp(ch);
@@ -1441,7 +1441,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         }
         if (var->name == "chan_size") {
             if (e.arguments.size() != 1)
-                throw LookCompileError("chan_size() 1 argüman alır", e.loc.line);
+                throw LookCompileError("chan_size() takes 1 argument", e.loc.line);
             uint8_t ch = compile_expr(*e.arguments[0]);
             uint8_t r  = (dest == 255) ? alloc_temp() : dest;
             emit(OpCode::CHAN_SIZE, r, ch);
@@ -1451,7 +1451,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         // Interpreter global builtin alias'ları → VM builtin karşılığı.
         // Bu isimler interpreter'da inline çözülüyordu ama VM builtin listesinde
         // yoktu → route çağırınca CALL (bytecode-fn) olarak derlenip runtime'da
-        // "Çağrılabilir değil" fırlatıyor, route KALICI interpreter'a düşüyordu
+        // "Not callable" fırlatıyor, route KALICI interpreter'a düşüyordu
         // (O(n²) string dahil tüm VM optimizasyonları o route'ta boşa gidiyordu).
         static const std::unordered_map<std::string, std::string> BUILTIN_ALIAS = {
             {"len", "count"}, {"intval", "int"}, {"floatval", "float"},
@@ -1503,7 +1503,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     // alanlarına gömülür — VM hata mesajında adı SÖYLEYEBİLSİN diye.
     // ESKİ HATA: VM'in CALL noktasında yalnız register değeri vardı, ad yoktu:
     //   olmayan_fonksiyon(1)
-    //   VM        -> "Çağrılabilir değil (BYTECODE_FN bekleniyor)"   (hangi ad?)
+    //   VM        -> "Not callable (BYTECODE_FN expected)"   (hangi ad?)
     //   tree-walk -> "Undefined variable: olmayan_fonksiyon"
     // LOAD_GLOBAL bu adda fırlatamıyor çünkü "mod::fn" isimleri orada ıskalamak
     // ZORUNDA (genel CALL yoluna düşsünler diye) — o yüzden çözüm adı buraya

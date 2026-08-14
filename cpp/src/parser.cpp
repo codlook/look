@@ -30,7 +30,7 @@ std::unique_ptr<Statement> Parser::statement() {
         ~DepthGuard() { --d; }
     } guard(stmt_depth_);
     if (stmt_depth_ > MAX_STMT_DEPTH)
-        throw look::LookParseError("İfade/blok çok derin iç içe (max " +
+        throw look::LookParseError("Expression/block nested too deep (max " +
                                    std::to_string(MAX_STMT_DEPTH) + ")",
                                    peek().line, peek().column);
     auto loc = cur_loc();
@@ -362,7 +362,7 @@ std::unique_ptr<Statement> Parser::return_statement() {
 //   throw error::new("x","msg") → catch($e) { error::is($e, "x") }
 std::unique_ptr<Statement> Parser::throw_statement() {
     if (check(TokenType::SEMICOLON) || check(TokenType::RBRACE) || is_at_end())
-        throw look::LookParseError("throw sonrası bir ifade gerekli",
+        throw look::LookParseError("an expression is required after throw",
                                    peek().line, peek().column);
     auto val = expression();
     consume_semi();
@@ -396,7 +396,7 @@ std::unique_ptr<Expression> Parser::expression() {
         ~DepthGuard() { --d; }
     } guard(expr_depth_);
     if (expr_depth_ > MAX_EXPR_DEPTH)
-        throw look::LookParseError("İfade çok derin iç içe (max " +
+        throw look::LookParseError("Expression nested too deep (max " +
                                    std::to_string(MAX_EXPR_DEPTH) + ")",
                                    peek().line, peek().column);
     // En dıştaki ifade girişinde ikili-zincir sayacını sıfırla (her top-level ifade
@@ -410,9 +410,9 @@ std::unique_ptr<Expression> Parser::expression() {
 
 void Parser::check_binop_chain() {
     if (++binop_depth_ > MAX_BINOP_CHAIN)
-        throw look::LookParseError("İfade zinciri çok uzun (max " +
+        throw look::LookParseError("Expression chain too long (max " +
                                    std::to_string(MAX_BINOP_CHAIN) +
-                                   " ardışık ikili operatör)",
+                                   " consecutive binary operators)",
                                    peek().line, peek().column);
 }
 
@@ -592,7 +592,7 @@ std::unique_ptr<Expression> Parser::power() {
     // "2**2**…**2" bu yüzden ayrı guard ister (aksi halde stack-overflow).
     struct DepthGuard { int& d; explicit DepthGuard(int& x):d(x){++d;} ~DepthGuard(){--d;} } guard(expr_depth_);
     if (expr_depth_ > MAX_EXPR_DEPTH)
-        throw look::LookParseError("İfade çok derin iç içe (max " +
+        throw look::LookParseError("Expression nested too deep (max " +
                                    std::to_string(MAX_EXPR_DEPTH) + ")",
                                    peek().line, peek().column);
     auto expr = unary();
@@ -607,7 +607,7 @@ std::unique_ptr<Expression> Parser::unary() {
     // taşırıyordu (ASan stack-overflow, parse-zamanı DoS). Aynı expr_depth_ sayacı.
     struct DepthGuard { int& d; explicit DepthGuard(int& x):d(x){++d;} ~DepthGuard(){--d;} } guard(expr_depth_);
     if (expr_depth_ > MAX_EXPR_DEPTH)
-        throw look::LookParseError("İfade çok derin iç içe (max " +
+        throw look::LookParseError("Expression nested too deep (max " +
                                    std::to_string(MAX_EXPR_DEPTH) + ")",
                                    peek().line, peek().column);
     if (match(TokenType::PLUS_PLUS)) {

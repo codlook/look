@@ -41,7 +41,7 @@ namespace fs = std::filesystem;
 
 static std::string read_file(const fs::path& path) {
     std::ifstream f(path);
-    if (!f) throw std::runtime_error("Dosya açılamadı: " + path.string());
+    if (!f) throw std::runtime_error("Could not open file: " + path.string());
     return { std::istreambuf_iterator<char>(f), {} };
 }
 
@@ -56,7 +56,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
 
     m.functions["ok"] = [fail](auto args) -> Value {
         if (args.empty() || !args[0].is_truthy())
-            fail("assert::ok() başarısız — değer falsy: " +
+            fail("assert::ok() failed — value is falsy: " +
                  (args.empty() ? "null" : args[0].to_string()));
         return Value();
     };
@@ -77,7 +77,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
             eq = (a.to_string() == b.to_string());
         }
         if (!eq)
-            fail("assert::eq() başarısız:\n    beklenen: " + b.to_string() +
+            fail("assert::eq() failed:\n    beklenen: " + b.to_string() +
                  "\n    gerçek:   " + a.to_string());
         return Value();
     };
@@ -86,20 +86,20 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
         if (args.size() < 2) fail("assert::neq() 2 argüman bekler");
         bool eq = (args[0].to_string() == args[1].to_string());
         if (eq)
-            fail("assert::neq() başarısız — değerler eşit: " + args[0].to_string());
+            fail("assert::neq() failed — values are equal: " + args[0].to_string());
         return Value();
     };
 
     m.functions["null"] = [fail](auto args) -> Value {
         if (args.empty() || args[0].type() != Value::NONE)
-            fail("assert::null() başarısız — değer null değil: " +
+            fail("assert::null() failed — value is not null: " +
                  (args.empty() ? "(yok)" : args[0].to_string()));
         return Value();
     };
 
     m.functions["not_null"] = [fail](auto args) -> Value {
         if (args.empty() || args[0].type() == Value::NONE)
-            fail("assert::not_null() başarısız — değer null");
+            fail("assert::not_null() failed — value is null");
         return Value();
     };
 
@@ -108,27 +108,27 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
         auto& arr = args[0];
         auto& val = args[1];
         if (arr.type() != Value::ARRAY)
-            fail("assert::contains() ilk argüman array olmalı");
+            fail("assert::contains() first argument must be an array");
         auto& vec = *arr.as_array();
         bool found = false;
         for (auto& elem : vec) {
             if (elem.to_string() == val.to_string()) { found = true; break; }
         }
         if (!found)
-            fail("assert::contains() başarısız — \"" + val.to_string() + "\" dizide yok");
+            fail("assert::contains() failed — \"" + val.to_string() + "\" dizide yok");
         return Value();
     };
 
     m.functions["true"] = [fail](auto args) -> Value {
         if (args.empty() || !args[0].is_truthy())
-            fail("assert::true() başarısız — değer falsy: " +
+            fail("assert::true() failed — value is falsy: " +
                  (args.empty() ? "null" : args[0].to_string()));
         return Value();
     };
 
     m.functions["false"] = [fail](auto args) -> Value {
         if (args.empty() || args[0].is_truthy())
-            fail("assert::false() başarısız — değer truthy: " +
+            fail("assert::false() failed — value is truthy: " +
                  (args.empty() ? "null" : args[0].to_string()));
         return Value();
     };
@@ -140,7 +140,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
         try {
             std::regex re(pat);
             if (!std::regex_search(s, re))
-                fail("assert::match() başarısız — \"" + s + "\" pattern ile eşleşmedi: " + pat);
+                fail("assert::match() failed — \"" + s + "\" did not match pattern: " + pat);
         } catch (std::regex_error& e) {
             fail("assert::match() geçersiz regex: " + std::string(e.what()));
         }
@@ -165,7 +165,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
             tmp->invoke(args[0], {});
         } catch (...) { threw = true; }
         if (!threw)
-            fail("assert::throws() başarısız — çağrı hata fırlatmadı");
+            fail("assert::throws() failed — the call did not throw");
         return Value();
     };
 
@@ -231,7 +231,7 @@ static std::vector<fs::path> find_test_files(const std::string& pattern) {
     if (pattern.empty()) {
         // Look in tests/ directory
         if (!fs::exists(tests_dir)) {
-            std::cerr << "tests/ klasörü bulunamadı: " << tests_dir.string() << "\n";
+            std::cerr << "tests/ folder not found: " << tests_dir.string() << "\n";
             return files;
         }
         for (auto& entry : fs::recursive_directory_iterator(tests_dir)) {
@@ -276,7 +276,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     catch (std::exception& e) {
         TestResult r;
         r.file    = file_path.filename().string();
-        r.name    = "(dosya okuma hatası)";
+        r.name    = "(file read error)";
         r.message = e.what();
         results.push_back(r);
         return results;
@@ -290,7 +290,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     catch (std::exception& e) {
         TestResult r;
         r.file    = file_path.filename().string();
-        r.name    = "(parse hatası)";
+        r.name    = "(parse error)";
         r.message = e.what();
         results.push_back(r);
         return results;
@@ -323,7 +323,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         if (args.size() < 2 || args[0].type() != Value::STRING)
             throw std::runtime_error("test() — test(isim, function() {...}) bekleniyor");
         if (args[1].type() != Value::FUNCTION && args[1].type() != Value::BYTECODE_FN)
-            throw std::runtime_error("test() — ikinci argüman fonksiyon olmalı");
+            throw std::runtime_error("test() — second argument must be a function");
         interp.register_test_case(args[0].as_string(), args[1]);
         return Value();
     });
@@ -347,19 +347,19 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
 
     interp.register_builtin("assert", [fail](std::vector<Value> args) -> Value {
         if (args.empty() || !args[0].is_truthy())
-            fail("assert() başarısız — " + (args.empty() ? "null" : args[0].to_string()));
+            fail("assert() failed — " + (args.empty() ? "null" : args[0].to_string()));
         return Value();
     });
 
     interp.register_builtin("assert_true", [fail](std::vector<Value> args) -> Value {
         if (args.empty() || !args[0].is_truthy())
-            fail("assert_true() başarısız — değer falsy: " + (args.empty() ? "null" : args[0].to_string()));
+            fail("assert_true() failed — value is falsy: " + (args.empty() ? "null" : args[0].to_string()));
         return Value();
     });
 
     interp.register_builtin("assert_false", [fail](std::vector<Value> args) -> Value {
         if (args.empty() || args[0].is_truthy())
-            fail("assert_false() başarısız — değer truthy: " + (args.empty() ? "null" : args[0].to_string()));
+            fail("assert_false() failed — value is truthy: " + (args.empty() ? "null" : args[0].to_string()));
         return Value();
     });
 
@@ -375,39 +375,39 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
             else eq = a.to_string() == b.to_string();
         } else eq = a.to_string() == b.to_string();
         if (!eq)
-            fail("assert_eq() başarısız:\n    beklenen: " + b.to_string() + "\n    gerçek:   " + a.to_string());
+            fail("assert_eq() failed:\n    beklenen: " + b.to_string() + "\n    gerçek:   " + a.to_string());
         return Value();
     });
 
     interp.register_builtin("assert_neq", [fail](std::vector<Value> args) -> Value {
         if (args.size() < 2) fail("assert_neq() 2 argüman bekler");
         if (args[0].to_string() == args[1].to_string())
-            fail("assert_neq() başarısız — değerler eşit: " + args[0].to_string());
+            fail("assert_neq() failed — values are equal: " + args[0].to_string());
         return Value();
     });
 
     interp.register_builtin("assert_null", [fail](std::vector<Value> args) -> Value {
         if (args.empty() || args[0].type() != Value::NONE)
-            fail("assert_null() başarısız — değer null değil: " + (args.empty() ? "(yok)" : args[0].to_string()));
+            fail("assert_null() failed — value is not null: " + (args.empty() ? "(yok)" : args[0].to_string()));
         return Value();
     });
 
     interp.register_builtin("assert_not_null", [fail](std::vector<Value> args) -> Value {
         if (args.empty() || args[0].type() == Value::NONE)
-            fail("assert_not_null() başarısız — değer null");
+            fail("assert_not_null() failed — value is null");
         return Value();
     });
 
     interp.register_builtin("assert_contains", [fail](std::vector<Value> args) -> Value {
         if (args.size() < 2) fail("assert_contains() 2 argüman bekler");
         if (args[0].type() != Value::ARRAY)
-            fail("assert_contains() ilk argüman array olmalı");
+            fail("assert_contains() first argument must be an array");
         auto& vec = *args[0].as_array();
         bool found = false;
         for (auto& elem : vec)
             if (elem.to_string() == args[1].to_string()) { found = true; break; }
         if (!found)
-            fail("assert_contains() başarısız — \"" + args[1].to_string() + "\" dizide yok");
+            fail("assert_contains() failed — \"" + args[1].to_string() + "\" dizide yok");
         return Value();
     });
 
@@ -427,7 +427,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
             tmp->invoke(args[0], {});
         } catch (...) { threw = true; }
         if (!threw)
-            fail("assert_throws() başarısız — çağrı hata fırlatmadı");
+            fail("assert_throws() failed — the call did not throw");
         return Value();
     });
 
@@ -436,7 +436,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         std::string s = args[0].to_string(), pat = args[1].to_string();
         try {
             if (!std::regex_search(s, std::regex(pat)))
-                fail("assert_match() başarısız — \"" + s + "\" pattern ile eşleşmedi: " + pat);
+                fail("assert_match() failed — \"" + s + "\" did not match pattern: " + pat);
         } catch (std::regex_error& e) { fail("assert_match() geçersiz regex: " + std::string(e.what())); }
         return Value();
     });
@@ -449,7 +449,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     } catch (std::exception& e) {
         TestResult r;
         r.file    = file_path.filename().string();
-        r.name    = "(setup hatası)";
+        r.name    = "(setup error)";
         r.message = e.what();
         results.push_back(r);
         return results;
@@ -485,7 +485,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
             res.message = e.what();
         } catch (const look::LookRuntimeError& e) {
             res.passed  = false;
-            res.message = "Runtime hatası: " + std::string(e.what());
+            res.message = "Runtime error: " + std::string(e.what());
         } catch (std::exception& e) {
             res.passed  = false;
             res.message = std::string(e.what());
@@ -512,7 +512,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         // File has no test() calls — warn
         if (verbose) {
             set_console_color(COLOR_YELLOW);
-            std::cout << "  ⚠ test() çağrısı yok\n";
+            std::cout << "  ⚠ no test() call\n";
             reset_console_color();
         }
     }
@@ -524,7 +524,7 @@ int run_test_mode(const std::string& pattern, bool verbose) {
     auto files = find_test_files(pattern);
 
     if (files.empty()) {
-        std::cerr << "Test dosyası bulunamadı";
+        std::cerr << "Test file not found";
         if (!pattern.empty()) std::cerr << " (pattern: " << pattern << ")";
         std::cerr << "\n";
         return 1;
@@ -586,7 +586,7 @@ int run_test_mode(const std::string& pattern, bool verbose) {
         reset_console_color();
     } else {
         set_console_color(COLOR_RED);
-        std::cout << failed << " başarısız";
+        std::cout << failed << " failed";
         reset_console_color();
         std::cout << " — ";
         set_console_color(COLOR_GREEN);

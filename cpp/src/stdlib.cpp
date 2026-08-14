@@ -35,12 +35,12 @@ static void secure_random_fill(uint8_t* buf, size_t n) {
     if (n == 0) return;
 #if defined(_WIN32)
     if (BCryptGenRandom(nullptr, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
-        throw std::runtime_error("string::random: CSPRNG erişilemedi (BCryptGenRandom)");
+        throw std::runtime_error("string::random: CSPRNG unavailable (BCryptGenRandom)");
 #else
     std::ifstream urandom("/dev/urandom", std::ios::binary);
     urandom.read(reinterpret_cast<char*>(buf), (std::streamsize)n);
     if (!urandom || (size_t)urandom.gcount() != n)
-        throw std::runtime_error("string::random: CSPRNG erişilemedi (/dev/urandom)");
+        throw std::runtime_error("string::random: CSPRNG unavailable (/dev/urandom)");
 #endif
 }
 
@@ -65,7 +65,7 @@ static Module make_math() {
         double x = args[0].to_float();
         // Negatif → sessiz NaN yerine net hata. NaN sonradan JSON'a girerse
         // geçersiz JSON (NaN yasak) üretirdi.
-        if (x < 0) throw std::runtime_error("math::sqrt: negatif sayının karekökü tanımsız");
+        if (x < 0) throw std::runtime_error("math::sqrt: square root of a negative number is undefined");
         return Value(std::sqrt(x));
     };
     m.functions["pow"] = [](auto args) {
@@ -127,7 +127,7 @@ static Module make_math() {
             int lo = args[0].to_int(), hi = args[1].to_int();
             // hi < lo → aralık boyutu ≤0; `rand() % 0` tamsayı sıfıra bölme
             // (SIGFPE crash), negatif aralık ise tanımsız modulus. Net hata ver.
-            if (hi < lo) throw std::runtime_error("math::random: hi < lo (geçersiz aralık)");
+            if (hi < lo) throw std::runtime_error("math::random: hi < lo (invalid range)");
             return Value(lo + std::rand() % (hi - lo + 1));
         }
         return Value((double)std::rand() / RAND_MAX);
@@ -137,7 +137,7 @@ static Module make_math() {
         double x = args[0].to_float();
         // x ≤ 0 → log(0)=-Inf, log(negatif)=NaN. sqrt gibi net hata ver — aksi
         // halde NaN/Inf sonradan JSON'a girip geçersiz JSON üretir.
-        if (x <= 0) throw std::runtime_error("math::log: pozitif olmayan sayının logaritması tanımsız");
+        if (x <= 0) throw std::runtime_error("math::log: logarithm of a non-positive number is undefined");
         return Value(std::log(x));
     };
     m.functions["sin"] = [](auto args) {
@@ -406,10 +406,10 @@ static Module make_string() {
         check_args("string::repeat", args.size(), 2);
         std::string s = args[0].to_string();
         int n = args[1].to_int();
-        if (n < 0) throw std::runtime_error("string::repeat: tekrar sayısı negatif olamaz");
+        if (n < 0) throw std::runtime_error("string::repeat: repeat count cannot be negative");
         static constexpr int64_t MAX_REPEAT = 10 * 1024 * 1024; // 10 MB
         if ((int64_t)n * (int64_t)s.size() > MAX_REPEAT)
-            throw std::runtime_error("string::repeat: sonuç 10 MB limitini aşıyor");
+            throw std::runtime_error("string::repeat: result exceeds the 10 MB limit");
         std::string result;
         result.reserve((size_t)n * s.size());
         for (int i = 0; i < n; i++) result += s;
@@ -473,7 +473,7 @@ static Module make_string() {
         std::string s   = args[0].to_string();
         int64_t     len = args[1].as_int();
         if (len < 0) len = 0;
-        if (len > PAD_MAX) throw std::runtime_error("string::pad_left: hedef uzunluk 10MB sınırını aşıyor");
+        if (len > PAD_MAX) throw std::runtime_error("string::pad_left: target length exceeds the 10 MB limit");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
         return Value(pad_to(s, len, pad, true));
@@ -484,7 +484,7 @@ static Module make_string() {
         std::string s   = args[0].to_string();
         int64_t     len = args[1].as_int();
         if (len < 0) len = 0;
-        if (len > PAD_MAX) throw std::runtime_error("string::pad_right: hedef uzunluk 10MB sınırını aşıyor");
+        if (len > PAD_MAX) throw std::runtime_error("string::pad_right: target length exceeds the 10 MB limit");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
         return Value(pad_to(s, len, pad, false));
@@ -594,7 +594,7 @@ static Module make_string() {
     static constexpr int REGEX_MAX_THREADS = 8;
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
         if (g_regex_threads.load() >= REGEX_MAX_THREADS)
-            throw std::runtime_error("string::regex: eşzamanlı regex limiti aşıldı (max 8)");
+            throw std::runtime_error("string::regex: concurrent regex limit exceeded (max 8)");
         using T = decltype(fn());
         struct State {
             std::mutex              mtx;
@@ -636,7 +636,7 @@ static Module make_string() {
             // en fazla 8 CANLI regex thread'i olur, 9.'su 596'da reddedilir (sistem yavaşlar
             // ama ölmez). timed_out yalnız sonuç/notify sırasında anlamlı.
             state->timed_out = true;
-            throw std::runtime_error("string::regex: execution timeout (ReDoS koruması — pattern çok karmaşık)");
+            throw std::runtime_error("string::regex: execution timeout (ReDoS protection — pattern too complex)");
         }
         if (state->ex) std::rethrow_exception(state->ex);
         return std::move(*state->result);

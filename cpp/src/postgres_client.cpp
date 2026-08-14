@@ -28,12 +28,12 @@ namespace look {
 static void pg_secure_random(uint8_t* buf, size_t n) {
 #ifdef _WIN32
     if (BCryptGenRandom(nullptr, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
-        throw std::runtime_error("PostgreSQL SCRAM: CSPRNG erişilemedi (BCryptGenRandom)");
+        throw std::runtime_error("PostgreSQL SCRAM: CSPRNG unavailable (BCryptGenRandom)");
 #else
     std::ifstream u("/dev/urandom", std::ios::binary);
     u.read(reinterpret_cast<char*>(buf), (std::streamsize)n);
     if (!u || (size_t)u.gcount() != n)
-        throw std::runtime_error("PostgreSQL SCRAM: CSPRNG erişilemedi (/dev/urandom)");
+        throw std::runtime_error("PostgreSQL SCRAM: CSPRNG unavailable (/dev/urandom)");
 #endif
 }
 
@@ -501,7 +501,7 @@ PostgresClient::PgMsg PostgresClient::read_message() {
         return 256ull * 1024 * 1024;
     }();
     if (body_len > PG_MAX_MSG)
-        throw std::runtime_error("db postgres: mesaj boyutu sınırı aşıldı (LOOK_PG_MAX_MSG)");
+        throw std::runtime_error("db postgres: message size limit exceeded (LOOK_PG_MAX_MSG)");
     std::vector<uint8_t> body(body_len);
     if (body_len > 0 && !recv_bytes(body.data(), body_len))
         throw std::runtime_error("db postgres: connection lost reading body");
@@ -625,18 +625,18 @@ void PostgresClient::do_connect() {
         uint8_t resp = 0;
         if (!recv_bytes(&resp, 1)) {
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-            throw std::runtime_error("db postgres: SSLRequest yanıtı okunamadı");
+            throw std::runtime_error("db postgres: could not read SSLRequest response");
         }
         if (resp != 'S') {
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
             throw std::runtime_error(std::string("db postgres: sunucu TLS desteklemiyor "
-                "(SSLRequest yanıtı '") + (char)resp + "') — düz metne DÜŞÜLMEDİ. "
-                "Şifresiz bağlanmak istiyorsanız postgres:// kullanın.");
+                "(SSLRequest response '") + (char)resp + "') — did NOT fall back to plaintext. "
+                "If you want to connect without encryption, use postgres://.");
         }
         SSL_CTX* ctx = pg_ssl_ctx();
         SSL* s = ctx ? SSL_new(ctx) : nullptr;
         if (!s) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-                  throw std::runtime_error("db postgres: SSL_new başarısız (TLS)"); }
+                  throw std::runtime_error("db postgres: SSL_new failed (TLS)"); }
         SSL_set_fd(s, (int)sock_);
         SSL_set_tlsext_host_name(s, host_.c_str());   // SNI
         if (tls_verify_) {
@@ -645,21 +645,21 @@ void PostgresClient::do_connect() {
             SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
             if (SSL_set1_host(s, host_.c_str()) != 1) {
                 SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-                throw std::runtime_error("db postgres: TLS hostname doğrulaması kurulamadı");
+                throw std::runtime_error("db postgres: could not set up TLS hostname verification");
             }
         }
         if (SSL_connect(s) != 1) {
             unsigned long e = ERR_get_error();
             char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
             SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-            throw std::runtime_error(std::string("db postgres: TLS handshake başarısız: ") + eb);
+            throw std::runtime_error(std::string("db postgres: TLS handshake failed: ") + eb);
         }
         ssl_ = s;   // bundan sonra send/recv_bytes SSL üstünden (startup+auth+sorgu dahil)
     }
 #else
     if (tls_)
-        throw std::runtime_error("db postgres: TLS (postgresqls://) bu yapıda desteklenmiyor "
-                                 "(Windows OpenSSL'siz derlenir). Linux yapısını kullanın.");
+        throw std::runtime_error("db postgres: TLS (postgresqls://) is not supported in this build "
+                                 "(Windows is built without OpenSSL). Use the Linux build.");
 #endif
 
     send_startup();

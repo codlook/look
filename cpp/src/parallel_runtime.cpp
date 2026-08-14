@@ -73,9 +73,9 @@ bool task_acquire(AcquireMode mode, int timeout_ms) {
     if (prev >= task_limit()) {
         s_count.fetch_sub(1);
         throw std::runtime_error(
-            "parallel(): task limiti aşıldı (" +
+            "parallel(): task limit exceeded (" +
             std::to_string(task_limit()) + "). " +
-            "LOOK_PARALLEL_LIMIT env ile artırılabilir.");
+            "can be raised with the LOOK_PARALLEL_LIMIT env var.");
     }
     return true;
 }

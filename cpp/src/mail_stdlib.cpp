@@ -205,9 +205,9 @@ static MailResult dispatch_send(const std::string& to,
     std::string from     = from_override.empty() ? env_get("MAIL_FROM", "") : from_override;
 
     if (api_key.empty())
-        throw std::runtime_error("mail:: — MAIL_API_KEY env değişkeni eksik");
+        throw std::runtime_error("mail:: — MAIL_API_KEY env variable is missing");
     if (from.empty())
-        throw std::runtime_error("mail:: — MAIL_FROM env değişkeni eksik (veya from parametresi belirt)");
+        throw std::runtime_error("mail:: — MAIL_FROM env variable is missing (or specify the from parameter)");
 
     if (provider == "mailgun") {
         std::string domain = env_get("MAIL_DOMAIN", "");

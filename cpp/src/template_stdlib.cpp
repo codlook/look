@@ -204,13 +204,13 @@ struct TplParser {
             if (c == '(' || c == ')' || c == '+' || c == '*' || c == '%' ||
                 c == '/' || c == '!' || c == '&' || c == '|' || c == '?') {
                 throw std::runtime_error(
-                    "Template hatası: '{$" + path + "}' içinde ifade veya fonksiyon "
-                    "çağrısı kullanılamaz. Hesaplamayı .lk dosyasında yapın.");
+                    "Template error: '{$" + path + "}' içinde ifade veya fonksiyon "
+                    "call cannot be used. Do the computation in the .lk file.");
             }
             // Disallow :: (module calls)
             if (c == ':' && path.find("::") != std::string::npos) {
                 throw std::runtime_error(
-                    "Template hatası: '{$" + path + "}' içinde modül çağrısı yapılamaz.");
+                    "Template error: '{$" + path + "}' cannot contain a module call.");
             }
         }
     }
@@ -331,8 +331,8 @@ struct TplParser {
                 auto as_pos = args.find(" as ");
                 if (as_pos == std::string::npos)
                     throw std::runtime_error(
-                        "Template hatası (" + origin + "): {#each} sözdizimi hatası. "
-                        "Doğru kullanım: {#each $liste as $eleman}");
+                        "Template error (" + origin + "): {#each} syntax error. "
+                        "Correct usage: {#each $list as $item}");
                 std::string arr_part  = tpl_trim(args.substr(0, as_pos));
                 std::string item_part = tpl_trim(args.substr(as_pos + 4));
                 if (!arr_part.empty()  && arr_part[0]  == '$') arr_part  = arr_part.substr(1);
@@ -383,11 +383,11 @@ struct TplParser {
             else if (kind[0] == '/' || kind == "#else" || kind == "#empty") {
                 // Unexpected stop directive
                 throw std::runtime_error(
-                    "Template hatası (" + origin + "): beklenmeyen direktif '{" + kind + "}'");
+                    "Template error (" + origin + "): beklenmeyen direktif '{" + kind + "}'");
             }
             else {
                 throw std::runtime_error(
-                    "Template hatası (" + origin + "): bilinmeyen direktif '{" + kind + "}'");
+                    "Template error (" + origin + "): bilinmeyen direktif '{" + kind + "}'");
             }
         }
 
@@ -445,7 +445,7 @@ std::string TemplateEngine::resolve_path(const std::string& path) {
     if (!p.is_absolute() && tpl_within(base_str, full_str))
         return (base / p).string();   // kök içinde ama yok → açılışta net hata
 
-    throw std::runtime_error("Template güvenlik hatası: izinli dizin dışına çıkış engellendi: " + path);
+    throw std::runtime_error("Template security error: escape outside the allowed directory blocked: " + path);
 }
 
 void TemplateEngine::collect_blocks(const std::vector<TplNode>& nodes, TplBlocks& out) {
@@ -465,7 +465,7 @@ static std::string load_and_render(const std::string& path, const TplContext& ct
     std::string full = TemplateEngine::resolve_path(path);
     std::ifstream f(full, std::ios::binary);
     if (!f.is_open())
-        throw std::runtime_error("Template dosyası bulunamadı: " + full);
+        throw std::runtime_error("Template file not found: " + full);
     std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     auto nodes = TemplateEngine::parse(src, path);
     return TemplateEngine::render(nodes, ctx, blocks);
@@ -475,7 +475,7 @@ std::string TemplateEngine::render_file(const std::string& path, const TplContex
     std::string full = resolve_path(path);
     std::ifstream f(full, std::ios::binary);
     if (!f.is_open())
-        throw std::runtime_error("Template dosyası bulunamadı: " + full);
+        throw std::runtime_error("Template file not found: " + full);
     std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     auto nodes = parse(src, path);
 
@@ -616,7 +616,7 @@ std::string TemplateEngine::render(const std::vector<TplNode>& nodes,
                     out += render_file(n.text, inc_ctx);
                 } catch (const std::exception& e) {
                     throw std::runtime_error(
-                        std::string("Template include hatası (") + n.text + "): " + e.what());
+                        std::string("Template include error (") + n.text + "): " + e.what());
                 }
                 break;
             }
@@ -656,7 +656,7 @@ Module make_template_module(Interpreter* interp) {
         if (args.empty() || args.size() > 2)
             throw std::runtime_error("template::render() 1 veya 2 argüman bekliyor: (dosya_yolu [, $veri])");
         if (args[0].type() != Value::STRING)
-            throw std::runtime_error("template::render(): ilk argüman string (dosya yolu) olmalı");
+            throw std::runtime_error("template::render(): first argument must be a string (file path)");
         TplContext ctx;
         if (args.size() == 2) ctx = value_to_context(args[1]);
         std::string html = TemplateEngine::render_file(args[0].as_string(), ctx);
@@ -668,7 +668,7 @@ Module make_template_module(Interpreter* interp) {
         if (args.empty() || args.size() > 2)
             throw std::runtime_error("template::render_string() 1 veya 2 argüman bekliyor");
         if (args[0].type() != Value::STRING)
-            throw std::runtime_error("template::render_string(): ilk argüman string olmalı");
+            throw std::runtime_error("template::render_string(): first argument must be a string");
         TplContext ctx;
         if (args.size() == 2) ctx = value_to_context(args[1]);
         std::string html = TemplateEngine::render_string(args[0].as_string(), ctx);

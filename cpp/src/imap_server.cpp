@@ -106,7 +106,7 @@ struct ImapServer::Impl {
             SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1 ||
             SSL_CTX_check_private_key(ctx) != 1) {
             Logger::instance().log(LogLevel::LOG_ERROR, "IMAP",
-                "TLS: sertifika/anahtar yüklenemedi — TLS devre dışı");
+                "TLS: could not load certificate/key — TLS disabled");
             SSL_CTX_free(ctx);
             return nullptr;
         }
@@ -516,7 +516,7 @@ struct ImapServer::Impl {
         };
 
         // Greeting
-        if (!send_all(fd, "* OK [CAPABILITY " + cap_line() + "] LOOK IMAP hazır\r\n")) return;
+        if (!send_all(fd, "* OK [CAPABILITY " + cap_line() + "] LOOK IMAP ready\r\n")) return;
 
         bool authenticated = false;
         std::string maildir_root;      // LOGIN sonrası kullanıcının Maildir kökü
@@ -531,22 +531,22 @@ struct ImapServer::Impl {
         while (running.load()) {
             if (!read_line(fd, line)) break;
             imap_parse_command(line, tag, cmd, args);
-            if (tag.empty()) { send_all(fd, "* BAD boş komut\r\n"); if (++errors >= imap_max_errors()) break; continue; }
+            if (tag.empty()) { send_all(fd, "* BAD empty command\r\n"); if (++errors >= imap_max_errors()) break; continue; }
 
             if (cmd == "CAPABILITY") {
-                send_all(fd, "* CAPABILITY " + cap_line() + "\r\n" + tag + " OK CAPABILITY tamamlandı\r\n");
+                send_all(fd, "* CAPABILITY " + cap_line() + "\r\n" + tag + " OK CAPABILITY completed\r\n");
             }
             else if (cmd == "STARTTLS") {
                 if (g_tls) { send_all(fd, tag + " NO TLS zaten aktif\r\n"); continue; }
-                if (!ssl_ctx) { send_all(fd, tag + " NO STARTTLS yapılandırılmamış\r\n"); continue; }
+                if (!ssl_ctx) { send_all(fd, tag + " NO STARTTLS not configured\r\n"); continue; }
                 // Önce OK gönder (plaintext), sonra el sıkış (RFC 3501 6.2.1).
-                if (!send_all(fd, tag + " OK TLS el sıkışmasına başlanıyor\r\n")) break;
+                if (!send_all(fd, tag + " OK beginning TLS handshake\r\n")) break;
                 if (!tls_handshake(fd)) break;   // başarısız → bağlantıyı düşür
                 // Güvenlik (RFC 3501): TLS öncesi durum çöpe atılır — kimlik sıfırla.
                 authenticated = false; maildir_root.clear(); selected.clear(); messages.clear();
             }
             else if (cmd == "NOOP") {
-                send_all(fd, tag + " OK NOOP tamamlandı\r\n");
+                send_all(fd, tag + " OK NOOP completed\r\n");
             }
             // ── M6: IDLE — yeni mail için canlı push (RFC 2177) ──────────────
             else if (cmd == "IDLE") {
@@ -583,14 +583,14 @@ struct ImapServer::Impl {
                     for (char& c : du) c = (char)std::toupper((unsigned char)c);
                     if (du == "DONE") break;
                     // RFC: IDLE içinde DONE dışında komut yok → protokol hatası
-                    if (!send_all(fd, tag + " BAD IDLE'ı bitirmek için DONE gerekli\r\n")) { broke = true; break; }
+                    if (!send_all(fd, tag + " BAD DONE required to end IDLE\r\n")) { broke = true; break; }
                     broke = true; break;
                 }
                 if (broke) break;
-                send_all(fd, tag + " OK IDLE tamamlandı\r\n");
+                send_all(fd, tag + " OK IDLE completed\r\n");
             }
             else if (cmd == "LOGOUT") {
-                send_all(fd, "* BYE LOOK IMAP oturum kapanıyor\r\n" + tag + " OK LOGOUT tamamlandı\r\n");
+                send_all(fd, "* BYE LOOK IMAP session closing\r\n" + tag + " OK LOGOUT completed\r\n");
                 break;
             }
             else if (cmd == "LOGIN") {
@@ -605,11 +605,11 @@ struct ImapServer::Impl {
                 if (r.ok) {
                     authenticated = true;
                     maildir_root  = r.maildir_path;
-                    send_all(fd, tag + " OK LOGIN başarılı\r\n");
+                    send_all(fd, tag + " OK LOGIN successful\r\n");
                 } else {
                     // Brute-force yavaşlatma — başarısız denemede sabit gecikme
                     std::this_thread::sleep_for(std::chrono::milliseconds(imap_auth_delay_ms()));
-                    send_all(fd, tag + " NO LOGIN başarısız\r\n");
+                    send_all(fd, tag + " NO LOGIN failed\r\n");
                     if (++errors >= imap_max_errors()) break;
                 }
             }
@@ -617,7 +617,7 @@ struct ImapServer::Impl {
             else if (cmd == "SELECT" || cmd == "EXAMINE") {
                 if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
                 std::string box = resolve_mailbox(maildir_root, args);
-                if (box.empty()) { send_all(fd, tag + " NO geçersiz mailbox adı\r\n"); continue; }
+                if (box.empty()) { send_all(fd, tag + " NO invalid mailbox name\r\n"); continue; }
                 // Kararlı snapshot al — sequence numaraları bu andan itibaren sabit
                 selected = box;
                 messages = build_messages(box);
@@ -630,8 +630,8 @@ struct ImapServer::Impl {
                     "* " + std::to_string(recent) + " RECENT\r\n"
                     "* OK [UIDVALIDITY 1] UID geçerlilik\r\n"
                     "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n"
-                    "* OK [PERMANENTFLAGS (\\Seen \\Deleted)] kalıcı bayraklar\r\n"
-                    + tag + " OK [" + ro + "] " + cmd + " tamamlandı\r\n";
+                    "* OK [PERMANENTFLAGS (\\Seen \\Deleted)] permanent flags\r\n"
+                    + tag + " OK [" + ro + "] " + cmd + " completed\r\n";
                 send_all(fd, resp);
             }
             // ── M2: LIST — mailbox'ları listele ──────────────────────────────
@@ -640,7 +640,7 @@ struct ImapServer::Impl {
                 std::string resp;
                 for (auto& b : list_mailboxes(maildir_root))
                     resp += "* " + cmd + " (\\HasNoChildren) \"/\" \"" + b + "\"\r\n";
-                resp += tag + " OK " + cmd + " tamamlandı\r\n";
+                resp += tag + " OK " + cmd + " completed\r\n";
                 send_all(fd, resp);
             }
             // ── M2: STATUS — mailbox durumu ──────────────────────────────────
@@ -657,7 +657,7 @@ struct ImapServer::Impl {
                     mbname = mbname.substr(1, mbname.size()-2);
                 send_all(fd, "* STATUS \"" + mbname + "\" (MESSAGES " + std::to_string(total) +
                              " RECENT " + std::to_string(recent) + ")\r\n" +
-                             tag + " OK STATUS tamamlandı\r\n");
+                             tag + " OK STATUS completed\r\n");
             }
             // ── M3: FETCH — mesaj içeriği oku (headers/body/flags/size/uid) ──
             else if (cmd == "FETCH") {
@@ -665,7 +665,7 @@ struct ImapServer::Impl {
                 if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
                 // args: "<seq-set> <items>"  (items parantezli veya tek)
                 size_t sp = args.find(' ');
-                if (sp == std::string::npos) { send_all(fd, tag + " BAD FETCH argümanı\r\n"); continue; }
+                if (sp == std::string::npos) { send_all(fd, tag + " BAD FETCH argument\r\n"); continue; }
                 std::string seqset = args.substr(0, sp);
                 std::string items  = args.substr(sp + 1);
                 for (char& ch : items) ch = (char)std::toupper((unsigned char)ch);
@@ -686,15 +686,15 @@ struct ImapServer::Impl {
                 // Kalıcı UID deposu (dovecot-uidlist / `,U=N` kalıbı) gelene kadar
                 // GÜRÜLTÜLÜ HATA doğru davranış: yanlış UID vermektense hiç vermemek.
                 if (items.find("UID") != std::string::npos) {
-                    send_all(fd, tag + " NO [CANNOT] UID desteklenmiyor — kalıcı UID yok "
-                                       "(Milestone 1). Sequence numarası kullanın.\r\n");
+                    send_all(fd, tag + " NO [CANNOT] UID not supported — no persistent UID "
+                                       "(Milestone 1). Use sequence numbers.\r\n");
                     continue;
                 }
 
                 auto& msgs = messages;   // kararlı snapshot
                 size_t lo = 0, hi = 0;
                 if (!parse_seqset(seqset, msgs.size(), lo, hi)) {
-                    send_all(fd, tag + " OK FETCH tamamlandı (boş)\r\n"); continue;
+                    send_all(fd, tag + " OK FETCH completed (empty)\r\n"); continue;
                 }
                 bool want_flags = items.find("FLAGS") != std::string::npos;
                 bool want_size  = items.find("RFC822.SIZE") != std::string::npos;
@@ -731,7 +731,7 @@ struct ImapServer::Impl {
                     resp += ")\r\n";
                     if (!send_all(fd, resp)) break;
                 }
-                send_all(fd, tag + " OK FETCH tamamlandı\r\n");
+                send_all(fd, tag + " OK FETCH completed\r\n");
             }
             // ── M4a: STORE — flag değiştir (okundu işaretle vb.) ─────────────
             else if (cmd == "STORE") {
@@ -739,7 +739,7 @@ struct ImapServer::Impl {
                 if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
                 // args: "<seq-set> <op>FLAGS[.SILENT] (<flags>)"
                 size_t sp = args.find(' ');
-                if (sp == std::string::npos) { send_all(fd, tag + " BAD STORE argümanı\r\n"); continue; }
+                if (sp == std::string::npos) { send_all(fd, tag + " BAD STORE argument\r\n"); continue; }
                 std::string seqset = args.substr(0, sp);
                 std::string rest   = args.substr(sp + 1);
                 std::string rest_u = rest; for (char& c : rest_u) c = (char)std::toupper((unsigned char)c);
@@ -757,7 +757,7 @@ struct ImapServer::Impl {
 
                 auto& msgs = messages;   // kararlı snapshot
                 size_t lo = 0, hi = 0;
-                if (!parse_seqset(seqset, msgs.size(), lo, hi)) { send_all(fd, tag + " OK STORE tamamlandı (boş)\r\n"); continue; }
+                if (!parse_seqset(seqset, msgs.size(), lo, hi)) { send_all(fd, tag + " OK STORE completed (empty)\r\n"); continue; }
 
                 std::string out;
                 for (size_t i = lo; i <= hi; i++) {
@@ -772,7 +772,7 @@ struct ImapServer::Impl {
                     if (!silent)
                         out += "* " + std::to_string(i) + " FETCH (FLAGS " + maildir_to_imap_flags(normalize_flags(nf)) + ")\r\n";
                 }
-                out += tag + " OK STORE tamamlandı\r\n";
+                out += tag + " OK STORE completed\r\n";
                 send_all(fd, out);
             }
             // ── M4a: EXPUNGE — \Deleted işaretli mesajları kalıcı sil ─────────
@@ -793,7 +793,7 @@ struct ImapServer::Impl {
                         }
                     }
                 }
-                out += tag + " OK EXPUNGE tamamlandı\r\n";
+                out += tag + " OK EXPUNGE completed\r\n";
                 send_all(fd, out);
             }
             // ── M4b: APPEND — mesaj ekle (Sent'e kaydet, taslak yükle) ───────
@@ -844,9 +844,9 @@ struct ImapServer::Impl {
                 std::string tail; read_line(fd, tail);
                 // Atomik yaz
                 if (maildir_append(box, mflags, data))
-                    send_all(fd, tag + " OK [APPENDUID 1 1] APPEND tamamlandı\r\n");
+                    send_all(fd, tag + " OK [APPENDUID 1 1] APPEND completed\r\n");
                 else
-                    send_all(fd, tag + " NO APPEND yazılamadı\r\n");
+                    send_all(fd, tag + " NO APPEND could not write\r\n");
             }
             // ── M4c: SEARCH — ölçütlere uyan mesaj sıra numaralarını döndür ──
             // UID FETCH/STORE/SEARCH/COPY — RFC 3501 §6.4.8'de zorunlu ama M1'de YOK.
@@ -854,15 +854,15 @@ struct ImapServer::Impl {
             // `BAD bilinmeyen komut` yerine NEDENİ söyle: Thunderbird'ü debug eden
             // geliştirici "komut yok mu, sözdizimi mi yanlış" diye aramasın.
             else if (cmd == "UID") {
-                send_all(fd, tag + " NO [CANNOT] UID komutu desteklenmiyor — kalıcı UID yok "
-                                   "(Milestone 1). Sequence tabanlı FETCH/STORE/SEARCH kullanın.\r\n");
+                send_all(fd, tag + " NO [CANNOT] UID command not supported — no persistent UID "
+                                   "(Milestone 1). Use sequence-based FETCH/STORE/SEARCH.\r\n");
             }
             // CREATE/DELETE/RENAME de M1 kapsamında değil — sessiz "bilinmeyen komut"
             // yerine kapsamı söyle.
             else if (cmd == "CREATE" || cmd == "DELETE" || cmd == "RENAME" ||
                      cmd == "SUBSCRIBE" || cmd == "UNSUBSCRIBE") {
                 send_all(fd, tag + " NO [CANNOT] " + cmd + " desteklenmiyor (Milestone 1: "
-                                   "yalnız mevcut INBOX okunur).\r\n");
+                                   "only the current INBOX is read).\r\n");
             }
             else if (cmd == "SEARCH") {
                 if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
@@ -963,7 +963,7 @@ struct ImapServer::Impl {
                     }
                     if (ok) result += " " + std::to_string(i);
                 }
-                send_all(fd, result + "\r\n" + tag + " OK SEARCH tamamlandı\r\n");
+                send_all(fd, result + "\r\n" + tag + " OK SEARCH completed\r\n");
             }
             else {
                 send_all(fd, tag + " BAD bilinmeyen komut\r\n");
@@ -980,7 +980,7 @@ struct ImapServer::Impl {
             if (conn_count.load() >= imap_max_conn()) {
                 // Not: implicit-TLS portunda handshake öncesi düz-metin BYE
                 //  gönderemeyiz; sadece kapat.
-                if (!implicit_tls) send_all(cfd, "* BYE çok fazla bağlantı, sonra deneyin\r\n");
+                if (!implicit_tls) send_all(cfd, "* BYE too many connections, try again later\r\n");
                 close(cfd);
                 continue;
             }
@@ -1024,7 +1024,7 @@ bool ImapServer::start() {
     }
     Logger::instance().log(LogLevel::LOG_INFO, "IMAP",
         std::string("IMAP4rev1 dinliyor — port ") + std::to_string(impl_->port_imap) +
-        (impl_->ssl_ctx ? " (STARTTLS aktif)" : " (TLS yapılandırılmamış — düz-metin)"));
+        (impl_->ssl_ctx ? " (STARTTLS aktif)" : " (TLS not configured — plaintext)"));
     return true;
 }
 

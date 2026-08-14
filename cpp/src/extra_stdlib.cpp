@@ -745,13 +745,13 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
 
     SECURITY_STATUS st = NCryptOpenStorageProvider(&hProv, MS_KEY_STORAGE_PROVIDER, 0);
     if (st != ERROR_SUCCESS)
-        throw std::runtime_error("crypto::rs256_sign() — NCrypt provider açılamadı");
+        throw std::runtime_error("crypto::rs256_sign() — could not open NCrypt provider");
 
     st = NCryptImportKey(hProv, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NULL,
                          &hKey, der.data(), (DWORD)der.size(), NCRYPT_SILENT_FLAG);
     if (st != ERROR_SUCCESS) {
         NCryptFreeObject(hProv);
-        throw std::runtime_error("crypto::rs256_sign() — RSA key import hatası (PKCS#8 PEM gerekli)");
+        throw std::runtime_error("crypto::rs256_sign() — RSA key import error (PKCS#8 PEM required)");
     }
 
     BCRYPT_PKCS1_PADDING_INFO pad = { BCRYPT_SHA256_ALGORITHM };
@@ -763,14 +763,14 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
                                         NULL, 0, &sigLen, BCRYPT_PAD_PKCS1);
     if (ss != ERROR_SUCCESS || sigLen == 0) {
         NCryptFreeObject(hKey); NCryptFreeObject(hProv);
-        throw std::runtime_error("crypto::rs256_sign() — imzalama hatası (RSA anahtar mı? EC/uyumsuz key reddedildi)");
+        throw std::runtime_error("crypto::rs256_sign() — signing error (is it an RSA key? EC/incompatible key rejected)");
     }
     std::vector<uint8_t> sig(sigLen);
     ss = NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
                         sig.data(), sigLen, &sigLen, BCRYPT_PAD_PKCS1);
     if (ss != ERROR_SUCCESS) {
         NCryptFreeObject(hKey); NCryptFreeObject(hProv);
-        throw std::runtime_error("crypto::rs256_sign() — imzalama hatası");
+        throw std::runtime_error("crypto::rs256_sign() — signing error");
     }
     sig.resize(sigLen);
 
@@ -817,7 +817,7 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
     BIO* bio = BIO_new_mem_buf(pem.data(), (int)pem.size());
     EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
     BIO_free(bio);
-    if (!pkey) { ERR_clear_error(); throw std::runtime_error("crypto::rs256_sign() — PEM key parse hatası"); }
+    if (!pkey) { ERR_clear_error(); throw std::runtime_error("crypto::rs256_sign() — PEM key parse error"); }
     // rs256 = RSA-only. EC/uyumsuz key'i REDDET (yoksa EVP EC'yi ECDSA-SHA256 olarak imzalar
     // → yanlış-alg, boş-olmayan sig, sessiz). Windows dalı (NCryptSignHash status) da reddeder
     // → çapraz-platform simetri (2026-08-11 bug-avı).
@@ -830,7 +830,7 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
     if (EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, pkey) != 1 ||
         EVP_DigestSignUpdate(ctx, data.data(), data.size()) != 1) {
         EVP_MD_CTX_free(ctx); EVP_PKEY_free(pkey); ERR_clear_error();
-        throw std::runtime_error("crypto::rs256_sign() — imzalama hatası");
+        throw std::runtime_error("crypto::rs256_sign() — signing error");
     }
     size_t len = 0;
     EVP_DigestSignFinal(ctx, NULL, &len);
@@ -941,14 +941,14 @@ static Module make_crypto_module() {
     // crypto::random_bytes($n) → hex string (n bayt)
     m.functions["random_bytes"] = [](auto args) -> Value {
         int n = args.empty() ? 16 : args[0].to_int();
-        if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_bytes() — 1-4096 arası");
+        if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_bytes() — must be 1-4096");
         return Value(to_hex(random_bytes((size_t)n)));
     };
 
     // crypto::random_string($n) → URL-safe rastgele string (n bayt entropi)
     m.functions["random_string"] = [](auto args) -> Value {
         int n = args.empty() ? 16 : args[0].to_int();
-        if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_string() — 1-4096 arası");
+        if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_string() — must be 1-4096");
         auto bytes = random_bytes((size_t)n);
         return Value(b64url_encode(bytes.data(), bytes.size()));
     };

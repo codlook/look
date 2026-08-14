@@ -35,8 +35,8 @@ void SqliteClient::open(const std::string& path) {
     // worker havuzu SQLite global statiklerini bozar (bkz. CMakeLists =2). Ucuz kontrol.
     if (sqlite3_threadsafe() == 0)
         throw std::runtime_error(
-            "sqlite: kütüphane SQLITE_THREADSAFE=0 ile derlenmiş — çok thread'li worker "
-            "havuzuyla GÜVENSİZ. CMakeLists'te SQLITE_THREADSAFE=2 olmalı.");
+            "sqlite: library built with SQLITE_THREADSAFE=0 — UNSAFE with the multi-threaded worker "
+            "pool. CMakeLists must set SQLITE_THREADSAFE=2.");
     if (db_) close();
     int rc = sqlite3_open(path.c_str(), &db_);
     if (rc != SQLITE_OK) {

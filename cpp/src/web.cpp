@@ -133,14 +133,14 @@ static std::string random_hex(int bytes = 16) {
 #ifdef _WIN32
     if (BCryptGenRandom(nullptr, buf.data(), (ULONG)bytes,
                         BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
-        throw std::runtime_error("random_hex: CSPRNG (BCryptGenRandom) başarısız");
+        throw std::runtime_error("random_hex: CSPRNG (BCryptGenRandom) failed");
 #else
     int fd = open("/dev/urandom", O_RDONLY);
-    if (fd < 0) throw std::runtime_error("random_hex: /dev/urandom açılamadı");
+    if (fd < 0) throw std::runtime_error("random_hex: could not open /dev/urandom");
     int got = 0;
     while (got < bytes) {
         ssize_t n = read(fd, buf.data() + got, bytes - got);
-        if (n <= 0) { close(fd); throw std::runtime_error("random_hex: /dev/urandom okuma hatası"); }
+        if (n <= 0) { close(fd); throw std::runtime_error("random_hex: /dev/urandom read error"); }
         got += (int)n;
     }
     close(fd);

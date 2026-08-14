@@ -130,17 +130,17 @@ int run_fmt(const std::vector<std::string>& files, bool check) {
         bool ok = false;
         std::string res = look_format_source(ss.str(), &ok);
         std::cout << res;
-        if (!ok) { std::cerr << "lk fmt: uyarı — biçimleme atlandı (anlam-koruma başarısız); girdi aynen döndü\n"; return 2; }
+        if (!ok) { std::cerr << "lk fmt: warning — formatting skipped (semantics-preservation failed); input returned unchanged\n"; return 2; }
         return 0;
     }
 
     int rc = 0;
     for (const std::string& file : files) {
         std::string src;
-        if (!read_file(file, src)) { std::cerr << "lk fmt: okunamadı: " << file << "\n"; rc = 2; continue; }
+        if (!read_file(file, src)) { std::cerr << "lk fmt: could not read: " << file << "\n"; rc = 2; continue; }
         bool ok = false;
         std::string res = look_format_source(src, &ok);
-        if (!ok) { std::cerr << "lk fmt: " << file << " — biçimleme atlandı (anlam-koruma başarısız, dosya değişmedi)\n"; rc = 2; continue; }
+        if (!ok) { std::cerr << "lk fmt: " << file << " — formatting skipped (semantics-preservation failed, file unchanged)\n"; rc = 2; continue; }
         if (res == src) {
             // zaten biçimli
         } else if (check) {

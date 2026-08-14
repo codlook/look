@@ -295,7 +295,7 @@ static std::atomic<bool>        g_http_ready{false};
 
 static std::string read_file(const fs::path& p) {
     std::ifstream f(p);
-    if (!f) throw std::runtime_error("Dosya açılamadı: " + p.string());
+    if (!f) throw std::runtime_error("Could not open file: " + p.string());
     return {std::istreambuf_iterator<char>(f), {}};
 }
 
@@ -350,7 +350,7 @@ static void run_setup_http(const fs::path& script) {
         } catch (const look::LookCompileError& e) {
             std::cerr << "[BYTECODE] LookCompileError: " << e.what() << "\n";
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                std::string("Bytecode compile başarısız, interpreter fallback: ") + e.what());
+                std::string("Bytecode compile failed, interpreter fallback: ") + e.what());
         } catch (const std::exception& e) {
             std::cerr << "[BYTECODE] exception: " << e.what() << "\n";
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
@@ -642,11 +642,11 @@ static void run_setup_http(const fs::path& script) {
             if (!g_http_app.vm_routes.empty()) {
                 g_http_app.vm_routes_ready = true;
                 g_http_app.vm_route_disabled.assign(g_http_app.vm_routes.size(), 0);
-                std::cerr << "[BYTECODE] VM routes: " << g_http_app.vm_routes.size() << " kayıtlandı\n";
+                std::cerr << "[BYTECODE] VM routes: " << g_http_app.vm_routes.size() << " registered\n";
                 look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
-                    "VM dispatch hazır — " + std::to_string(g_http_app.vm_routes.size()) + " route");
+                    "VM dispatch ready — " + std::to_string(g_http_app.vm_routes.size()) + " route");
             } else {
-                std::cerr << "[BYTECODE] VM route yok — interpreter dispatch kullanılacak\n";
+                std::cerr << "[BYTECODE] no VM routes — interpreter dispatch will be used\n";
             }
         } catch (const look::LookVmError& e) {
             std::cerr << "[BYTECODE] VM setup LookVmError: " << e.what() << "\n";
@@ -657,7 +657,7 @@ static void run_setup_http(const fs::path& script) {
         } catch (const std::exception& e) {
             std::cerr << "[BYTECODE] VM setup exception (" << typeid(e).name() << "): " << e.what() << "\n";
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                std::string("VM setup hatası, interpreter fallback: ") + e.what());
+                std::string("VM setup error, interpreter fallback: ") + e.what());
             g_http_app.vm_routes_ready = false;
         }
     }
@@ -758,7 +758,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
         if (!g_http_ready) {
             resp.status_code = 503;
             resp.status_text = "Service Unavailable";
-            resp.body = "{\"ok\":false,\"hata\":\"Başlatılıyor\"}";
+            resp.body = "{\"ok\":false,\"error\":\"Starting\"}";
             return;
         }
 
@@ -775,7 +775,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
                     run_setup_http(g_http_app.script_path);
                     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Hot reload: " + g_http_app.script_path.string());
                 } catch (const std::exception& e) {
-                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string("Hot reload hatası: ") + e.what());
+                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string("Hot reload error: ") + e.what());
                 }
             }
         }
@@ -1190,12 +1190,12 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     look::g_vm_disabled_routes().fetch_add(1, std::memory_order_relaxed);  // distinct disabled-route sayısı
                 }
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                    std::string("VM BUG — route kalıcı interpreter'a düştü (YAVAŞ YOL; "
-                                "bu bir hatadır, bildirin): ") +
+                    std::string("VM BUG — route permanently fell back to the interpreter (SLOW PATH; "
+                                "this is a bug, please report): ") +
                     g_http_app.vm_routes[vm_failed_route].pattern + " — " + vm_e.what());
             } else {
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                    std::string("VM BUG — interpreter fallback (bu bir hatadır, bildirin): ")
+                    std::string("VM BUG — interpreter fallback (this is a bug, please report): ")
                     + vm_e.what());
             }
             if (vm_strict) throw;   // strict: maskeleme yok — hata yüzeye çıksın
@@ -1219,7 +1219,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     web.status_text = "Internal Server Error";
                 }
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                    std::string("Fallback dispatch hatası: ") + e.what());
+                    std::string("Fallback dispatch error: ") + e.what());
             }
         }
         // VM path acquire (satır 937) burada serbest bırakılır — vm_ok ve
@@ -1305,7 +1305,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                         web.status_text = "Internal Server Error";
                     }
                     look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                        std::string("Fiber dispatch hatası: ") + e.what());
+                        std::string("Fiber dispatch error: ") + e.what());
                 }
             }
         } else {
@@ -1325,7 +1325,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     web.status_text = "Internal Server Error";
                 }
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                    std::string("Dispatch hatası: ") + e.what());
+                    std::string("Dispatch error: ") + e.what());
             }
             look::release_thread_connections();
         }
@@ -1369,7 +1369,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
     // Working directory — same logic as fcgi mode
     fs::path script = fs::absolute(script_path_str);
     if (!fs::exists(script)) {
-        std::cerr << "[look-fcgi] Dosya bulunamadı: " << script << "\n";
+        std::cerr << "[look-fcgi] File not found: " << script << "\n";
         return;
     }
     auto dir = script.parent_path().string();
@@ -1400,14 +1400,14 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         std::unique_lock<std::shared_mutex> ul(g_http_mutex);
         run_setup_http(script);
     } catch (const std::exception& e) {
-        std::cerr << "[look-fcgi --mode http] Setup hatası: " << e.what() << "\n";
+        std::cerr << "[look-fcgi --mode http] Setup error: " << e.what() << "\n";
         return;
     }
 
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
         "look-fcgi --mode http port=" + std::to_string(port) + " workers=" + std::to_string(workers));
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Script: " + script.string());
-    look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Apache bypass — nginx veya doğrudan bağlantı kullanın.");
+    look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Apache bypass — use nginx or a direct connection.");
 
     // WebSocket handler — called on a worker thread after 101 upgrade
     auto ws_handler = [](std::shared_ptr<look::WsConnection> conn,
@@ -1433,7 +1433,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
             copy->dispatch_routes();
         } catch (const std::exception& e) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                std::string("WS dispatch hatası: ") + e.what());
+                std::string("WS dispatch error: ") + e.what());
         }
         look::release_thread_connections();
     };
@@ -1462,7 +1462,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
             copy->dispatch_routes();
         } catch (const std::exception& e) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                std::string("SSE dispatch hatası: ") + e.what());
+                std::string("SSE dispatch error: ") + e.what());
         }
         look::release_thread_connections();
     };
@@ -1493,7 +1493,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
                             if (c == '/' || c == '\\' || c == '\0' || c < 0x20) unsafe = true;
                         if (unsafe) {
                             look::Logger::instance().log(look::LogLevel::LOG_WARN,
-                                "smtp", "güvensiz alıcı adı atlandı: " + rcpt);
+                                "smtp", "unsafe recipient name skipped: " + rcpt);
                             continue;
                         }
                         try {
@@ -1518,8 +1518,8 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
                     std::string("SMTP server started on port ") + smtp_port_env);
             } else {
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "smtp",
-                    std::string("SMTP BAŞLATILAMADI — port ") + smtp_port_env +
-                    " dinlenemedi (port meşgul mü? yetki? IPv6/IPv4?)");
+                    std::string("SMTP FAILED TO START — port ") + smtp_port_env +
+                    " could not be listened on (port busy? permissions? IPv6/IPv4?)");
                 smtp_srv.reset();
             }
         }
@@ -1552,8 +1552,8 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
                     std::string("IMAP server started on port ") + imap_port_env);
             } else {
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "imap",
-                    std::string("IMAP BAŞLATILAMADI — port ") + imap_port_env +
-                    " dinlenemedi (port meşgul mü? yetki? IPv6/IPv4?)");
+                    std::string("IMAP FAILED TO START — port ") + imap_port_env +
+                    " could not be listened on (port busy? permissions? IPv6/IPv4?)");
                 imap_srv.reset();
             }
         }

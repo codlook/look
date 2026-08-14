@@ -36,14 +36,14 @@ void JobStore::init(const std::string& db_path) {
     if (rc != SQLITE_OK) {
         std::string err = db_ ? sqlite3_errmsg(db_) : "bilinmeyen hata";
         if (db_) { sqlite3_close(db_); db_ = nullptr; }
-        throw std::runtime_error("jobs:: DB açılamadı (" + db_path + "): " + err);
+        throw std::runtime_error("jobs:: could not open DB (" + db_path + "): " + err);
     }
 
     // busy_timeout İLK İŞ olmalı — SONRAKİ her adımdan önce.
     //
     // ESKİ HATA (bu satır aşağıdaydı): `PRAGMA journal_mode=WAL` geçişi ÖZEL KİLİT
     // ister; busy_timeout henüz ayarlı olmadığı için çekişmede anında SQLITE_BUSY
-    // döner ve süreç "jobs:: schema hatası: database is locked" ile ÇÖKER.
+    // döner ve süreç "jobs:: schema error: database is locked" ile ÇÖKER.
     // create_schema() de aynı pencerede.
     // İki katmanlı sonuç: (a) worker'lar açılışta ölür, (b) ÖLEN worker'lar claim
     // yarışını MASKELER — az sayıda süreç hayatta kalınca yarış görünmez olur;
@@ -103,7 +103,7 @@ void JobStore::create_schema() {
     if (rc != SQLITE_OK) {
         std::string err = errmsg ? errmsg : "?";
         sqlite3_free(errmsg);
-        throw std::runtime_error("jobs:: schema hatası: " + err);
+        throw std::runtime_error("jobs:: schema error: " + err);
     }
 
     // Schema migration: add run_after to existing DBs (ignore error if column exists)
@@ -117,7 +117,7 @@ static sqlite3_stmt* prepare(sqlite3* db, const char* sql) {
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK || !stmt)
-        throw std::runtime_error(std::string("jobs:: SQL hazırlık hatası: ") + sqlite3_errmsg(db));
+        throw std::runtime_error(std::string("jobs:: SQL prepare error: ") + sqlite3_errmsg(db));
     return stmt;
 }
 
@@ -481,7 +481,7 @@ Module make_jobs_module() {
     m.functions["worker"] = [](std::vector<Value> args) -> Value {
         if (args.size() < 2) throw std::runtime_error("jobs::worker() — (queue, function) bekler");
         if (args[1].type() != Value::FUNCTION)
-            throw std::runtime_error("jobs::worker() — ikinci argüman fonksiyon olmalı");
+            throw std::runtime_error("jobs::worker() — second argument must be a function");
         JobStore::instance().register_worker(args[0].to_string(), args[1]);
         return Value(true);
     };

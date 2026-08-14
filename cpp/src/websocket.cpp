@@ -241,7 +241,7 @@ void WsRegistry::add(std::shared_ptr<WsConnection> conn) {
     }();
     std::unique_lock<std::shared_mutex> lk(mutex_);
     if (clients_.size() >= MAX_WS)
-        throw std::runtime_error("WebSocket bağlantı limiti aşıldı (" + std::to_string(MAX_WS) + ")");
+        throw std::runtime_error("WebSocket connection limit exceeded (" + std::to_string(MAX_WS) + ")");
     clients_[conn->fd] = std::move(conn);
 }
 

@@ -245,8 +245,8 @@ bool Value::operator==(const Value& o) const {
 // string'i 0'a coerce edip yanlış sonuç vermek yerine bug'ı yüzeye çıkar).
 [[noreturn]] static void cmp_type_error() {
     throw std::runtime_error(
-        "Karşılaştırılamayan türler: '<'/'>' yalnız sayı↔sayı ve string↔string için — "
-        "farklı türleri kıyaslamadan önce int()/float()/string() ile dönüştürün");
+        "Incomparable types: '<'/'>' only for number↔number and string↔string — "
+        "convert with int()/float()/string() before comparing different types");
 }
 // Sayısal sıralama: int↔int KESİN int64 (2^53 üstü ayrık int64 double'da eşitlenir →
 // yanlış sıralama, bkz operator==). Karışık int/float double.
@@ -407,7 +407,7 @@ void LookChannel::send_val(Value val) {
     auto has_room = [this]{ return closed || queue.size() < capacity; };
     if (to > 0) {
         if (!not_full.wait_for(lk, std::chrono::milliseconds(to), has_room))
-            throw std::runtime_error("channel send zaman aşımı (olası deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
+            throw std::runtime_error("channel send timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
     } else {
         not_full.wait(lk, has_room);
     }
@@ -429,7 +429,7 @@ void LookChannel::send_val(Value val) {
         auto taken = [this, gen]{ return closed || recv_gen > gen; };
         if (to > 0) {
             if (!not_full.wait_for(lk, std::chrono::milliseconds(to), taken))
-                throw std::runtime_error("channel send (rendezvous) zaman aşımı (olası deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
+                throw std::runtime_error("channel send (rendezvous) timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
         } else {
             not_full.wait(lk, taken);
         }
@@ -442,7 +442,7 @@ Value LookChannel::recv_val() {
     auto has_item = [this]{ return closed || !queue.empty(); };
     if (to > 0) {
         if (!not_empty.wait_for(lk, std::chrono::milliseconds(to), has_item))
-            throw std::runtime_error("channel receive zaman aşımı (olası deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
+            throw std::runtime_error("channel receive timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
     } else {
         not_empty.wait(lk, has_item);
     }
@@ -701,7 +701,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
                 included_files_.insert(abs_path);
 
                 std::ifstream f(abs_path);
-                if (!f) throw std::runtime_error("Modül dosyası açılamadı: " + abs_path);
+                if (!f) throw std::runtime_error("Could not open module file: " + abs_path);
                 std::string src((std::istreambuf_iterator<char>(f)),
                                  std::istreambuf_iterator<char>());
 
@@ -757,7 +757,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
             std::string root_str = root.string();
             if (abs_path.substr(0, root_str.size()) != root_str)
                 throw LookRuntimeError(
-                    "use \"" + s->path + "\": dosya modülü proje dizini dışına çıkamaz",
+                    "use \"" + s->path + "\": file module cannot escape the project directory",
                     stmt.loc, call_stack_);
         }
 
@@ -1635,7 +1635,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                                 ok = result.as_bool();
                             } catch (const std::exception& ex) {
                                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
-                                    std::string("handler hatası [") + queue + "]: " + ex.what());
+                                    std::string("handler error [") + queue + "]: " + ex.what());
                                 ok = false;
                             }
 
@@ -1866,7 +1866,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             ok = result.as_bool();
                         } catch (const std::exception& ex) {
                             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
-                                std::string("handler hatası [") + queue + "]: " + ex.what());
+                                std::string("handler error [") + queue + "]: " + ex.what());
                             ok = false;
                         }
 
@@ -2162,7 +2162,7 @@ namespace { thread_local Value (*g_vm_bridge)(const Value&, std::vector<Value>&)
 void  register_vm_bridge(Value (*hook)(const Value&, std::vector<Value>&)) { g_vm_bridge = hook; }
 bool  vm_bridge_available() { return g_vm_bridge != nullptr; }
 Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args) {
-    if (!g_vm_bridge) throw std::runtime_error("vm_bridge_invoke: VM hook kayıtlı değil");
+    if (!g_vm_bridge) throw std::runtime_error("vm_bridge_invoke: no VM hook registered");
     return g_vm_bridge(fn, args);
 }
 

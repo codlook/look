@@ -164,9 +164,9 @@ void RespClient::connect() {
         // TLS: TCP kurulduktan hemen sonra SSL handshake (MySQL'in aksine mid-stream
         // SSLRequest YOK — Redis TLS bağlantı başında). ssl_ set edilince tüm I/O SSL'den.
         SSL_CTX* ctx = redis_ssl_ctx();
-        if (!ctx) throw std::runtime_error("Redis: SSL_CTX oluşturulamadı (TLS)");
+        if (!ctx) throw std::runtime_error("Redis: could not create SSL_CTX (TLS)");
         SSL* s = SSL_new(ctx);
-        if (!s) throw std::runtime_error("Redis: SSL_new başarısız (TLS)");
+        if (!s) throw std::runtime_error("Redis: SSL_new failed (TLS)");
         SSL_set_fd(s, fd_);
         SSL_set_tlsext_host_name(s, host_.c_str());   // SNI
         if (tls_verify_) {
@@ -175,14 +175,14 @@ void RespClient::connect() {
             SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
             if (SSL_set1_host(s, host_.c_str()) != 1) {
                 SSL_free(s);
-                throw std::runtime_error("Redis: TLS hostname doğrulaması kurulamadı (verify)");
+                throw std::runtime_error("Redis: could not set up TLS hostname verification (verify)");
             }
         }
         if (SSL_connect(s) != 1) {
             unsigned long e = ERR_get_error();
             char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
             SSL_free(s);
-            throw std::runtime_error(std::string("Redis: TLS handshake başarısız: ") + eb);
+            throw std::runtime_error(std::string("Redis: TLS handshake failed: ") + eb);
         }
         ssl_ = s;   // bundan sonra send_command/read_* SSL üstünden
 #else
@@ -246,7 +246,7 @@ std::string RespClient::read_line() {
         if (c == '\n') break;
         line += c;
         if (line.size() > RESP_MAX_LINE)
-            throw std::runtime_error("Redis: satır sınırı aşıldı");
+            throw std::runtime_error("Redis: line limit exceeded");
     }
     return line;
 }
@@ -268,7 +268,7 @@ std::string RespClient::read_bulk(long len) {
     // Sınır kontrolü int'e DARALTMADAN önce — $5000000000 gibi >INT_MAX değer
     // (int)len ile negatife taşıp sessizce null dönüp socket'i desync ederdi.
     if ((size_t)len > resp_max_bulk())
-        throw std::runtime_error("Redis: bulk yanıt sınırı aşıldı (LOOK_REDIS_MAX_BULK)");
+        throw std::runtime_error("Redis: bulk response limit exceeded (LOOK_REDIS_MAX_BULK)");
     std::string buf((size_t)len, '\0');
     size_t got = 0, need = (size_t)len;
     while (got < need) {
@@ -290,7 +290,7 @@ std::string RespClient::read_response(int depth) {
     // kötü niyetli/bozuk sunucuya karşı derinlik sınırı.
     static constexpr int RESP_MAX_DEPTH = 64;
     if (depth > RESP_MAX_DEPTH)
-        throw std::runtime_error("Redis: yanıt çok derin iç içe (dizi)");
+        throw std::runtime_error("Redis: response nested too deep (array)");
     auto line = read_line();
     if (line.empty()) throw std::runtime_error("Redis: empty response");
 
@@ -304,14 +304,14 @@ std::string RespClient::read_response(int depth) {
         case '$': {                                      // Bulk string
             long len = 0;
             try { len = std::stol(payload); }            // bozuk uzunluk → protokol hatası
-            catch (...) { throw std::runtime_error("Redis: geçersiz bulk uzunluğu"); }
+            catch (...) { throw std::runtime_error("Redis: invalid bulk length"); }
             if (len == -1) return "";                    // nil
             return read_bulk(len);
         }
         case '*': {                                      // Array — flatten for our use
             long count = 0;
             try { count = std::stol(payload); }
-            catch (...) { throw std::runtime_error("Redis: geçersiz dizi sayısı"); }
+            catch (...) { throw std::runtime_error("Redis: invalid array count"); }
             if (count <= 0) return "";
             // Sunucu-verili count sanity cap — kötü niyetli/MITM sunucu (TLS yok)
             // `*2000000000` verirse döngü kaynak tüketir. Session subset'i küçük
@@ -319,7 +319,7 @@ std::string RespClient::read_response(int depth) {
             // ile tutarlı.)
             static constexpr long RESP_MAX_ARRAY = 1024 * 1024;
             if (count > RESP_MAX_ARRAY)
-                throw std::runtime_error("Redis: dizi eleman sayısı sınırı aşıldı");
+                throw std::runtime_error("Redis: array element count limit exceeded");
             std::string first;
             for (int i = 0; i < count; i++) {
                 auto v = read_response(depth + 1);

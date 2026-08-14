@@ -702,7 +702,7 @@ static void handle_request(look::FcgiRequest& req, look::FcgiConn& conn) {
         std::string setup_err;
         if (!look_http_engine_ensure(script_path, setup_err)) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "FCGI",
-                "Setup hatası: " + setup_err + " | " + script_path);
+                "Setup error: " + setup_err + " | " + script_path);
             conn.write_stdout(req.id,
                 build_error_response(503, "Service Unavailable", setup_err));
             conn.end_request(req.id, 0);

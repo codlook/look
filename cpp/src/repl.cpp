@@ -128,7 +128,7 @@ static std::string repl_display(const Value& v) {
 // ── :vars — list all globals defined by user ──────────────────────────────
 static void print_vars(const Interpreter& interp) {
     auto vars = interp.get_global_names();
-    if (vars.empty()) { std::cout << gray("  (henüz değişken yok)") << "\n"; return; }
+    if (vars.empty()) { std::cout << gray("  (no variables yet)") << "\n"; return; }
     std::sort(vars.begin(), vars.end());
     for (auto& name : vars)
         std::cout << "  $" << name << "\n";
@@ -136,15 +136,15 @@ static void print_vars(const Interpreter& interp) {
 
 // ── :help ─────────────────────────────────────────────────────────────────
 static void print_help() {
-    std::cout << "\n" << cyan("LOOK REPL Komutları:") << "\n";
-    std::cout << "  :help     — bu yardım\n";
-    std::cout << "  :vars     — tanımlı değişkenler\n";
-    std::cout << "  :clear    — ekranı temizle\n";
-    std::cout << "  :exit     — çık (veya Ctrl+C / Ctrl+D)\n\n";
-    std::cout << cyan("İpuçları:") << "\n";
+    std::cout << "\n" << cyan("LOOK REPL Commands:") << "\n";
+    std::cout << "  :help     — this help\n";
+    std::cout << "  :vars     — defined variables\n";
+    std::cout << "  :clear    — clear the screen\n";
+    std::cout << "  :exit     — exit (or Ctrl+C / Ctrl+D)\n\n";
+    std::cout << cyan("Tips:") << "\n";
     std::cout << "  Sonuç otomatik gösterilir — print() yazmana gerek yok\n";
-    std::cout << "  Çok satırlı: { ile açılan blok } ile kapatılana kadar bekler\n";
-    std::cout << "  Ok tuşları: komut geçmişi (↑/↓), imleç (←/→)\n\n";
+    std::cout << "  Multi-line: a block opened with { waits until it is closed with }\n";
+    std::cout << "  Arrow keys: command history (↑/↓), imleç (←/→)\n\n";
 }
 
 // ── Wrap source as expression-or-statement ────────────────────────────────
@@ -168,7 +168,7 @@ static bool handle_colon_command(const std::string& s, Interpreter& interp) {
         return true;
     }
     std::cout << red("  Bilinmeyen komut: ") << s << "\n";
-    std::cout << gray("  :help yazarak komutları görebilirsin\n");
+    std::cout << gray("  Type :help to see the commands\n");
     return true;
 }
 
@@ -182,7 +182,7 @@ int run_repl() {
     linenoiseHistoryLoad(hist_file);
 
     std::cout << cyan("LOOK v1.0.0 REPL") << "\n";
-    std::cout << gray("Çıkmak için :exit veya Ctrl+C") << "\n\n";
+    std::cout << gray("Type :exit or Ctrl+C to quit") << "\n\n";
 
     // Shared persistent interpreter — state survives between lines
     Interpreter interp;
@@ -224,7 +224,7 @@ int run_repl() {
                 std::cout << "\n";
                 continue;
             }
-            std::cout << "\n" << gray("Görüşürüz!") << "\n";
+            std::cout << "\n" << gray("See you!") << "\n";
             break;
         }
 
@@ -249,7 +249,7 @@ int run_repl() {
             linenoiseHistoryAdd(line.c_str());
             bool cont = handle_colon_command(line, interp);
             if (!cont) {
-                std::cout << gray("Görüşürüz!") << "\n";
+                std::cout << gray("See you!") << "\n";
                 break;
             }
             continue;
@@ -276,10 +276,10 @@ int run_repl() {
             Parser parser(lexer.scan_tokens());
             program = parser.parse();
         } catch (const LookParseError& e) {
-            std::cout << red("Parse hatası: ") << e.what() << "\n";
+            std::cout << red("Parse error: ") << e.what() << "\n";
             continue;
         } catch (const std::exception& e) {
-            std::cout << red("Parse hatası: ") << e.what() << "\n";
+            std::cout << red("Parse error: ") << e.what() << "\n";
             continue;
         }
 

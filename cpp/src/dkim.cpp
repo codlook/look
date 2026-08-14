@@ -125,7 +125,7 @@ static std::vector<unsigned char> rsa_sha256_sign(const std::string& data,
     BIO_free(bio);
     if (!pkey) {
         ERR_clear_error();
-        throw std::runtime_error("dkim_sign: private key PEM parse hatası");
+        throw std::runtime_error("dkim_sign: private key PEM parse error");
     }
 
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -134,7 +134,7 @@ static std::vector<unsigned char> rsa_sha256_sign(const std::string& data,
     if (EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, pkey) != 1 ||
         EVP_DigestSignUpdate(ctx, data.data(), data.size()) != 1) {
         EVP_MD_CTX_free(ctx); EVP_PKEY_free(pkey); ERR_clear_error();
-        throw std::runtime_error("dkim_sign: DigestSign init/update hatası");
+        throw std::runtime_error("dkim_sign: DigestSign init/update error");
     }
 
     size_t sig_len = 0;

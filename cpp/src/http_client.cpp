@@ -111,7 +111,7 @@ ParsedUrl parse_url(const std::string& url) {
 
     if (s.substr(0, 8) == "https://") { r.tls = true;  s = s.substr(8); r.port = 443; }
     else if (s.substr(0, 7) == "http://") { r.tls = false; s = s.substr(7); r.port = 80; }
-    else throw std::runtime_error("http:: Desteklenmeyen URL şeması: " + url);
+    else throw std::runtime_error("http:: Unsupported URL scheme: " + url);
 
     auto path_pos = s.find('/');
     std::string host_port = (path_pos != std::string::npos) ? s.substr(0, path_pos) : s;
@@ -128,7 +128,7 @@ ParsedUrl parse_url(const std::string& url) {
     if (!host_port.empty() && host_port[0] == '[') {
         auto rb = host_port.find(']');
         if (rb == std::string::npos)
-            throw std::runtime_error("http:: Geçersiz IPv6 URL (kapanış ']' yok): " + url);
+            throw std::runtime_error("http:: Invalid IPv6 URL (missing closing ']'): " + url);
         r.host = host_port.substr(1, rb - 1);          // parantezler host'a DAHİL DEĞİL
         if (rb + 1 < host_port.size() && host_port[rb + 1] == ':') {
             try { r.port = std::stoi(host_port.substr(rb + 2)); }

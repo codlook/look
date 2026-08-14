@@ -142,7 +142,7 @@ static PkgSpec parse_pkg(const std::string& input) {
     }
 
     if (p.host != "github.com")
-        throw std::runtime_error("Şu an sadece github.com destekleniyor.");
+        throw std::runtime_error("Only github.com is supported at the moment.");
 
     // Path-traversal koruması: user/repo/subdir doğrudan yerel hedef yola akıyor
     // (pkg_dir()="pkg/"+subdir, modules_dir()/mod_name). Kötü niyetli look.lock (klonlanmış
@@ -151,13 +151,13 @@ static PkgSpec parse_pkg(const std::string& input) {
     // proje-dışına attacker-içerikli dosya yazımı. Her bileşeni katı doğrula.
     auto validate_component = [&input](const std::string& c, const char* what) {
         if (c.empty())
-            throw std::runtime_error(std::string("Geçersiz paket (boş ") + what + "): " + input);
+            throw std::runtime_error(std::string("Invalid package (empty ") + what + "): " + input);
         if (c == "." || c == ".." || c.find("..") != std::string::npos ||
             c.find('/') != std::string::npos || c.find('\\') != std::string::npos ||
             c.find(':') != std::string::npos || c.front() == '.' ||
             c.find('\0') != std::string::npos)
             throw std::runtime_error(std::string("Geçersiz paket ") + what +
-                                     " (yol-kaçış karakteri): " + input);
+                                     " (path-escape character): " + input);
     };
     validate_component(p.user, "user");
     validate_component(p.repo, "repo");
@@ -186,7 +186,7 @@ static bool extract_zip(const std::vector<char>& data,
 {
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_mem(&zip, data.data(), data.size(), 0)) {
-        std::cerr << "ZIP açma hatası: " << mz_zip_get_error_string(mz_zip_get_last_error(&zip)) << "\n";
+        std::cerr << "ZIP open error: " << mz_zip_get_error_string(mz_zip_get_last_error(&zip)) << "\n";
         return false;
     }
 
@@ -247,7 +247,7 @@ static bool extract_zip(const std::vector<char>& data,
         size_t out_size = 0;
         void* buf = mz_zip_reader_extract_to_heap(&zip, i, &out_size, 0);
         if (!buf) {
-            if (verbose) std::cerr << "  Çıkartılamadı: " << filename << "\n";
+            if (verbose) std::cerr << "  Could not extract: " << filename << "\n";
             continue;
         }
 
@@ -262,7 +262,7 @@ static bool extract_zip(const std::vector<char>& data,
     mz_zip_reader_end(&zip);
 
     if (extracted == 0 && !subdir_filter.empty()) {
-        std::cerr << "Hata: '" << subdir_filter << "' klasörü repoda bulunamadı.\n";
+        std::cerr << "Error: '" << subdir_filter << "' folder not found in the repo.\n";
         return false;
     }
     return true;
@@ -276,7 +276,7 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
     opts.timeout_ms = 30000;  // 30s for large ZIPs
 
     for (int i = 0; i < max_redirects; ++i) {
-        if (verbose) std::cout << "  İndiriliyor: " << current << "\n";
+        if (verbose) std::cout << "  Downloading: " << current << "\n";
 
         std::map<std::string, std::string> headers;
         headers["Accept"]     = "application/zip";
@@ -290,7 +290,7 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
         if (resp.status >= 300 && resp.status < 400) {
             auto it = resp.headers.find("location");
             if (it == resp.headers.end()) {
-                resp.error = "redirect konum başlığı yok";
+                resp.error = "redirect has no location header";
                 return resp;
             }
             // Yönlendirme HEDEFİ doğrulanmalı — eskiden körlemesine takip ediliyordu.
@@ -362,11 +362,11 @@ int cmd_install(const std::string& pkg, bool verbose) {
     // Download ZIP
     HttpClientResponse resp = download_follow(spec.zip_url(), verbose);
     if (!resp.error.empty()) {
-        std::cerr << "İndirme hatası: " << resp.error << "\n";
+        std::cerr << "Download error: " << resp.error << "\n";
         return 1;
     }
     if (resp.status != 200) {
-        std::cerr << "GitHub " << resp.status << " döndürdü — paket bulunamadı: "
+        std::cerr << "GitHub " << resp.status << " returned — package not found: "
                   << spec.user << "/" << spec.repo << "\n";
         return 1;
     }
@@ -382,7 +382,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
 
     std::vector<char> zip_data(resp.body.begin(), resp.body.end());
     if (!extract_zip(zip_data, dest, verbose, spec.subdir)) {
-        std::cerr << "ZIP çıkartma hatası\n";
+        std::cerr << "ZIP extraction error\n";
         return 1;
     }
 
@@ -428,7 +428,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
 
     std::cout << "  look.lock güncellendi\n";
     std::cout << "✓ " << spec.lock_key() << " kuruldu\n\n";
-    std::cout << "Kullanım:\n";
+    std::cout << "Usage:\n";
     if (!spec.subdir.empty()) {
         // pkg/firebase/firebase.lk
         std::cout << "  use \"" << spec.pkg_dir() << "/" << spec.subdir << ".lk\";\n";
@@ -444,13 +444,13 @@ int cmd_install(const std::string& pkg, bool verbose) {
 int cmd_install_all(bool verbose) {
     auto lock_path = fs::current_path() / "look.lock";
     if (!fs::exists(lock_path)) {
-        std::cout << "look.lock bulunamadı — kurulacak paket yok.\n";
+        std::cout << "look.lock not found — no packages to install.\n";
         return 0;
     }
 
     auto lock = read_lock(lock_path);
     if (lock.empty()) {
-        std::cout << "look.lock boş — kurulacak paket yok.\n";
+        std::cout << "look.lock is empty — no packages to install.\n";
         return 0;
     }
 
@@ -484,7 +484,7 @@ static fs::path look_home() {
 #else
     const char* home = std::getenv("HOME");
 #endif
-    if (!home) throw std::runtime_error("HOME dizini bulunamadı");
+    if (!home) throw std::runtime_error("HOME directory not found");
     return fs::path(home) / ".look";
 }
 
@@ -514,11 +514,11 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
     // Download ZIP from GitHub
     HttpClientResponse resp = download_follow(spec.zip_url(), verbose);
     if (!resp.error.empty()) {
-        std::cerr << "İndirme hatası: " << resp.error << "\n";
+        std::cerr << "Download error: " << resp.error << "\n";
         return 1;
     }
     if (resp.status != 200) {
-        std::cerr << "GitHub " << resp.status << " döndürdü — modül bulunamadı: "
+        std::cerr << "GitHub " << resp.status << " returned — module not found: "
                   << spec.user << "/" << spec.repo << "\n";
         return 1;
     }
@@ -534,13 +534,13 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
 
     std::vector<char> zip_data(resp.body.begin(), resp.body.end());
     if (!extract_zip(zip_data, dest_dir, verbose, spec.subdir)) {
-        std::cerr << "ZIP çıkartma hatası\n";
+        std::cerr << "ZIP extraction error\n";
         return 1;
     }
 
     std::cout << "  → " << dest_dir.string() << "\n";
     std::cout << "✓ " << mod_name << " modülü kuruldu\n\n";
-    std::cout << "Kullanım:\n";
+    std::cout << "Usage:\n";
     std::cout << "  use " << mod_name << "\n";
 
     return 0;
@@ -596,7 +596,7 @@ int cmd_module_list() {
     HttpClientResponse resp = http_request("GET", api_url, "", hdrs, opts);
 
     if (!resp.error.empty()) {
-        std::cerr << "Bağlantı hatası: " << resp.error << "\n";
+        std::cerr << "Connection error: " << resp.error << "\n";
         return 1;
     }
     if (resp.status != 200) {
@@ -625,7 +625,7 @@ int cmd_module_list() {
 
     // Print official modules with install status
     if (official.empty()) {
-        std::cout << "Resmi modül bulunamadı.\n";
+        std::cout << "Official module not found.\n";
     } else {
         std::cout << "\nResmi modüller (github.com/codlook/look-modules):\n";
         for (auto& name : official) {

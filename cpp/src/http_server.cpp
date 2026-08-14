@@ -445,7 +445,7 @@ struct HttpServer::Impl {
             } catch (...) {
                 resp.status_code = 500;
                 resp.status_text = "Internal Server Error";
-                resp.body        = "{\"ok\":false,\"hata\":\"Sunucu hatası\"}";
+                resp.body        = "{\"ok\":false,\"hata\":\"Server error\"}";
                 resp.keep_alive  = false;
             }
 
@@ -487,7 +487,7 @@ struct HttpServer::Impl {
             for (const auto& allowed : allowed_origins)
                 if (allowed == "*" || allowed == origin) { ok = true; break; }
             if (!ok) {
-                send_ws_reject(fd, "403 Forbidden - Origin izinli değil: " + origin);
+                send_ws_reject(fd, "403 Forbidden - Origin not allowed: " + origin);
                 ::close(fd);
                 return;
             }
