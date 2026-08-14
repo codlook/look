@@ -10,6 +10,7 @@ jobs:
   sanitizers:
     name: "Regression under ASan/UBSan"
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # güvenlik ağı: ASan HTTP smoke'ta --max-time'sız curl bir deadlock'ta asılırsa erken kes
 
     steps:
       - uses: actions/checkout@v4
