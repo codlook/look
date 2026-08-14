@@ -68,22 +68,21 @@ const std::vector<std::string>& builtin_names() {
         "file::remove", "file::size", "file::store",
         // 113-119: http:: client
         "http::get", "http::post", "http::put", "http::delete",
-        "http::patch", "http::head", "http::request",
+        "http::patch",   // http::head/request HAYALET KALDIRILDI (impl yok; get/post/... kapsar)
         // 120-123: template::
         "template::render", "template::include", "template::block", "template::extends",
         // 124-128: cache::
         "cache::get", "cache::set", "cache::has", "cache::delete", "cache::flush",
         // 129-132: queue::
-        "queue::push", "queue::pop", "queue::size", "queue::flush",
+        "queue::push", "queue::pop", "queue::size",   // queue::flush HAYALET KALDIRILDI (gerçeği queue::clear)
         // 133-134: mail::
         "mail::send", "mail::deliver_maildir",
-        // 135-140: crypto::
-        "crypto::sha256", "crypto::sha512", "crypto::md5",
-        "crypto::hmac", "crypto::random_bytes", "crypto::random_hex",
-        // 141-142: base64::
-        "base64::encode", "base64::decode",
-        // 143: uuid::
-        "uuid::v4",
+        // crypto:: — HAYALET KALDIRILDI (docs-conformance/ölçüm): sha512/md5/hmac/random_hex
+        // builtin listesindeydi ama crypto modülünde implementasyonu YOK (çağrılınca "no function").
+        // Gerçek karşılıkları: sha256 var; hmac→hmac_sha256; random_hex→random_bytes+hex_encode.
+        // base64::encode/decode de HAYALET'ti (base64 modülü YOK → json modülüyle karışıyordu);
+        // gerçek base64 crypto::base64_encode/decode. uuid::v4 HAYALET → gerçeği crypto::uuid.
+        "crypto::sha256", "crypto::random_bytes",
         // 144-147: parallel:: observability
         "parallel::active", "parallel::wait", "parallel::limit", "parallel::at_capacity",
         // 148-151: error::
