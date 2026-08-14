@@ -477,13 +477,13 @@ static Module make_response_module(WebContext* ctx) {
     // 3 satırlık status+json+return kalıbının yerine geçer.
     m.functions["error"] = [ctx](auto args) -> Value {
         int code = args.empty() ? 500 : args[0].to_int();
-        std::string msg = args.size() >= 2 ? args[1].to_string() : "Hata";
+        std::string msg = args.size() >= 2 ? args[1].to_string() : "Error";
         ctx->set_status(code);
         ctx->headers_out["Content-Type"] = "application/json; charset=utf-8";
         auto obj = std::make_shared<std::vector<Value>>();
         obj->push_back(Value(std::string("__assoc__")));
         obj->push_back(Value(std::string("ok")));   obj->push_back(Value(false));
-        obj->push_back(Value(std::string("hata")));  obj->push_back(Value(msg));
+        obj->push_back(Value(std::string("error")));  obj->push_back(Value(msg));
         std::string s = json_encode(Value(obj));
         ctx->response_body += s;
         return Value(s);
@@ -1278,7 +1278,7 @@ static std::vector<DbParam> values_to_db_params(const std::vector<Value>& params
                 // üçü tutarsız + ikisi sessiz-veri-kaybı (Cephe 2). LOOK 0.0/0.0'da fail-loud;
                 // DB bind'de de fail-loud + TUTARLI: temiz hata (sessiz-null yerine).
                 if (!std::isfinite(d))
-                    throw std::runtime_error("db: NaN/Infinity float parametre olarak bind edilemez");
+                    throw std::runtime_error("db: cannot bind NaN/Infinity float as a parameter");
                 out.push_back(DbParam::from_float(d));
                 break;
             }

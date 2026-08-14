@@ -836,7 +836,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
             // tasma-guvenli bicim.
             for (int i = 0; i < (int)ncols; i++) {
                 if (end - p < 4)
-                    throw std::runtime_error("db postgres: bozuk DataRow — " +
+                    throw std::runtime_error("db postgres: malformed DataRow — " +
                         std::to_string(ncols) + " fields declared, " + std::to_string(i) + " fields received");
                 int32_t field_len = read_i32_be(p); p += 4;
                 std::string val;
@@ -847,7 +847,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
                     throw std::runtime_error("db postgres: malformed DataRow — invalid field length " +
                                              std::to_string(field_len));
                 } else if ((size_t)field_len > (size_t)(end - p)) {
-                    throw std::runtime_error("db postgres: bozuk DataRow — alan uzunlugu " +
+                    throw std::runtime_error("db postgres: malformed DataRow — field length " +
                         std::to_string(field_len) + " govdede kalan " +
                         std::to_string(end - p) + " bayti asiyor");
                 } else {
@@ -1073,7 +1073,7 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
             DbRow row;
             for (int i = 0; i < (int)ncols; i++) {
                 if (end - p < 4)
-                    throw std::runtime_error("db postgres: bozuk DataRow — " +
+                    throw std::runtime_error("db postgres: malformed DataRow — " +
                         std::to_string(ncols) + " fields declared, " + std::to_string(i) + " fields received");
                 int32_t field_len = read_i32_be(p); p += 4;
                 std::string val;
@@ -1084,7 +1084,7 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
                     throw std::runtime_error("db postgres: malformed DataRow — invalid field length " +
                                              std::to_string(field_len));
                 } else if ((size_t)field_len > (size_t)(end - p)) {   // tasma-guvenli
-                    throw std::runtime_error("db postgres: bozuk DataRow — alan uzunlugu " +
+                    throw std::runtime_error("db postgres: malformed DataRow — field length " +
                         std::to_string(field_len) + " govdede kalan " +
                         std::to_string(end - p) + " bayti asiyor");
                 } else {

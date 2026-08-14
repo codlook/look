@@ -1878,11 +1878,12 @@ LOG_DIR=C:/xampp/htdocs/logs</code></pre>
 
 <span class="var">$r</span> = <span class="ns">look::</span><span class="fn">check</span>(<span class="var">$user_code</span>)
 <span class="kw">if</span> (<span class="var">$r</span>[<span class="str">"ok"</span>]) {
-    <span class="kw">print</span>(<span class="str">"Gecerli LOOK kodu"</span>)
+    <span class="kw">print</span>(<span class="str">"Valid LOOK code"</span>)
 } <span class="kw">else</span> {
-    <span class="kw">print</span>(<span class="str">"Hata: "</span> . <span class="var">$r</span>[<span class="str">"line"</span>] . <span class="str">":"</span> . <span class="var">$r</span>[<span class="str">"col"</span>] . <span class="str">" "</span> . <span class="var">$r</span>[<span class="str">"msg"</span>])
+    <span class="kw">print</span>(<span class="str">"Error: "</span> . <span class="var">$r</span>[<span class="str">"line"</span>] . <span class="str">":"</span> . <span class="var">$r</span>[<span class="str">"col"</span>] . <span class="str">" "</span> . <span class="var">$r</span>[<span class="str">"msg"</span>])
 }</code></pre>
-  <div class="callout tip"><p>LLM tabanlı araçlar (ör. LOOKY) için ideal: üretilen veya kullanıcıdan gelen LOOK kodunu, alt-süreç çalıştırmadan doğrular — gerçek derleyici hatasını (satır/sütun) döndürür.</p></div>
+  <div class="callout tip"><p>Ideal for LLM-based tools (e.g. LOOKY): it validates generated or user-supplied LOOK code without spawning a subprocess — returning the real compiler error (line/column).</p></div>
+  <div class="callout"><p><strong>Hit an error you don't recognize?</strong> See the <a href="errors.md">Error Reference &amp; Troubleshooting</a> — every user-facing LOOK error message with its cause and fix.</p></div>
 </section>
 
 <section id="runtime">

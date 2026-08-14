@@ -818,7 +818,7 @@ struct ImapServer::Impl {
                 catch (...) { send_all(fd, tag + " BAD APPEND literal size\r\n"); continue; }
                 // OOM koruması — cap aşımı: veriyi HİÇ okumadan reddet
                 if (litsize > imap_max_literal()) {
-                    send_all(fd, tag + " NO [TOOBIG] APPEND mesaj çok büyük\r\n"); continue;
+                    send_all(fd, tag + " NO [TOOBIG] APPEND message too large\r\n"); continue;
                 }
                 // mailbox adı (ilk token)
                 std::string head = args.substr(0, lb);

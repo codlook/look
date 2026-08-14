@@ -702,7 +702,7 @@ call_dispatch:
                         if (sep != std::string::npos)
                             throw LookVmError("Module '" + nm.substr(0, sep) + "' not loaded.");
                         throw LookVmError("Built-in '" + (nm.empty() ? std::to_string(bidx) : nm) +
-                                          "' kullanilamiyor (baglanmamis)");
+                                          "' unavailable (not linked)");
                     }
                     R(ins.a) = bfn(args);
                 }

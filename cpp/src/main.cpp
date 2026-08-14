@@ -229,7 +229,7 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
             size_t cap = 128;
             if (!a.empty()) {
                 int n = a[0].to_int();
-                if (n < 0) throw std::runtime_error("channel: kapasite negatif olamaz");
+                if (n < 0) throw std::runtime_error("channel: capacity cannot be negative");
                 cap = (n == 0) ? (size_t)-1 : (size_t)n;
             }
             return Value(std::make_shared<look::LookChannel>(cap));
@@ -333,8 +333,8 @@ int main(int argc, char* argv[]) {
         if (cmd == "module") {
             if (argc < 3) {
                 std::cout << "Usage:\n"
-                          << "  lk module install <github.com/user/repo>  — modül yükle\n"
-                          << "  lk module list                             — resmi modülleri listele\n";
+                          << "  lk module install <github.com/user/repo>  — install a module\n"
+                          << "  lk module list                             — list official modules\n";
                 return 1;
             }
             std::string sub = argv[2];

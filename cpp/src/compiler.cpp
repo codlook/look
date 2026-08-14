@@ -74,7 +74,7 @@ int FunctionCompiler::emit_jump(OpCode op, uint8_t cond_reg) {
 void FunctionCompiler::patch_jump(int offset, int target) {
     // 16-bit target: b = hi, c = lo
     if (target > 0xFFFF)
-        throw LookCompileError("Jump hedefi çok uzak");
+        throw LookCompileError("Jump target too far");
     proto_.code[offset].b = (uint8_t)(target >> 8);
     proto_.code[offset].c = (uint8_t)(target & 0xFF);
 }

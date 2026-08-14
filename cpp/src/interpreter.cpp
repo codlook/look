@@ -1734,7 +1734,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             size_t cap = 128;
             if (argc >= 1) {
                 int n = evaluate_expression(*e->arguments[0]).to_int();
-                if (n < 0) throw std::runtime_error("channel: kapasite negatif olamaz");
+                if (n < 0) throw std::runtime_error("channel: capacity cannot be negative");
                 cap = (n == 0) ? (size_t)-1 : (size_t)n;
             }
             return Value(std::make_shared<LookChannel>(cap));
