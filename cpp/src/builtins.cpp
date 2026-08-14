@@ -106,7 +106,7 @@ const std::vector<std::string>& builtin_names() {
         "response::text", "response::html",
         // 171+: array:: modulu — eskiden builtin_names'de HIC yoktu → route icinde
         // array::map/keys/sort vb. cagirinca compiler CALL_BUILTIN uretemeyip genel
-        // CALL'a dusuyor, runtime'da "Cagirilabilir degil" firlatiyor ve route KALICI
+        // CALL'a dusuyor, runtime'da "Not callable" firlatiyor ve route KALICI
         // interpreter'a dusuyordu (veri-agirlikli route'lar tamamen yavas yolda).
         // Sona eklendi (mevcut indexler kaymaz); `use array` ile auto-wire olur (satir ~905),
         // interpreter ile parity (o da `use array` gerektirir).
@@ -153,7 +153,7 @@ const std::vector<std::string>& builtin_names() {
         // db:: tamamlama — transaction/begin/commit/rollback/escape. transaction()
         // closure alır: VM'den BYTECODE_FN gelir, interp->invoke() köprüyle çalıştırır.
         "db::transaction", "db::begin", "db::commit", "db::rollback", "db::escape",
-        // exit()/die() — VM'de YOKTU: CLI-VM'de "Çağrılabilir değil" fırlatıyordu (CLI
+        // exit()/die() — VM'de YOKTU: CLI-VM'de "Not callable" fırlatıyordu (CLI
         // script'lerinde exit kodu yaygın), web'de route'u kalıcı interpreter'a düşürüyordu.
         // Her iki motorda ExitException'a bağlanır (interpreter ile aynı semantik).
         "exit", "die",
@@ -174,7 +174,7 @@ const std::vector<std::string>& builtin_names() {
         "runtime::gc", "runtime::stats",
         "look::check",
         // jobs:: — worker HARİÇ: jobs::worker($q,$fn) setup'ta handler kaydeder, job'lar
-        // istek/VM bağlamı DIŞINDA çalışır → VM closure kaydedilirse "aktif VM yok".
+        // istek/VM bağlamı DIŞINDA çalışır → VM closure kaydedilirse "no active VM".
         "jobs::push", "jobs::next", "jobs::done", "jobs::fail", "jobs::failed",
         "jobs::list", "jobs::stats", "jobs::retry", "jobs::purge", "jobs::recover",
         // session::has — docs'ta belgeliydi ama eksikti (dogfooding #1). Auto-wire

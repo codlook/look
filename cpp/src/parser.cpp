@@ -97,7 +97,7 @@ std::unique_ptr<Statement> Parser::switch_statement() {
     return stmt;
 }
 
-// print(expr, ...)  — parens zorunlu
+// print(expr, ...)  — parens is required
 std::unique_ptr<Statement> Parser::try_statement() {
     auto stmt = std::make_unique<TryCatchStatement>();
 
@@ -138,7 +138,7 @@ std::unique_ptr<Statement> Parser::print_statement() {
     return std::make_unique<PrintStatement>(std::move(exprs));
 }
 
-// write(expr, ...)  — parens zorunlu, newline yok
+// write(expr, ...)  — parens is required, newline yok
 std::unique_ptr<Statement> Parser::write_statement() {
     consume(TokenType::LPAREN, "Expect '(' after 'write'.");
     auto exprs = argument_list();
@@ -464,7 +464,7 @@ std::unique_ptr<Expression> Parser::ternary() {
     auto cond = null_coalescing();
     if (match(TokenType::QUESTION)) {
         auto then_e = ternary();
-        consume(TokenType::COLON, "Ternary operatöründe ':' bekleniyor");
+        consume(TokenType::COLON, "':' expected in the ternary operator");
         auto else_e = ternary();
         return std::make_unique<TernaryExpression>(std::move(cond), std::move(then_e), std::move(else_e));
     }

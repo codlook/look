@@ -134,7 +134,7 @@ struct HttpServer::Impl {
     // CSWSH koruması (gerçek davranış — handle_ws_upgrade): BOŞ = güvenli-varsayılan
     // SAME-ORIGIN (Origin varsa Host'la eşleşmeli; cross-origin tarayıcı isteği=CSWSH
     // vektörü reddedilir; Origin'siz backend/wscat izinli). DOLU (LOOK_WS_ORIGINS) = yalnız
-    // listedeki origin'ler (Origin zorunlu). NOT: "boş=tüm originlere izin" DEĞİL (eski
+    // listedeki origin'ler (Origin is required). NOT: "boş=tüm originlere izin" DEĞİL (eski
     // yorum yanıltıcıydı; same-origin eklenmeden önceki davranışı anlatıyordu).
     std::vector<std::string> allowed_origins;
 
@@ -478,7 +478,7 @@ struct HttpServer::Impl {
         if (!allowed_origins.empty()) {
             // Açık allowlist yapılandırılmış (LOOK_WS_ORIGINS) — tam eşleşme.
             if (it == req.headers.end()) {
-                send_ws_reject(fd, "403 Forbidden - Origin header gerekli");
+                send_ws_reject(fd, "403 Forbidden - Origin header required");
                 ::close(fd);
                 return;
             }
@@ -507,8 +507,8 @@ struct HttpServer::Impl {
                 if (c != std::string::npos) hh = hh.substr(0, c);
             }
             if (oh.empty() || hh.empty() || oh != hh) {
-                send_ws_reject(fd, "403 Forbidden - Cross-origin WebSocket reddedildi "
-                                   "(same-origin varsayilan; izin icin LOOK_WS_ORIGINS)");
+                send_ws_reject(fd, "403 Forbidden - Cross-origin WebSocket rejected "
+                                   "(same-origin default; use LOOK_WS_ORIGINS to allow)");
                 ::close(fd);
                 return;
             }

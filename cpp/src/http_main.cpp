@@ -354,7 +354,7 @@ static void run_setup_http(const fs::path& script) {
         } catch (const std::exception& e) {
             std::cerr << "[BYTECODE] exception: " << e.what() << "\n";
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                std::string("Bytecode compile hata, interpreter fallback: ") + e.what());
+                std::string("Bytecode compile error, interpreter fallback: ") + e.what());
         } catch (...) {
             std::cerr << "[BYTECODE] unknown exception\n";
         }

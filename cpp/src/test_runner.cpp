@@ -63,7 +63,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
 
     m.functions["eq"] = [fail](auto args) -> Value {
         if (args.size() < 2)
-            fail("assert::eq() 2 argüman bekler");
+            fail("assert::eq() takes 2 arguments");
         auto& a = args[0]; auto& b = args[1];
         // Compare by string representation for simplicity
         bool eq = false;
@@ -83,7 +83,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
     };
 
     m.functions["neq"] = [fail](auto args) -> Value {
-        if (args.size() < 2) fail("assert::neq() 2 argüman bekler");
+        if (args.size() < 2) fail("assert::neq() takes 2 arguments");
         bool eq = (args[0].to_string() == args[1].to_string());
         if (eq)
             fail("assert::neq() failed — values are equal: " + args[0].to_string());
@@ -104,7 +104,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
     };
 
     m.functions["contains"] = [fail](auto args) -> Value {
-        if (args.size() < 2) fail("assert::contains() 2 argüman bekler");
+        if (args.size() < 2) fail("assert::contains() takes 2 arguments");
         auto& arr = args[0];
         auto& val = args[1];
         if (arr.type() != Value::ARRAY)
@@ -115,7 +115,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
             if (elem.to_string() == val.to_string()) { found = true; break; }
         }
         if (!found)
-            fail("assert::contains() failed — \"" + val.to_string() + "\" dizide yok");
+            fail("assert::contains() failed — \"" + val.to_string() + "\" is not in the array");
         return Value();
     };
 
@@ -134,7 +134,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
     };
 
     m.functions["match"] = [fail](auto args) -> Value {
-        if (args.size() < 2) fail("assert::match() 2 argüman bekler: (str, regex)");
+        if (args.size() < 2) fail("assert::match() takes 2 arguments: (str, regex)");
         std::string s     = args[0].to_string();
         std::string pat   = args[1].to_string();
         try {
@@ -142,14 +142,14 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
             if (!std::regex_search(s, re))
                 fail("assert::match() failed — \"" + s + "\" did not match pattern: " + pat);
         } catch (std::regex_error& e) {
-            fail("assert::match() geçersiz regex: " + std::string(e.what()));
+            fail("assert::match() invalid regex: " + std::string(e.what()));
         }
         return Value();
     };
 
     m.functions["throws"] = [fail, &interp, &web_ctx](auto args) -> Value {
         if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
-            fail("assert::throws() fonksiyon bekler");
+            fail("assert::throws() expects a function");
         // Fonksiyonu HEMEN çağır ve hata fırlatmasını bekle. (Eskiden bir marker
         // array döndürüp runner'ın kontrol etmesini beklerdi — ama LOOK son ifadeyi
         // örtük DÖNDÜRMEDIĞI için marker atılıyordu; assert::throws() son ifade
@@ -321,7 +321,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     // Register test() built-in
     interp.register_builtin("test", [&interp](std::vector<Value> args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::STRING)
-            throw std::runtime_error("test() — test(isim, function() {...}) bekleniyor");
+            throw std::runtime_error("test() — expects test(name, function() {...})");
         if (args[1].type() != Value::FUNCTION && args[1].type() != Value::BYTECODE_FN)
             throw std::runtime_error("test() — second argument must be a function");
         interp.register_test_case(args[0].as_string(), args[1]);
@@ -331,13 +331,13 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     // Register before_each() and after_each()
     interp.register_builtin("before_each", [&interp](std::vector<Value> args) -> Value {
         if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
-            throw std::runtime_error("before_each() — fonksiyon bekler");
+            throw std::runtime_error("before_each() — expects a function");
         interp.set_before_each(args[0]);
         return Value();
     });
     interp.register_builtin("after_each", [&interp](std::vector<Value> args) -> Value {
         if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
-            throw std::runtime_error("after_each() — fonksiyon bekler");
+            throw std::runtime_error("after_each() — expects a function");
         interp.set_after_each(args[0]);
         return Value();
     });
@@ -364,7 +364,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     });
 
     interp.register_builtin("assert_eq", [fail](std::vector<Value> args) -> Value {
-        if (args.size() < 2) fail("assert_eq() 2 argüman bekler");
+        if (args.size() < 2) fail("assert_eq() takes 2 arguments");
         bool eq = false;
         auto& a = args[0]; auto& b = args[1];
         if (a.type() == b.type()) {
@@ -380,7 +380,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     });
 
     interp.register_builtin("assert_neq", [fail](std::vector<Value> args) -> Value {
-        if (args.size() < 2) fail("assert_neq() 2 argüman bekler");
+        if (args.size() < 2) fail("assert_neq() takes 2 arguments");
         if (args[0].to_string() == args[1].to_string())
             fail("assert_neq() failed — values are equal: " + args[0].to_string());
         return Value();
@@ -399,7 +399,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     });
 
     interp.register_builtin("assert_contains", [fail](std::vector<Value> args) -> Value {
-        if (args.size() < 2) fail("assert_contains() 2 argüman bekler");
+        if (args.size() < 2) fail("assert_contains() takes 2 arguments");
         if (args[0].type() != Value::ARRAY)
             fail("assert_contains() first argument must be an array");
         auto& vec = *args[0].as_array();
@@ -407,13 +407,13 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         for (auto& elem : vec)
             if (elem.to_string() == args[1].to_string()) { found = true; break; }
         if (!found)
-            fail("assert_contains() failed — \"" + args[1].to_string() + "\" dizide yok");
+            fail("assert_contains() failed — \"" + args[1].to_string() + "\" is not in the array");
         return Value();
     });
 
     interp.register_builtin("assert_throws", [fail, &interp, &web_ctx](std::vector<Value> args) -> Value {
         if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
-            fail("assert_throws() fonksiyon bekler");
+            fail("assert_throws() expects a function");
         // Fonksiyonu HEMEN çağır (izole kopyada) ve hata fırlatmasını bekle.
         // Eski marker mekanizması yalnız testin DÖNÜŞ değeriyken çalışıyordu; LOOK
         // son ifadeyi örtük döndürmediği için belgelenen kullanım dahil hiçbir
@@ -432,12 +432,12 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     });
 
     interp.register_builtin("assert_match", [fail](std::vector<Value> args) -> Value {
-        if (args.size() < 2) fail("assert_match() 2 argüman bekler: (str, regex)");
+        if (args.size() < 2) fail("assert_match() takes 2 arguments: (str, regex)");
         std::string s = args[0].to_string(), pat = args[1].to_string();
         try {
             if (!std::regex_search(s, std::regex(pat)))
                 fail("assert_match() failed — \"" + s + "\" did not match pattern: " + pat);
-        } catch (std::regex_error& e) { fail("assert_match() geçersiz regex: " + std::string(e.what())); }
+        } catch (std::regex_error& e) { fail("assert_match() invalid regex: " + std::string(e.what())); }
         return Value();
     });
 

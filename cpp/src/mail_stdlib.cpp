@@ -217,7 +217,7 @@ static MailResult dispatch_send(const std::string& to,
             if (at != std::string::npos) domain = from.substr(at + 1);
         }
         if (domain.empty())
-            throw std::runtime_error("mail:: — Mailgun için MAIL_DOMAIN gerekli");
+            throw std::runtime_error("mail:: — MAIL_DOMAIN is required for Mailgun");
         return send_mailgun(api_key, from, to, subject, text, html, domain);
     }
 
@@ -242,7 +242,7 @@ Module make_mail_module() {
     // Provider + credentials from env: MAIL_PROVIDER, MAIL_API_KEY, MAIL_FROM
     m.functions["send"] = [](std::vector<Value> args) -> Value {
         if (args.size() < 2)
-            throw std::runtime_error("mail::send() — (to, subject [, text [, html [, from]]]) bekler");
+            throw std::runtime_error("mail::send() — expects (to, subject [, text [, html [, from]]])");
 
         std::string to      = args[0].to_string();
         std::string subject = args[1].to_string();
@@ -269,7 +269,7 @@ Module make_mail_module() {
     // Convenience: HTML email, text body auto-stripped or empty.
     m.functions["send_html"] = [](std::vector<Value> args) -> Value {
         if (args.size() < 3)
-            throw std::runtime_error("mail::send_html() — (to, subject, html [, from]) bekler");
+            throw std::runtime_error("mail::send_html() — expects (to, subject, html [, from])");
 
         std::string to      = args[0].to_string();
         std::string subject = args[1].to_string();
@@ -297,7 +297,7 @@ Module make_mail_module() {
     // Example: mail::deliver_maildir("/var/mail", "inbox", "sender@example.com", $raw)
     m.functions["deliver_maildir"] = [](std::vector<Value> args) -> Value {
         if (args.size() < 4)
-            throw std::runtime_error("mail::deliver_maildir() — (base_dir, mailbox, from, data) bekler");
+            throw std::runtime_error("mail::deliver_maildir() — expects (base_dir, mailbox, from, data)");
         SmtpMessage msg;
         msg.mail_from = args[2].to_string();
         msg.data      = args[3].to_string();

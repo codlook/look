@@ -60,32 +60,32 @@ Module make_queue_module() {
 
     // queue::push($name, $val) — add to end
     m.functions["push"] = [](std::vector<Value> args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("queue::push() — (name, value) bekler");
+        if (args.size() < 2) throw std::runtime_error("queue::push() — expects (name, value)");
         QueueStore::instance().push(args[0].to_string(), args[1]);
         return Value(true);
     };
 
     // queue::pop($name) → value | null
     m.functions["pop"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("queue::pop() — name bekler");
+        if (args.empty()) throw std::runtime_error("queue::pop() — expects name");
         return QueueStore::instance().pop(args[0].to_string());
     };
 
     // queue::peek($name) → value | null (no remove)
     m.functions["peek"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("queue::peek() — name bekler");
+        if (args.empty()) throw std::runtime_error("queue::peek() — expects name");
         return QueueStore::instance().peek(args[0].to_string());
     };
 
     // queue::size($name) → int
     m.functions["size"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("queue::size() — name bekler");
+        if (args.empty()) throw std::runtime_error("queue::size() — expects name");
         return Value(QueueStore::instance().size(args[0].to_string()));
     };
 
     // queue::clear($name) → removes all items from named queue
     m.functions["clear"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("queue::clear() — name bekler");
+        if (args.empty()) throw std::runtime_error("queue::clear() — expects name");
         QueueStore::instance().clear(args[0].to_string());
         return Value(true);
     };

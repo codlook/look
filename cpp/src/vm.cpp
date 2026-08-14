@@ -78,9 +78,9 @@ static thread_local VM* t_active_vm = nullptr;
 
 static Value vm_bridge_hook(const Value& fn, std::vector<Value>& args) {
     if (!t_active_vm)
-        throw LookVmError("vm_bridge_hook: aktif VM yok");
+        throw LookVmError("vm_bridge_hook: no active VM");
     if (fn.type() != Value::BYTECODE_FN)
-        throw LookVmError("vm_bridge_hook: BYTECODE_FN bekleniyor");
+        throw LookVmError("vm_bridge_hook: BYTECODE_FN expected");
     return t_active_vm->call_closure(*fn.as_bytecode_fn(), args);
 }
 
@@ -632,7 +632,7 @@ call_dispatch:
                         const std::string& nm = CONST((uint16_t)(cname - 1)).str_ref();
                         if (fn_val.type() == Value::NONE)
                             throw LookVmError("Undefined variable: " + nm);
-                        throw LookVmError("'" + nm + "' cagrilabilir degil (fonksiyon bekleniyor)");
+                        throw LookVmError("'" + nm + "' is not callable (function expected)");
                     }
                     throw LookVmError("Not callable (function expected)");
                 }
@@ -746,7 +746,7 @@ call_dispatch:
                 }
                 const Value& fn_val = R(ins.b);
                 if (fn_val.type() != Value::BYTECODE_FN)
-                    throw LookVmError("TAIL_CALL: BYTECODE_FN bekleniyor");
+                    throw LookVmError("TAIL_CALL: BYTECODE_FN expected");
                 auto cl = fn_val.as_bytecode_fn();
                 auto* cp = cl->proto.get();
                 int new_base = (int)regs_.size();
@@ -864,7 +864,7 @@ call_dispatch:
             // ── LOOK'a özgü ───────────────────────────────────────────────────
             case OpCode::PARALLEL_CALL: {
                 if (R(ins.a).type() != Value::BYTECODE_FN)
-                    throw LookVmError("parallel(): BYTECODE_FN bekleniyor");
+                    throw LookVmError("parallel(): BYTECODE_FN expected");
                 task_acquire(); // THROW mode: throws if LOOK_PARALLEL_LIMIT reached
                 auto src_cl = R(ins.a).as_bytecode_fn();
                 // 58: CELL captures'ı deep-clone et. Eskiden captures salt-okunur

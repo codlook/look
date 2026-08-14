@@ -318,7 +318,7 @@ struct ImapServer::Impl {
         if (ec) return "";
         // target_c kesinlikle root_c altında olmalı (traversal kilidi). Düz
         // string-prefix YETMEZ ("/root" öneki "/root-evil" ile eşleşir); ayırıcı-
-        // sınırı da zorunlu — üstteki ".." reddine bağlı kalmayan, kendi başına
+        // sınırı da is required — üstteki ".." reddine bağlı kalmayan, kendi başına
         // doğru containment (installer/template ile aynı disiplin).
         auto rs = root_c.string(), ts = target_c.string();
         bool within = ts.size() >= rs.size() && ts.compare(0, rs.size(), rs) == 0 &&
@@ -550,8 +550,8 @@ struct ImapServer::Impl {
             }
             // ── M6: IDLE — yeni mail için canlı push (RFC 2177) ──────────────
             else if (cmd == "IDLE") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
-                if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
+                if (selected.empty()) { send_all(fd, tag + " NO SELECT required first\r\n"); continue; }
                 if (!send_all(fd, "+ idling\r\n")) break;
                 // Sequence KARARLILIĞI: yeni mesajlar snapshot'a EKLENİR (mevcut
                 // indeksler değişmez). new/ tarayıp henüz bilinmeyenleri sona ekle.
@@ -596,7 +596,7 @@ struct ImapServer::Impl {
             else if (cmd == "LOGIN") {
                 // Güvenlik: TLS varsa düz-metin LOGIN reddedilir (LOGINDISABLED).
                 if (ssl_ctx && !g_tls) {
-                    send_all(fd, tag + " NO [PRIVACYREQUIRED] önce STARTTLS gerekli\r\n");
+                    send_all(fd, tag + " NO [PRIVACYREQUIRED] STARTTLS required first\r\n");
                     continue;
                 }
                 std::string user, pass;
@@ -615,7 +615,7 @@ struct ImapServer::Impl {
             }
             // ── M2: SELECT / EXAMINE — mailbox seç, mesaj say ────────────────
             else if (cmd == "SELECT" || cmd == "EXAMINE") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
                 std::string box = resolve_mailbox(maildir_root, args);
                 if (box.empty()) { send_all(fd, tag + " NO invalid mailbox name\r\n"); continue; }
                 // Kararlı snapshot al — sequence numaraları bu andan itibaren sabit
@@ -636,7 +636,7 @@ struct ImapServer::Impl {
             }
             // ── M2: LIST — mailbox'ları listele ──────────────────────────────
             else if (cmd == "LIST" || cmd == "LSUB") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
                 std::string resp;
                 for (auto& b : list_mailboxes(maildir_root))
                     resp += "* " + cmd + " (\\HasNoChildren) \"/\" \"" + b + "\"\r\n";
@@ -645,12 +645,12 @@ struct ImapServer::Impl {
             }
             // ── M2: STATUS — mailbox durumu ──────────────────────────────────
             else if (cmd == "STATUS") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
                 std::string mbname = args;
                 size_t sp = mbname.find(' ');
                 if (sp != std::string::npos) mbname = mbname.substr(0, sp);  // ilk arg = mailbox
                 std::string box = resolve_mailbox(maildir_root, mbname);
-                if (box.empty()) { send_all(fd, tag + " NO geçersiz mailbox\r\n"); continue; }
+                if (box.empty()) { send_all(fd, tag + " NO invalid mailbox\r\n"); continue; }
                 size_t total = 0, recent = 0;
                 count_maildir(box, total, recent);
                 if (mbname.size() >= 2 && mbname.front()=='"' && mbname.back()=='"')
@@ -661,8 +661,8 @@ struct ImapServer::Impl {
             }
             // ── M3: FETCH — mesaj içeriği oku (headers/body/flags/size/uid) ──
             else if (cmd == "FETCH") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
-                if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
+                if (selected.empty()) { send_all(fd, tag + " NO SELECT required first\r\n"); continue; }
                 // args: "<seq-set> <items>"  (items parantezli veya tek)
                 size_t sp = args.find(' ');
                 if (sp == std::string::npos) { send_all(fd, tag + " BAD FETCH argument\r\n"); continue; }
@@ -735,8 +735,8 @@ struct ImapServer::Impl {
             }
             // ── M4a: STORE — flag değiştir (okundu işaretle vb.) ─────────────
             else if (cmd == "STORE") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
-                if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
+                if (selected.empty()) { send_all(fd, tag + " NO SELECT required first\r\n"); continue; }
                 // args: "<seq-set> <op>FLAGS[.SILENT] (<flags>)"
                 size_t sp = args.find(' ');
                 if (sp == std::string::npos) { send_all(fd, tag + " BAD STORE argument\r\n"); continue; }
@@ -777,8 +777,8 @@ struct ImapServer::Impl {
             }
             // ── M4a: EXPUNGE — \Deleted işaretli mesajları kalıcı sil ─────────
             else if (cmd == "EXPUNGE") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
-                if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
+                if (selected.empty()) { send_all(fd, tag + " NO SELECT required first\r\n"); continue; }
                 // RFC 3501: EXPUNGE yanıtları AZALAN sequence sırasında; snapshot'tan
                 // da azalan sırada sil ki indeksler tutarlı kaysın (sequence yalnız
                 // BURADA değişir — kararlılık kuralı).
@@ -800,19 +800,19 @@ struct ImapServer::Impl {
             // GÜVENLİK: literal {N} client-kontrollü → MAX_LITERAL cap (OOM),
             // guarded parse, path-traversal (resolve_mailbox), atomik yazma.
             else if (cmd == "APPEND") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
                 // args: "<mailbox> [(<flags>)] [\"date\"] {<size>}"
                 // Literal boyutu: son '{' ... '}' (opsiyonel '+' non-sync)
                 size_t lb = args.rfind('{'), rb = args.rfind('}');
                 if (lb == std::string::npos || rb == std::string::npos || rb < lb) {
-                    send_all(fd, tag + " BAD APPEND literal {N} gerekli\r\n"); continue;
+                    send_all(fd, tag + " BAD APPEND literal {N} required\r\n"); continue;
                 }
                 std::string szs = args.substr(lb + 1, rb - lb - 1);
                 bool nonsync = !szs.empty() && szs.back() == '+';
                 if (nonsync) szs.pop_back();
                 size_t litsize = 0;
                 if (szs.empty() || szs.find_first_not_of("0123456789") != std::string::npos) {
-                    send_all(fd, tag + " BAD APPEND geçersiz literal boyutu\r\n"); continue;
+                    send_all(fd, tag + " BAD APPEND invalid literal size\r\n"); continue;
                 }
                 try { litsize = std::stoull(szs); }
                 catch (...) { send_all(fd, tag + " BAD APPEND literal boyutu\r\n"); continue; }
@@ -824,7 +824,7 @@ struct ImapServer::Impl {
                 std::string head = args.substr(0, lb);
                 std::string mbname; { std::istringstream hs(head); hs >> mbname; }
                 std::string box = resolve_mailbox(maildir_root, mbname);
-                if (box.empty()) { send_all(fd, tag + " NO [TRYCREATE] geçersiz mailbox\r\n"); continue; }
+                if (box.empty()) { send_all(fd, tag + " NO [TRYCREATE] invalid mailbox\r\n"); continue; }
                 // flags (parantez içi, opsiyonel)
                 std::string mflags;
                 size_t fp = head.find('(');
@@ -836,7 +836,7 @@ struct ImapServer::Impl {
                     }
                 }
                 // Senkron literal: devam isteği gönder
-                if (!nonsync) { if (!send_all(fd, "+ literal verisi bekleniyor\r\n")) break; }
+                if (!nonsync) { if (!send_all(fd, "+ literal data expected\r\n")) break; }
                 // Tam litsize byte oku (bounded — cap zaten doğrulandı)
                 std::string data;
                 if (!read_exact(fd, litsize, data)) break;  // bağlantı/timeout
@@ -849,7 +849,7 @@ struct ImapServer::Impl {
                     send_all(fd, tag + " NO APPEND could not write\r\n");
             }
             // ── M4c: SEARCH — ölçütlere uyan mesaj sıra numaralarını döndür ──
-            // UID FETCH/STORE/SEARCH/COPY — RFC 3501 §6.4.8'de zorunlu ama M1'de YOK.
+            // UID FETCH/STORE/SEARCH/COPY — RFC 3501 §6.4.8'de is required ama M1'de YOK.
             // Kalıcı UID olmadan uygulanamaz (bkz. FETCH'teki UID reddi).
             // `BAD bilinmeyen komut` yerine NEDENİ söyle: Thunderbird'ü debug eden
             // geliştirici "komut yok mu, sözdizimi mi yanlış" diye aramasın.
@@ -861,12 +861,12 @@ struct ImapServer::Impl {
             // yerine kapsamı söyle.
             else if (cmd == "CREATE" || cmd == "DELETE" || cmd == "RENAME" ||
                      cmd == "SUBSCRIBE" || cmd == "UNSUBSCRIBE") {
-                send_all(fd, tag + " NO [CANNOT] " + cmd + " desteklenmiyor (Milestone 1: "
+                send_all(fd, tag + " NO [CANNOT] " + cmd + " not supported (Milestone 1: "
                                    "only the current INBOX is read).\r\n");
             }
             else if (cmd == "SEARCH") {
-                if (!authenticated) { send_all(fd, tag + " NO önce LOGIN gerekli\r\n"); continue; }
-                if (selected.empty()) { send_all(fd, tag + " NO önce SELECT gerekli\r\n"); continue; }
+                if (!authenticated) { send_all(fd, tag + " NO LOGIN required first\r\n"); continue; }
+                if (selected.empty()) { send_all(fd, tag + " NO SELECT required first\r\n"); continue; }
 
                 // Tırnakları dikkate alan basit tokenizer (SEARCH FROM "a b" ...)
                 std::vector<std::string> tok;

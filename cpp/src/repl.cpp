@@ -142,7 +142,7 @@ static void print_help() {
     std::cout << "  :clear    — clear the screen\n";
     std::cout << "  :exit     — exit (or Ctrl+C / Ctrl+D)\n\n";
     std::cout << cyan("Tips:") << "\n";
-    std::cout << "  Sonuç otomatik gösterilir — print() yazmana gerek yok\n";
+    std::cout << "  The result is shown automatically — you don't need to write print()\n";
     std::cout << "  Multi-line: a block opened with { waits until it is closed with }\n";
     std::cout << "  Arrow keys: command history (↑/↓), imleç (←/→)\n\n";
 }

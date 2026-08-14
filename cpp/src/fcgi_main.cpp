@@ -367,7 +367,7 @@ FcgiServer::FcgiServer(int port) : port_(port) {
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
     } else if (bind_env && *bind_env) {
         if (inet_pton(AF_INET, bind_env, &addr.sin_addr) != 1)
-            throw std::runtime_error("look-fcgi: gecersiz LOOK_FCGI_BIND adresi: " + std::string(bind_env));
+            throw std::runtime_error("look-fcgi: invalid LOOK_FCGI_BIND address: " + std::string(bind_env));
     } else {
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 — guvenli default
     }
@@ -432,7 +432,7 @@ static bool is_production() {
 static std::string build_error_response(int status, const std::string& title,
                                          const std::string& msg) {
     std::string body = is_production()
-        ? "{\"ok\":false,\"hata\":\"Sunucu hatasi.\",\"kod\":" + std::to_string(status) + "}\n"
+        ? "{\"ok\":false,\"hata\":\"Server error.\",\"kod\":" + std::to_string(status) + "}\n"
         : "{\"ok\":false,\"hata\":\"" + json_escape_str(msg) + "\",\"kod\":" + std::to_string(status) + "}\n";
     return "Status: " + std::to_string(status) + " " + title + "\r\n"
            "Content-Type: application/json; charset=utf-8\r\n"

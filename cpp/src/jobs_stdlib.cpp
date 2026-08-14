@@ -34,7 +34,7 @@ void JobStore::init(const std::string& db_path) {
 
     int rc = sqlite3_open(db_path.c_str(), &db_);
     if (rc != SQLITE_OK) {
-        std::string err = db_ ? sqlite3_errmsg(db_) : "bilinmeyen hata";
+        std::string err = db_ ? sqlite3_errmsg(db_) : "unknown error";
         if (db_) { sqlite3_close(db_); db_ = nullptr; }
         throw std::runtime_error("jobs:: could not open DB (" + db_path + "): " + err);
     }
@@ -400,7 +400,7 @@ Module make_jobs_module() {
 
     // jobs::push($queue, $payload [, $max_retries=3 [, $delay=0]]) → int id
     m.functions["push"] = [](std::vector<Value> args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("jobs::push() — (queue, payload [, max_retries [, delay]]) bekler");
+        if (args.size() < 2) throw std::runtime_error("jobs::push() — expects (queue, payload [, max_retries [, delay]])");
         std::string q           = args[0].to_string();
         std::string payload     = args[1].to_string();
         int         max_retries = (args.size() >= 3) ? (int)args[2].to_float() : 3;
@@ -410,47 +410,47 @@ Module make_jobs_module() {
 
     // jobs::next($queue) → assoc | null
     m.functions["next"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("jobs::next() — queue bekler");
+        if (args.empty()) throw std::runtime_error("jobs::next() — expects queue");
         return JobStore::instance().next(args[0].to_string());
     };
 
     // jobs::done($id) → true
     m.functions["done"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("jobs::done() — id bekler");
+        if (args.empty()) throw std::runtime_error("jobs::done() — expects id");
         JobStore::instance().done((int64_t)args[0].to_float());
         return Value(true);
     };
 
     // jobs::fail($id) → true
     m.functions["fail"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("jobs::fail() — id bekler");
+        if (args.empty()) throw std::runtime_error("jobs::fail() — expects id");
         JobStore::instance().fail((int64_t)args[0].to_float());
         return Value(true);
     };
 
     // jobs::stats($queue) → {pending, processing, done, failed}
     m.functions["stats"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("jobs::stats() — queue bekler");
+        if (args.empty()) throw std::runtime_error("jobs::stats() — expects queue");
         return JobStore::instance().stats(args[0].to_string());
     };
 
     // jobs::list($queue, $status [, $limit=100]) → array
     m.functions["list"] = [](std::vector<Value> args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("jobs::list() — (queue, status) bekler");
+        if (args.size() < 2) throw std::runtime_error("jobs::list() — expects (queue, status)");
         int limit = (args.size() >= 3) ? (int)args[2].to_float() : 100;
         return JobStore::instance().list(args[0].to_string(), args[1].to_string(), limit);
     };
 
     // jobs::retry($id) → true
     m.functions["retry"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("jobs::retry() — id bekler");
+        if (args.empty()) throw std::runtime_error("jobs::retry() — expects id");
         JobStore::instance().retry((int64_t)args[0].to_float());
         return Value(true);
     };
 
     // jobs::purge($queue, $status) → int
     m.functions["purge"] = [](std::vector<Value> args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("jobs::purge() — (queue, status) bekler");
+        if (args.size() < 2) throw std::runtime_error("jobs::purge() — expects (queue, status)");
         return Value((int64_t)JobStore::instance().purge(args[0].to_string(), args[1].to_string()));
     };
 
@@ -459,7 +459,7 @@ Module make_jobs_module() {
     // min_age_seconds=0 resets ALL processing jobs unconditionally.
     // min_age_seconds=300 only resets jobs stuck for 5+ minutes.
     m.functions["recover"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("jobs::recover() — queue bekler");
+        if (args.empty()) throw std::runtime_error("jobs::recover() — expects queue");
         int min_age = (args.size() >= 2) ? (int)args[1].to_float() : 0;
         int64_t n = JobStore::instance().recover(args[0].to_string(), min_age);
         if (n > 0) {
@@ -471,7 +471,7 @@ Module make_jobs_module() {
 
     // jobs::failed($queue [, $limit=100]) → alias for jobs::list($queue, "failed")
     m.functions["failed"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("jobs::failed() — queue bekler");
+        if (args.empty()) throw std::runtime_error("jobs::failed() — expects queue");
         int limit = (args.size() >= 2) ? (int)args[1].to_float() : 100;
         return JobStore::instance().list(args[0].to_string(), "failed", limit);
     };
@@ -479,7 +479,7 @@ Module make_jobs_module() {
     // jobs::worker($queue, $fn) — register a handler for a queue
     // Called at setup time. jobs::run() will invoke these handlers.
     m.functions["worker"] = [](std::vector<Value> args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("jobs::worker() — (queue, function) bekler");
+        if (args.size() < 2) throw std::runtime_error("jobs::worker() — expects (queue, function)");
         if (args[1].type() != Value::FUNCTION)
             throw std::runtime_error("jobs::worker() — second argument must be a function");
         JobStore::instance().register_worker(args[0].to_string(), args[1]);

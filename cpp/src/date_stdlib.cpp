@@ -36,7 +36,7 @@ static std::tm parse_iso(const std::string& s) {
         // YYYY-MM-DD
         sscanf(s.c_str(), "%4d-%2d-%2d", &t.tm_year, &t.tm_mon, &t.tm_mday);
     } else {
-        throw std::runtime_error("date: geçersiz tarih: " + s);
+        throw std::runtime_error("date: invalid date: " + s);
     }
     t.tm_year -= 1900;
     t.tm_mon  -= 1;
@@ -125,7 +125,7 @@ static long unit_to_seconds(const std::string& unit) {
     if (unit == "week"   || unit == "weeks")    return 604800;
     if (unit == "month"  || unit == "months")   return -30;   // sentinel: month
     if (unit == "year"   || unit == "years")    return -365;  // sentinel: year
-    throw std::runtime_error("date::add/sub: geçersiz birim '" + unit +
+    throw std::runtime_error("date::add/sub: invalid unit '" + unit +
                              "' (second/minute/hour/day/week/month/year)");
 }
 
@@ -235,7 +235,7 @@ Module make_date_module() {
             t.tm_hour < 0  || t.tm_hour > 23 ||
             t.tm_min  < 0  || t.tm_min  > 59 ||
             t.tm_sec  < 0  || t.tm_sec  > 60)  // 60: artık saniye
-            throw std::runtime_error("date::parse(): geçersiz tarih — '" + input + "'");
+            throw std::runtime_error("date::parse(): invalid date — '" + input + "'");
 
         // TAKVIM doğrulaması — yukarıdaki aralık kontrolü KABA: "gün ≤ 31" olduğu için
         // 2024-04-31 (Nisan 30 çeker) ve 2023-02-29 (artık değil) geçiyordu, sonra
@@ -252,7 +252,7 @@ Module make_date_module() {
             std::time_t ts = mktime(&chk);
             if (ts == (std::time_t)-1 ||
                 chk.tm_year != t.tm_year || chk.tm_mon != t.tm_mon || chk.tm_mday != t.tm_mday)
-                throw std::runtime_error("date::parse(): geçersiz tarih — '" + input + "'");
+                throw std::runtime_error("date::parse(): invalid date — '" + input + "'");
         }
 
         t.tm_isdst = -1;

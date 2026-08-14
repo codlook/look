@@ -401,7 +401,7 @@ static Module make_request(WebContext* ctx) {
             throw std::runtime_error("Uploaded file exceeds max_size limit (" +
                                      std::to_string(max_size) + " bytes)");
 
-        // SVG kontrolü — allow_mime içinde SVG varsa allow_svg de zorunlu
+        // SVG kontrolü — allow_mime içinde SVG varsa allow_svg de is required
         if (uf.mime == "image/svg+xml" && !allow_svg)
             throw std::runtime_error("SVG upload requires allow_svg: true option");
 
@@ -684,7 +684,7 @@ using look::valid_sid;
 static std::string sess_file_path(const std::string& sid) {
     return std::string(std::getenv("TEMP") ? std::getenv("TEMP") : "/tmp") + "/look_sess_" + sid;
 }
-// Session blob'u satir tabanli "anahtar=deger\n" formatinda. Anahtar/deger HIC
+// Session blob'u satir tabanli "key=value\n" formatinda. Anahtar/deger HIC
 // KACIRILMIYORDU: degerin icindeki \n YENI BIR ALAN tanimliyordu.
 //
 // OLCULEN SALDIRI (uygulama kullanici verisini oturuma yaziyorsa — cok yaygin):
@@ -1350,19 +1350,19 @@ static Module make_db_module(Interpreter* interp) {
                                   (unsigned)rd(), (unsigned)rd(), (unsigned)rd());
                     auto dir = tmp / nm;
                     if (!std::filesystem::create_directory(dir, ec))
-                        throw std::runtime_error(":memory: icin guvenli gecici dizin acilamadi");
+                        throw std::runtime_error(":memory: could not open a safe temp directory");
                     memdb_path = (dir / "db.sqlite").string();
 #else
                     std::string tpl = (tmp / "look_mem_XXXXXX").string();
                     if (::mkdtemp(tpl.data()) == nullptr)
-                        throw std::runtime_error(":memory: icin guvenli gecici dizin acilamadi (mkdtemp)");
+                        throw std::runtime_error(":memory: could not open a safe temp directory (mkdtemp)");
                     memdb_path = tpl + "/db.sqlite";
 #endif
                 }
             }
             effective_dsn = "sqlite://" + memdb_path;
             Logger::instance().log(LogLevel::LOG_INFO, "DB",
-                ":memory: → süreç-ömürlü ÖZEL (0700) geçici dosyaya yönlendirildi");
+                ":memory: → redirected to a process-lifetime PRIVATE (0700) temp file");
         }
 
         auto pool = std::make_shared<ConnPool>();
@@ -1413,18 +1413,18 @@ static Module make_db_module(Interpreter* interp) {
                                dsn.find("sslmode=require") != std::string::npos;
             if (pg) {
                 if (!pg_encrypted)
-                    w = "PostgreSQL baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: postgresqls://... veya DSN'e ?tls=verify.";
+                    w = "PostgreSQL connection is UNENCRYPTED (plaintext) — for encrypted+verified use: postgresqls://... or add ?tls=verify to the DSN.";
                 else if (pg_insecure)
-                    w = "PostgreSQL TLS sertifikasi DOGRULANMIYOR (MITM riski) — ?tls=insecure yerine postgresqls:// veya ?tls=verify kullanin.";
+                    w = "PostgreSQL TLS certificate is NOT VERIFIED (MITM risk) — use postgresqls:// or ?tls=verify instead of ?tls=insecure.";
                 // aksi halde postgresqls:// / ?tls=verify → sifreli+dogrulanmis → uyari yok
             }
             else if ((sch == "mysql" || sch == "mariadb" || secure_sch) && !encrypted && sch[0] == 'm')
-                w = "MySQL baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: mysqls://...";
+                w = "MySQL connection is UNENCRYPTED (plaintext) — for encrypted+verified use: mysqls://...";
             else if ((sch == "redis" || sch == "rediss") && !encrypted)
-                w = "Redis baglantisi SIFRELENMEMIS (plaintext) — sifreli+dogrulanmis icin: rediss://...";
+                w = "Redis connection is UNENCRYPTED (plaintext) — for encrypted+verified use: rediss://...";
             else if (encrypted && insecure)
                 w = std::string(sch[0] == 'r' ? "Redis" : "MySQL") +
-                    " TLS sertifikasi ?tls=insecure ile DOGRULANMIYOR (MITM riski) — mumkunse insecure'u kaldirin (verify artik varsayilan).";
+                    " TLS certificate is NOT VERIFIED with ?tls=insecure (MITM risk) — remove insecure if possible (verify is now the default).";
             if (!w.empty())
                 Logger::instance().log(LogLevel::LOG_WARN, "DB-TLS", w);
         }

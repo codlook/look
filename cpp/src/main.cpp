@@ -206,7 +206,7 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     b[BI("pop")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) throw std::runtime_error("pop() requires array"); auto ar=a[0].as_array(); if (ar->empty()) return Value(); Value l=ar->back(); ar->pop_back(); return l; };
     b[BI("join")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) return Value(a.empty()?std::string():a[0].to_string()); std::string sep=a.size()>=2?a[1].to_string():""; std::string r; auto& ar=*a[0].as_array(); for(size_t i=0;i<ar.size();++i){ if(i)r+=sep; r+=ar[i].to_string(); } return Value(r); };
     b[BI("stop")] = [](std::vector<Value>&) -> Value { return Value(); };
-    // exit()/die() — CLI-VM'de bağlı değildi ("Çağrılabilir değil" fırlatıyordu).
+    // exit()/die() — CLI-VM'de bağlı değildi ("Not callable" fırlatıyordu).
     // interpreter ile birebir: ilk argüman INT ise çıkış kodu, yoksa 0.
     {
         auto do_exit = [](std::vector<Value>& a) -> Value {
@@ -347,7 +347,7 @@ int main(int argc, char* argv[]) {
             }
             if (sub == "install") {
                 if (pkg_url.empty()) {
-                    std::cerr << "Hata: GitHub linki gerekli.\n"
+                    std::cerr << "Error: a GitHub link is required.\n"
                               << "Örnek: lk module install github.com/codlook/look-modules/jwt\n";
                     return 1;
                 }
@@ -449,7 +449,7 @@ int main(int argc, char* argv[]) {
                 try { compiled = look::Compiler::compile(*program); }
                 catch (...) { compiled_ok = false; }   // compile hatası → tree-walk
                 // Builtin OLMAYAN "mod::fn" (ör. cache::keys, template::escape) → o çağrı
-                // RUNTIME'da "Çağrılabilir değil" fırlatır ve CLI-VM'de fallback YOKTUR
+                // RUNTIME'da "Not callable" fırlatır ve CLI-VM'de fallback YOKTUR
                 // (web'de route interpreter'a düşüp kurtulur). Bayrak varsa daha en baştan
                 // tree-walk — böylece VM default'u ÇALIŞAN script'leri kırmaz.
                 if (compiled_ok && compiled.uses_non_builtin_module_fn) compiled_ok = false;

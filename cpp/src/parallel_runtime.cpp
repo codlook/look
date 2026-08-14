@@ -62,7 +62,7 @@ bool task_acquire(AcquireMode mode, int timeout_ms) {
                 if (prev < task_limit()) return true;
                 s_count.fetch_sub(1);
                 throw std::runtime_error(
-                    "parallel(): backpressure timeout — task slot bekleniyor (" +
+                    "parallel(): backpressure timeout — waiting for a task slot (" +
                     std::to_string(timeout_ms) + " ms)");
             }
         }

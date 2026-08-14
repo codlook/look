@@ -25,7 +25,7 @@ SseRegistry g_sse_registry;
 //   • Tek-satırlık alanlar (event, id, comment): \r ve \n tamamen sıyrılır.
 //   • data: çok-satırlı olabilir — SSE spec'ine göre HER satır ayrı "data: "
 //     ile gönderilir. Böylece içerikteki satır-sonu sahte alan yaratamaz; her
-//     satır zorunlu olarak data içeriği olur (meşru çok-satırlı data korunur).
+//     satır is required olarak data içeriği olur (meşru çok-satırlı data korunur).
 static std::string sse_strip_nl(const std::string& s) {
     std::string out; out.reserve(s.size());
     for (char c : s) if (c != '\r' && c != '\n') out += c;

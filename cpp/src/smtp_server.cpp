@@ -764,7 +764,7 @@ static SSL_CTX* make_smtp_ssl_ctx() {
         SSL_CTX_check_private_key(ctx) != 1) {
         SSL_CTX_free(ctx);
         Logger::instance().log(LogLevel::LOG_ERROR, "smtp",
-            "STARTTLS: sertifika/anahtar yüklenemedi");
+            "STARTTLS: could not load certificate/key");
         return nullptr;
     }
     return ctx;
@@ -1358,10 +1358,10 @@ std::string deliver_maildir(const std::string& base_dir,
     // (arbitrary file write). Çağırana güvenme; burada zorla (mail_user_auth'un
     // user doğrulamasıyla aynı disiplin).
     if (mailbox.empty() || mailbox.find("..") != std::string::npos)
-        throw std::runtime_error("deliver_maildir: geçersiz mailbox (traversal)");
+        throw std::runtime_error("deliver_maildir: invalid mailbox (traversal)");
     for (unsigned char c : mailbox)
         if (c == '/' || c == '\\' || c == '\0' || c < 0x20)
-            throw std::runtime_error("deliver_maildir: geçersiz mailbox (yasak karakter)");
+            throw std::runtime_error("deliver_maildir: invalid mailbox (forbidden character)");
     fs::path mbox = fs::path(base_dir) / mailbox;
     fs::create_directories(mbox / "new");
     fs::create_directories(mbox / "cur");

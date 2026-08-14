@@ -115,7 +115,7 @@ Module make_cache_module() {
     // cache::set($key, $val [, $ttl_seconds])
     // TTL = 0 → no expiry
     m.functions["set"] = [](std::vector<Value> args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("cache::set() — (key, value [, ttl]) bekler");
+        if (args.size() < 2) throw std::runtime_error("cache::set() — expects (key, value [, ttl])");
         std::string key = args[0].to_string();
         int ttl = (args.size() >= 3) ? args[2].to_int() : 0;
         CacheStore::instance().set(key, args[1], ttl);
@@ -124,19 +124,19 @@ Module make_cache_module() {
 
     // cache::get($key) → value | null
     m.functions["get"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("cache::get() — key bekler");
+        if (args.empty()) throw std::runtime_error("cache::get() — expects key");
         return CacheStore::instance().get(args[0].to_string());
     };
 
     // cache::has($key) → bool
     m.functions["has"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("cache::has() — key bekler");
+        if (args.empty()) throw std::runtime_error("cache::has() — expects key");
         return Value(CacheStore::instance().has(args[0].to_string()));
     };
 
     // cache::delete($key) → bool (true if existed)
     m.functions["delete"] = [](std::vector<Value> args) -> Value {
-        if (args.empty()) throw std::runtime_error("cache::delete() — key bekler");
+        if (args.empty()) throw std::runtime_error("cache::delete() — expects key");
         return Value(CacheStore::instance().del(args[0].to_string()));
     };
 

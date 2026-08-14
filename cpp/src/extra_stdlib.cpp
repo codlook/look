@@ -95,9 +95,9 @@ static std::vector<uint8_t> random_bytes(size_t n) {
     BCryptCloseAlgorithmProvider(rng, 0);
 #else
     std::ifstream urandom("/dev/urandom", std::ios::binary);
-    if (!urandom) throw std::runtime_error("auth: /dev/urandom acilamadi");
+    if (!urandom) throw std::runtime_error("auth: could not open /dev/urandom");
     urandom.read(reinterpret_cast<char*>(buf.data()), (std::streamsize)n);
-    if (!urandom) throw std::runtime_error("auth: yeterli rastgele bayt okunamadi");
+    if (!urandom) throw std::runtime_error("auth: could not read enough random bytes");
 #endif
     return buf;
 }
@@ -239,30 +239,30 @@ static Module make_validator() {
                 if (!error.empty()) break;
 
                 if (rule == "required" && value.empty()) {
-                    error = field + " zorunlu";
+                    error = field + " is required";
                 } else if (rule == "email" && !value.empty() && !is_email(value)) {
-                    error = field + " gecersiz e-posta";
+                    error = field + " is not a valid email";
                 } else if (rule == "integer" && !value.empty()) {
-                    if (!str_is_integer(value)) error = field + " tam sayi olmali";
+                    if (!str_is_integer(value)) error = field + " must be an integer";
                 } else if (rule == "numeric" && !value.empty()) {
-                    if (!str_is_numeric(value)) error = field + " sayi olmali";
+                    if (!str_is_numeric(value)) error = field + " must be a number";
                 } else if (rule.substr(0,4) == "min:" && !value.empty()) {
                     int minv = std::stoi(rule.substr(4));
                     try {
                         if (std::stoi(value) < minv)
-                            error = field + " en az " + std::to_string(minv) + " olmali";
+                            error = field + " must be at least " + std::to_string(minv) + "";
                     } catch(...) {
                         if ((int)value.size() < minv)
-                            error = field + " en az " + std::to_string(minv) + " karakter olmali";
+                            error = field + " must be at least " + std::to_string(minv) + " characters";
                     }
                 } else if (rule.substr(0,4) == "max:" && !value.empty()) {
                     int maxv = std::stoi(rule.substr(4));
                     try {
                         if (std::stoi(value) > maxv)
-                            error = field + " en fazla " + std::to_string(maxv) + " olmali";
+                            error = field + " must be at most " + std::to_string(maxv) + "";
                     } catch(...) {
                         if ((int)value.size() > maxv)
-                            error = field + " en fazla " + std::to_string(maxv) + " karakter olmali";
+                            error = field + " must be at most " + std::to_string(maxv) + " characters";
                     }
                 } else if (rule.substr(0, 3) == "in:" && !value.empty()) {
                     // "in:admin,user,guest"
@@ -272,7 +272,7 @@ static Module make_validator() {
                     bool found = false;
                     while (std::getline(iss, opt, ','))
                         if (opt == value) { found = true; break; }
-                    if (!found) error = field + " gecersiz deger";
+                    if (!found) error = field + " has an invalid value";
                 }
             }
 
@@ -339,7 +339,7 @@ Module make_array_module(Interpreter* interp) {
             // buggy). std::sort böyle bir comparator'da UB → libstdc++ insertion-sort
             // dizinin başının ötesine taşar (ASan: heap-buffer-overflow, extra_stdlib:416).
             // Bottom-up stable merge sort her erişimi geçerli alt-aralıkta tutar —
-            // tutarsız comparator OOB YAPAMAZ, en fazla yanlış-ama-güvenli sıra üretir
+            // tutarsız comparator OOB YAPAMAZ, must be at most yanlış-ama-güvenli sıra üretir
             // (Python timsort / Java / düzeltilmiş V8 ile aynı güvenlik garantisi).
             std::vector<Value>& v = *result;
             size_t n = v.size();
@@ -557,7 +557,7 @@ Module make_array_module(Interpreter* interp) {
         return Value(); // null
     };
 
-    // any($arr, function($x) { return $x > 0; }) → en az biri eşleşirse true
+    // any($arr, function($x) { return $x > 0; }) → must be at least biri eşleşirse true
     m.functions["any"] = [interp](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::any() requires array and callback");
@@ -823,7 +823,7 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
     // → çapraz-platform simetri (2026-08-11 bug-avı).
     if (EVP_PKEY_base_id(pkey) != EVP_PKEY_RSA) {
         EVP_PKEY_free(pkey);
-        throw std::runtime_error("crypto::rs256_sign() — RSA anahtar gerekli (EC/uyumsuz key reddedildi)");
+        throw std::runtime_error("crypto::rs256_sign() — RSA key required (EC/incompatible key rejected)");
     }
 
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -868,7 +868,7 @@ static Module make_crypto_module() {
 
     // crypto::sha256($data) → hex string
     m.functions["sha256"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("crypto::sha256() — veri gerekli");
+        if (args.empty()) throw std::runtime_error("crypto::sha256() — data required");
         std::string s = args[0].to_string();
         std::vector<uint8_t> data(s.begin(), s.end());
         return Value(to_hex(sha256(data)));
@@ -876,7 +876,7 @@ static Module make_crypto_module() {
 
     // crypto::hmac_sha256($data, $key) → hex string
     m.functions["hmac_sha256"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("crypto::hmac_sha256() — data ve key gerekli");
+        if (args.size() < 2) throw std::runtime_error("crypto::hmac_sha256() — data and key required");
         std::string d = args[0].to_string();
         std::string k = args[1].to_string();
         std::vector<uint8_t> data(d.begin(), d.end());
@@ -886,7 +886,7 @@ static Module make_crypto_module() {
 
     // crypto::hmac_sha256_raw($data, $key) → raw bytes as string (JWT imzası için)
     m.functions["hmac_sha256_raw"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("crypto::hmac_sha256_raw() — data ve key gerekli");
+        if (args.size() < 2) throw std::runtime_error("crypto::hmac_sha256_raw() — data and key required");
         std::string d = args[0].to_string();
         std::string k = args[1].to_string();
         std::vector<uint8_t> data(d.begin(), d.end());
@@ -897,35 +897,35 @@ static Module make_crypto_module() {
 
     // crypto::base64_encode($data) → standard base64
     m.functions["base64_encode"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("crypto::base64_encode() — veri gerekli");
+        if (args.empty()) throw std::runtime_error("crypto::base64_encode() — data required");
         std::string s = args[0].to_string();
         return Value(b64_encode((const uint8_t*)s.data(), s.size()));
     };
 
     // crypto::base64_decode($s) → decoded string
     m.functions["base64_decode"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("crypto::base64_decode() — string gerekli");
+        if (args.empty()) throw std::runtime_error("crypto::base64_decode() — string required");
         auto v = b64_decode(args[0].to_string());
         return Value(std::string(v.begin(), v.end()));
     };
 
     // crypto::base64url_encode($data) → URL-safe base64, padding yok (JWT için)
     m.functions["base64url_encode"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("crypto::base64url_encode() — veri gerekli");
+        if (args.empty()) throw std::runtime_error("crypto::base64url_encode() — data required");
         std::string s = args[0].to_string();
         return Value(b64url_encode((const uint8_t*)s.data(), s.size()));
     };
 
     // crypto::base64url_decode($s) → decoded string
     m.functions["base64url_decode"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("crypto::base64url_decode() — string gerekli");
+        if (args.empty()) throw std::runtime_error("crypto::base64url_decode() — string required");
         auto v = b64url_decode(args[0].to_string());
         return Value(std::string(v.begin(), v.end()));
     };
 
     // crypto::hex_encode($data) → hex string
     m.functions["hex_encode"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("crypto::hex_encode() — veri gerekli");
+        if (args.empty()) throw std::runtime_error("crypto::hex_encode() — data required");
         std::string s = args[0].to_string();
         std::vector<uint8_t> data(s.begin(), s.end());
         return Value(to_hex(data));
@@ -933,7 +933,7 @@ static Module make_crypto_module() {
 
     // crypto::hex_decode($hex) → decoded string
     m.functions["hex_decode"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("crypto::hex_decode() — hex string gerekli");
+        if (args.empty()) throw std::runtime_error("crypto::hex_decode() — hex string required");
         auto v = from_hex(args[0].to_string());
         return Value(std::string(v.begin(), v.end()));
     };
@@ -972,7 +972,7 @@ static Module make_crypto_module() {
 
     // crypto::rs256_sign($data, $pem_private_key) → raw imza bytes (string)
     m.functions["rs256_sign"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign() — data ve PEM key gerekli");
+        if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign() — data and PEM key required");
         std::string data = args[0].to_string();
         std::string pem  = args[1].to_string();
         auto sig = rs256_sign_impl(data, pem);
@@ -981,7 +981,7 @@ static Module make_crypto_module() {
 
     // crypto::rs256_sign_b64url($data, $pem_private_key) → base64url imza (JWT için hazır)
     m.functions["rs256_sign_b64url"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign_b64url() — data ve PEM key gerekli");
+        if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign_b64url() — data and PEM key required");
         std::string data = args[0].to_string();
         std::string pem  = args[1].to_string();
         auto sig = rs256_sign_impl(data, pem);
@@ -990,7 +990,7 @@ static Module make_crypto_module() {
 
     // crypto::rs256_verify($data, $sig_bytes, $pem_public_key) → bool
     m.functions["rs256_verify"] = [](auto args) -> Value {
-        if (args.size() < 3) throw std::runtime_error("crypto::rs256_verify() — data, sig ve PEM public key gerekli");
+        if (args.size() < 3) throw std::runtime_error("crypto::rs256_verify() — data, sig and PEM public key required");
         std::string data = args[0].to_string();
         std::string sig_str = args[1].to_string();
         std::string pem  = args[2].to_string();

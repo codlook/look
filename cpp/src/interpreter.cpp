@@ -47,7 +47,7 @@ static bool look_is_int_key(const std::string& s) {
 // Double → string: kısa ama tam round-trip gösterim (std::to_chars shortest).
 // Varsayilan ostream 6 anlamli basamakla keser ve buyuk/kucuk sayida bilimsel
 // gosterime kacar (123456789.123 → "1.23457e+08") — para/ID icin veri kaybi.
-// to_chars shortest: gereken en az basamak, makul buyuklukte sabit gosterim.
+// to_chars shortest: gereken must be at least basamak, makul buyuklukte sabit gosterim.
 // look_format_double → look/format.h (dilin tek double formatı; DB sürücüleri de kullanır)
 
 std::string Value::to_string() const {
@@ -126,7 +126,7 @@ static void arith_check(const Value& v) {
             // NONE(null — EKSİK ASSOC ANAHTARI!), ARRAY, FUNCTION, CHANNEL/WS/SSE:
             // sayı değil. null+1=1 ve []+1=1, "abc"+1=1 sessiz-0 bug'ının kardeşi —
             // ve eksik anahtar çok daha yaygın. Fail-loud (== tip-katıyken + de olsun).
-            throw std::runtime_error("Aritmetik islem sayisal olmayan deger uzerinde (null/dizi/nesne)");
+            throw std::runtime_error("Arithmetic on a non-numeric value (null/array/object)");
     }
     std::string s = v.to_string();
     if (s.empty())
@@ -140,7 +140,7 @@ static void arith_check(const Value& v) {
         // int64'ü AŞAN TAMSAYI string'i (bignum / Snowflake ID / BIGINT UNSIGNED).
         // JSON int64-taşan sayıyı kesinlik için STRING tutuyor; onunla aritmetik
         // to_int→0'a düşüp SESSİZCE yanlış sonuç veriyordu ("bignum + 1 = 1"). Reddet.
-        throw std::runtime_error("Aritmetik: int64 sinirini asan sayi string'i uzerinde (bignum/ID): '" + s + "'");
+        throw std::runtime_error("Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '" + s + "'");
     } catch (...) {}
     // 2) Ondalık/üslü sayı string'i ("5.5", "1e3") → geçerli (float yolu)
     try {
@@ -148,7 +148,7 @@ static void arith_check(const Value& v) {
         if (pos == s.size()) return;
     } catch (...) {}
     // 3) Sayı değil ("abc", "12x") → reddet (== tip-katıyken + sessiz 0 vermesin)
-    throw std::runtime_error("Aritmetik islem sayiya cevrilemeyen string uzerinde: '" + s + "'");
+    throw std::runtime_error("Arithmetic on a string that cannot be converted to a number: '" + s + "'");
 }
 Value Value::operator+(const Value& o) const {
     arith_check(*this); arith_check(o);
@@ -218,7 +218,7 @@ void Value::append_in_place(const Value& o) {
 //   5 == 5.0    → true    (INT/FLOAT tek "sayı" türü — ayırmak dinamik dilde
 //                          daha kötü footgun olurdu: DB 5, hesap 5.0 verir)
 // Form girdisi string gelir; sayıyla karşılaştırmak için önce int()/float() ile
-// dönüştürülür (açık ve güvenli — Go'nun statik tip zorunluluğunun dinamik karşılığı).
+// dönüştürülür (açık ve güvenli — Go'nun statik tip is requiredluğunun dinamik karşılığı).
 static inline bool val_is_number(Value::Type t) { return t == Value::INT || t == Value::FLOAT; }
 
 bool Value::operator==(const Value& o) const {
@@ -1006,7 +1006,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
     if (auto* s = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
         // Builtin gölgeleme = hata (yoksa bare builtin dispatch'i kazanır, tanım ölü kod olur)
         if (is_reserved_builtin(s->name))
-            throw std::runtime_error("'" + s->name + "' bir builtin — yeniden tanimlanamaz");
+            throw std::runtime_error("'" + s->name + "' is a builtin — cannot be redefined");
         auto fn = std::make_shared<LookFunction>(s->name, s->parameters, s->is_variadic, s->body.get(), current_, &s->defaults);
         current_->define(s->name, Value(fn));
         return;
@@ -1509,10 +1509,10 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             base->invoke(cb_v, {});
                         } catch (const std::exception& ex) {
                             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "timer",
-                                std::string("callback hata: ") + ex.what());
+                                std::string("callback error: ") + ex.what());
                         } catch (...) {
                             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "timer",
-                                "callback bilinmeyen hata");
+                                "callback unknown error");
                         }
                         look::release_thread_connections();
                     };
@@ -1607,7 +1607,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
 
                 auto& workers = look::JobStore::instance().workers();
                 if (workers.empty())
-                    throw std::runtime_error("jobs::run() — önce jobs::worker() ile handler kaydet");
+                    throw std::runtime_error("jobs::run() — register a handler first with jobs::worker()");
 
                 auto run_one_pass = [&]() {
                     for (auto& [queue, fn_v] : workers) {
@@ -1836,7 +1836,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
 
             auto& workers = look::JobStore::instance().workers();
             if (workers.empty())
-                throw std::runtime_error("jobs::run() — önce jobs::worker() ile handler kaydet");
+                throw std::runtime_error("jobs::run() — register a handler first with jobs::worker()");
 
             auto run_one_pass = [&]() {
                 for (auto& [queue, fn] : workers) {
@@ -2139,7 +2139,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             // İki durum ayrıldı ve iki motor aynı metni kullanıyor (S3).
             if (callee_val.type() == Value::NONE)
                 throw std::runtime_error("Undefined variable: " + fn_name);
-            throw std::runtime_error("'" + fn_name + "' cagrilabilir degil (fonksiyon bekleniyor)");
+            throw std::runtime_error("'" + fn_name + "' is not callable (function expected)");
         }
 
         if (callee_val.type() == Value::BYTECODE_FN)
@@ -2172,7 +2172,7 @@ Value Interpreter::invoke(const Value& fn, std::vector<Value> args) {
     // interpreter'a düşürüyordu (array::map/filter/reduce bu yüzden fallback ediyordu).
     if (fn.type() == Value::BYTECODE_FN) {
         if (vm_bridge_available()) return vm_bridge_invoke(fn, args);
-        throw std::runtime_error("invoke: VM closure — aktif VM yok");
+        throw std::runtime_error("invoke: VM closure — no active VM");
     }
     if (fn.type() != Value::FUNCTION)
         throw std::runtime_error("invoke: not a function");
@@ -2340,7 +2340,7 @@ void Interpreter::dispatch_routes() {
         return;
     }
     // 404 handler tanimli degil — varsayilan mesaj
-    *output_stream_ << "{\"ok\":false,\"hata\":\"Endpoint bulunamadi\"}";
+    *output_stream_ << "{\"ok\":false,\"hata\":\"Endpoint not found\"}";
 }
 // ── look_get_env — VM setup için .env-aware env() erişimi ───────────────────
 std::string look_get_env(const std::string& key, const std::string& default_val) {

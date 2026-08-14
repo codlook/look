@@ -844,7 +844,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
                 if (field_len == -1) {
                     is_null = true;                       // protokolde NULL yalnizca -1
                 } else if (field_len < 0) {
-                    throw std::runtime_error("db postgres: bozuk DataRow — gecersiz alan uzunlugu " +
+                    throw std::runtime_error("db postgres: malformed DataRow — invalid field length " +
                                              std::to_string(field_len));
                 } else if ((size_t)field_len > (size_t)(end - p)) {
                     throw std::runtime_error("db postgres: bozuk DataRow — alan uzunlugu " +
@@ -1065,7 +1065,7 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
         } else if (msg.type == 'D') {
             // DataRow — simple_query ile AYNI guard'lar (bozuk DataRow sessizce yanlis
             // veri uretmesin). db::query/exec/one artik bu extended yolu kullaniyor;
-            // guard'lar yalniz simple_query'deydi → burada da olmali (differential yakaladi).
+            // guard'lar yalniz simple_query'deydi → burada da (differential yakaladi).
             if (msg.body.size() < 2) continue;
             uint16_t ncols = read_u16_be(msg.body.data());
             const uint8_t* p = msg.body.data() + 2;
@@ -1081,7 +1081,7 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
                 if (field_len == -1) {
                     is_null = true;                       // protokolde NULL yalnizca -1
                 } else if (field_len < 0) {
-                    throw std::runtime_error("db postgres: bozuk DataRow — gecersiz alan uzunlugu " +
+                    throw std::runtime_error("db postgres: malformed DataRow — invalid field length " +
                                              std::to_string(field_len));
                 } else if ((size_t)field_len > (size_t)(end - p)) {   // tasma-guvenli
                     throw std::runtime_error("db postgres: bozuk DataRow — alan uzunlugu " +

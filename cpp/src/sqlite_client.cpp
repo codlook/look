@@ -163,7 +163,7 @@ std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vect
     int want = sqlite3_bind_parameter_count(stmt);
     if (want != (int)params.size()) {
         sqlite3_finalize(stmt);
-        throw std::runtime_error("db: parametre sayisi uyusmuyor — SQL " + std::to_string(want) +
+        throw std::runtime_error("db: parameter count mismatch — SQL " + std::to_string(want) +
             " placeholder ('?') iceriyor, " + std::to_string(params.size()) + " parametre verildi.");
     }
 

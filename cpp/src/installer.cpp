@@ -119,13 +119,13 @@ static PkgSpec parse_pkg(const std::string& input) {
 
     // host
     auto s1 = s.find('/');
-    if (s1 == std::string::npos) throw std::runtime_error("Geçersiz paket: " + input);
+    if (s1 == std::string::npos) throw std::runtime_error("Invalid package: " + input);
     p.host = s.substr(0, s1);
     s      = s.substr(s1 + 1);
 
     // user
     auto s2 = s.find('/');
-    if (s2 == std::string::npos) throw std::runtime_error("Geçersiz paket (user/repo gerekli): " + input);
+    if (s2 == std::string::npos) throw std::runtime_error("Invalid package (user/repo required): " + input);
     p.user = s.substr(0, s2);
     s      = s.substr(s2 + 1);
 
@@ -156,7 +156,7 @@ static PkgSpec parse_pkg(const std::string& input) {
             c.find('/') != std::string::npos || c.find('\\') != std::string::npos ||
             c.find(':') != std::string::npos || c.front() == '.' ||
             c.find('\0') != std::string::npos)
-            throw std::runtime_error(std::string("Geçersiz paket ") + what +
+            throw std::runtime_error(std::string("Invalid package ") + what +
                                      " (path-escape character): " + input);
     };
     validate_component(p.user, "user");
@@ -233,7 +233,7 @@ static bool extract_zip(const std::vector<char>& data,
         // ağsız tablo-test eder, sibling-prefix kaçışı dahil pozitif-kontrollü).
         fs::path out_path = fs::weakly_canonical(dest_dir / filename);
         if (!look::zip_entry_inside_dest(filename, dest_dir)) {
-            if (verbose) std::cerr << "  ATLANDI (güvenlik): " << filename << "\n";
+            if (verbose) std::cerr << "  SKIPPED (security): " << filename << "\n";
             continue;
         }
 
@@ -314,7 +314,7 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
     }
 
     HttpClientResponse r;
-    r.error = "çok fazla yönlendirme";
+    r.error = "too many redirects";
     return r;
 }
 
@@ -647,7 +647,7 @@ int cmd_module_list() {
     }
 
     if (official.empty() && installed.empty()) {
-        std::cout << "Yüklü modül yok.\n";
+        std::cout << "No modules loaded.\n";
     }
 
     std::cout << "\nModül dizini: " << mdir.string() << "\n";

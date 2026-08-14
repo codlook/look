@@ -548,9 +548,9 @@ void MySQLClient::do_handshake(const std::string& user,
             return caching_sha2_scramble(password, nonce);
 #else
             throw std::runtime_error(
-                "db mysql: caching_sha2_password bu yapida desteklenmiyor (Windows yapisi "
+                "db mysql: caching_sha2_password is not supported in this build (the Windows build "
                 "OpenSSL'siz derlenir). Cozum: kullaniciyi mysql_native_password ile "
-                "olusturun ya da Linux yapisini kullanin.");
+                "create it, or use the Linux build.");
 #endif
         }
         throw std::runtime_error("db mysql: desteklenmeyen kimlik dogrulama eklentisi: " + plugin);
@@ -606,8 +606,8 @@ void MySQLClient::do_handshake(const std::string& user,
         ssl_     = s;   // bundan sonra send/recv_bytes SSL üstünden (auth dahil)
         auth_seq = 2;   // auth paketi TLS içinde, SSLRequest'ten sonraki seq
 #else
-        throw std::runtime_error("db mysql: TLS (mysqls://) bu yapida desteklenmiyor "
-                                 "(Windows yapisi OpenSSL'siz derlenir). Linux yapisini kullanin.");
+        throw std::runtime_error("db mysql: TLS (mysqls://) is not supported in this build "
+                                 "(the Windows build is compiled without OpenSSL). Use the Linux build.");
 #endif
     }
 
@@ -672,7 +672,7 @@ void MySQLClient::do_handshake(const std::string& user,
                 if (ssl_) {
                     // TLS AKTİF → kanal zaten şifreli; şifre CLEARTEXT (NUL-sonlu) gönderilir.
                     // RSA açık-anahtar dansı YAPILMAZ (sunucu TLS'te RSA vermez → eski kod
-                    // "RSA açık anahtarı vermedi" ile çökerdi). MySQL protokolü tam bunu ister.
+                    // "did not provide an RSA public key" ile çökerdi). MySQL protokolü tam bunu ister.
                     std::vector<uint8_t> cleartext(password.begin(), password.end());
                     cleartext.push_back(0x00);
                     send_packet(cleartext, (uint8_t)(seq + 1));
@@ -683,8 +683,8 @@ void MySQLClient::do_handshake(const std::string& user,
 #ifdef _WIN32
                 throw std::runtime_error(
                     "db mysql: caching_sha2_password tam kimlik dogrulamasi bu yapida "
-                    "desteklenmiyor (Windows yapisi OpenSSL'siz derlenir). Cozum: "
-                    "kullaniciyi mysql_native_password ile olusturun ya da Linux yapisini kullanin.");
+                    "not supported (the Windows build is compiled without OpenSSL). Fix: "
+                    "create the user with mysql_native_password, or use the Linux build.");
 #else
                 send_packet(std::vector<uint8_t>{0x02}, (uint8_t)(seq + 1));
                 auto keypkt = read_packet(seq);

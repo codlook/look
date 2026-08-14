@@ -186,8 +186,8 @@ void RespClient::connect() {
         }
         ssl_ = s;   // bundan sonra send_command/read_* SSL üstünden
 #else
-        throw std::runtime_error("Redis TLS (rediss://) bu yapida desteklenmiyor "
-                                 "(Windows yapisi OpenSSL'siz derlenir). Linux yapisini kullanin.");
+        throw std::runtime_error("Redis TLS (rediss://) is not supported in this build "
+                                 "(the Windows build is compiled without OpenSSL). Use the Linux build.");
 #endif
     }
 

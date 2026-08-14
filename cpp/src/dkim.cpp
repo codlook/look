@@ -254,7 +254,7 @@ bool dkim_verify_with_key(const std::string& raw_message, const std::string& pub
                 size_t end = raw_message.find_first_of(" \t\r\n>", at + 1);
                 std::string from_domain = raw_message.substr(at + 1,
                     end != std::string::npos ? end - at - 1 : std::string::npos);
-                // Case-insensitive: d= from_domain ile AYNI olmali ya da onun PARENT'i
+                // Case-insensitive: d= from_domain ile AYNI ya da onun PARENT'i
                 // (From: sub.example.com, d=example.com geçerli). Eski boyut-kapisi
                 // (fd.size() > dd.size()+1) suffix kontrolunu ESIT/YAKIN uzunlukta
                 // atliyordu → saldirgan kendi d=evildom.co ile From: paypal.com'u

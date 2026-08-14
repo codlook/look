@@ -204,7 +204,7 @@ struct TplParser {
             if (c == '(' || c == ')' || c == '+' || c == '*' || c == '%' ||
                 c == '/' || c == '!' || c == '&' || c == '|' || c == '?') {
                 throw std::runtime_error(
-                    "Template error: '{$" + path + "}' içinde ifade veya fonksiyon "
+                    "Template error: '{$" + path + "}' cannot contain an expression or function "
                     "call cannot be used. Do the computation in the .lk file.");
             }
             // Disallow :: (module calls)
@@ -654,7 +654,7 @@ Module make_template_module(Interpreter* interp) {
     // Returns rendered HTML. Use print(template::render(...)) in scripts.
     m.functions["render"] = [](std::vector<Value> args) -> Value {
         if (args.empty() || args.size() > 2)
-            throw std::runtime_error("template::render() 1 veya 2 argüman bekliyor: (dosya_yolu [, $veri])");
+            throw std::runtime_error("template::render() expects 1 or 2 arguments: (file_path [, $data])");
         if (args[0].type() != Value::STRING)
             throw std::runtime_error("template::render(): first argument must be a string (file path)");
         TplContext ctx;
@@ -666,7 +666,7 @@ Module make_template_module(Interpreter* interp) {
     // template::render_string("<h1>{$title}</h1>", $data) → string
     m.functions["render_string"] = [](std::vector<Value> args) -> Value {
         if (args.empty() || args.size() > 2)
-            throw std::runtime_error("template::render_string() 1 veya 2 argüman bekliyor");
+            throw std::runtime_error("template::render_string() expects 1 or 2 arguments");
         if (args[0].type() != Value::STRING)
             throw std::runtime_error("template::render_string(): first argument must be a string");
         TplContext ctx;
@@ -678,7 +678,7 @@ Module make_template_module(Interpreter* interp) {
     // template::escape($str) → HTML-escaped string (for manual use)
     m.functions["escape"] = [](std::vector<Value> args) -> Value {
         if (args.size() != 1)
-            throw std::runtime_error("template::escape() 1 argüman bekliyor");
+            throw std::runtime_error("template::escape() expects 1 argument");
         std::string s = args[0].type() == Value::STRING
                         ? args[0].as_string()
                         : TemplateEngine::to_str(args[0]);

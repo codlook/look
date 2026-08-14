@@ -67,7 +67,7 @@ Module make_http_module(Interpreter* interp) {
     // cagrilir. SSE/token akisi icin. Doner: response assoc (status, headers, error).
     m.functions["stream"] = [interp](std::vector<Value> args) -> Value {
         if (args.size() < 5)
-            throw std::runtime_error("http::stream() — method, url, body, headers, callback gerekli");
+            throw std::runtime_error("http::stream() — method, url, body, headers, callback required");
         std::string method = args[0].to_string();
         std::string url    = args[1].to_string();
         std::string reqbody = args[2].to_string();
@@ -75,7 +75,7 @@ Module make_http_module(Interpreter* interp) {
         Value cb  = args[4];
         HttpOptions opts = (args.size() >= 6) ? extract_opts(args[5]) : HttpOptions();
         if (cb.type() != Value::FUNCTION && cb.type() != Value::BYTECODE_FN)
-            throw std::runtime_error("http::stream() — 5. arg (callback) bir fonksiyon olmali");
+            throw std::runtime_error("http::stream() — the 5th arg (callback) must be a function");
 
         HttpChunkCallback on_chunk = [interp, cb](const std::string& chunk) {
             interp->invoke(cb, { Value(chunk) });
@@ -86,7 +86,7 @@ Module make_http_module(Interpreter* interp) {
 
     // http::get($url [, $headers [, $opts]])
     m.functions["get"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("http::get() — URL gerekli");
+        if (args.empty()) throw std::runtime_error("http::get() — URL required");
         std::string url = args[0].to_string();
         auto hdrs = args.size() >= 2 ? extract_headers(args[1]) : std::map<std::string,std::string>{};
         auto opts = args.size() >= 3 ? extract_opts(args[2]) : HttpOptions{};
@@ -95,7 +95,7 @@ Module make_http_module(Interpreter* interp) {
 
     // http::post($url, $body [, $headers [, $opts]])  — form-encoded body
     m.functions["post"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("http::post() — URL ve body gerekli");
+        if (args.size() < 2) throw std::runtime_error("http::post() — URL and body required");
         std::string url  = args[0].to_string();
         std::string body = args[1].to_string();
         auto hdrs = args.size() >= 3 ? extract_headers(args[2]) : std::map<std::string,std::string>{};
@@ -105,7 +105,7 @@ Module make_http_module(Interpreter* interp) {
 
     // http::post_json($url, $data [, $headers [, $opts]])  — auto json::encode
     m.functions["post_json"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("http::post_json() — URL ve data gerekli");
+        if (args.size() < 2) throw std::runtime_error("http::post_json() — URL and data required");
         std::string url = args[0].to_string();
 
         // Serialize the second arg to JSON manually
@@ -170,7 +170,7 @@ Module make_http_module(Interpreter* interp) {
 
     // http::put($url, $body [, $headers [, $opts]])
     m.functions["put"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("http::put() — URL ve body gerekli");
+        if (args.size() < 2) throw std::runtime_error("http::put() — URL and body required");
         std::string url  = args[0].to_string();
         std::string body = args[1].to_string();
         auto hdrs = args.size() >= 3 ? extract_headers(args[2]) : std::map<std::string,std::string>{};
@@ -180,7 +180,7 @@ Module make_http_module(Interpreter* interp) {
 
     // http::delete($url [, $headers [, $opts]])
     m.functions["delete"] = [](auto args) -> Value {
-        if (args.empty()) throw std::runtime_error("http::delete() — URL gerekli");
+        if (args.empty()) throw std::runtime_error("http::delete() — URL required");
         std::string url = args[0].to_string();
         auto hdrs = args.size() >= 2 ? extract_headers(args[1]) : std::map<std::string,std::string>{};
         auto opts = args.size() >= 3 ? extract_opts(args[2]) : HttpOptions{};
@@ -189,7 +189,7 @@ Module make_http_module(Interpreter* interp) {
 
     // http::patch($url, $body [, $headers [, $opts]])
     m.functions["patch"] = [](auto args) -> Value {
-        if (args.size() < 2) throw std::runtime_error("http::patch() — URL ve body gerekli");
+        if (args.size() < 2) throw std::runtime_error("http::patch() — URL and body required");
         std::string url  = args[0].to_string();
         std::string body = args[1].to_string();
         auto hdrs = args.size() >= 3 ? extract_headers(args[2]) : std::map<std::string,std::string>{};

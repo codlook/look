@@ -633,7 +633,7 @@ static Module make_string() {
         if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; })) {
             // Timeout: isteği hızlıca sonlandır AMA sayacı AZALTMA — kaçak thread hâlâ
             // çalışıyor; slot yalnız o thread bitince (yukarıda) serbest kalır → aynı anda
-            // en fazla 8 CANLI regex thread'i olur, 9.'su 596'da reddedilir (sistem yavaşlar
+            // must be at most 8 CANLI regex thread'i olur, 9.'su 596'da reddedilir (sistem yavaşlar
             // ama ölmez). timed_out yalnız sonuç/notify sırasında anlamlı.
             state->timed_out = true;
             throw std::runtime_error("string::regex: execution timeout (ReDoS protection — pattern too complex)");

@@ -353,7 +353,7 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     if (is_ssrf_blocked(res)) {
         freeaddrinfo(res);
         t_conn_error = "SSRF korumasi: ozel/ic ag adresine istek engellendi "
-                       "(gerekliyse LOOK_ALLOW_SSRF=1)";
+                       "(if needed, LOOK_ALLOW_SSRF=1)";
         return INVALID;
     }
 
@@ -613,7 +613,7 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     if (is_ssrf_blocked(res)) {
         freeaddrinfo(res);
         t_conn_error = "SSRF korumasi: ozel/ic ag adresine istek engellendi "
-                       "(gerekliyse LOOK_ALLOW_SSRF=1)";
+                       "(if needed, LOOK_ALLOW_SSRF=1)";
         return INVALID;
     }
 

@@ -54,7 +54,7 @@ static void send_error(int status, const std::string& title, const std::string& 
 
     if (is_production()) {
         // Production: kullaniciya genel mesaj, detay sadece log'a gider
-        std::cout << "{\"ok\":false,\"hata\":\"Sunucu hatasi. Lutfen tekrar deneyin.\","
+        std::cout << "{\"ok\":false,\"hata\":\"Server error. Please try again.\","
                   << "\"kod\":" << status << "}\n";
     } else {
         // Development: hata detayi JSON icinde
