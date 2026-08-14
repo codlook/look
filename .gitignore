@@ -110,10 +110,10 @@ CLAUDE.md
 # yarisi dokuman<->gerceklik drift'i (session::has, multipart, systemd www-data/lk...);
 # conformance guard yalniz FONKSIYON VARLIGINI gorur, DAVRANIS/TALIMAT iddialarini degil.
 # docs/ sürüm-disi kaldikca kod degisir dokuman ayri kalir, kimse diff'te yan yana gormez.
-# AYRI web property'ler (pazarlama ana sayfasi + paket dizini) IGNORE kalir — bu repo
-# "dil cekirdegi": alt siteler kendi yerinde.
-docs/codlook.com/
-docs/packages.codlook.com/
+# codlook.com (pazarlama ana sayfasi) + packages.codlook.com (paket dizini) 2026-08-14'ten
+# itibaren IZLENIR — kullanici karari: doc guncellemesi bu iki yuzeyle birlikte push edilsin,
+# boylece paket/builtin drift'i core docs gibi diff'te gorunur (monitor kartinin unutulmasi
+# gibi senkron bosluklari yakalanir).
 
 # --- Yayin hatti: TARIFI izle, CIKTIYI yok say ---
 # Drift kok-nedeni: izlenmeyen plesk/bin gunlerce stale kaldi -> yamasiz zip uretildi.

@@ -1,0 +1,1883 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="LOOK — a scripting language designed for the web. Routing built into the language, persistent DB, WebSocket + SSE + parallel() + jobs:: included. No framework, none to set up.">
+<title>LOOK Language — codlook.com</title>
+<style>
+/* ============================================================
+   LOOK — Landing Page
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --blue:    #3b82f6;
+  --blue-d:  #1d4ed8;
+  --green:   #10b981;
+  --purple:  #8b5cf6;
+  --orange:  #f59e0b;
+  --dark:    #0f172a;
+  --dark2:   #1e293b;
+  --dark3:   #334155;
+  --muted:   #94a3b8;
+  --light:   #f1f5f9;
+  --white:   #ffffff;
+  --code-bg: #0d1117;
+  --radius:  10px;
+}
+
+html { scroll-behavior: smooth; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+       background: var(--white); color: #1e293b; line-height: 1.6; }
+
+/* ---- NAV ---- */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(15,23,42,.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding: 0 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 60px;
+}
+.nav-logo { font-size: 22px; font-weight: 800; color: var(--white); letter-spacing: -.5px; }
+.nav-logo span { color: var(--blue); }
+.nav-links { display: flex; gap: 28px; align-items: center; }
+.nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500;
+               transition: color .2s; }
+.nav-links a:hover { color: var(--white); }
+.nav-links .nav-cta { background: var(--blue); color: var(--white) !important;
+                      padding: 8px 18px; border-radius: 8px; font-weight: 600; }
+.nav-links .nav-cta:hover { background: var(--blue-d); }
+@media (max-width:640px) { .nav-links .hide-mob { display:none; } }
+
+/* ---- HERO ---- */
+.hero {
+  background: var(--dark);
+  padding: 100px 24px 80px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(59,130,246,.25) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(59,130,246,.15); border: 1px solid rgba(59,130,246,.3);
+  color: var(--blue); padding: 6px 16px; border-radius: 100px;
+  font-size: 13px; font-weight: 600; margin-bottom: 28px;
+}
+.hero-badge .dot { width: 7px; height: 7px; background: var(--blue);
+                   border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
+
+.hero h1 {
+  font-size: clamp(36px, 6vw, 24px);
+  font-weight: 800;
+  color: var(--white);
+  line-height: 1.1;
+  letter-spacing: -1.5px;
+  max-width: 860px;
+  margin: 0 auto 20px;
+}
+.hero h1 .hl { color: var(--blue); }
+
+.hero-sub {
+  font-size: clamp(16px, 2.5vw, 20px);
+  color: var(--muted);
+  max-width: 640px;
+  margin: 0 auto 40px;
+  line-height: 1.6;
+}
+
+.hero-ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 60px; }
+.btn-hero-primary {
+  background: var(--blue); color: var(--white);
+  padding: 14px 32px; border-radius: 10px;
+  font-size: 16px; font-weight: 700;
+  text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+  transition: background .2s, transform .15s;
+}
+.btn-hero-primary:hover { background: var(--blue-d); transform: translateY(-1px); }
+.btn-hero-sec {
+  background: rgba(255,255,255,.08); color: var(--white);
+  padding: 14px 32px; border-radius: 10px;
+  font-size: 16px; font-weight: 600;
+  text-decoration: none; border: 1px solid rgba(255,255,255,.15);
+  transition: background .2s;
+}
+.btn-hero-sec:hover { background: rgba(255,255,255,.14); }
+
+/* Hero code */
+.hero-code {
+  max-width: 950px; margin: 0 auto;
+  background: var(--code-bg);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px;
+  overflow: hidden;
+  text-align: left;
+  box-shadow: 0 40px 80px rgba(0,0,0,.5);
+}
+.hero-code-bar {
+  background: rgba(255,255,255,.05);
+  padding: 12px 16px;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.hero-code-bar .dot { width: 12px; height: 12px; border-radius: 50%; }
+.hero-code-bar .dot:nth-child(1){background:#ff5f56}
+.hero-code-bar .dot:nth-child(2){background:#ffbd2e}
+.hero-code-bar .dot:nth-child(3){background:#27c93f}
+.hero-code-bar span { margin-left: auto; font-size: 12px; color: var(--muted); font-family: monospace; }
+.hero-code pre {
+  padding: 24px;
+  font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 13.5px; line-height: 1.8;
+  overflow-x: auto;
+  color:#cdd6f4;
+}
+/* Syntax highlight */
+.kw  { color: #c792ea; }
+.fn  { color: #82aaff; }
+.str { color: #c3e88d; }
+.cmt { color: #546e7a; font-style: italic; }
+.var { color: #f78c6c; }
+.num { color: #f78c6c; }
+.op  { color: #89ddff; }
+.ns  { color: #ffcb6b; }
+
+/* ---- RUNTIME STRIP ---- */
+.runtime-strip {
+  background: var(--dark2);
+  border-top: 1px solid rgba(255,255,255,.06);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  padding: 20px 24px;
+  overflow: hidden;
+}
+.runtime-strip-inner {
+  display: flex; gap: 40px; justify-content: center;
+  flex-wrap: wrap; align-items: center;
+}
+.runtime-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  white-space: nowrap;
+}
+.runtime-item .dot-g { width: 8px; height: 8px; border-radius: 50%;
+                        background: var(--green); flex-shrink: 0; }
+
+/* ---- WHAT IS LOOK ---- */
+.what { background: var(--white); padding: 100px 24px; }
+.what-inner { margin: 0 auto; }
+.section-label {
+  font-size: 12px; font-weight: 700; letter-spacing: .15em;
+  text-transform: uppercase; color: var(--blue); margin-bottom: 12px;
+}
+.section-title {
+  font-size: clamp(28px,4vw,44px); font-weight: 800;
+  color: #0f172a; margin-bottom: 14px; letter-spacing: -.5px;
+}
+.section-sub { color: #64748b; font-size: 17px; max-width: 600px; margin: 0 auto 56px; }
+
+.what-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+}
+.what-card {
+  border: 1px solid #e2e8f0; border-radius: 18px; padding: 32px;
+  transition: box-shadow .2s, border-color .2s;
+  position: relative; overflow: hidden;
+}
+.what-card::before {
+  content: "";
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--blue);
+}
+.what-card.green::before  { background: var(--green); }
+.what-card.purple::before { background: var(--purple); }
+.what-card.orange::before { background: var(--orange); }
+.what-card:hover { box-shadow: 0 12px 40px rgba(0,0,0,.1); border-color: #cbd5e1; }
+.what-icon { font-size: 32px; margin-bottom: 16px; }
+.what-card h3 { font-size: 18px; font-weight: 800; color: #0f172a; margin-bottom: 10px; }
+.what-card p  { font-size: 14px; color: #475569; line-height: 1.75; }
+.what-card code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
+                  font-family: monospace; font-size: 13px; color: #334155; }
+
+/* #kime-gore koyu arka planli — cocuk renkleri koyu temaya gore (yalniz bu bolum) */
+#kime-gore .section-title { color: var(--white); }
+#kime-gore .section-sub   { color: var(--muted); }
+#kime-gore .what-card     { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); }
+#kime-gore .what-card:hover { border-color: rgba(255,255,255,.22); box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+#kime-gore .what-card h3  { color: #fff; }
+#kime-gore .what-card p   { color: var(--muted); }
+#kime-gore .what-card code { background: rgba(255,255,255,.09); color: #cdd6f4; }
+
+/* ---- BENCHMARKS ---- */
+.benchmarks {
+  background: var(--dark2);
+  padding: 80px 24px;
+  text-align: center;
+}
+.section-title-w { color: var(--white); }
+.section-sub-w { color: var(--muted); font-size: 17px; max-width: 540px; margin: 0 auto 56px; }
+
+.bench-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px; margin: 0 auto;
+}
+.bench-card {
+  background: var(--dark3);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  padding: 28px 24px;
+}
+.bench-num {
+  font-size: 42px; font-weight: 800; color: var(--blue);
+  letter-spacing: -1px; line-height: 1;
+}
+.bench-unit { font-size: 18px; color: var(--muted); font-weight: 500; }
+.bench-lbl  { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.bench-sub  { color: rgba(148,163,184,.6); font-size: 11px; margin-top: 4px; }
+
+.bench-note {
+  max-width: 640px; margin: 40px auto 0;
+  color: rgba(148,163,184,.7); font-size: 13px; line-height: 1.7;
+  border-top: 1px solid rgba(255,255,255,.08); padding-top: 28px;
+}
+.bench-note a { color: var(--blue); text-decoration: none; }
+
+/* ---- FEATURES ---- */
+.features { padding: 100px 24px; background: var(--light); }
+.features-inner {margin: 0 auto; }
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px; margin-top: 56px;
+}
+.feat-card {
+  background: var(--white);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 26px;
+  transition: box-shadow .2s, border-color .2s;
+}
+.feat-card:hover { box-shadow: 0 8px 32px rgba(0,0,0,.08); border-color: var(--blue); }
+.feat-icon {
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; margin-bottom: 14px;
+}
+.feat-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #0f172a; }
+.feat-card p  { font-size: 13px; color: #64748b; line-height: 1.65; }
+.feat-badge {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 4px;
+  background: rgba(59,130,246,.1); color: var(--blue); margin-bottom: 10px;
+}
+.feat-badge.g { background: rgba(16,185,129,.1); color: var(--green); }
+.feat-badge.p { background: rgba(139,92,246,.1); color: var(--purple); }
+
+/* ---- CODE EXAMPLES ---- */
+.code-section { background: var(--dark); padding: 100px 24px; }
+.code-inner { max-width: 960px; margin: 0 auto; }
+.code-tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; }
+.tab-btn {
+  padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 600;
+  background: rgba(255,255,255,.06); color: var(--muted);
+  transition: all .15s;
+}
+.tab-btn.active { background: var(--blue); color: var(--white); }
+.tab-btn:hover:not(.active) { background: rgba(255,255,255,.12); color: var(--white); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.code-block {
+  background: var(--code-bg);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.code-block-bar {
+  padding: 10px 16px;
+  background: rgba(255,255,255,.04);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  font-size: 12px; color: var(--muted); font-family: monospace;
+  display: flex; align-items: center; gap: 10px;
+}
+.code-block-bar .cbadge {
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
+  background: rgba(59,130,246,.2); color: var(--blue); margin-left: auto;
+}
+.code-block pre {
+  padding: 24px;
+  font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 13.5px; line-height: 1.8;
+  overflow-x: auto; color: #cdd6f4;
+}
+
+/* ---- PHILOSOPHY ---- */
+.philosophy { padding: 100px 24px; background: var(--white); }
+.philosophy-inner { max-width: 960px; margin: 0 auto; }
+.philosophy-pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 56px; }
+@media(max-width:700px){ .philosophy-pillars { grid-template-columns: 1fr; } }
+.pillar {
+  background: var(--light); border-radius: 20px; padding: 40px 32px;
+  text-align: center;
+  border-top: 4px solid var(--blue);
+}
+.pillar.g { border-top-color: var(--green); }
+.pillar.p { border-top-color: var(--purple); }
+.pillar-icon { font-size: 40px; margin-bottom: 16px; }
+.pillar-title { font-size: 20px; font-weight: 800; color: #0f172a; margin-bottom: 12px; }
+.pillar-desc { font-size: 14px; color: #64748b; line-height: 1.75; }
+.pillar-code {
+  margin-top: 20px; background: var(--dark2); border-radius: 10px;
+  padding: 14px 18px; font-family: 'Fira Code', monospace; font-size: 12.5px;
+  color: #cdd6f4; text-align: left; line-height: 1.7; overflow-x: auto;
+}
+
+/* ---- RUNTIME STACK ---- */
+.stack { background: var(--dark2); padding: 80px 24px; }
+.stack-inner {margin: 0 auto; }
+.stack-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px; margin-top: 48px;
+}
+.stack-card {
+  background: var(--dark3); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px; padding: 22px 20px;
+}
+.stack-card h4 { font-size: 14px; font-weight: 700; color: var(--white); margin-bottom: 6px; }
+.stack-card p  { font-size: 12px; color: var(--muted); line-height: 1.6; }
+.stack-card .stag {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 2px 7px; border-radius: 4px; margin-bottom: 8px;
+  background: rgba(59,130,246,.2); color: var(--blue);
+}
+.stack-card .stag.g { background: rgba(16,185,129,.2); color: var(--green); }
+.stack-card .stag.p { background: rgba(139,92,246,.2); color: var(--purple); }
+.stack-card .stag.o { background: rgba(245,158,11,.2); color: var(--orange); }
+
+/* ---- SETUP ---- */
+.setup { padding: 100px 24px; background: var(--light); }
+.setup-inner { max-width: 860px; margin: 0 auto; }
+.platform-tabs { display: flex; gap: 8px; margin-bottom: 28px; flex-wrap: wrap; }
+.platform-btn {
+  padding: 10px 22px; border-radius: 10px; border: 2px solid #e2e8f0;
+  cursor: pointer; font-size: 14px; font-weight: 600;
+  background: var(--white); color: #64748b; transition: all .15s;
+  display: flex; align-items: center; gap: 8px;
+}
+.platform-btn.active { border-color: var(--blue); color: var(--blue); background: rgba(59,130,246,.06); }
+.setup-content { display: none; }
+.setup-content.active { display: block; }
+.setup-steps { counter-reset: step; list-style: none; }
+.setup-steps li {
+  counter-increment: step;
+  display: flex; gap: 16px; align-items: flex-start;
+  margin-bottom: 20px;
+}
+.setup-steps li::before {
+  content: counter(step);
+  min-width: 32px; height: 32px;
+  background: var(--blue); color: var(--white);
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; flex-shrink: 0;
+}
+.setup-steps li .step-body { flex: 1; }
+.setup-steps li h4 { font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+.setup-steps li p  { font-size: 13px; color: #64748b; margin-bottom: 8px; }
+.cmd-block {
+  background: var(--code-bg); color: #cdd6f4;
+  font-family: "Fira Code","Consolas",monospace; font-size: 13px;
+  padding: 12px 16px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid rgba(255,255,255,.08);
+}
+.copy-btn {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 12px; padding: 2px 8px; border-radius: 4px;
+  transition: color .15s, background .15s;
+}
+.copy-btn:hover { color: var(--white); background: rgba(255,255,255,.1); }
+
+/* ---- DOWNLOAD ---- */
+.download { background: var(--dark); padding: 100px 24px; text-align: center; }
+.download-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;margin: 48px auto 0;
+}
+.dl-card {
+  background: var(--dark2);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px; padding: 28px;
+  text-align: left; transition: border-color .2s;
+}
+.dl-card:hover { border-color: var(--blue); }
+.dl-card h3 { font-size: 17px; font-weight: 700; color: var(--white); margin-bottom: 6px; }
+.dl-card p  { font-size: 13px; color: var(--muted); margin-bottom: 20px; line-height: 1.6; }
+.btn-dl {
+  display: block; background: var(--blue); color: var(--white);
+  padding: 10px 18px; border-radius: 8px; text-decoration: none;
+  font-size: 14px; font-weight: 700; text-align: center;
+  transition: background .2s;
+}
+.btn-dl:hover { background: var(--blue-d); }
+.btn-dl-outline {
+  display: block; background: transparent; color: var(--blue);
+  padding: 10px 18px; border-radius: 8px; text-decoration: none;
+  font-size: 14px; font-weight: 700; text-align: center;
+  border: 2px solid var(--blue); margin-top: 8px;
+  transition: background .2s;
+}
+.btn-dl-outline:hover { background: rgba(59,130,246,.1); }
+
+/* ---- FOOTER ---- */
+footer {
+  background: var(--dark);
+  border-top: 1px solid rgba(255,255,255,.08);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted); font-size: 13px;
+}
+footer a { color: var(--blue); text-decoration: none; }
+
+/* ---- UTILS ---- */
+.container { max-width: 1080px; margin: 0 auto; }
+.text-center { text-align: center; }
+</style>
+
+
+<meta name="yandex-verification" content="79a31a4811e022ad" />
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-S76WJQSTX0"></script>
+<script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-S76WJQSTX0');
+</script>
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=AW-11120116479"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'AW-11120116479');
+</script>
+
+<!-- Event snippet for Page view conversion page -->
+<script>
+  gtag('event', 'conversion', {'send_to': 'AW-11120116479/BtMdCPSlrOQYEP-FvrYp'});
+</script>
+
+<!-- LOOK brand logo — Exo 2 + red dot (#ff3131). Shared across codlook.com, /docs and packages. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  /* Wordmark is lowercase "look." — the dot is always red, the word follows the surface:
+     white on dark surfaces (nav, footer), dark on light surfaces (add class .on-light). */
+  .nav-logo, .f-logo {
+    font-family: 'Exo 2', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    font-weight: 800;
+    letter-spacing: -.5px;
+    text-transform: lowercase;
+    color: #fff;                       /* dark surface */
+  }
+  .nav-logo.on-light, .f-logo.on-light { color: #0f172a; }   /* light surface */
+  .nav-logo span, .f-logo span { color: #ff3131; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ NAV -->
+<nav>
+  <div class="nav-logo">look<span>.</span></div>
+  <div class="nav-links">
+    <a href="#nedir" class="hide-mob">What it does</a>
+    <a href="#kime-gore" class="hide-mob">Who it's for</a>
+    <a href="#mail-spotlight" class="hide-mob">Mail</a>
+    <a href="#ozellikler" class="hide-mob">Features</a>
+    <a href="#anatomi" class="hide-mob">Anatomy</a>
+    <a href="#guvenlik" class="hide-mob">Security</a>
+    <a href="#ornekler" class="hide-mob">Examples</a>
+    <a href="#kurulum" class="hide-mob">Install</a>
+    <a href="https://codlook.com/docs" class="hide-mob" target="_blank">Docs</a>
+    <a href="https://github.com/codlook/look" class="hide-mob" target="_blank">GitHub</a>
+    <a href="#indir" class="nav-cta">Download</a>
+  </div>
+</nav>
+
+<!-- ============================================================ HERO -->
+<section class="hero">
+  <div class="hero-badge">
+    <span class="dot"></span>
+    v1.0.0 — Stable Release · Apache 2.0 · Open Source
+  </div>
+  <h1>
+    A scripting language<br>
+    <span class="hl">built for the web.</span>
+  </h1>
+  <p class="hero-sub">
+    Routing built into the language. Persistent DB connections. WebSocket, SSE, parallel(), jobs::, template:: —
+    all in a single binary. No framework to set up — just write.
+  </p>
+  <div class="hero-ctas">
+    <a href="#indir" class="btn-hero-primary">
+      &#8659; Download — Free
+    </a>
+    <a href="#ornekler" class="btn-hero-sec">Code examples &rarr;</a>
+  </div>
+
+  <!-- Code example -->
+  <div class="hero-code">
+    <div class="hero-code-bar">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span>index.lk — real-time dashboard</span>
+    </div>
+    <pre><span class="ns">app</span><span class="op">::</span><span class="fn">set</span>(<span class="str">"db"</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/shop"</span>))
+<span class="cmt"># REST — 3 queries in parallel, capture-free DB access (app::db)</span>
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/api/dashboard"</span>, <span class="kw">function</span>() {
+    <span class="var">$ch</span> <span class="op">=</span> <span class="fn">channel</span>(<span class="num">3</span>)
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>) { <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="ns">app</span><span class="op">::</span><span class="fn">db</span>(), <span class="str">"SELECT count(*) FROM orders"</span>, [])) })
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>) { <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="ns">app</span><span class="op">::</span><span class="fn">db</span>(), <span class="str">"SELECT sum(total) FROM orders"</span>, [])) })
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>) { <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="ns">app</span><span class="op">::</span><span class="fn">db</span>(), <span class="str">"SELECT count(*) FROM users"</span>, [])) })
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"orders"</span> <span class="op">=></span> <span class="fn">receive</span>(<span class="var">$ch</span>), <span class="str">"revenue"</span> <span class="op">=></span> <span class="fn">receive</span>(<span class="var">$ch</span>), <span class="str">"users"</span> <span class="op">=></span> <span class="fn">receive</span>(<span class="var">$ch</span>)])
+})
+<span class="cmt"># SSE — live notification stream</span>
+<span class="fn">route</span>(<span class="str">"SSE"</span>, <span class="str">"/events"</span>, <span class="kw">function</span>(<span class="var">$sse</span>) {
+    <span class="var">$id</span> <span class="op">=</span> <span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">3000</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$sse</span>) {
+        <span class="ns">sse</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$sse</span>, <span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"t"</span> <span class="op">=></span> <span class="ns">date</span><span class="op">::</span><span class="fn">now</span>()]), <span class="str">"tick"</span>)
+    })
+    <span class="ns">sse</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$sse</span>, <span class="str">"close"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$id</span>) { <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$id</span>) })
+})</pre>
+  </div>
+</section>
+
+<!-- ============================================================ RUNTIME STRIP -->
+<div class="runtime-strip">
+  <div class="runtime-strip-inner">
+    <div class="runtime-item"><span class="dot-g"></span> Warm Start Runtime</div>
+    <div class="runtime-item"><span class="dot-g"></span> WebSocket + SSE</div>
+    <div class="runtime-item"><span class="dot-g"></span> parallel() + channel()</div>
+    <div class="runtime-item"><span class="dot-g"></span> SQLite · MySQL · PostgreSQL</div>
+    <div class="runtime-item"><span class="dot-g"></span> jobs:: + queue:: + cache::</div>
+    <div class="runtime-item"><span class="dot-g"></span> Bytecode VM · up to ~50× faster (CLI)</div>
+    <div class="runtime-item"><span class="dot-g"></span> Apache / nginx / standalone</div>
+  </div>
+</div>
+
+<!-- ============================================================ WHAT IS LOOK -->
+<section class="what" id="nedir">
+  <div class="what-inner text-center">
+    <div class="section-label">What it does</div>
+    <div class="section-title">Everything a web app needs</div>
+    <p class="section-sub">
+      LOOK is a scripting language designed for server-side web development.
+      Routing, DB, concurrency, real-time connections, background jobs and a template engine —
+      all inside a single binary.
+    </p>
+
+    <div class="what-grid" style="text-align:left">
+
+      <div class="what-card">
+        <div class="what-icon">⚡</div>
+        <h3>Warm Start Runtime</h3>
+        <p>
+          The app starts once. DB connection, route registrations, setup code — it all stays in memory.
+          Every HTTP request only runs <code>dispatch_routes()</code>.
+          <br><br>
+          32 workers, 4.7 million requests, 10 minutes — <strong>0 errors, 8 MB RAM.</strong>
+        </p>
+      </div>
+
+      <div class="what-card green">
+        <div class="what-icon">🔀</div>
+        <h3>Routing Built Into the Language</h3>
+        <p>
+          <code>route("GET", "/product/{id}", fn)</code> — this isn't a library call, it's the core of the language.
+          No router to install, no config — middleware and route groups (<code>route::group</code>) are built in, not a bolt-on stack.
+          <br><br>
+          REST, WebSocket, SSE — all with the same <code>route()</code> syntax.
+        </p>
+      </div>
+
+      <div class="what-card purple">
+        <div class="what-icon">🚀</div>
+        <h3>parallel() + channel()</h3>
+        <p>
+          Lightweight concurrency, in a web scripting language. Run 3 DB queries at once
+          and collect the results with <code>receive()</code> — total time is <strong>max(t₁, t₂, t₃)</strong>.
+          <br><br>
+          No extra runtime, no extra library, nothing new to learn for concurrency.
+        </p>
+      </div>
+
+      <div class="what-card orange">
+        <div class="what-icon">📦</div>
+        <h3>Real-time: WS + SSE</h3>
+        <p>
+          <code>route("WS", "/chat", fn)</code> — WebSocket, fully RFC 6455 compliant.
+          <code>route("SSE", "/events", fn)</code> — Server-Sent Events, together with <code>timer::every()</code>.
+          <br><br>
+          500 concurrent WebSocket connections, 72 hours, 0 memory leaks.
+        </p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ WHO IT'S FOR -->
+<section class="what" id="kime-gore" style="background:var(--dark2)">
+  <div class="what-inner text-center">
+    <div class="section-label">Who it's for</div>
+    <div class="section-title">When to choose LOOK</div>
+    <p class="section-sub">
+      Not a framework — a language. If any of the needs below is yours, LOOK is a great fit.
+    </p>
+
+    <div class="what-grid" style="text-align:left">
+
+      <div class="what-card">
+        <div class="what-icon">🐘</div>
+        <h3>Coming from PHP, wanting more</h3>
+        <p>
+          You love the ease of shared hosting / Plesk but want <strong>WebSocket, SSE and
+          concurrency</strong>. Drop the file, it runs — plus real-time connections
+          and <code>parallel()</code>.
+        </p>
+      </div>
+
+      <div class="what-card green">
+        <div class="what-icon">🚀</div>
+        <h3>REST + DB without a framework</h3>
+        <p>
+          Routing, DB (MySQL/SQLite/PostgreSQL), validation, cache, JWT — <strong>all built
+          into the language</strong>. No <code>composer</code>/<code>npm</code> dependency tree, one binary.
+        </p>
+      </div>
+
+      <div class="what-card">
+        <div class="what-icon">📦</div>
+        <h3>Single binary deploy</h3>
+        <p>
+          Copy one file to a VPS, run it with systemd/Plesk. No separate runtime, no package
+          manager, no surprises. <strong>28 MB RAM, steady across 1M requests.</strong>
+        </p>
+      </div>
+
+      <div class="what-card green">
+        <div class="what-icon">✉️</div>
+        <h3>You want to run a mail system</h3>
+        <p>
+          Built-in <strong>SMTP + IMAP server</strong> — no Postfix/Dovecot needed. Build a secure
+          mail system, e-commerce notifications, a blog with LOOK. <a href="#mail-spotlight" style="color:var(--blue)">How? ↓</a>
+        </p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ BENCHMARKS -->
+<section class="benchmarks" id="benchmark">
+  <div class="section-label">Performance</div>
+  <div class="section-title section-title-w">Real numbers, real server</div>
+  <p class="section-sub-w">AlmaLinux 8 · MariaDB · measured on a direct port, 64 workers.</p>
+
+  <div class="bench-grid">
+    <div class="bench-card">
+      <div class="bench-num" data-target="10558">0</div>
+      <div class="bench-unit">RPS</div>
+      <div class="bench-lbl">HTTP + VM, router</div>
+      <div class="bench-sub">c=200, 0 errors</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num" data-target="1000000">0</div>
+      <div class="bench-unit">requests</div>
+      <div class="bench-lbl">Endurance run</div>
+      <div class="bench-sub">c=10,000, 0 errors</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num" data-target="20000">0</div>
+      <div class="bench-unit">concurrent</div>
+      <div class="bench-lbl">Concurrency ceiling</div>
+      <div class="bench-sub">single-machine ab limit, 0 errors</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num"><span>41</span></div>
+      <div class="bench-unit">× faster</div>
+      <div class="bench-lbl">Bytecode VM speedup</div>
+      <div class="bench-sub">CLI vs. tree-walk interpreter (3652 ms → 72 ms)</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num">28</div>
+      <div class="bench-unit">MB</div>
+      <div class="bench-lbl">Memory — steady</div>
+      <div class="bench-sub">not a single byte grew over 1.75M requests</div>
+    </div>
+    <div class="bench-card">
+      <div class="bench-num">0</div>
+      <div class="bench-unit">errors</div>
+      <div class="bench-lbl">All load tests</div>
+      <div class="bench-sub">c=1k / 5k / 10k / 20k + 1M</div>
+    </div>
+  </div>
+
+  <p class="bench-note">
+    All tests were measured with <code>ab</code> on a live AlmaLinux 8 server
+    (see <a href="https://test.codlook.com" target="_blank">test.codlook.com</a> for applications running on it). Throughput is steady from c=1,000 to c=20,000 (~7.5–10k) — the bottleneck is CPU;
+    kernel walls (backlog, syn_backlog) were cleared with tuning. The TLS chain (nginx→FCGI) does ~1,100–1,240 RPS;
+    the difference comes from double TLS termination, not LOOK. DB-bound endpoints are limited by MySQL RTT.
+  </p>
+</section>
+
+<!-- ============================================================ SECURITY & TESTS -->
+<section style="background:var(--white);padding:100px 24px" id="guvenlik">
+  <div class="container">
+    <div class="text-center">
+      <div class="section-label">Security &amp; Testing</div>
+      <div class="section-title">Proven resilience</div>
+      <p class="section-sub">Every line tested. Passed fuzzing, ThreadSanitizer and
+        data-integrity tests.</p>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:20px;margin-top:48px">
+      <div style="background:var(--surface,#f8fafc);border:1px solid #e2e8f0;border-radius:12px;padding:24px">
+        <div style="font-size:28px;font-weight:800;color:var(--blue)">16,000+</div>
+        <div style="font-weight:700;margin:6px 0 4px">Fuzzing iterations</div>
+        <div style="font-size:13px;color:#64748b">Random/malformed HTTP bombardment under AddressSanitizer + UndefinedBehaviorSanitizer — <strong>0 crashes, 0 UB, 0 memory errors</strong>.</div>
+      </div>
+      <div style="background:var(--surface,#f8fafc);border:1px solid #e2e8f0;border-radius:12px;padding:24px">
+        <div style="font-size:28px;font-weight:800;color:var(--blue)">0 races</div>
+        <div style="font-weight:700;margin:6px 0 4px">ThreadSanitizer clean</div>
+        <div style="font-size:13px;color:#64748b">Concurrent-dispatch data-race scan. The one race found (date::now tz) was fixed — now zero.</div>
+      </div>
+      <div style="background:var(--surface,#f8fafc);border:1px solid #e2e8f0;border-radius:12px;padding:24px">
+        <div style="font-size:28px;font-weight:800;color:var(--blue)">20,000</div>
+        <div style="font-weight:700;margin:6px 0 4px">Cross-contamination test</div>
+        <div style="font-size:13px;color:#64748b">Each request a unique token + DB round-trip. <strong>0 data leaks</strong> in blocking and fiber mode — every request saw only its own data.</div>
+      </div>
+      <div style="background:var(--surface,#f8fafc);border:1px solid #e2e8f0;border-radius:12px;padding:24px">
+        <div style="font-size:28px;font-weight:800;color:var(--blue)">Zero</div>
+        <div style="font-weight:700;margin:6px 0 4px">Supply-chain risk</div>
+        <div style="font-size:13px;color:#64748b">MySQL, PostgreSQL, SQLite and Redis (RESP2) wire protocols — all written from scratch in C++23. TLS uses the OS crypto library (OpenSSL / Schannel), statically pinned in release builds. No third-party packages, no dependency hell.</div>
+      </div>
+      <div style="background:var(--surface,#f8fafc);border:1px solid #e2e8f0;border-radius:12px;padding:24px">
+        <div style="font-size:28px;font-weight:800;color:var(--blue)">4 rounds</div>
+        <div style="font-weight:700;margin:6px 0 4px">Manual security audit</div>
+        <div style="font-size:13px;color:#64748b">Beyond fuzzing: protocol parsers, VM arithmetic and network paths reviewed line by line. Every hardening point found (unguarded number conversion, unbounded allocation, signed-overflow UB) was closed and tested.</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:48px;font-size:20px">Vulnerabilities closed &amp; protections</h3>
+    <div style="margin-top:16px;overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <tr style="border-bottom:2px solid #e2e8f0">
+          <th style="text-align:left;padding:10px 14px;color:#64748b;font-weight:600">Topic</th>
+          <th style="text-align:left;padding:10px 14px;color:var(--blue);font-weight:700">LOOK protection</th>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">SQL injection</td>
+          <td style="padding:10px 14px;color:#16a34a"><code>db::query($c, sql, [params])</code> — auto-parameterised <code>?</code>, driver-correct escaping</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">DoS — huge body</td>
+          <td style="padding:10px 14px;color:#16a34a"><code>LOOK_MAX_BODY_SIZE</code> (10 MB) exceeded → 413; unbounded-body memory exhaustion prevented</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Request smuggling</td>
+          <td style="padding:10px 14px;color:#16a34a">Content-Length + Transfer-Encoding together → 400 (RFC 7230 §3.3.3)</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Malformed header</td>
+          <td style="padding:10px 14px;color:#16a34a">Malformed Content-Length → 400 (worker doesn't crash); full RFC 7230 chunked TE support</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Slowloris / slow requests</td>
+          <td style="padding:10px 14px;color:#16a34a">Read/write timeout (30s) + kernel backlog 16384 + syn_backlog tuning</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Session security</td>
+          <td style="padding:10px 14px;color:#16a34a">128-bit <code>/dev/urandom</code> token; cookie <code>HttpOnly + Secure + SameSite</code></td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Password storage</td>
+          <td style="padding:10px 14px;color:#16a34a"><code>auth::hash / verify</code> — PBKDF2-SHA256, in the core</td>
+        </tr>
+        <tr style="background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Upload security</td>
+          <td style="padding:10px 14px;color:#16a34a">Magic-byte type validation (blocks extension spoofing) + SHA-256</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">WebSocket masking</td>
+          <td style="padding:10px 14px;color:#16a34a">Unmasked client frame → connection closed with 1002 (RFC 6455 §5.1) — cache-poisoning / proxy defense, no silent accept</td>
+        </tr>
+        <tr style="background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">JSON stack overflow</td>
+          <td style="padding:10px 14px;color:#16a34a">Deeply nested JSON body → recursion depth limit (<code>JSON_MAX_DEPTH</code>) — stack overflow prevented</td>
+        </tr>
+        <tr style="background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Parser stack overflow</td>
+          <td style="padding:10px 14px;color:#16a34a">Deeply nested <code>((…))</code> / <code>[[…]]</code> in source → expression/statement depth guards (150) — segfault prevented</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Response splitting</td>
+          <td style="padding:10px 14px;color:#16a34a">CR/LF in a response header / cookie / redirect → stripped at the setter and at serialization — no header injection</td>
+        </tr>
+        <tr style="background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Protocol parser DoS</td>
+          <td style="padding:10px 14px;color:#16a34a">RESP2/HTTP/PG/SMTP: unguarded number conversion + unbounded allocation closed (a malformed server response can't crash a worker)</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Arithmetic UB</td>
+          <td style="padding:10px 14px;color:#16a34a">64-bit integers; signed-overflow, shift and unary-minus undefined behaviour eliminated (promote to float only past ±9.2×10¹⁸) — UBSan clean. BIGINT / IDs / phone numbers round-trip exactly</td>
+        </tr>
+      </table>
+    </div>
+
+    <p style="margin-top:20px;font-size:13px;color:#64748b">
+      Before every build, 9 regression tests + automated ASan/UBSan fuzzing and ThreadSanitizer run in CI
+      (<code>.github/workflows/security.yml</code>). Memory: RSS steady over 1.75M requests — no leak.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ MAIL SPOTLIGHT -->
+<section id="mail-spotlight" style="background:linear-gradient(135deg,#0b1020,#111a33);color:#e6edf7;padding:100px 24px">
+  <div style="max-width:960px;margin:0 auto;text-align:center">
+    <div class="section-label" style="color:#82aaff">Spotlight</div>
+    <div class="section-title" style="color:#fff">Embedded Mail Server — SMTP + IMAP</div>
+    <p class="section-sub" style="color:#a9b6cc;max-width:680px;margin:0 auto 36px">
+      Most scripting languages <em>send</em> mail; LOOK <strong>serves</strong> it. A built-in
+      <strong>SMTP</strong> (RFC 5321) and <strong>IMAP4rev1</strong> (RFC 3501 + IDLE) server —
+      no Postfix/Dovecot needed. You can build a fully secure mail system end to end with LOOK.
+    </p>
+
+    <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:28px;text-align:left;font-family:monospace;font-size:14px;line-height:1.9;color:#cdd6f4;margin-bottom:32px">
+      <span style="color:#546e7a"># SMTP receives → Maildir → IMAP serves (one command)</span><br>
+      SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀─reads─  IMAP :143/:993<br>
+      <br>
+      <span style="color:#c3e88d">lk --mode http --port 7400</span>  <span style="color:#546e7a"># HTTP + SMTP + IMAP + IMAPS together</span>
+    </div>
+
+    <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center">
+      <span style="background:rgba(130,170,255,.14);color:#82aaff;padding:7px 14px;border-radius:20px;font-size:13px">STARTTLS + IMAPS (993)</span>
+      <span style="background:rgba(130,170,255,.14);color:#82aaff;padding:7px 14px;border-radius:20px;font-size:13px">SEARCH · FETCH · APPEND</span>
+      <span style="background:rgba(130,170,255,.14);color:#82aaff;padding:7px 14px;border-radius:20px;font-size:13px">IDLE — live push</span>
+      <span style="background:rgba(130,170,255,.14);color:#82aaff;padding:7px 14px;border-radius:20px;font-size:13px">mail_users PBKDF2 auth</span>
+      <span style="background:rgba(39,201,63,.14);color:#5bd66f;padding:7px 14px;border-radius:20px;font-size:13px">ASan+UBSan fuzz: 0 UB</span>
+    </div>
+    <p style="margin-top:26px;color:#a9b6cc;font-size:14px">
+      Thunderbird, Roundcube, Apple Mail and mobile clients connect directly —
+      list, read, write, search, receive live notifications. All over TLS.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ FEATURES -->
+<section class="features" id="ozellikler">
+  <div class="features-inner text-center">
+    <div class="section-label">Features</div>
+    <div class="section-title">One binary, a full runtime</div>
+    <p class="section-sub">Write directly — nothing to install, nothing new to learn.</p>
+
+    <div class="features-grid">
+
+      <div class="feat-card">
+        <div class="feat-badge">Core</div>
+        <div class="feat-icon" style="background:#eff6ff">🔀</div>
+        <h3>Routing built into the language</h3>
+        <p><code>route("GET", "/product/{id}", fn)</code> — REST, WS, SSE, same syntax. URL params parsed automatically.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Core</div>
+        <div class="feat-icon" style="background:#eff6ff">🧅</div>
+        <h3>Middleware + route groups</h3>
+        <p>Global <code>before_route()</code>, per-route chains, and <code>route::group("/admin", [$auth], fn)</code> — shared prefix and middleware, nestable. Minimal by design: prefix + middleware inheritance, no router DSL.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Syntax</div>
+        <div class="feat-icon" style="background:#eff6ff">⚡</div>
+        <h3>Short lambda — fn + arrow</h3>
+        <p><code>fn($x) => $x * 2</code> — a <code>function</code> alias + expression-bodied arrow with implicit return. <code>route("GET","/ping", fn() => response::json(["ok"=>true]))</code>. Classic <code>function</code> works too.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Syntax</div>
+        <div class="feat-icon" style="background:#f0fdf4">🧩</div>
+        <h3>app:: service registry</h3>
+        <p>No more passing a shared connection to every route with <code>use ($conn)</code>. <code>app::set("db", $conn)</code> once at setup → routes use <code>app::db()</code> with no capture. The explicit-capture philosophy is preserved.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Core</div>
+        <div class="feat-icon" style="background:#f0fdf4">🗄️</div>
+        <h3>MySQL · SQLite · PostgreSQL</h3>
+        <p>Wire protocol implemented directly. Same API: <code>db::query / db::exec / db::col</code>. Transactions: <code>db::begin / commit / rollback</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge g">Concurrency</div>
+        <div class="feat-icon" style="background:#faf5ff">⚙️</div>
+        <h3>parallel() + channel()</h3>
+        <p>The LOOK task model. Fan-out, pipeline, producer-consumer — over channels. No blocking, no callbacks. Monitor with <code>parallel::active() / limit() / at_capacity()</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge g">Real-time</div>
+        <div class="feat-icon" style="background:#faf5ff">🔌</div>
+        <h3>WebSocket</h3>
+        <p><code>route("WS", "/chat", fn)</code> — RFC 6455, SHA-1+Base64 handshake. <code>ws::broadcast()</code> to all connected clients.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge g">Real-time</div>
+        <div class="feat-icon" style="background:#f0fdf4">📡</div>
+        <h3>SSE + timer::</h3>
+        <p><code>route("SSE", "/events", fn)</code> — Server-Sent Events. Periodic push with <code>timer::every(3000, fn)</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge p">Background</div>
+        <div class="feat-icon" style="background:#fff7ed">📬</div>
+        <h3>jobs:: — job queue</h3>
+        <p>SQLite-backed durable queue. <code>jobs::push / worker / run</code>. Delayed jobs, retry, dead-letter. Not lost when the process exits.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge p">Background</div>
+        <div class="feat-icon" style="background:#f0fdf4">📥</div>
+        <h3>queue:: — FIFO queue</h3>
+        <p>In-memory, thread-safe, named queue. Passing data between requests. <code>queue::push / pop / peek / size</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge p">Cache</div>
+        <div class="feat-icon" style="background:#eff6ff">🧠</div>
+        <h3>cache:: — in-memory cache</h3>
+        <p>TTL-aware, thread-safe singleton. Shared across all workers with warm start. <code>cache::get / set / has / flush</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Template</div>
+        <div class="feat-icon" style="background:#fef2f2">🎨</div>
+        <h3>template:: — template engine</h3>
+        <p>Layout inheritance, partial includes, <code>{#each}</code> loops, <code>{#if}</code> conditions. Svelte-like — no runtime, server render only.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">VM</div>
+        <div class="feat-icon" style="background:#fef2f2">🚀</div>
+        <h3>Bytecode VM</h3>
+        <p>AST → register-based bytecode → switch dispatch. The default engine everywhere: <strong>~41–51× faster</strong> than the tree-walk interpreter on the CLI, and up to <strong>7.8×</strong> on compute-heavy web workloads.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Module</div>
+        <div class="feat-icon" style="background:#f0fdf4">📧</div>
+        <h3>mail:: — sending email</h3>
+        <p>Mailgun, SendGrid, Postmark supported. <code>mail::send / send_html</code>. Choose the provider with the MAIL_PROVIDER env var.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Security</div>
+        <div class="feat-icon" style="background:#fdf4ff">🔐</div>
+        <h3>crypto:: + JWT</h3>
+        <p>SHA-256, HMAC-SHA256, RS256, UUID v4, timing-safe compare. Sign and verify HS256/RS256 tokens with the official <code>pkg/jwt</code> package.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Security</div>
+        <div class="feat-icon" style="background:#fef2f2">🛡️</div>
+        <h3>Rate Limiter — Token Bucket</h3>
+        <p>Two-layer protection: per-IP burst tolerance + global botnet cap. <code>LOOK_RATE_LIMIT_RPM</code>, <code>LOOK_RATE_LIMIT_BURST</code>, <code>LOOK_RATE_LIMIT_GLOBAL_RPM</code>. Your LOOK code doesn't change — it's at the runtime level.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Security</div>
+        <div class="feat-icon" style="background:#f0fdf4">✉️</div>
+        <h3>DKIM + SMTP Protection</h3>
+        <p>Outbound e-mail is automatically signed with RSA-SHA256 (<code>LOOK_SMTP_DKIM_*</code>). Port 25 relay is blocked — authenticated SMTP only (587/465).</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Mail Server</div>
+        <div class="feat-icon" style="background:#eff6ff">📥</div>
+        <h3>Embedded SMTP + IMAP</h3>
+        <p>Embedded MTA (25/587) + IMAP4rev1 server (143/993). SMTP delivers to Maildir, IMAP serves it to Thunderbird/Roundcube. STARTTLS, SEARCH, live IDLE push. Same <code>mail_users</code> pbkdf2 identity. No Dovecot/Postfix required.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Error Handling</div>
+        <div class="feat-icon" style="background:#fffbeb">⚠️</div>
+        <h3>error:: — Type-Safe Errors</h3>
+        <p>Raise your own errors with <code>throw</code> — a plain string or a structured <code>error::new($type, $message [, $code])</code>. Catch with <code>try/catch</code>; inspect via <code>error::is($e, $type)</code>, <code>error::code($e)</code>, <code>error::message($e)</code>. No <code>use</code> required — always on.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Module</div>
+        <div class="feat-icon" style="background:#f0f9ff">🌐</div>
+        <h3>http:: — Outbound HTTP Client</h3>
+        <p>GET, POST, PUT, PATCH, DELETE. JSON body, custom headers, timeout. TLS included. Fan-out parallel API calls with <code>parallel()</code>.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Ecosystem</div>
+        <div class="feat-icon" style="background:#eff6ff">📦</div>
+        <h3>Package + Module System</h3>
+        <p><code>lk install github.com/codlook/look-packages/...</code> — JWT, payments and more. Explore the Codlook-approved ecosystem at <a href="https://packages.codlook.com" target="_blank">packages.codlook.com</a>. No registry, no config.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-badge">Developer</div>
+        <div class="feat-icon" style="background:#eff6ff">🧪</div>
+        <h3>Test + REPL + look install</h3>
+        <p><code>look test</code> — 10 assertions, before_each/after_each. <code>look repl</code> — interactive. Install packages from GitHub with <code>look install github.com/user/repo</code>.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ CODE EXAMPLES -->
+<section class="code-section" id="ornekler">
+  <div class="code-inner">
+    <div class="section-label" style="text-align:center;color:var(--blue)">Code Examples</div>
+    <div class="section-title section-title-w" style="text-align:center;margin-bottom:40px">Meet the real code</div>
+
+    <div class="code-tabs">
+      <button class="tab-btn active" onclick="showTab('t1',this)">REST + Auth</button>
+      <button class="tab-btn" onclick="showTab('t2',this)">WebSocket Chat</button>
+      <button class="tab-btn" onclick="showTab('t3',this)">Parallel DB</button>
+      <button class="tab-btn" onclick="showTab('t4',this)">SSE + Timer</button>
+      <button class="tab-btn" onclick="showTab('t5',this)">Background Jobs</button>
+      <button class="tab-btn" onclick="showTab('t6',this)">Template + Struct</button>
+      <button class="tab-btn" onclick="showTab('t7',this)">JWT + Package</button>
+    </div>
+
+    <!-- REST + Auth -->
+    <div class="tab-content active" id="t1">
+      <div class="code-block">
+        <div class="code-block-bar">index.lk — REST API, auth, validator<span class="cbadge">Basics</span></div>
+        <pre><span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/blog"</span>)
+<span class="kw">use</span> <span class="ns">auth</span>
+<span class="kw">use</span> <span class="ns">validator</span>
+<span class="kw">use</span> <span class="ns">cache</span>
+<span class="kw">function</span> <span class="fn">admin_check</span>() {
+    <span class="ns">session</span><span class="op">::</span><span class="fn">start</span>()
+    <span class="kw">if</span> (<span class="ns">session</span><span class="op">::</span><span class="fn">get</span>(<span class="str">"admin_id"</span>) <span class="op">==</span> <span class="kw">null</span>) {
+        <span class="ns">response</span><span class="op">::</span><span class="fn">error</span>(<span class="num">401</span>, <span class="str">"Unauthorized"</span>)
+        <span class="kw">return</span> <span class="kw">false</span>
+    }
+    <span class="kw">return</span> <span class="kw">true</span>
+}
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/api/posts"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="cmt"># 5-minute cache — don't hit the DB for the same data over and over</span>
+    <span class="var">$data</span> <span class="op">=</span> <span class="ns">cache</span><span class="op">::</span><span class="fn">get</span>(<span class="str">"posts"</span>)
+    <span class="kw">if</span> (<span class="var">$data</span> <span class="op">==</span> <span class="kw">null</span>) {
+        <span class="var">$data</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM posts ORDER BY id DESC"</span>, [])
+        <span class="ns">cache</span><span class="op">::</span><span class="fn">set</span>(<span class="str">"posts"</span>, <span class="var">$data</span>, <span class="num">300</span>)
+    }
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>, <span class="str">"data"</span> <span class="op">=></span> <span class="var">$data</span>])
+})
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/api/posts"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="kw">if</span> (!<span class="fn">admin_check</span>()) { <span class="kw">return</span> }
+    <span class="var">$v</span> <span class="op">=</span> <span class="ns">validator</span><span class="op">::</span><span class="fn">check</span>(<span class="ns">request</span><span class="op">::</span><span class="fn">json</span>(), [
+        <span class="str">"title"</span>  <span class="op">=></span> [<span class="str">"required"</span>, <span class="str">"min:3"</span>, <span class="str">"max:200"</span>],
+        <span class="str">"content"</span>  <span class="op">=></span> [<span class="str">"required"</span>, <span class="str">"min:10"</span>]
+    ])
+    <span class="kw">if</span> (!<span class="var">$v</span>[<span class="str">"ok"</span>]) { <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>(<span class="var">$v</span>, <span class="num">422</span>) <span class="kw">return</span> }
+    <span class="var">$data</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">json</span>()
+    <span class="ns">db</span><span class="op">::</span><span class="fn">exec</span>(<span class="var">$conn</span>, <span class="str">"INSERT INTO posts (title,content) VALUES (?,?)"</span>, [<span class="var">$data</span>[<span class="str">"title"</span>], <span class="var">$data</span>[<span class="str">"content"</span>]])
+    <span class="ns">cache</span><span class="op">::</span><span class="fn">delete</span>(<span class="str">"posts"</span>)  <span class="cmt"># cache invalidate</span>
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>, <span class="str">"id"</span> <span class="op">=></span> <span class="ns">db</span><span class="op">::</span><span class="fn">last_id</span>(<span class="var">$conn</span>)])
+})</pre>
+      </div>
+    </div>
+
+    <!-- WebSocket Chat -->
+    <div class="tab-content" id="t2">
+      <div class="code-block">
+        <div class="code-block-bar">chat.lk — Real-time chat, broadcast hub<span class="cbadge">WebSocket</span></div>
+        <pre><span class="cmt"># Hub: the shared broadcast channel for all connections (setup phase)</span>
+<span class="var">$hub</span> <span class="op">=</span> <span class="fn">channel</span>()
+<span class="fn">route</span>(<span class="str">"WS"</span>, <span class="str">"/chat"</span>, <span class="kw">function</span>(<span class="var">$ws</span>) <span class="kw">use</span> (<span class="var">$hub</span>) {
+
+    <span class="cmt"># One thread per connection: listen on the hub → write to this client</span>
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ws</span>, <span class="var">$hub</span>) {
+        <span class="kw">while</span> (<span class="kw">true</span>) {
+            <span class="var">$msg</span> <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$hub</span>)
+            <span class="kw">if</span> (<span class="var">$msg</span> <span class="op">==</span> <span class="kw">null</span>) { <span class="kw">break</span> }
+            <span class="ns">ws</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$ws</span>, <span class="var">$msg</span>)
+        }
+    })
+    <span class="cmt"># On incoming message, push to the hub → every client hears it</span>
+    <span class="ns">ws</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$ws</span>, <span class="str">"message"</span>, <span class="kw">function</span>(<span class="var">$data</span>) <span class="kw">use</span> (<span class="var">$hub</span>) {
+        <span class="var">$p</span> <span class="op">=</span> <span class="ns">json</span><span class="op">::</span><span class="fn">decode</span>(<span class="var">$data</span>)
+        <span class="fn">send</span>(<span class="var">$hub</span>, <span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"from"</span> <span class="op">=></span> <span class="ns">request</span><span class="op">::</span><span class="fn">ip</span>(), <span class="str">"msg"</span> <span class="op">=></span> <span class="var">$p</span>[<span class="str">"msg"</span>]]))
+    })
+    <span class="ns">ws</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$ws</span>, <span class="str">"close"</span>, <span class="kw">function</span>() {
+        <span class="ns">log</span><span class="op">::</span><span class="fn">info</span>(<span class="str">"Connection closed — active: "</span> <span class="op">.</span> <span class="ns">ws</span><span class="op">::</span><span class="fn">clients</span>())
+    })
+})
+<span class="cmt"># Keepalive ping — to all clients every 30 seconds</span>
+<span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">30000</span>, <span class="kw">function</span>() {
+    <span class="ns">ws</span><span class="op">::</span><span class="fn">broadcast</span>(<span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>([<span class="str">"type"</span> <span class="op">=></span> <span class="str">"ping"</span>]))
+})</pre>
+      </div>
+    </div>
+
+    <!-- Paralel DB -->
+    <div class="tab-content" id="t3">
+      <div class="code-block">
+        <div class="code-block-bar">parallel.lk — 3 queries at once, total time = max(t1,t2,t3)<span class="cbadge">parallel()</span></div>
+        <pre><span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/shop"</span>)
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/panel/summary"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+
+    <span class="var">$ch</span> <span class="op">=</span> <span class="fn">channel</span>(<span class="num">3</span>)  <span class="cmt"># waiting for 3 results</span>
+
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) {
+        <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT count(*) FROM orders"</span>, []))
+    })
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) {
+        <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT sum(total) FROM orders WHERE status='paid'"</span>, []))
+    })
+    <span class="fn">parallel</span>(<span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$ch</span>, <span class="var">$conn</span>) {
+        <span class="fn">send</span>(<span class="var">$ch</span>, <span class="ns">db</span><span class="op">::</span><span class="fn">col</span>(<span class="var">$conn</span>, <span class="str">"SELECT count(*) FROM users WHERE active=1"</span>, []))
+    })
+    <span class="cmt"># Won't continue until all parallel jobs finish</span>
+    <span class="var">$orders</span>  <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$ch</span>)
+    <span class="var">$revenue</span>       <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$ch</span>)
+    <span class="var">$users</span> <span class="op">=</span> <span class="fn">receive</span>(<span class="var">$ch</span>)
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([
+        <span class="str">"orders"</span>   <span class="op">=></span> <span class="var">$orders</span>,
+        <span class="str">"revenue"</span>        <span class="op">=></span> <span class="var">$revenue</span>,
+        <span class="str">"users"</span> <span class="op">=></span> <span class="var">$users</span>
+    ])
+})</pre>
+      </div>
+    </div>
+
+    <!-- SSE + Timer -->
+    <div class="tab-content" id="t4">
+      <div class="code-block">
+        <div class="code-block-bar">sse.lk — Live notification stream, periodic push<span class="cbadge">SSE + timer::</span></div>
+        <pre><span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/shop"</span>)
+<span class="cmt"># SSE: once the browser connects, a continuous data stream is pushed</span>
+<span class="fn">route</span>(<span class="str">"SSE"</span>, <span class="str">"/live/orders"</span>, <span class="kw">function</span>(<span class="var">$sse</span>) <span class="kw">use</span> (<span class="var">$conn</span>) {
+
+    <span class="cmt"># Check for new orders every 2 seconds</span>
+    <span class="var">$tick</span> <span class="op">=</span> <span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">2000</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$sse</span>, <span class="var">$conn</span>) {
+        <span class="var">$new</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>,
+            <span class="str">"SELECT * FROM orders WHERE created_at > date_sub(now(), interval 5 second)"</span>, [])
+        <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$new</span>) <span class="op">></span> <span class="num">0</span>) {
+            <span class="var">$ok</span> <span class="op">=</span> <span class="ns">sse</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$sse</span>, <span class="ns">json</span><span class="op">::</span><span class="fn">encode</span>(<span class="var">$new</span>), <span class="str">"new_order"</span>)
+            <span class="kw">if</span> (!<span class="var">$ok</span>) { <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$tick</span>) }   <span class="cmt"># connection closed</span>
+        }
+    })
+    <span class="cmt"># 30s keepalive — so the browser doesn't time out</span>
+    <span class="var">$ping</span> <span class="op">=</span> <span class="ns">timer</span><span class="op">::</span><span class="fn">every</span>(<span class="num">30000</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$sse</span>) {
+        <span class="ns">sse</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$sse</span>, <span class="str">"keepalive"</span>, <span class="str">"ping"</span>)
+    })
+    <span class="ns">sse</span><span class="op">::</span><span class="fn">on</span>(<span class="var">$sse</span>, <span class="str">"close"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$tick</span>, <span class="var">$ping</span>) {
+        <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$tick</span>)
+        <span class="ns">timer</span><span class="op">::</span><span class="fn">cancel</span>(<span class="var">$ping</span>)
+        <span class="ns">log</span><span class="op">::</span><span class="fn">info</span>(<span class="str">"SSE closed — active: "</span> <span class="op">.</span> <span class="ns">sse</span><span class="op">::</span><span class="fn">clients</span>())
+    })
+})</pre>
+      </div>
+    </div>
+
+    <!-- Jobs -->
+    <div class="tab-content" id="t5">
+      <div class="code-block">
+        <div class="code-block-bar">jobs.lk — SQLite durable queue, retry, mail delivery<span class="cbadge">jobs::</span></div>
+        <pre><span class="kw">use</span> <span class="ns">jobs</span>
+<span class="kw">use</span> <span class="ns">mail</span>
+<span class="cmt"># Route: respond instantly (1ms), enqueue the work</span>
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/signup"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$data</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">json</span>()
+    <span class="ns">db</span><span class="op">::</span><span class="fn">exec</span>(<span class="var">$conn</span>, <span class="str">"INSERT INTO users (email,name) VALUES (?,?)"</span>,
+             [<span class="var">$data</span>[<span class="str">"email"</span>], <span class="var">$data</span>[<span class="str">"name"</span>]])
+    <span class="cmt"># max 3 attempts, process now (delay_sec=0)</span>
+    <span class="ns">jobs</span><span class="op">::</span><span class="fn">push</span>(<span class="str">"welcome_email"</span>, [<span class="str">"to"</span> <span class="op">=></span> <span class="var">$data</span>[<span class="str">"email"</span>], <span class="str">"name"</span> <span class="op">=></span> <span class="var">$data</span>[<span class="str">"name"</span>]], <span class="num">3</span>, <span class="num">0</span>)
+    <span class="cmt"># reminder email after 10 minutes</span>
+    <span class="ns">jobs</span><span class="op">::</span><span class="fn">push</span>(<span class="str">"reminder_email"</span>, [<span class="str">"to"</span> <span class="op">=></span> <span class="var">$data</span>[<span class="str">"email"</span>]], <span class="num">3</span>, <span class="num">600</span>)
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>])
+})
+<span class="cmt"># worker.lk — separate process (runs as a systemd service)</span>
+<span class="ns">jobs</span><span class="op">::</span><span class="fn">recover</span>(<span class="str">"welcome_email"</span>)  <span class="cmt"># crash recovery</span>
+
+<span class="ns">jobs</span><span class="op">::</span><span class="fn">worker</span>(<span class="str">"welcome_email"</span>, <span class="kw">function</span>(<span class="var">$job</span>) {
+    <span class="var">$r</span> <span class="op">=</span> <span class="ns">mail</span><span class="op">::</span><span class="fn">send</span>(<span class="var">$job</span>[<span class="str">"payload"</span>][<span class="str">"to"</span>], <span class="str">"Welcome!"</span>,
+                    <span class="str">"Hi "</span> <span class="op">.</span> <span class="var">$job</span>[<span class="str">"payload"</span>][<span class="str">"name"</span>] <span class="op">.</span> <span class="str">", your account is ready."</span>)
+    <span class="kw">return</span> <span class="var">$r</span>[<span class="str">"ok"</span>]  <span class="cmt"># false → retry (max 3), then dead-letter</span>
+})
+<span class="ns">jobs</span><span class="op">::</span><span class="fn">run</span>(<span class="num">5000</span>)  <span class="cmt"># poll every 5 seconds</span></pre>
+      </div>
+    </div>
+
+    <!-- Struct + Template -->
+    <div class="tab-content" id="t6">
+      <div class="code-block">
+        <div class="code-block-bar">blog.lk — Struct + template engine (server-side render)<span class="cbadge">template::</span></div>
+        <pre><span class="kw">use</span> <span class="ns">template</span>
+<span class="cmt"># Struct — Go style, no methods, data only</span>
+<span class="kw">struct</span> Post {
+    id
+    title
+    content
+    date
+    likes: <span class="num">0</span>
+    published: <span class="kw">true</span>
+}
+
+<span class="var">$tpl</span> <span class="op">=</span> <span class="fn">env</span>(<span class="str">"VIEWS_DIR"</span>, <span class="str">"/app/views"</span>)
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/blog"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>, <span class="var">$tpl</span>) {
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM posts WHERE published=1"</span>, [])
+    <span class="kw">print</span>(<span class="ns">template</span><span class="op">::</span><span class="fn">render</span>(<span class="var">$tpl</span> <span class="op">.</span> <span class="str">"/blog/index"</span>, [
+        <span class="str">"title"</span>  <span class="op">=></span> <span class="str">"Blog"</span>,
+        <span class="str">"posts"</span> <span class="op">=></span> <span class="var">$rows</span>
+    ]))
+})
+<span class="cmt">
+# views/blog/index.html — server-side, no JS
+# {#extends "views/layout/base"}
+# {#block "content"}
+# {#each $posts as $p}
+#   &lt;article&gt
+#     &lt;h2&gt;{$p.title}&lt;/h2&gt
+#     &lt;p&gt;{$p.date} · {$p.likes} likes&lt;/p&gt
+#     &lt;div&gt;{!$p.content}&lt;/div&gt
+#   &lt;/article&gt
+# {/each}
+# {#empty}&lt;p&gt;No posts yet.&lt;/p&gt;{/each}
+# {/block}</span></pre>
+      </div>
+    </div>
+
+    <!-- JWT + Package -->
+    <div class="tab-content" id="t7">
+      <div class="code-block">
+        <div class="code-block-bar">api.lk — protect the API with JWT, install packages via look install<span class="cbadge">pkg/jwt</span></div>
+        <pre><span class="cmt"># Terminal: look install github.com/Codlook/look-packages</span>
+<span class="kw">use</span> <span class="str">"pkg/jwt/jwt.lk"</span>
+<span class="kw">use</span> <span class="ns">auth</span>
+<span class="kw">use</span> <span class="ns">crypto</span>
+<span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="fn">env</span>(<span class="str">"DB_DSN"</span>, <span class="str">"mysql://root:@127.0.0.1/app"</span>))
+<span class="cmt"># Login — issue a token</span>
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/api/login"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$email</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">post</span>(<span class="str">"email"</span>) ?? <span class="str">""</span>
+    <span class="var">$password</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">post</span>(<span class="str">"password"</span>) ?? <span class="str">""</span>
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM users WHERE email=?"</span>, [<span class="var">$email</span>])
+    <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) <span class="op">==</span> <span class="num">0</span> <span class="op">||</span> !<span class="ns">auth</span><span class="op">::</span><span class="fn">verify</span>(<span class="var">$password</span>, <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"password_hash"</span>])) {
+        <span class="ns">response</span><span class="op">::</span><span class="fn">error</span>(<span class="num">401</span>, <span class="str">"Invalid credentials"</span>)
+        <span class="kw">return</span>
+    }
+
+    <span class="var">$token</span> <span class="op">=</span> <span class="fn">jwt_sign</span>(
+        [<span class="str">"user_id"</span> <span class="op">=></span> <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"id"</span>], <span class="str">"role"</span> <span class="op">=></span> <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"role"</span>]],
+        <span class="fn">env</span>(<span class="str">"JWT_SECRET"</span>, <span class="str">""</span>),
+        [<span class="str">"exp"</span> <span class="op">=></span> <span class="num">86400</span>]   <span class="cmt"># 24 hours</span>
+    )
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>, <span class="str">"token"</span> <span class="op">=></span> <span class="var">$token</span>])
+})
+<span class="cmt"># Protected endpoint — Bearer token required</span>
+<span class="kw">function</span> <span class="fn">auth_required</span>() {
+    <span class="var">$header</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">header</span>(<span class="str">"Authorization"</span>) ?? <span class="str">""</span>
+    <span class="var">$token</span>  <span class="op">=</span> <span class="fn">string::substr</span>(<span class="var">$header</span>, <span class="num">7</span>)  <span class="cmt"># strip "Bearer "</span>
+    <span class="var">$p</span> <span class="op">=</span> <span class="fn">jwt_verify</span>(<span class="var">$token</span>, <span class="fn">env</span>(<span class="str">"JWT_SECRET"</span>, <span class="str">""</span>))
+    <span class="kw">if</span> (<span class="var">$p</span> <span class="op">==</span> <span class="kw">null</span>) {
+        <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"error"</span> <span class="op">=></span> <span class="str">"Invalid token"</span>], <span class="num">401</span>)
+        <span class="kw">return</span> <span class="kw">null</span>
+    }
+    <span class="kw">return</span> <span class="var">$p</span>
+}
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/api/profile"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$user</span> <span class="op">=</span> <span class="fn">auth_required</span>()
+    <span class="kw">if</span> (<span class="var">$user</span> <span class="op">==</span> <span class="kw">null</span>) { <span class="kw">return</span> }
+
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT id,name,email FROM users WHERE id=?"</span>, [<span class="var">$user</span>[<span class="str">"user_id"</span>]])
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>, <span class="str">"data"</span> <span class="op">=></span> <span class="var">$rows</span>[<span class="num">0</span>]])
+})
+<span class="cmt"># Webhook verification — HMAC-SHA256 timing-safe</span>
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/webhook/payment"</span>, <span class="kw">function</span>() {
+    <span class="var">$payload</span>  <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">body</span>()
+    <span class="var">$given</span>  <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">header</span>(<span class="str">"X-Signature"</span>) ?? <span class="str">""</span>
+    <span class="var">$expected</span> <span class="op">=</span> <span class="str">"sha256="</span> <span class="op">.</span> <span class="ns">crypto</span><span class="op">::</span><span class="fn">hmac_sha256</span>(<span class="var">$payload</span>, <span class="fn">env</span>(<span class="str">"WEBHOOK_SECRET"</span>, <span class="str">""</span>))
+    <span class="kw">if</span> (!<span class="ns">crypto</span><span class="op">::</span><span class="fn">constant_compare</span>(<span class="var">$given</span>, <span class="var">$expected</span>)) {
+        <span class="ns">response</span><span class="op">::</span><span class="fn">status</span>(<span class="num">401</span>) <span class="kw">return</span>
+    }
+    <span class="cmt"># Signature valid — process the payment...</span>
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">true</span>])
+})</pre>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============================================================ PLAYGROUND (YAKINDA) -->
+<section id="playground" style="padding:100px 24px;text-align:center">
+  <div style="max-width:820px;margin:0 auto">
+    <div class="section-label">Live Demo</div>
+    <div class="section-title">Try it in the browser <span style="font-size:.6em;vertical-align:middle;background:#f59e0b;color:#fff;padding:3px 10px;border-radius:20px;margin-left:8px">COMING SOON</span></div>
+    <p class="section-sub" style="max-width:600px;margin:0 auto 32px">
+      Write and run LOOK code in the browser — no install. It's in the works —
+      once ready, a live editor will sit right here.
+    </p>
+    <div style="background:var(--dark2,#0d1117);border:1px dashed rgba(130,170,255,.4);border-radius:12px;padding:0;text-align:left;overflow:hidden;opacity:.75">
+      <div style="background:rgba(255,255,255,.05);padding:10px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,.08)">
+        <span style="width:11px;height:11px;border-radius:50%;background:#ff5f56;display:inline-block"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#ffbd2e;display:inline-block"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#27c93f;display:inline-block"></span>
+        <span style="margin-left:auto;font-family:monospace;font-size:12px;color:#8892a6">playground.lk — runnable soon</span>
+      </div>
+      <pre style="margin:0;padding:24px;font-family:monospace;font-size:13.5px;line-height:1.8;color:#8892a6">route("GET", "/", fn() => response::json(["ok" => true, "message" => "Hello LOOK!"]))
+
+<span style="color:#546e7a"># ▶ The Run button will appear here once it's ready</span></pre>
+    </div>
+    <p style="margin-top:20px;color:var(--muted);font-size:14px">
+      For now: <a href="#indir" style="color:var(--blue)">download</a> and run it in seconds with <code>lk --mode http</code>.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ ANATOMI -->
+<section style="background:var(--white);padding:100px 24px" id="anatomi">
+  <div class="container">
+    <div class="text-center">
+      <div class="section-label">Anatomy</div>
+      <div class="section-title">A single LOOK file</div>
+      <p class="section-sub">Login and data fetching — one file, no framework, no surprises.</p>
+    </div>
+
+    <div style="max-width:760px;margin:48px auto 0">
+
+      <!-- LOOK -->
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="background:var(--blue);color:#fff;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">LOOK</span>
+          <span style="font-size:13px;color:#64748b">index.lk — login + data fetching</span>
+        </div>
+        <div style="background:var(--code-bg);border-radius:12px;overflow:hidden;border:1px solid rgba(59,130,246,.3)">
+          <pre style="padding:20px;font-family:'Fira Code',monospace;font-size:12.5px;line-height:1.85;color:#cdd6f4;overflow-x:auto"><span class="kw">use</span> <span class="ns">auth</span>;
+
+<span class="var">$conn</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@localhost/blog"</span>)
+<span class="cmt"># Opened once — stays alive across every request</span>
+
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/login"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="ns">session</span><span class="op">::</span><span class="fn">start</span>()
+    <span class="var">$d</span> <span class="op">=</span> <span class="ns">request</span><span class="op">::</span><span class="fn">json</span>()
+
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>,
+        <span class="str">"SELECT * FROM users WHERE email=?"</span>, [<span class="var">$d</span>[<span class="str">"email"</span>]])
+    <span class="cmt"># ? parameterised — no SQL injection, no XSS sanitising</span>
+
+    <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) <span class="op">==</span> <span class="num">0</span> <span class="op">||</span>
+        !<span class="ns">auth</span><span class="op">::</span><span class="fn">verify</span>(<span class="var">$d</span>[<span class="str">"password"</span>], <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"password_hash"</span>])) {
+        <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>([<span class="str">"ok"</span> <span class="op">=></span> <span class="kw">false</span>], <span class="num">401</span>)
+        <span class="kw">return</span>
+    }
+    <span class="ns">session</span><span class="op">::</span><span class="fn">set</span>(<span class="str">"user_id"</span>, <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"id"</span>])
+    <span class="ns">response</span><span class="op">::</span><span class="fn">redirect</span>(<span class="str">"/panel"</span>)
+})
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$rows</span> <span class="op">=</span> <span class="ns">db</span><span class="op">::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM posts"</span>, [])
+    <span class="ns">response</span><span class="op">::</span><span class="fn">json</span>(<span class="var">$rows</span>)
+})</pre>
+        </div>
+        <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">request:: — zero globals</span>
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">Prepared stmt automatic</span>
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">DB connection persistent</span>
+          <span style="background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px">auth:: PBKDF2 built in</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ne sunuyor -->
+    <div style="margin-top:48px;overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <tr style="border-bottom:2px solid #e2e8f0">
+          <th style="text-align:left;padding:10px 14px;color:#64748b;font-weight:600">Topic</th>
+          <th style="text-align:left;padding:10px 14px;color:var(--blue);font-weight:700">How LOOK does it</th>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">DB connection</td>
+          <td style="padding:10px 14px;color:#16a34a">Warm start — opened once, stays alive across every request</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Request data</td>
+          <td style="padding:10px 14px;color:#16a34a">No globals — <code>request::</code> / <code>session::</code> namespaces</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Routing</td>
+          <td style="padding:10px 14px;color:#16a34a">Built into the language — <code>route("GET", "/path/{id}", fn)</code></td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">SQL injection protection</td>
+          <td style="padding:10px 14px;color:#16a34a"><code>db::query</code> auto-parameterised (<code>?</code> placeholder)</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px 14px;color:#374151">Concurrency</td>
+          <td style="padding:10px 14px;color:#16a34a"><code>parallel()</code> + <code>channel()</code> inside the language</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">WebSocket / SSE</td>
+          <td style="padding:10px 14px;color:#16a34a"><code>route("WS", ...)</code> — part of the core</td>
+        </tr>
+        <tr style="background:#f8fafc">
+          <td style="padding:10px 14px;color:#374151">Performance (router)</td>
+          <td style="padding:10px 14px;color:#16a34a">Bytecode VM — 10,000+ RPS on a direct port, single core</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ PHILOSOPHY -->
+<section class="philosophy" id="felsefe">
+  <div class="philosophy-inner text-center">
+    <div class="section-label">Philosophy</div>
+    <div class="section-title">Three rules, never broken</div>
+    <p style="color:#64748b;font-size:17px;max-width:680px;margin:16px auto 0;line-height:1.7;">
+      Every new feature must serve these three principles — otherwise it doesn't make it into the language.
+    </p>
+
+    <div class="philosophy-pillars">
+      <div class="pillar">
+        <div class="pillar-icon">🗺️</div>
+        <div class="pillar-title">Drop it, run it</div>
+        <div class="pillar-desc">
+          Drop the file on the server, let the server route it — done.
+          Nothing to install, nothing to compile.
+          Shared hosting, VPS, Plesk — the same workflow.
+        </div>
+        <div class="pillar-code"><span class="cmt"># GitHub Releases → download the binary</span>
+cp look-fcgi /opt/look/ && chmod +x /opt/look/look-fcgi
+<span class="cmt"># → Apache .htaccess, systemd service</span></div>
+      </div>
+
+      <div class="pillar g">
+        <div class="pillar-icon">⚡</div>
+        <div class="pillar-title">Explicit scope</div>
+        <div class="pillar-desc">
+          Clean scope, explicit dependencies, concurrency built into the language.
+          <code>use()</code> declares exactly what comes in.
+          No hidden globals, no surprises.
+        </div>
+        <div class="pillar-code"><span class="kw">route</span>(<span class="str">"GET"</span>, <span class="str">"/product/{id}"</span>,
+  <span class="kw">function</span>(<span class="var">$id</span>) <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="ns">response</span>::<span class="fn">json</span>($row)
+})</div>
+      </div>
+
+      <div class="pillar p">
+        <div class="pillar-icon">🔒</div>
+        <div class="pillar-title">No framework to set up</div>
+        <div class="pillar-desc">
+          Routing, DB, auth, cache, jobs, WebSocket, SSE, templates —
+          all inside the language. No package manager to open, no dependency hell.
+        </div>
+        <div class="pillar-code"><span class="kw">use</span> <span class="ns">jobs</span>  <span class="cmt"># SQLite job queue</span>
+<span class="kw">use</span> <span class="ns">cache</span>  <span class="cmt"># in-memory TTL cache</span>
+<span class="kw">use</span> <span class="ns">mail</span>   <span class="cmt"># Mailgun/SendGrid</span>
+<span class="cmt"># No install. It's all inside the binary.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ RUNTIME STACK -->
+<section class="stack">
+  <div class="stack-inner text-center">
+    <div class="section-label" style="color:var(--blue)">Runtime Layers</div>
+    <div class="section-title section-title-w">How deep does it go?</div>
+    <p class="section-sub-w">Every component of LOOK is written in C++23.</p>
+
+    <div class="stack-grid">
+      <div class="stack-card">
+        <div class="stag">Parser</div>
+        <h4>Lexer + Parser + AST</h4>
+        <p>Precedence-aware parser, full operator set, string interpolation, error positions via SourceLocation.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag">VM</div>
+        <h4>Bytecode VM</h4>
+        <p>AST → 3-address register bytecode → switch dispatch. 7.8× faster on compute workloads. Fallback: tree-walk interpreter.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag g">Concurrency</div>
+        <h4>ThreadPool + ConnPool</h4>
+        <p><code>--workers N</code>, per-request interpreter copy, per-DSN connection pool. Hot reload: zero downtime.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag g">Network</div>
+        <h4>HTTP/1.1 + WebSocket + SSE</h4>
+        <p>epoll (Linux), IOCP (Windows). RFC 6455 WS, SSE frame codec. Unlimited concurrent connections.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag p">DB</div>
+        <h4>MySQL · SQLite · PostgreSQL</h4>
+        <p>Wire protocol from scratch. No driver, no ORM. Same <code>db::</code> API, different DSN.</p>
+      </div>
+      <div class="stack-card">
+        <div class="stag o">Deployment</div>
+        <h4>CGI + FastCGI + HTTP</h4>
+        <p>Apache/nginx FastCGI, standalone HTTP, CGI fallback. One binary, three modes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ SETUP -->
+<section class="setup" id="kurulum">
+  <div class="setup-inner">
+    <div class="text-center">
+      <div class="section-label">Install</div>
+      <div class="section-title">Running in 5 minutes</div>
+      <p class="section-sub">Choose your platform:</p>
+      <p style="font-size:12px;color:#64748b;margin-top:8px;max-width:640px;margin-left:auto;margin-right:auto">
+        One portable binary for <strong>glibc&nbsp;≥&nbsp;2.28</strong>: AlmaLinux/Rocky/RHEL&nbsp;8·9·10, Ubuntu&nbsp;18.10→24.04, Debian&nbsp;10+ — and future releases work automatically (built on old glibc&nbsp;+&nbsp;static OpenSSL). <strong>CentOS&nbsp;7 / RHEL&nbsp;7</strong> (glibc&nbsp;2.17, EOL) is not supported — migrate to AlmaLinux&nbsp;8.
+      </p>
+    </div>
+
+    <div class="platform-tabs" style="justify-content:center;margin-bottom:36px">
+      <button class="platform-btn active" onclick="showPlatform('linux',this)">🐧 Linux</button>
+      <button class="platform-btn" onclick="showPlatform('windows',this)">🪟 Windows</button>
+      <button class="platform-btn" onclick="showPlatform('plesk',this)">🖥️ Plesk</button>
+      <button class="platform-btn" onclick="showPlatform('docker',this)">🐳 Docker</button>
+    </div>
+
+    <!-- Linux -->
+    <div class="setup-content active" id="p-linux">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>Download and extract the package</h4>
+            <p>One package for <strong>Ubuntu/Debian + AlmaLinux/Rocky/RHEL</strong> — the same portable binary. From <a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a>:</p>
+            <div class="cmd-block">
+              <code>unzip look-lang-linux-1.0.0.zip -d look &amp;&amp; cd look</code>
+              <button class="copy-btn" onclick="copyCmd(this,'unzip look-lang-linux-1.0.0.zip -d look && cd look')">Copy</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Install (one command)</h4>
+            <p>Installs the binary to <code>/usr/local/bin</code>, creates a sample app + systemd service (port 9000), starts it and verifies.</p>
+            <div class="cmd-block">
+              <code>sudo bash install.sh</code>
+              <button class="copy-btn" onclick="copyCmd(this,'sudo bash install.sh')">Copy</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Verify</h4>
+            <div class="cmd-block">
+              <code>curl http://127.0.0.1:9000/   ·   systemctl status look</code>
+              <button class="copy-btn" onclick="copyCmd(this,'curl http://127.0.0.1:9000/')">Copy</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">Prefer to manage it with dnf on AlmaLinux/RHEL: <code>dnf install look-lang-1.0.0-1.el8.x86_64.rpm</code> (then <code>dnf update look-lang</code>).</p>
+          </div>
+        </li>
+      </ol>
+    </div>
+
+    <!-- Windows -->
+    <div class="setup-content" id="p-windows">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>Install XAMPP</h4>
+            <p>If XAMPP is already installed, skip this step.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Extract and install the package (Administrator PowerShell)</h4>
+            <p>Extract <code>look-lang-xampp-1.0.0.zip</code>; it copies <code>lk-cgi.exe</code> to <code>cgi-bin</code>, patches httpd.conf for <code>.lk</code>, and creates a sample <code>test.lk</code>.</p>
+            <div class="cmd-block">
+              <code>Expand-Archive look-lang-xampp-1.0.0.zip look; cd look; .\install.ps1</code>
+              <button class="copy-btn" onclick="copyCmd(this,'Expand-Archive look-lang-xampp-1.0.0.zip look; cd look; .\\install.ps1')">Copy</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">Custom path: <code>.\install.ps1 -XamppDir &quot;D:\xampp&quot;</code> · Uninstall: <code>.\uninstall.ps1</code></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Restart XAMPP Apache</h4>
+            <p>XAMPP Control Panel → Apache → Restart. Open <code>http://localhost/test.lk</code> — it's running.</p>
+          </div>
+        </li>
+      </ol>
+    </div>
+
+    <!-- Plesk -->
+    <div class="setup-content" id="p-plesk">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>Open the Plesk Terminal</h4>
+            <p>Plesk Panel &rarr; <strong>Server Management &rarr; Terminal</strong></p>
+            <p style="font-size:12px;color:#64748b;margin-top:4px">If you prefer SSH: <code>ssh root@server_ip</code></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Download and install the ZIP</h4>
+            <div class="cmd-block">
+              <code>plesk bin extension --uninstall look-lang 2&gt;/dev/null; wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip" &amp;&amp; plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code>
+              <button class="copy-btn" onclick="copyCmd(this,'plesk bin extension --uninstall look-lang 2>/dev/null; wget -O /tmp/look-lang-plesk-1.0.0.zip &quot;https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip&quot; && plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip')">Copy</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">You'll see "The extension was successfully installed."</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Finish setup — one root command (required on new servers)</h4>
+            <div class="cmd-block">
+              <code>plesk php /usr/local/psa/admin/plib/modules/look-lang/scripts/post-install.php</code>
+              <button class="copy-btn" onclick="copyCmd(this,'plesk php /usr/local/psa/admin/plib/modules/look-lang/scripts/post-install.php')">Copy</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">Plesk does not run the extension's install hook, so this installs the LOOK binary to <code>/opt/look</code> and grants sudo access. <strong>Without it, enabling a domain fails with</strong> <code>sudo: a password is required</code>. Safe to re-run; survives uninstall/install.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Open the LOOK Language panel</h4>
+            <p>Plesk Panel &rarr; <strong>Extensions</strong> &rarr; <strong>My Extensions</strong> &rarr; <strong>LOOK Language &rarr; Open</strong></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Add a domain</h4>
+            <p><strong>Applications &rarr; Add New Domain</strong> &rarr; pick a domain (script path and port fill in automatically) &rarr; <strong>Add &amp; Start</strong></p>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">After a few seconds it shows <strong>Running</strong> in the list. The systemd service + Apache proxy are created automatically.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Write your code</h4>
+            <p>Use <strong>Edit Code</strong> to edit <code>index.lk</code> in the browser &rarr; <strong>Save &amp; Redeploy</strong> &mdash; the file is written and the service restarts.</p>
+          </div>
+        </li>
+      </ol>
+      <p style="margin-top:16px;font-size:13px;color:#64748b;border-left:3px solid #3b82f6;padding-left:12px">
+        <strong>Full workspace:</strong> live system dashboard, in-browser code editor, per-domain monitor (CPU/RAM/PID/connections), journalctl log viewer.<br>
+        <span style="font-size:12px">On a fresh server, one root command is needed to grant sudo access (see docs).</span>
+      </p>
+    </div>
+
+    <!-- Docker -->
+    <div class="setup-content" id="p-docker">
+      <ol class="setup-steps">
+        <li>
+          <div class="step-body">
+            <h4>Pull &amp; run — nothing to build</h4>
+            <p>The official image is published on Docker Hub. One command downloads and starts LOOK — no source, no compiler. Your app lives in <code>./app</code>, mounted at <code>/app</code>.</p>
+            <div class="cmd-block">
+              <code>docker run -p 7400:7400 -v "${PWD}/app:/app" codlook/look</code>
+              <button class="copy-btn" onclick="copyCmd(this,'docker run -p 7400:7400 -v \"${PWD}/app:/app\" codlook/look')">Copy</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">Put your <code>index.lk</code> in <code>./app</code>, then open <code>http://localhost:7400/</code>. First run pulls the image (~43&nbsp;MB) automatically.</p>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Or build the image yourself</h4>
+            <p>Prefer building from source? The multi-stage production image (AlmaLinux 8 base) compiles and packages LOOK:</p>
+            <div class="cmd-block">
+              <code>docker build -f cpp/docker/Dockerfile.production -t look:latest .</code>
+              <button class="copy-btn" onclick="copyCmd(this,'docker build -f cpp/docker/Dockerfile.production -t look:latest .')">Copy</button>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="step-body">
+            <h4>Or just build the portable binary</h4>
+            <p>Build once on AlmaLinux 8 (glibc 2.28 + static OpenSSL) — the <strong>same single binary runs on every distribution</strong> (Ubuntu/Debian/AlmaLinux/Rocky/RHEL 8·9·10 and newer). No per-distro builds:</p>
+            <div class="cmd-block">
+              <code>docker build -t look-build -f cpp/Dockerfile.build cpp/ &amp;&amp; docker run --rm -v "${PWD}/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh</code>
+              <button class="copy-btn" onclick="copyCmd(this,'docker build -t look-build -f cpp/Dockerfile.build cpp/ && docker run --rm -v \"${PWD}/cpp:/look/cpp\" -w /look/cpp look-build bash build-portable.sh')">Copy</button>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-top:6px">Output: <code>cpp/build-portable/{lk, lk-fcgi, lk-cgi}</code> — statically linked (glibc + libz only). Verified on Ubuntu&nbsp;22.04 and AlmaLinux&nbsp;9 (OpenSSL&nbsp;3.x).</p>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ DOWNLOAD -->
+<section class="download" id="indir">
+  <div class="section-label">Download</div>
+  <div class="section-title section-title-w">Built for web developers</div>
+  <p class="section-sub-w">v1.0.0 · Apache 2.0 · Stable release for every platform.</p>
+
+  <div class="download-grid">
+    <div class="dl-card">
+      <h3>🐧 Linux — Ubuntu + AlmaLinux</h3>
+      <p>One self-contained package. <code>sudo bash install.sh</code> → binary + systemd service. The same portable binary runs on Ubuntu/Debian and AlmaLinux/Rocky/RHEL.</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; look-lang-linux-1.0.0.zip →
+      </a>
+      <a href="https://codlook.com/docs#fastcgi" class="btn-dl-outline" target="_blank">
+        Install Guide
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>📦 AlmaLinux / RHEL — RPM</h3>
+      <p>dnf-managed install. <code>dnf install look-lang-…rpm</code> → then update with <code>dnf update look-lang</code>. The binary links to the system OpenSSL (OS security patches).</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; look-lang-1.0.0-1.el8.x86_64.rpm →
+      </a>
+      <a href="https://codlook.com/docs#platform" class="btn-dl-outline" target="_blank">
+        Plesk Alternative
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>🪟 Windows — XAMPP</h3>
+      <p>One command for XAMPP. <code>.\install.ps1</code> → lk-cgi.exe + httpd.conf patch. Unlimited connections via IOCP.</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; look-lang-xampp-1.0.0.zip →
+      </a>
+      <a href="https://codlook.com/docs#apache" class="btn-dl-outline" target="_blank">
+        XAMPP Install Guide
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>🖥️ Plesk Extension</h3>
+      <p>A full hosting panel for Plesk 18+ — code editor, live monitor, log viewer. Add a domain, write your code, go live.</p>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl" target="_blank">
+        &#8659; look-lang-plesk-1.0.0.zip →
+      </a>
+      <a href="https://github.com/codlook/look" class="btn-dl-outline" target="_blank">GitHub →</a>
+    </div>
+
+    <div class="dl-card">
+      <h3>🧩 VS Code Extension</h3>
+      <p>IntelliSense (all built-ins + your own code), <strong>live error checking</strong> (syntax + undefined functions), outline, 20+ snippets, Run/Serve/REPL shortcuts. v2.0</p>
+      <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" class="btn-dl" target="_blank">
+        &#8659; Install from Marketplace →
+      </a>
+      <a href="https://github.com/codlook/look/releases/latest" class="btn-dl-outline" target="_blank">
+        &#8659; look-lang-2.0.0.vsix (GitHub) →
+      </a>
+    </div>
+
+    <div class="dl-card">
+      <h3>📦 Source Code</h3>
+      <p>C++23, CMake 3.20+. Apache 2.0 license. For contributing or building it yourself.</p>
+      <a href="https://github.com/codlook/look" class="btn-dl" target="_blank">
+        GitHub → codlook/look
+      </a>
+      <a href="https://github.com/codlook/look/releases" class="btn-dl-outline" target="_blank">
+        All Releases
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ FOOTER -->
+<footer>
+  <p class="f-logo" style="font-size:18px;color:#fff;margin-bottom:8px">look<span>.</span></p>
+  <p style="margin-bottom:20px;color:var(--muted)">A scripting language written for the web · v1.0.0 · Apache 2.0</p>
+  <p style="margin-bottom:16px">
+    <a href="https://github.com/Codlook/look" target="_blank">GitHub</a> &nbsp;·&nbsp;
+    <a href="https://packages.codlook.com" target="_blank">Packages</a> &nbsp;·&nbsp;
+    <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">VS Code</a> &nbsp;·&nbsp;
+    <a href="https://test.codlook.com" target="_blank">Live Demo</a> &nbsp;·&nbsp;
+    <a href="/docs" target="_blank">Documentation</a> &nbsp;·&nbsp;
+    <a href="mailto:info@codlook.com">info@codlook.com</a>
+  </p>
+  <p style="margin-bottom:24px">
+    <a href="https://twitter.com/codlook" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:7px 16px;border-radius:8px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:500;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='rgba(255,255,255,.06)'">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+      @codlook
+    </a>
+    &nbsp;
+    <a href="https://instagram.com/codlook" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:7px 16px;border-radius:8px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:500;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='rgba(255,255,255,.06)'">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+      @codlook
+    </a>
+    &nbsp;
+    <a href="https://linkedin.com/company/codlook" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:7px 16px;border-radius:8px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:500;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='rgba(255,255,255,.06)'">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+      codlook
+    </a>
+  </p>
+  <p style="color:rgba(148,163,184,.5);font-size:12px">
+    v1.0.0 · C++23 · CMake 3.20+ · Apache 2.4+ / nginx · &copy; 2026 Codlook
+  </p>
+</footer>
+
+<script>
+function showTab(id, btn) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    btn.classList.add('active');
+}
+function showPlatform(id, btn) {
+    document.querySelectorAll('.setup-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.platform-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('p-' + id).classList.add('active');
+    btn.classList.add('active');
+}
+function copyCmd(btn, text) {
+    navigator.clipboard.writeText(text).then(function() {
+        var orig = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        btn.style.color = '#10b981';
+        setTimeout(function() { btn.textContent = orig; btn.style.color = ''; }, 2000);
+    });
+}
+// Benchmark counter animation
+function animateCounters() {
+    document.querySelectorAll('.bench-num[data-target]').forEach(function(el) {
+        var target = parseInt(el.getAttribute('data-target'));
+        var current = 0;
+        var step = target / 60;
+        var timer = setInterval(function() {
+            current = Math.min(current + step, target);
+            el.textContent = Math.floor(current).toLocaleString('en-US');
+            if (current >= target) clearInterval(timer);
+        }, 16);
+    });
+}
+var observed = false;
+var observer = new IntersectionObserver(function(entries) {
+    if (!observed && entries[0].isIntersecting) { observed = true; animateCounters(); }
+}, { threshold: 0.3 });
+var benchEl = document.querySelector('.benchmarks');
+if (benchEl) observer.observe(benchEl);
+</script>
+</body>
+</html>
