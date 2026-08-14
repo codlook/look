@@ -58,6 +58,7 @@ jobs:
   tsan:
     name: "ThreadSanitizer (blocking mode)"
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # güvenlik ağı: hang olursa 6-saat GitHub varsayılanı yerine erken kes
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
@@ -79,7 +80,10 @@ jobs:
           TSAN_OPTIONS="halt_on_error=0" cpp/build-tsan/lk-fcgi --mode http --port 7411 --workers 8 /tmp/tsan_app.lk &
           SRV=$!
           sleep 3
-          for i in $(seq 1 500); do curl -s "http://127.0.0.1:7411/ping" > /dev/null & done
-          wait
+          # SADECE curl PID'lerini bekle — argümansız 'wait' sunucuyu ($SRV, --mode http sonsuz) da
+          # beklerdi → asla dönmez, 'kill $SRV' hiç çalışmaz, job 6 saat hang olurdu (kök-neden).
+          pids=""
+          for i in $(seq 1 500); do curl -s "http://127.0.0.1:7411/ping" > /dev/null & pids="$pids $!"; done
+          wait $pids
           kill $SRV 2>/dev/null || true
         continue-on-error: true  # TSan bulguları baseline kurulana dek uyarı
