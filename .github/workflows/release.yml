@@ -80,16 +80,24 @@ jobs:
             -f cpp/docker/Dockerfile.production .
           docker save codlook/look:1.0.0 | gzip > look-docker.tar.gz
 
-      # 6) Artefaktları topla + SHA256SUMS
-      - name: Collect artifacts + SHA256SUMS
+      # 6) Artefaktları topla + Windows/vsix'i çek + SHA256SUMS (HEPSİNİ kapsar)
+      # Windows/vsix Tier-2: ELLE derlenip release'e ÖNCEDEN yüklenir (Linux runner'da MSVC yok).
+      # Var olan release'ten çekilir → SHA256SUMS + inline consistency (adım 7.5) HEPSİNİ kapsasın;
+      # yoksa (rc / ilk yayın) best-effort atlanır ve manifest sadece Linux üçlüsünü sayar.
+      - name: Collect artifacts + fetch Win/vsix + SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           mkdir -p dist
           cp platforms/linux/look-lang-linux-1.0.0.zip dist/
           cp platforms/plesk/look-lang-plesk-1.0.0.zip dist/
           cp look-docker.tar.gz dist/
-          # subshell → dış kabuk repo kökünde kalır; 'cat dist/...' (cd sonrası dist/dist DEĞİL) çalışır
-          ( cd dist && sha256sum *.zip *.tar.gz > SHA256SUMS.txt )
+          gh release download "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'look-lang-windows-*.zip' --pattern '*.vsix' --dir dist --clobber 2>/dev/null || true
+          # subshell → dış kabuk repo kökünde kalır; nullglob ile vsix yoksa literal '*.vsix' geçmez
+          ( cd dist && shopt -s nullglob && sha256sum *.zip *.tar.gz *.vsix > SHA256SUMS.txt )
+          echo "=== dist ==="; ls -1 dist
           echo "=== SHA256SUMS ==="; cat dist/SHA256SUMS.txt
 
       # 7) Yayınla — rc* → ayrı prerelease (prova); v1.0 → mevcut asset'leri yenile
@@ -109,6 +117,51 @@ jobs:
             echo "GERÇEK YAYIN — $TAG asset'leri HEAD'e yenileniyor (sürüm 1.0.0 sabit, damga=$GITHUB_SHA)"
             gh release upload "$TAG" *.zip *.tar.gz SHA256SUMS.txt --clobber
           fi
+
+      # 7.5) CONSISTENCY (INLINE) — tüm binary asset'ler AYNI damga + manifest kapsamı.
+      # release-consistency.yml AYRI workflow'du ama GITHUB_TOKEN ile oluşturulan release'ler
+      # downstream'i tetiklemez (recursive-run koruması) → guard otomatik yolda ÖLÜYDÜ. Buraya
+      # inline alındı: upload'dan SONRA, Docker Hub push'undan ÖNCE koşar → tutarsız yayın Hub'a
+      # gitmez. 403d2dd'de Windows 5465074'te kalmıştı; bu adım o sınıfı otomatik kapatır.
+      # rc: Windows yok (Tier-2 ayrı) → atlanır; gerçek v* : Windows ZORUNLU, yoksa FAIL.
+      # POZİTİF KONTROL: bir asset'e eski-damgalı binary koy → bu adım KIRMIZI (rc provası göster).
+      - name: CONSISTENCY — asset damgaları aynı mı + manifest kapsamı (inline)
+        run: |
+          set -e
+          cd dist
+          unzip -oq look-lang-linux-*.zip -d _linux
+          REF=$(_linux/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+          [ -n "$REF" ] || { echo "::error::linux damgası okunamadı"; exit 1; }
+          echo "REFERANS damga (linux): $REF"
+          fail=0
+          unzip -oq look-lang-plesk-*.zip -d _plesk
+          if [ -f _plesk/htdocs/bin/lk ]; then
+            chmod +x _plesk/htdocs/bin/lk
+            P=$(_plesk/htdocs/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+            [ "$P" = "$REF" ] && echo "  OK   plesk  $P" || { echo "  FAIL plesk  $P != $REF"; fail=1; }
+          else echo "  FAIL plesk: htdocs/bin/lk YOK — paketleme bozuk"; fail=1; fi
+          docker load < look-docker.tar.gz >/dev/null
+          D=$(docker run --rm codlook/look:1.0.0 lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+          [ "$D" = "$REF" ] && echo "  OK   docker $D" || { echo "  FAIL docker $D != $REF"; fail=1; }
+          # Windows: ÇALIŞTIRMADAN — referans damga .exe içinde geçiyor mu (strings/grep)
+          if ls look-lang-windows-*.zip >/dev/null 2>&1; then
+            unzip -oq look-lang-windows-*.zip -d _win
+            if grep -aq "$REF" _win/lk.exe && grep -aq "$REF" _win/lk-fcgi.exe; then
+              echo "  OK   windows (damga $REF .exe içinde)"
+            else echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe içinde YOK (eski elle-derleme?)"; fail=1; fi
+          elif [[ "$GITHUB_REF_NAME" == *rc* ]]; then
+            echo "  SKIP windows (rc provası — Windows Tier-2 ayrı derlenir)"
+          else
+            echo "::error::windows asset YOK — gerçek yayında ZORUNLU (elle derlenip yüklenmeli)"; fail=1
+          fi
+          # Manifest sayı-kilidi: yayındaki her asset (SHA256SUMS hariç) manifest satırında mı
+          MAN=$(grep -cE '^[0-9a-f]{64}' SHA256SUMS.txt)
+          ASSETS=$(ls *.zip *.tar.gz *.vsix 2>/dev/null | wc -l)
+          echo "  manifest satır=$MAN | asset=$ASSETS"
+          [ "$MAN" = "$ASSETS" ] || { echo "::error::manifest $MAN != asset $ASSETS — bir asset kapsam dışı"; fail=1; }
+          echo ""
+          [ "$fail" = 0 ] || { echo "::error::Asset damgaları AYRIŞIYOR — yayın tutarsız"; exit 1; }
+          echo "TUTARLI: tüm binary asset'ler $REF"
 
       # 8) Docker Hub push — yalnız secret varsa (yoksa atla; kullanıcı elle push eder).
       # rc* tag'lerinde ATLANIR: Docker Hub'da tag izolasyonu yok → rc :latest'i ezerdi
