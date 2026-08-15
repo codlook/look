@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOOK — Documentation</title>
+<meta name="description" content="LOOK language reference: syntax, types, control flow, routing, database and 247 built-in functions across 32 modules. A scripting language built for the web.">
+<link rel="icon" href="look-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="https://codlook.com/"><span>look<span class="dot">.</span></span></a>
+    <nav class="nav-links">
+      <a href="https://codlook.com/">Home</a>
+      <a href="https://doc.codlook.com/" class="active">Docs</a>
+      <a href="https://packages.codlook.com/">Packages</a>
+      <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
+    </nav>
+    <a class="btn btn-primary" href="https://codlook.com/#kurulum">Get started</a>
+    <button class="nav-burger" aria-label="Menu" onclick="document.querySelector('header.nav').classList.toggle('open')"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<div class="doc-shell">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <h4>Getting started</h4>
+    <a href="#kurulum">Install</a>
+    <a href="#ilk">Your first index.lk</a>
+    <h4>Language</h4>
+    <a href="#sozdizimi">Syntax basics</a>
+    <a href="#tipler">Types &amp; arrays</a>
+    <a href="#operatorler">Operators</a>
+    <a href="#stringler">Strings &amp; interpolation</a>
+    <a href="#kontrol">Control flow</a>
+    <a href="#fonksiyonlar">Functions &amp; closures</a>
+    <a href="#hata">Error handling</a>
+    <h4>Web</h4>
+    <a href="#yonlendirme">Routing</a>
+    <a href="#istek">request:: / response::</a>
+    <a href="#veritabani">Database</a>
+    <a href="#gerceklzaman">WebSocket &amp; SSE</a>
+    <h4>Reference</h4>
+    <a href="#tasarim">Design decisions</a>
+    <a href="#moduller">Module reference</a>
+  </aside>
+
+  <!-- CONTENT -->
+  <main class="content">
+    <h1>LOOK <span class="r">Documentation</span></h1>
+    <p class="lead">A scripting language built for the web. This page is the full language reference — syntax, types, routing, database and 247 built-in functions across 32 modules.</p>
+
+    <section id="kurulum">
+      <h2>Install</h2>
+      <p>The fastest way — the official image on Docker Hub (no compilation):</p>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">terminal</span></div><pre>docker run -p 7400:7400 -v "$PWD/app:/app" codlook/look</pre></div>
+      <p>Drop in <code>./app/index.lk</code>, open <code>http://localhost:7400/</code>. For Linux server, Plesk and Windows installs see the <a href="https://codlook.com/#kurulum">install section on the home page</a>. Editor support: the <a href="https://packages.codlook.com/">VS Code extension</a>.</p>
+    </section>
+
+    <section id="ilk">
+      <h2>Your first index.lk</h2>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">index.lk</span></div>
+<pre><span class="c-cm">// Note: LOOK has no statement-ending semicolons</span>
+<span class="c-fn">route</span>(<span class="c-str">"GET"</span>, <span class="c-str">"/"</span>, <span class="c-kw">fn</span>(<span class="c-var">$req</span>) => <span class="c-fn">response::json</span>([<span class="c-str">"hello"</span> => <span class="c-str">"world"</span>]))
+
+<span class="c-fn">route</span>(<span class="c-str">"GET"</span>, <span class="c-str">"/hello/:name"</span>, <span class="c-kw">function</span>(<span class="c-var">$req</span>) {
+    <span class="c-var">$name</span> = <span class="c-fn">request::param</span>(<span class="c-str">"name"</span>)
+    <span class="c-kw">return</span> <span class="c-fn">response::json</span>([<span class="c-str">"message"</span> => <span class="c-str">"Hello, "</span> . <span class="c-var">$name</span>])
+})</pre></div>
+    </section>
+
+    <section id="sozdizimi">
+      <h2>Syntax basics</h2>
+      <ul>
+        <li><strong>Variables</strong> are prefixed with <code>$</code>: <code>$name = "Ada"</code>. Reading an undefined variable is an <strong>error</strong> (strict).</li>
+        <li><strong>No semicolons.</strong> Statements end at the end of the line.</li>
+        <li><strong>Comments:</strong> <code>// line</code>, <code># line</code>, <code>/* block */</code>.</li>
+        <li><strong>Output:</strong> <code>print(...)</code> and <code>write(...)</code> (parentheses required).</li>
+        <li><strong>String concatenation</strong> uses the dot: <code>"a" . "b"</code> (<code>+</code> is arithmetic).</li>
+      </ul>
+      <div class="callout"><b>Strict by design:</b> an undefined variable is an error, type-strict <code>==</code> (<code>1 == "1"</code> → <code>false</code>), full 64-bit integer comparison. A value that can't be converted to a number doesn't silently become 0 in arithmetic — it throws.</div>
+    </section>
+
+    <section id="tipler">
+      <h2>Types &amp; arrays</h2>
+      <p>Primitive types: <code>int</code> (64-bit), <code>float</code>, <code>string</code>, <code>bool</code>, <code>null</code>, <code>array</code>, <code>function</code>. Integers are full 64-bit — phone numbers/IDs don't silently corrupt.</p>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">types.lk</span></div>
+<pre><span class="c-cm">// Indexed array</span>
+<span class="c-var">$colors</span> = [<span class="c-str">"red"</span>, <span class="c-str">"green"</span>, <span class="c-str">"blue"</span>]
+
+<span class="c-cm">// Assoc array (key => value)</span>
+<span class="c-var">$person</span> = [<span class="c-str">"name"</span> => <span class="c-str">"Ali"</span>, <span class="c-str">"age"</span> => <span class="c-num">30</span>]
+<span class="c-fn">print</span>(<span class="c-var">$person</span>[<span class="c-str">"name"</span>])         <span class="c-cm">// Ali</span>
+
+<span class="c-cm">// Nested</span>
+<span class="c-var">$data</span> = [<span class="c-str">"users"</span> => [[<span class="c-str">"name"</span> => <span class="c-str">"Ada"</span>]]]</pre></div>
+      <p>Type conversion: <code>int(...)</code>, <code>float(...)</code>, <code>string(...)</code>. DB columns convert automatically; you only need it for user input: <code>int(request::get("id"))</code>.</p>
+    </section>
+
+    <section id="operatorler">
+      <h2>Operators</h2>
+      <table>
+        <tr><th>Group</th><th>Operators</th></tr>
+        <tr><td>Arithmetic</td><td><code>+ - * / %</code> · power: <code>**</code></td></tr>
+        <tr><td>String concatenation</td><td><code>.</code> &nbsp;(<code>"a" . "b"</code>)</td></tr>
+        <tr><td>Comparison</td><td><code>== != &lt; &lt;= &gt; &gt;=</code> &nbsp;(<strong>type-strict</strong>)</td></tr>
+        <tr><td>Logical</td><td><code>&amp;&amp; || !</code></td></tr>
+        <tr><td>Compound assignment</td><td><code>+= -= *= /= %= .=</code></td></tr>
+        <tr><td>Increment/decrement</td><td><code>++ --</code></td></tr>
+      </table>
+      <div class="callout"><b>Watch out:</b> <code>+</code> is arithmetic, not concatenation. Use <code>.</code> to join text. A non-numeric operand in arithmetic (null, array, non-numeric string) <strong>throws</strong> — it doesn't silently fall back to 0.</div>
+    </section>
+
+    <section id="stringler">
+      <h2>Strings &amp; interpolation</h2>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">string.lk</span></div>
+<pre><span class="c-var">$name</span> = <span class="c-str">"Ada"</span>
+<span class="c-cm">// Double quotes — interpolation on, {$x} auto HTML-escaped</span>
+<span class="c-fn">print</span>(<span class="c-str">"Hello {$name}!"</span>)          <span class="c-cm">// Hello Ada!</span>
+<span class="c-fn">print</span>(<span class="c-str">"Square: {math::pow(4,2)}"</span>)  <span class="c-cm">// expressions work too</span>
+
+<span class="c-cm">// Raw (unescaped) interpolation: {!$x}</span>
+<span class="c-cm">// Backtick — raw string, NO escaping/interpolation</span>
+<span class="c-var">$sql</span> = `SELECT * FROM users
+WHERE active = 1`</pre></div>
+      <p>In a double-quoted string, <code>{$variable}</code> and <code>{expression}</code> are interpolated and <strong>auto HTML-escaped</strong> (XSS protection). For unescaped output use <code>{!$x}</code>. A backtick string (<code>`...`</code>) is raw — ideal for multi-line SQL.</p>
+    </section>
+
+    <section id="kontrol">
+      <h2>Control flow</h2>
+      <div class="callout tip"><b>No semicolons.</b> The <code>for</code> loop is space-separated, and <code>switch</code> is Go-style (no <code>break</code> needed).</div>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">akis.lk</span></div>
+<pre><span class="c-cm">// if / elseif / else</span>
+<span class="c-kw">if</span> (<span class="c-var">$score</span> &gt;= <span class="c-num">90</span>) { <span class="c-fn">print</span>(<span class="c-str">"A"</span>) }
+<span class="c-kw">elseif</span> (<span class="c-var">$score</span> &gt;= <span class="c-num">80</span>) { <span class="c-fn">print</span>(<span class="c-str">"B"</span>) }
+<span class="c-kw">else</span> { <span class="c-fn">print</span>(<span class="c-str">"C"</span>) }
+
+<span class="c-cm">// for — space-separated (NO ;), $i++ increment</span>
+<span class="c-kw">for</span> (<span class="c-var">$i</span> = <span class="c-num">0</span> <span class="c-var">$i</span> &lt; <span class="c-num">10</span> <span class="c-var">$i</span>++) {
+    <span class="c-fn">print</span>(<span class="c-str">"{$i} "</span>)
+}
+
+<span class="c-cm">// foreach — arrays and assoc</span>
+<span class="c-kw">foreach</span> (<span class="c-var">$colors</span> <span class="c-kw">as</span> <span class="c-var">$color</span>) { <span class="c-fn">print</span>(<span class="c-var">$color</span>) }
+<span class="c-kw">foreach</span> (<span class="c-var">$person</span> <span class="c-kw">as</span> <span class="c-var">$key</span> => <span class="c-var">$value</span>) { }
+
+<span class="c-cm">// switch — Go-style: NO break, each case exits automatically</span>
+<span class="c-kw">switch</span> (<span class="c-var">$status</span>) {
+    <span class="c-kw">case</span> <span class="c-str">"active"</span>:
+        <span class="c-fn">print</span>(<span class="c-str">"running"</span>)
+    <span class="c-kw">case</span> <span class="c-str">"pending"</span>, <span class="c-str">"paused"</span>:   <span class="c-cm">// multiple with commas</span>
+        <span class="c-fn">print</span>(<span class="c-str">"stopped"</span>)
+    <span class="c-kw">default</span>:
+        <span class="c-fn">print</span>(<span class="c-str">"unknown"</span>)
+}
+
+<span class="c-cm">// while — break / continue</span>
+<span class="c-kw">while</span> (<span class="c-var">$i</span> &lt; <span class="c-num">5</span>) { <span class="c-var">$i</span>++ }</pre></div>
+    </section>
+
+    <section id="fonksiyonlar">
+      <h2>Functions &amp; closures</h2>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">fn.lk</span></div>
+<pre><span class="c-cm">// Classic function (with default parameters)</span>
+<span class="c-kw">function</span> <span class="c-fn">greet</span>(<span class="c-var">$name</span>, <span class="c-var">$greeting</span> = <span class="c-str">"Hello"</span>) {
+    <span class="c-kw">return</span> <span class="c-var">$greeting</span> . <span class="c-str">", "</span> . <span class="c-var">$name</span>
+}
+
+<span class="c-cm">// Short lambda — fn + arrow, implicit return</span>
+<span class="c-var">$square</span> = <span class="c-kw">fn</span>(<span class="c-var">$x</span>) => <span class="c-var">$x</span> * <span class="c-var">$x</span>
+
+<span class="c-cm">// Closure — EXPLICIT capture with use() (no hidden globals)</span>
+<span class="c-var">$factor</span> = <span class="c-num">3</span>
+<span class="c-var">$multiply</span> = <span class="c-kw">function</span>(<span class="c-var">$x</span>) <span class="c-kw">use</span> (<span class="c-var">$factor</span>) {
+    <span class="c-kw">return</span> <span class="c-var">$x</span> * <span class="c-var">$factor</span>
+}</pre></div>
+      <p>Closures capture their dependencies <strong>explicitly</strong> with <code>use (...)</code> — there are no hidden globals. For a connection shared across routes, use <code>app::set / app::get</code>.</p>
+    </section>
+
+    <section id="hata">
+      <h2>Error handling</h2>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">error.lk</span></div>
+<pre><span class="c-kw">try</span> {
+    <span class="c-kw">if</span> (<span class="c-var">$x</span> &lt; <span class="c-num">0</span>) {
+        <span class="c-kw">throw</span> <span class="c-fn">error::new</span>(<span class="c-str">"invalid"</span>, <span class="c-str">"negative value"</span>, <span class="c-num">400</span>)
+    }
+} <span class="c-kw">catch</span> (<span class="c-var">$e</span>) {
+    <span class="c-fn">log::error</span>(<span class="c-fn">error::message</span>(<span class="c-var">$e</span>))
+    <span class="c-kw">if</span> (<span class="c-fn">error::is</span>(<span class="c-var">$e</span>, <span class="c-str">"invalid"</span>)) { }
+}</pre></div>
+      <p>Throw a plain string or a structured <code>error::new($type, $message [, $code])</code>. Inspect it with <code>error::is / code / message</code>. <code>error::</code> is always available (no <code>use</code> needed). Every error also reports the <strong>File</strong> and <strong>Line</strong> where it occurred.</p>
+    </section>
+
+    <section id="yonlendirme">
+      <h2>Routing</h2>
+      <p>Routing is built into the language — REST, WebSocket and SSE all use the same <code>route()</code>. URL parameters (<code>:id</code>) are parsed automatically.</p>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">routes.lk</span></div>
+<pre><span class="c-fn">route</span>(<span class="c-str">"GET"</span>,  <span class="c-str">"/products"</span>,      <span class="c-var">$list</span>)
+<span class="c-fn">route</span>(<span class="c-str">"GET"</span>,  <span class="c-str">"/products/:id"</span>,  <span class="c-var">$show</span>)
+<span class="c-fn">route</span>(<span class="c-str">"POST"</span>, <span class="c-str">"/products"</span>,      <span class="c-var">$create</span>)
+<span class="c-fn">route</span>(<span class="c-str">"WS"</span>,   <span class="c-str">"/chat"</span>,          <span class="c-var">$ws</span>)
+<span class="c-fn">route</span>(<span class="c-str">"SSE"</span>,  <span class="c-str">"/events"</span>,        <span class="c-var">$sse</span>)</pre></div>
+      <p>Group routes under a shared prefix (and middleware) with <code>route::group("/api", [$auth], fn)</code>.</p>
+    </section>
+
+    <section id="istek">
+      <h2>request:: / response::</h2>
+      <p>Request data via <code>request::</code>, the response via <code>response::</code> — no middleware layer.</p>
+      <table>
+        <tr><th>Function</th><th>What it does</th></tr>
+        <tr><td><code>request::get("q")</code></td><td>Query parameter (?q=...)</td></tr>
+        <tr><td><code>request::post("name")</code></td><td>Form field</td></tr>
+        <tr><td><code>request::param("id")</code></td><td>Path parameter (/x/:id)</td></tr>
+        <tr><td><code>request::json()</code></td><td>Parses the JSON body into an assoc array</td></tr>
+        <tr><td><code>request::header("...")</code></td><td>Request header</td></tr>
+        <tr><td><code>response::json($v [, 201])</code></td><td>JSON response (+ status code)</td></tr>
+        <tr><td><code>response::error(404, "...")</code></td><td>Error response</td></tr>
+        <tr><td><code>response::html($s)</code></td><td>HTML response</td></tr>
+      </table>
+    </section>
+
+    <section id="veritabani">
+      <h2>Database</h2>
+      <p>MySQL, MariaDB, PostgreSQL and SQLite — the same <code>db::</code> API, different DSN. Queries are parameterized (<code>?</code>) — injection-safe.</p>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">db.lk</span></div>
+<pre><span class="c-var">$c</span> = <span class="c-fn">db::connect</span>(<span class="c-str">"mysql://user:pass@127.0.0.1/dbname"</span>)
+<span class="c-var">$rows</span> = <span class="c-fn">db::query</span>(<span class="c-var">$c</span>, <span class="c-str">"SELECT * FROM users WHERE id = ?"</span>, [<span class="c-var">$id</span>])
+<span class="c-fn">db::exec</span>(<span class="c-var">$c</span>, <span class="c-str">"INSERT INTO users(name) VALUES(?)"</span>, [<span class="c-var">$name</span>])
+<span class="c-cm">// Transactions: db::begin / commit / rollback · db::transaction($c, fn)</span></pre></div>
+      <table>
+        <tr><th>DB</th><th>DSN</th></tr>
+        <tr><td>MySQL / MariaDB</td><td><code>mysql://user:pass@127.0.0.1/db</code></td></tr>
+        <tr><td>PostgreSQL</td><td><code>postgres://user:pass@127.0.0.1/db</code></td></tr>
+        <tr><td>SQLite</td><td><code>sqlite://./data.db</code> · <code>sqlite://:memory:</code></td></tr>
+      </table>
+    </section>
+
+    <section id="gerceklzaman">
+      <h2>WebSocket &amp; SSE</h2>
+      <div class="codewin"><div class="bar"><i></i><i></i><i></i><span class="fn">realtime.lk</span></div>
+<pre><span class="c-cm">// WebSocket — ws::on / send / broadcast / clients</span>
+<span class="c-fn">route</span>(<span class="c-str">"WS"</span>, <span class="c-str">"/chat"</span>, <span class="c-kw">function</span>(<span class="c-var">$conn</span>) {
+    <span class="c-fn">ws::on</span>(<span class="c-var">$conn</span>, <span class="c-str">"message"</span>, <span class="c-kw">function</span>(<span class="c-var">$m</span>) {
+        <span class="c-fn">ws::broadcast</span>(<span class="c-var">$m</span>)
+    })
+})
+
+<span class="c-cm">// SSE — sse::send / on / close · periodic: timer::every</span>
+<span class="c-fn">route</span>(<span class="c-str">"SSE"</span>, <span class="c-str">"/prices"</span>, <span class="c-kw">function</span>(<span class="c-var">$conn</span>) {
+    <span class="c-fn">sse::send</span>(<span class="c-var">$conn</span>, <span class="c-fn">json::encode</span>(<span class="c-var">$tick</span>))
+})</pre></div>
+    </section>
+
+    <section id="tasarim">
+      <h2>Design decisions</h2>
+      <ul>
+        <li><strong>Routing built into the language</strong> — no framework to install.</li>
+        <li><strong>No global variables</strong> — closures capture explicitly with <code>use()</code>; shared state via <code>app::</code>.</li>
+        <li><strong>No OOP</strong> — deliberate. <code>struct</code> only groups data (no inheritance/methods).</li>
+        <li><strong>No mixed arrays</strong> — an array is either indexed or assoc.</li>
+        <li><strong>No semicolons</strong> — statements end at the end of the line.</li>
+        <li><strong>Strict defaults</strong> — undefined variable is an error, type-strict <code>==</code>, full 64-bit integers.</li>
+      </ul>
+    </section>
+
+    <section id="moduller">
+      <h2>Module reference</h2>
+      <p>32 modules, 247 built-in functions — the core library comes ready. The VS Code extension provides autocompletion and signatures for all of them. Hit an error you don't recognize? See the <a href="https://doc.codlook.com/errors.md">Error Reference</a>.</p>
+      <div class="modgrid">
+<div class="mod-card">
+          <h3><span class="mono">route::</span> <small>3 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">HTTP routing — REST, WebSocket and SSE share one call</p>
+          <div class="fn-list">
+            <span class="fn">route::group(prefix, [middlewares], fn)</span>
+            <span class="fn">route::matched()</span>
+            <span class="fn">route::param("id")</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">request::</span> <small>19 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Read incoming request data — query, form, JSON body, params, headers</p>
+          <div class="fn-list">
+            <span class="fn">request::all()</span>
+            <span class="fn">request::body()</span>
+            <span class="fn">request::file()</span>
+            <span class="fn">request::get()</span>
+            <span class="fn">request::header("X-Hub-Signature-256")</span>
+            <span class="fn">request::headers()</span>
+            <span class="fn">request::ip()</span>
+            <span class="fn">request::is_delete()</span>
+            <span class="fn">request::is_get()</span>
+            <span class="fn">request::is_head()</span>
+            <span class="fn">request::is_options()</span>
+            <span class="fn">request::is_patch()</span>
+            <span class="fn">request::is_post()</span>
+            <span class="fn">request::is_put()</span>
+            <span class="fn">request::json()</span>
+            <span class="fn">request::method()</span>
+            <span class="fn">request::param()</span>
+            <span class="fn">request::path()</span>
+            <span class="fn">request::post()</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">response::</span> <small>7 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Build the response — JSON, HTML, text, redirects, status codes</p>
+          <div class="fn-list">
+            <span class="fn">response::error($code, $message)</span>
+            <span class="fn">response::header("Content-Type", "application/json")</span>
+            <span class="fn">response::html($str)</span>
+            <span class="fn">response::json($data, 201)</span>
+            <span class="fn">response::redirect("/admin/login")</span>
+            <span class="fn">response::status($code)</span>
+            <span class="fn">response::text($str)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">db::</span> <small>12 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">MySQL/MariaDB, PostgreSQL, SQLite — query, exec, transactions</p>
+          <div class="fn-list">
+            <span class="fn">db::affected($conn)</span>
+            <span class="fn">db::begin($conn)</span>
+            <span class="fn">db::close($conn)</span>
+            <span class="fn">db::col($conn, $sql, $params)</span>
+            <span class="fn">db::commit($conn)</span>
+            <span class="fn">db::connect()</span>
+            <span class="fn">db::escape($conn, $str)</span>
+            <span class="fn">db::exec($conn, "UPDATE products SET price=? WHERE id=?", [$price, $id])</span>
+            <span class="fn">db::last_id($conn)</span>
+            <span class="fn">db::query($conn, "SELECT * FROM p WHERE company_id=? AND active=?", [$fid, 1])</span>
+            <span class="fn">db::rollback($conn)</span>
+            <span class="fn">db::transaction($conn, fn)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">template::</span> <small>6 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">View engine — layout inheritance, partials, {#if}/{#each}</p>
+          <div class="fn-list">
+            <span class="fn">template::block(…)</span>
+            <span class="fn">template::escape($str)</span>
+            <span class="fn">template::extends(…)</span>
+            <span class="fn">template::include(…)</span>
+            <span class="fn">template::render($path, $data)</span>
+            <span class="fn">template::render_string($tpl, $data)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">session::</span> <small>6 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Sessions (file or Redis) — start, get, set, destroy, regenerate</p>
+          <div class="fn-list">
+            <span class="fn">session::destroy()</span>
+            <span class="fn">session::get("admin_id")</span>
+            <span class="fn">session::has("admin_id")</span>
+            <span class="fn">session::regenerate()</span>
+            <span class="fn">session::set("user_id", $rows[0]["id"])</span>
+            <span class="fn">session::start()</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">cookie::</span> <small>4 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Read and write HTTP cookies with secure defaults</p>
+          <div class="fn-list">
+            <span class="fn">cookie::delete("k")</span>
+            <span class="fn">cookie::get("theme")</span>
+            <span class="fn">cookie::has("k")</span>
+            <span class="fn">cookie::set("theme", "dark", 604800)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">array::</span> <small>20 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Array helpers — map, filter, reduce, sort, slice, zip and more</p>
+          <div class="fn-list">
+            <span class="fn">array::all($arr, $fn)</span>
+            <span class="fn">array::any($arr, $fn)</span>
+            <span class="fn">array::chunk($arr, $n)</span>
+            <span class="fn">array::contains($arr, $v)</span>
+            <span class="fn">array::filter($arr, $fn)</span>
+            <span class="fn">array::find($arr, $fn)</span>
+            <span class="fn">array::flatten($arr [,$depth])</span>
+            <span class="fn">array::keys($arr)</span>
+            <span class="fn">array::map($arr, $fn)</span>
+            <span class="fn">array::new_assoc()</span>
+            <span class="fn">array::pop($arr)</span>
+            <span class="fn">array::push($arr, $v)</span>
+            <span class="fn">array::reduce($arr, $fn, $init)</span>
+            <span class="fn">array::reverse($arr)</span>
+            <span class="fn">array::set($arr, $key, $val)</span>
+            <span class="fn">array::slice($arr, $start, $len)</span>
+            <span class="fn">array::sort($numbers)</span>
+            <span class="fn">array::unique($arr)</span>
+            <span class="fn">array::values($arr)</span>
+            <span class="fn">array::zip($arr1, $arr2, ...)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">string::</span> <small>24 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">String helpers — split, trim, replace, case, pad, regex, format</p>
+          <div class="fn-list">
+            <span class="fn">string::contains($s,$search)</span>
+            <span class="fn">string::ends_with($s,$suf)</span>
+            <span class="fn">string::format("Name: %s, Age: %d, Price: %.2f USD", $name, $age, $price)</span>
+            <span class="fn">string::index_of($s,$search)</span>
+            <span class="fn">string::join($arr,$sep)</span>
+            <span class="fn">string::len($s)</span>
+            <span class="fn">string::lower($s)</span>
+            <span class="fn">string::ltrim($s)</span>
+            <span class="fn">string::pad_left($s,$len,$pad)</span>
+            <span class="fn">string::pad_right($s,$len,$pad)</span>
+            <span class="fn">string::random($n)</span>
+            <span class="fn">string::regex_match($v, "^[0-9]+$")</span>
+            <span class="fn">string::regex_match_all($s, $pat)</span>
+            <span class="fn">string::regex_replace($s, $pat, $rep)</span>
+            <span class="fn">string::repeat($s,$n)</span>
+            <span class="fn">string::replace($s,$search,$with)</span>
+            <span class="fn">string::reverse($s)</span>
+            <span class="fn">string::rtrim($s)</span>
+            <span class="fn">string::slugify($s)</span>
+            <span class="fn">string::split($s,$sep)</span>
+            <span class="fn">string::starts_with($s,$pre)</span>
+            <span class="fn">string::substr($s,$start,$len)</span>
+            <span class="fn">string::trim($input)</span>
+            <span class="fn">string::upper($s)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">math::</span> <small>14 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Math — sqrt, pow, round, floor, min/max, random, trig</p>
+          <div class="fn-list">
+            <span class="fn">math::abs($n)</span>
+            <span class="fn">math::ceil($n)</span>
+            <span class="fn">math::cos($r)</span>
+            <span class="fn">math::floor($n)</span>
+            <span class="fn">math::log($n)</span>
+            <span class="fn">math::max($a, $b, $c, ...)</span>
+            <span class="fn">math::min($a, $b, $c, ...)</span>
+            <span class="fn">math::pi()</span>
+            <span class="fn">math::pow($b, $e)</span>
+            <span class="fn">math::random($min,$max)</span>
+            <span class="fn">math::round($n)</span>
+            <span class="fn">math::sin($r)</span>
+            <span class="fn">math::sqrt($n)</span>
+            <span class="fn">math::tan($r)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">type::</span> <small>12 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Type checks and conversions — int, float, string, is_* helpers</p>
+          <div class="fn-list">
+            <span class="fn">type::is_array($v)</span>
+            <span class="fn">type::is_bool($v)</span>
+            <span class="fn">type::is_float($v)</span>
+            <span class="fn">type::is_function($v)</span>
+            <span class="fn">type::is_int($v)</span>
+            <span class="fn">type::is_null($v)</span>
+            <span class="fn">type::is_string($v)</span>
+            <span class="fn">type::of($v)</span>
+            <span class="fn">type::to_bool($v)</span>
+            <span class="fn">type::to_float($v)</span>
+            <span class="fn">type::to_int($v)</span>
+            <span class="fn">type::to_string($v)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">json::</span> <small>2 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Encode and decode JSON</p>
+          <div class="fn-list">
+            <span class="fn">json::decode($job["payload"])</span>
+            <span class="fn">json::encode($products)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">date::</span> <small>12 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Dates — parse, format, add/sub, diff, weekday, timestamps</p>
+          <div class="fn-list">
+            <span class="fn">date::add($date, $n, $unit)</span>
+            <span class="fn">date::diff($t1, $t2, $unit)</span>
+            <span class="fn">date::format($date, $fmt)</span>
+            <span class="fn">date::from_timestamp($ts)</span>
+            <span class="fn">date::is_valid($date)</span>
+            <span class="fn">date::now()</span>
+            <span class="fn">date::parse($str, $fmt)</span>
+            <span class="fn">date::sub($date, $n, $unit)</span>
+            <span class="fn">date::timestamp()</span>
+            <span class="fn">date::today()</span>
+            <span class="fn">date::week($date)</span>
+            <span class="fn">date::weekday($date)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">crypto::</span> <small>16 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Hashing, HMAC, base64/hex, secure random, UUID, RS256 (JWT)</p>
+          <div class="fn-list">
+            <span class="fn">crypto::base64_decode($s)</span>
+            <span class="fn">crypto::base64_encode($s)</span>
+            <span class="fn">crypto::base64url_decode($s)</span>
+            <span class="fn">crypto::base64url_encode($s)</span>
+            <span class="fn">crypto::constant_compare($given, $expected)</span>
+            <span class="fn">crypto::hex_decode($hex)</span>
+            <span class="fn">crypto::hex_encode($s)</span>
+            <span class="fn">crypto::hmac_sha256($data, $key)</span>
+            <span class="fn">crypto::hmac_sha256_raw($data, $key)</span>
+            <span class="fn">crypto::random_bytes($n)</span>
+            <span class="fn">crypto::random_string($n)</span>
+            <span class="fn">crypto::rs256_sign($data, $pem_key)</span>
+            <span class="fn">crypto::rs256_sign_b64url($data, $pem_key)</span>
+            <span class="fn">crypto::rs256_verify($data, $sig, $pem_key)</span>
+            <span class="fn">crypto::sha256($data)</span>
+            <span class="fn">crypto::uuid()</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">auth::</span> <small>2 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Password hashing and verification (PBKDF2)</p>
+          <div class="fn-list">
+            <span class="fn">auth::hash($data["password"])</span>
+            <span class="fn">auth::verify($password, $rows[0]["password_hash"])</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">validator::</span> <small>7 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Input validation — email, integer, numeric, required, min/max</p>
+          <div class="fn-list">
+            <span class="fn">validator::check($data, $rules)</span>
+            <span class="fn">validator::email(…)</span>
+            <span class="fn">validator::integer(…)</span>
+            <span class="fn">validator::max(…)</span>
+            <span class="fn">validator::min(…)</span>
+            <span class="fn">validator::numeric(…)</span>
+            <span class="fn">validator::required(…)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">file::</span> <small>8 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Sandboxed file access — read, write, append, uploads, store</p>
+          <div class="fn-list">
+            <span class="fn">file::append($path, $content)</span>
+            <span class="fn">file::exists($path)</span>
+            <span class="fn">file::put($path, $content)</span>
+            <span class="fn">file::read($path)</span>
+            <span class="fn">file::remove($path)</span>
+            <span class="fn">file::size($path)</span>
+            <span class="fn">file::store($file, $subdir)</span>
+            <span class="fn">file::upload_dir()</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">http::</span> <small>7 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Outbound HTTP client — GET/POST/PUT/PATCH/DELETE, streaming</p>
+          <div class="fn-list">
+            <span class="fn">http::delete($url [,$headers [,$opts]])</span>
+            <span class="fn">http::get($url [,$headers [,$opts]])</span>
+            <span class="fn">http::patch($url, $body [,$headers [,$opts]])</span>
+            <span class="fn">http::post($url, $body [,$headers [,$opts]])</span>
+            <span class="fn">http::post_json($url, $data [,$headers [,$opts]])</span>
+            <span class="fn">http::put($url, $body [,$headers [,$opts]])</span>
+            <span class="fn">http::stream($method, $url, $body, $headers, $callback [,$opts])</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">mail::</span> <small>4 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Send email + embedded SMTP/IMAP delivery (Maildir)</p>
+          <div class="fn-list">
+            <span class="fn">mail::deliver_maildir($base_dir, $mailbox, $from, $data)</span>
+            <span class="fn">mail::provider()</span>
+            <span class="fn">mail::send($to, $subject, $text [,$html [,$from]])</span>
+            <span class="fn">mail::send_html($to, $subject, $html [,$from])</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">ws::</span> <small>5 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">WebSocket connections — on, send, broadcast, clients</p>
+          <div class="fn-list">
+            <span class="fn">ws::broadcast($data)</span>
+            <span class="fn">ws::clients()</span>
+            <span class="fn">ws::close($ws)</span>
+            <span class="fn">ws::on($ws, "message", fn)</span>
+            <span class="fn">ws::send($ws, $msg)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">sse::</span> <small>4 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Server-Sent Events — send, on, close, clients</p>
+          <div class="fn-list">
+            <span class="fn">sse::clients()</span>
+            <span class="fn">sse::close($sse)</span>
+            <span class="fn">sse::on($sse, "close", fn)</span>
+            <span class="fn">sse::send($sse, $data, "event")</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">cache::</span> <small>7 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">In-process cache with TTL, shared across workers</p>
+          <div class="fn-list">
+            <span class="fn">cache::delete($key)</span>
+            <span class="fn">cache::flush()</span>
+            <span class="fn">cache::get($key)</span>
+            <span class="fn">cache::has($key)</span>
+            <span class="fn">cache::keys()</span>
+            <span class="fn">cache::set($key, $val [, $ttl])</span>
+            <span class="fn">cache::size()</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">queue::</span> <small>6 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">In-memory FIFO queue — push, pop, peek, size</p>
+          <div class="fn-list">
+            <span class="fn">queue::clear($name)</span>
+            <span class="fn">queue::names()</span>
+            <span class="fn">queue::peek($name)</span>
+            <span class="fn">queue::pop($name)</span>
+            <span class="fn">queue::push($name, $val)</span>
+            <span class="fn">queue::size($name)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">jobs::</span> <small>12 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Durable background jobs (SQLite) — push, worker, retry, stats</p>
+          <div class="fn-list">
+            <span class="fn">jobs::done($id)</span>
+            <span class="fn">jobs::fail($id)</span>
+            <span class="fn">jobs::failed($queue [, $limit=100])</span>
+            <span class="fn">jobs::list($queue, $status [, $limit=100])</span>
+            <span class="fn">jobs::next($queue)</span>
+            <span class="fn">jobs::purge($queue, $status)</span>
+            <span class="fn">jobs::push($queue, $payload [, $max_retries=3 [, $delay_sec=0]])</span>
+            <span class="fn">jobs::recover($queue, $min_age)</span>
+            <span class="fn">jobs::retry($id)</span>
+            <span class="fn">jobs::run([$interval_ms=5000])</span>
+            <span class="fn">jobs::stats($queue)</span>
+            <span class="fn">jobs::worker($queue, $fn)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">timer::</span> <small>3 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Timers — every, after, cancel (for SSE and background work)</p>
+          <div class="fn-list">
+            <span class="fn">timer::after(ms, fn)</span>
+            <span class="fn">timer::cancel($ping_id)</span>
+            <span class="fn">timer::every(ms, fn)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">parallel::</span> <small>4 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Concurrency helpers for parallel()/channel() task model</p>
+          <div class="fn-list">
+            <span class="fn">parallel::active()</span>
+            <span class="fn">parallel::at_capacity()</span>
+            <span class="fn">parallel::limit()</span>
+            <span class="fn">parallel::wait($timeout_ms)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">app::</span> <small>4 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">App-level service registry — share state across routes</p>
+          <div class="fn-list">
+            <span class="fn">app::db()</span>
+            <span class="fn">app::get()</span>
+            <span class="fn">app::has("name")</span>
+            <span class="fn">app::set("name", $value)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">error::</span> <small>4 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Typed errors — new, is, code, message (with try/catch)</p>
+          <div class="fn-list">
+            <span class="fn">error::code($e)</span>
+            <span class="fn">error::is($e, $type)</span>
+            <span class="fn">error::message($e)</span>
+            <span class="fn">error::new($type, $msg [,$code])</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">log::</span> <small>7 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Structured logging — info, warn, error, debug</p>
+          <div class="fn-list">
+            <span class="fn">log::configure($dir, $verbose, $level)</span>
+            <span class="fn">log::debug("msg")</span>
+            <span class="fn">log::error("Network error: " . $resp["error"])</span>
+            <span class="fn">log::info("User logged in: {$email}")</span>
+            <span class="fn">log::memory("msg")</span>
+            <span class="fn">log::query($sql, $ms)</span>
+            <span class="fn">log::warn("High memory: {$stats[\"working_mb\"]}MB")</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">runtime::</span> <small>2 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Runtime introspection — stats counters, gc</p>
+          <div class="fn-list">
+            <span class="fn">runtime::gc()</span>
+            <span class="fn">runtime::stats()</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">html::</span> <small>3 functions</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">HTML helpers — escape, sanitize</p>
+          <div class="fn-list">
+            <span class="fn">html::attr($title)</span>
+            <span class="fn">html::escape($user_input)</span>
+            <span class="fn">html::strip($html_content)</span>
+          </div>
+        </div>
+        <div class="mod-card">
+          <h3><span class="mono">look::</span> <small>1 function</small></h3>
+          <p style="font-size:13.5px;color:var(--ink-soft);margin:-4px 0 12px;">Language self-check — validate LOOK source (lk --check)</p>
+          <div class="fn-list">
+            <span class="fn">look::check($user_code)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-center">
+      <a class="brand" href="https://codlook.com/"><span>look<span class="dot">.</span></span></a>
+      <p class="foot-tag"><b>A scripting language built for the web</b> · v1.0.0 · Apache-2.0</p>
+      <nav class="foot-links">
+        <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
+        <a href="https://packages.codlook.com/">Packages</a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">VS Code</a>
+        <a href="https://test.codlook.com" target="_blank">Live Demo</a>
+        <a href="https://codlook.com/">Home</a>
+        <a href="mailto:info@codlook.com">info@codlook.com</a>
+      </nav>
+      <div class="foot-social">
+        <a class="soc" href="https://x.com/codlook" target="_blank" rel="noopener" aria-label="X (Twitter)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>@codlook</a>
+        <a class="soc" href="https://instagram.com/codlook" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>@codlook</a>
+        <a class="soc" href="https://www.linkedin.com/company/codlook" target="_blank" rel="noopener" aria-label="LinkedIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>codlook</a>
+      </div>
+      <div class="foot-meta">v1.0.0 · C++23 · CMake 3.20+ · Apache 2.4+ / nginx · © 2026 Codlook</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Close the mobile nav dropdown after tapping a link.
+document.querySelectorAll('.nav-links a').forEach(function (a) {
+  a.addEventListener('click', function () {
+    document.querySelector('header.nav').classList.remove('open');
+  });
+});
+</script>
+
+</body>
+</html>
