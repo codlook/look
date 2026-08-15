@@ -17,7 +17,7 @@
 html{scroll-behavior:smooth;scroll-padding-top:80px;overflow-x:clip;}
 body{
   font-family:'Exo 2',system-ui,sans-serif;background:var(--bg);color:var(--ink);
-  line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;padding-top:74px;
+  line-height:1.6;-webkit-font-smoothing:antialiased;padding-top:74px;
 }
 .mono{font-family:'JetBrains Mono',monospace;}
 a{color:inherit;text-decoration:none;}
