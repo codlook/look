@@ -6138,13 +6138,14 @@ DB_PASS=</code></pre>
     var k = 'S:' + l.textContent.trim(); if (seen[k]) return; seen[k] = 1;
     index.push({ label: l.textContent.trim(), href: l.getAttribute('href'), type: 'Section' });
   });
-  content.querySelectorAll('table tr td:first-child').forEach(function (td) {
+  content.querySelectorAll('table tr').forEach(function (tr) {
+    var td = tr.querySelector('td'); if (!td) return;
     var t = td.textContent.trim();
-    if (/^[a-z_]+::[a-z_0-9]+/i.test(t) || /^(fn |use )?[a-z_]+::/i.test(t)) {
-      var sec = td.closest('section'); var href = (sec && sec.id) ? '#' + sec.id : '';
-      var label = t.split('\n')[0].trim(); var k = 'F:' + label; if (seen[k] || !href) return; seen[k] = 1;
-      index.push({ label: label, href: href, type: 'Function' });
-    }
+    var fn = (t.match(/([a-z_]+::[a-z_0-9]+)/i) || [])[1];
+    if (!fn) return;
+    var label = t.split('\n')[0].trim(); var k = 'F:' + label; if (seen[k]) return; seen[k] = 1;
+    if (!tr.id) { var id = 'fn-' + fn.replace(/::/g, '-'); if (!document.getElementById(id)) tr.id = id; }
+    index.push({ label: label, href: '#' + (tr.id || ('#' + fn)), type: 'Function' });
   });
   var modal = document.createElement('div'); modal.className = 'search-modal';
   modal.innerHTML = '<div class="search-box"><input type="text" class="search-input" placeholder="Search docs and functions…" aria-label="Search docs"><div class="search-results"></div></div>';
@@ -6182,6 +6183,23 @@ DB_PASS=</code></pre>
   trigger.innerHTML = '<span>Search…</span><kbd>' + (isMac ? '⌘ K' : 'Ctrl K') + '</kbd>';
   trigger.addEventListener('click', openSearch);
   sidebar.insertBefore(trigger, sidebar.firstChild);
+
+  // flash the exact function row when search / a hash link jumps to it
+  function flashTarget() {
+    var h = decodeURIComponent(location.hash.slice(1)); if (!h) return;
+    var el = document.getElementById(h);
+    if (el && el.tagName === 'TR') { el.classList.add('fn-target'); setTimeout(function () { el.classList.remove('fn-target'); }, 1600); }
+  }
+  window.addEventListener('hashchange', flashTarget); setTimeout(flashTarget, 250);
+
+  // collapsible sidebar groups
+  [].slice.call(sidebar.querySelectorAll('.nav-group')).forEach(function (g) {
+    var wrap = document.createElement('div'); wrap.className = 'nav-links-group';
+    var n = g.nextElementSibling;
+    while (n && !n.classList.contains('nav-group')) { var nx = n.nextElementSibling; wrap.appendChild(n); n = nx; }
+    g.parentNode.insertBefore(wrap, g.nextElementSibling);
+    g.addEventListener('click', function () { g.classList.toggle('collapsed'); wrap.classList.toggle('collapsed'); });
+  });
 })();
 </script>
 

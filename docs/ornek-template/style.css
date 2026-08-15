@@ -518,3 +518,21 @@ footer{background:var(--navy);color:rgba(255,255,255,0.6);padding:64px 0 44px;}
   .docs-overlay.show{opacity:1;pointer-events:auto;}
   .content .hanchor{display:none;}
 }
+
+/* ============ DOCS — Phase 2 polish ============ */
+/* precise function-row highlight when search jumps to it */
+.content tr.fn-target td{background:rgba(226,43,54,0.10)!important;box-shadow:inset 3px 0 0 var(--red);}
+.content tr[id]{scroll-margin-top:96px;}
+/* collapsible sidebar groups */
+.sidebar .nav-group{cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;}
+.sidebar .nav-group::after{content:"\25be";font-size:10px;color:var(--ink-faint);transition:transform .2s;margin-left:8px;}
+.sidebar .nav-group.collapsed::after{transform:rotate(-90deg);}
+.sidebar .nav-links-group.collapsed{display:none;}
+/* intro toned down to read like docs, not a landing hero (content kept) */
+.content #intro .hero{margin-bottom:22px;padding:0;text-align:left;background:none;border:none;}
+.content #intro .hero h1{font-size:38px;margin-bottom:6px;}
+.content #intro .hero p{font-size:17px;}
+/* subtle language chip on code blocks */
+.pre-wrap::before{content:".lk";position:absolute;top:10px;right:64px;z-index:1;font-family:'JetBrains Mono',monospace;
+  font-size:11px;font-weight:600;color:rgba(255,255,255,0.28);opacity:0;transition:opacity .15s;pointer-events:none;}
+.pre-wrap:hover::before{opacity:1;}
