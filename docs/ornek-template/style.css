@@ -11,7 +11,7 @@
   --radius:20px;
   --shadow:0 24px 60px rgba(14,27,60,0.12);
   --shadow-lg:0 40px 90px rgba(14,27,60,0.22);
-  --wrap:1200px;
+  --wrap:1080px;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 html{scroll-behavior:smooth;scroll-padding-top:80px;overflow-x:clip;}
@@ -402,3 +402,59 @@ footer{background:var(--navy);color:rgba(255,255,255,0.6);padding:64px 0 44px;}
   .content h1{font-size:36px;}
   .modgrid{grid-template-columns:1fr;}
 }
+
+/* ============================================================
+   DOCS CONTENT MIGRATED FROM docs/index.html
+   Compatibility shims so the old content renders in this theme:
+   its syntax classes (.kw/.fn/.str/.num/.cm/.var/.ns), status
+   badges, CSS-var aliases used by inline styles, and dark code blocks.
+   ============================================================ */
+:root{
+  --border:#E1E5EE; --surface:#ffffff; --bg2:#0E1B3C;
+  --text:#0E1B3C; --text-muted:#5A6478; --muted:#5A6478; --accent:#E22B36;
+  --blue:#2563c9; --green:#1f9d4d; --orange:#c9761c; --yellow:#b8860b; --purple:#7c4dff; --cyan:#0e8fa8;
+}
+/* old sidebar group headings */
+.sidebar .nav-group{font-size:12px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
+  color:var(--ink-faint);margin:22px 0 10px;}
+.sidebar .nav-group:first-child{margin-top:0;}
+/* migrated code blocks: <pre><code> with .kw/.fn/.str/.num/.cm/.var/.ns spans */
+.content pre{background:var(--navy);border:1px solid rgba(255,255,255,0.06);border-radius:12px;
+  padding:18px 20px;overflow-x:auto;margin:14px 0 20px;box-shadow:var(--shadow);}
+.content pre code{font-family:'JetBrains Mono',monospace;font-size:13.5px;line-height:1.75;
+  color:#c9d1d9;background:none;border:none;padding:0;}
+.content .kw{color:#ff7b72;}
+.content .fn{color:#d2a8ff;}
+.content .str{color:#a5d6ff;}
+.content .num{color:#79c0ff;}
+.content .cm{color:#8b93a1;font-style:italic;}
+.content .var{color:#ffa657;}
+.content .ns{color:#7EB6FF;}
+.content .hero h1{font-size:44px;}
+.content .hero{margin-bottom:24px;}
+.content pre code .kw,.content pre code .fn{font-weight:400;}
+/* status badges (roadmap / support tables) */
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.badge-done{background:#1f4d2e;color:#3fb950;}
+.badge-plan{background:#3d2b00;color:#d29922;}
+.badge-never,.badge-warn{background:#3d1a1a;color:#f85149;}
+.content a{color:var(--red);}
+.content a:hover{text-decoration:underline;}
+
+/* callouts (used heavily in the docs content) — light theme, colored left border */
+.callout{background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--blue);
+  border-radius:0 9px 9px 0;padding:13px 17px;margin:14px 0 20px;font-size:15px;line-height:1.6;}
+.callout p{margin:0;color:#38445c;}
+.callout p + p{margin-top:8px;}
+.callout strong,.callout b{color:var(--navy);}
+.callout.tip{border-left-color:#28C840;}
+.callout.warn{border-left-color:var(--yellow);}
+.callout.danger{border-left-color:var(--red);}
+.callout.info{border-left-color:var(--blue);}
+
+/* tables in the docs content */
+.content table{width:100%;border-collapse:collapse;margin:16px 0 22px;font-size:14.5px;display:block;overflow-x:auto;}
+.content th{text-align:left;padding:10px 14px;background:var(--navy);color:#fff;font-weight:600;font-size:13.5px;white-space:nowrap;}
+.content td{padding:9px 14px;border-bottom:1px solid var(--line);vertical-align:top;color:#38445c;}
+.content tr:nth-child(even) td{background:var(--paper);}
+.content td code,.content th code{font-size:0.85em;}
