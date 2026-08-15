@@ -89,7 +89,7 @@ h1 .r{color:var(--red);}
   font-family:'JetBrains Mono',monospace;font-size:15px;line-height:1.85;
   color:var(--code-txt);padding:26px 26px;overflow-x:auto;
 }
-.codewin.lg pre{font-size:15.5px;}
+.codewin.lg pre{font-size:12px;}
 .c-kw{color:#7EB6FF;} .c-str{color:#FFB4A8;} .c-fn{color:#8CE0C3;}
 .c-var{color:#F2D479;} .c-cm{color:#6B7A99;} .c-num{color:#F2A65A;} .c-red{color:#FF6B72;}
 
@@ -162,6 +162,17 @@ h1 .r{color:var(--red);}
 }
 .term .p{color:#28C840;}
 .term code{color:#DDE4F2;white-space:nowrap;}
+.term.term-multi{align-items:flex-start;overflow-x:visible;}
+.term.term-multi code{white-space:pre-wrap;word-break:break-all;line-height:1.75;}
+/* copy-to-clipboard button (added to each .term via script) */
+.term-wrap{position:relative;}
+.copy-btn{position:absolute;top:8px;right:8px;z-index:3;font-family:'Exo 2',system-ui,sans-serif;
+  font-size:11px;font-weight:700;letter-spacing:0.03em;padding:4px 10px;border-radius:6px;cursor:pointer;
+  background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);color:rgba(255,255,255,0.7);
+  opacity:0;transition:background .15s,color .15s,opacity .15s;}
+.term-wrap:hover .copy-btn{opacity:1;}
+.copy-btn:hover{background:rgba(255,255,255,0.2);color:#fff;}
+.copy-btn.copied{background:#28C840;border-color:#28C840;color:#fff;opacity:1;}
 
 /* ---------- CTA ---------- */
 .cta{background:linear-gradient(135deg,var(--red),#B71E28);color:#fff;text-align:center;padding:88px 0;}
@@ -344,6 +355,33 @@ footer{background:var(--navy);color:rgba(255,255,255,0.6);padding:64px 0 44px;}
   .strip .n{font-size:30px;}
 }
 </style>
+
+<meta name="yandex-verification" content="79a31a4811e022ad" />
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-S76WJQSTX0"></script>
+<script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-S76WJQSTX0');
+</script>
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=AW-11120116479"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'AW-11120116479');
+</script>
+
+<!-- Event snippet for Page view conversion page -->
+<script>
+  gtag('event', 'conversion', {'send_to': 'AW-11120116479/BtMdCPSlrOQYEP-FvrYp'});
+</script>
+
 </head>
 <body>
 
@@ -921,7 +959,7 @@ SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀�
           <div class="step"><span class="no">3</span><div class="sc"><p>Verify</p>
             <div class="term"><span class="p">$</span><code>curl http://127.0.0.1:9000/ &nbsp;·&nbsp; systemctl status look</code></div></div></div>
         </div>
-        <p class="hint">If you prefer to manage it with dnf on AlmaLinux/RHEL, there's an RPM package too: <code>dnf install look-lang-*.rpm</code></p>
+        <p class="hint">Pick a custom port with <code>LOOK_PORT=8080 sudo bash install.sh</code>. The service is managed by systemd — <code>systemctl restart look</code>.</p>
       </div>
 
       <div class="ibox">
@@ -930,7 +968,8 @@ SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀�
         <div class="steps">
           <div class="step"><span class="no">1</span><div class="sc"><p>Open the Plesk Terminal: <b>Server Management → Terminal</b> (or <code>ssh root@server_ip</code>)</p></div></div>
           <div class="step"><span class="no">2</span><div class="sc"><p>Download and install the ZIP — at the end you'll see <i>"The extension was successfully installed."</i></p>
-            <div class="term"><span class="p">$</span><code>wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip" &amp;&amp; plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></div></div></div>
+            <div class="term term-multi"><code>wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip"
+plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></div></div></div>
           <div class="step"><span class="no">3</span><div class="sc"><p><b>Finish the install — one root command (required on new servers)</b></p>
             <div class="term"><span class="p">$</span><code>plesk php /usr/local/psa/admin/plib/modules/look-lang/scripts/post-install.php</code></div></div></div>
           <div class="step"><span class="no">4</span><div class="sc"><p>Open the panel: <b>Extensions → My Extensions → LOOK Language → Open</b></p></div></div>
@@ -941,15 +980,16 @@ SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀�
       </div>
 
       <div class="ibox">
-        <h3>🪟 Windows (XAMPP)</h3>
-        <p class="tagline">Zero external DLLs with Schannel TLS. <code>.exe</code>s built with MSVC.</p>
+        <h3>🪟 Windows</h3>
+        <p class="tagline">A native MSVC build with Schannel TLS — zero external DLLs. LOOK's HTTP server is built in, so no Apache or extra web server is needed.</p>
         <div class="steps">
-          <div class="step"><span class="no">1</span><div class="sc"><p>Skip if XAMPP is installed. Download <code>look-lang-xampp-*.zip</code></p></div></div>
-          <div class="step"><span class="no">2</span><div class="sc"><p>Open an <b>Administrator PowerShell</b> and install — copies <code>lk-cgi.exe</code> to cgi-bin, patches httpd.conf for <code>.lk</code></p>
-            <div class="term"><span class="p">&gt;</span><code>Expand-Archive look-lang-xampp-*.zip look; cd look; .\install.ps1</code></div></div></div>
-          <div class="step"><span class="no">3</span><div class="sc"><p>XAMPP Control Panel → Apache → Restart. <code>http://localhost/test.lk</code> opens</p></div></div>
+          <div class="step"><span class="no">1</span><div class="sc"><p>Download <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank" style="color:var(--red)">GitHub Releases</a> and extract it</p>
+            <div class="term"><span class="p">&gt;</span><code>Expand-Archive look-lang-windows-1.0.0.zip -DestinationPath look</code></div></div></div>
+          <div class="step"><span class="no">2</span><div class="sc"><p>Run the built-in HTTP server — it serves <code>index.lk</code> from the current folder</p>
+            <div class="term"><span class="p">&gt;</span><code>cd look; .\lk-fcgi.exe --mode http --port 8080</code></div></div></div>
+          <div class="step"><span class="no">3</span><div class="sc"><p>Open <code>http://localhost:8080</code>. Or run a script directly: <code>lk.exe app.lk</code></p></div></div>
         </div>
-        <p class="hint">Custom path: <code>.\install.ps1 -XamppDir "D:\xampp"</code> · Uninstall: <code>.\uninstall.ps1</code></p>
+        <p class="hint">The package is <code>lk.exe</code> (CLI / REPL) + <code>lk-fcgi.exe</code> (HTTP / FastCGI server) + README — plain binaries, no installer, no Apache.</p>
       </div>
 
       <div class="ibox">
@@ -1079,6 +1119,30 @@ SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀�
     </div>
   </div>
 </footer>
+
+<script>
+// Add a copy-to-clipboard button to every terminal command block.
+document.querySelectorAll('.term').forEach(function (term) {
+  var wrap = document.createElement('div');
+  wrap.className = 'term-wrap';
+  term.parentNode.insertBefore(wrap, term);
+  wrap.appendChild(term);
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-btn';
+  btn.textContent = 'Copy';
+  btn.addEventListener('click', function () {
+    var code = term.querySelector('code');
+    var text = (code ? code.innerText : term.innerText).trim();
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
+      setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1600);
+    });
+  });
+  wrap.appendChild(btn);
+});
+</script>
 
 </body>
 </html>
