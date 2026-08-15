@@ -22,7 +22,7 @@
   --wrap:1200px;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-html{scroll-behavior:smooth;}
+html{scroll-behavior:smooth;overflow-x:clip;}
 body{
   font-family:'Exo 2',system-ui,sans-serif;background:var(--bg);color:var(--ink);
   line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;
@@ -77,8 +77,10 @@ h1 .r{color:var(--red);}
 /* ---------- CODE WINDOW ---------- */
 .codewin{
   background:var(--navy);border-radius:var(--radius);box-shadow:var(--shadow-lg);
-  overflow:hidden;border:1px solid rgba(255,255,255,0.06);
+  overflow:hidden;border:1px solid rgba(255,255,255,0.06);max-width:100%;
 }
+/* grid cells must be allowed to shrink, or a wide code window forces horizontal overflow */
+.split > div,.hero-grid > div,.code-side,.dual-grid > div{min-width:0;}
 .codewin .bar{display:flex;align-items:center;gap:9px;padding:15px 20px;background:var(--navy-2);}
 .codewin .bar i{width:12px;height:12px;border-radius:50%;display:block;}
 .codewin .bar i:nth-child(1){background:#FF5F57;}
@@ -341,18 +343,32 @@ footer{background:var(--navy);color:rgba(255,255,255,0.6);padding:64px 0 44px;}
   .dual-grid{grid-template-columns:1fr !important;}
   .benchgrid{grid-template-columns:1fr 1fr;}
   .secstats{grid-template-columns:1fr 1fr;}
-  h1{font-size:48px;}
+  .eco-cards{grid-template-columns:1fr !important;}
+  h1{font-size:46px;}
+  .sec{padding:64px 0;}
+  .hero{padding:36px 0 40px;}
+  .split + .split{margin-top:56px;}
   .split .code-side{order:2;}
-  .nav-links{display:none;}
+  /* ---- mobile nav: burger toggles a full-width dropdown ---- */
+  .nav-links{display:none;position:absolute;top:100%;left:0;right:0;flex-direction:column;
+    align-items:stretch;gap:0;background:var(--bg);border-bottom:1px solid var(--line);
+    padding:6px 0 10px;box-shadow:0 22px 44px rgba(14,27,60,0.14);}
+  header.nav.open .nav-links{display:flex;}
+  .nav-links a{padding:13px 28px;font-size:16px;}
+  .nav-in > .btn-primary{display:none;}
   .nav-burger{display:flex;}
   .foot-grid{gap:28px;}
 }
 @media(max-width:560px){
   .fgrid,.modgrid,.benchgrid,.secstats,.rgrid{grid-template-columns:1fr;}
-  h1{font-size:40px;}
-  .sec-head h2,.cta h2{font-size:34px;}
+  .wrap{padding:0 20px;}
+  h1{font-size:38px;}
+  .sec-head h2,.cta h2,.eco h2{font-size:29px;}
+  .lead,.hero p.lead{font-size:17px;}
   .strip-in{gap:18px;}
-  .strip .n{font-size:30px;}
+  .strip .n{font-size:28px;}
+  .foot-links{font-size:14px;}
+  .brand{font-size:30px;}
 }
 </style>
 
@@ -395,11 +411,11 @@ footer{background:var(--navy);color:rgba(255,255,255,0.6);padding:64px 0 44px;}
       <a href="#moduller">Modules</a>
       <a href="#kurulum">Install</a>
       <a href="docs.html">Docs</a>
-      <a href="packages.html">Packages</a>
+      <a href="https://packages.codlook.com/">Packages</a>
       <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
     </nav>
     <a class="btn btn-primary" href="#kurulum">Get started</a>
-    <button class="nav-burger" onclick="document.querySelector('.nav-links').style.display='flex'"><span></span><span></span><span></span></button>
+    <button class="nav-burger" aria-label="Menu" onclick="document.querySelector('header.nav').classList.toggle('open')"><span></span><span></span><span></span></button>
   </div>
 </header>
 
@@ -554,7 +570,7 @@ footer{background:var(--navy);color:rgba(255,255,255,0.6);padding:64px 0 44px;}
       <div class="rcard"><span class="badge">Mail server</span><h4>Embedded SMTP + IMAP</h4><p>Built-in MTA (25/587) + IMAP4rev1 (143/993). SMTP → Maildir, IMAP → Thunderbird/Roundcube. No Dovecot/Postfix needed.</p></div>
       <div class="rcard"><span class="badge">Error handling</span><h4>error:: — typed errors</h4><p>Throw with <code>throw</code>; <code>error::new($type,$msg)</code> for structured errors. <code>try/catch</code> + <code>error::is / code / message</code>.</p></div>
       <div class="rcard"><span class="badge">Module</span><h4>http:: — outbound HTTP client</h4><p>GET/POST/PUT/PATCH/DELETE. JSON body, custom headers, timeout, TLS included. Fan-out API calls with <code>parallel()</code>.</p></div>
-      <div class="rcard"><span class="badge">Ecosystem</span><h4>Package + module system</h4><p><code>lk install github.com/...</code> — JWT, payments and more. No registry, no config. <a href="packages.html" style="color:var(--red)">Packages →</a></p></div>
+      <div class="rcard"><span class="badge">Ecosystem</span><h4>Package + module system</h4><p><code>lk install github.com/...</code> — JWT, payments and more. No registry, no config. <a href="https://packages.codlook.com/" style="color:var(--red)">Packages →</a></p></div>
       <div class="rcard"><span class="badge">Developer</span><h4>test + REPL + lk install</h4><p><code>lk test</code> — assertions, before/after_each. <code>lk repl</code> — interactive. Install packages from GitHub.</p></div>
       <div class="rcard"><span class="badge">Validation</span><h4>validator:: — input validation</h4><p>Email, number, integer, required field, min/max rules. Secure user input in a route with a single call.</p></div>
     </div>
@@ -1016,7 +1032,7 @@ plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></div></div><
       <p>The official LOOK extension: live error checking (parse + undefined function), autocompletion for 247 built-in functions, hover signatures, and Run / Service / REPL shortcuts. <b>Live on the VS Code Marketplace.</b></p>
       <div class="hero-cta" style="margin-top:26px;">
         <a class="btn btn-primary" href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">Install from the Marketplace →</a>
-        <a class="btn btn-ghost" href="packages.html">All packages</a>
+        <a class="btn btn-ghost" href="https://packages.codlook.com/">All packages</a>
       </div>
     </div>
     <div class="code-side">
@@ -1038,7 +1054,7 @@ plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></div></div><
     <div class="eco">
       <h2>When the core isn't enough, <span class="r">the ecosystem.</span></h2>
       <p>No registry, no config — straight from GitHub. Two separate official repos: <b>modules</b> (pure LOOK) and <b>packages</b> (integrations).</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:960px;margin:26px auto 0;text-align:left;">
+      <div class="eco-cards" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:960px;margin:26px auto 0;text-align:left;">
         <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px;min-width:0;">
           <div style="font-weight:700;color:#8CE0C3;margin-bottom:8px;">look-modules — <span style="color:rgba(255,255,255,0.5);font-weight:500;">ai · jwt</span></div>
           <div class="term" style="margin-top:0;font-size:13px;"><span class="p">$</span><code>lk module install github.com/codlook/look-modules/ai</code></div>
@@ -1049,7 +1065,7 @@ plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></div></div><
         </div>
       </div>
       <div class="eco-links">
-        <a class="btn btn-light" href="packages.html">Packages &amp; modules →</a>
+        <a class="btn btn-light" href="https://packages.codlook.com/">Packages &amp; modules →</a>
         <a class="btn btn-ghost" style="color:#fff;border-color:rgba(255,255,255,0.4);" href="https://github.com/codlook/look-modules" target="_blank">look-modules</a>
         <a class="btn btn-ghost" style="color:#fff;border-color:rgba(255,255,255,0.4);" href="https://github.com/codlook/look-packages" target="_blank">look-packages</a>
       </div>
@@ -1104,7 +1120,7 @@ plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></div></div><
       <p class="foot-tag"><b>A scripting language built for the web</b> · v1.0.0 · Apache-2.0</p>
       <nav class="foot-links">
         <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
-        <a href="packages.html">Packages</a>
+        <a href="https://packages.codlook.com/">Packages</a>
         <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">VS Code</a>
         <a href="https://test.codlook.com" target="_blank">Live Demo</a>
         <a href="docs.html">Documentation</a>
@@ -1141,6 +1157,13 @@ document.querySelectorAll('.term').forEach(function (term) {
     });
   });
   wrap.appendChild(btn);
+});
+
+// Close the mobile nav dropdown after tapping a link.
+document.querySelectorAll('.nav-links a').forEach(function (a) {
+  a.addEventListener('click', function () {
+    document.querySelector('header.nav').classList.remove('open');
+  });
 });
 </script>
 
