@@ -6057,12 +6057,132 @@ DB_PASS=</code></pre>
 </footer>
 
 <script>
-// Close the mobile nav dropdown after tapping a link.
-document.querySelectorAll('.nav-links a').forEach(function (a) {
-  a.addEventListener('click', function () {
-    document.querySelector('header.nav').classList.remove('open');
+(function () {
+  var content = document.querySelector('.content');
+  var sidebar = document.querySelector('.sidebar');
+  var header  = document.querySelector('header.nav');
+  if (!content || !sidebar) return;
+
+  // close the top nav dropdown on link tap
+  document.querySelectorAll('.nav-links a').forEach(function (a) {
+    a.addEventListener('click', function () { header.classList.remove('open'); });
   });
-});
+
+  // 1) heading anchors (hover #, deep-linkable)
+  function slug(t){return t.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,60);}
+  content.querySelectorAll('h2, h3').forEach(function (h) {
+    if (!h.id) {
+      var sec = h.closest('section');
+      if (h.tagName === 'H2' && sec && sec.id) h.id = sec.id;
+      else h.id = slug(h.textContent) || ('s-' + Math.random().toString(36).slice(2, 7));
+    }
+    var a = document.createElement('a');
+    a.className = 'hanchor'; a.href = '#' + h.id; a.textContent = '#';
+    a.setAttribute('aria-label', 'Link to this heading');
+    h.insertBefore(a, h.firstChild);
+  });
+
+  // 2) scrollspy — highlight the active section in the sidebar (scroll-based)
+  var links = [].slice.call(sidebar.querySelectorAll('a[href^="#"]'));
+  var byId = {}; links.forEach(function (l) { byId[l.getAttribute('href').slice(1)] = l; });
+  var secs = [].slice.call(content.querySelectorAll('section[id]'));
+  var curActive = null, ticking = false;
+  function updateSpy() {
+    ticking = false;
+    var current = null;
+    for (var i = 0; i < secs.length; i++) {
+      if (secs[i].getBoundingClientRect().top <= 130) current = secs[i].id; else break;
+    }
+    var l = current ? byId[current] : null;
+    if (l === curActive) return;
+    if (curActive) curActive.classList.remove('active');
+    curActive = l;
+    if (l) {
+      l.classList.add('active');
+      var lt = l.offsetTop, st = sidebar.scrollTop, sh = sidebar.clientHeight;
+      if (lt < st + 40 || lt > st + sh - 60) sidebar.scrollTop = lt - sh / 2;
+    }
+  }
+  window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(updateSpy); } }, { passive: true });
+  updateSpy();
+
+  // 3) copy buttons on every code block
+  content.querySelectorAll('pre').forEach(function (pre) {
+    var wrap = document.createElement('div'); wrap.className = 'pre-wrap';
+    pre.parentNode.insertBefore(wrap, pre); wrap.appendChild(pre);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'copy-btn'; btn.textContent = 'Copy';
+    btn.addEventListener('click', function () {
+      var code = pre.querySelector('code'); var text = (code ? code.innerText : pre.innerText).replace(/ /g, ' ');
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = 'Copied'; btn.classList.add('copied');
+        setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+      });
+    });
+    wrap.appendChild(btn);
+  });
+
+  // 4) mobile sidebar drawer
+  var mBtn = document.createElement('button'); mBtn.className = 'docs-menu-btn';
+  mBtn.setAttribute('aria-label', 'Open docs menu'); mBtn.innerHTML = '☰ Contents';
+  var overlay = document.createElement('div'); overlay.className = 'docs-overlay';
+  document.body.appendChild(overlay); document.body.appendChild(mBtn);
+  function openSb(){ sidebar.classList.add('open'); overlay.classList.add('show'); }
+  function closeSb(){ sidebar.classList.remove('open'); overlay.classList.remove('show'); }
+  mBtn.addEventListener('click', openSb);
+  overlay.addEventListener('click', closeSb);
+  sidebar.querySelectorAll('a').forEach(function (a) { a.addEventListener('click', closeSb); });
+
+  // 5) search (Cmd/Ctrl-K) over sections + every function
+  var index = [], seen = {};
+  links.forEach(function (l) {
+    var k = 'S:' + l.textContent.trim(); if (seen[k]) return; seen[k] = 1;
+    index.push({ label: l.textContent.trim(), href: l.getAttribute('href'), type: 'Section' });
+  });
+  content.querySelectorAll('table tr td:first-child').forEach(function (td) {
+    var t = td.textContent.trim();
+    if (/^[a-z_]+::[a-z_0-9]+/i.test(t) || /^(fn |use )?[a-z_]+::/i.test(t)) {
+      var sec = td.closest('section'); var href = (sec && sec.id) ? '#' + sec.id : '';
+      var label = t.split('\n')[0].trim(); var k = 'F:' + label; if (seen[k] || !href) return; seen[k] = 1;
+      index.push({ label: label, href: href, type: 'Function' });
+    }
+  });
+  var modal = document.createElement('div'); modal.className = 'search-modal';
+  modal.innerHTML = '<div class="search-box"><input type="text" class="search-input" placeholder="Search docs and functions…" aria-label="Search docs"><div class="search-results"></div></div>';
+  document.body.appendChild(modal);
+  var input = modal.querySelector('.search-input'), results = modal.querySelector('.search-results');
+  function esc(s){return s.replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function render(q) {
+    q = q.toLowerCase().trim();
+    var items = q ? index.filter(function (x) { return x.label.toLowerCase().indexOf(q) > -1; })
+                  : index.filter(function (x) { return x.type === 'Section'; });
+    items = items.slice(0, 50);
+    results.innerHTML = items.map(function (x, i) {
+      return '<a href="' + x.href + '" class="sr-item' + (i === 0 ? ' sel' : '') + '"><span class="sr-label">' + esc(x.label) + '</span><span class="sr-type">' + x.type + '</span></a>';
+    }).join('') || '<div class="sr-empty">No results</div>';
+  }
+  function openSearch(){ modal.classList.add('show'); input.value = ''; render(''); input.focus(); }
+  function closeSearch(){ modal.classList.remove('show'); }
+  input.addEventListener('input', function () { render(input.value); });
+  results.addEventListener('click', function (e) { if (e.target.closest('.sr-item')) closeSearch(); });
+  modal.addEventListener('click', function (e) { if (e.target === modal) closeSearch(); });
+  document.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openSearch(); return; }
+    if (e.key === 'Escape') { closeSearch(); return; }
+    if (!modal.classList.contains('show')) return;
+    var all = [].slice.call(results.querySelectorAll('.sr-item')); var sel = results.querySelector('.sr-item.sel');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); var i = all.indexOf(sel); i += (e.key === 'ArrowDown' ? 1 : -1);
+      if (i < 0) i = all.length - 1; if (i >= all.length) i = 0;
+      if (sel) sel.classList.remove('sel'); if (all[i]) { all[i].classList.add('sel'); all[i].scrollIntoView({ block: 'nearest' }); }
+    }
+    if (e.key === 'Enter' && sel) { location.hash = sel.getAttribute('href'); closeSearch(); }
+  });
+  var isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  var trigger = document.createElement('button'); trigger.className = 'search-trigger';
+  trigger.innerHTML = '<span>Search…</span><kbd>' + (isMac ? '⌘ K' : 'Ctrl K') + '</kbd>';
+  trigger.addEventListener('click', openSearch);
+  sidebar.insertBefore(trigger, sidebar.firstChild);
+})();
 </script>
 
 </body>
