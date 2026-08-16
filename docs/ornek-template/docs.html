@@ -422,6 +422,27 @@ look-fcgi --mode http --port 8080</code></pre>
     <p><strong>When are int() / float() needed?</strong> DB columns convert automatically — an <code>INT</code> column already comes back as <code>int</code>, a <code>DECIMAL</code> column already as <code>float</code>. Conversion is only needed for user input: <code>int(request::get("id"))</code>, <code>float(request::post("amount"))</code>.</p>
   </div>
 
+  <h3>Functions are values</h3>
+  <p>A <code>function</code> is a first-class value in LOOK — store it in a variable, pass it as an argument, or return it from another function.</p>
+  <pre><code><span class="var">$double</span> = <span class="kw">fn</span>(<span class="var">$x</span>) => <span class="var">$x</span> * <span class="num">2</span>
+<span class="kw">print</span>(<span class="var">$double</span>(<span class="num">21</span>))                 <span class="cm"># 42</span>
+
+<span class="cm"># passed as a callback</span>
+<span class="var">$out</span> = <span class="ns">array::</span><span class="fn">map</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>], <span class="var">$double</span>)   <span class="cm"># [2, 4, 6]</span></code></pre>
+
+  <h3>Checking a value's type</h3>
+  <p>Use <code>type::of()</code> to read a value's type name, or a predicate to test one. Predicates come in a global form (<code>is_int</code>) and a namespaced form (<code>type::is_int</code>) — they are identical.</p>
+  <pre><code><span class="ns">type::</span><span class="fn">of</span>(<span class="num">42</span>)          <span class="cm"># "int"</span>
+<span class="ns">type::</span><span class="fn">of</span>(<span class="str">"hi"</span>)        <span class="cm"># "string"</span>
+<span class="ns">type::</span><span class="fn">of</span>([<span class="num">1</span>, <span class="num">2</span>])     <span class="cm"># "array"</span>
+<span class="ns">type::</span><span class="fn">of</span>(<span class="kw">fn</span>() => <span class="num">0</span>)  <span class="cm"># "function"</span>
+
+<span class="kw">if</span> (<span class="fn">is_int</span>(<span class="var">$x</span>)) { }             <span class="cm"># global predicate</span>
+<span class="kw">if</span> (<span class="ns">type::</span><span class="fn">is_array</span>(<span class="var">$x</span>)) { }    <span class="cm"># same, namespaced</span></code></pre>
+  <p><code>type::of()</code> returns one of: <code>int</code>, <code>float</code>, <code>string</code>, <code>bool</code>, <code>array</code>, <code>function</code>, <code>null</code>. Predicates: <code>is_int</code>, <code>is_float</code>, <code>is_string</code>, <code>is_bool</code>, <code>is_array</code>, <code>is_null</code>, <code>is_function</code> (each also as <code>type::is_*</code>).</p>
+
+  <div class="callout"><p><strong>Truthiness — what counts as false.</strong> In <code>if</code>, <code>while</code> and <code>bool()</code>, these values are <strong>falsy</strong>: <code>false</code>, <code>0</code>, <code>0.0</code>, <code>""</code> (empty string), <code>"0"</code>, <code>null</code>, and an <strong>empty array</strong>. Everything else is truthy — including any non-empty string and any non-zero number.</p></div>
+
   <h3>Built-in Functions</h3>
   <table>
     <tr><th>Function</th><th>Description</th></tr>
@@ -430,6 +451,8 @@ look-fcgi --mode http --port 8080</code></pre>
     <tr><td>float($v)</td><td>Convert to float</td></tr>
     <tr><td>string($v)</td><td>Convert to string</td></tr>
     <tr><td>bool($v)</td><td>Convert to boolean</td></tr>
+    <tr><td>type::of($v)</td><td>The value's type name — <code>"int"</code>, <code>"string"</code>, <code>"array"</code>, <code>"function"</code>…</td></tr>
+    <tr><td>is_int($v) … is_function($v)</td><td>Type predicates (also as <code>type::is_*</code>) — see <a href="#type">type::</a></td></tr>
     <tr><td>print($v)</td><td>Output (writes to the HTTP response body)</td></tr>
     <tr><td>write($v)</td><td>Same as print()</td></tr>
   </table>
