@@ -35,6 +35,7 @@
     <a href="#ornek-merhaba">Hello World</a>
     <div class="nav-group">Language guide</div>
     <a href="#degiskenler">Variables & types</a>
+    <a href="#const-iota">const / iota</a>
     <a href="#operatorler">Operators</a>
     <a href="#stringler">Strings & interpolation</a>
     <a href="#kontrol">Control flow</a>
@@ -42,11 +43,10 @@
     <a href="#donguler">Loops</a>
     <a href="#fonksiyonlar">Functions</a>
     <a href="#closures">Closures & capture</a>
+    <a href="#struct">struct</a>
     <a href="#try-catch">try / catch / finally</a>
     <a href="#hata-sistemi">Error system</a>
     <a href="#error-module">error::</a>
-    <a href="#struct">struct</a>
-    <a href="#const-iota">const / iota</a>
     <a href="#moduller">Module system</a>
     <a href="#use-file">use "file.lk"</a>
     <div class="nav-group">Building web apps</div>
@@ -458,6 +458,75 @@ look-fcgi --mode http --port 8080</code></pre>
   </table>
 </section>
 
+<section id="const-iota">
+  <h2>const / iota — Constant Groups</h2>
+
+  <p>Constant groups inspired by Go's <code>const + iota</code> approach. There is no <code>enum</code> keyword — <code>const</code> is enough.</p>
+
+  <h3>Basic iota</h3>
+  <pre><code><span class="kw">const</span> {
+    PENDING = <span class="kw">iota</span>   <span class="cm"># 0</span>
+    ACTIVE               <span class="cm"># 1</span>
+    INACTIVE             <span class="cm"># 2</span>
+    DELETED              <span class="cm"># 3</span>
+}
+
+<span class="kw">if</span> (<span class="var">$order</span>.status == ACTIVE) {
+    <span class="kw">print</span>(<span class="str">"Your order is active."</span>)
+}
+
+<span class="kw">switch</span> (<span class="var">$order</span>.status) {
+    <span class="kw">case</span> PENDING:  <span class="kw">print</span>(<span class="str">"Pending"</span>)
+    <span class="kw">case</span> ACTIVE:   <span class="kw">print</span>(<span class="str">"Active"</span>)
+    <span class="kw">case</span> INACTIVE: <span class="kw">print</span>(<span class="str">"Inactive"</span>)
+}</code></pre>
+
+  <h3>Expression iota — Go-Style Chain</h3>
+  <pre><code><span class="kw">const</span> {
+    SMALL = <span class="kw">iota</span> * <span class="num">10</span>   <span class="cm"># 0  (iota=0 → 0*10)</span>
+    MEDIUM                <span class="cm"># 10 (iota=1 → 1*10)</span>
+    LARGE                 <span class="cm"># 20 (iota=2 → 2*10)</span>
+}
+
+<span class="cm"># Entries without a value re-evaluate the previous expression with the new iota</span>
+<span class="cm"># (identical to Go's behavior)</span></code></pre>
+
+  <h3>Constant Values (without iota)</h3>
+  <pre><code><span class="kw">const</span> {
+    HTTP_OK         = <span class="num">200</span>
+    HTTP_NOT_FOUND  = <span class="num">404</span>
+    HTTP_ERROR      = <span class="num">500</span>
+}
+
+<span class="kw">const</span> {
+    ROLE_ADMIN  = <span class="str">"admin"</span>
+    ROLE_EDITOR = <span class="str">"editor"</span>
+    ROLE_MEMBER = <span class="str">"member"</span>
+}
+
+<span class="fn">response::</span><span class="fn">status</span>(HTTP_NOT_FOUND)
+<span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>([<span class="str">"error"</span> => <span class="str">"Not found"</span>]))</code></pre>
+
+  <h3>const + struct Together</h3>
+  <pre><code><span class="kw">const</span> {
+    ROLE_ADMIN  = <span class="str">"admin"</span>
+    ROLE_EDITOR = <span class="str">"editor"</span>
+}
+
+<span class="kw">struct</span> <span class="ns">User</span> {
+    name
+    role: <span class="str">"member"</span>
+}
+
+<span class="var">$admin</span> = <span class="ns">User</span>{name: <span class="str">"Can"</span>, role: ROLE_ADMIN}
+<span class="kw">print</span>(<span class="var">$admin</span>.name . <span class="str">" — "</span> . <span class="var">$admin</span>.role)  <span class="cm"># Can — admin</span></code></pre>
+
+  <div class="callout">
+    <strong>Scope Rule:</strong> constants are valid in the scope they're defined in.
+    A top-level <code>const</code> is global — accessible from all functions and closures without <code>use</code>.
+  </div>
+</section>
+
 <section id="operatorler">
   <h2>Operators</h2>
 
@@ -807,6 +876,90 @@ look-fcgi --mode http --port 8080</code></pre>
   </div>
 </section>
 
+<section id="struct">
+  <h2>struct — Grouping Data</h2>
+
+  <p>Inspired by Go, struct is designed purely for grouping data, without inheritance or methods. There is no OOP — on purpose.</p>
+
+  <h3>Definition</h3>
+  <pre><code><span class="kw">struct</span> <span class="ns">User</span> {
+    name
+    age
+    email
+}
+
+<span class="cm"># Fields with default values</span>
+<span class="kw">struct</span> <span class="ns">Product</span> {
+    name
+    price: <span class="num">0.0</span>
+    stock:  <span class="num">0</span>
+    active: <span class="lit">true</span>
+}</code></pre>
+
+  <h3>Literals and Field Access</h3>
+  <pre><code><span class="var">$u</span> = <span class="ns">User</span>{name: <span class="str">"Ali"</span>, age: <span class="num">30</span>, email: <span class="str">"ali@example.com"</span>}
+<span class="kw">print</span>(<span class="var">$u</span>.name)  <span class="cm"># Ali</span>
+<span class="kw">print</span>(<span class="var">$u</span>.age)  <span class="cm"># 30</span>
+
+<span class="cm"># Update a field</span>
+<span class="var">$u</span>.name = <span class="str">"Mehmet"</span>
+<span class="kw">print</span>(<span class="var">$u</span>.name)  <span class="cm"># Mehmet</span>
+
+<span class="cm"># Unspecified fields take the default value</span>
+<span class="var">$pr</span> = <span class="ns">Product</span>{name: <span class="str">"Burger"</span>}
+<span class="kw">print</span>(<span class="var">$pr</span>.price)  <span class="cm"># 0</span>
+<span class="kw">print</span>(<span class="var">$pr</span>.active)  <span class="cm"># true</span></code></pre>
+
+  <h3>Nested Struct</h3>
+  <pre><code><span class="kw">struct</span> <span class="ns">Address</span> {
+    city
+    district
+}
+
+<span class="kw">struct</span> <span class="ns">User</span> {
+    name
+    address
+}
+
+<span class="var">$k</span> = <span class="ns">User</span>{name: <span class="str">"Ali"</span>, address: <span class="ns">Address</span>{city: <span class="str">"Istanbul"</span>, district: <span class="str">"Kadıköy"</span>}}
+<span class="kw">print</span>(<span class="var">$k</span>.address.city)  <span class="cm"># Istanbul</span></code></pre>
+
+  <h3>Nested &amp; Chained Assignment</h3>
+  <p>You can assign through a chained path — nested struct fields, array elements, and assoc values all update in place (structs and arrays are reference types):</p>
+  <pre><code><span class="var">$k</span>.address.city = <span class="str">"Ankara"</span>          <span class="cm"># nested struct field</span>
+
+<span class="var">$users</span> = [<span class="ns">User</span>{name: <span class="str">"A"</span>}, <span class="ns">User</span>{name: <span class="str">"B"</span>}]
+<span class="var">$users</span>[<span class="num">0</span>].name = <span class="str">"Ali"</span>            <span class="cm"># field of an array element</span>
+
+<span class="var">$grid</span> = [[<span class="num">1</span>, <span class="num">2</span>], [<span class="num">3</span>, <span class="num">4</span>]]
+<span class="var">$grid</span>[<span class="num">0</span>][<span class="num">1</span>] = <span class="num">99</span>              <span class="cm"># nested array index</span>
+
+<span class="var">$m</span>[<span class="str">"user"</span>].active = <span class="lit">true</span>         <span class="cm"># field of an assoc value</span></code></pre>
+
+  <h3>Array of Structs</h3>
+  <pre><code><span class="var">$products</span> = [
+    <span class="ns">Product</span>{name: <span class="str">"Burger"</span>, price: <span class="num">45.0</span>, stock: <span class="num">10</span>},
+    <span class="ns">Product</span>{name: <span class="str">"Pizza"</span>,  price: <span class="num">89.9</span>, stock: <span class="num">5</span>},
+    <span class="ns">Product</span>{name: <span class="str">"Salad"</span>, price: <span class="num">25.0</span>, stock: <span class="num">20</span>}
+]
+<span class="kw">foreach</span> (<span class="var">$products</span> <span class="kw">as</span> <span class="var">$u</span>) {
+    <span class="kw">print</span>(<span class="var">$u</span>.name . <span class="str">" — "</span> . <span class="var">$u</span>.price . <span class="str">" USD"</span>)
+}</code></pre>
+
+  <h3>JSON Encode</h3>
+  <pre><code><span class="var">$u</span> = <span class="ns">User</span>{name: <span class="str">"Ali"</span>, age: <span class="num">30</span>, email: <span class="str">"ali@example.com"</span>}
+<span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>(<span class="var">$u</span>))
+<span class="cm"># {"name":"Ali","age":30,"email":"ali@example.com"}</span>
+<span class="cm"># Note: the runtime tag (__struct__) is not included in the JSON</span></code></pre>
+
+  <div class="callout">
+    <strong>Design Decisions</strong><br>
+    Structs have no methods — on purpose. Behavior is defined with separate functions (<code>function greet($u) { ... }</code>).<br>
+    No inheritance, interfaces or visibility — simplicity is preserved.<br>
+    No type coercion — fields take dynamic types.
+  </div>
+</section>
+
 <section id="try-catch">
   <h2>try / catch / finally</h2>
 
@@ -971,159 +1124,6 @@ Stack trace:
   <h3>Auto-loaded as a Core Module</h3>
   <div class="callout tip">
     <p>Along with <code>log::</code>, <code>file::</code> and <code>date::</code>, <code>error::</code> is a <strong>core module</strong> — you don't need to write <code>use error;</code>. It's available directly in the setup phase and in all route callbacks.</p>
-  </div>
-</section>
-
-<section id="struct">
-  <h2>struct — Grouping Data</h2>
-
-  <p>Inspired by Go, struct is designed purely for grouping data, without inheritance or methods. There is no OOP — on purpose.</p>
-
-  <h3>Definition</h3>
-  <pre><code><span class="kw">struct</span> <span class="ns">User</span> {
-    name
-    age
-    email
-}
-
-<span class="cm"># Fields with default values</span>
-<span class="kw">struct</span> <span class="ns">Product</span> {
-    name
-    price: <span class="num">0.0</span>
-    stock:  <span class="num">0</span>
-    active: <span class="lit">true</span>
-}</code></pre>
-
-  <h3>Literals and Field Access</h3>
-  <pre><code><span class="var">$u</span> = <span class="ns">User</span>{name: <span class="str">"Ali"</span>, age: <span class="num">30</span>, email: <span class="str">"ali@example.com"</span>}
-<span class="kw">print</span>(<span class="var">$u</span>.name)  <span class="cm"># Ali</span>
-<span class="kw">print</span>(<span class="var">$u</span>.age)  <span class="cm"># 30</span>
-
-<span class="cm"># Update a field</span>
-<span class="var">$u</span>.name = <span class="str">"Mehmet"</span>
-<span class="kw">print</span>(<span class="var">$u</span>.name)  <span class="cm"># Mehmet</span>
-
-<span class="cm"># Unspecified fields take the default value</span>
-<span class="var">$pr</span> = <span class="ns">Product</span>{name: <span class="str">"Burger"</span>}
-<span class="kw">print</span>(<span class="var">$pr</span>.price)  <span class="cm"># 0</span>
-<span class="kw">print</span>(<span class="var">$pr</span>.active)  <span class="cm"># true</span></code></pre>
-
-  <h3>Nested Struct</h3>
-  <pre><code><span class="kw">struct</span> <span class="ns">Address</span> {
-    city
-    district
-}
-
-<span class="kw">struct</span> <span class="ns">User</span> {
-    name
-    address
-}
-
-<span class="var">$k</span> = <span class="ns">User</span>{name: <span class="str">"Ali"</span>, address: <span class="ns">Address</span>{city: <span class="str">"Istanbul"</span>, district: <span class="str">"Kadıköy"</span>}}
-<span class="kw">print</span>(<span class="var">$k</span>.address.city)  <span class="cm"># Istanbul</span></code></pre>
-
-  <h3>Nested &amp; Chained Assignment</h3>
-  <p>You can assign through a chained path — nested struct fields, array elements, and assoc values all update in place (structs and arrays are reference types):</p>
-  <pre><code><span class="var">$k</span>.address.city = <span class="str">"Ankara"</span>          <span class="cm"># nested struct field</span>
-
-<span class="var">$users</span> = [<span class="ns">User</span>{name: <span class="str">"A"</span>}, <span class="ns">User</span>{name: <span class="str">"B"</span>}]
-<span class="var">$users</span>[<span class="num">0</span>].name = <span class="str">"Ali"</span>            <span class="cm"># field of an array element</span>
-
-<span class="var">$grid</span> = [[<span class="num">1</span>, <span class="num">2</span>], [<span class="num">3</span>, <span class="num">4</span>]]
-<span class="var">$grid</span>[<span class="num">0</span>][<span class="num">1</span>] = <span class="num">99</span>              <span class="cm"># nested array index</span>
-
-<span class="var">$m</span>[<span class="str">"user"</span>].active = <span class="lit">true</span>         <span class="cm"># field of an assoc value</span></code></pre>
-
-  <h3>Array of Structs</h3>
-  <pre><code><span class="var">$products</span> = [
-    <span class="ns">Product</span>{name: <span class="str">"Burger"</span>, price: <span class="num">45.0</span>, stock: <span class="num">10</span>},
-    <span class="ns">Product</span>{name: <span class="str">"Pizza"</span>,  price: <span class="num">89.9</span>, stock: <span class="num">5</span>},
-    <span class="ns">Product</span>{name: <span class="str">"Salad"</span>, price: <span class="num">25.0</span>, stock: <span class="num">20</span>}
-]
-<span class="kw">foreach</span> (<span class="var">$products</span> <span class="kw">as</span> <span class="var">$u</span>) {
-    <span class="kw">print</span>(<span class="var">$u</span>.name . <span class="str">" — "</span> . <span class="var">$u</span>.price . <span class="str">" USD"</span>)
-}</code></pre>
-
-  <h3>JSON Encode</h3>
-  <pre><code><span class="var">$u</span> = <span class="ns">User</span>{name: <span class="str">"Ali"</span>, age: <span class="num">30</span>, email: <span class="str">"ali@example.com"</span>}
-<span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>(<span class="var">$u</span>))
-<span class="cm"># {"name":"Ali","age":30,"email":"ali@example.com"}</span>
-<span class="cm"># Note: the runtime tag (__struct__) is not included in the JSON</span></code></pre>
-
-  <div class="callout">
-    <strong>Design Decisions</strong><br>
-    Structs have no methods — on purpose. Behavior is defined with separate functions (<code>function greet($u) { ... }</code>).<br>
-    No inheritance, interfaces or visibility — simplicity is preserved.<br>
-    No type coercion — fields take dynamic types.
-  </div>
-</section>
-
-<section id="const-iota">
-  <h2>const / iota — Constant Groups</h2>
-
-  <p>Constant groups inspired by Go's <code>const + iota</code> approach. There is no <code>enum</code> keyword — <code>const</code> is enough.</p>
-
-  <h3>Basic iota</h3>
-  <pre><code><span class="kw">const</span> {
-    PENDING = <span class="kw">iota</span>   <span class="cm"># 0</span>
-    ACTIVE               <span class="cm"># 1</span>
-    INACTIVE             <span class="cm"># 2</span>
-    DELETED              <span class="cm"># 3</span>
-}
-
-<span class="kw">if</span> (<span class="var">$order</span>.status == ACTIVE) {
-    <span class="kw">print</span>(<span class="str">"Your order is active."</span>)
-}
-
-<span class="kw">switch</span> (<span class="var">$order</span>.status) {
-    <span class="kw">case</span> PENDING:  <span class="kw">print</span>(<span class="str">"Pending"</span>)
-    <span class="kw">case</span> ACTIVE:   <span class="kw">print</span>(<span class="str">"Active"</span>)
-    <span class="kw">case</span> INACTIVE: <span class="kw">print</span>(<span class="str">"Inactive"</span>)
-}</code></pre>
-
-  <h3>Expression iota — Go-Style Chain</h3>
-  <pre><code><span class="kw">const</span> {
-    SMALL = <span class="kw">iota</span> * <span class="num">10</span>   <span class="cm"># 0  (iota=0 → 0*10)</span>
-    MEDIUM                <span class="cm"># 10 (iota=1 → 1*10)</span>
-    LARGE                 <span class="cm"># 20 (iota=2 → 2*10)</span>
-}
-
-<span class="cm"># Entries without a value re-evaluate the previous expression with the new iota</span>
-<span class="cm"># (identical to Go's behavior)</span></code></pre>
-
-  <h3>Constant Values (without iota)</h3>
-  <pre><code><span class="kw">const</span> {
-    HTTP_OK         = <span class="num">200</span>
-    HTTP_NOT_FOUND  = <span class="num">404</span>
-    HTTP_ERROR      = <span class="num">500</span>
-}
-
-<span class="kw">const</span> {
-    ROLE_ADMIN  = <span class="str">"admin"</span>
-    ROLE_EDITOR = <span class="str">"editor"</span>
-    ROLE_MEMBER = <span class="str">"member"</span>
-}
-
-<span class="fn">response::</span><span class="fn">status</span>(HTTP_NOT_FOUND)
-<span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>([<span class="str">"error"</span> => <span class="str">"Not found"</span>]))</code></pre>
-
-  <h3>const + struct Together</h3>
-  <pre><code><span class="kw">const</span> {
-    ROLE_ADMIN  = <span class="str">"admin"</span>
-    ROLE_EDITOR = <span class="str">"editor"</span>
-}
-
-<span class="kw">struct</span> <span class="ns">User</span> {
-    name
-    role: <span class="str">"member"</span>
-}
-
-<span class="var">$admin</span> = <span class="ns">User</span>{name: <span class="str">"Can"</span>, role: ROLE_ADMIN}
-<span class="kw">print</span>(<span class="var">$admin</span>.name . <span class="str">" — "</span> . <span class="var">$admin</span>.role)  <span class="cm"># Can — admin</span></code></pre>
-
-  <div class="callout">
-    <strong>Scope Rule:</strong> constants are valid in the scope they're defined in.
-    A top-level <code>const</code> is global — accessible from all functions and closures without <code>use</code>.
   </div>
 </section>
 
