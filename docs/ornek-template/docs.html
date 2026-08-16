@@ -2967,7 +2967,41 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
 
 <section id="array">
   <h2>use array</h2>
+  <p>Arrays are the workhorse of LOOK. The most useful operations are the <strong>higher-order</strong> ones — they take a <strong>callback</strong>, a function you pass in (see <a href="#closures">Closures</a>). None of them mutate the original: each returns a <strong>new</strong> array.</p>
 
+  <h3>Transform, filter, reduce</h3>
+  <pre><code><span class="cm"># map — transform every element</span>
+<span class="ns">array::</span><span class="fn">map</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>], <span class="kw">fn</span>(<span class="var">$x</span>) => <span class="var">$x</span> * <span class="num">2</span>)            <span class="cm"># [2, 4, 6]</span>
+
+<span class="cm"># filter — keep the elements that pass the test</span>
+<span class="ns">array::</span><span class="fn">filter</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>], <span class="kw">fn</span>(<span class="var">$x</span>) => <span class="var">$x</span> % <span class="num">2</span> == <span class="num">0</span>)   <span class="cm"># [2, 4]</span>
+
+<span class="cm"># reduce — fold to a single value; $acc starts at the 3rd argument</span>
+<span class="ns">array::</span><span class="fn">reduce</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>], <span class="kw">fn</span>(<span class="var">$acc</span>, <span class="var">$x</span>) => <span class="var">$acc</span> + <span class="var">$x</span>, <span class="num">0</span>)   <span class="cm"># 10</span>
+
+<span class="cm"># chain them — user rows → the names of the active users</span>
+<span class="var">$names</span> = <span class="ns">array::</span><span class="fn">map</span>(
+    <span class="ns">array::</span><span class="fn">filter</span>(<span class="var">$users</span>, <span class="kw">fn</span>(<span class="var">$u</span>) => <span class="var">$u</span>[<span class="str">"active"</span>]),
+    <span class="kw">fn</span>(<span class="var">$u</span>) => <span class="var">$u</span>[<span class="str">"name"</span>]
+)</code></pre>
+  <div class="callout"><p><strong>Callback signatures.</strong> <code>map</code>, <code>filter</code>, <code>find</code>, <code>any</code> and <code>all</code> call your function with each <strong>element</strong>. <code>reduce</code> calls it with <strong>(accumulator, element)</strong> and takes the starting accumulator as its third argument.</p></div>
+
+  <h3>Search &amp; test</h3>
+  <pre><code><span class="ns">array::</span><span class="fn">find</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>], <span class="kw">fn</span>(<span class="var">$x</span>) => <span class="var">$x</span> &gt; <span class="num">1</span>)   <span class="cm"># 2 (first match, or null)</span>
+<span class="ns">array::</span><span class="fn">any</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>], <span class="kw">fn</span>(<span class="var">$x</span>) => <span class="var">$x</span> &gt; <span class="num">2</span>)    <span class="cm"># true</span>
+<span class="ns">array::</span><span class="fn">all</span>([<span class="num">2</span>, <span class="num">4</span>], <span class="kw">fn</span>(<span class="var">$x</span>) => <span class="var">$x</span> % <span class="num">2</span> == <span class="num">0</span>)  <span class="cm"># true</span>
+<span class="ns">array::</span><span class="fn">contains</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>], <span class="num">2</span>)              <span class="cm"># true (no callback — direct value)</span></code></pre>
+
+  <h3>Reshape</h3>
+  <pre><code><span class="ns">array::</span><span class="fn">sort</span>([<span class="num">3</span>, <span class="num">1</span>, <span class="num">2</span>])              <span class="cm"># [1, 2, 3]</span>
+<span class="ns">array::</span><span class="fn">unique</span>([<span class="num">1</span>, <span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>])         <span class="cm"># [1, 2, 3]</span>
+<span class="ns">array::</span><span class="fn">reverse</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>])           <span class="cm"># [3, 2, 1]</span>
+<span class="ns">array::</span><span class="fn">slice</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>], <span class="num">1</span>, <span class="num">2</span>)     <span class="cm"># [2, 3]  (start, length)</span>
+<span class="ns">array::</span><span class="fn">chunk</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>], <span class="num">2</span>)        <span class="cm"># [[1, 2], [3, 4]]</span>
+<span class="ns">array::</span><span class="fn">flatten</span>([[<span class="num">1</span>], [<span class="num">2</span>, [<span class="num">3</span>]]])      <span class="cm"># [1, 2, 3]  (default: full depth)</span>
+<span class="ns">array::</span><span class="fn">zip</span>([<span class="num">1</span>, <span class="num">2</span>], [<span class="str">"a"</span>, <span class="str">"b"</span>])         <span class="cm"># [[1, "a"], [2, "b"]]</span></code></pre>
+
+  <h3>Full reference</h3>
   <table>
     <tr><th>Function</th><th>Description</th></tr>
     <tr><td>array::sort($arr)</td><td>Sort (returns a new array)</td></tr>
