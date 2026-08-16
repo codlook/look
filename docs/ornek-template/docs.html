@@ -102,7 +102,7 @@
   <a href="#phase18-blog">Phase 18: Blog Live</a>
   <a href="#phase185-module">Phase 18.5: Module System</a>
   <a href="#eslesmezlik">Concurrency Model</a>
-  <a href="#apache">Apache / XAMPP</a>
+  <a href="#apache">Apache / FastCGI</a>
   <a href="#performans">Performance</a>
 
   <div class="nav-group">Reference</div>
@@ -147,7 +147,7 @@
       <span class="pill">WebSocket RFC 6455</span>
       <span class="pill">SSE route("SSE",...)</span>
       <span class="pill">timer:: scheduler</span>
-      <span class="pill">Apache / XAMPP</span>
+      <span class="pill">Apache FastCGI</span>
       <span class="pill">MySQL · SQLite · PostgreSQL</span>
       <span class="pill">Linux / Ubuntu / AlmaLinux</span>
       <span class="pill">Bytecode VM — default engine</span>
@@ -164,7 +164,7 @@
 
   <h2>What is LOOK?</h2>
   <p class="lead">LOOK is a language designed to keep web development as direct as possible. Define a route, connect to a database, return JSON — without setting up a framework or writing configuration files.</p>
-  <p>The language is written in C++23 and can be copied into an Apache/XAMPP environment and run. In FastCGI mode, the server loads the script once when it starts; every subsequent request is handled through the already-warm runtime.</p>
+  <p>The language is written in C++23 and can be copied into an Apache FastCGI environment and run. In FastCGI mode, the server loads the script once when it starts; every subsequent request is handled through the already-warm runtime.</p>
 
   <pre><code><span class="cm"># A LOOK application starts this simply</span>
 
@@ -205,16 +205,15 @@
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:1.5rem">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.2rem">
-      <h3 style="margin-top:0;color:var(--blue)">⊞ Windows (XAMPP)</h3>
+      <h3 style="margin-top:0;color:var(--blue)">⊞ Windows</h3>
       <ol style="padding-left:1.2rem;line-height:2">
-        <li>Download <code>look-windows-x64.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a></li>
-        <li>Copy <code>look-fcgi.exe</code> and <code>look-cgi.exe</code> into <code>C:\xampp\cgi-bin\</code></li>
-        <li>Add to <code>C:\xampp\htdocs\.htaccess</code>: <code>Options +ExecCGI</code></li>
-        <li>Create <code>C:\xampp\htdocs\index.lk</code> (the example below)</li>
-        <li>Start look-fcgi: <code>look-fcgi.exe --port 9000</code></li>
-        <li>Start Apache, open <code>http://localhost/</code></li>
+        <li>Download <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a> and extract it</li>
+        <li>Put your <code>index.lk</code> next to <code>lk-fcgi.exe</code></li>
+        <li>Run the built-in HTTP server: <code>lk-fcgi.exe --mode http --port 8080</code></li>
+        <li>Open <code>http://localhost:8080</code></li>
+        <li>Run a script directly: <code>lk.exe app.lk</code> · REPL: <code>lk.exe repl</code></li>
       </ol>
-      <p style="font-size:.85rem;color:var(--text-muted);margin:0">Detailed guide: <code>xampp/setup.md</code></p>
+      <p style="font-size:.85rem;color:var(--text-muted);margin:0">Native MSVC build with Schannel TLS — LOOK's HTTP server is built in, so no Apache or external DLLs.</p>
     </div>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.2rem">
       <h3 style="margin-top:0;color:var(--green)">⊞ Linux (Ubuntu / AlmaLinux)</h3>
@@ -1686,14 +1685,14 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
   <h2>env() / config()</h2>
 
   <h3>.env File</h3>
-  <pre><code><span class="cm"># C:\xampp\htdocs\.env</span>
+  <pre><code><span class="cm"># app\.env</span>
 APP_ENV=development
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=mydb
 DB_USER=root
 DB_PASS=
-LOG_DIR=C:/xampp/htdocs/logs</code></pre>
+LOG_DIR=C:/app/logs</code></pre>
 
   <h3>Using env()</h3>
   <pre><code><span class="var">$host</span>  = <span class="fn">env</span>(<span class="str">"DB_HOST"</span>, <span class="str">"127.0.0.1"</span>)  <span class="cm"># second arg = default</span>
@@ -1704,7 +1703,7 @@ LOG_DIR=C:/xampp/htdocs/logs</code></pre>
 <span class="var">$limit</span> = <span class="fn">config</span>(<span class="str">"pagination.per_page"</span>)  <span class="cm"># dot-notation</span></code></pre>
 
   <div class="callout warn">
-    <p><strong>LOG_DIR must be an absolute path.</strong> A relative path doesn't work in CGI mode — always use a full path like <code>C:/xampp/...</code>.</p>
+    <p><strong>LOG_DIR must be an absolute path.</strong> A relative path doesn't work in CGI mode — always use a full path like <code>C:/app/...</code>.</p>
   </div>
 </section>
 
@@ -2750,7 +2749,7 @@ EVERY subsequent request → dispatch phase:
       <tr><td>Ubuntu / AlmaLinux / RHEL</td><td><code>look-lang-linux-1.0.0.zip</code></td><td><code>sudo bash install.sh</code></td></tr>
       <tr><td>AlmaLinux / RHEL (dnf)</td><td><code>look-lang-1.0.0-1.el8.x86_64.rpm</code></td><td><code>dnf install look-lang-…rpm</code></td></tr>
       <tr><td>Plesk (panel)</td><td><code>look-lang-plesk-1.0.0.zip</code></td><td><code>plesk bin extension --install …</code></td></tr>
-      <tr><td>Windows + XAMPP</td><td><code>look-lang-xampp-1.0.0.zip</code></td><td><code>.\install.ps1</code> (Administrator)</td></tr>
+      <tr><td>Windows</td><td><code>look-lang-windows-1.0.0.zip</code></td><td>extract, run <code>lk-fcgi.exe --mode http</code></td></tr>
     </table>
     <p style="margin-top:.5rem">Details: <a href="#windows-installer">Windows Installer</a> · <a href="#plesk-extension">Plesk Extension</a> · <code>platforms/linux/ubuntu/README.md</code></p>
   </div>
@@ -2770,14 +2769,14 @@ EVERY subsequent request → dispatch phase:
       <th>Docs</th>
     </tr>
     <tr>
-      <td><strong>Windows + XAMPP</strong></td>
+      <td><strong>Windows</strong></td>
       <td>look-fcgi.exe / look-cgi.exe</td>
       <td class="yes">✅</td>
       <td class="yes">✅</td>
       <td class="yes">✅</td>
       <td class="yes">✅</td>
       <td class="yes">✅</td>
-      <td><code>xampp/setup.md</code></td>
+      <td><code>platforms/windows/README.md</code></td>
     </tr>
     <tr>
       <td><strong>Ubuntu 22.04 / 24.04 + Apache</strong></td>
@@ -2862,12 +2861,9 @@ cd cpp\build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . --config Release
 
-<span class="cm"># 2. Copy the binaries</span>
-copy cpp\build\Release\look-fcgi.exe C:\xampp\cgi-bin\
-copy cpp\build\Release\look-cgi.exe  C:\xampp\cgi-bin\
-
-<span class="cm"># 3. Start FastCGI</span>
-Start-Process "C:\xampp\cgi-bin\look-fcgi.exe" -ArgumentList "--port 9000" -WindowStyle Hidden</code></pre>
+<span class="cm"># 2. Run the built-in HTTP server (serves index.lk from the folder)</span>
+cd cpp\build-win\Release
+.\lk-fcgi.exe --mode http --port 8080</code></pre>
 
   <h3>Fastest — run the published image (no build)</h3>
   <pre><code><span class="cm"># The official image is on Docker Hub. Your app lives in ./app, mounted at /app.</span>
@@ -2945,7 +2941,6 @@ RewriteRule ^ fcgi://127.0.0.1:9000/index.lk [P,QSA,L]</code></pre>
     <tr><td>CGI doesn't work on Ubuntu</td><td>Ubuntu</td><td><code>a2dismod mpm_event</code> → <code>a2enmod mpm_prefork cgi</code></td></tr>
     <tr><td>Session doesn't work / 401</td><td>FastCGI</td><td><code>session::start()</code> must be called inside a route callback, not at global scope</td></tr>
     <tr><td>hello.lk → "Endpoint not found"</td><td>FastCGI</td><td>Old look-fcgi (no direct mode) — rebuild the binary</td></tr>
-    <tr><td>Rewrite doesn't work on XAMPP</td><td>Windows</td><td>The rules must be inside <code>&lt;Directory "C:/xampp/htdocs"&gt;</code>, not at global scope</td></tr>
     <tr><td>Can't connect to DB</td><td>All</td><td><code>DB_HOST=127.0.0.1</code> (TCP, not socket); hot reload with <code>systemctl restart look-fcgi</code></td></tr>
     <tr><td>No logs</td><td>All</td><td><code>LOG_DIR</code> must be an absolute path; does the directory have write permission?</td></tr>
   </table>
@@ -2979,8 +2974,8 @@ RewriteRule ^ fcgi://127.0.0.1:9000/index.lk [P,QSA,L]</code></pre>
   tasks for now.</p>
 
   <h3>Starting</h3>
-  <pre><code><span class="cm"># Windows XAMPP — 4 worker threads</span>
-Start-Process <span class="str">"C:\xampp\cgi-bin\look-fcgi.exe"</span> -ArgumentList <span class="str">"--port 9000 --workers 4"</span> -WindowStyle Hidden
+  <pre><code><span class="cm"># Windows — 4 worker threads</span>
+Start-Process <span class="str">"lk-fcgi.exe"</span> -ArgumentList <span class="str">"--port 9000 --workers 4"</span> -WindowStyle Hidden
 
 <span class="cm"># Linux systemd</span>
 ExecStart=/opt/look/lk-fcgi --port 9000 --workers 8
@@ -3035,9 +3030,9 @@ Each request → a worker thread from the ThreadPool:
   <p class="lead">With <code>look-fcgi --mode http</code>, look-fcgi runs its own HTTP/1.1 server — bypassing Apache/FastCGI. Required for WebSocket.</p>
 
   <h3>Starting</h3>
-  <pre><code><span class="cm"># Windows XAMPP — independent of Apache</span>
-Start-Process <span class="str">"C:\xampp\cgi-bin\look-fcgi.exe"</span> `
-  -ArgumentList <span class="str">"--mode http --port 8090 --workers 4 C:\xampp\htdocs\index.lk"</span> `
+  <pre><code><span class="cm"># Windows — native, no Apache</span>
+Start-Process <span class="str">"lk-fcgi.exe"</span> `
+  -ArgumentList <span class="str">"--mode http --port 8090 --workers 4 index.lk"</span> `
   -WindowStyle Hidden
 
 <span class="cm"># Linux systemd</span>
@@ -3323,8 +3318,8 @@ ws.send(JSON.stringify({ msg: <span class="str">'Hello!'</span> }))</code></pre>
 
   <h3>Starting the App (--mode http)</h3>
   <pre><code><span class="cm"># Windows</span>
-Start-Process <span class="str">"C:\xampp\cgi-bin\look-fcgi.exe"</span> `
-  -ArgumentList <span class="str">"--mode http --port 8090 --workers 4 C:\xampp\htdocs\index.lk"</span> `
+Start-Process <span class="str">"lk-fcgi.exe"</span> `
+  -ArgumentList <span class="str">"--mode http --port 8090 --workers 4 index.lk"</span> `
   -WindowStyle Hidden
 
 <span class="cm"># Linux systemd</span>
@@ -3644,19 +3639,12 @@ LOOK_BYTECODE=1 ./look-fcgi --mode http --port 9001 --workers 8 chat.lk
 
 <!-- ══════════════════════════════════════════════════════ -->
 <section id="apache">
-  <h2>Apache / XAMPP Configuration</h2>
+  <h2>Apache FastCGI Configuration</h2>
 
-  <h3>Windows XAMPP — Automatic Install</h3>
-  <p>One step: <strong>run</strong> <code>platforms/windows/xampp/install.bat</code> <strong>as administrator</strong>.</p>
-  <pre><code><span class="cm"># what install.bat does:</span>
-<span class="cm"># 1. copies lk-cgi.exe → C:\xampp\cgi-bin\</span>
-<span class="cm"># 2. adds a CGI handler to httpd.conf (with mod_rewrite rules)</span>
-<span class="cm"># 3. restarts Apache</span>
-<span class="cm"># 4. verifies with http://localhost/test.lk</span></code></pre>
-  <p>Once complete, open <code>http://localhost/test.lk</code> — you should see <strong>Hello LOOK!</strong>.</p>
+  <div class="callout"><p><strong>On Windows you don't need Apache at all</strong> — LOOK's HTTP server is built in (<code>lk-fcgi.exe --mode http</code>). This section is for Linux/Plesk deployments that put LOOK behind Apache. See <a href="#windows-installer">Windows Installation</a> for the native flow.</p></div>
 
   <h3>httpd.conf — CGI Mode (Manual)</h3>
-  <p>If <code>install.bat</code> doesn't work, add the block below inside <code>&lt;Directory "C:/xampp/htdocs"&gt;</code>:</p>
+  <p>To run LOOK behind Apache in CGI mode, add the block below inside your Apache <code>&lt;Directory&gt;</code> block (the docroot):</p>
   <pre><code>    <span class="cm"># --- LOOK Language CGI ---</span>
     Action look-handler /cgi-bin/lk-cgi.exe
     AddHandler look-handler .lk
@@ -4935,58 +4923,47 @@ plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></pre>
 
 <!-- ══════════════════════════════════════════════════════ -->
 <section id="windows-installer">
-  <h2>Windows + XAMPP Installation</h2>
-  <p class="lead">One command. <code>lk-cgi.exe</code> is copied to cgi-bin, <code>httpd.conf</code> is patched, a sample <code>test.lk</code> is created.</p>
+  <h2>Windows Installation</h2>
+  <p class="lead">A native MSVC build with Schannel TLS. LOOK's HTTP server is built in, so there's no Apache, no XAMPP and no external DLLs.</p>
 
-  <div class="callout">
-    <p><strong>Easiest way — the release package:</strong> download <code>look-lang-xampp-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a> (binaries embedded), extract it, and run it in <strong>Administrator PowerShell</strong>:</p>
-    <pre><code>Expand-Archive look-lang-xampp-1.0.0.zip look; cd look; .\install.ps1</code></pre>
-    <p style="margin-top:.4rem">Custom XAMPP path: <code>.\install.ps1 -XamppDir "D:\xampp"</code> · Uninstall: <code>.\uninstall.ps1</code>. Then restart Apache and open <code>http://localhost/test.lk</code>.</p>
+  <div class="callout tip">
+    <p><strong>Easiest way — the release package:</strong> download <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a>, extract it, and run the built-in HTTP server:</p>
+    <pre><code>Expand-Archive look-lang-windows-1.0.0.zip look; cd look
+.\lk-fcgi.exe --mode http --port 8080</code></pre>
+    <p style="margin-top:.4rem">Put your <code>index.lk</code> in the same folder, then open <code>http://localhost:8080</code>.</p>
   </div>
 
-  <p style="margin-top:1rem">The steps below are for developers who <strong>build from source</strong> and install from the repo.</p>
+  <h3>What's in the package</h3>
+  <ul style="line-height:2;padding-left:1.5rem">
+    <li><code>lk.exe</code> — the CLI: run a script (<code>lk.exe app.lk</code>) or the REPL (<code>lk.exe repl</code>)</li>
+    <li><code>lk-fcgi.exe</code> — the HTTP / FastCGI server; <code>--mode http</code> hosts its own web server</li>
+    <li><code>README.md</code></li>
+  </ul>
+
+  <h3>Run a web app</h3>
+  <pre><code><span class="cm"># serves index.lk from the current folder</span>
+.\lk-fcgi.exe --mode http --port 8080
+
+<span class="cm"># or pass a specific script</span>
+.\lk-fcgi.exe --mode http --port 8080 myapp.lk</code></pre>
 
   <h3>Requirements</h3>
   <ul style="line-height:2;padding-left:1.5rem">
     <li>Windows 10/11 (64-bit)</li>
-    <li>XAMPP 8.x — installed at <code>C:\xampp\</code></li>
-    <li>Visual C++ 2022 Redistributable</li>
-    <li>The LOOK source code built: <code>cpp\build\Release\lk-cgi.exe</code></li>
+    <li>Visual C++ 2022 Redistributable (usually already present)</li>
   </ul>
 
-  <h3>Step 1 — Build</h3>
-  <pre><code>cd cpp\build
-cmake --build . --config Release
-<span class="cm"># Output: lk.exe, lk-cgi.exe, lk-fcgi.exe</span></code></pre>
-
-  <h3>Step 2 — Install</h3>
-  <p>Right-click <code>platforms\windows\xampp\install.bat</code> → <strong>Run as administrator</strong></p>
-  <pre><code><span class="cm"># install.bat does the following in order:</span>
-<span class="cm"># 1. copies lk-cgi.exe → C:\xampp\cgi-bin\</span>
-<span class="cm"># 2. adds a CGI handler + mod_rewrite block to httpd.conf</span>
-<span class="cm"># 3. stops and restarts Apache</span>
-<span class="cm"># 4. auto-verifies with http://localhost/test.lk</span></code></pre>
-
-  <h3>Step 3 — Test</h3>
-  <pre><code>http://localhost/test.lk    <span class="cm"># should return Hello LOOK!</span>
-http://localhost/           <span class="cm"># the index.lk router should work</span></code></pre>
-
-  <h3>Uninstall</h3>
-  <p>To remove LOOK from XAMPP completely, open PowerShell as administrator:</p>
-  <pre><code><span class="cm"># 1. delete lk-cgi.exe</span>
-Remove-Item "C:\xampp\cgi-bin\lk-cgi.exe" -Force
-
-<span class="cm"># 2. manually delete the LOOK block in httpd.conf (between the # --- LOOK ... # --- /LOOK lines)</span>
-<span class="cm"># 3. restart Apache</span></code></pre>
+  <h3>Build from source (optional)</h3>
+  <pre><code>cmake -S cpp -B cpp\build-win -DCMAKE_BUILD_TYPE=Release
+cmake --build cpp\build-win --config Release --target look look-fcgi
+<span class="cm"># Output: cpp\build-win\Release\lk.exe, lk-fcgi.exe</span></code></pre>
 
   <h3>Troubleshooting</h3>
   <table>
-    <tr><th>Error</th><th>Cause</th><th>Solution</th></tr>
-    <tr><td>500 Internal Server Error</td><td><code>lk-cgi.exe</code> didn't run</td><td>Check the last lines of <code>C:\xampp\apache\logs\error.log</code></td></tr>
-    <tr><td>Source code shows in the browser</td><td>The CGI handler wasn't loaded</td><td>Run <code>install.bat</code> as administrator again</td></tr>
-    <tr><td>404 Not Found</td><td>The <code>httpd.conf</code> Directory block is missing</td><td>Run <code>install.ps1</code> directly</td></tr>
+    <tr><th>Issue</th><th>Cause</th><th>Solution</th></tr>
+    <tr><td>Port already in use</td><td>Another process holds 8080</td><td>Pick another port: <code>--port 8090</code></td></tr>
     <tr><td>Windows Defender warning</td><td>Unsigned binary</td><td>Allow → run again</td></tr>
-    <tr><td><code>lk-cgi.exe not found</code> error</td><td>Not built</td><td>Do Step 1</td></tr>
+    <tr><td>Page doesn't load</td><td>No <code>index.lk</code> in the folder</td><td>Add an <code>index.lk</code>, or pass a script path</td></tr>
   </table>
 </section>
 
@@ -5453,12 +5430,12 @@ $s2 = "Value: {$db_value}"  # output: Value: {1+1}   ← double quotes didn't ev
   </div>
 
   <div style="border-left:3px solid var(--accent);padding-left:1rem;margin-bottom:1.2rem">
-    <p><strong>The XAMPP/Apache model is dated. Does it run in Docker and Kubernetes?</strong></p>
+    <p><strong>Is it cloud-native? Does it run in Docker and Kubernetes?</strong></p>
     <p style="color:var(--text-muted);margin-top:.4rem">
-      LOOK doesn't depend on Apache or XAMPP. <code>look-fcgi</code> hosts its own TCP socket server
-      (port 9000). It can be packaged with a one-line <code>Dockerfile</code> and run on Kubernetes.
-      XAMPP is an option for easy setup on a developer's machine — not a requirement.
-      Linux binaries are built separately: Docker build images are ready for Ubuntu 24.04 and AlmaLinux 8.
+      LOOK doesn't depend on Apache or any web server. <code>lk-fcgi --mode http</code> hosts its own
+      HTTP/TCP server, so it drops straight into a one-line <code>Dockerfile</code> and runs on Kubernetes.
+      The official image is on Docker Hub, and a single static Linux binary runs unchanged on Ubuntu,
+      Debian, Rocky and RHEL 8·9·10+. On Windows it's a native <code>.exe</code> — no Apache, no XAMPP.
     </p>
   </div>
 
