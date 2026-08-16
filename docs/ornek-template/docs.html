@@ -189,32 +189,46 @@
   <p class="lead">5 steps to install LOOK and run your first application — no framework, no configuration file.</p>
 
   <div class="callout">
-    <p><strong>🧩 Editor support:</strong> a <strong>VS Code extension</strong> for <code>.lk</code> files — IntelliSense (completion + hover + signature for every built-in), <strong>live error checking</strong> (syntax + undefined function calls, underlined as you type), completion for your own variables/functions, outline, snippets and Run/Serve/REPL shortcuts. Install from the <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">Marketplace</a>, or download <code>look-lang-2.0.0.vsix</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a> and install it with <code>code --install-extension look-lang-2.0.0.vsix</code>.</p>
+    <p><strong>🧩 Editor support:</strong> a <strong>VS Code extension</strong> for <code>.lk</code> files — IntelliSense (completion + hover + signature for every built-in), <strong>live error checking</strong> (syntax + undefined function calls, underlined as you type), completion for your own variables/functions, outline, snippets and Run/Serve/REPL shortcuts. Install from the <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">Marketplace</a>, or download <code>look-lang-2.0.2.vsix</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a> and install it with <code>code --install-extension look-lang-2.0.2.vsix</code>.</p>
   </div>
 
+  <p>LOOK ships as one static binary. Pick whichever fits — all four run the same app unchanged.</p>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:1.5rem">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.2rem">
-      <h3 style="margin-top:0;color:var(--blue)">⊞ Windows</h3>
-      <ol style="padding-left:1.2rem;line-height:2">
-        <li>Download <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a> and extract it</li>
-        <li>Put your <code>index.lk</code> next to <code>lk-fcgi.exe</code></li>
-        <li>Run the built-in HTTP server: <code>lk-fcgi.exe --mode http --port 8080</code></li>
-        <li>Open <code>http://localhost:8080</code></li>
-        <li>Run a script directly: <code>lk.exe app.lk</code> · REPL: <code>lk.exe repl</code></li>
-      </ol>
-      <p style="font-size:.85rem;color:var(--text-muted);margin:0">Native MSVC build with Schannel TLS — LOOK's HTTP server is built in, so no Apache or external DLLs.</p>
+      <h3 style="margin-top:0;color:var(--blue)">🐳 Docker — no compilation</h3>
+      <p style="margin:.2rem 0 .6rem;font-size:.9rem;color:var(--text-muted)">The fastest path from a clean machine. The official image is on Docker Hub; the first run pulls it (~43&nbsp;MB).</p>
+      <pre style="margin:.4rem 0"><code>docker run -p 7400:7400 -v "$PWD/app:/app" codlook/look</code></pre>
+      <p style="font-size:.9rem;margin:0">Put <code>./app/index.lk</code>, open <code>http://localhost:7400/</code>. Image: <a href="https://hub.docker.com/r/codlook/look" target="_blank">hub.docker.com/r/codlook/look</a></p>
     </div>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.2rem">
-      <h3 style="margin-top:0;color:var(--green)">⊞ Linux (Ubuntu / AlmaLinux)</h3>
-      <ol style="padding-left:1.2rem;line-height:2">
-        <li>Download the binary for your platform from <a href="https://github.com/codlook/look/releases/latest" target="_blank">GitHub Releases</a></li>
-        <li>Copy the binary and give it the execute bit:<br><code>cp look-fcgi /opt/look/ &amp;&amp; chmod +x /opt/look/look-fcgi</code></li>
-        <li>Create an <code>index.lk</code> file in your app directory</li>
-        <li>Write a systemd service (see the <a href="#fastcgi">FastCGI section</a>)</li>
-        <li>Add the Apache <code>.htaccess</code> rewrite rules (see the <a href="#apache">Apache section</a>)</li>
-        <li><code>systemctl start look-fcgi</code> → <code>curl http://localhost/</code></li>
+      <h3 style="margin-top:0;color:var(--green)">🐧 Linux server</h3>
+      <p style="margin:.2rem 0 .6rem;font-size:.9rem;color:var(--text-muted)">One portable binary for Ubuntu/Debian and AlmaLinux/Rocky/RHEL 8·9·10+ (glibc&nbsp;≥&nbsp;2.28).</p>
+      <ol style="padding-left:1.2rem;line-height:1.9">
+        <li>Download &amp; unpack <code>look-lang-linux-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a></li>
+        <li>One command — installs the binary + a sample app + systemd service:<br><code>sudo bash install.sh</code></li>
+        <li>Verify: <code>curl http://127.0.0.1:9000/</code> · <code>systemctl status look</code></li>
       </ol>
-      <p style="font-size:.85rem;color:var(--text-muted);margin:0">Detailed guide: <code>docs/ubuntu-deployment.md</code></p>
+      <p style="font-size:.85rem;color:var(--text-muted);margin:0">Custom port: <code>LOOK_PORT=8080 sudo bash install.sh</code>. Full guide: <a href="#platform">Platform &amp; DB Support</a>.</p>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.2rem">
+      <h3 style="margin-top:0;color:var(--purple)">🔌 Plesk extension</h3>
+      <p style="margin:.2rem 0 .6rem;font-size:.9rem;color:var(--text-muted)">Install from the panel and attach LOOK to domains in one click — with an in-browser code editor and per-domain monitor.</p>
+      <ol style="padding-left:1.2rem;line-height:1.9">
+        <li>In the Plesk terminal, install the extension:<br><code>plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></li>
+        <li><strong>Finish it (required on new servers):</strong><br><code>plesk php .../look-lang/scripts/post-install.php</code></li>
+        <li><b>Applications → Add New Domain</b> → <b>Add &amp; Start</b></li>
+      </ol>
+      <p style="font-size:.85rem;color:var(--text-muted);margin:0">Full guide: <a href="#plesk-extension">Plesk Extension</a>.</p>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.2rem">
+      <h3 style="margin-top:0;color:var(--blue)">⊞ Windows</h3>
+      <p style="margin:.2rem 0 .6rem;font-size:.9rem;color:var(--text-muted)">Native MSVC build with Schannel TLS. LOOK's HTTP server is built in — no Apache, no external DLLs.</p>
+      <ol style="padding-left:1.2rem;line-height:1.9">
+        <li>Extract <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a></li>
+        <li>Put your <code>index.lk</code> in the folder, then run:<br><code>lk-fcgi.exe --mode http --port 8080</code></li>
+        <li>Open <code>http://localhost:8080</code> · run a script: <code>lk.exe app.lk</code></li>
+      </ol>
+      <p style="font-size:.85rem;color:var(--text-muted);margin:0">Full guide: <a href="#windows-installer">Windows</a>.</p>
     </div>
   </div>
 
