@@ -1399,6 +1399,26 @@ Stack trace:
     <tr><td>request::is_options()</td><td>Is the method OPTIONS?</td><td>bool</td></tr>
   </table>
 
+  <h3>Reading input</h3>
+  <pre><code><span class="cm"># Query string —  GET /search?q=burger&amp;page=2</span>
+<span class="var">$q</span>    = <span class="ns">request::</span><span class="fn">get</span>(<span class="str">"q"</span>)        <span class="cm"># "burger"</span>
+<span class="var">$page</span> = <span class="ns">request::</span><span class="fn">get</span>(<span class="str">"page"</span>)     <span class="cm"># "2"  (values always arrive as strings)</span>
+
+<span class="cm"># Form POST field</span>
+<span class="var">$email</span> = <span class="ns">request::</span><span class="fn">post</span>(<span class="str">"email"</span>)
+
+<span class="cm"># JSON body → assoc array</span>
+<span class="var">$body</span> = <span class="ns">request::</span><span class="fn">json</span>()          <span class="cm"># {"name":"Ada"} → ["name" =&gt; "Ada"]</span>
+
+<span class="cm"># Route parameter —  route("GET", "/user/{id}", ...)</span>
+<span class="var">$id</span> = <span class="ns">request::</span><span class="fn">param</span>(<span class="str">"id"</span>)       <span class="cm"># "42"</span>
+
+<span class="cm"># Method &amp; headers</span>
+<span class="kw">if</span> (<span class="ns">request::</span><span class="fn">is_post</span>()) { <span class="cm">/* ... */</span> }
+<span class="var">$token</span> = <span class="ns">request::</span><span class="fn">header</span>(<span class="str">"Authorization"</span>)  <span class="cm"># "Bearer ..."</span></code></pre>
+  <div class="callout tip"><p><strong>Everything arrives as a string.</strong> <code>get</code>/<code>post</code>/<code>param</code> return strings — convert when you need a number: <code>int(request::get("page"))</code>. Missing keys return an empty string, so <code>?? "default"</code> or an <code>== ""</code> check covers the absent case.</p></div>
+
+  <h3>A full handler</h3>
   <pre><code><span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/login"</span>, <span class="kw">function</span>() {
     <span class="var">$body</span> = <span class="ns">request::</span><span class="fn">json</span>()
     <span class="var">$email</span> = <span class="var">$body</span>[<span class="str">"email"</span>] ?? <span class="str">""</span>
