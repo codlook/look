@@ -157,6 +157,10 @@
         <p><span class="err-lbl">Cause</span> A token appears where the grammar doesn't allow it (a stray <code>)</code>, a missing operator, a keyword used as a name).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Look at the token in the message and the one before it. Usually a missing <code>,</code> <code>;</code> <code>{</code> or an extra bracket.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+if $age &gt; 18 { }            # missing parentheses
+<span class="eg-good"># ✓ fix</span>
+if ($age &gt; 18) { }</code></pre>
     </div>
     <div class="err" id="e1" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="unexpected character: '…' a character that isn't part of look (e.g. a smart-quote " pasted from a document, a stray backtick). replace it with the ascii equivalent (", ').">
       <div class="err-msg"><code>Unexpected character: '…'</code></div>
@@ -164,6 +168,10 @@
         <p><span class="err-lbl">Cause</span> A character that isn't part of LOOK (e.g. a smart-quote <code>"</code> pasted from a document, a stray backtick).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Replace it with the ASCII equivalent (<code>"</code>, <code>'</code>).</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$s = “hello”                # smart quotes from a document
+<span class="eg-good"># ✓ fix</span>
+$s = "hello"</code></pre>
     </div>
     <div class="err" id="e2" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="expect ';'. (got '…') a statement wasn't terminated. add ; — or check the previous line for an unclosed (/{ that makes the parser think the statement continues.">
       <div class="err-msg"><code>Expect ';'. (got '…')</code></div>
@@ -178,6 +186,10 @@
         <p><span class="err-lbl">Cause</span> A <code>"…"</code> (or raw string) opened but never closed on that line.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Close the quote. For text with newlines/quotes inside, use a raw string.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$s = "hello                 # quote never closed
+<span class="eg-good"># ✓ fix</span>
+$s = "hello"</code></pre>
     </div>
     <div class="err" id="e4" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="invalid assignment target. the left side of = isn't assignable (e.g. foo() = 1, $a + $b = 2). assign to a variable, array element, or property — not to an expression.">
       <div class="err-msg"><code>Invalid assignment target.</code></div>
@@ -207,6 +219,11 @@ throw "Not found"</code></pre>
         <p><span class="err-lbl">Cause</span> A single expression or block nests far deeper than the limit (often machine-generated code, or a runaway <code>a.b.c.d…</code> chain). This limit prevents a parser stack overflow.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Break the expression into intermediate variables / smaller statements.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$x = a(b(c(d(e(f(g(h( ... )))))))) # too deep
+<span class="eg-good"># ✓ fix</span>
+$g = g(h(...))
+$x = a(b(c($g)))   # split into steps</code></pre>
     </div>
     <div class="err" id="e7" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="jump target too far a single function compiled to more than 64 kb of bytecode — a jump can't reach that far. split the function into smaller functions.">
       <div class="err-msg"><code>Jump target too far</code></div>
@@ -214,6 +231,12 @@ throw "Not found"</code></pre>
         <p><span class="err-lbl">Cause</span> A single function compiled to more than 64 KB of bytecode — a jump can't reach that far.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Split the function into smaller functions.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+function huge() { /* 64KB+ of code */ }
+<span class="eg-good"># ✓ fix</span>
+# split into smaller functions
+function part1() { ... }
+function part2() { ... }</code></pre>
     </div>
   </div>
   </div>
@@ -405,48 +428,80 @@ array::map($arr, fn($x) =&gt; $x * 2)</code></pre>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> The size argument must be <code>&gt; 0</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+array::chunk($arr, 0)       # size must be &gt; 0
+<span class="eg-good"># ✓ fix</span>
+array::chunk($arr, 2)</code></pre>
     </div>
     <div class="err" id="e23" data-cat="Function arguments (built-ins)" data-text="array::zip() all arguments must be arrays every argument to zip must be an array.">
       <div class="err-msg"><code>array::zip() all arguments must be arrays</code></div>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> Every argument to <code>zip</code> must be an array.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+array::zip($a, "x")         # every arg must be an array
+<span class="eg-good"># ✓ fix</span>
+array::zip($a, $b)</code></pre>
     </div>
     <div class="err" id="e24" data-cat="Function arguments (built-ins)" data-text="math::max() expects 2+ arguments or 1 array call math::max(a, b, …) or math::max($arr).">
       <div class="err-msg"><code>math::max() expects 2+ arguments or 1 array</code></div>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> Call <code>math::max(a, b, …)</code> or <code>math::max($arr)</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+math::max()                 # needs values
+<span class="eg-good"># ✓ fix</span>
+math::max(3, 7, 2)   # or: math::max($arr)</code></pre>
     </div>
     <div class="err" id="e25" data-cat="Function arguments (built-ins)" data-text="math::sqrt: square root of a negative number is undefined guard against negative input.">
       <div class="err-msg"><code>math::sqrt: square root of a negative number is undefined</code></div>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> Guard against negative input.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+math::sqrt($n)              # $n may be negative
+<span class="eg-good"># ✓ fix</span>
+if ($n &gt;= 0) { math::sqrt($n) }</code></pre>
     </div>
     <div class="err" id="e26" data-cat="Function arguments (built-ins)" data-text="date::add() requires (date, amount, unit) pass all three; unit is "day", "hour", …">
       <div class="err-msg"><code>date::add() requires (date, amount, unit)</code></div>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass all three; <code>unit</code> is <code>"day"</code>, <code>"hour"</code>, …</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+date::add($d, 1)            # unit missing
+<span class="eg-good"># ✓ fix</span>
+date::add($d, 1, "day")</code></pre>
     </div>
     <div class="err" id="e27" data-cat="Function arguments (built-ins)" data-text="date::parse(): invalid date — '…' the string didn't match the given format; check the format argument.">
       <div class="err-msg"><code>date::parse(): invalid date — '…'</code></div>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> The string didn't match the given format; check the format argument.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+date::parse("2026/13/40", $fmt)  # doesn't match
+<span class="eg-good"># ✓ fix</span>
+date::parse("2026-08-17", "Y-m-d")</code></pre>
     </div>
     <div class="err" id="e28" data-cat="Function arguments (built-ins)" data-text="jobs::worker() — second argument must be a function pass a handler function($job){ … }.">
       <div class="err-msg"><code>jobs::worker() — second argument must be a function</code></div>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass a handler <code>function($job){ … }</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+jobs::worker("mail", $handler)   # not a function
+<span class="eg-good"># ✓ fix</span>
+jobs::worker("mail", fn($job) =&gt; send($job))</code></pre>
     </div>
     <div class="err" id="e29" data-cat="Function arguments (built-ins)" data-text="string::format() requires format string the first argument must be the format string.">
       <div class="err-msg"><code>string::format() requires format string</code></div>
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> The first argument must be the format string.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+string::format($name)       # format string first
+<span class="eg-good"># ✓ fix</span>
+string::format("Hi %s", $name)</code></pre>
     </div>
   </div>
   </div>
@@ -507,6 +562,10 @@ $conn = db::connect("mysql://root:@127.0.0.1/app")</code></pre>
         <p><span class="err-lbl">Cause</span> Malformed DSN, or a scheme other than <code>mysql</code>/<code>postgresql</code>/<code>sqlite</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Use a supported scheme and the <code>scheme://user:pass@host:port/name</code> shape.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+db::connect("root@localhost/app")   # no scheme
+<span class="eg-good"># ✓ fix</span>
+db::connect("mysql://root:@localhost/app")</code></pre>
     </div>
     <div class="err" id="e35" data-cat="Database (db::)" data-text="db::query() requires connection and sql (and exec/begin/commit/… variants) you didn't pass the connection handle (and sql). pass the handle from db::connect() as the first argument.">
       <div class="err-msg"><code>db::query() requires connection and SQL (and exec/begin/commit/… variants)</code></div>
@@ -604,6 +663,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> The path resolved outside the sandbox root (often <code>../</code> traversal or an absolute path).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Use a path <strong>inside</strong> the root; set <code>LOOK_FILE_ROOT</code> to the directory you intend to serve.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::read("../../etc/passwd")   # escapes the root
+<span class="eg-good"># ✓ fix</span>
+file::read("config/app.json")   # inside LOOK_FILE_ROOT</code></pre>
     </div>
     <div class="err" id="e46" data-cat="Files &amp; uploads (file::)" data-text="file: invalid path: … the path is malformed. use a plain relative path like config/app.json.">
       <div class="err-msg"><code>file: invalid path: …</code></div>
@@ -618,6 +681,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> The file doesn't exist or isn't readable/writable.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the path and permissions; create the file/dir first for writes.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::read("missing.txt")   # not there
+<span class="eg-good"># ✓ fix</span>
+if (file::exists($p)) { file::read($p) }</code></pre>
     </div>
     <div class="err" id="e48" data-cat="Files &amp; uploads (file::)" data-text="file::read() requires path (and other requires) missing argument. pass the path (and content for put/append).">
       <div class="err-msg"><code>file::read() requires path (and other requires)</code></div>
@@ -625,6 +692,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> Missing argument.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the path (and content for <code>put</code>/<code>append</code>).</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::read()                # path required
+<span class="eg-good"># ✓ fix</span>
+file::read("config/app.json")</code></pre>
     </div>
     <div class="err" id="e49" data-cat="Files &amp; uploads (file::)" data-text="uploaded file exceeds max_size limit (…) an upload is bigger than the allowed size. raise the max_size option, or reject large files client-side.">
       <div class="err-msg"><code>Uploaded file exceeds max_size limit (…)</code></div>
@@ -632,6 +703,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> An upload is bigger than the allowed size.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Raise the <code>max_size</code> option, or reject large files client-side.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::store($f)             # over the size cap
+<span class="eg-good"># ✓ fix</span>
+file::store($f, "img", ["max_size" =&gt; 5242880])</code></pre>
     </div>
     <div class="err" id="e50" data-cat="Files &amp; uploads (file::)" data-text="file type not allowed: … the upload's type isn't in your allow-list. add the type to the allow-list, or block it intentionally.">
       <div class="err-msg"><code>File type not allowed: …</code></div>
@@ -639,6 +714,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> The upload's type isn't in your allow-list.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Add the type to the allow-list, or block it intentionally.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::store($f)             # type not in the allow-list
+<span class="eg-good"># ✓ fix</span>
+file::store($f, "docs", ["allowed" =&gt; ["pdf", "png"]])</code></pre>
     </div>
     <div class="err" id="e51" data-cat="Files &amp; uploads (file::)" data-text="svg upload requires allow_svg: true option svg is blocked by default (it can carry scripts). only set allow_svg: true if you sanitize/trust the svg.">
       <div class="err-msg"><code>SVG upload requires allow_svg: true option</code></div>
@@ -646,6 +725,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> SVG is blocked by default (it can carry scripts).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Only set <code>allow_svg: true</code> if you sanitize/trust the SVG.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::store($upload)        # SVG blocked by default
+<span class="eg-good"># ✓ fix</span>
+file::store($upload, "img", ["allow_svg" =&gt; true])</code></pre>
     </div>
     <div class="err" id="e52" data-cat="Files &amp; uploads (file::)" data-text="file::store(): upload dir cannot be under web root — set upload_dir to a path outside web root saving uploads inside the web root would make them executable/served. point upload_dir outside the public web root.">
       <div class="err-msg"><code>file::store(): upload dir cannot be under web root — set UPLOAD_DIR to a path outside web root</code></div>
@@ -653,6 +736,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> Saving uploads inside the web root would make them executable/served.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Point <code>UPLOAD_DIR</code> outside the public web root.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::store($f, "uploads")   # folder under the web root
+<span class="eg-good"># ✓ fix</span>
+# point UPLOAD_DIR outside the public web root, e.g. /var/look-uploads</code></pre>
     </div>
     <div class="err" id="e53" data-cat="Files &amp; uploads (file::)" data-text="file::store(): subdir must be a simple name, not a path the subdir argument contained path separators. use a single folder name (no /, no ..).">
       <div class="err-msg"><code>file::store(): subdir must be a simple name, not a path</code></div>
@@ -660,6 +747,10 @@ db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
         <p><span class="err-lbl">Cause</span> The subdir argument contained path separators.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Use a single folder name (no <code>/</code>, no <code>..</code>).</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::store($f, "a/b/c")    # separators not allowed
+<span class="eg-good"># ✓ fix</span>
+file::store($f, "avatars")</code></pre>
     </div>
   </div>
   </div>
@@ -686,6 +777,10 @@ http::get("https://api.example.com/users")</code></pre>
         <p><span class="err-lbl">Cause</span> Not <code>http</code>/<code>https</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Use an <code>http(s)://</code> URL.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+http::get("ftp://host/f")
+<span class="eg-good"># ✓ fix</span>
+http::get("https://host/f")</code></pre>
     </div>
     <div class="err" id="e56" data-cat="HTTP client (http::)" data-text="http:: invalid ipv6 url (missing closing ']'): … an ipv6 host wasn't bracketed. wrap the address: http://[::1]:8080/.">
       <div class="err-msg"><code>http:: Invalid IPv6 URL (missing closing ']'): …</code></div>
@@ -693,6 +788,10 @@ http::get("https://api.example.com/users")</code></pre>
         <p><span class="err-lbl">Cause</span> An IPv6 host wasn't bracketed.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Wrap the address: <code>http://[::1]:8080/</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+http::get("http://::1:8080/")   # unbracketed
+<span class="eg-good"># ✓ fix</span>
+http::get("http://[::1]:8080/")</code></pre>
     </div>
     <div class="err" id="e57" data-cat="HTTP client (http::)" data-text="http::stream() — the 5th arg (callback) must be a function the streaming callback wasn't a function. pass function($chunk){ … } as the 5th argument.">
       <div class="err-msg"><code>http::stream() — the 5th arg (callback) must be a function</code></div>
@@ -700,6 +799,10 @@ http::get("https://api.example.com/users")</code></pre>
         <p><span class="err-lbl">Cause</span> The streaming callback wasn't a function.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass <code>function($chunk){ … }</code> as the 5th argument.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+http::stream($url, "GET", [], "", $cb)   # $cb not a function
+<span class="eg-good"># ✓ fix</span>
+http::stream($url, "GET", [], "", fn($chunk) =&gt; print($chunk))</code></pre>
     </div>
   </div>
   </div>
@@ -715,6 +818,10 @@ http::get("https://api.example.com/users")</code></pre>
         <p><span class="err-lbl">Cause</span> The view file path doesn't exist (relative to the views directory).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the path/filename passed to <code>template::render()</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+template::render("page.html")   # wrong path
+<span class="eg-good"># ✓ fix</span>
+template::render("pages/page.html", $data)</code></pre>
     </div>
     <div class="err" id="e59" data-cat="Templates (template::)" data-text="template parse error in '…' the template syntax is invalid ({#if} without {/if}, bad tag). fix the tag; every {#…} block needs its closing tag.">
       <div class="err-msg"><code>Template parse error in '…'</code></div>
@@ -722,6 +829,10 @@ http::get("https://api.example.com/users")</code></pre>
         <p><span class="err-lbl">Cause</span> The template syntax is invalid (<code>{#if}</code> without <code>{/if}</code>, bad tag).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Fix the tag; every <code>{#…}</code> block needs its closing tag.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+{#each $items as $i} ...        # no closing tag
+<span class="eg-good"># ✓ fix</span>
+{#each $items as $i} ... {/each}</code></pre>
     </div>
     <div class="err" id="e60" data-cat="Templates (template::)" data-text="template security error: escape outside the allowed directory blocked: … a {#extends}/{#include} path pointed outside the views directory. reference templates by relative name inside the views root only.">
       <div class="err-msg"><code>Template security error: escape outside the allowed directory blocked: …</code></div>
@@ -729,6 +840,10 @@ http::get("https://api.example.com/users")</code></pre>
         <p><span class="err-lbl">Cause</span> A <code>{#extends}</code>/<code>{#include}</code> path pointed outside the views directory.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Reference templates by relative name inside the views root only.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+{#include "../secret.html"}   # escapes the views dir
+<span class="eg-good"># ✓ fix</span>
+{#include "partials/header.html"}</code></pre>
     </div>
     <div class="err" id="e61" data-cat="Templates (template::)" data-text="template::render() expects 1 or 2 arguments: (file_path [, $data]) wrong argument count/type. template::render("page.html", $data).">
       <div class="err-msg"><code>template::render() expects 1 or 2 arguments: (file_path [, $data])</code></div>
@@ -755,6 +870,10 @@ template::render("page.html", $data)</code></pre>
         <p><span class="err-lbl">Cause</span> Missing argument.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the data (and key for <code>hmac</code>).</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+crypto::sha256()            # data required
+<span class="eg-good"># ✓ fix</span>
+crypto::sha256($payload)</code></pre>
     </div>
     <div class="err" id="e63" data-cat="Crypto (crypto::)" data-text="crypto::random_bytes() — must be 1-4096 / random_string() — must be 1-4096 requested length outside 1–4096. ask for a length in range; call repeatedly if you need more.">
       <div class="err-msg"><code>crypto::random_bytes() — must be 1-4096 / random_string() — must be 1-4096</code></div>
@@ -762,6 +881,10 @@ template::render("page.html", $data)</code></pre>
         <p><span class="err-lbl">Cause</span> Requested length outside 1–4096.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Ask for a length in range; call repeatedly if you need more.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+crypto::random_bytes(9000)  # must be 1-4096
+<span class="eg-good"># ✓ fix</span>
+crypto::random_bytes(32)</code></pre>
     </div>
     <div class="err" id="e64" data-cat="Crypto (crypto::)" data-text="crypto::rs256_sign() — rsa key required (ec/incompatible key rejected) the pem was not an rsa private key. provide a pkcs#8 rsa private key.">
       <div class="err-msg"><code>crypto::rs256_sign() — RSA key required (EC/incompatible key rejected)</code></div>
@@ -770,7 +893,7 @@ template::render("page.html", $data)</code></pre>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Provide a PKCS#8 RSA private key.</p>
       </div>
       <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
-crypto::rs256_sign($data, $pem)   # EC key rejected
+crypto::rs256_sign($data, $ec_pem)   # EC key rejected
 <span class="eg-good"># ✓ fix</span>
 # use a PKCS#8 RSA private key
 crypto::rs256_sign($data, $rsa_pem)</code></pre>
@@ -782,7 +905,7 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the key is valid PKCS#8 PEM, unencrypted, with proper <code>-----BEGIN…</code> lines.</p>
       </div>
       <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
-crypto::rs256_sign($data, $pem)   # EC key rejected
+crypto::rs256_sign($data, $ec_pem)   # EC key rejected
 <span class="eg-good"># ✓ fix</span>
 # use a PKCS#8 RSA private key
 crypto::rs256_sign($data, $rsa_pem)</code></pre>
@@ -793,6 +916,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> Missing one of the three arguments.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass data, signature, and the PEM <strong>public</strong> key.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+crypto::rs256_verify($data, $sig)   # public key missing
+<span class="eg-good"># ✓ fix</span>
+crypto::rs256_verify($data, $sig, $public_pem)</code></pre>
     </div>
   </div>
   </div>
@@ -815,6 +942,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> No password passed.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the plaintext password to hash.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+auth::hash()                # password required
+<span class="eg-good"># ✓ fix</span>
+$hash = auth::hash($password)</code></pre>
     </div>
     <div class="err" id="e69" data-cat="Sessions, cookies &amp; auth" data-text="auth: could not read enough random bytes csprng failure while hashing. system-level randomness problem; check the environment.">
       <div class="err-msg"><code>auth: could not read enough random bytes</code></div>
@@ -837,6 +968,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> The first argument wasn't the connection handle.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the connection object you got in the handler.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+ws::send($msg)              # first arg must be the socket
+<span class="eg-good"># ✓ fix</span>
+ws::send($ws, $msg)</code></pre>
     </div>
     <div class="err" id="e71" data-cat="Realtime — WebSocket, SSE, channels" data-text="websocket connection limit exceeded (…) / sse connection limit exceeded (…) too many concurrent connections. raise the configured limit, or shed/close idle connections.">
       <div class="err-msg"><code>WebSocket connection limit exceeded (…) / SSE connection limit exceeded (…)</code></div>
@@ -858,6 +993,12 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> You sent to a channel after it was closed.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Don't send after <code>close()</code>; coordinate producers/consumers.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+close($ch)
+send($ch, $v)               # channel already closed
+<span class="eg-good"># ✓ fix</span>
+send($ch, $v)
+close($ch)                   # send first, then close</code></pre>
     </div>
     <div class="err" id="e74" data-cat="Realtime — WebSocket, SSE, channels" data-text="channel send/receive timeout (possible deadlock; look_channel_timeout_ms) a channel op blocked past the timeout — often no counterpart is reading/writing (deadlock). ensure a receiver exists for every sender; adjust look_channel_timeout_ms for genuinely slow work.">
       <div class="err-msg"><code>channel send/receive timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)</code></div>
@@ -872,6 +1013,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> <code>channel(-1)</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Use a capacity <code>&gt;= 0</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$ch = channel(-1)
+<span class="eg-good"># ✓ fix</span>
+$ch = channel(0)   # unbuffered, or a positive size</code></pre>
     </div>
   </div>
   <div class="err-note">Channels/<code>go{}</code> are an experimental, opt-in feature — see the docs before relying on them.</div>
@@ -888,6 +1033,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> Wrong arguments.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass at least the queue name and payload.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+jobs::push("mail")          # payload required
+<span class="eg-good"># ✓ fix</span>
+jobs::push("mail", ["to" =&gt; $email])</code></pre>
     </div>
     <div class="err" id="e77" data-cat="Jobs &amp; queues (jobs::, queue::)" data-text="jobs::run() — register a handler first with jobs::worker() you ran the worker loop with no handler registered. call jobs::worker("queue", function($job){ … }) first.">
       <div class="err-msg"><code>jobs::run() — register a handler first with jobs::worker()</code></div>
@@ -895,6 +1044,11 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> You ran the worker loop with no handler registered.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Call <code>jobs::worker("queue", function($job){ … })</code> first.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+jobs::run()                 # no handler registered
+<span class="eg-good"># ✓ fix</span>
+jobs::worker("mail", fn($job) =&gt; send($job))
+jobs::run()</code></pre>
     </div>
     <div class="err" id="e78" data-cat="Jobs &amp; queues (jobs::, queue::)" data-text="jobs:: could not open db (…) / jobs:: schema error: … the job store (sqlite) couldn't be opened/initialized. check the job db path and write permissions.">
       <div class="err-msg"><code>jobs:: could not open DB (…) / jobs:: schema error: …</code></div>
@@ -909,6 +1063,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> Missing arguments.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the queue name (and value for <code>push</code>).</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+queue::push("mail")         # value required
+<span class="eg-good"># ✓ fix</span>
+queue::push("mail", $job)</code></pre>
     </div>
   </div>
   </div>
@@ -952,6 +1110,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> Wrong arguments.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass at least <code>to</code> and <code>subject</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+mail::send($to)             # subject required
+<span class="eg-good"># ✓ fix</span>
+mail::send($to, "Welcome", $body)</code></pre>
     </div>
   </div>
   </div>
@@ -967,6 +1129,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> Missing arguments.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the key (and value for <code>set</code>).</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+cache::set("k")             # value required
+<span class="eg-good"># ✓ fix</span>
+cache::set("k", $value, 300)   # ttl seconds</code></pre>
     </div>
     <div class="err" id="e86" data-cat="Cache &amp; Redis" data-text="redis: cannot connect to … / redis: cannot resolve … redis host/port unreachable. check the redis address and that it's running.">
       <div class="err-msg"><code>Redis: cannot connect to … / Redis: cannot resolve …</code></div>
@@ -1011,6 +1177,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> The pattern took too long on this input (catastrophic backtracking).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Simplify the pattern; avoid nested quantifiers like <code>(a+)+</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+string::regex_match($s, "(a+)+$")   # catastrophic backtracking
+<span class="eg-good"># ✓ fix</span>
+string::regex_match($s, "a+$")</code></pre>
     </div>
     <div class="err" id="e91" data-cat="Regular expressions (string::regex)" data-text="string::regex: concurrent regex limit exceeded (max 8) more than 8 regex operations ran at once. reduce concurrent regex work; reuse results.">
       <div class="err-msg"><code>string::regex: concurrent regex limit exceeded (max 8)</code></div>
@@ -1025,6 +1195,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> Input/pattern exceeds the size cap.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Trim the input, or pre-filter before matching.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+string::regex_match($huge, $p)
+<span class="eg-good"># ✓ fix</span>
+string::regex_match(string::substr($huge, 0, 65536), $p)</code></pre>
     </div>
   </div>
   </div>
@@ -1040,6 +1214,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> An install source other than <code>github.com</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Use <code>github.com/user/repo</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+lk install gitlab.com/user/repo
+<span class="eg-good"># ✓ fix</span>
+lk install github.com/user/repo</code></pre>
     </div>
     <div class="err" id="e94" data-cat="Modules &amp; packages (use, lk module/install)" data-text="invalid package (user/repo required): … the path isn't user/repo. give the full github.com/user/repo[/subdir].">
       <div class="err-msg"><code>Invalid package (user/repo required): …</code></div>
@@ -1047,6 +1225,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> The path isn't <code>user/repo</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Give the full <code>github.com/user/repo[/subdir]</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+lk install github.com/repo
+<span class="eg-good"># ✓ fix</span>
+lk install github.com/user/repo</code></pre>
     </div>
     <div class="err" id="e95" data-cat="Modules &amp; packages (use, lk module/install)" data-text="invalid package what (path-escape character): … the user/subdir contained .. or path separators (traversal attempt). use plain names — no .., no slashes inside a component.">
       <div class="err-msg"><code>Invalid package &lt;what&gt; (path-escape character): …</code></div>
@@ -1054,6 +1236,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> The user/subdir contained <code>..</code> or path separators (traversal attempt).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Use plain names — no <code>..</code>, no slashes inside a component.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+lk install github.com/user/../repo
+<span class="eg-good"># ✓ fix</span>
+lk install github.com/user/repo</code></pre>
     </div>
     <div class="err" id="e96" data-cat="Modules &amp; packages (use, lk module/install)" data-text="'…' folder not found in the repo. / official module not found. the named module/subdir doesn't exist in the repo. check the module name and the repo path.">
       <div class="err-msg"><code>'…' folder not found in the repo. / Official module not found.</code></div>
@@ -1068,6 +1254,10 @@ crypto::rs256_sign($data, $rsa_pem)</code></pre>
         <p><span class="err-lbl">Cause</span> A <code>use</code>d file/module can't be found or loaded.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the path in <code>use</code>; run <code>lk module install …</code> for external modules.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+use "helpers.lk"           # wrong path
+<span class="eg-good"># ✓ fix</span>
+use "lib/helpers.lk"   # or: lk module install github.com/user/repo</code></pre>
     </div>
   </div>
   </div>
