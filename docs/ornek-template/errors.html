@@ -66,6 +66,10 @@
   .err-msg{margin-bottom:.5rem;}
   .err-msg code{font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:600;color:var(--navy);background:color-mix(in srgb,var(--navy) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--navy) 20%,transparent);border-radius:6px;padding:.15rem .45rem;display:inline-block;overflow-wrap:anywhere;}
   .err-detail p{margin:.25rem 0;font-size:.9rem;line-height:1.55;color:var(--text);}
+  .err-eg{background:var(--navy);border-radius:8px;padding:.7rem .9rem;margin-top:.7rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;}
+  .err-eg code{background:transparent!important;border:0!important;padding:0!important;color:var(--code-txt)!important;font-size:inherit;white-space:pre-wrap;}
+  .err-eg .eg-bad{color:#ff9d9d;}
+  .err-eg .eg-good{color:#6ee7a8;}
   .err-lbl{display:inline-block;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:.05rem .35rem;margin-right:.35rem;vertical-align:.05em;}
   .err-lbl-fix{color:var(--green);border-color:color-mix(in srgb,var(--green) 35%,transparent);}
   .err-detail code,.err-body-wrap code,.err-note code{font-family:'JetBrains Mono',monospace;font-size:.82em;background:color-mix(in srgb,var(--blue) 8%,var(--surface));border:1px solid var(--border);border-radius:5px;padding:.03rem .3rem;overflow-wrap:anywhere;}
@@ -181,6 +185,10 @@
         <p><span class="err-lbl">Cause</span> The left side of <code>=</code> isn't assignable (e.g. <code>foo() = 1</code>, <code>$a + $b = 2</code>).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Assign to a variable, array element, or property — not to an expression.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+count($a) = 5               # left side isn't assignable
+<span class="eg-good"># ✓ fix</span>
+$n = 5</code></pre>
     </div>
     <div class="err" id="e5" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="an expression is required after throw throw with nothing after it. throw "message" — throw needs a value.">
       <div class="err-msg"><code>an expression is required after throw</code></div>
@@ -188,6 +196,10 @@
         <p><span class="err-lbl">Cause</span> <code>throw</code> with nothing after it.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> <code>throw "message"</code> — throw needs a value.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+throw
+<span class="eg-good"># ✓ fix</span>
+throw "Not found"</code></pre>
     </div>
     <div class="err" id="e6" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="expression nested too deep (max n) / expression chain too long (max n) / expression/block nested too deep a single expression or block nests far deeper than the limit (often machine-generated code, or a runaway a.b.c.d… chain). this limit prevents a parser stack overflow. break the expression into intermediate variables / smaller statements.">
       <div class="err-msg"><code>Expression nested too deep (max N) / Expression chain too long (max N) / Expression/block nested too deep</code></div>
@@ -219,6 +231,11 @@
         <p><span class="err-lbl">Cause</span> You read <code>$name</code> before it was ever assigned — almost always a <strong>typo</strong> (<code>$userr</code> vs <code>$user</code>) or a variable from another scope.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Assign it first (<code>$name = …</code>), or fix the spelling. A function cannot see the caller's variables — pass them as arguments.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+print($usr)                 # typo — $usr was never set
+<span class="eg-good"># ✓ fix</span>
+$user = "Ada"
+print($user)</code></pre>
     </div>
     <div class="err" id="e9" data-cat="Undefined names" data-text="undefined variable read (look_warn_undef transition mode, returned null): $name same as above, but you set look_warn_undef=1, which downgrades the error to a warning and returns null. only a migration aid. assign the variable; unset look_warn_undef to get strict errors back.">
       <div class="err-msg"><code>Undefined variable read (LOOK_WARN_UNDEF transition mode, returned null): $name</code></div>
@@ -226,6 +243,11 @@
         <p><span class="err-lbl">Cause</span> Same as above, but you set <code>LOOK_WARN_UNDEF=1</code>, which downgrades the error to a warning and returns <code>null</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Only a migration aid. Assign the variable; unset <code>LOOK_WARN_UNDEF</code> to get strict errors back.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+print($usr)                 # typo — $usr was never set
+<span class="eg-good"># ✓ fix</span>
+$user = "Ada"
+print($user)</code></pre>
     </div>
     <div class="err" id="e10" data-cat="Undefined names" data-text="undefined function: name you called a function that isn't defined (typo, or you forgot to use its module/package). check the spelling; add use module or use "pkg/ name " if it lives in a module/package.">
       <div class="err-msg"><code>Undefined function: name</code></div>
@@ -233,6 +255,10 @@
         <p><span class="err-lbl">Cause</span> You called a function that isn't defined (typo, or you forgot to <code>use</code> its module/package).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the spelling; add <code>use &lt;module&gt;</code> or <code>use "pkg/&lt;name&gt;"</code> if it lives in a module/package.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+echo("hi")                  # echo is not a LOOK function
+<span class="eg-good"># ✓ fix</span>
+print("hi")</code></pre>
     </div>
     <div class="err" id="e11" data-cat="Undefined names" data-text="built-in ' name ' unavailable (not linked) a built-in exists in this binary's name table but isn't wired into the running engine (rare; e.g. a cli-only path hitting a web-only built-in). use the documented built-in for your context; report it if a documented function triggers this.">
       <div class="err-msg"><code>Built-in '&lt;name&gt;' unavailable (not linked)</code></div>
@@ -255,6 +281,10 @@
         <p><span class="err-lbl">Cause</span> You used <code>+ - * /</code> on <code>null</code>, an array, or an object.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Convert first (<code>int()</code>, <code>float()</code>), or check the value isn't <code>null</code> before the math.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$total = $row + 5           # $row is an array / null
+<span class="eg-good"># ✓ fix</span>
+$total = ($row["qty"] ?? 0) + 5</code></pre>
     </div>
     <div class="err" id="e13" data-cat="Types, arithmetic &amp; indexing" data-text="arithmetic on an empty string math on "". guard empty input, or default it ($n = $s == "" ? 0 : int($s)).">
       <div class="err-msg"><code>Arithmetic on an empty string</code></div>
@@ -262,6 +292,10 @@
         <p><span class="err-lbl">Cause</span> Math on <code>""</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Guard empty input, or default it (<code>$n = $s == "" ? 0 : int($s)</code>).</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$n = $s + 1                 # $s is ""
+<span class="eg-good"># ✓ fix</span>
+$n = ($s == "" ? 0 : int($s)) + 1</code></pre>
     </div>
     <div class="err" id="e14" data-cat="Types, arithmetic &amp; indexing" data-text="arithmetic on a string that cannot be converted to a number: '…' the string isn't numeric ("12abc"). look does not silently truncate. validate with validator::integer/numeric, or clean the string before converting.">
       <div class="err-msg"><code>Arithmetic on a string that cannot be converted to a number: '…'</code></div>
@@ -269,6 +303,10 @@
         <p><span class="err-lbl">Cause</span> The string isn't numeric (<code>"12abc"</code>). LOOK does <strong>not</strong> silently truncate.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Validate with <code>validator::integer/numeric</code>, or clean the string before converting.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$n = int("12abc")           # not a full number
+<span class="eg-good"># ✓ fix</span>
+if (validator::integer($s)) { $n = int($s) }</code></pre>
     </div>
     <div class="err" id="e15" data-cat="Types, arithmetic &amp; indexing" data-text="arithmetic on a numeric string exceeding the int64 limit (bignum/id): '…' a numeric string is larger than a 64-bit integer (often a giant id). keep it as a string — don't do arithmetic on it. look compares such ids exactly as strings.">
       <div class="err-msg"><code>Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '…'</code></div>
@@ -276,6 +314,11 @@
         <p><span class="err-lbl">Cause</span> A numeric string is larger than a 64-bit integer (often a giant ID).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Keep it as a <strong>string</strong> — don't do arithmetic on it. LOOK compares such IDs exactly as strings.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$next = $big_id + 1         # 20-digit id &gt; int64
+<span class="eg-good"># ✓ fix</span>
+# keep large ids as strings — compare, don't do math
+if ($a_id == $b_id) { ... }</code></pre>
     </div>
     <div class="err" id="e16" data-cat="Types, arithmetic &amp; indexing" data-text="division by zero / modulo by zero the right operand of / or % was 0. check the divisor before dividing.">
       <div class="err-msg"><code>Division by zero / Modulo by zero</code></div>
@@ -283,6 +326,10 @@
         <p><span class="err-lbl">Cause</span> The right operand of <code>/</code> or <code>%</code> was <code>0</code>.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the divisor before dividing.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$avg = $sum / $count
+<span class="eg-good"># ✓ fix</span>
+$avg = $count == 0 ? 0 : $sum / $count</code></pre>
     </div>
     <div class="err" id="e17" data-cat="Types, arithmetic &amp; indexing" data-text="index operator requires an array you used x[i] on something that isn't an array/object. make sure x is an array; check for null first.">
       <div class="err-msg"><code>Index operator requires an array</code></div>
@@ -290,6 +337,10 @@
         <p><span class="err-lbl">Cause</span> You used <code>x[i]</code> on something that isn't an array/object.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Make sure <code>x</code> is an array; check for <code>null</code> first.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$name = $user["name"]       # $user is null
+<span class="eg-good"># ✓ fix</span>
+if (is_array($user)) { $name = $user["name"] }</code></pre>
     </div>
     <div class="err" id="e18" data-cat="Types, arithmetic &amp; indexing" data-text="array index out of bounds / array index … arr[i] with i past the end (or negative). check count(arr) before indexing; array indexes are 0-based.">
       <div class="err-msg"><code>Array index out of bounds / Array index …</code></div>
@@ -297,6 +348,10 @@
         <p><span class="err-lbl">Cause</span> <code>arr[i]</code> with <code>i</code> past the end (or negative).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check <code>count(arr)</code> before indexing; array indexes are 0-based.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$first = $rows[0]           # $rows may be empty
+<span class="eg-good"># ✓ fix</span>
+if (count($rows) &gt; 0) { $first = $rows[0] }</code></pre>
     </div>
     <div class="err" id="e19" data-cat="Types, arithmetic &amp; indexing" data-text="foreach requires an array foreach/for … as over a non-array (often null from a lookup that missed). ensure the value is an array; default to [] when a lookup can miss.">
       <div class="err-msg"><code>foreach requires an array</code></div>
@@ -304,6 +359,10 @@
         <p><span class="err-lbl">Cause</span> <code>foreach</code>/<code>for … as</code> over a non-array (often <code>null</code> from a lookup that missed).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Ensure the value is an array; default to <code>[]</code> when a lookup can miss.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+foreach ($rows as $r) { }   # $rows is null
+<span class="eg-good"># ✓ fix</span>
+foreach ($rows ?? [] as $r) { }</code></pre>
     </div>
     <div class="err" id="e20" data-cat="Types, arithmetic &amp; indexing" data-text="++/-- requires a variable ++/-- applied to something that isn't a variable (e.g. ++5, ++foo()). apply it to a variable: $i++.">
       <div class="err-msg"><code>++/-- requires a variable</code></div>
@@ -311,6 +370,11 @@
         <p><span class="err-lbl">Cause</span> <code>++</code>/<code>--</code> applied to something that isn't a variable (e.g. <code>++5</code>, <code>++foo()</code>).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Apply it to a variable: <code>$i++</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+++count($arr)               # not a variable
+<span class="eg-good"># ✓ fix</span>
+$i = count($arr)
+$i++</code></pre>
     </div>
   </div>
   </div>
@@ -331,6 +395,10 @@
       <div class="err-detail">
         <p><span class="err-lbl err-lbl-fix">Fix</span> <code>array::map($arr, function($x){ … })</code> — pass both.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+array::map($arr)            # missing callback
+<span class="eg-good"># ✓ fix</span>
+array::map($arr, fn($x) =&gt; $x * 2)</code></pre>
     </div>
     <div class="err" id="e22" data-cat="Function arguments (built-ins)" data-text="array::chunk() size must be positive the size argument must be 0.">
       <div class="err-msg"><code>array::chunk() size must be positive</code></div>
@@ -428,6 +496,10 @@
         <p><span class="err-lbl">Cause</span> Called <code>connect()</code> with no DSN.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> <code>db::connect("mysql://user:pass@host/db")</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+db::connect()
+<span class="eg-good"># ✓ fix</span>
+$conn = db::connect("mysql://root:@127.0.0.1/app")</code></pre>
     </div>
     <div class="err" id="e34" data-cat="Database (db::)" data-text="db: invalid dsn format / db::connect() unsupported dsn scheme: … malformed dsn, or a scheme other than mysql/postgresql/sqlite. use a supported scheme and the scheme://user:pass@host:port/name shape.">
       <div class="err-msg"><code>db: invalid DSN format / db::connect() unsupported DSN scheme: …</code></div>
@@ -442,6 +514,10 @@
         <p><span class="err-lbl">Cause</span> You didn't pass the connection handle (and SQL).</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the handle from <code>db::connect()</code> as the first argument.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+db::query("SELECT ...")     # missing connection
+<span class="eg-good"># ✓ fix</span>
+db::query($conn, "SELECT ...", [])</code></pre>
     </div>
     <div class="err" id="e36" data-cat="Database (db::)" data-text="db: connection not found / db: invalid connection handle the handle is stale/closed or from a different worker. reconnect; don't share a handle across requests — open per request or use the pool.">
       <div class="err-msg"><code>db: connection not found / db: invalid connection handle</code></div>
@@ -456,6 +532,10 @@
         <p><span class="err-lbl">Cause</span> The number of <code>?</code> placeholders ≠ the number of bound values.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Match placeholders to the values array exactly.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+db::query($c, "... id=? AND a=?", [$id])
+<span class="eg-good"># ✓ fix</span>
+db::query($c, "... id=? AND a=?", [$id, $a])</code></pre>
     </div>
     <div class="err" id="e38" data-cat="Database (db::)" data-text="db: cannot bind nan/infinity float as a parameter you tried to bind nan/infinity. validate/clean the number before binding.">
       <div class="err-msg"><code>db: cannot bind NaN/Infinity float as a parameter</code></div>
@@ -595,6 +675,10 @@
         <p><span class="err-lbl">Cause</span> No URL (or body) passed.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the URL; <code>post/put/patch</code> also need a body.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+http::get()                 # url required
+<span class="eg-good"># ✓ fix</span>
+http::get("https://api.example.com/users")</code></pre>
     </div>
     <div class="err" id="e55" data-cat="HTTP client (http::)" data-text="http:: unsupported url scheme: … not http/https. use an http(s):// url.">
       <div class="err-msg"><code>http:: Unsupported URL scheme: …</code></div>
@@ -652,6 +736,10 @@
         <p><span class="err-lbl">Cause</span> Wrong argument count/type.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> <code>template::render("page.html", $data)</code>.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+template::render()
+<span class="eg-good"># ✓ fix</span>
+template::render("page.html", $data)</code></pre>
     </div>
   </div>
   </div>
@@ -681,6 +769,11 @@
         <p><span class="err-lbl">Cause</span> The PEM was not an RSA private key.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Provide a PKCS#8 RSA private key.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+crypto::rs256_sign($data, $pem)   # EC key rejected
+<span class="eg-good"># ✓ fix</span>
+# use a PKCS#8 RSA private key
+crypto::rs256_sign($data, $rsa_pem)</code></pre>
     </div>
     <div class="err" id="e65" data-cat="Crypto (crypto::)" data-text="crypto::rs256_sign() — pem key parse error / rsa key import error (pkcs#8 pem required) the pem couldn't be parsed. check the key is valid pkcs#8 pem, unencrypted, with proper -----begin… lines.">
       <div class="err-msg"><code>crypto::rs256_sign() — PEM key parse error / RSA key import error (PKCS#8 PEM required)</code></div>
@@ -688,6 +781,11 @@
         <p><span class="err-lbl">Cause</span> The PEM couldn't be parsed.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the key is valid PKCS#8 PEM, unencrypted, with proper <code>-----BEGIN…</code> lines.</p>
       </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+crypto::rs256_sign($data, $pem)   # EC key rejected
+<span class="eg-good"># ✓ fix</span>
+# use a PKCS#8 RSA private key
+crypto::rs256_sign($data, $rsa_pem)</code></pre>
     </div>
     <div class="err" id="e66" data-cat="Crypto (crypto::)" data-text="crypto::rs256_verify() — data, sig and pem public key required missing one of the three arguments. pass data, signature, and the pem public key.">
       <div class="err-msg"><code>crypto::rs256_verify() — data, sig and PEM public key required</code></div>
