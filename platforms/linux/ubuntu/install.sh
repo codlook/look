@@ -2,7 +2,10 @@
 # ============================================================================
 # LOOK — Ubuntu/Debian tek-komut kurulum
 #
-#   curl -fsSL https://codlook.com/install/ubuntu.sh | sudo bash
+#   1) look-lang-linux-1.0.0.zip indir (GitHub Releases):
+#      https://github.com/codlook/look/releases/latest/download/look-lang-linux-1.0.0.zip
+#   2) unzip look-lang-linux-1.0.0.zip && cd look-lang-linux-*
+#   3) sudo bash install.sh      # bin/ zip'in içinde gömülü — indirme yok
 #
 # Ne yapar: binary'yi kurar → örnek uygulama + .env → systemd servisi →
 # başlatır → doğrular. Geliştirici tek komutla çalışan bir LOOK sunucusu alır.
@@ -12,14 +15,15 @@
 #   LOOK_WORKERS=0            0 = otomatik (CPU*4, max 64)
 #   LOOK_APP_DIR=/var/www/look   uygulama dizini
 #   LOOK_BIN_SRC=<yol>        yerel binary klasörü (lk, lk-fcgi) — offline kurulum
-#   LOOK_BIN_URL=<url>        binary indirme kök URL'si (release)
+#   LOOK_BIN_URL=<url>        opsiyonel: loose binary (lk, lk-fcgi) sunan bir ayna kök URL'si
+#                             (normalde gerekmez — release zip'i bin/ ile gelir)
 # ============================================================================
 set -euo pipefail
 
 LOOK_PORT="${LOOK_PORT:-9000}"
 LOOK_WORKERS="${LOOK_WORKERS:-0}"
 LOOK_APP_DIR="${LOOK_APP_DIR:-/var/www/look}"
-LOOK_BIN_URL="${LOOK_BIN_URL:-https://codlook.com/dl/linux}"
+LOOK_BIN_URL="${LOOK_BIN_URL:-}"
 BIN_DIR=/usr/local/bin
 ETC_DIR=/etc/look
 
@@ -59,10 +63,12 @@ install_bin() { # $1 = isim
   local name="$1"
   if [ -n "${LOOK_BIN_SRC:-}" ] && [ -f "$LOOK_BIN_SRC/$name" ]; then
     install -m 0755 "$LOOK_BIN_SRC/$name" "$BIN_DIR/$name"
-  else
+  elif [ -n "${LOOK_BIN_URL:-}" ]; then
     curl -fsSL "$LOOK_BIN_URL/$name" -o "$BIN_DIR/$name" \
-      || die "binary indirilemedi: $LOOK_BIN_URL/$name  (offline için LOOK_BIN_SRC kullan)"
+      || die "binary indirilemedi: $LOOK_BIN_URL/$name"
     chmod +x "$BIN_DIR/$name"
+  else
+    die "binary bulunamadı — install.sh'i açılmış release zip'inin içinden çalıştır (bin/ yanında olmalı), ya da LOOK_BIN_URL/LOOK_BIN_SRC ayarla"
   fi
 }
 say "Binary kuruluyor → $BIN_DIR/{lk, lk-fcgi}"
