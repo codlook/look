@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOOK — Error Reference</title>
+<meta name="description" content="LOOK error reference and troubleshooting — paste the error you got and find what it means, what causes it, and how to fix it. 116 errors across 19 categories.">
+<link rel="icon" href="look-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  .err-main{max-width:var(--wrap,1120px);margin:0 auto;padding:2.2rem 1.2rem 4rem;}
+  .err-hero{text-align:center;max-width:680px;margin:0 auto 1.4rem;}
+  .err-hero h1{font-size:2.1rem;margin:0 0 .5rem;}
+  .err-hero p{color:var(--text-muted);font-size:1.02rem;line-height:1.6;margin:0;}
+  .err-tools{position:sticky;top:74px;z-index:20;background:var(--bg);padding:.9rem 0 1rem;margin-bottom:.6rem;}
+  .err-search{display:block;width:100%;max-width:640px;margin:0 auto;padding:.85rem 1.1rem;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--text);font:inherit;font-size:1rem;}
+  .err-search:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px color-mix(in srgb,var(--navy) 18%,transparent);}
+  .err-chips{display:flex;flex-wrap:wrap;gap:.4rem;justify-content:center;max-width:900px;margin:.9rem auto 0;}
+  .err-chips a{font-size:.78rem;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:.3rem .7rem;text-decoration:none;transition:.15s;}
+  .err-chips a:hover{border-color:var(--navy);color:var(--text);}
+  .err-section{margin:2rem 0;scroll-margin-top:150px;}
+  .err-section > h2{font-size:1.3rem;margin:0 0 .5rem;padding-bottom:.4rem;border-bottom:2px solid var(--border);}
+  .err-body-wrap > p{color:var(--text-muted);font-size:.92rem;line-height:1.6;margin:.4rem 0;}
+  .err-body-wrap > h3{font-size:.95rem;margin:1rem 0 .4rem;color:var(--text);}
+  .err-ul{margin:.4rem 0 .8rem;padding-left:1.2rem;color:var(--text-muted);font-size:.9rem;line-height:1.7;}
+  .err-pre{background:var(--navy);color:#e8edf7;border-radius:10px;padding:.9rem 1.1rem;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:.82rem;line-height:1.5;margin:.6rem 0;}
+  .err-note{background:color-mix(in srgb,var(--blue) 8%,var(--surface));border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:8px;padding:.7rem .9rem;margin:.7rem 0;font-size:.88rem;color:var(--text);line-height:1.6;}
+  .err-list{display:flex;flex-direction:column;gap:.6rem;margin:.7rem 0;}
+  .err{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:.85rem 1rem;}
+  .err-msg{margin-bottom:.5rem;}
+  .err-msg code{font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:600;color:var(--navy);background:color-mix(in srgb,var(--navy) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--navy) 20%,transparent);border-radius:6px;padding:.15rem .45rem;display:inline-block;overflow-wrap:anywhere;}
+  .err-detail p{margin:.25rem 0;font-size:.9rem;line-height:1.55;color:var(--text);}
+  .err-lbl{display:inline-block;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:.05rem .35rem;margin-right:.35rem;vertical-align:.05em;}
+  .err-lbl-fix{color:var(--green);border-color:color-mix(in srgb,var(--green) 35%,transparent);}
+  .err-detail code,.err-body-wrap code,.err-note code{font-family:'JetBrains Mono',monospace;font-size:.82em;background:color-mix(in srgb,var(--blue) 8%,var(--surface));border:1px solid var(--border);border-radius:5px;padding:.03rem .3rem;overflow-wrap:anywhere;}
+  .err-empty{text-align:center;color:var(--text-muted);padding:3rem 1rem;display:none;}
+  @media(max-width:600px){.err-tools{position:static;}.err-hero h1{font-size:1.6rem;}}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html"><span>look<span class="dot">.</span></span></a>
+    <nav class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="packages.html">Packages</a>
+      <a href="errors.html" class="active">Errors</a>
+      <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
+    </nav>
+    <a class="btn btn-primary" href="index.html#kurulum">Get started</a>
+    <button class="nav-burger" aria-label="Menu" onclick="document.querySelector('header.nav').classList.toggle('open')"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<main class="err-main">
+  <div class="err-hero">
+    <h1>Error Reference</h1>
+    <p>You hit an error — here's what it <strong>means</strong>, what <strong>causes</strong> it, and how to <strong>fix</strong> it. Paste your message below, or browse by category.</p>
+  </div>
+
+  <div class="err-tools">
+    <input type="text" class="err-search" id="errSearch" placeholder="Paste your error message (e.g. Undefined variable: $user)…" aria-label="Search errors" autocomplete="off">
+    <div class="err-chips">
+      <a href="#how-to-read-a-look-error">How to read a LOOK error</a>
+      <a href="#syntax-parse-errors-before-your-code-run">Syntax &amp; parse errors (before your code runs)</a>
+      <a href="#undefined-names">Undefined names</a>
+      <a href="#types-arithmetic-indexing">Types, arithmetic &amp; indexing</a>
+      <a href="#function-arguments-built-ins">Function arguments (built-ins)</a>
+      <a href="#input-validation-validator">Input validation (`validator::`)</a>
+      <a href="#database-db">Database (`db::`)</a>
+      <a href="#files-uploads-file">Files &amp; uploads (`file::`)</a>
+      <a href="#http-client-http">HTTP client (`http::`)</a>
+      <a href="#templates-template">Templates (`template::`)</a>
+      <a href="#crypto-crypto">Crypto (`crypto::`)</a>
+      <a href="#sessions-cookies-auth">Sessions, cookies &amp; auth</a>
+      <a href="#realtime-websocket-sse-channels">Realtime — WebSocket, SSE, channels</a>
+      <a href="#jobs-queues-jobs-queue">Jobs &amp; queues (`jobs::`, `queue::`)</a>
+      <a href="#mail-mail">Mail (`mail::`)</a>
+      <a href="#cache-redis">Cache &amp; Redis</a>
+      <a href="#regular-expressions-string-regex">Regular expressions (`string::regex*`)</a>
+      <a href="#modules-packages-use-lk-module-install">Modules &amp; packages (`use`, `lk module/install`)</a>
+      <a href="#system-infrastructure-errors-rare">System / infrastructure errors (rare)</a>
+    </div>
+  </div>
+
+<section class="err-section" id="how-to-read-a-look-error">
+  <h2>How to read a LOOK error</h2>
+  <div class="err-body-wrap">
+  <p>Every LOOK error tells you <strong>what</strong> went wrong and <strong>where</strong>:</p>
+  <pre class="err-pre"><code>Runtime Error: Undefined variable: $userr
+  File: app.lk
+  Line: 42</code></pre>
+  <p>Parse/compile errors also give the <strong>column</strong>:</p>
+  <pre class="err-pre"><code>Parse Error: Unexpected token: ')'
+  File: app.lk
+  Line: 2, Column: 12</code></pre>
+  <ul class="err-ul"><li><strong>The kind</strong> — <code>Parse Error</code> happens *before* your code runs (syntax);</li></ul>
+  <p>  <code>Runtime Error</code> happens *while* it runs (bad value, missing file, failed connection).</p>
+  <ul class="err-ul"><li><strong>The message</strong> — the specific problem. Everything below is organized by this text.</li><li><strong><code>File:</code> / <code>Line:</code> (and <code>Column:</code> for parse errors)</strong> — exactly where it happened.</li></ul>
+  <p>  Parse errors point at the offending token; runtime errors point at the line being executed.</p>
+  <div class="err-note">Messages are matched by their <strong>leading text</strong>. Where a message ends with <code>…</code> or a value (<code>Undefined variable: $x</code>), look it up by the part before the value.</div>
+  </div>
+</section>
+
+<section class="err-section" id="syntax-parse-errors-before-your-code-run">
+  <h2>1. Syntax &amp; parse errors (before your code runs)</h2>
+  <div class="err-body-wrap">
+  <p>These come from the parser/compiler. Your program never starts until they are fixed.</p>
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="unexpected token: '…' a token appears where the grammar doesn't allow it (a stray ), a missing operator, a keyword used as a name). look at the token in the message and the one before it. usually a missing , ; { or an extra bracket.">
+      <div class="err-msg"><code>Unexpected token: '…'</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A token appears where the grammar doesn't allow it (a stray <code>)</code>, a missing operator, a keyword used as a name).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Look at the token in the message and the one before it. Usually a missing <code>,</code> <code>;</code> <code>{</code> or an extra bracket.</p>
+      </div>
+    </div>
+    <div class="err" data-text="unexpected character: '…' a character that isn't part of look (e.g. a smart-quote " pasted from a document, a stray backtick). replace it with the ascii equivalent (", ').">
+      <div class="err-msg"><code>Unexpected character: '…'</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A character that isn't part of LOOK (e.g. a smart-quote <code>"</code> pasted from a document, a stray backtick).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Replace it with the ASCII equivalent (<code>"</code>, <code>'</code>).</p>
+      </div>
+    </div>
+    <div class="err" data-text="expect ';'. (got '…') a statement wasn't terminated. add ; — or check the previous line for an unclosed (/{ that makes the parser think the statement continues.">
+      <div class="err-msg"><code>Expect ';'. (got '…')</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A statement wasn't terminated.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Add <code>;</code> — or check the previous line for an unclosed <code>(</code>/<code>{</code> that makes the parser think the statement continues.</p>
+      </div>
+    </div>
+    <div class="err" data-text="unterminated string at line n / unterminated raw string at line n a "…" (or raw string) opened but never closed on that line. close the quote. for text with newlines/quotes inside, use a raw string.">
+      <div class="err-msg"><code>Unterminated string at line N / Unterminated raw string at line N</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A <code>"…"</code> (or raw string) opened but never closed on that line.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Close the quote. For text with newlines/quotes inside, use a raw string.</p>
+      </div>
+    </div>
+    <div class="err" data-text="invalid assignment target. the left side of = isn't assignable (e.g. foo() = 1, $a + $b = 2). assign to a variable, array element, or property — not to an expression.">
+      <div class="err-msg"><code>Invalid assignment target.</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The left side of <code>=</code> isn't assignable (e.g. <code>foo() = 1</code>, <code>$a + $b = 2</code>).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Assign to a variable, array element, or property — not to an expression.</p>
+      </div>
+    </div>
+    <div class="err" data-text="an expression is required after throw throw with nothing after it. throw "message" — throw needs a value.">
+      <div class="err-msg"><code>an expression is required after throw</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>throw</code> with nothing after it.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> <code>throw "message"</code> — throw needs a value.</p>
+      </div>
+    </div>
+    <div class="err" data-text="expression nested too deep (max n) / expression chain too long (max n) / expression/block nested too deep a single expression or block nests far deeper than the limit (often machine-generated code, or a runaway a.b.c.d… chain). this limit prevents a parser stack overflow. break the expression into intermediate variables / smaller statements.">
+      <div class="err-msg"><code>Expression nested too deep (max N) / Expression chain too long (max N) / Expression/block nested too deep</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A single expression or block nests far deeper than the limit (often machine-generated code, or a runaway <code>a.b.c.d…</code> chain). This limit prevents a parser stack overflow.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Break the expression into intermediate variables / smaller statements.</p>
+      </div>
+    </div>
+    <div class="err" data-text="jump target too far a single function compiled to more than 64 kb of bytecode — a jump can't reach that far. split the function into smaller functions.">
+      <div class="err-msg"><code>Jump target too far</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A single function compiled to more than 64 KB of bytecode — a jump can't reach that far.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Split the function into smaller functions.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="undefined-names">
+  <h2>2. Undefined names</h2>
+  <div class="err-body-wrap">
+  <p>LOOK is <strong>strict</strong>: reading a variable that was never assigned is an error, not a silent</p>
+  <p><code>null</code>. This catches typos early.</p>
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="undefined variable: $name you read $name before it was ever assigned — almost always a typo ($userr vs $user) or a variable from another scope. assign it first ($name = …), or fix the spelling. a function cannot see the caller's variables — pass them as arguments.">
+      <div class="err-msg"><code>Undefined variable: $name</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You read <code>$name</code> before it was ever assigned — almost always a <strong>typo</strong> (<code>$userr</code> vs <code>$user</code>) or a variable from another scope.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Assign it first (<code>$name = …</code>), or fix the spelling. A function cannot see the caller's variables — pass them as arguments.</p>
+      </div>
+    </div>
+    <div class="err" data-text="undefined variable read (look_warn_undef transition mode, returned null): $name same as above, but you set look_warn_undef=1, which downgrades the error to a warning and returns null. only a migration aid. assign the variable; unset look_warn_undef to get strict errors back.">
+      <div class="err-msg"><code>Undefined variable read (LOOK_WARN_UNDEF transition mode, returned null): $name</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Same as above, but you set <code>LOOK_WARN_UNDEF=1</code>, which downgrades the error to a warning and returns <code>null</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Only a migration aid. Assign the variable; unset <code>LOOK_WARN_UNDEF</code> to get strict errors back.</p>
+      </div>
+    </div>
+    <div class="err" data-text="undefined function: name you called a function that isn't defined (typo, or you forgot to use its module/package). check the spelling; add use module or use "pkg/ name " if it lives in a module/package.">
+      <div class="err-msg"><code>Undefined function: name</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You called a function that isn't defined (typo, or you forgot to <code>use</code> its module/package).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the spelling; add <code>use &lt;module&gt;</code> or <code>use "pkg/&lt;name&gt;"</code> if it lives in a module/package.</p>
+      </div>
+    </div>
+    <div class="err" data-text="built-in ' name ' unavailable (not linked) a built-in exists in this binary's name table but isn't wired into the running engine (rare; e.g. a cli-only path hitting a web-only built-in). use the documented built-in for your context; report it if a documented function triggers this.">
+      <div class="err-msg"><code>Built-in '&lt;name&gt;' unavailable (not linked)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A built-in exists in this binary's name table but isn't wired into the running engine (rare; e.g. a CLI-only path hitting a web-only built-in).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use the documented built-in for your context; report it if a documented function triggers this.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="types-arithmetic-indexing">
+  <h2>3. Types, arithmetic &amp; indexing</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="arithmetic on a non-numeric value (null/array/object) you used + - * / on null, an array, or an object. convert first (int(), float()), or check the value isn't null before the math.">
+      <div class="err-msg"><code>Arithmetic on a non-numeric value (null/array/object)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You used <code>+ - * /</code> on <code>null</code>, an array, or an object.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Convert first (<code>int()</code>, <code>float()</code>), or check the value isn't <code>null</code> before the math.</p>
+      </div>
+    </div>
+    <div class="err" data-text="arithmetic on an empty string math on "". guard empty input, or default it ($n = $s == "" ? 0 : int($s)).">
+      <div class="err-msg"><code>Arithmetic on an empty string</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Math on <code>""</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Guard empty input, or default it (<code>$n = $s == "" ? 0 : int($s)</code>).</p>
+      </div>
+    </div>
+    <div class="err" data-text="arithmetic on a string that cannot be converted to a number: '…' the string isn't numeric ("12abc"). look does not silently truncate. validate with validator::integer/numeric, or clean the string before converting.">
+      <div class="err-msg"><code>Arithmetic on a string that cannot be converted to a number: '…'</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The string isn't numeric (<code>"12abc"</code>). LOOK does <strong>not</strong> silently truncate.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Validate with <code>validator::integer/numeric</code>, or clean the string before converting.</p>
+      </div>
+    </div>
+    <div class="err" data-text="arithmetic on a numeric string exceeding the int64 limit (bignum/id): '…' a numeric string is larger than a 64-bit integer (often a giant id). keep it as a string — don't do arithmetic on it. look compares such ids exactly as strings.">
+      <div class="err-msg"><code>Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '…'</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A numeric string is larger than a 64-bit integer (often a giant ID).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Keep it as a <strong>string</strong> — don't do arithmetic on it. LOOK compares such IDs exactly as strings.</p>
+      </div>
+    </div>
+    <div class="err" data-text="division by zero / modulo by zero the right operand of / or % was 0. check the divisor before dividing.">
+      <div class="err-msg"><code>Division by zero / Modulo by zero</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The right operand of <code>/</code> or <code>%</code> was <code>0</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the divisor before dividing.</p>
+      </div>
+    </div>
+    <div class="err" data-text="index operator requires an array you used x[i] on something that isn't an array/object. make sure x is an array; check for null first.">
+      <div class="err-msg"><code>Index operator requires an array</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You used <code>x[i]</code> on something that isn't an array/object.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Make sure <code>x</code> is an array; check for <code>null</code> first.</p>
+      </div>
+    </div>
+    <div class="err" data-text="array index out of bounds / array index … arr[i] with i past the end (or negative). check count(arr) before indexing; array indexes are 0-based.">
+      <div class="err-msg"><code>Array index out of bounds / Array index …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>arr[i]</code> with <code>i</code> past the end (or negative).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check <code>count(arr)</code> before indexing; array indexes are 0-based.</p>
+      </div>
+    </div>
+    <div class="err" data-text="foreach requires an array foreach/for … as over a non-array (often null from a lookup that missed). ensure the value is an array; default to [] when a lookup can miss.">
+      <div class="err-msg"><code>foreach requires an array</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>foreach</code>/<code>for … as</code> over a non-array (often <code>null</code> from a lookup that missed).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Ensure the value is an array; default to <code>[]</code> when a lookup can miss.</p>
+      </div>
+    </div>
+    <div class="err" data-text="++/-- requires a variable ++/-- applied to something that isn't a variable (e.g. ++5, ++foo()). apply it to a variable: $i++.">
+      <div class="err-msg"><code>++/-- requires a variable</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>++</code>/<code>--</code> applied to something that isn't a variable (e.g. <code>++5</code>, <code>++foo()</code>).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Apply it to a variable: <code>$i++</code>.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="function-arguments-built-ins">
+  <h2>4. Function arguments (built-ins)</h2>
+  <div class="err-body-wrap">
+  <p>Built-ins validate their arguments and throw a message of the shape</p>
+  <p><code>name() requires …</code>, <code>name() — expects …</code>, or <code>… must be a function</code>. The message names</p>
+  <p>the exact function and what it wanted. General fixes:</p>
+  <ul class="err-ul"><li><strong><code>… requires X</code></strong> — you passed too few arguments (or the wrong kind). Pass the listed arguments.</li><li><strong><code>… — expects (a, b [, c])</code></strong> — brackets mean optional. Provide at least the non-bracketed ones.</li><li><strong><code>… must be a function</code></strong> — a callback argument got a value instead of a <code>function(){…}</code>.</li><li><strong><code>… must be an array</code> / <code>must be a channel</code> / <code>must be a websocket</code></strong> — the argument is the wrong type; check what you passed.</li></ul>
+  <p>Representative examples (same pattern applies across <code>array::</code>, <code>string::</code>, <code>math::</code>,</p>
+  <p><code>date::</code>, <code>crypto::</code>, <code>jobs::</code>, <code>queue::</code>, <code>ws::</code>, <code>sse::</code>):</p>
+  <div class="err-list">
+    <div class="err" data-text="--- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="array::map() requires array and callback array::map($arr, function($x){ … }) — pass both.">
+      <div class="err-msg"><code>array::map() requires array and callback</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> <code>array::map($arr, function($x){ … })</code> — pass both.</p>
+      </div>
+    </div>
+    <div class="err" data-text="array::chunk() size must be positive the size argument must be 0.">
+      <div class="err-msg"><code>array::chunk() size must be positive</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> The size argument must be <code>&gt; 0</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="array::zip() all arguments must be arrays every argument to zip must be an array.">
+      <div class="err-msg"><code>array::zip() all arguments must be arrays</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Every argument to <code>zip</code> must be an array.</p>
+      </div>
+    </div>
+    <div class="err" data-text="math::max() expects 2+ arguments or 1 array call math::max(a, b, …) or math::max($arr).">
+      <div class="err-msg"><code>math::max() expects 2+ arguments or 1 array</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Call <code>math::max(a, b, …)</code> or <code>math::max($arr)</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="math::sqrt: square root of a negative number is undefined guard against negative input.">
+      <div class="err-msg"><code>math::sqrt: square root of a negative number is undefined</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Guard against negative input.</p>
+      </div>
+    </div>
+    <div class="err" data-text="date::add() requires (date, amount, unit) pass all three; unit is "day", "hour", …">
+      <div class="err-msg"><code>date::add() requires (date, amount, unit)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass all three; <code>unit</code> is <code>"day"</code>, <code>"hour"</code>, …</p>
+      </div>
+    </div>
+    <div class="err" data-text="date::parse(): invalid date — '…' the string didn't match the given format; check the format argument.">
+      <div class="err-msg"><code>date::parse(): invalid date — '…'</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> The string didn't match the given format; check the format argument.</p>
+      </div>
+    </div>
+    <div class="err" data-text="jobs::worker() — second argument must be a function pass a handler function($job){ … }.">
+      <div class="err-msg"><code>jobs::worker() — second argument must be a function</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass a handler <code>function($job){ … }</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="string::format() requires format string the first argument must be the format string.">
+      <div class="err-msg"><code>string::format() requires format string</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl err-lbl-fix">Fix</span> The first argument must be the format string.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="input-validation-validator">
+  <h2>5. Input validation (<code>validator::</code>)</h2>
+  <div class="err-body-wrap">
+  <p><code>validator::check($data, $rules)</code> returns field errors; individual rules throw these when a</p>
+  <p>value fails. <code>&lt;field&gt;</code> is your field name.</p>
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Meaning</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="field is required missing or empty value. provide the field. (an empty value only fails required; other rules pass on empty.)">
+      <div class="err-msg"><code>&lt;field&gt; is required</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Meaning</span> Missing or empty value.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Provide the field. (An empty value only fails <code>required</code>; other rules pass on empty.)</p>
+      </div>
+    </div>
+    <div class="err" data-text="field must be a number / must be an integer numeric / integer rule failed — the value wasn't a full number ("12abc" is rejected, not truncated). send a clean numeric value.">
+      <div class="err-msg"><code>&lt;field&gt; must be a number / must be an integer</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Meaning</span> <code>numeric</code> / <code>integer</code> rule failed — the value wasn't a full number (<code>"12abc"</code> is rejected, not truncated).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Send a clean numeric value.</p>
+      </div>
+    </div>
+    <div class="err" data-text="field must be at least n / must be at most n min:n / max:n failed (length for strings, value for numbers). adjust the input to the allowed range.">
+      <div class="err-msg"><code>&lt;field&gt; must be at least N / must be at most N</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Meaning</span> <code>min:N</code> / <code>max:N</code> failed (length for strings, value for numbers).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Adjust the input to the allowed range.</p>
+      </div>
+    </div>
+  </div>
+  <p>See the rule table in the main docs (<code>required</code>, <code>email</code>, <code>integer</code>, <code>numeric</code>, <code>min:N</code>,</p>
+  <p><code>max:N</code>, <code>in:a,b,c</code>).</p>
+  </div>
+</section>
+
+<section class="err-section" id="database-db">
+  <h2>6. Database (<code>db::</code>)</h2>
+  <div class="err-body-wrap">
+  <h3><strong>Your API-usage errors:</strong></h3>
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="db::connect() requires dsn string called connect() with no dsn. db::connect("mysql://user:pass@host/db").">
+      <div class="err-msg"><code>db::connect() requires DSN string</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Called <code>connect()</code> with no DSN.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> <code>db::connect("mysql://user:pass@host/db")</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: invalid dsn format / db::connect() unsupported dsn scheme: … malformed dsn, or a scheme other than mysql/postgresql/sqlite. use a supported scheme and the scheme://user:pass@host:port/name shape.">
+      <div class="err-msg"><code>db: invalid DSN format / db::connect() unsupported DSN scheme: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Malformed DSN, or a scheme other than <code>mysql</code>/<code>postgresql</code>/<code>sqlite</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a supported scheme and the <code>scheme://user:pass@host:port/name</code> shape.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db::query() requires connection and sql (and exec/begin/commit/… variants) you didn't pass the connection handle (and sql). pass the handle from db::connect() as the first argument.">
+      <div class="err-msg"><code>db::query() requires connection and SQL (and exec/begin/commit/… variants)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You didn't pass the connection handle (and SQL).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the handle from <code>db::connect()</code> as the first argument.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: connection not found / db: invalid connection handle the handle is stale/closed or from a different worker. reconnect; don't share a handle across requests — open per request or use the pool.">
+      <div class="err-msg"><code>db: connection not found / db: invalid connection handle</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The handle is stale/closed or from a different worker.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Reconnect; don't share a handle across requests — open per request or use the pool.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: parameter count mismatch — sql … the number of ? placeholders ≠ the number of bound values. match placeholders to the values array exactly.">
+      <div class="err-msg"><code>db: parameter count mismatch — SQL …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The number of <code>?</code> placeholders ≠ the number of bound values.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Match placeholders to the values array exactly.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: cannot bind nan/infinity float as a parameter you tried to bind nan/infinity. validate/clean the number before binding.">
+      <div class="err-msg"><code>db: cannot bind NaN/Infinity float as a parameter</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You tried to bind <code>NaN</code>/<code>Infinity</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Validate/clean the number before binding.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: query error … / db: server error … the database rejected the sql (syntax, constraint, permission). read the server's message after the colon; fix the sql or the data.">
+      <div class="err-msg"><code>db: query error … / db: server error …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The database rejected the SQL (syntax, constraint, permission).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Read the server's message after the colon; fix the SQL or the data.</p>
+      </div>
+    </div>
+  </div>
+  <h3><strong>Connection / network:</strong></h3>
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: cannot resolve host: … dns lookup failed. check the hostname in the dsn.">
+      <div class="err-msg"><code>db: cannot resolve host: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> DNS lookup failed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the hostname in the DSN.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: cannot connect to … / db: connection timeout to … the server is down, firewalled, or the port is wrong. verify host/port and that the db accepts your ip.">
+      <div class="err-msg"><code>db: cannot connect to … / db: connection timeout to …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The server is down, firewalled, or the port is wrong.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Verify host/port and that the DB accepts your IP.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db: connection lost / db: connection lost and reconnect failed after … the server dropped the connection and auto-reconnect failed. check db stability / timeouts; retry the operation.">
+      <div class="err-msg"><code>db: connection lost / db: connection lost and reconnect failed after …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The server dropped the connection and auto-reconnect failed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check DB stability / timeouts; retry the operation.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db … tls (…s://) is not supported in this build … you asked for tls (mysqls://, postgresqls://, rediss://) but this binary was built without it. use a tls-enabled build, or connect over a trusted/loopback network.">
+      <div class="err-msg"><code>db … TLS (…s://) is not supported in this build …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You asked for TLS (<code>mysqls://</code>, <code>postgresqls://</code>, <code>rediss://</code>) but this binary was built without it.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a TLS-enabled build, or connect over a trusted/loopback network.</p>
+      </div>
+    </div>
+    <div class="err" data-text="db postgres: malformed datarow — … / db mysql: column count limit exceeded (malicious server?) the server sent a wire response look couldn't trust. almost always a broken/incompatible or hostile server; verify you're talking to a real mysql/postgres.">
+      <div class="err-msg"><code>db postgres: malformed DataRow — … / db mysql: column count limit exceeded (malicious server?)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The server sent a wire response LOOK couldn't trust.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Almost always a broken/incompatible or hostile server; verify you're talking to a real MySQL/Postgres.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="files-uploads-file">
+  <h2>7. Files &amp; uploads (<code>file::</code>)</h2>
+  <div class="err-body-wrap">
+  <p>File access is <strong>sandboxed</strong> to a root directory (<code>LOOK_FILE_ROOT</code>); paths can't escape it.</p>
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="file: access denied (path outside look_file_root): … the path resolved outside the sandbox root (often ../ traversal or an absolute path). use a path inside the root; set look_file_root to the directory you intend to serve.">
+      <div class="err-msg"><code>file: access denied (path outside LOOK_FILE_ROOT): …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The path resolved outside the sandbox root (often <code>../</code> traversal or an absolute path).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a path <strong>inside</strong> the root; set <code>LOOK_FILE_ROOT</code> to the directory you intend to serve.</p>
+      </div>
+    </div>
+    <div class="err" data-text="file: invalid path: … the path is malformed. use a plain relative path like config/app.json.">
+      <div class="err-msg"><code>file: invalid path: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The path is malformed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a plain relative path like <code>config/app.json</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="file::read(): cannot open: … (and put/append) the file doesn't exist or isn't readable/writable. check the path and permissions; create the file/dir first for writes.">
+      <div class="err-msg"><code>file::read(): cannot open: … (and put/append)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The file doesn't exist or isn't readable/writable.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the path and permissions; create the file/dir first for writes.</p>
+      </div>
+    </div>
+    <div class="err" data-text="file::read() requires path (and other requires) missing argument. pass the path (and content for put/append).">
+      <div class="err-msg"><code>file::read() requires path (and other requires)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Missing argument.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the path (and content for <code>put</code>/<code>append</code>).</p>
+      </div>
+    </div>
+    <div class="err" data-text="uploaded file exceeds max_size limit (…) an upload is bigger than the allowed size. raise the max_size option, or reject large files client-side.">
+      <div class="err-msg"><code>Uploaded file exceeds max_size limit (…)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> An upload is bigger than the allowed size.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Raise the <code>max_size</code> option, or reject large files client-side.</p>
+      </div>
+    </div>
+    <div class="err" data-text="file type not allowed: … the upload's type isn't in your allow-list. add the type to the allow-list, or block it intentionally.">
+      <div class="err-msg"><code>File type not allowed: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The upload's type isn't in your allow-list.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Add the type to the allow-list, or block it intentionally.</p>
+      </div>
+    </div>
+    <div class="err" data-text="svg upload requires allow_svg: true option svg is blocked by default (it can carry scripts). only set allow_svg: true if you sanitize/trust the svg.">
+      <div class="err-msg"><code>SVG upload requires allow_svg: true option</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> SVG is blocked by default (it can carry scripts).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Only set <code>allow_svg: true</code> if you sanitize/trust the SVG.</p>
+      </div>
+    </div>
+    <div class="err" data-text="file::store(): upload dir cannot be under web root — set upload_dir to a path outside web root saving uploads inside the web root would make them executable/served. point upload_dir outside the public web root.">
+      <div class="err-msg"><code>file::store(): upload dir cannot be under web root — set UPLOAD_DIR to a path outside web root</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Saving uploads inside the web root would make them executable/served.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Point <code>UPLOAD_DIR</code> outside the public web root.</p>
+      </div>
+    </div>
+    <div class="err" data-text="file::store(): subdir must be a simple name, not a path the subdir argument contained path separators. use a single folder name (no /, no ..).">
+      <div class="err-msg"><code>file::store(): subdir must be a simple name, not a path</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The subdir argument contained path separators.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a single folder name (no <code>/</code>, no <code>..</code>).</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="http-client-http">
+  <h2>8. HTTP client (<code>http::</code>)</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="http::get() — url required (and post/put/delete/patch) no url (or body) passed. pass the url; post/put/patch also need a body.">
+      <div class="err-msg"><code>http::get() — URL required (and post/put/delete/patch)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> No URL (or body) passed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the URL; <code>post/put/patch</code> also need a body.</p>
+      </div>
+    </div>
+    <div class="err" data-text="http:: unsupported url scheme: … not http/https. use an http(s):// url.">
+      <div class="err-msg"><code>http:: Unsupported URL scheme: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Not <code>http</code>/<code>https</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use an <code>http(s)://</code> URL.</p>
+      </div>
+    </div>
+    <div class="err" data-text="http:: invalid ipv6 url (missing closing ']'): … an ipv6 host wasn't bracketed. wrap the address: http://[::1]:8080/.">
+      <div class="err-msg"><code>http:: Invalid IPv6 URL (missing closing ']'): …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> An IPv6 host wasn't bracketed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Wrap the address: <code>http://[::1]:8080/</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="http::stream() — the 5th arg (callback) must be a function the streaming callback wasn't a function. pass function($chunk){ … } as the 5th argument.">
+      <div class="err-msg"><code>http::stream() — the 5th arg (callback) must be a function</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The streaming callback wasn't a function.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass <code>function($chunk){ … }</code> as the 5th argument.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="templates-template">
+  <h2>9. Templates (<code>template::</code>)</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="template file not found: … the view file path doesn't exist (relative to the views directory). check the path/filename passed to template::render().">
+      <div class="err-msg"><code>Template file not found: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The view file path doesn't exist (relative to the views directory).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the path/filename passed to <code>template::render()</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="template parse error in '…' the template syntax is invalid ({#if} without {/if}, bad tag). fix the tag; every {#…} block needs its closing tag.">
+      <div class="err-msg"><code>Template parse error in '…'</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The template syntax is invalid (<code>{#if}</code> without <code>{/if}</code>, bad tag).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Fix the tag; every <code>{#…}</code> block needs its closing tag.</p>
+      </div>
+    </div>
+    <div class="err" data-text="template security error: escape outside the allowed directory blocked: … a {#extends}/{#include} path pointed outside the views directory. reference templates by relative name inside the views root only.">
+      <div class="err-msg"><code>Template security error: escape outside the allowed directory blocked: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A <code>{#extends}</code>/<code>{#include}</code> path pointed outside the views directory.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Reference templates by relative name inside the views root only.</p>
+      </div>
+    </div>
+    <div class="err" data-text="template::render() expects 1 or 2 arguments: (file_path [, $data]) wrong argument count/type. template::render("page.html", $data).">
+      <div class="err-msg"><code>template::render() expects 1 or 2 arguments: (file_path [, $data])</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Wrong argument count/type.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> <code>template::render("page.html", $data)</code>.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="crypto-crypto">
+  <h2>10. Crypto (<code>crypto::</code>)</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="crypto::sha256() — data required (and hmac, base64, hex, …) missing argument. pass the data (and key for hmac).">
+      <div class="err-msg"><code>crypto::sha256() — data required (and hmac, base64, hex, …)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Missing argument.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the data (and key for <code>hmac</code>).</p>
+      </div>
+    </div>
+    <div class="err" data-text="crypto::random_bytes() — must be 1-4096 / random_string() — must be 1-4096 requested length outside 1–4096. ask for a length in range; call repeatedly if you need more.">
+      <div class="err-msg"><code>crypto::random_bytes() — must be 1-4096 / random_string() — must be 1-4096</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Requested length outside 1–4096.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Ask for a length in range; call repeatedly if you need more.</p>
+      </div>
+    </div>
+    <div class="err" data-text="crypto::rs256_sign() — rsa key required (ec/incompatible key rejected) the pem was not an rsa private key. provide a pkcs#8 rsa private key.">
+      <div class="err-msg"><code>crypto::rs256_sign() — RSA key required (EC/incompatible key rejected)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The PEM was not an RSA private key.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Provide a PKCS#8 RSA private key.</p>
+      </div>
+    </div>
+    <div class="err" data-text="crypto::rs256_sign() — pem key parse error / rsa key import error (pkcs#8 pem required) the pem couldn't be parsed. check the key is valid pkcs#8 pem, unencrypted, with proper -----begin… lines.">
+      <div class="err-msg"><code>crypto::rs256_sign() — PEM key parse error / RSA key import error (PKCS#8 PEM required)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The PEM couldn't be parsed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the key is valid PKCS#8 PEM, unencrypted, with proper <code>-----BEGIN…</code> lines.</p>
+      </div>
+    </div>
+    <div class="err" data-text="crypto::rs256_verify() — data, sig and pem public key required missing one of the three arguments. pass data, signature, and the pem public key.">
+      <div class="err-msg"><code>crypto::rs256_verify() — data, sig and PEM public key required</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Missing one of the three arguments.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass data, signature, and the PEM <strong>public</strong> key.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="sessions-cookies-auth">
+  <h2>11. Sessions, cookies &amp; auth</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="session: could not obtain secure randomness (…) the os csprng was unavailable when creating a session id. system-level; ensure /dev/urandom (or the windows csprng) is available.">
+      <div class="err-msg"><code>session: could not obtain secure randomness (…)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The OS CSPRNG was unavailable when creating a session ID.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> System-level; ensure <code>/dev/urandom</code> (or the Windows CSPRNG) is available.</p>
+      </div>
+    </div>
+    <div class="err" data-text="auth::hash() requires password no password passed. pass the plaintext password to hash.">
+      <div class="err-msg"><code>auth::hash() requires password</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> No password passed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the plaintext password to hash.</p>
+      </div>
+    </div>
+    <div class="err" data-text="auth: could not read enough random bytes csprng failure while hashing. system-level randomness problem; check the environment.">
+      <div class="err-msg"><code>auth: could not read enough random bytes</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> CSPRNG failure while hashing.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> System-level randomness problem; check the environment.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="realtime-websocket-sse-channels">
+  <h2>12. Realtime — WebSocket, SSE, channels</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="ws::send() first argument must be a websocket (and on/close, same for sse::) the first argument wasn't the connection handle. pass the connection object you got in the handler.">
+      <div class="err-msg"><code>ws::send() first argument must be a websocket (and on/close, same for sse::)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The first argument wasn't the connection handle.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the connection object you got in the handler.</p>
+      </div>
+    </div>
+    <div class="err" data-text="websocket connection limit exceeded (…) / sse connection limit exceeded (…) too many concurrent connections. raise the configured limit, or shed/close idle connections.">
+      <div class="err-msg"><code>WebSocket connection limit exceeded (…) / SSE connection limit exceeded (…)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Too many concurrent connections.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Raise the configured limit, or shed/close idle connections.</p>
+      </div>
+    </div>
+    <div class="err" data-text="ws::decode_frame: frame rejected (incomplete or oversized) a malformed/oversized websocket frame. usually a misbehaving client; nothing to fix server-side.">
+      <div class="err-msg"><code>ws::decode_frame: frame rejected (incomplete or oversized)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A malformed/oversized WebSocket frame.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Usually a misbehaving client; nothing to fix server-side.</p>
+      </div>
+    </div>
+    <div class="err" data-text="send on closed channel you sent to a channel after it was closed. don't send after close(); coordinate producers/consumers.">
+      <div class="err-msg"><code>send on closed channel</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You sent to a channel after it was closed.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Don't send after <code>close()</code>; coordinate producers/consumers.</p>
+      </div>
+    </div>
+    <div class="err" data-text="channel send/receive timeout (possible deadlock; look_channel_timeout_ms) a channel op blocked past the timeout — often no counterpart is reading/writing (deadlock). ensure a receiver exists for every sender; adjust look_channel_timeout_ms for genuinely slow work.">
+      <div class="err-msg"><code>channel send/receive timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A channel op blocked past the timeout — often no counterpart is reading/writing (deadlock).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Ensure a receiver exists for every sender; adjust <code>LOOK_CHANNEL_TIMEOUT_MS</code> for genuinely slow work.</p>
+      </div>
+    </div>
+    <div class="err" data-text="channel: capacity cannot be negative channel(-1). use a capacity = 0.">
+      <div class="err-msg"><code>channel: capacity cannot be negative</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>channel(-1)</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a capacity <code>&gt;= 0</code>.</p>
+      </div>
+    </div>
+  </div>
+  <div class="err-note">Channels/<code>go{}</code> are an experimental, opt-in feature — see the docs before relying on them.</div>
+  </div>
+</section>
+
+<section class="err-section" id="jobs-queues-jobs-queue">
+  <h2>13. Jobs &amp; queues (<code>jobs::</code>, <code>queue::</code>)</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="jobs::push() — expects (queue, payload [, max_retries [, delay]]) wrong arguments. pass at least the queue name and payload.">
+      <div class="err-msg"><code>jobs::push() — expects (queue, payload [, max_retries [, delay]])</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Wrong arguments.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass at least the queue name and payload.</p>
+      </div>
+    </div>
+    <div class="err" data-text="jobs::run() — register a handler first with jobs::worker() you ran the worker loop with no handler registered. call jobs::worker("queue", function($job){ … }) first.">
+      <div class="err-msg"><code>jobs::run() — register a handler first with jobs::worker()</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> You ran the worker loop with no handler registered.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Call <code>jobs::worker("queue", function($job){ … })</code> first.</p>
+      </div>
+    </div>
+    <div class="err" data-text="jobs:: could not open db (…) / jobs:: schema error: … the job store (sqlite) couldn't be opened/initialized. check the job db path and write permissions.">
+      <div class="err-msg"><code>jobs:: could not open DB (…) / jobs:: schema error: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The job store (SQLite) couldn't be opened/initialized.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the job DB path and write permissions.</p>
+      </div>
+    </div>
+    <div class="err" data-text="queue::push() — expects (name, value) (and pop/peek/size/clear — expects name) missing arguments. pass the queue name (and value for push).">
+      <div class="err-msg"><code>queue::push() — expects (name, value) (and pop/peek/size/clear — expects name)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Missing arguments.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the queue name (and value for <code>push</code>).</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="mail-mail">
+  <h2>14. Mail (<code>mail::</code>)</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="mail:: — mail_api_key env variable is missing the provider api key isn't set. set mail_api_key in the environment.">
+      <div class="err-msg"><code>mail:: — MAIL_API_KEY env variable is missing</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The provider API key isn't set.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Set <code>MAIL_API_KEY</code> in the environment.</p>
+      </div>
+    </div>
+    <div class="err" data-text="mail:: — mail_from env variable is missing (or specify the from parameter) no sender address. set mail_from, or pass from to mail::send().">
+      <div class="err-msg"><code>mail:: — MAIL_FROM env variable is missing (or specify the from parameter)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> No sender address.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Set <code>MAIL_FROM</code>, or pass <code>from</code> to <code>mail::send()</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="mail:: — mail_domain is required for mailgun mailgun needs a domain. set mail_domain.">
+      <div class="err-msg"><code>mail:: — MAIL_DOMAIN is required for Mailgun</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Mailgun needs a domain.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Set <code>MAIL_DOMAIN</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="mail:: — unknown provider: … mail_provider isn't a supported provider. use a supported provider name.">
+      <div class="err-msg"><code>mail:: — Unknown provider: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>MAIL_PROVIDER</code> isn't a supported provider.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a supported provider name.</p>
+      </div>
+    </div>
+    <div class="err" data-text="mail::send() — expects (to, subject [, text [, html [, from]]]) wrong arguments. pass at least to and subject.">
+      <div class="err-msg"><code>mail::send() — expects (to, subject [, text [, html [, from]]])</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Wrong arguments.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass at least <code>to</code> and <code>subject</code>.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="cache-redis">
+  <h2>15. Cache &amp; Redis</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="cache::set() — expects (key, value [, ttl]) (and get/has/delete — expects key) missing arguments. pass the key (and value for set).">
+      <div class="err-msg"><code>cache::set() — expects (key, value [, ttl]) (and get/has/delete — expects key)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Missing arguments.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the key (and value for <code>set</code>).</p>
+      </div>
+    </div>
+    <div class="err" data-text="redis: cannot connect to … / redis: cannot resolve … redis host/port unreachable. check the redis address and that it's running.">
+      <div class="err-msg"><code>Redis: cannot connect to … / Redis: cannot resolve …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Redis host/port unreachable.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the Redis address and that it's running.</p>
+      </div>
+    </div>
+    <div class="err" data-text="redis auth failed wrong redis password. fix the credentials in the connection url.">
+      <div class="err-msg"><code>Redis AUTH failed</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Wrong Redis password.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Fix the credentials in the connection URL.</p>
+      </div>
+    </div>
+    <div class="err" data-text="redis tls (rediss://) is not supported in this build … tls redis requested on a non-tls build. use a tls build or a plain redis:// connection on a trusted network.">
+      <div class="err-msg"><code>Redis TLS (rediss://) is not supported in this build …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> TLS Redis requested on a non-TLS build.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a TLS build or a plain <code>redis://</code> connection on a trusted network.</p>
+      </div>
+    </div>
+    <div class="err" data-text="redis: … limit exceeded (…) a response exceeded a safety limit (bulk/array/line). usually a huge value or a misbehaving server; fetch smaller values.">
+      <div class="err-msg"><code>Redis: … limit exceeded (…)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A response exceeded a safety limit (bulk/array/line).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Usually a huge value or a misbehaving server; fetch smaller values.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="regular-expressions-string-regex">
+  <h2>16. Regular expressions (<code>string::regex*</code>)</h2>
+  <div class="err-body-wrap">
+  <p>Regex has built-in ReDoS and size protections.</p>
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="string::regex: execution timeout (redos protection — pattern too complex) the pattern took too long on this input (catastrophic backtracking). simplify the pattern; avoid nested quantifiers like (a+)+.">
+      <div class="err-msg"><code>string::regex: execution timeout (ReDoS protection — pattern too complex)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The pattern took too long on this input (catastrophic backtracking).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Simplify the pattern; avoid nested quantifiers like <code>(a+)+</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="string::regex: concurrent regex limit exceeded (max 8) more than 8 regex operations ran at once. reduce concurrent regex work; reuse results.">
+      <div class="err-msg"><code>string::regex: concurrent regex limit exceeded (max 8)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> More than 8 regex operations ran at once.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Reduce concurrent regex work; reuse results.</p>
+      </div>
+    </div>
+    <div class="err" data-text="string::regex_match(): input too long (max 65536) / pattern too long (max 2048) input/pattern exceeds the size cap. trim the input, or pre-filter before matching.">
+      <div class="err-msg"><code>string::regex_match(): input too long (max 65536) / pattern too long (max 2048)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Input/pattern exceeds the size cap.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Trim the input, or pre-filter before matching.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="modules-packages-use-lk-module-install">
+  <h2>17. Modules &amp; packages (<code>use</code>, <code>lk module/install</code>)</h2>
+  <div class="err-body-wrap">
+  <div class="err-list">
+    <div class="err" data-text="--- --- ---">
+      <div class="err-msg"><code>---</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> ---</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
+      </div>
+    </div>
+    <div class="err" data-text="only github.com is supported at the moment. an install source other than github.com. use github.com/user/repo.">
+      <div class="err-msg"><code>Only github.com is supported at the moment.</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> An install source other than <code>github.com</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use <code>github.com/user/repo</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="invalid package (user/repo required): … the path isn't user/repo. give the full github.com/user/repo[/subdir].">
+      <div class="err-msg"><code>Invalid package (user/repo required): …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The path isn't <code>user/repo</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Give the full <code>github.com/user/repo[/subdir]</code>.</p>
+      </div>
+    </div>
+    <div class="err" data-text="invalid package what (path-escape character): … the user/subdir contained .. or path separators (traversal attempt). use plain names — no .., no slashes inside a component.">
+      <div class="err-msg"><code>Invalid package &lt;what&gt; (path-escape character): …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The user/subdir contained <code>..</code> or path separators (traversal attempt).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use plain names — no <code>..</code>, no slashes inside a component.</p>
+      </div>
+    </div>
+    <div class="err" data-text="'…' folder not found in the repo. / official module not found. the named module/subdir doesn't exist in the repo. check the module name and the repo path.">
+      <div class="err-msg"><code>'…' folder not found in the repo. / Official module not found.</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The named module/subdir doesn't exist in the repo.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the module name and the repo path.</p>
+      </div>
+    </div>
+    <div class="err" data-text="could not open module file: … / unknown module: '…' a used file/module can't be found or loaded. check the path in use; run lk module install … for external modules.">
+      <div class="err-msg"><code>Could not open module file: … / Unknown module: '…'</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A <code>use</code>d file/module can't be found or loaded.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the path in <code>use</code>; run <code>lk module install …</code> for external modules.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section class="err-section" id="system-infrastructure-errors-rare">
+  <h2>18. System / infrastructure errors (rare)</h2>
+  <div class="err-body-wrap">
+  <p>These come from the OS, not your code — you usually can't fix them in <code>.lk</code>:</p>
+  <p><code>bind() failed on port …</code>, <code>listen() failed</code>, <code>socket() failed</code>, <code>epoll_create1 failed</code>,</p>
+  <p><code>eventfd failed</code>, <code>CreateIoCompletionPort failed</code>, <code>fiber: … failed</code>,</p>
+  <p><code>… CSPRNG unavailable (/dev/urandom | BCryptGenRandom)</code>.</p>
+  <p>Typical causes: the <strong>port is already in use</strong> (<code>bind() failed</code>), the process hit a</p>
+  <p><strong>file-descriptor / memory limit</strong>, or the OS <strong>randomness source is unavailable</strong> in a</p>
+  <p>locked-down container. Free the port, raise <code>ulimit</code>, or fix the container's <code>/dev/urandom</code>.</p>
+  <h3>Still stuck?</h3>
+  <ul class="err-ul"><li>Re-read the message's <strong>leading text</strong> and find its row above — the value after it is your specific input.</li><li>Check the <strong><code>file:line</code></strong> and the line just before it.</li><li>For behavior questions (what a function expects), see the main API docs.</li><li>If a <strong>documented</strong> function produces <code>unavailable (not linked)</code> or a <code>Compile Error</code> on</li></ul>
+  <p>  valid code, that's a bug worth reporting.</p>
+  </div>
+</section>
+
+  <div class="err-empty" id="errEmpty">No error matches that text. Try a shorter fragment — the message's leading words, without your specific value.</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-center">
+      <a class="brand" href="index.html"><span>look<span class="dot">.</span></span></a>
+      <p class="foot-tag"><b>A scripting language built for the web</b> · v1.0.0 · Apache-2.0</p>
+      <nav class="foot-links">
+        <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="https://test.codlook.com" target="_blank">Live Demo</a>
+        <a href="index.html">Home</a>
+        <a href="mailto:info@codlook.com">info@codlook.com</a>
+      </nav>
+      <div class="foot-meta">v1.0.0 · C++23 · CMake 3.20+ · Apache 2.4+ / nginx · © 2026 Codlook</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var search = document.getElementById('errSearch');
+  var empty  = document.getElementById('errEmpty');
+  var errs   = [].slice.call(document.querySelectorAll('.err'));
+  var secs   = [].slice.call(document.querySelectorAll('.err-section'));
+  function matchSet(q){
+    // longest leading phrase that is a substring of some entry — so pasting
+    // "Undefined variable: $userr" matches the "Undefined variable:" rows and
+    // nothing else (the trailing value is dropped word by word until it hits).
+    var words = q.split(/\s+/).filter(Boolean);
+    for (var n = words.length; n >= 1; n--){
+      var phrase = words.slice(0, n).join(' ');
+      if (phrase.length < 3) break;
+      var hits = errs.filter(function(e){ return e.getAttribute('data-text').indexOf(phrase) !== -1; });
+      if (hits.length) return hits;
+    }
+    return [];
+  }
+  function apply(){
+    var q = (search.value||'').trim().toLowerCase();
+    var shown = 0;
+    var set = q ? matchSet(q) : null;
+    errs.forEach(function(e){
+      var vis = !set || set.indexOf(e) !== -1;
+      e.style.display = vis ? '' : 'none';
+      if (vis) shown++;
+    });
+    secs.forEach(function(s){
+      var lists = s.querySelectorAll('.err-list');
+      if (!lists.length) { s.style.display = q ? 'none' : ''; return; }
+      var any = s.querySelectorAll('.err:not([style*="display: none"])').length;
+      s.style.display = any ? '' : 'none';
+    });
+    empty.style.display = (q && shown===0) ? 'block' : 'none';
+  }
+  search.addEventListener('input', apply);
+  document.querySelectorAll('.nav-links a').forEach(function(a){
+    a.addEventListener('click', function(){ document.querySelector('header.nav').classList.remove('open'); });
+  });
+})();
+</script>
+</body>
+</html>
