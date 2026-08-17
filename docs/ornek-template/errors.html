@@ -19,6 +19,10 @@
   .err-hero .search-trigger{max-width:460px;margin:1.3rem auto 0;font-size:.95rem;padding:.75rem 1.1rem;border-radius:12px;}
   .sr-item .sr-label{font-family:'JetBrains Mono',monospace;font-size:.82rem;}
   .err.flash{border-color:var(--navy);box-shadow:0 0 0 3px color-mix(in srgb,var(--navy) 22%,transparent);transition:box-shadow .3s;}
+  .err-fab{position:fixed;left:22px;bottom:22px;z-index:150;width:54px;height:54px;border-radius:50%;border:none;background:var(--navy);color:#fff;font-size:1.35rem;cursor:pointer;box-shadow:0 8px 24px rgba(14,27,60,.35);display:flex;align-items:center;justify-content:center;opacity:0;transform:scale(.7) translateY(12px);pointer-events:none;transition:opacity .2s,transform .2s;}
+  .err-fab.show{opacity:1;transform:scale(1) translateY(0);pointer-events:auto;}
+  .err-fab:hover{background:var(--navy-3);}
+  @media(max-width:600px){.err-fab{left:16px;bottom:16px;width:50px;height:50px;}}
   .err-chips{display:flex;flex-wrap:wrap;gap:.4rem;justify-content:center;max-width:900px;margin:.9rem auto 0;}
   .err-chips a{font-size:.78rem;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:.3rem .7rem;text-decoration:none;transition:.15s;}
   .err-chips a:hover{border-color:var(--navy);color:var(--text);}
@@ -979,6 +983,8 @@
   </div>
 </footer>
 
+<button class="err-fab" id="errFab" type="button" aria-label="Search errors" title="Search errors (Ctrl K)">🔎</button>
+
 <script>
 (function(){
   var errs = [].slice.call(document.querySelectorAll('.err'));
@@ -1023,6 +1029,12 @@
   }
 
   document.getElementById('errSearchBtn').addEventListener('click', openSearch);
+  // floating search button — appears once the hero button has scrolled away
+  var fab = document.getElementById('errFab');
+  fab.addEventListener('click', openSearch);
+  window.addEventListener('scroll', function(){
+    if (window.scrollY > 460) fab.classList.add('show'); else fab.classList.remove('show');
+  }, { passive: true });
   input.addEventListener('input', function(){ render(input.value); });
   results.addEventListener('click', function(e){
     var it = e.target.closest('.sr-item');
