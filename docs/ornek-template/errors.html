@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LOOK — Error Reference</title>
-<meta name="description" content="LOOK error reference and troubleshooting — paste the error you got and find what it means, what causes it, and how to fix it. 116 errors across 19 categories.">
+<meta name="description" content="LOOK error reference and troubleshooting — paste the error you got and find what it means, what causes it, and how to fix it. 98 errors across 19 categories.">
 <link rel="icon" href="look-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -112,13 +112,6 @@
   <div class="err-body-wrap">
   <p>These come from the parser/compiler. Your program never starts until they are fixed.</p>
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="unexpected token: '…' a token appears where the grammar doesn't allow it (a stray ), a missing operator, a keyword used as a name). look at the token in the message and the one before it. usually a missing , ; { or an extra bracket.">
       <div class="err-msg"><code>Unexpected token: '…'</code></div>
       <div class="err-detail">
@@ -185,13 +178,6 @@
   <p>LOOK is <strong>strict</strong>: reading a variable that was never assigned is an error, not a silent</p>
   <p><code>null</code>. This catches typos early.</p>
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="undefined variable: $name you read $name before it was ever assigned — almost always a typo ($userr vs $user) or a variable from another scope. assign it first ($name = …), or fix the spelling. a function cannot see the caller's variables — pass them as arguments.">
       <div class="err-msg"><code>Undefined variable: $name</code></div>
       <div class="err-detail">
@@ -228,13 +214,6 @@
   <h2>3. Types, arithmetic &amp; indexing</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="arithmetic on a non-numeric value (null/array/object) you used + - * / on null, an array, or an object. convert first (int(), float()), or check the value isn't null before the math.">
       <div class="err-msg"><code>Arithmetic on a non-numeric value (null/array/object)</code></div>
       <div class="err-detail">
@@ -312,12 +291,6 @@
   <p>Representative examples (same pattern applies across <code>array::</code>, <code>string::</code>, <code>math::</code>,</p>
   <p><code>date::</code>, <code>crypto::</code>, <code>jobs::</code>, <code>queue::</code>, <code>ws::</code>, <code>sse::</code>):</p>
   <div class="err-list">
-    <div class="err" data-text="--- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="array::map() requires array and callback array::map($arr, function($x){ … }) — pass both.">
       <div class="err-msg"><code>array::map() requires array and callback</code></div>
       <div class="err-detail">
@@ -382,13 +355,6 @@
   <p><code>validator::check($data, $rules)</code> returns field errors; individual rules throw these when a</p>
   <p>value fails. <code>&lt;field&gt;</code> is your field name.</p>
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Meaning</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="field is required missing or empty value. provide the field. (an empty value only fails required; other rules pass on empty.)">
       <div class="err-msg"><code>&lt;field&gt; is required</code></div>
       <div class="err-detail">
@@ -421,13 +387,6 @@
   <div class="err-body-wrap">
   <h3><strong>Your API-usage errors:</strong></h3>
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="db::connect() requires dsn string called connect() with no dsn. db::connect("mysql://user:pass@host/db").">
       <div class="err-msg"><code>db::connect() requires DSN string</code></div>
       <div class="err-detail">
@@ -480,13 +439,6 @@
   </div>
   <h3><strong>Connection / network:</strong></h3>
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="db: cannot resolve host: … dns lookup failed. check the hostname in the dsn.">
       <div class="err-msg"><code>db: cannot resolve host: …</code></div>
       <div class="err-detail">
@@ -531,13 +483,6 @@
   <div class="err-body-wrap">
   <p>File access is <strong>sandboxed</strong> to a root directory (<code>LOOK_FILE_ROOT</code>); paths can't escape it.</p>
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="file: access denied (path outside look_file_root): … the path resolved outside the sandbox root (often ../ traversal or an absolute path). use a path inside the root; set look_file_root to the directory you intend to serve.">
       <div class="err-msg"><code>file: access denied (path outside LOOK_FILE_ROOT): …</code></div>
       <div class="err-detail">
@@ -609,13 +554,6 @@
   <h2>8. HTTP client (<code>http::</code>)</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="http::get() — url required (and post/put/delete/patch) no url (or body) passed. pass the url; post/put/patch also need a body.">
       <div class="err-msg"><code>http::get() — URL required (and post/put/delete/patch)</code></div>
       <div class="err-detail">
@@ -652,13 +590,6 @@
   <h2>9. Templates (<code>template::</code>)</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="template file not found: … the view file path doesn't exist (relative to the views directory). check the path/filename passed to template::render().">
       <div class="err-msg"><code>Template file not found: …</code></div>
       <div class="err-detail">
@@ -695,13 +626,6 @@
   <h2>10. Crypto (<code>crypto::</code>)</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="crypto::sha256() — data required (and hmac, base64, hex, …) missing argument. pass the data (and key for hmac).">
       <div class="err-msg"><code>crypto::sha256() — data required (and hmac, base64, hex, …)</code></div>
       <div class="err-detail">
@@ -745,13 +669,6 @@
   <h2>11. Sessions, cookies &amp; auth</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="session: could not obtain secure randomness (…) the os csprng was unavailable when creating a session id. system-level; ensure /dev/urandom (or the windows csprng) is available.">
       <div class="err-msg"><code>session: could not obtain secure randomness (…)</code></div>
       <div class="err-detail">
@@ -781,13 +698,6 @@
   <h2>12. Realtime — WebSocket, SSE, channels</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="ws::send() first argument must be a websocket (and on/close, same for sse::) the first argument wasn't the connection handle. pass the connection object you got in the handler.">
       <div class="err-msg"><code>ws::send() first argument must be a websocket (and on/close, same for sse::)</code></div>
       <div class="err-detail">
@@ -839,13 +749,6 @@
   <h2>13. Jobs &amp; queues (<code>jobs::</code>, <code>queue::</code>)</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="jobs::push() — expects (queue, payload [, max_retries [, delay]]) wrong arguments. pass at least the queue name and payload.">
       <div class="err-msg"><code>jobs::push() — expects (queue, payload [, max_retries [, delay]])</code></div>
       <div class="err-detail">
@@ -882,13 +785,6 @@
   <h2>14. Mail (<code>mail::</code>)</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="mail:: — mail_api_key env variable is missing the provider api key isn't set. set mail_api_key in the environment.">
       <div class="err-msg"><code>mail:: — MAIL_API_KEY env variable is missing</code></div>
       <div class="err-detail">
@@ -932,13 +828,6 @@
   <h2>15. Cache &amp; Redis</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="cache::set() — expects (key, value [, ttl]) (and get/has/delete — expects key) missing arguments. pass the key (and value for set).">
       <div class="err-msg"><code>cache::set() — expects (key, value [, ttl]) (and get/has/delete — expects key)</code></div>
       <div class="err-detail">
@@ -983,13 +872,6 @@
   <div class="err-body-wrap">
   <p>Regex has built-in ReDoS and size protections.</p>
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="string::regex: execution timeout (redos protection — pattern too complex) the pattern took too long on this input (catastrophic backtracking). simplify the pattern; avoid nested quantifiers like (a+)+.">
       <div class="err-msg"><code>string::regex: execution timeout (ReDoS protection — pattern too complex)</code></div>
       <div class="err-detail">
@@ -1019,13 +901,6 @@
   <h2>17. Modules &amp; packages (<code>use</code>, <code>lk module/install</code>)</h2>
   <div class="err-body-wrap">
   <div class="err-list">
-    <div class="err" data-text="--- --- ---">
-      <div class="err-msg"><code>---</code></div>
-      <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> ---</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> ---</p>
-      </div>
-    </div>
     <div class="err" data-text="only github.com is supported at the moment. an install source other than github.com. use github.com/user/repo.">
       <div class="err-msg"><code>Only github.com is supported at the moment.</code></div>
       <div class="err-detail">
