@@ -1,0 +1,19 @@
+# LOOK Programming Language
+
+> LOOK is a modern, all-in-one scripting language for the web — a single static binary with minimal external runtime dependencies. It embeds MySQL, PostgreSQL and SQLite, WebSocket, Server-Sent Events, and an SMTP/IMAP mail server, so a complete web application runs from one file with no framework.
+
+LOOK is built and maintained by Codlook. The language ships as one binary for Linux and Windows. You write routes, database queries, templates and background jobs directly; the runtime handles concurrency, connection pooling and hot reload. The default engine is a bytecode VM, with a tree-walk interpreter as a fallback.
+
+## Documentation
+- [Home](https://look.codlook.com/index.html): What LOOK is, the language at a glance, and how to get started in seconds.
+- [Documentation](https://look.codlook.com/docs.html): The full reference — syntax, types, routing, database, templates, sessions, real-time (WebSocket/SSE), background jobs, deployment, environment variables, and every built-in function.
+- [Packages](https://look.codlook.com/packages.html): The modules that ship inside the language, plus installable modules (`lk module install`) and packages (`lk install`) from the ecosystem.
+- [Error Reference](https://look.codlook.com/errors.html): Every runtime and parse error with its cause, the fix, and a wrong→right code example.
+
+## Ecosystem
+- [GitHub repository](https://github.com/codlook/look): Source code, releases and issue tracker.
+- [Latest release](https://github.com/codlook/look/releases/latest): Prebuilt binaries for Linux, Windows and Plesk, plus the Docker image.
+- [VS Code extension](https://marketplace.visualstudio.com/items?itemName=codlook.look-lang): Syntax highlighting, IntelliSense and live error checking.
+
+## About
+- [Codlook](https://codlook.com): The software studio behind LOOK.
