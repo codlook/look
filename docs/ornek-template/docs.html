@@ -174,7 +174,7 @@
     <p class="tagline">A scripting language designed for web applications.<br>Routing, database and HTTP — built into the language. Simple to install, clean to write.</p>
     <div class="pills">
       <span class="pill">C++23 runtime</span>
-      <span class="pill">Zero dependency</span>
+      <span class="pill">Self-contained</span>
       <span class="pill">FastCGI warm start</span>
       <span class="pill">N-thread concurrent</span>
       <span class="pill">parallel() + channel()</span>
@@ -215,7 +215,7 @@
     <tr><th>Feature</th><th>Detail</th></tr>
     <tr><td>Runtime</td><td>C++23 — register-based bytecode VM (default engine, ~41–51× faster on the CLI) with a tree-walk interpreter as a safety-net fallback</td></tr>
     <tr><td>Web mode</td><td>FastCGI — port 9000 (production) · HTTP mode (WebSocket) · CGI (fallback)</td></tr>
-    <tr><td>Database</td><td>MySQL · SQLite · PostgreSQL — zero dependency, wire protocol</td></tr>
+    <tr><td>Database</td><td>MySQL · SQLite · PostgreSQL — self-contained, wire protocol</td></tr>
     <tr><td>Install</td><td>Copy the binary, register it with Apache, run</td></tr>
     <tr><td>GC</td><td>Reference counting</td></tr>
     <tr><td>File extension</td><td><code>.lk</code></td></tr>
@@ -2055,7 +2055,7 @@ LOG_DIR=C:/app/logs</code></pre>
 <section id="websocket">
   <h2>WebSocket</h2>
 
-  <p class="lead">Full WebSocket support in LOOK. RFC 6455, SHA-1, Base64 — zero dependency. Works only in <code>--mode http</code>.</p>
+  <p class="lead">Full WebSocket support in LOOK. RFC 6455, SHA-1, Base64 — self-contained. Works only in <code>--mode http</code>.</p>
 
   <div class="callout warn">
     <p><strong>Prerequisite:</strong> WebSocket works only with <code>look-fcgi --mode http</code>. There is no WebSocket support in FastCGI mode (<code>--mode fcgi</code>).</p>
@@ -3243,7 +3243,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
 <section id="crypto">
   <h2>use crypto</h2>
 
-  <p>SHA-256, HMAC-SHA256, Base64, UUID, secure random generation — zero dependency. The foundation for JWT and payment integrations.</p>
+  <p>SHA-256, HMAC-SHA256, Base64, UUID, secure random generation — self-contained. The foundation for JWT and payment integrations.</p>
 
   <table>
     <tr><th>Function</th><th>Description</th><th>Returns</th></tr>
@@ -3315,7 +3315,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
 <section id="auth">
   <h2>use auth</h2>
 
-  <p>Secure password hashing with PBKDF2-SHA256 — zero dependency.</p>
+  <p>Secure password hashing with PBKDF2-SHA256 — self-contained.</p>
 
   <table>
     <tr><th>Function</th><th>Description</th></tr>
@@ -3425,7 +3425,7 @@ look install github.com/Codlook/look-packages
 <section id="http">
   <h2>use http</h2>
 
-  <p>A zero-dependency HTTP/HTTPS client — uses the system OpenSSL on Linux and Schannel (WinSSL) on Windows. No libcurl required.</p>
+  <p>A self-contained HTTP/HTTPS client — uses the system OpenSSL on Linux and Schannel (WinSSL) on Windows. No libcurl required.</p>
 
   <table>
     <tr><th>Function</th><th>Description</th></tr>
@@ -3601,7 +3601,7 @@ look install github.com/Codlook/look-packages
   <h2>mail:: — Sending Email</h2>
 
   <p>
-    A zero-dependency email module. One API, multiple providers — to switch provider just edit <code>.env</code>.
+    A self-contained email module. One API, multiple providers — to switch provider just edit <code>.env</code>.
     It uses the existing <code>http::</code> infrastructure (Schannel / OpenSSL).
   </p>
 
@@ -3816,7 +3816,7 @@ LOOK_SMTP_USER_DB=mysql://user:pass@127.0.0.1/mydb
   <h2>Embedded Mail Server — SMTP + IMAP</h2>
 
   <p class="lead">
-    LOOK includes a zero-dependency, embedded <strong>SMTP</strong> (MTA, RFC 5321) and
+    LOOK includes a self-contained, embedded <strong>SMTP</strong> (MTA, RFC 5321) and
     <strong>IMAP4rev1</strong> (RFC 3501 + RFC 2177 IDLE) server. No Postfix,
     Dovecot or Courier required. They come up with the same command, in the same process — you can write
     a <strong>secure mail system end to end</strong> with LOOK.
@@ -4140,7 +4140,7 @@ RewriteRule ^ fcgi://127.0.0.1:9000/index.lk [P,QSA,L]</code></pre>
   <h3>DB Connection DSNs</h3>
   <table>
     <tr><th>DB</th><th>DSN Format</th><th>Note</th></tr>
-    <tr><td>MySQL / MariaDB</td><td><code>mysql://user:password@127.0.0.1/dbname</code></td><td>Zero dependency, wire protocol</td></tr>
+    <tr><td>MySQL / MariaDB</td><td><code>mysql://user:password@127.0.0.1/dbname</code></td><td>Self-contained, wire protocol</td></tr>
     <tr><td>SQLite</td><td><code>sqlite://./data.db</code> or <code>sqlite://:memory:</code></td><td>File or in-memory</td></tr>
     <tr><td>PostgreSQL</td><td><code>postgres://user:password@127.0.0.1/dbname</code></td><td>Protocol v3, MD5 auth</td></tr>
     <tr><td>PostgreSQL (port)</td><td><code>postgres://user:password@host:5432/dbname</code></td><td>Specify the port</td></tr>
@@ -4351,9 +4351,9 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
     <tr><td>extra_stdlib.cpp</td><td>env() config() runtime::stats()</td></tr>
     <tr><td>web.cpp</td><td>route() request:: response:: json:: session:: cookie:: — HTTP primitives</td></tr>
     <tr><td>web_stdlib.cpp</td><td>db:: auth:: validator:: html:: · ConnPool (per-DSN connection pool)</td></tr>
-    <tr><td>mysql_client.cpp</td><td>MySQL wire protocol — Winsock/POSIX, zero dependency</td></tr>
+    <tr><td>mysql_client.cpp</td><td>MySQL wire protocol — Winsock/POSIX, self-contained</td></tr>
     <tr><td>sqlite_client.cpp</td><td>SQLite driver — sqlite3 amalgamation, WAL+FK by default</td></tr>
-    <tr><td>postgres_client.cpp</td><td>PostgreSQL wire protocol v3 — MD5 auth, lastval(), zero dependency</td></tr>
+    <tr><td>postgres_client.cpp</td><td>PostgreSQL wire protocol v3 — MD5 auth, lastval(), self-contained</td></tr>
     <tr><td>logger.cpp</td><td>log:: — daily rotation, Windows FILE_SHARE_WRITE</td></tr>
     <tr><td>file_stdlib.cpp</td><td>file:: — read/put/append/exists/remove/size/store · upload security layer</td></tr>
     <tr><td>date_stdlib.cpp</td><td>date:: — now/today/format/parse/add/sub/diff/weekday/week</td></tr>
@@ -4544,9 +4544,9 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td>route() — routing built into the language</td><td class="yes">✅</td><td>URL parameters, 404 handler</td></tr>
     <tr><td>request:: / response:: / json::</td><td class="yes">✅</td><td>HTTP primitives</td></tr>
     <tr><td>session:: / cookie::</td><td class="yes">✅</td><td></td></tr>
-    <tr><td>db:: — MySQL</td><td class="yes">✅</td><td>Zero dependency, parameterized queries</td></tr>
+    <tr><td>db:: — MySQL</td><td class="yes">✅</td><td>Self-contained, parameterized queries</td></tr>
     <tr><td>db:: — SQLite</td><td class="yes">✅</td><td><code>sqlite://./data.db</code> or <code>sqlite://:memory:</code></td></tr>
-    <tr><td>db:: — PostgreSQL</td><td class="yes">✅</td><td>Wire protocol v3, MD5 auth, zero dependency</td></tr>
+    <tr><td>db:: — PostgreSQL</td><td class="yes">✅</td><td>Wire protocol v3, MD5 auth, self-contained</td></tr>
     <tr><td>Automatic type conversion</td><td class="yes">✅</td><td>INT → int, DECIMAL → float — no manual conversion needed</td></tr>
     <tr><td>FastCGI warm start</td><td class="yes">✅</td><td>Persistent DB, hot reload</td></tr>
     <tr><td>Linux / Ubuntu 24.04 support</td><td class="yes">✅</td><td>GCC build — CLI, CGI, FastCGI</td></tr>
@@ -4567,7 +4567,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td><code>--mode http</code> — Event Loop</td><td class="yes">✅</td><td>epoll (Linux) / IOCP (Windows) — Apache bypass, its own HTTP/1.1 server, unlimited connections</td></tr>
     <tr><td><code>parallel()</code> — task</td><td class="yes">✅</td><td>LOOK task; <code>make_dispatch_copy()</code> + <code>std::thread::detach</code>; panic → <code>log::error</code></td></tr>
     <tr><td><code>channel()</code> — channel</td><td class="yes">✅</td><td><code>send / receive / close / chan_size</code>; buffered (size N) or unbuffered/synchronous (size 0)</td></tr>
-    <tr><td>WebSocket — <code>route("WS",...)</code></td><td class="yes">✅</td><td>RFC 6455 frame codec, SHA-1+Base64 zero dependency, WsRegistry broadcast-safe</td></tr>
+    <tr><td>WebSocket — <code>route("WS",...)</code></td><td class="yes">✅</td><td>RFC 6455 frame codec, SHA-1+Base64 self-contained, WsRegistry broadcast-safe</td></tr>
     <tr><td>ws:: module</td><td class="yes">✅</td><td><code>ws::send / on / close / broadcast / clients</code> — <code>--mode http</code> only</td></tr>
     <tr><td>SSE — <code>route("SSE",...)</code></td><td class="yes">✅</td><td>Server-Sent Events; SseConnection + SseRegistry; Accept: text/event-stream detection</td></tr>
     <tr><td>sse:: module</td><td class="yes">✅</td><td><code>sse::send / on / close / clients</code> — named events, disconnect detection, <code>--mode http</code> only</td></tr>
@@ -4589,7 +4589,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td><code>cache::</code> module</td><td class="yes">✅</td><td>set/get/has/delete/flush/size/keys; TTL; CacheStore singleton — shared by all workers; 12/12 tests PASS</td></tr>
     <tr><td><code>queue::</code> module</td><td class="yes">✅</td><td>Named FIFO queues; push/pop/peek/size/clear/names; persistent cross-request; 9/9 tests PASS</td></tr>
     <tr><td><code>jobs::</code> module</td><td class="yes">✅</td><td>SQLite durable job queue; pending→processing→done/failed; retry; delayed; worker handler; run/recover; 23/23 tests PASS</td></tr>
-    <tr><td><code>look install</code> — package manager</td><td class="yes">✅</td><td>Download a GitHub zipball, extract to <code>pkg/</code>, update <code>look.lock</code>; zero dependency (miniz amalgamation)</td></tr>
+    <tr><td><code>look install</code> — package manager</td><td class="yes">✅</td><td>Download a GitHub zipball, extract to <code>pkg/</code>, update <code>look.lock</code>; self-contained (miniz amalgamation)</td></tr>
     <tr><td><code>mail::</code> module (v1.0.0)</td><td class="yes">✅</td><td>Mailgun / SendGrid / Postmark; <code>mail::send / send_html / provider</code>; env MAIL_PROVIDER+MAIL_API_KEY+MAIL_FROM</td></tr>
     <tr><td><code>jobs::recover()</code> — crash recovery (v1.0.0)</td><td class="yes">✅</td><td>processing → pending, log::warn; recovers stuck jobs when the app restarts; 3/3 tests PASS</td></tr>
     <tr><td>Windows IOCP — unlimited connections (v1.0.1)</td><td class="yes">✅</td><td><code>IocpEventLoop</code> — AcceptEx + WSARecv + WSASend; replacing SelectEventLoop (max 64); c=500 0 errors</td></tr>
