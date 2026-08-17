@@ -43,6 +43,9 @@ header.nav{
 }
 .btn-primary{background:var(--red);color:#fff;box-shadow:0 10px 24px rgba(226,43,54,0.28);}
 .btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 32px rgba(226,43,54,0.36);}
+/* Looky AI button — cyan/blue gradient matching looky.codlook.com */
+.btn-looky{background:linear-gradient(90deg,#2F6BFF,#35D6FF);color:#04101f;box-shadow:0 10px 24px rgba(47,107,255,0.32);}
+.btn-looky:hover{transform:translateY(-2px);box-shadow:0 16px 32px rgba(53,214,255,0.42);}
 .btn-ghost{background:transparent;color:var(--navy);border:2px solid var(--line);}
 .btn-ghost:hover{border-color:var(--navy);}
 .btn-dark{background:var(--navy);color:#fff;}

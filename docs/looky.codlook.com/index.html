@@ -71,6 +71,10 @@
   .btn-ghost{color:var(--ink);border:1px solid var(--line);background:rgba(255,255,255,.02);}
   .btn-ghost:hover{border-color:var(--cyan);color:var(--cyan);}
   .btn-ghost .m{font-family:'JetBrains Mono',monospace;} .btn-ghost .m .dot{color:var(--red);}
+  .soon{display:inline-flex;align-items:center;gap:10px;padding:14px 20px;border-radius:13px;font-weight:700;font-size:15px;
+    color:var(--cyan);background:rgba(53,214,255,.08);border:1px dashed rgba(53,214,255,.5);}
+  .soon .pulse{width:9px;height:9px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 0 rgba(53,214,255,.6);animation:pulse 1.8s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(53,214,255,.55);}70%{box-shadow:0 0 0 9px rgba(53,214,255,0);}100%{box-shadow:0 0 0 0 rgba(53,214,255,0);}}
 
   /* features */
   .sec-h{text-align:center;margin:22px 0 4px;font-size:14px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);}
@@ -118,7 +122,7 @@
         <h1>Meet <span class="g">Looky</span>.<br>Your LOOK coding partner.</h1>
         <p class="lead">Looky is an AI agent built <b>only for LOOK</b> — it explains the language, writes and builds real LOOK projects, and reads your errors to hand you the fix. Trained on the LOOK docs, packages and error reference.</p>
         <div class="ctas">
-          <a class="btn btn-primary" href="#" aria-label="Chat with Looky">💬 Chat with Looky</a>
+          <span class="soon"><span class="pulse"></span> Chat with Looky — almost here</span>
           <a class="btn btn-ghost" href="https://look.codlook.com" aria-label="Explore the LOOK language"><span class="m">look<span class="dot">.</span></span> Explore the language</a>
         </div>
       </div>
