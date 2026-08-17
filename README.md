@@ -338,8 +338,8 @@ This repository is **the LOOK language core** only. Everything else lives on its
 | Prebuilt binaries + VS Code extension | [Releases](https://github.com/codlook/look/releases) · [Marketplace](https://marketplace.visualstudio.com/items?itemName=codlook.look-lang) |
 | Modules (jwt, http, crypto, mail…) | [github.com/codlook/look-modules](https://github.com/codlook/look-modules) |
 | Packages (Firebase, iyzico…) | [github.com/codlook/look-packages](https://github.com/codlook/look-packages) |
-| Package & module directory | [packages.codlook.com](https://packages.codlook.com) |
-| Documentation | [codlook.com/docs](https://codlook.com/docs) |
+| Package & module directory | [look.codlook.com/packages.html](https://look.codlook.com/packages.html) |
+| Documentation | [look.codlook.com/docs.html](https://look.codlook.com/docs.html) |
 
 ## Project status
 
