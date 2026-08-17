@@ -37,12 +37,13 @@
   .pkg-desc{font-size:.9rem;line-height:1.55;color:var(--text);margin:.1rem 0 .7rem;flex:1;}
   .pkg-tags{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.7rem;}
   .pkg-tags span{font-size:.72rem;color:var(--text-muted);background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:6px;padding:.1rem .45rem;}
-  .pkg-cmd{display:flex;align-items:center;gap:.5rem;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;padding:.4rem .5rem .4rem .6rem;margin-bottom:.4rem;}
-  .pkg-cmd.sub{background:transparent;border-color:transparent;padding:.15rem .6rem;margin-bottom:.6rem;}
-  .pkg-cmd-label{font-size:.65rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);flex:none;}
-  .pkg-cmd code{font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--text);overflow-x:auto;white-space:nowrap;flex:1;min-width:0;}
-  .pkg-copy{flex:none;background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:1rem;padding:.1rem .3rem;border-radius:5px;}
-  .pkg-copy:hover{color:var(--blue);background:var(--surface);}
+  .pkg-cmd{background:color-mix(in srgb,var(--blue) 7%,var(--surface));border:1px solid var(--border);border-radius:8px;padding:.5rem .6rem;margin-bottom:.45rem;}
+  .pkg-cmd.sub{background:transparent;border-color:transparent;padding:.1rem .1rem 0;margin-bottom:.55rem;}
+  .pkg-cmd-label{display:block;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:.3rem;}
+  .pkg-cmd-row{display:flex;align-items:flex-start;gap:.5rem;}
+  .pkg-cmd code{flex:1;min-width:0;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.55;color:var(--text);white-space:normal;overflow-wrap:anywhere;}
+  .pkg-copy{flex:none;background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:.95rem;line-height:1;padding:.15rem .3rem;border-radius:5px;}
+  .pkg-copy:hover{color:var(--blue);background:color-mix(in srgb,var(--blue) 14%,transparent);}
   .pkg-copy.ok{color:var(--green);}
   .pkg-link{font-size:.85rem;color:var(--blue);text-decoration:none;font-weight:600;margin-top:auto;}
   .pkg-link:hover{text-decoration:underline;}
@@ -98,7 +99,7 @@
         </div>
         <p class="pkg-desc">Outbound HTTP client — GET/POST/PUT/DELETE/PATCH/HEAD, JSON bodies, custom headers, timeouts, streaming responses. Fiber-aware: while waiting on a slow external API the worker keeps serving other requests.</p>
         <div class="pkg-tags"><span>http</span><span>api</span><span>client</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>use http</code><button class="pkg-copy" data-copy="use http" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use http</code><button class="pkg-copy" data-copy="use http" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#http">Docs →</a>
       </article>
       <article class="pkg-card" data-name="crypto" data-tags="crypto hash security uuid builtin crypto" data-cat="builtin">
@@ -111,7 +112,7 @@
         </div>
         <p class="pkg-desc">SHA-256, HMAC-SHA256, base64 and base64url, hex encode/decode, constant-time compare, secure random bytes/strings, UUID, RS256 sign/verify for JWT.</p>
         <div class="pkg-tags"><span>crypto</span><span>hash</span><span>security</span><span>uuid</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>use crypto</code><button class="pkg-copy" data-copy="use crypto" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use crypto</code><button class="pkg-copy" data-copy="use crypto" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#crypto">Docs →</a>
       </article>
       <article class="pkg-card" data-name="db" data-tags="database mysql postgres sqlite builtin db" data-cat="builtin">
@@ -124,7 +125,7 @@
         </div>
         <p class="pkg-desc">MySQL/MariaDB, PostgreSQL and SQLite — wire protocol implemented inside the language, no external driver. Connection pool, parameterised queries, transactions with commit/rollback and savepoints.</p>
         <div class="pkg-tags"><span>database</span><span>mysql</span><span>postgres</span><span>sqlite</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>db::connect(&quot;mysql://user:pass@host/db&quot;)</code><button class="pkg-copy" data-copy="db::connect(&quot;mysql://user:pass@host/db&quot;)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>db::connect(&quot;mysql://user:pass@host/db&quot;)</code><button class="pkg-copy" data-copy="db::connect(&quot;mysql://user:pass@host/db&quot;)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#db">Docs →</a>
       </article>
       <article class="pkg-card" data-name="template" data-tags="template view html builtin template" data-cat="builtin">
@@ -137,7 +138,7 @@
         </div>
         <p class="pkg-desc">View engine with layout inheritance — {$var} escaped output, {!$var} raw, {#if}…{#else}, {#each $list as $item}…{#empty}, {#extends}, {#block}, {#include}. Keeps HTML out of your .lk files.</p>
         <div class="pkg-tags"><span>template</span><span>view</span><span>html</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>use template</code><button class="pkg-copy" data-copy="use template" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use template</code><button class="pkg-copy" data-copy="use template" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#template">Docs →</a>
       </article>
       <article class="pkg-card" data-name="session" data-tags="session cookie auth builtin session" data-cat="builtin">
@@ -150,7 +151,7 @@
         </div>
         <p class="pkg-desc">Sessions backed by files or Redis/RESP2, plus cookie helpers — start / get / set / destroy / regenerate for session rotation after login.</p>
         <div class="pkg-tags"><span>session</span><span>cookie</span><span>auth</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>session::start()</code><button class="pkg-copy" data-copy="session::start()" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>session::start()</code><button class="pkg-copy" data-copy="session::start()" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#session">Docs →</a>
       </article>
       <article class="pkg-card" data-name="cache" data-tags="cache performance builtin cache" data-cat="builtin">
@@ -163,7 +164,7 @@
         </div>
         <p class="pkg-desc">In-process key/value cache with TTL and a bounded entry cap (LOOK_CACHE_MAX_ENTRIES) so it cannot grow without limit — get / set / has / delete / flush / keys / size.</p>
         <div class="pkg-tags"><span>cache</span><span>performance</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>cache::set(&quot;key&quot;, $v, 300)</code><button class="pkg-copy" data-copy="cache::set(&quot;key&quot;, $v, 300)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>cache::set(&quot;key&quot;, $v, 300)</code><button class="pkg-copy" data-copy="cache::set(&quot;key&quot;, $v, 300)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#cache">Docs →</a>
       </article>
       <article class="pkg-card" data-name="queue" data-tags="queue jobs builtin queue" data-cat="builtin">
@@ -176,7 +177,7 @@
         </div>
         <p class="pkg-desc">Lightweight in-process job queue — push / pop / size / peek / names / clear. Pairs with jobs:: for background workers.</p>
         <div class="pkg-tags"><span>queue</span><span>jobs</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>queue::push(&quot;mail&quot;, $job)</code><button class="pkg-copy" data-copy="queue::push(&quot;mail&quot;, $job)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>queue::push(&quot;mail&quot;, $job)</code><button class="pkg-copy" data-copy="queue::push(&quot;mail&quot;, $job)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#queue">Docs →</a>
       </article>
       <article class="pkg-card" data-name="mail" data-tags="mail smtp imap builtin mail" data-cat="builtin">
@@ -189,7 +190,7 @@
         </div>
         <p class="pkg-desc">Send mail plus an embedded SMTP + IMAP server — ports 25/587/465 and 143/993, STARTTLS, DKIM signing, Maildir delivery. A full mail stack inside the language.</p>
         <div class="pkg-tags"><span>mail</span><span>smtp</span><span>imap</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>mail::send($to, $subject, $body)</code><button class="pkg-copy" data-copy="mail::send($to, $subject, $body)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>mail::send($to, $subject, $body)</code><button class="pkg-copy" data-copy="mail::send($to, $subject, $body)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#mail">Docs →</a>
       </article>
       <article class="pkg-card" data-name="validator" data-tags="validation security builtin validator" data-cat="builtin">
@@ -202,7 +203,7 @@
         </div>
         <p class="pkg-desc">Input validation — required, email (254-char cap), integer/numeric with strict full-string parsing (&quot;123abc&quot; is rejected, not silently truncated), min/max and a combined check().</p>
         <div class="pkg-tags"><span>validation</span><span>security</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>validator::email($v)</code><button class="pkg-copy" data-copy="validator::email($v)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>validator::email($v)</code><button class="pkg-copy" data-copy="validator::email($v)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#validator">Docs →</a>
       </article>
       <article class="pkg-card" data-name="ws" data-tags="websocket sse realtime builtin ws" data-cat="builtin">
@@ -215,7 +216,7 @@
         </div>
         <p class="pkg-desc">WebSocket and Server-Sent Events (SSE) — upgrade handling, broadcast, per-connection state. The broadcast snapshot pattern is race-free (verified under TSan).</p>
         <div class="pkg-tags"><span>websocket</span><span>sse</span><span>realtime</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>ws::broadcast($msg)</code><button class="pkg-copy" data-copy="ws::broadcast($msg)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>ws::broadcast($msg)</code><button class="pkg-copy" data-copy="ws::broadcast($msg)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#websocket">Docs →</a>
       </article>
       <article class="pkg-card" data-name="jobs" data-tags="jobs background builtin jobs" data-cat="builtin">
@@ -228,7 +229,7 @@
         </div>
         <p class="pkg-desc">Background jobs — push / next / done / fail / retry / purge / recover / stats. Runs outside the request cycle, survives worker restarts.</p>
         <div class="pkg-tags"><span>jobs</span><span>background</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>jobs::push(&quot;queue&quot;, $payload)</code><button class="pkg-copy" data-copy="jobs::push(&quot;queue&quot;, $payload)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>jobs::push(&quot;queue&quot;, $payload)</code><button class="pkg-copy" data-copy="jobs::push(&quot;queue&quot;, $payload)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#jobs">Docs →</a>
       </article>
       <article class="pkg-card" data-name="file" data-tags="file io security builtin file" data-cat="builtin">
@@ -241,7 +242,7 @@
         </div>
         <p class="pkg-desc">Sandboxed file access — read / put / append / exists / remove / size / store and an upload directory, with separator-bounded containment so paths cannot escape the root.</p>
         <div class="pkg-tags"><span>file</span><span>io</span><span>security</span><span>builtin</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><code>file::read(&quot;config/app.json&quot;)</code><button class="pkg-copy" data-copy="file::read(&quot;config/app.json&quot;)" aria-label="Copy">⧉</button></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>file::read(&quot;config/app.json&quot;)</code><button class="pkg-copy" data-copy="file::read(&quot;config/app.json&quot;)" aria-label="Copy">⧉</button></div></div>
         <a class="pkg-link" href="docs.html#file">Docs →</a>
       </article>
     </div>
@@ -263,7 +264,7 @@
         </div>
         <p class="pkg-desc">Create, verify and decode JSON Web Tokens — jwt_sign / jwt_verify / jwt_decode, HS256 and HS512, usable with a middleware pattern.</p>
         <div class="pkg-tags"><span>auth</span><span>token</span><span>security</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><code>lk module install github.com/codlook/look-modules/jwt</code><button class="pkg-copy" data-copy="lk module install github.com/codlook/look-modules/jwt" aria-label="Copy">⧉</button></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><code>use jwt</code></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>lk module install github.com/codlook/look-modules/jwt</code><button class="pkg-copy" data-copy="lk module install github.com/codlook/look-modules/jwt" aria-label="Copy">⧉</button></div></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use jwt</code></div></div>
         <a class="pkg-link" href="https://github.com/codlook/look-modules/tree/main/jwt" target="_blank" rel="noopener">GitHub →</a>
       </article>
       <article class="pkg-card" data-name="ai" data-tags="ai claude anthropic llm ai" data-cat="modules">
@@ -276,7 +277,7 @@
         </div>
         <p class="pkg-desc">Official Claude (Anthropic) module — ai_chat() for a complete reply, ai_stream() for token-by-token streaming, with system prompts, prompt caching, model and max_tokens options. Pure LOOK, built on the core http:: primitives.</p>
         <div class="pkg-tags"><span>ai</span><span>claude</span><span>anthropic</span><span>llm</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><code>lk module install github.com/codlook/look-modules/ai</code><button class="pkg-copy" data-copy="lk module install github.com/codlook/look-modules/ai" aria-label="Copy">⧉</button></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><code>use ai</code></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>lk module install github.com/codlook/look-modules/ai</code><button class="pkg-copy" data-copy="lk module install github.com/codlook/look-modules/ai" aria-label="Copy">⧉</button></div></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use ai</code></div></div>
         <a class="pkg-link" href="https://github.com/codlook/look-modules/tree/main/ai" target="_blank" rel="noopener">GitHub →</a>
       </article>
     </div>
@@ -298,7 +299,7 @@
         </div>
         <p class="pkg-desc">Firebase integration — Firestore CRUD, Authentication (email/password, token verification) and Realtime Database. Access Google Firebase services directly from LOOK.</p>
         <div class="pkg-tags"><span>firebase</span><span>database</span><span>auth</span><span>google</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><code>lk install github.com/codlook/look-packages/firebase</code><button class="pkg-copy" data-copy="lk install github.com/codlook/look-packages/firebase" aria-label="Copy">⧉</button></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><code>use &quot;pkg/firebase&quot;</code></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>lk install github.com/codlook/look-packages/firebase</code><button class="pkg-copy" data-copy="lk install github.com/codlook/look-packages/firebase" aria-label="Copy">⧉</button></div></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use &quot;pkg/firebase&quot;</code></div></div>
         <a class="pkg-link" href="https://github.com/codlook/look-packages/tree/main/firebase" target="_blank" rel="noopener">GitHub →</a>
       </article>
       <article class="pkg-card" data-name="iyzico" data-tags="payment iyzico ecommerce 3dsecure iyzico" data-cat="packages">
@@ -311,7 +312,7 @@
         </div>
         <p class="pkg-desc">iyzico payment integration for Turkish e-commerce — payment creation, 3D Secure flow, refund and cancellation, HMAC request signing. Drops straight into a checkout route.</p>
         <div class="pkg-tags"><span>payment</span><span>iyzico</span><span>ecommerce</span><span>3dsecure</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><code>lk install github.com/codlook/look-packages/iyzico</code><button class="pkg-copy" data-copy="lk install github.com/codlook/look-packages/iyzico" aria-label="Copy">⧉</button></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><code>use &quot;pkg/iyzico&quot;</code></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>lk install github.com/codlook/look-packages/iyzico</code><button class="pkg-copy" data-copy="lk install github.com/codlook/look-packages/iyzico" aria-label="Copy">⧉</button></div></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use &quot;pkg/iyzico&quot;</code></div></div>
         <a class="pkg-link" href="https://github.com/codlook/look-packages/tree/main/iyzico" target="_blank" rel="noopener">GitHub →</a>
       </article>
       <article class="pkg-card" data-name="monitor" data-tags="monitoring observability prometheus metrics monitor" data-cat="packages">
@@ -324,7 +325,7 @@
         </div>
         <p class="pkg-desc">Runtime observability — formats runtime::stats() into Prometheus (/metrics) and JSON, with correct counter/gauge typing so Grafana rate() works. Reads the core counters (requests, 5xx, latency, DB pool, VM-disabled routes). Safe-by-default: importing it registers no routes on its own.</p>
         <div class="pkg-tags"><span>monitoring</span><span>observability</span><span>prometheus</span><span>metrics</span></div>
-        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><code>lk install github.com/codlook/look-packages/monitor</code><button class="pkg-copy" data-copy="lk install github.com/codlook/look-packages/monitor" aria-label="Copy">⧉</button></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><code>use &quot;monitor/monitor.lk&quot;</code></div>
+        <div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>lk install github.com/codlook/look-packages/monitor</code><button class="pkg-copy" data-copy="lk install github.com/codlook/look-packages/monitor" aria-label="Copy">⧉</button></div></div><div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>use &quot;monitor/monitor.lk&quot;</code></div></div>
         <a class="pkg-link" href="https://github.com/codlook/look-packages/tree/main/monitor" target="_blank" rel="noopener">GitHub →</a>
       </article>
     </div>
