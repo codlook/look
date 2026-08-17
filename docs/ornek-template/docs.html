@@ -95,6 +95,7 @@
     <a href="#platform">Platform & DB support</a>
     <a href="#plesk-extension">Plesk extension</a>
     <a href="#windows-installer">Windows</a>
+    <a href="#env-vars">Environment variables</a>
     <div class="nav-group">Under the hood</div>
     <a href="#mimari">Architecture</a>
     <a href="#felsefe">Design decisions</a>
@@ -4211,6 +4212,76 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
     <tr><td>Windows Defender warning</td><td>Unsigned binary</td><td>Allow → run again</td></tr>
     <tr><td>Page doesn't load</td><td>No <code>index.lk</code> in the folder</td><td>Add an <code>index.lk</code>, or pass a script path</td></tr>
   </table>
+</section>
+
+<section id="env-vars">
+  <h2>Environment Variables</h2>
+  <p>look-fcgi reads these from the process environment — set them in your systemd unit, Docker <code>-e</code> flags, or an <code>.env</code> file. All are optional; the defaults below are the built-in values. Anything not listed here is an internal build/test toggle and not meant for production use.</p>
+
+  <div class="callout warn">
+    <p><strong>Security-relevant.</strong> <code>LOOK_ALLOW_SSRF</code>, <code>LOOK_WS_ORIGINS</code> and <code>LOOK_MAX_BODY_SIZE</code> change the server's exposure. Review these before going to production.</p>
+  </div>
+
+  <h3>Server &amp; workers</h3>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
+    <tr><td><code>LOOK_WORKERS</code></td><td>CPU count (min 2)</td><td>Worker-thread count. Same as the <code>--workers</code> flag; the flag wins if both are set.</td></tr>
+    <tr><td><code>LOOK_FCGI_BIND</code></td><td><code>127.0.0.1</code></td><td>Bind address. Set to <code>0.0.0.0</code> (or <code>any</code>) to listen on all interfaces.</td></tr>
+    <tr><td><code>LOOK_HEALTH_PATH</code></td><td><code>/health</code></td><td>Path that returns a plain health-check response.</td></tr>
+    <tr><td><code>LOOK_HTTP_IDLE_MS</code></td><td><code>30000</code></td><td>Keep-alive idle timeout in ms — how long an idle connection is held open.</td></tr>
+    <tr><td><code>LOOK_HEADER_TIMEOUT</code></td><td><code>15000</code></td><td>Max ms allowed to receive the full request headers (slow-loris guard).</td></tr>
+  </table>
+
+  <h3>Security</h3>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
+    <tr><td><code>LOOK_ALLOW_SSRF</code></td><td><em>off</em></td><td>When set to <code>1</code>, allows <code>http::</code> requests to private / loopback addresses. Off by default, so outbound calls to internal ranges are blocked (SSRF protection).</td></tr>
+    <tr><td><code>LOOK_WS_ORIGINS</code></td><td><em>all</em></td><td>Comma-separated allowlist of accepted WebSocket <code>Origin</code> headers. Unset = every origin is accepted; set it to lock WS to your own domains.</td></tr>
+    <tr><td><code>LOOK_MAX_BODY_SIZE</code></td><td><code>10485760</code> (10&nbsp;MB)</td><td>Maximum request body in bytes. Requests above the cap are rejected before buffering.</td></tr>
+  </table>
+
+  <h3>Connection limits</h3>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
+    <tr><td><code>LOOK_WS_MAX_CONN</code></td><td><code>1024</code></td><td>Maximum concurrent WebSocket connections; further connects are refused.</td></tr>
+    <tr><td><code>LOOK_SSE_MAX_CONN</code></td><td><code>1024</code></td><td>Maximum concurrent SSE connections.</td></tr>
+    <tr><td><code>LOOK_CHANNEL_TIMEOUT_MS</code></td><td><code>0</code></td><td>Timeout for a <code>channel()</code> receive in ms. <code>0</code> = block until a value arrives.</td></tr>
+  </table>
+
+  <h3>Database &amp; cache</h3>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
+    <tr><td><code>LOOK_DB_POOL_SIZE</code></td><td>= workers</td><td>Connections per DSN in the pool (MySQL/PostgreSQL). Clamped to 1–256. SQLite stays at 1.</td></tr>
+    <tr><td><code>LOOK_DB_ASYNC_THREADS</code></td><td>= workers</td><td>Background threads for async DB work.</td></tr>
+    <tr><td><code>LOOK_CACHE_MAX_ENTRIES</code></td><td><code>100000</code></td><td>Maximum entries held by the in-process <code>cache::</code> store before eviction.</td></tr>
+  </table>
+
+  <h3>Mail server</h3>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
+    <tr><td><code>LOOK_SMTP_CERT</code> / <code>LOOK_SMTP_KEY</code></td><td>—</td><td>TLS certificate and its private key for the SMTP (and IMAP) server. Set both together to enable TLS.</td></tr>
+    <tr><td><code>LOOK_SMTP_AUTH_DISABLED</code></td><td><em>off</em></td><td>When set, the SMTP server accepts mail without requiring AUTH. Use only on a trusted internal relay.</td></tr>
+    <tr><td><code>LOOK_MAIL_DOMAIN</code></td><td>—</td><td>The domain the mail server considers local (accepts delivery for).</td></tr>
+    <tr><td><code>LOOK_MAIL_PASS</code></td><td>—</td><td>Password for the built-in mail user.</td></tr>
+  </table>
+
+  <h3>Engine</h3>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
+    <tr><td><code>LOOK_BYTECODE</code></td><td><code>1</code></td><td>Bytecode VM on (default). <code>0</code> forces the tree-walk interpreter.</td></tr>
+    <tr><td><code>LOOK_FIBER_DISPATCH</code></td><td><em>off</em></td><td><code>1</code> switches from the worker pool to the fiber runtime (see <a href="#concurrent">Concurrent Runtime</a>).</td></tr>
+    <tr><td><code>LOOK_WARN_UNDEF</code></td><td><em>off</em></td><td>Undefined variables are a hard error by default. <code>1</code> restores lenient mode with a warning instead.</td></tr>
+  </table>
+
+  <div class="callout tip">
+    <p><strong>systemd example:</strong></p>
+  </div>
+  <pre><code><span class="cm"># /etc/systemd/system/myapp.service</span>
+[Service]
+Environment=LOOK_WORKERS=8
+Environment=LOOK_MAX_BODY_SIZE=5242880
+Environment=LOOK_WS_ORIGINS=https://app.example.com,https://admin.example.com
+ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</code></pre>
 </section>
 
 <section id="mimari">
