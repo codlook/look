@@ -401,22 +401,98 @@
 
 <script>
 (function(){
-  // copy buttons
-  document.querySelectorAll('.pkg-copy').forEach(function(b){
-    b.addEventListener('click', function(){
-      var t = b.getAttribute('data-copy');
-      navigator.clipboard.writeText(t).then(function(){
-        b.textContent = '✓'; b.classList.add('ok');
-        setTimeout(function(){ b.textContent = '⧉'; b.classList.remove('ok'); }, 1200);
-      });
+  var esc = function(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+
+  // ── live ecosystem: pull modules/packages straight from GitHub ──────────────
+  // Folders come from the GitHub contents API; each folder's look.json (name,
+  // description, tags, icon, color, use) is read from the raw CDN (no rate limit).
+  // The hardcoded cards below stay as the no-JS / offline / rate-limited fallback;
+  // a successful fetch replaces them, so pushing a module makes it appear here.
+  var REPOS = [
+    { repo: 'look-modules',  cat: 'modules',  install: 'lk module install ' },
+    { repo: 'look-packages', cat: 'packages', install: 'lk install ' }
+  ];
+  function toItem(name, m, r){
+    m = m || {};
+    return {
+      name: name, cat: r.cat,
+      description: m.description || '',
+      tags: m.tags || [],
+      icon: m.icon || '📦',
+      color: m.color || 'blue',
+      use: m.use || (r.cat === 'modules' ? 'use ' + name : 'use "pkg/' + name + '"'),
+      version: m.version || '', author: m.author || 'codlook',
+      install: r.install + 'github.com/codlook/' + r.repo + '/' + name,
+      github: 'https://github.com/codlook/' + r.repo + '/tree/main/' + name
+    };
+  }
+  function cardHtml(it){
+    var tags = it.tags.map(function(t){ return '<span>' + esc(t) + '</span>'; }).join('');
+    var dataTags = esc(it.tags.join(' ') + ' ' + it.name);
+    var meta = esc(it.author) + (it.version ? ' · v' + esc(it.version) : '');
+    return '<article class="pkg-card" data-name="' + esc(it.name) + '" data-tags="' + dataTags + '" data-cat="' + it.cat + '">'
+      + '<div class="pkg-top"><span class="pkg-icon" style="--c:var(--' + esc(it.color) + ')">' + it.icon + '</span>'
+      + '<div class="pkg-id"><h3>' + esc(it.name) + ' <span class="pkg-badge">✓ approved</span></h3>'
+      + '<span class="pkg-meta">' + meta + '</span></div></div>'
+      + '<p class="pkg-desc">' + esc(it.description) + '</p>'
+      + '<div class="pkg-tags">' + tags + '</div>'
+      + '<div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>' + esc(it.install) + '</code>'
+      + '<button class="pkg-copy" data-copy="' + esc(it.install) + '" aria-label="Copy">⧉</button></div></div>'
+      + '<div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>' + esc(it.use) + '</code></div></div>'
+      + '<a class="pkg-link" href="' + esc(it.github) + '" target="_blank" rel="noopener">GitHub →</a>'
+      + '</article>';
+  }
+  function renderCat(cat, items){
+    var grid = document.querySelector('#' + cat + ' .pkg-grid');
+    var cnt  = document.querySelector('#' + cat + ' .pkg-count');
+    if (!grid || !items.length) return;
+    grid.innerHTML = items.map(cardHtml).join('');
+    if (cnt) cnt.textContent = items.length;
+  }
+  function fetchRepo(r){
+    return fetch('https://api.github.com/repos/codlook/' + r.repo + '/contents')
+      .then(function(res){ if (!res.ok) throw 0; return res.json(); })
+      .then(function(list){
+        var names = list.filter(function(x){ return x.type === 'dir'; }).map(function(x){ return x.name; });
+        return Promise.all(names.map(function(name){
+          return fetch('https://raw.githubusercontent.com/codlook/' + r.repo + '/main/' + name + '/look.json')
+            .then(function(res){ return res.ok ? res.json() : null; })
+            .then(function(m){ return m ? toItem(name, m, r) : null; })
+            .catch(function(){ return null; });
+        }));
+      })
+      .then(function(items){ return items.filter(Boolean); });
+  }
+  function paint(data){ renderCat('modules', data.modules || []); renderCat('packages', data.packages || []); refresh(); apply(); }
+  function loadEcosystem(){
+    var cached = null;
+    try { cached = JSON.parse(localStorage.getItem('lookEco') || 'null'); } catch(e){}
+    if (cached && (Date.now() - cached.ts) < 12 * 3600 * 1000) { paint(cached.data); return; }
+    Promise.all(REPOS.map(fetchRepo)).then(function(res){
+      var data = { modules: res[0], packages: res[1] };
+      if (!data.modules.length && !data.packages.length) return; // keep hardcoded fallback
+      paint(data);
+      try { localStorage.setItem('lookEco', JSON.stringify({ ts: Date.now(), data: data })); } catch(e){}
+    }).catch(function(){ /* keep the hardcoded fallback cards */ });
+  }
+
+  // ── copy (event delegation so it works for dynamically added cards) ─────────
+  document.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.pkg-copy') : null;
+    if (!b) return;
+    navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function(){
+      b.textContent = '✓'; b.classList.add('ok');
+      setTimeout(function(){ b.textContent = '⧉'; b.classList.remove('ok'); }, 1200);
     });
   });
-  // search + filter
+
+  // ── search + filter (cards re-queried after each render) ────────────────────
   var search = document.getElementById('pkgSearch');
   var empty  = document.getElementById('pkgEmpty');
-  var cards  = [].slice.call(document.querySelectorAll('.pkg-card'));
   var groups = [].slice.call(document.querySelectorAll('.pkg-group'));
   var filter = 'all';
+  var cards  = [];
+  function refresh(){ cards = [].slice.call(document.querySelectorAll('.pkg-card')); }
   function apply(){
     var q = (search.value || '').trim().toLowerCase();
     var shown = 0;
@@ -446,6 +522,9 @@
   document.querySelectorAll('.nav-links a').forEach(function(a){
     a.addEventListener('click', function(){ document.querySelector('header.nav').classList.remove('open'); });
   });
+
+  refresh();          // index the hardcoded fallback cards
+  loadEcosystem();    // then upgrade Modules/Packages with the live GitHub list
 })();
 </script>
 </body>
