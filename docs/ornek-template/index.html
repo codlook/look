@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOOK — The fast, single-binary scripting language for the web</title>
+<meta name="description" content="LOOK is a scripting language built for the web with minimal external runtime dependencies. Embedded MySQL/PostgreSQL/SQLite, WebSocket, SSE and SMTP — one static binary. Up and running in seconds with docker run codlook/look.">
+<link rel="icon" href="look-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+
+<meta name="yandex-verification" content="79a31a4811e022ad" />
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-S76WJQSTX0"></script>
+<script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-S76WJQSTX0');
+</script>
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=AW-11120116479"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'AW-11120116479');
+</script>
+
+<!-- Event snippet for Page view conversion page -->
+<script>
+  gtag('event', 'conversion', {'send_to': 'AW-11120116479/BtMdCPSlrOQYEP-FvrYp'});
+</script>
+
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html"><span>look<span class="dot">.</span></span></a>
+    <nav class="nav-links">
+      <a href="#ozellikler">Features</a>
+      <a href="#kod">Code</a>
+      <a href="#moduller">Modules</a>
+      <a href="#kurulum">Install</a>
+      <a href="docs.html">Docs</a>
+      <a href="packages.html">Packages</a>
+      <a href="errors.html">Errors</a>
+      <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
+    </nav>
+    <a class="btn btn-primary" href="#kurulum">Get started</a>
+    <button class="nav-burger" aria-label="Menu" onclick="document.querySelector('header.nav').classList.toggle('open')"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="wrap">
+    <span class="kicker">Minimal runtime dependencies · Single binary</span>
+    <h1>A scripting language built for the <span class="r">web</span>.</h1>
+    <div class="hero-grid">
+    <div>
+      <p class="lead"><b>More time to build, everything in one place.</b> LOOK is a scripting language that carries the database, sessions, WebSocket, email and more <b>in its core</b> — so you spend your time building features, not wiring tools together. No packages to install, no dependency tree to resolve: <b>one static file</b>, and a complete workspace for the developer.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#kurulum">Try it now ↓</a>
+        <a class="btn btn-ghost" href="docs.html">Docs</a>
+      </div>
+      <div class="hero-mini">
+        <span><b>1</b> static binary</span>
+        <span><b>247</b> built-in functions</span>
+        <span><b>32</b> modules</span>
+        <span>Apache-2.0</span>
+      </div>
+    </div>
+    <div class="code-side">
+      <div class="codewin lg">
+        <div class="bar"><i></i><i></i><i></i><span class="fname">app.lk</span></div>
+<pre><span class="c-cm">// Fetch a user by ID — embedded database, zero setup</span>
+<span class="c-fn">route</span>(<span class="c-str">"GET"</span>, <span class="c-str">"/users/:id"</span>, <span class="c-kw">function</span>(<span class="c-var">$req</span>) {
+    <span class="c-var">$id</span>   = <span class="c-fn">int</span>(<span class="c-fn">request::param</span>(<span class="c-str">"id"</span>))
+    <span class="c-var">$user</span> = <span class="c-fn">db::query</span>(<span class="c-fn">app::db</span>(), <span class="c-str">"SELECT * FROM users WHERE id = ?"</span>, [<span class="c-var">$id</span>])
+
+    <span class="c-kw">if</span> (<span class="c-var">$user</span> == <span class="c-kw">null</span>) {
+        <span class="c-kw">return</span> <span class="c-fn">response::error</span>(<span class="c-num">404</span>, <span class="c-str">"not found"</span>)
+    }
+    <span class="c-kw">return</span> <span class="c-fn">response::json</span>(<span class="c-var">$user</span>)
+})</pre>
+      </div>
+    </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TRUST STRIP ============ -->
+<section class="strip">
+  <div class="wrap strip-in">
+    <div class="item"><div class="n">10,558<span class="r">/s</span></div><div class="l">requests/sec — c=200, 0 errors</div></div>
+    <div class="item"><div class="n">3–5<span class="r">×</span></div><div class="l">less RAM used</div></div>
+    <div class="item"><div class="n">1</div><div class="l">static binary · glibc ≥ 2.28</div></div>
+    <div class="item"><div class="n">C++<span class="r">23</span></div><div class="l">dual engine: bytecode VM + tree-walk</div></div>
+  </div>
+</section>
+
+<!-- ============ WHY / NEDEN ============ -->
+<section class="sec why" id="neden">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2><span class="r">Why</span> did web development get this complicated?</h2>
+      <p>A simple API pulls in dozens of packages, a dependency tree, a separate database driver, yet another service for real time... LOOK collapses that stack into a single file.</p>
+    </div>
+    <div class="compare">
+      <div class="cbox old">
+        <h3>The traditional web stack</h3>
+        <ul>
+          <li><span class="mk">✕</span> Install a runtime, a version manager, open a package manager</li>
+          <li><span class="mk">✕</span> Hundreds of transitive dependencies — each its own security surface</li>
+          <li><span class="mk">✕</span> A separate driver for the DB, a separate service for real time</li>
+          <li><span class="mk">✕</span> Install a framework, configure, update, break, reinstall</li>
+          <li><span class="mk">✕</span> Deploy = container + orchestration + "works on my machine"</li>
+        </ul>
+      </div>
+      <div class="cbox new">
+        <h3>With LOOK, <span class="r">one file</span></h3>
+        <ul>
+          <li><span class="mk">✓</span> No dependency manager — the core library lives inside the binary</li>
+          <li><span class="mk">✓</span> No transitive dependencies → no supply-chain risk</li>
+          <li><span class="mk">✓</span> MySQL/PG/SQLite/Redis + WebSocket + SSE embedded in the language</li>
+          <li><span class="mk">✓</span> No framework to install — routing is part of the language</li>
+          <li><span class="mk">✓</span> Deploy = copy the file, run it. One binary, three modes.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="why-note">
+      LOOK is <b>open source</b> (Apache-2.0) and development happens entirely in the open on <a href="https://github.com/codlook/look" target="_blank">GitHub</a> — read the source, open an issue, contribute.
+    </p>
+  </div>
+</section>
+
+<!-- ============ FEATURES ============ -->
+<section class="sec" id="ozellikler">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>Everything is <span class="r">inside</span>. The box isn't empty.</h2>
+      <p>Most languages say "batteries included," then leave you alone with a package manager. LOOK actually includes them.</p>
+    </div>
+    <div class="fgrid">
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg></div>
+        <h3>Embedded databases</h3>
+        <p>MySQL, MariaDB, PostgreSQL, SQLite and Redis (RESP2) — all in the core with a hand-written wire protocol. <b>No libpq/hiredis.</b></p>
+      </div>
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></div>
+        <h3>Dual engine, for speed</h3>
+        <p>The default <b>bytecode VM</b> is ~41× faster than the tree-walking interpreter on the CLI. On the web, a route-level safety-net fallback.</p>
+      </div>
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H4z"/><path d="M2 20h20"/><path d="M8 8l3 3-3 3M13 14h4"/></svg></div>
+        <h3>Real-time, built in</h3>
+        <p><b>WebSocket</b> and <b>Server-Sent Events</b> are embedded in the language — broadcast with <span class="mono">ws::</span> / <span class="mono">sse::</span> in one line.</p>
+      </div>
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></div>
+        <h3>Embedded SMTP + IMAP</h3>
+        <p>No external service needed to send email. A <b>built-in SMTP server</b> with STARTTLS, plus an IMAP server.</p>
+      </div>
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.4 8 8 10 4.6-2 8-5 8-10V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
+        <h3>Safe defaults</h3>
+        <p>An undefined variable is an <b>error</b> (strict). Type-strict <span class="mono">==</span>. 64-bit integers — phone numbers/IDs don't silently corrupt.</p>
+      </div>
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg></div>
+        <h3>One portable file</h3>
+        <p>A <b>static binary</b> built on AlmaLinux 8 runs unchanged on Ubuntu, Debian, Rocky, RHEL 8·9·10+. Or just <span class="mono">docker run codlook/look</span>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FULL RUNTIME GRID ============ -->
+<section class="sec" id="runtime-full" style="padding-top:0;">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>One binary, <span class="r">a full runtime.</span></h2>
+      <p>Just start writing — nothing to install, no new ecosystem to learn.</p>
+    </div>
+    <div class="rgrid">
+      <div class="rcard"><span class="badge">Core</span><h4>Routing in the language</h4><p><code>route("GET","/product/:id", fn)</code> — REST, WS, SSE share one syntax. URL parameters are parsed automatically.</p></div>
+      <div class="rcard"><span class="badge">Syntax</span><h4>Short lambda — fn + arrow</h4><p><code>fn($x) => $x * 2</code> — an expression-bodied arrow function with implicit return. Classic <code>function</code> works too.</p></div>
+      <div class="rcard"><span class="badge">Syntax</span><h4>app:: service registry</h4><p><code>app::set("db", $conn)</code> once → routes reach it with <code>app::db()</code> without capturing. The explicit-scope philosophy is preserved.</p></div>
+      <div class="rcard"><span class="badge">Core</span><h4>MySQL · SQLite · PostgreSQL</h4><p>The wire protocol, directly. One API: <code>db::query / exec / col</code>. Transactions: <code>db::begin / commit / rollback</code>.</p></div>
+      <div class="rcard"><span class="badge">Concurrency</span><h4>parallel() + channel()</h4><p>LOOK's task model. Fan-out, pipeline, producer-consumer — over channels. No blocking, no callbacks.</p></div>
+      <div class="rcard"><span class="badge">Real-time</span><h4>WebSocket</h4><p><code>route("WS","/chat", fn)</code> — RFC 6455, SHA-1+Base64 handshake. <code>ws::broadcast()</code> to every client.</p></div>
+      <div class="rcard"><span class="badge">Real-time</span><h4>SSE + timer::</h4><p><code>route("SSE","/events", fn)</code> — Server-Sent Events. Periodic push: <code>timer::every(3000, fn)</code>.</p></div>
+      <div class="rcard"><span class="badge">Background</span><h4>jobs:: — job queue</h4><p>SQLite-backed durable queue. <code>jobs::push / worker / run</code>. Delayed jobs, retries — survives a process restart.</p></div>
+      <div class="rcard"><span class="badge">Queue</span><h4>queue:: — FIFO queue</h4><p>In-memory, thread-safe, named queue. <code>queue::push / pop / peek / size</code>.</p></div>
+      <div class="rcard"><span class="badge">Cache</span><h4>cache:: — in-process cache</h4><p>TTL-aware, thread-safe singleton. Shared across all workers. <code>cache::get / set / has / flush</code>.</p></div>
+      <div class="rcard"><span class="badge">Template</span><h4>template:: — view engine</h4><p>Layout inheritance, partial include, <code>{#each}</code> loop, <code>{#if}</code> condition. Server-rendered — no runtime.</p></div>
+      <div class="rcard"><span class="badge">VM</span><h4>Bytecode VM</h4><p>AST → register bytecode → switch dispatch. The default engine everywhere — ~41× faster than tree-walking on the CLI.</p></div>
+      <div class="rcard"><span class="badge">Security</span><h4>crypto:: + auth:: + JWT</h4><p><code>sha256</code>, <code>hmac_sha256</code>, <code>rs256_sign/verify</code>, base64url, UUID v4, timing-safe <code>constant_compare</code> — no external deps. Passwords: <code>auth::hash</code> (PBKDF2). JWT builds on this.</p></div>
+      <div class="rcard"><span class="badge">Security</span><h4>Rate limiter — token bucket</h4><p>Two layers: per-IP burst + global cap. <code>LOOK_RATE_LIMIT_*</code> — your code doesn't change, it's at the runtime level.</p></div>
+      <div class="rcard"><span class="badge">Security</span><h4>DKIM + SMTP hardening</h4><p>Outbound email is signed RSA-SHA256 automatically. Port 25 relay is off — authenticated SMTP only (587/465).</p></div>
+      <div class="rcard"><span class="badge">Mail server</span><h4>Embedded SMTP + IMAP</h4><p>Built-in MTA (25/587) + IMAP4rev1 (143/993). SMTP → Maildir, IMAP → Thunderbird/Roundcube. No Dovecot/Postfix needed.</p></div>
+      <div class="rcard"><span class="badge">Error handling</span><h4>error:: — typed errors</h4><p>Throw with <code>throw</code>; <code>error::new($type,$msg)</code> for structured errors. <code>try/catch</code> + <code>error::is / code / message</code>.</p></div>
+      <div class="rcard"><span class="badge">Module</span><h4>http:: — outbound HTTP client</h4><p>GET/POST/PUT/PATCH/DELETE. JSON body, custom headers, timeout, TLS included. Fan-out API calls with <code>parallel()</code>.</p></div>
+      <div class="rcard"><span class="badge">Ecosystem</span><h4>Package + module system</h4><p><code>lk install github.com/...</code> — JWT, payments and more. No registry, no config. <a href="packages.html" style="color:var(--red)">Packages →</a></p></div>
+      <div class="rcard"><span class="badge">Developer</span><h4>test + REPL + lk install</h4><p><code>lk test</code> — assertions, before/after_each. <code>lk repl</code> — interactive. Install packages from GitHub.</p></div>
+      <div class="rcard"><span class="badge">Validation</span><h4>validator:: — input validation</h4><p>Email, number, integer, required field, min/max rules. Secure user input in a route with a single call.</p></div>
+    </div>
+    <div style="text-align:center;margin-top:40px;">
+      <a class="btn btn-ghost" href="docs.html">All 32 modules · 247 functions → Docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PERSONAS ============ -->
+<section class="sec" id="kime-gore" style="padding-top:0;">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>When should you reach for <span class="r">LOOK</span>?</h2>
+      <p>It's not a framework — it's a language. If one of the needs below is yours, LOOK fits.</p>
+    </div>
+    <div class="pgrid">
+      <div class="pcard">
+        <div class="emoji">🌐</div>
+        <div>
+          <h3>Simple hosting, real-time power</h3>
+          <p>You want the drop-a-file, shared-hosting / Plesk simplicity — and also <b>WebSocket, SSE and concurrency</b>. Drop the file, run it, and you get real-time connections and <span class="mono">parallel()</span> on top.</p>
+        </div>
+      </div>
+      <div class="pcard">
+        <div class="emoji">🚀</div>
+        <div>
+          <h3>REST + DB without a framework</h3>
+          <p>Routing, DB (MySQL/SQLite/PostgreSQL), validation, cache, JWT — <b>all in the language</b>. No dependency manager, no package tree — one binary.</p>
+        </div>
+      </div>
+      <div class="pcard">
+        <div class="emoji">📦</div>
+        <div>
+          <h3>Single-file deploy</h3>
+          <p>Copy one file to a VPS, run it with systemd/Plesk. No separate runtime, no package manager. <b>28 MB RAM, flat across 1M requests.</b></p>
+        </div>
+      </div>
+      <div class="pcard">
+        <div class="emoji">✉️</div>
+        <div>
+          <h3>Building a mail system</h3>
+          <p>Built-in <b>SMTP + IMAP server</b> — no Postfix/Dovecot. Build a secure mail system, e-commerce notifications or a blog entirely in LOOK. <a href="#mail" style="color:var(--red);font-weight:600">How? ↓</a></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CODE SHOWCASE ============ -->
+<section class="sec" id="kod" style="padding-top:0;">
+  <div class="wrap">
+    <!-- Routing -->
+    <div class="split">
+      <div class="txt">
+        <h3>Write a route, <span class="r">return JSON.</span> That's it.</h3>
+        <p>One-line endpoints with arrow functions, or a full function body. Request data via <span class="mono">request::</span>, response via <span class="mono">response::</span> — no middleware layer.</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5L20 7"/></svg> Path parameters: <span class="mono">/users/:id</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5L20 7"/></svg> Parameterized SQL — injection-safe</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5L20 7"/></svg> No semicolons, no ceremony</li>
+        </ul>
+      </div>
+      <div class="code-side">
+        <div class="codewin">
+          <div class="bar"><i></i><i></i><i></i><span class="fname">routes.lk</span></div>
+<pre><span class="c-cm">// One line — arrow function</span>
+<span class="c-fn">route</span>(<span class="c-str">"GET"</span>, <span class="c-str">"/"</span>, <span class="c-kw">fn</span>(<span class="c-var">$req</span>) => <span class="c-fn">response::json</span>([<span class="c-str">"hello"</span> => <span class="c-str">"world"</span>]))
+
+<span class="c-cm">// Submit a form — POST body</span>
+<span class="c-fn">route</span>(<span class="c-str">"POST"</span>, <span class="c-str">"/signup"</span>, <span class="c-kw">function</span>(<span class="c-var">$req</span>) {
+    <span class="c-var">$body</span> = <span class="c-fn">request::json</span>()
+    <span class="c-kw">if</span> (!<span class="c-fn">validator::email</span>(<span class="c-var">$body</span>[<span class="c-str">"email"</span>])) {
+        <span class="c-kw">return</span> <span class="c-fn">response::error</span>(<span class="c-num">400</span>, <span class="c-str">"invalid email"</span>)
+    }
+    <span class="c-fn">db::exec</span>(<span class="c-fn">app::db</span>(), <span class="c-str">"INSERT INTO users(email) VALUES(?)"</span>, [<span class="c-var">$body</span>[<span class="c-str">"email"</span>]])
+    <span class="c-kw">return</span> <span class="c-fn">response::json</span>([<span class="c-str">"ok"</span> => <span class="c-kw">true</span>], <span class="c-num">201</span>)
+})</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Realtime -->
+    <div class="split">
+      <div class="code-side">
+        <div class="codewin">
+          <div class="bar"><i></i><i></i><i></i><span class="fname">chat.lk</span></div>
+<pre><span class="c-cm">// Real-time chat — 5 lines</span>
+<span class="c-fn">route</span>(<span class="c-str">"WS"</span>, <span class="c-str">"/chat"</span>, <span class="c-kw">function</span>(<span class="c-var">$conn</span>) {
+    <span class="c-fn">ws::on</span>(<span class="c-var">$conn</span>, <span class="c-str">"message"</span>, <span class="c-kw">function</span>(<span class="c-var">$m</span>) {
+        <span class="c-fn">ws::broadcast</span>(<span class="c-var">$m</span>)          <span class="c-cm">// send to everyone</span>
+    })
+})
+
+<span class="c-cm">// Live event stream (SSE)</span>
+<span class="c-fn">route</span>(<span class="c-str">"SSE"</span>, <span class="c-str">"/prices"</span>, <span class="c-kw">function</span>(<span class="c-var">$conn</span>) {
+    <span class="c-fn">sse::send</span>(<span class="c-var">$conn</span>, <span class="c-fn">json::encode</span>(<span class="c-var">$tick</span>))
+})</pre>
+        </div>
+      </div>
+      <div class="txt">
+        <h3>Real-time, <span class="r">without a library.</span></h3>
+        <p>No Socket.io, no separate service. WebSocket and SSE are part of the language. <span class="mono">ws::broadcast()</span> reaches every connected client in one call.</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5L20 7"/></svg> <span class="mono">ws::on / send / broadcast / clients</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5L20 7"/></svg> <span class="mono">sse::send / on / close</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5L20 7"/></svg> Timers: <span class="mono">timer::every / after</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DEV ERGONOMICS ============ -->
+<section class="sec" id="kolaylik" style="padding-top:0;">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>What frameworks do, <span class="r">the language itself</span> does.</h2>
+      <p>A template engine, background jobs, a queue, Redis, even AI — normally each needs a separate library/service. We built LOOK to <b>make the developer's job easier</b>; it's all in the core.</p>
+    </div>
+
+    <!-- Template -->
+    <div class="split">
+      <div class="txt">
+        <span class="kicker">template::</span>
+        <h3>A template engine — <span class="r">in the language.</span></h3>
+        <p>Which language ships a template engine in the box? LOOK has layout inheritance, partial includes, <span class="mono">{#each}</span> / <span class="mono">{#if}</span> — server-rendered, no runtime. Automatic XSS protection via <span class="mono">template::escape</span>.</p>
+      </div>
+      <div class="code-side">
+        <div class="codewin">
+          <div class="bar"><i></i><i></i><i></i><span class="fname">products.lk</span></div>
+<pre><span class="c-cm">// page.html: {#each products as p}&lt;li&gt;{$p.name}&lt;/li&gt;{/each}</span>
+<span class="c-var">$html</span> = <span class="c-fn">template::render</span>(<span class="c-str">"page.html"</span>, [
+    <span class="c-str">"title"</span>    => <span class="c-str">"Products"</span>,
+    <span class="c-str">"products"</span> => <span class="c-fn">db::query</span>(<span class="c-fn">app::db</span>(), <span class="c-str">"SELECT * FROM products"</span>, [])
+])
+<span class="c-kw">return</span> <span class="c-fn">response::html</span>(<span class="c-var">$html</span>)</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Jobs / Queue -->
+    <div class="split">
+      <div class="code-side">
+        <div class="codewin">
+          <div class="bar"><i></i><i></i><i></i><span class="fname">jobs.lk</span></div>
+<pre><span class="c-cm">// Don't make the request wait — enqueue, return instantly</span>
+<span class="c-fn">jobs::push</span>(<span class="c-str">"mail"</span>, [<span class="c-str">"to"</span> => <span class="c-var">$email</span>, <span class="c-str">"subject"</span> => <span class="c-str">"Welcome"</span>])
+<span class="c-kw">return</span> <span class="c-fn">response::json</span>([<span class="c-str">"ok"</span> => <span class="c-kw">true</span>])
+
+<span class="c-cm">// Separate worker — durable (SQLite), survives a restart</span>
+<span class="c-fn">jobs::worker</span>(<span class="c-str">"mail"</span>, <span class="c-kw">function</span>(<span class="c-var">$job</span>) {
+    <span class="c-fn">mail::send</span>(<span class="c-var">$job</span>[<span class="c-str">"to"</span>], <span class="c-var">$job</span>[<span class="c-str">"subject"</span>], <span class="c-var">$body</span>)
+})
+<span class="c-fn">jobs::run</span>()</pre>
+        </div>
+      </div>
+      <div class="txt">
+        <span class="kicker">jobs:: · queue::</span>
+        <h3>Background jobs, <span class="r">without losing them.</span></h3>
+        <p>Don't make slow work (mail, reports, webhooks) block the request — enqueue it and let a worker chew on it in the background. <span class="mono">jobs::</span> is a SQLite-backed <b>durable</b> queue: delayed jobs, retries, dead-letter. <span class="mono">queue::</span> is a fast in-memory FIFO between requests.</p>
+      </div>
+    </div>
+
+    <!-- Parallel / Channel -->
+    <div class="split">
+      <div class="txt">
+        <span class="kicker">parallel() + channel()</span>
+        <h3>Concurrency <span class="r">at the language level.</span></h3>
+        <p>Run 3 DB queries at once in a single request — <b>total time equals the slowest query</b>, not the sum of all three. Go's channel model, in LOOK syntax: <span class="mono">parallel()</span> starts a task, <span class="mono">channel()</span> carries the result back. There's blocking (natural backpressure), no callback hell.</p>
+        <p style="color:var(--ink-faint);font-size:15px;margin-top:12px;">Every HTTP request already runs on its own worker thread — <span class="mono">--workers N</span>, no code changes. An isolated interpreter copy + a connection pool.</p>
+      </div>
+      <div class="code-side">
+        <div class="codewin">
+          <div class="bar"><i></i><i></i><i></i><span class="fname">dashboard.lk</span></div>
+<pre><span class="c-cm">// 3 queries AT ONCE — time = the slowest query</span>
+<span class="c-var">$result</span> = <span class="c-fn">channel</span>(<span class="c-num">3</span>)
+<span class="c-fn">parallel</span>(<span class="c-kw">function</span>() <span class="c-kw">use</span> (<span class="c-var">$result</span>, <span class="c-var">$db</span>) {
+    <span class="c-var">$n</span> = <span class="c-fn">db::query</span>(<span class="c-var">$db</span>, <span class="c-str">"SELECT count(*) n FROM companies"</span>, [])
+    <span class="c-fn">send</span>(<span class="c-var">$result</span>, <span class="c-var">$n</span>[<span class="c-num">0</span>][<span class="c-str">"n"</span>])
+})
+<span class="c-fn">parallel</span>(<span class="c-kw">function</span>() <span class="c-kw">use</span> (<span class="c-var">$result</span>, <span class="c-var">$db</span>) {
+    <span class="c-var">$n</span> = <span class="c-fn">db::query</span>(<span class="c-var">$db</span>, <span class="c-str">"SELECT count(*) n FROM orders"</span>, [])
+    <span class="c-fn">send</span>(<span class="c-var">$result</span>, <span class="c-var">$n</span>[<span class="c-num">0</span>][<span class="c-str">"n"</span>])
+})
+<span class="c-var">$companies</span> = <span class="c-fn">receive</span>(<span class="c-var">$result</span>)
+<span class="c-var">$orders</span>    = <span class="c-fn">receive</span>(<span class="c-var">$result</span>)</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cache/Redis + AI grid -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:88px;" class="dual-grid">
+      <div>
+        <span class="kicker">cache:: + Redis</span>
+        <h3 style="font-size:26px;font-weight:800;color:var(--navy);letter-spacing:-0.02em;margin-bottom:6px;">Connecting to Redis = <span style="color:var(--red)">one env var.</span></h3>
+        <p style="color:var(--ink-soft);font-size:16px;margin-bottom:18px;">No client to install, no driver to pick. Set <span class="mono">LOOK_REDIS_URL</span> — <span class="mono">cache::</span> speaks RESP2 itself. Leave it unset and it runs in-memory. The code stays the same.</p>
+        <div class="codewin">
+          <div class="bar"><i></i><i></i><i></i><span class="fname">cache.lk</span></div>
+<pre><span class="c-cm"># env: LOOK_REDIS_URL=redis://127.0.0.1:6379/0</span>
+<span class="c-fn">cache::set</span>(<span class="c-str">"stock:42"</span>, <span class="c-var">$stock</span>, <span class="c-num">300</span>)   <span class="c-cm">// 300s TTL</span>
+<span class="c-var">$stock</span> = <span class="c-fn">cache::get</span>(<span class="c-str">"stock:42"</span>)</pre>
+        </div>
+      </div>
+      <div>
+        <span class="kicker">ai — official module</span>
+        <h3 style="font-size:26px;font-weight:800;color:var(--navy);letter-spacing:-0.02em;margin-bottom:6px;">The Anthropic API in <span style="color:var(--red)">two lines.</span></h3>
+        <p style="color:var(--ink-soft);font-size:16px;margin-bottom:18px;">The official <span class="mono">ai</span> module is built on the core <span class="mono">http::stream</span>. Ask Claude a question, stream it token by token — the key lives in a single env var.</p>
+        <div class="codewin">
+          <div class="bar"><i></i><i></i><i></i><span class="fname">ai.lk</span></div>
+<pre><span class="c-kw">use</span> ai   <span class="c-cm">// lk module install github.com/codlook/look-modules/ai</span>
+
+<span class="c-var">$reply</span> = <span class="c-fn">ai_chat</span>([
+  [<span class="c-str">"role"</span> => <span class="c-str">"user"</span>, <span class="c-str">"content"</span> => <span class="c-str">"Describe LOOK in one sentence"</span>]
+], [<span class="c-str">"model"</span> => <span class="c-str">"claude-sonnet-5"</span>])
+
+<span class="c-fn">print</span>(<span class="c-var">$reply</span>[<span class="c-str">"content"</span>])</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ RUNTIME LAYERS ============ -->
+<section class="sec stack-wrap" id="runtime">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>How <span class="r">deep</span> does it go?</h2>
+      <p>Every component of LOOK is written from scratch in C++23 — no drivers, no ORM, no middleware.</p>
+    </div>
+    <div class="stackgrid">
+      <div class="scard"><span class="tag">Parser</span><h4>Lexer · Parser · AST</h4><p>Precedence-aware parser, full operator set, string interpolation, error reporting with line/column positions.</p></div>
+      <div class="scard"><span class="tag">VM</span><h4>Bytecode VM</h4><p>AST → 3-address register bytecode → switch dispatch. <code>41×</code> faster than tree-walking on the CLI. Safety net: tree-walk fallback.</p></div>
+      <div class="scard"><span class="tag">Concurrency</span><h4>ThreadPool + ConnPool</h4><p><code>--workers N</code>, a per-request interpreter copy, a per-DSN connection pool. Hot reload: zero downtime.</p></div>
+      <div class="scard"><span class="tag">Networking</span><h4>HTTP/1.1 · WebSocket · SSE</h4><p>epoll (Linux), IOCP (Windows). RFC 6455 WS, an SSE frame codec. Optional fiber runtime (Go netpoller model).</p></div>
+      <div class="scard"><span class="tag">DB</span><h4>MySQL · SQLite · PostgreSQL</h4><p>Wire protocol from scratch. No driver. One <code>db::</code> API, different DSNs — only the connection string changes.</p></div>
+      <div class="scard"><span class="tag">Deploy</span><h4>CGI · FastCGI · HTTP</h4><p>Apache/nginx FastCGI, standalone HTTP, CGI fallback. One binary, three modes.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BENCHMARK ============ -->
+<section class="sec bench-wrap" id="benchmark">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>Real numbers, <span class="r">a real server.</span></h2>
+      <p>Measured with <span class="mono">ab</span> on a live AlmaLinux 8 · MariaDB server (64 workers, direct port).</p>
+    </div>
+    <div class="benchgrid">
+      <div class="bcard"><div class="num">10,558</div><div class="unit">req/sec</div><div class="lbl">HTTP + VM router</div><div class="sub">c=200, 0 errors</div></div>
+      <div class="bcard"><div class="num">1<span class="r">M</span></div><div class="unit">requests</div><div class="lbl">Endurance run</div><div class="sub">c=10,000, 0 errors</div></div>
+      <div class="bcard"><div class="num">41–51<span class="r">×</span></div><div class="unit">faster</div><div class="lbl">Bytecode VM speedup</div><div class="sub">CLI: 3652 ms → 72 ms</div></div>
+      <div class="bcard"><div class="num">28</div><div class="unit">MB</div><div class="lbl">Memory — flat</div><div class="sub">didn't grow across 1.75M requests</div></div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--red);border-radius:14px;padding:26px 30px;margin-top:26px;">
+      <h3 style="font-size:20px;font-weight:800;color:var(--navy);margin-bottom:10px;">So why is it this frugal with RAM?</h3>
+      <p style="color:var(--ink-soft);font-size:16px;line-height:1.65;">The classic model spawns a <b>separate process</b> per request/worker — each tens of MB. LOOK is <b>one process + N worker threads</b>: memory is shared, and each request only takes a lightweight <b>isolated interpreter copy</b>. The result: a <b>~8 MB</b> idle baseline (<b>~8.5 MB</b> holding 200 open keepalive connections), and under sustained high-throughput load it holds flat at <b>~28 MB</b> across 1.75M requests — <b>leak-free</b>, verified with valgrind/heaptrack. With <code>--workers 2</code> it runs stably without OOM even on a <b>1 CPU / 1 GB RAM</b> VPS.</p>
+    </div>
+    <p class="bench-note">
+      All tests measured with <code>ab</code> on a live AlmaLinux 8 server (running apps: <a href="https://test.codlook.com" target="_blank" style="color:var(--red)">test.codlook.com</a>). Throughput is flat from c=1,000 to c=20,000 (~7.5–10k) — the bottleneck is CPU; kernel walls (backlog, syn_backlog) were cleared with tuning. The TLS chain (nginx→FCGI) does ~1,100–1,240 req/sec; the difference is double TLS termination, not LOOK.
+    </p>
+  </div>
+</section>
+
+<!-- ============ SECURITY ============ -->
+<section class="sec" id="guvenlik">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>Proven <span class="r">resilience.</span></h2>
+      <p>Every line is tested — it passes fuzzing, ThreadSanitizer and data-integrity tests.</p>
+    </div>
+    <div class="secstats">
+      <div class="sstat"><div class="n">16,000+</div><div class="t">Fuzzing rounds</div><div class="d">Random/malformed HTTP bombardment under ASan + UBSan — 0 crashes, 0 UB.</div></div>
+      <div class="sstat"><div class="n">0 races</div><div class="t">ThreadSanitizer clean</div><div class="d">Concurrent-dispatch data-race scan. The one race found was fixed.</div></div>
+      <div class="sstat"><div class="n">20,000</div><div class="t">Cross-leak test</div><div class="d">Every request a unique token + DB round-trip. 0 data leaks.</div></div>
+      <div class="sstat"><div class="n">Zero</div><div class="t">Supply-chain risk</div><div class="d">MySQL/PG/SQLite/Redis wire protocols from scratch in C++23. No third-party packages.</div></div>
+      <div class="sstat"><div class="n">4 rounds</div><div class="t">Manual security audit</div><div class="d">Protocol parsers, VM arithmetic and network paths reviewed line by line.</div></div>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="vuln">
+        <tr><th>Concern</th><th>LOOK's protection</th></tr>
+        <tr><td>SQL injection</td><td><code>db::query($conn, sql, [params])</code> — automatic parameterized <code>?</code>, driver-correct escaping</td></tr>
+        <tr><td>DoS — huge body</td><td>Exceeding <code>LOOK_MAX_BODY_SIZE</code> (10 MB) → 413; unbounded-body memory exhaustion is prevented</td></tr>
+        <tr><td>Request smuggling</td><td>Content-Length + Transfer-Encoding together → 400 (RFC 7230 §3.3.3)</td></tr>
+        <tr><td>Session security</td><td>128-bit <code>/dev/urandom</code> token; cookie <code>HttpOnly + Secure + SameSite</code></td></tr>
+        <tr><td>Password storage</td><td><code>auth::hash / verify</code> — PBKDF2-SHA256, in the core</td></tr>
+        <tr><td>Upload security</td><td>Magic-byte type validation (blocks extension spoofing) + SHA-256</td></tr>
+        <tr><td>WebSocket masking</td><td>An unmasked client frame → closed with 1002 (RFC 6455 §5.1)</td></tr>
+        <tr><td>Parser stack overflow</td><td>Deeply nested <code>((…))</code> → expression/statement depth guard (150) — segfault prevented</td></tr>
+        <tr><td>Arithmetic UB</td><td>64-bit integers; signed-overflow/shift/unary-minus UB eliminated — UBSan clean. BIGINT/ID/phone round-trips exactly</td></tr>
+      </table>
+    </div>
+
+    <h3 style="margin:56px 0 6px;font-size:24px;font-weight:800;color:var(--navy);text-align:center;">So <span style="color:var(--red)">how</span> did we solve these?</h3>
+    <p style="text-align:center;color:var(--ink-soft);max-width:640px;margin:0 auto 34px;">Security isn't a layer bolted on afterward — because we wrote the protocols ourselves, we control every byte.</p>
+    <div class="fgrid">
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.4 8 8 10 4.6-2 8-5 8-10V6z"/></svg></div>
+        <h3>The protocols are ours, from scratch</h3>
+        <p>We wrote the MySQL, PostgreSQL, SQLite, Redis, HTTP, SMTP and IMAP wire protocols ourselves in C++23. No third-party driver → no hidden vulnerability in an unknown dependency. A malformed server response can't crash a worker — every number conversion and allocation is bounded.</p>
+      </div>
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+        <h3>Sanitizers are mandatory in CI</h3>
+        <p>Before every build, CI runs 16,000+ rounds of malformed-HTTP fuzzing under <b>AddressSanitizer + UndefinedBehaviorSanitizer</b> and a <b>ThreadSanitizer</b> data-race scan (<code>security.yml</code>). The one race found was fixed. Memory is flat across 1.75M requests — no leaks.</p>
+      </div>
+      <div class="fcard">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+        <h3>4 rounds of manual audit</h3>
+        <p>Beyond fuzzing: protocol parsers, VM arithmetic and network paths were reviewed line by line. Every hardening point found — an unguarded number conversion, an unbounded allocation, signed-overflow UB — was closed and pinned to a test. An external independent audit also caught real CRITICAL findings, all resolved.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MAIL SPOTLIGHT ============ -->
+<section class="sec mail" id="mail">
+  <div class="wrap">
+    <span class="kicker">Spotlight</span>
+    <h2>Embedded Mail Server — <span class="r">SMTP + IMAP</span></h2>
+    <p class="lead">Most scripting languages <em>send</em> mail; LOOK <b>serves</b> it. A built-in <b>SMTP</b> (RFC 5321) and <b>IMAP4rev1</b> (RFC 3501 + IDLE) server — no Postfix/Dovecot. You can build a secure mail system end to end entirely in LOOK.</p>
+    <div class="mail-diagram">
+<span style="color:#546e7a"># Receives SMTP → Maildir → serves IMAP (one command)</span>
+SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀─reads─  IMAP :143/:993
+
+<span style="color:#c3e88d">lk --mode http --port 7400</span>  <span style="color:#546e7a"># HTTP + SMTP + IMAP + IMAPS together</span>
+    </div>
+    <div class="mail-tags">
+      <span>STARTTLS + IMAPS (993)</span>
+      <span>SEARCH · FETCH · APPEND</span>
+      <span>IDLE — live push</span>
+      <span>PBKDF2 authentication</span>
+      <span class="ok">ASan+UBSan fuzz: 0 UB</span>
+    </div>
+    <p style="margin-top:26px;color:rgba(255,255,255,0.6);font-size:15px">Thunderbird, Roundcube, Apple Mail and mobile clients connect directly — list, read, compose, search, get live notifications. All over TLS.</p>
+  </div>
+</section>
+
+<!-- ============ MODULES ============ -->
+<section class="sec modwrap" id="moduller">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>32 modules, <span class="r">247</span> functions.</h2>
+      <p>From text to cryptography, from queues to templates — the core library comes ready.</p>
+    </div>
+    <div class="modgrid">
+      <div class="modchip"><div class="m">db::</div><div class="d">MySQL · PG · SQLite · query, transaction</div></div>
+      <div class="modchip"><div class="m">request::</div><div class="d">get, post, json, param, header, ip</div></div>
+      <div class="modchip"><div class="m">response::</div><div class="d">json, error, redirect, html</div></div>
+      <div class="modchip"><div class="m">string::</div><div class="d">split, trim, replace, contains… (24)</div></div>
+      <div class="modchip"><div class="m">array::</div><div class="d">map, filter, reduce, sort… (20)</div></div>
+      <div class="modchip"><div class="m">math::</div><div class="d">sqrt, pow, round, random… (14)</div></div>
+      <div class="modchip"><div class="m">crypto::</div><div class="d">sha256, hmac_sha256, rs256, base64url, uuid</div></div>
+      <div class="modchip"><div class="m">auth::</div><div class="d">hash, verify — PBKDF2 passwords</div></div>
+      <div class="modchip"><div class="m">session::</div><div class="d">start, get, set, destroy</div></div>
+      <div class="modchip"><div class="m">http::</div><div class="d">get, post, stream — external APIs</div></div>
+      <div class="modchip"><div class="m">mail::</div><div class="d">send — embedded SMTP</div></div>
+      <div class="modchip"><div class="m">ws::</div><div class="d">WebSocket connections</div></div>
+      <div class="modchip"><div class="m">sse::</div><div class="d">Server-Sent Events</div></div>
+      <div class="modchip"><div class="m">cache::</div><div class="d">in-memory cache</div></div>
+      <div class="modchip"><div class="m">queue::</div><div class="d">job queue</div></div>
+      <div class="modchip"><div class="m">jobs::</div><div class="d">background jobs, worker</div></div>
+      <div class="modchip"><div class="m">validator::</div><div class="d">email, numeric, required, min, max</div></div>
+    </div>
+    <div style="text-align:center;margin-top:40px;">
+      <a class="btn btn-primary" href="docs.html">See all modules →</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DEPLOY / KURULUM ============ -->
+<section class="sec" id="kurulum">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>Up and running <span class="r">in seconds.</span></h2>
+      <p>The official <a href="https://hub.docker.com/r/codlook/look" target="_blank" style="color:var(--navy);font-weight:700">Docker image</a> and <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank" style="color:var(--navy);font-weight:700">VS Code extension</a> are live — or install the static binary on your server.</p>
+    </div>
+    <p style="text-align:center;color:var(--ink-faint);font-size:14px;max-width:680px;margin:-32px auto 44px;">
+      One portable binary for <b>glibc ≥ 2.28</b>: AlmaLinux/Rocky/RHEL 8·9·10, Ubuntu 18.10→24.04, Debian 10+ — future releases work automatically too. CentOS 7 / RHEL 7 (glibc 2.17, EOL) is not supported → move to AlmaLinux 8.
+    </p>
+    <div class="inst">
+
+      <div class="ibox">
+        <h3>🐳 Docker — no compilation <span style="font-size:13px;font-weight:600;color:#28C840;background:rgba(40,200,64,0.1);padding:3px 10px;border-radius:20px;vertical-align:middle;margin-left:6px;">● live on Docker Hub</span></h3>
+        <p class="tagline">The fastest path from a clean machine. The official image is <a href="https://hub.docker.com/r/codlook/look" target="_blank" style="color:var(--red);font-weight:700">live on Docker Hub</a> — the first run pulls it automatically (~43&nbsp;MB).</p>
+        <div class="steps">
+          <div class="step"><span class="no">1</span><div class="sc"><p>Run your app — the <code>./app</code> folder is mounted into the container</p>
+            <div class="term"><span class="p">$</span><code>docker run -p 7400:7400 -v "$PWD/app:/app" codlook/look</code></div></div></div>
+          <div class="step"><span class="no">2</span><div class="sc"><p>Drop in <code>./app/index.lk</code>, open <code>http://localhost:7400/</code> in the browser</p></div></div>
+        </div>
+        <p class="hint">Image page: <a href="https://hub.docker.com/r/codlook/look" target="_blank" style="color:var(--ink-soft);text-decoration:underline">hub.docker.com/r/codlook/look</a> · Build from source: <code>docker build -f cpp/docker/Dockerfile.production -t look .</code></p>
+      </div>
+
+      <div class="ibox">
+        <h3>🐧 Linux server</h3>
+        <p class="tagline">The same package for Ubuntu/Debian and AlmaLinux/Rocky/RHEL — one portable binary.</p>
+        <div class="steps">
+          <div class="step"><span class="no">1</span><div class="sc"><p>Download and unpack the package from <a href="https://github.com/codlook/look/releases/latest" target="_blank" style="color:var(--red)">GitHub Releases</a></p>
+            <div class="term"><span class="p">$</span><code>unzip look-lang-linux-*.zip -d look &amp;&amp; cd look</code></div></div></div>
+          <div class="step"><span class="no">2</span><div class="sc"><p>One command — installs the binary, creates a sample app + systemd service, starts it</p>
+            <div class="term"><span class="p">$</span><code>sudo bash install.sh</code></div></div></div>
+          <div class="step"><span class="no">3</span><div class="sc"><p>Verify</p>
+            <div class="term"><span class="p">$</span><code>curl http://127.0.0.1:9000/ &nbsp;·&nbsp; systemctl status look</code></div></div></div>
+        </div>
+        <p class="hint">Pick a custom port with <code>LOOK_PORT=8080 sudo bash install.sh</code>. The service is managed by systemd — <code>systemctl restart look</code>.</p>
+      </div>
+
+      <div class="ibox">
+        <h3>🔌 Plesk extension</h3>
+        <p class="tagline">Install from the panel, attach LOOK to domains in one click — a full workspace with an in-browser code editor, live monitor and log viewer.</p>
+        <div class="steps">
+          <div class="step"><span class="no">1</span><div class="sc"><p>Open the Plesk Terminal: <b>Server Management → Terminal</b> (or <code>ssh root@server_ip</code>)</p></div></div>
+          <div class="step"><span class="no">2</span><div class="sc"><p>Download and install the ZIP — at the end you'll see <i>"The extension was successfully installed."</i></p>
+            <div class="term term-multi"><code>wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip"
+plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></div></div></div>
+          <div class="step"><span class="no">3</span><div class="sc"><p><b>Finish the install — one root command (required on new servers)</b></p>
+            <div class="term"><span class="p">$</span><code>plesk php /usr/local/psa/admin/plib/modules/look-lang/scripts/post-install.php</code></div></div></div>
+          <div class="step"><span class="no">4</span><div class="sc"><p>Open the panel: <b>Extensions → My Extensions → LOOK Language → Open</b></p></div></div>
+          <div class="step"><span class="no">5</span><div class="sc"><p><b>Applications → Add New Domain</b> → pick the domain (script path and port fill in automatically) → <b>Add &amp; Start</b>. It shows <i>Running</i> in the list within seconds — the systemd service + Apache proxy are set up automatically.</p></div></div>
+          <div class="step"><span class="no">6</span><div class="sc"><p>Edit <code>index.lk</code> in the browser with <b>Edit Code</b> → <b>Save &amp; Redeploy</b> — the file is written and the service restarts.</p></div></div>
+        </div>
+        <p class="hint">Step 3 is required: Plesk doesn't run the extension's install hook; this command installs the binary to <code>/opt/look</code> + grants sudo rights. <b>Skip it</b> and enabling a domain fails with <code>sudo: a password is required</code>. Re-running is safe; it's idempotent. The workspace: a live system dashboard, an in-browser code editor, a per-domain monitor (CPU/RAM/PID/connections) and a journalctl log viewer.</p>
+      </div>
+
+      <div class="ibox">
+        <h3>🪟 Windows</h3>
+        <p class="tagline">A native MSVC build with Schannel TLS — zero external DLLs. LOOK's HTTP server is built in, so no Apache or extra web server is needed.</p>
+        <div class="steps">
+          <div class="step"><span class="no">1</span><div class="sc"><p>Download <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank" style="color:var(--red)">GitHub Releases</a> and extract it</p>
+            <div class="term"><span class="p">&gt;</span><code>Expand-Archive look-lang-windows-1.0.0.zip -DestinationPath look</code></div></div></div>
+          <div class="step"><span class="no">2</span><div class="sc"><p>Run the built-in HTTP server — it serves <code>index.lk</code> from the current folder</p>
+            <div class="term"><span class="p">&gt;</span><code>cd look; .\lk-fcgi.exe --mode http --port 8080</code></div></div></div>
+          <div class="step"><span class="no">3</span><div class="sc"><p>Open <code>http://localhost:8080</code>. Or run a script directly: <code>lk.exe app.lk</code></p></div></div>
+        </div>
+        <p class="hint">The package is <code>lk.exe</code> (CLI / REPL) + <code>lk-fcgi.exe</code> (HTTP / FastCGI server) + README — plain binaries, no installer, no Apache.</p>
+      </div>
+
+      <div class="ibox">
+        <h3>🧩 VS Code extension <span style="font-size:13px;font-weight:600;color:#28C840;background:rgba(40,200,64,0.1);padding:3px 10px;border-radius:20px;vertical-align:middle;margin-left:6px;">● live on the Marketplace</span></h3>
+        <p class="tagline">Live error checking as you write <code>.lk</code>, autocompletion for 247 functions, hover signatures — the official extension.</p>
+        <div class="steps">
+          <div class="step"><span class="no">1</span><div class="sc"><p>Install <b>"LOOK Language"</b> from the <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank" style="color:var(--red);font-weight:700">VS Code Marketplace</a> — or via the command line:</p>
+            <div class="term"><span class="p">$</span><code>code --install-extension codlook.look-lang</code></div></div></div>
+          <div class="step"><span class="no">2</span><div class="sc"><p>Open a <code>.lk</code> file — errors are underlined in red as you type</p></div></div>
+        </div>
+        <p class="hint">Marketplace: <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank" style="color:var(--ink-soft);text-decoration:underline">marketplace.visualstudio.com/…/codlook.look-lang</a> · If <code>lk</code> isn't on PATH, Settings → <code>look.binaryPath</code>.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ EDITOR ============ -->
+<section class="sec" style="padding-top:0;">
+  <div class="wrap split">
+    <div class="txt">
+      <span class="kicker">VS Code extension</span>
+      <h3>See <span class="r">your error</span> as you type.</h3>
+      <p>The official LOOK extension: live error checking (parse + undefined function), autocompletion for 247 built-in functions, hover signatures, and Run / Service / REPL shortcuts. <b>Live on the VS Code Marketplace.</b></p>
+      <div class="hero-cta" style="margin-top:26px;">
+        <a class="btn btn-primary" href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">Install from the Marketplace →</a>
+        <a class="btn btn-ghost" href="packages.html">All packages</a>
+      </div>
+    </div>
+    <div class="code-side">
+      <div class="codewin">
+        <div class="bar"><i></i><i></i><i></i><span class="fname">demo.lk — LOOK Language</span></div>
+<pre><span class="c-var">$name</span> = <span class="c-str">"Ada"</span>
+<span class="c-fn">print</span>(<span class="c-str">"Hello, "</span> . <span class="c-var">$name</span>)
+
+<span class="c-fn">mathh::</span><span class="c-red">sqrt</span>(<span class="c-num">16</span>)   <span class="c-red">⌇ Undefined function: mathh::sqrt</span>
+<span class="c-cm">//        ▲ underlined in red as you type</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ECOSYSTEM / PACKAGES ============ -->
+<section class="sec" id="ekosistem" style="padding-top:0;">
+  <div class="wrap">
+    <div class="eco">
+      <h2>When the core isn't enough, <span class="r">the ecosystem.</span></h2>
+      <p>No registry, no config — straight from GitHub. Two separate official repos: <b>modules</b> (pure LOOK) and <b>packages</b> (integrations).</p>
+      <div class="eco-cards" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:960px;margin:26px auto 0;text-align:left;">
+        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px;min-width:0;">
+          <div style="font-weight:700;color:#8CE0C3;margin-bottom:8px;">look-modules — <span style="color:rgba(255,255,255,0.5);font-weight:500;">ai · jwt</span></div>
+          <div class="term" style="margin-top:0;font-size:13px;"><span class="p">$</span><code>lk module install github.com/codlook/look-modules/ai</code></div>
+        </div>
+        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px;min-width:0;">
+          <div style="font-weight:700;color:#F2D479;margin-bottom:8px;">look-packages — <span style="color:rgba(255,255,255,0.5);font-weight:500;">iyzico · firebase</span></div>
+          <div class="term" style="margin-top:0;font-size:13px;"><span class="p">$</span><code>lk install github.com/codlook/look-packages/iyzico</code></div>
+        </div>
+      </div>
+      <div class="eco-links">
+        <a class="btn btn-light" href="packages.html">Packages &amp; modules →</a>
+        <a class="btn btn-ghost" style="color:#fff;border-color:rgba(255,255,255,0.4);" href="https://github.com/codlook/look-modules" target="_blank">look-modules</a>
+        <a class="btn btn-ghost" style="color:#fff;border-color:rgba(255,255,255,0.4);" href="https://github.com/codlook/look-packages" target="_blank">look-packages</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PHILOSOPHY ============ -->
+<section class="sec philo" id="felsefe">
+  <div class="wrap">
+    <div class="sec-head center">
+      <h2>Three rules, <span class="r">never broken.</span></h2>
+      <p>Every new feature has to serve these three principles — if it doesn't, it doesn't get into the language.</p>
+    </div>
+    <div class="pillars">
+      <div class="pillar">
+        <div class="pnum">01</div>
+        <h3>Drop it, run it</h3>
+        <p>Drop the file on the server, let the server route it — done. Nothing to install or compile. Shared hosting, VPS, Plesk — the same workflow.</p>
+      </div>
+      <div class="pillar">
+        <div class="pnum">02</div>
+        <h3>Explicit scope</h3>
+        <p>Clean scope, explicit dependencies, concurrency built into the language. <span class="mono">use()</span> declares exactly what comes in. No hidden globals, no surprises.</p>
+      </div>
+      <div class="pillar">
+        <div class="pnum">03</div>
+        <h3>No framework to install</h3>
+        <p>Routing, DB, auth, cache, jobs, WebSocket, SSE, templates — all in the language. No package manager to open, no dependency hell.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CTA ============ -->
+<section class="cta">
+  <div class="wrap">
+    <h2>When you're ready, one command.</h2>
+    <p>Start writing for the web without setup fatigue. Download LOOK, run it, deploy it.</p>
+    <div class="hero-cta">
+      <a class="btn btn-light" href="docs.html">Read the docs</a>
+      <a class="btn btn-ghost" href="https://github.com/codlook/look" target="_blank">Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="wrap">
+    <div class="foot-center">
+      <a class="brand" href="index.html"><span>look<span class="dot">.</span></span></a>
+      <p class="foot-tag"><b>A scripting language built for the web</b> · v1.0.0 · Apache-2.0</p>
+      <nav class="foot-links">
+        <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
+        <a href="packages.html">Packages</a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=codlook.look-lang" target="_blank">VS Code</a>
+        <a href="https://test.codlook.com" target="_blank">Live Demo</a>
+        <a href="docs.html">Documentation</a>
+        <a href="mailto:info@codlook.com">info@codlook.com</a>
+      </nav>
+      <div class="foot-social">
+        <a class="soc" href="https://x.com/codlook" target="_blank" rel="noopener" aria-label="X (Twitter)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>@codlook</a>
+        <a class="soc" href="https://instagram.com/codlook" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>@codlook</a>
+        <a class="soc" href="https://www.linkedin.com/company/codlook" target="_blank" rel="noopener" aria-label="LinkedIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>codlook</a>
+      </div>
+      <div class="foot-meta">v1.0.0 · C++23 · CMake 3.20+ · Apache 2.4+ / nginx · © 2026 Codlook</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Add a copy-to-clipboard button to every terminal command block.
+document.querySelectorAll('.term').forEach(function (term) {
+  var wrap = document.createElement('div');
+  wrap.className = 'term-wrap';
+  term.parentNode.insertBefore(wrap, term);
+  wrap.appendChild(term);
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-btn';
+  btn.textContent = 'Copy';
+  btn.addEventListener('click', function () {
+    var code = term.querySelector('code');
+    var text = (code ? code.innerText : term.innerText).trim();
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
+      setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1600);
+    });
+  });
+  wrap.appendChild(btn);
+});
+
+// Close the mobile nav dropdown after tapping a link.
+document.querySelectorAll('.nav-links a').forEach(function (a) {
+  a.addEventListener('click', function () {
+    document.querySelector('header.nav').classList.remove('open');
+  });
+});
+</script>
+
+</body>
+</html>
