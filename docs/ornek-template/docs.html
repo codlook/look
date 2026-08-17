@@ -99,7 +99,6 @@
     <a href="#mimari">Architecture</a>
     <a href="#felsefe">Design decisions</a>
     <a href="#bytecode-vm">Bytecode VM</a>
-    <a href="#performans">Performance</a>
     <a href="#yapilmayacak">Design limits</a>
     <a href="#anatomi">Anatomy of a file</a>
     <div class="nav-group">CLI & tools</div>
@@ -107,17 +106,15 @@
     <a href="#repl">REPL</a>
     <a href="#packages">Package system</a>
     <div class="nav-group">Tutorials</div>
-    <a href="#phase17-chat">Live chat</a>
-    <a href="#phase18-blog">Modular blog</a>
-    <a href="#phase185-module">File module system</a>
+    <a href="#tutorial-chat">Live chat</a>
+    <a href="#tutorial-blog">Modular blog</a>
+    <a href="#tutorial-module">File module system</a>
     <a href="#ornek-api">REST API + DB</a>
     <a href="#ornek-websocket">WebSocket chat</a>
     <a href="#ornek-blog">Blog (modular)</a>
     <a href="#ornek-upload">File upload</a>
-    <div class="nav-group">Proof & FAQ</div>
-    <a href="#test-sonuclari">Test results</a>
+    <div class="nav-group">FAQ</div>
     <a href="#sss">FAQ</a>
-    <a href="#roadmap">Roadmap</a>
   </aside>
 
   <main class="content">
@@ -141,14 +138,8 @@
       <span class="pill">MySQL · SQLite · PostgreSQL</span>
       <span class="pill">Linux / Ubuntu / AlmaLinux</span>
       <span class="pill">Bytecode VM — default engine</span>
-      <span class="pill">Chat live — 500/500 bots PASS</span>
-      <span class="pill">memory-72h — zero leak verified</span>
-      <span class="pill">concurrent-1000: 11008 RPS</span>
-      <span class="pill">ws-1000: 1000 WS</span>
       <span class="pill">template:: engine</span>
       <span class="pill">use "file.lk" module system</span>
-      <span class="pill">Blog live — looktest.tobiyo.com.tr/blog</span>
-      <span class="pill">v1.0.0</span>
     </div>
   </div>
 
@@ -2200,7 +2191,7 @@ location /events {
 <section id="parallel-channel">
   <h2>parallel() + channel() — Concurrent Tasks</h2>
 
-  <p class="lead">LOOK brings language-level concurrency. <code>parallel()</code> starts a new task and <code>channel()</code> passes the result back — LOOK-specific terminology, not Go's.</p>
+  <p class="lead">LOOK brings language-level concurrency. <code>parallel()</code> starts a new task and <code>channel()</code> passes the result back — LOOK-specific terminology with its own semantics.</p>
 
   <h3>Basic API</h3>
   <pre><code><span class="cm"># channel([size]) — create a channel</span>
@@ -4296,26 +4287,6 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
     <tr><td>VM</td><td>vm.cpp / vm.h</td><td>Register-based, switch dispatch, CallFrame stack, TryCatchEntry, PARALLEL_CALL thread detach</td></tr>
   </table>
 
-  <h3>Important Bug Fixes (Phase 16.5)</h3>
-  <table>
-    <tr><th>Bug</th><th>Impact</th><th>Fix</th></tr>
-    <tr><td>String-interpolation infinite loop</td><td>100% CPU on the <code>/product/{id}</code> route pattern</td><td>Trigger condition narrowed to <code>{$</code> — uses <code>find("{$", i)</code></td></tr>
-    <tr><td>CALL_BUILTIN register contiguity</td><td>The second CALL_BUILTIN's args were in reverse order</td><td><code>alloc_seq(n)</code> — bypass the free pool, contiguous block, <code>locals_end_</code> update</td></tr>
-    <tr><td>MAKE_CLOSURE capture-hint ordering</td><td>The closure was created without captures, "Capture index out of range" error</td><td>MOVE/LOAD_GLOBAL preloads are emitted BEFORE MAKE_CLOSURE</td></tr>
-    <tr><td>Assoc-array foreach double-free</td><td>It entered the LOCAL register pool twice, overwriting the value</td><td><code>if (next_ &gt; locals_end_) locals_end_ = next_</code> in <code>alloc_seq</code></td></tr>
-    <tr><td>db::connect VM setup</td><td>"Not callable" error</td><td>Added BUILTIN_NAMES[56]="db::connect"</td></tr>
-    <tr><td>channel() VM support</td><td>LOAD_GLOBAL "channel" → None → crash</td><td>Added BUILTIN_NAMES[57]="channel"</td></tr>
-  </table>
-
-  <h3>Benchmark — Docker Ubuntu, 8 workers</h3>
-  <table class="perf">
-    <tr><th>Endpoint</th><th>Description</th><th>Interpreter</th><th>VM</th><th>Difference</th></tr>
-    <tr><td>/heavy</td><td>10,000-iteration arithmetic</td><td>182 RPS</td><td><strong>1,427 RPS</strong></td><td><strong style="color:#3fb950">7.8x ↑</strong></td></tr>
-    <tr><td>/light</td><td>100-iteration string concat</td><td>8,829 RPS</td><td>15,653 RPS</td><td><strong style="color:#3fb950">1.77x ↑</strong></td></tr>
-    <tr><td>/router</td><td>No DB, pure routing</td><td>8,715 RPS</td><td>8,521 RPS</td><td>~1x (HTTP I/O bound)</td></tr>
-    <tr><td>/string</td><td>500-iteration large concat</td><td>3,467 RPS</td><td>2,697 RPS</td><td>0.78x (LOAD_GLOBAL overhead)</td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem">Conclusion: the VM gains 7.8x on compute-bound workloads. On HTTP+I/O-bound workloads the difference is dominated by HTTP overhead.</p>
 
   <h3>Usage</h3>
   <div class="callout warn">
@@ -4327,7 +4298,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
 <span class="cm"># VM disabled — interpreter fallback</span>
 LOOK_BYTECODE=0 ./look-fcgi --mode http --port 8090 --workers 8 /var/www/myapp/index.lk
 
-<span class="cm"># the chat service (Phase 17)</span>
+<span class="cm"># the chat service</span>
 LOOK_BYTECODE=1 ./look-fcgi --mode http --port 9001 --workers 8 chat.lk
 
 <span class="cm"># --mode fcgi — FastCGI (via Apache mod_proxy_fcgi) — VM also default here</span>
@@ -4338,102 +4309,6 @@ LOOK_BYTECODE=1 ./look-fcgi --mode http --port 9001 --workers 8 chat.lk
   </div>
 </section>
 
-<section id="performans">
-  <h2>Performance</h2>
-
-  <p>Apache Bench — 5000 requests, 500 concurrent connections:</p>
-
-  <table class="perf">
-    <tr><th>Endpoint</th><th>CGI</th><th>FastCGI Warm</th><th>Difference</th></tr>
-    <tr><td>GET / (DB query)</td><td>82 RPS</td><td>418 RPS</td><td style="color:var(--green)">5x</td></tr>
-    <tr><td>GET /admin/me (no DB)</td><td>81 RPS</td><td>2150 RPS</td><td style="color:var(--green)">26x</td></tr>
-    <tr><td>GET /menu/... (heavy query)</td><td>70 RPS</td><td>234 RPS</td><td style="color:var(--green)">3.3x</td></tr>
-  </table>
-
-  <p>The core advantage of FastCGI warm start: the DB connection is established once and stays alive for the life of the process. The cost of opening a new connection on every request is zero.</p>
-
-  <h3>Real Load Test — Plesk VPS (v1.0.0, June 15, 2026)</h3>
-  <p>Apache Bench — 10 minutes, 32 workers, 17 endpoints, 4.7 million requests:</p>
-
-  <table class="perf">
-    <tr><th>Mode</th><th>Workers</th><th>RPS</th><th>RSS</th><th>Duration / Requests</th><th>Errors</th></tr>
-    <tr><td>fcgi (Apache proxy)</td><td>8</td><td>~8,000</td><td>648 KB</td><td>—</td><td>crashed after 90s</td></tr>
-    <tr><td>fcgi (Apache proxy)</td><td>32</td><td>7,846</td><td>8 MB</td><td>10 min / 4.7M</td><td style="color:var(--green)">0</td></tr>
-    <tr><td>http interpreter (Apache bypass)</td><td>32</td><td>2,490</td><td>—</td><td>5,000 requests</td><td style="color:var(--green)">0</td></tr>
-    <tr><td>http interpreter (Apache bypass, DB)</td><td>32</td><td>182</td><td>—</td><td>5,000 requests</td><td style="color:var(--green)">0</td></tr>
-  </table>
-  <p><strong>Note:</strong> the RPS ceiling of fcgi mode comes from the Apache <code>mod_proxy_fcgi</code> layer — the bottleneck is Apache, not look-fcgi. <code>--mode http</code> bypasses Apache entirely.</p>
-
-  <h3>Bytecode VM Benchmark — Docker Ubuntu (v1.0.0, June 16, 2026)</h3>
-  <p>8 workers, <code>--mode http</code>, VM active:</p>
-
-  <table class="perf">
-    <tr><th>Endpoint</th><th>Description</th><th>Interpreter</th><th>VM</th><th>Difference</th></tr>
-    <tr><td>/heavy</td><td>10,000-iteration arithmetic loop</td><td>182 RPS</td><td><strong>1,427 RPS</strong></td><td style="color:var(--green)"><strong>7.8x ↑</strong></td></tr>
-    <tr><td>/light</td><td>100-iteration string concat</td><td>8,829 RPS</td><td>15,653 RPS</td><td style="color:var(--green)">1.77x ↑</td></tr>
-    <tr><td>/router</td><td>Pure routing (no DB)</td><td>8,715 RPS</td><td>8,521 RPS</td><td>~1x</td></tr>
-    <tr><td>/string</td><td>500-iteration large string concat</td><td>3,467 RPS</td><td>2,697 RPS</td><td>0.78x</td></tr>
-  </table>
-  <p>On compute-bound workloads the VM gains 7.8x. On HTTP/I/O-bound workloads the difference is dominated by HTTP overhead.</p>
-
-  <h3>Load Ladder — <code>--mode http</code>, direct port (July 2026)</h3>
-  <p>AlmaLinux 8 VPS — <code>--mode http</code>, 64 workers, Bytecode VM active, kernel tuning
-  (backlog 16384, syn_backlog 8192), ApacheBench. The same <code>SELECT 1+1</code> route at all concurrency levels:</p>
-
-  <table class="perf">
-    <tr><th>Concurrency</th><th>Total requests</th><th>RPS</th><th>Errors</th><th>RSS</th></tr>
-    <tr><td>c=1,000</td><td>50,000</td><td style="color:var(--green)"><strong>7,902</strong></td><td style="color:var(--green)">0</td><td>29 MB</td></tr>
-    <tr><td>c=5,000</td><td>100,000</td><td style="color:var(--green)"><strong>7,566</strong></td><td style="color:var(--green)">0</td><td>29 MB</td></tr>
-    <tr><td>c=10,000</td><td>200,000</td><td style="color:var(--green)"><strong>7,593</strong></td><td style="color:var(--green)">0</td><td>28 MB</td></tr>
-    <tr><td>c=20,000</td><td>200,000</td><td style="color:var(--green)"><strong>7,432</strong></td><td style="color:var(--green)">0</td><td>28 MB</td></tr>
-    <tr><td><strong>1M endurance</strong></td><td><strong>1,000,000</strong></td><td style="color:var(--green)"><strong>7,731</strong></td><td style="color:var(--green)"><strong>0</strong></td><td><strong>28 MB</strong></td></tr>
-    <tr><td>Blocking, c=200</td><td>20,000</td><td style="color:var(--green)"><strong>10,558</strong></td><td style="color:var(--green)">0</td><td>28 MB</td></tr>
-  </table>
-
-  <p><strong>Findings:</strong></p>
-  <ul>
-    <li><strong>Throughput is flat from c=1,000 to c=20,000</strong> (~7.5–10k) — this proves the system is <em>CPU-bound</em>, with no scheduler/lock bottleneck.</li>
-    <li><strong>1,000,000 requests, 0 errors</strong> — RSS stayed at 28 MB from start to finish, not a single byte grew (no memory leak).</li>
-    <li><strong>~1.75M requests total in this run, 0 errors.</strong> The walls were the OS, not LOOK: <code>tcp_max_syn_backlog</code> and the <code>listen()</code> backlog — overcome with persistent tuning.</li>
-    <li><strong>TLS chain</strong> (nginx→direct FCGI): ~1,100–1,240 RPS — the difference is double TLS termination + the proxy layer, not LOOK.</li>
-    <li><strong>DB-bound:</strong> the bottleneck is the MySQL round-trip — the VM has no effect, linear up to connection-pool saturation.</li>
-    <li><strong>Note:</strong> real c=100,000+ <em>concurrent</em> from a single machine is physically impossible (ephemeral ports ~64k). 1M <em>total</em> requests was tested as endurance.</li>
-  </ul>
-
-  <h3 id="guvenlik">Security &amp; Concurrency Tests (July 2026)</h3>
-  <p>The zero-dependency philosophy makes every parser (HTTP, MySQL, RESP2, PostgreSQL) our responsibility.
-  So beyond benchmarks, the runtime has been put through <strong>fuzzing, ThreadSanitizer and data-integrity</strong> tests:</p>
-
-  <table class="perf">
-    <tr><th>Test</th><th>Scope</th><th>Result</th></tr>
-    <tr><td>AddressSanitizer + UBSan fuzzing</td><td>16,000+ iterations of random/malformed HTTP (including chunked)</td><td style="color:var(--green)"><strong>0 crashes · 0 UB · 0 memory errors</strong></td></tr>
-    <tr><td>ThreadSanitizer</td><td>Concurrent-dispatch data-race scan (blocking)</td><td style="color:var(--green)"><strong>0 races</strong> (the date::now tz race found was fixed)</td></tr>
-    <tr><td>Cross-contamination (data leakage)</td><td>20,000 requests, unique token + DB round-trip, blocking + fiber</td><td style="color:var(--green)"><strong>0 data leakage</strong></td></tr>
-    <tr><td>Memory leak</td><td>RSS monitoring over 1.75M requests</td><td style="color:var(--green)"><strong>28 MB steady — no leak</strong></td></tr>
-    <tr><td>Regression suite</td><td>Automated tests for 9 past production bugs</td><td style="color:var(--green)"><strong>9/9 passing</strong></td></tr>
-    <tr><td>Manual security review</td><td>4 rounds of line-by-line review: protocol parsers, VM arithmetic, network path</td><td style="color:var(--green)"><strong>17 hardening points closed</strong></td></tr>
-    <tr><td>IMAP server fuzzing (ASan+UBSan)</td><td>Malformed-input battery: overflowing/negative literals, broken seq-set, SEARCH tokenizer, protocol violation, path traversal</td><td style="color:var(--green)"><strong>0 UB · 0 crashes</strong></td></tr>
-    <tr><td>Mail chain end-to-end (interop)</td><td>SMTP delivery → per-user Maildir → IMAP LOGIN+SELECT+FETCH reads the same message</td><td style="color:var(--green)"><strong>Passed — SMTP↔IMAP aligned</strong></td></tr>
-  </table>
-
-  <p><strong>Vulnerabilities closed:</strong></p>
-  <ul>
-    <li><strong>DoS — unbounded body:</strong> exceeding <code>LOOK_MAX_BODY_SIZE</code> (10 MB) → 413; memory exhaustion prevented.</li>
-    <li><strong>Request smuggling:</strong> Content-Length + Transfer-Encoding together → 400 (RFC 7230 §3.3.3).</li>
-    <li><strong>Malformed Content-Length:</strong> invalid value → 400 (worker doesn't crash); full RFC 7230 §4.1 <strong>chunked Transfer-Encoding</strong> support.</li>
-    <li><strong>SQL injection:</strong> <code>db::query</code> is parameterized (<code>?</code> placeholder) — driver-correct escaping, locale-independent.</li>
-    <li><strong>Session:</strong> 128-bit <code>/dev/urandom</code> token, <code>HttpOnly + Secure + SameSite</code> cookie.</li>
-    <li><strong>Slowloris:</strong> read/write timeout (30s) + kernel backlog tuning.</li>
-    <li><strong>Data race (date::now):</strong> <code>std::localtime</code> shared-buffer + tzset race → <code>localtime_r</code> + startup <code>tzset()</code>. Caught by ThreadSanitizer, fixed.</li>
-    <li><strong>JSON stack overflow:</strong> deeply nested body → recursion bounded with <code>JSON_MAX_DEPTH</code> (256) — network input via <code>request::json()</code> can't crash the worker.</li>
-    <li><strong>Protocol-parser DoS:</strong> RESP2/HTTP-client/PostgreSQL/SMTP — unguarded <code>std::sto*</code> number conversion + unbounded allocation (RESP2 <code>read_bulk</code>/<code>read_line</code>) closed.</li>
-    <li><strong>Arithmetic undefined behavior (UB):</strong> signed-integer overflow (+/−/*), <code>INT_MIN/-1</code>, shift amount and <code>-INT_MIN</code> → promoted to float on overflow; zero runtime errors under UBSan.</li>
-    <li><strong>IMAP server (RFC 3501/2177):</strong> APPEND literal size is validated <em>before reading</em> (<code>NO [TOOBIG]</code>, OOM prevention) · <code>LOGINDISABLED</code> before TLS (passwords don't go in the clear) · path traversal rejected in 3 layers (mailbox+user+SMTP recipient) · sequence stability (the wrong message isn't deleted) · Slowloris/brute-force protection · ASan+UBSan fuzz 0 UB.</li>
-  </ul>
-  <p style="color:var(--muted)">Layered defense: manual review (17 points) + fuzzing (16,000+ iterations) + ThreadSanitizer + regression (9/9) + CI. No absolute "zero bugs" is claimed — the main attack surface (network I/O, protocol parsers, VM arithmetic) has been scanned and hardened.</p>
-  <p>Fuzzing, ASan/UBSan and TSan run automatically in CI on every push (<code>.github/workflows/security.yml</code>).
-  Details: <code>SECURITY.md</code> in the repo root.</p>
-</section>
 
 <section id="yapilmayacak">
   <h2>Design Limits</h2>
@@ -4539,7 +4414,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td>FastCGI warm start</td><td class="yes">✅</td><td>Persistent DB, hot reload</td></tr>
     <tr><td>Linux / Ubuntu 24.04 support</td><td class="yes">✅</td><td>GCC build — CLI, CGI, FastCGI</td></tr>
     <tr><td>AlmaLinux 8 / Plesk support</td><td class="yes">✅</td><td>Docker build + Apache test — FastCGI + CGI fully working</td></tr>
-    <tr><td>Plesk VPS deployment</td><td class="yes">✅</td><td>AlmaLinux 8.10, Plesk Obsidian 18.0.76, nginx→Apache→lk-fcgi — live (see test.codlook.com)</td></tr>
+    <tr><td>Plesk VPS deployment</td><td class="yes">✅</td><td>nginx → Apache → lk-fcgi, running in production</td></tr>
     <tr><td>Route-less script (direct mode)</td><td class="yes">✅</td><td>Scripts without route() (like hello.lk) run in look-fcgi via a fresh interpret</td></tr>
     <tr><td>env() / config()</td><td class="yes">✅</td><td>.env file, dot-notation</td></tr>
     <tr><td>log:: — daily rotation</td><td class="yes">✅</td><td></td></tr>
@@ -4563,11 +4438,10 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td><code>--mode http</code> bug fix</td><td class="yes">✅</td><td>EPOLLOUT edge-triggered bug fixed (level-triggered); SIGPIPE ignore added — the connection was dropping after the first request</td></tr>
     <tr><td>Bytecode VM</td><td class="yes">✅</td><td>Register-based VM; compiler.cpp (AST→FunctionProto); vm.cpp (switch dispatch); 30/30 tests PASS; 7.8x compute speedup; <code>LOOK_BYTECODE=0</code> fallback</td></tr>
     <tr><td>timer::cancel fix</td><td class="yes">✅</td><td>Cancellation is now instant — erase(id) + cv_.notify_one(); the old behavior waited 30s</td></tr>
-    <tr><td>WebSocket Chat live</td><td class="yes">✅</td><td>500/500 bots PASS, 0 memory leak, look-chat service on port 9001</td></tr>
+    <tr><td>WebSocket chat</td><td class="yes">✅</td><td>WebSocket + broadcast + <code>timer::</code> keepalive — real-time messaging</td></tr>
     <tr><td>VM CALL goto fix</td><td class="yes">✅</td><td>The run() outer while loop wasn't restarting after push_back → named function bodies never ran; fixed with goto call_dispatch</td></tr>
     <tr><td>PrintStatement reg0 clobber fix</td><td class="yes">✅</td><td>emit(CALL_BUILTIN,0,print,r) was overwriting reg0; param $name became null; fixed with emit(CALL_BUILTIN,r,print,r)</td></tr>
     <tr><td>PARALLEL_CALL SEGV fix</td><td class="yes">✅</td><td>SharedState.builtins raw ptr → local req_builtins dangling pointer; isolated with a deep-copy builtins_copy in the goroutine lambda</td></tr>
-    <tr><td>concurrent-1000</td><td class="yes">✅</td><td>ab -n 5000 -c 1000 localhost:9001 — 11,008 RPS, 0 failed requests, max 508ms</td></tr>
     <tr><td>ws-1000</td><td class="yes">✅</td><td>websocat v1.13.0 musl — 1000 concurrent WebSocket connections, all established, broadcast active</td></tr>
     <tr><td>Security review — Session</td><td class="yes">✅</td><td>Secure+SameSite=Lax flags; <code>/dev/urandom</code> cryptographic RNG; destroy()+start() session-fixation protection; cookies_in.erase fix</td></tr>
     <tr><td>Security review — XSS / Path Traversal</td><td class="yes">✅</td><td>process_content() → html::escape; use "file.lk" → weakly_canonical + main_script_ root confinement</td></tr>
@@ -4594,8 +4468,8 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td><code>error::</code> core module (v1.x)</td><td class="yes">✅</td><td>Auto-loaded without <code>use error;</code> — always accessible like <code>log::</code>, <code>file::</code>, <code>date::</code></td></tr>
     <tr><td><code>task_*</code> rename (v1.x)</td><td class="yes">✅</td><td>Runtime-wide <code>goroutine_*</code> → <code>task_*</code>; env var: <code>LOOK_PARALLEL_LIMIT</code> (old name <code>LOOK_GOROUTINE_LIMIT</code> — no longer valid); LOOK-specific terminology</td></tr>
     <tr><td>Plesk extension — workspace (v1.0)</td><td class="yes">✅</td><td>Sidebar panel (Dashboard/Applications/Logs/Documentation), in-browser code editor (Save &amp; Redeploy), live per-domain monitor, journalctl log viewer, English UI; one-command install from a GitHub release; scripts via <code>sudo /bin/bash</code> (exec-bit independent)</td></tr>
-    <tr><td>AlmaLinux 8 binary — GCC 12 (v1.x)</td><td class="yes">✅</td><td>gcc-toolset-12 (GCC 12.2.1), OpenSSL 1.1.1k; GLIBC 2.28 compatible; verified on Plesk Obsidian 18.0.76</td></tr>
-    <tr><td>Plesk VPS live (v1.x)</td><td class="yes">✅</td><td>AlmaLinux 8.10, Plesk Obsidian 18.0.76, nginx→Apache→lk-fcgi port 9100; automatic install via the Plesk extension</td></tr>
+    <tr><td>AlmaLinux 8 binary — GCC 12 (v1.x)</td><td class="yes">✅</td><td>gcc-toolset-12 (GCC 12.2.1), OpenSSL 1.1.1k; GLIBC 2.28 compatible (AlmaLinux 8 / Plesk)</td></tr>
+    <tr><td>Plesk deployment</td><td class="yes">✅</td><td>Automatic install via the Plesk extension; nginx → Apache → lk-fcgi</td></tr>
   </table>
 
   <h3>Intentionally Absent</h3>
@@ -4860,9 +4734,9 @@ jobs.db</code></pre>
   </table>
 </section>
 
-<section id="phase17-chat">
+<section id="tutorial-chat">
   <h2>Tutorial — Live Chat</h2>
-  <p class="lead">A real-time chat application using WebSocket + broadcast + <code>timer::</code> keepalive. <strong>500/500 bots PASS</strong>, zero memory leak verified.</p>
+  <p class="lead">A real-time chat application using WebSocket + broadcast + <code>timer::</code> keepalive.</p>
 
   <div class="callout tip">
     <p><strong>Live:</strong> the look-chat service, <code>--mode http --port 9001 --workers 8</code></p>
@@ -4904,50 +4778,12 @@ jobs.db</code></pre>
     })
 })</code></pre>
 
-  <h3>Test Results — Phase 17 + 17.1 (June 16, 2026)</h3>
-  <table>
-    <tr><th>Test</th><th>Goal</th><th>Result</th><th>Date</th></tr>
-    <tr><td>vm-stress</td><td>VM vs interpreter compute speedup</td><td><span class="badge badge-done">✅ 7.8x /heavy compute (ms=8000)</span></td><td>Jun 16</td></tr>
-    <tr><td>concurrent-500</td><td>500/500 WS bots at once</td><td><span class="badge badge-done">✅ 500/500 PASS</span></td><td>Jun 16</td></tr>
-    <tr><td>crash-recovery</td><td>Automatic recovery after restart</td><td><span class="badge badge-done">✅ PASS</span></td><td>Jun 16</td></tr>
-    <tr><td>parallel-ws</td><td>WS send from inside parallel()</td><td><span class="badge badge-done">✅ PASS</span></td><td>Jun 16</td></tr>
-    <tr><td>vm-fallback</td><td>LOOK_BYTECODE=0 fallback works</td><td><span class="badge badge-done">✅ PASS</span></td><td>Jun 16</td></tr>
-    <tr><td>hot-reload</td><td>Service reloads when chat.lk changes</td><td><span class="badge badge-done">✅ PASS</span></td><td>Jun 16</td></tr>
-    <tr><td>unicode-xss</td><td>Unicode and XSS payloads pass through safely</td><td><span class="badge badge-done">✅ PASS</span></td><td>Jun 16</td></tr>
-    <tr><td>session-vm</td><td>Sessions work correctly in VM mode</td><td><span class="badge badge-done">✅ PASS</span></td><td>Jun 16</td></tr>
-    <tr><td>concurrent-1000</td><td>5000 req, c=1000, 0 fail</td><td><span class="badge badge-done">✅ 11,008 RPS, 0 fail (ab, localhost)</span></td><td>Jun 16</td></tr>
-    <tr><td>ws-1000</td><td>1000 concurrent WebSocket connections</td><td><span class="badge badge-done">✅ 1000 connections established, broadcast works</span></td><td>Jun 16</td></tr>
-    <tr><td>memory-1h (Phase 17)</td><td>No short-term memory leak</td><td><span class="badge badge-done">✅ glibc high-water mark; +0.5MB/200 connections, real leak zero</span></td><td>Jun 16</td></tr>
-    <tr><td>memory-72h</td><td>72-hour RSS monitoring, 100MB delta threshold</td><td><span class="badge badge-plan">🔄 Ongoing — start=97MB, ends Jun 19, 2026</span></td><td>Jun 16–19</td></tr>
-  </table>
-
-  <div class="callout tip">
-    <p><strong>concurrent-1000:</strong> ab -n 5000 -c 1000 http://localhost:9001/router — 11,008 RPS, max 508ms, 0 failed. VM mode (LOOK_BYTECODE=1), 8 workers, Docker Ubuntu.</p>
-  </div>
-  <div class="callout tip">
-    <p><strong>ws-1000:</strong> websocat v1.13.0 musl — 1000 parallel bash subprocesses, each connected to WS /chat. All connections established, ws::clients() peak=1000, broadcast active.</p>
-  </div>
-
-  <h3>timer::cancel Fix (Phase 17)</h3>
-  <div class="callout warn">
-    <p><strong>Old behavior:</strong> when <code>timer::cancel(id)</code> was called, the timer thread waited for the sleep to finish — for a 30-second keepalive, it waited 30 seconds.</p>
-  </div>
-  <p style="color:var(--muted);font-size:.85rem">Fix: <code>entries_.erase(id)</code> immediately + the thread is woken with <code>cv_.notify_one()</code>. The cancel call is now instant.</p>
-
-  <h3>Memory Behavior</h3>
-  <table>
-    <tr><th>State</th><th>RSS</th><th>Comment</th></tr>
-    <tr><td>Start</td><td>~8 MB</td><td>LOOK runtime</td></tr>
-    <tr><td>200 connections</td><td>~8.5 MB</td><td>+0.5 MB</td></tr>
-    <tr><td>4000 connections (cumulative)</td><td>~200 MB</td><td>glibc high-water mark — not returned to the OS</td></tr>
-    <tr><td>Real leak</td><td><strong style="color:#3fb950">Zero</strong></td><td>valgrind / heaptrack verified</td></tr>
-  </table>
 </section>
 
-<section id="phase18-blog">
+<section id="tutorial-blog">
   <h2>Tutorial — Modular Blog</h2>
 
-  <p class="lead">A live blog — template engine, CRUD, auth, file upload. June 18, 2026.</p>
+  <p class="lead">A live blog — template engine, CRUD, auth, file upload.</p>
 
   <h3>Features</h3>
   <ul>
@@ -4977,10 +4813,10 @@ POST /blog/admin/categories/new → Add category
 POST /blog/admin/categories/delete/{id} → Delete category</code></pre>
 </section>
 
-<section id="phase185-module">
+<section id="tutorial-module">
   <h2>Tutorial — File Module System</h2>
 
-  <p class="lead">Splitting large projects into multiple files with <code>use "file.lk"</code>. June 18, 2026. 5/5 tests PASS.</p>
+  <p class="lead">Splitting large projects into multiple files with <code>use "file.lk"</code> to split a large project into files.</p>
 
   <h3>Blog.lk Refactor Example</h3>
   <p>Split from a single 421-line file into 5 files — a 43-line bootstrap:</p>
@@ -4993,15 +4829,6 @@ POST /blog/admin/categories/delete/{id} → Delete category</code></pre>
     auth.lk        ← register_auth_routes($conn, $tpl)
     admin.lk       ← register_admin_routes($conn, $tpl)</code></pre>
 
-  <h3>Test Results</h3>
-  <table>
-    <tr><th>Test</th><th>Result</th></tr>
-    <tr><td>Was the function imported?</td><td class="yes">✅ PASS</td></tr>
-    <tr><td>Did the $hidden variable stay contained?</td><td class="yes">✅ PASS — Undefined variable</td></tr>
-    <tr><td>Was the const imported?</td><td class="yes">✅ PASS</td></tr>
-    <tr><td>Does a circular include error?</td><td class="yes">✅ PASS — Circular include error</td></tr>
-    <tr><td>use inside a function → LookParseError?</td><td class="yes">✅ PASS</td></tr>
-  </table>
 
   <div class="callout"><p><strong>Details:</strong> <a href="#use-file">the use "file.lk" module system section</a></p></div>
 </section>
@@ -5386,318 +5213,6 @@ DB_PASS=</code></pre>
 <span class="var">$record</span>[<span class="str">"path"</span>]      <span class="cm"># full path on disk</span></code></pre>
 </section>
 
-<section id="test-sonuclari">
-  <h2>Production Test Results</h2>
-
-  <p style="margin-bottom:1.2rem;color:var(--muted)">
-    The data below was obtained on an <strong>AlmaLinux 8.10 + Plesk Obsidian 18.0.76 + lk-fcgi</strong> server.
-    Live site: <a href="https://test.codlook.com" target="_blank">test.codlook.com</a> —
-    Full record: <code>docs/test-results.md</code>
-  </p>
-
-  <!-- OVERALL TEST RECORD -->
-  <h3 style="margin-bottom:.8rem">All Tests</h3>
-  <table>
-    <tr><th>#</th><th>Test</th><th>Tool</th><th>Status</th><th>Date</th></tr>
-    <tr><td>1</td><td>Smoke Test (10 min)</td><td>curl</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 9, 2026</td></tr>
-    <tr><td>2</td><td>72h Long Run Stress</td><td>stress-runner.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 10–13, 2026</td></tr>
-    <tr><td>3</td><td>Memory Leak Monitoring</td><td>leak-monitor.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 10–13, 2026</td></tr>
-    <tr><td>4</td><td>MySQL Recovery</td><td>mysql-recovery-test.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 10, 2026</td></tr>
-    <tr><td>5</td><td>Concurrency — up to 1000</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>6</td><td>Connection Leak</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>7</td><td>Crash Recovery</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>8</td><td>MySQL Recovery v2 (db_check fix)</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>9</td><td>Hot Reload (under load)</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>10</td><td>Large Payload (100KB / 1MB / 10MB)</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>11</td><td>Edge Case (boundary values)</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>12</td><td>Unicode / Encoding / XSS</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>13</td><td>Session Persistence</td><td>run-tests-v2.sh</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 13, 2026</td></tr>
-    <tr><td>14</td><td>Fuzz Test</td><td>Python fuzzer (custom script)</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 2026</td></tr>
-    <tr><td>15</td><td>Penetration (Pen Test)</td><td>curl / manual — Phase 19</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 2026</td></tr>
-    <tr><td>16</td><td>Low-Resource VPS (1CPU / 1GB RAM)</td><td>Docker</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 2026</td></tr>
-    <tr><td>17</td><td>vm-stress (VM compute speedup)</td><td>look-chat /monitor/run</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 16, 2026</td></tr>
-    <tr><td>18</td><td>concurrent-1000 (5000 req, c=1000)</td><td>ab (ApacheBench)</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 16, 2026</td></tr>
-    <tr><td>19</td><td>ws-1000 (1000 concurrent WebSocket)</td><td>websocat v1.13.0</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 16, 2026</td></tr>
-    <tr><td>20</td><td>memory-72h (72-hour RSS monitoring — chat/WS)</td><td>nohup bash + /proc/PID/status</td><td><span class="badge badge-done">✅ Done</span></td><td>Jun 16–19, 2026</td></tr>
-    <tr><td>21</td><td>Load ladder c=1k/5k/10k/20k</td><td>ab + kernel tuning</td><td><span class="badge badge-done">✅ 0 errors</span></td><td>Jul 2026</td></tr>
-    <tr><td>22</td><td>1,000,000-request endurance (c=10k)</td><td>ab</td><td><span class="badge badge-done">✅ 0 errors · RSS 28MB steady</span></td><td>Jul 2026</td></tr>
-    <tr><td>23</td><td>ASan + UBSan HTTP fuzzing (16k+ iter)</td><td>fuzz_http.sh</td><td><span class="badge badge-done">✅ 0 UB · 0 crashes</span></td><td>Jul 2026</td></tr>
-    <tr><td>24</td><td>ThreadSanitizer data-race scan</td><td>tsan_run.sh</td><td><span class="badge badge-done">✅ 0 races (1 found→fix)</span></td><td>Jul 2026</td></tr>
-    <tr><td>25</td><td>Cross-contamination (20k, blocking+fiber)</td><td>integrity_test.sh</td><td><span class="badge badge-done">✅ 0 data leakage</span></td><td>Jul 2026</td></tr>
-    <tr><td>26</td><td>DoS / smuggling protections</td><td>raw HTTP + regression</td><td><span class="badge badge-done">✅ 413/400 correct</span></td><td>Jul 2026</td></tr>
-    <tr><td>27</td><td>Chunked Transfer-Encoding (RFC 7230)</td><td>raw HTTP + ASan fuzz</td><td><span class="badge badge-done">✅ Works · 0 UB</span></td><td>Jul 2026</td></tr>
-    <tr><td>28</td><td>Regression suite (9 production bugs)</td><td>run_regression.sh</td><td><span class="badge badge-done">✅ 9/9</span></td><td>Jul 2026</td></tr>
-  </table>
-
-  <!-- SECURITY HARDENING -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">Security Hardening (July 2026)</h3>
-  <p style="color:var(--muted);margin-bottom:.8rem">
-    Following an independent security review, the HTTP parser, DoS resistance, concurrency and data integrity
-    were comprehensively hardened. Since the zero-dependency model makes every parser our responsibility,
-    fuzzing and sanitizer rounds were considered mandatory.
-  </p>
-  <table>
-    <tr><th>Area</th><th>Finding / Action</th><th>Verification</th></tr>
-    <tr><td>Memory safety</td><td>All HTTP/DB parsers fuzzed under ASan+UBSan</td><td><strong style="color:#22c55e">16k+ iter, 0 UB</strong></td></tr>
-    <tr><td>Data race</td><td><code>date::now</code> tz race found → <code>localtime_r</code> + <code>tzset()</code></td><td><strong style="color:#22c55e">TSan 1→0 race</strong></td></tr>
-    <tr><td>Data leakage</td><td>Per-fiber/thread connection isolation verified</td><td><strong style="color:#22c55e">20k requests, 0 contamination</strong></td></tr>
-    <tr><td>Memory leak</td><td>Connection-pool double-release structurally prevented</td><td><strong style="color:#22c55e">1.75M requests, RSS steady</strong></td></tr>
-    <tr><td>DoS — body</td><td><code>LOOK_MAX_BODY_SIZE</code> (10MB) → 413</td><td><strong style="color:#22c55e">Verified live</strong></td></tr>
-    <tr><td>Request smuggling</td><td>CL+TE together → 400 (RFC 7230)</td><td><strong style="color:#22c55e">Verified live</strong></td></tr>
-    <tr><td>HTTP parser</td><td>Malformed CL → 400, full chunked TE support</td><td><strong style="color:#22c55e">5k iter ASan, 0 UB</strong></td></tr>
-    <tr><td>CI automation</td><td>ASan/UBSan fuzz + TSan on every push</td><td><code>.github/workflows/security.yml</code></td></tr>
-  </table>
-
-  <!-- 72h TEST -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">2 — 72-Hour Stability Test</h3>
-  <table>
-    <tr><th>Metric</th><th>Result</th><th>Comment</th></tr>
-    <tr><td>Total HTTP requests</td><td><strong>766,032</strong></td><td>~78 hours uninterrupted</td></tr>
-    <tr><td>Application-caused errors</td><td><strong style="color:#22c55e">0</strong></td><td>Zero crashes, zero exceptions</td></tr>
-    <tr><td>Average response time</td><td>136 ms</td><td>Unchanged from start to finish</td></tr>
-    <tr><td>Min / Max response</td><td>30 ms / 45 s</td><td>Max = a momentary VPS network spike</td></tr>
-    <tr><td>RPS (stability test)</td><td>3.50</td><td>Sequential curl — a stability measurement, not a load test</td></tr>
-    <tr><td>RPS (warm start, with DB)</td><td><strong>418</strong></td><td>FastCGI warm start</td></tr>
-    <tr><td>RPS (warm start, no DB)</td><td><strong>2,150</strong></td><td>26× vs CGI mode</td></tr>
-    <tr><td>Memory (RSS) — start</td><td>17 MB</td><td>—</td></tr>
-    <tr><td>Memory (RSS) — after 66 hours</td><td><strong>74 MB</strong></td><td>Plateaued, growth stopped</td></tr>
-    <tr><td>MySQL connection threads</td><td>3–6</td><td>Stable over 78 hours</td></tr>
-    <tr><td>look-fcgi PID</td><td><strong style="color:#22c55e">Unchanged</strong></td><td>Not a single restart, not a single crash</td></tr>
-  </table>
-  <h4 style="margin-top:1rem;margin-bottom:.5rem;color:var(--muted);font-weight:500;font-size:.85rem">Network Anomalies (out of 766k requests)</h4>
-  <table>
-    <tr><th>Code</th><th>Count</th><th>Actual Cause</th></tr>
-    <tr><td><code>000</code></td><td>~20</td><td>VPS/nginx momentary timeout — look-fcgi unaffected (PID proof)</td></tr>
-    <tr><td><code>500</code></td><td>10</td><td>The MySQL recovery test's deliberate stop step</td></tr>
-    <tr><td><code>502</code></td><td>3</td><td>Apache layer transient — look-fcgi unaffected</td></tr>
-    <tr><td>Application error</td><td><strong style="color:#22c55e">0</strong></td><td>—</td></tr>
-  </table>
-
-  <!-- MEMORY LEAK -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">3 — Memory Leak Monitoring (66 Hours)</h3>
-  <table>
-    <tr><th>Time</th><th>RSS</th><th>VSZ</th><th>Comment</th></tr>
-    <tr><td>Start</td><td>~17 MB</td><td>~50 MB</td><td>—</td></tr>
-    <tr><td>Hour 24</td><td>~65 MB</td><td>~80 MB</td><td>—</td></tr>
-    <tr><td>Hour 48</td><td>~66 MB</td><td>~81 MB</td><td>Plateau began</td></tr>
-    <tr><td>Hour 66</td><td>74 MB</td><td>90 MB</td><td>Plateau — growth stopped</td></tr>
-  </table>
-  <p style="color:var(--muted);margin-top:.5rem;font-size:.85rem">RSS plateaued in the 65–74 MB range. No linear growth — no memory leak could be shown.</p>
-
-  <!-- MYSQL RECOVERY v1 -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">4 — MySQL Recovery v1 (before the db_check fix)</h3>
-  <table>
-    <tr><th>Step</th><th>Scenario</th><th>Expected</th><th>Actual</th></tr>
-    <tr><td>1</td><td>Normal operation</td><td>200 OK</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>2</td><td>MySQL stopped</td><td>503 graceful</td><td><span class="badge badge-warn">500 ⚠️</span></td></tr>
-    <tr><td>3</td><td>MySQL restart, no hot reload</td><td>503</td><td><span class="badge badge-done">200 ✅ auto reconnect</span></td></tr>
-    <tr><td>4</td><td>touch index.lk → hot reload</td><td>200 OK</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-  </table>
-  <p style="color:var(--muted);margin-top:.5rem;font-size:.85rem">
-    The 500 in step 2: <code>db_check()</code> couldn't recognize the invalid handle as null. Fixed on Jun 13 with a <code>SELECT 1</code> ping + try/catch — verified in #8.
-  </p>
-
-  <!-- CONCURRENCY v2 -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">5 — Concurrency — Up to 1000 Users</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">June 13, 2026 — parallel curl subprocesses (run-tests-v2.sh)</p>
-  <h4 style="color:var(--muted);font-size:.82rem;font-weight:500;margin:.6rem 0 .3rem">Home Page (no DB)</h4>
-  <table>
-    <tr><th>Concurrent</th><th>Total Time</th><th>Avg Response</th><th>Errors</th></tr>
-    <tr><td>50</td><td>11,882 ms</td><td>237 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-    <tr><td>100</td><td>22,459 ms</td><td>224 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-    <tr><td>200</td><td>44,278 ms</td><td>221 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-    <tr><td>500</td><td>109,379 ms</td><td>218 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-    <tr><td><strong>1000</strong></td><td>218,876 ms</td><td><strong style="color:#22c55e">218 ms</strong></td><td style="color:#22c55e"><strong>0</strong></td></tr>
-  </table>
-  <h4 style="color:var(--muted);font-size:.82rem;font-weight:500;margin:.8rem 0 .3rem">Route with DB (50,000-row products table)</h4>
-  <table>
-    <tr><th>Concurrent</th><th>Total Time</th><th>Avg Response</th><th>Errors</th></tr>
-    <tr><td>50</td><td>20,029 ms</td><td>400 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-    <tr><td>100</td><td>40,122 ms</td><td>401 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-    <tr><td>200</td><td>79,970 ms</td><td>399 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-    <tr><td>500</td><td>200,635 ms</td><td>401 ms</td><td style="color:#22c55e"><strong>0</strong></td></tr>
-  </table>
-  <h4 style="color:var(--muted);font-size:.82rem;font-weight:500;margin:.8rem 0 .3rem">Mixed — 3 different endpoints at once</h4>
-  <table>
-    <tr><th>Scenario</th><th>Total Requests</th><th>Avg Response</th><th>Errors</th></tr>
-    <tr><td>/ + /menu + /search in parallel</td><td>300</td><td><strong>208 ms</strong></td><td style="color:#22c55e"><strong>0</strong></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">Even at 1000 concurrent users the average response stayed at 218ms — performance didn't degrade as load rose.</p>
-
-  <!-- CONNECTION LEAK v2 -->
-  <h3 style="margin-top:1.8rem;margin-bottom:.8rem">6 — Connection Leak</h3>
-  <table>
-    <tr><th>Measurement</th><th>Value</th></tr>
-    <tr><td>Before 500 parallel requests</td><td>8 connections</td></tr>
-    <tr><td>Immediately after 500 parallel requests</td><td>8 connections</td></tr>
-    <tr><td>After a 5-second wait</td><td>8 connections</td></tr>
-    <tr><td>Leak</td><td><strong style="color:#22c55e">Zero</strong></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">Phase 12 concurrent runtime: <code>--workers N</code> opens an N-connection ConnPool. Each request borrows a connection and returns it to the pool as soon as it finishes. 8 connections before 500 parallel requests → 8 after — zero leak.</p>
-
-  <!-- CRASH RECOVERY v2 -->
-  <h3 style="margin-top:1.8rem;margin-bottom:.8rem">7 — Crash Recovery</h3>
-  <table>
-    <tr><th>Metric</th><th>Value</th></tr>
-    <tr><td>PID before / after</td><td>17999 → 33492</td></tr>
-    <tr><td>Status while stopped</td><td><span class="badge badge-done">503 ✅</span></td></tr>
-    <tr><td>After restart</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>Recovery time</td><td>&lt; 3 seconds</td></tr>
-  </table>
-
-  <!-- MYSQL RECOVERY v2 -->
-  <h3 style="margin-top:1.8rem;margin-bottom:.8rem">8 — MySQL Recovery v2 — db_check Fix Verification</h3>
-  <table>
-    <tr><th>Step</th><th>Scenario</th><th>Expected</th><th>Actual</th></tr>
-    <tr><td>1</td><td>Normal operation</td><td>200</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>2</td><td>MySQL stopped</td><td>503</td><td><span class="badge badge-done">503 ✅ FIX WORKED</span></td></tr>
-    <tr><td>3</td><td>MySQL restart, no hot reload</td><td>200 (auto reconnect)</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>4</td><td>touch index.lk → hot reload</td><td>200</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">
-    A <code>SELECT 1</code> ping + try/catch was added to <code>db_check()</code>. In <code>fcgi_main.cpp</code>, unhandled runtime errors were also updated from 500→503.
-  </p>
-
-  <!-- HOT RELOAD v2 -->
-  <h3 style="margin-top:1.8rem;margin-bottom:.8rem">9 — Hot Reload (Under 200 Parallel Load)</h3>
-  <table>
-    <tr><th>Metric</th><th>Value</th></tr>
-    <tr><td>touch index.lk during 200 parallel requests</td><td><span class="badge badge-done">PID unchanged ✅</span></td></tr>
-    <tr><td>Status after reload</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>Dropped requests</td><td><strong style="color:#22c55e">Zero</strong></td></tr>
-  </table>
-
-  <!-- PAYLOAD + EDGE + UNICODE + SESSION -->
-  <h3 style="margin-top:1.8rem;margin-bottom:.8rem">10–12 — Payload, Edge Case, Unicode / XSS</h3>
-  <table>
-    <tr><th>Category</th><th>Scenario</th><th>Result</th></tr>
-    <tr><td>Large Payload</td><td>100 KB JSON body</td><td><span class="badge badge-done">404 — no crash ✅</span></td></tr>
-    <tr><td>Large Payload</td><td>1 MB JSON body</td><td><span class="badge badge-done">404 — no crash ✅</span></td></tr>
-    <tr><td>Large Payload</td><td><strong>10 MB JSON body</strong></td><td><span class="badge badge-done">404 — no crash ✅</span></td></tr>
-    <tr><td>Edge Case</td><td>ID=0, ID=-1, ID=99,999,999</td><td><span class="badge badge-done">404 graceful ✅</span></td></tr>
-    <tr><td>Edge Case</td><td>Empty query parameter</td><td><span class="badge badge-done">403 — validator ✅</span></td></tr>
-    <tr><td>Edge Case</td><td>Path traversal (../../../../etc/passwd)</td><td><span class="badge badge-done">404 — router blocked ✅</span></td></tr>
-    <tr><td>Edge Case</td><td>SQL injection path (1'--)</td><td><span class="badge badge-done">404 — route didn't match ✅</span></td></tr>
-    <tr><td>Edge Case</td><td>DELETE method</td><td><span class="badge badge-done">404 — undefined ✅</span></td></tr>
-    <tr><td>Unicode</td><td>Turkish characters (köfte)</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>Unicode</td><td>Emoji (🍕pizza)</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>XSS</td><td>&lt;script&gt;alert(1)&lt;/script&gt;</td><td><span class="badge badge-done">403 — blocked ✅</span></td></tr>
-    <tr><td>SQLi encoded</td><td>%27;SELECT * FROM admins--</td><td><span class="badge badge-done">403 — blocked ✅</span></td></tr>
-  </table>
-
-  <h3 style="margin-top:1.8rem;margin-bottom:.8rem">13 — Session Persistence</h3>
-  <table>
-    <tr><th>Step</th><th>Scenario</th><th>Result</th></tr>
-    <tr><td>1</td><td>Login (admin@qrmenu.local)</td><td><span class="badge badge-done">200 ✅ cookie received</span></td></tr>
-    <tr><td>2</td><td>Auth route with cookie</td><td><span class="badge badge-done">200 ✅</span></td></tr>
-    <tr><td>3</td><td>Same cookie after look-fcgi restart</td><td><span class="badge badge-warn">200 ℹ️ (401 expected)</span></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">
-    The session stayed valid after a look-fcgi restart — the session is file-based, so even though warm-start memory is cleared, the file is preserved. Added to the review list.
-  </p>
-
-  <!-- CONCURRENT-1000 -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">17 — VM Stress (compute speedup)</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">June 16, 2026 — LOOK_BYTECODE=1, 8 workers, --mode http</p>
-  <table class="perf">
-    <tr><th>Endpoint</th><th>Description</th><th>Interpreter</th><th>VM</th><th>Difference</th></tr>
-    <tr><td>/heavy</td><td>10,000-iteration arithmetic loop</td><td>~182 RPS</td><td><strong>~1,427 RPS</strong></td><td style="color:var(--green)"><strong>7.8x ↑</strong></td></tr>
-    <tr><td>/light</td><td>100-iteration string concat</td><td>~8,829 RPS</td><td>~15,653 RPS</td><td style="color:var(--green)">1.77x ↑</td></tr>
-    <tr><td>/router</td><td>Pure routing (no DB)</td><td>~8,715 RPS</td><td>~8,521 RPS</td><td>~1x</td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">vm-stress monitor test: ms=8000 (8 seconds of heavy compute → drops to 1 second on the VM). The server test was run via /monitor/run/vm-stress, monitor/vm-stress.json result PASS.</p>
-
-  <!-- CONCURRENT-1000 -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">18 — concurrent-1000 (HTTP Load Test)</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">June 16, 2026 — ab (ApacheBench), localhost:9001, Apache bypass</p>
-  <table>
-    <tr><th>Metric</th><th>Value</th></tr>
-    <tr><td>Total requests</td><td>5,000</td></tr>
-    <tr><td>Concurrent connections</td><td>1,000</td></tr>
-    <tr><td>RPS</td><td><strong style="color:#3fb950">11,008</strong></td></tr>
-    <tr><td>Failed requests</td><td><strong style="color:#3fb950">0</strong></td></tr>
-    <tr><td>Max response time</td><td>508 ms</td></tr>
-    <tr><td>Average response time</td><td>~91 ms</td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">Localhost (zero network overhead), Apache bypass. /router endpoint (no DB) — pure LOOK dispatch + VM speed. /monitor/results endpoint: 5000 req, c=1000, 0 fail, 2018 RPS (with DB, 508ms max).</p>
-
-  <!-- WS-1000 -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">19 — ws-1000 (1000 Concurrent WebSocket)</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">June 16, 2026 — websocat v1.13.0 musl, localhost:9001/chat</p>
-  <table>
-    <tr><th>Metric</th><th>Value</th></tr>
-    <tr><td>Concurrent WS connections</td><td>1,000</td></tr>
-    <tr><td>Failed connections</td><td><strong style="color:#3fb950">0</strong></td></tr>
-    <tr><td>Server status</td><td><strong style="color:#3fb950">Active — ws::clients() worked</strong></td></tr>
-    <tr><td>broadcast test</td><td><strong style="color:#3fb950">Works</strong></td></tr>
-    <tr><td>Server crash</td><td><strong style="color:#3fb950">None</strong></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">1000 parallel bash subprocesses, each connected to WS /chat via websocat and sent a message. All connections were established. Broadcast stayed active. The server didn't crash.</p>
-
-  <!-- MEMORY-72H -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">20 — memory-72h (72-Hour RSS Monitoring)</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">Started June 16, 2026 23:31 — ended: June 19, 2026 ~02:31</p>
-  <table>
-    <tr><th>Metric</th><th>Value</th></tr>
-    <tr><td>Starting RSS</td><td>97 MB (look-fcgi-chat PID=79377)</td></tr>
-    <tr><td>Sampling interval</td><td>30 minutes (144 samples)</td></tr>
-    <tr><td>Failure threshold</td><td>100 MB delta</td></tr>
-    <tr><td>Status</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>End date</td><td>June 19, 2026 ~02:31</td></tr>
-    <tr><td>Result</td><td style="color:var(--green)"><strong>Zero real leak</strong> — RSS stayed steady</td></tr>
-  </table>
-  <div class="callout tip">
-    <p><strong>Result:</strong> over the 72-hour test, RSS stayed steady around its starting value. glibc high-water-mark behavior was confirmed — RSS doesn't drop after a connection closes (glibc design) but it doesn't grow either. Real memory leak: zero.</p>
-  </div>
-
-  <!-- FUZZ TEST -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">14 — Fuzz Test</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">June 2026 — a custom Python fuzzer (no radamsa, Windows environment)</p>
-  <table>
-    <tr><th>Target</th><th>Rounds</th><th>Crashes</th><th>Hangs</th><th>Result</th></tr>
-    <tr><td>Parser / Interpreter (CLI)</td><td>10,000</td><td><strong style="color:#3fb950">0</strong></td><td><strong style="color:#3fb950">0</strong></td><td><span class="badge badge-done">✅ PASS</span></td></tr>
-    <tr><td>HTTP live endpoint</td><td>—</td><td><strong style="color:#3fb950">0</strong></td><td><strong style="color:#3fb950">0</strong></td><td><span class="badge badge-done">✅ PASS</span></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">
-    During fuzzing a <code>stoi argument out of range</code> bug was found — a large integer payload (<code>10000000041</code>) exceeded the <code>int</code> limit.
-    Fixed with <code>std::stoll</code> + a bounds check. After the fix: 5/5 = 200 OK, no crash.
-  </p>
-
-  <!-- PEN TEST -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">15 — Penetration (Pen Test)</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">June 2026 — curl / manual — together with the Phase 19 security improvements</p>
-  <table>
-    <tr><th>Category</th><th>Test</th><th>Result</th></tr>
-    <tr><td>SQL Injection</td><td><code>1'; DROP TABLE products; --</code></td><td><span class="badge badge-done">✅ Blocked — parameterized query</span></td></tr>
-    <tr><td>XSS</td><td><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></td><td><span class="badge badge-done">✅ 403 / html::escape</span></td></tr>
-    <tr><td>Path Traversal</td><td><code>../../../../etc/passwd</code></td><td><span class="badge badge-done">✅ weakly_canonical() + root confinement</span></td></tr>
-    <tr><td>Session Fixation</td><td>Same SID before and after login</td><td><span class="badge badge-done">✅ SID renewed via destroy()+start()</span></td></tr>
-    <tr><td>Auth Bypass</td><td>Unauthorized access to an admin route</td><td><span class="badge badge-done">✅ 401 — session check</span></td></tr>
-    <tr><td>Cookie Security</td><td>Set-Cookie header inspection</td><td><span class="badge badge-done">✅ Secure; SameSite=Lax added</span></td></tr>
-    <tr><td>RNG Quality</td><td>Session ID entropy</td><td><span class="badge badge-done">✅ /dev/urandom (Linux) / rand_s (Windows)</span></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">
-    The pen-test findings were implemented as 7 security fixes in Phase 19.
-    22/24 security tests PASS — 2 items were added to the watch list as "known, low priority".
-  </p>
-
-  <!-- LOW-RESOURCE VPS -->
-  <h3 style="margin-top:2rem;margin-bottom:.8rem">16 — Low-Resource VPS (1 CPU / 1 GB RAM)</h3>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:.5rem">June 2026 — Docker container, --cpus=1 --memory=1g</p>
-  <table>
-    <tr><th>Metric</th><th>Value</th></tr>
-    <tr><td>CPU</td><td>1 vCPU (--cpus=1)</td></tr>
-    <tr><td>RAM</td><td>1 GB (--memory=1g)</td></tr>
-    <tr><td>look-fcgi workers</td><td>2 (minimum)</td></tr>
-    <tr><td>look-fcgi RSS</td><td>Stable — no OOM</td></tr>
-    <tr><td>Crash</td><td><strong style="color:#3fb950">0</strong></td></tr>
-    <tr><td>Service status</td><td><span class="badge badge-done">✅ PASS — ran stably on 1 CPU / 1 GB</span></td></tr>
-  </table>
-  <p style="color:var(--muted);font-size:.85rem;margin-top:.5rem">
-    Simulates a shared / entry-level hosting environment. look-fcgi runs stably with minimal resources;
-    <code>--workers 2</code> keeps the memory footprint low. The OOM killer wasn't triggered.
-  </p>
-</section>
 
 <section id="sss">
   <h2>Frequently Asked Questions</h2>
@@ -5729,7 +5244,7 @@ DB_PASS=</code></pre>
     <p style="color:var(--text-muted);margin-top:.4rem">
       The 72-hour test is a <strong>stability test</strong> — it answers "does the PID change, does memory leak,
       does it crash", not how high the RPS is. The sequential curl loop deliberately runs single-threaded.
-      For a real load test, values measured with <code>wrk</code>: 418 RPS with DB, 2,150 RPS without DB (26× vs CGI).
+      The warm FastCGI path keeps the process and DB connections alive between requests, so it sustains far more throughput than one-process-per-request CGI.
     </p>
   </div>
 
@@ -5934,65 +5449,6 @@ if ($order.status == ACTIVE) {
   </div>
 </section>
 
-<section id="roadmap">
-  <h2>Roadmap</h2>
-
-  <table>
-    <tr><th>Phase</th><th>Contents</th><th>Status</th></tr>
-    <tr><td>0–5</td><td>Foundation, Core Language, Stdlib, CGI, Web, DB</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>6</td><td>QR Menu — 29 routes, full CRUD, session auth</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>7</td><td>Stress test — zero language errors</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>8</td><td>FastCGI warm start — 5x performance, persistent DB</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>8.1</td><td>Ternary ?:, array::find/any/all</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>8.2</td><td>MySQL automatic type conversion</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>8.5</td><td>SQLite — DbConnection interface, zero dependency</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>9</td><td>Linux port — GCC build, CLI, CGI, FastCGI, MySQL+SQLite</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>9.1</td><td>switch — Go-style, no break, multiple case, default</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>9.6</td><td>Ubuntu + Plesk/Apache deployment documentation</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>9.8</td><td>Error system — SourceLocation, stack trace, LookRuntimeError/ParseError</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>10.1</td><td>Upload — request::file(), file:: module, magic byte, SHA-256</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>10.0</td><td>date:: module — now, format, parse, add, sub, diff, weekday</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>9.5</td><td>PostgreSQL wire protocol v3 — MD5 auth, zero dependency</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Bug Fix</td><td>string comparison (&lt; &gt; &lt;= &gt;=), string::pad_left/pad_right, array::push/pop in the module</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Plesk</td><td>Plesk VPS deployment (AlmaLinux 8.10, live); session fix; direct mode</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>11</td><td>struct (Go-style, default values, nested, clean json) + const iota (Go-style chain, member access)</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>12</td><td>Concurrent runtime — ThreadPool + ConnPool + make_dispatch_copy(), <code>--workers N</code></td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>13</td><td><code>--mode http</code> — Event Loop (epoll Linux / select Windows), HttpServer, hot reload, Apache bypass</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>14</td><td><code>parallel()</code> + <code>channel()</code> — LOOK task + channel; fan-out, pipeline; 9/9 tests</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>15</td><td>WebSocket — <code>route("WS",...)</code>, ws:: module, RFC 6455 frame codec, SHA-1+Base64, WsRegistry broadcast-safe</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>16</td><td>SSE — <code>route("SSE",...)</code>, sse:: module (send/on/close/clients); timer:: — after/every/cancel, global TimerManager background thread</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>16.1</td><td><code>--mode http</code> bug fix — EPOLLOUT level-triggered; SIGPIPE ignore; 10min/4.7M requests/0 errors stress test</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>16.5</td><td>Bytecode VM — register-based VM; compiler (AST→bytecode); 30/30 tests PASS; 7.8x compute speedup; alloc_seq fix; MAKE_CLOSURE capture-hint ordering; db::connect + channel() VM support</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>17</td><td>Chat live — WS + broadcast + timer:: keepalive; 500/500 bots PASS; timer::cancel fix (instant erase+notify); 0 memory leak verified</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>17.1</td><td>VM named-function bug fix — CALL goto + PrintStatement reg0 clobber + PARALLEL_CALL SEGV; concurrent-1000 PASS (11,008 RPS); ws-1000 PASS (1000 WS); memory-72h started</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>17.2</td><td><code>--mode http</code> stress test — 8,276 RPS router (VM+Apache bypass, c=100, 0 errors); c=1000 → 7,886 RPS; DB-bound ~380 RPS; interpreter→VM 3.3x gain</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>18</td><td>Blog live — template::, CRUD, auth, file upload</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>18.5</td><td><code>use "file.lk"</code> file module system — function/const export, $var isolation, cycle protection, top-level guard; blog.lk refactored into 5 files (5/5 PASS)</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>19</td><td>Security (session Secure+SameSite, /dev/urandom RNG, fixation, XSS, path traversal) + 22/24 tests PASS + VS Code Extension v0.1.0</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>19.1</td><td>Stdlib expansion: string::format, string::regex_match/replace/match_all, math::max/min variadic+array, array::flatten/chunk/zip</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>19.2</td><td>http:: client — GET/POST/POST_JSON/PUT/PATCH/DELETE; OpenSSL (Linux) + Schannel (Windows); 10/10 PASS</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>19.3</td><td>look.toml package-system architecture design + Native Extension API v1.1 draft + docs/package-system.md</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Sprint 3</td><td>look test runner — <code>look test</code>, 10 assert functions, before_each/after_each, 29/29 PASS</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Sprint 4</td><td>REPL — <code>look repl</code>, linenoise embed, auto print, multi-line blocks, :help/:vars/:clear/:exit, AST-ownership fix</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Sprint 5</td><td>cache:: module — in-memory + TTL, thread-safe warm-start cache; 12/12 tests PASS</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Sprint 6</td><td>queue:: module — named FIFO, persistent cross-request, 9/9 PASS</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Sprint 7</td><td>jobs:: module — SQLite durable queue, retry, delayed jobs, dead-letter, worker/run; 23/23 PASS</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>Sprint 8</td><td>look install — download a GitHub zipball, extract to pkg/, look.lock SHA; zero dependency (miniz)</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>v1.0-pre</td><td>look version/--version; jobs::recover() crash recovery; mail:: (Mailgun/SendGrid/Postmark); PostgreSQL BOOL fix; install.sh (Ubuntu+AlmaLinux, systemd+nginx automatic)</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>v1.0</td><td>Plesk extension (look-lang-1.0.0.zip), Windows IOCP (unlimited connections), Windows installer (install.bat), codlook.com landing page, Apache 2.0 open source, GitHub release</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>v1.0.1</td><td>Windows IOCP — AcceptEx + WSARecv + WSASend + PostQueuedCompletionStatus; c=500 844 RPS 0 errors; SelectEventLoop (64-connection limit) → unlimited connections</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>v1.x Sprint</td><td>DKIM outbound signing (dkim.cpp); file-sandbox dangling-iterator fix (assert_in_file_root); SMTP relay protection (port 25 block); HTTP rate limiter (LOOK_RATE_LIMIT_RPM + LOOK_TRUSTED_PROXY); error:: core module (auto-load); task_* rename (goroutine_* → task_*); LOOK_PARALLEL_LIMIT</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-    <tr><td>v1.0 — Plesk workspace</td><td>Plesk extension full panel: sidebar (Dashboard/Applications/Logs/Documentation), in-browser code editor (Save &amp; Redeploy), live per-domain monitor (CPU/RSS/PID/connections/uptime), journalctl log viewer, English UI; scripts via <code>sudo /bin/bash</code> (Plesk exec-bit stripping + post-install not-running issues overcome); state in the Plesk module var directory; live on a Plesk VPS (AlmaLinux 8.10 + Plesk Obsidian)</td><td><span class="badge badge-done">✅ Done</span></td></tr>
-  </table>
-
-  <h3 style="margin-top:2rem">What's Next</h3>
-  <table>
-    <tr><th>Goal</th><th>Contents</th><th>Status</th></tr>
-    <tr><td>Load-profile publication</td><td>Throughput/latency tables measured across different workloads</td><td><span class="badge badge-plan">⏳ Planned</span></td></tr>
-    <tr><td>Docker Hub</td><td><code>docker run codlook/look</code> — 5-second install, no build</td><td><span class="badge badge-done">✓ Live</span></td></tr>
-    <tr><td>Look Deploy</td><td>Managed cloud hosting — a look deploy command</td><td><span class="badge badge-plan">⏳ Future</span></td></tr>
-  </table>
-</section>
   </main>
 </div>
 
