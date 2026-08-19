@@ -1,9 +1,10 @@
-// http_client.cpp — Zero-dependency HTTP/HTTPS client
+// http_client.cpp — self-contained HTTP/HTTPS client
 // Linux: OpenSSL (system libssl)
 // Windows: Schannel (built-in, WinSSL)
 
 #include "look/http_client.h"
 #include "look/ssrf_safe.h"   // SSRF private/özel-blok kararı (saf, tablo-test edilebilir)
+#include "miniz/miniz.h"      // gzip response decode (raw deflate; header parsed by hand)
 #include <stdexcept>
 #include <sstream>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <vector>
 #ifndef _WIN32
 #  include <sys/stat.h>
 #endif
@@ -163,7 +165,8 @@ static std::string hc_strip_crlf(const std::string& s) {
 static std::string build_request(const std::string& method,
                                   const ParsedUrl& url,
                                   const std::string& body,
-                                  const std::map<std::string, std::string>& extra_headers)
+                                  const std::map<std::string, std::string>& extra_headers,
+                                  bool want_gzip = false)
 {
     std::ostringstream req;
     req << hc_strip_crlf(method) << " " << hc_strip_crlf(url.path) << " HTTP/1.1\r\n";
@@ -174,6 +177,10 @@ static std::string build_request(const std::string& method,
     req << "User-Agent: LOOK/0.19\r\n";
     req << "Connection: close\r\n";
     req << "Accept: */*\r\n";
+    // Ask for gzip only when we can decode it (non-streaming) and the caller
+    // didn't set its own Accept-Encoding.
+    if (want_gzip && extra_headers.find("Accept-Encoding") == extra_headers.end())
+        req << "Accept-Encoding: gzip\r\n";
 
     for (auto& [k, v] : extra_headers)
         req << hc_strip_crlf(k) << ": " << hc_strip_crlf(v) << "\r\n";
@@ -187,6 +194,52 @@ static std::string build_request(const std::string& method,
     req << "\r\n";
     req << body;
     return req.str();
+}
+
+// ── gzip response decode ──────────────────────────────────────────────────────
+// We advertise Accept-Encoding: gzip, so decode it transparently. The gzip header
+// is parsed by hand and the payload is raw-inflated with miniz (window_bits < 0),
+// which avoids depending on miniz's optional gzip-wrapper support. Bounded output:
+// decompression stops and fails past `cap`, so a gzip bomb cannot exhaust memory.
+static bool gzip_inflate(const std::string& in, size_t cap, std::string& out) {
+    if (in.size() < 18) return false;                       // 10-byte hdr + 8-byte trailer min
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(in.data());
+    if (p[0] != 0x1f || p[1] != 0x8b || p[2] != 0x08) return false;  // magic + DEFLATE method
+    unsigned char flg = p[3];
+    size_t off = 10;
+    if (flg & 0x04) {                                       // FEXTRA
+        if (off + 2 > in.size()) return false;
+        size_t xlen = (size_t)p[off] | ((size_t)p[off + 1] << 8);
+        off += 2 + xlen;
+    }
+    if (flg & 0x08) { while (off < in.size() && p[off] != 0) ++off; ++off; }  // FNAME
+    if (flg & 0x10) { while (off < in.size() && p[off] != 0) ++off; ++off; }  // FCOMMENT
+    if (flg & 0x02) off += 2;                               // FHCRC
+    if (off >= in.size()) return false;
+
+    mz_stream strm;
+    std::memset(&strm, 0, sizeof(strm));
+    if (mz_inflateInit2(&strm, -MZ_DEFAULT_WINDOW_BITS) != MZ_OK) return false;  // raw deflate
+    strm.next_in  = p + off;
+    strm.avail_in = (unsigned int)(in.size() - off);        // trailer left over; inflate stops at stream end
+
+    out.clear();
+    char obuf[16384];
+    int ret;
+    do {
+        do {
+            strm.next_out  = reinterpret_cast<unsigned char*>(obuf);
+            strm.avail_out = sizeof(obuf);
+            ret = mz_inflate(&strm, MZ_NO_FLUSH);
+            if (ret != MZ_OK && ret != MZ_STREAM_END && ret != MZ_BUF_ERROR) {
+                mz_inflateEnd(&strm); return false;
+            }
+            out.append(obuf, sizeof(obuf) - strm.avail_out);
+            if (out.size() > cap) { mz_inflateEnd(&strm); return false; }  // bomb guard
+        } while (strm.avail_out == 0 && ret != MZ_STREAM_END);
+    } while (ret != MZ_STREAM_END && strm.avail_in > 0);
+    mz_inflateEnd(&strm);
+    return ret == MZ_STREAM_END;
 }
 
 // ── Response parser ───────────────────────────────────────────────────────────
@@ -254,6 +307,22 @@ static HttpClientResponse parse_response(const std::string& raw) {
         resp.body = body_out.str();
     } else {
         resp.body = raw.substr(pos);
+    }
+
+    // Transparent gzip decode (we advertised Accept-Encoding: gzip).
+    auto ce = resp.headers.find("content-encoding");
+    if (ce != resp.headers.end() && !resp.body.empty()) {
+        std::string enc = ce->second;
+        std::transform(enc.begin(), enc.end(), enc.begin(), [](unsigned char c){ return std::tolower(c); });
+        if (enc.find("gzip") != std::string::npos) {
+            std::string dec;
+            if (gzip_inflate(resp.body, 64u * 1024u * 1024u, dec)) {   // 64 MB cap — gzip-bomb guard
+                resp.body = dec;
+                resp.headers.erase("content-encoding");
+            } else {
+                resp.error = "http:: gzip decode failed or exceeded the 64 MB decompression cap";
+            }
+        }
     }
 
     return resp;
@@ -382,7 +451,7 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
-    std::string req = build_request(method, url, body, hdrs);
+    std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr);
     if (send(s, req.c_str(), (int)req.size(), 0) == SOCKET_ERROR) {
         closesocket(s); resp.error = "send failed"; return resp;
     }
@@ -507,7 +576,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         QueryContextAttributesA(&ctx_handle, SECPKG_ATTR_STREAM_SIZES, &stream_sizes);
 
         // Encrypt request
-        std::string req = build_request(method, url, body, hdrs);
+        std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr);
         std::string enc_buf(stream_sizes.cbHeader + req.size() + stream_sizes.cbTrailer, '\0');
         memcpy((char*)enc_buf.data() + stream_sizes.cbHeader, req.data(), req.size());
 
@@ -689,7 +758,7 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
-    std::string req = build_request(method, url, body, hdrs);
+    std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr);
     if (::send(s, req.data(), req.size(), 0) < 0) {
         close(s); resp.error = "send failed"; return resp;
     }
@@ -744,7 +813,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         return resp;
     }
 
-    std::string req = build_request(method, url, body, hdrs);
+    std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr);
     if (SSL_write(ssl, req.data(), (int)req.size()) <= 0) {
         SSL_free(ssl); close(s);
         resp.error = "SSL_write failed"; return resp;
