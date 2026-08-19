@@ -1,5 +1,6 @@
 #include "look/stdlib.h"
 #include "look/html_escape.h"
+#include "look/charset.h"
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include <cstdint>
@@ -308,6 +309,17 @@ static Module make_string() {
     m.functions["len"] = [](auto args) {
         check_args("string::len", args.size(), 1);
         return Value((int64_t)utf8_decode(args[0].to_string()).size());
+    };
+    // Bir single-byte charset'i (iso-8859-9, windows-1254, latin1/1252) UTF-8'e çevir.
+    // Bilinmeyen charset → girdi olduğu gibi döner. HTTP istemcisi de aynı fonksiyonu
+    // Content-Type charset'i için otomatik kullanır.
+    m.functions["decode"] = [](auto args) -> Value {
+        check_args("string::decode", args.size(), 2);
+        std::string in = args[0].to_string();
+        std::string cs = args[1].to_string();
+        std::string out;
+        if (look::charset_to_utf8(in, cs, out)) return Value(out);
+        return Value(in);
     };
     // Büyük harf — locale-bağımsız (i→I). Çok-byte karakter bozulmaz.
     m.functions["upper"] = [](auto args) {

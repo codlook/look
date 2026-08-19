@@ -5,6 +5,7 @@
 #include "look/http_client.h"
 #include "look/ssrf_safe.h"   // SSRF private/özel-blok kararı (saf, tablo-test edilebilir)
 #include "miniz/miniz.h"      // gzip response decode (raw deflate; header parsed by hand)
+#include "look/charset.h"     // single-byte charset → UTF-8 (iso-8859-9 etc.)
 #include <stdexcept>
 #include <sstream>
 #include <cstring>
@@ -321,6 +322,25 @@ static HttpClientResponse parse_response(const std::string& raw) {
                 resp.headers.erase("content-encoding");
             } else {
                 resp.error = "http:: gzip decode failed or exceeded the 64 MB decompression cap";
+            }
+        }
+    }
+
+    // Transparent charset → UTF-8 for common single-byte encodings declared in the
+    // Content-Type header (e.g. "text/html; charset=iso-8859-9").
+    auto ct = resp.headers.find("content-type");
+    if (ct != resp.headers.end() && !resp.body.empty()) {
+        std::string tl = ct->second;
+        std::transform(tl.begin(), tl.end(), tl.begin(), [](unsigned char c){ return std::tolower(c); });
+        auto cpos = tl.find("charset=");
+        if (cpos != std::string::npos) {
+            std::string cs = tl.substr(cpos + 8);
+            auto semi = cs.find(';'); if (semi != std::string::npos) cs = cs.substr(0, semi);
+            while (!cs.empty() && (cs.front() == ' ' || cs.front() == '"')) cs.erase(cs.begin());
+            while (!cs.empty() && (cs.back()  == ' ' || cs.back()  == '"')) cs.pop_back();
+            if (!cs.empty() && cs != "utf-8" && cs != "utf8" && cs != "us-ascii" && cs != "ascii") {
+                std::string conv;
+                if (look::charset_to_utf8(resp.body, cs, conv)) resp.body = conv;
             }
         }
     }
