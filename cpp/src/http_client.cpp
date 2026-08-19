@@ -786,6 +786,30 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// Resolve a (possibly relative) Location header against the current URL.
+// Handles absolute, scheme-relative (//host/path) and path-absolute (/path),
+// plus a basic relative path. Returns "" when it can't be resolved.
+static std::string resolve_url(const std::string& base, const std::string& loc) {
+    if (loc.empty()) return "";
+    if (loc.rfind("http://", 0) == 0 || loc.rfind("https://", 0) == 0) return loc;
+
+    std::string scheme, rest;
+    if      (base.rfind("https://", 0) == 0) { scheme = "https"; rest = base.substr(8); }
+    else if (base.rfind("http://",  0) == 0) { scheme = "http";  rest = base.substr(7); }
+    else return "";
+
+    std::string authority = rest.substr(0, rest.find('/'));      // host[:port]
+    if (loc.rfind("//", 0) == 0) return scheme + ":" + loc;      // scheme-relative
+    if (loc[0] == '/')           return scheme + "://" + authority + loc;  // path-absolute
+
+    // relative to the base directory
+    std::string p = rest.substr(authority.size());              // "/dir/file?q"
+    auto q = p.find('?'); if (q != std::string::npos) p = p.substr(0, q);
+    auto slash = p.rfind('/');
+    std::string dir = (slash == std::string::npos) ? "/" : p.substr(0, slash + 1);
+    return scheme + "://" + authority + dir + loc;
+}
+
 HttpClientResponse http_request(const std::string& method,
                            const std::string& url_str,
                            const std::string& body,
@@ -793,16 +817,48 @@ HttpClientResponse http_request(const std::string& method,
                            const HttpOptions& opts)
 {
     HttpClientResponse resp;
-    ParsedUrl url;
-    try { url = parse_url(url_str); }
-    catch (std::exception& e) { resp.error = e.what(); return resp; }
+    std::string cur_url    = url_str;
+    std::string cur_method = method;
+    std::string cur_body   = body;
+    std::map<std::string, std::string> cur_headers = req_headers;
 
-    try {
-        if (url.tls) return do_tls(method, url, body, req_headers, opts);
-        else         return do_plain(method, url, body, req_headers, opts);
-    } catch (std::exception& e) {
-        resp.error = e.what();
-        return resp;
+    int max_hops = opts.follow_redirects ? (opts.max_redirects > 0 ? opts.max_redirects : 5) : 0;
+    std::vector<std::string> seen;
+
+    for (int hop = 0; ; ++hop) {
+        ParsedUrl url;
+        try { url = parse_url(cur_url); }
+        catch (std::exception& e) { resp.error = e.what(); return resp; }
+
+        try {
+            // Each hop reconnects, so tcp_connect's SSRF guard re-runs for the new host.
+            if (url.tls) resp = do_tls(cur_method, url, cur_body, cur_headers, opts);
+            else         resp = do_plain(cur_method, url, cur_body, cur_headers, opts);
+        } catch (std::exception& e) { resp.error = e.what(); return resp; }
+
+        if (!resp.error.empty()) return resp;
+        if (max_hops <= 0 || hop >= max_hops) return resp;
+        if (resp.status < 300 || resp.status >= 400) return resp;
+
+        auto it = resp.headers.find("location");
+        if (it == resp.headers.end() || it->second.empty()) return resp;
+
+        std::string next = resolve_url(cur_url, it->second);
+        if (next.empty()) return resp;                              // unresolvable → stop
+        if (std::find(seen.begin(), seen.end(), next) != seen.end()) {
+            resp.error = "http:: redirect loop detected"; return resp;
+        }
+        seen.push_back(next);
+
+        // 303 (and POST-style 301/302) become GET without a body, per common practice.
+        if (resp.status == 303 ||
+            ((resp.status == 301 || resp.status == 302) && cur_method != "GET" && cur_method != "HEAD")) {
+            cur_method = "GET";
+            cur_body.clear();
+            cur_headers.erase("Content-Type");
+            cur_headers.erase("Content-Length");
+        }
+        cur_url = next;
     }
 }
 

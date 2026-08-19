@@ -53,7 +53,9 @@ static HttpOptions extract_opts(const Value& v) {
     auto& arr = *v.as_array();
     for (size_t i = 1; i + 1 < arr.size(); i += 2) {
         std::string k = arr[i].to_string();
-        if (k == "timeout") opts.timeout_ms = (int)arr[i+1].to_int();
+        if      (k == "timeout")       opts.timeout_ms       = (int)arr[i+1].to_int();
+        else if (k == "follow")        opts.follow_redirects = arr[i+1].as_bool();
+        else if (k == "max_redirects") opts.max_redirects    = (int)arr[i+1].to_int();
     }
     return opts;
 }
