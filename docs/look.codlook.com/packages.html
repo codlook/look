@@ -120,6 +120,45 @@
     <p>12 modules ship <strong>inside the language</strong> — no install. Beyond those, the Codlook ecosystem adds installable <strong>modules</strong> (<code>lk module install</code>, global) and <strong>packages</strong> (<code>lk install</code>, per-project).</p>
   </div>
 
+  <style>
+    .pkg-detail{max-width:840px;margin:0 auto}
+    .pkg-detail-back{display:inline-block;margin-bottom:1.4rem;color:var(--muted,#8b93a7);text-decoration:none;font-weight:600}
+    .pkg-detail-back:hover{color:var(--fg,#e8ecf4)}
+    .pkg-detail-head{display:flex;align-items:center;gap:1rem;margin:.4rem 0 .3rem}
+    .pkg-detail-head h1{margin:0;font-size:2rem}
+    .pkg-detail .pkg-icon{width:56px;height:56px;font-size:1.7rem;display:flex;align-items:center;justify-content:center;border-radius:14px}
+    .pkg-detail-cmds{margin:1.3rem 0 .6rem}
+    .pkg-detail-links{display:flex;gap:1.2rem;margin-bottom:1.8rem}
+    .md-body{border-top:1px solid var(--border,rgba(127,127,127,.2));padding-top:1.7rem;line-height:1.7}
+    .md-body h1,.md-body h2,.md-body h3,.md-body h4{margin:1.7rem 0 .7rem;line-height:1.3;font-weight:700}
+    .md-body h1{font-size:1.55rem} .md-body h2{font-size:1.28rem} .md-body h3{font-size:1.08rem}
+    .md-body p{margin:.75rem 0} .md-body ul,.md-body ol{margin:.7rem 0 .7rem 1.5rem} .md-body li{margin:.3rem 0}
+    .md-body code{background:var(--code-bg,rgba(127,127,127,.16));padding:.15em .42em;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:.88em}
+    .md-body pre{background:var(--code-bg,rgba(127,127,127,.12));padding:1rem 1.1rem;border-radius:10px;overflow-x:auto;margin:1rem 0}
+    .md-body pre code{background:none;padding:0;font-size:.86em;line-height:1.55}
+    .md-body blockquote{border-left:3px solid var(--border,rgba(127,127,127,.3));margin:1rem 0;padding:.2rem 0 .2rem 1rem;color:var(--muted,#8b93a7)}
+    .md-body a{color:var(--blue,#3b82f6)}
+    .md-body hr{border:none;border-top:1px solid var(--border,rgba(127,127,127,.2));margin:1.7rem 0}
+    .md-body img{max-width:100%}
+    .md-table-wrap{overflow-x:auto;margin:1.1rem 0}
+    .md-body table{border-collapse:collapse;width:100%;font-size:.93em}
+    .md-body th,.md-body td{border:1px solid var(--border,rgba(127,127,127,.25));padding:.5rem .75rem;text-align:left;vertical-align:top}
+    .md-body th{background:rgba(127,127,127,.09);font-weight:600}
+    .md-loading{color:var(--muted,#8b93a7)}
+  </style>
+
+  <section class="pkg-detail" id="pkgDetail" style="display:none">
+    <a class="pkg-detail-back" href="packages.html">← All packages &amp; modules</a>
+    <div class="pkg-detail-head">
+      <span class="pkg-icon" id="pdIcon" style="--c:var(--blue)">📦</span>
+      <div><h1 id="pdName">…</h1><span class="pkg-meta" id="pdMeta"></span></div>
+    </div>
+    <p class="pkg-desc" id="pdDesc"></p>
+    <div class="pkg-detail-cmds" id="pdCmds"></div>
+    <div class="pkg-detail-links" id="pdLinks"></div>
+    <div class="md-body" id="pdReadme"><p class="md-loading">Loading README…</p></div>
+  </section>
+
   <div class="pkg-tools">
     <input type="text" class="pkg-search" id="pkgSearch" placeholder="Search 17 packages by name, tag or description…" aria-label="Search packages">
     <div class="pkg-filters">
@@ -439,6 +478,7 @@
       + '<div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>' + esc(it.install) + '</code>'
       + '<button class="pkg-copy" data-copy="' + esc(it.install) + '" aria-label="Copy">⧉</button></div></div>'
       + '<div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>' + esc(it.use) + '</code></div></div>'
+      + '<a class="pkg-link" href="packages.html?' + it.cat + '=' + encodeURIComponent(it.name) + '">Details →</a>'
       + '<a class="pkg-link" href="' + esc(it.github) + '" target="_blank" rel="noopener">GitHub →</a>'
       + '</article>';
   }
@@ -523,8 +563,91 @@
     a.addEventListener('click', function(){ document.querySelector('header.nav').classList.remove('open'); });
   });
 
-  refresh();          // index the hardcoded fallback cards
-  loadEcosystem();    // then upgrade Modules/Packages with the live GitHub list
+  // ── detail view: packages.html?modules=x / ?packages=x renders the README ───
+  // A compact, self-contained Markdown → HTML renderer (escape-first, so README
+  // content can't inject markup). Covers what the READMEs use: headings, tables,
+  // fenced & inline code, bold/italic, links/images, lists, blockquotes, rules.
+  function mdInline(t){
+    t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+    t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img src="$2" alt="$1">');
+    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" rel="noopener">$1</a>');
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    t = t.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    return t;
+  }
+  function mdRow(t){ return t.replace(/^\|/,'').replace(/\|$/,'').split('|').map(function(c){ return c.trim(); }); }
+  function mdToHtml(src){
+    var lines = esc(src).split('\n'), out = [], inCode = false, list = '';
+    function closeList(){ if (list){ out.push('</' + list + '>'); list = ''; } }
+    for (var i = 0; i < lines.length; i++){
+      var line = lines[i].replace(/\s+$/, ''), t = line.trim();
+      if (/^```/.test(t)){ closeList(); if (inCode){ out.push('</code></pre>'); inCode = false; } else { out.push('<pre><code>'); inCode = true; } continue; }
+      if (inCode){ out.push(lines[i]); continue; }
+      if (!t){ closeList(); continue; }
+      // table: a | row followed by a |---|--- separator
+      if (t.indexOf('|') !== -1 && i + 1 < lines.length && /-/.test(lines[i+1]) && /^[\s|:-]+$/.test(lines[i+1].trim())){
+        closeList();
+        var head = mdRow(t), rows = []; i += 2;
+        while (i < lines.length && lines[i].trim().indexOf('|') !== -1){ rows.push(mdRow(lines[i].trim())); i++; }
+        i--;
+        var h = '<div class="md-table-wrap"><table><thead><tr>' + head.map(function(c){ return '<th>' + mdInline(c) + '</th>'; }).join('') + '</tr></thead><tbody>';
+        h += rows.map(function(r){ return '<tr>' + r.map(function(c){ return '<td>' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }).join('');
+        out.push(h + '</tbody></table></div>'); continue;
+      }
+      var hm = t.match(/^(#{1,6})\s+(.*)$/);
+      if (hm){ closeList(); var lv = hm[1].length; out.push('<h' + lv + '>' + mdInline(hm[2]) + '</h' + lv + '>'); continue; }
+      if (t === '---' || t === '***'){ closeList(); out.push('<hr>'); continue; }
+      if (/^&gt;\s?/.test(t)){ closeList(); out.push('<blockquote>' + mdInline(t.replace(/^&gt;\s?/, '')) + '</blockquote>'); continue; }
+      if (/^[-*]\s+/.test(t)){ if (list !== 'ul'){ closeList(); out.push('<ul>'); list = 'ul'; } out.push('<li>' + mdInline(t.replace(/^[-*]\s+/, '')) + '</li>'); continue; }
+      if (/^\d+\.\s+/.test(t)){ if (list !== 'ol'){ closeList(); out.push('<ol>'); list = 'ol'; } out.push('<li>' + mdInline(t.replace(/^\d+\.\s+/, '')) + '</li>'); continue; }
+      closeList(); out.push('<p>' + mdInline(t) + '</p>');
+    }
+    closeList(); if (inCode) out.push('</code></pre>');
+    return out.join('\n');
+  }
+  function detailParam(){
+    var parts = location.search.replace(/^\?/, '').split('&');
+    for (var i = 0; i < parts.length; i++){
+      var kv = parts[i].split('=');
+      if ((kv[0] === 'modules' || kv[0] === 'packages') && kv[1]){ return { cat: kv[0], name: decodeURIComponent(kv[1]) }; }
+    }
+    return null;
+  }
+  function showDetail(sel){
+    var repo = sel.cat === 'modules' ? 'look-modules' : 'look-packages';
+    var base = 'https://raw.githubusercontent.com/codlook/' + repo + '/main/' + sel.name + '/';
+    var install = (sel.cat === 'modules' ? 'lk module install ' : 'lk install ') + 'github.com/codlook/' + repo + '/' + sel.name;
+    var useCmd = sel.cat === 'modules' ? 'use ' + sel.name : 'use "pkg/' + sel.name + '"';
+    var gh = 'https://github.com/codlook/' + repo + '/tree/main/' + sel.name;
+    var hero = document.querySelector('.pkg-hero'), tools = document.querySelector('.pkg-tools');
+    if (hero) hero.style.display = 'none';
+    if (tools) tools.style.display = 'none';
+    groups.forEach(function(g){ g.style.display = 'none'; });
+    document.getElementById('pkgDetail').style.display = '';
+    document.getElementById('pdName').textContent = sel.name;
+    document.title = sel.name + ' — LOOK ' + sel.cat;
+    document.getElementById('pdCmds').innerHTML =
+      '<div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>' + esc(install) + '</code><button class="pkg-copy" data-copy="' + esc(install) + '" aria-label="Copy">⧉</button></div></div>'
+      + '<div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>' + esc(useCmd) + '</code><button class="pkg-copy" data-copy="' + esc(useCmd) + '" aria-label="Copy">⧉</button></div></div>';
+    document.getElementById('pdLinks').innerHTML = '<a class="pkg-link" href="' + esc(gh) + '" target="_blank" rel="noopener">GitHub →</a>';
+    fetch(base + 'look.json').then(function(r){ return r.ok ? r.json() : null; }).then(function(m){
+      if (!m) return;
+      var ic = document.getElementById('pdIcon'); ic.textContent = m.icon || '📦';
+      if (m.color) ic.style.setProperty('--c', 'var(--' + m.color + ')');
+      document.getElementById('pdDesc').textContent = m.description || '';
+      document.getElementById('pdMeta').textContent = (m.author || 'codlook') + (m.version ? ' · v' + m.version : '');
+    }).catch(function(){});
+    fetch(base + 'README.md').then(function(r){ if (!r.ok) throw 0; return r.text(); })
+      .then(function(md){ document.getElementById('pdReadme').innerHTML = mdToHtml(md); })
+      .catch(function(){ document.getElementById('pdReadme').innerHTML = '<p class="md-loading">README not available. <a href="' + esc(gh) + '" target="_blank" rel="noopener">View on GitHub →</a></p>'; });
+  }
+
+  var sel = detailParam();
+  if (sel){ showDetail(sel); }
+  else {
+    refresh();          // index the hardcoded fallback cards
+    loadEcosystem();    // then upgrade Modules/Packages with the live GitHub list
+  }
 })();
 </script>
 </body>
