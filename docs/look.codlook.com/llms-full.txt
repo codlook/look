@@ -3017,6 +3017,7 @@ $n  = math::random(1, 6)  # rolling a die
 | string::starts_with($s,$pre) | Does it start with? (bool) |
 | string::ends_with($s,$suf) | Does it end with? (bool) |
 | string::len($s) | Number of characters (alias: len) |
+| string::decode($bytes,$charset) | Decode a single-byte charset (iso-8859-9, windows-1254, iso-8859-1, windows-1252) to UTF-8; unknown charset → input unchanged. http:: applies this automatically for a declared response charset. |
 | string::slugify($s) | URL-friendly slug — spaces → -, special chars removed |
 | string::pad_left($s,$len,$pad) | Pad left — adds $pad until it's $len characters total |
 | string::pad_right($s,$len,$pad) | Pad right — adds $pad until it's $len characters total |
@@ -3535,7 +3536,9 @@ A self-contained HTTP/HTTPS client — uses the system OpenSSL on Linux and Scha
 | http::stream($method, $url, $body, $headers, $callback [,$opts]) | **Streaming** — body chunks (chunked-decoded) delivered to $callback($chunk) as they arrive. For SSE / live token streams (e.g. LLM APIs). |
 
 **$headers** — assoc array (optional): `["Authorization" => "Bearer token"]`
- **$opts** — assoc array (optional): `["timeout" => 5000]` (ms, default 10000)
+ **$opts** — assoc array (optional): `["timeout" => 5000]` (ms, default 10000) · `["follow" => true]` follows 3xx redirects (default off; each hop re-checks the SSRF guard) · `["max_redirects" => 5]` hop cap · `["proxy" => "http://host:port"]` routes through an HTTP proxy. On a cross-origin redirect, `Authorization`, `Cookie` and `Proxy-Authorization` are dropped before the request is re-sent, so an open redirect on a trusted host can't leak them. Responses are transparently gzip-decoded (bomb-guarded) and, when the Content-Type declares a supported single-byte charset (iso-8859-9, windows-1254, …), converted to UTF-8.
+
+**Note on `proxy`:** when a proxy is set, the SSRF guard applies to the *proxy* address, not the final destination (the proxy resolves the target). If the request URL can be influenced by untrusted input, keep the destination on a trusted allow-list.
 
 ### http::stream — live streaming
 
