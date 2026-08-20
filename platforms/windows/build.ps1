@@ -33,7 +33,8 @@ $LkExe    = Join-Path $BinSrc "lk.exe"
 $Gate = @(
     "tests\crypto_vectors.lk",   # SHA/HMAC/base64 + BCrypt random (NIST/RFC)
     "tests\rs256_kat.lk",        # NCrypt rs256 verify+sign, pinned to openssl oracle
-    "tests\date_dst_test.lk"     # calendar arithmetic (MSVC CRT branch)
+    "tests\date_dst_test.lk",    # calendar arithmetic (MSVC CRT branch)
+    "tests\release_gate.lk"      # artifact-fix proofs incl. string::decode (charset codec shipped)
 )
 Write-Host "Pre-release gate (against MSVC binary)..."
 foreach ($t in $Gate) {
