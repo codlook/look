@@ -81,6 +81,10 @@
   .pkg-copy.ok{color:var(--green);}
   .pkg-link{font-size:.85rem;color:var(--blue);text-decoration:none;font-weight:600;margin-top:auto;}
   .pkg-link:hover{text-decoration:underline;}
+  .pkg-foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:.6rem;padding-top:.9rem;}
+  .pkg-foot .pkg-link{margin-top:0;}
+  .pkg-detail-btn{font-size:.82rem;font-weight:600;color:#fff;background:var(--blue);border:1px solid var(--blue);border-radius:7px;padding:.42rem .85rem;text-decoration:none;transition:.15s;white-space:nowrap;}
+  .pkg-detail-btn:hover{background:var(--navy,#0E1B3C);border-color:var(--navy,#0E1B3C);}
   .pkg-empty{text-align:center;color:var(--text-muted);padding:3rem 1rem;display:none;}
   @media(max-width:600px){.pkg-tools{position:static;}.pkg-hero h1{font-size:1.7rem;}}
 </style>
@@ -478,8 +482,10 @@
       + '<div class="pkg-cmd"><span class="pkg-cmd-label">install</span><div class="pkg-cmd-row"><code>' + esc(it.install) + '</code>'
       + '<button class="pkg-copy" data-copy="' + esc(it.install) + '" aria-label="Copy">⧉</button></div></div>'
       + '<div class="pkg-cmd sub"><span class="pkg-cmd-label">use</span><div class="pkg-cmd-row"><code>' + esc(it.use) + '</code></div></div>'
-      + '<a class="pkg-link" href="packages.html?' + it.cat + '=' + encodeURIComponent(it.name) + '">Details →</a>'
+      + '<div class="pkg-foot">'
+      + '<a class="pkg-detail-btn" href="packages.html?' + it.cat + '=' + encodeURIComponent(it.name) + '">Details</a>'
       + '<a class="pkg-link" href="' + esc(it.github) + '" target="_blank" rel="noopener">GitHub →</a>'
+      + '</div>'
       + '</article>';
   }
   function renderCat(cat, items){
