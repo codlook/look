@@ -322,6 +322,7 @@ static HttpClientResponse parse_response(const std::string& raw) {
                 resp.headers.erase("content-encoding");
             } else {
                 resp.error = "http:: gzip decode failed or exceeded the 64 MB decompression cap";
+                resp.body.clear();   // don't hand back the still-compressed bytes on failure
             }
         }
     }
