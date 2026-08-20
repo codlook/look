@@ -3442,9 +3442,16 @@ look install github.com/Codlook/look-packages
   <p><strong>$headers</strong> — assoc array (optional): <code>["Authorization" => "Bearer token"]</code><br>
   <strong>$opts</strong> — assoc array (optional): <code>["timeout" => 5000]</code> (ms, default 10000) ·
   <code>["follow" => true]</code> follows 3xx redirects (default off; each hop re-checks the SSRF guard) ·
-  <code>["max_redirects" => 5]</code> hop cap.
+  <code>["max_redirects" => 5]</code> hop cap ·
+  <code>["proxy" => "http://host:port"]</code> routes the request through an HTTP proxy.
+  On a cross-origin redirect, <code>Authorization</code>, <code>Cookie</code> and <code>Proxy-Authorization</code>
+  headers are dropped before the request is re-sent, so an open redirect on a trusted host can't leak them.
   Responses are transparently gzip-decoded (bomb-guarded) and, when the Content-Type declares a supported
   single-byte charset (iso-8859-9, windows-1254, …), converted to UTF-8.</p>
+  <p><strong>Note on <code>proxy</code>:</strong> when a proxy is set, the SSRF guard is applied to the
+  <em>proxy</em> address, not the final destination (the proxy resolves the target). If the request URL can
+  be influenced by untrusted input, keep the destination on a trusted allow-list — a proxy bypasses the
+  private/loopback block for the target.</p>
 
   <h3>http::stream — live streaming</h3>
   <p><code>http::stream()</code> does not buffer the whole response; instead it calls your <code>$callback</code> with each body chunk as it arrives. Pairs naturally with <code>route("SSE", ...)</code> and <code>channel()</code> — the building blocks for forwarding an upstream token stream (e.g. a Claude/LLM SSE response) straight to your client. Returns a response assoc (<code>status</code>, <code>headers</code>, <code>error</code>); the body arrives via the callback.</p>

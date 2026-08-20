@@ -173,7 +173,9 @@ static bool parse_proxy(const std::string& spec, std::string& host, int& port) {
     auto colon = s.rfind(':');
     if (colon != std::string::npos) {
         host = s.substr(0, colon);
-        try { port = std::stoi(s.substr(colon + 1)); } catch (...) { return false; }
+        const std::string ps = s.substr(colon + 1);
+        if (ps.empty() || ps.find_first_not_of("0123456789") != std::string::npos) return false;
+        try { port = std::stoi(ps); } catch (...) { return false; }
     } else {
         host = s;
     }
@@ -986,6 +988,28 @@ static std::string resolve_url(const std::string& base, const std::string& loc) 
     return scheme + "://" + authority + dir + loc;
 }
 
+// scheme + lowercased host[:port] of a URL — the "origin" for credential-scoping.
+static std::string url_origin(const std::string& u) {
+    std::string scheme, rest;
+    if      (u.rfind("https://", 0) == 0) { scheme = "https"; rest = u.substr(8); }
+    else if (u.rfind("http://",  0) == 0) { scheme = "http";  rest = u.substr(7); }
+    else return u;
+    std::string authority = rest.substr(0, rest.find('/'));
+    for (char& c : authority) c = (char)std::tolower((unsigned char)c);
+    return scheme + "://" + authority;
+}
+
+// Erase a header by name, case-insensitively (user-supplied keys are arbitrary case).
+static void erase_header_ci(std::map<std::string, std::string>& h, const std::string& name) {
+    for (auto it = h.begin(); it != h.end(); ) {
+        if (it->first.size() == name.size() &&
+            std::equal(it->first.begin(), it->first.end(), name.begin(),
+                       [](char a, char b){ return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); }))
+            it = h.erase(it);
+        else ++it;
+    }
+}
+
 HttpClientResponse http_request(const std::string& method,
                            const std::string& url_str,
                            const std::string& body,
@@ -1025,6 +1049,14 @@ HttpClientResponse http_request(const std::string& method,
             resp.error = "http:: redirect loop detected"; return resp;
         }
         seen.push_back(next);
+
+        // Cross-origin hop: drop credential headers so an open-redirect on a trusted host
+        // can't exfiltrate them to the target (curl/browser behaviour).
+        if (url_origin(next) != url_origin(cur_url)) {
+            erase_header_ci(cur_headers, "Authorization");
+            erase_header_ci(cur_headers, "Cookie");
+            erase_header_ci(cur_headers, "Proxy-Authorization");
+        }
 
         // 303 (and POST-style 301/302) become GET without a body, per common practice.
         if (resp.status == 303 ||
