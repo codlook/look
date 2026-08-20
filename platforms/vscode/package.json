@@ -2,7 +2,7 @@
   "name": "look-lang",
   "displayName": "LOOK Language",
   "description": "LOOK dili için tam destek: sözdizimi vurgusu, canlı hata denetimi (lk --check), otomatik tamamlama, hover imzaları, snippet'ler ve Çalıştır/Servis/REPL kısayolları.",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "publisher": "codlook",
   "license": "Apache-2.0",
   "icon": "icon.png",
