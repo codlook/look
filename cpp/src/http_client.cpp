@@ -163,14 +163,40 @@ static std::string hc_strip_crlf(const std::string& s) {
     return r;
 }
 
+// Parse a proxy spec ("http://host:port", "host:port", "host") into host + port.
+static bool parse_proxy(const std::string& spec, std::string& host, int& port) {
+    std::string s = spec;
+    if (s.rfind("http://", 0) == 0)       s = s.substr(7);
+    else if (s.rfind("https://", 0) == 0) s = s.substr(8);
+    auto slash = s.find('/'); if (slash != std::string::npos) s = s.substr(0, slash);
+    port = 8080;
+    auto colon = s.rfind(':');
+    if (colon != std::string::npos) {
+        host = s.substr(0, colon);
+        try { port = std::stoi(s.substr(colon + 1)); } catch (...) { return false; }
+    } else {
+        host = s;
+    }
+    return !host.empty() && port > 0 && port < 65536;
+}
+
 static std::string build_request(const std::string& method,
                                   const ParsedUrl& url,
                                   const std::string& body,
                                   const std::map<std::string, std::string>& extra_headers,
-                                  bool want_gzip = false)
+                                  bool want_gzip = false,
+                                  bool absolute_uri = false)  // proxy HTTP uses the absolute-form target
 {
     std::ostringstream req;
-    req << hc_strip_crlf(method) << " " << hc_strip_crlf(url.path) << " HTTP/1.1\r\n";
+    std::string target = hc_strip_crlf(url.path);
+    if (absolute_uri) {
+        std::ostringstream u;
+        u << (url.tls ? "https://" : "http://") << hc_strip_crlf(url.host);
+        if ((url.tls && url.port != 443) || (!url.tls && url.port != 80)) u << ":" << url.port;
+        u << hc_strip_crlf(url.path);
+        target = u.str();
+    }
+    req << hc_strip_crlf(method) << " " << target << " HTTP/1.1\r\n";
     req << "Host: " << hc_strip_crlf(url.host);
     if ((url.tls && url.port != 443) || (!url.tls && url.port != 80))
         req << ":" << url.port;
@@ -469,10 +495,14 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
                               const HttpChunkCallback* on_chunk = nullptr)
 {
     HttpClientResponse resp;
-    sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
+    bool via_proxy = !opts.proxy.empty();
+    std::string phost; int pport = 0;
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
+                         : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
-    std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr);
+    std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr, /*absolute_uri=*/ via_proxy);
     if (send(s, req.c_str(), (int)req.size(), 0) == SOCKET_ERROR) {
         closesocket(s); resp.error = "send failed"; return resp;
     }
@@ -506,8 +536,29 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     HttpClientResponse resp;
     std::unique_ptr<StreamSink> sink;
     if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
-    sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
+    bool via_proxy = !opts.proxy.empty();
+    std::string phost; int pport = 0;
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
+                         : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
+
+    if (via_proxy) {
+        // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
+        std::string tgt = hc_strip_crlf(url.host) + ":" + std::to_string(url.port);
+        std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
+        if (send(s, creq.c_str(), (int)creq.size(), 0) == SOCKET_ERROR) { closesocket(s); resp.error = "proxy CONNECT send failed"; return resp; }
+        std::string pr; char pb[1024]; int pn;
+        while (pr.find("\r\n\r\n") == std::string::npos) {
+            pn = recv(s, pb, sizeof(pb), 0);
+            if (pn <= 0) { closesocket(s); resp.error = "proxy closed during CONNECT"; return resp; }
+            pr.append(pb, pn);
+            if (pr.size() > 16384) { closesocket(s); resp.error = "proxy CONNECT response too large"; return resp; }
+        }
+        int pstatus = 0; auto sp = pr.find(' ');
+        if (sp != std::string::npos) { try { pstatus = std::stoi(pr.substr(sp + 1, 3)); } catch (...) {} }
+        if (pstatus < 200 || pstatus >= 300) { closesocket(s); resp.error = "http:: proxy CONNECT rejected (status " + std::to_string(pstatus) + ")"; return resp; }
+    }
 
     // Schannel credential
     SCHANNEL_CRED sc_cred{};
@@ -576,11 +627,18 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         if (ss == SEC_I_CONTINUE_NEEDED || ss == SEC_I_INCOMPLETE_CREDENTIALS) {
             // Read more from server
             char rbuf[16384];
-            // Check if Schannel has extra data from in_bufs[1]
-            handshake_buf.clear();
-            if (in_bufs[1].BufferType == SECBUFFER_EXTRA && in_bufs[1].cbBuffer > 0) {
-                handshake_buf.append((char*)in_bufs[1].pvBuffer, in_bufs[1].cbBuffer);
+            // Carry over any unprocessed bytes. For InitializeSecurityContext, Schannel
+            // reports SECBUFFER_EXTRA by count only — pvBuffer is NOT set; the extra bytes
+            // are the LAST cbBuffer bytes of the input we passed. Copy them from the end of
+            // the OLD handshake_buf BEFORE clearing it (reading in_bufs[1].pvBuffer here was a
+            // use-of-unset-pointer crash that fragmented handshakes — e.g. via a proxy — hit).
+            std::string carry;
+            if (in_bufs[1].BufferType == SECBUFFER_EXTRA && in_bufs[1].cbBuffer > 0
+                && in_bufs[1].cbBuffer <= handshake_buf.size()) {
+                carry.assign(handshake_buf.data() + (handshake_buf.size() - in_bufs[1].cbBuffer),
+                             in_bufs[1].cbBuffer);
             }
+            handshake_buf.swap(carry);
             int n = recv(s, rbuf, sizeof(rbuf), 0);
             if (n <= 0) { resp.error = "TLS handshake recv failed"; goto cleanup; }
             handshake_buf.append(rbuf, n);
@@ -776,10 +834,14 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
                               const HttpChunkCallback* on_chunk = nullptr)
 {
     HttpClientResponse resp;
-    sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
+    bool via_proxy = !opts.proxy.empty();
+    std::string phost; int pport = 0;
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
+                         : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
-    std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr);
+    std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr, /*absolute_uri=*/ via_proxy);
     if (::send(s, req.data(), req.size(), 0) < 0) {
         close(s); resp.error = "send failed"; return resp;
     }
@@ -815,8 +877,32 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     SSL_CTX* ctx = get_ssl_ctx();
     if (!ctx) { resp.error = "SSL_CTX init failed"; return resp; }
 
-    sock_t s = tcp_connect(url.host, url.port, opts.timeout_ms);
+    bool via_proxy = !opts.proxy.empty();
+    std::string phost; int pport = 0;
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
+                         : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
+
+    if (via_proxy) {
+        // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
+        std::string tgt = hc_strip_crlf(url.host) + ":" + std::to_string(url.port);
+        std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
+        if (::send(s, creq.data(), creq.size(), 0) < 0) { close(s); resp.error = "proxy CONNECT send failed"; return resp; }
+        std::string pr; char pb[1024];
+        for (;;) {
+            int w = client_wait_readable(s, opts.timeout_ms);
+            if (w == 0) { close(s); resp.error = "proxy CONNECT timeout"; return resp; }
+            ssize_t pn = recv(s, pb, sizeof(pb), 0);
+            if (pn <= 0) { close(s); resp.error = "proxy closed during CONNECT"; return resp; }
+            pr.append(pb, pn);
+            if (pr.find("\r\n\r\n") != std::string::npos) break;
+            if (pr.size() > 16384) { close(s); resp.error = "proxy CONNECT response too large"; return resp; }
+        }
+        int pstatus = 0; auto sp = pr.find(' ');
+        if (sp != std::string::npos) { try { pstatus = std::stoi(pr.substr(sp + 1, 3)); } catch (...) {} }
+        if (pstatus < 200 || pstatus >= 300) { close(s); resp.error = "http:: proxy CONNECT rejected (status " + std::to_string(pstatus) + ")"; return resp; }
+    }
 
     SSL* ssl = SSL_new(ctx);
     if (!ssl) { close(s); resp.error = "SSL_new failed"; return resp; }

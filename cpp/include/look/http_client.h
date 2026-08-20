@@ -23,9 +23,10 @@ struct HttpClientResponse {
 };
 
 struct HttpOptions {
-    int  timeout_ms       = 10000;   // default 10s
-    bool follow_redirects = false;   // opt-in: follow 3xx Location headers
-    int  max_redirects    = 5;       // hop cap when following redirects
+    int         timeout_ms       = 10000;   // default 10s
+    bool        follow_redirects = false;   // opt-in: follow 3xx Location headers
+    int         max_redirects    = 5;       // hop cap when following redirects
+    std::string proxy;                       // "http://host:port" — routes traffic through a proxy
 };
 
 // Parses "https://host:port/path?query" into parts
