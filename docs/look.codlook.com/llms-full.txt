@@ -2030,6 +2030,19 @@ $limit = config("pagination.per_page")  # dot-notation
 
 > **LOG_DIR must be an absolute path.** A relative path doesn't work in CGI mode — always use a full path like `C:/app/...`.
 
+## args() — CLI arguments
+
+`args()` returns the command-line words after the script name, as an array of strings — the building block for writing your own CLI tools and sub-commands in LOOK. In the web/CGI runtime it returns an empty array (no CLI arguments).
+
+```lk
+# run:  lk deploy.lk staging --force
+$a = args()          # ["staging", "--force"]
+if (count($a) == 0) { print("usage: lk deploy.lk <env> [--force]"); exit(1) }
+if ($a[0] == "staging") { # ... }
+```
+
+This is what lets a single `.lk` act like a real command — e.g. the `migrate` module dispatches `lk migrate.lk up|down|status` on `args()[0]`.
+
 ## log::
 
 | Function | Level | Use |

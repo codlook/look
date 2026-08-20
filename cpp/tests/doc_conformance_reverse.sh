@@ -31,6 +31,26 @@ else
   echo "  OK   tüm namespaced builtin belgeli (veya gerekçeli dışlamada)"
 fi
 
+# BARE (namespaced-OLMAYAN) builtin'ler — KÖR NOKTAYDI: args() belgesiz eklenip guard'dan
+# geçebildi çünkü yukarıdaki tarama yalnız "mod::fn" biçimini kontrol ediyordu. Bunları da
+# denetle. Bazı bare isimler KASITEN belgesizdir: kanonik biçimi belgeli geri-uyumluluk
+# takma adları (json_encode→json::encode, strlen→string::len...). Onlar BARE_EXCLUDE'da.
+BARE_EXCLUDE="json_encode json_decode strlen strtolower strtoupper"
+bare=$(sed -n '/const std::vector<std::string>& builtin_names/,/return NAMES;/p' "$BUILTINS" \
+  | grep -oE '"[a-z_][a-z0-9_]*"' | tr -d '"' | grep -vE '::' | sort -u)
+undoc_bare=""
+for n in $bare; do
+  case " $BARE_EXCLUDE " in *" $n "*) continue;; esac
+  grep -qw "$n" "$DOCS" || undoc_bare="$undoc_bare $n"
+done
+if [ -n "$undoc_bare" ]; then
+  echo "  FAIL: bare builtin var ama docs'ta YOK (belgele ya da gerekçeyle BARE_EXCLUDE'a ekle):"
+  for u in $undoc_bare; do echo "    $u"; done
+  fail=1
+else
+  echo "  OK   tüm bare builtin belgeli (veya gerekçeli dışlamada)"
+fi
+
 # POZİTİF KONTROL: belgeli bir fonksiyon (session::regenerate) docs'tan geçici çıkarılınca guard RED vermeli.
 if grep -qF "session::regenerate" "$DOCS"; then
   echo "  OK   pozitif-kontrol referansı mevcut (session::regenerate belgeli)"

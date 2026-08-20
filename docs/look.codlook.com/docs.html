@@ -2028,6 +2028,18 @@ LOG_DIR=C:/app/logs</code></pre>
   <div class="callout warn">
     <p><strong>LOG_DIR must be an absolute path.</strong> A relative path doesn't work in CGI mode — always use a full path like <code>C:/app/...</code>.</p>
   </div>
+
+  <h2>args() — CLI arguments</h2>
+  <p><code>args()</code> returns the command-line words that follow the script name, as an
+  array of strings — the building block for writing your own CLI tools and sub-commands
+  in LOOK. In the web/CGI runtime there are no CLI arguments, so it returns an empty array.</p>
+<pre><code><span class="cm"># run:  lk deploy.lk staging --force</span>
+<span class="var">$a</span> = <span class="fn">args</span>()          <span class="cm"># ["staging", "--force"]</span>
+<span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$a</span>) == <span class="lit">0</span>) { <span class="fn">print</span>(<span class="str">"usage: lk deploy.lk &lt;env&gt; [--force]"</span>); <span class="fn">exit</span>(<span class="lit">1</span>) }
+<span class="kw">if</span> (<span class="var">$a</span>[<span class="lit">0</span>] == <span class="str">"staging"</span>) { <span class="cm"># ... </span> }</code></pre>
+  <p>This is what lets a single <code>.lk</code> act like a real command — e.g. the
+  <code>migrate</code> module dispatches <code>lk migrate.lk up|down|status</code> on
+  <code>args()[0]</code>.</p>
 </section>
 
 <section id="log">
