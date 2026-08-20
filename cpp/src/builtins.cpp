@@ -132,6 +132,7 @@ const std::vector<std::string>& builtin_names() {
         // string:: tamamlama — format + regex (aynı landmine; regex/format'lı route'lar
         // fallback ediyordu). Auto-wire string modülünden bağlar.
         "string::format", "string::regex_match", "string::regex_replace", "string::regex_match_all",
+        "string::decode",  // charset → UTF-8 (iso-8859-9 etc.)
         // type:: modülü — builtin_names'de HİÇ yoktu (bare is_int/is_string ayrı, index
         // 10-15). `use type` ile type::is_int/of/to_int çağıran route fallback ediyordu.
         "type::is_null", "type::is_int", "type::is_float", "type::is_string", "type::is_bool",

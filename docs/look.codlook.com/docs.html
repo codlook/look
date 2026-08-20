@@ -2956,6 +2956,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
     <tr><td>string::regex_match($s, $pat)</td><td>Regex match → bool</td></tr>
     <tr><td>string::regex_replace($s, $pat, $rep)</td><td>Replace with a regex → string</td></tr>
     <tr><td>string::regex_match_all($s, $pat)</td><td>Returns all matches → <code>[[full, group1, ...], ...]</code></td></tr>
+    <tr><td>string::decode($bytes, $charset)</td><td>Decode a single-byte charset to UTF-8 — <code>iso-8859-9</code>, <code>windows-1254</code>, <code>iso-8859-1</code>, <code>windows-1252</code>. Unknown charset → returns the input unchanged. (<code>http::</code> also applies this automatically when a response declares a supported charset.)</td></tr>
   </table>
 
   <div class="callout">
@@ -3439,7 +3440,11 @@ look install github.com/Codlook/look-packages
   </table>
 
   <p><strong>$headers</strong> — assoc array (optional): <code>["Authorization" => "Bearer token"]</code><br>
-  <strong>$opts</strong> — assoc array (optional): <code>["timeout" => 5000]</code> (ms, default 10000)</p>
+  <strong>$opts</strong> — assoc array (optional): <code>["timeout" => 5000]</code> (ms, default 10000) ·
+  <code>["follow" => true]</code> follows 3xx redirects (default off; each hop re-checks the SSRF guard) ·
+  <code>["max_redirects" => 5]</code> hop cap.
+  Responses are transparently gzip-decoded (bomb-guarded) and, when the Content-Type declares a supported
+  single-byte charset (iso-8859-9, windows-1254, …), converted to UTF-8.</p>
 
   <h3>http::stream — live streaming</h3>
   <p><code>http::stream()</code> does not buffer the whole response; instead it calls your <code>$callback</code> with each body chunk as it arrives. Pairs naturally with <code>route("SSE", ...)</code> and <code>channel()</code> — the building blocks for forwarding an upstream token stream (e.g. a Claude/LLM SSE response) straight to your client. Returns a response assoc (<code>status</code>, <code>headers</code>, <code>error</code>); the body arrives via the callback.</p>

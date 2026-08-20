@@ -56,14 +56,6 @@
   "documented": true
  },
  {
-  "name": "array::constant_compare",
-  "module": "array",
-  "fn": "constant_compare",
-  "sig": "array::constant_compare(…)",
-  "detail": "Dizi/koleksiyon modülü",
-  "documented": false
- },
- {
   "name": "array::contains",
   "module": "array",
   "fn": "contains",
@@ -94,22 +86,6 @@
   "sig": "array::flatten($arr [,$depth])",
   "detail": "Dizi/koleksiyon modülü",
   "documented": true
- },
- {
-  "name": "array::hex_decode",
-  "module": "array",
-  "fn": "hex_decode",
-  "sig": "array::hex_decode(…)",
-  "detail": "Dizi/koleksiyon modülü",
-  "documented": false
- },
- {
-  "name": "array::hex_encode",
-  "module": "array",
-  "fn": "hex_encode",
-  "sig": "array::hex_encode(…)",
-  "detail": "Dizi/koleksiyon modülü",
-  "documented": false
  },
  {
   "name": "array::keys",
@@ -150,22 +126,6 @@
   "sig": "array::push($arr, $v)",
   "detail": "Dizi/koleksiyon modülü",
   "documented": true
- },
- {
-  "name": "array::random_bytes",
-  "module": "array",
-  "fn": "random_bytes",
-  "sig": "array::random_bytes(…)",
-  "detail": "Dizi/koleksiyon modülü",
-  "documented": false
- },
- {
-  "name": "array::random_string",
-  "module": "array",
-  "fn": "random_string",
-  "sig": "array::random_string(…)",
-  "detail": "Dizi/koleksiyon modülü",
-  "documented": false
  },
  {
   "name": "array::reduce",
@@ -214,14 +174,6 @@
   "sig": "array::unique($arr)",
   "detail": "Dizi/koleksiyon modülü",
   "documented": true
- },
- {
-  "name": "array::uuid",
-  "module": "array",
-  "fn": "uuid",
-  "sig": "array::uuid(…)",
-  "detail": "Dizi/koleksiyon modülü",
-  "documented": false
  },
  {
   "name": "array::values",
@@ -400,14 +352,6 @@
   "documented": true
  },
  {
-  "name": "crypto::hmac",
-  "module": "crypto",
-  "fn": "hmac",
-  "sig": "crypto::hmac(…)",
-  "detail": "Kriptografi modülü",
-  "documented": false
- },
- {
   "name": "crypto::hmac_sha256",
   "module": "crypto",
   "fn": "hmac_sha256",
@@ -430,14 +374,6 @@
   "sig": "crypto::random_bytes($n)",
   "detail": "Kriptografi modülü",
   "documented": true
- },
- {
-  "name": "crypto::random_hex",
-  "module": "crypto",
-  "fn": "random_hex",
-  "sig": "crypto::random_hex(…)",
-  "detail": "Kriptografi modülü",
-  "documented": false
  },
  {
   "name": "crypto::random_string",
@@ -816,14 +752,6 @@
   "documented": true
  },
  {
-  "name": "http::head",
-  "module": "http",
-  "fn": "head",
-  "sig": "http::head(…)",
-  "detail": "HTTP istemci modülü",
-  "documented": false
- },
- {
   "name": "http::patch",
   "module": "http",
   "fn": "patch",
@@ -854,14 +782,6 @@
   "sig": "http::put($url, $body [,$headers [,$opts]])",
   "detail": "HTTP istemci modülü",
   "documented": true
- },
- {
-  "name": "http::request",
-  "module": "http",
-  "fn": "request",
-  "sig": "http::request(…)",
-  "detail": "HTTP istemci modülü",
-  "documented": false
  },
  {
   "name": "http::stream",
@@ -963,7 +883,7 @@
   "name": "jobs::worker",
   "module": "jobs",
   "fn": "worker",
-  "sig": "jobs::worker($name, $fn)",
+  "sig": "jobs::worker($queue, $fn)",
   "detail": "Arka plan işleri modülü",
   "documented": true
  },
@@ -1248,14 +1168,6 @@
   "documented": true
  },
  {
-  "name": "queue::flush",
-  "module": "queue",
-  "fn": "flush",
-  "sig": "queue::flush(…)",
-  "detail": "Kuyruk modülü",
-  "documented": false
- },
- {
   "name": "queue::names",
   "module": "queue",
   "fn": "names",
@@ -1339,9 +1251,9 @@
   "name": "request::headers",
   "module": "request",
   "fn": "headers",
-  "sig": "request::headers(…)",
+  "sig": "request::headers()",
   "detail": "HTTP istek verisi modülü",
-  "documented": false
+  "documented": true
  },
  {
   "name": "request::ip",
@@ -1504,6 +1416,14 @@
   "documented": true
  },
  {
+  "name": "route::group",
+  "module": "route",
+  "fn": "group",
+  "sig": "route::group(prefix, [middlewares], fn)",
+  "detail": "Yönlendirme modülü",
+  "documented": true
+ },
+ {
   "name": "route::matched",
   "module": "route",
   "fn": "matched",
@@ -1552,12 +1472,20 @@
   "documented": true
  },
  {
+  "name": "session::has",
+  "module": "session",
+  "fn": "has",
+  "sig": "session::has(\"admin_id\")",
+  "detail": "Oturum modülü",
+  "documented": true
+ },
+ {
   "name": "session::regenerate",
   "module": "session",
   "fn": "regenerate",
-  "sig": "session::regenerate(…)",
+  "sig": "session::regenerate()",
   "detail": "Oturum modülü",
-  "documented": false
+  "documented": true
  },
  {
   "name": "session::set",
@@ -1595,7 +1523,7 @@
   "name": "sse::on",
   "module": "sse",
   "fn": "on",
-  "sig": "sse::on($sse, \"close\", $fn)",
+  "sig": "sse::on($sse, \"close\", fn)",
   "detail": "Server-Sent Events modülü",
   "documented": true
  },
@@ -1603,7 +1531,7 @@
   "name": "sse::send",
   "module": "sse",
   "fn": "send",
-  "sig": "sse::send($sse, $data [, $event])",
+  "sig": "sse::send($sse, $data, \"event\")",
   "detail": "Server-Sent Events modülü",
   "documented": true
  },
@@ -1708,6 +1636,14 @@
   "module": "string",
   "fn": "regex_match_all",
   "sig": "string::regex_match_all($s, $pat)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
+  "name": "string::decode",
+  "module": "string",
+  "fn": "decode",
+  "sig": "string::decode($bytes, $charset)",
   "detail": "Metin işlemleri modülü",
   "documented": true
  },
@@ -1851,7 +1787,7 @@
   "name": "timer::after",
   "module": "timer",
   "fn": "after",
-  "sig": "timer::after($ms, $fn)",
+  "sig": "timer::after(ms, fn)",
   "detail": "Zamanlayıcı modülü",
   "documented": true
  },
@@ -1859,7 +1795,7 @@
   "name": "timer::cancel",
   "module": "timer",
   "fn": "cancel",
-  "sig": "timer::cancel($id)",
+  "sig": "timer::cancel($ping_id)",
   "detail": "Zamanlayıcı modülü",
   "documented": true
  },
@@ -1867,7 +1803,7 @@
   "name": "timer::every",
   "module": "timer",
   "fn": "every",
-  "sig": "timer::every($ms, $fn)",
+  "sig": "timer::every(ms, fn)",
   "detail": "Zamanlayıcı modülü",
   "documented": true
  },
@@ -2027,7 +1963,7 @@
   "name": "ws::broadcast",
   "module": "ws",
   "fn": "broadcast",
-  "sig": "ws::broadcast($msg)",
+  "sig": "ws::broadcast($data)",
   "detail": "WebSocket modülü",
   "documented": true
  },
@@ -2051,7 +1987,7 @@
   "name": "ws::on",
   "module": "ws",
   "fn": "on",
-  "sig": "ws::on($ws, \"message\", $fn)",
+  "sig": "ws::on($ws, \"message\", fn)",
   "detail": "WebSocket modülü",
   "documented": true
  },

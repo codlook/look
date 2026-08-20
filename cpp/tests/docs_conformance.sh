@@ -15,7 +15,7 @@
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"
-DOCS="$ROOT/docs/index.html"
+DOCS="$ROOT/docs/look.codlook.com/docs.html"
 BUILTINS="$ROOT/cpp/src/builtins.cpp"
 FIXTURE="$DIR/docs_api.txt"
 [ -f "$BUILTINS" ] || { echo "builtins.cpp yok: $BUILTINS"; exit 2; }
@@ -81,6 +81,9 @@ timer::every
 timer::cancel
 jobs::run
 jobs::worker
+# Regex artefaktı: docs'taki "type::is_*" (predicate ailesi) `::[a-z_0-9]+` ile "type::is_"e
+# kesiliyor — gerçek fonksiyon değil (type::is_int/is_string/... ayrı ayrı belgeli ve builtin).
+type::is_
 ALLOW
 
 # Vacuous-green guard (Kural 2): boş/kesik fixture hiçbir şey test etmeden GEÇER —

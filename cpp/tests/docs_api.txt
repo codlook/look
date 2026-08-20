@@ -193,6 +193,7 @@ sse::close
 sse::on
 sse::send
 string::contains
+string::decode
 string::ends_with
 string::format
 string::index_of
@@ -222,6 +223,7 @@ template::render_string
 timer::after
 timer::cancel
 timer::every
+type::is_
 type::is_array
 type::is_bool
 type::is_float

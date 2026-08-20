@@ -25,7 +25,7 @@ instead of X" frame.
 | `github.com/codlook/look-packages` | Per-project packages installed with `lk install` (e.g. `firebase`, `iyzico`, `monitor`). |
 
 Websites (served from `docs/` in the main repo):
-- **look.codlook.com** — the LOOK language site (source: `docs/ornek-template/`), English.
+- **look.codlook.com** — the LOOK language site (source: `docs/look.codlook.com/`), English.
 - **codlook.com** — the company site (source: `docs/codlook.com/`), Turkish.
 - **looky.codlook.com** — Looky, the AI assistant for LOOK (source: `docs/looky.codlook.com/`).
 - AI/SEO files live at each site root: `llms.txt`, `llms-full.txt`, `sitemap.xml`, `robots.txt`, plus per-page JSON-LD.
@@ -39,7 +39,7 @@ cpp/                 C++23 runtime — the language itself
   include/look/      headers (ast.h, bytecode.h, builtins.h, crypto_sha256.h, wire parsers…)
   tests/             differential + guard scripts, fuzzers
   CMakeLists.txt · Dockerfile.build
-docs/                websites (ornek-template, codlook.com, looky.codlook.com) + *.md guides
+docs/                websites (look.codlook.com, codlook.com, looky.codlook.com) + *.md guides
 platforms/           linux (installers, rpm), plesk (extension), vscode (extension), windows
 dogfood/             apps written in LOOK, used to dogfood the language
 .github/workflows/   ci.yml, sanitizers.yml, security.yml, windows.yml, release*.yml, docker-publish.yml
@@ -95,9 +95,9 @@ look.codlook.com/docs.html → Environment Variables).
 
 ## Website generators (don't hand-edit generated output blindly)
 
-- `docs/ornek-template/errors.html` is **generated** from `docs/errors.md` (plus a curated
+- `docs/look.codlook.com/errors.html` is **generated** from `docs/errors.md` (plus a curated
   wrong→right code-example map). Edit the source/generator, then regenerate.
-- `docs/ornek-template/packages.html` was generated from package data that no longer lives in the
+- `docs/look.codlook.com/packages.html` was generated from package data that no longer lives in the
   repo — it is now **hand-edited directly**.
 - When you change docs, keep the machine-readable files in sync: `llms.txt`, `llms-full.txt`
   (the whole docs as one Markdown), `sitemap.xml`, and each page's JSON-LD.

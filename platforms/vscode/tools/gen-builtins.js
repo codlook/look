@@ -21,7 +21,7 @@ const names = grep('"([a-z_]+::[a-z_]+)"', srcFiles).sort();
 
 // docs/index.html'i düz metne indir: HTML etiketlerini sök + varlıkları çöz.
 // Aksi halde <pre> içindeki vurgulu imzalar <span>...</span> ile kirlenir.
-let docs = fs.readFileSync('docs/index.html', 'utf8');
+let docs = fs.readFileSync('docs/look.codlook.com/docs.html', 'utf8');
 docs = docs.replace(/<[^>]+>/g, '')
            .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
            .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -72,9 +72,15 @@ const SUPPLEMENT = [
   ['crypto::base64url_encode', '$s'], ['crypto::base64url_decode', '$s'],
   ['crypto::rs256_sign', '$data, $pem_key'], ['crypto::rs256_sign_b64url', '$data, $pem_key'],
   ['crypto::rs256_verify', '$data, $sig, $pem_key'],
+  // route::group — docs örneğindeki closure gövdesi ({...}) rsig'i şaşırtıyor → elle imza.
+  ['route::group', '$prefix, [$middleware], $fn'],
 ];
 for (const [nm, args] of SUPPLEMENT) {
-  if (!names.includes(nm)) { names.push(nm); byName[nm] = [args]; }
+  if (!names.includes(nm)) names.push(nm);
+  // SUPPLEMENT elle-doğrulanmış imza taşır. Docs auto-çıkarımı boş-string ("") ile kirlenmişse
+  // (bestArgs boşu gerçek args'a tercih ediyor) elle imzayı kullan; docs'ta gerçek args varsa onu tut.
+  const good = (byName[nm] || []).filter(a => a && a.trim() !== '');
+  byName[nm] = good.length ? good : [args];
 }
 names.sort();
 

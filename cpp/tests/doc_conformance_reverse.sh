@@ -6,7 +6,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILTINS="$ROOT/cpp/src/builtins.cpp"
-DOCS="$ROOT/docs/index.html"
+DOCS="$ROOT/docs/look.codlook.com/docs.html"
 fail=0
 
 # GEREKÇELİ DIŞLAMA (known_fail DEĞİL — her biri docs'ta BAŞKA formda belgeli):
