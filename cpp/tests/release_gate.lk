@@ -36,6 +36,14 @@ $FAIL = $FAIL + chk("B-05 aritmetik fail-loud", $b5)
 # --- B-08: backtick kacisi (html_escape) ---
 $FAIL = $FAIL + chk("B-08 backtick escape", html::escape("`") == "&#96;")
 
+# --- http:: codec turu: string::decode builtin'i artefakta girdi mi (bu release'in eklemesi).
+#     LOOK string literal'i ham yuksek-byte tasiyamaz (\x yok) -> kodek TABLOSU offline test
+#     edilemez; ama VARLIK test edilir: eski/yamasiz binary'de fonksiyon YOK -> "no function
+#     'decode'" throw -> catch -> false -> FAIL (drift yakalanir). ASCII kimlik yolu da dogrulanir. ---
+$dec_present = false
+try { $dv = string::decode("hello", "windows-1254"); $dec_present = ($dv == "hello") } catch ($e) { }
+$FAIL = $FAIL + chk("string::decode builtin present (charset codec shipped)", $dec_present)
+
 # --- B-04: JSON yinelenen anahtar son-kazanir + konum korunur ---
 $FAIL = $FAIL + chk("B-04 JSON son-kazanir", json::encode(json::decode("{\"a\":1,\"b\":2,\"a\":3}")) == "{\"a\":3,\"b\":2}")
 
@@ -68,7 +76,7 @@ $FAIL = $FAIL + chk("S1 native prepared binding (backtick)", $nb)
 # (Pozitif kontrol: analizci yamasiz binary'de bu satirin FAIL verdigini dogruladi.)
 $nfmsg = ""
 try { db::query($c, "SELECT ? AS v", [math::pow(10, 400)]) } catch ($e) { $nfmsg = "" . $e }
-$FAIL = $FAIL + chk("non-finite bind fail-loud", string::contains($nfmsg, "bind edilemez"))
+$FAIL = $FAIL + chk("non-finite bind fail-loud", string::contains($nfmsg, "cannot bind"))
 
 # NOT: "float round-trip" assertion'i CIKARILDI — SQLite'ta ayirt edici degildi (eski yol da
 # %.17g ile dogruydu -> yamasiz binary'de de gecerdi = sahte assertion, t1 dersi). Asil duzelen
