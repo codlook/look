@@ -1890,6 +1890,12 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             return Value(); // unreachable
         }
 
+        if (fn_name == "args") {
+            auto arr = std::make_shared<std::vector<Value>>();
+            for (const auto& s : script_args()) arr->push_back(Value(s));
+            return Value(arr);
+        }
+
         if (fn_name == "env") {
             ensure_env_loaded();
             if (argc < 1) return Value();

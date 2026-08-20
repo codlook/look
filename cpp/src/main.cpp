@@ -141,7 +141,7 @@ bool find_undefined_call(const Program& prog, std::string& name, int& line, int&
     // Gecerli bare cagri isimleri: interpreter'in inline fonksiyonlari +
     // builtin_names() bare girdileri + comert ekstralar (yanlis pozitif olmasin).
     std::set<std::string> valid = {
-        "abs","before_route","bool","boolval","chan_size","channel","close","config","count",
+        "abs","args","before_route","bool","boolval","chan_size","channel","close","config","count",
         "die","env","exit","float","floatval","header","int","intval","join","json","len","max",
         "min","parallel","pop","push","receive","redirect","response","route","send","sqrt","stop",
         "str","string","strlen","strtolower","strtoupper","strval",
@@ -219,6 +219,12 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     }
     b[BI("before_route")] = [](std::vector<Value>&) -> Value { return Value(); };
     b[BI("env")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(); const char* e=std::getenv(a[0].to_string().c_str()); if (e) return Value(std::string(e)); return a.size()>=2?Value(a[1].to_string()):Value(std::string()); };
+    if (look::builtin_index("args") >= 0)
+        b[BI("args")] = [](std::vector<Value>&) -> Value {
+            auto arr = std::make_shared<std::vector<Value>>();
+            for (const auto& s : look::script_args()) arr->push_back(Value(s));
+            return Value(arr);
+        };
     // channel() — CLI-VM'de BAĞLI DEĞİLDİ: send/receive'in CHAN_* opcode'ları var ama
     // kanal OLUŞTURMA düz builtin çağrısı → VM tablosunda boş → "kullanilamiyor
     // (baglanmamis)". tree-walk (interpreter.cpp:1631) inline hallettiği için CLI'da
@@ -379,8 +385,11 @@ int main(int argc, char* argv[]) {
         if (cmd == "-c") {
             if (argc < 3) { print_usage(); return 1; }
             source = argv[2];
+            for (int i = 3; i < argc; i++) look::script_args().push_back(argv[i]);
         } else {
             source = read_file(cmd);
+            // `lk file.lk <args...>` — script'ten sonraki kelimeler args()'a gider.
+            for (int i = 2; i < argc; i++) look::script_args().push_back(argv[i]);
         }
 
         look::Lexer  lexer(source);

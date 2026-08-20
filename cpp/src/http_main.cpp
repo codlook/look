@@ -532,6 +532,9 @@ static void run_setup_http(const fs::path& script) {
                 if (buf <= 0) buf = (1 << 20);
                 return look::Value(std::make_shared<look::LookChannel>(buf));
             };
+            setup_builtins[SBI("args")] = [](std::vector<look::Value>&) -> look::Value {
+                return look::Value(std::make_shared<std::vector<look::Value>>());
+            };
             setup_builtins[SBI("env")] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value();
                 std::string key = args[0].to_string();
@@ -1011,6 +1014,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             int buf = args.empty() ? 128 : (args[0].type() == look::Value::INT ? args[0].as_int() : 128);
             if (buf <= 0) buf = (1 << 20);
             return look::Value(std::make_shared<look::LookChannel>(buf));
+        };
+        // args() — web/CGI'de CLI argümanı yok → boş dizi (CLI-only anlamlı).
+        req_builtins[BI("args")] = [](std::vector<look::Value>&) -> look::Value {
+            return look::Value(std::make_shared<std::vector<look::Value>>());
         };
         // env() ve config()
         req_builtins[BI("env")] = [](std::vector<look::Value>& args) -> look::Value {

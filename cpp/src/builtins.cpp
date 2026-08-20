@@ -184,8 +184,17 @@ const std::vector<std::string>& builtin_names() {
         // route::group — setup-zamanı prefix+middleware kalıtımı (Go/chi tarzı). Closure alır,
         // içindeki route() çağrıları grup prefix'ini/mw'lerini miras alır. Bkz. route_group.h.
         "route::group",
+        // args — CLI argümanları (bare builtin). `lk x.lk a b` → args() == ["a","b"].
+        // Web/CGI'de boş dizi. Sona eklendi (indeks kayması yok).
+        "args",
     };
     return NAMES;
+}
+
+// CLI argümanları — süreç-global, main() doldurur. Varsayılan boş (web/CGI).
+std::vector<std::string>& script_args() {
+    static std::vector<std::string> ARGS;
+    return ARGS;
 }
 
 int builtin_index(const std::string& name) {

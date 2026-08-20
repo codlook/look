@@ -22,6 +22,10 @@ namespace look {
 // Kanonik builtin isim listesi — index == vector pozisyonu
 const std::vector<std::string>& builtin_names();
 
+// CLI argümanları — `lk script.lk <args...>`'daki script'ten SONRAKI kelimeler.
+// main() bir kez doldurur; args() builtin'i buradan okur (salt-okunur, süreç-global).
+std::vector<std::string>& script_args();
+
 // İsim → index; bulunamazsa -1. O(1) (ilk çağrıda hash map kurulur).
 int builtin_index(const std::string& name);
 
