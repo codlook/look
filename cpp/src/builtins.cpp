@@ -187,6 +187,9 @@ const std::vector<std::string>& builtin_names() {
         // args — CLI argümanları (bare builtin). `lk x.lk a b` → args() == ["a","b"].
         // Web/CGI'de boş dizi. Sona eklendi (indeks kayması yok).
         "args",
+        // db::driver — bağlı sürücü ("sqlite"/"mysql"/"postgres"); lehçe-farkında
+        // kod (migrate şema→DDL) için. mod::fn → http_main otomatik wire eder.
+        "db::driver",
     };
     return NAMES;
 }

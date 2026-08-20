@@ -1467,6 +1467,13 @@ static Module make_db_module(Interpreter* interp) {
         return Value((int64_t)get_conn(args[0])->affected_rows());
     };
 
+    // db::driver($conn) — "sqlite" | "mysql" | "postgres". Lets dialect-aware code
+    // (e.g. the migrate module's schema→DDL) pick the right SQL for the live DB.
+    m.functions["driver"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("db::driver() requires connection");
+        return Value(std::string(get_conn(args[0])->driver_name()));
+    };
+
     // db::escape($conn, $str) — DRIVER-AWARE. Eskiden HER sürücü için MySQL
     // backslash escaping (`\'`) kullanıyordu; ama SQLite/PostgreSQL standart
     // SQL'de backslash'i escape saymaz → `\'` içindeki `'` string'i kapatıp

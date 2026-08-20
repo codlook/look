@@ -71,6 +71,7 @@ db::close
 db::col
 db::commit
 db::connect
+db::driver
 db::escape
 db::exec
 db::last_id

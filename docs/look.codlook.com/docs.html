@@ -1718,6 +1718,7 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
     <tr><td>db::last_id($conn)</td><td>Auto-increment ID of the last INSERT</td></tr>
     <tr><td>db::affected($conn)</td><td>Number of rows affected by the last UPDATE/DELETE</td></tr>
     <tr><td>db::col($conn, $sql, $params)</td><td>Returns the first column of the first row (scalar)</td></tr>
+    <tr><td>db::driver($conn)</td><td>The connected driver — <code>"sqlite"</code>, <code>"mysql"</code> or <code>"postgres"</code>. For dialect-aware code (e.g. portable schema/DDL).</td></tr>
     <tr><td>db::escape($conn, $str)</td><td>Escapes a string for SQL (prefer parameterized queries)</td></tr>
     <tr><td>db::close($conn)</td><td>Close the connection</td></tr>
     <tr><td>db::begin($conn)</td><td>Start a transaction (MySQL / SQLite / PostgreSQL)</td></tr>
