@@ -4371,6 +4371,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | `LOOK_DB_POOL_SIZE` | = workers | Connections per DSN in the pool (MySQL/PostgreSQL). Clamped to 1–256. SQLite stays at 1. |
 | `LOOK_DB_ASYNC_THREADS` | = workers | Background threads for async DB work. |
 | `LOOK_CACHE_MAX_ENTRIES` | `100000` | Maximum entries held by the in-process `cache::` store before eviction. |
+| `LOOK_HOT_RELOAD_MS` | `500` | How often `--mode http` checks the script's modification time to hot-reload it, in milliseconds. Throttled so the check stays off the per-request hot path. `0` checks on every request (legacy behaviour); a higher value reloads less often. |
 
 ### Mail server
 
