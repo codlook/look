@@ -1698,6 +1698,7 @@ db::exec($conn, "DELETE FROM products WHERE id=?", [$id])
 | db::last_id($conn) | Auto-increment ID of the last INSERT |
 | db::affected($conn) | Number of rows affected by the last UPDATE/DELETE |
 | db::col($conn, $sql, $params) | Returns the first column of the first row (scalar) |
+| db::driver($conn) | The connected driver — "sqlite", "mysql" or "postgres". For dialect-aware code (e.g. portable schema/DDL). |
 | db::escape($conn, $str) | Escapes a string for SQL (prefer parameterized queries) |
 | db::close($conn) | Close the connection |
 | db::begin($conn) | Start a transaction (MySQL / SQLite / PostgreSQL) |
