@@ -210,6 +210,15 @@ std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vect
     }
     sqlite3_finalize(stmt);
 
+    // rc-check — query()'deki (satir 139) ile SIMETRIK. Eskiden YOKTU: sqlite3_step
+    // constraint ihlalinde SQLITE_CONSTRAINT dondurur (ROW degil) → dongu cikar, satir
+    // reddedilir ama exception ATILMAZDI → db::exec sessizce basarili donerdi (UNIQUE/
+    // NOT NULL/FK/CHECK sessizce yutuluyordu, veri-butunlugu tuzagi). Artik query() ile
+    // ayni sozlesme: fail-loud.
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        throw std::runtime_error(std::string("sqlite: step error: ") + sqlite3_errmsg(db_));
+    }
+
     if (rows.empty()) {
         affected_rows_  = sqlite3_changes(db_);
         last_insert_id_ = sqlite3_last_insert_rowid(db_);

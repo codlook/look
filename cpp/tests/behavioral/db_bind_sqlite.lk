@@ -36,6 +36,20 @@ $inf = false
 try { db::exec($c, "INSERT INTO t (f) VALUES (?)", [math::pow(10, 400)]) } catch ($e) { $inf = true }
 chk("Inf fail-loud", $inf, true); $ran = $ran + 1
 
-const { EXPECTED = 8 }
+# constraint fail-loud — db::exec KISIT ihlalinde THROW etmeli. Eskiden SQLite sessizce
+# yutuyordu (execute() step-dongusu sonrasi rc-check yoktu; kardes query() zaten check'liydi
+# = asimetri). UNIQUE + NOT NULL ayri ayri kilitli (ikisi de ayni SQLITE_CONSTRAINT ailesi).
+db::exec($c, "CREATE TABLE ct (id INTEGER PRIMARY KEY, email TEXT UNIQUE, name TEXT NOT NULL)", [])
+db::exec($c, "INSERT INTO ct (id,email,name) VALUES (?,?,?)", [1, "a@x", "Ali"])
+$uq = false
+try { db::exec($c, "INSERT INTO ct (id,email,name) VALUES (?,?,?)", [2, "a@x", "Vel"]) } catch ($e) { $uq = true }
+chk("UNIQUE fail-loud", $uq, true); $ran = $ran + 1
+$cnt = db::query($c, "SELECT COUNT(*) AS c FROM ct", [])[0]
+chk("UNIQUE satir reddedildi (count==1)", "" . db::col($cnt, "c"), "1"); $ran = $ran + 1
+$nn = false
+try { db::exec($c, "INSERT INTO ct (id,email,name) VALUES (?,?,?)", [3, "b@x", null]) } catch ($e) { $nn = true }
+chk("NOT NULL fail-loud", $nn, true); $ran = $ran + 1
+
+const { EXPECTED = 11 }
 if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
 print("=== bind ran=" . $ran . " ===")

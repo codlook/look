@@ -49,6 +49,20 @@ $caught = false
 try { db::query($c, "SELECT * FROM bindp WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
 chk("param-sayim reddi", $caught, true); $ran = $ran + 1
 
-const { EXPECTED = 11 }
+# ── constraint fail-loud (UNIQUE + NOT NULL) — PG zaten dogruydu (ErrorResponse 'E'),
+# ama artik OLCULU-kilitli (kaynak-okumasi degil test). Uc surucude ayni sozlesme. ──
+db::exec($c, "DROP TABLE IF EXISTS ctp", [])
+db::exec($c, "CREATE TABLE ctp (id INT PRIMARY KEY, email VARCHAR(80) UNIQUE, name VARCHAR(80) NOT NULL)", [])
+db::exec($c, "INSERT INTO ctp (id,email,name) VALUES (?,?,?)", [1, "a@x", "Ali"])
+$uq = false
+try { db::exec($c, "INSERT INTO ctp (id,email,name) VALUES (?,?,?)", [2, "a@x", "Vel"]) } catch ($e) { $uq = true }
+chk("UNIQUE fail-loud", $uq, true); $ran = $ran + 1
+$cc = db::query($c, "SELECT COUNT(*) AS c FROM ctp", [])[0]
+chk("UNIQUE satir reddedildi (count==1)", "" . db::col($cc, "c"), "1"); $ran = $ran + 1
+$nn = false
+try { db::exec($c, "INSERT INTO ctp (id,email,name) VALUES (?,?,?)", [3, "b@x", null]) } catch ($e) { $nn = true }
+chk("NOT NULL fail-loud", $nn, true); $ran = $ran + 1
+
+const { EXPECTED = 14 }
 if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
 print("=== bind ran=" . $ran . " ===")

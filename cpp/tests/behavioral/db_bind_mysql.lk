@@ -50,6 +50,34 @@ $caught = false
 try { db::query($c, "SELECT * FROM bindm WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
 chk("param-sayim reddi", $caught, true); $ran = $ran + 1
 
-const { EXPECTED = 11 }
+# ── constraint fail-loud (UNIQUE + NOT NULL) — db::exec kisit ihlalinde THROW etmeli ──
+db::exec($c, "DROP TABLE IF EXISTS ctm", [])
+db::exec($c, "CREATE TABLE ctm (id INT PRIMARY KEY, email VARCHAR(80) UNIQUE, name VARCHAR(80) NOT NULL)", [])
+db::exec($c, "INSERT INTO ctm (id,email,name) VALUES (?,?,?)", [1, "a@x", "Ali"])
+$uq = false
+try { db::exec($c, "INSERT INTO ctm (id,email,name) VALUES (?,?,?)", [2, "a@x", "Vel"]) } catch ($e) { $uq = true }
+chk("UNIQUE fail-loud", $uq, true); $ran = $ran + 1
+$cc = db::query($c, "SELECT COUNT(*) AS c FROM ctm", [])[0]
+chk("UNIQUE satir reddedildi (count==1)", "" . db::col($cc, "c"), "1"); $ran = $ran + 1
+$nn = false
+try { db::exec($c, "INSERT INTO ctm (id,email,name) VALUES (?,?,?)", [3, "b@x", null]) } catch ($e) { $nn = true }
+chk("NOT NULL fail-loud", $nn, true); $ran = $ran + 1
+
+# ── binary temporal decode — prepared/binary yolda DATETIME/DATE/TIME/TIMESTAMP ham wire
+# baytlari yerine string dönmeli (eskiden default→read_lenenc_str = ham 7/4 bayt; text-protokol
+# hep dogruydu, sadece binary yol isirdi → PG etkilenmedi). WHERE tail=? bind'i binary yolu
+# zorlar. tail sentinel = CURSOR HIZASI: yanlis bayt tüketimi sonraki sütunu SESSIZCE bozar.
+db::exec($c, "DROP TABLE IF EXISTS tmm", [])
+db::exec($c, "CREATE TABLE tmm (dt DATETIME NOT NULL, ts TIMESTAMP NOT NULL, dt6 DATETIME(6) NOT NULL, d DATE NOT NULL, t TIME NOT NULL, tail VARCHAR(16) NOT NULL)", [])
+db::exec($c, "INSERT INTO tmm (dt,ts,dt6,d,t,tail) VALUES (?,?,?,?,?,?)", ["2026-01-02 13:14:15", "2026-03-04 05:06:07", "2026-07-08 09:10:11.123456", "2026-01-02", "13:14:15", "SENTINEL"])
+$tr = db::query($c, "SELECT dt,ts,dt6,d,t,tail FROM tmm WHERE tail=?", ["SENTINEL"])[0]
+chk("DATETIME round-trip", db::col($tr, "dt"), "2026-01-02 13:14:15"); $ran = $ran + 1
+chk("TIMESTAMP round-trip (0x07 ayri tip)", db::col($tr, "ts"), "2026-03-04 05:06:07"); $ran = $ran + 1
+chk("DATETIME(6) mikrosaniye (11-bayt)", db::col($tr, "dt6"), "2026-07-08 09:10:11.123456"); $ran = $ran + 1
+chk("DATE round-trip", db::col($tr, "d"), "2026-01-02"); $ran = $ran + 1
+chk("TIME round-trip", db::col($tr, "t"), "13:14:15"); $ran = $ran + 1
+chk("TAIL sentinel bozulmamis (cursor hizasi)", db::col($tr, "tail"), "SENTINEL"); $ran = $ran + 1
+
+const { EXPECTED = 20 }
 if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
 print("=== bind ran=" . $ran . " ===")

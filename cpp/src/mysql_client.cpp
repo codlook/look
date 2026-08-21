@@ -14,6 +14,7 @@
 #  include <openssl/err.h>
 #endif
 #include <cstring>
+#include <cstdio>
 #include <sstream>
 #include <algorithm>
 #include <thread>
@@ -981,6 +982,49 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                     for (int b=0; b<bytes && rp<re; b++,rp++) v |= ((uint64_t)*rp << (b*8));
                     return (int64_t)v;
                 };
+                // MySQL binary temporal decode. Eskiden DATE/DATETIME/TIMESTAMP/TIME
+                // `default`→read_lenenc_str'e düşüyordu → ham wire baytları dönüyordu
+                // (DATETIME 7, DATE 4 bayt) → docs "string YYYY-MM-DD..." diyor, İHLAL.
+                // Binary format: 1 uzunluk baytı, sonra L veri baytı. KRİTİK: her dal
+                // TAM L bayt tüketmeli, yoksa cursor kayar ve SONRAKİ sütun bozulur
+                // (sessiz bozulma) — bu yüzden sonda rp = p0 + L ile kesin hizalanır.
+                auto read_temporal = [&](bool is_time) -> std::string {
+                    int L = (int)read_le(1);                 // uzunluk baytı (rp bir ilerledi)
+                    const uint8_t* p0 = rp;                  // veri başı
+                    auto g = [&](int off)->int { return (p0+off < re) ? p0[off] : 0; };
+                    char buf[48]; buf[0]=0;
+                    if (is_time) {
+                        if (L == 0) { std::strcpy(buf, "00:00:00"); }
+                        else {
+                            int sign = g(0);
+                            uint32_t days = (uint32_t)(g(1) | (g(2)<<8) | (g(3)<<16) | ((uint32_t)g(4)<<24));
+                            long th = (long)days*24 + g(5);
+                            if (L >= 12) {
+                                uint32_t us = (uint32_t)(g(8) | (g(9)<<8) | (g(10)<<16) | ((uint32_t)g(11)<<24));
+                                std::snprintf(buf,sizeof buf,"%s%ld:%02d:%02d.%06u", sign?"-":"", th, g(6), g(7), us);
+                            } else {
+                                std::snprintf(buf,sizeof buf,"%s%ld:%02d:%02d", sign?"-":"", th, g(6), g(7));
+                            }
+                        }
+                    } else {
+                        if (L == 0) { std::strcpy(buf, "0000-00-00"); }
+                        else {
+                            int year = g(0) | (g(1)<<8);
+                            if (L >= 7) {
+                                if (L >= 11) {
+                                    uint32_t us = (uint32_t)(g(7) | (g(8)<<8) | (g(9)<<16) | ((uint32_t)g(10)<<24));
+                                    std::snprintf(buf,sizeof buf,"%04d-%02d-%02d %02d:%02d:%02d.%06u",year,g(2),g(3),g(4),g(5),g(6),us);
+                                } else {
+                                    std::snprintf(buf,sizeof buf,"%04d-%02d-%02d %02d:%02d:%02d",year,g(2),g(3),g(4),g(5),g(6));
+                                }
+                            } else {
+                                std::snprintf(buf,sizeof buf,"%04d-%02d-%02d",year,g(2),g(3));
+                            }
+                        }
+                    }
+                    rp = p0 + L; if (rp > re) rp = re;       // TAM L bayt: cursor hizası garantili
+                    return std::string(buf);
+                };
                 switch(ct) {
                     case 0x01:           dv.str = std::to_string(read_le(1)); break;
                     case 0x02: case 0x0D: dv.str = std::to_string(read_le(2)); break;
@@ -991,6 +1035,11 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                     case 0x04: { float f;  if(rp+4<=re){memcpy(&f,rp,4);rp+=4;} dv.str=look_format_double(f); break; }
                     case 0x05: { double d; if(rp+8<=re){memcpy(&d,rp,8);rp+=8;} dv.str=look_format_double(d); break; }
                     case 0x10:            dv.str = std::to_string(read_le(1)); break;
+                    // Temporal: DATE(0x0A)/NEWDATE(0x0E)/TIMESTAMP(0x07)/DATETIME(0x0C) → tarih,
+                    // TIME(0x0B) → saat. L uzunluğu (0/4/7/11, TIME 0/8/12) formatı belirler.
+                    case 0x0A: case 0x0E:
+                    case 0x07: case 0x0C: dv.str = read_temporal(false); break;
+                    case 0x0B:            dv.str = read_temporal(true);  break;
                     default:              dv.str = read_lenenc_str(rp, re); break;
                 }
             }
