@@ -943,6 +943,9 @@ print(json::encode($u))
  No inheritance, interfaces or visibility — simplicity is preserved.
  No type coercion — fields take dynamic types.
 
+> **Where struct fits — and where it doesn't**
+`struct` is for fixed-shape internal data you construct yourself. LOOK's web flow is assoc-centric end to end: a DB row (`db::query`), `request::` input, templates (`{$row.field}`) and `json::encode` all speak assoc. Turning a DB row into a struct means mapping every field by hand (`User{name: $row["name"], …}`) — there is no reflection to populate it automatically, so it is *more* code with no gain in a CRUD flow. Keep assoc for data coming from the outside (DB, request, JSON); reach for `struct` when you have internal data whose shape is fixed and known.
+
 ## try / catch / finally
 
 ```lk

@@ -996,6 +996,18 @@ look-fcgi --mode http --port 8080</code></pre>
     No inheritance, interfaces or visibility — simplicity is preserved.<br>
     No type coercion — fields take dynamic types.
   </div>
+
+  <div class="callout">
+    <strong>Where struct fits — and where it doesn't</strong><br>
+    <code>struct</code> is for <strong>fixed-shape internal data</strong> you construct yourself.
+    LOOK's web flow, though, is <strong>assoc-centric</strong> end to end: a DB row
+    (<code>db::query</code>), <code>request::</code> input, templates (<code>{$row.field}</code>)
+    and <code>json::encode</code> all speak assoc. Turning a DB row into a struct means mapping
+    every field by hand (<code>User{name: $row["name"], …}</code>) — there is no reflection to
+    populate it automatically, so it is <em>more</em> code with no gain in a CRUD flow. Keep assoc
+    for data coming from the outside (DB, request, JSON); reach for <code>struct</code> when you
+    have internal data whose shape is fixed and known.
+  </div>
 </section>
 
 <section id="try-catch">
