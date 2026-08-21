@@ -60,6 +60,25 @@ uygulandıysa `grep -n --target` **32** demeli". `29` görürsen edit değil, ok
 Kural 1/2 ile aynı: **beklenen-değerle koş** (pozitif kontrol, ölçümün KENDİSİNE uygulanmış). "İddiadan
 önce ölç" → "ölçtüğün aracın çalıştığını da ölç".
 
+## ⚠️ KURAL 4: Bir bug'ın FIX'ini yazmadan önce, BUG'I izole+pozitif-kontrollü ÜRET
+
+Kural 1-3 assertion/guard/ölçüm-aracı içindi. Kural 4 bir adım öncesi: **fix'in var-sayımı olan bug'ın
+kendisi.** Bir "bug" temiz, izole, pozitif-kontrollü ÜREMİYORSA — fix YAZMA. Yoksa olmayan bir soruna
+kod eklersin (en kötüsü: yayınlanmış çekirdeğin en bug-üreten bölgesine, sıfır faydayla).
+
+**Bu turda en pahalı fantom (2026-08-21):** "dış http:: eşzamanlı çağrıları ~10 rps'e serileşiyor" öncülü
+hiç kontrollü ölçülmemişti. Üstüne DÖRT taraf inşa etti (geliştirici ölçümü → "serileşiyor"; analizci
+kaynak → "global kilit"; fix-oturumu → "worker açlığı"; ikinci okuma → "epfd_ paylaşımlı") ve bir
+`AsyncHttpPool` fix'i tasarlandı+yazıldı. **Fix ölçülünce sıfır fayda** (havuz ON/OFF = 209 vs 207 rps).
+Gerçek sebep iki confound'du: (1) tek-thread Python downstream KENDİSİ 5 rps'e serileşiyordu; (2) SSRF-guard
+loopback'i bloklayıp `status=0` hızlı-fail veriyordu → tüm erken ölçümler geçersiz. **Temiz kurulumda
+http:: 209 rps** (sağlıklı). Pozitif+negatif kontrol (threaded downstream→209, single-thread→11=orijinal
+"10") 30 saniyede çözdü. Fix tümüyle geri alındı.
+
+**Keskin yan-ders: çokluk yanlışı doğru yapmaz.** Dört ayrı taraf aynı çürük öncülün üstüne inşa etti;
+hiçbiri öncülün KENDİSİNİ kontrol etmedi. Kaynak+2-oturum+analizci hepsi güveni artırdı, doğruluğu değil.
+Bir sayı kaç kez tekrarlanırsa tekrarlansın, bir kez temiz-kontrollü üretilmemişse yoktur.
+
 ## release_gate.lk — yayın kapısı
 
 Paketlenen HER binary'nin fix'leri gerçekten içerdiğini KANITLAR. Pakete konmaz (repo'da durur):

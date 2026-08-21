@@ -464,13 +464,13 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
 
     t_conn_error = nullptr;
     if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) {
-        t_conn_error = "DNS cozumlenemedi";
+        t_conn_error = "DNS resolution failed";
         return INVALID;
     }
 
     if (is_ssrf_blocked(res)) {
         freeaddrinfo(res);
-        t_conn_error = "SSRF korumasi: ozel/ic ag adresine istek engellendi "
+        t_conn_error = "SSRF protection: request to a private/internal address blocked "
                        "(if needed, LOOK_ALLOW_SSRF=1)";
         return INVALID;
     }
@@ -756,13 +756,13 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
 
     t_conn_error = nullptr;
     if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) {
-        t_conn_error = "DNS cozumlenemedi";
+        t_conn_error = "DNS resolution failed";
         return INVALID;
     }
 
     if (is_ssrf_blocked(res)) {
         freeaddrinfo(res);
-        t_conn_error = "SSRF korumasi: ozel/ic ag adresine istek engellendi "
+        t_conn_error = "SSRF protection: request to a private/internal address blocked "
                        "(if needed, LOOK_ALLOW_SSRF=1)";
         return INVALID;
     }

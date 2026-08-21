@@ -547,7 +547,7 @@ sf_out=$(timeout 30 "$LK" "$TMP/ssrf.lk" 2>&1 | tail -1)
 # Tek regex yerine UC AYRI kosul — grep'te '|' duz karakterdir, alternation
 # beklemek yanlis alarm uretir (bu kontrolu yazarken tam bunu yasadim).
 sf_ok=1
-if echo "$sf_out" | grep -q "DNS cozumlenemedi"; then
+if echo "$sf_out" | grep -q "DNS resolution failed"; then
   echo "FAIL: IPv6 literal URL ayristirma bozuk — [::1] icin DNS hatasi doniyor,"
   echo "      demek ki kosleli parantezler siyrilmiyor (host \"[::1]\" olarak gidiyor)"
   sf_ok=0
