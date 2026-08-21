@@ -754,31 +754,61 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path);
 
+// Hot-reload throttle: the per-request mtime stat (fs::last_write_time) + shared_lock
+// was the dominant per-request cost on mounted/slow filesystems — strace showed one
+// stat() on the script for EVERY request. A dev convenience does not belong in the hot
+// path at that price. Throttle it to at most once per interval (default 500ms — a reload
+// still feels instant in dev); the vast majority of requests then pay a single lock-free
+// atomic read. Escape hatch: LOOK_HOT_RELOAD_MS (0 = check every request, legacy behaviour).
+static std::atomic<long long> g_last_hotcheck_ms{0};
+static long long hot_reload_interval_ms() {
+    static long long ms = []() -> long long {
+        const char* e = std::getenv("LOOK_HOT_RELOAD_MS");
+        if (e && e[0]) { long long v = std::atoll(e); return v < 0 ? 500 : v; }
+        return 500;
+    }();
+    return ms;
+}
+
 static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp) {
-    // Hot reload check
+    // Readiness — cheap lock-free atomic (g_http_ready flips false only mid hot-reload).
+    if (!g_http_ready.load(std::memory_order_acquire)) {
+        resp.status_code = 503;
+        resp.status_text = "Service Unavailable";
+        resp.body = "{\"ok\":false,\"error\":\"Starting\"}";
+        return;
+    }
+    // Throttled hot-reload check (see note above).
     {
-        std::shared_lock<std::shared_mutex> sl(g_http_mutex);
-        if (!g_http_ready) {
-            resp.status_code = 503;
-            resp.status_text = "Service Unavailable";
-            resp.body = "{\"ok\":false,\"error\":\"Starting\"}";
-            return;
+        long long interval = hot_reload_interval_ms();
+        bool do_check;
+        if (interval <= 0) {
+            do_check = true;   // legacy: stat every request
+        } else {
+            long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            long long last = g_last_hotcheck_ms.load(std::memory_order_relaxed);
+            // One thread wins the check slot per interval via CAS; others skip.
+            do_check = (now_ms - last >= interval) &&
+                       g_last_hotcheck_ms.compare_exchange_strong(last, now_ms, std::memory_order_relaxed);
         }
+        if (do_check) {
+            std::shared_lock<std::shared_mutex> sl(g_http_mutex);
+            auto cur_mtime = fs::last_write_time(g_http_app.script_path);
+            bool need_reload = (cur_mtime != g_http_app.mtime);
+            sl.unlock();
 
-        auto cur_mtime = fs::last_write_time(g_http_app.script_path);
-        bool need_reload = (cur_mtime != g_http_app.mtime);
-        sl.unlock();
-
-        if (need_reload) {
-            std::unique_lock<std::shared_mutex> ul(g_http_mutex);
-            // Double-check under exclusive lock
-            auto mtime2 = fs::last_write_time(g_http_app.script_path);
-            if (mtime2 != g_http_app.mtime) {
-                try {
-                    run_setup_http(g_http_app.script_path);
-                    look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Hot reload: " + g_http_app.script_path.string());
-                } catch (const std::exception& e) {
-                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string("Hot reload error: ") + e.what());
+            if (need_reload) {
+                std::unique_lock<std::shared_mutex> ul(g_http_mutex);
+                // Double-check under exclusive lock
+                auto mtime2 = fs::last_write_time(g_http_app.script_path);
+                if (mtime2 != g_http_app.mtime) {
+                    try {
+                        run_setup_http(g_http_app.script_path);
+                        look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Hot reload: " + g_http_app.script_path.string());
+                    } catch (const std::exception& e) {
+                        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string("Hot reload error: ") + e.what());
+                    }
                 }
             }
         }
