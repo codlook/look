@@ -3259,6 +3259,7 @@ Date and time operations. Loaded with `use date;`. All dates are in ISO 8601 for
 | date::now() | Current date + time → string | "2026-06-09 14:32:00" |
 | date::today() | Today's date → string | "2026-06-09" |
 | date::timestamp() | Unix epoch seconds → int | 1749470520 |
+| date::mono_us() | Monotonic clock in microseconds → int. For measuring elapsed time (take two readings and subtract) — NOT wall-clock, unaffected by system clock changes. | 4823917156 |
 | date::format($date, $fmt) | Format a date → string | "09.06.2026" |
 | date::parse($str, $fmt) | Parse a string into a date → string | "2026-06-09" |
 | date::add($date, $n, $unit) | Add → string | add 7 days |

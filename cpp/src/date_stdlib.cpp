@@ -168,6 +168,14 @@ Module make_date_module() {
         return Value((int64_t)std::time(nullptr));
     };
 
+    // date::mono_us() → monotonic steady_clock in microseconds (int64).
+    // High-resolution timer for benchmarking; not wall-clock, only for measuring
+    // elapsed durations (deltas). Independent of system clock adjustments.
+    m.functions["mono_us"] = [](auto) -> Value {
+        auto now = std::chrono::steady_clock::now().time_since_epoch();
+        return Value((int64_t)std::chrono::duration_cast<std::chrono::microseconds>(now).count());
+    };
+
     // date::format(tarih, format_str) → string
     // tarih: Unix timestamp (int) VEYA "YYYY-MM-DD [HH:MM:SS]" ISO string.
     //   DB/API'den gelen en yaygın format Unix timestamp'tir — INT/FLOAT ise

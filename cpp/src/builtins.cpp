@@ -190,6 +190,10 @@ const std::vector<std::string>& builtin_names() {
         // db::driver — bağlı sürücü ("sqlite"/"mysql"/"postgres"); lehçe-farkında
         // kod (migrate şema→DDL) için. mod::fn → http_main otomatik wire eder.
         "db::driver",
+        // date::mono_us — monotonic microsecond clock (benchmark timing). Appended at
+        // end (no index shift). Without this the VM compiler treats it as unknown and
+        // silently falls back to tree-walk for the whole script.
+        "date::mono_us",
     };
     return NAMES;
 }

@@ -3192,6 +3192,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
     <tr><td>date::now()</td><td>Current date + time → string</td><td>"2026-06-09 14:32:00"</td></tr>
     <tr><td>date::today()</td><td>Today's date → string</td><td>"2026-06-09"</td></tr>
     <tr><td>date::timestamp()</td><td>Unix epoch seconds → int</td><td>1749470520</td></tr>
+    <tr><td>date::mono_us()</td><td>Monotonic clock in microseconds → int. For measuring elapsed time (take two readings and subtract) — NOT wall-clock, and unaffected by system clock changes.</td><td>4823917156</td></tr>
     <tr><td>date::format($date, $fmt)</td><td>Format a date → string</td><td>"09.06.2026"</td></tr>
     <tr><td>date::parse($str, $fmt)</td><td>Parse a string into a date → string</td><td>"2026-06-09"</td></tr>
     <tr><td>date::add($date, $n, $unit)</td><td>Add → string</td><td>add 7 days</td></tr>
