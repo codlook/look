@@ -257,7 +257,11 @@ Value VM::array_get(const Value& arr, const Value& key) {
     // str_ref(): B5'te string pointer arkasında — as_string()/to_string() her erişimde
     // kopya döndürür. Sentinel ve key karşılaştırmaları kopyasız (nesne-lookup sıcak yolu).
     if (!vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__") {
-        std::string k = key.to_string();
+        // Lookup-key kopyasız: STRING anahtar (sıcak yol, $row["name"]) doğrudan
+        // str_ref(); sayısal anahtar ($a[5]) yine "5"e coerce edilir (semantik korunur).
+        std::string ktmp;
+        const std::string& k = (key.type() == Value::STRING) ? key.str_ref()
+                                                             : (ktmp = key.to_string());
         // Also handle __struct__ tag: ["__assoc__", "__struct__", "Name", k, v, ...]
         size_t start = 1;
         if (vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__")
@@ -301,7 +305,11 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
     // (interpreter bu metinleri hep sayisal indeks sayiyordu — motorlar ayrisiyordu).
     bool str_key = key.type() == Value::STRING && !look_is_int_key(key.str_ref());
     if (is_assoc || str_key) {
-        std::string k = key.to_string();
+        // Lookup-key kopyasız (array_get ile aynı): STRING anahtar str_ref();
+        // sayısal anahtar "5"e coerce. Yeni giriş Value(k) yine kopyalar.
+        std::string ktmp;
+        const std::string& k = (key.type() == Value::STRING) ? key.str_ref()
+                                                             : (ktmp = key.to_string());
         // ESKI HATA: liste henuz assoc DEGILKEN asagidaki dongu onu cift listesi
         // sanip tariyor (start=0), sonra basina yalnizca sentinel ekliyordu:
         //   $a=[1,2,3]; $a["k"]="X"  ->  ["__assoc__",1,2,3,"k","X"]

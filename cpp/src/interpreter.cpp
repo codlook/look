@@ -1103,7 +1103,8 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         auto& arr = *obj.as_array();
         if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__") {
             for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                if (arr[i].to_string() == e->field) return arr[i + 1];
+                if (arr[i].type() == Value::STRING ? arr[i].str_ref() == e->field
+                                                   : arr[i].to_string() == e->field) return arr[i + 1];
             }
             return Value(); // null if field not found
         }
@@ -1226,7 +1227,8 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             arr[0].as_string() == "__assoc__" && idx.type() == Value::STRING) {
             const std::string& key = idx.as_string();
             for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                if (arr[i].to_string() == key) return arr[i + 1];
+                if (arr[i].type() == Value::STRING ? arr[i].str_ref() == key
+                                                   : arr[i].to_string() == key) return arr[i + 1];
             }
             return Value(); // null if not found
         }
@@ -1304,7 +1306,8 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 arr[0].as_string() == "__assoc__" && idx.type() == Value::STRING) {
                 const std::string& key = idx.as_string();
                 for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                    if (arr[i].to_string() == key) { arr[i + 1] = apply_op(arr[i + 1]); return arr[i + 1]; }
+                    if (arr[i].type() == Value::STRING ? arr[i].str_ref() == key
+                                                       : arr[i].to_string() == key) { arr[i + 1] = apply_op(arr[i + 1]); return arr[i + 1]; }
                 }
                 // Key yok — yeni key/value ekle (compound'da mevcut = null)
                 Value nv = apply_op(Value());

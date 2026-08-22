@@ -1,0 +1,73 @@
+# assoc_sweep — assoc (string-keyed array) read hot-path micro-benchmark.
+#
+# Motivasyon: $row["name"] gibi STRING-anahtarlı assoc okuması, VM/interpreter'da
+# lookup-key başına bir std::string ayırıyordu (key.to_string()). str_ref() fast-path
+# bu ayırmayı STRING anahtarda kaldırır. Bu harness onu ölçer (before/after, best-of-3).
+#
+# K = assoc'taki anahtar sayısı; her tur K okuma yapar; TOTAL ~ sabit tutulur ki
+# ölçüm K'dan bağımsız per-lookup maliyeti yakalasın (küçük-K = fast-path baskın).
+#
+# Kullanım:  lk assoc_sweep.lk            (CLI-VM, DEFAULT motor)
+#            LOOK_CLI_VM=0 lk assoc_sweep.lk   (tree-walk / interpreter)
+use date
+
+const { TOTAL = 5000000 }   # her K için toplam lookup sayısı (~5M)
+
+# Anahtar öneki: MSVC small-string optimization eşiği (15 bayt) ÜSTÜNDE olmalı ki
+# to_string() gerçekten heap ayırsın (kısa anahtar SSO'ya girer, ayırma olmaz →
+# fast-path ölçülemez). Gerçek dünyada assoc anahtarları böyle olabilir:
+# "customer_email_address", "created_at_timestamp" vb.
+const { KEY_PREFIX = "customer_record_field_" }
+
+# K anahtarlı bir assoc kur
+function build($k) {
+    $a = []
+    for ($i = 0; $i < $k; $i = $i + 1) {
+        $a[KEY_PREFIX . $i] = $i
+    }
+    return $a
+}
+
+# Sabit anahtar listesi (her turda aynı anahtarları döngüde oku)
+function keys_of($k) {
+    $ks = []
+    for ($i = 0; $i < $k; $i = $i + 1) {
+        $ks = array::push($ks, KEY_PREFIX . $i)
+    }
+    return $ks
+}
+
+use array
+
+# Tek koşum: TOTAL lookup, sonucu topla (ölü-kod eliminasyonu engeli)
+function run_once($a, $ks, $k) {
+    $rounds = TOTAL / $k
+    $sum = 0
+    for ($r = 0; $r < $rounds; $r = $r + 1) {
+        for ($j = 0; $j < $k; $j = $j + 1) {
+            $sum = $sum + $a[$ks[$j]]
+        }
+    }
+    return $sum
+}
+
+function bench_k($k) {
+    $a = build($k)
+    $ks = keys_of($k)
+    # best-of-3
+    $best = -1
+    $s = 0
+    for ($t = 0; $t < 3; $t = $t + 1) {
+        $t0 = date::mono_us()
+        $s = run_once($a, $ks, $k)
+        $t1 = date::mono_us()
+        $ms = ($t1 - $t0) / 1000
+        if ($best < 0 || $ms < $best) { $best = $ms }
+    }
+    print("K=" . $k . "  best=" . $best . "ms  (checksum " . $s . ")")
+}
+
+bench_k(5)
+bench_k(15)
+bench_k(50)
+bench_k(100)
