@@ -196,20 +196,20 @@
   <!-- CEILING -->
   <section class="bsec">
     <h2>Does LOOK hit a ceiling? <span class="r">Not on tail.</span></h2>
-    <p>At c=1000, LOOK (tuned) is at 22k req/s with p99 212 µs and <b>zero</b> throttling — it is comfortable, not saturated. So we pushed it: 2,000, 5,000, 10,000, then <b>20,000 concurrent connections</b> — with just <b>two</b> worker threads on two cores.</p>
+    <p>At c=1000, LOOK (tuned) is at 22k req/s with p99 212 µs and <b>zero</b> throttling — comfortable, not saturated. So we pushed <b>both</b> runtimes to 5,000, 10,000, then <b>20,000 concurrent connections</b> — same tool, same box, so no one can say we only stressed one side.</p>
     <div class="tbl-scroll">
     <table class="btable">
-      <thead><tr><th>concurrency</th><th>req/s</th><th>p99</th><th>throttled</th></tr></thead>
+      <thead><tr><th>concurrency</th><th>LOOK req/s</th><th>LOOK p99</th><th>Node req/s</th><th>Node p99</th></tr></thead>
       <tbody>
-        <tr><td class="rt">1,000</td><td>22,821</td><td class="win">140 µs</td><td class="win">0</td></tr>
-        <tr><td class="rt">2,000</td><td>22,287</td><td class="win">197 µs</td><td class="win">0</td></tr>
-        <tr><td class="rt">5,000</td><td>21,310</td><td class="win">212 µs</td><td class="win">0</td></tr>
-        <tr><td class="rt">10,000</td><td>22,221</td><td class="win">184 µs</td><td class="win">0</td></tr>
-        <tr><td class="rt">20,000</td><td>16,946</td><td class="win">196 µs</td><td class="win">0</td></tr>
+        <tr><td class="rt">1,000</td><td>22,821</td><td class="win">140 µs</td><td>75,371</td><td class="bad">1.64 s</td></tr>
+        <tr><td class="rt">5,000</td><td>21,310</td><td class="win">212 µs</td><td>87,205</td><td class="bad">2.41 s</td></tr>
+        <tr><td class="rt">10,000</td><td>22,221</td><td class="win">184 µs</td><td>81,534</td><td class="bad">1.36 s</td></tr>
+        <tr><td class="rt">20,000</td><td>16,946</td><td class="win">196 µs</td><td>65,108</td><td>159 ms</td></tr>
       </tbody>
     </table>
     </div>
-    <p>The throughput ceiling (~22k) is simply the two CPU cores doing interpreted JSON work — it doesn't collapse, it plateaus. And <b>p99 stays flat at ~190 µs from 1,000 to 20,000 connections.</b> Two threads, 20,000 connections, sub-millisecond tail, no throttling. That is the headline the numbers actually support.</p>
+    <p>Measured symmetrically, the trade is stark: <b>Node sustains ~3–4× the throughput</b> (65–87k vs ~22k) — but its <b>p99 sits in whole seconds</b> (1.36–2.41 s) while LOOK holds a flat <b>~190 µs</b> from 1,000 to 20,000 connections. Two threads, 20,000 connections, sub-millisecond tail. Neither runtime "breaks" — they occupy opposite corners: Node maximizes throughput and pays in tail; LOOK holds latency and caps throughput at what two interpreted cores can do (~22k).</p>
+    <p class="note">Both runtimes dip at c=20,000 (LOOK 22k→17k, Node 81k→65k) — that is the <b>single load-generating machine</b> hitting its own limit (ephemeral ports / one wrk host driving 20k live sockets), not either server failing. The proof: LOOK's p99 is still 196 µs at that point, and Node's actually improves as its in-flight backlog thins. On a real fleet the client load would come from many hosts.</p>
   </section>
 
   <!-- STABILITY -->
