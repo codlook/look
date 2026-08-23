@@ -4309,7 +4309,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <h3>Server &amp; workers</h3>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
-    <tr><td><code>LOOK_WORKERS</code></td><td>CPU count (min 2)</td><td>Worker-thread count. Same as the <code>--workers</code> flag; the flag wins if both are set.</td></tr>
+    <tr><td><code>LOOK_WORKERS</code></td><td>CPUs × 4 (max 64)</td><td>Worker-thread count. Same as the <code>--workers</code> flag; the flag wins if both are set. The ×4 default overlaps blocking I/O. <strong>Under a hard CPU quota</strong> (container <code>--cpus</code>, k8s CPU limit, systemd <code>CPUQuota</code>) set this to the quota: extra threads burst past the CFS bandwidth limit and get throttled, spiking p99 tail latency. The server logs a warning at startup if it detects this.</td></tr>
     <tr><td><code>LOOK_FCGI_BIND</code></td><td><code>127.0.0.1</code></td><td>Bind address. Set to <code>0.0.0.0</code> (or <code>any</code>) to listen on all interfaces.</td></tr>
     <tr><td><code>LOOK_HEALTH_PATH</code></td><td><code>/health</code></td><td>Path that returns a plain health-check response.</td></tr>
     <tr><td><code>LOOK_HTTP_IDLE_MS</code></td><td><code>30000</code></td><td>Keep-alive idle timeout in ms — how long an idle connection is held open.</td></tr>

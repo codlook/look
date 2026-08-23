@@ -131,5 +131,8 @@ void clear_db_pools();               // close all pools — called before hot re
 // çekirdeği döndürür; kısıtlı ortamda worker/pool default'u aşırı thread açıp boşa
 // RAM harcardı. Worker ve DB-pool default'ları bunu kullanır → ortama otomatik uyum.
 int available_cpus();
+// CFS CPU quota (cgroup) rounded to whole cores, or -1 if no quota is set.
+// For the startup warning: workers > quota → CFS throttling spikes tail latency.
+int cfs_quota_cpus();
 
 } // namespace look

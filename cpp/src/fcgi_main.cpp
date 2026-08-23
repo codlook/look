@@ -799,6 +799,23 @@ int main(int argc, char* argv[]) {
     }
     if (workers < 2) workers = 2;
 
+    // Fail-loud: under a hard CPU quota, more worker threads than the quota burst
+    // past the CFS bandwidth limit and get throttled — the kernel deschedules ALL
+    // the container's threads until the next ~100ms period, spiking tail latency
+    // (p99 seen jumping to ~40-60ms while p50 stays sub-ms). The default workers =
+    // CPUs*4 trips this. The symptom is invisible: p99 high, strace clean, code
+    // correct — so warn instead of letting it stay a silent mystery.
+    {
+        int quota = look::cfs_quota_cpus();
+        if (quota > 0 && workers > quota) {
+            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+                "workers=" + std::to_string(workers) + " exceeds the CPU quota (" +
+                std::to_string(quota) + " core" + (quota == 1 ? "" : "s") + "). Extra worker "
+                "threads burst past the CFS quota and get throttled, spiking tail latency (p99). "
+                "Set LOOK_WORKERS=" + std::to_string(quota) + " to match the quota.");
+        }
+    }
+
     // ── --mode http — event loop, Apache bypass ───────────────────────────────
     if (mode == "http") {
         if (workers <= 0) {

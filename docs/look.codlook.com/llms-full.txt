@@ -4343,7 +4343,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `LOOK_WORKERS` | CPU count (min 2) | Worker-thread count. Same as the `--workers` flag; the flag wins if both are set. |
+| `LOOK_WORKERS` | CPUs × 4 (max 64) | Worker-thread count. Same as the `--workers` flag; the flag wins if both are set. The ×4 default overlaps blocking I/O. Under a hard CPU quota (container `--cpus`, k8s CPU limit, systemd `CPUQuota`) set this to the quota: extra threads burst past the CFS bandwidth limit and get throttled, spiking p99 tail latency. The server logs a warning at startup if it detects this. |
 | `LOOK_FCGI_BIND` | `127.0.0.1` | Bind address. Set to `0.0.0.0` (or `any`) to listen on all interfaces. |
 | `LOOK_HEALTH_PATH` | `/health` | Path that returns a plain health-check response. |
 | `LOOK_HTTP_IDLE_MS` | `30000` | Keep-alive idle timeout in ms — how long an idle connection is held open. |

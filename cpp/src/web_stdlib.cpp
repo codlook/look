@@ -1055,6 +1055,33 @@ int available_cpus() {
     return hw;
 }
 
+// CFS kotası kaç CPU (yuvarlanmış), kota yoksa/limitsizse -1. available_cpus()'un
+// kota-okuma kısmının ayrık hali — startup uyarısı "workers > kota" tespiti için.
+int cfs_quota_cpus() {
+#ifdef __linux__
+    double c = -1.0;
+    {
+        std::ifstream f("/sys/fs/cgroup/cpu.max");
+        std::string a, b;
+        if (f && (f >> a >> b) && a != "max") {
+            double q = std::atof(a.c_str());
+            double p = b.empty() ? 100000.0 : std::atof(b.c_str());
+            if (q > 0 && p > 0) c = q / p;
+        }
+    }
+    if (c < 0) {
+        std::ifstream fq("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us");
+        std::ifstream fp("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us");
+        long q = -1, p = -1;
+        if (fq) fq >> q;
+        if (fp) fp >> p;
+        if (q > 0 && p > 0) c = (double)q / (double)p;
+    }
+    if (c > 0) { int lim = (int)(c + 0.5); return lim < 1 ? 1 : lim; }
+#endif
+    return -1;
+}
+
 void acquire_thread_connections() {
     // Copy pool list under lock, then release before blocking on acquire().
     // Holding g_pools_mtx during pool->acquire() deadlocks: a releasing thread
