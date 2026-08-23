@@ -96,3 +96,15 @@ cross-toolchain comparison. To check whether an optimization is present in a bin
 known baseline, use a SELF-CONTAINED discriminator inside that same binary: here, short-key (SSO, no alloc)
 vs long-key (>SSO). If the fast-path is present the gap is small (comparison cost only); if absent it is large
 (a heap allocation per lookup). Toolchain-independent, and it proved the fix was really in the shipped binary.
+
+## Hygiene rule 9 — under a CPU quota, check `cpu.stat` before trusting tail latency
+
+Learned solving the "40ms p99" mystery (2026-08-22): a multi-threaded server measured under a hard CPU
+quota (`--cpus=2`) showed p99 40-60ms while p50 stayed sub-millisecond. Five network hypotheses and a
+tcpdump were spent chasing it — it was CFS bandwidth throttling: with workers=CPUs×4=8 threads bursting
+past a 2-CPU quota, the kernel throttled ALL threads ~92% of CFS periods, stalling in-flight requests.
+The tell was in `cat /sys/fs/cgroup/cpu.stat`: `nr_throttled` and `throttled_usec` climbing under load.
+If you measure tail latency under any CPU quota (container `--cpus`, k8s limit, systemd CPUQuota), read
+cpu.stat first: `nr_throttled > 0` under load means the numbers include scheduler throttling, not the
+server's own latency — set threads ≤ the quota (or remove the quota) and re-measure. The symptom is
+invisible in strace (the stall is descheduling, not a syscall) — cpu.stat is the only direct evidence.
