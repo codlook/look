@@ -1,0 +1,8 @@
+# Benchmark harnesses + hygiene rules (SPEC.md) are tracked — the durable output.
+# Result outputs, deps and container artefacts are not.
+node_modules/
+logs/
+*.log
+*.csv
+*.out
+_*

@@ -1,0 +1,234 @@
+# Micro-benchmark suite — LOOK implementation.
+# See ../SPEC.md. Prints one CSV line per benchmark: name,checksum,warm_ms
+# Timer: date::mono_us() — monotonic steady_clock in microseconds (added for benchmarking).
+use string
+use math
+use json
+
+# ── helpers for the recursion / fn-call benchmarks (must be top-level named fns) ──
+function bench_inc($i) { return $i + 1 }
+function bench_h($x) { return $x + 1 }
+function bench_g($x) { return bench_h($x) + 1 }
+function bench_f($x) { return bench_g($x) + 1 }
+function bench_fib($n) {
+    if ($n < 2) { return $n }
+    return bench_fib($n - 1) + bench_fib($n - 2)
+}
+
+# ── benchmark bodies (each returns its integer checksum) ──────────────────────
+$M = 1000000007
+
+$b_int_arith = function() {
+    $M = 1000000007
+    $s = 0
+    for ($i = 0; $i < 20000000; $i = $i + 1) {
+        $s = ($s + $i * 3 + 7) % $M
+    }
+    return $s
+}
+
+$b_float_arith = function() {
+    $M = 1000000007
+    $x = 1.0
+    for ($i = 0; $i < 20000000; $i = $i + 1) {
+        $x = $x * 1.0000003 + 0.5
+        if ($x > 1000000.0) { $x = $x - 1000000.0 }
+    }
+    return math::floor($x * 1000.0) % $M
+}
+
+$b_loop = function() {
+    $M = 1000000007
+    $s = 0
+    for ($i = 0; $i < 100000000; $i = $i + 1) {
+        $s = ($s + 1) % $M
+    }
+    return $s
+}
+
+$b_fn_call = function() {
+    $M = 1000000007
+    $s = 0
+    for ($i = 0; $i < 20000000; $i = $i + 1) {
+        $s = ($s + bench_inc($i)) % $M
+    }
+    return $s
+}
+
+$b_nested_fn = function() {
+    $M = 1000000007
+    $s = 0
+    for ($i = 0; $i < 10000000; $i = $i + 1) {
+        $s = ($s + bench_f($i)) % $M
+    }
+    return $s
+}
+
+$b_recursion = function() {
+    return bench_fib(32)
+}
+
+$b_array_create_iterate = function() {
+    $M = 1000000007
+    $K = 1000
+    $R = 20000
+    $s = 0
+    for ($r = 0; $r < $R; $r = $r + 1) {
+        $a = []
+        for ($k = 0; $k < $K; $k = $k + 1) { push($a, $k) }
+        $sum = 0
+        for ($k = 0; $k < $K; $k = $k + 1) { $sum = $sum + $a[$k] }
+        $s = ($s + $sum) % $M
+    }
+    return $s
+}
+
+$b_array_push_pop = function() {
+    $M = 1000000007
+    $K = 1000
+    $R = 20000
+    $s = 0
+    for ($r = 0; $r < $R; $r = $r + 1) {
+        $a = []
+        for ($k = 0; $k < $K; $k = $k + 1) { push($a, $k) }
+        $sum = 0
+        for ($k = 0; $k < $K; $k = $k + 1) { $sum = $sum + pop($a) }
+        $s = ($s + $sum) % $M
+    }
+    return $s
+}
+
+$b_assoc_access = function() {
+    $M = 1000000007
+    $map = []
+    for ($k = 0; $k < 100; $k = $k + 1) { $map["k" . $k] = $k }
+    $s = 0
+    for ($i = 0; $i < 5000000; $i = $i + 1) {
+        $key = "k" . ($i % 100)
+        $s = ($s + $map[$key]) % $M
+    }
+    return $s
+}
+
+$b_object_create = function() {
+    $M = 1000000007
+    $s = 0
+    for ($i = 0; $i < 5000000; $i = $i + 1) {
+        $rec = ["a" => $i, "b" => $i + 1, "c" => $i + 2, "d" => $i + 3, "e" => $i + 4]
+        $s = ($s + $rec["c"]) % $M
+    }
+    return $s
+}
+
+$b_string_concat = function() {
+    $M = 1000000007
+    $K = 1000
+    $R = 20000
+    $s = 0
+    for ($r = 0; $r < $R; $r = $r + 1) {
+        $str = ""
+        for ($k = 0; $k < $K; $k = $k + 1) { $str = $str . "x" }
+        $s = ($s + string::len($str)) % $M
+    }
+    return $s
+}
+
+$b_string_search = function() {
+    $M = 1000000007
+    # 1000-char haystack with "needle" near the end.
+    $hay = string::repeat("a", 984) . "needle" . string::repeat("b", 10)
+    $s = 0
+    for ($i = 0; $i < 1000000; $i = $i + 1) {
+        $idx = string::index_of($hay, "needle")
+        $s = ($s + $idx) % $M
+    }
+    return $s
+}
+
+$b_string_slice = function() {
+    $M = 1000000007
+    $hay = string::repeat("a", 1000)
+    $s = 0
+    for ($i = 0; $i < 2000000; $i = $i + 1) {
+        $start = $i % 900
+        $sub = string::substr($hay, $start, 50)
+        $s = ($s + string::len($sub)) % $M
+    }
+    return $s
+}
+
+$b_json_parse = function() {
+    $M = 1000000007
+    $src = "{\"id\":42,\"name\":\"look\",\"tags\":[1,2,3],\"active\":true}"
+    $s = 0
+    for ($i = 0; $i < 1000000; $i = $i + 1) {
+        $o = json::decode($src)
+        $s = ($s + $o["id"]) % $M
+    }
+    return $s
+}
+
+$b_json_serialize = function() {
+    $M = 1000000007
+    $obj = ["id" => 42, "name" => "look", "tags" => [1, 2, 3], "active" => true]
+    $s = 0
+    for ($i = 0; $i < 1000000; $i = $i + 1) {
+        $str = json::encode($obj)
+        $s = ($s + string::len($str)) % $M
+    }
+    return $s
+}
+
+$b_regex = function() {
+    $M = 1000000007
+    $text = "contact alice@example.com or bob@test.org or carol@mail.net today"
+    $pat = "[a-z]+@[a-z]+\\.[a-z]+"
+    $s = 0
+    for ($i = 0; $i < 500000; $i = $i + 1) {
+        $matches = string::regex_match_all($text, $pat)
+        $s = ($s + count($matches)) % $M
+    }
+    return $s
+}
+
+$b_exception = function() {
+    $M = 1000000007
+    $s = 0
+    for ($i = 0; $i < 2000000; $i = $i + 1) {
+        try {
+            if ($i % 2 == 0) { throw "err" }
+            $s = ($s + 1) % $M
+        } catch ($e) {
+            $s = ($s + 2) % $M
+        }
+    }
+    return $s
+}
+
+# ── runner: warm once (discard), then run timed; print name,checksum,warm_ms ──
+function run_bench($name, $fn) {
+    $fn()
+    $t0 = date::mono_us()
+    $cs = $fn()
+    $t1 = date::mono_us()
+    $ms = ($t1 - $t0) / 1000.0
+    print($name . "," . $cs . "," . string::format("%.3f", $ms))
+}
+
+run_bench("int_arith", $b_int_arith)
+run_bench("float_arith", $b_float_arith)
+run_bench("loop", $b_loop)
+run_bench("fn_call", $b_fn_call)
+run_bench("nested_fn", $b_nested_fn)
+run_bench("recursion", $b_recursion)
+run_bench("array_create_iterate", $b_array_create_iterate)
+run_bench("array_push_pop", $b_array_push_pop)
+run_bench("assoc_access", $b_assoc_access)
+run_bench("object_create", $b_object_create)
+run_bench("string_concat", $b_string_concat)
+run_bench("string_search", $b_string_search)
+run_bench("string_slice", $b_string_slice)
+run_bench("json_parse", $b_json_parse)
+run_bench("json_serialize", $b_json_serialize)
+run_bench("regex", $b_regex)
+run_bench("exception", $b_exception)

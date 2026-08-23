@@ -1,0 +1,7 @@
+use http
+use db
+$conn = db::connect(env("DB_DSN"))
+route("GET", "/", function() {
+    $rows = db::query($conn, "SELECT id, name, email FROM users WHERE id = ?", [42])
+    return response::json($rows)
+})

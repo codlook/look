@@ -1,0 +1,4 @@
+use http
+route("GET", "/", function() {
+    return response::json(["ok" => true, "msg" => "hello"])
+})

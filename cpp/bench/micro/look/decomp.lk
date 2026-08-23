@@ -1,0 +1,21 @@
+use string
+use math
+# A) FULL: key inşa + map lookup
+function v_full() {
+    $M=1000000007; $map=[]; for($k=0;$k<5;$k=$k+1){$map["k".$k]=$k}
+    $s=0; for($i=0;$i<5000000;$i=$i+1){ $key="k".($i%5); $s=($s+$map[$key])%$M } return $s
+}
+# B) NO-LOOKUP: aynı key inşası, ama lookup yerine ($i%5) ekle
+function v_nolook() {
+    $M=1000000007; $s=0
+    for($i=0;$i<5000000;$i=$i+1){ $key="k".($i%5); $s=($s+($i%5))%$M } return $s
+}
+# C) CONST-KEY lookup: string inşası YOK, sabit anahtarla lookup
+function v_constkey() {
+    $M=1000000007; $map=[]; for($k=0;$k<5;$k=$k+1){$map["k".$k]=$k}
+    $s=0; for($i=0;$i<5000000;$i=$i+1){ $s=($s+$map["k0"])%$M } return $s
+}
+function timeit($name,$fn){ $fn(); $t0=date::mono_us(); $c=$fn(); $t1=date::mono_us(); print($name.",".$c.",".string::format("%.1f",($t1-$t0)/1000.0)) }
+timeit("A_full     ", v_full)
+timeit("B_nolookup ", v_nolook)
+timeit("C_constkey ", v_constkey)
