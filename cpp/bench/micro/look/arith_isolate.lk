@@ -1,0 +1,14 @@
+use string
+# 1 ADD/iter (+ MOD + loop) — $i ekle ki constant-fold olmasın
+$b_add1 = function() {
+  $M=1000000007; $s=0
+  for($i=0;$i<20000000;$i=$i+1){ $s=($s + $i) % $M } return $s
+}
+# 5 ADD/iter (aynı loop+MOD) → fark 4 ekstra ADD
+$b_add5 = function() {
+  $M=1000000007; $s=0
+  for($i=0;$i<20000000;$i=$i+1){ $s=($s + $i + $i + $i + $i + $i) % $M } return $s
+}
+function t($n,$fn){ $fn(); $t0=date::mono_us(); $c=$fn(); $t1=date::mono_us(); $ms=($t1-$t0)/1000.0; print($n."," . $c . "," . string::format("%.1f",$ms)."ms") }
+t("add1", $b_add1)
+t("add5", $b_add5)

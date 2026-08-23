@@ -13,6 +13,7 @@
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include "look/builtins.h"      // builtin_names() — hata mesajinda modul/fonksiyon adi
+#include "look/int_overflow.h"  // i64_add_ovf — INT+INT aritmetik fast-path
 
 #include <sstream>
 #include <cmath>
@@ -477,9 +478,37 @@ call_dispatch:
             }
 
             // ── Aritmetik — Value'nun operatörlerini kullan ───────────────────
-            case OpCode::ADD:    R(ins.a) = R(ins.b) + R(ins.c);        break;
-            case OpCode::SUB:    R(ins.a) = R(ins.b) - R(ins.c);        break;
-            case OpCode::MUL:    R(ins.a) = R(ins.b) * R(ins.c);        break;
+            case OpCode::ADD: {
+                // INT+INT fast-path: skip Value::operator+ machinery (arith_check×2,
+                // to_int×2, FLOAT-checks) for the common case — measured ~8.5ns/add,
+                // ~28× a native add. Any non-INT / overflow falls through to operator+
+                // so FLOAT promotion and non-numeric fail-loud semantics are unchanged.
+                const Value& b = R(ins.b); const Value& c = R(ins.c);
+                if (b.type() == Value::INT && c.type() == Value::INT) {
+                    int64_t r;
+                    if (!look::i64_add_ovf(b.as_int(), c.as_int(), &r)) { R(ins.a) = Value(r); break; }
+                }
+                R(ins.a) = b + c;
+                break;
+            }
+            case OpCode::SUB: {
+                const Value& b = R(ins.b); const Value& c = R(ins.c);
+                if (b.type() == Value::INT && c.type() == Value::INT) {
+                    int64_t r;
+                    if (!look::i64_sub_ovf(b.as_int(), c.as_int(), &r)) { R(ins.a) = Value(r); break; }
+                }
+                R(ins.a) = b - c;
+                break;
+            }
+            case OpCode::MUL: {
+                const Value& b = R(ins.b); const Value& c = R(ins.c);
+                if (b.type() == Value::INT && c.type() == Value::INT) {
+                    int64_t r;
+                    if (!look::i64_mul_ovf(b.as_int(), c.as_int(), &r)) { R(ins.a) = Value(r); break; }
+                }
+                R(ins.a) = b * c;
+                break;
+            }
             case OpCode::DIV:    R(ins.a) = R(ins.b) / R(ins.c);        break;
             case OpCode::MOD:    R(ins.a) = R(ins.b) % R(ins.c);        break;
             case OpCode::POW:    R(ins.a) = R(ins.b).pow(R(ins.c));     break;
