@@ -1702,7 +1702,11 @@ uint8_t FunctionCompiler::compile_array_lit(const ArrayLiteral& e, uint8_t dest)
 
 uint8_t FunctionCompiler::compile_assoc_lit(const AssocArrayLiteral& e, uint8_t dest) {
     uint8_t r = (dest == 255) ? alloc_temp() : dest;
-    emit(OpCode::NEW_ASSOC, r);
+    // Pass the final element count (sentinel + 2 per pair) so the VM can reserve the
+    // vector once instead of growing it through log(n) reallocations — each realloc also
+    // re-copies the boxed key Values (atomic refcount traffic), so reserving is a real win.
+    size_t need = 1 + 2 * e.pairs.size();
+    emit(OpCode::NEW_ASSOC, r, (uint8_t)(need > 255 ? 0 : need));
     for (auto& [k, v] : e.pairs) {
         uint8_t kr = compile_expr(*k);
         uint8_t vr = compile_expr(*v);

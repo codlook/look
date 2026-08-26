@@ -335,8 +335,13 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
             if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
                 { vec[i+1] = val; return; }
         }
-        // New entry — append key, value at end
-        vec.push_back(Value(k));
+        // New entry — append key, value at end. When the key is already a STRING Value,
+        // store it directly (shared_ptr copy) instead of re-materializing it with a fresh
+        // make_shared<string> — the key literal already lives in the constant pool, so
+        // Value(k) was allocating a duplicate of a constant on every insert (5 per assoc in
+        // object_create). Only a coerced numeric key ("5") needs a freshly built string.
+        if (key.type() == Value::STRING) vec.push_back(key);
+        else                             vec.push_back(Value(k));
         vec.push_back(val);
         return;
     }
@@ -559,9 +564,16 @@ call_dispatch:
                 break;
             }
             case OpCode::NEW_ASSOC: {
-                // interpreter convention: assoc sentinel at end
+                // The "__assoc__" sentinel is a compile-time constant; allocating a fresh
+                // make_shared<string> for it on every assoc creation was pure waste (5M
+                // allocations in the object_create benchmark, and one per JSON response on
+                // the web path). Share one immutable instance — push_back is a shared_ptr
+                // refcount bump, not an allocation. Thread-safe: magic-static init + atomic
+                // refcount, and the sentinel is only ever compared, never mutated.
+                static const Value assoc_sentinel{std::string("__assoc__")};
                 auto v = std::make_shared<std::vector<Value>>();
-                v->push_back(Value(std::string("__assoc__")));
+                if (ins.b > 0) v->reserve(ins.b);   // compiler-known final size (sentinel + 2/pair)
+                v->push_back(assoc_sentinel);
                 R(ins.a) = Value(v);
                 break;
             }
