@@ -18,6 +18,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <vector>
+#include <queue>
+#include <functional>
 #if defined(_WIN32)
 #  include <windows.h>
 #  include <bcrypt.h>
@@ -620,6 +622,42 @@ static Module make_string() {
         return cache.emplace(pat, std::move(re)).first->second;
     };
 
+    // Persistent guard-thread pool. The ReDoS guard used to spawn a std::thread on EVERY
+    // regex call (~50µs). Measured, with the compile cache already in place: bypassing the
+    // guard dropped a 100k match-all from 6477ms to 189ms — the per-call spawn was ~54% of
+    // the remaining cost, not std::regex's match speed. A fixed pool of REGEX_MAX_THREADS
+    // workers reuses threads (µs handoff) and preserves the F-01 semantics EXACTLY: a task
+    // that runs away (catastrophic backtracking, input-bounded at 64KB so it still ends)
+    // holds its worker until it finishes, so at most REGEX_MAX_THREADS run concurrently and
+    // the (N+1)th caller is rejected fail-loud by the g_regex_threads cap below — same bound
+    // as the old spawn model. Leaked singleton (process-lifetime) — no static-dtor ordering.
+    struct RegexPool {
+        std::vector<std::thread>          workers;
+        std::queue<std::function<void()>> q;
+        std::mutex                        m;
+        std::condition_variable           cv;
+        bool                              stop = false;
+        explicit RegexPool(int n) {
+            for (int i = 0; i < n; ++i) workers.emplace_back([this]{
+                for (;;) {
+                    std::function<void()> job;
+                    {
+                        std::unique_lock<std::mutex> lk(m);
+                        cv.wait(lk, [this]{ return stop || !q.empty(); });
+                        if (stop && q.empty()) return;
+                        job = std::move(q.front()); q.pop();
+                    }
+                    job();   // runs fn(), fills the caller's State, then decrements the slot
+                }
+            });
+        }
+        void submit(std::function<void()> job) {
+            { std::lock_guard<std::mutex> lk(m); q.push(std::move(job)); }
+            cv.notify_one();
+        }
+    };
+    static auto& regex_pool = *new RegexPool(REGEX_MAX_THREADS);
+
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
         if (g_regex_threads.load() >= REGEX_MAX_THREADS)
             throw std::runtime_error("string::regex: concurrent regex limit exceeded (max 8)");
@@ -635,7 +673,7 @@ static Module make_string() {
         auto state = std::make_shared<State>();
 
         g_regex_threads++;
-        std::thread([state, fn = std::move(fn)]() mutable {
+        regex_pool.submit([state, fn = std::move(fn)]() mutable {
             try {
                 T r = fn();
                 std::lock_guard<std::mutex> lk(state->mtx);
@@ -655,7 +693,7 @@ static Module make_string() {
             // main azaltmadığı için çift-azaltma yok, ve worker azalttığı için sızıntı da yok.
             g_regex_threads--;
             state->cv.notify_one();
-        }).detach();
+        });
 
         std::unique_lock<std::mutex> lk(state->mtx);
         if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; })) {
