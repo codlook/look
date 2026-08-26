@@ -604,6 +604,22 @@ static Module make_string() {
     // std::async kullanılmaz — destructor bloklayarak timeout'u etkisiz kılar.
     static std::atomic<int> g_regex_threads{0};
     static constexpr int REGEX_MAX_THREADS = 8;
+    // Compiled-pattern cache: std::regex construction is expensive (NFA build), and the
+    // string:: regex builtins used to recompile the pattern on EVERY call — 100k calls =
+    // 100k compilations (measured: the bulk of regex cost, not the match). PHP (preg_*)
+    // and V8 both cache; LOOK did not. thread_local so no locking (each worker has its own),
+    // capped so distinct-pattern floods can't grow it unbounded. std::regex::optimize now
+    // pays off: slower compile once, faster match on every reuse.
+    // (Routing patterns are already compiled once per route; this covers the string:: API.)
+    static auto cached_regex = [](const std::string& pat) -> const std::regex& {
+        static thread_local std::unordered_map<std::string, std::regex> cache;
+        auto it = cache.find(pat);
+        if (it != cache.end()) return it->second;
+        if (cache.size() >= 256) cache.clear();
+        std::regex re(pat, std::regex::optimize);   // may throw regex_error → caller catches
+        return cache.emplace(pat, std::move(re)).first->second;
+    };
+
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
         if (g_regex_threads.load() >= REGEX_MAX_THREADS)
             throw std::runtime_error("string::regex: concurrent regex limit exceeded (max 8)");
@@ -662,7 +678,7 @@ static Module make_string() {
         if (pat.size() > 2048) throw std::runtime_error("string::regex_match(): pattern too long (max 2048)");
         if (str.size() > 65536) throw std::runtime_error("string::regex_match(): input too long (max 65536)");
         try {
-            std::regex re(pat);
+            const std::regex& re = cached_regex(pat);
             return Value(regex_with_timeout([str, re]{ return std::regex_search(str, re); }));
         } catch (const std::runtime_error&) { throw; }
           catch (...) { return Value(false); }
@@ -677,7 +693,7 @@ static Module make_string() {
         if (pat.size() > 2048) throw std::runtime_error("string::regex_replace(): pattern too long (max 2048)");
         if (str.size() > 65536) throw std::runtime_error("string::regex_replace(): input too long (max 65536)");
         try {
-            std::regex re(pat);
+            const std::regex& re = cached_regex(pat);
             return Value(regex_with_timeout([str, re, rep]{ return std::regex_replace(str, re, rep); }));
         } catch (const std::runtime_error&) { throw; }
           catch (...) { return Value(args[0].to_string()); }
@@ -692,7 +708,7 @@ static Module make_string() {
             std::string pat = args[1].to_string();
             if (pat.size() > 2048) throw std::runtime_error("string::regex_match_all(): pattern too long (max 2048)");
             if (s.size() > 65536) throw std::runtime_error("string::regex_match_all(): input too long (max 65536)");
-            std::regex re(pat);
+            const std::regex& re = cached_regex(pat);
             auto matches = regex_with_timeout([s, re]{
                 std::vector<std::vector<std::string>> out;
                 auto it = std::sregex_iterator(s.begin(), s.end(), re);
