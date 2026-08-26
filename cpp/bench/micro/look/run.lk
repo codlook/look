@@ -136,7 +136,7 @@ $b_string_concat = function() {
 $b_string_search = function() {
     $M = 1000000007
     # 1000-char haystack with "needle" near the end.
-    $hay = string::repeat("a", 984) . "needle" . string::repeat("b", 10)
+    $hay = string::repeat("a", 994) . "needle"
     $s = 0
     for ($i = 0; $i < 1000000; $i = $i + 1) {
         $idx = string::index_of($hay, "needle")
