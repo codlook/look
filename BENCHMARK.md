@@ -76,6 +76,21 @@ rules). Node may win here — that is expected and published as-is.
 | 6 | `json_parse` | parsing |
 | 7 | `json_serialize` | serialization |
 
+**Reading caveat — `regex` is not a regex-engine speed number.** The `regex` row's LOOK time is
+dominated (~95%) by the ReDoS guard's per-call thread handoff, not by matching: the raw match is
+~1.9 µs/call (≈6× Node), while the guard handoff adds ~36 µs/call. The guard is a deliberate
+architectural safety choice (bounded worst-case against catastrophic backtracking), not slow
+matching — so this row must not be read as "LOOK's regex engine is Nx slower," and it is not the
+argument for RE2 (RE2's value would be making the guard *unnecessary*, not raw speed). Report the
+guarded end-to-end number, but annotate it.
+
+**Reading caveat — string ops measure allocation, not the language.** `string_slice` /
+`object_create` / `string_concat` are dominated by per-operation heap allocation (LOOK's `Value`
+wraps each string in a `make_shared`, and some builtins did O(input) work per call). This is the
+same root as the ~180 framework allocations per web request, seen at a different layer — one target,
+two tables. (Measured 2026-08-27: `string::substr` was decoding the *entire* input to codepoints on
+every call; an ASCII fast-path cut `string_slice` 2.9×. See git history.)
+
 Run: `cpp/bench/micro/compare.sh` (LOOK vs Node vs PHP, checksum-verified equivalence). Three
 implementations, one per language: `look/run.lk`, `node/run.js`, `php/run.php` — identical logic,
 identical integer checksums (a checksum mismatch means the implementations diverged, not a result).

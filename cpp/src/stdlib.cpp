@@ -401,7 +401,25 @@ static Module make_string() {
     // Codepoint-tabanlı: substr("çğü",0,2) = "çğ" (yarım karakter değil).
     m.functions["substr"] = [](auto args) {
         check_args_min("string::substr", args.size(), 2);
-        auto cps = utf8_decode(args[0].to_string());
+        std::string src = args[0].to_string();
+        // ASCII fast-path: for pure-ASCII input, byte offset == codepoint offset, so we
+        // can slice bytes directly — no utf8_decode (which allocated a vector<uint32_t> of
+        // the WHOLE string on every call, making substr O(input) instead of O(slice); a
+        // 1000-char haystack was decoded 2M times in the string_slice benchmark). Detecting
+        // ASCII is a cheap byte scan; the multi-byte path below is unchanged for correctness.
+        bool ascii = true;
+        for (unsigned char ch : src) { if (ch >= 0x80) { ascii = false; break; } }
+        if (ascii) {
+            int64_t n = (int64_t)src.size();
+            int64_t start = args[1].to_int();
+            if (start < 0) start = std::max((int64_t)0, n + start);
+            if (start >= n) return Value(std::string(""));
+            int64_t count = (args.size() == 3) ? args[2].to_int() : (n - start);
+            if (count < 0) count = 0;
+            if (count > n - start) count = n - start;
+            return Value(src.substr((size_t)start, (size_t)count));
+        }
+        auto cps = utf8_decode(src);
         int64_t n = (int64_t)cps.size();
         int64_t start = args[1].to_int();
         if (start < 0) start = std::max((int64_t)0, n + start);
