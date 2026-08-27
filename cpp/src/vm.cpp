@@ -297,6 +297,13 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
     if (arr.type() == Value::NONE) {
         arr = Value(std::make_shared<std::vector<Value>>());
     }
+    // LOOK strings are immutable (there is no string-mutation builtin, and index assignment
+    // has no write path), but the VM used to SILENTLY ignore `$s[0] = "x"` — the silent-wrong
+    // class. The tree-walk interpreter already throws here; make the VM match, with an
+    // identical message, so both engines fail loud and identically. (Also locks the
+    // precondition for the string-view representation: strings never change under a view.)
+    if (arr.type() == Value::STRING)
+        throw LookVmError("Strings are immutable; cannot assign to a string index");
     if (arr.type() != Value::ARRAY) return;
     auto& vec = *arr.as_array();
 

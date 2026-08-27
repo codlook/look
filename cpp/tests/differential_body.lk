@@ -141,6 +141,12 @@ function run_all() {
   # Bu case eskiden RED verirdi (assoc testi yoktu, bug differential-gorunmezdi). Beklenen: 2,2,4,0,3.
   $ca = ["x"=>1, "y"=>2]; $cp = [1,2,3,4];
   $o .= "W:" . count($ca) . "," . len($ca) . "," . count($cp) . "," . count([]) . "," . len("abc") . ";";
+  # String immutability — $s[0]="X" must FAIL LOUD and identically in both engines. The VM
+  # used to silently ignore it (silent-wrong) while the interpreter threw; now both throw the
+  # same message and the string is unchanged. Locks the string-view precondition.
+  $im = ""; $ss = "abc";
+  try { $ss[0] = "X"; $im = "MUTATED:" . $ss } catch ($e) { $im = $ss . "|" . $e }
+  $o .= "X:" . $im . ";";
   return $o;
 }
 

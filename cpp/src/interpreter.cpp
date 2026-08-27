@@ -1258,6 +1258,9 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         if (e->index) {
             // Container: zincirli ise object ifadesinden (referans), değilse isimden.
             Value obj = e->object ? evaluate_expression(*e->object) : current_->get(e->name);
+            if (obj.type() == Value::STRING)
+                // Immutable strings — identical message to the VM (both engines fail loud).
+                throw std::runtime_error("Strings are immutable; cannot assign to a string index");
             if (obj.type() != Value::ARRAY)
                 throw std::runtime_error((e->object ? std::string("assignment target")
                                                     : e->name) + " is not an array");
