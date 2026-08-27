@@ -6,3 +6,6 @@ logs/
 *.csv
 *.out
 _*
+mallocprobe/*.so
+mallocprobe/lk-fcgi-old
+mallocprobe/lk-fcgi-new
