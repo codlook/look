@@ -2,6 +2,5 @@ use http
 route("GET", "/j", function() {
     return response::json(["ok" => true, "msg" => "hello", "id" => 42, "tags" => [1,2,3]])
 })
-route("GET", "/empty", function() {
-    return response::text("")
-})
+route("GET", "/empty", function() { return response::text("") })
+route("GET", "/echo", function() { return response::text(request::get("v")) })

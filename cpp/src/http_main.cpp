@@ -966,13 +966,40 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         // Per-request builtins: module fonksiyonları interpreter copy'den alınır
         // (copy->set_web_context(&web) çağrıldığında modules_ yeni web'e bind edildi)
-        std::vector<look::BuiltinFn> req_builtins(look::builtin_names().size());
+        //
+        // PERF: this table was rebuilt every request — ~106 std::function heap allocations
+        // per request (measured: 53% of the fixed per-request cost, the largest single
+        // source). Every wrapper captures only generation-stable state (module fns from the
+        // thread_local dispatch copy), so — like tl_copy / tl_route_closures beside it — it is
+        // cacheable per generation. The one exception is print, which needs the per-request
+        // output stream; under the default worker-pool model (one request per thread at a
+        // time) it routes through copy->output() (set per request), so the whole table caches
+        // thread_local. Under opt-in fiber mode a thread interleaves many fibers, so the
+        // thread_local cache and copy->output() would leak one fiber's output into another —
+        // there we keep rebuilding per request with print capturing the fiber-local output.
+        static const bool g_use_fiber = [](){ const char* v = std::getenv("LOOK_FIBER_DISPATCH");
+                                              return v && std::string(v) == "1"; }();
+        static thread_local std::vector<look::BuiltinFn> tl_req_builtins;
+        static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;
+        std::vector<look::BuiltinFn> fiber_req_builtins;
+        std::vector<look::BuiltinFn>& req_builtins = g_use_fiber ? fiber_req_builtins : tl_req_builtins;
+        const bool need_build = g_use_fiber || (tl_builtins_gen != cur_gen);
+        if (need_build) {
+        req_builtins.assign(look::builtin_names().size(), look::BuiltinFn{});
 
         // print/write (0, 1)
-        req_builtins[0] = [&output](std::vector<look::Value>& args) -> look::Value {
-            for (auto& a : args) output << a.to_string();
-            return look::Value();
-        };
+        // print/write: fiber mode captures the fiber-local output (safe under interleaving);
+        // worker-pool mode routes through copy->output() (set per request) so the table caches.
+        if (g_use_fiber)
+            req_builtins[0] = [&output](std::vector<look::Value>& args) -> look::Value {
+                for (auto& a : args) output << a.to_string();
+                return look::Value();
+            };
+        else
+            req_builtins[0] = [copy](std::vector<look::Value>& args) -> look::Value {
+                for (auto& a : args) copy->output() << a.to_string();
+                return look::Value();
+            };
         req_builtins[1] = req_builtins[0];
 
         // count (2)
@@ -1144,6 +1171,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             for (size_t i = 0; i < arr.size(); ++i) { if (i) result += sep; result += arr[i].to_string(); }
             return look::Value(result);
         };
+
+        if (!g_use_fiber) tl_builtins_gen = cur_gen;   // cache valid until the next hot-reload
+        }   // end if(need_build) — worker-pool builds once per generation; fiber every request
 
         // before_route closures: route_closures ile aynı yapıda
         std::vector<look::Closure*> before_closures;
