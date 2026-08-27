@@ -129,6 +129,23 @@ interpreter, CLI bytecode VM, web VM) and fails on any divergence: a security fi
 that only lands in one engine is itself a vulnerability. See
 [BUG_AVI_HARITASI.md](BUG_AVI_HARITASI.md) for the method and the full log.
 
+### Resolved issues
+
+- **Cross-request data leak under fiber dispatch (interpreter path) — fixed.** When the
+  optional fiber dispatch mode (`LOOK_FIBER_DISPATCH=1`) was enabled *and* a request ran on
+  the tree-walk interpreter path (which happens when bytecode compilation falls back for a
+  script, not only under an explicit debug flag), the interpreter's `request::`/`response::`
+  binding used a dispatch copy shared across the many fibers interleaved on one worker thread.
+  When a handler yielded on I/O (`http_client` / `db::query`), another fiber could rebind that
+  shared copy to its own request, so the first handler's `request::get()` could then read
+  **another user's request data** — one user's response leaking into another's. The default
+  worker-pool model (one request per thread at a time) was never affected, and the bytecode VM
+  path was already isolated via a per-request builtins snapshot. Fixed by giving every request
+  (every fiber) its own dispatch copy in fiber mode. Locked by a concurrent-different-output
+  regression guard (`cpp/tests/fiber_ctx/`, wired into CI): 80 concurrent unique-valued requests
+  each yielding at an I/O point must every one echo its own value — verified 80/80 leaked before
+  the fix, 0 after. Fiber dispatch remains opt-in; the default worker-pool mode was unaffected.
+
 ### Platform support tiers
 
 Following the Rust/Go model, platform support is a **declared capability, not a wish** — a tier
