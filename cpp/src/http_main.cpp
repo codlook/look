@@ -1300,25 +1300,6 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // istekte interpreter'da çalışır → globals'ı her istekte taze snapshot'a
         // resetlemek ZORUNLU (izolasyon). Yine de Interpreter kurulumu (tüm stdlib'in
         // yeniden inşası) artık istek başına ödenmiyor.
-        t_copy_start = std::chrono::steady_clock::now();
-        static thread_local std::unique_ptr<look::Interpreter> tl_icopy;
-        static thread_local uint64_t tl_igen = (uint64_t)-1;
-        const uint64_t cur_igen = g_http_app.generation.load(std::memory_order_acquire);
-        if (!tl_icopy || tl_igen != cur_igen) {
-            tl_icopy = g_http_app.interp->make_dispatch_copy();
-            tl_igen  = cur_igen;
-        } else {
-            tl_icopy->reset_globals_from(*g_http_app.interp);   // izolasyon
-        }
-        look::Interpreter* copy = tl_icopy.get();
-        t_copy_end = std::chrono::steady_clock::now();
-
-        copy->set_output(output);
-        copy->set_web_context(&web);
-        sl.unlock();
-
-        t_dispatch_start = std::chrono::steady_clock::now();
-
         // ── Fiber dispatch (LOOK_FIBER_DISPATCH=1 ile aktif) ──────────────────
         // Fiber path: connections are acquired lazily inside the fiber via
         // get_conn() fallback → pinned to fiber->local.conns.
@@ -1329,6 +1310,43 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             const char* v = std::getenv("LOOK_FIBER_DISPATCH");
             return v && std::string(v) == "1";
         }();
+
+        t_copy_start = std::chrono::steady_clock::now();
+        // ── Dispatch copy seçimi: web-context izolasyonu fiber-güvenli olmalı ────
+        // KORELASYON: interpreter'ın web_ctx_'i (ve request::/response:: modülleri)
+        // set_web_context() ile PAYLAŞILAN kopyaya bağlanır. Worker-pool modelinde
+        // (bir thread = bir istek) thread_local kopya güvenli. Ama fiber modunda tek
+        // worker thread'i BİRÇOK fiber'ı iç içe çalıştırır: bir handler db::query/
+        // http_client'ta yield edince başka bir fiber koşar ve set_web_context(&web)
+        // ile PAYLAŞILAN kopyayı KENDİ isteğine bağlar → ilk fiber devam edince
+        // request::get YANLIŞ isteğin verisini okur (bir kullanıcının yanıtı diğerine
+        // sızabilir). VM yolu bunu istek-başına fiber_req_builtins snapshot'ıyla önler;
+        // interpreter yolu doğrudan copy->modules_'a gittiği için snapshot'lanamaz →
+        // fiber modunda her isteğe (her fiber'a) TAZE kopya ver (doğal izolasyon).
+        std::unique_ptr<look::Interpreter> fiber_icopy;
+        look::Interpreter* copy;
+        if (use_fiber) {
+            fiber_icopy = g_http_app.interp->make_dispatch_copy();  // per-fiber, taze → izole
+            copy = fiber_icopy.get();
+        } else {
+            static thread_local std::unique_ptr<look::Interpreter> tl_icopy;
+            static thread_local uint64_t tl_igen = (uint64_t)-1;
+            const uint64_t cur_igen = g_http_app.generation.load(std::memory_order_acquire);
+            if (!tl_icopy || tl_igen != cur_igen) {
+                tl_icopy = g_http_app.interp->make_dispatch_copy();
+                tl_igen  = cur_igen;
+            } else {
+                tl_icopy->reset_globals_from(*g_http_app.interp);   // izolasyon
+            }
+            copy = tl_icopy.get();
+        }
+        t_copy_end = std::chrono::steady_clock::now();
+
+        copy->set_output(output);
+        copy->set_web_context(&web);
+        sl.unlock();
+
+        t_dispatch_start = std::chrono::steady_clock::now();
 
         if (use_fiber) {
             std::exception_ptr dispatch_ex;

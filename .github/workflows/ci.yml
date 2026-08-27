@@ -503,3 +503,10 @@ jobs:
           cmake --build build --target look-fcgi --parallel $(nproc)
       - name: Concurrency hang smoke (c=50 × 20, pool + fiber)
         run: bash cpp/tests/concurrency_smoke.sh cpp/build/lk-fcgi 50 20
+      # Fiber-mode per-request web-context leak guard: many concurrent requests
+      # with unique values, each yielding at http::get() between reading its input
+      # and writing its response, must every one echo its OWN value. Regression:
+      # the interpreter dispatch path shared a thread_local copy across interleaved
+      # fibers → one user's data leaked into another's response.
+      - name: Fiber web-context correctness (concurrent-different-output)
+        run: bash cpp/tests/fiber_ctx/guard.sh cpp/build/lk-fcgi

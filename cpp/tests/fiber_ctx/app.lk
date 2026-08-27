@@ -1,0 +1,18 @@
+use http
+
+// /slow is the yield target: /echo calls it via http::get, and the socket
+// round-trip suspends the calling fiber. While suspended, other connection
+// fibers on the same worker thread run and rebind the shared dispatch copy's
+// web-context to THEIR request — the exact interleave this test probes.
+route("GET", "/slow", function() {
+    return response::text("x")
+})
+
+// /echo yields FIRST (http::get), THEN reads its own input via request::get.
+// Under a correct per-fiber binding, request::get("v") returns this request's
+// own v. If the dispatch copy / web-context is shared across interleaved
+// fibers, the read after the yield returns another request's value → mismatch.
+route("GET", "/echo", function() {
+    http::get("http://127.0.0.1:7699/")
+    return response::text(request::get("v"))
+})
