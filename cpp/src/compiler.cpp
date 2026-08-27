@@ -8,6 +8,7 @@
 //   2. Short-circuit: && ve || JUMP_IF_FALSE/TRUE zinciri ile üretilir
 //   3. try/catch: catch bloğuna girerken sadece STORE_VAR yapılanlar geçerli
 
+#include <unordered_set>
 #include "look/compiler.h"
 #include "look/builtins.h"
 #include "look/interpreter.h"
@@ -1707,10 +1708,22 @@ uint8_t FunctionCompiler::compile_assoc_lit(const AssocArrayLiteral& e, uint8_t 
     // re-copies the boxed key Values (atomic refcount traffic), so reserving is a real win.
     size_t need = 1 + 2 * e.pairs.size();
     emit(OpCode::NEW_ASSOC, r, (uint8_t)(need > 255 ? 0 : need));
+    // If every key is a distinct compile-time string literal, the per-insert dedup scan in
+    // array_set is provably redundant (no key can collide), so emit the scan-free
+    // ASSOC_APPEND — turning O(n^2) literal construction into O(n). Any dynamic key, numeric
+    // key, or duplicate literal falls back to ARRAY_SET, which keeps the correct last-wins
+    // dedup semantics. User-facing $a["k"]=v is unaffected (still ARRAY_SET).
+    bool distinct_string_keys = true;
+    std::unordered_set<std::string> seen;
+    for (auto& [k, v] : e.pairs) {
+        auto* sl = dynamic_cast<const StringLiteral*>(k.get());
+        if (!sl || !seen.insert(sl->value).second) { distinct_string_keys = false; break; }
+    }
+    OpCode set_op = distinct_string_keys ? OpCode::ASSOC_APPEND : OpCode::ARRAY_SET;
     for (auto& [k, v] : e.pairs) {
         uint8_t kr = compile_expr(*k);
         uint8_t vr = compile_expr(*v);
-        emit(OpCode::ARRAY_SET, r, kr, vr);
+        emit(set_op, r, kr, vr);
         free_temp(vr); free_temp(kr);
     }
     return r;

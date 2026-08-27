@@ -587,6 +587,17 @@ call_dispatch:
             case OpCode::ARRAY_SET:
                 array_set(R(ins.a), R(ins.b), R(ins.c));
                 break;
+            case OpCode::ASSOC_APPEND: {
+                // Literal construction with compiler-proven-distinct string keys: skip the
+                // O(n) dedup scan array_set runs on every insert (that scan made building an
+                // n-field literal O(n^2)). The data structure is unchanged — still the
+                // ["__assoc__", k, v, ...] sentinel array with O(n) lookup; only the
+                // redundant build-time scan is elided.
+                auto& vec = *R(ins.a).as_array();
+                vec.push_back(R(ins.b));
+                vec.push_back(R(ins.c));
+                break;
+            }
             case OpCode::ARRAY_LEN: {
                 const Value& arr = R(ins.b);
                 int len = 0;

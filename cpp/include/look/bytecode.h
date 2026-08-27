@@ -59,6 +59,9 @@ enum class OpCode : uint8_t {
     ARRAY_GET,       // r[a] = r[b][r[c]]
     ARRAY_SET,       // r[a][r[b]] = r[c]
     ARRAY_PUSH,      // push(r[a], r[b])
+    ASSOC_APPEND,    // push key r[b] + val r[c] onto assoc r[a] WITHOUT the dedup scan —
+                     // emitted only for assoc literals whose keys the compiler has proven
+                     // are distinct string literals, so the runtime scan is provably redundant
     ARRAY_LEN,       // r[a] = count(r[b])
 
     // ── Struct ────────────────────────────────────────────────────────────────
