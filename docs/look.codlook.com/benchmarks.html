@@ -166,6 +166,10 @@
   <!-- WORKLOAD 1 -->
   <section class="bsec">
     <h2>Workload 1 — trivial JSON <span class="r">(CPU-bound)</span></h2>
+    <div class="callout" style="background:linear-gradient(135deg,#7a4a00,#9a5f00);">
+      <h3>⚠ These web numbers are from build <code>f2c2230</code> — not yet re-run on the current build</h3>
+      <p>Workloads 1–2, the tail-latency chart, the ceiling table and the endurance run below were all measured in an earlier session on a 16-core Linux host. This cycle's fixes (a 2.1× cut in per-request allocations, plus the security and dispatch fixes) are <b>not</b> reflected here — they should only help throughput and leave the tail unchanged, but that is an expectation, not a measurement. A faithful re-run needs an isolated Linux box comparable to the original (never the production VPS, whose live sites share its CPU); it is queued, not done. The language-core numbers in Workload 0 above <b>are</b> from the current build.</p>
+    </div>
     <p>A route that returns <span class="tag mono">{"ok":true,"msg":"hello"}</span> — no I/O, pure runtime overhead. This is LOOK's <b>worst case</b>: nothing amortizes the interpreter, so a JIT (V8) has the largest possible edge. We show LOOK both at its default worker count (throttled) and correctly tuned.</p>
     <div class="tbl-scroll">
     <table class="btable">
