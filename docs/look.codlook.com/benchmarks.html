@@ -121,6 +121,48 @@
     </div>
   </section>
 
+  <!-- WORKLOAD 0 — LANGUAGE CORE -->
+  <section class="bsec">
+    <h2>Workload 0 — the language core <span class="r">(pure CPU, no HTTP)</span></h2>
+    <p>Before any web framework, how fast is the language itself? Seventeen micro-benchmarks — arithmetic, loops, function calls, strings, arrays, maps, JSON, exceptions — each implemented identically in LOOK, Node and PHP, run with an integer <b>checksum that must match across all three</b> (a mismatch means the implementations diverged, not a result). This is LOOK's <b>hardest arena</b>: a bytecode VM interpreting each operation against V8's and PHP's JITs, with no I/O to amortize. We publish it as-is.</p>
+    <div class="tbl-scroll">
+    <table class="btable">
+      <thead><tr><th>benchmark</th><th>LOOK</th><th>Node</th><th>PHP</th><th>LOOK ÷ Node</th></tr></thead>
+      <tbody>
+        <tr class="row-look"><td class="rt">exception</td><td class="mono">103 ms</td><td class="mono">2732 ms</td><td class="mono">209 ms</td><td class="win">0.04× — 26× faster</td></tr>
+        <tr><td class="rt">json_parse</td><td class="mono">690 ms</td><td class="mono">346 ms</td><td class="mono">444 ms</td><td>2.0×</td></tr>
+        <tr><td class="rt">json_serialize</td><td class="mono">602 ms</td><td class="mono">144 ms</td><td class="mono">91 ms</td><td>4.2×</td></tr>
+        <tr><td class="rt">assoc_access</td><td class="mono">1400 ms</td><td class="mono">192 ms</td><td class="mono">130 ms</td><td>7.3×</td></tr>
+        <tr><td class="rt">loop</td><td class="mono">2781 ms</td><td class="mono">360 ms</td><td class="mono">478 ms</td><td>7.7×</td></tr>
+        <tr><td class="rt">int_arith</td><td class="mono">634 ms</td><td class="mono">78 ms</td><td class="mono">106 ms</td><td>8.1×</td></tr>
+        <tr><td class="rt">fn_call</td><td class="mono">1139 ms</td><td class="mono">72 ms</td><td class="mono">91 ms</td><td>15.9×</td></tr>
+        <tr><td class="rt">recursion</td><td class="mono">316 ms</td><td class="mono">14 ms</td><td class="mono">22 ms</td><td>22.5×</td></tr>
+        <tr><td class="rt">array_push_pop</td><td class="mono">2282 ms</td><td class="mono">80 ms</td><td class="mono">233 ms</td><td>28.5×</td></tr>
+        <tr><td class="rt">float_arith</td><td class="mono">932 ms</td><td class="mono">32 ms</td><td class="mono">32 ms</td><td>29.1×</td></tr>
+        <tr><td class="rt">string_concat</td><td class="mono">1739 ms</td><td class="mono">54 ms</td><td class="mono">128 ms</td><td>32.5×</td></tr>
+        <tr><td class="rt">nested_fn</td><td class="mono">1328 ms</td><td class="mono">36 ms</td><td class="mono">81 ms</td><td>37.0×</td></tr>
+        <tr><td class="rt">string_search</td><td class="mono">149 ms</td><td class="mono">3.6 ms</td><td class="mono">4.7 ms</td><td>41.4×</td></tr>
+        <tr><td class="rt">array_create_iterate</td><td class="mono">1868 ms</td><td class="mono">37 ms</td><td class="mono">55 ms</td><td>50.4×</td></tr>
+        <tr><td class="rt">object_create</td><td class="mono">1467 ms</td><td class="mono">18 ms</td><td class="mono">141 ms</td><td class="bad">81.8×</td></tr>
+        <tr><td class="rt">string_slice</td><td class="mono">1156 ms</td><td class="mono">8.7 ms</td><td class="mono">19 ms</td><td class="bad">132.9×</td></tr>
+        <tr><td class="rt">regex</td><td class="mono">17018 ms</td><td class="mono">113 ms</td><td class="mono">65 ms</td><td class="bad">151×</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p><b>Node's JIT wins the compute microbenchmarks, mostly by 8–40×</b> — that is structural: it compiles each hot loop to machine code, LOOK interprets it. Two honest caveats keep the table fair. <b>exception</b> is the one LOOK wins outright — <b>26× faster than Node</b> — because throwing is cheap in LOOK and expensive in V8; real request-handling code throws far more than it runs tight arithmetic loops. And <b>regex</b> is not an engine-speed number: ~95% of that time is a ReDoS safety guard (a per-call thread bounding catastrophic backtracking), not matching — the raw match is ~1.9 µs/call.</p>
+    <p class="note">Why this rarely shows on the web: the VM's per-instruction dispatch is about <b>0.5%</b> of a real request's cost (≈0.4 µs of ~90 µs) — the rest is HTTP parse, routing and response building. A microbenchmark magnifies the one layer that barely moves the needle in production (Workloads 1–2 below). It is published because hiding your worst arena is not measurement-first.</p>
+
+    <h3>Where it improved — and where it regressed</h3>
+    <p>The question "did the language get faster or slower?" is only answerable by comparing the <b>previous build against the current one in the same run</b> (drift cancels; a correctness suite can't see speed). We do exactly that every cycle. This one moved four numbers:</p>
+    <div class="stab" style="grid-template-columns:1fr 1fr;">
+      <div class="scard"><div class="big" style="color:#0a7d3c;">2 faster</div><div class="sub">this cycle's allocation fixes</div>
+        <ul><li><b>string_slice</b> +49% — substr stopped decoding the whole input per call</li><li><b>object_create</b> +28% — assoc literals stopped re-allocating constants</li></ul></div>
+      <div class="scard"><div class="big" style="color:var(--red);">1 caught</div><div class="sub">found &amp; fixed by the same scan</div>
+        <ul><li>a new opcode inserted mid-enum silently taxed the hot dispatch path — <b>int_arith / loop ~13% slower</b>, on code we never touched</li><li>moving the opcode to the enum end recovered it in one line; the arithmetic numbers above are the fixed values</li></ul></div>
+    </div>
+    <p class="note">No functional test — not even our three-engine differential suite — catches a codegen-layout regression like that; only an old-vs-new speed scan does. So it became a permanent rule in the harness: any change to the opcode set or the dispatch loop must ship with an old/new regression scan. This was the fourth time this session a real defect lived in a behavior no test was asserting.</p>
+  </section>
+
   <!-- WORKLOAD 1 -->
   <section class="bsec">
     <h2>Workload 1 — trivial JSON <span class="r">(CPU-bound)</span></h2>
@@ -244,6 +286,7 @@
     <table class="btable">
       <thead><tr><th>axis</th><th>winner</th><th>by how much</th></tr></thead>
       <tbody>
+        <tr><td class="rt">Raw compute (CPU micro)</td><td class="rt">Node.js</td><td>8–40× on arithmetic/strings (JIT vs bytecode VM) — except <b>exceptions</b>, where LOOK is 26× faster</td></tr>
         <tr><td class="rt">Raw throughput</td><td class="rt">Node.js</td><td>~4× (CPU-bound), ~1.6× (DB) over tuned LOOK</td></tr>
         <tr class="row-look"><td class="rt">p99 tail latency under load</td><td class="rt">LOOK</td><td>flat sub-ms to 20k conns; Node curves to 1.17 s</td></tr>
         <tr class="row-look"><td class="rt">Memory</td><td class="rt">LOOK</td><td>7 MB vs 91–234 MB — 13–95× less</td></tr>
@@ -255,7 +298,7 @@
     <p>If your metric is <b>maximum requests per second</b> on a trivial CPU-bound path, Node's JIT wins. If your metric is <b>what your worst user waits under load</b>, <b>how much memory a fleet costs</b>, or <b>whether it's still standing after ten million requests</b>, LOOK is the design that holds — predictable, tiny, and it doesn't fall over. PHP trails on throughput in both workloads.</p>
     <div class="callout">
       <h3>Reproduce every number</h3>
-      <p>Nothing here is hand-typed. The whole suite — the apps, the runners, and the eight measurement-hygiene rules learned the hard way — is in the repository under <code>cpp/bench/</code>. Run <code>bash cpp/bench/race.sh &lt;repo&gt;</code> and get this table on your own hardware. Numbers measured on LOOK build <code>f2c2230</code>.</p>
+      <p>Nothing here is hand-typed. The whole suite — the apps, the runners, and the eight measurement-hygiene rules learned the hard way — is in the repository under <code>cpp/bench/</code>. Run <code>bash cpp/bench/race.sh &lt;repo&gt;</code> for the web workloads, and <code>bash cpp/bench/micro/compare.sh</code> for the language core, on your own hardware. Web workloads (1–2) measured on build <code>f2c2230</code>; the language core (Workload 0) on the current build with the dispatch fix applied.</p>
     </div>
   </section>
 
