@@ -59,9 +59,6 @@ enum class OpCode : uint8_t {
     ARRAY_GET,       // r[a] = r[b][r[c]]
     ARRAY_SET,       // r[a][r[b]] = r[c]
     ARRAY_PUSH,      // push(r[a], r[b])
-    ASSOC_APPEND,    // push key r[b] + val r[c] onto assoc r[a] WITHOUT the dedup scan —
-                     // emitted only for assoc literals whose keys the compiler has proven
-                     // are distinct string literals, so the runtime scan is provably redundant
     ARRAY_LEN,       // r[a] = count(r[b])
 
     // ── Struct ────────────────────────────────────────────────────────────────
@@ -127,6 +124,14 @@ enum class OpCode : uint8_t {
     // ── Debug ─────────────────────────────────────────────────────────────────
     NOP,
     BREAKPOINT,      // VM debug hook
+
+    // Appended at the END of the enum on purpose: inserting an opcode in the middle
+    // renumbers every later opcode and perturbs the VM dispatch switch's codegen, which
+    // measurably slowed the hot arithmetic/loop opcodes (~13% on int_arith/loop). New
+    // opcodes go here to keep the hot opcodes' numbering — and jump-table slots — stable.
+    ASSOC_APPEND,    // push key r[b] + val r[c] onto assoc r[a] WITHOUT the dedup scan —
+                     // emitted only for assoc literals whose keys the compiler has proven
+                     // are distinct string literals, so the runtime scan is provably redundant
 };
 
 // ── Instruction ───────────────────────────────────────────────────────────────
