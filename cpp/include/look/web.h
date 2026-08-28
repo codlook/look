@@ -100,7 +100,8 @@ struct WebContext {
     void parse_post_body();
 
     // Helpers
-    static std::string url_decode(const std::string& s);
+    // plus_is_space: query strings encode space as '+', but in a PATH segment '+' is literal.
+    static std::string url_decode(const std::string& s, bool plus_is_space = true);
     static std::map<std::string, std::string> parse_query(const std::string& qs);
     static std::map<std::string, std::string> parse_cookies(const std::string& raw);
 

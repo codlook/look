@@ -223,8 +223,11 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
     std::vector<std::pair<std::string, std::string>> named;
     for (size_t i = 0; i < pp.size(); ++i) {
         if (pp[i].size() > 2 && pp[i].front() == '{' && pp[i].back() == '}') {
-            params.push_back(Value(rp[i]));
-            named.emplace_back(pp[i].substr(1, pp[i].size() - 2), rp[i]);
+            // URL-decode the path segment (query params already are; path params were not —
+            // /p/%C3%BC gave "%C3%BC" not "ü"). plus_is_space=false: '+' is literal in a path.
+            std::string dv = WebContext::url_decode(rp[i], false);
+            params.push_back(Value(dv));
+            named.emplace_back(pp[i].substr(1, pp[i].size() - 2), dv);
         } else if (pp[i] != rp[i]) return false;
     }
     // request::param("id") / route::param("id") VM yolunda da çalışsın

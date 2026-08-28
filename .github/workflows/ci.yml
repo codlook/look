@@ -139,6 +139,7 @@ jobs:
           # found the first example failed to parse and route snippets used a `:id` form that
           # 404s — none caught by any guard. This closes that class. See docs_examples_check.py.
           python3 tests/docs_examples_check.py build/lk ../docs/look.codlook.com/docs.html ../docs/look.codlook.com/index.html
+          bash tests/route_param_decode.sh build/lk-fcgi   # path params URL-decoded (both engines)
 
       # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
       # slowloris header-deadline. Testler vardı, CI'da değildi.

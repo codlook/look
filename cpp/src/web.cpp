@@ -252,11 +252,11 @@ void WebContext::init_from_cgi() {
     if (ck) cookies_in = parse_cookies(ck);
 }
 
-std::string WebContext::url_decode(const std::string& s) {
+std::string WebContext::url_decode(const std::string& s, bool plus_is_space) {
     std::string result;
     for (size_t i = 0; i < s.size(); ++i) {
         if (s[i] == '+') {
-            result += ' ';
+            result += plus_is_space ? ' ' : '+';
         } else if (s[i] == '%' && i + 2 < s.size()) {
             try {
                 int h = std::stoi(s.substr(i + 1, 2), nullptr, 16);

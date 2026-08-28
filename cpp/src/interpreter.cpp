@@ -2036,7 +2036,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
 
             web_ctx_->route_matched = true;
             for (size_t pi = 0; pi < param_names.size(); ++pi)
-                web_ctx_->route_params[param_names[pi]] = match[pi + 1].str();
+                web_ctx_->route_params[param_names[pi]] = WebContext::url_decode(match[pi + 1].str(), false);
 
             // Route-level middleware'leri çalıştır
             for (auto& mw : route_middlewares) {
@@ -2048,7 +2048,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 auto fn = callback.as_function();
                 std::vector<Value> args;
                 for (size_t pi = 0; pi < param_names.size(); ++pi)
-                    args.push_back(Value(match[pi + 1].str()));
+                    args.push_back(Value(WebContext::url_decode(match[pi + 1].str(), false)));
                 while (args.size() < fn->parameters.size()) args.push_back(Value());
                 args.resize(fn->parameters.size());
                 call_function(fn, std::move(args));
@@ -2316,7 +2316,7 @@ void Interpreter::dispatch_routes() {
         web_ctx_->route_matched = true;
         web_ctx_->route_params.clear();
         for (size_t pi = 0; pi < entry.param_names.size(); ++pi)
-            web_ctx_->route_params[entry.param_names[pi]] = match[pi + 1].str();
+            web_ctx_->route_params[entry.param_names[pi]] = WebContext::url_decode(match[pi + 1].str(), false);
 
         // Route-level middleware'leri çalıştır (before_route'dan sonra, handler'dan önce)
         bool route_stopped = false;
@@ -2335,7 +2335,7 @@ void Interpreter::dispatch_routes() {
             if (entry.method == "SSE" && sse_conn_)
                 args.push_back(Value(sse_conn_));
             for (size_t pi = 0; pi < entry.param_names.size(); ++pi)
-                args.push_back(Value(match[pi + 1].str()));
+                args.push_back(Value(WebContext::url_decode(match[pi + 1].str(), false)));
             while (args.size() < fn->parameters.size()) args.push_back(Value());
             args.resize(fn->parameters.size());
             call_function(fn, std::move(args));
