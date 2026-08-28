@@ -130,3 +130,25 @@ boxing, or any switch/function on the per-instruction hot path. New opcodes go a
 (a middle insert is a silent hot-path tax — see the comment in `bytecode.h`). This is the fourth
 "tests never asserted this behavior" gap this session (after string index-immutability, the fiber
 web-context leak, and differential's coverage blind spots) — the pattern is not a coincidence.
+
+## Hygiene rule 11 — give every runtime an equal warmup
+
+Learned re-running the LOOK vs Node vs PHP DB race (2026-08-28): any runtime with lazy initialization —
+a database **connection pool**, a **JIT** warming to its optimizing tier, an **opcache** filling — is slow
+on the first requests and fast once warm. If the load sweep measures the earliest concurrency levels while
+one side is still cold, the result is **systematically biased toward whichever side was already warm**.
+
+Here Node's `mysql2` pool connected lazily, so `c=50` / `c=100` measured connection setup (they came back
+EMPTY / rps=0) while LOOK — no cold pool — answered immediately. The table then read "LOOK beats Node in DB
+throughput." With Node's pool pre-warmed and an equal warmup pass added, the honest result was a **wash**
+(Node ~7% ahead at low concurrency, LOOK ~15% ahead at c=1000 where Node saturates and queues) — LOOK's
+real, defensible win was the **flat sub-ms tail** (p99 ~600µs at every level vs Node 10ms→426ms) and ~16×
+less RAM, not raw throughput.
+
+This is the most dangerous class of confound because it was **directional and self-flattering**: our side
+was warm, the competitor's was cold, and the result came out exactly as we'd have hoped — so it *felt*
+verified. The fix is structural, not a matter of remembering: before the measured levels, every runtime
+gets (1) a **readiness poll** (wait until the endpoint actually answers — pools that pre-warm before
+`listen()` aren't ready at process start) and (2) an identical **discarded warmup pass** under load. Fairness
+is then a property of the harness, not of discipline. This is rule 9's sibling for the DB/pool axis: rule 9
+removes a CPU-quota confound, rule 11 removes a warmup confound — both silently skew the tail otherwise.
