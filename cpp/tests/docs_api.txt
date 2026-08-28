@@ -58,6 +58,7 @@ date::diff
 date::format
 date::from_timestamp
 date::is_valid
+date::mono_us
 date::now
 date::parse
 date::sub
