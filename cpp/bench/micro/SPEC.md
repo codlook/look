@@ -108,3 +108,25 @@ If you measure tail latency under any CPU quota (container `--cpus`, k8s limit, 
 cpu.stat first: `nr_throttled > 0` under load means the numbers include scheduler throttling, not the
 server's own latency — set threads ≤ the quota (or remove the quota) and re-measure. The symptom is
 invisible in strace (the stall is descheduling, not a syscall) — cpu.stat is the only direct evidence.
+
+## Hygiene rule 10 — a perf regression is invisible without an OLD/NEW same-run scan
+
+Learned shipping this session's 6 perf fixes (2026-08-27): a change that adds a VM opcode, edits the
+dispatch loop, or touches any shared hot-path mechanism can slow OTHER, untouched code paths — and NO
+correctness test catches it. `differential` proves the engines agree; it says nothing about speed. Here,
+inserting `ASSOC_APPEND` in the MIDDLE of the OpCode enum renumbered every later opcode and perturbed the
+dispatch switch's codegen (jump-table layout / icache), slowing `int_arith` / `loop` / `exception` ~13% —
+on paths the fix never touched. It shipped in v1.0 unnoticed; the user's instinct ("feels like it's going
+backwards") was literally correct.
+
+The only thing that surfaces it is an **OLD-vs-NEW regression scan run in the SAME machine window**: build
+the pre-change and post-change binaries with IDENTICAL config (rule 8 — different SSL/LTO/toolchain is a
+confound that mimics a regression), run the micro suite interleaved (OLD, NEW, OLD, NEW…) so drift hits
+both equally, and compare per-test with a ±5% noise band. Report three lists — improved / unchanged /
+**regressed** — and treat a non-empty regressed list as the headline finding, not a footnote.
+
+**Mandatory** whenever a change touches: the OpCode enum, the VM dispatch loop, `array_set` / value
+boxing, or any switch/function on the per-instruction hot path. New opcodes go at the END of the enum
+(a middle insert is a silent hot-path tax — see the comment in `bytecode.h`). This is the fourth
+"tests never asserted this behavior" gap this session (after string index-immutability, the fiber
+web-context leak, and differential's coverage blind spots) — the pattern is not a coincidence.
