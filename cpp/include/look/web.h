@@ -65,6 +65,11 @@ struct WebContext {
     std::string body;
     std::string remote_addr;
     std::string content_type;
+    // True only when the client connection is actually HTTPS — set from an HTTPS FCGI param, or
+    // X-Forwarded-Proto=https from a TRUSTED proxy (LOOK_TRUSTED_PROXY). The session cookie's
+    // Secure flag is gated on this: Secure only helps under TLS, so setting it over plain HTTP
+    // just stops the cookie from being sent (which silently breaks local http:// dev).
+    bool is_https = false;
     std::map<std::string, std::string> get_params;
     std::map<std::string, std::string> post_params;
     std::map<std::string, std::string> cookies_in;

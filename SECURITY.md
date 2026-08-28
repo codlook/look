@@ -131,6 +131,16 @@ that only lands in one engine is itself a vulnerability. See
 
 ### Resolved issues
 
+- **Session cookies set `Secure` only over HTTPS (fixed a silent-breakage, not a weakening).**
+  The `LOOK_SESSION` cookie is marked `Secure` **when the connection is actually HTTPS**, detected
+  from `X-Forwarded-Proto: https` — and only when that header comes from a **trusted** proxy
+  (`LOOK_TRUSTED_PROXY`), or from an `HTTPS` FCGI param set by the web server; a client cannot forge
+  it. Over plain HTTP the flag is omitted, because `Secure` there would only stop the cookie from
+  being sent (no protection to add) — which silently broke local `http://` development and any
+  reverse-proxy setup that terminates TLS upstream. `HttpOnly` and `SameSite=Lax` are unconditional.
+  This is the standard behaviour (PHP/Express/Django); it loses no protection, since `Secure` only
+  matters under TLS, which is exactly when it is still set. Guarded by `cpp/tests/session_secure.sh`.
+
 - **Cross-request data leak under fiber dispatch (interpreter path) — fixed.** When the
   optional fiber dispatch mode (`LOOK_FIBER_DISPATCH=1`) was enabled *and* a request ran on
   the tree-walk interpreter path (which happens when bytecode compilation falls back for a

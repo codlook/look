@@ -756,7 +756,7 @@ static Module make_session_module(WebContext* ctx) {
         if (sit == ctx->cookies_in.end() || !valid_sid(sit->second)) {
             std::string sid = gen_session_id();
             ctx->cookies_in["LOOK_SESSION"] = sid;
-            ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly; Secure; SameSite=Lax");
+            ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + (ctx->is_https ? "; Secure" : "") + "; SameSite=Lax");
         }
         return Value(ctx->cookies_in["LOOK_SESSION"]);
     };
@@ -773,7 +773,7 @@ static Module make_session_module(WebContext* ctx) {
         }
         std::string sid = gen_session_id();
         ctx->cookies_in["LOOK_SESSION"] = sid;
-        ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly; Secure; SameSite=Lax");
+        ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + (ctx->is_https ? "; Secure" : "") + "; SameSite=Lax");
         if (!blob.empty()) sess_store(sid, blob);   // veriyi yeni SID'e taşı
         return Value(sid);
     };
@@ -808,7 +808,7 @@ static Module make_session_module(WebContext* ctx) {
         if (it != ctx->cookies_in.end() && valid_sid(it->second)) sess_remove(it->second);
         ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
         ctx->set_cookies_out.push_back(
-            "LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax");
+            std::string("LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly") + (ctx->is_https ? "; Secure" : "") + "; SameSite=Lax");
         return Value();
     };
 

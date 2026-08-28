@@ -247,6 +247,23 @@ static std::string resolve_client_ip(const Req& req) {
     return xff.empty() ? ip : xff;
 }
 
+// Is the ORIGINAL client connection HTTPS? The http server itself is plain HTTP (TLS is a front
+// proxy's job), so the only signal is X-Forwarded-Proto — and only when it comes from a TRUSTED
+// proxy (LOOK_TRUSTED_PROXY). Believing it from anyone would let a client forge the header and
+// flip the session cookie's Secure flag. Same trust rule as X-Forwarded-For above.
+template <typename Req>
+static bool resolve_is_https(const Req& req) {
+    if (!is_trusted_proxy(req.remote_addr)) return false;
+    auto it = req.headers.find("x-forwarded-proto");
+    if (it == req.headers.end()) return false;
+    std::string p = it->second;
+    auto comma = p.find(','); if (comma != std::string::npos) p = p.substr(0, comma);
+    p.erase(0, p.find_first_not_of(" \t"));
+    auto last = p.find_last_not_of(" \t"); p.erase(last == std::string::npos ? 0 : last + 1);
+    for (auto& c : p) c = (char)std::tolower((unsigned char)c);
+    return p == "https";
+}
+
 // ── Shared hot-reload state (mirrors WarmApp in fcgi_main) ───────────────────
 
 struct HttpApp {
@@ -734,6 +751,7 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
     // başlıklarına yalnız güvenilir proxy arkasındaysa güvenir (bkz.
     // resolve_client_ip: eskiden burada başlık KOŞULSUZ kabul ediliyordu).
     ctx.remote_addr = resolve_client_ip(req);
+    ctx.is_https    = resolve_is_https(req);
 
     // Gövde ayrıştırma — urlencoded VE multipart, tek kaynaktan (web.cpp).
     // ESKİ HATA: burada yalnızca urlencoded dalı vardı, multipart hiç yoktu →
@@ -1507,6 +1525,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.query_string = req.query_string;
         web.get_params   = look::WebContext::parse_query(req.query_string);
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
+        web.is_https    = resolve_is_https(req);
 
         std::ostringstream sink;
         copy->set_output(sink);
@@ -1536,6 +1555,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.query_string = req.query_string;
         web.get_params   = look::WebContext::parse_query(req.query_string);
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
+        web.is_https    = resolve_is_https(req);
 
         std::ostringstream sink;
         copy->set_output(sink);

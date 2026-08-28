@@ -568,6 +568,9 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
     web.parse_post_body();   // urlencoded + multipart — tek kaynak (web.cpp)
 
     web.remote_addr = param("REMOTE_ADDR");
+    // HTTPS from the FCGI params is set by the web server (Apache/nginx), not the client — trusted.
+    { std::string h = param("HTTPS"); for (auto& c : h) c = (char)std::tolower((unsigned char)c);
+      web.is_https = (h == "on" || h == "1" || param("REQUEST_SCHEME") == "https"); }
     std::string ck  = param("HTTP_COOKIE");
     if (!ck.empty()) web.cookies_in = look::WebContext::parse_cookies(ck);
 
