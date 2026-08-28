@@ -42,5 +42,28 @@ for eng in "VM:" "tree-walk:LOOK_BYTECODE=0"; do
   if has_secure "$sc"; then echo "  FAIL (c) forged XFP set Secure (untrusted): $sc"; fail=1; else echo "  ok   (c) forged XFP ignored"; fi
   kill $s 2>/dev/null; wait $s 2>/dev/null
 done
+
+# Explicit override (engine-independent) + fail-loud warning.
+echo "== override + warning =="
+# (d) LOOK_SESSION_SECURE=1 forces Secure even over plain HTTP
+LOOK_SESSION_SECURE=1 "$FCGI" --mode http --port $PORT "$APP" >/dev/null 2>&1 & s=$!; sleep 1.2
+sc="$(curl -s -m5 -i http://127.0.0.1:$PORT/set | grep -i set-cookie)"
+if has_secure "$sc"; then echo "  ok   (d) LOOK_SESSION_SECURE=1 forces Secure"; else echo "  FAIL (d) =1 did not force Secure: $sc"; fail=1; fi
+kill $s 2>/dev/null; wait $s 2>/dev/null
+
+# (e) LOOK_SESSION_SECURE=0 forces no Secure even with an HTTPS signal
+LOOK_SESSION_SECURE=0 LOOK_TRUSTED_PROXY=127.0.0.1 "$FCGI" --mode http --port $PORT "$APP" >/dev/null 2>&1 & s=$!; sleep 1.2
+sc="$(curl -s -m5 -i -H 'X-Forwarded-Proto: https' http://127.0.0.1:$PORT/set | grep -i set-cookie)"
+if has_secure "$sc"; then echo "  FAIL (e) =0 still set Secure: $sc"; fail=1; else echo "  ok   (e) LOOK_SESSION_SECURE=0 forces no Secure"; fi
+kill $s 2>/dev/null; wait $s 2>/dev/null
+
+# (f) fail-loud: a session cookie without Secure and no HTTPS signal must WARN (not silent)
+LOG="$(mktemp)"
+"$FCGI" --mode http --port $PORT "$APP" >/dev/null 2>"$LOG" & s=$!; sleep 1.2
+curl -s -m5 http://127.0.0.1:$PORT/set >/dev/null
+kill $s 2>/dev/null; wait $s 2>/dev/null
+if grep -qi 'WITHOUT Secure' "$LOG"; then echo "  ok   (f) warns when shipping a non-Secure session cookie"; else echo "  FAIL (f) no warning — silent security downgrade"; fail=1; fi
+rm -f "$LOG"
+
 rm -f "$APP" /tmp/_ck
-[ $fail = 0 ] && echo "PASS: session Secure is HTTPS-only, trusted-proxy-gated, both engines" || { echo "FAIL"; exit 1; }
+[ $fail = 0 ] && echo "PASS: session Secure is HTTPS-only, proxy-gated, overridable, and fail-loud" || { echo "FAIL"; exit 1; }

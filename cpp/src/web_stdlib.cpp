@@ -744,6 +744,31 @@ static std::string gen_session_id() {
     return std::string(id);
 }
 
+// Decide the session cookie's Secure attribute. LOOK_SESSION_SECURE forces it: "1" = always,
+// "0" = never (dev). Unset = conditional on a real HTTPS signal (ctx->is_https). The risk this
+// guards: behind a TLS proxy that forwards over plain HTTP, if LOOK_TRUSTED_PROXY is not set the
+// proxy's X-Forwarded-Proto is (correctly) distrusted, so is_https is false and Secure would be
+// silently dropped in production. So when we ship a session cookie without Secure over a non-HTTPS
+// request and nothing was set explicitly, we WARN once — behaviour unchanged, but never silent.
+static std::string session_secure_attr(WebContext* ctx) {
+    static const int mode = []{
+        const char* e = std::getenv("LOOK_SESSION_SECURE");
+        return !e ? -1 : (std::string(e) == "0" ? 0 : 1);
+    }();
+    if (mode == 1) return "; Secure";
+    if (mode == 0) return "";
+    if (ctx && ctx->is_https) return "; Secure";
+    static std::atomic<bool> warned{false};
+    bool expected = false;
+    if (warned.compare_exchange_strong(expected, true))
+        Logger::instance().log(LogLevel::LOG_WARN, "SESSION",
+            "session cookie sent WITHOUT Secure (no HTTPS signal on this request). If LOOK runs "
+            "behind a TLS-terminating proxy, set LOOK_TRUSTED_PROXY so X-Forwarded-Proto=https is "
+            "honoured; or set LOOK_SESSION_SECURE=1 to force it (LOOK_SESSION_SECURE=0 silences this "
+            "for plain-HTTP dev). Otherwise the session cookie can be sent over http and hijacked.");
+    return "";
+}
+
 static Module make_session_module(WebContext* ctx) {
     Module m;
     m.name = "session";
@@ -756,7 +781,7 @@ static Module make_session_module(WebContext* ctx) {
         if (sit == ctx->cookies_in.end() || !valid_sid(sit->second)) {
             std::string sid = gen_session_id();
             ctx->cookies_in["LOOK_SESSION"] = sid;
-            ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + (ctx->is_https ? "; Secure" : "") + "; SameSite=Lax");
+            ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
         }
         return Value(ctx->cookies_in["LOOK_SESSION"]);
     };
@@ -773,7 +798,7 @@ static Module make_session_module(WebContext* ctx) {
         }
         std::string sid = gen_session_id();
         ctx->cookies_in["LOOK_SESSION"] = sid;
-        ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + (ctx->is_https ? "; Secure" : "") + "; SameSite=Lax");
+        ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
         if (!blob.empty()) sess_store(sid, blob);   // veriyi yeni SID'e taşı
         return Value(sid);
     };
@@ -808,7 +833,7 @@ static Module make_session_module(WebContext* ctx) {
         if (it != ctx->cookies_in.end() && valid_sid(it->second)) sess_remove(it->second);
         ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
         ctx->set_cookies_out.push_back(
-            std::string("LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly") + (ctx->is_https ? "; Secure" : "") + "; SameSite=Lax");
+            std::string("LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly") + session_secure_attr(ctx) + "; SameSite=Lax");
         return Value();
     };
 

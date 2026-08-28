@@ -139,7 +139,11 @@ that only lands in one engine is itself a vulnerability. See
   being sent (no protection to add) — which silently broke local `http://` development and any
   reverse-proxy setup that terminates TLS upstream. `HttpOnly` and `SameSite=Lax` are unconditional.
   This is the standard behaviour (PHP/Express/Django); it loses no protection, since `Secure` only
-  matters under TLS, which is exactly when it is still set. Guarded by `cpp/tests/session_secure.sh`.
+  matters under TLS, which is exactly when it is still set. **Never silent:** if a session cookie is
+  shipped without `Secure` over a non-HTTPS request (e.g. behind a TLS proxy with `LOOK_TRUSTED_PROXY`
+  unset), the runtime logs a one-time warning so a misconfiguration can't quietly downgrade protection.
+  Override with `LOOK_SESSION_SECURE=1` (always) / `=0` (never, for plain-HTTP dev). Guarded by
+  `cpp/tests/session_secure.sh` (HTTPS, HTTP, forged-header, both overrides, and the warning).
 
 - **Cross-request data leak under fiber dispatch (interpreter path) — fixed.** When the
   optional fiber dispatch mode (`LOOK_FIBER_DISPATCH=1`) was enabled *and* a request ran on
