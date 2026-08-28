@@ -764,7 +764,7 @@ look-fcgi --mode http --port 8080</code></pre>
 }</code></pre>
 
   <h3>for</h3>
-  <pre><code><span class="kw">for</span> (<span class="var">$i</span> = <span class="num">0</span> <span class="var">$i</span> &lt <span class="num">10</span> <span class="var">$i</span>++) {
+  <pre><code><span class="kw">for</span> (<span class="var">$i</span> = <span class="num">0</span>; <span class="var">$i</span> &lt; <span class="num">10</span>; <span class="var">$i</span> = <span class="var">$i</span> + <span class="num">1</span>) {
     <span class="kw">print</span>(<span class="str">"{<span class="var">$i</span>}\n"</span>)
 }</code></pre>
 
@@ -1400,7 +1400,7 @@ Stack trace:
     })
 })
 
-<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/public"</span>, <span class="kw">function</span>() { <span class="cm"># outside the group — no prefix, no $auth</span> })</code></pre>
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/public"</span>, <span class="kw">function</span>() { <span class="cm">/* outside the group — no prefix, no $auth */</span> })</code></pre>
 
   <div class="callout">
     <p><strong>Deliberately minimal.</strong> <code>route::group()</code> does exactly two things —
@@ -3367,8 +3367,8 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
 <span class="ns">db::</span><span class="fn">exec</span>(<span class="var">$conn</span>, <span class="str">"INSERT INTO admins (email,password) VALUES (?,?)"</span>, [<span class="var">$email</span>, <span class="var">$hash</span>])
 <span class="cm"># Login — verify</span>
 <span class="var">$rows</span> = <span class="ns">db::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT password FROM admins WHERE email=?"</span>, [<span class="var">$email</span>])
-<span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) { <span class="cm"># no such user</span> }
-<span class="kw">if</span> (!<span class="ns">auth::</span><span class="fn">verify</span>(<span class="var">$password</span>, <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"password"</span>])) { <span class="cm"># wrong password</span> }</code></pre>
+<span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) { <span class="cm">/* no such user */</span> }
+<span class="kw">if</span> (!<span class="ns">auth::</span><span class="fn">verify</span>(<span class="var">$password</span>, <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"password"</span>])) { <span class="cm">/* wrong password */</span> }</code></pre>
 </section>
 
 <section id="jwt">
@@ -5047,7 +5047,7 @@ POST /blog/admin/categories/delete/{id} → Delete category</code></pre>
 <span class="cm"># GET /products/{id} — a single product</span>
 <span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/products/{id}"</span>, <span class="kw">function</span>(<span class="var">$id</span>) <span class="kw">use</span> (<span class="var">$conn</span>) {
     <span class="var">$rows</span> = <span class="fn">db</span>::<span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM products WHERE id = ?"</span>, [<span class="fn">int</span>(<span class="var">$id</span>)])
-    <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) { <span class="fn">json_error</span>(<span class="str">"Product not found"</span>, <span class="num">404</span>) <span class="kw">return</span> }
+    <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) { <span class="fn">json_error</span>(<span class="str">"Product not found"</span>, <span class="num">404</span>); <span class="kw">return</span> }
     <span class="fn">json_ok</span>(<span class="var">$rows</span>[<span class="num">0</span>])
 })
 
@@ -5057,7 +5057,7 @@ POST /blog/admin/categories/delete/{id} → Delete category</code></pre>
     <span class="var">$name</span>   = <span class="var">$body</span>[<span class="str">"name"</span>]    ?? <span class="str">""</span>
     <span class="var">$price</span> = <span class="fn">float</span>(<span class="var">$body</span>[<span class="str">"price"</span>] ?? <span class="num">0</span>)
 
-    <span class="kw">if</span> (<span class="var">$name</span> == <span class="str">""</span> || <span class="var">$price</span> <= <span class="num">0</span>) { <span class="fn">json_error</span>(<span class="str">"name and price are required"</span>) <span class="kw">return</span> }
+    <span class="kw">if</span> (<span class="var">$name</span> == <span class="str">""</span> || <span class="var">$price</span> <= <span class="num">0</span>) { <span class="fn">json_error</span>(<span class="str">"name and price are required"</span>); <span class="kw">return</span> }
 
     <span class="fn">db</span>::<span class="fn">exec</span>(<span class="var">$conn</span>, <span class="str">"INSERT INTO products (name, price) VALUES (?, ?)"</span>, [<span class="var">$name</span>, <span class="var">$price</span>])
     <span class="fn">json_ok</span>([<span class="str">"id"</span> => <span class="fn">db</span>::<span class="fn">last_id</span>(<span class="var">$conn</span>), <span class="str">"name"</span> => <span class="var">$name</span>, <span class="str">"price"</span> => <span class="var">$price</span>])
@@ -5068,7 +5068,7 @@ POST /blog/admin/categories/delete/{id} → Delete category</code></pre>
     <span class="var">$body</span>  = <span class="fn">request</span>::<span class="fn">json</span>()
     <span class="var">$name</span>    = <span class="var">$body</span>[<span class="str">"name"</span>]    ?? <span class="kw">null</span>
     <span class="var">$price</span> = <span class="var">$body</span>[<span class="str">"price"</span>] ?? <span class="kw">null</span>
-    <span class="kw">if</span> (<span class="var">$name</span> == <span class="kw">null</span> && <span class="var">$price</span> == <span class="kw">null</span>) { <span class="fn">json_error</span>(<span class="str">"No field to update"</span>) <span class="kw">return</span> }
+    <span class="kw">if</span> (<span class="var">$name</span> == <span class="kw">null</span> && <span class="var">$price</span> == <span class="kw">null</span>) { <span class="fn">json_error</span>(<span class="str">"No field to update"</span>); <span class="kw">return</span> }
     <span class="fn">db</span>::<span class="fn">exec</span>(<span class="var">$conn</span>, <span class="str">"UPDATE products SET name=COALESCE(?,name), price=COALESCE(?,price) WHERE id=?"</span>,
         [<span class="var">$name</span>, <span class="var">$price</span>, <span class="fn">int</span>(<span class="var">$id</span>)])
     <span class="fn">json_ok</span>([<span class="str">"updated"</span> => <span class="fn">db</span>::<span class="fn">affected</span>(<span class="var">$conn</span>) > <span class="num">0</span>])
@@ -5182,7 +5182,7 @@ DB_PASS=</code></pre>
 <span class="fn">route</span>(<span class="str">"SSE"</span>, <span class="str">"/events"</span>, <span class="kw">function</span>(<span class="var">$sse</span>) {
     <span class="var">$tick</span> = <span class="fn">timer</span>::<span class="fn">every</span>(<span class="num">2000</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$sse</span>) {
         <span class="var">$ok</span> = <span class="fn">sse</span>::<span class="fn">send</span>(<span class="var">$sse</span>, <span class="fn">json</span>::<span class="fn">encode</span>([<span class="str">"time"</span> => <span class="fn">date</span>::<span class="fn">now</span>()]), <span class="str">"tick"</span>)
-        <span class="kw">if</span> (!<span class="var">$ok</span>) { <span class="fn">timer</span>::<span class="fn">cancel</span>(<span class="var">$tick</span>) <span class="kw">return</span> }  <span class="cm"># connection closed</span>
+        <span class="kw">if</span> (!<span class="var">$ok</span>) { <span class="fn">timer</span>::<span class="fn">cancel</span>(<span class="var">$tick</span>); <span class="kw">return</span> }  <span class="cm"># connection closed</span>
     })
     <span class="fn">sse</span>::<span class="fn">on</span>(<span class="var">$sse</span>, <span class="str">"close"</span>, <span class="kw">function</span>() <span class="kw">use</span> (<span class="var">$tick</span>) {
         <span class="fn">timer</span>::<span class="fn">cancel</span>(<span class="var">$tick</span>)
@@ -5271,7 +5271,7 @@ DB_PASS=</code></pre>
     <span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/post/{slug}"</span>, <span class="kw">function</span>(<span class="var">$slug</span>) <span class="kw">use</span> (<span class="var">$conn</span>, <span class="var">$tpl</span>) {
         <span class="var">$rows</span> = <span class="fn">db</span>::<span class="fn">query</span>(<span class="var">$conn</span>,
             <span class="str">"SELECT * FROM posts WHERE slug = ? AND published = 1"</span>, [<span class="var">$slug</span>])
-        <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) { <span class="fn">response</span>::<span class="fn">status</span>(<span class="num">404</span>) <span class="kw">return</span> }
+        <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) { <span class="fn">response</span>::<span class="fn">status</span>(<span class="num">404</span>); <span class="kw">return</span> }
         <span class="fn">print</span>(<span class="fn">template</span>::<span class="fn">render</span>(<span class="var">$tpl</span> . <span class="str">"/public/post"</span>, [
             <span class="str">"title"</span> => <span class="var">$rows</span>[<span class="num">0</span>][<span class="str">"title"</span>],
             <span class="str">"post"</span>  => <span class="var">$rows</span>[<span class="num">0</span>]
@@ -5584,7 +5584,7 @@ route("GET", "/stats-fast", function() use ($conn) {
     parallel(function() use ($r, $conn) {
         send($r, db::query($conn, "SELECT count(*) as n FROM categories", [])[0]["n"])
     })
-    $u = receive($r) $k = receive($r)
+    $u = receive($r); $k = receive($r)
     print(json::encode(["products" => $u, "categories" => $k]))
 })</code></pre>
   </div>

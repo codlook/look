@@ -135,6 +135,10 @@ jobs:
           bash tests/parallel_db_test.sh build/lk-fcgi
           bash tests/finally_ret_test.sh build/lk   # finally return/break/continue (VM+interp parity)
           bash tests/args_test.sh build/lk          # args() CLI arguments (VM + tree-walk)
+          # Every LOOK example in the public docs must parse (`lk --check`). A clean-room dogfood
+          # found the first example failed to parse and route snippets used a `:id` form that
+          # 404s — none caught by any guard. This closes that class. See docs_examples_check.py.
+          python3 tests/docs_examples_check.py build/lk ../docs/look.codlook.com/docs.html ../docs/look.codlook.com/index.html
 
       # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
       # slowloris header-deadline. Testler vardı, CI'da değildi.
