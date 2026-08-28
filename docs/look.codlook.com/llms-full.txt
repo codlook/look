@@ -4356,6 +4356,8 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | `LOOK_ALLOW_SSRF` | *off* | When set to `1`, allows `http::` requests to private / loopback addresses. Off by default, so outbound calls to internal ranges are blocked (SSRF protection). |
 | `LOOK_WS_ORIGINS` | *all* | Comma-separated allowlist of accepted WebSocket `Origin` headers. Unset = every origin is accepted; set it to lock WS to your own domains. |
 | `LOOK_MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body in bytes. Requests above the cap are rejected before buffering. |
+| `LOOK_SESSION_SECURE` | *auto* | Controls the `Secure` flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (an `HTTPS` FCGI param, or `X-Forwarded-Proto: https` from a trusted proxy); the runtime warns once if it ships a session cookie without `Secure`, so a misconfiguration cannot silently downgrade. `1` = always; `0` = never (plain-HTTP local dev). |
+| `LOOK_TRUSTED_PROXY` | — (disabled) | Comma-separated proxy IPs / CIDRs to trust. Behind them, `X-Forwarded-For` sets the real client IP (`request::ip()`, rate limiter) **and** `X-Forwarded-Proto: https` marks the request HTTPS (session cookie gets `Secure`). Unset = these headers are ignored so a client cannot forge them. |
 
 ### Connection limits
 

@@ -4332,6 +4332,8 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
     <tr><td><code>LOOK_ALLOW_SSRF</code></td><td><em>off</em></td><td>When set to <code>1</code>, allows <code>http::</code> requests to private / loopback addresses. Off by default, so outbound calls to internal ranges are blocked (SSRF protection).</td></tr>
     <tr><td><code>LOOK_WS_ORIGINS</code></td><td><em>all</em></td><td>Comma-separated allowlist of accepted WebSocket <code>Origin</code> headers. Unset = every origin is accepted; set it to lock WS to your own domains.</td></tr>
     <tr><td><code>LOOK_MAX_BODY_SIZE</code></td><td><code>10485760</code> (10&nbsp;MB)</td><td>Maximum request body in bytes. Requests above the cap are rejected before buffering.</td></tr>
+    <tr><td><code>LOOK_SESSION_SECURE</code></td><td><em>auto</em></td><td>Controls the <code>Secure</code> flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (detected from an <code>HTTPS</code> FCGI param or <code>X-Forwarded-Proto: https</code> from a trusted proxy); the runtime warns once if it ships a session cookie without <code>Secure</code> so a misconfiguration can't silently downgrade. <code>1</code> = always set it; <code>0</code> = never (for plain-HTTP local dev).</td></tr>
+    <tr><td><code>LOOK_TRUSTED_PROXY</code></td><td>— (disabled)</td><td>Comma-separated proxy IPs / CIDRs to trust. Behind them, <code>X-Forwarded-For</code> sets the real client IP (<code>request::ip()</code>, rate limiter) <strong>and</strong> <code>X-Forwarded-Proto: https</code> marks the request HTTPS (so the session cookie gets <code>Secure</code>). Unset = these headers are ignored, so a client cannot forge them.</td></tr>
   </table>
 
   <h3>Connection limits</h3>
