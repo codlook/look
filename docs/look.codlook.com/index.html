@@ -105,7 +105,7 @@
       <div class="codewin lg">
         <div class="bar"><i></i><i></i><i></i><span class="fname">app.lk</span></div>
 <pre><span class="c-cm">// Fetch a user by ID — embedded database, zero setup</span>
-<span class="c-fn">route</span>(<span class="c-str">"GET"</span>, <span class="c-str">"/users/:id"</span>, <span class="c-kw">function</span>(<span class="c-var">$req</span>) {
+<span class="c-fn">route</span>(<span class="c-str">"GET"</span>, <span class="c-str">"/users/{id}"</span>, <span class="c-kw">function</span>(<span class="c-var">$req</span>) {
     <span class="c-var">$id</span>   = <span class="c-fn">int</span>(<span class="c-fn">request::param</span>(<span class="c-str">"id"</span>))
     <span class="c-var">$user</span> = <span class="c-fn">db::query</span>(<span class="c-fn">app::db</span>(), <span class="c-str">"SELECT * FROM users WHERE id = ?"</span>, [<span class="c-var">$id</span>])
 
@@ -215,7 +215,7 @@
       <p>Just start writing — nothing to install, no new ecosystem to learn.</p>
     </div>
     <div class="rgrid">
-      <div class="rcard"><span class="badge">Core</span><h4>Routing in the language</h4><p><code>route("GET","/product/:id", fn)</code> — REST, WS, SSE share one syntax. URL parameters are parsed automatically.</p></div>
+      <div class="rcard"><span class="badge">Core</span><h4>Routing in the language</h4><p><code>route("GET","/product/{id}", fn)</code> — REST, WS, SSE share one syntax. URL parameters are parsed automatically.</p></div>
       <div class="rcard"><span class="badge">Syntax</span><h4>Short lambda — fn + arrow</h4><p><code>fn($x) => $x * 2</code> — an expression-bodied arrow function with implicit return. Classic <code>function</code> works too.</p></div>
       <div class="rcard"><span class="badge">Syntax</span><h4>app:: service registry</h4><p><code>app::set("db", $conn)</code> once → routes reach it with <code>app::db()</code> without capturing. The explicit-scope philosophy is preserved.</p></div>
       <div class="rcard"><span class="badge">Core</span><h4>MySQL · SQLite · PostgreSQL</h4><p>The wire protocol, directly. One API: <code>db::query / exec / col</code>. Transactions: <code>db::begin / commit / rollback</code>.</p></div>

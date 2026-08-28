@@ -274,18 +274,27 @@
   <h3>Your first index.lk</h3>
   <pre><code><span class="cm"># index.lk — this file is everything; no framework, no config</span>
 
-<span class="var">$conn</span> = <span class="ns">db::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/blog"</span>)  <span class="cm"># DB optional</span>
-
 <span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/"</span>, <span class="kw">function</span>() {
     <span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>([<span class="str">"ok"</span> => <span class="lit">true</span>, <span class="str">"message"</span> => <span class="str">"Hello LOOK!"</span>]))
 })
-<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/posts/{id}"</span>, <span class="kw">function</span>(<span class="var">$id</span>) <span class="kw">use</span> (<span class="var">$conn</span>) {
-    <span class="var">$rows</span> = <span class="ns">db::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM posts WHERE id=?"</span>, [<span class="var">$id</span>])
-    <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) { <span class="ns">response::</span><span class="fn">status</span>(<span class="num">404</span>) <span class="kw">print</span>(<span class="str">"Not found"</span>) <span class="kw">return</span> }
-    <span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>(<span class="var">$rows</span>[<span class="num">0</span>]))
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/hello/{name}"</span>, <span class="kw">function</span>(<span class="var">$name</span>) {
+    <span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>([<span class="str">"hello"</span> => <span class="var">$name</span>]))
 })
 <span class="fn">route</span>(<span class="str">"404"</span>, <span class="kw">function</span>() {
     <span class="ns">response::</span><span class="fn">error</span>(<span class="num">404</span>, <span class="str">"Not found"</span>)
+})</code></pre>
+  <p class="hint">That is a complete, working app — <b>no database required</b>. Open <code>/</code> and <code>/hello/world</code> and you are running. Add a database <b>when you need one</b> (it connects at startup, so it needs a server already running — that is why it is not in the very first file):</p>
+  <pre><code><span class="cm"># add to the top of index.lk — needs a running MySQL/MariaDB</span>
+<span class="var">$conn</span> = <span class="ns">db::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/blog"</span>)
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/posts/{id}"</span>, <span class="kw">function</span>(<span class="var">$id</span>) <span class="kw">use</span> (<span class="var">$conn</span>) {
+    <span class="var">$rows</span> = <span class="ns">db::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM posts WHERE id=?"</span>, [<span class="var">$id</span>])
+    <span class="kw">if</span> (<span class="fn">count</span>(<span class="var">$rows</span>) == <span class="num">0</span>) {
+        <span class="ns">response::</span><span class="fn">status</span>(<span class="num">404</span>)
+        <span class="kw">print</span>(<span class="str">"Not found"</span>)
+        <span class="kw">return</span>
+    }
+    <span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>(<span class="var">$rows</span>[<span class="num">0</span>]))
 })</code></pre>
 
   <h3>Learning Path</h3>
