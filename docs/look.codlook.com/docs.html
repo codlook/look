@@ -3696,14 +3696,33 @@ MAIL_FROM=noreply@myapp.com
 # .env — Postmark
 MAIL_PROVIDER=postmark
 MAIL_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-MAIL_FROM=noreply@myapp.com</code></pre>
+MAIL_FROM=noreply@myapp.com
+
+# .env — SMTP relay (your hosting's own mail server — cPanel, Yandex, …)
+MAIL_PROVIDER=smtp
+SMTP_HOST=mail.myhost.com
+SMTP_PORT=587           # 587 = STARTTLS (default), 465 = implicit TLS, 25 = STARTTLS
+SMTP_USER=noreply@myapp.com
+SMTP_PASS=your-mailbox-password
+MAIL_FROM=noreply@myapp.com
+# SMTP_TLS=starttls     # optional: starttls (default) | implicit | none
+# SMTP_EHLO=myapp.com   # optional: the EHLO hostname (default look.localhost)</code></pre>
 
   <table>
     <tr><th>Provider</th><th>MAIL_PROVIDER value</th><th>Auth method</th><th>Success code</th></tr>
     <tr><td>Mailgun</td><td><code>mailgun</code></td><td>HTTP Basic (api:key)</td><td>200</td></tr>
     <tr><td>SendGrid</td><td><code>sendgrid</code></td><td>Bearer token</td><td>202</td></tr>
     <tr><td>Postmark</td><td><code>postmark</code></td><td>X-Postmark-Server-Token header</td><td>200</td></tr>
+    <tr><td>SMTP relay</td><td><code>smtp</code></td><td>AUTH LOGIN over STARTTLS/implicit TLS</td><td>250</td></tr>
   </table>
+
+  <p>The <code>smtp</code> provider talks SMTP directly to your mail server — the transport a
+  shared-hosting site already has, with no HTTP-API account. <strong>TLS certificate
+  verification is on by default</strong> (an untrusted or hostname-mismatched certificate
+  fails the send); <code>SMTP_TLS=none</code> is allowed but logs a clear-text warning. The
+  recipient, subject and from fields are stripped of CR/LF, so form input cannot inject extra
+  headers. Non-ASCII subjects (e.g. Turkish) are MIME encoded-word automatically. The
+  <code>smtp</code> provider is available on the Linux/macOS build.</p>
 
   <h3>Async Email with jobs:: (Recommended Pattern)</h3>
   <pre><code class="lk">use jobs
