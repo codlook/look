@@ -623,7 +623,7 @@ struct WorkItem {
     std::shared_ptr<SmtpSession> session;
 };
 
-struct WorkerPool {
+struct SmtpWorkerPool {
     std::vector<std::thread>      threads;
     std::queue<WorkItem>          queue;
     std::mutex                    mtx;
@@ -772,7 +772,7 @@ static SSL_CTX* make_smtp_ssl_ctx() {
 
 struct SmtpServer::Impl {
     std::unique_ptr<EventLoop> loop;
-    WorkerPool                 pool;
+    SmtpWorkerPool             pool;
     SmtpHandler                handler;
     std::atomic<int>           conn_count{0};
     SSL_CTX*                   ssl_ctx = nullptr; // null = TLS not configured
