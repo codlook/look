@@ -536,7 +536,7 @@ Module make_mail_module() {
 
         if (!r.ok) {
             Logger::instance().log(LogLevel::LOG_WARN, "mail::send",
-                "Mail gönderilemedi [" + to + "]: " + r.message);
+                "Mail delivery failed [" + to + "]: " + r.message);
         }
 
         auto arr = std::make_shared<std::vector<Value>>();
