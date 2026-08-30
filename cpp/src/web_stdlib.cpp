@@ -804,6 +804,17 @@ static Module make_session_module(WebContext* ctx) {
     };
     m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();
+        // Session values are stored as strings. Fail loud on a structure instead of
+        // silently coercing it (an array/assoc would to_string() to "[__assoc__, …]"
+        // and lose its shape on read) — the caller must JSON-encode it themselves.
+        switch (args[1].type()) {
+            case Value::STRING: case Value::INT: case Value::FLOAT: case Value::BOOL: case Value::NONE:
+                break;
+            case Value::ARRAY:
+                throw std::runtime_error("session::set() — session values are strings; JSON-encode a structure first, e.g. session::set(key, json::encode(value)) and json::decode(session::get(key))");
+            default:
+                throw std::runtime_error("session::set() — session values must be a string or number");
+        }
         auto it = ctx->cookies_in.find("LOOK_SESSION");
         if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value();  // traversal guard
         std::string blob = sess_load(it->second);
