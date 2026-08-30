@@ -1617,13 +1617,16 @@ Stack trace:
   </table>
 
   <div class="callout warn">
-    <p><strong>The session cookie is always <code>Secure</code>.</strong> It is sent by the browser
-    only over HTTPS (or to <code>localhost</code>, which browsers treat as a secure context). Behind an
-    HTTPS reverse proxy — the recommended production setup — this is exactly right and sessions work
-    normally. But if you expose <code>--mode http</code> <strong>directly over plain HTTP on a real
-    host</strong> (non-localhost, no TLS), the browser won't send the cookie back, so the session never
-    persists. Put a TLS-terminating proxy (nginx/Apache) in front, or use <code>localhost</code> for
-    local development.</p>
+    <p><strong>The session cookie's <code>Secure</code> flag follows the connection.</strong> By
+    default the runtime marks the cookie <code>Secure</code> only when the request is HTTPS (from an
+    HTTPS FCGI param, or <code>X-Forwarded-Proto: https</code> sent by a trusted proxy — see
+    <code>LOOK_TRUSTED_PROXY</code>). Over plain HTTP the flag is <strong>omitted</strong>, so the
+    browser still sends the cookie back and sessions work normally — on <code>localhost</code> and on
+    a plain-HTTP host alike (it logs a one-time warning when it omits <code>Secure</code> without an
+    HTTPS signal). Force it either way with <code>LOOK_SESSION_SECURE=1</code> (always) or
+    <code>LOOK_SESSION_SECURE=0</code> (never, and silence the warning). Behind an HTTPS
+    reverse proxy — the recommended production setup — set <code>LOOK_TRUSTED_PROXY</code> so the
+    proxy's <code>X-Forwarded-Proto</code> is honoured and the cookie is marked <code>Secure</code>.</p>
   </div>
 
   <h3>Multi-Server / Load Balancer — Redis Session</h3>
@@ -2615,7 +2618,7 @@ server {
     <tr><td><code>LOOK_RATE_LIMIT_BURST</code></td><td>= RPM</td><td>Instantaneous burst tolerance per IP (for SPA / mobile-app parallel requests).</td></tr>
     <tr><td><code>LOOK_RATE_LIMIT_GLOBAL_RPM</code></td><td>0 (disabled)</td><td>Per-minute limit across all IPs — botnet protection. 0 = disabled.</td></tr>
     <tr><td><code>LOOK_RATE_LIMIT_GLOBAL_BURST</code></td><td>= GLOBAL_RPM</td><td>Global instantaneous burst tolerance.</td></tr>
-    <tr><td><code>LOOK_TRUSTED_PROXY</code></td><td>— (disabled)</td><td>Comma-separated trusted proxy IPs or CIDRs. <code>X-Forwarded-For</code> from these IPs is used as the real client IP.</td></tr>
+    <tr><td><code>LOOK_TRUSTED_PROXY</code></td><td>— (disabled)</td><td>Comma-separated trusted proxy IPs or CIDRs. <code>X-Forwarded-For</code> from these IPs is used as the real client IP (and <code>X-Forwarded-Proto: https</code> is honoured, marking the request HTTPS so the session cookie gets <code>Secure</code> — see the Security env table).</td></tr>
   </table>
   <pre><code><span class="cm"># systemd service — behind an nginx proxy</span>
 [Service]
