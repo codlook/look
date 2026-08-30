@@ -1,0 +1,21 @@
+// Regression fixture: many sibling functions defined in ONE included file share a
+// single isolated closure Environment. Before the clone_for_thread env-memo fix, a
+// top-level timer::every (which thread-clones the callback's closure env) re-cloned
+// that shared env once per function → O(N!) blowup that hung lk-fcgi at startup.
+// Needs enough functions (>10) to make the old blowup an effective infinite hang.
+function fx01() { return 1; }
+function fx02() { return 2; }
+function fx03() { return 3; }
+function fx04() { return 4; }
+function fx05() { return 5; }
+function fx06() { return 6; }
+function fx07() { return 7; }
+function fx08() { return 8; }
+function fx09() { return 9; }
+function fx10() { return 10; }
+function fx11() { return 11; }
+function fx12() { return 12; }
+function fx13() { return 13; }
+function fx14() { return 14; }
+function fx15() { return 15; }
+function fx_sum() { return fx01() + fx15(); }
