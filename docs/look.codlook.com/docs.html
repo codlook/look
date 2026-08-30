@@ -2640,6 +2640,8 @@ Environment=LOOK_TRUSTED_PROXY=127.0.0.1</code></pre>
   <h2>jobs::</h2>
   <p class="lead">A SQLite-based, durable, thread-safe job queue. Jobs aren't lost even if the app restarts. Delayed jobs, a retry mechanism, a dead-letter queue and a worker loop are included. Loaded with <code>use jobs;</code>.</p>
 
+  <div class="callout warn"><p><strong>Never block a user-facing route on slow outgoing I/O</strong> — sending mail (SMTP), calling an external API (<code>http::</code>), anything that can take seconds. A blocking call holds its worker for the whole duration, and the worker pool is bounded (default: CPU cores), so a handful of concurrent requests exhaust it and the <em>whole site</em> stops responding — behind a reverse proxy too. Instead <code>jobs::push</code> the work and return instantly; a worker (<code>jobs::run()</code> in a separate process) does the slow part off the request path. <strong>If you enqueue jobs you must run a worker</strong>, or they pile up unsent.</p></div>
+
   <h3>Status Lifecycle</h3>
   <pre><code>pending → processing → done
                     ↘ failed  (retry_count ≥ max_retries)
