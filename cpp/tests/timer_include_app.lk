@@ -1,0 +1,6 @@
+use json;
+use "timer_include_lib.lk";
+
+// A file include + a top-level timer::every together must NOT hang lk-fcgi startup.
+route("GET", "/x", function() { response::json(["sum" => fx_sum()]); });
+timer::every(3000, function() { fx01(); });

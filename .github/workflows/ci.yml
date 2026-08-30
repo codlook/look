@@ -363,6 +363,15 @@ jobs:
           cd cpp
           bash tests/cookie_flags_test.sh build/lk-fcgi 7793
 
+      # file-include + timer::every birlikte lk-fcgi başlangıcını KİLİTLİYORDU (clone_for_thread
+      # env klonu, paylaşımlı closure env'i her fonksiyon için yeniden klonlayıp O(N!) patlıyordu).
+      # use "lib.lk" (>10 kardeş fn) + top-level timer::every → port bağlanmalı+servis vermeli.
+      # POZİTİF-KONTROL: eski yolda hiç bind etmezdi → timeout → RED.
+      - name: "file-include + timer::every startup binds (regresyon)"
+        run: |
+          cd cpp
+          bash tests/timer_include_bind_test.sh build/lk-fcgi 7794
+
       # before_route prefix guard — GÜVENLİK-KRİTİK. Dogfood'un kimlik doğrulaması artık tek
       # before_route + request::path() prefix'i (9 elle require_login → 1). Kırılırsa /admin (dogfood'da
       # /tasks) auth'suz açılır = sessiz yetki atlatması. lk-fcgi --mode http'ye karşı 403/200 + nested

@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 #include <chrono>
 #include <atomic>
@@ -296,8 +297,39 @@ public:
     // (`use ($inner)` — $inner kendisi closure) ikinci seviyede sığ kalıp $big'i paylaşıyordu
     // (t8 interp). parent_ PAYLAŞIMLI kalır (closure'ın parent'ı setup-zamanı globals_;
     // klonlarsak global okumaları bozulur). visited sınır ötesine taşınır → döngü koruması.
+    //
+    // ENV MEMOİZASYONU (kritik): N fonksiyon AYNI closure Environment'ı paylaşırsa (ör.
+    // `use "lib.lk"` bir izole env'de M fonksiyon tanımlar; hepsinin closure'ı O env'dir),
+    // clone_look_function her fonksiyon için `visited`'i EKLE-ÇIKAR yapar (kardeşler arası
+    // döngü guard'ı YOK) → o paylaşımlı env her fonksiyon için yeniden klonlanır. İç içe:
+    // env klonu → her değeri fn → her fn closure = AYNI env → env klonu → ... = O(N!)
+    // patlaması (11 fonksiyon lk-fcgi başlangıcını kilitliyordu). Tek geçişte her kaynak
+    // Environment'ı BİR KEZ klonla ve paylaş: hem patlamayı kapatır hem de paylaşım
+    // semantiğini korur (kardeş closure'lar klonda da tek env'i paylaşır). Memo geçiş
+    // başına (en dıştaki clone_for_thread depth 0'a dönünce) temizlenir.
+    static std::unordered_map<const Environment*, std::shared_ptr<Environment>>& ct_env_memo() {
+        static thread_local std::unordered_map<const Environment*, std::shared_ptr<Environment>> m;
+        return m;
+    }
+    static int& ct_env_depth() { static thread_local int d = 0; return d; }
+
     std::shared_ptr<Environment> clone_for_thread(std::unordered_set<const void*>& visited) const {
+        auto& memo = ct_env_memo();
+        struct DepthGuard {
+            int& d;
+            std::unordered_map<const Environment*, std::shared_ptr<Environment>>& m;
+            DepthGuard(int& d_, std::unordered_map<const Environment*,
+                       std::shared_ptr<Environment>>& m_) : d(d_), m(m_) {
+                if (d == 0) m.clear();   // yeni geçiş — stale klonları at
+                ++d;
+            }
+            ~DepthGuard() { if (--d == 0) m.clear(); }  // geçiş bitti — belleği bırak
+        } guard{ct_env_depth(), memo};
+
+        auto it = memo.find(this);
+        if (it != memo.end()) return it->second;   // bu geçişte zaten klonlandı → paylaş
         auto e = std::make_shared<Environment>(parent_);
+        memo.emplace(this, e);   // özyinelemeden ÖNCE kaydet (döngüsel closure güvenli)
         for (const auto& [k, v] : values_)
             e->values_[k] = v.clone_for_thread_tracked(visited);
         e->fn_boundary_ = fn_boundary_;
