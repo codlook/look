@@ -1512,6 +1512,10 @@ Stack trace:
     <tr><td>response::error(404, "message")</td><td>Status code + <code>{"ok":false,"error":message}</code> JSON — a one-line error response</td></tr>
   </table>
 
+  <div class="callout tip"><p><strong>Serving a custom Content-Type (SVG, PDF, …):</strong> <code>response::text</code> / <code>response::html</code> / <code>response::json</code> each set the Content-Type themselves, overriding any <code>response::header("Content-Type", …)</code> set <em>before</em> them. To serve a different type, write the body first and set the header <strong>after</strong>:</p>
+  <pre><code><span class="ns">response::</span><span class="fn">text</span>(<span class="var">$svg</span>)
+<span class="ns">response::</span><span class="fn">header</span>(<span class="str">"Content-Type"</span>, <span class="str">"image/svg+xml"</span>)  <span class="cm"># after the body — this wins</span></code></pre></div>
+
   <p><code>response::error</code> collapses the frequently-repeated 3-line pattern into one line:</p>
   <pre><code><span class="cm"># before — 3 lines</span>
 <span class="ns">response::</span><span class="fn">status</span>(<span class="num">404</span>)
