@@ -56,9 +56,11 @@ private:
     sqlite3* db_ = nullptr;
     mutable std::mutex mtx_;
     bool initialized_ = false;
+    std::once_flag init_once_;   // init() runs exactly once, even under a first-request burst
     std::vector<std::pair<std::string, Value>> workers_;
 
     void ensure_init();
+    void init_locked(const std::string& db_path);   // the real init body; call only via init_once_
     void create_schema();
     int64_t now_ts();
 };

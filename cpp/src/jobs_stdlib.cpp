@@ -29,7 +29,16 @@ int64_t JobStore::now_ts() {
 }
 
 // ── init ──────────────────────────────────────────────────────────────────
+// Public entry points funnel through init_once_ so the body runs EXACTLY once,
+// even when a burst of first requests hits push()/next()/... on N worker threads
+// at the same moment. Before this, ensure_init() ran the whole open+PRAGMA+CREATE
+// sequence OUTSIDE mtx_, so concurrent cold-init raced on the same DB file
+// (SQLITE_LOCKED → "schema error") and data-raced on db_/initialized_.
 void JobStore::init(const std::string& db_path) {
+    std::call_once(init_once_, [&] { init_locked(db_path); });
+}
+
+void JobStore::init_locked(const std::string& db_path) {
     if (initialized_) return;
 
     int rc = sqlite3_open(db_path.c_str(), &db_);
@@ -64,8 +73,8 @@ void JobStore::init(const std::string& db_path) {
                 const char* mode = reinterpret_cast<const char*>(sqlite3_column_text(jm, 0));
                 if (mode && std::string(mode) != "wal")
                     Logger::instance().log(LogLevel::LOG_WARN, "jobs",
-                        std::string("WAL etkinlestirilemedi (mod: ") + mode +
-                        ") — cok surecli kuyruk davranisi farklilasabilir");
+                        std::string("WAL could not be enabled (mode: ") + mode +
+                        ") — multi-process queue behaviour may differ");
             }
             sqlite3_finalize(jm);
         }
@@ -76,10 +85,13 @@ void JobStore::init(const std::string& db_path) {
 }
 
 void JobStore::ensure_init() {
-    if (initialized_) return;
-    const char* env_path = std::getenv("JOBS_DB");
-    std::string path = env_path ? env_path : "jobs.db";
-    init(path);
+    // Lazy init on first use — funnels through the same once_flag as init(), so a
+    // concurrent explicit init() and a first-request burst can never both run it.
+    std::call_once(init_once_, [this] {
+        const char* env_path = std::getenv("JOBS_DB");
+        std::string path = env_path ? env_path : "jobs.db";
+        init_locked(path);
+    });
 }
 
 void JobStore::create_schema() {
