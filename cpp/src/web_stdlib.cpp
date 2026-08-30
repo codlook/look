@@ -416,10 +416,11 @@ static Module make_request(WebContext* ctx) {
         // Dönüş değeri — assoc array
         auto result = std::make_shared<std::vector<Value>>();
         result->push_back(Value(std::string("__assoc__")));
-        result->push_back(Value(std::string("path")));   result->push_back(Value(uf.temp_path));
-        result->push_back(Value(std::string("mime")));   result->push_back(Value(uf.mime));
-        result->push_back(Value(std::string("size")));   result->push_back(Value((int64_t)uf.size));
-        result->push_back(Value(std::string("sha256"))); result->push_back(Value(uf.sha256));
+        result->push_back(Value(std::string("path")));     result->push_back(Value(uf.temp_path));
+        result->push_back(Value(std::string("filename"))); result->push_back(Value(uf.orig_name));
+        result->push_back(Value(std::string("mime")));     result->push_back(Value(uf.mime));
+        result->push_back(Value(std::string("size")));     result->push_back(Value((int64_t)uf.size));
+        result->push_back(Value(std::string("sha256")));   result->push_back(Value(uf.sha256));
         return Value(result);
     };
 

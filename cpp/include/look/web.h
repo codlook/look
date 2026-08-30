@@ -43,6 +43,7 @@ struct TempFileGuard {
 
 struct UploadedFile {
     std::string field_name;     // form field adı
+    std::string orig_name;      // istemcinin gönderdiği dosya adı (basename, sanitize — GÜVENİLMEZ, kullanımda escape)
     std::string temp_path;      // temp dosya yolu
     std::string mime;           // doğrulanmış MIME (magic byte'dan)
     std::string sha256;         // dosya içeriğinin SHA-256 hex hash'i

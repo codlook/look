@@ -392,6 +392,18 @@ void WebContext::parse_multipart(const std::string& boundary) {
             // Dosya parçası — temp dosyaya yaz
             UploadedFile uf;
             uf.field_name = field_name;
+            // Client filename is UNTRUSTED: take the basename (some browsers send a
+            // full path), drop control chars, cap length. Metadata only — the stored
+            // file is named by sha256; consumers must still escape it for display.
+            {
+                std::string fn = filename;
+                size_t slash = fn.find_last_of("/\\");
+                if (slash != std::string::npos) fn = fn.substr(slash + 1);
+                std::string clean;
+                for (char ch : fn) { if ((unsigned char)ch >= 0x20 && ch != 0x7f) clean.push_back(ch); }
+                if (clean.size() > 255) clean.resize(255);
+                uf.orig_name = clean;
+            }
             uf.size       = part_data.size();
             uf.mime       = look_internal::detect_mime(part_data);
             uf.sha256     = look_internal::sha256(part_data);
