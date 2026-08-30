@@ -5419,10 +5419,11 @@ DB_PASS=</code></pre>
 </table>
 
 <h2>request::file() return value</h2>
-<pre><code><span class="var">$file</span>[<span class="str">"name"</span>]      <span class="cm"># original file name</span>
+<pre><code><span class="var">$file</span>[<span class="str">"filename"</span>]  <span class="cm"># original client file name (basename, sanitized — untrusted, escape on display)</span>
 <span class="var">$file</span>[<span class="str">"mime"</span>]      <span class="cm"># real MIME type (from the magic byte)</span>
 <span class="var">$file</span>[<span class="str">"size"</span>]      <span class="cm"># size in bytes</span>
-<span class="var">$file</span>[<span class="str">"temp_path"</span>] <span class="cm"># temporary file path — pass it to file::store()</span>
+<span class="var">$file</span>[<span class="str">"sha256"</span>]    <span class="cm"># SHA-256 hex of the contents</span>
+<span class="var">$file</span>[<span class="str">"path"</span>]      <span class="cm"># temporary file path — pass it to file::store()</span>
 
 <span class="cm"># file::store() return value</span>
 <span class="var">$record</span>[<span class="str">"name"</span>]      <span class="cm"># new file name with the SHA-256 hash</span>
