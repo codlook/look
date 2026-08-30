@@ -138,6 +138,42 @@ Module make_file_module() {
         return Value(fs::exists(path));
     };
 
+    // file::list(path) → [ {name, dir, size}, … ]  — one directory level, sorted by name.
+    // Flat (no recursion — that's the caller's loop) and fail-loud: a missing or non-directory
+    // path throws rather than returning an empty list (a typo shouldn't look like an empty dir).
+    // Same sandbox as the rest of file:: — listing a directory outside LOOK_FILE_ROOT is denied
+    // (it would leak the directory structure), so the guard matters even more here.
+    m.functions["list"] = [](auto args) -> Value {
+        if (args.empty()) throw std::runtime_error("file::list() requires path");
+        std::string path = args[0].to_string();
+        assert_in_file_root(path);
+        std::error_code ec;
+        if (!fs::is_directory(path, ec) || ec)
+            throw std::runtime_error("file::list(): not a directory: " + path);
+        std::vector<std::tuple<std::string, bool, int64_t>> entries;
+        for (const auto& e : fs::directory_iterator(path, ec)) {
+            if (ec) break;
+            std::error_code ec2;
+            bool is_dir = e.is_directory(ec2);
+            int64_t size = 0;
+            if (!is_dir) { auto s = e.file_size(ec2); if (!ec2) size = (int64_t)s; }
+            entries.emplace_back(e.path().filename().string(), is_dir, size);
+        }
+        if (ec) throw std::runtime_error("file::list(): cannot read directory: " + path);
+        std::sort(entries.begin(), entries.end(),
+                  [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+        auto out = std::make_shared<std::vector<Value>>();
+        for (const auto& [name, is_dir, size] : entries) {
+            auto rec = std::make_shared<std::vector<Value>>();
+            rec->push_back(Value(std::string("__assoc__")));
+            rec->push_back(Value(std::string("name"))); rec->push_back(Value(name));
+            rec->push_back(Value(std::string("dir")));  rec->push_back(Value(is_dir));
+            rec->push_back(Value(std::string("size"))); rec->push_back(Value(size));
+            out->push_back(Value(rec));
+        }
+        return Value(out);
+    };
+
     // file::remove(path) → bool
     m.functions["remove"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("file::remove() requires path");

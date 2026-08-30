@@ -1915,6 +1915,7 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
     <tr><td>file::exists($path)</td><td>Does the file exist? → bool</td></tr>
     <tr><td>file::remove($path)</td><td>Delete a file → bool</td></tr>
     <tr><td>file::size($path)</td><td>Size (bytes) → int</td></tr>
+    <tr><td>file::list($dir)</td><td>List one directory level, sorted by name → array of <code>{name, dir, size}</code>. Throws if <code>$dir</code> isn't a directory. Flat (recurse in your own loop); same <code>LOOK_FILE_ROOT</code> sandbox. Good for theme/plugin discovery and media listings.</td></tr>
     <tr><td>file::upload_dir()</td><td>Upload root directory (UPLOAD_DIR env) → string</td></tr>
     <tr><td>file::store($file, $subdir)</td><td>Move an uploaded file to permanent storage → assoc array</td></tr>
   </table>

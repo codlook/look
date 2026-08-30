@@ -65,7 +65,7 @@ const std::vector<std::string>& builtin_names() {
         "date::week", "date::timestamp",
         // 106-112: file::
         "file::read", "file::put", "file::append", "file::exists",
-        "file::remove", "file::size", "file::store",
+        "file::remove", "file::size", "file::store", "file::list",
         // 113-119: http:: client
         "http::get", "http::post", "http::put", "http::delete",
         "http::patch",   // http::head/request HAYALET KALDIRILDI (impl yok; get/post/... kapsar)
