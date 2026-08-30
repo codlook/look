@@ -86,6 +86,7 @@ error::message
 error::new
 file::append
 file::exists
+file::list
 file::put
 file::read
 file::remove
