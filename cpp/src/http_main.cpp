@@ -358,7 +358,8 @@ static void run_setup_http(const fs::path& script) {
         try {
             std::cerr << "[BYTECODE] Compiling...\n";
             auto compiled = std::make_unique<look::CompiledProgram>(
-                look::Compiler::compile(*g_http_app.program));
+                look::Compiler::compile(*g_http_app.program,
+                                        g_http_app.script_path.parent_path().string()));
             g_http_app.compiled     = std::move(compiled);
             g_http_app.use_bytecode = true;
             std::cerr << "[BYTECODE] OK — VM modu aktif\n";

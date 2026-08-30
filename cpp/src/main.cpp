@@ -455,6 +455,12 @@ int main(int argc, char* argv[]) {
             if (want_vm && preload_uses_for_vm(interpreter, *program)) {
                 look::CompiledProgram compiled;
                 bool compiled_ok = true;
+                // NB: no base_dir here — a CLI script has no interpreter pre-pass to
+                // register the modules that a file-include's OWN `use <mod>` needs, so
+                // compiling file-includes would throw "Module not loaded" at runtime.
+                // Leaving base_dir empty keeps `use "file.lk"` on the interpreter path
+                // for the CLI (pre-existing behaviour). The web path (http_main) does run
+                // that pre-pass, so it passes base_dir and gets the compiled fast path.
                 try { compiled = look::Compiler::compile(*program); }
                 catch (...) { compiled_ok = false; }   // compile hatası → tree-walk
                 // Builtin OLMAYAN "mod::fn" (ör. cache::keys, template::escape) → o çağrı

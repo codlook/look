@@ -263,7 +263,10 @@ private:
 
 class Compiler {
 public:
-    static CompiledProgram compile(const Program& program);
+    // base_dir: directory of the main script — the root for resolving `use "file.lk"`
+    // (file includes) and the sandbox boundary. Empty → file includes are not compiled
+    // (they NOP → interpreter fallback, the pre-existing behaviour).
+    static CompiledProgram compile(const Program& program, const std::string& base_dir = "");
 };
 
 } // namespace look

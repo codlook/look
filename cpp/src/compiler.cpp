@@ -18,6 +18,17 @@
 #include <fstream>
 #include <cassert>
 #include <sstream>
+#include <filesystem>
+
+namespace {
+namespace cfs = std::filesystem;
+// Context for compiling `use "file.lk"` includes into the same bytecode unit (mirrors
+// the UseStatement/module path). Compilation runs single-threaded at load; thread_local
+// keeps it isolated per compile. Empty root → file includes NOP (interpreter fallback).
+thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
+thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
+thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
+}
 #include <stdexcept>
 #include <typeinfo>
 
@@ -471,6 +482,43 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             }
         }
         if (!loaded) emit(OpCode::NOP);
+    }
+    else if (auto* ufs = dynamic_cast<const UseFileStatement*>(&stmt)) {
+        // `use "file.lk"` — compile the included file's statements into THIS unit so its
+        // functions become BYTECODE_FN in VM globals, instead of leaving the whole app on
+        // the interpreter fallback (measured ~57× slower on compute — QR/PDF/inflate). This
+        // is the sibling of the module (`use <name>`) path above, which was already fixed.
+        // Any failure → NOP: the file still loads via the interpreter fallback, so a case we
+        // can't compile here never regresses — it just stays at today's speed.
+        if (no_discovery_) return;                    // discovery pass skips includes (as modules do)
+        // No base dir (the CLI, which has no interpreter pre-pass to register the include's
+        // own modules) → fail the whole compile so the caller falls back to the interpreter,
+        // which handles file includes. NOP here would wrongly "succeed" with the include's
+        // functions missing and no per-route fallback to recover (unlike the web path).
+        if (g_compile_root.empty())
+            throw LookCompileError("use \"" + ufs->path + "\": file include compiles only with a base directory");
+        static std::vector<std::shared_ptr<Program>> g_file_asts;   // AST lifetime (bytecode refs it)
+        try {
+            cfs::path base = g_compile_cur_dir.empty()
+                ? cfs::path(g_compile_root) : cfs::path(g_compile_cur_dir.back());
+            std::string abs  = cfs::weakly_canonical(base / ufs->path).string();
+            std::string root = cfs::weakly_canonical(cfs::path(g_compile_root)).string();
+            if (abs.compare(0, root.size(), root) != 0) { emit(OpCode::NOP); return; }  // sandbox
+            if (g_compile_included.count(abs))          { emit(OpCode::NOP); return; }  // dedup/circular
+            std::ifstream f(abs);
+            if (!f) { emit(OpCode::NOP); return; }
+            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            g_compile_included.insert(abs);
+            Lexer lx(src);
+            Parser p(lx.scan_tokens());
+            auto prog = std::shared_ptr<Program>(p.parse().release());
+            g_file_asts.push_back(prog);
+            g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
+            for (auto& sub : prog->statements) compile_stmt(*sub);
+            g_compile_cur_dir.pop_back();
+        } catch (...) {
+            emit(OpCode::NOP);   // lex/parse/compile failed → interpreter fallback handles it
+        }
     }
     else {
         throw LookCompileError("Unknown statement type: " + std::string(typeid(stmt).name()));
@@ -1773,7 +1821,11 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
 
 // ── Compiler::compile — public entry point ────────────────────────────────────
 
-CompiledProgram Compiler::compile(const Program& program) {
+CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir) {
+    g_compile_root = base_dir;
+    g_compile_included.clear();
+    g_compile_cur_dir.clear();
+    if (!base_dir.empty()) g_compile_cur_dir.push_back(base_dir);
     FunctionCompiler main_compiler("<main>", {}, false, nullptr);
     auto proto = main_compiler.compile_stmts(program.statements);
 
