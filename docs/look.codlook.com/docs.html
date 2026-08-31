@@ -1818,7 +1818,8 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
     <tr><td>{#each $list as $e} … {#empty} … {/each}</td><td>Empty-list branch</td></tr>
     <tr><td>{#extends "views/layout/base"}</td><td>Layout inheritance (at the top of the file)</td></tr>
     <tr><td>{#block "content"} … {/block}</td><td>Overridable block</td></tr>
-    <tr><td>{#include "views/partials/nav"}</td><td>Partial include</td></tr>
+    <tr><td>{#include "views/partials/nav"}</td><td>Partial include — the partial sees the parent's variables (scope-inherit)</td></tr>
+    <tr><td>{#include "views/partials/card" data=$item}</td><td>Component include — the partial gets <em>only</em> <code>$item</code>'s fields as its variables (isolated props)</td></tr>
   </table>
 
   <h3>Basic Usage</h3>
@@ -1853,6 +1854,72 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
   &lt;p&gt;No posts yet.&lt;/p&gt
 {/each}
 {/block}</code></pre>
+
+  <h3>Reusable Components — Partials &amp; Props</h3>
+  <p>An <code>{#include}</code> pulls one template into another. It has <strong>two modes</strong>, and together with <code>{#extends}</code> they give you the classic "one header, navbar and footer on every page" layout <em>and</em> fully isolated, reusable components.</p>
+
+  <table>
+    <tr><th>Form</th><th>What the partial sees</th></tr>
+    <tr><td><code>{#include "partials/nav"}</code></td><td><strong>Scope-inherit</strong> — the partial sees the parent's whole context (all its variables). Best for fixed pieces like a navbar or footer.</td></tr>
+    <tr><td><code>{#include "partials/card" data=$item}</code></td><td><strong>Component</strong> — the partial receives <em>only</em> the fields of <code>$item</code> (an assoc) as its top-level variables, and does <em>not</em> see the parent's variables. Isolated, parameterized, reusable.</td></tr>
+  </table>
+
+  <h3>One shell for every page (head + navbar + footer)</h3>
+  <p>Write the head, navbar and footer <strong>once</strong>. Every page <code>{#extends}</code> the layout and fills only its own content block — the shell comes for free.</p>
+
+  <pre><code><span class="cm">&lt;!-- views/partials/navbar.html — written once, same on every page --&gt;</span>
+&lt;nav class="nav"&gt;
+  &lt;a class="brand" href="/"&gt;SITE&lt;/a&gt;
+  &lt;a href="/"&gt;Home&lt;/a&gt; &lt;a href="/about"&gt;About&lt;/a&gt; &lt;a href="/contact"&gt;Contact&lt;/a&gt;
+&lt;/nav&gt;
+
+<span class="cm">&lt;!-- views/partials/footer.html --&gt;</span>
+&lt;footer class="foot"&gt;&amp;copy; 2026 SITE&lt;/footer&gt;
+
+<span class="cm">&lt;!-- views/layout.html — head + navbar + fillable block + footer --&gt;</span>
+&lt;!DOCTYPE html&gt;&lt;html lang="en"&gt;&lt;head&gt;
+  &lt;meta charset="UTF-8"&gt;
+  &lt;title&gt;{$title} — SITE&lt;/title&gt;
+  &lt;link rel="stylesheet" href="/style.css"&gt;
+&lt;/head&gt;&lt;body&gt;
+  {#include "views/partials/navbar"}
+  &lt;main&gt;{#block "content"}{/block}&lt;/main&gt;
+  {#include "views/partials/footer"}
+&lt;/body&gt;&lt;/html&gt;
+
+<span class="cm">&lt;!-- views/home.html — only the content; the shell is inherited --&gt;</span>
+{#extends "views/layout"}
+{#block "content"}
+  &lt;h1&gt;Welcome home&lt;/h1&gt;
+  &lt;p&gt;Only this block changes per page.&lt;/p&gt;
+{/block}
+
+<span class="cm">&lt;!-- views/about.html — different content, the SAME shell --&gt;</span>
+{#extends "views/layout"}
+{#block "content"}
+  &lt;h1&gt;About us&lt;/h1&gt;
+{/block}</code></pre>
+
+  <p>Wire the pages to routes. Each new page is one template that extends the layout plus one route line; <code>$title</code> flows from the route into the layout's <code>&lt;head&gt;</code>:</p>
+  <pre><code><span class="kw">use</span> <span class="ns">template</span>
+
+<span class="kw">function</span> <span class="fn">view</span>(<span class="var">$tpl</span>, <span class="var">$data</span>) {
+    <span class="kw">return</span> <span class="ns">response::</span><span class="fn">html</span>(<span class="ns">template::</span><span class="fn">render</span>(<span class="str">"views/"</span> . <span class="var">$tpl</span>, <span class="var">$data</span>))
+}
+
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/"</span>,        <span class="kw">function</span>() { <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"home"</span>,    [<span class="str">"title"</span> => <span class="str">"Home"</span>]) })
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/about"</span>,   <span class="kw">function</span>() { <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"about"</span>,   [<span class="str">"title"</span> => <span class="str">"About"</span>]) })
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/contact"</span>, <span class="kw">function</span>() { <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"contact"</span>, [<span class="str">"title"</span> => <span class="str">"Contact"</span>]) })</code></pre>
+  <p>To change the navbar on <em>every</em> page, edit <code>views/partials/navbar.html</code> once. Adding a page = one <code>.html</code> that extends the layout + one route line.</p>
+
+  <h3>Isolated components with props</h3>
+  <p>For a truly reusable piece — a card, a product row, a badge — pass explicit props with <code>data=</code>. The component sees only what you give it, so it can be dropped anywhere:</p>
+  <pre><code><span class="cm">&lt;!-- views/partials/card.html — knows only its own props --&gt;</span>
+&lt;div class="card"&gt;&lt;h3&gt;{$title}&lt;/h3&gt;&lt;p&gt;{$price} TL&lt;/p&gt;&lt;/div&gt;
+
+<span class="cm">&lt;!-- a page loops products, giving each card its own data --&gt;</span>
+{#each $products as $p}{#include "views/partials/card" data=$p}{/each}</code></pre>
+  <p>Each card renders with its own <code>$title</code>/<code>$price</code> and cannot see the page's other variables — that isolation is what makes it a component. If a component needs both its props <em>and</em> some shared value, include that value in the assoc you pass as <code>data=</code>.</p>
 
   <div class="callout warn"><p><strong>Not allowed (parse error):</strong> <code>{$function($arg)}</code>, <code>{$a + $b}</code> — function calls and arithmetic expressions aren't supported inside a template. Do the computation in LOOK code and pass the result to the template.</p></div>
 </section>
