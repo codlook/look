@@ -1909,8 +1909,33 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
 
 <span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/"</span>,        <span class="kw">function</span>() { <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"home"</span>,    [<span class="str">"title"</span> => <span class="str">"Home"</span>]) })
 <span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/about"</span>,   <span class="kw">function</span>() { <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"about"</span>,   [<span class="str">"title"</span> => <span class="str">"About"</span>]) })
-<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/contact"</span>, <span class="kw">function</span>() { <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"contact"</span>, [<span class="str">"title"</span> => <span class="str">"Contact"</span>]) })</code></pre>
+<span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/contact"</span>, <span class="kw">function</span>() { <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"contact"</span>, [<span class="str">"title"</span> => <span class="str">"Contact"</span>, <span class="str">"sent"</span> => <span class="kw">false</span>, <span class="str">"name"</span> => <span class="str">""</span>]) })</code></pre>
   <p>To change the navbar on <em>every</em> page, edit <code>views/partials/navbar.html</code> once. Adding a page = one <code>.html</code> that extends the layout + one route line.</p>
+
+  <h3>A page with a form (GET renders, POST handles)</h3>
+  <p>The same shell carries a <em>dynamic</em> page. The <code>GET</code> route renders the form; the <code>POST</code> route — same path as the form's <code>action</code> — reads the fields and re-renders with a thank-you. A <code>{#if}</code> on a flag you pass from the route gives that dynamic state, which a static <code>.html</code> file can't. The contact page still <code>{#extends}</code> the one layout, so it gets the same head/navbar/footer for free:</p>
+  <pre><code><span class="cm">&lt;!-- views/contact.html — extends the SAME layout, adds a form --&gt;</span>
+{#extends "views/layout"}
+{#block "content"}
+  &lt;h2&gt;Contact&lt;/h2&gt;
+  {#if $sent}&lt;p class="ok"&gt;Thanks {$name}, your message was received.&lt;/p&gt;{/if}
+  &lt;form action="/contact" method="POST"&gt;
+    &lt;label&gt;Name&lt;/label&gt;&lt;input name="name" required&gt;
+    &lt;label&gt;Email&lt;/label&gt;&lt;input type="email" name="email" required&gt;
+    &lt;label&gt;Message&lt;/label&gt;&lt;textarea name="message" required&gt;&lt;/textarea&gt;
+    &lt;button type="submit"&gt;Send&lt;/button&gt;
+  &lt;/form&gt;
+{/block}</code></pre>
+  <pre><code><span class="cm"># GET /contact is above (renders the empty form). POST /contact handles the submit:</span>
+<span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/contact"</span>, <span class="kw">function</span>() {
+    <span class="var">$name</span>    = <span class="ns">request::</span><span class="fn">post</span>(<span class="str">"name"</span>)
+    <span class="var">$email</span>   = <span class="ns">request::</span><span class="fn">post</span>(<span class="str">"email"</span>)
+    <span class="var">$message</span> = <span class="ns">request::</span><span class="fn">post</span>(<span class="str">"message"</span>)
+    <span class="cm"># save it or email it. If the mail gateway is slow, don't block the request —</span>
+    <span class="cm"># push it to a background job:  jobs::push("mail", json::encode([...]))</span>
+    <span class="kw">return</span> <span class="fn">view</span>(<span class="str">"contact"</span>, [<span class="str">"title"</span> => <span class="str">"Contact"</span>, <span class="str">"sent"</span> => <span class="kw">true</span>, <span class="str">"name"</span> => <span class="var">$name</span>])
+})</code></pre>
+  <p>So one <code>layout.html</code> is your single shared component; each page is <code>{#extends "views/layout"}</code> + a <code>{#block "content"}</code>, and a form is just a page whose <code>POST</code> route re-renders it. Edit the layout once → the whole site changes.</p>
 
   <h3>Isolated components with props</h3>
   <p>For a truly reusable piece — a card, a product row, a badge — pass explicit props with <code>data=</code>. The component sees only what you give it, so it can be dropped anywhere:</p>

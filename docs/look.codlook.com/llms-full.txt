@@ -1861,6 +1861,33 @@ Isolated component with props — pass explicit data with `data=`; the component
 {#each $products as $p}{#include "views/partials/card" data=$p}{/each}
 ```
 
+A page with a form — GET renders it, POST (same path as `action=`) handles it; a `{#if}` on a route flag gives dynamic state a static `.html` can't. The page still extends the same layout, so it gets the shared head/navbar/footer for free:
+
+```lk
+<!-- views/contact.html -->
+{#extends "views/layout"}
+{#block "content"}
+  <h2>Contact</h2>
+  {#if $sent}<p>Thanks {$name}, your message was received.</p>{/if}
+  <form action="/contact" method="POST">
+    <input name="name" required>
+    <input type="email" name="email" required>
+    <textarea name="message" required></textarea>
+    <button type="submit">Send</button>
+  </form>
+{/block}
+```
+
+```lk
+route("GET",  "/contact", function() { return view("contact", ["title" => "Contact", "sent" => false, "name" => ""]) })
+route("POST", "/contact", function() {
+    $name = request::post("name")
+    # save it or email it; if the mail gateway is slow, don't block the request:
+    #   jobs::push("mail", json::encode(["name" => $name, "email" => request::post("email")]))
+    return view("contact", ["title" => "Contact", "sent" => true, "name" => $name])
+})
+```
+
 > **Not allowed (parse error):** `{$function($arg)}`, `{$a + $b}` — function calls and arithmetic expressions aren't supported inside a template. Do the computation in LOOK code and pass the result to the template.
 
 ## use validator
