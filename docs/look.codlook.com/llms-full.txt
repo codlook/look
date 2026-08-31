@@ -1776,7 +1776,8 @@ Loaded with `use template;`. Renders HTML templates from a file or a string. It 
 | {#each $list as $e} … {#empty} … {/each} | Empty-list branch |
 | {#extends "views/layout/base"} | Layout inheritance (at the top of the file) |
 | {#block "content"} … {/block} | Overridable block |
-| {#include "views/partials/nav"} | Partial include |
+| {#include "views/partials/nav"} | Partial include — the partial sees the parent's variables (scope-inherit) |
+| {#include "views/partials/card" data=$item} | Component include — the partial gets ONLY $item's fields as its variables (isolated props) |
 
 ### Basic Usage
 
@@ -1815,6 +1816,49 @@ print(template::render_string("<h1>{$title}</h1>", ["title" => "Hello"]))
   <p>No posts yet.</p>
 {/each}
 {/block}
+```
+
+### Reusable Components — Partials & Props
+
+`{#include}` has two modes. Together with `{#extends}` they give you one shared shell (head/navbar/footer on every page) and isolated, reusable components.
+
+- `{#include "partials/nav"}` — **scope-inherit**: the partial sees the parent's whole context. Best for fixed pieces (navbar, footer).
+- `{#include "partials/card" data=$item}` — **component**: the partial gets ONLY the fields of `$item` (an assoc) as its variables, and does NOT see the parent's variables. Isolated, parameterized.
+
+One shell for every page — write head/navbar/footer once; each page extends the layout and fills only its block:
+
+```lk
+<!-- views/partials/navbar.html — written once, same on every page -->
+<nav><a href="/">Home</a> <a href="/about">About</a></nav>
+
+<!-- views/layout.html -->
+<!DOCTYPE html><html><head><title>{$title} — SITE</title></head><body>
+  {#include "views/partials/navbar"}
+  <main>{#block "content"}{/block}</main>
+  {#include "views/partials/footer"}
+</body></html>
+
+<!-- views/home.html — only the content; the shell is inherited -->
+{#extends "views/layout"}
+{#block "content"}<h1>Welcome</h1>{/block}
+```
+
+Route wiring — each new page is one template + one route line; `$title` flows into the layout's `<head>`:
+
+```lk
+use template
+function view($tpl, $data) { return response::html(template::render("views/" . $tpl, $data)) }
+route("GET", "/",      function() { return view("home",  ["title" => "Home"]) })
+route("GET", "/about", function() { return view("about", ["title" => "About"]) })
+```
+
+Isolated component with props — pass explicit data with `data=`; the component sees only what you give it:
+
+```lk
+<!-- views/partials/card.html -->
+<div class="card"><h3>{$title}</h3><p>{$price} TL</p></div>
+<!-- a page gives each card its own data -->
+{#each $products as $p}{#include "views/partials/card" data=$p}{/each}
 ```
 
 > **Not allowed (parse error):** `{$function($arg)}`, `{$a + $b}` — function calls and arithmetic expressions aren't supported inside a template. Do the computation in LOOK code and pass the result to the template.
