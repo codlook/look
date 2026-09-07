@@ -219,6 +219,33 @@ struct HttpServer::Impl {
     // buf: header'lar + gövdenin ilk parçası; start: gövde offset'i.
     // Çözülen gövde out'a yazılır. Body cap ve malformed kontrolleri dahil.
     // false → istek reddedildi (yanıt gönderildi), caller fd'yi kapatmalı.
+    // Body-read deadline. LOOK_HEADER_TIMEOUT only covers the header phase; without a
+    // body deadline a slow-body attacker (a full header + large Content-Length, then a
+    // byte every few seconds) holds a worker forever in pool mode — a proven DoS. This
+    // is the header-timeout logic applied to the body loop. LOOK_BODY_TIMEOUT = total
+    // deadline (ms, default 30s). LOOK_BODY_MIN_RATE = required average bytes/sec after a
+    // 5s grace (0 = off — the gentler option that does not penalise large-but-fast
+    // uploads; raise LOOK_BODY_TIMEOUT and set a floor instead). Either trips → close.
+    static bool body_read_too_slow(std::chrono::steady_clock::time_point body_start,
+                                   size_t received) {
+        static const long tmo_ms = []() -> long {
+            const char* e = std::getenv("LOOK_BODY_TIMEOUT");
+            long ms = (e && *e) ? std::atol(e) : 30000;
+            return ms > 0 ? ms : 30000;
+        }();
+        static const long min_rate = []() -> long {
+            const char* e = std::getenv("LOOK_BODY_MIN_RATE");
+            long r = (e && *e) ? std::atol(e) : 0;
+            return r > 0 ? r : 0;
+        }();
+        long elapsed_ms = (long)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - body_start).count();
+        if (elapsed_ms > tmo_ms) return true;                    // total deadline
+        if (min_rate > 0 && elapsed_ms > 5000)                   // min-rate after 5s grace
+            if ((double)received < (elapsed_ms / 1000.0) * (double)min_rate) return true;
+        return false;
+    }
+
     static bool read_chunked_body(int fd, std::string& buf, size_t start,
                                   char* tmp, size_t tmp_sz, std::string& out) {
         std::string stream = buf.substr(start);   // gövde baytları (henüz çözülmemiş)
@@ -226,11 +253,15 @@ struct HttpServer::Impl {
         const size_t cap    = max_body_size();
         const size_t raw_lim = cap + 1024 * 1024; // ham akış tavanı (chunk header payı)
 
+        // Gövde okuma deadline'ı — slow-body drip'i chunked yolda da worker'ı tutabilir.
+        auto body_start = std::chrono::steady_clock::now();
+        bool timed_out = false;
         auto refill = [&]() -> bool {
             ssize_t r = fiber_aware_recv(fd, tmp, tmp_sz);
             if (r <= 0) return false;
             if (stream.size() + (size_t)r > raw_lim) return false; // akış patlaması
             stream.append(tmp, (size_t)r);
+            if (body_read_too_slow(body_start, stream.size())) { timed_out = true; return false; }
             return true;
         };
 
@@ -239,7 +270,7 @@ struct HttpServer::Impl {
             size_t nl;
             while ((nl = stream.find("\r\n", p)) == std::string::npos) {
                 if (stream.size() - p > 64) { send_simple(fd, 400, "Bad Request"); return false; }
-                if (!refill()) { send_simple(fd, 400, "Bad Request"); return false; }
+                if (!refill()) { send_simple(fd, timed_out ? 408 : 400, timed_out ? "Request Timeout" : "Bad Request"); return false; }
             }
             std::string sizeline = stream.substr(p, nl - p);
             size_t semi = sizeline.find(';');            // chunk-ext'i at
@@ -264,7 +295,7 @@ struct HttpServer::Impl {
 
             // 2) chunk verisi + kapanış CRLF'i gelene kadar oku
             while (stream.size() < p + chunk_sz + 2) {
-                if (!refill()) { send_simple(fd, 400, "Bad Request"); return false; }
+                if (!refill()) { send_simple(fd, timed_out ? 408 : 400, timed_out ? "Request Timeout" : "Bad Request"); return false; }
             }
             out.append(stream, p, chunk_sz);
             p += chunk_sz;
@@ -275,7 +306,7 @@ struct HttpServer::Impl {
         // sonraki isteğin sınırı doğru olsun diye akıştan tüketilir.
         while (true) {
             size_t nl2 = stream.find("\r\n", p);
-            if (nl2 == std::string::npos) { if (!refill()) break; else continue; }
+            if (nl2 == std::string::npos) { if (!refill()) { if (timed_out) { send_simple(fd, 408, "Request Timeout"); return false; } break; } else continue; }
             if (nl2 == p) { p += 2; break; }             // boş satır → gövde bitti
             p = nl2 + 2;                                  // trailer satırını atla
         }
@@ -398,9 +429,14 @@ struct HttpServer::Impl {
                 if (body_in_buf > 0)
                     req.body = buf.substr(header_end,
                                           std::min(body_in_buf, content_len));
+                // Gövde okuma deadline'ı — slow-body worker açlığını (DoS) kapatır.
+                auto body_start = std::chrono::steady_clock::now();
                 while (req.body.size() < content_len) {
                     ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
                     if (r <= 0) { ::close(fd); return; }
+                    if (body_read_too_slow(body_start, req.body.size())) {
+                        send_simple(fd, 408, "Request Timeout"); ::close(fd); return;
+                    }
                     // Content-Length KESİN üst sınır (55. bug): body ayrı segmentte
                     // gelip son recv fazla bayt getirirse (pipeline'daki sonraki
                     // isteğin başlangıcı), o baytları body'ye YUTMA — yoksa gövde
