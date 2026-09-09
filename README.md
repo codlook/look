@@ -208,7 +208,7 @@ implemented inside the language, no external driver:
 
 Beyond the core, **Firebase** is available as an installable package (Firestore
 CRUD, Authentication, Realtime Database) — see Ecosystem below. Payments (**iyzico**)
-ship the same way. The core stays zero-dependency; optional integrations are opt-in.
+ship the same way. The core keeps its minimal external runtime dependencies; optional integrations are opt-in.
 
 Windows builds link no OpenSSL by design (zero DLLs), so MySQL
 `caching_sha2_password` **full** auth is unavailable there — create the user with

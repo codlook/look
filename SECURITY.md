@@ -84,7 +84,9 @@ vetted MTA such as Postfix) before exposing SMTP/IMAP to the public internet.
 | Cookie attribute injection | `;` in a cookie value forging attributes (`Domain=`, `Max-Age`, `Path`) to widen scope to sibling subdomains | Name and value percent-encoded on write, decoded on read — a `;` can no longer terminate the value. Distinct from CR/LF splitting below, and it was a **separate channel** |
 | Session data injection | `\n` in a stored value forging extra fields (`admin=1`) in the session blob — privilege escalation when user input is stored alongside authorization fields | Key and value escaped on write, unescaped on read: a newline round-trips as data and cannot act as a record separator |
 | Client-IP spoofing | Attacker sets `X-Forwarded-For` to choose their own IP, bypassing IP allow/deny lists, bans and per-IP rate limits | The real TCP peer is authoritative. `X-Forwarded-For` / `X-Real-IP` are honoured **only** when the connecting address is in `LOOK_TRUSTED_PROXY`; the chain's first hop is taken. One shared resolver feeds `request::ip()`, the rate limiter, and the WS/SSE paths |
-| Slowloris | Slow / idle connections | `SO_RCVTIMEO/SNDTIMEO`, large kernel backlog |
+| Slow-header (Slowloris) | Dribbled request headers holding a worker | `LOOK_HEADER_TIMEOUT` (15s total header deadline, timed from the first byte) + `SO_RCVTIMEO/SNDTIMEO` idle timeout + large kernel backlog |
+| Slow-body | Full header + large `Content-Length` (or chunked), then a byte every few seconds — holds a pool worker | `LOOK_BODY_TIMEOUT` (30s total body deadline) → 408; opt-in `LOOK_BODY_MIN_RATE` (min average bytes/sec after a 5s grace). Applies to both Content-Length and chunked bodies |
+| Per-IP connection exhaustion | One IP opening many concurrent connections to occupy the whole worker pool | Opt-in `LOOK_HTTP_MAX_CONNS_IP` (per-IP concurrent-connection cap → 429). Keyed on the real TCP peer, so enable it only when LOOK is **directly** internet-facing; behind a reverse proxy every connection shares the proxy's IP, so cap at the proxy instead. Complements the per-IP **request-rate** limiter below |
 | Path traversal | `../` in file / mailbox / recipient | `weakly_canonical` + root-confinement, `..`/absolute/control-char rejection |
 | Integer parsing | Malformed literals in wire protocols | Guarded `stol`/`stoull` (try/catch) everywhere |
 | JSON depth | Deeply nested `[[[…]]]` → stack overflow | `JSON_MAX_DEPTH` (256) |
@@ -99,9 +101,11 @@ vetted MTA such as Postfix) before exposing SMTP/IMAP to the public internet.
 
 ### Additional protections
 
-- **Supply chain:** zero 3rd-party dependencies; TLS via a pinned OpenSSL (statically
-  linked in release binaries; dnf-managed in the RPM so `dnf update openssl-libs`
-  applies OS security patches).
+- **Supply chain:** minimal external runtime dependencies — nothing to install at runtime,
+  and the few vendored/linked components (SQLite, miniz, linenoise, OpenSSL) are pinned and
+  listed in full in [THIRD_PARTY.md](THIRD_PARTY.md). TLS uses a pinned OpenSSL (statically
+  linked in release binaries; dnf-managed in the RPM so `dnf update openssl-libs` applies OS
+  security patches without rebuilding LOOK).
 - **File sandbox (secure by default):** `file::` access is confined to the current
   working directory when `LOOK_FILE_ROOT` is unset; set it to widen the sandbox, or
   `LOOK_FILE_ROOT=*` to explicitly opt out. Path traversal (`../`) is always blocked.
