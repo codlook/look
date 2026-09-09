@@ -22,7 +22,9 @@
 #include <set>
 #include <functional>
 
-#define LOOK_VERSION "1.0.0"
+#ifndef LOOK_VERSION
+#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#endif
 #ifndef LOOK_BUILD          // CMake damgası yoksa (ham derleme) güvenli varsayılan
 #define LOOK_BUILD "src"
 #endif

@@ -1,4 +1,7 @@
 // repl.cpp — `look repl` interactive session
+#ifndef LOOK_VERSION
+#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#endif
 #include "look/repl.h"
 #include "look/interpreter.h"
 #include "look/lexer.h"
@@ -181,7 +184,7 @@ int run_repl() {
     const char* hist_file = ".look_history";
     linenoiseHistoryLoad(hist_file);
 
-    std::cout << cyan("LOOK v1.0.0 REPL") << "\n";
+    std::cout << cyan("LOOK v" LOOK_VERSION " REPL") << "\n";
     std::cout << gray("Type :exit or Ctrl+C to quit") << "\n\n";
 
     // Shared persistent interpreter — state survives between lines

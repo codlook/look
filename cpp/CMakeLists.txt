@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(looklang VERSION 0.1.0 LANGUAGES CXX C)
+project(looklang VERSION 1.0.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -85,6 +85,11 @@ if(NOT LOOK_BUILD)
 endif()
 add_compile_definitions(LOOK_BUILD="${LOOK_BUILD}")
 message(STATUS "LOOK build damgasi: ${LOOK_BUILD}")
+
+# Ürün sürümü — TEK KAYNAK: project(... VERSION) yukarıda. `lk`/`lk-fcgi` --version
+# ve REPL banner'ı bu compile-def'ten okur (eskiden 3 dosyada elle "1.0.0" gömülüydü;
+# CMake project sürümü 0.1.0'da kalmıştı = drift). Sürüm bump artık tek satır: project().
+add_compile_definitions(LOOK_VERSION="${PROJECT_VERSION}")
 
 # Platform-specific fiber backend
 if(WIN32)

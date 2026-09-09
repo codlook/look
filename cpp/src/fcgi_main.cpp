@@ -17,6 +17,9 @@
 //
 // Gelistirici kodu hic degismez — sadece deployment modeli degisir.
 
+#ifndef LOOK_VERSION
+#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#endif
 #include <ctime>
 #include "look/fcgi.h"
 #include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
@@ -772,7 +775,7 @@ int main(int argc, char* argv[]) {
 #else
             "unknown";
 #endif
-        std::cout << "LOOK 1.0.0 (" << LOOK_BUILD << ", " << platform << "/" << arch << ")\n";
+        std::cout << "LOOK " LOOK_VERSION " (" << LOOK_BUILD << ", " << platform << "/" << arch << ")\n";
         return 0;
     }
 
