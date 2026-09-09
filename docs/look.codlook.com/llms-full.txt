@@ -4419,6 +4419,8 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | `LOOK_HEALTH_PATH` | `/health` | Path that returns a plain health-check response. |
 | `LOOK_HTTP_IDLE_MS` | `30000` | Keep-alive idle timeout in ms — how long an idle connection is held open. |
 | `LOOK_HEADER_TIMEOUT` | `15000` | Max ms allowed to receive the full request headers (slow-loris guard). |
+| `LOOK_BODY_TIMEOUT` | `30000` | Max ms allowed to receive the full request body — the slow-body counterpart of the header guard (a full header + large `Content-Length` then a byte every few seconds would otherwise hold a worker forever). Applies to both `Content-Length` and chunked bodies; over the deadline → `408`. |
+| `LOOK_BODY_MIN_RATE` | *off* | Optional minimum average body throughput in **bytes/sec**, enforced after a 5 s grace. Off by default (the deadline above is the gentler guard that doesn't penalise large-but-fast uploads); set it for a stricter floor. Under the rate → `408`. |
 
 ### Security
 
@@ -4427,6 +4429,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | `LOOK_ALLOW_SSRF` | *off* | When set to `1`, allows `http::` requests to private / loopback addresses. Off by default, so outbound calls to internal ranges are blocked (SSRF protection). |
 | `LOOK_WS_ORIGINS` | *all* | Comma-separated allowlist of accepted WebSocket `Origin` headers. Unset = every origin is accepted; set it to lock WS to your own domains. |
 | `LOOK_MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body in bytes. Requests above the cap are rejected before buffering. |
+| `LOOK_HTTP_MAX_CONNS_IP` | *off* | Max concurrent connections from a single IP; over the cap → `429`. Stops one IP from tying up the whole worker pool. **Opt-in**, and keyed on the real TCP peer: enable it only when LOOK is **directly** internet-facing. Behind a reverse proxy every connection shares the proxy's IP, so a single counter would throttle the entire site — cap connections at the proxy instead (nginx `limit_conn`). Complements the per-minute `LOOK_RATE_LIMIT_RPM` limiter. |
 | `LOOK_SESSION_SECURE` | *auto* | Controls the `Secure` flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (an `HTTPS` FCGI param, or `X-Forwarded-Proto: https` from a trusted proxy); the runtime warns once if it ships a session cookie without `Secure`, so a misconfiguration cannot silently downgrade. `1` = always; `0` = never (plain-HTTP local dev). |
 | `LOOK_TRUSTED_PROXY` | — (disabled) | Comma-separated proxy IPs / CIDRs to trust. Behind them, `X-Forwarded-For` sets the real client IP (`request::ip()`, rate limiter) **and** `X-Forwarded-Proto: https` marks the request HTTPS (session cookie gets `Secure`). Unset = these headers are ignored so a client cannot forge them. |
 
