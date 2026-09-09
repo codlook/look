@@ -125,6 +125,46 @@ static void send_ws_reject(int fd, const std::string& reason) {
 #endif
 }
 
+// ── Per-IP concurrent-connection limit (worker-scope) ─────────────────────────
+// SMTP/IMAP tarafındaki LOOK_SMTP_MAX_CONNS_IP modelinin HTTP karşılığı. Tek bir
+// IP'nin worker havuzunu tüketmesini engeller (slow-body/slowloris'i tek kaynaktan
+// çok daha zorlaştırır — ① ile birlikte savunma katmanı). Sayaç, bağlantının
+// worker'ı tuttuğu süre boyunca artık (handle_connection RAII kapsamı); WS/SSE
+// event-loop'a devredince worker serbest kalır ve slot da serbest kalır — bu tam
+// olarak "bir IP kaç worker tutabilir" eşiğidir.
+//
+// VARSAYILAN KAPALI (0). Anahtar TCP peer IP'sidir; PROD'da LOOK bir ters-proxy
+// (nginx/Apache) ARKASINDADIR → tüm bağlantılar proxy'nin IP'sinden görünür, tek
+// sayaç tüm siteyi kısıtlar. Bu yüzden yalnız LOOK doğrudan internete BAKARKEN
+// açılmalı (LOOK_HTTP_MAX_CONNS_IP=N); proxy arkasında hız-sınırı proxy'de yapılır.
+// (① LOOK_BODY_MIN_RATE ile aynı gerekçe: proxy'li kurulumu bozmayan opt-in.)
+static int http_max_conns_per_ip() {
+    static int v = []() {
+        const char* e = std::getenv("LOOK_HTTP_MAX_CONNS_IP");
+        if (e && *e) { int x = std::atoi(e); if (x > 0) return x; }
+        return 0;   // 0/negatif/tanımsız = devre dışı (opt-in)
+    }();
+    return v;
+}
+static std::mutex                            g_http_ip_mutex;
+static std::unordered_map<std::string, int>  g_http_ip_conns;
+
+// true → slot alındı (limit kapalıysa her zaman true). false → IP tavanda.
+static bool http_ip_acquire(const std::string& ip) {
+    int lim = http_max_conns_per_ip();
+    if (lim <= 0 || ip.empty()) return true;   // devre dışı ya da IP bilinmiyor
+    std::lock_guard<std::mutex> lk(g_http_ip_mutex);
+    int& n = g_http_ip_conns[ip];
+    if (n >= lim) return false;
+    ++n; return true;
+}
+static void http_ip_release(const std::string& ip) {
+    if (http_max_conns_per_ip() <= 0 || ip.empty()) return;
+    std::lock_guard<std::mutex> lk(g_http_ip_mutex);
+    auto it = g_http_ip_conns.find(ip);
+    if (it != g_http_ip_conns.end() && --it->second <= 0) g_http_ip_conns.erase(it);
+}
+
 struct HttpServer::Impl {
     int  port    = 0;
     int  workers = 0;
@@ -323,6 +363,18 @@ struct HttpServer::Impl {
     //
     // Event loop yok — Apache ile aynı model.
     void handle_connection(int fd, std::string remote_addr = "") {
+        // Per-IP eşzamanlı bağlantı tavanı (opt-in, LOOK_HTTP_MAX_CONNS_IP). Aşılırsa
+        // 429 gönder ve kapat — bu IP zaten worker(lar) tutuyor, yenisini alma.
+        if (!http_ip_acquire(remote_addr)) {
+            send_simple(fd, 429, "Too Many Requests"); ::close(fd); return;
+        }
+        // RAII: handle_connection'ın HANGİ yoldan dönerse dönsün (erken close, WS/SSE
+        // devri, keep-alive bitişi) slot serbest kalır — worker-scope semantiği.
+        struct IpSlot {
+            const std::string& ip;
+            ~IpSlot() { http_ip_release(ip); }
+        } ip_slot{ remote_addr };
+
         // Boşta timeout — istemci N ms yanıt vermezse kapat (default 30s). LOOK_HTTP_IDLE_MS
         // ile ayarlanabilir (test hızı için). PLATFORM-DOĞRU TİP: Windows SO_RCVTIMEO bir
         // DWORD-milisaniye bekler, POSIX timeval bekler. ESKİ BUG: Windows'a timeval{30,0}
