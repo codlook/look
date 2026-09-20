@@ -1513,6 +1513,26 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Script: " + script.string());
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Apache bypass — use nginx or a direct connection.");
 
+    // Security posture (fail-loud, one-time at startup): no application-level rate
+    // limiting AND no declared trusted proxy => this server is likely directly
+    // internet-facing with no flood/DoS protection. Behind a reverse proxy the proxy
+    // handles rate limiting and slow-client buffering, so LOOK_TRUSTED_PROXY being set
+    // is treated as "a proxy is in front" and the warning is suppressed. Never changes
+    // behaviour — it only surfaces an insecure-by-omission default so it can't stay silent.
+    {
+        const RlConfig& rl = rl_config();
+        const char* tp = std::getenv("LOOK_TRUSTED_PROXY");
+        bool rate_off = (rl.per_rpm <= 0 && rl.global_rpm <= 0);
+        bool no_proxy = (!tp || !*tp);
+        if (rate_off && no_proxy) {
+            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+                "Rate limiting is OFF (LOOK_RATE_LIMIT_RPM unset) and no LOOK_TRUSTED_PROXY is set. "
+                "If this server is directly exposed to the internet it has no application-level flood "
+                "protection. Set LOOK_RATE_LIMIT_RPM (and consider LOOK_HTTP_MAX_CONNS_IP / "
+                "LOOK_BODY_MIN_RATE), or run behind a reverse proxy. See DEPLOYMENT.md.");
+        }
+    }
+
     // WebSocket handler — called on a worker thread after 101 upgrade
     auto ws_handler = [](std::shared_ptr<look::WsConnection> conn,
                          const look::HttpRequest& req) {
