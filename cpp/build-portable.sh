@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 set -e
 source /opt/rh/gcc-toolset-12/enable 2>/dev/null
-S=/look/cpp/_ssl-static
-# OpenSSL zaten cache'te (_ssl-static); yoksa derle
+# OpenSSL 3.5.x LTS (statik). Prefix sürüme-özel → sürüm bump'ı eski cache'i doğal
+# olarak geçersiz kılar (eskiden sabit _ssl-static, bayat 1.1.1w'yi ship edebilirdi).
+# --libdir=lib: OpenSSL 3.x x86_64'te lib64'e kurar; CMake yolları lib/ bekliyor → sabitle.
+OSSL_VER=3.5.8
+OSSL_SHA=a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
+S=/look/cpp/_ssl-static-$OSSL_VER
 if [ ! -f "$S/lib/libcrypto.a" ]; then
   command -v perl >/dev/null || dnf install -y --setopt=sslverify=false perl-core >/dev/null 2>&1
-  cd /tmp; [ -d openssl-1.1.1w ] || { curl -sL -o o.tgz https://www.openssl.org/source/openssl-1.1.1w.tar.gz; tar xzf o.tgz; }
-  cd openssl-1.1.1w; ./config no-shared no-tests no-zlib --prefix="$S" >/dev/null 2>&1; make -j8 >/dev/null 2>&1; make install_sw >/dev/null 2>&1
+  cd /tmp
+  if [ ! -d "openssl-$OSSL_VER" ]; then
+    curl -sL -o o.tgz "https://github.com/openssl/openssl/releases/download/openssl-$OSSL_VER/openssl-$OSSL_VER.tar.gz"
+    echo "$OSSL_SHA  o.tgz" | sha256sum -c - || { echo "OpenSSL tarball SHA256 MISMATCH — aborting"; exit 1; }
+    tar xzf o.tgz
+  fi
+  cd "openssl-$OSSL_VER"
+  ./config no-shared no-tests no-zlib --libdir=lib --prefix="$S" >/dev/null 2>&1
+  make -j8 >/dev/null 2>&1; make install_sw >/dev/null 2>&1
 fi
 cd /look/cpp; rm -rf build-portable
 # LOOK_BUILD env varsa damgayı ONA sabitle (container'da .git yok → git rev-parse "src"e düşer,

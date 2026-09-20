@@ -27,12 +27,15 @@ RUN dnf install -y --setopt=sslverify=false \
 # HEPSINDE calisir. Sistem openssl-devel'de statik .a YOK; kaynaktan derlenir.
 # Kullanim: cmake ... -DLOOK_STATIC_SSL=ON -DOPENSSL_ROOT_DIR=/opt/openssl-static \
 #   -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+# OpenSSL 3.5.x LTS (statik). 1.1.1 serisi EOL (2023-09-11); 3.5 LTS 2030'a kadar.
+# --libdir=lib: 3.x x86_64'te lib64'e kurar; tüketiciler lib/ bekliyor → sabitle.
 RUN source /opt/rh/gcc-toolset-12/enable && cd /tmp \
-    && curl -sL -o o.tgz https://www.openssl.org/source/openssl-1.1.1w.tar.gz \
-    && tar xzf o.tgz && cd openssl-1.1.1w \
-    && ./config no-shared no-tests no-zlib --prefix=/opt/openssl-static >/dev/null 2>&1 \
+    && curl -sL -o o.tgz https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz \
+    && echo "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2  o.tgz" | sha256sum -c - \
+    && tar xzf o.tgz && cd openssl-3.5.8 \
+    && ./config no-shared no-tests no-zlib --libdir=lib --prefix=/opt/openssl-static >/dev/null 2>&1 \
     && make -j"$(nproc)" >/dev/null 2>&1 && make install_sw >/dev/null 2>&1 \
-    && cd /tmp && rm -rf openssl-1.1.1w o.tgz
+    && cd /tmp && rm -rf openssl-3.5.8 o.tgz
 ENV OPENSSL_STATIC_ROOT=/opt/openssl-static
 
 ENV BASH_ENV=/opt/rh/gcc-toolset-12/enable
