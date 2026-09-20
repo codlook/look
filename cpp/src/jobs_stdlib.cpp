@@ -3,7 +3,7 @@
 //                                       ↘ failed  (retry_count >= max_retries)
 //                             fail()  → pending   (if retry_count < max_retries)
 // Delayed jobs: run_after = now + delay_seconds  (next() filters run_after <= now)
-#include "sqlite3/sqlite-amalgamation-3470200/sqlite3.h"
+#include "sqlite3/sqlite-amalgamation-3530400/sqlite3.h"
 #include "look/jobs_store.h"
 #include "look/logger.h"
 #include <chrono>

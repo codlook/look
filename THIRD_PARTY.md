@@ -12,7 +12,7 @@ full — "minimal dependencies" means *few and pinned*, not *none hidden*.
 
 | Component | Version | License | How it's used | In the tree |
 |---|---|---|---|---|
-| **SQLite** | 3.47.2 | Public domain | Embedded SQL database driver (the amalgamation) | `cpp/src/sqlite3/sqlite-amalgamation-3470200/` |
+| **SQLite** | 3.53.4 | Public domain | Embedded SQL database driver (the amalgamation) | `cpp/src/sqlite3/sqlite-amalgamation-3530400/` |
 | **miniz** | 11.0.2 | MIT | Deflate / zlib + ZIP (gzip responses, archive support) | `cpp/src/miniz/` |
 | **linenoise** | pinned upstream snapshot | BSD-2-Clause | Line editing for the `look repl` interactive shell | `cpp/src/linenoise/` |
 | **OpenSSL** | 1.1.1w | Apache-2.0 | TLS for `http::`, DB drivers, SMTP/IMAP; crypto primitives | Statically linked in release binaries (see below) |

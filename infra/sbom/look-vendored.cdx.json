@@ -13,9 +13,9 @@
     {
       "type": "library",
       "name": "sqlite",
-      "version": "3.47.2",
-      "cpe": "cpe:2.3:a:sqlite:sqlite:3.47.2:*:*:*:*:*:*:*",
-      "purl": "pkg:generic/sqlite@3.47.2"
+      "version": "3.53.4",
+      "cpe": "cpe:2.3:a:sqlite:sqlite:3.53.4:*:*:*:*:*:*:*",
+      "purl": "pkg:generic/sqlite@3.53.4"
     },
     {
       "type": "library",

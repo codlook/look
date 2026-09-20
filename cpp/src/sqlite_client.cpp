@@ -1,6 +1,6 @@
 #include "look/sqlite_client.h"
 #include "look/format.h"   // look_format_double (dilin tek double formati)
-#include "sqlite3/sqlite-amalgamation-3470200/sqlite3.h"
+#include "sqlite3/sqlite-amalgamation-3530400/sqlite3.h"
 #include <stdexcept>
 #include <cstdio>
 #include <string>

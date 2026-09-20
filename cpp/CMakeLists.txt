@@ -53,7 +53,7 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # sqlite3.c saf C kodudur — C++ kurallarıyla derlenmez
 set_source_files_properties(
-    src/sqlite3/sqlite-amalgamation-3470200/sqlite3.c
+    src/sqlite3/sqlite-amalgamation-3530400/sqlite3.c
     PROPERTIES LANGUAGE C
 )
 
@@ -118,7 +118,7 @@ set(LOOK_CORE
     src/mysql_client.cpp
     src/sqlite_client.cpp
     src/postgres_client.cpp
-    src/sqlite3/sqlite-amalgamation-3470200/sqlite3.c
+    src/sqlite3/sqlite-amalgamation-3530400/sqlite3.c
     src/logger.cpp
     src/extra_stdlib.cpp
     src/file_stdlib.cpp
