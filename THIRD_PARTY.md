@@ -15,7 +15,7 @@ full — "minimal dependencies" means *few and pinned*, not *none hidden*.
 | **SQLite** | 3.47.2 | Public domain | Embedded SQL database driver (the amalgamation) | `cpp/src/sqlite3/sqlite-amalgamation-3470200/` |
 | **miniz** | 11.0.2 | MIT | Deflate / zlib + ZIP (gzip responses, archive support) | `cpp/src/miniz/` |
 | **linenoise** | pinned upstream snapshot | BSD-2-Clause | Line editing for the `look repl` interactive shell | `cpp/src/linenoise/` |
-| **OpenSSL** | 3.5.1 | Apache-2.0 | TLS for `http::`, DB drivers, SMTP/IMAP; crypto primitives | Statically linked in release binaries (see below) |
+| **OpenSSL** | 1.1.1w | Apache-2.0 | TLS for `http::`, DB drivers, SMTP/IMAP; crypto primitives | Statically linked in release binaries (see below) |
 
 ## How each is shipped
 
@@ -25,11 +25,14 @@ full — "minimal dependencies" means *few and pinned*, not *none hidden*.
   us. Upgrades are an explicit commit that bumps the vendored copy.
 
 - **OpenSSL** is the one component linked rather than vendored as source:
-  - **Release binaries (portable / Docker)** statically link a **pinned OpenSSL 3.5.1**, so
-    the artifact has no external `libssl` / `libcrypto` requirement.
+  - **Release binaries (portable / Docker / Plesk)** statically link OpenSSL built by
+    `cpp/build-portable.sh`, currently **1.1.1w**. ⚠️ The 1.1.1 series is **end-of-life**
+    (2023-09-11) and receives no upstream fixes; a migration to a **3.5.x LTS** is pending
+    (`cpp/build-portable.sh` + `cpp/Dockerfile.build` + this file + `infra/sbom/`).
   - **The RPM package** links the OS-managed `openssl-libs` instead, so
     `dnf update openssl-libs` applies OS security patches without rebuilding LOOK — the
-    normal distro trade-off (patch cadence over self-containment).
+    normal distro trade-off (patch cadence over self-containment). This channel is not
+    affected by the EOL note above (the distro backports fixes).
 
 ## Updating a vendored component
 

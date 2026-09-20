@@ -20,9 +20,10 @@
     {
       "type": "library",
       "name": "openssl",
-      "version": "3.5.1",
-      "cpe": "cpe:2.3:a:openssl:openssl:3.5.1:*:*:*:*:*:*:*",
-      "purl": "pkg:generic/openssl@3.5.1"
+      "version": "1.1.1w",
+      "cpe": "cpe:2.3:a:openssl:openssl:1.1.1w:*:*:*:*:*:*:*",
+      "purl": "pkg:generic/openssl@1.1.1w",
+      "description": "Statically linked in portable/Docker/Plesk release binaries via cpp/build-portable.sh. NOTE: 1.1.1 series is EOL (2023-09-11) — migration to a 3.5.x LTS is pending. The RPM links OS openssl-libs instead (backported fixes)."
     },
     {
       "type": "library",
