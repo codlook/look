@@ -346,13 +346,33 @@ static std::string resolve_sha(const PkgSpec& spec, bool verbose) {
 
 // ── cmd_install ───────────────────────────────────────────────────────────────
 
-int cmd_install(const std::string& pkg, bool verbose) {
+int cmd_install(const std::string& pkg, bool verbose, bool locked) {
     PkgSpec spec;
     try {
         spec = parse_pkg(pkg);
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;
+    }
+
+    // look.lock'u ÖNCE oku: --locked için kayıtlı sha'ya sabitle, ve normal kurulumda
+    // ref'in kilitten bu yana kayıp kaymadığını (etiket taşındı / dal ilerledi) göster.
+    auto lock_path = fs::current_path() / "look.lock";
+    auto lock      = read_lock(lock_path);
+    auto lock_it   = lock.find(spec.lock_key());
+    std::string locked_sha = (lock_it != lock.end()) ? lock_it->second.sha : "";
+
+    if (locked) {
+        // Reprodüksiyon + tahrif-kanıtı: kayıtlı commit sha'sını AYNEN indir. Ref
+        // (dal/etiket) o sha'dan başka bir şeye çözülse bile sha sabittir → GitHub
+        // o sha için tam olarak o ağacı verir, sessiz ikame imkansız.
+        if (locked_sha.empty()) {
+            std::cerr << "Error: no locked version for " << spec.lock_key()
+                      << " in look.lock — run 'look install " << pkg << "' first.\n";
+            return 1;
+        }
+        spec.ref = locked_sha;
+        if (verbose) std::cout << "  --locked: pinning to " << locked_sha << "\n";
     }
 
     std::cout << "Loading: " << spec.user << "/" << spec.repo;
@@ -388,10 +408,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
 
     std::cout << "  → " << dest.string() << "\n";
 
-    // Update look.lock
-    auto lock_path = fs::current_path() / "look.lock";
-    auto lock      = read_lock(lock_path);
-
+    // look.lock zaten yukarıda okundu (lock_path/lock/locked_sha).
     // Try to extract commit SHA from Content-Disposition or URL
     // GitHub sends: attachment; filename=user-repo-{sha}.zip
     std::string sha;
@@ -420,13 +437,33 @@ int cmd_install(const std::string& pkg, bool verbose) {
     // Try to resolve exact commit SHA if not already extracted from zip filename
     if (sha.empty()) sha = resolve_sha(spec, verbose);
 
-    LockEntry entry;
-    entry.ref = spec.ref;
-    entry.sha = sha;
-    lock[spec.lock_key()] = entry;
-    write_lock(lock_path, lock);
-
-    std::cout << "  look.lock updated\n";
+    if (locked) {
+        // Kilitli kurulum: içeriğin gerçekten kilitli sha olduğunu doğrula (GitHub
+        // sha URL'i için bunu garanti eder; yine de tahrif-kanıtı olarak kontrol et)
+        // ve look.lock'u DEĞİŞTİRME (kayıtlı ref/sha korunur).
+        if (!sha.empty() && !locked_sha.empty() && sha != locked_sha) {
+            std::cerr << "Error: locked install integrity check failed for "
+                      << spec.lock_key() << " — expected " << locked_sha
+                      << " got " << sha << "\n";
+            return 1;
+        }
+        std::cout << "  --locked: verified " << locked_sha << " (look.lock unchanged)\n";
+    } else {
+        // Sessiz-ikame görünürlüğü: kullanıcı bir dal/etiket kurdu ve o ref kilitten
+        // bu yana FARKLI bir commit'e çözüldüyse (etiket taşındı / dal ilerledi) bunu
+        // AÇIKÇA bildir — normal kurulum güncellemeyi amaçlar ama sessiz olmamalı.
+        if (!locked_sha.empty() && !sha.empty() && sha != locked_sha) {
+            std::cout << "  NOTE: '" << spec.ref << "' moved since look.lock: "
+                      << locked_sha.substr(0, 10) << " -> " << sha.substr(0, 10)
+                      << "  (updating; use --locked to pin to the recorded commit)\n";
+        }
+        LockEntry entry;
+        entry.ref = spec.ref;
+        entry.sha = sha;
+        lock[spec.lock_key()] = entry;
+        write_lock(lock_path, lock);
+        std::cout << "  look.lock updated\n";
+    }
     std::cout << "✓ " << spec.lock_key() << " kuruldu\n\n";
     std::cout << "Usage:\n";
     if (!spec.subdir.empty()) {
@@ -441,7 +478,7 @@ int cmd_install(const std::string& pkg, bool verbose) {
 
 // ── cmd_install_all ───────────────────────────────────────────────────────────
 
-int cmd_install_all(bool verbose) {
+int cmd_install_all(bool verbose, bool locked) {
     auto lock_path = fs::current_path() / "look.lock";
     if (!fs::exists(lock_path)) {
         std::cout << "look.lock not found — no packages to install.\n";
@@ -462,9 +499,13 @@ int cmd_install_all(bool verbose) {
         // her koşumda ref'i yeniden çözüyordu; dal HEAD'i ilerlerse (veya etiket
         // yeniden basılırsa) look.lock'ta sha yazılı olmasına rağmen FARKLI kod
         // kurulurdu — yani kilit hiç kilitlemiyordu. sha yoksa (eski lock) ref'e düş.
+        if (locked && entry.sha.empty()) {
+            std::cerr << "  " << key << ": no locked sha in look.lock (--locked is strict)\n";
+            ++failed; continue;
+        }
         const std::string& pin = entry.sha.empty() ? entry.ref : entry.sha;
         std::string pkg_str = "github.com/" + key + "@" + pin;
-        if (cmd_install(pkg_str, verbose) != 0) ++failed;
+        if (cmd_install(pkg_str, verbose, locked) != 0) ++failed;
     }
 
     if (failed > 0) {

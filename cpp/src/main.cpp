@@ -63,6 +63,7 @@ static void print_usage() {
     std::cout << "  lk install <pkg>                 — install package (e.g. github.com/codlook/look-packages/firebase)\n";
     std::cout << "  lk install <pkg@ref>             — install specific branch/tag\n";
     std::cout << "  lk install                       — install all from look.lock\n";
+    std::cout << "  lk install [pkg] --locked        — install the exact commit in look.lock (reproducible)\n";
     std::cout << "  lk version                       — print version info\n";
 }
 
@@ -371,14 +372,16 @@ int main(int argc, char* argv[]) {
         // ── lk install [pkg] ─────────────────────────────────────────────────
         if (cmd == "install") {
             bool verbose = false;
+            bool locked  = false;
             std::string pkg;
             for (int i = 2; i < argc; ++i) {
                 std::string arg = argv[i];
                 if (arg == "--verbose" || arg == "-v") verbose = true;
+                else if (arg == "--locked" || arg == "--frozen") locked = true;
                 else if (pkg.empty()) pkg = arg;
             }
-            if (pkg.empty()) return look::cmd_install_all(verbose);
-            return look::cmd_install(pkg, verbose);
+            if (pkg.empty()) return look::cmd_install_all(verbose, locked);
+            return look::cmd_install(pkg, verbose, locked);
         }
 
         // ── lk <file> / lk -c "code" ─────────────────────────────────────────
