@@ -1,0 +1,41 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "look",
+      "description": "Vendored/statically-linked third-party components of LOOK. Single source for the CVE scan; keep versions in sync with THIRD_PARTY.md."
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "sqlite",
+      "version": "3.47.2",
+      "cpe": "cpe:2.3:a:sqlite:sqlite:3.47.2:*:*:*:*:*:*:*",
+      "purl": "pkg:generic/sqlite@3.47.2"
+    },
+    {
+      "type": "library",
+      "name": "openssl",
+      "version": "3.5.1",
+      "cpe": "cpe:2.3:a:openssl:openssl:3.5.1:*:*:*:*:*:*:*",
+      "purl": "pkg:generic/openssl@3.5.1"
+    },
+    {
+      "type": "library",
+      "name": "miniz",
+      "version": "11.0.2",
+      "cpe": "cpe:2.3:a:miniz_project:miniz:11.0.2:*:*:*:*:*:*:*",
+      "purl": "pkg:github/richgel999/miniz@11.0.2"
+    },
+    {
+      "type": "library",
+      "name": "linenoise",
+      "version": "1.0.0",
+      "purl": "pkg:github/antirez/linenoise@1.0.0"
+    }
+  ]
+}
