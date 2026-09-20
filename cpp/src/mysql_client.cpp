@@ -434,17 +434,29 @@ void MySQLClient::send_packet(const std::vector<uint8_t>& data, uint8_t seq) {
 // Kripto OpenSSL'den alınıyor — kod tabanında SHA-256'nın 8 ayrı kopyası var
 // (S2 kümesi, haritada kayıtlı); dokuzuncuyu eklemiyoruz.
 #ifndef _WIN32
+// OpenSSL 3.0 low-level SHA256_* API'sini kullanımdan kaldırdı; EVP tek geçitli
+// SHA-256 yardımcı — biri d2+nonce zincirlenmiş, diğeri tek bloklu.
+static void evp_sha256(const unsigned char* a, size_t alen,
+                       const unsigned char* b, size_t blen,
+                       unsigned char out[SHA256_DIGEST_LENGTH]) {
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) throw std::runtime_error("db mysql: SHA-256 context allocation failed");
+    bool ok = EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) == 1 &&
+              EVP_DigestUpdate(ctx, a, alen) == 1 &&
+              (blen == 0 || EVP_DigestUpdate(ctx, b, blen) == 1) &&
+              EVP_DigestFinal_ex(ctx, out, nullptr) == 1;
+    EVP_MD_CTX_free(ctx);
+    if (!ok) throw std::runtime_error("db mysql: SHA-256 digest failed");
+}
+
 static std::vector<uint8_t> caching_sha2_scramble(const std::string& password,
                                                   const std::string& nonce) {
     if (password.empty()) return {};
     unsigned char d1[SHA256_DIGEST_LENGTH], d2[SHA256_DIGEST_LENGTH], d3[SHA256_DIGEST_LENGTH];
-    SHA256(reinterpret_cast<const unsigned char*>(password.data()), password.size(), d1);
-    SHA256(d1, sizeof(d1), d2);
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-    SHA256_Update(&ctx, d2, sizeof(d2));
-    SHA256_Update(&ctx, nonce.data(), nonce.size());
-    SHA256_Final(d3, &ctx);
+    evp_sha256(reinterpret_cast<const unsigned char*>(password.data()), password.size(), nullptr, 0, d1);
+    evp_sha256(d1, sizeof(d1), nullptr, 0, d2);
+    evp_sha256(d2, sizeof(d2),
+               reinterpret_cast<const unsigned char*>(nonce.data()), nonce.size(), d3);
     std::vector<uint8_t> out(SHA256_DIGEST_LENGTH);
     for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) out[i] = d1[i] ^ d3[i];
     return out;
