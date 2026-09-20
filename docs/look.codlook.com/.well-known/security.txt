@@ -1,0 +1,9 @@
+# LOOK — security contact and disclosure policy (RFC 9116)
+# Please report security issues privately; do not open a public issue for
+# undisclosed vulnerabilities. See the Policy link for details.
+
+Contact: mailto:security@codlook.com
+Expires: 2027-09-20T00:00:00.000Z
+Preferred-Languages: en, tr
+Canonical: https://look.codlook.com/.well-known/security.txt
+Policy: https://github.com/codlook/look/blob/main/SECURITY.md

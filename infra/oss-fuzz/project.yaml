@@ -1,0 +1,11 @@
+homepage: "https://look.codlook.com"
+language: c++
+primary_contact: "security@codlook.com"
+main_repo: "https://github.com/codlook/look"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
+  - undefined
+architectures:
+  - x86_64

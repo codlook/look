@@ -10,6 +10,8 @@ within 72 hours.
 
 Supported version: the latest release on the `main` branch.
 
+Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com/.well-known/security.txt) (RFC 9116).
+
 ---
 
 ## Security posture
