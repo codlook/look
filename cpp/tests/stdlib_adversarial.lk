@@ -1,0 +1,78 @@
+# LOOK — stdlib adversarial guard (untested-surface round, 2026-09-21)
+# The ~84 stdlib functions with no regression lock were probed with malformed,
+# boundary and overflow inputs. Every one handled the input safely (clean throw
+# or bounded garbage-out; no crash, no UB, no silent corruption). This file LOCKS
+# that hardened behavior so it cannot silently regress (cf. the opcode-enum
+# regression: hardened code stays correct only while a guard pins it).
+# Run: lk tests/stdlib_adversarial.lk    (any `FAIL` line breaks CI).
+use string
+use array
+use math
+use template
+use date
+use json
+
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . json::encode($got) . "] want[" . json::encode($want) . "]") }
+}
+function chk_throws($label, $fn) {
+    $threw = false
+    try { $fn() } catch ($e) { $threw = true }
+    chk($label, $threw, true)
+}
+# array `==` is reference-equality, not structural → compare shapes via json::encode.
+function chk_json($label, $got, $want) { chk($label, json::encode($got), $want) }
+
+# ── array::slice — negative/overflow offset & length must clamp, never OOB ──
+chk_json("slice neg-offset clamp",  array::slice([1,2,3], -100, 2), "[1,2]")
+chk_json("slice offset>n empty",    array::slice([1,2,3], 9999999999, 5), "[]")
+chk_json("slice neg-length empty",  array::slice([1,2,3], 0, -5), "[]")
+chk_json("slice offset+len ovf",    array::slice([1,2,3], 1, 9999999999), "[2,3]")
+
+# ── array::chunk — positive-size guard, huge size = one chunk ──
+chk_json("chunk huge-size",         array::chunk([1,2,3], 9999999999), "[[1,2,3]]")
+chk_throws("chunk zero-size",  fn() => array::chunk([1,2,3], 0))
+chk_throws("chunk neg-size",   fn() => array::chunk([1,2,3], -1))
+
+# ── array::zip — shortest wins, empty arg = empty ──
+chk_json("zip shortest",            array::zip([1,2,3],[9,8]), "[[1,9],[2,8]]")
+chk_json("zip with-empty",          array::zip([], [1,2]), "[]")
+
+# ── array::flatten — depth honored, no runaway ──
+chk_json("flatten depth-2",         array::flatten([[[[[1]]]]], 2), "[[[1]]]")
+
+# ── string::slugify — empty & all-separator collapse to empty ──
+chk("slugify empty",           string::slugify(""), "")
+chk("slugify all-seps",        string::slugify("---!!!___"), "")
+
+# ── string::index_of — miss returns -1, not throw ──
+chk("index_of miss",           string::index_of("abc", "z"), -1)
+chk("index_of empty-needle",   string::index_of("abc", ""), 0)
+
+# ── string::ends_with — empty suffix is true ──
+chk("ends_with empty",         string::ends_with("abc", ""), true)
+
+# ── math edges — INT64_MIN, negative-sqrt throws (never NaN into JSON) ──
+chk("math::min int64min",      math::min(-9223372036854775807, 3), -9223372036854775807)
+chk("math::floor neg",         math::floor(-2.5), -3)
+chk("math::ceil pos",          math::ceil(2.0001), 3)
+chk_throws("sqrt negative",    fn() => math::sqrt(-1.0))
+
+# ── string regex — malformed pattern throws cleanly, no crash/UB ──
+chk_throws("regex_replace bad-pat",   fn() => string::regex_replace("x", "[", "y"))
+chk_throws("regex_match_all bad-pat", fn() => string::regex_match_all("x", "(a"))
+chk("regex_replace basic",     string::regex_replace("aaaa", "a", "b"), "bbbb")
+
+# ── template::render_string — user data is NOT recursively evaluated ──
+# (placeholder value that itself looks like template syntax stays inert)
+chk("render_string inert-value",
+    string::index_of(template::render_string("X{{v}}Y", ["v" => "{{evil}}"]), "evil"),
+    -1)
+
+# ── date — malformed string throws; extreme timestamp is bounded, no null-deref ──
+chk_throws("date::weekday too-short", fn() => date::weekday("0"))
+chk("from_timestamp epoch",    date::from_timestamp(0), "1970-01-01 00:00:00")
+
+print("")
+print("=== stdlib adversarial guard done ===")

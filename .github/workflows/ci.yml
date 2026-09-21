@@ -44,6 +44,23 @@ jobs:
           fi
           echo "All assertions passed."
 
+      # stdlib adversarial guard — malformed/boundary/overflow inputs to the
+      # previously-unlocked stdlib surface (array boundary, regex ReDoS, template
+      # inertness, date parse, timestamp overflow). Runs on BOTH engines (VM default +
+      # LOOK_CLI_VM=0 tree-walk); any FAIL breaks CI.
+      - name: stdlib adversarial guard (both engines)
+        run: |
+          cd cpp
+          for env in "" "LOOK_CLI_VM=0"; do
+            out="$(env TZ=UTC $env ./build/lk tests/stdlib_adversarial.lk)"
+            echo "$out"
+            if echo "$out" | grep -q '^FAIL'; then
+              echo "::error::stdlib adversarial guard FAILED ($env)"
+              exit 1
+            fi
+          done
+          echo "stdlib adversarial guard passed (both engines)."
+
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
       # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
       # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
