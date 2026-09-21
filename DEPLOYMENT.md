@@ -191,9 +191,16 @@ certificate chain **and** hostname by default — see [SECURITY.md](SECURITY.md)
 **Remote database?** If the DB lives on a different host, connect with the TLS scheme
 (`mysqls://` / `postgresqls://` / `rediss://`) and set **`LOOK_DB_REQUIRE_TLS=1`** so a
 plaintext connection to a remote host is refused (a misconfigured DSN can't silently send
-data — including a plaintext Redis `AUTH` password — in the clear). Loopback / same-host
-DB connections are unaffected, so this is free when the DB is local. See
-[SECURITY.md](SECURITY.md).
+data — including a plaintext Redis `AUTH` password — in the clear). A DB reached over
+`127.0.0.1` / `localhost` / a Unix socket is unaffected, so this is free when the DB is
+truly local.
+
+> **Docker Compose note:** a DB service host like `db:3306` is **not** loopback — even
+> though the container is on the same host — so with the policy on it is treated as
+> remote and refused. On a single-host bridge network that traffic stays on the host, so
+> it is safe to add `?insecure_plaintext=1` to that DSN (an explicit, auditable
+> acknowledgement); on a multi-host overlay (Swarm/k8s) use `mysqls://` instead. See
+> [SECURITY.md](SECURITY.md).
 
 ---
 
