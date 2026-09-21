@@ -188,6 +188,13 @@ loopback port; the proxy handles certificates, HTTP/2, and renewal (certbot). Ou
 TLS from LOOK (`http::`, `postgresqls://`, `mysqls://`, `rediss://`) verifies the
 certificate chain **and** hostname by default — see [SECURITY.md](SECURITY.md).
 
+**Remote database?** If the DB lives on a different host, connect with the TLS scheme
+(`mysqls://` / `postgresqls://` / `rediss://`) and set **`LOOK_DB_REQUIRE_TLS=1`** so a
+plaintext connection to a remote host is refused (a misconfigured DSN can't silently send
+data — including a plaintext Redis `AUTH` password — in the clear). Loopback / same-host
+DB connections are unaffected, so this is free when the DB is local. See
+[SECURITY.md](SECURITY.md).
+
 ---
 
 ## 7. High-concurrency kernel tuning (c ≥ 5000)
@@ -217,6 +224,7 @@ Raise the file-descriptor limit for the service (systemd: `LimitNOFILE=200000`).
 - [ ] `client_body_timeout` / `client_header_timeout` / `client_max_body_size` set at nginx
 - [ ] `LOOK_TRUSTED_PROXY` set to the proxy address (real client IP)
 - [ ] `LOOK_SESSION_SECURE=1` (TLS terminates upstream)
+- [ ] Remote DB: TLS scheme (`mysqls://` …) + `LOOK_DB_REQUIRE_TLS=1` (no-op when the DB is local)
 - [ ] `LOOK_MAX_BODY_SIZE` matches nginx `client_max_body_size`
 - [ ] Per-IP / body-rate limits left off (proxy handles it) — or on, if **no** proxy
 - [ ] Fiber dispatch left off unless the workload is I/O-concurrency-bound
