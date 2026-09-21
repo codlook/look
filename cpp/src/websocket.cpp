@@ -147,6 +147,16 @@ WsFrame ws_try_decode_frame(const std::string& buf) {
     size_t plen      = b1 & 0x7F;
     size_t pos       = 2;
 
+    // RFC 6455 §5.2: RSV1-3 (0x70) sıfır olmalı — hiçbir uzantı müzakere edilmediğinden
+    // (LOOK permessage-deflate desteklemez) sıfır-dışı RSV protokol hatasıdır. Ayrıştırıcı
+    // adversarial tur (2026-09-21): sıfır-dışı RSV eskiden SESSİZCE kabul ediliyordu.
+    if ((b0 & 0x70) != 0) { f.protocol_error = true; return f; }
+    // RFC 6455 §5.2: yalnız tanımlı opcode'lar — data 0x0/0x1/0x2, kontrol 0x8/0x9/0xA.
+    // Ayrılmış opcode'lar (0x3-0x7, 0xB-0xF) → protokol hatası (eskiden sessizce düşürülüyordu).
+    if (f.opcode > 0x0A || (f.opcode > 0x02 && f.opcode < 0x08)) {
+        f.protocol_error = true; return f;
+    }
+
     if (plen == 126) {
         if (buf.size() < 4) return f;
         plen = ((size_t)(uint8_t)buf[2] << 8) | (uint8_t)buf[3];

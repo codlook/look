@@ -381,6 +381,17 @@ jobs:
           if timeout 30 /tmp/fcgi_posctl; then echo "::error::POSCTL dişsiz"; exit 1; \
           else echo "POSCTL ASan yakaladı (beklenen)"; fi
 
+      # WebSocket frame-decode (seam tablo, ASan/UBSan) — untrusted-NETWORK yüzeyi.
+      # Parser adversarial turu: decode_frame'in birim-guard'ı yoktu. Güvenlik (mask
+      # zorunlu, 16MB cap, kontrol-frame ≤125+FIN) + RFC 6455 §5.2 konformans fix'i
+      # (sıfır-dışı RSV + ayrılmış opcode → protokol hatası) pinlenir.
+      - name: WebSocket frame-decode (seam tablo, ASan/UBSan)
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/ws_frame_test.cpp src/websocket.cpp -o /tmp/ws_frame_test
+          timeout 60 /tmp/ws_frame_test
+
       # cookie:: güvenli-varsayılan (2026-08 flip) — HttpOnly + SameSite=Lax VARSAYILAN (session::
       # ile hizalı; Secure değil, düz-HTTP dev kırılmasın). Opt-out options assoc'u ile. lk-fcgi
       # --mode http'ye karşı Set-Cookie başlığı doğrulanır. Pozitif-kontrollü (varsayılan kalkarsa RED).
