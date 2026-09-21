@@ -36,6 +36,17 @@ int main() {
     chk(MY, "ssl=verify_identity", false, true, true); // MySQL'e özgü
     chk(MY, "foo=bar",     true,  true,  true);  // bilinmeyen query → şema + güvenli-varsayılan
     chk(MY, "foo=bar",     false, false, true);
+    // ── parser adversarial turu (2026-09-21): sınır-duyarlı param eşleme ──
+    // #1: ssl/tls FALSEY değeri TLS'i ZORLAMAZ (eski çıplak-substring "ssl=" TLS'i açıyordu).
+    chk(MY, "ssl=false",   false, false, true);
+    chk(MY, "ssl=0",       false, false, true);
+    chk(MY, "ssl=off",     false, false, true);
+    chk(MY, "ssl=disable", false, false, true);
+    chk(MY, "tls=false",   false, false, true);
+    chk(MY, "sslmode=disable", false, false, true); // "ssl=" substring'i DEĞİL → TLS yok
+    // #4: değer-içi enjeksiyon (opt=tls=insecure) verify'ı DÜŞÜRMEZ — "tls" param sınırında değil.
+    chk(MY, "dbname=x&opt=tls=insecure", false, false, true);
+    chk(MY, "name=tls=verify_notreal",   false, false, true);
     // ── Redis ──
     chk(RD, "",            false, false, true);  // redis:// düz
     chk(RD, "",            true,  true,  true);  // rediss:// → şifreli + DOĞRULANMIŞ
@@ -46,8 +57,9 @@ int main() {
     chk(RD, "tls=verify",  false, true,  true);
     chk(RD, "ssl=verify",  false, true,  true);
     chk(RD, "foo=bar",     false, false, true);
+    chk(RD, "ssl=false",   false, false, true);  // #1: falsey → TLS yok
 
-    const int EXPECTED = 21;
+    const int EXPECTED = 30;
     if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
     printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (verify=true güvenli-varsayılan + ?tls=insecure opt-out kilitli)\n", fails);
     return fails ? 1 : 0;
