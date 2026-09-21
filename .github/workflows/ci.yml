@@ -392,6 +392,16 @@ jobs:
             tests/ws_frame_test.cpp src/websocket.cpp -o /tmp/ws_frame_test
           timeout 60 /tmp/ws_frame_test
 
+      # LOOK dil-parser DoS-guard — parser.cpp TÜM motorların paylaştığı tek ön-yüz (parse
+      # bug'ı differential-KÖR). Özyinelemeli-inişli parser'da derin-yuvalama fiziksel stack'i
+      # taşırır; eval(untrusted) bunu saldırgan-erişimli kılar. 3 katmanlı depth guard'ı
+      # (MAX_STMT_DEPTH/EXPR_DEPTH/BINOP_CHAIN) 3 motorda (--check/VM/tree-walk) pinler:
+      # derin-yuvalama → temiz parse-hatası, ASLA crash/hang.
+      - name: Parser DoS-guard (derin-yuvalama, 3 motor)
+        run: |
+          cd cpp
+          bash tests/parser_dos_guard.sh ./build/lk
+
       # cookie:: güvenli-varsayılan (2026-08 flip) — HttpOnly + SameSite=Lax VARSAYILAN (session::
       # ile hizalı; Secure değil, düz-HTTP dev kırılmasın). Opt-out options assoc'u ile. lk-fcgi
       # --mode http'ye karşı Set-Cookie başlığı doğrulanır. Pozitif-kontrollü (varsayılan kalkarsa RED).
