@@ -433,6 +433,15 @@ $full = "Hello" . " World"  # "Hello World"
 $full .= "!"  # "Hello World!"
 ```
 
+> **`.` is greedy next to number literals.** Because `.` is the concatenation
+> operator, `1.2.3` lexes as `1.2` concatenated with `3` → the string `"1.23"`,
+> not a syntax error. Put spaces around `.` when concatenating numbers
+> (`$a . $b`) to keep it readable.
+>
+> **Unary minus binds tighter than `**`.** `-2 ** 2` is `(-2) ** 2 == 4`, not
+> `-(2 ** 2) == -4` (this differs from Python). Parenthesize when you mean the
+> negated power: `-(2 ** 2)`.
+
 ### Comparison
 
 ```lk

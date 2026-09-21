@@ -402,6 +402,14 @@ jobs:
           cd cpp
           bash tests/parser_dos_guard.sh ./build/lk
 
+      # LOOK parser fail-loud — iki fail-SILENT footgun fail-LOUD yapıldı: kapatılmamış
+      # `/*` (kod-yutma → exit 0) artık hata; int64-aşan literal (sessiz float presizyon-kaybı)
+      # artık stderr WARN (stdout değişmez). Pozitif+negatif kontrollü (meşru davranış korunur).
+      - name: Parser fail-loud (unterminated comment + int-overflow warn)
+        run: |
+          cd cpp
+          bash tests/parser_faillooud_guard.sh ./build/lk
+
       # cookie:: güvenli-varsayılan (2026-08 flip) — HttpOnly + SameSite=Lax VARSAYILAN (session::
       # ile hizalı; Secure değil, düz-HTTP dev kırılmasın). Opt-out options assoc'u ile. lk-fcgi
       # --mode http'ye karşı Set-Cookie başlığı doğrulanır. Pozitif-kontrollü (varsayılan kalkarsa RED).

@@ -1,5 +1,6 @@
 #include "look/parser.h"
 #include "look/interpreter.h"
+#include "look/logger.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cstdlib>
@@ -705,6 +706,12 @@ std::unique_ptr<Expression> Parser::primary() {
             // int64'ü aşan tamsayı → float. `strtod`: taşma→±inf, underflow→0,
             // işaret korunur (stod out_of_range'i 0'a çevirip devasa değeri sessizce
             // sıfırlıyordu → limit/eşik bypass'ı).
+            // Fail-loud (felsefe: "hiçbir şey gizli değil"): int64'e sığmayan literal
+            // sessizce float'a düşüp presizyon kaybettiriyordu (ör. bir ID/telefon). Yine
+            // float döneriz (bigint yok) AMA stderr'e uyarı — stdout çıktısı değişmez.
+            Logger::instance().log(LogLevel::LOG_WARN, "PARSER",
+                "integer literal '" + lit + "' at line " + std::to_string(previous().line) +
+                " exceeds the 64-bit integer range and is stored as a float (precision may be lost)");
             return std::make_unique<FloatLiteral>(std::strtod(lit.c_str(), nullptr));
         }
     }

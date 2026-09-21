@@ -182,11 +182,18 @@ void Lexer::scan_token() {
                 while (!is_at_end() && peek() != '\n') advance();
             } else if (peek() == '*') {
                 advance(); // consume *
+                int comment_line = line_;
+                bool closed = false;
                 while (!is_at_end()) {
-                    if (peek() == '*' && peek_next() == '/') { advance(); advance(); break; }
+                    if (peek() == '*' && peek_next() == '/') { advance(); advance(); closed = true; break; }
                     if (peek() == '\n') line_++;
                     advance();
                 }
+                // Fail-loud: kapatılmamış `/*` EOF'a kadar SESSİZCE yutulup kodun yarısını
+                // kaybettiriyordu (exit 0, hata yok). Kapanmadıysa net hata ver.
+                if (!closed)
+                    throw std::runtime_error("Unterminated block comment starting at line " +
+                                             std::to_string(comment_line));
             } else {
                 add_token(TokenType::SLASH);
             }
