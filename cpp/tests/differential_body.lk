@@ -96,7 +96,12 @@ function run_all() {
   while ($ri < 3) { $rv = $ri; push($fns, function() use ($rv) { return $rv * 100 }); $ri = $ri + 1 }
   $rm = ["a"=>1, "b"=>2]; $rs = ""
   foreach ($rm as $rk => $rvv) { $rs .= $rk . $rvv }
-  $o .= "R:" . dif_fib(12) . "," . $add10(5) . "," . $fns[0]() . $fns[1]() . $fns[2]() . "," . $rs . ";";
+  # 3b kilidi: use()-yakalanan FOREACH loop-local VM'de array-sarılı DÖNMEMELİ (["x"] değil
+  # "x"). json::encode wrap'ı ifşa eder; eski bug'da VM explicit-use() capture'ın CELL [0]
+  # deref'ini atlıyordu → tree-walk "x", VM ["x"] = ayrışma. İki motor da "pq" vermeli.
+  $cap = []; foreach (["p","q"] as $cx) { push($cap, function() use ($cx) { return $cx }) }
+  $capj = json::encode($cap[0]()) . "-" . json::encode($cap[1]());
+  $o .= "R:" . dif_fib(12) . "," . $add10(5) . "," . $fns[0]() . $fns[1]() . $fns[2]() . "," . $rs . "," . $capj . ";";
   # Tanımsız değişken — STRICT (Go/Node bandı; PHP'den yalnız dağıtım alınıyor, semantik
   # değil). Eskiden VM sessizce null dönüyordu = bu turun bug sınıfının ta kendisi.
   # İnterpolasyonda ise interpreter fragment eval-hatasını yakalayıp LİTERAL döner →

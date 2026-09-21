@@ -1524,7 +1524,17 @@ static Module make_db_module(Interpreter* interp) {
     };
 
     // db::query($conn, "SELECT ...", [$p1, $p2])
-    m.functions["query"] = [](auto args) -> Value {
+    m.functions["query"] = [interp](auto args) -> Value {
+        // 3a: during the setup pass, db::query silently returns NO rows (the read path is
+        // not serving yet) — even for data a setup-time db::exec just wrote. db::exec WORKS
+        // at setup (writes persist, visible at request-time), so this guard is query-only.
+        // Fail loud so an app that builds state from a top-level query isn't silently empty;
+        // move the read into a route handler (request-time), where db::query works.
+        if (interp && interp->is_setup_mode())
+            throw std::runtime_error("db::query() returns no rows during the setup pass — the read "
+                "path is not serving while routes are registered (db::exec writes, but a setup-time "
+                "query reads empty). Move the query into a route handler (request-time). "
+                "(This used to fail silently; see FRICTION #3a.)");
         if (args.size() < 2) throw std::runtime_error("db::query() requires connection and SQL");
         auto conn = get_conn(args[0]);
         std::string sql = args[1].to_string();

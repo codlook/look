@@ -1573,9 +1573,16 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
     // Her capture: parent'tan değer al → Closure.captures[]'e snapshot
     FunctionCompiler inner("<closure>", e.parameters, e.is_variadic, this);
 
-    // Capture mapping'i inner'a bildir
+    // Capture mapping'i inner'a bildir. is_cell'i AUTO-capture (resolve_upvalue) gibi
+    // parent'ta hesapla: yakalanan isim parent'ta boxed local/capture (CELL) ise, closure
+    // gövdesi okurken [0] deref etmeli (emit_read_capture). Eskiden use()-capture'lar is_cell
+    // HESAPLAMADAN eklendi (default false) → boxed loop-local yakalayınca deref atlanıyor,
+    // closure ham CELL'i (["x"]) okuyordu = VM↔tree-walk ayrışması (3b). tree-walk zaten by-ref
+    // doğru okuyor; auto-capture da is_cell'i doğru kuruyordu — yalnız use()-listesi kaçırıyordu.
     for (size_t i = 0; i < e.captures.size(); ++i) {
-        inner.captures_.push_back({e.captures[i], (uint8_t)i});
+        auto ploc = resolve_var(e.captures[i]);   // parent (this) scope'unda
+        bool is_cell = is_cell_var(ploc);
+        inner.captures_.push_back({e.captures[i], (uint8_t)i, is_cell});
     }
 
     auto proto = inner.compile(*e.body, &e.defaults);
