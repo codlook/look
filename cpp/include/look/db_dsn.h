@@ -80,4 +80,31 @@ inline void redis_resolve_tls(const std::string& query, bool scheme_secure,
     }
 }
 
+// ── Require-TLS policy (LOOK_DB_REQUIRE_TLS) ──────────────────────────────────
+// Opt-in operatör politikası: PLAINTEXT bir bağlantıyı UZAK host'a REDDET. Loopback /
+// Unix-soket düz metni HER ZAMAN serbest (trafik makineden çıkmıyor — yaygın, güvenli
+// app+DB-aynı-makine kurulumu) → politika o kurulumu asla kilitlemez. Bilinçli-güvenilen
+// uzak düz-metin için kaçış: DSN'de ?insecure_plaintext=1 (?tls=insecure gibi adlandırıldı
+// → "bilerek güvensizim" log/config'te GÖRÜNÜR; nötr "allow" değil). Loopback tespiti
+// literal host üzerinde STRING-BAZLI (deterministik, DNS-çözüm/spoofing yüzeyi YOK): 127.0.0.1'e
+// çözülen bir hostname UZAK sayılır → IP literali yaz ya da ?insecure_plaintext=1. (SECURITY.md'de belgeli.)
+inline bool db_host_is_local(const std::string& host) {
+    return host.empty() ||                    // unix soket / belirtilmemiş
+           host[0] == '/' ||                  // unix soket yolu
+           host == "localhost" ||
+           host == "::1" || host == "[::1]" ||
+           host.rfind("127.", 0) == 0;        // 127.0.0.0/8 loopback
+}
+inline bool db_insecure_plaintext_opt(const std::string& query) {
+    return query.find("insecure_plaintext=1")    != std::string::npos ||
+           query.find("insecure_plaintext=true") != std::string::npos;
+}
+// true → bağlantı REDDEDİLMELİ. require_tls: LOOK_DB_REQUIRE_TLS açık ·
+// encrypted: TLS kurulacak · insecure_plaintext: ?insecure_plaintext=1 opt-out.
+inline bool db_refuse_plaintext(bool require_tls, bool encrypted,
+                                const std::string& host, bool insecure_plaintext) {
+    if (!require_tls || encrypted || insecure_plaintext) return false;
+    return !db_host_is_local(host);
+}
+
 } // namespace look

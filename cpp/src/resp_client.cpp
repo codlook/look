@@ -2,6 +2,7 @@
 #include "look/db_dsn.h"   // redis_resolve_tls (saf TLS-karar dikişi)
 #include <sstream>
 #include <cstring>
+#include <cstdlib>
 #include <cerrno>
 #include <stdexcept>
 #include <vector>
@@ -110,6 +111,20 @@ static void parse_url(const std::string& url,
 
 RespClient::RespClient(const std::string& url) {
     parse_url(url, host_, port_, pass_, db_, tls_, tls_verify_);
+    // LOOK_DB_REQUIRE_TLS — uzak host'a düz metin bağlantıyı reddet (loopback serbest,
+    // bkz. db_dsn.h db_refuse_plaintext). Redis'te EKSTRA kritik: AUTH şifreyi cleartext
+    // gönderir (challenge-response yok) → düz metin uzak Redis = şifre tel üstünde açık.
+    {
+        const char* e = std::getenv("LOOK_DB_REQUIRE_TLS");
+        bool require_tls = e && *e && std::string(e) != "0" && std::string(e) != "false";
+        if (look::db_refuse_plaintext(require_tls, tls_, host_,
+                                      look::db_insecure_plaintext_opt(url)))
+            throw std::runtime_error(
+                "redis: refusing plaintext connection to remote host '" + host_ +
+                "' (LOOK_DB_REQUIRE_TLS is set; plaintext Redis AUTH would expose the password). "
+                "Use rediss:// (encrypted+verified), or add ?insecure_plaintext=1 to the URL, "
+                "or unset LOOK_DB_REQUIRE_TLS.");
+    }
     connect();
 }
 

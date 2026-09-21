@@ -1184,6 +1184,26 @@ static std::string make_pool_key() {
     return "__pool_" + std::to_string(g_pool_seq++);
 }
 
+// LOOK_DB_REQUIRE_TLS — opt-in operatör politikası (bkz. db_dsn.h db_refuse_plaintext).
+// Süreç başı bir kez okunur; "1"/"true"/dolu = açık, "0"/"false"/boş = kapalı.
+static bool db_require_tls() {
+    static const bool v = [] {
+        const char* e = std::getenv("LOOK_DB_REQUIRE_TLS");
+        if (!e || !*e) return false;
+        std::string s(e);
+        return s != "0" && s != "false";
+    }();
+    return v;
+}
+static std::runtime_error db_plaintext_refused(const std::string& host,
+                                               const std::string& secure_scheme) {
+    return std::runtime_error(
+        "db: refusing plaintext connection to remote host '" + host +
+        "' (LOOK_DB_REQUIRE_TLS is set). Use " + secure_scheme +
+        ":// (encrypted+verified), or add ?insecure_plaintext=1 to this DSN to allow it, "
+        "or unset LOOK_DB_REQUIRE_TLS.");
+}
+
 // open one physical connection for a given DSN
 static std::shared_ptr<DbConnection> open_one_connection(
         const std::string& dsn, const std::vector<Value>& args) {
@@ -1205,12 +1225,16 @@ static std::shared_ptr<DbConnection> open_one_connection(
         // kilitler; verify-ca sessiz-plaintext regresyonu (558d735) o testte pozitif-kontrollü.
         bool tls = (scheme == "postgresqls");
         bool tls_verify = true;
+        bool insecure_pt = false;
         { size_t q = db_name.find('?');
           if (q != std::string::npos) {
             std::string query = db_name.substr(q + 1);
             db_name = db_name.substr(0, q);
             look::pg_resolve_tls(query, scheme == "postgresqls", tls, tls_verify);
+            insecure_pt = look::db_insecure_plaintext_opt(query);
           } }
+        if (look::db_refuse_plaintext(db_require_tls(), tls, host, insecure_pt))
+            throw db_plaintext_refused(host, "postgresqls");
         auto c = std::make_shared<PostgresClient>();
         if (tls) c->set_tls(true, tls_verify);
         c->connect(host, port, user, pass, db_name);
@@ -1223,6 +1247,7 @@ static std::shared_ptr<DbConnection> open_one_connection(
     // ?tls=verify / ?ssl=verify → ayrıca sertifika+hostname doğrulaması (MITM'e karşı).
     bool tls = (scheme == "mysqls" || scheme == "mariadbs");
     bool tls_verify = false;
+    bool insecure_pt = false;
     { size_t q = db_name.find('?');
       std::string query;
       if (q != std::string::npos) {
@@ -1230,7 +1255,10 @@ static std::shared_ptr<DbConnection> open_one_connection(
         db_name = db_name.substr(0, q);   // sorgu dizisini db adından ayıkla
       }
       // TLS-karar look/db_dsn.h'de (saf, tablo-test edilebilir).
-      look::mysql_resolve_tls(query, tls, tls, tls_verify); }
+      look::mysql_resolve_tls(query, tls, tls, tls_verify);
+      insecure_pt = look::db_insecure_plaintext_opt(query); }
+    if (look::db_refuse_plaintext(db_require_tls(), tls, host, insecure_pt))
+        throw db_plaintext_refused(host, "mysqls");
     if (scheme == "mysqls")   scheme = "mysql";
     if (scheme == "mariadbs") scheme = "mariadb";
     if (scheme != "mysql" && scheme != "mariadb")

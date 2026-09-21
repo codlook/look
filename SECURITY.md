@@ -43,6 +43,18 @@ Honesty about what LOOK does **not** protect yet — so you can decide before de
 On loopback / same-host / a trusted private network, none of the above is exposed. The runtime logs a
 one-time warning per connection pool when a database connection is unencrypted or explicitly `?tls=insecure`.
 
+**Enforce TLS for remote databases — `LOOK_DB_REQUIRE_TLS` (opt-in).** Set `LOOK_DB_REQUIRE_TLS=1`
+to make LOOK **refuse a plaintext connection to a remote host** (MySQL, MariaDB, PostgreSQL, Redis) —
+a stricter secure-default than any mainstream Go/Rust driver offers. Loopback and Unix-socket
+connections are always allowed (traffic never leaves the host — the common app+DB-same-machine case
+is never blocked). To connect a genuinely-trusted remote link in plaintext anyway, either use the TLS
+scheme (`mysqls://` / `postgresqls://` / `rediss://`) or add **`?insecure_plaintext=1`** to that DSN as
+an explicit, auditable opt-out (named like `?tls=insecure` so "knowingly insecure" is visible in logs).
+Loopback detection is **string-based on the literal host** (deterministic, no DNS-resolution/spoofing
+surface): a hostname that resolves to `127.0.0.1` is treated as remote — use an IP literal or
+`?insecure_plaintext=1` for it. Default off (behaviour unchanged). Especially relevant for Redis, whose
+`AUTH` sends the password in cleartext — a plaintext remote Redis exposes the password on the wire.
+
 **Verify-by-default alignment (2026-08 flip).** MySQL/Redis previously defaulted to *encrypt but
 don't verify*, out of step with `http::` and PostgreSQL. That inconsistency was silent: a user who
 learned "LOOK verifies TLS" was wrong on MySQL and never told so. The default was flipped to
