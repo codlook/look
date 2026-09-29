@@ -970,19 +970,33 @@ void FunctionCompiler::compile_const_block(const ConstBlock& s) {
 // ── compile_struct_decl ───────────────────────────────────────────────────────
 
 void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
-    // Struct tanımı runtime'da işlenir — mevcut interpreter altyapısı korunuyor
-    // VM'e STRUCT_DEF instruction gönderilir; vm.cpp bunu StructDef tablosuna kaydeder
-    uint16_t name_idx = add_const(Value(s.name));
-    emit(OpCode::NEW_STRUCT, 0, (uint8_t)(name_idx >> 8), (uint8_t)(name_idx & 0xFF));
-    // Field isimleri: her biri LOAD_CONST + STORE_GLOBAL olarak sıralanır
-    // Detay: vm.cpp NEW_STRUCT handler'ı sonraki N LOAD_CONST instruction'ı okur
-    // Bu yaklaşım struct tanımını bytecode'a gömer — değişmez
-    uint8_t field_count = (uint8_t)s.fields.size();
-    emit(OpCode::NOP, field_count); // field sayısı hint — vm.cpp okur
+    // v1 bağlantı düzeltmesi (2026-09-30): VM struct tanımını HİÇ bilmiyordu — eski
+    // kod bildirimde sahte bir NEW_STRUCT basıp alan adlarını atlatıyordu, varsayılan
+    // ifadeleri hiç derlemiyordu; VM'in shared_.struct_defs işaretçisini de hiçbir kod
+    // atamıyordu. Sonuç VM'de (CLI + web üretim yolu): varsayılanlar UYGULANMIYOR,
+    // bilinmeyen alanlı literal sessizce kabul. Artık tanım bildirimin KENDİ konumunda
+    // (tree-walk gibi — `a: $d` dinamik varsayılan doğru) gizli bir global'e yazılır:
+    //   "__sdef:Name" = [f1, d1, f2, d2, ...]   (varsayılansız alan → null, interpreter'la aynı)
+    // CLI'da tek VM çalıştırır; web'de kurulum VM'i çalıştırır ve vm_setup_globals her
+    // isteğin VM'ine taşır. ':' tanımlayıcıda geçersiz → kullanıcı adıyla çakışamaz.
+    uint8_t arr = alloc_temp();
+    emit(OpCode::NEW_ARRAY, arr, (uint8_t)std::min<size_t>(s.fields.size() * 2, 255));
     for (auto& f : s.fields) {
-        uint16_t fi = add_const(Value(f.name));
-        emit(OpCode::LOAD_CONST_W, 0, (uint8_t)(fi >> 8), (uint8_t)(fi & 0xFF));
+        uint8_t t = alloc_temp();
+        emit_load_const(t, Value(f.name), 0);
+        emit(OpCode::ARRAY_PUSH, arr, t);
+        if (f.default_expr) {
+            uint8_t dv = compile_expr(*f.default_expr, t);
+            if (dv != t) emit(OpCode::MOVE, t, dv);
+        } else {
+            emit(OpCode::LOAD_NULL, t);
+        }
+        emit(OpCode::ARRAY_PUSH, arr, t);
+        free_temp(t);
     }
+    uint16_t gi = add_const(Value("__sdef:" + s.name));
+    emit(OpCode::STORE_GLOBAL, arr, (uint8_t)(gi >> 8), (uint8_t)(gi & 0xFF));
+    free_temp(arr);
 }
 
 // ── compile_assign_expr ───────────────────────────────────────────────────────
@@ -1802,6 +1816,16 @@ uint8_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, u
     uint8_t r = (dest == 255) ? alloc_temp() : dest;
     uint16_t ni = add_const(Value(e.struct_name));
     emit(OpCode::NEW_STRUCT, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+    // Literal'ın alan adları — VM "Unknown field" doğrulaması için (tree-walk ile
+    // aynı sözleşme). NOP(n) + n×LOAD_CONST_W: 16-bit sabit (kırpılmaz); VM NEW_STRUCT
+    // bu bloğu OKUYUP ATLAR, hiçbiri yürütülmez (register 0'a yazmaz).
+    if (e.fields.size() > 255)
+        throw std::runtime_error("struct literal '" + e.struct_name + "' has more than 255 fields");
+    emit(OpCode::NOP, (uint8_t)e.fields.size());
+    for (auto& [fname, fval] : e.fields) {
+        uint16_t fi = add_const(Value(fname));
+        emit(OpCode::LOAD_CONST_W, 0, (uint8_t)(fi >> 8), (uint8_t)(fi & 0xFF));
+    }
     for (auto& [fname, fval] : e.fields) {
         uint16_t fi = add_const(Value(fname));
         uint8_t  vr = compile_expr(*fval);

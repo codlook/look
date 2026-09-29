@@ -635,8 +635,30 @@ call_dispatch:
                 v->push_back(Value(std::string("__assoc__")));
                 v->push_back(Value(std::string("__struct__")));
                 v->push_back(Value(sname));
-                // Default field değerleri
-                if (shared_.struct_defs) {
+                // Literal alan-adı bloğu: NOP(n) + n×LOAD_CONST_W (compile_struct_lit üretir).
+                const bool has_names = frame.ip < (int)proto->code.size()
+                                    && proto->code[frame.ip].op == OpCode::NOP;
+                const int  fc = has_names ? proto->code[frame.ip].a : 0;
+                // Tanım: bildirimin kendi konumunda yazılan gizli global "__sdef:Name"
+                // (compile_struct_decl). Varsayılanlar bildirim-sırasıyla — tree-walk'la aynı
+                // alan sırası; literal değerleri ardından SET_FIELD ile yerinde değişir.
+                auto dit = globals_.find("__sdef:" + sname);
+                if (dit != globals_.end() && dit->second.type() == Value::ARRAY) {
+                    const auto& def = *dit->second.as_array();
+                    for (int k = 0; k < fc; ++k) {
+                        const auto& li = proto->code[frame.ip + 1 + k];
+                        const std::string& fname = CONST((uint16_t(li.b) << 8) | li.c).str_ref();
+                        bool declared = false;
+                        for (size_t j = 0; j + 1 < def.size(); j += 2)
+                            if (def[j].type() == Value::STRING && def[j].str_ref() == fname) { declared = true; break; }
+                        if (!declared)   // tree-walk ile birebir aynı metin (differential)
+                            throw LookVmError("Unknown field '" + fname + "' in struct '" + sname + "'");
+                    }
+                    for (size_t j = 0; j + 1 < def.size(); j += 2) {
+                        v->push_back(def[j]);
+                        v->push_back(def[j + 1]);
+                    }
+                } else if (shared_.struct_defs) {   // eski yol (hiçbir kod atamıyor) — zararsız
                     auto it = shared_.struct_defs->find(sname);
                     if (it != shared_.struct_defs->end()) {
                         for (auto& f : it->second) {
@@ -646,12 +668,7 @@ call_dispatch:
                     }
                 }
                 R(ins.a) = Value(v);
-                // NOP(field_count) + LOAD_CONST_W*N skip
-                if (frame.ip < (int)proto->code.size()
-                    && proto->code[frame.ip].op == OpCode::NOP) {
-                    int fc = proto->code[frame.ip].a;
-                    frame.ip += 1 + fc;
-                }
+                if (has_names) frame.ip += 1 + fc;   // alan-adı bloğunu atla (yürütme)
                 break;
             }
             case OpCode::GET_FIELD: {

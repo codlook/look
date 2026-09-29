@@ -77,6 +77,22 @@ jobs:
             fi
           done
 
+      # Struct VM parity guard — the VM never knew struct definitions, so defaults were
+      # dropped and unknown-field literals accepted on the VM (CLI + web). Uses no
+      # non-builtin module functions on purpose: those silently push the CLI onto
+      # tree-walk and would hide the VM bug. Both engines; any FAIL breaks CI.
+      - name: Struct VM parity guard (both engines)
+        run: |
+          cd cpp
+          for env in "" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/struct_vm_parity_test.lk)"
+            echo "$out"
+            if echo "$out" | grep -q '^FAIL'; then
+              echo "::error::struct VM parity guard FAILED ($env)"
+              exit 1
+            fi
+          done
+
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
       # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
       # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.

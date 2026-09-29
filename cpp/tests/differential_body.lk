@@ -8,6 +8,18 @@ use crypto;
 use date;
 function dif_fib($n) { if ($n < 2) { return $n } return dif_fib($n-1) + dif_fib($n-2) }
 
+# Struct VM paritesi (2026-09-30): VM struct tanımını hiç bilmiyordu → CLI-VM ve web-VM'de
+# varsayılanlar uygulanmıyor, bilinmeyen alanlı literal sessizce kabul ediliyordu; hiçbir
+# test struct kullanmadığı için bu kategori yoktu. ÜST SEVİYEDE bildirildi: web'de kurulum
+# VM'i çalıştırır ve tanım vm_setup_globals ile isteğin VM'ine taşınır (üretim yolu).
+# `tag: $dif_sd` dinamik varsayılan — bildirim anında değerlendirilir (tree-walk gibi).
+$dif_sd = "dyn"
+struct DifUser {
+  name
+  role: "member"
+  tag: $dif_sd
+}
+
 function run_all() {
   $o = "";
   # aritmetik + taşma + INT64 uç + bölme/modulo
@@ -152,6 +164,15 @@ function run_all() {
   $im = ""; $ss = "abc";
   try { $ss[0] = "X"; $im = "MUTATED:" . $ss } catch ($e) { $im = $ss . "|" . $e }
   $o .= "X:" . $im . ";";
+  # Y: struct — varsayılan uygulanır · literal ters sırada verilse de alan sırası bildirimdeki
+  # gibi · dinamik varsayılan · bilinmeyen alanlı literal iki motorda AYNI hatayı verir ·
+  # sonradan bilinmeyen alan ataması v1'de serbest (tree-walk sözleşmesi korunur).
+  $su1 = DifUser{name: "Can"}
+  $su2 = DifUser{role: "admin", name: "Ada"}
+  $ye = "";
+  try { $sbad = DifUser{nmae: "x"}; $ye = "NO-ERROR" } catch ($e) { $ye = "" . $e }
+  $su1.extra = 1
+  $o .= "Y:" . $su1.role . "," . json::encode($su2) . "," . $su1.tag . "," . $ye . "," . json::encode($su1) . ";";
   return $o;
 }
 

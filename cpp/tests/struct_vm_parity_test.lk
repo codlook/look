@@ -1,0 +1,41 @@
+# Struct VM parity guard (2026-09-30). The VM never knew struct definitions: nothing
+# assigned its struct_defs pointer and the declaration compiled to a no-op, so on the
+# VM (CLI and web) default field values were silently dropped (role -> null instead of
+# "member") and a literal with an unknown field was silently accepted, while the
+# tree-walk interpreter applied defaults and rejected the field. No test used structs,
+# so the differential guard never saw it. This file deliberately uses NO non-builtin
+# module functions: those make the CLI fall back to tree-walk silently, which would
+# hide exactly this bug (that is why differential_body.lk alone could not catch it on
+# the CLI column). Run: lk tests/struct_vm_parity_test.lk (VM) and with LOOK_CLI_VM=0.
+use json
+
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+
+$dyn = "dyn"
+struct User {
+    name
+    role: "member"
+    tag: $dyn
+}
+
+$u = User{name: "Can"}
+chk("default applied",                 $u.role, "member")
+chk("dynamic default (decl-time)",     $u.tag,  "dyn")
+chk("field without default is null",   json::encode(User{}), "{\"name\":null,\"role\":\"member\",\"tag\":\"dyn\"}")
+chk("literal order -> declared order", json::encode(User{role: "admin", name: "Ada"}), "{\"name\":\"Ada\",\"role\":\"admin\",\"tag\":\"dyn\"}")
+
+$err = "NO-ERROR"
+try { $bad = User{nmae: "x"} } catch ($e) { $err = "" . $e }
+chk("unknown field in literal rejected", $err, "Unknown field 'nmae' in struct 'User'")
+
+function make_in_fn() { return User{name: "Fn"} }
+chk("default applied inside a function", make_in_fn().role, "member")
+
+$u.extra = 1
+chk("post-construction assign allowed (v1 contract)", json::encode($u), "{\"name\":\"Can\",\"role\":\"member\",\"tag\":\"dyn\",\"extra\":1}")
+
+print("")
+print("=== struct vm parity guard done ===")
