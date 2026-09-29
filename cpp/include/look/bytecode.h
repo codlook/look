@@ -216,6 +216,7 @@ struct CompiledProgram {
     // CLI-VM'de fallback YOKTUR → script çöker. CLI bu bayrağı görünce tree-walk'a düşer
     // (karar EXECUTION ÖNCESİ — çıktı taahhüt edilmeden).
     bool uses_non_builtin_module_fn = false;
+    std::vector<std::string> non_builtin_module_fns;   // adlar (LOOK_VM_STRICT raporu)
     // Struct tanımları, route kayıtları setup fazında çalıştırılarak kurulur.
     // Bytecode yorumda StructDef ve route_registry_ mevcut interpreter
     // altyapısını kullanmaya devam eder — Phase 17'de taşınabilir.

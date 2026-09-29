@@ -66,7 +66,8 @@ FunctionCompiler::FunctionCompiler(const std::string& name,
         lv.depth = 0;
         locals_.push_back(lv);
     }
-    regs_ = std::make_unique<RegisterAllocator>((uint8_t)locals_.size());
+    regs_ = std::make_unique<RegisterAllocator>((uint8_t)locals_.size(),
+                                                name.empty() ? std::string("<main>") : name);
 }
 
 // ── Emit ──────────────────────────────────────────────────────────────────────
@@ -1468,7 +1469,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         // (LOAD_GLOBAL "mod::fn" → null → CALL). Web'de route interpreter'a düşüp
         // kurtulur; CLI-VM'de fallback YOK → script çökerdi. CLI bayrağı görüp
         // tree-walk'a düşer (bkz. CompiledProgram::uses_non_builtin_module_fn).
-        mark_non_builtin_module_fn();
+        mark_non_builtin_module_fn(full);
     }
     if (auto* var = dynamic_cast<const Variable*>(e.callee.get())) {
         if (var->name == "parallel") {
@@ -1885,6 +1886,7 @@ CompiledProgram Compiler::compile(const Program& program, const std::string& bas
     CompiledProgram out;
     out.main_proto = proto;
     out.uses_non_builtin_module_fn = main_compiler.used_non_builtin_module_fn();
+    out.non_builtin_module_fns     = main_compiler.non_builtin_module_fn_names();
     return out;
 }
 

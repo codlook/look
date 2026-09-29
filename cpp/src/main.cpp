@@ -457,7 +457,18 @@ int main(int argc, char* argv[]) {
             bool ran_vm = false;
             const char* cvm = std::getenv("LOOK_CLI_VM");
             const bool want_vm = !(cvm && cvm[0] == '0');   // default AÇIK; sadece "0" kapatır
-            if (want_vm && preload_uses_for_vm(interpreter, *program)) {
+            // LOOK_VM_STRICT — web'deki anlamıyla AYNI: sessiz fallback KAPALI, VM bu script'i
+            // çalıştıramıyorsa hata yüzeye çıkar. Eskiden yalnız http_main okuyordu; CLI'nın
+            // yürütme-öncesi tree-walk kararı (aşağıdaki 3 nokta) ona hiç bakmıyordu → differential'ın
+            // "CLI-VM" sütunu builtin-olmayan modül fn yüzünden SESSİZCE tree-walk koşuyordu ve
+            // gerçek VM hatalarını (struct varsayılanı) gizledi. Neden her noktada kaydedilir.
+            const char* cvs = std::getenv("LOOK_VM_STRICT");
+            const bool vm_strict = cvs && cvs[0] == '1';
+            std::string vm_skip_reason;
+            const bool preload_ok = want_vm && preload_uses_for_vm(interpreter, *program);
+            if (want_vm && !preload_ok)
+                vm_skip_reason = "a `use`d module could not be loaded for the VM";
+            if (preload_ok) {
                 look::CompiledProgram compiled;
                 bool compiled_ok = true;
                 // NB: no base_dir here — a CLI script has no interpreter pre-pass to
@@ -467,12 +478,20 @@ int main(int argc, char* argv[]) {
                 // for the CLI (pre-existing behaviour). The web path (http_main) does run
                 // that pre-pass, so it passes base_dir and gets the compiled fast path.
                 try { compiled = look::Compiler::compile(*program); }
-                catch (...) { compiled_ok = false; }   // compile hatası → tree-walk
+                catch (const std::exception& ex) {      // compile hatası → tree-walk
+                    compiled_ok = false;
+                    vm_skip_reason = std::string("compile error: ") + ex.what();
+                }
+                catch (...) { compiled_ok = false; vm_skip_reason = "compile error"; }
                 // Builtin OLMAYAN "mod::fn" (ör. cache::keys, template::escape) → o çağrı
                 // RUNTIME'da "Not callable" fırlatır ve CLI-VM'de fallback YOKTUR
                 // (web'de route interpreter'a düşüp kurtulur). Bayrak varsa daha en baştan
                 // tree-walk — böylece VM default'u ÇALIŞAN script'leri kırmaz.
-                if (compiled_ok && compiled.uses_non_builtin_module_fn) compiled_ok = false;
+                if (compiled_ok && compiled.uses_non_builtin_module_fn) {
+                    compiled_ok = false;
+                    vm_skip_reason = "module function(s) not available to the VM:";
+                    for (auto& n : compiled.non_builtin_module_fns) vm_skip_reason += " " + n;
+                }
                 if (compiled_ok) {
                     auto cli_builtins = build_cli_builtins(interpreter, std::cout);
                     look::VM::SharedState sh;
@@ -499,8 +518,16 @@ int main(int argc, char* argv[]) {
                     ran_vm = true;
                 }
             }
-            if (!ran_vm)
+            if (!ran_vm) {
+                if (vm_strict && want_vm) {
+                    std::cerr << "Error: LOOK_VM_STRICT is set and the VM cannot run this script — "
+                              << vm_skip_reason
+                              << " (without LOOK_VM_STRICT it would silently fall back to the "
+                                 "tree-walk interpreter)." << std::endl;
+                    return 1;
+                }
                 interpreter.interpret(*program);
+            }
         } catch (const look::RouteMatchedException&) {
             // route() flow control — normal
         } catch (const look::ExitException& e) {

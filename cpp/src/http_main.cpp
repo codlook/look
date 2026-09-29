@@ -308,6 +308,25 @@ static HttpApp                  g_http_app;
 static std::shared_mutex        g_http_mutex;
 static std::atomic<bool>        g_http_ready{false};
 
+// LOOK_VM_STRICT — "sessiz fallback KAPALI" (CLI main.cpp ile AYNI anlam). Eskiden web'de
+// yalnız istek-başı rota fallback'i dinliyordu; BÜTÜN programın yorumlayıcıya düşmesi
+// (derleme / VM kurulum hatası) strict'i hiç görmüyordu → tek bir 255+ register'lık
+// fonksiyon tüm uygulamayı ~40× yavaş yorumlayıcıya sessizce düşürüyordu ve differential
+// guard'ın web sütunu bu yüzden VM'i hiç koşmadı.
+static bool look_vm_strict() {
+    static const bool v = []{ const char* e = std::getenv("LOOK_VM_STRICT"); return e && e[0] == '1'; }();
+    return v;
+}
+static void whole_program_fallback(const std::string& why) {
+    const std::string msg = "the VM cannot run this program (" + why + "); the WHOLE application "
+                            "runs in the tree-walk interpreter, which is much slower";
+    if (look_vm_strict()) {
+        std::cerr << "Error: LOOK_VM_STRICT is set and " << msg << "." << std::endl;
+        std::exit(1);
+    }
+    look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP", "The " + msg.substr(4) + ".");
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 static std::string read_file(const fs::path& p) {
@@ -367,14 +386,13 @@ static void run_setup_http(const fs::path& script) {
                 "Bytecode compile OK — VM modu aktif");
         } catch (const look::LookCompileError& e) {
             std::cerr << "[BYTECODE] LookCompileError: " << e.what() << "\n";
-            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                std::string("Bytecode compile failed, interpreter fallback: ") + e.what());
+            whole_program_fallback(std::string("compile error: ") + e.what());
         } catch (const std::exception& e) {
             std::cerr << "[BYTECODE] exception: " << e.what() << "\n";
-            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                std::string("Bytecode compile error, interpreter fallback: ") + e.what());
+            whole_program_fallback(std::string("compile error: ") + e.what());
         } catch (...) {
             std::cerr << "[BYTECODE] unknown exception\n";
+            whole_program_fallback("unknown compile error");
         }
 
     // ── VM Setup Fazı: bytecode'u çalıştır, route'ları kaydet ────────────────
@@ -668,18 +686,22 @@ static void run_setup_http(const fs::path& script) {
                     "VM dispatch ready — " + std::to_string(g_http_app.vm_routes.size()) + " route");
             } else {
                 std::cerr << "[BYTECODE] no VM routes — interpreter dispatch will be used\n";
+                // Rotası olan bir uygulamada bu da BÜTÜN-program fallback'idir (strict reddeder).
+                if (look_vm_strict())
+                    whole_program_fallback("no route was registered in the VM");
             }
         } catch (const look::LookVmError& e) {
             std::cerr << "[BYTECODE] VM setup LookVmError: " << e.what() << "\n";
             g_http_app.vm_routes_ready = false;
+            whole_program_fallback(std::string("VM setup error: ") + e.what());
         } catch (const std::bad_function_call& e) {
             std::cerr << "[BYTECODE] VM setup bad_function_call: " << e.what() << "\n";
             g_http_app.vm_routes_ready = false;
+            whole_program_fallback(std::string("VM setup error: ") + e.what());
         } catch (const std::exception& e) {
             std::cerr << "[BYTECODE] VM setup exception (" << typeid(e).name() << "): " << e.what() << "\n";
-            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                std::string("VM setup error, interpreter fallback: ") + e.what());
             g_http_app.vm_routes_ready = false;
+            whole_program_fallback(std::string("VM setup error: ") + e.what());
         }
     }
     }

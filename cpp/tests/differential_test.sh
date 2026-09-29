@@ -40,14 +40,25 @@ cp "$BODY" "$TMP/vm.lk";  echo 'route("GET","/t", function(){ return response::t
 
 # C9: `lk` artık DEFAULT olarak VM kullanır → tree-walk için LOOK_CLI_VM=0 gerekir.
 TREE=$(LOOK_CLI_VM=0 "$LK" "$TMP/cli.lk" 2>&1)
-CLIVM=$("$LK" "$TMP/cli.lk" 2>&1)
+CLIVM=$(LOOK_VM_STRICT=1 "$LK" "$TMP/cli.lk" 2>&1)
 
-"$FCGI" --mode http --port $PORT "$TMP/vm.lk" >/dev/null 2>&1 &
+LOOK_VM_STRICT=1 "$FCGI" --mode http --port $PORT "$TMP/vm.lk" >"$TMP/web_main.log" 2>&1 &
 SRV=$!
 sleep 2
 WEBVM=$(curl -s --max-time 15 "http://127.0.0.1:$PORT/t")
 
 fail=0
+# ── Guard'ın KENDİ pozitif kontrolü (2026-09-30) ─────────────────────────────────
+# CLI-VM ve web-VM sütunları LOOK_VM_STRICT=1 ile koşar: VM script'i çalıştıramazsa sessizce
+# yorumlayıcıya düşmek yerine HATA vermeli. Bu önkoşul bozulursa (biri strict okumasını
+# kaldırırsa) sütunlar yine yorumlayıcı×3 olur ve guard sahte-yeşil verir — tam da gövdenin
+# 255-register sınırını aşıp aylarca VM'siz koştuğu gibi. İki yönü de kanıtla:
+printf 'use cache\nprint(cache::__guard_probe_not_a_fn())\n' > "$TMP/strict_probe.lk"
+if LOOK_VM_STRICT=1 "$LK" "$TMP/strict_probe.lk" >/dev/null 2>&1; then
+  echo "FAIL: LOOK_VM_STRICT CLI'da sessiz fallback'i ENGELLEMIYOR — CLI-VM sutunu guvenilmez"; fail=1
+fi
+grep -q "^\[BYTECODE\] OK" "$TMP/web_main.log" \
+  || { echo "FAIL: web-VM sutunu VM'de derlenmedi (log: $(grep -m1 -iE 'error|fallback' "$TMP/web_main.log"))"; fail=1; }
 [ -z "$TREE" ] && { echo "FAIL: tree-walk bos cikti verdi (script hatasi?)"; fail=1; }
 [ "$TREE" = "$CLIVM" ] || { echo "FAIL: tree-walk != CLI-VM"; fail=1; }
 [ "$TREE" = "$WEBVM" ] || { echo "FAIL: tree-walk != web-VM"; fail=1; }

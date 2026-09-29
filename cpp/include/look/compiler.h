@@ -30,8 +30,19 @@ public:
 
 class RegisterAllocator {
 public:
-    explicit RegisterAllocator(uint8_t locals_end)
-        : locals_end_(locals_end), next_(locals_end), max_(locals_end) {}
+    explicit RegisterAllocator(uint8_t locals_end, std::string owner = "<main>")
+        : locals_end_(locals_end), next_(locals_end), max_(locals_end),
+          owner_(std::move(owner)) {}
+
+    // v1 bytecode register operandı 8 bit → fonksiyon başına en fazla 255 register.
+    // Aşılınca derleme başarısız olur ve (CLI ve web'de) TÜM program yorumlayıcıya
+    // düşer. Eskiden Türkçe ve fonksiyon adı olmadan atılıyordu → hangi fonksiyonun
+    // bölünmesi gerektiği görünmüyordu. Kalıcı çözüm (sınırsız sanal register) v2'de.
+    [[noreturn]] void too_many() const {
+        throw LookCompileError("function '" + owner_ + "' is too large for the VM: it needs "
+                               "more than 255 registers (local variables + temporaries). "
+                               "Split it into smaller functions.");
+    }
 
     uint8_t alloc() {
         uint8_t r;
@@ -39,8 +50,7 @@ public:
             r = free_.top();
             free_.pop();
         } else {
-            if (next_ == 255)
-                throw LookCompileError("Fonksiyon çok karmaşık: 256 register sınırı aşıldı");
+            if (next_ == 255) too_many();
             r = next_++;
         }
         if (r + 1 > max_) max_ = r + 1;
@@ -71,8 +81,7 @@ public:
     // Also updates locals_end_ so these registers are protected from pool re-use.
     uint8_t alloc_seq(uint8_t n) {
         if (n == 0) return next_;
-        if ((int)next_ + n > 255)
-            throw LookCompileError("Fonksiyon çok karmaşık: 256 register sınırı aşıldı");
+        if ((int)next_ + n > 255) too_many();
         uint8_t base = next_;
         next_ += n;
         if (next_ > max_) max_ = next_;
@@ -90,6 +99,7 @@ private:
     uint8_t max_;
     std::stack<uint8_t> free_;
     bool    pinned_[256] = {false};  // aktif local register'lar (free() atlar)
+    std::string owner_;              // hata mesajı için fonksiyon adı
 };
 
 // ── LocalVar — lexical scope içindeki değişken ───────────────────────────────
@@ -138,6 +148,7 @@ public:
     // Programda builtin OLMAYAN "mod::fn" cagrisi goruldu mu? Compiler::compile bunu
     // CompiledProgram'a tasir → CLI-VM tree-walk'a duser (bkz. bytecode.h aciklamasi).
     bool used_non_builtin_module_fn() const { return non_builtin_module_fn_; }
+    const std::vector<std::string>& non_builtin_module_fn_names() const { return non_builtin_names_; }
 
 private:
     // ── Emit ──────────────────────────────────────────────────────────────────
@@ -214,12 +225,17 @@ private:
     // alt-compiler'da derlenir → parent_ zinciriyle koke cikilir). Compiler::compile bunu
     // CompiledProgram'a tasir; CLI-VM bayragi gorunce tree-walk'a duser (runtime'da
     // "Cagirilabilir degil" ile cokmek yerine).
-    void mark_non_builtin_module_fn() {
+    void mark_non_builtin_module_fn(const std::string& name) {
         FunctionCompiler* c = this;
         while (c->parent_) c = c->parent_;
         c->non_builtin_module_fn_ = true;
+        // Ad da tutulur: LOOK_VM_STRICT'te CLI "hangi fonksiyon yüzünden VM'i
+        // kullanamıyorum" diye söyleyebilsin (kırmızı liste = VM'e eklenecekler).
+        for (auto& n : c->non_builtin_names_) if (n == name) return;
+        c->non_builtin_names_.push_back(name);
     }
     bool non_builtin_module_fn_ = false;
+    std::vector<std::string> non_builtin_names_;
     void compile_func_decl(const FunctionDeclaration& s);
     void compile_switch(const SwitchStatement& s);
     void compile_const_block(const ConstBlock& s);

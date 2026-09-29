@@ -51,7 +51,7 @@ jobs:
       - name: stdlib adversarial guard (both engines)
         run: |
           cd cpp
-          for env in "" "LOOK_CLI_VM=0"; do
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
             out="$(env TZ=UTC $env ./build/lk tests/stdlib_adversarial.lk)"
             echo "$out"
             if echo "$out" | grep -q '^FAIL'; then
@@ -68,7 +68,7 @@ jobs:
       - name: VM wide-constant field access guard (both engines)
         run: |
           cd cpp
-          for env in "" "LOOK_CLI_VM=0"; do
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
             out="$(env $env ./build/lk tests/vm_wide_const_test.lk)"
             echo "$out"
             if echo "$out" | grep -q '^FAIL'; then
@@ -84,7 +84,7 @@ jobs:
       - name: Struct VM parity guard (both engines)
         run: |
           cd cpp
-          for env in "" "LOOK_CLI_VM=0"; do
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
             out="$(env $env ./build/lk tests/struct_vm_parity_test.lk)"
             echo "$out"
             if echo "$out" | grep -q '^FAIL'; then

@@ -20,7 +20,13 @@ struct DifUser {
   tag: $dif_sd
 }
 
-function run_all() {
+# GÖVDE KATEGORİ FONKSİYONLARINA BÖLÜNDÜ (2026-09-30). Tek dev run_all() VM'in 255-register
+# sınırını aşıyordu → CLI VE web TÜM programı SESSİZCE yorumlayıcıya veriyordu; bu guard'ın
+# "tree-walk == CLI-VM == web-VM" satırı gövde için yorumlayıcı×3 idi (bugünkü derleyiciyle
+# ~2026-07-18'den beri). Artık her parça sınırın çok altında ve differential_test.sh CLI+web
+# sütunlarını LOOK_VM_STRICT=1 ile koşturur: VM derleyemezse guard KIRMIZI olur, sessiz geçmez.
+# YENİ KATEGORİ EKLERKEN: tek bir dif_pN'i şişirme — yeni bir dif_pN aç.
+function dif_p1() {
   $o = "";
   # aritmetik + taşma + INT64 uç + bölme/modulo
   $o .= "A:" . (3+4*2) . "," . (10/3) . "," . (10%3) . "," . (2**10) . "," . (-9999999999) . "," . (7/2) . ";";
@@ -37,6 +43,11 @@ function run_all() {
   # object + member + index atama
   $m=["name"=>"ali","age"=>30]; $m.age=31; $m["city"]="ist";
   $o .= "F:" . $m.name . "," . $m.age . "," . $m["city"] . ";";
+  return $o;
+}
+
+function dif_p2() {
+  $o = "";
   # higher-order + implicit capture + explicit use + user-fn callback
   $mul=3; $mp=array::map([1,2,3], fn($x)=>$x*$mul);
   $fl=array::filter([1,2,3,4,5], fn($x)=>$x>2);
@@ -50,6 +61,11 @@ function run_all() {
   $o .= "I:" . len("merhaba") . "," . count([1,2,3]) . "," . intval("42") . "," . strtoupper("abc") . ";";
   # join
   $o .= "J:" . join(["a","b","c"], "-") . ";";
+  return $o;
+}
+
+function dif_p3() {
+  $o = "";
   # try/catch — C++ runtime hata (bölme/mod sıfır) + LOOK throw + finally + iç içe
   # (VM try/catch operatör exception'larını da yakalamalı — interpreter gibi)
   $k=""; try{ $qx=10/0 }catch($e){ $k.="d" }
@@ -73,6 +89,11 @@ function run_all() {
   $o .= "N:" . crypto::base64_encode("merhaba") . "," . crypto::base64_decode("bWVyaGFiYQ==") . ","
              . crypto::hex_encode("ab") . "," . crypto::hmac_sha256("msg","key") . ","
              . crypto::constant_compare("a","b") . ";";
+  return $o;
+}
+
+function dif_p4() {
+  $o = "";
   # VM↔interpreter köprüsü üzerinden exception: array::map callback'i iç run()'da çalışır.
   # throw/runtime-hata DIŞ try/catch'e ulaşmalı (try_floor_ + LookVmThrow). Taban yoksa
   # iç run() dış handler'a atlar → call stack bozulur, aradaki C++ catch (ör. db::transaction
@@ -114,6 +135,11 @@ function run_all() {
   $cap = []; foreach (["p","q"] as $cx) { push($cap, function() use ($cx) { return $cx }) }
   $capj = json::encode($cap[0]()) . "-" . json::encode($cap[1]());
   $o .= "R:" . dif_fib(12) . "," . $add10(5) . "," . $fns[0]() . $fns[1]() . $fns[2]() . "," . $rs . "," . $capj . ";";
+  return $o;
+}
+
+function dif_p5() {
+  $o = "";
   # Tanımsız değişken — STRICT (Go/Node bandı; PHP'den yalnız dağıtım alınıyor, semantik
   # değil). Eskiden VM sessizce null dönüyordu = bu turun bug sınıfının ta kendisi.
   # İnterpolasyonda ise interpreter fragment eval-hatasını yakalayıp LİTERAL döner →
@@ -130,6 +156,11 @@ function run_all() {
   queue::clear("dq"); queue::push("dq", "is1")
   $o .= "T:" . cache::size() . "," . count(cache::keys()) . "," . queue::peek("dq") . ","
              . template::escape("<x>") . "," . validator::check("a@b.co", "email") . ";";
+  return $o;
+}
+
+function dif_p6() {
+  $o = "";
   # U — BİLEŞİK ATAMA (+= -= *= /= %= .=) her kapsamda. Guard'da YOKTU ve tam bu yüzden
   # kaçtı: compiler'ın TOP-LEVEL GLOBAL dalı e.op'u yok sayıyordu → "$t += $i" sadece
   # "$t = $i" derleniyordu. Sonuç: interpreter DOĞRU, VM SESSİZCE YANLIŞ (toplamlar/
@@ -153,6 +184,11 @@ function run_all() {
              . date::is_valid("2024-04-31") . "," . date::is_valid("2024-02-29") . ","
              . date::diff(date::parse("2024-01-01","Y-m-d"), date::parse("2024-01-10","Y-m-d"), "days") . ";";
   $o .= "U:" . $ug . "," . $us . "," . $ut . "," . $ul[0] . "," . dif_compound() . ";";
+  return $o;
+}
+
+function dif_p7() {
+  $o = "";
   # count/len — assoc sentinel'i SAYMAMALI. VM builtin'leri (main b[2], http_main setup/req[2])
   # __assoc__ kontrolunu ATLIYORDU → count(["x"=>1])=3 (sentinel+2n), interpreter=1 ile ayrisir.
   # Bu case eskiden RED verirdi (assoc testi yoktu, bug differential-gorunmezdi). Beklenen: 2,2,4,0,3.
@@ -174,6 +210,10 @@ function run_all() {
   $su1.extra = 1
   $o .= "Y:" . $su1.role . "," . json::encode($su2) . "," . $su1.tag . "," . $ye . "," . json::encode($su1) . ";";
   return $o;
+}
+
+function run_all() {
+  return dif_p1() . dif_p2() . dif_p3() . dif_p4() . dif_p5() . dif_p6() . dif_p7();
 }
 
 # Fonksiyon-içi (local) bileşik atama — global dalıyla aynı sonucu vermeli.
