@@ -166,9 +166,14 @@ function dif_p6() {
   # "$t = $i" derleniyordu. Sonuç: interpreter DOĞRU, VM SESSİZCE YANLIŞ (toplamlar/
   # string birikimleri bozuk, hata yok). Diğer üç dal (index, local, fonksiyon-içi)
   # doğruydu — o yüzden web route'ları çalışıyor, top-level script'ler bozuktu.
-  # Dört kapsamı da kilitler: global, local, fonksiyon-içi, dizi-elemanı + döngüde birikim.
-  $ug = 1; $ug += 2; $ug *= 3; $ug -= 1; $ug /= 4; $ug %= 3;      # global zinciri
-  $us = "a"; $us .= "b"; $us .= "c";                              # global string birikimi
+  # KAPSAM DÜZELTMESİ (2026-09-30, hata enjeksiyonuyla ölçüldü): bu kategori bir FONKSİYONUN
+  # İÇİNDE koşar → yerel zincir, yerel string birikimi, döngüde birikim, dizi elemanı ve
+  # (dif_compound ile) fonksiyon-içi dalları kilitler. ÜST-SEVİYE GLOBAL dalı BURADA TEST
+  # EDİLMEZ (eski yorum "global" diyordu). O dalı differential_test.sh'deki ayrı
+  # "top-level compound" bölümü kilitler: global dalda e.op yok sayılınca o bölüm FAIL verdi,
+  # bu kategori ve regresyon dosyaları vermedi.
+  $ug = 1; $ug += 2; $ug *= 3; $ug -= 1; $ug /= 4; $ug %= 3;      # yerel zincir
+  $us = "a"; $us .= "b"; $us .= "c";                              # yerel string birikimi
   $ut = 0; $uk = 0;
   while ($uk < 5) { $ut += $uk; $uk = $uk + 1 }                   # döngüde birikim
   $ul = [10]; $ul[0] += 5;                                        # dizi elemanı
