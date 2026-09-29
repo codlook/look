@@ -1322,7 +1322,19 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         uint8_t r   = ensure_dest();
         // Field ismi constant pool'a girer — runtime'da field index çözülür
         uint16_t fi = add_const(Value(e->field));
-        emit(OpCode::GET_FIELD, r, obj, (uint8_t)(fi & 0xFF));
+        if (fi <= 0xFF) {
+            emit(OpCode::GET_FIELD, r, obj, (uint8_t)fi);
+        } else {
+            // 256+ sabitli proto: GET_FIELD'ın sabit operandı 8 bit — eskiden
+            // (fi & 0xFF) kırpılıyordu → BAŞKA bir sabitin adıyla alan okunuyordu
+            // (sessiz yanlış veri / null). CALL_BUILTIN 256 duvarını NOP-hint'le
+            // aşmıştı, GET_FIELD/SET_FIELD kaçmıştı (simetrik yüzey). Alan adını
+            // geniş yükle + genel ARRAY_GET — VM::get_field ≡ array_get, semantik aynı.
+            uint8_t k = alloc_temp();
+            emit_load_const(k, Value(e->field), 0);
+            emit(OpCode::ARRAY_GET, r, obj, k);
+            free_temp(k);
+        }
         free_temp(obj);
         return r;
     }
@@ -1793,7 +1805,17 @@ uint8_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, u
     for (auto& [fname, fval] : e.fields) {
         uint16_t fi = add_const(Value(fname));
         uint8_t  vr = compile_expr(*fval);
-        emit(OpCode::SET_FIELD, r, (uint8_t)(fi & 0xFF), vr);
+        if (fi <= 0xFF) {
+            emit(OpCode::SET_FIELD, r, (uint8_t)fi, vr);
+        } else {
+            // 256+ sabit: SET_FIELD'ın 8-bit operandı taşardı → alan YANLIŞ adla
+            // yazılıyordu ({"c46":11} gibi). GET_FIELD ile simetrik fallback:
+            // VM::set_field ≡ array_set.
+            uint8_t k = alloc_temp();
+            emit_load_const(k, Value(fname), 0);
+            emit(OpCode::ARRAY_SET, r, k, vr);
+            free_temp(k);
+        }
         free_temp(vr);
     }
     return r;

@@ -61,6 +61,22 @@ jobs:
           done
           echo "stdlib adversarial guard passed (both engines)."
 
+      # VM wide-constant guard — GET_FIELD/SET_FIELD used to truncate the field-name
+      # constant index to 8 bits, so in any function with 256+ constants `$obj.field`
+      # read/wrote the WRONG key (silent wrong data, VM only). Both engines; any FAIL
+      # breaks CI.
+      - name: VM wide-constant field access guard (both engines)
+        run: |
+          cd cpp
+          for env in "" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/vm_wide_const_test.lk)"
+            echo "$out"
+            if echo "$out" | grep -q '^FAIL'; then
+              echo "::error::VM wide-constant guard FAILED ($env)"
+              exit 1
+            fi
+          done
+
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
       # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
       # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
