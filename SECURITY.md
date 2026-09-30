@@ -14,6 +14,34 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ---
 
+## Security advisories
+
+### 2026-09-30 — Database password written to logs in plain text (action required)
+
+**Affected:** every LOOK 1.0.0 build up to and including build stamp `e7d9636` (all releases
+before this fix). **Fixed in:** 1.0.0 builds that include commit `49ecc17` — check the build
+stamp with `lk --version`.
+
+When a MySQL/MariaDB, PostgreSQL or Redis connection pool was opened, LOOK wrote an INFO log
+line meant to show the DSN without its credentials. The masking took the wrong side of the
+`@`, so the line contained exactly the user name and password:
+
+```
+[INFO ] [DB] Pool[16] created: mysql://root:S3cretPw9          ← affected builds
+[INFO ] [DB] Pool[16] created: mysql://root:***@db:3306/app    ← fixed builds
+```
+
+SQLite DSNs carry no password and were not affected. The password was never sent anywhere
+else; the exposure is limited to wherever your LOOK logs went (files, journald, a log
+collector, support tickets, CI output).
+
+**What to do if you ran an affected build with a password in the DSN:**
+1. Upgrade to a fixed build.
+2. **Rotate the database password** — upgrading does not remove passwords already written.
+3. Purge or restrict access to existing LOOK logs, including copies in log collectors.
+
+---
+
 ## Security posture
 
 Every protocol parser (HTTP, RESP2, MySQL/MariaDB & PostgreSQL wire, SMTP, IMAP, JSON) is
