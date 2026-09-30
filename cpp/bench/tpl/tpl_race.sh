@@ -21,11 +21,22 @@ docker rm -f srv >/dev/null 2>&1
 # milliseconds: the first run of this script did exactly that and measured T1 at ~65 rps and
 # T3 at 0 rps (each T3 request opens ~23 template files) — i.e. it measured the host file
 # share, not LOOK. It would also have credited any template cache with a fake speed-up.
+# This happened twice (here and in an earlier CMS render measurement), so it is enforced by
+# mechanism, not memory: the server REFUSES to start if the directory it serves is on any
+# mount other than the container's own root filesystem. APP_DIR exists only for the positive
+# control (point it at the bind mount and the run must refuse).
 docker run -d --name srv --network $NET $CAP -e LOOK_WORKERS=2 -e LOOK_VM_STRICT=1 \
-  -v "$ROOT/cpp:/look/cpp" look-build \
-  bash -c "cp -r /look/cpp/bench/tpl /root/tpl && cd /root/tpl && exec /look/cpp/build/lk-fcgi --mode http --port 8080 app.lk" >/dev/null
+  -e APP_DIR="${APP_DIR:-}" -v "$ROOT/cpp:/look/cpp" look-build bash -c '
+    if [ -z "$APP_DIR" ]; then cp -r /look/cpp/bench/tpl /root/tpl && APP_DIR=/root/tpl; fi
+    cd "$APP_DIR" || exit 3
+    mp=$(findmnt -n -o TARGET -T .)
+    if [ "$mp" != "/" ]; then echo "REFUSE: served app dir $APP_DIR is on mount $mp (host file share skews every result)"; exit 3; fi
+    exec /look/cpp/build/lk-fcgi --mode http --port 8080 app.lk' >/dev/null
 IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv)
-for _ in $(seq 1 60); do [ -n "$(curlq http://$IP:8080/t1)" ] && break; sleep 0.5; done
+for _ in $(seq 1 60); do [ -n "$(curlq http://$IP:8080/t1)" ] && break; docker logs srv 2>&1 | grep -q REFUSE && break; sleep 0.5; done
+if docker logs srv 2>&1 | grep -q REFUSE; then
+  echo "FAIL: $(docker logs srv 2>&1 | grep REFUSE)"; docker rm -f srv >/dev/null 2>&1; exit 1
+fi
 
 # Correctness gate — never time a wrong page or an interpreter fallback.
 docker logs srv 2>&1 | grep -q "^\[BYTECODE\] OK" || { echo "FAIL: server is not running on the VM"; docker logs srv | tail -5; exit 1; }
