@@ -11,7 +11,11 @@ function chk($l, $g, $w) {
 }
 
 $dsn = env("PG_DSN", "")
-if ($dsn == "") { print("FAIL harness: PG_DSN bos — canli postgres:16 DSN gerekli"); print("=== bind ran=0 ==="); exit(1) }
+# Ortam yoksa: CI'da FAIL, yerelde SKIP (bkz. db_bind_mysql.lk — aynı sözleşme).
+if ($dsn == "") {
+    if (env("CI", "") == "true") { print("FAIL harness: PG_DSN is empty in CI — the postgres:16 service or its DSN is misconfigured"); print("=== bind ran=0 ==="); exit(1) }
+    print("SKIP: PG_DSN not set — needs a live postgres:16 server (CI provides one)"); exit(0)
+}
 $c = db::connect($dsn)
 
 db::exec($c, "DROP TABLE IF EXISTS bindp", [])

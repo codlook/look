@@ -235,6 +235,28 @@ jobs:
           cd cpp
           bash tests/behavioral_test.sh build/lk
 
+      # Env-dependent test contract — positive control. A test whose environment is missing
+      # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
+      # DSN/secret in CI is a configuration error and must not turn into a silent green, the
+      # class release-consistency once had). If CI=true detection ever breaks, this step goes
+      # red. The SKIP line must not contain "ran=", so the existing ran= guards still catch it.
+      - name: Env-dependent test contract (SKIP locally, FAIL in CI)
+        run: |
+          cd cpp
+          UNSET="-u MYSQL_DSN -u PG_DSN -u BT_DIR -u LOOK_FILE_ROOT -u LOOK_TEST_DSN"
+          for t in behavioral/db_bind_mysql behavioral/db_bind_pg behavioral/file_ops repro/db_native_bind_matrix; do
+            if env $UNSET CI=true ./build/lk tests/$t.lk > /tmp/ci_branch.txt 2>&1; then
+              echo "::error::$t: empty env in CI did NOT fail (would be a silent green)"; cat /tmp/ci_branch.txt; exit 1
+            fi
+            grep -q "FAIL harness" /tmp/ci_branch.txt \
+              || { echo "::error::$t: CI branch failed without the harness message"; cat /tmp/ci_branch.txt; exit 1; }
+            out="$(env -u CI $UNSET ./build/lk tests/$t.lk 2>&1)" \
+              || { echo "::error::$t: local branch did not exit 0"; echo "$out"; exit 1; }
+            echo "$out" | grep -q "^SKIP:" || { echo "::error::$t: local branch did not SKIP"; echo "$out"; exit 1; }
+            if echo "$out" | grep -q "ran="; then echo "::error::$t: SKIP output contains ran="; exit 1; fi
+            echo "  OK $t (CI -> FAIL, local -> SKIP)"
+          done
+
       # PG DSN TLS-karar tablo testi — seam (look/db_dsn.h). sslmode/tls→(tls,verify) mantığı
       # ağsız kilitlenir; verify-ca sessiz-plaintext regresyonu (558d735) POZİTİF-KONTROLLÜ
       # (verify-ca dalı silinirse verify-ca vakası tls=false → FAIL). Gerçek TLS-handshake

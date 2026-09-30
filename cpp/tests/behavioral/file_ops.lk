@@ -1,6 +1,12 @@
 # file:: davranışsal test — yerel FS (sunucu YOK). CI-koşabilir. LOOK_FILE_ROOT + BT_DIR runner'dan.
 # put/read/append/exists/remove/size + traversal-guard reddi. Yol mutlak (kök-içi) olsun.
 use file
+# Ortam yoksa: CI'da FAIL, yerelde SKIP (bkz. db_bind_mysql.lk). Normalde behavioral_test.sh
+# LOOK_FILE_ROOT+BT_DIR verir; bu kontrol yalnız doğrudan çalıştırmayı kapsar.
+if (env("BT_DIR", "") == "" || env("LOOK_FILE_ROOT", "") == "") {
+    if (env("CI", "") == "true") { print("FAIL harness: BT_DIR / LOOK_FILE_ROOT are empty in CI"); exit(1) }
+    print("SKIP: BT_DIR / LOOK_FILE_ROOT not set — run it through tests/behavioral_test.sh"); exit(0)
+}
 $ran = 0
 function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
 

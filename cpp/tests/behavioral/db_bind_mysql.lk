@@ -12,7 +12,13 @@ function chk($l, $g, $w) {
 }
 
 $dsn = env("MYSQL_DSN", "")
-if ($dsn == "") { print("FAIL harness: MYSQL_DSN bos — canli mysql:8 DSN gerekli"); print("=== bind ran=0 ==="); exit(1) }
+# Ortam yoksa: CI'da FAIL (servis/secret bozulmuş = yapılandırma hatası, SUSMAMALI — "boş yeşil"
+# sınıfı), yerelde SKIP (yerel kırmızı = gerçek hata). SKIP satırı "ran=" İÇERMEZ → CI adımının
+# "ran= yok → erken öldü" kilidi atlamayı yine yakalar (iki katman).
+if ($dsn == "") {
+    if (env("CI", "") == "true") { print("FAIL harness: MYSQL_DSN is empty in CI — the mysql:8 service or its DSN is misconfigured"); print("=== bind ran=0 ==="); exit(1) }
+    print("SKIP: MYSQL_DSN not set — needs a live mysql:8 server (CI provides one)"); exit(0)
+}
 $c = db::connect($dsn)
 
 db::exec($c, "DROP TABLE IF EXISTS bindm", [])

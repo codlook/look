@@ -5,14 +5,22 @@
 use json
 use array
 use math
+use string
 $fail = 0
 function chk($l, $g, $w) {
     if ($g == $w) { print("OK   " . $l) }
     else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]"); }
 }
 
-$dsn = env("LOOK_TEST_DSN")
-print("=== DSN: " . $dsn . " ===")
+$dsn = env("LOOK_TEST_DSN", "")
+// Ortam yoksa: CI'da FAIL, yerelde SKIP (bkz. behavioral/db_bind_mysql.lk — aynı sözleşme).
+if ($dsn == "") {
+    if (env("CI", "") == "true") { print("FAIL harness: LOOK_TEST_DSN is empty in CI"); exit(1) }
+    print("SKIP: LOOK_TEST_DSN not set (mysql://... / postgres://... / sqlite://:memory:)"); exit(0)
+}
+// Yalnız şema basılır: tam DSN parolayı içerir (mysql://user:PAROLA@host) ve eskiden
+// olduğu gibi terminale/loga dökülmemeli.
+print("=== DSN scheme: " . string::split($dsn, "://")[0] . " ===")
 $c = db::connect($dsn)
 
 db::exec($c, "DROP TABLE IF EXISTS t_bind", [])
