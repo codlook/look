@@ -33,6 +33,14 @@ static void chk_opt(const char* q, bool want) {
     printf("  opt %-28s -> %d %s\n", (std::string("\"")+q+"\"").c_str(), got, ok?"OK":"FAIL");
     if (!ok) fails++;
 }
+// Log maskeleme: beklenen biçim VE parolanın hiçbir parçası çıktıda yok (secret="" → kontrol yok).
+static void chk_redact(const char* dsn, const char* want, const char* secret) {
+    ran++;
+    std::string got = db_dsn_redact(dsn);
+    bool ok = (got == want) && (secret[0] == '\0' || got.find(secret) == std::string::npos);
+    printf("  redact %-44s -> %-40s %s\n", dsn, got.c_str(), ok ? "OK" : "FAIL");
+    if (!ok) fails++;
+}
 
 int main() {
     printf("LOOK_DB_REQUIRE_TLS refuse-plaintext karar tablosu:\n");
@@ -84,6 +92,20 @@ int main() {
     // #2 uçtan uca: parola-içi substring ile UZAK düz metin YİNE REDDEDİLİR (bypass yok)
     chk(true, false, "db.remote.com",
         db_insecure_plaintext_opt("password=z_insecure_plaintext=1"), true);
+
+    // ── Log maskeleme (2026-09-30): havuz-açılış log'u "mysql://root:PAROLA" basıyordu ──
+    chk_redact("mysql://root:S3cretPw9@lkmy:3306/lookci", "mysql://root:***@lkmy:3306/lookci", "S3cretPw9");
+    chk_redact("postgres://u:p4ss@h/db?sslmode=require",  "postgres://u:***@h/db?sslmode=require", "p4ss");
+    chk_redact("mysqls://app:tok@db.example.com:3306/x?tls=verify",
+               "mysqls://app:***@db.example.com:3306/x?tls=verify", "tok");
+    chk_redact("redis://:pw9@h:6379",                     "redis://:***@h:6379", "pw9");
+    // parolada '@' ve ':' — ayrıştırıcı gibi SON '@' ve İLK ':' → hiçbir parça sızmaz
+    chk_redact("mysql://u:p@ss:w0rd@h/db",                "mysql://u:***@h/db", "w0rd");
+    chk_redact("mysql://u:p@ss:w0rd@h/db",                "mysql://u:***@h/db", "p@ss");
+    // parola yok → aynen (kullanıcı adı / sqlite yolu değişmez)
+    chk_redact("mysql://root@h/db",                        "mysql://root@h/db", "");
+    chk_redact("sqlite://:memory:",                        "sqlite://:memory:", "");
+    chk_redact("sqlite:///var/app/data.db",                "sqlite:///var/app/data.db", "");
 
     printf("\n%d/%d PASS%s\n", ran - fails, ran, fails ? "  — FAIL VAR" : "");
     return fails ? 1 : 0;

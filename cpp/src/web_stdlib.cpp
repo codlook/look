@@ -1477,8 +1477,7 @@ static Module make_db_module(Interpreter* interp) {
             dsn_to_key[dsn] = key;
         }
         Logger::instance().log(LogLevel::LOG_INFO, "DB",
-            "Pool[" + std::to_string(sz) + "] created: " +
-            dsn.substr(0, dsn.find('@') == std::string::npos ? dsn.size() : dsn.find('@')));
+            "Pool[" + std::to_string(sz) + "] created: " + look::db_dsn_redact(dsn));
 
         // S4: DB-TLS güvenlik uyarısı — POOL BASINA BİR KEZ (sorgu başına değil → spam yok).
         // El-yazması wire parser'a ağdaki herkes bayt besliyor; kullanıcı şifreleme/doğrulama

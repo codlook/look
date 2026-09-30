@@ -114,6 +114,25 @@ inline void redis_resolve_tls(const std::string& query, bool scheme_secure,
     }
 }
 
+// ── Log/hata için DSN maskeleme ──────────────────────────────────────────────
+// GÜVENLİK (2026-09-30, canlı mysql:8'de ölçüldü): havuz-açılış INFO log'u DSN'i
+// dsn.substr(0, dsn.find('@')) ile kırpıyordu — amaç kimlik bilgisini gizlemekti ama
+// @'nın ÖNCESİNİ alıyordu → log'a tam olarak "mysql://root:PAROLA" düşüyordu (gizli olan
+// basılıyor, gizli olmayan host saklanıyordu). Maskeleme ayrıştırıcıyla (web_stdlib
+// parse_dsn_part) BİREBİR aynı bölmeyi kullanır: userinfo = "://" sonrası SON '@'a kadar,
+// parola = userinfo'daki İLK ':' sonrası → parolada '@' ya da ':' geçse de hiçbir parçası
+// sızmaz. Parola yoksa (user@host, sqlite://...) DSN aynen döner.
+inline std::string db_dsn_redact(const std::string& dsn) {
+    const size_t se = dsn.find("://");
+    if (se == std::string::npos) return dsn;
+    const size_t rs = se + 3;
+    const size_t at = dsn.rfind('@');
+    if (at == std::string::npos || at < rs) return dsn;          // kimlik bilgisi yok
+    const size_t colon = dsn.find(':', rs);
+    if (colon == std::string::npos || colon > at) return dsn;    // kullanıcı var, parola yok
+    return dsn.substr(0, colon + 1) + "***" + dsn.substr(at);
+}
+
 // ── Require-TLS policy (LOOK_DB_REQUIRE_TLS) ──────────────────────────────────
 // Opt-in operatör politikası: PLAINTEXT bir bağlantıyı UZAK host'a REDDET. Loopback /
 // Unix-soket düz metni HER ZAMAN serbest (trafik makineden çıkmıyor — yaygın, güvenli
