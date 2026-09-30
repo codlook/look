@@ -1,0 +1,35 @@
+# Template benchmark (BENCHMARK.md test 10: T1 static / T2 dynamic / T3 real).
+# Run with the working directory set to cpp/bench/tpl so "views/..." paths resolve.
+# Data is built ONCE at setup and captured, so each request measures the template
+# engine (and, for T3, one indexed SQLite query) — not data construction.
+use template
+
+$db = db::connect("sqlite:///tmp/tplbench.db")
+db::exec($db, "DROP TABLE IF EXISTS products", [])
+db::exec($db, "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL, stock INTEGER, note TEXT)", [])
+$i = 1
+while ($i <= 20) {
+    db::exec($db, "INSERT INTO products (name, price, stock, note) VALUES (?, ?, ?, ?)",
+             ["Product " . $i, $i * 12.5, $i % 4, "<script>alert(" . $i . ")</script> & \"quoted\""])
+    $i = $i + 1
+}
+
+$items = []
+$k = 1
+while ($k <= 20) {
+    push($items, ["name" => "Item " . $k, "price" => $k * 3, "stock" => $k % 3])
+    $k = $k + 1
+}
+
+route("GET", "/t1", function() {
+    print(template::render("views/t1", []))
+})
+
+route("GET", "/t2", function() use ($items) {
+    print(template::render("views/t2", ["title" => "Dynamic", "user" => "Ada", "items" => $items]))
+})
+
+route("GET", "/t3", function() use ($db) {
+    $rows = db::query($db, "SELECT name, price, stock, note FROM products ORDER BY id", [])
+    print(template::render("views/t3", ["title" => "Products", "user" => "Ada", "year" => 2026, "rows" => $rows]))
+})

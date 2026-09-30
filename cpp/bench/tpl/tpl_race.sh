@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Template benchmark — BENCHMARK.md test 10 (T1 static / T2 dynamic / T3 real).
+# Same hygiene as cpp/bench/race.sh: server capped at 2 CPU / 4 GB, wrk in a separate
+# container, identical warm-up, best-of-3, rps reported together with p99, cpu.stat
+# throttling, and a correctness gate before any timing. The server runs with
+# LOOK_VM_STRICT=1 so it can never silently measure the tree-walk interpreter.
+# Usage: bash cpp/bench/tpl/tpl_race.sh <repo-root> [label]
+export MSYS_NO_PATHCONV=1
+set -u
+ROOT="$1"; LABEL="${2:-baseline}"; NET=benchnet
+LEVELS="50 200"
+CAP="--cpus=2 --memory=4g --ulimit nofile=1048576:1048576"
+docker network inspect $NET >/dev/null 2>&1 || docker network create $NET >/dev/null
+
+throttle(){ docker exec srv cat /sys/fs/cgroup/cpu.stat 2>/dev/null | awk '/nr_throttled/{print $2}'; }
+curlq(){ docker run --rm --network $NET curlimages/curl -s -m10 "$1" 2>/dev/null; }
+
+docker rm -f srv >/dev/null 2>&1
+# The app and its templates are copied to the container's OWN filesystem first. Serving them
+# from the bind-mounted repo (Docker Desktop file sharing) makes every template open cost
+# milliseconds: the first run of this script did exactly that and measured T1 at ~65 rps and
+# T3 at 0 rps (each T3 request opens ~23 template files) — i.e. it measured the host file
+# share, not LOOK. It would also have credited any template cache with a fake speed-up.
+docker run -d --name srv --network $NET $CAP -e LOOK_WORKERS=2 -e LOOK_VM_STRICT=1 \
+  -v "$ROOT/cpp:/look/cpp" look-build \
+  bash -c "cp -r /look/cpp/bench/tpl /root/tpl && cd /root/tpl && exec /look/cpp/build/lk-fcgi --mode http --port 8080 app.lk" >/dev/null
+IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv)
+for _ in $(seq 1 60); do [ -n "$(curlq http://$IP:8080/t1)" ] && break; sleep 0.5; done
+
+# Correctness gate — never time a wrong page or an interpreter fallback.
+docker logs srv 2>&1 | grep -q "^\[BYTECODE\] OK" || { echo "FAIL: server is not running on the VM"; docker logs srv | tail -5; exit 1; }
+t3=$(curlq http://$IP:8080/t3)
+echo "$t3" | grep -q "&lt;script&gt;" && ! echo "$t3" | grep -q "<script>alert" \
+  && [ "$(echo "$t3" | grep -o 'class="card"' | wc -l)" = "20" ] \
+  || { echo "FAIL: /t3 output is wrong (escaping or row count)"; exit 1; }
+
+echo "=================================================================="
+echo " TEMPLATE BENCH [$LABEL] — LOOK $(docker exec srv /look/cpp/build/lk --version 2>/dev/null)"
+echo " 2 CPU / 4 GB, LOOK_WORKERS=2, best-of-3, 6 s per run"
+echo "=================================================================="
+for ep in t1 t2 t3; do
+  docker run --rm --network $NET williamyeh/wrk -t4 -c100 -d3s "http://$IP:8080/$ep" >/dev/null 2>&1   # warm-up
+  echo "  /$ep"
+  for c in $LEVELS; do
+    t0=$(throttle); best=0; bp99=""
+    for i in 1 2 3; do
+      out=$(docker run --rm --network $NET williamyeh/wrk -t4 -c"$c" -d6s --latency "http://$IP:8080/$ep" 2>/dev/null)
+      r=$(echo "$out" | awk '/Requests\/sec/{print $2}')
+      [ -n "$r" ] && awk "BEGIN{exit !($r>$best)}" && { best=$r; bp99=$(echo "$out" | grep -A4 Distribution | awk '/99%/{print $2}'); }
+    done
+    t1=$(throttle)
+    printf "      c=%-4s rps=%-10s p99=%-9s throttled=%s\n" "$c" "$best" "$bp99" "$((t1-t0))"
+  done
+done
+printf "  RAM=%s\n" "$(docker stats --no-stream --format '{{.MemUsage}}' srv | cut -d/ -f1)"
+docker rm -f srv >/dev/null 2>&1

@@ -1,0 +1,9 @@
+{#extends "views/layout"}
+{#block "content"}
+<h1>{$title}</h1>
+{#each $rows as $r}
+  {#include "views/partials/card" data=$r}
+{#empty}
+  <p>No products</p>
+{/each}
+{/block}

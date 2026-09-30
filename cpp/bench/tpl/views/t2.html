@@ -1,0 +1,10 @@
+<!DOCTYPE html><html><head><title>{$title}</title></head><body>
+<h1>Hello {$user}</h1>
+<ul>
+{#each $items as $it}
+  <li>{$it.name} — {$it.price} TL {#if $it.stock > 0}(in stock){#else}(sold out){/if}</li>
+{#empty}
+  <li>No items</li>
+{/each}
+</ul>
+</body></html>
