@@ -1483,39 +1483,9 @@ static Module make_db_module(Interpreter* interp) {
         // El-yazması wire parser'a ağdaki herkes bayt besliyor; kullanıcı şifreleme/doğrulama
         // durumunu bilmeli ve NE YAPACAĞINI görmeli. 2026-08-11 flip sonrası: MySQL/Redis'te
         // verify=true GÜVENLİ-VARSAYILAN → yalnız AÇIK plaintext'te veya ?tls=insecure opt-out'ta uyar.
+        // Karar saf dikişte (look/db_dsn.h db_tls_warning) — gerçek TLS resolver'larıyla birebir.
         {
-            std::string sch = dsn.substr(0, dsn.find(':'));
-            bool has_tls = dsn.find("tls=") != std::string::npos || dsn.find("ssl=") != std::string::npos;
-            // verify artık varsayılan true; yalnız insecure opt-out doğrulamayı kapatır.
-            bool insecure = dsn.find("tls=insecure") != std::string::npos ||
-                            dsn.find("ssl=insecure")  != std::string::npos;
-            bool vfy     = !insecure;
-            bool secure_sch = (sch == "mysqls" || sch == "mariadbs" || sch == "rediss");
-            bool encrypted  = secure_sch ||
-                (has_tls && (sch == "mysql" || sch == "mariadb" || sch == "redis"));
-            std::string w;
-            // PostgreSQL: TLS artik VAR (postgresqls:// / ?tls=). verify DOGRU VARSAYILAN →
-            // yalniz ACIK plaintext'te veya insecure opt-out'ta uyar.
-            bool pg = (sch == "postgres" || sch == "postgresql" || sch == "postgresqls");
-            bool pg_encrypted = (sch == "postgresqls") ||
-                (has_tls && (dsn.find("tls=") != std::string::npos || dsn.find("sslmode=") != std::string::npos));
-            bool pg_insecure = dsn.find("tls=insecure") != std::string::npos ||
-                               dsn.find("ssl=insecure")  != std::string::npos ||
-                               dsn.find("sslmode=require") != std::string::npos;
-            if (pg) {
-                if (!pg_encrypted)
-                    w = "PostgreSQL connection is UNENCRYPTED (plaintext) — for encrypted+verified use: postgresqls://... or add ?tls=verify to the DSN.";
-                else if (pg_insecure)
-                    w = "PostgreSQL TLS certificate is NOT VERIFIED (MITM risk) — use postgresqls:// or ?tls=verify instead of ?tls=insecure.";
-                // aksi halde postgresqls:// / ?tls=verify → sifreli+dogrulanmis → uyari yok
-            }
-            else if ((sch == "mysql" || sch == "mariadb" || secure_sch) && !encrypted && sch[0] == 'm')
-                w = "MySQL connection is UNENCRYPTED (plaintext) — for encrypted+verified use: mysqls://...";
-            else if ((sch == "redis" || sch == "rediss") && !encrypted)
-                w = "Redis connection is UNENCRYPTED (plaintext) — for encrypted+verified use: rediss://...";
-            else if (encrypted && insecure)
-                w = std::string(sch[0] == 'r' ? "Redis" : "MySQL") +
-                    " TLS certificate is NOT VERIFIED with ?tls=insecure (MITM risk) — remove insecure if possible (verify is now the default).";
+            std::string w = look::db_tls_warning(dsn);
             if (!w.empty())
                 Logger::instance().log(LogLevel::LOG_WARN, "DB-TLS", w);
         }

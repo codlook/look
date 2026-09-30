@@ -21,6 +21,41 @@ static void chk(Drv d, const char* q, bool sec, bool wtls, bool wver) {
     if (!ok) fails++;
 }
 
+// ── Havuz-açılış DB-TLS uyarısı (db_tls_warning, 2026-09-30) ──
+// Uyarı GERÇEK karara eşit olmalı. Beklenen: 'N' uyarı yok · 'U' UNENCRYPTED · 'I' NOT VERIFIED.
+static char wkind(const std::string& w) {
+    if (w.empty()) return 'N';
+    if (w.find("UNENCRYPTED") != std::string::npos) return 'U';
+    if (w.find("NOT VERIFIED") != std::string::npos) return 'I';
+    return '?';
+}
+// Pozitif kontrol: ESKİ çıplak-substring mantığının birebir kopyası (web_stdlib, abb5e2e).
+// Bug vakalarında eski mantık YANLIŞ sonuç vermeli — vermiyorsa tablo ayrımcı değildir.
+static char legacy_kind(const std::string& dsn) {
+    std::string sch = dsn.substr(0, dsn.find(':'));
+    bool has_tls = dsn.find("tls=") != std::string::npos || dsn.find("ssl=") != std::string::npos;
+    bool insecure = dsn.find("tls=insecure") != std::string::npos || dsn.find("ssl=insecure") != std::string::npos;
+    bool secure_sch = (sch == "mysqls" || sch == "mariadbs" || sch == "rediss");
+    bool encrypted = secure_sch || (has_tls && (sch == "mysql" || sch == "mariadb" || sch == "redis"));
+    if (sch == "postgres" || sch == "postgresql" || sch == "postgresqls") {
+        bool pe = (sch == "postgresqls") || (has_tls && (dsn.find("tls=") != std::string::npos || dsn.find("sslmode=") != std::string::npos));
+        bool pi = insecure || dsn.find("sslmode=require") != std::string::npos;
+        return !pe ? 'U' : pi ? 'I' : 'N';
+    }
+    if (sch != "mysql" && sch != "mariadb" && sch != "redis" && !secure_sch) return 'N';
+    if (!encrypted) return 'U';
+    return insecure ? 'I' : 'N';
+}
+static void chkw(const char* dsn, char want, bool legacy_wrong = false) {
+    ran++;
+    char got = wkind(db_tls_warning(dsn));
+    char old = legacy_kind(dsn);
+    bool ok = got == want && (!legacy_wrong || old != want);
+    printf("  warn  %-48s -> %c (legacy %c)%s %s\n", dsn, got, old,
+           legacy_wrong ? " [bug]" : "", ok ? "OK" : "FAIL");
+    if (!ok) fails++;
+}
+
 int main() {
     printf("MySQL/Redis DSN TLS-karar tablosu (verify=true GÜVENLİ-VARSAYILAN + ?tls=insecure opt-out):\n");
     // ── MySQL ──
@@ -59,7 +94,33 @@ int main() {
     chk(RD, "foo=bar",     false, false, true);
     chk(RD, "ssl=false",   false, false, true);  // #1: falsey → TLS yok
 
-    const int EXPECTED = 30;
+    // ── Uyarı = karar (db_tls_warning) ──
+    chkw("mysql://u:p@db:3306/app",                        'U');
+    chkw("mysqls://u:p@db:3306/app",                       'N');
+    chkw("mysql://u:p@db:3306/app?tls=1",                  'N');
+    chkw("mysql://u:p@db:3306/app?tls=insecure",           'I');
+    chkw("mariadbs://u:p@db/app?ssl=insecure",             'I');
+    chkw("redis://:p@r:6379",                              'U');
+    chkw("rediss://:p@r:6379",                             'N');
+    chkw("redis://r:6379?tls=insecure",                    'I');
+    chkw("postgres://u:p@pg/app",                          'U');
+    chkw("postgresqls://u:p@pg/app",                       'N');
+    chkw("postgres://u:p@pg/app?sslmode=require",          'I', true); // eski 'U' derdi (şifreli ama doğrulamasız)
+    chkw("postgres://u:p@pg/app?tls=verify",               'N');
+    chkw("sqlite://app.db",                                'N');
+    // bug vakaları — eski substring mantığı YANLIŞ (pozitif kontrol)
+    chkw("mysql://u:tls=1@db:3306/app",                    'U', true); // (a) parolada tls=
+    chkw("postgres://u:tls=1@pg/app",                      'U', true); // (a) PG, canlı doğrulandı
+    chkw("redis://:ssl=1@r:6379",                          'U', true); // (a) redis parola
+    chkw("mysql://u:p@db:3306/app?ssl=false",              'U', true); // (b) ssl=false = TLS yok
+    chkw("redis://r:6379?tls=0",                           'U', true); // (b) redis falsey
+    chkw("mysql://u:p@db:3306/app?x=tls=insecure",         'U', true); // (c) değer-içi, plaintext
+    chkw("mysqls://u:p@db:3306/app?x=tls=insecure",        'N', true); // (c) mysqls doğrulanmış
+    chkw("postgres://u:p@pg/app?x=tls=insecure",           'U', true); // (c) PG, canlı doğrulandı
+    chkw("postgres://u:p@pg/app?sslmode=verify-ca",        'N', true); // 558d735 sınıfı: eski 'U' derdi
+    chkw("mysql://u:p?tls=insecure@db:3306/app",           'U', true); // userinfo'daki '?' sorgu değil
+
+    const int EXPECTED = 53;
     if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
     printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (verify=true güvenli-varsayılan + ?tls=insecure opt-out kilitli)\n", fails);
     return fails ? 1 : 0;
