@@ -31,6 +31,7 @@ run_lk "type:: ops"            type_ops.lk
 run_lk "queue:: FIFO"          queue_ops.lk
 run_lk "file:: FS+traversal"   file_ops.lk  "LOOK_FILE_ROOT=$TMP" "BT_DIR=$TMP"
 run_lk "template:: XSS-kaçış"  template_escape.lk
+run_lk "template:: önbellek"   template_cache.lk  "TEMPLATE_DIR=$TMP" "LOOK_FILE_ROOT=$TMP" "BT_DIR=$TMP"
 run_lk "validator:: sınır"     validator_check.lk
 
 [ $fail = 0 ] && echo "PASS: davranissal (db/jobs/parallel/prepared, SQLite CI)" || echo "FAIL: davranissal"

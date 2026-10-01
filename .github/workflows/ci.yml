@@ -235,6 +235,15 @@ jobs:
           cd cpp
           bash tests/behavioral_test.sh build/lk
 
+      # Template render golden — a 38-section matrix of template constructs must render byte for
+      # byte as the engine did in release abb5e2e (before the parsed-template cache and the render
+      # rewrite). Speed numbers say nothing about correctness; this does. Fault injection: removing
+      # the HTML escape makes it fail on both engines.
+      - name: Template render golden (byte-identical, both engines)
+        run: |
+          cd cpp
+          bash tests/template_golden_test.sh ./build/lk
+
       # Env-dependent test contract — positive control. A test whose environment is missing
       # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
       # DSN/secret in CI is a configuration error and must not turn into a silent green, the

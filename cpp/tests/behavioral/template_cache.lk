@@ -1,0 +1,61 @@
+# template:: parsed-template cache — behavioral guard. The engine caches parsed templates
+# per thread and revalidates each use by inode + mtime + size. What must never break:
+#   - HOT RELOAD: an edited template is picked up on the next render;
+#   - a deleted template is an error, never served from the cache;
+#   - the directory-escape check still applies once the cache is warm;
+#   - an {#include}d or {#extends}ed file is revalidated too, not just the top-level one.
+# Run through tests/behavioral_test.sh, which supplies TEMPLATE_DIR + LOOK_FILE_ROOT + BT_DIR.
+# Every edit below changes the file SIZE, so the result does not depend on mtime granularity.
+use template
+use file
+if (env("BT_DIR", "") == "" || env("TEMPLATE_DIR", "") == "") {
+    if (env("CI", "") == "true") { print("FAIL harness: BT_DIR / TEMPLATE_DIR are empty in CI"); exit(1) }
+    print("SKIP: BT_DIR / TEMPLATE_DIR not set — run it through tests/behavioral_test.sh"); exit(0)
+}
+$ran = 0
+function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
+$d = env("BT_DIR")
+
+# ── hot reload of a top-level template ──
+file::put($d . "/tc_page.html", `v1:{$x}`)
+chk("first render",            template::render("tc_page", ["x" => "A"]), "v1:A"); $ran = $ran + 1
+chk("second render (cached)",  template::render("tc_page", ["x" => "B"]), "v1:B"); $ran = $ran + 1
+file::put($d . "/tc_page.html", `version-two:{$x}`)
+chk("hot reload after edit",   template::render("tc_page", ["x" => "C"]), "version-two:C"); $ran = $ran + 1
+
+# ── an included file is revalidated too ──
+file::put($d . "/tc_inc.html",   `[inc1]`)
+file::put($d . "/tc_outer.html", `<{#include "tc_inc"}>`)
+chk("include",                 template::render("tc_outer", []), "<[inc1]>"); $ran = $ran + 1
+file::put($d . "/tc_inc.html",   `[include-two]`)
+chk("include reloaded",        template::render("tc_outer", []), "<[include-two]>"); $ran = $ran + 1
+
+# ── a parent layout ({#extends}) is revalidated too; blocks still override ──
+file::put($d . "/tc_base.html",  `B1({#block "c"}default{/block})`)
+file::put($d . "/tc_child.html", `{#extends "tc_base"}{#block "c"}{$v}{/block}`)
+chk("extends",                 template::render("tc_child", ["v" => "X"]), "B1(X)"); $ran = $ran + 1
+chk("extends (cached)",        template::render("tc_child", ["v" => "Y"]), "B1(Y)"); $ran = $ran + 1
+file::put($d . "/tc_base.html",  `BASE-TWO({#block "c"}default{/block})`)
+chk("parent reloaded",         template::render("tc_child", ["v" => "Z"]), "BASE-TWO(Z)"); $ran = $ran + 1
+
+# ── each: the loop variable must not leak between iterations or out of the loop ──
+file::put($d . "/tc_each.html",  `{#each $xs as $it}{$it}{#if $it == "b"}!{/if},{/each}|{$it}`)
+chk("each isolation",          template::render("tc_each", ["xs" => ["a", "b", "c"], "it" => "outer"]), "a,b!,c,|outer"); $ran = $ran + 1
+
+# ── directory escape is still refused once the cache is warm ──
+$e = "NO-ERROR"
+try { template::render("../../../../etc/passwd", []) } catch ($err) { $e = "blocked" }
+chk("traversal blocked",       $e, "blocked"); $ran = $ran + 1
+$e = "NO-ERROR"
+try { template::render("../../../../etc/passwd", []) } catch ($err) { $e = "blocked" }
+chk("traversal blocked again", $e, "blocked"); $ran = $ran + 1
+
+# ── a deleted template is an error, not stale cached output ──
+file::remove($d . "/tc_page.html")
+$g = "STALE"
+try { $g = template::render("tc_page", ["x" => "D"]) } catch ($err) { $g = "error" }
+chk("deleted file not served from cache", $g, "error"); $ran = $ran + 1
+
+const { EXPECTED = 12 }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " != " . EXPECTED) }
+print("=== template cache ran=" . $ran . " ===")

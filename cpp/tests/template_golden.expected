@@ -1,0 +1,75 @@
+### var escaped
+Ada &lt;b&gt;&amp;&quot;&#39;&#96;
+### var raw
+Ada <b>&"'`
+### deep path
+bottom
+### numeric index
+x|&lt;i&gt;|
+### list of assoc
+v2
+### missing
+[][][]
+### scalar types
+30|2.5|true|false||0|
+### unicode
+Şeker &lt;ç&gt; çğıöşü İ
+### literal braces
+a { b } {c} X }{
+### truthy
+TFFFFFTF
+### negation
+FTT
+### compare number
+abdeg
+### compare string
+A--
+### compare vars
+eqle
+### if without else
+[]
+### nested if
+young
+### each list
+[x][y&amp;z][&lt;i&gt;]
+### each empty
+none
+### each missing
+none
+### each no-empty
+<>
+### each assoc
+(1)(two)(&lt;3&gt;)
+### each of assoc
+v1;v2;
+### nested each
+A1,A2,|B3,|
+### each + if
+1-2+3+
+### loop var scope
+outer:xy&amp;z&lt;i&gt;:outer
+### outer in loop
+admin-x;admin-y&amp;z;admin-&lt;i&gt;;
+### include inherit
+plain E&amp;x <nav>admin/E&amp;x</nav>
+### extends + data include
+<html><nav>admin/E&amp;x</nav><h>default-head</h><m>main:E&amp;x<card>v1||</card><card>v2||</card></m>E&amp;x</html>
+### extends two blocks
+<html><nav>admin/E&amp;x</nav><h>H2</h><m>M2</m>E&amp;x</html>
+### base rendered directly
+<html><nav>admin/E&amp;x</nav><h>default-head</h><m>default-main</m>E&amp;x</html>
+### include sees loop var
+<t>x|admin</t><t>y&amp;z|admin</t><t>&lt;i&gt;|admin</t>
+### render_string include
+[<nav>admin/E&amp;x</nav>]
+### render_string extends
+<html><nav>admin/E&amp;x</nav><h>RS</h><m>default-main</m>E&amp;x</html>
+### same file twice
+plain E&amp;x <nav>admin/E&amp;x</nav>|plain 2nd <nav>admin/2nd</nav>
+### missing file
+error
+### missing include
+error
+### escape() builtin
+&lt;a href=&quot;x&quot;&gt;&amp;&#39;&#96;&lt;/a&gt;
+### END

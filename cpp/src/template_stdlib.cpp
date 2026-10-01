@@ -8,6 +8,12 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
+#include <system_error>
+#include <unordered_map>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 namespace fs = std::filesystem;
 namespace look {
@@ -459,59 +465,208 @@ void TemplateEngine::collect_blocks(const std::vector<TplNode>& nodes, TplBlocks
     }
 }
 
-// Helper: load a file and render it with optional pre-collected blocks (for extends)
-static std::string load_and_render(const std::string& path, const TplContext& ctx,
-                                    const TplBlocks* blocks) {
-    std::string full = TemplateEngine::resolve_path(path);
-    std::ifstream f(full, std::ios::binary);
-    if (!f.is_open())
-        throw std::runtime_error("Template file not found: " + full);
-    std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    auto nodes = TemplateEngine::parse(src, path);
-    return TemplateEngine::render(nodes, ctx, blocks);
+// ── Ayrıştırılmış şablon önbelleği ───────────────────────────────────────────────
+// Eskiden her render (ve her {#include} / {#extends}) dosyayı yeniden çözüyor, açıyor,
+// okuyor ve ayrıştırıyordu: 23 dosyalı gerçekçi bir sayfa ~400 µs, tek dosyalı sayfa
+// ~30 µs (cpp/bench/tpl/micro.lk) — maliyetin neredeyse tamamı dosya-başı sabit işti.
+//
+// • thread_local: kilit yok; her worker kendi önbelleğini tutar.
+// • Anahtar = çalışma dizini + TEMPLATE_DIR + İSTENEN yol (resolve_path'in girdileri).
+// • Her kullanımda mtime+boyut kontrolü → dosya değişince yeniden çözülür/ayrıştırılır:
+//   HOT-RELOAD korunur ve resolve_path'in dizin-dışı-kaçış kontrolü her yenilemede tekrar
+//   uygulanır. Yeni bir yol string'i ilk kullanımında her zaman resolve_path'ten geçer →
+//   template::render(kullanıcı_girdisi) korumasında değişiklik yok.
+// • mtime dosya OKUNMADAN ÖNCE alınır: okuma sırasında dosya değişirse eski mtime ile yeni
+//   içerik saklanır → sonraki çağrı farkı görüp yeniler (tersi kalıcı bayat içerik olurdu).
+// • 1024 girdi sınırı: yol kullanıcıdan geliyorsa ("views/./././a" gibi sonsuz eş-anlamlı
+//   varyant) sınırsız önbellek bellek-tüketme saldırısı olurdu.
+// • shared_ptr: render sürerken girdi yenilense bile kullanılan düğüm ağacı yaşar.
+// • Değişiklik damgası = inode + mtime + boyut, POSIX'te TEK stat çağrısıyla. Linux dosya
+//   zaman damgaları kaba saatle tutulur (birkaç ms): aynı boyutta içerik aynı dilimde iki
+//   kez yazılırsa mtime+boyut ayırt edemez. Geçici-dosya + rename ile yapılan dağıtımda
+//   inode değişir → yakalanır. (Windows'ta inode yok: mtime + boyut.)
+namespace {
+struct TplStamp {
+    bool               ok    = false;
+    std::uintmax_t     size  = 0;
+    long long          mtime = 0;
+    unsigned long long ino   = 0;
+    unsigned long long dev   = 0;
+    bool operator==(const TplStamp& o) const {
+        return ok && o.ok && size == o.size && mtime == o.mtime && ino == o.ino && dev == o.dev;
+    }
+};
+TplStamp tpl_stamp(const std::string& full) {
+    TplStamp s;
+#ifdef _WIN32
+    std::error_code ec;
+    auto mt = fs::last_write_time(full, ec);
+    if (ec) return s;
+    auto sz = fs::file_size(full, ec);
+    if (ec) return s;
+    s.ok = true; s.size = sz; s.mtime = (long long)mt.time_since_epoch().count();
+#else
+    struct stat st;
+    if (::stat(full.c_str(), &st) != 0) return s;
+    s.ok    = true;
+    s.size  = (std::uintmax_t)st.st_size;
+    s.mtime = (long long)st.st_mtim.tv_sec * 1000000000LL + (long long)st.st_mtim.tv_nsec;
+    s.ino   = (unsigned long long)st.st_ino;
+    s.dev   = (unsigned long long)st.st_dev;
+#endif
+    return s;
+}
+struct TplCacheEntry {
+    std::string                                   full;
+    TplStamp                                      stamp;
+    std::shared_ptr<const std::vector<TplNode>>   nodes;
+    unsigned long long                            checked_epoch = 0;
+};
+
+// Üst-seviye render kapsamı. Tek bir sayfa render'ı boyunca (a) her dosya EN FAZLA BİR KEZ
+// doğrulanır — 20 kez {#include} edilen bir partial eskiden aynı sayfada 20 kez stat'lanıyordu;
+// ayrıca bir sayfa aynı partial'ın iki farklı sürümünü karıştırarak üretilmemeli — ve (b)
+// çalışma dizini + TEMPLATE_DIR bir kez okunur. İkisi süreç boyunca sabit VARSAYILMAZ (FastCGI
+// modunda istek başına değişebilirler); yalnız tek render içinde değişmezler.
+//
+// FIBER GÜVENLİĞİ: kapsam thread-local DEĞİL, çağrı zinciri boyunca parametre olarak taşınır.
+// Bugün render hiç beklemeye geçmez (dosya okuma bloklayan çağrılarla, şablondan DB/I-O yok),
+// ama bunu varsayıma bırakmıyoruz: thread-local bir "şu anki render" durumu, render'a ileride
+// yield eden bir çağrı eklenirse aynı thread'deki iki fiber'ın birbirinin çalışma dizinini/
+// doğrulama kümesini ezmesine (siteler-arası şablon sızıntısı) yol açardı. Thread-local kalan
+// tek şey epoch SAYACI (yalnız benzersiz numara üretir) ve önbelleğin kendisidir; önbelleğe
+// erişim tek bir load_nodes çağrısı içinde başlar ve biter, arada bekleme noktası yoktur.
+struct TplEnv {
+    unsigned long long epoch = 0;
+    std::string        prefix;   // çalışma dizini + '\n' + TEMPLATE_DIR + '\n'
+};
+TplEnv tpl_make_env() {
+    thread_local unsigned long long counter = 0;
+    TplEnv env;
+    env.epoch = ++counter;
+    std::error_code ec;
+    env.prefix = fs::current_path(ec).string();
+    env.prefix += '\n';
+    if (const char* t = std::getenv("TEMPLATE_DIR")) env.prefix += t;
+    env.prefix += '\n';
+    return env;
+}
 }
 
-std::string TemplateEngine::render_file(const std::string& path, const TplContext& ctx) {
-    std::string full = resolve_path(path);
-    std::ifstream f(full, std::ios::binary);
-    if (!f.is_open())
-        throw std::runtime_error("Template file not found: " + full);
-    std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    auto nodes = parse(src, path);
+static std::shared_ptr<const std::vector<TplNode>> load_nodes(const std::string& path,
+                                                               const TplEnv& env) {
+    thread_local std::unordered_map<std::string, TplCacheEntry> cache;
+    const unsigned long long epoch = env.epoch;
+    std::string key = env.prefix;
+    key += path;
 
-    // Check for {#extends} — must be at the top (first non-text node)
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        if (it->second.checked_epoch == epoch)          // bu render'da zaten doğrulandı
+            return it->second.nodes;
+        if (tpl_stamp(it->second.full) == it->second.stamp) {
+            it->second.checked_epoch = epoch;
+            return it->second.nodes;
+        }
+        cache.erase(it);   // değişti ya da kayboldu → baştan
+    }
+
+    TplCacheEntry e;
+    e.full  = TemplateEngine::resolve_path(path);
+    e.stamp = tpl_stamp(e.full);          // OKUMADAN ÖNCE (yukarıdaki nota bakın)
+    e.checked_epoch = epoch;
+    std::ifstream f(e.full, std::ios::binary);
+    if (!f.is_open())
+        throw std::runtime_error("Template file not found: " + e.full);
+    std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    e.nodes = std::make_shared<const std::vector<TplNode>>(TemplateEngine::parse(src, path));
+    auto nodes = e.nodes;
+    if (e.stamp.ok) {                 // stat alınamadıysa önbelleğe koyma (her seferinde oku)
+        if (cache.size() >= 1024) cache.clear();
+        cache[std::move(key)] = std::move(e);
+    }
+    return nodes;
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────────
+// Tek çıktı tamponu: iç bloklar (if/each/block/include) eskiden ayrı bir string üretip
+// üstteki string'e kopyalıyordu (derinlik × boyut kadar kopya); artık hepsi aynı `out`'a
+// yazar. {#extends} blokları da KOPYALANMAZ — düğüm ağaçları önbellekte yaşadığı için
+// işaretçiyle taşınır (eskiden her istekte blokların alt ağaçları derin kopyalanıyordu).
+using TplBlockPtrs = std::map<std::string, const std::vector<TplNode>*>;
+
+static void collect_block_ptrs(const std::vector<TplNode>& nodes, TplBlockPtrs& out) {
+    for (const auto& n : nodes) {
+        if (n.kind == TplNodeKind::Block) {
+            if (!out.count(n.text)) // child definition wins; don't overwrite
+                out[n.text] = &n.children;
+        }
+        collect_block_ptrs(n.children, out);
+        collect_block_ptrs(n.alt,      out);
+    }
+}
+
+static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx,
+                        const TplBlockPtrs* blocks, std::string& out, const TplEnv& env);
+
+// {#extends} varsa: çocuğun bloklarını topla, ebeveyni render et. `nodes` çağıranın elinde
+// yaşamalı (blok işaretçileri onun içine bakar). Ebeveynin kendi {#extends}'i izlenmez —
+// tek seviye kalıtım, önceki davranışla aynı.
+static bool render_extends(const std::vector<TplNode>& nodes, const TplContext& ctx,
+                           std::string& out, const TplEnv& env) {
     for (const auto& n : nodes) {
         if (n.kind == TplNodeKind::Text) continue; // whitespace before extends is OK
         if (n.kind == TplNodeKind::Extends) {
-            TplBlocks blocks;
-            collect_blocks(nodes, blocks);
-            return load_and_render(n.text, ctx, &blocks);
+            TplBlockPtrs blocks;
+            collect_block_ptrs(nodes, blocks);
+            auto parent = load_nodes(n.text, env);
+            render_into(*parent, ctx, &blocks, out, env);
+            return true;
         }
         break; // non-extends first real node → not a child template
     }
+    return false;
+}
 
-    return render(nodes, ctx);
+static void render_file_into(const std::string& path, const TplContext& ctx, std::string& out, const TplEnv& env) {
+    auto holder = load_nodes(path, env);
+    if (!render_extends(*holder, ctx, out, env))
+        render_into(*holder, ctx, nullptr, out, env);
+}
+
+std::string TemplateEngine::render_file(const std::string& path, const TplContext& ctx) {
+    const TplEnv env = tpl_make_env();
+    std::string out;
+    render_file_into(path, ctx, out, env);
+    return out;
 }
 
 std::string TemplateEngine::render_string(const std::string& src, const TplContext& ctx) {
+    const TplEnv env = tpl_make_env();
     auto nodes = parse(src, "<string>");
-    for (const auto& n : nodes) {
-        if (n.kind == TplNodeKind::Text) continue;
-        if (n.kind == TplNodeKind::Extends) {
-            TplBlocks blocks;
-            collect_blocks(nodes, blocks);
-            return load_and_render(n.text, ctx, &blocks);
-        }
-        break;
-    }
-    return render(nodes, ctx);
+    std::string out;
+    if (!render_extends(nodes, ctx, out, env))
+        render_into(nodes, ctx, nullptr, out, env);
+    return out;
 }
 
 std::string TemplateEngine::render(const std::vector<TplNode>& nodes,
                                     const TplContext& ctx,
                                     const TplBlocks* blocks) {
+    const TplEnv env = tpl_make_env();
     std::string out;
+    if (blocks) {
+        TplBlockPtrs ptrs;
+        for (const auto& kv : *blocks) ptrs[kv.first] = &kv.second;
+        render_into(nodes, ctx, &ptrs, out, env);
+    } else {
+        render_into(nodes, ctx, nullptr, out, env);
+    }
+    return out;
+}
 
+static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx,
+                        const TplBlockPtrs* blocks, std::string& out, const TplEnv& env) {
     for (const auto& n : nodes) {
         switch (n.kind) {
             case TplNodeKind::Text:
@@ -519,28 +674,28 @@ std::string TemplateEngine::render(const std::vector<TplNode>& nodes,
                 break;
 
             case TplNodeKind::Var: {
-                Value v = resolve(n.text, ctx);
-                out += html_escape(to_str(v));
+                Value v = TemplateEngine::resolve(n.text, ctx);
+                out += TemplateEngine::html_escape(TemplateEngine::to_str(v));
                 break;
             }
 
             case TplNodeKind::RawVar: {
-                Value v = resolve(n.text, ctx);
-                out += to_str(v);
+                Value v = TemplateEngine::resolve(n.text, ctx);
+                out += TemplateEngine::to_str(v);
                 break;
             }
 
             case TplNodeKind::If:
-                if (eval_cond(n.extra, ctx))
-                    out += render(n.children, ctx, blocks);
+                if (TemplateEngine::eval_cond(n.extra, ctx))
+                    render_into(n.children, ctx, blocks, out, env);
                 else
-                    out += render(n.alt,      ctx, blocks);
+                    render_into(n.alt,      ctx, blocks, out, env);
                 break;
 
             case TplNodeKind::Each: {
-                Value arr_val = resolve(n.text, ctx);
+                Value arr_val = TemplateEngine::resolve(n.text, ctx);
                 if (arr_val.type() != Value::ARRAY || !arr_val.as_array()) {
-                    out += render(n.alt, ctx, blocks); // empty branch
+                    render_into(n.alt, ctx, blocks, out, env); // empty branch
                     break;
                 }
                 const auto& arr = *arr_val.as_array();
@@ -562,40 +717,45 @@ std::string TemplateEngine::render(const std::vector<TplNode>& nodes,
                 }
 
                 if (elems.empty()) {
-                    out += render(n.alt, ctx, blocks);
+                    render_into(n.alt, ctx, blocks, out, env);
                     break;
                 }
+                // Context döngü başına BİR kez kopyalanır; her yinelemede yalnız döngü
+                // değişkeni yeniden atanır (eskiden tüm harita her yinelemede kopyalanıyordu).
+                // Gövde ctx'i const görür → yinelemeler arası sızıntı yok.
+                TplContext child = ctx;
+                Value& slot = child[n.extra];
                 for (const Value* elem : elems) {
-                    TplContext child = ctx;
-                    child[n.extra] = *elem;
-                    out += render(n.children, child, blocks);
+                    slot = *elem;
+                    render_into(n.children, child, blocks, out, env);
                 }
                 break;
             }
 
             case TplNodeKind::Extends:
-                // Handled in render_file / render_string before this call
+                // Handled in render_extends before this call
                 break;
 
             case TplNodeKind::Block: {
                 if (blocks) {
                     auto it = blocks->find(n.text);
                     if (it != blocks->end()) {
-                        out += render(it->second, ctx, blocks);
+                        render_into(*it->second, ctx, blocks, out, env);
                         break;
                     }
                 }
                 // No override → use default block content
-                out += render(n.children, ctx, blocks);
+                render_into(n.children, ctx, blocks, out, env);
                 break;
             }
 
             case TplNodeKind::Include: {
                 // Build include context
                 TplContext inc_ctx;
+                const TplContext* use_ctx = &ctx;   // inherit parent context (kopyasız)
                 if (!n.extra.empty()) {
                     // data=$var → use that var as context (assoc array → k/v pairs)
-                    Value data = resolve(n.extra, ctx);
+                    Value data = TemplateEngine::resolve(n.extra, ctx);
                     if (data.type() == Value::ARRAY && data.as_array()) {
                         const auto& arr = *data.as_array();
                         size_t start = 0;
@@ -609,11 +769,10 @@ std::string TemplateEngine::render(const std::vector<TplNode>& nodes,
                                 inc_ctx[arr[j].as_string()] = arr[j+1];
                         }
                     }
-                } else {
-                    inc_ctx = ctx; // inherit parent context
+                    use_ctx = &inc_ctx;
                 }
                 try {
-                    out += render_file(n.text, inc_ctx);
+                    render_file_into(n.text, *use_ctx, out, env);
                 } catch (const std::exception& e) {
                     throw std::runtime_error(
                         std::string("Template include error (") + n.text + "): " + e.what());
@@ -622,8 +781,6 @@ std::string TemplateEngine::render(const std::vector<TplNode>& nodes,
             }
         }
     }
-
-    return out;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

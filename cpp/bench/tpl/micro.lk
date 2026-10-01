@@ -1,0 +1,33 @@
+# In-process template micro-benchmark: microseconds per render, no HTTP and no database.
+# Used to attribute template-engine cost layer by layer (tpl_race.sh is the end-to-end
+# number). Run from this directory on a container-local copy:
+#   cp -r cpp/bench/tpl /root/tpl && cd /root/tpl && LOOK_VM_STRICT=1 lk micro.lk
+use template
+use date
+
+function bench($label, $path, $data, $n) {
+    $len = 0
+    $k = 0
+    while ($k < 200) { $len = len(template::render($path, $data)); $k = $k + 1 }   # warm-up
+    $t0 = date::mono_us()
+    $k = 0
+    while ($k < $n) { $len = len(template::render($path, $data)); $k = $k + 1 }
+    $us = (date::mono_us() - $t0) / $n
+    print($label . ": " . $us . " us/render  (" . $len . " bytes, n=" . $n . ")")
+}
+
+$items = []
+$k = 1
+while ($k <= 20) { push($items, ["name" => "Item " . $k, "price" => $k * 3, "stock" => $k % 3]); $k = $k + 1 }
+
+$rows = []
+$i = 1
+while ($i <= 20) {
+    push($rows, ["name" => "Product " . $i, "price" => $i * 12.5, "stock" => $i % 4,
+                 "note" => "<script>alert(" . $i . ")</script> & \"quoted\""])
+    $i = $i + 1
+}
+
+bench("T1 static        ", "views/t1", [], 5000)
+bench("T2 dynamic       ", "views/t2", ["title" => "Dynamic", "user" => "Ada", "items" => $items], 5000)
+bench("T3 real (no DB)  ", "views/t3", ["title" => "Products", "user" => "Ada", "year" => 2026, "rows" => $rows], 2000)
