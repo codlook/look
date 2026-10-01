@@ -699,7 +699,7 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     for (int p : ctx.break_patches) patch_jump(p, after);
 
     // alloc_seq(4) ile alındı — 4 register birden serbest bırak
-    for (int k = 0; k < 4; ++k) regs_->free(r_iter + k);
+    regs_->release_seq(r_iter, 4);
     pop_scope();
 }
 
@@ -840,7 +840,7 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
         cap_regs.push_back(cr);
     }
     // MAKE_CLOSURE: a=r, b=fn_idx (nested index)
-    emit(OpCode::MAKE_CLOSURE, r, (uint8_t)fn_idx);
+    emit_make_closure(r, fn_idx);
     for (uint8_t cr : cap_regs) { emit(OpCode::LOAD_CAPTURE, 0, cr); free_temp(cr); }
     // Global'e kaydet — top-level function declaration (16-bit const index)
     emit(OpCode::STORE_GLOBAL, r, (uint8_t)(name_idx >> 8), (uint8_t)(name_idx & 0xFF));
@@ -1469,7 +1469,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
             emit(OpCode::NOP, argc, (uint8_t)(bidx >> 8));
-            for (int k = 0; k < argc; ++k) regs_->free(base + k);
+            regs_->release_seq(base, argc);
             return r;
         }
         // Unknown modül fonksiyonu → genel CALL yolu.
@@ -1566,7 +1566,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
             emit(OpCode::NOP, argc, (uint8_t)(bidx >> 8));
-            for (int k = 0; k < argc; ++k) regs_->free(base + k);
+            regs_->release_seq(base, argc);
             return r;
         }
     }
@@ -1599,7 +1599,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     if (auto* cv = dynamic_cast<const Variable*>(e.callee.get()))
         cname = (uint16_t)(add_const(Value(cv->name)) + 1);
     emit(OpCode::NOP, argc, (uint8_t)(cname >> 8), (uint8_t)(cname & 0xFF));
-    for (int k = 0; k < argc; ++k) regs_->free(base + k);
+    regs_->release_seq(base, argc);
     free_temp(fn);
     return r;
 }
@@ -1652,7 +1652,7 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
         cap_regs.push_back(cr);
     }
 
-    emit(OpCode::MAKE_CLOSURE, r, (uint8_t)fn_idx);
+    emit_make_closure(r, fn_idx);
 
     // MAKE_CLOSURE'dan hemen sonra art arda hint — VM bu pattern'ı okur
     for (uint8_t cr : cap_regs) {
