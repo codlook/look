@@ -107,6 +107,12 @@ jobs:
             fi
           done
 
+      # Argument count / parameter index are 8-bit: past 255 they wrapped silently on the VM.
+      - name: VM operand limits
+        run: |
+          cd cpp
+          bash tests/vm_operand_limits_test.sh ./build/lk
+
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
       # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
       # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.

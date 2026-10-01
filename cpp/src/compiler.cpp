@@ -59,6 +59,9 @@ FunctionCompiler::FunctionCompiler(const std::string& name,
     // regs_ params tamamlandıktan sonra kurulur — declare_local içinde
     // Önce locals_ listesini kur, sonra RegisterAllocator'ı
     scope_depth_ = 0;
+    // Parametre register indeksi 8 bit: 255 üstü SESSİZCE sarıyordu (300 parametre → 44.).
+    if (params.size() > 255)
+        throw LookCompileError("function '" + name + "' has more than 255 parameters");
     for (auto& p : params) {
         LocalVar lv;
         lv.name  = p;
@@ -183,6 +186,8 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     if (!for_write && parent_) {
         VarLoc pl = parent_->resolve_var(name, /*for_write=*/false);
         if (pl.kind != VarKind::GLOBAL) {
+            if (captures_.size() >= 255)
+                throw LookCompileError("closure captures more than 255 variables");
             uint8_t idx = (uint8_t)captures_.size();
             // 58: parent'ta bu isim boxed local (veya boxed capture) ise, yakalanan
             // şey CELL'dir → closure gövdesi okurken [0] deref etmeli (by-ref).
@@ -1457,6 +1462,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         if (bidx >= 0) {
             // Bilinen modül fonksiyonu → CALL_BUILTIN
             // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
+            check_argc(e);
             uint8_t argc = (uint8_t)e.arguments.size();
             uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
@@ -1554,6 +1560,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         int bidx = builtin_index(bname);
         if (bidx >= 0) {
             // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
+            check_argc(e);
             uint8_t argc = (uint8_t)e.arguments.size();
             uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
@@ -1577,6 +1584,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     uint8_t fn = compile_expr(*e.callee);
     callee_ctx_ = false;
     // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
+    check_argc(e);
     uint8_t argc = (uint8_t)e.arguments.size();
     uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
     for (int k = 0; k < argc; ++k) {
@@ -1617,6 +1625,8 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
     // HESAPLAMADAN eklendi (default false) → boxed loop-local yakalayınca deref atlanıyor,
     // closure ham CELL'i (["x"]) okuyordu = VM↔tree-walk ayrışması (3b). tree-walk zaten by-ref
     // doğru okuyor; auto-capture da is_cell'i doğru kuruyordu — yalnız use()-listesi kaçırıyordu.
+    if (e.captures.size() > 255)
+        throw LookCompileError("closure captures more than 255 variables", e.loc.line);
     for (size_t i = 0; i < e.captures.size(); ++i) {
         auto ploc = resolve_var(e.captures[i]);   // parent (this) scope'unda
         bool is_cell = is_cell_var(ploc);

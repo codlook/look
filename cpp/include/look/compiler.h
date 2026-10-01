@@ -161,6 +161,11 @@ private:
 
     // ── Constant pool ──────────────────────────────────────────────────────────
     uint16_t add_const(Value v);
+    // Argüman sayısı 8 bit taşınır: 255 üstü SESSİZCE sarıyordu (300 argüman → 44).
+    static void check_argc(const CallExpression& e) {
+        if (e.arguments.size() > 255)
+            throw LookCompileError("a call has more than 255 arguments", e.loc.line);
+    }
     void     emit_load_const(uint8_t dest, Value v, int line);
 
     // ── Register ──────────────────────────────────────────────────────────────
