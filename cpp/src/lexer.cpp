@@ -393,6 +393,9 @@ void Lexer::string(char quote) {
 
     advance(); // closing quote
     add_token(TokenType::STRING, value);
+    // Tek tırnak = HAM: {$x} metin olarak kalır (doküman hep böyle diyordu; eskiden üç
+    // tırnak türü de interpolasyon yapıyordu → şablon kaynağını güvenle yazmanın yolu yoktu).
+    if (quote == '\'') tokens_.back().raw = true;
 }
 
 void Lexer::raw_string() {

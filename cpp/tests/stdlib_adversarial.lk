@@ -66,9 +66,11 @@ chk("regex_replace basic",     string::regex_replace("aaaa", "a", "b"), "bbbb")
 
 # ── template::render_string — user data is NOT recursively evaluated ──
 # (placeholder value that itself looks like template syntax stays inert)
+# The earlier version of this check used "{{v}}", which is not LOOK template syntax, so it
+# proved nothing. Single quotes keep the template source and the hostile value raw.
 chk("render_string inert-value",
-    string::index_of(template::render_string("X{{v}}Y", ["v" => "{{evil}}"]), "evil"),
-    -1)
+    template::render_string('X{$v}Y', ["v" => '{!$evil}', "evil" => "PWNED"]),
+    'X{!$evil}Y')
 
 # ── date — malformed string throws; extreme timestamp is bounded, no null-deref ──
 chk_throws("date::weekday too-short", fn() => date::weekday("0"))

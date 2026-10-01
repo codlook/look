@@ -608,6 +608,16 @@ call_dispatch:
                 vec.push_back(R(ins.c));
                 break;
             }
+            case OpCode::CHECK_DEFINED: {
+                // Çıplak ad değer olarak okundu ve LOAD_GLOBAL null verdi: ad gerçekten
+                // tanımsız mı (null değerli const değil mi) → tree-walk ile aynı hata.
+                if (R(ins.a).type() == Value::NONE) {
+                    const std::string& nm = CONST((uint16_t)((ins.b << 8) | ins.c)).str_ref();
+                    if (globals_.find(nm) == globals_.end())
+                        throw LookVmError("Undefined variable: " + nm);
+                }
+                break;
+            }
             case OpCode::ARRAY_LEN: {
                 const Value& arr = R(ins.b);
                 int len = 0;
@@ -856,7 +866,8 @@ call_dispatch:
 
             // ── Closure ───────────────────────────────────────────────────────
             case OpCode::MAKE_CLOSURE: {
-                auto& nested_proto = proto->nested[ins.b];
+                // 16-bit indeks: b = düşük, c = yüksek bayt (eskiden yalnız b → 256. closure 0.'a sarıyordu).
+                auto& nested_proto = proto->nested[(size_t)ins.b | ((size_t)ins.c << 8)];
                 auto cl = std::make_shared<Closure>(nested_proto);
                 // Capture hint'leri oku: LOAD_CAPTURE(0, cr) pattern
                 while (frame.ip < (int)proto->code.size()) {

@@ -699,7 +699,7 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     for (int p : ctx.break_patches) patch_jump(p, after);
 
     // alloc_seq(4) ile alındı — 4 register birden serbest bırak
-    for (int k = 0; k < 4; ++k) regs_->free(r_iter + k);
+    regs_->release_seq(r_iter, 4);
     pop_scope();
 }
 
@@ -840,7 +840,7 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
         cap_regs.push_back(cr);
     }
     // MAKE_CLOSURE: a=r, b=fn_idx (nested index)
-    emit(OpCode::MAKE_CLOSURE, r, (uint8_t)fn_idx);
+    emit_make_closure(r, fn_idx);
     for (uint8_t cr : cap_regs) { emit(OpCode::LOAD_CAPTURE, 0, cr); free_temp(cr); }
     // Global'e kaydet — top-level function declaration (16-bit const index)
     emit(OpCode::STORE_GLOBAL, r, (uint8_t)(name_idx >> 8), (uint8_t)(name_idx & 0xFF));
@@ -1199,7 +1199,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         // Interpolation içeriyor mu? Lexer raw string gönderir
         // Basit string (interpolation yok) → LOAD_CONST
         // İnterpolasyon → compile_string_interp
-        if (e->value.find("{$") != std::string::npos) {
+        if (!e->raw && e->value.find("{$") != std::string::npos) {
             return compile_string_interp(e->value, expr.loc.line, r);
         }
         emit_load_const(r, Value(e->value), expr.loc.line);
@@ -1222,6 +1222,14 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         } else {
             uint16_t ni = add_const(Value(e->name));
             emit(OpCode::LOAD_GLOBAL, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+            // Çıplak ('$'sız) ad DEĞER olarak okunuyor. ESKİ HATA: LOAD_GLOBAL çıplak adı
+            // ıskalayınca sessizce null veriyordu ("mod::fn"/çağrı hedefi için gerekli),
+            // dolayısıyla unutulan '$' — `if (is_admin)` — VM'de hatasız YANLIŞ DALA
+            // giriyordu; tree-walk (referans) "Undefined variable: is_admin" fırlatır.
+            // Çağrı hedefi hariç (adı CALL söyler) her çıplak okuma tanımlı olmalı.
+            if (!callee_ctx_ && !e->name.empty() && e->name[0] != '$'
+                && e->name.find("::") == std::string::npos)
+                emit(OpCode::CHECK_DEFINED, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
         }
         return r;
     }
@@ -1461,7 +1469,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
             emit(OpCode::NOP, argc, (uint8_t)(bidx >> 8));
-            for (int k = 0; k < argc; ++k) regs_->free(base + k);
+            regs_->release_seq(base, argc);
             return r;
         }
         // Unknown modül fonksiyonu → genel CALL yolu.
@@ -1558,13 +1566,16 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
             emit(OpCode::NOP, argc, (uint8_t)(bidx >> 8));
-            for (int k = 0; k < argc; ++k) regs_->free(base + k);
+            regs_->release_seq(base, argc);
             return r;
         }
     }
 
     // Genel CALL: callee'yi register'a al, argümanları sıraya diz
+    // callee_ctx_ yalnız callee doğrudan bir AD iken açılır (iç içe ifadelere sızmasın).
+    callee_ctx_ = dynamic_cast<const Variable*>(e.callee.get()) != nullptr;
     uint8_t fn = compile_expr(*e.callee);
+    callee_ctx_ = false;
     // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
     uint8_t argc = (uint8_t)e.arguments.size();
     uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
@@ -1588,7 +1599,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     if (auto* cv = dynamic_cast<const Variable*>(e.callee.get()))
         cname = (uint16_t)(add_const(Value(cv->name)) + 1);
     emit(OpCode::NOP, argc, (uint8_t)(cname >> 8), (uint8_t)(cname & 0xFF));
-    for (int k = 0; k < argc; ++k) regs_->free(base + k);
+    regs_->release_seq(base, argc);
     free_temp(fn);
     return r;
 }
@@ -1641,7 +1652,7 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
         cap_regs.push_back(cr);
     }
 
-    emit(OpCode::MAKE_CLOSURE, r, (uint8_t)fn_idx);
+    emit_make_closure(r, fn_idx);
 
     // MAKE_CLOSURE'dan hemen sonra art arda hint — VM bu pattern'ı okur
     for (uint8_t cr : cap_regs) {

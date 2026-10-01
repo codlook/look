@@ -538,7 +538,16 @@ print("Result: {compute($x, $y)}")  # function call
 
 ```lk
 $s = 'This $variable is not interpolated'  # literal $variable
+$t = 'Hello {$name}'                       # literal {$name} — nothing is substituted
 ```
+
+Single quotes are the way to write text that contains `{$...}` and must reach its
+consumer unchanged — above all a template source passed to `template::render_string`.
+Escape sequences (`\'`, `\\`, `\n`) still apply.
+
+Inside an interpolating string, `{...}` holds a LOOK expression, so an array element is
+`{$u.list[1].k}`. (The template language has its own dotted paths; LOOK strings do not —
+in LOOK code `.` followed by a number or a name is concatenation.)
 
 ### Backtick — Raw String (no escaping, interpolation on)
 
@@ -548,13 +557,15 @@ $sql = `
     SELECT u.*, c.name AS category
     FROM products u
     JOIN categories c ON c.id = u.category_id
-    WHERE u.company_id = {$id}
+    WHERE u.company_id = ?
     ORDER BY u.sort
 `
+$rows = db::query($conn, $sql, [$id])  # values go in as parameters, never by interpolation
 print(`C:\Users\{$user}\Desktop`)  # backslashes just work
 ```
 
 > **Tip:** use a backtick raw string for multi-line SQL queries — no escaping mess.
+> Pass values with `?` placeholders; interpolating a value into SQL is an injection hole.
 
 ### Escape Sequences (inside double quotes)
 
@@ -1799,7 +1810,10 @@ $html = template::render("/app/views/blog/index", [
 ])
 print($html)
 # Inline render
-print(template::render_string("<h1>{$title}</h1>", ["title" => "Hello"]))
+# Write an inline template in SINGLE quotes. In double quotes LOOK itself would
+# substitute a $title that happens to be in scope before the template engine runs —
+# unescaped, and the value would then be executed as template code.
+print(template::render_string('<h1>{$title}</h1>', ["title" => "Hello"]))
 # The .html extension is added automatically — views/blog/index → views/blog/index.html
 ```
 

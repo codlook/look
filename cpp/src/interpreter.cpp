@@ -1162,7 +1162,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
     if (dynamic_cast<const NullLiteral*>(&expr))              return Value();
 
     if (auto* e = dynamic_cast<const StringLiteral*>(&expr))
-        return Value(interpolate_string(e->value));
+        return Value(e->raw ? e->value : interpolate_string(e->value));
 
     // Anonymous function expression â†' Value(LookFunction)
     if (auto* e = dynamic_cast<const FunctionExpression*>(&expr)) {

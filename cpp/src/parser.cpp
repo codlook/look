@@ -722,7 +722,7 @@ std::unique_ptr<Expression> Parser::primary() {
         // 0.0 yapıyordu → sessizce yanlış/tehlikeli değer). IEEE-754 doğru.
         return std::make_unique<FloatLiteral>(std::strtod(lit.c_str(), nullptr));
     }
-    if (match(TokenType::STRING))     return std::make_unique<StringLiteral>(previous().literal.value());
+    if (match(TokenType::STRING))     return std::make_unique<StringLiteral>(previous().literal.value(), previous().raw);
 
     // Anonymous function expression: function($a, $b) { ... }
     if (match(TokenType::FUNCTION)) {
