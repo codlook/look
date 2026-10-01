@@ -3,3 +3,5 @@
 # CALISMAZ (koruma yok saniliyor ama yok).
 *.sh text eol=lf
 *.lk text eol=lf
+# Golden/expected dosyalari BAYT BAYT karsilastirilir — satir sonu donusumu testi kirar.
+*.expected text eol=lf
