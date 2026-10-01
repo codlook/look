@@ -1,0 +1,81 @@
+# Raw single-quoted strings + bare-name strictness guard (2026-10-01).
+#
+# 1. Single quotes are RAW. All three quote styles used to interpolate {$x}, although the
+#    documentation always called single quotes raw. With no raw string there was no safe
+#    way to write a template source: template::render_string("<h1>{$title}</h1>", [...])
+#    had LOOK substitute $title into the SOURCE before the template engine ran whenever a
+#    variable of that name was in scope - no auto-escaping (XSS) and the value was then
+#    executed as template code (injection).
+# 2. A bare name (no '$') read as a value must be defined. The VM used to evaluate an
+#    undefined bare name to null without an error, so a forgotten '$' - if (is_admin) -
+#    silently took the wrong branch, while tree-walk raised "Undefined variable".
+#
+# Uses only builtin module functions so the CLI really runs it on the VM.
+# Run: lk tests/raw_string_bare_name_test.lk with LOOK_VM_STRICT=1 and with LOOK_CLI_VM=0.
+use json
+use array
+use template
+
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+
+$x = "VAL"
+$title = "<script>alert(1)</script>"
+$secret = "TOP-SECRET"
+
+# ── 1. quotes ────────────────────────────────────────────────────────────────
+chk("single quotes are raw",            'a{$x}b', "a{" . "$" . "x}b")
+chk("single quotes raw, expression",    '{$x . $x}', "{" . "$" . "x . " . "$" . "x}")
+chk("double quotes interpolate",        "a{$x}b", "aVALb")
+chk("backticks interpolate",            `a{$x}b`, "aVALb")
+chk("single-quote escapes still apply", 'a\'b\\c', "a'b\\c")
+chk("raw string length",                count('{$x}'), 4)
+
+# The documented render_string pattern, safe when the source is single-quoted:
+chk("render_string escapes the value",
+    template::render_string('<h1>{$title}</h1>', ["title" => $title]),
+    "<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>")
+chk("value is not executed as template code",
+    template::render_string('<p>{$v}</p>', ["v" => '{!$secret}', "secret" => $secret]),
+    '<p>{!$secret}</p>')
+
+# ── 2. bare names ────────────────────────────────────────────────────────────
+function double($n) { return $n * 2 }
+const { LIMIT = 5, NOTHING = null }
+
+function bare_in_if() {
+    $is_admin = true
+    if (is_admin) { return "took-branch" }
+    return "skipped-branch"
+}
+function bare_as_arg() { return json::encode(undefined_name) }
+function bare_in_concat() { return "v=" . missing_name }
+function bare_negated() { if (!is_banned) { return "allowed" } return "denied" }
+
+function err_of($f) {
+    $err = "NO-ERROR"
+    try { $r = $f(); $err = "NO-ERROR:" . $r } catch ($e) { $err = "" . $e }
+    return $err
+}
+
+chk("bare name in if",        err_of(bare_in_if),     "Undefined variable: is_admin")
+chk("bare name as argument",  err_of(bare_as_arg),    "Undefined variable: undefined_name")
+chk("bare name in concat",    err_of(bare_in_concat), "Undefined variable: missing_name")
+chk("bare name negated",      err_of(bare_negated),   "Undefined variable: is_banned")
+
+# Legitimate bare names keep working.
+chk("function passed by name", array::map([1, 2], double)[1], 4)
+chk("const read",              LIMIT + 1, 6)
+chk("const holding null",      json::encode(NOTHING), "null")
+chk("call of undefined fn",    err_of(fn() => nope(1)), "Undefined variable: nope")
+
+# Interpolation uses LOOK syntax: [1] indexes; a dotted ".1.k" is concatenation with a
+# bare name, so it is not a path and the text stays as written - in both engines.
+$u = ["list" => [["k" => "a"], ["k" => "b"]]]
+chk("index syntax inside a string", "v={$u.list[1].k}", "v=b")
+chk("dotted pseudo-path stays literal", "v={$u.list.1.k}", "v={" . "$" . "u.list.1.k}")
+
+print("")
+print("=== raw string + bare name guard done ===")

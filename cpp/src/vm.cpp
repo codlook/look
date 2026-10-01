@@ -608,6 +608,16 @@ call_dispatch:
                 vec.push_back(R(ins.c));
                 break;
             }
+            case OpCode::CHECK_DEFINED: {
+                // Çıplak ad değer olarak okundu ve LOAD_GLOBAL null verdi: ad gerçekten
+                // tanımsız mı (null değerli const değil mi) → tree-walk ile aynı hata.
+                if (R(ins.a).type() == Value::NONE) {
+                    const std::string& nm = CONST((uint16_t)((ins.b << 8) | ins.c)).str_ref();
+                    if (globals_.find(nm) == globals_.end())
+                        throw LookVmError("Undefined variable: " + nm);
+                }
+                break;
+            }
             case OpCode::ARRAY_LEN: {
                 const Value& arr = R(ins.b);
                 int len = 0;

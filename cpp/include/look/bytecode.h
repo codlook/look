@@ -132,6 +132,8 @@ enum class OpCode : uint8_t {
     ASSOC_APPEND,    // push key r[b] + val r[c] onto assoc r[a] WITHOUT the dedup scan —
                      // emitted only for assoc literals whose keys the compiler has proven
                      // are distinct string literals, so the runtime scan is provably redundant
+    CHECK_DEFINED,   // throw "Undefined variable: <const b<<8|c>" when r[a] is null — emitted
+                     // right after LOAD_GLOBAL for a bare (no '$') name read as a VALUE
 };
 
 // ── Instruction ───────────────────────────────────────────────────────────────

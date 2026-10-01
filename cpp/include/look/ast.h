@@ -27,7 +27,8 @@ struct Statement {
 
 struct StringLiteral final : Expression {
     std::string value;
-    explicit StringLiteral(std::string v) : value(std::move(v)) {}
+    bool raw = false;   // single-quoted: {$...} stays literal text
+    explicit StringLiteral(std::string v, bool r = false) : value(std::move(v)), raw(r) {}
 };
 
 struct NumberLiteral final : Expression {

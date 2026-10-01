@@ -125,6 +125,7 @@ struct Token {
     std::optional<std::string> literal;
     int line;
     int column = 1;
+    bool raw = false;   // single-quoted string: no {$...} interpolation
 };
 
 } // namespace look

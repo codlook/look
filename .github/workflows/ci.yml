@@ -93,6 +93,20 @@ jobs:
             fi
           done
 
+      # Single quotes are raw + an undefined bare name is an error on both engines.
+      # The run must reach its last line: a crash that prints no FAIL must not pass.
+      - name: Raw string + bare name guard (both engines)
+        run: |
+          cd cpp
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/raw_string_bare_name_test.lk || true)"
+            echo "$out"
+            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+              echo "::error::raw string + bare name guard FAILED ($env)"
+              exit 1
+            fi
+          done
+
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
       # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
       # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.

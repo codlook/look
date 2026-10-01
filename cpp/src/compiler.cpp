@@ -1199,7 +1199,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         // Interpolation içeriyor mu? Lexer raw string gönderir
         // Basit string (interpolation yok) → LOAD_CONST
         // İnterpolasyon → compile_string_interp
-        if (e->value.find("{$") != std::string::npos) {
+        if (!e->raw && e->value.find("{$") != std::string::npos) {
             return compile_string_interp(e->value, expr.loc.line, r);
         }
         emit_load_const(r, Value(e->value), expr.loc.line);
@@ -1222,6 +1222,14 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         } else {
             uint16_t ni = add_const(Value(e->name));
             emit(OpCode::LOAD_GLOBAL, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
+            // Çıplak ('$'sız) ad DEĞER olarak okunuyor. ESKİ HATA: LOAD_GLOBAL çıplak adı
+            // ıskalayınca sessizce null veriyordu ("mod::fn"/çağrı hedefi için gerekli),
+            // dolayısıyla unutulan '$' — `if (is_admin)` — VM'de hatasız YANLIŞ DALA
+            // giriyordu; tree-walk (referans) "Undefined variable: is_admin" fırlatır.
+            // Çağrı hedefi hariç (adı CALL söyler) her çıplak okuma tanımlı olmalı.
+            if (!callee_ctx_ && !e->name.empty() && e->name[0] != '$'
+                && e->name.find("::") == std::string::npos)
+                emit(OpCode::CHECK_DEFINED, r, (uint8_t)(ni >> 8), (uint8_t)(ni & 0xFF));
         }
         return r;
     }
@@ -1564,7 +1572,10 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     }
 
     // Genel CALL: callee'yi register'a al, argümanları sıraya diz
+    // callee_ctx_ yalnız callee doğrudan bir AD iken açılır (iç içe ifadelere sızmasın).
+    callee_ctx_ = dynamic_cast<const Variable*>(e.callee.get()) != nullptr;
     uint8_t fn = compile_expr(*e.callee);
+    callee_ctx_ = false;
     // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
     uint8_t argc = (uint8_t)e.arguments.size();
     uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
