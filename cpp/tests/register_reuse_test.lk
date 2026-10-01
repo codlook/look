@@ -1,0 +1,1776 @@
+# Register reuse guard (2026-10-01).
+#
+# Every call with arguments used to consume ~argc+1 registers for good: the argument
+# block was always taken from the top and "protected" by raising a watermark that never
+# came back down, which also discarded every temporary allocated before it. One function
+# could hold at most 72 route() calls or 63 three-argument calls; past that the compile
+# failed and the WHOLE program ran on the interpreter (CLI and web).
+#
+# Each function below is far past the old ceiling. Under LOOK_VM_STRICT=1 a compile
+# failure is an error, so this file only runs at all if the registers are reused; the
+# sums check that reuse did not corrupt a live value.
+# Uses only builtin module functions so the CLI really runs it on the VM.
+use json
+
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+
+function add3($a, $b, $c) { return $a + $b + $c }
+function one($a) { return $a }
+function pair($a, $b) { return [$a, $b] }
+
+function many_calls() {
+    $s = 0
+    $s = $s + add3(1, 1, 2)
+    $s = $s + add3(2, 1, 2)
+    $s = $s + add3(3, 1, 2)
+    $s = $s + add3(4, 1, 2)
+    $s = $s + add3(5, 1, 2)
+    $s = $s + add3(6, 1, 2)
+    $s = $s + add3(7, 1, 2)
+    $s = $s + add3(8, 1, 2)
+    $s = $s + add3(9, 1, 2)
+    $s = $s + add3(10, 1, 2)
+    $s = $s + add3(11, 1, 2)
+    $s = $s + add3(12, 1, 2)
+    $s = $s + add3(13, 1, 2)
+    $s = $s + add3(14, 1, 2)
+    $s = $s + add3(15, 1, 2)
+    $s = $s + add3(16, 1, 2)
+    $s = $s + add3(17, 1, 2)
+    $s = $s + add3(18, 1, 2)
+    $s = $s + add3(19, 1, 2)
+    $s = $s + add3(20, 1, 2)
+    $s = $s + add3(21, 1, 2)
+    $s = $s + add3(22, 1, 2)
+    $s = $s + add3(23, 1, 2)
+    $s = $s + add3(24, 1, 2)
+    $s = $s + add3(25, 1, 2)
+    $s = $s + add3(26, 1, 2)
+    $s = $s + add3(27, 1, 2)
+    $s = $s + add3(28, 1, 2)
+    $s = $s + add3(29, 1, 2)
+    $s = $s + add3(30, 1, 2)
+    $s = $s + add3(31, 1, 2)
+    $s = $s + add3(32, 1, 2)
+    $s = $s + add3(33, 1, 2)
+    $s = $s + add3(34, 1, 2)
+    $s = $s + add3(35, 1, 2)
+    $s = $s + add3(36, 1, 2)
+    $s = $s + add3(37, 1, 2)
+    $s = $s + add3(38, 1, 2)
+    $s = $s + add3(39, 1, 2)
+    $s = $s + add3(40, 1, 2)
+    $s = $s + add3(41, 1, 2)
+    $s = $s + add3(42, 1, 2)
+    $s = $s + add3(43, 1, 2)
+    $s = $s + add3(44, 1, 2)
+    $s = $s + add3(45, 1, 2)
+    $s = $s + add3(46, 1, 2)
+    $s = $s + add3(47, 1, 2)
+    $s = $s + add3(48, 1, 2)
+    $s = $s + add3(49, 1, 2)
+    $s = $s + add3(50, 1, 2)
+    $s = $s + add3(51, 1, 2)
+    $s = $s + add3(52, 1, 2)
+    $s = $s + add3(53, 1, 2)
+    $s = $s + add3(54, 1, 2)
+    $s = $s + add3(55, 1, 2)
+    $s = $s + add3(56, 1, 2)
+    $s = $s + add3(57, 1, 2)
+    $s = $s + add3(58, 1, 2)
+    $s = $s + add3(59, 1, 2)
+    $s = $s + add3(60, 1, 2)
+    $s = $s + add3(61, 1, 2)
+    $s = $s + add3(62, 1, 2)
+    $s = $s + add3(63, 1, 2)
+    $s = $s + add3(64, 1, 2)
+    $s = $s + add3(65, 1, 2)
+    $s = $s + add3(66, 1, 2)
+    $s = $s + add3(67, 1, 2)
+    $s = $s + add3(68, 1, 2)
+    $s = $s + add3(69, 1, 2)
+    $s = $s + add3(70, 1, 2)
+    $s = $s + add3(71, 1, 2)
+    $s = $s + add3(72, 1, 2)
+    $s = $s + add3(73, 1, 2)
+    $s = $s + add3(74, 1, 2)
+    $s = $s + add3(75, 1, 2)
+    $s = $s + add3(76, 1, 2)
+    $s = $s + add3(77, 1, 2)
+    $s = $s + add3(78, 1, 2)
+    $s = $s + add3(79, 1, 2)
+    $s = $s + add3(80, 1, 2)
+    $s = $s + add3(81, 1, 2)
+    $s = $s + add3(82, 1, 2)
+    $s = $s + add3(83, 1, 2)
+    $s = $s + add3(84, 1, 2)
+    $s = $s + add3(85, 1, 2)
+    $s = $s + add3(86, 1, 2)
+    $s = $s + add3(87, 1, 2)
+    $s = $s + add3(88, 1, 2)
+    $s = $s + add3(89, 1, 2)
+    $s = $s + add3(90, 1, 2)
+    $s = $s + add3(91, 1, 2)
+    $s = $s + add3(92, 1, 2)
+    $s = $s + add3(93, 1, 2)
+    $s = $s + add3(94, 1, 2)
+    $s = $s + add3(95, 1, 2)
+    $s = $s + add3(96, 1, 2)
+    $s = $s + add3(97, 1, 2)
+    $s = $s + add3(98, 1, 2)
+    $s = $s + add3(99, 1, 2)
+    $s = $s + add3(100, 1, 2)
+    $s = $s + add3(101, 1, 2)
+    $s = $s + add3(102, 1, 2)
+    $s = $s + add3(103, 1, 2)
+    $s = $s + add3(104, 1, 2)
+    $s = $s + add3(105, 1, 2)
+    $s = $s + add3(106, 1, 2)
+    $s = $s + add3(107, 1, 2)
+    $s = $s + add3(108, 1, 2)
+    $s = $s + add3(109, 1, 2)
+    $s = $s + add3(110, 1, 2)
+    $s = $s + add3(111, 1, 2)
+    $s = $s + add3(112, 1, 2)
+    $s = $s + add3(113, 1, 2)
+    $s = $s + add3(114, 1, 2)
+    $s = $s + add3(115, 1, 2)
+    $s = $s + add3(116, 1, 2)
+    $s = $s + add3(117, 1, 2)
+    $s = $s + add3(118, 1, 2)
+    $s = $s + add3(119, 1, 2)
+    $s = $s + add3(120, 1, 2)
+    $s = $s + add3(121, 1, 2)
+    $s = $s + add3(122, 1, 2)
+    $s = $s + add3(123, 1, 2)
+    $s = $s + add3(124, 1, 2)
+    $s = $s + add3(125, 1, 2)
+    $s = $s + add3(126, 1, 2)
+    $s = $s + add3(127, 1, 2)
+    $s = $s + add3(128, 1, 2)
+    $s = $s + add3(129, 1, 2)
+    $s = $s + add3(130, 1, 2)
+    $s = $s + add3(131, 1, 2)
+    $s = $s + add3(132, 1, 2)
+    $s = $s + add3(133, 1, 2)
+    $s = $s + add3(134, 1, 2)
+    $s = $s + add3(135, 1, 2)
+    $s = $s + add3(136, 1, 2)
+    $s = $s + add3(137, 1, 2)
+    $s = $s + add3(138, 1, 2)
+    $s = $s + add3(139, 1, 2)
+    $s = $s + add3(140, 1, 2)
+    $s = $s + add3(141, 1, 2)
+    $s = $s + add3(142, 1, 2)
+    $s = $s + add3(143, 1, 2)
+    $s = $s + add3(144, 1, 2)
+    $s = $s + add3(145, 1, 2)
+    $s = $s + add3(146, 1, 2)
+    $s = $s + add3(147, 1, 2)
+    $s = $s + add3(148, 1, 2)
+    $s = $s + add3(149, 1, 2)
+    $s = $s + add3(150, 1, 2)
+    $s = $s + add3(151, 1, 2)
+    $s = $s + add3(152, 1, 2)
+    $s = $s + add3(153, 1, 2)
+    $s = $s + add3(154, 1, 2)
+    $s = $s + add3(155, 1, 2)
+    $s = $s + add3(156, 1, 2)
+    $s = $s + add3(157, 1, 2)
+    $s = $s + add3(158, 1, 2)
+    $s = $s + add3(159, 1, 2)
+    $s = $s + add3(160, 1, 2)
+    $s = $s + add3(161, 1, 2)
+    $s = $s + add3(162, 1, 2)
+    $s = $s + add3(163, 1, 2)
+    $s = $s + add3(164, 1, 2)
+    $s = $s + add3(165, 1, 2)
+    $s = $s + add3(166, 1, 2)
+    $s = $s + add3(167, 1, 2)
+    $s = $s + add3(168, 1, 2)
+    $s = $s + add3(169, 1, 2)
+    $s = $s + add3(170, 1, 2)
+    $s = $s + add3(171, 1, 2)
+    $s = $s + add3(172, 1, 2)
+    $s = $s + add3(173, 1, 2)
+    $s = $s + add3(174, 1, 2)
+    $s = $s + add3(175, 1, 2)
+    $s = $s + add3(176, 1, 2)
+    $s = $s + add3(177, 1, 2)
+    $s = $s + add3(178, 1, 2)
+    $s = $s + add3(179, 1, 2)
+    $s = $s + add3(180, 1, 2)
+    $s = $s + add3(181, 1, 2)
+    $s = $s + add3(182, 1, 2)
+    $s = $s + add3(183, 1, 2)
+    $s = $s + add3(184, 1, 2)
+    $s = $s + add3(185, 1, 2)
+    $s = $s + add3(186, 1, 2)
+    $s = $s + add3(187, 1, 2)
+    $s = $s + add3(188, 1, 2)
+    $s = $s + add3(189, 1, 2)
+    $s = $s + add3(190, 1, 2)
+    $s = $s + add3(191, 1, 2)
+    $s = $s + add3(192, 1, 2)
+    $s = $s + add3(193, 1, 2)
+    $s = $s + add3(194, 1, 2)
+    $s = $s + add3(195, 1, 2)
+    $s = $s + add3(196, 1, 2)
+    $s = $s + add3(197, 1, 2)
+    $s = $s + add3(198, 1, 2)
+    $s = $s + add3(199, 1, 2)
+    $s = $s + add3(200, 1, 2)
+    $s = $s + add3(201, 1, 2)
+    $s = $s + add3(202, 1, 2)
+    $s = $s + add3(203, 1, 2)
+    $s = $s + add3(204, 1, 2)
+    $s = $s + add3(205, 1, 2)
+    $s = $s + add3(206, 1, 2)
+    $s = $s + add3(207, 1, 2)
+    $s = $s + add3(208, 1, 2)
+    $s = $s + add3(209, 1, 2)
+    $s = $s + add3(210, 1, 2)
+    $s = $s + add3(211, 1, 2)
+    $s = $s + add3(212, 1, 2)
+    $s = $s + add3(213, 1, 2)
+    $s = $s + add3(214, 1, 2)
+    $s = $s + add3(215, 1, 2)
+    $s = $s + add3(216, 1, 2)
+    $s = $s + add3(217, 1, 2)
+    $s = $s + add3(218, 1, 2)
+    $s = $s + add3(219, 1, 2)
+    $s = $s + add3(220, 1, 2)
+    $s = $s + add3(221, 1, 2)
+    $s = $s + add3(222, 1, 2)
+    $s = $s + add3(223, 1, 2)
+    $s = $s + add3(224, 1, 2)
+    $s = $s + add3(225, 1, 2)
+    $s = $s + add3(226, 1, 2)
+    $s = $s + add3(227, 1, 2)
+    $s = $s + add3(228, 1, 2)
+    $s = $s + add3(229, 1, 2)
+    $s = $s + add3(230, 1, 2)
+    $s = $s + add3(231, 1, 2)
+    $s = $s + add3(232, 1, 2)
+    $s = $s + add3(233, 1, 2)
+    $s = $s + add3(234, 1, 2)
+    $s = $s + add3(235, 1, 2)
+    $s = $s + add3(236, 1, 2)
+    $s = $s + add3(237, 1, 2)
+    $s = $s + add3(238, 1, 2)
+    $s = $s + add3(239, 1, 2)
+    $s = $s + add3(240, 1, 2)
+    $s = $s + add3(241, 1, 2)
+    $s = $s + add3(242, 1, 2)
+    $s = $s + add3(243, 1, 2)
+    $s = $s + add3(244, 1, 2)
+    $s = $s + add3(245, 1, 2)
+    $s = $s + add3(246, 1, 2)
+    $s = $s + add3(247, 1, 2)
+    $s = $s + add3(248, 1, 2)
+    $s = $s + add3(249, 1, 2)
+    $s = $s + add3(250, 1, 2)
+    $s = $s + add3(251, 1, 2)
+    $s = $s + add3(252, 1, 2)
+    $s = $s + add3(253, 1, 2)
+    $s = $s + add3(254, 1, 2)
+    $s = $s + add3(255, 1, 2)
+    $s = $s + add3(256, 1, 2)
+    $s = $s + add3(257, 1, 2)
+    $s = $s + add3(258, 1, 2)
+    $s = $s + add3(259, 1, 2)
+    $s = $s + add3(260, 1, 2)
+    $s = $s + add3(261, 1, 2)
+    $s = $s + add3(262, 1, 2)
+    $s = $s + add3(263, 1, 2)
+    $s = $s + add3(264, 1, 2)
+    $s = $s + add3(265, 1, 2)
+    $s = $s + add3(266, 1, 2)
+    $s = $s + add3(267, 1, 2)
+    $s = $s + add3(268, 1, 2)
+    $s = $s + add3(269, 1, 2)
+    $s = $s + add3(270, 1, 2)
+    $s = $s + add3(271, 1, 2)
+    $s = $s + add3(272, 1, 2)
+    $s = $s + add3(273, 1, 2)
+    $s = $s + add3(274, 1, 2)
+    $s = $s + add3(275, 1, 2)
+    $s = $s + add3(276, 1, 2)
+    $s = $s + add3(277, 1, 2)
+    $s = $s + add3(278, 1, 2)
+    $s = $s + add3(279, 1, 2)
+    $s = $s + add3(280, 1, 2)
+    $s = $s + add3(281, 1, 2)
+    $s = $s + add3(282, 1, 2)
+    $s = $s + add3(283, 1, 2)
+    $s = $s + add3(284, 1, 2)
+    $s = $s + add3(285, 1, 2)
+    $s = $s + add3(286, 1, 2)
+    $s = $s + add3(287, 1, 2)
+    $s = $s + add3(288, 1, 2)
+    $s = $s + add3(289, 1, 2)
+    $s = $s + add3(290, 1, 2)
+    $s = $s + add3(291, 1, 2)
+    $s = $s + add3(292, 1, 2)
+    $s = $s + add3(293, 1, 2)
+    $s = $s + add3(294, 1, 2)
+    $s = $s + add3(295, 1, 2)
+    $s = $s + add3(296, 1, 2)
+    $s = $s + add3(297, 1, 2)
+    $s = $s + add3(298, 1, 2)
+    $s = $s + add3(299, 1, 2)
+    $s = $s + add3(300, 1, 2)
+    return $s
+}
+
+function many_statement_calls() {
+    $last = 0
+    add3(1, 1, 1)
+    add3(2, 2, 2)
+    add3(3, 3, 3)
+    add3(4, 4, 4)
+    add3(5, 5, 5)
+    add3(6, 6, 6)
+    add3(7, 7, 7)
+    add3(8, 8, 8)
+    add3(9, 9, 9)
+    add3(10, 10, 10)
+    add3(11, 11, 11)
+    add3(12, 12, 12)
+    add3(13, 13, 13)
+    add3(14, 14, 14)
+    add3(15, 15, 15)
+    add3(16, 16, 16)
+    add3(17, 17, 17)
+    add3(18, 18, 18)
+    add3(19, 19, 19)
+    add3(20, 20, 20)
+    add3(21, 21, 21)
+    add3(22, 22, 22)
+    add3(23, 23, 23)
+    add3(24, 24, 24)
+    add3(25, 25, 25)
+    add3(26, 26, 26)
+    add3(27, 27, 27)
+    add3(28, 28, 28)
+    add3(29, 29, 29)
+    add3(30, 30, 30)
+    add3(31, 31, 31)
+    add3(32, 32, 32)
+    add3(33, 33, 33)
+    add3(34, 34, 34)
+    add3(35, 35, 35)
+    add3(36, 36, 36)
+    add3(37, 37, 37)
+    add3(38, 38, 38)
+    add3(39, 39, 39)
+    add3(40, 40, 40)
+    add3(41, 41, 41)
+    add3(42, 42, 42)
+    add3(43, 43, 43)
+    add3(44, 44, 44)
+    add3(45, 45, 45)
+    add3(46, 46, 46)
+    add3(47, 47, 47)
+    add3(48, 48, 48)
+    add3(49, 49, 49)
+    add3(50, 50, 50)
+    add3(51, 51, 51)
+    add3(52, 52, 52)
+    add3(53, 53, 53)
+    add3(54, 54, 54)
+    add3(55, 55, 55)
+    add3(56, 56, 56)
+    add3(57, 57, 57)
+    add3(58, 58, 58)
+    add3(59, 59, 59)
+    add3(60, 60, 60)
+    add3(61, 61, 61)
+    add3(62, 62, 62)
+    add3(63, 63, 63)
+    add3(64, 64, 64)
+    add3(65, 65, 65)
+    add3(66, 66, 66)
+    add3(67, 67, 67)
+    add3(68, 68, 68)
+    add3(69, 69, 69)
+    add3(70, 70, 70)
+    add3(71, 71, 71)
+    add3(72, 72, 72)
+    add3(73, 73, 73)
+    add3(74, 74, 74)
+    add3(75, 75, 75)
+    add3(76, 76, 76)
+    add3(77, 77, 77)
+    add3(78, 78, 78)
+    add3(79, 79, 79)
+    add3(80, 80, 80)
+    add3(81, 81, 81)
+    add3(82, 82, 82)
+    add3(83, 83, 83)
+    add3(84, 84, 84)
+    add3(85, 85, 85)
+    add3(86, 86, 86)
+    add3(87, 87, 87)
+    add3(88, 88, 88)
+    add3(89, 89, 89)
+    add3(90, 90, 90)
+    add3(91, 91, 91)
+    add3(92, 92, 92)
+    add3(93, 93, 93)
+    add3(94, 94, 94)
+    add3(95, 95, 95)
+    add3(96, 96, 96)
+    add3(97, 97, 97)
+    add3(98, 98, 98)
+    add3(99, 99, 99)
+    add3(100, 100, 100)
+    add3(101, 101, 101)
+    add3(102, 102, 102)
+    add3(103, 103, 103)
+    add3(104, 104, 104)
+    add3(105, 105, 105)
+    add3(106, 106, 106)
+    add3(107, 107, 107)
+    add3(108, 108, 108)
+    add3(109, 109, 109)
+    add3(110, 110, 110)
+    add3(111, 111, 111)
+    add3(112, 112, 112)
+    add3(113, 113, 113)
+    add3(114, 114, 114)
+    add3(115, 115, 115)
+    add3(116, 116, 116)
+    add3(117, 117, 117)
+    add3(118, 118, 118)
+    add3(119, 119, 119)
+    add3(120, 120, 120)
+    add3(121, 121, 121)
+    add3(122, 122, 122)
+    add3(123, 123, 123)
+    add3(124, 124, 124)
+    add3(125, 125, 125)
+    add3(126, 126, 126)
+    add3(127, 127, 127)
+    add3(128, 128, 128)
+    add3(129, 129, 129)
+    add3(130, 130, 130)
+    add3(131, 131, 131)
+    add3(132, 132, 132)
+    add3(133, 133, 133)
+    add3(134, 134, 134)
+    add3(135, 135, 135)
+    add3(136, 136, 136)
+    add3(137, 137, 137)
+    add3(138, 138, 138)
+    add3(139, 139, 139)
+    add3(140, 140, 140)
+    add3(141, 141, 141)
+    add3(142, 142, 142)
+    add3(143, 143, 143)
+    add3(144, 144, 144)
+    add3(145, 145, 145)
+    add3(146, 146, 146)
+    add3(147, 147, 147)
+    add3(148, 148, 148)
+    add3(149, 149, 149)
+    add3(150, 150, 150)
+    add3(151, 151, 151)
+    add3(152, 152, 152)
+    add3(153, 153, 153)
+    add3(154, 154, 154)
+    add3(155, 155, 155)
+    add3(156, 156, 156)
+    add3(157, 157, 157)
+    add3(158, 158, 158)
+    add3(159, 159, 159)
+    add3(160, 160, 160)
+    add3(161, 161, 161)
+    add3(162, 162, 162)
+    add3(163, 163, 163)
+    add3(164, 164, 164)
+    add3(165, 165, 165)
+    add3(166, 166, 166)
+    add3(167, 167, 167)
+    add3(168, 168, 168)
+    add3(169, 169, 169)
+    add3(170, 170, 170)
+    add3(171, 171, 171)
+    add3(172, 172, 172)
+    add3(173, 173, 173)
+    add3(174, 174, 174)
+    add3(175, 175, 175)
+    add3(176, 176, 176)
+    add3(177, 177, 177)
+    add3(178, 178, 178)
+    add3(179, 179, 179)
+    add3(180, 180, 180)
+    add3(181, 181, 181)
+    add3(182, 182, 182)
+    add3(183, 183, 183)
+    add3(184, 184, 184)
+    add3(185, 185, 185)
+    add3(186, 186, 186)
+    add3(187, 187, 187)
+    add3(188, 188, 188)
+    add3(189, 189, 189)
+    add3(190, 190, 190)
+    add3(191, 191, 191)
+    add3(192, 192, 192)
+    add3(193, 193, 193)
+    add3(194, 194, 194)
+    add3(195, 195, 195)
+    add3(196, 196, 196)
+    add3(197, 197, 197)
+    add3(198, 198, 198)
+    add3(199, 199, 199)
+    add3(200, 200, 200)
+    add3(201, 201, 201)
+    add3(202, 202, 202)
+    add3(203, 203, 203)
+    add3(204, 204, 204)
+    add3(205, 205, 205)
+    add3(206, 206, 206)
+    add3(207, 207, 207)
+    add3(208, 208, 208)
+    add3(209, 209, 209)
+    add3(210, 210, 210)
+    add3(211, 211, 211)
+    add3(212, 212, 212)
+    add3(213, 213, 213)
+    add3(214, 214, 214)
+    add3(215, 215, 215)
+    add3(216, 216, 216)
+    add3(217, 217, 217)
+    add3(218, 218, 218)
+    add3(219, 219, 219)
+    add3(220, 220, 220)
+    add3(221, 221, 221)
+    add3(222, 222, 222)
+    add3(223, 223, 223)
+    add3(224, 224, 224)
+    add3(225, 225, 225)
+    add3(226, 226, 226)
+    add3(227, 227, 227)
+    add3(228, 228, 228)
+    add3(229, 229, 229)
+    add3(230, 230, 230)
+    add3(231, 231, 231)
+    add3(232, 232, 232)
+    add3(233, 233, 233)
+    add3(234, 234, 234)
+    add3(235, 235, 235)
+    add3(236, 236, 236)
+    add3(237, 237, 237)
+    add3(238, 238, 238)
+    add3(239, 239, 239)
+    add3(240, 240, 240)
+    add3(241, 241, 241)
+    add3(242, 242, 242)
+    add3(243, 243, 243)
+    add3(244, 244, 244)
+    add3(245, 245, 245)
+    add3(246, 246, 246)
+    add3(247, 247, 247)
+    add3(248, 248, 248)
+    add3(249, 249, 249)
+    add3(250, 250, 250)
+    add3(251, 251, 251)
+    add3(252, 252, 252)
+    add3(253, 253, 253)
+    add3(254, 254, 254)
+    add3(255, 255, 255)
+    add3(256, 256, 256)
+    add3(257, 257, 257)
+    add3(258, 258, 258)
+    add3(259, 259, 259)
+    add3(260, 260, 260)
+    add3(261, 261, 261)
+    add3(262, 262, 262)
+    add3(263, 263, 263)
+    add3(264, 264, 264)
+    add3(265, 265, 265)
+    add3(266, 266, 266)
+    add3(267, 267, 267)
+    add3(268, 268, 268)
+    add3(269, 269, 269)
+    add3(270, 270, 270)
+    add3(271, 271, 271)
+    add3(272, 272, 272)
+    add3(273, 273, 273)
+    add3(274, 274, 274)
+    add3(275, 275, 275)
+    add3(276, 276, 276)
+    add3(277, 277, 277)
+    add3(278, 278, 278)
+    add3(279, 279, 279)
+    add3(280, 280, 280)
+    add3(281, 281, 281)
+    add3(282, 282, 282)
+    add3(283, 283, 283)
+    add3(284, 284, 284)
+    add3(285, 285, 285)
+    add3(286, 286, 286)
+    add3(287, 287, 287)
+    add3(288, 288, 288)
+    add3(289, 289, 289)
+    add3(290, 290, 290)
+    add3(291, 291, 291)
+    add3(292, 292, 292)
+    add3(293, 293, 293)
+    add3(294, 294, 294)
+    add3(295, 295, 295)
+    add3(296, 296, 296)
+    add3(297, 297, 297)
+    add3(298, 298, 298)
+    add3(299, 299, 299)
+    add3(300, 300, 300)
+    $last = add3(1, 2, 3)
+    return $last
+}
+
+# Live values around and inside call arguments must survive reuse.
+function nested_calls() {
+    $keep = 1000
+    $s = 0
+    $s = $s + add3(one(1), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(2), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(3), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(4), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(5), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(6), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(7), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(8), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(9), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(10), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(11), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(12), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(13), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(14), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(15), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(16), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(17), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(18), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(19), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(20), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(21), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(22), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(23), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(24), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(25), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(26), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(27), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(28), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(29), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(30), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(31), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(32), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(33), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(34), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(35), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(36), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(37), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(38), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(39), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(40), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(41), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(42), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(43), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(44), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(45), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(46), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(47), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(48), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(49), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(50), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(51), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(52), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(53), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(54), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(55), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(56), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(57), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(58), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(59), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(60), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(61), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(62), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(63), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(64), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(65), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(66), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(67), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(68), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(69), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(70), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(71), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(72), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(73), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(74), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(75), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(76), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(77), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(78), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(79), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(80), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(81), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(82), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(83), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(84), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(85), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(86), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(87), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(88), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(89), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(90), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(91), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(92), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(93), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(94), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(95), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(96), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(97), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(98), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(99), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(100), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(101), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(102), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(103), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(104), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(105), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(106), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(107), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(108), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(109), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(110), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(111), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(112), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(113), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(114), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(115), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(116), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(117), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(118), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(119), add3(1, one(2), 3), $keep) + one($keep)
+    $s = $s + add3(one(120), add3(1, one(2), 3), $keep) + one($keep)
+    return $s + $keep
+}
+
+function calls_in_loops() {
+    $out = ""
+    foreach ([1, 2, 3] as $i) {
+        foreach (["a", "b"] as $k => $v) {
+            $p = pair(add3($i, $k, 0), $v)
+            $out = $out . $p[0] . $p[1] . one("|")
+        }
+    }
+    foreach ([1] as $q) { $out = $out . one("") }
+    foreach ([2] as $q) { $out = $out . one("") }
+    foreach ([3] as $q) { $out = $out . one("") }
+    foreach ([4] as $q) { $out = $out . one("") }
+    foreach ([5] as $q) { $out = $out . one("") }
+    foreach ([6] as $q) { $out = $out . one("") }
+    foreach ([7] as $q) { $out = $out . one("") }
+    foreach ([8] as $q) { $out = $out . one("") }
+    foreach ([9] as $q) { $out = $out . one("") }
+    foreach ([10] as $q) { $out = $out . one("") }
+    foreach ([11] as $q) { $out = $out . one("") }
+    foreach ([12] as $q) { $out = $out . one("") }
+    foreach ([13] as $q) { $out = $out . one("") }
+    foreach ([14] as $q) { $out = $out . one("") }
+    foreach ([15] as $q) { $out = $out . one("") }
+    foreach ([16] as $q) { $out = $out . one("") }
+    foreach ([17] as $q) { $out = $out . one("") }
+    foreach ([18] as $q) { $out = $out . one("") }
+    foreach ([19] as $q) { $out = $out . one("") }
+    foreach ([20] as $q) { $out = $out . one("") }
+    foreach ([21] as $q) { $out = $out . one("") }
+    foreach ([22] as $q) { $out = $out . one("") }
+    foreach ([23] as $q) { $out = $out . one("") }
+    foreach ([24] as $q) { $out = $out . one("") }
+    foreach ([25] as $q) { $out = $out . one("") }
+    foreach ([26] as $q) { $out = $out . one("") }
+    foreach ([27] as $q) { $out = $out . one("") }
+    foreach ([28] as $q) { $out = $out . one("") }
+    foreach ([29] as $q) { $out = $out . one("") }
+    foreach ([30] as $q) { $out = $out . one("") }
+    foreach ([31] as $q) { $out = $out . one("") }
+    foreach ([32] as $q) { $out = $out . one("") }
+    foreach ([33] as $q) { $out = $out . one("") }
+    foreach ([34] as $q) { $out = $out . one("") }
+    foreach ([35] as $q) { $out = $out . one("") }
+    foreach ([36] as $q) { $out = $out . one("") }
+    foreach ([37] as $q) { $out = $out . one("") }
+    foreach ([38] as $q) { $out = $out . one("") }
+    foreach ([39] as $q) { $out = $out . one("") }
+    foreach ([40] as $q) { $out = $out . one("") }
+    foreach ([41] as $q) { $out = $out . one("") }
+    foreach ([42] as $q) { $out = $out . one("") }
+    foreach ([43] as $q) { $out = $out . one("") }
+    foreach ([44] as $q) { $out = $out . one("") }
+    foreach ([45] as $q) { $out = $out . one("") }
+    foreach ([46] as $q) { $out = $out . one("") }
+    foreach ([47] as $q) { $out = $out . one("") }
+    foreach ([48] as $q) { $out = $out . one("") }
+    foreach ([49] as $q) { $out = $out . one("") }
+    foreach ([50] as $q) { $out = $out . one("") }
+    foreach ([51] as $q) { $out = $out . one("") }
+    foreach ([52] as $q) { $out = $out . one("") }
+    foreach ([53] as $q) { $out = $out . one("") }
+    foreach ([54] as $q) { $out = $out . one("") }
+    foreach ([55] as $q) { $out = $out . one("") }
+    foreach ([56] as $q) { $out = $out . one("") }
+    foreach ([57] as $q) { $out = $out . one("") }
+    foreach ([58] as $q) { $out = $out . one("") }
+    foreach ([59] as $q) { $out = $out . one("") }
+    foreach ([60] as $q) { $out = $out . one("") }
+    foreach ([61] as $q) { $out = $out . one("") }
+    foreach ([62] as $q) { $out = $out . one("") }
+    foreach ([63] as $q) { $out = $out . one("") }
+    foreach ([64] as $q) { $out = $out . one("") }
+    foreach ([65] as $q) { $out = $out . one("") }
+    foreach ([66] as $q) { $out = $out . one("") }
+    foreach ([67] as $q) { $out = $out . one("") }
+    foreach ([68] as $q) { $out = $out . one("") }
+    foreach ([69] as $q) { $out = $out . one("") }
+    foreach ([70] as $q) { $out = $out . one("") }
+    foreach ([71] as $q) { $out = $out . one("") }
+    foreach ([72] as $q) { $out = $out . one("") }
+    foreach ([73] as $q) { $out = $out . one("") }
+    foreach ([74] as $q) { $out = $out . one("") }
+    foreach ([75] as $q) { $out = $out . one("") }
+    foreach ([76] as $q) { $out = $out . one("") }
+    foreach ([77] as $q) { $out = $out . one("") }
+    foreach ([78] as $q) { $out = $out . one("") }
+    foreach ([79] as $q) { $out = $out . one("") }
+    foreach ([80] as $q) { $out = $out . one("") }
+    return $out
+}
+
+function closures_in_args() {
+    $base = 10
+    $s = 0
+    $s = $s + add3(one(fn($x) => $x + $base)(1), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(2), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(3), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(4), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(5), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(6), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(7), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(8), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(9), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(10), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(11), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(12), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(13), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(14), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(15), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(16), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(17), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(18), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(19), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(20), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(21), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(22), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(23), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(24), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(25), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(26), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(27), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(28), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(29), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(30), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(31), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(32), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(33), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(34), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(35), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(36), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(37), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(38), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(39), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(40), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(41), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(42), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(43), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(44), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(45), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(46), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(47), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(48), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(49), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(50), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(51), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(52), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(53), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(54), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(55), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(56), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(57), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(58), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(59), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(60), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(61), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(62), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(63), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(64), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(65), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(66), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(67), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(68), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(69), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(70), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(71), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(72), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(73), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(74), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(75), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(76), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(77), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(78), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(79), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(80), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(81), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(82), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(83), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(84), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(85), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(86), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(87), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(88), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(89), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(90), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(91), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(92), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(93), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(94), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(95), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(96), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(97), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(98), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(99), 0, 0)
+    $s = $s + add3(one(fn($x) => $x + $base)(100), 0, 0)
+    return $s
+}
+
+# With the ceiling gone a function can hold more than 256 closures. The closure index was
+# 8 bits wide, so the 257th silently became the 1st (route 400 answered as route 144).
+function many_closures($pick) {
+    $r = ""
+    $f = fn() => "c1"
+    if ($pick == 1) { $r = $f() }
+    $f = fn() => "c2"
+    if ($pick == 2) { $r = $f() }
+    $f = fn() => "c3"
+    if ($pick == 3) { $r = $f() }
+    $f = fn() => "c4"
+    if ($pick == 4) { $r = $f() }
+    $f = fn() => "c5"
+    if ($pick == 5) { $r = $f() }
+    $f = fn() => "c6"
+    if ($pick == 6) { $r = $f() }
+    $f = fn() => "c7"
+    if ($pick == 7) { $r = $f() }
+    $f = fn() => "c8"
+    if ($pick == 8) { $r = $f() }
+    $f = fn() => "c9"
+    if ($pick == 9) { $r = $f() }
+    $f = fn() => "c10"
+    if ($pick == 10) { $r = $f() }
+    $f = fn() => "c11"
+    if ($pick == 11) { $r = $f() }
+    $f = fn() => "c12"
+    if ($pick == 12) { $r = $f() }
+    $f = fn() => "c13"
+    if ($pick == 13) { $r = $f() }
+    $f = fn() => "c14"
+    if ($pick == 14) { $r = $f() }
+    $f = fn() => "c15"
+    if ($pick == 15) { $r = $f() }
+    $f = fn() => "c16"
+    if ($pick == 16) { $r = $f() }
+    $f = fn() => "c17"
+    if ($pick == 17) { $r = $f() }
+    $f = fn() => "c18"
+    if ($pick == 18) { $r = $f() }
+    $f = fn() => "c19"
+    if ($pick == 19) { $r = $f() }
+    $f = fn() => "c20"
+    if ($pick == 20) { $r = $f() }
+    $f = fn() => "c21"
+    if ($pick == 21) { $r = $f() }
+    $f = fn() => "c22"
+    if ($pick == 22) { $r = $f() }
+    $f = fn() => "c23"
+    if ($pick == 23) { $r = $f() }
+    $f = fn() => "c24"
+    if ($pick == 24) { $r = $f() }
+    $f = fn() => "c25"
+    if ($pick == 25) { $r = $f() }
+    $f = fn() => "c26"
+    if ($pick == 26) { $r = $f() }
+    $f = fn() => "c27"
+    if ($pick == 27) { $r = $f() }
+    $f = fn() => "c28"
+    if ($pick == 28) { $r = $f() }
+    $f = fn() => "c29"
+    if ($pick == 29) { $r = $f() }
+    $f = fn() => "c30"
+    if ($pick == 30) { $r = $f() }
+    $f = fn() => "c31"
+    if ($pick == 31) { $r = $f() }
+    $f = fn() => "c32"
+    if ($pick == 32) { $r = $f() }
+    $f = fn() => "c33"
+    if ($pick == 33) { $r = $f() }
+    $f = fn() => "c34"
+    if ($pick == 34) { $r = $f() }
+    $f = fn() => "c35"
+    if ($pick == 35) { $r = $f() }
+    $f = fn() => "c36"
+    if ($pick == 36) { $r = $f() }
+    $f = fn() => "c37"
+    if ($pick == 37) { $r = $f() }
+    $f = fn() => "c38"
+    if ($pick == 38) { $r = $f() }
+    $f = fn() => "c39"
+    if ($pick == 39) { $r = $f() }
+    $f = fn() => "c40"
+    if ($pick == 40) { $r = $f() }
+    $f = fn() => "c41"
+    if ($pick == 41) { $r = $f() }
+    $f = fn() => "c42"
+    if ($pick == 42) { $r = $f() }
+    $f = fn() => "c43"
+    if ($pick == 43) { $r = $f() }
+    $f = fn() => "c44"
+    if ($pick == 44) { $r = $f() }
+    $f = fn() => "c45"
+    if ($pick == 45) { $r = $f() }
+    $f = fn() => "c46"
+    if ($pick == 46) { $r = $f() }
+    $f = fn() => "c47"
+    if ($pick == 47) { $r = $f() }
+    $f = fn() => "c48"
+    if ($pick == 48) { $r = $f() }
+    $f = fn() => "c49"
+    if ($pick == 49) { $r = $f() }
+    $f = fn() => "c50"
+    if ($pick == 50) { $r = $f() }
+    $f = fn() => "c51"
+    if ($pick == 51) { $r = $f() }
+    $f = fn() => "c52"
+    if ($pick == 52) { $r = $f() }
+    $f = fn() => "c53"
+    if ($pick == 53) { $r = $f() }
+    $f = fn() => "c54"
+    if ($pick == 54) { $r = $f() }
+    $f = fn() => "c55"
+    if ($pick == 55) { $r = $f() }
+    $f = fn() => "c56"
+    if ($pick == 56) { $r = $f() }
+    $f = fn() => "c57"
+    if ($pick == 57) { $r = $f() }
+    $f = fn() => "c58"
+    if ($pick == 58) { $r = $f() }
+    $f = fn() => "c59"
+    if ($pick == 59) { $r = $f() }
+    $f = fn() => "c60"
+    if ($pick == 60) { $r = $f() }
+    $f = fn() => "c61"
+    if ($pick == 61) { $r = $f() }
+    $f = fn() => "c62"
+    if ($pick == 62) { $r = $f() }
+    $f = fn() => "c63"
+    if ($pick == 63) { $r = $f() }
+    $f = fn() => "c64"
+    if ($pick == 64) { $r = $f() }
+    $f = fn() => "c65"
+    if ($pick == 65) { $r = $f() }
+    $f = fn() => "c66"
+    if ($pick == 66) { $r = $f() }
+    $f = fn() => "c67"
+    if ($pick == 67) { $r = $f() }
+    $f = fn() => "c68"
+    if ($pick == 68) { $r = $f() }
+    $f = fn() => "c69"
+    if ($pick == 69) { $r = $f() }
+    $f = fn() => "c70"
+    if ($pick == 70) { $r = $f() }
+    $f = fn() => "c71"
+    if ($pick == 71) { $r = $f() }
+    $f = fn() => "c72"
+    if ($pick == 72) { $r = $f() }
+    $f = fn() => "c73"
+    if ($pick == 73) { $r = $f() }
+    $f = fn() => "c74"
+    if ($pick == 74) { $r = $f() }
+    $f = fn() => "c75"
+    if ($pick == 75) { $r = $f() }
+    $f = fn() => "c76"
+    if ($pick == 76) { $r = $f() }
+    $f = fn() => "c77"
+    if ($pick == 77) { $r = $f() }
+    $f = fn() => "c78"
+    if ($pick == 78) { $r = $f() }
+    $f = fn() => "c79"
+    if ($pick == 79) { $r = $f() }
+    $f = fn() => "c80"
+    if ($pick == 80) { $r = $f() }
+    $f = fn() => "c81"
+    if ($pick == 81) { $r = $f() }
+    $f = fn() => "c82"
+    if ($pick == 82) { $r = $f() }
+    $f = fn() => "c83"
+    if ($pick == 83) { $r = $f() }
+    $f = fn() => "c84"
+    if ($pick == 84) { $r = $f() }
+    $f = fn() => "c85"
+    if ($pick == 85) { $r = $f() }
+    $f = fn() => "c86"
+    if ($pick == 86) { $r = $f() }
+    $f = fn() => "c87"
+    if ($pick == 87) { $r = $f() }
+    $f = fn() => "c88"
+    if ($pick == 88) { $r = $f() }
+    $f = fn() => "c89"
+    if ($pick == 89) { $r = $f() }
+    $f = fn() => "c90"
+    if ($pick == 90) { $r = $f() }
+    $f = fn() => "c91"
+    if ($pick == 91) { $r = $f() }
+    $f = fn() => "c92"
+    if ($pick == 92) { $r = $f() }
+    $f = fn() => "c93"
+    if ($pick == 93) { $r = $f() }
+    $f = fn() => "c94"
+    if ($pick == 94) { $r = $f() }
+    $f = fn() => "c95"
+    if ($pick == 95) { $r = $f() }
+    $f = fn() => "c96"
+    if ($pick == 96) { $r = $f() }
+    $f = fn() => "c97"
+    if ($pick == 97) { $r = $f() }
+    $f = fn() => "c98"
+    if ($pick == 98) { $r = $f() }
+    $f = fn() => "c99"
+    if ($pick == 99) { $r = $f() }
+    $f = fn() => "c100"
+    if ($pick == 100) { $r = $f() }
+    $f = fn() => "c101"
+    if ($pick == 101) { $r = $f() }
+    $f = fn() => "c102"
+    if ($pick == 102) { $r = $f() }
+    $f = fn() => "c103"
+    if ($pick == 103) { $r = $f() }
+    $f = fn() => "c104"
+    if ($pick == 104) { $r = $f() }
+    $f = fn() => "c105"
+    if ($pick == 105) { $r = $f() }
+    $f = fn() => "c106"
+    if ($pick == 106) { $r = $f() }
+    $f = fn() => "c107"
+    if ($pick == 107) { $r = $f() }
+    $f = fn() => "c108"
+    if ($pick == 108) { $r = $f() }
+    $f = fn() => "c109"
+    if ($pick == 109) { $r = $f() }
+    $f = fn() => "c110"
+    if ($pick == 110) { $r = $f() }
+    $f = fn() => "c111"
+    if ($pick == 111) { $r = $f() }
+    $f = fn() => "c112"
+    if ($pick == 112) { $r = $f() }
+    $f = fn() => "c113"
+    if ($pick == 113) { $r = $f() }
+    $f = fn() => "c114"
+    if ($pick == 114) { $r = $f() }
+    $f = fn() => "c115"
+    if ($pick == 115) { $r = $f() }
+    $f = fn() => "c116"
+    if ($pick == 116) { $r = $f() }
+    $f = fn() => "c117"
+    if ($pick == 117) { $r = $f() }
+    $f = fn() => "c118"
+    if ($pick == 118) { $r = $f() }
+    $f = fn() => "c119"
+    if ($pick == 119) { $r = $f() }
+    $f = fn() => "c120"
+    if ($pick == 120) { $r = $f() }
+    $f = fn() => "c121"
+    if ($pick == 121) { $r = $f() }
+    $f = fn() => "c122"
+    if ($pick == 122) { $r = $f() }
+    $f = fn() => "c123"
+    if ($pick == 123) { $r = $f() }
+    $f = fn() => "c124"
+    if ($pick == 124) { $r = $f() }
+    $f = fn() => "c125"
+    if ($pick == 125) { $r = $f() }
+    $f = fn() => "c126"
+    if ($pick == 126) { $r = $f() }
+    $f = fn() => "c127"
+    if ($pick == 127) { $r = $f() }
+    $f = fn() => "c128"
+    if ($pick == 128) { $r = $f() }
+    $f = fn() => "c129"
+    if ($pick == 129) { $r = $f() }
+    $f = fn() => "c130"
+    if ($pick == 130) { $r = $f() }
+    $f = fn() => "c131"
+    if ($pick == 131) { $r = $f() }
+    $f = fn() => "c132"
+    if ($pick == 132) { $r = $f() }
+    $f = fn() => "c133"
+    if ($pick == 133) { $r = $f() }
+    $f = fn() => "c134"
+    if ($pick == 134) { $r = $f() }
+    $f = fn() => "c135"
+    if ($pick == 135) { $r = $f() }
+    $f = fn() => "c136"
+    if ($pick == 136) { $r = $f() }
+    $f = fn() => "c137"
+    if ($pick == 137) { $r = $f() }
+    $f = fn() => "c138"
+    if ($pick == 138) { $r = $f() }
+    $f = fn() => "c139"
+    if ($pick == 139) { $r = $f() }
+    $f = fn() => "c140"
+    if ($pick == 140) { $r = $f() }
+    $f = fn() => "c141"
+    if ($pick == 141) { $r = $f() }
+    $f = fn() => "c142"
+    if ($pick == 142) { $r = $f() }
+    $f = fn() => "c143"
+    if ($pick == 143) { $r = $f() }
+    $f = fn() => "c144"
+    if ($pick == 144) { $r = $f() }
+    $f = fn() => "c145"
+    if ($pick == 145) { $r = $f() }
+    $f = fn() => "c146"
+    if ($pick == 146) { $r = $f() }
+    $f = fn() => "c147"
+    if ($pick == 147) { $r = $f() }
+    $f = fn() => "c148"
+    if ($pick == 148) { $r = $f() }
+    $f = fn() => "c149"
+    if ($pick == 149) { $r = $f() }
+    $f = fn() => "c150"
+    if ($pick == 150) { $r = $f() }
+    $f = fn() => "c151"
+    if ($pick == 151) { $r = $f() }
+    $f = fn() => "c152"
+    if ($pick == 152) { $r = $f() }
+    $f = fn() => "c153"
+    if ($pick == 153) { $r = $f() }
+    $f = fn() => "c154"
+    if ($pick == 154) { $r = $f() }
+    $f = fn() => "c155"
+    if ($pick == 155) { $r = $f() }
+    $f = fn() => "c156"
+    if ($pick == 156) { $r = $f() }
+    $f = fn() => "c157"
+    if ($pick == 157) { $r = $f() }
+    $f = fn() => "c158"
+    if ($pick == 158) { $r = $f() }
+    $f = fn() => "c159"
+    if ($pick == 159) { $r = $f() }
+    $f = fn() => "c160"
+    if ($pick == 160) { $r = $f() }
+    $f = fn() => "c161"
+    if ($pick == 161) { $r = $f() }
+    $f = fn() => "c162"
+    if ($pick == 162) { $r = $f() }
+    $f = fn() => "c163"
+    if ($pick == 163) { $r = $f() }
+    $f = fn() => "c164"
+    if ($pick == 164) { $r = $f() }
+    $f = fn() => "c165"
+    if ($pick == 165) { $r = $f() }
+    $f = fn() => "c166"
+    if ($pick == 166) { $r = $f() }
+    $f = fn() => "c167"
+    if ($pick == 167) { $r = $f() }
+    $f = fn() => "c168"
+    if ($pick == 168) { $r = $f() }
+    $f = fn() => "c169"
+    if ($pick == 169) { $r = $f() }
+    $f = fn() => "c170"
+    if ($pick == 170) { $r = $f() }
+    $f = fn() => "c171"
+    if ($pick == 171) { $r = $f() }
+    $f = fn() => "c172"
+    if ($pick == 172) { $r = $f() }
+    $f = fn() => "c173"
+    if ($pick == 173) { $r = $f() }
+    $f = fn() => "c174"
+    if ($pick == 174) { $r = $f() }
+    $f = fn() => "c175"
+    if ($pick == 175) { $r = $f() }
+    $f = fn() => "c176"
+    if ($pick == 176) { $r = $f() }
+    $f = fn() => "c177"
+    if ($pick == 177) { $r = $f() }
+    $f = fn() => "c178"
+    if ($pick == 178) { $r = $f() }
+    $f = fn() => "c179"
+    if ($pick == 179) { $r = $f() }
+    $f = fn() => "c180"
+    if ($pick == 180) { $r = $f() }
+    $f = fn() => "c181"
+    if ($pick == 181) { $r = $f() }
+    $f = fn() => "c182"
+    if ($pick == 182) { $r = $f() }
+    $f = fn() => "c183"
+    if ($pick == 183) { $r = $f() }
+    $f = fn() => "c184"
+    if ($pick == 184) { $r = $f() }
+    $f = fn() => "c185"
+    if ($pick == 185) { $r = $f() }
+    $f = fn() => "c186"
+    if ($pick == 186) { $r = $f() }
+    $f = fn() => "c187"
+    if ($pick == 187) { $r = $f() }
+    $f = fn() => "c188"
+    if ($pick == 188) { $r = $f() }
+    $f = fn() => "c189"
+    if ($pick == 189) { $r = $f() }
+    $f = fn() => "c190"
+    if ($pick == 190) { $r = $f() }
+    $f = fn() => "c191"
+    if ($pick == 191) { $r = $f() }
+    $f = fn() => "c192"
+    if ($pick == 192) { $r = $f() }
+    $f = fn() => "c193"
+    if ($pick == 193) { $r = $f() }
+    $f = fn() => "c194"
+    if ($pick == 194) { $r = $f() }
+    $f = fn() => "c195"
+    if ($pick == 195) { $r = $f() }
+    $f = fn() => "c196"
+    if ($pick == 196) { $r = $f() }
+    $f = fn() => "c197"
+    if ($pick == 197) { $r = $f() }
+    $f = fn() => "c198"
+    if ($pick == 198) { $r = $f() }
+    $f = fn() => "c199"
+    if ($pick == 199) { $r = $f() }
+    $f = fn() => "c200"
+    if ($pick == 200) { $r = $f() }
+    $f = fn() => "c201"
+    if ($pick == 201) { $r = $f() }
+    $f = fn() => "c202"
+    if ($pick == 202) { $r = $f() }
+    $f = fn() => "c203"
+    if ($pick == 203) { $r = $f() }
+    $f = fn() => "c204"
+    if ($pick == 204) { $r = $f() }
+    $f = fn() => "c205"
+    if ($pick == 205) { $r = $f() }
+    $f = fn() => "c206"
+    if ($pick == 206) { $r = $f() }
+    $f = fn() => "c207"
+    if ($pick == 207) { $r = $f() }
+    $f = fn() => "c208"
+    if ($pick == 208) { $r = $f() }
+    $f = fn() => "c209"
+    if ($pick == 209) { $r = $f() }
+    $f = fn() => "c210"
+    if ($pick == 210) { $r = $f() }
+    $f = fn() => "c211"
+    if ($pick == 211) { $r = $f() }
+    $f = fn() => "c212"
+    if ($pick == 212) { $r = $f() }
+    $f = fn() => "c213"
+    if ($pick == 213) { $r = $f() }
+    $f = fn() => "c214"
+    if ($pick == 214) { $r = $f() }
+    $f = fn() => "c215"
+    if ($pick == 215) { $r = $f() }
+    $f = fn() => "c216"
+    if ($pick == 216) { $r = $f() }
+    $f = fn() => "c217"
+    if ($pick == 217) { $r = $f() }
+    $f = fn() => "c218"
+    if ($pick == 218) { $r = $f() }
+    $f = fn() => "c219"
+    if ($pick == 219) { $r = $f() }
+    $f = fn() => "c220"
+    if ($pick == 220) { $r = $f() }
+    $f = fn() => "c221"
+    if ($pick == 221) { $r = $f() }
+    $f = fn() => "c222"
+    if ($pick == 222) { $r = $f() }
+    $f = fn() => "c223"
+    if ($pick == 223) { $r = $f() }
+    $f = fn() => "c224"
+    if ($pick == 224) { $r = $f() }
+    $f = fn() => "c225"
+    if ($pick == 225) { $r = $f() }
+    $f = fn() => "c226"
+    if ($pick == 226) { $r = $f() }
+    $f = fn() => "c227"
+    if ($pick == 227) { $r = $f() }
+    $f = fn() => "c228"
+    if ($pick == 228) { $r = $f() }
+    $f = fn() => "c229"
+    if ($pick == 229) { $r = $f() }
+    $f = fn() => "c230"
+    if ($pick == 230) { $r = $f() }
+    $f = fn() => "c231"
+    if ($pick == 231) { $r = $f() }
+    $f = fn() => "c232"
+    if ($pick == 232) { $r = $f() }
+    $f = fn() => "c233"
+    if ($pick == 233) { $r = $f() }
+    $f = fn() => "c234"
+    if ($pick == 234) { $r = $f() }
+    $f = fn() => "c235"
+    if ($pick == 235) { $r = $f() }
+    $f = fn() => "c236"
+    if ($pick == 236) { $r = $f() }
+    $f = fn() => "c237"
+    if ($pick == 237) { $r = $f() }
+    $f = fn() => "c238"
+    if ($pick == 238) { $r = $f() }
+    $f = fn() => "c239"
+    if ($pick == 239) { $r = $f() }
+    $f = fn() => "c240"
+    if ($pick == 240) { $r = $f() }
+    $f = fn() => "c241"
+    if ($pick == 241) { $r = $f() }
+    $f = fn() => "c242"
+    if ($pick == 242) { $r = $f() }
+    $f = fn() => "c243"
+    if ($pick == 243) { $r = $f() }
+    $f = fn() => "c244"
+    if ($pick == 244) { $r = $f() }
+    $f = fn() => "c245"
+    if ($pick == 245) { $r = $f() }
+    $f = fn() => "c246"
+    if ($pick == 246) { $r = $f() }
+    $f = fn() => "c247"
+    if ($pick == 247) { $r = $f() }
+    $f = fn() => "c248"
+    if ($pick == 248) { $r = $f() }
+    $f = fn() => "c249"
+    if ($pick == 249) { $r = $f() }
+    $f = fn() => "c250"
+    if ($pick == 250) { $r = $f() }
+    $f = fn() => "c251"
+    if ($pick == 251) { $r = $f() }
+    $f = fn() => "c252"
+    if ($pick == 252) { $r = $f() }
+    $f = fn() => "c253"
+    if ($pick == 253) { $r = $f() }
+    $f = fn() => "c254"
+    if ($pick == 254) { $r = $f() }
+    $f = fn() => "c255"
+    if ($pick == 255) { $r = $f() }
+    $f = fn() => "c256"
+    if ($pick == 256) { $r = $f() }
+    $f = fn() => "c257"
+    if ($pick == 257) { $r = $f() }
+    $f = fn() => "c258"
+    if ($pick == 258) { $r = $f() }
+    $f = fn() => "c259"
+    if ($pick == 259) { $r = $f() }
+    $f = fn() => "c260"
+    if ($pick == 260) { $r = $f() }
+    $f = fn() => "c261"
+    if ($pick == 261) { $r = $f() }
+    $f = fn() => "c262"
+    if ($pick == 262) { $r = $f() }
+    $f = fn() => "c263"
+    if ($pick == 263) { $r = $f() }
+    $f = fn() => "c264"
+    if ($pick == 264) { $r = $f() }
+    $f = fn() => "c265"
+    if ($pick == 265) { $r = $f() }
+    $f = fn() => "c266"
+    if ($pick == 266) { $r = $f() }
+    $f = fn() => "c267"
+    if ($pick == 267) { $r = $f() }
+    $f = fn() => "c268"
+    if ($pick == 268) { $r = $f() }
+    $f = fn() => "c269"
+    if ($pick == 269) { $r = $f() }
+    $f = fn() => "c270"
+    if ($pick == 270) { $r = $f() }
+    $f = fn() => "c271"
+    if ($pick == 271) { $r = $f() }
+    $f = fn() => "c272"
+    if ($pick == 272) { $r = $f() }
+    $f = fn() => "c273"
+    if ($pick == 273) { $r = $f() }
+    $f = fn() => "c274"
+    if ($pick == 274) { $r = $f() }
+    $f = fn() => "c275"
+    if ($pick == 275) { $r = $f() }
+    $f = fn() => "c276"
+    if ($pick == 276) { $r = $f() }
+    $f = fn() => "c277"
+    if ($pick == 277) { $r = $f() }
+    $f = fn() => "c278"
+    if ($pick == 278) { $r = $f() }
+    $f = fn() => "c279"
+    if ($pick == 279) { $r = $f() }
+    $f = fn() => "c280"
+    if ($pick == 280) { $r = $f() }
+    $f = fn() => "c281"
+    if ($pick == 281) { $r = $f() }
+    $f = fn() => "c282"
+    if ($pick == 282) { $r = $f() }
+    $f = fn() => "c283"
+    if ($pick == 283) { $r = $f() }
+    $f = fn() => "c284"
+    if ($pick == 284) { $r = $f() }
+    $f = fn() => "c285"
+    if ($pick == 285) { $r = $f() }
+    $f = fn() => "c286"
+    if ($pick == 286) { $r = $f() }
+    $f = fn() => "c287"
+    if ($pick == 287) { $r = $f() }
+    $f = fn() => "c288"
+    if ($pick == 288) { $r = $f() }
+    $f = fn() => "c289"
+    if ($pick == 289) { $r = $f() }
+    $f = fn() => "c290"
+    if ($pick == 290) { $r = $f() }
+    $f = fn() => "c291"
+    if ($pick == 291) { $r = $f() }
+    $f = fn() => "c292"
+    if ($pick == 292) { $r = $f() }
+    $f = fn() => "c293"
+    if ($pick == 293) { $r = $f() }
+    $f = fn() => "c294"
+    if ($pick == 294) { $r = $f() }
+    $f = fn() => "c295"
+    if ($pick == 295) { $r = $f() }
+    $f = fn() => "c296"
+    if ($pick == 296) { $r = $f() }
+    $f = fn() => "c297"
+    if ($pick == 297) { $r = $f() }
+    $f = fn() => "c298"
+    if ($pick == 298) { $r = $f() }
+    $f = fn() => "c299"
+    if ($pick == 299) { $r = $f() }
+    $f = fn() => "c300"
+    if ($pick == 300) { $r = $f() }
+    $f = fn() => "c301"
+    if ($pick == 301) { $r = $f() }
+    $f = fn() => "c302"
+    if ($pick == 302) { $r = $f() }
+    $f = fn() => "c303"
+    if ($pick == 303) { $r = $f() }
+    $f = fn() => "c304"
+    if ($pick == 304) { $r = $f() }
+    $f = fn() => "c305"
+    if ($pick == 305) { $r = $f() }
+    $f = fn() => "c306"
+    if ($pick == 306) { $r = $f() }
+    $f = fn() => "c307"
+    if ($pick == 307) { $r = $f() }
+    $f = fn() => "c308"
+    if ($pick == 308) { $r = $f() }
+    $f = fn() => "c309"
+    if ($pick == 309) { $r = $f() }
+    $f = fn() => "c310"
+    if ($pick == 310) { $r = $f() }
+    $f = fn() => "c311"
+    if ($pick == 311) { $r = $f() }
+    $f = fn() => "c312"
+    if ($pick == 312) { $r = $f() }
+    $f = fn() => "c313"
+    if ($pick == 313) { $r = $f() }
+    $f = fn() => "c314"
+    if ($pick == 314) { $r = $f() }
+    $f = fn() => "c315"
+    if ($pick == 315) { $r = $f() }
+    $f = fn() => "c316"
+    if ($pick == 316) { $r = $f() }
+    $f = fn() => "c317"
+    if ($pick == 317) { $r = $f() }
+    $f = fn() => "c318"
+    if ($pick == 318) { $r = $f() }
+    $f = fn() => "c319"
+    if ($pick == 319) { $r = $f() }
+    $f = fn() => "c320"
+    if ($pick == 320) { $r = $f() }
+    $f = fn() => "c321"
+    if ($pick == 321) { $r = $f() }
+    $f = fn() => "c322"
+    if ($pick == 322) { $r = $f() }
+    $f = fn() => "c323"
+    if ($pick == 323) { $r = $f() }
+    $f = fn() => "c324"
+    if ($pick == 324) { $r = $f() }
+    $f = fn() => "c325"
+    if ($pick == 325) { $r = $f() }
+    $f = fn() => "c326"
+    if ($pick == 326) { $r = $f() }
+    $f = fn() => "c327"
+    if ($pick == 327) { $r = $f() }
+    $f = fn() => "c328"
+    if ($pick == 328) { $r = $f() }
+    $f = fn() => "c329"
+    if ($pick == 329) { $r = $f() }
+    $f = fn() => "c330"
+    if ($pick == 330) { $r = $f() }
+    $f = fn() => "c331"
+    if ($pick == 331) { $r = $f() }
+    $f = fn() => "c332"
+    if ($pick == 332) { $r = $f() }
+    $f = fn() => "c333"
+    if ($pick == 333) { $r = $f() }
+    $f = fn() => "c334"
+    if ($pick == 334) { $r = $f() }
+    $f = fn() => "c335"
+    if ($pick == 335) { $r = $f() }
+    $f = fn() => "c336"
+    if ($pick == 336) { $r = $f() }
+    $f = fn() => "c337"
+    if ($pick == 337) { $r = $f() }
+    $f = fn() => "c338"
+    if ($pick == 338) { $r = $f() }
+    $f = fn() => "c339"
+    if ($pick == 339) { $r = $f() }
+    $f = fn() => "c340"
+    if ($pick == 340) { $r = $f() }
+    $f = fn() => "c341"
+    if ($pick == 341) { $r = $f() }
+    $f = fn() => "c342"
+    if ($pick == 342) { $r = $f() }
+    $f = fn() => "c343"
+    if ($pick == 343) { $r = $f() }
+    $f = fn() => "c344"
+    if ($pick == 344) { $r = $f() }
+    $f = fn() => "c345"
+    if ($pick == 345) { $r = $f() }
+    $f = fn() => "c346"
+    if ($pick == 346) { $r = $f() }
+    $f = fn() => "c347"
+    if ($pick == 347) { $r = $f() }
+    $f = fn() => "c348"
+    if ($pick == 348) { $r = $f() }
+    $f = fn() => "c349"
+    if ($pick == 349) { $r = $f() }
+    $f = fn() => "c350"
+    if ($pick == 350) { $r = $f() }
+    $f = fn() => "c351"
+    if ($pick == 351) { $r = $f() }
+    $f = fn() => "c352"
+    if ($pick == 352) { $r = $f() }
+    $f = fn() => "c353"
+    if ($pick == 353) { $r = $f() }
+    $f = fn() => "c354"
+    if ($pick == 354) { $r = $f() }
+    $f = fn() => "c355"
+    if ($pick == 355) { $r = $f() }
+    $f = fn() => "c356"
+    if ($pick == 356) { $r = $f() }
+    $f = fn() => "c357"
+    if ($pick == 357) { $r = $f() }
+    $f = fn() => "c358"
+    if ($pick == 358) { $r = $f() }
+    $f = fn() => "c359"
+    if ($pick == 359) { $r = $f() }
+    $f = fn() => "c360"
+    if ($pick == 360) { $r = $f() }
+    $f = fn() => "c361"
+    if ($pick == 361) { $r = $f() }
+    $f = fn() => "c362"
+    if ($pick == 362) { $r = $f() }
+    $f = fn() => "c363"
+    if ($pick == 363) { $r = $f() }
+    $f = fn() => "c364"
+    if ($pick == 364) { $r = $f() }
+    $f = fn() => "c365"
+    if ($pick == 365) { $r = $f() }
+    $f = fn() => "c366"
+    if ($pick == 366) { $r = $f() }
+    $f = fn() => "c367"
+    if ($pick == 367) { $r = $f() }
+    $f = fn() => "c368"
+    if ($pick == 368) { $r = $f() }
+    $f = fn() => "c369"
+    if ($pick == 369) { $r = $f() }
+    $f = fn() => "c370"
+    if ($pick == 370) { $r = $f() }
+    $f = fn() => "c371"
+    if ($pick == 371) { $r = $f() }
+    $f = fn() => "c372"
+    if ($pick == 372) { $r = $f() }
+    $f = fn() => "c373"
+    if ($pick == 373) { $r = $f() }
+    $f = fn() => "c374"
+    if ($pick == 374) { $r = $f() }
+    $f = fn() => "c375"
+    if ($pick == 375) { $r = $f() }
+    $f = fn() => "c376"
+    if ($pick == 376) { $r = $f() }
+    $f = fn() => "c377"
+    if ($pick == 377) { $r = $f() }
+    $f = fn() => "c378"
+    if ($pick == 378) { $r = $f() }
+    $f = fn() => "c379"
+    if ($pick == 379) { $r = $f() }
+    $f = fn() => "c380"
+    if ($pick == 380) { $r = $f() }
+    $f = fn() => "c381"
+    if ($pick == 381) { $r = $f() }
+    $f = fn() => "c382"
+    if ($pick == 382) { $r = $f() }
+    $f = fn() => "c383"
+    if ($pick == 383) { $r = $f() }
+    $f = fn() => "c384"
+    if ($pick == 384) { $r = $f() }
+    $f = fn() => "c385"
+    if ($pick == 385) { $r = $f() }
+    $f = fn() => "c386"
+    if ($pick == 386) { $r = $f() }
+    $f = fn() => "c387"
+    if ($pick == 387) { $r = $f() }
+    $f = fn() => "c388"
+    if ($pick == 388) { $r = $f() }
+    $f = fn() => "c389"
+    if ($pick == 389) { $r = $f() }
+    $f = fn() => "c390"
+    if ($pick == 390) { $r = $f() }
+    $f = fn() => "c391"
+    if ($pick == 391) { $r = $f() }
+    $f = fn() => "c392"
+    if ($pick == 392) { $r = $f() }
+    $f = fn() => "c393"
+    if ($pick == 393) { $r = $f() }
+    $f = fn() => "c394"
+    if ($pick == 394) { $r = $f() }
+    $f = fn() => "c395"
+    if ($pick == 395) { $r = $f() }
+    $f = fn() => "c396"
+    if ($pick == 396) { $r = $f() }
+    $f = fn() => "c397"
+    if ($pick == 397) { $r = $f() }
+    $f = fn() => "c398"
+    if ($pick == 398) { $r = $f() }
+    $f = fn() => "c399"
+    if ($pick == 399) { $r = $f() }
+    $f = fn() => "c400"
+    if ($pick == 400) { $r = $f() }
+    return $r
+}
+
+chk("300 three-argument calls",         many_calls(),            46050)
+chk("300 statement calls",              many_statement_calls(),  6)
+chk("nested calls keep live values",    nested_calls(),          248980)
+chk("calls inside nested loops",        calls_in_loops(),        "1a|2b|2a|3b|3a|4b|")
+chk("closures called inside arguments", closures_in_args(),      6050)
+chk("closure 1 of 400",                 many_closures(1),        "c1")
+chk("closure 257 of 400 (not wrapped)", many_closures(257),      "c257")
+chk("closure 400 of 400 (not wrapped)", many_closures(400),      "c400")
+
+print("")
+print("=== register reuse guard done ===")

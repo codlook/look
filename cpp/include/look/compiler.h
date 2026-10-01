@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <stack>
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
 #include <set>
@@ -74,8 +75,9 @@ public:
     uint8_t alloc() {
         uint8_t r;
         if (!free_.empty()) {
-            r = free_.top();
-            free_.pop();
+            r = free_.back();
+            free_.pop_back();
+            in_free_[r] = false;
         } else {
             if (next_ == 255) too_many();
             r = next_++;
@@ -89,7 +91,16 @@ public:
         // local'in slot'unu doğrudan döndürüp çağıran free_temp edince, o slot
         // yanlışlıkla yeniden kullanılıp local'i bozardı (fonksiyon-local'ler
         // temp aralığında olduğundan locals_end_ koruması yetmiyor).
-        if (r >= locals_end_ && !pinned_[r]) free_.push(r);
+        // Canlı bir ardışık bloğun (seq_) register'ı da dönmez: argüman derlenirken
+        // compile_expr base+k'yı döndürür, çağıran free_temp eder — blok hâlâ kullanımda.
+        // (SAVUNMA AMAÇLI: seq_ koruması kapatılıp tüm guardlar + iç içe çağrı/döngü/üçlü
+        // probları koşuldu, hiçbiri kırılmadı — gerekli olduğu KANITLANMADI, ayırıcı en riskli
+        // yer olduğu için tutuluyor.)
+        // in_free_: çift free aynı register'ı iki kez dağıtmasın.
+        if (r >= locals_end_ && !pinned_[r] && !seq_[r] && !in_free_[r]) {
+            free_.push_back(r);
+            in_free_[r] = true;
+        }
     }
 
     // Korumalı local slot ayır — free() bunu havuza atmaz (pop_scope'ta çözülür).
@@ -104,18 +115,42 @@ public:
         free(r);
     }
 
-    // Allocate n consecutive registers from next_ (ignores free pool — guarantees contiguity)
-    // Also updates locals_end_ so these registers are protected from pool re-use.
+    // n ardışık register ayır (VM çağrı argümanlarını base+k'da bekler). Blok canlıyken
+    // seq_ ile korunur; iş bitince release_seq() ile havuza döner.
+    //
+    // ESKİ HATA (register sızıntısı): blok HER ZAMAN next_'ten alınıyor ve korumak için
+    // locals_end_ yukarı çekiliyordu. locals_end_ bir daha inmediği için hem blok hem de
+    // ondan önce ayrılmış tüm geçici register'lar KALICI olarak kayboluyordu: argümanlı
+    // her çağrı ~argc+1 register tüketiyordu → bir fonksiyonda en fazla 72 route() /
+    // 63 üç-argümanlı çağrı; aşılınca TÜM program yorumlayıcıya düşüyordu.
+    // Şimdi: önce serbest havuzda n'lik ardışık bir boşluk aranır, yoksa next_'ten alınır.
     uint8_t alloc_seq(uint8_t n) {
         if (n == 0) return next_;
-        if ((int)next_ + n > 255) too_many();
-        uint8_t base = next_;
-        next_ += n;
-        if (next_ > max_) max_ = next_;
-        // Protect alloc_seq'd registers: compile_expr returning a local index directly
-        // must not contaminate the free pool with these registers.
-        if (next_ > locals_end_) locals_end_ = next_;
-        return base;
+        int base = -1;
+        for (int b = locals_end_; b + n <= next_; ++b) {
+            int k = 0;
+            while (k < n && in_free_[b + k]) ++k;
+            if (k == n) { base = b; break; }
+            b += k;   // b+k serbest değil → ondan sonrasından devam
+        }
+        if (base >= 0) {
+            for (int k = 0; k < n; ++k) in_free_[base + k] = false;
+            free_.erase(std::remove_if(free_.begin(), free_.end(),
+                            [&](uint8_t r) { return r >= base && r < base + n; }),
+                        free_.end());
+        } else {
+            if ((int)next_ + n > 255) too_many();
+            base = next_;
+            next_ += n;
+            if (next_ > max_) max_ = next_;
+        }
+        for (int k = 0; k < n; ++k) seq_[base + k] = true;
+        return (uint8_t)base;
+    }
+
+    // alloc_seq bloğunu bırak: koruma kalkar, register'lar havuza döner.
+    void release_seq(uint8_t base, uint8_t n) {
+        for (int k = 0; k < n; ++k) { seq_[base + k] = false; free((uint8_t)(base + k)); }
     }
 
     uint8_t max_used() const { return max_; }
@@ -124,7 +159,9 @@ private:
     uint8_t locals_end_;
     uint8_t next_;
     uint8_t max_;
-    std::stack<uint8_t> free_;
+    std::vector<uint8_t> free_;      // LIFO (alloc sondan alır)
+    bool    in_free_[256] = {false}; // free_ üyeliği (çift free + ardışık blok araması)
+    bool    seq_[256]    = {false};  // canlı alloc_seq bloğu (free() atlar)
     bool    pinned_[256] = {false};  // aktif local register'lar (free() atlar)
     std::string owner_;              // hata mesajı için fonksiyon adı
 };
@@ -192,6 +229,10 @@ private:
     static void check_argc(const CallExpression& e) {
         if (e.arguments.size() > 255)
             throw LookCompileError("a call has more than 255 arguments", e.loc.line);
+    }
+    // MAKE_CLOSURE: a=r, b/c = 16-bit nested-proto indeksi (b düşük, c yüksek).
+    void emit_make_closure(uint8_t r, int fn_idx) {
+        emit(OpCode::MAKE_CLOSURE, r, lo8(fn_idx), hi8(fn_idx));
     }
     void     emit_load_const(uint8_t dest, Value v, int line);
 
