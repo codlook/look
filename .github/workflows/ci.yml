@@ -113,6 +113,13 @@ jobs:
           cd cpp
           bash tests/vm_operand_limits_test.sh ./build/lk
 
+      # No bare narrowing casts in the compiler: every value that goes into an 8/16-bit
+      # operand passes through a checked helper (a value that does not fit is an error).
+      - name: No unchecked narrowing in the compiler
+        run: |
+          cd cpp
+          bash tests/no_unchecked_narrowing.sh
+
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
       # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
       # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.

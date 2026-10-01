@@ -22,6 +22,33 @@ public:
         : std::runtime_error(msg), line(line) {}
 };
 
+// ── Kontrollü daraltma ───────────────────────────────────────────────────────
+// Bytecode operandları 8/16 bit. Derleyicide bir değeri operanda sığdıran HER daraltma
+// buradan geçer: sığmıyorsa derleme hatası. Çıplak (uint8_t)x / & 0xFF dört ayrı sessiz
+// hataya yol açtı (alan adı, closure, argüman sayısı, parametre indeksi: değer 256'da
+// başa sarıyor, VM hatasız YANLIŞ çalışıyordu). compiler.cpp'de çıplak daraltma YASAK —
+// tests/no_unchecked_narrowing.sh CI'da denetler.
+template <class T> inline uint8_t u8(T v, const char* what) {
+    if ((long long)v < 0 || (long long)v > 0xFF)
+        throw LookCompileError(std::string(what) + " exceeds the VM limit of 255");
+    return static_cast<uint8_t>(v);
+}
+template <class T> inline uint16_t u16(T v, const char* what) {
+    if ((long long)v < 0 || (long long)v > 0xFFFF)
+        throw LookCompileError(std::string(what) + " exceeds the VM limit of 65535");
+    return static_cast<uint16_t>(v);
+}
+// 16-bit operandın yüksek/düşük baytı (b = hi, c = lo). Değer 16 bite sığmalı.
+template <class T> inline uint8_t hi8(T v) { return static_cast<uint8_t>(u16(v, "16-bit operand") >> 8); }
+template <class T> inline uint8_t lo8(T v) { return static_cast<uint8_t>(u16(v, "16-bit operand") & 0xFF); }
+// Yalnız kapasite ipucu (reserve): doygunlaşır, anlam taşımaz.
+inline uint8_t hint_u8(size_t n) { return static_cast<uint8_t>(n > 255 ? 255 : n); }
+// LOAD_INT'in işaretli 8-bit anlık değeri.
+inline uint8_t i8_bits(long long v) {
+    if (v < -128 || v > 127) throw LookCompileError("immediate integer out of range");
+    return static_cast<uint8_t>(static_cast<int8_t>(v));
+}
+
 // ── RegisterAllocator ─────────────────────────────────────────────────────────
 //
 // Local değişkenler 0..num_locals-1 arasında sabit slot alır.
