@@ -8,6 +8,10 @@
 export MSYS_NO_PATHCONV=1
 set -u
 ROOT="$1"; LABEL="${2:-baseline}"; NET=benchnet
+# BIN_DIR: which build to measure (default: the working tree build). Point it at another
+# directory under cpp/ to measure an older binary with the SAME app and harness, e.g. for an
+# interleaved old/new/old/new comparison in one session.
+BIN_DIR="${BIN_DIR:-/look/cpp/build}"
 LEVELS="50 200"
 CAP="--cpus=2 --memory=4g --ulimit nofile=1048576:1048576"
 docker network inspect $NET >/dev/null 2>&1 || docker network create $NET >/dev/null
@@ -26,12 +30,12 @@ docker rm -f srv >/dev/null 2>&1
 # mount other than the container's own root filesystem. APP_DIR exists only for the positive
 # control (point it at the bind mount and the run must refuse).
 docker run -d --name srv --network $NET $CAP -e LOOK_WORKERS=2 -e LOOK_VM_STRICT=1 \
-  -e APP_DIR="${APP_DIR:-}" -v "$ROOT/cpp:/look/cpp" look-build bash -c '
+  -e APP_DIR="${APP_DIR:-}" -e BIN_DIR="$BIN_DIR" -v "$ROOT/cpp:/look/cpp" look-build bash -c '
     if [ -z "$APP_DIR" ]; then cp -r /look/cpp/bench/tpl /root/tpl && APP_DIR=/root/tpl; fi
     cd "$APP_DIR" || exit 3
     mp=$(findmnt -n -o TARGET -T .)
     if [ "$mp" != "/" ]; then echo "REFUSE: served app dir $APP_DIR is on mount $mp (host file share skews every result)"; exit 3; fi
-    exec /look/cpp/build/lk-fcgi --mode http --port 8080 app.lk' >/dev/null
+    exec "$BIN_DIR/lk-fcgi" --mode http --port 8080 app.lk' >/dev/null
 IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv)
 for _ in $(seq 1 60); do [ -n "$(curlq http://$IP:8080/t1)" ] && break; docker logs srv 2>&1 | grep -q REFUSE && break; sleep 0.5; done
 if docker logs srv 2>&1 | grep -q REFUSE; then
@@ -46,7 +50,7 @@ echo "$t3" | grep -q "&lt;script&gt;" && ! echo "$t3" | grep -q "<script>alert" 
   || { echo "FAIL: /t3 output is wrong (escaping or row count)"; exit 1; }
 
 echo "=================================================================="
-echo " TEMPLATE BENCH [$LABEL] — LOOK $(docker exec srv /look/cpp/build/lk --version 2>/dev/null)"
+echo " TEMPLATE BENCH [$LABEL] — LOOK $(docker exec srv "$BIN_DIR/lk" --version 2>/dev/null)"
 echo " 2 CPU / 4 GB, LOOK_WORKERS=2, best-of-3, 6 s per run"
 echo "=================================================================="
 for ep in t1 t2 t3; do
