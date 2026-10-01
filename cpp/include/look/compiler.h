@@ -66,6 +66,9 @@ public:
         // temp aralığında olduğundan locals_end_ koruması yetmiyor).
         // Canlı bir ardışık bloğun (seq_) register'ı da dönmez: argüman derlenirken
         // compile_expr base+k'yı döndürür, çağıran free_temp eder — blok hâlâ kullanımda.
+        // (SAVUNMA AMAÇLI: seq_ koruması kapatılıp tüm guardlar + iç içe çağrı/döngü/üçlü
+        // probları koşuldu, hiçbiri kırılmadı — gerekli olduğu KANITLANMADI, ayırıcı en riskli
+        // yer olduğu için tutuluyor.)
         // in_free_: çift free aynı register'ı iki kez dağıtmasın.
         if (r >= locals_end_ && !pinned_[r] && !seq_[r] && !in_free_[r]) {
             free_.push_back(r);
@@ -195,6 +198,11 @@ private:
 
     // ── Constant pool ──────────────────────────────────────────────────────────
     uint16_t add_const(Value v);
+    // Argüman sayısı 8 bit taşınır: 255 üstü SESSİZCE sarıyordu (300 argüman → 44).
+    static void check_argc(const CallExpression& e) {
+        if (e.arguments.size() > 255)
+            throw LookCompileError("a call has more than 255 arguments", e.loc.line);
+    }
     // MAKE_CLOSURE: a=r, b/c = 16-bit nested-proto indeksi (b düşük, c yüksek).
     void emit_make_closure(uint8_t r, int fn_idx) {
         if (fn_idx > 0xFFFF) throw LookCompileError("too many closures in one function (limit 65536)");
