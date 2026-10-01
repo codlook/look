@@ -866,7 +866,8 @@ call_dispatch:
 
             // ── Closure ───────────────────────────────────────────────────────
             case OpCode::MAKE_CLOSURE: {
-                auto& nested_proto = proto->nested[ins.b];
+                // 16-bit indeks: b = düşük, c = yüksek bayt (eskiden yalnız b → 256. closure 0.'a sarıyordu).
+                auto& nested_proto = proto->nested[(size_t)ins.b | ((size_t)ins.c << 8)];
                 auto cl = std::make_shared<Closure>(nested_proto);
                 // Capture hint'leri oku: LOAD_CAPTURE(0, cr) pattern
                 while (frame.ip < (int)proto->code.size()) {
