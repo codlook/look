@@ -122,14 +122,29 @@ inline void redis_resolve_tls(const std::string& query, bool scheme_secure,
 // kararı gerçek resolver'lara sor → uyarı, kurulan bağlantıyla birebir aynı.
 // Sorgu çıkarma: mysql/pg = parse_dsn_part (son '@' sonrası, ilk '/' sonrası db, onda ilk '?');
 // redis = resp_client parse_url (şema sonrası ilk '?').
+// Redis URL'sinin şema-sonrası kısmını böler: userinfo ("user:pass", '@' yoksa boş),
+// hostpart ("host:port/db") ve query. Önce SON '@' (mysql/pg ayrıştırıcısıyla aynı kural),
+// SONRA '?'. ESKİ HATA: '?' önce aranıyordu → parolasında '?' olan
+// "redis://:pa?ss@host:6379" için sorgu "ss@host:6379", host ":pa" çıkıyordu: yanlış
+// sunucu adına bağlanma denemesi + parolanın yarısı TLS-seçeneği diye ayrıştırılıyordu.
+inline void redis_split_url(const std::string& after_scheme, std::string& userinfo,
+                            std::string& hostpart, std::string& query) {
+    userinfo.clear(); query.clear();
+    hostpart = after_scheme;
+    const size_t at = hostpart.rfind('@');
+    if (at != std::string::npos) { userinfo = hostpart.substr(0, at); hostpart = hostpart.substr(at + 1); }
+    const size_t q = hostpart.find('?');
+    if (q != std::string::npos) { query = hostpart.substr(q + 1); hostpart = hostpart.substr(0, q); }
+}
 inline std::string db_dsn_query(const std::string& dsn) {
     const size_t se = dsn.find("://");
     if (se == std::string::npos) return "";
     const std::string sch = dsn.substr(0, se);
     std::string rest = dsn.substr(se + 3);
     if (sch == "redis" || sch == "rediss") {
-        size_t q = rest.find('?');
-        return q == std::string::npos ? "" : rest.substr(q + 1);
+        std::string ui, hp, query;
+        redis_split_url(rest, ui, hp, query);
+        return query;
     }
     size_t at = rest.rfind('@');
     if (at != std::string::npos) rest = rest.substr(at + 1);

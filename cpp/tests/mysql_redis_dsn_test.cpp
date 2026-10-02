@@ -120,7 +120,30 @@ int main() {
     chkw("postgres://u:p@pg/app?sslmode=verify-ca",        'N', true); // 558d735 sınıfı: eski 'U' derdi
     chkw("mysql://u:p?tls=insecure@db:3306/app",           'U', true); // userinfo'daki '?' sorgu değil
 
-    const int EXPECTED = 53;
+    // Redis bölme sırası: önce son '@', sonra '?'. Eski sıra ('?' önce) parolasında '?'
+    // olan URL'de host'u ":pa", sorguyu "ss@r:6379" çıkarıyordu.
+    {
+        struct S { const char* in; const char* ui; const char* hp; const char* q; };
+        const S cases[] = {
+            {":pa?ss@r:6379/2",            ":pa?ss", "r:6379/2", ""},
+            {":pa?ss@r:6379/2?tls=verify", ":pa?ss", "r:6379/2", "tls=verify"},
+            {":p@r:6379?tls=1",            ":p",     "r:6379",   "tls=1"},
+            {"r:6379",                     "",       "r:6379",   ""},
+            {"user:p:q@r",                 "user:p:q", "r",      ""},
+        };
+        for (const S& c : cases) {
+            std::string ui, hp, q;
+            look::redis_split_url(c.in, ui, hp, q);
+            bool ok = ui == c.ui && hp == c.hp && q == c.q;
+            printf("  %s redis_split_url(%s) -> [%s] [%s] [%s]\n", ok ? "PASS" : "FAIL", c.in, ui.c_str(), hp.c_str(), q.c_str());
+            if (!ok) ++fails;
+            ++ran;
+        }
+    }
+    chkw("redis://:pa?tls=insecure@r:6379",                'U', true); // parolada '?': sorgu değil
+    chkw("rediss://:pa?ss@r:6379",                         'N');
+
+    const int EXPECTED = 60;
     if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
     printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (verify=true güvenli-varsayılan + ?tls=insecure opt-out kilitli)\n", fails);
     return fails ? 1 : 0;

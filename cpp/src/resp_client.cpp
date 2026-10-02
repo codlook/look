@@ -71,23 +71,15 @@ static void parse_url(const std::string& url,
 
     // ?tls=verify / ?ssl=verify → şifreleme + sertifika/hostname doğrulaması (MITM'e karşı).
     // ?tls=1 → yalnız şifreleme. Sorgu dizisini rest'ten ayıkla.
-    { auto q = rest.find('?');
-      std::string query;
-      if (q != std::string::npos) {
-        query = rest.substr(q + 1);
-        rest = rest.substr(0, q);
-      }
-      // TLS-karar look/db_dsn.h'de (saf, tablo-test edilebilir).
-      look::redis_resolve_tls(query, tls, tls, tls_verify); }
-
-    // password: :pass@
-    auto at = rest.rfind('@');
-    if (at != std::string::npos) {
-        auto colon = rest.find(':');
-        if (colon != std::string::npos && colon < at)
-            pass = rest.substr(colon + 1, at - colon - 1);
-        rest = rest.substr(at + 1);
-    }
+    // Bölme look/db_dsn.h'de (saf, tablo-test edilebilir): önce son '@', sonra '?'.
+    // Eskiden '?' önce aranıyordu → parolada '?' varsa host ve sorgu yanlış çıkıyordu.
+    { std::string userinfo, hostpart, query;
+      look::redis_split_url(rest, userinfo, hostpart, query);
+      look::redis_resolve_tls(query, tls, tls, tls_verify);
+      // password: [user]:pass
+      auto colon = userinfo.find(':');
+      if (colon != std::string::npos) pass = userinfo.substr(colon + 1);
+      rest = hostpart; }
 
     // /db
     auto slash = rest.find('/');
