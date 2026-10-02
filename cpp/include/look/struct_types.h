@@ -68,12 +68,13 @@ inline Value struct_zero_value(const std::string& type) {
     return Value();   // any, fn, struct adı → null
 }
 
-// Varsayılan değeri örneğe koyarken: dizi/map üst düzeyde KOPYALANIR. v1'de aynı dizi
-// tüm örnekler arasında paylaşılıyordu — birine eklenen eleman hepsinde görünüyordu.
+// Varsayılan değeri örneğe koyarken: dizi/map/struct DERİN kopyalanır. Eskiden aynı dizi
+// tüm örnekler arasında paylaşılıyordu; web'de bildirim istekten uzun yaşadığı için bir
+// isteğin verisi başka kullanıcının yeni örneğinde görünüyordu (1.0.3 güvenlik düzeltmesi).
+// Üst düzey kopya YETMEZ: iç içe dizi yine paylaşılır.
 inline Value struct_instance_default(const Value& def, const std::string& type) {
     if (def.type() == Value::NONE) return struct_zero_value(type);
-    if (def.type() == Value::ARRAY && !struct_is_instance(*def.as_array()))
-        return Value(std::make_shared<std::vector<Value>>(*def.as_array()));
+    if (def.type() == Value::ARRAY) return def.deep_clone();
     return def;
 }
 
