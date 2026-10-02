@@ -1466,8 +1466,8 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             uint8_t argc = u8(e.arguments.size(), "argument count");
             uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
-                uint8_t ev = compile_expr(*e.arguments[k], base + k);
-                if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
+                uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
+                if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
             check_builtin_index(bidx, full);
@@ -1564,8 +1564,8 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             uint8_t argc = u8(e.arguments.size(), "argument count");
             uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
-                uint8_t ev = compile_expr(*e.arguments[k], base + k);
-                if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
+                uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
+                if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
             check_builtin_index(bidx, bname);
@@ -1588,8 +1588,8 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     uint8_t argc = u8(e.arguments.size(), "argument count");
     uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
     for (int k = 0; k < argc; ++k) {
-        uint8_t ev = compile_expr(*e.arguments[k], base + k);
-        if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
+        uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
+        if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
     }
     uint8_t r = (dest == 255) ? alloc_temp() : dest;
     emit(OpCode::CALL, r, fn, base);

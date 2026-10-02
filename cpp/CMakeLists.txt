@@ -57,6 +57,14 @@ set_source_files_properties(
     PROPERTIES LANGUAGE C
 )
 
+# compiler.cpp: every implicit narrowing is a build error. Bytecode operands are 8/16 bit;
+# a value silently truncated on its way into one (emit(op, base + k, ...)) makes the VM run
+# wrong code with no error. Explicit narrowing goes through u8()/u16() in compiler.h, which
+# range-check. GCC/Clang only: the MSVC build has no equivalent wired in yet.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(src/compiler.cpp PROPERTIES COMPILE_OPTIONS "-Werror=conversion")
+endif()
+
 # SQLite: multi-thread modu (2) — çok thread'li worker havuzu ZORUNLU kılıyor.
 # =0 (single-thread) SQLite'ın GLOBAL statiklerinin (sqlite3StatusUp sayaçları,
 # sqlite3_randomness PRNG durumu, sqlite3_initialize, page cache) mutex'lerini de
