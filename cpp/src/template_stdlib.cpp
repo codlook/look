@@ -1,6 +1,7 @@
 #include "look/template.h"
 #include "look/stdlib.h"
 #include "look/html_escape.h"
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -141,11 +142,27 @@ bool TemplateEngine::eval_cond(const std::string& cond, const TplContext& ctx) {
     if (!s.empty() && s[0] == '$') s = s.substr(1);
 
     // Look for comparison operators (order matters: >= before >, etc.)
+    // ESKİ HATA: her operatör tüm metinde sırayla alt-dizgi olarak aranıyordu → tırnak
+    // içindeki operatör de eşleşiyordu: {#if $s == "a>=b"} ">=" üzerinden bölünüp sayısal
+    // 0 >= 0 karşılaştırmasına dönüyor, koşul HER ZAMAN doğru çıkıyordu. Şimdi: soldan
+    // sağa, tırnak DIŞINDAKİ ilk operatör; aynı konumda uzun olan (>= , >'den önce).
     static const char* ops[] = { ">=", "<=", "!=", "==", ">", "<", nullptr };
-    for (int i = 0; ops[i]; ++i) {
-        std::string op = ops[i];
-        size_t pos = s.find(op);
-        if (pos == std::string::npos) continue;
+    size_t op_pos = std::string::npos;
+    std::string found_op;
+    {
+        char quote = 0;
+        for (size_t p = 0; p < s.size() && found_op.empty(); ++p) {
+            char ch = s[p];
+            if (quote) { if (ch == quote) quote = 0; continue; }
+            if (ch == '"' || ch == '\'') { quote = ch; continue; }
+            for (int i = 0; ops[i]; ++i) {
+                if (s.compare(p, std::strlen(ops[i]), ops[i]) == 0) { op_pos = p; found_op = ops[i]; break; }
+            }
+        }
+    }
+    if (!found_op.empty()) {
+        const std::string& op = found_op;
+        size_t pos = op_pos;
 
         std::string lhs_str = tpl_trim(s.substr(0, pos));
         std::string rhs_str = tpl_trim(s.substr(pos + op.size()));

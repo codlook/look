@@ -114,7 +114,79 @@ inline void redis_resolve_tls(const std::string& query, bool scheme_secure,
     }
 }
 
-// ── Log/hata için DSN maskeleme ──────────────────────────────────────────────
+// ── Havuz-açılış DB-TLS uyarısı ───────────────────────────────────────────────
+// SORUN (2026-09-30): web_stdlib'deki uyarı ham DSN'de ÇIPLAK-SUBSTRING arıyordu (739d581'in
+// kapattığı sınıfın aynısı, bu kez UYARI yolunda) → parolada "tls=" geçmesi plaintext uyarısını
+// susturuyordu, ?ssl=false "TLS var" sayılıyordu, ?x=tls=insecure plaintext'te yanlış uyarı
+// basıyordu. ÇÖZÜM: sorgu kısmını GERÇEK ayrıştırıcıyla aynı yerden çıkar (userinfo ASLA) ve
+// kararı gerçek resolver'lara sor → uyarı, kurulan bağlantıyla birebir aynı.
+// Sorgu çıkarma: mysql/pg = parse_dsn_part (son '@' sonrası, ilk '/' sonrası db, onda ilk '?');
+// redis = resp_client parse_url (şema sonrası ilk '?').
+// Redis URL'sinin şema-sonrası kısmını böler: userinfo ("user:pass", '@' yoksa boş),
+// hostpart ("host:port/db") ve query. Önce SON '@' (mysql/pg ayrıştırıcısıyla aynı kural),
+// SONRA '?'. ESKİ HATA: '?' önce aranıyordu → parolasında '?' olan
+// "redis://:pa?ss@host:6379" için sorgu "ss@host:6379", host ":pa" çıkıyordu: yanlış
+// sunucu adına bağlanma denemesi + parolanın yarısı TLS-seçeneği diye ayrıştırılıyordu.
+inline void redis_split_url(const std::string& after_scheme, std::string& userinfo,
+                            std::string& hostpart, std::string& query) {
+    userinfo.clear(); query.clear();
+    hostpart = after_scheme;
+    const size_t at = hostpart.rfind('@');
+    if (at != std::string::npos) { userinfo = hostpart.substr(0, at); hostpart = hostpart.substr(at + 1); }
+    const size_t q = hostpart.find('?');
+    if (q != std::string::npos) { query = hostpart.substr(q + 1); hostpart = hostpart.substr(0, q); }
+}
+inline std::string db_dsn_query(const std::string& dsn) {
+    const size_t se = dsn.find("://");
+    if (se == std::string::npos) return "";
+    const std::string sch = dsn.substr(0, se);
+    std::string rest = dsn.substr(se + 3);
+    if (sch == "redis" || sch == "rediss") {
+        std::string ui, hp, query;
+        redis_split_url(rest, ui, hp, query);
+        return query;
+    }
+    size_t at = rest.rfind('@');
+    if (at != std::string::npos) rest = rest.substr(at + 1);
+    size_t slash = rest.find('/');
+    if (slash == std::string::npos) return "";
+    std::string db = rest.substr(slash + 1);
+    size_t q = db.find('?');
+    return q == std::string::npos ? "" : db.substr(q + 1);
+}
+// Boş dönüş → uyarı yok. Metinler kullanıcıya görünür (İngilizce).
+inline std::string db_tls_warning(const std::string& dsn) {
+    const std::string sch = dsn.substr(0, dsn.find(':'));
+    const std::string query = db_dsn_query(dsn);
+    bool tls = false, verify = true;
+    if (sch == "postgres" || sch == "postgresql" || sch == "postgresqls") {
+        pg_resolve_tls(query, sch == "postgresqls", tls, verify);
+        if (!tls)
+            return "PostgreSQL connection is UNENCRYPTED (plaintext) — for encrypted+verified use: postgresqls://... or add ?tls=verify to the DSN.";
+        if (!verify)
+            return "PostgreSQL TLS certificate is NOT VERIFIED (MITM risk) — use postgresqls:// or ?tls=verify instead of ?tls=insecure.";
+        return "";
+    }
+    const char* name;
+    if (sch == "mysql" || sch == "mariadb" || sch == "mysqls" || sch == "mariadbs") {
+        mysql_resolve_tls(query, sch == "mysqls" || sch == "mariadbs", tls, verify);
+        name = "MySQL";
+    } else if (sch == "redis" || sch == "rediss") {
+        redis_resolve_tls(query, sch == "rediss", tls, verify);
+        name = "Redis";
+    } else {
+        return "";   // sqlite vb. — ağ yok
+    }
+    if (!tls)
+        return std::string(name) + " connection is UNENCRYPTED (plaintext) — for encrypted+verified use: " +
+               (name[0] == 'R' ? "rediss://..." : "mysqls://...");
+    if (!verify)
+        return std::string(name) +
+               " TLS certificate is NOT VERIFIED with ?tls=insecure (MITM risk) — remove insecure if possible (verify is now the default).";
+    return "";
+}
+
+// ── Log/hata için DSN maskeleme──────────────────────────────────────────────
 // GÜVENLİK (2026-09-30, canlı mysql:8'de ölçüldü): havuz-açılış INFO log'u DSN'i
 // dsn.substr(0, dsn.find('@')) ile kırpıyordu — amaç kimlik bilgisini gizlemekti ama
 // @'nın ÖNCESİNİ alıyordu → log'a tam olarak "mysql://root:PAROLA" düşüyordu (gizli olan

@@ -1,0 +1,26 @@
+# Template condition guard (2026-10-02).
+# eval_cond searched for each comparison operator as a substring of the whole condition,
+# quotes included. {#if $s == "a>=b"} was split at ">=" and became a numeric 0 >= 0, so
+# the condition was ALWAYS true whatever $s held. The operator is now the first one
+# outside quotes. Template sources are single-quoted (raw).
+use template
+function t($label, $src, $data, $want) {
+    $got = template::render_string($src, $data)
+    if ($got == $want) { print("OK   " . $label) } else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+t("eq, value holds >=",   '{#if $s == "a>=b"}Y{#else}N{/if}', ["s" => "a>=b"], "Y")
+t("eq, value holds >= (no match)", '{#if $s == "a>=b"}Y{#else}N{/if}', ["s" => "zzz"], "N")
+t("eq, value holds !=",   '{#if $s == "a!=b"}Y{#else}N{/if}', ["s" => "a!=b"], "Y")
+t("eq, value holds != (no match)", '{#if $s == "a!=b"}Y{#else}N{/if}', ["s" => "zzz"], "N")
+t("ne, value holds ==",   '{#if $s != "a==b"}Y{#else}N{/if}', ["s" => "a==b"], "N")
+t("eq, value holds <=",   '{#if $s == "x<=y"}Y{#else}N{/if}', ["s" => "nope"], "N")
+t("gt, value holds <",    '{#if $s == "<"}Y{#else}N{/if}',    ["s" => "<"],    "Y")
+t("plain eq",             '{#if $s == "a"}Y{#else}N{/if}',    ["s" => "a"],    "Y")
+t("plain ge",             '{#if $n >= 3}Y{#else}N{/if}',      ["n" => 3],      "Y")
+t("plain lt",             '{#if $n < 3}Y{#else}N{/if}',       ["n" => 3],      "N")
+t("negated truthy",       '{#if !$n}Y{#else}N{/if}',          ["n" => 0],      "Y")
+t("single-quoted value",  '{#if $s == \'a<=b\'}Y{#else}N{/if}', ["s" => "zzz"], "N")
+t("ge, quoted rhs holds =", '{#if $n >= "3"}Y{#else}N{/if}',    ["n" => 2],     "N")
+
+print("")
+print("=== template condition guard done ===")
