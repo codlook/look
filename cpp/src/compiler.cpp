@@ -704,7 +704,7 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     for (int p : ctx.break_patches) patch_jump(p, after);
 
     // alloc_seq(4) ile alındı — 4 register birden serbest bırak
-    for (int k = 0; k < 4; ++k) regs_->free(r_iter + k);
+    for (int k = 0; k < 4; ++k) regs_->free(u8(r_iter + k, "register index"));
     pop_scope();
 }
 
@@ -1466,8 +1466,8 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             uint8_t argc = u8(e.arguments.size(), "argument count");
             uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
-                uint8_t ev = compile_expr(*e.arguments[k], base + k);
-                if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
+                uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
+                if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
             check_builtin_index(bidx, full);
@@ -1475,7 +1475,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
             emit(OpCode::NOP, argc, hi8(bidx));
-            for (int k = 0; k < argc; ++k) regs_->free(base + k);
+            for (int k = 0; k < argc; ++k) regs_->free(u8(base + k, "register index"));
             return r;
         }
         // Unknown modül fonksiyonu → genel CALL yolu.
@@ -1564,8 +1564,8 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             uint8_t argc = u8(e.arguments.size(), "argument count");
             uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
-                uint8_t ev = compile_expr(*e.arguments[k], base + k);
-                if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
+                uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
+                if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
             }
             uint8_t r = (dest == 255) ? alloc_temp() : dest;
             check_builtin_index(bidx, bname);
@@ -1573,7 +1573,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
             emit(OpCode::NOP, argc, hi8(bidx));
-            for (int k = 0; k < argc; ++k) regs_->free(base + k);
+            for (int k = 0; k < argc; ++k) regs_->free(u8(base + k, "register index"));
             return r;
         }
     }
@@ -1588,8 +1588,8 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     uint8_t argc = u8(e.arguments.size(), "argument count");
     uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
     for (int k = 0; k < argc; ++k) {
-        uint8_t ev = compile_expr(*e.arguments[k], base + k);
-        if (ev != base + k) emit(OpCode::MOVE, base + k, ev);
+        uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
+        if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
     }
     uint8_t r = (dest == 255) ? alloc_temp() : dest;
     emit(OpCode::CALL, r, fn, base);
@@ -1607,7 +1607,7 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     if (auto* cv = dynamic_cast<const Variable*>(e.callee.get()))
         cname = u16(add_const(Value(cv->name)) + 1, "constant index");
     emit(OpCode::NOP, argc, hi8(cname), lo8(cname));
-    for (int k = 0; k < argc; ++k) regs_->free(base + k);
+    for (int k = 0; k < argc; ++k) regs_->free(u8(base + k, "register index"));
     free_temp(fn);
     return r;
 }
