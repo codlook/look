@@ -120,6 +120,10 @@ jobs:
           cd cpp
           bash tests/no_unchecked_narrowing.sh
 
+      # A merge that duplicates a CI step must not pass silently.
+      - name: No duplicated CI steps
+        run: bash cpp/tests/ci_no_duplicate_steps.sh
+
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
       # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
       # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
