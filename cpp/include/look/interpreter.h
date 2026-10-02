@@ -484,6 +484,7 @@ private:
 
 struct StructFieldDef {
     std::string name;
+    std::string type;                // LOOK 2: "" = tipsiz
     bool        has_default = false;
     Value       default_val;
 };

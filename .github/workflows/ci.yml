@@ -93,6 +93,21 @@ jobs:
             fi
           done
 
+      # LOOK 2 typed structs: a field is name + type + default. One rule set for both
+      # engines (include/look/struct_types.h): type checked at construction and on
+      # assignment, zero values, fixed shape, per-instance default arrays.
+      - name: Typed struct guard (both engines)
+        run: |
+          cd cpp
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/struct_typed_test.lk || true)"
+            echo "$out"
+            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+              echo "::error::typed struct guard FAILED ($env)"
+              exit 1
+            fi
+          done
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)

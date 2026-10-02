@@ -262,6 +262,7 @@ struct MemberAccessExpression final : Expression {
 // struct Urun { ad, fiyat: 0.0, stok: 0 }
 struct StructField {
     std::string name;
+    std::string type;                         // LOOK 2: "" = tipsiz, "int", "?string", "User"
     std::unique_ptr<Expression> default_expr; // nullable
 };
 

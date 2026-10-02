@@ -19,6 +19,13 @@ struct DifUser {
   role: "member"
   tag: $dif_sd
 }
+# LOOK 2 tipli struct (ad + tip + varsayılan) — üç motorda aynı sıfır değeri ve aynı hata.
+struct DifTyped {
+  n int = 1
+  s string
+  f ?float
+  xs array
+}
 
 # GÖVDE KATEGORİ FONKSİYONLARINA BÖLÜNDÜ (2026-09-30). Tek dev run_all() VM'in 255-register
 # sınırını aşıyordu → CLI VE web TÜM programı SESSİZCE yorumlayıcıya veriyordu; bu guard'ın
@@ -207,13 +214,18 @@ function dif_p7() {
   $o .= "X:" . $im . ";";
   # Y: struct — varsayılan uygulanır · literal ters sırada verilse de alan sırası bildirimdeki
   # gibi · dinamik varsayılan · bilinmeyen alanlı literal iki motorda AYNI hatayı verir ·
-  # sonradan bilinmeyen alan ataması v1'de serbest (tree-walk sözleşmesi korunur).
+  # LOOK 2: şekil SABİT — sonradan bildirilmemiş alana atama iki motorda AYNI hatayı verir.
   $su1 = DifUser{name: "Can"}
   $su2 = DifUser{role: "admin", name: "Ada"}
   $ye = "";
   try { $sbad = DifUser{nmae: "x"}; $ye = "NO-ERROR" } catch ($e) { $ye = "" . $e }
-  $su1.extra = 1
-  $o .= "Y:" . $su1.role . "," . json::encode($su2) . "," . $su1.tag . "," . $ye . "," . json::encode($su1) . ";";
+  $yx = "";
+  try { $su1.extra = 1; $yx = "NO-ERROR" } catch ($e) { $yx = "" . $e }
+  $ty = DifTyped{s: "a"}; $ty.n += 2
+  $yt1 = ""; try { $tb = DifTyped{n: "x"}; $yt1 = "NO-ERROR" } catch ($e) { $yt1 = "" . $e }
+  $yt2 = ""; try { $ty.s = 5; $yt2 = "NO-ERROR" } catch ($e) { $yt2 = "" . $e }
+  $o .= "Y2:" . json::encode($ty) . "," . $yt1 . "," . $yt2 . ";";
+  $o .= "Y:" . $su1.role . "," . json::encode($su2) . "," . $su1.tag . "," . $ye . "," . $yx . "," . json::encode($su1) . ";";
   return $o;
 }
 

@@ -9,6 +9,7 @@
 #include "look/vm.h"
 #include "look/bytecode.h"
 #include "look/web.h"
+#include "look/struct_types.h"
 #include "look/interpreter.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
@@ -339,8 +340,30 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
         }
         // Find existing (skip sentinel at [0] and optional struct tags)
         size_t start = 1;
-        if (vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__")
+        if (vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__") {
             start = 3;
+            // LOOK 2: struct örneği — şekil sabit, tipli alan denetlenir. Literal kurulumu da
+            // (SET_FIELD) buradan geçer; kurallar tree-walk ile ortak (look/struct_types.h).
+            const std::string sname = vec[2].to_string();
+            for (size_t i = start; i + 1 < vec.size(); i += 2) {
+                if (!(vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)) continue;
+                Value nv = val;
+                auto dit = globals_.find("__sdef:" + sname);
+                if (dit != globals_.end() && dit->second.type() == Value::ARRAY) {
+                    const auto& def = *dit->second.as_array();
+                    for (size_t j = 0; j + 2 < def.size(); j += 3)
+                        if (def[j].to_string() == k) {
+                            try { look::struct_check_field(sname, k, def[j + 2].to_string(), nv); }
+                            catch (const std::runtime_error& e) { throw LookVmError(e.what()); }
+                            break;
+                        }
+                }
+                vec[i + 1] = nv;
+                return;
+            }
+            try { look::struct_no_field(sname, k); }
+            catch (const std::runtime_error& e) { throw LookVmError(e.what()); }
+        }
         for (size_t i = start; i + 1 < vec.size(); i += 2) {
             if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
                 { vec[i+1] = val; return; }
@@ -659,14 +682,21 @@ call_dispatch:
                         const auto& li = proto->code[frame.ip + 1 + k];
                         const std::string& fname = CONST((uint16_t(li.b) << 8) | li.c).str_ref();
                         bool declared = false;
-                        for (size_t j = 0; j + 1 < def.size(); j += 2)
+                        for (size_t j = 0; j + 2 < def.size(); j += 3)
                             if (def[j].type() == Value::STRING && def[j].str_ref() == fname) { declared = true; break; }
                         if (!declared)   // tree-walk ile birebir aynı metin (differential)
                             throw LookVmError("Unknown field '" + fname + "' in struct '" + sname + "'");
                     }
-                    for (size_t j = 0; j + 1 < def.size(); j += 2) {
+                    // LOOK 2: üçlüler [ad, varsayılan, tip]. Varsayılan örnek başına hazırlanır
+                    // (sıfır değeri / dizi kopyası) ve tipine karşı denetlenir — tree-walk ile
+                    // aynı sıra ve aynı metin (look/struct_types.h).
+                    for (size_t j = 0; j + 2 < def.size(); j += 3) {
+                        const std::string ftype = def[j + 2].to_string();
+                        Value dv = look::struct_instance_default(def[j + 1], ftype);
+                        try { look::struct_check_field(sname, def[j].to_string(), ftype, dv); }
+                        catch (const std::runtime_error& e) { throw LookVmError(e.what()); }
                         v->push_back(def[j]);
-                        v->push_back(def[j + 1]);
+                        v->push_back(dv);
                     }
                 } else if (shared_.struct_defs) {   // eski yol (hiçbir kod atamıyor) — zararsız
                     auto it = shared_.struct_defs->find(sname);

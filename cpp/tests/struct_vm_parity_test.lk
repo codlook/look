@@ -34,8 +34,11 @@ chk("unknown field in literal rejected", $err, "Unknown field 'nmae' in struct '
 function make_in_fn() { return User{name: "Fn"} }
 chk("default applied inside a function", make_in_fn().role, "member")
 
-$u.extra = 1
-chk("post-construction assign allowed (v1 contract)", json::encode($u), "{\"name\":\"Can\",\"role\":\"member\",\"tag\":\"dyn\",\"extra\":1}")
+# LOOK 2: the shape is fixed. v1 silently added an undeclared field on assignment.
+$xerr = "NO-ERROR"
+try { $u.extra = 1 } catch ($e) { $xerr = "" . $e }
+chk("undeclared field assignment refused (LOOK 2)", $xerr, "struct 'User' has no field 'extra'")
+chk("instance unchanged after the refused assignment", json::encode($u), "{\"name\":\"Can\",\"role\":\"member\",\"tag\":\"dyn\"}")
 
 print("")
 print("=== struct vm parity guard done ===")

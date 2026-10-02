@@ -283,7 +283,15 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
         auto field_tok = consume(TokenType::IDENT, "Expect field name.");
         StructField sf;
         sf.name = field_tok.lexeme;
-        if (match(TokenType::COLON)) {
+        // LOOK 2: alan = ad [tip] [= varsayılan].  Tip: [?]ad  (int, string, ..., StructAdı).
+        // v1 yazımı `ad: varsayılan` (tipsiz) geçerli kalır.
+        // `fn` bir anahtar sözcük (FUNCTION token'ı) ama tip adı olarak da geçerli.
+        if (check(TokenType::QUESTION) || check(TokenType::IDENT) || check(TokenType::FUNCTION)) {
+            if (match(TokenType::QUESTION)) sf.type = "?";
+            if (match(TokenType::FUNCTION)) sf.type += "fn";
+            else sf.type += consume(TokenType::IDENT, "Expect a type name after '?'.").lexeme;
+        }
+        if (match(TokenType::COLON) || match(TokenType::ASSIGN)) {
             sf.default_expr = expression();
         }
         stmt->fields.push_back(std::move(sf));

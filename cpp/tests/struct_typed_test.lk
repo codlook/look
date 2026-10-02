@@ -1,0 +1,109 @@
+# LOOK 2 typed struct guard: a field is name + TYPE + default.
+#
+#   name string          typed, no default -> zero value ("")
+#   age  int = 18        typed + default
+#   score ?float         nullable
+#   profile Profile      another struct (may be null)
+#   note                 untyped: takes any value, as in v1
+#   role: "member"       v1 spelling: untyped + default
+#
+# One rule set for both engines (include/look/struct_types.h): a value that does not match
+# the field type is an error at construction AND on later assignment; an int may go into a
+# float field; null only into ?type / any / fn / struct-typed / untyped fields; the shape
+# is fixed (assigning an undeclared field is an error; v1 silently added it).
+# Uses only builtin module functions so the CLI really runs it on the VM.
+use json
+
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+function err_of($f) {
+    $err = "NO-ERROR"
+    try { $r = $f(); $err = "NO-ERROR" } catch ($e) { $err = "" . $e }
+    return $err
+}
+
+struct Profile { bio string }
+struct User {
+    name string
+    age int = 18
+    score ?float
+    ratio float
+    tags array
+    meta map
+    active bool
+    profile Profile
+    on_save fn
+    extra any
+    note
+    role: "member"
+}
+
+# ── zero values and defaults ────────────────────────────────────────────────
+$u = User{name: "Ada"}
+chk("zero values + defaults", json::encode($u),
+    "{\"name\":\"Ada\",\"age\":18,\"score\":null,\"ratio\":0,\"tags\":[],\"meta\":{},\"active\":false,\"profile\":null,\"on_save\":null,\"extra\":null,\"note\":null,\"role\":\"member\"}")
+$empty = User{}
+chk("empty literal", $empty.name, "")
+
+# ── construction: matching values ───────────────────────────────────────────
+$full = User{name: "Bo", age: 30, score: 1.5, ratio: 2, tags: ["a"], active: true,
+             profile: Profile{bio: "hi"}, on_save: fn() => 1, extra: [1, 2], note: 7, role: 3}
+chk("typed values accepted",   "" . $full.age . $full.profile.bio, "30hi")
+chk("int goes into a float field", json::encode($full.ratio * 1.5), "3")
+chk("untyped fields take anything", "" . $full.note . $full.role, "73")
+
+# ── construction: mismatches ────────────────────────────────────────────────
+chk("string into int",   err_of(fn() => User{age: "30"}),      "struct 'User': field 'age' expects int, got string")
+chk("float into int",    err_of(fn() => User{age: 1.5}),       "struct 'User': field 'age' expects int, got float")
+chk("int into string",   err_of(fn() => User{name: 5}),        "struct 'User': field 'name' expects string, got int")
+chk("int into bool",     err_of(fn() => User{active: 1}),      "struct 'User': field 'active' expects bool, got int")
+chk("map into array",    err_of(fn() => User{tags: ["k" => 1]}), "struct 'User': field 'tags' expects array, got map")
+chk("string into ?float", err_of(fn() => User{score: "x"}),    "struct 'User': field 'score' expects ?float, got string")
+chk("wrong struct",      err_of(fn() => User{profile: User{}}), "struct 'User': field 'profile' expects Profile, got User")
+chk("null into int",     err_of(fn() => User{age: null}),
+    "struct 'User': field 'age' expects int, got null (declare it as ?int to allow null)")
+chk("null into ?float ok",     err_of(fn() => User{score: null}),   "NO-ERROR")
+chk("null into struct field ok", err_of(fn() => User{profile: null}), "NO-ERROR")
+chk("unknown field in literal", err_of(fn() => User{nmae: "x"}), "Unknown field 'nmae' in struct 'User'")
+
+# ── assignment after construction ───────────────────────────────────────────
+function many_assign_bad() { $x = User{}; $x.age = "old"; return 1 }
+function compound_bad()    { $x = User{name: "a"}; $x.name = $x.name == "a" ? 5 : "b"; return 1 }
+function shape_bad()       { $x = User{}; $x.nickname = "z"; return 1 }
+function index_bad()       { $x = User{}; $x["age"] = true; return 1 }
+$u.age = 40
+chk("assign matching value", $u.age, 40)
+$u.age += 2
+chk("compound assign", $u.age, 42)
+$u.ratio = 3
+chk("assign int into float field", json::encode($u.ratio / 2), "1.5")
+chk("assign mismatch",   err_of(fn() => many_assign_bad()),  "struct 'User': field 'age' expects int, got string")
+chk("compound mismatch", err_of(fn() => compound_bad()),     "struct 'User': field 'name' expects string, got int")
+chk("value kept after a refused assignment", $u.age, 42)
+chk("undeclared field",  err_of(fn() => shape_bad()),        "struct 'User' has no field 'nickname'")
+chk("index syntax is checked too", err_of(fn() => index_bad()), "struct 'User': field 'age' expects int, got bool")
+
+
+# ── defaults are checked and never shared between instances ─────────────────
+struct Bad { n int = "seven" }
+chk("default of the wrong type", err_of(fn() => Bad{}), "struct 'Bad': field 'n' expects int, got string")
+chk("...unless overridden?  no: the declaration is wrong", err_of(fn() => Bad{n: 1}),
+    "struct 'Bad': field 'n' expects int, got string")
+
+struct Box { items array, labels: ["x"] }
+$a = Box{}
+$b = Box{}
+$ai = $a.items
+$ai[0] = 1
+chk("mutation reaches its own instance", count($a.items), 1)
+chk("zero-value array is per instance", count($b.items), 0)
+$la = $a.labels
+$la[1] = "y"
+chk("mutation reaches its own instance (default)", count($a.labels), 2)
+$fresh = Box{}
+chk("default array is per instance", count($fresh.labels), 1)
+
+print("")
+print("=== typed struct guard done ===")

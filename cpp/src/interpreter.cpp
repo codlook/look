@@ -1,4 +1,5 @@
 #include "look/interpreter.h"
+#include "look/struct_types.h"
 #include "look/int_overflow.h"
 #include "look/array_count.h"
 #include "look/builtins.h"
@@ -1017,6 +1018,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
         for (const auto& f : s->fields) {
             StructFieldDef sfd;
             sfd.name = f.name;
+            sfd.type = f.type;
             if (f.default_expr) {
                 sfd.has_default = true;
                 sfd.default_val = evaluate_expression(*f.default_expr);
@@ -1132,18 +1134,23 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         arr->push_back(Value(std::string("__struct__")));
         arr->push_back(Value(e->struct_name));
 
+        // VM ile AYNI sıra (hata ve yan etki paritesi): önce her alan varsayılanıyla
+        // (tip denetimli; dizi/map örnek başına kopya), sonra literal alanları YAZILDIĞI
+        // sırayla değerlendirilip denetlenerek yerine konur. Kurallar: look/struct_types.h.
         for (const auto& def : defs) {
             arr->push_back(Value(def.name));
-            bool found = false;
-            for (const auto& kv : e->fields) {
-                if (kv.first == def.name) {
-                    arr->push_back(evaluate_expression(*kv.second));
-                    found = true;
-                    break;
-                }
+            Value dv = look::struct_instance_default(def.has_default ? def.default_val : Value(), def.type);
+            look::struct_check_field(e->struct_name, def.name, def.type, dv);
+            arr->push_back(dv);
+        }
+        for (const auto& kv : e->fields) {
+            Value v = evaluate_expression(*kv.second);
+            for (size_t i = 0; i < defs.size(); ++i) {
+                if (defs[i].name != kv.first) continue;
+                look::struct_check_field(e->struct_name, kv.first, defs[i].type, v);
+                (*arr)[3 + 2 * i + 1] = v;
+                break;
             }
-            if (!found)
-                arr->push_back(def.has_default ? def.default_val : Value());
         }
         return Value(arr);
     }
@@ -1308,6 +1315,21 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             if (!arr.empty() && arr[0].type() == Value::STRING &&
                 arr[0].as_string() == "__assoc__" && idx.type() == Value::STRING) {
                 const std::string& key = idx.as_string();
+                // LOOK 2: struct örneği — şekil sabit, tipli alan denetlenir (look/struct_types.h).
+                if (look::struct_is_instance(arr)) {
+                    const std::string sname = arr[2].to_string();
+                    auto sit = struct_defs_.find(sname);
+                    for (size_t i = 3; i + 1 < arr.size(); i += 2) {
+                        if (arr[i].to_string() != key) continue;
+                        Value nv = apply_op(arr[i + 1]);
+                        if (sit != struct_defs_.end())
+                            for (const auto& d : sit->second)
+                                if (d.name == key) { look::struct_check_field(sname, key, d.type, nv); break; }
+                        arr[i + 1] = nv;
+                        return nv;
+                    }
+                    look::struct_no_field(sname, key);
+                }
                 for (size_t i = 1; i + 1 < arr.size(); i += 2) {
                     if (arr[i].type() == Value::STRING ? arr[i].str_ref() == key
                                                        : arr[i].to_string() == key) { arr[i + 1] = apply_op(arr[i + 1]); return arr[i + 1]; }

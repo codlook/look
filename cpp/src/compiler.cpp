@@ -985,8 +985,9 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
     //   "__sdef:Name" = [f1, d1, f2, d2, ...]   (varsayılansız alan → null, interpreter'la aynı)
     // CLI'da tek VM çalıştırır; web'de kurulum VM'i çalıştırır ve vm_setup_globals her
     // isteğin VM'ine taşır. ':' tanımlayıcıda geçersiz → kullanıcı adıyla çakışamaz.
+    // LOOK 2: üçlüler [ad, varsayılan, tip] — tip "" = tipsiz (kurallar look/struct_types.h).
     uint8_t arr = alloc_temp();
-    emit(OpCode::NEW_ARRAY, arr, hint_u8(s.fields.size() * 2));
+    emit(OpCode::NEW_ARRAY, arr, hint_u8(s.fields.size() * 3));
     for (auto& f : s.fields) {
         uint8_t t = alloc_temp();
         emit_load_const(t, Value(f.name), 0);
@@ -997,6 +998,8 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
         } else {
             emit(OpCode::LOAD_NULL, t);
         }
+        emit(OpCode::ARRAY_PUSH, arr, t);
+        emit_load_const(t, Value(f.type), 0);
         emit(OpCode::ARRAY_PUSH, arr, t);
         free_temp(t);
     }
