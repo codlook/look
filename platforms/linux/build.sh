@@ -8,7 +8,7 @@
 set -e
 cd "$(dirname "$0")"
 
-VERSION="1.0.0"
+VERSION="$(bash ../version.sh)"
 OUT="look-lang-linux-${VERSION}.zip"
 PORT="../../cpp/build-portable"
 TMP="$(mktemp -d)"

@@ -41,13 +41,13 @@ Sunucuda root olarak:
 
 ```bash
 plesk bin extension --uninstall look-lang 2>/dev/null
-wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip"
-plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip
+wget -O /tmp/look-lang-plesk.zip "https://github.com/codlook/look/releases/latest/download/look-lang-plesk.zip"
+plesk bin extension --install /tmp/look-lang-plesk.zip
 ```
 
 Beklenen çıktı: `The extension was successfully installed.`
 
-Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk-1.0.0.zip`**.
+Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.zip`**.
 
 ### ⚠️ Kurulum sonrası — tek komut (YENİ sunucularda ZORUNLU)
 

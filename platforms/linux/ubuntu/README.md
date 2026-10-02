@@ -11,7 +11,7 @@ sudo bash install.sh
 ```
 
 > On AlmaLinux/RHEL you can alternatively install the dnf-managed RPM
-> (`look-lang-1.0.0-1.el8.x86_64.rpm`) for `dnf update look-lang` upgrades, or
+> (`look-lang-<version>-1.el8.x86_64.rpm`) for `dnf update look-lang` upgrades, or
 > use the **Plesk extension** if the server runs Plesk.
 
 What it does:

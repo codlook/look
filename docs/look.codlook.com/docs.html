@@ -243,7 +243,7 @@
       <h3 style="margin-top:0;color:var(--green)">🐧 Linux server</h3>
       <p style="margin:.2rem 0 .6rem;font-size:.9rem;color:var(--text-muted)">One portable binary for Ubuntu/Debian and AlmaLinux/Rocky/RHEL 8·9·10+ (glibc&nbsp;≥&nbsp;2.28).</p>
       <ol style="padding-left:1.2rem;line-height:1.9">
-        <li>Download &amp; unpack <code>look-lang-linux-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a></li>
+        <li>Download &amp; unpack <code>look-lang-linux.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a></li>
         <li>One command — installs the binary + a sample app + systemd service:<br><code>sudo bash install.sh</code></li>
         <li>Verify: <code>curl http://127.0.0.1:9000/</code> · <code>systemctl status look</code></li>
       </ol>
@@ -253,7 +253,7 @@
       <h3 style="margin-top:0;color:var(--purple)">🔌 Plesk extension</h3>
       <p style="margin:.2rem 0 .6rem;font-size:.9rem;color:var(--text-muted)">Install from the panel and attach LOOK to domains in one click — with an in-browser code editor and per-domain monitor.</p>
       <ol style="padding-left:1.2rem;line-height:1.9">
-        <li>In the Plesk terminal, install the extension:<br><code>plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></li>
+        <li>In the Plesk terminal, install the extension:<br><code>plesk bin extension --install /tmp/look-lang-plesk.zip</code></li>
         <li><strong>Finish it (required on new servers):</strong><br><code>plesk php .../look-lang/scripts/post-install.php</code></li>
         <li><b>Applications → Add New Domain</b> → <b>Add &amp; Start</b></li>
       </ol>
@@ -263,7 +263,7 @@
       <h3 style="margin-top:0;color:var(--blue)">⊞ Windows</h3>
       <p style="margin:.2rem 0 .6rem;font-size:.9rem;color:var(--text-muted)">Native MSVC build with Schannel TLS. LOOK's HTTP server is built in — no Apache, no external DLLs.</p>
       <ol style="padding-left:1.2rem;line-height:1.9">
-        <li>Extract <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a></li>
+        <li>Extract <code>look-lang-windows.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a></li>
         <li>Put your <code>index.lk</code> in the folder, then run:<br><code>lk-fcgi.exe --mode http --port 8080</code></li>
         <li>Open <code>http://localhost:8080</code> · run a script: <code>lk.exe app.lk</code></li>
       </ol>
@@ -4129,10 +4129,10 @@ sudo systemctl restart apache2</code></pre>
     <p><strong>One-command install (release packages):</strong> download the package for your platform from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a> — all self-contained (binary embedded):</p>
     <table style="margin-top:.5rem">
       <tr><th>Platform</th><th>Package</th><th>Install</th></tr>
-      <tr><td>Ubuntu / AlmaLinux / RHEL</td><td><code>look-lang-linux-1.0.0.zip</code></td><td><code>sudo bash install.sh</code></td></tr>
-      <tr><td>AlmaLinux / RHEL (dnf)</td><td><code>look-lang-1.0.0-1.el8.x86_64.rpm</code></td><td><code>dnf install look-lang-…rpm</code></td></tr>
-      <tr><td>Plesk (panel)</td><td><code>look-lang-plesk-1.0.0.zip</code></td><td><code>plesk bin extension --install …</code></td></tr>
-      <tr><td>Windows</td><td><code>look-lang-windows-1.0.0.zip</code></td><td>extract, run <code>lk-fcgi.exe --mode http</code></td></tr>
+      <tr><td>Ubuntu / AlmaLinux / RHEL</td><td><code>look-lang-linux.zip</code></td><td><code>sudo bash install.sh</code></td></tr>
+      <tr><td>AlmaLinux / RHEL (dnf)</td><td><code>look-lang-<version>-1.el8.x86_64.rpm</code></td><td><code>dnf install look-lang-…rpm</code></td></tr>
+      <tr><td>Plesk (panel)</td><td><code>look-lang-plesk.zip</code></td><td><code>plesk bin extension --install …</code></td></tr>
+      <tr><td>Windows</td><td><code>look-lang-windows.zip</code></td><td>extract, run <code>lk-fcgi.exe --mode http</code></td></tr>
     </table>
     <p style="margin-top:.5rem">Details: <a href="#windows-installer">Windows Installer</a> · <a href="#plesk-extension">Plesk Extension</a> · <code>platforms/linux/ubuntu/README.md</code></p>
   </div>
@@ -4341,10 +4341,10 @@ RewriteRule ^ fcgi://127.0.0.1:9000/index.lk [P,QSA,L]</code></pre>
   </ul>
 
   <h3>Step 1 — Install</h3>
-  <p>Upload <code>look-lang-plesk-1.0.0.zip</code> via Plesk Panel &rarr; <strong>Extensions &rarr; Upload Extension</strong>, <strong>or</strong> from a root terminal:</p>
+  <p>Upload <code>look-lang-plesk.zip</code> via Plesk Panel &rarr; <strong>Extensions &rarr; Upload Extension</strong>, <strong>or</strong> from a root terminal:</p>
   <pre><code>plesk bin extension --uninstall look-lang 2&gt;/dev/null
-wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip"
-plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></pre>
+wget -O /tmp/look-lang-plesk.zip "https://github.com/codlook/look/releases/latest/download/look-lang-plesk.zip"
+plesk bin extension --install /tmp/look-lang-plesk.zip</code></pre>
   <p style="margin-top:.8rem">Expected output: <code>The extension was successfully installed.</code></p>
 
   <h3>Step 2 — Open the Panel</h3>
@@ -4389,8 +4389,8 @@ plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip</code></pre>
   <p class="lead">A native MSVC build with Schannel TLS. LOOK's HTTP server is built in, so there's no Apache, no XAMPP and no external DLLs.</p>
 
   <div class="callout tip">
-    <p><strong>Easiest way — the release package:</strong> download <code>look-lang-windows-1.0.0.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a>, extract it, and run the built-in HTTP server:</p>
-    <pre><code>Expand-Archive look-lang-windows-1.0.0.zip look; cd look
+    <p><strong>Easiest way — the release package:</strong> download <code>look-lang-windows.zip</code> from <a href="https://github.com/codlook/look/releases/latest" target="_blank">Releases</a>, extract it, and run the built-in HTTP server:</p>
+    <pre><code>Expand-Archive look-lang-windows.zip look; cd look
 .\lk-fcgi.exe --mode http --port 8080</code></pre>
     <p style="margin-top:.4rem">Put your <code>index.lk</code> in the same folder, then open <code>http://localhost:8080</code>.</p>
   </div>
@@ -5769,7 +5769,7 @@ if ($order.status == ACTIVE) {
   <div class="wrap">
     <div class="foot-center">
       <a class="brand" href="index.html"><span>look<span class="dot">.</span></span></a>
-      <p class="foot-tag"><b>A scripting language built for the web</b> · v1.0.0 · Apache-2.0</p>
+      <p class="foot-tag"><b>A scripting language built for the web</b> · v1 · Apache-2.0</p>
       <nav class="foot-links">
         <a href="https://github.com/codlook/look" target="_blank">GitHub</a>
         <a href="benchmarks.html">Benchmarks</a>
@@ -5784,7 +5784,7 @@ if ($order.status == ACTIVE) {
         <a class="soc" href="https://instagram.com/codlook" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>@codlook</a>
         <a class="soc" href="https://www.linkedin.com/company/codlook" target="_blank" rel="noopener" aria-label="LinkedIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>codlook</a>
       </div>
-      <div class="foot-meta">v1.0.0 · C++23 · CMake 3.20+ · Apache 2.4+ / nginx · © 2026 Codlook</div>
+      <div class="foot-meta">v1 · C++23 · CMake 3.20+ · Apache 2.4+ / nginx · © 2026 Codlook</div>
     </div>
   </div>
 </footer>

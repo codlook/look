@@ -43,21 +43,24 @@ jobs:
       - name: docker load + tag doğrula (secret olmadan da koşar)
         run: |
           set -e
-          docker load < look-docker.tar.gz
-          echo "=== yüklenen imaj + LOOK damgası ==="
+          # İmaj etiketi tarball içinden okunur (codlook/look:<sürüm>); sürüm burada gömülü değil.
+          IMG="$(docker load < look-docker.tar.gz | sed -n 's/^Loaded image: //p' | head -1)"
+          [ -n "$IMG" ] || { echo "::error::no image in the tarball"; exit 1; }
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+          echo "=== yüklenen imaj ($IMG) + LOOK damgası ==="
           docker images codlook/look
           # damgayı imajdan oku (git-sha; "src"/"docker" ise release.yml stamp bug'ı geri gelmiş)
-          docker run --rm codlook/look:1.0.0 lk --version || true
+          docker run --rm "$IMG" lk --version || true
 
       - name: Docker Hub push (secret varsa; yoksa atla)
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
         run: |
           set -e
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          docker tag codlook/look:1.0.0 codlook/look:latest
-          docker push codlook/look:1.0.0
+          docker tag "$IMG" codlook/look:latest
+          docker push "$IMG"
           docker push codlook/look:latest
-          echo "Docker Hub güncellendi: codlook/look:1.0.0 + :latest"
+          echo "Docker Hub güncellendi: $IMG + :latest"
 
       - name: Secret yoksa uyar (kuru-prova sonucu)
         if: ${{ env.DOCKERHUB_TOKEN == '' }}
