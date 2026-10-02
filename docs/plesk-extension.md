@@ -19,13 +19,13 @@ Sunucuda **root** olarak (SSH veya Plesk → Tools & Settings → Terminal):
 
 ```bash
 plesk bin extension --uninstall look-lang 2>/dev/null
-wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip"
-plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip
+wget -O /tmp/look-lang-plesk.zip "https://github.com/codlook/look/releases/latest/download/look-lang-plesk.zip"
+plesk bin extension --install /tmp/look-lang-plesk.zip
 ```
 
 Beklenen çıktı: `The extension was successfully installed.`
 
-Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk-1.0.0.zip`**.
+Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.zip`**.
 
 Paneli aç: **Plesk → Extensions → LOOK Language**, veya doğrudan
 `https://<sunucu>:8443/modules/look-lang/`.
@@ -163,7 +163,7 @@ visudo -cf /etc/sudoers.d/look-lang
 ## Paket Yapısı
 
 ```
-look-lang-plesk-1.0.0.zip
+look-lang-plesk.zip
 ├── meta.xml                       # Plesk eklenti tanımı
 ├── post-install / pre-uninstall   # lifecycle hook'ları
 ├── plib/controllers/IndexController.php   # Plesk Obsidian MVC köprüsü

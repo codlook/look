@@ -64,8 +64,8 @@ jobs:
           fi
 
           # --- Docker: load + run ---
-          docker load < look-docker.tar.gz >/dev/null
-          D=$(docker run --rm codlook/look:1.0.0 lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+          IMG="$(docker load < look-docker.tar.gz | sed -n 's/^Loaded image: //p' | head -1)"
+          D=$(docker run --rm "$IMG" lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
           [ "$D" = "$REF" ] && echo "  OK   docker $D" || { echo "  FAIL docker $D != $REF"; fail=1; }
 
           # --- Windows: ÇALIŞTIRMADAN — referans damga .exe içinde geçiyor mu (strings/grep) ---

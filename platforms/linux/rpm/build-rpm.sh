@@ -9,7 +9,7 @@
 # Çalıştırma (repo kökünden, Docker):
 #   docker run --rm -v "$PWD:/look" -w /look almalinux:8 bash platforms/linux/rpm/build-rpm.sh
 set -euo pipefail
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-$(bash "$(dirname "$0")/../../version.sh")}"
 SPEC=/look/platforms/linux/rpm/look-lang.spec
 
 dnf install -y --setopt=sslverify=false gcc-toolset-12 cmake make openssl-devel \

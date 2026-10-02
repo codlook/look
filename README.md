@@ -311,11 +311,11 @@ Grab a package from **[Releases](https://github.com/codlook/look/releases)**:
 
 | Platform | Package |
 |---|---|
-| Linux (Ubuntu / AlmaLinux / RHEL) | `look-lang-linux-1.0.0.zip` → `sudo bash install.sh` |
-| AlmaLinux / RHEL (dnf) | `look-lang-1.0.0-1.el8.x86_64.rpm` |
-| Plesk panel | `look-lang-plesk-1.0.0.zip` → `plesk bin extension --install …` |
+| Linux (Ubuntu / AlmaLinux / RHEL) | `look-lang-linux.zip` → `sudo bash install.sh` |
+| AlmaLinux / RHEL (dnf) | `look-lang-<version>-1.el8.x86_64.rpm` |
+| Plesk panel | `look-lang-plesk.zip` → `plesk bin extension --install …` |
 | Docker (any OS) | `docker run -p 7400:7400 codlook/look` |
-| Windows | `look-lang-windows-1.0.0.zip` → unzip → `lk-fcgi.exe --mode http --port 8080` (no installer) |
+| Windows | `look-lang-windows.zip` → unzip → `lk-fcgi.exe --mode http --port 8080` (no installer) |
 | VS Code editor support | [Marketplace](https://marketplace.visualstudio.com/items?itemName=codlook.look-lang) |
 
 > **Platform tiers:** Linux x86_64 is **Tier 1** (full test suite gates every release; the production

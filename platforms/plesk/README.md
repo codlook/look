@@ -46,11 +46,11 @@ Run as **root** on the server (Plesk → Tools & Settings → Terminal, or SSH):
 
 ```bash
 plesk bin extension --uninstall look-lang 2>/dev/null
-wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip"
-plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip
+wget -O /tmp/look-lang-plesk.zip "https://github.com/codlook/look/releases/latest/download/look-lang-plesk.zip"
+plesk bin extension --install /tmp/look-lang-plesk.zip
 ```
 
-Or via Plesk UI: **Extensions → Upload Extension → `look-lang-plesk-1.0.0.zip`**.
+Or via Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.zip`**.
 
 Open the panel: **Plesk → Extensions → LOOK Language**, or directly at
 `https://<server>:8443/modules/look-lang/`.
@@ -108,5 +108,5 @@ bash platforms/plesk/build.sh --with-binaries
 ```
 
 It bundles `meta.xml`, `post-install`, `plib/`, `htdocs/` (UI + scripts +
-portable binaries) and the RPM into `look-lang-plesk-1.0.0.zip`.
+portable binaries) and the RPM into `look-lang-plesk.zip`.
 The zip must use forward-slash paths with `meta.xml` at the archive root.

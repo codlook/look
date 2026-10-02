@@ -84,7 +84,7 @@ Put `./app/index.lk`, open `http://localhost:7400/`. Image: [hub.docker.com/r/co
 
 One portable binary for Ubuntu/Debian and AlmaLinux/Rocky/RHEL 8·9·10+ (glibc ≥ 2.28).
 
-        - Download & unpack `look-lang-linux-1.0.0.zip` from [Releases](https://github.com/codlook/look/releases/latest)
+        - Download & unpack `look-lang-linux.zip` from [Releases](https://github.com/codlook/look/releases/latest)
 
         - One command — installs the binary + a sample app + systemd service:`sudo bash install.sh`
 
@@ -96,7 +96,7 @@ Custom port: `LOOK_PORT=8080 sudo bash install.sh`. Full guide: [Platform & DB S
 
 Install from the panel and attach LOOK to domains in one click — with an in-browser code editor and per-domain monitor.
 
-        - In the Plesk terminal, install the extension:`plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip`
+        - In the Plesk terminal, install the extension:`plesk bin extension --install /tmp/look-lang-plesk.zip`
 
         - **Finish it (required on new servers):**`plesk php .../look-lang/scripts/post-install.php`
 
@@ -108,7 +108,7 @@ Full guide: [Plesk Extension](#plesk-extension).
 
 Native MSVC build with Schannel TLS. LOOK's HTTP server is built in — no Apache, no external DLLs.
 
-        - Extract `look-lang-windows-1.0.0.zip` from [Releases](https://github.com/codlook/look/releases/latest)
+        - Extract `look-lang-windows.zip` from [Releases](https://github.com/codlook/look/releases/latest)
 
         - Put your `index.lk` in the folder, then run:`lk-fcgi.exe --mode http --port 8080`
 
@@ -4175,10 +4175,10 @@ Detailed guide: `docs/ubuntu-deployment.md` | `docs/plesk-apache-deployment.md`
 
 | Platform | Package | Install |
 | --- | --- | --- |
-| Ubuntu / AlmaLinux / RHEL | `look-lang-linux-1.0.0.zip` | `sudo bash install.sh` |
-| AlmaLinux / RHEL (dnf) | `look-lang-1.0.0-1.el8.x86_64.rpm` | `dnf install look-lang-…rpm` |
-| Plesk (panel) | `look-lang-plesk-1.0.0.zip` | `plesk bin extension --install …` |
-| Windows | `look-lang-windows-1.0.0.zip` | extract, run `lk-fcgi.exe --mode http` |
+| Ubuntu / AlmaLinux / RHEL | `look-lang-linux.zip` | `sudo bash install.sh` |
+| AlmaLinux / RHEL (dnf) | `look-lang-<version>-1.el8.x86_64.rpm` | `dnf install look-lang-…rpm` |
+| Plesk (panel) | `look-lang-plesk.zip` | `plesk bin extension --install …` |
+| Windows | `look-lang-windows.zip` | extract, run `lk-fcgi.exe --mode http` |
 
  Details: [Windows Installer](#windows-installer) · [Plesk Extension](#plesk-extension) · `platforms/linux/ubuntu/README.md`
 
@@ -4325,12 +4325,12 @@ A full LOOK hosting workspace from the Plesk panel — an in-browser code editor
 
 ### Step 1 — Install
 
-Upload `look-lang-plesk-1.0.0.zip` via Plesk Panel → **Extensions → Upload Extension**, **or** from a root terminal:
+Upload `look-lang-plesk.zip` via Plesk Panel → **Extensions → Upload Extension**, **or** from a root terminal:
 
 ```lk
 plesk bin extension --uninstall look-lang 2>/dev/null
-wget -O /tmp/look-lang-plesk-1.0.0.zip "https://github.com/codlook/look/releases/download/v1.0/look-lang-plesk-1.0.0.zip"
-plesk bin extension --install /tmp/look-lang-plesk-1.0.0.zip
+wget -O /tmp/look-lang-plesk.zip "https://github.com/codlook/look/releases/latest/download/look-lang-plesk.zip"
+plesk bin extension --install /tmp/look-lang-plesk.zip
 ```
 
 Expected output: `The extension was successfully installed.`
@@ -4378,10 +4378,10 @@ Details: `docs/plesk-extension.md` · `docs/plesk-extension-install.md`
 
 A native MSVC build with Schannel TLS. LOOK's HTTP server is built in, so there's no Apache, no XAMPP and no external DLLs.
 
-> **Easiest way — the release package:** download `look-lang-windows-1.0.0.zip` from [Releases](https://github.com/codlook/look/releases/latest), extract it, and run the built-in HTTP server:
+> **Easiest way — the release package:** download `look-lang-windows.zip` from [Releases](https://github.com/codlook/look/releases/latest), extract it, and run the built-in HTTP server:
 
 ```lk
-Expand-Archive look-lang-windows-1.0.0.zip look; cd look
+Expand-Archive look-lang-windows.zip look; cd look
 .\lk-fcgi.exe --mode http --port 8080
 ```
 

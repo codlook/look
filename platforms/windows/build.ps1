@@ -8,7 +8,9 @@
 # Then: powershell -ExecutionPolicy Bypass -File platforms\windows\build.ps1
 $ErrorActionPreference = "Stop"
 $Here    = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Version = "1.0.0"
+# Single source of the version: project(... VERSION x.y.z) in cpp\CMakeLists.txt.
+$Version = (Select-String -Path (Join-Path $Here "..\..\cpp\CMakeLists.txt") -Pattern '^project\(looklang VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+if (-not $Version) { throw "cannot read the version from cpp\CMakeLists.txt" }
 $Out     = Join-Path $Here "look-lang-windows-$Version.zip"
 $BinSrc  = [System.IO.Path]::GetFullPath((Join-Path $Here "..\..\cpp\build-win\Release"))
 $Tmp     = Join-Path $env:TEMP ("win-pkg-" + [guid]::NewGuid().ToString("N"))

@@ -2,9 +2,9 @@
 # ============================================================================
 # LOOK — Ubuntu/Debian tek-komut kurulum
 #
-#   1) look-lang-linux-1.0.0.zip indir (GitHub Releases):
-#      https://github.com/codlook/look/releases/latest/download/look-lang-linux-1.0.0.zip
-#   2) unzip look-lang-linux-1.0.0.zip && cd look-lang-linux-*
+#   1) look-lang-linux.zip indir (GitHub Releases):
+#      https://github.com/codlook/look/releases/latest/download/look-lang-linux.zip
+#   2) unzip look-lang-linux.zip && cd look-lang-linux-*
 #   3) sudo bash install.sh      # bin/ zip'in içinde gömülü — indirme yok
 #
 # Ne yapar: binary'yi kurar → örnek uygulama + .env → systemd servisi →

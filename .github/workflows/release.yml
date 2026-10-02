@@ -1,8 +1,19 @@
 name: Release — build, gate & publish (Linux Tier-1 core)
 
-# Yayın otomasyonu (#5). Üç yayın elle yapıldı, üçünde de drift birikti (yayın HEAD'den
-# 36 commit geride kalabildi). Tag push → build + KAPI + yayın. Sürüm 1.0.0 SABİT kalır;
-# ayrım damgada (lk --version → git-sha). v1.0 etiketi yerinde, asset'ler HEAD'e yenilenir.
+# Yayın otomasyonu (#5). Tag push → build + KAPI + yayın.
+#
+# SÜRÜM: tek kaynak cpp/CMakeLists.txt içindeki project(... VERSION x.y.z)
+# (platforms/version.sh okur). Etiket v<sürüm> olmalı (v1.0.1); uymazsa iş durur. Dosya
+# adları ve Docker etiketi bu sürümü taşır; ayrıca sürümsüz SABİT adlı kopyalar
+# (look-lang-linux.zip ...) yayınlanır ki /releases/latest/download/ bağlantıları her
+# sürümde çalışsın. Eski model ("1.0.0 sabit, v1.0 etiketi taşınır") bırakıldı: davranış
+# değiştiren bir düzeltme aynı numara altında sessizce geliyordu. v1.0 yayını ve
+# codlook/look:1.0.0 imajı olduğu gibi kalır, EZİLMEZ.
+#
+# GERÇEK YAYIN AKIŞI: (1) v<sürüm> için TASLAK (draft) release aç, Windows paketini
+# (elle MSVC derlemesi) ona yükle; (2) etiketi gönder → bu iş Linux/Plesk/Docker
+# artefaktlarını taslağa ekler, tutarlılığı denetler ve ANCAK ondan sonra taslağı yayınlar.
+# Tutarsız bir yayın hiç görünür olmaz.
 #
 # KAPI İÇERİDE (kritik): release_gate.lk 7/7 + crypto_vectors.lk 17/17 build'den SONRA,
 # upload'dan ÖNCE çalışır. Kapı düşerse iş orada durur → upload adımına HİÇ geçilmez.
@@ -10,8 +21,9 @@ name: Release — build, gate & publish (Linux Tier-1 core)
 # POZİTİF KONTROL: kapıyı bilerek boz (ör. release_gate'e yanlış assert) → workflow upload
 # ETMEMELİ. rc-tag provasında bir kez gösterilmeli (kırmızı görülmeden yeşile güvenilmez).
 #
-# PROVA: gerçek v1.0'ı ezmeden önce `v1.0.0-rc1` gibi bir pre-release tag ile tüm hattı koştur
-# (aşağıda -rc* → ayrı prerelease; v1.0 → mevcut asset'leri --clobber ile yeniler).
+# PROVA: gerçek yayından önce `v1.0.1-rc1` gibi bir etiketle tüm hattı koştur (-rc* → ayrı
+# prerelease, Docker Hub'a push YOK). Taslak yolunu da provalamak için rc etiketi adına bir
+# taslak release açıp Windows paketini yükle, sonra rc etiketini gönder.
 #
 # NOT: Windows (Tier 2) bu workflow'da YOK — MSVC/OpenSSL CI yolu ayrıca doğrulanmalı,
 # kör eklenmeyecek. Linux/Docker/Plesk = Tier-1 prod hedefi (36-commit'in asıl değeri).
@@ -35,6 +47,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 0) Sürüm — tek kaynak CMakeLists. Etiket v<sürüm> ya da v<sürüm>-rc<N> olmalı:
+      # yanlış numarayla etiketlenmiş bir yayın, başka sürümün dosya adlarını taşırdı.
+      - name: Resolve version (tag must match the source)
+        run: |
+          set -e
+          VERSION="$(bash platforms/version.sh)"
+          TAG="${GITHUB_REF_NAME}"
+          case "$TAG" in
+            "v$VERSION"|"v$VERSION"-rc*) ;;
+            *) echo "::error::tag $TAG does not match the source version $VERSION (expected v$VERSION or v$VERSION-rcN)"; exit 1 ;;
+          esac
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version $VERSION, tag $TAG"
+
       # 1) Toolchain imajı (gcc-toolset-12 + cmake gömülü)
       - name: Build look-build image
         run: docker build -t look-build -f cpp/Dockerfile.build cpp/
@@ -43,7 +69,7 @@ jobs:
       - name: Portable static build @ HEAD
         run: |
           # Damga = kısa git-sha (container'da .git yok → env ile geçir; yoksa binary "src" damgalanır
-          # ve "1.0.0 sabit, ayrım damgada" modeli çöker — rc3'te görüldü).
+          # ve hangi commit'in derlendiği görünmez olur — rc3'te görüldü).
           docker run --rm -e LOOK_BUILD="${GITHUB_SHA::7}" \
             -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh
           # FAIL-LOUD: recipe'in "cmake | grep"i exit kodunu yutuyor → binary'yi ELLE doğrula
@@ -76,9 +102,9 @@ jobs:
           # --build-arg LOOK_BUILD: .dockerignore .git'i attığı için container'da git yok;
           # sha'yı geçmezsek imaj "docker" damgalanır (portable "src" ile aynı sınıf sorun).
           docker build --build-arg LOOK_BUILD="${GITHUB_SHA::7}" \
-            -t codlook/look:1.0.0 -t codlook/look:latest \
+            -t "codlook/look:$VERSION" -t codlook/look:latest \
             -f cpp/docker/Dockerfile.production .
-          docker save codlook/look:1.0.0 | gzip > look-docker.tar.gz
+          docker save "codlook/look:$VERSION" | gzip > look-docker.tar.gz
 
       # 6) Artefaktları topla + Windows/vsix'i çek + SHA256SUMS (HEPSİNİ kapsar)
       # Windows/vsix Tier-2: ELLE derlenip release'e ÖNCEDEN yüklenir (Linux runner'da MSVC yok).
@@ -90,32 +116,43 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          cp platforms/linux/look-lang-linux-1.0.0.zip dist/
-          cp platforms/plesk/look-lang-plesk-1.0.0.zip dist/
+          cp "platforms/linux/look-lang-linux-$VERSION.zip" dist/
+          cp "platforms/plesk/look-lang-plesk-$VERSION.zip" dist/
           cp look-docker.tar.gz dist/
           gh release download "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'look-lang-windows-*.zip' --pattern '*.vsix' --dir dist --clobber 2>/dev/null || true
+            --pattern "look-lang-windows-$VERSION.zip" --pattern '*.vsix' --dir dist --clobber 2>/dev/null || true
+          # Sürümsüz SABİT adlı kopyalar: /releases/latest/download/look-lang-linux.zip her
+          # sürümde aynı adresten en son paketi verir (doküman bağlantıları bunu kullanır).
+          for p in linux plesk windows; do
+            [ -f "dist/look-lang-$p-$VERSION.zip" ] && cp "dist/look-lang-$p-$VERSION.zip" "dist/look-lang-$p.zip"
+          done
           # subshell → dış kabuk repo kökünde kalır; nullglob ile vsix yoksa literal '*.vsix' geçmez
           ( cd dist && shopt -s nullglob && sha256sum *.zip *.tar.gz *.vsix > SHA256SUMS.txt )
           echo "=== dist ==="; ls -1 dist
           echo "=== SHA256SUMS ==="; cat dist/SHA256SUMS.txt
 
-      # 7) Yayınla — rc* → ayrı prerelease (prova); v1.0 → mevcut asset'leri yenile
-      - name: Publish to GitHub release
+      # 7) Yükle — release (taslak) varsa ona ekle; yoksa rc → prerelease aç, gerçek → DUR.
+      # Gerçek yayında taslak ZORUNLU: Windows paketi yalnız orada bulunur ve taslak,
+      # tutarlılık denetimi (7.5) geçene kadar kimseye görünmez.
+      - name: Upload to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -e
           TAG="${GITHUB_REF_NAME}"
           cd dist
-          if [[ "$TAG" == *-rc* || "$TAG" == *rc* ]]; then
-            echo "PROVA — pre-release $TAG (gerçek v1.0 ezilmez)"
-            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
-              --title "LOOK $TAG (release automation prova)" \
-              --notes "release.yml prova koşumu — kapı geçti, artefaktlar üretildi. Damga: $GITHUB_SHA" \
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG exists — adding assets (build $GITHUB_SHA)"
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" *.zip *.tar.gz SHA256SUMS.txt --clobber
+          elif [[ "$TAG" == *-rc* ]]; then
+            echo "PROVA — pre-release $TAG"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+              --title "LOOK $TAG (release rehearsal)" \
+              --notes "Release pipeline rehearsal. Build $GITHUB_SHA." \
               *.zip *.tar.gz SHA256SUMS.txt
           else
-            echo "GERÇEK YAYIN — $TAG asset'leri HEAD'e yenileniyor (sürüm 1.0.0 sabit, damga=$GITHUB_SHA)"
-            gh release upload "$TAG" *.zip *.tar.gz SHA256SUMS.txt --clobber
+            echo "::error::no draft release for $TAG — create a draft release for this tag holding look-lang-windows-$VERSION.zip, then push the tag again"
+            exit 1
           fi
 
       # 7.5) CONSISTENCY (INLINE) — tüm binary asset'ler AYNI damga + manifest kapsamı.
@@ -134,6 +171,17 @@ jobs:
           [ -n "$REF" ] || { echo "::error::linux damgası okunamadı"; exit 1; }
           echo "REFERANS damga (linux): $REF"
           fail=0
+          # Sürüm: binary'nin söylediği numara dosya adındakiyle aynı olmalı.
+          _linux/bin/lk --version | grep -q "LOOK $VERSION " \
+            && echo "  OK   version $VERSION" \
+            || { echo "  FAIL version: binary says [$(_linux/bin/lk --version)], expected $VERSION"; fail=1; }
+          # Sabit adlı kopyalar sürümlü dosyayla bayt-aynı olmalı.
+          for p in linux plesk windows; do
+            [ -f "look-lang-$p-$VERSION.zip" ] || continue
+            cmp -s "look-lang-$p-$VERSION.zip" "look-lang-$p.zip" \
+              && echo "  OK   look-lang-$p.zip == look-lang-$p-$VERSION.zip" \
+              || { echo "  FAIL look-lang-$p.zip differs from the versioned file"; fail=1; }
+          done
           unzip -oq look-lang-plesk-*.zip -d _plesk
           if [ -f _plesk/htdocs/bin/lk ]; then
             chmod +x _plesk/htdocs/bin/lk
@@ -141,7 +189,7 @@ jobs:
             [ "$P" = "$REF" ] && echo "  OK   plesk  $P" || { echo "  FAIL plesk  $P != $REF"; fail=1; }
           else echo "  FAIL plesk: htdocs/bin/lk YOK — paketleme bozuk"; fail=1; fi
           docker load < look-docker.tar.gz >/dev/null
-          D=$(docker run --rm codlook/look:1.0.0 lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
+          D=$(docker run --rm "codlook/look:$VERSION" lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
           [ "$D" = "$REF" ] && echo "  OK   docker $D" || { echo "  FAIL docker $D != $REF"; fail=1; }
           # Windows: ÇALIŞTIRMADAN — referans damga .exe içinde geçiyor mu (strings/grep)
           if ls look-lang-windows-*.zip >/dev/null 2>&1; then
@@ -163,6 +211,21 @@ jobs:
           [ "$fail" = 0 ] || { echo "::error::Asset damgaları AYRIŞIYOR — yayın tutarsız"; exit 1; }
           echo "TUTARLI: tüm binary asset'ler $REF"
 
+      # 7.6) Taslağı yayınla — ANCAK tutarlılık geçtikten sonra. rc: prerelease olarak kalır.
+      - name: Publish the release (only after the consistency check)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" == *-rc* ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets \
+            --jq '"published: \(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets | length)"'
+
       # 8) Docker Hub push — yalnız secret varsa (yoksa atla; kullanıcı elle push eder).
       # rc* tag'lerinde ATLANIR: Docker Hub'da tag izolasyonu yok → rc :latest'i ezerdi
       # ve prova "gerçek yayını ezmeden" sözünü Docker tarafında bozardı (GitHub'da prerelease
@@ -171,5 +234,6 @@ jobs:
         if: ${{ env.DOCKERHUB_TOKEN != '' && !contains(github.ref_name, 'rc') }}
         run: |
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          docker push codlook/look:1.0.0
+          # Yalnız :$VERSION ve :latest. Eski sürüm etiketlerine (ör. :1.0.0) DOKUNULMAZ.
+          docker push "codlook/look:$VERSION"
           docker push codlook/look:latest
