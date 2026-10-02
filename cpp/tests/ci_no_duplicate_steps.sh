@@ -15,5 +15,12 @@ for f in "$@"; do
     if [ -n "$dups" ]; then
         echo "FAIL: duplicated step in $f:"; echo "$dups" | sed 's/^/    /'; fail=1
     fi
+    # A step swallowed by a comment: an inserted block that lost its newlines ends up as
+    # one "# ... - name: X  run: ..." line. The file still parses and the step never runs
+    # (it happened to "Version has a single source", which shipped green without running).
+    eaten="$(tr -d '\r' < "$f" | grep -nE '^[ \t]*#.*[ \t]- name:[ \t]' || true)"
+    if [ -n "$eaten" ]; then
+        echo "FAIL: a step is hidden inside a comment in $f:"; echo "$eaten" | cut -c1-140 | sed 's/^/    /'; fail=1
+    fi
 done
-[ $fail = 0 ] && echo "PASS: no duplicated CI steps ($# workflow files)" || exit 1
+[ $fail = 0 ] && echo "PASS: no duplicated or hidden CI steps ($# workflow files)" || exit 1

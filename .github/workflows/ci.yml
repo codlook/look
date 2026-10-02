@@ -136,7 +136,10 @@ jobs:
       # A merge that duplicates a CI step must not pass silently.
       - name: No duplicated CI steps
         run: bash cpp/tests/ci_no_duplicate_steps.sh
-# One source for the version number; docs link to unversioned download names.      - name: Version has a single source        run: bash cpp/tests/version_single_source.sh
+
+      # One source for the version number; docs link to unversioned download names.
+      - name: Version has a single source
+        run: bash cpp/tests/version_single_source.sh
 
       # A comparison operator inside a quoted value must not split a template condition.
       - name: Template condition guard (both engines)
