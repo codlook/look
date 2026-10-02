@@ -93,6 +93,13 @@ jobs:
             fi
           done
 
+      # A struct default array/map was shared by every instance, so one request's data
+      # appeared in the next user's new instance. Two requests, both engines.
+      - name: Struct default isolation (two requests, both engines)
+        run: |
+          cd cpp
+          bash tests/struct_default_isolation_test.sh ./build/lk-fcgi
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)

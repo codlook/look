@@ -666,7 +666,9 @@ call_dispatch:
                     }
                     for (size_t j = 0; j + 1 < def.size(); j += 2) {
                         v->push_back(def[j]);
-                        v->push_back(def[j + 1]);
+                        // Varsayılan dizi/map örnek başına DERİN kopya (tree-walk ile aynı):
+                        // paylaşılan varsayılan, istekler arasında veri sızdırıyordu.
+                        v->push_back(def[j + 1].type() == Value::ARRAY ? def[j + 1].deep_clone() : def[j + 1]);
                     }
                 } else if (shared_.struct_defs) {   // eski yol (hiçbir kod atamıyor) — zararsız
                     auto it = shared_.struct_defs->find(sname);

@@ -1143,7 +1143,13 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 }
             }
             if (!found)
-                arr->push_back(def.has_default ? def.default_val : Value());
+                // Varsayılan DİZİ/MAP her örnek için derin kopyalanır. ESKİ HATA: varsayılan
+                // bildirimde bir kez hesaplanıp tüm örneklerle PAYLAŞILIYORDU → bir örneğin
+                // dizisine yazılan veri sonraki her örnekte görünüyordu; webde bu, bir
+                // isteğin verisinin BAŞKA kullanıcının isteğine sızması demek.
+                arr->push_back(!def.has_default ? Value()
+                               : def.default_val.type() == Value::ARRAY ? def.default_val.deep_clone()
+                               : def.default_val);
         }
         return Value(arr);
     }

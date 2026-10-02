@@ -16,6 +16,31 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-02 — Struct default arrays shared between requests (data exposure)
+
+**Affected:** every release up to and including 1.0.2. **Fixed in:** 1.0.3.
+
+A struct field whose default is an array or a map was evaluated once, at the declaration,
+and every new instance pointed at that same value:
+
+```lk
+struct Cart { items: [] }
+```
+
+Writing into one instance's `items` in place changed the default itself. In a web
+application the declaration outlives the request, so data one request put into its own
+`Cart` appeared in the next request's freshly created `Cart` — for a different user. Both
+engines behaved the same way. Nested arrays inside the default were shared too.
+
+From 1.0.3 each instance gets its own deep copy of the default.
+
+**Who is affected:** applications that declare a struct with an array or map default and
+then modify that array or map in place. Scalar defaults (strings, numbers, booleans) and
+fields given a value in the literal (`Cart{items: [...]}`) were not affected.
+
+**What to do:** upgrade to 1.0.3. If you cannot upgrade immediately, give the field a
+value in every literal instead of relying on the default.
+
 ### 2026-09-30 — Database password written to logs in plain text (action required)
 
 **Affected:** every LOOK 1.0.0 build up to and including build stamp `e7d9636` (all releases
