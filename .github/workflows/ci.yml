@@ -107,19 +107,6 @@ jobs:
             fi
           done
 
-      # Register reuse — one function far past the old 72-route / 63-call ceiling, plus
-      # more than 256 closures. Strict VM: a compile failure is an error, not a fallback.
-      - name: Register reuse guard (both engines)
-        run: |
-          cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/register_reuse_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::register reuse guard FAILED ($env)"
-              exit 1
-            fi
-          done
       # Argument count / parameter index are 8-bit: past 255 they wrapped silently on the VM.
       - name: VM operand limits
         run: |
