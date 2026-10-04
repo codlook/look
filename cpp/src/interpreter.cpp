@@ -1144,6 +1144,8 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         // sırayla değerlendirilip denetlenerek yerine konur. Kurallar: look/struct_types.h.
         for (const auto& def : defs) {
             arr->push_back(Value(def.name));
+            look::struct_check_type_known(e->struct_name, def.name, def.type,
+                [&](const std::string& t) { return struct_defs_.count(t) != 0; });
             Value dv = look::struct_instance_default(def.has_default ? def.default_val : Value(), def.type);
             look::struct_check_field(e->struct_name, def.name, def.type, dv);
             arr->push_back(dv);

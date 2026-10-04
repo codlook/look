@@ -16,9 +16,9 @@ function chk($label, $got, $want) {
 
 $dyn = "dyn"
 struct User {
-    name
-    role: "member"
-    tag: $dyn
+    name any
+    role any = "member"
+    tag any = $dyn
 }
 
 $u = User{name: "Can"}

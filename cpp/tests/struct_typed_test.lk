@@ -4,12 +4,13 @@
 #   age  int = 18        typed + default
 #   score ?float         nullable
 #   profile Profile      another struct (may be null)
-#   note                 untyped: takes any value, as in v1
-#   role: "member"       v1 spelling: untyped + default
+#   note any             takes every value
+#   (one form only: "name type [= default]"; an untyped field and the v1 "name: default"
+#   spelling are parse errors — tests/struct_single_form_test.sh)
 #
 # One rule set for both engines (include/look/struct_types.h): a value that does not match
 # the field type is an error at construction AND on later assignment; an int may go into a
-# float field; null only into ?type / any / fn / struct-typed / untyped fields; the shape
+# float field; null only into ?type / any / fn / struct-typed fields; the shape
 # is fixed (assigning an undeclared field is an error; v1 silently added it).
 # Uses only builtin module functions so the CLI really runs it on the VM.
 use json
@@ -36,8 +37,8 @@ struct User {
     profile Profile
     on_save fn
     extra any
-    note
-    role: "member"
+    note any
+    role any = "member"
 }
 
 # ── zero values and defaults ────────────────────────────────────────────────
@@ -52,7 +53,7 @@ $full = User{name: "Bo", age: 30, score: 1.5, ratio: 2, tags: ["a"], active: tru
              profile: Profile{bio: "hi"}, on_save: fn() => 1, extra: [1, 2], note: 7, role: 3}
 chk("typed values accepted",   "" . $full.age . $full.profile.bio, "30hi")
 chk("int goes into a float field", json::encode($full.ratio * 1.5), "3")
-chk("untyped fields take anything", "" . $full.note . $full.role, "73")
+chk("any fields take anything", "" . $full.note . $full.role, "73")
 
 # ── construction: mismatches ────────────────────────────────────────────────
 chk("string into int",   err_of(fn() => User{age: "30"}),      "struct 'User': field 'age' expects int, got string")
@@ -92,7 +93,7 @@ chk("default of the wrong type", err_of(fn() => Bad{}), "struct 'Bad': field 'n'
 chk("...unless overridden?  no: the declaration is wrong", err_of(fn() => Bad{n: 1}),
     "struct 'Bad': field 'n' expects int, got string")
 
-struct Box { items array, labels: ["x"] }
+struct Box { items array, labels array = ["x"] }
 $a = Box{}
 $b = Box{}
 $ai = $a.items
@@ -105,5 +106,13 @@ chk("mutation reaches its own instance (default)", count($a.labels), 2)
 $fresh = Box{}
 chk("default array is per instance", count($fresh.labels), 1)
 
+
+# ── a misspelled type is an error when the struct is first built, value or no value ─────
+struct Typo { name strng, n int }
+chk("unknown type name", err_of(fn() => Typo{n: 1}),
+    "struct 'Typo': field 'name' has unknown type 'strng' (expected int, float, string, bool, array, map, fn, any or the name of a struct)")
+struct Later { next Node }
+struct Node { v int }
+chk("a struct declared later is a known type", err_of(fn() => Later{next: Node{v: 1}}), "NO-ERROR")
 print("")
 print("=== typed struct guard done ===")

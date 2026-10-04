@@ -10,7 +10,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev
 PORT="${PORT:-7711}"
 cat > "$TMP/app.lk" <<'LK'
 use json
-struct Cart { owner: "nobody", items: ["empty"], meta: ["tags" => ["t0"]] }
+struct Cart { owner any = "nobody", items array = ["empty"], meta map = ["tags" => ["t0"]] }
 function set_cart($u) {
     $c = Cart{owner: $u}
     $it = $c.items

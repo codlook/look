@@ -107,6 +107,14 @@ jobs:
               exit 1
             fi
           done
+
+      # LOOK 2: one spelling for a struct field ("name type [= default]"); the two v1
+      # spellings are parse errors that say what to write instead.
+      - name: Struct field single form (both engines)
+        run: |
+          cd cpp
+          bash tests/struct_single_form_test.sh ./build/lk
+
       # A struct default array/map was shared by every instance, so one request's data
       # appeared in the next user's new instance. Two requests, both engines.
       - name: Struct default isolation (two requests, both engines)

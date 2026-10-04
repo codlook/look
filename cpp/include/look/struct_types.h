@@ -6,14 +6,17 @@
 //       age   int = 18            # tipli + varsayılan
 //       score ?float              # null olabilir
 //       boss  User                # başka bir struct (null olabilir)
-//       note                      # tipsiz: v1'deki gibi her değeri alır
-//       role: "member"            # v1 yazımı: tipsiz + varsayılan
+//       note  any                 # her değeri alır
 //   }
+// Tek yazım: `ad tip [= varsayılan]`. Tipsiz alan ve v1'in `ad: varsayılan` yazımı
+// ayrıştırıcıda reddedilir (parser.cpp).
 //
 // Kurallar HER İKİ motorda bu tek başlıktan gelir (iki ayrı uygulama = ayrışma):
-//   * tipli alana uymayan değer → hata (kurulumda da, sonradan atamada da);
+//   * tip adı bilinmeli (yerleşik ya da bildirilmiş bir struct) — yazım hatası (`strng`)
+//     struct ilk kurulduğunda, alana değer verilmese bile hata;
+//   * alana uymayan değer → hata (kurulumda da, sonradan atamada da);
 //   * int, float alana yazılabilir (float'a çevrilir); tersi ve diğer tüm karışımlar hata;
-//   * null yalnız ?tip, any, fn, struct tipli ve tipsiz alanlara yazılabilir;
+//   * null yalnız ?tip, any, fn ve struct tipli alanlara yazılabilir;
 //   * struct'ın şekli SABİT: bildirilmemiş alana atama hata (v1'de sessizce ekleniyordu).
 // Bildirim düzeni (VM'de gizli global "__sdef:Name"): üçlüler [ad, varsayılan, tip].
 #include "look/interpreter.h"
@@ -50,6 +53,20 @@ inline std::string struct_value_type_name(const Value& v) {
 inline bool struct_type_is_builtin(const std::string& base) {
     return base == "int" || base == "float" || base == "string" || base == "bool"
         || base == "array" || base == "map" || base == "fn" || base == "any";
+}
+
+// Tip adı bilinen bir şey mi: yerleşik tip ya da bildirilmiş struct. `is_struct(ad)` motordan
+// gelir (VM: "__sdef:ad" global'i; tree-walk: struct_defs_). Struct'lar birbirine ileriden
+// başvurabildiği için denetim bildirimde değil, struct İLK KURULDUĞUNDA yapılır.
+template <class IsStruct>
+inline void struct_check_type_known(const std::string& sname, const std::string& fname,
+                                    const std::string& type, IsStruct&& is_struct) {
+    if (type.empty()) return;
+    const std::string base = type[0] == '?' ? type.substr(1) : type;
+    if (struct_type_is_builtin(base) || is_struct(base)) return;
+    throw std::runtime_error("struct '" + sname + "': field '" + fname + "' has unknown type '"
+                             + base + "' (expected int, float, string, bool, array, map, fn, any "
+                               "or the name of a struct)");
 }
 
 // Tipli alanın varsayılansız değeri. array/map HER örnek için taze üretilir.

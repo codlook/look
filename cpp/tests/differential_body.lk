@@ -15,9 +15,9 @@ function dif_fib($n) { if ($n < 2) { return $n } return dif_fib($n-1) + dif_fib(
 # `tag: $dif_sd` dinamik varsayılan — bildirim anında değerlendirilir (tree-walk gibi).
 $dif_sd = "dyn"
 struct DifUser {
-  name
-  role: "member"
-  tag: $dif_sd
+  name any
+  role any = "member"
+  tag any = $dif_sd
 }
 # LOOK 2 tipli struct (ad + tip + varsayılan) — üç motorda aynı sıfır değeri ve aynı hata.
 struct DifTyped {

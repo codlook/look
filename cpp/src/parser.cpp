@@ -283,15 +283,24 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
         auto field_tok = consume(TokenType::IDENT, "Expect field name.");
         StructField sf;
         sf.name = field_tok.lexeme;
-        // LOOK 2: alan = ad [tip] [= varsayılan].  Tip: [?]ad  (int, string, ..., StructAdı).
-        // v1 yazımı `ad: varsayılan` (tipsiz) geçerli kalır.
+        // LOOK 2: bir alanın TEK yazımı vardır:  ad tip [= varsayılan]
+        //   Tip: [?]ad  (int, float, string, bool, array, map, fn, any, StructAdı).
+        // v1'in iki yazımı kaldırıldı (aynı iş için üç yol = anayasa ihlali): tipsiz `ad`
+        // ve `ad: varsayılan`. İkisi de neyin yazılacağını söyleyen bir hatadır; "her değeri
+        // alır" artık açıkça `any` yazılarak söylenir.
         // `fn` bir anahtar sözcük (FUNCTION token'ı) ama tip adı olarak da geçerli.
-        if (check(TokenType::QUESTION) || check(TokenType::IDENT) || check(TokenType::FUNCTION)) {
-            if (match(TokenType::QUESTION)) sf.type = "?";
-            if (match(TokenType::FUNCTION)) sf.type += "fn";
-            else sf.type += consume(TokenType::IDENT, "Expect a type name after '?'.").lexeme;
-        }
-        if (match(TokenType::COLON) || match(TokenType::ASSIGN)) {
+        if (check(TokenType::COLON))
+            throw LookParseError("struct '" + stmt->name + "': field '" + sf.name
+                + "' uses the old 'name: default' form. Write '" + sf.name + " <type> = <default>' "
+                  "(for example '" + sf.name + " any = ...').", field_tok.line, field_tok.column);
+        if (!(check(TokenType::QUESTION) || check(TokenType::IDENT) || check(TokenType::FUNCTION)))
+            throw LookParseError("struct '" + stmt->name + "': field '" + sf.name
+                + "' needs a type. Write '" + sf.name + " <type>' — use 'any' to accept every value.",
+                field_tok.line, field_tok.column);
+        if (match(TokenType::QUESTION)) sf.type = "?";
+        if (match(TokenType::FUNCTION)) sf.type += "fn";
+        else sf.type += consume(TokenType::IDENT, "Expect a type name after '?'.").lexeme;
+        if (match(TokenType::ASSIGN)) {
             sf.default_expr = expression();
         }
         stmt->fields.push_back(std::move(sf));

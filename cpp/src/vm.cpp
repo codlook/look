@@ -726,7 +726,10 @@ call_dispatch:
                     for (size_t j = 0; j + 2 < def.size(); j += 3) {
                         const std::string ftype = def[j + 2].to_string();
                         Value dv = look::struct_instance_default(def[j + 1], ftype);
-                        try { look::struct_check_field(sname, def[j].to_string(), ftype, dv); }
+                        try {
+                            look::struct_check_type_known(sname, def[j].to_string(), ftype,
+                                [&](const std::string& t) { return globals_.count("__sdef:" + t) != 0; });
+                            look::struct_check_field(sname, def[j].to_string(), ftype, dv); }
                         catch (const std::runtime_error& e) { throw LookVmError(e.what()); }
                         v->push_back(def[j]);
                         v->push_back(dv);
