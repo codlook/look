@@ -292,6 +292,17 @@ public:
         return e;
     }
 
+    // İSTEK İZOLASYONU (web): kurulumda oluşmuş bir closure env'inin, parent'ı isteğin kendi
+    // globals'ına çevrilmiş ve dizileri derin kopyalanmış kopyası. Bkz. Interpreter::request_env.
+    const std::shared_ptr<Environment>& parent() const { return parent_; }
+    std::shared_ptr<Environment> rebased(std::shared_ptr<Environment> new_parent) const {
+        auto e = std::make_shared<Environment>(std::move(new_parent));
+        for (const auto& [k, v] : values_)
+            e->values_[k] = (v.type() == Value::ARRAY) ? v.deep_clone() : v;
+        e->fn_boundary_ = fn_boundary_;
+        return e;
+    }
+
     // THREAD-SINIRI klonu: clone() gibi AMA değerleri clone_for_thread ile klonlar (FUNCTION
     // dahil). clone() `deep_clone` kullanır ve o FUNCTION'ı bilmez → İÇ İÇE closure capture'ı
     // (`use ($inner)` — $inner kendisi closure) ikinci seviyede sığ kalıp $big'i paylaşıyordu
@@ -576,7 +587,18 @@ public:
     void reset_globals_from(const Interpreter& base) {
         globals_ = base.globals_->clone();
         current_ = std::make_shared<Environment>(globals_);
+        setup_globals_ = base.globals_.get();
+        rebased_.clear();
     }
+
+    // İSTEK İZOLASYONU: kurulumda tanımlanan her fonksiyonun closure'ı KURULUM globals'ını
+    // gösterir; dispatch kopyası globals'ı klonlasa da fonksiyonlar eskisini okuyup yazıyordu →
+    // bir isteğin `const`/üst-düzey diziye yerinde yazması sonraki isteklere sızıyordu.
+    // request_env, kurulum globals'ına varan bir env zincirini bu isteğin globals'ına bağlar
+    // (ara closure env'leri istek başına bir kez kopyalanır, dizileri derin klonlanır).
+    std::shared_ptr<Environment> request_env(const std::shared_ptr<Environment>& env);
+    const Environment* setup_globals_ = nullptr;   // dispatch kopyasında: asıl yorumlayıcının globals'ı
+    std::unordered_map<const Environment*, std::shared_ptr<Environment>> rebased_;
 
     // VM builtin wiring: set_web_context() sonrası modules_'dan fonksiyon al.
     // module = "response", fn = "header" → modules_["response"].functions["header"]

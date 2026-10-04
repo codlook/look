@@ -114,6 +114,13 @@ jobs:
           cd cpp
           bash tests/struct_default_isolation_test.sh ./build/lk-fcgi
 
+      # Arrays created at setup (const, top-level, captured by a route or by a stored
+      # closure) were shared by every request: one request's in-place write reached the next.
+      - name: Request isolation (const, global, captured arrays; both engines)
+        run: |
+          cd cpp
+          bash tests/request_isolation_test.sh ./build/lk-fcgi
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)

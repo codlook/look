@@ -75,6 +75,11 @@ public:
     explicit VM(SharedState shared, std::ostream& output);
 
     void set_globals(std::unordered_map<std::string, Value> g);
+    // İstek izolasyonu (web): set_globals'tan sonra çağrılır. Kurulum global'lerindeki
+    // dizi/closure'lar istek içinde İLK erişimde kopyalanır (LOAD_GLOBAL yavaş yolu).
+    void isolate_setup_globals() { isolate_globals_ = true; isolated_.clear(); }
+    // Dizi yakalayan kurulum closure'ının istek başına kopyası (yoksa c'nin kendisi).
+    static const Closure& request_local(const Closure& c, std::shared_ptr<Closure>& holder);
     void set_web_context(WebContext* ctx);
     void set_ws_connection(std::shared_ptr<WsConnection> ws);
     void set_sse_connection(std::shared_ptr<SseConnection> sse);
@@ -145,6 +150,8 @@ private:
     // Shared read-only state
     SharedState                              shared_;
     std::unordered_map<std::string, Value>   globals_;
+    bool                                     isolate_globals_ = false;  // web isteği VM'i mi
+    std::unordered_set<const Value*>         isolated_;  // bu istekte çözülmüş global slot'ları
     // A2 inline cache: LOAD_GLOBAL her erişimde globals_.find (hash + probe) ödüyordu —
     // global-ağır CPU döngüsünde ~2.77× (ölçüldü). Proto başına, sabit-havuz indeksiyle
     // (ni) adreslenen Value* önbelleği: ilk isabette globals_ slot'unun adresini çivileriz,

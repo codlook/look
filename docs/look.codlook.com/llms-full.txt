@@ -280,6 +280,34 @@ print($product["tags"][0])  # veggie
 
 > **No mixed arrays:** a single array can't use string keys and numeric indexes at the same time. Nested arrays (numeric inside assoc) are not covered by this rule — each array can be freely nested as long as it is homogeneous within itself.
 
+### Arrays Are Shared, Not Copied
+
+Assigning an array to another variable, or passing it to a function, does **not** copy it.
+Both names refer to the same array, and writing through an index changes it for both:
+
+```lk
+$b = [1, 2]
+$a = $b
+$a[0] = 9
+print($b[0])              # 9 — $b changed too
+
+function first_to_zero($x) { $x[0] = 0 }
+first_to_zero($b)
+print($b[0])              # 0 — the caller's array changed
+```
+
+This is different from PHP, where assignment copies. Functions that return a new array
+(`array::push`, `array::slice`, `array::map`, ...) leave the original untouched; index
+assignment (`$a[0] = x`, `$a["k"] = x`) changes it in place. To work on a private copy of
+a list, build one: `$copy = array::slice($b, 0)`. That copies one level; for nested data
+use `json::decode(json::encode($b))`.
+
+**Between requests** the web server isolates you from this: every request gets its own
+copy of the arrays created while the script was set up (`const` arrays, top-level arrays,
+arrays captured by a route with `use`, struct defaults). A request may change them freely;
+the next request sees the declared values again. State that is meant to outlive a request
+belongs in `cache::`, `session::` or the database — never in a top-level array.
+
 ### Type Conversions
 
 ```lk
