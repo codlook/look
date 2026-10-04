@@ -2409,3 +2409,11 @@ std::string look_get_env(const std::string& key, const std::string& default_val)
 
 } // namespace look
 
+
+// LOOK 2: yükleme bittiğinde tüm struct tip adlarını bir kez denetle (look/struct_types.h).
+void look::Interpreter::validate_struct_types() const {
+    for (const auto& [sname, fields] : struct_defs_)
+        for (const auto& f : fields)
+            look::struct_check_type_known(sname, f.name, f.type,
+                [&](const std::string& t) { return struct_defs_.count(t) != 0; });
+}

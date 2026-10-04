@@ -5,12 +5,13 @@
 #
 # 2026-08-12: ilk workflow_dispatch koşumu İLK denemede yeşil (MSVC build + gate 17/17·5/5·7/7,
 # ortam hatası yok) → push tetikleyicisi eklendi. main'e her push'ta koşar (release main'den çıkar);
-# feature-branch'ler yavaş MSVC ile yorulmasın diye yalnız main + elle-tetik. continue-on-error YOK.
+# feature-branch'ler yavaş MSVC ile yorulmasın diye yalnız main + v2 + elle-tetik. v2 eklendi (2026-10-04):
+# LOOK 2 değişiklikleri orada birikiyor; MSVC farkları main'e birleştirme gününe kalmasın. continue-on-error YOK.
 name: windows-tier2
 
 on:
   push:
-    branches: [main]
+    branches: [main, v2]
   workflow_dispatch: {}
 
 jobs:

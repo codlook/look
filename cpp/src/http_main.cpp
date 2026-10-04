@@ -358,6 +358,10 @@ static void run_setup_http(const fs::path& script) {
     interp->set_web_context(&setup_ctx);
     interp->set_setup_mode(true);
     interp->interpret(*program);
+    // LOOK 2: tüm dosyalar yüklendi, bütün struct'lar biliniyor → tip adlarını ŞİMDİ denetle.
+    // Yazım hatası (`strng`) uygulama BAŞLARKEN hata verir; yoksa ancak o struct'ı kuran
+    // (belki nadiren çağrılan) rota çalıştığında, üretimde ortaya çıkardı.
+    interp->validate_struct_types();
     interp->set_setup_mode(false);
 
     g_http_app.program     = std::move(program);

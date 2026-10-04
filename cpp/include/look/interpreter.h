@@ -540,6 +540,9 @@ public:
 
     // Warm start: setup_mode=true → route() sadece kaydeder, dispatch yapmaz
     void set_setup_mode(bool m) { setup_mode_ = m; }
+    // Bildirilmiş tüm struct'ların alan tip adlarını denetler (yerleşik ya da bilinen struct);
+    // bilinmeyen ad → std::runtime_error. Web kurulumunun SONUNDA çağrılır.
+    void validate_struct_types() const;
     bool is_setup_mode()  const { return setup_mode_; }
 
     // Warm start dispatch: kayitli route'lardan eslesen handler'i cagir

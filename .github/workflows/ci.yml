@@ -115,6 +115,12 @@ jobs:
           cd cpp
           bash tests/struct_single_form_test.sh ./build/lk
 
+      # A misspelled field type stops the web app at start-up, not when a rare route runs.
+      - name: Struct field types checked at start-up
+        run: |
+          cd cpp
+          bash tests/struct_type_startup_test.sh ./build/lk-fcgi
+
       # A struct default array/map was shared by every instance, so one request's data
       # appeared in the next user's new instance. Two requests, both engines.
       - name: Struct default isolation (two requests, both engines)
