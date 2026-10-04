@@ -85,6 +85,20 @@ as today for scalars: the cell model stays. The value inside the cell follows th
 so two closures sharing a cell see each other's writes to that variable (that is one
 variable), but copying the array out of it gives an independent value.
 
+This has a consequence the first draft of this document got wrong. The rule isolates
+*values*; it does not isolate *variables*. A captured cell is a variable, and a route
+closure is created once, at setup, and used by every request:
+
+```lk
+$G = ["empty"]
+route("GET", "/x", function() use ($G) { $G[0] = request::get("u") })
+```
+
+The array in that cell has exactly one owner — the cell — so copy on write says "write in
+place". But the cell is every request's cell: request A's write is what request B reads,
+and two workers running the route at once both see a count of 1 and both write in place.
+Copy on write does nothing for this case. See "What happens to the isolation code" below.
+
 **Structs.** Value types, like arrays. This is the one decision with a real cost in
 familiarity: PHP objects are handles, LOOK structs would not be. The reasons for it:
 one rule instead of two; a struct holding an array would otherwise be half value, half
@@ -99,16 +113,37 @@ assignment follows the same model, so the two styles become one.
 **Equality.** `==` on arrays, maps and structs compares content, recursively. Identity
 comparison disappears with identity.
 
-**Thread safety.** The reference count is atomic. "Unique" means the count is 1, which can
-only be observed by the single owner, so in-place writes need no lock. A value shared with
-another thread has a count above 1 and is copied before the write.
+**Thread safety.** The reference count is atomic. A value shared with another thread has a
+count above 1 and is copied before the write. A count of 1 means "write in place", and that
+is safe only if the *variable* holding the value belongs to one thread. So thread safety
+rests on two things together: copy on write for values, and no variable shared between
+threads. The second is not a property of copy on write; it has to be provided separately
+(next paragraph).
 
-**The 1.0.4 / 1.0.5 isolation machinery.** Becomes unnecessary: a request that writes to a
-setup array copies it by the general rule. The lazy per-request copy in `LOAD_GLOBAL`,
-`VM::request_local` and `Interpreter::request_env` are removed. Their tests
-(`request_isolation_test.sh`, `struct_default_isolation_test.sh`,
-`realtime_isolation_test.sh`) stay and must pass unchanged — they are the proof that the
-general rule covers every case the patches covered.
+**What happens to the isolation code.** It splits in two.
+
+*Deep copying goes away.* The per-instance deep copy of struct defaults (1.0.3) and the
+lazy deep copy of setup arrays in `LOAD_GLOBAL` (1.0.4) exist only because a shared array
+could be written in place. With copy on write a request simply shares the setup value and
+copies it if it writes. These become plain shares.
+
+*Per-request variables stay.* Everything that shares a **variable** between requests must
+keep giving each request its own instance of that variable:
+
+- the cells captured by closures created at setup (`VM::request_local`): each request gets
+  its own cell, holding the same shared value;
+- the setup environment that functions close over in the tree-walk interpreter
+  (`Interpreter::request_env`, including the 1.0.5 fix for copies of copies);
+- the per-request global table in the VM (already a per-request map).
+
+They get cheaper — a new cell or environment pointing at the same value instead of a deep
+copy — but they do not disappear. The same holds for `parallel`, timers, WebSocket and SSE
+handlers: each gets its own variables, as today.
+
+The tests (`request_isolation_test.sh`, `struct_default_isolation_test.sh`,
+`realtime_isolation_test.sh`) stay and must pass unchanged. They cover exactly the captured
+cell case above, so an implementation that dropped the per-request variables would fail
+them.
 
 ## What breaks
 
@@ -147,7 +182,8 @@ because today it is silently changing `$a`. Its output also changes from
 2. Copy-on-write writes in the VM: locals, globals, captures, nested paths.
 3. The same in the tree-walk interpreter.
 4. Content equality.
-5. Remove the 1.0.4/1.0.5 isolation machinery; the isolation tests must still pass.
+5. Replace the deep copies of 1.0.3/1.0.4 with plain shares; keep the per-request variables
+   (cells, environments). The isolation tests must still pass.
 6. `lk --check` rule for writes into a parameter.
 
 Each step lands with its own guard, proven by fault injection, and the benchmark above run
