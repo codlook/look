@@ -194,6 +194,11 @@ jobs:
       - name: No Turkish text in runtime strings
         run: bash cpp/tests/no_turkish_user_strings.sh
 
+      # A double-quoted render_string template and a value interpolated into SQL may not
+      # appear in any documentation file.
+      - name: No unsafe examples in the documentation
+        run: bash cpp/tests/docs_no_unsafe_examples.sh
+
       # JSON error bodies carry "error" (with "hata" beside it for 1.x); 'use timer' and
       # other built-in namespaces explain themselves instead of suggesting an install.
       - name: Error bodies and module messages
