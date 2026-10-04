@@ -1,0 +1,6 @@
+# Struct field read/write in a hot loop, on a struct with 12 fields. Today a field access is
+# a linear search over the field names; the LAST field is the worst case.
+struct Row { a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int, last int }
+function run() { $r = Row{}; $n = 0; $s = 0
+  while ($n < 400000) { $r.last = $r.last + 1; $s = $s + $r.a + $r.last; $n = $n + 1 } return $s }
+print(run())

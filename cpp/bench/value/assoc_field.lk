@@ -1,0 +1,4 @@
+# The same loop on a 12-key map, for comparison.
+function run() { $r = ["a" => 0, "b" => 0, "c" => 0, "d" => 0, "e" => 0, "f" => 0, "g" => 0, "h" => 0, "i" => 0, "j" => 0, "k" => 0, "last" => 0]; $n = 0; $s = 0
+  while ($n < 400000) { $r["last"] = $r["last"] + 1; $s = $s + $r["a"] + $r["last"]; $n = $n + 1 } return $s }
+print(run())
