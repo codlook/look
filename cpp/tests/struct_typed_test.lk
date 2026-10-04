@@ -98,16 +98,23 @@ chk("...unless overridden?  no: the declaration is wrong", err_of(fn() => Bad{n:
 struct Box { items array, labels array = ["x"] }
 $a = Box{}
 $b = Box{}
-$ai = $a.items
-$ai[0] = 1
+$a.items[0] = 1
 chk("mutation reaches its own instance", count($a.items), 1)
 chk("zero-value array is per instance", count($b.items), 0)
-$la = $a.labels
-$la[1] = "y"
+$a.labels[1] = "y"
 chk("mutation reaches its own instance (default)", count($a.labels), 2)
 $fresh = Box{}
 chk("default array is per instance", count($fresh.labels), 1)
 
+
+# ── value semantics: assigning or passing gives the receiver its own value ──
+$orig = Box{}
+$orig.items[0] = "kept"
+$alias = $orig
+$alias.items[0] = "changed"
+$taken = $orig.items
+$taken[0] = "changed too"
+chk("assigning a struct copies it", $orig.items[0] . "/" . $alias.items[0] . "/" . $taken[0], "kept/changed/changed too")
 
 # ── a struct is its own kind of value, not an array ─────────────────────────
 struct P1 { name string, x int }
@@ -119,7 +126,8 @@ $p2 = P2{name: "two", x: 2}
 # The same instruction sees two struct types whose fields sit at different positions:
 # the per-instruction slot cache must follow the definition, not the last position used.
 chk("one call site, two struct types (read)",  name_of($p1) . name_of($p2) . name_of($p1) . name_of($p2), "onetwoonetwo")
-chk("one call site, two struct types (write)", "" . set_x($p1, 10) . set_x($p2, 20) . set_x($p1, 11) . $p2.x . $p2.name, "10201120two")
+chk("one call site, two struct types (write)", "" . set_x($p1, 10) . set_x($p2, 20) . set_x($p1, 11), "102011")
+chk("a struct passed to a function is the callee's own value", "" . $p1.x . $p2.x . $p2.name, "12two")
 chk("type check still applies on the cached path", err_of(fn() => set_x($p2, "s")), "struct 'P2': field 'x' expects int, got string")
 chk("reading an undeclared field is an error", err_of(fn() => $p1.nope), "struct 'P1' has no field 'nope'")
 chk("a numeric index is refused", err_of(fn() => $p1[0]), "a struct is not an array: use a field name ('P1' has no numeric index)")
@@ -127,10 +135,10 @@ chk("array:: functions refuse a struct", err_of(fn() => array::push($p1, 1)) != 
 chk("field read through index syntax", $p1["name"], "one")
 $seen = ""
 foreach ($p2 as $k => $v) { $seen = $seen . $k . "=" . $v . ";" }
-chk("foreach walks the fields in declaration order", $seen, "x=20;pad=0;name=two;")
-chk("json::encode writes an object", json::encode($p1), "{\"name\":\"one\",\"x\":11}")
-chk("printing a struct", "" . $p1, "P1{name: one, x: 11}")
-chk("template resolves a struct field", template::render_string('{$u.name}/{$u.x}', ["u" => $p1]), "one/11")
+chk("foreach walks the fields in declaration order", $seen, "x=2;pad=0;name=two;")
+chk("json::encode writes an object", json::encode($p1), "{\"name\":\"one\",\"x\":1}")
+chk("printing a struct", "" . $p1, "P1{name: one, x: 1}")
+chk("template resolves a struct field", template::render_string('{$u.name}/{$u.x}', ["u" => $p1]), "one/1")
 struct Outer { inner P1, items array }
 $o = Outer{inner: P1{name: "in", x: 5}}
 chk("nested struct field", $o.inner.name . $o.inner.x, "in5")

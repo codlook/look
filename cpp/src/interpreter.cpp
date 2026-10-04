@@ -1,5 +1,5 @@
 #include "look/interpreter.h"
-#include "look/struct_types.h"
+#include "look/value_path.h"
 #include "look/int_overflow.h"
 #include "look/array_count.h"
 #include "look/builtins.h"
@@ -35,13 +35,61 @@ namespace look {
 // "12" / "-3" gibi TAM SAYI metni mi? Dizi anahtarinin sayisal indeks mi yoksa
 // assoc anahtari mi oldugunu ayirir. (vm.cpp'de ayni kural var — iki motorun
 // ayni sozlesmeyi uygulamasi icin.)
-static bool look_is_int_key(const std::string& s) {
-    if (s.empty()) return false;
-    size_t i = (s[0] == '-' || s[0] == '+') ? 1 : 0;
-    if (i >= s.size()) return false;
-    for (; i < s.size(); ++i) if (s[i] < '0' || s[i] > '9') return false;
-    return true;
+static bool look_is_int_key(const std::string& s) { return look::value_is_int_key(s); }
+
+// Tek düzey atama: c[idx] = nv. Liste/map dönüşüm kuralları VM::array_set ile aynı sözleşme.
+// `label` yalnız "… is not an array" hata metni içindir.
+static void interp_array_set(Value& c, const Value& idx, const Value& nv, const std::string& label) {
+    if (c.type() == Value::STRING)
+        // Immutable strings — identical message to the VM (both engines fail loud).
+        throw std::runtime_error("Strings are immutable; cannot assign to a string index");
+    if (c.type() == Value::STRUCT) {
+        // LOOK 2: struct alanı — şekil sabit, tip denetimli (look/struct_types.h).
+        auto& sv = *c.vec_ptr();
+        if (idx.type() != Value::STRING)
+            throw std::runtime_error("a struct is not an array: use a field name ('"
+                                     + look::struct_name(sv) + "' has no numeric index)");
+        look::struct_set_named(sv, idx.as_string(), nv);
+        return;
+    }
+    if (c.type() != Value::ARRAY)
+        throw std::runtime_error(label + " is not an array");
+    auto& arr = *c.vec_ptr();
+
+    // Sayısal LİSTE + tam-sayı-olmayan string anahtar → listeyi assoc'a DÖNÜŞTÜR, mevcut
+    // elemanları sayısal indeksleriyle anahtarlayarak KORU. ESKİ HATA: dönüştürme yoktu;
+    // to_int("k") = 0 olduğu için $a=[1,2,3]; $a["k"]="X" SESSİZCE ["X",2,3] üretiyordu.
+    if (idx.type() == Value::STRING && !look_is_int_key(idx.as_string()) &&
+        !(!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__")) {
+        std::vector<Value> conv;
+        conv.reserve(arr.size() * 2 + 1);
+        conv.push_back(Value(std::string("__assoc__")));
+        for (size_t n = 0; n < arr.size(); ++n) {
+            conv.push_back(Value(std::to_string(n)));
+            conv.push_back(arr[n]);
+        }
+        arr.swap(conv);
+    }
+    // Assoc array: string key
+    if (!arr.empty() && arr[0].type() == Value::STRING &&
+        arr[0].as_string() == "__assoc__" && idx.type() == Value::STRING) {
+        const std::string& key = idx.as_string();
+        for (size_t i = 1; i + 1 < arr.size(); i += 2)
+            if (arr[i].type() == Value::STRING ? arr[i].str_ref() == key : arr[i].to_string() == key) {
+                arr[i + 1] = nv; return;
+            }
+        arr.push_back(Value(key));
+        arr.push_back(nv);
+        return;
+    }
+    // Numeric index — int64 (int daraltma bounds bypass'ı → yanlış eleman yazma)
+    int64_t i = idx.to_int();
+    if (i < 0) i = (int64_t)arr.size() + i;
+    if (i == (int64_t)arr.size()) { arr.push_back(nv); return; }
+    if (i >= 0 && i < (int64_t)arr.size()) { arr[(size_t)i] = nv; return; }
+    throw std::runtime_error("Array index out of bounds");
 }
+
 
 // â"€â"€ Value â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
@@ -1192,20 +1240,14 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
 
     // Anonymous function expression â†' Value(LookFunction)
     if (auto* e = dynamic_cast<const FunctionExpression*>(&expr)) {
-        // use ($conn, $db) â€" captured variables'i closure env'e inject et
+        // LOOK 2: bir closure DEĞİŞKENİ yakalar (değerin o anki kopyasını değil) — `use (...)`
+        // listesiyle de, listesiz (ok fonksiyonu) de. Tanımlandığı kapsam closure'ın ortamıdır.
+        // ESKİ HAL: `use ($n)` değerleri yeni bir ortama KOPYALIYORDU; VM ise aynı sözdiziminde
+        // değişkeni (cell) yakalıyordu → aynı program iki motorda farklı sonuç veriyordu
+        // (`$n = 1; $f = function() use ($n) {...}; $n = 2; $f()` → VM 2, yorumlayıcı 1).
+        // Diziler referans olduğu sürece bu fark dizilerde görünmüyordu; değer semantiğiyle
+        // görünür oldu. Kural tek: varsayılan motorun (VM) davranışı.
         auto closure_env = current_;
-        if (!e->captures.empty()) {
-            auto captured = std::make_shared<Environment>(globals_);
-            for (const auto& name : e->captures) {
-                try {
-                    captured->define(name, current_->get(name));
-                } catch (...) {
-                    // Degisken bulunamazsa null ile devam et
-                    captured->define(name, Value());
-                }
-            }
-            closure_env = captured;
-        }
         auto fn = std::make_shared<LookFunction>("__anonymous__", e->parameters, e->is_variadic, e->body.get(), closure_env, &e->defaults);
         return Value(fn);
     }
@@ -1286,21 +1328,27 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
     if (auto* e = dynamic_cast<const AssignmentExpression*>(&expr)) {
         Value val = evaluate_expression(*e->value);
 
-        // $arr[i] = val  /  $assoc["key"] = val  /  zincirli $l.s.x, $arr[0].x
+        // $arr[i] = val  /  $assoc["key"] = val  /  zincirli $l.s.x, $m["rows"][0]
+        // LOOK 2 (değer semantiği): hedef bir YOLdur — kök değişkenin KENDİ yerinden başlanır,
+        // her düzey yazılmadan önce tek sahipli hale getirilir (look/value_path.h; VM ile ortak).
+        // Eskiden container'ın bir kopyası (aynı depoyu gösteren tutamaç) alınıp yerinde
+        // değiştiriliyordu: atanan/geçirilen her dizi aynı diziydi.
         if (e->index) {
-            // Container: zincirli ise object ifadesinden (referans), değilse isimden.
-            Value obj = e->object ? evaluate_expression(*e->object) : current_->get(e->name);
-            if (obj.type() == Value::STRING)
-                // Immutable strings — identical message to the VM (both engines fail loud).
-                throw std::runtime_error("Strings are immutable; cannot assign to a string index");
-            if (obj.type() != Value::ARRAY && obj.type() != Value::STRUCT)
-                throw std::runtime_error((e->object ? std::string("assignment target")
-                                                    : e->name) + " is not an array");
-            Value idx = evaluate_expression(*e->index);
-            auto& arr = *obj.as_array();
+            std::vector<std::pair<const Expression*, std::string>> rev;
+            const Variable* root = nullptr;
+            bool is_path = true;
+            for (const Expression* cur = e->object.get(); cur; ) {
+                if (auto* ix = dynamic_cast<const IndexExpression*>(cur)) {
+                    rev.push_back({ix->index.get(), ""}); cur = ix->object.get();
+                } else if (auto* ma = dynamic_cast<const MemberAccessExpression*>(cur)) {
+                    rev.push_back({nullptr, ma->field}); cur = ma->object.get();
+                } else if (auto* v = dynamic_cast<const Variable*>(cur)) {
+                    root = v; break;
+                } else { is_path = false; break; }
+            }
+            const std::string label = e->object ? std::string("assignment target") : e->name;
 
-            // Compound op (+= -= *= …) mevcut değeri okuyup birleştirir; "=" ise
-            // doğrudan val. ($arr[i] += 5, $arr[0].x *= 2, $m["k"] .= "!" — hepsi)
+            // Compound op (+= -= *= …) mevcut değeri okuyup birleştirir; "=" ise doğrudan val.
             auto apply_op = [&](const Value& cur) -> Value {
                 const std::string& op = e->op;
                 if (op == "=")  return val;
@@ -1315,61 +1363,32 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 if (op == "^=") return cur.bitwise_xor(val);
                 return val;
             };
+            Value result;
+            auto set_one = [&](Value& c, const Value& k, const Value* forced) {
+                if (forced) { interp_array_set(c, k, *forced, label); return; }
+                Value* p = (c.type() == Value::ARRAY || c.type() == Value::STRUCT) ? look::value_slot(c, k) : nullptr;
+                Value nv = apply_op(p ? *p : Value());
+                interp_array_set(c, k, nv, label);
+                Value* after = look::value_slot(c, k);
+                result = after ? *after : nv;
+            };
 
-            // LOOK 2: struct alanı — $u.age = x ve $u["age"] = x. Şekil sabit, tip denetimli
-            // (look/struct_types.h). Struct bir dizi değildir: sayısal indeks yok.
-            if (obj.type() == Value::STRUCT) {
-                if (idx.type() != Value::STRING)
-                    throw std::runtime_error("a struct is not an array: use a field name ('"
-                                             + look::struct_name(arr) + "' has no numeric index)");
-                const std::string key = idx.as_string();
-                Value nv = apply_op(look::struct_get_named(arr, key));
-                look::struct_set_named(arr, key, nv);
-                return look::struct_get_named(arr, key);
+            if (is_path) {
+                const std::string& root_name = root ? root->name : e->name;
+                Value* slot = current_->find_slot(root_name);
+                if (!slot) throw std::runtime_error("Undefined variable: " + root_name);
+                std::vector<Value> keys;
+                for (auto it = rev.rbegin(); it != rev.rend(); ++it)
+                    keys.push_back(it->first ? evaluate_expression(*it->first) : Value(it->second));
+                keys.push_back(evaluate_expression(*e->index));
+                look::value_set_path(*slot, keys.data(), (int)keys.size(), set_one);
+                return result;
             }
-
-            // Sayısal LİSTE + tam-sayı-olmayan string anahtar → listeyi assoc'a
-            // DÖNÜŞTÜR, mevcut elemanları sayısal indeksleriyle anahtarlayarak KORU.
-            // ESKİ HATA: dönüştürme yoktu; aşağıdaki sayısal dala düşüyor ve
-            // to_int("k") = 0 olduğu için $a=[1,2,3]; $a["k"]="X" SESSİZCE
-            // ["X",2,3] üretiyordu — hem yanlış eleman eziliyor hem anahtar
-            // kayboluyordu. (VM tarafı aynı ifadede veriyi tümden yok ediyordu.)
-            // array::set ve VM::array_set ile aynı sözleşme.
-            if (idx.type() == Value::STRING && !look_is_int_key(idx.as_string()) &&
-                !(!arr.empty() && arr[0].type() == Value::STRING &&
-                  arr[0].as_string() == "__assoc__")) {
-                std::vector<Value> conv;
-                conv.reserve(arr.size() * 2 + 1);
-                conv.push_back(Value(std::string("__assoc__")));
-                for (size_t n = 0; n < arr.size(); ++n) {
-                    conv.push_back(Value(std::to_string(n)));
-                    conv.push_back(arr[n]);
-                }
-                arr.swap(conv);
-            }
-
-            // Assoc array: string key
-            if (!arr.empty() && arr[0].type() == Value::STRING &&
-                arr[0].as_string() == "__assoc__" && idx.type() == Value::STRING) {
-                const std::string& key = idx.as_string();
-                for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                    if (arr[i].type() == Value::STRING ? arr[i].str_ref() == key
-                                                       : arr[i].to_string() == key) { arr[i + 1] = apply_op(arr[i + 1]); return arr[i + 1]; }
-                }
-                // Key yok — yeni key/value ekle (compound'da mevcut = null)
-                Value nv = apply_op(Value());
-                arr.push_back(Value(key));
-                arr.push_back(nv);
-                return nv;
-            }
-
-            // Numeric index — int64 (int daraltma bounds bypass'ı → yanlış eleman yazma)
-            int64_t i = idx.to_int();
-            if (i < 0) i = (int64_t)arr.size() + i;
-            if (i == (int64_t)arr.size()) { Value nv = apply_op(Value()); arr.push_back(nv); return nv; }
-            else if (i >= 0 && i < (int64_t)arr.size()) { arr[(size_t)i] = apply_op(arr[(size_t)i]); return arr[(size_t)i]; }
-            else throw std::runtime_error("Array index out of bounds");
-            return val;
+            // Kökü değişken olmayan hedef (f()[0] = x): geçici bir değere yazılır.
+            Value obj = evaluate_expression(*e->object);
+            Value idx = evaluate_expression(*e->index);
+            set_one(obj, idx, nullptr);
+            return result;
         }
 
         // $var op= val
@@ -1748,21 +1767,38 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             Value v = evaluate_expression(*e->arguments[0]);
             return Value(look_count(v));   // tek tanım (array_count.h) — VM builtin'leriyle birebir
         }
-        if (fn_name == "push") {
-            if (argc != 2) throw std::runtime_error("push() takes 2 arguments");
-            Value arr = evaluate_expression(*e->arguments[0]);
-            if (arr.type() != Value::ARRAY) throw std::runtime_error("push() requires array as first argument");
-            arr.as_array()->push_back(evaluate_expression(*e->arguments[1]));
-            return arr;
-        }
-        if (fn_name == "pop") {
-            if (argc != 1) throw std::runtime_error("pop() takes 1 argument");
-            Value arr = evaluate_expression(*e->arguments[0]);
-            if (arr.type() != Value::ARRAY) throw std::runtime_error("pop() requires array");
-            if (arr.as_array()->empty()) return Value();
-            Value last = arr.as_array()->back();
-            arr.as_array()->pop_back();
-            return last;
+        if (fn_name == "push" || fn_name == "pop") {
+            // LOOK 2: push/pop ilk argümanı olan DEĞİŞKENİ değiştirir (yazınca-kopyala ile) —
+            // depoyu paylaşan başka değerlere dokunmaz. Eskiden paylaşılan vektör yerinde
+            // değişiyordu: `$b = $a; push($a, 1)` $b'yi de büyütüyordu.
+            const bool is_push = fn_name == "push";
+            if (is_push && argc != 2) throw std::runtime_error("push() takes 2 arguments");
+            if (!is_push && argc != 1) throw std::runtime_error("pop() takes 1 argument");
+            std::vector<std::pair<const Expression*, std::string>> rev;
+            const Variable* root = nullptr;
+            for (const Expression* cur = e->arguments[0].get(); cur; ) {
+                if (auto* ix = dynamic_cast<const IndexExpression*>(cur)) {
+                    rev.push_back({ix->index.get(), ""}); cur = ix->object.get();
+                } else if (auto* ma = dynamic_cast<const MemberAccessExpression*>(cur)) {
+                    rev.push_back({nullptr, ma->field}); cur = ma->object.get();
+                } else { root = dynamic_cast<const Variable*>(cur); break; }
+            }
+            if (root) {
+                Value* slot = current_->find_slot(root->name);
+                if (!slot) throw std::runtime_error("Undefined variable: " + root->name);
+                std::vector<Value> keys;
+                for (auto it = rev.rbegin(); it != rev.rend(); ++it)
+                    keys.push_back(it->first ? evaluate_expression(*it->first) : Value(it->second));
+                Value pv = is_push ? evaluate_expression(*e->arguments[1]) : Value();
+                Value& target = look::value_path_slot(*slot, keys.data(), (int)keys.size(),
+                    [&](Value& c, const Value& k, const Value* forced) { interp_array_set(c, k, *forced, "push() target"); });
+                return is_push ? look::value_push(target, pv) : look::value_pop(target);
+            }
+            // Hedef bir değişken değil (ör. push(f(), x)): geçici değerin kendi kopyası değişir.
+            Value tmp = evaluate_expression(*e->arguments[0]);
+            tmp.detach();
+            if (is_push) return look::value_push(tmp, evaluate_expression(*e->arguments[1]));
+            return look::value_pop(tmp);
         }
         if (fn_name == "join") {
             if (argc < 1) throw std::runtime_error("join() takes 1-2 arguments");

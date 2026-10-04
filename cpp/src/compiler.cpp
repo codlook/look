@@ -1017,24 +1017,88 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     auto loc = resolve_var(e.name, /*for_write=*/(e.index == nullptr));
 
     if (e.index) {
-        // $arr[i] = val  ·  zincirli $l.s.x = v / $arr[0].x = v (object ifadeden)
-        uint8_t arr;
-        if (e.object) {
-            // Zincirli: container ifadeyi derle — ARRAY/assoc referans olduğu için
-            // ARRAY_SET yerinde mutasyon yapar, orijinali etkiler.
-            arr = compile_expr(*e.object);
-        } else {
-            arr = alloc_temp();
-            if      (loc.kind == VarKind::LOCAL)   emit_read_local(arr, loc.index);
-            else if (loc.kind == VarKind::CAPTURE) emit_read_capture(arr, loc.index);
-            else {
-                uint16_t ni = add_const(Value(e.name));
-                emit(OpCode::LOAD_GLOBAL, arr, hi8(ni), lo8(ni));
+        // $arr[i] = val  ·  zincirli $l.s.x = v / $m["rows"][0] = v
+        // LOOK 2 (değer semantiği): hedef bir YOL olarak derlenir — kök değişken + anahtarlar —
+        // ve SET_PATH kökün kendi yerinde, düzey düzey yazınca-kopyala yapar. Eskiden container
+        // bir geçici yazmaca yüklenip ARRAY_SET ile yerinde değiştiriliyordu (referans semantiği).
+        std::vector<const Expression*> key_exprs;      // dıştan içe sırayla
+        std::vector<std::string>       key_fields;     // key_exprs[i] == nullptr ise alan adı
+        const Variable* root = nullptr;
+        bool is_path = true;
+        {
+            std::vector<std::pair<const Expression*, std::string>> rev;
+            const Expression* cur = e.object.get();
+            while (cur) {
+                if (auto* ix = dynamic_cast<const IndexExpression*>(cur)) {
+                    rev.push_back({ix->index.get(), ""}); cur = ix->object.get();
+                } else if (auto* ma = dynamic_cast<const MemberAccessExpression*>(cur)) {
+                    rev.push_back({nullptr, ma->field}); cur = ma->object.get();
+                } else if (auto* v = dynamic_cast<const Variable*>(cur)) {
+                    root = v; break;
+                } else { is_path = false; break; }       // f()[0] = x gibi: kök bir değişken değil
             }
+            for (auto it = rev.rbegin(); it != rev.rend(); ++it) {
+                key_exprs.push_back(it->first); key_fields.push_back(it->second);
+            }
+            key_exprs.push_back(e.index.get()); key_fields.push_back("");
         }
+        if (is_path && key_exprs.size() <= 250) {
+            const std::string& root_name = root ? root->name : e.name;
+            auto rloc = resolve_var(root_name, /*for_write=*/false);
+            const uint8_t n = u8(key_exprs.size(), "index path length");
+            uint8_t base = regs_->alloc_seq(n);
+            for (uint8_t k = 0; k < n; ++k) {
+                const uint8_t kr = u8(base + k, "register index");
+                if (key_exprs[k]) {
+                    uint8_t ev = compile_expr(*key_exprs[k], kr);
+                    if (ev != kr) emit(OpCode::MOVE, kr, ev);
+                } else {
+                    emit_load_const(kr, Value(key_fields[k]), cur_line_);
+                }
+            }
+            uint8_t val = compile_expr(*e.value);
+            if (e.op != "=") {
+                // Compound (+= -= …): mevcut değeri AYNI anahtarlarla oku, birleştir, sonra yaz.
+                static const std::unordered_map<std::string, OpCode> COMPOUND = {
+                    {"+=", OpCode::ADD},  {"-=", OpCode::SUB},  {"*=", OpCode::MUL},
+                    {"/=", OpCode::DIV},  {"%=", OpCode::MOD},  {".=", OpCode::CONCAT},
+                    {"&=", OpCode::BAND}, {"|=", OpCode::BOR},  {"^=", OpCode::BXOR},
+                };
+                auto it = COMPOUND.find(e.op);
+                if (it == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
+                uint8_t cur = alloc_temp();
+                if      (rloc.kind == VarKind::LOCAL)   emit_read_local(cur, rloc.index);
+                else if (rloc.kind == VarKind::CAPTURE) emit_read_capture(cur, rloc.index);
+                else {
+                    uint16_t ni = add_const(Value(root_name));
+                    emit(OpCode::LOAD_GLOBAL, cur, hi8(ni), lo8(ni));
+                }
+                for (uint8_t k = 0; k < n; ++k)
+                    emit(OpCode::ARRAY_GET, cur, cur, u8(base + k, "register index"));
+                uint8_t res = alloc_temp();
+                emit(it->second, res, cur, val);
+                free_temp(cur); free_temp(val);
+                val = res;
+            }
+            // Kök: 0 yerel · 1 kutulu yerel (cell) · 2 yakalanan · 3 yakalanan cell · 4 global
+            uint8_t kind; uint16_t ix;
+            if (rloc.kind == VarKind::LOCAL) {
+                kind = boxed_slots_.count(rloc.index) ? 1 : 0; ix = rloc.index;
+            } else if (rloc.kind == VarKind::CAPTURE) {
+                kind = (rloc.index < captures_.size() && captures_[rloc.index].is_cell) ? 3 : 2; ix = rloc.index;
+            } else {
+                kind = 4; ix = add_const(Value(root_name));
+            }
+            emit(OpCode::SET_PATH, val, base, n);
+            emit(OpCode::NOP, kind, hi8(ix), lo8(ix));
+            free_temp(val);
+            regs_->release_seq(base, n);
+            return;
+        }
+        // Kökü değişken olmayan hedef (geçici bir değere yazma): eski yol.
+        uint8_t arr = compile_expr(*e.object);
         uint8_t idx = compile_expr(*e.index);
         uint8_t val = compile_expr(*e.value);
-        // Compound (+= -= …): mevcut arr[idx]'i oku, birleştir, sonra yaz.
         if (e.op != "=") {
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD},  {"-=", OpCode::SUB},  {"*=", OpCode::MUL},
@@ -1489,6 +1553,52 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         mark_non_builtin_module_fn(full);
     }
     if (auto* var = dynamic_cast<const Variable*>(e.callee.get())) {
+        // LOOK 2: push($hedef, v) / pop($hedef) ilk argümanı olan DEĞİŞKENİ değiştirir. Hedef bir
+        // yol ise (kökü değişken: $a, $m["rows"], $u.tags) PUSH_PATH/POP_PATH kökün kendi yerinde
+        // yazınca-kopyala yapar. Eski builtin paylaşılan vektörü yerinde değiştiriyordu:
+        // `$b = $a; push($a, 1)` $b'yi de büyütüyordu.
+        if ((var->name == "push" && e.arguments.size() == 2) || (var->name == "pop" && e.arguments.size() == 1)) {
+            std::vector<std::pair<const Expression*, std::string>> rev;
+            const Variable* root = nullptr;
+            for (const Expression* cur = e.arguments[0].get(); cur; ) {
+                if (auto* ix = dynamic_cast<const IndexExpression*>(cur)) {
+                    rev.push_back({ix->index.get(), ""}); cur = ix->object.get();
+                } else if (auto* ma = dynamic_cast<const MemberAccessExpression*>(cur)) {
+                    rev.push_back({nullptr, ma->field}); cur = ma->object.get();
+                } else { root = dynamic_cast<const Variable*>(cur); break; }
+            }
+            if (root && rev.size() <= 250) {
+                const bool is_push = var->name == "push";
+                auto rloc = resolve_var(root->name, /*for_write=*/false);
+                const uint8_t n = u8(rev.size(), "index path length");
+                uint8_t base = (n > 0) ? regs_->alloc_seq(n) : 0;
+                for (uint8_t k = 0; k < n; ++k) {
+                    const auto& item = rev[rev.size() - 1 - k];
+                    const uint8_t kr = u8(base + k, "register index");
+                    if (item.first) {
+                        uint8_t ev = compile_expr(*item.first, kr);
+                        if (ev != kr) emit(OpCode::MOVE, kr, ev);
+                    } else {
+                        emit_load_const(kr, Value(item.second), cur_line_);
+                    }
+                }
+                uint8_t val = is_push ? compile_expr(*e.arguments[1]) : 0;
+                uint8_t kind; uint16_t ix;
+                if (rloc.kind == VarKind::LOCAL) {
+                    kind = boxed_slots_.count(rloc.index) ? 1 : 0; ix = rloc.index;
+                } else if (rloc.kind == VarKind::CAPTURE) {
+                    kind = (rloc.index < captures_.size() && captures_[rloc.index].is_cell) ? 3 : 2; ix = rloc.index;
+                } else {
+                    kind = 4; ix = add_const(Value(root->name));
+                }
+                uint8_t r = (dest == 255) ? alloc_temp() : dest;
+                emit(is_push ? OpCode::PUSH_PATH : OpCode::POP_PATH, r, base, n);
+                emit(OpCode::NOP, kind, hi8(ix), lo8(ix));
+                if (is_push) { emit(OpCode::NOP, val); free_temp(val); }
+                if (n > 0) regs_->release_seq(base, n);
+                return r;
+            }
+        }
         if (var->name == "parallel") {
             if (e.arguments.size() != 1)
                 throw LookCompileError("parallel() takes one argument", e.loc.line);

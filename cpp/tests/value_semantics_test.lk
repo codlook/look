@@ -1,0 +1,70 @@
+# LOOK 2 value semantics guard.
+#
+# Arrays, maps and structs are VALUES: assigning one, passing it to a function or returning
+# it gives the receiver its own value, and changing one never changes another. Storage is
+# shared until someone writes (copy on write), so none of this copies eagerly.
+# In LOOK 1 they were shared references: `$a = $b; $a[0] = 9` changed $b too, a function
+# could change its caller's array, and one request could change another's.
+#
+# Both engines get the rule from one header (include/look/value_path.h).
+# Uses only builtin module functions so the CLI really runs it on the VM.
+use json
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) } else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+function local_alias() { $b = [1, 2]; $a = $b; $a[0] = 9; return json::encode($a) . json::encode($b) }
+chk("assignment gives an independent value", local_alias(), "[9,2][1,2]")
+function zero($x) { $x[0] = 0; return $x }
+function param() { $b = [1, 2]; $c = zero($b); return json::encode($b) . json::encode($c) }
+chk("a parameter is the callee's own value", param(), "[1,2][0,2]")
+function nested() { $m = ["rows" => [1, 2], "other" => [7]]; $n = $m; $n["rows"][0] = 9; return json::encode($m) . json::encode($n) }
+chk("a nested write copies only its path", nested(), "{\"rows\":[1,2],\"other\":[7]}{\"rows\":[9,2],\"other\":[7]}")
+function inner_alias() { $m = ["rows" => [1, 2]]; $r = $m["rows"]; $r[0] = 5; return json::encode($m) . json::encode($r) }
+chk("an element taken out is independent", inner_alias(), "{\"rows\":[1,2]}[5,2]")
+function vivify() { $m = ["a" => 1]; $m["b"]["c"] = 2; $m["l"][0] = "x"; return json::encode($m) }
+chk("a missing intermediate level is created", vivify(), "{\"a\":1,\"b\":{\"c\":2},\"l\":[\"x\"]}")
+function compound() { $m = ["n" => [1, 2]]; $m["n"][1] += 10; $m["n"][0] .= "!"; return json::encode($m) }
+chk("compound assignment through a path", compound(), "{\"n\":[\"1!\",12]}")
+function self_ref() { $a = [1]; $a[1] = $a; return json::encode($a) }
+chk("storing an array into itself stores its value", self_ref(), "[1,[1]]")
+struct P { name string, tags array }
+function struct_val() { $u = P{name: "a"}; $v = $u; $v.name = "b"; $v.tags[0] = "t"; return $u.name . json::encode($u.tags) . $v.name . json::encode($v.tags) }
+chk("a struct is a value too", struct_val(), "a[]b[\"t\"]")
+$G = [1, 2]
+function read_g() { return json::encode($G) }
+$H = $G
+$H[0] = 9
+chk("top-level arrays follow the same rule", read_g() . json::encode($H), "[1,2][9,2]")
+function loop_snapshot() { $a = [1, 2, 3]; $s = ""; foreach ($a as $i => $v) { $a[$i] = $v * 10; $s = $s . $v } return $s . json::encode($a) }
+chk("foreach iterates the value it started with", loop_snapshot(), "123[10,20,30]")
+function fill($xs) { $i = 0; while ($i < 3) { $xs[$i] = $i * 2; $i = $i + 1 } return $xs }
+function no_return($xs) { $xs[0] = "changed"; return 1 }
+function caller() { $a = ["orig"]; no_return($a); $b = fill([]); return $a[0] . json::encode($b) }
+chk("a function cannot change its caller's array; it returns the new one", caller(), "orig[0,2,4]")
+function capture() { $box = [1]; $inc = function() use ($box) { $box[0] = $box[0] + 1; return $box[0] }; $x = $inc(); $y = $inc(); return "" . $x . $y . $box[0] }
+chk("a closure writes the variable it captured", capture(), "233")
+function returned() { $a = [1, 2]; $b = ret($a); $b[0] = 7; return json::encode($a) . json::encode($b) }
+function ret($x) { return $x }
+chk("a returned array is the receiver's own value", returned(), "[1,2][7,2]")
+function deep() { $m = ["a" => ["b" => ["c" => [1, 2]]]]; $n = $m; $n["a"]["b"]["c"][1] = 9; return json::encode($m["a"]["b"]["c"]) . json::encode($n["a"]["b"]["c"]) }
+chk("three levels deep", deep(), "[1,2][1,9]")
+function in_list() { $rows = [["id" => 1], ["id" => 2]]; $copy = $rows; $copy[1]["id"] = 20; return json::encode($rows) . json::encode($copy) }
+chk("a map inside a list", in_list(), "[{\"id\":1},{\"id\":2}][{\"id\":1},{\"id\":20}]")
+function string_target() { $s = "abc"; $e = "NO-ERROR"; try { $s[0] = "x" } catch ($err) { $e = "" . $err } return $e }
+chk("strings stay immutable", string_target(), "Strings are immutable; cannot assign to a string index")
+
+# push() / pop() change the VARIABLE named by their first argument — and only it.
+function push_alias() { $a = [1]; $b = $a; $n = push($a, 2); return json::encode($a) . json::encode($b) . $n }
+chk("push appends to its variable, not to a copy of it; returns the new length", push_alias(), "[1,2][1]2")
+function pop_alias() { $a = [1, 2]; $b = $a; $x = pop($a); return json::encode($a) . json::encode($b) . $x }
+chk("pop removes from its variable only", pop_alias(), "[1][1,2]2")
+function push_path() { $m = ["rows" => [1]]; $n = $m; push($m["rows"], 2); push($m["new"], "x"); return json::encode($m) . json::encode($n) }
+chk("push through a path, creating a missing list", push_path(), "{\"rows\":[1,2],\"new\":[\"x\"]}{\"rows\":[1]}")
+function push_many() { $a = []; $i = 0; while ($i < 50000) { push($a, $i); $i = $i + 1 } return count($a) . ":" . $a[49999] }
+chk("50 000 pushes stay in place (no copy per push)", push_many(), "50000:49999")
+function push_param($xs) { push($xs, "added"); return count($xs) }
+function push_caller() { $a = ["x"]; $n = push_param($a); return $n . ":" . count($a) }
+chk("push inside a function does not reach the caller", push_caller(), "2:1")
+
+print("")
+print("=== value semantics guard done ===")

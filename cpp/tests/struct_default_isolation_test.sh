@@ -13,11 +13,8 @@ use json
 struct Cart { owner any = "nobody", items array = ["empty"], meta map = ["tags" => ["t0"]] }
 function set_cart($u) {
     $c = Cart{owner: $u}
-    $it = $c.items
-    $it[0] = $u
-    $m = $c.meta
-    $tg = $m["tags"]
-    $tg[0] = "secret-of-" . $u
+    $c.items[0] = $u
+    $c.meta["tags"][0] = "secret-of-" . $u
     return $c
 }
 route("GET", "/set", fn() => response::json(set_cart(request::get("u"))))

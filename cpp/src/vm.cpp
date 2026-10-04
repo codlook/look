@@ -9,7 +9,7 @@
 #include "look/vm.h"
 #include "look/bytecode.h"
 #include "look/web.h"
-#include "look/struct_types.h"
+#include "look/value_path.h"
 #include "look/interpreter.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
@@ -272,13 +272,7 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
 
 // "12" / "-3" gibi TAM SAYI metni mi? Dizi anahtari sayisal indeks mi yoksa
 // assoc anahtari mi diye ayirmak icin. (interpreter.cpp'de ayni kural var.)
-static bool look_is_int_key(const std::string& s) {
-    if (s.empty()) return false;
-    size_t i = (s[0] == '-' || s[0] == '+') ? 1 : 0;
-    if (i >= s.size()) return false;
-    for (; i < s.size(); ++i) if (s[i] < '0' || s[i] > '9') return false;
-    return true;
-}
+static bool look_is_int_key(const std::string& s) { return look::value_is_int_key(s); }
 
 bool VM::val_truthy(const Value& v) { return v.is_truthy(); }
 
@@ -339,6 +333,18 @@ Value VM::array_get(const Value& arr, const Value& key) {
     if (i < 0 || i >= (int64_t)vec.size())
         throw LookVmError("Array index " + std::to_string(key.to_int()) + " out of bounds");
     return vec[(size_t)i];
+}
+
+// ── LOOK 2: yazınca-kopyala yol ataması (kurallar: look/value_path.h, iki motor ortak) ──
+Value* VM::array_slot(Value& arr, const Value& key) {
+    return vm_struct([&] { return look::value_slot(arr, key); });
+}
+void VM::set_path(Value& slot, const Value* keys, int n, const Value& val) {
+    vm_struct([&] {
+        look::value_set_path(slot, keys, n, [&](Value& c, const Value& k, const Value* forced) {
+            array_set(c, k, forced ? *forced : val);
+        });
+    });
 }
 
 void VM::array_set(Value& arr, const Value& key, const Value& val) {
@@ -476,6 +482,26 @@ call_dispatch:
             return *fcache_p;
         };
 
+        // LOOK 2: yol atamalarının kökü — değişkenin KENDİ yeri (bkz. SET_PATH/PUSH_PATH).
+        //   0 yerel · 1 kutulu yerel (cell) · 2 yakalanan · 3 yakalanan cell · 4 global
+        auto path_root = [&](const Instruction& h) -> Value* {
+            const uint16_t ix = (uint16_t)((h.b << 8) | h.c);
+            switch (h.a) {
+                case 0: return &regs_[(size_t)(base + ix)];
+                case 1: return &(*regs_[(size_t)(base + ix)].vec_ptr())[0];
+                case 2: return const_cast<Value*>(&frame.closure->captures[ix]);
+                case 3: return &(*frame.closure->captures[ix].vec_ptr())[0];
+                default: {
+                    const std::string& gname = proto->constants[ix].str_ref();
+                    auto it = globals_.find(gname);
+                    if (it == globals_.end()) throw LookVmError("Undefined variable: " + gname);
+                    if (isolate_globals_ && isolated_.insert(&it->second).second
+                        && carries_mutable_state(it->second))
+                        it->second = it->second.deep_clone();
+                    return &it->second;
+                }
+            }
+        };
         try {
         while (frame.ip < (int)proto->code.size()) {
             const Instruction& ins = proto->code[frame.ip++];
@@ -768,6 +794,27 @@ call_dispatch:
                     break;
                 }
                 set_field(obj, fname, R(ins.c));
+                break;
+            }
+            case OpCode::SET_PATH: {
+                // a = değer, b = anahtarların ilk yazmacı, c = anahtar sayısı; sonraki NOP kökü söyler.
+                Value* root = path_root(proto->code[frame.ip++]);
+                // Değer, hedefle aynı depoyu taşıyor olabilir ($a[0] = $a): önce kopyasını tut.
+                Value v = R(ins.a);
+                set_path(*root, &R(ins.b), ins.c, v);
+                break;
+            }
+            case OpCode::PUSH_PATH: case OpCode::POP_PATH: {
+                // push/pop ilk argümanı olan DEĞİŞKENİ değiştirir: hedef, kökün kendi yerinde tek
+                // sahipli hale getirilir (yazınca-kopyala), sonra yerinde büyür/küçülür.
+                Value* root = path_root(proto->code[frame.ip++]);
+                const bool is_push = ins.op == OpCode::PUSH_PATH;
+                Value pv = is_push ? R(proto->code[frame.ip++].a) : Value();
+                R(ins.a) = vm_struct([&] {
+                    Value& target = look::value_path_slot(*root, &R(ins.b), ins.c,
+                        [&](Value& c, const Value& k, const Value* forced) { array_set(c, k, *forced); });
+                    return is_push ? look::value_push(target, pv) : look::value_pop(target);
+                });
                 break;
             }
 

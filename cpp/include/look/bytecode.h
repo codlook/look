@@ -134,6 +134,14 @@ enum class OpCode : uint8_t {
                      // are distinct string literals, so the runtime scan is provably redundant
     CHECK_DEFINED,   // throw "Undefined variable: <const b<<8|c>" when r[a] is null — emitted
                      // right after LOAD_GLOBAL for a bare (no '$') name read as a VALUE
+    SET_PATH,        // LOOK 2 copy-on-write assignment through an index path:
+                     //   root[k0][k1]...[kn-1] = r[a];  keys in r[b]..r[b+c-1];  next NOP: a = root
+                     //   kind (0 local, 1 boxed local, 2 capture, 3 cell capture, 4 global), b<<8|c = its
+                     //   register / capture index / name constant. Each level is detached (copied if
+                     //   shared) in the variable's own slot before the write.
+    PUSH_PATH,       // r[a] = push(root[k0]..[kc-1], value): keys in r[b]..; next NOP = root (as SET_PATH),
+                     //   then a NOP whose a = the value register. Appends to the VARIABLE (copy on write).
+    POP_PATH,        // r[a] = pop(root[k0]..[kc-1]); next NOP = root. Removes the last element.
 };
 
 // ── Instruction ───────────────────────────────────────────────────────────────

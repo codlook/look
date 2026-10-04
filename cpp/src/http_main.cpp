@@ -428,6 +428,7 @@ static void run_setup_http(const fs::path& script) {
             setup_builtins[3] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                     return look::Value();
+                args[0].detach();   // LOOK 2: paylaşılan depoyu yerinde değiştirme (değişken yolu PUSH_PATH ile gelir)
                 args[0].as_array()->push_back(args[1]);
                 return look::Value();
             };
@@ -435,6 +436,7 @@ static void run_setup_http(const fs::path& script) {
             setup_builtins[4] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty() || args[0].type() != look::Value::ARRAY)
                     return look::Value();
+                args[0].detach();
                 auto& v = *args[0].as_array();
                 if (v.empty()) return look::Value();
                 look::Value r = v.back(); v.pop_back(); return r;
@@ -1194,12 +1196,14 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         req_builtins[BI("push")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                 throw std::runtime_error("push() requires array and value");
+            args[0].detach();   // LOOK 2: paylaşılan depoyu yerinde değiştirme (değişken yolu PUSH_PATH ile gelir)
             args[0].as_array()->push_back(args[1]);
             return args[0];
         };
         req_builtins[BI("pop")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty() || args[0].type() != look::Value::ARRAY)
                 throw std::runtime_error("pop() requires array");
+            args[0].detach();
             auto a = args[0].as_array();
             if (a->empty()) return look::Value();
             look::Value last = a->back();

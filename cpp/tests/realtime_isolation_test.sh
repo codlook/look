@@ -15,7 +15,7 @@ use json
 use cache
 const { LIST = ["c0"] }
 $G = ["g0"]
-function w($who) { cache::set("ran_" . $who, "yes", 60); $l = LIST; $l[0] = $who; $g = $G; $g[0] = $who; return 1 }
+function w($who) { cache::set("ran_" . $who, "yes", 60); $G[0] = $who; $l = LIST; $l[0] = $who; return 1 }
 function ran($who) { return cache::get("ran_" . $who) ?? "no" }
 function arm() { timer::after(50, fn() => w("TIMER")); return 1 }
 route("GET", "/arm", fn() => response::json(arm()))

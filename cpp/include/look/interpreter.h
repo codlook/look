@@ -55,6 +55,13 @@ public:
     // Sıcak yol için sahipliksiz erişim: shared_ptr kopyası (atomik sayaç artır/azalt) yok.
     // Yalnız bu Value yaşarken geçerlidir.
     std::vector<Value>* vec_ptr() const { return static_cast<std::vector<Value>*>(ptr_val.get()); }
+    // LOOK 2 yazınca-kopyala: dizi/struct depolaması başka bir Value ile paylaşılıyorsa bu Value
+    // kendi (üst düzey) kopyasını alır; tek sahipse hiçbir şey yapmaz. Elemanlar paylaşılmaya
+    // devam eder — onlar da yazılacakları anda aynı kuralla ayrılır.
+    void detach() {
+        if ((type_ == ARRAY || type_ == STRUCT) && ptr_val && ptr_val.use_count() > 1)
+            ptr_val = std::make_shared<std::vector<Value>>(*vec_ptr());
+    }
 
     // B5: skalerler union'da (8 byte), STRING pointer arkasında → sizeof 80→32,
     // skaler kopyada string ctor/dtor yok. String literal'leri constant pool'dan
@@ -333,6 +340,14 @@ public:
     // İSTEK İZOLASYONU (web): kurulumda oluşmuş bir closure env'inin, parent'ı isteğin kendi
     // globals'ına çevrilmiş ve dizileri derin kopyalanmış kopyası. Bkz. Interpreter::request_env.
     const std::shared_ptr<Environment>& parent() const { return parent_; }
+    // LOOK 2: değişkenin YERİ — yazınca-kopyala yol atamasının kökü ($a[i] = v yerinde yazar).
+    // Okuma gibi üst kapsamlara düşer (fonksiyon içinden global diziye indeksli yazma, eskiden
+    // de olduğu gibi, global değişkeni değiştirir). Yoksa nullptr.
+    Value* find_slot(const std::string& name) {
+        auto it = values_.find(name);
+        if (it != values_.end()) return &it->second;
+        return parent_ ? parent_->find_slot(name) : nullptr;
+    }
     std::shared_ptr<Environment> rebased(std::shared_ptr<Environment> new_parent) const {
         auto e = std::make_shared<Environment>(std::move(new_parent));
         for (const auto& [k, v] : values_)

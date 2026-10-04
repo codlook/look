@@ -132,6 +132,9 @@ private:
     std::string val_to_str(const Value& v);
     Value       array_get(const Value& arr, const Value& key);
     void        array_set(Value& arr, const Value& key, const Value& val);
+    // LOOK 2: var olan elemanın yeri (yoksa nullptr) ve yol boyunca yazınca-kopyala ataması.
+    Value*      array_slot(Value& arr, const Value& key);
+    void        set_path(Value& slot, const Value* keys, int n, const Value& val);
     Value       get_field(const Value& obj, const std::string& field);
     void        set_field(Value& obj, const std::string& field, const Value& val);
 
