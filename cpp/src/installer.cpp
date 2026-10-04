@@ -324,7 +324,7 @@ static std::string resolve_sha(const PkgSpec& spec, bool verbose) {
     // GET https://api.github.com/repos/{user}/{repo}/commits/{ref}
     std::string url = "https://api.github.com/repos/" + spec.user + "/" + spec.repo
                     + "/commits/" + spec.ref;
-    if (verbose) std::cout << "  SHA çözümleniyor...\n";
+    if (verbose) std::cout << "  resolving SHA...\n";
 
     std::map<std::string, std::string> hdrs;
     hdrs["Accept"]     = "application/vnd.github.sha";
@@ -464,7 +464,7 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
         write_lock(lock_path, lock);
         std::cout << "  look.lock updated\n";
     }
-    std::cout << "✓ " << spec.lock_key() << " kuruldu\n\n";
+    std::cout << "✓ " << spec.lock_key() << " installed\n\n";
     std::cout << "Usage:\n";
     if (!spec.subdir.empty()) {
         // pkg/firebase/firebase.lk
@@ -541,7 +541,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
         spec = parse_pkg(pkg_url);
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
-        std::cerr << "Örnek: lk module install github.com/codlook/look-modules/jwt\n";
+        std::cerr << "Example: lk module install github.com/codlook/look-modules/jwt\n";
         return 1;
     }
 
@@ -580,7 +580,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
     }
 
     std::cout << "  → " << dest_dir.string() << "\n";
-    std::cout << "✓ " << mod_name << " modülü kuruldu\n\n";
+    std::cout << "✓ " << mod_name << " module installed\n\n";
     std::cout << "Usage:\n";
     std::cout << "  use " << mod_name << "\n";
 
@@ -668,7 +668,7 @@ int cmd_module_list() {
     if (official.empty()) {
         std::cout << "Official module not found.\n";
     } else {
-        std::cout << "\nResmi modüller (github.com/codlook/look-modules):\n";
+        std::cout << "\nOfficial modules (github.com/codlook/look-modules):\n";
         for (auto& name : official) {
             std::string status = is_installed(name) ? " [installed]" : "";
             std::cout << "  " << name << status << "\n";
@@ -683,7 +683,7 @@ int cmd_module_list() {
             extra.push_back(m);
     }
     if (!extra.empty()) {
-        std::cout << "\nÜçüncü taraf (yüklü):\n";
+        std::cout << "\nThird party (installed):\n";
         for (auto& m : extra) std::cout << "  " << m << "\n";
     }
 

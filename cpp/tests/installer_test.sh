@@ -39,7 +39,7 @@ fi
 if timeout 10 curl -s -o /dev/null https://api.github.com 2>/dev/null; then
   export HOME="$TMP"
   out=$(timeout 120 "$LK" module install github.com/codlook/look-modules/jwt -v 2>&1)
-  if echo "$out" | grep -q "codeload.github.com" && echo "$out" | grep -qi "kuruldu"; then
+  if echo "$out" | grep -q "codeload.github.com" && echo "$out" | grep -qi "installed"; then
     echo "  PASS gercek kurulum: api.github.com -> codeload.github.com zinciri calisiyor"
   else
     echo "  FAIL gercek kurulum basarisiz (yonlendirme dogrulamasi mesru akisi bozdu mu?):"

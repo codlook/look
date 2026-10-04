@@ -78,7 +78,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
         }
         if (!eq)
             fail("assert::eq() failed:\n    expected: " + b.to_string() +
-                 "\n    gerçek:   " + a.to_string());
+                 "\n    actual:   " + a.to_string());
         return Value();
     };
 
@@ -93,7 +93,7 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
     m.functions["null"] = [fail](auto args) -> Value {
         if (args.empty() || args[0].type() != Value::NONE)
             fail("assert::null() failed — value is not null: " +
-                 (args.empty() ? "(yok)" : args[0].to_string()));
+                 (args.empty() ? "(none)" : args[0].to_string()));
         return Value();
     };
 
@@ -375,7 +375,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
             else eq = a.to_string() == b.to_string();
         } else eq = a.to_string() == b.to_string();
         if (!eq)
-            fail("assert_eq() failed:\n    expected: " + b.to_string() + "\n    gerçek:   " + a.to_string());
+            fail("assert_eq() failed:\n    expected: " + b.to_string() + "\n    actual:   " + a.to_string());
         return Value();
     });
 
@@ -388,7 +388,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
 
     interp.register_builtin("assert_null", [fail](std::vector<Value> args) -> Value {
         if (args.empty() || args[0].type() != Value::NONE)
-            fail("assert_null() failed — value is not null: " + (args.empty() ? "(yok)" : args[0].to_string()));
+            fail("assert_null() failed — value is not null: " + (args.empty() ? "(none)" : args[0].to_string()));
         return Value();
     });
 
@@ -582,7 +582,7 @@ int run_test_mode(const std::string& pattern, bool verbose) {
     // Summary line
     if (failed == 0) {
         set_console_color(COLOR_GREEN);
-        std::cout << passed << "/" << total << " geçti";
+        std::cout << passed << "/" << total << " passed";
         reset_console_color();
     } else {
         set_console_color(COLOR_RED);
@@ -590,7 +590,7 @@ int run_test_mode(const std::string& pattern, bool verbose) {
         reset_console_color();
         std::cout << " — ";
         set_console_color(COLOR_GREEN);
-        std::cout << passed << "/" << total << " geçti";
+        std::cout << passed << "/" << total << " passed";
         reset_console_color();
     }
     std::cout << " — " << total_ms << "ms\n\n";

@@ -562,8 +562,8 @@ void MySQLClient::do_handshake(const std::string& user,
 #else
             throw std::runtime_error(
                 "db mysql: caching_sha2_password is not supported in this build (the Windows build "
-                "OpenSSL'siz derlenir). Cozum: kullaniciyi mysql_native_password ile "
-                "create it, or use the Linux build.");
+                "has no OpenSSL). Either create the user with mysql_native_password, "
+                "or use the Linux build.");
 #endif
         }
         throw std::runtime_error("db mysql: unsupported authentication plugin: " + plugin);

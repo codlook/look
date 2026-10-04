@@ -190,6 +190,17 @@ jobs:
       - name: Version has a single source
         run: bash cpp/tests/version_single_source.sh
 
+      # Everything the runtime shows a user is English (messages, logs, CLI output).
+      - name: No Turkish text in runtime strings
+        run: bash cpp/tests/no_turkish_user_strings.sh
+
+      # JSON error bodies carry "error" (with "hata" beside it for 1.x); 'use timer' and
+      # other built-in namespaces explain themselves instead of suggesting an install.
+      - name: Error bodies and module messages
+        run: |
+          cd cpp
+          bash tests/error_body_test.sh ./build/lk ./build/lk-fcgi
+
       # A comparison operator inside a quoted value must not split a template condition.
       - name: Template condition guard (both engines)
         run: |

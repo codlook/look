@@ -54,7 +54,7 @@ inline std::vector<uint8_t> mysql_reassemble(
         seq = hdr[3];
         size_t off = payload.size();
         if (off + (size_t)len > max_recv)
-            throw std::runtime_error("db mysql: yanit boyutu guvenlik sinirini asti (256 MB)");
+            throw std::runtime_error("db mysql: response size exceeded the safety limit (256 MB)");
         payload.resize(off + len);
         if (len > 0 && !read(payload.data() + off, len))
             throw std::runtime_error("db: connection lost reading payload");

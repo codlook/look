@@ -737,8 +737,13 @@ void Interpreter::execute_statement(const Statement& stmt) {
             }
         }
 
+        // ws/timer/sse yerleşik ad alanlarıdır (aşağıda satır içi işlenir), modül DEĞİL: `use`
+        // gerektirmezler ve kurulamazlar. Eski mesaj Türkçeydi ve bunlar için de "kur" diyordu.
+        if (s->module_name == "ws" || s->module_name == "timer" || s->module_name == "sse")
+            throw std::runtime_error("'" + s->module_name + "' is built in and is not a module: remove the 'use "
+                + s->module_name + "' line and call " + s->module_name + ":: directly.");
         throw std::runtime_error("Unknown module: '" + s->module_name
-            + "'. Kurmak için: lk module install " + s->module_name);
+            + "'. If it is a package, install it with: lk module install " + s->module_name);
     }
 
     // Phase 18.5 — dosya modül sistemi
@@ -2395,7 +2400,9 @@ void Interpreter::dispatch_routes() {
         return;
     }
     // 404 handler tanimli degil — varsayilan mesaj
-    *output_stream_ << "{\"ok\":false,\"hata\":\"Endpoint not found\"}";
+    // "error" = response::error() ile aynı anahtar. "hata" 1.x boyunca yanında kalır
+    // (mevcut istemciler onu okuyor); 2.0'da kalkar.
+    *output_stream_ << "{\"ok\":false,\"error\":\"Endpoint not found\",\"hata\":\"Endpoint not found\"}";
 }
 // ── look_get_env — VM setup için .env-aware env() erişimi ───────────────────
 std::string look_get_env(const std::string& key, const std::string& default_val) {
