@@ -1233,7 +1233,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             sh.builtins       = &req_builtins;
             sh.route_disabled = &g_http_app.vm_route_disabled;
             look::VM vm(sh, output);
+            // İstek izolasyonu: kurulum dizileri bu istekte ilk erişimde kopyalanır (LOAD_GLOBAL).
             vm.set_globals(g_http_app.vm_setup_globals);
+            vm.isolate_setup_globals();
             vm.set_web_context(&web);
 
             // before_route middleware'leri sırayla çalıştır
@@ -1241,7 +1243,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             bool stopped = false;
             for (auto* cl : before_closures) {
                 try {
-                    vm.call_closure(*cl, {});
+                    std::shared_ptr<look::Closure> own;
+                    vm.call_closure(look::VM::request_local(*cl, own), {});
                 } catch (const look::RouteStopException&) {
                     stopped = true;
                     break;

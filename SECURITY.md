@@ -16,6 +16,35 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-04 — Arrays created at setup shared between requests (data exposure)
+
+**Affected:** every release up to and including 1.0.3. **Fixed in:** 1.0.4.
+
+The struct issue fixed in 1.0.3 was one case of a wider one. Arrays are shared by
+reference in LOOK, and the arrays a web script creates while it is set up were handed to
+every request without a copy:
+
+```lk
+const { ALLOWED = ["admin"] }
+$config = ["features" => []]
+route("GET", "/x", fn() use ($config) => ...)
+```
+
+A request that wrote into such an array in place — through a `const`, a top-level
+variable, a value captured with `use`, or a closure stored in a variable — changed it for
+every later request, including other users' requests. With several workers the same array
+could also be written concurrently. Both engines behaved the same way.
+
+From 1.0.4 each request works on its own copy: the first time a request touches such an
+array it gets a private deep copy, so the next request sees the declared values again.
+Requests that do not touch an array pay nothing for it.
+
+**Who is affected:** scripts that modify, in place, an array created outside a route
+handler. Reading such arrays was never a problem.
+
+**What to do:** upgrade to 1.0.4. Note that state which used to "survive" between requests
+this way no longer does — keep such state in `cache::`, `session::` or the database.
+
 ### 2026-10-02 — Struct default arrays shared between requests (data exposure)
 
 **Affected:** every release up to and including 1.0.2. **Fixed in:** 1.0.3.

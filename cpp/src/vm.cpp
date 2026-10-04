@@ -148,6 +148,31 @@ int VM::push_frame(const Closure* cl, int reg_count, int ret_reg) {
     return base;
 }
 
+// ── request_local ─────────────────────────────────────────────────────────────
+// Kurulumda yaratılan route/middleware closure'ları TÜM isteklerce paylaşılır. Yakaladıkları
+// dizi (ör. `fn() use ($list)`) da paylaşılıyordu → bir isteğin yerinde yazdığı veri sonraki
+// isteklerde (başka kullanıcıda) görünüyordu; çok worker'da aynı vector'e eşzamanlı yazma =
+// veri yarışı. Dizi yakalayan closure istek başına kopyalanır, dizi capture'ları derin
+// klonlanır. Dizi yakalamayan closure (yaygın durum) olduğu gibi kullanılır — maliyet yok.
+// Paylaşılabilir-değiştirilebilir durum taşıyan değer mi: dizi, ya da kendisi bir şey
+// yakalamış closure (yakaladığı dizi onunla birlikte paylaşılır).
+static bool carries_mutable_state(const Value& v) {
+    if (v.type() == Value::ARRAY) return true;
+    if (v.type() == Value::BYTECODE_FN) { auto cl = v.as_bytecode_fn(); return cl && !cl->captures.empty(); }
+    return false;
+}
+
+const Closure& VM::request_local(const Closure& c, std::shared_ptr<Closure>& holder) {
+    bool any = false;
+    for (const auto& v : c.captures) if (carries_mutable_state(v)) { any = true; break; }
+    if (!any) return c;
+    holder = std::make_shared<Closure>(c.proto);
+    holder->captures = c.captures;
+    for (auto& v : holder->captures) if (carries_mutable_state(v)) v = v.deep_clone();
+    return *holder;
+}
+
+
 // ── dispatch_routes ───────────────────────────────────────────────────────────
 
 void VM::dispatch_routes(const std::string& method, const std::string& path) {
@@ -184,12 +209,13 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
                 throw VmRouteDisabled();
             // Route-level middleware'leri çalıştır
             bool stopped = false;
+            std::shared_ptr<Closure> own;
             for (auto* mw : entry.middlewares) {
-                try { call_closure(*mw, {}); }
+                try { call_closure(request_local(*mw, own), {}); }
                 catch (const RouteStopException&) { stopped = true; break; }
             }
             if (!stopped)
-                call_closure(*entry.fn, std::move(params));
+                call_closure(request_local(*entry.fn, own), std::move(params));
             return;
         }
     }
@@ -454,6 +480,12 @@ call_dispatch:
                 const std::string& gname = CONST(ni).str_ref();
                 auto it = globals_.find(gname);
                 if (it != globals_.end()) {
+                    // İstek izolasyonu (web): kurulumdan gelen dizi/closure bu istekte İLK kez
+                    // çözülürken kopyalanır. Önce bu yavaş yol çalışır, sonra slot çivilenir →
+                    // sıcak yolda maliyet yok; isteğin hiç dokunmadığı global hiç kopyalanmaz.
+                    if (isolate_globals_ && isolated_.insert(&it->second).second
+                        && carries_mutable_state(it->second))
+                        it->second = it->second.deep_clone();
                     (*gcache)[ni] = &it->second;   // slot'u çivile — sonraki erişimler ıskasız
                     R(ins.a) = it->second;
                 } else if (!gname.empty() && gname[0] == '$') {
@@ -488,6 +520,7 @@ call_dispatch:
                 const std::string& name = CONST(ni).str_ref();  // kopyasız
                 Value& slot = globals_[name];   // yoksa oluştur, varsa bul
                 slot = R(ins.a);
+                if (isolate_globals_) isolated_.insert(&slot);   // bu isteğin değeri — kopyalanmaz
                 (*gcache)[ni] = &slot;          // sonraki yazma/okuma için çivile
                 break;
             }
@@ -1017,7 +1050,8 @@ call_dispatch:
                 std::vector<BuiltinFn> builtins_copy = sh.builtins ? *sh.builtins : std::vector<BuiltinFn>{};
                 sh.builtins = nullptr;
                 sh.routes   = nullptr; // parallel task dispatch_routes çağırmaz
-                std::thread([cl_copy, sh, g_copy, builtins_copy = std::move(builtins_copy)]() mutable {
+                const bool iso = isolate_globals_;   // web isteğinden doğan task da kurulum global'lerini paylaşmamalı
+                std::thread([cl_copy, sh, g_copy, iso, builtins_copy = std::move(builtins_copy)]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
                     // DB bağlantısı iadesi — interpreter parallel() ile birebir: task
                     // içinde db::query çağrılırsa get_conn bu thread'e tembel bir conn
@@ -1027,6 +1061,7 @@ call_dispatch:
                     std::ostringstream sink;
                     VM tvm(sh, sink);
                     tvm.set_globals(std::move(g_copy));
+                    if (iso) tvm.isolate_setup_globals();
                     tvm.set_builtins(&builtins_copy);
                     try { tvm.call_closure(*cl_copy, {}); }
                     catch (const std::exception& e) {

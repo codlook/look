@@ -488,6 +488,7 @@ static const bool s_fn_cloner_registered = [] {
 std::unique_ptr<Interpreter> Interpreter::make_dispatch_copy() const {
     auto c = std::make_unique<Interpreter>();   // initialises stdlib_ + fresh globals_
     c->globals_        = globals_->clone();    // snapshot — her dispatch kendi globals_ kopyasına yazar
+    c->setup_globals_  = globals_.get();        // fonksiyon closure'ları bunu gösterir → request_env çevirir
     c->current_        = std::make_shared<Environment>(c->globals_);  // fresh dispatch scope
     // EŞZAMANLILIK SÖZLEŞMESİ (route_registry_/services_ worker thread'lerle PAYLAŞILIR):
     // Handler closure'ları sığ kopyalanır → LookFunction+Environment tüm worker'larda ortak.
@@ -2197,12 +2198,26 @@ Value Interpreter::invoke(const Value& fn, std::vector<Value> args) {
     return call_function(fn.as_function(), std::move(args));
 }
 
+std::shared_ptr<Environment> Interpreter::request_env(const std::shared_ptr<Environment>& env) {
+    if (!setup_globals_ || !env) return env;                 // dispatch kopyası değil
+    if (env.get() == setup_globals_) return globals_;        // yaygın durum: üst düzey fonksiyon
+    bool reaches = false;
+    for (const Environment* p = env.get(); p; p = p->parent().get())
+        if (p == setup_globals_) { reaches = true; break; }
+    if (!reaches) return env;                                 // bu istekte oluşmuş env
+    auto it = rebased_.find(env.get());
+    if (it != rebased_.end()) return it->second;
+    auto e = env->rebased(request_env(env->parent()));
+    rebased_[env.get()] = e;
+    return e;
+}
+
 Value Interpreter::call_function(std::shared_ptr<LookFunction> fn, std::vector<Value> args) {
     if (call_depth_ >= MAX_CALL_DEPTH)
         throw LookRuntimeError("Stack overflow: max call depth exceeded in '" + fn->name + "'",
                                current_loc_, call_stack_);
 
-    auto fn_env = std::make_shared<Environment>(fn->closure);
+    auto fn_env = std::make_shared<Environment>(request_env(fn->closure));
     fn_env->mark_fn_boundary();  // yazma (set) global'e sızamaz — scope izolasyonu
 
     if (fn->is_variadic) {
