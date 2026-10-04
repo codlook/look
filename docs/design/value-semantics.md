@@ -1,6 +1,7 @@
 # LOOK 2 design: value semantics for arrays, maps and structs
 
-Status: **proposal — not implemented.** Branch: `v2`.
+Status: **accepted (2026-10-04), not implemented yet.** Branch: `v2`. Decided: structs are value
+types; the parameter-write check runs by default at load and is an error under `lk --check`.
 
 ## The problem
 
@@ -154,9 +155,17 @@ Code that relies on sharing:
 - two variables deliberately aliased to one array.
 
 Each of these changes silently, not with an error: the code runs and the caller no longer
-sees the change. That is the dangerous kind of break, so the migration needs a tool:
-`lk --check` should flag a function that writes into a parameter and never returns or
-stores it. This tool is part of the work, not an afterthought.
+sees the change. A silent change of behaviour is exactly what LOOK does not allow, and a
+check that only runs when someone remembers to run it does not make it loud. So:
+
+- **The check runs by default.** When an application is loaded, a function that writes
+  into a parameter and never returns or stores it produces a warning that names the
+  function and the parameter.
+- **`lk --check` turns the same finding into an error**, for CI.
+- An existing LOOK 1 application (LookPress included) has to come out of this check clean
+  before it moves to LOOK 2.
+
+The check is part of the work, not an afterthought.
 
 ## Baseline (before any change)
 
@@ -184,7 +193,7 @@ because today it is silently changing `$a`. Its output also changes from
 4. Content equality.
 5. Replace the deep copies of 1.0.3/1.0.4 with plain shares; keep the per-request variables
    (cells, environments). The isolation tests must still pass.
-6. `lk --check` rule for writes into a parameter.
+6. The parameter-write check: a warning at load by default, an error under `lk --check`.
 
 Each step lands with its own guard, proven by fault injection, and the benchmark above run
 before and after.
