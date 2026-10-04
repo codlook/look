@@ -215,6 +215,11 @@ Windows builds link no OpenSSL by design (zero DLLs), so MySQL
 `mysql_native_password`, or use the Linux build. LOOK says so explicitly instead of
 failing obscurely.
 
+## Scope
+
+LOOK is a language for building web applications. It runs on its own virtual machine;
+compiling to native machine code is not a goal.
+
 ## Known limits (worth knowing up front)
 
 - **Modules live in the module directory, not in relative paths.** There is no
