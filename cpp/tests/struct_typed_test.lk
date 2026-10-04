@@ -14,6 +14,8 @@
 # is fixed (assigning an undeclared field is an error; v1 silently added it).
 # Uses only builtin module functions so the CLI really runs it on the VM.
 use json
+use array
+use template
 
 function chk($label, $got, $want) {
     if ($got == $want) { print("OK   " . $label) }
@@ -106,6 +108,32 @@ chk("mutation reaches its own instance (default)", count($a.labels), 2)
 $fresh = Box{}
 chk("default array is per instance", count($fresh.labels), 1)
 
+
+# ── a struct is its own kind of value, not an array ─────────────────────────
+struct P1 { name string, x int }
+struct P2 { x int, pad int, name string }
+function name_of($s) { return $s.name }
+function set_x($s, $v) { $s.x = $v; return $s.x }
+$p1 = P1{name: "one", x: 1}
+$p2 = P2{name: "two", x: 2}
+# The same instruction sees two struct types whose fields sit at different positions:
+# the per-instruction slot cache must follow the definition, not the last position used.
+chk("one call site, two struct types (read)",  name_of($p1) . name_of($p2) . name_of($p1) . name_of($p2), "onetwoonetwo")
+chk("one call site, two struct types (write)", "" . set_x($p1, 10) . set_x($p2, 20) . set_x($p1, 11) . $p2.x . $p2.name, "10201120two")
+chk("type check still applies on the cached path", err_of(fn() => set_x($p2, "s")), "struct 'P2': field 'x' expects int, got string")
+chk("reading an undeclared field is an error", err_of(fn() => $p1.nope), "struct 'P1' has no field 'nope'")
+chk("a numeric index is refused", err_of(fn() => $p1[0]), "a struct is not an array: use a field name ('P1' has no numeric index)")
+chk("array:: functions refuse a struct", err_of(fn() => array::push($p1, 1)) != "NO-ERROR", true)
+chk("field read through index syntax", $p1["name"], "one")
+$seen = ""
+foreach ($p2 as $k => $v) { $seen = $seen . $k . "=" . $v . ";" }
+chk("foreach walks the fields in declaration order", $seen, "x=20;pad=0;name=two;")
+chk("json::encode writes an object", json::encode($p1), "{\"name\":\"one\",\"x\":11}")
+chk("printing a struct", "" . $p1, "P1{name: one, x: 11}")
+chk("template resolves a struct field", template::render_string('{$u.name}/{$u.x}', ["u" => $p1]), "one/11")
+struct Outer { inner P1, items array }
+$o = Outer{inner: P1{name: "in", x: 5}}
+chk("nested struct field", $o.inner.name . $o.inner.x, "in5")
 
 # ── a misspelled type is an error when the struct is first built, value or no value ─────
 struct Typo { name strng, n int }

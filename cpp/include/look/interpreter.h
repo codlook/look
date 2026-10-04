@@ -40,7 +40,21 @@ struct Closure;        // defined in bytecode.h — BYTECODE_FN type
 
 class Value {
 public:
-    enum Type { INT, FLOAT, STRING, BOOL, FUNCTION, ARRAY, CHANNEL, WEBSOCKET, SSE_CONN, BYTECODE_FN, NONE };
+    // STRUCT (LOOK 2) sona eklendi → mevcut tiplerin numarası değişmez. Depolaması ARRAY ile
+    // aynıdır (shared_ptr<vector<Value>>) ama düzeni farklı ve SABİTTİR:
+    //   [0] = struct adı (STRING)   [1] = tanım (ARRAY, üçlüler [alan, varsayılan, tip])
+    //   [2 + i] = i. alanın değeri (bildirim sırası)
+    // Ayrı tip olduğu için dizi bekleyen her kod (array::, indeksleme, foreach) onu DİZİ
+    // sanmaz; alan erişimi ad araması değil indekstir. Kurallar: look/struct_types.h.
+    enum Type { INT, FLOAT, STRING, BOOL, FUNCTION, ARRAY, CHANNEL, WEBSOCKET, SSE_CONN, BYTECODE_FN, NONE, STRUCT };
+    static Value make_struct(std::shared_ptr<std::vector<Value>> slots) {
+        Value v(std::move(slots)); v.type_ = STRUCT; return v;
+    }
+    // STRUCT'ın slot vektörü (as_array ile aynı işaretçi; ad niyeti belli etsin diye ayrı).
+    std::shared_ptr<std::vector<Value>> as_struct() const { return std::static_pointer_cast<std::vector<Value>>(ptr_val); }
+    // Sıcak yol için sahipliksiz erişim: shared_ptr kopyası (atomik sayaç artır/azalt) yok.
+    // Yalnız bu Value yaşarken geçerlidir.
+    std::vector<Value>* vec_ptr() const { return static_cast<std::vector<Value>*>(ptr_val.get()); }
 
     // B5: skalerler union'da (8 byte), STRING pointer arkasında → sizeof 80→32,
     // skaler kopyada string ctor/dtor yok. String literal'leri constant pool'dan
@@ -126,6 +140,18 @@ private:
             visited.erase(arr.get());
             return Value(v);
         }
+        if (type_ == STRUCT && ptr_val) {
+            // Alan değerleri klonlanır; [0] ad ve [1] tanım değişmez → paylaşılır.
+            auto sv = std::static_pointer_cast<std::vector<Value>>(ptr_val);
+            if (visited.count(sv.get())) return Value();
+            visited.insert(sv.get());
+            auto v = std::make_shared<std::vector<Value>>();
+            v->reserve(sv->size());
+            for (size_t i = 0; i < sv->size(); ++i)
+                v->push_back(i < 2 ? (*sv)[i] : (*sv)[i].deep_clone_impl(visited));
+            visited.erase(sv.get());
+            return make_struct(std::move(v));
+        }
         if (type_ == BYTECODE_FN && ptr_val) {
             // Closure → transitif klonla (cloner kayıtlıysa). Yoksa shallow (eski).
             if (auto h = bc_fn_cloner()) return h(*this, visited);
@@ -154,6 +180,18 @@ private:
                 for (const auto& e : *arr) v->push_back(e.clone_for_thread_impl(visited));
                 visited.erase(arr.get());
                 return Value(v);
+            }
+            case STRUCT: {
+                if (!ptr_val) return *this;
+                auto sv = std::static_pointer_cast<std::vector<Value>>(ptr_val);
+                if (visited.count(sv.get())) return Value();
+                visited.insert(sv.get());
+                auto v = std::make_shared<std::vector<Value>>();
+                v->reserve(sv->size());
+                for (size_t i = 0; i < sv->size(); ++i)
+                    v->push_back(i < 2 ? (*sv)[i] : (*sv)[i].clone_for_thread_impl(visited));
+                visited.erase(sv.get());
+                return make_struct(std::move(v));
             }
             case BYTECODE_FN:
                 if (ptr_val) { if (auto h = bc_fn_cloner()) return h(*this, visited); }
@@ -656,6 +694,7 @@ private:
 
     // Phase 11: struct definitions + iota counter
     std::map<std::string, std::vector<StructFieldDef>> struct_defs_;
+    std::map<std::string, Value> struct_def_values_;   // aynı tanımın Value hali (üçlüler) — örnekler slot 1'de taşır
 
     // Phase 18.5: dosya modül sistemi
     // included_files_: döngüsel include koruması (abs path set)

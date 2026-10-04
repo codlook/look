@@ -802,6 +802,7 @@ static Module make_type() {
             case Value::BOOL:     return Value(std::string("bool"));
             case Value::FUNCTION: return Value(std::string("function"));
             case Value::ARRAY:    return Value(std::string("array"));
+            case Value::STRUCT:   return Value(std::string("struct"));
             case Value::NONE:     return Value(std::string("null"));
         }
         return Value(std::string("unknown"));

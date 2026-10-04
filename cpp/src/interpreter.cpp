@@ -67,6 +67,17 @@ std::string Value::to_string() const {
             }
             return s + "]";
         }
+        case STRUCT: {
+            // User{name: Ada, age: 18}
+            const auto& sv = *as_struct();
+            const auto& def = look::struct_def(sv);
+            std::string s = look::struct_name(sv) + "{";
+            for (size_t j = 0, i = 0; j + 2 < def.size(); j += 3, ++i) {
+                if (i) s += ", ";
+                s += def[j].str_ref() + ": " + sv[look::STRUCT_SLOT0 + i].to_string();
+            }
+            return s + "}";
+        }
         case FUNCTION:  return "<function>";
         case CHANNEL:   return "<channel>";
         case WEBSOCKET: return "<websocket>";
@@ -507,6 +518,7 @@ std::unique_ptr<Interpreter> Interpreter::make_dispatch_copy() const {
     c->route_registry_        = route_registry_;        // PAYLAŞ (bkz. sözleşme yukarıda)
     c->before_route_registry_ = before_route_registry_; // PAYLAŞ (middleware)
     c->struct_defs_           = struct_defs_;            // copy (user struct definitions)
+    c->struct_def_values_     = struct_def_values_;      // tanım Value'ları değişmez → paylaşılır
     c->modules_        = modules_;              // copy (use X state from setup)
     c->services_       = services_;             // PAYLAŞ (app:: — sözleşme: mutable state tutma)
     c->setup_mode_     = false;
@@ -878,6 +890,8 @@ void Interpreter::execute_statement(const Statement& stmt) {
     }
     if (auto* s = dynamic_cast<const ForeachStatement*>(&stmt)) {
         Value iterable = evaluate_expression(*s->iterable);
+        // LOOK 2: struct üzerinde foreach alanları (ad => değer) bildirim sırasıyla gezer.
+        if (iterable.type() == Value::STRUCT) iterable = look::struct_to_map(iterable);
         if (iterable.type() != Value::ARRAY)
             throw std::runtime_error("foreach requires an array");
         auto& arr = *iterable.as_array();
@@ -1035,6 +1049,15 @@ void Interpreter::execute_statement(const Statement& stmt) {
             }
             defs.push_back(std::move(sfd));
         }
+        // Tanımın Value hali: üçlüler [alan, varsayılan, tip] — VM'in "__sdef:" global'iyle
+        // aynı düzen; her örnek bunu slot 1'de taşır (look/struct_types.h).
+        auto dv = std::make_shared<std::vector<Value>>();
+        for (const auto& d : defs) {
+            dv->push_back(Value(d.name));
+            dv->push_back(d.has_default ? d.default_val : Value());
+            dv->push_back(Value(d.type));
+        }
+        struct_def_values_[s->name] = Value(dv);
         struct_defs_[s->name] = std::move(defs);
         return;
     }
@@ -1110,6 +1133,8 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
     // Phase 11: $obj.field — member access on struct/assoc array
     if (auto* e = dynamic_cast<const MemberAccessExpression*>(&expr)) {
         Value obj = evaluate_expression(*e->object);
+        if (obj.type() == Value::STRUCT)
+            return look::struct_get_named(*obj.as_struct(), e->field);
         if (obj.type() != Value::ARRAY)
             throw LookRuntimeError("Member access '." + e->field + "' requires a struct or assoc array", current_loc_);
         auto& arr = *obj.as_array();
@@ -1138,33 +1163,15 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 throw LookRuntimeError("Unknown field '" + kv.first + "' in struct '" + e->struct_name + "'", current_loc_);
         }
 
-        // Build assoc array: __assoc__ sentinel + __struct__ tag + all fields in declaration order
-        auto arr = std::make_shared<std::vector<Value>>();
-        arr->push_back(Value(std::string("__assoc__")));
-        arr->push_back(Value(std::string("__struct__")));
-        arr->push_back(Value(e->struct_name));
-
         // VM ile AYNI sıra (hata ve yan etki paritesi): önce her alan varsayılanıyla
         // (tip denetimli; dizi/map örnek başına kopya), sonra literal alanları YAZILDIĞI
         // sırayla değerlendirilip denetlenerek yerine konur. Kurallar: look/struct_types.h.
-        for (const auto& def : defs) {
-            arr->push_back(Value(def.name));
-            look::struct_check_type_known(e->struct_name, def.name, def.type,
-                [&](const std::string& t) { return struct_defs_.count(t) != 0; });
-            Value dv = look::struct_instance_default(def.has_default ? def.default_val : Value(), def.type);
-            look::struct_check_field(e->struct_name, def.name, def.type, dv);
-            arr->push_back(dv);
-        }
-        for (const auto& kv : e->fields) {
-            Value v = evaluate_expression(*kv.second);
-            for (size_t i = 0; i < defs.size(); ++i) {
-                if (defs[i].name != kv.first) continue;
-                look::struct_check_field(e->struct_name, kv.first, defs[i].type, v);
-                (*arr)[3 + 2 * i + 1] = v;
-                break;
-            }
-        }
-        return Value(arr);
+        Value inst = look::struct_new(e->struct_name, struct_def_values_.at(e->struct_name),
+            [&](const std::string& t) { return struct_defs_.count(t) != 0; });
+        auto& sv = *inst.as_struct();
+        for (const auto& kv : e->fields)
+            look::struct_set_named(sv, kv.first, evaluate_expression(*kv.second));
+        return inst;
     }
 
     // Ternary: $cond ? $then : $else
@@ -1237,6 +1244,12 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
     if (auto* e = dynamic_cast<const IndexExpression*>(&expr)) {
         Value obj = evaluate_expression(*e->object);
         Value idx = evaluate_expression(*e->index);
+        if (obj.type() == Value::STRUCT) {
+            if (idx.type() != Value::STRING)
+                throw std::runtime_error("a struct is not an array: use a field name ('"
+                                         + look::struct_name(*obj.as_struct()) + "' has no numeric index)");
+            return look::struct_get_named(*obj.as_struct(), idx.as_string());
+        }
         if (obj.type() != Value::ARRAY)
             throw std::runtime_error("Index operator requires an array");
         auto& arr = *obj.as_array();
@@ -1280,7 +1293,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             if (obj.type() == Value::STRING)
                 // Immutable strings — identical message to the VM (both engines fail loud).
                 throw std::runtime_error("Strings are immutable; cannot assign to a string index");
-            if (obj.type() != Value::ARRAY)
+            if (obj.type() != Value::ARRAY && obj.type() != Value::STRUCT)
                 throw std::runtime_error((e->object ? std::string("assignment target")
                                                     : e->name) + " is not an array");
             Value idx = evaluate_expression(*e->index);
@@ -1302,6 +1315,18 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 if (op == "^=") return cur.bitwise_xor(val);
                 return val;
             };
+
+            // LOOK 2: struct alanı — $u.age = x ve $u["age"] = x. Şekil sabit, tip denetimli
+            // (look/struct_types.h). Struct bir dizi değildir: sayısal indeks yok.
+            if (obj.type() == Value::STRUCT) {
+                if (idx.type() != Value::STRING)
+                    throw std::runtime_error("a struct is not an array: use a field name ('"
+                                             + look::struct_name(arr) + "' has no numeric index)");
+                const std::string key = idx.as_string();
+                Value nv = apply_op(look::struct_get_named(arr, key));
+                look::struct_set_named(arr, key, nv);
+                return look::struct_get_named(arr, key);
+            }
 
             // Sayısal LİSTE + tam-sayı-olmayan string anahtar → listeyi assoc'a
             // DÖNÜŞTÜR, mevcut elemanları sayısal indeksleriyle anahtarlayarak KORU.
@@ -1327,21 +1352,6 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             if (!arr.empty() && arr[0].type() == Value::STRING &&
                 arr[0].as_string() == "__assoc__" && idx.type() == Value::STRING) {
                 const std::string& key = idx.as_string();
-                // LOOK 2: struct örneği — şekil sabit, tipli alan denetlenir (look/struct_types.h).
-                if (look::struct_is_instance(arr)) {
-                    const std::string sname = arr[2].to_string();
-                    auto sit = struct_defs_.find(sname);
-                    for (size_t i = 3; i + 1 < arr.size(); i += 2) {
-                        if (arr[i].to_string() != key) continue;
-                        Value nv = apply_op(arr[i + 1]);
-                        if (sit != struct_defs_.end())
-                            for (const auto& d : sit->second)
-                                if (d.name == key) { look::struct_check_field(sname, key, d.type, nv); break; }
-                        arr[i + 1] = nv;
-                        return nv;
-                    }
-                    look::struct_no_field(sname, key);
-                }
                 for (size_t i = 1; i + 1 < arr.size(); i += 2) {
                     if (arr[i].type() == Value::STRING ? arr[i].str_ref() == key
                                                        : arr[i].to_string() == key) { arr[i + 1] = apply_op(arr[i + 1]); return arr[i + 1]; }

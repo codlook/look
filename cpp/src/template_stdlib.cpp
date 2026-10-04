@@ -1,4 +1,5 @@
 #include "look/template.h"
+#include "look/struct_types.h"
 #include "look/stdlib.h"
 #include "look/html_escape.h"
 #include <cstring>
@@ -78,7 +79,9 @@ Value TemplateEngine::resolve(const std::string& path, const TplContext& ctx) {
     Value v = it->second;
 
     for (size_t i = 1; i < parts.size(); ++i) {
-        if (!v.as_array()) return Value();
+        // LOOK 2: struct alanı ({$user.name}) → alanların map görünümü üzerinden çöz.
+        if (v.type() == Value::STRUCT) v = look::struct_to_map(v);
+        if (v.type() != Value::ARRAY || !v.as_array()) return Value();
         const auto& arr = *v.as_array();
         const std::string& key = parts[i];
 

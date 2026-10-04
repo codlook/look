@@ -1,6 +1,7 @@
 ﻿#define _CRT_RAND_S
 #include "look/stdlib.h"
 #include "look/web.h"
+#include "look/struct_types.h"
 #include "look/db_dsn.h"   // pg_resolve_tls (saf TLS-karar dikişi)
 #include "look/session_esc.h"   // valid_sid + sess_esc/blob (saf, tablo-test edilebilir)
 #include "look/fiber.h"
@@ -81,6 +82,8 @@ static std::string json_encode(const Value& v, int depth) {
         case Value::STRING: return json_encode_string(v.as_string());
         case Value::BOOL:   return v.as_bool() ? "true" : "false";
         case Value::NONE:   return "null";
+        // LOOK 2: struct → alan adlarıyla nesne (bildirim sırası).
+        case Value::STRUCT: return json_encode(look::struct_to_map(v), depth);
         case Value::ARRAY: {
             auto& arr = *v.as_array();
             // Associative array / struct: ["__assoc__", k0, v0, k1, v1, ...]
