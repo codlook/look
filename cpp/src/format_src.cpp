@@ -144,12 +144,12 @@ int run_fmt(const std::vector<std::string>& files, bool check) {
         if (res == src) {
             // zaten biçimli
         } else if (check) {
-            std::cout << "biçimsiz: " << file << "\n";
+            std::cout << "unformatted: " << file << "\n";
             rc = 1;   // CI modu: biçimsiz dosya var
         } else {
             std::ofstream of(file, std::ios::binary | std::ios::trunc);
             of << res;
-            std::cout << "biçimlendi: " << file << "\n";
+            std::cout << "formatted: " << file << "\n";
         }
     }
     return rc;

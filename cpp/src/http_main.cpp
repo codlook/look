@@ -381,9 +381,9 @@ static void run_setup_http(const fs::path& script) {
                                         g_http_app.script_path.parent_path().string()));
             g_http_app.compiled     = std::move(compiled);
             g_http_app.use_bytecode = true;
-            std::cerr << "[BYTECODE] OK — VM modu aktif\n";
+            std::cerr << "[BYTECODE] OK — VM mode active\n";
             look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
-                "Bytecode compile OK — VM modu aktif");
+                "Bytecode compile OK — VM mode active");
         } catch (const look::LookCompileError& e) {
             std::cerr << "[BYTECODE] LookCompileError: " << e.what() << "\n";
             whole_program_fallback(std::string("compile error: ") + e.what());

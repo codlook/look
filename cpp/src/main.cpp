@@ -357,7 +357,7 @@ int main(int argc, char* argv[]) {
             if (sub == "install") {
                 if (pkg_url.empty()) {
                     std::cerr << "Error: a GitHub link is required.\n"
-                              << "Örnek: lk module install github.com/codlook/look-modules/jwt\n";
+                              << "Example: lk module install github.com/codlook/look-modules/jwt\n";
                     return 1;
                 }
                 return look::cmd_module_install(pkg_url, verbose);

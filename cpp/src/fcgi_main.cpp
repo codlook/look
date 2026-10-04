@@ -435,8 +435,11 @@ static bool is_production() {
 static std::string build_error_response(int status, const std::string& title,
                                          const std::string& msg) {
     std::string body = is_production()
-        ? "{\"ok\":false,\"hata\":\"Server error.\",\"kod\":" + std::to_string(status) + "}\n"
-        : "{\"ok\":false,\"hata\":\"" + json_escape_str(msg) + "\",\"kod\":" + std::to_string(status) + "}\n";
+        // "error"/"code" = İngilizce anahtarlar; "hata"/"kod" 1.x boyunca yanında kalır, 2.0'da kalkar.
+        ? "{\"ok\":false,\"error\":\"Server error.\",\"code\":" + std::to_string(status)
+          + ",\"hata\":\"Server error.\",\"kod\":" + std::to_string(status) + "}\n"
+        : "{\"ok\":false,\"error\":\"" + json_escape_str(msg) + "\",\"code\":" + std::to_string(status)
+          + ",\"hata\":\"" + json_escape_str(msg) + "\",\"kod\":" + std::to_string(status) + "}\n";
     return "Status: " + std::to_string(status) + " " + title + "\r\n"
            "Content-Type: application/json; charset=utf-8\r\n"
            "Access-Control-Allow-Origin: *\r\n\r\n" + body;

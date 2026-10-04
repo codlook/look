@@ -533,7 +533,7 @@ struct HttpServer::Impl {
             } catch (...) {
                 resp.status_code = 500;
                 resp.status_text = "Internal Server Error";
-                resp.body        = "{\"ok\":false,\"hata\":\"Server error\"}";
+                resp.body        = "{\"ok\":false,\"error\":\"Server error\",\"hata\":\"Server error\"}";
                 resp.keep_alive  = false;
             }
 

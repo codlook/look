@@ -152,7 +152,7 @@ struct Instruction {
     uint16_t bx() const { return (uint16_t(b) << 8) | c; }
 };
 
-static_assert(sizeof(Instruction) == 4, "Instruction 4 byte olmalı");
+static_assert(sizeof(Instruction) == 4, "Instruction must be 4 bytes");
 
 // ── Constant pool ─────────────────────────────────────────────────────────────
 //

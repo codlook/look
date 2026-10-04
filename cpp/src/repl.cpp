@@ -147,7 +147,7 @@ static void print_help() {
     std::cout << cyan("Tips:") << "\n";
     std::cout << "  The result is shown automatically — you don't need to write print()\n";
     std::cout << "  Multi-line: a block opened with { waits until it is closed with }\n";
-    std::cout << "  Arrow keys: command history (↑/↓), imleç (←/→)\n\n";
+    std::cout << "  Arrow keys: command history (up/down), cursor (left/right)\n\n";
 }
 
 // ── Wrap source as expression-or-statement ────────────────────────────────

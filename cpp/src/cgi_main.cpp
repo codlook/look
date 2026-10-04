@@ -54,7 +54,9 @@ static void send_error(int status, const std::string& title, const std::string& 
 
     if (is_production()) {
         // Production: kullaniciya genel mesaj, detay sadece log'a gider
-        std::cout << "{\"ok\":false,\"hata\":\"Server error. Please try again.\","
+        // "error"/"code" = İngilizce anahtarlar; "hata"/"kod" 1.x boyunca yanında kalır.
+        std::cout << "{\"ok\":false,\"error\":\"Server error. Please try again.\",\"code\":" << status
+                  << ",\"hata\":\"Server error. Please try again.\","
                   << "\"kod\":" << status << "}\n";
     } else {
         // Development: hata detayi JSON icinde
@@ -67,7 +69,8 @@ static void send_error(int status, const std::string& title, const std::string& 
             else if (c == '\r') safe += "\\r";
             else                safe += c;
         }
-        std::cout << "{\"ok\":false,\"hata\":\"" << safe << "\","
+        std::cout << "{\"ok\":false,\"error\":\"" << safe << "\",\"code\":" << status
+                  << ",\"hata\":\"" << safe << "\","
                   << "\"kod\":" << status << "}\n";
     }
 }

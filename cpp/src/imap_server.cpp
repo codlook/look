@@ -911,7 +911,7 @@ struct ImapServer::Impl {
                     }
                     else { bad = true; break; }
                 }
-                if (bad) { send_all(fd, tag + " BAD SEARCH ölçütü çözümlenemedi\r\n"); continue; }
+                if (bad) { send_all(fd, tag + " BAD SEARCH criteria could not be parsed\r\n"); continue; }
 
                 auto hdr_field = [&](const std::string& hdr, const std::string& field) {
                     // "field:" ile başlayan satırların değerini (küçük harf) birleştir
@@ -1024,7 +1024,7 @@ bool ImapServer::start() {
     }
     Logger::instance().log(LogLevel::LOG_INFO, "IMAP",
         std::string("IMAP4rev1 dinliyor — port ") + std::to_string(impl_->port_imap) +
-        (impl_->ssl_ctx ? " (STARTTLS aktif)" : " (TLS not configured — plaintext)"));
+        (impl_->ssl_ctx ? " (STARTTLS enabled)" : " (TLS not configured — plaintext)"));
     return true;
 }
 

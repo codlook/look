@@ -13,7 +13,7 @@ namespace look {
 
 inline bool redirect_allowed(const std::string& next, std::string& err) {
     if (next.rfind("https://", 0) != 0) {
-        err = "güvensiz yönlendirme (yalnız https): " + next;
+        err = "unsafe redirect (https only): " + next;
         return false;
     }
     std::string rest = next.substr(8);              // "https://" sonrası
@@ -28,7 +28,7 @@ inline bool redirect_allowed(const std::string& next, std::string& err) {
     bool ok = host == "github.com" || host == "api.github.com" ||
               ends_with(host, ".github.com") ||
               ends_with(host, ".githubusercontent.com");
-    if (!ok) { err = "yönlendirme beklenmeyen host'a gidiyor: " + host; return false; }
+    if (!ok) { err = "redirect goes to an unexpected host: " + host; return false; }
     return true;
 }
 
