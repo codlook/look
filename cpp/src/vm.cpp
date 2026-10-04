@@ -220,17 +220,21 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
             return;
         }
     }
-    // 404 route ara
+    // Eşleşen rota yok → durum 404, HANDLER'DAN ÖNCE ayarlanır (tree-walk ile aynı).
+    // ESKİ HATA: durum yalnız varsayılan gövdede ayarlanıyordu; uygulama route("404", ...)
+    // tanımlamışsa handler çağrılıp dönülüyor ve özel 404 sayfası 200 ile gidiyordu.
+    // Handler isterse response::status ile değiştirebilir.
+    if (web_ctx_) { web_ctx_->status_code = 404; web_ctx_->status_text = "Not Found"; }
     for (auto& entry : *shared_.routes) {
         size_t colon = entry.pattern.find(':');
         if (colon == std::string::npos) continue;
         std::string m = entry.pattern.substr(0, colon);
         if (m == "404") {
-            call_closure(*entry.fn, {});
+            std::shared_ptr<Closure> own;
+            call_closure(request_local(*entry.fn, own), {});
             return;
         }
     }
-    if (web_ctx_) { web_ctx_->status_code = 404; web_ctx_->status_text = "Not Found"; }
     output_ << "404 Not Found";
 }
 
