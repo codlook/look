@@ -121,6 +121,13 @@ jobs:
           cd cpp
           bash tests/request_isolation_test.sh ./build/lk-fcgi
 
+      # Handlers that outlive a request (timer, WebSocket message, SSE) ran on a
+      # second-level interpreter copy that wrote into the real setup values.
+      - name: Realtime isolation (timer, SSE, WebSocket)
+        run: |
+          cd cpp
+          bash tests/realtime_isolation_test.sh ./build/lk-fcgi
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)

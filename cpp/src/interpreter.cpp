@@ -489,7 +489,11 @@ static const bool s_fn_cloner_registered = [] {
 std::unique_ptr<Interpreter> Interpreter::make_dispatch_copy() const {
     auto c = std::make_unique<Interpreter>();   // initialises stdlib_ + fresh globals_
     c->globals_        = globals_->clone();    // snapshot — her dispatch kendi globals_ kopyasına yazar
-    c->setup_globals_  = globals_.get();        // fonksiyon closure'ları bunu gösterir → request_env çevirir
+    // Fonksiyon closure'ları ASIL kurulum globals'ını gösterir → request_env onu çevirir.
+    // Kopyanın kopyası (WS mesajı, zamanlayıcı, kuyruk işleyicisi bir dispatch kopyasından
+    // türetilir) da ASIL adresi hatırlamalı: bir önceki kopyanınkini hatırlarsa closure'lar
+    // eşleşmez, yeniden bağlanmaz ve işleyici kurulum değerlerinin kendisine yazar.
+    c->setup_globals_  = setup_globals_ ? setup_globals_ : globals_.get();
     c->current_        = std::make_shared<Environment>(c->globals_);  // fresh dispatch scope
     // EŞZAMANLILIK SÖZLEŞMESİ (route_registry_/services_ worker thread'lerle PAYLAŞILIR):
     // Handler closure'ları sığ kopyalanır → LookFunction+Environment tüm worker'larda ortak.

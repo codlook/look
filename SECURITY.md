@@ -16,6 +16,23 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-04 — Timer and WebSocket handlers could still change setup arrays (1.0.5)
+
+**Affected:** every release up to and including 1.0.4, when the application runs on the
+interpreter (`LOOK_BYTECODE=0`, or after a VM fallback). **Fixed in:** 1.0.5.
+
+1.0.4 isolated requests from each other, but two kinds of handler slipped through: a timer
+armed by a route (`timer::after`, `timer::every`) and a WebSocket message handler
+(`ws::on($ws, "message", ...)`). When such a handler called a function that wrote into a
+`const` array or a top-level array, it wrote into the real setup value, and every later
+HTTP request saw the change. Writes made directly in the handler body, SSE handlers and
+the WebSocket open handler were already isolated.
+
+The handlers run on an interpreter copy made from the request's copy; that second-level
+copy did not remember where the setup values live. It does now.
+
+**What to do:** upgrade to 1.0.5.
+
 ### 2026-10-04 — Arrays created at setup shared between requests (data exposure)
 
 **Affected:** every release up to and including 1.0.3. **Fixed in:** 1.0.4.
