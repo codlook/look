@@ -1,0 +1,4 @@
+# $b = $a then write into $b: today both change (shared); with value semantics $b copies once.
+function run() { $a = []; $i = 0; while ($i < 2000) { $a[$i] = $i; $i = $i + 1 }
+  $s = 0; $k = 0; while ($k < 20000) { $b = $a; $b[0] = $k; $s = $s + $b[0]; $k = $k + 1 } return $s . ":" . $a[0] }
+print(run())

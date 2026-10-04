@@ -1,0 +1,4 @@
+# In-place index writes into a TOP-LEVEL (global) list from the top level.
+$a = []; $i = 0; while ($i < 2000) { $a[$i] = $i; $i = $i + 1 }
+$k = 0; while ($k < 300) { $i = 0; while ($i < 2000) { $a[$i] = $a[$i] + 1; $i = $i + 1 } $k = $k + 1 }
+print($a[1999])

@@ -1,0 +1,4 @@
+# Writes two levels deep: $m["rows"][$i] = ...
+function run() { $m = ["rows" => []]; $i = 0; while ($i < 1000) { $m["rows"][$i] = $i; $i = $i + 1 }
+  $k = 0; while ($k < 300) { $i = 0; while ($i < 1000) { $m["rows"][$i] = $m["rows"][$i] + 1; $i = $i + 1 } $k = $k + 1 } return $m["rows"][999] }
+print(run())

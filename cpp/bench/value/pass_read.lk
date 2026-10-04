@@ -1,0 +1,5 @@
+# Passing a large list to a function that only READS it: must not copy.
+function total($xs) { return $xs[0] + $xs[4999] }
+function run() { $a = []; $i = 0; while ($i < 5000) { $a[$i] = $i; $i = $i + 1 }
+  $s = 0; $k = 0; while ($k < 300000) { $s = $s + total($a); $k = $k + 1 } return $s }
+print(run())

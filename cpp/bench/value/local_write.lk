@@ -1,0 +1,4 @@
+# In-place index writes into a LOCAL list: must stay O(1) per write.
+function run() { $a = []; $i = 0; while ($i < 2000) { $a[$i] = $i; $i = $i + 1 }
+  $k = 0; $s = 0; while ($k < 300) { $i = 0; while ($i < 2000) { $a[$i] = $a[$i] + 1; $i = $i + 1 } $k = $k + 1 } return $a[1999] }
+print(run())
