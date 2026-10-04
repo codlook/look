@@ -28,6 +28,15 @@ for mode in "LOOK_BYTECODE=1" "LOOK_BYTECODE=0"; do
     fi
 done
 
+printf 'route("GET", "/ok", fn() => response::text("ok"))\nroute("404", fn() => response::text("custom-404"))\n' > "$TMP/app.lk"
+for mode in "LOOK_BYTECODE=1" "LOOK_BYTECODE=0"; do
+    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+    for i in $(seq 1 40); do [ "$(curl -s -m 1 "localhost:$PORT/ok")" = ok ] && break; sleep 0.1; done
+    body="$(curl -s -m 3 "localhost:$PORT/no-such-route")"; code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/no-such-route")"
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+    [ "$body" = "custom-404" ] && [ "$code" = 404 ] && ok "[$mode] route(\"404\") replaces the body, status stays 404" || bad "[$mode] custom 404: [$code] $body"
+done
+
 for name in timer ws sse; do
     printf 'use %s\nprint("x")\n' "$name" > "$TMP/u.lk"
     out="$(LOOK_CLI_VM=0 "$LK" "$TMP/u.lk" 2>&1)"
