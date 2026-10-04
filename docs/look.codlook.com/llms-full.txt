@@ -299,8 +299,13 @@ print($b[0])              # 0 — the caller's array changed
 This is different from PHP, where assignment copies. Functions that return a new array
 (`array::push`, `array::slice`, `array::map`, ...) leave the original untouched; index
 assignment (`$a[0] = x`, `$a["k"] = x`) changes it in place. To work on a private copy of
-a list, build one: `$copy = array::slice($b, 0)`. That copies one level; for nested data
-use `json::decode(json::encode($b))`.
+a list, build one: `$copy = array::slice($b, 0)`. That copies **one level only**: nested
+arrays inside it are still shared with the original.
+
+There is no general deep copy in 1.x. `json::decode(json::encode($b))` gives one for plain
+JSON-shaped data (strings, integers, booleans, null, lists, maps) and nothing else — it
+does not fail on other values, it changes them: a float such as `1.0` comes back as the
+integer `1`, a struct comes back as a plain map, and a closure comes back as `null`.
 
 **Between requests** the web server isolates you from this: every request gets its own
 copy of the arrays created while the script was set up (`const` arrays, top-level arrays,
