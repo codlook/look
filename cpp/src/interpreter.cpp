@@ -2399,10 +2399,12 @@ void Interpreter::dispatch_routes() {
             invoke(entry.callback, {});
         return;
     }
-    // 404 handler tanimli degil — varsayilan mesaj
-    // "error" = response::error() ile aynı anahtar. "hata" 1.x boyunca yanında kalır
-    // (mevcut istemciler onu okuyor); 2.0'da kalkar.
-    *output_stream_ << "{\"ok\":false,\"error\":\"Endpoint not found\",\"hata\":\"Endpoint not found\"}";
+    // 404 handler tanımlı değil — varsayılan gövde. LOOK 2: VM ile AYNI düz metin. v1'de bu
+    // yol JSON ({"ok":false,"error":...,"hata":...}) dönüyor, VM yolu düz metin dönüyordu:
+    // aynı istek motora göre farklı yanıt alıyordu. Düz metin seçildi: varsayılan motorun
+    // (VM) zaten döndüğü şey, ve HTML sitesi için de JSON API için de nötr. Kendi 404
+    // gövdesini isteyen uygulama route("404", ...) tanımlar — iki motorda da çalışır.
+    *output_stream_ << "404 Not Found";
 }
 // ── look_get_env — VM setup için .env-aware env() erişimi ───────────────────
 std::string look_get_env(const std::string& key, const std::string& default_val) {

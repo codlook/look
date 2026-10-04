@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The runtime's own JSON error bodies carry the English key "error" (the same key
-# response::error() uses). The older Turkish key "hata" stays beside it for the whole 1.x
-# line, because existing clients read it; it goes away in 2.0.
+# LOOK 2: an unmatched route answers the same on both engines, and an application can
+# replace that answer with route("404", ...).
 # Also: 'use timer' (a built-in namespace, not a module) must say so, in English, instead
 # of telling the author to install a module that does not exist.
 # Usage: error_body_test.sh <lk> <lk-fcgi>
@@ -18,14 +17,19 @@ for mode in "LOOK_BYTECODE=1" "LOOK_BYTECODE=0"; do
     for i in $(seq 1 40); do [ "$(curl -s -m 1 "localhost:$PORT/ok")" = ok ] && break; sleep 0.1; done
     body="$(curl -s -m 3 "localhost:$PORT/no-such-route")"
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    # KNOWN DIVERGENCE (older than this test, not decided yet): for an unmatched route the VM
-    # path answers with the plain text "404 Not Found", the interpreter path with JSON. The
-    # default (VM) body is left alone here; both are pinned so a change is a deliberate one.
-    if [ "$mode" = "LOOK_BYTECODE=1" ]; then
-        [ "$body" = "404 Not Found" ] && ok "[$mode] 404 body is the plain text (pinned)" || bad "[$mode] 404 body changed: $body"
-    else
-        case "$body" in *'"error":"Endpoint not found"'*'"hata":"Endpoint not found"'*) ok "[$mode] 404 body has error and hata";; *) bad "[$mode] 404 body: $body";; esac
-    fi
+    # LOOK 2: one answer for an unmatched route on both engines — the plain text the VM has
+    # always sent. (In 1.x the interpreter path sent JSON instead; that divergence is gone.)
+    [ "$body" = "404 Not Found" ] && ok "[$mode] unmatched route answers '404 Not Found'" || bad "[$mode] 404 body: $body"
+    # An application that wants its own body defines route("404", ...), on either engine.
+done
+
+printf 'route("GET", "/ok", fn() => response::text("ok"))\nroute("404", fn() => response::text("custom-404"))\n' > "$TMP/app.lk"
+for mode in "LOOK_BYTECODE=1" "LOOK_BYTECODE=0"; do
+    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+    for i in $(seq 1 40); do [ "$(curl -s -m 1 "localhost:$PORT/ok")" = ok ] && break; sleep 0.1; done
+    body="$(curl -s -m 3 "localhost:$PORT/no-such-route")"; code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/no-such-route")"
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+    [ "$body" = "custom-404" ] && [ "$code" = 404 ] && ok "[$mode] route(\"404\") replaces the body, status stays 404" || bad "[$mode] custom 404: [$code] $body"
 done
 
 for name in timer ws sse; do
