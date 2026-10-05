@@ -1144,6 +1144,24 @@ void Interpreter::execute_statement(const Statement& stmt) {
             dv->push_back(d.has_default ? d.default_val : Value());
             dv->push_back(Value(d.type));
         }
+        // LOOK 2: aynı adla FARKLI ikinci tanım = hata (iki dosya aynı adı kullanmış ya da
+        // bir dosya değişik halde iki kez yüklenmiş). Birebir aynı tanımın yeniden okunması
+        // serbest. Aynı dosya içindeki durum ayrıştırıcıda yakalanır; burası dosyalar arası.
+        if (auto old = struct_def_values_.find(s->name); old != struct_def_values_.end()) {
+            const auto& a = *old->second.as_array();
+            bool same = a.size() == dv->size();
+            for (size_t i = 0; same && i < a.size(); ++i) {
+                const bool is_fn = a[i].type() == Value::FUNCTION || a[i].type() == Value::BYTECODE_FN;
+                if (is_fn ? (*dv)[i].type() != a[i].type() : !(a[i] == (*dv)[i])) same = false;
+            }
+            if (!same) {
+                const auto& at = struct_decl_loc_[s->name];
+                throw std::runtime_error("struct '" + s->name + "' is already declared at "
+                    + (at.file.empty() ? std::string("line ") : at.file + ":") + std::to_string(at.line)
+                    + " with different fields");
+            }
+        }
+        struct_decl_loc_[s->name] = s->loc;
         struct_def_values_[s->name] = Value(dv);
         struct_defs_[s->name] = std::move(defs);
         return;

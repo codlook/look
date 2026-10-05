@@ -2,7 +2,9 @@
 
 #include "look/ast.h"
 #include "look/token.h"
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace look {
@@ -16,6 +18,7 @@ private:
     std::vector<Token> tokens_;
     size_t current_ = 0;
     int    scope_depth_ = 0;  // fonksiyon iç içeliği — use "file" top-level guard için
+    std::map<std::string, std::pair<std::string, int>> struct_seen_;  // LOOK 2: ad → (tanım imzası, satır)
     static constexpr int MAX_EXPR_DEPTH = 150;  // ifade özyineleme tavanı (expression+unary+power ortak)
     int    expr_depth_  = 0;  // ifade özyineleme derinliği — derin iç içe paren/array
                               // parser'ın recursive-descent yığınını taşırıp SIGSEGV

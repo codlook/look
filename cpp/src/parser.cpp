@@ -272,6 +272,12 @@ std::unique_ptr<Statement> Parser::foreach_statement() {
 // struct Urun { ad, fiyat: 0.0, stok: 0 }
 std::unique_ptr<Statement> Parser::struct_declaration() {
     auto name = consume(TokenType::IDENT, "Expect struct name after 'struct'.");
+    // LOOK 2: struct yalnız ÜST DÜZEYDE bildirilir (fonksiyon, closure ya da blok içinde değil).
+    // Bildirimin tek bir yeri olur → aynı adla farklı ikinci tanım her zaman yüklemede yakalanır.
+    if (scope_depth_ > 0 || stmt_depth_ > 1)
+        throw LookParseError("struct '" + name.lexeme + "' must be declared at the top level of a "
+            "file, not inside a function or a block", name.line, name.column);
+    const size_t sig_from = current_;
     consume(TokenType::LBRACE, "Expect '{' after struct name.");
 
     auto stmt = std::make_unique<StructDeclaration>();
@@ -308,6 +314,20 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
     }
 
     consume(TokenType::RBRACE, "Expect '}' after struct fields.");
+    // Aynı dosyada aynı ad: tanım birebir aynıysa sorun yok, farklıysa hata (dosyalar arası
+    // durum yüklemede yorumlayıcıda yakalanır — interpreter.cpp StructDeclaration).
+    {
+        std::string sig;
+        for (size_t i = sig_from; i < current_; ++i)
+            if (tokens_[i].type != TokenType::SEMICOLON && tokens_[i].type != TokenType::COMMA) {
+                sig += tokens_[i].literal.value_or(tokens_[i].lexeme); sig += '\x1f';
+            }
+        auto it = struct_seen_.find(stmt->name);
+        if (it != struct_seen_.end() && it->second.first != sig)
+            throw LookParseError("struct '" + stmt->name + "' is already declared at line "
+                + std::to_string(it->second.second) + " with different fields", name.line, name.column);
+        struct_seen_.emplace(stmt->name, std::make_pair(std::move(sig), name.line));
+    }
     return stmt;
 }
 

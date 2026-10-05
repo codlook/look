@@ -718,6 +718,7 @@ private:
     // Phase 11: struct definitions + iota counter
     std::map<std::string, std::vector<StructFieldDef>> struct_defs_;
     std::map<std::string, Value> struct_def_values_;   // aynı tanımın Value hali (üçlüler) — örnekler slot 1'de taşır
+    std::map<std::string, SourceLocation> struct_decl_loc_;   // LOOK 2: ilk bildirimin yeri (çift tanım hatası için)
 
     // Phase 18.5: dosya modül sistemi
     // included_files_: döngüsel include koruması (abs path set)
