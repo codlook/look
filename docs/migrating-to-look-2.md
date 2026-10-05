@@ -119,10 +119,21 @@ already behaved this way in LOOK 1; the tree-walk engine (`LOOK_BYTECODE=0`,
 A closure handed to another thread (`parallel`, timers, WebSocket and SSE handlers) still
 gets its own copy of everything it captured.
 
+### `==` compares content — silent
+
+`==` and `!=` on two arrays, maps or structs compare what they hold, at every depth.
+In LOOK 1 the result was always false for arrays and maps.
+
+- lists: same length and equal elements in the same order;
+- maps: the same keys with equal values; the order the keys were added in does not matter;
+- structs: the same struct name and equal fields;
+- an empty list and an empty map are equal.
+
+Elements compare by the usual rule: `[1] == [1.0]` is true, `[1] == ["1"]` is false.
+Functions, channels and connections still compare by identity.
+
 ### Not changed yet
 
-- `==` on two arrays, maps or structs does not compare their content yet. Comparing by
-  content is planned for LOOK 2.
 - Plain reads and assignments of a captured variable are not settled. Today the two
   engines differ: after `$c = 1; $f = function() use ($c) { return $c }; $c = 2`, `$f()`
   gives 1 on the default engine at the top level of a script and 2 on the tree-walk

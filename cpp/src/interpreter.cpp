@@ -281,6 +281,33 @@ void Value::append_in_place(const Value& o) {
 // dönüştürülür (açık ve güvenli — Go'nun statik tip is requiredluğunun dinamik karşılığı).
 static inline bool val_is_number(Value::Type t) { return t == Value::INT || t == Value::FLOAT; }
 
+// LOOK 2: dizi, map ve struct İÇERİĞE göre karşılaştırılır (özyinelemeli). Değer semantiğinde
+// kimlik diye bir şey yok; `$a == $b` "aynı şey mi" değil "aynı değer mi" demektir.
+//   liste  : aynı uzunluk + sırayla eşit elemanlar
+//   map    : aynı anahtarlar + eşit değerler; EKLEME SIRASI önemsiz
+//   struct : aynı ad + eşit alanlar
+// Boş liste ile boş map eşittir ([] henüz anahtar almamış bir map olarak da yazılır).
+static bool vec_is_map(const std::vector<Value>& v) {
+    return !v.empty() && v[0].type() == Value::STRING && v[0].str_ref() == "__assoc__";
+}
+static bool vec_content_equal(const std::vector<Value>& a, const std::vector<Value>& b) {
+    const bool am = vec_is_map(a), bm = vec_is_map(b);
+    if (am != bm) return (am ? a.size() == 1 && b.empty() : b.size() == 1 && a.empty());
+    if (a.size() != b.size()) return false;
+    if (!am) {
+        for (size_t i = 0; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
+        return true;
+    }
+    for (size_t i = 1; i + 1 < a.size(); i += 2) {
+        // Hızlı yol: aynı sırada kurulmuş iki map'te anahtar aynı konumdadır.
+        if (a[i] == b[i]) { if (!(a[i + 1] == b[i + 1])) return false; continue; }
+        bool found = false;
+        for (size_t j = 1; j + 1 < b.size(); j += 2)
+            if (a[i] == b[j]) { if (!(a[i + 1] == b[j + 1])) return false; found = true; break; }
+        if (!found) return false;
+    }
+    return true;
+}
 bool Value::operator==(const Value& o) const {
     bool a_num = val_is_number(type_), b_num = val_is_number(o.type_);
     if (a_num && b_num) {
@@ -297,8 +324,20 @@ bool Value::operator==(const Value& o) const {
         case STRING: return str_ref() == o.str_ref();
         case BOOL:   return bool_val == o.bool_val;
         case NONE:   return true;                           // null == null
-        case ARRAY:  return false;                          // referans karşılaştırması desteklenmiyor
-        default:     return ptr_val == o.ptr_val;           // fn/channel/ws: kimlik
+        case ARRAY: {
+            if (ptr_val == o.ptr_val) return true;          // aynı depolama (henüz ayrılmamış kopya)
+            if (!ptr_val || !o.ptr_val) return false;
+            return vec_content_equal(*vec_ptr(), *o.vec_ptr());
+        }
+        case STRUCT: {
+            if (ptr_val == o.ptr_val) return true;
+            if (!ptr_val || !o.ptr_val) return false;
+            const auto& a = *vec_ptr(); const auto& b = *o.vec_ptr();
+            if (a.size() != b.size() || a[0].str_ref() != b[0].str_ref()) return false;
+            for (size_t i = 2; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
+            return true;
+        }
+        default:     return ptr_val == o.ptr_val;           // fn/channel/ws: kimlik (tutamaçlar)
     }
 }
 // Sıralama: yalnız sayı↔sayı ve string↔string. Karışık tür → hata (sessizce

@@ -67,4 +67,39 @@ function push_caller() { $a = ["x"]; $n = push_param($a); return $n . ":" . coun
 chk("push inside a function does not reach the caller", push_caller(), "2:1")
 
 print("")
+
+# ── equality compares content ────────────────────────────────────────────────
+struct Pt { x int
+    y int = 2 }
+struct Other { x int
+    y int = 2 }
+function eq_all() {
+    $r = ""
+    $r = $r . (([1, 2, 3] == [1, 2, 3]) ? "T" : "F")              # list, same content
+    $r = $r . (([1, 2, 3] == [1, 2, 4]) ? "T" : "F")              # one element differs
+    $r = $r . (([1, 2] == [1, 2, 3]) ? "T" : "F")                 # length differs
+    $r = $r . (([1, [2, ["a" => [3]]]] == [1, [2, ["a" => [3]]]]) ? "T" : "F")   # nested
+    $r = $r . ((["a" => 1, "b" => 2] == ["b" => 2, "a" => 1]) ? "T" : "F")       # map: order free
+    $r = $r . ((["a" => 1, "b" => 2] == ["a" => 1, "b" => 3]) ? "T" : "F")
+    $r = $r . ((["a" => 1] == ["c" => 1]) ? "T" : "F")
+    $r = $r . (([1, 2] == [2, 1]) ? "T" : "F")                    # list: order matters
+    $r = $r . (([1] == [1.0]) ? "T" : "F")                        # numbers compare as numbers
+    $r = $r . (([1] == ["1"]) ? "T" : "F")                        # no string/number coercion
+    $r = $r . (([] == []) ? "T" : "F")
+    $r = $r . (([1, 2] != [1, 2]) ? "T" : "F")
+    return $r
+}
+chk("== on lists and maps compares content", eq_all(), "TFFTTFFFTFTF")
+function eq_struct() {
+    $a = Pt{x: 1}
+    $b = Pt{x: 1}
+    $c = $a
+    $c.x = 5
+    $r = (($a == $b) ? "T" : "F") . (($a == $c) ? "T" : "F") . ((Pt{x: 1} == Other{x: 1}) ? "T" : "F")
+    $c.x = 1
+    return $r . (($a == $c) ? "T" : "F") . (([Pt{x: 1}] == [Pt{x: 1}]) ? "T" : "F")
+}
+chk("== on structs: same name and equal fields", eq_struct(), "TFFTT")
+function eq_copy() { $a = [1, [2]]; $b = $a; $b[1][0] = 9; $x = ($a == $b); $b[1][0] = 2; return (($x) ? "T" : "F") . (($a == $b) ? "T" : "F") }
+chk("a copy is equal until it is written, and again when written back", eq_copy(), "FT")
 print("=== value semantics guard done ===")
