@@ -68,6 +68,9 @@ struct FunctionExpression final : Expression {
     std::vector<std::string> captures;   // use ($conn, $db) listesi
     bool is_variadic = false;            // son param ...$args ise true
     std::unique_ptr<BlockStatement> body;
+    // LOOK 2: closure'ın dışarıdan istediği adlar (ayrıştırıcı doldurur — look/capture_check.h).
+    // Yorumlayıcı closure kurulurken bunlardan saran fonksiyonda bulunanların DEĞERİNİ alır.
+    std::vector<std::string> free_names;
 };
 
 // ── Expressions ───────────────────────────────────────────────────────────────
@@ -293,6 +296,9 @@ struct FunctionDeclaration final : Statement {
     std::vector<std::unique_ptr<Expression>> defaults;  // paralel; nullptr = varsayılan yok
     bool is_variadic = false;            // son param ...$args ise true
     std::unique_ptr<BlockStatement> body;
+    // LOOK 2: yalnız İÇ (başka bir fonksiyonun içinde bildirilen) fonksiyonda dolu — o da bir
+    // closure'dır ve saran fonksiyonun yerellerinin DEĞERİNİ alır (look/capture_check.h).
+    std::vector<std::string> free_names;
     FunctionDeclaration(std::string name, std::vector<std::string> params, bool variadic, std::unique_ptr<BlockStatement> body)
         : name(std::move(name)), parameters(std::move(params)), is_variadic(variadic), body(std::move(body)) {}
 };

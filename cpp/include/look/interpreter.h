@@ -325,6 +325,7 @@ public:
     }
 
     void mark_fn_boundary() { fn_boundary_ = true; }
+    bool is_fn_boundary() const { return fn_boundary_; }
 
     // Included file'ların function/const tanımlarını caller scope'a aktarmak için
     const std::map<std::string, Value>& entries() const { return values_; }
@@ -343,6 +344,11 @@ public:
     // LOOK 2: değişkenin YERİ — yazınca-kopyala yol atamasının kökü ($a[i] = v yerinde yazar).
     // Okuma gibi üst kapsamlara düşer (fonksiyon içinden global diziye indeksli yazma, eskiden
     // de olduğu gibi, global değişkeni değiştirir). Yoksa nullptr.
+    // Yalnız BU ortamdaki yer (üst kapsamlara düşmez) — closure değer yakalaması için.
+    Value* own_slot(const std::string& name) {
+        auto it = values_.find(name);
+        return it != values_.end() ? &it->second : nullptr;
+    }
     Value* find_slot(const std::string& name) {
         auto it = values_.find(name);
         if (it != values_.end()) return &it->second;

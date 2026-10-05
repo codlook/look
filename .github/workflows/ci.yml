@@ -130,9 +130,10 @@ jobs:
           cd cpp
           bash tests/struct_declare_once_test.sh ./build/lk
 
-      # LOOK 2 transition: `lk --check` lists every place the planned closure rule (value
-      # capture, read-only inside the closure) would break. Warnings only for now.
-      - name: Capture check (lk --check warnings)
+      # LOOK 2 closure rule: a closure captures the value and cannot change it. A write to a
+      # captured variable is a parse error on both engines; a variable that changes after it
+      # was captured is a warning from `lk --check`.
+      - name: Closure capture rule (refused at load + lk --check warnings)
         run: |
           cd cpp
           bash tests/capture_check_test.sh ./build/lk

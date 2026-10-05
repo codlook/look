@@ -117,12 +117,52 @@ A check that reports functions writing to a parameter without returning it is pl
 - they change only that variable, not other variables that held the same array;
 - `push` returns the new length. In LOOK 1 it returned the array.
 
-### Closures: indexed writes reach the captured variable — silent, tree-walk engine only
+### A closure captures the value — silent; writing to it is an error at load
 
-Inside `function() use ($list) { ... }`, `$list[0] = 1` and `push($list, 1)` change the
-captured variable, and the next call of the closure sees the change. The default engine
-already behaved this way in LOOK 1; the tree-walk engine (`LOOK_BYTECODE=0`,
-`LOOK_CLI_VM=0`) now follows the same rule.
+A closure takes the value of what it captures at the moment it is created, and cannot
+change it. This holds for the names in `use (...)`, for the names an anonymous or arrow
+function uses from the function around it, and for a named function declared inside
+another function.
+
+```
+function report() {
+    $n = 1
+    $f = fn() => $n
+    $n = 2
+    return $f()        # LOOK 2: 1.  LOOK 1: 2.
+}
+```
+
+Two things follow.
+
+**A later change outside is not seen (silent).** In LOOK 1 the closure saw the variable as
+it was when called. `lk --check file.lk` lists every such place as `WARN ... [capture-stale]`
+with the line of the later change. A closure created in a loop keeps the value of its own
+iteration.
+
+**A closure cannot change what it captured (error at load).** Assigning to it, assigning to
+an element or a field, `+=` and the like, `++`, `push()` and `pop()` on a captured variable
+are parse errors; the program does not start. Return the new value and assign it outside:
+
+```
+# LOOK 1
+$add = function($x) use ($list) { push($list, $x) }
+$add(1)
+
+# LOOK 2
+$add = fn($list, $x) => array::push($list, $x)
+$list = $add($list, 1)
+```
+
+A variable a closure assigns before it reads it is the closure's own local, as before, even
+when the function around it has a variable of the same name.
+
+Top-level variables are not captured unless they are named in `use (...)`: a function or a
+closure that reads `$config` without `use` reads the global as it is when called.
+
+A closure cannot call itself through the variable it is being assigned to
+(`$fib = function($n) use ($fib) {...}`): at that moment `$fib` has no value yet. Write a
+named function when you need recursion.
 
 A closure handed to another thread (`parallel`, timers, WebSocket and SSE handlers) still
 gets its own copy of everything it captured.
@@ -139,14 +179,6 @@ In LOOK 1 the result was always false for arrays and maps.
 
 Elements compare by the usual rule: `[1] == [1.0]` is true, `[1] == ["1"]` is false.
 Functions, channels and connections still compare by identity.
-
-### Not changed yet
-
-- Plain reads and assignments of a captured variable are not settled. Today the two
-  engines differ: after `$c = 1; $f = function() use ($c) { return $c }; $c = 2`, `$f()`
-  gives 1 on the default engine at the top level of a script and 2 on the tree-walk
-  engine, and `$c = ...` inside the closure is rejected by the default engine. LOOK 2
-  will have one rule; until then do not rely on either result.
 
 ## Web
 

@@ -81,24 +81,35 @@ assignment must work on the variable's slot, not on a copy of the value.
 
 **Function parameters.** By value. The callee's writes are never visible to the caller.
 
-**Closure capture (`use ($x)` and automatic capture).** A closure captures the *variable*,
-as today for scalars: the cell model stays. The value inside the cell follows the rule above,
-so two closures sharing a cell see each other's writes to that variable (that is one
-variable), but copying the array out of it gives an independent value.
+**Closure capture (`use ($x)` and automatic capture).** A closure captures the *value*, at
+the moment it is created, and cannot change it. (An earlier version of this document chose
+"captures the variable"; that was reversed after measuring what it costs — see below.)
 
-This has a consequence the first draft of this document got wrong. The rule isolates
-*values*; it does not isolate *variables*. A captured cell is a variable, and a route
-closure is created once, at setup, and used by every request:
+"Captures the variable" keeps a second rule alive next to value semantics: values are
+copies, but a captured variable is shared, between the closure and its creator and, for a
+route closure created once at setup, between every request and every worker:
 
 ```lk
 $G = ["empty"]
 route("GET", "/x", function() use ($G) { $G[0] = request::get("u") })
 ```
 
-The array in that cell has exactly one owner — the cell — so copy on write says "write in
-place". But the cell is every request's cell: request A's write is what request B reads,
-and two workers running the route at once both see a count of 1 and both write in place.
-Copy on write does nothing for this case. See "What happens to the isolation code" below.
+Under variable capture the array in that cell has one owner, so copy on write says "write
+in place", and request A's write is what request B reads. Copy on write does nothing for
+that case; a separate per-request copy of every captured cell was needed to close it.
+
+With value capture and no writes, the case cannot be written: the program above is a parse
+error. What a closure holds is immutable for its whole life, so there is nothing to isolate
+and nothing to race on. The rule is enforced in one place for both engines, from the
+parser's tree, before anything runs (`include/look/capture_check.h`).
+
+The cost was measured before the change, with the parser rather than a text search: in
+LookPress, the example applications, the packages and the modules there is one closure
+that writes to a captured variable (the stream buffer in the `ai` module).
+
+What value capture does not remove: top-level variables. A function reads and writes a
+global without `use`, so each request still needs its own globals. See "What happens to the
+isolation code" below.
 
 **Structs.** Value types, like arrays. This is the one decision with a real cost in
 familiarity: PHP objects are handles, LOOK structs would not be. The reasons for it:
@@ -128,23 +139,24 @@ lazy deep copy of setup arrays in `LOAD_GLOBAL` (1.0.4) exist only because a sha
 could be written in place. With copy on write a request simply shares the setup value and
 copies it if it writes. These become plain shares.
 
-*Per-request variables stay.* Everything that shares a **variable** between requests must
-keep giving each request its own instance of that variable:
+*Per-request variables stay, for globals.* Everything that shares a **variable** between
+requests must keep giving each request its own instance of that variable:
 
-- the cells captured by closures created at setup (`VM::request_local`): each request gets
-  its own cell, holding the same shared value;
 - the setup environment that functions close over in the tree-walk interpreter
   (`Interpreter::request_env`, including the 1.0.5 fix for copies of copies);
 - the per-request global table in the VM (already a per-request map).
 
-They get cheaper — a new cell or environment pointing at the same value instead of a deep
-copy — but they do not disappear. The same holds for `parallel`, timers, WebSocket and SSE
-handlers: each gets its own variables, as today.
+They get cheaper — an environment pointing at the same value instead of a deep copy — but
+they do not disappear. The same holds for `parallel`, timers, WebSocket and SSE handlers:
+each gets its own variables, as today.
+
+*Captured variables need nothing.* With value capture a closure cannot change what it holds,
+so the per-request copy of captured cells (`VM::request_local`) has nothing left to protect.
+It is still in the code and is removed together with the deep copies (step 5).
 
 The tests (`request_isolation_test.sh`, `struct_default_isolation_test.sh`,
-`realtime_isolation_test.sh`) stay and must pass unchanged. They cover exactly the captured
-cell case above, so an implementation that dropped the per-request variables would fail
-them.
+`realtime_isolation_test.sh`) stay. `request_isolation_test.sh` drives the global case and
+checks that a handler writing to a captured variable does not load at all.
 
 ## What breaks
 

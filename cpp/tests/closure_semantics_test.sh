@@ -105,14 +105,24 @@ function outer($p){ function inner(){ return $p } $p=$p+7; return inner() }
 print(outer(10))
 LK
 
+# LOOK 2: closure DEGERI yakalar (olusturuldugu andaki) — include/look/capture_check.h.
+#   ust duzeyde use'suz ad = global erisim, CANLI kalir .............. A=10  E=333  H=222
+#   fonksiyon icinde, dongude dogan adda, catch/param/foreach'te deger . B=5 C=012 D=012
+#                                                                        I=e0e1e2 J=5 K=1,2
+#   closure icindeki duz atama kendi yerelini yaratir ................. F=5  G=5
+#   adli ic fonksiyon da bir closure'dir .............................. L=10
+# Artik yalniz parite degil beklenen DEGER de sinanir (iki motor ayni yanlisi paylasmasin).
+# Eski hal (58): VM, yorumlayicinin "degiskeni yakala" davranisina hucrelerle uyduruluyordu;
+# B ve J 10/105, L 17 veriyordu.
+declare -A WANT=([A]=10 [B]=5 [C]=012 [D]=012 [E]=333 [F]=5 [G]=5 [H]=222 [I]=e0e1e2 [J]=5 [K]=1,2 [L]=10)
 for c in A B C D E F G H I J K L; do
   tw=$(LOOK_CLI_VM=0 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
-  vm=$(timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
-  if [ "$tw" = "$vm" ]; then
-    echo "  PASS [$c] parite: $tw"
+  vm=$(LOOK_VM_STRICT=1 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
+  if [ "$tw" = "$vm" ] && [ "$tw" = "${WANT[$c]} " ]; then
+    echo "  PASS [$c] $tw"
   else
-    echo "  FAIL [$c] AYRISMA: tree-walk=[$tw] vm=[$vm]"; fail=1
+    echo "  FAIL [$c] tree-walk=[$tw] vm=[$vm] want=[${WANT[$c]}]"; fail=1
   fi
 done
-[ $fail = 0 ] && echo "PASS: closure semantics (58 — 12 vaka parite (C2+catch+param+foreach+named))" || echo "FAIL: closure semantics (58 — B/C fix bekliyor)"
+[ $fail = 0 ] && echo "PASS: closure semantics (12 cases, both engines, expected values)" || echo "FAIL: closure semantics"
 exit $fail

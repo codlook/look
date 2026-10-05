@@ -1119,7 +1119,20 @@ void Interpreter::execute_statement(const Statement& stmt) {
         // Builtin gölgeleme = hata (yoksa bare builtin dispatch'i kazanır, tanım ölü kod olur)
         if (is_reserved_builtin(s->name))
             throw std::runtime_error("'" + s->name + "' is a builtin — cannot be redefined");
-        auto fn = std::make_shared<LookFunction>(s->name, s->parameters, s->is_variadic, s->body.get(), current_, &s->defaults);
+        // LOOK 2: üst düzeyde bildirilen fonksiyonun ortamı global'lerdir. Başka bir fonksiyonun
+        // içinde bildirilen ise bir closure'dır: saran kapsamın yerellerinin o anki DEĞERİNİ alır
+        // (closure ifadesiyle aynı kural — look/capture_check.h) ve kendi adını görür (özyineleme).
+        auto fenv = current_;
+        // free_names yalnız iç fonksiyonda doludur (dosya düzeyindeki bildirimde boş → `use "dosya"`
+        // ile yüklenen kardeş fonksiyonlar ortak ortamlarını görmeye devam eder).
+        if (!s->free_names.empty() && current_->parent()) {
+            fenv = std::make_shared<Environment>(globals_);
+            for (const auto& name : s->free_names)
+                for (Environment* env = current_.get(); env && env->parent(); env = env->parent().get())
+                    if (Value* v = env->own_slot(name)) { fenv->define(name, *v); break; }
+        }
+        auto fn = std::make_shared<LookFunction>(s->name, s->parameters, s->is_variadic, s->body.get(), fenv, &s->defaults);
+        if (fenv != current_) fenv->define(s->name, Value(fn));
         current_->define(s->name, Value(fn));
         return;
     }
@@ -1304,7 +1317,24 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         // (`$n = 1; $f = function() use ($n) {...}; $n = 2; $f()` → VM 2, yorumlayıcı 1).
         // Diziler referans olduğu sürece bu fark dizilerde görünmüyordu; değer semantiğiyle
         // görünür oldu. Kural tek: varsayılan motorun (VM) davranışı.
-        auto closure_env = current_;
+        // GÜNCEL KURAL (look/capture_check.h): closure DEĞERİ yakalar — oluşturulduğu andaki.
+        // Yukarıdaki "değişkeni yakalar" notu bir ara durumdu; iki motor şimdi şuna uyar:
+        //   * `use (…)` listesindeki her ad: o anki değeri (tanımsızsa hata);
+        //   * closure'ın kullandığı diğer adlar (free_names): yalnız saran FONKSİYON kapsamında
+        //     bulunanlar (kökteki ortam = global'ler yakalanmaz, canlı okunur).
+        // Yakalanana içeride yazmak yüklemede hatadır (ayrıştırıcı), o yüzden bu ortam salt okunur.
+        auto closure_env = std::make_shared<Environment>(globals_);
+        auto local_slot = [&](const std::string& name) -> Value* {
+            for (Environment* env = current_.get(); env && env->parent(); env = env->parent().get())
+                if (Value* v = env->own_slot(name)) return v;
+            return nullptr;
+        };
+        for (const auto& name : e->captures)
+            closure_env->define(name, current_->get(name));   // tanımsız → "Undefined variable"
+        // Kök ortam dışındaki her kapsam sayılır: fonksiyon yerelleri ve üst düzeydeki blok/döngü
+        // kapsamları (üst düzey bir döngüde kurulan closure o turun değerini alır).
+        for (const auto& name : e->free_names)
+            if (Value* v = local_slot(name)) closure_env->define(name, *v);
         auto fn = std::make_shared<LookFunction>("__anonymous__", e->parameters, e->is_variadic, e->body.get(), closure_env, &e->defaults);
         return Value(fn);
     }

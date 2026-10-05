@@ -1,4 +1,5 @@
 #include "look/parser.h"
+#include "look/capture_check.h"
 #include "look/interpreter.h"
 #include "look/logger.h"
 #include <stdexcept>
@@ -15,6 +16,13 @@ std::unique_ptr<Program> Parser::parse() {
         while (match(TokenType::SEMICOLON)) {}  // ASI'den gelen boş ; atla
         if (is_at_end()) break;
         program->statements.push_back(statement());
+    }
+    // LOOK 2 closure kuralı (look/capture_check.h): yakalanan değişkene yazma YÜKLEMEDE hatadır
+    // — hiçbir şey çalışmadan, iki motor için tek yerde. "Bayat değer" durumları uyarı olarak
+    // saklanır; çağıran (CLI, web başlangıcı, --check) gösterir.
+    for (auto& w : check_captures(*program)) {
+        if (w.kind == "capture-write") throw LookParseError(w.message, w.line, w.column);
+        warnings_.push_back(std::move(w));
     }
     return program;
 }
@@ -384,6 +392,8 @@ std::unique_ptr<Statement> Parser::function_declaration() {
     scope_depth_--;
     auto fn = std::make_unique<FunctionDeclaration>(name_tok.lexeme, std::move(params), is_variadic, std::move(body));
     fn->defaults = std::move(defaults);
+    // LOOK 2: başka bir fonksiyonun içinde bildirilen adlı fonksiyon da bir closure'dır — aynı kural.
+    if (scope_depth_ > 0) fn->free_names = capture_free_names(fn->parameters, fn->body.get());
     return fn;
 }
 
@@ -816,6 +826,7 @@ std::unique_ptr<Expression> Parser::primary() {
         fn->captures    = std::move(captures);
         fn->is_variadic = is_variadic;
         fn->body = std::move(body);
+        fn->free_names = capture_free_names(*fn);   // iç closure'larınki zaten dolu (içten dışa)
         return fn;
     }
 

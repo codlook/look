@@ -41,8 +41,8 @@ function fill($xs) { $i = 0; while ($i < 3) { $xs[$i] = $i * 2; $i = $i + 1 } re
 function no_return($xs) { $xs[0] = "changed"; return 1 }
 function caller() { $a = ["orig"]; no_return($a); $b = fill([]); return $a[0] . json::encode($b) }
 chk("a function cannot change its caller's array; it returns the new one", caller(), "orig[0,2,4]")
-function capture() { $box = [1]; $inc = function() use ($box) { $box[0] = $box[0] + 1; return $box[0] }; $x = $inc(); $y = $inc(); return "" . $x . $y . $box[0] }
-chk("a closure writes the variable it captured", capture(), "233")
+function capture() { $box = [1]; $get = function() use ($box) { return $box[0] }; $box[0] = 9; $copy = fn() => $box; $c = $copy(); $c[0] = 5; return "" . $get() . $box[0] . $c[0] . $copy()[0] }
+chk("a closure captures the value: later writes outside do not reach it, and its result is a copy", capture(), "1959")
 function returned() { $a = [1, 2]; $b = ret($a); $b[0] = 7; return json::encode($a) . json::encode($b) }
 function ret($x) { return $x }
 chk("a returned array is the receiver's own value", returned(), "[1,2][7,2]")

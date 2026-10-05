@@ -185,7 +185,12 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     //    davranış korunur; capture'lar zaten değiştirilemez).
     if (!for_write && parent_) {
         VarLoc pl = parent_->resolve_var(name, /*for_write=*/false);
-        if (pl.kind != VarKind::GLOBAL) {
+        // LOOK 2: üst düzey bir DÖNGÜDE doğan ad VM'de global'dir ama closure onun o turdaki
+        // DEĞERİNİ almalı (yorumlayıcıda döngü kapsamının yereli). Değer capture-yükleme
+        // sitesinde LOAD_GLOBAL ile alınır.
+        const bool top_loop_name = pl.kind == VarKind::GLOBAL && parent_->parent_ == nullptr
+                                   && parent_->loop_globals_.count(name) > 0;
+        if (pl.kind != VarKind::GLOBAL || top_loop_name) {
             if (captures_.size() >= 255)
                 throw LookCompileError("closure captures more than 255 variables");
             uint8_t idx = u8(captures_.size(), "capture count");
@@ -255,17 +260,10 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
     // closure'lar tarafından yakalandığını topla. ÜRETİLEN KOD ATILIR — yalnız
     // boxed_names_ okunur. no_discovery_ sonsuz özyinelemeyi önler.
     // ŞU AN (2a) boxed_slots_ codegen'de KULLANILMAZ → davranış-değişmez.
-    if (!no_discovery_) {
-        FunctionCompiler disc(proto_.name, proto_.params, proto_.variadic, parent_);
-        disc.captures_     = captures_;   // use() capture'larını miras al
-        disc.no_discovery_ = true;
-        disc.compile(body, defaults);     // derle (atılır) → disc.escaping_names_ dolar
-        boxed_names_ = std::move(disc.escaping_names_);
-        if (std::getenv("LOOK_DEBUG_BOXED") && !boxed_names_.empty()) {
-            std::string s; for (auto& n : boxed_names_) s += n + " ";
-            fprintf(stderr, "[BOXED] %s: %s\n", proto_.name.c_str(), s.c_str());
-        }
-    }
+    // LOOK 2 (look/capture_check.h): closure DEĞERİ yakalar → hiçbir yerel "kutulanmaz". Eskiden
+    // burada bir keşif derlemesi koşup closure'ların yakaladığı yerelleri hücreye (cell) çeviriyorduk
+    // ki closure değişkenin sonraki halini görsün; o model kalktı. boxed_names_ hep boş kalır,
+    // hücreyle ilgili dallar artık ölü koddur (ayrı temizlik).
 
     // ── Prologue: varsayılan parametreler ────────────────────────────────────
     // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
@@ -608,7 +606,9 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
 
 void FunctionCompiler::compile_for(const ForStatement& s) {
     push_scope();
-    if (s.init)      compile_stmt(*s.init);
+    { const bool was = for_init_; for_init_ = true;      // LOOK 2: for-init adı döngüye aittir
+      if (s.init) compile_stmt(*s.init);
+      for_init_ = was; }
 
     int loop_start = current_ip();
     int exit_jump  = -1;
@@ -1211,7 +1211,8 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // 2c: döngü-DIŞI (loop_depth_==0) tanımlı top-level var → "outer global".
         // Döngü içindeki reassignment'ı cell YAPMAMALI (C2 paritesi — tree-walk
         // tek binding tutar). outer_globals_ bu ayrımı taşır.
-        if (loop_depth_ == 0) outer_globals_.insert(e.name);
+        if (loop_depth_ == 0 && !for_init_) outer_globals_.insert(e.name);
+        else if (!outer_globals_.count(e.name)) loop_globals_.insert(e.name);   // LOOK 2: üst düzey döngüde doğan ad
         uint16_t ni = add_const(Value(e.name));
         // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
         // "$t = $i" olarak derleniyordu (sol operand atılıyor). Diğer üç dal
@@ -1987,17 +1988,10 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
 {
     // 2c: top-level de escape-analiz keşif-geçişinden geçmeli (compile() gibi) —
     // yoksa top-level döngü-body-captured var'lar cell olmaz (C ayrışması kapanmaz).
-    if (!no_discovery_) {
-        FunctionCompiler disc(proto_.name, proto_.params, proto_.variadic, parent_);
-        disc.captures_     = captures_;
-        disc.no_discovery_ = true;
-        disc.compile_stmts(stmts);
-        boxed_names_ = std::move(disc.escaping_names_);
-        if (std::getenv("LOOK_DEBUG_BOXED") && !boxed_names_.empty()) {
-            std::string s; for (auto& n : boxed_names_) s += n + " ";
-            fprintf(stderr, "[BOXED] %s: %s\n", proto_.name.c_str(), s.c_str());
-        }
-    }
+    // LOOK 2 (look/capture_check.h): closure DEĞERİ yakalar → hiçbir yerel "kutulanmaz". Eskiden
+    // burada bir keşif derlemesi koşup closure'ların yakaladığı yerelleri hücreye (cell) çeviriyorduk
+    // ki closure değişkenin sonraki halini görsün; o model kalktı. boxed_names_ hep boş kalır,
+    // hücreyle ilgili dallar artık ölü koddur (ayrı temizlik).
     push_scope();
     for (auto& s : stmts) compile_stmt(*s);
     pop_scope();

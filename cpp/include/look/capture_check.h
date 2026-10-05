@@ -1,20 +1,18 @@
 #pragma once
-// LOOK 2 — closure yakalama denetimi (şimdilik yalnız UYARI; `lk --check` basar).
+// LOOK 2 — closure yakalama kuralı: bir closure yakaladığı şeyin DEĞERİNİ alır (oluşturulduğu
+// andaki) ve onu içeride DEĞİŞTİREMEZ. İki motor da bu başlıktaki tek tanıma uyar.
 //
-// Hedef kural: bir closure yakaladığı şeyin DEĞERİNİ alır ve onu içeride DEĞİŞTİREMEZ.
-// Bu geçiş kuralı devreye girmeden önce, kuralın kıracağı her yeri ayrıştırıcının kendi
-// ağacından (metin aramasından değil) satır numarasıyla çıkarır. Üç sınıf:
-//   capture-write    closure, yakaladığı değişkene yazıyor ($x = …, $x[i] = …, $x.f = …,
-//                    $x += …, $x++, push($x, …), pop($x))  → kural gelince yüklemede HATA
+// "Yakalanan" = `use (…)` listesindeki adlar + closure'ın kullandığı, kendi yereli olmayan,
+// saran FONKSİYONUN yereli olan adlar (otomatik yakalama; iç içe closure'lar için geçişli).
+// Üst düzey değişkenler `use` ile verilmedikçe yakalama değil GLOBAL erişimdir: canlı kalır.
+//
+// Ayrıştırıcının ağacından iki sınıf çıkarılır:
+//   capture-write    closure yakaladığı değişkene yazıyor ($x = …, $x[i] = …, $x.f = …,
+//                    $x += …, $x++, push($x, …), pop($x))            → YÜKLEMEDE HATA
 //   capture-stale    değişken closure oluşturulduktan SONRA dışarıda değişiyor (ya da closure
-//                    bir döngünün içinde ve değişken o döngüde değişiyor) → closure eski değeri
-//                    görür; SESSİZ davranış değişikliği
-//   capture-self     closure, atandığı değişkenin kendisini yakalıyor (özyineleme kalıbı)
-//                    → değer yakalamada o an null'dur
-//
-// "Yakalanan" = `use (…)` listesindeki adlar + closure'ın okuduğu, kendisinin yerel yapmadığı,
-// saran FONKSİYONUN yereli olan adlar (otomatik yakalama). Üst düzey değişkenler `use` ile
-// verilmedikçe yakalama değil global erişimdir ve bu denetimin konusu değildir.
+//                    bir döngüde ve değişken o döngüde değişiyor): closure yakaladığı değeri
+//                    tutar. LOOK 1'de sonraki değeri görürdü → UYARI (sessiz fark)
+// Özyineleme: closure kendini yakalayamaz (o an henüz tanımsız) — adlı fonksiyon yazılır.
 #include "look/ast.h"
 #include <map>
 #include <set>
@@ -160,30 +158,41 @@ struct Scan {
 
 inline std::string bare(const std::string& n) { return (!n.empty() && n[0] == '$') ? n.substr(1) : n; }
 
-// Bir fonksiyon kapsamını (adlı fonksiyon, closure ya da üst düzey) denetler.
-//   enclosing_locals : saran FONKSİYON kapsamlarının yerelleri (üst düzeyde boş)
+// Bir closure gövdesinin adları: `own` = kendi yerelleri (parametreler + ilk kullanımı düz atama
+// olan adlar), `uses` = dışarıdan gelmesi gereken adlar (okunan/yazılan, kendi yereli olmayan;
+// iç closure'ların dışarıdan istedikleri dahil — geçişli).
+struct Names { std::set<std::string> own, uses; };
+inline Names names_of(const FunctionExpression& f, const Scan& sc) {
+    Names n;
+    n.own.insert(f.parameters.begin(), f.parameters.end());
+    const std::set<std::string> explicit_caps(f.captures.begin(), f.captures.end());
+    for (auto& a : sc.plain_assigned)
+        if (!explicit_caps.count(a) && sc.first.at(a) == 'w') n.own.insert(a);
+    auto use = [&](const std::string& x) { if (!n.own.count(x)) n.uses.insert(x); };
+    for (auto& r : sc.reads) use(r);
+    for (auto& w : sc.writes) use(w.name);
+    for (auto* c : sc.closures) { for (auto& x : c->free_names) use(x); for (auto& x : c->captures) use(x); }
+    for (auto& x : explicit_caps) n.uses.insert(x);
+    return n;
+}
+
 inline void check_scope(const Scan& sc, const std::set<std::string>& scope_locals, bool is_top_level,
                         std::vector<CaptureWarning>& out);
 
 inline void check_closure(const FunctionExpression* f, const std::set<std::string>& enclosing_locals,
                           std::vector<CaptureWarning>& out) {
     Scan sc; sc.block(f->body.get());
-    std::set<std::string> own(f->parameters.begin(), f->parameters.end());
-    std::set<std::string> explicit_caps(f->captures.begin(), f->captures.end());
-    for (auto& n : sc.plain_assigned)
-        if (!explicit_caps.count(n) && !(sc.first.at(n) == 'r' && enclosing_locals.count(n))) own.insert(n);
-    // Yakalananlar: açık liste + okunan/yazılan, kendi yereli olmayan, saran fonksiyonun yereli.
-    std::set<std::string> caps(explicit_caps);
-    auto consider = [&](const std::string& n) { if (!own.count(n) && enclosing_locals.count(n)) caps.insert(n); };
-    for (auto& n : sc.reads) consider(n);
-    for (auto& w : sc.writes) consider(w.name);
+    Names n = names_of(*f, sc);
+    std::set<std::string> caps(f->captures.begin(), f->captures.end());
+    for (auto& u : n.uses) if (enclosing_locals.count(u)) caps.insert(u);
     for (auto& w : sc.writes)
         if (caps.count(w.name))
             out.push_back({w.line, w.column, "capture-write",
-                "closure writes to captured variable $" + bare(w.name) + " (" + w.how
-                + "); a closure will capture the value and may not change it — return the new value instead"});
-    // İç closure'lar: bu closure'ın yerelleri + yakaladıkları onların "saran yereli"dir.
-    std::set<std::string> locals(own); locals.insert(caps.begin(), caps.end());
+                "closure changes captured variable $" + bare(w.name) + " (" + w.how
+                + "); a closure captures the value and cannot change it — return the new value instead"});
+    // İç closure'lar için "saran yereller": bu closure'ın yerelleri + yakaladıkları.
+    std::set<std::string> locals(n.own); locals.insert(caps.begin(), caps.end());
+    for (auto& a : sc.plain_assigned) locals.insert(a);
     check_scope(sc, locals, /*is_top_level=*/false, out);
 }
 
@@ -191,39 +200,28 @@ inline void check_scope(const Scan& sc, const std::set<std::string>& scope_local
                         std::vector<CaptureWarning>& out) {
     for (auto* f : sc.closures) {
         check_closure(f, is_top_level ? std::set<std::string>{} : scope_locals, out);
-        // Bu closure'ın bu kapsamdan yakaladığı adlar (stale/self için): açık liste her yerde;
-        // otomatik yakalama yalnız fonksiyon içinde.
-        Scan in; in.block(f->body.get());
-        std::set<std::string> own(f->parameters.begin(), f->parameters.end());
+        // Bu closure'ın BU kapsamdan yakaladığı adlar: açık liste her yerde; otomatik yakalama
+        // yalnız fonksiyon içinde (üst düzeyde `use`suz ad = global erişim, canlı kalır).
         std::set<std::string> caps(f->captures.begin(), f->captures.end());
-        for (auto& n : in.plain_assigned)
-            if (!caps.count(n) && !(in.first.at(n) == 'r' && !is_top_level && scope_locals.count(n))) own.insert(n);
-        if (!is_top_level) for (auto& n : in.reads) if (!own.count(n) && scope_locals.count(n)) caps.insert(n);
+        if (!is_top_level) for (auto& u : f->free_names) if (scope_locals.count(u)) caps.insert(u);
         if (caps.empty()) continue;
         const int fline = sc.line_of.count(f) ? sc.line_of.at(f) : f->loc.line;
-        for (auto& p : sc.closure_assigned_to)
-            if (p.first == f && caps.count(p.second))
-                out.push_back({fline, f->loc.column, "capture-self",
-                    "closure captures $" + bare(p.second) + ", the variable it is being assigned to; "
-                    "with value capture it is still null at that point (recursive closures need another form)"});
         std::set<std::string> reported;
         for (auto& w : sc.writes) {
-            if (!caps.count(w.name) || reported.count(w.name)) continue;
-            const bool after = w.line > fline;
-            if (!after) continue;
+            if (!caps.count(w.name) || reported.count(w.name) || w.line <= fline) continue;
             reported.insert(w.name);
             out.push_back({w.line, w.column, "capture-stale",
                 "$" + bare(w.name) + " changes here after the closure at line " + std::to_string(fline)
-                + " captured it; with value capture the closure keeps the earlier value"});
+                + " captured it; the closure keeps the value it captured"});
         }
         for (auto& lw : sc.closure_loop_writes) {
             if (lw.first != f) continue;
-            for (auto& n : lw.second) {
-                if (!caps.count(n) || reported.count(n)) continue;
-                reported.insert(n);
+            for (auto& x : lw.second) {
+                if (!caps.count(x) || reported.count(x)) continue;
+                reported.insert(x);
                 out.push_back({fline, f->loc.column, "capture-stale",
-                    "closure captures $" + bare(n) + ", which changes in the surrounding loop; with value "
-                    "capture each closure keeps the value of its own iteration"});
+                    "closure captures $" + bare(x) + ", which changes in the surrounding loop; each closure "
+                    "keeps the value of the iteration that created it"});
             }
         }
     }
@@ -231,24 +229,54 @@ inline void check_scope(const Scan& sc, const std::set<std::string>& scope_local
 
 inline void check_function_decls(const std::vector<std::unique_ptr<Statement>>& stmts, std::vector<CaptureWarning>& out);
 
-inline void walk_decls(const Statement* s, std::vector<CaptureWarning>& out) {
+inline void walk_decls(const Statement* s, std::vector<CaptureWarning>& out, const std::set<std::string>* enclosing = nullptr) {
     if (!s) return;
     if (auto* fd = dynamic_cast<const FunctionDeclaration*>(s)) {
         Scan sc; sc.block(fd->body.get());
         std::set<std::string> locals(fd->parameters.begin(), fd->parameters.end());
+        // İÇ adlı fonksiyon (enclosing dolu) bir closure'dır: saran fonksiyonun yereline yazamaz.
+        if (enclosing) {
+            FunctionExpression shape; shape.parameters = fd->parameters;
+            Names n = names_of(shape, sc);
+            for (auto& w : sc.writes)
+                if (!n.own.count(w.name) && enclosing->count(w.name))
+                    out.push_back({w.line, w.column, "capture-write",
+                        "function " + fd->name + "() changes captured variable $" + bare(w.name) + " (" + w.how
+                        + "); a function declared inside another captures the value and cannot change it"});
+            for (auto& u : n.uses) if (enclosing->count(u)) locals.insert(u);
+        }
         locals.insert(sc.plain_assigned.begin(), sc.plain_assigned.end());
         check_scope(sc, locals, /*is_top_level=*/false, out);
-        if (fd->body) check_function_decls(fd->body->statements, out);
+        if (fd->body) for (auto& st : fd->body->statements) walk_decls(st.get(), out, &locals);
         return;
     }
-    if (auto* b = dynamic_cast<const BlockStatement*>(s)) { check_function_decls(b->statements, out); return; }
-    if (auto* x = dynamic_cast<const IfStatement*>(s)) { walk_decls(x->then_branch.get(), out); walk_decls(x->else_branch.get(), out); return; }
+    if (auto* b = dynamic_cast<const BlockStatement*>(s)) { for (auto& st : b->statements) walk_decls(st.get(), out, enclosing); return; }
+    if (auto* x = dynamic_cast<const IfStatement*>(s)) { walk_decls(x->then_branch.get(), out, enclosing); walk_decls(x->else_branch.get(), out, enclosing); return; }
 }
 inline void check_function_decls(const std::vector<std::unique_ptr<Statement>>& stmts, std::vector<CaptureWarning>& out) {
     for (auto& s : stmts) walk_decls(s.get(), out);
 }
 
 } // namespace capture_check_detail
+
+// Closure'ın dışarıdan istediği adlar (geçişli) — ayrıştırıcı düğüme yazar; yorumlayıcı closure
+// kurulurken bu adlardan saran fonksiyon kapsamında bulunanların DEĞERİNİ alır. İç closure'ların
+// free_names'i önce dolmuş olmalıdır (ayrıştırıcı içten dışa kurar).
+// Adlı iç fonksiyon için aynı hesap (parametreler + gövde).
+inline std::vector<std::string> capture_free_names(const std::vector<std::string>& params, const BlockStatement* body) {
+    using namespace capture_check_detail;
+    FunctionExpression shape; shape.parameters = params;
+    Scan sc; sc.block(body);
+    Names n = names_of(shape, sc);
+    return std::vector<std::string>(n.uses.begin(), n.uses.end());
+}
+
+inline std::vector<std::string> capture_free_names(const FunctionExpression& f) {
+    using namespace capture_check_detail;
+    Scan sc; sc.block(f.body.get());
+    Names n = names_of(f, sc);
+    return std::vector<std::string>(n.uses.begin(), n.uses.end());
+}
 
 inline std::vector<CaptureWarning> check_captures(const Program& program) {
     using namespace capture_check_detail;
