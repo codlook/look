@@ -392,7 +392,15 @@ public:
 
         auto it = memo.find(this);
         if (it != memo.end()) return it->second;   // bu geçişte zaten klonlandı → paylaş
-        auto e = std::make_shared<Environment>(parent_);
+        // LOOK 2: bir closure DEĞİŞKENİ yakalar, yani ortamı tanımlandığı kapsamın kendisidir ve
+        // üst kapsam zinciri çağıranın CANLI değişkenleridir. İş parçacığı sınırında yalnız bu
+        // ortamı klonlayıp üstünü paylaşmak (eski hal — o zaman üst yalnızca globals'tı) başka
+        // thread'e ana thread'in değişkenlerini verir: TSan yarışı. Zincirin tamamı klonlanır;
+        // kökteki ortam (parent'ı olmayan = globals) paylaşılır, o ayrıca kopyanın kendi
+        // globals'ına bağlanır (Interpreter::request_env).
+        std::shared_ptr<Environment> np = parent_;
+        if (parent_ && parent_->parent_) np = parent_->clone_for_thread(visited);
+        auto e = std::make_shared<Environment>(np);
         memo.emplace(this, e);   // özyinelemeden ÖNCE kaydet (döngüsel closure güvenli)
         for (const auto& [k, v] : values_)
             e->values_[k] = v.clone_for_thread_tracked(visited);
