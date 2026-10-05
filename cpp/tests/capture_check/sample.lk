@@ -1,0 +1,30 @@
+$g = 1
+$top = function() use ($g) { return $g }
+$g = 2
+function outer() {
+    $n = 0
+    $list = []
+    $inc = function() { $n = $n + 1
+        return $n }
+    $add = function($x) { push($list, $x) }
+    $set = function() use ($list) { $list[0] = 9 }
+    $read = fn() => $n * 2
+    $own = function() { $tmp = 1
+        $tmp = $tmp + 1
+        return $tmp }
+    $n = 5
+    return $read()
+}
+function loops() {
+    $fs = []
+    for ($i = 0; $i < 3; $i = $i + 1) { push($fs, function() { return $i }) }
+    return $fs
+}
+function rec() {
+    $fib = function($k) use ($fib) { return $k < 2 ? $k : $fib($k - 1) + $fib($k - 2) }
+    return $fib(5)
+}
+function clean($rows) {
+    $m = 3
+    return array::map($rows, fn($r) => $r * $m)
+}

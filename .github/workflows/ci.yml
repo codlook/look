@@ -130,6 +130,13 @@ jobs:
           cd cpp
           bash tests/struct_declare_once_test.sh ./build/lk
 
+      # LOOK 2 transition: `lk --check` lists every place the planned closure rule (value
+      # capture, read-only inside the closure) would break. Warnings only for now.
+      - name: Capture check (lk --check warnings)
+        run: |
+          cd cpp
+          bash tests/capture_check_test.sh ./build/lk
+
       # LOOK 2: one spelling for a struct field ("name type [= default]"); the two v1
       # spellings are parse errors that say what to write instead.
       - name: Struct field single form (both engines)

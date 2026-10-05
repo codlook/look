@@ -1,5 +1,6 @@
 #include "look/lexer.h"
 #include "look/parser.h"
+#include "look/capture_check.h"
 #include "look/format_src.h"   // lk fmt
 #include "look/interpreter.h"
 #include "look/array_count.h"
@@ -429,6 +430,11 @@ int main(int argc, char* argv[]) {
                           << " Undefined function: " << bad << "\n";
                 return 1;
             }
+            // LOOK 2 geçiş denetimi: closure yakalama kuralının kıracağı yerler (şimdilik uyarı;
+            // çıkış kodu değişmez, editör eklentisi yalnız "CHECK" satırına bakar).
+            for (const auto& w : look::check_captures(*program))
+                std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
+                          << " [" << w.kind << "] " << w.message << "\n";
             std::cout << "OK\n";
             return 0;
         }
