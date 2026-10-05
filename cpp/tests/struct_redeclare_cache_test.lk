@@ -1,0 +1,61 @@
+# The VM remembers, per instruction, the struct definition it last saw and the slot of the
+# field. That memory must never outlive the definition: when a struct is declared again with
+# its fields in another order and the old definition is freed, the new one can land at the
+# same address. With a raw pointer in the cache the same line then read or wrote the WRONG
+# field without any error. The cache now owns the definition it remembers.
+#
+# Pattern that forces the address reuse: declare layout 1, use; declare layout 2 twice
+# (the second lands where layout 1 lived); use through the same line again. Read and write
+# are kept in separate loops with nothing else allocated in between, because the
+# reproduction depends on the allocator handing the freed address back.
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+function rd($p) { return $p.a }
+function wr($p) { $p.a = 5
+    return $p.b }
+function decl1() { struct P { a int = 1
+    b int = 2 } }
+function decl2() { struct P { b int = 2
+    a int = 1 } }
+
+$bad = 0
+for ($i = 0; $i < 200; $i = $i + 1) {
+    decl1()
+    $x = P{}
+    if (rd($x) != 1) { $bad = $bad + 1 }
+    $x = null
+    decl2()
+    decl2()
+    $y = P{}
+    if (rd($y) != 1) { $bad = $bad + 1 }
+    $y = null
+}
+chk("read after redeclare: same line, right field", $bad, 0)
+
+$bad = 0
+for ($i = 0; $i < 200; $i = $i + 1) {
+    decl1()
+    $x = P{}
+    if (wr($x) != 2) { $bad = $bad + 1 }
+    $x = null
+    decl2()
+    decl2()
+    $y = P{}
+    if (wr($y) != 2) { $bad = $bad + 1 }
+    $y = null
+}
+chk("write after redeclare: same line, right field", $bad, 0)
+
+# Same line, two struct types in turn: the cache must miss, not reuse the slot.
+struct Q { z int = 9
+    a int = 7 }
+$bad = 0
+for ($i = 0; $i < 200; $i = $i + 1) {
+    decl1()
+    if (rd(P{}) != 1) { $bad = $bad + 1 }
+    if (rd(Q{}) != 7) { $bad = $bad + 1 }
+}
+chk("same line alternates between two struct types", $bad, 0)
+print("=== struct redeclare cache guard done ===")

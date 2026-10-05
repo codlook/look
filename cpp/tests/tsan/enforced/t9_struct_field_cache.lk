@@ -1,0 +1,39 @@
+# T9: ayni satir ($p.a / $p.a = ...) 8 thread'de ayni anda, IKI farkli struct turuyle.
+# Alan onbellegi VM'e aittir (her parallel thread kendi VM'ini kurar); paylasilan tek sey
+# tanimin kendisi (salt-okunur) ve bayt kodu. Onbellek paylasilsaydi burada yaris cikardi
+# ve bir turun tanimi digerinin slotuyla birlesirdi (yanlis alan -> "BAD").
+struct A { a int = 1
+  b int = 2 }
+struct B { b int = 2
+  x int = 3
+  a int = 1 }
+function rd($p) { return $p.a }
+function wr($p, $v) { $p.a = $v
+  return $p }
+$gate = channel(8)
+$done = channel(8)
+$sa = A{}
+$sb = B{}
+for ($i=0; $i<8; $i=$i+1) {
+  parallel(function() use ($gate, $done, $sa, $sb, $i) {
+    receive($gate)
+    $bad = 0
+    $p = null
+    $n = null
+    $q = null
+    for ($j=0; $j<3000; $j=$j+1) {
+      if (($i + $j) % 2 == 0) { $p = $sa } else { $p = $sb }
+      if (rd($p) != 1) { $bad = $bad + 1 }
+      $q = wr($p, $j)
+      if ($q.a != $j || $q.b != 2) { $bad = $bad + 1 }
+      if (($i + $j) % 2 == 0) { $n = A{} } else { $n = B{} }
+      if (rd($n) != 1) { $bad = $bad + 1 }
+    }
+    send($done, $bad)
+  })
+}
+for ($k=0; $k<8; $k=$k+1) { send($gate, 1) }
+$total = 0
+for ($k=0; $k<8; $k=$k+1) { $total = $total + receive($done) }
+if ($total != 0) { print("BAD " . $total); exit(1) }
+print("T9 bitti")

@@ -165,7 +165,12 @@ private:
     // tümden değişir). ni→isim eşlemesi proto'ya özgü olduğu için anahtar proto pointer'ı.
     std::unordered_map<const FunctionProto*, std::vector<Value*>> global_cache_;
     // LOOK 2: GET_FIELD/SET_FIELD talimat başına önbellek — en son görülen struct tanımı ve slotu.
-    struct FieldCache { const void* def = nullptr; int slot = 0; };
+    // Tanımı CANLI tutar (ham işaretçi değil): struct yeniden bildirilip eski tanım serbest
+    // kalınca yeni tanım aynı adrese düşebiliyor, önbellek de eski düzenin slotunu veriyordu →
+    // sessizce yanlış alan (tests/struct_redeclare_cache_test.lk). Sahiplik yalnız ıskada
+    // kopyalanır; sıcak yol hâlâ tek işaretçi karşılaştırması. Önbellek VM'e aittir (her istek
+    // ve her parallel iş parçacığı kendi VM'ini kurar) → iş parçacıkları arasında paylaşılmaz.
+    struct FieldCache { std::shared_ptr<std::vector<Value>> def; int slot = 0; };
     std::unordered_map<const FunctionProto*, std::vector<FieldCache>> field_cache_;
     WebContext*                              web_ctx_ = nullptr;
     std::ostream&                            output_;

@@ -767,10 +767,10 @@ call_dispatch:
                     auto& sv = *obj.vec_ptr();
                     FieldCache& fc = field_cache()[(size_t)(frame.ip - 1)];
                     const void* def = sv[1].vec_ptr();
-                    if (fc.def != def) {
+                    if (fc.def.get() != def) {
                         int i = look::struct_field_index(look::struct_def(sv), fname);
                         if (i < 0) vm_struct([&] { look::struct_no_field(look::struct_name(sv), fname); });
-                        fc.def = def; fc.slot = (int)look::STRUCT_SLOT0 + i;
+                        fc.def = sv[1].as_array(); fc.slot = (int)look::STRUCT_SLOT0 + i;
                     }
                     R(ins.a) = sv[(size_t)fc.slot];
                     break;
@@ -785,10 +785,10 @@ call_dispatch:
                     auto& sv = *obj.vec_ptr();
                     FieldCache& fc = field_cache()[(size_t)(frame.ip - 1)];
                     const void* def = sv[1].vec_ptr();
-                    if (fc.def != def) {
+                    if (fc.def.get() != def) {
                         int i = look::struct_field_index(look::struct_def(sv), fname);
                         if (i < 0) vm_struct([&] { look::struct_no_field(look::struct_name(sv), fname); });
-                        fc.def = def; fc.slot = (int)look::STRUCT_SLOT0 + i;
+                        fc.def = sv[1].as_array(); fc.slot = (int)look::STRUCT_SLOT0 + i;
                     }
                     vm_struct([&] { look::struct_set(sv, fc.slot - (int)look::STRUCT_SLOT0, R(ins.c)); });
                     break;
