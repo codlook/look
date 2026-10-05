@@ -651,6 +651,18 @@ Module make_array_module(Interpreter* interp) {
         return Value(result);
     };
 
+    // LOOK 2: struct bir dizi değildir. array:: fonksiyonları onu eskiden "dizi değil" sayıp
+    // sessizce boş sonuç veriyordu (array::keys($s) → []); artık hata. Yalnız İLK argümana
+    // bakılır: struct bir listenin ELEMANI olarak verilebilir (array::contains($list, $s)).
+    for (auto& entry : m.functions) {
+        entry.second = [fname = entry.first, inner = std::move(entry.second)](std::vector<Value> args) -> Value {
+            if (!args.empty() && args[0].type() == Value::STRUCT)
+                throw std::runtime_error("array::" + fname + "() does not take a struct ('"
+                    + (*args[0].as_struct())[0].str_ref() + "'): a struct is not an array, use its fields");
+            return inner(std::move(args));
+        };
+    }
+
     return m;
 }
 

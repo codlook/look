@@ -21,6 +21,10 @@ inline int look_count(const Value& v) {
         return (int)arr.size();
     }
     if (v.type() == Value::STRING) return (int)v.as_string().size();
+    // LOOK 2: struct bir dizi değildir — eskiden sessizce 0 dönüyordu.
+    if (v.type() == Value::STRUCT)
+        throw std::runtime_error("count() does not take a struct ('" + (*v.as_struct())[0].str_ref()
+                                 + "'): a struct is not an array, use its fields");
     return 0;
 }
 

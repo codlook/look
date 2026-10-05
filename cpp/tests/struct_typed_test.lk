@@ -132,6 +132,13 @@ chk("type check still applies on the cached path", err_of(fn() => set_x($p2, "s"
 chk("reading an undeclared field is an error", err_of(fn() => $p1.nope), "struct 'P1' has no field 'nope'")
 chk("a numeric index is refused", err_of(fn() => $p1[0]), "a struct is not an array: use a field name ('P1' has no numeric index)")
 chk("array:: functions refuse a struct", err_of(fn() => array::push($p1, 1)) != "NO-ERROR", true)
+# A struct is not an array: count() and every array:: function refuse it (they used to
+# answer 0 / an empty list without an error). A struct as an ELEMENT is fine.
+chk("count() refuses a struct", err_of(fn() => count($p1)), "count() does not take a struct ('P1'): a struct is not an array, use its fields")
+chk("array::keys refuses a struct", err_of(fn() => array::keys($p1)), "array::keys() does not take a struct ('P1'): a struct is not an array, use its fields")
+chk("array::values refuses a struct", err_of(fn() => array::values($p1)) != "NO-ERROR", true)
+chk("array::contains refuses a struct", err_of(fn() => array::contains($p1, 1)) != "NO-ERROR", true)
+chk("a struct may be an element", count([$p1, $p1]), 2)
 chk("field read through index syntax", $p1["name"], "one")
 $seen = ""
 foreach ($p2 as $k => $v) { $seen = $seen . $k . "=" . $v . ";" }

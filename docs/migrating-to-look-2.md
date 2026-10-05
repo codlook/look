@@ -55,16 +55,24 @@ fields.
 Reading or writing a field that the struct does not declare is an error. LOOK 1 returned
 null on read and silently added the field on write.
 
-### A struct is not an array — partly silent
+### A struct is declared once, at the top level — error at load
 
-In LOOK 1 a struct was a map internally, so `array::` functions and `$s["field"]` worked
-on it, and `array::set` could bypass the declaration. A struct is now its own kind of
-value, and `$s.field` is the only way to read and write a field.
+A struct declaration must stand at the top level of a file. Inside a function, a closure
+or a block it is a parse error.
 
-- `$s[0]` is an error at run time.
-- `$s["field"]` gives null, `count($s)` gives 0 and `array::` functions treat a struct as
-  "not an array" (`array::keys($s)` is empty). These do not raise an error today; code that
-  read a struct this way must be changed to `$s.field`.
+Declaring the same name a second time with different fields, types or defaults is an
+error: a parse error naming the first line when both are in one file, an error when the
+second file is loaded otherwise. Reading the identical declaration again is fine.
+
+### A struct is not an array — error at run time
+
+In LOOK 1 a struct was a map internally, so `count()` and `array::` functions worked on
+it, and `array::set` could bypass the declaration. A struct is now its own kind of value.
+
+- `$s.field` reads and writes a field. `$s["field"]` does the same and is the way to use a
+  field name held in a variable; an unknown name is an error either way.
+- `$s[0]`, `count($s)` and every `array::` function given a struct are errors.
+- A struct may be an element of a list or a value in a map like any other value.
 - `foreach`, `json::encode` and templates still see the fields, in declaration order.
 
 ## Arrays, maps and structs are values
