@@ -164,6 +164,28 @@ jobs:
           cd cpp
           bash tests/arg_count_check_test.sh ./build/lk
 
+      # Information only: which published modules, packages and example applications this
+      # build would stop from loading. Never fails the job.
+      - name: Ecosystem scan (modules, packages, examples — information only)
+        continue-on-error: true
+        run: |
+          cd cpp
+          bash tests/ecosystem_scan.sh ./build/lk
+
+      # LOOK 2: a call must give a function the arguments it declares, on both engines (the
+      # VM used to accept too many and too few).
+      - name: Argument count (both engines)
+        run: |
+          cd cpp
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/arg_count_test.lk || true)"
+            echo "$out"
+            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+              echo "::error::argument count guard FAILED ($env)"
+              exit 1
+            fi
+          done
+
       # LOOK 2 closure rule: a closure captures the value and cannot change it. A write to a
       # captured variable is a parse error on both engines; a variable that changes after it
       # was captured is a warning from `lk --check`.

@@ -78,11 +78,28 @@ static const bool s_bc_cloner_registered = [] {
 // yalnızca hook'unu kaydeder. Aktif VM run() içinde thread-local set edilir.
 static thread_local VM* t_active_vm = nullptr;
 
+// ── argüman sayısı (LOOK 2) ───────────────────────────────────────────────────
+// Kullanıcı çağrısı ve çalışma zamanının geri çağırması tam tutmalı: fazla argüman da,
+// varsayılanı olmayan parametrenin eksik kalması da HATA (yorumlayıcı hep böyleydi; VM sessizce
+// kabul ediyor, eksik parametre null oluyordu). Metinler yorumlayıcıyla aynı (interpreter.cpp).
+// Rota dağıtımı bu denetimden GEÇMEZ: işleyici yol parametrelerinden istediği kadarını alır.
+static inline void check_argc(const FunctionProto* p, int argc) {
+    const int fixed = p->variadic ? p->arity - 1 : p->arity;
+    if (argc >= p->required && (p->variadic || argc <= fixed)) return;
+    const std::string nm = (p->name.empty() || p->name == "<closure>") ? "__anonymous__" : p->name;
+    if (!p->variadic && argc > fixed)
+        throw LookVmError("Function '" + nm + "' expects at most " + std::to_string(fixed)
+                          + " args, got " + std::to_string(argc));
+    throw LookVmError("Function '" + nm + "' expects " + std::string(p->variadic ? "at least " : "")
+                      + std::to_string(fixed) + " args, got " + std::to_string(argc));
+}
+
 static Value vm_bridge_hook(const Value& fn, std::vector<Value>& args) {
     if (!t_active_vm)
         throw LookVmError("vm_bridge_hook: no active VM");
     if (fn.type() != Value::BYTECODE_FN)
         throw LookVmError("vm_bridge_hook: BYTECODE_FN expected");
+    check_argc(fn.as_bytecode_fn()->proto.get(), (int)args.size());   // geri çağırma: sayı tam tutmalı
     return t_active_vm->call_closure(*fn.as_bytecode_fn(), args);
 }
 
@@ -859,6 +876,7 @@ call_dispatch:
                 }
                 auto cl = fn_val.as_bytecode_fn();
                 auto* cp = cl->proto.get();
+                check_argc(cp, argc);
                 int new_base = (int)regs_.size();
                 regs_.resize(new_base + cp->reg_count);
                 if (!cp->variadic) {
@@ -970,6 +988,7 @@ call_dispatch:
                     throw LookVmError("TAIL_CALL: BYTECODE_FN expected");
                 auto cl = fn_val.as_bytecode_fn();
                 auto* cp = cl->proto.get();
+                check_argc(cp, argc3);
                 int new_base = (int)regs_.size();
                 regs_.resize(new_base + cp->reg_count);
                 if (!cp->variadic) {

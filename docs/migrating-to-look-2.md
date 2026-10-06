@@ -180,6 +180,31 @@ In LOOK 1 the result was always false for arrays and maps.
 Elements compare by the usual rule: `[1] == [1.0]` is true, `[1] == ["1"]` is false.
 Functions, channels and connections still compare by identity.
 
+## Calls
+
+### A call gives a function the arguments it declares — error at run time
+
+Calling a function with too many arguments, or without an argument for a parameter that
+has no default, is an error. The tree-walk engine always did this; the default engine
+accepted the call, dropped the extra arguments and made the missing parameter null.
+
+```
+function price($amount, $currency) { ... }
+price(10)          # LOOK 1, default engine: $currency is null.  LOOK 2: error.
+```
+
+A parameter with a default is optional, and a variadic function (`...$rest`) takes any
+number above its required ones. The same rule holds when the runtime calls your callback:
+`array::map`, `array::filter` and the search functions give one argument, `array::reduce`
+and `array::sort` two, `http::stream` two.
+
+`lk --check file.lk` lists the calls it can see (a named function called by name in the same
+file) as `WARN ... [arg-count]`.
+
+Route handlers keep their own contract: a handler may declare the path parameters of its
+route as its own parameters, in order, or declare none and read them with
+`request::param("name")`.
+
 ## Scope
 
 ### A block scopes its variables at the top level too — error at run time

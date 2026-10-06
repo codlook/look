@@ -264,6 +264,13 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
     // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
     // ilk yerel register'ları (0..arity-1) tutar. Varsayılan ifade önceki
     // param'ları görebilir (soldan sağa). Interpreter ile aynı arity semantiği.
+    // LOOK 2: zorunlu parametre sayısı (argüman sayısı denetimi — vm.cpp check_argc).
+    {
+        const int fixed = proto_.variadic ? proto_.arity - 1 : proto_.arity;
+        proto_.required = 0;
+        for (int i = 0; i < fixed; ++i)
+            if (!(defaults && (size_t)i < defaults->size() && (*defaults)[(size_t)i])) proto_.required = i + 1;
+    }
     if (defaults) {
         for (size_t i = 0; i < defaults->size() && i < proto_.arity; ++i) {
             if (!(*defaults)[i]) continue;

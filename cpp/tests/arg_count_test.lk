@@ -1,0 +1,52 @@
+# LOOK 2: a call must give a function the arguments it declares — on both engines.
+# The tree-walk engine always raised an error for too many or too few arguments; the VM
+# accepted the call, dropped the extra ones and made a missing parameter null (in 1.0.x too).
+#   * a parameter with a default is optional
+#   * a variadic function takes any number above its required ones
+#   * the same holds when the runtime calls a callback (array::map gives one argument, ...)
+# Route handlers are the one place with their own contract (path parameters): see
+# tests/route_param_decode.sh and the migration guide.
+use array
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+function err_of($f) {
+    $err = "NO-ERROR"
+    try { $r = $f(); $err = "NO-ERROR" } catch ($e) { $err = "" . $e }
+    return $err
+}
+function one($a) { return "one:" . $a }
+function two($a, $b) { return $a . $b }
+function opt($a, $b = "d") { return $a . $b }
+function va($a, ...$rest) { return $a . count($rest) }
+function none() { return "none" }
+
+chk("exact count", one(1) . two(1, 2) . none(), "one:112none")
+chk("too many", err_of(fn() => one(1, 2)), "Function 'one' expects at most 1 args, got 2")
+chk("too few", err_of(fn() => two(1)), "Function 'two' expects 2 args, got 1")
+chk("none given, one needed", err_of(fn() => one()), "Function 'one' expects 1 args, got 0")
+chk("argument to a function that takes none", err_of(fn() => none(1)), "Function 'none' expects at most 0 args, got 1")
+
+chk("default: optional parameter left out", opt("x"), "xd")
+chk("default: given", opt("x", "y"), "xy")
+chk("default: required one still missing", err_of(fn() => opt()), "Function 'opt' expects 2 args, got 0")
+chk("default: too many", err_of(fn() => opt(1, 2, 3)), "Function 'opt' expects at most 2 args, got 3")
+
+chk("variadic: only the required one", va("x"), "x0")
+chk("variadic: many", va("x", 1, 2, 3), "x3")
+chk("variadic: required one missing", err_of(fn() => va()), "Function 'va' expects at least 1 args, got 0")
+
+$c1 = function($a) { return "c:" . $a }
+$c0 = fn() => "z"
+chk("closure: exact", $c1(1) . $c0(), "c:1z")
+chk("closure: too many", err_of(fn() => $c1(1, 2)), "Function '__anonymous__' expects at most 1 args, got 2")
+chk("closure: too few", err_of(fn() => $c1()), "Function '__anonymous__' expects 1 args, got 0")
+
+# Callbacks called by the runtime: the count is part of each function's contract.
+chk("array::map gives one argument", array::map([1, 2], fn($x) => $x * 2)[1], 4)
+chk("array::map: a two-parameter callback is refused", err_of(fn() => array::map([1], fn($x, $i) => $x)) != "NO-ERROR", true)
+chk("array::map: a callback without parameters is refused", err_of(fn() => array::map([1], fn() => 1)) != "NO-ERROR", true)
+chk("array::reduce gives two", array::reduce([1, 2, 3], fn($acc, $x) => $acc + $x, 0), 6)
+chk("array::filter gives one", count(array::filter([1, 2, 3], fn($x) => $x > 1)), 2)
+print("=== argument count guard done ===")

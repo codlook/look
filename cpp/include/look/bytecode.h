@@ -177,6 +177,7 @@ using ConstantPool = std::vector<Value>;
 struct FunctionProto {
     std::string                          name;         // debug
     int                                  arity  = 0;   // zorunlu parametre sayısı
+    int                                  required = 0; // LOOK 2: varsayılanı olmayan (ve variadic kalan olmayan) param sayısı — eksik argüman denetimi
     bool                                 variadic = false;
     int                                  reg_count = 0;// max register sayısı (compiler hesaplar)
     ConstantPool                         constants;
