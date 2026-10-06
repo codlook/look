@@ -1,0 +1,73 @@
+# LOOK 2: a block scopes the variables first assigned in it — at the top level of a file too.
+# Inside a function both engines already did this; at the top level the VM made such a
+# variable a global, so `if (c) { $z = 1 } print($z)` printed 1 on the VM and failed with
+# "Undefined variable" on the tree-walk engine (also in 1.0.x). One rule now: moving code
+# into a function does not change what it means.
+#   * first assigned in a block (if/else, for incl. its init, while, foreach, try/catch,
+#     switch, bare block)                      -> gone after the block
+#   * assigned at the top level before the block -> the block writes the global
+function chk($label, $got, $want) {
+    if ($got == $want) { print("OK   " . $label) }
+    else { print("FAIL " . $label . " => got[" . $got . "] want[" . $want . "]") }
+}
+function seen($f) { $r = "?"
+    try { $r = "" . $f() } catch ($e) { $r = "undefined" }
+    return $r }
+
+$g = 1
+if (true) { $z = 1; $g = 2 }
+chk("if: new variable is gone after the block", seen(fn() => $z), "undefined")
+chk("if: a global assigned before the block is written", $g, 2)
+if (false) { $n1 = 1 } else { $e1 = 1 }
+chk("else: new variable is gone", seen(fn() => $e1), "undefined")
+
+for ($i = 0; $i < 2; $i = $i + 1) { $w = $i }
+chk("for: body variable is gone", seen(fn() => $w), "undefined")
+chk("for: init variable is gone", seen(fn() => $i), "undefined")
+
+$k = 0
+while ($k < 2) { $wv = $k; $k = $k + 1 }
+chk("while: body variable is gone", seen(fn() => $wv), "undefined")
+chk("while: outer counter keeps its value", $k, 2)
+
+foreach ([1, 2] as $fk => $fv) { $fb = $fv }
+chk("foreach: loop variable is gone", seen(fn() => $fv), "undefined")
+chk("foreach: body variable is gone", seen(fn() => $fb), "undefined")
+
+try { $tv = 1; throw "x" } catch ($ce) { $cv = 2 }
+chk("try: body variable is gone", seen(fn() => $tv), "undefined")
+chk("catch: variable is gone", seen(fn() => $cv), "undefined")
+
+switch (1) { case 1: $sv = 1 }
+chk("switch: case variable is gone", seen(fn() => $sv), "undefined")
+
+{ $bv = 1 }
+chk("bare block: variable is gone", seen(fn() => $bv), "undefined")
+
+$inner = "?"
+if (true) { $o1 = 1
+    if (true) { $d1 = 2; $inner = "" . ($o1 + $d1) }
+    $inner = $inner . ":" . seen(fn() => $d1) }
+chk("nested: inner block sees the outer block, not the reverse", $inner, "3:undefined")
+
+function reads_g() { return $g }
+$fn_sees = 0
+if (true) { $g = 7; $fn_sees = reads_g() }
+chk("a function sees a global written inside a block", $fn_sees, 7)
+
+# Declare first, assign in the block: the way to carry a value out.
+$out = null
+if (true) { $out = "set" }
+chk("declared before the block, assigned in it", $out, "set")
+
+# The same code inside a function means the same.
+function in_fn() {
+    $r = ""
+    if (true) { $fz = 1 }
+    try { $r = $r . $fz } catch ($e) { $r = $r . "undefined" }
+    for ($fi = 0; $fi < 1; $fi = $fi + 1) { $fw = 1 }
+    try { $r = $r . $fi } catch ($e) { $r = $r . ",undefined" }
+    return $r
+}
+chk("inside a function: the same rule", in_fn(), "undefined,undefined")
+print("=== block scope guard done ===")

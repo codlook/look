@@ -180,6 +180,27 @@ In LOOK 1 the result was always false for arrays and maps.
 Elements compare by the usual rule: `[1] == [1.0]` is true, `[1] == ["1"]` is false.
 Functions, channels and connections still compare by identity.
 
+## Scope
+
+### A block scopes its variables at the top level too — error at run time
+
+A variable first assigned inside a block (`if`/`else`, `for` including its init, `while`,
+`foreach`, `try`/`catch`, `switch`, a bare `{ }`) is gone when the block ends. Inside a
+function this was always so. At the top level of a file the default engine kept the
+variable as a global, while the tree-walk engine did not:
+
+```
+if ($debug) { $level = "verbose" } else { $level = "quiet" }
+print($level)      # LOOK 1, default engine: prints.  LOOK 2: Undefined variable: $level
+```
+
+Declare the variable before the block; the block then assigns the one outside:
+
+```
+$level = "quiet"
+if ($debug) { $level = "verbose" }
+```
+
 ## Web
 
 ### The default 404 body is plain text — silent

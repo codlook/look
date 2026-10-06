@@ -185,12 +185,7 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     //    davranış korunur; capture'lar zaten değiştirilemez).
     if (!for_write && parent_) {
         VarLoc pl = parent_->resolve_var(name, /*for_write=*/false);
-        // LOOK 2: üst düzey bir DÖNGÜDE doğan ad VM'de global'dir ama closure onun o turdaki
-        // DEĞERİNİ almalı (yorumlayıcıda döngü kapsamının yereli). Değer capture-yükleme
-        // sitesinde LOAD_GLOBAL ile alınır.
-        const bool top_loop_name = pl.kind == VarKind::GLOBAL && parent_->parent_ == nullptr
-                                   && parent_->loop_globals_.count(name) > 0;
-        if (pl.kind != VarKind::GLOBAL || top_loop_name) {
+        if (pl.kind != VarKind::GLOBAL) {
             if (captures_.size() >= 255)
                 throw LookCompileError("closure captures more than 255 variables");
             uint8_t idx = u8(captures_.size(), "capture count");
@@ -606,9 +601,7 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
 
 void FunctionCompiler::compile_for(const ForStatement& s) {
     push_scope();
-    { const bool was = for_init_; for_init_ = true;      // LOOK 2: for-init adı döngüye aittir
-      if (s.init) compile_stmt(*s.init);
-      for_init_ = was; }
+    if (s.init)      compile_stmt(*s.init);
 
     int loop_start = current_ip();
     int exit_jump  = -1;
@@ -1088,6 +1081,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 kind = (rloc.index < captures_.size() && captures_[rloc.index].is_cell) ? 3 : 2; ix = rloc.index;
             } else {
                 kind = 4; ix = add_const(Value(root_name));
+                if (parent_ == nullptr && scope_depth_ <= 1) outer_globals_.insert(root_name);   // üst düzeyde yolla doğan global
             }
             emit(OpCode::SET_PATH, val, base, n);
             emit(OpCode::NOP, kind, hi8(ix), lo8(ix));
@@ -1162,15 +1156,11 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     } else if (loc.kind == VarKind::CAPTURE) {
         // LOOK by-value capture — capture değiştirilemiyor (felsefe)
         throw LookCompileError("Captured variable cannot be reassigned: $" + e.name);
-    } else if (parent_ != nullptr ||
-               (loop_depth_ > 0 && !outer_globals_.count(e.name) &&
-                (no_discovery_ || boxed_names_.count(e.name)))) {
-        // Fonksiyon içi VEYA (2c) top-level DÖNGÜ-BODY'de tanımlı + closure-yakalanan
-        // top-level var → LOCAL (cell). Dar koşul: yalnız döngü-body'de tanımlı VE
-        // yakalanan (boxed_names_). Discovery'de (no_discovery_) tüm döngü-body
-        // top-level var'lar geçici local olur ki capture tespit edilsin; real'de
-        // yalnız yakalananlar cell olur, gerisi STORE_GLOBAL kalır (route güvenli:
-        // setup var'ları döngü-DIŞI → koşul tetiklenmez → global kalır).
+    } else if (parent_ != nullptr || (scope_depth_ > 1 && !outer_globals_.count(e.name))) {   // 1 = üst düzeyin kendi kapsamı (compile_stmts)
+        // LOOK 2: ÜST DÜZEYDE de blok kapsamı. Bir if/for/while/try gövdesinde İLK KEZ atanan ad
+        // o bloğun yerelidir (fonksiyon içinde ve yorumlayıcıda zaten böyleydi; VM üst düzeyde
+        // onu global yapıyordu → `if (c) { $z = 1 } print($z)` VM'de 1, yorumlayıcıda hata).
+        // Bloktan önce üst düzeyde atanmış ad (outer_globals_) global kalır: blok ona yazar.
         // Fonksiyon içi + isim local/capture değil → yeni FONKSIYON-LOCAL yarat.
         // Scope izolasyonu: fonksiyon dıştaki (global) değişkeni implicit ezemez
         // (interpreter ile aynı; VM'de eskiden STORE_GLOBAL ile sızıyordu — route
@@ -1211,8 +1201,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // 2c: döngü-DIŞI (loop_depth_==0) tanımlı top-level var → "outer global".
         // Döngü içindeki reassignment'ı cell YAPMAMALI (C2 paritesi — tree-walk
         // tek binding tutar). outer_globals_ bu ayrımı taşır.
-        if (loop_depth_ == 0 && !for_init_) outer_globals_.insert(e.name);
-        else if (!outer_globals_.count(e.name)) loop_globals_.insert(e.name);   // LOOK 2: üst düzey döngüde doğan ad
+        outer_globals_.insert(e.name);   // bu dala yalnız üst düzey (blok dışı) ya da bilinen global gelir
         uint16_t ni = add_const(Value(e.name));
         // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
         // "$t = $i" olarak derleniyordu (sol operand atılıyor). Diğer üç dal

@@ -325,8 +325,6 @@ private:
     bool                             callee_ctx_  = false; // çıplak ad ÇAĞRI HEDEFİ olarak derleniyor
                                                        // (top-level loop-local cell kararı)
     std::set<std::string>            outer_globals_;   // 2c: döngü-DIŞI tanımlı top-level
-    std::set<std::string>            loop_globals_;    // LOOK 2: üst düzey döngüde (ya da for-init'te) doğan adlar
-    bool                             for_init_ = false;
                                                        // var'lar → döngü-içi reassignment
                                                        // onları cell YAPMAZ (C2 paritesi)
     std::vector<CaptureInfo>         captures_;  // use() listesi
