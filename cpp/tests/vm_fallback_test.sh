@@ -63,25 +63,46 @@ if grep -q "VM BUG" "$SRVLOG"; then
   echo "  FAIL A: hook YOK ama log'da 'VM BUG' var — fast-path egzersiz edilmedi (test anlamsız)"; fail=1
 else echo "  OK A: log'da fallback YOK (VM fast-path doğrulandı)"; fi
 
-# ── B) LOOK_VM_FORCE_FAIL — interpreter fallback ────────────────────────────
+# ── B) LOOK_VM_FORCE_FAIL — a VM error is a 500; the request is NOT run again ──
+# (1.0.8) Until 1.0.7 the request was run a second time on the tree-walk engine and answered
+# from there. That second run repeated every side effect of a handler that had failed halfway
+# (tests/no_double_execution_test.sh), so it is gone: an error on the VM is an error.
 SRVLOG="$TMP/b.log"
 start_srv env LOOK_VM_FORCE_FAIL="/calc" || { echo "FAIL: VM fallback guard"; exit 1; }
-B=$(curl -s "http://127.0.0.1:$PORT/calc" 2>/dev/null)
+BCODE=$(curl -s -o "$TMP/b.body" -w "%{http_code}" "http://127.0.0.1:$PORT/calc" 2>/dev/null)
+B=$(cat "$TMP/b.body" 2>/dev/null)
 stop_srv
-if [ "$B" = "$EXPECT" ]; then echo "  OK B(fallback): yanıt HÂLÂ doğru '$B' (interpreter fallback)"
-else echo "  FAIL B(fallback): yanıt '$B' != '$EXPECT' — fallback YANLIŞ hesapladı"; fail=1; fi
-if grep -q "VM BUG" "$SRVLOG"; then echo "  OK B: log'da fallback kaydı var ('VM BUG')"
-else echo "  FAIL B: log'da 'VM BUG' YOK — fallback tetiklenmedi (hook çalışmadı / test anlamsız)"; fail=1; fi
+if [ "$BCODE" = "500" ] && [ "$B" != "$EXPECT" ]; then echo "  OK B(VM error): HTTP 500, not answered by a second run"
+else echo "  FAIL B(VM error): code=$BCODE body='$B' — the request was answered by a second run"; fail=1; fi
+if grep -q "Dispatch error" "$SRVLOG" && ! grep -q "fell back to the interpreter\|interpreter fallback" "$SRVLOG"; then echo "  OK B: the error is logged, no fallback"
+else echo "  FAIL B: log does not show a plain dispatch error"; fail=1; fi
 
-# ── C) LOOK_VM_STRICT=1 — fallback KAPALI, 500 ──────────────────────────────
+# ── C) LOOK_VM_STRICT=1 — the same: 500, and the server keeps answering ─────
 SRVLOG="$TMP/c.log"
 start_srv env LOOK_VM_FORCE_FAIL="/calc" LOOK_VM_STRICT=1 || { echo "FAIL: VM fallback guard"; exit 1; }
 CODE=$(curl -s -o "$TMP/c.body" -w "%{http_code}" "http://127.0.0.1:$PORT/calc" 2>/dev/null)
-CBODY=$(cat "$TMP/c.body" 2>/dev/null)
+for i in 1 2 3 4 5 6 7 8 9 10; do curl -s -m 3 -o /dev/null "http://127.0.0.1:$PORT/calc"; done
+CODE2=$(curl -s -m 3 -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/calc" 2>/dev/null)
 stop_srv
-if [ "$CODE" = "500" ]; then echo "  OK C(strict): HTTP 500 (fallback KAPALI, maskeleme yok)"
-elif [ "$CBODY" != "$EXPECT" ]; then echo "  OK C(strict): fallback yanıtı vermedi (body='$CBODY', code=$CODE)"
-else echo "  FAIL C(strict): LOOK_VM_STRICT=1 iken fallback HÂLÂ maskeledi (code=$CODE body='$CBODY')"; fail=1; fi
+if [ "$CODE" = "500" ] && [ "$CODE2" = "500" ]; then echo "  OK C(strict): HTTP 500, still answering after 11 errors"
+else echo "  FAIL C(strict): first=$CODE after-11=$CODE2 (000 = the server stopped answering)"; fail=1; fi
 
-[ $fail = 0 ] && echo "PASS: VM→interpreter fallback doğruluk guard'ı" || echo "FAIL: VM→interpreter fallback doğruluk guard'ı"
+# ── D) a route the VM cannot run is placed on the tree-walk engine at setup ──
+# and must give the same answer as the VM would for the same computation.
+cat > "$TMP/app.lk" <<'LKEOF'
+route("GET", "/calc", function() {
+    $s = 0
+    for ($i = 1; $i <= 100; $i = $i + 1) { $s = $s + $i }
+    timer::after(60000, fn() => 1)
+    return response::text("RESULT=" . $s)
+})
+LKEOF
+SRVLOG="$TMP/d.log"
+start_srv env || { echo "FAIL: VM fallback guard"; exit 1; }
+D=$(curl -s "http://127.0.0.1:$PORT/calc" 2>/dev/null)
+stop_srv
+if [ "$D" = "$EXPECT" ] && grep -q "runs on the interpreter: it reaches timer::after" "$SRVLOG"; then echo "  OK D: interpreter-only route answers '$D' and is announced in the log"
+else echo "  FAIL D: body='$D' or the route was not announced"; fail=1; fi
+
+[ $fail = 0 ] && echo "PASS: VM errors are errors; interpreter-only routes are decided at setup" || echo "FAIL: VM error / interpreter route guard"
 exit $fail

@@ -517,10 +517,10 @@ jobs:
           bash cpp/tests/plesk_inject_test.sh
           php  cpp/tests/plesk_php_domain_test.php
 
-      # VM→interpreter fallback DOĞRULUK — LOOK_VM_FORCE_FAIL test-hook'u bir route'u VM'de kasıtlı
-      # fail ettirir; fallback yanıtı VM'inkiyle AYNI olmalı + 'VM BUG' loglamalı; STRICT=1 ile 500.
-      # Pozitif-kontrollü (fallback yanlış hesaplarsa RED). Hook prod-inert (env yoksa tek pointer testi).
-      - name: VM→interpreter fallback doğruluk (runtime)
+      # A VM error is a 500 and the request is not run again (1.0.8); a route the VM cannot run
+      # is placed on the tree-walk engine at setup. LOOK_VM_FORCE_FAIL is the test hook that
+      # makes one route fail on the VM (inert without the variable).
+      - name: VM errors are errors; interpreter-only routes are decided at setup
         run: |
           cd cpp
           bash tests/vm_fallback_test.sh build/lk-fcgi 7772
