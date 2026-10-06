@@ -162,9 +162,6 @@ uint8_t FunctionCompiler::declare_local(const std::string& name, int line) {
     // "local slot'unu doğrudan döndür" optimizasyonu + free_temp local'i bozardı).
     uint8_t slot = regs_->alloc_local();
     locals_.push_back({name, slot, scope_depth_});
-    // 58 Adım 2a: keşif-geçişi bu ismi "kaçan local" bulduysa slot'unu boxed işaretle.
-    // (Adım 2b'de helper'lar boxed slot'lar için cell_get/cell_set yayacak.)
-    if (boxed_names_.count(name)) boxed_slots_.insert(slot);
     return slot;
 }
 
@@ -189,10 +186,7 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
             if (captures_.size() >= 255)
                 throw LookCompileError("closure captures more than 255 variables");
             uint8_t idx = u8(captures_.size(), "capture count");
-            // 58: parent'ta bu isim boxed local (veya boxed capture) ise, yakalanan
-            // şey CELL'dir → closure gövdesi okurken [0] deref etmeli (by-ref).
-            bool is_cell = parent_->is_cell_var(pl);
-            captures_.push_back({name, idx, is_cell});
+            captures_.push_back({name, idx});
             return {VarKind::CAPTURE, idx};
         }
     }
@@ -201,64 +195,25 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     return {VarKind::GLOBAL, 0};
 }
 
-// ── Local erişim helper'ları (58. bug closure fix hazırlığı) ──────────────────
-// ŞU AN davranış-değişmez: düz MOVE. Sonraki adımda "boxed" (cell) local'ler için
-// bu iki nokta cell_get/cell_set yayacak — tüm local erişimi buradan geçtiği için
-// boxing kararı TEK yere lokalize olur (dağınık değil).
+// ── Yerel / yakalanan erişim yardımcıları ─────────────────────────────────────
+// Tüm yerel ve yakalanan değişken erişimi bu üç noktadan geçer: yerel bir
+// register'dır (MOVE), yakalanan değer closure'ın kendi kopyasıdır (LOAD_CAPTURE).
 void FunctionCompiler::emit_read_local(uint8_t dest, uint8_t slot) {
-    if (boxed_slots_.count(slot)) {          // boxed → cell: dest = slot[0]
-        uint8_t z = alloc_temp();
-        emit_load_const(z, Value((int64_t)0), cur_line_);
-        emit(OpCode::ARRAY_GET, dest, slot, z);
-        free_temp(z);
-    } else {
-        emit(OpCode::MOVE, dest, slot);
-    }
+    emit(OpCode::MOVE, dest, slot);
 }
 void FunctionCompiler::emit_write_local(uint8_t slot, uint8_t src) {
-    if (boxed_slots_.count(slot)) {          // boxed → cell: slot[0] = src
-        uint8_t z = alloc_temp();
-        emit_load_const(z, Value((int64_t)0), cur_line_);
-        emit(OpCode::ARRAY_SET, slot, z, src);
-        free_temp(z);
-    } else {
-        emit(OpCode::MOVE, slot, src);
-    }
+    emit(OpCode::MOVE, slot, src);
 }
-// Closure gövdesinde bir capture okunuyor. is_cell ise capture bir CELL (boxed
-// local referansı) → LOAD_CAPTURE ile cell'i al, sonra [0] deref et (by-ref).
 void FunctionCompiler::emit_read_capture(uint8_t dest, uint8_t cap_index) {
-    if (cap_index < captures_.size() && captures_[cap_index].is_cell) {
-        uint8_t c = alloc_temp();
-        emit(OpCode::LOAD_CAPTURE, c, cap_index);
-        uint8_t z = alloc_temp();
-        emit_load_const(z, Value((int64_t)0), cur_line_);
-        emit(OpCode::ARRAY_GET, dest, c, z);
-        free_temp(z); free_temp(c);
-    } else {
-        emit(OpCode::LOAD_CAPTURE, dest, cap_index);
-    }
-}
-// Bir VarLoc boxed cell mi: LOCAL ise boxed_slots_'ta mı; CAPTURE ise is_cell mi.
-bool FunctionCompiler::is_cell_var(const VarLoc& loc) const {
-    if (loc.kind == VarKind::LOCAL)   return boxed_slots_.count(loc.index) > 0;
-    if (loc.kind == VarKind::CAPTURE) return loc.index < captures_.size() && captures_[loc.index].is_cell;
-    return false;
+    emit(OpCode::LOAD_CAPTURE, dest, cap_index);
 }
 
 // ── compile — entry point ─────────────────────────────────────────────────────
 
 std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& body,
         const std::vector<std::unique_ptr<Expression>>* defaults) {
-    // ── Adım 2a: escape-analiz keşif-geçişi ───────────────────────────────────
-    // Ayrı throwaway FC ile gövdeyi derle (state reset yok); hangi local'lerin
-    // closure'lar tarafından yakalandığını topla. ÜRETİLEN KOD ATILIR — yalnız
-    // boxed_names_ okunur. no_discovery_ sonsuz özyinelemeyi önler.
-    // ŞU AN (2a) boxed_slots_ codegen'de KULLANILMAZ → davranış-değişmez.
-    // LOOK 2 (look/capture_check.h): closure DEĞERİ yakalar → hiçbir yerel "kutulanmaz". Eskiden
-    // burada bir keşif derlemesi koşup closure'ların yakaladığı yerelleri hücreye (cell) çeviriyorduk
-    // ki closure değişkenin sonraki halini görsün; o model kalktı. boxed_names_ hep boş kalır,
-    // hücreyle ilgili dallar artık ölü koddur (ayrı temizlik).
+    // LOOK 2 (look/capture_check.h): closure DEĞERİ yakalar → hiçbir yerel ya da
+    // parametre sarılmaz; hepsi düz register'dır.
 
     // ── Prologue: varsayılan parametreler ────────────────────────────────────
     // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
@@ -290,31 +245,12 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
         }
     }
 
-    // 58 simetri: closure tarafından yakalanan PARAMETRELER cell'e kutulanır.
-    // Param'lar constructor'da declare_local'ı ATLAYIP slot alır (satır 50-56) →
-    // boxed_slots_'a hiç girmezler; catch değişkeniyle aynı sınıf. Cell olmadan
-    // capture snapshot okur → closure kurulduktan SONRA mutasyon ayrışır (tw by-ref
-    // 105, vm snapshot 5). Defaults doldurulduktan SONRA kutula: defaults MOVE'u ham
-    // slot bekler; burada slot nihai param değerini (verilen ya da varsayılan) tutar.
-    for (int i = 0; i < proto_.arity; ++i) {
-        if (!boxed_names_.count(proto_.params[i])) continue;
-        boxed_slots_.insert(u8(i, "parameter index"));
-        uint8_t tmp = alloc_temp();
-        emit(OpCode::MOVE,       tmp, u8(i, "parameter index"));   // gelen param değeri
-        emit(OpCode::NEW_ARRAY,  u8(i, "parameter index"), 1);     // slot = []
-        emit(OpCode::ARRAY_PUSH, u8(i, "parameter index"), tmp);   // slot = [value] (cell)
-        free_temp(tmp);
-    }
-
     compile_block(body);
 
     // Implicit return null
     emit(OpCode::RETURN_NULL);
 
     proto_.reg_count = regs_->max_used();
-    // 58: capture'ların cell olup olmadığını proto'ya yaz → parallel() runtime'da
-    // hangi capture'ı deep-clone edeceğini bilir (thread-safety).
-    for (auto& c : captures_) proto_.capture_is_cell.push_back(c.is_cell ? 1 : 0);
     return std::make_shared<FunctionProto>(std::move(proto_));
 }
 
@@ -425,12 +361,6 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         compile_block(*s);
     }
     else if (auto* us = dynamic_cast<const UseStatement*>(&stmt)) {
-        // 2c: keşif-geçişinde `use` İŞLENMEZ. Modül yükleme (bug 49) g_loaded dedup'ı
-        // ile yan etkilidir; discovery pass onu tetiklerse REAL pass "zaten yüklü"
-        // deyip modül kodunu atlar → route kalıcı interpreter'a düşer. Discovery
-        // yalnız closure capture arar; modül (ayrı dosya) mevcut dosyanın top-level
-        // loop-local'ini yakalamaz → `use`'u atlamak capture tespitini etkilemez.
-        if (no_discovery_) return;
         // `use <ad>` iki farklı şeyi karşılar:
         //   1) stdlib modülü (string, jobs, template…) → builtin tablosunda ZATEN
         //      bağlı; bytecode'da yapılacak bir şey yok → NOP (eski davranış doğru).
@@ -496,7 +426,6 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         // is the sibling of the module (`use <name>`) path above, which was already fixed.
         // Any failure → NOP: the file still loads via the interpreter fallback, so a case we
         // can't compile here never regresses — it just stays at today's speed.
-        if (no_discovery_) return;                    // discovery pass skips includes (as modules do)
         // No base dir (the CLI, which has no interpreter pre-pass to register the include's
         // own modules) → fail the whole compile so the caller falls back to the interpreter,
         // which handles file includes. NOP here would wrongly "succeed" with the include's
@@ -588,9 +517,7 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
     free_temp(cond);
 
     loop_stack_.push_back({.continue_target = loop_start, .finally_floor = pending_finally_.size()});
-    ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
-    --loop_depth_;
     auto ctx = loop_stack_.back();
     loop_stack_.pop_back();
 
@@ -619,9 +546,7 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
     }
 
     loop_stack_.push_back({.continue_target = -1, .finally_floor = pending_finally_.size()}); // continue hedefi post sonrası
-    ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
-    --loop_depth_;
     auto ctx = loop_stack_.back();
     loop_stack_.pop_back();
 
@@ -666,30 +591,16 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     uint8_t r_val = r_iter + 2;
     uint8_t r_key = r_iter + 3;
 
-    // 58 simetri: value/key var closure tarafından yakalanıyorsa (boxed) ayrı cell-slot
-    // al; değilse sabit r_val/r_key'e map et (mevcut hızlı yol). Manuel kayıt declare_local'ı
-    // atladığından foreach var'ı cell'i kaçırırdı → capture-sonrası mutasyon ayrışırdı
-    // (tw by-ref 101, vm snapshot 1). Boxed cell FOR_STEP sonrası her iterasyon TAZE tahsis
-    // edilir (per-iter, catch/param aynası).
-    bool val_boxed = !s.value_var.empty() && boxed_names_.count(s.value_var) > 0;
-    bool key_boxed = !s.key_var.empty()   && boxed_names_.count(s.key_var)   > 0;
-    uint8_t val_cell = 0, key_cell = 0;
-    if (val_boxed)                 val_cell = declare_local(s.value_var, 0);
-    else if (!s.value_var.empty()) locals_.push_back({s.value_var, r_val, scope_depth_});
-    if (key_boxed)                 key_cell = declare_local(s.key_var, 0);
-    else if (!s.key_var.empty())   locals_.push_back({s.key_var,   r_key, scope_depth_});
+    // Döngü değişkenleri doğrudan FOR_STEP'in yazdığı register'lara bağlanır.
+    if (!s.value_var.empty()) locals_.push_back({s.value_var, r_val, scope_depth_});
+    if (!s.key_var.empty())   locals_.push_back({s.key_var,   r_key, scope_depth_});
 
     int loop_start = current_ip();
     // FOR_STEP: a=r_iter, b=exit_hi, c=exit_lo (sonradan patch)
     int step_ip = emit(OpCode::FOR_STEP, r_iter, 0, 0);
-    // per-iter cell: FOR_STEP değeri r_val/r_key'e yazdıktan sonra taze cell'e kutula
-    if (val_boxed) { emit(OpCode::NEW_ARRAY, val_cell, 1); emit(OpCode::ARRAY_PUSH, val_cell, r_val); }
-    if (key_boxed) { emit(OpCode::NEW_ARRAY, key_cell, 1); emit(OpCode::ARRAY_PUSH, key_cell, r_key); }
 
     loop_stack_.push_back({.continue_target = loop_start, .finally_floor = pending_finally_.size()});
-    ++loop_depth_;                 // 2c: döngü-body → top-level loop-local cell olabilir
     compile_block(*s.body);
-    --loop_depth_;
     auto ctx = loop_stack_.back();
     loop_stack_.pop_back();
 
@@ -769,19 +680,7 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
         // catch değişkeni ($e) — exception değeri LOAD_EXC ile gelir
         if (!s.catch_var.empty()) {
             uint8_t e_reg = declare_local(s.catch_var, 0);
-            if (boxed_slots_.count(e_reg)) {
-                // 58 simetri: catch değişkeni bir closure tarafından yakalanıyorsa
-                // (boxed) → cell tahsis et ve exception'ı cell[0]'a koy. Aksi halde
-                // LOAD_EXC ham değeri slot'a yazar, boxed_slots slot'u cell sanır,
-                // capture ARRAY_GET[0]'da null okurdu (atama-bildirimi 961-966 aynası).
-                uint8_t tmp = alloc_temp();
-                emit(OpCode::LOAD_EXC, tmp);
-                emit(OpCode::NEW_ARRAY, e_reg, 1);
-                emit(OpCode::ARRAY_PUSH, e_reg, tmp);
-                free_temp(tmp);
-            } else {
-                emit(OpCode::LOAD_EXC, e_reg);
-            }
+            emit(OpCode::LOAD_EXC, e_reg);
         }
         compile_block(*s.catch_block);
         pop_scope();
@@ -839,7 +738,7 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
     for (auto& cap : inner.captures_) {
         auto loc = resolve_var(cap.name);
         uint8_t cr = alloc_temp();
-        if      (loc.kind == VarKind::LOCAL)   { escaping_names_.insert(cap.name); emit(OpCode::MOVE, cr, loc.index); }
+        if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE, cr, loc.index);
         else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, cr, loc.index);
         else { uint16_t ni = add_const(Value(cap.name)); emit(OpCode::LOAD_GLOBAL, cr, hi8(ni), lo8(ni)); }
         cap_regs.push_back(cr);
@@ -1080,12 +979,12 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 free_temp(cur); free_temp(val);
                 val = res;
             }
-            // Kök: 0 yerel · 1 kutulu yerel (cell) · 2 yakalanan · 3 yakalanan cell · 4 global
+            // Kök: 0 yerel · 4 global. Yakalanan değişken değiştirilemez.
             uint8_t kind; uint16_t ix;
             if (rloc.kind == VarKind::LOCAL) {
-                kind = boxed_slots_.count(rloc.index) ? 1 : 0; ix = rloc.index;
+                kind = 0; ix = rloc.index;
             } else if (rloc.kind == VarKind::CAPTURE) {
-                kind = (rloc.index < captures_.size() && captures_[rloc.index].is_cell) ? 3 : 2; ix = rloc.index;
+                throw LookCompileError("Captured variable cannot be changed: $" + root_name);
             } else {
                 kind = 4; ix = add_const(Value(root_name));
                 if (parent_ == nullptr && scope_depth_ <= 1) outer_globals_.insert(root_name);   // üst düzeyde yolla doğan global
@@ -1126,19 +1025,8 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // B7: `$s .= x` → yerinde CONCAT (dst==b==slot). VM append_in_place ile
         // amortize O(1); ayrıca cur/tmp MOVE'ları (iki O(n) kopya) elenir.
         if (e.op == ".=") {
-            if (boxed_slots_.count(loc.index)) {
-                // boxed: yerinde CONCAT yapılamaz (slot cell tutar) → cell[0] oku,
-                // birleştir, cell[0]'a yaz.
-                uint8_t cur = alloc_temp();
-                emit_read_local(cur, loc.index);
-                uint8_t res = alloc_temp();
-                emit(OpCode::CONCAT, res, cur, val);
-                emit_write_local(loc.index, res);
-                free_temp(res); free_temp(cur); free_temp(val);
-            } else {
-                emit(OpCode::CONCAT, loc.index, loc.index, val);
-                free_temp(val);
-            }
+            emit(OpCode::CONCAT, loc.index, loc.index, val);
+            free_temp(val);
         }
         // Compound assign için mevcut değeri oku
         else if (e.op != "=") {
@@ -1193,21 +1081,13 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             result = tmp;
         }
         uint8_t slot = declare_local(e.name, 0);
-        if (boxed_slots_.count(slot)) {
-            // 58: boxed local → cell = [result] (1-elemanlı array). Bu kod DÖNGÜ
-            // gövdesindeyse her iterasyon çalışır → per-iterasyon TAZE cell (bedava).
-            emit(OpCode::NEW_ARRAY, slot, 1);
-            emit(OpCode::ARRAY_PUSH, slot, result);
-        } else {
-            emit(OpCode::MOVE, slot, result);
-        }
+        emit(OpCode::MOVE, slot, result);
         free_temp(result);
     } else {
         // Top-level (script global) → STORE_GLOBAL. Route/setup global'leri, app::
         // servisleri ve module referansları burada yaşar; davranış korunur.
-        // 2c: döngü-DIŞI (loop_depth_==0) tanımlı top-level var → "outer global".
-        // Döngü içindeki reassignment'ı cell YAPMAMALI (C2 paritesi — tree-walk
-        // tek binding tutar). outer_globals_ bu ayrımı taşır.
+        // Ad outer_globals_'a yazılır: sonraki bir blok bu ada atarsa yeni yerel
+        // yaratmaz, bu global'e yazar.
         outer_globals_.insert(e.name);   // bu dala yalnız üst düzey (blok dışı) ya da bilinen global gelir
         uint16_t ni = add_const(Value(e.name));
         // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
@@ -1278,9 +1158,8 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     if (auto* e = dynamic_cast<const Variable*>(&expr)) {
         auto loc = resolve_var(e->name);
         if (loc.kind == VarKind::LOCAL) {
-            // boxed (cell) local için doğrudan slot DÖNDÜRÜLEMEZ — slot cell'i tutar,
-            // caller değeri bekler. emit_read_local cell[0] deref eder.
-            if (dest == 255 && !boxed_slots_.count(loc.index)) return loc.index;
+            // Hedef verilmediyse yerelin kendi register'ı döner (kopya yok).
+            if (dest == 255) return loc.index;
             uint8_t r = ensure_dest();
             emit_read_local(r, loc.index);
             return r;
@@ -1336,9 +1215,9 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
 
             uint8_t r = ensure_dest();
             if (loc.kind == VarKind::LOCAL) {
-                emit_read_local(r, loc.index);              // eski değer (postfix için; cell-farkında)
+                emit_read_local(r, loc.index);              // eski değer (postfix için)
                 uint8_t nv = alloc_temp();
-                emit(delta_op, nv, r, one);                 // r değeri tutar → boxed/unboxed ikisi de doğru
+                emit(delta_op, nv, r, one);
                 emit_write_local(loc.index, nv);
                 if (e->prefix) emit(OpCode::MOVE, r, nv);   // prefix → yeni değer
                 free_temp(nv);
@@ -1582,9 +1461,9 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
                 uint8_t val = is_push ? compile_expr(*e.arguments[1]) : 0;
                 uint8_t kind; uint16_t ix;
                 if (rloc.kind == VarKind::LOCAL) {
-                    kind = boxed_slots_.count(rloc.index) ? 1 : 0; ix = rloc.index;
+                    kind = 0; ix = rloc.index;
                 } else if (rloc.kind == VarKind::CAPTURE) {
-                    kind = (rloc.index < captures_.size() && captures_[rloc.index].is_cell) ? 3 : 2; ix = rloc.index;
+                    throw LookCompileError("Captured variable cannot be changed: $" + root->name);
                 } else {
                     kind = 4; ix = add_const(Value(root->name));
                 }
@@ -1729,19 +1608,11 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
     // Her capture: parent'tan değer al → Closure.captures[]'e snapshot
     FunctionCompiler inner("<closure>", e.parameters, e.is_variadic, this);
 
-    // Capture mapping'i inner'a bildir. is_cell'i AUTO-capture (resolve_upvalue) gibi
-    // parent'ta hesapla: yakalanan isim parent'ta boxed local/capture (CELL) ise, closure
-    // gövdesi okurken [0] deref etmeli (emit_read_capture). Eskiden use()-capture'lar is_cell
-    // HESAPLAMADAN eklendi (default false) → boxed loop-local yakalayınca deref atlanıyor,
-    // closure ham CELL'i (["x"]) okuyordu = VM↔tree-walk ayrışması (3b). tree-walk zaten by-ref
-    // doğru okuyor; auto-capture da is_cell'i doğru kuruyordu — yalnız use()-listesi kaçırıyordu.
+    // use() listesini inner'a bildir (0..k-1 capture indeksleri).
     if (e.captures.size() > 255)
         throw LookCompileError("closure captures more than 255 variables", e.loc.line);
-    for (size_t i = 0; i < e.captures.size(); ++i) {
-        auto ploc = resolve_var(e.captures[i]);   // parent (this) scope'unda
-        bool is_cell = is_cell_var(ploc);
-        inner.captures_.push_back({e.captures[i], u8(i, "capture count"), is_cell});
-    }
+    for (size_t i = 0; i < e.captures.size(); ++i)
+        inner.captures_.push_back({e.captures[i], u8(i, "capture count")});
 
     auto proto = inner.compile(*e.body, &e.defaults);
     int fn_idx = (int)proto_.nested.size();
@@ -1758,12 +1629,7 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
         const std::string& cap_name = cap.name;
         auto loc = resolve_var(cap_name);
         uint8_t cr = alloc_temp();
-        if      (loc.kind == VarKind::LOCAL) {
-            // 58 Adım 2a: bir closure BU fonksiyonun local'ini yakalıyor → o local
-            // "kaçıyor" (escape), cell'e taşınmalı. İsmi topla (keşif-geçişi okur).
-            escaping_names_.insert(cap_name);
-            emit(OpCode::MOVE, cr, loc.index);
-        }
+        if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE, cr, loc.index);
         else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, cr, loc.index);
         else {
             uint16_t ni = add_const(Value(cap_name));
@@ -1982,18 +1848,11 @@ uint8_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, u
 std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
     const std::vector<std::unique_ptr<Statement>>& stmts)
 {
-    // 2c: top-level de escape-analiz keşif-geçişinden geçmeli (compile() gibi) —
-    // yoksa top-level döngü-body-captured var'lar cell olmaz (C ayrışması kapanmaz).
-    // LOOK 2 (look/capture_check.h): closure DEĞERİ yakalar → hiçbir yerel "kutulanmaz". Eskiden
-    // burada bir keşif derlemesi koşup closure'ların yakaladığı yerelleri hücreye (cell) çeviriyorduk
-    // ki closure değişkenin sonraki halini görsün; o model kalktı. boxed_names_ hep boş kalır,
-    // hücreyle ilgili dallar artık ölü koddur (ayrı temizlik).
     push_scope();
     for (auto& s : stmts) compile_stmt(*s);
     pop_scope();
     emit(OpCode::RETURN_NULL);
     proto_.reg_count = regs_->max_used();
-    for (auto& c : captures_) proto_.capture_is_cell.push_back(c.is_cell ? 1 : 0);
     return std::make_shared<FunctionProto>(std::move(proto_));
 }
 

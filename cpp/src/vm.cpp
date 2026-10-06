@@ -35,10 +35,10 @@ const bool g_warn_undef = [] {
 
 namespace look {
 
-// 58 parallel transitif deep-clone hook'u. interpreter.h Closure'ı göremez (bytecode.h
+// parallel transitif deep-clone hook'u. interpreter.h Closure'ı göremez (bytecode.h
 // onu sonra tanımlar) → deep_clone_impl BYTECODE_FN görünce burada kayıtlı cloner'ı çağırır.
-// Bir Closure klonlanırken cell-capture'ları VE iç closure'ları özyineli klonlanır; aksi
-// halde parallel task'ın yakaladığı closure'ın içindeki cell parent'la paylaşımlı kalır
+// Bir Closure klonlanırken yakaladığı değerler VE iç closure'lar özyineli klonlanır; aksi
+// halde parallel task'ın yakaladığı closure'ın içindeki dizi/map parent'la paylaşımlı kalır
 // (np1 veri yarışı). Channel/scalar capture'lar paylaşımlı kalır (deep_clone_impl *this).
 static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& visited) {
     auto src = v.as_bytecode_fn();
@@ -46,18 +46,17 @@ static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& 
     if (visited.count(src.get())) return Value(); // döngü kır
     visited.insert(src.get());
     auto nc = std::make_shared<Closure>(src->proto);
-    nc->captures = src->captures;                  // sığ; aşağıda cell/closure olanlar derinleşir
+    nc->captures = src->captures;                  // sığ; aşağıda handle olmayanlar derinleşir
     // R-02: parallel task'a verilen closure'un capture izolasyonu — İZİN LİSTESİ
     // (fail-open) yerine YASAK LİSTESİ (fail-safe). Paylaşımı KASITLI olan handle tipleri
     // (channel/ws/sse — cross-thread iletişim primitifleri) DIŞINDA her capture deep_clone
     // edilir. Böylece `use ($dizi)` gibi düz ARRAY capture'ı da izole olur (eski hâl yalnız
-    // cell + iç-closure klonluyordu; düz dizi sığ shared_ptr'la PAYLAŞILIP parallel task'lar
+    // iç-closure klonluyordu; düz dizi sığ shared_ptr'la PAYLAŞILIP parallel task'lar
     // aynı vector'ü eşzamanlı mutasyona uğratıp YARIŞIYORDU — t1, TSan). Kritik: Value'ya
     // yeni bir tip eklendiğinde otomatik GÜVENLİ tarafta başlar — izin listesi olsaydı her
     // yeni tip sessiz-paylaşım bug'ı olurdu (bu sınıfın 3. yaması). deep_clone_impl her tipi
     // doğru ele alır: ARRAY özyineli klon, closure hook'la klon, scalar/string *this (ucuz,
     // immutable). Interpreter'ın zaten yaptığı izolasyonla parite (differential-güvenli).
-    // (cell flag'i artık gereksiz — cell'ler de handle olmadıkça klonlanır.)
     for (size_t j = 0; j < nc->captures.size(); ++j) {
         Value::Type t = nc->captures[j].type();
         bool shared_by_design = (t == Value::CHANNEL || t == Value::WEBSOCKET
@@ -500,15 +499,13 @@ call_dispatch:
         };
 
         // LOOK 2: yol atamalarının kökü — değişkenin KENDİ yeri (bkz. SET_PATH/PUSH_PATH).
-        //   0 yerel · 1 kutulu yerel (cell) · 2 yakalanan · 3 yakalanan cell · 4 global
+        //   0 yerel · 4 global (yakalanan değişkene yazılamaz: derleyici reddeder)
         auto path_root = [&](const Instruction& h) -> Value* {
             const uint16_t ix = (uint16_t)((h.b << 8) | h.c);
             switch (h.a) {
                 case 0: return &regs_[(size_t)(base + ix)];
-                case 1: return &(*regs_[(size_t)(base + ix)].vec_ptr())[0];
-                case 2: return const_cast<Value*>(&frame.closure->captures[ix]);
-                case 3: return &(*frame.closure->captures[ix].vec_ptr())[0];
-                default: {
+                default: throw LookVmError("internal: unexpected path root kind");
+                case 4: {
                     const std::string& gname = proto->constants[ix].str_ref();
                     auto it = globals_.find(gname);
                     if (it == globals_.end()) throw LookVmError("Undefined variable: " + gname);
@@ -1109,25 +1106,18 @@ call_dispatch:
                     throw LookVmError("parallel(): BYTECODE_FN expected");
                 task_acquire(); // THROW mode: throws if LOOK_PARALLEL_LIMIT reached
                 auto src_cl = R(ins.a).as_bytecode_fn();
-                // 58: CELL captures'ı deep-clone et. Eskiden captures salt-okunur
-                // snapshot'tı (thread-safe). By-ref cell'e geçince, aynı closure iki
-                // thread'de paylaşılan cell'i (aynı shared_ptr array) görür; biri
-                // cell[0]'a yazarsa sessiz veri yarışı. proto.capture_is_cell hangi
-                // capture'ın cell olduğunu söyler; yalnız onları deep-clone et.
+                // Yakalanan değerler thread'e taşınırken klonlanır: closure ile
+                // çağıran aynı dizi/map depolamasını paylaşmasın (paylaşım = yarış).
                 std::shared_ptr<Closure> cl_copy = src_cl;
                 {
-                    const auto& isc = src_cl->proto->capture_is_cell;
-                    // Klonlanacak capture: CELL (mutable → paylaşım=yarış) VEYA CLOSURE
-                    // (BYTECODE_FN). Closure'ı klonlamak şart çünkü içindeki cell'ler aksi
-                    // halde parent'la paylaşımlı kalır (np1: parallel task bir closure
-                    // yakalar, closure-içi cell'i parent değiştirir → veri yarışı). deep_clone
-                    // BYTECODE_FN'i transitif klonlar (bc_fn_cloner hook, aşağıda kayıtlı).
+                    // Yakalanan closure (BYTECODE_FN) da klonlanır: deep_clone onu
+                    // transitif klonlar (bc_fn_cloner hook, aşağıda kayıtlı).
 #ifdef LOOK_NO_TRANSITIVE_CLONE
                     constexpr bool CLONE_CLOSURES = false; // TSan pozitif kontrol: eski (yarışlı) hâl
 #else
                     constexpr bool CLONE_CLOSURES = true;
 #endif
-                    // R-02: capture izolasyonu — İZİN LİSTESİ (yalnız cell+closure klonla)
+                    // R-02: capture izolasyonu — İZİN LİSTESİ (yalnız closure klonla)
                     // yerine YASAK LİSTESİ (fail-safe). Paylaşımı KASITLI handle'lar
                     // (CHANNEL/WS/SSE — cross-thread iletişim) DIŞINDA her capture klonlanır.
                     // Eski hâl düz ARRAY capture'ı sığ paylaşıyordu → parallel task'lar aynı
@@ -1140,15 +1130,13 @@ call_dispatch:
                     };
                     bool needs = false;
                     for (size_t i = 0; i < src_cl->captures.size(); ++i) {
-                        bool cell = (i < isc.size() && isc[i]);
-                        if (cell || (CLONE_CLOSURES && must_clone(src_cl->captures[i].type()))) { needs = true; break; }
+                        if (CLONE_CLOSURES && must_clone(src_cl->captures[i].type())) { needs = true; break; }
                     }
                     if (needs) {
                         cl_copy = std::make_shared<Closure>(src_cl->proto);
                         cl_copy->captures = src_cl->captures;   // sığ (shared_ptr paylaşır)
                         for (size_t i = 0; i < cl_copy->captures.size(); ++i) {
-                            bool cell = (i < isc.size() && isc[i]);
-                            if (cell || (CLONE_CLOSURES && must_clone(cl_copy->captures[i].type())))
+                            if (CLONE_CLOSURES && must_clone(cl_copy->captures[i].type()))
                                 cl_copy->captures[i] = cl_copy->captures[i].clone_for_thread();
                         }
                     }

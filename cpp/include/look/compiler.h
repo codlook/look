@@ -179,8 +179,6 @@ struct LocalVar {
 struct CaptureInfo {
     std::string name;
     uint8_t     capture_index; // Closure.captures[] sırası
-    bool        is_cell = false; // 58: yakalanan değer bir CELL (boxed local) mı →
-                                 // closure gövdesi okurken [0] deref etmeli (by-ref)
 };
 
 // ── Loop stack — break/continue patch ────────────────────────────────────────
@@ -249,13 +247,11 @@ private:
     struct VarLoc { VarKind kind; uint8_t index; };
     VarLoc  resolve_var(const std::string& name, bool for_write = false);
 
-    // ── Local erişim helper'ları (58. bug closure fix hazırlığı) ──────────────
-    // Tüm local okuma/yazma bu iki noktadan geçer → "boxed local" (cell) desteği
-    // buraya lokalize edilecek. ŞU AN davranış-değişmez: düz MOVE (register).
-    void emit_read_local(uint8_t dest, uint8_t slot);   // dest = local(slot) [boxed→cell[0]]
-    void emit_write_local(uint8_t slot, uint8_t src);   // local(slot) = src [boxed→cell[0]]
-    void emit_read_capture(uint8_t dest, uint8_t cap_index); // dest = capture [cell→[0]]
-    bool is_cell_var(const VarLoc& loc) const;          // bu var boxed cell mi
+    // ── Yerel / yakalanan erişim yardımcıları ─────────────────────────────────
+    // Tüm yerel ve yakalanan değişken erişimi bu üç noktadan geçer.
+    void emit_read_local(uint8_t dest, uint8_t slot);   // dest = local(slot)
+    void emit_write_local(uint8_t slot, uint8_t src);   // local(slot) = src
+    void emit_read_capture(uint8_t dest, uint8_t cap_index); // dest = capture
 
     // ── Expression → register ─────────────────────────────────────────────────
     // dest=255 → compiler geçici register seçer; caller free_temp() çağırmalı
@@ -321,24 +317,11 @@ private:
 
     std::vector<LocalVar>            locals_;
     int                              scope_depth_ = 0;
-    int                              loop_depth_  = 0; // 58/2c: döngü-body içinde mi
     bool                             callee_ctx_  = false; // çıplak ad ÇAĞRI HEDEFİ olarak derleniyor
-                                                       // (top-level loop-local cell kararı)
-    std::set<std::string>            outer_globals_;   // 2c: döngü-DIŞI tanımlı top-level
-                                                       // var'lar → döngü-içi reassignment
-                                                       // onları cell YAPMAZ (C2 paritesi)
-    std::vector<CaptureInfo>         captures_;  // use() listesi
-
-    // ── 58. bug closure fix: escape-analiz (Adım 2a) ──────────────────────────
-    // no_discovery_: keşif-geçişinde true → kendi alt-keşfini yapmaz (sonsuz
-    //   özyineleme önlenir). escaping_names_: BU fonksiyonun bir closure tarafından
-    //   yakalanan local'leri (capture-load sitesinde toplanır). boxed_names_:
-    //   keşif-geçişinden gelen, cell'e taşınacak isimler. boxed_slots_: o isimlerin
-    //   register slot'ları (declare_local doldurur; Adım 2b helper'da kullanılacak).
-    bool                             no_discovery_ = false;
-    std::set<std::string>            escaping_names_;
-    std::set<std::string>            boxed_names_;
-    std::set<uint8_t>                boxed_slots_;
+    std::set<std::string>            outer_globals_;   // üst düzeyde (blok dışı) atanmış adlar:
+                                                       // bir blok bu ada atarsa yeni yerel
+                                                       // yaratmaz, global'e yazar
+    std::vector<CaptureInfo>         captures_;  // use() listesi + otomatik yakalananlar
 
     std::vector<LoopContext>         loop_stack_;  // back() = en iç bağlam
 

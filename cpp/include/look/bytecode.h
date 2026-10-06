@@ -136,8 +136,8 @@ enum class OpCode : uint8_t {
                      // right after LOAD_GLOBAL for a bare (no '$') name read as a VALUE
     SET_PATH,        // LOOK 2 copy-on-write assignment through an index path:
                      //   root[k0][k1]...[kn-1] = r[a];  keys in r[b]..r[b+c-1];  next NOP: a = root
-                     //   kind (0 local, 1 boxed local, 2 capture, 3 cell capture, 4 global), b<<8|c = its
-                     //   register / capture index / name constant. Each level is detached (copied if
+                     //   kind (0 local, 4 global), b<<8|c = its
+                     //   register / name constant. Each level is detached (copied if
                      //   shared) in the variable's own slot before the write.
     PUSH_PATH,       // r[a] = push(root[k0]..[kc-1], value): keys in r[b]..; next NOP = root (as SET_PATH),
                      //   then a NOP whose a = the value register. Appends to the VARIABLE (copy on write).
@@ -189,11 +189,6 @@ struct FunctionProto {
 
     // Parametre isimleri (hata mesajı için)
     std::vector<std::string>             params;
-
-    // 58: hangi capture'lar CELL (boxed, by-ref) — parallel() thread'e taşırken
-    // cell'ler deep-clone edilmeli (paylaşılan cell → thread'ler arası veri yarışı).
-    // captures ile paralel (index i). Boş ise hiç cell yok (hızlı yol).
-    std::vector<uint8_t>                 capture_is_cell;
 };
 
 // ── Closure object — runtime ──────────────────────────────────────────────────
