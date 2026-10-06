@@ -40,7 +40,8 @@ route stays on the VM.
 Related, test mode only: with `LOOK_VM_STRICT=1` the same error escaped the worker without
 releasing its database connections, and after as many errors as there are workers the
 server stopped answering. Fixed in the same release.
-nAlso in 1.0.8, not a security matter: a timer armed while the timer thread was already
+
+Also in 1.0.8, not a security matter: a timer armed while the timer thread was already
 waiting (in practice every timer after the first one in the process) could fire up to 30
 seconds late. Timers now fire when they are due.
 
