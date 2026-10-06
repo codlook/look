@@ -144,6 +144,13 @@ jobs:
             fi
           done
 
+      # LOOK 2: http::stream passes state explicitly (callback($chunk, $state) returns the
+      # next state), since a closure can no longer keep it in a captured variable.
+      - name: http::stream state (both engines)
+        run: |
+          cd cpp
+          bash tests/http_stream_state_test.sh ./build/lk
+
       # LOOK 2 closure rule: a closure captures the value and cannot change it. A write to a
       # captured variable is a parse error on both engines; a variable that changes after it
       # was captured is a warning from `lk --check`.

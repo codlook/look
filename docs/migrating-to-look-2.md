@@ -210,6 +210,35 @@ When no route matches and the application has no handler of its own, the respons
 that body must look at the status code, or the application must register its own 404
 handler.
 
+### `http::stream`: the callback takes and returns its state — error at run time
+
+The callback is called as `$callback($chunk, $state)` and what it returns is the state for
+the next call. The first state is `$opts["state"]` (null if absent) and the last one is in
+the response as `state`. A callback declared with one parameter must add the second.
+
+This replaces keeping the unfinished line in a captured variable, which no longer loads:
+
+```
+# LOOK 1
+$buf = ["rest" => ""]
+http::stream("GET", $url, "", [], function($chunk) use ($buf) { $buf["rest"] = ... })
+
+# LOOK 2
+http::stream("GET", $url, "", [], function($chunk, $rest) { ...; return $new_rest },
+             ["state" => ""])
+```
+
+### Handles are shared, and that is the way to share
+
+Channels, WebSocket and SSE connections and database connections are handles, not values:
+copying one gives another reference to the same thing, and a closure that captured a
+channel can send on it. They are the deliberate way to share state.
+
+They are not isolated between requests. A channel created at the top level of a web
+application and used by a route is the same channel for every request and every worker.
+Use that when requests are meant to talk to each other; do not use a handle to get around
+the closure rule inside one request — pass the value in and return the new one.
+
 ## Not part of LOOK 2
 
 These arrived in 1.0.x releases and apply to LOOK 1 as well; they are listed because a

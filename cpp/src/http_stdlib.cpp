@@ -80,11 +80,24 @@ Module make_http_module(Interpreter* interp) {
         if (cb.type() != Value::FUNCTION && cb.type() != Value::BYTECODE_FN)
             throw std::runtime_error("http::stream() — the 5th arg (callback) must be a function");
 
-        HttpChunkCallback on_chunk = [interp, cb](const std::string& chunk) {
-            interp->invoke(cb, { Value(chunk) });
+        // LOOK 2 — DURUM: geri cagirma, cagrilar arasinda bir sey tasimak icin (yarim kalan satir,
+        // sayac) yakaladigi degiskene yazamaz (closure degeri yakalar). Durum ACIKCA akar:
+        // ilk deger $opts["state"] (yoksa null); geri cagirma ($chunk, $state) alir ve DONUS
+        // degeri sonraki cagrinin $state'idir; sonuncusu yanitta "state" olarak doner.
+        Value state;
+        if (args.size() >= 6 && args[5].type() == Value::ARRAY) {
+            const auto& o = *args[5].as_array();
+            for (size_t i = 1; i + 1 < o.size(); i += 2)
+                if (o[i].type() == Value::STRING && o[i].str_ref() == "state") { state = o[i + 1]; break; }
+        }
+        HttpChunkCallback on_chunk = [interp, cb, &state](const std::string& chunk) {
+            state = interp->invoke(cb, { Value(chunk), state });
         };
         HttpClientResponse resp = http_request_stream(method, url, reqbody, hdrs, opts, on_chunk);
-        return response_to_value(resp);
+        Value out = response_to_value(resp);
+        out.as_array()->push_back(Value(std::string("state")));
+        out.as_array()->push_back(state);
+        return out;
     };
 
     // http::get($url [, $headers [, $opts]])

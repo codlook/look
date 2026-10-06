@@ -3596,7 +3596,7 @@ look install github.com/Codlook/look-packages
     <tr><td>http::put($url, $body [,$headers [,$opts]])</td><td>HTTP PUT</td></tr>
     <tr><td>http::patch($url, $body [,$headers [,$opts]])</td><td>HTTP PATCH</td></tr>
     <tr><td>http::delete($url [,$headers [,$opts]])</td><td>HTTP DELETE</td></tr>
-    <tr><td>http::stream($method, $url, $body, $headers, $callback [,$opts])</td><td><strong>Streaming</strong> — body chunks (chunked-decoded) delivered to $callback($chunk) as they arrive. For SSE / live token streams (e.g. LLM APIs).</td></tr>
+    <tr><td>http::stream($method, $url, $body, $headers, $callback [,$opts])</td><td><strong>Streaming</strong> — body chunks (chunked-decoded) delivered to $callback($chunk, $state) as they arrive; what the callback returns is the next $state. For SSE / live token streams (e.g. LLM APIs).</td></tr>
   </table>
 
   <p><strong>$headers</strong> — assoc array (optional): <code>["Authorization" => "Bearer token"]</code><br>
@@ -3615,10 +3615,19 @@ look install github.com/Codlook/look-packages
 
   <h3>http::stream — live streaming</h3>
   <p><code>http::stream()</code> does not buffer the whole response; instead it calls your <code>$callback</code> with each body chunk as it arrives. Pairs naturally with <code>route("SSE", ...)</code> and <code>channel()</code> — the building blocks for forwarding an upstream token stream (e.g. a Claude/LLM SSE response) straight to your client. Returns a response assoc (<code>status</code>, <code>headers</code>, <code>error</code>); the body arrives via the callback.</p>
-  <pre><code><span class="ns">http::</span><span class="fn">stream</span>(<span class="str">"POST"</span>, <span class="var">$url</span>, <span class="var">$json_body</span>, <span class="var">$headers</span>, <span class="kw">function</span>(<span class="var">$chunk</span>) {
-    <span class="cm"># her parca geldikce — SSE cikisina / kanala yaz</span>
+  <pre><code><span class="ns">http::</span><span class="fn">stream</span>(<span class="str">"POST"</span>, <span class="var">$url</span>, <span class="var">$json_body</span>, <span class="var">$headers</span>, <span class="kw">function</span>(<span class="var">$chunk</span>, <span class="var">$state</span>) {
     <span class="kw">print</span>(<span class="var">$chunk</span>)
+    <span class="kw">return</span> <span class="var">$state</span>
 }, [<span class="str">"timeout"</span> => <span class="num">60000</span>])</code></pre>
+  <p><strong>State between chunks.</strong> A chunk can end in the middle of a line, so a callback usually has to remember something from one call to the next. A closure cannot change what it captured, so the state is passed explicitly: the first value is <code>$opts["state"]</code> (null if absent), the callback receives it as its second parameter, and what the callback returns is the state for the next call. The last state comes back in the response as <code>state</code>.</p>
+  <pre><code>$r = http::stream("GET", $url, "", [], function($chunk, $st) {
+    $parts = string::split($st["rest"] . $chunk, "\n")
+    $n = count($parts)
+    $lines = $st["lines"]
+    for ($i = 0; $i &lt; $n - 1; $i = $i + 1) { push($lines, $parts[$i]) }
+    return ["rest" =&gt; $parts[$n - 1], "lines" =&gt; $lines]
+}, ["state" =&gt; ["rest" =&gt; "", "lines" =&gt; []]])
+# $r["state"]["lines"] holds every complete line</code></pre>
   <div class="callout tip"><p>The official <code>ai</code> module (<code>lk module install github.com/codlook/look-modules/ai</code>) is built on top of this — with <code>ai_stream()</code> you get token-by-token responses from the Claude API.</p></div>
 
   <p><strong>Return value</strong> — always an assoc array:</p>

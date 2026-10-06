@@ -3678,7 +3678,7 @@ A self-contained HTTP/HTTPS client — uses the system OpenSSL on Linux and Scha
 | http::put($url, $body [,$headers [,$opts]]) | HTTP PUT |
 | http::patch($url, $body [,$headers [,$opts]]) | HTTP PATCH |
 | http::delete($url [,$headers [,$opts]]) | HTTP DELETE |
-| http::stream($method, $url, $body, $headers, $callback [,$opts]) | **Streaming** — body chunks (chunked-decoded) delivered to $callback($chunk) as they arrive. For SSE / live token streams (e.g. LLM APIs). |
+| http::stream($method, $url, $body, $headers, $callback [,$opts]) | **Streaming** — body chunks (chunked-decoded) delivered to $callback($chunk, $state) as they arrive; what the callback returns is the next $state. For SSE / live token streams (e.g. LLM APIs). |
 
 **$headers** — assoc array (optional): `["Authorization" => "Bearer token"]`
  **$opts** — assoc array (optional): `["timeout" => 5000]` (ms, default 10000) · `["follow" => true]` follows 3xx redirects (default off; each hop re-checks the SSRF guard) · `["max_redirects" => 5]` hop cap · `["proxy" => "http://host:port"]` routes through an HTTP proxy. On a cross-origin redirect, `Authorization`, `Cookie` and `Proxy-Authorization` are dropped before the request is re-sent, so an open redirect on a trusted host can't leak them. Responses are transparently gzip-decoded (bomb-guarded) and, when the Content-Type declares a supported single-byte charset (iso-8859-9, windows-1254, …), converted to UTF-8.
@@ -3687,13 +3687,26 @@ A self-contained HTTP/HTTPS client — uses the system OpenSSL on Linux and Scha
 
 ### http::stream — live streaming
 
-`http::stream()` does not buffer the whole response; instead it calls your `$callback` with each body chunk as it arrives. Pairs naturally with `route("SSE", ...)` and `channel()` — the building blocks for forwarding an upstream token stream (e.g. a Claude/LLM SSE response) straight to your client. Returns a response assoc (`status`, `headers`, `error`); the body arrives via the callback.
+`http::stream()` does not buffer the whole response; instead it calls your `$callback` with each body chunk as it arrives. Pairs naturally with `route("SSE", ...)` and `channel()` — the building blocks for forwarding an upstream token stream (e.g. a Claude/LLM SSE response) straight to your client. (`status`, `headers`, `error`); the body arrives via the callback.
 
 ```lk
-http::stream("POST", $url, $json_body, $headers, function($chunk) {
-    # her parca geldikce — SSE cikisina / kanala yaz
+http::stream("POST", $url, $json_body, $headers, function($chunk, $state) {
     print($chunk)
+    return $state
 }, ["timeout" => 60000])
+```
+
+**State between chunks.** A chunk can end in the middle of a line, so a callback usually has to remember something from one call to the next. A closure cannot change what it captured, so the state is passed explicitly: the first value is `$opts["state"]` (null if absent), the callback receives it as its second parameter, and what the callback returns is the state for the next call. The last state comes back in the response as `state`.
+
+```lk
+$r = http::stream("GET", $url, "", [], function($chunk, $st) {
+    $parts = string::split($st["rest"] . $chunk, "\n")
+    $n = count($parts)
+    $lines = $st["lines"]
+    for ($i = 0; $i < $n - 1; $i = $i + 1) { push($lines, $parts[$i]) }
+    return ["rest" => $parts[$n - 1], "lines" => $lines]
+}, ["state" => ["rest" => "", "lines" => []]])
+# $r["state"]["lines"] holds every complete line
 ```
 
 > The official `ai` module (`lk module install github.com/codlook/look-modules/ai`) is built on top of this — with `ai_stream()` you get token-by-token responses from the Claude API.
