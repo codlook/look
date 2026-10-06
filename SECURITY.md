@@ -16,6 +16,40 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-06 — A failing route handler ran twice in one request (duplicate writes)
+
+**Affected:** every release up to and including 1.0.7, on the default engine (the bytecode
+VM), in `--mode http` and FastCGI. Applications started with `LOOK_BYTECODE=0` are not
+affected. **Fixed in:** 1.0.8.
+
+When a route handler ended with an uncaught error — a plain `throw`, a failed database
+query, an undefined variable, any run-time error — the server treated it as a fault of the
+VM and ran the same request again on the tree-walk engine. Everything the handler had done
+before the error was done twice in that one request: a row inserted twice, a job pushed
+twice, an outgoing HTTP request (a payment, an e-mail, an SMS) sent twice. The client saw
+one `500`. The route then stayed on the slower engine until the server was restarted, so a
+request that could be made to fail (for example through its input) also slowed that route
+down for everyone.
+
+Measured on 1.0.7: a handler that inserts one row and then fails wrote two rows for one
+request.
+
+A run-time error is now answered with `500` once; the handler is never run again and the
+route stays on the VM.
+
+Related, test mode only: with `LOOK_VM_STRICT=1` the same error escaped the worker without
+releasing its database connections, and after as many errors as there are workers the
+server stopped answering. Fixed in the same release.
+nAlso in 1.0.8, not a security matter: a timer armed while the timer thread was already
+waiting (in practice every timer after the first one in the process) could fire up to 30
+seconds late. Timers now fire when they are due.
+
+**What to do:** upgrade to 1.0.8. If a handler of yours writes and can then fail, check
+your data for duplicates created by failed requests: look for `Dispatch error` or
+`VM BUG` lines in the server log and compare with the rows, jobs or outgoing calls made at
+those times. Wrapping a multi-step write in `db::transaction` protects the database part
+on every version, because the failed attempt is rolled back.
+
 ### 2026-10-04 — Timer and WebSocket handlers could still change setup arrays (1.0.5)
 
 **Affected:** every release up to and including 1.0.4, when the application runs on the
