@@ -114,6 +114,21 @@ jobs:
           cd cpp
           bash tests/realtime_isolation_test.sh ./build/lk-fcgi
 
+      # A route handler runs once per request, also when it fails (until 1.0.8 an error made
+      # the server run the same request again on the other engine: duplicate writes), and an
+      # error under LOOK_VM_STRICT=1 no longer takes a worker down.
+      - name: A failing handler runs once (VM, strict VM, tree-walk)
+        run: |
+          cd cpp
+          bash tests/no_double_execution_test.sh ./build/lk-fcgi
+
+      # A timer fires when it is due. One armed while the timer thread was already asleep
+      # used to wait for the old deadline (up to 30 seconds).
+      - name: Timers fire on time
+        run: |
+          cd cpp
+          bash tests/timer_late_test.sh ./build/lk-fcgi
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)
