@@ -41,6 +41,16 @@ Related, test mode only: with `LOOK_VM_STRICT=1` the same error escaped the work
 releasing its database connections, and after as many errors as there are workers the
 server stopped answering. Fixed in the same release.
 
+**Behaviour change in 1.0.8.** Routes that call a module function the VM does not provide
+(`timer::after`, `timer::every`, `jobs::worker`, ...) used to work only because of that
+second run. The server now finds them at startup — through the route, its nested functions
+and the global functions it calls by name — runs them on the tree-walk engine from the
+first request, and writes one line per route to the log (`Route ... runs on the
+interpreter: it reaches ...`). A route that reaches such a function only through a
+variable (for example a function stored in an array and called from there) cannot be found
+that way; it used to answer after running twice and now answers `500`. Call the function
+by name, or start the server with `LOOK_BYTECODE=0`.
+
 Also in 1.0.8, not a security matter: a timer armed while the timer thread was already
 waiting (in practice every timer after the first one in the process) could fire up to 30
 seconds late. Timers now fire when they are due.
