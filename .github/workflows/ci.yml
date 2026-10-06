@@ -151,6 +151,19 @@ jobs:
           cd cpp
           bash tests/http_stream_state_test.sh ./build/lk
 
+      # Block scope on the web path: a variable first assigned in a top-level block is not a
+      # global, so no route sees it (the command-line case is the step above).
+      - name: Block scope on the web path (both engines)
+        run: |
+          cd cpp
+          bash tests/block_scope_web_test.sh build/lk-fcgi
+
+      # LOOK 2 transition: calls with the wrong number of arguments, listed by `lk --check`.
+      - name: Argument count check (lk --check warnings)
+        run: |
+          cd cpp
+          bash tests/arg_count_check_test.sh ./build/lk
+
       # LOOK 2 closure rule: a closure captures the value and cannot change it. A write to a
       # captured variable is a parse error on both engines; a variable that changes after it
       # was captured is a warning from `lk --check`.
