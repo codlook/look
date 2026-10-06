@@ -44,6 +44,7 @@ private:
     std::map<int, Entry> entries_;
     std::thread          thread_;
     std::atomic<bool>    running_{true};
+    bool                 dirty_ = false;   // mtx_ altında: liste değişti → bekleme süresi yeniden hesaplanır
 };
 
 } // namespace look

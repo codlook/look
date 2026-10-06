@@ -38,6 +38,7 @@
 #include <iostream>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 #include <thread>
 
 #ifdef _WIN32
@@ -317,6 +318,38 @@ static bool look_vm_strict() {
     static const bool v = []{ const char* e = std::getenv("LOOK_VM_STRICT"); return e && e[0] == '1'; }();
     return v;
 }
+// 1.0.8 — Bir rota VM'in SAĞLAMADIĞI bir yerleşik fonksiyona ulaşıyor mu? (rota içinde
+// timer::after, jobs::worker ... — derleyici bunları `LOAD_GLOBAL "mod::fn"` + genel CALL olarak
+// derler, VM'de değer null olur ve çağrı "Not callable" ile düşer.) Eskiden bu rotalar yalnızca
+// "hata olunca aynı isteği yorumlayıcıda yeniden çalıştır" ağı sayesinde çalışıyordu; o ağ
+// işleyiciyi İKİ KEZ çalıştırdığı için kalktı. Karar artık ÇALIŞMADAN ÖNCE, kurulumda verilir:
+// rotanın proto'su, iç proto'ları ve adıyla çağırdığı global fonksiyonlar (geçişli) taranır;
+// VM global'lerinde karşılığı olmayan bir "mod::fn" adı yükleniyorsa rota baştan yorumlayıcıya
+// sabitlenir. Değişken üzerinden yapılan dinamik çağrı görülemez: o durumda istek 500 alır.
+static bool proto_needs_interpreter(const look::FunctionProto* p,
+                                    const std::unordered_map<std::string, look::Value>& globals,
+                                    std::unordered_set<const look::FunctionProto*>& seen,
+                                    std::string& which) {
+    if (!p || !seen.insert(p).second) return false;
+    for (const auto& ins : p->code) {
+        if (ins.op != look::OpCode::LOAD_GLOBAL) continue;
+        const size_t ni = (size_t(ins.b) << 8) | ins.c;
+        if (ni >= p->constants.size() || p->constants[ni].type() != look::Value::STRING) continue;
+        const std::string& name = p->constants[ni].str_ref();
+        auto g = globals.find(name);
+        if (g == globals.end()) {
+            if (name.find("::") != std::string::npos) { which = name; return true; }
+            continue;
+        }
+        if (g->second.type() == look::Value::BYTECODE_FN)
+            if (auto cl = g->second.as_bytecode_fn())
+                if (proto_needs_interpreter(cl->proto.get(), globals, seen, which)) return true;
+    }
+    for (const auto& n : p->nested)
+        if (proto_needs_interpreter(n.get(), globals, seen, which)) return true;
+    return false;
+}
+
 static void whole_program_fallback(const std::string& why) {
     const std::string msg = "the VM cannot run this program (" + why + "); the WHOLE application "
                             "runs in the tree-walk interpreter, which is much slower";
@@ -687,6 +720,33 @@ static void run_setup_http(const fs::path& script) {
             if (!g_http_app.vm_routes.empty()) {
                 g_http_app.vm_routes_ready = true;
                 g_http_app.vm_route_disabled.assign(g_http_app.vm_routes.size(), 0);
+                // 1.0.8: VM'in sağlamadığı bir yerleşik fonksiyona ulaşan rotayı (ya da herkesi
+                // etkileyen bir before_route'u) BAŞTAN yorumlayıcıya sabitle — bkz.
+                // proto_needs_interpreter. LOOK_VM_STRICT=1'de sabitleme yok: çağrı 500 verir.
+                if (!look_vm_strict()) {
+                    auto needs = [&](const look::Value& fn, std::string& which) {
+                        if (fn.type() != look::Value::BYTECODE_FN) return false;
+                        auto cl = fn.as_bytecode_fn();
+                        std::unordered_set<const look::FunctionProto*> seen;
+                        return cl && proto_needs_interpreter(cl->proto.get(), g_http_app.vm_setup_globals, seen, which);
+                    };
+                    std::string mw_which;
+                    bool mw_needs = false;
+                    for (const auto& mw : g_http_app.vm_before_routes)
+                        if (needs(mw, mw_which)) { mw_needs = true; break; }
+                    for (size_t i = 0; i < g_http_app.vm_routes.size(); ++i) {
+                        std::string which = mw_which;
+                        bool n = mw_needs || needs(g_http_app.vm_routes[i].fn, which);
+                        for (const auto& mw : g_http_app.vm_routes[i].middlewares)
+                            if (!n && needs(mw, which)) n = true;
+                        if (!n) continue;
+                        g_http_app.vm_route_disabled[i] = 1;
+                        look::g_vm_disabled_routes().fetch_add(1, std::memory_order_relaxed);
+                        look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+                            "Route " + g_http_app.vm_routes[i].pattern + " runs on the interpreter: it reaches "
+                            + which + ", which the VM does not provide");
+                    }
+                }
                 std::cerr << "[BYTECODE] VM routes: " << g_http_app.vm_routes.size() << " registered\n";
                 look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
                     "VM dispatch ready — " + std::to_string(g_http_app.vm_routes.size()) + " route");
@@ -1295,29 +1355,41 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             //   • mesaj net eylem çağrısı içerir (bu bir BUG'dır, "bilgi" değil),
             //   • LOOK_VM_STRICT=1 → fallback KAPALI: hata 500 olarak yüzeye çıkar
             //     (CI/staging için; prod'da default AÇIK kalır — kullanıcı sitesi düşmesin).
-            static const bool vm_strict = []{
-                const char* v = std::getenv("LOOK_VM_STRICT");
-                return v && v[0] == '1';
-            }();
+            //
+            // 1.0.8 — İŞLEYİCİ ASLA YENİDEN ÇALIŞTIRILMAZ. Yukarıdaki "güvenlik ağı" her hatayı
+            // (düz `throw`, veritabanı hatası, tanımsız değişken) "VM hatası" sayıp AYNI isteği
+            // yorumlayıcıda baştan çalıştırıyordu: hatadan önce yapılan her yan etki (INSERT,
+            // jobs::push, dış HTTP isteği) tek istekte İKİ KEZ gerçekleşiyordu, ve rota kalıcı
+            // olarak yavaş yola sabitleniyordu (kullanıcı girdisiyle tetiklenebilir). Ölçüm:
+            // "INSERT; sonra hata" yapan rota tek istekte 2 satır yazıyordu.
+            // Artık çalışma zamanı hatası yorumlayıcı yolundakiyle AYNI sonucu verir: 500 + log.
+            // Yorumlayıcıya geçiş yalnız ÇALIŞMADAN ÖNCE verilen kararla olur (VmRouteDisabled:
+            // derlenemeyen/önceden sabitlenmiş rota).
+            // Tek istisna: VM'de bağlı olmayan yerleşik fonksiyon ("unavailable (not linked)") —
+            // rota SONRAKİ istekler için yorumlayıcıya sabitlenir; bu istek yine yeniden çalışmaz.
+            // LOOK_VM_STRICT=1 eskiden burada yeniden fırlatıyordu: istisna worker'dan çıkıyor,
+            // bağlantılar bırakılmıyor ve worker sayısı kadar hatadan sonra sunucu asılıyordu.
+            const std::string what = vm_e.what();
+            const bool unlinked = what.find("unavailable (not linked)") != std::string::npos;
             // route_disabled byte-flag'i eşzamanlı request-thread'leri okur (vm.cpp dispatch)
             // → atomic_ref ile eriş (data race/UB önle; relaxed — advisory flag).
-            if (vm_failed_route >= 0 &&
+            if (unlinked && vm_failed_route >= 0 &&
                 vm_failed_route < (int)g_http_app.vm_route_disabled.size() &&
                 !std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).load(std::memory_order_relaxed)) {
-                if (!vm_strict) {
-                    std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).store(1, std::memory_order_relaxed);
-                    look::g_vm_disabled_routes().fetch_add(1, std::memory_order_relaxed);  // distinct disabled-route sayısı
-                }
+                std::atomic_ref<uint8_t>(g_http_app.vm_route_disabled[vm_failed_route]).store(1, std::memory_order_relaxed);
+                look::g_vm_disabled_routes().fetch_add(1, std::memory_order_relaxed);  // distinct disabled-route sayısı
                 look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                    std::string("VM BUG — route permanently fell back to the interpreter (SLOW PATH; "
+                    std::string("VM BUG — route moved to the interpreter for later requests (SLOW PATH; "
                                 "this is a bug, please report): ") +
-                    g_http_app.vm_routes[vm_failed_route].pattern + " — " + vm_e.what());
-            } else {
-                look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                    std::string("VM BUG — interpreter fallback (this is a bug, please report): ")
-                    + vm_e.what());
+                    g_http_app.vm_routes[vm_failed_route].pattern + " — " + what);
             }
-            if (vm_strict) throw;   // strict: maskeleme yok — hata yüzeye çıksın
+            if (web.status_code == 200) {
+                web.status_code = 500;
+                web.status_text = "Internal Server Error";
+            }
+            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
+                std::string("Dispatch error: ") + what);
+            vm_ok = true;   // yanıt hazır (500) — yorumlayıcıda YENİDEN ÇALIŞTIRMA yok
         }
 
         if (!vm_ok) {

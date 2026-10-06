@@ -25,6 +25,7 @@ int TimerManager::after(int ms, std::function<void()> cb) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
         entries_[id] = std::move(e);
+        dirty_ = true;
     }
     cv_.notify_one();
     return id;
@@ -40,6 +41,7 @@ int TimerManager::every(int ms, std::function<void()> cb) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
         entries_[id] = std::move(e);
+        dirty_ = true;
     }
     cv_.notify_one();
     return id;
@@ -49,6 +51,7 @@ void TimerManager::cancel(int id) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
         entries_.erase(id);   // Hemen sil — callback lambda ($ws shared_ptr) serbest kalır
+        dirty_ = true;
     }
     cv_.notify_one();         // Thread'i uyandır — deadline güncellensin
 }
@@ -70,8 +73,15 @@ void TimerManager::run() {
                 deadline = e.next_fire;
         }
 
+        // 1.0.8: `deadline` beklemeye girmeden ÖNCE hesaplanır. Beklerken eklenen (ya da iptal
+        // edilen) bir zamanlayıcı cv'yi uyandırıyordu ama yüklem "henüz vakti gelmedi" deyip
+        // ESKİ deadline'a (boşken 30 sn) kadar yeniden uyuyordu → yönetici boştayken kurulan
+        // zamanlayıcı 30 saniyeye kadar geç çalışıyordu. Yalnız süreçteki İLK zamanlayıcı,
+        // iş parçacığı henüz beklemeye girmeden eklendiği için zamanında çalışıyordu.
+        // Liste değişince (dirty_) uyan ve deadline'ı yeniden hesapla.
+        dirty_ = false;
         cv_.wait_until(lk, deadline, [&] {
-            if (!running_.load()) return true;
+            if (!running_.load() || dirty_) return true;
             auto t = std::chrono::steady_clock::now();
             for (auto& [id, e] : entries_)
                 if (!e.cancelled && e.next_fire <= t) return true;
