@@ -2044,6 +2044,26 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 entry.middlewares  = route_middlewares;
                 std::string rstr = parse_pattern(pattern, entry.param_names);
                 entry.pattern_re = std::regex(rstr);
+                // 1.0.10 — UYARI (davranış değişmez): yol parametreleri işleyiciye SIRAYLA verilir.
+                // `/c/{id}/{slug}` rotasında `function($slug)` yazan işleyici sessizce `id` alır;
+                // rotada olmayan fazladan bir parametre sessizce null olur. Adı sırasındaki yol
+                // parametresiyle tutmayan her işleyici parametresi için başlangıçta bir uyarı yazılır.
+                // (WS/SSE'de ilk parametre bağlantıdır.) LOOK 2'de eşleşme ADA göredir.
+                if (callback.type() == Value::FUNCTION && req_method != "404") {
+                    const auto& hp = callback.as_function()->parameters;
+                    const size_t skip = (req_method == "WS" || req_method == "SSE") ? 1 : 0;
+                    for (size_t i = skip; i < hp.size(); ++i) {
+                        const std::string have = (!hp[i].empty() && hp[i][0] == '$') ? hp[i].substr(1) : hp[i];
+                        const size_t pi = i - skip;
+                        if (pi < entry.param_names.size() && entry.param_names[pi] == have) continue;
+                        look::Logger::instance().log(look::LogLevel::LOG_WARN, "ROUTE",
+                            "route " + req_method + " " + pattern + ": handler parameter $" + have
+                            + (pi < entry.param_names.size()
+                                 ? " receives the path parameter '" + entry.param_names[pi] + "' (parameters are passed by position, not by name)"
+                                 : " is always null (the route has no path parameter at that position)")
+                            + "; rename it, or read path parameters with request::param()");
+                    }
+                }
                 route_registry_.push_back(std::move(entry));
                 return Value();
             }

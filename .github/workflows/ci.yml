@@ -136,6 +136,13 @@ jobs:
           cd cpp
           bash tests/setup_once_test.sh ./build/lk-fcgi
 
+      # LOOK 1 passes path parameters by position; a handler whose parameter names do not match
+      # its path gets the wrong value silently. Behaviour unchanged, reported at startup.
+      - name: Route parameter name warning
+        run: |
+          cd cpp
+          bash tests/route_param_warning_test.sh ./build/lk-fcgi
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)
