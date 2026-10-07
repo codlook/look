@@ -2235,7 +2235,7 @@ route("WS", "/chat", function($ws) use ($hub) {
 | --- | --- |
 | `ws::send($ws, $msg)` | Send a text frame to this WS connection |
 | `ws::on($ws, "message", fn)` | Message callback — `fn($data)` is called on every frame |
-| `ws::on($ws, "close", fn)` | On connection close — `fn()` |
+| `ws::on($ws, "close", fn)` | The client went away — `fn()` runs once, on a close frame or a dropped connection; not when the server calls `ws::close` |
 | `ws::close($ws)` | Send a close frame, close the connection |
 | `ws::broadcast($msg)` | Send to all connected WS clients (broadcast-safe) |
 | `ws::clients()` | Number of active WS connections |
