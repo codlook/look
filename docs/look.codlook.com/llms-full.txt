@@ -1282,7 +1282,7 @@ route("GET", "/menu/{company}/{category}", function($company, $category) {
 })
 ```
 
-Parameters use `{name}` braces and arrive both as function arguments (in order) and via `request::param("name")` — use whichever reads better.
+Parameters use `{name}` braces and arrive as function arguments matched by name — a handler parameter `$id` takes the path parameter `{id}`, in any order and any subset — and via `request::param("name")`. A handler parameter that is not a path parameter of its route is an error at startup.
 
 > **Static routes win.** A static path always takes priority over a parameterized one, regardless of registration order — so `/user/new` matches its own handler even when `/user/{id}` is registered first. Matching is deterministic, not order-dependent.
 

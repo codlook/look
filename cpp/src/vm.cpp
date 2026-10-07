@@ -15,6 +15,7 @@
 #include "look/logger.h"
 #include "look/builtins.h"      // builtin_names() — hata mesajinda modul/fonksiyon adi
 #include "look/int_overflow.h"  // i64_add_ovf — INT+INT aritmetik fast-path
+#include "look/route_params.h"   // LOOK 2: yol parametreleri ada göre
 
 #include <sstream>
 #include <cmath>
@@ -231,8 +232,13 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
                 try { call_closure(request_local(*mw, own), {}); }
                 catch (const RouteStopException&) { stopped = true; break; }
             }
-            if (!stopped)
-                call_closure(request_local(*entry.fn, own), std::move(params));
+            if (!stopped) {
+                // LOOK 2: yol parametreleri işleyiciye ADA göre verilir (look/route_params.h).
+                std::vector<Value> named_args;
+                if (web_ctx_) look::route_args_by_name(m, p, entry.fn->proto->params, 0, web_ctx_->route_params, named_args);
+                else          named_args = std::move(params);
+                call_closure(request_local(*entry.fn, own), std::move(named_args));
+            }
             return;
         }
     }

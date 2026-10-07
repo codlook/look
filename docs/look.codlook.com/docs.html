@@ -1302,7 +1302,7 @@ Stack trace:
 <span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/menu/{company}/{category}"</span>, <span class="kw">function</span>(<span class="var">$company</span>, <span class="var">$category</span>) {
     <span class="kw">print</span>(<span class="str">"{<span class="var">$company</span>} / {<span class="var">$category</span>}"</span>)
 })</code></pre>
-  <p>Parameters use <code>{name}</code> braces and arrive both as function arguments (in order) and via <code>request::param("name")</code> — use whichever reads better.</p>
+  <p>Parameters use <code>{name}</code> braces and arrive as function arguments matched by name — a handler parameter <code>$id</code> takes the path parameter <code>{id}</code>, in any order and any subset — and via <code>request::param("name")</code>. A handler parameter that is not a path parameter of its route is an error at startup.</p>
   <div class="callout tip">
     <p><strong>Static routes win.</strong> A static path always takes priority over a parameterized one, regardless of registration order — so <code>/user/new</code> matches its own handler even when <code>/user/{id}</code> is registered first. Matching is deterministic, not order-dependent.</p>
   </div>

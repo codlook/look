@@ -14,6 +14,7 @@
 #include "look/websocket.h"
 #include "look/sse.h"
 #include "look/timer.h"
+#include "look/route_params.h"
 #include "look/jobs_store.h"
 #include <regex>
 #include <thread>
@@ -2086,6 +2087,10 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
 
             if (setup_mode_) {
                 // Warm start: kaydet, dispatch etme
+                // LOOK 2: işleyici parametreleri yol parametrelerine ADA göre bağlanır; rotada olmayan
+                // ad kayıt anında (yüklemede) hatadır — look/route_params.h.
+                if (callback.type() == Value::FUNCTION)
+                    look::route_check_handler(req_method, pattern, callback.as_function()->parameters);
                 RouteEntry entry;
                 entry.method       = req_method;
                 entry.pattern      = pattern;
@@ -2120,10 +2125,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             if (callback.type() == Value::FUNCTION) {
                 auto fn = callback.as_function();
                 std::vector<Value> args;
-                for (size_t pi = 0; pi < param_names.size(); ++pi)
-                    args.push_back(Value(WebContext::url_decode(match[pi + 1].str(), false)));
-                while (args.size() < fn->parameters.size()) args.push_back(Value());
-                args.resize(fn->parameters.size());
+                look::route_args_by_name(req_method, pattern, fn->parameters, 0, web_ctx_->route_params, args);
                 call_function(fn, std::move(args));
             }
             throw RouteMatchedException();
@@ -2479,10 +2481,9 @@ void Interpreter::dispatch_routes() {
             // Phase 16: SSE routes receive $sse as first argument
             if (entry.method == "SSE" && sse_conn_)
                 args.push_back(Value(sse_conn_));
-            for (size_t pi = 0; pi < entry.param_names.size(); ++pi)
-                args.push_back(Value(WebContext::url_decode(match[pi + 1].str(), false)));
-            while (args.size() < fn->parameters.size()) args.push_back(Value());
-            args.resize(fn->parameters.size());
+            // LOOK 2: yol parametreleri ADA göre (WS/SSE'de ilk parametre bağlantıdır).
+            look::route_args_by_name(entry.method, entry.pattern, fn->parameters, args.size(),
+                                     web_ctx_->route_params, args);
             call_function(fn, std::move(args));
         }
         return;

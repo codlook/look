@@ -235,6 +235,25 @@ When no route matches and the application has no handler of its own, the respons
 that body must look at the status code, or the application must register its own 404
 handler.
 
+### Route handlers take path parameters by name — silent; an unknown name is an error at load
+
+```
+route("GET", "/c/{id}/{slug}", function($slug) { ... })
+```
+
+In LOOK 1 path parameters were passed by position: `$slug` above silently received the
+`id`, and a parameter the route does not have was silently null. Now each handler parameter
+takes the path parameter of the same name, in any order and any subset; the others are read
+with `request::param("name")`.
+
+A handler parameter that is not a path parameter of its route stops the application at
+startup, with the route and the names it has. In a `WS` or `SSE` route the first parameter
+is the connection and can have any name.
+
+Handlers written as in the documentation (`/users/{id}` with `function($id)`) are not
+affected. A handler whose parameter names differ from the names in its path must be
+renamed.
+
 ### `http::stream`: the callback takes and returns its state — error at run time
 
 The callback is called as `$callback($chunk, $state)` and what it returns is the state for
