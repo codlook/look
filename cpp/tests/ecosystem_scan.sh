@@ -10,7 +10,9 @@
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> [dir]}")" && pwd)/$(basename "$1")"
 DIR="${2:-$(mktemp -d)}"
 for repo in look-modules look-packages look-examples; do
-    [ -d "$DIR/$repo" ] || git clone -q --depth 1 "https://github.com/codlook/$repo.git" "$DIR/$repo" 2>/dev/null \
+    # A repository may carry a v2 branch for LOOK 2 (look-modules does); otherwise its default branch.
+    [ -d "$DIR/$repo" ] || git clone -q --depth 1 --branch v2 "https://github.com/codlook/$repo.git" "$DIR/$repo" 2>/dev/null \
+        || git clone -q --depth 1 "https://github.com/codlook/$repo.git" "$DIR/$repo" 2>/dev/null \
         || { echo "== $repo: could not be fetched (skipped)"; continue; }
     files=0; broken=0; warned=0; : > "$DIR/$repo.report"
     while IFS= read -r f; do

@@ -257,6 +257,13 @@ jobs:
           cd cpp
           bash tests/jobs_vm_test.sh ./build/lk-fcgi
 
+      # A job is handled exactly once when several consumers drain the queue at once (the
+      # claim of the next job is one atomic statement; this once was a SELECT then an UPDATE).
+      - name: Concurrent queue consumers
+        run: |
+          cd cpp
+          bash tests/jobs_concurrent_test.sh ./build/lk-fcgi
+
       # The top level of a web application runs once at startup on every engine: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup
