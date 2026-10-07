@@ -43,11 +43,11 @@ for mode in "LOOK_X=1" "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     done
 done
 
-# Routes that reach a function the VM does not provide (ws::on / sse::on; everything else runs on the VM since LOOK 2) used to
+# Routes that reach a function the VM does not provide (session::id, for one) used to
 # work only through that second run. They are now placed on the tree-walk engine at setup,
 # before anything runs: they must still work, run once, and be announced in the log.
 cat >> "$TMP/app.lk" <<LK
-function start() { if (request::get("never") == "1") { ws::on(null, "message", function(\$m) { return 1 }) }; return 1 }
+function start() { if (request::get("never") == "1") { session::id() }; return 1 }
 route("GET", "/timer",  function() { hit(); start(); return response::text("armed") })
 LK
 rm -f "$TMP/t.db"

@@ -321,6 +321,13 @@ static std::atomic<bool>        g_http_ready{false};
 // LOOK 2: bu iş parçacığı bir zamanlayıcı geri çağırması koşturuyorsa çağrılacak closure.
 // look_app_dispatch bunu görünce rota eşleştirmez, closure'ı istek VM'inde doğrudan çağırır.
 static thread_local const look::Closure* t_direct_closure = nullptr;
+// ... ve ona verilecek argümanlar (WebSocket mesajı gibi); yoksa argümansız çağrılır.
+static thread_local const std::vector<look::Value>* t_direct_args = nullptr;
+// Bu iş parçacığı bir WebSocket/SSE BAĞLANTISININ rota işleyicisini koşturuyorsa o bağlantı
+// (WEBSOCKET / SSE_CONN değeri). İstek VM'i bunu görünce işleyiciye ilk argüman olarak verir.
+static thread_local look::Value t_conn;
+// Doğrudan çağrılan geri çağırmanın log etiketi ("message handler" …): hata bu adla loglanır.
+static thread_local const char* t_direct_what = nullptr;
 
 static bool look_vm_strict() {
     static const bool v = []{ const char* e = std::getenv("LOOK_VM_STRICT"); return e && e[0] == '1'; }();
@@ -1134,9 +1141,15 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                                               return v && std::string(v) == "1"; }();
         static thread_local std::vector<look::BuiltinFn> tl_req_builtins;
         static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;
+        // Modül sarmalayıcıları (request::, response::, session:: …) kuruldukları andaki `web`
+        // ADRESİNE bağlıdır. HTTP isteklerinde bu adres iş parçacığı başına sabittir (aynı yığın
+        // çerçevesi); ama WS/SSE işleyicisi ve geri çağırmalar BAŞKA çerçeveden dağıtılır. Adres
+        // değiştiyse tablo yeniden kurulur — yoksa sonraki istek ölü bir bağlama yazar (ölçüldü:
+        // SSE + WS'den sonraki sıradan istekte segfault).
+        static thread_local const look::WebContext* tl_builtins_web = nullptr;
         std::vector<look::BuiltinFn> fiber_req_builtins;
         std::vector<look::BuiltinFn>& req_builtins = g_use_fiber ? fiber_req_builtins : tl_req_builtins;
-        const bool need_build = g_use_fiber || (tl_builtins_gen != cur_gen);
+        const bool need_build = g_use_fiber || (tl_builtins_gen != cur_gen) || (tl_builtins_web != &web);
         if (need_build) {
         req_builtins.assign(look::builtin_names().size(), look::BuiltinFn{});
 
@@ -1274,6 +1287,49 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 if (v.type() != look::Value::SSE_CONN || !v.as_sse())
                     throw std::runtime_error(std::string(what));
                 return v.as_sse();
+            };
+            // ws::on / sse::on — geri çağırma, bağlantının iş parçacığında, zamanlayıcı gibi YENİ BİR
+            // İSTEK olarak kurulur (kendi VM'i, global'lerin bildirilen değerleri); hata loglanır,
+            // hiçbir şey yeniden çalıştırılmaz.
+            auto run_cb = [](const look::Value& fnv, std::vector<look::Value> cb_args, const char* tag, const char* kind) {
+                look::WebContext ctx;
+                ctx.method = "__EVENT__";
+                std::ostringstream sink;
+                t_direct_closure = fnv.as_bytecode_fn().get();
+                t_direct_args    = &cb_args;
+                t_direct_what    = kind;
+                try { look_app_dispatch(ctx, sink, std::string()); }
+                catch (const std::exception& ex) {
+                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, tag, std::string(kind) + " error: " + ex.what());
+                } catch (...) {
+                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, tag, std::string(kind) + " unknown error");
+                }
+                t_direct_closure = nullptr;
+                t_direct_args    = nullptr;
+                t_direct_what    = nullptr;
+            };
+            req_builtins[BI("ws::on")] = [ws_of, run_cb](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() != 3) throw std::runtime_error("ws::on() takes 3 arguments");
+                auto conn = ws_of(args[0], "ws::on() first argument must be a websocket");
+                if (args[2].type() != look::Value::BYTECODE_FN)
+                    throw std::runtime_error("ws::on() third argument must be a function");
+                const std::string ev = args[1].to_string();
+                look::Value fnv = args[2].clone_for_thread();
+                if (ev == "message")
+                    conn->on_message = [fnv, run_cb](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "message handler"); };
+                else if (ev == "close")
+                    conn->on_close = [fnv, run_cb]() { run_cb(fnv, {}, "ws", "close handler"); };
+                return look::Value();
+            };
+            req_builtins[BI("sse::on")] = [sse_of, run_cb](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() != 3) throw std::runtime_error("sse::on() takes 3 arguments");
+                auto conn = sse_of(args[0], "sse::on() first argument must be an SSE connection");
+                if (args[2].type() != look::Value::BYTECODE_FN)
+                    throw std::runtime_error("sse::on() third argument must be a function");
+                look::Value fnv = args[2].clone_for_thread();
+                if (args[1].to_string() == "close")
+                    conn->on_close_cb = [fnv, run_cb]() { run_cb(fnv, {}, "sse", "close handler"); };
+                return look::Value();
             };
             req_builtins[BI("ws::send")] = [ws_of](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 2) throw std::runtime_error("ws::send() takes 2 arguments");
@@ -1415,7 +1471,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             return look::Value(result);
         };
 
-        if (!g_use_fiber) tl_builtins_gen = cur_gen;   // cache valid until the next hot-reload
+        if (!g_use_fiber) { tl_builtins_gen = cur_gen; tl_builtins_web = &web; }   // cache valid until the next hot-reload
         }   // end if(need_build) — worker-pool builds once per generation; fiber every request
 
         // before_route closures: route_closures ile aynı yapıda
@@ -1440,13 +1496,17 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             vm.set_globals(g_http_app.vm_setup_globals);
             vm.isolate_setup_globals();
             vm.set_web_context(&web);
+            // LOOK 2: bağlantı işleyicisi (WS/SSE rotası) VM'de — bağlantı işleyiciye ilk argüman olarak gider.
+            if (t_conn.type() == look::Value::WEBSOCKET) vm.set_ws_connection(t_conn.as_websocket());
+            else if (t_conn.type() == look::Value::SSE_CONN) vm.set_sse_connection(t_conn.as_sse());
 
             // LOOK 2 — zamanlayıcı geri çağırması: rota eşleştirme ve before_route yok; closure,
             // yeni bir istek gibi kurulmuş bu VM'de (temiz kurulum değerleri, kendi builtin'leri)
             // doğrudan çağrılır. Hata aşağıdaki ortak yakalayıcıya düşer (log + yeniden çalıştırma yok).
             if (t_direct_closure) {
                 std::shared_ptr<look::Closure> own;
-                vm.call_closure(look::VM::request_local(*t_direct_closure, own), {});
+                vm.call_closure(look::VM::request_local(*t_direct_closure, own),
+                                t_direct_args ? *t_direct_args : std::vector<look::Value>{});
                 stopped_direct = true;
             }
             // before_route middleware'leri sırayla çalıştır
@@ -1531,7 +1591,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 web.status_text = "Internal Server Error";
             }
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                std::string("Dispatch error: ") + what);
+                (t_direct_what ? std::string(t_direct_what) + " error: " : std::string("Dispatch error: ")) + what);
             vm_ok = true;   // yanıt hazır (500) — yorumlayıcıda YENİDEN ÇALIŞTIRMA yok
         }
 
@@ -1543,6 +1603,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // globals'ı taze snapshot'a döndür (istekler arası sızıntı olmasın).
             copy->reset_globals_from(*g_http_app.interp);
             copy->set_web_context(&web);
+            // LOOK 2: bir WS/SSE rotası yorumlayıcıya sabitliyse bağlantıyı ona da ver. Kopya iş
+            // parçacığında yeniden kullanılır → çıkışta bağlantıyı bırak (sonraki isteğe taşınmasın).
+            struct ConnGuard { look::Interpreter* c; ~ConnGuard() { c->set_ws_connection(nullptr); c->set_sse_connection(nullptr); } } conn_guard{copy};
+            if (t_conn.type() == look::Value::WEBSOCKET) copy->set_ws_connection(t_conn.as_websocket());
+            else if (t_conn.type() == look::Value::SSE_CONN) copy->set_sse_connection(t_conn.as_sse());
             try {
                 copy->dispatch_routes();
             } catch (const look::RouteStopException&) {
@@ -1611,6 +1676,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         copy->set_output(output);
         copy->set_web_context(&web);
+        // LOOK 2: WS/SSE bağlantı işleyicisi bu yoldan da geçer — bağlantıyı ver, çıkışta bırak.
+        struct IConnGuard { look::Interpreter* c; ~IConnGuard() { c->set_ws_connection(nullptr); c->set_sse_connection(nullptr); } } iconn_guard{copy};
+        if (t_conn.type() == look::Value::WEBSOCKET) copy->set_ws_connection(t_conn.as_websocket());
+        else if (t_conn.type() == look::Value::SSE_CONN) copy->set_sse_connection(t_conn.as_sse());
         sl.unlock();
 
         t_dispatch_start = std::chrono::steady_clock::now();
@@ -1689,7 +1758,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     // Süreç-global sayaçlar (runtime::stats için, salt-okunur gözlemlenebilirlik). Setup interpreter'ın
     // request_count_'u web'de artmaz (VM yolu) → bu global'ler gerçek HTTP durumunu taşır. Clock'lar
     // zaten çağrıldı → latency toplama sıcak yola yeni clock EKLEMEZ (sadece relaxed atomik).
-    if (t_direct_closure) return;   // zamanlayıcı geri çağırması bir HTTP isteği değildir: sayaçlara girmez
+    // zamanlayıcı/bağlantı geri çağırması ve bağlantı işleyicisi bir HTTP isteği değildir: sayaçlara girmez
+    if (t_direct_closure || t_conn.type() != look::Value::NONE) return;
     look::g_http_request_count().fetch_add(1, std::memory_order_relaxed);
     look::g_latency_us_sum().fetch_add((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
     look::g_latency_us_last().store((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
@@ -1785,10 +1855,6 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
     // WebSocket handler — called on a worker thread after 101 upgrade
     auto ws_handler = [](std::shared_ptr<look::WsConnection> conn,
                          const look::HttpRequest& req) {
-        std::shared_lock<std::shared_mutex> sl(g_http_mutex);
-        auto copy = g_http_app.interp->make_dispatch_copy();
-        sl.unlock();
-
         look::WebContext web;
         web.method = "WS";
         web.path   = req.path;
@@ -1797,28 +1863,22 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
 
+        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi dağıtılır (VM; rota yorumlayıcıya
+        // sabitliyse orada). Bağlantı t_conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
         std::ostringstream sink;
-        copy->set_output(sink);
-        copy->set_web_context(&web);
-        copy->set_ws_connection(conn);
-
-        look::acquire_thread_connections();
+        t_conn = look::Value(conn);
         try {
-            copy->dispatch_routes();
+            look_app_dispatch(web, sink, std::string());
         } catch (const std::exception& e) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                 std::string("WS dispatch error: ") + e.what());
         }
-        look::release_thread_connections();
+        t_conn = look::Value();
     };
 
     // SSE handler — called on a worker thread after SSE upgrade
     auto sse_handler = [](std::shared_ptr<look::SseConnection> conn,
                           const look::HttpRequest& req) {
-        std::shared_lock<std::shared_mutex> sl(g_http_mutex);
-        auto copy = g_http_app.interp->make_dispatch_copy();
-        sl.unlock();
-
         look::WebContext web;
         web.method = "SSE";
         web.path   = req.path;
@@ -1827,19 +1887,17 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
 
+        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi dağıtılır (VM; rota yorumlayıcıya
+        // sabitliyse orada). Bağlantı t_conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
         std::ostringstream sink;
-        copy->set_output(sink);
-        copy->set_web_context(&web);
-        copy->set_sse_connection(conn);
-
-        look::acquire_thread_connections();
+        t_conn = look::Value(conn);
         try {
-            copy->dispatch_routes();
+            look_app_dispatch(web, sink, std::string());
         } catch (const std::exception& e) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                 std::string("SSE dispatch error: ") + e.what());
         }
-        look::release_thread_connections();
+        t_conn = look::Value();
     };
 
 #ifndef _WIN32   // Gömülü mail sunucuları POSIX-only (OpenSSL). Windows = XAMPP dev.

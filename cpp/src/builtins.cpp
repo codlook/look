@@ -211,6 +211,8 @@ const std::vector<std::string>& builtin_names() {
         // işleyiciler bağlantı iş parçacığında yorumlayıcıda koşar.
         "ws::send", "ws::close", "ws::broadcast", "ws::clients",
         "sse::send", "sse::close", "sse::clients",
+        // ws::on / sse::on — bağlantı işleyicileri de VM'de: geri çağırma yeni bir istek gibi kurulur.
+        "ws::on", "sse::on",
     };
     return NAMES;
 }

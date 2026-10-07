@@ -235,7 +235,10 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
             if (!stopped) {
                 // LOOK 2: yol parametreleri işleyiciye ADA göre verilir (look/route_params.h).
                 std::vector<Value> named_args;
-                if (web_ctx_) look::route_args_by_name(m, p, entry.fn->proto->params, 0, web_ctx_->route_params, named_args);
+                // WS / SSE rotasında ilk parametre bağlantıdır (tree-walk ile aynı).
+                if (m == "WS" && ws_conn_)        named_args.push_back(Value(ws_conn_));
+                else if (m == "SSE" && sse_conn_) named_args.push_back(Value(sse_conn_));
+                if (web_ctx_) look::route_args_by_name(m, p, entry.fn->proto->params, named_args.size(), web_ctx_->route_params, named_args);
                 else          named_args = std::move(params);
                 call_closure(request_local(*entry.fn, own), std::move(named_args));
             }

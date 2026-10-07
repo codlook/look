@@ -643,7 +643,7 @@ echo "$ji" | grep -q "18446744073709551615" || { echo "FAIL: json uint64-max KES
 #           (2) LOOK_VM_STRICT=1 → maskeleme YOK, hata yüzeye çıkar (CI/staging).
 cat > "$TMP/fb.lk" <<'LK'
 use jobs
-route("GET","/w",  function(){ if (request::get("never") == "1") { ws::on(null, "message", function($m) { return 1 }) }; return response::text("ok") })
+route("GET","/w",  function(){ if (request::get("never") == "1") { session::id() }; return response::text("ok") })
 route("GET","/ok", function(){ return response::text("saglam") })
 LK
 FB_PORT=9612
@@ -652,7 +652,7 @@ FB=$!
 sleep 2
 w_def=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/w")
 kill $FB 2>/dev/null; sleep 1; kill -9 $FB 2>/dev/null
-grep -q "runs on the interpreter: it reaches ws::on" "$TMP/fb1.log" || { echo "FAIL: route on the interpreter is not announced in the log"; fail=1; }
+grep -q "runs on the interpreter: it reaches session::id" "$TMP/fb1.log" || { echo "FAIL: route on the interpreter is not announced in the log"; fail=1; }
 [ "$w_def" = "ok" ] || { echo "FAIL: a route that needs the interpreter does not work: [$w_def]"; fail=1; }
 
 LOOK_VM_STRICT=1 "$FCGI" --mode http --port $FB_PORT "$TMP/fb.lk" >"$TMP/fb2.log" 2>&1 &
