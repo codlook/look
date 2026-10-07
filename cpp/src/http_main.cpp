@@ -295,6 +295,8 @@ struct HttpApp {
     bool                                     vm_routes_ready = false;
     // before_route() middleware listesi (setup fazında kaydedilir, dispatch'ten önce çalışır)
     std::vector<look::Value>                 vm_before_routes;
+    // 1.0.9: yorumlayıcı kurulum geçişinin modül çağrıları (ad, sonuç) — VM geçişi geri oynatır.
+    look::Interpreter::SetupRecord           setup_record;
     // Setup VM globals: db_check/json_ok/json_hata/admin_kontrol closure'ları + $conn pool key
     std::unordered_map<std::string, look::Value> vm_setup_globals;
 
@@ -390,7 +392,11 @@ static void run_setup_http(const fs::path& script) {
     interp->set_file(script.string());
     interp->set_web_context(&setup_ctx);
     interp->set_setup_mode(true);
-    interp->interpret(*program);
+    g_http_app.setup_record.clear();
+    interp->set_setup_record(&g_http_app.setup_record);   // 1.0.9: VM geçişi bunu geri oynatır
+    try { interp->interpret(*program); }
+    catch (...) { interp->set_setup_record(nullptr); throw; }
+    interp->set_setup_record(nullptr);
     interp->set_setup_mode(false);
 
     g_http_app.program     = std::move(program);
@@ -701,11 +707,42 @@ static void run_setup_http(const fs::path& script) {
                 }
             }
 
+            // ── 1.0.9: KURULUM GERİ OYNATMA ─────────────────────────────────────────
+            // Betiğin üst düzeyi az önce yorumlayıcıda koştu; şimdi VM'de bir kez daha koşacak
+            // (rota closure'larını ve global'leri bayt koduyla üretmek için). Bu ikinci geçişte
+            // modül fonksiyonları YENİDEN ÇAĞRILMAZ: yukarıdaki bağlamalar onları ya yeniden
+            // çalıştırıyordu (file::put/append → dosyaya iki kez yazma; crypto::uuid → iki farklı
+            // değer) ya da "yan etkili" sayıp null döndürüyordu (cache::get → VM rotaları kurulumda
+            // okunan değeri BOŞ görüyordu). Artık yorumlayıcının çağırdığı her modül fonksiyonu,
+            // aynı sırayla, ilk geçişte kaydedilen sonucu döndürür. Sıra tutmazsa (iki motor
+            // kurulumda farklı yoldan gittiyse) VM kurulumu hatayla biter → program yorumlayıcıda
+            // kalır (LOOK_VM_STRICT=1 reddeder); sessiz yanlış değer yok.
+            auto replay_pos = std::make_shared<size_t>(0);
+            {
+                auto* rec = &g_http_app.setup_record;
+                const auto& bnames = look::builtin_names();
+                for (size_t i = 0; i < setup_builtins.size() && i < bnames.size(); ++i) {
+                    const std::string& name = bnames[i];
+                    auto colon = name.find("::");
+                    if (colon == std::string::npos) continue;
+                    if (!g_http_app.interp->get_module_fn(name.substr(0, colon), name.substr(colon + 2))) continue;
+                    setup_builtins[i] = [name, rec, replay_pos](std::vector<look::Value>&) -> look::Value {
+                        if (*replay_pos >= rec->size() || (*rec)[*replay_pos].first != name)
+                            throw look::LookVmError("setup replay: the VM called " + name + " where the first pass called "
+                                + (*replay_pos < rec->size() ? (*rec)[*replay_pos].first : std::string("nothing more")));
+                        return (*rec)[(*replay_pos)++].second.deep_clone();
+                    };
+                }
+            }
+
             look::VM::SharedState setup_sh;
             setup_sh.builtins = &setup_builtins;
             std::ostringstream vm_setup_out;
             look::VM setup_vm(setup_sh, vm_setup_out);
             setup_vm.execute(*g_http_app.compiled);
+            if (*replay_pos != g_http_app.setup_record.size())
+                throw look::LookVmError("setup replay: the first pass called "
+                    + g_http_app.setup_record[*replay_pos].first + " and the VM did not");
 
             // Setup globals'ı sakla: db_check/json_ok/json_hata gibi named fn closure'lar +
             // $conn pool key — dispatch VM'e set_globals() ile verilecek
