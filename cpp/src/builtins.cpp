@@ -205,6 +205,12 @@ const std::vector<std::string>& builtin_names() {
         // bütünüyle yorumlayıcıya düşüyordu.)
         "jobs::worker",
         "jobs::run",
+        // ws:: / sse:: — LOOK 2: bağlantı tutamacı üzerinde çalışan, geri çağırma almayan fonksiyonlar.
+        // Sıradan bir rota (ör. POST /notify içinde ws::broadcast) artık bunlar yüzünden yorumlayıcıya
+        // verilmez. ws::on / sse::on burada YOK: yalnız WS/SSE rota işleyicisinde anlamlıdır ve o
+        // işleyiciler bağlantı iş parçacığında yorumlayıcıda koşar.
+        "ws::send", "ws::close", "ws::broadcast", "ws::clients",
+        "sse::send", "sse::close", "sse::clients",
     };
     return NAMES;
 }

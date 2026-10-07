@@ -1588,7 +1588,9 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
                             look::acquire_thread_connections();
-                            try { copy->invoke(cb_v, {Value(msg)}); } catch (...) {}
+                            try { copy->invoke(cb_v, {Value(msg)}); }
+                            catch (const std::exception& ex) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", std::string("message handler error: ") + ex.what()); }
+                            catch (...) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", "message handler unknown error"); }
                             look::release_thread_connections();
                         };
                     } else if (ev == "close") {
@@ -1596,7 +1598,9 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
                             look::acquire_thread_connections();
-                            try { copy->invoke(cb_v, {}); } catch (...) {}
+                            try { copy->invoke(cb_v, {}); }
+                            catch (const std::exception& ex) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", std::string("close handler error: ") + ex.what()); }
+                            catch (...) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", "close handler unknown error"); }
                             look::release_thread_connections();
                         };
                     }
@@ -1733,7 +1737,9 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             base->set_output(*sink);
                             base->set_web_context(&ctx);
                             look::acquire_thread_connections();
-                            try { base->invoke(cb_v, {}); } catch (...) {}
+                            try { base->invoke(cb_v, {}); }
+                            catch (const std::exception& ex) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "sse", std::string("close handler error: ") + ex.what()); }
+                            catch (...) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "sse", "close handler unknown error"); }
                             look::release_thread_connections();
                         };
                     }

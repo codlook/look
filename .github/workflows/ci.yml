@@ -271,6 +271,13 @@ jobs:
           cd cpp
           bash tests/route_params_test.sh ./build/lk-fcgi
 
+      # LOOK 2: ordinary routes that use ws:: / sse:: run on the VM; a WebSocket message handler
+      # runs once per message and its errors are logged.
+      - name: WebSocket and SSE functions on the VM
+        run: |
+          cd cpp
+          bash tests/ws_sse_vm_test.sh ./build/lk-fcgi
+
       # The top level of a web application runs once at startup on every engine: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup

@@ -21,6 +21,7 @@
 #include "look/logger.h"
 #include "look/web.h"
 #include "look/sse.h"
+#include "look/websocket.h"
 #include "look/smtp_server.h"
 #include "look/imap_server.h"
 #include "look/fiber.h"
@@ -1261,6 +1262,48 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // rotasında kaydedilen işleyici (BYTECODE_FN) köprüyle bu isteğin VM'inde çalışır.
             req_builtins[BI("jobs::run")] = [copy](std::vector<look::Value>& args) -> look::Value {
                 return copy->jobs_run(args.empty() ? 5000 : (int)args[0].to_float());
+            };
+            // ws:: / sse:: — LOOK 2: bağlantı tutamacı üzerindeki işlemler (geri çağırma almayanlar).
+            // Yorumlayıcıdaki satır içi tanımlarla aynı denetimler ve aynı hata metinleri.
+            auto ws_of = [](const look::Value& v, const char* what) {
+                if (v.type() != look::Value::WEBSOCKET || !v.as_websocket())
+                    throw std::runtime_error(std::string(what));
+                return v.as_websocket();
+            };
+            auto sse_of = [](const look::Value& v, const char* what) {
+                if (v.type() != look::Value::SSE_CONN || !v.as_sse())
+                    throw std::runtime_error(std::string(what));
+                return v.as_sse();
+            };
+            req_builtins[BI("ws::send")] = [ws_of](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() != 2) throw std::runtime_error("ws::send() takes 2 arguments");
+                return look::Value(ws_of(args[0], "ws::send() first argument must be a websocket")->send_text(args[1].to_string()));
+            };
+            req_builtins[BI("ws::close")] = [ws_of](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() != 1) throw std::runtime_error("ws::close() takes 1 argument");
+                ws_of(args[0], "ws::close() argument must be a websocket")->close_conn();
+                return look::Value();
+            };
+            req_builtins[BI("ws::broadcast")] = [](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() != 1) throw std::runtime_error("ws::broadcast() takes 1 argument");
+                look::g_ws_registry.broadcast(args[0].to_string());
+                return look::Value();
+            };
+            req_builtins[BI("ws::clients")] = [](std::vector<look::Value>&) -> look::Value {
+                return look::Value((int)look::g_ws_registry.count());
+            };
+            req_builtins[BI("sse::send")] = [sse_of](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() < 2) throw std::runtime_error("sse::send() takes at least 2 arguments");
+                return look::Value(sse_of(args[0], "sse::send() first argument must be an SSE connection")
+                                       ->send(args[1].to_string(), args.size() >= 3 ? args[2].to_string() : std::string()));
+            };
+            req_builtins[BI("sse::close")] = [sse_of](std::vector<look::Value>& args) -> look::Value {
+                if (args.empty()) throw std::runtime_error("sse::close() takes 1 argument");
+                sse_of(args[0], "sse::close() argument must be an SSE connection")->close_conn();
+                return look::Value();
+            };
+            req_builtins[BI("sse::clients")] = [](std::vector<look::Value>&) -> look::Value {
+                return look::Value((int)look::g_sse_registry.count());
             };
         }
 
