@@ -16,6 +16,36 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-07 — Top-level code ran twice at startup; values read at setup were lost (1.0.9)
+
+**Affected:** every release up to and including 1.0.8, on the default engine (the bytecode
+VM), in `--mode http` and FastCGI. Applications started with `LOOK_BYTECODE=0` are not
+affected. **Fixed in:** 1.0.9.
+
+At startup the server runs the top level of the script twice: once on the tree-walk engine
+and once on the VM, which needs it to build the routes. The second pass called some module
+functions again and skipped others by a fixed list of name prefixes:
+
+- `file::put` and `file::append` at the top level ran twice: one start wrote two lines to a
+  log file (measured on 1.0.8), and a file written at setup was written a second time;
+- functions that give a new value on every call (`crypto::uuid`, a timestamp) were called
+  again, so the VM pass worked with a second, different value;
+- functions on the skip list (`cache::`, `http::`, `mail::`, `queue::`, `jobs::`, and `db::`
+  other than `db::connect`) returned null to the second pass. Measured on 1.0.8: a value
+  read with `cache::get` at the top level was missing in a route running on the VM, while
+  the same route on the tree-walk engine saw it.
+
+Database writes at the top level (`db::exec`) were on the skip list and ran once (measured).
+
+The second pass now replays the results of the first, in order, and calls nothing again.
+If the two passes do not make the same calls in the same order, the VM setup stops and the
+application runs on the tree-walk engine (`LOOK_VM_STRICT=1` refuses to start); there is no
+silently different value.
+
+**What to do:** upgrade to 1.0.9. If your script writes files at the top level, expect one
+write per start from now on. If it reads configuration at the top level through `cache::`
+or another function listed above, routes will now see the value that was read.
+
 ### 2026-10-06 — A failing route handler ran twice in one request (duplicate writes)
 
 **Affected:** every release up to and including 1.0.7, on the default engine (the bytecode

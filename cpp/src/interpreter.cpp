@@ -1843,6 +1843,14 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 throw std::runtime_error("'" + sr->module_name + "' has no function '" + sr->member_name + "'");
             std::vector<Value> args;
             for (const auto& arg : e->arguments) args.push_back(evaluate_expression(*arg));
+            // 1.0.9: web kurulum geçişinde çağrının adı + sonucu kaydedilir; VM geçişi bunu geri
+            // oynatır, fonksiyonu yeniden çağırmaz (bkz. interpreter.h SetupRecord).
+            if (setup_record_ && setup_record_depth_ == 0) {
+                struct Depth { int& d; explicit Depth(int& x) : d(x) { ++d; } ~Depth() { --d; } } guard(setup_record_depth_);
+                Value r = fn_it->second(args);
+                setup_record_->emplace_back(sr->module_name + "::" + sr->member_name, r.deep_clone());
+                return r;
+            }
             return fn_it->second(args);
         }
 

@@ -250,6 +250,13 @@ jobs:
           cd cpp
           bash tests/timer_vm_test.sh ./build/lk-fcgi
 
+      # The top level of a web application runs once at startup on every engine: the VM's
+      # setup pass replays the first pass instead of calling module functions again.
+      - name: Top-level code runs once at startup
+        run: |
+          cd cpp
+          bash tests/setup_once_test.sh ./build/lk-fcgi
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)

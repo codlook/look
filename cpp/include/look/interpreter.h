@@ -610,6 +610,15 @@ public:
     // Bildirilmiş tüm struct'ların alan tip adlarını denetler (yerleşik ya da bilinen struct);
     // bilinmeyen ad → std::runtime_error. Web kurulumunun SONUNDA çağrılır.
     void validate_struct_types() const;
+    // 1.0.9 — KURULUM KAYDI. Web sunucusu betiğin üst düzeyini iki kez koşturur: önce burada
+    // (yorumlayıcı), sonra VM'de (rota closure'larını bayt koduyla üretmek için). İkinci geçiş
+    // modül fonksiyonlarını YENİDEN ÇAĞIRMAMALI: yan etki iki kez olur (dosyaya iki satır) ve
+    // sonuç farklı çıkabilir (uuid, saat, cache::get). İlk geçişte her modül çağrısının adı ve
+    // sonucu sırayla buraya yazılır; VM geçişi aynı sırayla bu sonuçları geri oynatır
+    // (http_main.cpp). Bir modül çağrısının İÇİNDEN (geri çağırmayla) yapılan çağrılar yazılmaz:
+    // VM dıştaki çağrının sonucunu aldığı için geri çağırmayı hiç koşturmaz.
+    using SetupRecord = std::vector<std::pair<std::string, Value>>;
+    void set_setup_record(SetupRecord* r) { setup_record_ = r; setup_record_depth_ = 0; }
     bool is_setup_mode()  const { return setup_mode_; }
 
     // Warm start dispatch: kayitli route'lardan eslesen handler'i cagir
@@ -718,6 +727,8 @@ private:
 
     // Warm start state
     bool                    setup_mode_ = false;
+    SetupRecord*            setup_record_ = nullptr;   // yalnız web kurulum geçişinde dolu
+    int                     setup_record_depth_ = 0;
     std::vector<RouteEntry> route_registry_;
     std::vector<Value>      before_route_registry_;  // before_route() middleware listesi
 
