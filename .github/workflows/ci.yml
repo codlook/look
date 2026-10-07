@@ -243,6 +243,13 @@ jobs:
           cd cpp
           bash tests/timer_late_test.sh ./build/lk-fcgi
 
+      # LOOK 2: a timer armed in a route runs on the VM (its callback like a new request, with
+      # the declared globals); the route is no longer placed on the tree-walk engine.
+      - name: Timers on the VM
+        run: |
+          cd cpp
+          bash tests/timer_vm_test.sh ./build/lk-fcgi
+
       # Single quotes are raw + an undefined bare name is an error on both engines.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard (both engines)

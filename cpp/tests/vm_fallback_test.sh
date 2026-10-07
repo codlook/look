@@ -90,10 +90,11 @@ else echo "  FAIL C(strict): first=$CODE after-11=$CODE2 (000 = the server stopp
 # ── D) a route the VM cannot run is placed on the tree-walk engine at setup ──
 # and must give the same answer as the VM would for the same computation.
 cat > "$TMP/app.lk" <<'LKEOF'
+use jobs
 route("GET", "/calc", function() {
     $s = 0
     for ($i = 1; $i <= 100; $i = $i + 1) { $s = $s + $i }
-    timer::after(60000, fn() => 1)
+    jobs::worker("q", function($j) { return 1 })
     return response::text("RESULT=" . $s)
 })
 LKEOF
@@ -101,7 +102,7 @@ SRVLOG="$TMP/d.log"
 start_srv env || { echo "FAIL: VM fallback guard"; exit 1; }
 D=$(curl -s "http://127.0.0.1:$PORT/calc" 2>/dev/null)
 stop_srv
-if [ "$D" = "$EXPECT" ] && grep -q "runs on the interpreter: it reaches timer::after" "$SRVLOG"; then echo "  OK D: interpreter-only route answers '$D' and is announced in the log"
+if [ "$D" = "$EXPECT" ] && grep -q "runs on the interpreter: it reaches jobs::worker" "$SRVLOG"; then echo "  OK D: interpreter-only route answers '$D' and is announced in the log"
 else echo "  FAIL D: body='$D' or the route was not announced"; fail=1; fi
 
 [ $fail = 0 ] && echo "PASS: VM errors are errors; interpreter-only routes are decided at setup" || echo "FAIL: VM error / interpreter route guard"

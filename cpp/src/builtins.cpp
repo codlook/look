@@ -194,6 +194,12 @@ const std::vector<std::string>& builtin_names() {
         // end (no index shift). Without this the VM compiler treats it as unknown and
         // silently falls back to tree-walk for the whole script.
         "date::mono_us",
+        // timer:: — LOOK 2: bir rotada kurulan zamanlayıcı VM'de çalışır (geri çağırma, yeni bir
+        // istek gibi kendi VM'inde ve temiz kurulum değerleriyle koşar — http_main.cpp). Eskiden
+        // yalnız yorumlayıcının içindeydi; bunu kullanan rota yorumlayıcıya verilmek zorundaydı.
+        "timer::after",
+        "timer::every",
+        "timer::cancel",
     };
     return NAMES;
 }

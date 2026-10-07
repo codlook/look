@@ -15,6 +15,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev
 PORT="${PORT:-7718}"
 cat > "$TMP/app.lk" <<LK
 use json
+use jobs
 function conn() { return db::connect("sqlite://$TMP/t.db") }
 \$c0 = conn()
 db::exec(\$c0, "CREATE TABLE IF NOT EXISTS hits (n INTEGER)")
@@ -42,12 +43,12 @@ for mode in "LOOK_X=1" "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     done
 done
 
-# Routes that reach a function the VM does not provide (timer::after, jobs::worker, ...) used to
+# Routes that reach a function the VM does not provide (jobs::worker, ws::, sse:: ...; timers run on the VM since LOOK 2) used to
 # work only through that second run. They are now placed on the tree-walk engine at setup,
 # before anything runs: they must still work, run once, and be announced in the log.
 cat >> "$TMP/app.lk" <<LK
-function arm() { timer::after(20, fn() => 1); return 1 }
-route("GET", "/timer",  function() { hit(); arm(); return response::text("armed") })
+function start() { jobs::worker("q", function(\$j) { return 1 }); return 1 }
+route("GET", "/timer",  function() { hit(); start(); return response::text("armed") })
 LK
 rm -f "$TMP/t.db"
 ( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!

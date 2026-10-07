@@ -24,6 +24,7 @@
 #include "look/smtp_server.h"
 #include "look/imap_server.h"
 #include "look/fiber.h"
+#include "look/timer.h"
 
 #include <cctype>
 #include <cmath>
@@ -314,6 +315,10 @@ static std::atomic<bool>        g_http_ready{false};
 // (derleme / VM kurulum hatası) strict'i hiç görmüyordu → tek bir 255+ register'lık
 // fonksiyon tüm uygulamayı ~40× yavaş yorumlayıcıya sessizce düşürüyordu ve differential
 // guard'ın web sütunu bu yüzden VM'i hiç koşmadı.
+// LOOK 2: bu iş parçacığı bir zamanlayıcı geri çağırması koşturuyorsa çağrılacak closure.
+// look_app_dispatch bunu görünce rota eşleştirmez, closure'ı istek VM'inde doğrudan çağırır.
+static thread_local const look::Closure* t_direct_closure = nullptr;
+
 static bool look_vm_strict() {
     static const bool v = []{ const char* e = std::getenv("LOOK_VM_STRICT"); return e && e[0] == '1'; }();
     return v;
@@ -1173,6 +1178,46 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // döndürüyordu). İsim-tabanlı çözüm bu senkron-kopukluğu sınıfını kapatır.
         auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
 
+        // timer::after / timer::every / timer::cancel — LOOK 2.
+        // Geri çağırma istekten SONRA, zamanlayıcı iş parçacığında çalışır. Orada yeni bir istek
+        // gibi kurulur (look_app_dispatch + t_direct_closure): kendi VM'i, kendi builtin'leri,
+        // kurulum global'lerinin temiz hali. Yani bir geri çağırmanın global'e yazdığı şey ne
+        // onu kuran isteğe ne sonraki isteklere ulaşır (tests/realtime_isolation_test.sh).
+        // Closure iş parçacığı sınırını geçerken klonlanır (yakaladığı değerlerle birlikte).
+        {
+            auto arm = [](std::vector<look::Value>& args, bool repeat) -> look::Value {
+                const char* nm = repeat ? "timer::every" : "timer::after";
+                if (args.size() < 2) throw std::runtime_error(std::string(nm) + "() takes 2 arguments");
+                if (args[1].type() != look::Value::BYTECODE_FN)
+                    throw std::runtime_error(std::string(nm) + "() second argument must be a function");
+                const int ms = (int)args[0].to_int();
+                look::Value fnv = args[1].clone_for_thread();
+                auto cb = [fnv]() {
+                    look::WebContext ctx;
+                    ctx.method = "__TIMER__";
+                    std::ostringstream sink;
+                    t_direct_closure = fnv.as_bytecode_fn().get();
+                    try { look_app_dispatch(ctx, sink, std::string()); }
+                    catch (const std::exception& ex) {
+                        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "timer",
+                            std::string("callback error: ") + ex.what());
+                    } catch (...) {
+                        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "timer", "callback unknown error");
+                    }
+                    t_direct_closure = nullptr;
+                };
+                return look::Value(repeat ? look::TimerManager::instance().every(ms, std::move(cb))
+                                          : look::TimerManager::instance().after(ms, std::move(cb)));
+            };
+            req_builtins[BI("timer::after")] = [arm](std::vector<look::Value>& args) { return arm(args, false); };
+            req_builtins[BI("timer::every")] = [arm](std::vector<look::Value>& args) { return arm(args, true); };
+            req_builtins[BI("timer::cancel")] = [](std::vector<look::Value>& args) -> look::Value {
+                if (args.empty()) throw std::runtime_error("timer::cancel() takes 1 argument");
+                look::TimerManager::instance().cancel((int)args[0].to_int());
+                return look::Value();
+            };
+        }
+
         // channel()
         req_builtins[BI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
             int buf = args.empty() ? 128 : (args[0].type() == look::Value::INT ? args[0].as_int() : 128);
@@ -1295,6 +1340,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         t_dispatch_start = std::chrono::steady_clock::now();
         bool vm_ok = false;
         int  vm_failed_route = -1;
+        bool stopped_direct = false;   // zamanlayıcı geri çağırması doğrudan çağrıldı
         try {
             look::VM::SharedState sh;
             sh.routes         = &route_closures;
@@ -1306,10 +1352,18 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             vm.isolate_setup_globals();
             vm.set_web_context(&web);
 
+            // LOOK 2 — zamanlayıcı geri çağırması: rota eşleştirme ve before_route yok; closure,
+            // yeni bir istek gibi kurulmuş bu VM'de (temiz kurulum değerleri, kendi builtin'leri)
+            // doğrudan çağrılır. Hata aşağıdaki ortak yakalayıcıya düşer (log + yeniden çalıştırma yok).
+            if (t_direct_closure) {
+                std::shared_ptr<look::Closure> own;
+                vm.call_closure(look::VM::request_local(*t_direct_closure, own), {});
+                stopped_direct = true;
+            }
             // before_route middleware'leri sırayla çalıştır
             // stop() throw ettiğinde RouteStopException yakalanır → route atlanır
-            bool stopped = false;
-            for (auto* cl : before_closures) {
+            bool stopped = stopped_direct;
+            if (!stopped_direct) for (auto* cl : before_closures) {
                 try {
                     std::shared_ptr<look::Closure> own;
                     vm.call_closure(look::VM::request_local(*cl, own), {});
@@ -1546,6 +1600,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     // Süreç-global sayaçlar (runtime::stats için, salt-okunur gözlemlenebilirlik). Setup interpreter'ın
     // request_count_'u web'de artmaz (VM yolu) → bu global'ler gerçek HTTP durumunu taşır. Clock'lar
     // zaten çağrıldı → latency toplama sıcak yola yeni clock EKLEMEZ (sadece relaxed atomik).
+    if (t_direct_closure) return;   // zamanlayıcı geri çağırması bir HTTP isteği değildir: sayaçlara girmez
     look::g_http_request_count().fetch_add(1, std::memory_order_relaxed);
     look::g_latency_us_sum().fetch_add((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
     look::g_latency_us_last().store((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);

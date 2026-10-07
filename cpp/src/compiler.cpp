@@ -1403,6 +1403,9 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         std::string full = sr->module_name + "::" + sr->member_name;
         int bidx = builtin_index(full);
         if (bidx >= 0) {
+            // timer:: yalnız WEB VM'inde bağlıdır (geri çağırma istek makinesinde koşar). Komut
+            // satırında bağlı değil → aynı bayrakla CLI baştan tree-walk'a düşer (eskisi gibi).
+            if (sr->module_name == "timer") mark_non_builtin_module_fn(full);
             // Bilinen modül fonksiyonu → CALL_BUILTIN
             // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
             check_argc(e);
