@@ -626,6 +626,7 @@ public:
     void dispatch_routes();
 
     Value invoke(const Value& fn, std::vector<Value> args);
+    Value jobs_run(int interval_ms);   // jobs::run — tek tanım (yorumlayıcı + VM builtin)
     Value get_global(const std::string& name) {
         try { return globals_->get(name); } catch (...) { return Value(); }
     }

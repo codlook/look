@@ -200,6 +200,11 @@ const std::vector<std::string>& builtin_names() {
         "timer::after",
         "timer::every",
         "timer::cancel",
+        // jobs::worker / jobs::run — LOOK 2: kuyruk işleyicisi kaydı ve çalıştırıcı VM'de de var.
+        // (jobs::worker eskiden builtin değildi → üst düzeyde onu çağıran her web uygulaması
+        // bütünüyle yorumlayıcıya düşüyordu.)
+        "jobs::worker",
+        "jobs::run",
     };
     return NAMES;
 }

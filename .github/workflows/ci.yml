@@ -250,6 +250,13 @@ jobs:
           cd cpp
           bash tests/timer_vm_test.sh ./build/lk-fcgi
 
+      # LOOK 2: an application with a job handler and a draining timer at the top level runs
+      # on the VM (each used to send the whole application to the tree-walk engine).
+      - name: Job queue on the VM
+        run: |
+          cd cpp
+          bash tests/jobs_vm_test.sh ./build/lk-fcgi
+
       # The top level of a web application runs once at startup on every engine: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup

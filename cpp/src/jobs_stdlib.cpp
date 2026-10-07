@@ -492,7 +492,8 @@ Module make_jobs_module() {
     // Called at setup time. jobs::run() will invoke these handlers.
     m.functions["worker"] = [](std::vector<Value> args) -> Value {
         if (args.size() < 2) throw std::runtime_error("jobs::worker() — expects (queue, function)");
-        if (args[1].type() != Value::FUNCTION)
+        // LOOK 2: VM closure'ı (BYTECODE_FN) da işleyici olabilir — jobs::run onu invoke() köprüsüyle çağırır.
+        if (args[1].type() != Value::FUNCTION && args[1].type() != Value::BYTECODE_FN)
             throw std::runtime_error("jobs::worker() — second argument must be a function");
         JobStore::instance().register_worker(args[0].to_string(), args[1]);
         return Value(true);

@@ -1678,6 +1678,8 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                         id = look::TimerManager::instance().after(ms, std::move(callback));
                     else
                         id = look::TimerManager::instance().every(ms, std::move(callback));
+                    // Kurulum kaydı: VM geçişi zamanlayıcıyı İKİNCİ KEZ kurmaz, aynı kimliği geri alır.
+                    if (setup_record_ && setup_record_depth_ == 0) setup_record_->emplace_back("timer::" + fn, Value(id));
                     return Value(id);
                 }
 
@@ -1686,6 +1688,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                     if (argc_t < 1) throw std::runtime_error("timer::cancel() takes 1 argument");
                     int id = evaluate_expression(*e->arguments[0]).to_int();
                     look::TimerManager::instance().cancel(id);
+                    if (setup_record_ && setup_record_depth_ == 0) setup_record_->emplace_back("timer::cancel", Value());
                     return Value();
                 }
 
@@ -1759,57 +1762,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 int interval_ms = (e->arguments.size() >= 1)
                     ? (int)evaluate_expression(*e->arguments[0]).to_float()
                     : 5000;
-                bool once = (interval_ms == 0);
-
-                auto& workers = look::JobStore::instance().workers();
-                if (workers.empty())
-                    throw std::runtime_error("jobs::run() — register a handler first with jobs::worker()");
-
-                auto run_one_pass = [&]() {
-                    for (auto& [queue, fn_v] : workers) {
-                        while (true) {
-                            Value job = look::JobStore::instance().next(queue);
-                            if (job.type() == Value::NONE) break;
-
-                            int64_t job_id = 0;
-                            if (job.as_array()) {
-                                auto& arr = *job.as_array();
-                                for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                                    if (arr[i].type() == Value::STRING && arr[i].as_string() == "id") {
-                                        job_id = (int64_t)arr[i + 1].to_float();
-                                        break;
-                                    }
-                                }
-                            }
-
-                            auto copy = make_dispatch_copy();
-                            auto sink = std::make_shared<std::ostringstream>();
-                            copy->set_output(*sink);
-                            bool ok = false;
-                            try {
-                                Value result = copy->invoke(fn_v, {job});
-                                ok = result.as_bool();
-                            } catch (const std::exception& ex) {
-                                look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
-                                    std::string("handler error [") + queue + "]: " + ex.what());
-                                ok = false;
-                            }
-
-                            if (ok) look::JobStore::instance().done(job_id);
-                            else    look::JobStore::instance().fail(job_id);
-                        }
-                    }
-                };
-
-                if (once) {
-                    run_one_pass();
-                    return Value(true);
-                }
-                while (true) {
-                    run_one_pass();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
-                }
-                return Value(); // unreachable
+                return jobs_run(interval_ms);
             }
 
             // ── route::group(prefix, [mw], fn) — Go/chi tarzı prefix+middleware kalıtımı ──
@@ -2013,62 +1966,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             int interval_ms = (argc >= 1)
                 ? (int)evaluate_expression(*e->arguments[0]).to_float()
                 : 5000;
-            bool once = (interval_ms == 0);
-
-            auto& workers = look::JobStore::instance().workers();
-            if (workers.empty())
-                throw std::runtime_error("jobs::run() — register a handler first with jobs::worker()");
-
-            auto run_one_pass = [&]() {
-                for (auto& [queue, fn] : workers) {
-                    while (true) {
-                        Value job = look::JobStore::instance().next(queue);
-                        if (job.type() == Value::NONE) break;
-
-                        // Extract id for done()/fail()
-                        int64_t job_id = 0;
-                        if (job.as_array()) {
-                            auto& arr = *job.as_array();
-                            for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                                if (arr[i].type() == Value::STRING && arr[i].as_string() == "id") {
-                                    job_id = (int64_t)arr[i + 1].to_float();
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Invoke handler in dispatch copy (isolated, like parallel())
-                        auto copy = make_dispatch_copy();
-                        auto sink = std::make_shared<std::ostringstream>();
-                        copy->set_output(*sink);
-                        bool ok = false;
-                        try {
-                            Value result = copy->invoke(fn, {job});
-                            ok = result.as_bool();
-                        } catch (const std::exception& ex) {
-                            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
-                                std::string("handler error [") + queue + "]: " + ex.what());
-                            ok = false;
-                        }
-
-                        if (ok) look::JobStore::instance().done(job_id);
-                        else    look::JobStore::instance().fail(job_id);
-                    }
-                }
-            };
-
-            if (once) {
-                // Single pass — returns immediately (use with timer::every)
-                run_one_pass();
-                return Value(true);
-            }
-
-            // Blocking loop — runs until process is killed (CLI worker mode)
-            while (true) {
-                run_one_pass();
-                std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
-            }
-            return Value(); // unreachable
+            return jobs_run(interval_ms);
         }
 
         if (fn_name == "args") {
@@ -2351,6 +2249,64 @@ bool  vm_bridge_available() { return g_vm_bridge != nullptr; }
 Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args) {
     if (!g_vm_bridge) throw std::runtime_error("vm_bridge_invoke: no VM hook registered");
     return g_vm_bridge(fn, args);
+}
+
+// ── jobs::run ────────────────────────────────────────────────────────────────
+// Kayıtlı kuyruk işleyicilerini (jobs::worker) çalıştırır. interval_ms == 0 → tek tur, döner;
+// > 0 → sonsuz döngü (worker süreci). Yorumlayıcıdaki iki çağrı yolu ve VM builtin'i (LOOK 2,
+// http_main.cpp) bu TEK tanımı kullanır. İşleyici FUNCTION ise taze bir kopyada tree-walk ile,
+// BYTECODE_FN ise invoke() köprüsüyle çağıranın VM'inde çalışır.
+Value Interpreter::jobs_run(int interval_ms) {
+    bool once = (interval_ms == 0);
+    auto& workers = look::JobStore::instance().workers();
+    if (workers.empty())
+        throw std::runtime_error("jobs::run() — register a handler first with jobs::worker()");
+
+    auto run_one_pass = [&]() {
+        for (auto& [queue, fn_v] : workers) {
+            while (true) {
+                Value job = look::JobStore::instance().next(queue);
+                if (job.type() == Value::NONE) break;
+
+                int64_t job_id = 0;
+                if (job.as_array()) {
+                    auto& arr = *job.as_array();
+                    for (size_t i = 1; i + 1 < arr.size(); i += 2) {
+                        if (arr[i].type() == Value::STRING && arr[i].as_string() == "id") {
+                            job_id = (int64_t)arr[i + 1].to_float();
+                            break;
+                        }
+                    }
+                }
+
+                auto copy = make_dispatch_copy();
+                auto sink = std::make_shared<std::ostringstream>();
+                copy->set_output(*sink);
+                bool ok = false;
+                try {
+                    Value result = copy->invoke(fn_v, {job});
+                    ok = result.as_bool();
+                } catch (const std::exception& ex) {
+                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
+                        std::string("handler error [") + queue + "]: " + ex.what());
+                    ok = false;
+                }
+
+                if (ok) look::JobStore::instance().done(job_id);
+                else    look::JobStore::instance().fail(job_id);
+            }
+        }
+    };
+
+    if (once) {
+        run_one_pass();
+        return Value(true);
+    }
+    while (true) {
+        run_one_pass();
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+    }
+    return Value(); // unreachable
 }
 
 Value Interpreter::invoke(const Value& fn, std::vector<Value> args) {

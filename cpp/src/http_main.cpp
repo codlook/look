@@ -736,7 +736,10 @@ static void run_setup_http(const fs::path& script) {
                     const std::string& name = bnames[i];
                     auto colon = name.find("::");
                     if (colon == std::string::npos) continue;
-                    if (!g_http_app.interp->get_module_fn(name.substr(0, colon), name.substr(colon + 2))) continue;
+                    // timer:: yorumlayıcıda modül değil satır içi ele alınır ama o da kayda girer (LOOK 2):
+                    // üst düzeyde kurulan zamanlayıcı bir kez kurulur, VM geçişi aynı kimliği geri alır.
+                    const bool timer_fn = name.rfind("timer::", 0) == 0;
+                    if (!timer_fn && !g_http_app.interp->get_module_fn(name.substr(0, colon), name.substr(colon + 2))) continue;
                     setup_builtins[i] = [name, rec, replay_pos](std::vector<look::Value>&) -> look::Value {
                         if (*replay_pos >= rec->size() || (*rec)[*replay_pos].first != name)
                             throw look::LookVmError("setup replay: the VM called " + name + " where the first pass called "
@@ -1252,6 +1255,12 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 if (args.empty()) throw std::runtime_error("timer::cancel() takes 1 argument");
                 look::TimerManager::instance().cancel((int)args[0].to_int());
                 return look::Value();
+            };
+            // jobs::run — LOOK 2: yorumlayıcıdaki TEK tanım (Interpreter::jobs_run). Kurulumda
+            // kaydedilen işleyiciler yorumlayıcı closure'ıdır ve taze bir kopyada çalışır; bir VM
+            // rotasında kaydedilen işleyici (BYTECODE_FN) köprüyle bu isteğin VM'inde çalışır.
+            req_builtins[BI("jobs::run")] = [copy](std::vector<look::Value>& args) -> look::Value {
+                return copy->jobs_run(args.empty() ? 5000 : (int)args[0].to_float());
             };
         }
 
