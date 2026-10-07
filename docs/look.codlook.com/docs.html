@@ -2248,7 +2248,7 @@ LOG_DIR=C:/app/logs</code></pre>
     <tr><th>Function</th><th>Description</th></tr>
     <tr><td><code>ws::send($ws, $msg)</code></td><td>Send a text frame to this WS connection</td></tr>
     <tr><td><code>ws::on($ws, "message", fn)</code></td><td>Message callback — <code>fn($data)</code> is called on every frame</td></tr>
-    <tr><td><code>ws::on($ws, "close", fn)</code></td><td>On connection close — <code>fn()</code></td></tr>
+    <tr><td><code>ws::on($ws, "close", fn)</code></td><td>The client went away — <code>fn()</code> runs once, on a close frame or a dropped connection; not when the server calls <code>ws::close</code></td></tr>
     <tr><td><code>ws::close($ws)</code></td><td>Send a close frame, close the connection</td></tr>
     <tr><td><code>ws::broadcast($msg)</code></td><td>Send to all connected WS clients (broadcast-safe)</td></tr>
     <tr><td><code>ws::clients()</code></td><td>Number of active WS connections</td></tr>

@@ -714,7 +714,24 @@ struct HttpServer::Impl {
         // + buffer'ı reap et — aksi halde her temiz disconnect'te ws_clients/ws_bufs/
         // g_ws_registry sızar → MAX_WS'e ulaşınca yeni upgrade'ler kalıcı reddedilir
         // + broadcast kapalı/yeniden-açılmış fd'ye yazmaya devam eder.
-        if (len == 0) { close_ws(fd); return; }
+        if (len == 0) {
+            // İstemci kapanış çerçevesi GÖNDERMEDEN gitti (ağ koptu, sekme kapandı, mobil uyku).
+            // "close" geri çağırması yalnız kapanış çerçevesinde ateşleniyordu → bu yolda hiç
+            // çalışmıyor, uygulamanın bağlantı listesi/temizliği sızıyordu (SSE'de kopuş zaten
+            // ateşliyor). Kural: istemci gidince bir kez; sunucu kendisi kapattıysa (closed) yok.
+            std::shared_ptr<WsConnection> gone;
+            {
+                std::lock_guard<std::mutex> lk(ws_mtx);
+                auto it = ws_clients.find(fd);
+                if (it != ws_clients.end()) gone = it->second;
+            }
+            if (gone && !gone->closed.exchange(true) && gone->on_close) {
+                auto cb = gone->on_close;
+                pool->submit([cb]() { cb(); });
+            }
+            close_ws(fd);
+            return;
+        }
         std::shared_ptr<WsConnection> conn;
         {
             std::lock_guard<std::mutex> lk(ws_mtx);

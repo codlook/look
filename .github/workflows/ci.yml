@@ -129,6 +129,13 @@ jobs:
           cd cpp
           bash tests/timer_late_test.sh ./build/lk-fcgi
 
+      # The close callback of a WebSocket runs when the client goes away, also without a
+      # close frame (dropped connection); not when the server closes the connection itself.
+      - name: WebSocket close callback (dropped client)
+        run: |
+          cd cpp
+          bash tests/ws_close_callback_test.sh ./build/lk-fcgi
+
       # The top level of a web application runs once at startup on every engine: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup
