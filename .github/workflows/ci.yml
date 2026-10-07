@@ -285,6 +285,13 @@ jobs:
           cd cpp
           bash tests/ws_close_callback_test.sh ./build/lk-fcgi
 
+      # LOOK 2: setup data is shared with every request instead of being copied for it; a write
+      # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.
+      - name: Shared setup data under concurrent requests
+        run: |
+          cd cpp
+          bash tests/shared_setup_concurrency_test.sh ./build/lk-fcgi
+
       # The top level of a web application runs once at startup on every engine: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup

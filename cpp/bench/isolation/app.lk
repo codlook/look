@@ -1,0 +1,16 @@
+// Per-request cost of sharing setup data with a request: a large top-level list, a list
+// captured by a route closure, and struct defaults that hold a list.
+use json
+struct Row { id int = 0, tags array = ["a", "b", "c", "d", "e", "f", "g", "h"] }
+$CFG = []
+for ($i = 0; $i < 2000; $i++) { push($CFG, ["id" => $i, "name" => "item-" . $i, "tags" => ["x", "y", "z"]]) }
+$captured = $CFG
+route("GET", "/plain",   fn() => response::text("ok"))
+route("GET", "/global",  fn() => response::text(count($CFG) . ":" . $CFG[10]["name"]))
+route("GET", "/capture", function() { return response::text(count($captured) . ":" . $captured[10]["name"]) })
+route("GET", "/struct",  function() {
+    $n = 0
+    for ($i = 0; $i < 50; $i++) { $r = Row { id: $i }; $n = $n + count($r.tags) }
+    return response::text($n)
+})
+route("GET", "/write",   function() { $CFG[10]["name"] = "changed"; return response::text($CFG[10]["name"] . ":" . count($CFG)) })

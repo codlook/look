@@ -1492,9 +1492,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             sh.builtins       = &req_builtins;
             sh.route_disabled = &g_http_app.vm_route_disabled;
             look::VM vm(sh, output);
-            // İstek izolasyonu: kurulum dizileri bu istekte ilk erişimde kopyalanır (LOAD_GLOBAL).
+            // Kurulum global'leri istekle paylaşılır (harita istek başına kopyalanır, değerler
+            // paylaşılır); istek birine yazarsa yazma yolu önce kendi kopyasını alır.
             vm.set_globals(g_http_app.vm_setup_globals);
-            vm.isolate_setup_globals();
             vm.set_web_context(&web);
             // LOOK 2: bağlantı işleyicisi (WS/SSE rotası) VM'de — bağlantı işleyiciye ilk argüman olarak gider.
             if (t_conn.type() == look::Value::WEBSOCKET) vm.set_ws_connection(t_conn.as_websocket());
@@ -1504,8 +1504,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // yeni bir istek gibi kurulmuş bu VM'de (temiz kurulum değerleri, kendi builtin'leri)
             // doğrudan çağrılır. Hata aşağıdaki ortak yakalayıcıya düşer (log + yeniden çalıştırma yok).
             if (t_direct_closure) {
-                std::shared_ptr<look::Closure> own;
-                vm.call_closure(look::VM::request_local(*t_direct_closure, own),
+                vm.call_closure(*t_direct_closure,
                                 t_direct_args ? *t_direct_args : std::vector<look::Value>{});
                 stopped_direct = true;
             }
@@ -1514,8 +1513,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             bool stopped = stopped_direct;
             if (!stopped_direct) for (auto* cl : before_closures) {
                 try {
-                    std::shared_ptr<look::Closure> own;
-                    vm.call_closure(look::VM::request_local(*cl, own), {});
+                    vm.call_closure(*cl, {});
                 } catch (const look::RouteStopException&) {
                     stopped = true;
                     break;

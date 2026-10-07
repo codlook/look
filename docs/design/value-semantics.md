@@ -152,7 +152,7 @@ each gets its own variables, as today.
 
 *Captured variables need nothing.* With value capture a closure cannot change what it holds,
 so the per-request copy of captured cells (`VM::request_local`) has nothing left to protect.
-It is still in the code and is removed together with the deep copies (step 5).
+It was removed together with the deep copies (step 5).
 
 The tests (`request_isolation_test.sh`, `struct_default_isolation_test.sh`,
 `realtime_isolation_test.sh`) stay. `request_isolation_test.sh` drives the global case and
@@ -209,3 +209,36 @@ because today it is silently changing `$a`. Its output also changes from
 
 Each step lands with its own guard, proven by fault injection, and the benchmark above run
 before and after.
+
+## Step 5 — done on the VM
+
+Removed: the deep copy of a top-level array on a request's first access to it, the deep copy
+of arrays captured by route and middleware closures (`VM::request_local`), and the deep copy
+of struct defaults for every new instance. Setup data is now shared with every request; the
+three copy-on-write points in `value_path.h` are what keeps a request's writes to itself.
+
+`cpp/bench/isolation/run.sh`, 4 workers, 4 keep-alive clients, requests per second, best of 3
+(the load client itself tops out near 51 000):
+
+| Route | before | after |
+|---|---|---|
+| `plain` — touches no setup data | 51 600 | 51 600 |
+| `global` — reads one element of a 2 000-element top-level list | 3 000 | 51 600 |
+| `capture` — the same list captured by the route closure | 3 000 | 51 600 |
+| `struct` — 50 instances of a struct with a list default | 31 100 | 31 000 |
+| `write` — writes one element of that list | 3 000 | 31 000 – 39 000 |
+
+The five workloads of the baseline table are unchanged (within noise).
+
+Guards: `request_isolation_test.sh` turns red for each of the three copy-on-write points
+when it is removed (plain write, write through a path, push / pop as the first write);
+`shared_setup_concurrency_test.sh` runs 1 200 concurrent requests on 4 workers and checks
+that every writer reads back its own writes and every reader the declared values.
+
+The tree-walk engine still copies its setup environment per request
+(`Interpreter::request_env`). It is the fallback engine and goes away with the single-engine
+work; it is not worth optimising on the way out.
+
+Not done here: the per-request copy of the global *table* itself (names and value handles,
+not the data). It is proportional to the number of top-level names, not to the size of the
+data.

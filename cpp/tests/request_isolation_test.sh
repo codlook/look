@@ -22,16 +22,22 @@ const { LIST = ["c0"] }
 $G = ["g0"]
 $N = ["k" => ["n0"]]
 $U = ["u0"]
+$P = ["p0"]
+$Q = ["k" => ["q0"]]
+$S = ["s0", "s1"]
 function w_global($u) { $G[0] = $u; $N["k"][0] = $u; push($G, $u); return count($G) }
+// push and pop are the FIRST write these three ever see (no assignment before them)
+function w_push($u) { push($P, $u); push($Q["k"], $u); pop($S); return count($P) + count($Q["k"]) + count($S) }
 route("GET", "/w", function() use ($U) {
     $mine = $U
     $mine[0] = request::get("u")
-    return response::json([w_global(request::get("u")), $G[0], $N["k"][0], $mine[0], $U[0]])
+    return response::json([w_global(request::get("u")), $G[0], $N["k"][0], $mine[0], $U[0], w_push(request::get("u"))])
 })
 route("GET", "/r", fn() use ($U) => response::json(["const" => LIST[0], "global" => $G[0], "nested" => $N["k"][0],
-                                                    "use" => $U[0], "count" => count($G)]))
+                                                    "use" => $U[0], "count" => count($G),
+                                                    "pushed" => count($P), "nested_pushed" => count($Q["k"]), "popped" => count($S)]))
 LK
-WANT='{"const":"c0","global":"g0","nested":"n0","use":"u0","count":1}'
+WANT='{"const":"c0","global":"g0","nested":"n0","use":"u0","count":1,"pushed":1,"nested_pushed":1,"popped":2}'
 fail=0
 for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
@@ -41,7 +47,7 @@ for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     after="$(curl -s -m 3 "localhost:$PORT/r")"
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
     # The writing request must see its own writes; the captured value stays what it was.
-    [ "$w" = '[2,"LEAK","LEAK","LEAK","u0"]' ] || { echo "  FAIL [$mode] the writing request did not see its own writes: $w $(grep -m1 ERROR "$TMP/log.txt" | cut -c1-160)"; fail=1; }
+    [ "$w" = '[2,"LEAK","LEAK","LEAK","u0",5]' ] || { echo "  FAIL [$mode] the writing request did not see its own writes: $w $(grep -m1 ERROR "$TMP/log.txt" | cut -c1-160)"; fail=1; }
     if [ "$before" = "$WANT" ] && [ "$after" = "$WANT" ]; then echo "  OK   [$mode] the next request reads the declared values"
     else echo "  FAIL [$mode] before=$before"; echo "       [$mode] after =$after"; fail=1; fi
 done

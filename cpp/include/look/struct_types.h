@@ -91,13 +91,11 @@ inline Value struct_zero_value(const std::string& type) {
     return Value();   // any, fn, struct adı → null
 }
 
-// Varsayılan değeri örneğe koyarken: dizi/map/struct DERİN kopyalanır. Eskiden aynı dizi
-// tüm örnekler arasında paylaşılıyordu; web'de bildirim istekten uzun yaşadığı için bir
-// isteğin verisi başka kullanıcının yeni örneğinde görünüyordu (1.0.3 güvenlik düzeltmesi).
-// Üst düzey kopya YETMEZ: iç içe dizi yine paylaşılır.
+// Varsayılan değer örnekle PAYLAŞILIR (LOOK 2 yazınca-kopyala): örnek alana yazarsa yazma
+// yolu önce kendi kopyasını alır, bildirimdeki değer değişmez. (1.0.3'te burada derin kopya
+// vardı — o zaman diziler referansla paylaşılıyordu.)
 inline Value struct_instance_default(const Value& def, const std::string& type) {
     if (def.type() == Value::NONE) return struct_zero_value(type);
-    if (def.type() == Value::ARRAY || def.type() == Value::STRUCT) return def.deep_clone();
     return def;
 }
 
