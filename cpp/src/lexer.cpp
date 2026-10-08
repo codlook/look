@@ -86,6 +86,9 @@ bool Lexer::is_continuation_ahead() const {
         pos++;
     if (pos >= source_.size()) return false;
     char c = source_[pos];
+    // `++$x` / `--$x` ile başlayan satır YENİ bir deyimdir, önceki satırın devamı değil.
+    // (Eskiden `-`/`+` ile başladığı için devam sayılıyor ve "Expect ';'" hatası veriyordu.)
+    if ((c == '+' || c == '-') && pos + 1 < source_.size() && source_[pos + 1] == c) return false;
     // Bu karakterlerle başlayan satır ifade devamıdır, yeni statement değil
     return (c == '.' || c == '+' || c == '-' || c == '*' || c == '/' ||
             c == '%' || c == '&' || c == '|' || c == '^' || c == '?');

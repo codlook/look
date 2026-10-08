@@ -494,7 +494,10 @@ int main(int argc, char* argv[]) {
             // Bilinen tek fark: hata çıktısında Column yok (VM sütun tablosu tutmuyor).
             bool ran_vm = false;
             const char* cvm = std::getenv("LOOK_CLI_VM");
-            const bool want_vm = !(cvm && cvm[0] == '0');   // default AÇIK; sadece "0" kapatır
+            // LOOK_BYTECODE=0 web sunucusunda yorumlayıcıyı seçer; komut satırı onu yok sayıyordu
+            // (yalnız LOOK_CLI_VM=0'a bakıyordu). Aynı ad iki ikilide de aynı anlama gelir.
+            const char* cbc = std::getenv("LOOK_BYTECODE");
+            const bool want_vm = !(cvm && cvm[0] == '0') && !(cbc && cbc[0] == '0');
             // LOOK_VM_STRICT — web'deki anlamıyla AYNI: sessiz fallback KAPALI, VM bu script'i
             // çalıştıramıyorsa hata yüzeye çıkar. Eskiden yalnız http_main okuyordu; CLI'nın
             // yürütme-öncesi tree-walk kararı (aşağıdaki 3 nokta) ona hiç bakmıyordu → differential'ın
@@ -560,10 +563,16 @@ int main(int argc, char* argv[]) {
                 if (vm_strict && want_vm) {
                     std::cerr << "Error: LOOK_VM_STRICT is set and the VM cannot run this script — "
                               << vm_skip_reason
-                              << " (without LOOK_VM_STRICT it would silently fall back to the "
+                              << " (without LOOK_VM_STRICT it would fall back to the "
                                  "tree-walk interpreter)." << std::endl;
                     return 1;
                 }
+                // Sessiz geri düşüş yok: VM istenip de çalıştıramıyorsa nedeni söylenir (web
+                // sunucusunun başlangıçta yazdığı uyarının komut satırındaki karşılığı).
+                if (want_vm && !vm_skip_reason.empty())
+                    look::Logger::instance().log(look::LogLevel::LOG_WARN, "VM",
+                        "The VM cannot run this script (" + vm_skip_reason +
+                        "); it runs on the tree-walk interpreter, which is much slower.");
                 interpreter.interpret(*program);
             }
         } catch (const look::RouteMatchedException&) {

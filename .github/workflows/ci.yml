@@ -108,6 +108,14 @@ jobs:
             fi
           done
 
+      # The command line says which engine runs: LOOK_BYTECODE=0 means the tree-walk engine for
+      # `lk` as for the web server, a fallback to it is announced, and a line starting with
+      # ++ or -- is a statement.
+      - name: Command-line engine choice
+        run: |
+          cd cpp
+          bash tests/cli_engine_choice_test.sh ./build/lk
+
       # LOOK 2: ++ and -- on an element or a field, with the meaning they have on a variable; an
       # element assignment used as an expression yields the element (the VM yielded the container).
       - name: Increment and decrement on elements (both engines)
