@@ -487,8 +487,13 @@ try {
 } catch ($e) { print("HATA") }
 LK
   pg_sonuc=""
+  # Portlar geçici (ephemeral) aralığın DIŞINDAN ve her durum için ayrı seçilir. Eskiden
+  # 55700-55899 arasından rastgele alınıyordu: o aralık çıkış bağlantılarının kaynak portu
+  # olarak da kullanılır, sahte sunucu ara sıra "Address already in use" ile açılamıyor ve
+  # sağlam durum HATA dönüyordu (yerelde 40 denemede 4).
+  pgbase=$((21700 + RANDOM % 190)); pgi=0
   for mod in saglam truncated negatif dev_uzunluk eksik_alan; do
-    pgport=$((55700 + RANDOM % 200))
+    pgport=$((pgbase + pgi)); pgi=$((pgi + 1))
     python3 "$FPG" $mod $pgport > "$TMP/fpg.log" 2>&1 &
     fpgpid=$!
     for i in $(seq 1 25); do grep -q hazir "$TMP/fpg.log" 2>/dev/null && break; sleep 0.2; done
