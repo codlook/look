@@ -299,6 +299,38 @@ application and used by a route is the same channel for every request and every 
 Use that when requests are meant to talk to each other; do not use a handle to get around
 the closure rule inside one request — pass the value in and return the new one.
 
+## Statements and the command line
+
+### A line starting with `++` or `--` is a new statement — was an error
+
+```
+$x--
+--$y        # LOOK 1: Parse Error "Expect ';'"; LOOK 2: decrements $y
+```
+
+A line that starts with `+` or `-` continues the expression of the line before; that is
+unchanged. A line that starts with `++` or `--` used to be taken the same way and failed to
+parse. It is a statement of its own now. Nothing that parsed before changes meaning.
+
+### `++` and `--` work on an element or a field — was an error
+
+`$count["views"]++`, `++$cart.items`, `$grid[$y][$x]--` were refused ("++/-- requires a
+variable"). They mean what they mean on a variable: the postfix form yields the old value,
+the prefix form the new one. A missing key is an error, as it is for `+=`.
+
+### `lk` says which engine runs a script
+
+- A script that loads its own files with `use "file.lk"` runs on the VM from the command
+  line too. In LOOK 1 such a script always ran on the tree-walk engine there (measured on a
+  loop-heavy included function: 3.7 s → 0.07 s).
+- When the VM cannot run a script, `lk` runs it on the tree-walk engine and writes one
+  `WARN` line to stderr with the reason. In LOOK 1 it did so silently. A script that wrote
+  nothing to stderr may now write that line.
+- `LOOK_BYTECODE=0` selects the tree-walk engine for `lk` as it does for the web server
+  (`lk` ignored it). `LOOK_CLI_VM=0` keeps working.
+- A struct declared again with different fields in an included file is an error on the VM
+  as well.
+
 ## Not part of LOOK 2
 
 These arrived in 1.0.x releases and apply to LOOK 1 as well; they are listed because a

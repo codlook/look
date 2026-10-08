@@ -337,6 +337,8 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
         if (it != struct_seen_.end() && it->second.first != sig)
             throw LookParseError("struct '" + stmt->name + "' is already declared at line "
                 + std::to_string(it->second.second) + " with different fields", name.line, name.column);
+        stmt->signature = sig;
+        stmt->decl_line = name.line;
         struct_seen_.emplace(stmt->name, std::make_pair(std::move(sig), name.line));
     }
     return stmt;

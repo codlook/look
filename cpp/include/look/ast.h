@@ -274,6 +274,10 @@ struct StructField {
 struct StructDeclaration final : Statement {
     std::string name;
     std::vector<StructField> fields;
+    // Tanımın imzası (alan adları, tipler, varsayılan ifadelerin metni): aynı adla ikinci bir
+    // bildirimin BİREBİR aynı olup olmadığını karşılaştırmak için. Ayrıştırıcı doldurur.
+    std::string signature;
+    int decl_line = 0;
 };
 
 // Kullanici{ad: "Ali", yas: 30}

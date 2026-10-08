@@ -278,10 +278,28 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
 
 // Programın top-level `use` modüllerini interpreter'a yükle. Hepsi stdlib ise true
 // (CLI-VM güvenli); dış/paket modül varsa false (caller tree-walk'a düşer — semantik korunur).
-static bool preload_uses_for_vm(look::Interpreter& interp, const look::Program& prog) {
+// `use "dosya.lk"` ile dahil edilen dosyaların KENDİ `use <modül>` satırları da yüklenir (özyinelemeli):
+// derleyici dahil edilen dosyayı aynı birime derler, modül fonksiyonları ise buradaki
+// yorumlayıcıdan bağlanır. Açılamayan/ayrıştırılamayan dosya burada sorun sayılmaz — derleyici
+// aynı dosyada nedenini söyleyerek durur.
+static bool preload_uses_for_vm(look::Interpreter& interp, const look::Program& prog,
+                                const std::filesystem::path& dir, std::set<std::string>& seen) {
     for (auto& s : prog.statements) {
         if (auto* u = dynamic_cast<const look::UseStatement*>(s.get())) {
             if (!interp.load_stdlib_module(u->module_name)) return false;
+        } else if (auto* uf = dynamic_cast<const look::UseFileStatement*>(s.get())) {
+            std::error_code ec;
+            const std::filesystem::path abs = std::filesystem::weakly_canonical(dir / uf->path, ec);
+            if (ec || !seen.insert(abs.string()).second) continue;
+            std::ifstream f(abs);
+            if (!f) continue;
+            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            try {
+                look::Lexer lx(src);
+                look::Parser p(lx.scan_tokens());
+                auto sub = p.parse();
+                if (!preload_uses_for_vm(interp, *sub, abs.parent_path(), seen)) return false;
+            } catch (...) { continue; }
         }
     }
     return true;
@@ -506,19 +524,17 @@ int main(int argc, char* argv[]) {
             const char* cvs = std::getenv("LOOK_VM_STRICT");
             const bool vm_strict = cvs && cvs[0] == '1';
             std::string vm_skip_reason;
-            const bool preload_ok = want_vm && preload_uses_for_vm(interpreter, *program);
+            const std::filesystem::path script_dir = std::filesystem::absolute(filename).parent_path();
+            std::set<std::string> preload_seen;
+            const bool preload_ok = want_vm && preload_uses_for_vm(interpreter, *program, script_dir, preload_seen);
             if (want_vm && !preload_ok)
                 vm_skip_reason = "a `use`d module could not be loaded for the VM";
             if (preload_ok) {
                 look::CompiledProgram compiled;
                 bool compiled_ok = true;
-                // NB: no base_dir here — a CLI script has no interpreter pre-pass to
-                // register the modules that a file-include's OWN `use <mod>` needs, so
-                // compiling file-includes would throw "Module not loaded" at runtime.
-                // Leaving base_dir empty keeps `use "file.lk"` on the interpreter path
-                // for the CLI (pre-existing behaviour). The web path (http_main) does run
-                // that pre-pass, so it passes base_dir and gets the compiled fast path.
-                try { compiled = look::Compiler::compile(*program); }
+                // Temel dizin verilir: `use "dosya.lk"` ile dahil edilenler de VM'e derlenir (web yolu
+                // gibi). Onların kendi modülleri yukarıdaki özyinelemeli ön yüklemeyle bağlandı.
+                try { compiled = look::Compiler::compile(*program, script_dir.string()); }
                 catch (const std::exception& ex) {      // compile hatası → tree-walk
                     compiled_ok = false;
                     vm_skip_reason = std::string("compile error: ") + ex.what();

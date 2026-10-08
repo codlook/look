@@ -28,6 +28,8 @@ namespace cfs = std::filesystem;
 thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
+// Bu derleme biriminde (dahil edilen dosyalar dahil) görülen struct bildirimleri: ad → (imza, satır).
+thread_local std::unordered_map<std::string, std::pair<std::string, int>> g_compile_structs;
 }
 #include <stdexcept>
 #include <typeinfo>
@@ -452,8 +454,11 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
             struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); } } dir_pop;
             for (auto& sub : prog->statements) compile_stmt(*sub);
-        } catch (const LookCompileError&) {
-            throw;
+        } catch (const LookCompileError& ex) {
+            // Hangi dosyada olduğu söylenir (içteki bir dahil etme zaten adını koyduysa yinelenmez).
+            const std::string m = ex.what();
+            if (m.rfind("use \"", 0) == 0) throw;
+            throw LookCompileError("use \"" + ufs->path + "\": " + m);
         } catch (const std::exception& ex) {
             // ESKİ HATA: burada her hata yutulup NOP yazılıyordu ("yorumlayıcı yedeği halleder").
             // 1.0.8'den beri istek yorumlayıcıda yeniden çalıştırılmıyor → dahil edilen dosyanın
@@ -895,6 +900,16 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
     // CLI'da tek VM çalıştırır; web'de kurulum VM'i çalıştırır ve vm_setup_globals her
     // isteğin VM'ine taşır. ':' tanımlayıcıda geçersiz → kullanıcı adıyla çakışamaz.
     // LOOK 2: üçlüler [ad, varsayılan, tip] — tip "" = tipsiz (kurallar look/struct_types.h).
+    // Aynı adla FARKLI ikinci bildirim = hata; birebir aynısı serbest. Aynı dosyadaki durumu
+    // ayrıştırıcı yakalar; burası dahil edilen dosyalar arası (yorumlayıcı bunu yüklemede
+    // yakalıyordu, VM hiç bakmıyordu — komut satırı dahil edilenleri derlemeye başlayınca göründü).
+    {
+        auto seen = g_compile_structs.find(s.name);
+        if (seen != g_compile_structs.end() && seen->second.first != s.signature)
+            throw LookCompileError("struct '" + s.name + "' is already declared at line "
+                + std::to_string(seen->second.second) + " with different fields");
+        g_compile_structs.emplace(s.name, std::make_pair(s.signature, s.decl_line));
+    }
     uint8_t arr = alloc_temp();
     emit(OpCode::NEW_ARRAY, arr, hint_u8(s.fields.size() * 3));
     for (auto& f : s.fields) {
@@ -1896,6 +1911,7 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
 CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir) {
     g_compile_root = base_dir;
     g_compile_included.clear();
+    g_compile_structs.clear();
     g_compile_cur_dir.clear();
     if (!base_dir.empty()) g_compile_cur_dir.push_back(base_dir);
     FunctionCompiler main_compiler("<main>", {}, false, nullptr);

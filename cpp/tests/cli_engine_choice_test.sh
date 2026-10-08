@@ -10,6 +10,7 @@
 #   * a script the VM can run produces no such line
 #   * a line that starts with ++ or -- is a new statement, not the continuation of the
 #     line before
+#   * a script that loads its own files with `use "file.lk"` runs on the VM as well
 # Usage: cli_engine_choice_test.sh <lk>
 LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -35,4 +36,20 @@ for sw in LOOK_VM_STRICT=1 LOOK_CLI_VM=0; do
     if [ "$out" = "3:2:2" ]; then echo "  OK   [$sw] lines starting with ++ / -- are statements; a line starting with - still continues"
     else echo "  FAIL [$sw] step.lk: [$out]"; fail=1; fi
 done
+# A script that loads its own files with `use "file.lk"` runs on the VM too (it always ran on
+# the tree-walk engine from the command line), with the modules those files use themselves.
+mkdir -p "$TMP/lib"
+printf 'use json\nuse "inner.lk"\nfunction enc($v) { return json::encode($v) }\n' > "$TMP/lib/util.lk"
+printf 'use math\nfunction root($n) { return math::sqrt($n) }\n' > "$TMP/lib/inner.lk"
+printf 'use "lib/util.lk"\nprint(enc(["a" => root(16)]))\n' > "$TMP/inc.lk"
+for sw in LOOK_X=1 LOOK_VM_STRICT=1 LOOK_CLI_VM=0; do
+    out="$(cd "$TMP" && env $sw "$LK" inc.lk 2>"$TMP/err.txt")"
+    if [ "$out" = '{"a":4}' ] && [ ! -s "$TMP/err.txt" ]; then echo "  OK   [$sw] a script with nested file includes runs, without a fallback warning"
+    else echo "  FAIL [$sw] inc.lk: out=[$out] stderr=[$(head -c 200 "$TMP/err.txt")]"; fail=1; fi
+done
+{ echo 'function cnt(...$a) { return count($a) }'; echo "function many() { return cnt($(seq -s, 1 300)) }"; } > "$TMP/lib/big.lk"
+printf 'use "lib/big.lk"\nprint("got=" . many())\n' > "$TMP/incbig.lk"
+out="$(cd "$TMP" && "$LK" incbig.lk 2>"$TMP/err.txt")"
+if [ "$out" = "got=300" ] && grep -q 'The VM cannot run this script (compile error: use "lib/big.lk": .*more than 255 arguments' "$TMP/err.txt"; then echo "  OK   an included file the VM cannot compile: the warning names the file and the reason, the result is right"
+else echo "  FAIL incbig.lk: out=[$out] stderr=[$(head -c 220 "$TMP/err.txt")]"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: the command line says which engine runs" || { echo "FAIL: command-line engine choice"; exit 1; }
