@@ -15,6 +15,8 @@
 #include "look/db_async_pool.h"
 #include "look/lexer.h"
 #include "look/parser.h"
+#include "look/setup_handoff.h"
+#include "look/jobs_store.h"
 #include "look/interpreter.h"
 #include "look/compiler.h"
 #include "look/vm.h"
@@ -328,6 +330,12 @@ static thread_local const std::vector<look::Value>* t_direct_args = nullptr;
 static thread_local look::Value t_conn;
 // Doğrudan çağrılan geri çağırmanın log etiketi ("message handler" …): hata bu adla loglanır.
 static thread_local const char* t_direct_what = nullptr;
+// Doğrudan çağrının sonucu ve hata durumu (iş işleyicisi dönüş değerine bakar).
+static thread_local look::Value t_direct_result;
+static thread_local bool t_direct_failed = false;
+// Bu iş parçacığında şu an bir dağıtım sürüyor mu (iç içe "yeni istek" ayrı iş parçacığında koşar).
+static thread_local int t_dispatch_depth = 0;
+static look::Value run_closure_as_request(const look::Value& fnv, std::vector<look::Value> args, const char* what, bool& ok);
 
 static bool look_vm_strict() {
     static const bool v = []{ const char* e = std::getenv("LOOK_VM_STRICT"); return e && e[0] == '1'; }();
@@ -407,6 +415,7 @@ static void run_setup_http(const fs::path& script) {
     interp->set_web_context(&setup_ctx);
     interp->set_setup_mode(true);
     g_http_app.setup_record.clear();
+    look::setup_handoff().reset(look::JobStore::instance().workers().size());   // LOOK 2: üst düzey geri çağırmaların VM'e devri
     interp->set_setup_record(&g_http_app.setup_record);   // 1.0.9: VM geçişi bunu geri oynatır
     try { interp->interpret(*program); }
     catch (...) { interp->set_setup_record(nullptr); throw; }
@@ -738,6 +747,8 @@ static void run_setup_http(const fs::path& script) {
             // kurulumda farklı yoldan gittiyse) VM kurulumu hatayla biter → program yorumlayıcıda
             // kalır (LOOK_VM_STRICT=1 reddeder); sessiz yanlış değer yok.
             auto replay_pos = std::make_shared<size_t>(0);
+            auto staged_timers  = std::make_shared<std::vector<look::Value>>();
+            auto staged_workers = std::make_shared<std::vector<look::Value>>();
             {
                 auto* rec = &g_http_app.setup_record;
                 const auto& bnames = look::builtin_names();
@@ -749,10 +760,16 @@ static void run_setup_http(const fs::path& script) {
                     // üst düzeyde kurulan zamanlayıcı bir kez kurulur, VM geçişi aynı kimliği geri alır.
                     const bool timer_fn = name.rfind("timer::", 0) == 0;
                     if (!timer_fn && !g_http_app.interp->get_module_fn(name.substr(0, colon), name.substr(colon + 2))) continue;
-                    setup_builtins[i] = [name, rec, replay_pos](std::vector<look::Value>&) -> look::Value {
+                    setup_builtins[i] = [name, rec, replay_pos, staged_timers, staged_workers](std::vector<look::Value>& args) -> look::Value {
                         if (*replay_pos >= rec->size() || (*rec)[*replay_pos].first != name)
                             throw look::LookVmError("setup replay: the VM called " + name + " where the first pass called "
                                 + (*replay_pos < rec->size() ? (*rec)[*replay_pos].first : std::string("nothing more")));
+                        // LOOK 2: üst düzeyde kaydedilen geri çağırmanın VM karşılığı bekletilir; VM kurulumu
+                        // başarıyla bitince ilk geçişte kurulanın yerine geçer (look/setup_handoff.h).
+                        if ((name == "timer::after" || name == "timer::every") && args.size() >= 2)
+                            staged_timers->push_back(args[1].type() == look::Value::BYTECODE_FN ? args[1].clone_for_thread() : look::Value());
+                        else if (name == "jobs::worker" && args.size() >= 2)
+                            staged_workers->push_back(args[1].type() == look::Value::BYTECODE_FN ? args[1].clone_for_thread() : look::Value());
                         return (*rec)[(*replay_pos)++].second.deep_clone();
                     };
                 }
@@ -804,6 +821,27 @@ static void run_setup_http(const fs::path& script) {
                 std::cerr << "[BYTECODE] VM routes: " << g_http_app.vm_routes.size() << " registered\n";
                 look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
                     "VM dispatch ready — " + std::to_string(g_http_app.vm_routes.size()) + " route");
+                // LOOK 2: VM kurulumu tamam → üst düzeyde kaydedilen zamanlayıcılar ve iş işleyicileri
+                // artık VM closure'larını çağırır. (Buraya gelinmediyse — derleme/kurulum hatası —
+                // ilk geçişte kurulan yorumlayıcı geri çağırmaları olduğu gibi kalır.)
+                {
+                    look::vm_closure_runner() = run_closure_as_request;
+                    auto& ho = look::setup_handoff();
+                    size_t nt = 0, nw = 0;
+                    for (size_t i = 0; i < staged_timers->size() && i < ho.timer_slots.size(); ++i) {
+                        if ((*staged_timers)[i].type() != look::Value::BYTECODE_FN) continue;
+                        look::Value fnv = (*staged_timers)[i];
+                        ho.timer_slots[i]->set([fnv]() { bool ok = false; run_closure_as_request(fnv, {}, "timer callback", ok); });
+                        ++nt;
+                    }
+                    for (size_t i = 0; i < staged_workers->size(); ++i) {
+                        if ((*staged_workers)[i].type() != look::Value::BYTECODE_FN) continue;
+                        if (look::JobStore::instance().replace_worker(ho.worker_base + i, (*staged_workers)[i])) ++nw;
+                    }
+                    if (nt + nw > 0)
+                        look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
+                            "Top-level callbacks on the VM: " + std::to_string(nt) + " timer, " + std::to_string(nw) + " job handler");
+                }
             } else {
                 std::cerr << "[BYTECODE] no VM routes — interpreter dispatch will be used\n";
                 // Rotası olan bir uygulamada bu da BÜTÜN-program fallback'idir (strict reddeder).
@@ -914,6 +952,47 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
 // İleri bildirim — tanım http_handler'dan sonra (paylaşılan motor)
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path);
+
+// LOOK 2 — bir VM closure'ını YENİ BİR İSTEK gibi çalıştırır: kendi VM'i, kendi builtin'leri,
+// global'lerin bildirilen değerleri (üst düzeyde kaydedilen zamanlayıcı ve iş işleyicileri için).
+// Hata loglanır (what + " error: …"), ok=false döner; hiçbir şey yeniden çalıştırılmaz.
+static look::Value run_closure_here(const look::Value& fnv, std::vector<look::Value>& args,
+                                    const char* what, bool& ok) {
+    look::WebContext ctx;
+    ctx.method = "__EVENT__";
+    std::ostringstream sink;
+    const look::Closure* pc = t_direct_closure;
+    const std::vector<look::Value>* pa = t_direct_args;
+    const char* pw = t_direct_what;
+    t_direct_closure = fnv.as_bytecode_fn().get();
+    t_direct_args    = &args;
+    t_direct_what    = what;
+    t_direct_failed  = false;
+    t_direct_result  = look::Value();
+    try { look_app_dispatch(ctx, sink, std::string()); }
+    catch (const std::exception& ex) {
+        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string(what) + " error: " + ex.what());
+        t_direct_failed = true;
+    } catch (...) {
+        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string(what) + " unknown error");
+        t_direct_failed = true;
+    }
+    ok = !t_direct_failed;
+    look::Value r = std::move(t_direct_result);
+    t_direct_result  = look::Value();
+    t_direct_closure = pc;
+    t_direct_args    = pa;
+    t_direct_what    = pw;
+    return r;
+}
+static look::Value run_closure_as_request(const look::Value& fnv, std::vector<look::Value> args,
+                                          const char* what, bool& ok) {
+    // Bu iş parçacığında zaten bir istek dağıtılıyorsa (ör. bir rota jobs::run çağırdı) iç içe
+    // dağıtım look_app_dispatch'te ele alınır: dış isteğin önbellekleri ve veritabanı
+    // bağlantıları korunur. (Ayrı iş parçacığı açmak, her tüketicinin bir bağlantı tuttuğu
+    // durumda havuzu tüketip kilitleniyordu — tests/jobs_concurrent_test.sh.)
+    return run_closure_here(fnv, args, what, ok);
+}
 
 // Hot-reload throttle: the per-request mtime stat (fs::last_write_time) + shared_lock
 // was the dominant per-request cost on mounted/slow filesystems — strace showed one
@@ -1048,6 +1127,23 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
 // interpreter ile dispatch eder, çıktıyı output/web.response_body'ye yazar.
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path) {
+    // İÇ İÇE dağıtım: bir istek sürerken aynı iş parçacığında bir VM closure'ı "yeni istek"
+    // olarak koşuyor (rota jobs::run çağırdı → iş işleyicisi). Dış isteğin iş parçacığına özgü
+    // durumu korunur: builtin tablosu yerel kurulur (önbelleğe dokunulmaz), veritabanı
+    // bağlantıları dıştakinden kullanılır (yeniden alınmaz/bırakılmaz — havuzu tüketip
+    // kilitlenmesin), çıkışta kopyanın çıktısı ve bağlamı dış isteğe geri bağlanır.
+    struct DepthGuard {
+        std::function<void()> restore;
+        DepthGuard() { ++t_dispatch_depth; }
+        ~DepthGuard() { --t_dispatch_depth; if (restore) restore(); }
+    } depth_guard;
+    const bool nested = t_dispatch_depth > 1;
+    static thread_local look::WebContext*   t_cur_web = nullptr;
+    static thread_local std::ostringstream* t_cur_out = nullptr;
+    look::WebContext*   const outer_web = t_cur_web;
+    std::ostringstream* const outer_out = t_cur_out;
+    t_cur_web = &web; t_cur_out = &output;
+    struct CurGuard { look::WebContext* w; std::ostringstream* o; ~CurGuard() { t_cur_web = w; t_cur_out = o; } } cur_guard{outer_web, outer_out};
     // Fallback için bozulmamış kopya (VM kısmi header/status yazmış olabilir)
     const look::WebContext web0 = web;
 
@@ -1089,6 +1185,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         t_copy_end = std::chrono::steady_clock::now();
         copy->set_output(output);
         copy->set_web_context(&web);
+        if (nested && outer_web && outer_out)
+            depth_guard.restore = [copy, outer_web, outer_out]() { copy->set_output(*outer_out); copy->set_web_context(outer_web); };
 
         // VM routes'u shared_lock altında alıyoruz (g_http_app read-only erişim).
         // PERF: route_closures listesi vm_routes'tan türetilir (istek-bağımsız, yalnız
@@ -1149,15 +1247,16 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // SSE + WS'den sonraki sıradan istekte segfault).
         static thread_local const look::WebContext* tl_builtins_web = nullptr;
         std::vector<look::BuiltinFn> fiber_req_builtins;
-        std::vector<look::BuiltinFn>& req_builtins = g_use_fiber ? fiber_req_builtins : tl_req_builtins;
-        const bool need_build = g_use_fiber || (tl_builtins_gen != cur_gen) || (tl_builtins_web != &web);
+        const bool local_table = g_use_fiber || nested;   // iç içe dağıtım dış isteğin önbelleğine dokunmaz
+        std::vector<look::BuiltinFn>& req_builtins = local_table ? fiber_req_builtins : tl_req_builtins;
+        const bool need_build = local_table || (tl_builtins_gen != cur_gen) || (tl_builtins_web != &web);
         if (need_build) {
         req_builtins.assign(look::builtin_names().size(), look::BuiltinFn{});
 
         // print/write (0, 1)
         // print/write: fiber mode captures the fiber-local output (safe under interleaving);
         // worker-pool mode routes through copy->output() (set per request) so the table caches.
-        if (g_use_fiber)
+        if (local_table)
             req_builtins[0] = [&output](std::vector<look::Value>& args) -> look::Value {
                 for (auto& a : args) output << a.to_string();
                 return look::Value();
@@ -1472,7 +1571,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             return look::Value(result);
         };
 
-        if (!g_use_fiber) { tl_builtins_gen = cur_gen; tl_builtins_web = &web; }   // cache valid until the next hot-reload
+        if (!local_table) { tl_builtins_gen = cur_gen; tl_builtins_web = &web; }   // cache valid until the next hot-reload
         }   // end if(need_build) — worker-pool builds once per generation; fiber every request
 
         // before_route closures: route_closures ile aynı yapıda
@@ -1482,7 +1581,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             if (val.type() == look::Value::BYTECODE_FN)
                 before_closures.push_back(val.as_bytecode_fn().get());
 
-        look::acquire_thread_connections();
+        if (!nested) look::acquire_thread_connections();   // iç içe: dış isteğin bağlantıları kullanılır
         t_dispatch_start = std::chrono::steady_clock::now();
         bool vm_ok = false;
         int  vm_failed_route = -1;
@@ -1505,7 +1604,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // yeni bir istek gibi kurulmuş bu VM'de (temiz kurulum değerleri, kendi builtin'leri)
             // doğrudan çağrılır. Hata aşağıdaki ortak yakalayıcıya düşer (log + yeniden çalıştırma yok).
             if (t_direct_closure) {
-                vm.call_closure(*t_direct_closure,
+                t_direct_result = vm.call_closure(*t_direct_closure,
                                 t_direct_args ? *t_direct_args : std::vector<look::Value>{});
                 stopped_direct = true;
             }
@@ -1591,6 +1690,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             }
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                 (t_direct_what ? std::string(t_direct_what) + " error: " : std::string("Dispatch error: ")) + what);
+            if (t_direct_closure) t_direct_failed = true;
             vm_ok = true;   // yanıt hazır (500) — yorumlayıcıda YENİDEN ÇALIŞTIRMA yok
         }
 
@@ -1623,7 +1723,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // VM path acquire (satır 937) burada serbest bırakılır — vm_ok ve
         // fallback dahil her iki akışı kapsar. Eksik release, pool_size istek
         // sonrası tüm worker'ların deadlock olmasına neden oluyordu.
-        look::release_thread_connections();
+        if (!nested) look::release_thread_connections();
     } else {
         // ── Interpreter path (bytecode kapalı: LOOK_BYTECODE=0 veya compile hatası) ──
         // Burada da kopya worker başına bir kez kurulur (VM yolundaki ölçümün aynısı:

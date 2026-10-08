@@ -11,6 +11,7 @@
 #include "look/ast.h"
 #include "look/lexer.h"
 #include "look/parser.h"
+#include "look/setup_handoff.h"
 #include "look/websocket.h"
 #include "look/sse.h"
 #include "look/timer.h"
@@ -1681,11 +1682,20 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                         look::release_thread_connections();
                     };
 
+                    // LOOK 2: kurulumda (üst düzeyde) kurulan zamanlayıcı bir YUVA üzerinden çağrılır;
+                    // VM kurulumu başarıyla bitince yuvaya VM closure'ı konur (look/setup_handoff.h).
+                    std::function<void()> armed = std::move(callback);
+                    if (setup_record_ && setup_record_depth_ == 0) {
+                        auto slot = std::make_shared<look::CallbackSlot>();
+                        slot->set(std::move(armed));
+                        look::setup_handoff().timer_slots.push_back(slot);
+                        armed = [slot]() { slot->call(); };
+                    }
                     int id;
                     if (fn == "after")
-                        id = look::TimerManager::instance().after(ms, std::move(callback));
+                        id = look::TimerManager::instance().after(ms, std::move(armed));
                     else
-                        id = look::TimerManager::instance().every(ms, std::move(callback));
+                        id = look::TimerManager::instance().every(ms, std::move(armed));
                     // Kurulum kaydı: VM geçişi zamanlayıcıyı İKİNCİ KEZ kurmaz, aynı kimliği geri alır.
                     if (setup_record_ && setup_record_depth_ == 0) setup_record_->emplace_back("timer::" + fn, Value(id));
                     return Value(id);
@@ -2293,10 +2303,23 @@ Value Interpreter::jobs_run(int interval_ms) {
                 auto copy = make_dispatch_copy();
                 auto sink = std::make_shared<std::ostringstream>();
                 copy->set_output(*sink);
+                // İşleyici KENDİ istek bağlamında koşar. Eskiden kopya, jobs::run'ı çağıran isteğin
+                // bağlamını paylaşıyordu: işleyici o isteğin parametrelerini okuyor, response::status /
+                // header çağrıları isteğin yanıtını değiştiriyordu.
+                look::WebContext job_ctx;
+                job_ctx.method = "__JOB__";
+                copy->set_web_context(&job_ctx);
                 bool ok = false;
                 try {
-                    Value result = copy->invoke(fn_v, {job});
-                    ok = result.as_bool();
+                    if (fn_v.type() == Value::BYTECODE_FN && look::vm_closure_runner()) {
+                        // LOOK 2: işleyici VM closure'ı — yeni bir istek gibi VM'de koşar (hata orada loglanır).
+                        bool ran = false;
+                        Value result = look::vm_closure_runner()(fn_v, {job}, "job handler", ran);
+                        ok = ran && result.as_bool();
+                    } else {
+                        Value result = copy->invoke(fn_v, {job});
+                        ok = result.as_bool();
+                    }
                 } catch (const std::exception& ex) {
                     look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
                         std::string("handler error [") + queue + "]: " + ex.what());

@@ -45,6 +45,13 @@ public:
 
     // Register a LOOK function handler for a queue.
     void register_worker(const std::string& queue, Value fn);
+    // LOOK 2: kayıtlı işleyicinin fonksiyonunu değiştirir (VM kurulumu bitince yorumlayıcı
+    // fonksiyonunun yerine VM closure'ı geçer). Kuyruk adı aynı kalır.
+    bool replace_worker(size_t index, Value fn) {
+        if (index >= workers_.size()) return false;
+        workers_[index].second = std::move(fn);
+        return true;
+    }
 
     // Get registered workers (for jobs::run()).
     const std::vector<std::pair<std::string, Value>>& workers() const { return workers_; }

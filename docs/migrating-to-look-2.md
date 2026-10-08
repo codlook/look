@@ -299,6 +299,20 @@ application and used by a route is the same channel for every request and every 
 Use that when requests are meant to talk to each other; do not use a handle to get around
 the closure rule inside one request — pass the value in and return the new one.
 
+### Job handlers and top-level timers: their own request, on the VM — silent
+
+A job handler (`jobs::worker`) and a timer armed at the top level now run like a request of
+their own: on the VM, with the top-level variables at their declared values.
+
+- A handler started from inside a request — a route that calls `jobs::run(0)` — used to share
+  that request: `request::get(...)` in the handler read the caller's parameters, and
+  `response::status(...)` or `response::header(...)` in the handler changed the caller's
+  response. The handler has its own context now and the request keeps its own. Pass what the
+  handler needs in the job's payload.
+- The callbacks used to run on the tree-walk engine even when the application ran on the VM.
+  Nothing changes in what they compute; loop-heavy handlers are much faster (measured:
+  4.2 s → 0.08 s for one job).
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error
