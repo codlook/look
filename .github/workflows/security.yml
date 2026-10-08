@@ -90,13 +90,29 @@ jobs:
         continue-on-error: true  # TSan bulguları baseline kurulana dek uyarı
 
       # LOOK 2: setup arrays are shared between request threads and copied on write. Writers and
-      # readers run at once on 4 workers; the reports are counted and the first ones printed
-      # (advisory, like the step above).
+      # readers run at once on 4 workers; any ThreadSanitizer report fails the job.
       - name: Shared setup data under TSan
         run: |
           cd cpp
-          TSAN_OPTIONS="halt_on_error=0:log_path=/tmp/tsan_shared" bash tests/shared_setup_concurrency_test.sh ./build-tsan/lk-fcgi || true
+          rm -f /tmp/tsan_shared.*
+          TSAN_OPTIONS="halt_on_error=0:log_path=/tmp/tsan_shared" bash tests/shared_setup_concurrency_test.sh ./build-tsan/lk-fcgi
           n="$(cat /tmp/tsan_shared.* 2>/dev/null | grep -c "WARNING: ThreadSanitizer" || true)"
           echo "ThreadSanitizer reports: $n"
           cat /tmp/tsan_shared.* 2>/dev/null | head -120 || true
-        continue-on-error: true
+          [ "$n" = "0" ]
+
+      # Positive control for the step above: the same scenario with the copy on write removed
+      # (requests then write into the shared array in place) MUST produce reports. Without
+      # this, "0 reports" would also be what a step that cannot report prints.
+      - name: Shared setup data under TSan — positive control
+        run: |
+          cd cpp
+          sed -i 's|^    slot\.detach();$|    /* positive control: the copy on write is removed */|' include/look/value_path.h
+          grep -q 'positive control: the copy on write is removed' include/look/value_path.h
+          cmake --build build-tsan --target look-fcgi --parallel $(nproc)
+          rm -f /tmp/tsan_ctl.*
+          TSAN_OPTIONS="halt_on_error=0:log_path=/tmp/tsan_ctl" bash tests/shared_setup_concurrency_test.sh ./build-tsan/lk-fcgi || true
+          n="$(cat /tmp/tsan_ctl.* 2>/dev/null | grep -c "WARNING: ThreadSanitizer" || true)"
+          echo "ThreadSanitizer reports with the copy on write removed: $n"
+          cat /tmp/tsan_ctl.* 2>/dev/null | head -40 || true
+          [ "$n" -gt 0 ]

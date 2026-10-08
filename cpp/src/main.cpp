@@ -454,6 +454,14 @@ int main(int argc, char* argv[]) {
                 }
                 if (bad_param) return 1;
             }
+            // VM bu dosyayı derleyebiliyor mu? Derleyemiyorsa betik (web'de bütün uygulama)
+            // sessizce yorumlayıcıda çalışır — burada adıyla söylenir. Çalıştırma yok.
+            // Temel dizin web yolundaki gibi verilir: `use "dosya.lk"` dahil edilenler de derlenir.
+            try { (void)look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string()); }
+            catch (const std::exception& ex) {
+                std::cout << "WARN 1 1 [vm-compile] the VM cannot compile this file (" << ex.what()
+                          << "); it runs on the tree-walk engine\n";
+            }
             std::cout << "OK\n";
             return 0;
         }

@@ -10,7 +10,7 @@
 # Usage: ecosystem_scan.sh <lk> [dir-with-checkouts]
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> [dir]}")" && pwd)/$(basename "$1")"
 DIR="${2:-$(mktemp -d)}"
-for repo in look-modules look-packages look-examples; do
+for repo in look-modules look-packages look-examples lookpress; do
     # A repository may carry a v2 branch for LOOK 2 (look-modules does); otherwise its default branch.
     [ -d "$DIR/$repo" ] || git clone -q --depth 1 --branch v2 "https://github.com/codlook/$repo.git" "$DIR/$repo" 2>/dev/null \
         || git clone -q --depth 1 "https://github.com/codlook/$repo.git" "$DIR/$repo" 2>/dev/null \
@@ -23,7 +23,7 @@ for repo in look-modules look-packages look-examples; do
         w="$(echo "$out" | grep -c '^WARN')"
         if [ "$w" -gt 0 ]; then warned=$((warned + 1)); echo "$out" | grep '^WARN' | sed "s|^WARN |  warning        ${f#$DIR/}: |" >> "$DIR/$repo.report"; fi
     done < <(find "$DIR/$repo" -name '*.lk' -not -path '*/.git/*' | sort)
-    echo "== $repo: $files files, $broken do not load, $warned with warnings"
+    echo "== $repo: $files files, $broken do not load, $warned with warnings, $(grep -cF "[vm-compile]" "$DIR/$repo.report") the VM cannot compile, $(grep -cF "[param-write]" "$DIR/$repo.report") with a parameter write"
     cut -c1-220 "$DIR/$repo.report"
 done
 exit 0
