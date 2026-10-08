@@ -509,10 +509,11 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                 ? cfs::path(g_compile_root) : cfs::path(g_compile_cur_dir.back());
             std::string abs  = cfs::weakly_canonical(base / ufs->path).string();
             std::string root = cfs::weakly_canonical(cfs::path(g_compile_root)).string();
-            if (abs.compare(0, root.size(), root) != 0) { emit(OpCode::NOP); return; }  // sandbox
+            if (abs.compare(0, root.size(), root) != 0)
+                throw LookCompileError("use \"" + ufs->path + "\": the file is outside the application directory");
             if (g_compile_included.count(abs))          { emit(OpCode::NOP); return; }  // dedup/circular
             std::ifstream f(abs);
-            if (!f) { emit(OpCode::NOP); return; }
+            if (!f) throw LookCompileError("use \"" + ufs->path + "\": the file cannot be opened");
             std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             g_compile_included.insert(abs);
             Lexer lx(src);
@@ -520,10 +521,19 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             auto prog = std::shared_ptr<Program>(p.parse().release());
             g_file_asts.push_back(prog);
             g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
+            struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); } } dir_pop;
             for (auto& sub : prog->statements) compile_stmt(*sub);
-            g_compile_cur_dir.pop_back();
+        } catch (const LookCompileError&) {
+            throw;
+        } catch (const std::exception& ex) {
+            // ESKİ HATA: burada her hata yutulup NOP yazılıyordu ("yorumlayıcı yedeği halleder").
+            // 1.0.8'den beri istek yorumlayıcıda yeniden çalıştırılmıyor → dahil edilen dosyanın
+            // fonksiyonları sessizce YOK oluyor, derleme "tamam" deniyor ve onları çağıran her rota
+            // "Undefined variable" ile 500 veriyordu. Artık derleme bütünüyle başarısız olur:
+            // çağıran bunu loglar ve uygulamayı yorumlayıcıda çalıştırır.
+            throw LookCompileError("use \"" + ufs->path + "\": " + ex.what());
         } catch (...) {
-            emit(OpCode::NOP);   // lex/parse/compile failed → interpreter fallback handles it
+            throw LookCompileError("use \"" + ufs->path + "\": the file could not be compiled");
         }
     }
     else {

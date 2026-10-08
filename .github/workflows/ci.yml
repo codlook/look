@@ -136,6 +136,13 @@ jobs:
           cd cpp
           bash tests/ws_close_callback_test.sh ./build/lk-fcgi
 
+      # An included file the VM cannot compile used to be dropped silently: "compile OK" and
+      # 500 "Undefined variable" for every route that called one of its functions.
+      - name: Included file the VM cannot compile
+        run: |
+          cd cpp
+          bash tests/include_compile_failure_test.sh ./build/lk-fcgi
+
       # The top level of a web application runs once at startup on every engine: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup
