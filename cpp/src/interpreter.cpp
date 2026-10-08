@@ -815,6 +815,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
                 auto toks = lx.scan_tokens();
                 Parser p(std::move(toks));
                 auto prog = p.parse();
+                look::log_param_writes(p.warnings(), abs_path);
 
                 auto prev_file = current_file_;
                 current_file_ = abs_path;
@@ -900,6 +901,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
         catch (const LookParseError& e) {
             throw LookParseError(e.message, e.line, e.column, abs_path);
         }
+        look::log_param_writes(p.warnings(), abs_path);
 
         // 5. İzole ortamda çalıştır — $var tanımları sızmaz
         auto prev_file = current_file_;

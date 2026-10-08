@@ -422,6 +422,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        if (!check_only) look::log_param_writes(parser.warnings(), filename);
+
         // Parse basarili — --check modunda: tanimsiz cagri semantik kontrolu,
         // sonra calistirmadan cik (yan etki yok).
         if (check_only) {
@@ -441,6 +443,17 @@ int main(int argc, char* argv[]) {
             for (const auto& w : look::check_arg_counts(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [arg-count] " << w.message << "\n";
+            // LOOK 2: parametreye yazıp döndürmeyen fonksiyon — burada HATA (CI için); yüklemede uyarı.
+            {
+                bool bad_param = false;
+                for (const auto& w : parser.warnings()) {
+                    if (w.kind != "param-write") continue;
+                    std::cout << "CHECK " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
+                              << " [param-write] " << w.message << "\n";
+                    bad_param = true;
+                }
+                if (bad_param) return 1;
+            }
             std::cout << "OK\n";
             return 0;
         }

@@ -3,6 +3,7 @@
 #include "look/ast.h"
 #include "look/token.h"
 #include "look/capture_check.h"
+#include "look/param_write_check.h"
 #include <map>
 #include <memory>
 #include <string>

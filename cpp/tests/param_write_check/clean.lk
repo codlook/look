@@ -1,0 +1,3 @@
+function add($list, $x) { push($list, $x); return $list }
+$l = add([1], 2)
+print(count($l))

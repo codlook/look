@@ -636,6 +636,7 @@ static void run_setup(const std::string& script_path, fs::file_time_type mtime,
         conn.end_request(req.id, 0);
         return;
     }
+    look::log_param_writes(parser.warnings(), script_path);
 
     new_interp->set_file(script_path);
 

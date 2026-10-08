@@ -1,0 +1,24 @@
+// Every line marked FINDING must be reported; no other line may be.
+function save($v) { return $v }
+function note($v) { return 1 }
+function fill($arr) { for ($i = 0; $i < 3; $i++) { $arr[$i] = 0 } }          // FINDING
+function add($list, $x) { if (count($list) < 10) { push($list, $x) } }       // FINDING
+function setf($u) { $u["name"] = "x" }                                       // FINDING
+function inc($c) { $c["n"] = $c["n"] + 1; return $c["n"] }                // FINDING
+function early($a) { note($a); $a[0] = 1 }                                   // FINDING
+function deep($t) { $t["a"]["b"] = 1; return 1 }                             // FINDING
+function drop($s) { pop($s) }                                                // FINDING
+$h = function($m) { $m["k"] = 1 }                                            // FINDING
+function outer() { function inner($z) { $z[0] = 1 }; return 1 }              // FINDING
+function ok_return($a) { $a[0] = 1; return $a }
+function ok_pass($a) { $a["x"] = 1; save($a) }
+function ok_rebind($a) { $a = []; $a[0] = 1; return 1 }
+function ok_wrap($a) { $a["x"] = 1; return ["data" => $a] }
+function ok_loop($a) { for ($i = 0; $i < 2; $i++) { save($a); $a[$i] = 1 } }
+function ok_variadic(...$xs) { $xs[0] = 1 }
+function ok_capture($a) { $a[0] = 1; return function() { return $a } }
+function ok_copy($p) { $q = $p; $q[0] = 1; return $q }
+function ok_scalar($n) { $n++; $n = $n + 1; return $n }
+function ok_assign($a) { $a[0] = 1; $b = $a; return count($b) }
+function ok_read($a) { return $a[0] + count($a) }
+print("ran")

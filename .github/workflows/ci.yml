@@ -292,6 +292,13 @@ jobs:
           cd cpp
           bash tests/shared_setup_concurrency_test.sh ./build/lk-fcgi
 
+      # LOOK 2: a function that changes a parameter and never returns it is reported — an error
+      # under `lk --check`, a warning at load (CLI, web startup, files loaded with `use`).
+      - name: Parameter-write check
+        run: |
+          cd cpp
+          bash tests/param_write_check_test.sh ./build/lk ./build/lk-fcgi
+
       # The top level of a web application runs once at startup on every engine: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup

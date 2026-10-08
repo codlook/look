@@ -106,8 +106,24 @@ $o = add_total($o)
 No copy is made on assignment; a value is copied only when it is written to while still
 shared, so passing a large array to a function that only reads it costs nothing.
 
-A check that reports functions writing to a parameter without returning it is planned
-(a warning at load, an error under `lk --check`). It is not in `v2` yet.
+This is the one change that would otherwise pass silently, so it is reported. A function
+that changes a parameter (`$p[i] = …`, `$p.field = …`, `push($p, …)`, `pop($p)`) and then
+neither returns it nor passes it on gets one line when the file is loaded — on the command
+line, at web startup, and for files loaded with `use`:
+
+```
+[WARN ] [check] app.lk:12: function add_tag() changes its parameter $post (push() changes it)
+but never returns it or passes it on; arrays and structs are values, so the caller's $post
+does not change — return the new value
+```
+
+The program still runs. `lk --check` reports the same finding as an error (a `CHECK` line,
+exit status 1), so it can stop a build. Run `lk --check` on every file of an application
+before moving it to LOOK 2 and return the changed value from each function it names.
+
+The check is deliberately narrow and prefers missing a case to a false alarm: a parameter
+the function assigns as a whole (`$p = …`) is its own variable and is not checked, nor is
+a variadic parameter.
 
 ### `push` and `pop` change the variable you name — silent
 

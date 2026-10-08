@@ -393,6 +393,7 @@ static void run_setup_http(const fs::path& script) {
 
     look::Parser parser(std::move(tokens));
     auto program = parser.parse();
+    look::log_param_writes(parser.warnings(), script.string());
 
     g_http_app.setup_out.str("");
     g_http_app.setup_out.clear();

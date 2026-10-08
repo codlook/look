@@ -5,7 +5,8 @@
 # block this one.
 #   does not load   a parse error other than "Undefined function" (that one is expected when
 #                   a file of a multi-file application is checked on its own)
-#   warnings        capture-stale / arg-count lines from the transition checks
+#   warnings        capture-stale / arg-count lines from the transition checks; a param-write
+#                   finding is a CHECK line and counts as a file that does not pass
 # Usage: ecosystem_scan.sh <lk> [dir-with-checkouts]
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> [dir]}")" && pwd)/$(basename "$1")"
 DIR="${2:-$(mktemp -d)}"

@@ -242,3 +242,15 @@ work; it is not worth optimising on the way out.
 Not done here: the per-request copy of the global *table* itself (names and value handles,
 not the data). It is proportional to the number of top-level names, not to the size of the
 data.
+
+## Step 6 — done
+
+`look/param_write_check.h`: a function that writes into a parameter and neither returns it
+nor passes it on afterwards is reported — a `WARN` line at load (CLI, web startup, files
+loaded with `use`), an error under `lk --check`. Guard: `param_write_check_test.sh` with a
+sample that marks every line that must be reported; red when a use before the write is
+counted and when a plain rebind is no longer recognised. The published modules, packages and
+examples come out clean (57 files, 0 findings).
+
+Found on the way, still open: `$a["n"]++` on an element does not compile on the VM
+("++/-- requires a variable"); the script silently runs on the tree-walk engine.

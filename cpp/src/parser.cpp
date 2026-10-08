@@ -1,5 +1,6 @@
 #include "look/parser.h"
 #include "look/capture_check.h"
+#include "look/param_write_check.h"
 #include "look/interpreter.h"
 #include "look/logger.h"
 #include <stdexcept>
@@ -24,6 +25,8 @@ std::unique_ptr<Program> Parser::parse() {
         if (w.kind == "capture-write") throw LookParseError(w.message, w.line, w.column);
         warnings_.push_back(std::move(w));
     }
+    // LOOK 2 parametreye-yazma denetimi (look/param_write_check.h): çağırana ulaşmayan yazma.
+    for (auto& w : check_param_writes(*program)) warnings_.push_back(std::move(w));
     return program;
 }
 
