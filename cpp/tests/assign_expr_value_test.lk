@@ -1,0 +1,35 @@
+// An element assignment used as an expression yields the element it stored — on both engines.
+// The VM yielded the whole container: `$total = ($cart["sum"] += $price)` put the map into
+// $total without any error.
+use json
+function check($name, $got, $want) {
+    if (json::encode($got) == json::encode($want)) { print("  OK   " . $name); return 1 }
+    print("  FAIL " . $name . ": got " . json::encode($got) . " want " . json::encode($want)); return 0
+}
+function run() {
+    $ok = 0
+    $a = ["n" => 1]
+    $v = ($a["n"] += 1)
+    $ok = $ok + check("compound assignment to a map key", $v, 2)
+    $w = ($a["n"] = 9)
+    $ok = $ok + check("plain assignment to a map key", $w, 9)
+    $l = [5, 6]
+    $x = ($l[0] += 1)
+    $ok = $ok + check("compound assignment to a list index", $x, 6)
+    $m = ["cart" => ["sum" => 10]]
+    $t = ($m["cart"]["sum"] += 5)
+    $ok = $ok + check("nested target", $t, 15)
+    $s = ($a["name"] = "x") . "!"
+    $ok = $ok + check("used inside a larger expression", $s, "x!")
+    $c = 0
+    if (($a["n"] += 1) > 5) { $c = 1 }
+    $ok = $ok + check("used in a condition", [$c, $a["n"]], [1, 10])
+    $p = $q = 4
+    $ok = $ok + check("chained variable assignment is unchanged", [$p, $q], [4, 4])
+    return $ok
+}
+$n = run()
+$g = ["n" => 1]
+$gv = ($g["n"] += 1)
+$n = $n + check("at the top level (global)", $gv, 2)
+print(($n == 8 ? "PASS" : "FAIL") . ": an element assignment yields the element (" . $n . "/8)")

@@ -1021,6 +1021,8 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     // Plain `$x = v` yazma target'ı (auto-capture YOK → dış değişkene atama yeni
     // local yaratır). `$arr[i]=v` ise $arr container'ı OKUNUP yerinde mutasyona
     // uğrar → auto-capture gerekir (referans tipi paylaşılır).
+    const int want = assign_result_reg_;   // ifade değeri isteniyor mu (iç atamalar kendi isteğini kurar)
+    assign_result_reg_ = -1;
     auto loc = resolve_var(e.name, /*for_write=*/(e.index == nullptr));
 
     if (e.index) {
@@ -1058,6 +1060,9 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             val = res;
         }
         emit(OpCode::ARRAY_SET, arr, idx, val);
+        // İfade olarak kullanıldıysa değeri YAZILAN elemandır (yorumlayıcıyla aynı). Eskiden çağıran kök
+        // değişkeni yeniden okuyordu: `$v = ($a["n"] += 1)` dizinin TAMAMINI veriyordu.
+        if (want >= 0) emit(OpCode::ARRAY_GET, static_cast<uint8_t>(want), arr, idx);
         free_temp(val); free_temp(idx); free_temp(arr);
         return;
     }
@@ -1250,6 +1255,13 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     }
 
     if (auto* e = dynamic_cast<const AssignmentExpression*>(&expr)) {
+        if (e->index) {
+            // Eleman ataması: ifadenin değeri yazılan elemandır (aşağıdaki kök-okuma dizinin tamamını verirdi).
+            uint8_t r = ensure_dest();
+            assign_result_reg_ = r;
+            compile_assign_expr(*e);
+            return r;
+        }
         compile_assign_expr(*e);
         // Atama expression olarak kullanılmış — değeri oku
         auto loc = resolve_var(e->name);

@@ -136,6 +136,17 @@ jobs:
           cd cpp
           bash tests/ws_close_callback_test.sh ./build/lk-fcgi
 
+      # An element assignment used as an expression yields the element on both engines (the VM
+      # yielded the whole container: `$total = ($cart["sum"] += $price)` stored the map).
+      - name: Element assignment as an expression (both engines)
+        run: |
+          cd cpp
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/assign_expr_value_test.lk || true)"
+            echo "$out"
+            echo "$out" | grep -q "^PASS: an element assignment yields the element" || { echo "::error::assignment expression test FAILED ($env)"; exit 1; }
+          done
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
