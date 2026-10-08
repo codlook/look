@@ -1062,7 +1062,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         emit(OpCode::ARRAY_SET, arr, idx, val);
         // İfade olarak kullanıldıysa değeri YAZILAN elemandır (yorumlayıcıyla aynı). Eskiden çağıran kök
         // değişkeni yeniden okuyordu: `$v = ($a["n"] += 1)` dizinin TAMAMINI veriyordu.
-        if (want >= 0) emit(OpCode::ARRAY_GET, static_cast<uint8_t>(want), arr, idx);
+        if (want >= 0) emit(OpCode::ARRAY_GET, u8(want, "register index"), arr, idx);
         free_temp(val); free_temp(idx); free_temp(arr);
         return;
     }
