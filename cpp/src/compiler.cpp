@@ -923,6 +923,8 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     // Plain `$x = v` yazma target'ı (auto-capture YOK → dış değişkene atama yeni
     // local yaratır). `$arr[i]=v` ise $arr container'ı OKUNUP yerinde mutasyona
     // uğrar → auto-capture gerekir (referans tipi paylaşılır).
+    const int want = assign_result_reg_;   // ifade değeri isteniyor mu (iç atamalar kendi isteğini kurar)
+    assign_result_reg_ = -1;
     auto loc = resolve_var(e.name, /*for_write=*/(e.index == nullptr));
 
     if (e.index) {
@@ -984,6 +986,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 }
                 for (uint8_t k = 0; k < n; ++k)
                     emit(OpCode::ARRAY_GET, cur, cur, u8(base + k, "register index"));
+                if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u8(want, "register index"), cur);   // sonek ++/--: eski değer
                 uint8_t res = alloc_temp();
                 emit(it->second, res, cur, val);
                 free_temp(cur); free_temp(val);
@@ -1001,6 +1004,14 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             }
             emit(OpCode::SET_PATH, val, base, n);
             emit(OpCode::NOP, kind, hi8(ix), lo8(ix));
+            if (want >= 0 && !e.yield_old) {
+                // İfadenin değeri YAZILAN değerdir (alan tipine çevrilmiş haliyle) — aynı anahtarlarla
+                // geri okunur; anahtarlar yeniden hesaplanmaz. Eskiden kök değişkenin TAMAMI dönüyordu.
+                const uint8_t w = u8(want, "register index");
+                if (rloc.kind == VarKind::LOCAL) emit_read_local(w, rloc.index);
+                else { uint16_t ni = add_const(Value(root_name)); emit(OpCode::LOAD_GLOBAL, w, hi8(ni), lo8(ni)); }
+                for (uint8_t k = 0; k < n; ++k) emit(OpCode::ARRAY_GET, w, w, u8(base + k, "register index"));
+            }
             free_temp(val);
             regs_->release_seq(base, n);
             return;
@@ -1019,12 +1030,14 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             if (it == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
             uint8_t cur = alloc_temp();
             emit(OpCode::ARRAY_GET, cur, arr, idx);
+            if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u8(want, "register index"), cur);
             uint8_t res = alloc_temp();
             emit(it->second, res, cur, val);
             free_temp(cur); free_temp(val);
             val = res;
         }
         emit(OpCode::ARRAY_SET, arr, idx, val);
+        if (want >= 0 && !e.yield_old) emit(OpCode::ARRAY_GET, u8(want, "register index"), arr, idx);
         free_temp(val); free_temp(idx); free_temp(arr);
         return;
     }
@@ -1193,6 +1206,13 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     }
 
     if (auto* e = dynamic_cast<const AssignmentExpression*>(&expr)) {
+        if (e->index) {
+            // Eleman/alan ataması: değer, yazılan elemandır (sonek ++/-- için eski değer).
+            uint8_t r = ensure_dest();
+            assign_result_reg_ = r;
+            compile_assign_expr(*e);
+            return r;
+        }
         compile_assign_expr(*e);
         // Atama expression olarak kullanılmış — değeri oku
         auto loc = resolve_var(e->name);

@@ -467,6 +467,34 @@ void Parser::check_binop_chain() {
                                    peek().line, peek().column);
 }
 
+// `$a[k]++`, `++$a[k]`, `$s.n--`: bir eleman ya da alan üzerinde ++/--. Bileşik atamaya çevrilir
+// (`$a[k] += 1`) — iki motor da onu zaten yol olarak yazıyor; anahtarlar bir kez hesaplanır.
+// Sonek biçiminde ifadenin değeri eski değerdir (yield_old). Hedef eleman/alan değilse null.
+static std::unique_ptr<Expression> element_step(std::unique_ptr<Expression>& target, const char* op, bool postfix) {
+    std::unique_ptr<AssignmentExpression> a;
+    auto one = [] { return std::make_unique<NumberLiteral>(1); };
+    if (auto* idx = dynamic_cast<IndexExpression*>(target.get())) {
+        auto index = std::move(const_cast<std::unique_ptr<Expression>&>(idx->index));
+        if (auto* var = dynamic_cast<Variable*>(idx->object.get()))
+            a = std::make_unique<AssignmentExpression>(var->name, op, one(), std::move(index));
+        else {
+            auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(idx->object));
+            a = std::make_unique<AssignmentExpression>("", op, one(), std::move(index), std::move(obj));
+        }
+    } else if (auto* ma = dynamic_cast<MemberAccessExpression*>(target.get())) {
+        auto index = std::make_unique<StringLiteral>(ma->field);
+        if (auto* var = dynamic_cast<Variable*>(ma->object.get()))
+            a = std::make_unique<AssignmentExpression>(var->name, op, one(), std::move(index));
+        else {
+            auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(ma->object));
+            a = std::make_unique<AssignmentExpression>("", op, one(), std::move(index), std::move(obj));
+        }
+    } else return nullptr;
+    a->yield_old = postfix;
+    a->loc = target->loc;
+    return a;
+}
+
 std::unique_ptr<Expression> Parser::assignment() {
     auto expr = ternary();
 
@@ -661,12 +689,16 @@ std::unique_ptr<Expression> Parser::unary() {
         throw look::LookParseError("Expression nested too deep (max " +
                                    std::to_string(MAX_EXPR_DEPTH) + ")",
                                    peek().line, peek().column);
+    // Önek ++/--: hedef bir değişken ya da onun bir elemanı/alanıdır (`++$a["n"]`, `--$s.count`),
+    // bu yüzden indeks/alan zinciriyle birlikte okunur (call()).
     if (match(TokenType::PLUS_PLUS)) {
-        auto right = primary();
+        auto right = call();
+        if (auto step = element_step(right, "+=", false)) return step;
         return std::make_unique<UnaryExpression>("++", std::move(right), true);
     }
     if (match(TokenType::MINUS_MINUS)) {
-        auto right = primary();
+        auto right = call();
+        if (auto step = element_step(right, "-=", false)) return step;
         return std::make_unique<UnaryExpression>("--", std::move(right), true);
     }
     if (match(TokenType::BANG))  { return std::make_unique<UnaryExpression>("!", std::move(unary()),  true); }
@@ -677,8 +709,14 @@ std::unique_ptr<Expression> Parser::unary() {
 
 std::unique_ptr<Expression> Parser::postfix() {
     auto expr = call();
-    if (match(TokenType::PLUS_PLUS))   return std::make_unique<UnaryExpression>("++", std::move(expr), false);
-    if (match(TokenType::MINUS_MINUS)) return std::make_unique<UnaryExpression>("--", std::move(expr), false);
+    if (match(TokenType::PLUS_PLUS)) {
+        if (auto step = element_step(expr, "+=", true)) return step;
+        return std::make_unique<UnaryExpression>("++", std::move(expr), false);
+    }
+    if (match(TokenType::MINUS_MINUS)) {
+        if (auto step = element_step(expr, "-=", true)) return step;
+        return std::make_unique<UnaryExpression>("--", std::move(expr), false);
+    }
     return expr;
 }
 

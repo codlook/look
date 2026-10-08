@@ -113,6 +113,8 @@ struct AssignmentExpression final : Expression {
                                          // set ise `name` kullanılmaz.
     std::unique_ptr<Expression> index;   // nullable — set for $arr[i] = ...
     std::unique_ptr<Expression> value;
+    // `$a[k]++` / `$a[k]--` (sonek): ifadenin değeri yazmadan ÖNCEKİ değerdir (değişkendeki ++ gibi).
+    bool yield_old = false;
     AssignmentExpression(std::string name, std::string op,
                          std::unique_ptr<Expression> val,
                          std::unique_ptr<Expression> idx = nullptr,

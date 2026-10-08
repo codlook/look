@@ -108,6 +108,17 @@ jobs:
             fi
           done
 
+      # LOOK 2: ++ and -- on an element or a field, with the meaning they have on a variable; an
+      # element assignment used as an expression yields the element (the VM yielded the container).
+      - name: Increment and decrement on elements (both engines)
+        run: |
+          cd cpp
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/element_step_test.lk || true)"
+            echo "$out"
+            echo "$out" | grep -q "^PASS: ++ and -- on elements" || { echo "::error::element step test FAILED ($env)"; exit 1; }
+          done
+
       # LOOK 2 value semantics: assigning, passing or returning an array, map or struct gives
       # the receiver its own value (copy on write); push/pop change their variable only.
       - name: Value semantics guard (both engines)

@@ -459,6 +459,11 @@ int main(int argc, char* argv[]) {
             // Temel dizin web yolundaki gibi verilir: `use "dosya.lk"` dahil edilenler de derlenir.
             try { (void)look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string()); }
             catch (const std::exception& ex) {
+                // Tek başına denetlenen bir alt dosyada `use "../x.lk"` uygulama kökü bilinmeden
+                // çözülemez (kök, giriş dosyasının dizinidir) — bu VM eksiği değil, raporlanmaz.
+                const std::string why = ex.what();
+                if (why.find("the file cannot be opened") == std::string::npos &&
+                    why.find("outside the application directory") == std::string::npos)
                 std::cout << "WARN 1 1 [vm-compile] the VM cannot compile this file (" << ex.what()
                           << "); it runs on the tree-walk engine\n";
             }

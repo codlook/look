@@ -252,9 +252,9 @@ sample that marks every line that must be reported; red when a use before the wr
 counted and when a plain rebind is no longer recognised. The published modules, packages and
 examples come out clean (57 files, 0 findings).
 
-Found on the way, still open: `$a["n"]++` on an element is not supported by either engine
-("++/-- requires a variable"), but they refuse it at different times: the VM when the file
-is compiled — the whole application then runs on the tree-walk engine — and the tree-walk
-engine only when the line runs. `lk --check` now names a file the VM cannot compile
+Found on the way: `$a["n"]++` on an element was not supported by either engine, and they
+refused it at different times (the VM when the file is compiled, the tree-walk engine when
+the line runs). It is supported now, with the meaning it has on a variable
+(`tests/element_step_test.lk`). `lk --check` now names a file the VM cannot compile
 (`[vm-compile]`), and the scan of modules, packages, examples and LookPress (80 files) finds
 none.

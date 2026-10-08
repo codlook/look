@@ -1,0 +1,56 @@
+// ++ and -- on an element or a field behave like ++ and -- on a variable, on both engines.
+$ok = 0; $bad = 0
+function t($name, $got, $want) {
+    if ($got == $want) { print("  OK   " . $name . "\n"); return 1 }
+    print("  FAIL " . $name . ": got " . json::encode($got) . " want " . json::encode($want) . "\n"); return 0
+}
+use json
+struct Counter { n int = 0, rate float = 1.5 }
+function run() {
+    $r = []
+    $a = ["n" => 1, "list" => [10, 20], "deep" => ["x" => ["y" => 5]]]
+    $a["n"]++
+    push($r, t("postfix as a statement", $a["n"], 2))
+    $old = $a["n"]++
+    push($r, t("postfix yields the old value", [$old, $a["n"]], [2, 3]))
+    $new = ++$a["n"]
+    push($r, t("prefix yields the new value", [$new, $a["n"]], [4, 4]))
+    $a["n"]--
+    $tmp = --$a["n"]
+    push($r, t("-- both forms", $a["n"], 2))
+    $a["list"][1]++
+    $a["deep"]["x"]["y"]--
+    push($r, t("nested paths", [$a["list"][1], $a["deep"]["x"]["y"]], [21, 4]))
+    $i = 0
+    $l = [5, 6, 7]
+    $l[$i]++
+    push($r, t("variable index", $l, [6, 6, 7]))
+    $c = Counter { }
+    $c.n++
+    $t2 = ++$c.n
+    $was = $c.n--
+    push($r, t("struct field", [$c.n, $was], [1, 2]))
+    $c.rate++
+    push($r, t("float field", $c.rate, 2.5))
+    $b = $a
+    $b["n"]++
+    push($r, t("a copy is changed, the original is not", [$a["n"], $b["n"]], [2, 3]))
+    $v = ($a["n"] += 10)
+    push($r, t("compound assignment yields the element, not the container", $v, 12))
+    $w = ($a["n"] = 7)
+    push($r, t("plain element assignment yields the element", $w, 7))
+    $f = ($c.rate = 3)
+    push($r, t("the value is the stored one (int stored in a float field)", $f, 3.0))
+    $e1 = "none"
+    try { $a["missing"]++ } catch ($e) { $e1 = "error" }
+    push($r, t("a missing key is an error, as for += ", $e1, "error"))
+    $x = 5
+    $y = $x++
+    $z = ++$x
+    push($r, t("variables are unchanged by this", [$y, $z, $x], [5, 7, 7]))
+    return $r
+}
+$res = run()
+$fail = 0
+foreach ($res as $one) { if ($one != 1) { $fail++ } }
+print(($fail == 0 ? "PASS" : "FAIL") . ": ++ and -- on elements and fields (" . count($res) . " cases)\n")

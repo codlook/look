@@ -534,6 +534,11 @@ $i--  # postfix
 --$i  # prefix
 ```
 
+LOOK 2: `++` and `--` also work on an element or a field — `$count["views"]++`, `++$cart.items`,
+`$grid[$y][$x]--` — with the same meaning as on a variable: the postfix form yields the old value,
+the prefix form the new one. The element must exist and hold a number; a missing key is an
+error, as it is for `+=`.
+
 ### Null Coalescing
 
 ```lk
@@ -5917,7 +5922,7 @@ LOOK is **strict**: reading a variable that was never assigned is an error, not 
 | `Index operator requires an array` | You used `x[i]` on something that isn't an array/object. | Make sure `x` is an array; check for `null` first. |
 | `Array index out of bounds` / `Array index …` | `arr[i]` with `i` past the end (or negative). | Check `count(arr)` before indexing; array indexes are 0-based. |
 | `foreach requires an array` | `foreach`/`for … as` over a non-array (often `null` from a lookup that missed). | Ensure the value is an array; default to `[]` when a lookup can miss. |
-| `++/-- requires a variable` | `++`/`--` applied to something that isn't a variable (e.g. `++5`, `++foo()`). | Apply it to a variable: `$i++`. |
+| `++/-- requires a variable` | `++`/`--` applied to something that is not a variable, an element or a field (e.g. `++5`, `++foo()`). | Apply it to a variable, an element or a field: `$i++`, `$a["n"]++`. |
 
 ---
 

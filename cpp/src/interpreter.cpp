@@ -1457,10 +1457,11 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             auto set_one = [&](Value& c, const Value& k, const Value* forced) {
                 if (forced) { interp_array_set(c, k, *forced, label); return; }
                 Value* p = (c.type() == Value::ARRAY || c.type() == Value::STRUCT) ? look::value_slot(c, k) : nullptr;
-                Value nv = apply_op(p ? *p : Value());
+                const Value old = p ? *p : Value();
+                Value nv = apply_op(old);
                 interp_array_set(c, k, nv, label);
                 Value* after = look::value_slot(c, k);
-                result = after ? *after : nv;
+                result = e->yield_old ? old : (after ? *after : nv);   // sonek ++/--: eski değer
             };
 
             if (is_path) {
