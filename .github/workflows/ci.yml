@@ -122,6 +122,20 @@ jobs:
           cd cpp
           bash tests/toplevel_builtins_test.sh ./build/lk-fcgi
 
+      # Generated from the binary's own built-in table: every pure built-in is called at the top
+      # level and inside a route, on both engines; the four results must be equal.
+      - name: Built-ins at the top level (generated from the built-in table)
+        run: |
+          cd cpp
+          bash tests/builtin_toplevel_auto_test.sh ./build/lk ./build/lk-fcgi
+
+      # math::random was re-seeded with the current second for every new copy of the standard
+      # library: the first requests of each worker got the same number.
+      - name: math::random differs between requests
+        run: |
+          cd cpp
+          bash tests/random_per_request_test.sh ./build/lk-fcgi
+
       # Every module function is provided by the VM. A function known only to the tree-walk
       # engine would send the routes that call it there; `lk --vm-report` lists such functions
       # and fails when there is one.

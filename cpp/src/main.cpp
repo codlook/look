@@ -323,6 +323,12 @@ int main(int argc, char* argv[]) {
             cmd = argv[2];
         }
 
+        // lk --builtins : the VM's built-in table, one name per line (tests generate their cases from it).
+        if (cmd == "--builtins") {
+            for (const auto& n : look::builtin_names()) std::cout << n << "\n";
+            return 0;
+        }
+
         // lk --vm-report : which module functions the VM does not provide. A route or a script
         // that reaches one of them runs on the tree-walk engine; the list has to be empty for
         // an application to run on the VM alone.

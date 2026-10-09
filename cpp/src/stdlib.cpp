@@ -3,6 +3,7 @@
 #include "look/charset.h"
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
+#include <random>
 #include <cstdint>
 #include <cmath>
 #include <algorithm>
@@ -1049,7 +1050,11 @@ static Module make_error_module() {
 }
 
 std::map<std::string, Module> make_stdlib(Interpreter* interp) {
-    std::srand((unsigned)std::time(nullptr));
+    // Tohum SÜREÇ BAŞINA BİR KEZ atılır. Eskiden burada her çağrıda `srand(time)` vardı ve bu
+    // fonksiyon her istek kopyası için yeniden koşuyordu: aynı saniyedeki bütün istekler
+    // math::random'dan AYNI sayıyı alıyordu (ölçüldü: art arda iki istek 822480, 822480).
+    static const bool seeded = []() { std::random_device rd; std::srand(rd() ^ (unsigned)std::time(nullptr)); return true; }();
+    (void)seeded;
     std::map<std::string, Module> stdlib;
     auto add = [&](Module mod) { stdlib[mod.name] = std::move(mod); };
     add(make_math());
