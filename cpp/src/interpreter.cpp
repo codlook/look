@@ -1651,6 +1651,12 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             auto copy = make_dispatch_copy();
                             auto sink = std::make_shared<std::ostringstream>();
                             copy->set_output(*sink);
+                            // İşleyici KENDİ istek bağlamında koşar. Eskiden kopya, jobs::run'ı çağıran isteğin
+                            // bağlamını paylaşıyordu: işleyici o isteğin parametrelerini (ve oturumunu) okuyor,
+                            // response::status / header çağrıları isteğin yanıtını değiştiriyordu.
+                            look::WebContext job_ctx;
+                            job_ctx.method = "__JOB__";
+                            copy->set_web_context(&job_ctx);
                             bool ok = false;
                             try {
                                 Value result = copy->invoke(fn_v, {job});

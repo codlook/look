@@ -147,6 +147,13 @@ jobs:
             echo "$out" | grep -q "^PASS: an element assignment yields the element" || { echo "::error::assignment expression test FAILED ($env)"; exit 1; }
           done
 
+      # A job handler started from inside a request (a route calling jobs::run) has its own
+      # context: it does not read the caller's parameters or change the caller's response.
+      - name: Job handler does not share the request
+        run: |
+          cd cpp
+          bash tests/job_handler_context_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
