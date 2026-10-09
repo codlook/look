@@ -2962,7 +2962,7 @@ route("POST", "/signup", function() use ($conn) {
 use jobs
 jobs::worker("email", function($job) use ($conn) {
  use mail
- $p = $job["payload"]
+ $p = json::decode($job["payload"])
  $r = mail::send($p["to"], "Welcome!", "Your account is ready.")
  return $r["ok"] # if it returns false, jobs retries (max 3)
 })
@@ -3937,7 +3937,7 @@ route("POST", "/signup", function() use ($conn) {
 use jobs
 use mail
 jobs::worker("email", function($job) {
- $p = $job["payload"]
+ $p = json::decode($job["payload"])
  $r = mail::send($p["to"], "Welcome!", "Your account is ready.")
  return $r["ok"] # false → automatic retry (max 3)
 })

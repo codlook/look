@@ -381,12 +381,14 @@
         <div class="codewin">
           <div class="bar"><i></i><i></i><i></i><span class="fname">jobs.lk</span></div>
 <pre><span class="c-cm">// Don't make the request wait — enqueue, return instantly</span>
-<span class="c-fn">jobs::push</span>(<span class="c-str">"mail"</span>, [<span class="c-str">"to"</span> => <span class="c-var">$email</span>, <span class="c-str">"subject"</span> => <span class="c-str">"Welcome"</span>])
+<span class="c-fn">jobs::push</span>(<span class="c-str">"mail"</span>, <span class="c-fn">json::encode</span>([<span class="c-str">"to"</span> => <span class="c-var">$email</span>, <span class="c-str">"subject"</span> => <span class="c-str">"Welcome"</span>, <span class="c-str">"body"</span> => <span class="c-var">$body</span>]))
 <span class="c-kw">return</span> <span class="c-fn">response::json</span>([<span class="c-str">"ok"</span> => <span class="c-kw">true</span>])
 
 <span class="c-cm">// Separate worker — durable (SQLite), survives a restart</span>
 <span class="c-fn">jobs::worker</span>(<span class="c-str">"mail"</span>, <span class="c-kw">function</span>(<span class="c-var">$job</span>) {
-    <span class="c-fn">mail::send</span>(<span class="c-var">$job</span>[<span class="c-str">"to"</span>], <span class="c-var">$job</span>[<span class="c-str">"subject"</span>], <span class="c-var">$body</span>)
+    <span class="c-var">$p</span> = <span class="c-fn">json::decode</span>(<span class="c-var">$job</span>[<span class="c-str">"payload"</span>])
+    <span class="c-var">$r</span> = <span class="c-fn">mail::send</span>(<span class="c-var">$p</span>[<span class="c-str">"to"</span>], <span class="c-var">$p</span>[<span class="c-str">"subject"</span>], <span class="c-var">$p</span>[<span class="c-str">"body"</span>])
+    <span class="c-kw">return</span> <span class="c-var">$r</span>[<span class="c-str">"ok"</span>]  <span class="c-cm">// true = done; anything else is tried again, then failed</span>
 })
 <span class="c-fn">jobs::run</span>()</pre>
         </div>
