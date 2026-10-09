@@ -349,6 +349,68 @@ static bool look_vm_strict() {
 // rotanın proto'su, iç proto'ları ve adıyla çağırdığı global fonksiyonlar (geçişli) taranır;
 // VM global'lerinde karşılığı olmayan bir "mod::fn" adı yükleniyorsa rota baştan yorumlayıcıya
 // sabitlenir. Değişken üzerinden yapılan dinamik çağrı görülemez: o durumda istek 500 alır.
+// Saf (isteğe bağlı olmayan) yalın yerleşikler: bool, string, strlen, abs, max, min, sqrt, strtoupper,
+// strtolower, join.
+// İSTEK tablosu ve KURULUM tablosu aynı tanımı kullanır. Eskiden yalnız istek tablosunda vardılar:
+// VM kurulum geçişinde boş değer dönüyor, üst düzeyde `$x = strtoupper("a")` ile hesaplanan
+// değişken rotalarda null oluyordu (yorumlayıcıda doğru) — sessiz yanlış değer.
+static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
+    auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
+    t[BI("bool")] = [](std::vector<look::Value>& args) -> look::Value {
+        if (args.empty()) return look::Value(false);
+        auto& v = args[0];
+        if (v.type() == look::Value::BOOL) return v;
+        if (v.type() == look::Value::INT) return look::Value(v.as_int() != 0);
+        if (v.type() == look::Value::FLOAT) return look::Value(v.as_float() != 0.0);
+        if (v.type() == look::Value::STRING) return look::Value(!v.as_string().empty());
+        if (v.type() == look::Value::NONE) return look::Value(false);
+        return look::Value(true);
+    };
+    t[BI("string")] = [](std::vector<look::Value>& args) -> look::Value {   // str ile aynı
+        return look::Value(args.empty() ? "" : args[0].to_string());
+    };
+    t[BI("strlen")] = [](std::vector<look::Value>& args) -> look::Value {
+        return look::Value(args.empty() ? 0 : (int)args[0].to_string().size());
+    };
+    t[BI("abs")] = [](std::vector<look::Value>& args) -> look::Value {
+        if (args.empty()) return look::Value(0);
+        auto& v = args[0];
+        if (v.type() == look::Value::FLOAT) return look::Value(std::abs(v.as_float()));
+        return look::Value(std::abs(v.to_int()));
+    };
+    t[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
+        if (args.size() < 2) return args.empty() ? look::Value() : args[0];
+        return args[0] >= args[1] ? args[0] : args[1];
+    };
+    t[BI("min")] = [](std::vector<look::Value>& args) -> look::Value {
+        if (args.size() < 2) return args.empty() ? look::Value() : args[0];
+        return args[0] <= args[1] ? args[0] : args[1];
+    };
+    t[BI("sqrt")] = [](std::vector<look::Value>& args) -> look::Value {
+        return look::Value(args.empty() ? 0.0 : std::sqrt(args[0].to_float()));
+    };
+    t[BI("strtoupper")] = [](std::vector<look::Value>& args) -> look::Value {
+        std::string s = args.empty() ? "" : args[0].to_string();
+        for (char& c : s) c = (char)std::toupper((unsigned char)c);
+        return look::Value(s);
+    };
+    t[BI("strtolower")] = [](std::vector<look::Value>& args) -> look::Value {
+        std::string s = args.empty() ? "" : args[0].to_string();
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+        return look::Value(s);
+    };
+    // bare join(arr, sep="") — interpreter global builtin'i (fn_name=="join").
+    t[BI("join")] = [](std::vector<look::Value>& args) -> look::Value {
+        if (args.empty() || args[0].type() != look::Value::ARRAY)
+            return look::Value(args.empty() ? std::string() : args[0].to_string());
+        std::string sep = args.size() >= 2 ? args[1].to_string() : "";
+        std::string result;
+        auto& arr = *args[0].as_array();
+        for (size_t i = 0; i < arr.size(); ++i) { if (i) result += sep; result += arr[i].to_string(); }
+        return look::Value(result);
+    };
+}
+
 static bool proto_needs_interpreter(const look::FunctionProto* p,
                                     const std::unordered_map<std::string, look::Value>& globals,
                                     std::unordered_set<const look::FunctionProto*>& seen,
@@ -524,6 +586,8 @@ static void run_setup_http(const fs::path& script) {
                 // string round-trip hassasiyet kaybı yok) → tree-walk to_float ile birebir.
                 return look::Value(args[0].to_float());
             };
+
+            bind_scalar_builtins(setup_builtins);   // strlen, abs, max, min, sqrt, strtoupper, strtolower, join — istek tablosuyla aynı tanım
 
             // log::info/warn/error/debug (43-46) — setup logları
             for (int i = 43; i <= 46; ++i) {
@@ -1287,19 +1351,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             if (args.empty()) return look::Value(0.0);
             return look::Value(args[0].to_float());  // to_float(): to_string() round-trip yok, tree-walk parite
         };
-        req_builtins[8] = [](std::vector<look::Value>& args) -> look::Value {
-            if (args.empty()) return look::Value(false);
-            auto& v = args[0];
-            if (v.type() == look::Value::BOOL) return v;
-            if (v.type() == look::Value::INT) return look::Value(v.as_int() != 0);
-            if (v.type() == look::Value::FLOAT) return look::Value(v.as_float() != 0.0);
-            if (v.type() == look::Value::STRING) return look::Value(!v.as_string().empty());
-            if (v.type() == look::Value::NONE) return look::Value(false);
-            return look::Value(true);
-        };
-
-        // string (9) — alias for str
-        req_builtins[9] = req_builtins[5];
+        // bool (8) ve string (9): bind_scalar_builtins (kurulum tablosuyla tek tanım)
 
         // route() dispatch'te no-op (22)
         req_builtins[22] = [](std::vector<look::Value>&) -> look::Value { return look::Value(); };
@@ -1508,37 +1560,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             req_builtins[BI("die")]  = do_exit;
         }
 
-        // skaler core builtins — interpreter ile birebir
-        req_builtins[BI("strlen")] = [](std::vector<look::Value>& args) -> look::Value {
-            return look::Value(args.empty() ? 0 : (int)args[0].to_string().size());
-        };
-        req_builtins[BI("abs")] = [](std::vector<look::Value>& args) -> look::Value {
-            if (args.empty()) return look::Value(0);
-            auto& v = args[0];
-            if (v.type() == look::Value::FLOAT) return look::Value(std::abs(v.as_float()));
-            return look::Value(std::abs(v.to_int()));
-        };
-        req_builtins[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
-            if (args.size() < 2) return args.empty() ? look::Value() : args[0];
-            return args[0] >= args[1] ? args[0] : args[1];
-        };
-        req_builtins[BI("min")] = [](std::vector<look::Value>& args) -> look::Value {
-            if (args.size() < 2) return args.empty() ? look::Value() : args[0];
-            return args[0] <= args[1] ? args[0] : args[1];
-        };
-        req_builtins[BI("sqrt")] = [](std::vector<look::Value>& args) -> look::Value {
-            return look::Value(args.empty() ? 0.0 : std::sqrt(args[0].to_float()));
-        };
-        req_builtins[BI("strtoupper")] = [](std::vector<look::Value>& args) -> look::Value {
-            std::string s = args.empty() ? "" : args[0].to_string();
-            for (char& c : s) c = (char)std::toupper((unsigned char)c);
-            return look::Value(s);
-        };
-        req_builtins[BI("strtolower")] = [](std::vector<look::Value>& args) -> look::Value {
-            std::string s = args.empty() ? "" : args[0].to_string();
-            for (char& c : s) c = (char)std::tolower((unsigned char)c);
-            return look::Value(s);
-        };
+        // skaler core builtins — tek tanım (bind_scalar_builtins); kurulum tablosu da onu kullanır
+        bind_scalar_builtins(req_builtins);
         // push/pop: builtin_names'de vardı ama req_builtins'de bağlı DEĞİLDİ →
         // route içinde bare push/pop "bad function call" fırlatıp interpreter'a
         // düşürüyordu. In-place mutasyon: args[0] çağıranın $arr'ıyla shared_ptr
@@ -1559,16 +1582,6 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             look::Value last = a->back();
             a->pop_back();
             return last;
-        };
-        // bare join(arr, sep="") — interpreter global builtin'i (fn_name=="join").
-        req_builtins[BI("join")] = [](std::vector<look::Value>& args) -> look::Value {
-            if (args.empty() || args[0].type() != look::Value::ARRAY)
-                return look::Value(args.empty() ? std::string() : args[0].to_string());
-            std::string sep = args.size() >= 2 ? args[1].to_string() : "";
-            std::string result;
-            auto& arr = *args[0].as_array();
-            for (size_t i = 0; i < arr.size(); ++i) { if (i) result += sep; result += arr[i].to_string(); }
-            return look::Value(result);
         };
 
         if (!local_table) { tl_builtins_gen = cur_gen; tl_builtins_web = &web; }   // cache valid until the next hot-reload

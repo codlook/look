@@ -115,6 +115,13 @@ jobs:
           cd cpp
           bash tests/toplevel_callbacks_vm_test.sh ./build/lk-fcgi
 
+      # A top-level variable computed with a plain built-in (max, strtoupper, strlen, ...) was null
+      # in routes on the default engine: the VM's setup pass did not connect those functions.
+      - name: Built-ins at the top level (both engines)
+        run: |
+          cd cpp
+          bash tests/toplevel_builtins_test.sh ./build/lk-fcgi
+
       # Every module function is provided by the VM. A function known only to the tree-walk
       # engine would send the routes that call it there; `lk --vm-report` lists such functions
       # and fails when there is one.
