@@ -2805,7 +2805,7 @@ pending → processing → done
 | `jobs::failed($queue [, $limit=100])` | Dead-letter queue — shortcut for `jobs::list($q, "failed")` |
 | `jobs::retry($id)` | failed → pending (manual retry) |
 | `jobs::purge($queue, $status)` | Delete jobs in the given status → number deleted |
-| `jobs::worker($queue, $fn)` | Register a handler for the queue. `$fn($job)` → true (done) / false (fail) |
+| `jobs::worker($queue, $fn)` | Register a handler for the queue. `$fn($job)` must return `true` (done) or `false` (failed: tried again later, up to the job's limit). An error counts as `false`. Any other result — a forgotten `return` — is logged and the job is marked failed without being run again. A retry waits: 30 s, then 60 s, then 120 s … (base: `LOOK_JOBS_RETRY_SECONDS`) |
 | `jobs::run([$interval_ms=5000])` | Worker loop. `interval_ms > 0` → infinite loop (a separate process). `interval_ms = 0` → one pass, returns (embed with a timer) |
 
 ### Usage Pattern 1 — Embedded Worker (single process, no terminal)

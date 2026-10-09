@@ -23,7 +23,7 @@ run_lk() {
 
 run_lk "db:: CRUD+tx"          db_crud.lk
 run_lk "prepared bind matrisi" db_bind_sqlite.lk
-run_lk "jobs:: lifecycle"      jobs_lifecycle.lk  "JOBS_DB=$TMP/jobs.db"
+run_lk "jobs:: lifecycle"      jobs_lifecycle.lk  "JOBS_DB=$TMP/jobs.db" "LOOK_JOBS_RETRY_SECONDS=0"
 run_lk "parallel() fan-out"    parallel_fanout.lk
 run_lk "string:: ops"          string_ops.lk
 run_lk "array:: ops"           array_ops.lk

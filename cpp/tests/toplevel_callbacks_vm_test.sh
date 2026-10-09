@@ -59,14 +59,14 @@ now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 fail=0
 for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     rm -f "$TMP"/jobs.db*
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+    ( cd "$TMP" && exec env $mode LOOK_JOBS_RETRY_SECONDS=1 "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
     for i in $(seq 1 60); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.05; done
     t0=$(now_ms); tm=-1
     for i in $(seq 1 200); do [ "$(num "$(curl -s -m 3 "localhost:$PORT/r")" timer_done)" = "1" ] && { tm=$(( $(now_ms) - t0 )); break; }; sleep 0.05; done
     curl -s -m 3 "localhost:$PORT/push?to=a" >/dev/null
     j0=$(now_ms); curl -s -m 60 "localhost:$PORT/drain" >/dev/null; jm=$(( $(now_ms) - j0 ))
     for to in bad boom; do curl -s -m 3 "localhost:$PORT/push?to=$to" >/dev/null; done
-    curl -s -m 60 "localhost:$PORT/drain" >/dev/null
+    for i in 1 2 3 4 5 6 7; do curl -s -m 60 "localhost:$PORT/drain" >/dev/null; sleep 0.6; done   # retries wait 1 s, then 2 s
     nest="$(curl -s -m 10 -D "$TMP/h.txt" -w ' %{http_code}' "localhost:$PORT/nest?x=42")"; nh="$(grep -ci 'x-from-handler' "$TMP/h.txt")"
     after="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/r")"
     t1="$(num "$(curl -s -m 3 "localhost:$PORT/r")" ticks)"; curl -s -m 3 "localhost:$PORT/stop" >/dev/null; sleep 0.3
@@ -77,7 +77,7 @@ for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
     base="$(echo "$r" | grep -o '"global":"[a-z0-9]*"') runs=$(num "$r" job_runs) done=$(num "$r" done) failed=$(num "$r" failed)"
     if [ "$base" = '"global":"g0" runs=7 done=1 failed=2' ] && [ "$boom" = "3" ] && [ "${t1:-0}" -ge 2 ] && [ "$t2" = "$t3" ]; then
-        echo "  OK   [$mode] 3 jobs: 1 done, 2 failed after 3 tries each (7 handler runs, each error logged); the top-level timer id cancels it; globals untouched"
+        echo "  OK   [$mode] 3 jobs: 1 done, 2 failed after 3 tries each, with a wait between tries (7 handler runs, each error logged); the top-level timer id cancels it; globals untouched"
     else echo "  FAIL [$mode] $base boom-logged=$boom ticks=$t1/$t2/$t3 r=$r"; fail=1; fi
     if [ "$nest" = '{"x":"42","handler_saw":"nothing"} 200' ] && [ "$nh" = "0" ] && [ "$after" = "200" ]; then
         echo "  OK   [$mode] a handler run from inside a request has its own context; the request keeps its status, headers and parameters"

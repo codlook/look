@@ -2310,25 +2310,43 @@ Value Interpreter::jobs_run(int interval_ms) {
                 look::WebContext job_ctx;
                 job_ctx.method = "__JOB__";
                 copy->set_web_context(&job_ctx);
-                bool ok = false;
+                // LOOK 2: işleyici true (bitti) ya da false (başarısız, beklemeyle yeniden denenir)
+                // döndürür. Başka bir şey döndürmek — en çok da `return`i unutmak — HATADIR: eskiden
+                // sessizce "başarısız" sayılıyor ve iş yeniden çalıştırılıyordu (e-posta üç kez gidiyordu).
+                // Artık loglanır ve iş YENİDEN ÇALIŞTIRILMADAN başarısız işaretlenir.
+                enum class Outcome { Done, Retry, BadReturn } outcome = Outcome::Retry;
+                std::string returned;
                 try {
+                    Value result;
+                    bool ran = true;
                     if (fn_v.type() == Value::BYTECODE_FN && look::vm_closure_runner()) {
                         // LOOK 2: işleyici VM closure'ı — yeni bir istek gibi VM'de koşar (hata orada loglanır).
-                        bool ran = false;
-                        Value result = look::vm_closure_runner()(fn_v, {job}, "job handler", ran);
-                        ok = ran && result.as_bool();
+                        result = look::vm_closure_runner()(fn_v, {job}, "job handler", ran);
                     } else {
-                        Value result = copy->invoke(fn_v, {job});
-                        ok = result.as_bool();
+                        result = copy->invoke(fn_v, {job});
+                    }
+                    if (!ran) outcome = Outcome::Retry;                       // işleyici hata verdi (loglandı)
+                    else if (result.type() == Value::BOOL) outcome = result.as_bool() ? Outcome::Done : Outcome::Retry;
+                    else {
+                        outcome = Outcome::BadReturn;
+                        returned = result.type() == Value::NONE ? "nothing (null)" :
+                                   result.type() == Value::STRING ? "a string" :
+                                   result.type() == Value::INT || result.type() == Value::FLOAT ? "a number" : "a value that is not true or false";
                     }
                 } catch (const std::exception& ex) {
                     look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
                         std::string("handler error [") + queue + "]: " + ex.what());
-                    ok = false;
+                    outcome = Outcome::Retry;
                 }
 
-                if (ok) look::JobStore::instance().done(job_id);
-                else    look::JobStore::instance().fail(job_id);
+                if (outcome == Outcome::Done) look::JobStore::instance().done(job_id);
+                else if (outcome == Outcome::Retry) look::JobStore::instance().fail(job_id);
+                else {
+                    look::Logger::instance().log(look::LogLevel::LOG_ERROR, "jobs::run",
+                        std::string("handler for queue '") + queue + "' must return true (done) or false (failed, tried again later); it returned "
+                        + returned + " — job " + std::to_string(job_id) + " is marked failed and is not run again");
+                    look::JobStore::instance().fail_final(job_id);
+                }
             }
         }
     };

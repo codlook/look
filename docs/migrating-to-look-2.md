@@ -340,6 +340,24 @@ their own: on the VM, with the top-level variables at their declared values.
   Nothing changes in what they compute; loop-heavy handlers are much faster (measured:
   4.2 s → 0.08 s for one job).
 
+### A job handler returns `true` or `false`, and a retry waits — was silent
+
+```
+jobs::worker("mail", function($job) {
+    mail::send(...)          # LOOK 1: no `return` counted as failed and the job was run again
+})                           #         at once — three mails. LOOK 2: an error in the log,
+                             #         the job is marked failed and is NOT run again.
+```
+
+- `return true` — done. `return false`, or an error — failed, tried again later up to the
+  job's limit. Anything else is a mistake of the handler: one `ERROR` line names the queue
+  and what was returned, and the job is not repeated. Make every handler end with
+  `return true` or `return false`.
+- A retry waits. In LOOK 1 a failed job was tried again immediately, all tries in the same
+  pass. Now the next try comes after 30 seconds, then 60, then 120 (the base is
+  `LOOK_JOBS_RETRY_SECONDS`; at most an hour). This also holds for `jobs::fail($id)` called
+  by hand: `jobs::next` does not return that job again until its wait is over.
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

@@ -256,6 +256,25 @@ void JobStore::done(int64_t id) {
     sqlite3_finalize(stmt);
 }
 
+// Yeniden deneme beklemesinin tabanı (saniye). Ortam değişkeni: LOOK_JOBS_RETRY_SECONDS.
+static int64_t retry_base_seconds() {
+    const char* e = std::getenv("LOOK_JOBS_RETRY_SECONDS");
+    if (e && *e) { long v = std::atol(e); if (v >= 0 && v <= 3600) return v; }
+    return 30;
+}
+
+// İşi YENİDEN DENEMEDEN başarısız say (işleyici true/false dışında bir şey döndürdü).
+void JobStore::fail_final(int64_t id) {
+    ensure_init();
+    std::lock_guard<std::mutex> lk(mtx_);
+    sqlite3_stmt* stmt = prepare(db_,
+        "UPDATE look_jobs SET status='failed', updated_at=? WHERE id=?");
+    sqlite3_bind_int64(stmt, 1, now_ts());
+    sqlite3_bind_int64(stmt, 2, id);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 // ── fail ──────────────────────────────────────────────────────────────────
 void JobStore::fail(int64_t id) {
     ensure_init();
@@ -274,12 +293,22 @@ void JobStore::fail(int64_t id) {
     int         new_count  = retry_count + 1;
     const char* new_status = (new_count >= max_retries) ? "failed" : "pending";
 
+    // LOOK 2: yeniden deneme BEKLER. Eskiden iş hemen "pending" oluyor ve aynı jobs::run geçişi onu
+    // hemen yeniden alıyordu: üç deneme aynı milisaniyede bitiyordu (geçici bir hatada — SMTP bir an
+    // yanıt vermedi — hiçbir işe yaramayan tekrarlar). Bekleme her denemede ikiye katlanır:
+    // taban × 1, × 2, × 4 … (taban LOOK_JOBS_RETRY_SECONDS, varsayılan 30 sn; en çok 1 saat).
+    int64_t delay = retry_base_seconds();
+    for (int i = 1; i < new_count && delay < 3600; ++i) delay *= 2;
+    if (delay > 3600) delay = 3600;
+    const int64_t ts = now_ts();
+
     sqlite3_stmt* upd = prepare(db_,
-        "UPDATE look_jobs SET status=?, retry_count=?, updated_at=? WHERE id=?");
+        "UPDATE look_jobs SET status=?, retry_count=?, updated_at=?, run_after=? WHERE id=?");
     sqlite3_bind_text (upd, 1, new_status, -1, SQLITE_STATIC);
     sqlite3_bind_int  (upd, 2, new_count);
-    sqlite3_bind_int64(upd, 3, now_ts());
-    sqlite3_bind_int64(upd, 4, id);
+    sqlite3_bind_int64(upd, 3, ts);
+    sqlite3_bind_int64(upd, 4, ts + delay);
+    sqlite3_bind_int64(upd, 5, id);
     sqlite3_step(upd);
     sqlite3_finalize(upd);
 }

@@ -114,6 +114,13 @@ jobs:
           cd cpp
           bash tests/job_handler_context_test.sh ./build/lk-fcgi
 
+      # LOOK 2: a job handler returns true or false; any other result is logged and the job is not
+      # run again (a forgotten return ran it three times); a retry waits.
+      - name: Job handler result and retry wait
+        run: |
+          cd cpp
+          bash tests/job_handler_result_test.sh ./build/lk-fcgi
+
       # LOOK 2: a timer armed and a job handler registered at the top level run on the VM once
       # its setup has succeeded (they stayed on the tree-walk engine while the routes ran on the VM).
       - name: Top-level timers and job handlers on the VM
