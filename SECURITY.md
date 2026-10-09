@@ -16,6 +16,25 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-09 — One connection over the WebSocket / SSE limit stopped the server (1.0.15)
+
+**Affected:** every release up to and including 1.0.14, in `--mode http`, for applications
+that have a `WS` or an `SSE` route. **Fixed in:** 1.0.15.
+
+Open WebSocket connections and open SSE connections each have a limit (`LOOK_WS_MAX_CONN`,
+`LOOK_SSE_MAX_CONN`; 1024 by default). The connection that went over the limit raised an
+error that nothing caught, and the server process ended. Anyone who could reach the port
+could stop the application by opening 1025 connections to a WebSocket or SSE route — no
+login and no valid message needed. Measured on 1.0.13 for both; 1.0.14 has the same code.
+
+The connection over the limit is now answered `503 Service Unavailable` and closed. The
+open connections keep working, ordinary requests are answered, and a place freed by a
+closed connection can be taken again.
+
+**What to do:** upgrade. If your application expects more than 1024 clients at once, set
+`LOOK_WS_MAX_CONN` / `LOOK_SSE_MAX_CONN` to the number you want to allow; the limit is there
+to bound memory, and one open WebSocket connection costs the server about 1 KB.
+
 ### 2026-10-09 — `math::random` repeated and could be predicted (1.0.14)
 
 **Affected:** every release up to and including 1.0.13, on both engines. **Fixed in:** 1.0.14.

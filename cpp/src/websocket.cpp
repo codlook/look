@@ -243,16 +243,27 @@ void WsConnection::close_conn() {
 
 WsRegistry g_ws_registry;
 
-void WsRegistry::add(std::shared_ptr<WsConnection> conn) {
-    // LOOK_WS_MAX_CONN env ile yapılandırılabilir (varsayılan: 1024)
-    static const size_t MAX_WS = []() -> size_t {
+// LOOK_WS_MAX_CONN ile yapılandırılır (varsayılan: 1024).
+static size_t ws_max_conn() {
+    static const size_t m = []() -> size_t {
         const char* e = std::getenv("LOOK_WS_MAX_CONN");
         return (e && *e) ? (size_t)std::stoul(e) : 1024;
     }();
+    return m;
+}
+
+// Sınır doluysa FIRLATMAZ, false döner. Eskiden burada istisna fırlatılıyordu ve onu kimse
+// yakalamıyordu: sınırdan bir fazla bağlantı (varsayılan 1025.) bütün sunucuyu düşürüyordu.
+bool WsRegistry::add(std::shared_ptr<WsConnection> conn) {
     std::unique_lock<std::shared_mutex> lk(mutex_);
-    if (clients_.size() >= MAX_WS)
-        throw std::runtime_error("WebSocket connection limit exceeded (" + std::to_string(MAX_WS) + ")");
+    if (clients_.size() >= ws_max_conn()) return false;
     clients_[conn->fd] = std::move(conn);
+    return true;
+}
+
+bool WsRegistry::full() {
+    std::shared_lock<std::shared_mutex> lk(mutex_);
+    return clients_.size() >= ws_max_conn();
 }
 
 void WsRegistry::remove(int fd) {

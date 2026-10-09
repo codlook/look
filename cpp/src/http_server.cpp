@@ -111,6 +111,23 @@ public:
 
 // ── HttpServer::Impl ──────────────────────────────────────────────────────────
 
+// Bağlantı sınırı dolu: 503 ile reddet (istemci sonra yeniden dener). Sunucu ayakta kalır.
+static void send_limit_reject(int fd, const char* what) {
+    std::string body = std::string(what) + " connection limit reached; try again later";
+    std::string resp =
+        "HTTP/1.1 503 Service Unavailable\r\n"
+        "Content-Type: text/plain\r\n"
+        "Retry-After: 5\r\n"
+        "Connection: close\r\n"
+        "Content-Length: " + std::to_string(body.size()) + "\r\n"
+        "\r\n" + body;
+#ifdef _WIN32
+    ::send(fd, resp.data(), (int)resp.size(), 0);
+#else
+    ::send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
+#endif
+}
+
 static void send_ws_reject(int fd, const std::string& reason) {
     std::string resp =
         "HTTP/1.1 403 Forbidden\r\n"
@@ -601,6 +618,7 @@ struct HttpServer::Impl {
                 return;
             }
         }
+        if (look::g_ws_registry.full()) { send_limit_reject(fd, "WebSocket"); ::close(fd); return; }
         std::string hs = ws_handshake_101(req.ws_key);
 #ifdef _WIN32
         ::send(fd, hs.data(), (int)hs.size(), 0);
@@ -613,7 +631,11 @@ struct HttpServer::Impl {
             ws_clients[fd] = conn;
             ws_bufs[fd]    = "";
         }
-        look::g_ws_registry.add(conn);
+        if (!look::g_ws_registry.add(conn)) {   // sınır bu arada doldu (başka iş parçacığı)
+            { std::lock_guard<std::mutex> lk(ws_mtx); ws_clients.erase(fd); ws_bufs.erase(fd); }
+            ::close(fd);
+            return;
+        }
 
         ws_handler(conn, req);
 
@@ -625,6 +647,7 @@ struct HttpServer::Impl {
 
     // ── SSE upgrade — worker thread'de çalışır ───────────────────────────────
     void handle_sse_upgrade(int fd, const HttpRequest& req) {
+        if (look::g_sse_registry.full()) { send_limit_reject(fd, "SSE"); ::close(fd); return; }
         const char* hdrs =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/event-stream\r\n"
@@ -647,7 +670,11 @@ struct HttpServer::Impl {
             std::lock_guard<std::mutex> lk(sse_mtx);
             sse_clients[fd] = conn;
         }
-        look::g_sse_registry.add(conn);
+        if (!look::g_sse_registry.add(conn)) {
+            { std::lock_guard<std::mutex> lk(sse_mtx); sse_clients.erase(fd); }
+            ::close(fd);
+            return;
+        }
 
         sse_handler(conn, req);
 
