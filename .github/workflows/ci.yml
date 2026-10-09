@@ -388,6 +388,17 @@ jobs:
           cd cpp
           bash tests/param_write_check_test.sh ./build/lk ./build/lk-fcgi
 
+      # string::random reduced a random byte with `% 36`: the first four characters of its
+      # alphabet came out about 14% more often. Every character is equally likely now.
+      - name: string::random is uniform (both engines)
+        run: |
+          cd cpp
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/string_random_uniform_test.lk || true)"
+            echo "$out"
+            echo "$out" | grep -q "^PASS: string::random is uniform" || { echo "::error::string::random distribution test FAILED ($env)"; exit 1; }
+          done
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile

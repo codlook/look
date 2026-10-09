@@ -16,10 +16,9 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
-### 2026-10-09 — `math::random` repeated and could be predicted
+### 2026-10-09 — `math::random` repeated and could be predicted (1.0.14)
 
-**Affected:** every release up to and including 1.0.13, on both engines. **Fixed in:** not yet
-released for 1.0.x; fixed on the `v2` branch.
+**Affected:** every release up to and including 1.0.13, on both engines. **Fixed in:** 1.0.14.
 
 `math::random` used the C generator and seeded it again with the current second every time
 a copy of the standard library was built — for each worker thread, and for job handlers and

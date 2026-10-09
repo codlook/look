@@ -130,7 +130,7 @@ static Module make_math() {
     // math::random — HER İŞ PARÇACIĞININ kendi üreteci var ve her biri işletim sisteminin güvenli
     // kaynağından ayrı tohumlanır. Eskiden tek bir C `rand()` kullanılıyordu ve standart kitaplığın
     // her yeni kopyasında `srand(time)` ile yeniden tohumlanıyordu: aynı saniyede kurulan iş
-    // parçacıkları AYNI diziyi üretiyor (ölçüldü: 16 eşzamanlı istekte 4 farklı sayı), dizi de
+    // parçacıkları AYNI diziyi üretiyor (ölçüldü: 16 eşzamanlı istekte 14 farklı sayı), dizi de
     // saniyeden tahmin edilebiliyordu. Ayrıca `rand() % n` Windows'ta 32767'yi aşamıyordu.
     // NOT: bu üreteç güvenlik amaçlı DEĞİLDİR (kod/anahtar için crypto::random_string).
     m.functions["random"] = [](auto args) -> Value {
@@ -568,11 +568,17 @@ static Module make_string() {
         if (length > MAX_RANDOM) length = MAX_RANDOM;
         static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
         std::string result((size_t)length, '\0');
-        if (length > 0) {
-            std::vector<uint8_t> buf((size_t)length);
+        // Reddetme örneklemesi: 256, 36'ya tam bölünmez — `bayt % 36` alfabenin ilk 4 karakterini
+        // (a, b, c, d) diğerlerinden ~%14 daha sık üretiyordu. 252'den (7 × 36) küçük baytlar
+        // kullanılır, gerisi atılıp yenisi çekilir; her karakter eşit olasılıklıdır.
+        static constexpr unsigned ALPHA = sizeof(chars) - 1;          // 36
+        static constexpr unsigned LIMIT = (256 / ALPHA) * ALPHA;      // 252
+        size_t filled = 0;
+        while (filled < (size_t)length) {
+            std::vector<uint8_t> buf((size_t)length - filled + 16);
             secure_random_fill(buf.data(), buf.size());   // CSPRNG (fail-closed)
-            for (int i = 0; i < length; ++i)
-                result[(size_t)i] = chars[buf[(size_t)i] % (sizeof(chars) - 1)];
+            for (size_t i = 0; i < buf.size() && filled < (size_t)length; ++i)
+                if (buf[i] < LIMIT) result[filled++] = chars[buf[i] % ALPHA];
         }
         return Value(result);
     };
