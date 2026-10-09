@@ -161,6 +161,13 @@ jobs:
           cd cpp
           bash tests/toplevel_builtins_test.sh ./build/lk-fcgi
 
+      # Generated from the binary's own built-in table: every pure built-in is called at the top
+      # level and inside a route, on both engines; the four results must be equal.
+      - name: Built-ins at the top level (generated from the built-in table)
+        run: |
+          cd cpp
+          bash tests/builtin_toplevel_auto_test.sh ./build/lk ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile

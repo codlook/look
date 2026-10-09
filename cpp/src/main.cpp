@@ -303,6 +303,12 @@ int main(int argc, char* argv[]) {
             cmd = argv[2];
         }
 
+        // lk --builtins : the VM's built-in table, one name per line (tests generate their cases from it).
+        if (cmd == "--builtins") {
+            for (const auto& n : look::builtin_names()) std::cout << n << "\n";
+            return 0;
+        }
+
         if (cmd == "version" || cmd == "--version" || cmd == "-v") {
             std::cout << "LOOK " << LOOK_VERSION
                       << " (" << LOOK_BUILD << ", " << LOOK_PLATFORM << "/" << LOOK_ARCH << ")"
