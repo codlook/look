@@ -12,6 +12,7 @@
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/setup_handoff.h"
+#include "look/index_error.h"
 #include "look/websocket.h"
 #include "look/sse.h"
 #include "look/timer.h"
@@ -1258,7 +1259,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         if (obj.type() == Value::STRUCT)
             return look::struct_get_named(*obj.as_struct(), e->field);
         if (obj.type() != Value::ARRAY)
-            throw LookRuntimeError("Member access '." + e->field + "' requires a struct or assoc array", current_loc_);
+            throw LookRuntimeError(look::index_error_message(obj, Value(e->field)), current_loc_);   // `$x.f` = `$x["f"]`: tek mesaj
         auto& arr = *obj.as_array();
         if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__") {
             for (size_t i = 1; i + 1 < arr.size(); i += 2) {
@@ -1384,7 +1385,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
             return look::struct_get_named(*obj.as_struct(), idx.as_string());
         }
         if (obj.type() != Value::ARRAY)
-            throw std::runtime_error("Index operator requires an array");
+            throw std::runtime_error(look::index_error_message(obj, idx));
         auto& arr = *obj.as_array();
 
         // Associative array: string key access

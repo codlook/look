@@ -5919,7 +5919,7 @@ LOOK is **strict**: reading a variable that was never assigned is an error, not 
 | `Arithmetic on a string that cannot be converted to a number: '…'` | The string isn't numeric (`"12abc"`). LOOK does **not** silently truncate. | Validate with `validator::integer/numeric`, or clean the string before converting. |
 | `Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '…'` | A numeric string is larger than a 64-bit integer (often a giant ID). | Keep it as a **string** — don't do arithmetic on it. LOOK compares such IDs exactly as strings. |
 | `Division by zero` / `Modulo by zero` | The right operand of `/` or `%` was `0`. | Check the divisor before dividing. |
-| `Index operator requires an array` | You used `x[i]` on something that isn't an array/object. | Make sure `x` is an array; check for `null` first. |
+| `Index operator requires an array: cannot read ["k"] of null` | You used `x[i]` or `x.field` on a value that is not an array, a map or a struct (null, a string, a number). A key an array does not have gives `null`; that is not this error. | Check the value first, or give it a default before indexing: `($x ?? [])["k"]`. |
 | `Array index out of bounds` / `Array index …` | `arr[i]` with `i` past the end (or negative). | Check `count(arr)` before indexing; array indexes are 0-based. |
 | `foreach requires an array` | `foreach`/`for … as` over a non-array (often `null` from a lookup that missed). | Ensure the value is an array; default to `[]` when a lookup can miss. |
 | `++/-- requires a variable` | `++`/`--` applied to something that is not a variable, an element or a field (e.g. `++5`, `++foo()`). | Apply it to a variable, an element or a field: `$i++`, `$a["n"]++`. |

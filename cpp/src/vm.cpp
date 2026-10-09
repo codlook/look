@@ -7,6 +7,7 @@
 #include <atomic>
 #include <climits>
 #include "look/vm.h"
+#include "look/index_error.h"
 #include "look/bytecode.h"
 #include "look/web.h"
 #include "look/value_path.h"
@@ -292,7 +293,9 @@ Value VM::array_get(const Value& arr, const Value& key) {
                               + look::struct_name(*arr.as_struct()) + "' has no numeric index)");
         return vm_struct([&]() -> Value { return look::struct_get_named(*arr.as_struct(), key.str_ref()); });
     }
-    if (arr.type() != Value::ARRAY) return Value();
+    // LOOK 2: dizi olmayan değeri indekslemek hatadır (yorumlayıcıyla aynı; look/index_error.h).
+    // Eskiden sessizce null dönüyordu.
+    if (arr.type() != Value::ARRAY) throw LookVmError(look::index_error_message(arr, key));
     auto& vec = *arr.as_array();
 
     // Assoc: ["__assoc__", k0, v0, k1, v1, ...] — sentinel at position 0 (interpreter convention)

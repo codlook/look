@@ -179,6 +179,17 @@ jobs:
             echo "$out" | grep -q "^PASS: ++ and -- on elements" || { echo "::error::element step test FAILED ($env)"; exit 1; }
           done
 
+      # LOOK 2: indexing a value that is not an array, a map or a struct is an error on both
+      # engines with the same message; a missing key still gives null.
+      - name: Indexing a non-array (both engines)
+        run: |
+          cd cpp
+          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+            out="$(env $env ./build/lk tests/index_non_array_test.lk || true)"
+            echo "$out"
+            echo "$out" | grep -q "^PASS: indexing a value that is not an array" || { echo "::error::index test FAILED ($env)"; exit 1; }
+          done
+
       # LOOK 2 value semantics: assigning, passing or returning an array, map or struct gives
       # the receiver its own value (copy on write); push/pop change their variable only.
       - name: Value semantics guard (both engines)

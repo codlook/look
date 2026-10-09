@@ -367,15 +367,15 @@ $avg = $sum / $count
 $avg = $count == 0 ? 0 : $sum / $count</code></pre>
     </div>
     <div class="err" id="e17" data-cat="Types, arithmetic &amp; indexing" data-text="index operator requires an array you used x[i] on something that isn't an array/object. make sure x is an array; check for null first.">
-      <div class="err-msg"><code>Index operator requires an array</code></div>
+      <div class="err-msg"><code>Index operator requires an array: cannot read ["name"] of null</code></div>
       <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> You used <code>x[i]</code> on something that isn't an array/object.</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> Make sure <code>x</code> is an array; check for <code>null</code> first.</p>
+        <p><span class="err-lbl">Cause</span> You used <code>x[i]</code> or <code>x.field</code> on a value that is not an array, a map or a struct — null, a string, a number. The message names the key and what the value was. (A key that an array does not have gives <code>null</code>; that is not this error.)</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the value first, or give it a default before indexing: <code>($x ?? [])["name"]</code>.</p>
       </div>
       <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
 $name = $user["name"]       # $user is null
 <span class="eg-good"># ✓ fix</span>
-if (is_array($user)) { $name = $user["name"] }</code></pre>
+$name = ($user ?? [])["name"]      # null when there is no user</code></pre>
     </div>
     <div class="err" id="e18" data-cat="Types, arithmetic &amp; indexing" data-text="array index out of bounds / array index … arr[i] with i past the end (or negative). check count(arr) before indexing; array indexes are 0-based.">
       <div class="err-msg"><code>Array index out of bounds / Array index …</code></div>

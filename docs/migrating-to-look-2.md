@@ -183,6 +183,33 @@ named function when you need recursion.
 A closure handed to another thread (`parallel`, timers, WebSocket and SSE handlers) still
 gets its own copy of everything it captured.
 
+### Indexing a value that is not an array is an error — was silent on the VM
+
+```
+$user = null
+$name = $user["name"]                 # LOOK 1 on the VM: null · LOOK 2: error
+$city = $row["address"]["city"]       # error when $row has no "address"
+$city = $row["address"]["city"] ?? "" # still an error: `??` does not cover the missing step
+$city = ($row["address"] ?? [])["city"] ?? ""   # what to write
+```
+
+Reading a key that an array or a map does not have gives `null`, as before. Indexing
+something that is not an array, a map or a struct — `null`, a string, a number, a boolean —
+stops with
+
+```
+Index operator requires an array: cannot read ["city"] of null — check the value first,
+or give it a default: ($value ?? [])["city"]
+```
+
+In LOOK 1 the tree-walk engine already raised this error and the VM returned `null`, so the
+same line behaved differently depending on which engine ran it, and a value of the wrong
+type travelled on as `null`. Both engines raise it now, for `$x[...]` and for `$x.field`.
+
+Where a step of a chain may be missing, give that step a default: `($a["b"] ?? [])["c"]`.
+Running LookPress and every published module, package and example on LOOK 2 did not hit
+the error once; code that does will say where.
+
 ### `==` compares content — silent
 
 `==` and `!=` on two arrays, maps or structs compare what they hold, at every depth.
