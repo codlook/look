@@ -154,6 +154,13 @@ jobs:
           cd cpp
           bash tests/job_handler_context_test.sh ./build/lk-fcgi
 
+      # A top-level variable computed with a plain built-in (max, strtoupper, strlen, ...) was null
+      # in routes on the default engine: the VM's setup pass did not connect those functions.
+      - name: Built-ins at the top level (both engines)
+        run: |
+          cd cpp
+          bash tests/toplevel_builtins_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
