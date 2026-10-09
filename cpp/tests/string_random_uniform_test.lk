@@ -1,0 +1,34 @@
+// string::random draws every character of its alphabet with the same probability.
+// It reduced a random byte with `byte % 36`; 256 is not a multiple of 36, so the first four
+// characters (a, b, c, d) came out about 14% more often than the other 32. Bytes that do not
+// fit are now thrown away and drawn again.
+// 360 000 characters: each of the 36 is expected 10 000 times. With the old code a..d are
+// expected about 11 250 times each and the rest about 9 840 — far outside the band below
+// (five standard deviations are about 500).
+use string
+function tally() {
+    $alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    $counts = []
+    for ($i = 0; $i < 36; $i++) { $counts[string::substr($alphabet, $i, 1)] = 0 }
+    $total = 0
+    for ($r = 0; $r < 36; $r++) {
+        $s = string::random(10000)
+        $n = string::len($s)
+        for ($k = 0; $k < $n; $k++) {
+            $c = string::substr($s, $k, 1)
+            $counts[$c] = $counts[$c] + 1
+        }
+        $total = $total + $n
+    }
+    $lo = 1000000; $hi = 0; $first4 = 0
+    for ($i = 0; $i < 36; $i++) {
+        $n = $counts[string::substr($alphabet, $i, 1)]
+        if ($n < $lo) { $lo = $n }
+        if ($n > $hi) { $hi = $n }
+        if ($i < 4) { $first4 = $first4 + $n }
+    }
+    $ok = $total == 360000 && $lo > 9500 && $hi < 10500 && $first4 < 41500
+    return ($ok ? "PASS" : "FAIL") . ": string::random is uniform (total " . $total . ", least " . $lo . ", most " . $hi . ", a+b+c+d " . $first4 . " of an expected 40000)"
+}
+print(tally())
+print("lengths " . string::len(string::random(0)) . ":" . string::len(string::random(1)) . ":" . string::len(string::random(37)))
