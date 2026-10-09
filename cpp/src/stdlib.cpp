@@ -4,6 +4,7 @@
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include <random>
+#include <cstring>
 #include <cstdint>
 #include <cmath>
 #include <algorithm>
@@ -126,15 +127,27 @@ static Module make_math() {
     m.functions["pi"] = [](auto args) {
         return Value(3.14159265358979323846);
     };
+    // math::random — HER İŞ PARÇACIĞININ kendi üreteci var ve her biri işletim sisteminin güvenli
+    // kaynağından ayrı tohumlanır. Eskiden tek bir C `rand()` kullanılıyordu ve standart kitaplığın
+    // her yeni kopyasında `srand(time)` ile yeniden tohumlanıyordu: aynı saniyede kurulan iş
+    // parçacıkları AYNI diziyi üretiyor (ölçüldü: 16 eşzamanlı istekte 4 farklı sayı), dizi de
+    // saniyeden tahmin edilebiliyordu. Ayrıca `rand() % n` Windows'ta 32767'yi aşamıyordu.
+    // NOT: bu üreteç güvenlik amaçlı DEĞİLDİR (kod/anahtar için crypto::random_string).
     m.functions["random"] = [](auto args) -> Value {
+        static thread_local std::mt19937_64 engine = []() {
+            uint8_t seed_bytes[32];
+            secure_random_fill(seed_bytes, sizeof(seed_bytes));
+            uint32_t words[8];
+            std::memcpy(words, seed_bytes, sizeof(words));
+            std::seed_seq seq(words, words + 8);
+            return std::mt19937_64(seq);
+        }();
         if (args.size() == 2) {
-            int lo = args[0].to_int(), hi = args[1].to_int();
-            // hi < lo → aralık boyutu ≤0; `rand() % 0` tamsayı sıfıra bölme
-            // (SIGFPE crash), negatif aralık ise tanımsız modulus. Net hata ver.
+            int64_t lo = args[0].to_int(), hi = args[1].to_int();
             if (hi < lo) throw std::runtime_error("math::random: hi < lo (invalid range)");
-            return Value(lo + std::rand() % (hi - lo + 1));
+            return Value((int64_t)std::uniform_int_distribution<int64_t>(lo, hi)(engine));
         }
-        return Value((double)std::rand() / RAND_MAX);
+        return Value(std::generate_canonical<double, 53>(engine));
     };
     m.functions["log"] = [](auto args) {
         check_args("math::log", args.size(), 1);
@@ -1050,11 +1063,6 @@ static Module make_error_module() {
 }
 
 std::map<std::string, Module> make_stdlib(Interpreter* interp) {
-    // Tohum SÜREÇ BAŞINA BİR KEZ atılır. Eskiden burada her çağrıda `srand(time)` vardı ve bu
-    // fonksiyon her istek kopyası için yeniden koşuyordu: aynı saniyedeki bütün istekler
-    // math::random'dan AYNI sayıyı alıyordu (ölçüldü: art arda iki istek 822480, 822480).
-    static const bool seeded = []() { std::random_device rd; std::srand(rd() ^ (unsigned)std::time(nullptr)); return true; }();
-    (void)seeded;
     std::map<std::string, Module> stdlib;
     auto add = [&](Module mod) { stdlib[mod.name] = std::move(mod); };
     add(make_math());

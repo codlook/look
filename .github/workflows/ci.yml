@@ -135,7 +135,7 @@ jobs:
           cd cpp
           bash tests/builtin_toplevel_auto_test.sh ./build/lk ./build/lk-fcgi
 
-      # math::random was re-seeded with the current second for every new copy of the standard
+      # math::random used the C generator, re-seeded with the current second for every new copy of the standard
       # library: the first requests of each worker got the same number.
       - name: math::random differs between requests
         run: |

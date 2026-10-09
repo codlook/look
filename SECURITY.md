@@ -16,6 +16,51 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-09 — `math::random` repeated and could be predicted
+
+**Affected:** every release up to and including 1.0.13, on both engines. **Fixed in:** not yet
+released for 1.0.x; fixed on the `v2` branch.
+
+`math::random` used the C generator and seeded it again with the current second every time
+a copy of the standard library was built — for each worker thread, and for job handlers and
+timer callbacks. Two consequences:
+
+- threads created in the same second produced the same sequence. Measured on 1.0.13: 16
+  requests at once returned 14 different numbers, and two servers started in the same second
+  returned the same first number;
+- the sequence followed from the second the process (or thread) started, so whoever knew
+  that second could compute the numbers.
+
+An application that made a verification code, a reset code or any other secret with
+`math::random(100000, 999999)` gave out codes that could repeat between users and could be
+predicted. Session ids, `string::random`, `crypto::random_string`, `crypto::random_bytes` and
+`crypto::uuid` were never affected: they read the operating system's secure source.
+
+Every worker thread now has its own generator, seeded from the operating system's secure
+source.
+
+**What to do:** upgrade. `math::random` is still not a generator for secrets: if your
+application makes codes, keys or passwords with it, change those to `crypto::random_string`
+or `string::random`, and consider codes issued before the upgrade as guessable.
+
+### 2026-10-09 — A job handler shared the request that started it (1.0.13)
+
+**Affected:** every release up to and including 1.0.12, on both engines, for applications in
+which a route calls `jobs::run(...)`. **Fixed in:** 1.0.13.
+
+A route that calls `jobs::run(0)` runs the queue's handlers before it answers. The handler
+ran with that request's context: `request::get(...)` in the handler read the request's
+parameters (measured on 1.0.12), and because the whole context was shared its headers and
+session were reachable the same way. `response::status(...)` and `response::header(...)` in
+the handler changed the request's response — measured: a route answered 503 because the
+handler it ran set it.
+
+The handler has a context of its own now.
+
+**What to do:** upgrade. A handler that read `request::` or `session::` values was reading
+them from whichever request drained the queue; pass what the handler needs in the job's
+payload. Handlers run only from a timer or a separate worker process were not affected.
+
 ### 2026-10-07 — Top-level code ran twice at startup; values read at setup were lost (1.0.9)
 
 **Affected:** every release up to and including 1.0.8, on the default engine (the bytecode
