@@ -295,6 +295,7 @@ Value VM::array_get(const Value& arr, const Value& key) {
     }
     // LOOK 2: dizi olmayan değeri indekslemek hatadır (yorumlayıcıyla aynı; look/index_error.h).
     // Eskiden sessizce null dönüyordu.
+    if (arr.type() == Value::NONE) return Value();   // null boş bir map gibi okunur (Go: nil map okumak hata değildir)
     if (arr.type() != Value::ARRAY) throw LookVmError(look::index_error_message(arr, key));
     auto& vec = *arr.as_array();
 

@@ -367,15 +367,15 @@ $avg = $sum / $count
 $avg = $count == 0 ? 0 : $sum / $count</code></pre>
     </div>
     <div class="err" id="e17" data-cat="Types, arithmetic &amp; indexing" data-text="index operator requires an array you used x[i] on something that isn't an array/object. make sure x is an array; check for null first.">
-      <div class="err-msg"><code>Index operator requires an array: cannot read ["name"] of null</code></div>
+      <div class="err-msg"><code>Index operator requires an array: cannot read ["name"] of a string</code></div>
       <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> You used <code>x[i]</code> or <code>x.field</code> on a value that is not an array, a map or a struct — null, a string, a number. The message names the key and what the value was. (A key that an array does not have gives <code>null</code>; that is not this error.)</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the value first, or give it a default before indexing: <code>($x ?? [])["name"]</code>.</p>
+        <p><span class="err-lbl">Cause</span> You used <code>x[i]</code> or <code>x.field</code> on a string, a number or a boolean. The message names the key and what the value was. (A key that an array does not have reads as <code>null</code>, and so does reading from <code>null</code>; neither is this error.)</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> The value has the wrong type: find where it was set. A value that may be missing can stay <code>null</code> — <code>$x["name"] ?? "default"</code> works.</p>
       </div>
       <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
-$name = $user["name"]       # $user is null
+$name = $user["name"]       # $user is the string "ali", not the user's row
 <span class="eg-good"># ✓ fix</span>
-$name = ($user ?? [])["name"]      # null when there is no user</code></pre>
+$name = $profile["name"] ?? ""   # $profile is the map of the user — or null when there is none</code></pre>
     </div>
     <div class="err" id="e18" data-cat="Types, arithmetic &amp; indexing" data-text="array index out of bounds / array index … arr[i] with i past the end (or negative). check count(arr) before indexing; array indexes are 0-based.">
       <div class="err-msg"><code>Array index out of bounds / Array index …</code></div>

@@ -183,32 +183,36 @@ named function when you need recursion.
 A closure handed to another thread (`parallel`, timers, WebSocket and SSE handlers) still
 gets its own copy of everything it captured.
 
-### Indexing a value that is not an array is an error — was silent on the VM
+### Reading with `[...]` follows one rule on both engines
 
 ```
+$row["missing"]                     # null — a key the map does not have
 $user = null
-$name = $user["name"]                 # LOOK 1 on the VM: null · LOOK 2: error
-$city = $row["address"]["city"]       # error when $row has no "address"
-$city = $row["address"]["city"] ?? "" # still an error: `??` does not cover the missing step
-$city = ($row["address"] ?? [])["city"] ?? ""   # what to write
+$user["name"]                       # null — null reads as an empty map
+$row["address"]["city"] ?? ""       # "" when there is no address: the chain is null, `??` does the rest
+"abc"[1]                            # error — a string is not an array
+$count["x"]                         # error when $count is a number
 ```
 
-Reading a key that an array or a map does not have gives `null`, as before. Indexing
-something that is not an array, a map or a struct — `null`, a string, a number, a boolean —
-stops with
+- A key that an array or a map does not have reads as `null`.
+- Reading from `null` gives `null`. `null` reads as an empty map, the way reading a nil map
+  is not an error in Go; a chain through a missing step is simply `null`, and `??` needs no
+  special meaning to give it a default.
+- Reading from a string, a number or a boolean is an error. That is not a missing value but
+  a wrong type:
 
-```
-Index operator requires an array: cannot read ["city"] of null — check the value first,
-or give it a default: ($value ?? [])["city"]
-```
+  ```
+  Index operator requires an array: cannot read ["x"] of an integer — only arrays, maps and
+  structs can be indexed (a missing key and null both read as null)
+  ```
 
-In LOOK 1 the tree-walk engine already raised this error and the VM returned `null`, so the
-same line behaved differently depending on which engine ran it, and a value of the wrong
-type travelled on as `null`. Both engines raise it now, for `$x[...]` and for `$x.field`.
+The same holds for `$x.field`.
 
-Where a step of a chain may be missing, give that step a default: `($a["b"] ?? [])["c"]`.
-Running LookPress and every published module, package and example on LOOK 2 did not hit
-the error once; code that does will say where.
+What changes from LOOK 1 depends on the engine the code ran on. On the VM (the default)
+all of these read as `null`, the wrong types included: `"abc"["k"]` and `$number["k"]` are
+errors now. On the tree-walk engine all of them were errors, `null` included: reading from
+`null` gives `null` now. Running LookPress and every published module, package and example
+on LOOK 2 did not hit the error once.
 
 ### `==` compares content — silent
 

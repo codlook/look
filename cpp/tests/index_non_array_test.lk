@@ -1,26 +1,33 @@
-// Reading a key that an array or map does not have gives null. Indexing a value that is not
-// an array, a map or a struct — null, a string, a number, a boolean — is an error, on both
-// engines, with the same message.
-// The tree-walk engine always raised it; the VM returned null, so the same line behaved
-// differently depending on the engine, and a wrong type travelled on as null.
+// One rule for reading with [...] and .field, the same on both engines:
+//   a key the array or map does not have        -> null
+//   reading from null                            -> null  (null reads as an empty map, so a
+//                                                          chain through a missing step is null
+//                                                          and `?? default` works without help)
+//   reading from a string, a number, a boolean   -> error (not a missing value: a wrong type)
+// In LOOK 1 the tree-walk engine raised an error for all of these, null included, and the VM
+// returned null for all of them, wrong types included.
 use json
 function attempt($f) { try { return json::encode($f()) } catch ($e) { return "ERROR: " . $e } }
 $m = ["a" => 1, "l" => [1, 2], "u" => ["name" => "x"]]
 $n = null
 $s = "abc"
 $i = 5
+$tail = " — only arrays, maps and structs can be indexed (a missing key and null both read as null)"
 $r = []
-push($r, ["missing key",          attempt(fn() => $m["zz"]),              "null"])
-push($r, ["missing key in list",  attempt(fn() => $m["l"]["k"]),          "null"])
-push($r, ["nested, present",      attempt(fn() => $m["u"]["name"]),       "\"x\""])
-push($r, ["default first",        attempt(fn() => ($m["zz"] ?? [])["to"]), "null"])
-push($r, ["null",                 attempt(fn() => $n["k"]),               "ERROR: Index operator requires an array: cannot read [\"k\"] of null — check the value first, or give it a default: (\$value ?? [])[\"k\"]"])
-push($r, ["string",               attempt(fn() => $s[1]),                 "ERROR: Index operator requires an array: cannot read [1] of a string — check the value first, or give it a default: (\$value ?? [])[1]"])
-push($r, ["integer",              attempt(fn() => $i["k"]),               "ERROR: Index operator requires an array: cannot read [\"k\"] of an integer — check the value first, or give it a default: (\$value ?? [])[\"k\"]"])
-push($r, ["chain through a gap",  attempt(fn() => $m["zz"]["to"]),        "ERROR: Index operator requires an array: cannot read [\"to\"] of null — check the value first, or give it a default: (\$value ?? [])[\"to\"]"])
-push($r, ["chain under ??",       attempt(fn() => $m["zz"]["to"] ?? "d"), "ERROR: Index operator requires an array: cannot read [\"to\"] of null — check the value first, or give it a default: (\$value ?? [])[\"to\"]"])
-push($r, ["through a number",     attempt(fn() => $m["a"]["x"]),          "ERROR: Index operator requires an array: cannot read [\"x\"] of an integer — check the value first, or give it a default: (\$value ?? [])[\"x\"]"])
-push($r, ["field of null",        attempt(fn() => $n.field),              "ERROR: Index operator requires an array: cannot read [\"field\"] of null — check the value first, or give it a default: (\$value ?? [])[\"field\"]"])
+push($r, ["missing key",             attempt(fn() => $m["zz"]),                 "null"])
+push($r, ["missing key in a list",   attempt(fn() => $m["l"]["k"]),             "null"])
+push($r, ["nested, present",         attempt(fn() => $m["u"]["name"]),          "\"x\""])
+push($r, ["null",                    attempt(fn() => $n["k"]),                  "null"])
+push($r, ["field of null",           attempt(fn() => $n.field),                 "null"])
+push($r, ["chain through a gap",     attempt(fn() => $m["zz"]["to"]),           "null"])
+push($r, ["long chain through a gap", attempt(fn() => $m["zz"]["a"]["b"]["c"]), "null"])
+push($r, ["chain with a default",    attempt(fn() => $m["zz"]["to"] ?? "d"),    "\"d\""])
+push($r, ["present with a default",  attempt(fn() => $m["u"]["name"] ?? "d"),   "\"x\""])
+push($r, ["string",                  attempt(fn() => $s[1]),                    "ERROR: Index operator requires an array: cannot read [1] of a string" . $tail])
+push($r, ["string with a default",   attempt(fn() => $s["k"] ?? "d"),           "ERROR: Index operator requires an array: cannot read [\"k\"] of a string" . $tail])
+push($r, ["integer",                 attempt(fn() => $i["k"]),                  "ERROR: Index operator requires an array: cannot read [\"k\"] of an integer" . $tail])
+push($r, ["through a number",        attempt(fn() => $m["a"]["x"]),             "ERROR: Index operator requires an array: cannot read [\"x\"] of an integer" . $tail])
+push($r, ["field of a string",       attempt(fn() => $s.field),                 "ERROR: Index operator requires an array: cannot read [\"field\"] of a string" . $tail])
 $bad = 0
 foreach ($r as $case) {
     if ($case[1] == $case[2]) { print("  OK   " . $case[0]) }
