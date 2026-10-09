@@ -323,6 +323,30 @@ int main(int argc, char* argv[]) {
             cmd = argv[2];
         }
 
+        // lk --vm-report : which module functions the VM does not provide. A route or a script
+        // that reaches one of them runs on the tree-walk engine; the list has to be empty for
+        // an application to run on the VM alone.
+        if (cmd == "--vm-report") {
+            look::WebContext rctx;
+            look::Interpreter rint;
+            rint.set_web_context(&rctx);
+            std::set<std::string> known(look::builtin_names().begin(), look::builtin_names().end());
+            size_t total = 0, missing = 0;
+            std::map<std::string, std::vector<std::string>> by_module;
+            for (const auto& [mname, mod] : rint.stdlib_modules())
+                for (const auto& [fname, fn] : mod.functions) {
+                    ++total;
+                    if (!known.count(mname + "::" + fname)) { ++missing; by_module[mname].push_back(fname); }
+                }
+            for (const auto& [mname, fns] : by_module) {
+                std::cout << mname << " (" << fns.size() << "):";
+                for (const auto& f : fns) std::cout << " " << f;
+                std::cout << "\n";
+            }
+            std::cout << "module functions: " << total << ", not provided by the VM: " << missing << "\n";
+            return missing == 0 ? 0 : 1;
+        }
+
         if (cmd == "version" || cmd == "--version" || cmd == "-v") {
             std::cout << "LOOK " << LOOK_VERSION
                       << " (" << LOOK_BUILD << ", " << LOOK_PLATFORM << "/" << LOOK_ARCH << ")"

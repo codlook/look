@@ -711,6 +711,10 @@ private:
     std::shared_ptr<Environment> globals_;
     std::shared_ptr<Environment> current_;
     std::ostream* output_stream_;
+    // Yüklenebilir tüm modüller (stdlib + web çekirdeği): VM kapsam raporu için (lk --vm-report).
+public:
+    const std::map<std::string, Module>& stdlib_modules() const { return stdlib_; }
+private:
     std::map<std::string, Module> modules_;
     std::map<std::string, Module> stdlib_;
 

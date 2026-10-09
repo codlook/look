@@ -115,6 +115,14 @@ jobs:
           cd cpp
           bash tests/toplevel_callbacks_vm_test.sh ./build/lk-fcgi
 
+      # Every module function is provided by the VM. A function known only to the tree-walk
+      # engine would send the routes that call it there; `lk --vm-report` lists such functions
+      # and fails when there is one.
+      - name: VM provides every module function
+        run: |
+          cd cpp
+          ./build/lk --vm-report
+
       # The command line says which engine runs: LOOK_BYTECODE=0 means the tree-walk engine for
       # `lk` as for the web server, a fallback to it is announced, and a line starting with
       # ++ or -- is a statement.
