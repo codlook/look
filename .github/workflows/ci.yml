@@ -168,6 +168,14 @@ jobs:
           cd cpp
           bash tests/builtin_toplevel_auto_test.sh ./build/lk ./build/lk-fcgi
 
+      # math::random used the C generator, re-seeded with the current second for every new copy
+      # of the standard library: worker threads repeated each other and the sequence followed
+      # from the start time.
+      - name: math::random differs between requests
+        run: |
+          cd cpp
+          bash tests/random_per_request_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile

@@ -3129,7 +3129,7 @@ route("GET", "/api/stats", function() use ($conn) {
 | math::min($a, $b, $c, ...) | Multiple arguments — the smallest | min(3,7,2,9) → 2 |
 | math::min([$arr]) | The smallest in an array | min([5,3,8]) → 3 |
 | math::pi() | The π constant | 3.14159... |
-| math::random($min,$max) | Random integer | random(1,100) |
+| math::random($min,$max) | Random integer. **Not for secrets** — codes, keys and passwords are made with `crypto::random_string` / `string::random` | random(1,100) |
 | math::sin($r) | Sine (radians) |  |
 | math::cos($r) | Cosine |  |
 | math::tan($r) | Tangent |  |

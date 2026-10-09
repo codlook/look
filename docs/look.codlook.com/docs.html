@@ -3074,7 +3074,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
     <tr><td>math::min($a, $b, $c, ...)</td><td>Multiple arguments — the smallest</td><td>min(3,7,2,9) → 2</td></tr>
     <tr><td>math::min([$arr])</td><td>The smallest in an array</td><td>min([5,3,8]) → 3</td></tr>
     <tr><td>math::pi()</td><td>The π constant</td><td>3.14159...</td></tr>
-    <tr><td>math::random($min,$max)</td><td>Random integer</td><td>random(1,100)</td></tr>
+    <tr><td>math::random($min,$max)</td><td>Random integer. <strong>Not for secrets</strong> — codes, keys and passwords are made with <code>crypto::random_string</code> / <code>string::random</code></td><td>random(1,100)</td></tr>
     <tr><td>math::sin($r)</td><td>Sine (radians)</td><td></td></tr>
     <tr><td>math::cos($r)</td><td>Cosine</td><td></td></tr>
     <tr><td>math::tan($r)</td><td>Tangent</td><td></td></tr>
