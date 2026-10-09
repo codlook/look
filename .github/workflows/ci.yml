@@ -108,6 +108,12 @@ jobs:
             fi
           done
 
+      # A job handler started from inside a request has its own context (1.0.13).
+      - name: Job handler does not share the request
+        run: |
+          cd cpp
+          bash tests/job_handler_context_test.sh ./build/lk-fcgi
+
       # LOOK 2: a timer armed and a job handler registered at the top level run on the VM once
       # its setup has succeeded (they stayed on the tree-walk engine while the routes ran on the VM).
       - name: Top-level timers and job handlers on the VM
