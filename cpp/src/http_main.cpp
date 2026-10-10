@@ -855,10 +855,11 @@ static void run_setup_http(const fs::path& script) {
             if (!g_http_app.vm_routes.empty()) {
                 g_http_app.vm_routes_ready = true;
                 g_http_app.vm_route_disabled.assign(g_http_app.vm_routes.size(), 0);
-                // 1.0.8: VM'in sağlamadığı bir yerleşik fonksiyona ulaşan rotayı (ya da herkesi
-                // etkileyen bir before_route'u) BAŞTAN yorumlayıcıya sabitle — bkz.
-                // proto_needs_interpreter. LOOK_VM_STRICT=1'de sabitleme yok: çağrı 500 verir.
-                if (!look_vm_strict()) {
+                // LOOK 2 (tek motor): bir rota ya da before_route VAR OLMAYAN bir modül fonksiyonuna
+                // ulaşıyorsa uygulama BAŞLAMAZ. Her modül fonksiyonu VM'de vardır (`lk --vm-report`, CI
+                // kapısı); VM'in tanımadığı bir `mod::fn` adı yazım hatasıdır. Eskiden böyle bir rota
+                // sessizce yorumlayıcıya alınıyor, hata ancak o rotaya ilk istek geldiğinde çıkıyordu.
+                {
                     auto needs = [&](const look::Value& fn, std::string& which) {
                         if (fn.type() != look::Value::BYTECODE_FN) return false;
                         auto cl = fn.as_bytecode_fn();
@@ -875,11 +876,9 @@ static void run_setup_http(const fs::path& script) {
                         for (const auto& mw : g_http_app.vm_routes[i].middlewares)
                             if (!n && needs(mw, which)) n = true;
                         if (!n) continue;
-                        g_http_app.vm_route_disabled[i] = 1;
-                        look::g_vm_disabled_routes().fetch_add(1, std::memory_order_relaxed);
-                        look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                            "Route " + g_http_app.vm_routes[i].pattern + " runs on the interpreter: it reaches "
-                            + which + ", which the VM does not provide");
+                        std::cerr << "Error: route " << g_http_app.vm_routes[i].pattern << " calls " << which
+                                  << "(), which does not exist — check the spelling of the module and the function." << std::endl;
+                        std::exit(1);
                     }
                 }
                 std::cerr << "[BYTECODE] VM routes: " << g_http_app.vm_routes.size() << " registered\n";

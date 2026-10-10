@@ -149,6 +149,13 @@ jobs:
           cd cpp
           bash tests/random_per_request_test.sh ./build/lk-fcgi
 
+      # LOOK 2: a route that calls a module function that does not exist stops the application at
+      # startup (it was handed to the tree-walk engine and failed on the first request to reach it).
+      - name: A call to a function that does not exist stops startup
+        run: |
+          cd cpp
+          bash tests/undefined_function_startup_test.sh ./build/lk ./build/lk-fcgi
+
       # Every module function is provided by the VM. A function known only to the tree-walk
       # engine would send the routes that call it there; `lk --vm-report` lists such functions
       # and fails when there is one.

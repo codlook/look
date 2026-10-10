@@ -505,7 +505,22 @@ int main(int argc, char* argv[]) {
             // VM bu dosyayı derleyebiliyor mu? Derleyemiyorsa betik (web'de bütün uygulama)
             // sessizce yorumlayıcıda çalışır — burada adıyla söylenir. Çalıştırma yok.
             // Temel dizin web yolundaki gibi verilir: `use "dosya.lk"` dahil edilenler de derlenir.
-            try { (void)look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string()); }
+            try {
+                auto checked = look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string());
+                // Var olmayan modül fonksiyonu: `string::uper(...)`. Yalnız ÇEKİRDEK modüller için söylenir
+                // (adı yerleşik tablosunda geçen modüller) — paket modüllerinin fonksiyonları burada bilinmez.
+                std::set<std::string> core_modules;
+                for (const auto& n : look::builtin_names()) { auto p = n.find("::"); if (p != std::string::npos) core_modules.insert(n.substr(0, p)); }
+                bool unknown_fn = false;
+                for (const auto& n : checked.non_builtin_module_fns) {
+                    auto p = n.find("::");
+                    if (p == std::string::npos || !core_modules.count(n.substr(0, p))) continue;
+                    if (look::builtin_index(n) >= 0) continue;   // var: komut satırında bilerek yorumlayıcıya bırakılan ad (jobs::run, timer:: …)
+                    std::cout << "CHECK 1 1 [undefined-function] " << n << "() does not exist — check the spelling of the module and the function\n";
+                    unknown_fn = true;
+                }
+                if (unknown_fn) return 1;
+            }
             catch (const std::exception& ex) {
                 // Tek başına denetlenen bir alt dosyada `use "../x.lk"` uygulama kökü bilinmeden
                 // çözülemez (kök, giriş dosyasının dizinidir) — bu VM eksiği değil, raporlanmaz.

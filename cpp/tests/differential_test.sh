@@ -641,34 +641,6 @@ echo "$ji" | grep -q "9223372036854775809" || { echo "FAIL: json int64-asan id K
 echo "$ji" | grep -q "18446744073709551615" || { echo "FAIL: json uint64-max KESINLIK kaybi (beklenen 18446744073709551615): [$ji]"; fail=1; }
 
 
-# ── Yorumlayıcıya sabitlenen rota GÖRÜNÜR mü? (1.0.8: karar kurulumda, yeniden çalıştırma yok)────────────────────────────
-# Fallback bug MASKELER: route sessizce yavaş yola düşüp doğru sonuç döner → bug
-# yıllarca görünmez (2026-07-16'da bulunan 10 bug'ın çoğu böyle saklanmıştı).
-# Sözleşme: (1) fallback olursa log seviyesi ERROR + "VM BUG" ibaresi,
-#           (2) LOOK_VM_STRICT=1 → maskeleme YOK, hata yüzeye çıkar (CI/staging).
-cat > "$TMP/fb.lk" <<'LK'
-use jobs
-route("GET","/w",  function(){ if (request::get("never") == "1") { session::id() }; return response::text("ok") })
-route("GET","/ok", function(){ return response::text("saglam") })
-LK
-FB_PORT=9612
-"$FCGI" --mode http --port $FB_PORT "$TMP/fb.lk" >"$TMP/fb1.log" 2>&1 &
-FB=$!
-sleep 2
-w_def=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/w")
-kill $FB 2>/dev/null; sleep 1; kill -9 $FB 2>/dev/null
-grep -q "runs on the interpreter: it reaches session::id" "$TMP/fb1.log" || { echo "FAIL: route on the interpreter is not announced in the log"; fail=1; }
-[ "$w_def" = "ok" ] || { echo "FAIL: a route that needs the interpreter does not work: [$w_def]"; fail=1; }
-
-LOOK_VM_STRICT=1 "$FCGI" --mode http --port $FB_PORT "$TMP/fb.lk" >"$TMP/fb2.log" 2>&1 &
-FB=$!
-sleep 2
-w_str=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/w?never=1")   # strict: rota yorumlayiciya verilmez; saglanmayan cagriya girilince hata vermeli
-ok_str=$(curl -s --max-time 8 "http://127.0.0.1:$FB_PORT/ok")
-kill $FB 2>/dev/null; sleep 1; kill -9 $FB 2>/dev/null
-[ "$w_str" = "ok" ] && { echo "FAIL: LOOK_VM_STRICT=1 hala MASKELIYOR (fallback calisti)"; fail=1; }
-[ "$ok_str" = "saglam" ] || { echo "FAIL: strict modda saglam route bozuldu: [$ok_str]"; fail=1; }
-
 # ── Dispatch kopyasi worker'da YENIDEN KULLANILIYOR mu, izolasyon bozuldu mu? ──
 # Kopya artik thread_local (per-request make_dispatch_copy 30-63us idi — route'u
 # calistirmaktan pahali). Sozlesme: paylasilan kopya istekler arasi SIZINTI yapmamali.

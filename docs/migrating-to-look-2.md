@@ -330,6 +330,21 @@ application and used by a route is the same channel for every request and every 
 Use that when requests are meant to talk to each other; do not use a handle to get around
 the closure rule inside one request — pass the value in and return the new one.
 
+### A call to a module function that does not exist stops the application at startup
+
+```
+route("GET", "/report", function() { return response::text(string::uper($title)) })
+```
+
+```
+Error: route GET:/report calls string::uper(), which does not exist — check the spelling of
+the module and the function.
+```
+
+In LOOK 1 the server started, put that route on the tree-walk engine with a warning, and the
+mistake showed on the first request that reached the line. `lk --check` reports the same for
+the core modules (`CHECK … [undefined-function]`, exit status 1).
+
 ### Job handlers and top-level timers: their own request, on the VM — silent
 
 A job handler (`jobs::worker`) and a timer armed at the top level now run like a request of

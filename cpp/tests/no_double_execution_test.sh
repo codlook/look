@@ -43,22 +43,4 @@ for mode in "LOOK_X=1" "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     done
 done
 
-# Routes that reach a function the VM does not provide (session::id, for one) used to
-# work only through that second run. They are now placed on the tree-walk engine at setup,
-# before anything runs: they must still work, run once, and be announced in the log.
-cat >> "$TMP/app.lk" <<LK
-function start() { if (request::get("never") == "1") { session::id() }; return 1 }
-route("GET", "/timer",  function() { hit(); start(); return response::text("armed") })
-LK
-rm -f "$TMP/t.db"
-( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/n" && break; sleep 0.1; done
-t="$(curl -s -m 4 "localhost:$PORT/timer")"; n1="$(curl -s -m 4 "localhost:$PORT/n")"
-ann="$(grep -c 'runs on the interpreter: it reaches' "$TMP/log.txt")"
-vmerr="$(grep -c 'VM BUG\|Dispatch error' "$TMP/log.txt")"
-kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-if [ "$t" = "armed" ] && [ "$n1" = '{"hits":1}' ] && [ "$ann" = "1" ] && [ "$vmerr" = "0" ]; then
-    echo "  OK   routes that need the tree-walk engine are placed there at setup, work, and run once"
-else echo "  FAIL interpreter-only routes: timer=[$t] $n1 announced=$ann errors=$vmerr"; fail=1; fi
-
 [ $fail = 0 ] && echo "PASS: a failing handler runs once and does not take a worker down" || { echo "FAIL: handler ran more than once or the server stopped answering"; exit 1; }
