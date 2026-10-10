@@ -189,7 +189,7 @@ jobs:
 
       # The WebSocket / SSE connection limit refuses the next connection with 503. It used to raise
       # an error nothing caught: one connection over the limit ended the whole server.
-      - name: Connection limit refuses instead of stopping the server
+      - name: No built-in connection limit; a full limit never stops the server
         run: |
           cd cpp
           bash tests/connection_limit_test.sh ./build/lk-fcgi

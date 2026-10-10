@@ -100,11 +100,11 @@ void SseConnection::close_conn() {
     }
 }
 
-// LOOK_SSE_MAX_CONN ile yapılandırılır (varsayılan: 1024).
+// LOOK_SSE_MAX_CONN ile yapılandırılır (varsayılan: sınır yok; 0 = sınır yok).
 static size_t sse_max_conn() {
     static const size_t m = []() -> size_t {
         const char* e = std::getenv("LOOK_SSE_MAX_CONN");
-        return (e && *e) ? (size_t)std::stoul(e) : 1024;
+        return (e && *e) ? (size_t)std::strtoull(e, nullptr, 10) : 0;
     }();
     return m;
 }
@@ -112,14 +112,14 @@ static size_t sse_max_conn() {
 // Sınır doluysa FIRLATMAZ, false döner (bkz. WsRegistry::add — yakalanmayan istisna sunucuyu düşürüyordu).
 bool SseRegistry::add(std::shared_ptr<SseConnection> conn) {
     std::unique_lock<std::shared_mutex> lk(mutex_);
-    if (clients_.size() >= sse_max_conn()) return false;
+    if (sse_max_conn() != 0 && clients_.size() >= sse_max_conn()) return false;
     clients_[conn->fd] = std::move(conn);
     return true;
 }
 
 bool SseRegistry::full() {
     std::shared_lock<std::shared_mutex> lk(mutex_);
-    return clients_.size() >= sse_max_conn();
+    return sse_max_conn() != 0 && clients_.size() >= sse_max_conn();
 }
 
 void SseRegistry::remove(int fd) {

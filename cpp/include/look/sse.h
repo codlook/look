@@ -14,6 +14,7 @@ namespace look {
 struct SseConnection {
     int fd;
     std::string client_ip;
+    std::string held_ip;     // LOOK_HTTP_MAX_CONNS_IP yuvası bu adres için tutuluyor (boş = yok)
     std::atomic<bool> closed{false};
     std::mutex write_mutex;
     std::function<void()> on_close_cb;

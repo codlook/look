@@ -16,24 +16,35 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
-### 2026-10-09 — One connection over the WebSocket / SSE limit stopped the server (1.0.15)
+### 2026-10-10 — One connection over the WebSocket / SSE limit stopped the server (1.0.15)
 
 **Affected:** every release up to and including 1.0.14, in `--mode http`, for applications
 that have a `WS` or an `SSE` route. **Fixed in:** 1.0.15.
 
-Open WebSocket connections and open SSE connections each have a limit (`LOOK_WS_MAX_CONN`,
-`LOOK_SSE_MAX_CONN`; 1024 by default). The connection that went over the limit raised an
-error that nothing caught, and the server process ended. Anyone who could reach the port
-could stop the application by opening 1025 connections to a WebSocket or SSE route — no
-login and no valid message needed. Measured on 1.0.13 for both; 1.0.14 has the same code.
+Open WebSocket connections and open SSE connections each had a built-in limit of 1024. The
+connection that went over it raised an error that nothing caught, and the server process
+ended. Anyone who could reach the port could stop the application by opening 1025
+connections to a WebSocket or SSE route — no login and no valid message needed. Measured on
+the published 1.0.13 and 1.0.14, for both.
 
-The connection over the limit is now answered `503 Service Unavailable` and closed. The
-open connections keep working, ordinary requests are answered, and a place freed by a
-closed connection can be taken again.
+What changed in 1.0.15:
 
-**What to do:** upgrade. If your application expects more than 1024 clients at once, set
-`LOOK_WS_MAX_CONN` / `LOOK_SSE_MAX_CONN` to the number you want to allow; the limit is there
-to bound memory, and one open WebSocket connection costs the server about 1 KB.
+- **There is no built-in limit any more.** The limit is the operating system's open-file
+  limit, and the server raises its own soft limit to the hard limit when it starts. One open
+  WebSocket connection costs the server about 1 KB.
+- **At the open-file limit the server waits.** A new connection stays in the listen queue and
+  is taken as soon as a place is free; the open connections keep working and the process
+  stays up. (1.0.14 did not stop here, but it retried without pausing and used every core.)
+- **`LOOK_HTTP_MAX_CONNS_IP` now counts open WebSocket and SSE connections.** Before, a
+  connection stopped counting at the upgrade, so one address could hold any number of them.
+- `LOOK_WS_MAX_CONN` / `LOOK_SSE_MAX_CONN` still work when you set them: the connection over
+  the limit is answered `503 Service Unavailable`.
+
+**What to do:** upgrade. With no built-in limit, one address can open connections until the
+process has no file descriptors left, and then new requests wait. If the server faces the
+internet directly, set `LOOK_HTTP_MAX_CONNS_IP`; behind a reverse proxy, limit connections
+per address in the proxy. Check the open-file limit of the service (`LimitNOFILE=` in a
+systemd unit) if you expect many clients at once.
 
 ### 2026-10-09 — `math::random` repeated and could be predicted (1.0.14)
 
