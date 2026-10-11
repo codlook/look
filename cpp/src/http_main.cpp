@@ -1181,9 +1181,15 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                                               return v && std::string(v) == "1"; }();
         static thread_local std::vector<look::BuiltinFn> tl_req_builtins;
         static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;
+        // Modül sarmalayıcıları (request::, response::, session:: …) kuruldukları andaki `web`
+        // ADRESİNE bağlıdır. HTTP isteklerinde bu adres iş parçacığı başına çoğunlukla sabittir
+        // (aynı yığın çerçevesi) ve tablo "tesadüfen" doğru bağlama yazar; adres değiştiğinde
+        // (başka çerçeveden dağıtım) önbellekteki sarmalayıcılar ÖLÜ bir bağlama yazardı
+        // (ASan: stack-use-after-return, web_stdlib.cpp response::text). Adres değiştiyse yeniden kur.
+        static thread_local const look::WebContext* tl_builtins_web = nullptr;
         std::vector<look::BuiltinFn> fiber_req_builtins;
         std::vector<look::BuiltinFn>& req_builtins = g_use_fiber ? fiber_req_builtins : tl_req_builtins;
-        const bool need_build = g_use_fiber || (tl_builtins_gen != cur_gen);
+        const bool need_build = g_use_fiber || (tl_builtins_gen != cur_gen) || (tl_builtins_web != &web);
         if (need_build) {
         req_builtins.assign(look::builtin_names().size(), look::BuiltinFn{});
 
@@ -1321,7 +1327,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             return last;
         };
 
-        if (!g_use_fiber) tl_builtins_gen = cur_gen;   // cache valid until the next hot-reload
+        if (!g_use_fiber) { tl_builtins_gen = cur_gen; tl_builtins_web = &web; }   // cache valid until the next hot-reload
         }   // end if(need_build) — worker-pool builds once per generation; fiber every request
 
         // before_route closures: route_closures ile aynı yapıda

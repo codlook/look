@@ -44,6 +44,13 @@ What changed in 1.0.15:
   database connection: measured under ASan/UBSan with 2000 open WebSockets, `db::connect`
   wrote out of bounds. They use `poll()` now; the same measurement — MySQL, PostgreSQL,
   `http::get` and `mail::send` with 2000 connections open — reports nothing.
+- **Request-time built-ins no longer keep the address of an earlier request.** The per-thread
+  table of built-ins (`response::`, `request::`, `session::` …) stayed bound to the request
+  context it was first built with. On one thread that context usually sits at the same
+  address, so the calls landed in the current request; when the address differed they wrote
+  to memory of a request that had ended. Found by running the web server under ASan with
+  stack-use-after-return detection (`response::text`); no case was observed in a normal build.
+  The table is rebuilt when the address changes.
 - `LOOK_WS_MAX_CONN` / `LOOK_SSE_MAX_CONN` still work when you set them: the connection over
   the limit is answered `503 Service Unavailable`.
 

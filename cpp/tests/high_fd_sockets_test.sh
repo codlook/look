@@ -10,6 +10,9 @@
 # under test may land there and the test would pass without testing anything (that happened
 # while measuring this fix: the IMAP connection got descriptor 5). So the test first fills
 # the low numbers and FAILS if one is still free.
+# It also runs with detect_stack_use_after_return: the first time this test ran the web server
+# under ASan it showed request-time built-ins (response::text) writing to the WebContext of an
+# earlier request — the per-thread built-in table kept the address it was built with.
 # Usage: high_fd_sockets_test.sh <lk-fcgi built with -DLOOK_SANITIZE=address,undefined>
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null' EXIT
@@ -58,7 +61,7 @@ except socket.timeout: pass
 print("imap-login=%s imap-idle=%s" % ("ok" if b"a1 OK" in r else "failed", "ok" if b"a3 OK" in d else "failed"))
 print("ok=%s" % get("/ok"))
 PY
-( cd "$TMP" && exec env ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 LOOK_IMAP_PORT=$IPORT LOOK_MAIL_DIR="$TMP/md" LOOK_MAIL_USER="u@localhost" LOOK_MAIL_PASS="s123" LOOK_IMAP_IDLE_TICK_MS=300 "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+( cd "$TMP" && exec env ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 UBSAN_OPTIONS=print_stacktrace=1 LOOK_IMAP_PORT=$IPORT LOOK_MAIL_DIR="$TMP/md" LOOK_MAIL_USER="u@localhost" LOOK_MAIL_PASS="s123" LOOK_IMAP_IDLE_TICK_MS=300 "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
 for i in $(seq 1 120); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.25; done
 out="$(python3 "$TMP/client.py" "$PORT" "$IPORT" "$pid" 2>&1 | tr '\n' ' ')"
 reports="$(grep -c 'runtime error:\|ERROR: AddressSanitizer' "$TMP/log.txt")"
