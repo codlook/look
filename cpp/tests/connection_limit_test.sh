@@ -113,6 +113,7 @@ if close_k:
     late = collections.Counter(head(s, 1) for s, r in socks if r == "waiting")
     print("after closing %d: waiting ones now:" % len(acc), dict(late), "| /ok:", ok())
 if close_k and not any(r == "waiting" for s, r in socks):
+    time.sleep(1.0)   # the /ok probe above still holds its per-address place for a moment after its answer
     again = []
     for i in range(close_k + 2):
         try: s = start(); again.append(head(s)); socks.append((s, again[-1]))

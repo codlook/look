@@ -72,4 +72,5 @@ if [ "$out" = "$want" ]; then echo "  OK   MySQL connect, PostgreSQL connect and
 else echo "  FAIL $out"; fail=1; fi
 if [ "$reports" = 0 ]; then echo "  OK   no sanitizer report"
 else echo "  FAIL $reports sanitizer report(s): $(grep -m3 -o 'src/[a-z_]*\.cpp:[0-9]*:[0-9]*: runtime error: [a-z0-9 ]*' "$TMP/log.txt" | tr '\n' ';')"; fail=1; fi
+[ "$reports" = 0 ] || grep -E -m1 -A14 'runtime error:|ERROR: AddressSanitizer' "$TMP/log.txt" | cut -c1-220
 [ $fail = 0 ] && echo "PASS: sockets above 1023 are safe" || { echo "FAIL: high descriptor sockets"; exit 1; }
