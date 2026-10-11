@@ -203,15 +203,6 @@ static bool http_ip_acquire(const std::string& ip) {
     if (n >= lim) return false;
     ++n; return true;
 }
-// WS/SSE: bağlantı olay döngüsüne devredilince worker yuvası bırakılır; bağlantı AÇIK kaldığı
-// sürece IP'nin sayacında kalması için ayrı bir yuva tutulur (denetimsiz artış: bağlantı zaten
-// kabul edilmiş, yuvası elinde). close_ws / close_sse bırakır. Bu olmadan tek adres sınırsız
-// kalıcı bağlantı açıp sürecin bütün tanıtıcılarını tüketebiliyordu.
-static void http_ip_hold(const std::string& ip) {
-    if (http_max_conns_per_ip() <= 0 || ip.empty()) return;
-    std::lock_guard<std::mutex> lk(g_http_ip_mutex);
-    ++g_http_ip_conns[ip];
-}
 static void http_ip_release(const std::string& ip) {
     if (http_max_conns_per_ip() <= 0 || ip.empty()) return;
     std::lock_guard<std::mutex> lk(g_http_ip_mutex);
@@ -426,7 +417,11 @@ struct HttpServer::Impl {
         // devri, keep-alive bitişi) slot serbest kalır — worker-scope semantiği.
         struct IpSlot {
             const std::string& ip;
-            ~IpSlot() { http_ip_release(ip); }
+            // WS/SSE'ye yükselen bağlantı yuvasını yanında götürür (close_ws / close_sse bırakır):
+            // burada bırakıp orada yeniden almak bağlantıyı kısa süre İKİ kez sayıyordu ve sınırın
+            // bir eksiğindeki adres haksız 429 alıyordu.
+            bool moved = false;
+            ~IpSlot() { if (!moved) http_ip_release(ip); }
         } ip_slot{ remote_addr };
 
         // Boşta timeout — istemci N ms yanıt vermezse kapat (default 30s). LOOK_HTTP_IDLE_MS
@@ -556,13 +551,13 @@ struct HttpServer::Impl {
 
             // WS upgrade → event loop'a devret, worker serbest kalır
             if (req.upgrade_websocket && ws_handler) {
-                handle_ws_upgrade(fd, req);
+                handle_ws_upgrade(fd, req, ip_slot.moved);
                 return;
             }
 
             // SSE upgrade → event loop'a devret
             if (req.upgrade_sse && sse_handler) {
-                handle_sse_upgrade(fd, req);
+                handle_sse_upgrade(fd, req, ip_slot.moved);
                 return;
             }
 
@@ -614,7 +609,7 @@ struct HttpServer::Impl {
         return h;
     }
 
-    void handle_ws_upgrade(int fd, const HttpRequest& req) {
+    void handle_ws_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
         // CSWSH (Cross-Site WebSocket Hijacking) koruması.
         auto it = req.headers.find("origin");
         if (!allowed_origins.empty()) {
@@ -673,7 +668,7 @@ struct HttpServer::Impl {
             ::close(fd);
             return;
         }
-        conn->held_ip = req.remote_addr; http_ip_hold(conn->held_ip);
+        conn->held_ip = req.remote_addr; ip_slot_moved = true;
 
         ws_handler(conn, req);
 
@@ -684,7 +679,7 @@ struct HttpServer::Impl {
     }
 
     // ── SSE upgrade — worker thread'de çalışır ───────────────────────────────
-    void handle_sse_upgrade(int fd, const HttpRequest& req) {
+    void handle_sse_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
         if (look::g_sse_registry.full()) { send_limit_reject(fd, "SSE"); ::close(fd); return; }
         const char* hdrs =
             "HTTP/1.1 200 OK\r\n"
@@ -713,7 +708,7 @@ struct HttpServer::Impl {
             ::close(fd);
             return;
         }
-        conn->held_ip = req.remote_addr; http_ip_hold(conn->held_ip);
+        conn->held_ip = req.remote_addr; ip_slot_moved = true;
 
         sse_handler(conn, req);
 

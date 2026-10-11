@@ -161,4 +161,27 @@ for kind in ws sse; do
         *) echo "  FAIL [$kind] per-address limit: $out"; fail=1 ;;
     esac
 done
+
+# 3b. a connection under the limit is never refused. The upgrade used to count the connection
+# twice for a moment, so an address one below its limit got 429 on its next connection
+# (measured: 2966 of 6000 connections inside the limit refused).
+cat > "$TMP/pairs.py" <<'PY'
+import socket, sys, time, collections
+port = int(sys.argv[1])
+WS = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+def one():
+    s = socket.socket(); s.settimeout(5); s.connect(("127.0.0.1", port)); s.sendall(WS); return s, s.recv(4096).split(b" ")[1].decode()
+hold = [one()[0] for i in range(18)]
+c = collections.Counter()
+for i in range(300):
+    a, ra = one(); b, rb = one()   # the 19th and the 20th: both inside the limit
+    c[ra] += 1; c[rb] += 1; a.close(); b.close(); time.sleep(0.01)
+print(dict(c))
+PY
+srv LOOK_HTTP_MAX_CONNS_IP=20
+out="$(python3 "$TMP/pairs.py" "$PORT" 2>&1 | tail -1)"
+stop
+if [ "$out" = "{'101': 600}" ]; then echo "  OK   [ws] 600 connections inside the per-address limit, none refused"
+else echo "  FAIL [ws] connections inside the per-address limit were refused: $out"; fail=1; fi
+
 [ $fail = 0 ] && echo "PASS: no built-in connection limit; a full limit never stops the server" || { echo "FAIL: connection limit"; exit 1; }
