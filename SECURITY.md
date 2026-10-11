@@ -30,8 +30,8 @@ the published 1.0.13 and 1.0.14, for both.
 What changed in 1.0.15:
 
 - **There is no built-in limit any more.** The limit is the operating system's open-file
-  limit, and the server raises its own soft limit to the hard limit when it starts. One open
-  WebSocket connection costs the server about 1 KB.
+  limit, and the server raises its own soft limit to the hard limit when it starts. Memory is
+  the practical bound: in 1.0.x one open WebSocket connection costs the server about 38 KB.
 - **At the open-file limit the server waits.** A new connection stays in the listen queue and
   is taken as soon as a place is free; the open connections keep working and the process
   stays up. (1.0.14 did not stop here, but it retried without pausing and used every core.)
