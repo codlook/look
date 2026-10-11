@@ -194,6 +194,13 @@ jobs:
           cd cpp
           bash tests/connection_limit_test.sh ./build/lk-fcgi
 
+      # select() cannot take a descriptor above 1023 (FD_SET writes out of bounds). With thousands
+      # of open connections every later socket is above that.
+      - name: No select() outside Windows-only code
+        run: |
+          cd cpp
+          bash tests/no_select_test.sh
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile

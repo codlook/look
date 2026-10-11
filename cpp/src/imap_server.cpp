@@ -12,6 +12,9 @@
 //   • Eşzamanlı bağlantı + oturum-başına hata sınırı (DoS)
 
 #include "look/imap_server.h"
+#if !defined(_WIN32)
+#include <poll.h>
+#endif
 #include "look/imap_parse.h"   // saf parse dikişi: imap_parse_command / imap_split_two / imap_mailbox_name_ok
 #include "look/logger.h"
 
@@ -198,9 +201,15 @@ struct ImapServer::Impl {
     // "okunabilir" sayılır (SSL_pending). Dönen: 1=hazır, 0=zaman aşımı, -1=hata.
     static int wait_readable(int fd, int ms) {
         if (g_tls && SSL_pending(g_tls) > 0) return 1;
+#if defined(_WIN32)
         fd_set rs; FD_ZERO(&rs); FD_SET(fd, &rs);
         struct timeval tv{}; tv.tv_sec = ms / 1000; tv.tv_usec = (ms % 1000) * 1000;
         int r = ::select(fd + 1, &rs, nullptr, nullptr, &tv);
+#else
+        // select() DEĞİL: fd_set yalnız 1024'ten küçük tanıtıcıları taşır, büyüğünde FD_SET belleği taşırır.
+        struct pollfd pf{}; pf.fd = fd; pf.events = POLLIN;
+        int r = ::poll(&pf, 1, ms);
+#endif
         return r;
     }
 

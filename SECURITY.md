@@ -37,6 +37,13 @@ What changed in 1.0.15:
   stays up. (1.0.14 did not stop here, but it retried without pausing and used every core.)
 - **`LOOK_HTTP_MAX_CONNS_IP` now counts open WebSocket and SSE connections.** Before, a
   connection stopped counting at the upgrade, so one address could hold any number of them.
+- **Sockets numbered above 1023 no longer corrupt memory.** The MySQL and PostgreSQL connect
+  timeouts and the IMAP idle wait used `select()`, which writes outside its buffer for a
+  descriptor above 1023. A server that had more than about a thousand descriptors open (its
+  open-file limit raised by the operator, and many connections held) hit this on the next
+  database connection: measured under ASan/UBSan with 2000 open WebSockets, `db::connect`
+  wrote out of bounds. They use `poll()` now; the same measurement — MySQL, PostgreSQL,
+  `http::get` and `mail::send` with 2000 connections open — reports nothing.
 - `LOOK_WS_MAX_CONN` / `LOOK_SSE_MAX_CONN` still work when you set them: the connection over
   the limit is answered `503 Service Unavailable`.
 

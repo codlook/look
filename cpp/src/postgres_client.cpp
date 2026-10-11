@@ -14,6 +14,7 @@
   #pragma comment(lib, "ws2_32.lib")
 #else
   #include <netinet/tcp.h>
+  #include <poll.h>
   #include <fstream>
   // DB-TLS: PostgreSQL SSLRequest → TLS upgrade (Linux; Windows OpenSSL'siz derlenir).
   #include <openssl/ssl.h>
@@ -564,16 +565,19 @@ void PostgresClient::do_connect() {
 
     ::connect(sock_, (struct sockaddr*)&addr, sizeof(addr));
 
+#ifdef _WIN32
     fd_set wfds;
     FD_ZERO(&wfds);
     FD_SET(sock_, &wfds);
     struct timeval tv;
     tv.tv_sec  = connect_timeout_ms_ / 1000;
     tv.tv_usec = (connect_timeout_ms_ % 1000) * 1000;
-#ifdef _WIN32
     int sel = select(0, nullptr, &wfds, nullptr, &tv);
 #else
-    int sel = select((int)sock_ + 1, nullptr, &wfds, nullptr, &tv);
+    // select() DEĞİL: fd_set yalnız 1024'ten küçük tanıtıcıları taşır; sunucu binlerce bağlantı
+    // tutarken soket numarası bunu aşar ve FD_SET yığın belleğini taşırır.
+    struct pollfd cpf{}; cpf.fd = sock_; cpf.events = POLLOUT;
+    int sel = ::poll(&cpf, 1, connect_timeout_ms_);
 #endif
     if (sel <= 0) {
         pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
