@@ -18,7 +18,7 @@ jobs:
         run: |
           cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                 -DLOOK_SANITIZE=address,undefined -DLOOK_STATIC_SSL=OFF
-          cmake --build build-asan --target look -j"$(nproc)"
+          cmake --build build-asan --target look look-fcgi -j"$(nproc)"
       - name: Regression (zorunlu — yesil olmali)
         working-directory: cpp
         env:
@@ -32,6 +32,11 @@ jobs:
         working-directory: cpp
         env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1" }
         run: bash tests/eval_depth_guard.sh ./build-asan/lk
+      # select() cannot take a descriptor above 1023: FD_SET writes outside the fd_set. Answers stay
+      # correct, so only this build shows it. The test fails if a low descriptor was still free.
+      - name: Sockets above 1023 — database connect and IMAP idle with 1100 connections held
+        working-directory: cpp
+        run: bash tests/high_fd_sockets_test.sh ./build-asan/lk-fcgi
 
   tsan:
     runs-on: ubuntu-24.04
