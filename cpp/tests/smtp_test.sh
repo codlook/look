@@ -94,7 +94,18 @@ try: s.sendall(b"QUIT\r\n"); s.close()
 except Exception: pass
 PYEOF
 timeout 30 python3 "$TMP/teslim.py" $PORT >/dev/null 2>&1
-rp=$(grep -rh '^Return-Path:' "$TMP/maildir" 2>/dev/null | head -1)
+# Dosyayi SINIRLI sure bekle. Sunucu teslimden once SPF icin DNS'e sorar; DNS
+# yanit vermezse (5 sn x 2 deneme) 250 yaniti ~10 sn sonra gelir — istemcinin
+# okuma zaman asimi da 10 sn, yani istemci 250'yi gormeden cikabiliyor ve mesaj
+# Maildir'e bu satirdan SONRA dusuyordu (olculdu: 200 teslimde 250 her seferinde
+# dosyadan sonra geldi; kopan istemcide dosya 10.0 sn'de belirdi). Yalnizca
+# new/ altina bakilir: tmp/ icindeki yarim dosya teslim sayilmaz.
+rp=""
+for i in $(seq 1 90); do
+  rp=$(find "$TMP/maildir" -path '*/new/*' -type f -exec grep -h '^Return-Path:' {} + 2>/dev/null | head -1)
+  [ -n "$rp" ] && break
+  sleep 0.5
+done
 case "$rp" in
   *"<bare@t.com>"*) echo "  PASS Return-Path temiz: $rp" ;;
   *"FROM:"*)        echo "  FAIL Return-Path'e COP yazildi: $rp (bare adres ayristirma kirik)"; fail=1 ;;
