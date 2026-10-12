@@ -72,7 +72,7 @@ for mode in "LOOK_X=1" "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
     r="$(curl -s -m 3 "localhost:$PORT/r")"
     placed="$(grep -c 'runs on the interpreter\|VM BUG\|interpreter fallback' "$TMP/log.txt")"
     vmroutes="$(grep -o 'VM routes: [0-9]* registered' "$TMP/log.txt")"
-    errlog="$(grep -c 'message handler error: boom in ws' "$TMP/log.txt")"
+    errlog="$(grep -c 'ws message.*callback error: boom in ws' "$TMP/log.txt")"
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
     if [ "$mode" != "LOOK_BYTECODE=0" ]; then
         if [ "$placed" = "0" ] && [ "$vmroutes" = "VM routes: 4 registered" ]; then echo "  OK   [$mode] all 4 routes on the VM, none placed on the tree-walk engine"

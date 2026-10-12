@@ -1467,9 +1467,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 const std::string ev = args[1].to_string();
                 look::Value fnv = args[2].clone_for_thread();
                 if (ev == "message")
-                    conn->on_message = [fnv, run_cb](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "message handler"); };
+                    conn->on_message = [fnv, run_cb](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "ws message callback"); };
                 else if (ev == "close")
-                    conn->on_close = [fnv, run_cb]() { run_cb(fnv, {}, "ws", "close handler"); };
+                    conn->on_close = [fnv, run_cb]() { run_cb(fnv, {}, "ws", "ws close callback"); };
                 return look::Value();
             };
             req_builtins[BI("sse::on")] = [sse_of, run_cb](std::vector<look::Value>& args) -> look::Value {
@@ -1479,7 +1479,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     throw std::runtime_error("sse::on() third argument must be a function");
                 look::Value fnv = args[2].clone_for_thread();
                 if (args[1].to_string() == "close")
-                    conn->on_close_cb = [fnv, run_cb]() { run_cb(fnv, {}, "sse", "close handler"); };
+                    conn->on_close_cb = [fnv, run_cb]() { run_cb(fnv, {}, "sse", "sse close callback"); };
                 return look::Value();
             };
             req_builtins[BI("ws::send")] = [ws_of](std::vector<look::Value>& args) -> look::Value {

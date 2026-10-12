@@ -31,6 +31,14 @@
 #include <stdexcept>
 #include <thread>
 
+// Bağlantı geri çağırmasındaki hata İSTEMCİYE gidemez (yanıt yok) — günlüğe de yazılmazsa
+// iz bırakmadan kaybolur (1.0.15'e dek `catch (...) {}`: mesaj işleyicisi sessizce çalışmıyordu).
+static void log_callback_error(const char* tag, const char* what) {
+    look::Logger::instance().log(look::LogLevel::LOG_ERROR, tag, std::string("callback error: ") + what);
+}
+#define LOOK_LOG_CALLBACK_ERRORS(tag) catch (const std::exception& ex) { log_callback_error(tag, ex.what()); } catch (...) { log_callback_error(tag, "unknown error"); }
+
+
 namespace interp_fs = std::filesystem;
 
 namespace look {
@@ -1595,9 +1603,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
                             look::acquire_thread_connections();
-                            try { copy->invoke(cb_v, {Value(msg)}); }
-                            catch (const std::exception& ex) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", std::string("message handler error: ") + ex.what()); }
-                            catch (...) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", "message handler unknown error"); }
+                            try { copy->invoke(cb_v, {Value(msg)}); } LOOK_LOG_CALLBACK_ERRORS("ws message")
                             look::release_thread_connections();
                         };
                     } else if (ev == "close") {
@@ -1605,9 +1611,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
                             look::acquire_thread_connections();
-                            try { copy->invoke(cb_v, {}); }
-                            catch (const std::exception& ex) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", std::string("close handler error: ") + ex.what()); }
-                            catch (...) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "ws", "close handler unknown error"); }
+                            try { copy->invoke(cb_v, {}); } LOOK_LOG_CALLBACK_ERRORS("ws close")
                             look::release_thread_connections();
                         };
                     }
@@ -1753,9 +1757,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             base->set_output(*sink);
                             base->set_web_context(&ctx);
                             look::acquire_thread_connections();
-                            try { base->invoke(cb_v, {}); }
-                            catch (const std::exception& ex) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "sse", std::string("close handler error: ") + ex.what()); }
-                            catch (...) { look::Logger::instance().log(look::LogLevel::LOG_ERROR, "sse", "close handler unknown error"); }
+                            try { base->invoke(cb_v, {}); } LOOK_LOG_CALLBACK_ERRORS("sse close")
                             look::release_thread_connections();
                         };
                     }

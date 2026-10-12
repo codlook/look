@@ -456,6 +456,11 @@ struct SmtpSession {
     SSL*        ssl      = nullptr;
     bool        tls_active = false;
 
+    // close_session bu oturumu kapattı. Yalnız event-loop thread'inde okunur ve
+    // yazılır. fd NUMARASI kimlik değildir: kapanan fd'yi sonraki accept aynı
+    // numarayla alır; worker'dan dönen iş "oturum hâlâ açık mı" diye buna bakar.
+    bool        closed   = false;
+
     ~SmtpSession() {
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); ssl = nullptr; }
     }
@@ -735,6 +740,11 @@ private:
                 ? "250 2.6.0 Message accepted\r\n"
                 : "550 5.7.1 Message rejected by policy\r\n";
             item.loop->post([loop = item.loop, fd = item.fd, reply, session = item.session]() mutable {
+                // İstemci worker meşgulken (SPF DNS'i ~10 sn sürebilir) koptuysa
+                // fd kapanmış, araya giren yeni bağlantı aynı numarayı almış
+                // olabilir. Ölçüldü: yanıt o İLGİSİZ bağlantıya, 220 banner'ının
+                // ardından yazılıyordu. Oturum kapandıysa yanıtın alıcısı yok.
+                if (session->closed) return;
                 loop->async_write(fd, reply, [loop, fd, session](bool) {
                     session->reset_envelope();
                 });
@@ -898,6 +908,7 @@ struct SmtpServer::Impl {
     void close_session(int fd) {
         auto it = sessions.find(fd);
         if (it != sessions.end()) {
+            it->second->closed = true;
             ip_release(it->second->msg.remote_ip);
             sessions.erase(it);
         }

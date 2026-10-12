@@ -16,6 +16,23 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-12 — A late SMTP reply was written to another connection (1.0.16)
+
+**Affected:** every release up to and including 1.0.15, for applications that run the
+built-in SMTP server (`LOOK_SMTP_PORT`). **Fixed in:** 1.0.16.
+
+The server answers a finished message from a worker thread. It wrote that answer to the
+descriptor number the sending connection had when the message ended. If the sender had
+disconnected while the worker was still busy (the SPF lookup can take about 10 s when DNS
+does not answer), that number could already belong to a new connection, and the new client
+received `250 2.6.0 Message accepted` right after its banner; its commands and replies were
+then off by one. Measured on the published 1.0.15: 3 of 3 runs. The message itself was
+delivered in every case, and nothing but that one reply line reached the other connection.
+
+The reply is now dropped when its session has ended.
+
+**What to do:** upgrade.
+
 ### 2026-10-10 — One connection over the WebSocket / SSE limit stopped the server (1.0.15)
 
 **Affected:** every release up to and including 1.0.14, in `--mode http`, for applications
