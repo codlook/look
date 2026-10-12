@@ -597,6 +597,7 @@ jobs:
           bash tests/smtp_test.sh build/lk-fcgi 7826
           bash tests/smtp_slowloris_test.sh build/lk-fcgi 7830
           bash tests/smtp_late_reply_test.sh build/lk-fcgi 7834
+          bash tests/smtp_pipelining_test.sh build/lk-fcgi 7841
 
       # Motor paritesi — bu guard'lar repoda vardı ama HİÇBİR workflow'da koşmuyordu
       # (olgunluk denetimi 2026-08-11: "guard var, CI'da yok" = regresyon manuel-koşuma

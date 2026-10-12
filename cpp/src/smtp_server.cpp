@@ -446,6 +446,9 @@ struct SmtpSession {
     int         fd       = -1;
     SmtpState   state    = SmtpState::GREETING;
     std::string buf;           // raw read buffer (may span multiple reads)
+    // Bir yanıt yolda ya da mesaj worker'da: o bitene dek buf'taki sıradaki satırlar İŞLENMEZ.
+    // Yalnız event-loop thread'inde okunur ve yazılır.
+    bool        waiting  = false;
     SmtpMessage msg;           // in-progress message
     std::string ehlo_domain;   // client EHLO domain
     int         error_count = 0;
@@ -626,6 +629,7 @@ struct WorkItem {
     SmtpHandler handler;
     EventLoop*  loop;
     std::shared_ptr<SmtpSession> session;
+    std::function<void()> resume;   // event-loop thread'inde: tamponda bekleyen satırlara dön
 };
 
 struct SmtpWorkerPool {
@@ -739,14 +743,17 @@ private:
             std::string reply = ok
                 ? "250 2.6.0 Message accepted\r\n"
                 : "550 5.7.1 Message rejected by policy\r\n";
-            item.loop->post([loop = item.loop, fd = item.fd, reply, session = item.session]() mutable {
+            item.loop->post([loop = item.loop, fd = item.fd, reply, session = item.session,
+                             resume = std::move(item.resume)]() mutable {
                 // İstemci worker meşgulken (SPF DNS'i ~10 sn sürebilir) koptuysa
                 // fd kapanmış, araya giren yeni bağlantı aynı numarayı almış
                 // olabilir. Ölçüldü: yanıt o İLGİSİZ bağlantıya, 220 banner'ının
                 // ardından yazılıyordu. Oturum kapandıysa yanıtın alıcısı yok.
                 if (session->closed) return;
-                loop->async_write(fd, reply, [loop, fd, session](bool) {
+                loop->async_write(fd, reply, [loop, fd, session, resume = std::move(resume)](bool ok) {
                     session->reset_envelope();
+                    // Yanıt yazıldı: noktadan sonra art arda gönderilmiş komutlar tamponda bekliyor.
+                    if (ok && !session->closed && resume) resume();
                 });
             });
         }
@@ -922,19 +929,35 @@ struct SmtpServer::Impl {
         loop->async_write(fd, reply, [this, fd, sess, then](bool ok) {
             if (!ok) { close_session(fd); return; }
             if (then) then();
-            else {
-                // Keep reading
-                loop->async_read(fd, [this, fd, sess](const char* data, size_t len) {
-                    on_data(fd, sess, data, len);
-                });
-            }
+            else resume(fd, sess);
         });
     }
+
+    static constexpr size_t SMTP_PENDING_SLACK = 64 * 1024;
 
     void on_data(int fd, std::shared_ptr<SmtpSession> sess,
                  const char* data, size_t len) {
         if (len == 0) { close_session(fd); return; }
         sess->buf.append(data, len);
+        if (sess->waiting) {
+            // Yanıt/worker bitmeden gelen satırlar sırada bekler (PIPELINING). Eskiden burada
+            // işleniyordu: DATA durumundayken gelen sonraki komutlar mesaj gövdesine eklenip
+            // atılıyor, bir yanıt yazılırken tamponda kalanlar ise yeni veri gelene dek hiç
+            // işlenmiyordu — art arda gönderen istemcinin postası sessizce kayboluyordu.
+            if (sess->buf.size() > smtp_max_msg() + SMTP_PENDING_SLACK) close_session(fd);
+            return;
+        }
+        pump(fd, sess);
+    }
+
+    // Yanıt yazıldı / worker bitti: tamponda bekleyen satırlardan devam et.
+    void resume(int fd, std::shared_ptr<SmtpSession> sess) {
+        if (sess->closed) return;
+        sess->waiting = false;
+        pump(fd, sess);
+    }
+
+    void pump(int fd, std::shared_ptr<SmtpSession> sess) {
 
         // Line-by-line processing from accumulated buffer.
         // Handles ".\r\n" split across chunks correctly: we only extract a line
@@ -959,8 +982,10 @@ struct SmtpServer::Impl {
             sess->buf.erase(0, nl + 1);
             if (!line.empty() && line.back() == '\r') line.pop_back();
 
+            sess->waiting = true;   // dispatch bir yanıt/worker başlatırsa o bitene dek dur
             bool keep_reading = dispatch_line(fd, sess, line);
-            if (!keep_reading) return; // session handed off or closed
+            if (!keep_reading) return; // yanıt yolda, worker'da ya da oturum kapandı — resume() sürdürür
+            sess->waiting = false;
         }
 
         // Need more data
@@ -1242,9 +1267,7 @@ struct SmtpServer::Impl {
             send_reply(fd, sess, "354 Start mail input; end with <CRLF>.<CRLF>\r\n",
                 [this, fd, sess]() {
                     sess->state = SmtpState::DATA_BODY;
-                    loop->async_read(fd, [this, fd, sess](const char* d, size_t l) {
-                        on_data(fd, sess, d, l);
-                    });
+                    resume(fd, sess);
                 });
             return false;
         }
@@ -1265,9 +1288,7 @@ struct SmtpServer::Impl {
                 send_reply(fd, sess, "552 5.3.4 Message too large\r\n",
                     [this, fd, sess]() {
                         sess->reset_envelope();
-                        loop->async_read(fd, [this, fd, sess](const char* d, size_t l) {
-                            on_data(fd, sess, d, l);
-                        });
+                        resume(fd, sess);
                     });
                 return false;
             }
@@ -1278,6 +1299,7 @@ struct SmtpServer::Impl {
             item.handler = handler;
             item.loop    = loop.get();
             item.session = sess;
+            item.resume  = [this, fd, sess]() { resume(fd, sess); };
             pool.enqueue(std::move(item));
             return false;
         }
@@ -1291,9 +1313,7 @@ struct SmtpServer::Impl {
             send_reply(fd, sess, "552 5.3.4 Message too large\r\n",
                 [this, fd, sess]() {
                     sess->reset_envelope();
-                    loop->async_read(fd, [this, fd, sess](const char* d, size_t l) {
-                        on_data(fd, sess, d, l);
-                    });
+                    resume(fd, sess);
                 });
             return false;
         }
@@ -1431,6 +1451,14 @@ std::string deliver_maildir(const std::string& base_dir,
     }
 
     fs::rename(tmp_path, new_path); // atomic on POSIX
+#if !defined(_WIN32)
+    // Dosyanın içeriği yukarıda diske eşitlendi; ADI (rename) ise dizin girdisidir ve ayrıca
+    // eşitlenmezse "250 kabul edildi"den hemen sonraki bir güç kesintisinde kaybolabilir.
+    {
+        int dfd = ::open(new_path.parent_path().c_str(), O_RDONLY | O_DIRECTORY);
+        if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }
+    }
+#endif
     return new_path.filename().string();
 }
 

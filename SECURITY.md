@@ -16,6 +16,30 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-12 — The SMTP server lost mail sent with pipelining (1.0.17)
+
+**Affected:** every release up to and including 1.0.16, for applications that run the
+built-in SMTP server (`LOOK_SMTP_PORT`). **Fixed in:** 1.0.17.
+
+The server advertises `PIPELINING`, which tells a client it may send commands without
+waiting for each reply. It did not handle that: after answering one command it left the
+following ones in its buffer until more data arrived, and the message body sent next was
+read as commands; commands sent right after the final `.` were added to the message that
+had just ended and thrown away. Measured on the published 1.0.16: of five messages, the one
+whose `MAIL`, `RCPT` and `DATA` came in one packet and the one sent right after a `.` were
+lost, with no error on the server. A sending mail server that pipelines (Postfix does) is
+ordinary traffic, not an attack.
+
+Commands are now handled in order, one reply at a time, whatever the packet boundaries are.
+
+**Known issue, not fixed in 1.0.17:** `STARTTLS` does not work. The handshake completes and
+then the session gets no replies, so a sender that uses TLS cannot deliver (measured on
+1.0.16). Until it is fixed, do not set `LOOK_SMTP_CERT` / `LOOK_SMTP_KEY` on the built-in
+SMTP server: without a certificate `STARTTLS` is not offered and senders deliver in plain
+text. Put a mail relay with TLS in front if you need encryption in transit.
+
+**What to do:** upgrade.
+
 ### 2026-10-12 — A late SMTP reply was written to another connection (1.0.16)
 
 **Affected:** every release up to and including 1.0.15, for applications that run the
