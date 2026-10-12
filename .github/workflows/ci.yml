@@ -201,6 +201,13 @@ jobs:
           cd cpp
           bash tests/no_select_test.sh
 
+      # A WebSocket / SSE connection callback has no response to carry an error: if the log does
+      # not have it either, the handler fails without a trace.
+      - name: Connection callback errors are logged
+        run: |
+          cd cpp
+          bash tests/callback_error_log_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
