@@ -16,6 +16,7 @@ namespace look {
 struct WsConnection {
     int                  fd;
     std::string          client_ip;
+    std::string          held_ip;     // LOOK_HTTP_MAX_CONNS_IP yuvası bu adres için tutuluyor (boş = yok)
     std::atomic<bool>    closed{false};
     std::mutex           write_mutex;
 
@@ -55,7 +56,9 @@ class WsRegistry {
     std::shared_mutex                                       mutex_;
     std::unordered_map<int, std::shared_ptr<WsConnection>> clients_;
 public:
-    void   add(std::shared_ptr<WsConnection> conn);
+    // false: sınır dolu (LOOK_WS_MAX_CONN). Fırlatmaz — çağıran bağlantıyı reddeder.
+    bool   add(std::shared_ptr<WsConnection> conn);
+    bool   full();
     void   remove(int fd);
     void   broadcast(const std::string& msg);
     size_t count();

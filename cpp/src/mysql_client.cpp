@@ -205,6 +205,7 @@ void MySQLClient::do_connect() {
 
     ::connect(sock_, (struct sockaddr*)&addr, sizeof(addr));
 
+#ifdef _WIN32
     // Wait for connect with timeout
     fd_set wfds;
     FD_ZERO(&wfds);
@@ -213,10 +214,12 @@ void MySQLClient::do_connect() {
     tv.tv_sec  = cfg_.connect_timeout_ms / 1000;
     tv.tv_usec = (cfg_.connect_timeout_ms % 1000) * 1000;
 
-#ifdef _WIN32
     int sel = select(0, nullptr, &wfds, nullptr, &tv);
 #else
-    int sel = select((int)sock_ + 1, nullptr, &wfds, nullptr, &tv);
+    // select() DEĞİL: fd_set yalnız 1024'ten küçük tanıtıcıları taşır; sunucu binlerce bağlantı
+    // tutarken soket numarası bunu aşar ve FD_SET yığın belleğini taşırır.
+    struct pollfd cpf{}; cpf.fd = sock_; cpf.events = POLLOUT;
+    int sel = ::poll(&cpf, 1, cfg_.connect_timeout_ms);
 #endif
     if (sel <= 0) {
         disconnect();

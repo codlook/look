@@ -16,6 +16,34 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
+
+// Açık bağlantı sayısına LOOK bir sınır koymaz; sınır işletim sisteminin tanıtıcı sınırıdır.
+// Yumuşak sınır çoğu sistemde 1024 gelir: başlangıçta sert sınıra çekilir (Go da böyle yapar).
+static void raise_fd_limit() {
+#ifdef __linux__
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
+        rl.rlim_cur = rl.rlim_max;
+        setrlimit(RLIMIT_NOFILE, &rl);
+    }
+#endif
+}
+
+// accept tanıtıcı/bellek tükendiği için başarısızsa bağlantı kuyrukta bekler ve accept hemen
+// aynı hatayı yeniden verir: beklemeden dönmek çekirdeği %100 yakar. Kısa bekle, yeniden dene;
+// açık bağlantılardan biri kapanınca kabul kendiliğinden sürer.
+static void accept_backoff() {
+#ifndef _WIN32
+    int e = errno;
+    if (e == EMFILE || e == ENFILE || e == ENOBUFS || e == ENOMEM)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+#endif
+}
 
 #if defined(__linux__)
 #  include <sys/socket.h>
@@ -110,6 +138,23 @@ public:
 };
 
 // ── HttpServer::Impl ──────────────────────────────────────────────────────────
+
+// Bağlantı sınırı dolu: 503 ile reddet (istemci sonra yeniden dener). Sunucu ayakta kalır.
+static void send_limit_reject(int fd, const char* what) {
+    std::string body = std::string(what) + " connection limit reached; try again later";
+    std::string resp =
+        "HTTP/1.1 503 Service Unavailable\r\n"
+        "Content-Type: text/plain\r\n"
+        "Retry-After: 5\r\n"
+        "Connection: close\r\n"
+        "Content-Length: " + std::to_string(body.size()) + "\r\n"
+        "\r\n" + body;
+#ifdef _WIN32
+    ::send(fd, resp.data(), (int)resp.size(), 0);
+#else
+    ::send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
+#endif
+}
 
 static void send_ws_reject(int fd, const std::string& reason) {
     std::string resp =
@@ -372,7 +417,11 @@ struct HttpServer::Impl {
         // devri, keep-alive bitişi) slot serbest kalır — worker-scope semantiği.
         struct IpSlot {
             const std::string& ip;
-            ~IpSlot() { http_ip_release(ip); }
+            // WS/SSE'ye yükselen bağlantı yuvasını yanında götürür (close_ws / close_sse bırakır):
+            // burada bırakıp orada yeniden almak bağlantıyı kısa süre İKİ kez sayıyordu ve sınırın
+            // bir eksiğindeki adres haksız 429 alıyordu.
+            bool moved = false;
+            ~IpSlot() { if (!moved) http_ip_release(ip); }
         } ip_slot{ remote_addr };
 
         // Boşta timeout — istemci N ms yanıt vermezse kapat (default 30s). LOOK_HTTP_IDLE_MS
@@ -502,13 +551,13 @@ struct HttpServer::Impl {
 
             // WS upgrade → event loop'a devret, worker serbest kalır
             if (req.upgrade_websocket && ws_handler) {
-                handle_ws_upgrade(fd, req);
+                handle_ws_upgrade(fd, req, ip_slot.moved);
                 return;
             }
 
             // SSE upgrade → event loop'a devret
             if (req.upgrade_sse && sse_handler) {
-                handle_sse_upgrade(fd, req);
+                handle_sse_upgrade(fd, req, ip_slot.moved);
                 return;
             }
 
@@ -560,7 +609,7 @@ struct HttpServer::Impl {
         return h;
     }
 
-    void handle_ws_upgrade(int fd, const HttpRequest& req) {
+    void handle_ws_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
         // CSWSH (Cross-Site WebSocket Hijacking) koruması.
         auto it = req.headers.find("origin");
         if (!allowed_origins.empty()) {
@@ -601,6 +650,7 @@ struct HttpServer::Impl {
                 return;
             }
         }
+        if (look::g_ws_registry.full()) { send_limit_reject(fd, "WebSocket"); ::close(fd); return; }
         std::string hs = ws_handshake_101(req.ws_key);
 #ifdef _WIN32
         ::send(fd, hs.data(), (int)hs.size(), 0);
@@ -613,7 +663,12 @@ struct HttpServer::Impl {
             ws_clients[fd] = conn;
             ws_bufs[fd]    = "";
         }
-        look::g_ws_registry.add(conn);
+        if (!look::g_ws_registry.add(conn)) {   // sınır bu arada doldu (başka iş parçacığı)
+            { std::lock_guard<std::mutex> lk(ws_mtx); ws_clients.erase(fd); ws_bufs.erase(fd); }
+            ::close(fd);
+            return;
+        }
+        conn->held_ip = req.remote_addr; ip_slot_moved = true;
 
         ws_handler(conn, req);
 
@@ -624,7 +679,8 @@ struct HttpServer::Impl {
     }
 
     // ── SSE upgrade — worker thread'de çalışır ───────────────────────────────
-    void handle_sse_upgrade(int fd, const HttpRequest& req) {
+    void handle_sse_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
+        if (look::g_sse_registry.full()) { send_limit_reject(fd, "SSE"); ::close(fd); return; }
         const char* hdrs =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/event-stream\r\n"
@@ -647,7 +703,12 @@ struct HttpServer::Impl {
             std::lock_guard<std::mutex> lk(sse_mtx);
             sse_clients[fd] = conn;
         }
-        look::g_sse_registry.add(conn);
+        if (!look::g_sse_registry.add(conn)) {
+            { std::lock_guard<std::mutex> lk(sse_mtx); sse_clients.erase(fd); }
+            ::close(fd);
+            return;
+        }
+        conn->held_ip = req.remote_addr; ip_slot_moved = true;
 
         sse_handler(conn, req);
 
@@ -685,6 +746,7 @@ struct HttpServer::Impl {
         // bulunamayınca yine `loop->close_fd(fd)` çağırıyordu → ÇİFT close_fd = fd yeniden
         // kullanıldıysa YANLIŞ-fd kapatma. O tehlikeli dal kaldırıldı (own-once ile yapısal).
         if (!owned) return;
+        http_ip_release(conn->held_ip);
         look::g_sse_registry.remove(fd);
         bool fire_cb = false;
         {
@@ -843,6 +905,7 @@ struct HttpServer::Impl {
         // write_mutex'i DRAIN et (uçuştaki send bitene kadar bekle) — write_mutex tutulurken
         // hiçbir send_raw ::send içinde olamaz → close_fd güvenli. Kilit close_fd'yi de kapsar.
         if (conn) {
+            http_ip_release(conn->held_ip);
             conn->closed.store(true);
             std::lock_guard<std::mutex> wlk(conn->write_mutex);  // uçuştaki send'i drain et
             look::g_ws_registry.remove(fd);
@@ -897,6 +960,7 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
 
     if (bind(srv, (sockaddr*)&addr, sizeof(addr)) < 0)
         throw std::runtime_error("bind() failed on port " + std::to_string(port));
+    raise_fd_limit();
     if (::listen(srv, 16384) < 0)
         throw std::runtime_error("listen() failed");
 
@@ -1030,6 +1094,11 @@ void HttpServer::run() {
                                     break;   // epoll yok (olmamalı) — fiber modu bırak
                                 continue;
                             }
+                            if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
+                                // Tanıtıcı/bellek tükendi: dinlemeyi BIRAKMA, kısa çekil (bkz. accept_backoff).
+                                sched->wait_readable_tmo(self, -1, 50);
+                                continue;
+                            }
                             break;   // gerçek accept hatası
                         }
                     });
@@ -1053,6 +1122,7 @@ void HttpServer::run() {
 #endif
                 if (client < 0) {
                     if (!impl_->running) break;
+                    accept_backoff();
                     continue;
                 }
                 char peer_ip[INET6_ADDRSTRLEN] = {};

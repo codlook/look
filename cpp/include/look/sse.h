@@ -14,6 +14,7 @@ namespace look {
 struct SseConnection {
     int fd;
     std::string client_ip;
+    std::string held_ip;     // LOOK_HTTP_MAX_CONNS_IP yuvası bu adres için tutuluyor (boş = yok)
     std::atomic<bool> closed{false};
     std::mutex write_mutex;
     std::function<void()> on_close_cb;
@@ -37,7 +38,9 @@ class SseRegistry {
     std::shared_mutex mutex_;
     std::unordered_map<int, std::shared_ptr<SseConnection>> clients_;
 public:
-    void add(std::shared_ptr<SseConnection> conn);
+    // false: sınır dolu (LOOK_SSE_MAX_CONN). Fırlatmaz — çağıran bağlantıyı reddeder.
+    bool add(std::shared_ptr<SseConnection> conn);
+    bool full();
     void remove(int fd);
     size_t count();
 };
