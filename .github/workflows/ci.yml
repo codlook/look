@@ -376,11 +376,15 @@ jobs:
       #  2) smtp_slowloris_test.sh: EventLoop idle-timeout POZİTİF KONTROL — idle
       #     bağlantı timeout sonra kapanır, aktif bağlantı kapanmaz, conn_count sızmaz.
       #     (Non-blocking ET soketinde SO_RCVTIMEO çalışmaz → koruma EventLoop katmanında.)
+      #  3) smtp_late_reply_test.sh: worker'dan geç dönen teslim yanıtı, aynı fd
+      #     numarasını almış BAŞKA bağlantıya yazılmaz. Worker DNS ile değil,
+      #     yarım bırakılan STARTTLS el sıkışmasıyla tutulur (belirlenimli).
       - name: SMTP runtime (parser + relay + slowloris idle-timeout)
         run: |
           cd cpp
           bash tests/smtp_test.sh build/lk-fcgi 7826
           bash tests/smtp_slowloris_test.sh build/lk-fcgi 7830
+          bash tests/smtp_late_reply_test.sh build/lk-fcgi 7834
 
       # Motor paritesi — bu guard'lar repoda vardı ama HİÇBİR workflow'da koşmuyordu
       # (olgunluk denetimi 2026-08-11: "guard var, CI'da yok" = regresyon manuel-koşuma
