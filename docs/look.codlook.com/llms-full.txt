@@ -4529,7 +4529,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `LOOK_SMTP_CERT` / `LOOK_SMTP_KEY` | — | TLS certificate and its private key for the SMTP (and IMAP) server. Set both together to enable TLS. |
+| `LOOK_SMTP_CERT` / `LOOK_SMTP_KEY` | — | TLS certificate and its private key. They enable TLS on the IMAP server (STARTTLS on 143, and the implicit-TLS port). The SMTP server does not offer STARTTLS in 1.0.x: it accepts mail in plain text, and with a certificate set it refuses AUTH on the submission port. Put a relay with TLS in front for encryption in transit. |
 | `LOOK_SMTP_AUTH_DISABLED` | *off* | When set, the SMTP server accepts mail without requiring AUTH. Use only on a trusted internal relay. |
 | `LOOK_MAIL_DOMAIN` | — | The domain the mail server considers local (accepts delivery for). |
 | `LOOK_MAIL_PASS` | — | Password for the built-in mail user. |

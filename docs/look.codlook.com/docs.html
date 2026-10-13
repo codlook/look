@@ -4512,7 +4512,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <h3>Mail server</h3>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
-    <tr><td><code>LOOK_SMTP_CERT</code> / <code>LOOK_SMTP_KEY</code></td><td>—</td><td>TLS certificate and its private key for the SMTP (and IMAP) server. Set both together to enable TLS.</td></tr>
+    <tr><td><code>LOOK_SMTP_CERT</code> / <code>LOOK_SMTP_KEY</code></td><td>—</td><td>TLS certificate and its private key. They enable TLS on the IMAP server (STARTTLS on 143, and the implicit-TLS port). The SMTP server does not offer STARTTLS in 1.0.x: it accepts mail in plain text, and with a certificate set it refuses AUTH on the submission port. Put a relay with TLS in front for encryption in transit.</td></tr>
     <tr><td><code>LOOK_SMTP_AUTH_DISABLED</code></td><td><em>off</em></td><td>When set, the SMTP server accepts mail without requiring AUTH. Use only on a trusted internal relay.</td></tr>
     <tr><td><code>LOOK_MAIL_DOMAIN</code></td><td>—</td><td>The domain the mail server considers local (accepts delivery for).</td></tr>
     <tr><td><code>LOOK_MAIL_PASS</code></td><td>—</td><td>Password for the built-in mail user.</td></tr>

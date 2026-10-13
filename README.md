@@ -176,7 +176,7 @@ Three things worth knowing:
 | Databases — MySQL/MariaDB, PostgreSQL (wire protocol), SQLite | ✅ |
 | Sessions (file or Redis/RESP2), cookies, JWT, validation, templates | ✅ |
 | Concurrency — `parallel()` + channels; FastCGI multi-worker | ✅ |
-| Embedded SMTP server (25/587/465, STARTTLS, DKIM sign **and** verify, SPF check) | ✅ |
+| Embedded SMTP server (25/587, PIPELINING, DKIM sign **and** verify, SPF check; no STARTTLS — put a TLS relay in front) | ✅ |
 | Embedded IMAP server — **Milestone 1**: read-only INBOX (see note below) | 🟡 |
 | `crypto::` — SHA-256, HMAC, base64url, UUID, secure random | ✅ |
 | Rate limiting (token bucket, per-IP + global), file sandbox | ✅ |

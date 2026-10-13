@@ -1051,9 +1051,12 @@ struct SmtpServer::Impl {
                         "250-8BITMIME\r\n"
                         "250-PIPELINING\r\n"
                         "250-SMTPUTF8\r\n";
-        if (ssl_ctx && !sess->tls_active)
-            r += "250-STARTTLS\r\n";
-        if (sess->submission)
+        // STARTTLS İLAN EDİLMEZ (1.0.18). 1.0.17'ye dek sertifika varken ilan ediliyordu ama el
+        // sıkışmadan sonra oturum hiç yanıt almıyordu (yanıtlar şifrelenmeden yazılıyor, okuma
+        // yolu TLS ile uyumsuz): TLS deneyen her gönderen postasını teslim edemiyordu. İlan
+        // olmayınca gönderen düz metinle teslim eder. Sertifika tanımlıysa AUTH de ilan edilmez:
+        // şifreleme olmadan parola kabul edilmez (aşağıda 530), yani başarılamayacak bir şey sunulmaz.
+        if (sess->submission && !ssl_ctx)
             r += "250-AUTH PLAIN LOGIN\r\n";
         r += "250 OK\r\n";
         sess->state = SmtpState::READY;
@@ -1064,15 +1067,9 @@ struct SmtpServer::Impl {
     bool handle_ready(int fd, std::shared_ptr<SmtpSession> sess,
                       const std::string& verb, const std::string& line) {
         if (verb == "STARTTLS") {
-            if (sess->tls_active) {
-                return error_reply(fd, sess, "503 5.5.1 TLS already active\r\n");
-            }
-            if (!ssl_ctx) {
-                return error_reply(fd, sess, "454 4.7.0 TLS not configured\r\n");
-            }
-            send_reply(fd, sess, "220 2.0.0 Ready to start TLS\r\n",
-                [this, fd, sess]() { do_starttls(fd, sess); });
-            return false;
+            // İlan edilmiyor (bkz. handle_ehlo); yine de gönderen bir istemci dürüst bir ret alır
+            // ve düz metinle sürdürebilir. do_starttls / on_data_tls çağrılmıyor.
+            return error_reply(fd, sess, "502 5.5.1 STARTTLS is not available on this server\r\n");
         }
         // AUTH PLAIN [initial-response]
         if (verb == "AUTH") {
@@ -1083,7 +1080,7 @@ struct SmtpServer::Impl {
                 return error_reply(fd, sess, "503 5.5.1 Already authenticated\r\n");
             }
             if (!sess->tls_active && ssl_ctx) {
-                return error_reply(fd, sess, "530 5.7.0 Must issue STARTTLS first\r\n");
+                return error_reply(fd, sess, "530 5.7.0 Encryption is required for AUTH and STARTTLS is not available on this server\r\n");
             }
             // Extract mechanism and optional initial response
             // Line format: "AUTH PLAIN [base64]" or "AUTH PLAIN"
@@ -1110,7 +1107,18 @@ struct SmtpServer::Impl {
         if (verb == "MAIL") {
             // :587 submission requires TLS before MAIL FROM (RFC 8314)
             if (sess->submission && !sess->tls_active && ssl_ctx) {
-                return error_reply(fd, sess, "530 5.7.0 Must issue STARTTLS first\r\n");
+                return error_reply(fd, sess, "530 5.7.0 Encryption is required on this port and STARTTLS is not available on this server\r\n");
+            }
+            // SIZE (RFC 1870): ilan edilen tavanı aşan bildirimi gövdeyi okumadan reddet.
+            {
+                std::string up = line;
+                for (char& c : up) c = (char)std::toupper((unsigned char)c);
+                size_t p = up.find(" SIZE=");
+                if (p != std::string::npos) {
+                    unsigned long long declared = std::strtoull(up.c_str() + p + 6, nullptr, 10);
+                    if (declared > (unsigned long long)smtp_max_msg())
+                        return error_reply(fd, sess, "552 5.3.4 Message size exceeds the fixed maximum message size\r\n");
+                }
             }
             // :587 requires AUTH before MAIL FROM
             if (sess->submission && !sess->auth_ok) {
@@ -1342,6 +1350,12 @@ SmtpServer::SmtpServer(int port_smtp, int port_sub, int port_smtps,
     impl_->loop    = EventLoop::create();
     impl_->handler = std::move(handler);
     impl_->ssl_ctx = make_smtp_ssl_ctx(); // null if LOOK_SMTP_CERT/KEY not set
+    if (impl_->ssl_ctx) {
+        Logger::instance().log(LogLevel::LOG_WARN, "smtp",
+            "LOOK_SMTP_CERT is set, but this version does not offer STARTTLS on the SMTP server: "
+            "mail is accepted in plain text, and AUTH on the submission port is refused. "
+            "Put a relay with TLS in front if you need encryption in transit.");
+    }
     impl_->pool.start(workers);
 
     auto bind_port = [&](int port, bool submission) {
