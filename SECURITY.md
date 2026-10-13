@@ -16,6 +16,30 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-13 — SMTP `AUTH` sent the password in clear text from any address (1.0.19)
+
+**Affected:** every release up to and including 1.0.18, for applications that run the
+built-in SMTP server with a submission port (`LOOK_SMTP_SUB_PORT`) and no certificate.
+**Fixed in:** 1.0.19.
+
+`AUTH PLAIN` and `AUTH LOGIN` only encode the password; they do not encrypt it, and the
+SMTP server has no TLS. The submission port offered `AUTH` to every client and accepted the
+password from any address, so anyone who could read the traffic between the client and the
+server could read the user name and the password. Measured on the published 1.0.18.
+
+`AUTH` is now offered and accepted only for a connection from the same machine
+(`127.0.0.0/8`, `::1`; the address is the peer address of the socket, no header is
+trusted). From any other address it is not advertised and is refused with `530` before the
+password is read. The server logs a warning at start.
+
+**This can stop a setup that worked:** a client on another host — or in another container,
+which connects from the container network (for example `172.17.0.2`), not from
+`127.0.0.1` — can no longer authenticate. Run the client in the same container as the
+server, or put a mail relay with TLS in front.
+
+**What to do:** upgrade. If a password was ever sent to the submission port from another
+host, change it.
+
 ### 2026-10-13 — `STARTTLS` on the SMTP server never completed a session (1.0.18)
 
 **Affected:** every release up to and including 1.0.17, for applications that run the
