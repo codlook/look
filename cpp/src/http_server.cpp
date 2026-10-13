@@ -4,6 +4,7 @@
 #include "look/sse.h"
 #include "look/event_loop.h"
 #include "look/fiber.h"
+#include "look/logger.h"
 
 #include <sstream>
 #include <thread>
@@ -139,23 +140,6 @@ public:
 
 // ── HttpServer::Impl ──────────────────────────────────────────────────────────
 
-// Bağlantı sınırı dolu: 503 ile reddet (istemci sonra yeniden dener). Sunucu ayakta kalır.
-static void send_limit_reject(int fd, const char* what) {
-    std::string body = std::string(what) + " connection limit reached; try again later";
-    std::string resp =
-        "HTTP/1.1 503 Service Unavailable\r\n"
-        "Content-Type: text/plain\r\n"
-        "Retry-After: 5\r\n"
-        "Connection: close\r\n"
-        "Content-Length: " + std::to_string(body.size()) + "\r\n"
-        "\r\n" + body;
-#ifdef _WIN32
-    ::send(fd, resp.data(), (int)resp.size(), 0);
-#else
-    ::send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
-#endif
-}
-
 static void send_ws_reject(int fd, const std::string& reason) {
     std::string resp =
         "HTTP/1.1 403 Forbidden\r\n"
@@ -194,20 +178,75 @@ static int http_max_conns_per_ip() {
 static std::mutex                            g_http_ip_mutex;
 static std::unordered_map<std::string, int>  g_http_ip_conns;
 
+// Sınıra takılan adres günlüğe BİR KEZ yazılır (sayaç sınırın altına inene dek yinelenmez):
+// sınırın gerçek kullanıcıları mı yoksa bir saldırıyı mı kestiği günlükten görülebilsin,
+// ama saldırı günlüğü de doldurmasın. g_http_ip_mutex altında çağrılır.
+static std::unordered_map<std::string, bool> g_ip_limit_logged;
+static void note_ip_limit(const std::string& ip, int lim, const char* what) {
+    if (g_ip_limit_logged[ip]) return;
+    g_ip_limit_logged[ip] = true;
+    look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+        std::string(what) + " from " + ip + " refused with 429: the address is at its limit of " +
+        std::to_string(lim) + " (logged once until it drops below)");
+}
+
 // true → slot alındı (limit kapalıysa her zaman true). false → IP tavanda.
 static bool http_ip_acquire(const std::string& ip) {
     int lim = http_max_conns_per_ip();
     if (lim <= 0 || ip.empty()) return true;   // devre dışı ya da IP bilinmiyor
     std::lock_guard<std::mutex> lk(g_http_ip_mutex);
     int& n = g_http_ip_conns[ip];
-    if (n >= lim) return false;
+    if (n >= lim) { note_ip_limit(ip, lim, "a connection"); return false; }
     ++n; return true;
 }
 static void http_ip_release(const std::string& ip) {
     if (http_max_conns_per_ip() <= 0 || ip.empty()) return;
     std::lock_guard<std::mutex> lk(g_http_ip_mutex);
     auto it = g_http_ip_conns.find(ip);
-    if (it != g_http_ip_conns.end() && --it->second <= 0) g_http_ip_conns.erase(it);
+    if (it == g_http_ip_conns.end()) return;
+    --it->second;
+    g_ip_limit_logged.erase(ip);
+    if (it->second <= 0) g_http_ip_conns.erase(it);
+}
+
+// ── Uzun ömürlü bağlantılar (WebSocket / SSE): adres başına VARSAYILAN tavan ──
+// Açık bağlantıların toplamına sınır yoktur (tavan işletim sisteminin dosya sınırıdır). O
+// yüzden tek bir adres, önünde hiçbir şey yokken, sürecin bütün tanıtıcılarını tüketebilir.
+// LOOK doğrudan internete bakıyorsa (LOOK_TRUSTED_PROXY tanımsız) bir adres en çok
+// HELD_DEFAULT_PER_IP açık WebSocket/SSE bağlantısı tutar. 1000: tek adresin arkasında çok
+// kullanıcı olabilir (mobil operatör, şirket ağı) — sınır onları değil, binlerce bağlantı açan
+// tek kaynağı keser. Ters vekil arkasında bütün bağlantılar vekilin adresinden görünür: orada
+// varsayılan uygulanmaz, sınır vekilde konur. LOOK_HTTP_MAX_CONNS_IP verilmişse o geçerlidir
+// (bütün bağlantıları sayar) ve bu varsayılan devreye girmez.
+static constexpr int HELD_DEFAULT_PER_IP = 1000;
+static int held_default_limit() {
+    static int v = []() {
+        if (http_max_conns_per_ip() > 0) return 0;
+        const char* e = std::getenv("LOOK_TRUSTED_PROXY");
+        return (e && *e) ? 0 : HELD_DEFAULT_PER_IP;
+    }();
+    return v;
+}
+static std::unordered_map<std::string, int> g_held_ip_conns;
+static bool held_ip_acquire(const std::string& ip) {
+    int lim = held_default_limit();
+    if (lim <= 0 || ip.empty()) return true;
+    std::lock_guard<std::mutex> lk(g_http_ip_mutex);
+    int& n = g_held_ip_conns[ip];
+    if (n >= lim) { note_ip_limit(ip, lim, "a WebSocket / SSE connection"); return false; }
+    ++n; return true;
+}
+// Bağlantı kapanınca: açık sınırda worker'dan devralınan yuva, varsayılanda held sayacı bırakılır.
+static void held_ip_release(const std::string& ip) {
+    if (ip.empty()) return;
+    if (http_max_conns_per_ip() > 0) { http_ip_release(ip); return; }
+    if (held_default_limit() <= 0) return;
+    std::lock_guard<std::mutex> lk(g_http_ip_mutex);
+    auto it = g_held_ip_conns.find(ip);
+    if (it == g_held_ip_conns.end()) return;
+    --it->second;
+    g_ip_limit_logged.erase(ip);
+    if (it->second <= 0) g_held_ip_conns.erase(it);
 }
 
 struct HttpServer::Impl {
@@ -650,7 +689,7 @@ struct HttpServer::Impl {
                 return;
             }
         }
-        if (look::g_ws_registry.full()) { send_limit_reject(fd, "WebSocket"); ::close(fd); return; }
+        if (!held_ip_acquire(req.remote_addr)) { send_simple(fd, 429, "Too Many Requests"); ::close(fd); return; }
         std::string hs = ws_handshake_101(req.ws_key);
 #ifdef _WIN32
         ::send(fd, hs.data(), (int)hs.size(), 0);
@@ -663,11 +702,7 @@ struct HttpServer::Impl {
             ws_clients[fd] = conn;
             ws_bufs[fd]    = "";
         }
-        if (!look::g_ws_registry.add(conn)) {   // sınır bu arada doldu (başka iş parçacığı)
-            { std::lock_guard<std::mutex> lk(ws_mtx); ws_clients.erase(fd); ws_bufs.erase(fd); }
-            ::close(fd);
-            return;
-        }
+        look::g_ws_registry.add(conn);
         conn->held_ip = req.remote_addr; ip_slot_moved = true;
 
         ws_handler(conn, req);
@@ -680,7 +715,7 @@ struct HttpServer::Impl {
 
     // ── SSE upgrade — worker thread'de çalışır ───────────────────────────────
     void handle_sse_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
-        if (look::g_sse_registry.full()) { send_limit_reject(fd, "SSE"); ::close(fd); return; }
+        if (!held_ip_acquire(req.remote_addr)) { send_simple(fd, 429, "Too Many Requests"); ::close(fd); return; }
         const char* hdrs =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/event-stream\r\n"
@@ -703,11 +738,7 @@ struct HttpServer::Impl {
             std::lock_guard<std::mutex> lk(sse_mtx);
             sse_clients[fd] = conn;
         }
-        if (!look::g_sse_registry.add(conn)) {
-            { std::lock_guard<std::mutex> lk(sse_mtx); sse_clients.erase(fd); }
-            ::close(fd);
-            return;
-        }
+        look::g_sse_registry.add(conn);
         conn->held_ip = req.remote_addr; ip_slot_moved = true;
 
         sse_handler(conn, req);
@@ -746,7 +777,7 @@ struct HttpServer::Impl {
         // bulunamayınca yine `loop->close_fd(fd)` çağırıyordu → ÇİFT close_fd = fd yeniden
         // kullanıldıysa YANLIŞ-fd kapatma. O tehlikeli dal kaldırıldı (own-once ile yapısal).
         if (!owned) return;
-        http_ip_release(conn->held_ip);
+        held_ip_release(conn->held_ip);
         look::g_sse_registry.remove(fd);
         bool fire_cb = false;
         {
@@ -905,7 +936,7 @@ struct HttpServer::Impl {
         // write_mutex'i DRAIN et (uçuştaki send bitene kadar bekle) — write_mutex tutulurken
         // hiçbir send_raw ::send içinde olamaz → close_fd güvenli. Kilit close_fd'yi de kapsar.
         if (conn) {
-            http_ip_release(conn->held_ip);
+            held_ip_release(conn->held_ip);
             conn->closed.store(true);
             std::lock_guard<std::mutex> wlk(conn->write_mutex);  // uçuştaki send'i drain et
             look::g_ws_registry.remove(fd);
@@ -961,6 +992,12 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
     if (bind(srv, (sockaddr*)&addr, sizeof(addr)) < 0)
         throw std::runtime_error("bind() failed on port " + std::to_string(port));
     raise_fd_limit();
+    for (const char* gone : {"LOOK_WS_MAX_CONN", "LOOK_SSE_MAX_CONN"}) {
+        const char* e = std::getenv(gone);
+        if (e && *e) look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+            std::string(gone) + " is set but is not used in LOOK 2: there is no limit on the total of open connections. "
+            "Limit connections per address with LOOK_HTTP_MAX_CONNS_IP.");
+    }
     if (::listen(srv, 16384) < 0)
         throw std::runtime_error("listen() failed");
 

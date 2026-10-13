@@ -301,6 +301,26 @@ Handlers written as in the documentation (`/users/{id}` with `function($id)`) ar
 affected. A handler whose parameter names differ from the names in its path must be
 renamed.
 
+### Open connections: no total limit, and a default limit per address — silent
+
+LOOK 1 had `LOOK_WS_MAX_CONN` and `LOOK_SSE_MAX_CONN` (1024 each until 1.0.14, off by default
+from 1.0.15). LOOK 2 has no limit on the total of open connections and no setting for one: the
+operating system's open-file limit is the limit, and the server raises its own soft limit to
+the hard limit at start. If one of the two settings is still set, the log says at start that it
+is not used.
+
+With no total limit, what keeps one source from taking every file descriptor is a limit per
+address. When the server faces the internet directly — `LOOK_TRUSTED_PROXY` is not set — one
+address may hold **1000** open WebSocket / SSE connections. The connection over that gets
+`429`, and the address is written to the log once until it drops below. Ordinary requests are
+not counted. Behind a reverse proxy every connection comes from the proxy's address, so the
+default does not apply there: limit per address in the proxy. `LOOK_HTTP_MAX_CONNS_IP=N`, when
+set, replaces the default and counts every connection of an address.
+
+What can change for an application: more than 1000 clients behind one address (a large
+office, a mobile carrier) that all keep a WebSocket open to a server with nothing in front of
+it — the 1001st gets `429`. Set `LOOK_HTTP_MAX_CONNS_IP` to a higher number in that case.
+
 ### `http::stream`: the callback takes and returns its state — error at run time
 
 The callback is called as `$callback($chunk, $state)` and what it returns is the state for

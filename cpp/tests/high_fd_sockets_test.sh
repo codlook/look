@@ -32,7 +32,8 @@ port, iport, pid = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 WS = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
 hold = []
 for i in range(1100):
-    c = socket.socket(); c.settimeout(10); c.connect(("127.0.0.1", port)); c.sendall(WS); c.recv(4096); hold.append(c)
+    c = socket.socket(); c.settimeout(10); c.bind(("127.0.0.%d" % (1 + i % 2), 0))   # two client addresses: LOOK 2 allows 1000 per address
+    c.connect(("127.0.0.1", port)); c.sendall(WS); c.recv(4096); hold.append(c)
 def imap():
     s = socket.create_connection(("127.0.0.1", iport), timeout=10); s.recv(4096); return s
 hold += [imap() for i in range(8)]

@@ -56,9 +56,7 @@ class WsRegistry {
     std::shared_mutex                                       mutex_;
     std::unordered_map<int, std::shared_ptr<WsConnection>> clients_;
 public:
-    // false: sınır dolu (LOOK_WS_MAX_CONN). Fırlatmaz — çağıran bağlantıyı reddeder.
-    bool   add(std::shared_ptr<WsConnection> conn);
-    bool   full();
+    void   add(std::shared_ptr<WsConnection> conn);
     void   remove(int fd);
     void   broadcast(const std::string& msg);
     size_t count();

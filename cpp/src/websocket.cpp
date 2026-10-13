@@ -243,27 +243,11 @@ void WsConnection::close_conn() {
 
 WsRegistry g_ws_registry;
 
-// LOOK_WS_MAX_CONN ile yapılandırılır (varsayılan: sınır yok; 0 = sınır yok).
-static size_t ws_max_conn() {
-    static const size_t m = []() -> size_t {
-        const char* e = std::getenv("LOOK_WS_MAX_CONN");
-        return (e && *e) ? (size_t)std::strtoull(e, nullptr, 10) : 0;
-    }();
-    return m;
-}
-
-// Sınır doluysa FIRLATMAZ, false döner. Eskiden burada istisna fırlatılıyordu ve onu kimse
-// yakalamıyordu: sınırdan bir fazla bağlantı (varsayılan 1025.) bütün sunucuyu düşürüyordu.
-bool WsRegistry::add(std::shared_ptr<WsConnection> conn) {
+// Açık bağlantı sayısına sınır yoktur (LOOK 2): tavan işletim sisteminin dosya sınırıdır;
+// adres başına sınır http_server'dadır.
+void WsRegistry::add(std::shared_ptr<WsConnection> conn) {
     std::unique_lock<std::shared_mutex> lk(mutex_);
-    if (ws_max_conn() != 0 && clients_.size() >= ws_max_conn()) return false;
     clients_[conn->fd] = std::move(conn);
-    return true;
-}
-
-bool WsRegistry::full() {
-    std::shared_lock<std::shared_mutex> lk(mutex_);
-    return ws_max_conn() != 0 && clients_.size() >= ws_max_conn();
 }
 
 void WsRegistry::remove(int fd) {

@@ -6,15 +6,18 @@
 # the port could stop the application by opening 1025 connections — no login, no valid
 # request needed. Measured on the published 1.0.13 and 1.0.14, for WebSocket and for SSE.
 #
-# What holds now:
-#   1. No default limit. The operating system's open-file limit is the limit, and the server
-#      raises its own soft limit to the hard limit at start.
-#   2. At the open-file limit the server waits: a new connection stays in the listen queue
-#      and is taken when a place is free. The process stays up and does not spin (1.0.14
-#      burned every core in a retry loop here).
-#   3. LOOK_HTTP_MAX_CONNS_IP counts open WebSocket / SSE connections too (it used to let go
-#      of them at the upgrade, so one address could hold any number).
-#   4. LOOK_WS_MAX_CONN / LOOK_SSE_MAX_CONN, when set, answer 503 over the limit.
+# What holds in LOOK 2:
+#   1. No limit on the total of open connections, and no setting for one. The operating
+#      system's open-file limit is the limit, and the server raises its own soft limit to
+#      the hard limit at start. (LOOK 1 had LOOK_WS_MAX_CONN / LOOK_SSE_MAX_CONN.)
+#   2. One address may hold 1000 open WebSocket / SSE connections by default when the server
+#      faces the internet directly (no LOOK_TRUSTED_PROXY); over that the connection gets 429
+#      and the address is logged once. With no total limit this is what keeps one source from
+#      taking every file descriptor.
+#   3. At the open-file limit the server waits: a new connection stays in the listen queue
+#      and is taken when a place is free. The process stays up and does not spin.
+#   4. LOOK_HTTP_MAX_CONNS_IP, when set, counts every connection of an address, open
+#      WebSocket / SSE connections included, and replaces the default of 2.
 # Usage: connection_limit_test.sh <lk-fcgi>
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null' EXIT
@@ -24,67 +27,17 @@ route("WS", "/ws", function($ws) { ws::on($ws, "message", function($m) { ws::sen
 route("SSE", "/sse", function($sse) { sse::send($sse, "x") })
 route("GET", "/ok", fn() => response::text("alive"))
 LK
-cat > "$TMP/client.py" <<'PY'
-import socket, sys, time, os
-port, kind, limit = int(sys.argv[1]), sys.argv[2], int(sys.argv[3])
-WS = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
-SSE = b"GET /sse HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n"
-def open_one():
-    s = socket.socket(); s.settimeout(5); s.connect(("127.0.0.1", port)); s.sendall(WS if kind == "ws" else SSE)
-    head = b""
-    while b"\r\n\r\n" not in head:
-        d = s.recv(4096)
-        if not d: break
-        head += d
-    return s, head.split(b"\r\n")[0].decode(errors="replace")
-socks, first = [], ""
-for i in range(limit):
-    s, line = open_one(); socks.append(s)
-    if i == 0: first = line
-over = []
-for i in range(5):
-    try: s, line = open_one(); over.append(line.split(" ")[1] if " " in line else "?"); s.close()
-    except OSError as e: over.append("error")
-# the open ones still work
-works = "n/a"
-if kind == "ws":
-    s = socks[7]; m = os.urandom(4); p = b"ping"
-    s.sendall(bytes([0x81, 0x80 | len(p)]) + m + bytes(b ^ m[i % 4] for i, b in enumerate(p)))
-    buf = b""
-    try:
-        while b"echo:ping" not in buf:
-            d = s.recv(4096)
-            if not d: break
-            buf += d
-    except OSError: pass
-    works = "yes" if b"echo:ping" in buf else "no"
-# free two places, take them again
-socks[0].close(); socks[1].close(); time.sleep(1.0)
-again = []
-for i in range(2):
-    try: s, line = open_one(); again.append(line.split(" ")[1] if " " in line else "?"); socks.append(s)
-    except OSError: again.append("error")
-print("accepted=%d first=[%s] over=%s open-still-work=%s after-freeing=%s" % (limit, first.split(" ")[1] if " " in first else first, ",".join(over), works, ",".join(again)))
-PY
 fail=0
-for kind in ws sse; do
-    code=101; [ $kind = sse ] && code=200
-    ( cd "$TMP" && exec env LOOK_WS_MAX_CONN=40 LOOK_SSE_MAX_CONN=40 "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
-    out="$(python3 "$TMP/client.py" "$PORT" $kind 40 2>&1 | tail -1)"
-    alive="$(curl -s -m 3 "localhost:$PORT/ok")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    want="accepted=40 first=[$code] over=503,503,503,503,503 open-still-work=$([ $kind = ws ] && echo yes || echo n/a) after-freeing=$code,$code"
-    if [ "$out" = "$want" ] && [ "$alive" = "alive" ]; then echo "  OK   [$kind] LOOK_*_MAX_CONN=40: 40 accepted, the next 5 answered 503, the server kept answering, freed places taken again"
-    else echo "  FAIL [$kind] $out | server answers: [${alive:-nothing}] $(grep -m1 -o 'terminate called.*' "$TMP/log.txt" | cut -c1-70)"; fail=1; fi
-done
 cat > "$TMP/many.py" <<'PY'
 import socket, sys, time, os, collections
 port, kind, n, close_k = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 WS = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
 SSE = b"GET /sse HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n"
+SRCS = int(os.environ.get("SRCS", "1")); seq = [0]
 def start():
-    s = socket.socket(); s.settimeout(3); s.connect(("127.0.0.1", port)); s.sendall(WS if kind == "ws" else SSE); return s
+    s = socket.socket(); s.settimeout(3)
+    if SRCS > 1: s.bind(("127.0.0.%d" % (1 + seq[0] % SRCS), 0)); seq[0] += 1   # several client addresses
+    s.connect(("127.0.0.1", port)); s.sendall(WS if kind == "ws" else SSE); return s
 def head(s, t=3):
     s.settimeout(t); h = b""
     try:
@@ -124,15 +77,42 @@ srv() { ( cd "$TMP" && exec env "$@" "$FCGI" --mode http --port "$PORT" --worker
         for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done; }
 stop() { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""; }
 
-# 1. no default limit
+# 1. no limit on the total: 1500 connections from three addresses, no setting
 for kind in ws sse; do
     code=101; [ $kind = sse ] && code=200
     srv LOOK_X=1
-    out="$(python3 "$TMP/many.py" "$PORT" $kind 1500 0 2>&1 | head -1)"
+    out="$(SRCS=3 python3 "$TMP/many.py" "$PORT" $kind 1500 0 2>&1 | head -1)"
     stop
-    if [ "$out" = "opened: {'$code': 1500} | /ok while full: alive" ]; then echo "  OK   [$kind] 1500 connections open with no setting, the server answers"
+    if [ "$out" = "opened: {'$code': 1500} | /ok while full: alive" ]; then echo "  OK   [$kind] 1500 connections open from three addresses with no setting, the server answers"
     else echo "  FAIL [$kind] default: $out $(grep -m1 -o 'terminate called.*' "$TMP/log.txt" | cut -c1-70)"; fail=1; fi
 done
+
+# 1b. one address, no setting, no reverse proxy: a default limit of 1000 open WebSocket / SSE
+#     connections per address; the connection over it gets 429 and one line in the log.
+for kind in ws sse; do
+    code=101; [ $kind = sse ] && code=200
+    srv LOOK_X=1
+    out="$(python3 "$TMP/many.py" "$PORT" $kind 1005 0 2>&1 | head -1)"
+    logged="$(grep -c 'refused with 429: the address is at its limit of 1000' "$TMP/log.txt")"
+    stop
+    if [ "$out" = "opened: {'$code': 1000, '429': 5} | /ok while full: alive" ] && [ "$logged" = 1 ]; then echo "  OK   [$kind] one address: 1000 open, the next 5 answered 429, logged once, ordinary requests still answered"
+    else echo "  FAIL [$kind] default per-address limit: $out | log lines: $logged"; fail=1; fi
+done
+
+# 1c. behind a reverse proxy every connection comes from the proxy's address: no default limit
+srv LOOK_TRUSTED_PROXY=10.9.9.9
+out="$(python3 "$TMP/many.py" "$PORT" ws 1100 0 2>&1 | head -1)"
+stop
+if [ "$out" = "opened: {'101': 1100} | /ok while full: alive" ]; then echo "  OK   [ws] with LOOK_TRUSTED_PROXY set there is no default per-address limit (1100 open from one address)"
+else echo "  FAIL [ws] with a trusted proxy: $out"; fail=1; fi
+
+# 1d. the settings LOOK 1 had for a total limit are gone: they change nothing and the log says so
+srv LOOK_WS_MAX_CONN=40 LOOK_SSE_MAX_CONN=40
+out="$(python3 "$TMP/many.py" "$PORT" ws 60 0 2>&1 | head -1)"
+said="$(grep -c 'is set but is not used in LOOK 2' "$TMP/log.txt")"
+stop
+if [ "$out" = "opened: {'101': 60} | /ok while full: alive" ] && [ "$said" = 2 ]; then echo "  OK   LOOK_WS_MAX_CONN / LOOK_SSE_MAX_CONN are not used: 60 open with both set to 40, and the log says so"
+else echo "  FAIL removed settings: $out | log lines: $said"; fail=1; fi
 
 # 2. the open-file limit: wait, do not stop, do not spin
 if [ -r /proc/self/stat ]; then

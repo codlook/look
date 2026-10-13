@@ -38,9 +38,7 @@ class SseRegistry {
     std::shared_mutex mutex_;
     std::unordered_map<int, std::shared_ptr<SseConnection>> clients_;
 public:
-    // false: sınır dolu (LOOK_SSE_MAX_CONN). Fırlatmaz — çağıran bağlantıyı reddeder.
-    bool add(std::shared_ptr<SseConnection> conn);
-    bool full();
+    void add(std::shared_ptr<SseConnection> conn);
     void remove(int fd);
     size_t count();
 };
