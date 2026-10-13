@@ -77,6 +77,21 @@ else:
     check(one(s, b"AUTH PLAIN " + base64.b64encode(b"\0u@localhost\0wrong") + b"\r\n").startswith("535"), "[SMTP AUTH] a wrong password is refused")
     check(one(s, b"AUTH PLAIN " + cred + b"\r\n").startswith("235"), "[SMTP AUTH] the right password is accepted")
     check(one(s, b"MAIL FROM:<u@localhost>\r\n").startswith("250"), "[SMTP AUTH] MAIL after AUTH is accepted")
+    # AUTH PLAIN/LOGIN only encodes the password. Without encryption it is offered to this
+    # machine only: a connection that arrives from any other address must not be offered AUTH
+    # and must be refused, with the right password too (1.0.18 accepted it from anywhere).
+    lan = None
+    try:
+        u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.connect(("192.0.2.1", 9)); lan = u.getsockname()[0]; u.close()
+    except Exception: pass
+    if lan and not lan.startswith("127."):
+        r2 = socket.create_connection((lan, subport), timeout=5); rd(r2); r2.sendall(b"EHLO t\r\n"); e2 = rd(r2)
+        check("AUTH" not in e2, "[SMTP AUTH] not advertised to a connection from another address (%s)" % lan, e2)
+        check(one(r2, b"AUTH PLAIN " + cred + b"\r\n").startswith("530"), "[SMTP AUTH] refused without encryption from another address, with the right password too")
+        check(one(r2, b"MAIL FROM:<u@localhost>\r\n").startswith("530"), "[SMTP AUTH] and that connection cannot send")
+        r2.close()
+    else:
+        check(False, "[SMTP AUTH] this machine has no non-loopback address, the refusal cannot be tested", lan)
 s.close()
 
 # ---- IMAP
