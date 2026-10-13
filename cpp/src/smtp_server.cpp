@@ -760,6 +760,12 @@ private:
     }
 };
 
+// Bağlantı aynı makineden mi? remote_ip getpeername'den gelir; IPv4-eşlemeli IPv6
+// (::ffff:127.0.0.1) orada IPv4'e çevrilmiştir. 127.0.0.0/8 ve ::1.
+static bool smtp_is_loopback(const std::string& ip) {
+    return ip.rfind("127.", 0) == 0 || ip == "::1";
+}
+
 // ── SmtpServer::Impl ──────────────────────────────────────────────────────────
 
 // ── TLS server context (shared, created once) ─────────────────────────────────
@@ -1056,7 +1062,10 @@ struct SmtpServer::Impl {
         // yolu TLS ile uyumsuz): TLS deneyen her gönderen postasını teslim edemiyordu. İlan
         // olmayınca gönderen düz metinle teslim eder. Sertifika tanımlıysa AUTH de ilan edilmez:
         // şifreleme olmadan parola kabul edilmez (aşağıda 530), yani başarılamayacak bir şey sunulmaz.
-        if (sess->submission && !ssl_ctx)
+        // AUTH PLAIN/LOGIN parolayı yalnız base64 ile KODLAR, şifrelemez; bu sunucuda TLS de yok.
+        // Bu yüzden AUTH yalnız aynı makineden gelen bağlantıya sunulur (1.0.19): ağdan parola
+        // açık gitmez. Adres getpeername'den gelir (on_accept), hiçbir başlığa güvenilmez.
+        if (sess->submission && !ssl_ctx && smtp_is_loopback(sess->msg.remote_ip))
             r += "250-AUTH PLAIN LOGIN\r\n";
         r += "250 OK\r\n";
         sess->state = SmtpState::READY;
@@ -1081,6 +1090,10 @@ struct SmtpServer::Impl {
             }
             if (!sess->tls_active && ssl_ctx) {
                 return error_reply(fd, sess, "530 5.7.0 Encryption is required for AUTH and STARTTLS is not available on this server\r\n");
+            }
+            if (!sess->tls_active && !smtp_is_loopback(sess->msg.remote_ip)) {
+                // Parola okunmadan reddedilir (satırdaki base64 çözülmez).
+                return error_reply(fd, sess, "530 5.7.0 AUTH without encryption is accepted from this machine only (127.0.0.1 / ::1)\r\n");
             }
             // Extract mechanism and optional initial response
             // Line format: "AUTH PLAIN [base64]" or "AUTH PLAIN"
@@ -1350,6 +1363,12 @@ SmtpServer::SmtpServer(int port_smtp, int port_sub, int port_smtps,
     impl_->loop    = EventLoop::create();
     impl_->handler = std::move(handler);
     impl_->ssl_ctx = make_smtp_ssl_ctx(); // null if LOOK_SMTP_CERT/KEY not set
+    if (port_sub > 0 && !impl_->ssl_ctx) {
+        Logger::instance().log(LogLevel::LOG_WARN, "smtp",
+            "The submission port has no encryption: AUTH is offered and accepted only for connections "
+            "from this machine (127.0.0.1 / ::1). A client on another host, or in another container, "
+            "is refused — run it in the same container, or put a relay with TLS in front.");
+    }
     if (impl_->ssl_ctx) {
         Logger::instance().log(LogLevel::LOG_WARN, "smtp",
             "LOOK_SMTP_CERT is set, but this version does not offer STARTTLS on the SMTP server: "
