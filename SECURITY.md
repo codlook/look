@@ -16,6 +16,29 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-13 — `STARTTLS` on the SMTP server never completed a session (1.0.18)
+
+**Affected:** every release up to and including 1.0.17, for applications that run the
+built-in SMTP server with a certificate (`LOOK_SMTP_CERT` / `LOOK_SMTP_KEY`).
+**Fixed in:** 1.0.18, by no longer offering it.
+
+With a certificate set the server advertised `STARTTLS`. The handshake completed and then
+the session got no replies at all: a sender that uses TLS when it is offered — most do —
+waited, timed out and could not deliver, and such a sender retries for days before it
+reports the mail as undeliverable instead of falling back to plain text. Measured on the
+published 1.0.16 and 1.0.17. The same handshake ran on a delivery worker with no time
+limit, so as many silent `STARTTLS` clients as there are workers stopped all delivery.
+
+From 1.0.18 the SMTP server does not advertise `STARTTLS` and answers the command with
+`502`. Senders deliver in plain text and nothing is lost; no client can hold a worker in a
+handshake. On the submission port, with a certificate set, `AUTH` is not advertised and is
+refused: passwords are not accepted without encryption. The server logs a warning at start
+when a certificate is set. IMAP is not affected: its `STARTTLS` and implicit-TLS port work
+and are covered by a test now.
+
+**What to do:** upgrade. If you need encryption in transit for SMTP, or authenticated
+submission, put a mail relay with TLS in front of the built-in server.
+
 ### 2026-10-12 — The SMTP server lost mail sent with pipelining (1.0.17)
 
 **Affected:** every release up to and including 1.0.16, for applications that run the
