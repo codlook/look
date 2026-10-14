@@ -16,6 +16,35 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-14 — A few open connections made every other client wait (1.0.20)
+
+**Affected:** every release up to and including 1.0.19, in `--mode http` with no reverse proxy
+in front. **Fixed in:** 1.0.20 on Linux; see below for Windows.
+
+The default dispatch gave each open connection a worker until the connection sent a request
+or timed out (30 s). As many open connections as there are workers made every other client
+wait: connections that sent nothing, one byte or half a request — and also connections that
+sent one request and then stayed open, which is what a browser does. Measured on the
+published 1.0.19 with 8 workers: a request from another address got no answer for 12 s in
+all five cases, and with 8 idle browser-like connections it was answered after 30.5 s. So
+this was not only an attack: a handful of ordinary visitors could stall a site that faced
+the internet directly. Behind a reverse proxy (nginx, Apache) it did not show, because the
+proxy holds the client connections.
+
+From 1.0.20 fibers are the default dispatch on Linux: a connection that waits holds no
+worker. The same five cases are answered at once. Measured before the release: every test
+of the repository passes in both modes, the LookPress smoke test gives the same result in
+both, and a three-hour load test (about 400 million requests) shows the same memory and
+error behaviour in both.
+
+**Windows** has no fiber dispatch and keeps the old model. On Windows — and on Linux with
+`LOOK_FIBER_DISPATCH=0` — the server logs a warning at start when no reverse proxy is
+configured.
+
+**What to do:** upgrade. To go back to the old model on Linux, set `LOOK_FIBER_DISPATCH=0`
+(LOOK 2 will not have that switch). On Windows, put a reverse proxy in front and set
+`LOOK_TRUSTED_PROXY`, or set `LOOK_HTTP_MAX_CONNS_IP`.
+
 ### 2026-10-13 — SMTP `AUTH` sent the password in clear text from any address (1.0.19)
 
 **Affected:** every release up to and including 1.0.18, for applications that run the

@@ -208,6 +208,13 @@ jobs:
           cd cpp
           bash tests/callback_error_log_test.sh ./build/lk-fcgi
 
+      # Open connections — idle, slow, or kept open by a browser — must not make other clients
+      # wait (up to 1.0.19 a few of them stalled every other client for 30 s).
+      - name: Open connections do not make other clients wait
+        run: |
+          cd cpp
+          bash tests/idle_connections_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
