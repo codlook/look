@@ -214,6 +214,7 @@ jobs:
         run: |
           cd cpp
           bash tests/idle_connections_test.sh ./build/lk-fcgi
+          bash tests/fiber_stack_depth_test.sh ./build/lk-fcgi
 
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.

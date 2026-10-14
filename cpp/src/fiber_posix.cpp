@@ -118,7 +118,7 @@ Fiber::Fiber(Fn fn, size_t stack_size)
     // Allocate stack with mmap (necessary for mprotect)
     void* mem = ::mmap(nullptr, total_alloc,
                        PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
                        -1, 0);
     if (mem == MAP_FAILED)
         throw std::runtime_error("fiber: mmap stack failed: " +
