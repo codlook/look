@@ -75,7 +75,11 @@ public:
     using Fn = std::function<void()>;
 
     // Stack size constants
-    static constexpr size_t STACK_DEFAULT = 128 * 1024;   //  128 KB
+    // 8 MB, bir iş parçacığı yığını kadar (1.0.20). 128 KB'tı: yorumlayıcıda ~100 seviyelik
+    // özyineleme fiber yığınını taşırıp BÜTÜN süreci çökertiyordu (ölçüldü), derinlik koruması
+    // (MAX_CALL_DEPTH) ateşlenmeden. Yalnız adres alanı ayrılır (MAP_NORESERVE): bellek, kullanılan
+    // sayfalar kadar tüketilir — boşta bekleyen bağlantının fiber'ı birkaç sayfa kullanır.
+    static constexpr size_t STACK_DEFAULT = 8 * 1024 * 1024;   //  8 MB (adres alanı)
     static constexpr size_t STACK_LARGE   = 512 * 1024;   //  512 KB
     static constexpr size_t STACK_MIN     =  64 * 1024;   //   64 KB
     static constexpr size_t GUARD_SIZE    =   4 * 1024;   //    4 KB (1 page)

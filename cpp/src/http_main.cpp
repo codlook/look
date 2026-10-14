@@ -969,6 +969,18 @@ bool look_http_engine_ensure(const std::string& script_path_str, std::string& er
 
 // ── WebContext from HttpRequest ───────────────────────────────────────────────
 
+// Dağıtım modeli (1.0.20): Linux'ta VARSAYILAN fiber — bağlantı beklerken işçiyi tutmaz.
+// Eski model (bağlantı başına bir işçi) yalnız LOOK_FIBER_DISPATCH=0 ile seçilir. O modelde
+// işçi sayısı kadar açık bağlantı (boşta bekleyen tarayıcı bağlantıları dahil) sunucuyu
+// zaman aşımı dolana dek kilitliyordu. Linux dışında fiber dağıtımı yok: yalnız "1" açar.
+static bool look_fiber_dispatch_on(const char* v) {
+#ifdef __linux__
+    return !(v && std::string(v) == "0");
+#else
+    return v && std::string(v) == "1";
+#endif
+}
+
 static look::WebContext make_web_ctx(const look::HttpRequest& req) {
     look::WebContext ctx;
     ctx.method       = req.method;
@@ -1300,7 +1312,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // thread_local cache and copy->output() would leak one fiber's output into another —
         // there we keep rebuilding per request with print capturing the fiber-local output.
         static const bool g_use_fiber = [](){ const char* v = std::getenv("LOOK_FIBER_DISPATCH");
-                                              return v && std::string(v) == "1"; }();
+                                              return look_fiber_dispatch_on(v); }();
         static thread_local std::vector<look::BuiltinFn> tl_req_builtins;
         static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;
         // Modül sarmalayıcıları (request::, response::, session:: …) kuruldukları andaki `web`
@@ -1751,7 +1763,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // when the fiber tries to acquire its own connection (deadlock).
         static const bool use_fiber = []() {
             const char* v = std::getenv("LOOK_FIBER_DISPATCH");
-            return v && std::string(v) == "1";
+            return look_fiber_dispatch_on(v);
         }();
 
         t_copy_start = std::chrono::steady_clock::now();

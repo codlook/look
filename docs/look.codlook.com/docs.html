@@ -2579,13 +2579,12 @@ LOOK_PARALLEL_LIMIT=50</code></pre>
 
   <p class="lead">look-fcgi runs fully concurrently. Each HTTP request is handled on a separate worker thread; your LOOK code never changes. For more advanced concurrency, use <a href="#parallel-channel">parallel() + channel()</a>.</p>
 
-  <h3>Two dispatch modes — worker pool (default) or fibers</h3>
-  <p>Besides the worker pool, LOOK ships a <strong>fiber</strong> runtime: stackful green threads
-  parked on <code>epoll</code> (the Go netpoller model). It is <strong>opt-in</strong>:</p>
-  <pre><code>LOOK_FIBER_DISPATCH=1 lk-fcgi --mode http --port 9000 --workers 4</code></pre>
-  <p>Which one to use is a <strong>workload</strong> question, and the answer is measured, not guessed:</p>
+  <h3>Dispatch — fibers (default on Linux) or a worker per connection</h3>
+  <p>On Linux, connections are served by <strong>fibers</strong>: stackful green threads parked on <code>epoll</code> (the Go netpoller model). A connection that waits — idle, slow, or kept open by a browser between requests — holds no worker. This is the default from 1.0.20. The older model gives each open connection a worker until it sends a request or times out; with no reverse proxy in front, as many open connections as there are workers make every other client wait. It is still selectable on Linux, and it is the only model on Windows:</p>
+  <pre><code>LOOK_FIBER_DISPATCH=0 lk-fcgi --mode http --port 9000 --workers 4   # worker per connection (LOOK 1 only)</code></pre>
+  <p>Throughput measured before 1.0.20 (the worker-per-connection model is somewhat faster on short routes; fibers are far better when requests wait on I/O, and they keep serving everyone when connections stay open):</p>
   <table>
-    <tr><th>Workload</th><th>Worker pool (default)</th><th>Fibers</th><th>Use</th></tr>
+    <tr><th>Workload</th><th>Worker per connection</th><th>Fibers</th><th>Use</th></tr>
     <tr><td>Fast route, no external I/O (c=50)</td><td><strong>11,506 req/s</strong>, p95 6 ms</td><td>9,724 req/s, p95 8 ms</td><td>pool (~15 % faster, better tail)</td></tr>
     <tr><td>Fast route (c=200)</td><td><strong>9,210 req/s</strong>, p95 28 ms</td><td>8,097 req/s, p95 31 ms</td><td>pool</td></tr>
     <tr><td>Slow external API (0.5 s), 1 worker, 10 concurrent</td><td>3.62 req/s</td><td><strong>13.19 req/s</strong></td><td><strong>fibers — 3.6×</strong></td></tr>
@@ -4520,7 +4519,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
     <tr><td><code>LOOK_BYTECODE</code></td><td><code>1</code></td><td>Bytecode VM on (default). <code>0</code> forces the tree-walk interpreter.</td></tr>
-    <tr><td><code>LOOK_FIBER_DISPATCH</code></td><td><em>off</em></td><td><code>1</code> switches from the worker pool to the fiber runtime (see <a href="#concurrent">Concurrent Runtime</a>).</td></tr>
+    <tr><td><code>LOOK_FIBER_DISPATCH</code></td><td><em>on (Linux)</em></td><td><code>0</code> selects a worker per connection instead of fibers (see <a href="#concurrent">Concurrent Runtime</a>). Windows always uses a worker per connection. Not in LOOK 2.</td></tr>
     <tr><td><code>LOOK_WARN_UNDEF</code></td><td><em>off</em></td><td>Undefined variables are a hard error by default. <code>1</code> restores lenient mode with a warning instead.</td></tr>
   </table>
 

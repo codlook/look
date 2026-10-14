@@ -2589,18 +2589,17 @@ LOOK offers concurrency at two levels: at the runtime level (each HTTP request o
 
 look-fcgi runs fully concurrently. Each HTTP request is handled on a separate worker thread; your LOOK code never changes. For more advanced concurrency, use [parallel() + channel()](#parallel-channel).
 
-### Two dispatch modes — worker pool (default) or fibers
+### Dispatch — fibers (default on Linux) or a worker per connection
 
-Besides the worker pool, LOOK ships a **fiber** runtime: stackful green threads
- parked on `epoll` (the Go netpoller model). It is **opt-in**:
+On Linux, connections are served by **fibers**: stackful green threads parked on `epoll` (the Go netpoller model). A connection that waits — idle, slow, or kept open by a browser between requests — holds no worker. This is the default from 1.0.20. The older model gives each open connection a worker until it sends a request or times out; with no reverse proxy in front, as many open connections as there are workers make every other client wait. It is still selectable on Linux, and it is the only model on Windows:
 
 ```lk
-LOOK_FIBER_DISPATCH=1 lk-fcgi --mode http --port 9000 --workers 4
+LOOK_FIBER_DISPATCH=0 lk-fcgi --mode http --port 9000 --workers 4   # worker per connection; fibers are the default on Linux from 1.0.20
 ```
 
-Which one to use is a **workload** question, and the answer is measured, not guessed:
+Throughput measured before 1.0.20 (the worker-per-connection model is somewhat faster on short routes; fibers are far better when requests wait on I/O, and they keep serving everyone when connections stay open):
 
-| Workload | Worker pool (default) | Fibers | Use |
+| Workload | Worker per connection | Fibers | Use |
 | --- | --- | --- | --- |
 | Fast route, no external I/O (c=50) | **11,506 req/s**, p95 6 ms | 9,724 req/s, p95 8 ms | pool (~15 % faster, better tail) |
 | Fast route (c=200) | **9,210 req/s**, p95 28 ms | 8,097 req/s, p95 31 ms | pool |
@@ -4537,7 +4536,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `LOOK_BYTECODE` | `1` | Bytecode VM on (default). `0` forces the tree-walk interpreter. |
-| `LOOK_FIBER_DISPATCH` | *off* | `1` switches from the worker pool to the fiber runtime (see [Concurrent Runtime](#concurrent)). |
+| `LOOK_FIBER_DISPATCH` | *on (Linux)* | `0` selects a worker per connection instead of fibers (see [Concurrent Runtime](#concurrent)). Windows always uses a worker per connection. Not in LOOK 2. |
 | `LOOK_WARN_UNDEF` | *off* | Undefined variables are a hard error by default. `1` restores lenient mode with a warning instead. |
 
 > **systemd example:**

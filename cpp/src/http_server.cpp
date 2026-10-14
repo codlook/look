@@ -35,6 +35,17 @@ static void raise_fd_limit() {
 #endif
 }
 
+// Dağıtım modeli (1.0.20): Linux'ta VARSAYILAN fiber — bağlantı beklerken işçiyi tutmaz.
+// "0" = eski model (bağlantı başına işçi). Linux dışında fiber dağıtımı yok.
+static bool fiber_dispatch_on() {
+#ifdef __linux__
+    const char* v = std::getenv("LOOK_FIBER_DISPATCH");
+    return !(v && std::string(v) == "0");
+#else
+    return false;
+#endif
+}
+
 // accept tanıtıcı/bellek tükendiği için başarısızsa bağlantı kuyrukta bekler ve accept hemen
 // aynı hatayı yeniden verir: beklemeden dönmek çekirdeği %100 yakar. Kısa bekle, yeniden dene;
 // açık bağlantılardan biri kapanınca kabul kendiliğinden sürer.
@@ -998,6 +1009,20 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
             std::string(gone) + " is set but is not used in LOOK 2: there is no limit on the total of open connections. "
             "Limit connections per address with LOOK_HTTP_MAX_CONNS_IP.");
     }
+    if (!fiber_dispatch_on()) {
+        // Bağlantı başına işçi modeli (LOOK_FIBER_DISPATCH=0 ya da fiber olmayan platform, ör.
+        // Windows): açık bağlantı bir istek gönderene ya da zaman aşımına dek işçiyi tutar. Önünde
+        // vekil yoksa işçi sayısı kadar açık bağlantı (boşta tarayıcı bağlantıları dahil) herkesi
+        // bekletir (ölçüldü: 8 işçi, 8 bağlantı → 30 sn). Sessiz kalmasın.
+        const char* tp = std::getenv("LOOK_TRUSTED_PROXY");
+        if (!(tp && *tp))
+            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+                "Each open connection holds a worker until it sends a request or times out "
+                "(worker-per-connection dispatch: LOOK_FIBER_DISPATCH=0, or a platform without fibers). "
+                "With no reverse proxy in front, as many open connections as there are workers - idle "
+                "browser connections included - make every other client wait. Put a reverse proxy in "
+                "front and set LOOK_TRUSTED_PROXY, or set LOOK_HTTP_MAX_CONNS_IP.");
+    }
     if (::listen(srv, 16384) < 0)
         throw std::runtime_error("listen() failed");
 
@@ -1022,14 +1047,7 @@ void HttpServer::run() {
     //   connections evenly across all workers (vs old model: single shared fd
     //   → one worker grabs everything → only 1 CPU active).
     //   Worker loop: poll → burst accept → spawn fibers → run_until_complete()
-    static const bool fiber_burst = []() {
-#ifdef __linux__
-        const char* v = std::getenv("LOOK_FIBER_DISPATCH");
-        return v && std::string(v) == "1";
-#else
-        return false;
-#endif
-    }();
+    static const bool fiber_burst = fiber_dispatch_on();
 
 #ifdef __linux__
     // SO_REUSEPORT mode: per-worker sockets replace the shared fd.
