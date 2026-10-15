@@ -4,8 +4,76 @@
 #include <stdexcept>
 #include <cstdio>
 #include <string>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
+#include <set>
+#include <map>
+#include <memory>
+#include <cctype>
 
 namespace look {
+
+// ── Yazma kapısı: aynı dosyaya yazan bağlantılar bu süreçte SIRAYLA yazar ─────
+// SQLite tek yazıcıya izin verir; ötekiler busy_timeout içinde aralıklı uyuyup yeniden dener.
+// Bu deneme ADİL DEĞİL: 20 eşzamanlı yazıcıda bazıları sırasını sürekli kaçırıp süreyi aşıyor
+// ve "database is locked" (kod 5) ile 500 dönüyordu (ölçüldü: 2 sn'de 60 sn'de 27 hata, 5 sn'de
+// de 3 — en uzun bekleme 5,5 sn). Bu kapı süreç içindeki yazıcıları bilet sırasıyla kuyruğa
+// sokar: kimse sırasını kaybetmez. Okumalar (WAL) kapıdan geçmez. Başka programların aynı
+// dosyaya yazmaları için SQLite'ın kendi beklemesi (busy_timeout) yerinde kalır.
+// Açık işlem (BEGIN ... COMMIT/ROLLBACK) kapıyı işlem bitene dek tutar.
+struct SqliteWriteGate {
+    std::mutex              m;
+    std::condition_variable cv;
+    uint64_t                next = 0, serving = 0;
+    std::set<uint64_t>      abandoned;   // süresi dolup vazgeçen biletler — sıra atlanır
+    bool acquire(std::chrono::milliseconds limit) {
+        std::unique_lock<std::mutex> lk(m);
+        uint64_t t = next++;
+        if (cv.wait_for(lk, limit, [&] { return serving == t; })) return true;
+        abandoned.insert(t);
+        return false;
+    }
+    void release() {
+        std::lock_guard<std::mutex> lk(m);
+        ++serving;
+        while (abandoned.erase(serving)) ++serving;
+        cv.notify_all();
+    }
+};
+static std::shared_ptr<SqliteWriteGate> sqlite_gate_for(const std::string& path) {
+    static std::mutex mu;
+    static std::map<std::string, std::shared_ptr<SqliteWriteGate>> gates;
+    std::lock_guard<std::mutex> lk(mu);
+    auto& g = gates[path];
+    if (!g) g = std::make_shared<SqliteWriteGate>();
+    return g;
+}
+static bool sqlite_starts_begin(const std::string& sql) {
+    size_t i = 0;
+    while (i < sql.size() && std::isspace((unsigned char)sql[i])) ++i;
+    static const char kw[] = "BEGIN";
+    for (int k = 0; k < 5; ++k, ++i)
+        if (i >= sql.size() || std::toupper((unsigned char)sql[i]) != kw[k]) return false;
+    return true;
+}
+static constexpr std::chrono::milliseconds SQLITE_GATE_LIMIT{10000};
+
+void SqliteClient::gate_before(sqlite3_stmt* stmt, const std::string& sql) {
+    if (!gate_ || gate_held_) return;
+    if (sqlite3_stmt_readonly(stmt) && !sqlite_starts_begin(sql)) return;
+    if (!gate_->acquire(SQLITE_GATE_LIMIT))
+        throw std::runtime_error("sqlite: step error: database is locked: waited 10 s for the other "
+                                 "writers of this database in this process");
+    gate_held_ = true;
+}
+void SqliteClient::gate_after() {
+    // Açık işlem sürüyorsa (autocommit kapalı) kapı tutulur; işlem bitince bırakılır.
+    if (gate_held_ && (!db_ || sqlite3_get_autocommit(db_))) {
+        gate_held_ = false;
+        gate_->release();
+    }
+}
 
 // double formatı → look/format.h look_format_double (dilin tek formatı, NaN/Inf dahil)
 
@@ -45,15 +113,15 @@ void SqliteClient::open(const std::string& path) {
         db_ = nullptr;
         throw std::runtime_error("sqlite: cannot open database '" + path + "': " + err);
     }
+    gate_ = (path == ":memory:") ? nullptr : sqlite_gate_for(path);   // ":memory:" her açılışta ayrı veritabanı
     // D-01: busy_timeout İLK İŞ — eşzamanlı yazıcı BUSY'de anında hata almak yerine bekler.
     // WAL tek yazıcıya izin verir; busy_timeout olmadan pool'daki ikinci bağlantı "database
-    // is locked" ile hemen döner. İSTEK YOLU (db::) için 2000 ms — agresif: 32 worker'ın
-    // 5 sn donup upstream timeout/havuz tükenmesi cascade'i yaratmasındansa hızlı geri
-    // basınç yeğ. (jobs:: arka plan olduğu için kendi 5000'ini korur.) İmplicit-transaction
-    // INSERT'ler bununla kapanır; explicit BEGIN için begin_stmt() "BEGIN IMMEDIATE" verir —
-    // SQLITE_BUSY_SNAPSHOT busy_timeout ile retry EDİLEMEZ.
-    // TODO: DSN ?busy_timeout=<ms> ile ayarlanabilir yapılabilir.
-    sqlite3_busy_timeout(db_, 2000);
+    // is locked" ile hemen döner. Bu süreçteki yazıcılar zaten yazma kapısında sıraya girer
+    // (yukarıda); busy_timeout artık yalnız BAŞKA bir programın aynı dosyaya yazması için
+    // beklenir — 5000 ms, jobs:: ile aynı. İmplicit-transaction INSERT'ler bununla kapanır;
+    // explicit BEGIN için begin_stmt() "BEGIN IMMEDIATE" verir — SQLITE_BUSY_SNAPSHOT
+    // busy_timeout ile retry EDİLEMEZ.
+    sqlite3_busy_timeout(db_, 5000);
     // WAL modu — okuma/yazma çakışmasını azaltır
     sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
     // NOT: synchronous varsayılan (FULL) BIRAKILDI. synchronous=NORMAL dayanıklılığı
@@ -65,6 +133,7 @@ void SqliteClient::open(const std::string& path) {
 }
 
 void SqliteClient::close() {
+    if (gate_held_) { gate_held_ = false; gate_->release(); }   // açık işlem kapanışta geri alınır
     if (db_) {
         sqlite3_close(db_);
         db_ = nullptr;
@@ -79,6 +148,9 @@ std::vector<DbRow> SqliteClient::query(const std::string& sql) {
     if (rc != SQLITE_OK) {
         throw std::runtime_error(std::string("sqlite: ") + sqlite3_errmsg(db_) + " — SQL: " + sql);
     }
+
+    try { gate_before(stmt, sql); } catch (...) { sqlite3_finalize(stmt); throw; }
+    struct GateRelease { SqliteClient* c; ~GateRelease() { c->gate_after(); } } gate_release{this};
 
     std::vector<DbRow> rows;
     int col_count = sqlite3_column_count(stmt);
@@ -137,7 +209,7 @@ std::vector<DbRow> SqliteClient::query(const std::string& sql) {
     sqlite3_finalize(stmt);
 
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-        throw std::runtime_error(std::string("sqlite: step error: ") + sqlite3_errmsg(db_));
+        throw std::runtime_error(std::string("sqlite: step error: ") + sqlite3_errmsg(db_) + " (code " + std::to_string(sqlite3_extended_errcode(db_)) + ")");
     }
 
     // INSERT/UPDATE/DELETE için istatistikleri güncelle
@@ -179,6 +251,9 @@ std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vect
         }
     }
 
+    try { gate_before(stmt, sql); } catch (...) { sqlite3_finalize(stmt); throw; }
+    struct GateRelease { SqliteClient* c; ~GateRelease() { c->gate_after(); } } gate_release{this};
+
     std::vector<DbRow> rows;
     int col_count = sqlite3_column_count(stmt);
 
@@ -216,7 +291,7 @@ std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vect
     // NOT NULL/FK/CHECK sessizce yutuluyordu, veri-butunlugu tuzagi). Artik query() ile
     // ayni sozlesme: fail-loud.
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-        throw std::runtime_error(std::string("sqlite: step error: ") + sqlite3_errmsg(db_));
+        throw std::runtime_error(std::string("sqlite: step error: ") + sqlite3_errmsg(db_) + " (code " + std::to_string(sqlite3_extended_errcode(db_)) + ")");
     }
 
     if (rows.empty()) {

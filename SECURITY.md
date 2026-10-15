@@ -16,6 +16,29 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-15 — Concurrent SQLite writes failed with "database is locked" (1.0.21)
+
+**Affected:** every release up to and including 1.0.20, for applications that write to a
+SQLite database (`sqlite://`) from several requests at once. **Fixed in:** 1.0.21.
+
+SQLite lets one connection write at a time. The others sleep and retry until a timeout
+(2 seconds for `db::` connections), and that retry is not fair: under steady concurrent writes
+some requests kept losing their turn, waited past the timeout and failed with
+`database is locked` — a 500, and the row was not written. Measured on the published 1.0.20
+with 20 concurrent writers: 21 failed writes in 40 seconds, writes waiting up to 4 seconds;
+in a test that also runs transactions and rollbacks, 10–11 failed requests in every run and
+the same number of rows missing. Reads were not affected.
+
+Writers of one database in one process now queue in arrival order and take their turn one
+after another; reads do not queue. The same load gives no failed request, and the longest
+write waits 0.3 seconds instead of 4. A writer that waits more than 10 seconds for its turn
+gets the error, so a transaction that is never committed cannot block the others forever.
+For another program writing the same file, SQLite's own wait now lasts 5 seconds (was 2).
+The error message carries SQLite's extended result code, for example `(code 5)`.
+
+**What to do:** upgrade. Rows that an application believed it wrote while it showed a 500
+were not written.
+
 ### 2026-10-14 — A few open connections made every other client wait (1.0.20)
 
 **Affected:** every release up to and including 1.0.19, in `--mode http` with no reverse proxy

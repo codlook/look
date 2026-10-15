@@ -3,9 +3,11 @@
 #include "look/db_connection.h"
 #include <string>
 #include <stdexcept>
+#include <memory>
 
 // Forward declare — sqlite3.h'ı include etmiyoruz, header kirliliği önlemek için
 struct sqlite3;
+struct sqlite3_stmt;
 
 namespace look {
 
@@ -38,6 +40,12 @@ private:
     sqlite3* db_             = nullptr;
     int64_t  last_insert_id_ = 0;
     int64_t  affected_rows_  = 0;
+
+    // Aynı dosyaya yazan bağlantılar bu süreçte SIRAYLA (ilk gelen ilk) yazar; bkz. .cpp.
+    std::shared_ptr<struct SqliteWriteGate> gate_;
+    bool gate_held_ = false;
+    void gate_before(::sqlite3_stmt* stmt, const std::string& sql);
+    void gate_after();
 };
 
 } // namespace look

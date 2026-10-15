@@ -435,6 +435,22 @@ jobs:
           bash tests/idle_connections_test.sh ./build/lk-fcgi
           bash tests/fiber_stack_depth_test.sh ./build/lk-fcgi
 
+      # Concurrent writers to one SQLite database: until 1.0.20 some of them lost their turn,
+      # waited past the busy timeout and got a 500 "database is locked" (the row was not written).
+      - name: Concurrent SQLite writers are not refused
+        run: |
+          cd cpp
+          bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
+          LOOK_FIBER_DISPATCH=0 bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
+
+      # With fibers a request started while another one was suspended on the same thread
+      # counted as nested and never returned its DB connection: the pool ran out and
+      # concurrent requests hung without a response.
+      - name: Requests on fibers return their DB connection
+        run: |
+          cd cpp
+          bash tests/fiber_pool_release_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
