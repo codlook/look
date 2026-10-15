@@ -441,6 +441,13 @@ jobs:
         run: |
           cd cpp
           bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
+
+      # With fibers one thread runs many requests and switches between them while one waits.
+      # Per-request data must never reach another request across such a switch.
+      - name: Suspended requests keep their own data
+        run: |
+          cd cpp
+          bash tests/fiber_request_isolation_test.sh ./build/lk-fcgi
           LOOK_FIBER_DISPATCH=0 bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
 
       # With fibers a request started while another one was suspended on the same thread
