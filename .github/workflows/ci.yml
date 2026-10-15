@@ -223,6 +223,13 @@ jobs:
           cd cpp
           bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
 
+      # With fibers one thread runs many requests and switches between them while one waits.
+      # Per-request data must never reach another request across such a switch.
+      - name: Suspended requests keep their own data
+        run: |
+          cd cpp
+          bash tests/fiber_request_isolation_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
