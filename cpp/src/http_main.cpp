@@ -1207,18 +1207,35 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     // durumu korunur: builtin tablosu yerel kurulur (önbelleğe dokunulmaz), veritabanı
     // bağlantıları dıştakinden kullanılır (yeniden alınmaz/bırakılmaz — havuzu tüketip
     // kilitlenmesin), çıkışta kopyanın çıktısı ve bağlamı dış isteğe geri bağlanır.
-    struct DepthGuard {
-        std::function<void()> restore;
-        DepthGuard() { ++t_dispatch_depth; }
-        ~DepthGuard() { --t_dispatch_depth; if (restore) restore(); }
-    } depth_guard;
-    const bool nested = t_dispatch_depth > 1;
+    // Fiber modunda derinlik ve dış bağlam FIBER'a aittir: bir iş parçacığı birçok isteği
+    // fiber olarak sırayla askıya alıp sürdürür; thread_local sayaç askıdaki başka isteği
+    // "dış istek" sanıyordu (bkz. FiberLocal::dispatch_depth).
     static thread_local look::WebContext*   t_cur_web = nullptr;
     static thread_local std::ostringstream* t_cur_out = nullptr;
-    look::WebContext*   const outer_web = t_cur_web;
-    std::ostringstream* const outer_out = t_cur_out;
-    t_cur_web = &web; t_cur_out = &output;
-    struct CurGuard { look::WebContext* w; std::ostringstream* o; ~CurGuard() { t_cur_web = w; t_cur_out = o; } } cur_guard{outer_web, outer_out};
+    look::Fiber* const cur_fiber = look::Fiber::current();
+    int&   depth   = cur_fiber ? cur_fiber->local.dispatch_depth : t_dispatch_depth;
+    void*  thr_web = t_cur_web;
+    void*  thr_out = t_cur_out;
+    void*& cur_web = cur_fiber ? cur_fiber->local.dispatch_web : thr_web;
+    void*& cur_out = cur_fiber ? cur_fiber->local.dispatch_out : thr_out;
+    struct DepthGuard {
+        int& d;
+        std::function<void()> restore;
+        explicit DepthGuard(int& x) : d(x) { ++d; }
+        ~DepthGuard() { --d; if (restore) restore(); }
+    } depth_guard(depth);
+    const bool nested = depth > 1;
+    look::WebContext*   const outer_web = static_cast<look::WebContext*>(cur_web);
+    std::ostringstream* const outer_out = static_cast<std::ostringstream*>(cur_out);
+    cur_web = &web; cur_out = &output;
+    if (!cur_fiber) { t_cur_web = &web; t_cur_out = &output; }
+    struct CurGuard {
+        void*& w; void*& o; void* ow; void* oo; bool thr;
+        ~CurGuard() {
+            w = ow; o = oo;
+            if (thr) { t_cur_web = static_cast<look::WebContext*>(ow); t_cur_out = static_cast<std::ostringstream*>(oo); }
+        }
+    } cur_guard{cur_web, cur_out, outer_web, outer_out, cur_fiber == nullptr};
     // Fallback için bozulmamış kopya (VM kısmi header/status yazmış olabilir)
     const look::WebContext web0 = web;
 

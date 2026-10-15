@@ -62,6 +62,13 @@ struct FiberLocal {
     // DB connections — previously thread_local tl_conns
     std::map<std::string, std::shared_ptr<DbConnection>> conns;
 
+    // İstek dağıtımının iç içelik derinliği + dış isteğin bağlamı (http_main look_app_dispatch).
+    // thread_local OLAMAZ: aynı iş parçacığındaki başka bir fiber'ın askıdaki isteği
+    // "iç içe" sayılır → bağlantısını bırakmaz, havuz tükenir, istekler asılı kalır.
+    int   dispatch_depth = 0;
+    void* dispatch_web   = nullptr;   // look::WebContext*
+    void* dispatch_out   = nullptr;   // std::ostringstream*
+
     // Extend here for other fiber-specific state as needed
     // (e.g., per-request log context, tracing IDs)
 

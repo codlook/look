@@ -952,6 +952,14 @@ struct ConnPool {
             auto shared_fiber = fiber->shared_from_this_fiber();
             while (true) {
                 {
+                    // Boş-kontrolü ve kuyruğa girme AYNI havuz kilidi altında: arada gelen
+                    // release() bekleyen görmeyip uyandırmayı kaybetmesin. Kilit sırası
+                    // mtx → g_fiber_waiters_mtx; release() ikisini iç içe almaz.
+                    std::lock_guard<std::mutex> plk(mtx);
+                    if (!available.empty()) {
+                        auto c = available.back(); available.pop_back();
+                        return c;
+                    }
                     std::lock_guard<std::mutex> lk(g_fiber_waiters_mtx);
                     g_fiber_waiters.push_back({shared_fiber, sched, this});
                 }
@@ -979,7 +987,7 @@ struct ConnPool {
             available.push_back(c);
         }
         // Wake one fiber waiter first (cross-scheduler safe)
-        notify_fiber_waiters();
+        notify_fiber_waiters(this);
         // Then wake one blocking thread waiter
         cv.notify_one();
     }
@@ -997,14 +1005,16 @@ private:
     static std::mutex               g_fiber_waiters_mtx;
     static std::vector<FiberWaiter> g_fiber_waiters;
 
-    static void notify_fiber_waiters() {
-        // Wake the first waiter unconditionally — the fiber's while(true) acquire
+    static void notify_fiber_waiters(ConnPool* pool) {
+        // Wake the first waiter OF THIS POOL — the fiber's while(true) acquire
         // loop re-queues itself if the slot is stolen before it runs.
+        // (Başka havuzun bekleyenini uyandırmak bu havuzun bekleyenini sonsuza dek uyutur.)
         std::lock_guard<std::mutex> lk(g_fiber_waiters_mtx);
-        if (!g_fiber_waiters.empty()) {
-            auto it = g_fiber_waiters.begin();
+        for (auto it = g_fiber_waiters.begin(); it != g_fiber_waiters.end(); ++it) {
+            if (it->pool != pool) continue;
             it->sched->resume_fiber(std::move(it->fiber));
             g_fiber_waiters.erase(it);
+            return;
         }
     }
 };
