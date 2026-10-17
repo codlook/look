@@ -62,6 +62,11 @@ struct FiberLocal {
     // DB connections — previously thread_local tl_conns
     std::map<std::string, std::shared_ptr<DbConnection>> conns;
 
+    // Bu fiber'da şu an çalışan VM (vm.cpp t_active_vm'in fiber karşılığı). thread_local OLAMAZ:
+    // istek bir sorguda askıya alınınca aynı iş parçacığındaki başka bir isteğin VM'i onu ezer,
+    // geri çağırmalı yerleşik (array::map …) closure'ı o VM'de — öteki isteğin bağlamında — çalıştırırdı.
+    void* active_vm = nullptr;   // look::VM*
+
     // Extend here for other fiber-specific state as needed
     // (e.g., per-request log context, tracing IDs)
 

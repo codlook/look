@@ -7,6 +7,7 @@
 #include <atomic>
 #include <climits>
 #include "look/vm.h"
+#include "look/fiber.h"         // Fiber::current — aktif VM fibere özel (active_vm_slot)
 #include "look/bytecode.h"
 #include "look/web.h"
 #include "look/interpreter.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
@@ -74,15 +75,24 @@ static const bool s_bc_cloner_registered = [] {
 
 // ── VM/interpreter callback köprüsü (hook tarafı) ─────────────────────────────
 // Bridge fonksiyonları interpreter.cpp'de (hem CLI hem fcgi linkler); VM burada
-// yalnızca hook'unu kaydeder. Aktif VM run() içinde thread-local set edilir.
+// yalnızca hook'unu kaydeder. Aktif VM run() içinde kaydedilir: fiber içinde FİBERE özel
+// (FiberLocal::active_vm), fiber dışında iş parçacığına özel. Eskiden yalnız thread_local'di:
+// istek bir sorguda / http::get'te askıya alınınca aynı iş parçacığındaki başka bir isteğin
+// VM'i onu eziyordu; askıdan dönen istekteki array::map closure'ı ÖTEKİ isteğin VM'inde çalışıp
+// onun başlığını/parametresini okuyor, sonra süreç çöküyordu (1.0.20–1.0.23, fiber modu).
 static thread_local VM* t_active_vm = nullptr;
+static VM*& active_vm_slot() {
+    if (Fiber* f = Fiber::current()) return reinterpret_cast<VM*&>(f->local.active_vm);
+    return t_active_vm;
+}
 
 static Value vm_bridge_hook(const Value& fn, std::vector<Value>& args) {
-    if (!t_active_vm)
+    VM* vm = active_vm_slot();
+    if (!vm)
         throw LookVmError("vm_bridge_hook: no active VM");
     if (fn.type() != Value::BYTECODE_FN)
         throw LookVmError("vm_bridge_hook: BYTECODE_FN expected");
-    return t_active_vm->call_closure(*fn.as_bytecode_fn(), args);
+    return vm->call_closure(*fn.as_bytecode_fn(), args);
 }
 
 // ── VM ctor ───────────────────────────────────────────────────────────────────
@@ -414,10 +424,12 @@ Value VM::run() {
     // Callback köprüsü: bu VM'i aktif olarak kaydet (RAII ile geri al). Nested
     // run() aynı VM'e set eder — zararsız. array::map gibi builtin'ler callback'i
     // interpreter->invoke → vm_bridge_invoke → bu VM'in call_closure'ıyla çalıştırır.
-    VM* _prev_active = t_active_vm;
-    t_active_vm = this;
+    // Yuva girişte bir kez alınır: run() boyunca aynı fiber'dayız, geri alma aynı yuvaya yazar.
+    VM*& _active = active_vm_slot();
+    VM* _prev_active = _active;
+    _active = this;
     register_vm_bridge(&vm_bridge_hook);   // thread-local hook'u kaydet (idempotent)
-    struct ActiveGuard { VM* prev; ~ActiveGuard() { t_active_vm = prev; } } _ag{_prev_active};
+    struct ActiveGuard { VM*& slot; VM* prev; ~ActiveGuard() { slot = prev; } } _ag{_active, _prev_active};
 
     // Try tabanı: bu run() yalnız kendi push ettiği handler'ları kullanır. İç içe
     // run() (köprüden gelen closure çağrısı) dış handler'a atlayamaz → LookVmThrow ile
