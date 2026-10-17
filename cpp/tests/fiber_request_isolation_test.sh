@@ -7,7 +7,9 @@
 # user's request (v2 had one such variable; it made requests keep database connections).
 # Each request here sets and reads back its own path parameter, request header, cookie, session
 # value, response status and response header around an HTTP call that suspends it, with 64
-# clients at once, and every answer must be its own. Run with fibers and with
+# clients at once, and every answer must be its own. After the call a callback (array::map)
+# reads the request header too: up to 1.0.23 the callback ran in the VM of whichever request
+# had last started on that thread, read that request's header and then crashed the process. Run with fibers and with
 # LOOK_FIBER_DISPATCH=0. The fiber run must also show that the requests really overlapped.
 # Usage: fiber_request_isolation_test.sh <lk-fcgi>
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
@@ -16,6 +18,7 @@ PORT="${PORT:-7842}"; UP=$((PORT + 1))
 command -v python3 >/dev/null 2>&1 || { echo "  (skipped: python3 is required)"; exit 0; }
 cat > "$TMP/app.lk" <<LK
 use http
+use array
 route("GET", "/set/{id}", function(\$id) {
     session::start()
     session::set("who", \$id)
@@ -28,7 +31,8 @@ route("GET", "/t/{id}", function(\$id) {
     response::status(200 + (\$id % 7))
     response::header("X-Echo", \$id)
     http::get("http://127.0.0.1:$UP/slow")
-    return response::text(\$id . "|" . \$h0 . "|" . request::header("X-Id") . "|" . \$c0 . "|" . cookie::get("cid") . "|" . session::get("who"))
+    \$cb = array::map([1], fn(\$x) => request::header("X-Id"))
+    return response::text(\$cb[0] . "|" . \$id . "|" . \$h0 . "|" . request::header("X-Id") . "|" . \$c0 . "|" . cookie::get("cid") . "|" . session::get("who"))
 })
 route("GET", "/ok", fn() => response::text("alive"))
 LK
@@ -69,7 +73,7 @@ def client(c):
         sess = [v.split(";")[0] for v in hdr.get("set-cookie", []) if v.lower().startswith("look_session") or "sess" in v.lower().split("=")[0]]
         cookie = "; ".join(sess + ["cid=c%d" % i])
         st, hdr, body = req("/t/%d" % i, {"X-Id": "h%d" % i, "Cookie": cookie})
-        want = "%d|h%d|h%d|c%d|c%d|%d" % (i, i, i, i, i, i)
+        want = "h%d|%d|h%d|h%d|c%d|c%d|%d" % (i, i, i, i, i, i, i)
         ok = st == 200 + (i % 7) and hdr.get("x-echo", [""])[0] == str(i) and body == want
         with lock:
             res["ok" if ok else "MIXED"] += 1

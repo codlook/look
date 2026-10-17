@@ -1752,7 +1752,18 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             web = web0;
             // Kopya worker'da yeniden kullanılıyor → kullanıcı kodu çalışmadan ÖNCE
             // globals'ı taze snapshot'a döndür (istekler arası sızıntı olmasın).
-            copy->reset_globals_from(*g_http_app.interp);
+            // Fiber modunda paylaşılan kopya KULLANILAMAZ: bu rota bir sorguda askıya alınınca
+            // aynı iş parçacığındaki başka bir istek kopyayı kendi isteğine bağlar (web, globals)
+            // → her isteğe taze kopya (yorumlayıcı yolundaki gibi).
+            std::unique_ptr<look::Interpreter> fiber_fcopy;
+            if (g_use_fiber) {
+                std::shared_lock<std::shared_mutex> fl(g_http_mutex);
+                fiber_fcopy = g_http_app.interp->make_dispatch_copy();
+                copy = fiber_fcopy.get();
+                copy->set_output(output);
+            } else {
+                copy->reset_globals_from(*g_http_app.interp);
+            }
             copy->set_web_context(&web);
             // LOOK 2: bir WS/SSE rotası yorumlayıcıya sabitliyse bağlantıyı ona da ver. Kopya iş
             // parçacığında yeniden kullanılır → çıkışta bağlantıyı bırak (sonraki isteğe taşınmasın).

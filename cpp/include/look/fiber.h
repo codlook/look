@@ -75,6 +75,11 @@ struct FiberLocal {
     // iş "başarısız" sayılıp yeniden çalışıyordu (tests/jobs_concurrent_test.sh).
     std::shared_ptr<void> http_direct;
 
+    // Bu fiber'da şu an çalışan VM (vm.cpp t_active_vm'in fiber karşılığı). thread_local OLAMAZ:
+    // istek bir sorguda askıya alınınca aynı iş parçacığındaki başka bir isteğin VM'i onu ezer,
+    // geri çağırmalı yerleşik (array::map …) closure'ı o VM'de — öteki isteğin bağlamında — çalıştırırdı.
+    void* active_vm = nullptr;   // look::VM*
+
     // Extend here for other fiber-specific state as needed
     // (e.g., per-request log context, tracing IDs)
 

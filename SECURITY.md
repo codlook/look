@@ -16,6 +16,27 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-17 — A callback could run in another request after a suspension (1.0.24)
+
+**Affected:** 1.0.20 to 1.0.23 on Linux (fibers, the default dispatch since 1.0.20). **Fixed in:**
+1.0.24.
+
+With fibers one thread serves many requests and switches to another while one waits — on a
+database query or an outgoing HTTP call. Built-ins that call back into the program (for example
+`array::map`, `array::filter`, `array::reduce`) found "the running program" in a variable shared
+by the whole thread. When a request waited and another request on the same thread started in the
+meantime, a callback of the first request ran in the second request's context: it read the second
+request's headers, parameters and session, and its output went to the second request. The process
+then often crashed. Measured on the published 1.0.23: 64 clients, each request reading its own
+header in an `array::map` callback after an outgoing HTTP call — another user's header came back,
+then the process crashed. With `LOOK_FIBER_DISPATCH=0` every answer was correct.
+
+The running program is now kept per request. The same test gives 1920 correct answers of 1920 and
+no crash. Routes that the VM cannot compile and that run on the interpreter now also get their own
+copy of the interpreter per request in fiber mode (they shared one per thread).
+
+**What to do:** upgrade. If you cannot upgrade at once, set `LOOK_FIBER_DISPATCH=0`.
+
 ### 2026-10-17 — A waiting database query held other requests (1.0.22)
 
 **Affected:** 1.0.20 and 1.0.21 on Linux (fibers, the default dispatch since 1.0.20) for
@@ -48,7 +69,12 @@ writers of the database waits on a thread of its own connection. A request takes
 connection at its first query and keeps it until it ends, so every query of a transaction uses
 the same connection.
 
-The same measurements give no waiting request (at most 0.006 s). Fast queries did not get
+The same measurements give no waiting request (at most 0.006 s).
+
+*Correction (1.0.23):* in 1.0.22 a long CPU-bound SQLite statement (for example a large
+`WITH RECURSIVE`) did give up its turn every 2 ms, but the scheduler only looked for new
+connections when no request was ready, so a plain request could still wait ~0.8 s. Fixed in
+1.0.23: the scheduler looks for new connections at least every millisecond. Fast queries did not get
 slower; in the load test they got faster — SQLite reads and writes 8–17 % more requests per
 second, PostgreSQL `SELECT 1` 60–80 % more (requests no longer wait for connections of pools
 they do not use).
