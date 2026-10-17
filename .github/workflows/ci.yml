@@ -559,8 +559,9 @@ jobs:
       - name: PG SCRAM crypto agreement RFC-KAT (seam)
         run: |
           cd cpp
+          # fiber_posix + logger: PG reads suspend the fiber while waiting (fiber_io.h)
           g++ -std=c++17 -Iinclude tests/pg_scram_crypto_kat.cpp src/postgres_client.cpp \
-              -lssl -lcrypto -o /tmp/pgkat
+              src/fiber_posix.cpp src/logger.cpp -lssl -lcrypto -lpthread -o /tmp/pgkat
           /tmp/pgkat
 
       # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
