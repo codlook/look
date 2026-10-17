@@ -16,6 +16,45 @@ Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com
 
 ## Security advisories
 
+### 2026-10-17 — A waiting database query held other requests (1.0.22)
+
+**Affected:** 1.0.20 and 1.0.21 on Linux (fibers, the default dispatch since 1.0.20) for
+applications that use SQLite, PostgreSQL or MySQL over TLS; and every release up to and
+including 1.0.21, in both dispatch models, for applications that use a database at all.
+**Fixed in:** 1.0.22.
+
+Three problems, measured on the published 1.0.21:
+
+- **A slow query held its whole thread.** With fibers one thread serves many requests and
+  switches to another while one waits. MySQL queries switched; SQLite, PostgreSQL and MySQL
+  over TLS held the thread, so the other requests on that thread waited until the query
+  ended. With 4 workers: while one 1-second query ran, about one plain request in 20 waited
+  up to 1 second (`pg_sleep(1)`: 0.8 s, MySQL `SLEEP(1)` over TLS: 0.9 s, a SQLite write
+  waiting for a lock: 1.4 s). With `LOOK_FIBER_DISPATCH=0` none did.
+- **A database server that never answered held the request forever.** In fiber mode the
+  wait for a MySQL answer ignored the query timeout (`query_timeout`, 30 s by default): the
+  request never ended. With `LOOK_FIBER_DISPATCH=0` it failed after the timeout.
+- **Every request took a connection from every database pool.** A request borrowed one
+  connection from each pool when it started, whether it used the database or not. When a
+  pool's connections were all in use, a route that never touches the database waited for
+  one too — 1.4 s in the measurement, in both dispatch models.
+
+Now a query that waits suspends only its own request: PostgreSQL and MySQL (with or without
+TLS) wait for the server's answer without holding the thread, and the wait ends with an error
+after the query timeout. A SQLite query still runs on the request's thread — fast queries pay
+nothing extra — but waiting for another program's lock suspends the request, a long statement
+gives the other requests a turn every 2 ms, and a write that has to queue behind the other
+writers of the database waits on a thread of its own connection. A request takes a database
+connection at its first query and keeps it until it ends, so every query of a transaction uses
+the same connection.
+
+The same measurements give no waiting request (at most 0.006 s). Fast queries did not get
+slower; in the load test they got faster — SQLite reads and writes 8–17 % more requests per
+second, PostgreSQL `SELECT 1` 60–80 % more (requests no longer wait for connections of pools
+they do not use).
+
+**What to do:** upgrade.
+
 ### 2026-10-15 — Concurrent SQLite writes failed with "database is locked" (1.0.21)
 
 **Affected:** every release up to and including 1.0.20, for applications that write to a

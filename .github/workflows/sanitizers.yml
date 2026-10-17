@@ -37,6 +37,18 @@ jobs:
       - name: Sockets above 1023 — database connect and IMAP idle with 1100 connections held
         working-directory: cpp
         run: bash tests/high_fd_sockets_test.sh ./build-asan/lk-fcgi
+      # Database queries suspend the fiber mid-call (lock waits, long statements, a full write
+      # queue handed to the connection's own thread). Any memory error there aborts the server and
+      # the test fails. Fiber switches are announced to ASan (fiber_posix.cpp), so the
+      # use-after-return check stays on.
+      - name: Waiting database queries and concurrent SQLite writers under ASan
+        working-directory: cpp
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:detect_stack_use_after_return=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          bash tests/db_wait_test.sh ./build-asan/lk-fcgi
+          bash tests/sqlite_concurrent_writers_test.sh ./build-asan/lk-fcgi
 
   tsan:
     runs-on: ubuntu-24.04

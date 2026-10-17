@@ -1460,7 +1460,6 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                         conn->on_message = [base, cb_v = cb_v.clone_for_thread()](const std::string& msg) {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
-                            look::acquire_thread_connections();
                             try { copy->invoke(cb_v, {Value(msg)}); } LOOK_LOG_CALLBACK_ERRORS("ws message")
                             look::release_thread_connections();
                         };
@@ -1468,7 +1467,6 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                         conn->on_close = [base, cb_v = cb_v.clone_for_thread()]() {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
-                            look::acquire_thread_connections();
                             try { copy->invoke(cb_v, {}); } LOOK_LOG_CALLBACK_ERRORS("ws close")
                             look::release_thread_connections();
                         };
@@ -1534,7 +1532,6 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                         sink->str(""); sink->clear();
                         base->set_output(*sink);
                         base->set_web_context(&ctx);
-                        look::acquire_thread_connections();
                         try {
                             base->invoke(cb_v, {});
                         } catch (const std::exception& ex) {
@@ -1602,7 +1599,6 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                             ctx.method = "__SSE_CLOSE__";
                             base->set_output(*sink);
                             base->set_web_context(&ctx);
-                            look::acquire_thread_connections();
                             try { base->invoke(cb_v, {}); } LOOK_LOG_CALLBACK_ERRORS("sse close")
                             look::release_thread_connections();
                         };
@@ -1845,8 +1841,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 std::thread([c = std::move(copy), sink, fn = fn.clone_for_thread()]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
                     // DB bağlantısı iadesi: task içinde db::query çağrılırsa get_conn
-                    // bu thread'in thread_local'ine TEMBEL bir conn alır (istek
-                    // thread'i gibi acquire_thread_connections() çağrılmaz). Bırakılmazsa
+                    // bu thread'in thread_local'ine TEMBEL bir conn alır. Bırakılmazsa
                     // her parallel+DB task'ı havuzdan KALICI bir conn sızdırır → birkaç
                     // istek sonra havuz tükenir ve endpoint sonsuza dek asılır.
                     struct DbGuard { ~DbGuard() { look::release_thread_connections(); } } _db;

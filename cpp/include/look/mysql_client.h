@@ -91,6 +91,7 @@ private:
     void ensure_connected();
     void do_connect();
     void set_socket_timeout(int ms);
+    int  rcv_tmo_ms_ = -1;   // son set_socket_timeout değeri (fiber beklemesi için)
 
     std::vector<uint8_t> read_packet(uint8_t& seq);
     void send_packet(const std::vector<uint8_t>& data, uint8_t seq);

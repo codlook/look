@@ -1119,21 +1119,11 @@ int cfs_quota_cpus() {
     return -1;
 }
 
-void acquire_thread_connections() {
-    // Copy pool list under lock, then release before blocking on acquire().
-    // Holding g_pools_mtx during pool->acquire() deadlocks: a releasing thread
-    // also needs g_pools_mtx (release_thread_connections), so it can never
-    // unblock the waiter.
-    std::vector<std::pair<std::string, std::shared_ptr<ConnPool>>> pools_snap;
-    {
-        std::lock_guard<std::mutex> lk(g_pools_mtx);
-        pools_snap.assign(g_pools.begin(), g_pools.end());
-    }
-    auto& conns = active_conns();
-    for (auto& [key, pool] : pools_snap)
-        conns[key] = pool->acquire();
-}
-
+// Bağlantı istek başında PEŞİN alınmaz: ilk db:: çağrısında get_conn() havuzdan alır ve
+// istek bitene dek (release_thread_connections) o isteğe bağlı kalır — aynı işlem aynı
+// bağlantıda. Eskiden her istek başında her havuzdan bir bağlantı alınıyordu: havuz doluyken
+// veritabanına HİÇ dokunmayan bir rota da bağlantı bekliyordu (4 uzun sorgu + havuz 4 →
+// düz metin dönen rota ~1 sn).
 void release_thread_connections() {
     auto& conns = active_conns();
     {
