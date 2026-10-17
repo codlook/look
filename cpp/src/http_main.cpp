@@ -322,17 +322,29 @@ static std::atomic<bool>        g_http_ready{false};
 // guard'ın web sütunu bu yüzden VM'i hiç koşmadı.
 // LOOK 2: bu iş parçacığı bir zamanlayıcı geri çağırması koşturuyorsa çağrılacak closure.
 // look_app_dispatch bunu görünce rota eşleştirmez, closure'ı istek VM'inde doğrudan çağırır.
-static thread_local const look::Closure* t_direct_closure = nullptr;
-// ... ve ona verilecek argümanlar (WebSocket mesajı gibi); yoksa argümansız çağrılır.
-static thread_local const std::vector<look::Value>* t_direct_args = nullptr;
-// Bu iş parçacığı bir WebSocket/SSE BAĞLANTISININ rota işleyicisini koşturuyorsa o bağlantı
-// (WEBSOCKET / SSE_CONN değeri). İstek VM'i bunu görünce işleyiciye ilk argüman olarak verir.
-static thread_local look::Value t_conn;
-// Doğrudan çağrılan geri çağırmanın log etiketi ("message handler" …): hata bu adla loglanır.
-static thread_local const char* t_direct_what = nullptr;
-// Doğrudan çağrının sonucu ve hata durumu (iş işleyicisi dönüş değerine bakar).
-static thread_local look::Value t_direct_result;
-static thread_local bool t_direct_failed = false;
+// Fiber içinde FİBERE özeldir (FiberLocal::http_direct): işleyici bir sorguda askıya alınınca
+// aynı iş parçacığındaki başka bir fiber bunun üstüne yazmasın. Fiber dışında iş parçacığına özel.
+struct DirectState {
+    const look::Closure* closure = nullptr;
+    // ... ve ona verilecek argümanlar (WebSocket mesajı gibi); yoksa argümansız çağrılır.
+    const std::vector<look::Value>* args = nullptr;
+    // Bir WebSocket/SSE BAĞLANTISININ rota işleyicisi koşuyorsa o bağlantı (WEBSOCKET / SSE_CONN
+    // değeri). İstek VM'i bunu görünce işleyiciye ilk argüman olarak verir.
+    look::Value conn;
+    // Doğrudan çağrılan geri çağırmanın log etiketi ("message handler" …): hata bu adla loglanır.
+    const char* what = nullptr;
+    // Doğrudan çağrının sonucu ve hata durumu (iş işleyicisi dönüş değerine bakar).
+    look::Value result;
+    bool failed = false;
+};
+static thread_local DirectState t_direct_thread;
+static DirectState& direct() {
+    if (look::Fiber* f = look::Fiber::current()) {
+        if (!f->local.http_direct) f->local.http_direct = std::make_shared<DirectState>();
+        return *static_cast<DirectState*>(f->local.http_direct.get());
+    }
+    return t_direct_thread;
+}
 // Bu iş parçacığında şu an bir dağıtım sürüyor mu (iç içe "yeni istek" ayrı iş parçacığında koşar).
 static thread_local int t_dispatch_depth = 0;
 static look::Value run_closure_as_request(const look::Value& fnv, std::vector<look::Value> args, const char* what, bool& ok);
@@ -1036,28 +1048,28 @@ static look::Value run_closure_here(const look::Value& fnv, std::vector<look::Va
     look::WebContext ctx;
     ctx.method = "__EVENT__";
     std::ostringstream sink;
-    const look::Closure* pc = t_direct_closure;
-    const std::vector<look::Value>* pa = t_direct_args;
-    const char* pw = t_direct_what;
-    t_direct_closure = fnv.as_bytecode_fn().get();
-    t_direct_args    = &args;
-    t_direct_what    = what;
-    t_direct_failed  = false;
-    t_direct_result  = look::Value();
+    const look::Closure* pc = direct().closure;
+    const std::vector<look::Value>* pa = direct().args;
+    const char* pw = direct().what;
+    direct().closure = fnv.as_bytecode_fn().get();
+    direct().args    = &args;
+    direct().what    = what;
+    direct().failed  = false;
+    direct().result  = look::Value();
     try { look_app_dispatch(ctx, sink, std::string()); }
     catch (const std::exception& ex) {
         look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string(what) + " error: " + ex.what());
-        t_direct_failed = true;
+        direct().failed = true;
     } catch (...) {
         look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string(what) + " unknown error");
-        t_direct_failed = true;
+        direct().failed = true;
     }
-    ok = !t_direct_failed;
-    look::Value r = std::move(t_direct_result);
-    t_direct_result  = look::Value();
-    t_direct_closure = pc;
-    t_direct_args    = pa;
-    t_direct_what    = pw;
+    ok = !direct().failed;
+    look::Value r = std::move(direct().result);
+    direct().result  = look::Value();
+    direct().closure = pc;
+    direct().args    = pa;
+    direct().what    = pw;
     return r;
 }
 static look::Value run_closure_as_request(const look::Value& fnv, std::vector<look::Value> args,
@@ -1414,7 +1426,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         // timer::after / timer::every / timer::cancel — LOOK 2.
         // Geri çağırma istekten SONRA, zamanlayıcı iş parçacığında çalışır. Orada yeni bir istek
-        // gibi kurulur (look_app_dispatch + t_direct_closure): kendi VM'i, kendi builtin'leri,
+        // gibi kurulur (look_app_dispatch + direct().closure): kendi VM'i, kendi builtin'leri,
         // kurulum global'lerinin temiz hali. Yani bir geri çağırmanın global'e yazdığı şey ne
         // onu kuran isteğe ne sonraki isteklere ulaşır (tests/realtime_isolation_test.sh).
         // Closure iş parçacığı sınırını geçerken klonlanır (yakaladığı değerlerle birlikte).
@@ -1430,7 +1442,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     look::WebContext ctx;
                     ctx.method = "__TIMER__";
                     std::ostringstream sink;
-                    t_direct_closure = fnv.as_bytecode_fn().get();
+                    direct().closure = fnv.as_bytecode_fn().get();
                     try { look_app_dispatch(ctx, sink, std::string()); }
                     catch (const std::exception& ex) {
                         look::Logger::instance().log(look::LogLevel::LOG_ERROR, "timer",
@@ -1438,7 +1450,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     } catch (...) {
                         look::Logger::instance().log(look::LogLevel::LOG_ERROR, "timer", "callback unknown error");
                     }
-                    t_direct_closure = nullptr;
+                    direct().closure = nullptr;
                 };
                 return look::Value(repeat ? look::TimerManager::instance().every(ms, std::move(cb))
                                           : look::TimerManager::instance().after(ms, std::move(cb)));
@@ -1475,18 +1487,18 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 look::WebContext ctx;
                 ctx.method = "__EVENT__";
                 std::ostringstream sink;
-                t_direct_closure = fnv.as_bytecode_fn().get();
-                t_direct_args    = &cb_args;
-                t_direct_what    = kind;
+                direct().closure = fnv.as_bytecode_fn().get();
+                direct().args    = &cb_args;
+                direct().what    = kind;
                 try { look_app_dispatch(ctx, sink, std::string()); }
                 catch (const std::exception& ex) {
                     look::Logger::instance().log(look::LogLevel::LOG_ERROR, tag, std::string(kind) + " error: " + ex.what());
                 } catch (...) {
                     look::Logger::instance().log(look::LogLevel::LOG_ERROR, tag, std::string(kind) + " unknown error");
                 }
-                t_direct_closure = nullptr;
-                t_direct_args    = nullptr;
-                t_direct_what    = nullptr;
+                direct().closure = nullptr;
+                direct().args    = nullptr;
+                direct().what    = nullptr;
             };
             req_builtins[BI("ws::on")] = [ws_of, run_cb](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 3) throw std::runtime_error("ws::on() takes 3 arguments");
@@ -1637,15 +1649,15 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             vm.set_globals(g_http_app.vm_setup_globals);
             vm.set_web_context(&web);
             // LOOK 2: bağlantı işleyicisi (WS/SSE rotası) VM'de — bağlantı işleyiciye ilk argüman olarak gider.
-            if (t_conn.type() == look::Value::WEBSOCKET) vm.set_ws_connection(t_conn.as_websocket());
-            else if (t_conn.type() == look::Value::SSE_CONN) vm.set_sse_connection(t_conn.as_sse());
+            if (direct().conn.type() == look::Value::WEBSOCKET) vm.set_ws_connection(direct().conn.as_websocket());
+            else if (direct().conn.type() == look::Value::SSE_CONN) vm.set_sse_connection(direct().conn.as_sse());
 
             // LOOK 2 — zamanlayıcı geri çağırması: rota eşleştirme ve before_route yok; closure,
             // yeni bir istek gibi kurulmuş bu VM'de (temiz kurulum değerleri, kendi builtin'leri)
             // doğrudan çağrılır. Hata aşağıdaki ortak yakalayıcıya düşer (log + yeniden çalıştırma yok).
-            if (t_direct_closure) {
-                t_direct_result = vm.call_closure(*t_direct_closure,
-                                t_direct_args ? *t_direct_args : std::vector<look::Value>{});
+            if (direct().closure) {
+                direct().result = vm.call_closure(*direct().closure,
+                                direct().args ? *direct().args : std::vector<look::Value>{});
                 stopped_direct = true;
             }
             // before_route middleware'leri sırayla çalıştır
@@ -1729,8 +1741,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 web.status_text = "Internal Server Error";
             }
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                (t_direct_what ? std::string(t_direct_what) + " error: " : std::string("Dispatch error: ")) + what);
-            if (t_direct_closure) t_direct_failed = true;
+                (direct().what ? std::string(direct().what) + " error: " : std::string("Dispatch error: ")) + what);
+            if (direct().closure) direct().failed = true;
             vm_ok = true;   // yanıt hazır (500) — yorumlayıcıda YENİDEN ÇALIŞTIRMA yok
         }
 
@@ -1745,8 +1757,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // LOOK 2: bir WS/SSE rotası yorumlayıcıya sabitliyse bağlantıyı ona da ver. Kopya iş
             // parçacığında yeniden kullanılır → çıkışta bağlantıyı bırak (sonraki isteğe taşınmasın).
             struct ConnGuard { look::Interpreter* c; ~ConnGuard() { c->set_ws_connection(nullptr); c->set_sse_connection(nullptr); } } conn_guard{copy};
-            if (t_conn.type() == look::Value::WEBSOCKET) copy->set_ws_connection(t_conn.as_websocket());
-            else if (t_conn.type() == look::Value::SSE_CONN) copy->set_sse_connection(t_conn.as_sse());
+            if (direct().conn.type() == look::Value::WEBSOCKET) copy->set_ws_connection(direct().conn.as_websocket());
+            else if (direct().conn.type() == look::Value::SSE_CONN) copy->set_sse_connection(direct().conn.as_sse());
             try {
                 copy->dispatch_routes();
             } catch (const look::RouteStopException&) {
@@ -1814,8 +1826,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         copy->set_web_context(&web);
         // LOOK 2: WS/SSE bağlantı işleyicisi bu yoldan da geçer — bağlantıyı ver, çıkışta bırak.
         struct IConnGuard { look::Interpreter* c; ~IConnGuard() { c->set_ws_connection(nullptr); c->set_sse_connection(nullptr); } } iconn_guard{copy};
-        if (t_conn.type() == look::Value::WEBSOCKET) copy->set_ws_connection(t_conn.as_websocket());
-        else if (t_conn.type() == look::Value::SSE_CONN) copy->set_sse_connection(t_conn.as_sse());
+        if (direct().conn.type() == look::Value::WEBSOCKET) copy->set_ws_connection(direct().conn.as_websocket());
+        else if (direct().conn.type() == look::Value::SSE_CONN) copy->set_sse_connection(direct().conn.as_sse());
         sl.unlock();
 
         t_dispatch_start = std::chrono::steady_clock::now();
@@ -1894,7 +1906,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     // request_count_'u web'de artmaz (VM yolu) → bu global'ler gerçek HTTP durumunu taşır. Clock'lar
     // zaten çağrıldı → latency toplama sıcak yola yeni clock EKLEMEZ (sadece relaxed atomik).
     // zamanlayıcı/bağlantı geri çağırması ve bağlantı işleyicisi bir HTTP isteği değildir: sayaçlara girmez
-    if (t_direct_closure || t_conn.type() != look::Value::NONE) return;
+    if (direct().closure || direct().conn.type() != look::Value::NONE) return;
     look::g_http_request_count().fetch_add(1, std::memory_order_relaxed);
     look::g_latency_us_sum().fetch_add((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
     look::g_latency_us_last().store((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
@@ -1999,16 +2011,16 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.is_https    = resolve_is_https(req);
 
         // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi dağıtılır (VM; rota yorumlayıcıya
-        // sabitliyse orada). Bağlantı t_conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
+        // sabitliyse orada). Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
         std::ostringstream sink;
-        t_conn = look::Value(conn);
+        direct().conn = look::Value(conn);
         try {
             look_app_dispatch(web, sink, std::string());
         } catch (const std::exception& e) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                 std::string("WS dispatch error: ") + e.what());
         }
-        t_conn = look::Value();
+        direct().conn = look::Value();
     };
 
     // SSE handler — called on a worker thread after SSE upgrade
@@ -2023,16 +2035,16 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.is_https    = resolve_is_https(req);
 
         // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi dağıtılır (VM; rota yorumlayıcıya
-        // sabitliyse orada). Bağlantı t_conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
+        // sabitliyse orada). Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
         std::ostringstream sink;
-        t_conn = look::Value(conn);
+        direct().conn = look::Value(conn);
         try {
             look_app_dispatch(web, sink, std::string());
         } catch (const std::exception& e) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                 std::string("SSE dispatch error: ") + e.what());
         }
-        t_conn = look::Value();
+        direct().conn = look::Value();
     };
 
 #ifndef _WIN32   // Gömülü mail sunucuları POSIX-only (OpenSSL). Windows = XAMPP dev.

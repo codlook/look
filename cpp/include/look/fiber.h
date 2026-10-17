@@ -69,6 +69,12 @@ struct FiberLocal {
     void* dispatch_web   = nullptr;   // look::WebContext*
     void* dispatch_out   = nullptr;   // std::ostringstream*
 
+    // Doğrudan çağrılan geri çağırmanın durumu (http_main DirectState: closure, argümanlar,
+    // sonuç, hata, WS/SSE bağlantısı). thread_local OLAMAZ: işleyici bir sorguda askıya
+    // alınınca aynı iş parçacığındaki başka bir fiber kendi işini başlatıp üstüne yazıyordu →
+    // iş "başarısız" sayılıp yeniden çalışıyordu (tests/jobs_concurrent_test.sh).
+    std::shared_ptr<void> http_direct;
+
     // Extend here for other fiber-specific state as needed
     // (e.g., per-request log context, tracing IDs)
 
