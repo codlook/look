@@ -35,7 +35,10 @@ The running program is now kept per request. The same test gives 1920 correct an
 no crash. Routes that the VM cannot compile and that run on the interpreter now also get their own
 copy of the interpreter per request in fiber mode (they shared one per thread).
 
-**What to do:** upgrade. If you cannot upgrade at once, set `LOOK_FIBER_DISPATCH=0`.
+**What to do:** if you run 1.0.20, 1.0.21, 1.0.22 or 1.0.23 on Linux, upgrade to 1.0.24 now —
+an application that calls a database or `http::get` and then a built-in with a callback could
+show one user's data to another. If you cannot upgrade at once, set `LOOK_FIBER_DISPATCH=0`
+until you can.
 
 ### 2026-10-17 — A waiting database query held other requests (1.0.22)
 
