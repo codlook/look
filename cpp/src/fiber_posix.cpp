@@ -17,8 +17,11 @@
 #include <cassert>
 #include <cerrno>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 // POSIX
@@ -72,6 +75,80 @@ static thread_local FiberScheduler*  tl_scheduler       = nullptr;
 Fiber* Fiber::current() noexcept { return tl_current_fiber; }
 
 FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
+
+// ── Sıra bırakma (bkz. fiber.h preempt_point) ─────────────────────────────────
+static constexpr int PREEMPT_CHECK_EVERY = 1024;
+thread_local int t_preempt_budget = PREEMPT_CHECK_EVERY;
+// Bu iş parçacığında şu an çalışan fiber'ın en son devraldığı an (run_one resume öncesi yazar).
+static thread_local std::chrono::steady_clock::time_point tl_slice_start;
+
+static bool preempt_every_point() {
+    static const bool v = [] {
+        const char* e = std::getenv("LOOK_TEST_PREEMPT");
+        return e && std::strcmp(e, "1") == 0;
+    }();
+    return v;
+}
+
+void preempt_slow() noexcept {
+    const bool every = preempt_every_point();
+    t_preempt_budget = every ? 1 : PREEMPT_CHECK_EVERY;
+    if (!tl_current_fiber || !tl_scheduler) return;   // fiber dışında: sıra bırakılmaz
+    if (!every && std::chrono::steady_clock::now() - tl_slice_start < std::chrono::milliseconds(1))
+        return;
+    Fiber::yield();   // gönüllü: zamanlayıcı fiber'ı hazır kuyruğunun sonuna koyar
+}
+
+// ── Uzun C++ işleri için ortak havuz (bkz. fiber.h fiber_offload) ─────────────
+// Sabit boyut (çekirdek sayısı, en az 2): giriş denemesi seli sınırsız iş parçacığı açmaz,
+// fazlası kuyrukta bekler (fiber'lar askıda — iş parçacıkları öteki isteklere açık).
+namespace {
+struct OffloadPool {
+    std::mutex                        m;
+    std::condition_variable           cv;
+    std::vector<std::function<void()>> q;
+    OffloadPool() {
+        unsigned n = std::thread::hardware_concurrency();
+        if (n < 2) n = 2;
+        for (unsigned i = 0; i < n; ++i)
+            std::thread([this] {
+                for (;;) {
+                    std::function<void()> j;
+                    {
+                        std::unique_lock<std::mutex> lk(m);
+                        cv.wait(lk, [&] { return !q.empty(); });
+                        j = std::move(q.front());
+                        q.erase(q.begin());
+                    }
+                    j();
+                }
+            }).detach();   // süreç ömrü boyunca yaşar
+    }
+    void post(std::function<void()> j) {
+        { std::lock_guard<std::mutex> lk(m); q.push_back(std::move(j)); }
+        cv.notify_one();
+    }
+};
+OffloadPool& offload_pool() { static OffloadPool* p = new OffloadPool(); return *p; }   // kasıtlı sızıntı: çıkışta yıkım yarışı yok
+}
+
+void fiber_offload_run(const std::function<void()>& job) {
+    Fiber* cur = tl_current_fiber;
+    FiberScheduler* sched = tl_scheduler;
+    std::shared_ptr<Fiber> sp = (cur && sched) ? cur->shared_from_this_fiber() : nullptr;
+    if (!sp) { job(); return; }
+    std::exception_ptr err;
+    std::atomic<bool> done{false};
+    offload_pool().post([&, sched, sp] {
+        try { job(); } catch (...) { err = std::current_exception(); }
+        done.store(true, std::memory_order_release);
+        sched->resume_fiber(sp);
+    });
+    // En az bir kez askıya gir (erken uyandırma pending_resume_ ile bu askıda tüketilir);
+    // iş bitmeden gelen beklenmedik uyanmada yeniden askıya gir (bkz. sqlite_client on_own_thread).
+    do { FiberScheduler::suspend_current(); } while (!done.load(std::memory_order_acquire));
+    if (err) std::rethrow_exception(err);
+}
 void            set_thread_scheduler(FiberScheduler* s) noexcept { tl_scheduler = s; }
 
 // ── Guard page ────────────────────────────────────────────────────────────────
@@ -269,6 +346,7 @@ bool FiberScheduler::run_one() {
     }
 
     f->sched_state_.store(Fiber::SchedState::RUNNING, std::memory_order_release);
+    tl_slice_start = std::chrono::steady_clock::now();   // sıra bırakma ölçüsü bu andan başlar
     f->resume();
 
     // Yield dönüşü — fiber'ın akıbetine TEK yetkili burası karar verir.

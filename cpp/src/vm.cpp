@@ -746,22 +746,27 @@ call_dispatch:
             }
 
             // ── Jump ──────────────────────────────────────────────────────────
+            // Geriye atlama = döngünün yeni turu → sıra bırakma noktası (fiber.h preempt_point).
+#define LOOK_VM_JUMP_TO(target) do { const int _t = (target); \
+                if (_t < frame.ip) preempt_point(); frame.ip = _t; } while (0)
             case OpCode::JUMP:
-                frame.ip = (uint16_t(ins.b)<<8)|ins.c;
+                LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
                 break;
             case OpCode::JUMP_IF_FALSE:
-                if (!R(ins.a).is_truthy()) frame.ip = (uint16_t(ins.b)<<8)|ins.c;
+                if (!R(ins.a).is_truthy()) LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
                 break;
             case OpCode::JUMP_IF_TRUE:
-                if ( R(ins.a).is_truthy()) frame.ip = (uint16_t(ins.b)<<8)|ins.c;
+                if ( R(ins.a).is_truthy()) LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
                 break;
             case OpCode::JUMP_IF_NULL:
-                if (R(ins.a).type()==Value::NONE) frame.ip = (uint16_t(ins.b)<<8)|ins.c;
+                if (R(ins.a).type()==Value::NONE) LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
                 break;
+#undef LOOK_VM_JUMP_TO
 
             // ── CALL ──────────────────────────────────────────────────────────
             case OpCode::CALL: {
                 // a=ret_reg, b=fn_reg, c=args_base; sonraki NOP(argc)
+                preempt_point();   // özyineleme döngüsüz de uzun sürebilir (fiber.h)
                 uint8_t argc = 0;
                 uint16_t cname = 0;   // callee adinin sabit indeksi + 1 (0 = ad yok)
                 if (frame.ip < (int)proto->code.size()

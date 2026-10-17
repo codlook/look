@@ -223,6 +223,29 @@ jobs:
           cd cpp
           bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
 
+      # Long CPU work (a LOOK loop, deep calls, password hashing) must hold only its own request:
+      # up to 1.0.24 LOOK code never gave up its turn under fibers (0.7–1 s waits, 32 s on the
+      # interpreter).
+      - name: Long CPU work does not hold other requests
+        run: |
+          cd cpp
+          bash tests/cpu_turn_test.sh ./build/lk-fcgi
+
+      # Since 1.0.25 a request can give up its turn at any loop turn or call, not only while it
+      # waits. LOOK_TEST_PREEMPT=1 (tests only) gives up the turn at EVERY such point, so state
+      # that wrongly lives per thread crosses between requests on the first try instead of once
+      # in a while (shown: the 1.0.24 bug put back passes 960/960 normally, crashes with this).
+      - name: Fiber tests with a turn given up at every point
+        env:
+          LOOK_TEST_PREEMPT: "1"
+        run: |
+          cd cpp
+          for t in fiber_request_isolation request_isolation struct_default_isolation realtime_isolation \
+                   jobs_concurrent sqlite_concurrent_writers db_wait no_double_execution job_handler_context \
+                   ws_close_callback; do
+            echo "== $t"; bash tests/${t}_test.sh ./build/lk-fcgi || exit 1
+          done
+
       # Several consumers drain one job queue at once while their handlers write to SQLite (which
       # suspends the fiber since 1.0.22): every job is handled exactly once.
       - name: Concurrent queue consumers
