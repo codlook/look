@@ -1,5 +1,6 @@
 #include "look/interpreter.h"
 #include "look/value_path.h"
+#include "look/fiber.h"         // preempt_point — döngü/çağrı sıra bırakma noktası
 #include "look/int_overflow.h"
 #include "look/array_count.h"
 #include "look/builtins.h"
@@ -968,6 +969,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
     }
     if (auto* s = dynamic_cast<const WhileStatement*>(&stmt)) {
         while (evaluate_expression(*s->condition).is_truthy()) {
+            preempt_point();   // döngü turu: sıra bırakma noktası (fiber.h)
             try { execute_block(*s->body, current_); }
             catch (const BreakException&)    { break; }
             catch (const ContinueException&) { continue; }
@@ -980,6 +982,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
         current_   = scope;
         if (s->init) execute_statement(*s->init);
         while (!s->condition || evaluate_expression(*s->condition).is_truthy()) {
+            preempt_point();
             try { execute_block(*s->body, current_); }
             catch (const BreakException&)    { break; }
             catch (const ContinueException&) {}
@@ -1002,6 +1005,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
 
         if (is_assoc) {
             for (size_t idx = 1; idx + 1 < arr.size(); idx += 2) {
+                preempt_point();
                 auto env  = std::make_shared<Environment>(current_);
                 auto prev = current_;
                 current_  = env;
@@ -1017,6 +1021,7 @@ void Interpreter::execute_statement(const Statement& stmt) {
         }
 
         for (size_t idx = 0; idx < arr.size(); ++idx) {
+            preempt_point();
             auto env  = std::make_shared<Environment>(current_);
             auto prev = current_;
             current_  = env;
@@ -2389,6 +2394,7 @@ std::shared_ptr<Environment> Interpreter::request_env(const std::shared_ptr<Envi
 }
 
 Value Interpreter::call_function(std::shared_ptr<LookFunction> fn, std::vector<Value> args) {
+    preempt_point();   // özyineleme döngüsüz de uzun sürebilir (fiber.h)
     if (call_depth_ >= MAX_CALL_DEPTH)
         throw LookRuntimeError("Stack overflow: max call depth exceeded in '" + fn->name + "'",
                                current_loc_, call_stack_);

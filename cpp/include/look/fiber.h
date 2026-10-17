@@ -308,4 +308,30 @@ private:
 FiberScheduler* get_thread_scheduler() noexcept;
 void            set_thread_scheduler(FiberScheduler* s) noexcept;
 
+// ── LOOK kodu için sıra bırakma (Elixir'deki "reduction" sayacı) ─────────────
+// VM'in geriye atlamaları ve çağrıları, yorumlayıcının döngü turları ve çağrıları
+// preempt_point() çağırır. Sayaç bitince (1024 noktada bir) saate bakılır: fiber 1 ms'den uzun
+// süredir çalışıyorsa sırayı bırakır — uzun bir döngü aynı iş parçacığındaki öteki istekleri
+// bekletmez (1.0.20–1.0.24: 0,7 sn'lik döngü başka isteği 0,35 sn bekletiyordu). Fiber dışında
+// (CLI, eski worker modeli, zamanlayıcı/parallel iş parçacıkları) yalnız sayaç azalır.
+// LOOK_TEST_PREEMPT=1 yalnız TESTLER içindir: her noktada sıra bırakılır — fiberler arasında
+// iş parçacığına bağlı durum karışmasını (nadir zamanlama hatalarını) her istekte ortaya çıkarır.
+extern thread_local int t_preempt_budget;
+void preempt_slow() noexcept;
+inline void preempt_point() noexcept {
+    if (--t_preempt_budget <= 0) preempt_slow();
+}
+
+// ── Bölünemeyen uzun C++ işi (Elixir'deki "dirty scheduler") ──────────────────
+// Ortasından kesilemeyen uzun bir yerleşik (parola özetleme: PBKDF2 100k tur ≈ 100 ms) fiber
+// içinde çağrılınca sabit boyutlu ortak bir iş parçacığı havuzunda çalışır, fiber o sırada
+// askıdadır — iş parçacığı öteki isteklere döner. Fiber dışında doğrudan çalışır. İş KİLİT
+// TUTMAMALI ve LOOK değerlerine dokunmamalı (yalnız C++ verisi): başka iş parçacığında koşar.
+void fiber_offload_run(const std::function<void()>& job);
+template <class F> auto fiber_offload(F&& f) -> decltype(f()) {
+    decltype(f()) out{};
+    fiber_offload_run([&] { out = f(); });
+    return out;
+}
+
 } // namespace look

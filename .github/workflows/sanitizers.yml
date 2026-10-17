@@ -50,6 +50,8 @@ jobs:
           bash tests/db_wait_test.sh ./build-asan/lk-fcgi
           bash tests/sqlite_concurrent_writers_test.sh ./build-asan/lk-fcgi
           bash tests/fiber_request_isolation_test.sh ./build-asan/lk-fcgi
+          LOOK_TEST_PREEMPT=1 bash tests/fiber_request_isolation_test.sh ./build-asan/lk-fcgi
+          bash tests/cpu_turn_test.sh ./build-asan/lk-fcgi
 
   tsan:
     runs-on: ubuntu-24.04

@@ -1,5 +1,6 @@
 #include "look/stdlib.h"
 #include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (saf, RFC-KAT edilebilir)
+#include "look/fiber.h"           // fiber_offload — uzun PBKDF2 ortak havuzda
 #include "look/metrics.h"         // g_http_request_count() — web dispatch istek sayacı
 #include "look/interpreter.h"
 #include "look/logger.h"
@@ -115,7 +116,8 @@ static Module make_auth() {
         uint32_t iter = args.size() >= 2 ? (uint32_t)args[1].to_int() : 100000;
 
         auto salt = random_bytes(32);
-        auto dk   = pbkdf2_sha256(pwd, salt, iter, 32);
+        // ~100 ms bölünemeyen C++ hesabı: fiber içinde ortak havuzda (fiber.h fiber_offload)
+        auto dk   = fiber_offload([&] { return pbkdf2_sha256(pwd, salt, iter, 32); });
 
         std::string result = "pbkdf2$sha256$" + std::to_string(iter) + "$"
                            + b64_encode(salt.data(), salt.size()) + "$"
@@ -146,7 +148,7 @@ static Module make_auth() {
         if (iter == 0 || iter > MAX_PBKDF2_ITER) return Value(false);
         auto     salt    = b64_decode(parts[3]);
         auto     stored  = b64_decode(parts[4]);
-        auto     derived = pbkdf2_sha256(pwd, salt, iter, 32);
+        auto     derived = fiber_offload([&] { return pbkdf2_sha256(pwd, salt, iter, 32); });
 
         // Constant-time compare
         if (derived.size() != stored.size()) return Value(false);
