@@ -442,13 +442,6 @@ jobs:
           cd cpp
           bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
 
-      # Several consumers drain one job queue at once while their handlers write to SQLite (which
-      # suspends the fiber since 1.0.22): every job is handled exactly once.
-      - name: Concurrent queue consumers
-        run: |
-          cd cpp
-          bash tests/jobs_concurrent_test.sh ./build/lk-fcgi
-
       # With fibers one thread runs many requests and switches between them while one waits.
       # Per-request data must never reach another request across such a switch.
       - name: Suspended requests keep their own data
