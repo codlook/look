@@ -351,7 +351,16 @@ int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int time
 
 void FiberScheduler::run_until_complete() {
     while (true) {
-        while (run_one()) {}
+        // Hazır fiber'ları koştur — ama en fazla 1 ms, sonra epoll'u yokla. Sınırsız "kuyruk
+        // boşalana dek koştur" yazılamaz: gönüllü sıra bırakan fiber (uzun SQLite hesabı,
+        // on_progress) kuyruğa geri girer, kuyruk hiç boşalmaz ve yeni bağlantı / okunabilir soket
+        // sorgu bitene dek fark edilmezdi (1.0.22: 1 sn'lik hesap sırasında sıradan istek ~0,8 sn
+        // bekledi). Süreyle sınırlı (tur sayısıyla değil): normal yükte kuyruk 1 ms dolmadan
+        // boşalır ve ek epoll çağrısı olmaz (her turdan sonra yoklamak PG yükünü ~%2 düşürdü).
+        const auto slice_start = std::chrono::steady_clock::now();
+        while (run_one()) {
+            if (std::chrono::steady_clock::now() - slice_start >= std::chrono::milliseconds(1)) break;
+        }
 
         {
             std::lock_guard<std::mutex> lk(mtx_);

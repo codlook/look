@@ -10,7 +10,8 @@
 #
 # Here another process holds the SQLite database locked for 1.5 s, so writes wait without using
 # the CPU. While they wait, requests to a plain route must be answered at once:
-#   1. one waiting write;   2. more waiting writes than the pool has connections.
+#   1. one waiting write;   2. more waiting writes than the pool has connections;
+#   and while one long CPU-bound SQLite statement runs (WITH RECURSIVE, about 1 s).
 # Then: 3. many more concurrent transactions than connections all finish with exactly the
 # committed rows (no deadlock); 4. every query of a transaction stays on one connection (a
 # connection-private temporary table holds the request's own value); 5. a database server that
@@ -66,6 +67,10 @@ route("GET", "/silent", function() {
     db::query($c, "SELECT 1")
     return response::text("answered")
 })
+route("GET", "/cpu", function() {
+    $r = db::query(conn(), "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t WHERE n < 6000000) SELECT COUNT(*) AS c FROM t")
+    return response::text("done")
+})
 route("GET", "/count", function() {
     $r = db::query(conn(), "SELECT kind, COUNT(*) AS c FROM hits GROUP BY kind ORDER BY kind")
     $out = ""
@@ -107,6 +112,7 @@ def fast_while(slow_paths, hold_lock):
     print("max=%.3f slow=%.2f ok=%d/%d" % (max(lat), max(r[2] for r in res), slow_ok, len(res)))
 if case == "one":   fast_while(["/w"], True)
 if case == "many":  fast_while(["/w"] * int(__import__("os").environ["MANY"]), True)
+if case == "cpu":   fast_while(["/cpu"], False)
 if case == "pg":    fast_while(["/pg"], False)
 if case == "my":    fast_while(["/my"], False)
 if case == "tx":
@@ -171,6 +177,17 @@ run() {   # $1 = dispatch setting
             echo "  FAIL [$1] $label: a plain route waited ${max} s while database writes waited ($out)"; fail=1
         fi
     done
+    # A long CPU-bound SQLite statement (no lock, no server): it gives the other requests a turn
+    # every 2 ms. In 1.0.22 the turn was given but the scheduler only looked for new connections
+    # once nothing was ready, so a plain request still waited ~0.8 s.
+    out="$(python3 check.py "$PORT" cpu 2>&1 | tail -1)"
+    max="$(echo "$out" | sed -n 's/^max=\([0-9.]*\).*/\1/p')"
+    slow="$(echo "$out" | sed -n 's/.* slow=\([0-9.]*\).*/\1/p')"
+    if [ -z "$slow" ] || ! python3 -c "import sys; sys.exit(0 if $slow >= 0.3 else 1)"; then
+        echo "  FAIL [$1] long SQLite statement: it did not run long enough ($out) — the test did not reach its case"; fail=1
+    elif echo "$out" | grep -q 'ok=1/1' && python3 -c "import sys; sys.exit(0 if $max < 0.3 else 1)"; then
+        echo "  OK   [$1] long CPU-bound SQLite statement: plain route answered in at most ${max} s (statement took ${slow} s)"
+    else echo "  FAIL [$1] long CPU-bound SQLite statement: a plain route waited ${max} s ($out)"; fail=1; fi
     for ext in pg my; do
         if [ $ext = pg ]; then dsn="${PG_DSN:-}"; label="one pg_sleep(1) on PostgreSQL"
         else dsn="${MY_DSN:-}"; label="one SLEEP(1) on MySQL"

@@ -48,7 +48,12 @@ writers of the database waits on a thread of its own connection. A request takes
 connection at its first query and keeps it until it ends, so every query of a transaction uses
 the same connection.
 
-The same measurements give no waiting request (at most 0.006 s). Fast queries did not get
+The same measurements give no waiting request (at most 0.006 s).
+
+*Correction (1.0.23):* in 1.0.22 a long CPU-bound SQLite statement (for example a large
+`WITH RECURSIVE`) did give up its turn every 2 ms, but the scheduler only looked for new
+connections when no request was ready, so a plain request could still wait ~0.8 s. Fixed in
+1.0.23: the scheduler looks for new connections at least every millisecond. Fast queries did not get
 slower; in the load test they got faster — SQLite reads and writes 8–17 % more requests per
 second, PostgreSQL `SELECT 1` 60–80 % more (requests no longer wait for connections of pools
 they do not use).
