@@ -127,9 +127,8 @@ class RouteStopException : public std::exception {
 };
 
 // ── Connection pool — thread-safe, per-request borrow/return ──────────────────
-// Called by fcgi_main before/after each request dispatch in threaded mode.
-void acquire_thread_connections();   // borrow one conn per pool into thread-local
-void release_thread_connections();   // return all thread-local conns to pools
+// Bağlantı ilk db:: çağrısında tembel alınır; istek/geri çağrı sonunda hepsi iade edilir.
+void release_thread_connections();   // return all conns borrowed by this request to pools
 void set_db_pool_size(int n);        // set pool size before any db::connect call
 void clear_db_pools();               // close all pools — called before hot reload
 

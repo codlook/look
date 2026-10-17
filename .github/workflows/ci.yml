@@ -458,6 +458,14 @@ jobs:
           cd cpp
           bash tests/fiber_pool_release_test.sh ./build/lk-fcgi
 
+      # A database query that waits (a lock, a slow statement, a silent server) must hold only
+      # its own request. In 1.0.20–1.0.21 SQLite/PostgreSQL/MySQL-over-TLS queries held the whole
+      # fiber thread, and every request waited for a pool connection even without using one.
+      - name: A waiting database query does not hold other requests
+        run: |
+          cd cpp
+          bash tests/db_wait_test.sh ./build/lk-fcgi
+
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
@@ -781,8 +789,9 @@ jobs:
       - name: PG SCRAM crypto agreement RFC-KAT (seam)
         run: |
           cd cpp
+          # fiber_posix + logger: PG reads suspend the fiber while waiting (fiber_io.h)
           g++ -std=c++17 -Iinclude tests/pg_scram_crypto_kat.cpp src/postgres_client.cpp \
-              -lssl -lcrypto -o /tmp/pgkat
+              src/fiber_posix.cpp src/logger.cpp -lssl -lcrypto -lpthread -o /tmp/pgkat
           /tmp/pgkat
 
       # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
@@ -1023,7 +1032,7 @@ jobs:
         run: |
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target look --parallel $(nproc)
+          cmake --build build --target look look-fcgi --parallel $(nproc)
       # caching_sha2: root@mysql:8 TLS'siz TCP → taze önbellek → full-auth RSA yolu (sonra fast).
       - name: "caching_sha2_password — gerçek MySQL 8 (full-auth RSA + fast yol)"
         env:
@@ -1050,6 +1059,19 @@ jobs:
             true
           done
           echo "Native prepared-bind matrisi (MySQL+PG) YESIL."
+      # Web server on real servers: a slow PostgreSQL query and a slow MySQL query over TLS must
+      # hold only their own request (1.0.20–1.0.21 held the whole fiber thread). After the MySQL
+      # auth steps: a TLS login caches the password and would hide the full-auth path above.
+      - name: "Slow PostgreSQL 16 / MySQL 8 (TLS) query holds only its own request"
+        env:
+          PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"
+          MY_DSN: "mysql://root:rootpw@127.0.0.1:3306/lookci?tls=insecure"
+        run: |
+          cd cpp
+          out="$(bash tests/db_wait_test.sh ./build/lk-fcgi 2>&1)"; echo "$out"
+          echo "$out" | grep -q 'pg_sleep(1) on PostgreSQL: plain' || { echo "::error::PostgreSQL case did not run"; exit 1; }
+          echo "$out" | grep -q 'SLEEP(1) on MySQL over TLS: plain' || { echo "::error::MySQL TLS case did not run"; exit 1; }
+          echo "$out" | grep -q '^PASS'
       # A Redis password containing '?' used to break the URL parse (host became ':pa').
       # Real server: the right password works, a wrong one and none are refused — the two
       # refusals prove the server really enforces the password.

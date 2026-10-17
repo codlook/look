@@ -680,8 +680,8 @@ static void run_setup_http(const fs::path& script) {
             };
 
             // db::connect (56) — interpreter'ın mevcut pool key'ini döndür (aynı DSN için yeni
-            // pool açmaz). VM route closures bu key'i capture eder; acquire_thread_connections()
-            // bu pool'dan bağlantı alır. Farklı DSN için yeni pool açmak gerekmez (index.lk tek DSN).
+            // pool açmaz). VM route closures bu key'i capture eder; ilk db:: çağrısı
+            // (get_conn) bu pool'dan bağlantı alır. Farklı DSN için yeni pool açmak gerekmez (index.lk tek DSN).
             // KRİTİK: bu override'lar artık İSİMDEN indeksleniyor (builtin_index).
             // Eskiden hard-coded sayılardı; builtin_names()'e giriş eklenince
             // (ör. session::regenerate) tüm indeksler kaydı ve db::connect setup'ta
@@ -1622,7 +1622,6 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             if (val.type() == look::Value::BYTECODE_FN)
                 before_closures.push_back(val.as_bytecode_fn().get());
 
-        if (!nested) look::acquire_thread_connections();   // iç içe: dış isteğin bağlantıları kullanılır
         t_dispatch_start = std::chrono::steady_clock::now();
         bool vm_ok = false;
         int  vm_failed_route = -1;
@@ -1761,7 +1760,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     std::string("Fallback dispatch error: ") + e.what());
             }
         }
-        // VM path acquire (satır 937) burada serbest bırakılır — vm_ok ve
+        // İstek boyunca tembel alınan bağlantılar burada iade edilir — vm_ok ve
         // fallback dahil her iki akışı kapsar. Eksik release, pool_size istek
         // sonrası tüm worker'ların deadlock olmasına neden oluyordu.
         if (!nested) look::release_thread_connections();
@@ -1774,10 +1773,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // yeniden inşası) artık istek başına ödenmiyor.
         // ── Fiber dispatch (LOOK_FIBER_DISPATCH=1 ile aktif) ──────────────────
         // Fiber path: connections are acquired lazily inside the fiber via
-        // get_conn() fallback → pinned to fiber->local.conns.
-        // Thread-level acquire_thread_connections() is intentionally skipped:
-        // it would fill tl_conns (not fiber->local.conns), causing pool exhaustion
-        // when the fiber tries to acquire its own connection (deadlock).
+        // get_conn() → pinned to fiber->local.conns (every path is lazy now).
         static const bool use_fiber = []() {
             const char* v = std::getenv("LOOK_FIBER_DISPATCH");
             return look_fiber_dispatch_on(v);
@@ -1871,7 +1867,6 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             }
         } else {
             // ── Blocking path (default) ───────────────────────────────────────
-            look::acquire_thread_connections();
             try {
                 bool is_direct = (copy->get_route_count() == 0);
                 if (is_direct) {

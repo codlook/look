@@ -1,6 +1,7 @@
 #include "look/mysql_client.h"
 #include "look/mysql_wire_parse.h"   // saf ayristirici tek tanim (member'lar forward eder)
 #include "look/fiber.h"
+#include "look/fiber_io.h"
 #include "look/format.h"   // look_format_double (dilin tek double formati)
 #ifndef _WIN32
 // caching_sha2_password (MySQL 8+ varsayilan): SHA-256 + RSA-OAEP.
@@ -144,6 +145,7 @@ void MySQLClient::disconnect() {
 
 void MySQLClient::set_socket_timeout(int ms) {
     if (sock_ == SOCK_INVALID) return;
+    rcv_tmo_ms_ = ms;   // fiber beklemesi de aynı süreyle sınırlanır
 #ifdef _WIN32
     DWORD timeout = (DWORD)ms;
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
@@ -297,13 +299,16 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
     size_t received = 0;
 
 #ifndef _WIN32
-    // ── TLS path: bloklayan SSL_read ──────────────────────────────────────────
-    // TLS aktifse fiber non-blocking optimizasyonunu ATLA (SSL_read + SSL_ERROR_WANT_*
-    // + fiber yield karmaşık; TLS remote-DB'dir, latency ağ-baskın → düz blocking doğru
-    // ve yeterli). Localhost hızlı yolu (non-TLS) fiber path'te korunur.
+    // ── TLS path: SSL_read ────────────────────────────────────────────────────
+    // Fiber içinde TLS tamponu boşsa soket okunabilir olana dek yalnız fiber bekler.
+    // (Eskiden burada düz bloklayan okuma vardı: uzak/yönetilen veritabanı = TLS, ve
+    // yavaş bir sorgu o iş parçacığındaki bütün istekleri bekletiyordu.)
     if (ssl_) {
         SSL* s = (SSL*)ssl_;
         while (received < len) {
+            if (SSL_pending(s) == 0 && fiber_wait_readable((int)sock_, rcv_tmo_ms_) == 0) {
+                disconnect(); return false;
+            }
             int r = SSL_read(s, buf + received, (int)(len - received));
             if (r <= 0) { disconnect(); return false; }
             received += (size_t)r;
@@ -313,7 +318,7 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
 #endif
 
     // ── Fiber path: non-blocking recv + cooperative yield ─────────────────────
-    if (Fiber* fiber = Fiber::current()) {
+    if (Fiber::current()) {
         while (received < len) {
             int r = ::recv(sock_, (char*)(buf + received),
                            (int)(len - received), MSG_DONTWAIT);
@@ -323,44 +328,16 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
             int e = errno;
             if (e != EAGAIN && e != EWOULDBLOCK) { disconnect(); return false; }
 
-#ifndef _WIN32
-            // ── Fiber v3: suspend'den önce kısa poll ─────────────────────────
-            // Teşhis (Little's law analizi): suspend+epoll-kayıt+eventfd+resume
-            // zinciri istek başına ~1.1ms yiyor ve throughput'u ~7k'da tavanlıyor.
-            // Localhost DB yanıtı çoğu kez <1ms'de gelir — 1ms'lik poll ile
-            // suspension'ların büyük kısmı hiç yaşanmaz. Poll boş dönerse
-            // (gerçekten yavaş sorgu) normal suspend yoluna düşülür.
-            {
-                struct pollfd pfd{};
-                pfd.fd     = (int)sock_;
-                pfd.events = POLLIN;
-                if (::poll(&pfd, 1, 1 /*ms*/) > 0) continue;  // veri geldi — recv'e dön
-            }
-#endif
-
-            FiberScheduler* sched = get_thread_scheduler();
-
-            if (sched) {
-                auto sp = fiber->shared_from_this_fiber();
-                // wait_readable: register sock_ with scheduler's epoll,
-                // yield this fiber, resume when fd is readable.
-                // Returns false on Windows (no epoll) — fall through to blocking recv.
-                if (sp && sched->wait_readable(sp, (int)sock_)) {
-                    // Resumed: fd is readable, retry recv at top of while loop
-                } else {
-                    // Not supported or weak_self_ missing — blocking recv
-                    int rb = ::recv(sock_, (char*)(buf + received),
-                                    (int)(len - received), 0);
-                    if (rb <= 0) { disconnect(); return false; }
-                    received += rb;
-                }
-            } else {
-                // No fiber scheduler — blocking recv
-                int rb = ::recv(sock_, (char*)(buf + received),
-                                (int)(len - received), 0);
-                if (rb <= 0) { disconnect(); return false; }
-                received += rb;
-            }
+            // Kısa poll + askı (bkz. fiber_io.h). Süre sınırı query_timeout'tur: SO_RCVTIMEO
+            // fiber beklemesinde işlemez — eskiden yanıt vermeyen sunucu isteği süresiz tutuyordu.
+            int w = fiber_wait_readable((int)sock_, rcv_tmo_ms_);
+            if (w == 1) continue;              // okunabilir — recv'e dön
+            if (w == 0) { disconnect(); return false; }   // süre doldu
+            // Zamanlayıcı yok / desteklenmiyor — bloklayan recv
+            int rb = ::recv(sock_, (char*)(buf + received),
+                            (int)(len - received), 0);
+            if (rb <= 0) { disconnect(); return false; }
+            received += rb;
         }
         return true;
     }

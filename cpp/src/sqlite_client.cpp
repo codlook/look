@@ -1,6 +1,11 @@
 #include "look/sqlite_client.h"
 #include "look/format.h"   // look_format_double (dilin tek double formati)
 #include "sqlite3/sqlite-amalgamation-3530400/sqlite3.h"
+#include "look/fiber.h"
+#include <atomic>
+#include <exception>
+#include <functional>
+#include <thread>
 #include <stdexcept>
 #include <cstdio>
 #include <string>
@@ -34,6 +39,13 @@ struct SqliteWriteGate {
         abandoned.insert(t);
         return false;
     }
+    // Beklemeden al: kapı boşsa ve sırada kimse yoksa bilet alır.
+    bool try_acquire() {
+        std::lock_guard<std::mutex> lk(m);
+        if (serving != next) return false;
+        ++next;
+        return true;
+    }
     void release() {
         std::lock_guard<std::mutex> lk(m);
         ++serving;
@@ -59,10 +71,16 @@ static bool sqlite_starts_begin(const std::string& sql) {
 }
 static constexpr std::chrono::milliseconds SQLITE_GATE_LIMIT{10000};
 
+// Fiber içinde kapı doluysa: beklemek iş parçacığını tutardı → sorgu bağlantının kendi
+// iş parçacığına aktarılır (bkz. run()). Hiçbir adım çalışmadan atılır.
+struct SqliteGateBusy {};
+
 void SqliteClient::gate_before(sqlite3_stmt* stmt, const std::string& sql) {
     if (!gate_ || gate_held_) return;
     if (sqlite3_stmt_readonly(stmt) && !sqlite_starts_begin(sql)) return;
-    if (!gate_->acquire(SQLITE_GATE_LIMIT))
+    if (in_fiber_) {
+        if (!gate_->try_acquire()) throw SqliteGateBusy{};
+    } else if (!gate_->acquire(SQLITE_GATE_LIMIT))
         throw std::runtime_error("sqlite: step error: database is locked: waited 10 s for the other "
                                  "writers of this database in this process");
     gate_held_ = true;
@@ -74,6 +92,38 @@ void SqliteClient::gate_after() {
         gate_->release();
     }
 }
+
+// Bağlantının kendi iş parçacığı — kullanımı ve gerekçesi on_own_thread() üstünde.
+struct SqliteRunner {
+    std::mutex              m;
+    std::condition_variable cv;
+    std::function<void()>   job;
+    bool                    stop = false;
+    std::thread             th;   // EN SON üye: iş parçacığı öteki üyeler kurulduktan sonra başlar
+    SqliteRunner() : th([this] { loop(); }) {}
+    ~SqliteRunner() {
+        { std::lock_guard<std::mutex> lk(m); stop = true; }
+        cv.notify_one();
+        th.join();
+    }
+    void post(std::function<void()> j) {
+        { std::lock_guard<std::mutex> lk(m); job = std::move(j); }
+        cv.notify_one();
+    }
+    void loop() {
+        for (;;) {
+            std::function<void()> j;
+            {
+                std::unique_lock<std::mutex> lk(m);
+                cv.wait(lk, [&] { return stop || job; });
+                if (!job) return;
+                j = std::move(job);
+                job = nullptr;
+            }
+            j();
+        }
+    }
+};
 
 // double formatı → look/format.h look_format_double (dilin tek formatı, NaN/Inf dahil)
 
@@ -121,7 +171,11 @@ void SqliteClient::open(const std::string& path) {
     // beklenir — 5000 ms, jobs:: ile aynı. İmplicit-transaction INSERT'ler bununla kapanır;
     // explicit BEGIN için begin_stmt() "BEGIN IMMEDIATE" verir — SQLITE_BUSY_SNAPSHOT
     // busy_timeout ile retry EDİLEMEZ.
-    sqlite3_busy_timeout(db_, 5000);
+    // Bekleme busy_timeout(5000) ile aynı süre ve aralıklarla ama kendi işleyicimizle: fiber
+    // içinde iş parçacığını değil fiber'ı uyutur (bkz. on_busy). Uzun hesaplayan sorgu da
+    // fiber içinde arada sırayı öteki isteklere bırakır (on_progress).
+    sqlite3_busy_handler(db_, &SqliteClient::on_busy, this);
+    sqlite3_progress_handler(db_, 1000, &SqliteClient::on_progress, this);
     // WAL modu — okuma/yazma çakışmasını azaltır
     sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
     // NOT: synchronous varsayılan (FULL) BIRAKILDI. synchronous=NORMAL dayanıklılığı
@@ -133,6 +187,7 @@ void SqliteClient::open(const std::string& path) {
 }
 
 void SqliteClient::close() {
+    runner_.reset();   // bağlantının iş parçacığı (varsa) — üzerinde iş yokken kapanır
     if (gate_held_) { gate_held_ = false; gate_->release(); }   // açık işlem kapanışta geri alınır
     if (db_) {
         sqlite3_close(db_);
@@ -140,7 +195,107 @@ void SqliteClient::close() {
     }
 }
 
+// ── Fiber içinde SQLite: iş parçacığını değil fiber'ı bekletmek ──────────────
+// SQLite bir C kütüphanesidir; sorgu süresince çağıran iş parçacığını tutar. Fiber
+// dağıtımında bu, o iş parçacığındaki BÜTÜN istekleri bekletiyordu (1.0.20–1.0.21: tek uzun
+// sorgu sırasında başka istek ~1 sn bekledi; eski worker modelinde beklemiyordu).
+// Sorgu yine çağıran iş parçacığında çalışır (hızlı sorgu hiçbir ek maliyet ödemez — her
+// sorguyu başka iş parçacığına göndermek hızlı okumayı 2,9× yavaşlatıyordu, ölçüldü). Bekleyen
+// üç an fiber'ı bekletir:
+//   - başka programın kilidi: busy işleyicisi fiber'ı uyutur (on_busy);
+//   - uzun hesaplama: her 1000 adımda bakılır, 2 ms dolduysa sıra öteki isteklere (on_progress);
+//   - yazma kapısı dolu: sorgu bu bağlantının KENDİ iş parçacığında çalışır, orada bekler
+//     (on_own_thread). Ortak havuz değil bağlantı başına iş parçacığı: kapı açık işlem boyunca
+//     tutulur; ortak havuzda bütün iş parçacıkları kapıyı beklerken kapıyı tutan işlemin
+//     COMMIT'i boş iş parçacığı bulamazdı → kilitlenme.
+// Bir bağlantı her zaman tek bir isteğe aittir; hiçbir zaman aynı anda iki yerden kullanılmaz.
+static bool sqlite_in_fiber() {
+    return Fiber::current() && get_thread_scheduler();
+}
+
+int SqliteClient::on_progress(void* self) {
+    auto* c = static_cast<SqliteClient*>(self);
+    if (!c->in_fiber_) return 0;
+    auto now = std::chrono::steady_clock::now();
+    if (now - c->slice_start_ >= std::chrono::milliseconds(2)) {
+        Fiber::yield();   // gönüllü: zamanlayıcı fiber'ı hazır kuyruğunun sonuna koyar
+        c->slice_start_ = std::chrono::steady_clock::now();
+    }
+    return 0;
+}
+
+int SqliteClient::on_busy(void* self, int count) {
+    // SQLite'ın busy_timeout aralıkları; toplam 5000 ms.
+    static const int delays[] = {1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100};
+    auto* c = static_cast<SqliteClient*>(self);
+    if (count == 0) c->busy_waited_ms_ = 0;
+    if (c->busy_waited_ms_ >= 5000) return 0;
+    int d = count < 12 ? delays[count] : 100;
+    if (d > 5000 - c->busy_waited_ms_) d = 5000 - c->busy_waited_ms_;
+    std::shared_ptr<Fiber> sp;
+    FiberScheduler* sched = nullptr;
+    if (c->in_fiber_) { sched = get_thread_scheduler(); sp = Fiber::current()->shared_from_this_fiber(); }
+    if (sp && sched && sched->wait_readable_tmo(sp, -1, d) >= 0) {
+        // fiber uyudu, iş parçacığı öteki isteklere döndü
+    } else {
+        std::this_thread::sleep_for(std::chrono::milliseconds(d));
+    }
+    c->busy_waited_ms_ += d;
+    c->slice_start_ = std::chrono::steady_clock::now();
+    return 1;
+}
+
+template <class Fn>
+std::vector<DbRow> SqliteClient::run(Fn&& fn) {
+    if (!sqlite_in_fiber()) return fn();
+    in_fiber_ = true;
+    slice_start_ = std::chrono::steady_clock::now();
+    try {
+        auto rows = fn();
+        in_fiber_ = false;
+        return rows;
+    } catch (const SqliteGateBusy&) {
+        in_fiber_ = false;   // hiçbir adım çalışmadı — kendi iş parçacığında, beklemeli kapıyla
+    } catch (...) {
+        in_fiber_ = false;
+        throw;
+    }
+    return on_own_thread(fn);
+}
+
+template <class Fn>
+std::vector<DbRow> SqliteClient::on_own_thread(Fn&& fn) {
+    Fiber* cur = Fiber::current();
+    FiberScheduler* sched = cur ? get_thread_scheduler() : nullptr;
+    std::shared_ptr<Fiber> sp = sched ? cur->shared_from_this_fiber() : nullptr;
+    if (!sp) return fn();   // fiber dışında (worker modeli, jobs, CLI): doğrudan çalış
+    if (!runner_) runner_ = std::make_unique<SqliteRunner>();
+    std::vector<DbRow> out;
+    std::exception_ptr err;
+    std::atomic<bool> done{false};
+    runner_->post([&, sched, sp] {
+        try { out = fn(); } catch (...) { err = std::current_exception(); }
+        done.store(true, std::memory_order_release);
+        sched->resume_fiber(sp);
+    });
+    // EN AZ BİR KEZ askıya gir: iş çok hızlı bitse bile resume_fiber'ın uyandırması bu askıda
+    // tüketilir (erken gelirse pending_resume_ olarak). Askıya girmeden devam etseydik artık
+    // uyandırma fiber'ın SONRAKİ beklemesini (soket/havuz) erken uyandırırdı. Döngü: iş bitmeden
+    // gelen beklenmedik uyanma yığındaki out/err'e erken dokunmasın.
+    do { FiberScheduler::suspend_current(); } while (!done.load(std::memory_order_acquire));
+    if (err) std::rethrow_exception(err);
+    return out;
+}
+
 std::vector<DbRow> SqliteClient::query(const std::string& sql) {
+    return run([&] { return query_here(sql); });
+}
+
+std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vector<DbParam>& params) {
+    return run([&] { return execute_here(sql, params); });
+}
+
+std::vector<DbRow> SqliteClient::query_here(const std::string& sql) {
     if (!db_) throw std::runtime_error("sqlite: no open database");
 
     sqlite3_stmt* stmt = nullptr;
@@ -221,7 +376,7 @@ std::vector<DbRow> SqliteClient::query(const std::string& sql) {
     return rows;
 }
 
-std::vector<DbRow> SqliteClient::execute(const std::string& sql, const std::vector<DbParam>& params) {
+std::vector<DbRow> SqliteClient::execute_here(const std::string& sql, const std::vector<DbParam>& params) {
     if (!db_) throw std::runtime_error("sqlite: no open database");
 
     sqlite3_stmt* stmt = nullptr;

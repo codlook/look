@@ -2,6 +2,8 @@
 #include "look/pg_parse.h"   // saf pg_parse_error (fuzz/test ile paylasilan tek tanim)
 #include "look/format.h"     // look_format_double (dilin tek double formati)
 #include "look/crypto_sha256.h" // SCRAM primitifleri: look::sha256/hmac_sha256/pbkdf2_sha256 (tek impl)
+#include "look/fiber_io.h"      // fiber içinde bekleme: iş parçacığı değil yalnız fiber bekler
+#include <cerrno>
 #include <cstring>
 #include <cctype>
 #include <sstream>
@@ -400,12 +402,36 @@ void PostgresClient::disconnect() {
 bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
     size_t received = 0;
 #ifndef _WIN32
-    if (ssl_) {   // TLS aktif → SSL_read (bloklayan)
+    if (ssl_) {   // TLS aktif → SSL_read
         SSL* s = (SSL*)ssl_;
         while (received < len) {
+            // Fiber içinde: TLS tamponu boşsa soket okunabilir olana dek yalnız fiber bekler.
+            if (SSL_pending(s) == 0) {
+                int w = fiber_wait_readable(sock_, rcv_tmo_ms_);
+                if (w == 0) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID; return false; }
+            }
             int r = SSL_read(s, buf + received, (int)(len - received));
             if (r <= 0) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID; return false; }
             received += r;
+        }
+        return true;
+    }
+    // Fiber yolu: beklemeden oku; veri yoksa fiber'ı askıya al (MySQL ile aynı yol).
+    if (Fiber::current()) {
+        while (received < len) {
+            ssize_t r = ::recv(sock_, (char*)(buf + received), len - received, MSG_DONTWAIT);
+            if (r > 0) { received += (size_t)r; continue; }
+            if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                int w = fiber_wait_readable(sock_, rcv_tmo_ms_);
+                if (w == 1) continue;
+                if (w < 0) {   // zamanlayıcı yok → bloklayarak oku
+                    r = ::recv(sock_, (char*)(buf + received), len - received, 0);
+                    if (r > 0) { received += (size_t)r; continue; }
+                }
+            }
+            pg_close_sock(sock_);
+            sock_ = PG_SOCK_INVALID;
+            return false;
         }
         return true;
     }
@@ -467,6 +493,7 @@ void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
 
 void PostgresClient::set_socket_timeout(int ms) {
     if (sock_ == PG_SOCK_INVALID) return;
+    rcv_tmo_ms_ = ms;   // fiber beklemesi de aynı süreyle sınırlanır (SO_RCVTIMEO fiber'da işlemez)
 #ifdef _WIN32
     DWORD t = (DWORD)ms;
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof(t));

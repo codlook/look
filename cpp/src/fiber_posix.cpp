@@ -28,6 +28,22 @@
 #include <ucontext.h>
 #include <unistd.h>
 
+// ASan derlemesinde fiber geçişleri ASan'a bildirilir. Bildirilmezse ASan fiber yığınını
+// tanımaz: istisna fırlatılınca (__asan_handle_no_return) yanlış yığını temizler, ve
+// use-after-return denetiminin iş parçacığı başına "sahte yığını" fiberler bir çağrının
+// ortasında askıya alınıp birbirinin arasına girince bozulur → yanlış alarmlar. Yayın
+// derlemesinde bu blok yoktur.
+#if defined(__SANITIZE_ADDRESS__)
+#  define LOOK_ASAN_FIBER 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define LOOK_ASAN_FIBER 1
+#  endif
+#endif
+#ifdef LOOK_ASAN_FIBER
+#  include <sanitizer/common_interface_defs.h>
+#endif
+
 namespace look {
 
 // ── Platform impl ─────────────────────────────────────────────────────────────
@@ -40,6 +56,12 @@ struct Fiber::Impl {
     void*  stack_base  = nullptr;  // bottom of allocation (guard page here)
     size_t stack_alloc = 0;        // total allocation size (stack + guard page)
     size_t stack_size  = 0;        // usable stack size (without guard page)
+    void*  usable_stack = nullptr; // usable stack bottom (after the guard page)
+#ifdef LOOK_ASAN_FIBER
+    void*       fake_stack    = nullptr;   // fiber'ın askıdaki sahte yığını
+    const void* caller_bottom = nullptr;   // dönülecek (iş parçacığı) yığın sınırları
+    size_t      caller_size   = 0;
+#endif
 };
 
 // ── Thread-local state ────────────────────────────────────────────────────────
@@ -84,6 +106,9 @@ void fiber_trampoline(uint32_t hi, uint32_t lo) noexcept {
     // Reconstruct pointer from two ints (portable on 32 and 64-bit)
     uintptr_t ptr = ((uintptr_t)hi << 32) | (uintptr_t)lo;
     Fiber* f = reinterpret_cast<Fiber*>(ptr);
+#ifdef LOOK_ASAN_FIBER
+    __sanitizer_finish_switch_fiber(nullptr, &f->impl_->caller_bottom, &f->impl_->caller_size);
+#endif
     try {
         f->fn()();
     } catch (const std::exception& ex) {
@@ -97,6 +122,9 @@ void fiber_trampoline(uint32_t hi, uint32_t lo) noexcept {
     tl_current_fiber = nullptr;
     // CRITICAL: swap back to caller — uc_link=nullptr means we must do this
     // manually, otherwise the thread exits when the fiber function returns.
+#ifdef LOOK_ASAN_FIBER
+    __sanitizer_start_switch_fiber(nullptr, f->impl_->caller_bottom, f->impl_->caller_size);   // son çıkış
+#endif
     ::swapcontext(&f->impl_->fiber_ctx, &f->impl_->caller_ctx);
     // This line is never reached — swapcontext does not return here.
 }
@@ -133,6 +161,7 @@ Fiber::Fiber(Fn fn, size_t stack_size)
 
     // Usable stack starts after guard page
     void* usable_stack = static_cast<char*>(mem) + guard_bytes;
+    impl_->usable_stack = usable_stack;
 
     // Set up ucontext
     if (::getcontext(&impl_->fiber_ctx) != 0)
@@ -176,7 +205,14 @@ void Fiber::resume() {
     tl_current_fiber   = this;
 
     // Switch: save caller context into caller_ctx, jump to fiber_ctx
+#ifdef LOOK_ASAN_FIBER
+    void* caller_fake = nullptr;
+    __sanitizer_start_switch_fiber(&caller_fake, impl_->usable_stack, impl_->stack_size);
+#endif
     ::swapcontext(&impl_->caller_ctx, &impl_->fiber_ctx);
+#ifdef LOOK_ASAN_FIBER
+    __sanitizer_finish_switch_fiber(caller_fake, nullptr, nullptr);
+#endif
 
     // Execution returns here when the fiber yields or completes
     tl_current_fiber = prev;
@@ -187,7 +223,15 @@ void Fiber::yield() {
     assert(self && "yield() called outside a fiber");
 
     // Switch back to the context that called resume()
+#ifdef LOOK_ASAN_FIBER
+    __sanitizer_start_switch_fiber(&self->impl_->fake_stack,
+                                   self->impl_->caller_bottom, self->impl_->caller_size);
+#endif
     ::swapcontext(&self->impl_->fiber_ctx, &self->impl_->caller_ctx);
+#ifdef LOOK_ASAN_FIBER
+    __sanitizer_finish_switch_fiber(self->impl_->fake_stack,
+                                    &self->impl_->caller_bottom, &self->impl_->caller_size);
+#endif
 }
 
 // ── FiberScheduler ────────────────────────────────────────────────────────────

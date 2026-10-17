@@ -79,7 +79,8 @@ private:
     bool        wsock_init_         = false;
     int         connect_timeout_ms_ = 5000;
     int         query_timeout_ms_   = 30000;
-    void*       ssl_                = nullptr;   // SSL* — TLS aktifse (void*: header OpenSSL'siz kalır)
+    int         rcv_tmo_ms_         = -1;        // son set_socket_timeout değeri (fiber beklemesi için)
+    void*       ssl_               = nullptr;   // SSL* — TLS aktifse (void*: header OpenSSL'siz kalır)
     bool        tls_                = false;     // TLS iste
     bool        tls_verify_         = true;      // sertifika+hostname doğrula (doğru varsayılan)
 

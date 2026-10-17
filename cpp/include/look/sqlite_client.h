@@ -4,6 +4,7 @@
 #include <string>
 #include <stdexcept>
 #include <memory>
+#include <chrono>
 
 // Forward declare — sqlite3.h'ı include etmiyoruz, header kirliliği önlemek için
 struct sqlite3;
@@ -46,6 +47,18 @@ private:
     bool gate_held_ = false;
     void gate_before(::sqlite3_stmt* stmt, const std::string& sql);
     void gate_after();
+
+    // Fiber içinde bekleyen sorgu iş parçacığını değil fiber'ı bekletir (bkz. .cpp).
+    bool in_fiber_ = false;                               // sorgu şu an fiber içinde, bu iş parçacığında
+    std::chrono::steady_clock::time_point slice_start_;   // son sıra bırakma anı
+    int  busy_waited_ms_ = 0;
+    static int on_progress(void* self);
+    static int on_busy(void* self, int count);
+    std::unique_ptr<struct SqliteRunner> runner_;         // yazma kapısı doluyken: bağlantının iş parçacığı
+    template <class Fn> std::vector<DbRow> run(Fn&& fn);
+    template <class Fn> std::vector<DbRow> on_own_thread(Fn&& fn);
+    std::vector<DbRow> query_here(const std::string& sql);
+    std::vector<DbRow> execute_here(const std::string& sql, const std::vector<DbParam>& params);
 };
 
 } // namespace look
