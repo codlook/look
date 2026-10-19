@@ -33,7 +33,7 @@ if kill -0 "$pid" 2>/dev/null; then
     echo "  FAIL the server started with an included file the VM cannot compile"; echo "FAIL: included file not refused"; exit 1
 fi
 wait "$pid"; rc=$?; pid=""
-named="$(grep -c 'the VM cannot run this program (compile error: use "lib.lk": .*65534' "$TMP/log.txt")"
+named="$(grep -c 'Setup error: use "lib.lk": .*65534' "$TMP/log.txt")"
 undef="$(grep -c 'Undefined variable' "$TMP/log.txt")"
 if [ "$rc" = 1 ] && [ "$named" -ge 1 ] && [ "$undef" = "0" ]; then
     echo "  OK   the application does not start, and the error names the included file and the reason"

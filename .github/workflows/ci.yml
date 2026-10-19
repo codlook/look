@@ -920,6 +920,14 @@ jobs:
           cd cpp
           bash tests/vm_only_startup_test.sh ./build/lk-fcgi
 
+      # The use rule with the top level on the VM only: a module function without its use line
+      # stops startup (top level) or fails the request (route); a use line in an included file
+      # opens the module; an unknown module and use timer stop startup.
+      - name: The use rule holds in a web application
+        run: |
+          cd cpp
+          bash tests/use_rule_web_test.sh ./build/lk-fcgi
+
       # JWT güvenlik tablosu — HS256 modülü klasik açıklara GÜVENLİ mi: alg=none reddi,
       # RS256→HS256 key-confusion reddi, exp expiry, imza-kurcalama + pozitif. verify header
       # alg'ini OKUMAZ (koşulsuz HMAC) → alg-confusion yapısal imkânsız. Pozitif-kontrollü.

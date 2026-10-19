@@ -2,11 +2,11 @@
 # LOOK 2: callbacks registered at the top level run on the VM — a timer armed there and a
 # job handler registered with jobs::worker.
 #
-# The top level of a web application runs first on the tree-walk engine. A timer or a job
-# handler registered there was a tree-walk function and kept running on that engine while the
-# rest of the application ran on the VM: two engines side by side, the slow one doing the
-# background work. When the VM's setup has succeeded, those registrations are now handed over
-# to the VM's own closures (look/setup_handoff.h). The timer keeps its id.
+# The top level of a web application used to run first on the tree-walk engine. A timer or a
+# job handler registered there was a tree-walk function and kept running on that engine while
+# the rest of the application ran on the VM: two engines side by side, the slow one doing the
+# background work. Then the registrations were handed over to the VM after setup. Now the top
+# level runs only on the VM, once, and registers the VM's closures directly.
 # How this test sees the engine: each callback runs a loop the tree-walk engine needed seconds
 # for and the VM a fraction of one, and the test measures from outside how long it took.
 # (LOOK 2 web runs only on the VM; the tree-walk comparison run was removed with the fallback.)
@@ -70,7 +70,6 @@ for mode in "LOOK_VM_STRICT=1"; do
     after="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/r")"
     t1="$(num "$(curl -s -m 3 "localhost:$PORT/r")" ticks)"; curl -s -m 3 "localhost:$PORT/stop" >/dev/null; sleep 0.3
     t2="$(num "$(curl -s -m 3 "localhost:$PORT/r")" ticks)"; sleep 0.5; r="$(curl -s -m 3 "localhost:$PORT/r")"; t3="$(num "$r" ticks)"
-    said="$(grep -c 'Top-level callbacks on the VM: 2 timer, 2 job handler' "$TMP/log.txt")"
     boom="$(grep -c 'boom in job' "$TMP/log.txt")"
     vmerr="$(grep -c 'VM BUG\|runs on the interpreter' "$TMP/log.txt")"
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
@@ -81,8 +80,8 @@ for mode in "LOOK_VM_STRICT=1"; do
     if [ "$nest" = '{"x":"42","handler_saw":"nothing"} 200' ] && [ "$nh" = "0" ] && [ "$after" = "200" ]; then
         echo "  OK   [$mode] a handler run from inside a request has its own context; the request keeps its status, headers and parameters"
     else echo "  FAIL [$mode] nested handler: response=[$nest] handler-header-leaked=$nh next-request=$after"; fail=1; fi
-    if [ "$said" = "1" ] && [ "$vmerr" = "0" ] && [ "$tm" -ge 0 ] && [ "$tm" -lt 1200 ] && [ "$jm" -lt 900 ]; then
+    if [ "$vmerr" = "0" ] && [ "$tm" -ge 0 ] && [ "$tm" -lt 1200 ] && [ "$jm" -lt 900 ]; then
         echo "  OK   [$mode] both callbacks ran on the VM (timer done after ${tm} ms, one job drained in ${jm} ms)"
-    else echo "  FAIL [$mode] handed-over line=$said timer=${tm} ms (want < 1200) job=${jm} ms (want < 900) log-problems=$vmerr"; fail=1; fi
+    else echo "  FAIL [$mode] timer=${tm} ms (want < 1200) job=${jm} ms (want < 900) log-problems=$vmerr"; fail=1; fi
 done
 [ $fail = 0 ] && echo "PASS: top-level timers and job handlers run on the VM" || { echo "FAIL: top-level callbacks"; exit 1; }

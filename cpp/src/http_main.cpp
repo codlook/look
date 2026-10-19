@@ -15,7 +15,6 @@
 #include "look/db_async_pool.h"
 #include "look/lexer.h"
 #include "look/parser.h"
-#include "look/setup_handoff.h"
 #include "look/jobs_store.h"
 #include "look/interpreter.h"
 #include "look/compiler.h"
@@ -27,7 +26,12 @@
 #include "look/smtp_server.h"
 #include "look/imap_server.h"
 #include "look/fiber.h"
+#include <set>
 #include "look/timer.h"
+#include "look/setup_handoff.h"   // vm_closure_runner (jobs::run VM işleyicilerini çalıştırır)
+#include "look/use_modules.h"     // collect_use_modules — CLI ile aynı `use` listesi
+#include "look/route_params.h"    // route_check_handler — rota parametre adları kayıtta denetlenir
+#include "look/struct_types.h"    // struct_check_type_known — kurulum sonrası alan tipi denetimi
 
 #include <cctype>
 #include <cmath>
@@ -296,8 +300,6 @@ struct HttpApp {
     bool                                     script_mode = false;
     // before_route() middleware listesi (setup fazında kaydedilir, dispatch'ten önce çalışır)
     std::vector<look::Value>                 vm_before_routes;
-    // 1.0.9: yorumlayıcı kurulum geçişinin modül çağrıları (ad, sonuç) — VM geçişi geri oynatır.
-    look::Interpreter::SetupRecord           setup_record;
     // Setup VM globals: db_check/json_ok/json_hata/admin_kontrol closure'ları + $conn pool key
     std::unordered_map<std::string, look::Value> vm_setup_globals;
 
@@ -435,14 +437,16 @@ static bool proto_needs_interpreter(const look::FunctionProto* p,
     return false;
 }
 
-// LOOK 2 tek motor: VM programı derleyemiyor ya da kuramıyorsa uygulama BAŞLAMAZ (eskiden
-// bütün uygulama sessizce ~40× yavaş yorumlayıcıya düşüyordu; LOOK_VM_STRICT yalnız bunu
-// reddetmenin yoluydu — artık tek davranış budur). İstisna fırlatır: başlangıçta çağıran
-// mesajı yazıp 1 koduyla çıkar; sıcak yeniden yüklemede hata loglanır, sunucu kapanmaz
-// (uygulama hazır değil → istekler 500 alır, dosya düzeltilince sonraki yükleme toparlar).
+// LOOK 2 tek motor: program derlenemiyorsa uygulama BAŞLAMAZ (eskiden bütün uygulama sessizce
+// ~40× yavaş yorumlayıcıya düşüyordu; LOOK_VM_STRICT yalnız bunu reddetmenin yoluydu — artık
+// tek davranış budur). Derleme hatası programın hatasıdır (eksik dosya, bilinmeyen modül, sınır
+// aşımı) — mesaj olduğu gibi iletilir; "VM çalıştıramıyor" çerçevesi motoru suçlu gösteriyordu.
+// İstisna fırlatır: başlangıçta çağıran mesajı yazıp 1 koduyla çıkar; sıcak yeniden yüklemede
+// hata loglanır, sunucu kapanmaz (uygulama hazır değil → istekler 500 alır, dosya düzeltilince
+// sonraki yükleme toparlar).
 [[noreturn]] static void refuse_start(const std::string& why) {
     g_http_app.vm_routes_ready = false;
-    throw std::runtime_error("the VM cannot run this program (" + why + ")");
+    throw std::runtime_error(why);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -472,21 +476,24 @@ static void run_setup_http(const fs::path& script) {
     setup_ctx        = look::WebContext{};
     setup_ctx.method = "__SETUP__";
 
+    // LOOK 2 tek motor: üst düzey kod (kurulum) YALNIZ VM'de, bir kez çalışır. Bu nesne LOOK kodu
+    // ÇALIŞTIRMAZ — yalnız yerleşik modüllerin deposu (ModuleHost): modül fonksiyonları ondan
+    // alınır, web modülleri kurulum bağlamına (setup_ctx) bağlanır, setup modu bayrağını taşır.
+    // (Eskiden üst düzey önce burada yorumlayıcıda koşuyor, sonra VM aynı kodu kayıttan geri
+    // oynatıyordu: iki geçiş, iki motor.)
     auto interp = std::make_unique<look::Interpreter>(g_http_app.setup_out);
     interp->set_file(script.string());
     interp->set_web_context(&setup_ctx);
-    interp->set_setup_mode(true);
-    g_http_app.setup_record.clear();
-    look::setup_handoff().reset(look::JobStore::instance().workers().size());   // LOOK 2: üst düzey geri çağırmaların VM'e devri
-    interp->set_setup_record(&g_http_app.setup_record);   // 1.0.9: VM geçişi bunu geri oynatır
-    try { interp->interpret(*program); }
-    catch (...) { interp->set_setup_record(nullptr); throw; }
-    interp->set_setup_record(nullptr);
-    // LOOK 2: tüm dosyalar yüklendi, bütün struct'lar biliniyor → tip adlarını ŞİMDİ denetle.
-    // Yazım hatası (`strng`) uygulama BAŞLARKEN hata verir; yoksa ancak o struct'ı kuran
-    // (belki nadiren çağrılan) rota çalıştığında, üretimde ortaya çıkardı.
-    interp->validate_struct_types();
-    interp->set_setup_mode(false);
+    // Yalnız programın `use` ettiği stdlib modülleri açılır (dahil edilen dosyalarınkiler de —
+    // CLI ile aynı liste, look/use_modules.h). Eskiden yorumlayıcı geçişi `use` satırlarını
+    // yürüterek açıyordu; o geçiş yok. `use` edilmeyen modülün yuvası boş kalır → VM "Module 'x'
+    // not loaded." verir. Paket modülü (~/.look/modules) stdlib değildir: derleyici derler.
+    {
+        std::set<std::string> seen_files;
+        std::vector<std::string> mods;
+        look::collect_use_modules(*program, script.parent_path(), seen_files, mods);
+        for (const auto& m : mods) interp->load_stdlib_module(m);
+    }
 
     g_http_app.program     = std::move(program);
     g_http_app.interp      = std::move(interp);
@@ -516,12 +523,10 @@ static void run_setup_http(const fs::path& script) {
             std::cerr << "[BYTECODE] OK — VM mode active\n";
             look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
                 "Bytecode compile OK — VM mode active");
-        } catch (const look::LookCompileError& e) {
-            refuse_start(std::string("compile error: ") + e.what());
         } catch (const std::exception& e) {
-            refuse_start(std::string("compile error: ") + e.what());
+            refuse_start(e.what());
         } catch (...) {
-            refuse_start("unknown compile error");
+            refuse_start("the program could not be compiled");
         }
 
     // ── VM Setup Fazı: bytecode'u çalıştır, route'ları kaydet ────────────────
@@ -591,20 +596,6 @@ static void run_setup_http(const fs::path& script) {
 
             bind_scalar_builtins(setup_builtins);   // strlen, abs, max, min, sqrt, strtoupper, strtolower, join — istek tablosuyla aynı tanım
 
-            // log::info/warn/error/debug (43-46) — setup logları
-            for (int i = 43; i <= 46; ++i) {
-                std::string level_str = (i==43?"INFO":i==44?"WARN":i==45?"ERROR":"DEBUG");
-                setup_builtins[i] = [level_str](std::vector<look::Value>& args) -> look::Value {
-                    auto lvl = (level_str=="INFO") ? look::LogLevel::LOG_INFO
-                             : (level_str=="WARN") ? look::LogLevel::LOG_WARN
-                             : (level_str=="ERROR")? look::LogLevel::LOG_ERROR
-                             :                       look::LogLevel::LOG_DEBUG;
-                    look::Logger::instance().log(lvl, "VM-setup",
-                        args.empty() ? "" : args[0].to_string());
-                    return look::Value();
-                };
-            }
-
             // before_route() — setup'ta middleware closure'ı kaydet. İndeks İSİMDEN
             // (builtin_index) — hard-coded sayı builtin listesi büyüyünce kayıyordu.
             setup_builtins[(size_t)look::builtin_index("before_route")] =
@@ -641,10 +632,6 @@ static void run_setup_http(const fs::path& script) {
                 return look::Value();
             };
 
-            // db::connect (setup'ta çağrılır) — interpreter fallback ile
-            // NOT: db:: fonksiyonları setup'ta interpreter tarafından çalıştırıldı.
-            // VM setup fazında db:: yok — sadece route() kayıt önemli.
-
             // route() — index 22: pattern + closure kaydet
             setup_builtins[22] = [vm_routes_ptr](std::vector<look::Value>& args) -> look::Value {
                 // route("GET", "/path", fn) — 3-arg form
@@ -661,6 +648,7 @@ static void run_setup_http(const fs::path& script) {
                         middlewares.insert(middlewares.end(), own.begin(), own.end());
                     }
                     if (args[3].type() == look::Value::BYTECODE_FN) {
+                        look::route_check_handler(method, pattern, args[3].as_bytecode_fn()->proto->params);
                         vm_routes_ptr->push_back({method + ":" + pattern, args[3], std::move(middlewares)});
                     }
                 } else if (args.size() >= 3) {
@@ -669,6 +657,7 @@ static void run_setup_http(const fs::path& script) {
                     std::string pattern = look::route_group_prefix() + args[1].to_string();
                     std::vector<look::Value> middlewares = look::route_group_middlewares();
                     if (args[2].type() == look::Value::BYTECODE_FN) {
+                        look::route_check_handler(method, pattern, args[2].as_bytecode_fn()->proto->params);
                         vm_routes_ptr->push_back({method + ":" + pattern, args[2], std::move(middlewares)});
                     }
                 } else if (args.size() >= 2) {
@@ -681,22 +670,11 @@ static void run_setup_http(const fs::path& script) {
                 return look::Value();
             };
 
-            // db::connect (56) — interpreter'ın mevcut pool key'ini döndür (aynı DSN için yeni
-            // pool açmaz). VM route closures bu key'i capture eder; ilk db:: çağrısı
-            // (get_conn) bu pool'dan bağlantı alır. Farklı DSN için yeni pool açmak gerekmez (index.lk tek DSN).
-            // KRİTİK: bu override'lar artık İSİMDEN indeksleniyor (builtin_index).
-            // Eskiden hard-coded sayılardı; builtin_names()'e giriş eklenince
-            // (ör. session::regenerate) tüm indeksler kaydı ve db::connect setup'ta
-            // channel lambda'sını çalıştırıyordu (sessiz VM/interpreter divergence).
+            // KRİTİK: override'lar İSİMDEN indekslenir (builtin_index). Eskiden hard-coded sayılardı;
+            // builtin_names()'e giriş eklenince indeksler kayıyordu (sessiz yanlış fonksiyon).
+            // db::connect ve diğer modül fonksiyonları aşağıdaki genel döngüde GERÇEK modül
+            // fonksiyonuna bağlanır (kurulum tek geçiş: havuz bir kez açılır).
             auto SBI = [](const char* n) { return (size_t)look::builtin_index(n); };
-            setup_builtins[SBI("db::connect")] = [](std::vector<look::Value>& args) -> look::Value {
-                look::Value existing = g_http_app.interp->get_global("conn");
-                if (existing.type() == look::Value::STRING) return existing;
-                auto f = g_http_app.interp->get_module_fn("db", "connect");
-                if (!f) return look::Value();
-                std::vector<look::Value> a = args;
-                return f(a);
-            };
             setup_builtins[SBI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
                 int buf = args.empty() ? 128 : (args[0].type() == look::Value::INT ? args[0].as_int() : 128);
                 if (buf <= 0) buf = (1 << 20);
@@ -747,112 +725,104 @@ static void run_setup_http(const fs::path& script) {
                 };
             }
 
-            // ── Boş slot güvenlik ağı — VM'in sessizce devre dışı kalmasını önler ──
-            // Setup fazında, yukarıda açıkça bağlanmamış herhangi bir builtin
-            // çağrılırsa (örn. db::exec, crypto::uuid, json::encode), boş bir
-            // std::function çağrılır → std::bad_function_call → catch → tüm VM
-            // devre dışı → en yaygın kalıpta (setup'ta DB) VM sessizce kapanırdı.
-            // Çözüm: kalan tüm slotları doldur.
-            //   • Yan etkili modüller (db yazma, http, mail, queue, jobs, cache,
-            //     ws, sse) → NO-OP: interpreter setup'ı (satır ~285) bu yan
-            //     etkileri ZATEN çalıştırdı; VM tekrarında ikinci kez çalışması
-            //     çift INSERT / çift istek / "table exists" hatası yapardı.
-            //   • Saf fonksiyonlar (string, json, crypto, math, date…) →
-            //     interpreter'a fallback (gerçek değer döner; dinamik route
-            //     path'i bunlara dayanırsa VM route'u interpreter'la eşleşir).
+            // ── Kalan yerleşikler: GERÇEK modül fonksiyonları (LOOK 2: kurulum TEK geçiş) ─────────
+            // Üst düzey yalnız burada, VM'de, bir kez çalışır: modül fonksiyonlarının yan etkileri
+            // (db::exec, file::put, cache::set, http::get …) bir kez gerçekleşir, dönüşleri gerçektir.
+            // Eskiden yorumlayıcı geçişi bunları çalıştırıyor, VM geçişi sonuçları kayıttan geri
+            // oynatıyordu (1.0.9) — iki geçiş, iki motor; artık ikisi de yok.
             {
                 const auto& bnames = look::builtin_names();
-                auto starts_with = [](const std::string& s, const char* p) {
-                    return s.rfind(p, 0) == 0;
-                };
-                auto is_side_effect = [&](const std::string& n) {
-                    // db::connect hariç db:: yan etkilidir (setup'ta zaten çalıştı)
-                    if (starts_with(n, "db::")) return n != "db::connect";
-                    return starts_with(n, "http::") || starts_with(n, "mail::") ||
-                           starts_with(n, "queue::") || starts_with(n, "jobs::") ||
-                           starts_with(n, "cache::") || starts_with(n, "ws::") ||
-                           starts_with(n, "sse::");
-                };
+                look::Interpreter* host = g_http_app.interp.get();
                 for (size_t i = 0; i < setup_builtins.size() && i < bnames.size(); ++i) {
-                    if (setup_builtins[i]) continue;           // zaten bağlı
+                    if (setup_builtins[i]) continue;           // yukarıda özel olarak bağlandı
                     const std::string& name = bnames[i];
-                    if (is_side_effect(name)) {
-                        setup_builtins[i] = [](std::vector<look::Value>&) -> look::Value {
-                            return look::Value();              // setup'ta no-op
+                    // Üst düzeyde kurulan zamanlayıcı: geri çağırma VM closure'ı, her tetiklenişte
+                    // yeni bir istek gibi kurulan VM'de çalışır (rotada kurulanla aynı yol).
+                    if (name == "timer::after" || name == "timer::every") {
+                        const bool repeat = (name == "timer::every");
+                        setup_builtins[i] = [name, repeat](std::vector<look::Value>& args) -> look::Value {
+                            if (args.size() < 2) throw std::runtime_error(name + "() takes 2 arguments");
+                            if (args[1].type() != look::Value::BYTECODE_FN)
+                                throw std::runtime_error(name + "() second argument must be a function");
+                            const int ms = (int)args[0].to_int();
+                            look::Value fnv = args[1].clone_for_thread();
+                            auto cb = [fnv]() { bool ok = false; run_closure_as_request(fnv, {}, "timer callback", ok); };
+                            return look::Value(repeat ? look::TimerManager::instance().every(ms, std::move(cb))
+                                                      : look::TimerManager::instance().after(ms, std::move(cb)));
+                        };
+                        continue;
+                    }
+                    if (name == "timer::cancel") {
+                        setup_builtins[i] = [](std::vector<look::Value>& args) -> look::Value {
+                            if (args.empty()) throw std::runtime_error("timer::cancel() takes 1 argument");
+                            look::TimerManager::instance().cancel((int)args[0].to_int());
+                            return look::Value();
+                        };
+                        continue;
+                    }
+                    // jobs::run — işleyicileri çalıştırır (VM işleyicileri vm_closure_runner ile).
+                    if (name == "jobs::run") {
+                        setup_builtins[i] = [host](std::vector<look::Value>& args) -> look::Value {
+                            return host->jobs_run(args.empty() ? 5000 : (int)args[0].to_float());
                         };
                         continue;
                     }
                     auto colon = name.find("::");
+                    // `use` edilmemiş modül: yuva boş kalır, VM "Module 'x' not loaded." der.
+                    if (colon != std::string::npos && host->module_not_used(name.substr(0, colon))) continue;
                     if (colon != std::string::npos) {
-                        std::string mod = name.substr(0, colon);
-                        std::string fn  = name.substr(colon + 2);
-                        auto f = g_http_app.interp->get_module_fn(mod, fn);
+                        auto f = host->get_module_fn(name.substr(0, colon), name.substr(colon + 2));
                         if (f) {
-                            setup_builtins[i] = [f](std::vector<look::Value>& args) -> look::Value {
+                            // jobs::worker: işleyici başka iş parçacıklarında çağrılır → closure'u kopyala.
+                            const bool clone_fn_arg = (name == "jobs::worker");
+                            setup_builtins[i] = [f, clone_fn_arg](std::vector<look::Value>& args) -> look::Value {
                                 std::vector<look::Value> a = args;
+                                if (clone_fn_arg && a.size() >= 2 && a[1].type() == look::Value::BYTECODE_FN)
+                                    a[1] = a[1].clone_for_thread();
                                 return f(a);
                             };
                             continue;
                         }
                     }
-                    // Modülsüz veya bulunamayan builtin → güvenli no-op (crash yerine)
-                    setup_builtins[i] = [](std::vector<look::Value>&) -> look::Value {
-                        return look::Value();
+                    // Kurulumda anlamı olmayan yerleşik (ws::on, istek sırasında var olan bağlam …):
+                    // açık hata — eskiden sessizce null dönüyordu.
+                    setup_builtins[i] = [name](std::vector<look::Value>&) -> look::Value {
+                        throw look::LookVmError(name + "() cannot be used at the top level of a web application");
                     };
                 }
             }
-
-            // ── 1.0.9: KURULUM GERİ OYNATMA ─────────────────────────────────────────
-            // Betiğin üst düzeyi az önce yorumlayıcıda koştu; şimdi VM'de bir kez daha koşacak
-            // (rota closure'larını ve global'leri bayt koduyla üretmek için). Bu ikinci geçişte
-            // modül fonksiyonları YENİDEN ÇAĞRILMAZ: yukarıdaki bağlamalar onları ya yeniden
-            // çalıştırıyordu (file::put/append → dosyaya iki kez yazma; crypto::uuid → iki farklı
-            // değer) ya da "yan etkili" sayıp null döndürüyordu (cache::get → VM rotaları kurulumda
-            // okunan değeri BOŞ görüyordu). Artık yorumlayıcının çağırdığı her modül fonksiyonu,
-            // aynı sırayla, ilk geçişte kaydedilen sonucu döndürür. Sıra tutmazsa (iki motor
-            // kurulumda farklı yoldan gittiyse) VM kurulumu hatayla biter → program yorumlayıcıda
-            // kalır (LOOK_VM_STRICT=1 reddeder); sessiz yanlış değer yok.
-            auto replay_pos = std::make_shared<size_t>(0);
-            auto staged_timers  = std::make_shared<std::vector<look::Value>>();
-            auto staged_workers = std::make_shared<std::vector<look::Value>>();
-            {
-                auto* rec = &g_http_app.setup_record;
-                const auto& bnames = look::builtin_names();
-                for (size_t i = 0; i < setup_builtins.size() && i < bnames.size(); ++i) {
-                    const std::string& name = bnames[i];
-                    auto colon = name.find("::");
-                    if (colon == std::string::npos) continue;
-                    // timer:: yorumlayıcıda modül değil satır içi ele alınır ama o da kayda girer (LOOK 2):
-                    // üst düzeyde kurulan zamanlayıcı bir kez kurulur, VM geçişi aynı kimliği geri alır.
-                    const bool timer_fn = name.rfind("timer::", 0) == 0;
-                    if (!timer_fn && !g_http_app.interp->get_module_fn(name.substr(0, colon), name.substr(colon + 2))) continue;
-                    setup_builtins[i] = [name, rec, replay_pos, staged_timers, staged_workers](std::vector<look::Value>& args) -> look::Value {
-                        if (*replay_pos >= rec->size() || (*rec)[*replay_pos].first != name)
-                            throw look::LookVmError("setup replay: the VM called " + name + " where the first pass called "
-                                + (*replay_pos < rec->size() ? (*rec)[*replay_pos].first : std::string("nothing more")));
-                        // LOOK 2: üst düzeyde kaydedilen geri çağırmanın VM karşılığı bekletilir; VM kurulumu
-                        // başarıyla bitince ilk geçişte kurulanın yerine geçer (look/setup_handoff.h).
-                        if ((name == "timer::after" || name == "timer::every") && args.size() >= 2)
-                            staged_timers->push_back(args[1].type() == look::Value::BYTECODE_FN ? args[1].clone_for_thread() : look::Value());
-                        else if (name == "jobs::worker" && args.size() >= 2)
-                            staged_workers->push_back(args[1].type() == look::Value::BYTECODE_FN ? args[1].clone_for_thread() : look::Value());
-                        return (*rec)[(*replay_pos)++].second.deep_clone();
-                    };
-                }
-            }
+            // jobs::run kurulumda çağrılırsa VM işleyicilerini çalıştırabilsin (kurulumdan ÖNCE kur).
+            look::vm_closure_runner() = run_closure_as_request;
 
             look::VM::SharedState setup_sh;
             setup_sh.builtins = &setup_builtins;
             std::ostringstream vm_setup_out;
             look::VM setup_vm(setup_sh, vm_setup_out);
+            // Kurulum sürüyor: db::query gibi modüller bunu ModuleHost::is_setup_mode ile görür.
+            struct SetupMode { look::Interpreter* h; SetupMode(look::Interpreter* x) : h(x) { h->set_setup_mode(true); }
+                               ~SetupMode() { h->set_setup_mode(false); } } setup_mode{g_http_app.interp.get()};
             setup_vm.execute(*g_http_app.compiled);
-            if (*replay_pos != g_http_app.setup_record.size())
-                throw look::LookVmError("setup replay: the first pass called "
-                    + g_http_app.setup_record[*replay_pos].first + " and the VM did not");
 
             // Setup globals'ı sakla: db_check/json_ok/json_hata gibi named fn closure'lar +
             // $conn pool key — dispatch VM'e set_globals() ile verilecek
             g_http_app.vm_setup_globals = setup_vm.get_globals();
+
+            // LOOK 2: tüm dosyalar yüklendi, bütün struct'lar biliniyor → alan tip adlarını ŞİMDİ
+            // denetle. Yazım hatası (`strng`) uygulama BAŞLARKEN hata verir; yoksa ancak o struct'ı
+            // kuran (belki nadiren çağrılan) rota çalıştığında, üretimde ortaya çıkardı. Tanımlar
+            // VM global'lerinde "__sdef:<ad>" altında [alan, varsayılan, tip] üçlüleri olarak durur.
+            {
+                const std::string pre = "__sdef:";
+                auto known = [&](const std::string& t) {
+                    return g_http_app.vm_setup_globals.count(pre + t) != 0;
+                };
+                for (const auto& [k, v] : g_http_app.vm_setup_globals) {
+                    if (k.rfind(pre, 0) != 0 || v.type() != look::Value::ARRAY) continue;
+                    const auto& f = *v.as_array();
+                    for (size_t j = 0; j + 2 < f.size(); j += 3)
+                        look::struct_check_type_known(k.substr(pre.size()), f[j].to_string(), f[j + 2].to_string(), known);
+                }
+            }
 
             if (!g_http_app.vm_routes.empty()) {
                 g_http_app.vm_routes_ready = true;
@@ -891,32 +861,12 @@ static void run_setup_http(const fs::path& script) {
                 g_http_app.script_mode     = true;
                 std::cerr << "[BYTECODE] no routes — each request runs the whole script on the VM\n";
             }
-            // LOOK 2: VM kurulumu tamam → üst düzeyde kaydedilen zamanlayıcılar ve iş işleyicileri
-            // artık VM closure'larını çağırır (rotalı uygulamada da, rotasız betikte de).
-            {
-                look::vm_closure_runner() = run_closure_as_request;
-                auto& ho = look::setup_handoff();
-                size_t nt = 0, nw = 0;
-                for (size_t i = 0; i < staged_timers->size() && i < ho.timer_slots.size(); ++i) {
-                    if ((*staged_timers)[i].type() != look::Value::BYTECODE_FN) continue;
-                    look::Value fnv = (*staged_timers)[i];
-                    ho.timer_slots[i]->set([fnv]() { bool ok = false; run_closure_as_request(fnv, {}, "timer callback", ok); });
-                    ++nt;
-                }
-                for (size_t i = 0; i < staged_workers->size(); ++i) {
-                    if ((*staged_workers)[i].type() != look::Value::BYTECODE_FN) continue;
-                    if (look::JobStore::instance().replace_worker(ho.worker_base + i, (*staged_workers)[i])) ++nw;
-                }
-                if (nt + nw > 0)
-                    look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
-                        "Top-level callbacks on the VM: " + std::to_string(nt) + " timer, " + std::to_string(nw) + " job handler");
-            }
-        } catch (const look::LookVmError& e) {
-            refuse_start(std::string("VM setup error: ") + e.what());
-        } catch (const std::bad_function_call& e) {
-            refuse_start(std::string("VM setup error: ") + e.what());
         } catch (const std::exception& e) {
-            refuse_start(std::string("VM setup error: ") + e.what());
+            // Kurulum yalnız VM'de koşuyor: buradaki hata programın KENDİ hatasıdır (eksik argüman,
+            // throw, `use` edilmemiş modül …), "VM bu programı çalıştıramıyor" değil — mesaj olduğu
+            // gibi iletilir (çağıran "Setup error: …" diye yazar, uygulama başlamaz).
+            g_http_app.vm_routes_ready = false;
+            throw std::runtime_error(e.what());
         }
     }
     }

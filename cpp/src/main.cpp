@@ -16,6 +16,7 @@
 #include "look/builtins.h"
 #include "look/compiler.h"
 #include "look/vm.h"
+#include "look/use_modules.h"   // collect_use_modules — CLI ve web aynı `use` listesi
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -276,32 +277,15 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     return b;
 }
 
-// Programın top-level `use` modüllerini interpreter'a yükle. Hepsi stdlib ise true
-// (CLI-VM güvenli); dış/paket modül varsa false (caller tree-walk'a düşer — semantik korunur).
-// `use "dosya.lk"` ile dahil edilen dosyaların KENDİ `use <modül>` satırları da yüklenir (özyinelemeli):
-// derleyici dahil edilen dosyayı aynı birime derler, modül fonksiyonları ise buradaki
-// yorumlayıcıdan bağlanır. Açılamayan/ayrıştırılamayan dosya burada sorun sayılmaz — derleyici
-// aynı dosyada nedenini söyleyerek durur.
+// Programın `use` modüllerini (dahil edilen dosyalarınkiler dahil — look/use_modules.h) interpreter'a
+// yükle. Hepsi stdlib ise true (CLI-VM güvenli); dış/paket modül varsa false (caller tree-walk'a
+// düşer — semantik korunur).
 static bool preload_uses_for_vm(look::Interpreter& interp, const look::Program& prog,
                                 const std::filesystem::path& dir, std::set<std::string>& seen) {
-    for (auto& s : prog.statements) {
-        if (auto* u = dynamic_cast<const look::UseStatement*>(s.get())) {
-            if (!interp.load_stdlib_module(u->module_name)) return false;
-        } else if (auto* uf = dynamic_cast<const look::UseFileStatement*>(s.get())) {
-            std::error_code ec;
-            const std::filesystem::path abs = std::filesystem::weakly_canonical(dir / uf->path, ec);
-            if (ec || !seen.insert(abs.string()).second) continue;
-            std::ifstream f(abs);
-            if (!f) continue;
-            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            try {
-                look::Lexer lx(src);
-                look::Parser p(lx.scan_tokens());
-                auto sub = p.parse();
-                if (!preload_uses_for_vm(interp, *sub, abs.parent_path(), seen)) return false;
-            } catch (...) { continue; }
-        }
-    }
+    std::vector<std::string> mods;
+    look::collect_use_modules(prog, dir, seen, mods);
+    for (const auto& m : mods)
+        if (!interp.load_stdlib_module(m)) return false;
     return true;
 }
 

@@ -690,6 +690,12 @@ public:
     // wiring get_module_fn ile bunları görebilsin diye. Dış/paket modüller kapsam dışı
     // → false (caller tree-walk'a düşer). Default CLI'ı etkilemez (opt-in yol).
     bool load_stdlib_module(const std::string& name);
+    // `use` isteyen bir stdlib modülü olup `use` edilmemiş mi? Öyleyse VM o modülün fonksiyonu
+    // için "Module 'x' not loaded." verir — bağlayıcı yuvayı boş bırakır. (`use` istemeyen
+    // modüller — web çekirdeği, ws/sse … — burada false döner.)
+    bool module_not_used(const std::string& name) const {
+        return stdlib_.count(name) != 0 && modules_.count(name) == 0;
+    }
 
     // VM builtin wiring: route_registry_ erişimi — VM dispatch için closure ptr'ları al.
     const std::vector<RouteEntry>& get_route_registry() const { return route_registry_; }

@@ -44,7 +44,7 @@ for i in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 if kill -0 "$pid" 2>/dev/null; then bad "A: the server is still running with a program the VM cannot compile"; stop
 else
     wait "$pid"; rc=$?; pid=""
-    if [ $rc = 1 ] && grep -q "the VM cannot run this program (compile error: .*65534" "$TMP/a/log.txt" && ! grep -qi "tree-walk" "$TMP/a/log.txt"; then
+    if [ $rc = 1 ] && grep -q "Setup error: .*65534" "$TMP/a/log.txt" && ! grep -qi "tree-walk" "$TMP/a/log.txt"; then
         ok "A: a program the VM cannot compile does not start (exit 1, the reason is printed)"
     else bad "A: exit=$rc log=[$(grep -iE 'error|tree-walk' "$TMP/a/log.txt" | head -2 | tr '\n' ' ')]"; fi
 fi

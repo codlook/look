@@ -10,6 +10,7 @@
 
 #include <unordered_set>
 #include "look/compiler.h"
+#include "look/param_write_check.h"   // log_param_writes — dahil edilen dosyaların uyarıları
 #include "look/builtins.h"
 #include "look/interpreter.h"
 #include "look/lexer.h"
@@ -421,18 +422,41 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                         Lexer lx(src);
                         Parser p(lx.scan_tokens());
                         auto prog = std::shared_ptr<Program>(p.parse().release());
+                        look::log_param_writes(p.warnings(), path);
                         g_loaded.push_back(path);
                         g_module_asts.push_back(prog);
                         for (auto& sub : prog->statements) compile_stmt(*sub);
                         loaded = true;
-                    } catch (...) {
-                        // Modül derlenemedi → NOP; interpreter yolu yine çalışır
-                        // (fallback), sessiz yanlış davranış üretmeyiz.
+                    } catch (const std::exception& ex) {
+                        // LOOK 2: yorumlayıcı yedeği yok — derlenemeyen paket nedenini söyleyerek
+                        // durdurur (eskiden NOP: paketin fonksiyonları sessizce eksik kalıyordu).
+                        const std::string m = ex.what();
+                        if (m.rfind("use " + us->module_name + ":", 0) == 0) throw;
+                        throw LookCompileError("use " + us->module_name + ": " + m);
                     }
                 }
             }
         }
-        if (!loaded) emit(OpCode::NOP);
+        if (!loaded) {
+            // Paket değil: stdlib modülü olmalı. Yorumlayıcının `use` denetimiyle aynı iki mesaj —
+            // bu denetim eskiden yalnız yorumlayıcı geçişindeydi (LOOK 2'de o geçiş yok).
+            const std::string& m = us->module_name;
+            if (m == "ws" || m == "timer" || m == "sse")
+                throw LookCompileError("'" + m + "' is built in and is not a module: remove the 'use "
+                    + m + "' line and call " + m + ":: directly.");
+            static const std::set<std::string> stdlib_mods = [] {
+                std::set<std::string> s;
+                for (const auto& n : builtin_names()) {
+                    auto c = n.find("::");
+                    if (c != std::string::npos) s.insert(n.substr(0, c));
+                }
+                return s;
+            }();
+            if (!stdlib_mods.count(m))
+                throw LookCompileError("Unknown module: '" + m
+                    + "'. If it is a package, install it with: lk module install " + m);
+            emit(OpCode::NOP);
+        }
     }
     else if (auto* ufs = dynamic_cast<const UseFileStatement*>(&stmt)) {
         // `use "file.lk"` — compile the included file's statements into THIS unit so its
@@ -463,6 +487,9 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             Lexer lx(src);
             Parser p(lx.scan_tokens());
             auto prog = std::shared_ptr<Program>(p.parse().release());
+            // Dahil edilen dosyanın parametre-yazma uyarıları (ana dosyanınkiler çağıran tarafta
+            // loglanır). LOOK 2: bunu eskiden yalnız yorumlayıcı, dosyayı yüklerken yapıyordu.
+            look::log_param_writes(p.warnings(), abs);
             g_file_asts.push_back(prog);
             g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
             struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); } } dir_pop;
