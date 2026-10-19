@@ -935,6 +935,13 @@ jobs:
           cd cpp
           bash tests/silent_noop_startup_test.sh ./build/lk ./build/lk-fcgi
 
+      # Every built-in has an effect class (src/builtins.cpp: builtin_effect): the discarded-result
+      # rule applies only to Pure built-ins, so a new built-in without a class fails here.
+      - name: Every built-in has an effect class
+        run: |
+          cd cpp
+          bash tests/builtin_effect_table_test.sh
+
       # JWT güvenlik tablosu — HS256 modülü klasik açıklara GÜVENLİ mi: alg=none reddi,
       # RS256→HS256 key-confusion reddi, exp expiry, imza-kurcalama + pozitif. verify header
       # alg'ini OKUMAZ (koşulsuz HMAC) → alg-confusion yapısal imkânsız. Pozitif-kontrollü.

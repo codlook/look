@@ -234,6 +234,131 @@ int builtin_index(const std::string& name) {
     return it == INDEX.end() ? -1 : it->second;
 }
 
+// ── Yerleşik etkileri (builtins.h: BuiltinEffect) ─────────────────────────────────────────────
+// YENİ YERLEŞİK EKLEYİNCE buraya da ekle — sınıfsız ad CI'da kırmızı (builtin_effect_table_test).
+// Sınıf ÖLÇÜLEREK verilir: ör. global push/pop diziyi yerinde değiştirir (Effect), array::push
+// yeni dizi döndürür (Pure) — tahminle değil, iki motorda denenerek.
+namespace {
+struct EffectRow { BuiltinEffect e; std::vector<const char*> names; };
+const std::vector<EffectRow>& effect_rows() {
+    static const std::vector<EffectRow> ROWS = {
+        { BuiltinEffect::Pure, {
+            "count", "str", "int", "float", "bool", "string",
+            "is_null", "is_int", "is_float", "is_string", "is_bool", "is_array",
+            "json_encode", "strlen", "abs", "max", "min", "sqrt", "strtoupper", "strtolower", "join",
+            "array::keys", "array::values", "array::reverse", "array::slice", "array::contains",
+            "array::unique", "array::flatten", "array::chunk", "array::zip", "array::push", "array::pop",
+            "array::set", "array::new_assoc",
+            "auth::verify",
+            "crypto::sha256", "crypto::base64_encode", "crypto::base64url_encode", "crypto::hex_encode",
+            "crypto::hmac_sha256", "crypto::hmac_sha256_raw", "crypto::constant_compare",
+            "date::format", "date::add", "date::sub", "date::diff", "date::from_timestamp",
+            "date::is_valid", "date::weekday", "date::week",
+            "error::new", "error::is", "error::message", "error::code",
+            "html::escape", "html::attr", "html::strip",
+            "json::encode",
+            "math::abs", "math::floor", "math::ceil", "math::round", "math::pow", "math::sqrt",
+            "math::min", "math::max", "math::sin", "math::cos", "math::tan", "math::log", "math::pi",
+            "string::upper", "string::lower", "string::trim", "string::replace", "string::contains",
+            "string::substr", "string::split", "string::join", "string::len", "string::starts_with",
+            "string::ends_with", "string::reverse", "string::repeat", "string::index_of",
+            "string::pad_left", "string::pad_right", "string::slugify", "string::ltrim", "string::rtrim",
+            "string::format",
+            "template::escape",
+            "type::is_null", "type::is_int", "type::is_float", "type::is_string", "type::is_bool",
+            "type::is_array", "type::is_function", "type::of", "type::to_int", "type::to_float",
+            "type::to_string", "type::to_bool",
+            "validator::required", "validator::email", "validator::integer", "validator::numeric",
+            "validator::min", "validator::max", "validator::check",
+        }},
+        { BuiltinEffect::Reads, {
+            "chan_size", "env", "config", "args",
+            "app::get", "app::has", "app::db",
+            "auth::hash",   // rastgele tuz
+            "cache::get", "cache::has", "cache::keys", "cache::size",
+            "cookie::get", "cookie::has",
+            "crypto::random_bytes", "crypto::random_string", "crypto::uuid",
+            "date::now", "date::today", "date::timestamp", "date::mono_us",
+            "db::escape", "db::driver", "db::last_id", "db::affected",
+            "file::read", "file::exists", "file::size", "file::list", "file::upload_dir",
+            "jobs::failed", "jobs::list", "jobs::stats",
+            "log::memory", "look::check", "mail::provider", "math::random",
+            "parallel::active", "parallel::at_capacity",
+            "queue::size", "queue::names", "queue::peek",
+            "request::method", "request::get", "request::post", "request::json", "request::body",
+            "request::path", "request::ip", "request::param", "request::all", "request::header",
+            "request::headers", "request::is_get", "request::is_post", "request::is_put",
+            "request::is_delete", "request::is_head", "request::is_options", "request::is_patch",
+            "request::file",
+            "route::matched", "route::param", "runtime::stats",
+            "session::get", "session::has", "string::random",
+            "sse::clients", "ws::clients",
+        }},
+        { BuiltinEffect::Effect, {
+            "print", "write", "push", "pop", "send", "receive", "close", "route", "channel",
+            "before_route", "stop", "exit", "die",
+            "app::set",
+            "cache::set", "cache::delete", "cache::flush",
+            "cookie::set", "cookie::delete",
+            "crypto::rs256_sign", "crypto::rs256_sign_b64url",   // anahtar yükler, hatalı anahtarda fırlatır
+            "db::query", "db::exec", "db::col", "db::close", "db::connect", "db::transaction",
+            "db::begin", "db::commit", "db::rollback",
+            "file::put", "file::append", "file::remove", "file::store",
+            "http::get", "http::post", "http::put", "http::delete", "http::patch", "http::post_json",
+            "http::stream",
+            "jobs::push", "jobs::next", "jobs::done", "jobs::fail", "jobs::retry", "jobs::purge",
+            "jobs::recover", "jobs::worker", "jobs::run",
+            "log::info", "log::warn", "log::error", "log::debug", "log::query", "log::configure",
+            "mail::send", "mail::deliver_maildir", "mail::send_html",
+            "parallel::wait", "parallel::limit",
+            "queue::push", "queue::pop", "queue::clear",
+            "response::status", "response::header", "response::redirect", "response::json",
+            "response::error", "response::text", "response::html",
+            "route::group", "runtime::gc",
+            "session::start", "session::set", "session::destroy", "session::regenerate",
+            "sse::send", "sse::close", "sse::on",
+            "template::render", "template::include", "template::block", "template::extends",
+            "template::render_string",
+            "timer::after", "timer::every", "timer::cancel",
+            "ws::send", "ws::close", "ws::broadcast", "ws::on",
+        }},
+        { BuiltinEffect::Callback, {
+            "array::map", "array::filter", "array::reduce", "array::find", "array::sort",
+            "array::all", "array::any",
+        }},
+        { BuiltinEffect::ThrowCheck, {
+            "json_decode", "json::decode", "date::parse",
+            "crypto::base64_decode", "crypto::base64url_decode", "crypto::hex_decode",
+            "crypto::rs256_verify",
+            "string::regex_match", "string::regex_replace", "string::regex_match_all", "string::decode",
+        }},
+    };
+    return ROWS;
+}
+const std::unordered_map<std::string, BuiltinEffect>& effect_map() {
+    static const std::unordered_map<std::string, BuiltinEffect> M = [] {
+        std::unordered_map<std::string, BuiltinEffect> m;
+        for (const auto& row : effect_rows())
+            for (const char* n : row.names) m.emplace(n, row.e);
+        return m;
+    }();
+    return M;
+}
+} // namespace
+
+BuiltinEffect builtin_effect(const std::string& name) {
+    auto it = effect_map().find(name);
+    return it == effect_map().end() ? BuiltinEffect::Unknown : it->second;
+}
+
+std::vector<std::string> builtin_effect_strays() {
+    std::vector<std::string> out;
+    for (const auto& row : effect_rows())
+        for (const char* n : row.names)
+            if (builtin_index(n) < 0) out.push_back(n);
+    return out;
+}
+
 bool is_reserved_builtin(const std::string& name) {
     // Rezerve = builtin_names()'in bare (":: içermeyen") girdileri. Tek kaynak,
     // el-listesi yok → yeni bare builtin eklenince otomatik dahil olur.

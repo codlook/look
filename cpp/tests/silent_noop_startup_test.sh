@@ -68,10 +68,11 @@ $notes = []
 $notes = array::push($notes, 1)
 array::map($notes, fn($n) => $n)
 try { json::decode("{bad") } catch ($e) { }
+push($notes, 2)
 route("GET", "/x", fn() => response::text("x"))
 LK
 start "$TMP/push_ok"
-starts "the result assigned; array::map and json::decode alone on a line" "$TMP/push_ok"
+starts "the result assigned; array::map, json::decode and push() (changes its array) alone on a line" "$TMP/push_ok"
 
 # the CLI too: it does not run the program on its fallback engine
 printf 'use array\n$a = [1]\narray::push($a, 2)\nprint("ran")\n' > "$TMP/cli.lk"
@@ -79,6 +80,13 @@ out="$(cd "$TMP" && "$LK" cli.lk 2>&1)"; crc=$?
 if [ $crc = 1 ] && echo "$out" | grep -qF "line 3: the result of array::push() is not used" && ! echo "$out" | grep -q '^ran'; then
     ok "lk: the same program is refused before it runs"
 else bad "lk: rc=$crc out=[$out]"; fi
+
+# a bare built-in too: strtoupper() returns the new string and changes nothing
+printf '$s = "a"\nstrtoupper($s)\nprint("ran")\n' > "$TMP/cli2.lk"
+out="$(cd "$TMP" && "$LK" cli2.lk 2>&1)"; crc=$?
+if [ $crc = 1 ] && echo "$out" | grep -qF "line 2: the result of strtoupper() is not used" && ! echo "$out" | grep -q '^ran'; then
+    ok "lk: a discarded strtoupper() is refused too"
+else bad "lk strtoupper: rc=$crc out=[$out]"; fi
 
 # ── 2. a route on the built-in health path ───────────────────────────────────────────────────
 mk health <<'LK'

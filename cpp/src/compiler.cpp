@@ -296,12 +296,15 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         } else {
             // Sonucu atılan SAF yerleşik (array::push($l, $x) tek başına): hiçbir şey yapmaz, sessiz
             // hatadır → program başlamaz, nedeni söylenir (var olmayan fonksiyon kuralı gibi).
-            if (auto* call = dynamic_cast<const CallExpression*>(s->expression.get()))
-                if (auto* sr = dynamic_cast<const ScopeResolution*>(call->callee.get())) {
-                    const std::string full = sr->module_name + "::" + sr->member_name;
-                    if (is_pure_builtin(full))
-                        throw LookProgramError(unused_result_message(full, stmt.loc.line), stmt.loc.line);
-                }
+            if (auto* call = dynamic_cast<const CallExpression*>(s->expression.get())) {
+                std::string full;
+                if (auto* sr = dynamic_cast<const ScopeResolution*>(call->callee.get()))
+                    full = sr->module_name + "::" + sr->member_name;
+                else if (auto* v = dynamic_cast<const Variable*>(call->callee.get()))
+                    if (is_reserved_builtin(v->name)) full = v->name;   // count(), strtoupper() … (gölgelenemez)
+                if (!full.empty() && is_pure_builtin(full))
+                    throw LookProgramError(unused_result_message(full, stmt.loc.line), stmt.loc.line);
+            }
             // Sonuç kullanılmıyor — geçici register al, hemen bırak
             uint16_t r = compile_expr(*s->expression);
             free_temp(r);

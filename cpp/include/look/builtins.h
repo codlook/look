@@ -40,4 +40,18 @@ int builtin_index(const std::string& name);
 // her iki motor da hata fırlatır (parity).
 bool is_reserved_builtin(const std::string& name);
 
+// Yerleşiğin etkisi — HER builtin_names() girdisi sınıflandırılmış OLMALI (CI:
+// tests/builtin_effect_table_test.sh; sınıfsız yeni yerleşik → kırmızı). Tüketici: sonucu atılan
+// saf yerleşik kuralı (look/unused_result.h) — yalnız Pure'a uygulanır.
+//   Pure       argümanı değiştirmez, dışarıya etkisi yok, yalnız değer döndürür
+//              (array::push yeni dizi döndürür → Pure; global push diziyi YERİNDE değiştirir → Effect)
+//   Reads      dışarıdaki durumu okur (istek, oturum, önbellek, saat, rastgele, ortam)
+//   Effect     bir şeyi değiştirir ya da yazar (çıktı, veritabanı, dosya, ağ, argümanı)
+//   Callback   geri çağırma alır — onun etkisi olabilir (array::map …)
+//   ThrowCheck tek başına "fırlatıyor mu" diye çağrılabilir (json::decode, date::parse …)
+enum class BuiltinEffect { Unknown, Pure, Reads, Effect, Callback, ThrowCheck };
+BuiltinEffect builtin_effect(const std::string& name);
+// Sınıflandırmada adı geçen ama builtin_names()'de olmayan girdiler (yazım hatası denetimi — CI).
+std::vector<std::string> builtin_effect_strays();
+
 } // namespace look
