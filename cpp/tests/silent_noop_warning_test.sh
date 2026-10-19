@@ -32,9 +32,10 @@ serve() {
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
 }
 mk() { mkdir -p "$TMP/$1"; cat > "$TMP/$1/app.lk"; }
-warned() {   # warned <case> <dir> <text>
-    if [ "$body" = "x" ] && grep -F "[WARN" "$2/log.txt" | grep -qF "$3"; then ok "$1: warned, the application runs"
-    else bad "$1: body=[$body] warn=[$(grep -F '[WARN' "$2/log.txt" | grep -v 'Rate limiting\|holds a worker' | head -1)]"; fi
+warned() {   # warned <case> <dir> <text> — the warning is written exactly once
+    local n; n="$(grep -F "[WARN" "$2/log.txt" | grep -cF "$3")"
+    if [ "$body" = "x" ] && [ "$n" = 1 ]; then ok "$1: warned once, the application runs"
+    else bad "$1: body=[$body] times=$n warn=[$(grep -F '[WARN' "$2/log.txt" | grep -v 'Rate limiting\|holds a worker' | head -1)]"; fi
 }
 quiet() {    # quiet <case> <dir> <text that must not appear>
     if [ "$body" = "x" ] && ! grep -qF "$3" "$2/log.txt"; then ok "$1: no warning"
@@ -54,6 +55,25 @@ LK
 serve "$TMP/push_route"
 warned "array::push without its result, inside a route" "$TMP/push_route" "line 5: the result of array::push() is not used"
 
+# a closure inside a closure inside a route: each level used to repeat the warning (2^depth)
+mk push_nested <<'LK'
+use array
+route("GET", "/x", function() {
+    $outer = function() {
+        $inner = function() {
+            $l = [1]
+            array::push($l, 2)
+            return $l
+        }
+        return $inner()
+    }
+    $outer()
+    return response::text("x")
+})
+LK
+serve "$TMP/push_nested"
+warned "array::push three closures deep" "$TMP/push_nested" "line 6: the result of array::push() is not used"
+
 mkdir -p "$TMP/push_inc"; printf 'use string\nfunction tidy($s) {\n    string::trim($s)\n    return $s\n}\n' > "$TMP/push_inc/lib.lk"
 mk push_inc <<'LK'
 use "lib.lk"
@@ -69,16 +89,24 @@ $notes = []
 $notes = array::push($notes, 1)
 array::map($notes, fn($n) => $n)
 try { json::decode("{bad") } catch ($e) { }
+push($notes, 2)
 route("GET", "/x", fn() => response::text("x"))
 LK
 serve "$TMP/push_ok"
-quiet "the result assigned; array::map and json::decode alone on a line" "$TMP/push_ok" "is not used"
+quiet "the result assigned; array::map, json::decode and push() (changes its array) alone on a line" "$TMP/push_ok" "is not used"
 
 printf 'use array\n$a = [1]\narray::push($a, 2)\nprint("ran")\n' > "$TMP/cli.lk"
 out="$(cd "$TMP" && "$LK" cli.lk 2>&1)"; crc=$?
-if [ $crc = 0 ] && echo "$out" | grep -qF "Warning: line 3: the result of array::push() is not used" && echo "$out" | grep -q 'ran'; then
-    ok "lk: warned, the program runs"
+if [ $crc = 0 ] && [ "$(echo "$out" | grep -cF "Warning: line 3: the result of array::push() is not used")" = 1 ] && echo "$out" | grep -q 'ran'; then
+    ok "lk: warned once, the program runs"
 else bad "lk: rc=$crc out=[$out]"; fi
+
+# a bare built-in too: strtoupper() returns the new string and changes nothing
+printf '$s = "a"\nstrtoupper($s)\nprint("ran")\n' > "$TMP/cli2.lk"
+out="$(cd "$TMP" && "$LK" cli2.lk 2>&1)"; crc=$?
+if [ $crc = 0 ] && [ "$(echo "$out" | grep -cF "Warning: line 2: the result of strtoupper() is not used")" = 1 ] && echo "$out" | grep -q 'ran'; then
+    ok "lk: a discarded strtoupper() is warned once too"
+else bad "lk strtoupper: rc=$crc out=[$out]"; fi
 
 # ── 2. a route on the built-in health path ───────────────────────────────────────────────────
 mk health <<'LK'

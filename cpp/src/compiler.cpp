@@ -347,16 +347,27 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             // Sonucu atılan SAF yerleşik (array::push($l, $x) tek başına): hiçbir şey yapmaz, sessiz
             // hatadır → v1 uyarı toplar (LOOK 2'de program başlamaz). Dahil edilen dosyada önek
             // v2'nin hata metniyle aynı: `use "lib.lk": line N: …`.
-            if (auto* call = dynamic_cast<const CallExpression*>(s->expression.get()))
-                if (auto* sr = dynamic_cast<const ScopeResolution*>(call->callee.get())) {
-                    const std::string full = sr->module_name + "::" + sr->member_name;
-                    if (is_pure_builtin(full)) {
+            if (auto* call = dynamic_cast<const CallExpression*>(s->expression.get())) {
+                std::string full;
+                if (auto* sr = dynamic_cast<const ScopeResolution*>(call->callee.get()))
+                    full = sr->module_name + "::" + sr->member_name;
+                else if (auto* v = dynamic_cast<const Variable*>(call->callee.get()))
+                    if (is_reserved_builtin(v->name)) full = v->name;   // count(), strtoupper() … (gölgelenemez)
+                {
+                    // Kaçış-analizi keşif geçişi gövdeyi atılmak üzere bir kez daha derler (iç
+                    // içe her düzeyde) → uyarı yalnız GERÇEK derlemede toplanır; yoksa aynı satır
+                    // 2^derinlik kez yazılıyordu (1.0.26: iki çağrı → altı satır).
+                    bool in_discovery = false;
+                    for (const FunctionCompiler* c = this; c; c = c->parent_)
+                        if (c->no_discovery_) { in_discovery = true; break; }
+                    if (!in_discovery && is_pure_builtin(full)) {
                         std::string w = unused_result_message(full, stmt.loc.line);
                         for (auto it = g_compile_cur_use.rbegin(); it != g_compile_cur_use.rend(); ++it)
                             w = "use \"" + *it + "\": " + w;
                         g_compile_warnings.push_back(w);
                     }
                 }
+            }
             // Sonuç kullanılmıyor — geçici register al, hemen bırak
             uint8_t r = compile_expr(*s->expression);
             free_temp(r);

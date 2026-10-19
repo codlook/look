@@ -522,6 +522,13 @@ jobs:
           cd cpp
           bash tests/silent_noop_warning_test.sh ./build/lk ./build/lk-fcgi
 
+      # Every built-in has an effect class (src/builtins.cpp: builtin_effect): the discarded-result
+      # rule applies only to Pure built-ins, so a new built-in without a class fails here.
+      - name: Every built-in has an effect class
+        run: |
+          cd cpp
+          bash tests/builtin_effect_table_test.sh
+
       # Env-dependent test contract — positive control. A test whose environment is missing
       # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
       # DSN/secret in CI is a configuration error and must not turn into a silent green, the
