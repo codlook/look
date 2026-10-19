@@ -1,49 +1,69 @@
-// LOOK örnek — küçük JSON API. Eklentiyi denemek için bu dosyayı aç:
-//   • yaz  → otomatik tamamlama (modül:: , $değişken) + canlı hata denetimi
-//   • üzerine gel → hover imzası
-//   • Ctrl+F5 → çalıştır   ·   komut paleti "LOOK: Web Sunucusu Başlat"
-// Not: LOOK'ta ifade sonu noktalı virgül YOKTUR.
+// LOOK example — a small JSON API. Open this file to try the extension:
+//   • type   → autocompletion (module:: , $variable) + live error checking
+//   • hover  → function signature
+//   • Ctrl+F5 → run   ·   command palette "LOOK: Start Web Server"
+// Note: LOOK statements do NOT end with a semicolon.
+// A handler parameter takes the path parameter of the same name (e.g. {id});
+// everything else about the request comes from request:: (request::json(), request::get(), ...).
+use array
 use json
 use string
+use type
 
-// GET /health → durum kontrolü (tek satır arrow route)
-route("GET", "/health", fn($req) => response::json(["ok" => true, "zaman" => date::now()]))
+// GET /status → status check (one-line arrow route)
+// (/health is answered by the server itself — LOOK_HEALTH_PATH — so the app uses /status)
+route("GET", "/status", fn() => response::json(["ok" => true, "time" => date::now()]))
 
-// POST /notlar → yeni not ekle  (gövde: {"metin": "..."} )
-// Paylaşılan durum app:: ile tutulur (istekler arası kalıcı).
-route("POST", "/notlar", function($req) {
+// POST /notes → add a new note  (body: {"text": "..."} )
+// Shared state is kept with app:: (persists across requests).
+route("POST", "/notes", function() {
     $body = request::json()
-    if ($body == null || $body["metin"] == null) {
-        return response::error(400, "metin alanı gerekli")
+    if ($body == null || $body["text"] == null) {
+        return response::error(400, "the text field is required")
     }
-    $notlar = app::get("notlar")
-    if ($notlar == null) {
-        $notlar = []
+    $notes = app::get("notes")
+    if ($notes == null) {
+        $notes = []
     }
-    array::push($notlar, [
-        "id"    => len($notlar) + 1,
-        "metin" => string::trim($body["metin"]),
+    // array::push returns a new array — it does not change $notes in place
+    $notes = array::push($notes, [
+        "id"   => len($notes) + 1,
+        "text" => string::trim($body["text"]),
     ])
-    app::set("notlar", $notlar)
-    return response::json(["eklendi" => $notlar[len($notlar) - 1]], 201)
+    app::set("notes", $notes)
+    return response::json(["added" => $notes[len($notes) - 1]], 201)
 })
 
-// GET /notlar → tümünü listele
-route("GET", "/notlar", function($req) {
-    $notlar = app::get("notlar")
-    if ($notlar == null) {
-        $notlar = []
+// GET /notes → list all notes
+route("GET", "/notes", function() {
+    $notes = app::get("notes")
+    if ($notes == null) {
+        $notes = []
     }
-    return response::json(["toplam" => len($notlar), "notlar" => $notlar])
+    return response::json(["total" => len($notes), "notes" => $notes])
 })
 
-// GET /ara?q=... → metinde arama
-route("GET", "/ara", function($req) {
-    $notlar = app::get("notlar")
-    if ($notlar == null) {
-        $notlar = []
+// GET /notes/{id} → one note; $id is the {id} path parameter
+route("GET", "/notes/{id}", function($id) {
+    $notes = app::get("notes")
+    if ($notes == null) {
+        $notes = []
+    }
+    foreach ($notes as $n) {
+        if ($n["id"] == type::to_int($id)) {
+            return response::json($n)
+        }
+    }
+    return response::error(404, "note not found")
+})
+
+// GET /search?q=... → search the note texts
+route("GET", "/search", function() {
+    $notes = app::get("notes")
+    if ($notes == null) {
+        $notes = []
     }
     $q = request::get("q")
-    $bulunan = array::filter($notlar, fn($n) => string::contains($n["metin"], $q))
-    return response::json($bulunan)
+    $found = array::filter($notes, fn($n) => string::contains($n["text"], $q))
+    return response::json($found)
 })
