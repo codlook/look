@@ -899,16 +899,15 @@ call_dispatch:
             }
 
             case OpCode::CALL_BUILTIN: {
-                // 16-bit builtin indeksi: dusuk 8 bit ins.b'de, YUKSEK 8 bit takip eden
-                // NOP hint'inin b alaninda (a=argc). Eski kodlamayla bit-uyumlu: idx<=255
-                // icin NOP.b hep 0'di. 8-bit'ken 256. giris SESSIZCE kirpilip yanlis
-                // builtin'i cagiriyordu (index 256 → 0 → print) — duvar boyle asildi.
+                // Builtin indeksi: düşük yarısı ins.b'de, yüksek yarısı takip eden NOP hint'inin
+                // b alanında (a=argc) — Instruction::builtin_index. 8-bit'ken 256. giriş SESSİZCE
+                // kırpılıp yanlış builtin'i çağırıyordu (index 256 → 0 → print).
                 uint16_t argc2 = 1;
                 uint32_t bidx = ins.b;
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
                     argc2 = proto->code[frame.ip].a;
-                    bidx |= (uint32_t)proto->code[frame.ip].b << 16;
+                    bidx = Instruction::builtin_index(ins, proto->code[frame.ip]);
                     ++frame.ip;
                 }
                 if (!shared_.builtins || bidx >= shared_.builtins->size())
@@ -1002,8 +1001,8 @@ call_dispatch:
 
             // ── Closure ───────────────────────────────────────────────────────
             case OpCode::MAKE_CLOSURE: {
-                // 16-bit indeks: b = düşük, c = yüksek bayt (eskiden yalnız b → 256. closure 0.'a sarıyordu).
-                auto& nested_proto = proto->nested[(size_t)ins.b | ((size_t)ins.c << 16)];
+                // 32-bit indeks: b = düşük, c = yüksek yarı — Instruction::bx_lohi (v1: yalnız b → 256. closure 0.'a sarıyordu).
+                auto& nested_proto = proto->nested[ins.bx_lohi()];
                 auto cl = std::make_shared<Closure>(nested_proto);
                 // Capture hint'leri oku: LOAD_CAPTURE(0, cr) pattern
                 while (frame.ip < (int)proto->code.size()) {

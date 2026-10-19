@@ -529,6 +529,11 @@ jobs:
         run: |
           cd cpp
           bash tests/no_unchecked_narrowing.sh
+      # The reading side: bytecode operands are combined only through Instruction::bx /
+      # bx_lohi / builtin_index. When the operands widened to 16 bits, a hand-made shift in the
+      # route scanner would have read the wrong constant without any error.
+      - name: No hand-made bytecode operand decoding
+        run: bash cpp/tests/no_raw_operand_decode.sh
       # Register reuse — one function far past the old 72-route / 63-call ceiling, plus
       # more than 256 closures. Strict VM: a compile failure is an error, not a fallback.
       - name: Register reuse guard (both engines)

@@ -160,8 +160,17 @@ struct Instruction {
     static Instruction make(OpCode op, uint16_t a=0, uint16_t b=0, uint16_t c=0) {
         return {op, 0, a, b, c};
     }
-    // 32-bit b<<16|c alanı
+    // 32-bit b<<16|c alanı (sabit indeksi, atlama hedefi, ad sabiti)
     uint32_t bx() const { return (uint32_t(b) << 16) | c; }
+    // 32-bit b|c<<16 alanı — MAKE_CLOSURE'ın iç fonksiyon indeksi (b düşük, c yüksek)
+    uint32_t bx_lohi() const { return uint32_t(b) | (uint32_t(c) << 16); }
+    // CALL_BUILTIN'in yerleşik indeksi: düşük yarısı bu komutun b'sinde, yüksek yarısı
+    // ardından gelen NOP'un b'sinde. Operandlar YALNIZ bu yardımcılarla birleştirilir —
+    // tests/no_raw_operand_decode.sh elle bit kaydırmayı yasaklar (biçim değişince gözden
+    // kaçan bir okuyucu sessizce yanlış değer okur: rota tarayıcısında oldu).
+    static uint32_t builtin_index(const Instruction& call, const Instruction& nop_hint) {
+        return uint32_t(call.b) | (uint32_t(nop_hint.b) << 16);
+    }
 };
 
 static_assert(sizeof(Instruction) == 8, "Instruction must be 8 bytes");
