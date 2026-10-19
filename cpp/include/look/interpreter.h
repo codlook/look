@@ -2,6 +2,7 @@
 
 #include "look/ast.h"
 #include "look/format.h"   // look_format_double — dilin tek double formatlayıcısı
+#include "look/module_host.h"   // ModuleHost — yerleşik modüllerin çalışma zamanı arayüzü
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -581,7 +582,7 @@ struct RouteEntry {
 
 // ── Interpreter ───────────────────────────────────────────────────────────────
 
-class Interpreter {
+class Interpreter : public ModuleHost {
 public:
     Interpreter();
     explicit Interpreter(std::ostream& out);
@@ -619,22 +620,22 @@ public:
     // VM dıştaki çağrının sonucunu aldığı için geri çağırmayı hiç koşturmaz.
     using SetupRecord = std::vector<std::pair<std::string, Value>>;
     void set_setup_record(SetupRecord* r) { setup_record_ = r; setup_record_depth_ = 0; }
-    bool is_setup_mode()  const { return setup_mode_; }
+    bool is_setup_mode()  const override { return setup_mode_; }
 
     // Warm start dispatch: kayitli route'lardan eslesen handler'i cagir
     // web_ctx_ onceden set_web_context() ile atanmis olmali.
     void dispatch_routes();
 
-    Value invoke(const Value& fn, std::vector<Value> args);
+    Value invoke(const Value& fn, std::vector<Value> args) override;
     Value jobs_run(int interval_ms);   // jobs::run — tek tanım (yorumlayıcı + VM builtin)
     Value get_global(const std::string& name) {
         try { return globals_->get(name); } catch (...) { return Value(); }
     }
 
     // runtime:: stats
-    int  get_route_count()   const { return (int)route_registry_.size(); }
-    int  get_request_count() const { return request_count_.load(); }
-    long get_uptime_sec()    const {
+    int  get_route_count()   const override { return (int)route_registry_.size(); }
+    int  get_request_count() const override { return request_count_.load(); }
+    long get_uptime_sec()    const override {
         auto now = std::chrono::steady_clock::now();
         return (long)std::chrono::duration_cast<std::chrono::seconds>(now - start_time_).count();
     }

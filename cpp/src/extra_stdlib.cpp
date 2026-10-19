@@ -299,7 +299,7 @@ static Module make_validator() {
 
 // ── array module ──────────────────────────────────────────────────────────────
 
-Module make_array_module(Interpreter* interp) {
+Module make_array_module(ModuleHost* interp) {
     Module m;
     m.name = "array";
 
@@ -1035,7 +1035,7 @@ static Module make_crypto_module() {
 #pragma comment(lib, "psapi.lib")
 #endif
 
-static Module make_runtime_module(Interpreter* interp) {
+static Module make_runtime_module(ModuleHost* interp) {
     Module mod;
     mod.name = "runtime";
 
@@ -1246,7 +1246,7 @@ static Module make_look_module() {
     return mod;
 }
 
-std::map<std::string, Module> make_extra_stdlib(Interpreter* interp) {
+std::map<std::string, Module> make_extra_stdlib(ModuleHost* interp) {
     std::map<std::string, Module> mods;
     auto add = [&](Module mod) { mods[mod.name] = std::move(mod); };
     add(make_auth());

@@ -48,6 +48,6 @@ private:
     static void collect_blocks(const std::vector<TplNode>& nodes, TplBlocks& out);
 };
 
-Module make_template_module(Interpreter* interp);
+Module make_template_module(ModuleHost* interp);
 
 } // namespace look

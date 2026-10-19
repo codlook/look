@@ -61,7 +61,7 @@ static HttpOptions extract_opts(const Value& v) {
     return opts;
 }
 
-Module make_http_module(Interpreter* interp) {
+Module make_http_module(ModuleHost* interp) {
     Module m;
     m.name = "http";
 

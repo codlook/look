@@ -987,7 +987,7 @@ static Module make_parallel_module() {
 }
 
 // Forward declarations — defined in their respective .cpp files
-Module make_http_module(Interpreter* interp);
+Module make_http_module(ModuleHost* interp);
 Module make_cache_module();
 Module make_queue_module();
 Module make_jobs_module();
@@ -1068,7 +1068,7 @@ static Module make_error_module() {
     return m;
 }
 
-std::map<std::string, Module> make_stdlib(Interpreter* interp) {
+std::map<std::string, Module> make_stdlib(ModuleHost* interp) {
     std::map<std::string, Module> stdlib;
     auto add = [&](Module mod) { stdlib[mod.name] = std::move(mod); };
     add(make_math());

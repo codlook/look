@@ -823,7 +823,7 @@ static TplContext value_to_context(const Value& v) {
     return ctx;
 }
 
-Module make_template_module(Interpreter* interp) {
+Module make_template_module(ModuleHost* interp) {
     Module m;
     m.name = "template";
 

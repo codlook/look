@@ -1384,7 +1384,7 @@ static std::vector<DbParam> values_to_db_params(const std::vector<Value>& params
     return out;
 }
 
-static Module make_db_module(Interpreter* interp) {
+static Module make_db_module(ModuleHost* interp) {
     Module m;
     m.name = "db";
 
@@ -1687,7 +1687,7 @@ static Module make_db_module(Interpreter* interp) {
 
 // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-std::map<std::string, Module> make_web_modules(WebContext* ctx, Interpreter* interp) {
+std::map<std::string, Module> make_web_modules(WebContext* ctx, ModuleHost* interp) {
     std::map<std::string, Module> mods;
     auto add = [&](Module mod) { mods[mod.name] = std::move(mod); };
     add(make_request(ctx));
