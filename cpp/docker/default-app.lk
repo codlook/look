@@ -1,13 +1,13 @@
-# LOOK — Docker imajı varsayılan uygulaması.
-# `docker run -p 7400:7400 codlook/look` bunu servis eder (kutudan çalışır).
-# KENDİ uygulamanı çalıştırmak için /app'i mount et:  docker run -v ./app:/app codlook/look
+# LOOK — the Docker image's default application.
+# `docker run -p 7400:7400 codlook/look` serves it (works out of the box).
+# To run your own application, mount /app:  docker run -v ./app:/app codlook/look
 route("GET", "/", fn() => response::json([
     "ok" => true,
-    "mesaj" => "Merhaba LOOK! Kendi uygulamanız için /app'i mount edin.",
+    "message" => "Hello from LOOK! Mount /app to run your own application.",
     "docs" => "https://github.com/codlook/look"
 ]))
 
-# /health — HEALTHCHECK bunu bekler (Dockerfile). 200 dönmeli.
-route("GET", "/health", fn() => response::json(["status" => "ok"]))
+# GET /health (the Dockerfile HEALTHCHECK) is answered by the server itself with 200 "ok",
+# before the application runs — an application route on that path would never be reached.
 
-route("404", fn() => response::error(404, "Bulunamadı"))
+route("404", fn() => response::error(404, "Not found"))

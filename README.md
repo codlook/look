@@ -22,7 +22,7 @@ curl localhost:8080
 You'll get a live JSON response:
 
 ```json
-{"ok":true,"mesaj":"Merhaba LOOK! Kendi uygulamanız için /app'i mount edin.","docs":"https://github.com/codlook/look"}
+{"ok":true,"message":"Hello from LOOK! Mount /app to run your own application.","docs":"https://github.com/codlook/look"}
 ```
 
 That's a complete web server — routing and JSON out of a single binary, no framework

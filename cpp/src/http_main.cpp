@@ -30,6 +30,7 @@
 #include "look/timer.h"
 #include "look/setup_handoff.h"   // vm_closure_runner (jobs::run VM işleyicilerini çalıştırır)
 #include "look/use_modules.h"     // collect_use_modules — CLI ile aynı `use` listesi
+#include "look/health_path.h"     // yerleşik sağlık yolu — istek + başlangıç çakışma denetimi
 #include "look/route_params.h"    // route_check_handler — rota parametre adları kayıtta denetlenir
 #include "look/struct_types.h"    // struct_check_type_known — kurulum sonrası alan tipi denetimi
 
@@ -649,6 +650,7 @@ static void run_setup_http(const fs::path& script) {
                     }
                     if (args[3].type() == look::Value::BYTECODE_FN) {
                         look::route_check_handler(method, pattern, args[3].as_bytecode_fn()->proto->params);
+                        look::route_check_builtin_path(method, pattern);
                         vm_routes_ptr->push_back({method + ":" + pattern, args[3], std::move(middlewares)});
                     }
                 } else if (args.size() >= 3) {
@@ -658,6 +660,7 @@ static void run_setup_http(const fs::path& script) {
                     std::vector<look::Value> middlewares = look::route_group_middlewares();
                     if (args[2].type() == look::Value::BYTECODE_FN) {
                         look::route_check_handler(method, pattern, args[2].as_bytecode_fn()->proto->params);
+                        look::route_check_builtin_path(method, pattern);
                         vm_routes_ptr->push_back({method + ":" + pattern, args[2], std::move(middlewares)});
                     }
                 } else if (args.size() >= 2) {
@@ -1112,11 +1115,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
 
     // Built-in health endpoint — rate limit bypass, no LOOK context needed
     {
-        static std::string health_path = []() -> std::string {
-            const char* e = std::getenv("LOOK_HEALTH_PATH");
-            return e ? e : "/health";
-        }();
-        if (req.method == "GET" && req.path == health_path) {
+        if (req.method == "GET" && req.path == look::health_path()) {
             resp.status_code = 200;
             resp.status_text = "OK";
             resp.headers["Content-Type"] = "text/plain";

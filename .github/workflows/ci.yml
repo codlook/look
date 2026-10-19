@@ -928,6 +928,13 @@ jobs:
           cd cpp
           bash tests/use_rule_web_test.sh ./build/lk-fcgi
 
+      # Code that silently did nothing stops startup with the reason: the discarded result of a
+      # pure built-in (array::push alone on a line) and a route on the built-in health path.
+      - name: Silent no-ops stop the application at startup
+        run: |
+          cd cpp
+          bash tests/silent_noop_startup_test.sh ./build/lk ./build/lk-fcgi
+
       # JWT güvenlik tablosu — HS256 modülü klasik açıklara GÜVENLİ mi: alg=none reddi,
       # RS256→HS256 key-confusion reddi, exp expiry, imza-kurcalama + pozitif. verify header
       # alg'ini OKUMAZ (koşulsuz HMAC) → alg-confusion yapısal imkânsız. Pozitif-kontrollü.

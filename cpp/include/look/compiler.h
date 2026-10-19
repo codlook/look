@@ -23,6 +23,14 @@ public:
         : std::runtime_error(msg), line(line) {}
 };
 
+// Programın kendi hatası (ör. sonucu kullanılmayan saf yerleşik): CLI bunu görünce tree-walk'a
+// DÜŞMEZ, hatayı yazıp çıkar — yedek motor bu denetimi yapmadığı için programı sessizce
+// çalıştırırdı. (Web'de her derleme hatası zaten uygulamayı durdurur.)
+class LookProgramError : public LookCompileError {
+public:
+    using LookCompileError::LookCompileError;
+};
+
 // ── Kontrollü daraltma ───────────────────────────────────────────────────────
 // Bytecode operandları 16 bit (LOOK 2: eskiden 8 bitti — 255 register/parametre/yakalama,
 // 65535 sabit sınırı; "VM derleyemezse uygulama başlamaz" kuralından önce kaldırıldı).

@@ -12,6 +12,7 @@
 #include "look/compiler.h"
 #include "look/param_write_check.h"   // log_param_writes — dahil edilen dosyaların uyarıları
 #include "look/builtins.h"
+#include "look/unused_result.h"   // is_pure_builtin — sonucu atılan saf yerleşik
 #include "look/interpreter.h"
 #include "look/lexer.h"
 #include "look/parser.h"
@@ -293,6 +294,14 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         if (auto* a = dynamic_cast<const AssignmentExpression*>(s->expression.get())) {
             compile_assign_expr(*a);
         } else {
+            // Sonucu atılan SAF yerleşik (array::push($l, $x) tek başına): hiçbir şey yapmaz, sessiz
+            // hatadır → program başlamaz, nedeni söylenir (var olmayan fonksiyon kuralı gibi).
+            if (auto* call = dynamic_cast<const CallExpression*>(s->expression.get()))
+                if (auto* sr = dynamic_cast<const ScopeResolution*>(call->callee.get())) {
+                    const std::string full = sr->module_name + "::" + sr->member_name;
+                    if (is_pure_builtin(full))
+                        throw LookProgramError(unused_result_message(full, stmt.loc.line), stmt.loc.line);
+                }
             // Sonuç kullanılmıyor — geçici register al, hemen bırak
             uint16_t r = compile_expr(*s->expression);
             free_temp(r);
@@ -432,6 +441,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                         // durdurur (eskiden NOP: paketin fonksiyonları sessizce eksik kalıyordu).
                         const std::string m = ex.what();
                         if (m.rfind("use " + us->module_name + ":", 0) == 0) throw;
+                        if (dynamic_cast<const LookProgramError*>(&ex))
+                            throw LookProgramError("use " + us->module_name + ": " + m);
                         throw LookCompileError("use " + us->module_name + ": " + m);
                     }
                 }
@@ -498,6 +509,9 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             // Hangi dosyada olduğu söylenir (içteki bir dahil etme zaten adını koyduysa yinelenmez).
             const std::string m = ex.what();
             if (m.rfind("use \"", 0) == 0) throw;
+            // Programın kendi hatası türünü korur (CLI onu yedeğe düşmeden yazar).
+            if (dynamic_cast<const LookProgramError*>(&ex))
+                throw LookProgramError("use \"" + ufs->path + "\": " + m, ex.line);
             throw LookCompileError("use \"" + ufs->path + "\": " + m);
         } catch (const std::exception& ex) {
             // ESKİ HATA: burada her hata yutulup NOP yazılıyordu ("yorumlayıcı yedeği halleder").

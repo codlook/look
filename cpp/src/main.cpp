@@ -564,6 +564,12 @@ int main(int argc, char* argv[]) {
                 // Temel dizin verilir: `use "dosya.lk"` ile dahil edilenler de VM'e derlenir (web yolu
                 // gibi). Onların kendi modülleri yukarıdaki özyinelemeli ön yüklemeyle bağlandı.
                 try { compiled = look::Compiler::compile(*program, script_dir.string()); }
+                catch (const look::LookProgramError& ex) {
+                    // Programın kendi hatası (sonucu atılan saf yerleşik …): tree-walk bu denetimi
+                    // yapmaz, programı sessizce çalıştırırdı → yedeğe düşme, yaz ve çık.
+                    std::cerr << "Error: " << ex.what() << "\n  File: " << filename << std::endl;
+                    std::exit(1);
+                }
                 catch (const std::exception& ex) {      // compile hatası → tree-walk
                     compiled_ok = false;
                     vm_skip_reason = std::string("compile error: ") + ex.what();

@@ -22,6 +22,7 @@
 #endif
 #include <ctime>
 #include "look/fcgi.h"
+#include "look/health_path.h"  // yerleşik sağlık yolu — tek kaynak (HTTP modu da kullanır)
 #include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
 #include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
 #include "look/http_client.h"
@@ -675,10 +676,7 @@ static void handle_request(look::FcgiRequest& req, look::FcgiConn& conn) {
 
     // Built-in health endpoint — no LOOK context, no script needed
     {
-        static std::string health_path = []() -> std::string {
-            const char* e = std::getenv("LOOK_HEALTH_PATH");
-            return e ? e : "/health";
-        }();
+        const std::string& health_path = look::health_path();
         auto uri_it = req.params.find("REQUEST_URI");
         auto method_it = req.params.find("REQUEST_METHOD");
         if (uri_it != req.params.end() && method_it != req.params.end()) {
