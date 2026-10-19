@@ -35,10 +35,10 @@ PORT=7402
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# Minik, CPU-hafif app: /health hızlı 200 döner (hang'i izole eder — app yavaşlığı
+# Minik, CPU-hafif app: /ping hızlı 200 döner (hang'i izole eder — app yavaşlığı
 # değil dispatch'i ölçeriz).
 cat > "$TMP/app.lk" <<'LK'
-route("GET", "/health", function() {
+route("GET", "/ping", function() {
   return response::text("ok")
 })
 LK
@@ -53,10 +53,10 @@ run_mode() {
   if [ -n "$env_pfx" ]; then export $env_pfx; fi
   "$FCGI" --mode http --port $PORT app.lk >"$TMP/srv.log" 2>&1 &
   local srv=$!
-  # Hazır olana dek bekle (curl ile /health 200)
+  # Hazır olana dek bekle (curl ile /ping 200)
   local up=0
   for i in $(seq 1 40); do
-    if curl -s --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q ok; then up=1; break; fi
+    if curl -s --max-time 1 "http://127.0.0.1:$PORT/ping" 2>/dev/null | grep -q ok; then up=1; break; fi
     sleep 0.25
   done
   if [ "$up" != "1" ]; then
