@@ -48,13 +48,6 @@ struct VmRoute {
                                          // sabitlemek için kullanılır
 };
 
-// VM'den çıkarılmış route'a istek geldi — sessiz interpreter fallback sinyali.
-// (Hata DEĞİL: route daha önce VM'de başarısız oldu ve kalıcı sabitlendi.)
-class VmRouteDisabled : public std::exception {
-public:
-    const char* what() const noexcept override { return "route interpreter'a sabitli"; }
-};
-
 // ── VM ────────────────────────────────────────────────────────────────────────
 
 class VM {
@@ -66,10 +59,6 @@ public:
               std::vector<StructFieldDef>>*                       struct_defs = nullptr;
         // builtins: per-request olarak set edilir (set_builtins ile)
         const std::vector<BuiltinFn>*                            builtins    = nullptr;
-        // Route bazında kalıcı VM-devre-dışı bayrakları (app_index ile indekslenir).
-        // Eşleşen route'un bayrağı setli ise dispatch VmRouteDisabled fırlatır →
-        // caller sessizce interpreter'a düşer.
-        const std::vector<uint8_t>*                              route_disabled = nullptr;
     };
 
     explicit VM(SharedState shared, std::ostream& output);

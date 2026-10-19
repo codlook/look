@@ -52,11 +52,11 @@ th.join()
 print("slow=%.2f body=%s max=%.3f" % (res[0][0], res[0][1] if res[0][1] in (want,) else "WRONG:" + res[0][1], max(lat)))
 PY
 fail=0
-for mode in "LOOK_X=1" "LOOK_BYTECODE=0" "LOOK_FIBER_DISPATCH=0"; do
+for mode in "LOOK_X=1" "LOOK_FIBER_DISPATCH=0"; do
     ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
     for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/fast" && break; sleep 0.1; done
-    # The interpreter runs the loop ~70x slower: fewer turns, about the same time.
-    if [ "$mode" = LOOK_BYTECODE=0 ]; then n=300000; c=3000; else n=50000000; c=500000; fi
+
+    n=50000000; c=500000
     for case in "loop:/loop/$n:s=$n" "calls:/calls/$c:s=$((c * 50))" "hash:/hash:okok"; do
         name="${case%%:*}"; rest="${case#*:}"; path="${rest%%:*}"; want="${rest#*:}"
         out="$(cd "$TMP" && python3 check.py "$PORT" "$path" "$want" 2>&1 | tail -1)"

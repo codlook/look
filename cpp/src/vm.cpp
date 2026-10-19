@@ -191,27 +191,6 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
         std::vector<Value> params;
         if (route_match(p, path, params)) {
             last_matched_route_ = entry.app_index;
-            // ── TEST-ONLY fault injection (env-gated, prod-etkisiz) ──────────
-            // LOOK_VM_FORCE_FAIL=<substr>: eşleşen route pattern'i <substr>
-            // içeriyorsa VM yürütmesini kasıtlı fail ettir → http_main
-            // interpreter-fallback yolu (ve route-pinning) tetiklenir. Bu YALNIZ
-            // fallback-doğruluk CI guard'ı içindir. Env yoksa: statik pointer
-            // NULL → hot-path'te tek pointer testi, davranış DEĞİŞMEZ.
-            {
-                static const char* const s_force_fail =
-                    std::getenv("LOOK_VM_FORCE_FAIL");
-                if (s_force_fail && *s_force_fail &&
-                    entry.pattern.find(s_force_fail) != std::string::npos)
-                    throw std::runtime_error(
-                        std::string("LOOK_VM_FORCE_FAIL test-hook: ") + entry.pattern);
-            }
-            // Route daha önce VM'de hata verdiyse kalıcı interpreter'a sabitli
-            // route_disabled byte-flag'i başka request-thread'i (http_main VM-fallback yolu)
-            // yazabilir → atomic_ref ile oku (data race/UB önle; relaxed — advisory flag).
-            if (shared_.route_disabled && entry.app_index >= 0 &&
-                entry.app_index < (int)shared_.route_disabled->size() &&
-                std::atomic_ref<uint8_t>(const_cast<uint8_t&>((*shared_.route_disabled)[entry.app_index])).load(std::memory_order_relaxed))
-                throw VmRouteDisabled();
             // Route-level middleware'leri çalıştır
             bool stopped = false;
             for (auto* mw : entry.middlewares) {
@@ -1229,7 +1208,6 @@ call_dispatch:
         // kontrol-akışı exception'ları (exit/route/stop/route-disabled) sızdırılır,
         // geri kalan std::exception mesajıyla catch bloğuna düşer. try_stack_ boşsa
         // yukarı iletilir (web'de route fallback, CLI-VM'de üst seviye hata).
-        catch (const VmRouteDisabled&)      { throw; }
         catch (const RouteStopException&)   { throw; }
         catch (const RouteMatchedException&){ throw; }
         catch (const ExitException&)        { throw; }

@@ -912,13 +912,13 @@ jobs:
           bash cpp/tests/plesk_inject_test.sh
           php  cpp/tests/plesk_php_domain_test.php
 
-      # A VM error is a 500 and the request is not run again (1.0.8); a route the VM cannot run
-      # is placed on the tree-walk engine at setup. LOOK_VM_FORCE_FAIL is the test hook that
-      # makes one route fail on the VM (inert without the variable).
-      - name: VM errors are errors; interpreter-only routes are decided at setup
+      # LOOK 2 web runs only on the VM: a program the VM cannot compile does not start (exit 1),
+      # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear
+      # 500, LOOK_BYTECODE=0 is ignored, a script without routes runs whole per request.
+      - name: The web server runs only on the VM
         run: |
           cd cpp
-          bash tests/vm_fallback_test.sh build/lk-fcgi 7772
+          bash tests/vm_only_startup_test.sh ./build/lk-fcgi
 
       # JWT güvenlik tablosu — HS256 modülü klasik açıklara GÜVENLİ mi: alg=none reddi,
       # RS256→HS256 key-confusion reddi, exp expiry, imza-kurcalama + pozitif. verify header

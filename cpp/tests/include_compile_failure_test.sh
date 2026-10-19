@@ -6,8 +6,9 @@
 # run again on the tree-walk engine, which hid it. Since 1.0.8 nothing is run twice, so every
 # route that called a function of that file answered 500 "Undefined variable: <function>" —
 # also functions that had nothing to do with the line the VM could not compile.
-# Now the compile fails as a whole: the server says so at startup and runs the application
-# on the tree-walk engine, where it works.
+# Now the compile fails as a whole. LOOK 2 runs only on the VM, so the application does not
+# start (exit 1), and the error names the included file and the reason — nothing is dropped
+# silently and no route answers "Undefined variable".
 # The included file here is valid LOOK: one call in it passes 65535 arguments, more than the VM
 # encodes (tests/vm_operand_limits_test.sh).
 # Usage: include_compile_failure_test.sh <lk-fcgi>
@@ -26,12 +27,15 @@ route("GET", "/x", fn() => response::text(twice(21)))
 route("GET", "/m", fn() => response::text(many()))
 LK
 ( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/x" && break; sleep 0.1; done
-x="$(curl -s -m 3 -w ' %{http_code}' "localhost:$PORT/x")"; m="$(curl -s -m 3 -w ' %{http_code}' "localhost:$PORT/m")"
-said="$(grep -c 'The VM cannot run this program' "$TMP/log.txt")"
+for i in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+    echo "  FAIL the server started with an included file the VM cannot compile"; echo "FAIL: included file not refused"; exit 1
+fi
+wait "$pid"; rc=$?; pid=""
+named="$(grep -c 'the VM cannot run this program (compile error: use "lib.lk": .*65534' "$TMP/log.txt")"
 undef="$(grep -c 'Undefined variable' "$TMP/log.txt")"
-kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-if [ "$x" = "42 200" ] && [ "$m" = "65535 200" ] && [ "$said" = "1" ] && [ "$undef" = "0" ]; then
-    echo "  OK   the functions of the included file work, and the server said the application runs on the tree-walk engine"
+if [ "$rc" = 1 ] && [ "$named" -ge 1 ] && [ "$undef" = "0" ]; then
+    echo "  OK   the application does not start, and the error names the included file and the reason"
     echo "PASS: an included file the VM cannot compile is not dropped"
-else echo "  FAIL /x=[$x] /m=[$m] announced=$said undefined-variable-errors=$undef"; echo "FAIL: included file dropped"; exit 1; fi
+else echo "  FAIL exit=$rc named=$named undefined-variable-errors=$undef log=[$(grep -iE 'error' "$TMP/log.txt" | head -2 | tr '\n' ' ')]"; echo "FAIL: included file dropped"; exit 1; fi
