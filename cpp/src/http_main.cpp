@@ -24,6 +24,7 @@
 #include "look/smtp_server.h"
 #include "look/imap_server.h"
 #include "look/fiber.h"
+#include "look/health_path.h"     // yerleşik sağlık yolu — istek + başlangıç çakışma uyarısı
 
 #include <cctype>
 #include <cmath>
@@ -478,6 +479,9 @@ static void run_setup_http(const fs::path& script) {
             auto compiled = std::make_unique<look::CompiledProgram>(
                 look::Compiler::compile(*g_http_app.program,
                                         g_http_app.script_path.parent_path().string()));
+            // Derleyici uyarıları (sonucu atılan saf yerleşik …): program aynen çalışır.
+            for (const auto& w : compiled->warnings)
+                look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP", w);
             g_http_app.compiled     = std::move(compiled);
             g_http_app.use_bytecode = true;
             std::cerr << "[BYTECODE] OK — VM mode active\n";
@@ -629,6 +633,8 @@ static void run_setup_http(const fs::path& script) {
                     }
                     if (args[3].type() == look::Value::BYTECODE_FN) {
                         vm_routes_ptr->push_back({method + ":" + pattern, args[3], std::move(middlewares)});
+                        if (auto w = look::route_builtin_path_conflict(method, pattern); !w.empty())
+                            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP", w);
                     }
                 } else if (args.size() >= 3) {
                     // 3-arg: method, pattern, fn
@@ -637,6 +643,8 @@ static void run_setup_http(const fs::path& script) {
                     std::vector<look::Value> middlewares = look::route_group_middlewares();
                     if (args[2].type() == look::Value::BYTECODE_FN) {
                         vm_routes_ptr->push_back({method + ":" + pattern, args[2], std::move(middlewares)});
+                        if (auto w = look::route_builtin_path_conflict(method, pattern); !w.empty())
+                            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP", w);
                     }
                 } else if (args.size() >= 2) {
                     // 2-arg: "404" + fn
@@ -1065,11 +1073,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
 
     // Built-in health endpoint — rate limit bypass, no LOOK context needed
     {
-        static std::string health_path = []() -> std::string {
-            const char* e = std::getenv("LOOK_HEALTH_PATH");
-            return e ? e : "/health";
-        }();
-        if (req.method == "GET" && req.path == health_path) {
+        if (req.method == "GET" && req.path == look::health_path()) {
             resp.status_code = 200;
             resp.status_text = "OK";
             resp.headers["Content-Type"] = "text/plain";

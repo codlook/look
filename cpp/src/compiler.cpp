@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include "look/compiler.h"
 #include "look/builtins.h"
+#include "look/unused_result.h"   // is_pure_builtin — sonucu atılan saf yerleşik (uyarı)
 #include "look/interpreter.h"
 #include "look/lexer.h"
 #include "look/parser.h"
@@ -28,6 +29,8 @@ namespace cfs = std::filesystem;
 thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
+thread_local std::vector<std::string>       g_compile_cur_use;   // `use "x"` metinleri (uyarı öneki)
+thread_local std::vector<std::string>       g_compile_warnings;  // → CompiledProgram::warnings
 }
 #include <stdexcept>
 #include <typeinfo>
@@ -341,6 +344,19 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         if (auto* a = dynamic_cast<const AssignmentExpression*>(s->expression.get())) {
             compile_assign_expr(*a);
         } else {
+            // Sonucu atılan SAF yerleşik (array::push($l, $x) tek başına): hiçbir şey yapmaz, sessiz
+            // hatadır → v1 uyarı toplar (LOOK 2'de program başlamaz). Dahil edilen dosyada önek
+            // v2'nin hata metniyle aynı: `use "lib.lk": line N: …`.
+            if (auto* call = dynamic_cast<const CallExpression*>(s->expression.get()))
+                if (auto* sr = dynamic_cast<const ScopeResolution*>(call->callee.get())) {
+                    const std::string full = sr->module_name + "::" + sr->member_name;
+                    if (is_pure_builtin(full)) {
+                        std::string w = unused_result_message(full, stmt.loc.line);
+                        for (auto it = g_compile_cur_use.rbegin(); it != g_compile_cur_use.rend(); ++it)
+                            w = "use \"" + *it + "\": " + w;
+                        g_compile_warnings.push_back(w);
+                    }
+                }
             // Sonuç kullanılmıyor — geçici register al, hemen bırak
             uint8_t r = compile_expr(*s->expression);
             free_temp(r);
@@ -521,7 +537,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             auto prog = std::shared_ptr<Program>(p.parse().release());
             g_file_asts.push_back(prog);
             g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
-            struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); } } dir_pop;
+            g_compile_cur_use.push_back(ufs->path);
+            struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); g_compile_cur_use.pop_back(); } } dir_pop;
             for (auto& sub : prog->statements) compile_stmt(*sub);
         } catch (const LookCompileError&) {
             throw;
@@ -1922,12 +1939,16 @@ CompiledProgram Compiler::compile(const Program& program, const std::string& bas
     g_compile_root = base_dir;
     g_compile_included.clear();
     g_compile_cur_dir.clear();
+    g_compile_cur_use.clear();
+    g_compile_warnings.clear();
     if (!base_dir.empty()) g_compile_cur_dir.push_back(base_dir);
     FunctionCompiler main_compiler("<main>", {}, false, nullptr);
     auto proto = main_compiler.compile_stmts(program.statements);
 
     CompiledProgram out;
     out.main_proto = proto;
+    out.warnings   = std::move(g_compile_warnings);
+    g_compile_warnings.clear();
     out.uses_non_builtin_module_fn = main_compiler.used_non_builtin_module_fn();
     out.non_builtin_module_fns     = main_compiler.non_builtin_module_fn_names();
     return out;

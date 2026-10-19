@@ -81,7 +81,7 @@ mkdir -p "$LOOK_APP_DIR" "$ETC_DIR"
 if [ ! -f "$LOOK_APP_DIR/index.lk" ]; then
   cat > "$LOOK_APP_DIR/index.lk" <<'APP'
 # LOOK — örnek uygulama (düzenle: /var/www/look/index.lk)
-route("GET", "/", fn() => response::json(["ok" => true, "mesaj" => "Merhaba LOOK!"]))
+route("GET", "/", fn() => response::json(["ok" => true, "message" => "Hello from LOOK!"]))
 
 route("GET", "/selam/{ad}", function($ad) {
     response::json(["selam" => $ad])

@@ -514,6 +514,14 @@ jobs:
           cd cpp
           bash tests/behavioral_test.sh build/lk
 
+      # Code that silently did nothing is reported at startup (the program still runs): the
+      # discarded result of a pure built-in (array::push alone on a line) and a route on the
+      # built-in health path.
+      - name: Silent no-ops are reported at startup
+        run: |
+          cd cpp
+          bash tests/silent_noop_warning_test.sh ./build/lk ./build/lk-fcgi
+
       # Env-dependent test contract — positive control. A test whose environment is missing
       # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
       # DSN/secret in CI is a configuration error and must not turn into a silent green, the

@@ -219,6 +219,9 @@ struct CompiledProgram {
     // (karar EXECUTION ÖNCESİ — çıktı taahhüt edilmeden).
     bool uses_non_builtin_module_fn = false;
     std::vector<std::string> non_builtin_module_fns;   // adlar (LOOK_VM_STRICT raporu)
+    // Derleyici uyarıları (kullanıcıya giden, İngilizce) — ör. sonucu atılan saf yerleşik
+    // (look/unused_result.h). Program aynen çalışır; web Logger'a, CLI stderr'e yazar.
+    std::vector<std::string> warnings;
     // Struct tanımları, route kayıtları setup fazında çalıştırılarak kurulur.
     // Bytecode yorumda StructDef ve route_registry_ mevcut interpreter
     // altyapısını kullanmaya devam eder — Phase 17'de taşınabilir.

@@ -489,6 +489,9 @@ int main(int argc, char* argv[]) {
                     vm_skip_reason = std::string("compile error: ") + ex.what();
                 }
                 catch (...) { compiled_ok = false; vm_skip_reason = "compile error"; }
+                // Derleyici uyarıları (sonucu atılan saf yerleşik …): program aynen çalışır.
+                if (compiled_ok)
+                    for (const auto& w : compiled.warnings) std::cerr << "Warning: " << w << "\n";
                 // Builtin OLMAYAN "mod::fn" (ör. cache::keys, template::escape) → o çağrı
                 // RUNTIME'da "Not callable" fırlatır ve CLI-VM'de fallback YOKTUR
                 // (web'de route interpreter'a düşüp kurtulur). Bayrak varsa daha en baştan
