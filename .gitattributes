@@ -5,3 +5,4 @@
 *.lk text eol=lf
 # Golden/expected dosyalari BAYT BAYT karsilastirilir — satir sonu donusumu testi kirar.
 *.expected text eol=lf
+*.out text eol=lf
