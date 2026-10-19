@@ -63,6 +63,32 @@ grep -q "^\[BYTECODE\] OK" "$TMP/web_main.log" \
 [ "$TREE" = "$CLIVM" ] || { echo "FAIL: tree-walk != CLI-VM"; fail=1; }
 [ "$TREE" = "$WEBVM" ] || { echo "FAIL: tree-walk != web-VM"; fail=1; }
 
+# ── SABİT REFERANS (beklenen sonuç dosyaları, tests/golden/differential/) ────────────
+# Motorlar arası karşılaştırma, iki motorun ORTAK kullandığı koda (yerleşik modüller zaten
+# ortak) giren hatayı göremez: ikisi de aynı yanlışı verir. LOOK 2 tek motora geçerken
+# yorumlayıcı da kalkacak. Bu dosyalar, iki/üç motorun birbirini doğruladığı anki çıktıları
+# sabitler (2026-10-19, motorların birebir aynı çıktısı). Bilinçli değişiklikte: UPDATE_GOLDEN=1
+# ile yeniden yaz ve farkı commit'te açıkla. Dosya yoksa FAIL (sessiz yeşil yok).
+# Güncelleme yalnız motorlar AYNI çıktıyı verirse yazar: aynı ad bu koşuda farklı değerle
+# ikinci kez gelirse FAIL (son yazan sessizce kazanmasın).
+GOLDEN_DIR="$DIR/golden/differential"
+GOLDEN_SEEN=" "
+golden() {   # golden <ad> <değer> <etiket>
+  local f="$GOLDEN_DIR/$1.out"
+  if [ "${UPDATE_GOLDEN:-0}" = 1 ]; then
+    mkdir -p "$GOLDEN_DIR"
+    case "$GOLDEN_SEEN" in
+      *" $1 "*) [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 oteki motordan farkli — golden YAZILMADI"; fail=1; }; return ;;
+    esac
+    printf '%s' "$2" > "$f"; GOLDEN_SEEN="$GOLDEN_SEEN$1 "; echo "  (golden yazildi: $1)"; return
+  fi
+  if [ ! -f "$f" ]; then echo "FAIL: golden dosyasi yok: $f (UPDATE_GOLDEN=1 ile olustur)"; fail=1; return; fi
+  [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 sabit referanstan ayrisiyor ($f)"; fail=1; }
+}
+golden run_all "$TREE"  "run_all (tree-walk)"
+golden run_all "$CLIVM" "run_all (CLI-VM)"
+golden run_all "$WEBVM" "run_all (web-VM)"
+
 # ── CLI'ye özgü yüzey: print/write BAYT BAYT + exit kodu ─────────────────────────
 # Yukarıdaki $(...) karşılaştırması trailing newline'ı YUTAR ve gövde tek kez print
 # eder → print'in newline/" " ayraç semantiği görünmez. Nitekim VM'de print newline de
@@ -92,6 +118,8 @@ if [ "$io_tree_dump" != "$io_vm_dump" ]; then
   echo "  CLIVM: $(echo "$io_vm_dump"   | head -2 | tr '\n' ' ')"
   fail=1
 fi
+golden print_write_bytes "$io_tree_dump" "print/write baytlari (tree-walk)"
+golden print_write_bytes "$io_vm_dump"   "print/write baytlari (CLI-VM)"
 printf 'print("basla")\nexit(3)\nprint("OLMAMALI")\n' > "$TMP/ex.lk"
 LOOK_CLI_VM=0 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; t_code=$?
 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; v_code=$?
@@ -448,6 +476,8 @@ ue_vm=$("$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
 uo_vm=$("$LK" "$TMP/uok.lk" 2>&1 | tail -1)
 echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM C++ ic istisnasini sizdiriyor: [$ue_vm]"; fail=1; }
 [ "$ue_tree" = "$ue_vm" ] || { echo "FAIL: hata mesaji motorlar arasi ayrisiyor — tree-walk: [$ue_tree] / CLI-VM: [$ue_vm]"; fail=1; }
+golden use_missing_error "$ue_tree" "'use' unutulunca hata mesaji (tree-walk)"
+golden use_missing_error "$ue_vm"   "'use' unutulunca hata mesaji (CLI-VM)"
 [ "$uo_vm" = "3" ] || { echo "FAIL: 'use' VARKEN modul cagrisi bozuldu (pozitif kontrol): [$uo_vm]"; fail=1; }
 
 # Cagrilamayan AD — mesaj adi soylemeli ve iki motor ayni demeli.
