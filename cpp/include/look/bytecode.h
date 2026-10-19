@@ -12,17 +12,17 @@ namespace look {
 // ── OpCode ────────────────────────────────────────────────────────────────────
 //
 // 3-adres register tabanlı instruction set.
-// Her instruction: opcode (1B) + a,b,c register/index alanları (1B her biri)
-// Geniş sabit için OP_LOAD_CONST_W: a=reg, bhi+blo=16-bit pool index.
+// Her instruction: opcode (1B) + a,b,c register/index alanları (2B her biri)
+// Geniş sabit için OP_LOAD_CONST_W: a=reg, b<<16|c = 32-bit pool index.
 
 enum class OpCode : uint8_t {
     // ── Sabit yükleme ─────────────────────────────────────────────────────────
-    LOAD_CONST,      // r[a] = pool[b]          — b < 256
-    LOAD_CONST_W,    // r[a] = pool[b<<8|c]     — 16-bit pool index
+    LOAD_CONST,      // r[a] = pool[b]          — b < 65536
+    LOAD_CONST_W,    // r[a] = pool[b<<16|c]    — 32-bit pool index
     LOAD_NULL,       // r[a] = null
     LOAD_TRUE,       // r[a] = true
     LOAD_FALSE,      // r[a] = false
-    LOAD_INT,        // r[a] = (int8_t)b        — küçük literal (-128..127)
+    LOAD_INT,        // r[a] = (int16_t)b       — küçük literal (-32768..32767)
 
     // ── Register / değişken ───────────────────────────────────────────────────
     MOVE,            // r[a] = r[b]
@@ -68,10 +68,10 @@ enum class OpCode : uint8_t {
     // "field index" compile-time'da struct_def.fields[] sırasından hesaplanır.
 
     // ── Kontrol akışı ─────────────────────────────────────────────────────────
-    JUMP,            // ip = a<<8|b             — 16-bit offset
-    JUMP_IF_FALSE,   // if !r[a]: ip = b<<8|c
-    JUMP_IF_TRUE,    // if  r[a]: ip = b<<8|c
-    JUMP_IF_NULL,    // if r[a]==null: ip = b<<8|c
+    JUMP,            // ip = a<<16|b             — 16-bit offset
+    JUMP_IF_FALSE,   // if !r[a]: ip = b<<16|c
+    JUMP_IF_TRUE,    // if  r[a]: ip = b<<16|c
+    JUMP_IF_NULL,    // if r[a]==null: ip = b<<16|c
 
     // ── Fonksiyon çağrısı ─────────────────────────────────────────────────────
     // Çağrı convention:
@@ -92,12 +92,12 @@ enum class OpCode : uint8_t {
 
     // ── Iterasyon ─────────────────────────────────────────────────────────────
     FOR_PREP,        // r[a]=iter_state, r[a+1]=0(idx)  — r[b]=array
-    FOR_STEP,        // if end: ip=c<<8|d; else r[a+2]=val, r[a+3]=idx, ++r[a+1]
+    FOR_STEP,        // if end: ip=c<<16|d; else r[a+2]=val, r[a+3]=idx, ++r[a+1]
     // foreach ($arr as $v)        → r[a+2]=value
     // foreach ($arr as $k => $v)  → r[a+2]=key, r[a+3]=value
 
     // ── Hata yönetimi ─────────────────────────────────────────────────────────
-    TRY_PUSH,        // catch_stack.push(ip=a<<8|b)    — catch block başlangıcı
+    TRY_PUSH,        // catch_stack.push(ip=a<<16|b)    — catch block başlangıcı
     TRY_POP,         // catch_stack.pop()
     THROW,           // throw r[a]
     LOAD_EXC,        // r[a] = current_exception (catch bloğu başında)
@@ -132,11 +132,11 @@ enum class OpCode : uint8_t {
     ASSOC_APPEND,    // push key r[b] + val r[c] onto assoc r[a] WITHOUT the dedup scan —
                      // emitted only for assoc literals whose keys the compiler has proven
                      // are distinct string literals, so the runtime scan is provably redundant
-    CHECK_DEFINED,   // throw "Undefined variable: <const b<<8|c>" when r[a] is null — emitted
+    CHECK_DEFINED,   // throw "Undefined variable: <const b<<16|c>" when r[a] is null — emitted
                      // right after LOAD_GLOBAL for a bare (no '$') name read as a VALUE
     SET_PATH,        // LOOK 2 copy-on-write assignment through an index path:
                      //   root[k0][k1]...[kn-1] = r[a];  keys in r[b]..r[b+c-1];  next NOP: a = root
-                     //   kind (0 local, 4 global), b<<8|c = its
+                     //   kind (0 local, 4 global), b<<16|c = its
                      //   register / name constant. Each level is detached (copied if
                      //   shared) in the variable's own slot before the write.
     PUSH_PATH,       // r[a] = push(root[k0]..[kc-1], value): keys in r[b]..; next NOP = root (as SET_PATH),
@@ -146,26 +146,30 @@ enum class OpCode : uint8_t {
 
 // ── Instruction ───────────────────────────────────────────────────────────────
 
+// LOOK 2: operandlar 16 bit (v1'de 8 bitti → fonksiyon başına 255 register / parametre /
+// yakalama ve 65535 sabit sınırı; "VM derleyemezse uygulama başlamaz" kuralından önce
+// kaldırıldı). İki operand birleşince 32 bitlik alan: b<<16|c (sabit indeksi, atlama hedefi).
 struct Instruction {
-    OpCode op;
-    uint8_t a = 0;
-    uint8_t b = 0;
-    uint8_t c = 0;
+    OpCode   op;
+    uint8_t  pad_ = 0;
+    uint16_t a = 0;
+    uint16_t b = 0;
+    uint16_t c = 0;
 
     // Helpers
-    static Instruction make(OpCode op, uint8_t a=0, uint8_t b=0, uint8_t c=0) {
-        return {op, a, b, c};
+    static Instruction make(OpCode op, uint16_t a=0, uint16_t b=0, uint16_t c=0) {
+        return {op, 0, a, b, c};
     }
-    // 16-bit b<<8|c alanı
-    uint16_t bx() const { return (uint16_t(b) << 8) | c; }
+    // 32-bit b<<16|c alanı
+    uint32_t bx() const { return (uint32_t(b) << 16) | c; }
 };
 
-static_assert(sizeof(Instruction) == 4, "Instruction must be 4 bytes");
+static_assert(sizeof(Instruction) == 8, "Instruction must be 8 bytes");
 
 // ── Constant pool ─────────────────────────────────────────────────────────────
 //
 // Per-function. Her sabit literali (sayı, string, bool, null) buraya girer.
-// Bir fonksiyon max 65535 sabit taşıyabilir (LOAD_CONST_W 16-bit).
+// Bir fonksiyonun sabit sayısı pratikte sınırsız (LOAD_CONST_W 32-bit).
 
 using ConstantPool = std::vector<Value>;
 

@@ -15,16 +15,16 @@
 LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fail=0
-{ echo 'function cnt(...$a) { return count($a) }'; echo "print(\"got=\" . cnt($(seq -s, 1 300)))"; } > "$TMP/big.lk"
+{ echo 'function cnt(...$a) { return count($a) }'; echo "print(\"got=\" . cnt($(seq -s, 1 65535)))"; } > "$TMP/big.lk"
 echo 'print("ok")' > "$TMP/small.lk"
 printf '$x = 5\n$x--\n--$x\n$y = 1\n++$y\n$z = $x\n- 1\nprint($x . ":" . $y . ":" . $z)\n' > "$TMP/step.lk"
 for sw in LOOK_CLI_VM=0 LOOK_BYTECODE=0; do
     out="$(env $sw LOOK_VM_STRICT=1 "$LK" "$TMP/big.lk" 2>"$TMP/err.txt")"; rc=$?
-    if [ "$out" = "got=300" ] && [ "$rc" = "0" ] && ! grep -q 'cannot run' "$TMP/err.txt"; then echo "  OK   $sw runs the script on the tree-walk engine (a script the VM cannot compile runs, strict mode included)"
+    if [ "$out" = "got=65535" ] && [ "$rc" = "0" ] && ! grep -q 'cannot run' "$TMP/err.txt"; then echo "  OK   $sw runs the script on the tree-walk engine (a script the VM cannot compile runs, strict mode included)"
     else echo "  FAIL $sw: out=[$out] exit=$rc stderr=[$(head -c 160 "$TMP/err.txt")]"; fail=1; fi
 done
 out="$("$LK" "$TMP/big.lk" 2>"$TMP/err.txt")"; rc=$?
-if [ "$out" = "got=300" ] && [ "$rc" = "0" ] && [ "$(grep -c 'The VM cannot run this script (compile error: .*more than 255 arguments.*tree-walk interpreter' "$TMP/err.txt")" = "1" ]; then echo "  OK   default run: the fallback is announced with its reason, and the result is right"
+if [ "$out" = "got=65535" ] && [ "$rc" = "0" ] && [ "$(grep -c 'The VM cannot run this script (compile error: .*more than 65534 arguments.*tree-walk interpreter' "$TMP/err.txt")" = "1" ]; then echo "  OK   default run: the fallback is announced with its reason, and the result is right"
 else echo "  FAIL default run: out=[$out] exit=$rc stderr=[$(head -c 200 "$TMP/err.txt")]"; fail=1; fi
 out="$(LOOK_VM_STRICT=1 "$LK" "$TMP/big.lk" 2>&1)"; rc=$?
 if [ "$rc" = "1" ]; then echo "  OK   LOOK_VM_STRICT=1 refuses instead of falling back"; else echo "  FAIL strict: exit=$rc [$out]"; fail=1; fi
@@ -47,9 +47,9 @@ for sw in LOOK_X=1 LOOK_VM_STRICT=1 LOOK_CLI_VM=0; do
     if [ "$out" = '{"a":4}' ] && [ ! -s "$TMP/err.txt" ]; then echo "  OK   [$sw] a script with nested file includes runs, without a fallback warning"
     else echo "  FAIL [$sw] inc.lk: out=[$out] stderr=[$(head -c 200 "$TMP/err.txt")]"; fail=1; fi
 done
-{ echo 'function cnt(...$a) { return count($a) }'; echo "function many() { return cnt($(seq -s, 1 300)) }"; } > "$TMP/lib/big.lk"
+{ echo 'function cnt(...$a) { return count($a) }'; echo "function many() { return cnt($(seq -s, 1 65535)) }"; } > "$TMP/lib/big.lk"
 printf 'use "lib/big.lk"\nprint("got=" . many())\n' > "$TMP/incbig.lk"
 out="$(cd "$TMP" && "$LK" incbig.lk 2>"$TMP/err.txt")"
-if [ "$out" = "got=300" ] && grep -q 'The VM cannot run this script (compile error: use "lib/big.lk": .*more than 255 arguments' "$TMP/err.txt"; then echo "  OK   an included file the VM cannot compile: the warning names the file and the reason, the result is right"
+if [ "$out" = "got=65535" ] && grep -q 'The VM cannot run this script (compile error: use "lib/big.lk": .*more than 65534 arguments' "$TMP/err.txt"; then echo "  OK   an included file the VM cannot compile: the warning names the file and the reason, the result is right"
 else echo "  FAIL incbig.lk: out=[$out] stderr=[$(head -c 220 "$TMP/err.txt")]"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: the command line says which engine runs" || { echo "FAIL: command-line engine choice"; exit 1; }

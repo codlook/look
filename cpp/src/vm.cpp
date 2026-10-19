@@ -500,7 +500,7 @@ call_dispatch:
         // LOOK 2: yol atamalarının kökü — değişkenin KENDİ yeri (bkz. SET_PATH/PUSH_PATH).
         //   0 yerel · 4 global (yakalanan değişkene yazılamaz: derleyici reddeder)
         auto path_root = [&](const Instruction& h) -> Value* {
-            const uint16_t ix = (uint16_t)((h.b << 8) | h.c);
+            const uint32_t ix = h.bx();
             switch (h.a) {
                 case 0: return &regs_[(size_t)(base + ix)];
                 default: throw LookVmError("internal: unexpected path root kind");
@@ -533,18 +533,18 @@ call_dispatch:
                 R(ins.a) = CONST(ins.b);
                 break;
             case OpCode::LOAD_CONST_W:
-                R(ins.a) = CONST((uint16_t(ins.b)<<8)|ins.c);
+                R(ins.a) = CONST(ins.bx());
                 break;
             case OpCode::LOAD_NULL:  R(ins.a) = Value();        break;
             case OpCode::LOAD_TRUE:  R(ins.a) = Value(true);    break;
             case OpCode::LOAD_FALSE: R(ins.a) = Value(false);   break;
-            case OpCode::LOAD_INT:   R(ins.a) = Value((int)(int8_t)ins.b); break;
+            case OpCode::LOAD_INT:   R(ins.a) = Value((int)(int16_t)ins.b); break;
             case OpCode::MOVE:       R(ins.a) = R(ins.b);       break;
             case OpCode::LOAD_VAR:   R(ins.a) = R(ins.b);       break;
             case OpCode::STORE_VAR:  R(ins.a) = R(ins.b);       break;
 
             case OpCode::LOAD_GLOBAL: {
-                uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
+                uint32_t ni = ins.bx();
                 // A2 inline cache: bu ni için çivilenmiş slot varsa doğrudan oku (register hızı).
                 if (Value* hit = (*gcache)[ni]) { R(ins.a) = *hit; break; }
                 // str_ref(): as_string() kopyasını önle (B5'te string pointer arkasında;
@@ -581,7 +581,7 @@ call_dispatch:
             }
             case OpCode::STORE_GLOBAL: {
                 // a=src_reg, b=name_hi, c=name_lo (16-bit constant pool index)
-                uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
+                uint32_t ni = ins.bx();
                 // A2: çivilenmiş slot varsa doğrudan yaz (hash yok). Yalnız MEVCUT slot'a
                 // yazar (cache ilk find/insert'ten sonra doldurulur → daima geçerli adres).
                 if (Value* hit = (*gcache)[ni]) { *hit = R(ins.a); break; }
@@ -712,7 +712,7 @@ call_dispatch:
                 // Çıplak ad değer olarak okundu ve LOAD_GLOBAL null verdi: ad gerçekten
                 // tanımsız mı (null değerli const değil mi) → tree-walk ile aynı hata.
                 if (R(ins.a).type() == Value::NONE) {
-                    const std::string& nm = CONST((uint16_t)((ins.b << 8) | ins.c)).str_ref();
+                    const std::string& nm = CONST(ins.bx()).str_ref();
                     if (globals_.find(nm) == globals_.end())
                         throw LookVmError("Undefined variable: " + nm);
                 }
@@ -738,7 +738,7 @@ call_dispatch:
 
             // ── Struct — Value::STRUCT, slotlar [ad, tanım, alan0, alan1, ...] ─────────
             case OpCode::NEW_STRUCT: {
-                uint16_t ni = (uint16_t(ins.b)<<8)|ins.c;
+                uint32_t ni = ins.bx();
                 const std::string& sname = CONST(ni).str_ref();
                 // Literal alan-adı bloğu: NOP(n) + n×LOAD_CONST_W (compile_struct_lit üretir).
                 const bool has_names = frame.ip < (int)proto->code.size()
@@ -753,7 +753,7 @@ call_dispatch:
                 const auto& def = *dit->second.as_array();
                 for (int k = 0; k < fc; ++k) {
                     const auto& li = proto->code[frame.ip + 1 + k];
-                    const std::string& fname = CONST((uint16_t(li.b) << 8) | li.c).str_ref();
+                    const std::string& fname = CONST(li.bx()).str_ref();
                     if (look::struct_field_index(def, fname) < 0)   // tree-walk ile birebir aynı metin
                         throw LookVmError("Unknown field '" + fname + "' in struct '" + sname + "'");
                 }
@@ -828,16 +828,16 @@ call_dispatch:
 #define LOOK_VM_JUMP_TO(target) do { const int _t = (target); \
                 if (_t < frame.ip) preempt_point(); frame.ip = _t; } while (0)
             case OpCode::JUMP:
-                LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
+                LOOK_VM_JUMP_TO(ins.bx());
                 break;
             case OpCode::JUMP_IF_FALSE:
-                if (!R(ins.a).is_truthy()) LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
+                if (!R(ins.a).is_truthy()) LOOK_VM_JUMP_TO(ins.bx());
                 break;
             case OpCode::JUMP_IF_TRUE:
-                if ( R(ins.a).is_truthy()) LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
+                if ( R(ins.a).is_truthy()) LOOK_VM_JUMP_TO(ins.bx());
                 break;
             case OpCode::JUMP_IF_NULL:
-                if (R(ins.a).type()==Value::NONE) LOOK_VM_JUMP_TO((uint16_t(ins.b)<<8)|ins.c);
+                if (R(ins.a).type()==Value::NONE) LOOK_VM_JUMP_TO(ins.bx());
                 break;
 #undef LOOK_VM_JUMP_TO
 
@@ -845,12 +845,12 @@ call_dispatch:
             case OpCode::CALL: {
                 // a=ret_reg, b=fn_reg, c=args_base; sonraki NOP(argc)
                 preempt_point();   // özyineleme döngüsüz de uzun sürebilir (fiber.h)
-                uint8_t argc = 0;
-                uint16_t cname = 0;   // callee adinin sabit indeksi + 1 (0 = ad yok)
+                uint16_t argc = 0;
+                uint32_t cname = 0;   // callee adinin sabit indeksi + 1 (0 = ad yok)
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
                     argc  = proto->code[frame.ip].a;
-                    cname = (uint16_t)((proto->code[frame.ip].b << 8) | proto->code[frame.ip].c);
+                    cname = proto->code[frame.ip].bx();
                     ++frame.ip;
                 }
                 const Value& fn_val = R(ins.b);
@@ -860,7 +860,7 @@ call_dispatch:
                     // "Undefined variable: <ad>" diyordu; motorlar hem mesajda hem
                     // teshis edilebilirlikte ayrisiyordu (S3).
                     if (cname) {
-                        const std::string& nm = CONST((uint16_t)(cname - 1)).str_ref();
+                        const std::string& nm = CONST(cname - 1).str_ref();
                         if (fn_val.type() == Value::NONE)
                             throw LookVmError("Undefined variable: " + nm);
                         throw LookVmError("'" + nm + "' is not callable (function expected)");
@@ -903,12 +903,12 @@ call_dispatch:
                 // NOP hint'inin b alaninda (a=argc). Eski kodlamayla bit-uyumlu: idx<=255
                 // icin NOP.b hep 0'di. 8-bit'ken 256. giris SESSIZCE kirpilip yanlis
                 // builtin'i cagiriyordu (index 256 → 0 → print) — duvar boyle asildi.
-                uint8_t argc2 = 1;
-                uint16_t bidx = ins.b;
+                uint16_t argc2 = 1;
+                uint32_t bidx = ins.b;
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
                     argc2 = proto->code[frame.ip].a;
-                    bidx |= (uint16_t)proto->code[frame.ip].b << 8;
+                    bidx |= (uint32_t)proto->code[frame.ip].b << 16;
                     ++frame.ip;
                 }
                 if (!shared_.builtins || bidx >= shared_.builtins->size())
@@ -971,7 +971,7 @@ call_dispatch:
             case OpCode::TAIL_CALL: {
                 // Aynı CALL mantığı — frame yeniden kullan (tail call opt)
                 // Şimdilik normal CALL gibi davran — optimize edilmemiş
-                uint8_t argc3 = 0;
+                uint16_t argc3 = 0;
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
                     argc3 = proto->code[frame.ip].a; ++frame.ip;
@@ -1003,7 +1003,7 @@ call_dispatch:
             // ── Closure ───────────────────────────────────────────────────────
             case OpCode::MAKE_CLOSURE: {
                 // 16-bit indeks: b = düşük, c = yüksek bayt (eskiden yalnız b → 256. closure 0.'a sarıyordu).
-                auto& nested_proto = proto->nested[(size_t)ins.b | ((size_t)ins.c << 8)];
+                auto& nested_proto = proto->nested[(size_t)ins.b | ((size_t)ins.c << 16)];
                 auto cl = std::make_shared<Closure>(nested_proto);
                 // Capture hint'leri oku: LOAD_CAPTURE(0, cr) pattern
                 while (frame.ip < (int)proto->code.size()) {
@@ -1032,7 +1032,7 @@ call_dispatch:
             case OpCode::FOR_STEP: {
                 const Value& arr = R(ins.a);
                 int idx = R(ins.a+1).as_int();
-                if (arr.type() != Value::ARRAY) { frame.ip=(uint16_t(ins.b)<<8)|ins.c; break; }
+                if (arr.type() != Value::ARRAY) { frame.ip=ins.bx(); break; }
                 auto& vec = *arr.as_array();
                 // Sentinel-first: ["__assoc__", k0, v0, k1, v1, ...]
                 bool is_assoc = !vec.empty() && vec[0].type()==Value::STRING
@@ -1044,7 +1044,7 @@ call_dispatch:
                         data_start = 3;
                     int pi = data_start + idx * 2;
                     if (pi + 1 >= (int)vec.size()) {
-                        frame.ip = (uint16_t(ins.b)<<8)|ins.c;
+                        frame.ip = ins.bx();
                     } else {
                         R(ins.a+3) = vec[pi];     // key
                         R(ins.a+2) = vec[pi+1];   // val
@@ -1052,7 +1052,7 @@ call_dispatch:
                     }
                 } else {
                     if (idx >= (int)vec.size()) {
-                        frame.ip = (uint16_t(ins.b)<<8)|ins.c;
+                        frame.ip = ins.bx();
                     } else {
                         R(ins.a+2) = vec[idx];    // val
                         R(ins.a+3) = Value(idx);  // key
@@ -1064,7 +1064,7 @@ call_dispatch:
 
             // ── Try/Catch ─────────────────────────────────────────────────────
             case OpCode::TRY_PUSH: {
-                int catch_ip = (uint16_t(ins.b)<<8)|ins.c;
+                int catch_ip = ins.bx();
                 try_stack_.push_back({catch_ip, (int)call_stack_.size(), base});
                 break;
             }

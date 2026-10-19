@@ -8,13 +8,13 @@
 # also functions that had nothing to do with the line the VM could not compile.
 # Now the compile fails as a whole: the server says so at startup and runs the application
 # on the tree-walk engine, where it works.
-# The included file here is valid LOOK: one call in it passes 300 arguments, more than the VM
+# The included file here is valid LOOK: one call in it passes 65535 arguments, more than the VM
 # encodes (tests/vm_operand_limits_test.sh).
 # Usage: include_compile_failure_test.sh <lk-fcgi>
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null' EXIT
 PORT="${PORT:-7737}"
-args="$(seq -s, 1 300)"
+args="$(seq -s, 1 65535)"
 cat > "$TMP/lib.lk" <<LK
 function twice(\$n) { return \$n * 2 }
 function cnt(...\$a) { return count(\$a) }
@@ -31,7 +31,7 @@ x="$(curl -s -m 3 -w ' %{http_code}' "localhost:$PORT/x")"; m="$(curl -s -m 3 -w
 said="$(grep -c 'The VM cannot run this program' "$TMP/log.txt")"
 undef="$(grep -c 'Undefined variable' "$TMP/log.txt")"
 kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-if [ "$x" = "42 200" ] && [ "$m" = "300 200" ] && [ "$said" = "1" ] && [ "$undef" = "0" ]; then
+if [ "$x" = "42 200" ] && [ "$m" = "65535 200" ] && [ "$said" = "1" ] && [ "$undef" = "0" ]; then
     echo "  OK   the functions of the included file work, and the server said the application runs on the tree-walk engine"
     echo "PASS: an included file the VM cannot compile is not dropped"
 else echo "  FAIL /x=[$x] /m=[$m] announced=$said undefined-variable-errors=$undef"; echo "FAIL: included file dropped"; exit 1; fi

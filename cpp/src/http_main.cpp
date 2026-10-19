@@ -430,7 +430,7 @@ static bool proto_needs_interpreter(const look::FunctionProto* p,
     if (!p || !seen.insert(p).second) return false;
     for (const auto& ins : p->code) {
         if (ins.op != look::OpCode::LOAD_GLOBAL) continue;
-        const size_t ni = (size_t(ins.b) << 8) | ins.c;
+        const size_t ni = ins.bx();
         if (ni >= p->constants.size() || p->constants[ni].type() != look::Value::STRING) continue;
         const std::string& name = p->constants[ni].str_ref();
         auto g = globals.find(name);

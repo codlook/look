@@ -61,58 +61,71 @@ FunctionCompiler::FunctionCompiler(const std::string& name,
     // regs_ params tamamlandıktan sonra kurulur — declare_local içinde
     // Önce locals_ listesini kur, sonra RegisterAllocator'ı
     scope_depth_ = 0;
-    // Parametre register indeksi 8 bit: 255 üstü SESSİZCE sarıyordu (300 parametre → 44.).
-    if (params.size() > 255)
-        throw LookCompileError("function '" + name + "' has more than 255 parameters");
+    // Parametre register indeksi 16 bit (v1: 8 bit, 255 üstü sessizce sarıyordu: 300 parametre → 44.).
+    if ((long long)params.size() > REG_LIMIT)
+        throw LookCompileError("function '" + name + "' has more than 65534 parameters");
     for (auto& p : params) {
         LocalVar lv;
         lv.name  = p;
-        lv.reg   = u8(locals_.size(), "parameter count");
+        lv.reg   = u16(locals_.size(), "parameter count");
         lv.depth = 0;
         locals_.push_back(lv);
     }
-    regs_ = std::make_unique<RegisterAllocator>(u8(locals_.size(), "parameter count"),
+    regs_ = std::make_unique<RegisterAllocator>(u16(locals_.size(), "parameter count"),
                                                 name.empty() ? std::string("<main>") : name);
 }
 
 // ── Emit ──────────────────────────────────────────────────────────────────────
 
-int FunctionCompiler::emit(OpCode op, uint8_t a, uint8_t b, uint8_t c) {
+int FunctionCompiler::emit(OpCode op, uint16_t a, uint16_t b, uint16_t c) {
     int ip = (int)proto_.code.size();
     proto_.code.push_back(Instruction::make(op, a, b, c));
     proto_.lines.push_back(cur_line_); // satır tablosu — VM hata konumu için (compile_stmt doldurur)
     return ip;
 }
 
-int FunctionCompiler::emit_jump(OpCode op, uint8_t cond_reg) {
+int FunctionCompiler::emit_jump(OpCode op, uint16_t cond_reg) {
     // Hedef bilinmiyor — b ve c alanı 0, sonradan patch_jump ile doldurulur
     return emit(op, cond_reg, 0, 0);
 }
 
 void FunctionCompiler::patch_jump(int offset, int target) {
-    // 16-bit target: b = hi, c = lo
-    if (target > 0xFFFF)
-        throw LookCompileError("Jump target too far");
-    proto_.code[offset].b = hi8(target);
-    proto_.code[offset].c = lo8(target);
+    // 32-bit target: b = hi, c = lo (hi16/lo16 sığmayanı derleme hatasına çevirir;
+    // v1'de 16 bitti → 65535 komuttan uzun döngü "Jump target too far" ile derlenmiyordu)
+    proto_.code[offset].b = hi16(target);
+    proto_.code[offset].c = lo16(target);
 }
 
 // ── Constant pool ─────────────────────────────────────────────────────────────
 
-uint16_t FunctionCompiler::add_const(Value v) {
-    // Deduplicate — Value::operator== public
-    for (size_t i = 0; i < proto_.constants.size(); ++i)
-        if (proto_.constants[i] == v) return u16(i, "constant index");
-    if (proto_.constants.size() >= 0xFFFF)
-        throw LookCompileError("Constant pool overflow (max 65535)");
+uint32_t FunctionCompiler::add_const(Value v) {
+    // Tekilleştir. Sayı ve metin sabitleri karma tabloyla (eskiden her sabitte bütün havuz
+    // taranıyordu: sınır 65535 iken önemsizdi, 70 000 sabitte derleme karesel uzardı).
+    // Anahtar tür + birebir değer: 1 ile 1.0 ve "1" ayrı sabitlerdir.
+    std::string key;
+    switch (v.type()) {
+        case Value::INT:    key = "i" + std::to_string(v.as_int()); break;
+        case Value::FLOAT:  { double d = v.as_float(); key.assign("f"); key.append(reinterpret_cast<const char*>(&d), sizeof d); break; }
+        case Value::STRING: key = "s" + v.as_string(); break;
+        default: break;
+    }
+    if (!key.empty()) {
+        auto it = const_index_.find(key);
+        if (it != const_index_.end()) return it->second;
+    } else {
+        for (size_t i = 0; i < proto_.constants.size(); ++i)
+            if (proto_.constants[i] == v) return u32(i, "constant index");
+    }
+    const uint32_t idx = u32(proto_.constants.size(), "constant index");
     proto_.constants.push_back(v);
-    return u16(proto_.constants.size() - 1, "constant index");
+    if (!key.empty()) const_index_.emplace(std::move(key), idx);
+    return idx;
 }
 
-void FunctionCompiler::emit_load_const(uint8_t dest, Value v, int /*line*/) {
-    // Küçük integer optimizasyonu: -128..127 → LOAD_INT
-    if (v.type() == Value::INT && v.as_int() >= -128 && v.as_int() <= 127) {
-        emit(OpCode::LOAD_INT, dest, i8_bits(v.as_int()));
+void FunctionCompiler::emit_load_const(uint16_t dest, Value v, int /*line*/) {
+    // Küçük integer optimizasyonu: 16-bit işaretli aralık → LOAD_INT (sabit havuzu yok)
+    if (v.type() == Value::INT && v.as_int() >= -32768 && v.as_int() <= 32767) {
+        emit(OpCode::LOAD_INT, dest, i16_bits(v.as_int()));
         return;
     }
     if (v.type() == Value::NONE)  { emit(OpCode::LOAD_NULL,  dest); return; }
@@ -120,21 +133,21 @@ void FunctionCompiler::emit_load_const(uint8_t dest, Value v, int /*line*/) {
         emit(v.as_bool() ? OpCode::LOAD_TRUE : OpCode::LOAD_FALSE, dest);
         return;
     }
-    uint16_t idx = add_const(v);
-    if (idx < 256) {
-        emit(OpCode::LOAD_CONST,   dest, u8(idx, "constant index"));
+    uint32_t idx = add_const(v);
+    if (idx <= REG_LIMIT) {
+        emit(OpCode::LOAD_CONST,   dest, u16(idx, "constant index"));
     } else {
-        emit(OpCode::LOAD_CONST_W, dest, hi8(idx), lo8(idx));
+        emit(OpCode::LOAD_CONST_W, dest, hi16(idx), lo16(idx));
     }
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::alloc_temp() {
+uint16_t FunctionCompiler::alloc_temp() {
     return regs_->alloc();
 }
 
-void FunctionCompiler::free_temp(uint8_t r) {
+void FunctionCompiler::free_temp(uint16_t r) {
     regs_->free(r);
 }
 
@@ -153,7 +166,7 @@ void FunctionCompiler::pop_scope() {
     --scope_depth_;
 }
 
-uint8_t FunctionCompiler::declare_local(const std::string& name, int line) {
+uint16_t FunctionCompiler::declare_local(const std::string& name, int line) {
     // Aynı scope'ta aynı isim zaten var mı?
     for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
         if (it->depth < scope_depth_) break;
@@ -162,7 +175,7 @@ uint8_t FunctionCompiler::declare_local(const std::string& name, int line) {
     }
     // Yeni korumalı local slot — free() bunu havuza atmaz (aksi halde compile_expr'in
     // "local slot'unu doğrudan döndür" optimizasyonu + free_temp local'i bozardı).
-    uint8_t slot = regs_->alloc_local();
+    uint16_t slot = regs_->alloc_local();
     locals_.push_back({name, slot, scope_depth_});
     return slot;
 }
@@ -185,9 +198,9 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     if (!for_write && parent_) {
         VarLoc pl = parent_->resolve_var(name, /*for_write=*/false);
         if (pl.kind != VarKind::GLOBAL) {
-            if (captures_.size() >= 255)
-                throw LookCompileError("closure captures more than 255 variables");
-            uint8_t idx = u8(captures_.size(), "capture count");
+            if ((long long)captures_.size() >= REG_LIMIT)
+                throw LookCompileError("closure captures more than 65534 variables");
+            uint16_t idx = u16(captures_.size(), "capture count");
             captures_.push_back({name, idx});
             return {VarKind::CAPTURE, idx};
         }
@@ -200,13 +213,13 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
 // ── Yerel / yakalanan erişim yardımcıları ─────────────────────────────────────
 // Tüm yerel ve yakalanan değişken erişimi bu üç noktadan geçer: yerel bir
 // register'dır (MOVE), yakalanan değer closure'ın kendi kopyasıdır (LOAD_CAPTURE).
-void FunctionCompiler::emit_read_local(uint8_t dest, uint8_t slot) {
+void FunctionCompiler::emit_read_local(uint16_t dest, uint16_t slot) {
     emit(OpCode::MOVE, dest, slot);
 }
-void FunctionCompiler::emit_write_local(uint8_t slot, uint8_t src) {
+void FunctionCompiler::emit_write_local(uint16_t slot, uint16_t src) {
     emit(OpCode::MOVE, slot, src);
 }
-void FunctionCompiler::emit_read_capture(uint8_t dest, uint8_t cap_index) {
+void FunctionCompiler::emit_read_capture(uint16_t dest, uint16_t cap_index) {
     emit(OpCode::LOAD_CAPTURE, dest, cap_index);
 }
 
@@ -231,17 +244,17 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
     if (defaults) {
         for (size_t i = 0; i < defaults->size() && i < proto_.arity; ++i) {
             if (!(*defaults)[i]) continue;
-            uint8_t ac = alloc_temp();
+            uint16_t ac = alloc_temp();
             emit(OpCode::LOAD_ARGC, ac);
-            uint8_t lim = alloc_temp();
+            uint16_t lim = alloc_temp();
             emit_load_const(lim, Value((int64_t)i), 0);
-            uint8_t cond = alloc_temp();
+            uint16_t cond = alloc_temp();
             emit(OpCode::LTE, cond, ac, lim);         // argc <= i  → param i sağlanmadı
             free_temp(ac); free_temp(lim);
             int skip = emit_jump(OpCode::JUMP_IF_FALSE, cond);  // sağlandıysa varsayılanı atla
             free_temp(cond);
-            uint8_t dr = compile_expr(*(*defaults)[i]); // varsayılan değeri
-            emit(OpCode::MOVE, u8(i, "parameter index"), dr);          // param i = varsayılan (reg i)
+            uint16_t dr = compile_expr(*(*defaults)[i]); // varsayılan değeri
+            emit(OpCode::MOVE, u16(i, "parameter index"), dr);          // param i = varsayılan (reg i)
             free_temp(dr);
             patch_jump(skip, current_ip());
         }
@@ -280,7 +293,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             compile_assign_expr(*a);
         } else {
             // Sonuç kullanılmıyor — geçici register al, hemen bırak
-            uint8_t r = compile_expr(*s->expression);
+            uint16_t r = compile_expr(*s->expression);
             free_temp(r);
         }
     }
@@ -301,7 +314,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
     }
     else if (auto* s = dynamic_cast<const ThrowStatement*>(&stmt)) {
         // throw <ifade> → değeri hesapla, THROW opcode (try_stack_ / LOAD_EXC yakalar)
-        uint8_t r = compile_expr(*s->expression);
+        uint16_t r = compile_expr(*s->expression);
         emit(OpCode::THROW, r);
         free_temp(r);
     }
@@ -326,7 +339,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         int target = loop_stack_[idx].continue_target;
         if (target >= 0) {
             // Hedef biliniyor (while/foreach)
-            emit(OpCode::JUMP, 0, hi8(target), lo8(target));
+            emit(OpCode::JUMP, 0, hi16(target), lo16(target));
         } else {
             int p = emit_jump(OpCode::JUMP);
             loop_stack_[idx].continue_patches.push_back(p);
@@ -496,7 +509,7 @@ void FunctionCompiler::compile_return(const ReturnStatement& s) {
         emit(OpCode::RETURN_NULL);
         return;
     }
-    uint8_t r = compile_expr(*s.expression);
+    uint16_t r = compile_expr(*s.expression);
     // r TAHSİSLİ kalır → emit_pending_finallys'ın temp'leri onu ezmez (temp'ler üstte).
     emit_pending_finallys();
     emit(OpCode::RETURN, r);
@@ -506,7 +519,7 @@ void FunctionCompiler::compile_return(const ReturnStatement& s) {
 // ── compile_if ────────────────────────────────────────────────────────────────
 
 void FunctionCompiler::compile_if(const IfStatement& s) {
-    uint8_t cond = compile_expr(*s.condition);
+    uint16_t cond = compile_expr(*s.condition);
     int jump_false = emit_jump(OpCode::JUMP_IF_FALSE, cond);
     free_temp(cond);
 
@@ -527,7 +540,7 @@ void FunctionCompiler::compile_if(const IfStatement& s) {
 void FunctionCompiler::compile_while(const WhileStatement& s) {
     int loop_start = current_ip();
 
-    uint8_t cond = compile_expr(*s.condition);
+    uint16_t cond = compile_expr(*s.condition);
     int exit_jump = emit_jump(OpCode::JUMP_IF_FALSE, cond);
     free_temp(cond);
 
@@ -539,7 +552,7 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
     // continue → loop_start
     for (int p : ctx.continue_patches) patch_jump(p, loop_start);
     // döngüye geri dön
-    emit(OpCode::JUMP, 0, hi8(loop_start), lo8(loop_start));
+    emit(OpCode::JUMP, 0, hi16(loop_start), lo16(loop_start));
 
     int after = current_ip();
     patch_jump(exit_jump, after);
@@ -555,7 +568,7 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
     int loop_start = current_ip();
     int exit_jump  = -1;
     if (s.condition) {
-        uint8_t cond = compile_expr(*s.condition);
+        uint16_t cond = compile_expr(*s.condition);
         exit_jump = emit_jump(OpCode::JUMP_IF_FALSE, cond);
         free_temp(cond);
     }
@@ -567,13 +580,13 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
 
     int post_ip = current_ip();
     if (s.post) {
-        uint8_t r = compile_expr(*s.post);
+        uint16_t r = compile_expr(*s.post);
         free_temp(r);
     }
 
     // continue → post
     for (int p : ctx.continue_patches) patch_jump(p, post_ip);
-    emit(OpCode::JUMP, 0, hi8(loop_start), lo8(loop_start));
+    emit(OpCode::JUMP, 0, hi16(loop_start), lo16(loop_start));
 
     int after = current_ip();
     if (exit_jump >= 0) patch_jump(exit_jump, after);
@@ -594,17 +607,17 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
 void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     push_scope();
 
-    uint8_t r_arr = compile_expr(*s.iterable);
+    uint16_t r_arr = compile_expr(*s.iterable);
     // alloc_seq(4): r_iter, r_iter+1(idx), r_iter+2(val), r_iter+3(key)
     // FOR_STEP bu 4 register'a doğrudan yazar; loop body'deki alloc_temp()
     // çağrıları bu bloğa girmemeli — alloc_seq bunu garanti eder.
-    uint8_t r_iter = regs_->alloc_seq(4);
+    uint16_t r_iter = regs_->alloc_seq(4);
     emit(OpCode::FOR_PREP, r_iter, r_arr);
     free_temp(r_arr);
 
     // value ve key register'ları r_iter+2 ve r_iter+3 — FOR_STEP convention
-    uint8_t r_val = r_iter + 2;
-    uint8_t r_key = r_iter + 3;
+    uint16_t r_val = r_iter + 2;
+    uint16_t r_key = r_iter + 3;
 
     // Döngü değişkenleri doğrudan FOR_STEP'in yazdığı register'lara bağlanır.
     if (!s.value_var.empty()) locals_.push_back({s.value_var, r_val, scope_depth_});
@@ -620,12 +633,12 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     loop_stack_.pop_back();
 
     for (int p : ctx.continue_patches) patch_jump(p, loop_start);
-    emit(OpCode::JUMP, 0, hi8(loop_start), lo8(loop_start));
+    emit(OpCode::JUMP, 0, hi16(loop_start), lo16(loop_start));
 
     int after = current_ip();
     // FOR_STEP exit patch: b ve c alanına after yaz
-    proto_.code[step_ip].b = hi8(after);
-    proto_.code[step_ip].c = lo8(after);
+    proto_.code[step_ip].b = hi16(after);
+    proto_.code[step_ip].c = lo16(after);
 
     for (int p : ctx.break_patches) patch_jump(p, after);
 
@@ -657,14 +670,14 @@ void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expres
     // builtin 0 (print) ve 1 (write) ikisi de argümanı HAM yazar (newline/ayraç eklemez)
     // → ayraç ve newline burada, interpreter'la aynı kuralla üretilir.
     auto emit_literal = [&](const char* text) {
-        uint8_t r = alloc_temp();
+        uint16_t r = alloc_temp();
         emit_load_const(r, Value(std::string(text)), 0);
         emit(OpCode::CALL_BUILTIN, r, 1 /*write*/, r);
         free_temp(r);
     };
     for (size_t i = 0; i < exprs.size(); ++i) {
         if (i > 0) emit_literal(" ");            // build_output: argümanlar arası " "
-        uint8_t r = compile_expr(*exprs[i]);
+        uint16_t r = compile_expr(*exprs[i]);
         emit(OpCode::CALL_BUILTIN, r, 1 /*write*/, r);  // sonuç atılır
         free_temp(r);
     }
@@ -694,7 +707,7 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
         push_scope();
         // catch değişkeni ($e) — exception değeri LOAD_EXC ile gelir
         if (!s.catch_var.empty()) {
-            uint8_t e_reg = declare_local(s.catch_var, 0);
+            uint16_t e_reg = declare_local(s.catch_var, 0);
             emit(OpCode::LOAD_EXC, e_reg);
         }
         compile_block(*s.catch_block);
@@ -716,7 +729,7 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
         // devam ediyordu → exception SESSİZCE YUTULUYORDU. Şimdi: throw-yolu (catch_ip'te)
         // exception'ı LOAD_EXC ile yakalar, finally çalıştırır, THROW ile YENİDEN fırlatır
         // (dıştaki try'a/C++'a propagate). Normal-yol AYRI finally kopyası çalıştırıp devam eder.
-        uint8_t exc = alloc_temp();
+        uint16_t exc = alloc_temp();
         emit(OpCode::LOAD_EXC, exc);                        // orijinal exception (finally'den önce)
         if (s.finally_block) compile_block(*s.finally_block);  // throw-yolu finally
         emit(OpCode::THROW, exc);                           // re-raise
@@ -741,28 +754,28 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
     proto_.nested.push_back(proto);
 
     // Fonksiyon adı global scope'a kaydedilir
-    uint16_t name_idx = add_const(Value(s.name));
-    uint8_t  r        = alloc_temp();
+    uint32_t name_idx = add_const(Value(s.name));
+    uint16_t  r        = alloc_temp();
 
     // İç fonksiyon dıştaki local/capture'ları yakalıyorsa (implicit capture —
     // inner.compile sırasında toplandı) compile_closure ile AYNI capture kurulumunu
     // yap. Eskiden bu blok YOKTU → proto gövdesindeki LOAD_CAPTURE'lar runtime'da
     // "Capture index out of range" ile ÇÖKÜYORDU (named nested fn capture, tree-walk çalışırken
     // VM crash). Capture yükleme MAKE_CLOSURE'dan hemen önce; hint'ler hemen sonra.
-    std::vector<uint8_t> cap_regs;
+    std::vector<uint16_t> cap_regs;
     for (auto& cap : inner.captures_) {
         auto loc = resolve_var(cap.name);
-        uint8_t cr = alloc_temp();
+        uint16_t cr = alloc_temp();
         if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE, cr, loc.index);
         else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, cr, loc.index);
-        else { uint16_t ni = add_const(Value(cap.name)); emit(OpCode::LOAD_GLOBAL, cr, hi8(ni), lo8(ni)); }
+        else { uint32_t ni = add_const(Value(cap.name)); emit(OpCode::LOAD_GLOBAL, cr, hi16(ni), lo16(ni)); }
         cap_regs.push_back(cr);
     }
     // MAKE_CLOSURE: a=r, b=fn_idx (nested index)
     emit_make_closure(r, fn_idx);
-    for (uint8_t cr : cap_regs) { emit(OpCode::LOAD_CAPTURE, 0, cr); free_temp(cr); }
+    for (uint16_t cr : cap_regs) { emit(OpCode::LOAD_CAPTURE, 0, cr); free_temp(cr); }
     // Global'e kaydet — top-level function declaration (16-bit const index)
-    emit(OpCode::STORE_GLOBAL, r, hi8(name_idx), lo8(name_idx));
+    emit(OpCode::STORE_GLOBAL, r, hi16(name_idx), lo16(name_idx));
     free_temp(r);
 }
 
@@ -771,7 +784,7 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
 // Go stili — her case otomatik break, fallthrough yok.
 
 void FunctionCompiler::compile_switch(const SwitchStatement& s) {
-    uint8_t subj = compile_expr(*s.subject);
+    uint16_t subj = compile_expr(*s.subject);
 
     std::vector<int> case_jumps;   // her case'in başına jump
     std::vector<int> end_jumps;    // her case sonunda switch dışına jump
@@ -789,8 +802,8 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
         entry.is_default = c.values.empty();
         if (!entry.is_default) {
             for (auto& v : c.values) {
-                uint8_t r = compile_expr(*v);
-                uint8_t eq = alloc_temp();
+                uint16_t r = compile_expr(*v);
+                uint16_t eq = alloc_temp();
                 emit(OpCode::EQ, eq, subj, r);
                 free_temp(r);
                 // EQ true → bu case'e gir
@@ -871,18 +884,18 @@ void FunctionCompiler::compile_const_block(const ConstBlock& s) {
                 v = Value(b->value);
             } else {
                 // Karmaşık expression: runtime'da değerlendir, global'e store et
-                uint8_t r = compile_expr(*item.value);
-                uint16_t name_idx = add_const(Value(item.name));
-                emit(OpCode::STORE_GLOBAL, r, hi8(name_idx), lo8(name_idx));
+                uint16_t r = compile_expr(*item.value);
+                uint32_t name_idx = add_const(Value(item.name));
+                emit(OpCode::STORE_GLOBAL, r, hi16(name_idx), lo16(name_idx));
                 free_temp(r);
                 continue;
             }
         }
         // Sabit değeri global'e yükle
-        uint8_t r = alloc_temp();
+        uint16_t r = alloc_temp();
         emit_load_const(r, v, 0);
-        uint16_t name_idx = add_const(Value(item.name));
-        emit(OpCode::STORE_GLOBAL, r, hi8(name_idx), lo8(name_idx));
+        uint32_t name_idx = add_const(Value(item.name));
+        emit(OpCode::STORE_GLOBAL, r, hi16(name_idx), lo16(name_idx));
         free_temp(r);
     }
 }
@@ -910,14 +923,14 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
                 + std::to_string(seen->second.second) + " with different fields");
         g_compile_structs.emplace(s.name, std::make_pair(s.signature, s.decl_line));
     }
-    uint8_t arr = alloc_temp();
-    emit(OpCode::NEW_ARRAY, arr, hint_u8(s.fields.size() * 3));
+    uint16_t arr = alloc_temp();
+    emit(OpCode::NEW_ARRAY, arr, hint_u16(s.fields.size() * 3));
     for (auto& f : s.fields) {
-        uint8_t t = alloc_temp();
+        uint16_t t = alloc_temp();
         emit_load_const(t, Value(f.name), 0);
         emit(OpCode::ARRAY_PUSH, arr, t);
         if (f.default_expr) {
-            uint8_t dv = compile_expr(*f.default_expr, t);
+            uint16_t dv = compile_expr(*f.default_expr, t);
             if (dv != t) emit(OpCode::MOVE, t, dv);
         } else {
             emit(OpCode::LOAD_NULL, t);
@@ -927,8 +940,8 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
         emit(OpCode::ARRAY_PUSH, arr, t);
         free_temp(t);
     }
-    uint16_t gi = add_const(Value("__sdef:" + s.name));
-    emit(OpCode::STORE_GLOBAL, arr, hi8(gi), lo8(gi));
+    uint32_t gi = add_const(Value("__sdef:" + s.name));
+    emit(OpCode::STORE_GLOBAL, arr, hi16(gi), lo16(gi));
     free_temp(arr);
 }
 
@@ -971,18 +984,18 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         if (is_path && key_exprs.size() <= 250) {
             const std::string& root_name = root ? root->name : e.name;
             auto rloc = resolve_var(root_name, /*for_write=*/false);
-            const uint8_t n = u8(key_exprs.size(), "index path length");
-            uint8_t base = regs_->alloc_seq(n);
-            for (uint8_t k = 0; k < n; ++k) {
-                const uint8_t kr = u8(base + k, "register index");
+            const uint16_t n = u16(key_exprs.size(), "index path length");
+            uint16_t base = regs_->alloc_seq(n);
+            for (uint16_t k = 0; k < n; ++k) {
+                const uint16_t kr = u16(base + k, "register index");
                 if (key_exprs[k]) {
-                    uint8_t ev = compile_expr(*key_exprs[k], kr);
+                    uint16_t ev = compile_expr(*key_exprs[k], kr);
                     if (ev != kr) emit(OpCode::MOVE, kr, ev);
                 } else {
                     emit_load_const(kr, Value(key_fields[k]), cur_line_);
                 }
             }
-            uint8_t val = compile_expr(*e.value);
+            uint16_t val = compile_expr(*e.value);
             if (e.op != "=") {
                 // Compound (+= -= …): mevcut değeri AYNI anahtarlarla oku, birleştir, sonra yaz.
                 static const std::unordered_map<std::string, OpCode> COMPOUND = {
@@ -992,23 +1005,23 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 };
                 auto it = COMPOUND.find(e.op);
                 if (it == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
-                uint8_t cur = alloc_temp();
+                uint16_t cur = alloc_temp();
                 if      (rloc.kind == VarKind::LOCAL)   emit_read_local(cur, rloc.index);
                 else if (rloc.kind == VarKind::CAPTURE) emit_read_capture(cur, rloc.index);
                 else {
-                    uint16_t ni = add_const(Value(root_name));
-                    emit(OpCode::LOAD_GLOBAL, cur, hi8(ni), lo8(ni));
+                    uint32_t ni = add_const(Value(root_name));
+                    emit(OpCode::LOAD_GLOBAL, cur, hi16(ni), lo16(ni));
                 }
-                for (uint8_t k = 0; k < n; ++k)
-                    emit(OpCode::ARRAY_GET, cur, cur, u8(base + k, "register index"));
-                if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u8(want, "register index"), cur);   // sonek ++/--: eski değer
-                uint8_t res = alloc_temp();
+                for (uint16_t k = 0; k < n; ++k)
+                    emit(OpCode::ARRAY_GET, cur, cur, u16(base + k, "register index"));
+                if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u16(want, "register index"), cur);   // sonek ++/--: eski değer
+                uint16_t res = alloc_temp();
                 emit(it->second, res, cur, val);
                 free_temp(cur); free_temp(val);
                 val = res;
             }
             // Kök: 0 yerel · 4 global. Yakalanan değişken değiştirilemez.
-            uint8_t kind; uint16_t ix;
+            uint16_t kind; uint32_t ix;
             if (rloc.kind == VarKind::LOCAL) {
                 kind = 0; ix = rloc.index;
             } else if (rloc.kind == VarKind::CAPTURE) {
@@ -1018,23 +1031,23 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 if (parent_ == nullptr && scope_depth_ <= 1) outer_globals_.insert(root_name);   // üst düzeyde yolla doğan global
             }
             emit(OpCode::SET_PATH, val, base, n);
-            emit(OpCode::NOP, kind, hi8(ix), lo8(ix));
+            emit(OpCode::NOP, kind, hi16(ix), lo16(ix));
             if (want >= 0 && !e.yield_old) {
                 // İfadenin değeri YAZILAN değerdir (alan tipine çevrilmiş haliyle) — aynı anahtarlarla
                 // geri okunur; anahtarlar yeniden hesaplanmaz. Eskiden kök değişkenin TAMAMI dönüyordu.
-                const uint8_t w = u8(want, "register index");
+                const uint16_t w = u16(want, "register index");
                 if (rloc.kind == VarKind::LOCAL) emit_read_local(w, rloc.index);
-                else { uint16_t ni = add_const(Value(root_name)); emit(OpCode::LOAD_GLOBAL, w, hi8(ni), lo8(ni)); }
-                for (uint8_t k = 0; k < n; ++k) emit(OpCode::ARRAY_GET, w, w, u8(base + k, "register index"));
+                else { uint32_t ni = add_const(Value(root_name)); emit(OpCode::LOAD_GLOBAL, w, hi16(ni), lo16(ni)); }
+                for (uint16_t k = 0; k < n; ++k) emit(OpCode::ARRAY_GET, w, w, u16(base + k, "register index"));
             }
             free_temp(val);
             regs_->release_seq(base, n);
             return;
         }
         // Kökü değişken olmayan hedef (geçici bir değere yazma): eski yol.
-        uint8_t arr = compile_expr(*e.object);
-        uint8_t idx = compile_expr(*e.index);
-        uint8_t val = compile_expr(*e.value);
+        uint16_t arr = compile_expr(*e.object);
+        uint16_t idx = compile_expr(*e.index);
+        uint16_t val = compile_expr(*e.value);
         if (e.op != "=") {
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD},  {"-=", OpCode::SUB},  {"*=", OpCode::MUL},
@@ -1043,21 +1056,21 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             };
             auto it = COMPOUND.find(e.op);
             if (it == COMPOUND.end()) throw LookCompileError("Unknown compound op: " + e.op);
-            uint8_t cur = alloc_temp();
+            uint16_t cur = alloc_temp();
             emit(OpCode::ARRAY_GET, cur, arr, idx);
-            if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u8(want, "register index"), cur);
-            uint8_t res = alloc_temp();
+            if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u16(want, "register index"), cur);
+            uint16_t res = alloc_temp();
             emit(it->second, res, cur, val);
             free_temp(cur); free_temp(val);
             val = res;
         }
         emit(OpCode::ARRAY_SET, arr, idx, val);
-        if (want >= 0 && !e.yield_old) emit(OpCode::ARRAY_GET, u8(want, "register index"), arr, idx);
+        if (want >= 0 && !e.yield_old) emit(OpCode::ARRAY_GET, u16(want, "register index"), arr, idx);
         free_temp(val); free_temp(idx); free_temp(arr);
         return;
     }
 
-    uint8_t val = compile_expr(*e.value);
+    uint16_t val = compile_expr(*e.value);
 
     if (loc.kind == VarKind::LOCAL) {
         // B7: `$s .= x` → yerinde CONCAT (dst==b==slot). VM append_in_place ile
@@ -1068,9 +1081,9 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         }
         // Compound assign için mevcut değeri oku
         else if (e.op != "=") {
-            uint8_t cur = alloc_temp();
+            uint16_t cur = alloc_temp();
             emit_read_local(cur, loc.index);
-            uint8_t tmp = alloc_temp();
+            uint16_t tmp = alloc_temp();
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
                 {"/=", OpCode::DIV}, {"%=", OpCode::MOD}, {".=", OpCode::CONCAT},
@@ -1100,13 +1113,13 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // gövdesi local'leri global olduğundan eş zamanlı isteklerde de race'liydi).
         // Okuma hâlâ global'e düşer; val (RHS) yukarıda compile edildiği için
         // aynı-isim okuması doğru şekilde global'i gördü.
-        uint8_t result = val;
+        uint16_t result = val;
         if (e.op != "=") {
             // compound: mevcut değeri GLOBAL'den oku (isim henüz local değil)
-            uint16_t ni = add_const(Value(e.name));
-            uint8_t cur = alloc_temp();
-            emit(OpCode::LOAD_GLOBAL, cur, hi8(ni), lo8(ni));
-            uint8_t tmp = alloc_temp();
+            uint32_t ni = add_const(Value(e.name));
+            uint16_t cur = alloc_temp();
+            emit(OpCode::LOAD_GLOBAL, cur, hi16(ni), lo16(ni));
+            uint16_t tmp = alloc_temp();
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
                 {"/=", OpCode::DIV}, {"%=", OpCode::MOD}, {".=", OpCode::CONCAT},
@@ -1118,7 +1131,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             free_temp(cur); free_temp(val);
             result = tmp;
         }
-        uint8_t slot = declare_local(e.name, 0);
+        uint16_t slot = declare_local(e.name, 0);
         emit(OpCode::MOVE, slot, result);
         free_temp(result);
     } else {
@@ -1127,7 +1140,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // Ad outer_globals_'a yazılır: sonraki bir blok bu ada atarsa yeni yerel
         // yaratmaz, bu global'e yazar.
         outer_globals_.insert(e.name);   // bu dala yalnız üst düzey (blok dışı) ya da bilinen global gelir
-        uint16_t ni = add_const(Value(e.name));
+        uint32_t ni = add_const(Value(e.name));
         // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
         // "$t = $i" olarak derleniyordu (sol operand atılıyor). Diğer üç dal
         // (index, local, fonksiyon-içi) compound'u doğru yapıyordu; yalnız GLOBAL
@@ -1135,9 +1148,9 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // Örn. top-level: $t=0; $t+=5 → VM'de 5 yerine... 5 (doğru sanılır) ama
         // $t=1; $t+=2 → 2 (3 değil); $s="x"; $s.="y" → "y" ("xy" değil).
         if (e.op != "=") {
-            uint8_t cur = alloc_temp();
-            emit(OpCode::LOAD_GLOBAL, cur, hi8(ni), lo8(ni));
-            uint8_t tmp = alloc_temp();
+            uint16_t cur = alloc_temp();
+            emit(OpCode::LOAD_GLOBAL, cur, hi16(ni), lo16(ni));
+            uint16_t tmp = alloc_temp();
             static const std::unordered_map<std::string, OpCode> COMPOUND = {
                 {"+=", OpCode::ADD}, {"-=", OpCode::SUB}, {"*=", OpCode::MUL},
                 {"/=", OpCode::DIV}, {"%=", OpCode::MOD}, {".=", OpCode::CONCAT},
@@ -1149,40 +1162,40 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             free_temp(cur); free_temp(val);
             val = tmp;
         }
-        emit(OpCode::STORE_GLOBAL, val, hi8(ni), lo8(ni));
+        emit(OpCode::STORE_GLOBAL, val, hi16(ni), lo16(ni));
         free_temp(val);
     }
 }
 
 // ── compile_expr — dispatch ───────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
-    auto ensure_dest = [&]() -> uint8_t {
-        return (dest == 255) ? alloc_temp() : dest;
+uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
+    auto ensure_dest = [&]() -> uint16_t {
+        return (dest == NO_REG) ? alloc_temp() : dest;
     };
 
     if (auto* e = dynamic_cast<const NumberLiteral*>(&expr)) {
-        uint8_t r = ensure_dest();
+        uint16_t r = ensure_dest();
         emit_load_const(r, Value(e->value), expr.loc.line);
         return r;
     }
     if (auto* e = dynamic_cast<const FloatLiteral*>(&expr)) {
-        uint8_t r = ensure_dest();
+        uint16_t r = ensure_dest();
         emit_load_const(r, Value(e->value), expr.loc.line);
         return r;
     }
     if (auto* e = dynamic_cast<const BooleanLiteral*>(&expr)) {
-        uint8_t r = ensure_dest();
+        uint16_t r = ensure_dest();
         emit_load_const(r, Value(e->value), expr.loc.line);
         return r;
     }
     if (dynamic_cast<const NullLiteral*>(&expr)) {
-        uint8_t r = ensure_dest();
+        uint16_t r = ensure_dest();
         emit(OpCode::LOAD_NULL, r);
         return r;
     }
     if (auto* e = dynamic_cast<const StringLiteral*>(&expr)) {
-        uint8_t r = ensure_dest();
+        uint16_t r = ensure_dest();
         // Interpolation içeriyor mu? Lexer raw string gönderir
         // Basit string (interpolation yok) → LOAD_CONST
         // İnterpolasyon → compile_string_interp
@@ -1197,17 +1210,17 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         auto loc = resolve_var(e->name);
         if (loc.kind == VarKind::LOCAL) {
             // Hedef verilmediyse yerelin kendi register'ı döner (kopya yok).
-            if (dest == 255) return loc.index;
-            uint8_t r = ensure_dest();
+            if (dest == NO_REG) return loc.index;
+            uint16_t r = ensure_dest();
             emit_read_local(r, loc.index);
             return r;
         }
-        uint8_t r = ensure_dest();
+        uint16_t r = ensure_dest();
         if (loc.kind == VarKind::CAPTURE) {
             emit_read_capture(r, loc.index);
         } else {
-            uint16_t ni = add_const(Value(e->name));
-            emit(OpCode::LOAD_GLOBAL, r, hi8(ni), lo8(ni));
+            uint32_t ni = add_const(Value(e->name));
+            emit(OpCode::LOAD_GLOBAL, r, hi16(ni), lo16(ni));
             // Çıplak ('$'sız) ad DEĞER olarak okunuyor. ESKİ HATA: LOAD_GLOBAL çıplak adı
             // ıskalayınca sessizce null veriyordu ("mod::fn"/çağrı hedefi için gerekli),
             // dolayısıyla unutulan '$' — `if (is_admin)` — VM'de hatasız YANLIŞ DALA
@@ -1215,7 +1228,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
             // Çağrı hedefi hariç (adı CALL söyler) her çıplak okuma tanımlı olmalı.
             if (!callee_ctx_ && !e->name.empty() && e->name[0] != '$'
                 && e->name.find("::") == std::string::npos)
-                emit(OpCode::CHECK_DEFINED, r, hi8(ni), lo8(ni));
+                emit(OpCode::CHECK_DEFINED, r, hi16(ni), lo16(ni));
         }
         return r;
     }
@@ -1223,7 +1236,7 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     if (auto* e = dynamic_cast<const AssignmentExpression*>(&expr)) {
         if (e->index) {
             // Eleman/alan ataması: değer, yazılan elemandır (sonek ++/-- için eski değer).
-            uint8_t r = ensure_dest();
+            uint16_t r = ensure_dest();
             assign_result_reg_ = r;
             compile_assign_expr(*e);
             return r;
@@ -1231,11 +1244,11 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
         compile_assign_expr(*e);
         // Atama expression olarak kullanılmış — değeri oku
         auto loc = resolve_var(e->name);
-        uint8_t r = ensure_dest();
+        uint16_t r = ensure_dest();
         if (loc.kind == VarKind::LOCAL) emit_read_local(r, loc.index);
         else {
-            uint16_t ni = add_const(Value(e->name));
-            emit(OpCode::LOAD_GLOBAL, r, hi8(ni), lo8(ni));
+            uint32_t ni = add_const(Value(e->name));
+            emit(OpCode::LOAD_GLOBAL, r, hi16(ni), lo16(ni));
         }
         return r;
     }
@@ -1252,35 +1265,35 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
             auto* var = dynamic_cast<const Variable*>(e->right.get());
             if (!var) throw LookCompileError("++/-- requires a variable");
             OpCode delta_op = (e->op == "++") ? OpCode::ADD : OpCode::SUB;
-            uint8_t one = alloc_temp();
+            uint16_t one = alloc_temp();
             emit_load_const(one, Value((int64_t)1), expr.loc.line);
             auto loc = resolve_var(var->name);
             if (loc.kind == VarKind::CAPTURE)
                 throw LookCompileError("Captured variable cannot be reassigned: $" + var->name);
 
-            uint8_t r = ensure_dest();
+            uint16_t r = ensure_dest();
             if (loc.kind == VarKind::LOCAL) {
                 emit_read_local(r, loc.index);              // eski değer (postfix için)
-                uint8_t nv = alloc_temp();
+                uint16_t nv = alloc_temp();
                 emit(delta_op, nv, r, one);
                 emit_write_local(loc.index, nv);
                 if (e->prefix) emit(OpCode::MOVE, r, nv);   // prefix → yeni değer
                 free_temp(nv);
             } else {
                 // GLOBAL
-                uint16_t ni = add_const(Value(var->name));
-                emit(OpCode::LOAD_GLOBAL, r, hi8(ni), lo8(ni));
-                uint8_t nv = alloc_temp();
+                uint32_t ni = add_const(Value(var->name));
+                emit(OpCode::LOAD_GLOBAL, r, hi16(ni), lo16(ni));
+                uint16_t nv = alloc_temp();
                 emit(delta_op, nv, r, one);
-                emit(OpCode::STORE_GLOBAL, nv, hi8(ni), lo8(ni));
+                emit(OpCode::STORE_GLOBAL, nv, hi16(ni), lo16(ni));
                 if (e->prefix) emit(OpCode::MOVE, r, nv);
                 free_temp(nv);
             }
             free_temp(one);
             return r;
         }
-        uint8_t operand = compile_expr(*e->right);
-        uint8_t r = ensure_dest();
+        uint16_t operand = compile_expr(*e->right);
+        uint16_t r = ensure_dest();
         if (e->op == "-")  emit(OpCode::UNM, r, operand);
         else if (e->op == "!") emit(OpCode::NOT, r, operand);
         else if (e->op == "~") emit(OpCode::BNOT, r, operand);
@@ -1290,15 +1303,15 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     }
 
     if (auto* e = dynamic_cast<const TernaryExpression*>(&expr)) {
-        uint8_t cond = compile_expr(*e->condition);
+        uint16_t cond = compile_expr(*e->condition);
         int jf = emit_jump(OpCode::JUMP_IF_FALSE, cond);
         free_temp(cond);
-        uint8_t r = ensure_dest();
-        uint8_t then_r = compile_expr(*e->then_expr, r);
+        uint16_t r = ensure_dest();
+        uint16_t then_r = compile_expr(*e->then_expr, r);
         if (then_r != r) { emit(OpCode::MOVE, r, then_r); free_temp(then_r); }
         int jend = emit_jump(OpCode::JUMP);
         patch_jump(jf, current_ip());
-        uint8_t else_r = compile_expr(*e->else_expr, r);
+        uint16_t else_r = compile_expr(*e->else_expr, r);
         if (else_r != r) { emit(OpCode::MOVE, r, else_r); free_temp(else_r); }
         patch_jump(jend, current_ip());
         return r;
@@ -1325,28 +1338,28 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     }
 
     if (auto* e = dynamic_cast<const IndexExpression*>(&expr)) {
-        uint8_t obj = compile_expr(*e->object);
-        uint8_t idx = compile_expr(*e->index);
-        uint8_t r   = ensure_dest();
+        uint16_t obj = compile_expr(*e->object);
+        uint16_t idx = compile_expr(*e->index);
+        uint16_t r   = ensure_dest();
         emit(OpCode::ARRAY_GET, r, obj, idx);
         free_temp(idx); free_temp(obj);
         return r;
     }
 
     if (auto* e = dynamic_cast<const MemberAccessExpression*>(&expr)) {
-        uint8_t obj = compile_expr(*e->object);
-        uint8_t r   = ensure_dest();
+        uint16_t obj = compile_expr(*e->object);
+        uint16_t r   = ensure_dest();
         // Field ismi constant pool'a girer — runtime'da field index çözülür
-        uint16_t fi = add_const(Value(e->field));
-        if (fi <= 0xFF) {
-            emit(OpCode::GET_FIELD, r, obj, u8(fi, "field name index"));
+        uint32_t fi = add_const(Value(e->field));
+        if (fi <= REG_LIMIT) {
+            emit(OpCode::GET_FIELD, r, obj, u16(fi, "field name index"));
         } else {
             // 256+ sabitli proto: GET_FIELD'ın sabit operandı 8 bit — eskiden
             // (fi & 0xFF) kırpılıyordu → BAŞKA bir sabitin adıyla alan okunuyordu
             // (sessiz yanlış veri / null). CALL_BUILTIN 256 duvarını NOP-hint'le
             // aşmıştı, GET_FIELD/SET_FIELD kaçmıştı (simetrik yüzey). Alan adını
             // geniş yükle + genel ARRAY_GET — VM::get_field ≡ array_get, semantik aynı.
-            uint8_t k = alloc_temp();
+            uint16_t k = alloc_temp();
             emit_load_const(k, Value(e->field), 0);
             emit(OpCode::ARRAY_GET, r, obj, k);
             free_temp(k);
@@ -1358,9 +1371,9 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
     if (auto* e = dynamic_cast<const ScopeResolution*>(&expr)) {
         // module::func → LOAD_GLOBAL "module::func"
         std::string full = e->module_name + "::" + e->member_name;
-        uint8_t r = ensure_dest();
-        uint16_t ni = add_const(Value(full));
-        emit(OpCode::LOAD_GLOBAL, r, hi8(ni), lo8(ni));
+        uint16_t r = ensure_dest();
+        uint32_t ni = add_const(Value(full));
+        emit(OpCode::LOAD_GLOBAL, r, hi16(ni), lo16(ni));
         return r;
     }
 
@@ -1370,14 +1383,14 @@ uint8_t FunctionCompiler::compile_expr(const Expression& expr, uint8_t dest) {
 
 // ── compile_binary ────────────────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint8_t dest) {
+uint16_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint16_t dest) {
     // Kritik 2. nokta: && ve || short-circuit
     if (e.op == "&&" || e.op == "||") return compile_logical(e, dest);
 
     // Null coalescing: a ?? b → a if a is not null, else b
     if (e.op == "??") {
-        uint8_t lhs = compile_expr(*e.left);
-        uint8_t r = (dest == 255) ? alloc_temp() : dest;
+        uint16_t lhs = compile_expr(*e.left);
+        uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
         // Jump to rhs-block if lhs IS null
         int jnull = emit_jump(OpCode::JUMP_IF_NULL, lhs);
         // lhs is NOT null → use lhs
@@ -1386,15 +1399,15 @@ uint8_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint8_t dest
         int jend = emit_jump(OpCode::JUMP);
         // lhs IS null → evaluate rhs
         patch_jump(jnull, current_ip());
-        uint8_t rhs = compile_expr(*e.right, r);
+        uint16_t rhs = compile_expr(*e.right, r);
         if (rhs != r) { emit(OpCode::MOVE, r, rhs); free_temp(rhs); }
         patch_jump(jend, current_ip());
         return r;
     }
 
-    uint8_t l = compile_expr(*e.left);
-    uint8_t r2 = compile_expr(*e.right);
-    uint8_t r  = (dest == 255) ? alloc_temp() : dest;
+    uint16_t l = compile_expr(*e.left);
+    uint16_t r2 = compile_expr(*e.right);
+    uint16_t r  = (dest == NO_REG) ? alloc_temp() : dest;
 
     static const std::unordered_map<std::string, OpCode> OPS = {
         {"+",   OpCode::ADD},   {"-",  OpCode::SUB},  {"*",  OpCode::MUL},
@@ -1418,10 +1431,10 @@ uint8_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint8_t dest
 
 // ── compile_logical — short-circuit && / || ────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint8_t dest) {
-    uint8_t r = (dest == 255) ? alloc_temp() : dest;
+uint16_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint16_t dest) {
+    uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
 
-    uint8_t lhs = compile_expr(*e.left, r);
+    uint16_t lhs = compile_expr(*e.left, r);
     if (lhs != r) { emit(OpCode::MOVE, r, lhs); free_temp(lhs); }
 
     int short_circuit;
@@ -1433,7 +1446,7 @@ uint8_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint8_t des
         short_circuit = emit_jump(OpCode::JUMP_IF_TRUE, r);
     }
 
-    uint8_t rhs = compile_expr(*e.right, r);
+    uint16_t rhs = compile_expr(*e.right, r);
     if (rhs != r) { emit(OpCode::MOVE, r, rhs); free_temp(rhs); }
 
     patch_jump(short_circuit, current_ip());
@@ -1442,7 +1455,7 @@ uint8_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint8_t des
 
 // ── compile_call ──────────────────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
+uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) {
     // Özel fonksiyonlar: parallel, send, receive
     if (auto* sr = dynamic_cast<const ScopeResolution*>(e.callee.get())) {
         std::string full = sr->module_name + "::" + sr->member_name;
@@ -1456,18 +1469,18 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // Bilinen modül fonksiyonu → CALL_BUILTIN
             // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
             check_argc(e);
-            uint8_t argc = u8(e.arguments.size(), "argument count");
-            uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
+            uint16_t argc = u16(e.arguments.size(), "argument count");
+            uint16_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
-                uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
-                if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
+                uint16_t ev = compile_expr(*e.arguments[k], u16(base + k, "register index"));
+                if (ev != u16(base + k, "register index")) emit(OpCode::MOVE, u16(base + k, "register index"), ev);
             }
-            uint8_t r = (dest == 255) ? alloc_temp() : dest;
+            uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
             check_builtin_index(bidx, full);
-            emit(OpCode::CALL_BUILTIN, r, lo8(bidx), base);
+            emit(OpCode::CALL_BUILTIN, r, lo16(bidx), base);
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
-            emit(OpCode::NOP, argc, hi8(bidx));
+            emit(OpCode::NOP, argc, hi16(bidx));
             regs_->release_seq(base, argc);
             return r;
         }
@@ -1496,20 +1509,20 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             if (root && rev.size() <= 250) {
                 const bool is_push = var->name == "push";
                 auto rloc = resolve_var(root->name, /*for_write=*/false);
-                const uint8_t n = u8(rev.size(), "index path length");
-                uint8_t base = (n > 0) ? regs_->alloc_seq(n) : 0;
-                for (uint8_t k = 0; k < n; ++k) {
+                const uint16_t n = u16(rev.size(), "index path length");
+                uint16_t base = (n > 0) ? regs_->alloc_seq(n) : 0;
+                for (uint16_t k = 0; k < n; ++k) {
                     const auto& item = rev[rev.size() - 1 - k];
-                    const uint8_t kr = u8(base + k, "register index");
+                    const uint16_t kr = u16(base + k, "register index");
                     if (item.first) {
-                        uint8_t ev = compile_expr(*item.first, kr);
+                        uint16_t ev = compile_expr(*item.first, kr);
                         if (ev != kr) emit(OpCode::MOVE, kr, ev);
                     } else {
                         emit_load_const(kr, Value(item.second), cur_line_);
                     }
                 }
-                uint8_t val = is_push ? compile_expr(*e.arguments[1]) : 0;
-                uint8_t kind; uint16_t ix;
+                uint16_t val = is_push ? compile_expr(*e.arguments[1]) : 0;
+                uint16_t kind; uint32_t ix;
                 if (rloc.kind == VarKind::LOCAL) {
                     kind = 0; ix = rloc.index;
                 } else if (rloc.kind == VarKind::CAPTURE) {
@@ -1517,9 +1530,9 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
                 } else {
                     kind = 4; ix = add_const(Value(root->name));
                 }
-                uint8_t r = (dest == 255) ? alloc_temp() : dest;
+                uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
                 emit(is_push ? OpCode::PUSH_PATH : OpCode::POP_PATH, r, base, n);
-                emit(OpCode::NOP, kind, hi8(ix), lo8(ix));
+                emit(OpCode::NOP, kind, hi16(ix), lo16(ix));
                 if (is_push) { emit(OpCode::NOP, val); free_temp(val); }
                 if (n > 0) regs_->release_seq(base, n);
                 return r;
@@ -1528,29 +1541,29 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         if (var->name == "parallel") {
             if (e.arguments.size() != 1)
                 throw LookCompileError("parallel() takes one argument", e.loc.line);
-            uint8_t closure = compile_expr(*e.arguments[0]);
+            uint16_t closure = compile_expr(*e.arguments[0]);
             emit(OpCode::PARALLEL_CALL, closure);
             free_temp(closure);
-            uint8_t r = (dest == 255) ? alloc_temp() : dest;
+            uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
             emit(OpCode::LOAD_NULL, r);
             return r;
         }
         if (var->name == "send") {
             if (e.arguments.size() != 2)
                 throw LookCompileError("send() takes 2 arguments", e.loc.line);
-            uint8_t ch  = compile_expr(*e.arguments[0]);
-            uint8_t val = compile_expr(*e.arguments[1]);
+            uint16_t ch  = compile_expr(*e.arguments[0]);
+            uint16_t val = compile_expr(*e.arguments[1]);
             emit(OpCode::CHAN_SEND, ch, val);
             free_temp(val); free_temp(ch);
-            uint8_t r = (dest == 255) ? alloc_temp() : dest;
+            uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
             emit(OpCode::LOAD_NULL, r);
             return r;
         }
         if (var->name == "receive") {
             if (e.arguments.size() != 1)
                 throw LookCompileError("receive() takes 1 argument", e.loc.line);
-            uint8_t ch = compile_expr(*e.arguments[0]);
-            uint8_t r  = (dest == 255) ? alloc_temp() : dest;
+            uint16_t ch = compile_expr(*e.arguments[0]);
+            uint16_t r  = (dest == NO_REG) ? alloc_temp() : dest;
             emit(OpCode::CHAN_RECV, r, ch);
             free_temp(ch);
             return r;
@@ -1561,18 +1574,18 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
             // veriyordu → divergence). send/receive kalıbıyla doğrula.
             if (e.arguments.size() != 1)
                 throw LookCompileError("close() takes 1 argument", e.loc.line);
-            uint8_t ch = compile_expr(*e.arguments[0]);
+            uint16_t ch = compile_expr(*e.arguments[0]);
             emit(OpCode::CHAN_CLOSE, ch);
             free_temp(ch);
-            uint8_t r = (dest == 255) ? alloc_temp() : dest;
+            uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
             emit(OpCode::LOAD_NULL, r);
             return r;
         }
         if (var->name == "chan_size") {
             if (e.arguments.size() != 1)
                 throw LookCompileError("chan_size() takes 1 argument", e.loc.line);
-            uint8_t ch = compile_expr(*e.arguments[0]);
-            uint8_t r  = (dest == 255) ? alloc_temp() : dest;
+            uint16_t ch = compile_expr(*e.arguments[0]);
+            uint16_t r  = (dest == NO_REG) ? alloc_temp() : dest;
             emit(OpCode::CHAN_SIZE, r, ch);
             free_temp(ch);
             return r;
@@ -1600,18 +1613,18 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
         if (bidx >= 0) {
             // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
             check_argc(e);
-            uint8_t argc = u8(e.arguments.size(), "argument count");
-            uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
+            uint16_t argc = u16(e.arguments.size(), "argument count");
+            uint16_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
             for (int k = 0; k < argc; ++k) {
-                uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
-                if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
+                uint16_t ev = compile_expr(*e.arguments[k], u16(base + k, "register index"));
+                if (ev != u16(base + k, "register index")) emit(OpCode::MOVE, u16(base + k, "register index"), ev);
             }
-            uint8_t r = (dest == 255) ? alloc_temp() : dest;
+            uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
             check_builtin_index(bidx, bname);
-            emit(OpCode::CALL_BUILTIN, r, lo8(bidx), base);
+            emit(OpCode::CALL_BUILTIN, r, lo16(bidx), base);
             // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
             // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
-            emit(OpCode::NOP, argc, hi8(bidx));
+            emit(OpCode::NOP, argc, hi16(bidx));
             regs_->release_seq(base, argc);
             return r;
         }
@@ -1620,20 +1633,20 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     // Genel CALL: callee'yi register'a al, argümanları sıraya diz
     // callee_ctx_ yalnız callee doğrudan bir AD iken açılır (iç içe ifadelere sızmasın).
     callee_ctx_ = dynamic_cast<const Variable*>(e.callee.get()) != nullptr;
-    uint8_t fn = compile_expr(*e.callee);
+    uint16_t fn = compile_expr(*e.callee);
     callee_ctx_ = false;
     // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
     check_argc(e);
-    uint8_t argc = u8(e.arguments.size(), "argument count");
-    uint8_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
+    uint16_t argc = u16(e.arguments.size(), "argument count");
+    uint16_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
     for (int k = 0; k < argc; ++k) {
-        uint8_t ev = compile_expr(*e.arguments[k], u8(base + k, "register index"));
-        if (ev != u8(base + k, "register index")) emit(OpCode::MOVE, u8(base + k, "register index"), ev);
+        uint16_t ev = compile_expr(*e.arguments[k], u16(base + k, "register index"));
+        if (ev != u16(base + k, "register index")) emit(OpCode::MOVE, u16(base + k, "register index"), ev);
     }
-    uint8_t r = (dest == 255) ? alloc_temp() : dest;
+    uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
     emit(OpCode::CALL, r, fn, base);
     // argc ek byte olarak NOP'a gömülür — VM okur.
-    // Callee basit bir AD ise adın sabit indeksi de (ni+1, 16-bit) NOP'un b/c
+    // Callee basit bir AD ise adın sabit indeksi de (ni+1, 32-bit) NOP'un b/c
     // alanlarına gömülür — VM hata mesajında adı SÖYLEYEBİLSİN diye.
     // ESKİ HATA: VM'in CALL noktasında yalnız register değeri vardı, ad yoktu:
     //   olmayan_fonksiyon(1)
@@ -1642,10 +1655,10 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
     // LOAD_GLOBAL bu adda fırlatamıyor çünkü "mod::fn" isimleri orada ıskalamak
     // ZORUNDA (genel CALL yoluna düşsünler diye) — o yüzden çözüm adı buraya
     // taşımak. 0 = ad yok (CALL_BUILTIN'in 16-bit indeks kalıbıyla aynı yöntem).
-    uint16_t cname = 0;
+    uint32_t cname = 0;
     if (auto* cv = dynamic_cast<const Variable*>(e.callee.get()))
-        cname = u16(add_const(Value(cv->name)) + 1, "constant index");
-    emit(OpCode::NOP, argc, hi8(cname), lo8(cname));
+        cname = u32((long long)add_const(Value(cv->name)) + 1, "constant index");
+    emit(OpCode::NOP, argc, hi16(cname), lo16(cname));
     regs_->release_seq(base, argc);
     free_temp(fn);
     return r;
@@ -1653,37 +1666,37 @@ uint8_t FunctionCompiler::compile_call(const CallExpression& e, uint8_t dest) {
 
 // ── compile_closure ───────────────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t dest) {
+uint16_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint16_t dest) {
     // use() listesindeki capture'ları çözümle
     // Her capture: parent'tan değer al → Closure.captures[]'e snapshot
     FunctionCompiler inner("<closure>", e.parameters, e.is_variadic, this);
 
     // use() listesini inner'a bildir (0..k-1 capture indeksleri).
-    if (e.captures.size() > 255)
-        throw LookCompileError("closure captures more than 255 variables", e.loc.line);
+    if ((long long)e.captures.size() > REG_LIMIT)
+        throw LookCompileError("closure captures more than 65534 variables", e.loc.line);
     for (size_t i = 0; i < e.captures.size(); ++i)
-        inner.captures_.push_back({e.captures[i], u8(i, "capture count")});
+        inner.captures_.push_back({e.captures[i], u16(i, "capture count")});
 
     auto proto = inner.compile(*e.body, &e.defaults);
     int fn_idx = (int)proto_.nested.size();
     proto_.nested.push_back(proto);
 
-    uint8_t r = (dest == 255) ? alloc_temp() : dest;
+    uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
 
     // Capture değerlerini MAKE_CLOSURE'dan ÖNCE yükle — VM MAKE_CLOSURE'dan hemen
     // sonra art arda LOAD_CAPTURE(0, cr) hint'lerini bekler; araya MOVE giremez.
     // inner.captures_ = explicit use() (0..k-1) + gövde derlenirken keşfedilen
     // otomatik capture'lar (k..). Hepsini index sırasında parent scope'tan yükle.
-    std::vector<uint8_t> cap_regs;
+    std::vector<uint16_t> cap_regs;
     for (auto& cap : inner.captures_) {
         const std::string& cap_name = cap.name;
         auto loc = resolve_var(cap_name);
-        uint8_t cr = alloc_temp();
+        uint16_t cr = alloc_temp();
         if      (loc.kind == VarKind::LOCAL)   emit(OpCode::MOVE, cr, loc.index);
         else if (loc.kind == VarKind::CAPTURE) emit(OpCode::LOAD_CAPTURE, cr, loc.index);
         else {
-            uint16_t ni = add_const(Value(cap_name));
-            emit(OpCode::LOAD_GLOBAL, cr, hi8(ni), lo8(ni));
+            uint32_t ni = add_const(Value(cap_name));
+            emit(OpCode::LOAD_GLOBAL, cr, hi16(ni), lo16(ni));
         }
         cap_regs.push_back(cr);
     }
@@ -1691,7 +1704,7 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
     emit_make_closure(r, fn_idx);
 
     // MAKE_CLOSURE'dan hemen sonra art arda hint — VM bu pattern'ı okur
-    for (uint8_t cr : cap_regs) {
+    for (uint16_t cr : cap_regs) {
         emit(OpCode::LOAD_CAPTURE, 0, cr);
         free_temp(cr);
     }
@@ -1704,10 +1717,10 @@ uint8_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint8_t d
 // Basit implementasyon: interpreter string interpolation mantığını yeniden kullanır.
 // TODO: tam expression parser — şimdilik {$var} ve sabit parçalar destekleniyor
 
-uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line, uint8_t dest) {
+uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int line, uint16_t dest) {
     // Interpolation olmayan string → direkt yükle
     if (raw.find('{') == std::string::npos) {
-        uint8_t r = (dest == 255) ? alloc_temp() : dest;
+        uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
         emit_load_const(r, Value(raw), line);
         return r;
     }
@@ -1725,7 +1738,7 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
     auto is_interp_start = [](const std::string& s, size_t p) -> bool {
         return s[p] == '{' && p + 1 < s.size() && s[p + 1] == '$';
     };
-    std::vector<uint8_t> parts;
+    std::vector<uint16_t> parts;
     std::vector<std::unique_ptr<Program>> keepalive; // parse edilen AST'ler compile bitene dek yaşamalı
     size_t i = 0;
     while (i < raw.size()) {
@@ -1738,7 +1751,7 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
                 ++j;
             }
             if (depth != 0) {  // kapanmayan brace → '{' literal, ilerle
-                uint8_t pr = alloc_temp();
+                uint16_t pr = alloc_temp();
                 emit_load_const(pr, Value(std::string(1, raw[i])), line);
                 parts.push_back(pr);
                 ++i;
@@ -1746,7 +1759,7 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
             }
             std::string expr_src = raw.substr(i + 1, j - i - 1);
             const std::string literal_src = raw.substr(i, j - i + 1);  // "{$x}" — hata hâlinde
-            uint8_t pr = 255;
+            uint16_t pr = NO_REG;
             try {
                 Lexer lex(expr_src + ";");
                 Parser par(lex.scan_tokens());
@@ -1764,7 +1777,7 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
                         // Doğal register'a derle (dest=255): CALL sonucu arg-register
                         // düzenine bağlı, sabit dest zorlamak bozar. Sonra temp'e MOVE
                         // + TO_STR — local slot dönerse üstüne yazmayız.
-                        uint8_t src = compile_expr(*es->expression);
+                        uint16_t src = compile_expr(*es->expression);
                         emit(OpCode::MOVE, pr, src);
                         emit(OpCode::TO_STR, pr, pr);
                         emit(OpCode::TRY_POP);
@@ -1775,8 +1788,8 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
                         keepalive.push_back(std::move(prog));
                     }
                 }
-            } catch (...) { pr = 255; }
-            if (pr == 255) {  // parse hatası → interpreter gibi {…} literal
+            } catch (...) { pr = NO_REG; }
+            if (pr == NO_REG) {  // parse hatası → interpreter gibi {…} literal
                 pr = alloc_temp();
                 emit_load_const(pr, Value(literal_src), line);
             }
@@ -1787,7 +1800,7 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
             std::string literal;
             while (i < raw.size() && !is_interp_start(raw, i)) literal += raw[i++];
             if (!literal.empty()) {
-                uint8_t pr = alloc_temp();
+                uint16_t pr = alloc_temp();
                 emit_load_const(pr, Value(literal), line);
                 parts.push_back(pr);
             }
@@ -1795,17 +1808,17 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
     }
 
     if (parts.empty()) {
-        uint8_t r = (dest == 255) ? alloc_temp() : dest;
+        uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
         emit(OpCode::LOAD_NULL, r);
         return r;
     }
     if (parts.size() == 1) {
-        if (dest != 255 && parts[0] != dest) { emit(OpCode::MOVE, dest, parts[0]); free_temp(parts[0]); return dest; }
+        if (dest != NO_REG && parts[0] != dest) { emit(OpCode::MOVE, dest, parts[0]); free_temp(parts[0]); return dest; }
         return parts[0];
     }
 
     // CONCAT zinciri: r = parts[0] . parts[1] . ...
-    uint8_t r = (dest == 255) ? alloc_temp() : dest;
+    uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
     emit(OpCode::CONCAT, r, parts[0], parts[1]);
     free_temp(parts[0]); free_temp(parts[1]);
     for (size_t j = 2; j < parts.size(); ++j) {
@@ -1817,11 +1830,11 @@ uint8_t FunctionCompiler::compile_string_interp(const std::string& raw, int line
 
 // ── compile_array_lit ─────────────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_array_lit(const ArrayLiteral& e, uint8_t dest) {
-    uint8_t r = (dest == 255) ? alloc_temp() : dest;
-    emit(OpCode::NEW_ARRAY, r, hint_u8(e.elements.size()));
+uint16_t FunctionCompiler::compile_array_lit(const ArrayLiteral& e, uint16_t dest) {
+    uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
+    emit(OpCode::NEW_ARRAY, r, hint_u16(e.elements.size()));
     for (auto& el : e.elements) {
-        uint8_t er = compile_expr(*el);
+        uint16_t er = compile_expr(*el);
         emit(OpCode::ARRAY_PUSH, r, er);
         free_temp(er);
     }
@@ -1830,13 +1843,13 @@ uint8_t FunctionCompiler::compile_array_lit(const ArrayLiteral& e, uint8_t dest)
 
 // ── compile_assoc_lit ─────────────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_assoc_lit(const AssocArrayLiteral& e, uint8_t dest) {
-    uint8_t r = (dest == 255) ? alloc_temp() : dest;
+uint16_t FunctionCompiler::compile_assoc_lit(const AssocArrayLiteral& e, uint16_t dest) {
+    uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
     // Pass the final element count (sentinel + 2 per pair) so the VM can reserve the
     // vector once instead of growing it through log(n) reallocations — each realloc also
     // re-copies the boxed key Values (atomic refcount traffic), so reserving is a real win.
     size_t need = 1 + 2 * e.pairs.size();
-    emit(OpCode::NEW_ASSOC, r, (need > 255 ? uint8_t{0} : u8(need, "assoc size hint")));
+    emit(OpCode::NEW_ASSOC, r, hint_u16(need));
     // If every key is a distinct compile-time string literal, the per-insert dedup scan in
     // array_set is provably redundant (no key can collide), so emit the scan-free
     // ASSOC_APPEND — turning O(n^2) literal construction into O(n). Any dynamic key, numeric
@@ -1850,8 +1863,8 @@ uint8_t FunctionCompiler::compile_assoc_lit(const AssocArrayLiteral& e, uint8_t 
     }
     OpCode set_op = distinct_string_keys ? OpCode::ASSOC_APPEND : OpCode::ARRAY_SET;
     for (auto& [k, v] : e.pairs) {
-        uint8_t kr = compile_expr(*k);
-        uint8_t vr = compile_expr(*v);
+        uint16_t kr = compile_expr(*k);
+        uint16_t vr = compile_expr(*v);
         emit(set_op, r, kr, vr);
         free_temp(vr); free_temp(kr);
     }
@@ -1860,30 +1873,30 @@ uint8_t FunctionCompiler::compile_assoc_lit(const AssocArrayLiteral& e, uint8_t 
 
 // ── compile_struct_lit ────────────────────────────────────────────────────────
 
-uint8_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, uint8_t dest) {
-    uint8_t r = (dest == 255) ? alloc_temp() : dest;
-    uint16_t ni = add_const(Value(e.struct_name));
-    emit(OpCode::NEW_STRUCT, r, hi8(ni), lo8(ni));
+uint16_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, uint16_t dest) {
+    uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
+    uint32_t ni = add_const(Value(e.struct_name));
+    emit(OpCode::NEW_STRUCT, r, hi16(ni), lo16(ni));
     // Literal'ın alan adları — VM "Unknown field" doğrulaması için (tree-walk ile
     // aynı sözleşme). NOP(n) + n×LOAD_CONST_W: 16-bit sabit (kırpılmaz); VM NEW_STRUCT
     // bu bloğu OKUYUP ATLAR, hiçbiri yürütülmez (register 0'a yazmaz).
-    if (e.fields.size() > 255)
-        throw std::runtime_error("struct literal '" + e.struct_name + "' has more than 255 fields");
-    emit(OpCode::NOP, u8(e.fields.size(), "struct field count"));
+    if ((long long)e.fields.size() > REG_LIMIT)
+        throw std::runtime_error("struct literal '" + e.struct_name + "' has more than 65534 fields");
+    emit(OpCode::NOP, u16(e.fields.size(), "struct field count"));
     for (auto& [fname, fval] : e.fields) {
-        uint16_t fi = add_const(Value(fname));
-        emit(OpCode::LOAD_CONST_W, 0, hi8(fi), lo8(fi));
+        uint32_t fi = add_const(Value(fname));
+        emit(OpCode::LOAD_CONST_W, 0, hi16(fi), lo16(fi));
     }
     for (auto& [fname, fval] : e.fields) {
-        uint16_t fi = add_const(Value(fname));
-        uint8_t  vr = compile_expr(*fval);
-        if (fi <= 0xFF) {
-            emit(OpCode::SET_FIELD, r, u8(fi, "field name index"), vr);
+        uint32_t fi = add_const(Value(fname));
+        uint16_t  vr = compile_expr(*fval);
+        if (fi <= REG_LIMIT) {
+            emit(OpCode::SET_FIELD, r, u16(fi, "field name index"), vr);
         } else {
             // 256+ sabit: SET_FIELD'ın 8-bit operandı taşardı → alan YANLIŞ adla
             // yazılıyordu ({"c46":11} gibi). GET_FIELD ile simetrik fallback:
             // VM::set_field ≡ array_set.
-            uint8_t k = alloc_temp();
+            uint16_t k = alloc_temp();
             emit_load_const(k, Value(fname), 0);
             emit(OpCode::ARRAY_SET, r, k, vr);
             free_temp(k);

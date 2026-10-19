@@ -24,69 +24,72 @@ public:
 };
 
 // ── Kontrollü daraltma ───────────────────────────────────────────────────────
-// Bytecode operandları 8/16 bit. Derleyicide bir değeri operanda sığdıran HER daraltma
-// buradan geçer: sığmıyorsa derleme hatası. Çıplak (uint8_t)x / & 0xFF dört ayrı sessiz
-// hataya yol açtı (alan adı, closure, argüman sayısı, parametre indeksi: değer 256'da
-// başa sarıyor, VM hatasız YANLIŞ çalışıyordu). compiler.cpp'de çıplak daraltma YASAK —
-// tests/no_unchecked_narrowing.sh CI'da denetler.
-template <class T> inline uint8_t u8(T v, const char* what) {
-    if ((long long)v < 0 || (long long)v > 0xFF)
-        throw LookCompileError(std::string(what) + " exceeds the VM limit of 255");
-    return static_cast<uint8_t>(v);
-}
+// Bytecode operandları 16 bit (LOOK 2: eskiden 8 bitti — 255 register/parametre/yakalama,
+// 65535 sabit sınırı; "VM derleyemezse uygulama başlamaz" kuralından önce kaldırıldı).
+// İki operand birleşince 32 bitlik alan taşır (b<<16|c). Derleyicide bir değeri operanda
+// sığdıran HER daraltma buradan geçer: sığmıyorsa derleme hatası. Çıplak daraltma dört ayrı
+// sessiz hataya yol açmıştı (değer sınırda başa sarıyor, VM hatasız YANLIŞ çalışıyordu).
+// compiler.cpp'de çıplak daraltma YASAK — tests/no_unchecked_narrowing.sh CI'da denetler.
+using Reg = uint16_t;
+constexpr Reg NO_REG = 0xFFFF;   // compile_expr(dest): "geçici register seç" (geçerli register değil)
+constexpr long long REG_LIMIT = 0xFFFE;   // en yüksek register indeksi (NO_REG ayrılmış)
 template <class T> inline uint16_t u16(T v, const char* what) {
-    if ((long long)v < 0 || (long long)v > 0xFFFF)
-        throw LookCompileError(std::string(what) + " exceeds the VM limit of 65535");
+    if ((long long)v < 0 || (long long)v > REG_LIMIT)
+        throw LookCompileError(std::string(what) + " exceeds the VM limit of 65534");
     return static_cast<uint16_t>(v);
 }
-// 16-bit operandın yüksek/düşük baytı (b = hi, c = lo). Değer 16 bite sığmalı.
-template <class T> inline uint8_t hi8(T v) { return static_cast<uint8_t>(u16(v, "16-bit operand") >> 8); }
-template <class T> inline uint8_t lo8(T v) { return static_cast<uint8_t>(u16(v, "16-bit operand") & 0xFF); }
+template <class T> inline uint32_t u32(T v, const char* what) {
+    if ((long long)v < 0 || (long long)v > 0xFFFFFFFFll)
+        throw LookCompileError(std::string(what) + " exceeds the VM limit of 4294967295");
+    return static_cast<uint32_t>(v);
+}
+// 32-bit alanın yüksek/düşük 16 biti (b = hi, c = lo — komuta göre sıra değişir).
+template <class T> inline uint16_t hi16(T v) { return static_cast<uint16_t>(u32(v, "32-bit operand") >> 16); }
+template <class T> inline uint16_t lo16(T v) { return static_cast<uint16_t>(u32(v, "32-bit operand") & 0xFFFF); }
 // Yalnız kapasite ipucu (reserve): doygunlaşır, anlam taşımaz.
-inline uint8_t hint_u8(size_t n) { return static_cast<uint8_t>(n > 255 ? 255 : n); }
-// LOAD_INT'in işaretli 8-bit anlık değeri.
-inline uint8_t i8_bits(long long v) {
-    if (v < -128 || v > 127) throw LookCompileError("immediate integer out of range");
-    return static_cast<uint8_t>(static_cast<int8_t>(v));
+inline uint16_t hint_u16(size_t n) { return static_cast<uint16_t>(n > 0xFFFF ? 0xFFFF : n); }
+// LOAD_INT'in işaretli 16-bit anlık değeri.
+inline uint16_t i16_bits(long long v) {
+    if (v < -32768 || v > 32767) throw LookCompileError("immediate integer out of range");
+    return static_cast<uint16_t>(static_cast<int16_t>(v));
 }
 
 // ── RegisterAllocator ─────────────────────────────────────────────────────────
 //
 // Local değişkenler 0..num_locals-1 arasında sabit slot alır.
 // Temp değerler num_locals'tan başlar, free() ile geri verilir.
-// Max 255 register — aşılırsa LookCompileError.
+// Max 65534 register (16-bit operand; 0xFFFF = NO_REG) — aşılırsa LookCompileError.
 
 class RegisterAllocator {
 public:
-    explicit RegisterAllocator(uint8_t locals_end, std::string owner = "<main>")
+    explicit RegisterAllocator(Reg locals_end, std::string owner = "<main>")
         : locals_end_(locals_end), next_(locals_end), max_(locals_end),
-          owner_(std::move(owner)) {}
+          owner_(std::move(owner)) { grow(locals_end); }
 
-    // v1 bytecode register operandı 8 bit → fonksiyon başına en fazla 255 register.
-    // Aşılınca derleme başarısız olur ve (CLI ve web'de) TÜM program yorumlayıcıya
-    // düşer. Eskiden Türkçe ve fonksiyon adı olmadan atılıyordu → hangi fonksiyonun
-    // bölünmesi gerektiği görünmüyordu. Kalıcı çözüm (sınırsız sanal register) v2'de.
+    // Register operandı 16 bit → fonksiyon başına en fazla 65534 register (LOOK 2; v1'de
+    // 8 bit / 255'ti ve aşılınca TÜM program yorumlayıcıya düşüyordu).
     [[noreturn]] void too_many() const {
         throw LookCompileError("function '" + owner_ + "' is too large for the VM: it needs "
-                               "more than 255 registers (local variables + temporaries). "
+                               "more than 65534 registers (local variables + temporaries). "
                                "Split it into smaller functions.");
     }
 
-    uint8_t alloc() {
-        uint8_t r;
+    Reg alloc() {
+        Reg r;
         if (!free_.empty()) {
             r = free_.back();
             free_.pop_back();
             in_free_[r] = false;
         } else {
-            if (next_ == 255) too_many();
+            if (next_ >= REG_LIMIT) too_many();
             r = next_++;
+            grow(next_);
         }
         if (r + 1 > max_) max_ = r + 1;
         return r;
     }
 
-    void free(uint8_t r) {
+    void free(Reg r) {
         // Pinned (aktif local) register'lar havuza dönmez: compile_expr bir
         // local'in slot'unu doğrudan döndürüp çağıran free_temp edince, o slot
         // yanlışlıkla yeniden kullanılıp local'i bozardı (fonksiyon-local'ler
@@ -104,13 +107,13 @@ public:
     }
 
     // Korumalı local slot ayır — free() bunu havuza atmaz (pop_scope'ta çözülür).
-    uint8_t alloc_local() {
-        uint8_t r = alloc();
+    Reg alloc_local() {
+        Reg r = alloc();
         pinned_[r] = true;
         return r;
     }
     // Local scope'tan çıkınca: pin'i kaldır + register'ı havuza iade et.
-    void free_local(uint8_t r) {
+    void free_local(Reg r) {
         pinned_[r] = false;
         free(r);
     }
@@ -124,7 +127,7 @@ public:
     // her çağrı ~argc+1 register tüketiyordu → bir fonksiyonda en fazla 72 route() /
     // 63 üç-argümanlı çağrı; aşılınca TÜM program yorumlayıcıya düşüyordu.
     // Şimdi: önce serbest havuzda n'lik ardışık bir boşluk aranır, yoksa next_'ten alınır.
-    uint8_t alloc_seq(uint8_t n) {
+    Reg alloc_seq(Reg n) {
         if (n == 0) return next_;
         int base = -1;
         for (int b = locals_end_; b + n <= next_; ++b) {
@@ -136,33 +139,38 @@ public:
         if (base >= 0) {
             for (int k = 0; k < n; ++k) in_free_[base + k] = false;
             free_.erase(std::remove_if(free_.begin(), free_.end(),
-                            [&](uint8_t r) { return r >= base && r < base + n; }),
+                            [&](Reg r) { return r >= base && r < base + n; }),
                         free_.end());
         } else {
-            if ((int)next_ + n > 255) too_many();
+            if ((long long)next_ + n > REG_LIMIT) too_many();
             base = next_;
-            next_ += n;
+            next_ = static_cast<Reg>(next_ + n);
+            grow(next_);
             if (next_ > max_) max_ = next_;
         }
         for (int k = 0; k < n; ++k) seq_[base + k] = true;
-        return (uint8_t)base;
+        return static_cast<Reg>(base);
     }
 
     // alloc_seq bloğunu bırak: koruma kalkar, register'lar havuza döner.
-    void release_seq(uint8_t base, uint8_t n) {
-        for (int k = 0; k < n; ++k) { seq_[base + k] = false; free((uint8_t)(base + k)); }
+    void release_seq(Reg base, Reg n) {
+        for (int k = 0; k < n; ++k) { seq_[base + k] = false; free(static_cast<Reg>(base + k)); }
     }
 
-    uint8_t max_used() const { return max_; }
+    Reg max_used() const { return max_; }
 
 private:
-    uint8_t locals_end_;
-    uint8_t next_;
-    uint8_t max_;
-    std::vector<uint8_t> free_;      // LIFO (alloc sondan alır)
-    bool    in_free_[256] = {false}; // free_ üyeliği (çift free + ardışık blok araması)
-    bool    seq_[256]    = {false};  // canlı alloc_seq bloğu (free() atlar)
-    bool    pinned_[256] = {false};  // aktif local register'lar (free() atlar)
+    // Bayrak dizileri register sayısıyla büyür (eskiden sabit 256'lık diziler).
+    void grow(size_t n) {
+        if (n > in_free_.size()) { in_free_.resize(n, 0); seq_.resize(n, 0); pinned_.resize(n, 0); }
+    }
+    Reg locals_end_;
+    Reg next_;
+    Reg max_;
+    std::vector<Reg>  free_;         // LIFO (alloc sondan alır)
+    std::vector<char> in_free_;      // free_ üyeliği (çift free + ardışık blok araması)
+    std::vector<char> seq_;          // canlı alloc_seq bloğu (free() atlar)
+    std::vector<char> pinned_;       // aktif local register'lar (free() atlar)
     std::string owner_;              // hata mesajı için fonksiyon adı
 };
 
@@ -170,7 +178,7 @@ private:
 
 struct LocalVar {
     std::string name;
-    uint8_t     reg;
+    uint16_t     reg;
     int         depth;
 };
 
@@ -178,7 +186,7 @@ struct LocalVar {
 
 struct CaptureInfo {
     std::string name;
-    uint8_t     capture_index; // Closure.captures[] sırası
+    uint16_t     capture_index; // Closure.captures[] sırası
 };
 
 // ── Loop stack — break/continue patch ────────────────────────────────────────
@@ -214,57 +222,57 @@ public:
 
 private:
     // ── Emit ──────────────────────────────────────────────────────────────────
-    int  emit(OpCode op, uint8_t a=0, uint8_t b=0, uint8_t c=0);
-    int  emit_jump(OpCode op, uint8_t cond_reg=0);  // hedef sonradan patch edilir
+    int  emit(OpCode op, uint16_t a=0, uint16_t b=0, uint16_t c=0);
+    int  emit_jump(OpCode op, uint16_t cond_reg=0);  // hedef sonradan patch edilir
     void patch_jump(int offset, int target);
     int  current_ip() const { return (int)proto_.code.size(); }
     // Derlenen statement satiri — emit() proto_.lines'a bunu yazar (VM hata konumu).
     int  cur_line_ = 0;
 
     // ── Constant pool ──────────────────────────────────────────────────────────
-    uint16_t add_const(Value v);
-    // Argüman sayısı 8 bit taşınır: 255 üstü SESSİZCE sarıyordu (300 argüman → 44).
+    uint32_t add_const(Value v);
+    // Argüman sayısı 16 bit taşınır (v1'de 8 bitti: 255 üstü sessizce sarıyordu, 300 → 44).
     static void check_argc(const CallExpression& e) {
-        if (e.arguments.size() > 255)
-            throw LookCompileError("a call has more than 255 arguments", e.loc.line);
+        if ((long long)e.arguments.size() > REG_LIMIT)
+            throw LookCompileError("a call has more than 65534 arguments", e.loc.line);
     }
-    // MAKE_CLOSURE: a=r, b/c = 16-bit nested-proto indeksi (b düşük, c yüksek).
-    void emit_make_closure(uint8_t r, int fn_idx) {
-        emit(OpCode::MAKE_CLOSURE, r, lo8(fn_idx), hi8(fn_idx));
+    // MAKE_CLOSURE: a=r, b/c = 32-bit nested-proto indeksi (b düşük, c yüksek).
+    void emit_make_closure(uint16_t r, int fn_idx) {
+        emit(OpCode::MAKE_CLOSURE, r, lo16(fn_idx), hi16(fn_idx));
     }
-    void     emit_load_const(uint8_t dest, Value v, int line);
+    void     emit_load_const(uint16_t dest, Value v, int line);
 
     // ── Register ──────────────────────────────────────────────────────────────
-    uint8_t alloc_temp();
-    void    free_temp(uint8_t r);
+    uint16_t alloc_temp();
+    void    free_temp(uint16_t r);
 
     // ── Scope ──────────────────────────────────────────────────────────────────
     void    push_scope();
     void    pop_scope();
-    uint8_t declare_local(const std::string& name, int line);
+    uint16_t declare_local(const std::string& name, int line);
 
     enum class VarKind { LOCAL, CAPTURE, GLOBAL };
-    struct VarLoc { VarKind kind; uint8_t index; };
+    struct VarLoc { VarKind kind; uint16_t index; };
     VarLoc  resolve_var(const std::string& name, bool for_write = false);
 
     // ── Yerel / yakalanan erişim yardımcıları ─────────────────────────────────
     // Tüm yerel ve yakalanan değişken erişimi bu üç noktadan geçer.
-    void emit_read_local(uint8_t dest, uint8_t slot);   // dest = local(slot)
-    void emit_write_local(uint8_t slot, uint8_t src);   // local(slot) = src
-    void emit_read_capture(uint8_t dest, uint8_t cap_index); // dest = capture
+    void emit_read_local(uint16_t dest, uint16_t slot);   // dest = local(slot)
+    void emit_write_local(uint16_t slot, uint16_t src);   // local(slot) = src
+    void emit_read_capture(uint16_t dest, uint16_t cap_index); // dest = capture
 
     // ── Expression → register ─────────────────────────────────────────────────
-    // dest=255 → compiler geçici register seçer; caller free_temp() çağırmalı
-    uint8_t compile_expr(const Expression& expr, uint8_t dest = 255);
+    // dest=NO_REG → compiler geçici register seçer; caller free_temp() çağırmalı
+    uint16_t compile_expr(const Expression& expr, uint16_t dest = NO_REG);
 
-    uint8_t compile_binary(const BinaryExpression& e, uint8_t dest);
-    uint8_t compile_logical(const BinaryExpression& e, uint8_t dest); // && ||
-    uint8_t compile_call(const CallExpression& e, uint8_t dest);
-    uint8_t compile_closure(const FunctionExpression& e, uint8_t dest);
-    uint8_t compile_string_interp(const std::string& raw, int line, uint8_t dest);
-    uint8_t compile_array_lit(const ArrayLiteral& e, uint8_t dest);
-    uint8_t compile_assoc_lit(const AssocArrayLiteral& e, uint8_t dest);
-    uint8_t compile_struct_lit(const StructLiteralExpression& e, uint8_t dest);
+    uint16_t compile_binary(const BinaryExpression& e, uint16_t dest);
+    uint16_t compile_logical(const BinaryExpression& e, uint16_t dest); // && ||
+    uint16_t compile_call(const CallExpression& e, uint16_t dest);
+    uint16_t compile_closure(const FunctionExpression& e, uint16_t dest);
+    uint16_t compile_string_interp(const std::string& raw, int line, uint16_t dest);
+    uint16_t compile_array_lit(const ArrayLiteral& e, uint16_t dest);
+    uint16_t compile_assoc_lit(const AssocArrayLiteral& e, uint16_t dest);
+    uint16_t compile_struct_lit(const StructLiteralExpression& e, uint16_t dest);
 
     // ── Statement ─────────────────────────────────────────────────────────────
     void compile_stmt(const Statement& stmt);
@@ -286,8 +294,8 @@ private:
     // print/write ortak yolu: argümanları " " ile ayırıp yazar, newline=true ise "\n" ekler
     // (interpreter build_output + PrintStatement semantiğiyle birebir).
     void emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs, bool newline);
-    // CALL_BUILTIN indeks alani 8-bit: 255 ustu SESSIZCE kirpilir → yanlis builtin.
-    // builtin_names 255/256 DOLU; yeni giris eklenirse burasi gurultulu hata verir.
+    // CALL_BUILTIN indeks alani (b + sonraki NOP.b) 32 bit; eskiden 8 bitti ve 255 ustu SESSIZCE kirpiliyordu.
+    // Sigmazsa burasi gurultulu hata verir.
     static void check_builtin_index(int bidx, const std::string& name);
 
     // Builtin OLMAYAN "mod::fn" cagrisi gorulunce KOK compiler'da isaretle (closure'lar
@@ -315,6 +323,7 @@ private:
 
     // ── Data ──────────────────────────────────────────────────────────────────
     FunctionProto                    proto_;
+    std::unordered_map<std::string, uint32_t> const_index_;   // add_const tekilleştirme (sayı/metin)
     std::unique_ptr<RegisterAllocator> regs_;
 
     std::vector<LocalVar>            locals_;
