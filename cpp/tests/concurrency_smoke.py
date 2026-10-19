@@ -18,7 +18,7 @@ import socket, sys, threading, time
 PORT   = int(sys.argv[1]) if len(sys.argv) > 1 else 7402
 CONC   = int(sys.argv[2]) if len(sys.argv) > 2 else 100
 PERCON = int(sys.argv[3]) if len(sys.argv) > 3 else 20
-PATH   = "/health"
+PATH   = "/ping"   # uygulama rotası: /health sunucunun kendi yanıtıdır, dispatch'e girmez
 # Her bağlantı için cömert tavan. Bir HANG olsaydı bağlantılar bu süreyi aşar →
 # thread bu süre içinde PERCON isteği bitiremez → eksik sayılır → FAIL.
 CONN_TIMEOUT = 8.0
