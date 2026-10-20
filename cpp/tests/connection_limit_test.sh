@@ -143,7 +143,11 @@ if [ -r /proc/self/stat ]; then
 ' ' ')"
     t1="$(awk '{print $14+$15}' /proc/$pid/stat 2>/dev/null)"; up=no; kill -0 "$pid" 2>/dev/null && up=yes
     stop
-    acc="$(echo "$out" | grep -o "opened: {'101': [0-9]*" | grep -o '[0-9]*$')"; late="$(echo "$out" | grep -o "waiting ones now: {'101': [0-9]*" | grep -o '[0-9]*$')"
+    # Counter anahtarları ilk görülme sırasında: '101' ilk sırada olmayabilir — {'waiting': 57, '101': 60}
+    # (kabul sırası değişince, ör. LOOK_TEST_PREEMPT=1) — sıradan bağımsız oku. ESKİ HATA: sayı okunamıyor,
+    # doğru davranan sunucu FAIL alıyordu (fd sızıntısı sanıldı).
+    acc="$(echo "$out" | grep -o "opened: {[^}]*}" | grep -o "'101': [0-9]*" | grep -o '[0-9]*$')"
+    late="$(echo "$out" | grep -o "waiting ones now: {[^}]*}" | grep -o "'101': [0-9]*" | grep -o '[0-9]*$')"
     if [ "$up" = yes ] && [ "${acc:-0}" -gt 250 ] && [ "${late:-0}" = 60 ] && [ "$((t1 - t0))" -lt 1000 ]; then
         echo "  OK   [open-file limit 300] $acc accepted (soft limit 200 raised), the rest waited, 60 freed places taken by 60 waiting connections, CPU ticks $((t1 - t0))"
     else echo "  FAIL [open-file limit] up=$up accepted=$acc taken-after-freeing=$late cpu-ticks=$((t1 - t0)) | $out"; fail=1; fi
