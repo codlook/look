@@ -454,6 +454,20 @@ $notes = array::push($notes, $note) # what was meant
 
 LOOK 1 (1.0.26) reports both with a warning and runs the program.
 
+### `lk test` and `lk repl` run on the VM — error at load
+
+Test files and REPL lines used to run on the tree-walk engine, so a test did not exercise the
+engine the program runs on. They run on the VM now, with the same built-ins as `lk`:
+
+- A test file is a LOOK 2 program like any other: what the VM refuses at load (a discarded
+  pure result, a module function that does not exist, `assert::eqq`) is reported as
+  `(load error)` before any test runs.
+- Nothing else changes in `lk test`: `test()`, the `assert_*()` functions, `use assert` with
+  `assert::eq`, `before_each` / `after_each`, each test starting from the file's top-level
+  state, the output and the exit status.
+- `lk repl`: values, variables and functions behave as before. `:vars` lists variables as
+  `$name` (it printed `$$name`) and now lists functions too, as `name()`.
+
 ### Callbacks on the command line: on the VM, output on stdout — silent
 
 A job handler (`jobs::worker` + `jobs::run`), a timer callback and a `parallel()` task run

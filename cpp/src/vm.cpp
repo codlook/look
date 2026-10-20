@@ -49,6 +49,7 @@ static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& 
     if (visited.count(src.get())) return Value(); // döngü kır
     visited.insert(src.get());
     auto nc = std::make_shared<Closure>(src->proto);
+    nc->native   = src->native;                    // ev sahibi fonksiyonu (varsa) aynen
     nc->captures = src->captures;                  // sığ; aşağıda handle olmayanlar derinleşir
     // R-02: parallel task'a verilen closure'un capture izolasyonu — İZİN LİSTESİ
     // (fail-open) yerine YASAK LİSTESİ (fail-safe). Paylaşımı KASITLI olan handle tipleri
@@ -133,15 +134,28 @@ void VM::set_sse_connection(std::shared_ptr<SseConnection> sse) { sse_conn_ = ss
 
 // ── execute ───────────────────────────────────────────────────────────────────
 
-void VM::execute(const CompiledProgram& prog) {
+Value VM::execute(const CompiledProgram& prog) {
     auto cl = std::make_shared<Closure>(prog.main_proto);
     push_frame(cl.get(), prog.main_proto->reg_count, -1);
-    run();
+    return run();
 }
 
 // ── call_closure ──────────────────────────────────────────────────────────────
 
+Value make_native_fn(const std::string& name, BuiltinFn fn) {
+    auto p = std::make_shared<FunctionProto>();
+    p->name     = name;
+    p->variadic = true;   // her argüman sayısı kabul — denetimi fonksiyonun kendisi yapar
+    p->arity    = 1;
+    p->required = 0;
+    p->reg_count = 0;
+    auto cl = std::make_shared<Closure>(p);
+    cl->native = std::move(fn);
+    return Value(cl);
+}
+
 Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
+    if (closure.native) return closure.native(args);   // ev sahibi fonksiyonu
     if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
         throw LookVmError("Stack overflow (max " + std::to_string(MAX_CALL_DEPTH) + ")");
 
@@ -847,6 +861,13 @@ call_dispatch:
                     throw LookVmError("Not callable (function expected)");
                 }
                 auto cl = fn_val.as_bytecode_fn();
+                if (cl->native) {   // ev sahibi fonksiyonu: yerleşik çağrısı gibi
+                    std::vector<Value> nargs;
+                    nargs.reserve(argc);
+                    for (int i = 0; i < argc; ++i) nargs.push_back(R(ins.c + i));
+                    R(ins.a) = cl->native(nargs);
+                    goto call_dispatch;   // geri çağırma VM'e yeniden girip yığını büyütmüş olabilir
+                }
                 auto* cp = cl->proto.get();
                 check_argc(cp, argc);
                 int new_base = (int)regs_.size();
@@ -958,6 +979,13 @@ call_dispatch:
                 if (fn_val.type() != Value::BYTECODE_FN)
                     throw LookVmError("TAIL_CALL: BYTECODE_FN expected");
                 auto cl = fn_val.as_bytecode_fn();
+                if (cl->native) {   // ev sahibi fonksiyonu: sonucu R(a)'ya, ardından gelen RETURN döndürür
+                    std::vector<Value> nargs;
+                    nargs.reserve(argc3);
+                    for (int i = 0; i < argc3; ++i) nargs.push_back(R(ins.c + i));
+                    R(ins.a) = cl->native(nargs);
+                    goto call_dispatch;
+                }
                 auto* cp = cl->proto.get();
                 check_argc(cp, argc3);
                 int new_base = (int)regs_.size();

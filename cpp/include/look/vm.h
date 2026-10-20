@@ -38,6 +38,10 @@ public:
 
 using BuiltinFn = std::function<Value(std::vector<Value>&)>;
 
+// Ev sahibi fonksiyonunu LOOK fonksiyon değerine sarar (bkz. Closure::native). Bir çalıştırıcının
+// global'e koyduğu adlar için: `lk test`'in test(), assert_eq(), assert::eq … yardımcıları.
+Value make_native_fn(const std::string& name, BuiltinFn fn);
+
 // Route-level middleware destekli VM route girişi
 struct VmRoute {
     std::string          pattern;     // "GET:/path/{id}"
@@ -73,7 +77,8 @@ public:
     // Per-request builtins — her request'te çağrılmalı (module fn'ler ctx'e bağlıdır)
     void set_builtins(const std::vector<BuiltinFn>* b) { shared_.builtins = b; }
 
-    void  execute(const CompiledProgram& prog);
+    // Üst düzey `return <ifade>` değerini döndürür (REPL son ifadeyi böyle gösterir); yoksa null.
+    Value execute(const CompiledProgram& prog);
     void  dispatch_routes(const std::string& method, const std::string& path);
     // Son dispatch'te eşleşen route'un app_index'i (-1 = eşleşme yok/404).
     // VM hatasında hangi route'un interpreter'a sabitleneceğini söyler.

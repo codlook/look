@@ -10,6 +10,8 @@
 #     top-level value in the next test
 #   * `lk test name` runs tests/test_name.lk; functions from `use "lib.lk"` are available
 #   * a top-level error and a parse error are reported as such, not as a passing run
+#   * LOOK 2: the test file runs on the VM — a rule only the VM applies stops it at load, and a
+#     misspelled assert::… function is named
 # Usage: lk_test_runner_test.sh <lk>
 LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -91,5 +93,16 @@ echo "$out" | grep -q '(setup error)' && echo "$out" | grep -q 'setup broke' && 
 printf 'test("x", function() { assert(true) \n' > "$TMP/p/tests/test_parse.lk"
 out="$(cd "$TMP/p" && "$LK" test parse 2>&1 | plain)"
 echo "$out" | grep -q '(parse error)' && ok "a parse error is reported as a parse error" || bad "parse error: [$out]"
+
+# the test file runs on the VM: a rule only the VM applies (a discarded pure result) stops it at
+# load, and a misspelled assert function is named
+printf 'use array\n$a = [1]\narray::push($a, 2)\ntest("never", function() { assert(true) })\n' > "$TMP/p/tests/test_vm.lk"
+out="$(cd "$TMP/p" && "$LK" test vm 2>&1 | plain)"
+if echo "$out" | grep -q '(load error)' && echo "$out" | grep -q 'line 3: the result of array::push() is not used'; then
+    ok "the test file runs on the VM (a discarded array::push stops it at load)"
+else bad "vm: [$out]"; fi
+printf 'use assert\ntest("typo", function() { assert::eqq(1, 1) })\n' > "$TMP/p/tests/test_typo.lk"
+out="$(cd "$TMP/p" && "$LK" test typo 2>&1 | plain)"
+echo "$out" | grep -q 'assert::eqq() does not exist' && ok "a misspelled assert::eqq is named before anything runs" || bad "typo: [$out]"
 
 [ $fail = 0 ] && echo "PASS: lk test does what the documentation says" || { echo "FAIL: lk test"; exit 1; }

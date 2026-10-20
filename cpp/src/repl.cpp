@@ -7,6 +7,15 @@
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/web.h"
+#include "look/ast.h"
+#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ile aynı VM ortamı
+#include "look/compiler.h"
+#include "look/use_modules.h"
+#include "look/vm.h"
+#include <filesystem>
+#include <memory>
+#include <set>
+#include <unordered_map>
 
 extern "C" {
 #include "linenoise/linenoise.h"
@@ -129,12 +138,17 @@ static std::string repl_display(const Value& v) {
 }
 
 // ── :vars — list all globals defined by user ──────────────────────────────
-static void print_vars(const Interpreter& interp) {
-    auto vars = interp.get_global_names();
+static void print_vars(const std::unordered_map<std::string, Value>& globals) {
+    std::vector<std::string> vars;
+    for (const auto& [name, v] : globals) {
+        if (name.empty() || name.rfind("__", 0) == 0) continue;   // derleyicinin iç adları (__sdef: …)
+        // Değişkenler "$ad", adlı fonksiyonlar "ad" olarak tutulur → fonksiyon "ad()" gösterilir.
+        vars.push_back(name[0] == '$' ? name : name + "()");
+    }
     if (vars.empty()) { std::cout << gray("  (no variables yet)") << "\n"; return; }
     std::sort(vars.begin(), vars.end());
     for (auto& name : vars)
-        std::cout << "  $" << name << "\n";
+        std::cout << "  " << name << "\n";
 }
 
 // ── :help ─────────────────────────────────────────────────────────────────
@@ -160,10 +174,10 @@ static bool is_colon_command(const std::string& s) {
     return !s.empty() && s[0] == ':';
 }
 
-static bool handle_colon_command(const std::string& s, Interpreter& interp) {
+static bool handle_colon_command(const std::string& s, const std::unordered_map<std::string, Value>& globals) {
     if (s == ":exit" || s == ":quit" || s == ":q") return false;  // signal exit
     if (s == ":help" || s == ":h") { print_help(); return true; }
-    if (s == ":vars") { print_vars(interp); return true; }
+    if (s == ":vars") { print_vars(globals); return true; }
     if (s == ":clear") { linenoiseClearScreen(); return true; }
     // :time <expr> — placeholder (future)
     if (s.substr(0,5) == ":time") {
@@ -187,32 +201,29 @@ int run_repl() {
     std::cout << cyan("LOOK v" LOOK_VERSION " REPL") << "\n";
     std::cout << gray("Type :exit or Ctrl+C to quit") << "\n\n";
 
-    // Shared persistent interpreter — state survives between lines
-    Interpreter interp;
+    // LOOK 2 (tek motor, adım 6): REPL VM'de koşar. Her satır ayrı derlenir ve YENİ bir VM'de
+    // çalışır; önceki satırların global'leri (değişkenler, fonksiyonlar) aktarılır — bir satır
+    // hatayla bitse de o ana kadar atananlar kalır. Yerleşik tablo komut satırıyla aynı (cli_runtime).
+    Interpreter interp;   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
     WebContext  web_ctx;
     web_ctx.method = "GET";
     web_ctx.path   = "/";
     interp.set_web_context(&web_ctx);
     interp.set_file("<repl>");
+    // Standart modüller baştan açık — REPL'de `use X` yazmak gerekmez (eskisi gibi).
+    for (const char* m : {"math", "string", "array", "type", "date", "file", "auth", "validator",
+                          "html", "http", "template"})
+        interp.load_stdlib_module(m);
 
-    // Pre-load standard modules so user doesn't need `use X;` in REPL
-    {
-        const char* preamble =
-            "use math; use string; use array; use type; use date; use file; "
-            "use auth; use validator; use html; use http; use template;";
-        std::ostringstream dev_null;
-        interp.set_output(dev_null);
-        try {
-            Lexer  l(preamble);
-            Parser p(l.scan_tokens());
-            auto prog = p.parse();
-            interp.interpret(*prog);
-        } catch (...) {}
-        interp.set_output(std::cout);
-    }
+    static std::vector<BuiltinFn> builtins;   // zamanlayıcı geri çağırmaları satırdan uzun yaşayabilir
+    static VM::SharedState sh;
+    sh.builtins = &builtins;
+    auto callbacks = std::make_shared<CliCallbacks>();
+    callbacks->shared = &sh;
+    std::unordered_map<std::string, Value> globals;   // satırlar arası durum
 
     std::string pending;  // accumulated multi-line buffer
-    // Keep all programs alive — LookFunction::body points into these ASTs
+    // Programlar yaşar: dahil edilen dosyaların AST'si derlenmiş koda bağlı kalabilir.
     std::vector<std::unique_ptr<Program>> owned_programs;
 
     while (true) {
@@ -235,7 +246,7 @@ int run_repl() {
         linenoise_free(raw);
 
         // Trim trailing whitespace
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\t'))
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r'))
             line.pop_back();
 
         // Empty line
@@ -250,7 +261,7 @@ int run_repl() {
         // Colon commands only on fresh line (not inside multi-line)
         if (pending.empty() && is_colon_command(line)) {
             linenoiseHistoryAdd(line.c_str());
-            bool cont = handle_colon_command(line, interp);
+            bool cont = handle_colon_command(line, globals);
             if (!cont) {
                 std::cout << gray("See you!") << "\n";
                 break;
@@ -286,51 +297,84 @@ int run_repl() {
             continue;
         }
 
-        // ── Execute ──────────────────────────────────────────────────────
-        // We redirect output — if program prints, we show that.
-        // Also capture "last value" from expression statements.
+        // Son cümle bir ifadeyse (atama değil) değeri gösterilir: `return <ifade>` olarak derlenir.
+        // (Böylece REPL'de `strtoupper("a")` "sonuç kullanılmıyor" hatası vermez — sonuç gösteriliyor.)
+        // Son cümle düz bir değişkene atamaysa (`$x = 5`) çalıştıktan sonra o değişken gösterilir.
+        std::string shown_var;
+        if (!program->statements.empty()) {
+            if (auto* es = dynamic_cast<ExpressionStatement*>(program->statements.back().get())) {
+                if (auto* as = dynamic_cast<AssignmentExpression*>(es->expression.get())) {
+                    if (!as->object && !as->index) shown_var = as->name;
+                } else {
+                    auto ret = std::make_unique<ReturnStatement>(std::move(es->expression));
+                    ret->loc = es->loc;
+                    program->statements.back() = std::move(ret);
+                }
+            }
+        }
+
+        // Satırın `use` ettiği modüller açılır; yerleşik tablo bu satırın çıktısına bağlanır.
+        {
+            std::set<std::string> seen_files;
+            std::vector<std::string> mods;
+            collect_use_modules(*program, std::filesystem::current_path(), seen_files, mods);
+            for (const auto& m : mods) interp.load_stdlib_module(m);
+        }
         std::ostringstream captured;
-        interp.set_output(captured);
+        builtins = build_cli_builtins(interp, captured);
+        wire_cli_callbacks(builtins, interp, callbacks);
 
-        Value last_val;
-        bool has_last_val = false;
-
-        // Keep program alive — LookFunction::body holds raw pointers into the AST
         owned_programs.push_back(std::move(program));
         Program* prog_ptr = owned_programs.back().get();
 
+        CompiledProgram compiled;
         try {
-            // Set a callback so the interpreter records the last expression value
-            interp.set_repl_value_callback([&](const Value& v) {
-                last_val     = v;
-                has_last_val = true;
-            });
-
-            interp.interpret(*prog_ptr);
-        } catch (const RouteMatchedException&) {
-            // fine
-        } catch (const LookRuntimeError& e) {
-            std::cout << red("Error: ") << e.what() << "\n";
-            interp.set_output(std::cout);
-            continue;
-        } catch (const ExitException& e) {
-            std::cout << gray("exit(" + std::to_string(e.code()) + ")") << "\n";
-            interp.set_output(std::cout);
-            continue;
+            compiled = Compiler::compile(*prog_ptr, std::filesystem::current_path().string());
         } catch (const std::exception& e) {
             std::cout << red("Error: ") << e.what() << "\n";
-            interp.set_output(std::cout);
+            continue;
+        }
+        if (compiled.uses_non_builtin_module_fn) {
+            for (const auto& n : compiled.non_builtin_module_fns)
+                std::cout << red("Error: ") << n << "() does not exist — check the spelling of the module and the function.\n";
             continue;
         }
 
-        interp.set_output(std::cout);
+        // ── Execute ──────────────────────────────────────────────────────
+        Value last_val;
+        bool failed = false;
+        {
+            VM vm(sh, captured);
+            vm.set_web_context(&web_ctx);
+            vm.set_globals(globals);
+            callbacks->main_vm = &vm;
+            try {
+                last_val = vm.execute(compiled);
+            } catch (const RouteMatchedException&) {
+                // fine
+            } catch (const ExitException& e) {
+                std::cout << captured.str() << gray("exit(" + std::to_string(e.code()) + ")") << "\n";
+                failed = true;
+            } catch (const std::exception& e) {
+                std::cout << captured.str() << red("Error: ") << e.what() << "\n";
+                failed = true;
+            }
+            globals = vm.get_globals();   // hata olsa da o ana kadar atananlar kalır
+            callbacks->main_vm = nullptr;
+        }
+        if (failed) continue;
 
         // Print captured stdout (from print() calls)
         std::string out = captured.str();
         if (!out.empty()) std::cout << out;
 
+        if (!shown_var.empty()) {
+            auto it = globals.find(shown_var);
+            if (it == globals.end() && shown_var[0] != '$') it = globals.find("$" + shown_var);
+            if (it != globals.end()) last_val = it->second;
+        }
         // Auto-display last expression value (if it's not null and nothing was printed)
-        if (has_last_val && last_val.type() != Value::NONE && out.empty()) {
+        if (last_val.type() != Value::NONE && out.empty()) {
             std::cout << "=> " << repl_display(last_val) << "\n";
         }
     }

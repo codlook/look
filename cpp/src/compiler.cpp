@@ -30,6 +30,7 @@ namespace cfs = std::filesystem;
 thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
+thread_local std::set<std::string>          g_host_modules;     // çalıştırıcının sağladığı modüller (lk test: assert)
 // Bu derleme biriminde (dahil edilen dosyalar dahil) görülen struct bildirimleri: ad → (imza, satır).
 thread_local std::unordered_map<std::string, std::pair<std::string, int>> g_compile_structs;
 }
@@ -450,6 +451,11 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                     }
                 }
             }
+        }
+        if (!loaded && g_host_modules.count(us->module_name)) {
+            // Çalıştırıcının sağladığı modül (lk test: `use assert`) — fonksiyonları global'de hazır.
+            emit(OpCode::NOP);
+            return;
         }
         if (!loaded) {
             // Paket değil: stdlib modülü olmalı. Yorumlayıcının `use` denetimiyle aynı iki mesaj —
@@ -1976,6 +1982,13 @@ CompiledProgram Compiler::compile(const Program& program, const std::string& bas
     out.uses_non_builtin_module_fn = main_compiler.used_non_builtin_module_fn();
     out.non_builtin_module_fns     = main_compiler.non_builtin_module_fn_names();
     return out;
+}
+
+CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir,
+                                  const std::set<std::string>& host_modules) {
+    g_host_modules = host_modules;
+    struct Reset { ~Reset() { g_host_modules.clear(); } } reset;   // sonraki derleme etkilenmesin
+    return compile(program, base_dir);
 }
 
 } // namespace look

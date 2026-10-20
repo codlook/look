@@ -359,6 +359,10 @@ public:
     // (file includes) and the sandbox boundary. Empty → file includes are not compiled
     // (they NOP → interpreter fallback, the pre-existing behaviour).
     static CompiledProgram compile(const Program& program, const std::string& base_dir = "");
+    // host_modules: çalıştırıcının (ör. `lk test`: assert) kendisi sağladığı modüller — `use <ad>`
+    // reddedilmez, `ad::fn(...)` çağrısı çalıştırıcının global'e koyduğu "ad::fn" değerine gider.
+    static CompiledProgram compile(const Program& program, const std::string& base_dir,
+                                   const std::set<std::string>& host_modules);
 };
 
 } // namespace look

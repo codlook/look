@@ -146,8 +146,8 @@ set(LOOK_CORE
     src/installer.cpp
     src/resp_client.cpp
     src/miniz/miniz.c
-    src/test_runner.cpp
-    src/repl.cpp
+
+
     src/linenoise/linenoise.c
     ${LOOK_FIBER}
 )
@@ -166,6 +166,9 @@ add_executable(look
     src/event_loop.cpp
     src/compiler.cpp   # C9: CLI-VM (opt-in LOOK_CLI_VM) — bytecode derleyici
     src/vm.cpp         # C9: CLI-VM — bytecode yürütücü
+    src/cli_runtime.cpp # LOOK 2: lk ve lk test aynı VM ortamı
+    src/test_runner.cpp # LOOK 2: lk test VM'de (cli_runtime kullanır)
+    src/repl.cpp        # LOOK 2: REPL VM'de (cli_runtime kullanır)
     ${LOOK_CORE}       # builtins.cpp artık LOOK_CORE'da (interpreter bağımlılığı)
 )
 

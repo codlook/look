@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <functional>
 
 namespace look {
 
@@ -212,6 +213,12 @@ struct FunctionProto {
 struct Closure {
     std::shared_ptr<FunctionProto> proto;
     std::vector<Value>             captures; // use ($a,$b,...) sırasıyla
+    // LOOK 2: ev sahibi (C++) fonksiyonu — doluysa çağrı bytecode yerine bunu çalıştırır.
+    // Yerleşik tabloya girmeyen, yalnız bir çalıştırıcının sağladığı adlar için (`lk test`:
+    // test(), assert_eq(), assert::eq …): global'e konur, LOOK fonksiyonu gibi çağrılır,
+    // geri çağırma olarak geçirilebilir. proto boş-ama-geçerli kalır (değişken argümanlı,
+    // register'sız) → proto'ya dokunan her yer (argüman denetimi, kopyalama) çalışır.
+    std::function<Value(std::vector<Value>&)> native;
 
     explicit Closure(std::shared_ptr<FunctionProto> p) : proto(std::move(p)) {}
 };

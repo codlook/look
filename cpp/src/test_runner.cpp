@@ -5,6 +5,11 @@
 #include "look/parser.h"
 #include "look/web.h"
 #include "look/websocket.h"
+#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ile aynı VM ortamı
+#include "look/compiler.h"
+#include "look/use_modules.h"
+#include "look/vm.h"
+#include <unordered_map>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -45,8 +50,10 @@ static std::string read_file(const fs::path& path) {
     return { std::istreambuf_iterator<char>(f), {} };
 }
 
-// assert:: module — uses TestAssertionError to signal failure
-static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
+// assert:: module — uses TestAssertionError to signal failure. `call` runs a LOOK function value
+// (LOOK 2: on the VM that is running the test — vm_bridge_invoke).
+using CallFn = std::function<void(const Value&)>;
+static Module make_assert_module(CallFn call) {
     Module m;
     m.name = "assert";
 
@@ -147,23 +154,15 @@ static Module make_assert_module(Interpreter& interp, WebContext& web_ctx) {
         return Value();
     };
 
-    m.functions["throws"] = [fail, &interp, &web_ctx](auto args) -> Value {
-        if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
+    m.functions["throws"] = [fail, call](auto args) -> Value {
+        if (args.empty() || args[0].type() != Value::BYTECODE_FN)
             fail("assert::throws() expects a function");
         // Fonksiyonu HEMEN çağır ve hata fırlatmasını bekle. (Eskiden bir marker
         // array döndürüp runner'ın kontrol etmesini beklerdi — ama LOOK son ifadeyi
         // örtük DÖNDÜRMEDIĞI için marker atılıyordu; assert::throws() son ifade
         // olsa bile hiçbir zaman assert etmiyordu → sessiz yalancı geçiş.)
-        // İzole bir dispatch kopyasında çalıştır ki yan etkiler ne parent interp'e
-        // ne de sonraki testlere sızsın.
         bool threw = false;
-        try {
-            auto tmp = interp.make_dispatch_copy();
-            std::ostringstream sink;
-            tmp->set_output(sink);
-            tmp->set_web_context(&web_ctx);
-            tmp->invoke(args[0], {});
-        } catch (...) { threw = true; }
+        try { call(args[0]); } catch (...) { threw = true; }
         if (!threw)
             fail("assert::throws() failed — the call did not throw");
         return Value();
@@ -271,99 +270,106 @@ static std::vector<fs::path> find_test_files(const std::string& pattern) {
 
 static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose) {
     std::vector<TestResult> results;
-    std::string source;
-    try { source = read_file(file_path); }
-    catch (std::exception& e) {
+    auto one = [&](const std::string& name, const std::string& msg) {
         TestResult r;
         r.file    = file_path.filename().string();
-        r.name    = "(file read error)";
-        r.message = e.what();
+        r.name    = name;
+        r.message = msg;
         results.push_back(r);
         return results;
-    }
+    };
+    std::string source;
+    try { source = read_file(file_path); }
+    catch (std::exception& e) { return one("(file read error)", e.what()); }
 
     // Parse
     look::Lexer  lexer(source);
     look::Parser parser(lexer.scan_tokens());
     std::unique_ptr<look::Program> program;
     try { program = parser.parse(); }
-    catch (std::exception& e) {
-        TestResult r;
-        r.file    = file_path.filename().string();
-        r.name    = "(parse error)";
-        r.message = e.what();
-        results.push_back(r);
-        return results;
-    }
+    catch (std::exception& e) { return one("(parse error)", e.what()); }
 
-    // Set up interpreter with assert:: module and test() built-in
-    std::ostringstream out;
+    // LOOK 2 (tek motor, adım 6): test dosyası VM'de koşar — komut satırıyla AYNI yerleşik tablo
+    // (cli_runtime). Eskiden yorumlayıcıda koşuyordu; testler programın gerçekte koştuğu motoru
+    // sınamıyordu. Test yardımcıları (test, assert_*, assert::*) yerleşik tabloda DEĞİL — `test`
+    // adını bütün programlar için ayırırdı — global'e konan ev sahibi fonksiyonlarıdır.
+    std::ostringstream out;   // test dosyasının çıktısı (eskisi gibi gösterilmez)
     look::WebContext web_ctx;
     web_ctx.method = "GET";
     web_ctx.path   = "/";
 
-    look::Interpreter interp(out);
+    look::Interpreter interp(out);   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
     interp.set_web_context(&web_ctx);
     interp.set_file(file_path.string());
+    const fs::path dir = fs::absolute(file_path).parent_path();
+    {
+        std::set<std::string> seen_files;
+        std::vector<std::string> mods;
+        look::collect_use_modules(*program, dir, seen_files, mods);
+        for (const auto& m : mods) interp.load_stdlib_module(m);
+    }
 
-    // Register assert:: module (for "use assert;" syntax)
-    auto assert_mod = make_assert_module(interp, web_ctx);
-    interp.register_use_module("assert", assert_mod);
+    // ── Ev sahibi fonksiyonları ─────────────────────────────────────────────
+    struct Case { std::string name; Value fn; };
+    std::vector<Case> cases;
+    Value before_each_fn, after_each_fn;
+    std::unordered_map<std::string, Value> host;
+    auto host_fn = [&](const std::string& name, look::BuiltinFn fn) { host[name] = look::make_native_fn(name, std::move(fn)); };
+    // Verilen LOOK fonksiyonunu o an testi koşturan VM'de çağırır.
+    CallFn call = [](const Value& fn) { std::vector<Value> none; look::vm_bridge_invoke(fn, none); };
 
-    // Register ws:: test module — exposes ws::decode_frame() for WS frame DoS tests
-    auto ws_mod = make_ws_test_module();
-    interp.register_use_module("ws", ws_mod);
-
-    // Register html:: test module — exposes html::sanitize_svg() for SVG XSS tests
-    auto html_mod = make_html_test_module();
-    interp.register_use_module("html", html_mod);
-
-    // Register test() built-in
-    interp.register_builtin("test", [&interp](std::vector<Value> args) -> Value {
+    host_fn("test", [&](std::vector<Value>& args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::STRING)
             throw std::runtime_error("test() — expects test(name, function() {...})");
-        if (args[1].type() != Value::FUNCTION && args[1].type() != Value::BYTECODE_FN)
+        if (args[1].type() != Value::BYTECODE_FN)
             throw std::runtime_error("test() — second argument must be a function");
-        interp.register_test_case(args[0].as_string(), args[1]);
+        cases.push_back({args[0].as_string(), args[1]});
+        return Value();
+    });
+    host_fn("before_each", [&](std::vector<Value>& args) -> Value {
+        if (args.empty() || args[0].type() != Value::BYTECODE_FN)
+            throw std::runtime_error("before_each() — expects a function");
+        before_each_fn = args[0];
+        return Value();
+    });
+    host_fn("after_each", [&](std::vector<Value>& args) -> Value {
+        if (args.empty() || args[0].type() != Value::BYTECODE_FN)
+            throw std::runtime_error("after_each() — expects a function");
+        after_each_fn = args[0];
         return Value();
     });
 
-    // Register before_each() and after_each()
-    interp.register_builtin("before_each", [&interp](std::vector<Value> args) -> Value {
-        if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
-            throw std::runtime_error("before_each() — expects a function");
-        interp.set_before_each(args[0]);
-        return Value();
-    });
-    interp.register_builtin("after_each", [&interp](std::vector<Value> args) -> Value {
-        if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
-            throw std::runtime_error("after_each() — expects a function");
-        interp.set_after_each(args[0]);
-        return Value();
-    });
+    // `use assert` + assert::eq(...) — modül biçimi
+    for (auto& [fname, fn] : make_assert_module(call).functions)
+        host_fn("assert::" + fname, [fn = fn](std::vector<Value>& a) -> Value { return fn(a); });
+    // Test kancaları: ws::decode_frame (WS çerçeve DoS testleri), html::sanitize_svg (SVG XSS testleri)
+    for (auto& [fname, fn] : make_ws_test_module().functions)
+        host_fn("ws::" + fname, [fn = fn](std::vector<Value>& a) -> Value { return fn(a); });
+    for (auto& [fname, fn] : make_html_test_module().functions)
+        host_fn("html::" + fname, [fn = fn](std::vector<Value>& a) -> Value { return fn(a); });
 
     // ── Top-level assert_*() shortcuts ──────────────────────────────────────
     auto fail = [](const std::string& msg) { throw TestAssertionError(msg); };
 
-    interp.register_builtin("assert", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert", [fail](std::vector<Value>& args) -> Value {
         if (args.empty() || !args[0].is_truthy())
             fail("assert() failed — " + (args.empty() ? "null" : args[0].to_string()));
         return Value();
     });
 
-    interp.register_builtin("assert_true", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_true", [fail](std::vector<Value>& args) -> Value {
         if (args.empty() || !args[0].is_truthy())
             fail("assert_true() failed — value is falsy: " + (args.empty() ? "null" : args[0].to_string()));
         return Value();
     });
 
-    interp.register_builtin("assert_false", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_false", [fail](std::vector<Value>& args) -> Value {
         if (args.empty() || args[0].is_truthy())
             fail("assert_false() failed — value is truthy: " + (args.empty() ? "null" : args[0].to_string()));
         return Value();
     });
 
-    interp.register_builtin("assert_eq", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_eq", [fail](std::vector<Value>& args) -> Value {
         if (args.size() < 2) fail("assert_eq() takes 2 arguments");
         bool eq = false;
         auto& a = args[0]; auto& b = args[1];
@@ -379,26 +385,26 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         return Value();
     });
 
-    interp.register_builtin("assert_neq", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_neq", [fail](std::vector<Value>& args) -> Value {
         if (args.size() < 2) fail("assert_neq() takes 2 arguments");
         if (args[0].to_string() == args[1].to_string())
             fail("assert_neq() failed — values are equal: " + args[0].to_string());
         return Value();
     });
 
-    interp.register_builtin("assert_null", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_null", [fail](std::vector<Value>& args) -> Value {
         if (args.empty() || args[0].type() != Value::NONE)
             fail("assert_null() failed — value is not null: " + (args.empty() ? "(none)" : args[0].to_string()));
         return Value();
     });
 
-    interp.register_builtin("assert_not_null", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_not_null", [fail](std::vector<Value>& args) -> Value {
         if (args.empty() || args[0].type() == Value::NONE)
             fail("assert_not_null() failed — value is null");
         return Value();
     });
 
-    interp.register_builtin("assert_contains", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_contains", [fail](std::vector<Value>& args) -> Value {
         if (args.size() < 2) fail("assert_contains() takes 2 arguments");
         if (args[0].type() != Value::ARRAY)
             fail("assert_contains() first argument must be an array");
@@ -411,27 +417,20 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         return Value();
     });
 
-    interp.register_builtin("assert_throws", [fail, &interp, &web_ctx](std::vector<Value> args) -> Value {
-        if (args.empty() || (args[0].type() != Value::FUNCTION && args[0].type() != Value::BYTECODE_FN))
+    host_fn("assert_throws", [fail, call](std::vector<Value>& args) -> Value {
+        if (args.empty() || args[0].type() != Value::BYTECODE_FN)
             fail("assert_throws() expects a function");
-        // Fonksiyonu HEMEN çağır (izole kopyada) ve hata fırlatmasını bekle.
-        // Eski marker mekanizması yalnız testin DÖNÜŞ değeriyken çalışıyordu; LOOK
-        // son ifadeyi örtük döndürmediği için belgelenen kullanım dahil hiçbir
-        // zaman assert etmiyordu (sessiz yalancı geçiş).
+        // Fonksiyonu HEMEN çağır ve hata fırlatmasını bekle. Eski marker mekanizması yalnız testin
+        // DÖNÜŞ değeriyken çalışıyordu; LOOK son ifadeyi örtük döndürmediği için belgelenen kullanım
+        // dahil hiçbir zaman assert etmiyordu (sessiz yalancı geçiş).
         bool threw = false;
-        try {
-            auto tmp = interp.make_dispatch_copy();
-            std::ostringstream sink;
-            tmp->set_output(sink);
-            tmp->set_web_context(&web_ctx);
-            tmp->invoke(args[0], {});
-        } catch (...) { threw = true; }
+        try { call(args[0]); } catch (...) { threw = true; }
         if (!threw)
             fail("assert_throws() failed — the call did not throw");
         return Value();
     });
 
-    interp.register_builtin("assert_match", [fail](std::vector<Value> args) -> Value {
+    host_fn("assert_match", [fail](std::vector<Value>& args) -> Value {
         if (args.size() < 2) fail("assert_match() takes 2 arguments: (str, regex)");
         std::string s = args[0].to_string(), pat = args[1].to_string();
         try {
@@ -441,65 +440,78 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         return Value();
     });
 
-    // Execute the file — this registers all test() calls
-    try {
-        interp.interpret(*program);
-    } catch (const look::RouteMatchedException&) {
-        // OK
-    } catch (std::exception& e) {
-        TestResult r;
-        r.file    = file_path.filename().string();
-        r.name    = "(setup error)";
-        r.message = e.what();
-        results.push_back(r);
-        return results;
+    // ── Derle ───────────────────────────────────────────────────────────────
+    look::CompiledProgram compiled;
+    try { compiled = look::Compiler::compile(*program, dir.string(), {"assert", "ws"}); }
+    catch (std::exception& e) { return one("(load error)", e.what()); }
+    // Yerleşik de ev sahibi fonksiyonu da olmayan mod::fn → yazım hatası (komut satırındaki kural).
+    for (const auto& n : compiled.non_builtin_module_fns)
+        if (!host.count(n))
+            return one("(load error)", n + "() does not exist — check the spelling of the module and the function");
+
+    // ── Üst düzeyi bir kez çalıştır: test()'ler kaydolur ────────────────────
+    static std::vector<look::BuiltinFn> builtins;   // geri çağırmalar dosyadan uzun yaşayabilir
+    static look::VM::SharedState sh;
+    builtins = look::build_cli_builtins(interp, out);
+    sh.builtins = &builtins;
+    auto callbacks = std::make_shared<look::CliCallbacks>();
+    callbacks->shared = &sh;
+    look::wire_cli_callbacks(builtins, interp, callbacks);
+    std::unordered_map<std::string, Value> snapshot;
+    {
+        look::VM vm(sh, out);
+        vm.set_web_context(&web_ctx);
+        vm.set_globals(host);
+        callbacks->main_vm = &vm;
+        try {
+            vm.execute(compiled);
+        } catch (const look::RouteMatchedException&) {
+            // OK
+        } catch (std::exception& e) {
+            callbacks->main_vm = nullptr;
+            return one("(setup error)", e.what());
+        }
+        snapshot = vm.get_globals();
+        callbacks->main_vm = nullptr;
     }
 
-    // Now run each registered test
-    for (auto& tc : interp.test_cases()) {
+    // ── Her test: üst düzeyin durumundan başlayan kendi VM'i ────────────────
+    auto run_in_fresh_vm = [&](const Value& fn, std::ostream& sink) {
+        look::VM sub(sh, sink);
+        sub.set_web_context(&web_ctx);
+        sub.set_globals(snapshot);
+        sub.call_closure(*fn.as_bytecode_fn(), {});
+    };
+    for (auto& tc : cases) {
         TestResult res;
         res.file = file_path.filename().string();
         res.name = tc.name;
 
         auto t0 = std::chrono::steady_clock::now();
         try {
-            // Each test gets an isolated dispatch copy — no shared state between tests
-            auto copy = interp.make_dispatch_copy();
-            std::ostringstream test_out;
-            copy->set_output(test_out);
-            copy->set_web_context(&web_ctx);
-
+            // Her test yalıtılmış: kendi VM'i, üst düzeyin bıraktığı global'ler (değer semantiği:
+            // bir testin değiştirdiği dizi sonrakine geçmez).
+            look::VM sub(sh, out);
+            sub.set_web_context(&web_ctx);
+            sub.set_globals(snapshot);
             // before_each — runs before the test body (e.g. db::begin)
-            if (interp.before_each().type() == Value::FUNCTION ||
-                interp.before_each().type() == Value::BYTECODE_FN)
-                copy->invoke(interp.before_each(), {});
-
-            // assert_throws() / assert::throws() artık çağrıldıkları yerde HEMEN
-            // çalışıp fırlatmayı doğruluyor (marker mekanizması kaldırıldı — son
-            // ifade örtük döndürülmediği için sessizce çalışmıyordu).
-            copy->invoke(tc.fn, {});
-
+            if (before_each_fn.type() == Value::BYTECODE_FN)
+                sub.call_closure(*before_each_fn.as_bytecode_fn(), {});
+            sub.call_closure(*tc.fn.as_bytecode_fn(), {});
             res.passed = true;
         } catch (const TestAssertionError& e) {
             res.passed  = false;
             res.message = e.what();
-        } catch (const look::LookRuntimeError& e) {
-            res.passed  = false;
-            res.message = "Runtime error: " + std::string(e.what());
         } catch (std::exception& e) {
             res.passed  = false;
-            res.message = std::string(e.what());
+            res.message = "Runtime error: " + std::string(e.what());
         }
 
         // after_each — always runs (even on failure) — db::rollback pattern
         try {
-            if (interp.after_each().type() == Value::FUNCTION ||
-                interp.after_each().type() == Value::BYTECODE_FN) {
-                auto copy2 = interp.make_dispatch_copy();
+            if (after_each_fn.type() == Value::BYTECODE_FN) {
                 std::ostringstream dummy;
-                copy2->set_output(dummy);
-                copy2->set_web_context(&web_ctx);
-                copy2->invoke(interp.after_each(), {});
+                run_in_fresh_vm(after_each_fn, dummy);
             }
         } catch (...) { /* after_each hataları sessizce yutulur */ }
 
