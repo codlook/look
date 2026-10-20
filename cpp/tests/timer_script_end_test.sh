@@ -65,6 +65,36 @@ if [ "$out" = "$(printf 'task done\nend')" ] && [ -z "$err" ]; then
     ok "parallel::wait() lets the task finish; no warning"
 else bad "p2.lk: out=[$out] err=[$err]"; fi
 
+# Ending at once (std::_Exit while a task runs) loses nothing the script wrote: file::put/append,
+# a database row and LOOK's own log are on disk; only the unfinished task's later work is gone.
+cat > "$TMP/dur.lk" <<'LK'
+use file
+$c = db::connect("sqlite://./dur.db")
+db::exec($c, "CREATE TABLE IF NOT EXISTS t (v TEXT)")
+file::put("main.txt", "main-put\n")
+file::append("main.txt", "main-append\n")
+db::exec($c, "INSERT INTO t (v) VALUES ('main-row')")
+log::info("main-log-line")
+parallel(function() {
+    file::append("task.txt", "task-early\n")
+    $i = 0
+    while ($i < 200000000) { $i = $i + 1 }
+    file::append("task.txt", "task-late\n")
+})
+$j = 0
+while ($j < 2000000) { $j = $j + 1 }
+print("end")
+LK
+printf '$c = db::connect("sqlite://./dur.db")\n$r = db::query($c, "SELECT count(*) AS n FROM t")\n$n = $r[0]["n"]\nprint("rows={$n}")\n' > "$TMP/durchk.lk"
+mkdir -p "$TMP/dur" && mv "$TMP/dur.lk" "$TMP/durchk.lk" "$TMP/dur/"   # own directory: own logs/
+dout="$(cd "$TMP/dur" && "$LK" dur.lk 2>/dev/null | tr -d '\r')"
+rows="$(cd "$TMP/dur" && "$LK" durchk.lk 2>/dev/null | tr -d '\r')"
+logged="$(cat "$TMP"/dur/logs/*.log 2>/dev/null | grep -c 'main-log-line\|parallel() task was still running')"
+if [ "$(tr -d '\r' < "$TMP/dur/main.txt")" = "$(printf 'main-put\nmain-append')" ] && grep -q 'task-early' "$TMP/dur/task.txt" \
+   && ! grep -q 'task-late' "$TMP/dur/task.txt" && [ "$rows" = "rows=1" ] && [ "$logged" = 2 ] && [ "$dout" = end ]; then
+    ok "ending with a task still running loses nothing the script wrote (stdout, files, database row, log)"
+else bad "durability: stdout=[$dout] main=[$(cat "$TMP/dur/main.txt")] task=[$(cat "$TMP/dur/task.txt")] $rows log-lines=$logged"; fi
+
 printf 'print("plain")\n' > "$TMP/p.lk"
 run p.lk
 [ "$out" = plain ] && [ -z "$err" ] && ok "a script without timers writes no warning" || bad "p.lk: out=[$out] err=[$err]"
