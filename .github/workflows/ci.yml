@@ -536,6 +536,18 @@ jobs:
           cd cpp
           bash tests/callback_output_cli_test.sh ./build/lk ./build/lk-fcgi
 
+      # type::of says "function" for a function on the VM (command line and web).
+      - name: type::of says function for a function
+        run: |
+          cd cpp
+          bash tests/type_of_function_test.sh ./build/lk ./build/lk-fcgi
+
+      # type::of and type::is_* agree for a value of every kind (one fixed, its neighbour forgotten → red).
+      - name: type::of and type::is_* agree
+        run: |
+          cd cpp
+          bash tests/type_of_is_consistency_test.sh ./build/lk ./build/lk-fcgi
+
       # Env-dependent test contract — positive control. A test whose environment is missing
       # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
       # DSN/secret in CI is a configuration error and must not turn into a silent green, the
