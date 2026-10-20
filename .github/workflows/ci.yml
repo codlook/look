@@ -529,6 +529,13 @@ jobs:
           cd cpp
           bash tests/builtin_effect_table_test.sh
 
+      # On the command line the output of a job handler, a timer callback and a parallel() task
+      # reaches stdout (it was written to a buffer and thrown away); a web route is unchanged.
+      - name: Callback output reaches stdout on the command line
+        run: |
+          cd cpp
+          bash tests/callback_output_cli_test.sh ./build/lk ./build/lk-fcgi
+
       # Env-dependent test contract — positive control. A test whose environment is missing
       # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
       # DSN/secret in CI is a configuration error and must not turn into a silent green, the

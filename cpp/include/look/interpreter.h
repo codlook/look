@@ -521,6 +521,11 @@ public:
     void  set_web_context(WebContext* ctx);
     void  set_output(std::ostream& out) { output_stream_ = &out; }
     void  set_output(std::ostream* out) { output_stream_ = out; }
+    // Geri çağırmanın (iş işleyicisi, zamanlayıcı, parallel görevi) çıktısı nereye gider: komut
+    // satırında (çıktı std::cout) stdout'a — ESKİ HATA: ayrı bir tampona yazılıp atılıyordu, bir iş
+    // betiğindeki `print` sessizce kayboluyordu. Web'de geri çağırmanın yazacağı bir yanıt yok →
+    // tampon (eskisi gibi).
+    std::ostream& callback_output(const std::shared_ptr<std::ostringstream>& sink) const;
 
     // REPL support
     using ReplValueCallback = std::function<void(const Value&)>;
