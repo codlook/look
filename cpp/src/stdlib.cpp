@@ -820,7 +820,10 @@ static Module make_type() {
             case Value::FLOAT:    return Value(std::string("float"));
             case Value::STRING:   return Value(std::string("string"));
             case Value::BOOL:     return Value(std::string("bool"));
-            case Value::FUNCTION: return Value(std::string("function"));
+            // BYTECODE_FN de fonksiyondur (VM closure, adlı fonksiyon). ESKİ HATA: is_function
+            // düzeltilmiş, of unutulmuştu — VM'de her fonksiyon için "unknown" dönüyordu.
+            case Value::FUNCTION:
+            case Value::BYTECODE_FN: return Value(std::string("function"));
             case Value::ARRAY:    return Value(std::string("array"));
             case Value::STRUCT:   return Value(std::string("struct"));
             case Value::NONE:     return Value(std::string("null"));

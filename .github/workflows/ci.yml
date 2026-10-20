@@ -200,6 +200,25 @@ jobs:
           cd cpp
           bash tests/repl_test.sh ./build/lk
 
+      # A host function value (lk test helpers) travels like any function value: parallel, timer,
+      # cache, json, type::of, == — no crash, errors named.
+      - name: Host function values at the boundaries
+        run: |
+          cd cpp
+          bash tests/native_fn_boundary_test.sh ./build/lk
+
+      # type::of says "function" for a function on the VM (command line and web).
+      - name: type::of says function for a function
+        run: |
+          cd cpp
+          bash tests/type_of_function_test.sh ./build/lk ./build/lk-fcgi
+
+      # type::of and type::is_* agree for a value of every kind (one fixed, its neighbour forgotten → red).
+      - name: type::of and type::is_* agree
+        run: |
+          cd cpp
+          bash tests/type_of_is_consistency_test.sh ./build/lk ./build/lk-fcgi
+
       # An element assignment used as an expression yields the element on both engines (1.0.12).
       - name: Element assignment as an expression (both engines)
         run: |
