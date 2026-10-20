@@ -54,6 +54,29 @@ void TimerManager::cancel(int id) {
         dirty_ = true;
     }
     cv_.notify_one();         // Thread'i uyandır — deadline güncellensin
+    idle_cv_.notify_all();    // timer::wait iptal edilen tek seferliği beklemesin
+}
+
+TimerManager::Pending TimerManager::pending() {
+    std::lock_guard<std::mutex> lk(mtx_);
+    Pending p;
+    for (auto& [id, e] : entries_) {
+        if (e.cancelled) continue;
+        if (e.interval_ms > 0) ++p.repeating; else ++p.once;
+    }
+    return p;
+}
+
+bool TimerManager::wait_one_shots(int timeout_ms) {
+    std::unique_lock<std::mutex> lk(mtx_);
+    auto idle = [&] {
+        if (running_cbs_ > 0) return false;
+        for (auto& [id, e] : entries_)
+            if (!e.cancelled && e.interval_ms == 0) return false;
+        return true;
+    };
+    if (timeout_ms < 0) { idle_cv_.wait(lk, idle); return true; }
+    return idle_cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms), idle);
 }
 
 void TimerManager::shutdown() {
@@ -93,24 +116,32 @@ void TimerManager::run() {
         now = std::chrono::steady_clock::now();
 
         std::vector<std::function<void()>> cbs;
+        std::vector<bool> once;   // cbs[i] tek seferlik mi (timer::wait onu bekler)
         std::vector<int> to_remove;
 
         for (auto& [id, e] : entries_) {
             if (e.cancelled) { to_remove.push_back(id); continue; }
             if (e.next_fire <= now) {
                 cbs.push_back(e.callback);
+                once.push_back(e.interval_ms == 0);
                 if (e.interval_ms > 0)
                     e.next_fire = now + std::chrono::milliseconds(e.interval_ms);
-                else
+                else {
                     to_remove.push_back(id);
+                    ++running_cbs_;   // listeden çıktı ama geri çağırması henüz bitmedi
+                }
             }
         }
         for (int id : to_remove) entries_.erase(id);
 
         lk.unlock();
 
-        for (auto& cb : cbs) {
-            try { cb(); } catch (...) {}
+        for (size_t i = 0; i < cbs.size(); ++i) {
+            try { cbs[i](); } catch (...) {}
+            if (once[i]) {
+                { std::lock_guard<std::mutex> g(mtx_); --running_cbs_; }
+                idle_cv_.notify_all();
+            }
         }
     }
 }

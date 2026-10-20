@@ -755,6 +755,12 @@ static void run_setup_http(const fs::path& script) {
                         };
                         continue;
                     }
+                    if (name == "timer::wait") {
+                        setup_builtins[i] = [](std::vector<look::Value>&) -> look::Value {
+                            throw std::runtime_error("timer::wait() can be used only on the command line: a web application does not wait for timers");
+                        };
+                        continue;
+                    }
                     if (name == "timer::cancel") {
                         setup_builtins[i] = [](std::vector<look::Value>& args) -> look::Value {
                             if (args.empty()) throw std::runtime_error("timer::cancel() takes 1 argument");
@@ -1390,6 +1396,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 if (args.empty()) throw std::runtime_error("timer::cancel() takes 1 argument");
                 look::TimerManager::instance().cancel((int)args[0].to_int());
                 return look::Value();
+            };
+            // timer::wait yalnız komut satırında: bir istek zamanlayıcı beklerse iş parçacığını tutar.
+            // (Bağlanmasaydı VM "Module 'timer' not loaded" derdi — yanlış neden.)
+            req_builtins[BI("timer::wait")] = [](std::vector<look::Value>&) -> look::Value {
+                throw std::runtime_error("timer::wait() can be used only on the command line: a web request does not wait for timers");
             };
             // jobs::run — LOOK 2: yorumlayıcıdaki TEK tanım (Interpreter::jobs_run). Kurulumda
             // kaydedilen işleyiciler yorumlayıcı closure'ıdır ve taze bir kopyada çalışır; bir VM

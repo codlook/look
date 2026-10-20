@@ -316,6 +316,20 @@ static look::Value run_cli_closure(const CliCallbacks& cc, const look::Value& fn
     }
     return look::Value();
 }
+// LOOK 2: betik bitince süreç biter (Go/Rust modeli: programın ömrünü üst düzey belirler, beklemek
+// açıkça yazılır). Sessizce değil: kurulu kalan zamanlayıcılar söylenir, beklemek için ne yazılacağıyla.
+static void warn_pending_timers() {
+    const auto p = look::TimerManager::instance().pending();
+    if (p.once > 0)
+        look::Logger::instance().log(look::LogLevel::LOG_WARN, "timer",
+            std::to_string(p.once) + (p.once == 1 ? " timer::after callback never ran" : " timer::after callbacks never ran") +
+            ": the script ended first. To wait for them, call timer::wait() before the script ends.");
+    if (p.repeating > 0)
+        look::Logger::instance().log(look::LogLevel::LOG_WARN, "timer",
+            std::to_string(p.repeating) + (p.repeating == 1 ? " timer::every timer was" : " timer::every timers were") +
+            " still set when the script ended and stopped with it. Stop one with timer::cancel($id) when it is no longer needed.");
+}
+
 static void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::Interpreter& interp,
                                std::shared_ptr<CliCallbacks> cc) {
     using look::Value;
@@ -357,6 +371,13 @@ static void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::Interprete
         if (a.empty()) throw std::runtime_error("timer::cancel() takes 1 argument");
         look::TimerManager::instance().cancel((int)a[0].to_int());
         return Value();
+    };
+    // timer::wait([ms=5000]) — parallel::wait ile aynı biçim: tek seferlik zamanlayıcılar tetiklenip
+    // geri çağırmaları bitene kadar bekler; true = hepsi bitti, false = süre doldu.
+    b[BI("timer::wait")] = [](std::vector<Value>& a) -> Value {
+        int ms = 5000;
+        if (!a.empty() && a[0].type() == Value::INT) ms = (int)a[0].as_int();
+        return Value(look::TimerManager::instance().wait_one_shots(ms));
     };
     // ws::/sse:: yalnız bir web uygulamasının bağlantı rotasında anlamlı — açık hata.
     for (const auto& n : look::builtin_names()) {
@@ -675,6 +696,7 @@ int main(int argc, char* argv[]) {
             // catch'e düşüp "Error: exit" basıyor ve kodu 1 döndürüyordu (exit(3) → 1).
             // cgi_main/fcgi_main zaten yakalıyordu — CLI eksikti.
             look::task_wait(5000);   // arka plan parallel() task'larını bekle
+            warn_pending_timers();
             return e.code();
         } catch (const look::LookRuntimeError& e) {
             auto err = e;
@@ -687,6 +709,7 @@ int main(int argc, char* argv[]) {
         // Wait for any background parallel() tasks to finish.
         // 5 s timeout — detached tasks that overstay are abandoned.
         look::task_wait(5000);
+        warn_pending_timers();
         return 0;
     } catch (const look::LookRuntimeError& e) {
         std::cerr << e.format() << std::endl;

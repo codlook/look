@@ -226,6 +226,7 @@ template::render_string
 timer::after
 timer::cancel
 timer::every
+timer::wait
 type::is_
 type::is_array
 type::is_bool

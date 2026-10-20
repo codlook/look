@@ -25,6 +25,15 @@ public:
     // Shutdown timer thread.
     void shutdown();
 
+    // LOOK 2 (komut satırı): betik biterken kurulu kalan zamanlayıcılar — tek seferlikler (henüz
+    // tetiklenmemiş) ve tekrarlayanlar. Bitişteki uyarı bunları sayar.
+    struct Pending { int once = 0; int repeating = 0; };
+    Pending pending();
+
+    // timer::wait([ms]) — bütün tek seferlik zamanlayıcılar tetiklenip geri çağırmaları bitene kadar
+    // (ya da ms dolana kadar) bekler; true = hepsi bitti. Tekrarlayanları beklemez (bitmezler).
+    bool wait_one_shots(int timeout_ms);
+
 private:
     struct Entry {
         int id;
@@ -45,6 +54,8 @@ private:
     std::thread          thread_;
     std::atomic<bool>    running_{true};
     bool                 dirty_ = false;   // mtx_ altında: liste değişti → bekleme süresi yeniden hesaplanır
+    int                  running_cbs_ = 0; // mtx_ altında: şu an çalışan tek seferlik geri çağırma sayısı
+    std::condition_variable idle_cv_;      // tek seferlik iş azaldı (tetiklendi/bitti/iptal) → wait_one_shots
 };
 
 } // namespace look

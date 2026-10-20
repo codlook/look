@@ -2312,6 +2312,7 @@ ExecStart=/opt/look/look-fcgi --mode http --port 8090 --workers 4 /var/www/myapp
     <tr><td><code>timer::after(ms, fn)</code></td><td>Call fn once after ms → returns an int id</td></tr>
     <tr><td><code>timer::every(ms, fn)</code></td><td>Call fn repeatedly every ms → returns an int id</td></tr>
     <tr><td><code>timer::cancel($id)</code></td><td>Cancel the timer</td></tr>
+    <tr><td><code>timer::wait([ms])</code></td><td>LOOK 2, command line: wait until every <code>timer::after</code> callback has run → <code>true</code>, or <code>false</code> when ms (default 5000) runs out. A script ends when its last line has run; timers it leaves are named in a warning. Not for <code>timer::every</code> (stop it with <code>timer::cancel</code>); an error in a web request.</td></tr>
   </table>
 
   <h3>sse:: API</h3>

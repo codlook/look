@@ -180,6 +180,13 @@ jobs:
           cd cpp
           bash tests/callback_output_cli_test.sh ./build/lk ./build/lk-fcgi
 
+      # A command-line script ends when its last line has run (Go/Rust): timers left are named in a
+      # WARN line, timer::wait([ms]) waits for timer::after callbacks, and a web request may not wait.
+      - name: A script ends when its last line has run
+        run: |
+          cd cpp
+          bash tests/timer_script_end_test.sh ./build/lk ./build/lk-fcgi
+
       # An element assignment used as an expression yields the element on both engines (1.0.12).
       - name: Element assignment as an expression (both engines)
         run: |

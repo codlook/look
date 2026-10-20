@@ -1726,6 +1726,13 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                     return Value();
                 }
 
+                // timer::wait([ms=5000]) — tek seferlik zamanlayıcıları bekler (parallel::wait biçimi).
+                if (fn == "wait") {
+                    int ms = 5000;
+                    if (argc_t >= 1) { Value v = evaluate_expression(*e->arguments[0]); if (v.type() == Value::INT) ms = (int)v.as_int(); }
+                    return Value(look::TimerManager::instance().wait_one_shots(ms));
+                }
+
                 throw std::runtime_error("timer::" + fn + "() not found");
             }
 

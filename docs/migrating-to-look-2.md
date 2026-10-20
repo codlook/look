@@ -416,18 +416,67 @@ parse. It is a statement of its own now. Nothing that parsed before changes mean
 variable"). They mean what they mean on a variable: the postfix form yields the old value,
 the prefix form the new one. A missing key is an error, as it is for `+=`.
 
-### `lk` says which engine runs a script
+### One engine: the VM — error at load
 
+LOOK 1 had two engines, the VM and a slower tree-walk interpreter, and fell back to the
+second when the VM could not run something. LOOK 2 runs only on the VM, on the web server
+and on the command line.
+
+- A program the VM cannot compile does not run. The web server does not start (exit
+  status 1); `lk` prints the reason and exits with status 1, before any output. An included
+  file is named: `Error: use "lib/big.lk": a call has more than 65534 arguments`. In LOOK 1
+  the whole program ran on the tree-walk engine instead, about 40 times slower.
+- `LOOK_BYTECODE=0` and `LOOK_CLI_VM=0` are ignored, with one `WARN` line. `LOOK_VM_STRICT`
+  changes nothing.
+- A call to a module function that does not exist is refused before anything runs, on the
+  command line as on the web server (`Error: string::uper() does not exist`).
 - A script that loads its own files with `use "file.lk"` runs on the VM from the command
-  line too. In LOOK 1 such a script always ran on the tree-walk engine there (measured on a
-  loop-heavy included function: 3.7 s → 0.07 s).
-- When the VM cannot run a script, `lk` runs it on the tree-walk engine and writes one
-  `WARN` line to stderr with the reason. In LOOK 1 it did so silently. A script that wrote
-  nothing to stderr may now write that line.
-- `LOOK_BYTECODE=0` selects the tree-walk engine for `lk` as it does for the web server
-  (`lk` ignored it). `LOOK_CLI_VM=0` keeps working.
-- A struct declared again with different fields in an included file is an error on the VM
-  as well.
+  line too (measured on a loop-heavy included function: 3.7 s → 0.07 s).
+- A struct declared again with different fields in an included file is an error.
+
+### Code that silently did nothing stops the program — error at load
+
+```
+array::push($notes, $note)          # LOOK 2: error — the result is not used
+$notes = array::push($notes, $note) # what was meant
+```
+
+- The result of a pure built-in is thrown away: `array::push` returns a new array and does
+  not change the one you pass, so the line did nothing. The message names the line (and the
+  included file). The rule covers built-ins that change nothing and have no other effect —
+  `string::`, `math::`, `type::`, `array::` functions without a callback, encoders, hashes,
+  date arithmetic, `count()`, `strtoupper()`, `join()` … Built-ins that take a callback
+  (`array::map`) or that are called to see whether they throw (`json::decode`,
+  `date::parse`) are not in it, and neither is the bare `push()`, which changes its array.
+- A route on the path the server answers itself — `GET /health`, or the path in
+  `LOOK_HEALTH_PATH` — never ran: the server replied before the application. The application
+  does not start; use another path or move the health check with `LOOK_HEALTH_PATH`.
+
+LOOK 1 (1.0.26) reports both with a warning and runs the program.
+
+### Callbacks on the command line: on the VM, output on stdout — silent
+
+A job handler (`jobs::worker` + `jobs::run`), a timer callback and a `parallel()` task run
+on the VM from the command line too; in LOOK 1 a script that used `jobs::worker` or `timer::`
+ran on the tree-walk engine as a whole. Their `print` output reaches stdout; the tree-walk
+engine threw it away (fixed in 1.0.28 as well). `ws::` and `sse::` on the command line are an
+error: they belong to a web application.
+
+### A script ends when its last line has run — a warning names the timers left
+
+```
+timer::after(400, function() { print("later") })
+timer::wait()               # wait for timer::after callbacks (at most 5 s; timer::wait(ms))
+```
+
+The program's life is its top level, as in Go and Rust: when the script ends, the process
+ends, and a timer that has not fired yet does not run. In LOOK 1 such a timer was lost
+without a word. Now one `WARN` line says how many `timer::after` callbacks never ran and how
+many `timer::every` timers were still set. To wait, write it: `timer::wait([ms])` waits until
+every `timer::after` callback has run and returns `true`, or `false` when `ms` (default 5000)
+runs out — the same shape as `parallel::wait`. It does not wait for `timer::every`, which does
+not end; stop one with `timer::cancel($id)`. In a web application `timer::wait()` is an error:
+a request does not wait for timers.
 
 ## Not part of LOOK 2
 

@@ -213,6 +213,9 @@ const std::vector<std::string>& builtin_names() {
         "sse::send", "sse::close", "sse::clients",
         // ws::on / sse::on — bağlantı işleyicileri de VM'de: geri çağırma yeni bir istek gibi kurulur.
         "ws::on", "sse::on",
+        // timer::wait([ms]) — komut satırında tek seferlik zamanlayıcıları bekler (parallel::wait ile
+        // aynı biçim). Betik bitince süreç biter; beklemek açıkça yazılır.
+        "timer::wait",
     };
     return NAMES;
 }
@@ -319,7 +322,7 @@ const std::vector<EffectRow>& effect_rows() {
             "sse::send", "sse::close", "sse::on",
             "template::render", "template::include", "template::block", "template::extends",
             "template::render_string",
-            "timer::after", "timer::every", "timer::cancel",
+            "timer::after", "timer::every", "timer::cancel", "timer::wait",
             "ws::send", "ws::close", "ws::broadcast", "ws::on",
         }},
         { BuiltinEffect::Callback, {
