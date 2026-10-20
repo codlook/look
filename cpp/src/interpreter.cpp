@@ -694,6 +694,11 @@ void Interpreter::set_web_context(WebContext* ctx) {
     }
 }
 
+// Geri çağırma çıktısı: komut satırında stdout, web'de ayrı tampon (bkz. interpreter.h).
+std::ostream& Interpreter::callback_output(const std::shared_ptr<std::ostringstream>& sink) const {
+    return output_stream_ == &std::cout ? std::cout : static_cast<std::ostream&>(*sink);
+}
+
 bool Interpreter::load_stdlib_module(const std::string& name) {
     auto it = stdlib_.find(name);
     if (it == stdlib_.end()) return false;   // dış/paket modül — CLI-VM kapsam dışı
@@ -1673,11 +1678,13 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                     auto base = std::shared_ptr<Interpreter>(make_dispatch_copy().release());
                     auto sink = std::make_shared<std::ostringstream>();
 
-                    auto callback = [base, sink, cb_v = cb_v.clone_for_thread()]() mutable {
+                    // Komut satırında çıktı stdout'a (callback_output — eskiden atılıyordu).
+                    const bool to_stdout = output_stream_ == &std::cout;
+                    auto callback = [base, sink, to_stdout, cb_v = cb_v.clone_for_thread()]() mutable {
                         look::WebContext ctx;
                         ctx.method = "__TIMER__";
                         sink->str(""); sink->clear();
-                        base->set_output(*sink);
+                        if (to_stdout) base->set_output(std::cout); else base->set_output(*sink);
                         base->set_web_context(&ctx);
                         try {
                             base->invoke(cb_v, {});
@@ -1952,7 +1959,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                 auto copy = make_dispatch_copy();
                 copy->set_web_context(nullptr);
                 auto sink = std::make_shared<std::ostringstream>();
-                copy->set_output(*sink);
+                copy->set_output(callback_output(sink));
 
                 // R-02 (interpreter): fn'i THREAD-klonla — closure'ın Environment'ı (içindeki
                 // ARRAY/STRING capture'lar) her task'a izole olsun. Klonsuz: 8 task aynı
@@ -2307,7 +2314,7 @@ Value Interpreter::jobs_run(int interval_ms) {
 
                 auto copy = make_dispatch_copy();
                 auto sink = std::make_shared<std::ostringstream>();
-                copy->set_output(*sink);
+                copy->set_output(callback_output(sink));   // komut satırında stdout (eskiden atılıyordu)
                 // İşleyici KENDİ istek bağlamında koşar. Eskiden kopya, jobs::run'ı çağıran isteğin
                 // bağlamını paylaşıyordu: işleyici o isteğin parametrelerini okuyor, response::status /
                 // header çağrıları isteğin yanıtını değiştiriyordu.
