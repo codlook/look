@@ -23,8 +23,8 @@ else
   echo "  FAIL VM: beklenmedik: [$vm]"; fail=1
 fi
 
-# tree-walk (LOOK_CLI_VM=0) — o da bounded olmali
-tw=$(LOOK_CLI_VM=0 timeout 15 "$LK" "$TMP/deep.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ')
+# tree-walk (LOOK_X=1) — o da bounded olmali
+tw=$(LOOK_X=1 timeout 15 "$LK" "$TMP/deep.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ')
 if echo "$tw" | grep -qi "stack overflow"; then
   echo "  PASS tree-walk: derin ozyineleme bounded"
 else

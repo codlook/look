@@ -34,10 +34,10 @@ done
 
 for name in timer ws sse; do
     printf 'use %s\nprint("x")\n' "$name" > "$TMP/u.lk"
-    out="$(LOOK_CLI_VM=0 "$LK" "$TMP/u.lk" 2>&1)"
+    out="$(LOOK_X=1 "$LK" "$TMP/u.lk" 2>&1)"
     case "$out" in *"'$name' is built in and is not a module: remove the 'use $name' line"*) ok "use $name explains that it is built in";; *) bad "use $name: $(echo "$out" | tr '\n' ' ' | cut -c1-160)";; esac
 done
 printf 'use nosuchpkg\n' > "$TMP/u.lk"
-out="$(LOOK_CLI_VM=0 "$LK" "$TMP/u.lk" 2>&1)"
+out="$(LOOK_X=1 "$LK" "$TMP/u.lk" 2>&1)"
 case "$out" in *"Unknown module: 'nosuchpkg'. If it is a package, install it with: lk module install nosuchpkg"*) ok "unknown module message is English";; *) bad "unknown module: $(echo "$out" | tr '\n' ' ' | cut -c1-160)";; esac
 [ $fail = 0 ] && echo "PASS: error bodies and module messages" || { echo "FAIL: error bodies / module messages"; exit 1; }

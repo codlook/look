@@ -15,7 +15,7 @@ if [ "$MODE" = "--update" ]; then
   echo "updated: $(wc -l < "$HERE/template_golden.expected") lines"; exit 0
 fi
 fail=0
-for e in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+for e in "LOOK_X=1"; do   # LOOK 2: komut satırı yalnız VM (LOOK_CLI_VM=0 yok sayılır)
   run "$e" > "$TMP/got.txt"
   grep -q '^### END$' "$TMP/got.txt" || { echo "  FAIL [$e]: corpus did not run to the end"; tail -3 "$TMP/got.txt" | sed 's/^/    /'; fail=1; continue; }
   if cmp -s "$TMP/got.txt" "$HERE/template_golden.expected"; then

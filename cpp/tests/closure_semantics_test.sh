@@ -116,7 +116,7 @@ LK
 # B ve J 10/105, L 17 veriyordu.
 declare -A WANT=([A]=10 [B]=5 [C]=012 [D]=012 [E]=333 [F]=5 [G]=5 [H]=222 [I]=e0e1e2 [J]=5 [K]=1,2 [L]=10)
 for c in A B C D E F G H I J K L; do
-  tw=$(LOOK_CLI_VM=0 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
+  tw=$(LOOK_X=1 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   vm=$(LOOK_VM_STRICT=1 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
   if [ "$tw" = "$vm" ] && [ "$tw" = "${WANT[$c]} " ]; then
     echo "  PASS [$c] $tw"

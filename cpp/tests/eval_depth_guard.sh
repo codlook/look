@@ -28,7 +28,7 @@ gen_paren() { awk -v n="$1" 'BEGIN{printf "print("; for(i=0;i<n;i++) printf "(";
 # Bir kaynak dosyayı verilen motorla çalıştır; rc'yi döndür. rc>=128 (POSIX) veya
 # 127 (Windows/bash native crash) → sinyal/çökme demek → GUARD BAŞARISIZ.
 run() { # $1=dosya $2=VM(1)/interp(0)
-  if [ "$2" = "0" ]; then LOOK_CLI_VM=0 "$LK" "$1" >/dev/null 2>&1; else "$LK" "$1" >/dev/null 2>&1; fi
+  if [ "$2" = "0" ]; then LOOK_X=1 "$LK" "$1" >/dev/null 2>&1; else "$LK" "$1" >/dev/null 2>&1; fi
   echo $?
 }
 is_crash() { local rc="$1"; [ "$rc" -ge 128 ] || [ "$rc" = "127" ] || [ "$rc" = "134" ]; }
@@ -49,7 +49,7 @@ echo "== Regresyon: normal derinlikteki ifade doğru çalışmalı =="
 gen_chain 500 > "$TMP/ok.lk"   # 501 sonucu; guard'ın (1000) çok altında
 for eng in 1 0; do
   name=$([ "$eng" = 1 ] && echo VM || echo interp)
-  if [ "$eng" = "0" ]; then out=$(LOOK_CLI_VM=0 "$LK" "$TMP/ok.lk" 2>/dev/null); else out=$("$LK" "$TMP/ok.lk" 2>/dev/null); fi
+  if [ "$eng" = "0" ]; then out=$(LOOK_X=1 "$LK" "$TMP/ok.lk" 2>/dev/null); else out=$("$LK" "$TMP/ok.lk" 2>/dev/null); fi
   if [ "$out" = "501" ]; then echo "  OK   [$name] 500-terim zincir = 501"; else echo "  FAIL [$name] beklenen 501, gelen '$out'"; fail=1; fi
 done
 printf 'print(1+2+3*4-5)\n' > "$TMP/sm.lk"

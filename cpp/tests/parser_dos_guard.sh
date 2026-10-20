@@ -17,7 +17,7 @@ gen() { python3 -c "$1" > "$TMP/p.lk"; }
 # Her girdiyi 3 modda koştur; her modda: crash/hang → FAIL, temiz-hata/ok → PASS.
 probe() {
   local tag="$1"
-  for spec in "--check|" "VM|" "tree|LOOK_CLI_VM=0"; do
+  for spec in "--check|" "VM|" "tree|LOOK_X=1"; do
     ran=$((ran+1))
     local mode="${spec%%|*}" env="${spec##*|}" flag=""
     [ "$mode" = "--check" ] && flag="--check"

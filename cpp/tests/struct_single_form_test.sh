@@ -7,7 +7,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fail=0
 check() {  # label source want-substring
     printf '%s\n' "$2" > "$TMP/t.lk"
-    for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+    for env in "LOOK_VM_STRICT=1" "LOOK_X=1"; do
         out="$(env $env "$LK" "$TMP/t.lk" 2>&1)"
         case "$out" in *"$3"*) echo "  OK   [$env] $1";; *) echo "  FAIL [$env] $1: $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; fail=1;; esac
     done

@@ -8,7 +8,7 @@ APP="$HERE/finally_ret.lk"
 fail=0
 
 vm=$("$LK" "$APP" 2>&1)
-it=$(LOOK_CLI_VM=0 "$LK" "$APP" 2>&1)
+it=$(LOOK_X=1 "$LK" "$APP" 2>&1)
 
 # 1. İKİ MOTOR AYNI (parity) — bug tam da buradaydı
 if [ "$vm" != "$it" ]; then
@@ -42,7 +42,7 @@ n=$(echo "$vm" | grep -cF "NORMAL-FIN")
 # "Z" (finally) yazılmalı AMA "YUTULDU" (sonraki satır) YAZILMAMALI + exit≠0 (propagate).
 tmp2="$(mktemp)"
 printf 'try { throw "err" } finally { print("Z") }\nprint("YUTULDU")\n' > "$tmp2"
-for eng in "" "LOOK_CLI_VM=0"; do
+for eng in "" "LOOK_X=1"; do
   out=$(env $eng "$LK" "$tmp2" 2>&1); rc=$?
   echo "$out" | grep -qF "Z" || { echo "  FAIL: [$eng] finally (Z) çalışmadı"; fail=1; }
   echo "$out" | grep -qF "YUTULDU" && { echo "  FAIL: [$eng] bug#2 — catch'siz finally exception'ı YUTTU"; fail=1; }

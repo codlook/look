@@ -29,7 +29,7 @@ LK
 
 refused() {  # label, source on stdin
     { echo 'print("ran")'; cat; } > "$TMP/w.lk"
-    for env in LOOK_VM_STRICT=1 LOOK_CLI_VM=0; do
+    for env in LOOK_VM_STRICT=1 LOOK_X=1; do
         o="$(env $env "$LK" "$TMP/w.lk" 2>&1)"
         case "$o" in
           *ran*) echo "  FAIL [$env] $1: the program ran"; fail=1;;

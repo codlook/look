@@ -68,8 +68,8 @@ while IFS= read -r name; do
     fi
     while IFS= read -r shape; do
         printf 'use json\n%s\nprint(json::encode(%s(%s)))\n' "$uses" "$name" "$shape" > "$TMP/p.lk"
-        a="$(LOOK_CLI_VM=0 timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
-        b="$(LOOK_CLI_VM=0 timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
+        a="$(LOOK_X=1 timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
+        b="$(LOOK_X=1 timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
         [ -n "$a" ] && [ "$a" = "$b" ] || continue
         case "$a" in *"<function>"*) continue;; esac   # a function printed as a value: not a meaningful sample
         echo "$name($shape)" >> "$TMP/calls.txt"; break

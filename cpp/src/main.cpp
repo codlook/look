@@ -17,6 +17,10 @@
 #include "look/compiler.h"
 #include "look/vm.h"
 #include "look/use_modules.h"   // collect_use_modules — CLI ve web aynı `use` listesi
+#include "look/timer.h"         // TimerManager — komut satırında timer:: VM closure'ı kurar
+#include "look/setup_handoff.h" // vm_closure_runner — jobs::run işleyicilerini VM'de koşturur
+#include <memory>
+#include <unordered_map>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -277,16 +281,90 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     return b;
 }
 
-// Programın `use` modüllerini (dahil edilen dosyalarınkiler dahil — look/use_modules.h) interpreter'a
-// yükle. Hepsi stdlib ise true (CLI-VM güvenli); dış/paket modül varsa false (caller tree-walk'a
-// düşer — semantik korunur).
-static bool preload_uses_for_vm(look::Interpreter& interp, const look::Program& prog,
-                                const std::filesystem::path& dir, std::set<std::string>& seen) {
-    std::vector<std::string> mods;
-    look::collect_use_modules(prog, dir, seen, mods);
-    for (const auto& m : mods)
-        if (!interp.load_stdlib_module(m)) return false;
-    return true;
+// ── LOOK 2: komut satırında geri çağırmalar da VM'de koşar ────────────────────────────────────
+// timer::after/every ve jobs::worker işleyicisi eskiden betiği bütünüyle tree-walk'a düşürüyordu.
+// Şimdi her çağrı kendi VM'inde koşar (web'deki gibi: istek başına yeni VM), aynı yerleşik tabloyla.
+//   * iş işleyicisi jobs::run içinde, AYNI iş parçacığında koşar → ana VM'in GÜNCEL global'lerini görür
+//   * zamanlayıcı başka iş parçacığında koşar → kurulduğu andaki global'lerin kopyasını görür
+// Çıktı stdout'a gider. ESKİ HATA: yorumlayıcı işleyicinin/zamanlayıcının çıktısını ayrı bir tampona
+// yazıp atıyordu — komut satırındaki bir iş betiğinde `print` sessizce kayboluyordu.
+struct CliCallbacks {
+    look::VM::SharedState* shared  = nullptr;   // yerleşik tablo (süreç ömrü)
+    look::VM*              main_vm = nullptr;   // jobs::run anında güncel global'ler
+};
+static look::Value run_cli_closure(const CliCallbacks& cc, const look::Value& fnv, std::vector<look::Value> args,
+                                   const std::unordered_map<std::string, look::Value>* globals,
+                                   const char* method, const char* what, bool& ok) {
+    ok = false;
+    look::WebContext ctx;
+    ctx.method = method;
+    try {
+        look::VM sub(*cc.shared, std::cout);
+        if (globals) sub.set_globals(*globals);
+        else if (cc.main_vm) sub.set_globals(cc.main_vm->get_globals());
+        sub.set_web_context(&ctx);
+        look::Value r = sub.call_closure(*fnv.as_bytecode_fn(), std::move(args));
+        std::cout.flush();
+        ok = true;
+        return r;
+    } catch (const look::ExitException&) {
+        throw;
+    } catch (const std::exception& ex) {
+        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "VM", std::string(what) + " error: " + ex.what());
+    } catch (...) {
+        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "VM", std::string(what) + " unknown error");
+    }
+    return look::Value();
+}
+static void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::Interpreter& interp,
+                               std::shared_ptr<CliCallbacks> cc) {
+    using look::Value;
+    auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
+    // jobs::run işleyicileri vm_closure_runner üzerinden çağırır (BYTECODE_FN).
+    look::vm_closure_runner() = [cc](const Value& fn, std::vector<Value> args, const char* what, bool& ok) {
+        return run_cli_closure(*cc, fn, std::move(args), nullptr, "__JOB__", what, ok);
+    };
+    b[BI("jobs::run")] = [&interp](std::vector<Value>& a) -> Value {
+        return interp.jobs_run(a.empty() ? 5000 : (int)a[0].to_float());
+    };
+    if (auto f = interp.get_module_fn("jobs", "worker"))
+        b[BI("jobs::worker")] = [f](std::vector<Value>& a) -> Value {
+            std::vector<Value> aa = a;
+            if (aa.size() >= 2 && aa[1].type() == Value::BYTECODE_FN) aa[1] = aa[1].clone_for_thread();
+            return f(aa);
+        };
+    for (const char* name : {"timer::after", "timer::every"}) {
+        const bool repeat = std::string(name) == "timer::every";
+        const std::string nm = name;
+        b[BI(name)] = [cc, repeat, nm](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) throw std::runtime_error(nm + "() takes 2 arguments");
+            if (a[1].type() != Value::BYTECODE_FN) throw std::runtime_error(nm + "() second argument must be a function");
+            // Zamanlayıcı başka iş parçacığında koşar: global'lerin o anki kopyası (paylaşım yok).
+            auto snap = std::make_shared<std::unordered_map<std::string, Value>>();
+            if (cc->main_vm)
+                for (const auto& [k, v] : cc->main_vm->get_globals()) snap->emplace(k, v.clone_for_thread());
+            Value fnv = a[1].clone_for_thread();
+            auto cb = [cc, fnv, snap]() {
+                bool ok = false;
+                run_cli_closure(*cc, fnv, {}, snap.get(), "__TIMER__", "timer callback", ok);
+            };
+            const int ms = (int)a[0].to_int();
+            return Value(repeat ? look::TimerManager::instance().every(ms, std::move(cb))
+                                : look::TimerManager::instance().after(ms, std::move(cb)));
+        };
+    }
+    b[BI("timer::cancel")] = [](std::vector<Value>& a) -> Value {
+        if (a.empty()) throw std::runtime_error("timer::cancel() takes 1 argument");
+        look::TimerManager::instance().cancel((int)a[0].to_int());
+        return Value();
+    };
+    // ws::/sse:: yalnız bir web uygulamasının bağlantı rotasında anlamlı — açık hata.
+    for (const auto& n : look::builtin_names()) {
+        if (n.rfind("ws::", 0) != 0 && n.rfind("sse::", 0) != 0) continue;
+        b[BI(n.c_str())] = [n](std::vector<Value>&) -> Value {
+            throw std::runtime_error(n + "() can be used only in a web application (lk-fcgi), not on the command line");
+        };
+    }
 }
 
 } // namespace
@@ -313,9 +391,9 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        // lk --vm-report : which module functions the VM does not provide. A route or a script
-        // that reaches one of them runs on the tree-walk engine; the list has to be empty for
-        // an application to run on the VM alone.
+        // lk --vm-report : which module functions the VM does not provide. LOOK 2 runs only on the
+        // VM (web and command line), so a program that reaches one of them does not start; the
+        // list has to be empty (CI).
         if (cmd == "--vm-report") {
             look::WebContext rctx;
             look::Interpreter rint;
@@ -486,8 +564,8 @@ int main(int argc, char* argv[]) {
                 }
                 if (bad_param) return 1;
             }
-            // VM bu dosyayı derleyebiliyor mu? Derleyemiyorsa betik (web'de bütün uygulama)
-            // sessizce yorumlayıcıda çalışır — burada adıyla söylenir. Çalıştırma yok.
+            // VM bu dosyayı derleyebiliyor mu? LOOK 2'de derlenemeyen program ÇALIŞMAZ (komut satırı ve
+            // web) — burada adıyla söylenir, hata. Çalıştırma yok.
             // Temel dizin web yolundaki gibi verilir: `use "dosya.lk"` dahil edilenler de derlenir.
             try {
                 auto checked = look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string());
@@ -499,7 +577,6 @@ int main(int argc, char* argv[]) {
                 for (const auto& n : checked.non_builtin_module_fns) {
                     auto p = n.find("::");
                     if (p == std::string::npos || !core_modules.count(n.substr(0, p))) continue;
-                    if (look::builtin_index(n) >= 0) continue;   // var: komut satırında bilerek yorumlayıcıya bırakılan ad (jobs::run, timer:: …)
                     std::cout << "CHECK 1 1 [undefined-function] " << n << "() does not exist — check the spelling of the module and the function\n";
                     unknown_fn = true;
                 }
@@ -510,9 +587,12 @@ int main(int argc, char* argv[]) {
                 // çözülemez (kök, giriş dosyasının dizinidir) — bu VM eksiği değil, raporlanmaz.
                 const std::string why = ex.what();
                 if (why.find("the file cannot be opened") == std::string::npos &&
-                    why.find("outside the application directory") == std::string::npos)
-                std::cout << "WARN 1 1 [vm-compile] the VM cannot compile this file (" << ex.what()
-                          << "); it runs on the tree-walk engine\n";
+                    why.find("outside the application directory") == std::string::npos) {
+                    auto* ce = dynamic_cast<const look::LookCompileError*>(&ex);
+                    const int line = ce && ce->line > 0 ? ce->line : 1;
+                    std::cout << "CHECK " << line << " 1 [compile] " << why << "\n";
+                    return 1;
+                }
             }
             std::cout << "OK\n";
             return 0;
@@ -527,104 +607,66 @@ int main(int argc, char* argv[]) {
         interpreter.set_file(filename);
 
         try {
-            // C9: CLI top-level artık DEFAULT olarak bytecode VM'de çalışır (~37×).
-            // Kaçış kapağı: LOOK_CLI_VM=0 → tree-walk (sorun görülürse anında geri dönüş).
-            //
-            // Güvenlik: VM yoluna ancak tüm `use`'lar stdlib ise VE compile başarılıysa
-            // girilir — İKİSİ DE EXECUTION ÖNCESİ. Dış/paket modül veya compile hatası →
-            // sessizce tree-walk. Çıktı taahhüt edildikten SONRA fallback YOK (çift çıktı
-            // riski yok).
-            //
-            // Default'a alınabilmesinin dayanağı: 3 motor differential (19 kategori,
-            // tree-walk == CLI-VM == web-VM) + CLI'ye özgü yüzey (print/write bayt-bayt,
-            // exit kodu) + hata raporu artık tree-walk formatında (File/Line — bkz. aşağı).
-            // Bilinen tek fark: hata çıktısında Column yok (VM sütun tablosu tutmuyor).
-            bool ran_vm = false;
-            const char* cvm = std::getenv("LOOK_CLI_VM");
-            // LOOK_BYTECODE=0 web sunucusunda yorumlayıcıyı seçer; komut satırı onu yok sayıyordu
-            // (yalnız LOOK_CLI_VM=0'a bakıyordu). Aynı ad iki ikilide de aynı anlama gelir.
-            const char* cbc = std::getenv("LOOK_BYTECODE");
-            const bool want_vm = !(cvm && cvm[0] == '0') && !(cbc && cbc[0] == '0');
-            // LOOK_VM_STRICT — web'deki anlamıyla AYNI: sessiz fallback KAPALI, VM bu script'i
-            // çalıştıramıyorsa hata yüzeye çıkar. Eskiden yalnız http_main okuyordu; CLI'nın
-            // yürütme-öncesi tree-walk kararı (aşağıdaki 3 nokta) ona hiç bakmıyordu → differential'ın
-            // "CLI-VM" sütunu builtin-olmayan modül fn yüzünden SESSİZCE tree-walk koşuyordu ve
-            // gerçek VM hatalarını (struct varsayılanı) gizledi. Neden her noktada kaydedilir.
-            const char* cvs = std::getenv("LOOK_VM_STRICT");
-            const bool vm_strict = cvs && cvs[0] == '1';
-            std::string vm_skip_reason;
-            const std::filesystem::path script_dir = std::filesystem::absolute(filename).parent_path();
-            std::set<std::string> preload_seen;
-            const bool preload_ok = want_vm && preload_uses_for_vm(interpreter, *program, script_dir, preload_seen);
-            if (want_vm && !preload_ok)
-                vm_skip_reason = "a `use`d module could not be loaded for the VM";
-            if (preload_ok) {
-                look::CompiledProgram compiled;
-                bool compiled_ok = true;
-                // Temel dizin verilir: `use "dosya.lk"` ile dahil edilenler de VM'e derlenir (web yolu
-                // gibi). Onların kendi modülleri yukarıdaki özyinelemeli ön yüklemeyle bağlandı.
-                try { compiled = look::Compiler::compile(*program, script_dir.string()); }
-                catch (const look::LookProgramError& ex) {
-                    // Programın kendi hatası (sonucu atılan saf yerleşik …): tree-walk bu denetimi
-                    // yapmaz, programı sessizce çalıştırırdı → yedeğe düşme, yaz ve çık.
-                    std::cerr << "Error: " << ex.what() << "\n  File: " << filename << std::endl;
-                    std::exit(1);
-                }
-                catch (const std::exception& ex) {      // compile hatası → tree-walk
-                    compiled_ok = false;
-                    vm_skip_reason = std::string("compile error: ") + ex.what();
-                }
-                catch (...) { compiled_ok = false; vm_skip_reason = "compile error"; }
-                // Builtin OLMAYAN "mod::fn" (ör. cache::keys, template::escape) → o çağrı
-                // RUNTIME'da "Not callable" fırlatır ve CLI-VM'de fallback YOKTUR
-                // (web'de route interpreter'a düşüp kurtulur). Bayrak varsa daha en baştan
-                // tree-walk — böylece VM default'u ÇALIŞAN script'leri kırmaz.
-                if (compiled_ok && compiled.uses_non_builtin_module_fn) {
-                    compiled_ok = false;
-                    vm_skip_reason = "module function(s) not available to the VM:";
-                    for (auto& n : compiled.non_builtin_module_fns) vm_skip_reason += " " + n;
-                }
-                if (compiled_ok) {
-                    auto cli_builtins = build_cli_builtins(interpreter, std::cout);
-                    look::VM::SharedState sh;
-                    sh.builtins = &cli_builtins;
-                    look::VM vm(sh, std::cout);
-                    vm.set_web_context(&web_ctx);
-                    // Hata raporu tree-walk ile aynı biçimde olmalı: yakalanmamış hatada
-                    // VM'in kaydettiği satırı (proto.lines — compile_stmt doldurur) alıp
-                    // LookRuntimeError'a sarıyoruz. Aksi halde CLI-VM sadece "Error: msg"
-                    // basardı; tree-walk "Runtime Error ... File/Line" veriyor → VM'i
-                    // default yapmak hata kalitesini DÜŞÜRÜRDÜ ("developer için çalış").
-                    // ExitException/RouteMatched kontrol akışıdır — sarılmaz, geçer.
-                    try {
-                        vm.execute(compiled);
-                    } catch (const look::ExitException&)         { throw; }
-                      catch (const look::RouteMatchedException&) { throw; }
-                      catch (const look::LookRuntimeError&)      { throw; }  // zaten konumlu
-                      catch (const std::exception& ex) {
-                        look::SourceLocation loc;
-                        loc.file = filename;
-                        loc.line = vm.last_error_line();
-                        throw look::LookRuntimeError(ex.what(), loc, {});
-                    }
-                    ran_vm = true;
-                }
-            }
-            if (!ran_vm) {
-                if (vm_strict && want_vm) {
-                    std::cerr << "Error: LOOK_VM_STRICT is set and the VM cannot run this script — "
-                              << vm_skip_reason
-                              << " (without LOOK_VM_STRICT it would fall back to the "
-                                 "tree-walk interpreter)." << std::endl;
-                    return 1;
-                }
-                // Sessiz geri düşüş yok: VM istenip de çalıştıramıyorsa nedeni söylenir (web
-                // sunucusunun başlangıçta yazdığı uyarının komut satırındaki karşılığı).
-                if (want_vm && !vm_skip_reason.empty())
+            // LOOK 2 tek motor: komut satırı YALNIZ VM'de çalışır. Eskiden derleme hatası, paket
+            // modülü, timer::/jobs::worker ya da VM'de olmayan bir mod::fn betiği sessizce (sonra
+            // bir uyarıyla) ~40× yavaş tree-walk'a düşürüyordu; LOOK_CLI_VM=0 onu seçtiriyordu.
+            // Artık: derlenemeyen program ÇALIŞMAZ (nedeni yazılır, çıkış 1); LOOK_CLI_VM=0 ve
+            // LOOK_BYTECODE=0 bir uyarıyla yok sayılır (web sunucusuyla aynı).
+            for (const char* var : {"LOOK_CLI_VM", "LOOK_BYTECODE"}) {
+                const char* v = std::getenv(var);
+                if (v && v[0] == '0')
                     look::Logger::instance().log(look::LogLevel::LOG_WARN, "VM",
-                        "The VM cannot run this script (" + vm_skip_reason +
-                        "); it runs on the tree-walk interpreter, which is much slower.");
-                interpreter.interpret(*program);
+                        std::string(var) + "=0 is ignored: LOOK 2 runs only on the VM.");
+            }
+            const std::filesystem::path script_dir = std::filesystem::absolute(filename).parent_path();
+            // Yalnız `use` edilen stdlib modülleri açılır (web ile aynı liste). Paket modülü
+            // (~/.look/modules) stdlib değildir: derleyici derler; bilinmeyen modülü derleyici reddeder.
+            {
+                std::set<std::string> seen_files;
+                std::vector<std::string> mods;
+                look::collect_use_modules(*program, script_dir, seen_files, mods);
+                for (const auto& m : mods) interpreter.load_stdlib_module(m);
+            }
+            look::CompiledProgram compiled;
+            try {
+                compiled = look::Compiler::compile(*program, script_dir.string());
+            } catch (const std::exception& ex) {
+                std::cerr << "Error: " << ex.what() << "\n  File: " << filename << std::endl;
+                return 1;
+            }
+            // VM'de karşılığı olmayan bir mod::fn adı yazım hatasıdır (web'deki "does not exist"
+            // kuralıyla aynı) — çalıştırmadan söylenir.
+            if (compiled.uses_non_builtin_module_fn) {
+                for (const auto& n : compiled.non_builtin_module_fns)
+                    std::cerr << "Error: " << n << "() does not exist — check the spelling of the module and the function.\n";
+                std::cerr << "  File: " << filename << std::endl;
+                return 1;
+            }
+            // Yerleşik tablo ve paylaşılan durum SÜREÇ ÖMRÜ: zamanlayıcı betik bittikten sonra da
+            // (parallel görevleri beklenirken) tetiklenebilir.
+            static std::vector<look::BuiltinFn> cli_builtins;
+            static look::VM::SharedState sh;
+            cli_builtins = build_cli_builtins(interpreter, std::cout);
+            sh.builtins = &cli_builtins;
+            auto callbacks = std::make_shared<CliCallbacks>();
+            callbacks->shared = &sh;
+            wire_cli_callbacks(cli_builtins, interpreter, callbacks);
+            look::VM vm(sh, std::cout);
+            vm.set_web_context(&web_ctx);
+            callbacks->main_vm = &vm;
+            struct MainVmGone { std::shared_ptr<CliCallbacks> c; ~MainVmGone() { c->main_vm = nullptr; } } main_vm_gone{callbacks};
+            // Yakalanmamış hata tree-walk'un biçiminde raporlanır: VM'in kaydettiği satır
+            // (proto.lines) LookRuntimeError'a sarılır. ExitException/RouteMatched kontrol akışıdır.
+            try {
+                vm.execute(compiled);
+            } catch (const look::ExitException&)         { throw; }
+              catch (const look::RouteMatchedException&) { throw; }
+              catch (const look::LookRuntimeError&)      { throw; }  // zaten konumlu
+              catch (const std::exception& ex) {
+                look::SourceLocation loc;
+                loc.file = filename;
+                loc.line = vm.last_error_line();
+                throw look::LookRuntimeError(ex.what(), loc, {});
             }
         } catch (const look::RouteMatchedException&) {
             // route() flow control — normal

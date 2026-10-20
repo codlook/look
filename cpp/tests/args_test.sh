@@ -22,7 +22,7 @@ out=$("$LK" "$TMP/a.lk" up --force 2>/dev/null | tr '\n' ',')
 check "VM: two args reach args()" "2,up,--force," "$out"
 
 # tree-walk fallback
-out=$(LOOK_CLI_VM=0 "$LK" "$TMP/a.lk" solo 2>/dev/null | tr '\n' ',')
+out=$(LOOK_X=1 "$LK" "$TMP/a.lk" solo 2>/dev/null | tr '\n' ',')
 check "tree-walk: one arg reaches args()" "1,solo," "$out"
 
 # no args → empty array

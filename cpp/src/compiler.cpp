@@ -1505,12 +1505,9 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
         std::string full = sr->module_name + "::" + sr->member_name;
         int bidx = builtin_index(full);
         if (bidx >= 0) {
-            // timer:: yalnız WEB VM'inde bağlıdır (geri çağırma istek makinesinde koşar). Komut
-            // satırında bağlı değil → aynı bayrakla CLI baştan tree-walk'a düşer (eskisi gibi).
-            if (sr->module_name == "timer" || sr->module_name == "ws" || sr->module_name == "sse"
-                || full == "jobs::worker" || full == "jobs::run")
-                mark_non_builtin_module_fn(full);
-            // Bilinen modül fonksiyonu → CALL_BUILTIN
+            // Bilinen modül fonksiyonu → CALL_BUILTIN. (LOOK 2: timer::/jobs::worker/jobs::run komut
+            // satırında da VM'e bağlı; ws::/sse:: orada açık hata verir — eskiden bunlar CLI'ı
+            // tree-walk'a düşürüyordu.)
             // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
             check_argc(e);
             uint16_t argc = u16(e.arguments.size(), "argument count");

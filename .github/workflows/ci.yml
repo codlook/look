@@ -164,13 +164,14 @@ jobs:
           cd cpp
           ./build/lk --vm-report
 
-      # The command line says which engine runs: LOOK_BYTECODE=0 means the tree-walk engine for
-      # `lk` as for the web server, a fallback to it is announced, and a line starting with
-      # ++ or -- is a statement.
-      - name: Command-line engine choice
+      # LOOK 2: the command line runs only on the VM — a script that does not compile does not
+      # run (exit 1, the reason), LOOK_CLI_VM=0 / LOOK_BYTECODE=0 are ignored with a warning, job
+      # handlers and timers run on the VM and their output reaches stdout, ws::/sse:: say they
+      # belong to a web application, and a line starting with ++ or -- is a statement.
+      - name: The command line runs only on the VM
         run: |
           cd cpp
-          bash tests/cli_engine_choice_test.sh ./build/lk
+          bash tests/cli_vm_only_test.sh ./build/lk
 
       # An element assignment used as an expression yields the element on both engines (1.0.12).
       - name: Element assignment as an expression (both engines)

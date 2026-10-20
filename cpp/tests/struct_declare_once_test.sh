@@ -13,7 +13,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fail=0
 check() {  # label source want-substring [envs]
     printf '%s\n' "$2" > "$TMP/t.lk"
-    for env in ${4:-LOOK_VM_STRICT=1 LOOK_CLI_VM=0}; do
+    for env in ${4:-LOOK_VM_STRICT=1 LOOK_X=1}; do
         out="$(env $env "$LK" "$TMP/t.lk" 2>&1)"
         case "$out" in *"$3"*) echo "  OK   [$env] $1";; *) echo "  FAIL [$env] $1: $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; fail=1;; esac
     done
@@ -48,10 +48,10 @@ printf 'struct Shared { b int = 2\n  a int = 1 }\n' > "$TMP/other.lk"
 check "different fields, another file" 'struct Shared { a int = 1
   b int = 2 }
 use "other.lk"
-print("ran")'                                                        "struct 'Shared' is already declared at" "LOOK_X=1 LOOK_CLI_VM=0"
+print("ran")'                                                        "struct 'Shared' is already declared at" "LOOK_X=1 LOOK_X=1"
 check "identical, another file" 'struct Shared { a int = 1
   b int = 2 }
 use "same.lk"
 $s = Shared{}
-print("b=" . $s.b)'                                                  "b=2" "LOOK_X=1 LOOK_CLI_VM=0"
+print("b=" . $s.b)'                                                  "b=2" "LOOK_X=1 LOOK_X=1"
 [ $fail = 0 ] && echo "PASS: a struct is declared once, at the top level" || { echo "FAIL: struct declare once"; exit 1; }

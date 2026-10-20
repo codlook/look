@@ -50,7 +50,7 @@ print(\$r["status"] . " state=" . ((\$r["state"] == null) ? "null" : "set"))
 LK
 fail=0
 WANT='200 ["data: alpha","data: beta","data: gamma","data: delta"] rest=[] many=yes'
-for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
+for env in "LOOK_VM_STRICT=1" "LOOK_X=1"; do
     got="$(env LOOK_ALLOW_SSRF=1 $env "$LK" "$TMP/state.lk" 2>&1 | grep -v 'INFO' | tail -1)"
     if [ "$got" = "$WANT" ]; then echo "  OK   [$env] lines cut across chunks are reassembled through the state"
     else echo "  FAIL [$env] got: $got"; fail=1; fi

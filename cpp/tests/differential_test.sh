@@ -2,7 +2,8 @@
 # ÜÇ MOTOR differential regresyon testi — hepsi BİREBİR aynı çıktıyı vermeli.
 # Felsefe koruması: motorlar SEMANTİK olarak ayrışmamalı ("bagsız ve stabil").
 #
-#   1) tree-walk  : LOOK_CLI_VM=0 lk <script>   — referans semantik (interpreter, kacis kapagi)
+#   1) "tree-walk" sütunu: LOOK 2 (adım 5) komut satırı da YALNIZ VM — bu sütun artık `lk`i ikinci kez
+#      koşturur; referans semantik tests/golden/differential/*.out. Sütun yorumlayıcı silinince kalkar.
 #   2) CLI-VM     : lk <script>  (C9: DEFAULT) — bytecode VM, main.cpp/build_cli_builtins
 #   3) web-VM     : lk-fcgi --mode http (route)  — bytecode VM, http_main.cpp/req_builtins
 #
@@ -38,8 +39,8 @@ trap cleanup EXIT
 cp "$BODY" "$TMP/cli.lk"; echo 'print(run_all());' >> "$TMP/cli.lk"
 cp "$BODY" "$TMP/vm.lk";  echo 'route("GET","/t", function(){ return response::text(run_all()); });' >> "$TMP/vm.lk"
 
-# C9: `lk` artık DEFAULT olarak VM kullanır → tree-walk için LOOK_CLI_VM=0 gerekir.
-TREE=$(LOOK_CLI_VM=0 "$LK" "$TMP/cli.lk" 2>&1)
+# LOOK 2 (adım 5): `lk` yalnız VM — bu "tree-walk" değişkeni artık CLI-VM'in ikinci koşusu (bkz. başlık).
+TREE=$("$LK" "$TMP/cli.lk" 2>&1)
 CLIVM=$(LOOK_VM_STRICT=1 "$LK" "$TMP/cli.lk" 2>&1)
 
 LOOK_VM_STRICT=1 "$FCGI" --mode http --port $PORT "$TMP/vm.lk" >"$TMP/web_main.log" 2>&1 &
@@ -101,7 +102,7 @@ print("x", "y", "z")
 write("p", "q")
 print("son")
 LK
-LOOK_CLI_VM=0 "$LK" "$TMP/io.lk" > "$TMP/io_tree.out" 2>&1
+"$LK" "$TMP/io.lk" > "$TMP/io_tree.out" 2>&1
 "$LK" "$TMP/io.lk" > "$TMP/io_vm.out" 2>&1
 # Bayt-bayt karsilastirma HARICI ARACA BAGLI OLMAMALI: `cmp`/`diff` (diffutils) minimal
 # konteynerlerde YOK — komut bulunamayinca non-zero doner ve "baytlar farkli" sanilir
@@ -121,7 +122,7 @@ fi
 golden print_write_bytes "$io_tree_dump" "print/write baytlari (tree-walk)"
 golden print_write_bytes "$io_vm_dump"   "print/write baytlari (CLI-VM)"
 printf 'print("basla")\nexit(3)\nprint("OLMAMALI")\n' > "$TMP/ex.lk"
-LOOK_CLI_VM=0 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; t_code=$?
+"$LK" "$TMP/ex.lk" >/dev/null 2>&1; t_code=$?
 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; v_code=$?
 if [ "$t_code" != "3" ] || [ "$v_code" != "3" ]; then
   echo "FAIL: exit(3) kodu — tree=$t_code CLI-VM=$v_code (ikisi de 3 olmali)"
@@ -153,7 +154,7 @@ $i = 0
 while ($i < 5) { $t += $i; $i = $i + 1 }
 print($a . "|" . $n . "|" . $m . "|" . $p . "|" . $q . "|" . $r . "|" . $t)
 LK
-ca_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/ca.lk" 2>&1)
+ca_tree=$("$LK" "$TMP/ca.lk" 2>&1)
 ca_vm=$("$LK" "$TMP/ca.lk" 2>&1)
 ca_bek="xy|3|7|12|3|2|10"
 [ "$ca_tree" = "$ca_bek" ] || { echo "FAIL: top-level compound tree-walk: [$ca_tree] (beklenen $ca_bek)"; fail=1; }
@@ -179,7 +180,7 @@ $xss = "<b>&'''\""
 print("KOD:if0:" . b($s0) . " ifs:" . b($ss) . " f:" . $big)
 print(template::render("tpl", ["s0"=>$s0,"ss"=>$ss,"big"=>$big,"xss"=>$xss]))
 TPLLK
-tpl_out=$(cd "$TMP" && LOOK_CLI_VM=0 "$LK" tpl.lk 2>&1)
+tpl_out=$(cd "$TMP" && "$LK" tpl.lk 2>&1)
 tpl_vm=$(cd "$TMP" && "$LK" tpl.lk 2>&1)
 echo "$tpl_out" | grep -q 'KOD:if0:F ifs:T f:1234567.5' || { echo "FAIL: template guard — KOD satiri beklenmedik: [$tpl_out]"; fail=1; }
 echo "$tpl_out" | grep -q 'if0:F ifs:T f:1234567.5' || { echo "FAIL: TEMPLATE dil semantiginden SAPIYOR (truthiness \"0\" veya float formati): [$tpl_out]"; fail=1; }
@@ -203,7 +204,7 @@ print(json::encode(array::set([1,2,3], 1, "X")) . "|" .
       json::encode(array::set([], "k", "X")) . "|" .
       json::encode(array::set(["a"=>1,"b"=>2], "a", 9)))
 LK
-as_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/aset.lk" 2>&1)
+as_tree=$("$LK" "$TMP/aset.lk" 2>&1)
 as_vm=$("$LK" "$TMP/aset.lk" 2>&1)
 as_bek='[1,"X",3]|[1,2,3,"X"]|{"0":1,"1":2,"2":3,"k":"X"}|{"k":"X"}|{"a":9,"b":2}'
 [ "$as_tree" = "$as_bek" ] || { echo "FAIL: array::set tree-walk: [$as_tree] (beklenen $as_bek) — sayisal dizide veri yok ediliyor olabilir"; fail=1; }
@@ -252,12 +253,12 @@ print(t(function(){ $a=[1,2,3]; return $a[-1] }) . "|" .
       t(function(){ $a=[1,2,3]; $a[99]="X"; return $a }))
 LK
 in_bek='3|HATA|HATA|[1,2,"X"]|[1,2,3,"X"]|HATA'
-in_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/inum.lk" 2>&1)
+in_tree=$("$LK" "$TMP/inum.lk" 2>&1)
 in_vm=$("$LK" "$TMP/inum.lk" 2>&1)
 [ "$in_tree" = "$in_bek" ] || { echo "FAIL: \$arr[sayi] uclari tree-walk: [$in_tree] (beklenen $in_bek)"; fail=1; }
 [ "$in_vm"   = "$in_bek" ] || { echo "FAIL: \$arr[sayi] uclari CLI-VM: [$in_vm] (beklenen $in_bek) — VM aralik disinda/negatifte SESSIZ olabilir"; fail=1; }
 
-ik_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/ikey.lk" 2>&1)
+ik_tree=$("$LK" "$TMP/ikey.lk" 2>&1)
 ik_vm=$("$LK" "$TMP/ikey.lk" 2>&1)
 ik_bek='{"0":1,"1":2,"2":3,"k":"X"}|X|2|{"k":"X"}|[1,"X",3]|null|2'
 [ "$ik_tree" = "$ik_bek" ] || { echo "FAIL: \$arr[str] tree-walk: [$ik_tree] (beklenen $ik_bek) — string anahtar sayisal indekse zorlaniyor olabilir"; fail=1; }
@@ -280,7 +281,7 @@ print(string::replace("abc", "", "X") . "|" . string::replace("abc", "", "") . "
       string::replace("aXbXc", "X", "-"))
 LK
 rp_bek='XaXbXcX|abc|-ş-ğ-|X|a-b-c'
-rp_tree=$(timeout 10 env LOOK_CLI_VM=0 "$LK" "$TMP/rep.lk" 2>&1); rp_rc=$?
+rp_tree=$(timeout 10 env "$LK" "$TMP/rep.lk" 2>&1); rp_rc=$?
 [ $rp_rc -eq 124 ] && { echo "FAIL: string::replace tree-walk ASILDI (bos arama dizesi sonsuz dongu)"; fail=1; }
 rp_vm=$(timeout 10 "$LK" "$TMP/rep.lk" 2>&1); rp_rc2=$?
 [ $rp_rc2 -eq 124 ] && { echo "FAIL: string::replace CLI-VM ASILDI (bos arama dizesi sonsuz dongu)"; fail=1; }
@@ -308,7 +309,7 @@ print(string::pad_left("ş",3,"x") . "|" . string::len(string::pad_left("ş",3,"
       string::pad_left("",3,"x") . "|" . string::pad_left("ab",0,"x"))
 LK
 pd_bek='xxş|3|şxx|şşşa|abcdef|şğü|xxx|ab'
-pd_tree=$(timeout 10 env LOOK_CLI_VM=0 "$LK" "$TMP/pad.lk" 2>&1)
+pd_tree=$(timeout 10 env "$LK" "$TMP/pad.lk" 2>&1)
 pd_vm=$(timeout 10 "$LK" "$TMP/pad.lk" 2>&1)
 [ "$pd_tree" = "$pd_bek" ] || { echo "FAIL: string::pad_* tree-walk: [$pd_tree] (beklenen $pd_bek) — bayt tabanli genislik veya kirpma geri gelmis olabilir"; fail=1; }
 [ "$pd_vm"   = "$pd_bek" ] || { echo "FAIL: string::pad_* CLI-VM: [$pd_vm] (beklenen $pd_bek)"; fail=1; }
@@ -334,7 +335,7 @@ print(string::upper("i") . string::lower("I") . string::upper("ı") . string::lo
       string::lower(string::upper("привет")))
 LK
 cs_bek='IiIi|ÇĞÖŞÜ|ПРИВЕТ|привет|ΕΛΛΆΔΑ|ŁÓDŹ|ČEŠTINA|привет'
-cs_tree=$(timeout 10 env LOOK_CLI_VM=0 "$LK" "$TMP/case.lk" 2>&1)
+cs_tree=$(timeout 10 env "$LK" "$TMP/case.lk" 2>&1)
 cs_vm=$(timeout 10 "$LK" "$TMP/case.lk" 2>&1)
 [ "$cs_tree" = "$cs_bek" ] || { echo "FAIL: string::upper/lower tree-walk: [$cs_tree] (beklenen $cs_bek) — Turkce locale geri gelmis veya kapsam eksik olabilir"; fail=1; }
 [ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (beklenen $cs_bek)"; fail=1; }
@@ -471,7 +472,7 @@ cat > "$TMP/uok.lk" <<'LK'
 use string
 print(string::len("abc"))
 LK
-ue_tree=$(LOOK_CLI_VM=0 "$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
+ue_tree=$("$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
 ue_vm=$("$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
 uo_vm=$("$LK" "$TMP/uok.lk" 2>&1 | tail -1)
 echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM C++ ic istisnasini sizdiriyor: [$ue_vm]"; fail=1; }
@@ -490,11 +491,11 @@ printf 'print(olmayan_fonksiyon(1))\n' > "$TMP/c1.lk"
 printf '$x = 5\nprint($x(1))\n'        > "$TMP/c2.lk"
 for cf in c1 c2; do
   cv=$("$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
-  ct=$(LOOK_CLI_VM=0 "$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
+  ct=$("$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
   [ "$cv" = "$ct" ] || { echo "FAIL: cagri hatasi motorlar arasi ayrisiyor ($cf) — CLI-VM: [$cv] / tree-walk: [$ct]"; fail=1; }
   echo "$cv" | grep -q "BYTECODE_FN" && { echo "FAIL: cagri hatasi ic terim sizdiriyor (ad soylenmiyor): [$cv]"; fail=1; }
 done
-echo "$(LOOK_CLI_VM=0 "$LK" "$TMP/c2.lk" 2>&1)" | grep -q "is not defined" && {
+echo "$("$LK" "$TMP/c2.lk" 2>&1)" | grep -q "is not defined" && {
   echo "FAIL: tanimli ama cagrilamayan deger icin yaniltici 'is not defined' mesaji"; fail=1; }
 
 

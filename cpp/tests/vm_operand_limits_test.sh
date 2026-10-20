@@ -35,7 +35,7 @@ check "300 local variables"     "$TMP/locals.lk"   "got=301"
 check "300 captured variables"  "$TMP/captures.lk" "got=300"
 check "70000 constants"         "$TMP/consts.lk"   "got=408894"
 check "loop body over 65535 instructions" "$TMP/longloop.lk" "got=80000"
-s="$(LOOK_VM_STRICT=1 "$LK" "$TMP/over.lk" 2>&1 | tail -1)"
+s="$(LOOK_VM_STRICT=1 "$LK" "$TMP/over.lk" 2>&1 | grep -m1 "arguments")"
 case "$s" in *"more than 65534 arguments"*) echo "  OK   65535 arguments: refused by name";;
              *) echo "  FAIL 65535 arguments: got [$s] (want the 65534 limit named)"; fail=1;; esac
 [ $fail = 0 ] && echo "PASS: vm operand limits" || { echo "FAIL: vm operand limits"; exit 1; }
