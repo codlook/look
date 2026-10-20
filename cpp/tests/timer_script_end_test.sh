@@ -10,6 +10,8 @@
 #   * a script that waited, or cancelled its timer, writes no warning
 #   * exit() ends the script too: the same warning
 #   * in a web application timer::wait() is an error (a request does not wait for timers)
+#   * a parallel() task still running when the script ends stops with it, named in a WARN line;
+#     parallel::wait() lets it finish (it used to be waited for up to 5 s without a word)
 # Usage: timer_script_end_test.sh <lk> <lk-fcgi>
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> <lk-fcgi>}")" && pwd)/$(basename "$1")"
 FCGI="$(cd "$(dirname "${2:?usage: $0 <lk> <lk-fcgi>}")" && pwd)/$(basename "$2")"
@@ -50,6 +52,18 @@ run x.lk
 if [ "$rc" = 3 ] && [ "$(nwarn)" = 1 ] && echo "$err" | grep -qF 'never ran'; then
     ok "exit() ends the script: exit status kept, same warning"
 else bad "x.lk: rc=$rc err=[$err]"; fi
+
+# parallel() follows the same rule (it used to be waited for up to 5 s without a word)
+printf 'parallel(function() { $i = 0; while ($i < 30000000) { $i = $i + 1 } ; print("task done") })\nprint("end")\n' > "$TMP/p1.lk"
+run p1.lk
+if [ "$out" = end ] && [ "$(nwarn)" = 1 ] && echo "$err" | grep -qF '1 parallel() task was still running when the script ended and stopped with it. To wait for them, call parallel::wait()'; then
+    ok "a parallel() task still running when the script ends: it stops, one warning says to call parallel::wait()"
+else bad "p1.lk: out=[$out] err=[$err]"; fi
+printf 'parallel(function() { $i = 0; while ($i < 3000000) { $i = $i + 1 } ; print("task done") })\nparallel::wait()\nprint("end")\n' > "$TMP/p2.lk"
+run p2.lk
+if [ "$out" = "$(printf 'task done\nend')" ] && [ -z "$err" ]; then
+    ok "parallel::wait() lets the task finish; no warning"
+else bad "p2.lk: out=[$out] err=[$err]"; fi
 
 printf 'print("plain")\n' > "$TMP/p.lk"
 run p.lk

@@ -462,7 +462,7 @@ ran on the tree-walk engine as a whole. Their `print` output reaches stdout; the
 engine threw it away (fixed in 1.0.28 as well). `ws::` and `sse::` on the command line are an
 error: they belong to a web application.
 
-### A script ends when its last line has run — a warning names the timers left
+### A script ends when its last line has run — a warning names what was left — silent
 
 ```
 timer::after(400, function() { print("later") })
@@ -477,6 +477,12 @@ every `timer::after` callback has run and returns `true`, or `false` when `ms` (
 runs out — the same shape as `parallel::wait`. It does not wait for `timer::every`, which does
 not end; stop one with `timer::cancel($id)`. In a web application `timer::wait()` is an error:
 a request does not wait for timers.
+
+`parallel()` follows the same rule. In LOOK 1 the command line waited up to 5 seconds for
+tasks still running when the script ended, without saying so. Now a task still running stops
+with the script and one `WARN` line names it; to let it finish, call `parallel::wait([ms])`
+before the end. A script that collects its tasks' results with `receive()` already waits for
+them and is not affected.
 
 ## Not part of LOOK 2
 

@@ -317,7 +317,25 @@ static look::Value run_cli_closure(const CliCallbacks& cc, const look::Value& fn
     return look::Value();
 }
 // LOOK 2: betik bitince süreç biter (Go/Rust modeli: programın ömrünü üst düzey belirler, beklemek
-// açıkça yazılır). Sessizce değil: kurulu kalan zamanlayıcılar söylenir, beklemek için ne yazılacağıyla.
+// açıkça yazılır). Sessizce değil: kurulu kalan zamanlayıcılar ve bitmemiş parallel() görevleri
+// söylenir, beklemek için ne yazılacağıyla. (Eskiden parallel() görevleri örtük 5 sn bekleniyor,
+// zamanlayıcılar sessizce kayboluyordu — iki ayrı kural; artık tek kural.)
+static void warn_pending_timers();
+static int finish_script(int code) {
+    const int running = look::task_active();
+    if (running > 0)
+        look::Logger::instance().log(look::LogLevel::LOG_WARN, "parallel",
+            std::to_string(running) + (running == 1 ? " parallel() task was" : " parallel() tasks were") +
+            " still running when the script ended and stopped with it. To wait for them, call parallel::wait() before the script ends.");
+    warn_pending_timers();
+    if (running > 0) {
+        // Çalışan görevler süreç belleğini kullanırken statik yıkıcılar çalışmasın: doğrudan çık.
+        std::cout.flush();
+        std::cerr.flush();
+        std::_Exit(code);
+    }
+    return code;
+}
 static void warn_pending_timers() {
     const auto p = look::TimerManager::instance().pending();
     if (p.once > 0)
@@ -695,22 +713,14 @@ int main(int argc, char* argv[]) {
             // exit()/die() — NORMAL sonlanma, hata değil. Yakalanmıyordu: dıştaki genel
             // catch'e düşüp "Error: exit" basıyor ve kodu 1 döndürüyordu (exit(3) → 1).
             // cgi_main/fcgi_main zaten yakalıyordu — CLI eksikti.
-            look::task_wait(5000);   // arka plan parallel() task'larını bekle
-            warn_pending_timers();
-            return e.code();
+            return finish_script(e.code());
         } catch (const look::LookRuntimeError& e) {
             auto err = e;
             if (err.location.file.empty()) err.location.file = filename;
             std::cerr << err.format() << std::endl;
-            look::task_wait(3000); // drain parallel tasks before exit on error
-            return 1;
+            return finish_script(1);
         }
-
-        // Wait for any background parallel() tasks to finish.
-        // 5 s timeout — detached tasks that overstay are abandoned.
-        look::task_wait(5000);
-        warn_pending_timers();
-        return 0;
+        return finish_script(0);
     } catch (const look::LookRuntimeError& e) {
         std::cerr << e.format() << std::endl;
         return 1;
