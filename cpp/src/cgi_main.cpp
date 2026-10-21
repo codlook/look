@@ -19,21 +19,10 @@
 
 namespace fs = std::filesystem;
 
-// ── HTML escape ───────────────────────────────────────────────────────────────
-
-static std::string html_escape(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        switch (c) {
-            case '&':  out += "&amp;";  break;
-            case '<':  out += "&lt;";   break;
-            case '>':  out += "&gt;";   break;
-            case '"':  out += "&quot;"; break;
-            default:   out += c;
-        }
-    }
-    return out;
-}
+// Paylaşılan web motoru — http_main.cpp (lk-fcgi ile aynı)
+bool look_http_engine_ensure(const std::string& script_path, std::string& err);
+void look_app_dispatch(look::WebContext& web, std::ostringstream& output, const std::string& prof_path);
+void look_http_engine_set_quiet(bool quiet);   // açılış bilgi satırları yok — her istek ayrı süreç
 
 // ── Error response ────────────────────────────────────────────────────────────
 
@@ -74,15 +63,6 @@ static void send_error(int status, const std::string& title, const std::string& 
                   << "\"kod\":" << status << "}\n";
     }
 }
-
-// ── File helpers ──────────────────────────────────────────────────────────────
-
-static std::string read_file(const fs::path& path) {
-    std::ifstream f(path);
-    if (!f) throw std::runtime_error("Cannot open: " + path.string());
-    return std::string(std::istreambuf_iterator<char>(f), {});
-}
-
 
 // ── Resolve script path ───────────────────────────────────────────────────────
 
@@ -167,71 +147,29 @@ int main(int argc, char* argv[]) {
 #endif
         }
 
-        // NOT: eski ".look_cache/*.lkc" marker cache'i KALDIRILDI — bytecode
-        // serileştirmiyordu, execution'ı etkilemiyordu; sadece yanıltıcı
-        // artifact üretiyordu (deploy'larda "stale cache" karmaşasının kaynağı).
-        std::string source = read_file(script);
+        // LOOK 2 (tek motor, adım 7): CGI de lk-fcgi'nin web motorunu kullanır — kurulum (üst düzey
+        // VM'de bir kez), rota eşleştirme, 404, script modu, hata yanıtı. Eskiden CGI betiği her
+        // istekte yorumlayıcıda baştan çalıştırıyordu: aynı program CGI'da ve FastCGI'da iki ayrı
+        // motorla koşuyordu. Bir CGI süreci tek istek yaşar: "kurulum + bir istek" = eski "betiği bir
+        // kez çalıştır".
+        std::string setup_err;
+        look_http_engine_set_quiet(true);   // stderr = Apache hata günlüğü: başarılı istekte sessiz
+        if (!look_http_engine_ensure(script.string(), setup_err)) {
+            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "CGI",
+                "Setup error: " + setup_err + " | " + script_path);
+            send_error(500, "Setup Error", setup_err);
+            return 1;
+        }
 
-        // ── Web context ───────────────────────────────────────────────────────
         look::WebContext web;
         web.init_from_cgi();
-
-        // ── Parse ─────────────────────────────────────────────────────────────
-        look::Lexer  lexer(source);
-        auto         tokens  = lexer.scan_tokens();
-        look::Parser parser(std::move(tokens));
-        std::unique_ptr<look::Program> program;
-        try {
-            program = parser.parse();
-        } catch (const look::LookParseError& e) {
-            auto err = e;
-            if (err.file.empty()) err.file = script_path;
-            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "CGI", err.format());
-            send_error(500, "Parse Error", err.format());
-            return 1;
-        }
-
-        // ── Execute ───────────────────────────────────────────────────────────
         std::ostringstream output;
-        look::Interpreter interp(output);
-        interp.set_web_context(&web);
-        interp.set_file(script_path);
-
-        try {
-            interp.interpret(*program);
-        } catch (const look::RouteMatchedException&) {
-            // Normal — route() flow control
-        } catch (const look::ExitException&) {
-            // exit() / die() — temiz cikis, response gonder
-        } catch (const look::LookRuntimeError& e) {
-            auto err = e;
-            if (err.location.file.empty()) err.location.file = script_path;
-            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "CGI", err.format());
-            send_error(500, "Runtime Error", err.format());
-            return 1;
-        }
-
-        // ── 404 handler ───────────────────────────────────────────────────────
-        // route() kullanilmis ama hicbiri eslesmediyse
-        bool used_routing = (source.find("route(") != std::string::npos);
-        if (used_routing && !web.route_matched) {
-            web.set_status(404);
-            // route("404", callback) tanimli mi?
-            try {
-                look::Value handler = interp.get_global("__404_handler__");
-                if (handler.type() == look::Value::FUNCTION) {
-                    interp.invoke(handler, {});
-                }
-            } catch (...) {
-                // 404 handler tanimli degil — varsayilan mesaj
-                output << "404 Not Found";
-            }
-        }
+        look_app_dispatch(web, output, web.path);
 
         // ── Response ──────────────────────────────────────────────────────────
+        // FastCGI ile aynı: response:: gövdesi varsa o, yoksa print çıktısı.
         std::cout << web.build_headers();
-        std::cout << output.str();          // print() / echo çıktısı
-        std::cout << web.response_body;      // response::json/text/html/error gövdesi
+        std::cout << (web.response_body.empty() ? output.str() : web.response_body);
 
     } catch (const std::exception& e) {
         // Production: log'a yaz, kullaniciya temiz sayfa

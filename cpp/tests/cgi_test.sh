@@ -7,6 +7,8 @@
 #   * a path no route matches gets 404, and route("404", fn) answers it with status 404
 #   * a script without routes runs whole and its output is the body
 #   * a run-time error in a handler is a 500; a script that does not load is an error status
+#   * LOOK 2: the application runs on the VM (the web engine of lk-fcgi) — a rule only the VM
+#     applies stops it at load
 # Usage: cgi_test.sh <lk-cgi>
 CGI="$(cd "$(dirname "${1:?usage: $0 <lk-cgi>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -17,7 +19,8 @@ bad() { echo "  FAIL $1"; fail=1; }
 req() {
     local script="$1" method="$2" path="$3" query="${4:-}" data="${5:-}"
     local raw
-    raw="$(cd "$TMP" && printf '%s' "$data" | env -i PATH="$PATH" APP_ENV=development \
+    # MSYS2_ENV_CONV_EXCL: Git Bash (Windows) would turn PATH_INFO=/u/42 into a Windows path.
+    raw="$(cd "$TMP" && printf '%s' "$data" | env -i PATH="$PATH" APP_ENV=development MSYS2_ENV_CONV_EXCL="PATH_INFO;REQUEST_URI" \
         REQUEST_METHOD="$method" SCRIPT_FILENAME="$TMP/$script" PATH_INFO="$path" REQUEST_URI="$path${query:+?$query}" \
         QUERY_STRING="$query" CONTENT_TYPE="application/json" CONTENT_LENGTH="${#data}" \
         GATEWAY_INTERFACE="CGI/1.1" "$CGI" 2>/dev/null | tr -d '\r')"
@@ -73,5 +76,18 @@ req script.lk GET /
 printf 'route("GET", "/", fn() => response::text("x")\n' > "$TMP/broken.lk"
 req broken.lk GET /
 [ "${status:-200}" -ge 500 ] && ok "a script that does not load is an error status ($status)" || bad "broken: status=$status body=[$body]"
+
+# LOOK 2: the application runs on the VM — a rule only the VM applies stops it at load, the reason
+# in the development error body
+printf 'use array\n$a = [1]\narray::push($a, 2)\nroute("GET", "/", fn() => response::text("x"))\n' > "$TMP/vmrule.lk"
+req vmrule.lk GET /
+if [ "${status:-200}" -ge 500 ] && echo "$body" | grep -q 'the result of array::push() is not used'; then
+    ok "the application runs on the VM (a discarded array::push stops it at load, the reason is in the body)"
+else bad "vm rule: status=$status body=[$body]"; fi
+
+# a request that succeeds writes nothing on stderr (Apache's error log): no start-up banner per request
+err="$(cd "$TMP" && env -i PATH="$PATH" MSYS2_ENV_CONV_EXCL="PATH_INFO;REQUEST_URI" REQUEST_METHOD=GET SCRIPT_FILENAME="$TMP/app.lk" PATH_INFO=/ REQUEST_URI=/ \
+       GATEWAY_INTERFACE="CGI/1.1" "$CGI" 2>&1 >/dev/null)"
+[ -z "$err" ] && ok "a request that succeeds writes nothing on stderr (Apache's error log)" || bad "stderr: [$(echo "$err" | head -3)]"
 
 [ $fail = 0 ] && echo "PASS: lk-cgi serves a LOOK application" || { echo "FAIL: lk-cgi"; exit 1; }

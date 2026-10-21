@@ -174,6 +174,10 @@ add_executable(look
 
 add_executable(look-cgi
     src/cgi_main.cpp
+    src/http_main.cpp   # LOOK 2: lk-cgi, lk-fcgi ile aynı web motoru — VM
+    src/http_server.cpp
+    src/compiler.cpp
+    src/vm.cpp
     src/event_loop.cpp
     ${LOOK_CORE}
 )

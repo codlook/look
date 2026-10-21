@@ -10,6 +10,7 @@
 #   * the same for a before_route, which every route passes through
 #   * `lk --check` reports it for a core module, exit status 1
 #   * an application without the mistake starts
+#   * a hot reload into a version with the mistake keeps the server up (500) and recovers when fixed
 # Usage: undefined_function_startup_test.sh <lk> <lk-fcgi>
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> <lk-fcgi>}")" && pwd)/$(basename "$1")"
 FCGI="$(cd "$(dirname "${2:?usage: $0 <lk> <lk-fcgi>}")" && pwd)/$(basename "$2")"
@@ -36,7 +37,7 @@ for mode in "LOOK_X=1" "LOOK_VM_STRICT=1"; do
     for app in "route.lk GET:/rare string::uper" "mw.lk GET:/ok session::ident"; do
         set -- $app
         ( cd "$TMP" && exec env $mode timeout 5 "$FCGI" --mode http --port "$PORT" --workers 1 "$1" > "$TMP/log.txt" 2>&1 ); rc=$?
-        if [ "$rc" = "1" ] && grep -q "Error: route $2 calls $3(), which does not exist" "$TMP/log.txt"; then
+        if [ "$rc" = "1" ] && grep -q "route $2 calls $3(), which does not exist" "$TMP/log.txt"; then
             echo "  OK   [$mode] $1 does not start: the route and $3 are named"
         else echo "  FAIL [$mode] $1: exit=$rc (124 = it started) log: $(grep -m1 -i 'error' "$TMP/log.txt" | cut -c1-140)"; fail=1; fi
     done
@@ -45,6 +46,20 @@ done
 for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
 g="$(curl -s -m 3 "localhost:$PORT/ok")"; kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
 if [ "$g" = "OK" ]; then echo "  OK   an application without the mistake starts and answers"; else echo "  FAIL good.lk answered [$g]"; fail=1; fi
+# hot reload into a version with the mistake: the server stays up and answers 500, the reason is
+# logged; fixed again, it answers (it used to exit — std::exit — and take every request down)
+cp "$TMP/good.lk" "$TMP/live.lk"
+( cd "$TMP" && exec env LOOK_HOT_RELOAD_MS=0 "$FCGI" --mode http --port "$PORT" --workers 1 live.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
+sleep 1.1; cp "$TMP/route.lk" "$TMP/live.lk"; touch "$TMP/live.lk"
+bad_code="$(curl -s -o /dev/null -w '%{http_code}' -m 3 "localhost:$PORT/ok")"
+alive=no; kill -0 "$pid" 2>/dev/null && alive=yes
+sleep 1.1; cp "$TMP/good.lk" "$TMP/live.lk"; touch "$TMP/live.lk"
+fixed="$(curl -s -m 3 "localhost:$PORT/ok")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$bad_code" = 500 ] && [ "$alive" = yes ] && [ "$fixed" = OK ] && grep -q "which does not exist" "$TMP/log.txt"; then
+    echo "  OK   a hot reload with the mistake keeps the server up (500, reason logged); fixed, it answers again"
+else echo "  FAIL hot reload: code=$bad_code alive=$alive fixed=[$fixed] log=[$(grep -m1 -i 'does not exist' "$TMP/log.txt" | cut -c1-100)]"; fail=1; fi
 out="$("$LK" --check "$TMP/route.lk" 2>/dev/null)"; rc=$?
 if [ "$rc" = "1" ] && echo "$out" | grep -q '^CHECK .*\[undefined-function\] string::uper() does not exist'; then echo "  OK   lk --check reports it and fails"
 else echo "  FAIL lk --check: exit=$rc [$out]"; fail=1; fi

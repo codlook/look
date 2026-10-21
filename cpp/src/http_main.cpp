@@ -438,6 +438,18 @@ static bool proto_needs_interpreter(const look::FunctionProto* p,
     return false;
 }
 
+// Açılış bilgi satırları ([BYTECODE] …, "VM dispatch ready") — uzun ömürlü sunucu için anlamlı.
+// lk-cgi her istekte yeni süreçtir: stderr Apache'nin hata günlüğüne gider → orada her istekte
+// gürültü olurdu (eski lk-cgi başarılı istekte stderr'e hiçbir şey yazmıyordu). CGI kapatır;
+// uyarı ve hatalar her zaman yazılır.
+static bool g_http_quiet_startup = false;
+void look_http_engine_set_quiet(bool quiet) { g_http_quiet_startup = quiet; }
+static void startup_note(const std::string& stderr_line, const std::string& log_line = "") {
+    if (g_http_quiet_startup) return;
+    std::cerr << stderr_line << "\n";
+    if (!log_line.empty()) look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", log_line);
+}
+
 // LOOK 2 tek motor: program derlenemiyorsa uygulama BAŞLAMAZ (eskiden bütün uygulama sessizce
 // ~40× yavaş yorumlayıcıya düşüyordu; LOOK_VM_STRICT yalnız bunu reddetmenin yoluydu — artık
 // tek davranış budur). Derleme hatası programın hatasıdır (eksik dosya, bilinmeyen modül, sınır
@@ -515,15 +527,13 @@ static void run_setup_http(const fs::path& script) {
     g_http_app.use_bytecode = false;
     {
         try {
-            std::cerr << "[BYTECODE] Compiling...\n";
+            startup_note("[BYTECODE] Compiling...");
             auto compiled = std::make_unique<look::CompiledProgram>(
                 look::Compiler::compile(*g_http_app.program,
                                         g_http_app.script_path.parent_path().string()));
             g_http_app.compiled     = std::move(compiled);
             g_http_app.use_bytecode = true;
-            std::cerr << "[BYTECODE] OK — VM mode active\n";
-            look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
-                "Bytecode compile OK — VM mode active");
+            startup_note("[BYTECODE] OK — VM mode active", "Bytecode compile OK — VM mode active");
         } catch (const std::exception& e) {
             refuse_start(e.what());
         } catch (...) {
@@ -856,19 +866,21 @@ static void run_setup_http(const fs::path& script) {
                         for (const auto& mw : g_http_app.vm_routes[i].middlewares)
                             if (!n && needs(mw, which)) n = true;
                         if (!n) continue;
-                        std::cerr << "Error: route " << g_http_app.vm_routes[i].pattern << " calls " << which
-                                  << "(), which does not exist — check the spelling of the module and the function." << std::endl;
-                        std::exit(1);
+                        // İstisna — std::exit DEĞİL: ilk açılışta çağıran yazıp 1 koduyla çıkar; sıcak
+                        // yeniden yüklemede sunucu ayakta kalır (istekler 500); lk-cgi bir hata yanıtı
+                        // yazar. ESKİ HATA: exit(1) yeniden yüklemede bütün sunucuyu öldürüyordu.
+                        g_http_app.vm_routes_ready = false;
+                        throw std::runtime_error("route " + g_http_app.vm_routes[i].pattern + " calls " + which +
+                            "(), which does not exist — check the spelling of the module and the function.");
                     }
                 }
-                std::cerr << "[BYTECODE] VM routes: " << g_http_app.vm_routes.size() << " registered\n";
-                look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
-                    "VM dispatch ready — " + std::to_string(g_http_app.vm_routes.size()) + " route");
+                startup_note("[BYTECODE] VM routes: " + std::to_string(g_http_app.vm_routes.size()) + " registered",
+                             "VM dispatch ready — " + std::to_string(g_http_app.vm_routes.size()) + " route");
             } else {
                 // Rota kaydetmeyen betik (PHP gibi): her istek programın tamamını VM'de baştan çalıştırır.
                 g_http_app.vm_routes_ready = true;
                 g_http_app.script_mode     = true;
-                std::cerr << "[BYTECODE] no routes — each request runs the whole script on the VM\n";
+                startup_note("[BYTECODE] no routes — each request runs the whole script on the VM");
             }
         } catch (const std::exception& e) {
             // Kurulum yalnız VM'de koşuyor: buradaki hata programın KENDİ hatasıdır (eksik argüman,

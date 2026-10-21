@@ -207,6 +207,12 @@ jobs:
           cd cpp
           bash tests/cgi_test.sh ./build/lk-cgi
 
+      # httpoxy: under CGI a Proxy: request header becomes HTTP_PROXY; http:: must not use it.
+      - name: No httpoxy under lk-cgi
+        run: |
+          cd cpp
+          bash tests/httpoxy_test.sh ./build/lk-cgi
+
       # A host function value (lk test helpers) travels like any function value: parallel, timer,
       # cache, json, type::of, == — no crash, errors named.
       - name: Host function values at the boundaries

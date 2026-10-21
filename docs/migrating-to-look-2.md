@@ -454,6 +454,19 @@ $notes = array::push($notes, $note) # what was meant
 
 LOOK 1 (1.0.26) reports both with a warning and runs the program.
 
+### `lk-cgi` uses the web server's engine — silent
+
+`lk-cgi` (the binary Apache and Plesk run once per request) ran the whole script on the
+tree-walk engine for every request. It now uses the same engine as `lk-fcgi`: the top level
+runs once on the VM, then the request is dispatched. A program behaves the same under CGI and
+FastCGI.
+
+- What the VM refuses at load (see above) is a `500` with the reason in the development
+  error body.
+- A route that both prints and returns a `response::` value answers with the `response::`
+  body only, as `lk-fcgi` does (CGI wrote both, one after the other).
+- A request that succeeds writes nothing to stderr — Apache's error log — as before.
+
 ### `lk test` and `lk repl` run on the VM — error at load
 
 Test files and REPL lines used to run on the tree-walk engine, so a test did not exercise the
