@@ -13,8 +13,7 @@ cmake --build build-tsan --target look -j"$(nproc)"
 
 ## `tsan/` — yarış testleri (bu dizin)
 
-`build-tsan/lk` ile çalıştırın. Her testi **iki motorda da** koşun
-(`LOOK_CLI_VM=0` ile ve olmadan) — bulguların biri yalnızca VM yolunda çıkıyor.
+`build-tsan/lk` ile çalıştırın (LOOK 2'de tek motor: VM).
 
 İki gruba ayrıldı — **CI ilk günden yeşil başlasın diye:**
 

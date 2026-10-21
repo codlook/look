@@ -19,16 +19,14 @@ route("GET", "/arm/{k}", function() { $k = request::param("k"); timer::after(50,
 route("GET", "/ran/{k}", fn() => response::json(cache::get("ran_" . request::param("k")) ?? "no"))
 LK
 fail=0
-for mode in "LOOK_BYTECODE=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ran/x" && break; sleep 0.1; done
-    got=""
-    for k in a b c; do
-        curl -s -m 3 "localhost:$PORT/arm/$k" >/dev/null; sleep 0.5
-        got="$got$(curl -s -m 3 "localhost:$PORT/ran/$k")"; sleep 0.5
-    done
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$got" = '"yes""yes""yes"' ]; then echo "  OK   [$mode] three timers armed one second apart each fired on time"
-    else echo "  FAIL [$mode] fired within 0.5 s: $got (want \"yes\" three times)"; fail=1; fi
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ran/x" && break; sleep 0.1; done
+got=""
+for k in a b c; do
+    curl -s -m 3 "localhost:$PORT/arm/$k" >/dev/null; sleep 0.5
+    got="$got$(curl -s -m 3 "localhost:$PORT/ran/$k")"; sleep 0.5
 done
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$got" = '"yes""yes""yes"' ]; then echo "  OK   three timers armed one second apart each fired on time"
+else echo "  FAIL fired within 0.5 s: $got (want \"yes\" three times)"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: timers fire when they are due" || { echo "FAIL: a timer fired late or not at all"; exit 1; }

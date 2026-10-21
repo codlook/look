@@ -39,18 +39,16 @@ route("GET", "/r", fn() use ($U) => response::json(["const" => LIST[0], "global"
 LK
 WANT='{"const":"c0","global":"g0","nested":"n0","use":"u0","count":1,"pushed":1,"nested_pushed":1,"popped":2}'
 fail=0
-for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
-    before="$(curl -s -m 3 "localhost:$PORT/r")"
-    w="$(curl -s -m 3 "localhost:$PORT/w?u=LEAK")"
-    after="$(curl -s -m 3 "localhost:$PORT/r")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    # The writing request must see its own writes; the captured value stays what it was.
-    [ "$w" = '[2,"LEAK","LEAK","LEAK","u0",5]' ] || { echo "  FAIL [$mode] the writing request did not see its own writes: $w $(grep -m1 ERROR "$TMP/log.txt" | cut -c1-160)"; fail=1; }
-    if [ "$before" = "$WANT" ] && [ "$after" = "$WANT" ]; then echo "  OK   [$mode] the next request reads the declared values"
-    else echo "  FAIL [$mode] before=$before"; echo "       [$mode] after =$after"; fail=1; fi
-done
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
+before="$(curl -s -m 3 "localhost:$PORT/r")"
+w="$(curl -s -m 3 "localhost:$PORT/w?u=LEAK")"
+after="$(curl -s -m 3 "localhost:$PORT/r")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+# The writing request must see its own writes; the captured value stays what it was.
+[ "$w" = '[2,"LEAK","LEAK","LEAK","u0",5]' ] || { echo "  FAIL the writing request did not see its own writes: $w $(grep -m1 ERROR "$TMP/log.txt" | cut -c1-160)"; fail=1; }
+if [ "$before" = "$WANT" ] && [ "$after" = "$WANT" ]; then echo "  OK   the next request reads the declared values"
+else echo "  FAIL before=$before"; echo "       after =$after"; fail=1; fi
 
 # A handler that writes to what it captured must not load: nothing is served.
 cat > "$TMP/bad1.lk" <<'LK'
@@ -70,12 +68,10 @@ function mk() { $n = [0]
 route("GET", "/ok", fn() => "served")
 LK
 for app in bad1 bad2 bad3; do
-    for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-        ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 $app.lk > "$TMP/bad.txt" 2>&1 ) & pid=$!
-        sleep 0.8; got="$(curl -s -m 2 "localhost:$PORT/ok")"
-        kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-        if [ "$got" != "served" ] && grep -q "captures the value and cannot change it" "$TMP/bad.txt"; then echo "  OK   [$mode] refused at load: $app"
-        else echo "  FAIL [$mode] $app: a handler writing to a captured variable was loaded (got=[$got]): $(head -2 "$TMP/bad.txt" | tr '\n' ' ' | cut -c1-200)"; fail=1; fi
-    done
+    ( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 $app.lk > "$TMP/bad.txt" 2>&1 ) & pid=$!
+    sleep 0.8; got="$(curl -s -m 2 "localhost:$PORT/ok")"
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+    if [ "$got" != "served" ] && grep -q "captures the value and cannot change it" "$TMP/bad.txt"; then echo "  OK   refused at load: $app"
+    else echo "  FAIL $app: a handler writing to a captured variable was loaded (got=[$got]): $(head -2 "$TMP/bad.txt" | tr '\n' ' ' | cut -c1-200)"; fail=1; fi
 done
 [ $fail = 0 ] && echo "PASS: requests are isolated from each other" || { echo "FAIL: request isolation"; exit 1; }

@@ -24,15 +24,13 @@ route("GET", "/n", fn() => response::json(["handled" => db::query(conn(), "SELEC
                                             "distinct" => db::query(conn(), "SELECT COUNT(DISTINCT job_id) AS c FROM seen")[0]["c"]]))
 LK
 fail=0
-for mode in "LOOK_X=1" "LOOK_BYTECODE=0"; do
-    rm -f "$TMP"/*.db*
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 8 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/n" && break; sleep 0.1; done
-    curl -s -m 30 "localhost:$PORT/fill" >/dev/null
-    pids=""; for i in 1 2 3 4 5 6 7 8; do curl -s -m 60 -o /dev/null "localhost:$PORT/drain" & pids="$pids $!"; done; wait $pids
-    got="$(curl -s -m 5 "localhost:$PORT/n")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$got" = '{"handled":300,"distinct":300}' ]; then echo "  OK   [$mode] 300 jobs, 8 consumers at once: each handled exactly once"
-    else echo "  FAIL [$mode] $got (want 300 handled, 300 distinct)"; fail=1; fi
-done
+rm -f "$TMP"/*.db*
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 8 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/n" && break; sleep 0.1; done
+curl -s -m 30 "localhost:$PORT/fill" >/dev/null
+pids=""; for i in 1 2 3 4 5 6 7 8; do curl -s -m 60 -o /dev/null "localhost:$PORT/drain" & pids="$pids $!"; done; wait $pids
+got="$(curl -s -m 5 "localhost:$PORT/n")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$got" = '{"handled":300,"distinct":300}' ]; then echo "  OK   300 jobs, 8 consumers at once: each handled exactly once"
+else echo "  FAIL $got (want 300 handled, 300 distinct)"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: concurrent consumers never handle a job twice" || { echo "FAIL: a job was handled more than once or lost"; exit 1; }

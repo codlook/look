@@ -10,8 +10,9 @@
 # dispatch copy in fiber mode (the VM path was already safe via a per-request
 # builtins snapshot). See look_app_dispatch() in cpp/src/http_main.cpp.
 #
-# This guard runs the two fiber configurations and asserts zero cross-request
-# leakage. The interpreter+fiber row is the one that used to fail 80/80.
+# This guard runs the VM under fiber dispatch and asserts zero cross-request
+# leakage. (The interpreter+fiber row, the one that used to fail 80/80, went
+# away with the tree-walk interpreter.)
 #
 # Requirements: Linux (fiber-burst is Linux-only) + python3 + curl. Skips (exit
 # 0 with a notice) when unavailable so it is safe to call from any CI job.
@@ -27,8 +28,6 @@ if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; th
 fi
 
 rc=0
-echo "== interpreter path + fiber (regression case) =="
-LOOK_BYTECODE=0 bash "$DIR/run.sh" "$BIN" fiber || rc=1
 echo "== VM path + fiber =="
 bash "$DIR/run.sh" "$BIN" fiber || rc=1
 

@@ -168,13 +168,13 @@ run() {   # $1 = dispatch setting
         else want="$MANY/$MANY"; label="$MANY waiting writes, pool of 4, $WORKERS workers"; fi
         # the case is only reached when the writes really waited for the lock
         if [ -z "$slow" ] || ! python3 -c "import sys; sys.exit(0 if $slow >= 1.0 else 1)"; then
-            echo "  FAIL [$1] $label: the writes did not wait for the lock ($out) — the test did not reach its case"; fail=1
+            echo "  FAIL [${1:-default}] $label: the writes did not wait for the lock ($out) — the test did not reach its case"; fail=1
         elif [ "$okn" != "$want" ]; then
-            echo "  FAIL [$1] $label: writes failed ($out)"; fail=1
+            echo "  FAIL [${1:-default}] $label: writes failed ($out)"; fail=1
         elif python3 -c "import sys; sys.exit(0 if $max < 0.3 else 1)"; then
-            echo "  OK   [$1] $label: plain route answered in at most ${max} s (writes waited ${slow} s)"
+            echo "  OK   [${1:-default}] $label: plain route answered in at most ${max} s (writes waited ${slow} s)"
         else
-            echo "  FAIL [$1] $label: a plain route waited ${max} s while database writes waited ($out)"; fail=1
+            echo "  FAIL [${1:-default}] $label: a plain route waited ${max} s while database writes waited ($out)"; fail=1
         fi
     done
     # A long CPU-bound SQLite statement (no lock, no server): it gives the other requests a turn
@@ -184,10 +184,10 @@ run() {   # $1 = dispatch setting
     max="$(echo "$out" | sed -n 's/^max=\([0-9.]*\).*/\1/p')"
     slow="$(echo "$out" | sed -n 's/.* slow=\([0-9.]*\).*/\1/p')"
     if [ -z "$slow" ] || ! python3 -c "import sys; sys.exit(0 if $slow >= 0.3 else 1)"; then
-        echo "  FAIL [$1] long SQLite statement: it did not run long enough ($out) — the test did not reach its case"; fail=1
+        echo "  FAIL [${1:-default}] long SQLite statement: it did not run long enough ($out) — the test did not reach its case"; fail=1
     elif echo "$out" | grep -q 'ok=1/1' && python3 -c "import sys; sys.exit(0 if $max < 0.3 else 1)"; then
-        echo "  OK   [$1] long CPU-bound SQLite statement: plain route answered in at most ${max} s (statement took ${slow} s)"
-    else echo "  FAIL [$1] long CPU-bound SQLite statement: a plain route waited ${max} s ($out)"; fail=1; fi
+        echo "  OK   [${1:-default}] long CPU-bound SQLite statement: plain route answered in at most ${max} s (statement took ${slow} s)"
+    else echo "  FAIL [${1:-default}] long CPU-bound SQLite statement: a plain route waited ${max} s ($out)"; fail=1; fi
     for ext in pg my; do
         if [ $ext = pg ]; then dsn="${PG_DSN:-}"; label="one pg_sleep(1) on PostgreSQL"
         else dsn="${MY_DSN:-}"; label="one SLEEP(1) on MySQL"
@@ -197,16 +197,16 @@ run() {   # $1 = dispatch setting
         max="$(echo "$out" | sed -n 's/^max=\([0-9.]*\).*/\1/p')"
         slow="$(echo "$out" | sed -n 's/.* slow=\([0-9.]*\).*/\1/p')"
         if [ -n "$max" ] && echo "$out" | grep -q 'ok=1/1' && python3 -c "import sys; sys.exit(0 if $slow >= 0.9 and $max < 0.3 else 1)"; then
-            echo "  OK   [$1] $label: plain route answered in at most ${max} s (query took ${slow} s)"
-        else echo "  FAIL [$1] $label: $out"; fail=1; fi
+            echo "  OK   [${1:-default}] $label: plain route answered in at most ${max} s (query took ${slow} s)"
+        else echo "  FAIL [${1:-default}] $label: $out"; fail=1; fi
     done
     curl -s -o /dev/null -m 5 "localhost:$PORT/count"   # warm
     out="$(timeout 120 python3 check.py "$PORT" tx 2>&1 | tail -1)"
     count="$(curl -s -m 10 "localhost:$PORT/count")"
     want="tx=1200 w=$((MANY + 1)) "
     if echo "$out" | grep -q "^codes={200: 600}" && [ "$count" = "$want" ]; then
-        echo "  OK   [$1] 600 transactions from 40 clients on a pool of 4 all finished, rows exact (${out##* })"
-    else echo "  FAIL [$1] transactions: $out, rows [$count] (want $want)"; fail=1; fi
+        echo "  OK   [${1:-default}] 600 transactions from 40 clients on a pool of 4 all finished, rows exact (${out##* })"
+    else echo "  FAIL [${1:-default}] transactions: $out, rows [$count] (want $want)"; fail=1; fi
     # A database server that accepts the connection and never answers: the query ends with an
     # error after query_timeout (1 s here). Up to 1.0.21 the fiber wait had no limit — the
     # request waited forever (the worker model gave up after the timeout).
@@ -214,14 +214,14 @@ run() {   # $1 = dispatch setting
     code="$(curl -s -m 15 -o /dev/null -w '%{http_code}' "localhost:$PORT/silent")"
     ms=$(( ($(date +%s%N) - t0) / 1000000 ))
     if [ "$code" = 500 ] && [ $ms -lt 5000 ] && grep -q 'query timeout' "$TMP/log.txt"; then
-        echo "  OK   [$1] silent database server: query timed out after ${ms} ms"
-    else echo "  FAIL [$1] silent database server: HTTP $code after ${ms} ms (want 500 after about 1 s)"; fail=1; fi
+        echo "  OK   [${1:-default}] silent database server: query timed out after ${ms} ms"
+    else echo "  FAIL [${1:-default}] silent database server: HTTP $code after ${ms} ms (want 500 after about 1 s)"; fail=1; fi
     out="$(timeout 120 python3 check.py "$PORT" mine 2>&1 | tail -1)"
-    if [ "$out" = "bad=0 []" ]; then echo "  OK   [$1] 640 transactions each kept one connection (temporary table held the request's own value)"
-    else echo "  FAIL [$1] connection inside a transaction: $out"; fail=1; fi
+    if [ "$out" = "bad=0 []" ]; then echo "  OK   [${1:-default}] 640 transactions each kept one connection (temporary table held the request's own value)"
+    else echo "  FAIL [${1:-default}] connection inside a transaction: $out"; fail=1; fi
     cd - >/dev/null
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
 }
-run LOOK_X=1
+run ""   # default (fibers)
 run LOOK_FIBER_DISPATCH=0
 [ $fail = 0 ] && echo "PASS: a waiting database query does not hold other requests" || { echo "FAIL: a waiting database query held other requests"; exit 1; }

@@ -1,4 +1,4 @@
-// ++ and -- on an element or a field behave like ++ and -- on a variable, on both engines.
+// ++ and -- on an element or a field behave like ++ and -- on a variable.
 $ok = 0; $bad = 0
 function t($name, $got, $want) {
     if ($got == $want) { print("  OK   " . $name . "\n"); return 1 }

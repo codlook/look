@@ -4,9 +4,9 @@
 # "member") and a literal with an unknown field was silently accepted, while the
 # tree-walk interpreter applied defaults and rejected the field. No test used structs,
 # so the differential guard never saw it. This file deliberately uses NO non-builtin
-# module functions: those make the CLI fall back to tree-walk silently, which would
-# hide exactly this bug (that is why differential_body.lk alone could not catch it on
-# the CLI column). Run: lk tests/struct_vm_parity_test.lk (VM) and with LOOK_CLI_VM=0.
+# module functions: those used to make the CLI fall back to tree-walk silently, which
+# hid exactly this bug (that is why differential_body.lk alone could not catch it on
+# the CLI column). Run: lk tests/struct_vm_parity_test.lk
 use json
 
 function chk($label, $got, $want) {

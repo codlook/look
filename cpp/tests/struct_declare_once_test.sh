@@ -11,12 +11,10 @@
 LK="${1:?usage: $0 <lk>}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fail=0
-check() {  # label source want-substring [envs]
+check() {  # label source want-substring
     printf '%s\n' "$2" > "$TMP/t.lk"
-    for env in ${4:-LOOK_VM_STRICT=1 LOOK_X=1}; do
-        out="$(env $env "$LK" "$TMP/t.lk" 2>&1)"
-        case "$out" in *"$3"*) echo "  OK   [$env] $1";; *) echo "  FAIL [$env] $1: $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; fail=1;; esac
-    done
+    out="$("$LK" "$TMP/t.lk" 2>&1)"
+    case "$out" in *"$3"*) echo "  OK   $1";; *) echo "  FAIL $1: $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; fail=1;; esac
 }
 TOP="must be declared at the top level of a file"
 check "inside a function"  'function f() { struct A { n int } }
@@ -41,17 +39,16 @@ struct A { a int = 1
 $x = A{}
 print("a=" . $x.a)'                                                  "a=1"
 
-# Across files: the VM does not run file includes, so these run on the default CLI path
-# (which hands such a script to the tree-walk engine) and on the tree-walk engine directly.
+# Across files: a file loaded with `use` declares the same struct name.
 printf 'struct Shared { a int = 1\n  b int = 2 }\n' > "$TMP/same.lk"
 printf 'struct Shared { b int = 2\n  a int = 1 }\n' > "$TMP/other.lk"
 check "different fields, another file" 'struct Shared { a int = 1
   b int = 2 }
 use "other.lk"
-print("ran")'                                                        "struct 'Shared' is already declared at" "LOOK_X=1 LOOK_X=1"
+print("ran")'                                                        "struct 'Shared' is already declared at"
 check "identical, another file" 'struct Shared { a int = 1
   b int = 2 }
 use "same.lk"
 $s = Shared{}
-print("b=" . $s.b)'                                                  "b=2" "LOOK_X=1 LOOK_X=1"
+print("b=" . $s.b)'                                                  "b=2"
 [ $fail = 0 ] && echo "PASS: a struct is declared once, at the top level" || { echo "FAIL: struct declare once"; exit 1; }

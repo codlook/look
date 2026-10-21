@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# A top-level variable computed with a built-in function has the same value in a route on
-# both engines.
+# A top-level variable computed with a built-in function has the same value in a route.
 #
-# The top level of a web application is run twice at startup, once per engine. In the VM's
+# The top level of a web application used to run twice at startup, once per engine. In the VM's
 # pass the plain built-ins — strtoupper, strtolower, max, min, abs, sqrt, strlen, join,
 # string, bool — were not connected and returned null, so
 #     $limit = max(10, int(env("PAGE_SIZE", "20")))
@@ -40,12 +39,10 @@ route("GET", "/in", fn() => response::json(["upper" => strtoupper("abc"), "lower
 LK
 WANT='{"upper":"ABC","lower":"abc","max":9,"min":3,"abs":4,"sqrt":9,"strlen":5,"join":"1,2","string":"42","bool":true,"count":3,"conv":"571.5","module":"X4","limit":20}'
 fail=0
-for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/in" && break; sleep 0.1; done
-    top="$(curl -s -m 3 "localhost:$PORT/top")"; in="$(curl -s -m 3 "localhost:$PORT/in")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$top" = "$WANT" ] && [ "$in" = "$WANT" ]; then echo "  OK   [$mode] 14 values: the same computed at the top level and inside a route"
-    else echo "  FAIL [$mode] top level: $top"; echo "       [$mode] in route:  $in"; fail=1; fi
-done
-[ $fail = 0 ] && echo "PASS: built-ins give the same value at the top level on both engines" || { echo "FAIL: top-level built-ins"; exit 1; }
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/in" && break; sleep 0.1; done
+top="$(curl -s -m 3 "localhost:$PORT/top")"; in="$(curl -s -m 3 "localhost:$PORT/in")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$top" = "$WANT" ] && [ "$in" = "$WANT" ]; then echo "  OK   14 values: the same computed at the top level and inside a route"
+else echo "  FAIL top level: $top"; echo "       in route:  $in"; fail=1; fi
+[ $fail = 0 ] && echo "PASS: built-ins give the same value at the top level and in a route" || { echo "FAIL: top-level built-ins"; exit 1; }

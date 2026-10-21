@@ -3,7 +3,6 @@
 # Found by a dogfood — /p/%C3%BC gave "%C3%BC" (raw) instead of "ü": query params were
 # decoded but path params were not (the sibling-path-lagged-behind class). Both the function
 # argument and request::param() must decode; '+' stays literal in a path (not a space).
-# Runs both dispatch engines (bytecode VM default, tree-walk via LOOK_BYTECODE=0).
 set -u
 FCGI="${1:?usage: route_param_decode.sh <lk-fcgi>}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,15 +19,11 @@ check() {  # label  expected
   else echo "  ok   /p/$1 -> $got"; fi
 }
 
-for eng in "VM:" "tree-walk:LOOK_BYTECODE=0"; do
-  name="${eng%%:*}"; env="${eng#*:}"
-  echo "== $name =="
-  env $env "$FCGI" --mode http --port $PORT "$APP" >/dev/null 2>&1 &
-  srv=$!; sleep 1.5
-  check "%C3%BC"       '{"arg":"ü","param":"ü"}'       # UTF-8 ü decoded
-  check "a%20b"        '{"arg":"a b","param":"a b"}'    # %20 -> space
-  check "a+b"          '{"arg":"a+b","param":"a+b"}'    # '+' literal in a path
-  kill $srv 2>/dev/null; wait $srv 2>/dev/null
-done
+"$FCGI" --mode http --port $PORT "$APP" >/dev/null 2>&1 &
+srv=$!; sleep 1.5
+check "%C3%BC"       '{"arg":"ü","param":"ü"}'       # UTF-8 ü decoded
+check "a%20b"        '{"arg":"a b","param":"a b"}'    # %20 -> space
+check "a+b"          '{"arg":"a+b","param":"a+b"}'    # '+' literal in a path
+kill $srv 2>/dev/null; wait $srv 2>/dev/null
 rm -f "$APP"
-[ $fail = 0 ] && echo "PASS: route params URL-decoded in both engines" || { echo "FAIL: route-param decoding broken"; exit 1; }
+[ $fail = 0 ] && echo "PASS: route params URL-decoded" || { echo "FAIL: route-param decoding broken"; exit 1; }

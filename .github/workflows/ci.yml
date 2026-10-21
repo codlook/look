@@ -31,9 +31,9 @@ jobs:
           # release build yakaladı (kırık lk-cgi = Plesk CGI yolu yayınlanacaktı). 3 target = kapalı.
           cmake --build build --target look --target look-fcgi --target look-cgi --parallel $(nproc)
 
-      # Interpreter regresyon suite — assertion dosyası "OK/FAIL" basar.
+      # Regresyon suite — assertion dosyası "OK/FAIL" basar.
       # Herhangi bir FAIL satırı işi kırar.
-      - name: Regression suite (interpreter)
+      - name: Regression suite
         run: |
           cd cpp
           out="$(./build/lk tests/regression_all.lk)"
@@ -46,67 +46,57 @@ jobs:
 
       # stdlib adversarial guard — malformed/boundary/overflow inputs to the
       # previously-unlocked stdlib surface (array boundary, regex ReDoS, template
-      # inertness, date parse, timestamp overflow). Runs on BOTH engines (VM default +
-      # LOOK_CLI_VM=0 tree-walk); any FAIL breaks CI.
-      - name: stdlib adversarial guard (both engines)
+      # inertness, date parse, timestamp overflow). Any FAIL breaks CI.
+      - name: stdlib adversarial guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env TZ=UTC $env ./build/lk tests/stdlib_adversarial.lk)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL'; then
-              echo "::error::stdlib adversarial guard FAILED ($env)"
-              exit 1
-            fi
-          done
-          echo "stdlib adversarial guard passed (both engines)."
+          out="$(env TZ=UTC ./build/lk tests/stdlib_adversarial.lk)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL'; then
+            echo "::error::stdlib adversarial guard FAILED"
+            exit 1
+          fi
+          echo "stdlib adversarial guard passed."
 
       # VM wide-constant guard — GET_FIELD/SET_FIELD used to truncate the field-name
       # constant index to 8 bits, so in any function with 256+ constants `$obj.field`
-      # read/wrote the WRONG key (silent wrong data, VM only). Both engines; any FAIL
-      # breaks CI.
-      - name: VM wide-constant field access guard (both engines)
+      # read/wrote the WRONG key (silent wrong data). Any FAIL breaks CI.
+      - name: VM wide-constant field access guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/vm_wide_const_test.lk)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL'; then
-              echo "::error::VM wide-constant guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/vm_wide_const_test.lk)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL'; then
+            echo "::error::VM wide-constant guard FAILED"
+            exit 1
+          fi
 
       # Struct VM parity guard — the VM never knew struct definitions, so defaults were
       # dropped and unknown-field literals accepted on the VM (CLI + web). Uses no
-      # non-builtin module functions on purpose: those silently push the CLI onto
-      # tree-walk and would hide the VM bug. Both engines; any FAIL breaks CI.
-      - name: Struct VM parity guard (both engines)
+      # non-builtin module functions (they used to push the CLI onto the tree-walk
+      # engine and hide the VM bug). Any FAIL breaks CI.
+      - name: Struct VM parity guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/struct_vm_parity_test.lk)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL'; then
-              echo "::error::struct VM parity guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/struct_vm_parity_test.lk)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL'; then
+            echo "::error::struct VM parity guard FAILED"
+            exit 1
+          fi
 
-      # LOOK 2 typed structs: a field is name + type + default. One rule set for both
-      # engines (include/look/struct_types.h): type checked at construction and on
+      # LOOK 2 typed structs: a field is name + type + default. One rule set
+      # (include/look/struct_types.h): type checked at construction and on
       # assignment, zero values, fixed shape, per-instance default arrays.
-      - name: Typed struct guard (both engines)
+      - name: Typed struct guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/struct_typed_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::typed struct guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/struct_typed_test.lk || true)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+            echo "::error::typed struct guard FAILED"
+            exit 1
+          fi
 
       # A job handler started from inside a request has its own context (1.0.13).
       - name: Job handler does not share the request
@@ -130,13 +120,13 @@ jobs:
 
       # A top-level variable computed with a plain built-in (max, strtoupper, strlen, ...) was null
       # in routes on the default engine: the VM's setup pass did not connect those functions.
-      - name: Built-ins at the top level (both engines)
+      - name: Built-ins at the top level
         run: |
           cd cpp
           bash tests/toplevel_builtins_test.sh ./build/lk-fcgi
 
       # Generated from the binary's own built-in table: every pure built-in is called at the top
-      # level and inside a route, on both engines; the four results must be equal.
+      # level and inside a route; the two results must be equal.
       - name: Built-ins at the top level (generated from the built-in table)
         run: |
           cd cpp
@@ -156,9 +146,8 @@ jobs:
           cd cpp
           bash tests/undefined_function_startup_test.sh ./build/lk ./build/lk-fcgi
 
-      # Every module function is provided by the VM. A function known only to the tree-walk
-      # engine would send the routes that call it there; `lk --vm-report` lists such functions
-      # and fails when there is one.
+      # Every module function is provided by the VM. A program that reaches one the VM does not
+      # provide does not start; `lk --vm-report` lists such functions and fails when there is one.
       - name: VM provides every module function
         run: |
           cd cpp
@@ -232,84 +221,74 @@ jobs:
           cd cpp
           bash tests/type_of_is_consistency_test.sh ./build/lk ./build/lk-fcgi
 
-      # An element assignment used as an expression yields the element on both engines (1.0.12).
-      - name: Element assignment as an expression (both engines)
+      # An element assignment used as an expression yields the element (1.0.12).
+      - name: Element assignment as an expression
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/assign_expr_value_test.lk || true)"
-            echo "$out"
-            echo "$out" | grep -q "^PASS: an element assignment yields the element" || { echo "::error::assignment expression test FAILED ($env)"; exit 1; }
-          done
+          out="$(./build/lk tests/assign_expr_value_test.lk || true)"
+          echo "$out"
+          echo "$out" | grep -q "^PASS: an element assignment yields the element" || { echo "::error::assignment expression test FAILED"; exit 1; }
 
       # LOOK 2: ++ and -- on an element or a field, with the meaning they have on a variable; an
       # element assignment used as an expression yields the element (the VM yielded the container).
-      - name: Increment and decrement on elements (both engines)
+      - name: Increment and decrement on elements
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/element_step_test.lk || true)"
-            echo "$out"
-            echo "$out" | grep -q "^PASS: ++ and -- on elements" || { echo "::error::element step test FAILED ($env)"; exit 1; }
-          done
+          out="$(./build/lk tests/element_step_test.lk || true)"
+          echo "$out"
+          echo "$out" | grep -q "^PASS: ++ and -- on elements" || { echo "::error::element step test FAILED"; exit 1; }
 
-      # LOOK 2: indexing a value that is not an array, a map or a struct is an error on both
-      # engines with the same message; a missing key still gives null.
-      - name: Indexing a non-array (both engines)
+      # LOOK 2: indexing a value that is not an array, a map or a struct is an error, always
+      # with the same message; a missing key still gives null.
+      - name: Indexing a non-array
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/index_non_array_test.lk || true)"
-            echo "$out"
-            echo "$out" | grep -q "^PASS: indexing a value that is not an array" || { echo "::error::index test FAILED ($env)"; exit 1; }
-          done
+          out="$(./build/lk tests/index_non_array_test.lk || true)"
+          echo "$out"
+          echo "$out" | grep -q "^PASS: indexing a value that is not an array" || { echo "::error::index test FAILED"; exit 1; }
 
       # LOOK 2 value semantics: assigning, passing or returning an array, map or struct gives
       # the receiver its own value (copy on write); push/pop change their variable only.
-      - name: Value semantics guard (both engines)
+      - name: Value semantics guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/value_semantics_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::value semantics guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/value_semantics_test.lk || true)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+            echo "::error::value semantics guard FAILED"
+            exit 1
+          fi
 
       # LOOK 2: a struct is declared once, at the top level of a file. A second, different
       # definition of the same name is an error at load (same file: parse error; another
       # file: when it is loaded). This also removes the only way to reach a stale field cache.
-      - name: Struct is declared once, at the top level (both engines)
+      - name: Struct is declared once, at the top level
         run: |
           cd cpp
           bash tests/struct_declare_once_test.sh ./build/lk
 
       # LOOK 2: a block scopes the variables first assigned in it, at the top level too
       # (the VM used to make them globals there while the tree-walk engine did not).
-      - name: Block scope (both engines)
+      - name: Block scope
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/block_scope_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::block scope guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/block_scope_test.lk || true)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+            echo "::error::block scope guard FAILED"
+            exit 1
+          fi
 
       # LOOK 2: http::stream passes state explicitly (callback($chunk, $state) returns the
       # next state), since a closure can no longer keep it in a captured variable.
-      - name: http::stream state (both engines)
+      - name: http::stream state
         run: |
           cd cpp
           bash tests/http_stream_state_test.sh ./build/lk
 
       # Block scope on the web path: a variable first assigned in a top-level block is not a
       # global, so no route sees it (the command-line case is the step above).
-      - name: Block scope on the web path (both engines)
+      - name: Block scope on the web path
         run: |
           cd cpp
           bash tests/block_scope_web_test.sh build/lk-fcgi
@@ -328,22 +307,20 @@ jobs:
           cd cpp
           bash tests/ecosystem_scan.sh ./build/lk
 
-      # LOOK 2: a call must give a function the arguments it declares, on both engines (the
+      # LOOK 2: a call must give a function the arguments it declares (the
       # VM used to accept too many and too few).
-      - name: Argument count (both engines)
+      - name: Argument count
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/arg_count_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::argument count guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/arg_count_test.lk || true)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+            echo "::error::argument count guard FAILED"
+            exit 1
+          fi
 
       # LOOK 2 closure rule: a closure captures the value and cannot change it. A write to a
-      # captured variable is a parse error on both engines; a variable that changes after it
+      # captured variable is a parse error; a variable that changes after it
       # was captured is a warning from `lk --check`.
       - name: Closure capture rule (refused at load + lk --check warnings)
         run: |
@@ -352,7 +329,7 @@ jobs:
 
       # LOOK 2: one spelling for a struct field ("name type [= default]"); the two v1
       # spellings are parse errors that say what to write instead.
-      - name: Struct field single form (both engines)
+      - name: Struct field single form
         run: |
           cd cpp
           bash tests/struct_single_form_test.sh ./build/lk
@@ -364,15 +341,15 @@ jobs:
           bash tests/struct_type_startup_test.sh ./build/lk-fcgi
 
       # A struct default array/map was shared by every instance, so one request's data
-      # appeared in the next user's new instance. Two requests, both engines.
-      - name: Struct default isolation (two requests, both engines)
+      # appeared in the next user's new instance. Two requests.
+      - name: Struct default isolation (two requests)
         run: |
           cd cpp
           bash tests/struct_default_isolation_test.sh ./build/lk-fcgi
 
       # Arrays created at setup (const, top-level, captured by a route or by a stored
       # closure) were shared by every request: one request's in-place write reached the next.
-      - name: Request isolation (const, global, captured arrays; both engines)
+      - name: Request isolation (const, global, captured arrays)
         run: |
           cd cpp
           bash tests/request_isolation_test.sh ./build/lk-fcgi
@@ -386,8 +363,8 @@ jobs:
 
       # A route handler runs once per request, also when it fails (until 1.0.8 an error made
       # the server run the same request again on the other engine: duplicate writes), and an
-      # error under LOOK_VM_STRICT=1 no longer takes a worker down.
-      - name: A failing handler runs once (VM, strict VM, tree-walk)
+      # error no longer takes a worker down.
+      - name: A failing handler runs once
         run: |
           cd cpp
           bash tests/no_double_execution_test.sh ./build/lk-fcgi
@@ -464,14 +441,12 @@ jobs:
 
       # string::random reduced a random byte with `% 36`: the first four characters of its
       # alphabet came out about 14% more often. Every character is equally likely now.
-      - name: string::random is uniform (both engines)
+      - name: string::random is uniform
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/string_random_uniform_test.lk || true)"
-            echo "$out"
-            echo "$out" | grep -q "^PASS: string::random is uniform" || { echo "::error::string::random distribution test FAILED ($env)"; exit 1; }
-          done
+          out="$(./build/lk tests/string_random_uniform_test.lk || true)"
+          echo "$out"
+          echo "$out" | grep -q "^PASS: string::random is uniform" || { echo "::error::string::random distribution test FAILED"; exit 1; }
 
       # The WebSocket / SSE connection limit refuses the next connection with 503. It used to raise
       # an error nothing caught: one connection over the limit ended the whole server.
@@ -563,26 +538,24 @@ jobs:
           cd cpp
           bash tests/include_compile_failure_test.sh ./build/lk-fcgi
 
-      # The top level of a web application runs once at startup on every engine: the VM's
+      # The top level of a web application runs once at startup: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup
         run: |
           cd cpp
           bash tests/setup_once_test.sh ./build/lk-fcgi
 
-      # Single quotes are raw + an undefined bare name is an error on both engines.
+      # Single quotes are raw + an undefined bare name is an error.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
-      - name: Raw string + bare name guard (both engines)
+      - name: Raw string + bare name guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/raw_string_bare_name_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::raw string + bare name guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/raw_string_bare_name_test.lk || true)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+            echo "::error::raw string + bare name guard FAILED"
+            exit 1
+          fi
 
       # Argument count / parameter index are 8-bit: past 255 they wrapped silently on the VM.
       - name: VM operand limits
@@ -602,18 +575,16 @@ jobs:
       - name: No hand-made bytecode operand decoding
         run: bash cpp/tests/no_raw_operand_decode.sh
       # Register reuse — one function far past the old 72-route / 63-call ceiling, plus
-      # more than 256 closures. Strict VM: a compile failure is an error, not a fallback.
-      - name: Register reuse guard (both engines)
+      # more than 256 closures. A compile failure is an error, not a fallback.
+      - name: Register reuse guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/register_reuse_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::register reuse guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/register_reuse_test.lk || true)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+            echo "::error::register reuse guard FAILED"
+            exit 1
+          fi
 
       # A merge that duplicates a CI step must not pass silently.
       - name: No duplicated CI steps
@@ -640,21 +611,19 @@ jobs:
           bash tests/error_body_test.sh ./build/lk ./build/lk-fcgi
 
       # A comparison operator inside a quoted value must not split a template condition.
-      - name: Template condition guard (both engines)
+      - name: Template condition guard
         run: |
           cd cpp
-          for env in "LOOK_VM_STRICT=1" "LOOK_CLI_VM=0"; do
-            out="$(env $env ./build/lk tests/template_cond_test.lk || true)"
-            echo "$out"
-            if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
-              echo "::error::template condition guard FAILED ($env)"
-              exit 1
-            fi
-          done
+          out="$(./build/lk tests/template_cond_test.lk || true)"
+          echo "$out"
+          if echo "$out" | grep -q '^FAIL' || ! echo "$out" | grep -q 'guard done ==='; then
+            echo "::error::template condition guard FAILED"
+            exit 1
+          fi
 
       # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
-      # RFC 4231/4648 vektörlerine pinler. differential yalnız motorları KARŞILAŞTIRIR
-      # (üçü de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
+      # RFC 4231/4648 vektörlerine pinler. differential sütunları KARŞILAŞTIRIR
+      # (ikisi de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
       - name: Crypto known-answer vectors
         run: |
           cd cpp
@@ -736,9 +705,9 @@ jobs:
 
       # Motor paritesi — bu guard'lar repoda vardı ama HİÇBİR workflow'da koşmuyordu
       # (olgunluk denetimi 2026-08-11: "guard var, CI'da yok" = regresyon manuel-koşuma
-      # bağlı). Şimdi bağlandı. differential = tree-walk/CLI-VM/web-VM 22 kat×3 birebir;
-      # closure = 12 vaka parite; recursion = graceful stack-overflow; parallel_db = iki
-      # motorda conn-sızıntısı + havuz baskısı. (differential yol-çözme bug'ı düzeltildi:
+      # bağlı). Şimdi bağlandı. differential = CLI-VM/web-VM 22 kat×2 birebir + golden;
+      # closure = 12 vaka parite; recursion = graceful stack-overflow; parallel_db = web'de
+      # conn-sızıntısı + havuz baskısı. (differential yol-çözme bug'ı düzeltildi:
       # alt-testler $TMP'ye cd ediyordu, göreli build/lk çözülmüyordu.)
       - name: Motor paritesi (differential + closure + recursion + parallel)
         run: |
@@ -747,13 +716,13 @@ jobs:
           bash tests/closure_semantics_test.sh build/lk
           bash tests/vm_recursion_test.sh build/lk
           bash tests/parallel_db_test.sh build/lk-fcgi
-          bash tests/finally_ret_test.sh build/lk   # finally return/break/continue (VM+interp parity)
-          bash tests/args_test.sh build/lk          # args() CLI arguments (VM + tree-walk)
+          bash tests/finally_ret_test.sh build/lk   # finally return/break/continue (expected lines)
+          bash tests/args_test.sh build/lk          # args() CLI arguments
           # Every LOOK example in the public docs must parse (`lk --check`). A clean-room dogfood
           # found the first example failed to parse and route snippets used a `:id` form that
           # 404s — none caught by any guard. This closes that class. See docs_examples_check.py.
           python3 tests/docs_examples_check.py build/lk ../docs/look.codlook.com/docs.html ../docs/look.codlook.com/index.html
-          bash tests/route_param_decode.sh build/lk-fcgi   # path params URL-decoded (both engines)
+          bash tests/route_param_decode.sh build/lk-fcgi   # path params URL-decoded
           bash tests/session_secure.sh build/lk-fcgi        # session cookie Secure is HTTPS-only, proxy-gated
 
       # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
@@ -803,8 +772,8 @@ jobs:
       # Template render golden — a 38-section matrix of template constructs must render byte for
       # byte as the engine did in release abb5e2e (before the parsed-template cache and the render
       # rewrite). Speed numbers say nothing about correctness; this does. Fault injection: removing
-      # the HTML escape makes it fail on both engines.
-      - name: Template render golden (byte-identical, both engines)
+      # the HTML escape makes it fail.
+      - name: Template render golden (byte-identical)
         run: |
           cd cpp
           bash tests/template_golden_test.sh ./build/lk
@@ -1046,9 +1015,9 @@ jobs:
       # LOOK dil-parser DoS-guard — parser.cpp TÜM motorların paylaştığı tek ön-yüz (parse
       # bug'ı differential-KÖR). Özyinelemeli-inişli parser'da derin-yuvalama fiziksel stack'i
       # taşırır; eval(untrusted) bunu saldırgan-erişimli kılar. 3 katmanlı depth guard'ı
-      # (MAX_STMT_DEPTH/EXPR_DEPTH/BINOP_CHAIN) 3 motorda (--check/VM/tree-walk) pinler:
+      # (MAX_STMT_DEPTH/EXPR_DEPTH/BINOP_CHAIN) iki modda (--check/VM) pinler:
       # derin-yuvalama → temiz parse-hatası, ASLA crash/hang.
-      - name: Parser DoS-guard (derin-yuvalama, 3 motor)
+      - name: Parser DoS-guard (derin-yuvalama, --check + VM)
         run: |
           cd cpp
           bash tests/parser_dos_guard.sh ./build/lk
@@ -1088,9 +1057,9 @@ jobs:
           bash tests/middleware_guard_test.sh build/lk-fcgi 7795
 
       # route::group() — Go/chi tarzı prefix + middleware kalıtımı (name/namespace YOK, bilinçli
-      # minimal). İki motorda parity, lk-fcgi --mode http'ye karşı. Kendinden-ayırt-edici: prefix
+      # minimal). lk-fcgi --mode http'ye karşı. Kendinden-ayırt-edici: prefix
       # kırılırsa bare /solo açılır (404 değil 200), mw kırılırsa no-token 200 döner → test RED.
-      - name: "route::group prefix + middleware kalıtımı (VM+interp parity)"
+      - name: "route::group prefix + middleware kalıtımı"
         run: |
           cd cpp
           bash tests/route_group_test.sh build/lk-fcgi 7715

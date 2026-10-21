@@ -1,4 +1,4 @@
-# LOOK 2: a call must give a function the arguments it declares — on both engines.
+# LOOK 2: a call must give a function the arguments it declares.
 # The tree-walk engine always raised an error for too many or too few arguments; the VM
 # accepted the call, dropped the extra ones and made a missing parameter null (in 1.0.x too).
 #   * a parameter with a default is optional

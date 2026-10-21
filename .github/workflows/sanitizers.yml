@@ -73,7 +73,6 @@ jobs:
           # overlayfs kilit belirsizligi yok — asil temiz A/B ortami burasi.
           for f in tests/tsan/enforced/*.lk; do
             echo "== $f"; ./build-tsan/lk "$f" || exit 1
-            LOOK_CLI_VM=0 ./build-tsan/lk "$f" || exit 1   # her iki motor da temiz
           done
 
   fuzz:

@@ -44,16 +44,14 @@ s = conn("bye"); s.sendall(frame(b"bye")); time.sleep(0.4); s.close()           
 PY
 WANT='{"frame":1,"drop":1,"frame_then_drop":1,"server_close":0,"sse_drop":1,"sse_server_close":0,"open":0}'
 fail=0
-for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
-    python3 "$TMP/client.py" "$PORT"
-    curl -s -m 1 -N -H 'Accept: text/event-stream' "localhost:$PORT/sse/ssecli" >/dev/null 2>&1
-    curl -s -m 1 -N -H 'Accept: text/event-stream' "localhost:$PORT/sse/ssesrv" >/dev/null 2>&1
-    sleep 0.8
-    got="$(curl -s -m 3 "localhost:$PORT/r")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$got" = "$WANT" ]; then echo "  OK   [$mode] close runs once when the client goes away, not when the server closes"
-    else echo "  FAIL [$mode] $got"; fail=1; fi
-done
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
+python3 "$TMP/client.py" "$PORT"
+curl -s -m 1 -N -H 'Accept: text/event-stream' "localhost:$PORT/sse/ssecli" >/dev/null 2>&1
+curl -s -m 1 -N -H 'Accept: text/event-stream' "localhost:$PORT/sse/ssesrv" >/dev/null 2>&1
+sleep 0.8
+got="$(curl -s -m 3 "localhost:$PORT/r")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$got" = "$WANT" ]; then echo "  OK   close runs once when the client goes away, not when the server closes"
+else echo "  FAIL $got"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: the close callback runs when the client goes away" || { echo "FAIL: close callback"; exit 1; }

@@ -23,12 +23,10 @@ else echo "  FAIL --check: want lines [$want] got [$got] exit=$rc"; fail=1; fi
 out="$("$LK" --check "$HERE/clean.lk" 2>/dev/null)"; rc=$?
 if [ "$out" = "OK" ] && [ "$rc" = "0" ]; then echo "  OK   --check passes a function that returns what it changed"
 else echo "  FAIL --check on clean.lk: [$out] exit=$rc"; fail=1; fi
-for env in LOOK_VM_STRICT=1 LOOK_X=1; do
-    o="$(env $env "$LK" "$HERE/sample.lk" 2>"$TMP/err.txt")"; rc=$?
-    n="$(grep -c 'WARN.*changes its parameter' "$TMP/err.txt")"; w="$(echo "$want" | wc -w)"
-    if [ "$o" = "ran" ] && [ "$rc" = "0" ] && [ "$n" = "$w" ]; then echo "  OK   [$env] at load: $n warnings, the program still runs"
-    else echo "  FAIL [$env] at load: output=[$o] exit=$rc warnings=$n (want $w)"; fail=1; fi
-done
+o="$("$LK" "$HERE/sample.lk" 2>"$TMP/err.txt")"; rc=$?
+n="$(grep -c 'WARN.*changes its parameter' "$TMP/err.txt")"; w="$(echo "$want" | wc -w)"
+if [ "$o" = "ran" ] && [ "$rc" = "0" ] && [ "$n" = "$w" ]; then echo "  OK   at load: $n warnings, the program still runs"
+else echo "  FAIL at load: output=[$o] exit=$rc warnings=$n (want $w)"; fail=1; fi
 # web startup and a file loaded with `use`
 cat > "$TMP/lib.lk" <<'LK'
 function lib_touch($rows) { $rows[0] = "changed" }

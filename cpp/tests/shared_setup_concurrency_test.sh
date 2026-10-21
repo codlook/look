@@ -76,15 +76,13 @@ ts = [threading.Thread(target=writer, args=(i,)) for i in range(5)] + [threading
 print("requests=%d bad=%d %s" % (done[0], len(bad), json.dumps(bad[:2])))
 PY
 fail=0
-for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
-    out="$(python3 "$TMP/load.py" "$PORT" 2>&1 | tail -1)"
-    alive="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/r")"
-    errs="$(grep -c 'Dispatch error\|VM BUG\|runs on the interpreter' "$TMP/log.txt")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "${out%% \[*}" = "requests=1200 bad=0" ] && [ "$alive" = "200" ] && [ "$errs" = "0" ]; then
-        echo "  OK   [$mode] 1200 concurrent requests: every writer read its own writes, every reader the declared values"
-    else echo "  FAIL [$mode] $out alive=$alive log-errors=$errs $(grep -m1 'Dispatch error' "$TMP/log.txt" | cut -c1-140)"; fail=1; fi
-done
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
+out="$(python3 "$TMP/load.py" "$PORT" 2>&1 | tail -1)"
+alive="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/r")"
+errs="$(grep -c 'Dispatch error\|VM BUG\|runs on the interpreter' "$TMP/log.txt")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "${out%% \[*}" = "requests=1200 bad=0" ] && [ "$alive" = "200" ] && [ "$errs" = "0" ]; then
+    echo "  OK   1200 concurrent requests: every writer read its own writes, every reader the declared values"
+else echo "  FAIL $out alive=$alive log-errors=$errs $(grep -m1 'Dispatch error' "$TMP/log.txt" | cut -c1-140)"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: setup data is shared between concurrent requests without leaking writes" || { echo "FAIL: shared setup data"; exit 1; }

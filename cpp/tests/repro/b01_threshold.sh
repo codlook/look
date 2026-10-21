@@ -9,10 +9,10 @@ probe(){ gen "$1"
   if echo "$out" | grep -qE "stack-overflow|SEGV|Segmentation"; then echo CRASH
   elif [ $rc -ge 128 ]; then echo "CRASH(sig$((rc-128)))"
   else echo OK; fi; }
-printf "%-8s %-9s %-9s %-9s\n" N --check VM interp
+printf "%-8s %-9s %-9s\n" N --check VM
 for n in 200 400 500 1000 2000 4000 8000 16000 32000; do
-  printf "%-8s %-9s %-9s %-9s\n" "$n" \
-    "$(probe $n '' --check)" "$(probe $n '' '')" "$(probe $n LOOK_CLI_VM=0 '')"
+  printf "%-8s %-9s %-9s\n" "$n" \
+    "$(probe $n '' --check)" "$(probe $n '' '')"
 done
 echo
 echo "Beklenen dogru davranis: her sutun, parser guard'i (max 150) ile TUTARLI bir"

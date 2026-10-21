@@ -85,14 +85,14 @@ print("%s: %s %s" % (how, dict(res), bad if bad else ""))
 PY
 python3 "$TMP/slow.py" "$UP" & up=$!
 fail=0
-for mode in "LOOK_X=1" "LOOK_FIBER_DISPATCH=0"; do
+for mode in "" "LOOK_FIBER_DISPATCH=0"; do   # default (fibers), then the worker pool
     ( cd "$TMP" && exec env $mode LOOK_ALLOW_SSRF=1 LOOK_SESSION_SECURE=0 "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
     for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
     s=$(date +%s%N); out="$(python3 "$TMP/client.py" "$PORT" http 64 30 2>&1 | tail -1)"; ms=$(( ($(date +%s%N) - s) / 1000000 ))
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$out" = "http: {'ok': 1920} " ]; then echo "  OK   [$mode] 1920 requests suspended mid-way, each got its own parameter, header, cookie, session, status and header ($ms ms)"
-    else echo "  FAIL [$mode] $out"; fail=1; fi
+    if [ "$out" = "http: {'ok': 1920} " ]; then echo "  OK   [${mode:-default}] 1920 requests suspended mid-way, each got its own parameter, header, cookie, session, status and header ($ms ms)"
+    else echo "  FAIL [${mode:-default}] $out"; fail=1; fi
     # 1920 calls of 30 ms one after another on 4 workers take 14.4 s; overlapping fibers take far less
-    if [ "$mode" = "LOOK_X=1" ] && [ "$(uname -s)" = Linux ] && [ $ms -gt 7000 ]; then echo "  FAIL [$mode] the requests did not overlap ($ms ms) — the test did not reach the case it is for"; fail=1; fi
+    if [ -z "$mode" ] && [ "$(uname -s)" = Linux ] && [ $ms -gt 7000 ]; then echo "  FAIL [${mode:-default}] the requests did not overlap ($ms ms) — the test did not reach the case it is for"; fail=1; fi
 done
 [ $fail = 0 ] && echo "PASS: suspended requests keep their own data" || { echo "FAIL: request data crossed between suspended requests"; exit 1; }

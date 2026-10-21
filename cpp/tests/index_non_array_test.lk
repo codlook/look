@@ -1,4 +1,4 @@
-// One rule for reading with [...] and .field, the same on both engines:
+// One rule for reading with [...] and .field:
 //   a key the array or map does not have        -> null
 //   reading from null                            -> null  (null reads as an empty map, so a
 //                                                          chain through a missing step is null

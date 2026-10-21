@@ -39,25 +39,23 @@ route("GET", "/r", function() {
 })
 LK
 fail=0
-for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    rm -f "$TMP"/jobs.db*
-    ( cd "$TMP" && exec env $mode LOOK_JOBS_RETRY_SECONDS=1 "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
-    curl -s -m 5 "localhost:$PORT/push" >/dev/null
-    curl -s -m 20 "localhost:$PORT/drain" >/dev/null; curl -s -m 20 "localhost:$PORT/drain" >/dev/null
-    first="$(curl -s -m 5 "localhost:$PORT/r")"                 # two passes in a row: one run each
-    for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.6; curl -s -m 20 "localhost:$PORT/drain" >/dev/null; done
-    last="$(curl -s -m 5 "localhost:$PORT/r")"                  # after the waits (1 s, then 2 s)
-    said1="$(grep -c "handler for queue 'noreturn' must return true (done) or false.*it returned nothing (null)" "$TMP/log.txt")"
-    said2="$(grep -c "handler for queue 'text' must return true (done) or false.*it returned a string" "$TMP/log.txt")"
-    boom="$(grep -c 'smtp down' "$TMP/log.txt")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    # runs/done/pending/failed
-    W1='{"good":"1/1/0/0","noreturn":"1/0/0/1","text":"1/0/0/1","bad":"1/0/1/0","boom":"1/0/1/0"}'
-    W2='{"good":"1/1/0/0","noreturn":"1/0/0/1","text":"1/0/0/1","bad":"3/0/0/1","boom":"3/0/0/1"}'
-    if [ "$first" = "$W1" ]; then echo "  OK   [$mode] two passes in a row: every handler ran once; a retry waits; a handler without a result is not run again"
-    else echo "  FAIL [$mode] after two passes: $first"; echo "       want:             $W1"; fail=1; fi
-    if [ "$last" = "$W2" ] && [ "$said1" = "1" ] && [ "$said2" = "1" ] && [ "$boom" = "3" ]; then echo "  OK   [$mode] later: false and an error were tried 3 times and failed; the two bad results were logged once each"
-    else echo "  FAIL [$mode] at the end: $last (logged: no-return=$said1 text=$said2 errors=$boom)"; fail=1; fi
-done
+rm -f "$TMP"/jobs.db*
+( cd "$TMP" && exec env LOOK_JOBS_RETRY_SECONDS=1 "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
+curl -s -m 5 "localhost:$PORT/push" >/dev/null
+curl -s -m 20 "localhost:$PORT/drain" >/dev/null; curl -s -m 20 "localhost:$PORT/drain" >/dev/null
+first="$(curl -s -m 5 "localhost:$PORT/r")"                 # two passes in a row: one run each
+for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.6; curl -s -m 20 "localhost:$PORT/drain" >/dev/null; done
+last="$(curl -s -m 5 "localhost:$PORT/r")"                  # after the waits (1 s, then 2 s)
+said1="$(grep -c "handler for queue 'noreturn' must return true (done) or false.*it returned nothing (null)" "$TMP/log.txt")"
+said2="$(grep -c "handler for queue 'text' must return true (done) or false.*it returned a string" "$TMP/log.txt")"
+boom="$(grep -c 'smtp down' "$TMP/log.txt")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+# runs/done/pending/failed
+W1='{"good":"1/1/0/0","noreturn":"1/0/0/1","text":"1/0/0/1","bad":"1/0/1/0","boom":"1/0/1/0"}'
+W2='{"good":"1/1/0/0","noreturn":"1/0/0/1","text":"1/0/0/1","bad":"3/0/0/1","boom":"3/0/0/1"}'
+if [ "$first" = "$W1" ]; then echo "  OK   two passes in a row: every handler ran once; a retry waits; a handler without a result is not run again"
+else echo "  FAIL after two passes: $first"; echo "       want:             $W1"; fail=1; fi
+if [ "$last" = "$W2" ] && [ "$said1" = "1" ] && [ "$said2" = "1" ] && [ "$boom" = "3" ]; then echo "  OK   later: false and an error were tried 3 times and failed; the two bad results were logged once each"
+else echo "  FAIL at the end: $last (logged: no-return=$said1 text=$said2 errors=$boom)"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: a job handler returns true or false, and a retry waits" || { echo "FAIL: job handler result"; exit 1; }

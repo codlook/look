@@ -18,13 +18,13 @@ route("GET", "/deep/{n}", function($n) { return response::text("depth=" . down($
 route("GET", "/ok", fn() => response::text("alive"))
 LK
 fail=0
-for mode in "LOOK_X=1" "LOOK_BYTECODE=0" "LOOK_FIBER_DISPATCH=0" "LOOK_BYTECODE=0 LOOK_FIBER_DISPATCH=0"; do
+for mode in "" "LOOK_FIBER_DISPATCH=0"; do   # default (fibers), then the worker pool
     ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
     for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
     got=""; for d in 100 200 5000; do got="$got $(curl -s -m 10 -o /dev/null -w '%{http_code}' "localhost:$PORT/deep/$d")"; done
     up=no; kill -0 "$pid" 2>/dev/null && up=yes
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$got" = " 200 200 500" ] && [ $up = yes ]; then echo "  OK   [$mode] depth 100 and 200 answered, 5000 is a clean 500, the server is up"
-    else echo "  FAIL [$mode] depth 100/200/5000 -> [$got ] server up: $up"; fail=1; fi
+    if [ "$got" = " 200 200 500" ] && [ $up = yes ]; then echo "  OK   [${mode:-default}] depth 100 and 200 answered, 5000 is a clean 500, the server is up"
+    else echo "  FAIL [${mode:-default}] depth 100/200/5000 -> [$got ] server up: $up"; fail=1; fi
 done
 [ $fail = 0 ] && echo "PASS: deep recursion ends in a clean error on every dispatch" || { echo "FAIL: deep recursion took the server down"; exit 1; }

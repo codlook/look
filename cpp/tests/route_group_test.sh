@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # route::group() guard — Go/chi tarzı prefix + middleware kalıtımı + nesting. lk-fcgi --mode http'ye
-# karşı, İKİ motorda (VM + interpreter LOOK_BYTECODE=0) PARITY. Kendinden-ayırt-edici:
+# karşı. Kendinden-ayırt-edici:
 #   - prefix kalıtımı: /admin/solo=200 AMA bare /solo=404 (prefix uygulanmazsa /solo açılırdı)
 #   - middleware kalıtımı: /admin/users no-token=403 (mw miras alınmazsa 200 dönerdi)
 #   - nested: /admin/deep/x prefix yığını + dış grup mw'sini miras alır
@@ -32,7 +32,6 @@ run_engine() {
 }
 
 run_engine "VM"     "$PORT"        ""
-run_engine "interp" "$((PORT+1))"  "LOOK_BYTECODE=0"
 
-[ $fail = 0 ] && echo "PASS: route::group (prefix+mw kalıtımı + nested) — VM+interp parity" || echo "FAIL: route::group"
+[ $fail = 0 ] && echo "PASS: route::group (prefix+mw kalıtımı + nested)" || echo "FAIL: route::group"
 exit $fail

@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# closure_semantics_test.sh — closure yakalama parite guard'ı (58. bug).
+# closure_semantics_test.sh — closure yakalama guard'ı (58. bug).
 #
-# tree-walk (canonical) ile VM AYNI çıktıyı vermeli. 7 vaka closure semantiğinin
-# tüm köşelerini kapsar. Fix ÖNCESİ B ve C AYRIŞIR (bilinen bug); fix SONRASI
-# hepsi parite olmalı. A/D/E/F/G regresyon kilidi (fix bunları BOZMAMALI).
-#
-# NOT: differential ana suite'e EKLENMEDİ (B/C şu an ayrıştığı için kırar);
-# bu ayrı guard fix'in doğrulaması + hedefi. Fix landığında ana suite'e taşınır.
+# Her vaka beklenen DEĞERE karşı sınanır (aşağıdaki WANT tablosu); 12 vaka closure
+# semantiğinin tüm köşelerini kapsar. (Eskiden tree-walk ile VM paritesiydi; LOOK 2'de
+# tek motor var.)
 set -u
 LK="${1:-./build/lk}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -111,18 +108,16 @@ LK
 #                                                                        I=e0e1e2 J=5 K=1,2
 #   closure icindeki duz atama kendi yerelini yaratir ................. F=5  G=5
 #   adli ic fonksiyon da bir closure'dir .............................. L=10
-# Artik yalniz parite degil beklenen DEGER de sinanir (iki motor ayni yanlisi paylasmasin).
 # Eski hal (58): VM, yorumlayicinin "degiskeni yakala" davranisina hucrelerle uyduruluyordu;
 # B ve J 10/105, L 17 veriyordu.
 declare -A WANT=([A]=10 [B]=5 [C]=012 [D]=012 [E]=333 [F]=5 [G]=5 [H]=222 [I]=e0e1e2 [J]=5 [K]=1,2 [L]=10)
 for c in A B C D E F G H I J K L; do
-  tw=$(LOOK_X=1 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
-  vm=$(LOOK_VM_STRICT=1 timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
-  if [ "$tw" = "$vm" ] && [ "$tw" = "${WANT[$c]} " ]; then
-    echo "  PASS [$c] $tw"
+  got=$(timeout 10 "$LK" "$TMP/$c.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ' | tr -s ' ')
+  if [ "$got" = "${WANT[$c]} " ]; then
+    echo "  PASS [$c] $got"
   else
-    echo "  FAIL [$c] tree-walk=[$tw] vm=[$vm] want=[${WANT[$c]}]"; fail=1
+    echo "  FAIL [$c] got=[$got] want=[${WANT[$c]}]"; fail=1
   fi
 done
-[ $fail = 0 ] && echo "PASS: closure semantics (12 cases, both engines, expected values)" || echo "FAIL: closure semantics"
+[ $fail = 0 ] && echo "PASS: closure semantics (12 cases, expected values)" || echo "FAIL: closure semantics"
 exit $fail

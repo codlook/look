@@ -5,8 +5,8 @@
 # {"c46":11} gibi yanlış anahtarlarla kuruluyordu. SESSİZ yanlış veri, yalnız VM'de
 # (tree-walk doğru) — hiçbir test 256+ sabitli fonksiyon kullanmadığı için
 # differential görmedi. CALL_BUILTIN aynı duvarı NOP-hint'le aşmıştı; bu iki opcode
-# kaçmıştı (simetrik yüzey). Çalıştır: lk tests/vm_wide_const_test.lk (VM) ve
-# LOOK_CLI_VM=0 ile (tree-walk). Herhangi bir FAIL satırı CI'yı kırar.
+# kaçmıştı (simetrik yüzey). Çalıştır: lk tests/vm_wide_const_test.lk.
+# Herhangi bir FAIL satırı CI'yı kırar.
 use json
 
 function chk($label, $got, $want) {

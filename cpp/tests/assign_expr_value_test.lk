@@ -1,4 +1,4 @@
-// An element assignment used as an expression yields the element it stored — on both engines.
+// An element assignment used as an expression yields the element it stored.
 // The VM yielded the whole container: `$total = ($cart["sum"] += $price)` put the map into
 // $total without any error.
 use json

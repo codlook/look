@@ -29,16 +29,14 @@ parallel(function() use ($c) { print("from task"); send($c, 1) })
 $v = receive($c)
 print("main done")
 LK
-for eng in LOOK_X=1; do   # LOOK 2: komut satırı yalnız VM
-    rm -f "$TMP"/*.db*
-    out="$(cd "$TMP" && env $eng "$LK" cb.lk 2>/dev/null)"
-    miss=""
-    for want in "handled a@x" "timer ran" "from task" "main done"; do
-        echo "$out" | grep -qx "$want" || miss="$miss [$want]"
-    done
-    [ -z "$miss" ] && echo "  OK   [$eng] job handler, timer and parallel() output reach stdout" \
-                   || { echo "  FAIL [$eng] missing:$miss out=[$out]"; fail=1; }
+rm -f "$TMP"/*.db*
+out="$(cd "$TMP" && "$LK" cb.lk 2>/dev/null)"
+miss=""
+for want in "handled a@x" "timer ran" "from task" "main done"; do
+    echo "$out" | grep -qx "$want" || miss="$miss [$want]"
 done
+[ -z "$miss" ] && echo "  OK   job handler, timer and parallel() output reach stdout" \
+               || { echo "  FAIL missing:$miss out=[$out]"; fail=1; }
 
 cat > "$TMP/web.lk" <<'LK'
 use jobs

@@ -28,14 +28,12 @@ e = socket.socket(); e.settimeout(3); e.connect(("127.0.0.1", port)); e.sendall(
 time.sleep(1.0)
 PY
 fail=0
-for mode in "LOOK_X=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
-    python3 "$TMP/client.py" "$PORT"
-    alive="$(curl -s -m 3 "localhost:$PORT/ok")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    m="$(grep -c 'ws message.*Division by zero' "$TMP/log.txt")"; c="$(grep -c 'ws close.*close-boom' "$TMP/log.txt")"; s="$(grep -c 'sse close.*sse-close-boom' "$TMP/log.txt")"
-    if [ "$m" = 1 ] && [ "$c" = 1 ] && [ "$s" = 1 ] && [ "$alive" = alive ]; then echo "  OK   [$mode] the three callback errors are in the log, the server answers"
-    else echo "  FAIL [$mode] logged: ws message=$m ws close=$c sse close=$s (want 1 each), server answers: [${alive:-nothing}]"; fail=1; fi
-done
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
+python3 "$TMP/client.py" "$PORT"
+alive="$(curl -s -m 3 "localhost:$PORT/ok")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+m="$(grep -c 'ws message.*Division by zero' "$TMP/log.txt")"; c="$(grep -c 'ws close.*close-boom' "$TMP/log.txt")"; s="$(grep -c 'sse close.*sse-close-boom' "$TMP/log.txt")"
+if [ "$m" = 1 ] && [ "$c" = 1 ] && [ "$s" = 1 ] && [ "$alive" = alive ]; then echo "  OK   the three callback errors are in the log, the server answers"
+else echo "  FAIL logged: ws message=$m ws close=$c sse close=$s (want 1 each), server answers: [${alive:-nothing}]"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: connection callback errors are logged" || { echo "FAIL: a connection callback error left no trace"; exit 1; }

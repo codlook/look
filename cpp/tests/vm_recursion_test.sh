@@ -5,7 +5,7 @@
 # opcode'u frame'i limitsiz push ediyordu → doğrudan LOOK özyinelemesi SINIRSIZDI:
 # runaway/derin özyineleme graceful "Stack overflow" yerine bellek tükenene dek
 # gidiyordu (OOM DoS) ve tree-walk'un sınırından ayrışıyordu. Fix: CALL yolu da
-# MAX_CALL_DEPTH'i zorlar. Bu guard hem VM'in bounded olduğunu hem her iki motorun
+# MAX_CALL_DEPTH'i zorlar. Bu guard VM'in bounded olduğunu ve
 # derin özyinelemede graceful hata verdiğini doğrular.
 set -u
 LK="${1:-./build/lk}"
@@ -21,14 +21,6 @@ elif echo "$vm" | grep -q "100000"; then
   echo "  FAIL VM: r(100000) dondu — CALL yolu MAX_CALL_DEPTH'i zorlamiyor (unbounded/OOM riski)"; fail=1
 else
   echo "  FAIL VM: beklenmedik: [$vm]"; fail=1
-fi
-
-# tree-walk (LOOK_X=1) — o da bounded olmali
-tw=$(LOOK_X=1 timeout 15 "$LK" "$TMP/deep.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ')
-if echo "$tw" | grep -qi "stack overflow"; then
-  echo "  PASS tree-walk: derin ozyineleme bounded"
-else
-  echo "  FAIL tree-walk: beklenmedik: [$tw]"; fail=1
 fi
 
 # Sig-crash yok (exit 139/137 olmamali)

@@ -90,7 +90,7 @@ release build FRESH olmalı).
 ## Diğer
 
 - `regression_all.lk` — genel regresyon (her motor değişikliğinden sonra).
-- `differential_test.sh` / `parallel_db_test.sh` — 3 motor × kategori paritesi + parallel/DB sızıntısı.
+- `differential_test.sh` / `parallel_db_test.sh` — CLI-VM × web-VM × kategori paritesi (+ golden) + parallel/DB sızıntısı.
 - `tsan/enforced/` — yarış testleri ZORUNLU (kırılırsa CI kırmızı). `known_fail/` KALDIRILDI
   (fail-loud'un tersi "başarısızlık kabul bölgesi"ydi).
 - `fuzz/` — libFuzzer harness'ları (clang; CI'da her push 30s). Corpus gitignore'da.

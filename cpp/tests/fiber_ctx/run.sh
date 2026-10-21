@@ -19,7 +19,6 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 [ "$MODE" = fiber ] && export LOOK_FIBER_DISPATCH=1
 # /echo's http::get() targets loopback (the slow upstream) — allow it past SSRF.
 export LOOK_ALLOW_SSRF=1
-# Optional: LOOK_BYTECODE=0 forces the tree-walk interpreter fiber path.
 WORKERS="${LOOK_WORKERS:-2}"
 
 # Slow upstream that /echo's http::get() hits — widens the fiber yield window so
@@ -63,5 +62,5 @@ for i in $(seq 1 $N); do
     [ $bad -le 5 ] && echo "MISMATCH: expected req$i got '$got'"
   fi
 done
-echo "MODE=$MODE workers=$WORKERS bytecode=${LOOK_BYTECODE:-1} checked=$checked mismatches=$bad (empty=$empty)"
+echo "MODE=$MODE workers=$WORKERS checked=$checked mismatches=$bad (empty=$empty)"
 [ "$bad" -eq 0 ] || exit 1

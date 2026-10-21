@@ -11,7 +11,7 @@
 #    silently took the wrong branch, while tree-walk raised "Undefined variable".
 #
 # Uses only builtin module functions so the CLI really runs it on the VM.
-# Run: lk tests/raw_string_bare_name_test.lk with LOOK_VM_STRICT=1 and with LOOK_CLI_VM=0.
+# Run: lk tests/raw_string_bare_name_test.lk
 use json
 use array
 use template
@@ -72,7 +72,7 @@ chk("const holding null",      json::encode(NOTHING), "null")
 chk("call of undefined fn",    err_of(fn() => nope(1)), "Undefined variable: nope")
 
 # Interpolation uses LOOK syntax: [1] indexes; a dotted ".1.k" is concatenation with a
-# bare name, so it is not a path and the text stays as written - in both engines.
+# bare name, so it is not a path and the text stays as written.
 $u = ["list" => [["k" => "a"], ["k" => "b"]]]
 chk("index syntax inside a string", "v={$u.list[1].k}", "v=b")
 chk("dotted pseudo-path stays literal", "v={$u.list.1.k}", "v={" . "$" . "u.list.1.k}")

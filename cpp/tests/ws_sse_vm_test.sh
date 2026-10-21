@@ -7,7 +7,7 @@
 # Now a connection handler is dispatched like a request (the connection is its first argument,
 # path parameters follow by name), and a callback runs like a new request: its own VM, the
 # globals at their declared values. This test pins down:
-#   * no route is placed on the tree-walk engine; it also works with LOOK_VM_STRICT=1
+#   * every route is on the VM, nothing falls back
 #   * a broadcast from an ordinary route reaches an open connection
 #   * a WS route receives its path parameter by name; the callback sees the captured values
 #   * a message callback runs once per message, also when it fails; the error is logged and
@@ -63,27 +63,23 @@ print(notify + " broadcast=" + ("yes" if b"hello" in got else "no")
       + " echo=" + ("yes" if b"echo:m1:r7:t-r7" in e1 and b"echo:m3:r7:t-r7" in e3 else "no"))
 PY
 fail=0
-for mode in "LOOK_X=1" "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
-    c="$(python3 "$TMP/client.py" "$PORT" 2>&1 | tail -1)"
-    sse="$(curl -s -m 1 -N -H 'Accept: text/event-stream' "localhost:$PORT/sse" 2>/dev/null | tr -d '\r\n')"
-    sleep 0.6
-    r="$(curl -s -m 3 "localhost:$PORT/r")"
-    placed="$(grep -c 'runs on the interpreter\|VM BUG\|interpreter fallback' "$TMP/log.txt")"
-    vmroutes="$(grep -o 'VM routes: [0-9]* registered' "$TMP/log.txt")"
-    errlog="$(grep -c 'ws message.*callback error: boom in ws' "$TMP/log.txt")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$mode" != "LOOK_BYTECODE=0" ]; then
-        if [ "$placed" = "0" ] && [ "$vmroutes" = "VM routes: 4 registered" ]; then echo "  OK   [$mode] all 4 routes on the VM, none placed on the tree-walk engine"
-        else echo "  FAIL [$mode] routes: '$vmroutes', interpreter/fallback log lines: $placed"; fail=1; fi
-    fi
-    if [ "$c" = '{"ws":1,"sse":0} broadcast=yes echo=yes' ]; then echo "  OK   [$mode] broadcast reached the connection; the callback got the path parameter and the captured value"
-    else echo "  FAIL [$mode] client: $c"; fail=1; fi
-    if [ "$r" = '{"seen":3,"last":"m3","ws_closed":"r7","sse_closed":"yes"}' ] && [ "$errlog" = "1" ]; then echo "  OK   [$mode] three messages handled once each, the failing one logged; both close callbacks ran"
-    else echo "  FAIL [$mode] r=$r, logged handler errors: $errlog"; fail=1; fi
-    case "$sse" in *"data: x"*) echo "  OK   [$mode] the SSE route sent its event";; *) echo "  FAIL [$mode] SSE output: [$sse]"; fail=1;; esac
-done
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
+c="$(python3 "$TMP/client.py" "$PORT" 2>&1 | tail -1)"
+sse="$(curl -s -m 1 -N -H 'Accept: text/event-stream' "localhost:$PORT/sse" 2>/dev/null | tr -d '\r\n')"
+sleep 0.6
+r="$(curl -s -m 3 "localhost:$PORT/r")"
+placed="$(grep -c 'runs on the interpreter\|VM BUG\|interpreter fallback' "$TMP/log.txt")"
+vmroutes="$(grep -o 'VM routes: [0-9]* registered' "$TMP/log.txt")"
+errlog="$(grep -c 'ws message.*callback error: boom in ws' "$TMP/log.txt")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$placed" = "0" ] && [ "$vmroutes" = "VM routes: 4 registered" ]; then echo "  OK   all 4 routes on the VM, no fallback"
+else echo "  FAIL routes: '$vmroutes', interpreter/fallback log lines: $placed"; fail=1; fi
+if [ "$c" = '{"ws":1,"sse":0} broadcast=yes echo=yes' ]; then echo "  OK   broadcast reached the connection; the callback got the path parameter and the captured value"
+else echo "  FAIL client: $c"; fail=1; fi
+if [ "$r" = '{"seen":3,"last":"m3","ws_closed":"r7","sse_closed":"yes"}' ] && [ "$errlog" = "1" ]; then echo "  OK   three messages handled once each, the failing one logged; both close callbacks ran"
+else echo "  FAIL r=$r, logged handler errors: $errlog"; fail=1; fi
+case "$sse" in *"data: x"*) echo "  OK   the SSE route sent its event";; *) echo "  FAIL SSE output: [$sse]"; fail=1;; esac
 
 # A connection handler and its callbacks are dispatched from another stack frame than an HTTP
 # request. The per-thread table of request::/response:: functions is bound to the request

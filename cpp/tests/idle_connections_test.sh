@@ -44,7 +44,7 @@ run() { ( cd "$TMP" && exec env "$@" "$FCGI" --mode http --port "$PORT" --worker
         for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done; }
 stop() { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""; }
 if [ "$(uname -s)" = Linux ]; then
-    run LOOK_X=1
+    run
     out="$(python3 "$TMP/hold.py" "$PORT" 2 2>&1)"
     warned="$(grep -c 'Each open connection holds a worker' "$TMP/log.txt")"
     stop

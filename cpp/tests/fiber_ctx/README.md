@@ -32,9 +32,8 @@ index-immutability gap: differential/load tests didn't assert this behavior.
 - `slow_server.py` — deliberately slow HTTP responder that widens the yield
   window so fibers reliably interleave.
 - `run.sh <lk-fcgi> [fiber|worker-pool]` — fires 80 concurrent unique requests,
-  asserts every response equals its own input. `LOOK_BYTECODE=0` selects the
-  interpreter path (the one that used to fail 80/80).
-- `guard.sh <lk-fcgi>` — CI entry point; runs interpreter+fiber and VM+fiber,
+  asserts every response equals its own input.
+- `guard.sh <lk-fcgi>` — CI entry point; runs the VM under fiber dispatch,
   fails on any leak. Skips cleanly off-Linux or without python3/curl.
 
 ## Run

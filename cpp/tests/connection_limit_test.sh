@@ -80,7 +80,7 @@ stop() { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""; }
 # 1. no limit on the total: 1500 connections from three addresses, no setting
 for kind in ws sse; do
     code=101; [ $kind = sse ] && code=200
-    srv LOOK_X=1
+    srv
     out="$(SRCS=3 python3 "$TMP/many.py" "$PORT" $kind 1500 0 2>&1 | head -1)"
     stop
     if [ "$out" = "opened: {'$code': 1500} | /ok while full: alive" ]; then echo "  OK   [$kind] 1500 connections open from three addresses with no setting, the server answers"
@@ -91,7 +91,7 @@ done
 #     connections per address; the connection over it gets 429 and one line in the log.
 for kind in ws sse; do
     code=101; [ $kind = sse ] && code=200
-    srv LOOK_X=1
+    srv
     out="$(python3 "$TMP/many.py" "$PORT" $kind 1005 0 2>&1 | head -1)"
     logged="$(grep -c 'refused with 429: the address is at its limit of 1000' "$TMP/log.txt")"
     stop

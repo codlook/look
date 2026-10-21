@@ -29,15 +29,13 @@ route("GET", "/go", function() {
 })
 LK
 fail=0
-for mode in "LOOK_X=1" "LOOK_BYTECODE=0"; do
-    rm -f "$TMP"/jobs.db*
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/nope" && break; sleep 0.1; done
-    got="$(curl -s -m 10 -D "$TMP/h.txt" -w ' %{http_code}' "localhost:$PORT/go?x=SECRET")"
-    hdr="$(grep -ci 'x-from-handler' "$TMP/h.txt")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$got" = '{"x":"SECRET","handler_saw":"nothing","ran":1} 200' ] && [ "$hdr" = "0" ]; then
-        echo "  OK   [$mode] the handler ran once with its own context; the request kept its parameters, status and headers"
-    else echo "  FAIL [$mode] response=[$got] handler-header-in-response=$hdr"; fail=1; fi
-done
+rm -f "$TMP"/jobs.db*
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/nope" && break; sleep 0.1; done
+got="$(curl -s -m 10 -D "$TMP/h.txt" -w ' %{http_code}' "localhost:$PORT/go?x=SECRET")"
+hdr="$(grep -ci 'x-from-handler' "$TMP/h.txt")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$got" = '{"x":"SECRET","handler_saw":"nothing","ran":1} 200' ] && [ "$hdr" = "0" ]; then
+    echo "  OK   the handler ran once with its own context; the request kept its parameters, status and headers"
+else echo "  FAIL response=[$got] handler-header-in-response=$hdr"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: a job handler does not share the request that started it" || { echo "FAIL: job handler context"; exit 1; }

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Every pure built-in gives the same value when it is called at the top level of a web
-# application and read in a route, as when it is called inside the route — on both engines.
+# application and read in a route, as when it is called inside the route.
 #
 # The cases are GENERATED from the binary's own built-in table (`lk --builtins`), so a
 # function added later is covered without anyone remembering to add it:
 #   1. for each function of a pure module (array, crypto, html, json, math, string, type,
-#      validator) and each plain built-in, a list of argument shapes is tried on the tree-walk
+#      validator) and each plain built-in, a list of argument shapes is tried on the
 #      command line until one runs without an error and gives the same output twice
 #      (functions that are random or depend on the clock drop out here);
 #   2. one web application is generated: `$v<i> = <call>` at the top level for every sampled
 #      call, a route that returns those variables, and a route that makes the same calls;
-#   3. it is started on the VM and on the tree-walk engine; all four lists must be equal.
+#   3. it is started; the two lists must be equal.
 # This is the class of the 1.0.13 fix: ten plain built-ins were not connected in the VM's
 # setup pass and returned null at the top level, with no error.
 # The number of sampled functions is printed; it must not fall below MIN_SAMPLED.
@@ -68,8 +68,8 @@ while IFS= read -r name; do
     fi
     while IFS= read -r shape; do
         printf 'use json\n%s\nprint(json::encode(%s(%s)))\n' "$uses" "$name" "$shape" > "$TMP/p.lk"
-        a="$(LOOK_X=1 timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
-        b="$(LOOK_X=1 timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
+        a="$(timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
+        b="$(timeout 10 "$LK" "$TMP/p.lk" 2>/dev/null)" || continue
         [ -n "$a" ] && [ "$a" = "$b" ] || continue
         case "$a" in *"<function>"*) continue;; esac   # a function printed as a value: not a meaningful sample
         echo "$name($shape)" >> "$TMP/calls.txt"; break
@@ -86,18 +86,17 @@ n="$(wc -l < "$TMP/calls.txt")"
     i=0; while IFS= read -r c; do [ $i -gt 0 ] && printf ', '; printf '%s' "$c"; i=$((i+1)); done < "$TMP/calls.txt"
     echo '])) })'
 } > "$TMP/app.lk"
-fail=0; ref=""
-for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 50); do curl -s -o /dev/null -m 1 "localhost:$PORT/in" && break; sleep 0.1; done
-    top="$(curl -s -m 10 "localhost:$PORT/top")"; in="$(curl -s -m 10 "localhost:$PORT/in")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    [ -z "$ref" ] && ref="$in"
-    if [ -n "$top" ] && [ "$top" = "$in" ] && [ "$in" = "$ref" ]; then echo "  OK   [$mode] $n functions: top level == inside a route"
-    else
-        echo "  FAIL [$mode] the lists differ $(grep -m1 -o 'rror.*' "$TMP/log.txt" | cut -c1-120)"; fail=1
-        echo "$top" > "$TMP/a.json"; echo "$in" > "$TMP/b.json"; echo "$ref" > "$TMP/c.json"
-        python3 - "$TMP" <<'PY'
+fail=0
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 50); do curl -s -o /dev/null -m 1 "localhost:$PORT/in" && break; sleep 0.1; done
+top="$(curl -s -m 10 "localhost:$PORT/top")"; in="$(curl -s -m 10 "localhost:$PORT/in")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+ref="$in"
+if [ -n "$top" ] && [ "$top" = "$in" ]; then echo "  OK   $n functions: top level == inside a route"
+else
+    echo "  FAIL the lists differ $(grep -m1 -o 'rror.*' "$TMP/log.txt" | cut -c1-120)"; fail=1
+    echo "$top" > "$TMP/a.json"; echo "$in" > "$TMP/b.json"; echo "$ref" > "$TMP/c.json"
+    python3 - "$TMP" <<'PY'
 import json, sys
 d = sys.argv[1]
 calls = [l.rstrip("\n") for l in open(d + "/calls.txt")]
@@ -111,7 +110,6 @@ for nm, lst in (("top level", top), ("in route", inr)):
         if ref is not None and i < len(lst) and i < len(ref) and lst[i] != ref[i]:
             print("       %s: %s -> %s (expected %s)" % (nm, c, json.dumps(lst[i]), json.dumps(ref[i])))
 PY
-    fi
-done
+fi
 if [ "$n" -lt "$MIN_SAMPLED" ]; then echo "  FAIL only $n functions could be sampled (want at least $MIN_SAMPLED)"; fail=1; fi
-[ $fail = 0 ] && echo "PASS: $n built-ins give the same value at the top level and in a route, on both engines" || { echo "FAIL: built-ins at the top level (generated)"; exit 1; }
+[ $fail = 0 ] && echo "PASS: $n built-ins give the same value at the top level and in a route" || { echo "FAIL: built-ins at the top level (generated)"; exit 1; }

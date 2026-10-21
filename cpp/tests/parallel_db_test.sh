@@ -45,31 +45,27 @@ LK
 cd "$TMP"   # göreli "t.db" buraya düşsün; $srv gerçek fcgi PID'i olsun (alt-kabuk değil)
 
 fail=0
-for engine in vm interp; do
-  rm -f t.db
-  if [ "$engine" = "interp" ]; then export LOOK_BYTECODE=0; else unset LOOK_BYTECODE; fi
-  "$FCGI" --mode http --port $PORT app.lk >/dev/null 2>&1 &
-  srv=$!
-  sleep 2
+rm -f t.db
+"$FCGI" --mode http --port $PORT app.lk >/dev/null 2>&1 &
+srv=$!
+sleep 2
 
-  # 1) Sızıntı: havuz boyutundan (varsayılan 4) fazla ardışık istek
-  ok=0
-  for i in $(seq 1 10); do
-    [ "$(curl -s --max-time 6 "http://127.0.0.1:$PORT/par")" = "par=1" ] && ok=$((ok+1))
-  done
-  # 2) Havuz baskısı: 8 eşzamanlı task / 4 conn
-  sum=$(curl -s --max-time 18 "http://127.0.0.1:$PORT/par8")
-
-  kill $srv 2>/dev/null || true
-  wait $srv 2>/dev/null || true
-  sleep 1
-
-  if [ "$ok" = "10" ] && [ "$sum" = "sum=8" ]; then
-    echo "PASS [$engine]: sızıntı yok (10/10), havuz baskısı OK ($sum)"
-  else
-    echo "FAIL [$engine]: ardışık=$ok/10 (sızıntı!), 8-paralel=[$sum] (beklenen sum=8)"
-    fail=1
-  fi
+# 1) Sızıntı: havuz boyutundan (varsayılan 4) fazla ardışık istek
+ok=0
+for i in $(seq 1 10); do
+  [ "$(curl -s --max-time 6 "http://127.0.0.1:$PORT/par")" = "par=1" ] && ok=$((ok+1))
 done
-unset LOOK_BYTECODE
+# 2) Havuz baskısı: 8 eşzamanlı task / 4 conn
+sum=$(curl -s --max-time 18 "http://127.0.0.1:$PORT/par8")
+
+kill $srv 2>/dev/null || true
+wait $srv 2>/dev/null || true
+sleep 1
+
+if [ "$ok" = "10" ] && [ "$sum" = "sum=8" ]; then
+  echo "PASS: sızıntı yok (10/10), havuz baskısı OK ($sum)"
+else
+  echo "FAIL: ardışık=$ok/10 (sızıntı!), 8-paralel=[$sum] (beklenen sum=8)"
+  fail=1
+fi
 exit $fail

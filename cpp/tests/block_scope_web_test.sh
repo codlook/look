@@ -29,16 +29,14 @@ route("GET", "/scope", fn() => response::json([
 LK
 WANT='{"if":"undefined","for":"undefined","for_init":"undefined","foreach":"undefined","foreach_var":"undefined","try":"undefined","declared":"set in block","level":"verbose","names":["x","y"]}'
 fail=0
-for mode in "LOOK_VM_STRICT=1" "LOOK_BYTECODE=0"; do
-    ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/scope" && break; sleep 0.1; done
-    got="$(curl -s -m 3 "localhost:$PORT/scope")"
-    items="$(curl -s -m 3 "localhost:$PORT/item/x")$(curl -s -m 3 "localhost:$PORT/item/y")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$got" = "$WANT" ]; then echo "  OK   [$mode] routes see only what the top level declared"
-    else echo "  FAIL [$mode] got: $got $(grep -m1 -i 'error' "$TMP/log.txt" | cut -c1-160)"; fail=1; fi
-    # A route registered in a top-level loop keeps the value of its own iteration.
-    if [ "$items" = '{"item":"x"}{"item":"y"}' ]; then echo "  OK   [$mode] a route created in a loop keeps its own iteration's value"
-    else echo "  FAIL [$mode] loop routes: $items"; fail=1; fi
-done
+( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/scope" && break; sleep 0.1; done
+got="$(curl -s -m 3 "localhost:$PORT/scope")"
+items="$(curl -s -m 3 "localhost:$PORT/item/x")$(curl -s -m 3 "localhost:$PORT/item/y")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+if [ "$got" = "$WANT" ]; then echo "  OK   routes see only what the top level declared"
+else echo "  FAIL got: $got $(grep -m1 -i 'error' "$TMP/log.txt" | cut -c1-160)"; fail=1; fi
+# A route registered in a top-level loop keeps the value of its own iteration.
+if [ "$items" = '{"item":"x"}{"item":"y"}' ]; then echo "  OK   a route created in a loop keeps its own iteration's value"
+else echo "  FAIL loop routes: $items"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: block scope holds on the web path" || { echo "FAIL: block scope (web)"; exit 1; }

@@ -1,15 +1,15 @@
 #!/bin/bash
-# ÜÇ MOTOR differential regresyon testi — hepsi BİREBİR aynı çıktıyı vermeli.
-# Felsefe koruması: motorlar SEMANTİK olarak ayrışmamalı ("bagsız ve stabil").
+# İKİ SÜTUN differential regresyon testi — ikisi BİREBİR aynı çıktıyı vermeli ve sabit
+# referansa (tests/golden/differential/*.out) ve beklenen değerlere (*_bek) uymalı.
+# Felsefe koruması: yüzeyler SEMANTİK olarak ayrışmamalı ("bagsız ve stabil").
 #
-#   1) "tree-walk" sütunu: LOOK 2 (adım 5) komut satırı da YALNIZ VM — bu sütun artık `lk`i ikinci kez
-#      koşturur; referans semantik tests/golden/differential/*.out. Sütun yorumlayıcı silinince kalkar.
-#   2) CLI-VM     : lk <script>  (C9: DEFAULT) — bytecode VM, main.cpp/build_cli_builtins
-#   3) web-VM     : lk-fcgi --mode http (route)  — bytecode VM, http_main.cpp/req_builtins
+#   1) CLI-VM     : lk <script>  — bytecode VM, main.cpp/build_cli_builtins
+#   2) web-VM     : lk-fcgi --mode http (route)  — bytecode VM, http_main.cpp/req_builtins
 #
-# NEDEN 3 MOTOR: builtin wiring İKİ ayrı elle-yazılmış yerde duruyor (build_cli_builtins
+# LOOK 2 tek motorludur (yorumlayıcı silindi); eskiden üçüncü bir "tree-walk" sütunu vardı.
+# NEDEN 2 SÜTUN: builtin wiring İKİ ayrı elle-yazılmış yerde duruyor (build_cli_builtins
 # ve req_builtins). Bunlar sessizce birbirinden kayabilir — nitekim kaydı da (math::round
-# bir dönem web'de çalışıp CLI-VM'de çalışmadı). 2 motorlu test bu kaymayı GÖREMEZ.
+# bir dönem web'de çalışıp CLI-VM'de çalışmadı). Tek sütunlu test bu kaymayı GÖREMEZ.
 #
 # Her motor değişikliğinden (opcode/builtin/Value/köprü) sonra çalıştır.
 # Kullanım: bash differential_test.sh [lk_yolu] [lk-fcgi_yolu]
@@ -39,38 +39,34 @@ trap cleanup EXIT
 cp "$BODY" "$TMP/cli.lk"; echo 'print(run_all());' >> "$TMP/cli.lk"
 cp "$BODY" "$TMP/vm.lk";  echo 'route("GET","/t", function(){ return response::text(run_all()); });' >> "$TMP/vm.lk"
 
-# LOOK 2 (adım 5): `lk` yalnız VM — bu "tree-walk" değişkeni artık CLI-VM'in ikinci koşusu (bkz. başlık).
-TREE=$("$LK" "$TMP/cli.lk" 2>&1)
-CLIVM=$(LOOK_VM_STRICT=1 "$LK" "$TMP/cli.lk" 2>&1)
+CLIVM=$("$LK" "$TMP/cli.lk" 2>&1)
 
-LOOK_VM_STRICT=1 "$FCGI" --mode http --port $PORT "$TMP/vm.lk" >"$TMP/web_main.log" 2>&1 &
+"$FCGI" --mode http --port $PORT "$TMP/vm.lk" >"$TMP/web_main.log" 2>&1 &
 SRV=$!
 sleep 2
 WEBVM=$(curl -s --max-time 15 "http://127.0.0.1:$PORT/t")
 
 fail=0
 # ── Guard'ın KENDİ pozitif kontrolü (2026-09-30) ─────────────────────────────────
-# CLI-VM ve web-VM sütunları LOOK_VM_STRICT=1 ile koşar: VM script'i çalıştıramazsa sessizce
-# yorumlayıcıya düşmek yerine HATA vermeli. Bu önkoşul bozulursa (biri strict okumasını
-# kaldırırsa) sütunlar yine yorumlayıcı×3 olur ve guard sahte-yeşil verir — tam da gövdenin
-# 255-register sınırını aşıp aylarca VM'siz koştuğu gibi. İki yönü de kanıtla:
+# VM script'i çalıştıramazsa sessizce başka bir yola düşmek yerine HATA vermeli (LOOK 2'de
+# başka yol yok). Bu önkoşul bozulursa guard sahte-yeşil verir — tam da gövdenin 255-register
+# sınırını aşıp aylarca VM'siz (yorumlayıcıda) koştuğu gibi. İki yönü de kanıtla:
 printf 'use cache\nprint(cache::__guard_probe_not_a_fn())\n' > "$TMP/strict_probe.lk"
-if LOOK_VM_STRICT=1 "$LK" "$TMP/strict_probe.lk" >/dev/null 2>&1; then
-  echo "FAIL: LOOK_VM_STRICT CLI'da sessiz fallback'i ENGELLEMIYOR — CLI-VM sutunu guvenilmez"; fail=1
+if "$LK" "$TMP/strict_probe.lk" >/dev/null 2>&1; then
+  echo "FAIL: a call to a function that does not exist did not fail on the command line — the CLI-VM column cannot be trusted"; fail=1
 fi
 grep -q "^\[BYTECODE\] OK" "$TMP/web_main.log" \
   || { echo "FAIL: web-VM sutunu VM'de derlenmedi (log: $(grep -m1 -iE 'error|fallback' "$TMP/web_main.log"))"; fail=1; }
-[ -z "$TREE" ] && { echo "FAIL: tree-walk bos cikti verdi (script hatasi?)"; fail=1; }
-[ "$TREE" = "$CLIVM" ] || { echo "FAIL: tree-walk != CLI-VM"; fail=1; }
-[ "$TREE" = "$WEBVM" ] || { echo "FAIL: tree-walk != web-VM"; fail=1; }
+[ -z "$CLIVM" ] && { echo "FAIL: CLI-VM gave no output (script error?)"; fail=1; }
+[ "$CLIVM" = "$WEBVM" ] || { echo "FAIL: CLI-VM != web-VM"; fail=1; }
 
 # ── SABİT REFERANS (beklenen sonuç dosyaları, tests/golden/differential/) ────────────
-# Motorlar arası karşılaştırma, iki motorun ORTAK kullandığı koda (yerleşik modüller zaten
-# ortak) giren hatayı göremez: ikisi de aynı yanlışı verir. LOOK 2 tek motora geçerken
-# yorumlayıcı da kalkacak. Bu dosyalar, iki/üç motorun birbirini doğruladığı anki çıktıları
-# sabitler (2026-10-19, motorların birebir aynı çıktısı). Bilinçli değişiklikte: UPDATE_GOLDEN=1
-# ile yeniden yaz ve farkı commit'te açıkla. Dosya yoksa FAIL (sessiz yeşil yok).
-# Güncelleme yalnız motorlar AYNI çıktıyı verirse yazar: aynı ad bu koşuda farklı değerle
+# Sütunlar arası karşılaştırma, iki sütunun ORTAK kullandığı koda (VM ve yerleşik modüller
+# ortak) giren hatayı göremez: ikisi de aynı yanlışı verir. Bu dosyalar, üç motorun (yorumlayıcı
+# silinmeden önce) birbirini doğruladığı anki çıktıları sabitler (2026-10-19, motorların birebir
+# aynı çıktısı). Bilinçli değişiklikte: UPDATE_GOLDEN=1 ile yeniden yaz ve farkı commit'te
+# açıkla. Dosya yoksa FAIL (sessiz yeşil yok).
+# Güncelleme yalnız sütunlar AYNI çıktıyı verirse yazar: aynı ad bu koşuda farklı değerle
 # ikinci kez gelirse FAIL (son yazan sessizce kazanmasın).
 GOLDEN_DIR="$DIR/golden/differential"
 GOLDEN_SEEN=" "
@@ -79,14 +75,13 @@ golden() {   # golden <ad> <değer> <etiket>
   if [ "${UPDATE_GOLDEN:-0}" = 1 ]; then
     mkdir -p "$GOLDEN_DIR"
     case "$GOLDEN_SEEN" in
-      *" $1 "*) [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 oteki motordan farkli — golden YAZILMADI"; fail=1; }; return ;;
+      *" $1 "*) [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 differs from the other column — golden NOT written"; fail=1; }; return ;;
     esac
     printf '%s' "$2" > "$f"; GOLDEN_SEEN="$GOLDEN_SEEN$1 "; echo "  (golden yazildi: $1)"; return
   fi
   if [ ! -f "$f" ]; then echo "FAIL: golden dosyasi yok: $f (UPDATE_GOLDEN=1 ile olustur)"; fail=1; return; fi
   [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 sabit referanstan ayrisiyor ($f)"; fail=1; }
 }
-golden run_all "$TREE"  "run_all (tree-walk)"
 golden run_all "$CLIVM" "run_all (CLI-VM)"
 golden run_all "$WEBVM" "run_all (web-VM)"
 
@@ -102,30 +97,19 @@ print("x", "y", "z")
 write("p", "q")
 print("son")
 LK
-"$LK" "$TMP/io.lk" > "$TMP/io_tree.out" 2>&1
 "$LK" "$TMP/io.lk" > "$TMP/io_vm.out" 2>&1
 # Bayt-bayt karsilastirma HARICI ARACA BAGLI OLMAMALI: `cmp`/`diff` (diffutils) minimal
 # konteynerlerde YOK — komut bulunamayinca non-zero doner ve "baytlar farkli" sanilir
 # (YANLIS ALARM: bu tam olarak yasandi, AlmaLinux 8 minimal'da cmp yok). od + $(...)
-# de guvenli degil: $(...) trailing newline'i yutar. Cozum: od dump'larini DOSYAYA yaz,
+# de guvenli degil: $(...) trailing newline'i yutar. Cozum: od dump'ini DOSYAYA yaz,
 # shell string karsilastirmasi yap — od her yerde var (coreutils).
-od -c < "$TMP/io_tree.out" > "$TMP/io_tree.od"
 od -c < "$TMP/io_vm.out"   > "$TMP/io_vm.od"
-io_tree_dump=$(cat "$TMP/io_tree.od")
 io_vm_dump=$(cat "$TMP/io_vm.od")
-if [ "$io_tree_dump" != "$io_vm_dump" ]; then
-  echo "FAIL: print/write BAYT BAYT ayrisiyor (newline / ' ' ayraci)"
-  echo "  tree : $(echo "$io_tree_dump" | head -2 | tr '\n' ' ')"
-  echo "  CLIVM: $(echo "$io_vm_dump"   | head -2 | tr '\n' ' ')"
-  fail=1
-fi
-golden print_write_bytes "$io_tree_dump" "print/write baytlari (tree-walk)"
 golden print_write_bytes "$io_vm_dump"   "print/write baytlari (CLI-VM)"
 printf 'print("basla")\nexit(3)\nprint("OLMAMALI")\n' > "$TMP/ex.lk"
-"$LK" "$TMP/ex.lk" >/dev/null 2>&1; t_code=$?
 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; v_code=$?
-if [ "$t_code" != "3" ] || [ "$v_code" != "3" ]; then
-  echo "FAIL: exit(3) kodu — tree=$t_code CLI-VM=$v_code (ikisi de 3 olmali)"
+if [ "$v_code" != "3" ]; then
+  echo "FAIL: exit(3) exit code — CLI-VM=$v_code (want 3)"
   fail=1
 fi
 
@@ -154,10 +138,8 @@ $i = 0
 while ($i < 5) { $t += $i; $i = $i + 1 }
 print($a . "|" . $n . "|" . $m . "|" . $p . "|" . $q . "|" . $r . "|" . $t)
 LK
-ca_tree=$("$LK" "$TMP/ca.lk" 2>&1)
 ca_vm=$("$LK" "$TMP/ca.lk" 2>&1)
 ca_bek="xy|3|7|12|3|2|10"
-[ "$ca_tree" = "$ca_bek" ] || { echo "FAIL: top-level compound tree-walk: [$ca_tree] (beklenen $ca_bek)"; fail=1; }
 [ "$ca_vm"   = "$ca_bek" ] || { echo "FAIL: top-level compound CLI-VM: [$ca_vm] (beklenen $ca_bek) — compiler global dalinda e.op yok sayiliyor olabilir"; fail=1; }
 
 # ── TEMPLATE motoru: dil semantigiyle AYNI olmali ────────────────────────────────
@@ -181,11 +163,9 @@ print("KOD:if0:" . b($s0) . " ifs:" . b($ss) . " f:" . $big)
 print(template::render("tpl", ["s0"=>$s0,"ss"=>$ss,"big"=>$big,"xss"=>$xss]))
 TPLLK
 tpl_out=$(cd "$TMP" && "$LK" tpl.lk 2>&1)
-tpl_vm=$(cd "$TMP" && "$LK" tpl.lk 2>&1)
 echo "$tpl_out" | grep -q 'KOD:if0:F ifs:T f:1234567.5' || { echo "FAIL: template guard — KOD satiri beklenmedik: [$tpl_out]"; fail=1; }
 echo "$tpl_out" | grep -q 'if0:F ifs:T f:1234567.5' || { echo "FAIL: TEMPLATE dil semantiginden SAPIYOR (truthiness \"0\" veya float formati): [$tpl_out]"; fail=1; }
 echo "$tpl_out" | grep -q 'esc:&lt;b&gt;&amp;' || { echo "FAIL: template HTML escaping bozuk (XSS riski): [$tpl_out]"; fail=1; }
-[ "$tpl_out" = "$tpl_vm" ] || { echo "FAIL: template tree-walk != CLI-VM"; fail=1; }
 
 # ── array::set — SAYISAL dizide veri yok ediyordu ────────────────────────────────
 # NEDEN: "Convert numeric array to assoc" dali donusturmuyor, DEGISTIRIYORDU —
@@ -204,11 +184,9 @@ print(json::encode(array::set([1,2,3], 1, "X")) . "|" .
       json::encode(array::set([], "k", "X")) . "|" .
       json::encode(array::set(["a"=>1,"b"=>2], "a", 9)))
 LK
-as_tree=$("$LK" "$TMP/aset.lk" 2>&1)
 as_vm=$("$LK" "$TMP/aset.lk" 2>&1)
 as_bek='[1,"X",3]|[1,2,3,"X"]|{"0":1,"1":2,"2":3,"k":"X"}|{"k":"X"}|{"a":9,"b":2}'
-[ "$as_tree" = "$as_bek" ] || { echo "FAIL: array::set tree-walk: [$as_tree] (beklenen $as_bek) — sayisal dizide veri yok ediliyor olabilir"; fail=1; }
-[ "$as_vm"   = "$as_bek" ] || { echo "FAIL: array::set CLI-VM: [$as_vm] (beklenen $as_bek)"; fail=1; }
+[ "$as_vm"   = "$as_bek" ] || { echo "FAIL: array::set CLI-VM: [$as_vm] (beklenen $as_bek) — sayisal dizide veri yok ediliyor olabilir"; fail=1; }
 
 # ── $arr["anahtar"] — SAYISAL listeye string anahtar ─────────────────────────────
 # NEDEN: iki motor da yanlisti, farkli sekilde (guard'da bu vaka HIC yoktu):
@@ -253,16 +231,12 @@ print(t(function(){ $a=[1,2,3]; return $a[-1] }) . "|" .
       t(function(){ $a=[1,2,3]; $a[99]="X"; return $a }))
 LK
 in_bek='3|HATA|HATA|[1,2,"X"]|[1,2,3,"X"]|HATA'
-in_tree=$("$LK" "$TMP/inum.lk" 2>&1)
 in_vm=$("$LK" "$TMP/inum.lk" 2>&1)
-[ "$in_tree" = "$in_bek" ] || { echo "FAIL: \$arr[sayi] uclari tree-walk: [$in_tree] (beklenen $in_bek)"; fail=1; }
 [ "$in_vm"   = "$in_bek" ] || { echo "FAIL: \$arr[sayi] uclari CLI-VM: [$in_vm] (beklenen $in_bek) — VM aralik disinda/negatifte SESSIZ olabilir"; fail=1; }
 
-ik_tree=$("$LK" "$TMP/ikey.lk" 2>&1)
 ik_vm=$("$LK" "$TMP/ikey.lk" 2>&1)
 ik_bek='{"0":1,"1":2,"2":3,"k":"X"}|X|2|{"k":"X"}|[1,"X",3]|null|2'
-[ "$ik_tree" = "$ik_bek" ] || { echo "FAIL: \$arr[str] tree-walk: [$ik_tree] (beklenen $ik_bek) — string anahtar sayisal indekse zorlaniyor olabilir"; fail=1; }
-[ "$ik_vm"   = "$ik_bek" ] || { echo "FAIL: \$arr[str] CLI-VM: [$ik_vm] (beklenen $ik_bek) — liste assoc'a cevrilirken elemanlar korunmuyor olabilir"; fail=1; }
+[ "$ik_vm"   = "$ik_bek" ] || { echo "FAIL: \$arr[str] CLI-VM: [$ik_vm] (beklenen $ik_bek) — liste assoc'a cevrilirken elemanlar korunmuyor veya string anahtar sayisal indekse zorlaniyor olabilir"; fail=1; }
 
 
 # ── string::replace — BOS arama dizesi ASIYORDU (DoS) ───────────────────────────
@@ -281,11 +255,8 @@ print(string::replace("abc", "", "X") . "|" . string::replace("abc", "", "") . "
       string::replace("aXbXc", "X", "-"))
 LK
 rp_bek='XaXbXcX|abc|-ş-ğ-|X|a-b-c'
-rp_tree=$(timeout 10 env "$LK" "$TMP/rep.lk" 2>&1); rp_rc=$?
-[ $rp_rc -eq 124 ] && { echo "FAIL: string::replace tree-walk ASILDI (bos arama dizesi sonsuz dongu)"; fail=1; }
 rp_vm=$(timeout 10 "$LK" "$TMP/rep.lk" 2>&1); rp_rc2=$?
 [ $rp_rc2 -eq 124 ] && { echo "FAIL: string::replace CLI-VM ASILDI (bos arama dizesi sonsuz dongu)"; fail=1; }
-[ $rp_rc -eq 124 ] || [ "$rp_tree" = "$rp_bek" ] || { echo "FAIL: string::replace tree-walk: [$rp_tree] (beklenen $rp_bek)"; fail=1; }
 [ $rp_rc2 -eq 124 ] || [ "$rp_vm" = "$rp_bek" ] || { echo "FAIL: string::replace CLI-VM: [$rp_vm] (beklenen $rp_bek)"; fail=1; }
 
 
@@ -309,10 +280,8 @@ print(string::pad_left("ş",3,"x") . "|" . string::len(string::pad_left("ş",3,"
       string::pad_left("",3,"x") . "|" . string::pad_left("ab",0,"x"))
 LK
 pd_bek='xxş|3|şxx|şşşa|abcdef|şğü|xxx|ab'
-pd_tree=$(timeout 10 env "$LK" "$TMP/pad.lk" 2>&1)
 pd_vm=$(timeout 10 "$LK" "$TMP/pad.lk" 2>&1)
-[ "$pd_tree" = "$pd_bek" ] || { echo "FAIL: string::pad_* tree-walk: [$pd_tree] (beklenen $pd_bek) — bayt tabanli genislik veya kirpma geri gelmis olabilir"; fail=1; }
-[ "$pd_vm"   = "$pd_bek" ] || { echo "FAIL: string::pad_* CLI-VM: [$pd_vm] (beklenen $pd_bek)"; fail=1; }
+[ "$pd_vm"   = "$pd_bek" ] || { echo "FAIL: string::pad_* CLI-VM: [$pd_vm] (beklenen $pd_bek) — bayt tabanli genislik veya kirpma geri gelmis olabilir"; fail=1; }
 if command -v iconv >/dev/null 2>&1; then
   printf '%s' "$pd_vm" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || { echo "FAIL: string::pad_* GECERSIZ UTF-8 uretiyor (cok baytli karakter ortadan bolunuyor)"; fail=1; }
 fi
@@ -335,10 +304,8 @@ print(string::upper("i") . string::lower("I") . string::upper("ı") . string::lo
       string::lower(string::upper("привет")))
 LK
 cs_bek='IiIi|ÇĞÖŞÜ|ПРИВЕТ|привет|ΕΛΛΆΔΑ|ŁÓDŹ|ČEŠTINA|привет'
-cs_tree=$(timeout 10 env "$LK" "$TMP/case.lk" 2>&1)
 cs_vm=$(timeout 10 "$LK" "$TMP/case.lk" 2>&1)
-[ "$cs_tree" = "$cs_bek" ] || { echo "FAIL: string::upper/lower tree-walk: [$cs_tree] (beklenen $cs_bek) — Turkce locale geri gelmis veya kapsam eksik olabilir"; fail=1; }
-[ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (beklenen $cs_bek)"; fail=1; }
+[ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (beklenen $cs_bek) — Turkce locale geri gelmis veya kapsam eksik olabilir"; fail=1; }
 
 
 # ── GUVENLIK: request::ip() sahtelenemez mi? ────────────────────────────────────
@@ -464,7 +431,7 @@ db_bek='Hazir mi?|D|0|1|hata|hata'
 # Ne modulu ne fonksiyonu soyluyor, ustelik bir C++ ic terimi. tree-walk (REFERANS)
 # ise dogru mesaji veriyordu: "Module 'string' not loaded."
 # 'use' unutmak LOOK'ta EN SIK yapilan hata, yani VARSAYILAN motor en kotu mesaji
-# veriyordu. Hata metni de sozlesmenin parcasidir (S3): iki motor ayni demeli.
+# veriyordu. Hata metni de sozlesmenin parcasidir (S3): sabit referans (golden) onu kilitler.
 cat > "$TMP/uerr.lk" <<'LK'
 print(string::len("abc"))
 LK
@@ -472,16 +439,13 @@ cat > "$TMP/uok.lk" <<'LK'
 use string
 print(string::len("abc"))
 LK
-ue_tree=$("$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
 ue_vm=$("$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
 uo_vm=$("$LK" "$TMP/uok.lk" 2>&1 | tail -1)
 echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM C++ ic istisnasini sizdiriyor: [$ue_vm]"; fail=1; }
-[ "$ue_tree" = "$ue_vm" ] || { echo "FAIL: hata mesaji motorlar arasi ayrisiyor — tree-walk: [$ue_tree] / CLI-VM: [$ue_vm]"; fail=1; }
-golden use_missing_error "$ue_tree" "'use' unutulunca hata mesaji (tree-walk)"
 golden use_missing_error "$ue_vm"   "'use' unutulunca hata mesaji (CLI-VM)"
 [ "$uo_vm" = "3" ] || { echo "FAIL: 'use' VARKEN modul cagrisi bozuldu (pozitif kontrol): [$uo_vm]"; fail=1; }
 
-# Cagrilamayan AD — mesaj adi soylemeli ve iki motor ayni demeli.
+# Cagrilamayan AD — mesaj adi soylemeli.
 # ESKI HATA (iki yonlu): VM adi bilmiyordu ("Cagrilabilir degil (BYTECODE_FN
 # bekleniyor)" — hangi ad?); tree-walk ise her durumda "is not defined" diyordu,
 # oysa deger TANIMLI olabilir ve yalnizca cagrilabilir degildir ($x = 5; $x(1)).
@@ -491,8 +455,6 @@ printf 'print(olmayan_fonksiyon(1))\n' > "$TMP/c1.lk"
 printf '$x = 5\nprint($x(1))\n'        > "$TMP/c2.lk"
 for cf in c1 c2; do
   cv=$("$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
-  ct=$("$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
-  [ "$cv" = "$ct" ] || { echo "FAIL: cagri hatasi motorlar arasi ayrisiyor ($cf) — CLI-VM: [$cv] / tree-walk: [$ct]"; fail=1; }
   echo "$cv" | grep -q "BYTECODE_FN" && { echo "FAIL: cagri hatasi ic terim sizdiriyor (ad soylenmiyor): [$cv]"; fail=1; }
 done
 echo "$("$LK" "$TMP/c2.lk" 2>&1)" | grep -q "is not defined" && {
@@ -646,7 +608,7 @@ fi
 # sağlam çıkan davranışları REGRESYONA karşı kilitler:
 #   sonlanmama -> hata (sonsuz okuma değil), derin iç içe -> parser guard (stack
 #   overflow değil), unicode surrogate -> doğru (tek surrogate güvenli, çift
-#   birleşiyor). Hepsi tek motorda (lexer paylaşımlı) — 3 motora gerek yok.
+#   birleşiyor). Hepsi tek sütunda (lexer paylaşımlı) — iki sütuna gerek yok.
 lx_fail=0
 printf 'print("acik' > "$TMP/lx_str.lk"
 "$LK" --check "$TMP/lx_str.lk" 2>&1 | grep -qi "Unterminated\|sonland" || { echo "FAIL: lexer sonlanmamis string'i yakalamiyor"; lx_fail=1; }
@@ -720,11 +682,10 @@ kill $OC $OU 2>/dev/null; sleep 1; kill -9 $OC $OU 2>/dev/null
 [ "$odr_r" = '{"st":200}' ] || { echo "FAIL: web route'ta http::get bozuk: [$odr_r] (ODR/crash?)"; fail=1; }
 [ "$odr_alive" = "yes" ] || { echo "FAIL: http::get sonrasi SUNUCU COKTU (look::HttpResponse ODR ihlali geri geldi mi?)"; fail=1; }
 if [ $fail -eq 0 ]; then
-  echo "PASS: tree-walk == CLI-VM == web-VM (3 motor x 22 kategori + CLI print/exit + fallback-gurultulu)"
-  echo "  $TREE"
+  echo "PASS: CLI-VM == web-VM == golden (2 columns x 22 categories + CLI print/exit + no silent fallback)"
+  echo "  $CLIVM"
   exit 0
 else
-  echo "  tree-walk: $TREE"
   echo "  CLI-VM   : $CLIVM"
   echo "  web-VM   : $WEBVM"
   exit 1

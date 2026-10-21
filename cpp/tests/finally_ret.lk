@@ -1,4 +1,4 @@
-# finally-on-return davranışı — deterministik sıra. Runner iki motorda koşup çıktıyı + parity'yi
+# finally-on-return davranışı — deterministik sıra. Runner çıktıdaki beklenen satırları
 # doğrular. BUG (düzeltildi): VM `try { return X } finally { ... }`'de finally'yi atlıyordu
 # (interpreter ise catch-içi return'de atlıyordu). İkisi de düzeltildi; bu test regresyon guard'ı.
 

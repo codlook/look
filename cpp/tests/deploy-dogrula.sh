@@ -132,7 +132,7 @@ fi
 # VM by-value snapshot bug'ı fix'liyse döngü-içi tanımlı yakalanan var per-iter
 # cell olur: fns[0..2]() → 0,1,2 → "012". Fix YOKSA hepsi son değeri görür → "222".
 # C1 senaryosu (analizci canlı-doğrulama önerisi): 58'in canlı binary'de gerçekten
-# olduğunu dışarıdan kanıtlar. VM DEFAULT olduğundan LOOK_CLI_VM sarmalamaya gerek yok.
+# olduğunu dışarıdan kanıtlar.
 RECLK58="$LK"; [ -x "$RECLK58" ] || RECLK58="$LKFCGI"
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf '$fns=[]\n$i=0\nwhile($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }\nprint($fns[0]() . $fns[1]() . $fns[2]())\n' > "$TMP/clo.lk"
@@ -147,8 +147,8 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
 fi
 
 # ── 58+ closure guard: 12 vaka (catch/param/foreach/named-fn dahil) ──────────
-# 58 C1 tek senaryo; closure_semantics_test.sh 12 vakanın TAMAMINI (A-L) iki motorda
-# karşılaştırır → bu turda eklenen catch(I)/param(J)/foreach(K)/named-fn(L) fix'lerini
+# 58 C1 tek senaryo; closure_semantics_test.sh 12 vakanın TAMAMINI (A-L) beklenen
+# değerlere karşı sınar → bu turda eklenen catch(I)/param(J)/foreach(K)/named-fn(L) fix'lerini
 # de deploy edilen binary'de guard'lar (analizci önerisi). Yalnız yerel binary + guard
 # script mevcutsa (canlı HTTP-only modda atlanır).
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
@@ -224,18 +224,17 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
 fi
 
 # ── Oturum guard'lari (2026-07-28): differential-GORUNMEZ regresyonlar ────────
-# Bu 3 fix iki motorda da ayni yanlisi verebilir → differential YAKALAMAZ. Dis-oracle/
+# Bu 3 fix her yuzeyde ayni yanlisi verebilir → differential YAKALAMAZ. Dis-oracle/
 # davranis guard'i sart. int64 kiyas: operator== int'i double'a cevirirse 2^53 ustu ayrik
 # int64 esitlenir (d752afe). cache/channel izolasyon: deep_clone kalkarsa (biri "gereksiz
 # kopya" diye optimize ederse) cross-thread paylasim + heap race geri gelir (c7c7427/9670c18).
-# encoding-safe (tr -d + exact match, Turkce-grep yok); mutlak $TMP; her iki motor.
+# encoding-safe (tr -d + exact match, Turkce-grep yok); mutlak $TMP.
 printf '$a=9007199254740992+1\n$b=9007199254740992\nprint($a==$b)\n' > "$TMP/g_int.lk"
 iv=$("$RECLK58" "$TMP/g_int.lk" 2>&1 | tr -d '[:space:]')
-it=$(LOOK_CLI_VM=0 "$RECLK58" "$TMP/g_int.lk" 2>&1 | tr -d '[:space:]')
-if [ "$iv" = "false" ] && [ "$it" = "false" ]; then
+if [ "$iv" = "false" ]; then
   echo "  PASS int64-kiyas: 2^53+1 != 2^53 (dis-oracle, differential-gorunmez)"
 else
-  echo "  FAIL int64-kiyas: VM=[$iv] TW=[$it] beklenen false — d752afe regresyonu"; fail=1
+  echo "  FAIL int64-kiyas: [$iv] beklenen false — d752afe regresyonu"; fail=1
 fi
 printf 'use cache\ncache::set("k",[1,2,3])\n$a=cache::get("k")\npush($a,9)\nprint(count(cache::get("k")))\n' > "$TMP/g_cache.lk"
 cv=$("$RECLK58" "$TMP/g_cache.lk" 2>&1 | tr -d '[:space:]')

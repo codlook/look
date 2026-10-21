@@ -8,7 +8,7 @@
 #   (one form only: "name type [= default]"; an untyped field and the v1 "name: default"
 #   spelling are parse errors — tests/struct_single_form_test.sh)
 #
-# One rule set for both engines (include/look/struct_types.h): a value that does not match
+# One rule set (include/look/struct_types.h): a value that does not match
 # the field type is an error at construction AND on later assignment; an int may go into a
 # float field; null only into ?type / any / fn / struct-typed fields; the shape
 # is fixed (assigning an undeclared field is an error; v1 silently added it).

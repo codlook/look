@@ -6,7 +6,7 @@
 # could hold at most 72 route() calls or 63 three-argument calls; past that the compile
 # failed and the WHOLE program ran on the interpreter (CLI and web).
 #
-# Each function below is far past the old ceiling. Under LOOK_VM_STRICT=1 a compile
+# Each function below is far past the old ceiling. A compile
 # failure is an error, so this file only runs at all if the registers are reused; the
 # sums check that reuse did not corrupt a live value.
 # Uses only builtin module functions so the CLI really runs it on the VM.

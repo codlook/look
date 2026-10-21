@@ -5,7 +5,7 @@
 # target). Up to LOOK 1 they were 8 bits: past 255 arguments / parameters / captures /
 # registers (and 65535 constants, or a loop body longer than 65535 instructions) a program
 # did not compile on the VM, and LOOK 2 refuses to start an app the VM cannot compile. Each
-# case here runs on the VM in strict mode and must give the right answer. Above the real
+# case here runs on the VM and must give the right answer. Above the real
 # limit (65534) the compiler still refuses, and names the limit (no silent wrap-around: in
 # v1 a call with 300 arguments once delivered 44).
 # Usage: vm_operand_limits_test.sh <lk>
@@ -26,7 +26,7 @@ nums() { local s=""; for i in $(seq 1 $(( $1 - 1 ))); do s="$s$2$i, "; done; pri
 
 check() {  # name file want
     local s
-    s="$(LOOK_VM_STRICT=1 "$LK" "$2" 2>&1 | tail -1)"
+    s="$("$LK" "$2" 2>&1 | tail -1)"
     if [ "$s" = "$3" ]; then echo "  OK   $1 on the VM -> $s"; else echo "  FAIL $1 on the VM: got [$s] want [$3]"; fail=1; fi
 }
 check "300 arguments"           "$TMP/args.lk"     "got=300"
@@ -35,7 +35,7 @@ check "300 local variables"     "$TMP/locals.lk"   "got=301"
 check "300 captured variables"  "$TMP/captures.lk" "got=300"
 check "70000 constants"         "$TMP/consts.lk"   "got=408894"
 check "loop body over 65535 instructions" "$TMP/longloop.lk" "got=80000"
-s="$(LOOK_VM_STRICT=1 "$LK" "$TMP/over.lk" 2>&1 | grep -m1 "arguments")"
+s="$("$LK" "$TMP/over.lk" 2>&1 | grep -m1 "arguments")"
 case "$s" in *"more than 65534 arguments"*) echo "  OK   65535 arguments: refused by name";;
              *) echo "  FAIL 65535 arguments: got [$s] (want the 65534 limit named)"; fail=1;; esac
 [ $fail = 0 ] && echo "PASS: vm operand limits" || { echo "FAIL: vm operand limits"; exit 1; }

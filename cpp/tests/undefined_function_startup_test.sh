@@ -33,14 +33,12 @@ cat > "$TMP/good.lk" <<'LK'
 use string
 route("GET", "/ok", fn() => response::text(string::upper("ok")))
 LK
-for mode in "LOOK_X=1" "LOOK_VM_STRICT=1"; do
-    for app in "route.lk GET:/rare string::uper" "mw.lk GET:/ok session::ident"; do
-        set -- $app
-        ( cd "$TMP" && exec env $mode timeout 5 "$FCGI" --mode http --port "$PORT" --workers 1 "$1" > "$TMP/log.txt" 2>&1 ); rc=$?
-        if [ "$rc" = "1" ] && grep -q "route $2 calls $3(), which does not exist" "$TMP/log.txt"; then
-            echo "  OK   [$mode] $1 does not start: the route and $3 are named"
-        else echo "  FAIL [$mode] $1: exit=$rc (124 = it started) log: $(grep -m1 -i 'error' "$TMP/log.txt" | cut -c1-140)"; fail=1; fi
-    done
+for app in "route.lk GET:/rare string::uper" "mw.lk GET:/ok session::ident"; do
+    set -- $app
+    ( cd "$TMP" && exec timeout 5 "$FCGI" --mode http --port "$PORT" --workers 1 "$1" > "$TMP/log.txt" 2>&1 ); rc=$?
+    if [ "$rc" = "1" ] && grep -q "route $2 calls $3(), which does not exist" "$TMP/log.txt"; then
+        echo "  OK   $1 does not start: the route and $3 are named"
+    else echo "  FAIL $1: exit=$rc (124 = it started) log: $(grep -m1 -i 'error' "$TMP/log.txt" | cut -c1-140)"; fail=1; fi
 done
 ( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 1 good.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
 for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done

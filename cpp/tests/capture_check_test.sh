@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LOOK 2 closure rule, as seen at load (include/look/capture_check.h):
-#   * a closure that changes a variable it captured is a PARSE ERROR, on either engine and
+#   * a closure that changes a variable it captured is a PARSE ERROR,
 #     before anything runs: $x = ..., $x[i] = ..., $x.f = ..., $x += ..., $x++, push($x, ...),
 #     pop($x); the same for a named function declared inside another function;
 #   * a variable that changes after a closure captured it is reported as a WARNING by
@@ -29,14 +29,12 @@ LK
 
 refused() {  # label, source on stdin
     { echo 'print("ran")'; cat; } > "$TMP/w.lk"
-    for env in LOOK_VM_STRICT=1 LOOK_X=1; do
-        o="$(env $env "$LK" "$TMP/w.lk" 2>&1)"
-        case "$o" in
-          *ran*) echo "  FAIL [$env] $1: the program ran"; fail=1;;
-          *"captures the value and cannot change it"*) echo "  OK   [$env] refused at load: $1";;
-          *) echo "  FAIL [$env] $1: $(echo "$o" | tr '\n' ' ' | cut -c1-160)"; fail=1;;
-        esac
-    done
+    o="$("$LK" "$TMP/w.lk" 2>&1)"
+    case "$o" in
+      *ran*) echo "  FAIL $1: the program ran"; fail=1;;
+      *"captures the value and cannot change it"*) echo "  OK   refused at load: $1";;
+      *) echo "  FAIL $1: $(echo "$o" | tr '\n' ' ' | cut -c1-160)"; fail=1;;
+    esac
 }
 refused "assign after read" <<'LK'
 function f() { $n = 0

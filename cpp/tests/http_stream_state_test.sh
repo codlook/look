@@ -50,12 +50,10 @@ print(\$r["status"] . " state=" . ((\$r["state"] == null) ? "null" : "set"))
 LK
 fail=0
 WANT='200 ["data: alpha","data: beta","data: gamma","data: delta"] rest=[] many=yes'
-for env in "LOOK_VM_STRICT=1" "LOOK_X=1"; do
-    got="$(env LOOK_ALLOW_SSRF=1 $env "$LK" "$TMP/state.lk" 2>&1 | grep -v 'INFO' | tail -1)"
-    if [ "$got" = "$WANT" ]; then echo "  OK   [$env] lines cut across chunks are reassembled through the state"
-    else echo "  FAIL [$env] got: $got"; fail=1; fi
-    got="$(env LOOK_ALLOW_SSRF=1 $env "$LK" "$TMP/plain.lk" 2>&1 | grep -v 'INFO' | tail -1)"
-    if [ "$got" = "200 state=null" ]; then echo "  OK   [$env] without an initial state it starts as null"
-    else echo "  FAIL [$env] no initial state: $got"; fail=1; fi
-done
+got="$(env LOOK_ALLOW_SSRF=1 "$LK" "$TMP/state.lk" 2>&1 | grep -v 'INFO' | tail -1)"
+if [ "$got" = "$WANT" ]; then echo "  OK   lines cut across chunks are reassembled through the state"
+else echo "  FAIL got: $got"; fail=1; fi
+got="$(env LOOK_ALLOW_SSRF=1 "$LK" "$TMP/plain.lk" 2>&1 | grep -v 'INFO' | tail -1)"
+if [ "$got" = "200 state=null" ]; then echo "  OK   without an initial state it starts as null"
+else echo "  FAIL no initial state: $got"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: http::stream carries state between callback calls" || { echo "FAIL: http::stream state"; exit 1; }

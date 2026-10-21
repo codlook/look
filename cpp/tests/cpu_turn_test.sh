@@ -52,7 +52,7 @@ th.join()
 print("slow=%.2f body=%s max=%.3f" % (res[0][0], res[0][1] if res[0][1] in (want,) else "WRONG:" + res[0][1], max(lat)))
 PY
 fail=0
-for mode in "LOOK_X=1" "LOOK_FIBER_DISPATCH=0"; do
+for mode in "" "LOOK_FIBER_DISPATCH=0"; do   # default (fibers), then the worker pool
     ( cd "$TMP" && exec env $mode "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
     for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/fast" && break; sleep 0.1; done
 
@@ -62,13 +62,13 @@ for mode in "LOOK_X=1" "LOOK_FIBER_DISPATCH=0"; do
         out="$(cd "$TMP" && python3 check.py "$PORT" "$path" "$want" 2>&1 | tail -1)"
         slow="$(echo "$out" | sed -n 's/^slow=\([0-9.]*\).*/\1/p')"; max="$(echo "$out" | sed -n 's/.* max=\([0-9.]*\).*/\1/p')"
         if [ -z "$slow" ] || ! python3 -c "import sys; sys.exit(0 if $slow >= 0.2 else 1)"; then
-            echo "  FAIL [$mode] $name: did not run long enough ($out) — the test did not reach its case"; fail=1
+            echo "  FAIL [${mode:-default}] $name: did not run long enough ($out) — the test did not reach its case"; fail=1
         elif echo "$out" | grep -q 'body=WRONG'; then
-            echo "  FAIL [$mode] $name: wrong result ($out)"; fail=1
+            echo "  FAIL [${mode:-default}] $name: wrong result ($out)"; fail=1
         elif python3 -c "import sys; sys.exit(0 if $max < 0.3 else 1)"; then
-            echo "  OK   [$mode] $name ran ${slow} s; a plain request waited at most ${max} s"
+            echo "  OK   [${mode:-default}] $name ran ${slow} s; a plain request waited at most ${max} s"
         else
-            echo "  FAIL [$mode] $name ran ${slow} s and a plain request waited ${max} s"; fail=1
+            echo "  FAIL [${mode:-default}] $name ran ${slow} s and a plain request waited ${max} s"; fail=1
         fi
     done
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""

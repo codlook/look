@@ -12,7 +12,7 @@
 # (LOOK 2 web runs only on the VM; the tree-walk comparison run was removed with the fallback.)
 #   * both callbacks finish fast, the server says how many it handed over
 #   * a job's result is respected: true = done; false or an error = tried again up to its
-#     limit (3), then failed — the same count of handler runs on both engines
+#     limit (3), then failed
 #   * a timer id taken at the top level still cancels that timer from a route
 #   * a global written by a callback does not reach a later request
 #   * a job handler run from inside a request (a route calls jobs::run) gets its own request
@@ -56,32 +56,30 @@ LK
 num() { echo "$1" | grep -o "\"$2\":[0-9-]*" | head -1 | cut -d: -f2; }
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 fail=0
-for mode in "LOOK_VM_STRICT=1"; do
-    rm -f "$TMP"/jobs.db*
-    ( cd "$TMP" && exec env $mode LOOK_JOBS_RETRY_SECONDS=1 "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
-    for i in $(seq 1 60); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.05; done
-    t0=$(now_ms); tm=-1
-    for i in $(seq 1 200); do [ "$(num "$(curl -s -m 3 "localhost:$PORT/r")" timer_done)" = "1" ] && { tm=$(( $(now_ms) - t0 )); break; }; sleep 0.05; done
-    curl -s -m 3 "localhost:$PORT/push?to=a" >/dev/null
-    j0=$(now_ms); curl -s -m 60 "localhost:$PORT/drain" >/dev/null; jm=$(( $(now_ms) - j0 ))
-    for to in bad boom; do curl -s -m 3 "localhost:$PORT/push?to=$to" >/dev/null; done
-    for i in 1 2 3 4 5 6 7; do curl -s -m 60 "localhost:$PORT/drain" >/dev/null; sleep 0.6; done   # retries wait 1 s, then 2 s
-    nest="$(curl -s -m 10 -D "$TMP/h.txt" -w ' %{http_code}' "localhost:$PORT/nest?x=42")"; nh="$(grep -ci 'x-from-handler' "$TMP/h.txt")"
-    after="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/r")"
-    t1="$(num "$(curl -s -m 3 "localhost:$PORT/r")" ticks)"; curl -s -m 3 "localhost:$PORT/stop" >/dev/null; sleep 0.3
-    t2="$(num "$(curl -s -m 3 "localhost:$PORT/r")" ticks)"; sleep 0.5; r="$(curl -s -m 3 "localhost:$PORT/r")"; t3="$(num "$r" ticks)"
-    boom="$(grep -c 'boom in job' "$TMP/log.txt")"
-    vmerr="$(grep -c 'VM BUG\|runs on the interpreter' "$TMP/log.txt")"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    base="$(echo "$r" | grep -o '"global":"[a-z0-9]*"') runs=$(num "$r" job_runs) done=$(num "$r" done) failed=$(num "$r" failed)"
-    if [ "$base" = '"global":"g0" runs=7 done=1 failed=2' ] && [ "$boom" = "3" ] && [ "${t1:-0}" -ge 2 ] && [ "$t2" = "$t3" ]; then
-        echo "  OK   [$mode] 3 jobs: 1 done, 2 failed after 3 tries each, with a wait between tries (7 handler runs, each error logged); the top-level timer id cancels it; globals untouched"
-    else echo "  FAIL [$mode] $base boom-logged=$boom ticks=$t1/$t2/$t3 r=$r"; fail=1; fi
-    if [ "$nest" = '{"x":"42","handler_saw":"nothing"} 200' ] && [ "$nh" = "0" ] && [ "$after" = "200" ]; then
-        echo "  OK   [$mode] a handler run from inside a request has its own context; the request keeps its status, headers and parameters"
-    else echo "  FAIL [$mode] nested handler: response=[$nest] handler-header-leaked=$nh next-request=$after"; fail=1; fi
-    if [ "$vmerr" = "0" ] && [ "$tm" -ge 0 ] && [ "$tm" -lt 1200 ] && [ "$jm" -lt 900 ]; then
-        echo "  OK   [$mode] both callbacks ran on the VM (timer done after ${tm} ms, one job drained in ${jm} ms)"
-    else echo "  FAIL [$mode] timer=${tm} ms (want < 1200) job=${jm} ms (want < 900) log-problems=$vmerr"; fail=1; fi
-done
+rm -f "$TMP"/jobs.db*
+( cd "$TMP" && exec env LOOK_JOBS_RETRY_SECONDS=1 "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+for i in $(seq 1 60); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.05; done
+t0=$(now_ms); tm=-1
+for i in $(seq 1 200); do [ "$(num "$(curl -s -m 3 "localhost:$PORT/r")" timer_done)" = "1" ] && { tm=$(( $(now_ms) - t0 )); break; }; sleep 0.05; done
+curl -s -m 3 "localhost:$PORT/push?to=a" >/dev/null
+j0=$(now_ms); curl -s -m 60 "localhost:$PORT/drain" >/dev/null; jm=$(( $(now_ms) - j0 ))
+for to in bad boom; do curl -s -m 3 "localhost:$PORT/push?to=$to" >/dev/null; done
+for i in 1 2 3 4 5 6 7; do curl -s -m 60 "localhost:$PORT/drain" >/dev/null; sleep 0.6; done   # retries wait 1 s, then 2 s
+nest="$(curl -s -m 10 -D "$TMP/h.txt" -w ' %{http_code}' "localhost:$PORT/nest?x=42")"; nh="$(grep -ci 'x-from-handler' "$TMP/h.txt")"
+after="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "localhost:$PORT/r")"
+t1="$(num "$(curl -s -m 3 "localhost:$PORT/r")" ticks)"; curl -s -m 3 "localhost:$PORT/stop" >/dev/null; sleep 0.3
+t2="$(num "$(curl -s -m 3 "localhost:$PORT/r")" ticks)"; sleep 0.5; r="$(curl -s -m 3 "localhost:$PORT/r")"; t3="$(num "$r" ticks)"
+boom="$(grep -c 'boom in job' "$TMP/log.txt")"
+vmerr="$(grep -c 'VM BUG\|runs on the interpreter' "$TMP/log.txt")"
+kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
+base="$(echo "$r" | grep -o '"global":"[a-z0-9]*"') runs=$(num "$r" job_runs) done=$(num "$r" done) failed=$(num "$r" failed)"
+if [ "$base" = '"global":"g0" runs=7 done=1 failed=2' ] && [ "$boom" = "3" ] && [ "${t1:-0}" -ge 2 ] && [ "$t2" = "$t3" ]; then
+    echo "  OK   3 jobs: 1 done, 2 failed after 3 tries each, with a wait between tries (7 handler runs, each error logged); the top-level timer id cancels it; globals untouched"
+else echo "  FAIL $base boom-logged=$boom ticks=$t1/$t2/$t3 r=$r"; fail=1; fi
+if [ "$nest" = '{"x":"42","handler_saw":"nothing"} 200' ] && [ "$nh" = "0" ] && [ "$after" = "200" ]; then
+    echo "  OK   a handler run from inside a request has its own context; the request keeps its status, headers and parameters"
+else echo "  FAIL nested handler: response=[$nest] handler-header-leaked=$nh next-request=$after"; fail=1; fi
+if [ "$vmerr" = "0" ] && [ "$tm" -ge 0 ] && [ "$tm" -lt 1200 ] && [ "$jm" -lt 900 ]; then
+    echo "  OK   both callbacks ran on the VM (timer done after ${tm} ms, one job drained in ${jm} ms)"
+else echo "  FAIL timer=${tm} ms (want < 1200) job=${jm} ms (want < 900) log-problems=$vmerr"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: top-level timers and job handlers run on the VM" || { echo "FAIL: top-level callbacks"; exit 1; }
