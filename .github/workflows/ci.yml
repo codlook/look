@@ -548,6 +548,12 @@ jobs:
           cd cpp
           bash tests/type_of_is_consistency_test.sh ./build/lk ./build/lk-fcgi
 
+      # httpoxy: under CGI a Proxy: request header becomes HTTP_PROXY; http:: must not use it.
+      - name: No httpoxy under lk-cgi
+        run: |
+          cd cpp
+          bash tests/httpoxy_test.sh ./build/lk-cgi
+
       # Env-dependent test contract — positive control. A test whose environment is missing
       # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
       # DSN/secret in CI is a configuration error and must not turn into a silent green, the
