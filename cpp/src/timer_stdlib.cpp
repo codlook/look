@@ -2,12 +2,17 @@
 
 namespace look {
 
+static std::atomic<bool> g_timer_created{false};
+
 TimerManager& TimerManager::instance() {
     static TimerManager inst;
     return inst;
 }
 
+bool TimerManager::exists() { return g_timer_created.load(); }
+
 TimerManager::TimerManager() {
+    g_timer_created.store(true);
     thread_ = std::thread([this] { run(); });
 }
 
@@ -80,7 +85,11 @@ bool TimerManager::wait_one_shots(int timeout_ms) {
 }
 
 void TimerManager::shutdown() {
-    running_.store(false);
+    // Bayrak mtx_ ALTINDA yazılır. ESKİ HATA (kaybolan uyandırma): kilitsiz yazılınca, iş parçacığı
+    // yüklemi (running_ hâlâ true) değerlendirip henüz uykuya geçmemişken gelen notify kayboluyor,
+    // iş parçacığı deadline'a (boşken 30 sn) kadar uyuyor ve çıkıştaki join süreci o kadar
+    // bekletiyordu — ölçüm: zamanlayıcıya dokunan betiklerin ~%5'i çıkışta asılıyordu.
+    { std::lock_guard<std::mutex> lk(mtx_); running_.store(false); }
     cv_.notify_all();
     if (thread_.joinable()) thread_.join();
 }

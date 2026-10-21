@@ -12,6 +12,9 @@ namespace look {
 class TimerManager {
 public:
     static TimerManager& instance();
+    // Yönetici (ve iş parçacığı) bu süreçte kuruldu mu? Betik sonundaki uyarı, zamanlayıcı
+    // kullanmayan betikte yalnız sormak için iş parçacığı başlatmasın.
+    static bool exists();
 
     // Schedule one-shot callback after ms milliseconds. Returns timer id.
     int after(int ms, std::function<void()> cb);

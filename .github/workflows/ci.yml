@@ -406,6 +406,13 @@ jobs:
           cd cpp
           bash tests/timer_vm_test.sh ./build/lk-fcgi
 
+      # A script ends at once. The timer thread's stop used to lose its wake-up now and then and
+      # the exit waited up to 30 seconds (about 1 run in 20, also for scripts without timers).
+      - name: Scripts end at once
+        run: |
+          cd cpp
+          bash tests/timer_exit_test.sh ./build/lk
+
       # LOOK 2: an application with a job handler and a draining timer at the top level runs
       # on the VM (each used to send the whole application to the tree-walk engine).
       - name: Job queue on the VM

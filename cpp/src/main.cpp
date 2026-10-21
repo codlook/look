@@ -199,6 +199,7 @@ static int finish_script(int code) {
     return code;
 }
 static void warn_pending_timers() {
+    if (!look::TimerManager::exists()) return;   // zamanlayıcı hiç kurulmadı — iş parçacığı başlatma
     const auto p = look::TimerManager::instance().pending();
     if (p.once > 0)
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "timer",
