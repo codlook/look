@@ -200,6 +200,13 @@ jobs:
           cd cpp
           bash tests/repl_test.sh ./build/lk
 
+      # lk-cgi (the Apache/Plesk CGI path) serves a LOOK application: routes, parameters, JSON,
+      # status and headers, 404, a script without routes, errors.
+      - name: lk-cgi serves a LOOK application
+        run: |
+          cd cpp
+          bash tests/cgi_test.sh ./build/lk-cgi
+
       # A host function value (lk test helpers) travels like any function value: parallel, timer,
       # cache, json, type::of, == — no crash, errors named.
       - name: Host function values at the boundaries
