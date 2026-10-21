@@ -39,6 +39,9 @@ chkge "request_count delta" "$((r1 - r0))" "14"
 chk   "errors_5xx (3x boom)" "$e" "3"
 chkge "latency_last_us > 0"  "$lat" "1"
 chkge "db_pool_size > 0"     "$psize" "1"
+# route_count = uygulamanın rota sayısı (4). ESKİ HATA (v2): sayı yorumlayıcının rota kaydından
+# okunuyordu; kurulum VM'e geçince 0 kaldı.
+chk   "route_count (4 rota)" "$(field route_count)" "4"
 # vm_disabled_routes 0 olmalı (bozuk route yok) — VM sağlık kanaryası
 chk   "vm_disabled_routes (VM sağlıklı)" "$(field vm_disabled_routes)" "0"
 

@@ -128,7 +128,6 @@ static std::string repl_display(const Value& v) {
         oss << "]";
         return oss.str();
     }
-    case Value::FUNCTION:
     case Value::BYTECODE_FN:
         return gray("<function>");
     default:

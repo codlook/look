@@ -77,7 +77,7 @@ Module make_http_module(ModuleHost* interp) {
         auto hdrs = extract_headers(args[3]);
         Value cb  = args[4];
         HttpOptions opts = (args.size() >= 6) ? extract_opts(args[5]) : HttpOptions();
-        if (cb.type() != Value::FUNCTION && cb.type() != Value::BYTECODE_FN)
+        if (cb.type() != Value::BYTECODE_FN)
             throw std::runtime_error("http::stream() — the 5th arg (callback) must be a function");
 
         // LOOK 2 — DURUM: geri cagirma, cagrilar arasinda bir sey tasimak icin (yarim kalan satir,

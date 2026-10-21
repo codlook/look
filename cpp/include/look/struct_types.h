@@ -45,7 +45,7 @@ inline std::string struct_value_type_name(const Value& v) {
         case Value::FLOAT:  return "float";
         case Value::STRING: return "string";
         case Value::BOOL:   return "bool";
-        case Value::FUNCTION: case Value::BYTECODE_FN: return "fn";
+        case Value::BYTECODE_FN: return "fn";
         case Value::STRUCT: return struct_name(*v.as_struct());
         case Value::ARRAY: {
             const auto& a = *v.as_array();

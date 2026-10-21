@@ -29,7 +29,6 @@ struct Expression;
 struct Statement;
 struct Program;
 struct BlockStatement;
-struct LookFunction;
 
 // ── Forward declarations for Value members ────────────────────────────────────
 struct LookChannel;    // defined after Value (queue<Value> needs complete type)
@@ -47,7 +46,9 @@ public:
     //   [2 + i] = i. alanın değeri (bildirim sırası)
     // Ayrı tip olduğu için dizi bekleyen her kod (array::, indeksleme, foreach) onu DİZİ
     // sanmaz; alan erişimi ad araması değil indekstir. Kurallar: look/struct_types.h.
-    enum Type { INT, FLOAT, STRING, BOOL, FUNCTION, ARRAY, CHANNEL, WEBSOCKET, SSE_CONN, BYTECODE_FN, NONE, STRUCT };
+    // Fonksiyon değeri tek türdür: BYTECODE_FN (VM closure'ı). LOOK 2 öncesindeki FUNCTION
+    // (ağaç-yürüten yorumlayıcının closure'ı) yorumlayıcıyla birlikte kalktı.
+    enum Type { INT, FLOAT, STRING, BOOL, ARRAY, CHANNEL, WEBSOCKET, SSE_CONN, BYTECODE_FN, NONE, STRUCT };
     static Value make_struct(std::shared_ptr<std::vector<Value>> slots) {
         Value v(std::move(slots)); v.type_ = STRUCT; return v;
     }
@@ -74,7 +75,6 @@ public:
     explicit Value(bool b)                          : type_(BOOL),     bool_val(b)  {}
     explicit Value(const std::string& s)            : type_(STRING),   int_val(0), ptr_val(std::make_shared<std::string>(s)) {}
     explicit Value(std::string&& s)                 : type_(STRING),   int_val(0), ptr_val(std::make_shared<std::string>(std::move(s))) {}
-    explicit Value(std::shared_ptr<LookFunction> f) : type_(FUNCTION),    int_val(0), ptr_val(std::move(f)) {}
     explicit Value(std::shared_ptr<std::vector<Value>> a) : type_(ARRAY), int_val(0), ptr_val(std::move(a)) {}
     explicit Value(std::shared_ptr<LookChannel>        c) : type_(CHANNEL),   int_val(0), ptr_val(std::move(c)) {}
     explicit Value(std::shared_ptr<WsConnection>       w) : type_(WEBSOCKET), int_val(0), ptr_val(std::move(w)) {}
@@ -90,7 +90,6 @@ public:
     }
     bool        as_bool()   const { return bool_val; }
     // Tek shared_ptr<void>'dan tipli erişim — type_ hangi tipin aktif olduğunu garanti eder.
-    std::shared_ptr<LookFunction>        as_function() const { return std::static_pointer_cast<LookFunction>(ptr_val); }
     std::shared_ptr<std::vector<Value>>  as_array()    const { return std::static_pointer_cast<std::vector<Value>>(ptr_val); }
     std::shared_ptr<LookChannel>         as_channel()    const { return std::static_pointer_cast<LookChannel>(ptr_val); }
     std::shared_ptr<WsConnection>        as_websocket()  const { return std::static_pointer_cast<WsConnection>(ptr_val); }
@@ -118,16 +117,8 @@ public:
     // Hook özyinelemesi için visited-paylaşımlı deep-clone (deep_clone_impl private).
     Value deep_clone_tracked(std::unordered_set<const void*>& visited) const { return deep_clone_impl(visited); }
 
-    // FUNCTION (tree-walk interpreter closure = LookFunction + Environment) hook'u. interpreter.h
-    // LookFunction'ı TAM göremez (aşağıda tanımlı) → interpreter.cpp bir cloner kaydeder.
-    using FnCloner = Value(*)(const Value&, std::unordered_set<const void*>&);
-    static FnCloner& fn_cloner() { static FnCloner h = nullptr; return h; }
-
-    // THREAD-SINIRI klonu: deep_clone gibi AMA FUNCTION + STRING dahil. ÖNEMLİ: deep_clone()
-    // SICAK YOLDA (Environment::clone → make_dispatch_copy, HER WS MESAJINDA) çağrıldığı için
-    // ona FUNCTION dalı EKLENMEZ (her mesajda tüm global fn'leri derin klonlar = felaket).
-    // Bu ayrı yol YALNIZ thread-crossing site'larda (parallel/timer/ws/sse/channel/cache)
-    // çağrılır — deep_clone semantiği değişmez, sıcak yol maliyeti aynı kalır.
+    // THREAD-SINIRI klonu: deep_clone gibi AMA STRING dahil (append_in_place yerinde yazar).
+    // YALNIZ thread-crossing site'larda (parallel/timer/ws/sse/channel/cache) çağrılır.
     Value clone_for_thread() const {
         std::unordered_set<const void*> visited;
         return clone_for_thread_impl(visited);
@@ -167,9 +158,8 @@ private:
         return *this; // scalar, channel, ws, sse — shallow copy yeterli (paylaşım kasıtlı)
     }
 
-    // Thread-sınırı klonu (yalnız clone_for_thread'den). deep_clone_impl'in kopyası +
-    // FUNCTION (interpreter closure) + STRING dalları. deep_clone SICAK YOLDA olduğu için
-    // ayrı tutuluyor; buraya eklenen dallar sıcak yolu ETKİLEMEZ.
+    // Thread-sınırı klonu (yalnız clone_for_thread'den). deep_clone_impl'in kopyası + STRING
+    // dalı. deep_clone SICAK YOLDA olduğu için ayrı tutuluyor.
     Value clone_for_thread_impl(std::unordered_set<const void*>& visited) const {
         switch (type_) {
             case INT: case FLOAT: case BOOL: case NONE:
@@ -203,10 +193,6 @@ private:
             }
             case BYTECODE_FN:
                 if (ptr_val) { if (auto h = bc_fn_cloner()) return h(*this, visited); }
-                return *this;
-            case FUNCTION:
-                // interpreter.cpp'de kayıtlı: LookFunction + closure Environment klonu.
-                if (ptr_val) { if (auto h = fn_cloner()) return h(*this, visited); }
                 return *this;
         }
         return *this; // unreachable — tüm Type'lar kapsandı (default YOK: yeni tip -> -Wswitch)
@@ -258,7 +244,7 @@ private:
         double  float_val;
         bool    bool_val;
     };
-    // STRING → shared_ptr<std::string>; ARRAY/FUNCTION/CHANNEL/WS/SSE/BYTECODE_FN → ilgili tip
+    // STRING → shared_ptr<std::string>; ARRAY/CHANNEL/WS/SSE/BYTECODE_FN → ilgili tip
     std::shared_ptr<void> ptr_val;
 };
 
@@ -286,158 +272,14 @@ struct LookChannel {
     int   sz()        { std::unique_lock<std::mutex> lk(mtx); return (int)queue.size(); }
 };
 
-// ── VM/interpreter callback köprüsü ───────────────────────────────────────────
-// Higher-order builtin'ler (array::map/filter/reduce…) callback'i interpreter'ın
-// invoke'uyla çağırıyor; VM route'unda callback bir BYTECODE_FN (VM closure) olur.
-// Aktif VM kendini thread-local kaydeder; interpreter BYTECODE_FN gelince buraya
-// delege eder. vm.cpp tanımlar. Kayıtlı VM yoksa available()==false → fallback.
+// ── VM geri çağırma köprüsü ───────────────────────────────────────────────────
+// Higher-order builtin'ler (array::map/filter/reduce…) callback'i ev sahibinin invoke'uyla
+// çağırır; callback bir BYTECODE_FN (VM closure) olur. Etkin VM kendini thread-local kaydeder;
+// invoke buraya delege eder. Kayıtlı VM yoksa available()==false.
 bool  vm_bridge_available();
 Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args);
-// VM (vm.cpp) çalışırken kendi closure-invoker hook'unu kaydeder. CLI (tree-walk)
-// bunu hiç çağırmaz → hook null → vm_bridge_available()==false.
+// VM (vm.cpp) çalışırken kendi closure-invoker hook'unu kaydeder.
 void  register_vm_bridge(Value (*hook)(const Value& fn, std::vector<Value>& args));
-
-// ── Environment ───────────────────────────────────────────────────────────────
-
-class Environment {
-public:
-    explicit Environment(std::shared_ptr<Environment> parent = nullptr)
-        : parent_(parent) {}
-
-    void define(const std::string& name, const Value& val) { values_[name] = val; }
-
-    Value get(const std::string& name) const {
-        auto it = values_.find(name);
-        if (it != values_.end()) return it->second;
-        if (parent_)             return parent_->get(name);
-        throw std::runtime_error("Undefined variable: " + name);
-    }
-
-    void set(const std::string& name, const Value& val) {
-        auto it = values_.find(name);
-        if (it != values_.end()) { it->second = val; return; }
-        // Fonksiyon sınırını YAZMA için geçme: dıştaki (global) değişkeni implicit
-        // ezmeyi engeller. Bulunamazsa çağıran define() ile local yaratır — Python
-        // semantiği: okuma (get) yukarı düşer, yazma fonksiyon içinde local kalır.
-        // Blok sınırları şeffaftır (fn_boundary_ yalnız fonksiyon çağrısında set).
-        if (fn_boundary_ || !parent_)
-            throw std::runtime_error("Undefined variable: " + name);
-        parent_->set(name, val);
-    }
-
-    void mark_fn_boundary() { fn_boundary_ = true; }
-    bool is_fn_boundary() const { return fn_boundary_; }
-
-    // Included file'ların function/const tanımlarını caller scope'a aktarmak için
-    const std::map<std::string, Value>& entries() const { return values_; }
-
-    // Dispatch kopyası için derin kopya — shared mutable state race kondisyonunu engeller
-    std::shared_ptr<Environment> clone() const {
-        auto e = std::make_shared<Environment>(parent_);
-        for (const auto& [k, v] : values_)
-            e->values_[k] = v.deep_clone();
-        return e;
-    }
-
-    // İSTEK İZOLASYONU (web): kurulumda oluşmuş bir closure env'inin, parent'ı isteğin kendi
-    // globals'ına çevrilmiş ve dizileri derin kopyalanmış kopyası. Bkz. Interpreter::request_env.
-    const std::shared_ptr<Environment>& parent() const { return parent_; }
-    // LOOK 2: değişkenin YERİ — yazınca-kopyala yol atamasının kökü ($a[i] = v yerinde yazar).
-    // Okuma gibi üst kapsamlara düşer (fonksiyon içinden global diziye indeksli yazma, eskiden
-    // de olduğu gibi, global değişkeni değiştirir). Yoksa nullptr.
-    // Yalnız BU ortamdaki yer (üst kapsamlara düşmez) — closure değer yakalaması için.
-    Value* own_slot(const std::string& name) {
-        auto it = values_.find(name);
-        return it != values_.end() ? &it->second : nullptr;
-    }
-    Value* find_slot(const std::string& name) {
-        auto it = values_.find(name);
-        if (it != values_.end()) return &it->second;
-        return parent_ ? parent_->find_slot(name) : nullptr;
-    }
-    std::shared_ptr<Environment> rebased(std::shared_ptr<Environment> new_parent) const {
-        auto e = std::make_shared<Environment>(std::move(new_parent));
-        for (const auto& [k, v] : values_)
-            e->values_[k] = (v.type() == Value::ARRAY) ? v.deep_clone() : v;
-        e->fn_boundary_ = fn_boundary_;
-        return e;
-    }
-
-    // THREAD-SINIRI klonu: clone() gibi AMA değerleri clone_for_thread ile klonlar (FUNCTION
-    // dahil). clone() `deep_clone` kullanır ve o FUNCTION'ı bilmez → İÇ İÇE closure capture'ı
-    // (`use ($inner)` — $inner kendisi closure) ikinci seviyede sığ kalıp $big'i paylaşıyordu
-    // (t8 interp). parent_ PAYLAŞIMLI kalır (closure'ın parent'ı setup-zamanı globals_;
-    // klonlarsak global okumaları bozulur). visited sınır ötesine taşınır → döngü koruması.
-    //
-    // ENV MEMOİZASYONU (kritik): N fonksiyon AYNI closure Environment'ı paylaşırsa (ör.
-    // `use "lib.lk"` bir izole env'de M fonksiyon tanımlar; hepsinin closure'ı O env'dir),
-    // clone_look_function her fonksiyon için `visited`'i EKLE-ÇIKAR yapar (kardeşler arası
-    // döngü guard'ı YOK) → o paylaşımlı env her fonksiyon için yeniden klonlanır. İç içe:
-    // env klonu → her değeri fn → her fn closure = AYNI env → env klonu → ... = O(N!)
-    // patlaması (11 fonksiyon lk-fcgi başlangıcını kilitliyordu). Tek geçişte her kaynak
-    // Environment'ı BİR KEZ klonla ve paylaş: hem patlamayı kapatır hem de paylaşım
-    // semantiğini korur (kardeş closure'lar klonda da tek env'i paylaşır). Memo geçiş
-    // başına (en dıştaki clone_for_thread depth 0'a dönünce) temizlenir.
-    static std::unordered_map<const Environment*, std::shared_ptr<Environment>>& ct_env_memo() {
-        static thread_local std::unordered_map<const Environment*, std::shared_ptr<Environment>> m;
-        return m;
-    }
-    static int& ct_env_depth() { static thread_local int d = 0; return d; }
-
-    std::shared_ptr<Environment> clone_for_thread(std::unordered_set<const void*>& visited) const {
-        auto& memo = ct_env_memo();
-        struct DepthGuard {
-            int& d;
-            std::unordered_map<const Environment*, std::shared_ptr<Environment>>& m;
-            DepthGuard(int& d_, std::unordered_map<const Environment*,
-                       std::shared_ptr<Environment>>& m_) : d(d_), m(m_) {
-                if (d == 0) m.clear();   // yeni geçiş — stale klonları at
-                ++d;
-            }
-            ~DepthGuard() { if (--d == 0) m.clear(); }  // geçiş bitti — belleği bırak
-        } guard{ct_env_depth(), memo};
-
-        auto it = memo.find(this);
-        if (it != memo.end()) return it->second;   // bu geçişte zaten klonlandı → paylaş
-        // LOOK 2: bir closure DEĞİŞKENİ yakalar, yani ortamı tanımlandığı kapsamın kendisidir ve
-        // üst kapsam zinciri çağıranın CANLI değişkenleridir. İş parçacığı sınırında yalnız bu
-        // ortamı klonlayıp üstünü paylaşmak (eski hal — o zaman üst yalnızca globals'tı) başka
-        // thread'e ana thread'in değişkenlerini verir: TSan yarışı. Zincirin tamamı klonlanır;
-        // kökteki ortam (parent'ı olmayan = globals) paylaşılır, o ayrıca kopyanın kendi
-        // globals'ına bağlanır (Interpreter::request_env).
-        std::shared_ptr<Environment> np = parent_;
-        if (parent_ && parent_->parent_) np = parent_->clone_for_thread(visited);
-        auto e = std::make_shared<Environment>(np);
-        memo.emplace(this, e);   // özyinelemeden ÖNCE kaydet (döngüsel closure güvenli)
-        for (const auto& [k, v] : values_)
-            e->values_[k] = v.clone_for_thread_tracked(visited);
-        e->fn_boundary_ = fn_boundary_;
-        return e;
-    }
-
-private:
-    std::map<std::string, Value> values_;
-    std::shared_ptr<Environment> parent_;
-    bool fn_boundary_ = false;   // true: yazma (set) bu env'i geçip global'e ulaşamaz
-};
-
-// ── LookFunction ──────────────────────────────────────────────────────────────
-
-struct LookFunction {
-    std::string name;
-    std::vector<std::string> parameters;
-    bool is_variadic = false;
-    const BlockStatement* body;
-    std::shared_ptr<Environment> closure;
-    // Varsayılan parametre ifadeleri (AST'den ödünç; paralel, nullptr = yok).
-    const std::vector<std::unique_ptr<Expression>>* defaults = nullptr;
-
-    LookFunction(std::string n, std::vector<std::string> p, bool variadic,
-                 const BlockStatement* b, std::shared_ptr<Environment> c,
-                 const std::vector<std::unique_ptr<Expression>>* defs = nullptr)
-        : name(std::move(n)), parameters(std::move(p)), is_variadic(variadic),
-          body(b), closure(std::move(c)), defaults(defs) {}
-};
 
 // ── Module ────────────────────────────────────────────────────────────────────
 
@@ -531,24 +373,6 @@ public:
     }
 };
 
-// ── Exceptions ────────────────────────────────────────────────────────────────
-
-class ReturnException : public std::exception {
-public:
-    explicit ReturnException(const Value& v) : value_(v) {}
-    const char* what() const noexcept override { return "return"; }
-    Value value() const { return value_; }
-private:
-    Value value_;
-};
-
-class BreakException : public std::exception {
-    const char* what() const noexcept override { return "break"; }
-};
-class ContinueException : public std::exception {
-    const char* what() const noexcept override { return "continue"; }
-};
-
 // exit(code) — script'i tamamen durdurur, FastCGI döngüsünü bozmaz
 class ExitException : public std::exception {
 public:
@@ -568,25 +392,15 @@ struct StructFieldDef {
     Value       default_val;
 };
 
-// ── RouteEntry — warm start icin kayitli route ────────────────────────────────
-
-struct RouteEntry {
-    std::string              method;       // "GET", "POST", "404", "*"
-    std::string              pattern;      // "/menu/{slug}"
-    std::vector<std::string> param_names;  // ["slug"]
-    std::regex               pattern_re;   // compiled regex
-    Value                    callback;     // captured closure
-    std::vector<Value>       middlewares;  // route-level middleware listesi (setup'ta doldurulur)
-    bool                     is_404 = false;
-};
-
-// ── Interpreter ───────────────────────────────────────────────────────────────
+// ── Interpreter — yerleşik modüllerin ev sahibi ───────────────────────────────
+// LOOK 2'de programı yalnız VM çalıştırır. Bu sınıf artık bir yorumlayıcı DEĞİL: modül
+// tablosunu (stdlib + web çekirdeği + `use` edilenler), çıktı akışını, istek bağlamını ve
+// app:: servis kaydını tutar; modül fonksiyonları geri çağırmayı invoke() ile VM'e verir.
 
 class Interpreter : public ModuleHost {
 public:
     Interpreter();
     explicit Interpreter(std::ostream& out);
-    void  interpret(const Program& program);
     void  set_web_context(WebContext* ctx);
     void  set_output(std::ostream& out) { output_stream_ = &out; }
     void  set_output(std::ostream* out) { output_stream_ = out; }
@@ -595,105 +409,37 @@ public:
     // betiğindeki `print` sessizce kayboluyordu. Web'de geri çağırmanın yazacağı bir yanıt yok →
     // tampon (eskisi gibi).
     std::ostream& callback_output(const std::shared_ptr<std::ostringstream>& sink) const;
-
-    // REPL support
-    using ReplValueCallback = std::function<void(const Value&)>;
-    void set_repl_value_callback(ReplValueCallback cb) { repl_value_cb_ = std::move(cb); }
-    void clear_repl_value_callback() { repl_value_cb_ = nullptr; }
-
-    // Returns names of all user-defined globals (excludes internal names starting with __)
-    std::vector<std::string> get_global_names() const;
-
-    // Test runner helpers — register a module for `use X;` and a top-level built-in
-    void register_use_module(const std::string& name, Module mod) {
-        stdlib_[name] = std::move(mod);
-    }
-    void register_builtin(const std::string& name, std::function<Value(std::vector<Value>)> fn);
     std::ostream& output() const { return *output_stream_; }
 
-    // Warm start: setup_mode=true → route() sadece kaydeder, dispatch yapmaz
+    // Kurulum (üst düzey) sürüyor mu — db::query kurulumdaki yan etkiyi buna göre ele alır.
     void set_setup_mode(bool m) { setup_mode_ = m; }
-    // Bildirilmiş tüm struct'ların alan tip adlarını denetler (yerleşik ya da bilinen struct);
-    // bilinmeyen ad → std::runtime_error. Web kurulumunun SONUNDA çağrılır.
-    void validate_struct_types() const;
-    // 1.0.9 — KURULUM KAYDI. Web sunucusu betiğin üst düzeyini iki kez koşturur: önce burada
-    // (yorumlayıcı), sonra VM'de (rota closure'larını bayt koduyla üretmek için). İkinci geçiş
-    // modül fonksiyonlarını YENİDEN ÇAĞIRMAMALI: yan etki iki kez olur (dosyaya iki satır) ve
-    // sonuç farklı çıkabilir (uuid, saat, cache::get). İlk geçişte her modül çağrısının adı ve
-    // sonucu sırayla buraya yazılır; VM geçişi aynı sırayla bu sonuçları geri oynatır
-    // (http_main.cpp). Bir modül çağrısının İÇİNDEN (geri çağırmayla) yapılan çağrılar yazılmaz:
-    // VM dıştaki çağrının sonucunu aldığı için geri çağırmayı hiç koşturmaz.
-    using SetupRecord = std::vector<std::pair<std::string, Value>>;
-    void set_setup_record(SetupRecord* r) { setup_record_ = r; setup_record_depth_ = 0; }
     bool is_setup_mode()  const override { return setup_mode_; }
 
-    // Warm start dispatch: kayitli route'lardan eslesen handler'i cagir
-    // web_ctx_ onceden set_web_context() ile atanmis olmali.
-    void dispatch_routes();
-
     Value invoke(const Value& fn, std::vector<Value> args) override;
-    Value jobs_run(int interval_ms);   // jobs::run — tek tanım (yorumlayıcı + VM builtin)
-    Value get_global(const std::string& name) {
-        try { return globals_->get(name); } catch (...) { return Value(); }
-    }
+    Value jobs_run(int interval_ms);   // jobs::run — web ve komut satırı için tek tanım
 
-    // runtime:: stats
-    int  get_route_count()   const override { return (int)route_registry_.size(); }
-    int  get_request_count() const override { return request_count_.load(); }
+    // runtime:: stats. Rota sayısını web motoru kurulumdan sonra yazar (VM'in rota tablosu).
+    void set_route_count(int n) { route_count_ = n; }
+    int  get_route_count()   const override { return route_count_; }
+    int  get_request_count() const override { return 0; }   // web sayacı süreç-global (g_http_request_count)
     long get_uptime_sec()    const override {
         auto now = std::chrono::steady_clock::now();
         return (long)std::chrono::duration_cast<std::chrono::seconds>(now - start_time_).count();
     }
 
-    // Tree-walk interpreter her LOOK çağrısında çok sayıda native C++ frame
-    // kullanır (~16KB/çağrı). 8 MB thread stack'te native limit ~500 civarı; 500
-    // guard'ı tam limitte olduğu için guard ateşlerken throw'un kendisi stack'i
-    // taşırıp çökertiyordu (STATUS_STACK_OVERFLOW, Linux worker'ları dahil). 256
-    // native limitin güvenli ~2x altında → guard temiz ateşler, yakalanabilir hata.
-    // (VM heap-based call_stack kullandığı için kendi 500 limiti güvenli kalır.)
-    static constexpr int MAX_CALL_DEPTH = 256;
-
     void set_file(const std::string& file) { current_file_ = file; if (main_script_.empty()) main_script_ = file; }
 
-    // Phase 15: WebSocket — set active WS connection for dispatch_routes() "WS" matching
-    void set_ws_connection(std::shared_ptr<WsConnection> ws) { ws_conn_ = std::move(ws); }
-
-    // Phase 16: SSE — set active SSE connection for dispatch_routes() "SSE" matching
-    void set_sse_connection(std::shared_ptr<SseConnection> sse) { sse_conn_ = std::move(sse); }
-
-    // Thread-safe dispatch copy — shares read-only setup state, has fresh per-request state.
-    // Call set_output() and set_web_context() on the copy before dispatch_routes().
+    // İş parçacığı kopyası: aynı modül durumu ve servis kaydı, kendi çıktısı ve bağlamı.
+    // Kopyada set_output() ve set_web_context() çağrılır.
     std::unique_ptr<Interpreter> make_dispatch_copy() const;
-
-    // Dispatch kopyası worker thread'inde YENİDEN KULLANILIYOR (per-request kurulum
-    // 30-63µs'ydi — route'u çalıştırmaktan pahalı). Kopya paylaşıldığı için, kullanıcı
-    // kodu interpreter'da çalışacaksa globals ÖNCE taze snapshot'a dönmeli — yoksa bir
-    // isteğin yazdığı global sonraki isteğe SIZAR. VM route'u interpreter globals'ını
-    // kullanmadığından bu maliyeti ödemez (yalnız fallback/interpreter yolu çağırır).
-    void reset_globals_from(const Interpreter& base) {
-        globals_ = base.globals_->clone();
-        current_ = std::make_shared<Environment>(globals_);
-        setup_globals_ = base.globals_.get();
-        rebased_.clear();
-    }
-
-    // İSTEK İZOLASYONU: kurulumda tanımlanan her fonksiyonun closure'ı KURULUM globals'ını
-    // gösterir; dispatch kopyası globals'ı klonlasa da fonksiyonlar eskisini okuyup yazıyordu →
-    // bir isteğin `const`/üst-düzey diziye yerinde yazması sonraki isteklere sızıyordu.
-    // request_env, kurulum globals'ına varan bir env zincirini bu isteğin globals'ına bağlar
-    // (ara closure env'leri istek başına bir kez kopyalanır, dizileri derin klonlanır).
-    std::shared_ptr<Environment> request_env(const std::shared_ptr<Environment>& env);
-    const Environment* setup_globals_ = nullptr;   // dispatch kopyasında: asıl yorumlayıcının globals'ı
-    std::unordered_map<const Environment*, std::shared_ptr<Environment>> rebased_;
 
     // VM builtin wiring: set_web_context() sonrası modules_'dan fonksiyon al.
     // module = "response", fn = "header" → modules_["response"].functions["header"]
     // Bulunamazsa null std::function döner.
     NativeFn get_module_fn(const std::string& module_name, const std::string& fn_name) const;
 
-    // C9 (CLI-VM): bir stdlib modülünü modules_'a yükler (use semantiği) — VM builtin
-    // wiring get_module_fn ile bunları görebilsin diye. Dış/paket modüller kapsam dışı
-    // → false (caller tree-walk'a düşer). Default CLI'ı etkilemez (opt-in yol).
+    // Bir stdlib modülünü modules_'a yükler (`use` semantiği). Stdlib'de yoksa (paket modülü)
+    // false — paket modülünü derleyici derler.
     bool load_stdlib_module(const std::string& name);
     // `use` isteyen bir stdlib modülü olup `use` edilmemiş mi? Öyleyse VM o modülün fonksiyonu
     // için "Module 'x' not loaded." verir — bağlayıcı yuvayı boş bırakır. (`use` istemeyen
@@ -701,90 +447,25 @@ public:
     bool module_not_used(const std::string& name) const {
         return stdlib_.count(name) != 0 && modules_.count(name) == 0;
     }
-
-    // VM builtin wiring: route_registry_ erişimi — VM dispatch için closure ptr'ları al.
-    const std::vector<RouteEntry>& get_route_registry() const { return route_registry_; }
-
-    // Test runner support
-    struct TestCase {
-        std::string name;
-        Value       fn;
-    };
-    void register_test_case(const std::string& name, const Value& fn) {
-        test_cases_.push_back({name, fn});
-    }
-    const std::vector<TestCase>& test_cases() const { return test_cases_; }
-    void set_before_each(const Value& fn) { before_each_ = fn; }
-    void set_after_each(const Value& fn)  { after_each_  = fn; }
-    const Value& before_each() const { return before_each_; }
-    const Value& after_each()  const { return after_each_; }
-
-private:
-    std::shared_ptr<Environment> globals_;
-    std::shared_ptr<Environment> current_;
-    std::ostream* output_stream_;
     // Yüklenebilir tüm modüller (stdlib + web çekirdeği): VM kapsam raporu için (lk --vm-report).
-public:
     const std::map<std::string, Module>& stdlib_modules() const { return stdlib_; }
+
 private:
+    std::ostream* output_stream_;
     std::map<std::string, Module> modules_;
     std::map<std::string, Module> stdlib_;
 
     // Servis kaydı — app::set/get (setup'ta yazılır, tüm dispatch'lerce paylaşılır)
     std::shared_ptr<ServiceRegistry> services_ = std::make_shared<ServiceRegistry>();
     void register_app_module();   // constructor'da çağrılır — app:: core modülü
-    int call_depth_ = 0;
     WebContext* web_ctx_ = nullptr;
 
-    // Error tracking
-    std::string              main_script_;    // proje kök scripti — değişmez
-    std::string              current_file_;
-    SourceLocation           current_loc_;
-    std::vector<StackFrame>  call_stack_;
+    std::string main_script_;    // proje kök scripti — değişmez
+    std::string current_file_;
+    bool        setup_mode_  = false;
+    int         route_count_ = 0;
 
-    // Warm start state
-    bool                    setup_mode_ = false;
-    SetupRecord*            setup_record_ = nullptr;   // yalnız web kurulum geçişinde dolu
-    int                     setup_record_depth_ = 0;
-    std::vector<RouteEntry> route_registry_;
-    std::vector<Value>      before_route_registry_;  // before_route() middleware listesi
-
-    // Phase 11: struct definitions + iota counter
-    std::map<std::string, std::vector<StructFieldDef>> struct_defs_;
-    std::map<std::string, Value> struct_def_values_;   // aynı tanımın Value hali (üçlüler) — örnekler slot 1'de taşır
-    std::map<std::string, SourceLocation> struct_decl_loc_;   // LOOK 2: ilk bildirimin yeri (çift tanım hatası için)
-
-    // Phase 18.5: dosya modül sistemi
-    // included_files_: döngüsel include koruması (abs path set)
-    // owned_programs_: include edilen dosyaların AST'leri — fonksiyon body pointer'ları bu AST'lere bakıyor
-    std::unordered_set<std::string>       included_files_;
-    std::vector<std::unique_ptr<Program>> owned_programs_;
-
-    // REPL value callback — fires when an expression statement produces a value
-    ReplValueCallback repl_value_cb_;
-
-    // Test runner — registered via test() built-in
-    std::vector<TestCase> test_cases_;
-    Value before_each_;
-    Value after_each_;
-    std::map<std::string, std::function<Value(std::vector<Value>)>> builtins_;
-
-    // Phase 15: active WebSocket connection (set before dispatch_routes() for WS routes)
-    std::shared_ptr<WsConnection>  ws_conn_;
-    // Phase 16: active SSE connection (set before dispatch_routes() for SSE routes)
-    std::shared_ptr<SseConnection> sse_conn_;
-    int current_iota_ = 0;
-
-    // runtime:: stats
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
-    std::atomic<int>                       request_count_{0};
-
-    void  execute_statement(const Statement& stmt);
-    void  execute_block(const BlockStatement& block, std::shared_ptr<Environment> enclosing);
-    Value evaluate_expression(const Expression& expr);
-    Value call_function(std::shared_ptr<LookFunction> fn, std::vector<Value> args);
-    std::string interpolate_string(const std::string& raw);
-    std::string build_output(const std::vector<std::unique_ptr<Expression>>& exprs);
 };
 
 // .env-aware env() — VM setup builtins için (g_env_vars + system env)

@@ -327,12 +327,10 @@ Module make_array_module(ModuleHost* interp) {
         if (args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::sort() requires array as first argument");
         auto result = std::make_shared<std::vector<Value>>(*args[0].as_array());
-        // BYTECODE_FN de çağrılabilir: VM route'unda comparator bu tiple gelir.
-        // Yalnız FUNCTION'a bakmak comparator'ı SESSİZCE yok sayıp varsayılan sırayla
-        // sıralıyordu (hata/fallback yok → web'de sessiz yanlış sonuç). interp->invoke()
-        // ikisini de çalıştırır (BYTECODE_FN → VM köprüsü).
-        if (args.size() >= 2 &&
-            (args[1].type() == Value::FUNCTION || args[1].type() == Value::BYTECODE_FN)) {
+        // Comparator bir VM closure'ıdır (BYTECODE_FN); interp->invoke() onu VM köprüsüyle çalıştırır.
+        // ESKİ HATA: yalnız yorumlayıcının fonksiyon türüne bakılıyordu → VM'de comparator SESSİZCE
+        // yok sayılıp varsayılan sırayla sıralanıyordu.
+        if (args.size() >= 2 && args[1].type() == Value::BYTECODE_FN) {
             auto fn = args[1];
             auto less = [&](const Value& a, const Value& b) {
                 return interp->invoke(fn, {a, b}).to_int() < 0;

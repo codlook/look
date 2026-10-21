@@ -837,6 +837,9 @@ static void run_setup_http(const fs::path& script) {
                 }
             }
 
+            // runtime::stats()["routes"]. ESKİ HATA (4b'den beri): sayı yorumlayıcının rota kaydından
+            // okunuyordu; kurulum VM'e geçince o kayıt boş kaldı ve stats web'de 0 rota diyordu.
+            g_http_app.interp->set_route_count((int)g_http_app.vm_routes.size());
             if (!g_http_app.vm_routes.empty()) {
                 g_http_app.vm_routes_ready = true;
                 // LOOK 2 (tek motor): bir rota ya da before_route VAR OLMAYAN bir modül fonksiyonuna

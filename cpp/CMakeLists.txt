@@ -115,8 +115,8 @@ set(LOOK_CORE
     src/parser.cpp
     src/format_src.cpp   # lk fmt — kaynak biçimlendirici (lexer'a bağlı)
     src/route_group.cpp  # route::group() setup-zamanı prefix+mw kalıtımı context'i
-    src/interpreter.cpp
-    src/builtins.cpp   # interpreter.cpp is_reserved_builtin() çağırır → HER target'a lazım
+    src/interpreter.cpp  # Value + modül ev sahibi (LOOK 2: ağaç-yürüten değerlendirici kalktı)
+    src/builtins.cpp   # derleyici is_reserved_builtin() çağırır → HER target'a lazım
                        # (look-cgi LOOK_CORE kullanıp builtins'i ayrıca eklemiyordu → link fail,
                        # yalnız 3-target portatif build'de görüldü; ci/build-win 2-target kaçırdı)
     src/runtime_init.cpp
@@ -210,9 +210,8 @@ if(WIN32)
     target_link_libraries(look-cgi  ws2_32 bcrypt)
     target_link_libraries(look-fcgi ws2_32 bcrypt)
     # Ana thread + std::thread worker'ları 8 MB stack (Linux varsayılanıyla aynı).
-    # Windows default 1 MB, tree-walk interpreter'ın MAX_CALL_DEPTH=500 recursion
-    # guard'ı ateşlemeden native stack'i taşırıp çökertiyordu (STATUS_STACK_OVERFLOW).
-    # 8 MB'da guard 500'de temiz ateşler → derin/sonsuz recursion yakalanabilir hata.
+    # Windows default 1 MB. VM çağrı yığını heap'tedir, ama geri çağırma zinciri (array::map içinde
+    # array::map …) her seviyede VM'e native olarak yeniden girer; 8 MB Linux ile aynı payı verir.
     if(MSVC)
         target_link_options(look      PRIVATE /STACK:8388608)
         target_link_options(look-cgi  PRIVATE /STACK:8388608)

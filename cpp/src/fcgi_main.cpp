@@ -446,12 +446,6 @@ static std::string build_error_response(int status, const std::string& title,
            "Access-Control-Allow-Origin: *\r\n\r\n" + body;
 }
 
-static std::string read_file(const fs::path& path) {
-    std::ifstream f(path);
-    if (!f) throw std::runtime_error("Cannot open: " + path.string());
-    return std::string(std::istreambuf_iterator<char>(f), {});
-}
-
 static void set_env_from_params(const std::map<std::string, std::string>& params) {
     for (auto& [k, v] : params) {
 #ifdef _WIN32
@@ -529,20 +523,6 @@ static std::string resolve_script(const std::map<std::string, std::string>& para
     return "";
 }
 
-// ── Warm start state — process boyunca yasayan interpreter ───────────────────
-
-struct WarmApp {
-    std::string                        script_path;
-    std::unique_ptr<look::Interpreter> interp;
-    std::unique_ptr<look::Program>     program;    // AST — closures buna pointer tutar
-    std::ostringstream                 setup_out;  // interpreter omrunde yasayan stream
-    fs::file_time_type                 mtime;
-    bool                               ready = false;
-};
-
-static WarmApp          g_app;
-static std::shared_mutex g_app_mutex;  // shared = concurrent dispatch, exclusive = setup/reload
-
 // FCGI params'tan WebContext doldur (env var bagimsiz)
 static look::WebContext make_web_context(const look::FcgiRequest& req) {
     auto param = [&](const std::string& k) -> std::string {
@@ -593,75 +573,6 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
     }
 
     return web;
-}
-
-// ── Setup fazı — exclusive lock altında çalışır ──────────────────────────────
-
-static void run_setup(const std::string& script_path, fs::file_time_type mtime,
-                      look::FcgiRequest& req, look::FcgiConn& conn) {
-    look::Logger::instance().log(look::LogLevel::LOG_INFO, "FCGI",
-        "Warm start: " + script_path);
-    look::clear_db_pools(); // eski bağlantıları kapat — yeni setup kendi pool'unu açar
-
-    fs::path script_dir = fs::path(script_path).parent_path();
-    if (!script_dir.empty()) {
-#ifdef _WIN32
-        _wchdir(script_dir.wstring().c_str());
-#else
-        (void)chdir(script_dir.string().c_str());
-#endif
-    }
-
-    std::string source = read_file(script_path);
-
-    static look::WebContext setup_ctx;
-    setup_ctx         = look::WebContext{};
-    setup_ctx.method  = "__SETUP__";
-
-    g_app.setup_out.str(""); g_app.setup_out.clear();
-    auto new_interp = std::make_unique<look::Interpreter>(g_app.setup_out);
-    new_interp->set_setup_mode(true);
-    new_interp->set_web_context(&setup_ctx);
-
-    look::Lexer  lexer(source);
-    auto         tokens = lexer.scan_tokens();
-    look::Parser parser(std::move(tokens));
-    std::unique_ptr<look::Program> program;
-    try {
-        program = parser.parse();
-    } catch (const look::LookParseError& e) {
-        auto err = e;
-        if (err.file.empty()) err.file = script_path;
-        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "FCGI", err.format());
-        conn.write_stdout(req.id, build_error_response(500, "Parse Error", err.format()));
-        conn.end_request(req.id, 0);
-        return;
-    }
-    look::log_param_writes(parser.warnings(), script_path);
-
-    new_interp->set_file(script_path);
-
-    try {
-        new_interp->interpret(*program);
-    } catch (const look::ExitException&) {
-    } catch (const look::RouteMatchedException&) {
-    } catch (const look::LookRuntimeError& e) {
-        auto err = e;
-        if (err.location.file.empty()) err.location.file = script_path;
-        look::Logger::instance().log(look::LogLevel::LOG_WARN, "FCGI",
-            std::string("Setup warning: ") + err.format());
-    } catch (const std::exception& e) {
-        look::Logger::instance().log(look::LogLevel::LOG_WARN, "FCGI",
-            std::string("Setup warning (non-fatal): ") + e.what());
-    }
-
-    new_interp->set_setup_mode(false);
-
-    g_app.interp      = std::move(new_interp);
-    g_app.program     = std::move(program);
-    g_app.script_path = script_path;
-    g_app.mtime       = mtime;
-    g_app.ready       = true;
 }
 
 // ── Request isleme — concurrent dispatch modeli ───────────────────────────────
