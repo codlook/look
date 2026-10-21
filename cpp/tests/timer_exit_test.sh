@@ -10,6 +10,7 @@
 #   * a script without timers ends at once (and starts no timer thread)
 #   * a script that arms and cancels a timer ends at once
 #   * a script that waits for a timer ends at once after it
+#   * a script that ends with a timer still set ends at once (with a warning)
 # Usage: timer_exit_test.sh <lk> [runs]
 LK="${1:?usage: $0 <lk> [runs]}"
 RUNS="${2:-150}"
@@ -19,9 +20,10 @@ command -v timeout >/dev/null 2>&1 || { echo "  (skipped: timeout needed)"; exit
 printf 'print("ok")\n' > "$TMP/plain.lk"
 printf '$id = timer::after(60000, function() { print("late") })\ntimer::cancel($id)\nprint("ok")\n' > "$TMP/cancel.lk"
 printf 'timer::after(1, function() { print("ran") })\ntimer::wait()\nprint("ok")\n' > "$TMP/wait.lk"
+printf 'timer::after(60000, function() { print("late") })\nprint("ok")\n' > "$TMP/pending.lk"
 
 fail=0
-for case in plain cancel wait; do
+for case in plain cancel wait pending; do
     hung=0; wrong=0
     for i in $(seq "$RUNS"); do
         out="$(timeout 5 "$LK" "$TMP/$case.lk" 2>/dev/null)"; rc=$?
