@@ -129,6 +129,13 @@ jobs:
           cd cpp
           bash tests/timer_late_test.sh ./build/lk-fcgi
 
+      # A script that touched timer:: ends at once. The timer thread's stop used to lose its
+      # wake-up now and then and the exit waited up to 30 seconds.
+      - name: Scripts with timers end at once
+        run: |
+          cd cpp
+          bash tests/timer_exit_test.sh ./build/lk
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)

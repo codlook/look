@@ -57,7 +57,11 @@ void TimerManager::cancel(int id) {
 }
 
 void TimerManager::shutdown() {
-    running_.store(false);
+    // Bayrak mtx_ ALTINDA yazılır. ESKİ HATA (kaybolan uyandırma): kilitsiz yazılınca, iş parçacığı
+    // yüklemi (running_ hâlâ true) değerlendirip henüz uykuya geçmemişken gelen notify kayboluyor,
+    // iş parçacığı deadline'a (boşken 30 sn) kadar uyuyor ve çıkıştaki join süreci o kadar
+    // bekletiyordu — ölçüm: zamanlayıcı kuran betiklerin 30'da 1'ine kadarı çıkışta asılıyordu.
+    { std::lock_guard<std::mutex> lk(mtx_); running_.store(false); }
     cv_.notify_all();
     if (thread_.joinable()) thread_.join();
 }
