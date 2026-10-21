@@ -7,7 +7,6 @@
 #include "look/websocket.h"
 #include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ile aynı VM ortamı
 #include "look/compiler.h"
-#include "look/use_modules.h"
 #include "look/vm.h"
 #include <unordered_map>
 #include <filesystem>
@@ -302,12 +301,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     interp.set_web_context(&web_ctx);
     interp.set_file(file_path.string());
     const fs::path dir = fs::absolute(file_path).parent_path();
-    {
-        std::set<std::string> seen_files;
-        std::vector<std::string> mods;
-        look::collect_use_modules(*program, dir, seen_files, mods);
-        for (const auto& m : mods) interp.load_stdlib_module(m);
-    }
+    // Modüller derlemeden sonra açılır (CompiledProgram::use_modules — aşağıda).
 
     // ── Ev sahibi fonksiyonları ─────────────────────────────────────────────
     struct Case { std::string name; Value fn; };
@@ -444,6 +438,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     look::CompiledProgram compiled;
     try { compiled = look::Compiler::compile(*program, dir.string(), {"assert", "ws"}); }
     catch (std::exception& e) { return one("(load error)", e.what()); }
+    for (const auto& m : compiled.use_modules) interp.load_stdlib_module(m);   // derleyicinin listesi
     // Yerleşik de ev sahibi fonksiyonu da olmayan mod::fn → yazım hatası (komut satırındaki kural).
     for (const auto& n : compiled.non_builtin_module_fns)
         if (!host.count(n))

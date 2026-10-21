@@ -31,6 +31,7 @@ thread_local std::string                    g_compile_root;      // main-script 
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
 thread_local std::set<std::string>          g_host_modules;     // çalıştırıcının sağladığı modüller (lk test: assert)
+thread_local std::vector<std::string>       g_use_modules;      // görülen stdlib `use` modülleri → CompiledProgram::use_modules
 // Bu derleme biriminde (dahil edilen dosyalar dahil) görülen struct bildirimleri: ad → (imza, satır).
 thread_local std::unordered_map<std::string, std::pair<std::string, int>> g_compile_structs;
 }
@@ -475,6 +476,9 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             if (!stdlib_mods.count(m))
                 throw LookCompileError("Unknown module: '" + m
                     + "'. If it is a package, install it with: lk module install " + m);
+            // Çalıştırıcı bunu derlemeden sonra açar (CompiledProgram::use_modules).
+            if (std::find(g_use_modules.begin(), g_use_modules.end(), m) == g_use_modules.end())
+                g_use_modules.push_back(m);
             emit(OpCode::NOP);
         }
     }
@@ -1973,12 +1977,15 @@ CompiledProgram Compiler::compile(const Program& program, const std::string& bas
     g_compile_included.clear();
     g_compile_structs.clear();
     g_compile_cur_dir.clear();
+    g_use_modules.clear();
     if (!base_dir.empty()) g_compile_cur_dir.push_back(base_dir);
     FunctionCompiler main_compiler("<main>", {}, false, nullptr);
     auto proto = main_compiler.compile_stmts(program.statements);
 
     CompiledProgram out;
     out.main_proto = proto;
+    out.use_modules = std::move(g_use_modules);
+    g_use_modules.clear();
     out.uses_non_builtin_module_fn = main_compiler.used_non_builtin_module_fn();
     out.non_builtin_module_fns     = main_compiler.non_builtin_module_fn_names();
     return out;

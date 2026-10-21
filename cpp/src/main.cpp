@@ -16,7 +16,6 @@
 #include "look/builtins.h"
 #include "look/compiler.h"
 #include "look/vm.h"
-#include "look/use_modules.h"   // collect_use_modules — CLI ve web aynı `use` listesi
 #include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ve lk test aynı ortam
 #include "look/timer.h"         // TimerManager — komut satırında timer:: VM closure'ı kurar
 #include "look/setup_handoff.h" // vm_closure_runner — jobs::run işleyicilerini VM'de koşturur
@@ -464,14 +463,6 @@ int main(int argc, char* argv[]) {
                         std::string(var) + "=0 is ignored: LOOK 2 runs only on the VM.");
             }
             const std::filesystem::path script_dir = std::filesystem::absolute(filename).parent_path();
-            // Yalnız `use` edilen stdlib modülleri açılır (web ile aynı liste). Paket modülü
-            // (~/.look/modules) stdlib değildir: derleyici derler; bilinmeyen modülü derleyici reddeder.
-            {
-                std::set<std::string> seen_files;
-                std::vector<std::string> mods;
-                look::collect_use_modules(*program, script_dir, seen_files, mods);
-                for (const auto& m : mods) interpreter.load_stdlib_module(m);
-            }
             look::CompiledProgram compiled;
             try {
                 compiled = look::Compiler::compile(*program, script_dir.string());
@@ -479,6 +470,9 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: " << ex.what() << "\n  File: " << filename << std::endl;
                 return 1;
             }
+            // Yalnız `use` edilen stdlib modülleri açılır — derleyicinin topladığı liste (web ile aynı;
+            // dahil edilen dosyalarınkiler dahil). Paket modülü stdlib değildir: derleyici derler.
+            for (const auto& m : compiled.use_modules) interpreter.load_stdlib_module(m);
             // VM'de karşılığı olmayan bir mod::fn adı yazım hatasıdır (web'deki "does not exist"
             // kuralıyla aynı) — çalıştırmadan söylenir.
             if (compiled.uses_non_builtin_module_fn) {

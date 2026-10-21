@@ -243,6 +243,11 @@ struct CompiledProgram {
     // (karar EXECUTION ÖNCESİ — çıktı taahhüt edilmeden).
     bool uses_non_builtin_module_fn = false;
     std::vector<std::string> non_builtin_module_fns;   // adlar (LOOK_VM_STRICT raporu)
+    // Programın (dahil edilen dosyaları dahil) `use` ettiği stdlib modülleri, görüldükleri sırayla.
+    // Çalıştırıcı derlemeden SONRA bunları açar, sonra yerleşik tabloyu kurar. ESKİ YOL: ayrı bir
+    // tarama (collect_use_modules) dahil edilen her dosyayı İKİNCİ KEZ ayrıştırıyordu — qr-menu
+    // CGI isteğinin %37'si oydu.
+    std::vector<std::string> use_modules;
     // Struct tanımları, route kayıtları setup fazında çalıştırılarak kurulur.
     // Bytecode yorumda StructDef ve route_registry_ mevcut interpreter
     // altyapısını kullanmaya devam eder — Phase 17'de taşınabilir.

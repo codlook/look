@@ -10,7 +10,6 @@
 #include "look/ast.h"
 #include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ile aynı VM ortamı
 #include "look/compiler.h"
-#include "look/use_modules.h"
 #include "look/vm.h"
 #include <filesystem>
 #include <memory>
@@ -313,17 +312,6 @@ int run_repl() {
             }
         }
 
-        // Satırın `use` ettiği modüller açılır; yerleşik tablo bu satırın çıktısına bağlanır.
-        {
-            std::set<std::string> seen_files;
-            std::vector<std::string> mods;
-            collect_use_modules(*program, std::filesystem::current_path(), seen_files, mods);
-            for (const auto& m : mods) interp.load_stdlib_module(m);
-        }
-        std::ostringstream captured;
-        builtins = build_cli_builtins(interp, captured);
-        wire_cli_callbacks(builtins, interp, callbacks);
-
         owned_programs.push_back(std::move(program));
         Program* prog_ptr = owned_programs.back().get();
 
@@ -334,6 +322,12 @@ int run_repl() {
             std::cout << red("Error: ") << e.what() << "\n";
             continue;
         }
+        // Satırın `use` ettiği modüller açılır (derleyicinin listesi); yerleşik tablo bu satırın
+        // çıktısına bağlanır.
+        for (const auto& m : compiled.use_modules) interp.load_stdlib_module(m);
+        std::ostringstream captured;
+        builtins = build_cli_builtins(interp, captured);
+        wire_cli_callbacks(builtins, interp, callbacks);
         if (compiled.uses_non_builtin_module_fn) {
             for (const auto& n : compiled.non_builtin_module_fns)
                 std::cout << red("Error: ") << n << "() does not exist — check the spelling of the module and the function.\n";

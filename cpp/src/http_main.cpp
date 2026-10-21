@@ -29,7 +29,6 @@
 #include <set>
 #include "look/timer.h"
 #include "look/setup_handoff.h"   // vm_closure_runner (jobs::run VM işleyicilerini çalıştırır)
-#include "look/use_modules.h"     // collect_use_modules — CLI ile aynı `use` listesi
 #include "look/health_path.h"     // yerleşik sağlık yolu — istek + başlangıç çakışma denetimi
 #include "look/route_params.h"    // route_check_handler — rota parametre adları kayıtta denetlenir
 #include "look/struct_types.h"    // struct_check_type_known — kurulum sonrası alan tipi denetimi
@@ -497,17 +496,7 @@ static void run_setup_http(const fs::path& script) {
     auto interp = std::make_unique<look::Interpreter>(g_http_app.setup_out);
     interp->set_file(script.string());
     interp->set_web_context(&setup_ctx);
-    // Yalnız programın `use` ettiği stdlib modülleri açılır (dahil edilen dosyalarınkiler de —
-    // CLI ile aynı liste, look/use_modules.h). Eskiden yorumlayıcı geçişi `use` satırlarını
-    // yürüterek açıyordu; o geçiş yok. `use` edilmeyen modülün yuvası boş kalır → VM "Module 'x'
-    // not loaded." verir. Paket modülü (~/.look/modules) stdlib değildir: derleyici derler.
-    {
-        std::set<std::string> seen_files;
-        std::vector<std::string> mods;
-        look::collect_use_modules(*program, script.parent_path(), seen_files, mods);
-        for (const auto& m : mods) interp->load_stdlib_module(m);
-    }
-
+    // Modüller derlemeden SONRA açılır (aşağıda, CompiledProgram::use_modules).
     g_http_app.program     = std::move(program);
     g_http_app.interp      = std::move(interp);
     g_http_app.script_path = script;
@@ -531,6 +520,11 @@ static void run_setup_http(const fs::path& script) {
             auto compiled = std::make_unique<look::CompiledProgram>(
                 look::Compiler::compile(*g_http_app.program,
                                         g_http_app.script_path.parent_path().string()));
+            // Yalnız programın `use` ettiği stdlib modülleri açılır (dahil edilen dosyalarınkiler de —
+            // derleyici zaten okuduğu `use` satırlarından toplar; CLI ile aynı liste). `use` edilmeyen
+            // modülün yuvası boş kalır → VM "Module 'x' not loaded." verir. Paket modülü
+            // (~/.look/modules) stdlib değildir: derleyici derler.
+            for (const auto& m : compiled->use_modules) g_http_app.interp->load_stdlib_module(m);
             g_http_app.compiled     = std::move(compiled);
             g_http_app.use_bytecode = true;
             startup_note("[BYTECODE] OK — VM mode active", "Bytecode compile OK — VM mode active");

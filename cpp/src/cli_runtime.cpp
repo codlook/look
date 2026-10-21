@@ -16,7 +16,6 @@
 #include "look/builtins.h"
 #include "look/compiler.h"
 #include "look/vm.h"
-#include "look/use_modules.h"   // collect_use_modules — CLI ve web aynı `use` listesi
 #include "look/timer.h"         // TimerManager — komut satırında timer:: VM closure'ı kurar
 #include "look/setup_handoff.h" // vm_closure_runner — jobs::run işleyicilerini VM'de koşturur
 #include <memory>

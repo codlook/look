@@ -466,6 +466,10 @@ FastCGI.
 - A route that both prints and returns a `response::` value answers with the `response::`
   body only, as `lk-fcgi` does (CGI wrote both, one after the other).
 - A request that succeeds writes nothing to stderr — Apache's error log — as before.
+- CGI starts a new process for every request, and LOOK 2 checks and compiles the whole program
+  each time (measured on a mid-size application: about 12 ms per request; 8 ms on the tree-walk
+  engine, which ran only the matched route). When speed matters, use `lk-fcgi`: it loads the
+  program once and keeps it.
 
 ### `lk test` and `lk repl` run on the VM — error at load
 
