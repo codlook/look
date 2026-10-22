@@ -47,9 +47,6 @@ struct VmRoute {
     std::string          pattern;     // "GET:/path/{id}"
     Closure*             fn;          // route handler closure
     std::vector<Closure*> middlewares; // route-level middleware listesi (setup'ta doldurulur)
-    int                  app_index = -1; // g_http_app.vm_routes'taki kalıcı indeks (eskiden
-                                         // VM hatasında route'u yorumlayıcıya sabitlemek
-                                         // içindi; bkz. last_matched_route)
 };
 
 // ── VM ────────────────────────────────────────────────────────────────────────
@@ -80,9 +77,6 @@ public:
     // Üst düzey `return <ifade>` değerini döndürür (REPL son ifadeyi böyle gösterir); yoksa null.
     Value execute(const CompiledProgram& prog);
     void  dispatch_routes(const std::string& method, const std::string& path);
-    // Son dispatch'te eşleşen route'un app_index'i (-1 = eşleşme yok/404).
-    // Eskiden VM hatasında hangi route'un yorumlayıcıya sabitleneceğini söylüyordu; bugün çağıran yok.
-    int   last_matched_route() const { return last_matched_route_; }
     // Dışarı sızan (yakalanmamış) hata anındaki kaynak satırı — 0 = bilinmiyor.
     // Çağıran "Runtime Error ... File/Line" formatını üretebilsin diye.
     int   last_error_line() const { return last_error_line_; }
@@ -130,7 +124,6 @@ private:
     Value       get_field(const Value& obj, const std::string& field);
     void        set_field(Value& obj, const std::string& field, const Value& val);
 
-    int last_matched_route_ = -1;
     int last_error_line_ = 0;   // yakalanmamış hatanın satırı (proto->lines[ip-1])
 
     // Hata dışarı sızarken çalışan opcode'un satırını kaydet. frame.ip zaten bir sonraki

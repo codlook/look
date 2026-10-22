@@ -3,7 +3,7 @@
 #include "look/web.h"
 #include "look/logger.h"
 #include "look/jobs_store.h"
-#include "look/setup_handoff.h" // vm_closure_runner — jobs::run işleyicisi
+#include "look/vm_closure_runner.h" // vm_closure_runner — jobs::run işleyicisi
 #include <thread>
 #include <fstream>
 #include <iostream>

@@ -203,7 +203,6 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
         if (m != method && m != "*") continue;
         std::vector<Value> params;
         if (route_match(p, path, params)) {
-            last_matched_route_ = entry.app_index;
             // Route-level middleware'leri çalıştır
             bool stopped = false;
             for (auto* mw : entry.middlewares) {

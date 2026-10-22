@@ -29,7 +29,7 @@
 #include "look/fiber.h"
 #include <set>
 #include "look/timer.h"
-#include "look/setup_handoff.h"   // vm_closure_runner (jobs::run VM işleyicilerini çalıştırır)
+#include "look/vm_closure_runner.h"   // vm_closure_runner (jobs::run VM işleyicilerini çalıştırır)
 #include "look/health_path.h"     // yerleşik sağlık yolu — istek + başlangıç çakışma denetimi
 #include "look/route_params.h"    // route_check_handler — rota parametre adları kayıtta denetlenir
 #include "look/struct_types.h"    // struct_check_type_known — kurulum sonrası alan tipi denetimi
@@ -288,7 +288,6 @@ struct HttpApp {
     std::ostringstream                       setup_out;
 
     // ── Bytecode VM (tek motor — derlenemezse uygulama başlamaz) ──────────────
-    bool                                     use_bytecode = false;
     std::unique_ptr<look::CompiledProgram>   compiled;
 
     // VM route registry: setup fazında VM çalıştırılarak doldurulur.
@@ -512,7 +511,6 @@ static void run_setup_http(const fs::path& script) {
         }
     }
 
-    g_http_app.use_bytecode = false;
     {
         try {
             startup_note("[BYTECODE] Compiling...");
@@ -525,7 +523,6 @@ static void run_setup_http(const fs::path& script) {
             // (~/.look/modules) stdlib değildir: derleyici derler.
             for (const auto& m : compiled->use_modules) g_http_app.interp->load_stdlib_module(m);
             g_http_app.compiled     = std::move(compiled);
-            g_http_app.use_bytecode = true;
             startup_note("[BYTECODE] OK — VM mode active", "Bytecode compile OK — VM mode active");
         } catch (const std::exception& e) {
             refuse_start(e.what());
@@ -538,7 +535,7 @@ static void run_setup_http(const fs::path& script) {
     g_http_app.vm_before_routes.clear();
     g_http_app.vm_routes_ready = false;
     g_http_app.script_mode     = false;
-    if (g_http_app.use_bytecode && g_http_app.compiled) {
+    if (g_http_app.compiled) {
         try {
             // Setup builtins: route() (index 22) ve temel veri fonksiyonları
             // Diğer builtin'ler setup'ta çağrılmaz (db::query vb. HTTP context ister)
@@ -1197,7 +1194,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     std::shared_lock<std::shared_mutex> sl(g_http_mutex);
     // vm_routes_ready: VM'nin dispatch_routes() kullanabilmesi için
     // native function wiring tamamlanmış olmalı (Phase 16.5 Adım 5.5)
-    bool use_bc = g_http_app.use_bytecode && g_http_app.compiled && g_http_app.vm_routes_ready;
+    bool use_bc = g_http_app.compiled && g_http_app.vm_routes_ready;   // başarısız yüklemede vm_routes_ready false
 
     auto t_copy_start    = std::chrono::steady_clock::now();
     auto t_copy_end      = t_copy_start;
@@ -1248,12 +1245,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             for (size_t ri = 0; ri < g_http_app.vm_routes.size(); ++ri) {
                 auto& r = g_http_app.vm_routes[ri];
                 if (r.fn.type() != look::Value::BYTECODE_FN) continue;
-                // app_index: g_http_app.vm_routes'taki kalıcı indeks (eskiden hata durumunda
-                // route'u yorumlayıcıya sabitlemek içindi).
                 look::VmRoute vr;
                 vr.pattern   = r.pattern;
                 vr.fn        = r.fn.as_bytecode_fn().get();
-                vr.app_index = (int)ri;
                 for (auto& mw : r.middlewares)
                     if (mw.type() == look::Value::BYTECODE_FN)
                         vr.middlewares.push_back(mw.as_bytecode_fn().get());

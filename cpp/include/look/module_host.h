@@ -2,7 +2,7 @@
 // Yerleşik modüllerin çalışma zamanından istediği her şey — ve yalnız bu kadarı.
 //
 // Modül fabrikaları (make_stdlib, make_extra_stdlib, make_web_modules, …) eskiden
-// yorumlayıcı nesnesini (bugünkü RuntimeHost) alıyordu; oysa modüller ondan yalnız şu beş
+// yorumlayıcı nesnesini (bugünkü RuntimeHost) alıyordu; oysa modüller ondan yalnız şu dört
 // şeyi kullanıyor. LOOK 2 tek motora (VM) geçerken modül tablosunu yorumlayıcı nesnesi
 // olmadan kurabilmek için bağımlılık bu arayüze indirildi. Bugün RuntimeHost uygular; VM
 // kendi ana makinesini getirdiğinde modüllere dokunmak gerekmez.
@@ -25,7 +25,6 @@ public:
 
     // runtime::stats sayaçları.
     virtual int  get_route_count()   const = 0;
-    virtual int  get_request_count() const = 0;
     virtual long get_uptime_sec()    const = 0;
 };
 

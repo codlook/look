@@ -34,7 +34,6 @@ public:
     // runtime:: stats. Rota sayısını web motoru kurulumdan sonra yazar (VM'in rota tablosu).
     void set_route_count(int n) { route_count_ = n; }
     int  get_route_count()   const override { return route_count_; }
-    int  get_request_count() const override { return 0; }   // web sayacı süreç-global (g_http_request_count)
     long get_uptime_sec()    const override {
         auto now = std::chrono::steady_clock::now();
         return (long)std::chrono::duration_cast<std::chrono::seconds>(now - start_time_).count();

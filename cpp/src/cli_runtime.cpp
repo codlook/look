@@ -17,7 +17,7 @@
 #include "look/compiler.h"
 #include "look/vm.h"
 #include "look/timer.h"         // TimerManager — komut satırında timer:: VM closure'ı kurar
-#include "look/setup_handoff.h" // vm_closure_runner — jobs::run işleyicilerini VM'de koşturur
+#include "look/vm_closure_runner.h" // vm_closure_runner — jobs::run işleyicilerini VM'de koşturur
 #include <memory>
 #include <unordered_map>
 #include <cmath>

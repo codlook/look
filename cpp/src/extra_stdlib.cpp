@@ -1041,10 +1041,8 @@ static Module make_runtime_module(ModuleHost* interp) {
     mod.functions["stats"] = [interp](std::vector<Value> args) -> Value {
         long uptime  = interp->get_uptime_sec();
         int  routes  = interp->get_route_count();
-        // get_request_count() LOOK 2'de hep 0 (RuntimeHost); istekleri süreç-global HTTP sayacı
-        // taşır (web dispatch artırır). Toplam → çift-sayım yok.
-        int  reqs    = interp->get_request_count()
-                     + (int)look::g_http_request_count().load(std::memory_order_relaxed);
+        // İstekleri süreç-global HTTP sayacı taşır (web dispatch artırır).
+        int  reqs    = (int)look::g_http_request_count().load(std::memory_order_relaxed);
 
         double working_mb = 0.0;
         double private_mb = 0.0;
