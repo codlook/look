@@ -1,6 +1,6 @@
 #include "look/lexer.h"
 #include "look/parser.h"
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/logger.h"
 #include "look/web.h"
 #include "look/runtime_init.h"   // runtime_init (CA probe + SQLite init, süreç başı — 3 giriş noktası ortak)

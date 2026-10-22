@@ -3,7 +3,7 @@
 #include "look/capture_check.h"
 #include "look/arg_check.h"
 #include "look/format_src.h"   // lk fmt
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/array_count.h"
 #include "look/http_client.h"
 #include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
@@ -241,7 +241,7 @@ int main(int argc, char* argv[]) {
         // list has to be empty (CI).
         if (cmd == "--vm-report") {
             look::WebContext rctx;
-            look::Interpreter rint;
+            look::RuntimeHost rint;
             rint.set_web_context(&rctx);
             std::set<std::string> known(look::builtin_names().begin(), look::builtin_names().end());
             size_t total = 0, missing = 0;
@@ -447,7 +447,7 @@ int main(int argc, char* argv[]) {
         web_ctx.method = "GET";
         web_ctx.path   = "/";
 
-        look::Interpreter interpreter;
+        look::RuntimeHost interpreter;
         interpreter.set_web_context(&web_ctx);
         interpreter.set_file(filename);
 

@@ -1,5 +1,5 @@
 // http_stdlib.cpp — LOOK `use http;` module binding
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/http_client.h"
 #include <sstream>
 #include <stdexcept>

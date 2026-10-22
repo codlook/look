@@ -11,7 +11,7 @@
 // bekletir. VM kurulumu BAŞARIYLA bitince yuvalar ve işleyiciler VM closure'larıyla değiştirilir;
 // başarısız olursa hiçbir şey değişmez, uygulama yorumlayıcıda kaldığı gibi geri çağırmalar da
 // orada kalır. Zamanlayıcı kimlikleri değişmez (aynı kayıt, yalnız çağırdığı şey değişir).
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include <functional>
 #include <memory>
 #include <mutex>

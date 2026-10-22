@@ -16,7 +16,7 @@
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/jobs_store.h"
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/compiler.h"
 #include "look/vm.h"
 #include "look/logger.h"
@@ -282,7 +282,7 @@ struct HttpApp {
     std::atomic<uint64_t>                    generation{0};
 
     // ── Tree-walk interpreter (her zaman mevcut — fallback) ───────────────────
-    std::unique_ptr<look::Interpreter>       interp;
+    std::unique_ptr<look::RuntimeHost>       interp;
     std::unique_ptr<look::Program>           program;
     std::ostringstream                       setup_out;
 
@@ -303,7 +303,7 @@ struct HttpApp {
     // Setup VM globals: db_check/json_ok/json_hata/admin_kontrol closure'ları + $conn pool key
     std::unordered_map<std::string, look::Value> vm_setup_globals;
 
-    // Interpreter'ın shared globals/struct_defs — VM SharedState için read-only ptr
+    // RuntimeHost'ın shared globals/struct_defs — VM SharedState için read-only ptr
     // (make_dispatch_copy ile ayrı interpreter kopyasına da erişilebilir)
 
     fs::path                                 script_path;
@@ -493,7 +493,7 @@ static void run_setup_http(const fs::path& script) {
     // alınır, web modülleri kurulum bağlamına (setup_ctx) bağlanır, setup modu bayrağını taşır.
     // (Eskiden üst düzey önce burada yorumlayıcıda koşuyor, sonra VM aynı kodu kayıttan geri
     // oynatıyordu: iki geçiş, iki motor.)
-    auto interp = std::make_unique<look::Interpreter>(g_http_app.setup_out);
+    auto interp = std::make_unique<look::RuntimeHost>(g_http_app.setup_out);
     interp->set_file(script.string());
     interp->set_web_context(&setup_ctx);
     // Modüller derlemeden SONRA açılır (aşağıda, CompiledProgram::use_modules).
@@ -739,7 +739,7 @@ static void run_setup_http(const fs::path& script) {
             // oynatıyordu (1.0.9) — iki geçiş, iki motor; artık ikisi de yok.
             {
                 const auto& bnames = look::builtin_names();
-                look::Interpreter* host = g_http_app.interp.get();
+                look::RuntimeHost* host = g_http_app.interp.get();
                 for (size_t i = 0; i < setup_builtins.size() && i < bnames.size(); ++i) {
                     if (setup_builtins[i]) continue;           // yukarıda özel olarak bağlandı
                     const std::string& name = bnames[i];
@@ -812,7 +812,7 @@ static void run_setup_http(const fs::path& script) {
             std::ostringstream vm_setup_out;
             look::VM setup_vm(setup_sh, vm_setup_out);
             // Kurulum sürüyor: db::query gibi modüller bunu ModuleHost::is_setup_mode ile görür.
-            struct SetupMode { look::Interpreter* h; SetupMode(look::Interpreter* x) : h(x) { h->set_setup_mode(true); }
+            struct SetupMode { look::RuntimeHost* h; SetupMode(look::RuntimeHost* x) : h(x) { h->set_setup_mode(true); }
                                ~SetupMode() { h->set_setup_mode(false); } } setup_mode{g_http_app.interp.get()};
             setup_vm.execute(*g_http_app.compiled);
 
@@ -1210,7 +1210,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // Ölçüm (docker, 2 worker): make_dispatch_copy() her istekte 30µs (global'siz
         // app) — route'u ÇALIŞTIRMAKTAN (12µs) 2.5× pahalı; global-ağır app'te 63µs ve
         // throughput 21.2k→12.8k düşüyordu (route AYNI olmasına rağmen). Sebep:
-        // make_dispatch_copy → make_unique<Interpreter>() TÜM stdlib'i (yüzlerce
+        // make_dispatch_copy → make_unique<RuntimeHost>() TÜM stdlib'i (yüzlerce
         // std::function) her istekte yeniden kuruyor + globals_ deep-clone.
         // PHP-FPM istek başına böyle bir bedel ödemez — "PHP'yi geç" hedefinin önündeki
         // asıl engel buydu, motor hızı değil.
@@ -1218,18 +1218,18 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // Güvenlik: her worker tek isteği aynı anda işler → thread_local kopya güvenli.
         // Hot-reload'da generation artar → kopya tazelenir.
         // İZOLASYON: VM route'u interpreter globals'ını KULLANMAZ (VM kendi globals'ını
-        // g_http_app.vm_setup_globals'tan alır) → klon gereksiz. Interpreter fallback'i
+        // g_http_app.vm_setup_globals'tan alır) → klon gereksiz. RuntimeHost fallback'i
         // kullanıcı kodu çalıştırdığı için globals'ı TAZE snapshot'a resetler (aşağıda) —
         // yoksa bir isteğin yazdığı global sonraki isteğe sızardı.
         t_copy_start = std::chrono::steady_clock::now();
-        static thread_local std::unique_ptr<look::Interpreter> tl_copy;
+        static thread_local std::unique_ptr<look::RuntimeHost> tl_copy;
         static thread_local uint64_t tl_gen = (uint64_t)-1;
         const uint64_t cur_gen = g_http_app.generation.load(std::memory_order_acquire);
         if (!tl_copy || tl_gen != cur_gen) {
             tl_copy = g_http_app.interp->make_dispatch_copy();
             tl_gen  = cur_gen;
         }
-        look::Interpreter* copy = tl_copy.get();
+        look::RuntimeHost* copy = tl_copy.get();
         t_copy_end = std::chrono::steady_clock::now();
         copy->set_output(output);
         copy->set_web_context(&web);
@@ -1411,7 +1411,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             req_builtins[BI("timer::wait")] = [](std::vector<look::Value>&) -> look::Value {
                 throw std::runtime_error("timer::wait() can be used only on the command line: a web request does not wait for timers");
             };
-            // jobs::run — LOOK 2: yorumlayıcıdaki TEK tanım (Interpreter::jobs_run). Kurulumda
+            // jobs::run — LOOK 2: yorumlayıcıdaki TEK tanım (RuntimeHost::jobs_run). Kurulumda
             // kaydedilen işleyiciler yorumlayıcı closure'ıdır ve taze bir kopyada çalışır; bir VM
             // rotasında kaydedilen işleyici (BYTECODE_FN) köprüyle bu isteğin VM'inde çalışır.
             req_builtins[BI("jobs::run")] = [copy](std::vector<look::Value>& args) -> look::Value {

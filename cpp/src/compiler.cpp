@@ -13,7 +13,7 @@
 #include "look/param_write_check.h"   // log_param_writes — dahil edilen dosyaların uyarıları
 #include "look/builtins.h"
 #include "look/unused_result.h"   // is_pure_builtin — sonucu atılan saf yerleşik
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/lexer.h"
 #include "look/parser.h"
 
@@ -237,7 +237,7 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
     // ── Prologue: varsayılan parametreler ────────────────────────────────────
     // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
     // ilk yerel register'ları (0..arity-1) tutar. Varsayılan ifade önceki
-    // param'ları görebilir (soldan sağa). Interpreter ile aynı arity semantiği.
+    // param'ları görebilir (soldan sağa). RuntimeHost ile aynı arity semantiği.
     // LOOK 2: zorunlu parametre sayısı (argüman sayısı denetimi — vm.cpp check_argc).
     {
         const int fixed = proto_.variadic ? proto_.arity - 1 : proto_.arity;
@@ -1313,7 +1313,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
 
     if (auto* e = dynamic_cast<const UnaryExpression*>(&expr)) {
         // ++/-- — VM'de eskiden desteklenmiyordu (compile hatası → interpreter'a
-        // görünmez sapma). Interpreter ile aynı semantik: prefix yeni değeri,
+        // görünmez sapma). RuntimeHost ile aynı semantik: prefix yeni değeri,
         // postfix eski değeri döndürür; değişkene geri yazılır.
         if (e->op == "++" || e->op == "--") {
             auto* var = dynamic_cast<const Variable*>(e->right.get());
@@ -1641,7 +1641,7 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             free_temp(ch);
             return r;
         }
-        // Interpreter global builtin alias'ları → VM builtin karşılığı.
+        // RuntimeHost global builtin alias'ları → VM builtin karşılığı.
         // Bu isimler interpreter'da inline çözülüyordu ama VM builtin listesinde
         // yoktu → route çağırınca CALL (bytecode-fn) olarak derlenip runtime'da
         // "Not callable" fırlatıyor, route KALICI interpreter'a düşüyordu
@@ -1776,7 +1776,7 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
         return r;
     }
 
-    // Parçalara böl: sabit string + interpolation dönüşümlü. Interpreter'ın
+    // Parçalara böl: sabit string + interpolation dönüşümlü. RuntimeHost'ın
     // interpolate_string() semantiğiyle BİREBİR: tetikleyici {$ · {harf · {_
     // (template {# değil), iç içe brace'lere saygı, fragment TAM expression olarak
     // lex+parse+compile ({$a + $b}, {$arr[1]}, {count($x)}, {mod::f()}...), parse

@@ -1,6 +1,6 @@
 // test_runner.cpp — `look test` subcommand implementation
 #include "look/test_runner.h"
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/web.h"
@@ -297,7 +297,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     web_ctx.method = "GET";
     web_ctx.path   = "/";
 
-    look::Interpreter interp(out);   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
+    look::RuntimeHost interp(out);   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
     interp.set_web_context(&web_ctx);
     interp.set_file(file_path.string());
     const fs::path dir = fs::absolute(file_path).parent_path();

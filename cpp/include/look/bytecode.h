@@ -1,6 +1,6 @@
 #pragma once
 
-#include "look/interpreter.h"  // Value
+#include "look/runtime_host.h"  // Value
 
 #include <cstdint>
 #include <string>

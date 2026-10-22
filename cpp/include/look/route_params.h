@@ -10,7 +10,7 @@
 //   * işleyici yol parametrelerinin hepsini, bir kısmını ya da hiçbirini bildirebilir;
 //     bildirmedikleri request::param("ad") ile okunur.
 // WS ve SSE rotalarında ilk parametre bağlantının kendisidir (adı serbest); kural kalanlara uygulanır.
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include <map>
 #include <stdexcept>
 #include <string>

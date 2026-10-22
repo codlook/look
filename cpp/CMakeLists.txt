@@ -115,7 +115,8 @@ set(LOOK_CORE
     src/parser.cpp
     src/format_src.cpp   # lk fmt — kaynak biçimlendirici (lexer'a bağlı)
     src/route_group.cpp  # route::group() setup-zamanı prefix+mw kalıtımı context'i
-    src/interpreter.cpp  # Value + modül ev sahibi (LOOK 2: ağaç-yürüten değerlendirici kalktı)
+    src/value.cpp        # Value, kanal
+    src/runtime_host.cpp # yerleşik modüllerin ev sahibi (LOOK 2: ağaç-yürüten yorumlayıcının yerini aldı)
     src/builtins.cpp   # derleyici is_reserved_builtin() çağırır → HER target'a lazım
                        # (look-cgi LOOK_CORE kullanıp builtins'i ayrıca eklemiyordu → link fail,
                        # yalnız 3-target portatif build'de görüldü; ci/build-win 2-target kaçırdı)

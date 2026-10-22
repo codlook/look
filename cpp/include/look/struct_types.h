@@ -24,7 +24,7 @@
 //   * int, float alana yazılabilir (float'a çevrilir); tersi ve diğer tüm karışımlar hata;
 //   * null yalnız ?tip, any, fn ve struct tipli alanlara yazılabilir;
 //   * şekil SABİT: bildirilmemiş alan yok (ne okunur ne yazılır).
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include <stdexcept>
 #include <string>
 #include <vector>

@@ -2,7 +2,7 @@
 #include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (saf, RFC-KAT edilebilir)
 #include "look/fiber.h"           // fiber_offload — uzun PBKDF2 ortak havuzda
 #include "look/metrics.h"         // g_http_request_count() — web dispatch istek sayacı
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/logger.h"
 #include <cstdint>
 #include "look/lexer.h"

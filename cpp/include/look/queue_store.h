@@ -1,5 +1,5 @@
 #pragma once
-#include "interpreter.h"
+#include "value.h"
 #include <string>
 #include <deque>
 #include <unordered_map>

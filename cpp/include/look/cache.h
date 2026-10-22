@@ -1,5 +1,5 @@
 #pragma once
-#include "interpreter.h"
+#include "value.h"
 #include <string>
 #include <unordered_map>
 #include <chrono>

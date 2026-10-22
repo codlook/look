@@ -2,9 +2,9 @@
 // Yerleşik modüllerin çalışma zamanından istediği her şey — ve yalnız bu kadarı.
 //
 // Modül fabrikaları (make_stdlib, make_extra_stdlib, make_web_modules, …) eskiden
-// Interpreter* alıyordu; oysa modüller ondan yalnız şu beş şeyi kullanıyor. LOOK 2 tek
+// RuntimeHost* alıyordu; oysa modüller ondan yalnız şu beş şeyi kullanıyor. LOOK 2 tek
 // motora (VM) geçerken modül tablosunu yorumlayıcı nesnesi olmadan kurabilmek için
-// bağımlılık bu arayüze indirildi. Bugün Interpreter uygular; VM kendi ana makinesini
+// bağımlılık bu arayüze indirildi. Bugün RuntimeHost uygular; VM kendi ana makinesini
 // getirdiğinde modüllere dokunmak gerekmez.
 #include <vector>
 

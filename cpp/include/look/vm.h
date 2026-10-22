@@ -1,7 +1,7 @@
 #pragma once
 
 #include "look/bytecode.h"
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 
 #include <memory>
 #include <string>

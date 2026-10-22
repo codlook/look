@@ -7,7 +7,7 @@
 #include "look/fiber.h"
 #include <cmath>
 #include <cstdint>
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/mysql_client.h"
 #include "look/sqlite_client.h"
 #include "look/postgres_client.h"

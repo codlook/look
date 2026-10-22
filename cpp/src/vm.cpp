@@ -12,7 +12,7 @@
 #include "look/bytecode.h"
 #include "look/web.h"
 #include "look/value_path.h"
-#include "look/interpreter.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
+#include "look/runtime_host.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include "look/builtins.h"      // builtin_names() — hata mesajinda modul/fonksiyon adi
@@ -60,7 +60,7 @@ static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& 
     // yeni bir tip eklendiğinde otomatik GÜVENLİ tarafta başlar — izin listesi olsaydı her
     // yeni tip sessiz-paylaşım bug'ı olurdu (bu sınıfın 3. yaması). deep_clone_impl her tipi
     // doğru ele alır: ARRAY özyineli klon, closure hook'la klon, scalar/string *this (ucuz,
-    // immutable). Interpreter'ın zaten yaptığı izolasyonla parite (differential-güvenli).
+    // immutable). RuntimeHost'ın zaten yaptığı izolasyonla parite (differential-güvenli).
     for (size_t j = 0; j < nc->captures.size(); ++j) {
         Value::Type t = nc->captures[j].type();
         bool shared_by_design = (t == Value::CHANNEL || t == Value::WEBSOCKET

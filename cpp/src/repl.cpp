@@ -3,7 +3,7 @@
 #define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
 #endif
 #include "look/repl.h"
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/web.h"
@@ -202,7 +202,7 @@ int run_repl() {
     // LOOK 2 (tek motor, adım 6): REPL VM'de koşar. Her satır ayrı derlenir ve YENİ bir VM'de
     // çalışır; önceki satırların global'leri (değişkenler, fonksiyonlar) aktarılır — bir satır
     // hatayla bitse de o ana kadar atananlar kalır. Yerleşik tablo komut satırıyla aynı (cli_runtime).
-    Interpreter interp;   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
+    RuntimeHost interp;   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
     WebContext  web_ctx;
     web_ctx.method = "GET";
     web_ctx.path   = "/";

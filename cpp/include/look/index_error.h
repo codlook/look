@@ -11,7 +11,7 @@
 //                                    → HATA   (bu eksik bir değer değil, yanlış türdür)
 // LOOK 1'de yorumlayıcı null dahil hepsinde hata veriyor, VM hepsinde sessizce null dönüyordu:
 // aynı satır motora göre farklı davranıyor, yanlış tür null olarak yayılıyordu.
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include <string>
 
 namespace look {

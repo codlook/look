@@ -1,5 +1,5 @@
 #pragma once
-#include "interpreter.h"
+#include "value.h"
 struct sqlite3;  // forward declare — full definition in jobs_stdlib.cpp
 #include <string>
 #include <mutex>

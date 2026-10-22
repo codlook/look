@@ -1,5 +1,5 @@
 #pragma once
-#include "interpreter.h"
+#include "value.h"
 
 namespace look {
 

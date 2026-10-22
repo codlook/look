@@ -6,7 +6,7 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "look/interpreter.h"   // look::Value
+#include "look/runtime_host.h"   // look::Value
 
 namespace look {
 

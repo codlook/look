@@ -56,7 +56,7 @@ struct UploadedFile {
 };
 
 // ── Web Context ───────────────────────────────────────────────────────────────
-// CGI isteğinin tüm bilgilerini tutar. Interpreter tarafından paylaşılır.
+// CGI isteğinin tüm bilgilerini tutar. RuntimeHost tarafından paylaşılır.
 
 struct WebContext {
     // Request

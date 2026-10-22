@@ -1,7 +1,7 @@
 #include "look/parser.h"
 #include "look/capture_check.h"
 #include "look/param_write_check.h"
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/logger.h"
 #include <stdexcept>
 #include <algorithm>

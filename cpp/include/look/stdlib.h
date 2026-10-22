@@ -1,6 +1,6 @@
 #pragma once
 
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include <map>
 #include <string>
 

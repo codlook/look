@@ -6,7 +6,7 @@
 #include "look/parser.h"
 #include "look/capture_check.h"
 #include "look/arg_check.h"
-#include "look/interpreter.h"
+#include "look/runtime_host.h"
 #include "look/array_count.h"
 #include "look/http_client.h"
 #include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
@@ -33,7 +33,7 @@ namespace look {
 // ── C9 (CLI-VM, opt-in) — CLI top-level script'i bytecode VM'de çalıştırmak için
 // builtin tablosu. http_main req_builtins ile aynı semantik; çıktı `out`'a gider.
 // Modül fn'leri interpreter'ın YÜKLÜ modüllerinden auto-wire olur (use gerektirir).
-std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp, std::ostream& out) {
+std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::ostream& out) {
     using look::Value;
     std::vector<look::BuiltinFn> b(look::builtin_names().size());
     auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
@@ -164,7 +164,7 @@ look::Value run_cli_closure(const CliCallbacks& cc, const look::Value& fnv, std:
     }
     return look::Value();
 }
-void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::Interpreter& interp,
+void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::RuntimeHost& interp,
                                std::shared_ptr<CliCallbacks> cc) {
     using look::Value;
     auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
