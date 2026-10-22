@@ -10,9 +10,8 @@
 // onun üzerinden yazmak (LOOK 1'in yaptığı) geçiciyi ikinci sahip yapar: ya her yazmada kopya
 // (karesel döngü) ya da kaybolan yazma olur.
 //
-// İki motor da bu başlığı kullanır: eleman arama (value_slot) ve yol yürüyüşü
-// (value_set_path) tek yerde. Son düzeydeki yazma motorun kendi tek-düzey atamasıdır
-// (VM::array_set / yorumlayıcının karşılığı) ve geri çağrı olarak verilir.
+// Eleman arama (value_slot) ve yol yürüyüşü (value_set_path) tek yerde. Son düzeydeki
+// yazma VM'in tek-düzey atamasıdır (VM::array_set) ve geri çağrı olarak verilir.
 #include "look/struct_types.h"
 
 namespace look {
@@ -108,7 +107,7 @@ inline Value& value_path_slot(Value& slot, const Value* keys, int n, SetOne&& se
     return *cur;
 }
 
-// push/pop'un tek tanımı (iki motor ortak). Hedef tek sahipli bir yerdir.
+// push/pop'un tek tanımı. Hedef tek sahipli bir yerdir.
 inline Value value_push(Value& target, const Value& v) {
     if (target.type() != Value::ARRAY) throw std::runtime_error("push() requires array as first argument");
     target.vec_ptr()->push_back(v);

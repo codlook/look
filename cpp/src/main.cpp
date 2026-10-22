@@ -83,8 +83,8 @@ static std::string read_file(const std::filesystem::path& path) {
 
 // ── Semantik kontrol (yalniz --check) — tanimsiz bare fonksiyon cagrilari ──────
 // Guvenli/yanlis-pozitifsiz olmak icin: yalniz CallExpression'in callee'si bare
-// ($'siz, ::'siz) Variable olanlari; gecerli kume = interpreter'in inline bare
-// fonksiyonlari + builtin_names() + dosyadaki fn/struct/const adlari. Dosyada
+// ($'siz, ::'siz) Variable olanlari; gecerli kume = dilin bare yerlesikleri
+// (derleyicinin ozel ele aldiklari dahil) + builtin_names() + dosyadaki fn/struct/const adlari. Dosyada
 // `use` importu varsa (cross-file isimler bilinemez) hic kontrol edilmez.
 namespace {
 using namespace look;
@@ -148,7 +148,7 @@ bool find_undefined_call(const Program& prog, std::string& name, int& line, int&
         if (dynamic_cast<const UseStatement*>(s.get()) || dynamic_cast<const UseFileStatement*>(s.get()))
             return false;   // import var → cross-file isimler bilinemez, kontrol etme
 
-    // Gecerli bare cagri isimleri: interpreter'in inline fonksiyonlari +
+    // Gecerli bare cagri isimleri: dilin bare yerlesikleri +
     // builtin_names() bare girdileri + comert ekstralar (yanlis pozitif olmasin).
     std::set<std::string> valid = {
         "abs","args","before_route","bool","boolval","chan_size","channel","close","config","count",
@@ -393,8 +393,8 @@ int main(int argc, char* argv[]) {
             for (const auto& w : look::check_captures(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [" << w.kind << "] " << w.message << "\n";
-            // LOOK 2 geçiş denetimi: adlı fonksiyona yanlış sayıda argümanla çağrı (iki motor
-            // bugün ayrışıyor; kural kesinleşmeden önce sayım için).
+            // LOOK 2 geçiş denetimi: adlı fonksiyona yanlış sayıda argümanla çağrı (1.0.x'te iki
+            // motor ayrışıyordu; kural kesinleşmeden önce sayım için).
             for (const auto& w : look::check_arg_counts(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [arg-count] " << w.message << "\n";
@@ -495,7 +495,7 @@ int main(int argc, char* argv[]) {
             vm.set_web_context(&web_ctx);
             callbacks->main_vm = &vm;
             struct MainVmGone { std::shared_ptr<look::CliCallbacks> c; ~MainVmGone() { c->main_vm = nullptr; } } main_vm_gone{callbacks};
-            // Yakalanmamış hata tree-walk'un biçiminde raporlanır: VM'in kaydettiği satır
+            // Yakalanmamış hata "Runtime Error ... File/Line" biçiminde raporlanır: VM'in kaydettiği satır
             // (proto.lines) LookRuntimeError'a sarılır. ExitException/RouteMatched kontrol akışıdır.
             try {
                 vm.execute(compiled);

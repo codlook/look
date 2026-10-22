@@ -1,4 +1,4 @@
-// Dilin TEK double formatlayıcısı — interpreter'dan BAĞIMSIZ (DB sürücüleri de kullanır).
+// Dilin TEK double formatlayıcısı — çalışma zamanından BAĞIMSIZ (DB sürücüleri de kullanır).
 // NaN/Infinity açıkça ele alınır, aksi halde std::to_chars shortest (round-trip-güvenli,
 // locale-bağımsız '.'). Aynı değer her yerde (to_string, JSON, sqlite/mysql/pg sonuç) AYNI
 // metin → "kavram başına tek yapı". Önceki 4 ayrı impl (interpreter to_chars, sqlite %.17g,

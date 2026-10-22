@@ -21,7 +21,7 @@ public:
         : std::runtime_error(msg), line(line) {}
 };
 
-// LOOK `throw` bir C++ sınırını geçerken (VM → CALL_BUILTIN → interpreter native fn →
+// LOOK `throw` bir C++ sınırını geçerken (VM → CALL_BUILTIN → modül native fn →
 // köprü → iç VM run()) fırlatılan DEĞERİ taşır. İç run() kendi try tabanının altındaki
 // handler'a atlayamaz (dış frame'leri iç çağrının içinde çalıştırıp call stack'i bozardı
 // ve aradaki C++ katmanının catch'i — ör. db::transaction ROLLBACK'i — hiç çalışmazdı).
@@ -47,9 +47,9 @@ struct VmRoute {
     std::string          pattern;     // "GET:/path/{id}"
     Closure*             fn;          // route handler closure
     std::vector<Closure*> middlewares; // route-level middleware listesi (setup'ta doldurulur)
-    int                  app_index = -1; // g_http_app.vm_routes'taki kalıcı indeks —
-                                         // VM hatasında route'u kalıcı interpreter'a
-                                         // sabitlemek için kullanılır
+    int                  app_index = -1; // g_http_app.vm_routes'taki kalıcı indeks (eskiden
+                                         // VM hatasında route'u yorumlayıcıya sabitlemek
+                                         // içindi; bkz. last_matched_route)
 };
 
 // ── VM ────────────────────────────────────────────────────────────────────────
@@ -81,10 +81,10 @@ public:
     Value execute(const CompiledProgram& prog);
     void  dispatch_routes(const std::string& method, const std::string& path);
     // Son dispatch'te eşleşen route'un app_index'i (-1 = eşleşme yok/404).
-    // VM hatasında hangi route'un interpreter'a sabitleneceğini söyler.
+    // Eskiden VM hatasında hangi route'un yorumlayıcıya sabitleneceğini söylüyordu; bugün çağıran yok.
     int   last_matched_route() const { return last_matched_route_; }
     // Dışarı sızan (yakalanmamış) hata anındaki kaynak satırı — 0 = bilinmiyor.
-    // Çağıran, tree-walk'ın "Runtime Error ... File/Line" formatını üretebilsin diye.
+    // Çağıran "Runtime Error ... File/Line" formatını üretebilsin diye.
     int   last_error_line() const { return last_error_line_; }
     Value call_closure(const Closure& closure, std::vector<Value> args);
     const std::unordered_map<std::string, Value>& get_globals() const { return globals_; }

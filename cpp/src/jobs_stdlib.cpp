@@ -528,8 +528,8 @@ Module make_jobs_module() {
         return Value(true);
     };
 
-    // jobs::run() — ScopeResolution handler in interpreter.cpp intercepts this
-    // before module lookup, so no stub needed here.
+    // jobs::run() — wired directly in the builtin table (http_main.cpp, cli_runtime.cpp),
+    // so no stub needed here.
 
     return m;
 }

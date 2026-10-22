@@ -6,7 +6,7 @@
 namespace look {
 
 // Senkronizasyon primitifleri KASITLI leak edilir (asla yok edilmez). parallel()
-// task'ları detached (interpreter.cpp / vm.cpp: std::thread(...).detach()). main()
+// task'ları detached (vm.cpp: std::thread(...).detach()). main()
 // task_wait ile drain etse de iki delik kalır: (1) task_wait timeout'unu aşan task
 // TERK edilir → çıkışta hâlâ çalışırken statikler yok edilir; (2) son task_release()
 // s_cv.notify_all()/s_mtx.lock içindeyken, waiter predicate (s_count<=0) fetch_sub'dan

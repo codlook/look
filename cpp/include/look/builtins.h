@@ -7,7 +7,7 @@
 //   2. http_main.cpp — index → çalışma zamanı fonksiyonu (req_builtins wiring)
 //
 // Kural: "mod::fn" biçimindeki isimler http_main tarafında OTOMATİK wire edilir
-// (interpreter'ın modül fonksiyonu üzerinden). "::" içermeyen isimler (print,
+// (RuntimeHost'un modül fonksiyonu üzerinden). "::" içermeyen isimler (print,
 // count, strlen, route...) özel semantik taşır ve http_main'de elle bağlanır.
 //
 // YENİ BUILTIN EKLEME: listenin SONUNA ekle (mevcut indeksler .lkc bytecode
@@ -35,9 +35,8 @@ int builtin_index(const std::string& name);
 // route, config, env, stop, before_route, strlen, abs...). El-listesi TUTULMAZ —
 // dispatcher'ın tek kaynağından türer; yeni bare builtin eklenince otomatik kapsanır.
 //
-// NEDEN: interpreter+compiler bare builtin'i kullanıcı fonksiyonundan ÖNCE dispatch
-// eder → `function config() {...}` SESSİZCE ölü koda dönüşüyordu. Artık tanım anında
-// her iki motor da hata fırlatır (parity).
+// NEDEN: compiler bare builtin'i kullanıcı fonksiyonundan ÖNCE dispatch eder →
+// `function config() {...}` SESSİZCE ölü koda dönüşüyordu. Artık tanım anında hata.
 bool is_reserved_builtin(const std::string& name);
 
 // Yerleşiğin etkisi — HER builtin_names() girdisi sınıflandırılmış OLMALI (CI:

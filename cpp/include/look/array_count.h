@@ -3,10 +3,10 @@
 
 namespace look {
 
-// count() / len() semantiği — TEK TANIM (interpreter + CLI VM + web VM aynı sonucu versin).
+// count() / len() semantiği — TEK TANIM (CLI VM + web VM aynı sonucu versin).
 //
 // ESKİ HATA (VM↔interpreter ayrışması, differential-görünmez çünkü testler DÜZ dizi kullanıyordu):
-// interpreter.cpp assoc sentinel'ini sayıyordu ama üç VM builtin tablosu (main.cpp b[2],
+// eski yorumlayıcı assoc sentinel'ini sayıyordu ama üç VM builtin tablosu (main.cpp b[2],
 // http_main setup_builtins[2] + req_builtins[2]) ATLIYORDU → count(["x"=>1]) = 3 (sentinel+2)
 // döndürüyordu, 1 yerine. Sonuç: `if (count($assoc)==0)` hiç true olmuyordu, count(request::json())
 // sessizce yanlıştı. Assoc = ["__assoc__", k0,v0,...] → çift sayısı = (size-1)/2.

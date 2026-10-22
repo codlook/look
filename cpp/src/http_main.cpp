@@ -281,12 +281,12 @@ struct HttpApp {
     // yolundaki tl_copy). Sayaç olmadan hot-reload sonrası eski kopya kullanılırdı.
     std::atomic<uint64_t>                    generation{0};
 
-    // ── Tree-walk interpreter (her zaman mevcut — fallback) ───────────────────
+    // ── Modül ev sahibi (RuntimeHost) + program ───────────────────────────────
     std::unique_ptr<look::RuntimeHost>       interp;
     std::unique_ptr<look::Program>           program;
     std::ostringstream                       setup_out;
 
-    // ── Bytecode VM (opsiyonel — derleme başarılıysa kullanılır) ──────────────
+    // ── Bytecode VM (tek motor — derlenemezse uygulama başlamaz) ──────────────
     bool                                     use_bytecode = false;
     std::unique_ptr<look::CompiledProgram>   compiled;
 
@@ -302,9 +302,6 @@ struct HttpApp {
     std::vector<look::Value>                 vm_before_routes;
     // Setup VM globals: db_check/json_ok/json_hata/admin_kontrol closure'ları + $conn pool key
     std::unordered_map<std::string, look::Value> vm_setup_globals;
-
-    // RuntimeHost'ın shared globals/struct_defs — VM SharedState için read-only ptr
-    // (make_dispatch_copy ile ayrı interpreter kopyasına da erişilebilir)
 
     fs::path                                 script_path;
     fs::file_time_type                       mtime;
@@ -349,13 +346,14 @@ static look::Value run_closure_as_request(const look::Value& fnv, std::vector<lo
 // "hata olunca aynı isteği yorumlayıcıda yeniden çalıştır" ağı sayesinde çalışıyordu; o ağ
 // işleyiciyi İKİ KEZ çalıştırdığı için kalktı. Karar artık ÇALIŞMADAN ÖNCE, kurulumda verilir:
 // rotanın proto'su, iç proto'ları ve adıyla çağırdığı global fonksiyonlar (geçişli) taranır;
-// VM global'lerinde karşılığı olmayan bir "mod::fn" adı yükleniyorsa rota baştan yorumlayıcıya
-// sabitlenir. Değişken üzerinden yapılan dinamik çağrı görülemez: o durumda istek 500 alır.
+// VM global'lerinde karşılığı olmayan bir "mod::fn" adı yükleniyorsa uygulama başlamaz (LOOK 2;
+// 1.0.8'de rota baştan yorumlayıcıya sabitleniyordu). Değişken üzerinden yapılan dinamik çağrı
+// görülemez: o durumda istek 500 alır.
 // Saf (isteğe bağlı olmayan) yalın yerleşikler: bool, string, strlen, abs, max, min, sqrt, strtoupper,
 // strtolower, join.
 // İSTEK tablosu ve KURULUM tablosu aynı tanımı kullanır. Eskiden yalnız istek tablosunda vardılar:
 // VM kurulum geçişinde boş değer dönüyor, üst düzeyde `$x = strtoupper("a")` ile hesaplanan
-// değişken rotalarda null oluyordu (yorumlayıcıda doğru) — sessiz yanlış değer.
+// değişken rotalarda null oluyordu (yorumlayıcıda doğruydu) — sessiz yanlış değer.
 static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
     auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
     t[BI("bool")] = [](std::vector<look::Value>& args) -> look::Value {
@@ -401,7 +399,7 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
         for (char& c : s) c = (char)std::tolower((unsigned char)c);
         return look::Value(s);
     };
-    // bare join(arr, sep="") — interpreter global builtin'i (fn_name=="join").
+    // bare join(arr, sep="") — global builtin (use gerektirmez).
     t[BI("join")] = [](std::vector<look::Value>& args) -> look::Value {
         if (args.empty() || args[0].type() != look::Value::ARRAY)
             return look::Value(args.empty() ? std::string() : args[0].to_string());
@@ -588,14 +586,14 @@ static void run_setup_http(const fs::path& script) {
                 // to_int() KULLAN — stoll(to_string(float)) BOZUK: to_string büyük float'ı
                 // bilimsel gösterime çevirir ("1e+06"), stoll 'e'de durup 1 döndürür →
                 // int(float>~1e6) sessizce yanlış. to_int() FLOAT'ı doğrudan (int64_t) cast
-                // eder (tree-walk to_int ile BİREBİR → parite), STRING'i aynı stoll ile parse eder.
+                // eder, STRING'i aynı stoll ile parse eder.
                 return look::Value(args[0].to_int());
             };
             // float (7)
             setup_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value(0.0);
                 // to_float(): int()'teki gibi to_string() round-trip'i ele (FLOAT doğrudan,
-                // string round-trip hassasiyet kaybı yok) → tree-walk to_float ile birebir.
+                // string round-trip hassasiyet kaybı yok).
                 return look::Value(args[0].to_float());
             };
 
@@ -1156,8 +1154,8 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
         resp.headers["Content-Type"] = "text/html; charset=utf-8";
 }
 
-// Paylaşılan istek motoru — web ctx hazırlanmış olmalı; VM (varsa) veya
-// interpreter ile dispatch eder, çıktıyı output/web.response_body'ye yazar.
+// Paylaşılan istek motoru — web ctx hazırlanmış olmalı; VM ile dispatch eder,
+// çıktıyı output/web.response_body'ye yazar.
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path) {
     // İÇ İÇE dağıtım: bir istek sürerken aynı iş parçacığında bir VM closure'ı "yeni istek"
@@ -1217,10 +1215,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         //
         // Güvenlik: her worker tek isteği aynı anda işler → thread_local kopya güvenli.
         // Hot-reload'da generation artar → kopya tazelenir.
-        // İZOLASYON: VM route'u interpreter globals'ını KULLANMAZ (VM kendi globals'ını
-        // g_http_app.vm_setup_globals'tan alır) → klon gereksiz. RuntimeHost fallback'i
-        // kullanıcı kodu çalıştırdığı için globals'ı TAZE snapshot'a resetler (aşağıda) —
-        // yoksa bir isteğin yazdığı global sonraki isteğe sızardı.
+        // İZOLASYON: RuntimeHost LOOK global'i tutmaz (VM kendi globals'ını her istekte
+        // g_http_app.vm_setup_globals'tan alır) → klon gereksiz.
         t_copy_start = std::chrono::steady_clock::now();
         static thread_local std::unique_ptr<look::RuntimeHost> tl_copy;
         static thread_local uint64_t tl_gen = (uint64_t)-1;
@@ -1251,8 +1247,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             for (size_t ri = 0; ri < g_http_app.vm_routes.size(); ++ri) {
                 auto& r = g_http_app.vm_routes[ri];
                 if (r.fn.type() != look::Value::BYTECODE_FN) continue;
-                // app_index: hata durumunda route'u kalıcı interpreter'a sabitlemek
-                // için g_http_app.vm_route_disabled ile eşleşen kalıcı indeks.
+                // app_index: g_http_app.vm_routes'taki kalıcı indeks (eskiden hata durumunda
+                // route'u yorumlayıcıya sabitlemek içindi).
                 look::VmRoute vr;
                 vr.pattern   = r.pattern;
                 vr.fn        = r.fn.as_bytecode_fn().get();
@@ -1271,7 +1267,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         std::vector<look::VmRoute>& route_closures = tl_route_closures;
         sl.unlock();
 
-        // Per-request builtins: module fonksiyonları interpreter copy'den alınır
+        // Per-request builtins: module fonksiyonları dispatch kopyasından (RuntimeHost) alınır
         // (copy->set_web_context(&web) çağrıldığında modules_ yeni web'e bind edildi)
         //
         // PERF: this table was rebuilt every request — ~106 std::function heap allocations
@@ -1328,12 +1324,12 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         req_builtins[6] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0);
             // to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + (int) int32 daralması
-            // ikisini de kapatır (tree-walk to_int ile birebir parite). Bkz. setup_builtins[6].
+            // ikisini de kapatır. Bkz. setup_builtins[6].
             return look::Value(args[0].to_int());
         };
         req_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0.0);
-            return look::Value(args[0].to_float());  // to_float(): to_string() round-trip yok, tree-walk parite
+            return look::Value(args[0].to_float());  // to_float(): to_string() round-trip yok
         };
         // bool (8) ve string (9): bind_scalar_builtins (kurulum tablosuyla tek tanım)
 
@@ -1342,7 +1338,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         // ── Modül builtin'leri: TEK kaynaktan otomatik wiring ────────────────
         // builtin_names() (look/builtins.h) içindeki her "mod::fn" ismi
-        // interpreter'ın modül fonksiyonuna bağlanır. Yeni "mod::fn" builtin'i
+        // RuntimeHost'un modül fonksiyonuna bağlanır. Yeni "mod::fn" builtin'i
         // eklemek için SADECE builtins.cpp listesine eklemek yeterli —
         // elle senkron yok (strlen bug'ının kökü elle senkron kopukluğuydu).
         {
@@ -1411,14 +1407,13 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             req_builtins[BI("timer::wait")] = [](std::vector<look::Value>&) -> look::Value {
                 throw std::runtime_error("timer::wait() can be used only on the command line: a web request does not wait for timers");
             };
-            // jobs::run — LOOK 2: yorumlayıcıdaki TEK tanım (RuntimeHost::jobs_run). Kurulumda
-            // kaydedilen işleyiciler yorumlayıcı closure'ıdır ve taze bir kopyada çalışır; bir VM
-            // rotasında kaydedilen işleyici (BYTECODE_FN) köprüyle bu isteğin VM'inde çalışır.
+            // jobs::run — LOOK 2: TEK tanım (RuntimeHost::jobs_run). İşleyici (BYTECODE_FN)
+            // vm_closure_runner ile yeni bir istek gibi kendi VM'inde çalışır.
             req_builtins[BI("jobs::run")] = [copy](std::vector<look::Value>& args) -> look::Value {
                 return copy->jobs_run(args.empty() ? 5000 : (int)args[0].to_float());
             };
             // ws:: / sse:: — LOOK 2: bağlantı tutamacı üzerindeki işlemler (geri çağırma almayanlar).
-            // Yorumlayıcıdaki satır içi tanımlarla aynı denetimler ve aynı hata metinleri.
+            // Denetimler ve hata metinleri eski yorumlayıcıdaki satır içi tanımlarla aynı.
             auto ws_of = [](const look::Value& v, const char* what) {
                 if (v.type() != look::Value::WEBSOCKET || !v.as_websocket())
                     throw std::runtime_error(std::string(what));
@@ -1536,9 +1531,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             throw look::RouteStopException();
         };
 
-        // exit()/die() — interpreter ile aynı semantik (ExitException). Bağlanmazsa
-        // builtin slot'u boş kalır → std::bad_function_call → route KALICI interpreter'a
-        // düşerdi. Web'de exit() zaten nadir; davranış interpreter yolundakiyle aynı.
+        // exit()/die() — komut satırıyla aynı semantik (ExitException). Bağlanmazsa
+        // builtin slot'u boş kalır → std::bad_function_call (eskiden route KALICI
+        // yorumlayıcıya düşüyordu). Web'de exit() zaten nadir.
         {
             auto do_exit = [](std::vector<look::Value>& a) -> look::Value {
                 int code = 0;
@@ -1634,20 +1629,16 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             vm_ok = true;  // stop() route handler içinde çağrıldı — normal akış
         } catch (const look::ExitException&) {
             // exit()/die() — script'i sonlandırır, VM hatası DEĞİL. Genel catch'e
-            // düşerse route KALICI interpreter'a sabitlenirdi (yanlış suçlama).
-            // O ana dek yazılmış çıktı yanıt olur — interpreter semantiğiyle aynı.
+            // düşerse 500 + hata logu olurdu (yanlış suçlama).
+            // O ana dek yazılmış çıktı yanıt olur.
             vm_ok = true;
         } catch (const std::exception& vm_e) {
-            // İlk hata: route'u kalıcı interpreter'a sabitle — bu route için
-            // her istekte dene→hata→fallback döngüsü bir daha yaşanmaz.
+            // Çalışma zamanı hatası: 500 + log. LOOK 2: yorumlayıcı yok — rota sabitleme de yok.
             //
-            // C9 felsefe adımı: fallback bir GÜVENLİK AĞI, ama yıllarca BUG MASKELEDİ —
-            // route sessizce yavaş yola düşüp DOĞRU sonuç döndüğü için kimse fark etmiyordu
-            // (2026-07-16 turunda bulunan 10 bug'ın çoğu böyle saklanmıştı). Artık:
-            //   • seviye WARN değil ERROR — log filtrelerinde görünür,
-            //   • mesaj net eylem çağrısı içerir (bu bir BUG'dır, "bilgi" değil),
-            //   • LOOK_VM_STRICT=1 → fallback KAPALI: hata 500 olarak yüzeye çıkar
-            //     (CI/staging için; prod'da default AÇIK kalır — kullanıcı sitesi düşmesin).
+            // Tarihçe — C9: eskiden ilk hatada route kalıcı olarak yorumlayıcıya sabitleniyordu.
+            // Bu güvenlik ağı yıllarca BUG MASKELEDİ — route sessizce yavaş yola düşüp DOĞRU sonuç
+            // döndüğü için kimse fark etmiyordu (2026-07-16 turunda bulunan 10 bug'ın çoğu böyle
+            // saklanmıştı); log seviyesi ERROR'a çekilmişti, LOOK_VM_STRICT=1 ağı kapatıyordu.
             //
             // 1.0.8 — İŞLEYİCİ ASLA YENİDEN ÇALIŞTIRILMAZ. Yukarıdaki "güvenlik ağı" her hatayı
             // (düz `throw`, veritabanı hatası, tanımsız değişken) "VM hatası" sayıp AYNI isteği
@@ -1655,7 +1646,6 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // jobs::push, dış HTTP isteği) tek istekte İKİ KEZ gerçekleşiyordu, ve rota kalıcı
             // olarak yavaş yola sabitleniyordu (kullanıcı girdisiyle tetiklenebilir). Ölçüm:
             // "INSERT; sonra hata" yapan rota tek istekte 2 satır yazıyordu.
-            // Çalışma zamanı hatası: 500 + log. LOOK 2: yorumlayıcı yok — rota sabitleme de yok.
             // LOOK_VM_STRICT=1 eskiden burada yeniden fırlatıyordu: istisna worker'dan çıkıyor,
             // bağlantılar bırakılmıyor ve worker sayısı kadar hatadan sonra sunucu asılıyordu.
             const std::string what = vm_e.what();
@@ -1669,8 +1659,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             vm_ok = true;   // yanıt hazır (500) — yorumlayıcıda YENİDEN ÇALIŞTIRMA yok
         }
 
-        // İstek boyunca tembel alınan bağlantılar burada iade edilir — vm_ok ve
-        // fallback dahil her iki akışı kapsar. Eksik release, pool_size istek
+        // İstek boyunca tembel alınan bağlantılar burada iade edilir — başarılı ve
+        // hatalı her iki akışı kapsar. Eksik release, pool_size istek
         // sonrası tüm worker'ların deadlock olmasına neden oluyordu.
         if (!nested) look::release_thread_connections();
     } else {
@@ -1688,8 +1678,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     auto t_dispatch_end = std::chrono::steady_clock::now();
     auto us_dispatch = std::chrono::duration_cast<std::chrono::microseconds>(t_dispatch_end - t_dispatch_start).count();
 
-    // Süreç-global sayaçlar (runtime::stats için, salt-okunur gözlemlenebilirlik). Setup interpreter'ın
-    // request_count_'u web'de artmaz (VM yolu) → bu global'ler gerçek HTTP durumunu taşır. Clock'lar
+    // Süreç-global sayaçlar (runtime::stats için, salt-okunur gözlemlenebilirlik). RuntimeHost istek
+    // saymaz → bu global'ler gerçek HTTP durumunu taşır. Clock'lar
     // zaten çağrıldı → latency toplama sıcak yola yeni clock EKLEMEZ (sadece relaxed atomik).
     // zamanlayıcı/bağlantı geri çağırması ve bağlantı işleyicisi bir HTTP isteği değildir: sayaçlara girmez
     if (direct().closure || direct().conn.type() != look::Value::NONE) return;
@@ -1798,8 +1788,8 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
 
-        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi dağıtılır (VM; rota yorumlayıcıya
-        // sabitliyse orada). Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
+        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
+        // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
         std::ostringstream sink;
         direct().conn = look::Value(conn);
         try {
@@ -1822,8 +1812,8 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
 
-        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi dağıtılır (VM; rota yorumlayıcıya
-        // sabitliyse orada). Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
+        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
+        // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
         std::ostringstream sink;
         direct().conn = look::Value(conn);
         try {

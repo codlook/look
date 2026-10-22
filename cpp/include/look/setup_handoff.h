@@ -1,16 +1,14 @@
 #pragma once
 // LOOK 2 — kurulumda (üst düzeyde) kaydedilen geri çağırmaların VM'e devri.
 //
-// Web uygulamasının üst düzeyi önce yorumlayıcıda çalışır (ilk geçiş), sonra VM aynı kodu
-// geri oynatarak kendi rotalarını kurar. `timer::after/every` ve `jobs::worker` ilk geçişte
-// GERÇEKTEN kaydedilir — geri çağırmaları yorumlayıcı fonksiyonlarıdır ve VM modunda bile
-// yorumlayıcıda koşuyorlardı (uygulamanın geri kalanı VM'deyken).
+// Eskiden web uygulamasının üst düzeyi önce yorumlayıcıda çalışıyordu (ilk geçiş), sonra VM aynı
+// kodu geri oynatarak kendi rotalarını kuruyordu; `timer::after/every` ve `jobs::worker` geri
+// çağırmaları ilk geçişte kaydedildiği için VM modunda bile yorumlayıcıda koşuyordu.
 //
-// Devir: ilk geçiş her zamanlayıcıyı bir YUVA üzerinden kurar ve iş işleyicilerini sırasıyla
-// kaydeder. VM geçişi aynı çağrıları aynı sırada görür ve kendi closure'larını (BYTECODE_FN)
-// bekletir. VM kurulumu BAŞARIYLA bitince yuvalar ve işleyiciler VM closure'larıyla değiştirilir;
-// başarısız olursa hiçbir şey değişmez, uygulama yorumlayıcıda kaldığı gibi geri çağırmalar da
-// orada kalır. Zamanlayıcı kimlikleri değişmez (aynı kayıt, yalnız çağırdığı şey değişir).
+// Devir (o dönemin): ilk geçiş her zamanlayıcıyı bir YUVA üzerinden kurup iş işleyicilerini
+// sırasıyla kaydediyordu; VM kurulumu BAŞARIYLA bitince yuvalar ve işleyiciler VM closure'larıyla
+// değiştiriliyordu. LOOK 2'de ilk geçiş yok: bugün yalnız vm_closure_runner kullanılır,
+// CallbackSlot / SetupHandoff'u çağıran yok.
 #include "look/runtime_host.h"
 #include <functional>
 #include <memory>
@@ -40,8 +38,8 @@ struct SetupHandoff {
 inline SetupHandoff& setup_handoff() { static SetupHandoff h; return h; }
 
 // Bir VM closure'ını YENİ BİR İSTEK gibi çalıştırır (kendi VM'i, global'lerin bildirilen
-// değerleri); web sunucusu kurar. ok=false ise hata loglanmıştır. Kurulmamışsa boştur
-// (komut satırı, yorumlayıcı modu).
+// değerleri); web sunucusu ve komut satırı (cli_runtime) kurar. ok=false ise hata
+// loglanmıştır. Kurulmamışsa boştur.
 using VmClosureRunner = std::function<Value(const Value& fn, std::vector<Value> args, const char* what, bool& ok)>;
 inline VmClosureRunner& vm_closure_runner() { static VmClosureRunner r; return r; }
 

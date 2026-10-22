@@ -1,5 +1,5 @@
 // int_overflow.h — int64 aritmetiği taşma-tespiti (SAF, tablo-test edilebilir).
-// interpreter.cpp'nin operator+/-/* bunları çağırır; taşınca çağıran float'a promote eder
+// value.cpp'nin operator+/-/* bunları çağırır; taşınca çağıran float'a promote eder
 // (büyük-literal float davranışıyla tutarlı, signed-overflow UB YOK).
 // Portatif: GCC/Clang __builtin_*_overflow; MSVC unsigned-sarma + bölme kontrolü.
 #pragma once

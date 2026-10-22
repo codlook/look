@@ -1,8 +1,8 @@
 #pragma once
 // LOOK 2 — argüman sayısı denetimi (şimdilik yalnız UYARI; `lk --check` basar).
 //
-// İki motor bugün ayrışıyor (1.0.x'te de): adlı bir fonksiyon fazla ya da eksik argümanla
-// çağrılınca yorumlayıcı hata verir, VM sessizce kabul eder (eksik parametre null olur).
+// 1.0.x'te iki motor ayrışıyordu: adlı bir fonksiyon fazla ya da eksik argümanla çağrılınca
+// yorumlayıcı hata veriyordu, VM sessizce kabul ediyordu (eksik parametre null olur).
 // Kural kesinleşmeden önce, kaç yerin etkileneceği ayrıştırıcının ağacından sayılır.
 //
 // Kapsam: aynı dosyada bildirilen ADLI fonksiyona, adıyla yapılan çağrılar. Değişkendeki

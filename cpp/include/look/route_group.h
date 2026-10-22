@@ -2,7 +2,7 @@
 // route::group("/admin", [$auth], fn) → fn() içindeki route() çağrıları prefix'i ve middleware'leri
 // MİRAS alır. SADECE kayıt-zamanı dönüşümü: dispatch'e dokunmaz (prefix normal eşleşir, mw'ler zaten
 // çalışır). Nesting stack ile doğal (Go/chi). name/namespace/domain YOK — bilinçli minimal.
-// Tek tanım (route_group.cpp) → interpreter.cpp ve http_main.cpp paylaşır (drift yok).
+// Tek tanım (route_group.cpp) → builtins.cpp ve http_main.cpp paylaşır (drift yok).
 #pragma once
 #include <string>
 #include <vector>

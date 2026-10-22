@@ -69,7 +69,7 @@ struct FunctionExpression final : Expression {
     bool is_variadic = false;            // son param ...$args ise true
     std::unique_ptr<BlockStatement> body;
     // LOOK 2: closure'ın dışarıdan istediği adlar (ayrıştırıcı doldurur — look/capture_check.h).
-    // Yorumlayıcı closure kurulurken bunlardan saran fonksiyonda bulunanların DEĞERİNİ alır.
+    // Yakalama denetimleri (capture_check.h, param_write_check.h) okur.
     std::vector<std::string> free_names;
 };
 

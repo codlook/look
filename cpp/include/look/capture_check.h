@@ -259,8 +259,8 @@ inline void check_function_decls(const std::vector<std::unique_ptr<Statement>>& 
 
 } // namespace capture_check_detail
 
-// Closure'ın dışarıdan istediği adlar (geçişli) — ayrıştırıcı düğüme yazar; yorumlayıcı closure
-// kurulurken bu adlardan saran fonksiyon kapsamında bulunanların DEĞERİNİ alır. İç closure'ların
+// Closure'ın dışarıdan istediği adlar (geçişli) — ayrıştırıcı düğüme yazar; yukarıdaki
+// denetimler okur. İç closure'ların
 // free_names'i önce dolmuş olmalıdır (ayrıştırıcı içten dışa kurar).
 // Adlı iç fonksiyon için aynı hesap (parametreler + gövde).
 inline std::vector<std::string> capture_free_names(const std::vector<std::string>& params, const BlockStatement* body) {

@@ -152,7 +152,7 @@ Value Value::operator*(const Value& o) const {
 Value Value::operator/(const Value& o) const {
     arith_check(*this); arith_check(o);
     double d = o.to_float();
-    if (d == 0.0) throw std::runtime_error("Division by zero");  // caught and enriched by interpreter
+    if (d == 0.0) throw std::runtime_error("Division by zero");  // the caller adds the source location
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() / d);
     int64_t i = o.to_int();
     int64_t self_i = to_int();  // ham int_val değil — STRING/BOOL de doğru çevrilsin ("6"/2=3)
@@ -231,7 +231,7 @@ bool Value::operator==(const Value& o) const {
     if (a_num && b_num) {
         // int↔int: KESİN int64 karşılaştır. to_float() ile double'a çevirmek 2^53 üstü
         // ayrık int64'leri eşitler (9007199254740993==...992, INT64_MAX-1==INT64_MAX →
-        // true) — hem dil-düzeyi == yanlışı (her iki motor, differential-görünmez), hem
+        // true) — hem dil-düzeyi == yanlışı (LOOK 1'de her iki motorda, differential-görünmez), hem
         // VM constant-pool dedup korupsiyonu (compiler.cpp dedup bu =='i kullanır → int
         // literalleri çakışıp bozulur). Karışık int/float double kalır (kaçınılmaz).
         if (type_ == INT && o.type_ == INT) return int_val == o.int_val;
@@ -316,8 +316,7 @@ Value Value::shift_right(const Value& o) const {
 // bu süreyi aşınca sonsuza asılmak yerine yakalanabilir bir hata fırlatır. Böylece
 // eşleşecek gönderici/alıcı yoksa (mantık hatası kaynaklı deadlock) worker ebediyen
 // kilitlenmez; kurtulur. Unset/0 = sonsuz blok (Go unbuffered rendezvous varsayılanı).
-// Tek noktada — hem tree-walk interpreter hem bytecode VM (CHAN_SEND/RECV) bu
-// metotları çağırdığı için iki yol da otomatik kapsanır.
+// Tek noktada — VM (CHAN_SEND/RECV) bu metotları çağırır.
 static long channel_timeout_ms() {
     static const long v = []() -> long {
         const char* e = std::getenv("LOOK_CHANNEL_TIMEOUT_MS");

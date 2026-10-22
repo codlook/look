@@ -19,7 +19,7 @@ std::unique_ptr<Program> Parser::parse() {
         program->statements.push_back(statement());
     }
     // LOOK 2 closure kuralı (look/capture_check.h): yakalanan değişkene yazma YÜKLEMEDE hatadır
-    // — hiçbir şey çalışmadan, iki motor için tek yerde. "Bayat değer" durumları uyarı olarak
+    // — hiçbir şey çalışmadan, tek yerde. "Bayat değer" durumları uyarı olarak
     // saklanır; çağıran (CLI, web başlangıcı, --check) gösterir.
     for (auto& w : check_captures(*program)) {
         if (w.kind == "capture-write") throw LookParseError(w.message, w.line, w.column);
@@ -326,7 +326,7 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
 
     consume(TokenType::RBRACE, "Expect '}' after struct fields.");
     // Aynı dosyada aynı ad: tanım birebir aynıysa sorun yok, farklıysa hata (dosyalar arası
-    // durum yüklemede yorumlayıcıda yakalanır — interpreter.cpp StructDeclaration).
+    // durum derleyicide yakalanır — compiler.cpp compile_struct_decl).
     {
         std::string sig;
         for (size_t i = sig_from; i < current_; ++i)
@@ -470,7 +470,7 @@ void Parser::check_binop_chain() {
 }
 
 // `$a[k]++`, `++$a[k]`, `$s.n--`: bir eleman ya da alan üzerinde ++/--. Bileşik atamaya çevrilir
-// (`$a[k] += 1`) — iki motor da onu zaten yol olarak yazıyor; anahtarlar bir kez hesaplanır.
+// (`$a[k] += 1`) — derleyici onu zaten yol olarak yazıyor; anahtarlar bir kez hesaplanır.
 // Sonek biçiminde ifadenin değeri eski değerdir (yield_old). Hedef eleman/alan değilse null.
 static std::unique_ptr<Expression> element_step(std::unique_ptr<Expression>& target, const char* op, bool postfix) {
     std::unique_ptr<AssignmentExpression> a;

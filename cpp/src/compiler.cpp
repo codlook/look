@@ -26,7 +26,7 @@ namespace {
 namespace cfs = std::filesystem;
 // Context for compiling `use "file.lk"` includes into the same bytecode unit (mirrors
 // the UseStatement/module path). Compilation runs single-threaded at load; thread_local
-// keeps it isolated per compile. Empty root → file includes NOP (interpreter fallback).
+// keeps it isolated per compile. Empty root → a file include is a compile error.
 thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
@@ -237,7 +237,7 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
     // ── Prologue: varsayılan parametreler ────────────────────────────────────
     // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
     // ilk yerel register'ları (0..arity-1) tutar. Varsayılan ifade önceki
-    // param'ları görebilir (soldan sağa). RuntimeHost ile aynı arity semantiği.
+    // param'ları görebilir (soldan sağa).
     // LOOK 2: zorunlu parametre sayısı (argüman sayısı denetimi — vm.cpp check_argc).
     {
         const int fixed = proto_.variadic ? proto_.arity - 1 : proto_.arity;
@@ -287,7 +287,7 @@ void FunctionCompiler::compile_block(const BlockStatement& block) {
 void FunctionCompiler::compile_stmt(const Statement& stmt) {
     // Satır takibi: bundan sonra emit edilen opcode'lar bu statement'ın satırına yazılır.
     // proto_.lines ZATEN vardı ama emit() hep 0 basıyordu ("sonradan eklenecek") → VM
-    // hataları satır/konum veremiyordu (tree-walk "File/Line" veriyor, VM sadece mesaj).
+    // hataları satır/konum veremiyordu (tree-walk "File/Line" veriyordu, VM sadece mesaj).
     if (stmt.loc.line > 0) cur_line_ = stmt.loc.line;
     if (auto* s = dynamic_cast<const ExpressionStatement*>(&stmt)) {
         // Atama statement olarak kullanılıyorsa sonuç atılır → değeri geri-okuyan
@@ -312,10 +312,10 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             free_temp(r);
         }
     }
-    // print/write — interpreter semantiği (interpreter.cpp: build_output + PrintStatement):
-    //   build_output: argümanlar " " ile AYRILIR;  print: sonuna "\n" EKLER;  write: eklemez.
+    // print/write semantiği (eski yorumlayıcının build_output + PrintStatement kuralı):
+    //   argümanlar " " ile AYRILIR;  print: sonuna "\n" EKLER;  write: eklemez.
     // Eskiden burada her argüman için tek tek builtin çağrılıyordu → ayraç da newline de
-    // yoktu: print($a,$b) interpreter'da "a b\n", VM'de "ab" üretiyordu (hem CLI-VM hem
+    // yoktu: print($a,$b) yorumlayıcıda "a b\n", VM'de "ab" üretiyordu (hem CLI-VM hem
     // web-VM). Differential kaçırmıştı: gövde tek argümanla print ediyor ve $(...) zaten
     // trailing newline'ı yutuyor.
     else if (auto* s = dynamic_cast<const PrintStatement*>(&stmt)) {
@@ -420,8 +420,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             if (home && *home) {
                 std::string path = std::string(home) + "/.look/modules/" +
                                    us->module_name + "/" + us->module_name + ".lk";
-                // Aynı modül iki kez use edilirse tekrar derleme (interpreter'ın
-                // included_files_ mantığıyla aynı) — çift tanım ve şişme olmasın.
+                // Aynı modül iki kez use edilirse tekrar derleme — çift tanım ve şişme olmasın.
                 static std::vector<std::string> g_loaded;
                 static std::vector<std::shared_ptr<Program>> g_module_asts;  // AST ömrü
                 bool already = false;
@@ -459,7 +458,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             return;
         }
         if (!loaded) {
-            // Paket değil: stdlib modülü olmalı. Yorumlayıcının `use` denetimiyle aynı iki mesaj —
+            // Paket değil: stdlib modülü olmalı. Eski yorumlayıcının `use` denetimindeki iki mesaj —
             // bu denetim eskiden yalnız yorumlayıcı geçişindeydi (LOOK 2'de o geçiş yok).
             const std::string& m = us->module_name;
             if (m == "ws" || m == "timer" || m == "sse")
@@ -484,15 +483,11 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
     }
     else if (auto* ufs = dynamic_cast<const UseFileStatement*>(&stmt)) {
         // `use "file.lk"` — compile the included file's statements into THIS unit so its
-        // functions become BYTECODE_FN in VM globals, instead of leaving the whole app on
-        // the interpreter fallback (measured ~57× slower on compute — QR/PDF/inflate). This
-        // is the sibling of the module (`use <name>`) path above, which was already fixed.
-        // Any failure → NOP: the file still loads via the interpreter fallback, so a case we
-        // can't compile here never regresses — it just stays at today's speed.
-        // No base dir (the CLI, which has no interpreter pre-pass to register the include's
-        // own modules) → fail the whole compile so the caller falls back to the interpreter,
-        // which handles file includes. NOP here would wrongly "succeed" with the include's
-        // functions missing and no per-route fallback to recover (unlike the web path).
+        // functions become BYTECODE_FN in VM globals. (Before this, the whole app stayed on
+        // the old interpreter fallback — measured ~57× slower on compute: QR/PDF/inflate.) This
+        // is the sibling of the module (`use <name>`) path above.
+        // Any failure fails the whole compile (see the catch below), and so does a missing base
+        // dir: NOP here would wrongly "succeed" with the include's functions missing.
         if (g_compile_root.empty())
             throw LookCompileError("use \"" + ufs->path + "\": file include compiles only with a base directory");
         static std::vector<std::shared_ptr<Program>> g_file_asts;   // AST lifetime (bytecode refs it)
@@ -522,7 +517,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             // Hangi dosyada olduğu söylenir (içteki bir dahil etme zaten adını koyduysa yinelenmez).
             const std::string m = ex.what();
             if (m.rfind("use \"", 0) == 0) throw;
-            // Programın kendi hatası türünü korur (CLI onu yedeğe düşmeden yazar).
+            // Programın kendi hatası türünü korur.
             if (dynamic_cast<const LookProgramError*>(&ex))
                 throw LookProgramError("use \"" + ufs->path + "\": " + m, ex.line);
             throw LookCompileError("use \"" + ufs->path + "\": " + m);
@@ -531,7 +526,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             // 1.0.8'den beri istek yorumlayıcıda yeniden çalıştırılmıyor → dahil edilen dosyanın
             // fonksiyonları sessizce YOK oluyor, derleme "tamam" deniyor ve onları çağıran her rota
             // "Undefined variable" ile 500 veriyordu. Artık derleme bütünüyle başarısız olur:
-            // çağıran bunu loglar ve uygulamayı yorumlayıcıda çalıştırır.
+            // çağıran nedeni yazar ve program başlamaz.
             throw LookCompileError("use \"" + ufs->path + "\": " + ex.what());
         } catch (...) {
             throw LookCompileError("use \"" + ufs->path + "\": the file could not be compiled");
@@ -722,7 +717,7 @@ void FunctionCompiler::check_builtin_index(int bidx, const std::string& name) {
 void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs,
                                         bool newline) {
     // builtin 0 (print) ve 1 (write) ikisi de argümanı HAM yazar (newline/ayraç eklemez)
-    // → ayraç ve newline burada, interpreter'la aynı kuralla üretilir.
+    // → ayraç ve newline burada üretilir.
     auto emit_literal = [&](const char* text) {
         uint16_t r = alloc_temp();
         emit_load_const(r, Value(std::string(text)), 0);
@@ -797,8 +792,7 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
 // ── compile_func_decl ─────────────────────────────────────────────────────────
 
 void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
-    // Builtin gölgeleme = hata (interpreter ile parity — orada da tanım anında fırlatılır).
-    // Compile hatası CLI'da tree-walk'a düşer, o da AYNI hatayı fırlatır → tutarlı.
+    // Builtin gölgeleme = hata, tanım anında (derleme hatası → program başlamaz).
     if (is_reserved_builtin(s.name))
         throw std::runtime_error("'" + s.name + "' is a builtin — cannot be redefined");
     // İç fonksiyon derle
@@ -962,8 +956,8 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
     // ifadeleri hiç derlemiyordu; VM'in shared_.struct_defs işaretçisini de hiçbir kod
     // atamıyordu. Sonuç VM'de (CLI + web üretim yolu): varsayılanlar UYGULANMIYOR,
     // bilinmeyen alanlı literal sessizce kabul. Artık tanım bildirimin KENDİ konumunda
-    // (tree-walk gibi — `a: $d` dinamik varsayılan doğru) gizli bir global'e yazılır:
-    //   "__sdef:Name" = [f1, d1, f2, d2, ...]   (varsayılansız alan → null, interpreter'la aynı)
+    // (`a: $d` dinamik varsayılan doğru) gizli bir global'e yazılır:
+    //   "__sdef:Name" = [f1, d1, f2, d2, ...]   (varsayılansız alan → null)
     // CLI'da tek VM çalıştırır; web'de kurulum VM'i çalıştırır ve vm_setup_globals her
     // isteğin VM'ine taşır. ':' tanımlayıcıda geçersiz → kullanıcı adıyla çakışamaz.
     // LOOK 2: üçlüler [ad, varsayılan, tip] — tip "" = tipsiz (kurallar look/struct_types.h).
@@ -1163,7 +1157,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // Bloktan önce üst düzeyde atanmış ad (outer_globals_) global kalır: blok ona yazar.
         // Fonksiyon içi + isim local/capture değil → yeni FONKSIYON-LOCAL yarat.
         // Scope izolasyonu: fonksiyon dıştaki (global) değişkeni implicit ezemez
-        // (interpreter ile aynı; VM'de eskiden STORE_GLOBAL ile sızıyordu — route
+        // (VM'de eskiden STORE_GLOBAL ile sızıyordu — route
         // gövdesi local'leri global olduğundan eş zamanlı isteklerde de race'liydi).
         // Okuma hâlâ global'e düşer; val (RHS) yukarıda compile edildiği için
         // aynı-isim okuması doğru şekilde global'i gördü.
@@ -1278,7 +1272,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
             // Çıplak ('$'sız) ad DEĞER olarak okunuyor. ESKİ HATA: LOAD_GLOBAL çıplak adı
             // ıskalayınca sessizce null veriyordu ("mod::fn"/çağrı hedefi için gerekli),
             // dolayısıyla unutulan '$' — `if (is_admin)` — VM'de hatasız YANLIŞ DALA
-            // giriyordu; tree-walk (referans) "Undefined variable: is_admin" fırlatır.
+            // giriyordu; tree-walk (referans) "Undefined variable: is_admin" fırlatıyordu.
             // Çağrı hedefi hariç (adı CALL söyler) her çıplak okuma tanımlı olmalı.
             if (!callee_ctx_ && !e->name.empty() && e->name[0] != '$'
                 && e->name.find("::") == std::string::npos)
@@ -1313,7 +1307,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
 
     if (auto* e = dynamic_cast<const UnaryExpression*>(&expr)) {
         // ++/-- — VM'de eskiden desteklenmiyordu (compile hatası → interpreter'a
-        // görünmez sapma). RuntimeHost ile aynı semantik: prefix yeni değeri,
+        // görünmez sapma). Semantik: prefix yeni değeri,
         // postfix eski değeri döndürür; değişkene geri yazılır.
         if (e->op == "++" || e->op == "--") {
             auto* var = dynamic_cast<const Variable*>(e->right.get());
@@ -1537,9 +1531,8 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
         }
         // Unknown modül fonksiyonu → genel CALL yolu.
         // İŞARETLE: bu çağrı derlenir ama RUNTIME'da "Not callable" fırlatır
-        // (LOAD_GLOBAL "mod::fn" → null → CALL). Web'de route interpreter'a düşüp
-        // kurtulur; CLI-VM'de fallback YOK → script çökerdi. CLI bayrağı görüp
-        // tree-walk'a düşer (bkz. CompiledProgram::uses_non_builtin_module_fn).
+        // (LOAD_GLOBAL "mod::fn" → null → CALL). Komut satırı / REPL / lk test bayrağı
+        // görüp çalıştırmadan hata verir (bkz. CompiledProgram::uses_non_builtin_module_fn).
         mark_non_builtin_module_fn(full);
     }
     if (auto* var = dynamic_cast<const Variable*>(e.callee.get())) {
@@ -1641,8 +1634,8 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             free_temp(ch);
             return r;
         }
-        // RuntimeHost global builtin alias'ları → VM builtin karşılığı.
-        // Bu isimler interpreter'da inline çözülüyordu ama VM builtin listesinde
+        // Global builtin alias'ları → VM builtin karşılığı.
+        // Bu isimler eski yorumlayıcıda inline çözülüyordu ama VM builtin listesinde
         // yoktu → route çağırınca CALL (bytecode-fn) olarak derlenip runtime'da
         // "Not callable" fırlatıyor, route KALICI interpreter'a düşüyordu
         // (O(n²) string dahil tüm VM optimizasyonları o route'ta boşa gidiyordu).
@@ -1650,10 +1643,10 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             {"len", "count"}, {"intval", "int"}, {"floatval", "float"},
             {"strval", "string"}, {"boolval", "bool"},
             {"json", "json::encode"},
-            // Web: bare header()/redirect() interpreter global'iydi ama VM'de fallback
+            // Web: bare header()/redirect() eski yorumlayıcının global'iydi, VM'de fallback
             // ediyordu. response::header/redirect module fonksiyonları ZATEN var ve
             // per-request web_ctx_'e bağlanıyor (response::text gibi) + CRLF-sanitize
-            // ediyor (bonus). Alias → route interpreter'a düşmez.
+            // ediyor (bonus).
             {"header", "response::header"}, {"redirect", "response::redirect"},
         };
         std::string bname = var->name;
@@ -1765,7 +1758,6 @@ uint16_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint16_t
 // ── compile_string_interp ─────────────────────────────────────────────────────
 //
 // "{$name} merhaba {$x+$y}" → CONCAT zinciri
-// Basit implementasyon: interpreter string interpolation mantığını yeniden kullanır.
 // TODO: tam expression parser — şimdilik {$var} ve sabit parçalar destekleniyor
 
 uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int line, uint16_t dest) {
@@ -1776,16 +1768,14 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
         return r;
     }
 
-    // Parçalara böl: sabit string + interpolation dönüşümlü. RuntimeHost'ın
-    // interpolate_string() semantiğiyle BİREBİR: tetikleyici {$ · {harf · {_
-    // (template {# değil), iç içe brace'lere saygı, fragment TAM expression olarak
-    // lex+parse+compile ({$a + $b}, {$arr[1]}, {count($x)}, {mod::f()}...), parse
-    // hatasında {…} literal olarak kalır. Aksi halde VM sessizce "null" üretirdi.
-    // Tetikleyici SADECE '{$' — '$'-önekli formlar iki motorda da kesin
-    // interpolation'dır (undefined '$var' → her ikisinde null). Dolarsız
-    // '{identifier}' BİLİNÇLİ dışarıda: interpreter onu eval-hatasında literal'e
-    // düşürür (runtime karar), VM derleyip null üretirdi → '{renk}' gibi şablon
-    // string'lerinde web davranışını değiştirir. Güvenli/tutarlı sınır: '{$...}'.
+    // Parçalara böl: sabit string + interpolation dönüşümlü. İç içe brace'lere saygı,
+    // fragment TAM expression olarak lex+parse+compile ({$a + $b}, {$arr[1]},
+    // {count($x)}, {mod::f()}...), parse hatasında {…} literal olarak kalır.
+    // Aksi halde VM sessizce "null" üretirdi.
+    // Tetikleyici SADECE '{$' — '$'-önekli formlar kesin interpolation'dır. Dolarsız
+    // '{identifier}' BİLİNÇLİ dışarıda: eski yorumlayıcı onu eval-hatasında literal'e
+    // düşürüyordu, VM derleyip null üretirdi → '{renk}' gibi şablon string'lerinde
+    // web davranışını değiştirir. Güvenli/tutarlı sınır: '{$...}'.
     auto is_interp_start = [](const std::string& s, size_t p) -> bool {
         return s[p] == '{' && p + 1 < s.size() && s[p + 1] == '$';
     };
@@ -1817,11 +1807,10 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
                 auto prog = par.parse();
                 if (!prog->statements.empty()) {
                     if (auto* es = dynamic_cast<ExpressionStatement*>(prog->statements[0].get())) {
-                        // Fragment RUNTIME try/catch ile sarılır — interpreter parity:
-                        // interpolate_string() fragment'ı eval ederken hata olursa (ör.
+                        // Fragment RUNTIME try/catch ile sarılır: eval hatası (ör.
                         // tanımsız değişken → strict LOAD_GLOBAL fırlatır) "{…}" literal
-                        // olarak bırakır. Sarmazsak strict VM fırlatır, interpreter literal
-                        // döner → sapma. Parse hataları zaten aşağıda derleme-zamanı ele
+                        // olarak kalır (eski yorumlayıcının interpolate_string() kuralı).
+                        // Parse hataları zaten aşağıda derleme-zamanı ele
                         // alınıyor; bu sarmalayıcı EVAL hataları içindir.
                         pr = alloc_temp();
                         int try_push_ip = emit(OpCode::TRY_PUSH, 0, 0, 0);
@@ -1840,7 +1829,7 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
                     }
                 }
             } catch (...) { pr = NO_REG; }
-            if (pr == NO_REG) {  // parse hatası → interpreter gibi {…} literal
+            if (pr == NO_REG) {  // parse hatası → {…} literal
                 pr = alloc_temp();
                 emit_load_const(pr, Value(literal_src), line);
             }
@@ -1928,8 +1917,8 @@ uint16_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, 
     uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
     uint32_t ni = add_const(Value(e.struct_name));
     emit(OpCode::NEW_STRUCT, r, hi16(ni), lo16(ni));
-    // Literal'ın alan adları — VM "Unknown field" doğrulaması için (tree-walk ile
-    // aynı sözleşme). NOP(n) + n×LOAD_CONST_W: 16-bit sabit (kırpılmaz); VM NEW_STRUCT
+    // Literal'ın alan adları — VM "Unknown field" doğrulaması için.
+    // NOP(n) + n×LOAD_CONST_W: 16-bit sabit (kırpılmaz); VM NEW_STRUCT
     // bu bloğu OKUYUP ATLAR, hiçbiri yürütülmez (register 0'a yazmaz).
     if ((long long)e.fields.size() > REG_LIMIT)
         throw std::runtime_error("struct literal '" + e.struct_name + "' has more than 65534 fields");

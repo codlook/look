@@ -856,7 +856,7 @@ static Module make_session_module(WebContext* ctx) {
 }
 
 // â”€â”€ Route module â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// route() is handled as a built-in function in the interpreter.
+// route() is a built-in function (compiler + web dispatch), not part of this module.
 // This module provides route::params() helper.
 
 static Module make_route_module(WebContext* ctx) {

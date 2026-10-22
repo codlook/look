@@ -11,7 +11,7 @@
 // Tek yazım: `ad tip [= varsayılan]`. Tipsiz alan ve v1'in `ad: varsayılan` yazımı
 // ayrıştırıcıda reddedilir (parser.cpp).
 //
-// DÜZEN (iki motorda aynı, tek yerde tanımlı):
+// DÜZEN (tek yerde tanımlı):
 //   tanım (def)  = ARRAY, üçlüler [alan, varsayılan, tip]          (bildirim sırası)
 //   örnek        = Value::STRUCT, slotlar [ad, def, alan0, alan1, ...]
 // Alan i'nin değeri slot 2+i'dedir → erişim ad araması değil İNDEKSTİR. Struct bir dizi
@@ -134,7 +134,7 @@ inline void struct_check_field(const std::string& sname, const std::string& fnam
 }
 
 // Alan adı → alan sırası (0..n-1); yoksa -1. Tanım üzerinde doğrusal arama: yalnız önbellek
-// ıskasında ve yorumlayıcıda çalışır; VM sıcak yolu sonucu talimat başına önbellekler.
+// ıskasında çalışır; VM sıcak yolu sonucu talimat başına önbellekler.
 inline int struct_field_index(const std::vector<Value>& def, const std::string& field) {
     for (size_t j = 0; j + 2 < def.size(); j += 3)
         if (def[j].str_ref() == field) return (int)(j / 3);
@@ -169,7 +169,7 @@ inline void struct_set(std::vector<Value>& sv, int i, Value v) {
     sv[STRUCT_SLOT0 + (size_t)i] = std::move(v);
 }
 
-// Ada göre okuma/yazma (yorumlayıcı ve VM'in önbelleksiz yolu). Bilinmeyen alan → hata.
+// Ada göre okuma/yazma (VM'in önbelleksiz yolu). Bilinmeyen alan → hata.
 inline const Value& struct_get_named(const std::vector<Value>& sv, const std::string& field) {
     int i = struct_field_index(struct_def(sv), field);
     if (i < 0) struct_no_field(struct_name(sv), field);

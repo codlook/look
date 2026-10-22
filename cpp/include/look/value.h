@@ -103,7 +103,7 @@ public:
         return deep_clone_impl(visited);
     }
 
-    // BYTECODE_FN (Closure) transitif deep-clone hook'u. interpreter.h Closure'ı GÖREMEZ
+    // BYTECODE_FN (Closure) transitif deep-clone hook'u. value.h Closure'ı GÖREMEZ
     // (bytecode.h bunu sonra include eder) → vm katmanı bir cloner kaydeder. Kayıtsızsa
     // eski davranış (shallow). 58 parallel: bir closure yakalanınca, deep_clone onu shallow
     // kopyalarsa closure-içi cell'ler parent'la PAYLAŞIMLI kalır → veri yarışı (np1). Cloner

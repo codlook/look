@@ -477,7 +477,7 @@ Module make_array_module(ModuleHost* interp) {
             //   array::set([1,2,3], 1, "X") = {"1":"X"}   (beklenen [1,"X",3])
             // Sessiz veri kaybi; hata yok.
             // Sozlesme: gecerli indeks → yerinde degistir, size'a esit → sona ekle
-            // ($arr[i] = v ile ayni, iki motor da bu iki durumda hemfikir).
+            // ($arr[i] = v ile ayni).
             if (args[1].type() == Value::INT) {
                 int64_t i = args[1].as_int();
                 if (i >= 0 && i < (int64_t)result->size()) {
@@ -1041,8 +1041,8 @@ static Module make_runtime_module(ModuleHost* interp) {
     mod.functions["stats"] = [interp](std::vector<Value> args) -> Value {
         long uptime  = interp->get_uptime_sec();
         int  routes  = interp->get_route_count();
-        // CLI/CGI: interpreter dispatch sayacı. Web: setup interpreter'ın sayacı artmaz (VM yolu) →
-        // süreç-global HTTP sayacını EKLE. Biri her zaman 0 (mod başına tek yol aktif) → çift-sayım yok.
+        // get_request_count() LOOK 2'de hep 0 (RuntimeHost); istekleri süreç-global HTTP sayacı
+        // taşır (web dispatch artırır). Toplam → çift-sayım yok.
         int  reqs    = interp->get_request_count()
                      + (int)look::g_http_request_count().load(std::memory_order_relaxed);
 

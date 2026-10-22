@@ -237,10 +237,9 @@ struct CallFrame {
 struct CompiledProgram {
     std::shared_ptr<FunctionProto> main_proto; // top-level
     // Programda builtin OLMAYAN bir "mod::fn" çağrısı var mı? (ör. cache::keys —
-    // interpreter modülünde var ama builtin_names'de yok). Böyle bir çağrı derlenir ama
-    // RUNTIME'da "Çağrılabilir değil" fırlatır: web'de route interpreter'a düşüp kurtulur,
-    // CLI-VM'de fallback YOKTUR → script çöker. CLI bu bayrağı görünce tree-walk'a düşer
-    // (karar EXECUTION ÖNCESİ — çıktı taahhüt edilmeden).
+    // modül tablosunda var ama builtin_names'de yok). Böyle bir çağrı derlenir ama
+    // RUNTIME'da "Çağrılabilir değil" fırlatır. Komut satırı / REPL / lk test bu bayrağı
+    // görünce çalıştırmadan "does not exist" hatası verir (EXECUTION ÖNCESİ).
     bool uses_non_builtin_module_fn = false;
     std::vector<std::string> non_builtin_module_fns;   // adlar (LOOK_VM_STRICT raporu)
     // Programın (dahil edilen dosyaları dahil) `use` ettiği stdlib modülleri, görüldükleri sırayla.
@@ -249,8 +248,6 @@ struct CompiledProgram {
     // CGI isteğinin %37'si oydu.
     std::vector<std::string> use_modules;
     // Struct tanımları, route kayıtları setup fazında çalıştırılarak kurulur.
-    // Bytecode yorumda StructDef ve route_registry_ mevcut interpreter
-    // altyapısını kullanmaya devam eder — Phase 17'de taşınabilir.
 };
 
 } // namespace look

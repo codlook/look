@@ -1,8 +1,7 @@
 // LOOK Bytecode VM
 //
 // Dispatch döngüsü: switch(opcode) → GCC/Clang jump table.
-// Value tipi interpreter.h ile aynı — tam uyumluluk.
-// Struct convention: ARRAY + __struct__ sentinel (interpreter ile aynı).
+// Value tipi: look/value.h. Struct: Value::STRUCT (look/struct_types.h).
 
 #include <atomic>
 #include <climits>
@@ -12,7 +11,7 @@
 #include "look/bytecode.h"
 #include "look/web.h"
 #include "look/value_path.h"
-#include "look/runtime_host.h"   // ExitException — CALL_BUILTIN (interpreter NativeFn) fırlatabilir
+#include "look/runtime_host.h"   // ExitException — CALL_BUILTIN (modül NativeFn) fırlatabilir
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include "look/builtins.h"      // builtin_names() — hata mesajinda modul/fonksiyon adi
@@ -38,7 +37,7 @@ const bool g_warn_undef = [] {
 
 namespace look {
 
-// parallel transitif deep-clone hook'u. interpreter.h Closure'ı göremez (bytecode.h
+// parallel transitif deep-clone hook'u. value.h Closure'ı göremez (bytecode.h
 // onu sonra tanımlar) → deep_clone_impl BYTECODE_FN görünce burada kayıtlı cloner'ı çağırır.
 // Bir Closure klonlanırken yakaladığı değerler VE iç closure'lar özyineli klonlanır; aksi
 // halde parallel task'ın yakaladığı closure'ın içindeki dizi/map parent'la paylaşımlı kalır
@@ -60,7 +59,7 @@ static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& 
     // yeni bir tip eklendiğinde otomatik GÜVENLİ tarafta başlar — izin listesi olsaydı her
     // yeni tip sessiz-paylaşım bug'ı olurdu (bu sınıfın 3. yaması). deep_clone_impl her tipi
     // doğru ele alır: ARRAY özyineli klon, closure hook'la klon, scalar/string *this (ucuz,
-    // immutable). RuntimeHost'ın zaten yaptığı izolasyonla parite (differential-güvenli).
+    // immutable).
     for (size_t j = 0; j < nc->captures.size(); ++j) {
         Value::Type t = nc->captures[j].type();
         bool shared_by_design = (t == Value::CHANNEL || t == Value::WEBSOCKET
@@ -76,8 +75,8 @@ static const bool s_bc_cloner_registered = [] {
     return true;
 }();
 
-// ── VM/interpreter callback köprüsü (hook tarafı) ─────────────────────────────
-// Bridge fonksiyonları interpreter.cpp'de (hem CLI hem fcgi linkler); VM burada
+// ── VM callback köprüsü (hook tarafı) ─────────────────────────────────────────
+// Bridge fonksiyonları runtime_host.cpp'de; VM burada
 // yalnızca hook'unu kaydeder. Aktif VM run() içinde kaydedilir: fiber içinde FİBERE özel
 // (FiberLocal::active_vm), fiber dışında iş parçacığına özel. Eskiden yalnız thread_local'di:
 // istek bir sorguda / http::get'te askıya alınınca aynı iş parçacığındaki başka bir isteğin
@@ -92,7 +91,7 @@ static VM*& active_vm_slot() {
 // ── argüman sayısı (LOOK 2) ───────────────────────────────────────────────────
 // Kullanıcı çağrısı ve çalışma zamanının geri çağırması tam tutmalı: fazla argüman da,
 // varsayılanı olmayan parametrenin eksik kalması da HATA (yorumlayıcı hep böyleydi; VM sessizce
-// kabul ediyor, eksik parametre null oluyordu). Metinler yorumlayıcıyla aynı (interpreter.cpp).
+// kabul ediyordu, eksik parametre null oluyordu). Metinler eski yorumlayıcınınkiyle aynı.
 // Rota dağıtımı bu denetimden GEÇMEZ: işleyici yol parametrelerinden istediği kadarını alır.
 static inline void check_argc(const FunctionProto* p, int argc) {
     const int fixed = p->variadic ? p->arity - 1 : p->arity;
@@ -214,7 +213,7 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
             if (!stopped) {
                 // LOOK 2: yol parametreleri işleyiciye ADA göre verilir (look/route_params.h).
                 std::vector<Value> named_args;
-                // WS / SSE rotasında ilk parametre bağlantıdır (tree-walk ile aynı).
+                // WS / SSE rotasında ilk parametre bağlantıdır.
                 if (m == "WS" && ws_conn_)        named_args.push_back(Value(ws_conn_));
                 else if (m == "SSE" && sse_conn_) named_args.push_back(Value(sse_conn_));
                 if (web_ctx_) look::route_args_by_name(m, p, entry.fn->proto->params, named_args.size(), web_ctx_->route_params, named_args);
@@ -224,7 +223,7 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
             return;
         }
     }
-    // Eşleşen rota yok → durum 404, HANDLER'DAN ÖNCE ayarlanır (tree-walk ile aynı).
+    // Eşleşen rota yok → durum 404, HANDLER'DAN ÖNCE ayarlanır.
     // ESKİ HATA: durum yalnız varsayılan gövdede ayarlanıyordu; uygulama route("404", ...)
     // tanımlamışsa handler çağrılıp dönülüyor ve özel 404 sayfası 200 ile gidiyordu.
     // Handler isterse response::status ile değiştirebilir.
@@ -265,7 +264,7 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
         } else if (pp[i] != rp[i]) return false;
     }
     // request::param("id") / route::param("id") VM yolunda da çalışsın
-    // (interpreter route_params'ı dolduruyor — divergence giderildi).
+    // (eski yorumlayıcı route_params'ı dolduruyordu — divergence giderildi).
     if (web_ctx_)
         for (auto& [k, v] : named) web_ctx_->route_params[k] = v;
     return true;
@@ -274,7 +273,7 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
 // ── Value helpers ─────────────────────────────────────────────────────────────
 
 // "12" / "-3" gibi TAM SAYI metni mi? Dizi anahtari sayisal indeks mi yoksa
-// assoc anahtari mi diye ayirmak icin. (interpreter.cpp'de ayni kural var.)
+// assoc anahtari mi diye ayirmak icin (tek tanim: look/value_path.h).
 static bool look_is_int_key(const std::string& s) { return look::value_is_int_key(s); }
 
 bool VM::val_truthy(const Value& v) { return v.is_truthy(); }
@@ -296,13 +295,13 @@ Value VM::array_get(const Value& arr, const Value& key) {
                               + look::struct_name(*arr.as_struct()) + "' has no numeric index)");
         return vm_struct([&]() -> Value { return look::struct_get_named(*arr.as_struct(), key.str_ref()); });
     }
-    // LOOK 2: dizi olmayan değeri indekslemek hatadır (yorumlayıcıyla aynı; look/index_error.h).
+    // LOOK 2: dizi olmayan değeri indekslemek hatadır (look/index_error.h).
     // Eskiden sessizce null dönüyordu.
     if (arr.type() == Value::NONE) return Value();   // null boş bir map gibi okunur (Go: nil map okumak hata değildir)
     if (arr.type() != Value::ARRAY) throw LookVmError(look::index_error_message(arr, key));
     auto& vec = *arr.as_array();
 
-    // Assoc: ["__assoc__", k0, v0, k1, v1, ...] — sentinel at position 0 (interpreter convention)
+    // Assoc: ["__assoc__", k0, v0, k1, v1, ...] — sentinel at position 0
     // str_ref(): B5'te string pointer arkasında — as_string()/to_string() her erişimde
     // kopya döndürür. Sentinel ve key karşılaştırmaları kopyasız (nesne-lookup sıcak yolu).
     if (!vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__") {
@@ -325,7 +324,7 @@ Value VM::array_get(const Value& arr, const Value& key) {
     // bulunamayan anahtarla ayni sozlesme). $obj.alan erisimi de buraya duser.
     if (key.type() == Value::STRING && !look_is_int_key(key.str_ref())) return Value();
 
-    // Sayisal indeks — TREE-WALK REFERANS SEMANTIGI (interpreter.cpp ile ayni):
+    // Sayisal indeks — REFERANS SEMANTIGI (eski tree-walk'takiyle ayni):
     // negatif = sondan, aralik disi = HATA.
     // ESKI HATA: VM aralik disinda ve negatifte SESSIZCE null donuyordu, oysa
     // interpreter hata firlatiyor/sondan sayiyordu — ayni program iki motorda iki
@@ -341,7 +340,7 @@ Value VM::array_get(const Value& arr, const Value& key) {
     return vec[(size_t)i];
 }
 
-// ── LOOK 2: yazınca-kopyala yol ataması (kurallar: look/value_path.h, iki motor ortak) ──
+// ── LOOK 2: yazınca-kopyala yol ataması (kurallar: look/value_path.h) ──
 Value* VM::array_slot(Value& arr, const Value& key) {
     return vm_struct([&] { return look::value_slot(arr, key); });
 }
@@ -359,13 +358,13 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
     }
     // LOOK strings are immutable (there is no string-mutation builtin, and index assignment
     // has no write path), but the VM used to SILENTLY ignore `$s[0] = "x"` — the silent-wrong
-    // class. The tree-walk interpreter already throws here; make the VM match, with an
-    // identical message, so both engines fail loud and identically. (Also locks the
+    // class. The tree-walk interpreter threw here; the VM now does too, with the same
+    // message (tests grep it). (Also locks the
     // precondition for the string-view representation: strings never change under a view.)
     if (arr.type() == Value::STRING)
         throw LookVmError("Strings are immutable; cannot assign to a string index");
     // LOOK 2: struct alanına yazma — şekil sabit, tip denetimli. Literal kurulumu da
-    // (SET_FIELD) buradan geçer; kurallar tree-walk ile ortak (look/struct_types.h).
+    // (SET_FIELD) buradan geçer; kurallar look/struct_types.h'ta.
     if (arr.type() == Value::STRUCT) {
         if (key.type() != Value::STRING)
             throw LookVmError("a struct is not an array: use a field name ('"
@@ -376,10 +375,10 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
     if (arr.type() != Value::ARRAY) return;
     auto& vec = *arr.as_array();
 
-    // Assoc: ["__assoc__", k0, v0, ...] — sentinel at position 0 (interpreter convention)
+    // Assoc: ["__assoc__", k0, v0, ...] — sentinel at position 0
     bool is_assoc = !vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__";
     // "12"/"-3" gibi tam sayi METNI sayisal indekstir, assoc anahtari degil
-    // (interpreter bu metinleri hep sayisal indeks sayiyordu — motorlar ayrisiyordu).
+    // (yorumlayici bu metinleri hep sayisal indeks sayiyordu — motorlar ayrisiyordu).
     bool str_key = key.type() == Value::STRING && !look_is_int_key(key.str_ref());
     if (is_assoc || str_key) {
         // Lookup-key kopyasız (array_get ile aynı): STRING anahtar str_ref();
@@ -419,7 +418,7 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
         vec.push_back(val);
         return;
     }
-    // Sayisal indeks — TREE-WALK REFERANS SEMANTIGI (interpreter.cpp ile ayni):
+    // Sayisal indeks — REFERANS SEMANTIGI (eski tree-walk'takiyle ayni):
     // negatif = sondan, size'a esit = sona ekleme, digerleri HATA.
     // ESKI HATA: VM aralik disinda ve negatifte YAZMAYI SESSIZCE ATLIYORDU —
     // atama hicbir sey yapmiyor, hata da vermiyordu:
@@ -447,7 +446,7 @@ void VM::set_field(Value& obj, const std::string& field, const Value& val) {
 Value VM::run() {
     // Callback köprüsü: bu VM'i aktif olarak kaydet (RAII ile geri al). Nested
     // run() aynı VM'e set eder — zararsız. array::map gibi builtin'ler callback'i
-    // interpreter->invoke → vm_bridge_invoke → bu VM'in call_closure'ıyla çalıştırır.
+    // RuntimeHost::invoke → vm_bridge_invoke → bu VM'in call_closure'ıyla çalıştırır.
     // Yuva girişte bir kez alınır: run() boyunca aynı fiber'dayız, geri alma aynı yuvaya yazar.
     VM*& _active = active_vm_slot();
     VM* _prev_active = _active;
@@ -550,14 +549,13 @@ call_dispatch:
                     (*gcache)[ni] = &it->second;   // slot'u çivile — sonraki erişimler ıskasız
                     R(ins.a) = it->second;
                 } else if (!gname.empty() && gname[0] == '$') {
-                    // Tanımsız DEĞİŞKEN — STRICT (interpreter ile birebir mesaj).
+                    // Tanımsız DEĞİŞKEN — STRICT (mesajı testler grep'liyor).
                     // Karar gerekçesi: hedef bandın iki ucu da strict (Go: derleme hatası,
                     // Node: ReferenceError); PHP'den yalnız dağıtım/kitle alınıyor, semantik
-                    // değil. İnterpreter (referans motor) zaten strict — sapan taraf VM'di
-                    // ve sessiz null üretiyordu (bu turun tüm bug'ları o sınıftandı).
+                    // değil. Yorumlayıcı (o zamanki referans motor) zaten strict'ti — sapan taraf
+                    // VM'di ve sessiz null üretiyordu (bu turun tüm bug'ları o sınıftandı).
                     // LOOK_WARN_UNDEF=1 → GEÇİŞ MODU: eski lenient davranış + uyarı
-                    // (yalnız migration için; interpreter her hâlükârda strict → bu modda
-                    // motorlar AYRIŞIR, kalıcı kullanım için değildir).
+                    // (yalnız migration için, kalıcı kullanım için değildir).
                     if (g_warn_undef) {
                         R(ins.a) = Value();
                         Logger::instance().log(LogLevel::LOG_WARN, "VM",
@@ -703,7 +701,7 @@ call_dispatch:
             }
             case OpCode::CHECK_DEFINED: {
                 // Çıplak ad değer olarak okundu ve LOAD_GLOBAL null verdi: ad gerçekten
-                // tanımsız mı (null değerli const değil mi) → tree-walk ile aynı hata.
+                // tanımsız mı (null değerli const değil mi) → "Undefined variable" hatası.
                 if (R(ins.a).type() == Value::NONE) {
                     const std::string& nm = CONST(ins.bx()).str_ref();
                     if (globals_.find(nm) == globals_.end())
@@ -742,12 +740,12 @@ call_dispatch:
                 // 1'de taşır; literal değerleri ardından SET_FIELD ile yerine konur.
                 auto dit = globals_.find("__sdef:" + sname);
                 if (dit == globals_.end() || dit->second.type() != Value::ARRAY)
-                    throw LookVmError("Unknown struct '" + sname + "'");   // tree-walk ile aynı metin
+                    throw LookVmError("Unknown struct '" + sname + "'");   // metni testler grep'liyor
                 const auto& def = *dit->second.as_array();
                 for (int k = 0; k < fc; ++k) {
                     const auto& li = proto->code[frame.ip + 1 + k];
                     const std::string& fname = CONST(li.bx()).str_ref();
-                    if (look::struct_field_index(def, fname) < 0)   // tree-walk ile birebir aynı metin
+                    if (look::struct_field_index(def, fname) < 0)   // metni testler grep'liyor
                         throw LookVmError("Unknown field '" + fname + "' in struct '" + sname + "'");
                 }
                 R(ins.a) = vm_struct([&] {
@@ -922,8 +920,7 @@ call_dispatch:
                 // Ne modulu ne fonksiyonu soyluyor, ustelik bir C++ ic terimi. Oysa
                 // tree-walk (REFERANS) dogru mesaji veriyordu: "Module 'string' not
                 // loaded." — 'use' unutmak LOOK'ta en sik yapilan hata oldugu icin
-                // varsayilan motor en kotu mesaji veriyordu. Ayni metin kullaniliyor
-                // ki iki motor birebir ayni hatayi versin (S3).
+                // varsayilan motor en kotu mesaji veriyordu. Ayni metin kullaniliyor (S3).
                 {
                     const auto& bfn = (*shared_.builtins)[bidx];
                     if (!bfn) {
@@ -1151,7 +1148,7 @@ call_dispatch:
                 sh.routes   = nullptr; // parallel task dispatch_routes çağırmaz
                 std::thread([cl_copy, sh, g_copy, builtins_copy = std::move(builtins_copy)]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
-                    // DB bağlantısı iadesi — interpreter parallel() ile birebir: task
+                    // DB bağlantısı iadesi: task
                     // içinde db::query çağrılırsa get_conn bu thread'e tembel bir conn
                     // alır; bırakılmazsa havuzdan KALICI sızar (birkaç istek sonra
                     // havuz tükenir, endpoint sonsuza dek asılır).
@@ -1174,7 +1171,7 @@ call_dispatch:
             // CHAN_* — TİP KONTROLÜ ŞART: as_channel() type_ bakmadan static_pointer_cast
             // yapar; argüman ARRAY/STRING/FN ise (compiler send/receive/close/chan_size'ı
             // tipe bakmadan üretir) o nesnenin belleği LookChannel sanılır → TYPE CONFUSION
-            // → heap-buffer-overflow (ASan-kanıtlı). interpreter.cpp:1646 zaten kontrol
+            // → heap-buffer-overflow (ASan-kanıtlı). Eski yorumlayıcı zaten kontrol
             // ediyordu; VM'de yoktu (motor ayrışması, S3). send([1,2,3],42) gibi.
             case OpCode::CHAN_SEND: {
                 if (R(ins.a).type() != Value::CHANNEL)
@@ -1232,15 +1229,15 @@ call_dispatch:
         }
         // ── C++ exception → LOOK try/catch köprüsü ────────────────────────────
         // Operatör/builtin'lerin fırlattığı runtime hatası (bölme sıfıra, tip
-        // hatası...) try_stack_'e yönlendirilir — interpreter semantiğiyle birebir:
-        // kontrol-akışı exception'ları (exit/route/stop/route-disabled) sızdırılır,
+        // hatası...) try_stack_'e yönlendirilir:
+        // kontrol-akışı exception'ları (exit/route/stop) sızdırılır,
         // geri kalan std::exception mesajıyla catch bloğuna düşer. try_stack_ boşsa
-        // yukarı iletilir (web'de route fallback, CLI-VM'de üst seviye hata).
+        // yukarı iletilir (web'de hata yanıtı, CLI-VM'de üst seviye hata).
         catch (const RouteStopException&)   { throw; }
         catch (const RouteMatchedException&){ throw; }
         catch (const ExitException&)        { throw; }
         catch (const LookVmThrow& t) {
-            // C++ sınırını geçmiş LOOK throw (iç run() → builtin/interpreter → buraya).
+            // C++ sınırını geçmiş LOOK throw (iç run() → builtin → buraya).
             // DEĞER korunur (error::new gibi tipli değerler dahil) — e.what() değil.
             if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
@@ -1257,7 +1254,7 @@ call_dispatch:
             // Tipli payload'ı korumak ZORUNLU: e.what() string'ine düşürmek catch
             // değişkenini "[type, E_DB, message, ...]" string'i yapar → error::is()
             // false döner, error::message() tüm nesneyi verir (sessizce yanlış hata
-            // yönetimi). interpreter.cpp'deki catch ile birebir: has_value ? value : message.
+            // yönetimi). Kural: has_value ? value : message.
             if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = e.has_value ? e.value : Value(e.message);

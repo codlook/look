@@ -1,5 +1,5 @@
 #pragma once
-// LOOK 2 — indeksleme kuralı ve hata metni: iki motor için TEK tanım.
+// LOOK 2 — indeksleme kuralı ve hata metni: TEK tanım.
 //
 // Kural (Go'daki map okuma gibi, tek cümle):
 //   * dizide/map'te olmayan ANAHTAR  → null
@@ -9,7 +9,7 @@
 //                                              bir anlam yoktur.
 //   * dizi, map ya da struct OLMAYAN başka bir değeri (metin, sayı, bool, fonksiyon) indekslemek
 //                                    → HATA   (bu eksik bir değer değil, yanlış türdür)
-// LOOK 1'de yorumlayıcı null dahil hepsinde hata veriyor, VM hepsinde sessizce null dönüyordu:
+// LOOK 1'de yorumlayıcı null dahil hepsinde hata veriyordu, VM hepsinde sessizce null dönüyordu:
 // aynı satır motora göre farklı davranıyor, yanlış tür null olarak yayılıyordu.
 #include "look/runtime_host.h"
 #include <string>

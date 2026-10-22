@@ -30,9 +30,9 @@
 
 namespace look {
 
-// ── C9 (CLI-VM, opt-in) — CLI top-level script'i bytecode VM'de çalıştırmak için
+// ── CLI-VM — komut satırı / REPL / lk test betiğini bytecode VM'de çalıştırmak için
 // builtin tablosu. http_main req_builtins ile aynı semantik; çıktı `out`'a gider.
-// Modül fn'leri interpreter'ın YÜKLÜ modüllerinden auto-wire olur (use gerektirir).
+// Modül fn'leri RuntimeHost'un YÜKLÜ modüllerinden auto-wire olur (use gerektirir).
 std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::ostream& out) {
     using look::Value;
     std::vector<look::BuiltinFn> b(look::builtin_names().size());
@@ -43,8 +43,8 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
         return Value(a.empty() ? 0 : look_count(a[0]));   // assoc: (size-1)/2 (sentinel atlanır)
     };
     b[5] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? std::string() : a[0].to_string()); };  // str
-    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return Value(a[0].to_int()); };  // int — to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + int32 daralması kapandı (tree-walk parite)
-    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); return Value(a[0].to_float()); };  // float — to_float(): to_string() round-trip yok (tree-walk parite)
+    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return Value(a[0].to_int()); };  // int — to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + int32 daralması kapandı
+    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); return Value(a[0].to_float()); };  // float — to_float(): to_string() round-trip yok
     b[8] = [](std::vector<Value>& a) -> Value {   // bool
         if (a.empty()) return Value(false);
         auto& v = a[0];
@@ -69,7 +69,7 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
     b[BI("join")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) return Value(a.empty()?std::string():a[0].to_string()); std::string sep=a.size()>=2?a[1].to_string():""; std::string r; auto& ar=*a[0].as_array(); for(size_t i=0;i<ar.size();++i){ if(i)r+=sep; r+=ar[i].to_string(); } return Value(r); };
     b[BI("stop")] = [](std::vector<Value>&) -> Value { return Value(); };
     // exit()/die() — CLI-VM'de bağlı değildi ("Not callable" fırlatıyordu).
-    // interpreter ile birebir: ilk argüman INT ise çıkış kodu, yoksa 0.
+    // Kural: ilk argüman INT ise çıkış kodu, yoksa 0.
     {
         auto do_exit = [](std::vector<Value>& a) -> Value {
             int code = 0;
@@ -89,8 +89,8 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
         };
     // channel() — CLI-VM'de BAĞLI DEĞİLDİ: send/receive'in CHAN_* opcode'ları var ama
     // kanal OLUŞTURMA düz builtin çağrısı → VM tablosunda boş → "kullanilamiyor
-    // (baglanmamis)". tree-walk (interpreter.cpp:1631) inline hallettiği için CLI'da
-    // parallel+channel tree-walk'ta çalışıp VM'de (DEFAULT) çöküyordu. Semantik birebir:
+    // (baglanmamis)". Eski tree-walk inline hallettiği için CLI'da
+    // parallel+channel tree-walk'ta çalışıp VM'de (DEFAULT) çöküyordu. Semantik:
     // default 128, n<0 hata, n==0 → unbuffered ((size_t)-1).
     if (look::builtin_index("channel") >= 0)
         b[BI("channel")] = [](std::vector<Value>& a) -> Value {
@@ -103,9 +103,9 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
             return Value(std::make_shared<look::LookChannel>(cap));
         };
     // config() — channel ile AYNI SINIF: web'de (http_main) bağlı, CLI-VM'de eksikti →
-    // tree-walk "def" dönerken VM "kullanilamiyor" veriyordu. tree-walk (interpreter.cpp:1802)
-    // "section.key" → "SECTION_KEY" env anahtarına çevirip g_env_vars+getenv'e bakar; look_get_env
-    // AYNI kaynağı kullanır → birebir parite. Bulunamaz+default-yok → null (sentinel ile ayırt).
+    // tree-walk "def" dönerken VM "kullanilamiyor" veriyordu. Kural: "section.key" →
+    // "SECTION_KEY" env anahtarı, g_env_vars+getenv'e bakılır (look_get_env AYNI kaynağı
+    // kullanır). Bulunamaz+default-yok → null (sentinel ile ayırt).
     if (look::builtin_index("config") >= 0)
         b[BI("config")] = [](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value();
@@ -118,11 +118,10 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
             std::string v = look::look_get_env(ek, NF);
             return v == NF ? Value() : Value(v);
         };
-    // Modül fn'leri: builtin_names'deki her "mod::fn" → interpreter'ın YÜKLÜ modülü.
-    // YALNIZCA `use` edilmiş modüller auto-wire olur — interpreter ile parity: interpreter
-    // de string::/math::/array:: için `use` gerektirir (json:: gibi her-zaman-açık olanlar
-    // ayrı, index-tabanlı wire edilir). Preload YOK — aksi halde VM `use`'suz çalışıp
-    // interpreter hata verirdi (divergence).
+    // Modül fn'leri: builtin_names'deki her "mod::fn" → RuntimeHost'un YÜKLÜ modülü.
+    // YALNIZCA `use` edilmiş modüller auto-wire olur: string::/math::/array:: `use`
+    // gerektirir (json:: gibi her-zaman-açık olanlar ayrı, index-tabanlı wire edilir).
+    // Preload YOK — aksi halde `use`'suz program çalışırdı.
     const auto& names = look::builtin_names();
     for (size_t i = 0; i < names.size(); ++i) {
         auto pos = names[i].find("::");

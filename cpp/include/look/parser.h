@@ -32,11 +32,11 @@ private:
                               // aynı stack-taşma riskini taşır; ayrı sayaçla korunur.
     // Sol-yaslı ikili zincir ('1+1+1+...+1' N terim) parse'ta İTERATİF kurulur
     // (while döngüsü) — expr_depth_ ARTMAZ, yani paren/array guard'ı bunu YAKALAMAZ.
-    // Ama üretilen AST N derinliğinde sola-nested olur; interpreter evaluate() ve
-    // VM compiler bu iskeleti ÖZYİNELİ gezerek ~7000 terimde stack-overflow (SIGABRT)
+    // Ama üretilen AST N derinliğinde sola-nested olur; VM compiler bu iskeleti
+    // ÖZYİNELİ gezerek ~7000 terimde stack-overflow (SIGABRT)
     // yapar → saldırgan-kontrollü derin girdi = DoS. Tek terim ~1 zincir demek; gerçek
     // kodda bin+ ardışık ikili operatör görülmez. Sınır aşılınca AST HİÇ kurulmadan
-    // temiz parse hatası atılır → ne interpreter ne VM derin ağacı görür.
+    // temiz parse hatası atılır → derleyici derin ağacı görmez.
     static constexpr int MAX_BINOP_CHAIN = 1000;  // tek ifadedeki ikili-operatör tavanı
     int    binop_depth_ = 0;  // kurulan ikili-operatör düğüm sayacı (expression() başında sıfırlanır)
     void   check_binop_chain();  // her ikili düğümden önce çağrılır; aşımda temiz hata

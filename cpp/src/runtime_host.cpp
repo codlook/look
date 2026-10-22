@@ -162,7 +162,7 @@ void RuntimeHost::set_web_context(WebContext* ctx) {
     }
 }
 
-// Geri çağırma çıktısı: komut satırında stdout, web'de ayrı tampon (bkz. interpreter.h).
+// Geri çağırma çıktısı: komut satırında stdout, web'de ayrı tampon (bkz. runtime_host.h).
 std::ostream& RuntimeHost::callback_output(const std::shared_ptr<std::ostringstream>& sink) const {
     return output_stream_ == &std::cout ? std::cout : static_cast<std::ostream&>(*sink);
 }
@@ -182,9 +182,9 @@ NativeFn RuntimeHost::get_module_fn(const std::string& module_name, const std::s
     return fit->second;
 }
 
-// ── VM/interpreter callback köprüsü (bridge tarafı) ───────────────────────────
-// interpreter.cpp hem CLI hem fcgi'ye linklenir. VM (vm.cpp) run() içinde hook'unu
-// register_vm_bridge ile kaydeder; CLI'da hiç kaydolmaz → available()==false.
+// ── VM callback köprüsü (bridge tarafı) ────────────────────────────────────────
+// VM (vm.cpp) run() içinde hook'unu register_vm_bridge ile kaydeder (thread-local);
+// bu iş parçacığında VM koşmadıysa available()==false.
 namespace { thread_local Value (*g_vm_bridge)(const Value&, std::vector<Value>&) = nullptr; }
 void  register_vm_bridge(Value (*hook)(const Value&, std::vector<Value>&)) { g_vm_bridge = hook; }
 bool  vm_bridge_available() { return g_vm_bridge != nullptr; }
@@ -285,7 +285,7 @@ Value RuntimeHost::jobs_run(int interval_ms) {
 Value RuntimeHost::invoke(const Value& fn, std::vector<Value> args) {
     // VM closure (BYTECODE_FN): higher-order builtin bir VM route'undan çağrıldı →
     // callback'i aktif VM'e delege et. Eskiden "not a function" fırlatıp route'u
-    // interpreter'a düşürüyordu (array::map/filter/reduce bu yüzden fallback ediyordu).
+    // yorumlayıcıya düşürüyordu (array::map/filter/reduce bu yüzden fallback ediyordu).
     if (fn.type() == Value::BYTECODE_FN) {
         if (vm_bridge_available()) return vm_bridge_invoke(fn, args);
         throw std::runtime_error("invoke: VM closure — no active VM");

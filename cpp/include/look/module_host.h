@@ -2,15 +2,15 @@
 // Yerleşik modüllerin çalışma zamanından istediği her şey — ve yalnız bu kadarı.
 //
 // Modül fabrikaları (make_stdlib, make_extra_stdlib, make_web_modules, …) eskiden
-// RuntimeHost* alıyordu; oysa modüller ondan yalnız şu beş şeyi kullanıyor. LOOK 2 tek
-// motora (VM) geçerken modül tablosunu yorumlayıcı nesnesi olmadan kurabilmek için
-// bağımlılık bu arayüze indirildi. Bugün RuntimeHost uygular; VM kendi ana makinesini
-// getirdiğinde modüllere dokunmak gerekmez.
+// yorumlayıcı nesnesini (bugünkü RuntimeHost) alıyordu; oysa modüller ondan yalnız şu beş
+// şeyi kullanıyor. LOOK 2 tek motora (VM) geçerken modül tablosunu yorumlayıcı nesnesi
+// olmadan kurabilmek için bağımlılık bu arayüze indirildi. Bugün RuntimeHost uygular; VM
+// kendi ana makinesini getirdiğinde modüllere dokunmak gerekmez.
 #include <vector>
 
 namespace look {
 
-class Value;   // interpreter.h (ileri bildirim — bu başlık her yerden ucuzca dahil edilebilsin)
+class Value;   // value.h (ileri bildirim — bu başlık her yerden ucuzca dahil edilebilsin)
 
 class ModuleHost {
 public:

@@ -309,8 +309,7 @@ FiberScheduler* get_thread_scheduler() noexcept;
 void            set_thread_scheduler(FiberScheduler* s) noexcept;
 
 // ── LOOK kodu için sıra bırakma (Elixir'deki "reduction" sayacı) ─────────────
-// VM'in geriye atlamaları ve çağrıları, yorumlayıcının döngü turları ve çağrıları
-// preempt_point() çağırır. Sayaç bitince (1024 noktada bir) saate bakılır: fiber 1 ms'den uzun
+// VM'in geriye atlamaları ve çağrıları preempt_point() çağırır. Sayaç bitince (1024 noktada bir) saate bakılır: fiber 1 ms'den uzun
 // süredir çalışıyorsa sırayı bırakır — uzun bir döngü aynı iş parçacığındaki öteki istekleri
 // bekletmez (1.0.20–1.0.24: 0,7 sn'lik döngü başka isteği 0,35 sn bekletiyordu). Fiber dışında
 // (CLI, eski worker modeli, zamanlayıcı/parallel iş parçacıkları) yalnız sayaç azalır.

@@ -615,9 +615,8 @@ static void handle_request(look::FcgiRequest& req, look::FcgiConn& conn) {
     }
 
     try {
-        // ── Paylaşılan motor (http_main.cpp) — setup + hot reload + VM/interp ──
-        // FCGI modu artık HTTP moduyla AYNI dispatch motorunu kullanır:
-        // bytecode VM (varsa) → route bazlı kalıcı fallback → interpreter.
+        // ── Paylaşılan motor (http_main.cpp) — setup + hot reload + VM ──
+        // FCGI modu HTTP moduyla AYNI dispatch motorunu (bytecode VM) kullanır.
         std::string setup_err;
         if (!look_http_engine_ensure(script_path, setup_err)) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "FCGI",

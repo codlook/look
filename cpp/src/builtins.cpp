@@ -93,7 +93,7 @@ const std::vector<std::string>& builtin_names() {
         "before_route",
         // 154: stop() — middleware'den route execution'ı iptal et
         "stop",
-        // 155-161: skaler core builtins (interpreter'da inline)
+        // 155-161: skaler core builtins
         "strlen", "abs", "max", "min", "sqrt", "strtoupper", "strtolower",
         // 162-163: request:: gelen header okuma (headers_in'den)
         "request::header", "request::headers",
@@ -107,8 +107,7 @@ const std::vector<std::string>& builtin_names() {
         // array::map/keys/sort vb. cagirinca compiler CALL_BUILTIN uretemeyip genel
         // CALL'a dusuyor, runtime'da "Not callable" firlatiyor ve route KALICI
         // interpreter'a dusuyordu (veri-agirlikli route'lar tamamen yavas yolda).
-        // Sona eklendi (mevcut indexler kaymaz); `use array` ile auto-wire olur (satir ~905),
-        // interpreter ile parity (o da `use array` gerektirir).
+        // Sona eklendi (mevcut indexler kaymaz); `use array` ile auto-wire olur.
         "array::map", "array::filter", "array::reduce", "array::find", "array::keys",
         "array::values", "array::sort", "array::reverse", "array::slice", "array::contains",
         "array::unique", "array::flatten", "array::chunk", "array::zip", "array::all",
@@ -119,11 +118,11 @@ const std::vector<std::string>& builtin_names() {
         // çağrılınca "'array' has no function" / "Module not loaded" (fantom builtin).
         // Kaldırma güvenli: bytecode diske serileştirilmiyor (eski .lkc cache kaldırıldı,
         // bkz. cgi_main.cpp), index'ler process-içi geçici; VM her başlangıçta yeniden derler.
-        // bare join — interpreter'da global (fn_name=="join", use gerektirmez); VM'de
+        // bare join — global (use gerektirmez; eski yorumlayıcıda inline'dı); VM'de
         // yoktu → route içinde CALL'a düşüp fallback ediyordu. Global builtin olarak
         // bağlanır (string::join'e alias DEĞİL — o `use string` gerektirir → divergence).
         "join",
-        // math:: tamamlama — interpreter math modülünde vardı ama builtin_names'de
+        // math:: tamamlama — math modülünde vardı ama builtin_names'de
         // YOKTU → route içinde CALL'a düşüp KALICI interpreter'a iniyordu (array:: ile
         // aynı fallback landmine; math-yoğun route sessizce yavaş yola/koda düşüyordu).
         // Sona eklendi (mevcut indexler kaymaz); auto-wire math modülünden bağlar.
@@ -139,7 +138,7 @@ const std::vector<std::string>& builtin_names() {
         "type::is_array", "type::is_function", "type::of",
         "type::to_int", "type::to_float", "type::to_string", "type::to_bool",
         // crypto:: tamamlama — base64/hex/hmac_sha256/constant_compare/random_string/
-        // uuid/rs256 (JWT imzalama). Hepsi interpreter crypto modülünde DOĞRULANDI.
+        // uuid/rs256 (JWT imzalama). Hepsi crypto modülünde DOĞRULANDI.
         "crypto::base64_encode", "crypto::base64_decode",
         "crypto::base64url_encode", "crypto::base64url_decode",
         "crypto::hex_encode", "crypto::hex_decode",
@@ -155,10 +154,10 @@ const std::vector<std::string>& builtin_names() {
         "db::transaction", "db::begin", "db::commit", "db::rollback", "db::escape",
         // exit()/die() — VM'de YOKTU: CLI-VM'de "Not callable" fırlatıyordu (CLI
         // script'lerinde exit kodu yaygın), web'de route'u kalıcı interpreter'a düşürüyordu.
-        // Her iki motorda ExitException'a bağlanır (interpreter ile aynı semantik).
+        // ExitException'a bağlanır.
         "exit", "die",
         // ── 256+ bölge: CALL_BUILTIN indeksi artık 16-bit (NOP hint'in b alanı yüksek
-        // 8 biti taşır) — 8-bit duvar kalktı. Aşağıdakiler interpreter modüllerinde vardı
+        // 8 biti taşır) — 8-bit duvar kalktı. Aşağıdakiler modüllerde vardı
         // ama builtin_names'de yoktu → kullanan route KALICI interpreter'a düşüyordu
         // (çıktı doğru ama ~40× yavaş; CLI-VM'de execution-öncesi tree-walk'a düşüyordu).
         // Denetlendi: callback alan yalnız http::stream (BYTECODE_FN'i zaten tanır).
@@ -191,8 +190,8 @@ const std::vector<std::string>& builtin_names() {
         // kod (migrate şema→DDL) için. mod::fn → http_main otomatik wire eder.
         "db::driver",
         // date::mono_us — monotonic microsecond clock (benchmark timing). Appended at
-        // end (no index shift). Without this the VM compiler treats it as unknown and
-        // silently falls back to tree-walk for the whole script.
+        // end (no index shift). Without it the compiler treats it as an unknown module
+        // function (before LOOK 2 that sent the whole script to tree-walk).
         "date::mono_us",
         // timer:: — LOOK 2: bir rotada kurulan zamanlayıcı VM'de çalışır (geri çağırma, yeni bir
         // istek gibi kendi VM'inde ve temiz kurulum değerleriyle koşar — http_main.cpp). Eskiden
@@ -206,9 +205,8 @@ const std::vector<std::string>& builtin_names() {
         "jobs::worker",
         "jobs::run",
         // ws:: / sse:: — LOOK 2: bağlantı tutamacı üzerinde çalışan, geri çağırma almayan fonksiyonlar.
-        // Sıradan bir rota (ör. POST /notify içinde ws::broadcast) artık bunlar yüzünden yorumlayıcıya
-        // verilmez. ws::on / sse::on burada YOK: yalnız WS/SSE rota işleyicisinde anlamlıdır ve o
-        // işleyiciler bağlantı iş parçacığında yorumlayıcıda koşar.
+        // Eskiden bunlar yüzünden sıradan bir rota (ör. POST /notify içinde ws::broadcast) yorumlayıcıya
+        // veriliyordu. ws::on / sse::on geri çağırma alır — aşağıda ayrı.
         "ws::send", "ws::close", "ws::broadcast", "ws::clients",
         "sse::send", "sse::close", "sse::clients",
         // ws::on / sse::on — bağlantı işleyicileri de VM'de: geri çağırma yeni bir istek gibi kurulur.
@@ -240,7 +238,7 @@ int builtin_index(const std::string& name) {
 // ── Yerleşik etkileri (builtins.h: BuiltinEffect) ─────────────────────────────────────────────
 // YENİ YERLEŞİK EKLEYİNCE buraya da ekle — sınıfsız ad CI'da kırmızı (builtin_effect_table_test).
 // Sınıf ÖLÇÜLEREK verilir: ör. global push/pop diziyi yerinde değiştirir (Effect), array::push
-// yeni dizi döndürür (Pure) — tahminle değil, iki motorda denenerek.
+// yeni dizi döndürür (Pure) — tahminle değil, denenerek.
 namespace {
 struct EffectRow { BuiltinEffect e; std::vector<const char*> names; };
 const std::vector<EffectRow>& effect_rows() {

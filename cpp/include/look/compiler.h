@@ -23,9 +23,9 @@ public:
         : std::runtime_error(msg), line(line) {}
 };
 
-// Programın kendi hatası (ör. sonucu kullanılmayan saf yerleşik): CLI bunu görünce tree-walk'a
-// DÜŞMEZ, hatayı yazıp çıkar — yedek motor bu denetimi yapmadığı için programı sessizce
-// çalıştırırdı. (Web'de her derleme hatası zaten uygulamayı durdurur.)
+// Programın kendi hatası (ör. sonucu kullanılmayan saf yerleşik). LOOK 1'de CLI bunu görünce
+// tree-walk'a düşmeden hatayı yazıp çıkıyordu; LOOK 2'de her derleme hatası programı durdurur,
+// tür yalnız sarmalanırken korunur.
 class LookProgramError : public LookCompileError {
 public:
     using LookCompileError::LookCompileError;
@@ -224,7 +224,7 @@ public:
     std::shared_ptr<FunctionProto> compile_stmts(const std::vector<std::unique_ptr<Statement>>& stmts);
 
     // Programda builtin OLMAYAN "mod::fn" cagrisi goruldu mu? Compiler::compile bunu
-    // CompiledProgram'a tasir → CLI-VM tree-walk'a duser (bkz. bytecode.h aciklamasi).
+    // CompiledProgram'a tasir (bkz. bytecode.h aciklamasi).
     bool used_non_builtin_module_fn() const { return non_builtin_module_fn_; }
     const std::vector<std::string>& non_builtin_module_fn_names() const { return non_builtin_names_; }
 
@@ -294,13 +294,12 @@ private:
     void compile_try(const TryCatchStatement& s);
     // BUG FIX (VM finally-on-return): try/catch içinde AKTİF finally blokları. `return`
     // RETURN'den ÖNCE bunları (içten-dışa) emit eder — yoksa RETURN inline finally'yi atlar
-    // (interpreter'da finally return'de çalışır; VM'de çalışmıyordu → differential ayrışma).
+    // (yorumlayıcıda finally return'de çalışıyordu; VM'de çalışmıyordu → differential ayrışma).
     std::vector<const BlockStatement*> pending_finally_;
     // floor'a kadarki (dahil değil) bekleyen finally'leri içten-dışa emit et. return→floor=0
     // (fonksiyona kadar hepsi); break/continue→loop'un finally_floor'u (yalnız döngü-içi).
     void emit_pending_finallys(size_t floor = 0);
-    // print/write ortak yolu: argümanları " " ile ayırıp yazar, newline=true ise "\n" ekler
-    // (interpreter build_output + PrintStatement semantiğiyle birebir).
+    // print/write ortak yolu: argümanları " " ile ayırıp yazar, newline=true ise "\n" ekler.
     void emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs, bool newline);
     // CALL_BUILTIN indeks alani (b + sonraki NOP.b) 32 bit; eskiden 8 bitti ve 255 ustu SESSIZCE kirpiliyordu.
     // Sigmazsa burasi gurultulu hata verir.
@@ -308,7 +307,7 @@ private:
 
     // Builtin OLMAYAN "mod::fn" cagrisi gorulunce KOK compiler'da isaretle (closure'lar
     // alt-compiler'da derlenir → parent_ zinciriyle koke cikilir). Compiler::compile bunu
-    // CompiledProgram'a tasir; CLI-VM bayragi gorunce tree-walk'a duser (runtime'da
+    // CompiledProgram'a tasir; CLI bayragi gorunce calistirmadan hata verir (runtime'da
     // "Cagirilabilir degil" ile cokmek yerine).
     void mark_non_builtin_module_fn(const std::string& name) {
         FunctionCompiler* c = this;
@@ -356,8 +355,7 @@ private:
 class Compiler {
 public:
     // base_dir: directory of the main script — the root for resolving `use "file.lk"`
-    // (file includes) and the sandbox boundary. Empty → file includes are not compiled
-    // (they NOP → interpreter fallback, the pre-existing behaviour).
+    // (file includes) and the sandbox boundary. Empty → a file include is a compile error.
     static CompiledProgram compile(const Program& program, const std::string& base_dir = "");
     // host_modules: çalıştırıcının (ör. `lk test`: assert) kendisi sağladığı modüller — `use <ad>`
     // reddedilmez, `ad::fn(...)` çağrısı çalıştırıcının global'e koyduğu "ad::fn" değerine gider.

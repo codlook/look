@@ -1,5 +1,5 @@
 #pragma once
-// LOOK 2 — rota yol parametreleri işleyiciye ADA göre verilir (iki motorda tek tanım).
+// LOOK 2 — rota yol parametreleri işleyiciye ADA göre verilir (tek tanım).
 //
 //   route("GET", "/c/{id}/{slug}", function($slug) { ... })     → $slug = yoldaki slug
 //

@@ -6,8 +6,6 @@
 namespace look {
 
 // ── Parallel task lifecycle ───────────────────────────────────────────────────
-// Shared between interpreter.cpp (tree-walk) and vm.cpp (bytecode).
-//
 // Default limit: 64.  Override with env var LOOK_PARALLEL_LIMIT (integer).
 // Small server: 32.  CPU-bound batch workers: 128.
 // Note: SMTP / HTTP listeners are I/O-bound and must use event_loop, not parallel().
