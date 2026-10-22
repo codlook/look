@@ -475,17 +475,17 @@ void Parser::check_binop_chain() {
 static std::unique_ptr<Expression> element_step(std::unique_ptr<Expression>& target, const char* op, bool postfix) {
     std::unique_ptr<AssignmentExpression> a;
     auto one = [] { return std::make_unique<NumberLiteral>(1); };
-    if (auto* idx = dynamic_cast<IndexExpression*>(target.get())) {
+    if (auto* idx = node_as<IndexExpression>(target.get())) {
         auto index = std::move(const_cast<std::unique_ptr<Expression>&>(idx->index));
-        if (auto* var = dynamic_cast<Variable*>(idx->object.get()))
+        if (auto* var = node_as<Variable>(idx->object.get()))
             a = std::make_unique<AssignmentExpression>(var->name, op, one(), std::move(index));
         else {
             auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(idx->object));
             a = std::make_unique<AssignmentExpression>("", op, one(), std::move(index), std::move(obj));
         }
-    } else if (auto* ma = dynamic_cast<MemberAccessExpression*>(target.get())) {
+    } else if (auto* ma = node_as<MemberAccessExpression>(target.get())) {
         auto index = std::make_unique<StringLiteral>(ma->field);
-        if (auto* var = dynamic_cast<Variable*>(ma->object.get()))
+        if (auto* var = node_as<Variable>(ma->object.get()))
             a = std::make_unique<AssignmentExpression>(var->name, op, one(), std::move(index));
         else {
             auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(ma->object));
@@ -514,25 +514,25 @@ std::unique_ptr<Expression> Parser::assignment() {
             auto val = assignment();
 
             // $arr[i] = val   (i basit değişken VEYA zincir: $a[0][1], $m[k].x'in tabanı)
-            if (auto* idx = dynamic_cast<IndexExpression*>(expr.get())) {
+            if (auto* idx = node_as<IndexExpression>(expr.get())) {
                 auto index = std::move(const_cast<std::unique_ptr<Expression>&>(idx->index));
-                if (auto* var = dynamic_cast<Variable*>(idx->object.get()))
+                if (auto* var = node_as<Variable>(idx->object.get()))
                     return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
                 // Zincirli: object bir ifade ($arr[0], $l.s, ...) — in-place mutasyon
                 auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(idx->object));
                 return std::make_unique<AssignmentExpression>("", op, std::move(val), std::move(index), std::move(obj));
             }
             // $obj.field = val  → $obj["field"] = val  (obj basit değişken VEYA zincir)
-            if (auto* ma = dynamic_cast<MemberAccessExpression*>(expr.get())) {
+            if (auto* ma = node_as<MemberAccessExpression>(expr.get())) {
                 auto index = std::make_unique<StringLiteral>(ma->field);
-                if (auto* var = dynamic_cast<Variable*>(ma->object.get()))
+                if (auto* var = node_as<Variable>(ma->object.get()))
                     return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
                 // Zincirli: $l.s.x = 9, $arr[0].x = 7, $map["k"].x = 3
                 auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(ma->object));
                 return std::make_unique<AssignmentExpression>("", op, std::move(val), std::move(index), std::move(obj));
             }
             // $var = val
-            if (auto* var = dynamic_cast<Variable*>(expr.get()))
+            if (auto* var = node_as<Variable>(expr.get()))
                 return std::make_unique<AssignmentExpression>(var->name, op, std::move(val));
 
             throw look::LookParseError("Invalid assignment target.", previous().line, previous().column);
@@ -751,10 +751,10 @@ std::unique_ptr<Expression> Parser::call() {
                    // Only member access on expressions that can be containers
                    // (Variable, IndexExpression, CallExpression, MemberAccessExpression)
                    // NOT on literals — those use '.' for string concat
-                   (dynamic_cast<Variable*>(expr.get()) ||
-                    dynamic_cast<IndexExpression*>(expr.get()) ||
-                    dynamic_cast<CallExpression*>(expr.get()) ||
-                    dynamic_cast<MemberAccessExpression*>(expr.get()))) {
+                   (node_as<Variable>(expr.get()) ||
+                    node_as<IndexExpression>(expr.get()) ||
+                    node_as<CallExpression>(expr.get()) ||
+                    node_as<MemberAccessExpression>(expr.get()))) {
             // $obj.field — member access (dot followed by bare identifier, not $var)
             advance(); // consume '.'
             auto field = consume(TokenType::IDENT, "Expect field name after '.'.");

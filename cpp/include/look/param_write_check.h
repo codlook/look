@@ -60,15 +60,15 @@ struct Walk {
         static const std::set<std::string> pure = {
             "count", "len", "empty", "isset", "is_array", "is_map", "is_null", "is_string",
             "is_int", "in_array", "typeof", "type" };
-        if (auto* v = dynamic_cast<const Variable*>(callee)) return pure.count(bare(v->name)) > 0;
+        if (auto* v = node_as<Variable>(callee)) return pure.count(bare(v->name)) > 0;
         return false;
     }
 
     // `value` = bu ifadenin DEĞERİ bir yere akıyor mu (döndürülüyor, atanıyor, veriliyor).
     void expr(const Expression* e, bool value) {
         if (!e) return;
-        if (auto* v = dynamic_cast<const Variable*>(e)) { if (value) use(v->name); return; }
-        if (auto* f = dynamic_cast<const FunctionExpression*>(e)) {
+        if (auto* v = node_as<Variable>(e)) { if (value) use(v->name); return; }
+        if (auto* f = node_as<FunctionExpression>(e)) {
             closures.push_back(f);
             for (auto& d : f->defaults) expr(d.get(), false);
             // Closure parametreyi yakalıyorsa değeri onunla birlikte gider.
@@ -76,7 +76,7 @@ struct Walk {
             for (auto& n : f->captures)   use(n);
             return;
         }
-        if (auto* a = dynamic_cast<const AssignmentExpression*>(e)) {
+        if (auto* a = node_as<AssignmentExpression>(e)) {
             expr(a->value.get(), true);
             if (a->index || a->object) {
                 expr(a->index.get(), false);
@@ -88,9 +88,9 @@ struct Walk {
             }
             return;
         }
-        if (auto* u = dynamic_cast<const UnaryExpression*>(e)) {
+        if (auto* u = node_as<UnaryExpression>(e)) {
             if (u->op == "++" || u->op == "--") {
-                if (auto* v = dynamic_cast<const Variable*>(u->right.get())) {
+                if (auto* v = node_as<Variable>(u->right.get())) {
                     if (is_param(v->name)) rebound.insert(bare(v->name));   // sayı: değer zaten kopya
                 } else if (auto* r = root_of(u->right.get())) {
                     write(r->name, e, "an element or field of it is changed with " + u->op);
@@ -100,16 +100,16 @@ struct Walk {
             expr(u->right.get(), false);
             return;
         }
-        if (auto* c = dynamic_cast<const CallExpression*>(e)) {
+        if (auto* c = node_as<CallExpression>(e)) {
             expr(c->callee.get(), false);
-            const auto* cv = dynamic_cast<const Variable*>(c->callee.get());
+            const auto* cv = node_as<Variable>(c->callee.get());
             const bool pushpop = cv && (bare(cv->name) == "push" || bare(cv->name) == "pop");
             const bool pure = reads_only(c->callee.get());
             for (size_t i = 0; i < c->arguments.size(); ++i) {
                 if (pushpop && i == 0) {
                     if (auto* r = root_of(c->arguments[0].get())) {
                         write(r->name, e, bare(cv->name) + "() changes it");
-                        if (auto* ix = dynamic_cast<const IndexExpression*>(c->arguments[0].get())) expr(ix->index.get(), false);
+                        if (auto* ix = node_as<IndexExpression>(c->arguments[0].get())) expr(ix->index.get(), false);
                         continue;
                     }
                 }
@@ -117,13 +117,13 @@ struct Walk {
             }
             return;
         }
-        if (auto* x = dynamic_cast<const IndexExpression*>(e)) { expr(x->object.get(), false); expr(x->index.get(), false); return; }
-        if (auto* x = dynamic_cast<const MemberAccessExpression*>(e)) { expr(x->object.get(), false); return; }
-        if (auto* x = dynamic_cast<const BinaryExpression*>(e)) { expr(x->left.get(), false); expr(x->right.get(), false); return; }
-        if (auto* x = dynamic_cast<const TernaryExpression*>(e)) { expr(x->condition.get(), false); expr(x->then_expr.get(), value); expr(x->else_expr.get(), value); return; }
-        if (auto* x = dynamic_cast<const ArrayLiteral*>(e)) { for (auto& el : x->elements) expr(el.get(), true); return; }
-        if (auto* x = dynamic_cast<const AssocArrayLiteral*>(e)) { for (auto& p : x->pairs) { expr(p.first.get(), false); expr(p.second.get(), true); } return; }
-        if (auto* x = dynamic_cast<const StructLiteralExpression*>(e)) { for (auto& p : x->fields) expr(p.second.get(), true); return; }
+        if (auto* x = node_as<IndexExpression>(e)) { expr(x->object.get(), false); expr(x->index.get(), false); return; }
+        if (auto* x = node_as<MemberAccessExpression>(e)) { expr(x->object.get(), false); return; }
+        if (auto* x = node_as<BinaryExpression>(e)) { expr(x->left.get(), false); expr(x->right.get(), false); return; }
+        if (auto* x = node_as<TernaryExpression>(e)) { expr(x->condition.get(), false); expr(x->then_expr.get(), value); expr(x->else_expr.get(), value); return; }
+        if (auto* x = node_as<ArrayLiteral>(e)) { for (auto& el : x->elements) expr(el.get(), true); return; }
+        if (auto* x = node_as<AssocArrayLiteral>(e)) { for (auto& p : x->pairs) { expr(p.first.get(), false); expr(p.second.get(), true); } return; }
+        if (auto* x = node_as<StructLiteralExpression>(e)) { for (auto& p : x->fields) expr(p.second.get(), true); return; }
     }
 
     void block(const BlockStatement* b) { if (b) for (auto& s : b->statements) stmt(s.get()); }
@@ -137,41 +137,41 @@ struct Walk {
     void stmt(const Statement* s) {
         if (!s) return;
         if (s->loc.line > 0) cur_line = s->loc.line;
-        if (auto* x = dynamic_cast<const ExpressionStatement*>(s)) { expr(x->expression.get(), false); return; }
-        if (auto* x = dynamic_cast<const PrintStatement*>(s)) { for (auto& e : x->expressions) expr(e.get(), true); return; }
-        if (auto* x = dynamic_cast<const WriteStatement*>(s)) { for (auto& e : x->expressions) expr(e.get(), true); return; }
-        if (auto* x = dynamic_cast<const ReturnStatement*>(s)) { expr(x->expression.get(), true); return; }
-        if (auto* x = dynamic_cast<const ThrowStatement*>(s)) { expr(x->expression.get(), true); return; }
-        if (auto* x = dynamic_cast<const BlockStatement*>(s)) { block(x); return; }
-        if (auto* x = dynamic_cast<const IfStatement*>(s)) { expr(x->condition.get(), false); block(x->then_branch.get()); block(x->else_branch.get()); return; }
-        if (auto* x = dynamic_cast<const WhileStatement*>(s)) {
+        if (auto* x = node_as<ExpressionStatement>(s)) { expr(x->expression.get(), false); return; }
+        if (auto* x = node_as<PrintStatement>(s)) { for (auto& e : x->expressions) expr(e.get(), true); return; }
+        if (auto* x = node_as<WriteStatement>(s)) { for (auto& e : x->expressions) expr(e.get(), true); return; }
+        if (auto* x = node_as<ReturnStatement>(s)) { expr(x->expression.get(), true); return; }
+        if (auto* x = node_as<ThrowStatement>(s)) { expr(x->expression.get(), true); return; }
+        if (auto* x = node_as<BlockStatement>(s)) { block(x); return; }
+        if (auto* x = node_as<IfStatement>(s)) { expr(x->condition.get(), false); block(x->then_branch.get()); block(x->else_branch.get()); return; }
+        if (auto* x = node_as<WhileStatement>(s)) {
             in_loop([&] { expr(x->condition.get(), false); stmt(x->body.get()); });
             return;
         }
-        if (auto* x = dynamic_cast<const ForStatement*>(s)) {
+        if (auto* x = node_as<ForStatement>(s)) {
             stmt(x->init.get());
             in_loop([&] { expr(x->condition.get(), false); stmt(x->body.get()); expr(x->post.get(), false); });
             return;
         }
-        if (auto* x = dynamic_cast<const ForeachStatement*>(s)) {
+        if (auto* x = node_as<ForeachStatement>(s)) {
             expr(x->iterable.get(), false);
             if (is_param(x->key_var))   rebound.insert(bare(x->key_var));
             if (is_param(x->value_var)) rebound.insert(bare(x->value_var));
             in_loop([&] { stmt(x->body.get()); });
             return;
         }
-        if (auto* x = dynamic_cast<const TryCatchStatement*>(s)) {
+        if (auto* x = node_as<TryCatchStatement>(s)) {
             block(x->try_block.get());
             if (is_param(x->catch_var)) rebound.insert(bare(x->catch_var));
             block(x->catch_block.get()); block(x->finally_block.get());
             return;
         }
-        if (auto* x = dynamic_cast<const SwitchStatement*>(s)) {
+        if (auto* x = node_as<SwitchStatement>(s)) {
             expr(x->subject.get(), false);
             for (auto& c : x->cases) { for (auto& v : c.values) expr(v.get(), false); for (auto& b : c.body) stmt(b.get()); }
             return;
         }
-        if (auto* x = dynamic_cast<const FunctionDeclaration*>(s)) {
+        if (auto* x = node_as<FunctionDeclaration>(s)) {
             inner_fns.push_back(x);
             for (auto& n : x->free_names) use(n);   // iç fonksiyon parametreyi yakalıyorsa
             return;

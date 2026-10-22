@@ -289,20 +289,20 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
     // proto_.lines ZATEN vardı ama emit() hep 0 basıyordu ("sonradan eklenecek") → VM
     // hataları satır/konum veremiyordu (tree-walk "File/Line" veriyordu, VM sadece mesaj).
     if (stmt.loc.line > 0) cur_line_ = stmt.loc.line;
-    if (auto* s = dynamic_cast<const ExpressionStatement*>(&stmt)) {
+    if (auto* s = node_as<ExpressionStatement>(&stmt)) {
         // Atama statement olarak kullanılıyorsa sonuç atılır → değeri geri-okuyan
         // MOVE'u atla. Aksi halde compile_expr(Assignment) her seferinde slot'u temp'e
         // kopyalar; `$s .= x` gibi akümülatörde bu O(n²) yaratır (kopya = tüm string).
-        if (auto* a = dynamic_cast<const AssignmentExpression*>(s->expression.get())) {
+        if (auto* a = node_as<AssignmentExpression>(s->expression.get())) {
             compile_assign_expr(*a);
         } else {
             // Sonucu atılan SAF yerleşik (array::push($l, $x) tek başına): hiçbir şey yapmaz, sessiz
             // hatadır → program başlamaz, nedeni söylenir (var olmayan fonksiyon kuralı gibi).
-            if (auto* call = dynamic_cast<const CallExpression*>(s->expression.get())) {
+            if (auto* call = node_as<CallExpression>(s->expression.get())) {
                 std::string full;
-                if (auto* sr = dynamic_cast<const ScopeResolution*>(call->callee.get()))
+                if (auto* sr = node_as<ScopeResolution>(call->callee.get()))
                     full = sr->module_name + "::" + sr->member_name;
-                else if (auto* v = dynamic_cast<const Variable*>(call->callee.get()))
+                else if (auto* v = node_as<Variable>(call->callee.get()))
                     if (is_reserved_builtin(v->name)) full = v->name;   // count(), strtoupper() … (gölgelenemez)
                 if (!full.empty() && is_pure_builtin(full))
                     throw LookProgramError(unused_result_message(full, stmt.loc.line), stmt.loc.line);
@@ -318,22 +318,22 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
     // yoktu: print($a,$b) yorumlayıcıda "a b\n", VM'de "ab" üretiyordu (hem CLI-VM hem
     // web-VM). Differential kaçırmıştı: gövde tek argümanla print ediyor ve $(...) zaten
     // trailing newline'ı yutuyor.
-    else if (auto* s = dynamic_cast<const PrintStatement*>(&stmt)) {
+    else if (auto* s = node_as<PrintStatement>(&stmt)) {
         emit_output_args(s->expressions, /*newline=*/true);
     }
-    else if (auto* s = dynamic_cast<const WriteStatement*>(&stmt)) {
+    else if (auto* s = node_as<WriteStatement>(&stmt)) {
         emit_output_args(s->expressions, /*newline=*/false);
     }
-    else if (auto* s = dynamic_cast<const ReturnStatement*>(&stmt)) {
+    else if (auto* s = node_as<ReturnStatement>(&stmt)) {
         compile_return(*s);
     }
-    else if (auto* s = dynamic_cast<const ThrowStatement*>(&stmt)) {
+    else if (auto* s = node_as<ThrowStatement>(&stmt)) {
         // throw <ifade> → değeri hesapla, THROW opcode (try_stack_ / LOAD_EXC yakalar)
         uint16_t r = compile_expr(*s->expression);
         emit(OpCode::THROW, r);
         free_temp(r);
     }
-    else if (dynamic_cast<const BreakStatement*>(&stmt)) {
+    else if (node_as<BreakStatement>(&stmt)) {
         // break en yakın breakable bağlama gider — switch veya döngü.
         if (loop_stack_.empty())
             throw LookCompileError("break outside a loop/switch");
@@ -342,7 +342,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         int p = emit_jump(OpCode::JUMP);
         loop_stack_.back().break_patches.push_back(p);
     }
-    else if (dynamic_cast<const ContinueStatement*>(&stmt)) {
+    else if (node_as<ContinueStatement>(&stmt)) {
         // continue switch'i ATLAR — en yakın gerçek DÖNGÜYE gider (C semantiği).
         int idx = -1;
         for (int i = (int)loop_stack_.size() - 1; i >= 0; --i)
@@ -360,37 +360,37 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             loop_stack_[idx].continue_patches.push_back(p);
         }
     }
-    else if (auto* s = dynamic_cast<const IfStatement*>(&stmt)) {
+    else if (auto* s = node_as<IfStatement>(&stmt)) {
         compile_if(*s);
     }
-    else if (auto* s = dynamic_cast<const WhileStatement*>(&stmt)) {
+    else if (auto* s = node_as<WhileStatement>(&stmt)) {
         compile_while(*s);
     }
-    else if (auto* s = dynamic_cast<const ForStatement*>(&stmt)) {
+    else if (auto* s = node_as<ForStatement>(&stmt)) {
         compile_for(*s);
     }
-    else if (auto* s = dynamic_cast<const ForeachStatement*>(&stmt)) {
+    else if (auto* s = node_as<ForeachStatement>(&stmt)) {
         compile_foreach(*s);
     }
-    else if (auto* s = dynamic_cast<const TryCatchStatement*>(&stmt)) {
+    else if (auto* s = node_as<TryCatchStatement>(&stmt)) {
         compile_try(*s);
     }
-    else if (auto* s = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
+    else if (auto* s = node_as<FunctionDeclaration>(&stmt)) {
         compile_func_decl(*s);
     }
-    else if (auto* s = dynamic_cast<const SwitchStatement*>(&stmt)) {
+    else if (auto* s = node_as<SwitchStatement>(&stmt)) {
         compile_switch(*s);
     }
-    else if (auto* s = dynamic_cast<const ConstBlock*>(&stmt)) {
+    else if (auto* s = node_as<ConstBlock>(&stmt)) {
         compile_const_block(*s);
     }
-    else if (auto* s = dynamic_cast<const StructDeclaration*>(&stmt)) {
+    else if (auto* s = node_as<StructDeclaration>(&stmt)) {
         compile_struct_decl(*s);
     }
-    else if (auto* s = dynamic_cast<const BlockStatement*>(&stmt)) {
+    else if (auto* s = node_as<BlockStatement>(&stmt)) {
         compile_block(*s);
     }
-    else if (auto* us = dynamic_cast<const UseStatement*>(&stmt)) {
+    else if (auto* us = node_as<UseStatement>(&stmt)) {
         // `use <ad>` iki farklı şeyi karşılar:
         //   1) stdlib modülü (string, jobs, template…) → builtin tablosunda ZATEN
         //      bağlı; bytecode'da yapılacak bir şey yok → NOP (eski davranış doğru).
@@ -481,7 +481,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             emit(OpCode::NOP);
         }
     }
-    else if (auto* ufs = dynamic_cast<const UseFileStatement*>(&stmt)) {
+    else if (auto* ufs = node_as<UseFileStatement>(&stmt)) {
         // `use "file.lk"` — compile the included file's statements into THIS unit so its
         // functions become BYTECODE_FN in VM globals. (Before this, the whole app stayed on
         // the old interpreter fallback — measured ~57× slower on compute: QR/PDF/inflate.) This
@@ -916,19 +916,19 @@ void FunctionCompiler::compile_const_block(const ConstBlock& s) {
             // Önceki iota ifadesini yeniden değerlendir (iota değeri artmış)
             // Compiler basitleştirmesi: iota_ doğrusal → sadece sayısal destekle
             v = Value(iota_val_++);
-        } else if (auto* iota = dynamic_cast<const IotaExpression*>(item.value.get())) {
+        } else if (auto* iota = node_as<IotaExpression>(item.value.get())) {
             v = Value(iota_val_++);
             last_iota_expr = nullptr;
         } else {
             // Sabit expression — compile-time eval girişimi
             // Basit literaller için direkt değer al
-            if (auto* n = dynamic_cast<const NumberLiteral*>(item.value.get())) {
+            if (auto* n = node_as<NumberLiteral>(item.value.get())) {
                 v = Value(n->value);
-            } else if (auto* f = dynamic_cast<const FloatLiteral*>(item.value.get())) {
+            } else if (auto* f = node_as<FloatLiteral>(item.value.get())) {
                 v = Value(f->value);
-            } else if (auto* str = dynamic_cast<const StringLiteral*>(item.value.get())) {
+            } else if (auto* str = node_as<StringLiteral>(item.value.get())) {
                 v = Value(str->value);
-            } else if (auto* b = dynamic_cast<const BooleanLiteral*>(item.value.get())) {
+            } else if (auto* b = node_as<BooleanLiteral>(item.value.get())) {
                 v = Value(b->value);
             } else {
                 // Karmaşık expression: runtime'da değerlendir, global'e store et
@@ -1016,11 +1016,11 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             std::vector<std::pair<const Expression*, std::string>> rev;
             const Expression* cur = e.object.get();
             while (cur) {
-                if (auto* ix = dynamic_cast<const IndexExpression*>(cur)) {
+                if (auto* ix = node_as<IndexExpression>(cur)) {
                     rev.push_back({ix->index.get(), ""}); cur = ix->object.get();
-                } else if (auto* ma = dynamic_cast<const MemberAccessExpression*>(cur)) {
+                } else if (auto* ma = node_as<MemberAccessExpression>(cur)) {
                     rev.push_back({nullptr, ma->field}); cur = ma->object.get();
-                } else if (auto* v = dynamic_cast<const Variable*>(cur)) {
+                } else if (auto* v = node_as<Variable>(cur)) {
                     root = v; break;
                 } else { is_path = false; break; }       // f()[0] = x gibi: kök bir değişken değil
             }
@@ -1222,27 +1222,27 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return (dest == NO_REG) ? alloc_temp() : dest;
     };
 
-    if (auto* e = dynamic_cast<const NumberLiteral*>(&expr)) {
+    if (auto* e = node_as<NumberLiteral>(&expr)) {
         uint16_t r = ensure_dest();
         emit_load_const(r, Value(e->value), expr.loc.line);
         return r;
     }
-    if (auto* e = dynamic_cast<const FloatLiteral*>(&expr)) {
+    if (auto* e = node_as<FloatLiteral>(&expr)) {
         uint16_t r = ensure_dest();
         emit_load_const(r, Value(e->value), expr.loc.line);
         return r;
     }
-    if (auto* e = dynamic_cast<const BooleanLiteral*>(&expr)) {
+    if (auto* e = node_as<BooleanLiteral>(&expr)) {
         uint16_t r = ensure_dest();
         emit_load_const(r, Value(e->value), expr.loc.line);
         return r;
     }
-    if (dynamic_cast<const NullLiteral*>(&expr)) {
+    if (node_as<NullLiteral>(&expr)) {
         uint16_t r = ensure_dest();
         emit(OpCode::LOAD_NULL, r);
         return r;
     }
-    if (auto* e = dynamic_cast<const StringLiteral*>(&expr)) {
+    if (auto* e = node_as<StringLiteral>(&expr)) {
         uint16_t r = ensure_dest();
         // Interpolation içeriyor mu? Lexer raw string gönderir
         // Basit string (interpolation yok) → LOAD_CONST
@@ -1254,7 +1254,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return r;
     }
 
-    if (auto* e = dynamic_cast<const Variable*>(&expr)) {
+    if (auto* e = node_as<Variable>(&expr)) {
         auto loc = resolve_var(e->name);
         if (loc.kind == VarKind::LOCAL) {
             // Hedef verilmediyse yerelin kendi register'ı döner (kopya yok).
@@ -1281,7 +1281,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return r;
     }
 
-    if (auto* e = dynamic_cast<const AssignmentExpression*>(&expr)) {
+    if (auto* e = node_as<AssignmentExpression>(&expr)) {
         if (e->index) {
             // Eleman/alan ataması: değer, yazılan elemandır (sonek ++/-- için eski değer).
             uint16_t r = ensure_dest();
@@ -1301,16 +1301,16 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return r;
     }
 
-    if (auto* e = dynamic_cast<const BinaryExpression*>(&expr)) {
+    if (auto* e = node_as<BinaryExpression>(&expr)) {
         return compile_binary(*e, dest);
     }
 
-    if (auto* e = dynamic_cast<const UnaryExpression*>(&expr)) {
+    if (auto* e = node_as<UnaryExpression>(&expr)) {
         // ++/-- — VM'de eskiden desteklenmiyordu (compile hatası → interpreter'a
         // görünmez sapma). Semantik: prefix yeni değeri,
         // postfix eski değeri döndürür; değişkene geri yazılır.
         if (e->op == "++" || e->op == "--") {
-            auto* var = dynamic_cast<const Variable*>(e->right.get());
+            auto* var = node_as<Variable>(e->right.get());
             if (!var) throw LookCompileError("++/-- requires a variable");
             OpCode delta_op = (e->op == "++") ? OpCode::ADD : OpCode::SUB;
             uint16_t one = alloc_temp();
@@ -1350,7 +1350,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return r;
     }
 
-    if (auto* e = dynamic_cast<const TernaryExpression*>(&expr)) {
+    if (auto* e = node_as<TernaryExpression>(&expr)) {
         uint16_t cond = compile_expr(*e->condition);
         int jf = emit_jump(OpCode::JUMP_IF_FALSE, cond);
         free_temp(cond);
@@ -1365,27 +1365,27 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return r;
     }
 
-    if (auto* e = dynamic_cast<const CallExpression*>(&expr)) {
+    if (auto* e = node_as<CallExpression>(&expr)) {
         return compile_call(*e, dest);
     }
 
-    if (auto* e = dynamic_cast<const FunctionExpression*>(&expr)) {
+    if (auto* e = node_as<FunctionExpression>(&expr)) {
         return compile_closure(*e, dest);
     }
 
-    if (auto* e = dynamic_cast<const ArrayLiteral*>(&expr)) {
+    if (auto* e = node_as<ArrayLiteral>(&expr)) {
         return compile_array_lit(*e, dest);
     }
 
-    if (auto* e = dynamic_cast<const AssocArrayLiteral*>(&expr)) {
+    if (auto* e = node_as<AssocArrayLiteral>(&expr)) {
         return compile_assoc_lit(*e, dest);
     }
 
-    if (auto* e = dynamic_cast<const StructLiteralExpression*>(&expr)) {
+    if (auto* e = node_as<StructLiteralExpression>(&expr)) {
         return compile_struct_lit(*e, dest);
     }
 
-    if (auto* e = dynamic_cast<const IndexExpression*>(&expr)) {
+    if (auto* e = node_as<IndexExpression>(&expr)) {
         uint16_t obj = compile_expr(*e->object);
         uint16_t idx = compile_expr(*e->index);
         uint16_t r   = ensure_dest();
@@ -1394,7 +1394,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return r;
     }
 
-    if (auto* e = dynamic_cast<const MemberAccessExpression*>(&expr)) {
+    if (auto* e = node_as<MemberAccessExpression>(&expr)) {
         uint16_t obj = compile_expr(*e->object);
         uint16_t r   = ensure_dest();
         // Field ismi constant pool'a girer — runtime'da field index çözülür
@@ -1416,7 +1416,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         return r;
     }
 
-    if (auto* e = dynamic_cast<const ScopeResolution*>(&expr)) {
+    if (auto* e = node_as<ScopeResolution>(&expr)) {
         // module::func → LOAD_GLOBAL "module::func"
         std::string full = e->module_name + "::" + e->member_name;
         uint16_t r = ensure_dest();
@@ -1505,7 +1505,7 @@ uint16_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint16_t d
 
 uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) {
     // Özel fonksiyonlar: parallel, send, receive
-    if (auto* sr = dynamic_cast<const ScopeResolution*>(e.callee.get())) {
+    if (auto* sr = node_as<ScopeResolution>(e.callee.get())) {
         std::string full = sr->module_name + "::" + sr->member_name;
         int bidx = builtin_index(full);
         if (bidx >= 0) {
@@ -1535,7 +1535,7 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
         // görüp çalıştırmadan hata verir (bkz. CompiledProgram::uses_non_builtin_module_fn).
         mark_non_builtin_module_fn(full);
     }
-    if (auto* var = dynamic_cast<const Variable*>(e.callee.get())) {
+    if (auto* var = node_as<Variable>(e.callee.get())) {
         // LOOK 2: push($hedef, v) / pop($hedef) ilk argümanı olan DEĞİŞKENİ değiştirir. Hedef bir
         // yol ise (kökü değişken: $a, $m["rows"], $u.tags) PUSH_PATH/POP_PATH kökün kendi yerinde
         // yazınca-kopyala yapar. Eski builtin paylaşılan vektörü yerinde değiştiriyordu:
@@ -1544,11 +1544,11 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             std::vector<std::pair<const Expression*, std::string>> rev;
             const Variable* root = nullptr;
             for (const Expression* cur = e.arguments[0].get(); cur; ) {
-                if (auto* ix = dynamic_cast<const IndexExpression*>(cur)) {
+                if (auto* ix = node_as<IndexExpression>(cur)) {
                     rev.push_back({ix->index.get(), ""}); cur = ix->object.get();
-                } else if (auto* ma = dynamic_cast<const MemberAccessExpression*>(cur)) {
+                } else if (auto* ma = node_as<MemberAccessExpression>(cur)) {
                     rev.push_back({nullptr, ma->field}); cur = ma->object.get();
-                } else { root = dynamic_cast<const Variable*>(cur); break; }
+                } else { root = node_as<Variable>(cur); break; }
             }
             if (root && rev.size() <= 250) {
                 const bool is_push = var->name == "push";
@@ -1676,7 +1676,7 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
 
     // Genel CALL: callee'yi register'a al, argümanları sıraya diz
     // callee_ctx_ yalnız callee doğrudan bir AD iken açılır (iç içe ifadelere sızmasın).
-    callee_ctx_ = dynamic_cast<const Variable*>(e.callee.get()) != nullptr;
+    callee_ctx_ = node_as<Variable>(e.callee.get()) != nullptr;
     uint16_t fn = compile_expr(*e.callee);
     callee_ctx_ = false;
     // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
@@ -1700,7 +1700,7 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
     // ZORUNDA (genel CALL yoluna düşsünler diye) — o yüzden çözüm adı buraya
     // taşımak. 0 = ad yok (CALL_BUILTIN'in 16-bit indeks kalıbıyla aynı yöntem).
     uint32_t cname = 0;
-    if (auto* cv = dynamic_cast<const Variable*>(e.callee.get()))
+    if (auto* cv = node_as<Variable>(e.callee.get()))
         cname = u32((long long)add_const(Value(cv->name)) + 1, "constant index");
     emit(OpCode::NOP, argc, hi16(cname), lo16(cname));
     regs_->release_seq(base, argc);
@@ -1806,7 +1806,7 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
                 Parser par(lex.scan_tokens());
                 auto prog = par.parse();
                 if (!prog->statements.empty()) {
-                    if (auto* es = dynamic_cast<ExpressionStatement*>(prog->statements[0].get())) {
+                    if (auto* es = node_as<ExpressionStatement>(prog->statements[0].get())) {
                         // Fragment RUNTIME try/catch ile sarılır: eval hatası (ör.
                         // tanımsız değişken → strict LOAD_GLOBAL fırlatır) "{…}" literal
                         // olarak kalır (eski yorumlayıcının interpolate_string() kuralı).
@@ -1898,7 +1898,7 @@ uint16_t FunctionCompiler::compile_assoc_lit(const AssocArrayLiteral& e, uint16_
     bool distinct_string_keys = true;
     std::unordered_set<std::string> seen;
     for (auto& [k, v] : e.pairs) {
-        auto* sl = dynamic_cast<const StringLiteral*>(k.get());
+        auto* sl = node_as<StringLiteral>(k.get());
         if (!sl || !seen.insert(sl->value).second) { distinct_string_keys = false; break; }
     }
     OpCode set_op = distinct_string_keys ? OpCode::ASSOC_APPEND : OpCode::ARRAY_SET;

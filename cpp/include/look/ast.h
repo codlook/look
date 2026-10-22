@@ -13,48 +13,81 @@ struct SourceLocation {
     int column = 0;
 };
 
+// Düğüm türü etiketi. Derleyici ve yükleme denetimleri her düğümde "hangi tür?" sorar;
+// dynamic_cast zinciri (10–20 deneme) yerine etiket karşılaştırması: node_as<T>(p).
+// Her somut düğüm `final` ve doğrudan Expression/Statement'tan türer → etiket eşitliği
+// dynamic_cast ile aynı sonucu verir.
+enum class NodeKind : uint8_t {
+    StringLiteral, NumberLiteral, FloatLiteral, BooleanLiteral, NullLiteral, ArrayLiteral,
+    AssocArrayLiteral, FunctionExpression, Variable, IndexExpression, UnaryExpression,
+    BinaryExpression, AssignmentExpression, CallExpression, TernaryExpression, ScopeResolution,
+    IotaExpression, MemberAccessExpression, StructLiteralExpression,
+    ExpressionStatement, PrintStatement, WriteStatement, ReturnStatement, ThrowStatement,
+    BreakStatement, ContinueStatement, UseStatement, UseFileStatement, BlockStatement,
+    IfStatement, WhileStatement, ForStatement, ForeachStatement, TryCatchStatement,
+    SwitchStatement, StructDeclaration, ConstBlock, FunctionDeclaration,
+};
+
 struct Expression {
     SourceLocation loc;
+    NodeKind kind;
     virtual ~Expression() = default;
+protected:
+    explicit Expression(NodeKind k) : kind(k) {}
 };
 
 struct Statement {
     SourceLocation loc;
+    NodeKind kind;
     virtual ~Statement() = default;
+protected:
+    explicit Statement(NodeKind k) : kind(k) {}
 };
+
+// Somut düğümün tabanı: etiketi yapıcıda koyar, türün etiketini KIND olarak taşır.
+template <NodeKind K> struct ExprNode : Expression { static constexpr NodeKind KIND = K; ExprNode() : Expression(K) {} };
+template <NodeKind K> struct StmtNode : Statement  { static constexpr NodeKind KIND = K; StmtNode() : Statement(K) {} };
+
+// p T türündeyse T*, değilse (ya da p boşsa) nullptr — dynamic_cast<const T*>(p) ile aynı.
+template <class T, class B> inline const T* node_as(const B* p) {
+    return (p && p->kind == T::KIND) ? static_cast<const T*>(p) : nullptr;
+}
+template <class T, class B> inline T* node_as(B* p) {
+    return (p && p->kind == T::KIND) ? static_cast<T*>(p) : nullptr;
+}
 
 // ── Literals ──────────────────────────────────────────────────────────────────
 
-struct StringLiteral final : Expression {
+struct StringLiteral final : ExprNode<NodeKind::StringLiteral> {
     std::string value;
     bool raw = false;   // single-quoted: {$...} stays literal text
     explicit StringLiteral(std::string v, bool r = false) : value(std::move(v)), raw(r) {}
 };
 
-struct NumberLiteral final : Expression {
+struct NumberLiteral final : ExprNode<NodeKind::NumberLiteral> {
     int64_t value;
     explicit NumberLiteral(int64_t v) : value(v) {}
 };
 
-struct FloatLiteral final : Expression {
+struct FloatLiteral final : ExprNode<NodeKind::FloatLiteral> {
     double value;
     explicit FloatLiteral(double v) : value(v) {}
 };
 
-struct BooleanLiteral final : Expression {
+struct BooleanLiteral final : ExprNode<NodeKind::BooleanLiteral> {
     bool value;
     explicit BooleanLiteral(bool v) : value(v) {}
 };
 
-struct NullLiteral final : Expression {};
+struct NullLiteral final : ExprNode<NodeKind::NullLiteral> {};
 
 // $arr = [1, 2, "hello"]
-struct ArrayLiteral final : Expression {
+struct ArrayLiteral final : ExprNode<NodeKind::ArrayLiteral> {
     std::vector<std::unique_ptr<Expression>> elements;
 };
 
 // $map = ["key" => "val", "x" => 1]
-struct AssocArrayLiteral final : Expression {
+struct AssocArrayLiteral final : ExprNode<NodeKind::AssocArrayLiteral> {
     std::vector<std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>> pairs;
 };
 
@@ -62,7 +95,7 @@ struct AssocArrayLiteral final : Expression {
 struct BlockStatement;
 
 // function($a, $b) use ($conn, $db) { ... }  — closure with explicit capture
-struct FunctionExpression final : Expression {
+struct FunctionExpression final : ExprNode<NodeKind::FunctionExpression> {
     std::vector<std::string> parameters;
     std::vector<std::unique_ptr<Expression>> defaults;  // paralel; nullptr = varsayılan yok
     std::vector<std::string> captures;   // use ($conn, $db) listesi
@@ -75,20 +108,20 @@ struct FunctionExpression final : Expression {
 
 // ── Expressions ───────────────────────────────────────────────────────────────
 
-struct Variable final : Expression {
+struct Variable final : ExprNode<NodeKind::Variable> {
     std::string name;
     explicit Variable(std::string n) : name(std::move(n)) {}
 };
 
 // $arr[0]  /  $arr[$i]
-struct IndexExpression final : Expression {
+struct IndexExpression final : ExprNode<NodeKind::IndexExpression> {
     std::unique_ptr<Expression> object;
     std::unique_ptr<Expression> index;
     IndexExpression(std::unique_ptr<Expression> obj, std::unique_ptr<Expression> idx)
         : object(std::move(obj)), index(std::move(idx)) {}
 };
 
-struct UnaryExpression final : Expression {
+struct UnaryExpression final : ExprNode<NodeKind::UnaryExpression> {
     std::string op;
     std::unique_ptr<Expression> right;
     bool prefix;
@@ -96,7 +129,7 @@ struct UnaryExpression final : Expression {
         : op(std::move(op)), right(std::move(right)), prefix(prefix) {}
 };
 
-struct BinaryExpression final : Expression {
+struct BinaryExpression final : ExprNode<NodeKind::BinaryExpression> {
     std::unique_ptr<Expression> left;
     std::string op;
     std::unique_ptr<Expression> right;
@@ -105,7 +138,7 @@ struct BinaryExpression final : Expression {
 };
 
 // $x = expr  /  $x += expr  /  $arr[i] = expr
-struct AssignmentExpression final : Expression {
+struct AssignmentExpression final : ExprNode<NodeKind::AssignmentExpression> {
     std::string name;
     std::string op;
     std::unique_ptr<Expression> object;  // nullable — zincirli lvalue container
@@ -123,7 +156,7 @@ struct AssignmentExpression final : Expression {
           object(std::move(obj)), index(std::move(idx)), value(std::move(val)) {}
 };
 
-struct CallExpression final : Expression {
+struct CallExpression final : ExprNode<NodeKind::CallExpression> {
     std::unique_ptr<Expression> callee;
     std::vector<std::unique_ptr<Expression>> arguments;
     CallExpression(std::unique_ptr<Expression> callee, std::vector<std::unique_ptr<Expression>> args)
@@ -131,7 +164,7 @@ struct CallExpression final : Expression {
 };
 
 // $x ? $a : $b
-struct TernaryExpression final : Expression {
+struct TernaryExpression final : ExprNode<NodeKind::TernaryExpression> {
     std::unique_ptr<Expression> condition;
     std::unique_ptr<Expression> then_expr;
     std::unique_ptr<Expression> else_expr;
@@ -141,7 +174,7 @@ struct TernaryExpression final : Expression {
         : condition(std::move(cond)), then_expr(std::move(then_e)), else_expr(std::move(else_e)) {}
 };
 
-struct ScopeResolution final : Expression {
+struct ScopeResolution final : ExprNode<NodeKind::ScopeResolution> {
     std::string module_name;
     std::string member_name;
     ScopeResolution(std::string mod, std::string mem)
@@ -150,39 +183,39 @@ struct ScopeResolution final : Expression {
 
 // ── Statements ────────────────────────────────────────────────────────────────
 
-struct ExpressionStatement final : Statement {
+struct ExpressionStatement final : StmtNode<NodeKind::ExpressionStatement> {
     std::unique_ptr<Expression> expression;
     explicit ExpressionStatement(std::unique_ptr<Expression> e) : expression(std::move(e)) {}
 };
 
 // print(expr, ...)  → output + newline
-struct PrintStatement final : Statement {
+struct PrintStatement final : StmtNode<NodeKind::PrintStatement> {
     std::vector<std::unique_ptr<Expression>> expressions;
     explicit PrintStatement(std::vector<std::unique_ptr<Expression>> exprs)
         : expressions(std::move(exprs)) {}
 };
 
 // write(expr, ...)  → output, no newline
-struct WriteStatement final : Statement {
+struct WriteStatement final : StmtNode<NodeKind::WriteStatement> {
     std::vector<std::unique_ptr<Expression>> expressions;
     explicit WriteStatement(std::vector<std::unique_ptr<Expression>> exprs)
         : expressions(std::move(exprs)) {}
 };
 
-struct ReturnStatement final : Statement {
+struct ReturnStatement final : StmtNode<NodeKind::ReturnStatement> {
     std::unique_ptr<Expression> expression;
     explicit ReturnStatement(std::unique_ptr<Expression> e) : expression(std::move(e)) {}
 };
 
-struct ThrowStatement final : Statement {
+struct ThrowStatement final : StmtNode<NodeKind::ThrowStatement> {
     std::unique_ptr<Expression> expression;   // fırlatılan değer (string, error::new, vb.)
     explicit ThrowStatement(std::unique_ptr<Expression> e) : expression(std::move(e)) {}
 };
 
-struct BreakStatement    final : Statement {};
-struct ContinueStatement final : Statement {};
+struct BreakStatement    final : StmtNode<NodeKind::BreakStatement> {};
+struct ContinueStatement final : StmtNode<NodeKind::ContinueStatement> {};
 
-struct UseStatement final : Statement {
+struct UseStatement final : StmtNode<NodeKind::UseStatement> {
     std::string module_name;
     std::string alias;  // empty = no alias
     explicit UseStatement(std::string name, std::string alias = "")
@@ -191,16 +224,16 @@ struct UseStatement final : Statement {
 
 // use "routes/auth.lk"; — dosya modül sistemi (Phase 18.5)
 // Sadece function ve const tanımları caller scope'a aktarılır; $var paylaşılmaz.
-struct UseFileStatement final : Statement {
+struct UseFileStatement final : StmtNode<NodeKind::UseFileStatement> {
     std::string path;   // "routes/auth.lk" gibi — tırnak içindeki değer
     explicit UseFileStatement(std::string p) : path(std::move(p)) {}
 };
 
-struct BlockStatement final : Statement {
+struct BlockStatement final : StmtNode<NodeKind::BlockStatement> {
     std::vector<std::unique_ptr<Statement>> statements;
 };
 
-struct IfStatement final : Statement {
+struct IfStatement final : StmtNode<NodeKind::IfStatement> {
     std::unique_ptr<Expression> condition;
     std::unique_ptr<BlockStatement> then_branch;
     std::unique_ptr<BlockStatement> else_branch; // nullable
@@ -210,14 +243,14 @@ struct IfStatement final : Statement {
         : condition(std::move(cond)), then_branch(std::move(then_b)), else_branch(std::move(else_b)) {}
 };
 
-struct WhileStatement final : Statement {
+struct WhileStatement final : StmtNode<NodeKind::WhileStatement> {
     std::unique_ptr<Expression> condition;
     std::unique_ptr<BlockStatement> body;
     WhileStatement(std::unique_ptr<Expression> cond, std::unique_ptr<BlockStatement> body)
         : condition(std::move(cond)), body(std::move(body)) {}
 };
 
-struct ForStatement final : Statement {
+struct ForStatement final : StmtNode<NodeKind::ForStatement> {
     std::unique_ptr<Statement>  init;
     std::unique_ptr<Expression> condition;
     std::unique_ptr<Expression> post;
@@ -226,7 +259,7 @@ struct ForStatement final : Statement {
 
 // foreach ($arr as $val)
 // foreach ($arr as $key => $val)
-struct ForeachStatement final : Statement {
+struct ForeachStatement final : StmtNode<NodeKind::ForeachStatement> {
     std::unique_ptr<Expression> iterable;
     std::string key_var;   // empty = no key
     std::string value_var;
@@ -234,7 +267,7 @@ struct ForeachStatement final : Statement {
 };
 
 // try { } catch ($e) { } finally { }
-struct TryCatchStatement final : Statement {
+struct TryCatchStatement final : StmtNode<NodeKind::TryCatchStatement> {
     std::unique_ptr<BlockStatement> try_block;
     std::string catch_var;               // "$e" — nullable (catch without var)
     std::unique_ptr<BlockStatement> catch_block;  // nullable
@@ -247,16 +280,16 @@ struct SwitchCase {
     std::vector<std::unique_ptr<Statement>> body;
 };
 
-struct SwitchStatement final : Statement {
+struct SwitchStatement final : StmtNode<NodeKind::SwitchStatement> {
     std::unique_ptr<Expression> subject;
     std::vector<SwitchCase> cases;
 };
 
 // iota keyword — only meaningful inside const block
-struct IotaExpression final : Expression {};
+struct IotaExpression final : ExprNode<NodeKind::IotaExpression> {};
 
 // $obj.field  — member access on struct/assoc array
-struct MemberAccessExpression final : Expression {
+struct MemberAccessExpression final : ExprNode<NodeKind::MemberAccessExpression> {
     std::unique_ptr<Expression> object;
     std::string field;
     MemberAccessExpression(std::unique_ptr<Expression> obj, std::string f)
@@ -271,7 +304,7 @@ struct StructField {
     std::unique_ptr<Expression> default_expr; // nullable
 };
 
-struct StructDeclaration final : Statement {
+struct StructDeclaration final : StmtNode<NodeKind::StructDeclaration> {
     std::string name;
     std::vector<StructField> fields;
     // Tanımın imzası (alan adları, tipler, varsayılan ifadelerin metni): aynı adla ikinci bir
@@ -281,7 +314,7 @@ struct StructDeclaration final : Statement {
 };
 
 // Kullanici{ad: "Ali", yas: 30}
-struct StructLiteralExpression final : Expression {
+struct StructLiteralExpression final : ExprNode<NodeKind::StructLiteralExpression> {
     std::string struct_name;
     std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields;
 };
@@ -292,11 +325,11 @@ struct ConstItem {
     std::unique_ptr<Expression> value; // nullable = implicit iota
 };
 
-struct ConstBlock final : Statement {
+struct ConstBlock final : StmtNode<NodeKind::ConstBlock> {
     std::vector<ConstItem> items;
 };
 
-struct FunctionDeclaration final : Statement {
+struct FunctionDeclaration final : StmtNode<NodeKind::FunctionDeclaration> {
     std::string name;
     std::vector<std::string> parameters;
     std::vector<std::unique_ptr<Expression>> defaults;  // paralel; nullptr = varsayılan yok

@@ -300,8 +300,8 @@ int run_repl() {
         // Son cümle düz bir değişkene atamaysa (`$x = 5`) çalıştıktan sonra o değişken gösterilir.
         std::string shown_var;
         if (!program->statements.empty()) {
-            if (auto* es = dynamic_cast<ExpressionStatement*>(program->statements.back().get())) {
-                if (auto* as = dynamic_cast<AssignmentExpression*>(es->expression.get())) {
+            if (auto* es = node_as<ExpressionStatement>(program->statements.back().get())) {
+                if (auto* as = node_as<AssignmentExpression>(es->expression.get())) {
                     if (!as->object && !as->index) shown_var = as->name;
                 } else {
                     auto ret = std::make_unique<ReturnStatement>(std::move(es->expression));
