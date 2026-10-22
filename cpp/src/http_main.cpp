@@ -6,6 +6,7 @@
 // Mevcut --mode fcgi (default) hiç değişmez.
 // Aynı .lk kodu her iki modda çalışır.
 
+#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/builtins.h"
 #include "look/route_group.h"
 #include "look/metrics.h"
@@ -464,7 +465,7 @@ static void startup_note(const std::string& stderr_line, const std::string& log_
 static std::string read_file(const fs::path& p) {
     std::ifstream f(p);
     if (!f) throw std::runtime_error("Could not open file: " + p.string());
-    return {std::istreambuf_iterator<char>(f), {}};
+    return look::read_stream(f);
 }
 
 static void run_setup_http(const fs::path& script) {

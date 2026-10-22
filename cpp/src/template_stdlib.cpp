@@ -1,3 +1,4 @@
+#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/template.h"
 #include "look/struct_types.h"
 #include "look/stdlib.h"
@@ -598,7 +599,7 @@ static std::shared_ptr<const std::vector<TplNode>> load_nodes(const std::string&
     std::ifstream f(e.full, std::ios::binary);
     if (!f.is_open())
         throw std::runtime_error("Template file not found: " + e.full);
-    std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::string src = look::read_stream(f);
     e.nodes = std::make_shared<const std::vector<TplNode>>(TemplateEngine::parse(src, path));
     auto nodes = e.nodes;
     if (e.stamp.ok) {                 // stat alınamadıysa önbelleğe koyma (her seferinde oku)

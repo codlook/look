@@ -9,6 +9,7 @@
 //   3. try/catch: catch bloğuna girerken sadece STORE_VAR yapılanlar geçerli
 
 #include <unordered_set>
+#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/compiler.h"
 #include "look/param_write_check.h"   // log_param_writes — dahil edilen dosyaların uyarıları
 #include "look/builtins.h"
@@ -429,8 +430,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
 
                 std::ifstream f(path);
                 if (f) {
-                    std::string src((std::istreambuf_iterator<char>(f)),
-                                     std::istreambuf_iterator<char>());
+                    std::string src = look::read_stream(f);
                     try {
                         Lexer lx(src);
                         Parser p(lx.scan_tokens());
@@ -501,7 +501,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             if (g_compile_included.count(abs))          { emit(OpCode::NOP); return; }  // dedup/circular
             std::ifstream f(abs);
             if (!f) throw LookCompileError("use \"" + ufs->path + "\": the file cannot be opened");
-            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            std::string src = look::read_stream(f);
             g_compile_included.insert(abs);
             Lexer lx(src);
             Parser p(lx.scan_tokens());

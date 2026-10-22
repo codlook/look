@@ -1,3 +1,4 @@
+#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/capture_check.h"
@@ -78,7 +79,7 @@ static std::string read_file(const std::filesystem::path& path) {
     std::ifstream input(path);
     if (!input)
         throw std::runtime_error("Unable to open file: " + path.string());
-    return std::string(std::istreambuf_iterator<char>(input), {});
+    return look::read_stream(input);
 }
 
 // ── Semantik kontrol (yalniz --check) — tanimsiz bare fonksiyon cagrilari ──────

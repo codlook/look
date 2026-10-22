@@ -1,4 +1,5 @@
 // test_runner.cpp — `look test` subcommand implementation
+#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/test_runner.h"
 #include "look/runtime_host.h"
 #include "look/lexer.h"
@@ -46,7 +47,7 @@ namespace fs = std::filesystem;
 static std::string read_file(const fs::path& path) {
     std::ifstream f(path);
     if (!f) throw std::runtime_error("Could not open file: " + path.string());
-    return { std::istreambuf_iterator<char>(f), {} };
+    return look::read_stream(f);
 }
 
 // assert:: module — uses TestAssertionError to signal failure. `call` runs a LOOK function value
