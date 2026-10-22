@@ -51,6 +51,7 @@ Lexer::Lexer(std::string source)
 }
 
 std::vector<Token> Lexer::scan_tokens() {
+    tokens_.reserve(source_.size() / 4 + 16);   // kaba tahmin: ~4 bayt kaynak başına bir token
     while (!is_at_end()) {
         start_ = current_;
         start_col_ = col_;
@@ -68,7 +69,7 @@ std::vector<Token> Lexer::scan_tokens() {
         last_token_type_ = TokenType::SEMICOLON;
     }
     tokens_.push_back(Token{TokenType::EOF_TOKEN, "", std::nullopt, line_, col_});
-    return tokens_;
+    return std::move(tokens_);   // üye — `return tokens_` bütün vektörü (her token'ın metniyle) KOPYALIYORDU
 }
 
 // Sonraki satır bir devam operatörüyle başlıyorsa ASI bastır.
@@ -123,8 +124,7 @@ char Lexer::peek() const      { return is_at_end() ? '\0' : source_[current_]; }
 char Lexer::peek_next() const { return (current_ + 1 >= source_.length()) ? '\0' : source_[current_ + 1]; }
 
 void Lexer::add_token(TokenType type, std::optional<std::string> literal) {
-    std::string text = source_.substr(start_, current_ - start_);
-    tokens_.push_back(Token{type, text, literal, line_, start_col_});
+    tokens_.push_back(Token{type, source_.substr(start_, current_ - start_), std::move(literal), line_, start_col_});
     last_token_type_ = type;
 }
 
@@ -395,7 +395,7 @@ void Lexer::string(char quote) {
         throw std::runtime_error("Unterminated string at line " + std::to_string(line_));
 
     advance(); // closing quote
-    add_token(TokenType::STRING, value);
+    add_token(TokenType::STRING, std::move(value));
     // Tek tırnak = HAM: {$x} metin olarak kalır (doküman hep böyle diyordu; eskiden üç
     // tırnak türü de interpolasyon yapıyordu → şablon kaynağını güvenle yazmanın yolu yoktu).
     if (quote == '\'') tokens_.back().raw = true;
@@ -410,7 +410,7 @@ void Lexer::raw_string() {
     if (is_at_end())
         throw std::runtime_error("Unterminated raw string at line " + std::to_string(line_));
     advance(); // closing backtick
-    add_token(TokenType::STRING, value);
+    add_token(TokenType::STRING, std::move(value));
 }
 
 void Lexer::number() {
@@ -453,19 +453,20 @@ void Lexer::number() {
         }
     }
 
-    std::string text = source_.substr(start_, current_ - start_);
-    add_token(is_float ? TokenType::FLOAT_NUM : TokenType::NUMBER, text);
+    add_token(is_float ? TokenType::FLOAT_NUM : TokenType::NUMBER, source_.substr(start_, current_ - start_));
 }
 
 void Lexer::identifier() {
     while (!is_at_end() && (std::isalnum(peek()) || peek() == '_')) advance();
     std::string text = source_.substr(start_, current_ - start_);
-    // Strip leading $ for keyword lookup
-    std::string lookup = (text[0] == '$') ? text.substr(1) : text;
-    auto it = keywords.find(lookup);
-    // Only treat as keyword if there's no $ prefix
-    TokenType type = (text[0] != '$' && it != keywords.end()) ? it->second : TokenType::IDENT;
-    add_token(type);
+    // $ önekli ad hiçbir zaman anahtar kelime değildir — yalnız öneksiz ad tabloda aranır.
+    TokenType type = TokenType::IDENT;
+    if (text[0] != '$') {
+        auto it = keywords.find(text);
+        if (it != keywords.end()) type = it->second;
+    }
+    tokens_.push_back(Token{type, std::move(text), std::nullopt, line_, start_col_});
+    last_token_type_ = type;
 }
 
 } // namespace look
