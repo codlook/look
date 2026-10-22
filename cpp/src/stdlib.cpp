@@ -694,7 +694,12 @@ static Module make_string() {
             cv.notify_one();
         }
     };
-    static auto& regex_pool = *new RegexPool(REGEX_MAX_THREADS);
+    // İLK regex çağrısında kurulur. ESKİ HAL: make_string() (modül tablosu, HER süreçte kurulur)
+    // havuzu hemen kuruyordu → regex kullanmayan her lk / lk-cgi süreci de 8 thread başlatıyordu.
+    static auto regex_pool = []() -> RegexPool& {
+        static auto& pool = *new RegexPool(REGEX_MAX_THREADS);
+        return pool;
+    };
 
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
         if (g_regex_threads.load() >= REGEX_MAX_THREADS)
@@ -711,7 +716,7 @@ static Module make_string() {
         auto state = std::make_shared<State>();
 
         g_regex_threads++;
-        regex_pool.submit([state, fn = std::move(fn)]() mutable {
+        regex_pool().submit([state, fn = std::move(fn)]() mutable {
             try {
                 T r = fn();
                 std::lock_guard<std::mutex> lk(state->mtx);
