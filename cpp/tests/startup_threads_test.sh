@@ -20,12 +20,18 @@ print("done")'
 printf '%s\n' "$LOOP" > "$TMP/plain.lk"
 printf 'use string\nprint(string::regex_match("abc", "b"))\n%s\n' "$LOOP" > "$TMP/regex.lk"
 
-threads() {   # threads FILE -> thread count while it runs
+threads() {   # threads FILE -> the largest thread count seen while it runs
+    # Sampled until the process ends, not once after a fixed wait: a single look could come
+    # before the threads start (slow machine, sanitizer build) and miss them.
     "$LK" "$1" > /dev/null 2>&1 & local p=$!
-    sleep 0.3
-    local n; n=$(ls /proc/$p/task 2>/dev/null | wc -l)
+    local max=0 n
+    while kill -0 "$p" 2>/dev/null; do
+        n=$(ls /proc/$p/task 2>/dev/null | wc -l)
+        [ "$n" -gt "$max" ] && max=$n
+        sleep 0.01
+    done
     wait $p
-    echo "$n"
+    echo "$max"
 }
 
 fail=0
