@@ -31,6 +31,7 @@ namespace cfs = std::filesystem;
 thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
+thread_local std::vector<std::string>       g_compile_file;      // derlenen dosya yığını (hata konumu); boş = ana betik
 thread_local std::set<std::string>          g_host_modules;     // çalıştırıcının sağladığı modüller (lk test: assert)
 thread_local std::vector<std::string>       g_use_modules;      // görülen stdlib `use` modülleri → CompiledProgram::use_modules
 // Bu derleme biriminde (dahil edilen dosyalar dahil) görülen struct bildirimleri: ad → (imza, satır).
@@ -86,6 +87,11 @@ int FunctionCompiler::emit(OpCode op, uint16_t a, uint16_t b, uint16_t c) {
     int ip = (int)proto_.code.size();
     proto_.code.push_back(Instruction::make(op, a, b, c));
     proto_.lines.push_back(cur_line_); // satır tablosu — VM hata konumu için (compile_stmt doldurur)
+    // Dosya tablosu: derlenen dosya değiştiyse (dahil etmeye girildi/çıkıldı) bir satır.
+    static const std::string kMain;
+    const std::string& cf = g_compile_file.empty() ? kMain : g_compile_file.back();
+    if (proto_.file_runs.empty() ? !cf.empty() : proto_.file_runs.back().second != cf)
+        proto_.file_runs.push_back({ip, cf});
     return ip;
 }
 
@@ -438,6 +444,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                         look::log_param_writes(p.warnings(), path);
                         g_loaded.push_back(path);
                         g_module_asts.push_back(prog);
+                        g_compile_file.push_back(path);   // paket: uygulama dizini dışında → tam yol
+                        struct FilePop { ~FilePop() { g_compile_file.pop_back(); } } file_pop;
                         for (auto& sub : prog->statements) compile_stmt(*sub);
                         loaded = true;
                     } catch (const std::exception& ex) {
@@ -511,7 +519,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             look::log_param_writes(p.warnings(), abs);
             g_file_asts.push_back(prog);
             g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
-            struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); } } dir_pop;
+            g_compile_file.push_back(cfs::path(abs).lexically_relative(cfs::path(root)).generic_string());
+            struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); g_compile_file.pop_back(); } } dir_pop;
             for (auto& sub : prog->statements) compile_stmt(*sub);
         } catch (const LookCompileError& ex) {
             // Hangi dosyada olduğu söylenir (içteki bir dahil etme zaten adını koyduysa yinelenmez).
@@ -1964,6 +1973,7 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
 CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir) {
     g_compile_root = base_dir;
     g_compile_included.clear();
+    g_compile_file.clear();
     g_compile_structs.clear();
     g_compile_cur_dir.clear();
     g_use_modules.clear();

@@ -80,6 +80,8 @@ public:
     // Dışarı sızan (yakalanmamış) hata anındaki kaynak satırı — 0 = bilinmiyor.
     // Çağıran "Runtime Error ... File/Line" formatını üretebilsin diye.
     int   last_error_line() const { return last_error_line_; }
+    // Hatanın dosyası: "" = ana betik, yoksa ana betiğin dizinine göre göreli yol (dahil edilen dosya).
+    const std::string& last_error_file() const { return last_error_file_; }
     Value call_closure(const Closure& closure, std::vector<Value> args);
     const std::unordered_map<std::string, Value>& get_globals() const { return globals_; }
 
@@ -125,14 +127,17 @@ private:
     void        set_field(Value& obj, const std::string& field, const Value& val);
 
     int last_error_line_ = 0;   // yakalanmamış hatanın satırı (proto->lines[ip-1])
+    std::string last_error_file_;   // ...ve dosyası (proto->file_at; "" = ana betik)
 
     // Hata dışarı sızarken çalışan opcode'un satırını kaydet. frame.ip zaten bir sonraki
     // komutu gösterir (fetch sırasında ip++) → hatalı komut ip-1'dedir.
     template <class F, class P>
     void note_error_line(const F& frame, const P* proto) {
         int i = frame.ip - 1;
-        if (proto && i >= 0 && i < (int)proto->lines.size() && proto->lines[i] > 0)
+        if (proto && i >= 0 && i < (int)proto->lines.size() && proto->lines[i] > 0) {
             last_error_line_ = proto->lines[i];
+            last_error_file_ = proto->file_at(i);
+        }
     }
 
     // Shared read-only state

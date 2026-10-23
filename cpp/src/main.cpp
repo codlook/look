@@ -505,7 +505,10 @@ int main(int argc, char* argv[]) {
               catch (const look::LookRuntimeError&)      { throw; }  // zaten konumlu
               catch (const std::exception& ex) {
                 look::SourceLocation loc;
-                loc.file = filename;
+                // Dahil edilen dosyadaki hata o dosyanın adıyla (ESKİ HATA: ana betiğin adı + dahil
+                // edilen dosyanın satırı — "main.lk, Line: 7" beş satırlık bir main.lk için).
+                const std::string& ef = vm.last_error_file();
+                loc.file = ef.empty() ? filename : (std::filesystem::path(filename).parent_path() / ef).generic_string();
                 loc.line = vm.last_error_line();
                 throw look::LookRuntimeError(ex.what(), loc, {});
             }

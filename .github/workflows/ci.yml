@@ -397,6 +397,13 @@ jobs:
           cd cpp
           bash tests/startup_threads_test.sh ./build/lk
 
+      # A run-time error names the file it happened in. An error in an included file used to
+      # be reported with the main script's name and the included file's line number.
+      - name: Errors name the right file
+        run: |
+          cd cpp
+          bash tests/error_location_test.sh ./build/lk
+
       # LOOK 2: an application with a job handler and a draining timer at the top level runs
       # on the VM (each used to send the whole application to the tree-walk engine).
       - name: Job queue on the VM

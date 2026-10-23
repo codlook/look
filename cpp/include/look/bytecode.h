@@ -200,6 +200,16 @@ struct FunctionProto {
 
     // Kaynak konum bilgisi — her instruction için satır numarası
     std::vector<int>                     lines;
+    // ...ve dosyası: (ilk komut, dosya) — yalnız dosya değişince bir satır; "" = ana betik.
+    // Dahil edilen dosyanın üst düzey kodu ana fonksiyona derlenir → bir proto'da birden çok
+    // dosya olabilir. Dosya adı ana betiğin dizinine göre göreli (lib/util.lk).
+    std::vector<std::pair<int, std::string>> file_runs;
+    const std::string& file_at(int ip) const {
+        static const std::string kMain;
+        const std::string* f = &kMain;
+        for (const auto& r : file_runs) { if (r.first > ip) break; f = &r.second; }
+        return *f;
+    }
 
     // Parametre isimleri (hata mesajı için)
     std::vector<std::string>             params;
