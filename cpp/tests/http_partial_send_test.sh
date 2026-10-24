@@ -9,7 +9,7 @@
 # accepts what it got would have stored a truncated body).
 # Usage: http_partial_send_test.sh <lk>   (needs python3)
 set -u
-LK="$1"
+LK="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"   # aşağıda cd yapılıyor: mutlak yol
 PORT=7481
 T=$(mktemp -d); trap '{ kill $sp; wait; } 2>/dev/null; rm -rf "$T"' EXIT
 sp=""
