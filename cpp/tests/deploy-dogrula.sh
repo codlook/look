@@ -16,6 +16,7 @@
 set -u
 LK="${1:-./build/lk}"
 LKFCGI="${2:-./build/lk-fcgi}"
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"; LKFCGI="$(cd "$(dirname "$LKFCGI")" && pwd)/$(basename "$LKFCGI")"   # aşağıda cd yapılıyor
 BASE_URL="${BASE_URL:-}"
 fail=0
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"; [ -n "${SRV_PID:-}" ] && kill "$SRV_PID" 2>/dev/null' EXIT

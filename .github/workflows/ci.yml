@@ -460,6 +460,14 @@ jobs:
           cd cpp
           bash tests/http_partial_send_test.sh ./build/lk
 
+      # A Redis reply left half-read (a session over LOOK_REDIS_MAX_BULK) on a connection that
+      # stayed open was read by the next request on that thread: one user got another's session.
+      # Also checked: a Redis restart never mixes two users' sessions.
+      - name: Redis sessions never reach another user's request
+        run: |
+          cd cpp
+          bash tests/redis_session_crossing_test.sh ./build/lk-fcgi
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)
@@ -510,6 +518,11 @@ jobs:
         run: |
           cd cpp
           bash tests/no_select_test.sh
+
+      # A test that changes directory and runs a relative ./build/lk does not find it: this
+      # broke CI three times (run locally with absolute paths, it never showed).
+      - name: Test scripts run their binary arguments by an absolute path
+        run: bash cpp/tests/test_path_guard.sh
 
       # A WebSocket / SSE connection callback has no response to carry an error: if the log does
       # not have it either, the handler fails without a trace.
