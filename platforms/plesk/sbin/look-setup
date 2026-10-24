@@ -1,0 +1,97 @@
+#!/bin/bash
+# LOOK Language — kurulum/yukseltme (ROOT)
+# Kullanim: look-setup [<domain> <script> <workers> <mode> <port> <env-file>]...
+#
+# Plesk eklenti kancalarini (plib/scripts/post-install.php) ROOT degil psaadm olarak
+# calistirir (olculdu: euid=983); eskiden kanca setup.sh'i psaadm ile kosuyordu, /opt/look'a,
+# sudoers'a ve unit'lere yazamadan dusuyor, hata gizleniyordu → guncelleme ne ikiliyi ne de
+# servisleri yeniliyordu. Root yolu Plesk'in belgeledigi pm_ApiCli::callSbin: post-install.php
+# bu betigi cagirir, kayitli domain'leri (domains.json'dan) arguman olarak verir.
+#
+# Yapar: (1) LOOK ikilisini yeniler, (2) sudoers yazar, (3) her domain'in servisini enable.sh
+# ile yeniden yazar (servis domain kullanicisiyla calisir). Root olmadan calisamayan bir
+# servisi DURDURUR — 1.1.x'in root servisi sessizce calismaya devam etmez.
+# Hata = sifir olmayan cikis + mesaj (Plesk kurulumda gosterir); hicbir cikti susturulmaz.
+set -u
+
+MOD=/usr/local/psa/admin/htdocs/modules/look-lang
+OPT=/opt/look
+SCRIPTS="$MOD/scripts"
+fail=0
+err() { echo "ERROR: $*" >&2; fail=1; }
+
+mkdir -p "$OPT/conf" /var/log/look
+
+# ─── 1) LOOK ikilisi ─────────────────────────────────────────────────────────
+# Calisan bir ikilinin uzerine cp "Text file busy" ile duser (servisler guncellemede calisiyor):
+# yaninda yeni dosya + atomik mv. Eski surec eski inode'la calisir, restart yenisini alir.
+replaced=0
+for b in lk lk-fcgi lk-cgi; do
+    src="$MOD/bin/$b"
+    [ -f "$src" ] || continue
+    if install -m 755 "$src" "$OPT/.$b.new" && mv -f "$OPT/.$b.new" "$OPT/$b"; then
+        replaced=$((replaced + 1))
+    else
+        rm -f "$OPT/.$b.new"; err "could not install $OPT/$b"
+    fi
+done
+if [ "$replaced" = 0 ] && [ ! -x "$OPT/lk-fcgi" ]; then
+    err "the extension has no LOOK binary ($MOD/bin) and $OPT/lk-fcgi does not exist"
+fi
+if [ -x "$OPT/lk" ]; then echo "LOOK binary: $("$OPT/lk" --version 2>&1 | head -1)"; fi
+
+# ─── 2) sudoers — panel (psaadm) scriptleri sudo ile cagirir ────────────────
+SUDOERS=/etc/sudoers.d/look-lang
+mkdir -p /etc/sudoers.d
+cat > "$SUDOERS.new" << SUDO
+psaadm ALL=(root) NOPASSWD: \\
+  /bin/bash $SCRIPTS/enable.sh *, \\
+  /bin/bash $SCRIPTS/disable.sh *, \\
+  /bin/bash $SCRIPTS/status.sh *, \\
+  /bin/bash $SCRIPTS/logs.sh *, \\
+  /bin/bash $SCRIPTS/monitor.sh *, \\
+  /bin/systemctl start look-*, \\
+  /bin/systemctl stop look-*, \\
+  /bin/systemctl restart look-*, \\
+  /bin/systemctl enable look-*, \\
+  /bin/systemctl disable look-*, \\
+  /bin/systemctl daemon-reload, \\
+  /usr/local/psa/admin/sbin/websrvmng, \\
+  /usr/local/psa/admin/bin/httpdmng
+SUDO
+chmod 440 "$SUDOERS.new"
+if command -v visudo > /dev/null 2>&1 && ! visudo -cqf "$SUDOERS.new"; then
+    rm -f "$SUDOERS.new"; err "the generated sudoers rule is invalid; $SUDOERS was left as it was"
+else
+    mv -f "$SUDOERS.new" "$SUDOERS"
+fi
+echo 'export PATH="/opt/look:$PATH"' > /etc/profile.d/look.sh
+
+# ─── 3) servisleri yeni kurala gore yeniden yaz ─────────────────────────────
+svc_of() { echo "look-$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')"; }
+stop_svc() { /bin/systemctl stop "$1" 2>/dev/null; /bin/systemctl disable "$1" 2>/dev/null; true; }
+done_svcs=" "
+while [ "$#" -ge 6 ]; do
+    d="$1"; s="$2"; w="$3"; m="$4"; p="$5"; e="$6"; shift 6
+    svc="$(svc_of "$d")"; done_svcs="$done_svcs$svc "
+    if out="$(/bin/bash "$SCRIPTS/enable.sh" "$d" "$s" "$w" "$m" "$p" ${e:+"$e"} 2>&1)"; then
+        echo "$d: $(printf '%s\n' "$out" | grep -E '^(OK|WARNING)' | tr '\n' ' ')"
+    else
+        stop_svc "$svc"
+        err "$d: the service was STOPPED — it cannot run as the domain's user: $(printf '%s\n' "$out" | grep -E 'ERROR' | head -1)"
+    fi
+done
+[ "$#" = 0 ] || err "ignored $# trailing argument(s): domains are given as groups of 6"
+
+# Eklentinin yazdigi (Description imzasi) ama kaydi olmayan, User= tasimayan unit = root servis
+for f in /etc/systemd/system/look-*.service; do
+    [ -f "$f" ] || continue
+    svc="$(basename "$f" .service)"
+    case "$done_svcs" in *" $svc "*) continue ;; esac
+    grep -q '^Description=LOOK FastCGI - ' "$f" || continue
+    grep -q '^User=' "$f" && continue
+    stop_svc "$svc"
+    err "$svc was STOPPED: it ran as root and is not registered in the panel; add the domain again in the panel"
+done
+
+exit "$fail"

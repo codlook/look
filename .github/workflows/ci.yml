@@ -745,6 +745,12 @@ jobs:
       - name: Plesk services run as the domain's user
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_service_user_test.sh
 
+      # Updating the extension updates LOOK and rewrites every domain's service: Plesk runs the
+      # hook as psaadm, the root step goes through sbin/look-setup. Plays a 1.1.0 → new upgrade
+      # with the old binary running; a service that cannot leave root is stopped and reported.
+      - name: Plesk update rewrites every service and updates LOOK
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_upgrade_test.sh
+
       # A VM error is a 500 and the request is not run again (1.0.8); a route the VM cannot run
       # is placed on the tree-walk engine at setup. LOOK_VM_FORCE_FAIL is the test hook that
       # makes one route fail on the VM (inert without the variable).

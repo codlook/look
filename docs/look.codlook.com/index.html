@@ -651,11 +651,9 @@ SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀�
           <div class="step"><span class="no">2</span><div class="sc"><p>Download and install the ZIP — at the end you'll see <i>"The extension was successfully installed."</i></p>
             <div class="term term-multi"><code>wget -O /tmp/look-lang-plesk.zip "https://github.com/codlook/look/releases/latest/download/look-lang-plesk.zip"
 plesk bin extension --install /tmp/look-lang-plesk.zip</code></div></div></div>
-          <div class="step"><span class="no">3</span><div class="sc"><p><b>Finish the install — one root command (required on new servers)</b></p>
-            <div class="term"><span class="p">$</span><code>plesk php /usr/local/psa/admin/plib/modules/look-lang/scripts/post-install.php</code></div></div></div>
-          <div class="step"><span class="no">4</span><div class="sc"><p>Open the panel: <b>Extensions → My Extensions → LOOK Language → Open</b></p></div></div>
-          <div class="step"><span class="no">5</span><div class="sc"><p><b>Applications → Add New Domain</b> → pick the domain (script path and port fill in automatically) → <b>Add &amp; Start</b>. It shows <i>Running</i> in the list within seconds — the systemd service + Apache proxy are set up automatically.</p></div></div>
-          <div class="step"><span class="no">6</span><div class="sc"><p>Edit <code>index.lk</code> in the browser with <b>Edit Code</b> → <b>Save &amp; Redeploy</b> — the file is written and the service restarts.</p></div></div>
+          <div class="step"><span class="no">3</span><div class="sc"><p>Open the panel: <b>Extensions → My Extensions → LOOK Language → Open</b></p></div></div>
+          <div class="step"><span class="no">4</span><div class="sc"><p><b>Applications → Add New Domain</b> → pick the domain (script path and port fill in automatically) → <b>Add &amp; Start</b>. It shows <i>Running</i> in the list within seconds — the systemd service + Apache proxy are set up automatically.</p></div></div>
+          <div class="step"><span class="no">5</span><div class="sc"><p>Edit <code>index.lk</code> in the browser with <b>Edit Code</b> → <b>Save &amp; Redeploy</b> — the file is written and the service restarts.</p></div></div>
         </div>
         <p class="hint">Step 3 is required: Plesk doesn't run the extension's install hook; this command installs the binary to <code>/opt/look</code> + grants sudo rights. <b>Skip it</b> and enabling a domain fails with <code>sudo: a password is required</code>. Re-running is safe; it's idempotent. The workspace: a live system dashboard, an in-browser code editor, a per-domain monitor (CPU/RAM/PID/connections) and a journalctl log viewer.</p>
       </div>

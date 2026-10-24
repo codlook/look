@@ -21,51 +21,10 @@ define('LOOK_VAR', is_dir('/usr/local/psa/var/modules/look-lang')
 define('DOMAINS_JSON', LOOK_VAR . '/domains.json');
 
 function auto_setup(): void {
-    if (!is_dir(LOOK_OPT))  mkdir(LOOK_OPT,  0755, true);
-    if (!is_dir(LOOK_CONF)) mkdir(LOOK_CONF, 0755, true);
-
-    // Binary kurulumu (Plesk kök post-install hook'unu çalıştırmadığı için burada).
-    // RHEL/AlmaLinux: RPM (dnf) → 'dnf update look-lang' yolu; aksi halde static binary.
-    if (!file_exists(LOOK_BIN) && !is_link(LOOK_BIN)) {
-        $rpm = __DIR__ . "/look-lang.rpm";
-        $installed = false;
-        if (file_exists($rpm) && (trim(@shell_exec('command -v dnf')) || trim(@shell_exec('command -v yum')))) {
-            $mgr = trim(@shell_exec('command -v dnf')) ? 'dnf' : 'yum';
-            @shell_exec("$mgr install -y " . escapeshellarg($rpm) . " 2>&1 || rpm -Uvh --force " . escapeshellarg($rpm) . " 2>&1");
-            // /opt/look yollarını sistem binary'sine symlink (scriptler /opt/look kullanır)
-            if (file_exists('/usr/bin/lk-fcgi')) {
-                foreach (['lk','lk-fcgi','lk-cgi'] as $b) { @symlink("/usr/bin/$b", LOOK_OPT."/$b"); }
-                $installed = true;
-            }
-        }
-        if (!$installed) {  // fallback: bundle'lanan portatif static binary
-            foreach (['lk-fcgi','lk','lk-cgi'] as $b) {
-                $src = __DIR__ . "/bin/$b";
-                if (file_exists($src)) { copy($src, LOOK_OPT."/$b"); chmod(LOOK_OPT."/$b", 0755); }
-            }
-        }
-    }
-
-    // sudoers — panel enable.sh/disable.sh + systemctl'i sudo ile çalıştırabilsin.
-    // logs.sh eklendiginden mevcut kurulumlarda da yeniden yazilir (surum farki).
-    // Scriptler '/bin/bash <script>' ile calisir — Plesk zip'i PHP ile acip unix
-    // exec bitini striplediginden dosyalar 644 kalir; bash interpreter ile cagirinca
-    // exec biti gerekmez. Bu yuzden sudoers de bash-formunda.
-    $sudo = "psaadm ALL=(root) NOPASSWD: /bin/bash " . SCRIPTS_DIR . "/enable.sh *, /bin/bash " . SCRIPTS_DIR . "/disable.sh *, "
-          . "/bin/bash " . SCRIPTS_DIR . "/status.sh *, /bin/bash " . SCRIPTS_DIR . "/logs.sh *, /bin/bash " . SCRIPTS_DIR . "/monitor.sh *, "
-          . "/bin/systemctl start look-*, /bin/systemctl stop look-*, "
-          . "/bin/systemctl restart look-*, /bin/systemctl enable look-*, /bin/systemctl disable look-*, "
-          . "/bin/systemctl daemon-reload, /usr/local/psa/admin/sbin/websrvmng, /usr/local/psa/admin/bin/httpdmng\n";
-    $cur = @file_get_contents('/etc/sudoers.d/look-lang');
-    if ($cur === false || strpos($cur, '/bin/bash') === false) {
-        @mkdir('/etc/sudoers.d', 0755, true);
-        @file_put_contents('/etc/sudoers.d/look-lang', $sudo);
-        @chmod('/etc/sudoers.d/look-lang', 0440);
-    }
-
-    // Scriptler zaten 0755 kurulur; panel psaadm olarak root dosyalarini chmod
-    // edemez → warning uretir. Yalnizca calistirilamaz olan varsa dene, sessizce.
-    foreach (glob(SCRIPTS_DIR . '/*.sh') ?: [] as $sh) if (!is_executable($sh)) @chmod($sh, 0755);
+    // Ikili, sudoers ve servis unit'leri ROOT isidir: kurulum/yukseltme kancasi
+    // (plib/scripts/post-install.php → pm_ApiCli::callSbin('look-setup')) yapar. Panel psaadm
+    // olarak calisir; burada /opt/look'a kopyalama denemesi hep "Permission denied" ile dusup
+    // Plesk loguna uyari yaziyordu.
 
     // State dizini + eski /opt/look/conf/domains.json'dan tek seferlik tasima
     if (!is_dir(LOOK_VAR)) @mkdir(LOOK_VAR, 0755, true);

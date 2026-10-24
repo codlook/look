@@ -30,12 +30,12 @@ Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.
 Paneli aç: **Plesk → Extensions → LOOK Language**, veya doğrudan
 `https://<sunucu>:8443/modules/look-lang/`.
 
-> **Yeni/temiz sunucu notu:** Plesk, güvenlik gereği eklenti `post-install`
-> hook'unu çalıştırmaz ve zip'i açarken dosya çalıştırma bitlerini kaldırır.
-> Eklenti bunu, script'leri `sudo /bin/bash <script>` ile çağırarak aşar (çalıştırma
-> izni gerekmez). Ancak sudo yetkisi için `/etc/sudoers.d/look-lang` bir kez root
-> ile oluşturulmalıdır (aşağıdaki [Sudoers](#sudoers) bölümü). Bu dosya
-> kaldır/kur döngülerinde **korunur** — aynı sunucuda tekrar gerekmez.
+> **Kurulum notu:** Plesk eklentinin `post-install.php` kancasını kurulumda ve güncellemede
+> çalıştırır, ama root değil `psaadm` olarak. Root gerektiren adım (ikili, sudoers, servis
+> unit'leri) `sbin/look-setup`'tadır ve kanca onu Plesk'in root yolu
+> `pm_ApiCli::callSbin` ile çağırır. Zip açılırken çalıştırma bitleri kalktığı için panel
+> script'leri `sudo /bin/bash <script>` ile çağırır. Adımı elle tekrar çalıştırmak için:
+> `plesk bin extension --exec look-lang post-install.php`.
 
 ---
 

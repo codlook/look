@@ -24,6 +24,12 @@ if [ -d plib ]; then
     cp -r plib/* "$TMP/plib/"
 fi
 
+# sbin — root adimi (ikili, sudoers, servis unit'leri). post-install.php bunu
+# pm_ApiCli::callSbin ile cagirir; Plesk kancalari root degil psaadm olarak calisir.
+mkdir -p "$TMP/sbin"
+cp sbin/look-setup "$TMP/sbin/"
+chmod 755 "$TMP/sbin/look-setup"
+
 # htdocs
 mkdir -p "$TMP/htdocs/scripts" "$TMP/htdocs/bin"
 cp htdocs/index.php "$TMP/htdocs/"
