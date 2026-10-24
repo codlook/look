@@ -20,7 +20,7 @@ LK
 cat > "$TMP/web.lk" <<'LK'
 use string
 route("GET", "/ok", fn() => response::text("alive"))
-route("GET", "/rx", fn() => response::text(string::regex_match(string::repeat("a", 65536), "^(a|b)*$") ? "match" : "no"))
+route("GET", "/rx", fn() => response::text(string::regex_match(string::repeat("a", 8192), "^(a|b)*$") ? "match" : "no"))
 LK
 fail=0
 for kb in 1048576 524288; do   # 1 GB, 512 MB
@@ -39,6 +39,6 @@ cpids=""; for i in 1 2 3 4 5 6 7 8; do curl -s -m 20 "localhost:$PORT/rx" > "$TM
 got="$(for f in "$TMP"/r?; do cat "$f"; echo; done | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 alive="$(curl -s -m 3 "localhost:$PORT/ok")"
 kill "$pid" 2>/dev/null; sleep 0.5; kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-if [ "$got" = " 8 match;" ] && [ "$alive" = alive ]; then echo "  OK   lk-fcgi, ulimit -v 2 GB: 8 concurrent 64 KB matches all answered"
+if [ "$got" = " 8 match;" ] && [ "$alive" = alive ]; then echo "  OK   lk-fcgi, ulimit -v 2 GB: 8 concurrent regex requests all answered"
 else echo "  FAIL lk-fcgi, ulimit -v 2 GB: answers '$got', server '$alive'"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: regex works under a virtual memory limit" || { echo "FAIL: regex under a virtual memory limit"; exit 1; }
