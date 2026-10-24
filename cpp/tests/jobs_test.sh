@@ -13,6 +13,7 @@
 # Kullanim: bash jobs_test.sh <lk_yolu>
 set -u
 LK="${1:-./build/lk}"
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # aşağıda cd yapılıyor: mutlak yol
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0

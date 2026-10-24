@@ -9,6 +9,7 @@
 # Kullanım: jobs-canli-dogrula.sh <lk> [nproc=6] [rounds=8]
 set -u
 LK="${1:-./build/lk}"
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # aşağıda cd yapılıyor: mutlak yol
 NPROC="${2:-6}"; ROUNDS="${3:-8}"; TOTAL=$((NPROC*ROUNDS))
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 cd "$TMP" || exit 1

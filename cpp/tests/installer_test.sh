@@ -14,6 +14,7 @@
 # Ag gerektiren kisim ag yoksa ATLANIR (sessizce degil, 'atlandi' yazarak).
 set -u
 LK="${1:-./build/lk}"
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # aşağıda cd yapılıyor: mutlak yol
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0
