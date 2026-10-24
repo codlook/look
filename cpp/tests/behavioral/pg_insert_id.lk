@@ -1,0 +1,109 @@
+# PostgreSQL: an INSERT inside a transaction is kept, and db::last_id belongs to that INSERT.
+# A REAL postgres:16 server is required (CI service container; DSN = PG_DSN env).
+#
+# After every INSERT the driver asked the server for SELECT lastval(). On a table without a
+# sequence that query fails; inside a transaction a failed statement aborts the whole
+# transaction, and the COMMIT that follows silently becomes a ROLLBACK — every row of the
+# transaction was lost, with no error. And lastval() is the session's last sequence value,
+# whatever the table: after an INSERT into a table without a sequence, db::last_id returned
+# the previous table's id — on a pooled connection, possibly another request's.
+$ran = 0
+function chk($l, $g, $w) {
+    if ($g == $w) { print("OK   " . $l) }
+    else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") }
+}
+
+$dsn = env("PG_DSN", "")
+if ($dsn == "") {
+    if (env("CI", "") == "true") { print("FAIL harness: PG_DSN is empty in CI — the postgres:16 service or its DSN is misconfigured"); print("=== insert-id ran=0 ==="); exit(1) }
+    print("SKIP: PG_DSN not set — needs a live postgres:16 server (CI provides one)"); exit(0)
+}
+$c = db::connect($dsn)
+db::exec($c, "DROP TABLE IF EXISTS lid_plain", [])
+db::exec($c, "DROP TABLE IF EXISTS lid_serial", [])
+db::exec($c, "DROP TABLE IF EXISTS lid_ident", [])
+db::exec($c, "CREATE TABLE lid_plain (k TEXT PRIMARY KEY, v TEXT)", [])
+db::exec($c, "CREATE TABLE lid_serial (id BIGSERIAL PRIMARY KEY, v TEXT)", [])
+db::exec($c, "CREATE TABLE lid_ident (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, v TEXT)", [])
+
+# ── 1. Rows written in a transaction are there after COMMIT ──────────────────
+# tx(name, fn): runs fn in a transaction; an error is reported, the run goes on.
+function tx($c, $name, $fn) {
+    try { db::transaction($c, $fn); return "" } catch ($e) { print("     (" . $name . ": " . error::message($e) . ")"); return "error" }
+}
+$e1 = tx($c, "two parameterised inserts", function() use ($c) {
+    db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["a", "1"])
+    db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["b", "2"])
+    return true
+})
+chk("transaction, table without a sequence, two inserts: no error, both rows kept", $e1 . db::col($c, "SELECT COUNT(*) FROM lid_plain WHERE k IN ('a', 'b')", []), "2"); $ran = $ran + 1
+# One INSERT, nothing after it: the failed lastval() left the transaction aborted and the
+# COMMIT turned into a ROLLBACK — no error at all, the row was gone.
+$e2 = tx($c, "one parameterised insert", function() use ($c) {
+    db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["c", "3"])
+    return true
+})
+chk("transaction, one insert with parameters: row kept (was lost without an error)", $e2 . db::col($c, "SELECT COUNT(*) FROM lid_plain WHERE k = 'c'", []), "1"); $ran = $ran + 1
+$e3 = tx($c, "one insert without parameters", function() use ($c) {
+    db::exec($c, "INSERT INTO lid_plain (k, v) VALUES ('c2', '3')", [])
+    return true
+})
+chk("transaction, one insert without parameters: row kept", $e3 . db::col($c, "SELECT COUNT(*) FROM lid_plain WHERE k = 'c2'", []), "1"); $ran = $ran + 1
+$e4 = tx($c, "mixed tables", function() use ($c) {
+    db::exec($c, "INSERT INTO lid_serial (v) VALUES (?)", ["s"])
+    db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["d", "4"])
+    db::exec($c, "INSERT INTO lid_serial (v) VALUES (?)", ["t"])
+    return true
+})
+chk("transaction mixing both tables: all rows kept", $e4 . db::col($c, "SELECT COUNT(*) FROM lid_plain WHERE k = 'd'", []) . "/" . db::col($c, "SELECT COUNT(*) FROM lid_serial WHERE v IN ('s', 't')", []), "1/2"); $ran = $ran + 1
+
+# ── 2. db::last_id is the id of THIS insert, or 0 ────────────────────────────
+db::exec($c, "INSERT INTO lid_serial (v) VALUES (?)", ["x"])
+$sid = db::last_id($c)
+chk("serial table: last_id is the new row's id", "" . $sid, "" . db::col($c, "SELECT id FROM lid_serial WHERE v = 'x'", [])); $ran = $ran + 1
+db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["e", "5"])
+chk("table without a sequence after a serial insert: last_id 0, not the other table's id", db::last_id($c), 0); $ran = $ran + 1
+$lid_in = -1
+try {
+    $lid_in = db::transaction($c, function() use ($c) {
+        db::exec($c, "INSERT INTO lid_serial (v) VALUES (?)", ["y"])
+        db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["f", "6"])
+        return db::last_id($c)
+    })
+} catch ($e) { print("     (last_id in a transaction: " . error::message($e) . ")") }
+chk("inside a transaction too: last_id 0 after the table without a sequence", $lid_in, 0); $ran = $ran + 1
+db::exec($c, "INSERT INTO lid_ident (v) VALUES (?)", ["i"])
+chk("identity column: last_id is the new row's id", "" . db::last_id($c), "" . db::col($c, "SELECT id FROM lid_ident WHERE v = 'i'", [])); $ran = $ran + 1
+db::exec($c, "INSERT INTO lid_serial (v) VALUES ('m1'), ('m2'), ('m3')", [])
+chk("multi-row insert: last_id is one of its rows (the last)", "" . db::last_id($c), "" . db::col($c, "SELECT id FROM lid_serial WHERE v = 'm3'", [])); $ran = $ran + 1
+db::exec($c, "INSERT INTO lid_serial (id, v) VALUES (?, ?)", [9000, "explicit"])
+chk("explicit id: last_id is that row's id", db::last_id($c), 9000); $ran = $ran + 1
+$rr = db::query($c, "INSERT INTO lid_serial (v) VALUES (?) RETURNING id, v", ["ret"])
+chk("own RETURNING: the rows come back as written", count($rr) . " " . $rr[0]["v"], "1 ret"); $ran = $ran + 1
+chk("own RETURNING: last_id is that row's id", "" . db::last_id($c), "" . $rr[0]["id"]); $ran = $ran + 1
+db::exec($c, "INSERT INTO public.lid_serial (v) VALUES (?)", ["schema"])
+chk("schema-qualified table: last_id is the new row's id", "" . db::last_id($c), "" . db::col($c, "SELECT id FROM lid_serial WHERE v = 'schema'", [])); $ran = $ran + 1
+db::exec($c, "DROP TABLE IF EXISTS \"Lid Q\"", [])
+db::exec($c, "CREATE TABLE \"Lid Q\" (\"Id\" SERIAL PRIMARY KEY, v TEXT)", [])
+db::exec($c, "INSERT INTO \"Lid Q\" (v) VALUES (?);", ["q"])
+chk("quoted table and column names: last_id is the new row's id", "" . db::last_id($c), "" . db::col($c, "SELECT \"Id\" FROM \"Lid Q\" WHERE v = 'q'", [])); $ran = $ran + 1
+db::exec($c, "DROP TABLE \"Lid Q\"", [])
+$qr = db::query($c, "INSERT INTO lid_serial (v) VALUES (?)", ["q2"])
+chk("db::query on an INSERT still returns no rows", count($qr), 0); $ran = $ran + 1
+db::exec($c, "UPDATE lid_serial SET v = v WHERE id = ?", [9000])
+chk("UPDATE: last_id 0", db::last_id($c), 0); $ran = $ran + 1
+
+# ── 3. A failing statement still rolls the whole transaction back ────────────
+try {
+    db::transaction($c, function() use ($c) {
+        db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["g", "7"])
+        db::exec($c, "INSERT INTO lid_plain (k, v) VALUES (?, ?)", ["g", "duplicate key"])
+        return true
+    })
+} catch ($e) { }
+chk("an error in the transaction rolls back its other rows", db::col($c, "SELECT COUNT(*) FROM lid_plain WHERE k = 'g'", []), 0); $ran = $ran + 1
+
+db::exec($c, "DROP TABLE lid_plain", [])
+db::exec($c, "DROP TABLE lid_serial", [])
+db::exec($c, "DROP TABLE lid_ident", [])
+print("=== insert-id ran=" . $ran . " ===")

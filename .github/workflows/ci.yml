@@ -593,6 +593,14 @@ jobs:
           g++ -std=c++17 -Iinclude tests/pg_dsn_test.cpp -o /tmp/pg_dsn_test
           /tmp/pg_dsn_test
 
+      # PostgreSQL INSERT id: the target table, the user's own RETURNING, the RETURNING added
+      # (look/pg_insert.h). The live behaviour runs against postgres:16 in the db-live job.
+      - name: PostgreSQL INSERT id — SQL table test
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/pg_insert_test.cpp -o /tmp/pg_insert_test
+          /tmp/pg_insert_test
+
       # MySQL/Redis DSN TLS-karar — seam (look/db_dsn.h). PG'den fark: verify=false VARSAYILAN
       # (DB cert self-signed; kablo-şifreleme amaç). Ağsız tablo mevcut kararı kilitler; varsayılan
       # bir gün değişirse (kırıcı-karar) RED. POZİTİF-KONTROLLÜ.
@@ -906,6 +914,19 @@ jobs:
             true
           done
           echo "Native prepared-bind matrisi (MySQL+PG) YESIL."
+      # An INSERT inside a transaction is kept, and db::last_id belongs to that INSERT. The
+      # driver used to ask for lastval() after every INSERT: on a table without a sequence that
+      # failed, aborted the transaction, and the COMMIT silently rolled back; and lastval() is the
+      # session's last sequence value, so last_id could be another table's (or request's) id.
+      - name: "PostgreSQL 16 — INSERT in a transaction is kept; last_id is that INSERT's"
+        env:
+          PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"
+        run: |
+          cd cpp
+          out="$(timeout 60 ./build/lk tests/behavioral/pg_insert_id.lk 2>&1)"; echo "$out"
+          echo "$out" | grep -q 'insert-id ran=17' || { echo "::error::pg_insert_id did not run all cases"; exit 1; }
+          echo "$out" | grep -q '^FAIL' && { echo "::error::pg_insert_id failed"; exit 1; }
+          true
       # Web server on real servers: a slow PostgreSQL query and a slow MySQL query over TLS must
       # hold only their own request (1.0.20–1.0.21 held the whole fiber thread). After the MySQL
       # auth steps: a TLS login caches the password and would hide the full-auth path above.
