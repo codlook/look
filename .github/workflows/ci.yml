@@ -970,6 +970,12 @@ jobs:
           bash cpp/tests/plesk_inject_test.sh
           php  cpp/tests/plesk_php_domain_test.php
 
+      # The Plesk extension runs each domain's service as the domain's system user, never as
+      # root; the env file is read with that user's rights; Remove deletes the unit and its
+      # .service.d. Runs the real enable.sh/disable.sh in a throwaway container (it creates users).
+      - name: Plesk services run as the domain's user
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_service_user_test.sh
+
       # LOOK 2 web runs only on the VM: a program the VM cannot compile does not start (exit 1),
       # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear
       # 500, LOOK_BYTECODE=0 is ignored, a script without routes runs whole per request.

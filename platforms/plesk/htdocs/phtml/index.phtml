@@ -358,6 +358,7 @@ $icons = [
                   <?php foreach ($pleskDoms as $pd): ?><option value="<?= htmlspecialchars($pd) ?>"><?= htmlspecialchars($pd) ?></option><?php endforeach; ?>
                 </select></div>
               <div class="lk-fg"><label>Script (index.lk path)</label><input type="text" id="lkFscript" placeholder="/var/www/vhosts/.../index.lk"></div>
+              <div class="lk-fg"><label>Env file (optional)</label><input type="text" id="lkFenv" placeholder="/var/www/vhosts/.../.look.env"></div>
               <div class="lk-fg"><label>Workers</label><input type="number" id="lkFwork" value="4" min="1" max="64"></div>
               <div class="lk-fg"><label>Mode</label><select id="lkFmode"><option value="fcgi">FastCGI</option><option value="http">HTTP</option></select></div>
               <div class="lk-fg"><label>Port</label><input type="number" id="lkFport" value="9100" min="1025" max="65535"></div>
@@ -462,6 +463,7 @@ route("404", fn() =&gt; response::error(404, "Not found"))</code></pre>
       <input type="hidden" id="lkESvc">
       <div class="lk-mfg"><label>Domain</label><input type="text" id="lkEDom" readonly></div>
       <div class="lk-mfg"><label>Script Path</label><input type="text" id="lkEScript"></div>
+      <div class="lk-mfg"><label>Env File (optional)</label><input type="text" id="lkEEnv" placeholder="/var/www/vhosts/.../.look.env"></div>
       <div class="lk-mfg-row">
         <div class="lk-mfg"><label>Workers</label><input type="number" id="lkEWork" min="1" max="64"></div>
         <div class="lk-mfg"><label>Mode</label><select id="lkEMode"><option value="fcgi">FastCGI</option><option value="http">HTTP</option></select></div>
@@ -617,7 +619,7 @@ document.addEventListener('DOMContentLoaded',lkDomChange);
 async function lkAdd(){
   const btn=document.getElementById('lkAddBtn'),log=document.getElementById('lkAddLog');
   btn.disabled=true;btn.textContent='Starting…';log.style.display='block';log.textContent='$ enable.sh…';
-  const d=await lkApi({action:'add',domain:lkV('lkFdom'),script:lkV('lkFscript'),workers:lkV('lkFwork'),mode:lkV('lkFmode'),port:lkV('lkFport')});
+  const d=await lkApi({action:'add',domain:lkV('lkFdom'),script:lkV('lkFscript'),env:lkV('lkFenv'),workers:lkV('lkFwork'),mode:lkV('lkFmode'),port:lkV('lkFport')});
   log.textContent=d.out||d.error||'';btn.disabled=false;btn.textContent='Add & Start';
   if(d.ok){lkToast('Domain added');setTimeout(()=>location.reload(),1000);}else lkToast(d.error||'Error',false);
 }
@@ -666,7 +668,8 @@ async function lkDelete(domain,svc){
 // ── Edit (config) modal ────────────────────────────────────────────────────────
 function lkEdit(data){
   document.getElementById('lkESvc').value=data.svc;document.getElementById('lkEDom').value=data.domain;
-  document.getElementById('lkEScript').value=data.script;document.getElementById('lkEWork').value=data.workers;
+  document.getElementById('lkEScript').value=data.script;document.getElementById('lkEEnv').value=data.env||'';
+  document.getElementById('lkEWork').value=data.workers;
   document.getElementById('lkEMode').value=data.mode;document.getElementById('lkEPort').value=data.port;
   document.getElementById('lkEditLog').style.display='none';document.getElementById('lkModal').classList.add('open');
 }
@@ -675,7 +678,7 @@ document.getElementById('lkModal').addEventListener('click',e=>{if(e.target===e.
 async function lkSaveEdit(){
   const btn=document.getElementById('lkESave'),log=document.getElementById('lkEditLog');
   btn.disabled=true;btn.textContent='Saving…';log.style.display='block';log.textContent='$ enable.sh…';
-  const d=await lkApi({action:'edit',domain:lkV('lkEDom'),script:lkV('lkEScript'),workers:lkV('lkEWork'),mode:lkV('lkEMode'),port:lkV('lkEPort')});
+  const d=await lkApi({action:'edit',domain:lkV('lkEDom'),script:lkV('lkEScript'),env:lkV('lkEEnv'),workers:lkV('lkEWork'),mode:lkV('lkEMode'),port:lkV('lkEPort')});
   log.textContent=d.out||d.error||'';btn.disabled=false;btn.textContent='Save & Restart';
   if(d.ok){lkToast('Saved');setTimeout(()=>location.reload(),900);}else lkToast(d.error||'Error',false);
 }

@@ -100,6 +100,14 @@ function safe_script_path(?array $d): ?string {
     if (strpos($p, '..') !== false) return null;
     return $p;
 }
+// enable.sh argumanlari: <domain> <script> <workers> <mode> <port> [<env-file>]
+// (eski domains.json kayitlarinda 'env' yok → ortam dosyasiz)
+function enable_args(array $d): string {
+    $a = escapeshellarg($d['domain']) . ' ' . escapeshellarg($d['script']) . ' ' .
+         (int)$d['workers'] . ' ' . escapeshellarg($d['mode']) . ' ' . (int)$d['port'];
+    if (($d['env'] ?? '') !== '') $a .= ' ' . escapeshellarg($d['env']);
+    return $a;
+}
 function run_script(string $script, string $args): array {
     $cmd = 'sudo /bin/bash ' . escapeshellarg(SCRIPTS_DIR . '/' . $script) . ' ' . $args . ' 2>&1';
     return ['output' => trim(shell_exec($cmd) ?? '')];
@@ -218,6 +226,7 @@ if ($action !== '') {
     if ($action === 'add' || $action === 'edit') {
         $domain  = trim($_POST['domain']  ?? '');
         $script  = trim($_POST['script']  ?? '');
+        $env     = trim($_POST['env']     ?? '');
         $workers = max(1, (int)($_POST['workers'] ?? 4));
         $mode    = in_array($_POST['mode'] ?? 'fcgi', ['fcgi','http']) ? $_POST['mode'] : 'fcgi';
         $port    = (int)($_POST['port']   ?? next_free_port($domains));
@@ -233,6 +242,12 @@ if ($action !== '') {
             (!preg_match('#^/var/www/vhosts/[A-Za-z0-9._/-]+\.lk$#', $script) || str_contains($script, '..'))) {
             echo json_encode(['ok'=>false,'error'=>'Invalid script path']); exit;
         }
+        // Ortam dosyasi (istege bagli): enable.sh ayrica domain'in document root'u icinde
+        // oldugunu ve servisin kullanicisinin okuyabildigini dogrular
+        if ($env !== '' &&
+            (!preg_match('#^/var/www/vhosts/[A-Za-z0-9._/-]+$#', $env) || str_contains($env, '..'))) {
+            echo json_encode(['ok'=>false,'error'=>'Invalid env file path']); exit;
+        }
         if (!$script) {
             $parent = implode('.', array_slice(explode('.', $domain), 1));
             $script = is_dir("/var/www/vhosts/$parent/$domain")
@@ -240,11 +255,9 @@ if ($action !== '') {
                 : "/var/www/vhosts/$domain/httpdocs/index.lk";
         }
         $svc    = 'look-' . preg_replace('/[^a-z0-9]/', '-', strtolower($domain));
-        $result = run_script('enable.sh',
-            escapeshellarg($domain)  . ' ' . escapeshellarg($script)  . ' ' .
-            (int)$workers            . ' ' . escapeshellarg($mode)    . ' ' . (int)$port);
+        $result = run_script('enable.sh', enable_args(compact('domain','script','workers','mode','port','env')));
         if (str_contains($result['output'], 'OK:')) {
-            $entry = compact('domain','script','workers','mode','port','svc');
+            $entry = compact('domain','script','env','workers','mode','port','svc');
             $idx   = array_search($domain, array_column($domains, 'domain'));
             if ($idx !== false) $domains[$idx] = $entry; else $domains[] = $entry;
             if (!save_domains($domains)) {
@@ -277,9 +290,7 @@ if ($action !== '') {
         $idx    = array_search($domain, array_column($domains, 'domain'));
         if ($idx === false) { echo json_encode(['ok'=>false,'error'=>'Domain not found']); exit; }
         $d      = $domains[$idx];
-        $result = run_script('enable.sh',
-            escapeshellarg($d['domain']) . ' ' . escapeshellarg($d['script']) . ' ' .
-            (int)$d['workers']           . ' ' . escapeshellarg($d['mode'])   . ' ' . (int)$d['port']);
+        $result = run_script('enable.sh', enable_args($d));
         $st = svc_status($d['svc']);
         echo json_encode(['ok' => str_contains($result['output'],'OK:'), 'state'=>$st['state'], 'out'=>$result['output']]); exit;
     }
@@ -287,7 +298,8 @@ if ($action !== '') {
         $domain = trim($_POST['domain'] ?? '');
         $svc    = trim($_POST['svc']    ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
-        run_script('disable.sh', escapeshellarg($svc) . ' ' . escapeshellarg($domain));
+        // 'remove': unit dosyasi ve .service.d de silinir (Stop'ta kalir)
+        run_script('disable.sh', escapeshellarg($svc) . ' ' . escapeshellarg($domain) . ' remove');
         $domains = array_values(array_filter($domains, fn($d) => $d['domain'] !== $domain));
         save_domains($domains);
         echo json_encode(['ok'=>true]); exit;
@@ -316,9 +328,7 @@ if ($action !== '') {
             echo json_encode(['ok'=>false,'error'=>'Could not write: '.$path.' (permissions?)']); exit;
         }
         // yeniden deploy — enable.sh restart mantigi (bytecode cache'i tazeler)
-        $result = run_script('enable.sh',
-            escapeshellarg($d['domain']) . ' ' . escapeshellarg($d['script']) . ' ' .
-            (int)$d['workers'] . ' ' . escapeshellarg($d['mode']) . ' ' . (int)$d['port']);
+        $result = run_script('enable.sh', enable_args($d));
         echo json_encode(['ok'=>str_contains($result['output'],'OK:'),'out'=>$result['output']]); exit;
     }
     // Servis loglari (journalctl — logs.sh sudo ile)
