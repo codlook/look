@@ -21,12 +21,14 @@ inline int fiber_wait_readable(int fd, int timeout_ms) {
     if (!cur) return -1;
     FiberScheduler* sched = get_thread_scheduler();
     if (!sched) return -1;
-    // Askıya almadan önce kısa poll: localhost veritabanı yanıtı çoğu kez <1 ms'de gelir;
-    // askı+epoll+uyanma zinciri (~1 ms) çoğu sorguda hiç yaşanmaz.
+    // Askıya almadan önce BEKLEMESİZ yoklama: yanıt zaten geldiyse askı/uyanma yaşanmaz.
+    // Eskiden 1 ms BEKLEYEN poll vardı ("askı+uyanma ~1 ms" varsayımıyla): her DB beklemesinde
+    // iş parçacığı 1 ms başka hiçbir isteğe bakamıyordu. Ölçüldü (8 işçi, havuz 32, MySQL 5 ms,
+    // wrk): off-CPU profilinde işçiler çoğu örnekte bu poll'da; DB rotası 32 işçinin ~%15 gerisindeydi.
     struct pollfd pfd{};
     pfd.fd = fd;
     pfd.events = POLLIN;
-    if (::poll(&pfd, 1, 1) > 0) return 1;
+    if (::poll(&pfd, 1, 0) > 0) return 1;
     auto sp = cur->shared_from_this_fiber();
     if (!sp) return -1;
     return sched->wait_readable_tmo(sp, fd, timeout_ms > 0 ? timeout_ms : -1);
