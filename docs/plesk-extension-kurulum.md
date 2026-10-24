@@ -49,23 +49,17 @@ Beklenen çıktı: `The extension was successfully installed.`
 
 Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.zip`**.
 
-### ⚠️ Kurulum sonrası — tek komut (YENİ sunucularda ZORUNLU)
+### Kurulum ve güncelleme ne yapar
 
-Plesk, eklentinin `post-install` hook'unu **güvenilir çalıştırmıyor** (doğrulandı:
-`plesk bin extension --install` CLI/sideload kurulumu hook'u hiç koşmuyor). Bu yüzden
-kurulum **motoru (`/opt/look`) + sudoers kuralını otomatik ayarlamaz.** Kurulumdan
-**hemen sonra, root olarak bir kez** şunu çalıştır — portatif binary'yi `/opt/look`'a
-kurar **ve** sudoers kuralını yazar (kur/kaldır döngülerinde kalıcı):
+Her kurulum ve güncelleme (UI veya CLI) eklentinin kurulum adımını root olarak çalıştırır:
+paketteki LOOK ikililerini `/opt/look`'a kurar (eskisinin yerine), sudoers kuralını
+(`/etc/sudoers.d/look-lang`) yazar ve paneldeki her domain'in servisini güncel kurala göre
+yeniden yazıp yeniden başlatır (servis domain'in kullanıcısıyla çalışır). Domain'in
+kullanıcısıyla çalışamayan bir servis **durdurulur** ve kurulum, domain'i adıyla belirten bir
+hata verir. Nedeni giderip eklentiyi yeniden kur ya da adımı root olarak tekrar çalıştır:
 
 ```bash
-plesk php /usr/local/psa/admin/plib/modules/look-lang/scripts/post-install.php
-```
-
-**Bu komut çalıştırılmazsa** domain enable ederken şu hatayı alırsın:
-
-```
-sudo: a terminal is required to read the password ...
-sudo: a password is required
+plesk bin extension --exec look-lang post-install.php
 ```
 
 Sebep: sudoers kuralı yoksa panelin `sudo systemctl …` çağrısı parola ister, ama web

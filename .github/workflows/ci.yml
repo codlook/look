@@ -976,6 +976,12 @@ jobs:
       - name: Plesk services run as the domain's user
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_service_user_test.sh
 
+      # Updating the extension updates LOOK and rewrites every domain's service: Plesk runs the
+      # hook as psaadm, the root step goes through sbin/look-setup. Plays a 1.1.0 → new upgrade
+      # with the old binary running; a service that cannot leave root is stopped and reported.
+      - name: Plesk update rewrites every service and updates LOOK
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_upgrade_test.sh
+
       # LOOK 2 web runs only on the VM: a program the VM cannot compile does not start (exit 1),
       # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear
       # 500, LOOK_BYTECODE=0 is ignored, a script without routes runs whole per request.

@@ -55,30 +55,24 @@ Or via Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.zip`**.
 Open the panel: **Plesk → Extensions → LOOK Language**, or directly at
 `https://<server>:8443/modules/look-lang/`.
 
-### Post-install setup — one command (REQUIRED on new servers)
+### What installing and updating do
 
-Plesk does **not** reliably run the extension's `post-install` hook (confirmed: the
-`plesk bin extension --install` CLI / sideload install never runs it). So a fresh
-install does **not** auto-configure the engine or sudoers. **Immediately after
-installing**, run this **once as root** — it installs the portable binary to
-`/opt/look` **and** writes the sudoers rule (survives uninstall/install cycles):
+Every install and every update of the extension, from the UI or the CLI, runs its
+setup as root:
+
+- installs the bundled LOOK binaries to `/opt/look`, replacing the old ones;
+- writes the sudoers rule `/etc/sudoers.d/look-lang` the panel needs;
+- rewrites the service of every domain in the panel with the current rules and
+  restarts it.
+
+A domain whose service cannot run as the domain's user (for example a document
+root owned by root) is **stopped**, not left running as root. The install then
+reports an error that names the domain. Fix the cause and install the extension
+again, or run the setup again as root:
 
 ```bash
-plesk php /usr/local/psa/admin/plib/modules/look-lang/scripts/post-install.php
+plesk bin extension --exec look-lang post-install.php
 ```
-
-Without this step, enabling a domain fails with:
-
-```
-sudo: a terminal is required to read the password ...
-sudo: a password is required
-```
-
-Reason: with no sudoers rule the panel's `sudo systemctl …` call prompts for a
-password, but the web context has no terminal. The command above creates
-`/opt/look/lk-fcgi` + `/etc/sudoers.d/look-lang`, after which enabling a domain
-works. (Equivalently you may run the same logic directly:
-`bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/setup.sh`.)
 
 ---
 
@@ -106,10 +100,10 @@ Install a newer zip the same way — Plesk replaces the existing extension in
 place (domain configuration in `/usr/local/psa/var/modules/look-lang/` is
 preserved).
 
-Updating from 1.1.x: services created by 1.1.x run as root until they are written
-again. Open the panel and press **Restart** on each domain — the service is rewritten
-to run as the domain's user. Files the old service created (an SQLite database,
-uploads) may be owned by root; the restart output says how many, and
+Updating from 1.1.x or 1.2.0: the update rewrites every domain's service to run as the
+domain's user (1.2.0 itself did not: its update left the old binary and the old services
+in place). Files the old root service created (an SQLite database, uploads) may be
+owned by root; the setup output says how many per domain, and
 `chown <user>:psacln <file>` gives them back to the domain's user.
 
 ## Uninstall

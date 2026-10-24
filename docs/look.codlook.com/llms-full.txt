@@ -98,8 +98,6 @@ Install from the panel and attach LOOK to domains in one click — with an in-br
 
         - In the Plesk terminal, install the extension:`plesk bin extension --install /tmp/look-lang-plesk.zip`
 
-        - **Finish it (required on new servers):**`plesk php .../look-lang/scripts/post-install.php`
-
         - **Applications → Add New Domain** → **Add & Start**
 
 Full guide: [Plesk Extension](#plesk-extension).
@@ -4418,7 +4416,7 @@ Each domain is a systemd service (`look-`): `nginx :443 → Apache :7081 (ProxyP
 
 | Topic | Description |
 | --- | --- |
-| One-time sudo grant | Plesk doesn't run the `post-install` hook and strips the exec bit when extracting the zip. Scripts are invoked via `sudo /bin/bash` (no chmod needed); on a new server `/etc/sudoers.d/look-lang` is created once as root — preserved across install/uninstall cycles. |
+| Install and update setup | Every install and update runs the extension's setup as root: it installs the bundled LOOK binaries to `/opt/look`, writes `/etc/sudoers.d/look-lang`, and rewrites and restarts every domain's service so it runs as the domain's user. A service that cannot run as the domain's user is stopped and the install reports an error. Run it again with `plesk bin extension --exec look-lang post-install.php`. |
 | State | The domain list is at `/usr/local/psa/var/modules/look-lang/domains.json` (panel-writable) |
 | Updates | Replaced in place when a new ZIP is uploaded; domain configuration is preserved |
 
