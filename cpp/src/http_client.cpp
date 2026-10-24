@@ -45,8 +45,28 @@ static const sock_t INVALID = INVALID_SOCKET;
 typedef int sock_t;
 static const sock_t INVALID = -1;
 #endif
+#include <climits>
 
 namespace look {
+
+#ifdef _WIN32
+// İsteğin TAMAMINI gönder (Windows; POSIX yolu look::fiber_send_all kullanır). Tek send() kısmi
+// yazabilir: soketin gönderme süre sınırı ("timeout" seçeneği, SO_SNDTIMEO) yavaş okuyan sunucuda
+// dolunca yazılabilen kadarını gönderip döner ve kalan hiç gitmiyordu — hata da verilmiyordu
+// (ölçüldü: 8 MB POST'un 2,6 MB'ı, error=null). Her send aynı süre sınırıyla bekler.
+// Dönüş: true = hepsi gitti; false = hata, *timed_out = süre doldu.
+static bool send_all(sock_t s, const char* p, size_t n, bool* timed_out) {
+    *timed_out = false;
+    while (n > 0) {
+        int chunk = n > (size_t)INT_MAX ? INT_MAX : (int)n;
+        int k = send(s, p, chunk, 0);
+        if (k == SOCKET_ERROR) { *timed_out = (WSAGetLastError() == WSAETIMEDOUT); return false; }
+        if (k == 0) return false;
+        p += k; n -= (size_t)k;
+    }
+    return true;
+}
+#endif
 
 // ── Sistem CA bundle'ını bul (statik OpenSSL için — her iki platformda tanımlı) ──
 // Statik OpenSSL derleme-prefix'indeki CA dizinini arar (hedefte YOK) → https
@@ -509,8 +529,9 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr, /*absolute_uri=*/ via_proxy);
-    if (send(s, req.c_str(), (int)req.size(), 0) == SOCKET_ERROR) {
-        closesocket(s); resp.error = "send failed"; return resp;
+    bool send_tmo = false;
+    if (!send_all(s, req.data(), req.size(), &send_tmo)) {
+        closesocket(s); resp.error = send_tmo ? "timeout" : "send failed"; return resp;
     }
 
     std::unique_ptr<StreamSink> sink;
@@ -553,7 +574,8 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
         std::string tgt = hc_strip_crlf(url.host) + ":" + std::to_string(url.port);
         std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
-        if (send(s, creq.c_str(), (int)creq.size(), 0) == SOCKET_ERROR) { closesocket(s); resp.error = "proxy CONNECT send failed"; return resp; }
+        bool ctmo = false;
+        if (!send_all(s, creq.data(), creq.size(), &ctmo)) { closesocket(s); resp.error = "proxy CONNECT send failed"; return resp; }
         std::string pr; char pb[1024]; int pn;
         while (pr.find("\r\n\r\n") == std::string::npos) {
             pn = recv(s, pb, sizeof(pb), 0);
@@ -678,9 +700,16 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         enc_bufs[3].BufferType = SECBUFFER_EMPTY;
         SecBufferDesc enc_desc{ SECBUFFER_VERSION, 4, enc_bufs };
 
-        EncryptMessage(&ctx_handle, 0, &enc_desc, 0);
+        // Şifreleme ve gönderme sonucu denetlenir: eskiden ikisi de yok sayılıyordu (başarısız
+        // şifreleme ya da kısmi gönderim sessizce geçip yanıt bekleniyordu).
+        if (EncryptMessage(&ctx_handle, 0, &enc_desc, 0) != SEC_E_OK) {
+            resp.error = "TLS encrypt failed"; goto cleanup2;
+        }
         size_t total = enc_bufs[0].cbBuffer + enc_bufs[1].cbBuffer + enc_bufs[2].cbBuffer;
-        send(s, enc_buf.data(), (int)total, 0);
+        bool etmo = false;
+        if (!send_all(s, enc_buf.data(), total, &etmo)) {
+            resp.error = etmo ? "timeout" : "send failed"; goto cleanup2;
+        }
 
         // Receive + decrypt
         std::string raw_enc;

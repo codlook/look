@@ -95,6 +95,11 @@ Each domain added in the panel gets its own systemd service, `look-<domain>.serv
   about it). Quotes around a value are removed.
 - **Remove** stops the service and deletes `look-<domain>.service` and its
   `look-<domain>.service.d` folder; **Stop** only stops it.
+- **Mode on shared hosting with a memory limit** — use **FastCGI**. On a host
+  that limits each site's virtual memory (for example CloudLinux, about 1 GB),
+  HTTP mode starts a database thread per worker and, on a server with many
+  cores, does not fit: it exits with "could not start database thread …".
+  FastCGI mode starts under the same limit.
 
 ## Update
 
