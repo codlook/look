@@ -1466,17 +1466,28 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
                     auto conn = ws_v.as_websocket();
                     // Create a base interpreter copy — each event invocation gets its own copy.
                     auto base = std::shared_ptr<Interpreter>(make_dispatch_copy().release());
+                    // Geri cagri, el sikisma istegi BITTIKTEN sonra baska bir thread'de calisir.
+                    // Kopyanin web baglami yoktu: request::/response:: cagrisi gecersiz baglama
+                    // dokunup SURECI dusuruyordu (SIGSEGV). El sikismanin baglamini SIMDI (istek
+                    // canliyken) kopyala; her olay kendi taze kopyasini alir — baska istegin
+                    // verisi asla gorunmez, request::get ws adresinin parametrelerini dondurur.
+                    auto handshake = std::make_shared<const look::WebContext>(
+                        web_ctx_ ? *web_ctx_ : look::WebContext{});
                     if (ev == "message") {
-                        conn->on_message = [base, cb_v = cb_v.clone_for_thread()](const std::string& msg) {
+                        conn->on_message = [base, handshake, cb_v = cb_v.clone_for_thread()](const std::string& msg) {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
+                            look::WebContext ctx = *handshake;
+                            copy->set_web_context(&ctx);
                             try { copy->invoke(cb_v, {Value(msg)}); } LOOK_LOG_CALLBACK_ERRORS("ws message")
                             look::release_thread_connections();
                         };
                     } else if (ev == "close") {
-                        conn->on_close = [base, cb_v = cb_v.clone_for_thread()]() {
+                        conn->on_close = [base, handshake, cb_v = cb_v.clone_for_thread()]() {
                             auto copy = base->make_dispatch_copy();
                             std::ostringstream out; copy->set_output(out);
+                            look::WebContext ctx = *handshake;
+                            copy->set_web_context(&ctx);
                             try { copy->invoke(cb_v, {}); } LOOK_LOG_CALLBACK_ERRORS("ws close")
                             look::release_thread_connections();
                         };
