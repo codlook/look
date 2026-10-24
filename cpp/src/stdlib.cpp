@@ -28,6 +28,7 @@
 #else
 #  include <fstream>
 #  include <pthread.h>
+#  include <sys/resource.h>
 #endif
 #include <memory>
 
@@ -684,10 +685,14 @@ static Module make_string() {
     // HIC isci acilamazsa anlasilir bir hata. Isciler surec omru boyunca yasar → detach.
     static constexpr size_t REGEX_STACK = size_t(256) << 20;
     struct RegexPool {
-        std::queue<std::function<void()>> q;
+        // run: isci calistirir. fail: hic isci kalmadiysa (acilamadi) isi hatayla bitirir — kuyrukta
+        // iscisiz kalan is cagirani 250 ms bekletip yaniltici "timeout" verdirirdi.
+        struct Job { std::function<void()> run, fail; };
+        std::queue<Job>                   q;
         std::mutex                        m;
         std::condition_variable           cv;
-        int                               started = 0;   // acilmis isci
+        int                               started = 0;   // calisan isci
+        int                               pending = 0;   // acilmakta olan isci
         int                               idle    = 0;   // is bekleyen isci
         static bool spawn(std::function<void()>* body) {
 #ifdef _WIN32
@@ -712,7 +717,7 @@ static Module make_string() {
         }
         void worker() {
             for (;;) {
-                std::function<void()> job;
+                Job job;
                 {
                     std::unique_lock<std::mutex> lk(m);
                     ++idle;
@@ -720,23 +725,49 @@ static Module make_string() {
                     --idle;
                     job = std::move(q.front()); q.pop();
                 }
-                job();   // runs fn(), fills the caller's State, then decrements the slot
+                job.run();   // runs fn(), fills the caller's State, then decrements the slot
             }
         }
-        // Bos isci yoksa (ve sinir dolmadiysa) once yeni isci ac; hic isci yoksa ve acilamiyorsa
-        // isi kuyruga KOYMADAN hata ver (kuyrukta kalsa cagiran 250 ms bekleyip yaniltici
-        // "timeout" alirdi).
-        void submit(std::function<void()> job) {
-            bool grow;
-            { std::lock_guard<std::mutex> lk(m); grow = idle == 0 && started < REGEX_MAX_THREADS; if (grow) ++started; }
-            if (grow && !spawn(new std::function<void()>([this]{ worker(); }))) {
-                std::lock_guard<std::mutex> lk(m);
-                if (--started == 0)
-                    throw std::runtime_error("string::regex: could not start a regex thread "
-                                             "(256 MB stack; is the process's virtual memory limited?)");
+        // Sanal bellek sinirli bir sureçte (ulimit -v / RLIMIT_AS — paylasimli hosting) 256 MB'lik
+        // regex iscileri sunucunun baglanti fiber'lerinin (8 MB yigin) yerini yiyordu: olculdu,
+        // "own size + 1 GB" sinirda 3 regex iscisi acilinca bir baglantinin fiber'i yigin acamadi
+        // ve baglanti dustu. Sinir varsa isci sayisi sinirin 1/8'ine sigacak kadar (en az 1); yoksa 8.
+        // Her buyume kararinda okunur (sinir surec calisirken degisebilir — prlimit).
+        static int worker_cap() {
+#ifndef _WIN32
+            struct rlimit rl;
+            if (getrlimit(RLIMIT_AS, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
+                unsigned long long n = (unsigned long long)rl.rlim_cur / 8 / REGEX_STACK;
+                return (int)std::max<unsigned long long>(1, std::min<unsigned long long>(n, REGEX_MAX_THREADS));
             }
-            { std::lock_guard<std::mutex> lk(m); q.push(std::move(job)); }
+#endif
+            return REGEX_MAX_THREADS;
+        }
+        // Isi kuyruga koy; bos isci yoksa (ve sinir dolmadiysa) yeni isci ac. Acilamazsa ve hic
+        // isci yoksa/acilmiyorsa kuyruktaki TUM isler fail ile hemen biter (iki istek ayni anda
+        // acmayi deneyip ikisi de basarisiz olunca biri iscisiz kuyrukta kaliyordu).
+        void submit(Job job) {
+            bool grow;
+            const int cap = worker_cap();
+            {
+                std::lock_guard<std::mutex> lk(m);
+                q.push(std::move(job));
+                grow = idle == 0 && started + pending < cap;
+                if (grow) ++pending;
+            }
             cv.notify_one();
+            if (!grow) return;
+            bool ok;
+            try { ok = spawn(new std::function<void()>([this]{ worker(); })); } catch (...) { ok = false; }
+            std::vector<Job> orphans;
+            {
+                std::lock_guard<std::mutex> lk(m);
+                --pending;
+                if (ok) ++started;
+                else if (started == 0 && pending == 0)
+                    while (!q.empty()) { orphans.push_back(std::move(q.front())); q.pop(); }
+            }
+            for (auto& o : orphans) o.fail();
         }
     };
     // Havuz nesnesi bos kurulur; isciler ilk regex'te acilir (regex kullanmayan lk / lk-cgi
@@ -758,8 +789,18 @@ static Module make_string() {
         auto state = std::make_shared<State>();
 
         g_regex_threads++;
-        try {
-        regex_pool.submit([state, fn = std::move(fn)]() mutable {
+        // fail: hic regex iscisi acilamadi — isi hatayla bitir, slotu geri ver (run'daki gibi).
+        auto fail = [state]() {
+            {
+                std::lock_guard<std::mutex> lk(state->mtx);
+                state->ex = std::make_exception_ptr(std::runtime_error(
+                    "string::regex: could not start a regex thread (256 MB stack; is the process's virtual memory limited?)"));
+                state->done = true;
+            }
+            g_regex_threads--;
+            state->cv.notify_one();
+        };
+        regex_pool.submit({[state, fn = std::move(fn)]() mutable {
             try {
                 T r = fn();
                 std::lock_guard<std::mutex> lk(state->mtx);
@@ -779,8 +820,7 @@ static Module make_string() {
             // main azaltmadığı için çift-azaltma yok, ve worker azalttığı için sızıntı da yok.
             g_regex_threads--;
             state->cv.notify_one();
-        });
-        } catch (...) { g_regex_threads--; throw; }   // is hic baslamadi: slotu geri ver
+        }, fail});
 
         std::unique_lock<std::mutex> lk(state->mtx);
         if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; })) {
