@@ -938,6 +938,12 @@ jobs:
         run: |
           cd cpp
           bash tests/mysql_caching_sha2_ci.sh ./build/lk
+      # A connection MySQL closes (wait_timeout, restart, KILL) does not kill LOOK: SIGPIPE killed
+      # lk and lk-fcgi in FastCGI mode (exit 141). The test KILLs the connections itself.
+      - name: "A dropped MySQL connection does not kill lk / lk-fcgi"
+        run: |
+          cd cpp
+          bash tests/db_dropped_connection_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci" root
       # native prepared bind matrisi — MySQL COM_STMT_EXECUTE + PG extended-query.
       - name: "Prepared bind matrisi — MySQL 8 + PostgreSQL 16 (native)"
         env:

@@ -24,6 +24,10 @@
   #include <openssl/err.h>
 #endif
 
+#ifndef MSG_NOSIGNAL
+#  define MSG_NOSIGNAL 0   // Windows/macOS: bayrak yok (Windows'ta SIGPIPE de yok)
+#endif
+
 namespace look {
 
 // SCRAM-SHA-256 client nonce'u KRİPTOGRAFİK olmalı (RFC 5802 §5.1: nonce
@@ -476,7 +480,7 @@ void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
     }
 #endif
     while (sent < len) {
-        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), 0);
+        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), MSG_NOSIGNAL);   // SIGPIPE yok: kapali sokette EPIPE
         if (r <= 0) {
             // read yollariyla SIMETRIK: gonderim kopmasinda soketi kapat ve sock_'u
             // INVALID yap ki "kapali ama gecerli gorunen fd" havuza donup sonraki

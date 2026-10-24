@@ -26,6 +26,10 @@
 #  include <openssl/err.h>
 #endif
 
+#ifndef MSG_NOSIGNAL
+#  define MSG_NOSIGNAL 0   // Windows/macOS: bayrak yok (Windows'ta SIGPIPE de yok)
+#endif
+
 namespace look {
 
 #ifndef _WIN32
@@ -227,7 +231,7 @@ void RespClient::send_command(const std::vector<std::string>& args) {
         if (ssl_) sent = SSL_write((SSL*)ssl_, p, (int)rem);
         else
 #endif
-            sent = (int)::send(fd_, p, (int)rem, 0);
+            sent = (int)::send(fd_, p, (int)rem, MSG_NOSIGNAL);   // SIGPIPE yok: kapali sokette EPIPE
         if (sent <= 0) throw std::runtime_error("Redis: send error");
         p += sent; rem -= sent;
     }
