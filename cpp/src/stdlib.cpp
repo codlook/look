@@ -27,7 +27,9 @@
 #  include <bcrypt.h>
 #else
 #  include <fstream>
+#  include <pthread.h>
 #endif
+#include <memory>
 
 namespace look {
 
@@ -669,14 +671,40 @@ static Module make_string() {
     // holds its worker until it finishes, so at most REGEX_MAX_THREADS run concurrently and
     // the (N+1)th caller is rejected fail-loud by the g_regex_threads cap below — same bound
     // as the old spawn model. Leaked singleton (process-lifetime) — no static-dtor ordering.
+    //
+    // YIGIN: std::regex (libstdc++ ve MSVC) eslestirmeyi ozyinelemeyle yapar, derinlik girdi
+    // uzunluguyla buyur. Varsayilan 8 MB yiginda ~10–20 KB girdi yigini tasirip SURECIN TAMAMINI
+    // dusuruyordu (SIGSEGV) — izin verilen sinir ise 64 KB. Olculdu: denenen desenlerin hepsi
+    // 64 MB'ta 64 KB'i kaldiriyor; 256 MB pay birakir. Yalniz sanal adres ayrilir, kullanildikca
+    // isler (8 isci × 256 MB ≈ 2 GB sanal). Isciler surec omru boyunca yasar → detach.
+    static constexpr size_t REGEX_STACK = size_t(256) << 20;
     struct RegexPool {
-        std::vector<std::thread>          workers;
         std::queue<std::function<void()>> q;
         std::mutex                        m;
         std::condition_variable           cv;
         bool                              stop = false;
+        static void spawn(std::function<void()>* body) {
+#ifdef _WIN32
+            HANDLE h = CreateThread(nullptr, REGEX_STACK, [](LPVOID p) -> DWORD {
+                std::unique_ptr<std::function<void()>> f((std::function<void()>*)p); (*f)(); return 0;
+            }, body, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+            if (!h) { delete body; throw std::runtime_error("string::regex: could not start a regex thread"); }
+            CloseHandle(h);
+#else
+            pthread_attr_t at;
+            pthread_attr_init(&at);
+            pthread_attr_setstacksize(&at, REGEX_STACK);
+            pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+            pthread_t t;
+            int rc = pthread_create(&t, &at, [](void* p) -> void* {
+                std::unique_ptr<std::function<void()>> f((std::function<void()>*)p); (*f)(); return nullptr;
+            }, body);
+            pthread_attr_destroy(&at);
+            if (rc != 0) { delete body; throw std::runtime_error("string::regex: could not start a regex thread"); }
+#endif
+        }
         explicit RegexPool(int n) {
-            for (int i = 0; i < n; ++i) workers.emplace_back([this]{
+            for (int i = 0; i < n; ++i) spawn(new std::function<void()>([this]{
                 for (;;) {
                     std::function<void()> job;
                     {
@@ -687,7 +715,7 @@ static Module make_string() {
                     }
                     job();   // runs fn(), fills the caller's State, then decrements the slot
                 }
-            });
+            }));
         }
         void submit(std::function<void()> job) {
             { std::lock_guard<std::mutex> lk(m); q.push(std::move(job)); }

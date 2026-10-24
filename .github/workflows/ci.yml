@@ -136,6 +136,13 @@ jobs:
           cd cpp
           bash tests/timer_exit_test.sh ./build/lk
 
+      # string::regex_* take up to 64 KB of input. std::regex recurses once per character and
+      # the regex threads had an 8 MB stack: a ~20 KB input killed the whole process (SIGSEGV).
+      - name: Long regex inputs do not kill the process
+        run: |
+          cd cpp
+          bash tests/regex_long_input_test.sh ./build/lk
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)
