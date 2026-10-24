@@ -20,6 +20,7 @@
 #include "look/runtime_host.h"
 #include "look/compiler.h"
 #include "look/vm.h"
+#include "look/service_error.h"
 #include "look/logger.h"
 #include "look/web.h"
 #include "look/sse.h"
@@ -328,6 +329,7 @@ struct DirectState {
     look::Value result;
     bool failed = false;
 };
+// fiber-ok: yalnız fiber dışı yedek; fiber içinde direct() FiberLocal::http_direct döner
 static thread_local DirectState t_direct_thread;
 static DirectState& direct() {
     if (look::Fiber* f = look::Fiber::current()) {
@@ -337,6 +339,7 @@ static DirectState& direct() {
     return t_direct_thread;
 }
 // Bu iş parçacığında şu an bir dağıtım sürüyor mu (iç içe "yeni istek" ayrı iş parçacığında koşar).
+// fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::dispatch_depth
 static thread_local int t_dispatch_depth = 0;
 static look::Value run_closure_as_request(const look::Value& fnv, std::vector<look::Value> args, const char* what, bool& ok);
 
@@ -1164,6 +1167,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     // Fiber modunda derinlik ve dış bağlam FIBER'a aittir: bir iş parçacığı birçok isteği
     // fiber olarak sırayla askıya alıp sürdürür; thread_local sayaç askıdaki başka isteği
     // "dış istek" sanıyordu (bkz. FiberLocal::dispatch_depth).
+    // fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::dispatch_web/out
     static thread_local look::WebContext*   t_cur_web = nullptr;
     static thread_local std::ostringstream* t_cur_out = nullptr;
     look::Fiber* const cur_fiber = look::Fiber::current();
@@ -1216,6 +1220,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // İZOLASYON: RuntimeHost LOOK global'i tutmaz (VM kendi globals'ını her istekte
         // g_http_app.vm_setup_globals'tan alır) → klon gereksiz.
         t_copy_start = std::chrono::steady_clock::now();
+        // fiber-ok: nesil-sabit dağıtım kopyası; isteğe özgü bağlam her istekte bağlanır, fiber modunda istek tablosu istek-başına kurulur (tests/fiber_request_isolation_test.sh askı boyunca ölçer)
         static thread_local std::unique_ptr<look::RuntimeHost> tl_copy;
         static thread_local uint64_t tl_gen = (uint64_t)-1;
         const uint64_t cur_gen = g_http_app.generation.load(std::memory_order_acquire);
@@ -1237,6 +1242,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // kuruluyordu (N-route app'te O(N) per request). Artık yalnız generation değişince
         // yeniden kurulur. Ham pointer'lar (vr.fn) generation-içi geçerli (vm_routes sabit);
         // generation artınca cache tazelenir — tl_copy ile aynı güvenlik.
+        // fiber-ok: nesil-sabit, salt-okunur rota listesi (istekten bağımsız)
         static thread_local std::vector<look::VmRoute> tl_route_closures;
         static thread_local uint64_t tl_routes_gen = (uint64_t)-1;
         if (tl_routes_gen != cur_gen) {
@@ -1277,6 +1283,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // there we keep rebuilding per request with print capturing the fiber-local output.
         static const bool g_use_fiber = [](){ const char* v = std::getenv("LOOK_FIBER_DISPATCH");
                                               return look_fiber_dispatch_on(v); }();
+        // fiber-ok: fiber modunda kullanılmaz (local_table → istek-başına tablo); yalnız işçi-başına-bağlantı modunda
         static thread_local std::vector<look::BuiltinFn> tl_req_builtins;
         static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;
         // Modül sarmalayıcıları (request::, response::, session:: …) kuruldukları andaki `web`
@@ -1652,7 +1659,16 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // LOOK_VM_STRICT=1 eskiden burada yeniden fırlatıyordu: istisna worker'dan çıkıyor,
             // bağlantılar bırakılmıyor ve worker sayısı kadar hatadan sonra sunucu asılıyordu.
             const std::string what = vm_e.what();
-            if (web.status_code == 200) {
+            if (dynamic_cast<const look::ServiceUnavailable*>(&vm_e)) {
+                // Bağımlı servis kesintisi (ör. oturum deposu Redis): uygulama hatası değil →
+                // 503 ve yarım kalmış sayfa yerine kısa bir açıklama. Hata yine günlüğe yazılır.
+                web.status_code = 503;
+                web.status_text = "Service Unavailable";
+                output.str("");
+                output.clear();
+                web.response_body = "Service temporarily unavailable. Please try again shortly.";
+                web.headers_out["Content-Type"] = "text/plain; charset=utf-8";
+            } else if (web.status_code == 200) {
                 web.status_code = 500;
                 web.status_text = "Internal Server Error";
             }

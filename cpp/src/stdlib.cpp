@@ -137,6 +137,7 @@ static Module make_math() {
     // saniyeden tahmin edilebiliyordu. Ayrıca `rand() % n` Windows'ta 32767'yi aşamıyordu.
     // NOT: bu üreteç güvenlik amaçlı DEĞİLDİR (kod/anahtar için crypto::random_string).
     m.functions["random"] = [](auto args) -> Value {
+        // fiber-ok: rastgele üreteç; yazma ile okuma arasında askı yok
         static thread_local std::mt19937_64 engine = []() {
             uint8_t seed_bytes[32];
             secure_random_fill(seed_bytes, sizeof(seed_bytes));
@@ -655,6 +656,7 @@ static Module make_string() {
     // pays off: slower compile once, faster match on every reuse.
     // (Routing patterns are already compiled once per route; this covers the string:: API.)
     static auto cached_regex = [](const std::string& pat) -> const std::regex& {
+        // fiber-ok: derlenmiş desen önbelleği; iş regex'in KOPYASINI alır, bekleme cv ile (askı yok)
         static thread_local std::unordered_map<std::string, std::regex> cache;
         auto it = cache.find(pat);
         if (it != cache.end()) return it->second;

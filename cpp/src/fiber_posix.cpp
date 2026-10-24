@@ -69,6 +69,7 @@ struct Fiber::Impl {
 
 // ── Thread-local state ────────────────────────────────────────────────────────
 
+// fiber-ok: zamanlayıcının kendisi — hangi fiber'ın koştuğunu tutar
 static thread_local Fiber*           tl_current_fiber   = nullptr;
 static thread_local FiberScheduler*  tl_scheduler       = nullptr;
 
@@ -78,6 +79,7 @@ FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
 
 // ── Sıra bırakma (bkz. fiber.h preempt_point) ─────────────────────────────────
 static constexpr int PREEMPT_CHECK_EVERY = 1024;
+// fiber-ok: zaman dilimi sayacı/başlangıcı iş parçacığına ait; fiber geçişinde yeniden kurulur
 thread_local int t_preempt_budget = PREEMPT_CHECK_EVERY;
 // Bu iş parçacığında şu an çalışan fiber'ın en son devraldığı an (run_one resume öncesi yazar).
 static thread_local std::chrono::steady_clock::time_point tl_slice_start;

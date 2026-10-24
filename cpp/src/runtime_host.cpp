@@ -185,6 +185,7 @@ NativeFn RuntimeHost::get_module_fn(const std::string& module_name, const std::s
 // ── VM callback köprüsü (bridge tarafı) ────────────────────────────────────────
 // VM (vm.cpp) run() içinde hook'unu register_vm_bridge ile kaydeder (thread-local);
 // bu iş parçacığında VM koşmadıysa available()==false.
+// fiber-ok: sabit kanca işaretçisi (her iş parçacığında aynı fonksiyon)
 namespace { thread_local Value (*g_vm_bridge)(const Value&, std::vector<Value>&) = nullptr; }
 void  register_vm_bridge(Value (*hook)(const Value&, std::vector<Value>&)) { g_vm_bridge = hook; }
 bool  vm_bridge_available() { return g_vm_bridge != nullptr; }

@@ -562,6 +562,7 @@ struct TplEnv {
     std::string        prefix;   // çalışma dizini + '\n' + TEMPLATE_DIR + '\n'
 };
 TplEnv tpl_make_env() {
+    // fiber-ok: yalnız benzersiz numara üretir
     thread_local unsigned long long counter = 0;
     TplEnv env;
     env.epoch = ++counter;
@@ -576,6 +577,7 @@ TplEnv tpl_make_env() {
 
 static std::shared_ptr<const std::vector<TplNode>> load_nodes(const std::string& path,
                                                                const TplEnv& env) {
+    // fiber-ok: erişim tek load_nodes çağrısında başlar ve biter (askı yok); düğümler shared_ptr ile çıkar
     thread_local std::unordered_map<std::string, TplCacheEntry> cache;
     const unsigned long long epoch = env.epoch;
     std::string key = env.prefix;

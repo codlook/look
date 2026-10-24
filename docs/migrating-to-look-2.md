@@ -403,8 +403,10 @@ With `LOOK_SESSION_DRIVER=redis`, LOOK 1 swallowed every Redis error: a Redis th
 gave an empty session (the user looked logged out) and `session::set` lost its data without a
 word. A Redis that accepted the connection but never answered held the request forever.
 
-Now a Redis error reaches the request as an error (`session: Redis: …`), which an application
-can catch with `try`/`catch`. Connecting, sending and every reply have a time limit:
+Now a Redis error reaches the request as an error (`session: Redis: …`). Unless the
+application catches it with `try`/`catch`, the error is written to the log and the visitor gets
+`503 Service Unavailable` with a short plain-text page (not a `500`: the application is not at
+fault). Connecting, sending and every reply have a time limit:
 `LOOK_REDIS_TIMEOUT_MS`, default 3000 ms. When it runs out the request gets an error naming
 the limit and that connection is closed and not reused; the next request opens a new one.
 Session connections are taken from a pool per request and opened when needed.

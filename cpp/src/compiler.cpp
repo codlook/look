@@ -28,6 +28,7 @@ namespace cfs = std::filesystem;
 // Context for compiling `use "file.lk"` includes into the same bytecode unit (mirrors
 // the UseStatement/module path). Compilation runs single-threaded at load; thread_local
 // keeps it isolated per compile. Empty root → a file include is a compile error.
+// fiber-ok: yalnız derleme anı durumu; derleme askıya girmez (dosyalar eşzamanlı okunur)
 thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard

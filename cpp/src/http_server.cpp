@@ -1096,6 +1096,7 @@ void HttpServer::run() {
                 }
             }
 
+            // fiber-ok: iş parçacığının zamanlayıcısı (iş parçacığı yapısı)
             static thread_local look::FiberScheduler tl_srv_sched;
             if (fiber_burst && worker_fd >= 0) look::set_thread_scheduler(&tl_srv_sched);
 #endif

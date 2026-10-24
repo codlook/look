@@ -12,6 +12,7 @@
 #include "look/sqlite_client.h"
 #include "look/postgres_client.h"
 #include "look/resp_client.h"
+#include "look/service_error.h"
 #include "look/logger.h"
 #include <sstream>
 #include <iomanip>
@@ -692,7 +693,8 @@ static void with_session_redis(const std::function<void(RespClient&)>& op) {
         }
         op(*c);
     } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("session: ") + e.what());
+        // Yakalanmazsa 503 + günlük (uygulama hatası değil, oturum deposu kesintisi).
+        throw look::ServiceUnavailable(std::string("session: ") + e.what());
     }
     if (c->is_connected()) {
         std::lock_guard<std::mutex> g(mu);
@@ -1066,6 +1068,7 @@ static std::atomic<int>                                  g_pool_size{0}; // 0 = 
 // when multiple fibers shared a thread (fiber A sets conn, yields, fiber B
 // overwrites it — fiber A resumes with wrong connection).
 
+// fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::conns
 static thread_local std::map<std::string, std::shared_ptr<DbConnection>> tl_conns;
 
 // Returns the active connection map for the current execution context.

@@ -8,17 +8,20 @@
 # user B received user A's session. This test runs one worker (all requests share a thread),
 # gives every client its own session value, and checks each client only ever reads its own.
 # Then it points the server at a Redis that accepts but never answers (a silent TCP listener)
-# and checks the request fails within LOOK_REDIS_TIMEOUT_MS instead of hanging.
+# and checks the request gets 503 within LOOK_REDIS_TIMEOUT_MS (logged) instead of hanging; an
+# application try/catch sees the error; with no Redis at all the request gets 503, not an empty
+# session (LOOK 1 swallowed Redis errors: users looked logged out and session data was lost).
 # Usage: redis_session_isolation_test.sh <lk-fcgi> <redis-url>   (needs python3, curl)
 set -u
 LKF="$1"; URL="$2"
-PORT=7461; SPORT=7462; MUTE=7463
-T=$(mktemp -d); trap '{ kill $pid $spid $mpid; wait; } 2>/dev/null; rm -rf "$T"' EXIT
-pid=""; spid=""; mpid=""
+PORT=7461; SPORT=7462; MUTE=7463; DPORT=7464; DOWN=7465
+T=$(mktemp -d); trap '{ kill $pid $spid $mpid $dpid; wait; } 2>/dev/null; rm -rf "$T"' EXIT
+pid=""; spid=""; mpid=""; dpid=""
 cat > "$T/app.lk" <<'LK'
 route("GET", "/set", function() { session::start(); session::set("v", request::get("v")); return response::text("ok") })
 route("GET", "/get", function() { session::start(); return response::text(session::get("v")) })
 route("GET", "/ping", function() { return response::text("ok") })
+route("GET", "/caught", function() { try { session::start(); session::set("a", "b") } catch ($e) { return response::text("caught: " . $e) } return response::text("no error") })
 LK
 wait_up() { for i in $(seq 1 50); do curl -s --max-time 1 "http://127.0.0.1:$1/health" | grep -q ok && return 0; sleep 0.2; done; return 1; }
 fail=0
@@ -67,13 +70,29 @@ s0=$(date +%s%N)
 code=$(curl -s -o "$T/body" -w '%{http_code}' --max-time 10 "http://127.0.0.1:$SPORT/set?v=x")
 ms=$(( ($(date +%s%N) - s0) / 1000000 ))
 # Bekleme sırasında aynı işçi başka isteğe bakabilmeli (yalnız fiber bekliyor).
-if [ "$code" = "500" ] && [ "$ms" -lt 3000 ] && grep -q "LOOK_REDIS_TIMEOUT_MS" "$T/mute.log" "$T/body"; then
-    echo "PASS: a silent Redis fails the request after ${ms} ms with a clear error"
+if [ "$code" = "503" ] && [ "$ms" -lt 3000 ] && grep -q "LOOK_REDIS_TIMEOUT_MS" "$T/mute.log" \
+   && grep -q "temporarily unavailable" "$T/body"; then
+    echo "PASS: a silent Redis gives 503 after ${ms} ms; the log names LOOK_REDIS_TIMEOUT_MS"
 else
-    echo "FAIL: silent Redis: status=$code after ${ms} ms (want 500 within the 500 ms limit, error naming LOOK_REDIS_TIMEOUT_MS)"
+    echo "FAIL: silent Redis: status=$code after ${ms} ms, body '$(head -c 80 "$T/body")' (want 503 within the 500 ms limit, log naming LOOK_REDIS_TIMEOUT_MS)"
     tail -5 "$T/mute.log"; fail=1
 fi
 h=$(curl -s --max-time 2 "http://127.0.0.1:$SPORT/ping")
 [ "$h" = "ok" ] && echo "PASS: the server still answers after the Redis timeout" \
                 || { echo "FAIL: server stopped answering after the Redis timeout"; fail=1; }
+# Uygulama hatayı kendisi yakalayabilir: try/catch sıradan bir hata mesajı görür.
+c=$(curl -s --max-time 10 "http://127.0.0.1:$SPORT/caught")
+case "$c" in "caught: session: Redis:"*) echo "PASS: try/catch in the application sees the Redis error";;
+             *) echo "FAIL: try/catch did not see the Redis error: '$c'"; fail=1;; esac
+# Redis hiç yok (bağlantı reddi): eskiden oturum sessizce boştu, yazılan veri kayboluyordu.
+LOOK_SESSION_DRIVER=redis LOOK_REDIS_URL="redis://127.0.0.1:$DOWN" \
+    "$LKF" --mode http --port $DPORT --workers 1 "$T/app.lk" >"$T/down.log" 2>&1 &
+dpid=$!
+wait_up $DPORT || { echo "FAIL: server (no Redis) did not start"; cat "$T/down.log"; exit 1; }
+code=$(curl -s -o "$T/body2" -w '%{http_code}' --max-time 10 "http://127.0.0.1:$DPORT/set?v=x")
+if [ "$code" = "503" ] && grep -q "session: Redis: cannot connect" "$T/down.log"; then
+    echo "PASS: no Redis at all gives 503 and a logged error (not an empty session)"
+else
+    echo "FAIL: no Redis: status=$code (want 503 + logged 'cannot connect')"; tail -3 "$T/down.log"; fail=1
+fi
 exit $fail

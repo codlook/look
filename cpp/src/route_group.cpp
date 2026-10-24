@@ -6,6 +6,7 @@ namespace look {
 
 namespace {
 struct Frame { std::string prefix; std::vector<Value> mws; };
+// fiber-ok: yalnız yükleme anı (route::group gövdesi kurulumda koşar, askı yok)
 thread_local std::vector<Frame> g_stack;
 }
 

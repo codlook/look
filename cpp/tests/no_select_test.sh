@@ -11,8 +11,9 @@
 fail=0
 for f in src/*.cpp include/look/*.h; do
     awk -v F="$f" '
-        /^[ \t]*#[ \t]*if/    { depth++; win[depth] = ($0 ~ /_WIN32/ && $0 !~ /!|ifndef/) ? 1 : 0; next }
-        /^[ \t]*#[ \t]*else/  { win[depth] = 0; next }
+        # Windows dalı: #ifdef _WIN32 / #if defined(_WIN32) gövdesi ve #ifndef _WIN32 / #if !defined(_WIN32) bloğunun #else dalı.
+        /^[ \t]*#[ \t]*if/    { depth++; neg[depth] = ($0 ~ /_WIN32/ && $0 ~ /!|ifndef/) ? 1 : 0; win[depth] = ($0 ~ /_WIN32/ && !neg[depth]) ? 1 : 0; next }
+        /^[ \t]*#[ \t]*(else|elif)/ { win[depth] = neg[depth]; next }
         /^[ \t]*#[ \t]*endif/ { depth--; next }
         /^[ \t]*\/\//         { next }
         /FD_SET[ \t]*\(|[^a-zA-Z_:]select[ \t]*\(|::select[ \t]*\(/ {

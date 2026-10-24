@@ -9,6 +9,8 @@
 #   1. getaddrinfo TAM 1 kez çağrılır (ikinci çözüm YOK).
 #   2. is_ssrf_blocked(res) connect'ten ÖNCE gelir.
 #   3. connect(...) çözümlenmiş 'res->ai_addr'a bağlanır (host'u yeniden geçirmez).
+#      (ya da aynı listede dolaşan 'p'nin adresine: for (p = res; ...) — "localhost" ::1 sonra 127.0.0.1;
+#      liste is_ssrf_blocked(res) ile BÜTÜNÜYLE denetlenmiştir).
 # Bu üçü tutuyorsa çözülmüş+onaylı IP pinlidir → rebinding imkânsız.
 #
 # POZİTİF KONTROL: aşağıda kasıtlı-KIRIK (yeniden çözen) bir gövde guard'a verilir;
@@ -23,6 +25,10 @@ check_body() {
     local ga conn ssrf
     ga=$(printf '%s\n' "$body" | grep -c 'getaddrinfo(')
     conn=$(printf '%s\n' "$body" | grep -c 'connect(s, res->ai_addr')
+    # aynı çözülmüş listede dolaşan p: connect(s, p->ai_addr) + for (... p = res; ...)
+    if printf '%s\n' "$body" | grep -q 'p = res;'; then
+        conn=$((conn + $(printf '%s\n' "$body" | grep -c 'connect(s, p->ai_addr')))
+    fi
     ssrf=$(printf '%s\n' "$body" | grep -c 'is_ssrf_blocked(res)')
     # getaddrinfo tam 1, connect res->ai_addr'a, ssrf-check mevcut
     if [ "$ga" -ne 1 ] || [ "$conn" -lt 1 ] || [ "$ssrf" -lt 1 ]; then

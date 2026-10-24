@@ -82,6 +82,7 @@ static const bool s_bc_cloner_registered = [] {
 // istek bir sorguda / http::get'te askıya alınınca aynı iş parçacığındaki başka bir isteğin
 // VM'i onu eziyordu; askıdan dönen istekteki array::map closure'ı ÖTEKİ isteğin VM'inde çalışıp
 // onun başlığını/parametresini okuyor, sonra süreç çöküyordu (1.0.20–1.0.23, fiber modu).
+// fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::active_vm
 static thread_local VM* t_active_vm = nullptr;
 static VM*& active_vm_slot() {
     if (Fiber* f = Fiber::current()) return reinterpret_cast<VM*&>(f->local.active_vm);

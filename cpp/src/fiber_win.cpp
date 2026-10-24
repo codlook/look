@@ -33,6 +33,7 @@ struct Fiber::Impl {
 
 // ── Thread-local state ────────────────────────────────────────────────────────
 
+// fiber-ok: zamanlayıcının kendisi (Windows'ta istek fiber'ı yok)
 static thread_local Fiber*          tl_current_fiber = nullptr;
 static thread_local FiberScheduler* tl_scheduler     = nullptr;
 
@@ -55,6 +56,7 @@ Fiber* Fiber::current() noexcept { return tl_current_fiber; }
 FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
 
 // Sıra bırakma (fiber.h preempt_point): Windows'ta fiber dağıtımı yok — yalnız sayaç tazelenir.
+// fiber-ok: iş parçacığının preempt sayacı
 thread_local int t_preempt_budget = 1024;
 void preempt_slow() noexcept { t_preempt_budget = 1024; }
 void fiber_offload_run(const std::function<void()>& job) { job(); }

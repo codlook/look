@@ -769,6 +769,7 @@ std::unique_ptr<EventLoop> EventLoop::create() {
 
 // ── Thread-local EventLoop accessor ─────────────────────────────────────────
 
+// fiber-ok: iş parçacığının kendi olay döngüsü (iş parçacığı yapısı)
 static thread_local EventLoop* tl_event_loop = nullptr;
 
 EventLoop* get_thread_event_loop() noexcept { return tl_event_loop; }

@@ -622,6 +622,11 @@ jobs:
       # connect, the TLS handshake and sends go through look/fiber_net.h for the same reason.
       - name: Network clients never block the worker thread in a fiber
         run: bash cpp/tests/fiber_blocking_io_guard.sh
+      # A thread variable written before a wait and read after it can belong to another request
+      # once the thread ran other fibers meanwhile (a user received another user's session).
+      # Each thread_local states why it is safe ("fiber-ok: …").
+      - name: Every thread_local states why it is safe with fibers
+        run: bash cpp/tests/thread_local_guard.sh
       # Register reuse — one function far past the old 72-route / 63-call ceiling, plus
       # more than 256 closures. A compile failure is an error, not a fallback.
       - name: Register reuse guard

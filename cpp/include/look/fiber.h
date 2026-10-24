@@ -320,6 +320,7 @@ void            set_thread_scheduler(FiberScheduler* s) noexcept;
 // (CLI, eski worker modeli, zamanlayıcı/parallel iş parçacıkları) yalnız sayaç azalır.
 // LOOK_TEST_PREEMPT=1 yalnız TESTLER içindir: her noktada sıra bırakılır — fiberler arasında
 // iş parçacığına bağlı durum karışmasını (nadir zamanlama hatalarını) her istekte ortaya çıkarır.
+// fiber-ok: iş parçacığının preempt sayacı (fiber_posix.cpp), istek verisi değil
 extern thread_local int t_preempt_budget;
 void preempt_slow() noexcept;
 inline void preempt_point() noexcept {

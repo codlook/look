@@ -107,6 +107,7 @@ static bool is_ssrf_blocked(const struct addrinfo* res) {
 // iç servisine ulaşamayan geliştirici isteği bir güvenlik politikasının
 // engellediğini göremiyor, boşuna ağ/DNS/firewall araştırıyordu.
 // (33. bug ile aynı sınıf: davranış doğru, mesaj teşhis ettirmiyor.)
+// fiber-ok: yalnız tcp_connect'in son askı noktasından SONRA yazılır, çağıran hemen okur
 static thread_local const char* t_conn_error = nullptr;
 
 // ── URL parser ────────────────────────────────────────────────────────────────

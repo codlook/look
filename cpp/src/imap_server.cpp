@@ -64,6 +64,7 @@ namespace look {
 // Her oturum kendi thread'inde çalışır; I/O yardımcıları bu işaretçiyi kontrol
 // ederek ::send/::recv yerine SSL_write/SSL_read kullanır. Böylece 40+ çağrı
 // noktası değişmeden TLS-farkında olur.
+// fiber-ok: IMAP oturumu kendi iş parçacığında koşar (bağlantı başına iş parçacığı, fiber yok)
 static thread_local SSL* g_tls = nullptr;
 
 // ── Env yapılandırma (güvenlik limitleri) ─────────────────────────────────────
