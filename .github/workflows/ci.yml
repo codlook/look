@@ -157,6 +157,20 @@ jobs:
           cd cpp
           bash tests/startup_resource_failure_test.sh ./build/lk-fcgi
 
+      # http:: sent the request with one send(): a slow server let the send timeout expire and
+      # the rest of the body was never sent, with no error (8 MB POST: 2.6 MB arrived).
+      - name: "http:: sends the whole request body to a slow server"
+        run: |
+          cd cpp
+          bash tests/http_partial_send_test.sh ./build/lk
+
+      # A Redis session error is logged (the behaviour stays: empty session), and the broken
+      # connection is replaced: after a Redis restart sessions stayed empty until LOOK restarted.
+      - name: Redis session errors are logged and the connection recovers
+        run: |
+          cd cpp
+          bash tests/redis_session_warn_test.sh ./build/lk-fcgi
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)

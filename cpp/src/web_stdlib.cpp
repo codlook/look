@@ -28,6 +28,7 @@
 #include <condition_variable>
 #include <thread>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <system_error>
 #include "look/json_str_parse.h"   // saf JSON string-unescape (fuzz ile paylasilan tek tanim)
@@ -668,14 +669,20 @@ static int session_ttl() {
     return v;
 }
 // Her worker thread kendi Redis bağlantısını tutar (RespClient thread-safe değil).
+static thread_local std::unique_ptr<RespClient> tl_sess_redis;
 static RespClient* session_redis() {
-    static thread_local std::unique_ptr<RespClient> cli;
-    if (!cli) {
+    if (!tl_sess_redis) {
         const char* u = std::getenv("LOOK_REDIS_URL");
-        cli = std::make_unique<RespClient>(u ? std::string(u) : std::string("redis://127.0.0.1:6379"));
+        tl_sess_redis = std::make_unique<RespClient>(u ? std::string(u) : std::string("redis://127.0.0.1:6379"));
     }
-    return cli.get();
+    return tl_sess_redis.get();
 }
+// Hatadan sonra bağlantı atılır, sıradaki kullanım yeniden bağlanır. Eskiden hiç yeniden
+// bağlanılmıyordu: Redis bir kez yeniden başlayınca (ya da bağlantı koptuğunda) o iş
+// parçacığının oturumları LOOK yeniden başlatılana dek boş okunuyor, yazılanlar kayboluyordu
+// (ölçüldü: yeniden başlatmadan sonra session::set hiç tutmadı). Yarıda kalan bir yanıttan
+// sonra akışın neresinde olunduğu da bilinmez — kalan baytlar sıradaki isteğin yanıtı sanılırdı.
+static void session_redis_drop() { tl_sess_redis.reset(); }
 // GÜVENLİK: Session ID doğrulama — üretilen format TAM 32 hex karakter. sid
 // client'ın LOOK_SESSION cookie'sinden gelir ve doğrudan dosya yoluna girer
 // (sess_file_path). Doğrulanmazsa "x/../../../etc/cron.d/pwn" gibi bir değer
@@ -707,20 +714,50 @@ using look::sess_esc;
 using look::sess_unesc;
 using look::sess_blob_get;
 using look::sess_blob_set;
+// Redis oturum hatası LOOK 1'de yutulur (oturum boş okunur / yazılan veri kaybolur — davranış
+// korunur) ama artık İZ BIRAKIR: eskiden günlükte hiçbir şey yoktu, kullanıcı çıkış yapmış
+// görünüyordu ve nedeni bulunamıyordu. Redis kapalıyken her istek bir satır yazmasın diye en
+// çok 10 saniyede bir uyarı; aradaki sayı da yazılır. Bağlantı atılır: sonraki istek yeniden
+// bağlanır. (LOOK 2: hata isteğe 503 olarak ulaşır.)
+static void sess_redis_warn(const char* what, const std::exception* e) {
+    session_redis_drop();   // bozuk bağlantı bir daha kullanılmaz
+    static std::atomic<long long> last_ms{0};
+    static std::atomic<long> suppressed{0};
+    long long now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    long long prev = last_ms.load(std::memory_order_relaxed);
+    if (prev != 0 && now - prev < 10000) { suppressed.fetch_add(1, std::memory_order_relaxed); return; }
+    if (!last_ms.compare_exchange_strong(prev, now)) { suppressed.fetch_add(1, std::memory_order_relaxed); return; }
+    long n = suppressed.exchange(0);
+    look::Logger::instance().log(look::LogLevel::LOG_WARN, "SESSION",
+        std::string("Redis session storage failed: ") + what + " (" + (e ? e->what() : "unknown error") + ")" +
+        (n > 0 ? "; " + std::to_string(n) + " more failure(s) since the last warning" : std::string()));
+}
 static std::string sess_load(const std::string& sid) {
     if (session_use_redis()) {
         try { return session_redis()->get("look_sess:" + sid); }
-        catch (...) { return ""; }   // Redis erişilemezse crash yerine boş session
+        catch (const std::exception& e) { sess_redis_warn("the session was read as empty", &e); return ""; }
+        catch (...) { sess_redis_warn("the session was read as empty", nullptr); return ""; }
     }
     std::ifstream f(sess_file_path(sid));
     std::stringstream ss; ss << f.rdbuf(); return ss.str();
 }
 static void sess_store(const std::string& sid, const std::string& blob) {
-    if (session_use_redis()) { try { session_redis()->set("look_sess:" + sid, blob, session_ttl()); } catch (...) {} return; }
+    if (session_use_redis()) {
+        try { session_redis()->set("look_sess:" + sid, blob, session_ttl()); }
+        catch (const std::exception& e) { sess_redis_warn("the session data was NOT saved", &e); }
+        catch (...) { sess_redis_warn("the session data was NOT saved", nullptr); }
+        return;
+    }
     std::ofstream f(sess_file_path(sid), std::ios::trunc); f << blob;   // overwrite
 }
 static void sess_remove(const std::string& sid) {
-    if (session_use_redis()) { try { session_redis()->del("look_sess:" + sid); } catch (...) {} return; }
+    if (session_use_redis()) {
+        try { session_redis()->del("look_sess:" + sid); }
+        catch (const std::exception& e) { sess_redis_warn("the session was NOT removed", &e); }
+        catch (...) { sess_redis_warn("the session was NOT removed", nullptr); }
+        return;
+    }
     std::remove(sess_file_path(sid).c_str());
 }
 // 32-hex CSPRNG session ID üret (fail-closed) — session::start ve regenerate
