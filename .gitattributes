@@ -3,3 +3,5 @@
 # CALISMAZ (koruma yok saniliyor ama yok).
 *.sh text eol=lf
 *.lk text eol=lf
+# Uzantisiz shell scriptleri (Plesk eklentisinin root adimi) — *.sh kuralina girmez
+platforms/plesk/sbin/* text eol=lf
