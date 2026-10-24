@@ -77,6 +77,7 @@ public:
 private:
     sock_t   sock_           = SOCK_INVALID;
     void*    ssl_            = nullptr;  // SSL* (POSIX/OpenSSL); TLS aktifse send/recv_bytes buradan geçer
+    bool     quitting_       = false;    // disconnect COM_QUIT gönderirken (send hatası disconnect'i yeniden çağırmasın)
     DbConfig cfg_;
     uint64_t last_insert_id_ = 0;
     uint64_t affected_rows_  = 0;

@@ -1171,6 +1171,12 @@ jobs:
       # driver used to ask for lastval() after every INSERT: on a table without a sequence that
       # failed, aborted the transaction, and the COMMIT silently rolled back; and lastval() is the
       # session's last sequence value, so last_id could be another table's (or request's) id.
+      # MySQL connections end with COM_QUIT: without it MySQL counted each closed connection as
+      # aborted (Aborted_clients) and logged a warning — every connection of a script's pool.
+      - name: "MySQL 8 — a script leaves no aborted connection"
+        run: |
+          cd cpp
+          bash tests/mysql_quit_test.sh ./build/lk "mysql://root:rootpw@127.0.0.1:3306/lookci"
       - name: "PostgreSQL 16 — INSERT in a transaction is kept; last_id is that INSERT's"
         env:
           PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"

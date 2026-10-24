@@ -127,6 +127,16 @@ MySQLClient::~MySQLClient() {
 }
 
 void MySQLClient::disconnect() {
+    // COM_QUIT (best effort): sunucuya "çıkıyorum" de. ESKİ HAL: soket doğrudan kapatılıyordu →
+    // MySQL her bağlantıyı "aborted" sayıp hata günlüğüne uyarı yazıyordu (ER_NET_READ_ERROR,
+    // Aborted_clients — ölçüm: tek sorgu yapan bir betik havuzun 16 bağlantısının 16'sını da).
+    // send_bytes hata verirse kendisi disconnect() çağırır → quitting_ özyinelemeyi keser.
+    if (sock_ != SOCK_INVALID && !quitting_) {
+        quitting_ = true;
+        const uint8_t quit[5] = {1, 0, 0, 0, 0x01};   // uzunluk 1, sıra 0, COM_QUIT
+        try { send_bytes(quit, sizeof(quit)); } catch (...) {}
+        quitting_ = false;
+    }
 #ifndef _WIN32
     if (ssl_) {
         SSL* s = (SSL*)ssl_;
