@@ -150,6 +150,13 @@ jobs:
           cd cpp
           bash tests/regex_memory_limit_test.sh ./build/lk ./build/lk-fcgi
 
+      # A start that cannot get its threads or stacks (a memory limit) says why and exits
+      # non-zero: lk-fcgi hung (alive, port never opened), died in std::terminate, or exited 0.
+      - name: Startup without enough resources fails with the reason
+        run: |
+          cd cpp
+          bash tests/startup_resource_failure_test.sh ./build/lk-fcgi
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)

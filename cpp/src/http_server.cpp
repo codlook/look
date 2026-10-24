@@ -5,6 +5,7 @@
 #include "look/event_loop.h"
 #include "look/fiber.h"
 #include "look/logger.h"
+#include "look/thread_start.h"   // start_pool_threads: baslatilamazsa durdur+birlestir+nedenli hata
 
 #include <sstream>
 #include <thread>
@@ -15,6 +16,8 @@
 #include <unordered_map>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
+#include <atomic>
 #include <stdexcept>
 #include <algorithm>
 #include <cerrno>
@@ -122,8 +125,7 @@ class WorkerPool {
     bool stop_ = false;
 public:
     explicit WorkerPool(int n) {
-        for (int i = 0; i < n; ++i) {
-            workers_.emplace_back([this] {
+        look::start_pool_threads(workers_, n, "HTTP worker pool", [this] {
                 for (;;) {
                     std::function<void()> fn;
                     {
@@ -135,8 +137,8 @@ public:
                     }
                     fn();
                 }
-            });
-        }
+            },
+            [this] { { std::lock_guard<std::mutex> lk(mtx_); stop_ = true; } cv_.notify_all(); });
     }
     void submit(std::function<void()> fn) {
         { std::lock_guard<std::mutex> lk(mtx_); queue_.push(std::move(fn)); }
@@ -1026,6 +1028,7 @@ void HttpServer::run() {
     std::vector<std::thread> workers;
     workers.reserve(impl_->workers);
     for (int i = 0; i < impl_->workers; ++i) {
+      try {
 #ifdef __linux__
         workers.emplace_back([this, shared_port, i]() {
 #else
@@ -1074,6 +1077,7 @@ void HttpServer::run() {
                     // yeni bağlantı gelince epoll acceptor'ı uyandırır.
                     constexpr int FIBER_CAP = 1024;  // worker başına fiber üst sınırı
                     FiberScheduler* sched = &tl_srv_sched;
+                    try {
                     sched->spawn([this, worker_fd, sched]() {
                         auto self = look::Fiber::current()->shared_from_this_fiber();
                         while (impl_->running) {
@@ -1099,9 +1103,22 @@ void HttpServer::run() {
                                         &reinterpret_cast<sockaddr_in6*>(&peer)->sin6_addr,
                                         peer_ip, sizeof(peer_ip));
                                 std::string ip_str = peer_ip;
-                                sched->spawn([this, client, ip_str]() {
-                                    impl_->handle_connection(client, ip_str);
-                                });
+                                try {
+                                    sched->spawn([this, client, ip_str]() {
+                                        impl_->handle_connection(client, ip_str);
+                                    });
+                                } catch (const std::exception& e) {
+                                    // Baglantinin fiber'i acilamadi (bellek): yalniz bu baglantiyi
+                                    // kapat. Eskiden istisna acceptor'u dusuruyor, fd sizip istemci
+                                    // cevapsiz kaliyordu.
+                                    ::close(client);
+                                    static std::atomic<unsigned> dropped{0};
+                                    unsigned n = ++dropped;
+                                    if (n == 1 || n % 1000 == 0)
+                                        look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+                                            "closed a connection: its fiber could not start (" + std::string(e.what()) +
+                                            "); " + std::to_string(n) + " so far. Is the process's virtual memory limited (ulimit -v)?");
+                                }
                                 continue;   // kuyruk boşalana dek accept'e devam
                             }
                             if (errno == EINTR) continue;
@@ -1121,6 +1138,19 @@ void HttpServer::run() {
                             break;   // gerçek accept hatası
                         }
                     });
+                    } catch (const std::exception& e) {
+                        // Acceptor fiber'i acilamadi: bu worker'in soketine gelen baglantilar
+                        // hic kabul edilmezdi. Go gibi: nedeni yaz, hata koduyla cik (systemd
+                        // yeniden baslatir, panel/journal gosterir). Eskiden istisna thread'den
+                        // kacip std::terminate ile "terminate called without an active exception".
+                        std::string msg = "could not start the connection fiber of HTTP worker " +
+                            std::to_string(i + 1) + " (" + e.what() + "). Use fewer workers (--workers) "
+                            "or raise the process's limits (ulimit -v).";
+                        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", msg);
+                        std::fprintf(stderr, "Error: %s\n", msg.c_str());
+                        std::fflush(nullptr);
+                        std::_Exit(1);
+                    }
                     // Acceptor + tüm bağlantı fiber'ları bitene dek çalış.
                     // Acceptor running=false görünce (≤200ms) çıkar; bağlantı
                     // fiber'ları idle-timeout ile kapanır → temiz wind-down.
@@ -1163,6 +1193,17 @@ void HttpServer::run() {
             }
 #endif
         });
+      } catch (const std::system_error& e) {
+        // Islemci thread'i acilamadi: baslatilanlari durdur (≤200 ms'de running'i gorurler),
+        // birlestir, nedenli hata — joinable thread'le cikmak std::terminate idi.
+        impl_->running = false;
+        for (auto& t : workers) if (t.joinable()) t.join();
+        impl_->loop->stop();
+        if (impl_->loop_thread.joinable()) impl_->loop_thread.join();
+        throw std::runtime_error("could not start HTTP worker thread " + std::to_string(i + 1) + " of " +
+            std::to_string(impl_->workers) + " (" + e.what() + "). Use fewer threads (--workers) or "
+            "raise the process's limits (ulimit -u, ulimit -v).");
+      }
     }
 
     for (auto& t : workers) {

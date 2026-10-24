@@ -1,13 +1,13 @@
 #include "look/db_async_pool.h"
 #include "look/logger.h"
+#include "look/thread_start.h"
 #include <string>
 
 namespace look {
 
 AsyncDbPool::AsyncDbPool(int thread_count) {
-    threads_.reserve(thread_count);
-    for (int i = 0; i < thread_count; ++i)
-        threads_.emplace_back([this] { worker_loop(); });
+    start_pool_threads(threads_, thread_count, "database", [this] { worker_loop(); },
+        [this] { { std::lock_guard<std::mutex> lk(mtx_); stop_ = true; } cv_.notify_all(); });
     Logger::instance().log(LogLevel::LOG_INFO, "DB",
         "AsyncDbPool[" + std::to_string(thread_count) + "] started");
 }
