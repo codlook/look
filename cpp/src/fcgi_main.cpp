@@ -26,6 +26,7 @@
 #include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
 #include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
 #include "look/http_client.h"
+#include "look/thread_start.h"     // start_pool_threads
 #include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
 #include "look/lexer.h"
 #include "look/parser.h"
@@ -64,8 +65,7 @@
 class ThreadPool {
 public:
     explicit ThreadPool(int n) : stop_(false) {
-        for (int i = 0; i < n; ++i)
-            workers_.emplace_back([this] {
+        look::start_pool_threads(workers_, n, "FastCGI worker", [this] {
                 while (true) {
                     std::function<void()> task;
                     {
@@ -77,7 +77,8 @@ public:
                     }
                     task();
                 }
-            });
+            },
+            [this] { { std::lock_guard<std::mutex> lk(mtx_); stop_ = true; } cv_.notify_all(); });
     }
 
     void submit(std::function<void()> f) {
@@ -746,7 +747,15 @@ int main(int argc, char* argv[]) {
         }
         if (workers < 2)  workers = 2;
         if (tcp_port <= 0) tcp_port = 9000;
-        run_http_mode(tcp_port, workers, script);
+        try {
+            run_http_mode(tcp_port, workers, script);
+        } catch (const std::exception& e) {
+            // Kurulumda (ör. veritabani is parcacigi havuzu) baslatilamayan kaynak: nedeni yaz, 1 ile cik
+            // (eskiden yakalanmayan istisna → std::terminate).
+            std::cerr << "Error: LOOK could not start: " << e.what() << "\n";
+            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string("could not start: ") + e.what());
+            return 1;
+        }
         return 0;
     }
 

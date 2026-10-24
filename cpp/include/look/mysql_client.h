@@ -81,6 +81,9 @@ private:
     DbConfig cfg_;
     uint64_t last_insert_id_ = 0;
     uint64_t affected_rows_  = 0;
+    // Sunucunun son OK/EOF paketindeki SERVER_STATUS_IN_TRANS: transaction icinde miyiz.
+    // Kopan baglanti transaction icindeyse yeni baglanti ACILMAZ (bkz. ensure_connected).
+    bool     in_txn_         = false;
     int64_t  last_query_ms_  = 0;
     bool     wsock_init_     = false;
 

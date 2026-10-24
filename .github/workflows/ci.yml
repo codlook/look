@@ -446,6 +446,13 @@ jobs:
           cd cpp
           bash tests/regex_memory_limit_test.sh ./build/lk ./build/lk-fcgi
 
+      # A start that cannot get its threads or stacks (a memory limit) says why and exits
+      # non-zero: lk-fcgi hung (alive, port never opened), died in std::terminate, or exited 0.
+      - name: Startup without enough resources fails with the reason
+        run: |
+          cd cpp
+          bash tests/startup_resource_failure_test.sh ./build/lk-fcgi
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)
@@ -1197,6 +1204,15 @@ jobs:
         run: |
           cd cpp
           bash tests/db_dropped_connection_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci" root
+      # A connection the server closed (wait_timeout, restart, KILL, pg_terminate_backend) is
+      # replaced before the query is sent: the first query no longer fails. A sent query is never
+      # sent again, and inside a transaction it is an error (PostgreSQL used to reconnect there and
+      # keep the rest of the transaction outside it).
+      - name: "A connection the server closed is replaced before the query (MySQL 8 + PostgreSQL 16)"
+        run: |
+          cd cpp
+          bash tests/db_stale_connection_test.sh ./build/lk ./build/lk-fcgi \
+            "mysql://root:rootpw@127.0.0.1:3306/lookci" root "postgres://lookci:lookci@127.0.0.1:5432/lookci" lookci
       # native prepared bind matrisi — MySQL COM_STMT_EXECUTE + PG extended-query.
       - name: "Prepared bind matrisi — MySQL 8 + PostgreSQL 16 (native)"
         env:

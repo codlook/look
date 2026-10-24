@@ -1,5 +1,6 @@
 #include "look/mysql_client.h"
 #include "look/mysql_wire_parse.h"   // saf ayristirici tek tanim (member'lar forward eder)
+#include "look/sock_idle.h"         // idle_socket_unusable: gondermeden once oluluk yoklamasi
 #include "look/fiber.h"
 #include "look/fiber_io.h"
 #include "look/format.h"   // look_format_double (dilin tek double formati)
@@ -297,7 +298,18 @@ bool MySQLClient::ping() {
 // ── ensure_connected ──────────────────────────────────────────────────────────
 
 void MySQLClient::ensure_connected() {
+    // Sunucu bosta bekleyen baglantiyi kapattiysa (wait_timeout, yeniden baslatma, KILL) bunu
+    // sorguyu GONDERMEDEN anla: eskiden ilk sorgu kapali sokete gidip hata veriyordu (sabahin ilk
+    // istegi 500). Gonderilmis bir sorgu asla tekrarlanmaz — bu yalniz gonderimden onceki yoklama.
+    if (sock_ != SOCK_INVALID && idle_socket_unusable(sock_)) disconnect();
     if (sock_ != SOCK_INVALID) return;  // socket alive — skip round-trip ping
+    // Transaction icinde kopan baglantinin yerine yenisi ACILMAZ: sunucu transaction'i geri aldi;
+    // yeni baglantida sonraki komutlar transaction DISINDA kalici yazilirdi (sessiz tutarsizlik).
+    if (in_txn_) {
+        in_txn_ = false;
+        throw std::runtime_error("db: the connection was closed inside a transaction; "
+                                 "the server rolled the transaction back and nothing of it was kept");
+    }
     for (int attempt = 0; attempt < cfg_.max_reconnect; ++attempt) {
         if (attempt > 0)
             std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.reconnect_delay_ms));
@@ -745,6 +757,7 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     }
     if (resp[0] == 0x00) {
         p++; affected_rows_=read_lenenc(p,end); last_insert_id_=read_lenenc(p,end);
+        if (end - p >= 2) in_txn_ = (p[0] & 0x01) != 0;   // SERVER_STATUS_IN_TRANS
         return {};
     }
 
@@ -776,6 +789,8 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     std::vector<DbRow> rows;
     while (true) {
         auto row_pkt = read_packet(seq);
+        if (row_pkt.size() >= 5 && row_pkt.size() < 9 && row_pkt[0] == 0xFE)
+            in_txn_ = (row_pkt[3] & 0x01) != 0;   // EOF: [FE][uyari 2][durum 2]
         if (row_pkt.empty() || row_pkt[0]==0xFE || row_pkt[0]==0xFF) break;
         DbRow row;
         const uint8_t* rp = row_pkt.data();
@@ -933,6 +948,7 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
         const uint8_t* end = resp.data() + resp.size();
         affected_rows_  = read_lenenc(p, end);
         last_insert_id_ = read_lenenc(p, end);
+        if (end - p >= 2) in_txn_ = (p[0] & 0x01) != 0;   // SERVER_STATUS_IN_TRANS
         return {};
     }
 
@@ -966,6 +982,8 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     std::vector<DbRow> rows;
     while (true) {
         auto row_pkt = read_packet(seq);
+        if (row_pkt.size() >= 5 && row_pkt.size() < 9 && row_pkt[0] == 0xFE)
+            in_txn_ = (row_pkt[3] & 0x01) != 0;   // EOF: [FE][uyari 2][durum 2]
         if (row_pkt.empty() || row_pkt[0]==0xFE || row_pkt[0]==0xFF) break;
 
         // binary row: 0x00 header + null_bitmap

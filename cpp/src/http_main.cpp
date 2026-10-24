@@ -1927,8 +1927,12 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
             "Listening on port " + std::to_string(port));
         server.run();
     } catch (const std::exception& e) {
+        // Sunucu kurulamadi/calisamadi: hata koduyla CIK. Eskiden loglayip normal donuyordu →
+        // surec 0 ile bitiyor, systemd Restart=on-failure bunu basari sayip yeniden baslatmiyordu.
         std::cerr << "[look-fcgi --mode http] " << e.what() << "\n";
         look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", e.what());
+        std::fflush(nullptr);
+        std::_Exit(1);
     }
 
 #ifndef _WIN32
