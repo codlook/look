@@ -1,4 +1,5 @@
 #include "look/postgres_client.h"
+#include "look/sock_idle.h"   // idle_socket_unusable: gondermeden once oluluk yoklamasi
 #include "look/pg_parse.h"   // saf pg_parse_error (fuzz/test ile paylasilan tek tanim)
 #include "look/pg_insert.h"  // INSERT kimliği: hedef tablo, RETURNING (saf, tablo testli)
 #include "look/format.h"     // look_format_double (dilin tek double formati)
@@ -562,6 +563,11 @@ void PostgresClient::connect(const std::string& host, int port,
 }
 
 void PostgresClient::do_connect() {
+#ifndef _WIN32
+    // Eski TLS oturumu serbest birakilmiyordu: yeniden baglanmada SSLRequest eski oturumun
+    // ustunden sifreli gidiyor, sunucu anlamiyor → TLS baglantisi bir daha kurulamiyordu (+ sizinti).
+    if (ssl_) { SSL_free((SSL*)ssl_); ssl_ = nullptr; }
+#endif
     if (sock_ != PG_SOCK_INVALID) {
         pg_close_sock(sock_);
         sock_ = PG_SOCK_INVALID;
@@ -776,7 +782,8 @@ void PostgresClient::do_auth() {
         } else if (msg.type == 'E') {
             throw std::runtime_error("db postgres: " + pg_parse_error(msg.body));
         } else if (msg.type == 'Z') {
-            // ReadyForQuery — auth tamamlandı
+            // ReadyForQuery — auth tamamlandı (taze baglanti: transaction yok)
+            in_txn_ = false;
             return;
         }
         // 'S' (ParameterStatus), 'K' (BackendKeyData), 'N' (Notice) → yoksay
@@ -785,19 +792,31 @@ void PostgresClient::do_auth() {
 
 // ── Query ─────────────────────────────────────────────────────────────────────
 
-std::vector<DbRow> PostgresClient::query(const std::string& sql) {
-    if (sock_ == PG_SOCK_INVALID) {
-        try { do_connect(); } catch (...) {}
-        if (sock_ == PG_SOCK_INVALID)
-            throw std::runtime_error("db postgres: not connected");
-    }
+// Sorgudan ONCE. Sunucu bosta bekleyen baglantiyi kapattiysa (pg_terminate_backend, yeniden
+// baslatma, idle timeout) bunu hicbir sey GONDERMEDEN anla ve yenile. Transaction icinde kopan
+// baglantinin yerine yenisi ACILMAZ: sunucu transaction'i geri aldi; eskiden yeni baglantida
+// sonraki komutlar transaction DISINDA kalici yaziliyordu (olculdu: sessiz tutarsizlik).
+static const char* const kPgTxLost = "db postgres: the connection was closed inside a transaction; "
+                                     "the server rolled the transaction back and nothing of it was kept";
+void PostgresClient::ready_to_send() {
+    if (sock_ != PG_SOCK_INVALID && idle_socket_unusable(sock_)) disconnect();
+    if (sock_ != PG_SOCK_INVALID) return;
+    if (in_txn_) { in_txn_ = false; throw std::runtime_error(kPgTxLost); }
+    try { do_connect(); } catch (...) {}
+    if (sock_ == PG_SOCK_INVALID)
+        throw std::runtime_error("db postgres: not connected");
+}
 
+std::vector<DbRow> PostgresClient::query(const std::string& sql) {
+    ready_to_send();
     try {
         return simple_query(sql);
     } catch (const PgSendError&) {
         // Yalnız GÖNDERİM başarısızsa retry — istek sunucuya ulaşmadı, güvenli.
         // Yanıt-okuma aşamasındaki kopma buraya DÜŞMEZ (std::runtime_error) →
         // propagate eder, retry edilmez (sunucu işlemiş olabilir → çift-yazma).
+        // Transaction icindeyse retry YOK (yeni baglanti transaction disinda kalirdi).
+        if (in_txn_) { in_txn_ = false; throw std::runtime_error(kPgTxLost); }
         try { do_connect(); } catch (...) { throw; }
         return simple_query(sql);
     }
@@ -897,12 +916,13 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
             }
         } else if (msg.type == 'Z') {
             // ReadyForQuery — bitti.
+            in_txn_ = !msg.body.empty() && msg.body[0] != 'I';
             break;
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
             // ReadyForQuery'ye kadar drain et
             while (true) {
-                try { auto m = read_message(); if (m.type == 'Z') break; } catch (...) { break; }
+                try { auto m = read_message(); if (m.type == 'Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; break; } } catch (...) { break; }
             }
             throw std::runtime_error(err);
         }
@@ -1055,10 +1075,11 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
                 try { affected_rows_ = std::stoll(tag.substr(sp+1)); } catch (...) {}
             }
         } else if (msg.type == 'Z') {
+            in_txn_ = !msg.body.empty() && msg.body[0] != 'I';
             break;
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
-            while (true) { try { auto m=read_message(); if(m.type=='Z') break; } catch(...){break;} }
+            while (true) { try { auto m=read_message(); if(m.type=='Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; break; } } catch(...){break;} }
             throw std::runtime_error(err);
         }
     }
@@ -1112,16 +1133,13 @@ std::string PostgresClient::serial_column(const std::string& table) {
 }
 
 std::vector<DbRow> PostgresClient::execute(const std::string& sql, const std::vector<DbParam>& params) {
-    if (sock_ == PG_SOCK_INVALID) {
-        try { do_connect(); } catch (...) {}
-        if (sock_ == PG_SOCK_INVALID)
-            throw std::runtime_error("db postgres: not connected");
-    }
+    ready_to_send();
     try {
         return extended_query(sql, params);
     } catch (const PgSendError&) {
         // Yalnız gönderim başarısızsa retry (bkz. query()/53. bug). Yanıt-okuma
         // kopması retry EDİLMEZ — sunucu statement'ı işlemiş olabilir.
+        if (in_txn_) { in_txn_ = false; throw std::runtime_error(kPgTxLost); }
         try { do_connect(); } catch (...) { throw; }
         return extended_query(sql, params);
     }

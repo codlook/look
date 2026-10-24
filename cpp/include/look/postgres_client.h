@@ -74,6 +74,9 @@ private:
     int64_t     affected_rows_      = 0;
     bool        wsock_init_         = false;
     int         connect_timeout_ms_ = 5000;
+    // Son ReadyForQuery durum bayti != 'I': transaction icinde. Kopan baglanti transaction icindeyse
+    // yeni baglanti ACILMAZ ve gonderim hatasi tekrar denenmez (bkz. ready_to_send).
+    bool        in_txn_             = false;
     int         query_timeout_ms_   = 30000;
     int         rcv_tmo_ms_         = -1;        // son set_socket_timeout değeri (fiber beklemesi için)
     void*       ssl_               = nullptr;   // SSL* — TLS aktifse (void*: header OpenSSL'siz kalır)
@@ -82,6 +85,7 @@ private:
 
     void do_connect();
     void set_socket_timeout(int ms);
+    void ready_to_send();   // sorgudan once: olu bosta baglantiyi yenile / transaction icindeyse hata
     bool recv_bytes(uint8_t* buf, size_t len);
     void send_bytes(const uint8_t* buf, size_t len);
 
