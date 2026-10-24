@@ -1,5 +1,6 @@
 #include "look/postgres_client.h"
 #include "look/pg_parse.h"   // saf pg_parse_error (fuzz/test ile paylasilan tek tanim)
+#include "look/pg_insert.h"  // INSERT kimliği: hedef tablo, RETURNING (saf, tablo testli)
 #include "look/format.h"     // look_format_double (dilin tek double formati)
 #include "look/crypto_sha256.h" // SCRAM primitifleri: look::sha256/hmac_sha256/pbkdf2_sha256 (tek impl)
 #include "look/fiber_io.h"      // fiber içinde bekleme: iş parçacığı değil yalnız fiber bekler
@@ -809,17 +810,8 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
     std::vector<ColInfo> columns;
 
     affected_rows_  = 0;
-    last_insert_id_ = 0;
-
-    // SQL INSERT mi? (lastval() için)
-    bool is_insert = false;
-    {
-        const char* p = sql.c_str();
-        while (*p && isspace((unsigned char)*p)) p++;
-        char upper6[7] = {};
-        for (int i = 0; i < 6 && p[i]; i++) upper6[i] = (char)toupper((unsigned char)p[i]);
-        is_insert = (strcmp(upper6, "INSERT") == 0);
-    }
+    // last_insert_id_ DOKUNULMAZ: bu yol yalnız BEGIN/COMMIT/ROLLBACK/SAVEPOINT içindir (kullanıcı
+    // SQL'i extended_query'den geçer); COMMIT'ten sonra da db::last_id INSERT'inkini verir.
 
     while (true) {
         PgMsg msg;
@@ -900,8 +892,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
                 try { affected_rows_ = std::stoll(tag.substr(sp + 1)); } catch (...) {}
             }
         } else if (msg.type == 'Z') {
-            // ReadyForQuery — bitti. Body[0] = transaction durum baytı.
-            if (!msg.body.empty()) tx_status_ = (char)msg.body[0];
+            // ReadyForQuery — bitti.
             break;
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
@@ -914,78 +905,12 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
         // 'N' (Notice), 'I' (EmptyQuery) → yoksay
     }
 
-    // INSERT sonrası lastval() ile son ID'yi al.
-    //
-    // ESKİ HATA — sessiz VERİ KAYBI (gerçek PG sunucusuyla + sunucu loguyla bulundu):
-    // Tablo SERIAL/sequence KULLANMIYORSA `SELECT lastval()` hata verir
-    // ("lastval is not yet defined in this session"). Autocommit'te zararsız —
-    // INSERT ayrı statement'ta zaten kalıcı. AMA açık transaction içinde bu hata
-    // TÜM transaction'ı ABORTED yapar; sonraki COMMIT sessizce ROLLBACK'e döner:
-    //   BEGIN; INSERT INTO t(n) VALUES(8);  -- affected=1
-    //   SELECT lastval();                   -- HATA → transaction aborted
-    //   COMMIT;                             -- aborted → ROLLBACK → INSERT KAYBOLUR
-    // C++ tarafında catch(...) hatayı yutuyordu ama PG bağlantısı zaten zehirli.
-    // sequence'siz tabloya transaction içinde INSERT yapan HERKES verisini
-    // kaybediyordu (MySQL/SQLite'ta yok — lastval hataları oraya özgü değil).
-    //
-    // Çözüm: transaction bloğundaysak (tx_status_ == 'T') lastval'i SAVEPOINT ile
-    // koru — hata olsa da transaction kurtulur. Autocommit'te ('I') doğrudan çağır.
-    if (is_insert && affected_rows_ > 0) {
-        // simple_query her çağrı başında affected_rows_/last_insert_id_'yi SIFIRLAR;
-        // aşağıdaki SAVEPOINT/ROLLBACK/RELEASE çağrıları da simple_query olduğu için
-        // INSERT'in değerlerini ezerdi → yereli tut, en sonda yaz.
-        const int64_t saved_affected = affected_rows_;
-        const bool in_tx = (tx_status_ == 'T');
-        if (in_tx) { try { simple_query("SAVEPOINT look_lv"); } catch (...) {} }
-        int64_t new_id = 0;
-        try {
-            auto lv = do_lastval();
-            if (!lv.empty() && !lv[0].empty())
-                new_id = std::stoll(lv[0][0].second.str);
-        } catch (...) {}
-        if (in_tx) {
-            // lastval hata verdiyse transaction aborted — savepoint'e dönerek kurtar.
-            // Başarılıysa da geri dönmek zararsız (lastval yalnızca okuma).
-            try { simple_query("ROLLBACK TO SAVEPOINT look_lv"); } catch (...) {}
-            try { simple_query("RELEASE SAVEPOINT look_lv"); } catch (...) {}
-        }
-        last_insert_id_ = new_id;
-        affected_rows_  = saved_affected;  // savepoint komutları ezmesin
-    }
-
-    return rows;
-}
-
-// Lastval() için internal sorgu — reconnect döngüsü yok
-std::vector<DbRow> PostgresClient::do_lastval() {
-    std::string sql = "SELECT lastval()";
-    std::vector<uint8_t> body(sql.begin(), sql.end());
-    body.push_back('\0');
-    send_message('Q', body);
-
-    std::vector<DbRow> rows;
-    while (true) {
-        PgMsg msg;
-        try { msg = read_message(); } catch (...) { break; }
-        if (msg.type == 'D' && msg.body.size() >= 6) {
-            const uint8_t* p = msg.body.data() + 2;
-            const uint8_t* end = msg.body.data() + msg.body.size();
-            if (p + 4 <= end) {
-                int32_t flen = read_i32_be(p); p += 4;
-                if (flen >= 0 && p + flen <= end) {
-                    DbRow row;
-                    row.push_back({"lastval", DbValue{std::string((const char*)p, flen), pg_type::INT}});
-                    rows.push_back(row);
-                }
-            }
-        } else if (msg.type == 'Z') break;
-    }
     return rows;
 }
 
 // ── Extended Query Protocol (Parse/Bind/Execute/Sync) ────────────────────────
 
-std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
+std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
                                                     const std::vector<DbParam>& params) {
     // ? → $1, $2, ... dönüşümü
     std::string pg_sql;
@@ -1061,15 +986,6 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
     struct ColInfo { std::string name; uint8_t type_code; };
     std::vector<ColInfo> columns;
     affected_rows_ = 0;
-    last_insert_id_ = 0;
-    bool is_insert = false;
-    {
-        const char* p = sql.c_str();
-        while (*p && isspace((unsigned char)*p)) p++;
-        char u[7]={};
-        for(int i=0;i<6&&p[i];i++) u[i]=(char)toupper((unsigned char)p[i]);
-        is_insert = (strcmp(u,"INSERT")==0);
-    }
 
     while (true) {
         PgMsg msg;
@@ -1142,15 +1058,53 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
             throw std::runtime_error(err);
         }
     }
-
-    if (is_insert && affected_rows_ > 0) {
-        try {
-            auto lv = do_lastval();
-            if (!lv.empty() && !lv[0].empty())
-                last_insert_id_ = std::stoll(lv[0][0].second.str);
-        } catch (...) { last_insert_id_ = 0; }
-    }
     return rows;
+}
+
+// Kullanıcının SQL'i. INSERT ise kimlik eklenen satırdan okunur (look/pg_insert.h — eski lastval
+// yolunun sessiz veri kaybı ve yanlış kimlik hatası orada anlatılıyor). Ek sorgu yalnız katalog
+// sorgusu: hata veremez, transaction'ı bozamaz.
+std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
+                                                    const std::vector<DbParam>& params) {
+    if (!pg_is_insert(sql)) {
+        auto rows = extended_query_raw(sql, params);
+        last_insert_id_ = 0;
+        return rows;
+    }
+    const std::string table = pg_insert_target(sql);
+    const std::string col   = table.empty() ? std::string() : serial_column(table);
+    if (col.empty()) {                       // dizisiz tablo (ya da tanınmayan biçim) → kimlik yok
+        auto rows = extended_query_raw(sql, params);
+        last_insert_id_ = 0;
+        return rows;
+    }
+    // Eklenen satırların sonuncusunun kimliği (SQLite last_insert_rowid gibi).
+    auto id_of = [&](const std::vector<DbRow>& rows) -> int64_t {
+        if (rows.empty()) return 0;
+        for (const auto& f : rows.back())
+            if (f.first == col && !f.second.is_null) { try { return std::stoll(f.second.str); } catch (...) { return 0; } }
+        return 0;
+    };
+    if (pg_has_returning(sql)) {             // kullanıcının kendi RETURNING'i — SQL'e dokunma
+        auto rows = extended_query_raw(sql, params);
+        last_insert_id_ = id_of(rows);
+        return rows;
+    }
+    auto rows = extended_query_raw(pg_with_returning(sql, col), params);
+    last_insert_id_ = id_of(rows);
+    return {};                               // eklenen RETURNING'in satırları kullanıcıya gitmez
+}
+
+std::string PostgresClient::serial_column(const std::string& table) {
+    // to_regclass: tablo yoksa NULL (hata değil); ad pg_insert_target'tan geçtiği için sözdizimi
+    // geçerli. pg_get_serial_sequence hem SERIAL hem IDENTITY kolonunu tanır.
+    auto rows = extended_query_raw(
+        "SELECT a.attname FROM pg_catalog.pg_attribute a "
+        "WHERE a.attrelid = to_regclass(?) AND a.attnum > 0 AND NOT a.attisdropped "
+        "AND pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL "
+        "ORDER BY a.attnum LIMIT 1", {DbParam::from_text(table)});
+    if (rows.empty() || rows[0].empty()) return "";
+    return rows[0][0].second.str;
 }
 
 std::vector<DbRow> PostgresClient::execute(const std::string& sql, const std::vector<DbParam>& params) {

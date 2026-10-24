@@ -72,10 +72,6 @@ private:
     std::string database_;
     int64_t     last_insert_id_     = 0;
     int64_t     affected_rows_      = 0;
-    // ReadyForQuery'nin transaction durum baytı: 'I'=idle (autocommit),
-    // 'T'=transaction bloğunda, 'E'=başarısız transaction. INSERT sonrası
-    // lastval()'i güvenli çağırmak için (bkz. simple_query).
-    char        tx_status_          = 'I';
     bool        wsock_init_         = false;
     int         connect_timeout_ms_ = 5000;
     int         query_timeout_ms_   = 30000;
@@ -97,8 +93,11 @@ private:
     void  do_scram_sha256(const std::vector<uint8_t>& mechanisms_body);
 
     std::vector<DbRow> simple_query(const std::string& sql);
+    // Kullanıcı SQL'i: INSERT ise kimliği eklenen satırdan alır (look/pg_insert.h), sonra _raw.
     std::vector<DbRow> extended_query(const std::string& sql, const std::vector<DbParam>& params);
-    std::vector<DbRow> do_lastval();
+    std::vector<DbRow> extended_query_raw(const std::string& sql, const std::vector<DbParam>& params);
+    // Tablonun dizi/IDENTITY kolonu (yoksa ""). Katalog sorgusu — hata veremez (tablo yoksa boş).
+    std::string serial_column(const std::string& table);
     struct ColInfo_ { std::string name; uint8_t type_code; };
 
     std::vector<DbRow> drain_rows(std::vector<ColInfo_>& columns);
