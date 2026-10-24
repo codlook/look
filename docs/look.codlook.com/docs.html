@@ -4398,6 +4398,7 @@ plesk bin extension --install /tmp/look-lang-plesk.zip</code></pre>
   <table>
     <tr><th>Topic</th><th>Description</th></tr>
     <tr><td>Install and update setup</td><td>Every install and update runs the extension's setup as root: it installs the bundled LOOK binaries to <code>/opt/look</code>, removes the sudo rule <code>/etc/sudoers.d/look-lang</code> of older versions (the panel needs no sudo: its root actions go through the extension's own <code>look-ctl</code> script, which accepts only LOOK services), and rewrites and restarts every domain's service so it runs as the domain's user. A service that cannot run as the domain's user is stopped and the install reports an error. Run it again with <code>plesk bin extension --exec look-lang post-install.php</code>.</td></tr>
+    <tr><td>Shared hosting with a memory limit</td><td>Use <b>FastCGI</b> mode. On a host that limits each site's virtual memory (for example CloudLinux, about 1 GB), HTTP mode starts a database thread per worker and, on a server with many cores, does not fit: it exits with <code>could not start database thread …</code>. FastCGI mode starts under the same limit.</td></tr>
     <tr><td>State</td><td>The domain list is at <code>/usr/local/psa/var/modules/look-lang/domains.json</code> (panel-writable)</td></tr>
     <tr><td>Updates</td><td>Replaced in place when a new ZIP is uploaded; domain configuration is preserved</td></tr>
   </table>
