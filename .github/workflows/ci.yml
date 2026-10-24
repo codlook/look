@@ -739,6 +739,12 @@ jobs:
           bash cpp/tests/plesk_inject_test.sh
           php  cpp/tests/plesk_php_domain_test.php
 
+      # The Plesk extension runs each domain's service as the domain's system user, never as
+      # root; the env file is read with that user's rights; Remove deletes the unit and its
+      # .service.d. Runs the real enable.sh/disable.sh in a throwaway container (it creates users).
+      - name: Plesk services run as the domain's user
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_service_user_test.sh
+
       # A VM error is a 500 and the request is not run again (1.0.8); a route the VM cannot run
       # is placed on the tree-walk engine at setup. LOOK_VM_FORCE_FAIL is the test hook that
       # makes one route fail on the VM (inert without the variable).

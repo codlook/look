@@ -4,7 +4,7 @@ One-click LOOK web-runtime hosting for Plesk. Publish any domain as a LOOK
 application (its own systemd service) with a built-in code editor, live
 per-domain monitor, log viewer and system dashboard.
 
-- Zero-dependency runtime — bundles the portable `lk` binary + RPM
+- Minimal external runtime dependencies — bundles the portable `lk` binary + RPM
 - Full workspace UI: Dashboard · Applications · Logs · Documentation
 - In-browser code editor (edit `index.lk` → save → auto redeploy)
 - Live monitor (CPU, RSS, PID, connections, uptime, restarts) + log tail
@@ -82,11 +82,35 @@ works. (Equivalently you may run the same logic directly:
 
 ---
 
+## How a domain runs
+
+Each domain added in the panel gets its own systemd service, `look-<domain>.service`:
+
+- **User** — the service runs as the domain's system user (the owner of its document
+  root), never as root. A document root owned by root or a system account is refused.
+  Ports below 1024 need root and are refused too.
+- **Script** — the `.lk` file chosen in the panel (default `index.lk` in the document
+  root). It must be inside the domain's document root. When it does not exist, a small
+  sample app is created, owned by the domain's user.
+- **Env file** (optional) — a file of `KEY=VALUE` lines inside the document root, for
+  example `.look.env`. The domain's user reads it when the service starts, so it can be
+  mode `600`. Lines starting with `#` are comments; there are no comments at the end of
+  a line: in `APP_NAME=Shop # title` the value is `Shop # title` (the service log warns
+  about it). Quotes around a value are removed.
+- **Remove** stops the service and deletes `look-<domain>.service` and its
+  `look-<domain>.service.d` folder; **Stop** only stops it.
+
 ## Update
 
 Install a newer zip the same way — Plesk replaces the existing extension in
 place (domain configuration in `/usr/local/psa/var/modules/look-lang/` is
 preserved).
+
+Updating from 1.1.x: services created by 1.1.x run as root until they are written
+again. Open the panel and press **Restart** on each domain — the service is rewritten
+to run as the domain's user. Files the old service created (an SQLite database,
+uploads) may be owned by root; the restart output says how many, and
+`chown <user>:psacln <file>` gives them back to the domain's user.
 
 ## Uninstall
 
