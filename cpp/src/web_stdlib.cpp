@@ -670,14 +670,34 @@ static int session_ttl() {
     }();
     return v;
 }
-// Her worker thread kendi Redis bağlantısını tutar (RespClient thread-safe değil).
-static RespClient* session_redis() {
-    static thread_local std::unique_ptr<RespClient> cli;
-    if (!cli) {
-        const char* u = std::getenv("LOOK_REDIS_URL");
-        cli = std::make_unique<RespClient>(u ? std::string(u) : std::string("redis://127.0.0.1:6379"));
+// Redis oturum bağlantıları havuzdan: istek bir bağlantı alır, komut biter bitmez geri verir;
+// boşta bağlantı yoksa yenisi açılır (tembel). Eskiden iş parçacığı başına TEK bağlantı vardı:
+// fiber Redis'i beklerken aynı iş parçacığındaki başka bir istek aynı bağlantıya komut yazıp
+// öbürünün yanıtını okuyabiliyordu — A kullanıcısının oturumu B'ye gidiyordu
+// (tests/redis_session_isolation_test.sh). Hata ya da süre dolmasında RespClient bağlantıyı
+// kapatır; kapalı bağlantı havuza dönmez, sıradaki istek yenisini açar. Hata isteğe ulaşır:
+// eskiden yutuluyordu (Redis yanıt vermeyince oturum sessizce boş, yazılan veri sessizce kayıp).
+static void with_session_redis(const std::function<void(RespClient&)>& op) {
+    static std::mutex mu;
+    static std::vector<std::unique_ptr<RespClient>> idle;
+    std::unique_ptr<RespClient> c;
+    {
+        std::lock_guard<std::mutex> g(mu);
+        if (!idle.empty()) { c = std::move(idle.back()); idle.pop_back(); }
     }
-    return cli.get();
+    try {
+        if (!c) {   // kilit dışında: bağlanırken fiber askıya alınabilir
+            const char* u = std::getenv("LOOK_REDIS_URL");
+            c = std::make_unique<RespClient>(u ? std::string(u) : std::string("redis://127.0.0.1:6379"));
+        }
+        op(*c);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("session: ") + e.what());
+    }
+    if (c->is_connected()) {
+        std::lock_guard<std::mutex> g(mu);
+        if (idle.size() < 256) idle.push_back(std::move(c));
+    }
 }
 // GÜVENLİK: Session ID doğrulama — üretilen format TAM 32 hex karakter. sid
 // client'ın LOOK_SESSION cookie'sinden gelir ve doğrudan dosya yoluna girer
@@ -712,18 +732,25 @@ using look::sess_blob_get;
 using look::sess_blob_set;
 static std::string sess_load(const std::string& sid) {
     if (session_use_redis()) {
-        try { return session_redis()->get("look_sess:" + sid); }
-        catch (...) { return ""; }   // Redis erişilemezse crash yerine boş session
+        std::string blob;
+        with_session_redis([&](RespClient& r) { blob = r.get("look_sess:" + sid); });
+        return blob;
     }
     std::ifstream f(sess_file_path(sid));
     std::stringstream ss; ss << f.rdbuf(); return ss.str();
 }
 static void sess_store(const std::string& sid, const std::string& blob) {
-    if (session_use_redis()) { try { session_redis()->set("look_sess:" + sid, blob, session_ttl()); } catch (...) {} return; }
+    if (session_use_redis()) {
+        with_session_redis([&](RespClient& r) { r.set("look_sess:" + sid, blob, session_ttl()); });
+        return;
+    }
     std::ofstream f(sess_file_path(sid), std::ios::trunc); f << blob;   // overwrite
 }
 static void sess_remove(const std::string& sid) {
-    if (session_use_redis()) { try { session_redis()->del("look_sess:" + sid); } catch (...) {} return; }
+    if (session_use_redis()) {
+        with_session_redis([&](RespClient& r) { r.del("look_sess:" + sid); });
+        return;
+    }
     std::remove(sess_file_path(sid).c_str());
 }
 // 32-hex CSPRNG session ID üret (fail-closed) — session::start ve regenerate

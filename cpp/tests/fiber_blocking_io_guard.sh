@@ -17,22 +17,26 @@
 # branches (#ifdef _WIN32 … #else/#endif) are skipped: there are no fibers on Windows.
 # Usage: fiber_blocking_io_guard.sh   (run from anywhere)
 cd "$(dirname "$0")/.." || exit 1
-files="include/look/fiber_io.h src/mysql_client.cpp src/postgres_client.cpp src/resp_client.cpp src/mail_stdlib.cpp src/http_client.cpp"
+files="include/look/fiber_io.h include/look/fiber_net.h src/mysql_client.cpp src/postgres_client.cpp src/resp_client.cpp src/mail_stdlib.cpp src/http_client.cpp"
 check_file() {
     awk -v F="$1" '
     { L[NR] = $0 }
     END {
-        depth = 0; win = 0
+        depth = 0
         for (i = 1; i <= NR; i++) {
             s = L[i]
+            # Windows dalları: #ifdef _WIN32 / #if defined(_WIN32) gövdesi, #ifndef _WIN32 / #if
+            # !defined(_WIN32) bloğunun #else dalı. Her derinlikte ayrı izlenir (iç içe #if).
             if (s ~ /^[ \t]*#[ \t]*if/) {
-                depth++
-                if (s ~ /#[ \t]*ifdef[ \t]+_WIN32/ || s ~ /#[ \t]*if[ \t]+defined\(_WIN32\)/) win = depth
+                depth++; kind[depth] = 0; inwin[depth] = 0
+                if (s ~ /#[ \t]*ifdef[ \t]+_WIN32/ || s ~ /#[ \t]*if[ \t]+defined\(_WIN32\)/) { kind[depth] = 1; inwin[depth] = 1 }
+                if (s ~ /#[ \t]*ifndef[ \t]+_WIN32/ || s ~ /#[ \t]*if[ \t]+!defined\(_WIN32\)/) kind[depth] = -1
                 continue
             }
-            if (s ~ /^[ \t]*#[ \t]*else/ || s ~ /^[ \t]*#[ \t]*elif/) { if (win == depth) win = -depth; continue }
-            if (s ~ /^[ \t]*#[ \t]*endif/) { if (win == depth || win == -depth) win = 0; depth--; continue }
-            if (win > 0) continue                                  # Windows dalı
+            if (s ~ /^[ \t]*#[ \t]*(else|elif)/) { inwin[depth] = (kind[depth] == -1); continue }
+            if (s ~ /^[ \t]*#[ \t]*endif/) { inwin[depth] = 0; kind[depth] = 0; depth--; continue }
+            win = 0; for (d = 1; d <= depth; d++) if (inwin[d]) win = 1
+            if (win) continue                                      # Windows dalı
             if (s ~ /^[ \t]*\/\//) continue                        # yorum satırı
             code = s; sub(/[ \t]*\/\/.*$/, "", code)                # satır sonu yorumu
             mark2 = 0; for (k = i - 2; k <= i; k++) if (k > 0 && L[k] ~ /blocking-ok/) mark2 = 1
@@ -42,10 +46,24 @@ check_file() {
                 split(t, a, ","); tmo = a[3]; sub(/^[ \t]+/, "", tmo); sub(/[ \t)].*$/, "", tmo)
                 if (tmo != "0" && !mark2) print F ":" i ": poll with timeout " tmo ": " s
             }
-            if (code ~ /(^|[^a-zA-Z_])(recv|SSL_read)[ \t]*\(/ && code !~ /^(static )?int resp_recv/) {
+            if (code ~ /(^|[^a-zA-Z_])(recv|SSL_read)[ \t]*\(/) {
                 nb = (code ~ /MSG_DONTWAIT/ || L[i + 1] ~ /MSG_DONTWAIT/)
                 waited = 0; for (k = i - 8; k < i; k++) if (k > 0 && L[k] ~ /fiber_wait_readable|client_wait_readable|wait_readable_tmo/) waited = 1
                 if (!nb && !waited && !mark3) print F ":" i ": read without a fiber wait: " s
+            }
+            # 3–5: DNS, bağlantı kurma, TLS el sıkışması ve gönderme look/fiber_net.h yardımcılarından
+            # geçer (fiber_getaddrinfo, fiber_connect, fiber_ssl_connect, fiber_send_all). Ham çağrı
+            # yalnız "fiber-safe" (soket o an engellemesiz / iş havuzunda) ya da "blocking-ok" ile.
+            safe2 = mark2; for (k = i - 2; k <= i; k++) if (k > 0 && L[k] ~ /fiber-safe/) safe2 = 1
+            if (code ~ /(^|[^a-zA-Z_:])(::)?getaddrinfo[ \t]*\(/ && !safe2)
+                print F ":" i ": DNS lookup outside fiber_getaddrinfo: " s
+            if (code ~ /(^|[^a-zA-Z_:.>])(::)?connect[ \t]*\([^)]/ && !safe2)
+                print F ":" i ": connect outside fiber_connect: " s
+            if (code ~ /(^|[^a-zA-Z_:])SSL_connect[ \t]*\(/ && !safe2)
+                print F ":" i ": TLS handshake outside fiber_ssl_connect: " s
+            if (code ~ /(^|[^a-zA-Z_:])(::)?(send|SSL_write)[ \t]*\(/) {
+                nb = (code ~ /MSG_DONTWAIT/ || L[i + 1] ~ /MSG_DONTWAIT/)
+                if (!nb && !safe2) print F ":" i ": send outside fiber_send_all: " s
             }
         }
     }' "$1"

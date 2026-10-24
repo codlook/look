@@ -3,6 +3,7 @@
 #include "look/sock_idle.h"         // idle_socket_unusable: gondermeden once oluluk yoklamasi
 #include "look/fiber.h"
 #include "look/fiber_io.h"
+#include "look/fiber_net.h"   // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
 #include "look/format.h"   // look_format_double (dilin tek double formati)
 #ifndef _WIN32
 // caching_sha2_password (MySQL 8+ varsayilan): SHA-256 + RSA-OAEP.
@@ -196,33 +197,36 @@ void MySQLClient::do_connect() {
     if (sock_ == SOCK_INVALID)
         throw std::runtime_error("db: socket creation failed");
 
-    // Non-blocking mode
-#ifdef _WIN32
-    u_long mode = 1;
-    ioctlsocket(sock_, FIONBIO, &mode);
-#else
-    int flags = fcntl(sock_, F_GETFL, 0);
-    fcntl(sock_, F_SETFL, flags | O_NONBLOCK);
-#endif
-
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port   = htons((uint16_t)cfg_.port);
 
+    // Ad çözümleme fiber içinde iş havuzunda (yavaş çözücü iş parçacığını tutmasın).
     struct addrinfo* res = nullptr;
     struct addrinfo  hints{};
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(cfg_.host.c_str(), nullptr, &hints, &res) != 0 || !res) {
+    if (look::fiber_getaddrinfo(cfg_.host.c_str(), nullptr, &hints, &res) != 0 || !res) {
         disconnect();
         throw std::runtime_error("db: cannot resolve host: " + cfg_.host);
     }
     addr.sin_addr = ((struct sockaddr_in*)res->ai_addr)->sin_addr;
     freeaddrinfo(res);
 
+#ifndef _WIN32
+    // Fiber içinde bağlantı kurulurken yalnız fiber bekler (fiber dışında poll); soket engelleyen
+    // kipe döner. select() kullanılmaz: fd_set 1024'ten büyük tanıtıcıda yığını taşırır.
+    if (look::fiber_connect((int)sock_, (struct sockaddr*)&addr, sizeof(addr), cfg_.connect_timeout_ms) != 0) {
+        bool timed_out = (errno == ETIMEDOUT);
+        disconnect();
+        throw std::runtime_error((timed_out ? "db: connection timeout to " : "db: cannot connect to ") +
+                                 cfg_.host + ":" + std::to_string(cfg_.port));
+    }
+#else
+    u_long mode = 1;
+    ioctlsocket(sock_, FIONBIO, &mode);
     ::connect(sock_, (struct sockaddr*)&addr, sizeof(addr));
 
-#ifdef _WIN32
     // Wait for connect with timeout
     fd_set wfds;
     FD_ZERO(&wfds);
@@ -232,41 +236,22 @@ void MySQLClient::do_connect() {
     tv.tv_usec = (cfg_.connect_timeout_ms % 1000) * 1000;
 
     int sel = select(0, nullptr, &wfds, nullptr, &tv);
-#else
-    // select() DEĞİL: fd_set yalnız 1024'ten küçük tanıtıcıları taşır; sunucu binlerce bağlantı
-    // tutarken soket numarası bunu aşar ve FD_SET yığın belleğini taşırır.
-    // Fiber içinde bağlantının kurulmasını beklerken iş parçacığını değil fiber'ı askıya al.
-    int sel = look::fiber_wait_writable((int)sock_, cfg_.connect_timeout_ms);
-    if (sel < 0) {   // fiber dışı (komut satırı, kurulum): poll ile bekle — blocking-ok: fiber yok
-        struct pollfd cpf{}; cpf.fd = sock_; cpf.events = POLLOUT;
-        sel = ::poll(&cpf, 1, cfg_.connect_timeout_ms);
-    }
-#endif
     if (sel <= 0) {
         disconnect();
         throw std::runtime_error("db: connection timeout to " + cfg_.host + ":" + std::to_string(cfg_.port));
     }
 
     int err = 0;
-#ifdef _WIN32
     int len = sizeof(err);
     getsockopt(sock_, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
-#else
-    socklen_t len = sizeof(err);
-    getsockopt(sock_, SOL_SOCKET, SO_ERROR, &err, &len);
-#endif
     if (err != 0) {
         disconnect();
         throw std::runtime_error("db: cannot connect to " + cfg_.host + ":" + std::to_string(cfg_.port));
     }
 
     // Blocking mode geri al
-#ifdef _WIN32
     u_long bmode = 0;
     ioctlsocket(sock_, FIONBIO, &bmode);
-#else
-    int bflags = fcntl(sock_, F_GETFL, 0);
-    fcntl(sock_, F_SETFL, bflags & ~O_NONBLOCK);
 #endif
 
     // Nagle algoritmasını kapat — küçük paketlerde 40ms gecikmeyi önler
@@ -382,23 +367,21 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
 }
 
 void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
-    size_t sent = 0;
 #ifndef _WIN32
-    if (ssl_) {
-        SSL* s = (SSL*)ssl_;
-        while (sent < len) {
-            int r = SSL_write(s, buf + sent, (int)(len - sent));
-            if (r <= 0) { disconnect(); throw std::runtime_error("db: SSL send failed — connection lost"); }
-            sent += (size_t)r;
-        }
-        return;
+    // Gönderme tamponu doluysa fiber içinde yalnız fiber bekler (fiber dışı: SO_SNDTIMEO).
+    if (!look::fiber_send_all((int)sock_, (SSL*)ssl_, buf, len, rcv_tmo_ms_)) {
+        bool tls = ssl_ != nullptr;
+        disconnect();
+        throw std::runtime_error(tls ? "db: SSL send failed — connection lost" : "db: send failed — connection lost");
     }
-#endif
+#else
+    size_t sent = 0;
     while (sent < len) {
         int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), MSG_NOSIGNAL);   // SIGPIPE yok: kapali sokette EPIPE
         if (r <= 0) { disconnect(); throw std::runtime_error("db: send failed — connection lost"); }
         sent += r;
     }
+#endif
 }
 
 std::vector<uint8_t> MySQLClient::read_packet(uint8_t& seq) {
@@ -620,11 +603,13 @@ void MySQLClient::do_handshake(const std::string& user,
                 throw std::runtime_error("db mysql: could not set up TLS hostname verification (verify)");
             }
         }
-        if (SSL_connect(s) != 1) {
+        int hs = look::fiber_ssl_connect(s, (int)sock_, cfg_.connect_timeout_ms);
+        if (hs != 1) {
             unsigned long e = ERR_get_error();
             char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
             SSL_free(s);
-            throw std::runtime_error(std::string("db mysql: TLS handshake failed: ") + eb);
+            throw std::runtime_error(hs == 0 ? std::string("db mysql: TLS handshake timed out")
+                                             : std::string("db mysql: TLS handshake failed: ") + eb);
         }
         ssl_     = s;   // bundan sonra send/recv_bytes SSL üstünden (auth dahil)
         auth_seq = 2;   // auth paketi TLS içinde, SSLRequest'ten sonraki seq

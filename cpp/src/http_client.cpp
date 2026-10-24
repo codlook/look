@@ -20,6 +20,9 @@
 #ifdef __linux__
 #  include "look/fiber.h"   // fiber-aware recv (Go netpoller) — yalnız Linux --mode http
 #endif
+#ifndef _WIN32
+#  include "look/fiber_net.h"   // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
+#endif
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -754,8 +757,10 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     char port_str[16];
     snprintf(port_str, sizeof(port_str), "%d", port);
 
-    t_conn_error = nullptr;
-    if (getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) {
+    // t_conn_error YALNIZ son askı noktasından sonra yazılır: DNS ve connect fiber'ı askıya alır,
+    // bu sırada aynı iş parçacığındaki başka bir istek t_conn_error'a kendi nedenini yazabilir.
+    // Dönüşle çağıranın okuması arasında askı yok → okunan değer bu isteğin.
+    if (look::fiber_getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) {
         t_conn_error = "DNS resolution failed";
         return INVALID;
     }
@@ -767,19 +772,23 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
         return INVALID;
     }
 
-    sock_t s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (s < 0) { freeaddrinfo(res); return INVALID; }
-
-    struct timeval tv;
-    tv.tv_sec  = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    if (connect(s, res->ai_addr, res->ai_addrlen) != 0) {
-        close(s); freeaddrinfo(res); return INVALID;
+    // Çözülen adresler sırayla denenir: "localhost" önce ::1 döner; yalnız IPv4'te dinleyen
+    // servise eskiden bağlanılamıyordu (yalnız ilk adres deneniyordu).
+    sock_t s = INVALID;
+    for (struct addrinfo* p = res; p; p = p->ai_next) {
+        s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (s < 0) { s = INVALID; continue; }
+        struct timeval tv;
+        tv.tv_sec  = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        // Fiber içinde bağlantı kurulurken yalnız fiber bekler (en çok timeout_ms).
+        if (look::fiber_connect(s, p->ai_addr, p->ai_addrlen, timeout_ms) == 0) break;
+        close(s); s = INVALID;
     }
     freeaddrinfo(res);
+    t_conn_error = nullptr;
     return s;
 }
 
@@ -810,9 +819,8 @@ static SSL_CTX* get_ssl_ctx() {
 // (recv/SSL_read) worker thread'ini bloklamamalı: fiber içindeysek fd okunabilir olana
 // dek YIELD ederiz (scheduler başka goroutine koşturur), veri gelince epoll resume eder.
 // Bu, fiber'in tek gerçek değer önerisi olan "eşzamanlı dış I/O"yu açar (bkz. PROJE_DURUMU
-// §9). Kapsam BİLİNÇLİ olarak recv yoluyla sınırlı: connect/handshake/send zaten hızlı ve
-// SO_*TIMEO ile sınırlı; onları non-blocking'e çevirmek risk/getiri açısından değmez
-// (wait_writable yok). Soket blocking kalır → yield'den sonraki okuma anında döner.
+// §9). DNS, connect, TLS el sıkışması ve gönderme look/fiber_net.h yardımcılarıyla aynı
+// şekilde yalnız fiber'ı bekletir. Soket blocking kalır → yield'den sonraki okuma anında döner.
 // Dönüş: 1 = okunabilir (oku), 0 = timeout (dış API yanıt vermedi), -1 = fiber/epoll yok
 // (caller mevcut düz-blocking davranışına düşer → DEFAULT pool yolu birebir korunur).
 static int client_wait_readable(int fd, int timeout_ms) {
@@ -844,7 +852,8 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr, /*absolute_uri=*/ via_proxy);
-    if (::send(s, req.data(), req.size(), 0) < 0) {
+    // Tamamı gider (eskiden tek send: kısmi yazmada isteğin geri kalanı sessizce gönderilmiyordu).
+    if (!look::fiber_send_all(s, nullptr, req.data(), req.size(), opts.timeout_ms)) {
         close(s); resp.error = "send failed"; return resp;
     }
 
@@ -890,7 +899,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
         std::string tgt = hc_strip_crlf(url.host) + ":" + std::to_string(url.port);
         std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
-        if (::send(s, creq.data(), creq.size(), 0) < 0) { close(s); resp.error = "proxy CONNECT send failed"; return resp; }
+        if (!look::fiber_send_all(s, nullptr, creq.data(), creq.size(), opts.timeout_ms)) { close(s); resp.error = "proxy CONNECT send failed"; return resp; }
         std::string pr; char pb[1024];
         for (;;) {
             int w = client_wait_readable(s, opts.timeout_ms);
@@ -915,7 +924,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     // SNI + hostname verification
     SSL_set1_host(ssl, url.host.c_str());
 
-    if (SSL_connect(ssl) != 1) {
+    if (look::fiber_ssl_connect(ssl, s, opts.timeout_ms) != 1) {
         ERR_clear_error();
         SSL_free(ssl); close(s);
         resp.error = "TLS handshake failed";
@@ -923,7 +932,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     }
 
     std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr);
-    if (SSL_write(ssl, req.data(), (int)req.size()) <= 0) {
+    if (!look::fiber_send_all(s, ssl, req.data(), req.size(), opts.timeout_ms)) {
         SSL_free(ssl); close(s);
         resp.error = "SSL_write failed"; return resp;
     }

@@ -25,6 +25,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include "look/fiber_io.h"   // fiber içinde SMTP yanıtı beklenirken iş parçacığı serbest kalır
+#include "look/fiber_net.h"  // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
 #endif
 
 namespace look {
@@ -266,21 +267,13 @@ struct SmtpConn {
     int      fd  = -1;
     int      tmo_ms = 30000;   // okuma süresi sınırı (SO_RCVTIMEO ile aynı) — fiber beklemesi de buna uyar
     SSL*     ssl = nullptr;
-    SSL_CTX* ctx = nullptr;
     ~SmtpConn() {
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
-        if (ctx) SSL_CTX_free(ctx);
         if (fd >= 0) ::close(fd);
     }
+    // Gönderme tamponu doluysa fiber içinde yalnız fiber bekler (fiber dışı: SO_SNDTIMEO).
     bool write_all(const std::string& s) {
-        size_t off = 0;
-        while (off < s.size()) {
-            int n = ssl ? SSL_write(ssl, s.data() + off, (int)(s.size() - off))
-                        : (int)::send(fd, s.data() + off, s.size() - off, 0);
-            if (n <= 0) return false;
-            off += (size_t)n;
-        }
-        return true;
+        return look::fiber_send_all(fd, ssl, s.data(), s.size(), tmo_ms);
     }
     bool read_line(std::string& line) {
         line.clear();
@@ -320,19 +313,32 @@ static bool smtp_cmd(SmtpConn& c, const std::string& cmd, int ok, int ok2, std::
 
 // client-side TLS handshake on c.fd, verifying the peer against the system CA
 // bundle and enforcing the hostname (gate #2: verification on by default).
+// İstemci SSL_CTX'i süreç başına bir kez: eskiden her mail::send yeni bağlam kurup sistem CA
+// paketini diskten okuyup ayrıştırıyordu (işçi iş parçacığında, her gönderimde).
+static SSL_CTX* smtp_ssl_ctx() {
+    static SSL_CTX* ctx = [] {
+        SSL_CTX* x = SSL_CTX_new(TLS_client_method());
+        if (x) {
+            SSL_CTX_set_verify(x, SSL_VERIFY_PEER, nullptr);
+            SSL_CTX_set_default_verify_paths(x);            // reads SSL_CERT_FILE/DIR
+        }
+        return x;
+    }();
+    return ctx;
+}
+
 static bool smtp_tls(SmtpConn& c, const std::string& host) {
-    c.ctx = SSL_CTX_new(TLS_client_method());
-    if (!c.ctx) return false;
-    SSL_CTX_set_verify(c.ctx, SSL_VERIFY_PEER, nullptr);
-    SSL_CTX_set_default_verify_paths(c.ctx);                // reads SSL_CERT_FILE/DIR
-    c.ssl = SSL_new(c.ctx);
+    SSL_CTX* ctx = smtp_ssl_ctx();
+    if (!ctx) return false;
+    c.ssl = SSL_new(ctx);
     if (!c.ssl) return false;
     SSL_set_fd(c.ssl, c.fd);
     SSL_set_tlsext_host_name(c.ssl, host.c_str());          // SNI
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
     SSL_set1_host(c.ssl, host.c_str());                     // reject a mismatched cert
 #endif
-    return SSL_connect(c.ssl) == 1;
+    // Fiber içinde el sıkışmanın her tur yolculuğunda yalnız fiber bekler.
+    return look::fiber_ssl_connect(c.ssl, c.fd, c.tmo_ms) == 1;
 }
 
 static bool smtp_connect(SmtpConn& c, const std::string& host, int port, int timeout_ms) {
@@ -341,7 +347,7 @@ static bool smtp_connect(SmtpConn& c, const std::string& host, int port, int tim
     hints.ai_socktype = SOCK_STREAM;
     struct addrinfo* res = nullptr;
     char portstr[16]; snprintf(portstr, sizeof(portstr), "%d", port);
-    if (getaddrinfo(host.c_str(), portstr, &hints, &res) != 0) return false;
+    if (look::fiber_getaddrinfo(host.c_str(), portstr, &hints, &res) != 0) return false;
     int s = -1;
     for (auto* p = res; p; p = p->ai_next) {
         s = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
@@ -349,7 +355,7 @@ static bool smtp_connect(SmtpConn& c, const std::string& host, int port, int tim
         struct timeval tv; tv.tv_sec = timeout_ms / 1000; tv.tv_usec = (timeout_ms % 1000) * 1000;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-        if (::connect(s, p->ai_addr, p->ai_addrlen) == 0) break;
+        if (look::fiber_connect(s, p->ai_addr, p->ai_addrlen, timeout_ms) == 0) break;
         ::close(s); s = -1;
     }
     freeaddrinfo(res);

@@ -397,6 +397,18 @@ jobs::worker("mail", function($job) {
   `LOOK_JOBS_RETRY_SECONDS`; at most an hour). This also holds for `jobs::fail($id)` called
   by hand: `jobs::next` does not return that job again until its wait is over.
 
+### Redis sessions: an unreachable or silent Redis is an error — was silent
+
+With `LOOK_SESSION_DRIVER=redis`, LOOK 1 swallowed every Redis error: a Redis that was down
+gave an empty session (the user looked logged out) and `session::set` lost its data without a
+word. A Redis that accepted the connection but never answered held the request forever.
+
+Now a Redis error reaches the request as an error (`session: Redis: …`), which an application
+can catch with `try`/`catch`. Connecting, sending and every reply have a time limit:
+`LOOK_REDIS_TIMEOUT_MS`, default 3000 ms. When it runs out the request gets an error naming
+the limit and that connection is closed and not reused; the next request opens a new one.
+Session connections are taken from a pool per request and opened when needed.
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

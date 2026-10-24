@@ -35,7 +35,14 @@ private:
     bool        tls_verify_ = false;  // ?tls=verify → SSL_VERIFY_PEER + hostname (MITM'e karşı)
     int         fd_    = -1;
     void*       ssl_   = nullptr;     // SSL* (POSIX/OpenSSL); TLS aktifse tüm I/O buradan geçer
+    int         tmo_ms_ = 3000;       // bağlantı/gönderme/yanıt süre sınırı (LOOK_REDIS_TIMEOUT_MS)
+    std::string rbuf_;                // okuma tamponu (satırlar bayt bayt sistem çağrısıyla okunmasın)
+    size_t      rpos_ = 0, rlen_ = 0;
 
+    void        drop();                                   // bağlantıyı kapat (bir daha kullanılmaz)
+    [[noreturn]] void fail(const std::string& msg);      // drop + throw
+    [[noreturn]] void fail_timeout(const char* what);    // drop + süre-dolması hatası
+    void        fill();                                   // tamponu doldur (süre sınırlı)
     void        send_command(const std::vector<std::string>& args);
     std::string read_line();
     std::string read_bulk(long len);          // long: >INT_MAX bulk int'e taşmasın

@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <stdexcept>
 #include <vector>
+#include <algorithm>
 
 #ifndef _WIN32
 #  include <sys/socket.h>
@@ -24,8 +25,8 @@
 #ifndef _WIN32
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
-#  include "look/fiber_io.h"   // fiber içinde Redis yanıtı beklenirken iş parçacığı serbest kalır
 #endif
+#include "look/fiber_net.h"   // fiber içinde Redis beklenirken (DNS/connect/TLS/yazma/okuma) iş parçacığı serbest kalır
 
 #ifndef MSG_NOSIGNAL
 #  define MSG_NOSIGNAL 0   // Windows/macOS: bayrak yok (Windows'ta SIGPIPE de yok)
@@ -106,7 +107,19 @@ static void parse_url(const std::string& url,
 
 // ── Constructor / Destructor ─────────────────────────────────────────────────
 
+// Redis yanıtı (ve bağlantı kurma, el sıkışma, gönderme) için süre sınırı. Eskiden sınır yoktu:
+// kabul edip yanıt vermeyen bir Redis isteği sonsuza dek asıyordu. LOOK_REDIS_TIMEOUT_MS (ms).
+static int redis_timeout_ms() {
+    static const int v = [] {
+        const char* e = std::getenv("LOOK_REDIS_TIMEOUT_MS");
+        if (e && *e) { long n = std::atol(e); if (n > 0 && n <= 3600000) return (int)n; }
+        return 3000;
+    }();
+    return v;
+}
+
 RespClient::RespClient(const std::string& url) {
+    tmo_ms_ = redis_timeout_ms();
     parse_url(url, host_, port_, pass_, db_, tls_, tls_verify_);
     // LOOK_DB_REQUIRE_TLS — uzak host'a düz metin bağlantıyı reddet (loopback serbest,
     // bkz. db_dsn.h db_refuse_plaintext). Redis'te EKSTRA kritik: AUTH şifreyi cleartext
@@ -125,20 +138,33 @@ RespClient::RespClient(const std::string& url) {
     connect();
 }
 
-RespClient::~RespClient() {
+RespClient::~RespClient() { drop(); }
+
+// Bağlantıyı kapat. Yarıda kalan bir komuttan sonra akışın neresinde olunduğu bilinmez
+// (gelmemiş yanıt sonradan gelir, sıradaki komutun yanıtı sanılır) → her hata ve süre
+// dolmasında bağlantı atılır; bir daha kullanılmaz (is_connected false).
+void RespClient::drop() {
 #ifndef _WIN32
-    if (ssl_) { SSL_shutdown((SSL*)ssl_); SSL_free((SSL*)ssl_); ssl_ = nullptr; }
+    if (ssl_) { SSL_free((SSL*)ssl_); ssl_ = nullptr; }
 #endif
     if (fd_ >= 0) { CLOSESOCKET(fd_); fd_ = -1; }
+    rpos_ = rlen_ = 0;   // eski bağlantıdan kalan okunmamış veri yeni bağlantıya taşınmasın
+}
+
+void RespClient::fail(const std::string& msg) {
+    drop();
+    throw std::runtime_error(msg);
+}
+
+void RespClient::fail_timeout(const char* what) {
+    fail(std::string("Redis: ") + what + " " + host_ + ":" + std::to_string(port_) + " took longer than " +
+         std::to_string(tmo_ms_) + " ms (LOOK_REDIS_TIMEOUT_MS); the connection was closed");
 }
 
 // ── TCP connect ──────────────────────────────────────────────────────────────
 
 void RespClient::connect() {
-#ifndef _WIN32
-    if (ssl_) { SSL_shutdown((SSL*)ssl_); SSL_free((SSL*)ssl_); ssl_ = nullptr; }
-#endif
-    if (fd_ >= 0) { CLOSESOCKET(fd_); fd_ = -1; }
+    drop();
 
 #ifdef _WIN32
     WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
@@ -147,17 +173,31 @@ void RespClient::connect() {
     struct addrinfo hints{}, *res = nullptr;
     hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host_.c_str(), std::to_string(port_).c_str(), &hints, &res) != 0)
+    if (fiber_getaddrinfo(host_.c_str(), std::to_string(port_).c_str(), &hints, &res) != 0)
         throw std::runtime_error("Redis: cannot resolve " + host_);
 
     int sock = -1;
+    bool timed_out = false;
     for (auto* r = res; r; r = r->ai_next) {
         sock = (int)socket(r->ai_family, r->ai_socktype, r->ai_protocol);
         if (sock < 0) continue;
+#ifndef _WIN32
+        // Fiber dışında da okuma/yazma süre sınırlı (fiber içinde beklemeler tmo_ms_ ile).
+        struct timeval tv; tv.tv_sec = tmo_ms_ / 1000; tv.tv_usec = (tmo_ms_ % 1000) * 1000;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        if (fiber_connect(sock, r->ai_addr, (socklen_t)r->ai_addrlen, tmo_ms_) == 0) break;
+        if (errno == ETIMEDOUT) timed_out = true;
+#else
+        DWORD tv = (DWORD)tmo_ms_;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
         if (::connect(sock, r->ai_addr, (int)r->ai_addrlen) == 0) break;
+#endif
         CLOSESOCKET(sock); sock = -1;
     }
     freeaddrinfo(res);
+    if (sock < 0 && timed_out) fail_timeout("connecting to");
     if (sock < 0) throw std::runtime_error("Redis: cannot connect to " + host_ + ":" + std::to_string(port_));
     fd_ = sock;
 
@@ -187,14 +227,16 @@ void RespClient::connect() {
             SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
             if (SSL_set1_host(s, host_.c_str()) != 1) {
                 SSL_free(s);
-                throw std::runtime_error("Redis: could not set up TLS hostname verification (verify)");
+                fail("Redis: could not set up TLS hostname verification (verify)");
             }
         }
-        if (SSL_connect(s) != 1) {
+        int hs = fiber_ssl_connect(s, fd_, tmo_ms_);
+        if (hs == 0) { SSL_free(s); fail_timeout("the TLS handshake with"); }
+        if (hs != 1) {
             unsigned long e = ERR_get_error();
             char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
             SSL_free(s);
-            throw std::runtime_error(std::string("Redis: TLS handshake failed: ") + eb);
+            fail(std::string("Redis: TLS handshake failed: ") + eb);
         }
         ssl_ = s;   // bundan sonra send_command/read_* SSL üstünden
 #else
@@ -224,35 +266,49 @@ void RespClient::send_command(const std::vector<std::string>& args) {
     for (auto& a : args)
         buf += "$" + std::to_string(a.size()) + "\r\n" + a + "\r\n";
 
+    if (fd_ < 0) throw std::runtime_error("Redis: not connected");
+#ifndef _WIN32
+    if (!fiber_send_all(fd_, (SSL*)ssl_, buf.data(), buf.size(), tmo_ms_)) {
+        if (errno == ETIMEDOUT || errno == EAGAIN || errno == EWOULDBLOCK) fail_timeout("sending to");
+        fail("Redis: send error");
+    }
+#else
     const char* p = buf.data();
     size_t rem = buf.size();
     while (rem > 0) {
-        int sent;
-#ifndef _WIN32
-        if (ssl_) sent = SSL_write((SSL*)ssl_, p, (int)rem);
-        else
-#endif
-            sent = (int)::send(fd_, p, (int)rem, MSG_NOSIGNAL);   // SIGPIPE yok: kapali sokette EPIPE
-        if (sent <= 0) throw std::runtime_error("Redis: send error");
+        int sent = (int)::send(fd_, p, (int)rem, 0);
+        if (sent <= 0) fail("Redis: send error");
         p += sent; rem -= sent;
     }
+#endif
 }
 
 // ── RESP2 reader ─────────────────────────────────────────────────────────────
 
-// Tek okuma noktası. Eskiden recv/SSL_read doğrudan engelliyordu: fiber içinde (web isteği)
-// Redis yanıtı gelene dek İŞ PARÇACIĞI başka hiçbir isteğe bakamıyordu (MySQL/PostgreSQL
-// fiber_wait_readable ile çoktan bekliyordu). Veri hazırsa hemen okunur; değilse yalnız fiber
-// askıya alınır. Bekleme süresi eskisi gibi sınırsız (davranış aynı; serbest kalan iş parçacığı).
-static int resp_recv(int fd, void* ssl, char* buf, size_t len) {
+// Tek okuma noktası: tampona en çok 16 KB okur. Eskiden recv/SSL_read doğrudan engelliyordu
+// (fiber içinde Redis yanıtı gelene dek İŞ PARÇACIĞI başka isteğe bakamıyordu) ve satırlar bayt
+// bayt okunuyordu (her bayt bir sistem çağrısı). Veri hazırsa hemen okunur; değilse yalnız fiber
+// en çok tmo_ms_ bekler. Fiber dışında okuma SO_RCVTIMEO (tmo_ms_) ile sınırlı engeller.
+// Süre dolarsa ya da bağlantı koparsa bağlantı atılır ve açık bir hata fırlatılır.
+void RespClient::fill() {
+    if (fd_ < 0) throw std::runtime_error("Redis: not connected");
+    rbuf_.resize(16384);
+    rpos_ = rlen_ = 0;
+    int n;
 #ifndef _WIN32
-    if (!(ssl && SSL_pending((SSL*)ssl) > 0))
-        fiber_wait_readable(fd, 0);   // fiber dışı → -1: aşağıdaki okuma eskisi gibi engeller (blocking-ok: fiber yok)
-    if (ssl) return SSL_read((SSL*)ssl, buf, (int)len);
+    if (!(ssl_ && SSL_pending((SSL*)ssl_) > 0) && fiber_wait_readable(fd_, tmo_ms_) == 0)
+        fail_timeout("waiting for a reply from");
+    errno = 0;
+    // Fiber içinde yukarıda beklendi (veri hazır); fiber dışı → blocking-ok: SO_RCVTIMEO ile sınırlı.
+    if (ssl_) n = SSL_read((SSL*)ssl_, &rbuf_[0], (int)rbuf_.size());
+    else      n = (int)::recv(fd_, &rbuf_[0], rbuf_.size(), 0);
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) fail_timeout("waiting for a reply from");
 #else
-    (void)ssl;
+    n = (int)::recv(fd_, &rbuf_[0], (int)rbuf_.size(), 0);
+    if (n < 0 && WSAGetLastError() == WSAETIMEDOUT) fail_timeout("waiting for a reply from");
 #endif
-    return (int)::recv(fd, buf, (int)len, 0);
+    if (n <= 0) fail("Redis: connection closed");
+    rlen_ = (size_t)n;
 }
 
 std::string RespClient::read_line() {
@@ -260,15 +316,14 @@ std::string RespClient::read_line() {
     // sunucu '\n' göndermezse sınırsız büyümeyi (OOM) önlemek için üst sınır.
     static constexpr size_t RESP_MAX_LINE = 64 * 1024;
     std::string line;
-    char c;
     while (true) {
-        int n = resp_recv(fd_, ssl_, &c, 1);
-        if (n <= 0) throw std::runtime_error("Redis: connection closed");
+        if (rpos_ >= rlen_) fill();
+        char c = rbuf_[rpos_++];
         if (c == '\r') continue;
         if (c == '\n') break;
         line += c;
         if (line.size() > RESP_MAX_LINE)
-            throw std::runtime_error("Redis: line limit exceeded");
+            fail("Redis: line limit exceeded");
     }
     return line;
 }
@@ -290,13 +345,14 @@ std::string RespClient::read_bulk(long len) {
     // Sınır kontrolü int'e DARALTMADAN önce — $5000000000 gibi >INT_MAX değer
     // (int)len ile negatife taşıp sessizce null dönüp socket'i desync ederdi.
     if ((size_t)len > resp_max_bulk())
-        throw std::runtime_error("Redis: bulk response limit exceeded (LOOK_REDIS_MAX_BULK)");
+        fail("Redis: bulk response limit exceeded (LOOK_REDIS_MAX_BULK)");
     std::string buf((size_t)len, '\0');
     size_t got = 0, need = (size_t)len;
     while (got < need) {
-        int n = resp_recv(fd_, ssl_, &buf[got], need - got);
-        if (n <= 0) throw std::runtime_error("Redis: connection closed reading bulk");
-        got += (size_t)n;
+        if (rpos_ >= rlen_) fill();
+        size_t k = std::min(need - got, rlen_ - rpos_);
+        std::memcpy(&buf[got], &rbuf_[rpos_], k);
+        rpos_ += k; got += k;
     }
     read_line();  // trailing \r\n
     return buf;
@@ -307,28 +363,32 @@ std::string RespClient::read_response(int depth) {
     // kötü niyetli/bozuk sunucuya karşı derinlik sınırı.
     static constexpr int RESP_MAX_DEPTH = 64;
     if (depth > RESP_MAX_DEPTH)
-        throw std::runtime_error("Redis: response nested too deep (array)");
+        fail("Redis: response nested too deep (array)");
     auto line = read_line();
-    if (line.empty()) throw std::runtime_error("Redis: empty response");
+    if (line.empty()) fail("Redis: empty response");
 
     char type = line[0];
     std::string payload = line.substr(1);
 
     switch (type) {
         case '+': return payload;                        // Simple string
-        case '-': throw std::runtime_error("Redis: " + payload);  // Error
+        case '-':                                        // Error
+            // Üst düzeyde akış hizalı (yanıt bitti) → bağlantı sağlam kalır; dizi içindeyse
+            // kalan elemanlar okunmadan çıkılıyor → bağlantı atılır.
+            if (depth > 0) fail("Redis: " + payload);
+            throw std::runtime_error("Redis: " + payload);
         case ':': return payload;                        // Integer (as string)
         case '$': {                                      // Bulk string
             long len = 0;
             try { len = std::stol(payload); }            // bozuk uzunluk → protokol hatası
-            catch (...) { throw std::runtime_error("Redis: invalid bulk length"); }
+            catch (...) { fail("Redis: invalid bulk length"); }
             if (len == -1) return "";                    // nil
             return read_bulk(len);
         }
         case '*': {                                      // Array — flatten for our use
             long count = 0;
             try { count = std::stol(payload); }
-            catch (...) { throw std::runtime_error("Redis: invalid array count"); }
+            catch (...) { fail("Redis: invalid array count"); }
             if (count <= 0) return "";
             // Sunucu-verili count sanity cap — kötü niyetli/MITM sunucu (TLS yok)
             // `*2000000000` verirse döngü kaynak tüketir. Session subset'i küçük
@@ -336,7 +396,7 @@ std::string RespClient::read_response(int depth) {
             // ile tutarlı.)
             static constexpr long RESP_MAX_ARRAY = 1024 * 1024;
             if (count > RESP_MAX_ARRAY)
-                throw std::runtime_error("Redis: array element count limit exceeded");
+                fail("Redis: array element count limit exceeded");
             std::string first;
             for (int i = 0; i < count; i++) {
                 auto v = read_response(depth + 1);
@@ -345,7 +405,7 @@ std::string RespClient::read_response(int depth) {
             return first;
         }
         default:
-            throw std::runtime_error("Redis: unknown response type " + std::string(1, type));
+            fail("Redis: unknown response type " + std::string(1, type));
     }
 }
 
