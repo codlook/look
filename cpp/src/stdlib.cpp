@@ -674,21 +674,27 @@ static Module make_string() {
     //
     // YIGIN: std::regex (libstdc++ ve MSVC) eslestirmeyi ozyinelemeyle yapar, derinlik girdi
     // uzunluguyla buyur. Varsayilan 8 MB yiginda ~10–20 KB girdi yigini tasirip SURECIN TAMAMINI
-    // dusuruyordu (SIGSEGV) — izin verilen sinir ise 64 KB. Olculdu: denenen desenlerin hepsi
-    // 64 MB'ta 64 KB'i kaldiriyor; 256 MB pay birakir. Yalniz sanal adres ayrilir, kullanildikca
-    // isler (8 isci × 256 MB ≈ 2 GB sanal). Isciler surec omru boyunca yasar → detach.
+    // dusuruyordu (SIGSEGV) — izin verilen sinir ise 64 KB. Olculdu, LOOK'un KENDI -O3
+    // derlemesinde (ayri bir test programi daha kucuk cerceve verip yaniltiyor), 64 KB girdi:
+    // 64 MB'ta 7 desenin 5'i, 96'da 5'i, 128'de 6'si, 256'da 7'si gecti → 256 MB. Ihtiyac desenin
+    // ic ice grup derinligiyle buyur; 256 MB denenen her deseni karsilar, sinirsizi degil.
+    // Isciler IHTIYAC OLDUKCA birer birer acilir (cogu surecte tek isci). 1.0.34 8'ini birden
+    // aciyordu (≈2 GB sanal): `ulimit -v` sinirinda (paylasimli hosting, ~1 GB) bazilari
+    // acilamiyor ve surec TAKILIYORDU. Simdi acilamayan isci yerine is acik iscilere siralanir;
+    // HIC isci acilamazsa anlasilir bir hata. Isciler surec omru boyunca yasar → detach.
     static constexpr size_t REGEX_STACK = size_t(256) << 20;
     struct RegexPool {
         std::queue<std::function<void()>> q;
         std::mutex                        m;
         std::condition_variable           cv;
-        bool                              stop = false;
-        static void spawn(std::function<void()>* body) {
+        int                               started = 0;   // acilmis isci
+        int                               idle    = 0;   // is bekleyen isci
+        static bool spawn(std::function<void()>* body) {
 #ifdef _WIN32
             HANDLE h = CreateThread(nullptr, REGEX_STACK, [](LPVOID p) -> DWORD {
                 std::unique_ptr<std::function<void()>> f((std::function<void()>*)p); (*f)(); return 0;
             }, body, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-            if (!h) { delete body; throw std::runtime_error("string::regex: could not start a regex thread"); }
+            if (!h) { delete body; return false; }
             CloseHandle(h);
 #else
             pthread_attr_t at;
@@ -700,29 +706,40 @@ static Module make_string() {
                 std::unique_ptr<std::function<void()>> f((std::function<void()>*)p); (*f)(); return nullptr;
             }, body);
             pthread_attr_destroy(&at);
-            if (rc != 0) { delete body; throw std::runtime_error("string::regex: could not start a regex thread"); }
+            if (rc != 0) { delete body; return false; }
 #endif
+            return true;
         }
-        explicit RegexPool(int n) {
-            for (int i = 0; i < n; ++i) spawn(new std::function<void()>([this]{
-                for (;;) {
-                    std::function<void()> job;
-                    {
-                        std::unique_lock<std::mutex> lk(m);
-                        cv.wait(lk, [this]{ return stop || !q.empty(); });
-                        if (stop && q.empty()) return;
-                        job = std::move(q.front()); q.pop();
-                    }
-                    job();   // runs fn(), fills the caller's State, then decrements the slot
+        void worker() {
+            for (;;) {
+                std::function<void()> job;
+                {
+                    std::unique_lock<std::mutex> lk(m);
+                    ++idle;
+                    cv.wait(lk, [this]{ return !q.empty(); });
+                    --idle;
+                    job = std::move(q.front()); q.pop();
                 }
-            }));
+                job();   // runs fn(), fills the caller's State, then decrements the slot
+            }
         }
+        // Bos isci yoksa (ve sinir dolmadiysa) once yeni isci ac; hic isci yoksa ve acilamiyorsa
+        // isi kuyruga KOYMADAN hata ver (kuyrukta kalsa cagiran 250 ms bekleyip yaniltici
+        // "timeout" alirdi).
         void submit(std::function<void()> job) {
+            bool grow;
+            { std::lock_guard<std::mutex> lk(m); grow = idle == 0 && started < REGEX_MAX_THREADS; if (grow) ++started; }
+            if (grow && !spawn(new std::function<void()>([this]{ worker(); }))) {
+                std::lock_guard<std::mutex> lk(m);
+                if (--started == 0)
+                    throw std::runtime_error("string::regex: could not start a regex thread "
+                                             "(256 MB stack; is the process's virtual memory limited?)");
+            }
             { std::lock_guard<std::mutex> lk(m); q.push(std::move(job)); }
             cv.notify_one();
         }
     };
-    static auto& regex_pool = *new RegexPool(REGEX_MAX_THREADS);
+    static auto& regex_pool = *new RegexPool();
 
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
         if (g_regex_threads.load() >= REGEX_MAX_THREADS)
@@ -739,6 +756,7 @@ static Module make_string() {
         auto state = std::make_shared<State>();
 
         g_regex_threads++;
+        try {
         regex_pool.submit([state, fn = std::move(fn)]() mutable {
             try {
                 T r = fn();
@@ -760,6 +778,7 @@ static Module make_string() {
             g_regex_threads--;
             state->cv.notify_one();
         });
+        } catch (...) { g_regex_threads--; throw; }   // is hic baslamadi: slotu geri ver
 
         std::unique_lock<std::mutex> lk(state->mtx);
         if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; })) {

@@ -143,6 +143,13 @@ jobs:
           cd cpp
           bash tests/regex_long_input_test.sh ./build/lk
 
+      # ...and under a virtual memory limit (shared hosting): 1.0.34 started all 8 regex threads
+      # of 256 MB at once and hung under ulimit -v; they now start one at a time as needed.
+      - name: Regex under a virtual memory limit
+        run: |
+          cd cpp
+          bash tests/regex_memory_limit_test.sh ./build/lk ./build/lk-fcgi
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)
