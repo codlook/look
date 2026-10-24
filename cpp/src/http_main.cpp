@@ -1422,9 +1422,13 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // ws::on / sse::on — geri çağırma, bağlantının iş parçacığında, zamanlayıcı gibi YENİ BİR
             // İSTEK olarak kurulur (kendi VM'i, global'lerin bildirilen değerleri); hata loglanır,
             // hiçbir şey yeniden çalıştırılmaz.
-            auto run_cb = [](const look::Value& fnv, std::vector<look::Value> cb_args, const char* tag, const char* kind) {
+            // handshake: ws geri cagrisinda el sikisma isteginin kopyasi — request::get ws adresinin
+            // parametrelerini dondurur (v1 ile ayni kural); diger olaylarda bos istek.
+            auto run_cb = [](const look::Value& fnv, std::vector<look::Value> cb_args, const char* tag, const char* kind,
+                             const look::WebContext* handshake = nullptr) {
                 look::WebContext ctx;
-                ctx.method = "__EVENT__";
+                if (handshake) ctx = *handshake;
+                else ctx.method = "__EVENT__";
                 std::ostringstream sink;
                 direct().closure = fnv.as_bytecode_fn().get();
                 direct().args    = &cb_args;
@@ -1439,17 +1443,21 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 direct().args    = nullptr;
                 direct().what    = nullptr;
             };
-            req_builtins[BI("ws::on")] = [ws_of, run_cb](std::vector<look::Value>& args) -> look::Value {
+            // ws::on el sikisma istegi icinde cagrilir: baglami SIMDI (istek canliyken) kopyala.
+            // Geri cagri istek bittikten sonra baska thread'de calisir; her olay kendi taze kopyasini alir.
+            const look::WebContext* web_now = &web;
+            req_builtins[BI("ws::on")] = [ws_of, run_cb, web_now](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 3) throw std::runtime_error("ws::on() takes 3 arguments");
                 auto conn = ws_of(args[0], "ws::on() first argument must be a websocket");
                 if (args[2].type() != look::Value::BYTECODE_FN)
                     throw std::runtime_error("ws::on() third argument must be a function");
                 const std::string ev = args[1].to_string();
                 look::Value fnv = args[2].clone_for_thread();
+                auto handshake = std::make_shared<const look::WebContext>(*web_now);
                 if (ev == "message")
-                    conn->on_message = [fnv, run_cb](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "ws message callback"); };
+                    conn->on_message = [fnv, run_cb, handshake](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "ws message callback", handshake.get()); };
                 else if (ev == "close")
-                    conn->on_close = [fnv, run_cb]() { run_cb(fnv, {}, "ws", "ws close callback"); };
+                    conn->on_close = [fnv, run_cb, handshake]() { run_cb(fnv, {}, "ws", "ws close callback", handshake.get()); };
                 return look::Value();
             };
             req_builtins[BI("sse::on")] = [sse_of, run_cb](std::vector<look::Value>& args) -> look::Value {

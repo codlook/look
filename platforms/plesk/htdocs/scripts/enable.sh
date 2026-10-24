@@ -163,9 +163,9 @@ Environment=LOOK_FILE_ROOT=${DOC_ROOT}
 WantedBy=multi-user.target
 SYSTEMD
 
-sudo /bin/systemctl daemon-reload
-sudo /bin/systemctl enable "$SVC_NAME" 2>/dev/null || true
-sudo /bin/systemctl restart "$SVC_NAME"
+/bin/systemctl daemon-reload
+/bin/systemctl enable "$SVC_NAME" 2>/dev/null || true
+/bin/systemctl restart "$SVC_NAME"
 
 # Port acilana kadar bekle (max 5s)
 for i in $(seq 1 10); do
@@ -205,9 +205,9 @@ echo "$PROXY_CONF" > "$CONF_DIR/vhost_ssl.conf"
 # uygular. Hemen OK dönüyoruz, UI anında domain'i listeye ekler.
 nohup bash -c '
     if [ -x /usr/local/psa/admin/bin/httpdmng ]; then
-        sudo /usr/local/psa/admin/bin/httpdmng --reconfigure-domain "'"$DOMAIN"'"
+        /usr/local/psa/admin/bin/httpdmng --reconfigure-domain "'"$DOMAIN"'"
     elif [ -x /usr/local/psa/admin/sbin/websrvmng ]; then
-        sudo /usr/local/psa/admin/sbin/websrvmng --reconfigure-vhost --vhost-name="'"$DOMAIN"'"
+        /usr/local/psa/admin/sbin/websrvmng --reconfigure-vhost --vhost-name="'"$DOMAIN"'"
     fi
 ' >/dev/null 2>&1 &
 

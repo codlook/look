@@ -432,12 +432,26 @@ jobs:
           cd cpp
           bash tests/ws_sse_vm_test.sh ./build/lk-fcgi
 
+      # string::regex_* take up to 64 KB of input. std::regex recurses once per character and
+      # the regex threads had an 8 MB stack: a ~20 KB input killed the whole process (SIGSEGV).
+      - name: Long regex inputs do not kill the process
+        run: |
+          cd cpp
+          bash tests/regex_long_input_test.sh ./build/lk
+
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)
         run: |
           cd cpp
           bash tests/ws_close_callback_test.sh ./build/lk-fcgi
+
+      # A WebSocket callback sees its own handshake request (v1 had no web context there and
+      # request::get killed the process; LOOK 2 ran the callback with an empty request).
+      - name: WebSocket callbacks read their handshake request
+        run: |
+          cd cpp
+          bash tests/ws_callback_context_test.sh ./build/lk-fcgi
 
       # LOOK 2: setup data is shared with every request instead of being copied for it; a write
       # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.
@@ -517,7 +531,7 @@ jobs:
           cd cpp
           for t in fiber_request_isolation request_isolation struct_default_isolation realtime_isolation \
                    jobs_concurrent sqlite_concurrent_writers db_wait no_double_execution job_handler_context \
-                   ws_close_callback; do
+                   ws_close_callback ws_callback_context; do
             echo "== $t"; bash tests/${t}_test.sh ./build/lk-fcgi || exit 1
           done
 
@@ -981,6 +995,12 @@ jobs:
       # with the old binary running; a service that cannot leave root is stopped and reported.
       - name: Plesk update rewrites every service and updates LOOK
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_upgrade_test.sh
+
+      # The panel user has no sudo rights: a '*' in sudoers also matches spaces, so
+      # "systemctl enable look-*" allowed "systemctl enable look-a /tmp/evil.service". Root work
+      # goes through sbin/look-ctl (callSbin), which checks the action, name and argument count.
+      - name: Plesk panel has no sudo rights
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_no_sudo_test.sh
 
       # LOOK 2 web runs only on the VM: a program the VM cannot compile does not start (exit 1),
       # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear

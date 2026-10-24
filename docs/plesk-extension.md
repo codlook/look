@@ -31,10 +31,10 @@ Paneli aç: **Plesk → Extensions → LOOK Language**, veya doğrudan
 `https://<sunucu>:8443/modules/look-lang/`.
 
 > **Kurulum notu:** Plesk eklentinin `post-install.php` kancasını kurulumda ve güncellemede
-> çalıştırır, ama root değil `psaadm` olarak. Root gerektiren adım (ikili, sudoers, servis
-> unit'leri) `sbin/look-setup`'tadır ve kanca onu Plesk'in root yolu
-> `pm_ApiCli::callSbin` ile çağırır. Zip açılırken çalıştırma bitleri kalktığı için panel
-> script'leri `sudo /bin/bash <script>` ile çağırır. Adımı elle tekrar çalıştırmak için:
+> çalıştırır, ama root değil `psaadm` olarak. Root gerektiren adım (ikili, servis unit'leri)
+> `sbin/look-setup`'tadır ve kanca onu Plesk'in root yolu `pm_ApiCli::callSbin` ile çağırır;
+> panelin root işlemleri de aynı yoldan `sbin/look-ctl`'e gider (sudo yok, aşağıdaki
+> [Root işlemleri](#root-işlemleri-sudo-yok)). Adımı elle tekrar çalıştırmak için:
 > `plesk bin extension --exec look-lang post-install.php`.
 
 ---
@@ -129,34 +129,17 @@ Domain listesi panel-yazılabilir Plesk modül var dizininde tutulur:
 
 ---
 
-## Sudoers
+## Root işlemleri (sudo yok)
 
-Panel `psaadm` olarak çalışır; servisleri ve script'leri `sudo` ile yönetir.
-Plesk exec bitini kaldırdığından script'ler **`/bin/bash` ile** çağrılır:
+Panel `psaadm` olarak çalışır ve **sudo kullanmaz**. Servis kurma/durdurma, durum, log ve
+monitör gibi root gerektiren her işlem Plesk'in root yolu `pm_ApiCli::callSbin` ile eklentinin
+`sbin/look-ctl` betiğine gider. `look-ctl` eylemi, argüman sayısını ve servis adını
+(`^look-[a-z0-9-]+$`, çağrı başına tek servis) denetler; başka bir servise ya da dosyaya
+dokunamaz.
 
-```
-psaadm ALL=(root) NOPASSWD: \
-  /bin/bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/enable.sh *, \
-  /bin/bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/disable.sh *, \
-  /bin/bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/status.sh *, \
-  /bin/bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/logs.sh *, \
-  /bin/bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/monitor.sh *, \
-  /bin/systemctl start look-*, /bin/systemctl stop look-*, \
-  /bin/systemctl restart look-*, /bin/systemctl enable look-*, \
-  /bin/systemctl disable look-*, /bin/systemctl daemon-reload, \
-  /usr/local/psa/admin/sbin/websrvmng, /usr/local/psa/admin/bin/httpdmng
-```
-
-Yeni sunucuda bir kez root ile:
-
-```bash
-S=/usr/local/psa/admin/htdocs/modules/look-lang/scripts
-cat > /etc/sudoers.d/look-lang <<SUDO
-psaadm ALL=(root) NOPASSWD: /bin/bash $S/enable.sh *, /bin/bash $S/disable.sh *, /bin/bash $S/status.sh *, /bin/bash $S/logs.sh *, /bin/bash $S/monitor.sh *, /bin/systemctl start look-*, /bin/systemctl stop look-*, /bin/systemctl restart look-*, /bin/systemctl enable look-*, /bin/systemctl disable look-*, /bin/systemctl daemon-reload, /usr/local/psa/admin/sbin/websrvmng, /usr/local/psa/admin/bin/httpdmng
-SUDO
-chmod 0440 /etc/sudoers.d/look-lang
-visudo -cf /etc/sudoers.d/look-lang
-```
+1.0.33'e kadarki sürümler `/etc/sudoers.d/look-lang` yazıyordu. sudoers'ta `*` boşlukları da
+kapsadığından `systemctl enable look-*` kuralı `systemctl enable look-a /tmp/evil.service` ve
+`systemctl stop look-a sshd`'yi de izinliyordu. Güncelleme bu dosyayı siler.
 
 ---
 
@@ -220,9 +203,9 @@ SMTP relay koruması: port 25 outbound engelli; yalnızca kimlik doğrulamalı 5
 
 ## Sorun Giderme
 
-**`sudo: .../enable.sh: command not found`** — sudoers eksik/yanlış. Yukarıdaki
-[Sudoers](#sudoers) bloğunu root ile çalıştır (script'ler `/bin/bash` ile çağrılır,
-chmod gerekmez).
+**Kurulum "setup failed" hatası verdi** — hata metni nedeni ve durdurulan domain'i adıyla
+söyler. Nedeni gider, sonra eklentiyi yeniden kur ya da root olarak:
+`plesk bin extension --exec look-lang post-install.php`.
 
 **Domain eklendi ama listede yok** — panel `domains.json`'a yazamıyor. Kontrol:
 ```bash

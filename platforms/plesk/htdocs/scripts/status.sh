@@ -14,10 +14,10 @@ fi
 SVC_NAME=$(printf '%s' "$SVC_NAME" | tr -cd 'A-Za-z0-9.-')
 case "$SVC_NAME" in look-*) ;; *) echo "unknown"; exit 0 ;; esac
 
-STATE=$(sudo /bin/systemctl is-active "$SVC_NAME" 2>/dev/null || echo "unknown")
+STATE=$(/bin/systemctl is-active "$SVC_NAME" 2>/dev/null || echo "unknown")
 
 if [ "$STATE" = "active" ]; then
-    PID=$(sudo /bin/systemctl show -p MainPID "$SVC_NAME" 2>/dev/null | cut -d= -f2)
+    PID=$(/bin/systemctl show -p MainPID "$SVC_NAME" 2>/dev/null | cut -d= -f2)
     echo "active:${PID}"
 else
     echo "$STATE"

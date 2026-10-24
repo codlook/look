@@ -8,7 +8,7 @@
 # servisleri yeniliyordu. Root yolu Plesk'in belgeledigi pm_ApiCli::callSbin: post-install.php
 # bu betigi cagirir, kayitli domain'leri (domains.json'dan) arguman olarak verir.
 #
-# Yapar: (1) LOOK ikilisini yeniler, (2) sudoers yazar, (3) her domain'in servisini enable.sh
+# Yapar: (1) LOOK ikilisini yeniler, (2) eski sudoers kuralini kaldirir, (3) her domain'in servisini enable.sh
 # ile yeniden yazar (servis domain kullanicisiyla calisir). Root olmadan calisamayan bir
 # servisi DURDURUR — 1.1.x'in root servisi sessizce calismaya devam etmez.
 # Hata = sifir olmayan cikis + mesaj (Plesk kurulumda gosterir); hicbir cikti susturulmaz.
@@ -40,30 +40,11 @@ if [ "$replaced" = 0 ] && [ ! -x "$OPT/lk-fcgi" ]; then
 fi
 if [ -x "$OPT/lk" ]; then echo "LOOK binary: $("$OPT/lk" --version 2>&1 | head -1)"; fi
 
-# ─── 2) sudoers — panel (psaadm) scriptleri sudo ile cagirir ────────────────
-SUDOERS=/etc/sudoers.d/look-lang
-mkdir -p /etc/sudoers.d
-cat > "$SUDOERS.new" << SUDO
-psaadm ALL=(root) NOPASSWD: \\
-  /bin/bash $SCRIPTS/enable.sh *, \\
-  /bin/bash $SCRIPTS/disable.sh *, \\
-  /bin/bash $SCRIPTS/status.sh *, \\
-  /bin/bash $SCRIPTS/logs.sh *, \\
-  /bin/bash $SCRIPTS/monitor.sh *, \\
-  /bin/systemctl start look-*, \\
-  /bin/systemctl stop look-*, \\
-  /bin/systemctl restart look-*, \\
-  /bin/systemctl enable look-*, \\
-  /bin/systemctl disable look-*, \\
-  /bin/systemctl daemon-reload, \\
-  /usr/local/psa/admin/sbin/websrvmng, \\
-  /usr/local/psa/admin/bin/httpdmng
-SUDO
-chmod 440 "$SUDOERS.new"
-if command -v visudo > /dev/null 2>&1 && ! visudo -cqf "$SUDOERS.new"; then
-    rm -f "$SUDOERS.new"; err "the generated sudoers rule is invalid; $SUDOERS was left as it was"
-else
-    mv -f "$SUDOERS.new" "$SUDOERS"
+# ─── 2) sudoers YOK — panel root islerini sbin/look-ctl ile (callSbin) yapar ──
+# Eski surumlerin kurali ('systemctl enable look-*' — '*' bosluklari da kapsar) psaadm'e
+# root veriyordu; guncellemede kaldirilir.
+if [ -e /etc/sudoers.d/look-lang ]; then
+    rm -f /etc/sudoers.d/look-lang && echo "removed /etc/sudoers.d/look-lang (the panel no longer uses sudo)"
 fi
 echo 'export PATH="/opt/look:$PATH"' > /etc/profile.d/look.sh
 

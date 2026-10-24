@@ -61,7 +61,9 @@ Every install and every update of the extension, from the UI or the CLI, runs it
 setup as root:
 
 - installs the bundled LOOK binaries to `/opt/look`, replacing the old ones;
-- writes the sudoers rule `/etc/sudoers.d/look-lang` the panel needs;
+- removes the sudo rule `/etc/sudoers.d/look-lang` that versions up to 1.0.33 wrote. The
+  panel needs no sudo: its root actions go through the extension's `look-ctl` script, which
+  Plesk runs as root and which accepts only LOOK services (`look-…`), one per call;
 - rewrites the service of every domain in the panel with the current rules and
   restarts it.
 
