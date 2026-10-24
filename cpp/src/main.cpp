@@ -23,6 +23,9 @@
 #include <memory>
 #include <unordered_map>
 #include <cmath>
+#include <cerrno>
+#include <csignal>
+#include <streambuf>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -213,10 +216,46 @@ static void warn_pending_timers() {
 }
 
 
+#ifndef _WIN32
+// runtime_init SIGPIPE'i yok sayar (kapanan DB soketi sureci oldurmesin). Ama `lk x.lk | head`
+// gibi bir kullanimda betik, cikti borusu kapaninca eskisi gibi sonlanmali — yoksa print sessizce
+// basarisiz olur ve sonsuz bir dongu sonsuza kadar calisir. Bu sarmalayici std::cout/cerr'in
+// onune gecer (tamponlamayi degistirmez); alttaki yazma EPIPE ile donerse varsayilan SIGPIPE ile
+// sonlanir — 1.0.34'e kadarki davranisin aynisi, yalniz stdout/stderr icin.
+struct PipeGuard : std::streambuf {
+    std::streambuf* inner;
+    explicit PipeGuard(std::streambuf* in) : inner(in) {}
+    static void die_if_epipe() {
+        if (errno == EPIPE) { std::signal(SIGPIPE, SIG_DFL); std::raise(SIGPIPE); }
+    }
+    int overflow(int c) override {
+        if (c == traits_type::eof()) return traits_type::not_eof(c);
+        if (inner->sputc((char)c) == traits_type::eof()) { die_if_epipe(); return traits_type::eof(); }
+        return c;
+    }
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        std::streamsize w = inner->sputn(s, n);
+        if (w < n) die_if_epipe();
+        return w;
+    }
+    int sync() override {
+        int r = inner->pubsync();
+        if (r != 0) die_if_epipe();
+        return r;
+    }
+};
+#endif
+
 } // namespace
 
 int main(int argc, char* argv[]) {
     look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
+#ifndef _WIN32
+    // Hic yok edilmez: cikista std::cout bu sarmalayici uzerinden bosaltilir (static olsaydi once o
+    // yikilir, ardindan ios_base::Init olu nesneye yazardi).
+    std::cout.rdbuf(new PipeGuard(std::cout.rdbuf()));
+    std::cerr.rdbuf(new PipeGuard(std::cerr.rdbuf()));
+#endif
     try {
         if (argc < 2) { print_usage(); return 1; }
 

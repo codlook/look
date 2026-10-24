@@ -33,6 +33,10 @@
   #include <poll.h>
 #endif
 
+#ifndef MSG_NOSIGNAL
+#  define MSG_NOSIGNAL 0   // Windows/macOS: bayrak yok (Windows'ta SIGPIPE de yok)
+#endif
+
 namespace look {
 
 // Sunucu-verili sütun sayısı üst sınırı — kötü niyetli/MITM sunucunun devasa
@@ -375,7 +379,7 @@ void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
     }
 #endif
     while (sent < len) {
-        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), 0);
+        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), MSG_NOSIGNAL);   // SIGPIPE yok: kapali sokette EPIPE
         if (r <= 0) { disconnect(); throw std::runtime_error("db: send failed — connection lost"); }
         sent += r;
     }
