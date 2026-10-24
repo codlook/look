@@ -24,6 +24,7 @@
 #include <ctime>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include "look/fiber_io.h"   // fiber içinde SMTP yanıtı beklenirken iş parçacığı serbest kalır
 #endif
 
 namespace look {
@@ -263,6 +264,7 @@ static std::string smtp_date() {
 // A plain-fd-or-TLS connection with line-oriented read and reply-code parsing.
 struct SmtpConn {
     int      fd  = -1;
+    int      tmo_ms = 30000;   // okuma süresi sınırı (SO_RCVTIMEO ile aynı) — fiber beklemesi de buna uyar
     SSL*     ssl = nullptr;
     SSL_CTX* ctx = nullptr;
     ~SmtpConn() {
@@ -284,6 +286,10 @@ struct SmtpConn {
         line.clear();
         char c;
         for (;;) {
+            // Eskiden recv/SSL_read doğrudan engelliyordu: web isteğindeki mail::send uzak sunucunun her
+            // yanıtı boyunca İŞ PARÇACIĞINI tutuyordu. Fiber içinde yalnız fiber bekler; fiber dışı → -1,
+            // okuma eskisi gibi SO_RCVTIMEO ile engeller (blocking-ok: fiber yok).
+            if (!(ssl && SSL_pending(ssl) > 0) && look::fiber_wait_readable(fd, tmo_ms) == 0) return false;
             int n = ssl ? SSL_read(ssl, &c, 1) : (int)::recv(fd, &c, 1, 0);
             if (n <= 0) return false;                       // error / timeout / EOF
             if (c == '\n') { if (!line.empty() && line.back() == '\r') line.pop_back(); return true; }
@@ -349,6 +355,7 @@ static bool smtp_connect(SmtpConn& c, const std::string& host, int port, int tim
     freeaddrinfo(res);
     if (s < 0) return false;
     c.fd = s;
+    c.tmo_ms = timeout_ms > 0 ? timeout_ms : 30000;
     return true;
 }
 

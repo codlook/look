@@ -220,6 +220,16 @@ int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int time
     return -1;
 }
 
+int FiberScheduler::wait_writable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
+    (void)f; (void)fd; (void)timeout_ms;
+    return -1;
+}
+
+int FiberScheduler::wait_fd_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms, uint32_t events) {
+    (void)f; (void)fd; (void)timeout_ms; (void)events;
+    return -1;
+}
+
 void FiberScheduler::run_until_complete() {
     while (true) {
         while (run_one()) {}

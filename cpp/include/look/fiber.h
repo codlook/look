@@ -24,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -246,6 +247,10 @@ public:
     // fiber'ları ve acceptor'ın kapanış kontrolü buna dayanır — süresiz bekleme,
     // ab -k wind-down stall'ının ve kapanışta takılmanın köküydü.
     int wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms);
+    // Aynısı, yazılabilir olana dek (engellemesiz connect'in tamamlanması). fd >= 0 zorunlu.
+    int wait_writable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms);
+    // İkisinin ortak gövdesi (events: EPOLLIN / EPOLLOUT) — yalnız POSIX'te tanımlı.
+    int wait_fd_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms, uint32_t events);
 
     // Called from I/O completion (epoll callback) to wake a suspended fiber
     void resume_fiber(std::shared_ptr<Fiber> f);

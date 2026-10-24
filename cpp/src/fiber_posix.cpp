@@ -399,6 +399,16 @@ bool FiberScheduler::wait_readable(std::shared_ptr<Fiber> f, int fd) {
 // zamanlayıcı (sentetik anahtar, epoll kaydı yok — acceptor backpressure uykusu).
 // Dönüş: 1 okunabilir, 0 süre doldu, -1 desteklenmiyor.
 int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
+    return wait_fd_tmo(std::move(f), fd, timeout_ms, EPOLLIN);
+}
+
+// Yazılabilir olana dek (ör. engellemesiz connect'in bitmesi) yalnız fiber'ı askıya al.
+int FiberScheduler::wait_writable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
+    if (fd < 0) return -1;
+    return wait_fd_tmo(std::move(f), fd, timeout_ms, EPOLLOUT);
+}
+
+int FiberScheduler::wait_fd_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms, uint32_t events) {
     if (epfd_ < 0) return -1;
     if (fd < 0 && timeout_ms < 0) return -1;   // fd'siz süresiz bekleme anlamsız
     int key = fd;
@@ -414,7 +424,7 @@ int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int time
     }
     if (fd >= 0) {
         epoll_event ev{};
-        ev.events  = EPOLLIN | EPOLLONESHOT;
+        ev.events  = events | EPOLLONESHOT;
         ev.data.fd = fd;
         // EPOLL_CTL_ADD: if fd already tracked (same connection, retry), use MOD
         if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) < 0 && errno == EEXIST)

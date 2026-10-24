@@ -442,6 +442,7 @@ bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
         return true;
     }
 #endif
+    // Fiber dışı yol (Windows, komut satırı) — blocking-ok: fiber yok
     while (received < len) {
         int r = recv(sock_, (char*)(buf + received), (int)(len - received), 0);
         if (r <= 0) {
@@ -614,8 +615,12 @@ void PostgresClient::do_connect() {
 #else
     // select() DEĞİL: fd_set yalnız 1024'ten küçük tanıtıcıları taşır; sunucu binlerce bağlantı
     // tutarken soket numarası bunu aşar ve FD_SET yığın belleğini taşırır.
-    struct pollfd cpf{}; cpf.fd = sock_; cpf.events = POLLOUT;
-    int sel = ::poll(&cpf, 1, connect_timeout_ms_);
+    // Fiber içinde bağlantının kurulmasını beklerken iş parçacığını değil fiber'ı askıya al.
+    int sel = fiber_wait_writable((int)sock_, connect_timeout_ms_);
+    if (sel < 0) {   // fiber dışı (komut satırı, kurulum): poll ile bekle — blocking-ok: fiber yok
+        struct pollfd cpf{}; cpf.fd = sock_; cpf.events = POLLOUT;
+        sel = ::poll(&cpf, 1, connect_timeout_ms_);
+    }
 #endif
     if (sel <= 0) {
         pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;

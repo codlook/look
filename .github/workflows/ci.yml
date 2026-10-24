@@ -616,6 +616,11 @@ jobs:
       # route scanner would have read the wrong constant without any error.
       - name: No hand-made bytecode operand decoding
         run: bash cpp/tests/no_raw_operand_decode.sh
+      # While a fiber waits for the database, Redis, SMTP or HTTP, the worker thread serves other
+      # requests: no poll with a timeout and no blocking read in the clients' fiber paths (a 1 ms
+      # poll cost ~15% on database load; blocking Redis reads halved session throughput).
+      - name: Network clients never block the worker thread in a fiber
+        run: bash cpp/tests/fiber_blocking_io_guard.sh
       # Register reuse — one function far past the old 72-route / 63-call ceiling, plus
       # more than 256 closures. A compile failure is an error, not a fallback.
       - name: Register reuse guard
@@ -1270,7 +1275,7 @@ jobs:
           for i in $(seq 1 20); do docker exec look-redis-q redis-cli -a 'pa?ss' --no-auth-warning ping 2>/dev/null | grep -q PONG && break; sleep 1; done
           cd cpp
           g++ -std=c++23 -Iinclude tests/redis_tls/harness.cpp build/CMakeFiles/look.dir/src/resp_client.cpp.o \
-            -lssl -lcrypto -o /tmp/resp_harness
+            build/CMakeFiles/look.dir/src/fiber_posix.cpp.o -lssl -lcrypto -lpthread -o /tmp/resp_harness
           ok="$(/tmp/resp_harness 'redis://:pa?ss@127.0.0.1:6380/1' 2>&1 || true)";  echo "right password : $ok"
           bad="$(/tmp/resp_harness 'redis://:wrong@127.0.0.1:6380' 2>&1 || true)";   echo "wrong password : $bad"
           none="$(/tmp/resp_harness 'redis://127.0.0.1:6380' 2>&1 || true)";         echo "no password    : $none"

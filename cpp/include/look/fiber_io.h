@@ -35,4 +35,25 @@ inline int fiber_wait_readable(int fd, int timeout_ms) {
 #endif
 }
 
+// Yazılabilir olana dek (engellemesiz connect'in bitmesi) yalnız fiber'ı askıya al.
+// Dönüş: 1 = yazılabilir, 0 = süre doldu, -1 = fiber yok (çağıran poll ile bekler).
+inline int fiber_wait_writable(int fd, int timeout_ms) {
+#ifdef _WIN32
+    (void)fd; (void)timeout_ms;
+    return -1;
+#else
+    Fiber* cur = Fiber::current();
+    if (!cur) return -1;
+    FiberScheduler* sched = get_thread_scheduler();
+    if (!sched) return -1;
+    struct pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    if (::poll(&pfd, 1, 0) > 0) return 1;
+    auto sp = cur->shared_from_this_fiber();
+    if (!sp) return -1;
+    return sched->wait_writable_tmo(sp, fd, timeout_ms > 0 ? timeout_ms : -1);
+#endif
+}
+
 } // namespace look

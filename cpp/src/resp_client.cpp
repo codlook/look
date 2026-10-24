@@ -24,6 +24,7 @@
 #ifndef _WIN32
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
+#  include "look/fiber_io.h"   // fiber içinde Redis yanıtı beklenirken iş parçacığı serbest kalır
 #endif
 
 #ifndef MSG_NOSIGNAL
@@ -239,6 +240,21 @@ void RespClient::send_command(const std::vector<std::string>& args) {
 
 // ── RESP2 reader ─────────────────────────────────────────────────────────────
 
+// Tek okuma noktası. Eskiden recv/SSL_read doğrudan engelliyordu: fiber içinde (web isteği)
+// Redis yanıtı gelene dek İŞ PARÇACIĞI başka hiçbir isteğe bakamıyordu (MySQL/PostgreSQL
+// fiber_wait_readable ile çoktan bekliyordu). Veri hazırsa hemen okunur; değilse yalnız fiber
+// askıya alınır. Bekleme süresi eskisi gibi sınırsız (davranış aynı; serbest kalan iş parçacığı).
+static int resp_recv(int fd, void* ssl, char* buf, size_t len) {
+#ifndef _WIN32
+    if (!(ssl && SSL_pending((SSL*)ssl) > 0))
+        fiber_wait_readable(fd, 0);   // fiber dışı → -1: aşağıdaki okuma eskisi gibi engeller (blocking-ok: fiber yok)
+    if (ssl) return SSL_read((SSL*)ssl, buf, (int)len);
+#else
+    (void)ssl;
+#endif
+    return (int)::recv(fd, buf, (int)len, 0);
+}
+
 std::string RespClient::read_line() {
     // RESP2 kontrol satırları kısadır (+OK, :123, $<len>). Kötü niyetli/bozuk
     // sunucu '\n' göndermezse sınırsız büyümeyi (OOM) önlemek için üst sınır.
@@ -246,12 +262,7 @@ std::string RespClient::read_line() {
     std::string line;
     char c;
     while (true) {
-        int n;
-#ifndef _WIN32
-        if (ssl_) n = SSL_read((SSL*)ssl_, &c, 1);
-        else
-#endif
-            n = (int)::recv(fd_, &c, 1, 0);
+        int n = resp_recv(fd_, ssl_, &c, 1);
         if (n <= 0) throw std::runtime_error("Redis: connection closed");
         if (c == '\r') continue;
         if (c == '\n') break;
@@ -283,12 +294,7 @@ std::string RespClient::read_bulk(long len) {
     std::string buf((size_t)len, '\0');
     size_t got = 0, need = (size_t)len;
     while (got < need) {
-        int n;
-#ifndef _WIN32
-        if (ssl_) n = SSL_read((SSL*)ssl_, &buf[got], (int)(need - got));
-        else
-#endif
-            n = (int)::recv(fd_, &buf[got], need - got, 0);
+        int n = resp_recv(fd_, ssl_, &buf[got], need - got);
         if (n <= 0) throw std::runtime_error("Redis: connection closed reading bulk");
         got += (size_t)n;
     }

@@ -235,8 +235,12 @@ void MySQLClient::do_connect() {
 #else
     // select() DEĞİL: fd_set yalnız 1024'ten küçük tanıtıcıları taşır; sunucu binlerce bağlantı
     // tutarken soket numarası bunu aşar ve FD_SET yığın belleğini taşırır.
-    struct pollfd cpf{}; cpf.fd = sock_; cpf.events = POLLOUT;
-    int sel = ::poll(&cpf, 1, cfg_.connect_timeout_ms);
+    // Fiber içinde bağlantının kurulmasını beklerken iş parçacığını değil fiber'ı askıya al.
+    int sel = look::fiber_wait_writable((int)sock_, cfg_.connect_timeout_ms);
+    if (sel < 0) {   // fiber dışı (komut satırı, kurulum): poll ile bekle — blocking-ok: fiber yok
+        struct pollfd cpf{}; cpf.fd = sock_; cpf.events = POLLOUT;
+        sel = ::poll(&cpf, 1, cfg_.connect_timeout_ms);
+    }
 #endif
     if (sel <= 0) {
         disconnect();
@@ -368,7 +372,7 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
         return true;
     }
 
-    // ── Thread path: blocking recv ────────────────────────────────────────────
+    // ── Thread path: blocking recv — blocking-ok: fiber yok (komut satırı, kurulum) ──
     while (received < len) {
         int r = ::recv(sock_, (char*)(buf + received), (int)(len - received), 0);
         if (r <= 0) { disconnect(); return false; }
