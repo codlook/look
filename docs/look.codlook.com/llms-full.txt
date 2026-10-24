@@ -4398,7 +4398,7 @@ Each domain is a systemd service (`look-`): `nginx :443 → Apache :7081 (ProxyP
 
 | Topic | Description |
 | --- | --- |
-| Install and update setup | Every install and update runs the extension's setup as root: it installs the bundled LOOK binaries to `/opt/look`, writes `/etc/sudoers.d/look-lang`, and rewrites and restarts every domain's service so it runs as the domain's user. A service that cannot run as the domain's user is stopped and the install reports an error. Run it again with `plesk bin extension --exec look-lang post-install.php`. |
+| Install and update setup | Every install and update runs the extension's setup as root: it installs the bundled LOOK binaries to `/opt/look`, removes the sudo rule `/etc/sudoers.d/look-lang` of older versions (the panel needs no sudo: its root actions go through the extension's own `look-ctl` script, which accepts only LOOK services), and rewrites and restarts every domain's service so it runs as the domain's user. A service that cannot run as the domain's user is stopped and the install reports an error. Run it again with `plesk bin extension --exec look-lang post-install.php`. |
 | State | The domain list is at `/usr/local/psa/var/modules/look-lang/domains.json` (panel-writable) |
 | Updates | Replaced in place when a new ZIP is uploaded; domain configuration is preserved |
 

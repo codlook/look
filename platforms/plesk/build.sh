@@ -27,8 +27,8 @@ fi
 # sbin — root adimi (ikili, sudoers, servis unit'leri). post-install.php bunu
 # pm_ApiCli::callSbin ile cagirir; Plesk kancalari root degil psaadm olarak calisir.
 mkdir -p "$TMP/sbin"
-cp sbin/look-setup "$TMP/sbin/"
-chmod 755 "$TMP/sbin/look-setup"
+cp sbin/look-setup sbin/look-ctl "$TMP/sbin/"
+chmod 755 "$TMP/sbin/look-setup" "$TMP/sbin/look-ctl"
 
 # htdocs
 mkdir -p "$TMP/htdocs/scripts" "$TMP/htdocs/bin"

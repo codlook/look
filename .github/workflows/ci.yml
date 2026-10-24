@@ -765,6 +765,12 @@ jobs:
       - name: Plesk update rewrites every service and updates LOOK
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_upgrade_test.sh
 
+      # The panel user has no sudo rights: a '*' in sudoers also matches spaces, so
+      # "systemctl enable look-*" allowed "systemctl enable look-a /tmp/evil.service". Root work
+      # goes through sbin/look-ctl (callSbin), which checks the action, name and argument count.
+      - name: Plesk panel has no sudo rights
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_no_sudo_test.sh
+
       # A VM error is a 500 and the request is not run again (1.0.8); a route the VM cannot run
       # is placed on the tree-walk engine at setup. LOOK_VM_FORCE_FAIL is the test hook that
       # makes one route fail on the VM (inert without the variable).

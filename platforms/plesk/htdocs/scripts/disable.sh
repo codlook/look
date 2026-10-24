@@ -25,13 +25,13 @@ case "$SVC_NAME" in
     *) echo "ERROR: only look-* services allowed" >&2; exit 1 ;;
 esac
 
-sudo /bin/systemctl stop "$SVC_NAME" 2>/dev/null || true
-sudo /bin/systemctl disable "$SVC_NAME" 2>/dev/null || true
+/bin/systemctl stop "$SVC_NAME" 2>/dev/null || true
+/bin/systemctl disable "$SVC_NAME" 2>/dev/null || true
 
 if [ "$REMOVE" = "remove" ]; then
     rm -f "/etc/systemd/system/${SVC_NAME}.service"
     rm -rf "/etc/systemd/system/${SVC_NAME}.service.d"
-    sudo /bin/systemctl daemon-reload
+    /bin/systemctl daemon-reload
 fi
 
 # vhost config temizle (Apache proxy'yi kaldir)
@@ -43,9 +43,9 @@ if [ -n "$DOMAIN" ]; then
 
     # websrvmng Plesk Obsidian'da yok; httpdmng olmadan vhost.conf silinse de Apache eski proxy'yi tutar
     if [ -x /usr/local/psa/admin/bin/httpdmng ]; then
-        sudo /usr/local/psa/admin/bin/httpdmng --reconfigure-domain "$DOMAIN" >/dev/null 2>&1 || true
+        /usr/local/psa/admin/bin/httpdmng --reconfigure-domain "$DOMAIN" >/dev/null 2>&1 || true
     elif [ -x /usr/local/psa/admin/sbin/websrvmng ]; then
-        sudo /usr/local/psa/admin/sbin/websrvmng --reconfigure-vhost --vhost-name="$DOMAIN" 2>/dev/null || true
+        /usr/local/psa/admin/sbin/websrvmng --reconfigure-vhost --vhost-name="$DOMAIN" 2>/dev/null || true
     fi
 fi
 

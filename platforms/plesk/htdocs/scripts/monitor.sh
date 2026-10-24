@@ -1,7 +1,7 @@
 #!/bin/bash
 # LOOK Language — servis canli monitoru (panel Monitör modali)
 # Kullanim: monitor.sh <servis>
-# Cikti: key=value satirlari (PHP parse eder). sudo ile root calisir.
+# Cikti: key=value satirlari (PHP parse eder). look-ctl (root, callSbin) uzerinden calisir.
 SVC="$1"
 case "$SVC" in
     look-*) ;;

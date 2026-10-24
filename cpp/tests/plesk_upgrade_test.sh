@@ -94,7 +94,7 @@ check "a domain that cannot leave root is stopped"     'grep -q "stop look-roots
 check "an unregistered root service is stopped"        'grep -q "stop look-orphan-com" "$LOG"'
 check "both are named in the output"                   '[[ "$out" == *rootsite.com*STOPPED* ]] && [[ "$out" == *look-orphan-com*STOPPED* ]]'
 check "the hook reports failure (exit $rc)"            '[ "$rc" != 0 ]'
-check "sudoers is written, mode 440"                   '[ "$(stat -c %a /etc/sudoers.d/look-lang 2>/dev/null)" = 440 ] && grep -q "$MOD/scripts/enable.sh" /etc/sudoers.d/look-lang'
+check "no sudoers rule is left (the panel uses look-ctl)" '[ ! -e /etc/sudoers.d/look-lang ]'
 
 echo "== a clean upgrade succeeds =="
 reset_sandbox

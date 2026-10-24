@@ -28,13 +28,15 @@ PLUG=/tmp/plesk-mod/scripts; STUB=/tmp/plesk-stub; LOG=/tmp/plesk-systemctl.log
 rm -rf /tmp/plesk-mod "$STUB" /var/www/vhosts /etc/systemd/system/look-*; : > "$LOG"
 mkdir -p "$PLUG" "$STUB" /opt/look /etc/systemd/system
 cp "$SRC"/*.sh "$PLUG/"; chmod 644 "$PLUG"/*.sh            # Plesk unpacks the zip without exec bits
+# systemd does not run in this container: /bin/systemctl only records its calls. (Up to 1.0.33
+# the scripts called "sudo /bin/systemctl"; the sudo stand-in keeps those versions testable.)
+printf '#!/bin/bash\necho "systemctl $*" >> /tmp/plesk-systemctl.log\nexit 0\n' > /usr/bin/systemctl
 cat > "$STUB/sudo" <<'EOF'
 #!/bin/bash
-case "$1" in /bin/systemctl) shift; echo "systemctl $*" >> /tmp/plesk-systemctl.log; exit 0 ;; esac
 exec "$@"
 EOF
 printf '#!/bin/bash\necho "LISTEN 0 128 127.0.0.1:9150 0.0.0.0:*"\n' > "$STUB/ss"
-chmod 755 "$STUB/sudo" "$STUB/ss"
+chmod 755 /usr/bin/systemctl "$STUB/sudo" "$STUB/ss"
 # lk-fcgi stand-in: prints who runs it, its arguments and the variables the app would see
 cat > /opt/look/lk-fcgi <<'EOF'
 #!/bin/bash

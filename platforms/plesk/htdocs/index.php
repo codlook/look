@@ -11,6 +11,10 @@ define('LOOK_BIN',     LOOK_OPT . '/lk-fcgi');
 define('SCRIPTS_DIR',  __DIR__ . '/scripts');
 define('BASE_PORT',    9100);
 
+// pm_ApiCli::callSbin eklentinin baglamini ister. Panel bu dosyaya IndexController (zaten
+// baglamli) ya da dogrudan /modules/look-lang/index.php uzerinden gelir — ikincisinde baglam yok.
+pm_Context::init('look-lang');
+
 // State (domains.json) — Plesk'in panel-yazilabilir modul var dizininde tutulur.
 // /opt/look/conf root'a ait (dnf/RPM binary klasoru); panel psaadm olarak calisir
 // ve oraya YAZAMAZ → domain eklense de kaydedilmez, listede gorunmezdi. Bu dizin
@@ -61,26 +65,29 @@ function safe_script_path(?array $d): ?string {
 }
 // enable.sh argumanlari: <domain> <script> <workers> <mode> <port> [<env-file>]
 // (eski domains.json kayitlarinda 'env' yok → ortam dosyasiz)
-function enable_args(array $d): string {
-    $a = escapeshellarg($d['domain']) . ' ' . escapeshellarg($d['script']) . ' ' .
-         (int)$d['workers'] . ' ' . escapeshellarg($d['mode']) . ' ' . (int)$d['port'];
-    if (($d['env'] ?? '') !== '') $a .= ' ' . escapeshellarg($d['env']);
+function enable_args(array $d): array {
+    $a = ['enable', (string)$d['domain'], (string)$d['script'], (string)(int)$d['workers'],
+          (string)$d['mode'], (string)(int)$d['port']];
+    if (($d['env'] ?? '') !== '') $a[] = (string)$d['env'];
     return $a;
 }
-function run_script(string $script, string $args): array {
-    $cmd = 'sudo /bin/bash ' . escapeshellarg(SCRIPTS_DIR . '/' . $script) . ' ' . $args . ' 2>&1';
-    return ['output' => trim(shell_exec($cmd) ?? '')];
+// Root islemleri: sudo YOK. Plesk'in root yolu pm_ApiCli::callSbin → sbin/look-ctl (eylem, servis
+// adi ve arguman sayisi orada denetlenir). Argumanlar kabuk olmadan (argv) gider.
+// Eskiden sudoers 'systemctl enable look-*' kuraliyla psaadm'e root veriyordu; '*' bosluklari da
+// kapsadigindan 'systemctl enable look-a /tmp/evil.service' de izinliydi.
+function ctl(array $args): array {
+    $r = pm_ApiCli::callSbin('look-ctl', $args, pm_ApiCli::RESULT_FULL);
+    return ['output' => trim(($r['stdout'] ?? '') . ($r['stderr'] ?? '')), 'code' => (int)($r['code'] ?? 1)];
 }
 function svc_status(string $svc): array {
-    $out = trim(shell_exec('sudo /bin/bash ' . escapeshellarg(SCRIPTS_DIR . '/status.sh') . ' ' . escapeshellarg($svc) . ' 2>&1') ?? '');
+    $out = ctl(['status', $svc])['output'];
     if (str_starts_with($out, 'active:')) return ['state'=>'active','pid'=>substr($out,7)];
     return ['state' => $out ?: 'unknown', 'pid' => ''];
 }
 // GUVENLIK: svc her zaman 'look-' + alfanumerik/dash (enable.sh SVC_NAME uretimi:
-// domain'deki [^a-z0-9] -> '-'). 'start' eylemi svc'yi HAM 'sudo systemctl start'a
-// veriyor; sudoers 'systemctl start look-*' wildcard'inda '*' argumanda '/' de eslesir,
-// systemctl '/' iceren argi PATH olarak yukler -> 'look-../../tmp/evil.service' saldirgan
-// unit'ini ROOT baslatir. Slash/'..' iceren svc'yi reddet (path-injection kapanir).
+// domain'deki [^a-z0-9] -> '-'). svc root'ta systemctl'e gider (look-ctl ayni kurali bir kez
+// daha uygular); systemctl '/' iceren argi PATH olarak yukler -> 'look-../../tmp/evil.service'
+// saldirgan unit'ini ROOT baslatirdi. Slash/'..' iceren svc'yi burada da reddet.
 function valid_svc(string $svc): bool {
     return (bool)preg_match('/^look-[a-z0-9-]+$/', $svc);
 }
@@ -191,7 +198,7 @@ if ($action !== '') {
         $port    = (int)($_POST['port']   ?? next_free_port($domains));
         if (!$domain) { echo json_encode(['ok'=>false,'error'=>'Domain is required']); exit; }
         // GUVENLIK: domain/script HAM olarak enable.sh'a, oradan tirnaksiz heredoc ile
-        // systemd unit'ine geciyor (sudo systemctl restart -> root). Format dogrulamasi
+        // systemd unit'ine geciyor (root systemctl restart). Format dogrulamasi
         // olmadan gomulu satir-sonu iceren bir domain, unit'e kendi [Service]/ExecStartPre
         // direktifini yazip root komut kosturur (panel kullanicisi -> root). Kati dogrula:
         if (!preg_match('/^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i', $domain)) {
@@ -214,7 +221,7 @@ if ($action !== '') {
                 : "/var/www/vhosts/$domain/httpdocs/index.lk";
         }
         $svc    = 'look-' . preg_replace('/[^a-z0-9]/', '-', strtolower($domain));
-        $result = run_script('enable.sh', enable_args(compact('domain','script','workers','mode','port','env')));
+        $result = ctl(enable_args(compact('domain','script','workers','mode','port','env')));
         if (str_contains($result['output'], 'OK:')) {
             $entry = compact('domain','script','env','workers','mode','port','svc');
             $idx   = array_search($domain, array_column($domains, 'domain'));
@@ -232,7 +239,7 @@ if ($action !== '') {
     if ($action === 'start') {
         $svc = trim($_POST['svc'] ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
-        shell_exec('sudo /bin/systemctl start ' . escapeshellarg($svc) . ' 2>&1');
+        ctl(['start', $svc]);
         $st = svc_status($svc);
         echo json_encode(['ok' => $st['state']==='active', 'state'=>$st['state']]); exit;
     }
@@ -240,7 +247,7 @@ if ($action !== '') {
         $svc    = trim($_POST['svc']    ?? '');
         $domain = trim($_POST['domain'] ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
-        $result = run_script('disable.sh', escapeshellarg($svc) . ' ' . escapeshellarg($domain));
+        $result = ctl(['disable', $svc, $domain]);
         $st     = svc_status($svc);
         echo json_encode(['ok'=>true,'state'=>$st['state'],'out'=>$result['output']]); exit;
     }
@@ -249,7 +256,7 @@ if ($action !== '') {
         $idx    = array_search($domain, array_column($domains, 'domain'));
         if ($idx === false) { echo json_encode(['ok'=>false,'error'=>'Domain not found']); exit; }
         $d      = $domains[$idx];
-        $result = run_script('enable.sh', enable_args($d));
+        $result = ctl(enable_args($d));
         $st = svc_status($d['svc']);
         echo json_encode(['ok' => str_contains($result['output'],'OK:'), 'state'=>$st['state'], 'out'=>$result['output']]); exit;
     }
@@ -258,7 +265,7 @@ if ($action !== '') {
         $svc    = trim($_POST['svc']    ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         // 'remove': unit dosyasi ve .service.d de silinir (Stop'ta kalir)
-        run_script('disable.sh', escapeshellarg($svc) . ' ' . escapeshellarg($domain) . ' remove');
+        ctl(['disable', $svc, $domain, 'remove']);
         $domains = array_values(array_filter($domains, fn($d) => $d['domain'] !== $domain));
         save_domains($domains);
         echo json_encode(['ok'=>true]); exit;
@@ -287,22 +294,22 @@ if ($action !== '') {
             echo json_encode(['ok'=>false,'error'=>'Could not write: '.$path.' (permissions?)']); exit;
         }
         // yeniden deploy — enable.sh restart mantigi (bytecode cache'i tazeler)
-        $result = run_script('enable.sh', enable_args($d));
+        $result = ctl(enable_args($d));
         echo json_encode(['ok'=>str_contains($result['output'],'OK:'),'out'=>$result['output']]); exit;
     }
-    // Servis loglari (journalctl — logs.sh sudo ile)
+    // Servis loglari (journalctl — look-ctl logs)
     if ($action === 'logs') {
         $svc = trim($_POST['svc'] ?? $_GET['svc'] ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
         $n   = min(1000, max(20, (int)($_POST['n'] ?? 200)));
-        $out = shell_exec('sudo /bin/bash ' . escapeshellarg(SCRIPTS_DIR . '/logs.sh') . ' ' . escapeshellarg($svc) . ' ' . (int)$n . ' 2>&1');
+        $out = ctl(['logs', $svc, (string)$n])['output'];
         echo json_encode(['ok'=>true,'log'=>trim($out ?? '')]); exit;
     }
     // Canli servis monitoru (durum, PID, uptime, RSS, CPU%, restart, port, baglanti)
     if ($action === 'monitor') {
         $svc = trim($_POST['svc'] ?? $_GET['svc'] ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
-        $raw = shell_exec('sudo /bin/bash ' . escapeshellarg(SCRIPTS_DIR . '/monitor.sh') . ' ' . escapeshellarg($svc) . ' 2>&1');
+        $raw = ctl(['monitor', $svc])['output'];
         $m = [];
         foreach (explode("\n", trim($raw ?? '')) as $ln) {
             $p = strpos($ln, '=');

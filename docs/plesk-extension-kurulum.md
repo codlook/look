@@ -52,8 +52,9 @@ Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.
 ### Kurulum ve güncelleme ne yapar
 
 Her kurulum ve güncelleme (UI veya CLI) eklentinin kurulum adımını root olarak çalıştırır:
-paketteki LOOK ikililerini `/opt/look`'a kurar (eskisinin yerine), sudoers kuralını
-(`/etc/sudoers.d/look-lang`) yazar ve paneldeki her domain'in servisini güncel kurala göre
+paketteki LOOK ikililerini `/opt/look`'a kurar (eskisinin yerine), eski sürümlerin sudoers
+kuralını (`/etc/sudoers.d/look-lang`) siler — panel sudo kullanmaz, root işlemlerini eklentinin
+`look-ctl` betiğiyle yapar — ve paneldeki her domain'in servisini güncel kurala göre
 yeniden yazıp yeniden başlatır (servis domain'in kullanıcısıyla çalışır). Domain'in
 kullanıcısıyla çalışamayan bir servis **durdurulur** ve kurulum, domain'i adıyla belirten bir
 hata verir. Nedeni giderip eklentiyi yeniden kur ya da adımı root olarak tekrar çalıştır:
@@ -62,10 +63,6 @@ hata verir. Nedeni giderip eklentiyi yeniden kur ya da adımı root olarak tekra
 plesk bin extension --exec look-lang post-install.php
 ```
 
-Sebep: sudoers kuralı yoksa panelin `sudo systemctl …` çağrısı parola ister, ama web
-bağlamında terminal yoktur. Komut `/opt/look/lk-fcgi` + `/etc/sudoers.d/look-lang`
-oluşturur → enable sorunsuz çalışır. (Aynı işi doğrudan da yapabilirsin:
-`bash /usr/local/psa/admin/htdocs/modules/look-lang/scripts/setup.sh`.)
 
 ---
 
@@ -116,7 +113,7 @@ route("404", fn() => response::error(404, "Not found"))
 
 | Belirti | Çözüm |
 |---|---|
-| `sudo: .../enable.sh: command not found` | Adım 1'deki sudoers bloğunu root ile çalıştır |
+| Kurulum "setup failed" diyor | Hata metnindeki nedeni gider, eklentiyi yeniden kur ya da root olarak `plesk bin extension --exec look-lang post-install.php` |
 | Domain eklendi ama listede yok | `ls -l /usr/local/psa/var/modules/look-lang/domains.json` (psaadm sahipli olmalı) |
 | Site 502/403 | `systemctl status look-<domain>` + `journalctl -u look-<domain> -n 50` |
 

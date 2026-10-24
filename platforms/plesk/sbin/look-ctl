@@ -1,0 +1,55 @@
+#!/bin/bash
+# LOOK Language — panelin root islemleri (ROOT, pm_ApiCli::callSbin ile)
+# Kullanim: look-ctl <eylem> <argumanlar>
+#   enable  <domain> <script> <workers> <mode> <port> [<env-file>]
+#   disable <svc> [<domain>] [remove]
+#   start   <svc>
+#   status  <svc>
+#   logs    <svc> <satir>
+#   monitor <svc>
+#
+# Eskiden panel (psaadm) bunlari sudoers kuraliyla calistiriyordu. sudoers'ta '*' bosluklari da
+# kapsar: "systemctl enable look-*" kurali "systemctl enable look-a /tmp/evil.service" ve
+# "systemctl stop look-a sshd"i de izinliyordu → psaadm olarak kod calistiran her acik root'a
+# cikabiliyordu. Simdi sudoers YOK; tek giris bu betik: eylem, arguman sayisi ve servis adi
+# (^look-[a-z0-9-]+$) burada denetlenir. callSbin argumanlari kabuk olmadan (argv) gecirir.
+set -u
+SCRIPTS=/usr/local/psa/admin/htdocs/modules/look-lang/scripts
+
+die() { echo "ERROR: $*" >&2; exit 2; }
+svc_ok() { [[ "$1" =~ ^look-[a-z0-9-]+$ ]] || die "invalid service name"; }
+domain_ok() { [[ "$1" =~ ^[A-Za-z0-9.-]{1,253}$ ]] || die "invalid domain"; }
+
+[ "$#" -ge 1 ] || die "no action"
+action="$1"; shift
+case "$action" in
+    enable)
+        [ "$#" -eq 5 ] || [ "$#" -eq 6 ] || die "enable takes 5 or 6 arguments"
+        domain_ok "$1"
+        exec /bin/bash "$SCRIPTS/enable.sh" "$@" ;;
+    disable)
+        [ "$#" -ge 1 ] && [ "$#" -le 3 ] || die "disable takes 1 to 3 arguments"
+        svc_ok "$1"
+        [ "$#" -lt 2 ] || [ -z "$2" ] || domain_ok "$2"
+        [ "$#" -lt 3 ] || [ "$3" = remove ] || die "the third argument of disable can only be 'remove'"
+        exec /bin/bash "$SCRIPTS/disable.sh" "$@" ;;
+    start)
+        [ "$#" -eq 1 ] || die "start takes 1 argument"
+        svc_ok "$1"
+        exec /bin/systemctl start "$1" ;;
+    status)
+        [ "$#" -eq 1 ] || die "status takes 1 argument"
+        svc_ok "$1"
+        exec /bin/bash "$SCRIPTS/status.sh" "$1" ;;
+    logs)
+        [ "$#" -eq 2 ] || die "logs takes 2 arguments"
+        svc_ok "$1"
+        [[ "$2" =~ ^[0-9]{1,5}$ ]] || die "the line count must be a number"
+        exec /bin/bash "$SCRIPTS/logs.sh" "$1" "$2" ;;
+    monitor)
+        [ "$#" -eq 1 ] || die "monitor takes 1 argument"
+        svc_ok "$1"
+        exec /bin/bash "$SCRIPTS/monitor.sh" "$1" ;;
+    *)
+        die "unknown action" ;;
+esac

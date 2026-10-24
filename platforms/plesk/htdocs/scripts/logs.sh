@@ -1,7 +1,7 @@
 #!/bin/bash
 # LOOK Language — servis loglari (panel Log goruntuleyici)
 # Kullanim: logs.sh <servis> [satir]
-# Guvenlik: yalnizca look-* servisleri; sudo ile root olarak journalctl calisir.
+# Guvenlik: yalnizca look-* servisleri; look-ctl (root, callSbin) uzerinden journalctl calisir.
 SVC="$1"
 N="${2:-200}"
 

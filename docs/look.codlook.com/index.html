@@ -655,7 +655,7 @@ plesk bin extension --install /tmp/look-lang-plesk.zip</code></div></div></div>
           <div class="step"><span class="no">4</span><div class="sc"><p><b>Applications → Add New Domain</b> → pick the domain (script path and port fill in automatically) → <b>Add &amp; Start</b>. It shows <i>Running</i> in the list within seconds — the systemd service + Apache proxy are set up automatically.</p></div></div>
           <div class="step"><span class="no">5</span><div class="sc"><p>Edit <code>index.lk</code> in the browser with <b>Edit Code</b> → <b>Save &amp; Redeploy</b> — the file is written and the service restarts.</p></div></div>
         </div>
-        <p class="hint">Step 3 is required: Plesk doesn't run the extension's install hook; this command installs the binary to <code>/opt/look</code> + grants sudo rights. <b>Skip it</b> and enabling a domain fails with <code>sudo: a password is required</code>. Re-running is safe; it's idempotent. The workspace: a live system dashboard, an in-browser code editor, a per-domain monitor (CPU/RAM/PID/connections) and a journalctl log viewer.</p>
+        <p class="hint">Installing or updating the extension sets everything up: LOOK goes to <code>/opt/look</code> and every domain's service runs as the domain's user. The workspace: a live system dashboard, an in-browser code editor, a per-domain monitor (CPU/RAM/PID/connections) and a journalctl log viewer.</p>
       </div>
 
       <div class="ibox">
