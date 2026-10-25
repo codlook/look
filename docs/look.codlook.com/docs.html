@@ -1659,12 +1659,14 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
     <tr><th>Env Var</th><th>Default</th><th>Description</th></tr>
     <tr><td>LOOK_SESSION_DRIVER</td><td>file</td><td><code>file</code> (single server) or <code>redis</code> (multi-server)</td></tr>
     <tr><td>LOOK_REDIS_URL</td><td>redis://127.0.0.1:6379/0</td><td><code>redis://[:pass@]host:port[/db]</code> format</td></tr>
-    <tr><td>LOOK_SESSION_TTL</td><td>3600</td><td>Session lifetime in seconds (Redis EXPIRE + file-compatible)</td></tr>
-    <tr><td>LOOK_SESSION_DIR</td><td>/tmp</td><td>Session directory for the file driver</td></tr>
+    <tr><td>LOOK_SESSION_TTL</td><td>86400</td><td>Session lifetime in seconds (Redis EXPIRE + file-compatible)</td></tr>
+    <tr><td>LOOK_SESSION_MAX_BYTES</td><td>1048576</td><td>Largest session, in bytes. <code>session::set</code> over it is an error; nothing is written or cut</td></tr>
+    <tr><td>LOOK_REDIS_TIMEOUT_MS</td><td>3000</td><td>Time limit for connecting to Redis, sending and each reply; on timeout the request gets an error and the connection is closed</td></tr>
+    <tr><td>TEMP</td><td>/tmp</td><td>Directory of the file driver's session files (<code>look_sess_&lt;id&gt;</code>)</td></tr>
   </table>
 
   <div class="callout info">
-    <p><strong>Zero external dependency.</strong> The Redis protocol (RESP2) is implemented in the LOOK core — no <code>hiredis</code> or other library needed. Code that runs on a single server moves instantly to multi-server by changing an env var.</p>
+    <p><strong>Built in.</strong> The Redis protocol (RESP2) is implemented in the LOOK core — no <code>hiredis</code> or other library needed. Code that runs on a single server moves instantly to multi-server by changing an env var.</p>
   </div>
 
   <pre><code><span class="cm"># Login</span>

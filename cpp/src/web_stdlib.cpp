@@ -741,6 +741,15 @@ static std::string sess_load(const std::string& sid) {
     std::ifstream f(sess_file_path(sid));
     std::stringstream ss; ss << f.rdbuf(); return ss.str();
 }
+// Bir oturumun en büyük boyutu (bayt). LOOK_SESSION_MAX_BYTES; varsayılan 1 MB.
+static size_t session_max_bytes() {
+    static const size_t v = [] {
+        const char* e = std::getenv("LOOK_SESSION_MAX_BYTES");
+        if (e && *e) { long long n = std::atoll(e); if (n > 0) return (size_t)n; }
+        return (size_t)1 << 20;
+    }();
+    return v;
+}
 static void sess_store(const std::string& sid, const std::string& blob) {
     if (session_use_redis()) {
         with_session_redis([&](RespClient& r) { r.set("look_sess:" + sid, blob, session_ttl()); });
@@ -852,6 +861,14 @@ static Module make_session_module(WebContext* ctx) {
         if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value();  // traversal guard
         std::string blob = sess_load(it->second);
         sess_blob_set(blob, args[0].to_string(), args[1].to_string());
+        // Oturumun üst sınırı (Redis ve dosya sürücüsünde aynı): eskiden yoktu — bir ziyaretçi
+        // kendi oturumunu megabaytlarca büyütüp her istekte o kadar okutabiliyor, birkaç
+        // ziyaretçiyle Redis belleğini doldurabiliyordu. Aşılınca veri yazılmaz, sessizce de
+        // kesilmez: açık hata. Önceki oturum olduğu gibi kalır.
+        if (blob.size() > session_max_bytes())
+            throw std::runtime_error("session::set() — the session would be " + std::to_string(blob.size()) +
+                " bytes, more than the limit of " + std::to_string(session_max_bytes()) +
+                " (LOOK_SESSION_MAX_BYTES); keep large data in the database and store its id in the session");
         sess_store(it->second, blob);
         return Value();
     };

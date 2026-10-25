@@ -397,6 +397,17 @@ jobs::worker("mail", function($job) {
   `LOOK_JOBS_RETRY_SECONDS`; at most an hour). This also holds for `jobs::fail($id)` called
   by hand: `jobs::next` does not return that job again until its wait is over.
 
+### A session is at most 1 MB — new limit
+
+`session::set` that would make the session larger than `LOOK_SESSION_MAX_BYTES` (default
+1048576 bytes, 1 MB) throws an error naming the limit. Nothing is written, and nothing is cut:
+the session keeps what it had. The limit is the same for the file and the Redis driver. In
+LOOK 1 a session had no limit of its own, so a visitor could grow their session to megabytes,
+read on every request; a few could fill Redis's memory.
+
+A session normally holds a few kilobytes (who is logged in, a cart). Keep large data in the
+database and store its id in the session.
+
 ### Redis sessions: an unreachable or silent Redis is an error — was silent
 
 With `LOOK_SESSION_DRIVER=redis`, LOOK 1 swallowed every Redis error: a Redis that was down

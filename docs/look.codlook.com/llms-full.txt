@@ -1646,10 +1646,12 @@ Environment=LOOK_SESSION_TTL=3600
 | --- | --- | --- |
 | LOOK_SESSION_DRIVER | file | `file` (single server) or `redis` (multi-server) |
 | LOOK_REDIS_URL | redis://127.0.0.1:6379/0 | `redis://[:pass@]host:port[/db]` format |
-| LOOK_SESSION_TTL | 3600 | Session lifetime in seconds (Redis EXPIRE + file-compatible) |
-| LOOK_SESSION_DIR | /tmp | Session directory for the file driver |
+| LOOK_SESSION_TTL | 86400 | Session lifetime in seconds (Redis EXPIRE + file-compatible) |
+| LOOK_SESSION_MAX_BYTES | 1048576 | Largest session, in bytes. `session::set` over it is an error; nothing is written or cut |
+| LOOK_REDIS_TIMEOUT_MS | 3000 | Time limit for connecting to Redis, sending and each reply; on timeout the request gets an error and the connection is closed |
+| TEMP | /tmp | Directory of the file driver's session files (`look_sess_<id>`) |
 
-> **Zero external dependency.** The Redis protocol (RESP2) is implemented in the LOOK core — no `hiredis` or other library needed. Code that runs on a single server moves instantly to multi-server by changing an env var.
+> **Built in.** The Redis protocol (RESP2) is implemented in the LOOK core — no `hiredis` or other library needed. Code that runs on a single server moves instantly to multi-server by changing an env var.
 
 ```lk
 # Login
