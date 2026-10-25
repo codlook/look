@@ -164,6 +164,13 @@ jobs:
           cd cpp
           bash tests/http_partial_send_test.sh ./build/lk
 
+      # The job queue: an atomic claim across processes (no job run twice), retries ending in
+      # failed, delayed jobs, recovery of a claimed job, done jobs not taken again, cold start.
+      - name: Job queue (multi-process claim, retries, delays, recovery)
+        run: |
+          cd cpp
+          bash tests/jobs_test.sh ./build/lk
+
       # A Redis session error is logged (the behaviour stays: empty session), and the broken
       # connection is replaced: after a Redis restart sessions stayed empty until LOOK restarted.
       - name: Redis session errors are logged and the connection recovers
