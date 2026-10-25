@@ -28,6 +28,7 @@
 #include "look/http_client.h"
 #include "look/thread_start.h"     // start_pool_threads
 #include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
+#include "look/session_files.h"   // başlangıçta LOOK_SESSION_DIR denetimi
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/interpreter.h"
@@ -821,6 +822,17 @@ int main(int argc, char* argv[]) {
                 std::to_string(quota) + " core" + (quota == 1 ? "" : "s") + "). Extra worker "
                 "threads burst past the CFS quota and get throttled, spiking tail latency (p99). "
                 "Set LOOK_WORKERS=" + std::to_string(quota) + " to match the quota.");
+        }
+    }
+
+    // Açıkça verilmiş oturum dizini (LOOK_SESSION_DIR) başkasına aitse ya da izinleri gevşekse
+    // başlama: oturumlar o dizinde başkalarınca okunabilir/sahtelenebilir olurdu.
+    {
+        std::string why = look::session_dir_startup_problem();
+        if (!why.empty()) {
+            std::cerr << "Error: LOOK could not start: " << why << "\n";
+            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "SESSION", "could not start: " + why);
+            return 1;
         }
     }
 

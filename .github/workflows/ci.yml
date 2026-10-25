@@ -181,6 +181,14 @@ jobs:
       # A Redis reply left half-read (a session over LOOK_REDIS_MAX_BULK) on a connection that
       # stayed open was read by the next request on that thread: one user got another's session.
       # Also checked: a Redis restart never mixes two users' sessions.
+      # Session files were written to /tmp with mode 0644, and a look_sess_<id> file another user
+      # put there was accepted as a session (user=admin). Now: a 0700 directory owned by the
+      # process's user, 0600 files, links not followed, foreign files ignored.
+      - name: Session files are private and a foreign file is never a session
+        run: |
+          cd cpp
+          bash tests/session_file_security_test.sh ./build/lk-fcgi
+
       - name: Redis sessions never reach another user's request
         run: |
           cd cpp

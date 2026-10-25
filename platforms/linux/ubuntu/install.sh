@@ -105,7 +105,17 @@ LOOK_WORKERS=$LOOK_WORKERS
 ENV
 ok "yapılandırma: $ETC_DIR/look.env"
 
-# ── 3. systemd servisi ────────────────────────────────────────────────────────
+# ── 3. Servis kullanıcısı ─────────────────────────────────────────────────────
+# Servis root olarak çalışıyordu (User= yoktu): uygulamadaki bir açık bütün sunucuyu verirdi.
+# Artık kendi sistem kullanıcısı: uygulama dizini ona ait (SQLite, yüklenen dosyalar yazılabilsin).
+if ! id look >/dev/null 2>&1; then
+  useradd --system --home-dir /var/lib/look --no-create-home --shell /usr/sbin/nologin look \
+    || die "could not create the system user 'look'"
+  ok "system user: look"
+fi
+chown -R look:look "$LOOK_APP_DIR"
+
+# ── 4. systemd servisi ────────────────────────────────────────────────────────
 UNIT=/etc/systemd/system/look.service
 cat > "$UNIT" <<UNITEOF
 [Unit]
@@ -114,7 +124,17 @@ After=network.target
 
 [Service]
 Type=simple
+User=look
+Group=look
 EnvironmentFile=$ETC_DIR/look.env
+# Oturum dosyaları kalıcı, yalnız look kullanıcısına ait 0700 dizinde (yeniden başlatmada düşmez);
+# /tmp servise özel. Düşük portlar (80, 25) root olmadan da açılabilsin.
+StateDirectory=look
+StateDirectoryMode=0700
+Environment=LOOK_SESSION_DIR=/var/lib/look/sessions
+PrivateTmp=true
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 ExecStart=$BIN_DIR/lk-fcgi --mode http --port \${LOOK_PORT} --workers \${LOOK_WORKERS} $LOOK_APP_DIR/index.lk
 Restart=on-failure
 RestartSec=2
@@ -125,7 +145,7 @@ WantedBy=multi-user.target
 UNITEOF
 ok "systemd unit: $UNIT"
 
-# ── 4. Başlat + doğrula ───────────────────────────────────────────────────────
+# ── 5. Başlat + doğrula ───────────────────────────────────────────────────────
 HAS_SYSTEMD=0
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then HAS_SYSTEMD=1; fi
 
@@ -144,7 +164,7 @@ else
   echo "    lk-fcgi --mode http --port $LOOK_PORT $LOOK_APP_DIR/index.lk"
 fi
 
-# ── 5. Özet ───────────────────────────────────────────────────────────────────
+# ── 6. Özet ───────────────────────────────────────────────────────────────────
 echo
 ok "LOOK kuruldu 🎉"
 echo -e "   Uygulama : ${c_b}$LOOK_APP_DIR/index.lk${c_0}  (düzenle, servis otomatik yeniden yükler)"
