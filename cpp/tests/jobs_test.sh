@@ -10,6 +10,9 @@
 # Cozum: tek ifadelik atomik claim (UPDATE ... WHERE id=(SELECT ...) AND
 # status='pending' RETURNING ...) + WAL + busy_timeout.
 #
+# LOOK 2: yeniden deneme BEKLER (c4d1471; jobs::fail elle çağrılınca da). Akış testi tabanı 1 sn
+# yapar: başarısız iş hemen yeniden alınmamalı, bekleme geçince alınmalı, 3. denemede failed.
+# (Bu test v2 CI'ında koşmuyordu; eski "hemen yeniden al" beklentisiyle kırmızı kalmıştı.)
 # Kullanim: bash jobs_test.sh <lk_yolu>
 set -u
 LK="${1:-./build/lk}"
@@ -39,10 +42,16 @@ print($s)
 LK
 cat > akis.lk <<'LK'
 use jobs
-# retry -> max_retries dolunca failed (sonsuz denenmemeli)
+# retry: LOOK 2'de yeniden deneme BEKLER (taban LOOK_JOBS_RETRY_SECONDS; burada 1 sn → 1, 2 sn);
+# beklemeden önce iş alınmamalı, sonra alınmalı; max_retries (3) dolunca failed (sonsuz denenmemeli)
 jobs::push("r", "x")
-$t = 0
-while ($t < 8) { $j = jobs::next("r"); if ($j == null) { break }; jobs::fail($j.id); $t = $t + 1 }
+$j = jobs::next("r"); jobs::fail($j.id)
+$hemen = jobs::next("r")
+timer::after(1300, fn() => null); timer::wait(5000)
+$j = jobs::next("r"); jobs::fail($j.id)
+timer::after(2300, fn() => null); timer::wait(5000)
+$j = jobs::next("r"); jobs::fail($j.id)
+$son = jobs::next("r")
 $rs = jobs::stats("r")
 # run_after: 4. parametre GECIKME (3. parametre max_retries — kolay karistirilir)
 jobs::push("d", "gec", 3, 3600)
@@ -57,7 +66,8 @@ jobs::push("o", "bir")
 $o = jobs::next("o")
 jobs::done($o.id)
 $o2 = jobs::next("o")
-print($rs.failed . "|" . ($erken == null ? "gec" : "ERKEN") . "|" . $kurt . "|" .
+print(($hemen == null ? "bekledi" : "HEMEN") . "|" . $rs.failed . "|" . ($son == null ? "bitti" : "TEKRAR") . "|" .
+      ($erken == null ? "gec" : "ERKEN") . "|" . $kurt . "|" .
       ($tekrar != null ? "kurtarildi" : "YOK") . "|" . ($o2 == null ? "bitti" : "TEKRAR"))
 LK
 
@@ -79,13 +89,13 @@ if [ "$tekil" -ne 40 ]; then
 fi
 
 export JOBS_DB="$TMP/jobs2.db"
-out=$("$LK" akis.lk 2>&1 | grep -v '^\[' | tail -1)
-bek="1|gec|1|kurtarildi|bitti"
+out=$(LOOK_JOBS_RETRY_SECONDS=1 "$LK" akis.lk 2>&1 | grep -v '^\[' | tail -1)
+bek="bekledi|1|bitti|gec|1|kurtarildi|bitti"
 if [ "$out" = "$bek" ]; then
-  echo "  PASS akis: retry->failed, run_after, recover, done"
+  echo "  PASS akis: a retry waits, retries end in failed, run_after, recover, done"
 else
   echo "  FAIL jobs akisi: [$out] (beklenen $bek)"
-  echo "       sira: failed-sayisi|gecikmeli-is|recover-sayisi|kurtarilan-alindi|done-tekrar-alinmadi"
+  echo "       sira: bekledi|failed-sayisi|failed-tekrar-alinmadi|gecikmeli-is|recover-sayisi|kurtarilan-alindi|done-tekrar-alinmadi"
   fail=1
 fi
 

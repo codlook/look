@@ -111,6 +111,14 @@ jobs:
           cd cpp
           bash tests/job_handler_result_test.sh ./build/lk-fcgi
 
+      # The job queue itself: an atomic claim across processes (no job run twice), a retry that
+      # waits and ends in failed, delayed jobs, recovery of a claimed job, done jobs not taken
+      # again, and a cold start with several processes creating the schema at once.
+      - name: Job queue (multi-process claim, retries, delays, recovery)
+        run: |
+          cd cpp
+          bash tests/jobs_test.sh ./build/lk
+
       # LOOK 2: a timer armed and a job handler registered at the top level run on the VM once
       # its setup has succeeded (they stayed on the tree-walk engine while the routes ran on the VM).
       - name: Top-level timers and job handlers on the VM
