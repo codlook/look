@@ -1662,7 +1662,7 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
     <tr><td>LOOK_SESSION_TTL</td><td>86400</td><td>Session lifetime in seconds (Redis EXPIRE + file-compatible)</td></tr>
     <tr><td>LOOK_SESSION_MAX_BYTES</td><td>1048576</td><td>Largest session, in bytes. <code>session::set</code> over it is an error; nothing is written or cut</td></tr>
     <tr><td>LOOK_REDIS_TIMEOUT_MS</td><td>3000</td><td>Time limit for connecting to Redis, sending and each reply; on timeout the request gets an error and the connection is closed</td></tr>
-    <tr><td>TEMP</td><td>/tmp</td><td>Directory of the file driver's session files (<code>look_sess_&lt;id&gt;</code>)</td></tr>
+    <tr><td>LOOK_SESSION_DIR</td><td>${TMPDIR:-/tmp}/look-sessions-&lt;uid&gt;</td><td>Directory of the file driver's session files. It must belong to the user LOOK runs as and have mode 0700, and must not be a symbolic link; otherwise LOOK does not use it and says why (an explicit LOOK_SESSION_DIR stops the start). Created with mode 0700 if missing. Files are written with mode 0600</td></tr>
   </table>
 
   <div class="callout info">

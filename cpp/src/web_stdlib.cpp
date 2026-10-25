@@ -3,6 +3,7 @@
 #include "look/web.h"
 #include "look/struct_types.h"
 #include "look/db_dsn.h"   // pg_resolve_tls (saf TLS-karar dikişi)
+#include "look/session_files.h" // dosya sürücüsü: 0700 dizin, 0600 dosya, sahiplik denetimi
 #include "look/session_esc.h"   // valid_sid + sess_esc/blob (saf, tablo-test edilebilir)
 #include "look/fiber.h"
 #include <cmath>
@@ -703,13 +704,10 @@ static void with_session_redis(const std::function<void(RespClient&)>& op) {
 }
 // GÜVENLİK: Session ID doğrulama — üretilen format TAM 32 hex karakter. sid
 // client'ın LOOK_SESSION cookie'sinden gelir ve doğrudan dosya yoluna girer
-// (sess_file_path). Doğrulanmazsa "x/../../../etc/cron.d/pwn" gibi bir değer
+// (oturum dosyası yolu). Doğrulanmazsa "x/../../../etc/cron.d/pwn" gibi bir değer
 // path traversal → arbitrary file read (session::get) ve write/truncate
 // (session::set → ofstream trunc) sağlar. Katı allowlist: yalnız 32 hex kabul.
 using look::valid_sid;
-static std::string sess_file_path(const std::string& sid) {
-    return std::string(std::getenv("TEMP") ? std::getenv("TEMP") : "/tmp") + "/look_sess_" + sid;
-}
 // Session blob'u satir tabanli "key=value\n" formatinda. Anahtar/deger HIC
 // KACIRILMIYORDU: degerin icindeki \n YENI BIR ALAN tanimliyordu.
 //
@@ -738,8 +736,12 @@ static std::string sess_load(const std::string& sid) {
         with_session_redis([&](RespClient& r) { blob = r.get("look_sess:" + sid); });
         return blob;
     }
-    std::ifstream f(sess_file_path(sid));
-    std::stringstream ss; ss << f.rdbuf(); return ss.str();
+    bool foreign = false;
+    std::string blob = look::session_file_read(sid, &foreign);
+    if (foreign)   // bu sürecin yazmadığı bir dosya: asla oturum olmaz
+        look::Logger::instance().log(look::LogLevel::LOG_WARN, "SESSION",
+            "ignored a session file not written by this process (wrong owner, permissions or a link): " + look::session_file(sid));
+    return blob;
 }
 // Bir oturumun en büyük boyutu (bayt). LOOK_SESSION_MAX_BYTES; varsayılan 1 MB.
 static size_t session_max_bytes() {
@@ -755,14 +757,14 @@ static void sess_store(const std::string& sid, const std::string& blob) {
         with_session_redis([&](RespClient& r) { r.set("look_sess:" + sid, blob, session_ttl()); });
         return;
     }
-    std::ofstream f(sess_file_path(sid), std::ios::trunc); f << blob;   // overwrite
+    look::session_file_write(sid, blob);   // 0600, bağlantı izlenmez
 }
 static void sess_remove(const std::string& sid) {
     if (session_use_redis()) {
         with_session_redis([&](RespClient& r) { r.del("look_sess:" + sid); });
         return;
     }
-    std::remove(sess_file_path(sid).c_str());
+    look::session_file_remove(sid);
 }
 // 32-hex CSPRNG session ID üret (fail-closed) — session::start ve regenerate
 // paylaşır. /dev/urandom (Linux) veya rand_s (Windows). Güvenli kaynak yoksa
