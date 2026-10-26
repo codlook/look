@@ -114,7 +114,38 @@ static std::string resolve_script(int argc, char* argv[]) {
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
+#ifndef LOOK_VERSION
+#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#endif
+#ifndef LOOK_BUILD
+#define LOOK_BUILD "src"
+#endif
+#ifdef _WIN32
+#  define LOOK_CGI_PLATFORM "windows"
+#elif defined(__linux__)
+#  define LOOK_CGI_PLATFORM "linux"
+#elif defined(__APPLE__)
+#  define LOOK_CGI_PLATFORM "darwin"
+#else
+#  define LOOK_CGI_PLATFORM "unknown"
+#endif
+#if defined(__x86_64__) || defined(_M_X64)
+#  define LOOK_CGI_ARCH "amd64"
+#elif defined(__aarch64__)
+#  define LOOK_CGI_ARCH "arm64"
+#else
+#  define LOOK_CGI_ARCH "x86"
+#endif
+
 int main(int argc, char* argv[]) {
+    // lk-cgi --version (lk / lk-fcgi ile aynı biçim): yalnız CGI ortamı DIŞINDA. Eskiden yoktu —
+    // hangi lk-cgi'nin kurulu olduğu görülemiyordu, derleme damgası ikiliye girmiyordu (yayın
+    // tutarlılık denetimi onu bu yüzden doğrulayamıyordu). CGI'da web sunucusu "=" içermeyen bir
+    // sorgu dizesini argüman olarak geçirebilir: "?--version" sürümü dışarı söylemesin.
+    if (argc >= 2 && std::strcmp(argv[1], "--version") == 0 && !std::getenv("GATEWAY_INTERFACE")) {
+        std::cout << "LOOK " LOOK_VERSION " (" << LOOK_BUILD << ", " << LOOK_CGI_PLATFORM << "/" << LOOK_CGI_ARCH << ")\n";
+        return 0;
+    }
 #ifdef _WIN32
     // CGI çıktısı byte-exact olmalı: text-mode \n→\r\n dönüşümü CGI header/body
     // yapısını bozar (kodda zaten \r\n var → \r\r\n olur, body kaybolur).
