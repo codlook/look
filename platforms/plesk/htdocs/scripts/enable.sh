@@ -95,6 +95,18 @@ fi
 RUN_GROUP=$(id -gn "$RUN_USER")
 RUN_GROUP=$(printf '%s' "$RUN_GROUP" | tr -cd 'A-Za-z0-9._-')
 
+# Oturum dosyalari: site kullanicisinin ev dizininde (web kokunun disinda), site basina, kalici.
+# Servis PrivateTmp ile calisir; eskiden oturumlar ozel /tmp'de kaliyor, her yeniden baslatmada
+# (eklenti guncellemesi dahil) dusuyordu. Dizini LOOK kendisi, site kullanicisi olarak 0700 ile
+# yaratir — bu betik (root) kullanicinin ev dizininde hicbir sey yaratmaz/degistirmez.
+# Ev dizini vhost altinda degilse (alisilmadik kurulum) satir yazilmaz: LOOK kendi varsayilan
+# sirasini kullanir ($HOME bu kullaniciya aitse orada, degilse servisin ozel /tmp'si).
+RUN_HOME=$(getent passwd "$RUN_USER" | cut -d: -f6 | tr -cd 'A-Za-z0-9._/-')
+SESSION_ENV=""
+case "$RUN_HOME" in
+    /var/www/vhosts/?*) SESSION_ENV="Environment=LOOK_SESSION_DIR=${RUN_HOME%/}/.look/sessions-${SVC_NAME}" ;;
+esac
+
 # Betik ve ortam dosyasi domain'in document root'u icinde olmali (baska sitenin dosyasi degil)
 case "$SCRIPT" in
     "$DOC_ROOT"/*) ;;
@@ -158,6 +170,7 @@ RestartSec=3
 StandardOutput=journal
 StandardError=journal
 Environment=LOOK_FILE_ROOT=${DOC_ROOT}
+${SESSION_ENV}
 
 [Install]
 WantedBy=multi-user.target

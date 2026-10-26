@@ -738,7 +738,7 @@ static std::string sess_load(const std::string& sid) {
         catch (...) { sess_redis_warn("the session was read as empty", nullptr); return ""; }
     }
     bool foreign = false;
-    std::string blob = look::session_file_read(sid, &foreign);
+    std::string blob = look::session_file_read(sid, &foreign, session_ttl());   // süresi dolmuşsa boş
     if (foreign)   // bu sürecin yazmadığı bir dosya: asla oturum olmaz
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "SESSION",
             "ignored a session file not written by this process (wrong owner, permissions or a link): " + look::session_file(sid));
@@ -752,6 +752,7 @@ static void sess_store(const std::string& sid, const std::string& blob) {
         return;
     }
     look::session_file_write(sid, blob);   // 0600, bağlantı izlenmez
+    look::session_files_gc(session_ttl());  // süresi dolanları arka planda sil
 }
 static void sess_remove(const std::string& sid) {
     if (session_use_redis()) {

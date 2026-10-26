@@ -1641,8 +1641,8 @@ Environment=LOOK_SESSION_TTL=3600
 | --- | --- | --- |
 | LOOK_SESSION_DRIVER | file | `file` (single server) or `redis` (multi-server) |
 | LOOK_REDIS_URL | redis://127.0.0.1:6379/0 | `redis://[:pass@]host:port[/db]` format |
-| LOOK_SESSION_TTL | 86400 | Session lifetime in seconds (Redis EXPIRE + file-compatible) |
-| LOOK_SESSION_DIR | ${TMPDIR:-/tmp}/look-sessions-<uid> | Directory of the file driver's session files. It must belong to the user LOOK runs as and have mode 0700, and must not be a symbolic link; otherwise LOOK does not use it and says why (an explicit LOOK_SESSION_DIR stops the start). Created with mode 0700 if missing. Files are written with mode 0600 |
+| LOOK_SESSION_TTL | 86400 | Session lifetime in seconds, counted from the last write (Redis EXPIRE; with the file driver an older file is not read and is removed in the background) |
+| LOOK_SESSION_DIR | automatic | Directory of the file driver's session files. Unset: the first of `$STATE_DIRECTORY/sessions` (systemd `StateDirectory=`), `$XDG_RUNTIME_DIR/look-sessions`, `$HOME/.look/sessions` (when `$HOME` belongs to the user LOOK runs as), `${TMPDIR:-/tmp}/look-sessions-<uid>`. The directory must belong to that user and have mode 0700, and must not be a symbolic link; otherwise LOOK does not use it and says why (an explicit LOOK_SESSION_DIR stops the start). Created with mode 0700 if missing. Files are written with mode 0600 |
 
 > **Built in.** The Redis protocol (RESP2) is implemented in the LOOK core — no `hiredis` or other library needed. Code that runs on a single server moves instantly to multi-server by changing an env var.
 

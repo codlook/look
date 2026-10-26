@@ -5,7 +5,8 @@
 # listed by every user: another user on the server could read the ids and contents and steal a
 # session, and a file they wrote there themselves (look_sess_<id> with user=admin) was accepted
 # as a session when its id came in the cookie. Now sessions live in a directory owned by the
-# process's user with mode 0700 (${TMPDIR:-/tmp}/look-sessions-<uid>, or LOOK_SESSION_DIR), files
+# process's user with mode 0700 (here the last fallback, ${TMPDIR:-/tmp}/look-sessions-<uid> — HOME,
+# XDG_RUNTIME_DIR and STATE_DIRECTORY are unset; or LOOK_SESSION_DIR), files
 # are 0600 and never followed through a link, and a file that is not this user's 0600 file is
 # ignored. "Another user" here is uid 12345 (needs root or passwordless sudo for chown).
 # Usage: session_file_security_test.sh <lk-fcgi>   (needs curl)
@@ -27,7 +28,7 @@ ok()  { echo "  OK   $1"; }
 bad() { echo "  FAIL $1"; fail=1; }
 start() {   # $@ = ek ortam
     { kill $pid; wait $pid; } 2>/dev/null
-    ( cd "$T" && exec env TMPDIR="$SHARED" TEMP="$SHARED" LOOK_SESSION_SECURE=0 "$@" \
+    ( cd "$T" && exec env -u HOME -u XDG_RUNTIME_DIR -u STATE_DIRECTORY TMPDIR="$SHARED" TEMP="$SHARED" LOOK_SESSION_SECURE=0 "$@" \
         "$LKF" --mode http --port $P --workers 2 app.lk >"$T/srv.log" 2>&1 ) & pid=$!
     for i in $(seq 1 50); do curl -s --max-time 1 "http://127.0.0.1:$P/health" >/dev/null && return 0
         kill -0 $pid 2>/dev/null || return 1; sleep 0.2; done; return 1
