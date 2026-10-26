@@ -93,8 +93,15 @@ jobs:
         run: |
           bash platforms/linux/build.sh
           mkdir -p platforms/plesk/bin
-          cp cpp/build-portable/lk cpp/build-portable/lk-fcgi platforms/plesk/bin/
+          cp cpp/build-portable/lk cpp/build-portable/lk-fcgi cpp/build-portable/lk-cgi platforms/plesk/bin/
           bash platforms/plesk/build.sh --with-binaries
+
+      # Belgelerde adı geçen her ikili pakette olmalı (lk-cgi 1.0.40'a dek hiçbir pakette yoktu:
+      # CGI kullanıcıları oturum güvenlik düzeltmelerini alamıyordu). Eksikse yükleme YOK.
+      - name: GUARD — every binary the docs name is in the packages
+        run: |
+          bash cpp/tests/package_binaries_guard.sh \
+            "platforms/linux/look-lang-linux-$VERSION.zip" "platforms/plesk/look-lang-plesk-$VERSION.zip"
 
       # 5) Docker imajı → tarball (docker load ile Hub olmadan da kurulur)
       - name: Docker image → look-docker.tar.gz
@@ -194,9 +201,11 @@ jobs:
           # Windows: ÇALIŞTIRMADAN — referans damga .exe içinde geçiyor mu (strings/grep)
           if ls look-lang-windows-*.zip >/dev/null 2>&1; then
             unzip -oq look-lang-windows-*.zip -d _win
-            if grep -aq "$REF" _win/lk.exe && grep -aq "$REF" _win/lk-fcgi.exe; then
+            if grep -aq "$REF" _win/lk.exe && grep -aq "$REF" _win/lk-fcgi.exe && grep -aq "$REF" _win/lk-cgi.exe; then
               echo "  OK   windows (damga $REF .exe içinde)"
-            else echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe içinde YOK (eski elle-derleme?)"; fail=1; fi
+            else echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe/lk-cgi.exe içinde YOK (eski elle-derleme?)"; fail=1; fi
+            bash ../cpp/tests/package_binaries_guard.sh look-lang-linux-$VERSION.zip look-lang-plesk-$VERSION.zip \
+              look-lang-windows-$VERSION.zip || fail=1
           elif [[ "$GITHUB_REF_NAME" == *rc* ]]; then
             echo "  SKIP windows (rc provası — Windows Tier-2 ayrı derlenir)"
           else

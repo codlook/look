@@ -13,7 +13,7 @@ OUT="look-lang-linux-${VERSION}.zip"
 PORT="../../cpp/build-portable"
 TMP="$(mktemp -d)"
 
-for b in lk lk-fcgi; do
+for b in lk lk-fcgi lk-cgi; do
     [ -f "$PORT/$b" ] || { echo "HATA: portatif binary yok ($PORT/$b) — önce build-portable.sh" >&2; exit 1; }
 done
 
@@ -21,7 +21,7 @@ echo "Building LOOK Linux package v$VERSION..."
 mkdir -p "$TMP/bin"
 cp ubuntu/install.sh ubuntu/start.sh ubuntu/README.md "$TMP/"
 chmod +x "$TMP/install.sh" "$TMP/start.sh"
-for b in lk lk-fcgi; do
+for b in lk lk-fcgi lk-cgi; do
     cp "$PORT/$b" "$TMP/bin/$b"
     chmod +x "$TMP/bin/$b"
 done

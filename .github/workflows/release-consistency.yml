@@ -26,6 +26,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # Depo: belgelerde adı geçen ikilileri okuyan guard (cpp/tests/package_binaries_guard.sh) için.
+      - uses: actions/checkout@v4
       - name: Asset'leri indir
         env:
           GH_TOKEN: ${{ github.token }}
@@ -70,11 +72,14 @@ jobs:
 
           # --- Windows: ÇALIŞTIRMADAN — referans damga .exe içinde geçiyor mu (strings/grep) ---
           unzip -oq look-lang-windows-*.zip -d win
-          if grep -aq "$REF" win/lk.exe && grep -aq "$REF" win/lk-fcgi.exe; then
+          if grep -aq "$REF" win/lk.exe && grep -aq "$REF" win/lk-fcgi.exe && grep -aq "$REF" win/lk-cgi.exe; then
             echo "  OK   windows (damga $REF .exe içinde)"
           else
-            echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe içinde YOK (eski elle-derleme?)"; fail=1
+            echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe/lk-cgi.exe içinde YOK (eski elle-derleme?)"; fail=1
           fi
+          # Belgelerde adı geçen her ikili (lk-cgi dahil) pakette mi
+          bash ../cpp/tests/package_binaries_guard.sh look-lang-linux-[0-9]*.zip look-lang-plesk-[0-9]*.zip \
+            look-lang-windows-[0-9]*.zip || fail=1
 
           echo ""
           if [ "$fail" != 0 ]; then

@@ -15,9 +15,9 @@ $Out     = Join-Path $Here "look-lang-windows-$Version.zip"
 $BinSrc  = [System.IO.Path]::GetFullPath((Join-Path $Here "..\..\cpp\build-win\Release"))
 $Tmp     = Join-Path $env:TEMP ("win-pkg-" + [guid]::NewGuid().ToString("N"))
 
-# lk-fcgi.exe = HTTP server (the whole point); lk.exe = CLI / script / REPL.
-# lk-cgi.exe is NOT included: --mode http needs no integration; CGI is advanced use.
-$exes = @("lk.exe", "lk-fcgi.exe")
+# lk-fcgi.exe = HTTP server (the whole point); lk.exe = CLI / script / REPL; lk-cgi.exe = CGI under
+# Apache/XAMPP (the documentation describes it; it was missing from the package up to 1.0.40).
+$exes = @("lk.exe", "lk-fcgi.exe", "lk-cgi.exe")
 foreach ($b in $exes) {
     if (-not (Test-Path (Join-Path $BinSrc $b))) {
         Write-Error "MISSING: $b not found in $BinSrc - build MSVC Release first."
@@ -59,4 +59,4 @@ Remove-Item $Tmp -Recurse -Force
 
 $mb = [math]::Round((Get-Item $Out).Length / 1MB, 1)
 Write-Host "OK: look-lang-windows-$Version.zip - $mb MB"
-Write-Host "Contents: lk.exe + lk-fcgi.exe + README.md (NO installer script)"
+Write-Host "Contents: lk.exe + lk-fcgi.exe + lk-cgi.exe + README.md (NO installer script)"

@@ -74,6 +74,11 @@ install_bin() { # $1 = isim
 say "Binary kuruluyor → $BIN_DIR/{lk, lk-fcgi}"
 install_bin lk
 install_bin lk-fcgi
+# lk-cgi (Apache CGI için) 1.0.41'den beri pakette; elle verilen eski bir klasörde yoksa atlanır.
+if [ -n "${LOOK_BIN_SRC:-}" ] && [ -f "$LOOK_BIN_SRC/lk-cgi" ]; then
+  install -m 0755 "$LOOK_BIN_SRC/lk-cgi" "$BIN_DIR/lk-cgi"
+  ok "lk-cgi → $BIN_DIR/lk-cgi"
+fi
 ok "lk $("$BIN_DIR/lk" --version 2>/dev/null || echo '(kuruldu)')"
 
 # ── 2. Uygulama + .env ────────────────────────────────────────────────────────
