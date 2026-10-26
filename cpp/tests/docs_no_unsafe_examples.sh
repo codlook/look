@@ -15,4 +15,12 @@ bad="$(grep -nE 'render_string(</span>)?\((<span class="str">)?("|&quot;)' $file
 [ -z "$bad" ] || { echo "FAIL: template::render_string with a double-quoted template:"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
 bad="$(grep -nE '\b(WHERE|AND|OR|SET|VALUES)\b[^`"]*\{(<span class="var">)?\$' $files /dev/null || true)"
 [ -z "$bad" ] || { echo "FAIL: a value interpolated into SQL:"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
+# 3. Kurulum: "curl … | sudo bash" yok ve indirme yalnız projenin adreslerinden. Ubuntu rehberi
+#    kayıtlı olmayan bir alan adından (get.look-lang.org) root olarak betik çalıştırtıyordu:
+#    o adı alan herkes rehberi izleyenin sunucusunda kod çalıştırırdı.
+ifiles="$( { echo "$files"; git ls-files '*.md' 'platforms/**/*.md' 'platforms/**/*.sh' 2>/dev/null | grep -v '^cpp/tests/'; } | sort -u)"
+bad="$(grep -nE '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z)?sh\b' $ifiles /dev/null || true)"
+[ -z "$bad" ] || { echo "FAIL: a download piped into a shell:"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
+bad="$(grep -nE '(curl|wget)[^#]*https?://' $ifiles /dev/null | grep -vE 'https?://(github\.com/codlook/|([a-z0-9-]+\.)?codlook\.com\b|(127\.0\.0\.1|localhost|\$|<|\{))' | grep -E '(curl|wget)[^#]*https?://[a-z]' | grep -vE 'https?://[^/ ]*(example|myapp|sunucu|domain)' || true)"
+[ -z "$bad" ] || { echo "FAIL: a download from an address that is not the project's (github.com/codlook, codlook.com):"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
 [ $fail = 0 ] && echo "PASS: no unsafe examples in the documentation ($(echo "$files" | wc -l) files)" || exit 1

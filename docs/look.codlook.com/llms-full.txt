@@ -4206,7 +4206,6 @@ Detailed guide: `docs/ubuntu-deployment.md` | `docs/plesk-apache-deployment.md`
 | Platform | Package | Install |
 | --- | --- | --- |
 | Ubuntu / AlmaLinux / RHEL | `look-lang-linux.zip` | `sudo bash install.sh` |
-| AlmaLinux / RHEL (dnf) | `look-lang-<version>-1.el8.x86_64.rpm` | `dnf install look-lang-…rpm` |
 | Plesk (panel) | `look-lang-plesk.zip` | `plesk bin extension --install …` |
 | Windows | `look-lang-windows.zip` | extract, run `lk-fcgi.exe --mode http` |
 
