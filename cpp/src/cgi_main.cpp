@@ -4,6 +4,8 @@
 #include "look/logger.h"
 #include "look/web.h"
 #include "look/runtime_init.h"   // runtime_init (CA probe + SQLite init, süreç başı — 3 giriş noktası ortak)
+#include "look/session_files.h"  // yanıttan sonra oturum temizliği (kısa ömürlü süreç)
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -124,6 +126,21 @@ int main(int argc, char* argv[]) {
     // → CGI modunda http:: + PostgreSQL TLS (verify VARSAYILAN) dağıtımlar arası kırıktı.
     // SSL_CERT_FILE'i process-global set eder; DB istemcilerinin default_verify_paths'i okur.
     look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
+    // CGI'da süreç tek istek yaşar: süresi dolan oturum dosyalarının temizliği (zamanı geldiyse)
+    // yanıt gönderildikten SONRA yapılır. Çıktı önce kapatılır: web sunucusu yanıtın bittiğini
+    // çıktının kapanmasından anlar, ziyaretçi taramayı beklemez. Her dönüş yolunu kapsar.
+    look::session_gc_short_lived(true);
+    struct SessionGcAfterResponse {
+        ~SessionGcAfterResponse() {
+            std::cout.flush();
+            std::fflush(stdout);
+#ifndef _WIN32
+            int nul = ::open("/dev/null", O_WRONLY);
+            if (nul >= 0) { ::dup2(nul, 1); ::close(nul); }
+#endif
+            look::session_gc_run_pending();
+        }
+    } session_gc_after_response;
     std::string script_path = resolve_script(argc, argv);
 
     if (script_path.empty()) {
