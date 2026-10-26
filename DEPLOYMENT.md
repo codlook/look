@@ -41,6 +41,7 @@ WantedBy=multi-user.target
 DB_DSN=sqlite:///var/www/myapp/data/app.db
 ADMIN_PASSWORD=…            # your app's secrets
 LOOK_TRUSTED_PROXY=127.0.0.1  # so X-Forwarded-* from nginx is honoured (see §3)
+LOOK_BIND=127.0.0.1           # --mode http: only nginx can reach the app's port
 LOOK_SESSION_SECURE=1         # TLS terminates at the proxy; force Secure on session cookies
 ```
 

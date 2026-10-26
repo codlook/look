@@ -3,7 +3,7 @@
     <id>look-lang</id>
     <name>LOOK Language</name>
     <description>LOOK web scripting language — one-click LOOK server per domain (portable static binary: AlmaLinux 8/9 + Ubuntu, minimal external runtime dependencies)</description>
-    <version>1.4.1</version>
+    <version>1.4.2</version>
     <plesk_min_version>18.0.0</plesk_min_version>
     <author>Codlook Bilisim</author>
     <url>https://codlook.com</url>

@@ -1860,7 +1860,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
     try {
         look::HttpServer server(port, workers, http_handler, ws_handler, sse_handler);
         look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
-            "Listening on port " + std::to_string(port));
+            "Listening on " + std::string(std::getenv("LOOK_BIND") && *std::getenv("LOOK_BIND") ? std::getenv("LOOK_BIND") : "0.0.0.0") + ":" + std::to_string(port));
         server.run();
     } catch (const std::exception& e) {
         // Sunucu kurulamadi/calisamadi: hata koduyla CIK. Eskiden loglayip normal donuyordu →

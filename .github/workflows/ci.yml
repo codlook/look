@@ -201,6 +201,13 @@ jobs:
           # processes (a locked stamp file) and after the response (1.0.39 lost it at exit).
           bash tests/session_gc_cgi_test.sh ./build/lk-cgi
 
+      # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
+      # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
+      - name: --bind keeps --mode http on the address given
+        run: |
+          cd cpp
+          bash tests/bind_test.sh ./build/lk-fcgi
+
       - name: Redis sessions never reach another user's request
         run: |
           cd cpp
