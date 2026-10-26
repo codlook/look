@@ -28,6 +28,7 @@
 #  include <cerrno>
 #  include <cstring>
 #  include <dirent.h>
+#  include <sys/file.h>
 #  include <fcntl.h>
 #  include <sys/stat.h>
 #  include <sys/types.h>
@@ -217,9 +218,64 @@ inline void session_file_remove(const std::string& sid) {
 // Süresi dolan oturum dosyalarını sil. Eskiden hiç silinmiyordu: yeni ziyaretçinin oturumuna
 // yazan her istek (her sayfada CSRF anahtarı) kalıcı bir dosya bırakıyordu — çerezsiz istekler,
 // giriş yapmadan, diski ve inode'ları doldurabiliyordu (ölçüldü: 3000 istek, 3000 dosya).
-// Süreç başına en çok 5 dakikada bir (TTL daha kısaysa TTL'de bir), arka planda bir iş
-// parçacığında: istek taramayı beklemez. Yarım kalmış geçici dosyalar (look_sess_<id>.XXXXXX)
-// bir saat sonra silinir. Yalnız bu kullanıcının düz dosyalarına dokunulur.
+// Ne zaman: en çok 5 dakikada bir (TTL daha kısaysa TTL'de bir), TÜM SÜREÇLER için bir kez. Son
+// temizliğin zamanı dizindeki .gc-stamp dosyasında tutulur ve kilitlenir (flock): 1.0.39'da
+// süreç belleğindeydi — CGI'da her istek yeni bir süreç olduğu için temizlik ya her istekte
+// başlıyor ya da süreç kapanınca yarıda ölüyordu (ölçüldü: süre dolduktan sonra 320 dosyanın
+// hiçbiri silinmedi). Uzun yaşayan sunucuda arka plan iş parçacığında; kısa ömürlü süreçte
+// (CGI: session_gc_short_lived) yanıt gönderildikten sonra session_gc_run_pending ile.
+// Yarım kalmış geçici dosyalar (look_sess_<id>.XXXXXX) en az bir saat sonra silinir. Yalnız bu
+// kullanıcının düz dosyalarına dokunulur.
+inline std::atomic<bool>& session_gc_short_lived_flag() { static std::atomic<bool> v{false}; return v; }
+inline std::atomic<long>& session_gc_pending_ttl()    { static std::atomic<long> v{0};     return v; }
+inline void session_gc_short_lived(bool on) { session_gc_short_lived_flag() = on; }
+#ifndef _WIN32
+
+// Bu süreç temizliği üstlenebilir mi: damga yoksa ya da eskiyse, kilit alınabiliyorsa evet.
+// Dönüş: kilitli damga fd'si (tarama bitince kapatılır) ya da -1.
+inline int session_gc_claim(const std::string& dir, long long every, long long now) {
+    const std::string stamp = dir + "/.gc-stamp";
+    int fd = ::open(stamp.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) return -1;
+    struct stat st{};
+    if (::flock(fd, LOCK_EX | LOCK_NB) != 0 || ::fstat(fd, &st) != 0 ||
+        !S_ISREG(st.st_mode) || st.st_uid != ::geteuid() ||
+        (st.st_size > 0 && now - (long long)st.st_mtime < every)) {   // boyut 0 = hiç taranmadı
+        ::close(fd);
+        return -1;
+    }
+    if (::pwrite(fd, "1", 1, 0) != 1 || ::futimens(fd, nullptr) != 0) { ::close(fd); return -1; }
+    return fd;
+}
+
+inline void session_gc_sweep(const std::string& dir, long ttl_sec, long long now) {
+    if (DIR* d = ::opendir(dir.c_str())) {
+        const int dfd = ::dirfd(d);
+        while (struct dirent* e = ::readdir(d)) {
+            if (std::strncmp(e->d_name, "look_sess_", 10) != 0) continue;
+            struct stat st{};
+            if (::fstatat(dfd, e->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) continue;
+            if (!S_ISREG(st.st_mode) || st.st_uid != ::geteuid()) continue;
+            const bool tmp = std::strchr(e->d_name, '.') != nullptr;
+            const long long age = now - (long long)st.st_mtime;
+            if (age > (tmp ? (ttl_sec > 3600 ? ttl_sec : 3600) : ttl_sec)) ::unlinkat(dfd, e->d_name, 0);
+        }
+        ::closedir(d);
+    }
+}
+
+inline void session_gc_run(long ttl_sec) {
+    const long long now = (long long)std::time(nullptr);
+    const long long every = ttl_sec < 300 ? ttl_sec : 300;
+    std::string dir;
+    try { dir = session_dir(); } catch (...) { return; }
+    int fd = session_gc_claim(dir, every, now);
+    if (fd < 0) return;   // aralık dolmadı ya da başka bir süreç tarıyor
+    session_gc_sweep(dir, ttl_sec, now);
+    ::close(fd);
+}
+#endif
+
 inline void session_files_gc(long ttl_sec) {
 #ifndef _WIN32
     if (ttl_sec <= 0) return;
@@ -228,31 +284,23 @@ inline void session_files_gc(long ttl_sec) {
     const long long now = (long long)std::time(nullptr);
     const long long every = ttl_sec < 300 ? ttl_sec : 300;
     long long prev = last.load();
-    if (now - prev < every || !last.compare_exchange_strong(prev, now)) return;
+    if (now - prev < every || !last.compare_exchange_strong(prev, now)) return;   // süreç içi kısayol
+    if (session_gc_short_lived_flag()) { session_gc_pending_ttl() = ttl_sec; return; }   // yanıttan sonra
     bool idle = false;
     if (!running.compare_exchange_strong(idle, true)) return;
-    std::string dir;
-    try { dir = session_dir(); } catch (...) { running = false; return; }
-    auto sweep = [dir, ttl_sec, now]() {
-        if (DIR* d = ::opendir(dir.c_str())) {
-            const int dfd = ::dirfd(d);
-            while (struct dirent* e = ::readdir(d)) {
-                if (std::strncmp(e->d_name, "look_sess_", 10) != 0) continue;
-                struct stat st{};
-                if (::fstatat(dfd, e->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) continue;
-                if (!S_ISREG(st.st_mode) || st.st_uid != ::geteuid()) continue;
-                const bool tmp = std::strchr(e->d_name, '.') != nullptr;
-                const long long age = now - (long long)st.st_mtime;
-                if (age > (tmp ? (ttl_sec > 3600 ? ttl_sec : 3600) : ttl_sec)) ::unlinkat(dfd, e->d_name, 0);
-            }
-            ::closedir(d);
-        }
-        running = false;
-    };
-    try { std::thread(sweep).detach(); }
-    catch (...) { sweep(); }   // iş parçacığı açılamadı (bellek sınırı): bu istekte tara
+    auto job = [ttl_sec]() { session_gc_run(ttl_sec); running = false; };
+    try { std::thread(job).detach(); }
+    catch (...) { job(); }   // iş parçacığı açılamadı (bellek sınırı): bu istekte tara
 #else
     (void)ttl_sec;
+#endif
+}
+
+// Kısa ömürlü süreç (CGI): yanıt gönderildikten sonra, bu istekte temizlik zamanı geldiyse tara.
+inline void session_gc_run_pending() {
+#ifndef _WIN32
+    long ttl = session_gc_pending_ttl().exchange(0);
+    if (ttl > 0) session_gc_run(ttl);
 #endif
 }
 

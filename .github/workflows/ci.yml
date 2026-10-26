@@ -197,6 +197,9 @@ jobs:
           cd cpp
           bash tests/session_gc_test.sh ./build/lk-fcgi
           bash tests/session_dir_default_test.sh ./build/lk-fcgi
+          # CGI: one short-lived process per request — the sweep runs once per interval for all
+          # processes (a locked stamp file) and after the response (1.0.39 lost it at exit).
+          bash tests/session_gc_cgi_test.sh ./build/lk-cgi
 
       - name: Redis sessions never reach another user's request
         run: |
