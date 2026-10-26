@@ -83,6 +83,11 @@ check "the chosen script is started"             '[[ "$run" == *"--script $DOC/a
 check "the env file is loaded (a # inside a value is kept)" '[[ "$run" == *"DB_DSN=mysql://app:p#ss@localhost/app"* ]]'
 check "quotes around a value are removed"        '[[ "$run" == *"APP_NAME=My Site"* ]]'
 check "LOOK_FILE_ROOT is the document root"      '[[ "$run" == *"LOOK_FILE_ROOT=$DOC"* ]]'
+# Oturumlar: site başına, kullanıcının ev dizininde, web kökünün dışında, kalıcı (PrivateTmp'te
+# yeniden başlatmada düşüyorlardı). Dizini betik (root) yaratmaz; LOOK kullanıcı olarak yaratır.
+check "sessions live in the user's home, per site, outside the web root" \
+    'grep -qx "Environment=LOOK_SESSION_DIR=/var/www/vhosts/site.com/.look/sessions-look-app-site-com" "$UNIT"'
+check "enable.sh (root) creates nothing in the user's home" '[ ! -e /var/www/vhosts/site.com/.look ]'
 
 echo "== the env file is read with the domain user's rights =="
 printf 'DB_DSN=mysql://other:secret@localhost/other\n' > /var/www/vhosts/other.com/httpdocs/.look.env

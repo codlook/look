@@ -479,6 +479,15 @@ jobs:
           cd cpp
           bash tests/session_file_security_test.sh ./build/lk-fcgi
 
+      # Session files were never removed (every new visitor whose session got a CSRF token left a
+      # file for ever: requests without a cookie could fill the disk), and LOOK_SESSION_TTL was not
+      # applied to files. And the default directory is one no other user can create first.
+      - name: Expired sessions are removed; the default session directory cannot be taken
+        run: |
+          cd cpp
+          bash tests/session_gc_test.sh ./build/lk-fcgi
+          bash tests/session_dir_default_test.sh ./build/lk-fcgi
+
       - name: Redis sessions never reach another user's request
         run: |
           cd cpp
