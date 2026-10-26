@@ -643,6 +643,16 @@ jobs:
           cd cpp
           bash tests/httpoxy_test.sh ./build/lk-cgi
 
+      # lk-cgi --version prints the build (the release check reads its stamp), but not under CGI:
+      # a web server may pass a query string without "=" as an argument ("?--version").
+      - name: lk-cgi --version outside CGI only
+        run: |
+          cd cpp
+          v="$(./build/lk-cgi --version)"; echo "$v"
+          [[ "$v" == "LOOK "*"("*", linux/"* ]] || { echo "::error::lk-cgi --version: '$v'"; exit 1; }
+          out="$(GATEWAY_INTERFACE=CGI/1.1 ./build/lk-cgi --version 2>&1 || true)"
+          [[ "$out" != "LOOK "* ]] || { echo "::error::lk-cgi printed its version under CGI"; exit 1; }
+
       # Env-dependent test contract — positive control. A test whose environment is missing
       # SKIPs locally (so a local red always means a real failure) but FAILs in CI (a missing
       # DSN/secret in CI is a configuration error and must not turn into a silent green, the
