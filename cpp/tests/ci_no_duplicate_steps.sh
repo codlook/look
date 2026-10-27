@@ -22,5 +22,13 @@ for f in "$@"; do
     if [ -n "$eaten" ]; then
         echo "FAIL: a step is hidden inside a comment in $f:"; echo "$eaten" | cut -c1-140 | sed 's/^/    /'; fail=1
     fi
+    # An unquoted name with ": " in it (e.g. "csrf:: and …") is not valid YAML: GitHub cannot
+    # read the file and NONE of its jobs run — the run shows the file name and fails at startup,
+    # and every other workflow stays green. It happened twice; the second time the whole CI of
+    # two v2 commits never ran.
+    colon="$(tr -d '\r' < "$f" | grep -nE '^[ \t]+- name:[ \t]+[^"'"'"' \t].*: ' || true)"
+    if [ -n "$colon" ]; then
+        echo "FAIL: an unquoted step name with ': ' in $f (quote it):"; echo "$colon" | cut -c1-140 | sed 's/^/    /'; fail=1
+    fi
 done
 [ $fail = 0 ] && echo "PASS: no duplicated or hidden CI steps ($# workflow files)" || exit 1
