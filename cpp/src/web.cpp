@@ -6,6 +6,7 @@
 #include <fstream>
 #include <cstring>
 #include <cstdint>
+#include <cctype>
 #include <iomanip>
 #include <stdexcept>
 #include <filesystem>
@@ -246,6 +247,13 @@ void WebContext::init_from_cgi() {
     // Remote addr
     const char* ra = std::getenv("REMOTE_ADDR");
     remote_addr = ra ? ra : "";
+
+    // HTTPS: CGI ortamını web sunucusu kurar (istemci değil) — FastCGI ile aynı kural.
+    // Eskiden CGI'de is_https hiç ayarlanmıyordu: HTTPS sitede oturum çerezi Secure almıyordu.
+    { const char* h = std::getenv("HTTPS"); std::string hs = h ? h : "";
+      for (auto& c : hs) c = (char)std::tolower((unsigned char)c);
+      const char* rs = std::getenv("REQUEST_SCHEME");
+      is_https = (hs == "on" || hs == "1" || (rs && std::string(rs) == "https")); }
 
     // Cookies
     const char* ck = std::getenv("HTTP_COOKIE");

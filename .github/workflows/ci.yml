@@ -200,6 +200,8 @@ jobs:
           # CGI: one short-lived process per request — the sweep runs once per interval for all
           # processes (a locked stamp file) and after the response (1.0.39 lost it at exit).
           bash tests/session_gc_cgi_test.sh ./build/lk-cgi
+          # CGI never read HTTPS: on an HTTPS site the session cookie went out without Secure.
+          bash tests/cgi_https_session_test.sh ./build/lk-cgi
 
       # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
       # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
