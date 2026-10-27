@@ -256,5 +256,25 @@ grep -q "LOOK_SECRET is not set or shorter than 32 characters. This application 
 runs 'route("GET", "/", function() { session::start(); return response::text("g"); })' LOOK_SECRET=short
 is "a LOOK_SECRET shorter than 32 characters: does not start" "$(cat "$T/rs")" nostart
 
+# Paket modülü (~/.look/modules/<ad>/<ad>.lk, `use <ad>`): çerezi uygulama değil paket kullanıyor —
+# hazır bir kimlik doğrulama paketi gibi. Uygulamanın kendi kodunda çerez yok; koruma yine açık olmalı.
+mkdir -p "$T/home/.look/modules/authpkg"
+printf 'function current_user() { return cookie::get("jwt", "") }\n' > "$T/home/.look/modules/authpkg/authpkg.lk"
+runs 'use authpkg
+route("GET", "/", fn() => response::text("g"))
+route("POST", "/", fn() => response::text("user=" . current_user()))' LOOK_SECRET=$S1 HOME="$T/home"
+is "cookies only inside a package module (use authpkg): checked" "$(cat "$T/rs")" 403
+runs 'use authpkg
+route("GET", "/", fn() => response::text("g"))
+route("POST", "/", fn() => response::text("p"))' LOOK_SECRET=$S1 HOME="$T/home"
+is "a package that uses cookies, even if the app never calls it: checked" "$(cat "$T/rs")" 403
+# Sıcak yeniden yükleme: derleyici bir paketi süreç başına bir kez derler (çift tanım olmasın). Yeniden
+# yüklemede paket yeniden derlenmezse çerez kullanımı görünmez ve koruma sessizce kapanırdı.
+printf 'use authpkg\nroute("GET", "/", fn() => response::text("g2"))\nroute("POST", "/", fn() => response::text("user=" . current_user()))\n' > "$T/p.lk"
+touch -d '+2 seconds' "$T/p.lk"
+for i in $(seq 1 30); do [ "$(curl -s --max-time 1 "$BASE/")" = g2 ] && break; sleep 0.3; done
+is "after a hot reload the new program is served" "$(curl -s --max-time 2 "$BASE/")" g2
+is "… and a package that uses cookies is still checked" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -d x=1 "$BASE/")" 403
+
 [ $fail = 0 ] && echo "PASS: CSRF protection is on by default (--mode http, FastCGI, CGI)" || echo "FAIL: CSRF protection"
 exit $fail

@@ -35,6 +35,11 @@ thread_local std::unordered_set<std::string> g_compile_included; // dedup / circ
 thread_local std::vector<std::string>       g_compile_file;      // derlenen dosya yığını (hata konumu); boş = ana betik
 thread_local std::set<std::string>          g_host_modules;     // çalıştırıcının sağladığı modüller (lk test: assert)
 thread_local std::vector<std::string>       g_use_modules;      // görülen stdlib `use` modülleri → CompiledProgram::use_modules
+// Bu derlemede yüklenmiş kullanıcı/paket modülleri (aynı modül iki kez use edilirse bir kez derlensin).
+// Derleme başına: eskiden süreç ömrü boyunca duran bir listeydi — sıcak yeniden yüklemede `use paket`
+// boş geçiyordu, paketin fonksiyonları yok oluyordu ("Undefined variable") ve paketin çerez kullanımı
+// görünmediği için CSRF denetimi sessizce kapanıyordu.
+thread_local std::unordered_set<std::string> g_compile_modules;
 // Bu derleme biriminde (dahil edilen dosyalar dahil) görülen struct bildirimleri: ad → (imza, satır).
 thread_local std::unordered_map<std::string, std::pair<std::string, int>> g_compile_structs;
 }
@@ -428,12 +433,9 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             if (home && *home) {
                 std::string path = std::string(home) + "/.look/modules/" +
                                    us->module_name + "/" + us->module_name + ".lk";
-                // Aynı modül iki kez use edilirse tekrar derleme — çift tanım ve şişme olmasın.
-                static std::vector<std::string> g_loaded;
+                // Aynı modül bu derlemede iki kez use edilirse tekrar derleme — çift tanım ve şişme olmasın.
                 static std::vector<std::shared_ptr<Program>> g_module_asts;  // AST ömrü
-                bool already = false;
-                for (auto& p : g_loaded) if (p == path) { already = true; break; }
-                if (already) { emit(OpCode::NOP); return; }
+                if (g_compile_modules.count(path)) { emit(OpCode::NOP); return; }
 
                 std::ifstream f(path);
                 if (f) {
@@ -443,7 +445,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                         Parser p(lx.scan_tokens());
                         auto prog = std::shared_ptr<Program>(p.parse().release());
                         look::log_param_writes(p.warnings(), path);
-                        g_loaded.push_back(path);
+                        g_compile_modules.insert(path);
                         g_module_asts.push_back(prog);
                         g_compile_file.push_back(path);   // paket: uygulama dizini dışında → tam yol
                         struct FilePop { ~FilePop() { g_compile_file.pop_back(); } } file_pop;
@@ -1978,6 +1980,7 @@ CompiledProgram Compiler::compile(const Program& program, const std::string& bas
     g_compile_structs.clear();
     g_compile_cur_dir.clear();
     g_use_modules.clear();
+    g_compile_modules.clear();
     if (!base_dir.empty()) g_compile_cur_dir.push_back(base_dir);
     FunctionCompiler main_compiler("<main>", {}, false, nullptr);
     auto proto = main_compiler.compile_stmts(program.statements);
