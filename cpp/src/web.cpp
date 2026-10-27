@@ -1,4 +1,7 @@
 #include "look/web.h"
+#ifndef _WIN32
+extern char** environ;   // CGI istek başlıkları (HTTP_*) — init_from_cgi
+#endif
 #include <cstdlib>
 #include <sstream>
 #include <algorithm>
@@ -170,6 +173,12 @@ static std::string mime_to_ext(const std::string& mime) {
 
 namespace look {
 
+#ifdef _WIN32
+static char** look_environ() { return _environ; }
+#else
+static char** look_environ() { return ::environ; }
+#endif
+
 void WebContext::init_from_cgi() {
     // Method
     const char* m = std::getenv("REQUEST_METHOD");
@@ -254,6 +263,19 @@ void WebContext::init_from_cgi() {
       for (auto& c : hs) c = (char)std::tolower((unsigned char)c);
       const char* rs = std::getenv("REQUEST_SCHEME");
       is_https = (hs == "on" || hs == "1" || (rs && std::string(rs) == "https")); }
+
+    // İstek başlıkları: web sunucusu her başlığı HTTP_<AD> ortam değişkeni olarak verir (RFC 3875
+    // 4.1.18) — FastCGI'deki HTTP_* parametreleriyle aynı dönüşüm. Eskiden CGI'de headers_in hiç
+    // doldurulmuyordu: request::header() hep null'dı (Authorization dahil).
+    for (char** e = look_environ(); e && *e; ++e) {
+        std::string kv = *e;
+        auto eq = kv.find('=');
+        if (eq == std::string::npos || eq <= 5 || kv.compare(0, 5, "HTTP_") != 0) continue;
+        std::string name = kv.substr(5, eq - 5);
+        std::transform(name.begin(), name.end(), name.begin(),
+            [](unsigned char c) { return c == '_' ? '-' : (char)std::tolower(c); });
+        headers_in[name] = kv.substr(eq + 1);
+    }
 
     // Cookies
     const char* ck = std::getenv("HTTP_COOKIE");

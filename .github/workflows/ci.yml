@@ -203,6 +203,14 @@ jobs:
           # CGI never read HTTPS: on an HTTPS site the session cookie went out without Secure.
           bash tests/cgi_https_session_test.sh ./build/lk-cgi
 
+      # Oturum + çerez güvenliği ÜÇ MODDA (--mode http, FastCGI, CGI): cookie:: bayrakları, oturum
+      # çerezinin Secure'u, 0600/0700, istemcinin seçtiği oturum kimliği, istek başlıkları. CGI üç kez
+      # geride kaldı (temizlik, HTTPS, başlıklar); bir modda eksik davranış CI'ı kırar.
+      - name: Session and cookie security in all three modes
+        run: |
+          cd cpp
+          bash tests/session_cookie_modes_test.sh build/lk-fcgi build/lk-cgi
+
       # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
       # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
       - name: --bind keeps --mode http on the address given

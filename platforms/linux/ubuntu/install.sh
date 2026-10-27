@@ -138,6 +138,9 @@ LOOK_WORKERS=$LOOK_WORKERS
 # LOOK_IMAP_PORT=143
 # LOOK_MAIL_DIR=/var/mail/look
 ENV
+# Gizli değerler (DB_DSN parolası) burada: yalnız root okur (systemd EnvironmentFile'ı root olarak
+# okur, servis değerleri ortamdan alır). Eskiden 0644'tü — sunucudaki her kullanıcı okurdu.
+chown root:root "$ETC_DIR/look.env"; chmod 600 "$ETC_DIR/look.env"
 ok "yapılandırma: $ETC_DIR/look.env"
 
 # ── 3. Servis kullanıcısı ─────────────────────────────────────────────────────

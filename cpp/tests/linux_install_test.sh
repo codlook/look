@@ -47,6 +47,8 @@ out="$(LOOK_BIN_SRC="$STUB" bash "$INST" 2>&1)"; rc=$?
 check "exit 0 ($(echo "$out" | tail -1 | cut -c1-60))" '[ "$rc" = 0 ]'
 check "lk-fcgi installed"                              '[ -x /usr/local/bin/lk-fcgi ]'
 check "the unit runs as user look"                     'grep -qx "User=look" /etc/systemd/system/look.service'
+# look.env DB_DSN parolası taşır: yalnız root okur (eskiden 0644, her kullanıcı okurdu).
+check "look.env is mode 0600, owned by root"           '[ "$(stat -c %a:%U /etc/look/look.env)" = 600:root ]'
 
 clean; rm -rf "$STUB"
 [ $fails = 0 ] && echo "PASS: install.sh refuses options it does not have" || { echo "FAIL: $fails check(s)"; exit 1; }
