@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: ["**"]
 
+# LOOK 2: a program that uses cookies does not start without LOOK_SECRET (CSRF signing key).
+# CI's own test key; test scripts that start servers with env -i pass their own.
+env:
+  LOOK_SECRET: look-ci-secret-0123456789abcdef0123456789abcdef
+
 jobs:
   build-and-test:
     name: "Clean Linux build + regression suite"
@@ -495,7 +500,7 @@ jobs:
 
       # csrf:: (signed double-submit cookie, LOOK_SECRET) and request::scheme/host (trusted-proxy
       # rule); also CGI over HTTPS, which sent the session cookie without Secure.
-      - name: csrf:: and request::scheme/host
+      - name: "csrf:: and request::scheme/host"
         run: |
           cd cpp
           bash tests/csrf_core_test.sh ./build/lk-fcgi ./build/lk-cgi

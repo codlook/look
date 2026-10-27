@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: ["**"]
 
+# LOOK 2: a program that uses cookies does not start without LOOK_SECRET (CSRF signing key).
+# CI's own test key; test scripts that start servers with env -i pass their own.
+env:
+  LOOK_SECRET: look-ci-secret-0123456789abcdef0123456789abcdef
+
 jobs:
   sanitizers:
     name: "Regression under ASan/UBSan"
