@@ -491,6 +491,13 @@ jobs:
           # processes (a locked stamp file) and after the response (1.0.39 lost it at exit).
           bash tests/session_gc_cgi_test.sh ./build/lk-cgi
 
+      # csrf:: (signed double-submit cookie, LOOK_SECRET) and request::scheme/host (trusted-proxy
+      # rule); also CGI over HTTPS, which sent the session cookie without Secure.
+      - name: csrf:: and request::scheme/host
+        run: |
+          cd cpp
+          bash tests/csrf_core_test.sh ./build/lk-fcgi ./build/lk-cgi
+
       # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
       # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
       - name: --bind keeps --mode http on the address given

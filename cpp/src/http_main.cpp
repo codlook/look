@@ -275,6 +275,23 @@ static bool resolve_is_https(const Req& req) {
     return p == "https";
 }
 
+// The request's host (request::host, the csrf:: Origin check). Same trust rule: X-Forwarded-Host
+// only from a trusted proxy — otherwise a client could name any host and pass the Origin check.
+template <typename Req>
+static std::string resolve_host(const Req& req) {
+    if (is_trusted_proxy(req.remote_addr)) {
+        auto it = req.headers.find("x-forwarded-host");
+        if (it != req.headers.end()) {
+            std::string h = it->second;
+            auto comma = h.find(','); if (comma != std::string::npos) h = h.substr(0, comma);
+            std::string c = look::WebContext::clean_host(h);
+            if (!c.empty()) return c;
+        }
+    }
+    auto it = req.headers.find("host");
+    return it == req.headers.end() ? std::string() : look::WebContext::clean_host(it->second);
+}
+
 // ── Shared hot-reload state (mirrors WarmApp in fcgi_main) ───────────────────
 
 struct HttpApp {
@@ -969,6 +986,7 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
     // resolve_client_ip: eskiden burada başlık KOŞULSUZ kabul ediliyordu).
     ctx.remote_addr = resolve_client_ip(req);
     ctx.is_https    = resolve_is_https(req);
+    ctx.host        = resolve_host(req);
 
     // Gövde ayrıştırma — urlencoded VE multipart, tek kaynaktan (web.cpp).
     // ESKİ HATA: burada yalnızca urlencoded dalı vardı, multipart hiç yoktu →
@@ -1806,6 +1824,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.get_params   = look::WebContext::parse_query(req.query_string);
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
+        web.host        = resolve_host(req);
 
         // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
         // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
@@ -1830,6 +1849,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.get_params   = look::WebContext::parse_query(req.query_string);
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
+        web.host        = resolve_host(req);
 
         // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
         // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.

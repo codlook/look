@@ -1462,6 +1462,8 @@ route("GET", "/product/{id}", function($id) {
 | request::body() | Raw body (JSON) | raw string |
 | request::json() | JSON body → assoc array | {"k":"v"} → array |
 | request::ip() | Client IP | "192.168.1.1" |
+| request::scheme() | `"https"` or `"http"`, as the client connected. Behind a reverse proxy, from `X-Forwarded-Proto` only when the proxy is in `LOOK_TRUSTED_PROXY`; under FastCGI/CGI, from the web server | "https" |
+| request::host() | Host the client asked for, lower case, with the port if one was given; `""` if the header is missing or not a host name. Behind a reverse proxy, from `X-Forwarded-Host` only when the proxy is in `LOOK_TRUSTED_PROXY` | "shop.example.com" |
 | request::path() | URL path | "/menu/burger-cafe" |
 | request::param("k") | URL parameter (from the route) | {id} → "42" |
 | request::all() | GET + POST combined | assoc array |
@@ -1620,8 +1622,8 @@ route("POST", "/login", function() {
 | session::get("k") | Read a session value |
 | session::set("k","v") | Write a session value |
 | session::has("k") | Does the key exist? |
-| session::regenerate() | Issue a fresh session ID, migrate the existing data to it, and invalidate the old ID. Returns the new ID. **Call it right after a privilege change (login, role change) to prevent session fixation.** |
-| session::destroy() | Delete the session |
+| session::regenerate() | Issue a fresh session ID, migrate the existing data to it, and invalidate the old ID. Returns the new ID. **Call it right after a privilege change (login, role change) to prevent session fixation.** If the app uses csrf::, it also gets a new token base |
+| session::destroy() | Delete the session (with csrf::: a new token base too) |
 
 > **The session cookie is always `Secure`.** It is sent by the browser
  only over HTTPS (or to `localhost`, which browsers treat as a secure context). Behind an
@@ -1678,6 +1680,32 @@ route("GET", "/admin/panel", function() {
     # ... admin page ...
 })
 ```
+
+## csrf::
+
+Protection against cross-site request forgery: another site cannot make a visitor's browser submit a form to yours. Nothing is stored on the server — the token's base is in a signed cookie, so a visitor who only sees a form does not open a session.
+
+| Function | Description |
+| --- | --- |
+| csrf::field() | A hidden `<input name="_csrf">` to put inside a form. Sets the cookie if the visitor has none |
+| csrf::token() | The token alone — for a `X-CSRF-Token` header in `fetch`/AJAX requests. Different on every call |
+| csrf::verify() | `true` if the request carries a valid token (the `_csrf` field, or the `X-CSRF-Token` header) for this visitor's cookie, and its `Origin`, when sent, is this site. A call whose result is not used is a compile error: `csrf::verify();` on its own protects nothing |
+
+```lk
+route("GET", "/contact", function() {
+    return response::html("<form method=\"post\">" . csrf::field() . "<button>Send</button></form>")
+})
+route("POST", "/contact", function() {
+    if (!csrf::verify()) { return response::error(403, "Invalid form, reload the page") }
+    # ... handle the form ...
+})
+```
+
+- **`LOOK_SECRET` is required** — at least 32 characters, the same on every server (`openssl rand -hex 32`). Without it `csrf::` calls fail with an error that says so. Applications that do not use `csrf::` do not need it.
+- **Changing the secret:** put the old value in `LOOK_SECRET_PREVIOUS` while forms signed with it are still open; their cookies are signed again with the new secret on the next page.
+- **Login and logout** (`session::regenerate()`, `session::destroy()`) give a new token base: a token obtained or planted before login does not work after it.
+- **The cookie** is `look_csrf`; over HTTPS it is `__Host-look_csrf` with `Secure`, which a subdomain cannot set. Always `HttpOnly`, `SameSite=Lax`. HTTPS is detected as for the session cookie (`LOOK_TRUSTED_PROXY`, `LOOK_SESSION_SECURE`).
+- Behind a reverse proxy, set `LOOK_TRUSTED_PROXY` so the `Origin` check sees the public host (`X-Forwarded-Host`); a client's own `X-Forwarded-Host` is never trusted.
 
 ## cookie::
 
@@ -4505,7 +4533,9 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | `LOOK_DB_REQUIRE_TLS` | *off* | `1` refuses a **plaintext** DB connection (MySQL/MariaDB/PostgreSQL/Redis) to a **remote** host. Loopback / Unix-socket always allowed (app+DB same machine never blocked). Allow a trusted remote plaintext link with the TLS scheme (`mysqls://`/`postgresqls://`/`rediss://`) or `?insecure_plaintext=1` on the DSN. Loopback matched on the **literal** host (a hostname resolving to 127.0.0.1 counts as remote). Especially relevant for Redis (`AUTH` sends the password in cleartext). |
 | `LOOK_HTTP_MAX_CONNS_IP` | *off* | Max concurrent connections from a single IP; over the cap → `429`. Stops one IP from tying up the whole worker pool; open WebSocket and SSE connections count too. Not set and no `LOOK_TRUSTED_PROXY`: one address may still hold at most 1000 open WebSocket / SSE connections (a default; there is no limit on the total). **Opt-in**, and keyed on the real TCP peer: enable it only when LOOK is **directly** internet-facing. Behind a reverse proxy every connection shares the proxy's IP, so a single counter would throttle the entire site — cap connections at the proxy instead (nginx `limit_conn`). Complements the per-minute `LOOK_RATE_LIMIT_RPM` limiter. |
 | `LOOK_SESSION_SECURE` | *auto* | Controls the `Secure` flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (an `HTTPS` FCGI param, or `X-Forwarded-Proto: https` from a trusted proxy); the runtime warns once if it ships a session cookie without `Secure`, so a misconfiguration cannot silently downgrade. `1` = always; `0` = never (plain-HTTP local dev). |
-| `LOOK_TRUSTED_PROXY` | — (disabled) | Comma-separated proxy IPs / CIDRs to trust. Behind them, `X-Forwarded-For` sets the real client IP (`request::ip()`, rate limiter) **and** `X-Forwarded-Proto: https` marks the request HTTPS (session cookie gets `Secure`). Unset = these headers are ignored so a client cannot forge them. |
+| `LOOK_TRUSTED_PROXY` | — (disabled) | Comma-separated proxy IPs / CIDRs to trust. Behind them, `X-Forwarded-For` sets the real client IP (`request::ip()`, rate limiter) **and** `X-Forwarded-Proto: https` marks the request HTTPS (session cookie gets `Secure`; `request::scheme()`), and `X-Forwarded-Host` sets `request::host()` (the `csrf::` Origin check). Unset = these headers are ignored so a client cannot forge them. |
+| `LOOK_SECRET` | — | Signs the `csrf::` cookie. At least 32 characters, the same on every server (`openssl rand -hex 32`). Required by `csrf::`; other code does not need it. |
+| `LOOK_SECRET_PREVIOUS` | — | The previous `LOOK_SECRET` while it is being changed: cookies signed with it are still accepted and are signed again with the new one. |
 | `LOOK_BIND` / `--bind` | *all interfaces* | The IPv4 address `--mode http` listens on. Behind a reverse proxy on the same machine set `127.0.0.1`, so the app's own port is not reachable from outside and the proxy cannot be bypassed (the Plesk extension does this since 1.4.2). A name such as `localhost` is refused — give an address. FastCGI mode already listens on `127.0.0.1` (`LOOK_FCGI_BIND`). |
 
 ### Connection limits

@@ -3,6 +3,8 @@
 #include "look/runtime_host.h"
 #include <map>
 #include <string>
+#include <vector>
+#include <cstdint>
 
 namespace look {
 
@@ -14,5 +16,7 @@ std::map<std::string, Module> make_extra_stdlib(ModuleHost* interp);
 Module make_file_module();
 Module make_date_module();
 Module make_template_module(ModuleHost* interp);
+// İşletim sisteminin kriptografik rastgele kaynağı (urandom / BCrypt); okunamazsa fırlatır.
+std::vector<uint8_t> secure_random_bytes(size_t n);
 
 } // namespace look

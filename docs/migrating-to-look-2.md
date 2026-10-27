@@ -422,6 +422,32 @@ fault). Connecting, sending and every reply have a time limit:
 the limit and that connection is closed and not reused; the next request opens a new one.
 Session connections are taken from a pool per request and opened when needed.
 
+### CSRF protection is built in: `csrf::` — new
+
+`csrf::field()` puts a token in a form, `csrf::token()` gives it for an `X-CSRF-Token` header, and
+`csrf::verify()` checks it. Nothing is stored on the server: the token's base is in a signed
+cookie (`look_csrf`, `__Host-look_csrf` over HTTPS), so a visitor who only sees a form does not
+open a session. `session::regenerate()` and `session::destroy()` give a new token base. If your
+LOOK 1 application kept its own token in the session, you can replace it with these three calls.
+
+`csrf::` needs `LOOK_SECRET`: at least 32 characters, the same on every server; while changing
+it, put the old value in `LOOK_SECRET_PREVIOUS`. Without it `csrf::` calls fail with an error
+that says so. Applications that do not use `csrf::` do not need it. A `csrf::verify();` whose
+result is not used is an error at load: on its own it protects nothing.
+
+### `request::scheme()` and `request::host()` — new
+
+The scheme and host the client asked for. Behind a reverse proxy they come from
+`X-Forwarded-Proto` / `X-Forwarded-Host` only when the proxy is in `LOOK_TRUSTED_PROXY` — the
+rule `request::ip()` already follows. An application that read these headers itself with
+`request::header(...)` let any client choose them; use these two functions instead.
+
+### CGI over HTTPS: the session cookie is `Secure` — was silent
+
+`lk-cgi` never read the web server's `HTTPS` variable, so on an HTTPS site the session cookie
+went out without `Secure` (with a warning in the log on every request). It now follows the
+connection, as under FastCGI and `--mode http`. LOOK 1.0.43 has the same fix.
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

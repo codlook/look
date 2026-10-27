@@ -53,6 +53,9 @@ crypto::rs256_sign_b64url
 crypto::rs256_verify
 crypto::sha256
 crypto::uuid
+csrf::field
+csrf::token
+csrf::verify
 date::add
 date::diff
 date::format
@@ -159,6 +162,7 @@ request::file
 request::get
 request::header
 request::headers
+request::host
 request::ip
 request::is_delete
 request::is_get
@@ -172,6 +176,7 @@ request::method
 request::param
 request::path
 request::post
+request::scheme
 response::error
 response::header
 response::html

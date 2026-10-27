@@ -6,6 +6,7 @@
 #include <fstream>
 #include <cstring>
 #include <cstdint>
+#include <cctype>
 #include <iomanip>
 #include <stdexcept>
 #include <filesystem>
@@ -247,6 +248,14 @@ void WebContext::init_from_cgi() {
     const char* ra = std::getenv("REMOTE_ADDR");
     remote_addr = ra ? ra : "";
 
+    // HTTPS ve Host: CGI ortamını web sunucusu kurar (istemci değil) — FastCGI ile aynı kural.
+    // Eskiden CGI'de is_https hiç ayarlanmıyordu: HTTPS sitede oturum çerezi Secure almıyordu.
+    { const char* h = std::getenv("HTTPS"); std::string hs = h ? h : "";
+      for (auto& c : hs) c = (char)std::tolower((unsigned char)c);
+      const char* rs = std::getenv("REQUEST_SCHEME");
+      is_https = (hs == "on" || hs == "1" || (rs && std::string(rs) == "https")); }
+    { const char* hh = std::getenv("HTTP_HOST"); host = clean_host(hh ? hh : ""); }
+
     // Cookies
     const char* ck = std::getenv("HTTP_COOKIE");
     if (ck) cookies_in = parse_cookies(ck);
@@ -285,6 +294,37 @@ std::map<std::string, std::string> WebContext::parse_query(const std::string& qs
         }
     }
     return result;
+}
+
+std::string WebContext::clean_host(const std::string& raw) {
+    // Host istemciden gelir: Origin karşılaştırmasında ve uygulamanın kurduğu bağlantılarda
+    // kullanılır. Yalnız ad[:port] / [ipv6][:port] kabul; başka her şey "" (yok sayılır).
+    std::string h = raw;
+    h.erase(0, h.find_first_not_of(" \t"));
+    auto last = h.find_last_not_of(" \t"); h.erase(last == std::string::npos ? 0 : last + 1);
+    if (h.empty() || h.size() > 255) return "";
+    size_t i = 0;
+    if (h[0] == '[') {                                   // [ipv6]
+        auto close = h.find(']');
+        if (close == std::string::npos || close < 2) return "";
+        for (size_t j = 1; j < close; ++j) {
+            char c = h[j];
+            if (!(std::isxdigit((unsigned char)c) || c == ':' || c == '.')) return "";
+        }
+        i = close + 1;
+    } else {
+        for (; i < h.size() && h[i] != ':'; ++i) {
+            char c = h[i];
+            if (!(std::isalnum((unsigned char)c) || c == '-' || c == '.' || c == '_')) return "";
+        }
+        if (i == 0) return "";
+    }
+    if (i < h.size()) {                                  // :port
+        if (h[i] != ':' || i + 1 == h.size() || h.size() - i - 1 > 5) return "";
+        for (size_t j = i + 1; j < h.size(); ++j) if (!std::isdigit((unsigned char)h[j])) return "";
+    }
+    for (auto& c : h) c = (char)std::tolower((unsigned char)c);
+    return h;
 }
 
 std::map<std::string, std::string> WebContext::parse_cookies(const std::string& raw) {

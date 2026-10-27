@@ -102,6 +102,8 @@ static std::vector<uint8_t> random_bytes(size_t n) {
 #endif
     return buf;
 }
+// csrf:: (web_stdlib) da aynı kaynağı kullanır.
+std::vector<uint8_t> secure_random_bytes(size_t n) { return random_bytes(n); }
 
 // ── auth module ───────────────────────────────────────────────────────────────
 

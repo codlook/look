@@ -71,6 +71,13 @@ struct WebContext {
     // Secure flag is gated on this: Secure only helps under TLS, so setting it over plain HTTP
     // just stops the cookie from being sent (which silently breaks local http:// dev).
     bool is_https = false;
+    // İsteğin ana bilgisayarı (request::host, csrf:: Origin denetimi). is_https ile aynı kural:
+    // --mode http'de Host; X-Forwarded-Host yalnız bağlanan adres LOOK_TRUSTED_PROXY'deyse.
+    // FastCGI/CGI'de web sunucusunun HTTP_HOST'u (önündeki sunucu güvenilen taraftır).
+    // Geçersiz değer (boşluk, kontrol karakteri, '/', '@' …) → "" (clean_host).
+    std::string host;
+    // csrf:: — bu istekte kullanılan anahtar tabanı (çerez aynı istekte cookies_in'e dönmez).
+    std::string csrf_base;
     std::map<std::string, std::string> get_params;
     std::map<std::string, std::string> post_params;
     std::map<std::string, std::string> cookies_in;
@@ -110,6 +117,8 @@ struct WebContext {
     static std::string url_decode(const std::string& s, bool plus_is_space = true);
     static std::map<std::string, std::string> parse_query(const std::string& qs);
     static std::map<std::string, std::string> parse_cookies(const std::string& raw);
+    // Host başlığı değerini doğrula + küçük harfe çevir: ad[:port] ya da [ipv6][:port]; değilse "".
+    static std::string clean_host(const std::string& raw);
 
     // Header output
     std::string build_headers() const;

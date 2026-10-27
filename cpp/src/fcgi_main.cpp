@@ -560,6 +560,7 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
     // HTTPS from the FCGI params is set by the web server (Apache/nginx), not the client — trusted.
     { std::string h = param("HTTPS"); for (auto& c : h) c = (char)std::tolower((unsigned char)c);
       web.is_https = (h == "on" || h == "1" || param("REQUEST_SCHEME") == "https"); }
+    web.host = look::WebContext::clean_host(param("HTTP_HOST"));   // aynı: web sunucusunun Host'u
     std::string ck  = param("HTTP_COOKIE");
     if (!ck.empty()) web.cookies_in = look::WebContext::parse_cookies(ck);
 

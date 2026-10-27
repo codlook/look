@@ -4,6 +4,7 @@
 #include "look/struct_types.h"
 #include "look/db_dsn.h"   // pg_resolve_tls (saf TLS-karar dikişi)
 #include "look/session_files.h" // dosya sürücüsü: 0700 dizin, 0600 dosya, sahiplik denetimi
+#include "look/crypto_sha256.h"  // csrf:: HMAC-SHA256
 #include "look/session_esc.h"   // valid_sid + sess_esc/blob (saf, tablo-test edilebilir)
 #include "look/fiber.h"
 #include <cmath>
@@ -307,6 +308,15 @@ static Module make_request(WebContext* ctx) {
     };
     m.functions["ip"] = [ctx](auto) -> Value {
         return Value(ctx->remote_addr);
+    };
+    // request::scheme() / request::host() — istemcinin gördüğü adres. X-Forwarded-Proto/-Host yalnız
+    // güvenilen vekilden (LOOK_TRUSTED_PROXY) — request::ip ile aynı kural; uygulama başlığı kendisi
+    // okursa istemci şemayı/ana bilgisayarı seçebilir. host: küçük harf, ad[:port]; geçersizse "".
+    m.functions["scheme"] = [ctx](auto) -> Value {
+        return Value(std::string(ctx->is_https ? "https" : "http"));
+    };
+    m.functions["host"] = [ctx](auto) -> Value {
+        return Value(ctx->host);
     };
     // request::header("Authorization") — gelen HTTP header'ını oku.
     // Anahtar case-insensitive (headers_in lowercase saklanır: Authorization,
@@ -814,6 +824,145 @@ static std::string session_secure_attr(WebContext* ctx) {
     return "";
 }
 
+// ── csrf:: — sunucuda durum yok: imzalı çift-gönderim çerezi ─────────────────────
+// (gorilla/csrf, OWASP "signed double-submit"; LookPress src/security.lk ile aynı algoritma)
+//   çerez look_csrf = taban . "." . HMAC(LOOK_SECRET, "csrf|" . taban)   HTTPS'te __Host-look_csrf (Secure)
+//   form  _csrf     = nonce . "." . HMAC(taban, nonce)   — her çağrıda farklı (BREACH)
+// Anahtarı oturuma yazmak, form gören her ziyaretçiye sunucuda bir oturum dosyası açtırıyordu
+// (çerezsiz istekler diski doldurabiliyordu). Doğrulama: çerez imzası LOOK_SECRET ya da
+// LOOK_SECRET_PREVIOUS ile geçerli, gönderilen değerin MAC'i tabanla tutar, Origin varsa bu site.
+// session::regenerate/destroy (giriş/çıkış) yeni taban verir: girişten önce ele geçirilmiş ya da
+// dayatılmış bir anahtar sonra geçmez. __Host- öneki: alt alan adından çerez dayatılamaz.
+static std::string csrf_hex(const std::vector<uint8_t>& b) {
+    static const char* hx = "0123456789abcdef";
+    std::string o; o.reserve(b.size() * 2);
+    for (uint8_t c : b) { o += hx[c >> 4]; o += hx[c & 0xF]; }
+    return o;
+}
+static std::string csrf_mac(const std::string& key, const std::string& msg) {
+    return csrf_hex(look::hmac_sha256(std::vector<uint8_t>(key.begin(), key.end()),
+                                      std::vector<uint8_t>(msg.begin(), msg.end())));
+}
+static bool csrf_equal(const std::string& a, const std::string& b) {   // sabit süreli
+    if (a.size() != b.size()) return false;
+    unsigned char d = 0;
+    for (size_t i = 0; i < a.size(); ++i) d |= (unsigned char)(a[i] ^ b[i]);
+    return d == 0;
+}
+// İmza anahtarları: önce güncel, sonra (varsa) önceki — anahtar değişirken açık formlar 403 almasın.
+// require: anahtar yoksa fırlat (csrf:: çağrıları) ya da boş dön (session:: içinden yenileme).
+static std::vector<std::string> csrf_secrets(bool require) {
+    const char* cur = std::getenv("LOOK_SECRET");
+    std::string c = cur ? cur : "";
+    if (c.size() < 32) {
+        if (!require) return {};
+        throw std::runtime_error("csrf: LOOK_SECRET is not set or shorter than 32 characters. Set it to a "
+            "random value, the same on every server (e.g. openssl rand -hex 32): CSRF tokens are signed with it");
+    }
+    std::vector<std::string> v{c};
+    const char* p = std::getenv("LOOK_SECRET_PREVIOUS");
+    if (p && *p) v.push_back(p);
+    return v;
+}
+// Secure: oturum çereziyle aynı karar (LOOK_SESSION_SECURE 1/0 zorlar; yoksa gerçek HTTPS).
+static bool csrf_secure(WebContext* ctx) {
+    const char* e = std::getenv("LOOK_SESSION_SECURE");
+    if (e) return std::string(e) != "0";
+    return ctx && ctx->is_https;
+}
+static std::string csrf_cookie_name(WebContext* ctx) {
+    return csrf_secure(ctx) ? "__Host-look_csrf" : "look_csrf";
+}
+// Çerezdeki taban: imzası anahtarlardan biriyle (0..max_key) geçerliyse taban, değilse "".
+static std::string csrf_cookie_base(WebContext* ctx, size_t max_key) {
+    auto it = ctx->cookies_in.find(csrf_cookie_name(ctx));
+    if (it == ctx->cookies_in.end()) return "";
+    const std::string& v = it->second;
+    auto dot = v.find('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 == v.size() || v.find('.', dot + 1) != std::string::npos)
+        return "";
+    std::string base = v.substr(0, dot), sig = v.substr(dot + 1);
+    auto keys = csrf_secrets(true);
+    for (size_t i = 0; i < keys.size() && i <= max_key; ++i)
+        if (csrf_equal(sig, csrf_mac(keys[i], "csrf|" + base))) return base;
+    return "";
+}
+static void csrf_set_cookie(WebContext* ctx, const std::string& base) {
+    std::string name = csrf_cookie_name(ctx);
+    auto& out = ctx->set_cookies_out;   // aynı istekte ikinci kez (yenileme): eski satır gider
+    out.erase(std::remove_if(out.begin(), out.end(),
+        [&](const std::string& s) { return s.rfind(name + "=", 0) == 0; }), out.end());
+    out.push_back(name + "=" + base + "." + csrf_mac(csrf_secrets(true)[0], "csrf|" + base) +
+                  "; Path=/; HttpOnly" + (csrf_secure(ctx) ? "; Secure" : "") + "; SameSite=Lax");
+    ctx->csrf_base = base;
+}
+// Bu isteğin tabanı: geçerli çerez varsa o (önceki anahtarla imzalıysa güncel anahtarla yeniden
+// imzalanır), yoksa yeni taban + çerez. Bir istekte hep aynı taban.
+static std::string csrf_base(WebContext* ctx) {
+    if (!ctx->csrf_base.empty()) return ctx->csrf_base;
+    std::string b = csrf_cookie_base(ctx, 0);
+    if (!b.empty()) { ctx->csrf_base = b; return b; }
+    b = csrf_cookie_base(ctx, 1);
+    if (b.empty()) b = csrf_hex(look::secure_random_bytes(32));
+    csrf_set_cookie(ctx, b);
+    return b;
+}
+// session::regenerate / session::destroy: uygulama csrf:: kullanıyorsa (bu istekte ya da çerezi
+// geldiyse) yeni taban. Kullanmayan uygulamada hiçbir şey yapmaz (LOOK_SECRET de istemez).
+static void csrf_rotate_if_used(WebContext* ctx) {
+    bool used = !ctx->csrf_base.empty() || ctx->cookies_in.count("look_csrf") ||
+                ctx->cookies_in.count("__Host-look_csrf");
+    if (!used || csrf_secrets(false).empty()) return;
+    csrf_set_cookie(ctx, csrf_hex(look::secure_random_bytes(32)));
+}
+// Origin başlığı varsa bu siteden mi (request::host — X-Forwarded-Host yalnız güvenilen vekilden).
+static bool csrf_origin_ok(WebContext* ctx) {
+    auto it = ctx->headers_in.find("origin");
+    if (it == ctx->headers_in.end() || it->second.empty()) return true;   // eski tarayıcı: yalnız anahtar
+    std::string o = it->second;
+    for (auto& c : o) c = (char)std::tolower((unsigned char)c);
+    if (o == "null") return false;                                           // opak köken (sandbox, data:)
+    auto p = o.find("://");
+    if (p == std::string::npos) return false;
+    std::string oh = o.substr(p + 3);
+    if (!ctx->host.empty() && oh == ctx->host) return true;
+    auto h = ctx->headers_in.find("host");
+    return h != ctx->headers_in.end() && !oh.empty() && oh == WebContext::clean_host(h->second);
+}
+
+static Module make_csrf_module(WebContext* ctx) {
+    Module m;
+    m.name = "csrf";
+    // csrf::token() — forma ya da X-CSRF-Token başlığına konan değer; her çağrıda yeni nonce.
+    m.functions["token"] = [ctx](auto) -> Value {
+        std::string base = csrf_base(ctx);
+        std::string nonce = csrf_hex(look::secure_random_bytes(16));
+        return Value(nonce + "." + csrf_mac(base, nonce));
+    };
+    // csrf::field() — formun içine konan gizli alan (değer yalnız [0-9a-f.] — kaçış gerekmez).
+    m.functions["field"] = [ctx](auto) -> Value {
+        std::string base = csrf_base(ctx);
+        std::string nonce = csrf_hex(look::secure_random_bytes(16));
+        return Value("<input type=\"hidden\" name=\"_csrf\" value=\"" + nonce + "." + csrf_mac(base, nonce) + "\">");
+    };
+    // csrf::verify() — gönderilen değer doğru mu: POST alanı _csrf, yoksa X-CSRF-Token başlığı.
+    // Sonucu kullanılmayan çağrı derleme hatasıdır (Pure): "csrf::verify();" hiçbir şeyi korumaz.
+    m.functions["verify"] = [ctx](auto) -> Value {
+        csrf_secrets(true);
+        if (!csrf_origin_ok(ctx)) return Value(false);
+        std::string base = csrf_cookie_base(ctx, 1);
+        if (base.empty()) return Value(false);
+        std::string sent;
+        auto pp = ctx->post_params.find("_csrf");
+        if (pp != ctx->post_params.end()) sent = pp->second;
+        if (sent.empty()) { auto h = ctx->headers_in.find("x-csrf-token"); if (h != ctx->headers_in.end()) sent = h->second; }
+        auto dot = sent.find('.');
+        if (dot == std::string::npos || dot == 0 || sent.find('.', dot + 1) != std::string::npos) return Value(false);
+        return Value(csrf_equal(sent.substr(dot + 1), csrf_mac(base, sent.substr(0, dot))));
+    };
+    return m;
+}
+
 static Module make_session_module(WebContext* ctx) {
     Module m;
     m.name = "session";
@@ -845,6 +994,7 @@ static Module make_session_module(WebContext* ctx) {
         ctx->cookies_in["LOOK_SESSION"] = sid;
         ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
         if (!blob.empty()) sess_store(sid, blob);   // veriyi yeni SID'e taşı
+        csrf_rotate_if_used(ctx);                   // giriş: yeni CSRF tabanı (csrf:: kullanılıyorsa)
         return Value(sid);
     };
     m.functions["set"] = [ctx](auto args) -> Value {
@@ -898,6 +1048,7 @@ static Module make_session_module(WebContext* ctx) {
         ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
         ctx->set_cookies_out.push_back(
             std::string("LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly") + session_secure_attr(ctx) + "; SameSite=Lax");
+        csrf_rotate_if_used(ctx);                   // çıkış: yeni CSRF tabanı
         return Value();
     };
 
@@ -1745,6 +1896,7 @@ std::map<std::string, Module> make_web_modules(WebContext* ctx, ModuleHost* inte
     add(make_json_module());
     add(make_cookie_module(ctx));
     add(make_session_module(ctx));
+    add(make_csrf_module(ctx));
     add(make_route_module(ctx));
     add(make_db_module(interp));
     return mods;

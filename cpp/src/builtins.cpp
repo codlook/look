@@ -214,6 +214,10 @@ const std::vector<std::string>& builtin_names() {
         // timer::wait([ms]) — komut satırında tek seferlik zamanlayıcıları bekler (parallel::wait ile
         // aynı biçim). Betik bitince süreç biter; beklemek açıkça yazılır.
         "timer::wait",
+        // request::scheme/host — istemcinin gördüğü şema ve ana bilgisayar (güvenilen vekil kuralıyla).
+        "request::scheme", "request::host",
+        // csrf:: — sunucuda durumsuz CSRF koruması (imzalı çift-gönderim çerezi, LOOK_SECRET).
+        "csrf::token", "csrf::field", "csrf::verify",
     };
     return NAMES;
 }
@@ -271,6 +275,9 @@ const std::vector<EffectRow>& effect_rows() {
             "type::to_string", "type::to_bool",
             "validator::required", "validator::email", "validator::integer", "validator::numeric",
             "validator::min", "validator::max", "validator::check",
+            // Etkisi yok, sonucu tek anlamı: "csrf::verify();" yazıp sonucuna bakmamak hiçbir şeyi
+            // korumaz — atılan sonuç derleme hatası olsun diye burada.
+            "csrf::verify",
         }},
         { BuiltinEffect::Reads, {
             "chan_size", "env", "config", "args",
@@ -290,7 +297,7 @@ const std::vector<EffectRow>& effect_rows() {
             "request::path", "request::ip", "request::param", "request::all", "request::header",
             "request::headers", "request::is_get", "request::is_post", "request::is_put",
             "request::is_delete", "request::is_head", "request::is_options", "request::is_patch",
-            "request::file",
+            "request::file", "request::scheme", "request::host",
             "route::matched", "route::param", "runtime::stats",
             "session::get", "session::has", "string::random",
             "sse::clients", "ws::clients",
@@ -301,6 +308,7 @@ const std::vector<EffectRow>& effect_rows() {
             "app::set",
             "cache::set", "cache::delete", "cache::flush",
             "cookie::set", "cookie::delete",
+            "csrf::token", "csrf::field",   // çerezi kurar/yeniler
             "crypto::rs256_sign", "crypto::rs256_sign_b64url",   // anahtar yükler, hatalı anahtarda fırlatır
             "db::query", "db::exec", "db::col", "db::close", "db::connect", "db::transaction",
             "db::begin", "db::commit", "db::rollback",
