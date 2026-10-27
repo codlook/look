@@ -963,6 +963,21 @@ struct HttpServer::Impl {
 
 // ── HttpServer public API ─────────────────────────────────────────────────────
 
+// HTTP modunun dinleme adresi: --bind / LOOK_BIND (IPv4). Boş → tüm arayüzler (varsayılan
+// değişmedi: Ubuntu kurulumu ve Docker doğrudan hizmet verir). Eskiden adres seçilemiyordu: bir
+// ters vekilin (Plesk'te Apache) arkasındaki site kendi portunda internete de açıktı — vekil
+// atlanıp HTTPS, vekil kuralları ve güvenilen vekil başlıkları devre dışı bırakılabiliyordu.
+// Ad (localhost) kabul edilmez: çözümlemede ::1'e düşüp IPv4 dinleyiciyle eşleşmeyebilir.
+static uint32_t http_bind_addr() {
+    const char* e = std::getenv("LOOK_BIND");
+    if (!e || !*e) return htonl(INADDR_ANY);
+    in_addr a{};
+    if (inet_pton(AF_INET, e, &a) != 1)
+        throw std::runtime_error(std::string("invalid --bind / LOOK_BIND address '") + e +
+                                 "': give an IPv4 address such as 127.0.0.1 (a name like localhost is not resolved)");
+    return a.s_addr;
+}
+
 HttpServer::HttpServer(int port, int workers, HttpHandler handler,
                        WsHandler ws_handler, SseHandler sse_handler)
     : impl_(std::make_unique<Impl>())
@@ -999,11 +1014,11 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
 
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_addr.s_addr = http_bind_addr();
     addr.sin_port        = htons((uint16_t)port);
 
     if (bind(srv, (sockaddr*)&addr, sizeof(addr)) < 0)
-        throw std::runtime_error("bind() failed on port " + std::to_string(port));
+        throw std::runtime_error("bind() failed on " + std::string(std::getenv("LOOK_BIND") && *std::getenv("LOOK_BIND") ? std::getenv("LOOK_BIND") : "0.0.0.0") + ":" + std::to_string(port));
     raise_fd_limit();
     for (const char* gone : {"LOOK_WS_MAX_CONN", "LOOK_SSE_MAX_CONN"}) {
         const char* e = std::getenv(gone);
@@ -1083,7 +1098,7 @@ void HttpServer::run() {
                     ::setsockopt(worker_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
                     sockaddr_in waddr{};
                     waddr.sin_family      = AF_INET;
-                    waddr.sin_addr.s_addr = INADDR_ANY;
+                    waddr.sin_addr.s_addr = http_bind_addr();
                     waddr.sin_port        = htons((uint16_t)shared_port);
                     if (::bind(worker_fd, (sockaddr*)&waddr, sizeof(waddr)) < 0 ||
                         ::listen(worker_fd, 16384) < 0) {

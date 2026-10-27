@@ -41,6 +41,7 @@ WantedBy=multi-user.target
 DB_DSN=sqlite:///var/www/myapp/data/app.db
 ADMIN_PASSWORD=…            # your app's secrets
 LOOK_TRUSTED_PROXY=127.0.0.1  # so X-Forwarded-* from nginx is honoured (see §3)
+LOOK_BIND=127.0.0.1           # --mode http: only nginx can reach the app's port
 LOOK_SESSION_SECURE=1         # TLS terminates at the proxy; force Secure on session cookies
 ```
 
@@ -226,7 +227,7 @@ Raise the file-descriptor limit for the service (systemd: `LimitNOFILE=200000`).
 
 ## Checklist
 
-- [ ] `lk-fcgi --mode http` runs as a systemd service on a loopback port
+- [ ] `lk-fcgi --mode http` runs as a systemd service on a loopback port (`LOOK_BIND=127.0.0.1`; check with `ss -tlnp`)
 - [ ] nginx terminates TLS and reverse-proxies with `proxy_buffering on`
 - [ ] `client_body_timeout` / `client_header_timeout` / `client_max_body_size` set at nginx
 - [ ] `LOOK_TRUSTED_PROXY` set to the proxy address (real client IP)

@@ -142,7 +142,9 @@ fi
 SVC_FILE="/etc/systemd/system/${SVC_NAME}.service"
 
 if [ "$MODE" = "http" ]; then
-    EXEC_CMD="$LK_FCGI --mode http --port $PORT --workers $WORKERS --script $SCRIPT"
+    # Yalniz yerel adreste dinler: Apache vekili 127.0.0.1:$PORT'a gider (asagida). Eskiden tum
+    # arayuzlerde dinliyordu — site kendi portunda internete de acikti, Apache atlanabiliyordu.
+    EXEC_CMD="$LK_FCGI --mode http --bind 127.0.0.1 --port $PORT --workers $WORKERS --script $SCRIPT"
 else
     EXEC_CMD="$LK_FCGI --port $PORT --workers $WORKERS --script $SCRIPT"
 fi

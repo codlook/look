@@ -1,5 +1,5 @@
 Name:           look-lang
-Version:        1.0.41
+Version:        1.0.42
 Release:        1%{?dist}
 Summary:        LOOK — sıfır bağımlılık web scripting dili (gömülü SMTP/IMAP, VM, DB)
 

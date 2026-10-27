@@ -1,455 +1,184 @@
-# LOOK — Ubuntu / AlmaLinux Deployment Rehberi
+# Deploying LOOK on Ubuntu / AlmaLinux
 
-At çalışsın, açık kapsamla yaz, framework kurma.
-
-Bu rehber Ubuntu 22.04/24.04 LTS ve AlmaLinux 8/9 üzerinde LOOK uygulamalarını production'a almak için hazırlanmıştır.
-
----
-
-## Hızlı Kurulum (Önerilen)
-
-```bash
-# Tek komutla kur — binary indir, systemd yaz, nginx ayarla
-curl -fsSL https://get.look-lang.org | sudo bash -- --with-service --with-nginx --with-cli
-
-# Ya da seçeneklerle:
-sudo bash install.sh --with-service --with-nginx --port 9000 --workers 8
-```
-
-Kurulum scripti şunları otomatik yapar:
-- Distro algılar (Ubuntu → apt, AlmaLinux → dnf)
-- `look-fcgi` binary'sini `/usr/local/bin/` altına indirir
-- `systemd` servisi yazar, etkinleştirir ve başlatır
-- `nginx` `fastcgi_pass` yapılandırması yazar ve reload eder
-- Örnek `index.lk` oluşturur
-
-```bash
-# Hızlı doğrulama
-curl http://localhost/health
-look version
-```
+This guide covers Ubuntu 22.04 / 24.04 LTS, Debian, and AlmaLinux / Rocky 8 and 9. The same
+portable binary runs on all of them. For the recommended production shape (nginx in front, TLS,
+the environment settings that matter) see also [DEPLOYMENT.md](../DEPLOYMENT.md).
 
 ---
 
-## Manuel Kurulum
+## 1. Install
 
-### Gereksinimler
+Download the Linux package from the GitHub release, check it, and run the installer as root:
 
-- Ubuntu 22.04 LTS / 24.04 LTS **veya** AlmaLinux 8 / Rocky Linux 8+
-- nginx veya Apache 2.4+
-- MySQL 8.0+ / MariaDB 10.6+ / PostgreSQL 14+ (opsiyonel)
-- Root veya sudo erişimi
+```bash
+curl -fsSLO https://github.com/codlook/look/releases/latest/download/look-lang-linux.zip
+curl -fsSLO https://github.com/codlook/look/releases/latest/download/SHA256SUMS.txt
+sha256sum -c --ignore-missing SHA256SUMS.txt     # must print: look-lang-linux.zip: OK
+unzip look-lang-linux.zip -d look-lang && cd look-lang
+sudo bash install.sh
+```
 
-> **AlmaLinux / RHEL — SELinux:** Taze kurulumda SELinux genellikle **enforcing** modundadır. Bu modda
-> uygulamanın yazdığı upload dizini ile SQLite DB dosyasının doğru SELinux context'ine sahip olması,
-> ve `--mode http`'nin standart-dışı bir porta bağlanması için ek yapılandırma gerekebilir
-> (`semanage fcontext` / `restorecon`, port için `semanage port`, veya reverse-proxy senaryosunda
-> `httpd_can_network_connect`). *Not: bu adımlar enforcing bir ortamda ayrıca doğrulanmalıdır;
-> `getenforce` ile modu kontrol edin.*
+Download only from `github.com/codlook/look`. There is no other install address, and no
+one-line installer that pipes a download into a root shell.
+
+### What `install.sh` does
+
+- Installs `lk`, `lk-fcgi` and `lk-cgi` to `/usr/local/bin` (from the `bin/` folder in the zip; nothing is downloaded).
+- Creates a sample app at `/var/www/look/index.lk`, unless one is already there.
+- Writes `/etc/look/look.env`, unless it exists.
+- Creates the system user `look` and makes the app directory its own.
+- Writes `look.service`, which runs `lk-fcgi --mode http` as `look` on port **9000**. Sessions are kept in `/var/lib/look/sessions`.
+- Starts the service and checks that it answers.
+
+### What it does not do
+
+- It does not install or configure **nginx or Apache**.
+- It does not set up TLS.
+- It does not change the firewall.
+
+It takes no command-line options. The settings are environment variables:
+
+| Variable | Default | |
+|---|---|---|
+| `LOOK_PORT` | `9000` | HTTP port |
+| `LOOK_WORKERS` | `0` | worker threads; `0` = automatic |
+| `LOOK_APP_DIR` | `/var/www/look` | app directory |
+| `LOOK_BIN_SRC` | the zip's `bin/` | a local folder with the binaries (offline install) |
+
+```bash
+sudo LOOK_PORT=9100 LOOK_APP_DIR=/var/www/myapp bash install.sh
+```
+
+> **The port is open to the network.** The service listens on every interface, so
+> `http://<server ip>:9000/` is reachable from outside unless a firewall blocks it. That is right
+> when LOOK itself is the public server; then set the rate limits in
+> [DEPLOYMENT.md §4](../DEPLOYMENT.md#4-dos-knobs--and-why-most-are-off-behind-a-proxy).
+> **If you put nginx or Apache in front, also do step 2**, otherwise anyone can bypass the proxy,
+> and with it TLS and the proxy's rules, by using the port directly.
+
+On a Plesk server, use the Plesk extension (`look-lang-plesk.zip` from the same release) instead.
 
 ---
 
-## 1. Apache Kurulumu
+## 2. Behind nginx or Apache: listen on 127.0.0.1 only
+
+Add these lines to `/etc/look/look.env` (LOOK 1.0.42 or later) and restart the service:
+
+```sh
+LOOK_BIND=127.0.0.1           # only the proxy on this machine can reach the port
+LOOK_TRUSTED_PROXY=127.0.0.1  # take the client IP and https from the proxy's X-Forwarded-* headers
+```
 
 ```bash
-sudo apt update
-sudo apt install -y apache2
-
-# Gerekli modüller
-# ÖNEMLİ: mpm_prefork + mod_cgi zorunlu — mpm_event + mod_cgid .lk CGI'yi çalıştırmaz
-sudo a2dismod mpm_event
-sudo a2enmod mpm_prefork cgi rewrite proxy proxy_fcgi actions
-
-sudo systemctl restart apache2
+sudo systemctl restart look
+ss -tlnp | grep ':9000 '      # must show 127.0.0.1:9000, not 0.0.0.0:9000 or *:9000
 ```
 
----
+Writing your own unit file instead? Pass `--bind 127.0.0.1` to `lk-fcgi --mode http`.
+`--bind` takes an IPv4 address. A name such as `localhost` is refused, because it may resolve
+to the IPv6 address `::1`.
 
-## 2. LOOK Binary'lerinin Kurulumu
-
-**Seçenek A — install.sh (önerilen):**
-
-```bash
-# Ubuntu/AlmaLinux — sadece binary (servis+nginx ayrıca)
-sudo bash install.sh --with-cli
-```
-
-**Seçenek B — manuel kopyalama:**
-
-```bash
-# Tek portatif binary — her dağıtımda aynı (bkz: Linux build rehberi / build-portable.sh)
-scp cpp/build-portable/lk-fcgi user@sunucu:/usr/local/bin/lk-fcgi
-scp cpp/build-portable/lk-cgi  user@sunucu:/usr/local/bin/lk-cgi
-scp cpp/build-portable/lk      user@sunucu:/usr/local/bin/lk
-
-# Sunucuda izinleri ayarla
-sudo chmod +x /usr/local/bin/lk-fcgi /usr/local/bin/lk-cgi /usr/local/bin/lk
-
-# AlmaLinux: /var/www/cgi-bin/ altına da kopyala
-sudo cp /usr/local/bin/lk-cgi /var/www/cgi-bin/lk-cgi
-```
-
-**Doğrulama:**
-
-```bash
-look version          # LOOK 1.0.0 (linux/amd64)
-look-fcgi version     # LOOK 1.0.0 (linux/amd64)
-```
-
----
-
-## 3. Uygulama Dizini
-
-```bash
-# Uygulama dosyaları
-sudo mkdir -p /var/www/myapp
-sudo chown www-data:www-data /var/www/myapp
-
-# index.lk ve statik dosyaları kopyala
-scp index.lk user@sunucu:/var/www/myapp/
-scp .env      user@sunucu:/var/www/myapp/
-
-# Log dizini
-sudo mkdir -p /var/log/look
-sudo chown www-data:www-data /var/log/look
-```
-
-### .env dosyası (`/var/www/myapp/.env`)
-
-```
-APP_ENV=production
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=myapp
-DB_USER=myapp_user
-DB_PASS=guclu_sifre
-LOG_DIR=/var/log/look
-```
-
----
-
-## 4. Nginx ile Kullanım (Apache alternatifi)
-
-Apache yerine nginx tercih ediyorsan — `install.sh --with-nginx` otomatik yazar, ya da manuel:
+### nginx
 
 ```nginx
-# /etc/nginx/conf.d/look.conf
-upstream look_backend {
-    server 127.0.0.1:9000;
-    keepalive 32;
-}
-
 server {
     listen 80;
-    server_name myapp.com;
-    root /var/www/myapp;
+    server_name myapp.example.com;
 
-    # Statik dosyalar
-    location ~* \.(css|js|png|jpg|svg|woff2|ico)$ {
-        try_files $uri =404;
-        expires 30d;
-    }
-
-    # LOOK FastCGI
     location / {
-        fastcgi_pass look_backend;
-        fastcgi_param SCRIPT_FILENAME $document_root/index.lk;
-        fastcgi_param REQUEST_URI     $request_uri;
-        fastcgi_param REQUEST_METHOD  $request_method;
-        fastcgi_param QUERY_STRING    $query_string;
-        fastcgi_param CONTENT_TYPE    $content_type;
-        fastcgi_param CONTENT_LENGTH  $content_length;
-        fastcgi_param HTTP_COOKIE     $http_cookie;
-        fastcgi_param REMOTE_ADDR     $remote_addr;
-        fastcgi_read_timeout 30;
+        proxy_pass http://127.0.0.1:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
+For TLS, request-body limits and WebSocket / SSE routes, use the full configuration in
+[DEPLOYMENT.md §2](../DEPLOYMENT.md#2-nginx-reverse-proxy-tls--buffering).
 
----
-
-## 5. look Servisi (systemd)
-
-İki mod arasında seçim yap:
-
-**A) FastCGI modu** — nginx/Apache proxy ile (önerilen, kararlı):
-
-`/etc/systemd/system/look-fcgi.service`:
-
-```ini
-[Unit]
-Description=LOOK FastCGI Server
-After=network.target mysql.service
-Wants=mysql.service
-
-[Service]
-Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=/var/www/myapp
-ExecStart=/usr/local/bin/lk-fcgi --port 9000 --workers 4
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**B) HTTP modu** — doğrudan HTTP, WebSocket ve SSE desteği:
-
-`/etc/systemd/system/look-http.service`:
-
-```ini
-[Unit]
-Description=LOOK HTTP Server
-After=network.target mysql.service
-
-[Service]
-Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=/var/www/myapp
-ExecStart=/usr/local/bin/lk-fcgi --mode http --port 7400 --workers 8
-Restart=on-failure
-RestartSec=3
-EnvironmentFile=/var/www/myapp/.env
-
-[Install]
-WantedBy=multi-user.target
-```
-
-> **HTTP modu gereksinimleri:** WebSocket, SSE ve gömülü SMTP sunucu yalnızca `--mode http`'de çalışır. FastCGI modunda bu özellikler pasiftir.
-
-Servisi etkinleştir:
+### Apache
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable look-fcgi   # veya look-http
-sudo systemctl start look-fcgi
-
-# Kontrol
-sudo systemctl status look-fcgi
-
-# Uygulama logları / hata teşhisi (500 vb.) — LOOK'un INFO/ERROR satırları buraya gider
-sudo journalctl -u look-fcgi -f          # canlı takip
-sudo journalctl -u look-fcgi -n 50 --no-pager   # son 50 satır
+sudo a2enmod proxy proxy_http headers      # Ubuntu; on AlmaLinux these modules are loaded by default
 ```
-
-> **AlmaLinux / RHEL — servis kullanıcısı:** yukarıdaki şablonlar `User=www-data`/`Group=www-data`
-> kullanır; bu **Debian/Ubuntu** kullanıcısıdır. AlmaLinux/RHEL'de web kullanıcısı **`apache`**'dir
-> (`www-data` yoktur → servis "no such user" ile başlamaz). AlmaLinux'ta `User=apache`/`Group=apache`
-> yazın.
->
-> **Dizin izinleri:** servis root değil, `apache` (veya `www-data`) olarak çalışır — bu yüzden
-> uygulamanın YAZDIĞI dizinler (session, upload, SQLite DB) servis kullanıcısına ait olmalı:
-> `sudo chown -R apache:apache /var/www/myapp` (yoksa session/DB yazımı sessizce başarısız olur).
->
-> **HTTP modu binary:** `--mode http` **`lk-fcgi`** ile çalışır (yukarıdaki B şablonu). CLI `lk`
-> binary'si `--mode http`'yi servis etmez (script'i CLI'da çalıştırır, HTTP dinlemez).
-
----
-
-## 6. Apache Virtual Host
-
-`/etc/apache2/sites-available/myapp.conf` dosyasını oluştur:
 
 ```apache
 <VirtualHost *:80>
-    ServerName myapp.com
-    DocumentRoot /var/www/myapp
-
-    # CGI binary
-    ScriptAlias /cgi-bin/ /usr/local/bin/
-    Action look-handler /cgi-bin/look-cgi
-    AddHandler look-handler .lk
-
-    <Directory /var/www/myapp>
-        Options +ExecCGI
-        AllowOverride None
-        Require all granted
-
-        <IfModule mod_rewrite.c>
-            RewriteEngine On
-
-            # index.lk direkt erişimi engelle
-            RewriteRule ^index\.lk$ / [R=301,L]
-
-            # Statik dosyalar doğrudan serve edilir
-            RewriteCond %{REQUEST_URI} \.(html|htm|css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|pdf|txt|map|webp)$ [NC]
-            RewriteCond %{REQUEST_FILENAME} -f
-            RewriteRule "^" - [L]
-
-            # Dizinler
-            RewriteCond %{REQUEST_FILENAME} -d
-            RewriteRule "^" - [L]
-
-            # Var olan .lk dosyaları → CGI handler
-            RewriteCond %{REQUEST_URI} \.lk$ [NC]
-            RewriteCond %{REQUEST_FILENAME} -f
-            RewriteRule "^" - [L]
-
-            # Geri kalan her şey → LOOK FastCGI router
-            RewriteRule "^" "fcgi://127.0.0.1:9000/var/www/myapp/index.lk" [P,QSA,L]
-        </IfModule>
-    </Directory>
-
-    ErrorLog ${APACHE_LOG_DIR}/myapp-error.log
-    CustomLog ${APACHE_LOG_DIR}/myapp-access.log combined
+    ServerName myapp.example.com
+    ProxyRequests Off
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:9000/
+    ProxyPassReverse / http://127.0.0.1:9000/
 </VirtualHost>
 ```
 
-Site'i etkinleştir:
+In the HTTPS virtual host, also add `RequestHeader set X-Forwarded-Proto "https"`, so that
+LOOK marks the session cookie `Secure`.
+
+Point the proxy at `127.0.0.1`, not at `localhost`.
+
+---
+
+## 3. FastCGI mode (optional)
+
+`lk-fcgi` without `--mode http` speaks FastCGI and listens on `127.0.0.1` by default
+(`LOOK_FCGI_BIND`). WebSocket, SSE and the built-in mail server work only in `--mode http`.
+To use FastCGI, change the service's `ExecStart` (`sudo systemctl edit --full look`):
+
+```ini
+ExecStart=/usr/local/bin/lk-fcgi --port 9000 --workers 0 --script /var/www/look/index.lk
+```
+
+Then use `fcgi://127.0.0.1:9000/` in Apache's `ProxyPass` (`a2enmod proxy_fcgi`). In nginx, use
+`fastcgi_pass 127.0.0.1:9000;` with `include fastcgi_params;`.
+
+---
+
+## 4. Configuration and the database
+
+The service reads `/etc/look/look.env`. Keep secrets there, not in the app directory. The web
+server never serves this file.
+
+```sh
+DB_DSN=mysql://myapp:password@127.0.0.1/myapp        # MySQL 8 / MariaDB
+# DB_DSN=postgres://myapp:password@127.0.0.1/myapp   # PostgreSQL
+# DB_DSN=sqlite:///var/www/look/data/app.db          # SQLite (the directory must belong to look)
+```
+
+After changing it: `sudo systemctl restart look`.
+
+The service runs as `look`. Anything the app writes must belong to that user: the SQLite file
+and its directory, and upload folders. For example: `sudo chown -R look:look /var/www/look`.
+
+> **AlmaLinux / RHEL with SELinux enforcing:** the app's upload directory and SQLite file may
+> need an SELinux context (`semanage fcontext` / `restorecon`). Apache in front of LOOK needs
+> `setsebool -P httpd_can_network_connect 1` to reach the port. Check the mode with
+> `getenforce`.
+
+---
+
+## 5. Running it
 
 ```bash
-sudo a2ensite myapp.conf
-sudo a2dissite 000-default.conf   # varsayılan siteyi devre dışı bırak
-sudo systemctl reload apache2
+systemctl status look                  # is it running?
+journalctl -u look -f                  # logs (errors behind a 500 appear here)
+journalctl -u look -n 50 --no-pager    # the last 50 lines
 ```
+
+- **Editing the app:** changes to `/var/www/look/index.lk` are picked up without a restart.
+- **Updating LOOK:** download and check the new release as in step 1, then run `sudo bash install.sh` again, followed by `sudo systemctl restart look`. A service that is already running keeps the old binary until it restarts. The installer keeps your app and `/etc/look/look.env`, but it rewrites `look.service`, so keep your own settings in `look.env`.
 
 ---
 
-## 7. Veritabanı Kurulumu (opsiyonel)
+## Troubleshooting
 
-```bash
-sudo apt install -y mysql-server
-
-# Güvenlik ayarları
-sudo mysql_secure_installation
-
-# Veritabanı ve kullanıcı oluştur
-sudo mysql -u root -p <<'SQL'
-CREATE DATABASE myapp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'myapp_user'@'localhost' IDENTIFIED BY 'guclu_sifre';
-GRANT ALL PRIVILEGES ON myapp.* TO 'myapp_user'@'localhost';
-FLUSH PRIVILEGES;
-SQL
-
-# Schema yükle
-mysql -u myapp_user -p myapp < schema.sql
-```
-
----
-
-## 8. PostgreSQL Kullanımı
-
-```bash
-# Ubuntu
-sudo apt install -y postgresql
-sudo -u postgres createuser --pwprompt look_user
-sudo -u postgres createdb -O look_user lookdb
-
-# AlmaLinux
-sudo dnf install -y postgresql-server
-sudo postgresql-setup --initdb
-sudo systemctl enable --now postgresql
-```
-
-```lk
-# index.lk — PostgreSQL bağlantısı
-$conn = db::connect("postgres://look_user:sifre@127.0.0.1:5432/lookdb");
-```
-
-> **Not:** PostgreSQL için `pg_hba.conf` dosyasında `md5` auth olmalı.  
-> `host all all 127.0.0.1/32 md5` satırını ekle, sonra `systemctl restart postgresql`.
-
----
-
-## 9. mail:: E-posta Yapılandırması
-
-```bash
-# .env — Mailgun örneği
-MAIL_PROVIDER=mailgun
-MAIL_API_KEY=key-xxxxxxxxxxxxxxxxxxxxxx
-MAIL_FROM=noreply@myapp.com
-```
-
-```lk
-use mail;
-
-$r = mail::send("user@example.com", "Hoşgeldiniz!", "Kaydınız tamamlandı.");
-if (!$r["ok"]) { log::error("Mail hatası: " . $r["message"]); }
-```
-
-Desteklenen provider'lar: `mailgun`, `sendgrid`, `postmark`
-
----
-
-## 10. Doğrulama
-
-```bash
-# look-fcgi çalışıyor mu?
-sudo systemctl status look-fcgi
-
-# Port dinleniyor mu?
-ss -tlnp | grep 9000
-
-# HTTP test
-curl -s http://localhost/
-curl -s http://localhost/api/test
-```
-
----
-
-## 11. Güncelleme (sıfır kesinti)
-
-```bash
-# Yeni binary'yi kopyala
-sudo cp look-fcgi-yeni /usr/local/bin/look-fcgi
-
-# index.lk'yı güncelle — look-fcgi mtime farkını görür, hot reload yapar
-sudo cp index-yeni.lk /var/www/myapp/index.lk
-
-# Servis restart (yalnızca binary değiştiyse gerekir)
-sudo systemctl restart look-fcgi
-```
-
-**Hot reload:** `index.lk` değişince look-fcgi mtime farkını otomatik algılar ve setup fazını yeniden çalıştırır. Servis restart gerekmez.
-
----
-
-## 12. SQLite Kullanımı
-
-MySQL yerine SQLite kullanmak için sadece DSN değiştir:
-
-```lk
-# index.lk
-$conn = db::connect("sqlite:///var/www/myapp/data.db");
-```
-
-SQLite dosyası izinleri:
-
-```bash
-sudo chown www-data:www-data /var/www/myapp/data.db
-sudo chmod 660 /var/www/myapp/data.db
-```
-
----
-
-## Sorun Giderme
-
-| Sorun | Kontrol |
-|-------|---------|
-| 502 Bad Gateway | `systemctl status look-fcgi` — servis çalışıyor mu? |
-| DB bağlanamıyor | `.env` dosyası `DB_HOST=127.0.0.1` (socket değil TCP) |
-| 403 Forbidden | `chown www-data:www-data /var/www/myapp` |
-| Log yok | `LOG_DIR` mutlak path olmalı, `www-data` yazma izni olmalı |
-| Hot reload çalışmıyor | `index.lk` mtime değişmeli — `touch index.lk` dene |
-
----
-
-## Windows (XAMPP) ile Karşılaştırma
-
-| | Windows / XAMPP | Ubuntu / Apache |
-|--|----------------|-----------------|
-| Binary | `look-fcgi.exe` → `C:\xampp\cgi-bin\` | `look-fcgi` → `/usr/local/bin/` |
-| Servis | Manuel başlat veya Task Scheduler | `systemctl enable look-fcgi` |
-| Config | `httpd.conf` `<Directory>` bloğu | `/etc/apache2/sites-available/myapp.conf` |
-| Uygulama | `C:\xampp\htdocs\` | `/var/www/myapp/` |
-| Log | `C:\xampp\htdocs\logs\` | `/var/log/look/` |
-| DB | XAMPP MySQL | `mysql-server` veya SQLite |
-
-**Felsefe aynı:** binary kopyala, 10 satır config, index.lk'yı koy, bitti.
+| Problem | Check |
+|---|---|
+| 502 / 503 from the proxy | `systemctl status look`; the proxy's port must match `LOOK_PORT` |
+| The port is reachable from outside | `LOOK_BIND=127.0.0.1` in `/etc/look/look.env`; check with `ss -tlnp` |
+| Every request comes from 127.0.0.1 (rate limiter, logs) | `LOOK_TRUSTED_PROXY=127.0.0.1` |
+| Session cookie without `Secure` behind HTTPS | the proxy must send `X-Forwarded-Proto: https`, and `LOOK_TRUSTED_PROXY` must be set |
+| The database cannot be opened, or uploads fail | the files belong to `look`; on SELinux, see §4 |

@@ -661,6 +661,7 @@ int main(int argc, char* argv[]) {
     // --workers N     → concurrent dispatch thread sayısı (default: CPU çekirdeği)
     // --mode fcgi     → FastCGI modu (default)
     // --mode http     → HTTP/1.1 modu, Apache bypass, event loop
+    // --bind ADDR     → --mode http dinleme adresi (LOOK_BIND; varsayılan tüm arayüzler)
     // argumansiz      → stdin/stdout modu (mod_fcgid)
     int         tcp_port = 0;
     int         workers  = 0;
@@ -704,6 +705,14 @@ int main(int argc, char* argv[]) {
             mode = argv[++i];
         else if (std::strcmp(argv[i], "--script") == 0 && i + 1 < argc)
             script = argv[++i];
+        else if (std::strcmp(argv[i], "--bind") == 0 && i + 1 < argc) {
+            // --mode http dinleme adresi (LOOK_BIND ile aynı; komut satırı ortamı ezer)
+#ifdef _WIN32
+            _putenv_s("LOOK_BIND", argv[++i]);
+#else
+            setenv("LOOK_BIND", argv[++i], 1);
+#endif
+        }
         else if (argv[i][0] != '-')
             script = argv[i];  // positional arg: script path
     }

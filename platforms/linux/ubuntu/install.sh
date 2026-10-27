@@ -4,7 +4,7 @@
 #
 #   1) look-lang-linux.zip indir (GitHub Releases):
 #      https://github.com/codlook/look/releases/latest/download/look-lang-linux.zip
-#   2) unzip look-lang-linux.zip && cd look-lang-linux-*
+#   2) unzip look-lang-linux.zip -d look-lang && cd look-lang   (zip'te üst klasör yok)
 #   3) sudo bash install.sh      # bin/ zip'in içinde gömülü — indirme yok
 #
 # Ne yapar: binary'yi kurar → örnek uygulama + .env → systemd servisi →

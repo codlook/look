@@ -83,6 +83,12 @@ check "the chosen script is started"             '[[ "$run" == *"--script $DOC/a
 check "the env file is loaded (a # inside a value is kept)" '[[ "$run" == *"DB_DSN=mysql://app:p#ss@localhost/app"* ]]'
 check "quotes around a value are removed"        '[[ "$run" == *"APP_NAME=My Site"* ]]'
 check "LOOK_FILE_ROOT is the document root"      '[[ "$run" == *"LOOK_FILE_ROOT=$DOC"* ]]'
+# 1.4.2'ye kadar HTTP modu tüm arayüzlerde dinliyordu: site kendi portunda internete açıktı,
+# Apache (HTTPS, kuralları) atlanabiliyordu. Servis yalnız 127.0.0.1'de; vekil de oraya gider.
+# (Gerçek dinleme davranışı: cpp/tests/bind_test.sh.)
+check "the service listens on 127.0.0.1 only (--bind)" '[[ "$run" == *"--mode http --bind 127.0.0.1 --port 9150"* ]]'
+check "Apache proxies to 127.0.0.1:<port>, not a name" \
+    'grep -qx "ProxyPass / http://127.0.0.1:9150/" /var/www/vhosts/system/app.site.com/conf/vhost.conf && ! grep -q localhost /var/www/vhosts/system/app.site.com/conf/vhost.conf'
 # Oturumlar: site başına, kullanıcının ev dizininde, web kökünün dışında, kalıcı (PrivateTmp'te
 # yeniden başlatmada düşüyorlardı). Dizini betik (root) yaratmaz; LOOK kullanıcı olarak yaratır.
 check "sessions live in the user's home, per site, outside the web root" \
