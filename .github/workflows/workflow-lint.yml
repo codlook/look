@@ -1,0 +1,27 @@
+# .github/workflows/workflow-lint.yml
+# Bütün iş akışı dosyalarını denetler — AYRI bir dosyada, çünkü denetlediği dosyanın içindeki bir
+# denetim, o dosya bozulunca kendisi de çalışmaz. İki kez yaşandı: ci.yml'de tırnaksız bir adım adı
+# ("name: csrf:: and …") YAML'ı bozdu; GitHub dosyayı okuyamadı, ana CI'ın HİÇBİR işi koşmadı, öbür
+# iş akışları yeşil göründüğü için fark edilmedi. actionlint YAML sözdizimini, iş akışı şemasını ve
+# ${{ }} ifadelerini denetler. (shellcheck/pyflakes kapalı: amaç iş akışlarının OKUNABİLMESİ; betik
+# kalitesi ayrı iş.) İkili sürümü VE SHA-256'sı sabit — indirilen değişirse adım kırılır.
+name: workflow-lint
+on: [push, pull_request]
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install actionlint (pinned version and SHA-256)
+        run: |
+          V=1.7.12
+          F=actionlint_${V}_linux_amd64.tar.gz
+          curl -fsSL -o "$F" "https://github.com/rhysd/actionlint/releases/download/v${V}/${F}"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $F" | sha256sum -c -
+          tar xzf "$F" actionlint
+          ./actionlint -version
+      - name: Every workflow file is valid (actionlint)
+        run: ./actionlint -color -shellcheck= -pyflakes= .github/workflows/*.yml
+      - name: No duplicated, hidden or unquoted-colon step names
+        run: bash cpp/tests/ci_no_duplicate_steps.sh
