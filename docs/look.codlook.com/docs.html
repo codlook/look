@@ -3921,7 +3921,7 @@ LOOK_SMTP_DKIM_KEY_FILE=/etc/dkim/myapp.com.private</code></pre>
     <tr><td><code>LOOK_IMAP_IDLE_TIMEOUT</code></td><td>1800</td><td>Idle-connection recv timeout — seconds (Slowloris + RFC autologout)</td></tr>
   </table>
   <div class="callout tip">
-    <p>The same command brings up three servers at once: <code>lk --mode http --port 7400</code> → HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993. Details: <code>docs/imap-server.md</code> in the repo root.</p>
+    <p>The same command brings up three servers at once: <code>lk-fcgi --mode http --port 7400</code> → HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993. Details: <code>docs/imap-server.md</code> in the repo root.</p>
   </div>
 
   <h3>SMTP User Management</h3>
@@ -4038,7 +4038,7 @@ LOOK_IMAP_CERT=/etc/look/mail.crt   # if absent, LOOK_SMTP_CERT is shared
 LOOK_IMAP_KEY=/etc/look/mail.key
 LOOK_MAIL_USER_DB=mysql://user:pass@127.0.0.1/db   # mail_users (SHARED with SMTP)
 LOOK_MAIL_DIR=/var/mail/look</code></pre>
-  <pre><code class="sh">lk --mode http --port 7400 --workers 4
+  <pre><code class="sh">lk-fcgi --mode http --port 7400 --workers 4
 # All at once: HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993</code></pre>
 
   <h3>IMAP — Supported Commands</h3>

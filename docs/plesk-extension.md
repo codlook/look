@@ -4,7 +4,7 @@
 **Eklenti ID:** `look-lang`
 **Hedef:** Plesk Obsidian 18.0+ · systemd Linux (AlmaLinux/RHEL/Rocky/CloudLinux · Ubuntu/Debian Plesk)
 **Kaynak:** `platforms/plesk/`
-**Canlı örnek:** [look.codlook.com](https://look.codlook.com) — AlmaLinux 8.10, Plesk Obsidian, nginx→Apache→lk-fcgi
+**Canlı örnek:** [test.codlook.com](https://test.codlook.com) — AlmaLinux 8.10, Plesk Obsidian, nginx→Apache→lk-fcgi
 
 LOOK Plesk eklentisi, tek tıkla her Plesk domainini bir **LOOK uygulaması** (kendi
 systemd servisi) olarak yayına alır. Tarayıcı-içi kod editörü, canlı per-domain
@@ -84,12 +84,12 @@ nginx :443  →  Apache :7081 (vhost_ssl.conf ProxyPass)  →  lk-fcgi :<port>
 ```
 
 - **FastCGI modu** (`fcgi`) — Apache `mod_proxy_fcgi` ile; üretim önerisi.
-- **HTTP modu** (`http`) — `lk-fcgi --mode http`; doğrudan HTTP portu.
+- **HTTP modu** (`http`) — `lk-fcgi --mode http --bind 127.0.0.1`; Apache yerel porta vekil olur. 1.4.2 öncesi sürümler tüm arayüzlerde dinliyordu (port dışarıdan erişilebilirdi); güncelleme mevcut servisleri de yeniden yazar.
 
 Servis + Apache proxy config'i `enable.sh` oluşturur; `httpdmng --reconfigure-domain`
 arka planda uygular (panel bloke olmaz).
 
-Örnek: `look.codlook.com` → servis `look-look-codlook-com`, port `9100`.
+Örnek: `example.com` → servis `look-example-com`, port `9100`.
 
 ---
 
@@ -111,7 +111,7 @@ Domain listesi panel-yazılabilir Plesk modül var dizininde tutulur:
 /usr/local/psa/var/modules/look-lang/domains.json
 ```
 
-> `/opt/look/conf` root'a aittir (dnf/RPM binary klasörü); panel `psaadm` olarak
+> `/opt/look/conf` root'a aittir (ikili klasörü); panel `psaadm` olarak
 > çalışır ve oraya yazamaz. Bu yüzden state modül var dizinindedir.
 
 ```json

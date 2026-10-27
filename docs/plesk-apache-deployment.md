@@ -1,272 +1,144 @@
-# LOOK — Plesk + Apache Deployment Rehberi
+# Deploying LOOK on Plesk by hand (Apache)
 
-At calissin, acik kapsamla yaz, framework kurma.
+> **Use the Plesk extension if you can.** It writes everything below for each domain, keeps it
+> correct across updates and is tested on every release: see
+> [plesk-extension-kurulum.md](plesk-extension-kurulum.md). This guide is for servers where the
+> extension is not installed. It sets up the same configuration the extension writes.
 
-> **Not:** Plesk Extension kullaniyorsan bu rehbere gerek yok.  
-> Bak: [plesk-extension-kurulum.md](plesk-extension-kurulum.md) — ZIP yukle, 1 komut, domain ekle, bitti.  
-> Bu rehber **manuel kurulum** icin (Plesk Extension kullanmayanlar veya SSH tercih edenler).
-
-Bu rehber **VPS uzerinde Plesk** kullanan sunucularda LOOK uygulamalarini Apache ile production'a almak icin hazirlanmistir.
-
-**Gereksinimler:**
-- VPS veya Dedicated sunucu (root veya sudo erişimi zorunlu)
-- Plesk Obsidian veya üzeri
-- Apache web server (Plesk kurulumunda seçili)
-- Ubuntu 22.04/24.04 LTS veya AlmaLinux 8 (Plesk'in önerdiği dağıtımlar)
-
-**Platform notu:** Artık **tek portatif binary** (`cpp/build-portable/lk-fcgi`) her dağıtımda çalışır —
-AlmaLinux 8'de derlenir (glibc 2.28 + statik OpenSSL), Ubuntu/Debian/AlmaLinux/Rocky/RHEL 8·9·10+
-üzerinde değişmeden koşar. **Dağıtım başına ayrı derleme yok.** Üretmek için: `docker build -t look-build
--f cpp/Dockerfile.build cpp/ && docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh`.
-
-| Platform | Apache farkı |
-|----------|--------------|
-| Ubuntu/Debian + Plesk | `a2enmod` ile modül aç |
-| AlmaLinux 8 + Plesk | `httpd`, `/var/www/cgi-bin/` |
+Requirements: root SSH access, Plesk Obsidian with Apache, AlmaLinux 8/9 or Ubuntu 22.04/24.04.
+The same portable binary runs on all of them.
 
 ---
 
-## 1. LOOK Binary Kurulumu
+## 1. Install the binaries
 
-Sunucuya SSH ile bağlan:
-
-```bash
-ssh root@sunucu_ip
-```
-
-Binary'leri kopyala:
+Download the Linux package from the GitHub release and check it (see
+[ubuntu-deployment.md §1](ubuntu-deployment.md#1-install)), then:
 
 ```bash
-# Tek portatif binary — her dağıtımda aynı (Ubuntu/AlmaLinux fark etmez)
-scp cpp/build-portable/lk-fcgi root@sunucu_ip:/opt/look/lk-fcgi
-scp cpp/build-portable/lk-cgi  root@sunucu_ip:/opt/look/lk-cgi
-
-# İzinleri ayarla (pscp execute bit'i kaybeder — chmod zorunlu!)
-chmod +x /opt/look/lk-fcgi /opt/look/lk-cgi
+unzip look-lang-linux.zip -d look-lang
+install -d -m 755 /opt/look
+install -m 755 look-lang/bin/lk look-lang/bin/lk-fcgi look-lang/bin/lk-cgi /opt/look/
+/opt/look/lk-fcgi --version
 ```
 
-> **Kritik:** `scp` / `pscp` ile yüklenen binary'lerde execute bit kaybolur. Upload sonrası mutlaka `chmod +x` çalıştır. Binary yüklendikten sonra `systemctl restart` da gerekir.
+`/opt/look` belongs to root and is not writable by the sites. That matters, because the services
+run as the sites' users.
 
 ---
 
-## 2. Uygulama Dizini
+## 2. The service: one per domain, as the domain's user
 
-Plesk'te her domain `/var/www/vhosts/domain.com/httpdocs/` altında yaşar:
+Each domain gets its own service and its own local port (9100, 9101, …). **The service runs as
+the domain's system user, never as root.** As root, a bug in one site would expose the whole
+server, and every other site's files and passwords with it.
+
+Find the domain's user, and keep the environment file outside the web root:
 
 ```bash
-# Uygulama dizini (Plesk otomatik oluşturur)
-APPDIR=/var/www/vhosts/domain.com/httpdocs
-
-# index.lk ve dosyaları kopyala
-scp index.lk root@sunucu_ip:$APPDIR/
-scp .env      root@sunucu_ip:$APPDIR/
-
-# Log dizini
-mkdir -p /var/log/look
-chown psacln:psacln /var/log/look   # Plesk kullanıcısı
+DOC=/var/www/vhosts/example.com/httpdocs
+stat -c '%U' "$DOC"                     # the domain's system user, e.g. example.com_a1b2
+install -m 600 -o example.com_a1b2 -g psacln /dev/null /var/www/vhosts/example.com/.look.env
 ```
 
-### .env (`/var/www/vhosts/domain.com/httpdocs/.env`)
-
-```
-APP_ENV=production
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=myapp
-DB_USER=myapp_user
-DB_PASS=guclu_sifre
-LOG_DIR=/var/log/look
-```
-
----
-
-## 3. look-fcgi Servisi (systemd)
-
-Her domain için ayrı port kullanılır. Birden fazla LOOK uygulaması varsa port numaraları farklı olmalı (9000, 9001, 9002...).
-
-`/etc/systemd/system/look-fcgi-domain.service` oluştur:
+`/etc/systemd/system/look-example-com.service`:
 
 ```ini
 [Unit]
-Description=LOOK FastCGI — domain.com
-After=network.target mariadb.service
+Description=LOOK - example.com
+After=network.target mariadb.service mysqld.service
 
 [Service]
 Type=simple
-ExecStart=/opt/look/look-fcgi --port 9000
-WorkingDirectory=/var/www/vhosts/domain.com/httpdocs
+User=example.com_a1b2
+Group=psacln
+NoNewPrivileges=true
+PrivateTmp=true
+WorkingDirectory=/var/www/vhosts/example.com/httpdocs
+EnvironmentFile=/var/www/vhosts/example.com/.look.env
+Environment=LOOK_FILE_ROOT=/var/www/vhosts/example.com/httpdocs
+Environment=LOOK_SESSION_DIR=/var/www/vhosts/example.com/.look/sessions-look-example-com
+ExecStart=/opt/look/lk-fcgi --mode http --bind 127.0.0.1 --port 9100 --workers 4 --script /var/www/vhosts/example.com/httpdocs/index.lk
 Restart=on-failure
 RestartSec=3
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-> **Not:** `User=psacln` eklersen binary `/opt/look/` için okuma izni gerekir. Root olarak çalıştırmak Plesk VPS'lerde yaygın ve pratiktir.
-
-Servisi başlat:
+- **`--bind 127.0.0.1`** keeps the port local. Without it, `--mode http` listens on every
+  interface, and the site is also reachable at `http://<server ip>:9100/`, bypassing Apache, its
+  HTTPS and its rules. `--bind` needs LOOK 1.0.42 or later.
+- **Environment file:** systemd reads `KEY=value` lines. A `#` after a value is part of the
+  value, not a comment, so put comments on their own lines.
+- **Sessions** are kept outside the web root, per site. LOOK creates the directory itself, as the
+  site's user, with mode `0700`.
 
 ```bash
 systemctl daemon-reload
-systemctl enable look-fcgi-domain
-systemctl start look-fcgi-domain
-
-# Kontrol
-systemctl status look-fcgi-domain
+systemctl enable --now look-example-com
+ss -tlnp | grep ':9100 '      # must show 127.0.0.1:9100, not 0.0.0.0:9100
 ```
 
 ---
 
-## 4. Apache Konfigürasyonu — .htaccess (Önerilen)
+## 3. Apache: proxy the domain to the service
 
-Plesk'te `vhost_ssl.conf` otomatik include edilmez. En güvenilir yöntem: kuralları doğrudan `.htaccess`'e yazmak.
-
-`/var/www/vhosts/domain.com/httpdocs/.htaccess`:
-
-```apache
-RewriteEngine On
-
-# index.lk direkt erişimi engelle
-RewriteRule ^index\.lk$ / [R=301,L]
-
-# Statik dosyalar doğrudan serve edilir
-RewriteCond %{REQUEST_URI} \.(html|htm|css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|pdf|txt|map|webp)$ [NC]
-RewriteCond %{REQUEST_FILENAME} -f
-RewriteRule ^ - [L]
-
-# Dizinler
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^ - [L]
-
-# Var olan .lk dosyaları → look-fcgi (direct mode — route'suz scriptler)
-RewriteCond %{REQUEST_URI} \.lk$ [NC]
-RewriteCond %{REQUEST_FILENAME} -f
-RewriteRule ^(.+\.lk)$ fcgi://127.0.0.1:9000/$1 [P,QSA,L]
-
-# Geri kalan her şey → LOOK FastCGI router
-RewriteRule ^ fcgi://127.0.0.1:9000/index.lk [P,QSA,L]
-```
-
-**Neden `Action look-handler` değil?**  
-Plesk'te `ScriptAlias /cgi-bin/` tanımlı değil, `Action` direktifi için gerekli URL path çalışmıyor. `.lk` dosyalarını doğrudan look-fcgi'ye yönlendirmek daha temiz: look-fcgi `route()` içermeyen scriptleri otomatik olarak "direct mode"da çalıştırır (her request'te fresh interpret).
-
-**Alternatif — Plesk Panel (Additional Directives):**  
-Plesk Panel → Domains → domain.com → Apache & Nginx Settings → "Additional directives for HTTPS" alanına da aynı RewriteEngine kuralları yazılabilir. Ancak `.htaccess` daha hızlı güncellenir ve restart gerektirmez.
-
-**Kritik `.htaccess` uyarıları:**
-- `Options +FollowSymLinks` yazma — Plesk AllowOverride bunu engelliyor, 500 döner
-- `Options +ExecCGI` yazabilirsin (AllowOverride izin veriyor) ama CGI yolu için gerekmiyor
-- `vhost_ssl.conf` oluşturup içine kural yazmak işe yaramıyor — Plesk otomatik include etmiyor
-
----
-
-## 5. Apache Modülleri Kontrolü
-
-Plesk genellikle gerekli modülleri kurar ama kontrol et:
+Plesk includes `vhost.conf` and `vhost_ssl.conf` from the domain's `conf` directory. Write the
+same lines to both:
 
 ```bash
-# Ubuntu + Plesk
-apachectl -M | grep -E 'proxy_fcgi|rewrite|actions|cgi'
-# Eksikse:
-a2dismod mpm_event
-a2enmod mpm_prefork cgi proxy proxy_fcgi rewrite actions
-systemctl restart apache2
-
-# AlmaLinux 8 + Plesk (httpd)
-apachectl -M | grep -E 'proxy_fcgi|rewrite|actions|cgi'
-# httpd'de modüller /etc/httpd/conf.modules.d/ altında yönetilir
-# Plesk kurulumunda proxy_fcgi genellikle zaten aktiftir
+CONF=/var/www/vhosts/system/example.com/conf
+cat > "$CONF/vhost.conf" <<'EOF'
+ProxyRequests Off
+ProxyPreserveHost On
+ProxyPass /.well-known !
+ProxyPass / http://127.0.0.1:9100/
+ProxyPassReverse / http://127.0.0.1:9100/
+EOF
+cp "$CONF/vhost.conf" "$CONF/vhost_ssl.conf"
+/usr/local/psa/admin/bin/httpdmng --reconfigure-domain example.com
 ```
 
-> **Not:** Ubuntu Apache'de `.lk` CGI action çalışması için `mpm_prefork` zorunludur. `mpm_event` + `mod_cgid` kombinasyonu LOOK CGI binary'sini çalıştırmaz.
+Point the proxy at `127.0.0.1`, not at `localhost`. `/.well-known` stays with Plesk, so Let's
+Encrypt renewals keep working.
+
+To take the client IP and HTTPS from the proxy, add `LOOK_TRUSTED_PROXY=127.0.0.1` to the
+environment file.
+
+**FastCGI instead of HTTP:** use
+`ExecStart=/opt/look/lk-fcgi --port 9100 --workers 4 --script …` (no `--mode`; FastCGI listens on
+`127.0.0.1` by default) and `fcgi://127.0.0.1:9100/` in both `ProxyPass` lines. WebSocket, SSE
+and the built-in mail server need `--mode http`.
 
 ---
 
-## 6. Doğrulama
+## 4. Check
 
 ```bash
-# look-fcgi çalışıyor mu?
-systemctl status look-fcgi-domain
-
-# Port dinleniyor mu?
-ss -tlnp | grep 9000
-
-# HTTP test
-curl -s http://domain.com/
-curl -s http://domain.com/api/test
+systemctl status look-example-com
+journalctl -u look-example-com -n 50 --no-pager
+curl -s -o /dev/null -w '%{http_code}\n' https://example.com/       # 200 through Apache
 ```
 
----
-
-## 7. Birden Fazla LOOK Uygulaması
-
-Her domain için ayrı servis ve port:
-
-| Domain | Servis dosyası | Port |
-|--------|---------------|------|
-| domain.com | look-fcgi-domain.service | 9000 |
-| shop.com | look-fcgi-shop.service | 9001 |
-| blog.com | look-fcgi-blog.service | 9002 |
-
-Her domain'in **Additional Directives** alanında `fcgi://127.0.0.1:PORT` kısmını ilgili port ile güncelle.
+From another machine, `curl http://<server ip>:9100/` must fail to connect.
 
 ---
 
-## 8. Güncelleme (sıfır kesinti)
+## 5. Updates
 
-```bash
-# index.lk güncelle — lk-fcgi mtime farkını görür, hot reload yapar
-# Servis restart gerekmez
-scp index-yeni.lk root@sunucu_ip:/var/www/vhosts/domain.com/httpdocs/index.lk
-
-# Binary güncellendiyse servis restart gerekir
-scp cpp/build-portable/lk-fcgi root@sunucu_ip:/usr/local/bin/lk-fcgi
-systemctl restart look-fcgi-domain
-```
+- **App files:** changes to `index.lk` are picked up without a restart.
+- **LOOK:** install the new binaries into `/opt/look` as in §1, then
+  `systemctl restart look-example-com`. A running service keeps the old binary until it restarts.
 
 ---
 
-## Sorun Giderme
+## Troubleshooting
 
-| Sorun | Kontrol |
-|-------|---------|
-| 502 Bad Gateway | `systemctl status look-fcgi` — servis çalışıyor mu? `ss -tlnp \| grep 9000` — port dinleniyor mu? |
-| 500 Internal Server Error | `.htaccess`'te `Options +FollowSymLinks` varsa sil — Plesk AllowOverride bunu engelliyor |
-| `hello.lk` → 404 "Endpoint bulunamadi" | look-fcgi eski sürüm (direct mode yok). Binary'yi yeniden derle ve `chmod +x` yap |
-| Session çalışmıyor / 401 | `session::start()` global scope'ta çağrılıyor. Her session kullanan route callback içine taşı |
-| Login cookie gelmiyor | `session::start()` route içinde mi? `Set-Cookie` header var mı? (`curl -v`) |
-| Binary çalışmıyor (203/EXEC) | `chmod +x /opt/look/look-fcgi` — pscp execute bit'i siliyor |
-| DB bağlanamıyor | `.env` → `DB_HOST=127.0.0.1` (socket değil TCP). `systemctl restart look-fcgi` sonrası hot reload gerekir |
-| Rewrite çalışmıyor | `apachectl -M \| grep rewrite` — mod_rewrite aktif mi? `.htaccess` syntax hatası için Apache error log'a bak |
-| Log yok | `LOG_DIR` mutlak path (`/var/log/look/`), dizin yazma izni var mı? |
-| nginx 404 (static) | nginx tüm istekleri Apache'ye proxylıyor — 404 Apache'den geliyor, nginx'ten değil. Apache log'a bak |
-
----
-
-## XAMPP / Ubuntu / Plesk Karşılaştırması
-
-| | XAMPP (Windows) | Ubuntu + Apache | Plesk + Apache |
-|--|----------------|-----------------|----------------|
-| Binary | `cgi-bin/look-fcgi.exe` | `/usr/local/bin/look-fcgi` | `/usr/local/bin/look-fcgi` |
-| Servis | Manuel / Task Scheduler | `systemctl` | `systemctl` |
-| Config | `httpd.conf` `<Directory>` | vhost `.conf` dosyası | Additional Directives (UI) |
-| Uygulama | `htdocs/` | `/var/www/myapp/` | `/var/www/vhosts/domain.com/httpdocs/` |
-
-**Felsefe değişmedi:** binary kopyala, birkaç satır config, index.lk at, bitti.
-
----
-
-## Gerçek Kurulum — look.codlook.com
-
-| Alan | Değer |
-|------|-------|
-| OS | AlmaLinux 8.10 |
-| Panel | Plesk Obsidian 18.0.76 |
-| Domain | look.codlook.com |
-| Binary | `/opt/look/lk-fcgi` |
-| Servis | `look-look-codlook-com.service` (port 9100) |
-| Uygulama | `/var/www/vhosts/look.codlook.com/httpdocs/` |
-| Mimari | nginx:443 → Apache:7081 → mod_proxy_fcgi → lk-fcgi:9100 |
-| Kurulum | Plesk extension v1.3.0 — auto-setup via index.php |
+| Problem | Check |
+|---|---|
+| 502 / 503 | `systemctl status look-example-com`; the port in `ProxyPass` must match `--port` |
+| `203/EXEC` when the service starts | `chmod 755 /opt/look/lk-fcgi` (copying with `scp`/`pscp` can drop the execute bit) |
+| The service cannot write its SQLite file or uploads | they must belong to the domain's user: `chown <user>:psacln <file>` |
+| The site is reachable on its port from outside | `--bind 127.0.0.1` is missing from `ExecStart` |
+| A value from the environment file contains `# …` | move the comment to its own line |

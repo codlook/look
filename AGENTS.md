@@ -77,14 +77,14 @@ docker build -t look-build -f cpp/Dockerfile.build cpp/
 docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash -c "cmake --build build --target look-fcgi -j8"
 ```
 
-Binaries: `lk` (CLI/REPL/test), `look-fcgi` (web: FastCGI + `--mode http` for WebSocket),
+Binaries: `lk` (CLI/REPL/test), `lk-fcgi` (web: FastCGI + `--mode http` for WebSocket),
 `lk-cgi` (fallback). There are **no** feature flags like `LOOK_ENABLE_MYSQL` — DB engines are
 always embedded. Runtime tuning is via `LOOK_*` environment variables (documented at
 look.codlook.com/docs.html → Environment Variables).
 
 ## Engine & test guards
 
-- **Bytecode VM is the default** for `lk` and `look-fcgi`; tree-walk is the fallback. Undefined
+- **Bytecode VM is the default** for `lk` and `lk-fcgi`; tree-walk is the fallback. Undefined
   variables are a **hard error** in both engines (`LOOK_WARN_UNDEF=1` restores lenient mode).
 - After **any** engine change, run the guards:
   - `bash cpp/tests/differential_test.sh <lk> <lk-fcgi>` — 3 engines × many categories must agree.

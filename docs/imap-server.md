@@ -32,7 +32,7 @@ LOOK_MAIL_DIR=/var/mail/look                          # Maildir kökü
 ```
 
 ```bash
-lk --mode http --port 7400 --workers 4
+lk-fcgi --mode http --port 7400 --workers 4
 # Aynı anda: HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993
 ```
 

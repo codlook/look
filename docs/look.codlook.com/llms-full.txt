@@ -3978,7 +3978,7 @@ The embedded SMTP *delivers* the letter to Maildir; to let users read it, enable
 | `LOOK_IMAP_MAX_CONN` / `_MAX_LINE` / `_MAX_ERRORS` | 1000 / 8KB / 5 | Connection, line, error limits (DoS) |
 | `LOOK_IMAP_IDLE_TIMEOUT` | 1800 | Idle-connection recv timeout — seconds (Slowloris + RFC autologout) |
 
-> The same command brings up three servers at once: `lk --mode http --port 7400` → HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993. Details: `docs/imap-server.md` in the repo root.
+> The same command brings up three servers at once: `lk-fcgi --mode http --port 7400` → HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993. Details: `docs/imap-server.md` in the repo root.
 
 ### SMTP User Management
 
@@ -4088,7 +4088,7 @@ LOOK_IMAP_CERT=/etc/look/mail.crt # if absent, LOOK_SMTP_CERT is shared
 LOOK_IMAP_KEY=/etc/look/mail.key
 LOOK_MAIL_USER_DB=mysql://user:pass@127.0.0.1/db # mail_users (SHARED with SMTP)
 LOOK_MAIL_DIR=/var/mail/look
- lk --mode http --port 7400 --workers 4
+ lk-fcgi --mode http --port 7400 --workers 4
 # All at once: HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993
 
 ### IMAP — Supported Commands

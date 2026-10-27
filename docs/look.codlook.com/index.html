@@ -561,7 +561,7 @@
 <span style="color:#546e7a"># Receives SMTP → Maildir → serves IMAP (one command)</span>
 SMTP :25/:587  ─deliver─▶  &lt;LOOK_MAIL_DIR&gt;/&lt;user&gt;/inbox  ◀─reads─  IMAP :143/:993
 
-<span style="color:#c3e88d">lk --mode http --port 7400</span>  <span style="color:#546e7a"># HTTP + SMTP + IMAP + IMAPS together</span>
+<span style="color:#c3e88d">lk-fcgi --mode http --port 7400</span>  <span style="color:#546e7a"># HTTP + SMTP + IMAP + IMAPS together</span>
     </div>
     <div class="mail-tags">
       <span>STARTTLS + IMAPS (993)</span>

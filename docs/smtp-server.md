@@ -21,7 +21,7 @@ LOOK_MAIL_DIR=/var/mail/look
 ```
 
 ```bash
-lk --mode http --port 7400 --workers 4
+lk-fcgi --mode http --port 7400 --workers 4
 # Hem HTTP :7400 hem SMTP :25/:587 aynı anda dinler
 ```
 
