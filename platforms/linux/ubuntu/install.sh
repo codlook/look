@@ -20,6 +20,34 @@
 # ============================================================================
 set -euo pipefail
 
+# Seçenek yok; ayarlar ortam değişkeniyle. Eskiden verilen her seçenek sessizce yok sayılıyordu
+# (belge --with-nginx diyordu: kullanıcı nginx kuruldu sandı, port dışarıya açık kaldı).
+# Bilinmeyen seçenek → hiçbir şey kurmadan, nedenini söyleyerek dur.
+usage() {
+  cat <<'USAGE'
+Usage: sudo bash install.sh
+
+Installs lk, lk-fcgi and lk-cgi to /usr/local/bin, a sample app, /etc/look/look.env and a
+systemd service (look.service, user look) that runs lk-fcgi --mode http. It does not install or
+configure nginx or Apache.
+
+Settings are environment variables (sudo LOOK_PORT=9100 bash install.sh):
+  LOOK_PORT=9000           HTTP port
+  LOOK_WORKERS=0           worker threads (0 = automatic)
+  LOOK_APP_DIR=/var/www/look   app directory
+  LOOK_BIN_SRC=<dir>       local folder with the binaries (default: bin/ next to this script)
+
+The service listens on every interface. Behind nginx or Apache, add LOOK_BIND=127.0.0.1 to
+/etc/look/look.env and run: systemctl restart look
+USAGE
+}
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    *) echo "install.sh: unknown option: $arg (install.sh takes no options; settings are environment variables, see --help)" >&2; exit 2 ;;
+  esac
+done
+
 LOOK_PORT="${LOOK_PORT:-9000}"
 LOOK_WORKERS="${LOOK_WORKERS:-0}"
 LOOK_APP_DIR="${LOOK_APP_DIR:-/var/www/look}"
@@ -102,6 +130,8 @@ fi
 # LOOK ortam değişkenleri
 LOOK_PORT=$LOOK_PORT
 LOOK_WORKERS=$LOOK_WORKERS
+# Behind nginx or Apache on this machine, listen on 127.0.0.1 only:
+# LOOK_BIND=127.0.0.1
 # DB_DSN=mysql://user:pass@127.0.0.1/db
 # Gömülü mail sunucusu için (opsiyonel):
 # LOOK_SMTP_PORT=25

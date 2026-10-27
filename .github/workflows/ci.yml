@@ -844,6 +844,15 @@ jobs:
       - name: Plesk services run as the domain's user
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_service_user_test.sh
 
+      # install.sh ignored every option it was given (the guide's --with-nginx went through without
+      # a word and the port stayed open). An unknown option stops it before anything is installed.
+      - name: Linux installer refuses options it does not have (Ubuntu, Debian, AlmaLinux)
+        run: |
+          for img in ubuntu:24.04 debian:12 almalinux:8 almalinux:9; do
+            echo "== $img"
+            docker run --rm -v "$PWD:/w" -w /w "$img" bash cpp/tests/linux_install_test.sh
+          done
+
       # Updating the extension updates LOOK and rewrites every domain's service: Plesk runs the
       # hook as psaadm, the root step goes through sbin/look-setup. Plays a 1.1.0 → new upgrade
       # with the old binary running; a service that cannot leave root is stopped and reported.
