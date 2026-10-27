@@ -216,8 +216,9 @@ const std::vector<std::string>& builtin_names() {
         "timer::wait",
         // request::scheme/host — istemcinin gördüğü şema ve ana bilgisayar (güvenilen vekil kuralıyla).
         "request::scheme", "request::host",
-        // csrf:: — sunucuda durumsuz CSRF koruması (imzalı çift-gönderim çerezi, LOOK_SECRET).
-        "csrf::token", "csrf::field", "csrf::verify",
+        // csrf:: — sunucuda durumsuz CSRF koruması (imzalı çift-gönderim çerezi, LOOK_SECRET). Denetim
+        // varsayılan: çerez kullanan uygulamada her POST/PUT/PATCH/DELETE (http_main kapısı); exempt muafiyet.
+        "csrf::token", "csrf::field", "csrf::exempt",
     };
     return NAMES;
 }
@@ -275,9 +276,6 @@ const std::vector<EffectRow>& effect_rows() {
             "type::to_string", "type::to_bool",
             "validator::required", "validator::email", "validator::integer", "validator::numeric",
             "validator::min", "validator::max", "validator::check",
-            // Etkisi yok, sonucu tek anlamı: "csrf::verify();" yazıp sonucuna bakmamak hiçbir şeyi
-            // korumaz — atılan sonuç derleme hatası olsun diye burada.
-            "csrf::verify",
         }},
         { BuiltinEffect::Reads, {
             "chan_size", "env", "config", "args",
@@ -309,6 +307,7 @@ const std::vector<EffectRow>& effect_rows() {
             "cache::set", "cache::delete", "cache::flush",
             "cookie::set", "cookie::delete",
             "csrf::token", "csrf::field",   // çerezi kurar/yeniler
+            "csrf::exempt",                 // kurulumda muafiyet kaydı
             "crypto::rs256_sign", "crypto::rs256_sign_b64url",   // anahtar yükler, hatalı anahtarda fırlatır
             "db::query", "db::exec", "db::col", "db::close", "db::connect", "db::transaction",
             "db::begin", "db::commit", "db::rollback",

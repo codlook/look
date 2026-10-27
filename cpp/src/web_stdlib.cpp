@@ -945,22 +945,47 @@ static Module make_csrf_module(WebContext* ctx) {
         std::string nonce = csrf_hex(look::secure_random_bytes(16));
         return Value("<input type=\"hidden\" name=\"_csrf\" value=\"" + nonce + "." + csrf_mac(base, nonce) + "\">");
     };
-    // csrf::verify() — gönderilen değer doğru mu: POST alanı _csrf, yoksa X-CSRF-Token başlığı.
-    // Sonucu kullanılmayan çağrı derleme hatasıdır (Pure): "csrf::verify();" hiçbir şeyi korumaz.
-    m.functions["verify"] = [ctx](auto) -> Value {
-        csrf_secrets(true);
-        if (!csrf_origin_ok(ctx)) return Value(false);
-        std::string base = csrf_cookie_base(ctx, 1);
-        if (base.empty()) return Value(false);
-        std::string sent;
-        auto pp = ctx->post_params.find("_csrf");
-        if (pp != ctx->post_params.end()) sent = pp->second;
-        if (sent.empty()) { auto h = ctx->headers_in.find("x-csrf-token"); if (h != ctx->headers_in.end()) sent = h->second; }
-        auto dot = sent.find('.');
-        if (dot == std::string::npos || dot == 0 || sent.find('.', dot + 1) != std::string::npos) return Value(false);
-        return Value(csrf_equal(sent.substr(dot + 1), csrf_mac(base, sent.substr(0, dot))));
+    // csrf::exempt(yol) — yalnız üst düzeyde (http_main kurulum tablosu kaydeder); burada çağrılırsa
+    // istek sırasındadır: açık hata.
+    m.functions["exempt"] = [](auto) -> Value {
+        throw std::runtime_error("csrf::exempt() is called at the top level of the program, next to route(), not inside a route");
     };
     return m;
+}
+
+// ── Varsayılan CSRF kapısı (http_main: üç mod aynı motordan) ─────────────────────
+// Kural: çerez kullanan her uygulama korunur — programda session::/csrf::/cookie:: varsa
+// POST/PUT/PATCH/DELETE rotadan ve before_route'tan ÖNCE burada denetlenir.
+std::string csrf_secret_problem() {
+    const char* cur = std::getenv("LOOK_SECRET");
+    if (cur && std::string(cur).size() >= 32) return "";
+    return "LOOK_SECRET is not set or shorter than 32 characters. This application uses cookies, and every "
+           "application that uses cookies is protected against cross-site request forgery: its POST, PUT, PATCH and "
+           "DELETE requests carry a token signed with LOOK_SECRET. Set it to a random value, the same on every server "
+           "(openssl rand -hex 32) — in the service's environment file, or with Docker: "
+           "docker run -e LOOK_SECRET=<value> … or --env-file <file>";
+}
+bool csrf_request_ok(WebContext* ctx, std::string& why) {
+    if (!csrf_origin_ok(ctx)) {
+        auto o = ctx->headers_in.find("origin");
+        why = "Origin " + (o == ctx->headers_in.end() ? std::string("?") : o->second) + " is not this site" +
+              (ctx->host.empty() ? std::string() : " (" + ctx->host + ")");
+        return false;
+    }
+    std::string sent;
+    auto pp = ctx->post_params.find("_csrf");
+    if (pp != ctx->post_params.end()) sent = pp->second;
+    if (sent.empty()) { auto h = ctx->headers_in.find("x-csrf-token"); if (h != ctx->headers_in.end()) sent = h->second; }
+    if (sent.empty()) { why = "no _csrf field or X-CSRF-Token header"; return false; }
+    std::string base = csrf_cookie_base(ctx, 1);
+    if (base.empty()) { why = "no valid CSRF cookie (the form was not loaded from this site, cookies are blocked, or LOOK_SECRET changed)"; return false; }
+    auto dot = sent.find('.');
+    if (dot == std::string::npos || dot == 0 || sent.find('.', dot + 1) != std::string::npos ||
+        !csrf_equal(sent.substr(dot + 1), csrf_mac(base, sent.substr(0, dot)))) {
+        why = "the token does not belong to this visitor's CSRF cookie";
+        return false;
+    }
+    return true;
 }
 
 static Module make_session_module(WebContext* ctx) {
@@ -1052,6 +1077,18 @@ static Module make_session_module(WebContext* ctx) {
         return Value();
     };
 
+    // csrf::exempt ile muaf geçen istekte oturum YOK: muafiyet yalnız çereze dayanmayan uçlar içindir
+    // (imzalı webhook, token'lı API). "Muaf tut ama oturumla doğrula" CSRF açığıdır — yazılamasın.
+    for (auto& [name, fn] : m.functions) {
+        auto inner = fn;
+        fn = [ctx, inner, name = name](std::vector<Value> args) -> Value {
+            if (ctx && !ctx->csrf_exempt_rule.empty())
+                throw std::runtime_error("session::" + name + "() in a request exempted from the CSRF check by csrf::exempt(\"" +
+                    ctx->csrf_exempt_rule + "\"). An exempt route is for webhooks and token APIs, which do not use the "
+                    "session; a route that uses the session must stay protected (remove the exemption and send a token)");
+            return inner(args);
+        };
+    }
     return m;
 }
 

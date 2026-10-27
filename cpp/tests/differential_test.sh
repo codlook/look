@@ -14,6 +14,8 @@
 # Her motor değişikliğinden (opcode/builtin/Value/köprü) sonra çalıştır.
 # Kullanım: bash differential_test.sh [lk_yolu] [lk-fcgi_yolu]
 set -u
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LK="${1:-$DIR/../build/lk}"
 FCGI="${2:-$DIR/../build/lk-fcgi}"

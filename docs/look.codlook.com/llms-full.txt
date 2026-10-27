@@ -1683,29 +1683,29 @@ route("GET", "/admin/panel", function() {
 
 ## csrf::
 
-Protection against cross-site request forgery: another site cannot make a visitor's browser submit a form to yours. Nothing is stored on the server — the token's base is in a signed cookie, so a visitor who only sees a form does not open a session.
+**Every application that uses cookies is protected against cross-site request forgery.** If the program uses `session::`, `csrf::` or `cookie::`, every `POST`, `PUT`, `PATCH` and `DELETE` request must carry a token; it is checked before `before_route` and the route run, under `--mode http`, FastCGI and CGI alike. A request without a valid token gets `403`, and the log says why and what to change. Programs that do not use cookies (token APIs) are not affected. Nothing is stored on the server: the token's base is in a signed cookie.
 
 | Function | Description |
 | --- | --- |
-| csrf::field() | A hidden `<input name="_csrf">` to put inside a form. Sets the cookie if the visitor has none |
-| csrf::token() | The token alone — for a `X-CSRF-Token` header in `fetch`/AJAX requests. Different on every call |
-| csrf::verify() | `true` if the request carries a valid token (the `_csrf` field, or the `X-CSRF-Token` header) for this visitor's cookie, and its `Origin`, when sent, is this site. A call whose result is not used is a compile error: `csrf::verify();` on its own protects nothing |
+| csrf::field() | A hidden `<input name="_csrf">` to put inside every form (also forms that upload files). Sets the cookie if the visitor has none |
+| csrf::token() | The token alone — send it in an `X-CSRF-Token` header from `fetch`/AJAX. Different on every call |
+| csrf::exempt("/path") | Let a path through without a token — for webhooks and token APIs, which do not use cookies. `"/api/*"` exempts a prefix; `{name}` parts work as in `route()`. Called at the top of the program, next to `route()`. **A request let through this way cannot use `session::`** (it is an error): a route that uses the session must stay protected |
 
 ```lk
 route("GET", "/contact", function() {
     return response::html("<form method=\"post\">" . csrf::field() . "<button>Send</button></form>")
 })
 route("POST", "/contact", function() {
-    if (!csrf::verify()) { return response::error(403, "Invalid form, reload the page") }
-    # ... handle the form ...
+    # runs only with a valid token — nothing to check here
 })
+csrf::exempt("/webhooks/stripe")   # verified by its signature, not by a cookie
 ```
 
-- **`LOOK_SECRET` is required** — at least 32 characters, the same on every server (`openssl rand -hex 32`). Without it `csrf::` calls fail with an error that says so. Applications that do not use `csrf::` do not need it.
+- **`LOOK_SECRET` is required** — at least 32 characters, the same on every server (`openssl rand -hex 32`). A program that uses cookies does not start without it and says why. The Linux installer creates it; with Docker pass it with `-e LOOK_SECRET=…` or `--env-file`.
 - **Changing the secret:** put the old value in `LOOK_SECRET_PREVIOUS` while forms signed with it are still open; their cookies are signed again with the new secret on the next page.
 - **Login and logout** (`session::regenerate()`, `session::destroy()`) give a new token base: a token obtained or planted before login does not work after it.
-- **The cookie** is `look_csrf`; over HTTPS it is `__Host-look_csrf` with `Secure`, which a subdomain cannot set. Always `HttpOnly`, `SameSite=Lax`. HTTPS is detected as for the session cookie (`LOOK_TRUSTED_PROXY`, `LOOK_SESSION_SECURE`).
-- Behind a reverse proxy, set `LOOK_TRUSTED_PROXY` so the `Origin` check sees the public host (`X-Forwarded-Host`); a client's own `X-Forwarded-Host` is never trusted.
+- **The cookie** is `look_csrf`; over HTTPS it is `__Host-look_csrf` with `Secure`, which a subdomain cannot set. Always `HttpOnly`, `SameSite=Lax`.
+- When an `Origin` header is sent it must be this site. Behind a reverse proxy, set `LOOK_TRUSTED_PROXY` so the check sees the public host (`X-Forwarded-Host`); a client's own `X-Forwarded-Host` is never trusted.
 
 ## cookie::
 
@@ -4534,7 +4534,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | `LOOK_HTTP_MAX_CONNS_IP` | *off* | Max concurrent connections from a single IP; over the cap → `429`. Stops one IP from tying up the whole worker pool; open WebSocket and SSE connections count too. Not set and no `LOOK_TRUSTED_PROXY`: one address may still hold at most 1000 open WebSocket / SSE connections (a default; there is no limit on the total). **Opt-in**, and keyed on the real TCP peer: enable it only when LOOK is **directly** internet-facing. Behind a reverse proxy every connection shares the proxy's IP, so a single counter would throttle the entire site — cap connections at the proxy instead (nginx `limit_conn`). Complements the per-minute `LOOK_RATE_LIMIT_RPM` limiter. |
 | `LOOK_SESSION_SECURE` | *auto* | Controls the `Secure` flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (an `HTTPS` FCGI param, or `X-Forwarded-Proto: https` from a trusted proxy); the runtime warns once if it ships a session cookie without `Secure`, so a misconfiguration cannot silently downgrade. `1` = always; `0` = never (plain-HTTP local dev). |
 | `LOOK_TRUSTED_PROXY` | — (disabled) | Comma-separated proxy IPs / CIDRs to trust. Behind them, `X-Forwarded-For` sets the real client IP (`request::ip()`, rate limiter) **and** `X-Forwarded-Proto: https` marks the request HTTPS (session cookie gets `Secure`; `request::scheme()`), and `X-Forwarded-Host` sets `request::host()` (the `csrf::` Origin check). Unset = these headers are ignored so a client cannot forge them. |
-| `LOOK_SECRET` | — | Signs the `csrf::` cookie. At least 32 characters, the same on every server (`openssl rand -hex 32`). Required by `csrf::`; other code does not need it. |
+| `LOOK_SECRET` | — | Signs the CSRF cookie. At least 32 characters, the same on every server (`openssl rand -hex 32`). Required by every program that uses cookies (`session::`, `csrf::`, `cookie::`): without it such a program does not start. |
 | `LOOK_SECRET_PREVIOUS` | — | The previous `LOOK_SECRET` while it is being changed: cookies signed with it are still accepted and are signed again with the new one. |
 | `LOOK_BIND` / `--bind` | *all interfaces* | The IPv4 address `--mode http` listens on. Behind a reverse proxy on the same machine set `127.0.0.1`, so the app's own port is not reachable from outside and the proxy cannot be bypassed (the Plesk extension does this since 1.4.2). A name such as `localhost` is refused — give an address. FastCGI mode already listens on `127.0.0.1` (`LOOK_FCGI_BIND`). |
 

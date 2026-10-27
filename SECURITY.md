@@ -544,7 +544,7 @@ who learned "LOOK cookies are safe" was wrong for application cookies (an auth t
 plain-HTTP dev environments; opt in with `cookie::set(k, v, ["secure" => true])`. Opt out of any
 flag with the options map (`["httponly" => false]` when JS must read the cookie, `["samesite" => false]`
 to omit it). Positional `expires`/`path` arguments still work unchanged. Verified in CI against a
-live `lk-fcgi --mode http` `Set-Cookie` header (`cookie_flags_test`, positive-controlled). This is a
+live `Set-Cookie` header in `--mode http`, FastCGI and CGI (`session_cookie_modes_test`, positive-controlled). This is a
 breaking change (a cookie read from JS by name breaks), landed in the zero-user window like the DB-TLS flip.
 
 **The embedded SMTP / IMAP server is off by default and has not had an adversarial security audit.**
@@ -631,7 +631,8 @@ that only lands in one engine is itself a vulnerability. See
   shipped without `Secure` over a non-HTTPS request (e.g. behind a TLS proxy with `LOOK_TRUSTED_PROXY`
   unset), the runtime logs a one-time warning so a misconfiguration can't quietly downgrade protection.
   Override with `LOOK_SESSION_SECURE=1` (always) / `=0` (never, for plain-HTTP dev). Guarded by
-  `cpp/tests/session_secure.sh` (HTTPS, HTTP, forged-header, both overrides, and the warning).
+  `cpp/tests/session_cookie_modes_test.sh` in `--mode http`, FastCGI and CGI (HTTPS, HTTP,
+  forged-header, both overrides, and the warning).
 
 - **Cross-request data leak under fiber dispatch (interpreter path) — fixed.** When the
   optional fiber dispatch mode (`LOOK_FIBER_DISPATCH=1`) was enabled *and* a request ran on

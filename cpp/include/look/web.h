@@ -78,6 +78,8 @@ struct WebContext {
     std::string host;
     // csrf:: — bu istekte kullanılan anahtar tabanı (çerez aynı istekte cookies_in'e dönmez).
     std::string csrf_base;
+    // Bu istek csrf::exempt kuralıyla denetimsiz geçtiyse o kural (session:: burada yasak).
+    std::string csrf_exempt_rule;
     std::map<std::string, std::string> get_params;
     std::map<std::string, std::string> post_params;
     std::map<std::string, std::string> cookies_in;

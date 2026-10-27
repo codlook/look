@@ -840,7 +840,6 @@ jobs:
           # 404s — none caught by any guard. This closes that class. See docs_examples_check.py.
           python3 tests/docs_examples_check.py build/lk ../docs/look.codlook.com/docs.html ../docs/look.codlook.com/index.html
           bash tests/route_param_decode.sh build/lk-fcgi   # path params URL-decoded
-          bash tests/session_secure.sh build/lk-fcgi        # session cookie Secure is HTTPS-only, proxy-gated
 
       # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
       # slowloris header-deadline. Testler vardı, CI'da değildi.
@@ -1192,13 +1191,14 @@ jobs:
           cd cpp
           bash tests/parser_faillooud_guard.sh ./build/lk
 
-      # cookie:: güvenli-varsayılan (2026-08 flip) — HttpOnly + SameSite=Lax VARSAYILAN (session::
-      # ile hizalı; Secure değil, düz-HTTP dev kırılmasın). Opt-out options assoc'u ile. lk-fcgi
-      # --mode http'ye karşı Set-Cookie başlığı doğrulanır. Pozitif-kontrollü (varsayılan kalkarsa RED).
-      - name: "cookie:: güvenli-varsayılan flag'leri (runtime)"
+      # Oturum + çerez güvenliği ÜÇ MODDA (--mode http, FastCGI, CGI): cookie:: bayrakları, oturum
+      # çerezinin Secure'u (yalnız gerçek HTTPS; istemcinin X-Forwarded-Proto'su sayılmaz), 0600/0700,
+      # istemcinin seçtiği oturum kimliği, istek başlıkları. Eskiden yalnız --mode http sınanıyordu;
+      # CGI üç kez geride kaldı (temizlik, HTTPS, başlıklar). Bir modda eksik davranış CI'ı kırar.
+      - name: Session and cookie security in all three modes
         run: |
           cd cpp
-          bash tests/cookie_flags_test.sh build/lk-fcgi 7793
+          bash tests/session_cookie_modes_test.sh build/lk-fcgi build/lk-cgi
 
       # file-include + timer::every birlikte lk-fcgi başlangıcını KİLİTLİYORDU (clone_for_thread
       # env klonu, paylaşımlı closure env'i her fonksiyon için yeniden klonlayıp O(N!) patlıyordu).

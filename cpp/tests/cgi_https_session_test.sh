@@ -7,13 +7,15 @@
 # server, as FastCGI does (the client cannot set these).
 # Usage: cgi_https_session_test.sh <lk-cgi>
 set -u
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 CGI="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -m 700 "$T/s"
 printf 'route("GET", "/s", function() { session::start(); return response::text("s"); })\n' > "$T/app.lk"
 fail=0
 run() {   # run [env...] → the response headers and stderr
-    (cd "$T" && env -i PATH=/usr/bin:/bin REQUEST_METHOD=GET SCRIPT_FILENAME="$T/app.lk" PATH_INFO=/s REQUEST_URI=/s \
+    (cd "$T" && env -i PATH=/usr/bin:/bin LOOK_SECRET="$LOOK_SECRET" REQUEST_METHOD=GET SCRIPT_FILENAME="$T/app.lk" PATH_INFO=/s REQUEST_URI=/s \
         GATEWAY_INTERFACE=CGI/1.1 LOOK_SESSION_DIR="$T/s" "$@" "$CGI" 2>&1) | tr -d '\r'
 }
 check() {   # check <name> <want Secure: yes|no> [env...]

@@ -39,6 +39,9 @@ Settings are environment variables (sudo LOOK_PORT=9100 bash install.sh):
 
 The service listens on every interface. Behind nginx or Apache, add LOOK_BIND=127.0.0.1 to
 /etc/look/look.env and run: systemctl restart look
+
+/etc/look/look.env (mode 0600) also gets a random LOOK_SECRET if it has none: applications that
+use cookies need it. On more than one server, copy the same value to every server.
 USAGE
 }
 for arg in "$@"; do
@@ -138,6 +141,19 @@ LOOK_WORKERS=$LOOK_WORKERS
 # LOOK_IMAP_PORT=143
 # LOOK_MAIL_DIR=/var/mail/look
 ENV
+# Gizli değerler (DB_DSN parolası, LOOK_SECRET) burada: yalnız root okur (systemd EnvironmentFile'ı
+# root olarak okur, servis değerleri ortamdan alır). Eskiden 0644'tü — sunucudaki her kullanıcı okurdu.
+chown root:root "$ETC_DIR/look.env"; chmod 600 "$ETC_DIR/look.env"
+# LOOK_SECRET — çerez kullanan uygulama onsuz başlamaz (CSRF imzası). İşletim sisteminin kriptografik
+# kaynağından üretilir; ekrana, log'a, komut satırına yazılmaz. Varsa dokunulmaz (her sunucuda aynı olmalı).
+if ! grep -q '^LOOK_SECRET=' "$ETC_DIR/look.env"; then
+  secret="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+  [ "${#secret}" = 64 ] || die "could not read 32 random bytes from /dev/urandom"
+  { echo "# CSRF signing key for applications that use cookies — the same on every server; keep it secret"
+    echo "LOOK_SECRET=$secret"; } >> "$ETC_DIR/look.env"
+  unset secret
+  ok "LOOK_SECRET created in $ETC_DIR/look.env (mode 0600)"
+fi
 ok "yapılandırma: $ETC_DIR/look.env"
 
 # ── 3. Servis kullanıcısı ─────────────────────────────────────────────────────

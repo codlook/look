@@ -10,6 +10,8 @@
 # "Another user" is uid 12345 (needs root or passwordless sudo for chown).
 # Usage: session_dir_default_test.sh <lk-fcgi>   (needs curl)
 set -u
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 P=7621
 T=$(mktemp -d); trap '{ kill $pid; wait; } 2>/dev/null; ${SUDO} rm -rf "$T"' EXIT

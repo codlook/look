@@ -12,6 +12,8 @@
 # had last started on that thread, read that request's header and then crashed the process. Run with fibers and with
 # LOOK_FIBER_DISPATCH=0. The fiber run must also show that the requests really overlapped.
 # Usage: fiber_request_isolation_test.sh <lk-fcgi>
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null; [ -n "${up:-}" ] && kill "$up" 2>/dev/null' EXIT
 PORT="${PORT:-7842}"; UP=$((PORT + 1))

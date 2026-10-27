@@ -13,6 +13,8 @@
 # session (LOOK 1 swallowed Redis errors: users looked logged out and session data was lost).
 # Usage: redis_session_isolation_test.sh <lk-fcgi> <redis-url>   (needs python3, curl)
 set -u
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$1"; URL="$2"
 PORT=7461; SPORT=7462; MUTE=7463; DPORT=7464; DOWN=7465
 T=$(mktemp -d); trap '{ kill $pid $spid $mpid $dpid; wait; } 2>/dev/null; rm -rf "$T"' EXIT

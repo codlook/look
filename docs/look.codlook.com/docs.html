@@ -1699,38 +1699,41 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
 
 <section id="csrf">
   <h2>csrf::</h2>
-  <p>Protection against cross-site request forgery: another site cannot make a visitor's browser
-  submit a form to yours. Nothing is stored on the server — the token's base is in a signed cookie,
-  so a visitor who only sees a form does not open a session.</p>
+  <p><strong>Every application that uses cookies is protected against cross-site request forgery.</strong>
+  If the program uses <code>session::</code>, <code>csrf::</code> or <code>cookie::</code>, every <code>POST</code>,
+  <code>PUT</code>, <code>PATCH</code> and <code>DELETE</code> request must carry a token; it is checked before
+  <code>before_route</code> and the route run, under <code>--mode http</code>, FastCGI and CGI alike. A request without
+  a valid token gets <code>403</code>, and the log says why and what to change. Programs that do not use cookies
+  (token APIs) are not affected. Nothing is stored on the server: the token's base is in a signed cookie.</p>
 
   <table>
     <tr><th>Function</th><th>Description</th></tr>
-    <tr><td>csrf::field()</td><td>A hidden <code>&lt;input name="_csrf"&gt;</code> to put inside a form. Sets the cookie if the visitor has none</td></tr>
-    <tr><td>csrf::token()</td><td>The token alone — for a <code>X-CSRF-Token</code> header in <code>fetch</code>/AJAX requests. Different on every call</td></tr>
-    <tr><td>csrf::verify()</td><td><code>true</code> if the request carries a valid token (the <code>_csrf</code> field, or the <code>X-CSRF-Token</code> header) for this visitor's cookie, and its <code>Origin</code>, when sent, is this site. A call whose result is not used is a compile error: <code>csrf::verify();</code> on its own protects nothing</td></tr>
+    <tr><td>csrf::field()</td><td>A hidden <code>&lt;input name="_csrf"&gt;</code> to put inside every form (also forms that upload files). Sets the cookie if the visitor has none</td></tr>
+    <tr><td>csrf::token()</td><td>The token alone — send it in an <code>X-CSRF-Token</code> header from <code>fetch</code>/AJAX. Different on every call</td></tr>
+    <tr><td>csrf::exempt("/path")</td><td>Let a path through without a token — for webhooks and token APIs, which do not use cookies. <code>"/api/*"</code> exempts a prefix; <code>{name}</code> parts work as in <code>route()</code>. Called at the top of the program, next to <code>route()</code>. <strong>A request let through this way cannot use <code>session::</code></strong> (it is an error): a route that uses the session must stay protected</td></tr>
   </table>
 
   <pre><code><span class="fn">route</span>(<span class="str">"GET"</span>, <span class="str">"/contact"</span>, <span class="kw">function</span>() {
     <span class="kw">return</span> <span class="ns">response::</span><span class="fn">html</span>(<span class="str">"&lt;form method=\"post\"&gt;"</span> . <span class="ns">csrf::</span><span class="fn">field</span>() . <span class="str">"&lt;button&gt;Send&lt;/button&gt;&lt;/form&gt;"</span>)
 })
 <span class="fn">route</span>(<span class="str">"POST"</span>, <span class="str">"/contact"</span>, <span class="kw">function</span>() {
-    <span class="kw">if</span> (!<span class="ns">csrf::</span><span class="fn">verify</span>()) { <span class="kw">return</span> <span class="ns">response::</span><span class="fn">error</span>(<span class="num">403</span>, <span class="str">"Invalid form, reload the page"</span>) }
-    <span class="cm"># ... handle the form ...</span>
-})</code></pre>
+    <span class="cm"># runs only with a valid token — nothing to check here</span>
+})
+<span class="ns">csrf::</span><span class="fn">exempt</span>(<span class="str">"/webhooks/stripe"</span>)   <span class="cm"># verified by its signature, not by a cookie</span></code></pre>
 
   <ul>
     <li><strong><code>LOOK_SECRET</code> is required</strong> — at least 32 characters, the same on every server
-    (<code>openssl rand -hex 32</code>). Without it <code>csrf::</code> calls fail with an error that says so.
-    Applications that do not use <code>csrf::</code> do not need it.</li>
+    (<code>openssl rand -hex 32</code>). A program that uses cookies does not start without it and says why. The
+    Linux installer creates it; with Docker pass it with <code>-e LOOK_SECRET=…</code> or <code>--env-file</code>.</li>
     <li><strong>Changing the secret:</strong> put the old value in <code>LOOK_SECRET_PREVIOUS</code> while forms
     signed with it are still open; their cookies are signed again with the new secret on the next page.</li>
     <li><strong>Login and logout</strong> (<code>session::regenerate()</code>, <code>session::destroy()</code>) give
     a new token base: a token obtained or planted before login does not work after it.</li>
     <li><strong>The cookie</strong> is <code>look_csrf</code>; over HTTPS it is <code>__Host-look_csrf</code> with
-    <code>Secure</code>, which a subdomain cannot set. Always <code>HttpOnly</code>, <code>SameSite=Lax</code>.
-    HTTPS is detected as for the session cookie (<code>LOOK_TRUSTED_PROXY</code>, <code>LOOK_SESSION_SECURE</code>).</li>
-    <li>Behind a reverse proxy, set <code>LOOK_TRUSTED_PROXY</code> so the <code>Origin</code> check sees the
-    public host (<code>X-Forwarded-Host</code>); a client's own <code>X-Forwarded-Host</code> is never trusted.</li>
+    <code>Secure</code>, which a subdomain cannot set. Always <code>HttpOnly</code>, <code>SameSite=Lax</code>.</li>
+    <li>When an <code>Origin</code> header is sent it must be this site. Behind a reverse proxy, set
+    <code>LOOK_TRUSTED_PROXY</code> so the check sees the public host (<code>X-Forwarded-Host</code>); a client's own
+    <code>X-Forwarded-Host</code> is never trusted.</li>
   </ul>
 </section>
 
@@ -4530,7 +4533,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
     <tr><td><code>LOOK_HTTP_MAX_CONNS_IP</code></td><td><em>off</em></td><td>Max concurrent connections from a single IP; over the cap → <code>429</code>. Stops one IP from tying up the whole worker pool; open WebSocket and SSE connections count too. Not set and no <code>LOOK_TRUSTED_PROXY</code>: one address may still hold at most 1000 open WebSocket / SSE connections (a default; there is no limit on the total). <strong>Opt-in</strong>, and keyed on the real TCP peer: enable it only when LOOK is <strong>directly</strong> internet-facing. Behind a reverse proxy every connection shares the proxy's IP, so a single counter would throttle the entire site — cap connections at the proxy instead (nginx <code>limit_conn</code>). Complements the per-minute <code>LOOK_RATE_LIMIT_RPM</code> limiter.</td></tr>
     <tr><td><code>LOOK_SESSION_SECURE</code></td><td><em>auto</em></td><td>Controls the <code>Secure</code> flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (detected from an <code>HTTPS</code> FCGI param or <code>X-Forwarded-Proto: https</code> from a trusted proxy); the runtime warns once if it ships a session cookie without <code>Secure</code> so a misconfiguration can't silently downgrade. <code>1</code> = always set it; <code>0</code> = never (for plain-HTTP local dev).</td></tr>
     <tr><td><code>LOOK_TRUSTED_PROXY</code></td><td>— (disabled)</td><td>Comma-separated proxy IPs / CIDRs to trust. Behind them, <code>X-Forwarded-For</code> sets the real client IP (<code>request::ip()</code>, rate limiter) <strong>and</strong> <code>X-Forwarded-Proto: https</code> marks the request HTTPS (so the session cookie gets <code>Secure</code>; <code>request::scheme()</code>), and <code>X-Forwarded-Host</code> sets <code>request::host()</code> (the <code>csrf::</code> Origin check). Unset = these headers are ignored, so a client cannot forge them.</td></tr>
-    <tr><td><code>LOOK_SECRET</code></td><td>—</td><td>Signs the <code>csrf::</code> cookie. At least 32 characters, the same on every server (<code>openssl rand -hex 32</code>). Required by <code>csrf::</code>; other code does not need it.</td></tr>
+    <tr><td><code>LOOK_SECRET</code></td><td>—</td><td>Signs the CSRF cookie. At least 32 characters, the same on every server (<code>openssl rand -hex 32</code>). Required by every program that uses cookies (<code>session::</code>, <code>csrf::</code>, <code>cookie::</code>): without it such a program does not start.</td></tr>
     <tr><td><code>LOOK_SECRET_PREVIOUS</code></td><td>—</td><td>The previous <code>LOOK_SECRET</code> while it is being changed: cookies signed with it are still accepted and are signed again with the new one.</td></tr>
     <tr><td><code>LOOK_BIND</code> / <code>--bind</code></td><td><em>all interfaces</em></td><td>The IPv4 address <code>--mode http</code> listens on. Behind a reverse proxy on the same machine set <code>127.0.0.1</code>, so the app's own port is not reachable from outside and the proxy cannot be bypassed (the Plesk extension does this since 1.4.2). A name such as <code>localhost</code> is refused — give an address. FastCGI mode already listens on <code>127.0.0.1</code> (<code>LOOK_FCGI_BIND</code>).</td></tr>
     <tr><td><code>LOOK_DB_REQUIRE_TLS</code></td><td><em>off</em></td><td><code>1</code> refuses a <strong>plaintext</strong> DB connection (MySQL/MariaDB/PostgreSQL/Redis) to a <strong>remote</strong> host. Loopback / Unix-socket connections are always allowed (app+DB same machine is never blocked). To allow a trusted remote plaintext link anyway: use the TLS scheme (<code>mysqls://</code> / <code>postgresqls://</code> / <code>rediss://</code>) or add <code>?insecure_plaintext=1</code> to the DSN. Loopback is matched on the <strong>literal</strong> host (a hostname resolving to 127.0.0.1 counts as remote — use an IP literal or the opt-out). Especially relevant for Redis (<code>AUTH</code> sends the password in cleartext).</td></tr>

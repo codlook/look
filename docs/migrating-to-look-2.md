@@ -422,18 +422,35 @@ fault). Connecting, sending and every reply have a time limit:
 the limit and that connection is closed and not reused; the next request opens a new one.
 Session connections are taken from a pool per request and opened when needed.
 
-### CSRF protection is built in: `csrf::` — new
+### Every application that uses cookies is protected against CSRF — new, breaking
 
-`csrf::field()` puts a token in a form, `csrf::token()` gives it for an `X-CSRF-Token` header, and
-`csrf::verify()` checks it. Nothing is stored on the server: the token's base is in a signed
-cookie (`look_csrf`, `__Host-look_csrf` over HTTPS), so a visitor who only sees a form does not
-open a session. `session::regenerate()` and `session::destroy()` give a new token base. If your
-LOOK 1 application kept its own token in the session, you can replace it with these three calls.
+If your program uses `session::`, `csrf::` or `cookie::`, every `POST`, `PUT`, `PATCH` and
+`DELETE` request must now carry a CSRF token; without one it gets `403` before `before_route`
+and the route run, and the log names the request and what to change. LOOK 1 left this to each
+application, and a route that forgot the check was open without a word. Programs that do not use
+cookies (token APIs) are not affected.
 
-`csrf::` needs `LOOK_SECRET`: at least 32 characters, the same on every server; while changing
-it, put the old value in `LOOK_SECRET_PREVIOUS`. Without it `csrf::` calls fail with an error
-that says so. Applications that do not use `csrf::` do not need it. A `csrf::verify();` whose
-result is not used is an error at load: on its own it protects nothing.
+What to change:
+
+- Put `csrf::field()` inside every form, including forms that upload files.
+- Send `csrf::token()` in an `X-CSRF-Token` header from `fetch`/AJAX requests.
+- Exempt webhooks and token APIs, which do not use cookies, with `csrf::exempt("/webhooks/stripe")`
+  or `csrf::exempt("/api/*")` at the top of the program. A request let through this way cannot
+  use `session::` — that is an error.
+- Set `LOOK_SECRET`: at least 32 characters, the same on every server (`openssl rand -hex 32`).
+  A program that uses cookies does not start without it. While changing it, put the old value in
+  `LOOK_SECRET_PREVIOUS`. The Linux installer creates it; with Docker pass it with
+  `-e LOOK_SECRET=…` or `--env-file`.
+
+Nothing is stored on the server: the token's base is in a signed cookie (`look_csrf`,
+`__Host-look_csrf` over HTTPS). `session::regenerate()` and `session::destroy()` give a new
+token base. If your LOOK 1 application had its own token in the session, remove that code.
+
+### CGI: request headers reach the application — was silent
+
+Under `lk-cgi`, `request::header()` always returned `null` (the web server's `HTTP_*` variables
+were not read), so an `Authorization` header or any other header was invisible. Headers now
+reach the application as under FastCGI and `--mode http`.
 
 ### `request::scheme()` and `request::host()` — new
 

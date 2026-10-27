@@ -13,6 +13,8 @@
 #      read only their own session afterwards.
 # Usage: redis_session_crossing_test.sh <lk-fcgi>   (needs python3, curl)
 set -u
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 T=$(mktemp -d); trap '{ kill $pid $rpid; wait; } 2>/dev/null; rm -rf "$T"' EXIT
 pid=""; rpid=""

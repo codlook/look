@@ -9,6 +9,8 @@
 # processes, and under CGI it runs after the response has been sent (stdout is closed first).
 # Usage: session_gc_cgi_test.sh <lk-cgi>   (needs mkfifo, xargs)
 set -u
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 CGI="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -m 0700 "$T/s"
@@ -16,7 +18,7 @@ cat > "$T/app.lk" <<'LK'
 route("GET", "/csrf", function() { session::start(); session::set("csrf", "token"); return response::text("ok") })
 LK
 req() {   # bir CGI isteği (Apache'nin verdiği ortamla); çıktı = yanıt
-    (cd "$T" && exec env -i PATH=/usr/bin:/bin REQUEST_METHOD=GET SCRIPT_FILENAME="$T/app.lk" PATH_INFO=/csrf \
+    (cd "$T" && exec env -i PATH=/usr/bin:/bin LOOK_SECRET="$LOOK_SECRET" REQUEST_METHOD=GET SCRIPT_FILENAME="$T/app.lk" PATH_INFO=/csrf \
         REQUEST_URI=/csrf GATEWAY_INTERFACE=CGI/1.1 LOOK_SESSION_DIR="$T/s" LOOK_SESSION_TTL="$TTL" "$CGI" 2>/dev/null)
 }
 files() { find "$T/s" -name 'look_sess_*' | wc -l; }
@@ -37,7 +39,7 @@ else echo "  FAIL CGI: $before files after 300 requests, still $after after the 
   && find . -name 'look_sess_*' -exec touch -d '1 hour ago' {} + && touch -d '1 hour ago' .gc-stamp )
 mkfifo "$T/out"
 s=$(date +%s%N)
-( cd "$T" && exec env -i PATH=/usr/bin:/bin REQUEST_METHOD=GET SCRIPT_FILENAME="$T/app.lk" PATH_INFO=/csrf \
+( cd "$T" && exec env -i PATH=/usr/bin:/bin LOOK_SECRET="$LOOK_SECRET" REQUEST_METHOD=GET SCRIPT_FILENAME="$T/app.lk" PATH_INFO=/csrf \
     REQUEST_URI=/csrf GATEWAY_INTERFACE=CGI/1.1 LOOK_SESSION_DIR="$T/s" LOOK_SESSION_TTL="$TTL" "$CGI" > "$T/out" 2>/dev/null ) & cp=$!
 cat "$T/out" > "$T/body"; eof=$(( ($(date +%s%N) - s) / 1000000 ))
 wait $cp; done_ms=$(( ($(date +%s%N) - s) / 1000000 ))

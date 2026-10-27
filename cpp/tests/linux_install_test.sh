@@ -47,6 +47,13 @@ out="$(LOOK_BIN_SRC="$STUB" bash "$INST" 2>&1)"; rc=$?
 check "exit 0 ($(echo "$out" | tail -1 | cut -c1-60))" '[ "$rc" = 0 ]'
 check "lk-fcgi installed"                              '[ -x /usr/local/bin/lk-fcgi ]'
 check "the unit runs as user look"                     'grep -qx "User=look" /etc/systemd/system/look.service'
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz → kurulum üretir; gizli kalır.
+check "look.env is mode 0600, owned by root"           '[ "$(stat -c %a:%U /etc/look/look.env)" = 600:root ]'
+check "look.env has a 64-hex LOOK_SECRET"              'grep -qE "^LOOK_SECRET=[0-9a-f]{64}$" /etc/look/look.env'
+sec="$(sed -n 's/^LOOK_SECRET=//p' /etc/look/look.env)"
+check "the secret is not printed"                      '[ -n "$sec" ] && [[ "$out" != *"$sec"* ]]'
+out="$(LOOK_BIN_SRC="$STUB" bash "$INST" 2>&1)"
+check "running it again keeps the same secret"         '[ "$(sed -n "s/^LOOK_SECRET=//p" /etc/look/look.env)" = "$sec" ] && [ "$(grep -c "^LOOK_SECRET=" /etc/look/look.env)" = 1 ]'
 
 clean; rm -rf "$STUB"
 [ $fails = 0 ] && echo "PASS: install.sh refuses options it does not have" || { echo "FAIL: $fails check(s)"; exit 1; }

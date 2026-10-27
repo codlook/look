@@ -8,6 +8,8 @@
 # nothing is written and the session keeps what it had. The application can catch the error.
 # Usage: session_size_limit_test.sh <lk-fcgi> [redis-url]   (needs curl)
 set -u
+# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 RURL="${2:-}"
 P=7498

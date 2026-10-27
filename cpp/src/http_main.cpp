@@ -23,6 +23,7 @@
 #include "look/service_error.h"
 #include "look/logger.h"
 #include "look/web.h"
+#include "look/stdlib.h"   // csrf_secret_problem / csrf_request_ok (varsayılan CSRF kapısı)
 #include "look/sse.h"
 #include "look/websocket.h"
 #include "look/smtp_server.h"
@@ -318,6 +319,10 @@ struct HttpApp {
     bool                                     script_mode = false;
     // before_route() middleware listesi (setup fazında kaydedilir, dispatch'ten önce çalışır)
     std::vector<look::Value>                 vm_before_routes;
+    // Varsayılan CSRF denetimi: program çerez kullanıyorsa (session::/csrf::/cookie::) açık;
+    // csrf::exempt("/yol" | "/önek/*") kuralları kurulumda kaydedilir.
+    bool                                     csrf_on = false;
+    std::vector<std::string>                 csrf_exempt;
     // Setup VM globals: db_check/json_ok/json_hata/admin_kontrol closure'ları + $conn pool key
     std::unordered_map<std::string, look::Value> vm_setup_globals;
 
@@ -429,6 +434,51 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
         for (size_t i = 0; i < arr.size(); ++i) { if (i) result += sep; result += arr[i].to_string(); }
         return look::Value(result);
     };
+}
+
+// Program çerez kullanıyor mu: session::, csrf:: ya da cookie:: çağrısı (CALL_BUILTIN ya da ad olarak
+// yüklenen modül fonksiyonu). Kural tek cümle: çerez kullanan her uygulama CSRF'e karşı korunur.
+static bool cookie_api(const std::string& n) {
+    return n.rfind("session::", 0) == 0 || n.rfind("csrf::", 0) == 0 || n.rfind("cookie::", 0) == 0;
+}
+static bool proto_uses_cookies(const look::FunctionProto* p, std::unordered_set<const look::FunctionProto*>& seen) {
+    if (!p || !seen.insert(p).second) return false;
+    const auto& names = look::builtin_names();
+    for (size_t i = 0; i < p->code.size(); ++i) {
+        const auto& ins = p->code[i];
+        if (ins.op == look::OpCode::CALL_BUILTIN) {
+            uint32_t bidx = ins.b;
+            if (i + 1 < p->code.size() && p->code[i + 1].op == look::OpCode::NOP)
+                bidx = look::Instruction::builtin_index(ins, p->code[i + 1]);
+            if (bidx < names.size() && cookie_api(names[bidx])) return true;
+        } else if (ins.op == look::OpCode::LOAD_GLOBAL) {
+            const size_t ni = ins.bx();
+            if (ni < p->constants.size() && p->constants[ni].type() == look::Value::STRING &&
+                cookie_api(p->constants[ni].str_ref())) return true;
+        }
+    }
+    for (const auto& n : p->nested)
+        if (proto_uses_cookies(n.get(), seen)) return true;
+    return false;
+}
+// csrf::exempt kuralı: "/yol" (route() gibi {ad} parçalı) ya da "/önek/*".
+static bool csrf_exempt_match(const std::string& rule, const std::string& path) {
+    if (!rule.empty() && rule.back() == '*') return path.rfind(rule.substr(0, rule.size() - 1), 0) == 0;
+    size_t i = 0, j = 0;
+    while (i < rule.size() && j < path.size()) {
+        if (rule[i] == '{') {
+            auto close = rule.find('}', i);
+            if (close == std::string::npos) return false;
+            size_t start = j;
+            while (j < path.size() && path[j] != '/') ++j;
+            if (j == start) return false;
+            i = close + 1;
+            continue;
+        }
+        if (rule[i] != path[j]) return false;
+        ++i; ++j;
+    }
+    return i == rule.size() && j == path.size();
 }
 
 static bool proto_needs_interpreter(const look::FunctionProto* p,
@@ -553,6 +603,8 @@ static void run_setup_http(const fs::path& script) {
     // ── VM Setup Fazı: bytecode'u çalıştır, route'ları kaydet ────────────────
     g_http_app.vm_routes.clear();
     g_http_app.vm_before_routes.clear();
+    g_http_app.csrf_on = false;
+    g_http_app.csrf_exempt.clear();
     g_http_app.vm_routes_ready = false;
     g_http_app.script_mode     = false;
     if (g_http_app.compiled) {
@@ -820,6 +872,19 @@ static void run_setup_http(const fs::path& script) {
                     };
                 }
             }
+            // csrf::exempt("/yol" | "/önek/*") — kurulumda muafiyet kaydı (modül sürümü istekte hata verir).
+            {
+                auto* ex = &g_http_app.csrf_exempt;
+                setup_builtins[(size_t)look::builtin_index("csrf::exempt")] =
+                    [ex](std::vector<look::Value>& args) -> look::Value {
+                    if (args.size() != 1 || args[0].type() != look::Value::STRING || args[0].to_string().empty() ||
+                        args[0].to_string()[0] != '/')
+                        throw std::runtime_error("csrf::exempt(path) takes one path that starts with /, e.g. "
+                            "csrf::exempt(\"/webhooks/stripe\") or csrf::exempt(\"/api/*\")");
+                    ex->push_back(args[0].to_string());
+                    return look::Value();
+                };
+            }
             // jobs::run kurulumda çağrılırsa VM işleyicilerini çalıştırabilsin (kurulumdan ÖNCE kur).
             look::vm_closure_runner() = run_closure_as_request;
 
@@ -835,6 +900,23 @@ static void run_setup_http(const fs::path& script) {
             // Setup globals'ı sakla: db_check/json_ok/json_hata gibi named fn closure'lar +
             // $conn pool key — dispatch VM'e set_globals() ile verilecek
             g_http_app.vm_setup_globals = setup_vm.get_globals();
+
+            // Varsayılan CSRF denetimi: program çerez kullanıyorsa açık. Anahtar yoksa uygulama
+            // BAŞLAMAZ (Go modeli: eksik kaynak açılışta nedenli hata; çalışırken rastgele 403 değil).
+            {
+                std::unordered_set<const look::FunctionProto*> seen;
+                g_http_app.csrf_on = proto_uses_cookies(g_http_app.compiled->main_proto.get(), seen);
+                for (const auto& [k, v] : g_http_app.vm_setup_globals)
+                    if (!g_http_app.csrf_on && v.type() == look::Value::BYTECODE_FN)
+                        if (auto cl = v.as_bytecode_fn()) g_http_app.csrf_on = proto_uses_cookies(cl->proto.get(), seen);
+                if (g_http_app.csrf_on) {
+                    std::string problem = look::csrf_secret_problem();
+                    if (!problem.empty()) throw std::runtime_error(problem);
+                }
+                startup_note(g_http_app.csrf_on
+                    ? "CSRF protection: on (the program uses cookies; " + std::to_string(g_http_app.csrf_exempt.size()) + " exempt path(s))"
+                    : "CSRF protection: off (the program does not use cookies)");
+            }
 
             // LOOK 2: tüm dosyalar yüklendi, bütün struct'lar biliniyor → alan tip adlarını ŞİMDİ
             // denetle. Yazım hatası (`strng`) uygulama BAŞLARKEN hata verir; yoksa ancak o struct'ı
@@ -1633,7 +1715,28 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // before_route middleware'leri sırayla çalıştır
             // stop() throw ettiğinde RouteStopException yakalanır → route atlanır
             bool stopped = stopped_direct;
-            if (!stopped_direct) for (auto* cl : before_closures) {
+            // Varsayılan CSRF kapısı — rotadan ve before_route'tan ÖNCE, üç modda aynı yer. Bağlantı
+            // işleyicisi (WS/SSE) ve zamanlayıcı geri çağırması istek değildir.
+            if (!stopped && g_http_app.csrf_on && direct().conn.type() == look::Value::NONE &&
+                (web.method == "POST" || web.method == "PUT" || web.method == "PATCH" || web.method == "DELETE")) {
+                for (const auto& rule : g_http_app.csrf_exempt)
+                    if (csrf_exempt_match(rule, web.path)) { web.csrf_exempt_rule = rule; break; }
+                std::string why;
+                if (web.csrf_exempt_rule.empty() && !look::csrf_request_ok(&web, why)) {
+                    stopped = true;
+                    web.status_code = 403;
+                    web.status_text = "Forbidden";
+                    web.headers_out["Content-Type"] = "text/plain; charset=utf-8";
+                    web.response_body = "Forbidden: this form has expired or did not come from this site. "
+                                        "Reload the page and try again.";
+                    look::Logger::instance().log(look::LogLevel::LOG_WARN, "CSRF",
+                        web.method + " " + web.path + " refused: " + why + ". Every application that uses cookies is "
+                        "protected: put csrf::field() in the form, or send csrf::token() in an X-CSRF-Token header; "
+                        "a webhook or token API that does not use cookies can be exempted with csrf::exempt(\"" +
+                        web.path + "\")");
+                }
+            }
+            if (!stopped) for (auto* cl : before_closures) {
                 try {
                     vm.call_closure(*cl, {});
                 } catch (const look::RouteStopException&) {
