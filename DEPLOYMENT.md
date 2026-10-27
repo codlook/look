@@ -24,7 +24,7 @@ Type=simple
 User=www-data
 WorkingDirectory=/var/www/myapp
 EnvironmentFile=/etc/look/myapp.env
-ExecStart=/usr/bin/lk-fcgi --mode http --port 9101 app.lk
+ExecStart=/usr/local/bin/lk-fcgi --mode http --port 9101 app.lk
 Restart=on-failure
 RestartSec=2
 # Hardening

@@ -23,4 +23,14 @@ bad="$(grep -nE '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z)?sh\b' $
 [ -z "$bad" ] || { echo "FAIL: a download piped into a shell:"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
 bad="$(grep -nE '(curl|wget)[^#]*https?://' $ifiles /dev/null | grep -vE 'https?://(github\.com/codlook/|([a-z0-9-]+\.)?codlook\.com\b|(127\.0\.0\.1|localhost|\$|<|\{))' | grep -E '(curl|wget)[^#]*https?://[a-z]' | grep -vE 'https?://[^/ ]*(example|myapp|sunucu|domain)' || true)"
 [ -z "$bad" ] || { echo "FAIL: a download from an address that is not the project's (github.com/codlook, codlook.com):"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
+# 4. Belgedeki her systemd servis örneği bir kullanıcıyla çalışır, root'la değil. Plesk elle kurulum
+#    rehberi User= olmadan servis yazdırıyor ve "root yaygın ve pratik" diyordu (eklenti 1.2.0'da
+#    kapattığımız açığın belgedeki kopyası).
+mdfiles="$(echo "$ifiles" | grep '\.md$')"
+bad="$(awk 'FNR==1{inb=0} /^```/{ if(inb){ if(svc && exe && !usr) print FILENAME":"start": systemd unit without User= (or User=root)"; inb=0 } else { inb=1; svc=0; exe=0; usr=0; start=FNR } next }
+     inb && /^\[Service\]/{svc=1} inb && /^ExecStart=.*(lk|look)-(fcgi|cgi)/{exe=1} inb && /^User=/ && !/^User=root/{usr=1}' $mdfiles /dev/null || true)"
+[ -z "$bad" ] || { echo "FAIL: a service example that runs LOOK as root:"; echo "$bad" | sed 's/^/    /'; fail=1; }
+# 5. Web sunucusu lk-fcgi'dir; "lk --mode http" bir dosya adı sanılır ve çalışmaz (SMTP/IMAP belgeleri).
+bad="$(grep -nE '(^|[[:space:]`>])lk --mode http' $ifiles /dev/null | grep -v '^dogfood/' || true)"
+[ -z "$bad" ] || { echo "FAIL: 'lk --mode http' (the server is lk-fcgi):"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
 [ $fail = 0 ] && echo "PASS: no unsafe examples in the documentation ($(echo "$files" | wc -l) files)" || exit 1

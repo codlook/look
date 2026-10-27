@@ -17,7 +17,7 @@ LOOK dilinin C++23 runtime implementasyonu.
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . --config Release
-# Çıktı: build/Release/look-fcgi.exe, look-cgi.exe, look.exe
+# Çıktı: build/Release/lk-fcgi.exe, lk-cgi.exe, lk.exe
 ```
 
 ### Linux — Docker (önerilen)
