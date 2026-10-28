@@ -39,6 +39,7 @@ thread_local std::vector<std::string>       g_use_modules;      // görülen std
 // Derleme başına: eskiden süreç ömrü boyunca duran bir listeydi — sıcak yeniden yüklemede `use paket`
 // boş geçiyordu, paketin fonksiyonları yok oluyordu ("Undefined variable") ve paketin çerez kullanımı
 // görünmediği için CSRF denetimi sessizce kapanıyordu.
+// fiber-ok: yalnız derleme anı durumu; derleme askıya girmez
 thread_local std::unordered_set<std::string> g_compile_modules;
 // Bu derleme biriminde (dahil edilen dosyalar dahil) görülen struct bildirimleri: ad → (imza, satır).
 thread_local std::unordered_map<std::string, std::pair<std::string, int>> g_compile_structs;
