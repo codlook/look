@@ -507,6 +507,13 @@ jobs:
           cd cpp
           bash tests/csrf_core_test.sh ./build/lk-fcgi ./build/lk-cgi
 
+      # Paket modülü (~/.look/modules) sıcak yeniden yüklemeden sonra da çalışır: derleyici yüklenen
+      # modülleri süreç boyunca hatırlıyordu, yeniden yüklemede `use paket` boş geçiyor, istekler 500.
+      - name: Package modules survive a hot reload
+        run: |
+          cd cpp
+          bash tests/package_hot_reload_test.sh build/lk-fcgi
+
       # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
       # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
       - name: --bind keeps --mode http on the address given
