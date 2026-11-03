@@ -8,7 +8,9 @@ a description, the affected version, and a reproduction if possible. Please do n
 open a public issue for undisclosed vulnerabilities. We aim to acknowledge reports
 within 72 hours.
 
-Supported version: the latest release on the `main` branch.
+Supported versions: the latest release of each supported line. After LOOK 2.0 is released,
+LOOK 1 (1.0.x) keeps receiving security fixes for at least 12 months; its end is announced at
+least 6 months before it (see [Moving from LOOK 1 to LOOK 2](docs/migrating-to-look-2.md)).
 
 Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com/.well-known/security.txt) (RFC 9116).
 

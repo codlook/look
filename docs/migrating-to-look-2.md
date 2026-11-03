@@ -12,6 +12,13 @@ Each entry says how the change shows up:
 - **Silent** — the program runs and gives a different result. These are the ones to read
   carefully.
 
+## How long LOOK 1 is supported
+
+LOOK 1 (1.0.x) keeps receiving security fixes and fixes for silent failures for **at least 12
+months after LOOK 2.0 is released**, so you can move each application when it suits you. It gets
+no new features. The end of LOOK 1 support is announced **at least 6 months before it**, in the
+release notes, in the README and on this page.
+
 ## Structs
 
 ### One way to write a field — error at load
