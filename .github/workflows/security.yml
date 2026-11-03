@@ -18,7 +18,9 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev curl
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev curl
+          # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
+          if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
 
       # (Release build + regresyon için bkz. ci.yml — burası yalnızca sanitizer.)
       - name: Build (ASan + UBSan)
@@ -65,7 +67,9 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev curl
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev curl
+          # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
+          if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
 
       # TSan blocking-mode data race taraması. Fiber path'i ucontext annotation
       # gerektirdiği için ayrı; burada production default (blocking) taranır.

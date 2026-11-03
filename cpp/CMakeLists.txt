@@ -232,6 +232,53 @@ else()
         find_package(ZLIB QUIET)
     endif()
     find_package(OpenSSL REQUIRED)
+    # Statik libcrypto'nun kendi bağımlılıkları (libcrypto.pc Libs.private) kurulu mu? Ubuntu 26.04'ün
+    # OpenSSL 3.5'i -l:libjitterentropy.a -lz -lzstd ister; eksikse derleme ancak sonda, anlaşılmaz bir
+    # bağlayıcı hatasıyla düşüyordu ("cannot find -l:libjitterentropy.a"). Şimdi yapılandırmada, hangi
+    # kütüphanenin eksik olduğunu söyleyerek durur. Denetlenen .pc, BULUNAN libcrypto'nun yanındaki dosyadır
+    # (taşınabilir yayın derlemesi kendi OpenSSL'ini verir; sistemin libcrypto.pc'si başka kütüphaneyi anlatır).
+    # O dizinde .pc yoksa denetim yapılmaz.
+    get_filename_component(LOOK_CRYPTO_DIR "${OPENSSL_CRYPTO_LIBRARY}" DIRECTORY)
+    if(LOOK_STATIC_SSL AND OPENSSL_CRYPTO_LIBRARY MATCHES "\\.a$" AND EXISTS "${LOOK_CRYPTO_DIR}/pkgconfig/libcrypto.pc")
+        find_package(PkgConfig QUIET)
+        if(PKG_CONFIG_FOUND)
+            execute_process(COMMAND ${CMAKE_COMMAND} -E env "PKG_CONFIG_PATH=${LOOK_CRYPTO_DIR}/pkgconfig"
+                                    "PKG_CONFIG_LIBDIR=${LOOK_CRYPTO_DIR}/pkgconfig"
+                                    ${PKG_CONFIG_EXECUTABLE} --libs-only-l --static libcrypto
+                            OUTPUT_VARIABLE LOOK_CRYPTO_STATIC_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE
+                            RESULT_VARIABLE LOOK_CRYPTO_PC_RC ERROR_QUIET)
+            if(LOOK_CRYPTO_PC_RC EQUAL 0)
+                separate_arguments(LOOK_CRYPTO_STATIC_LIBS UNIX_COMMAND "${LOOK_CRYPTO_STATIC_LIBS}")
+                set(LOOK_CRYPTO_MISSING "")
+                foreach(flag IN LISTS LOOK_CRYPTO_STATIC_LIBS)
+                    if(flag MATCHES "^-l:(.+)$")
+                        set(lib_file "${CMAKE_MATCH_1}")
+                    elseif(flag MATCHES "^-l(.+)$")
+                        set(lib_file "lib${CMAKE_MATCH_1}.a")
+                    else()
+                        continue()
+                    endif()
+                    if(lib_file MATCHES "^lib(ssl|crypto|dl|pthread|rt|m|c)\\.a$")
+                        continue()   # OpenSSL'in kendisi ve libc parçaları
+                    endif()
+                    unset(LOOK_DEP_PATH CACHE)
+                    find_library(LOOK_DEP_PATH NAMES "${lib_file}")
+                    if(NOT LOOK_DEP_PATH)
+                        list(APPEND LOOK_CRYPTO_MISSING "${lib_file}")
+                    endif()
+                endforeach()
+                unset(LOOK_DEP_PATH CACHE)
+                if(LOOK_CRYPTO_MISSING)
+                    string(REPLACE ";" ", " LOOK_CRYPTO_MISSING "${LOOK_CRYPTO_MISSING}")
+                    message(FATAL_ERROR
+                        "The static OpenSSL on this system needs these libraries, which are not installed: ${LOOK_CRYPTO_MISSING}. "
+                        "On Debian/Ubuntu install: libjitterentropy3-dev zlib1g-dev libzstd-dev "
+                        "(only the ones that exist on your release). Or build with -DLOOK_STATIC_SSL=OFF "
+                        "to link OpenSSL dynamically (the binary then needs this system's libssl at run time).")
+                endif()
+            endif()
+        endif()
+    endif()
     # Statik libcrypto.a dlopen + zlib gerektirebilir → dl, z ekli
     target_link_libraries(look      Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
     target_link_libraries(look-cgi  Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
