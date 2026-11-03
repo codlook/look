@@ -339,6 +339,50 @@ static void lex_append_utf8(std::string& out, uint32_t cp) {
     else { out += (char)(0xF0|(cp>>18)); out += (char)(0x80|((cp>>12)&0x3F)); out += (char)(0x80|((cp>>6)&0x3F)); out += (char)(0x80|(cp&0x3F)); }
 }
 
+// value: kapanan tırnağa kadar okunan string; current_ kapanan tırnağın üzerinde.
+void Lexer::check_quote_inside_placeholder(const std::string& value) {
+    // Açık kalan ilk '{' (iç içe sayarak)
+    std::vector<size_t> open;
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '{') open.push_back(i);
+        else if (value[i] == '}' && !open.empty()) open.pop_back();
+    }
+    if (open.empty()) return;
+    size_t start = open.front();
+    size_t after = current_ + 1;                       // kapanan tırnaktan sonraki karakter
+    if (after >= source_.size()) return;
+    char n = source_[after];
+    if (!(std::isalnum((unsigned char)n) || n == '_')) return;   // tırnağın arkasında ad yok
+    std::string head = value.substr(start);           // "{$u["
+    // Kaynağın devamından {…}'i kapatan '}'e kadar al (en çok 80 karakter); yoksa öneri yapma.
+    int depth = (int)open.size();
+    std::string tail;
+    for (size_t j = after; j < source_.size() && tail.size() < 80; ++j) {
+        char c = source_[j];
+        if (c == '\n') break;
+        tail += c;
+        if (c == '{') depth++;
+        else if (c == '}' && --depth == 0) break;
+    }
+    if (depth != 0) tail.clear();
+    std::string written = head + "\"" + tail;          // kullanıcının yazdığı: {$u["name"]}
+    std::string msg = "Line " + std::to_string(line_) + ": the \" in " + (tail.empty() ? head + "\"…" : written) +
+        " ends the string, so the rest of the line is not part of it.";
+    if (head.size() >= 2 && head[1] == '$') {
+        if (!tail.empty()) {
+            std::string fixed = written;
+            for (size_t k = 0; k < fixed.size(); ++k) if (fixed[k] == '"') fixed[k] = '\'';
+            msg += " Inside {…} write single quotes: " + fixed;
+        } else {
+            msg += " Inside {…} write single quotes, e.g. {$u['name']}";
+        }
+    } else {
+        // {cache::get("k")} — yalnız {$…} değiştirilir; dolarsız {…} metin olarak kalır.
+        msg += " Only {$…} is replaced inside a string: put the value in a variable first, then write {$value}";
+    }
+    throw std::runtime_error(msg);
+}
+
 void Lexer::string(char quote) {
     std::string value;
     while (!is_at_end() && peek() != quote) {
@@ -393,6 +437,12 @@ void Lexer::string(char quote) {
 
     if (is_at_end())
         throw std::runtime_error("Unterminated string at line " + std::to_string(line_));
+
+    // "Hi {$u["name"]}" — iç çift tırnak string'i BİTİRİR; sonraki kelime parser'da anlamsız bir
+    // hataya dönüşüyordu ("Expect ')' after print arguments. (got 'name')"). String kapandığında
+    // açık bir '{' varsa ve tırnağın hemen arkasından bir ad devam ediyorsa, tırnak yanlışlıkla
+    // {…}'in içindedir: nedeni ve doğru yazımı söyle. (Yeni yazım YOK — tek tırnak zaten çalışıyor.)
+    if (quote == '"') check_quote_inside_placeholder(value);
 
     advance(); // closing quote
     add_token(TokenType::STRING, std::move(value));

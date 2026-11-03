@@ -521,6 +521,12 @@ jobs:
           cd cpp
           bash tests/worker_pool_defaults_test.sh build/lk-fcgi
 
+      # "Hi {$u["name"]}": iç çift tırnak string'i bitirir — hata yeri ve doğru yazımı ({$u['name']}) söyler.
+      - name: A quote inside {…} gets an error that shows the right spelling
+        run: |
+          cd cpp
+          bash tests/interpolation_quote_message_test.sh build/lk
+
       # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
       # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
       - name: --bind keeps --mode http on the address given

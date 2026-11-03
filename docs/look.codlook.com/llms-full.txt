@@ -585,6 +585,9 @@ Inside an interpolating string, `{...}` holds a LOOK expression, so an array ele
 `{$u.list[1].k}`. (The template language has its own dotted paths; LOOK strings do not —
 in LOOK code `.` followed by a number or a name is concatenation.)
 
+A double quote inside `{…}` ends the string, so write single quotes there: `"Hi {$u['name']}"`, not
+`"Hi {$u["name"]}"`. If you forget, LOOK stops with an error that shows the line and the corrected text.
+
 ### Backtick — Raw String (no escaping, interpolation on)
 
 ```lk

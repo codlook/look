@@ -679,6 +679,7 @@ look-fcgi --mode http --port 8080</code></pre>
 <span class="var">$t</span> = <span class="str">'Hello {$name}'</span>                       <span class="cm"># literal {$name} — nothing is substituted</span></code></pre>
   <p>Single quotes are the way to write text that contains <code>{$...}</code> and must reach its consumer unchanged — above all a template source passed to <code>template::render_string</code>. Escape sequences (<code>\'</code>, <code>\\</code>, <code>\n</code>) still apply.</p>
   <p>Inside an interpolating string, <code>{...}</code> holds a LOOK expression, so an array element is <code>{$u.list[1].k}</code>. (The template language has its own dotted paths; LOOK strings do not — in LOOK code <code>.</code> followed by a number or a name is concatenation.)</p>
+  <p>A double quote inside <code>{…}</code> ends the string, so write single quotes there: <code>"Hi {$u['name']}"</code>, not <code>"Hi {$u["name"]}"</code>. If you forget, LOOK stops with an error that shows the line and the corrected text.</p>
 
   <h3>Backtick — Raw String (no escaping, interpolation on)</h3>
   <pre><code><span class="var">$json</span> = `{"key": "value", "num": 42}`

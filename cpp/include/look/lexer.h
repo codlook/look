@@ -36,6 +36,7 @@ private:
     void scan_token();
     void add_token(TokenType type, std::optional<std::string> literal = std::nullopt);
     void string(char quote);
+    void check_quote_inside_placeholder(const std::string& value);   // "{$u["name"]}" → nedenli hata
     void raw_string();
     void number();
     void identifier();
