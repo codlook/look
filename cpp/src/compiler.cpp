@@ -31,6 +31,11 @@ thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
 thread_local std::vector<std::string>       g_compile_cur_use;   // `use "x"` metinleri (uyarı öneki)
 thread_local std::vector<std::string>       g_compile_warnings;  // → CompiledProgram::warnings
+// Bu derlemede yüklenmiş kullanıcı/paket modülleri (aynı modül iki kez use edilirse bir kez derlensin).
+// Derleme başına: eskiden süreç ömrü boyunca duran bir listeydi — sıcak yeniden yüklemede `use paket`
+// boş geçiyordu ve paketin fonksiyonları yok oluyordu ("Undefined variable", her istekte 500).
+// fiber-ok: yalnız derleme anı durumu; derleme askıya girmez
+thread_local std::unordered_set<std::string> g_compile_modules;
 }
 #include <stdexcept>
 #include <typeinfo>
@@ -452,7 +457,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         compile_block(*s);
     }
     else if (auto* us = dynamic_cast<const UseStatement*>(&stmt)) {
-        // 2c: keşif-geçişinde `use` İŞLENMEZ. Modül yükleme (bug 49) g_loaded dedup'ı
+        // 2c: keşif-geçişinde `use` İŞLENMEZ. Modül yükleme (bug 49) g_compile_modules dedupı
         // ile yan etkilidir; discovery pass onu tetiklerse REAL pass "zaten yüklü"
         // deyip modül kodunu atlar → route kalıcı interpreter'a düşer. Discovery
         // yalnız closure capture arar; modül (ayrı dosya) mevcut dosyanın top-level
@@ -489,11 +494,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                                    us->module_name + "/" + us->module_name + ".lk";
                 // Aynı modül iki kez use edilirse tekrar derleme (interpreter'ın
                 // included_files_ mantığıyla aynı) — çift tanım ve şişme olmasın.
-                static std::vector<std::string> g_loaded;
                 static std::vector<std::shared_ptr<Program>> g_module_asts;  // AST ömrü
-                bool already = false;
-                for (auto& p : g_loaded) if (p == path) { already = true; break; }
-                if (already) { emit(OpCode::NOP); return; }
+                if (g_compile_modules.count(path)) { emit(OpCode::NOP); return; }
 
                 std::ifstream f(path);
                 if (f) {
@@ -503,7 +505,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                         Lexer lx(src);
                         Parser p(lx.scan_tokens());
                         auto prog = std::shared_ptr<Program>(p.parse().release());
-                        g_loaded.push_back(path);
+                        g_compile_modules.insert(path);
                         g_module_asts.push_back(prog);
                         for (auto& sub : prog->statements) compile_stmt(*sub);
                         loaded = true;
@@ -1949,6 +1951,7 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
 CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir) {
     g_compile_root = base_dir;
     g_compile_included.clear();
+    g_compile_modules.clear();
     g_compile_cur_dir.clear();
     g_compile_cur_use.clear();
     g_compile_warnings.clear();
