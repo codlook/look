@@ -53,6 +53,9 @@ LK
 cat > "$TMP/load.py" <<'PY'
 import sys, json, threading, urllib.request
 port, bad, done = int(sys.argv[1]), [], [0]
+# Sunucu yanıt vermez olursa dur: her istek 10 sn bekler, 1200 istek yarım saat sürer (pozitif kontrolün
+# kasıtlı yarışı sunucuyu kilitleyebiliyor — CI işi 20 dakikada iptal ediliyordu). Hata yine sayılır.
+errors, LIMIT = [0], 5
 READ = ["g1", "n0", "d0", 1, "y", "x", 1, "t0"]
 def get(p): return json.loads(urllib.request.urlopen("http://127.0.0.1:%d%s" % (port, p), timeout=10).read().decode())
 def writer(t):
@@ -62,18 +65,22 @@ def writer(t):
             r = get("/w?u=" + u)
             want = {"w": ["g0", u, u, u, 2, u, u, "y", 2, u, u], "mine": u, "cap": "x"}
             if r != want: bad.append(("w", u, r))
-        except Exception as e: bad.append(("w-error", u, str(e)))
+        except Exception as e:
+            bad.append(("w-error", u, str(e))); errors[0] += 1
+            if errors[0] >= LIMIT: return
         done[0] += 1
 def reader(t):
     for n in range(150):
         try:
             r = get("/r")
             if r != READ: bad.append(("r", t, r))
-        except Exception as e: bad.append(("r-error", t, str(e)))
+        except Exception as e:
+            bad.append(("r-error", t, str(e))); errors[0] += 1
+            if errors[0] >= LIMIT: return
         done[0] += 1
 ts = [threading.Thread(target=writer, args=(i,)) for i in range(5)] + [threading.Thread(target=reader, args=(i,)) for i in range(3)]
 [t.start() for t in ts]; [t.join() for t in ts]
-print("requests=%d bad=%d %s" % (done[0], len(bad), json.dumps(bad[:2])))
+print("requests=%d bad=%d%s %s" % (done[0], len(bad), " (stopped: the server stopped answering)" if errors[0] >= LIMIT else "", json.dumps(bad[:2])))
 PY
 fail=0
 ( cd "$TMP" && exec "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!

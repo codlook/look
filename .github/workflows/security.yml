@@ -120,7 +120,9 @@ jobs:
           grep -q 'positive control: the copy on write is removed' include/look/value_path.h
           cmake --build build-tsan --target look-fcgi --parallel $(nproc)
           rm -f /tmp/tsan_ctl.*
-          TSAN_OPTIONS="halt_on_error=0:log_path=/tmp/tsan_ctl" bash tests/shared_setup_concurrency_test.sh ./build-tsan/lk-fcgi || true
+          # The deliberate race can corrupt the array and wedge the server: bound the run (the reports
+          # are written to the log as they happen, before any wedge).
+          TSAN_OPTIONS="halt_on_error=0:log_path=/tmp/tsan_ctl" timeout 300 bash tests/shared_setup_concurrency_test.sh ./build-tsan/lk-fcgi || true
           n="$(cat /tmp/tsan_ctl.* 2>/dev/null | grep -c "WARNING: ThreadSanitizer" || true)"
           echo "ThreadSanitizer reports with the copy on write removed: $n"
           cat /tmp/tsan_ctl.* 2>/dev/null | head -40 || true
