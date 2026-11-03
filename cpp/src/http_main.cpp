@@ -1866,15 +1866,15 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
 #endif
 
     {
-        int pool_sz = workers;  // default: workers ile aynı (güvenli başlangıç)
+        // Havuzun üst sınırı işçi sayısından bağımsız: LOOK_DB_POOL_SIZE verilmişse o, yoksa
+        // varsayılan (db::connect: 4 × CPU, 8..64). Bağlantılar gerektikçe açılır.
         const char* env = std::getenv("LOOK_DB_POOL_SIZE");
-        if (env && env[0]) pool_sz = std::atoi(env);
-        pool_sz = std::max(1, std::min(pool_sz, 256));
+        int pool_sz = (env && env[0]) ? std::max(1, std::min(std::atoi(env), 256)) : 0;
         look::set_db_pool_size(pool_sz);
 
         // AsyncDbPool — DB işlerini HTTP worker'lardan ayıran thread pool
-        // LOOK_DB_ASYNC_THREADS: varsayılan pool_sz, 0 ise devre dışı
-        int async_threads = pool_sz;
+        // LOOK_DB_ASYNC_THREADS: varsayılan işçi sayısı, 0 ise devre dışı
+        int async_threads = workers;   // (eskiden pool_sz = workers idi; değer aynı kalır)
         const char* ath_env = std::getenv("LOOK_DB_ASYNC_THREADS");
         if (ath_env && ath_env[0]) async_threads = std::atoi(ath_env);
         if (async_threads > 0)

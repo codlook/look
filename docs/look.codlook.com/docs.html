@@ -4515,7 +4515,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <h3>Server &amp; workers</h3>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
-    <tr><td><code>LOOK_WORKERS</code></td><td>CPUs × 4 (max 64)</td><td>Worker-thread count. Same as the <code>--workers</code> flag; the flag wins if both are set. The ×4 default overlaps blocking I/O. <strong>Under a hard CPU quota</strong> (container <code>--cpus</code>, k8s CPU limit, systemd <code>CPUQuota</code>) set this to the quota: extra threads burst past the CFS bandwidth limit and get throttled, spiking p99 tail latency. The server logs a warning at startup if it detects this.</td></tr>
+    <tr><td><code>LOOK_WORKERS</code></td><td>usable CPUs (<code>--mode http</code> on Linux); CPUs × 4, max 64 (FastCGI, Windows, <code>LOOK_FIBER_DISPATCH=0</code>)</td><td>Worker-thread count. Same as the <code>--workers</code> flag; the flag wins if both are set; either is applied as given. "Usable CPUs" counts the CPUs the process may run on (<code>taskset</code>, systemd <code>CPUAffinity=</code>, container cpuset) and a CPU quota (container <code>--cpus</code>, k8s CPU limit, systemd <code>CPUQuota</code>), like Go's <code>GOMAXPROCS</code>. With fiber dispatch a worker runs other requests while one waits on the database or the network, so more workers than CPUs only add memory and tail latency. Where a thread waits for its request (FastCGI, Windows), the ×4 default overlaps that waiting; under a hard CPU quota the server warns if the workers exceed it.</td></tr>
     <tr><td><code>LOOK_FCGI_BIND</code></td><td><code>127.0.0.1</code></td><td>Bind address. Set to <code>0.0.0.0</code> (or <code>any</code>) to listen on all interfaces.</td></tr>
     <tr><td><code>LOOK_HEALTH_PATH</code></td><td><code>/health</code></td><td>Path that returns a plain health-check response.</td></tr>
     <tr><td><code>LOOK_HTTP_IDLE_MS</code></td><td><code>30000</code></td><td>Keep-alive idle timeout in ms — how long an idle connection is held open.</td></tr>
@@ -4548,7 +4548,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <h3>Database &amp; cache</h3>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
-    <tr><td><code>LOOK_DB_POOL_SIZE</code></td><td>= workers</td><td>Connections per DSN in the pool (MySQL/PostgreSQL). Clamped to 1–256. SQLite uses 2–4 (reads run side by side; writes take turns).</td></tr>
+    <tr><td><code>LOOK_DB_POOL_SIZE</code></td><td>4 × usable CPUs, 8–64</td><td>Most connections per DSN (MySQL/PostgreSQL), independent of the workers; clamped to 1–256. <code>db::connect</code> opens one connection — a wrong password or an unreachable server stops the start — and the rest open when requests need them. SQLite uses at most 4 (reads run side by side; writes take turns).</td></tr>
     <tr><td><code>LOOK_DB_ASYNC_THREADS</code></td><td>= workers</td><td>Background threads for async DB work.</td></tr>
     <tr><td><code>LOOK_CACHE_MAX_ENTRIES</code></td><td><code>100000</code></td><td>Maximum entries held by the in-process <code>cache::</code> store before eviction.</td></tr>
     <tr><td><code>LOOK_HOT_RELOAD_MS</code></td><td><code>500</code></td><td>How often <code>--mode http</code> checks the script's modification time to hot-reload it, in milliseconds. Throttled so the check stays off the per-request hot path. <code>0</code> checks on every request (legacy behaviour); a higher value reloads less often.</td></tr>

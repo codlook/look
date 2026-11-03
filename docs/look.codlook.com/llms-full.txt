@@ -4515,7 +4515,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `LOOK_WORKERS` | CPUs × 4 (max 64) | Worker-thread count. Same as the `--workers` flag; the flag wins if both are set. The ×4 default overlaps blocking I/O. Under a hard CPU quota (container `--cpus`, k8s CPU limit, systemd `CPUQuota`) set this to the quota: extra threads burst past the CFS bandwidth limit and get throttled, spiking p99 tail latency. The server logs a warning at startup if it detects this. |
+| `LOOK_WORKERS` | usable CPUs (`--mode http` on Linux); CPUs × 4, max 64 (FastCGI, Windows, `LOOK_FIBER_DISPATCH=0`) | Worker-thread count. Same as the `--workers` flag; the flag wins if both are set; either is applied as given. "Usable CPUs" counts the CPUs the process may run on (`taskset`, systemd `CPUAffinity=`, container cpuset) and a CPU quota (container `--cpus`, k8s CPU limit, systemd `CPUQuota`), like Go's `GOMAXPROCS`. With fiber dispatch a worker runs other requests while one waits on the database or the network, so more workers than CPUs only add memory and tail latency. Where a thread waits for its request (FastCGI, Windows), the ×4 default overlaps that waiting; under a hard CPU quota the server warns if the workers exceed it. |
 | `LOOK_FCGI_BIND` | `127.0.0.1` | Bind address. Set to `0.0.0.0` (or `any`) to listen on all interfaces. |
 | `LOOK_HEALTH_PATH` | `/health` | Path that returns a plain health-check response. |
 | `LOOK_HTTP_IDLE_MS` | `30000` | Keep-alive idle timeout in ms — how long an idle connection is held open. |
@@ -4548,7 +4548,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `LOOK_DB_POOL_SIZE` | = workers | Connections per DSN in the pool (MySQL/PostgreSQL). Clamped to 1–256. SQLite uses 2–4 (reads run side by side; writes take turns). |
+| `LOOK_DB_POOL_SIZE` | 4 × usable CPUs, 8–64 | Most connections per DSN (MySQL/PostgreSQL), independent of the workers; clamped to 1–256. `db::connect` opens one connection — a wrong password or an unreachable server stops the start — and the rest open when requests need them. SQLite uses at most 4 (reads run side by side; writes take turns). |
 | `LOOK_DB_ASYNC_THREADS` | = workers | Background threads for async DB work. |
 | `LOOK_CACHE_MAX_ENTRIES` | `100000` | Maximum entries held by the in-process `cache::` store before eviction. |
 | `LOOK_HOT_RELOAD_MS` | `500` | How often `--mode http` checks the script's modification time to hot-reload it, in milliseconds. Throttled so the check stays off the per-request hot path. `0` checks on every request (legacy behaviour); a higher value reloads less often. |

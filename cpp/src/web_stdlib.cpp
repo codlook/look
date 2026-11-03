@@ -31,6 +31,9 @@
 #include <random>
 #include <condition_variable>
 #include <thread>
+#ifdef __linux__
+#include <sched.h>   // sched_getaffinity — available_cpus
+#endif
 #include <atomic>
 #include <filesystem>
 #include <system_error>
@@ -1166,56 +1169,61 @@ struct ConnPool {
     std::vector<std::shared_ptr<DbConnection>> available;
     std::mutex                                 mtx;
     std::condition_variable                    cv;
+    // Tembel havuz (Go database/sql gibi): db::connect bir bağlantı açar; gerisi istekler
+    // gerektirdikçe max_size'a kadar. Eskiden bütün havuz (işçi sayısı kadar) db::connect'te
+    // peşin açılıyordu. opening = şu an açılmakta olan (kilit dışında) bağlantı sayısı.
+    int                                        max_size = 1;
+    int                                        opening  = 0;
+    std::function<std::shared_ptr<DbConnection>()> opener;
 
     std::shared_ptr<DbConnection> acquire() {
-        // Fast path: slot available — no waiting needed
-        {
-            std::lock_guard<std::mutex> lk(mtx);
-            if (!available.empty()) {
-                auto c = available.back(); available.pop_back();
-                return c;
-            }
-        }
-
-        // Slow path: pool exhausted
         look::Fiber*          fiber = look::Fiber::current();
         look::FiberScheduler* sched = look::get_thread_scheduler();
+        std::shared_ptr<look::Fiber> shared_fiber;
+        if (fiber && sched) shared_fiber = fiber->shared_from_this_fiber();
 
-        if (fiber && sched) {
-            // Fiber context: yield cooperatively until a slot is available.
-            // Re-enqueue on each wake until we actually grab a connection —
-            // handles the rare race where another acquire() takes the slot
-            // between notify_fiber_waiters() and this fiber resuming.
-            auto shared_fiber = fiber->shared_from_this_fiber();
-            while (true) {
-                {
-                    // Boş-kontrolü ve kuyruğa girme AYNI havuz kilidi altında: arada gelen
-                    // release() bekleyen görmeyip uyandırmayı kaybetmesin. Kilit sırası
-                    // mtx → g_fiber_waiters_mtx; release() ikisini iç içe almaz.
-                    std::lock_guard<std::mutex> plk(mtx);
-                    if (!available.empty()) {
-                        auto c = available.back(); available.pop_back();
-                        return c;
-                    }
-                    std::lock_guard<std::mutex> lk(g_fiber_waiters_mtx);
-                    g_fiber_waiters.push_back({shared_fiber, sched, this});
-                }
-                look::FiberScheduler::suspend_current();
-
-                std::lock_guard<std::mutex> lk(mtx);
+        while (true) {
+            bool grow = false;
+            {
+                // Karar AYNI havuz kilidi altında: boşta bağlantı → al; yer varsa → yer ayır, kilit
+                // dışında aç; yoksa bekle. Bekleyen fiber'ın kuyruğa girişi de bu kilit altında: arada
+                // gelen release() onu görmeyip uyandırmayı kaybetmesin. Kilit sırası mtx →
+                // g_fiber_waiters_mtx; release() ikisini iç içe almaz.
+                std::unique_lock<std::mutex> lk(mtx);
                 if (!available.empty()) {
                     auto c = available.back(); available.pop_back();
                     return c;
                 }
-                // Slot taken by someone else — yield again
+                if (opener && (int)all.size() + opening < max_size) {
+                    ++opening; grow = true;
+                } else if (shared_fiber) {
+                    std::lock_guard<std::mutex> wl(g_fiber_waiters_mtx);
+                    g_fiber_waiters.push_back({shared_fiber, sched, this});
+                } else {
+                    // İş parçacığı bağlamı: engelleyen bekleme (cv.wait burada güvenli)
+                    cv.wait(lk, [this] {
+                        return !available.empty() || (opener && (int)all.size() + opening < max_size);
+                    });
+                    continue;
+                }
             }
+            if (grow) {
+                std::shared_ptr<DbConnection> c;
+                try {
+                    c = opener();   // ağ G/Ç'si: kilit dışında (fiber burada askıya girebilir)
+                } catch (...) {
+                    { std::lock_guard<std::mutex> lk(mtx); --opening; }
+                    notify_fiber_waiters(this);   // ayrılan yer boşaldı: bekleyen biri kendisi denesin
+                    cv.notify_one();
+                    throw;
+                }
+                std::lock_guard<std::mutex> lk(mtx);
+                --opening;
+                all.push_back(c);
+                return c;
+            }
+            look::FiberScheduler::suspend_current();   // release() ya da başarısız açılış uyandırır
         }
-
-        // Thread context: blocking wait (cv.wait is safe here)
-        std::unique_lock<std::mutex> lk(mtx);
-        cv.wait(lk, [this] { return !available.empty(); });
-        auto c = available.back(); available.pop_back();
-        return c;
     }
 
     void release(std::shared_ptr<DbConnection> c) {
@@ -1314,6 +1322,16 @@ int available_cpus() {
     int hw = (int)std::thread::hardware_concurrency();
     if (hw < 1) hw = 1;
 #ifdef __linux__
+    // Sürecin çalışabileceği CPU'lar (taskset, systemd CPUAffinity=, container cpuset): Go'nun
+    // GOMAXPROCS'u gibi. hardware_concurrency() makinedeki bütün CPU'ları sayar.
+    {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+            int n = CPU_COUNT(&set);
+            if (n >= 1 && n < hw) hw = n;
+        }
+    }
     double c = -1.0;
     // cgroup v2: /sys/fs/cgroup/cpu.max = "quota period" (quota="max" → limit yok)
     {
@@ -1646,10 +1664,12 @@ static Module make_db_module(ModuleHost* interp) {
         }
 
         bool is_sqlite = (dsn.substr(0, 9) == "sqlite://");
+        // Havuzun ÜST SINIRI — işçi sayısından bağımsız. LOOK_DB_POOL_SIZE verilmişse o (aynen);
+        // yoksa 4 × kullanılabilir CPU, 8..64 (fiber dağıtımında bir işçi aynı anda çok sayıda
+        // sorguyu bekletebilir; bağlantılar tembel açıldığı için kullanılmayan sınır bedava).
         int sz = g_pool_size.load();
-        if (sz <= 0) sz = look::available_cpus();
-        if (sz < 2)  sz = 2;
-        if (is_sqlite) { if (sz > 4) sz = 4; if (sz < 2) sz = 2; }  // SQLite: WAL concurrent reads, up to 4
+        if (sz <= 0) sz = std::max(8, std::min(64, look::available_cpus() * 4));
+        if (is_sqlite) { if (sz > 4) sz = 4; }   // SQLite: WAL eşzamanlı okuma, en çok 4
 
         // SQLite `:memory:` her bağlantıya özeldir — çok bağlantılı pool'da
         // (ve her worker thread'in kendi bağlantısını sabitlediği modelde) setup'ta
@@ -1700,7 +1720,12 @@ static Module make_db_module(ModuleHost* interp) {
 
         auto pool = std::make_shared<ConnPool>();
         pool->dsn = effective_dsn;
-        for (int i = 0; i < sz; i++) {
+        pool->max_size = sz;
+        // Gerisi gerektikçe aynı DSN ve seçeneklerle açılır.
+        pool->opener = [effective_dsn, args]() { return open_one_connection(effective_dsn, args); };
+        // İlk bağlantı ŞİMDİ: yanlış parola / ulaşılamayan sunucu uygulamanın açılışını durdursun
+        // (ilk istekte değil). Go'daki sql.Open + Ping gibi.
+        {
             auto c = open_one_connection(effective_dsn, args);
             pool->all.push_back(c);
             pool->available.push_back(c);
@@ -1718,7 +1743,7 @@ static Module make_db_module(ModuleHost* interp) {
             dsn_to_key[dsn] = key;
         }
         Logger::instance().log(LogLevel::LOG_INFO, "DB",
-            "Pool[" + std::to_string(sz) + "] created: " + look::db_dsn_redact(dsn));
+            "Pool created (up to " + std::to_string(sz) + " connections, opened as needed): " + look::db_dsn_redact(dsn));
 
         // S4: DB-TLS güvenlik uyarısı — POOL BASINA BİR KEZ (sorgu başına değil → spam yok).
         // El-yazması wire parser'a ağdaki herkes bayt besliyor; kullanıcı şifreleme/doğrulama

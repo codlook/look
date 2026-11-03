@@ -86,6 +86,9 @@ static void accept_backoff() {
 
 namespace look {
 
+// fcgi_main varsayılan işçi sayısını dağıtım modeline göre seçer (bkz. fiber_dispatch_on).
+bool http_fiber_dispatch_enabled() { return fiber_dispatch_on(); }
+
 // ── HTTP/1.1 parser ───────────────────────────────────────────────────────────
 // Saf ayrıştırma mantığı look/http_parse.h'ye taşındı (fuzz + test hedefi, drift
 // yok). Buradaki thin wrapper mevcut çağrı yerlerini korur.

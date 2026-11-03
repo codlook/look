@@ -514,6 +514,13 @@ jobs:
           cd cpp
           bash tests/package_hot_reload_test.sh build/lk-fcgi
 
+      # Varsayılan işçi = kullanılabilir CPU (affinity + cgroup) fiber dağıtımında; engelleyen modelde
+      # CPU × 4. Havuz işçiden bağımsız ve tembel: db::connect bir bağlantı açar, gerisi gerektikçe.
+      - name: Workers follow usable CPUs; the database pool opens connections as needed
+        run: |
+          cd cpp
+          bash tests/worker_pool_defaults_test.sh build/lk-fcgi
+
       # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
       # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
       - name: --bind keeps --mode http on the address given

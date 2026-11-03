@@ -465,6 +465,23 @@ rule `request::ip()` already follows. An application that read these headers its
 went out without `Secure` (with a warning in the log on every request). It now follows the
 connection, as under FastCGI and `--mode http`. LOOK 1.0.43 has the same fix.
 
+### Workers follow the usable CPUs; database connections open as needed — silent
+
+LOOK 1 started CPUs × 4 worker threads (at most 64) and opened one database connection per
+worker at `db::connect`. With fiber dispatch (`--mode http` on Linux, the default) a worker runs
+other requests while one waits on the database or the network, so LOOK 2 starts as many workers
+as there are usable CPUs — the CPUs the process may run on (`taskset`, systemd `CPUAffinity=`,
+container cpuset) and a CPU quota, like Go's `GOMAXPROCS`. LOOK 1 counted every CPU of the
+machine. Measured on 8 CPUs, against LOOK 1's 32 workers: the same or higher throughput and a
+much lower tail latency (p99 1.4 ms instead of 14 ms on a trivial route, 59 ms instead of 113 ms
+on a CPU-bound one), 42 threads instead of 114. FastCGI, Windows and `LOOK_FIBER_DISPATCH=0`,
+where a thread waits for its request, keep CPUs × 4.
+
+The pool no longer follows the workers. `db::connect` opens one connection — a wrong password
+or an unreachable server still stops the start — and the rest open when requests need them, up
+to `LOOK_DB_POOL_SIZE` (default 4 × usable CPUs, 8–64; SQLite 4). `--workers`, `LOOK_WORKERS`
+and `LOOK_DB_POOL_SIZE` are applied as given; set them as before if you tuned them for LOOK 1.
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

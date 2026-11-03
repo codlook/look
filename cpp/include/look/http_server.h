@@ -11,6 +11,9 @@
 
 namespace look {
 
+// --mode http fiber dağıtımıyla mı çalışıyor (Linux varsayılanı; LOOK_FIBER_DISPATCH=0 kapatır).
+bool http_fiber_dispatch_enabled();
+
 // ── Parsed HTTP request (minimal — only what dispatch needs) ──────────────────
 
 struct HttpRequest {
