@@ -162,6 +162,15 @@ void RuntimeHost::set_web_context(WebContext* ctx) {
     }
 }
 
+void RuntimeHost::bind_web_to_current_request() {
+    web_ctx_ = nullptr;
+    auto web_mods = make_web_modules(nullptr, this);   // nullptr: bağlam çağrı anında okunur
+    for (auto& [name, mod] : web_mods) {
+        stdlib_[name]  = mod;
+        modules_[name] = std::move(mod);
+    }
+}
+
 // Geri çağırma çıktısı: komut satırında stdout, web'de ayrı tampon (bkz. runtime_host.h).
 std::ostream& RuntimeHost::callback_output(const std::shared_ptr<std::ostringstream>& sink) const {
     return output_stream_ == &std::cout ? std::cout : static_cast<std::ostream&>(*sink);

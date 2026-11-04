@@ -81,6 +81,13 @@ struct FiberLocal {
     // geri çağırmalı yerleşik (array::map …) closure'ı o VM'de — öteki isteğin bağlamında — çalıştırırdı.
     void* active_vm = nullptr;   // look::VM*
 
+    // İstek tutamacı (look/request_scope.h): web modülleri (request::, response::, session:: …)
+    // ve print, bağlamı ve çıktıyı ÇAĞRI ANINDA buradan okur. Böylece modüller iş parçacığı
+    // başına bir kez kurulur (eskiden her istekte yeniden kuruluyordu — istek maliyetinin
+    // büyük kısmı). thread_local OLAMAZ: askıdaki başka bir fiber'ın isteği okunurdu.
+    void* req_web = nullptr;   // look::WebContext*
+    void* req_out = nullptr;   // std::ostream*
+
     // Extend here for other fiber-specific state as needed
     // (e.g., per-request log context, tracing IDs)
 

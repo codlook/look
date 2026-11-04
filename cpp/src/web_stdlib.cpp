@@ -7,6 +7,7 @@
 #include "look/crypto_sha256.h"  // csrf:: HMAC-SHA256
 #include "look/session_esc.h"   // valid_sid + sess_esc/blob (saf, tablo-test edilebilir)
 #include "look/fiber.h"
+#include "look/request_scope.h"
 #include <cmath>
 #include <cstdint>
 #include "look/runtime_host.h"
@@ -272,7 +273,46 @@ static std::regex pattern_to_regex(const std::string& pattern,
 
 // â”€â”€ Web modules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-static Module make_request(WebContext* ctx) {
+// ── İstek tutamacı (look/request_scope.h) ────────────────────────────────────
+// fiber-ok: yalnız fiber DIŞINDA kullanılır (Fiber::current() varsa fiber'ın kendi alanı)
+static thread_local WebContext*   tl_req_web = nullptr;
+static thread_local std::ostream* tl_req_out = nullptr;   // fiber-ok: yukarıdakiyle aynı kural
+
+WebContext* current_request_web() {
+    if (Fiber* f = Fiber::current()) return static_cast<WebContext*>(f->local.req_web);
+    return tl_req_web;
+}
+std::ostream* current_request_out() {
+    if (Fiber* f = Fiber::current()) return static_cast<std::ostream*>(f->local.req_out);
+    return tl_req_out;
+}
+RequestScope::RequestScope(WebContext* web, std::ostream* out)
+    : prev_web_(current_request_web()), prev_out_(current_request_out()) {
+    if (Fiber* f = Fiber::current()) { f->local.req_web = web; f->local.req_out = out; }
+    else { tl_req_web = web; tl_req_out = out; }
+}
+RequestScope::~RequestScope() {
+    if (Fiber* f = Fiber::current()) { f->local.req_web = prev_web_; f->local.req_out = prev_out_; }
+    else { tl_req_web = prev_web_; tl_req_out = prev_out_; }
+}
+
+// Modüllerin bağlam tutamacı. fixed doluysa o bağlam (komut satırı, kurulum, iş kuyruğu — tek
+// bağlamlı yollar); boşsa çağrı anındaki isteğin bağlamı (web dağıtımı). İstek yokken çağrılırsa
+// açık hata — ölü bir adrese yazmak yerine.
+struct WebRef {
+    WebContext* fixed = nullptr;
+    WebContext* get() const {
+        if (fixed) return fixed;
+        WebContext* w = current_request_web();
+        if (!w) throw std::runtime_error("request data is not available here: this runs outside a request");
+        return w;
+    }
+    WebContext* operator->() const { return get(); }
+    WebContext& operator*() const { return *get(); }
+    operator WebContext*() const { return get(); }
+};
+
+static Module make_request(WebRef ctx) {
     Module m;
     m.name = "request";
 
@@ -458,7 +498,7 @@ static std::string sanitize_header(const std::string& s) {
     return v;
 }
 
-static Module make_response_module(WebContext* ctx) {
+static Module make_response_module(WebRef ctx) {
     Module m;
     m.name = "response";
 
@@ -584,7 +624,7 @@ static std::string cookie_dec(const std::string& s) {
     return o;
 }
 
-static Module make_cookie_module(WebContext* ctx) {
+static Module make_cookie_module(WebRef ctx) {
     Module m;
     m.name = "cookie";
 
@@ -933,7 +973,7 @@ static bool csrf_origin_ok(WebContext* ctx) {
     return h != ctx->headers_in.end() && !oh.empty() && oh == WebContext::clean_host(h->second);
 }
 
-static Module make_csrf_module(WebContext* ctx) {
+static Module make_csrf_module(WebRef ctx) {
     Module m;
     m.name = "csrf";
     // csrf::token() — forma ya da X-CSRF-Token başlığına konan değer; her çağrıda yeni nonce.
@@ -991,7 +1031,7 @@ bool csrf_request_ok(WebContext* ctx, std::string& why) {
     return true;
 }
 
-static Module make_session_module(WebContext* ctx) {
+static Module make_session_module(WebRef ctx) {
     Module m;
     m.name = "session";
 
@@ -1099,7 +1139,7 @@ static Module make_session_module(WebContext* ctx) {
 // route() is a built-in function (compiler + web dispatch), not part of this module.
 // This module provides route::params() helper.
 
-static Module make_route_module(WebContext* ctx) {
+static Module make_route_module(WebRef ctx) {
     Module m;
     m.name = "route";
 
@@ -1950,7 +1990,8 @@ static Module make_db_module(ModuleHost* interp) {
 
 // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-std::map<std::string, Module> make_web_modules(WebContext* ctx, ModuleHost* interp) {
+std::map<std::string, Module> make_web_modules(WebContext* fixed_ctx, ModuleHost* interp) {
+    WebRef ctx{fixed_ctx};   // nullptr: çağrı anındaki istek (look/request_scope.h)
     std::map<std::string, Module> mods;
     auto add = [&](Module mod) { mods[mod.name] = std::move(mod); };
     add(make_request(ctx));

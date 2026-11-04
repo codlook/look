@@ -15,6 +15,9 @@ public:
     RuntimeHost();
     explicit RuntimeHost(std::ostream& out);
     void  set_web_context(WebContext* ctx);
+    // Web modüllerini çağrı anındaki isteğe bağla (look/request_scope.h): bir kez kurulur,
+    // her istek kendi bağlamını RequestScope ile verir. Web dağıtım kopyası bunu kullanır.
+    void  bind_web_to_current_request();
     void  set_output(std::ostream& out) { output_stream_ = &out; }
     void  set_output(std::ostream* out) { output_stream_ = out; }
     // Geri çağırmanın (iş işleyicisi, zamanlayıcı, parallel görevi) çıktısı nereye gider: komut

@@ -28,6 +28,7 @@
 #include "look/smtp_server.h"
 #include "look/imap_server.h"
 #include "look/fiber.h"
+#include "look/request_scope.h"
 #include <set>
 #include "look/timer.h"
 #include "look/vm_closure_runner.h"   // vm_closure_runner (jobs::run VM işleyicilerini çalıştırır)
@@ -1325,14 +1326,17 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         const uint64_t cur_gen = g_http_app.generation.load(std::memory_order_acquire);
         if (!tl_copy || tl_gen != cur_gen) {
             tl_copy = g_http_app.interp->make_dispatch_copy();
+            tl_copy->bind_web_to_current_request();   // web modülleri bir kez; bağlam çağrı anında
             tl_gen  = cur_gen;
         }
         look::RuntimeHost* copy = tl_copy.get();
         t_copy_end = std::chrono::steady_clock::now();
         copy->set_output(output);
-        copy->set_web_context(&web);
+        // İstek tutamacı: modüller ve print bu isteğin bağlamını/çıktısını buradan okur (fiber'ın
+        // kendi alanı). Kapsam bitince önceki değer geri gelir — iç içe dağıtım dış isteği bozmaz.
+        look::RequestScope req_scope(&web, &output);
         if (nested && outer_web && outer_out)
-            depth_guard.restore = [copy, outer_web, outer_out]() { copy->set_output(*outer_out); copy->set_web_context(outer_web); };
+            depth_guard.restore = [copy, outer_out]() { copy->set_output(*outer_out); };
 
         // VM routes'u shared_lock altında alıyoruz (g_http_app read-only erişim).
         // PERF: route_closures listesi vm_routes'tan türetilir (istek-bağımsız, yalnız
@@ -1367,50 +1371,30 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         std::vector<look::VmRoute>& route_closures = tl_route_closures;
         sl.unlock();
 
-        // Per-request builtins: module fonksiyonları dispatch kopyasından (RuntimeHost) alınır
-        // (copy->set_web_context(&web) çağrıldığında modules_ yeni web'e bind edildi)
-        //
-        // PERF: this table was rebuilt every request — ~106 std::function heap allocations
-        // per request (measured: 53% of the fixed per-request cost, the largest single
-        // source). Every wrapper captures only generation-stable state (module fns from the
-        // thread_local dispatch copy), so — like tl_copy / tl_route_closures beside it — it is
-        // cacheable per generation. The one exception is print, which needs the per-request
-        // output stream; under the default worker-pool model (one request per thread at a
-        // time) it routes through copy->output() (set per request), so the whole table caches
-        // thread_local. Under opt-in fiber mode a thread interleaves many fibers, so the
-        // thread_local cache and copy->output() would leak one fiber's output into another —
-        // there we keep rebuilding per request with print capturing the fiber-local output.
-        static const bool g_use_fiber = [](){ const char* v = std::getenv("LOOK_FIBER_DISPATCH");
-                                              return look_fiber_dispatch_on(v); }();
-        // fiber-ok: fiber modunda kullanılmaz (local_table → istek-başına tablo); yalnız işçi-başına-bağlantı modunda
+        // Builtin tablosu: modül fonksiyonları dağıtım kopyasından (RuntimeHost) alınır; kopya web
+        // modüllerini çağrı anındaki isteğe bağlamıştır (bind_web_to_current_request).
+        // fiber-ok: tablodaki hiçbir giriş isteğe özgü değil (bağlam/çıktı istek tutamacından, fiber-başına) — tests/fiber_request_isolation_test.sh askı boyunca ölçer
         static thread_local std::vector<look::BuiltinFn> tl_req_builtins;
-        static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;
-        // Modül sarmalayıcıları (request::, response::, session:: …) kuruldukları andaki `web`
-        // ADRESİNE bağlıdır. HTTP isteklerinde bu adres iş parçacığı başına sabittir (aynı yığın
-        // çerçevesi); ama WS/SSE işleyicisi ve geri çağırmalar BAŞKA çerçeveden dağıtılır. Adres
-        // değiştiyse tablo yeniden kurulur — yoksa sonraki istek ölü bir bağlama yazar (ölçüldü:
-        // SSE + WS'den sonraki sıradan istekte segfault).
-        static thread_local const look::WebContext* tl_builtins_web = nullptr;
-        std::vector<look::BuiltinFn> fiber_req_builtins;
-        const bool local_table = g_use_fiber || nested;   // iç içe dağıtım dış isteğin önbelleğine dokunmaz
-        std::vector<look::BuiltinFn>& req_builtins = local_table ? fiber_req_builtins : tl_req_builtins;
-        const bool need_build = local_table || (tl_builtins_gen != cur_gen) || (tl_builtins_web != &web);
+        static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;   // fiber-ok: nesil sayacı
+        // Tablo artık fiber modunda da iş parçacığı başına bir kez kurulur: isteğe özgü hiçbir şey
+        // yakalanmaz — print çıktıyı, web modülleri bağlamı çağrı anında istek tutamacından okur
+        // (look/request_scope.h, fiber'ın kendi alanı). Eskiden fiber modunda her istekte ~190
+        // girişlik tablo yeniden kuruluyordu (ölçüm: isteğin en büyük maliyeti, VM'in kendisi %2).
+        // İç içe dağıtım (zamanlayıcı/WS geri çağırması) dış isteğin tablosuna dokunmaz: kendi tablosu.
+        std::vector<look::BuiltinFn> nested_req_builtins;
+        const bool local_table = nested;
+        std::vector<look::BuiltinFn>& req_builtins = local_table ? nested_req_builtins : tl_req_builtins;
+        const bool need_build = local_table || (tl_builtins_gen != cur_gen);
         if (need_build) {
         req_builtins.assign(look::builtin_names().size(), look::BuiltinFn{});
 
-        // print/write (0, 1)
-        // print/write: fiber mode captures the fiber-local output (safe under interleaving);
-        // worker-pool mode routes through copy->output() (set per request) so the table caches.
-        if (local_table)
-            req_builtins[0] = [&output](std::vector<look::Value>& args) -> look::Value {
-                for (auto& a : args) output << a.to_string();
-                return look::Value();
-            };
-        else
-            req_builtins[0] = [copy](std::vector<look::Value>& args) -> look::Value {
-                for (auto& a : args) copy->output() << a.to_string();
-                return look::Value();
-            };
+        // print/write (0, 1): çıktı çağrı anındaki isteğin akışı
+        req_builtins[0] = [](std::vector<look::Value>& args) -> look::Value {
+            std::ostream* out = look::current_request_out();
+            if (!out) throw std::runtime_error("print: no output here (this runs outside a request)");
+            for (auto& a : args) *out << a.to_string();
+            return look::Value();
+        };
         req_builtins[1] = req_builtins[0];
 
         // count (2)
@@ -1551,8 +1535,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             };
             // ws::on el sikisma istegi icinde cagrilir: baglami SIMDI (istek canliyken) kopyala.
             // Geri cagri istek bittikten sonra baska thread'de calisir; her olay kendi taze kopyasini alir.
-            const look::WebContext* web_now = &web;
-            req_builtins[BI("ws::on")] = [ws_of, run_cb, web_now](std::vector<look::Value>& args) -> look::Value {
+            req_builtins[BI("ws::on")] = [ws_of, run_cb](std::vector<look::Value>& args) -> look::Value {
+                const look::WebContext* web_now = look::current_request_web();
+                if (!web_now) throw std::runtime_error("ws::on() runs only inside a request");
                 if (args.size() != 3) throw std::runtime_error("ws::on() takes 3 arguments");
                 auto conn = ws_of(args[0], "ws::on() first argument must be a websocket");
                 if (args[2].type() != look::Value::BYTECODE_FN)
@@ -1677,8 +1662,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             return last;
         };
 
-        if (!local_table) { tl_builtins_gen = cur_gen; tl_builtins_web = &web; }   // cache valid until the next hot-reload
-        }   // end if(need_build) — worker-pool builds once per generation; fiber every request
+        if (!local_table) tl_builtins_gen = cur_gen;   // geçerli: bir sonraki sıcak yeniden yüklemeye dek
+        }   // end if(need_build) — iş parçacığı başına nesilde bir kez (iç içe dağıtım: kendi tablosu)
 
         // before_route closures: route_closures ile aynı yapıda
         std::vector<look::Closure*> before_closures;

@@ -36,6 +36,14 @@ route("GET", "/t/{id}", function(\$id) {
     \$cb = array::map([1], fn(\$x) => request::header("X-Id"))
     return response::text(\$cb[0] . "|" . \$id . "|" . \$h0 . "|" . request::header("X-Id") . "|" . \$c0 . "|" . cookie::get("cid") . "|" . session::get("who"))
 })
+// print çıktısı + POST gövdesi askıdan SONRA okunur (çıktı akışı ve istek gövdesi de isteğe özeldir)
+csrf::exempt("/p/*")
+route("POST", "/p/{id}", function(\$id) {
+    \$b0 = request::post("v")
+    print("p|" . \$id)
+    http::get("http://127.0.0.1:$UP/slow")
+    print("|" . \$b0 . "|" . request::post("v") . "|" . request::header("X-Id"))
+})
 route("GET", "/ok", fn() => response::text("alive"))
 LK
 cat > "$TMP/slow.py" <<'PY'
@@ -54,9 +62,11 @@ cat > "$TMP/client.py" <<'PY'
 import socket, sys, threading, collections
 port, how, n_clients, per = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 res = collections.Counter(); bad = []; lock = threading.Lock()
-def req(path, headers):
+def req(path, headers, body=None):
     s = socket.create_connection(("127.0.0.1", port), timeout=30)
-    s.sendall(("GET %s HTTP/1.1\r\nHost: x\r\nConnection: close\r\n%s\r\n" % (path, "".join("%s: %s\r\n" % kv for kv in headers.items()))).encode())
+    if body is not None:
+        headers = dict(headers, **{"Content-Type": "application/x-www-form-urlencoded", "Content-Length": str(len(body))})
+    s.sendall(("%s %s HTTP/1.1\r\nHost: x\r\nConnection: close\r\n%s\r\n%s" % ("GET" if body is None else "POST", path, "".join("%s: %s\r\n" % kv for kv in headers.items()), body or "")).encode())
     d = b""
     while True:
         x = s.recv(65536)
@@ -77,6 +87,10 @@ def client(c):
         st, hdr, body = req("/t/%d" % i, {"X-Id": "h%d" % i, "Cookie": cookie})
         want = "h%d|%d|h%d|h%d|c%d|c%d|%d" % (i, i, i, i, i, i, i)
         ok = st == 200 + (i % 7) and hdr.get("x-echo", [""])[0] == str(i) and body == want
+        st2, _, body2 = req("/p/%d" % i, {"X-Id": "h%d" % i}, "v=b%d" % i)
+        want2 = "p|%d\n|b%d|b%d|h%d\n" % (i, i, i, i)   # print her satırın sonuna \n koyar
+        if not (st2 == 200 and body2 == want2):
+            ok = False; body = "POST: %s %r want %r" % (st2, body2, want2)
         with lock:
             res["ok" if ok else "MIXED"] += 1
             if not ok and len(bad) < 3: bad.append((i, st, hdr.get("x-echo"), body))
@@ -92,9 +106,9 @@ for mode in "" "LOOK_FIBER_DISPATCH=0"; do   # default (fibers), then the worker
     for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
     s=$(date +%s%N); out="$(python3 "$TMP/client.py" "$PORT" http 64 30 2>&1 | tail -1)"; ms=$(( ($(date +%s%N) - s) / 1000000 ))
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    if [ "$out" = "http: {'ok': 1920} " ]; then echo "  OK   [${mode:-default}] 1920 requests suspended mid-way, each got its own parameter, header, cookie, session, status and header ($ms ms)"
+    if [ "$out" = "http: {'ok': 1920} " ]; then echo "  OK   [${mode:-default}] 1920 GET + 1920 POST requests suspended mid-way, each got its own parameter, header, cookie, session, status, header, POST body and print output ($ms ms)"
     else echo "  FAIL [${mode:-default}] $out"; fail=1; fi
-    # 1920 calls of 30 ms one after another on 4 workers take 14.4 s; overlapping fibers take far less
-    if [ -z "$mode" ] && [ "$(uname -s)" = Linux ] && [ $ms -gt 7000 ]; then echo "  FAIL [${mode:-default}] the requests did not overlap ($ms ms) — the test did not reach the case it is for"; fail=1; fi
+    # 3840 calls of 30 ms one after another on 4 workers take 28.8 s; overlapping fibers take far less
+    if [ -z "$mode" ] && [ "$(uname -s)" = Linux ] && [ $ms -gt 14000 ]; then echo "  FAIL [${mode:-default}] the requests did not overlap ($ms ms) — the test did not reach the case it is for"; fail=1; fi
 done
 [ $fail = 0 ] && echo "PASS: suspended requests keep their own data" || { echo "FAIL: request data crossed between suspended requests"; exit 1; }
