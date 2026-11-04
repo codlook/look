@@ -140,7 +140,61 @@ cpp/bench/race.sh            # hello / JSON / template throughput + tail
 bash cpp/tests/differential_test.sh build/lk build/lk-fcgi
 ```
 
-## Results — 2026-11-04 (tests 8 and 12, six runtimes)
+## Results — 2026-11-04, after the per-request work (tests 8 and 12, six runtimes)
+
+The same script, the same machine, later the same day, on `v2` at 60c5da9: per-request runtime
+tables built once per worker thread (731b141), MySQL statements prepared once per connection with
+buffered reads (993658f), PostgreSQL in one send with buffered reads (af006d3), SQLite statements
+prepared once per connection (60c5da9). Raw output: `cpp/bench/results/2026-11-04-race2-after.txt`.
+The machine was idle for this run: the LOOK 2 HTTP layer alone (`/health`) answered 136–140k
+requests/s before it and 125k after. (An earlier run the same afternoon, while the machine was busy,
+had moved by up to 40% between runtimes measured minutes apart; it is not used.)
+
+**Trivial JSON**
+
+| Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LOOK 2 | 92,692 | **2.0 ms** | 78,157 | 19 ms | **4.9 MB** |
+| LOOK 1.0.45 | 18,047 | 81 ms | 21,294 | 189 ms | 9.8 MB |
+| Go 1.22 | **112,992** | 2.8 ms | **106,375** | **15 ms** | 35 MB |
+| Node 22 (cluster ×2) | 96,120 | 2.4 ms | 85,084 | 1.05 s | 117 MB |
+| Elixir (Bandit) | 51,741 | 3.6 ms | 46,893 | 43 ms | 116 MB |
+| PHP (FPM + nginx) | 3,886 | 80 ms | 3,835 | 397 ms | 113 MB |
+
+Measured back to back (LOOK 2, Go, Node, twice, c=100): LOOK 2 95,467 / 95,890, Go 115,143 /
+111,698, Node 98,464 / 94,512 — LOOK 2 level with Node, about 84% of Go, with the lowest p99.
+
+**One DB row** (MySQL 8)
+
+| Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LOOK 2 | **34,215** | 24 ms | **29,447** | 311 ms | **25 MB** |
+| LOOK 1.0.45 | 5,097 | 183 ms | 4,963 | 1.32 s | 58 MB |
+| Go 1.22 | 22,034 | 68 ms | 20,496 | 1.07 s | 51 MB |
+| Node 22 (cluster ×2) | 11,273 | 18 ms | 9,601 | 502 ms | 285 MB |
+| Elixir (Bandit) | 11,606 | **15 ms** | 11,080 ² | **173 ms** | 217 MB |
+| PHP (FPM + nginx) | 2,068 | 197 ms | 2,180 | 875 ms | 126 MB |
+
+² 1,084 non-2xx responses at c=1000. Go had 35 wrk timeouts at c=1000; LOOK 2 had 19 at c=50.
+
+**The same row on PostgreSQL 16 and SQLite** (LOOK only — the other apps have no such variant yet;
+`cpp/bench/dbbench/look/dbapp.lk` and `sqliteapp.lk`, c=100)
+
+| | LOOK 2 | p99 | LOOK 1.0.45 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| PostgreSQL 16 | 37,099 | 19 ms | 5,770 | 217 ms |
+| SQLite | 69,576 | 1.9 ms | 13,381 | 84 ms |
+
+What it says:
+- **Trivial JSON:** LOOK 2 went from about a third of Node's throughput to level with it, and is
+  at 82–84% of Go, with the lowest p99 at c=100 and the smallest memory of the six.
+- **Database:** LOOK 2 now serves the most requests of the six on MySQL — about 1.6× Go and 3× Node
+  and Elixir — with the smallest memory. Elixir keeps the steadiest tail.
+- **LOOK 2 vs LOOK 1:** 5× on trivial JSON, 6–7× on MySQL and PostgreSQL, 5× on SQLite.
+- **Open for LOOK 2:** the DB p99 at c=1000 (311 ms against Elixir's 173 ms) — how requests waiting
+  for a pooled connection are ordered.
+
+## Results — 2026-11-04, before (tests 8 and 12, six runtimes)
 
 `cpp/bench/race2.sh` — the same two endpoints in LOOK 2, LOOK 1.0.45, Node 22, Go 1.22, Elixir 1.16
 and PHP 8 (FPM + nginx). Raw output: `cpp/bench/results/2026-11-04-race2.txt`. Servers `--cpus=2
@@ -179,8 +233,7 @@ What it says:
 - **Memory:** LOOK 2 serves 1000 connections in 8 MB on the trivial test — the smallest of the six.
 - **Raw throughput:** Go and Node lead the trivial test by about 3×; on the DB test LOOK 2, Node and
   Elixir are level and Go leads. Elixir has the steadiest DB tail at c=100.
-- **Open for LOOK 2:** the DB p99 at c=1000 (533 ms) — the next work item (memory budget, fiber
-  stacks) is measured against this row.
+- **Open for LOOK 2 (then):** the DB p99 at c=1000 (533 ms) — measured against in the run above.
 
 ## Baseline & regression discipline
 
