@@ -143,7 +143,6 @@ set(LOOK_CORE
     src/jobs_stdlib.cpp
     src/mail_stdlib.cpp
     src/parallel_runtime.cpp
-    src/db_async_pool.cpp
     src/installer.cpp
     src/resp_client.cpp
     src/miniz/miniz.c

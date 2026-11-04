@@ -71,6 +71,19 @@ ok=1; for i in 1 2 3 4; do [ "$(cat "$T/s$i")" = 1500000 ] || ok=0; done
 is "LOOK_DB_POOL_SIZE=1: four parallel queries all answered" "$ok" 1
 is "… on one connection"                                  "$(curl -s --max-time 5 "http://127.0.0.1:$P/pool")" 1
 
+echo "== no idle threads (LOOK_DB_ASYNC_THREADS is gone)"
+# LOOK 1 ayrıca işçi sayısı kadar "database" thread'i açıyordu; hiçbir şey onları kullanmıyordu.
+# Thread'lerin adı yok: varsayılanla açılan thread sayısı, eskiden havuzu kapatan
+# LOOK_DB_ASYNC_THREADS=0 ile açılanla AYNI olmalı (eskisi işçi sayısı kadar fazlaydı).
+threads() { ls /proc/$pid/task | wc -l; }
+start 0,1 t0.log LOOK_DB_ASYNC_THREADS=0 -- --mode http --port $P; waitup; sleep 0.5; base=$(threads)
+start 0,1 t1.log -- --mode http --port $P; waitup; sleep 0.5
+is "default start: no extra idle threads (threads with the old pool switched off: $base)" "$(threads)" "$base"
+start 0,1 t2.log LOOK_DB_ASYNC_THREADS=4 -- --mode http --port $P; waitup; sleep 0.5
+grep -q "LOOK_DB_ASYNC_THREADS is no longer used" "$T/t2.log" && echo "  OK   LOOK_DB_ASYNC_THREADS set: a warning at start" \
+    || { echo "  FAIL no warning for LOOK_DB_ASYNC_THREADS"; fail=1; }
+is "… and it starts no threads"                           "$(threads)" "$base"
+
 echo "== a database that cannot be opened still stops the start"
 printf '$db = db::connect("sqlite:///nonexistent-dir/x/y.db")\nroute("GET", "/", fn() => response::text("up"))\n' > "$T/bad.lk"
 ( cd "$T" && timeout 10 env -i PATH=/usr/bin:/bin "$LKF" --mode http --port 7723 bad.lk >"$T/bad.log" 2>&1 ); rc=$?

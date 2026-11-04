@@ -489,6 +489,10 @@ or an unreachable server still stops the start — and the rest open when reques
 to `LOOK_DB_POOL_SIZE` (default 4 × usable CPUs, 8–64; SQLite 4). `--workers`, `LOOK_WORKERS`
 and `LOOK_DB_POOL_SIZE` are applied as given; set them as before if you tuned them for LOOK 1.
 
+`LOOK_DB_ASYNC_THREADS` is gone. In LOOK 1 it started a set of threads (one per worker by
+default) that nothing ever used. LOOK 2 does not start them; if the variable is still set, the
+server logs a warning at start and otherwise ignores it.
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

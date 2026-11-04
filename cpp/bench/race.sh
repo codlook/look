@@ -55,7 +55,7 @@ plain "-v $ROOT/cpp/bench/phproot:/var/www/html trafex/php-nginx:latest";       
 
 echo; echo "########## WORKLOAD 2: DB ENDPOINT (SELECT id -> JSON, I/O-bound) ##########"
 look "-e DB_DSN=$DSN"                                             "cp /look/cpp/bench/dbbench/look/dbapp.lk /root/s.lk && cd /root && exec /look/cpp/build/lk-fcgi --mode http --port 8080 /root/s.lk"; sweep "LOOK default (w=8)"
-look "-e DB_DSN=$DSN -e LOOK_WORKERS=4 -e LOOK_DB_POOL_SIZE=4 -e LOOK_DB_ASYNC_THREADS=4" "cp /look/cpp/bench/dbbench/look/dbapp.lk /root/s.lk && cd /root && exec /look/cpp/build/lk-fcgi --mode http --port 8080 /root/s.lk"; sweep "LOOK tuned (w=4 peak)"
+look "-e DB_DSN=$DSN -e LOOK_WORKERS=4 -e LOOK_DB_POOL_SIZE=4" "cp /look/cpp/bench/dbbench/look/dbapp.lk /root/s.lk && cd /root && exec /look/cpp/build/lk-fcgi --mode http --port 8080 /root/s.lk"; sweep "LOOK tuned (w=4 peak)"
 plain "-e DB_HOST=mysqlbench -e DB_PASS=benchpass -v $ROOT/cpp/bench/dbbench/node:/app -w /app node:20-alpine node dbapp.js"; sweep "Node (cluster x2 + mysql2)"
 plain "-e DB_HOST=mysqlbench -e DB_PASS=benchpass -v $ROOT/cpp/bench/dbbench/php:/var/www/html trafex/php-nginx:latest";      sweep "PHP (fpm+nginx + mysqli)"
 docker rm -f srv >/dev/null 2>&1

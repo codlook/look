@@ -4550,7 +4550,6 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
     <tr><td><code>LOOK_DB_POOL_SIZE</code></td><td>4 × usable CPUs, 8–64</td><td>Most connections per DSN (MySQL/PostgreSQL), independent of the workers; clamped to 1–256. <code>db::connect</code> opens one connection — a wrong password or an unreachable server stops the start — and the rest open when requests need them. SQLite uses at most 4 (reads run side by side; writes take turns).</td></tr>
-    <tr><td><code>LOOK_DB_ASYNC_THREADS</code></td><td>= workers</td><td>Background threads for async DB work.</td></tr>
     <tr><td><code>LOOK_CACHE_MAX_ENTRIES</code></td><td><code>100000</code></td><td>Maximum entries held by the in-process <code>cache::</code> store before eviction.</td></tr>
     <tr><td><code>LOOK_HOT_RELOAD_MS</code></td><td><code>500</code></td><td>How often <code>--mode http</code> checks the script's modification time to hot-reload it, in milliseconds. Throttled so the check stays off the per-request hot path. <code>0</code> checks on every request (legacy behaviour); a higher value reloads less often.</td></tr>
   </table>

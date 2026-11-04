@@ -13,7 +13,6 @@
 #include "look/array_count.h"
 #include "look/http_server.h"
 #include <algorithm>
-#include "look/db_async_pool.h"
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/jobs_store.h"
@@ -1872,13 +1871,13 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         int pool_sz = (env && env[0]) ? std::max(1, std::min(std::atoi(env), 256)) : 0;
         look::set_db_pool_size(pool_sz);
 
-        // AsyncDbPool — DB işlerini HTTP worker'lardan ayıran thread pool
-        // LOOK_DB_ASYNC_THREADS: varsayılan işçi sayısı, 0 ise devre dışı
-        int async_threads = workers;   // (eskiden pool_sz = workers idi; değer aynı kalır)
+        // LOOK_DB_ASYNC_THREADS kaldırıldı (AsyncDbPool hiç kullanılmıyordu; yalnız boş thread
+        // açıyordu). Ayarlı bırakan görsün diye uyarı — sessizce yok sayılmasın.
         const char* ath_env = std::getenv("LOOK_DB_ASYNC_THREADS");
-        if (ath_env && ath_env[0]) async_threads = std::atoi(ath_env);
-        if (async_threads > 0)
-            look::set_db_async_pool(std::make_unique<look::AsyncDbPool>(async_threads));
+        if (ath_env && ath_env[0])
+            look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+                "LOOK_DB_ASYNC_THREADS is no longer used and has no effect; remove it. "
+                "Database connections are set with LOOK_DB_POOL_SIZE.");
     }
 
     // Initial setup
