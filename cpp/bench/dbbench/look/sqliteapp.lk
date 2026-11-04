@@ -1,0 +1,11 @@
+use http
+use db
+// SQLite counterpart of dbapp.lk: the same row, the same JSON. The table is created at start
+// (setup may write, not read — so INSERT OR IGNORE instead of a check).
+$conn = db::connect(env("DB_DSN", "sqlite:///tmp/bench.db"))
+db::exec($conn, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)", [])
+db::exec($conn, "WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < 1000) INSERT OR IGNORE INTO users SELECT n, 'user' || n, 'user' || n || '@example.com' FROM s", [])
+route("GET", "/", function() {
+    $rows = db::query($conn, "SELECT id, name, email FROM users WHERE id = ?", [42])
+    return response::json($rows)
+})

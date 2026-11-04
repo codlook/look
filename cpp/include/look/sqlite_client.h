@@ -5,6 +5,9 @@
 #include <stdexcept>
 #include <memory>
 #include <chrono>
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 // Forward declare — sqlite3.h'ı include etmiyoruz, header kirliliği önlemek için
 struct sqlite3;
@@ -59,6 +62,18 @@ private:
     template <class Fn> std::vector<DbRow> on_own_thread(Fn&& fn);
     std::vector<DbRow> query_here(const std::string& sql);
     std::vector<DbRow> execute_here(const std::string& sql, const std::vector<DbParam>& params);
+
+    // Hazırlanmış-ifade önbelleği (bağlantı başına): aynı SQL her sorguda yeniden ayrıştırılmaz.
+    // Kullanılan ifade önbellekten ÇIKARILIR, bitince sıfırlanıp geri konur — iki kullanım aynı
+    // ifadeyi paylaşmaz ve sıfırlanmamış ifade okuma işlemini açık tutmaz. Şema değişince SQLite
+    // ifadeyi kendisi yeniden hazırlar (prepare_v2).
+    struct CachedStmt { ::sqlite3_stmt* stmt; uint64_t used; };
+    std::unordered_map<std::string, CachedStmt> stmt_cache_;
+    uint64_t stmt_tick_ = 0;
+    static constexpr size_t STMT_CACHE_MAX = 64;
+    ::sqlite3_stmt* take_stmt(const std::string& sql);
+    void give_back_stmt(const std::string& sql, ::sqlite3_stmt* st);
+    void clear_stmt_cache();
 };
 
 } // namespace look

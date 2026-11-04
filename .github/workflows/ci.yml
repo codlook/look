@@ -617,6 +617,14 @@ jobs:
           cd cpp
           bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
 
+      # Each SQLite connection keeps its prepared statements; the cache must never change a result
+      # or keep a read open: ALTER on the same connection and from another process, a checkpoint
+      # after thousands of cached reads, errors, more statements than the cache holds.
+      - name: "SQLite statements prepared once per connection, never a wrong result"
+        run: |
+          cd cpp
+          bash tests/sqlite_stmt_cache_test.sh ./build/lk ./build/lk-fcgi
+
       # Long CPU work (a LOOK loop, deep calls, password hashing) must hold only its own request:
       # up to 1.0.24 LOOK code never gave up its turn under fibers (0.7–1 s waits, 32 s on the
       # interpreter).

@@ -189,6 +189,7 @@ void SqliteClient::open(const std::string& path) {
 void SqliteClient::close() {
     runner_.reset();   // bağlantının iş parçacığı (varsa) — üzerinde iş yokken kapanır
     if (gate_held_) { gate_held_ = false; gate_->release(); }   // açık işlem kapanışta geri alınır
+    clear_stmt_cache();   // sonlandırılmamış ifade varken sqlite3_close bağlantıyı kapatmaz
     if (db_) {
         sqlite3_close(db_);
         db_ = nullptr;
@@ -376,20 +377,57 @@ std::vector<DbRow> SqliteClient::query_here(const std::string& sql) {
     return rows;
 }
 
+void SqliteClient::clear_stmt_cache() {
+    for (auto& kv : stmt_cache_) sqlite3_finalize(kv.second.stmt);
+    stmt_cache_.clear();
+}
+
+sqlite3_stmt* SqliteClient::take_stmt(const std::string& sql) {
+    auto it = stmt_cache_.find(sql);
+    if (it != stmt_cache_.end()) {
+        sqlite3_stmt* st = it->second.stmt;
+        stmt_cache_.erase(it);   // kullanım süresince önbellekte değil
+        return st;
+    }
+    sqlite3_stmt* st = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &st, nullptr);
+    if (rc != SQLITE_OK) {
+        if (st) sqlite3_finalize(st);
+        throw std::runtime_error(std::string("sqlite: ") + sqlite3_errmsg(db_));
+    }
+    return st;
+}
+
+void SqliteClient::give_back_stmt(const std::string& sql, sqlite3_stmt* st) {
+    if (!st) return;
+    sqlite3_reset(st);            // okuma işlemi biter (sıfırlanmamış ifade onu açık tutardı)
+    sqlite3_clear_bindings(st);   // önceki sorgunun değerleri sonraki sorguda kalmaz
+    if (!db_ || stmt_cache_.count(sql)) { sqlite3_finalize(st); return; }   // aynı SQL zaten geri konmuş
+    if (stmt_cache_.size() >= STMT_CACHE_MAX) {   // en uzun süredir kullanılmayanı kapat
+        auto old = stmt_cache_.begin();
+        for (auto i = stmt_cache_.begin(); i != stmt_cache_.end(); ++i)
+            if (i->second.used < old->second.used) old = i;
+        sqlite3_finalize(old->second.stmt);
+        stmt_cache_.erase(old);
+    }
+    stmt_cache_.emplace(sql, CachedStmt{st, ++stmt_tick_});
+}
+
 std::vector<DbRow> SqliteClient::execute_here(const std::string& sql, const std::vector<DbParam>& params) {
     if (!db_) throw std::runtime_error("sqlite: no open database");
 
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr);
-    if (rc != SQLITE_OK)
-        throw std::runtime_error(std::string("sqlite: ") + sqlite3_errmsg(db_));
+    sqlite3_stmt* stmt = take_stmt(sql);
+    // Her çıkış yolunda (hata dahil) ifade sıfırlanıp önbelleğe döner.
+    struct StmtReturn { SqliteClient* c; const std::string& sql; sqlite3_stmt* st;
+                        ~StmtReturn() { c->give_back_stmt(sql, st); } } stmt_return{this, sql, stmt};
+    int rc = SQLITE_OK;
 
     // Placeholder SAYIM kontrolü (fail-loud, Go db.Query gibi) — SQLite bind edilmeyen '?'yi
     // sessizce NULL sayar; eksik/fazla parametre gizli bug yapardı. SQLite'ın KENDİ sayımı
     // (backtick-ident, string, yorum içindeki '?' hariç) → eski lehçe-parser'ın kör-noktası yok.
     int want = sqlite3_bind_parameter_count(stmt);
     if (want != (int)params.size()) {
-        sqlite3_finalize(stmt);
+        // (ifade StmtReturn ile önbelleğe döner)
         throw std::runtime_error("db: parameter count mismatch — SQL " + std::to_string(want) +
             " placeholder ('?') iceriyor, " + std::to_string(params.size()) + " parameters given.");
     }
@@ -406,13 +444,17 @@ std::vector<DbRow> SqliteClient::execute_here(const std::string& sql, const std:
         }
     }
 
-    try { gate_before(stmt, sql); } catch (...) { sqlite3_finalize(stmt); throw; }
+    gate_before(stmt, sql);   // hata atarsa ifade StmtReturn ile önbelleğe döner
     struct GateRelease { SqliteClient* c; ~GateRelease() { c->gate_after(); } } gate_release{this};
 
     std::vector<DbRow> rows;
-    int col_count = sqlite3_column_count(stmt);
+    // Sütun sayısı ilk adımdan SONRA okunur: şema değiştiyse (ALTER TABLE …) SQLite önbellekteki
+    // ifadeyi ilk sqlite3_step içinde yeniden hazırlar ve sütunlar değişir — önceden okunan sayı
+    // eski şemanınki olurdu (SELECT * yeni sütunu döndürmezdi; tests/sqlite_stmt_cache_test.sh).
+    int col_count = -1;
 
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (col_count < 0) col_count = sqlite3_column_count(stmt);
         DbRow row;
         for (int i = 0; i < col_count; i++) {
             std::string col_name = sqlite3_column_name(stmt, i);
@@ -438,7 +480,7 @@ std::vector<DbRow> SqliteClient::execute_here(const std::string& sql, const std:
         }
         rows.push_back(std::move(row));
     }
-    sqlite3_finalize(stmt);
+    sqlite3_reset(stmt);   // okuma işlemi eskiden finalize ile tam burada biterdi — aynı an (hata kodu/mesajı korunur)
 
     // rc-check — query()'deki (satir 139) ile SIMETRIK. Eskiden YOKTU: sqlite3_step
     // constraint ihlalinde SQLITE_CONSTRAINT dondurur (ROW degil) → dongu cikar, satir
