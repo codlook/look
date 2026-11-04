@@ -1361,6 +1361,14 @@ jobs:
         run: |
           cd cpp
           bash tests/mysql_quit_test.sh ./build/lk "mysql://root:rootpw@127.0.0.1:3306/lookci"
+      # Each connection keeps the statements it prepared (one round trip per query instead of
+      # PREPARE + EXECUTE + CLOSE) and reads through a buffer. The cache must never return a wrong
+      # result: changed tables, one database per shop, a KILLed connection (statement ids restart
+      # there), the server's global statement limit, transactions, concurrent web requests.
+      - name: "MySQL 8 — statements prepared once per connection, never a wrong result"
+        run: |
+          cd cpp
+          bash tests/mysql_stmt_cache_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci"
       - name: "PostgreSQL 16 — INSERT in a transaction is kept; last_id is that INSERT's"
         env:
           PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"

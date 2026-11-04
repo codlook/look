@@ -155,6 +155,16 @@ void MySQLClient::disconnect() {
         close_sock(sock_);
         sock_ = SOCK_INVALID;
     }
+    // Oturum bitti: tampondaki baytlar ve ifade kimlikleri o oturuma aitti. Yeni bağlantıda
+    // eski kimlikle EXECUTE başka (ya da hiçbir) ifadeyi çalıştırırdı.
+    rbuf_pos_ = rbuf_len_ = 0;
+    clear_stmt_cache(false);
+}
+
+void MySQLClient::clear_stmt_cache(bool close_on_server) {
+    if (close_on_server && sock_ != SOCK_INVALID)
+        for (auto& kv : stmt_cache_) stmt_close(kv.second.meta.id);
+    stmt_cache_.clear();
 }
 
 // ── Socket timeout ────────────────────────────────────────────────────────────
@@ -332,38 +342,61 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
     }
 #endif
 
+    // ── Düz TCP: tamponlu okuma ───────────────────────────────────────────────
+    // Bir recv tamponu doldurur, paketler (başlık + gövde) tampondan verilir. Eskiden her paket
+    // iki recv'di (4 bayt başlık, sonra gövde): tek satırlık bir SELECT ~30 sistem çağrısı.
+    // Tampondan büyük istek (büyük satır/BLOB) tampon boşken doğrudan hedefe okunur.
+    if (!rbuf_) rbuf_.reset(new uint8_t[RBUF_SIZE]);
+    while (received < len) {
+        size_t avail = rbuf_len_ - rbuf_pos_;
+        if (avail > 0) {
+            size_t n = std::min(avail, len - received);
+            std::memcpy(buf + received, rbuf_.get() + rbuf_pos_, n);
+            rbuf_pos_ += n; received += n;
+            continue;
+        }
+        rbuf_pos_ = rbuf_len_ = 0;
+        if (len - received >= RBUF_SIZE) {
+            int r = recv_some(buf + received, len - received);
+            if (r <= 0) return false;
+            received += (size_t)r;
+            continue;
+        }
+        int r = recv_some(rbuf_.get(), RBUF_SIZE);
+        if (r <= 0) return false;
+        rbuf_len_ = (size_t)r;
+    }
+    return true;
+}
+
+// Düz TCP soketten en az 1, en çok cap bayt. <=0: bağlantı bitti (disconnect edildi).
+int MySQLClient::recv_some(uint8_t* buf, size_t cap) {
     // ── Fiber path: non-blocking recv + cooperative yield ─────────────────────
     if (Fiber::current()) {
-        while (received < len) {
-            int r = ::recv(sock_, (char*)(buf + received),
-                           (int)(len - received), MSG_DONTWAIT);
-            if (r > 0) { received += r; continue; }
-            if (r == 0) { disconnect(); return false; }
+        for (;;) {
+            int r = ::recv(sock_, (char*)buf, (int)cap, MSG_DONTWAIT);
+            if (r > 0) return r;
+            if (r == 0) { disconnect(); return 0; }
 
             int e = errno;
-            if (e != EAGAIN && e != EWOULDBLOCK) { disconnect(); return false; }
+            if (e != EAGAIN && e != EWOULDBLOCK) { disconnect(); return -1; }
 
             // Kısa poll + askı (bkz. fiber_io.h). Süre sınırı query_timeout'tur: SO_RCVTIMEO
             // fiber beklemesinde işlemez — eskiden yanıt vermeyen sunucu isteği süresiz tutuyordu.
             int w = fiber_wait_readable((int)sock_, rcv_tmo_ms_);
             if (w == 1) continue;              // okunabilir — recv'e dön
-            if (w == 0) { disconnect(); return false; }   // süre doldu
+            if (w == 0) { disconnect(); return -1; }   // süre doldu
             // Zamanlayıcı yok / desteklenmiyor — bloklayan recv
-            int rb = ::recv(sock_, (char*)(buf + received),
-                            (int)(len - received), 0);
-            if (rb <= 0) { disconnect(); return false; }
-            received += rb;
+            int rb = ::recv(sock_, (char*)buf, (int)cap, 0);
+            if (rb <= 0) { disconnect(); return -1; }
+            return rb;
         }
-        return true;
     }
 
     // ── Thread path: blocking recv — blocking-ok: fiber yok (komut satırı, kurulum) ──
-    while (received < len) {
-        int r = ::recv(sock_, (char*)(buf + received), (int)(len - received), 0);
-        if (r <= 0) { disconnect(); return false; }
-        received += r;
-    }
-    return true;
+    int r = ::recv(sock_, (char*)buf, (int)cap, 0);
+    if (r <= 0) { disconnect(); return -1; }
+    return r;
 }
 
 void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
@@ -403,8 +436,18 @@ std::vector<uint8_t> MySQLClient::read_packet(uint8_t& seq) {
 void MySQLClient::send_packet(const std::vector<uint8_t>& data, uint8_t seq) {
     uint32_t len = (uint32_t)data.size();
     uint8_t hdr[4] = {(uint8_t)len,(uint8_t)(len>>8),(uint8_t)(len>>16),seq};
+    // Küçük paket başlıkla tek send (eskiden iki: her biri ayrı sistem çağrısı + sunucuyu ayrı
+    // uyandırma). Büyük paket (BLOB) kopyalanmaz — iki send. Tampon 4 KB: fiber yığınında
+    // daha büyük bir çerçeve her fiber için sayfa işler.
+    if (data.size() <= 4092) {
+        uint8_t one[4096];
+        std::memcpy(one, hdr, 4);
+        if (!data.empty()) std::memcpy(one + 4, data.data(), data.size());
+        send_bytes(one, 4 + data.size());
+        return;
+    }
     send_bytes(hdr, 4);
-    if (!data.empty()) send_bytes(data.data(), data.size());
+    send_bytes(data.data(), data.size());
 }
 
 // ── MySQL authentication ───────────────────────────────────────────────────────
@@ -582,6 +625,13 @@ void MySQLClient::do_handshake(const std::string& user,
         ssl_req.push_back(45);                                // charset (utf8mb4)
         ssl_req.insert(ssl_req.end(), 23, 0);                 // reserved
         send_packet(ssl_req, 1);                              // plaintext — henüz ssl_ yok
+        // Okuma tamponunda TLS'ten önce gelmiş fazladan düz metin varsa reddet: o baytlar
+        // şifreli oturumun ilk cevabıymış gibi okunurdu (STARTTLS komut enjeksiyonu sınıfı).
+        // Dürüst sunucu, istemcinin TLS el sıkışmasını beklerken hiçbir şey göndermez.
+        if (rbuf_len_ != rbuf_pos_) {
+            disconnect();
+            throw std::runtime_error("db mysql: the server sent data before TLS started — connection refused");
+        }
         SSL_CTX* ctx = mysql_ssl_ctx();
         if (!ctx) throw std::runtime_error("db mysql: could not create SSL_CTX (TLS)");
         SSL* s = SSL_new(ctx);
@@ -818,7 +868,8 @@ MySQLClient::StmtMeta MySQLClient::stmt_prepare(const std::string& sql) {
         // Sınır-güvenli: kısa 0xFF paketinde (sadece FF) memcpy 2-bayt overread
         // yapıp p'yi end'in ötesine taşırdı → std::string(p,end) UB. Kötü niyetli/
         // MITM sunucu tetikler. error-code (2) ve '#SQLSTATE' (6) sınır-kontrollü atla.
-        if (p + 2 <= end) p += 2; else p = end;             // error code (kullanılmıyor)
+        last_error_code_ = 0;
+        if (p + 2 <= end) { last_error_code_ = (uint16_t)(p[0] | (p[1] << 8)); p += 2; } else p = end;   // hata kodu (1243/1461 ayrımı)
         if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE' işareti
         throw std::runtime_error("db: " + std::string(p, end));
     }
@@ -928,7 +979,8 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
         const uint8_t* end = resp.data() + resp.size();
         // Sınır-güvenli (stmt_prepare error-path ile aynı): kısa 0xFF paketinde
         // memcpy 2-bayt overread + std::string(p,end) UB'sini önle.
-        if (p + 2 <= end) p += 2; else p = end;             // error code (kullanılmıyor)
+        last_error_code_ = 0;
+        if (p + 2 <= end) { last_error_code_ = (uint16_t)(p[0] | (p[1] << 8)); p += 2; } else p = end;   // hata kodu (1243/1461 ayrımı)
         if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE'
         throw std::runtime_error("db: " + std::string(p, end));
     }
@@ -1065,10 +1117,50 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
 
 std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vector<DbParam>& params) {
     ensure_connected();
-    auto meta = stmt_prepare(sql);
-    auto rows = stmt_execute(meta, params);
-    stmt_close(meta.id);
-    return rows;
+    // USE bugün hazırlanmış-ifade protokolünde reddedilir; desteklenirse veritabanı değişir ve
+    // önbellekteki ifadeler eski veritabanının tablolarına bağlı kalırdı → önbellek boşalır.
+    if (sql.size() >= 4 && (sql[0] | 0x20) == 'u' && (sql[1] | 0x20) == 's' && (sql[2] | 0x20) == 'e' &&
+        (sql[3] == ' ' || sql[3] == '\t' || sql[3] == '\n'))
+        clear_stmt_cache(true);
+
+    last_error_code_ = 0;   // önceki bir hatanın kodu aşağıdaki ayrımı yanıltmasın
+    auto it = stmt_cache_.find(sql);
+    if (it != stmt_cache_.end()) {
+        it->second.used = ++stmt_tick_;
+        try {
+            return stmt_execute(it->second.meta, params);
+        } catch (const std::runtime_error&) {
+            // 1243: ifade sunucuda yok (bağlantı paylaştırıcısı — ProxySQL vb. — başka arka uca
+            // geçti). Sorgu ÇALIŞMADI → yeniden hazırlayıp bir kez denemek güvenli. Başka her hata
+            // olduğu gibi çağırana gider.
+            if (last_error_code_ != 1243 || !is_connected()) throw;
+            stmt_cache_.erase(it);
+        }
+    }
+
+    StmtMeta meta;
+    last_error_code_ = 0;
+    try {
+        meta = stmt_prepare(sql);
+    } catch (const std::runtime_error&) {
+        // 1461: sunucunun toplam ifade sınırı (max_prepared_stmt_count, bütün istemciler için)
+        // doldu. Bizim önbelleğimizi boşalt ve bu sorguyu önbelleksiz yürüt — sorgu hata vermez.
+        if (last_error_code_ != 1461 || !is_connected()) throw;
+        clear_stmt_cache(true);
+        auto m = stmt_prepare(sql);
+        auto rows = stmt_execute(m, params);
+        stmt_close(m.id);
+        return rows;
+    }
+    if (stmt_cache_.size() >= STMT_CACHE_MAX) {   // en uzun süredir kullanılmayanı kapat
+        auto old = stmt_cache_.begin();
+        for (auto i = stmt_cache_.begin(); i != stmt_cache_.end(); ++i)
+            if (i->second.used < old->second.used) old = i;
+        stmt_close(old->second.meta.id);
+        stmt_cache_.erase(old);
+    }
+    stmt_cache_.emplace(sql, CachedStmt{meta, ++stmt_tick_});
+    return stmt_execute(meta, params);
 }
 
 // ── Escape ────────────────────────────────────────────────────────────────────

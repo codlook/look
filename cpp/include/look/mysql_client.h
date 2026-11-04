@@ -5,6 +5,8 @@
 #include <vector>
 #include <stdexcept>
 #include <chrono>
+#include <memory>
+#include <unordered_map>
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -91,6 +93,22 @@ private:
     StmtMeta             stmt_prepare(const std::string& sql);
     std::vector<DbRow>   stmt_execute(const StmtMeta& m, const std::vector<DbParam>& params);
     void                 stmt_close(uint32_t stmt_id);
+    uint16_t             last_error_code_ = 0;   // son ERR paketinin kodu (1243, 1461 ayrımı)
+
+    // Hazırlanmış-ifade önbelleği (bağlantı başına). Aynı SQL ikinci kez hazırlanmaz: sorgu
+    // başına bir gidiş-dönüş (eskiden PREPARE + EXECUTE + CLOSE = iki). Bağlantı kopunca boşalır
+    // (ifade kimlikleri o oturuma aittir); üst sınır sunucunun toplam ifade sınırını korur.
+    struct CachedStmt { StmtMeta meta; uint64_t used; };
+    std::unordered_map<std::string, CachedStmt> stmt_cache_;
+    uint64_t stmt_tick_ = 0;
+    static constexpr size_t STMT_CACHE_MAX = 64;
+    void clear_stmt_cache(bool close_on_server);
+
+    // Okuma tamponu: bir recv ile birden çok paket (eskiden paket başına başlık + gövde = iki recv).
+    std::unique_ptr<uint8_t[]> rbuf_;
+    size_t rbuf_pos_ = 0, rbuf_len_ = 0;
+    static constexpr size_t RBUF_SIZE = 16384;
+    int  recv_some(uint8_t* buf, size_t cap);   // düz TCP: en az 1 bayt; <=0 → bağlantı bitti
 
     void ensure_connected();
     void do_connect();
