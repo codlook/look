@@ -269,6 +269,7 @@ public:
     // epoll_wait'te uyuyan scheduler thread'ini anında uyandır.
     // POSIX: eventfd'ye yazar; Windows: no-op (cv_ zaten kullanılıyor).
     void wake();
+    void wake_if_other_thread();   // yalnız başka iş parçacığından çağrılınca uyandırır
 
     // Called from inside a fiber when the DB pool is exhausted.
     // Moves fiber to pool_waiters_ and yields until notify_pool_waiter() is called.

@@ -592,7 +592,7 @@ void FiberScheduler::resume_fiber(std::shared_ptr<Fiber> f) {
             ready_.push_back(std::move(f));
         }
         cv_.notify_one();
-        wake();
+        wake_if_other_thread();
         return;
     }
 
@@ -601,7 +601,15 @@ void FiberScheduler::resume_fiber(std::shared_ptr<Fiber> f) {
     // READY/DONE durumlarında bayrak zararsızdır (dönüşte temizlenir).
     f->pending_resume_.store(true, std::memory_order_release);
     cv_.notify_one();
-    wake();
+    wake_if_other_thread();
+}
+
+// Uyandırma (eventfd yazımı) yalnız BAŞKA iş parçacığından gerekir: bu planlayıcının kendi iş
+// parçacığı o an burada kod çalıştırıyor, epoll_wait'te uyuyor olamaz; döngü hazır kuyruğunu
+// beklemeden işler (ready_ doluyken zaman aşımı 0). Eskiden soket olayıyla devam ettirilen her
+// fiber için kendine bir write + iki read yapıyordu — istek başına üç gereksiz sistem çağrısı.
+void FiberScheduler::wake_if_other_thread() {
+    if (get_thread_scheduler() != this) wake();
 }
 
 // epoll_wait'te uyuyan scheduler thread'ini anında uyandır (cross-thread çağrı)
