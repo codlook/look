@@ -27,7 +27,7 @@ locate LOOK's cost, not to frame an "X vs LOOK" contest.
 
 ## Fairness lock (non-negotiable — the credibility of the whole suite)
 
-Crippling a competitor to win is worse than losing a test. All three run in a realistic
+Crippling a competitor to win is worse than losing a test. Every runtime runs in a realistic
 production configuration:
 
 | Runtime | Version (pin exact patch at run time) | Configuration |
@@ -35,6 +35,8 @@ production configuration:
 | **Node.js** | 22.x LTS | default production run (`node app.js`); **JIT ON** (never `--jitless`), cluster only where the test explicitly measures multi-process |
 | **PHP** | 8.3.x | **OPcache ON + JIT ON** (`opcache.enable_cli=1`, `opcache.jit=tracing`, `opcache.jit_buffer_size=128M`); FPM for web tests, CLI for language-core |
 | **LOOK** | build stamped via `--version` (git sha) | bytecode VM default (`LOOK_CLI_VM=1`), `lk-fcgi` for web |
+| **Go** | 1.22.x | `net/http`, `database/sql` + go-sql-driver/mysql; `GOMAXPROCS=2` (Go 1.22 does not read the cgroup quota) |
+| **Elixir** | 1.16 / OTP | Plug on Bandit, MyXQL pool with `nodelay: true` (without it every query waits ~40 ms on Nagle + delayed ACK) |
 
 For web tests, an optional secondary table may show **PHP JIT ON vs OFF** and **Node default** side
 by side — but the headline PHP/Node columns are always the production-default config a real user runs.
@@ -137,6 +139,48 @@ cpp/bench/race.sh            # hello / JSON / template throughput + tail
 # Always: after any engine change, prove correctness BEFORE trusting perf
 bash cpp/tests/differential_test.sh build/lk build/lk-fcgi
 ```
+
+## Results — 2026-11-04 (tests 8 and 12, six runtimes)
+
+`cpp/bench/race2.sh` — the same two endpoints in LOOK 2, LOOK 1.0.45, Node 22, Go 1.22, Elixir 1.16
+and PHP 8 (FPM + nginx). Raw output: `cpp/bench/results/2026-11-04-race2.txt`. Servers `--cpus=2
+--memory=4g`, wrk `-t8 -d8s` from a separate container, warm-up, best of 3. Host: 16 CPUs, Windows 11
++ Docker Desktop 29.7 (WSL2) — a developer machine, so read the numbers relative to each other.
+LOOK 2 is the `v2` branch after the idle-thread removal (a072aac). Requests per second · p99 · RSS.
+
+**Trivial JSON** (`{"ok":true,"msg":"hello"}`)
+
+| Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LOOK 2 | 32,760 | 4.6 ms | 32,990 | 41 ms | **7.9 MB** |
+| LOOK 1.0.45 | 17,199 | 83 ms | 17,391 | 303 ms | 6.2 MB |
+| Go 1.22 | **119,454** | 2.3 ms | **108,260** | **16 ms** | 36 MB |
+| Node 22 (cluster ×2) | 102,812 | **2.1 ms** | 88,038 | 1.06 s | 119 MB |
+| Elixir (Bandit) | 53,883 | 3.2 ms | 48,484 | 46 ms | 112 MB |
+| PHP (FPM + nginx) | 5,246 | 63 ms | 4,909 | 363 ms | 135 MB |
+
+**One DB row** (`SELECT id, name, email FROM users WHERE id = 42`, MySQL 8, pool 16 where configurable)
+
+| Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LOOK 2 | 14,553 | 41 ms | 13,449 | 533 ms | 53 MB |
+| LOOK 1.0.45 | 6,888 | 147 ms | 5,762 | 722 ms | 56 MB |
+| Go 1.22 | **26,017** | 47 ms | **23,914** | 1.15 s | **51 MB** |
+| Node 22 (cluster ×2) | 14,771 | 15 ms | 12,709 | 903 ms | 288 MB |
+| Elixir (Bandit) | 13,877 | **10 ms** | 10,475 ¹ | **358 ms** | 200 MB |
+| PHP (FPM + nginx) | 2,585 | 118 ms | 2,864 | 577 ms | 126 MB |
+
+¹ 8,752 non-2xx responses at c=1000 (pool queue timeouts). Node had a few dozen wrk timeouts per
+run and Go 72 at c=1000 on the DB test; LOOK 2 had 3 at c=1000 on the DB test.
+
+What it says:
+- **LOOK 2 vs LOOK 1:** about 2× the throughput on both tests and a far lower tail (trivial JSON at
+  c=1000: p99 303 ms → 41 ms). CPU throttling under the 2-CPU quota fell from 245 to 44 periods.
+- **Memory:** LOOK 2 serves 1000 connections in 8 MB on the trivial test — the smallest of the six.
+- **Raw throughput:** Go and Node lead the trivial test by about 3×; on the DB test LOOK 2, Node and
+  Elixir are level and Go leads. Elixir has the steadiest DB tail at c=100.
+- **Open for LOOK 2:** the DB p99 at c=1000 (533 ms) — the next work item (memory budget, fiber
+  stacks) is measured against this row.
 
 ## Baseline & regression discipline
 
