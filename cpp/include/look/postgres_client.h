@@ -5,6 +5,7 @@
 #include <vector>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 
 #ifdef _WIN32
@@ -87,6 +88,16 @@ private:
     void set_socket_timeout(int ms);
     void ready_to_send();   // sorgudan once: olu bosta baglantiyi yenile / transaction icindeyse hata
     bool recv_bytes(uint8_t* buf, size_t len);
+    // Okuma tamponu: bir recv ile birden çok mesaj (eskiden mesaj başına tür + uzunluk + gövde =
+    // üç recv). Her yeni bağlantıda boşalır (do_connect).
+    std::unique_ptr<uint8_t[]> rbuf_;
+    size_t rbuf_pos_ = 0, rbuf_len_ = 0;
+    static constexpr size_t RBUF_SIZE = 16384;
+    int  recv_some(uint8_t* buf, size_t cap);   // düz TCP: en az 1 bayt; <=0 → bağlantı bitti
+    // Gönderme kuyruğu: bir sorgunun Parse/Bind/Describe/Execute/Sync mesajları tek send ile.
+    std::vector<uint8_t> out_;
+    void queue_message(char type, const std::vector<uint8_t>& body);
+    void flush_out();
     void send_bytes(const uint8_t* buf, size_t len);
 
     struct PgMsg { char type; std::vector<uint8_t> body; };

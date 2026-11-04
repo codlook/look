@@ -423,37 +423,64 @@ bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
         }
         return true;
     }
+#endif
+    // ── Düz TCP: tamponlu okuma (MySQL ile aynı yol) ─────────────────────────
+    // Bir recv tamponu doldurur, mesajlar (tür + uzunluk + gövde) tampondan verilir. Eskiden her
+    // mesaj üç recv'di: tek satırlık bir SELECT ~18 sistem çağrısı. Tampondan büyük istek tampon
+    // boşken doğrudan hedefe okunur.
+    if (!rbuf_) rbuf_.reset(new uint8_t[RBUF_SIZE]);
+    while (received < len) {
+        size_t avail = rbuf_len_ - rbuf_pos_;
+        if (avail > 0) {
+            size_t n = std::min(avail, len - received);
+            std::memcpy(buf + received, rbuf_.get() + rbuf_pos_, n);
+            rbuf_pos_ += n; received += n;
+            continue;
+        }
+        rbuf_pos_ = rbuf_len_ = 0;
+        if (len - received >= RBUF_SIZE) {
+            int r = recv_some(buf + received, len - received);
+            if (r <= 0) return false;
+            received += (size_t)r;
+            continue;
+        }
+        int r = recv_some(rbuf_.get(), RBUF_SIZE);
+        if (r <= 0) return false;
+        rbuf_len_ = (size_t)r;
+    }
+    return true;
+}
+
+// Düz TCP soketten en az 1, en çok cap bayt. <=0: bağlantı bitti (soket kapatıldı).
+int PostgresClient::recv_some(uint8_t* buf, size_t cap) {
+#ifndef _WIN32
     // Fiber yolu: beklemeden oku; veri yoksa fiber'ı askıya al (MySQL ile aynı yol).
     if (Fiber::current()) {
-        while (received < len) {
-            ssize_t r = ::recv(sock_, (char*)(buf + received), len - received, MSG_DONTWAIT);
-            if (r > 0) { received += (size_t)r; continue; }
+        for (;;) {
+            ssize_t r = ::recv(sock_, (char*)buf, cap, MSG_DONTWAIT);
+            if (r > 0) return (int)r;
             if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                 int w = fiber_wait_readable(sock_, rcv_tmo_ms_);
                 if (w == 1) continue;
                 if (w < 0) {   // zamanlayıcı yok → bloklayarak oku
-                    r = ::recv(sock_, (char*)(buf + received), len - received, 0);
-                    if (r > 0) { received += (size_t)r; continue; }
+                    r = ::recv(sock_, (char*)buf, cap, 0);
+                    if (r > 0) return (int)r;
                 }
             }
             pg_close_sock(sock_);
             sock_ = PG_SOCK_INVALID;
-            return false;
+            return -1;
         }
-        return true;
     }
 #endif
     // Fiber dışı yol (Windows, komut satırı) — blocking-ok: fiber yok
-    while (received < len) {
-        int r = recv(sock_, (char*)(buf + received), (int)(len - received), 0);
-        if (r <= 0) {
-            pg_close_sock(sock_);
-            sock_ = PG_SOCK_INVALID;
-            return false;
-        }
-        received += r;
+    int r = recv(sock_, (char*)buf, (int)cap, 0);
+    if (r <= 0) {
+        pg_close_sock(sock_);
+        sock_ = PG_SOCK_INVALID;
+        return -1;
     }
-    return true;
+    return r;
 }
 
 // İstek SUNUCUYA ULAŞMADAN kopmayı ("at-most-once güvenli") yanıt-okuma
@@ -543,12 +570,26 @@ PostgresClient::PgMsg PostgresClient::read_message() {
 
 // Frontend → type(1) + len(4, len içinde kendisi var) + body
 void PostgresClient::send_message(char type, const std::vector<uint8_t>& body) {
+    queue_message(type, body);
+    flush_out();
+}
+
+// Mesajı gönderme kuyruğuna ekle (flush_out tek send ile yollar).
+void PostgresClient::queue_message(char type, const std::vector<uint8_t>& body) {
     uint32_t len = 4 + (uint32_t)body.size();
     uint8_t hdr[5];
     hdr[0] = (uint8_t)type;
     write_u32_be(hdr + 1, len);
-    send_bytes(hdr, 5);
-    if (!body.empty()) send_bytes(body.data(), body.size());
+    out_.insert(out_.end(), hdr, hdr + 5);
+    out_.insert(out_.end(), body.begin(), body.end());
+}
+
+void PostgresClient::flush_out() {
+    if (out_.empty()) return;
+    std::vector<uint8_t> o;
+    o.swap(out_);   // gönderim hata atsa bile kuyruk boş kalır (yarım mesaj sonraki sorguya karışmaz)
+    send_bytes(o.data(), o.size());
+    if (o.capacity() <= 65536) { o.clear(); out_.swap(o); }   // küçük tamponu yeniden kullan (büyüğü bırak)
 }
 
 // ── Connect ───────────────────────────────────────────────────────────────────
@@ -571,6 +612,10 @@ void PostgresClient::do_connect() {
         pg_close_sock(sock_);
         sock_ = PG_SOCK_INVALID;
     }
+    // Yeni oturum: eski bağlantıdan kalan okunmamış baytlar ve gönderilmemiş mesajlar o oturuma
+    // aitti — yeni bağlantıda okunsalar cevaplar kayar (başka sorgunun satırları gelirdi).
+    rbuf_pos_ = rbuf_len_ = 0;
+    out_.clear();
 
     sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock_ == PG_SOCK_INVALID)
@@ -655,6 +700,13 @@ void PostgresClient::do_connect() {
         if (!recv_bytes(&resp, 1)) {
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
             throw std::runtime_error("db postgres: could not read SSLRequest response");
+        }
+        // 'S'den sonra tamponda bayt kaldıysa reddet: sunucu (ya da araya giren biri) TLS'ten önce
+        // düz metin göndermiş; o baytlar şifreli oturumun ilk cevabıymış gibi okunurdu
+        // (PostgreSQL'deki CVE-2021-23222 sınıfı). Dürüst sunucu 'S'den sonra TLS'i bekler.
+        if (resp == 'S' && rbuf_len_ != rbuf_pos_) {
+            pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+            throw std::runtime_error("db postgres: the server sent data before TLS started — connection refused");
         }
         if (resp != 'S') {
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
@@ -951,7 +1003,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
         body.insert(body.end(), pg_sql.begin(), pg_sql.end());
         body.push_back('\0'); // query
         body.push_back(0); body.push_back(0); // num_param_types = 0 (server infers)
-        send_message('P', body);
+        queue_message('P', body);   // Parse … Sync: tek send (flush Sync'te)
     }
 
     // Bind ('B') — bind params as text format
@@ -982,16 +1034,16 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
             }
         }
         body.push_back(0); body.push_back(0); // num_result_format_codes = 0 (text)
-        send_message('B', body);
+        queue_message('B', body);
     }
 
     // Describe ('D') — portal
-    { std::vector<uint8_t> body; body.push_back('P'); body.push_back('\0'); send_message('D', body); }
+    { std::vector<uint8_t> body; body.push_back('P'); body.push_back('\0'); queue_message('D', body); }
 
     // Execute ('E')
-    { std::vector<uint8_t> body; body.push_back('\0'); for(int b=0;b<4;b++) body.push_back(0); send_message('E', body); }
+    { std::vector<uint8_t> body; body.push_back('\0'); for(int b=0;b<4;b++) body.push_back(0); queue_message('E', body); }
 
-    // Sync ('S')
+    // Sync ('S') — kuyruktaki beş mesaj tek send ile gider
     { send_message('S', {}); }
 
     // Drain responses
