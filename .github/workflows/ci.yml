@@ -633,6 +633,13 @@ jobs:
           cd cpp
           bash tests/db_pool_fairness_test.sh ./build/lk-fcgi
 
+      # After a reply the client could not read to its end (fake MySQL and PostgreSQL servers send
+      # one), the next queries must get their own results, not the old reply's rest.
+      - name: "No result shifts after a refused MySQL / PostgreSQL reply"
+        run: |
+          cd cpp
+          bash tests/db_malformed_desync_test.sh ./build/lk
+
       # Long CPU work (a LOOK loop, deep calls, password hashing) must hold only its own request:
       # up to 1.0.24 LOOK code never gave up its turn under fibers (0.7–1 s waits, 32 s on the
       # interpreter).

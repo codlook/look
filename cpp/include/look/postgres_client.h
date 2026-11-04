@@ -87,6 +87,7 @@ private:
     void do_connect();
     void set_socket_timeout(int ms);
     void ready_to_send();   // sorgudan once: olu bosta baglantiyi yenile / transaction icindeyse hata
+    bool unread_reply_bytes() const;   // önceki cevaptan okunmamış bayt (tampon / TLS)
     bool recv_bytes(uint8_t* buf, size_t len);
     // Okuma tamponu: bir recv ile birden çok mesaj (eskiden mesaj başına tür + uzunluk + gövde =
     // üç recv). Her yeni bağlantıda boşalır (do_connect).

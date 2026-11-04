@@ -839,8 +839,19 @@ void PostgresClient::do_auth() {
 // sonraki komutlar transaction DISINDA kalici yaziliyordu (olculdu: sessiz tutarsizlik).
 static const char* const kPgTxLost = "db postgres: the connection was closed inside a transaction; "
                                      "the server rolled the transaction back and nothing of it was kept";
+bool PostgresClient::unread_reply_bytes() const {
+    // Sorgu gönderilmeden önce okunmamış cevap baytı kalmış olmamalı: kalmışsa önceki bir cevap
+    // yarıda bırakılmıştır ve bu bağlantıda okunan her şey bir sorgu geriden gelir. Soketteki
+    // baytı idle_socket_unusable görür; okuma tamponundakini (ve TLS tamponundakini) bu görür.
+    if (rbuf_len_ != rbuf_pos_) return true;
+#ifndef _WIN32
+    if (ssl_ && SSL_pending((SSL*)ssl_) > 0) return true;
+#endif
+    return false;
+}
+
 void PostgresClient::ready_to_send() {
-    if (sock_ != PG_SOCK_INVALID && idle_socket_unusable(sock_)) disconnect();
+    if (sock_ != PG_SOCK_INVALID && (unread_reply_bytes() || idle_socket_unusable(sock_))) disconnect();
     if (sock_ != PG_SOCK_INVALID) return;
     if (in_txn_) { in_txn_ = false; throw std::runtime_error(kPgTxLost); }
     try { do_connect(); } catch (...) {}
@@ -877,6 +888,11 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
     // last_insert_id_ DOKUNULMAZ: bu yol yalnız BEGIN/COMMIT/ROLLBACK/SAVEPOINT içindir (kullanıcı
     // SQL'i extended_query'den geçer); COMMIT'ten sonra da db::last_id INSERT'inkini verir.
 
+    // Cevap sonuna (ReadyForQuery) kadar okunmadan hata atılırsa bağlantı kapanır: okunmamış
+    // mesajlar sonraki sorgunun cevabı sanılırdı (her sonuç bir sorgu geriden; hata yok —
+    // tests/pg_malformed_desync_test.sh). Sunucu hatası ('E') 'Z'ye kadar okunur, bağlantı kalır.
+    bool reply_done = false;
+    try {
     while (true) {
         PgMsg msg;
         try { msg = read_message(); }
@@ -958,16 +974,21 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
         } else if (msg.type == 'Z') {
             // ReadyForQuery — bitti.
             in_txn_ = !msg.body.empty() && msg.body[0] != 'I';
+            reply_done = true;
             break;
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
             // ReadyForQuery'ye kadar drain et
             while (true) {
-                try { auto m = read_message(); if (m.type == 'Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; break; } } catch (...) { break; }
+                try { auto m = read_message(); if (m.type == 'Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; reply_done = true; break; } } catch (...) { break; }
             }
             throw std::runtime_error(err);
         }
         // 'N' (Notice), 'I' (EmptyQuery) → yoksay
+    }
+    } catch (...) {
+        if (!reply_done && sock_ != PG_SOCK_INVALID) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID; }
+        throw;
     }
 
     return rows;
@@ -1052,6 +1073,9 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
     std::vector<ColInfo> columns;
     affected_rows_ = 0;
 
+    // simple_query ile aynı kural: cevap 'Z'ye kadar okunmadan hata atılırsa bağlantı kapanır.
+    bool reply_done = false;
+    try {
     while (true) {
         PgMsg msg;
         try { msg = read_message(); } catch (...) { pg_close_sock(sock_); sock_=PG_SOCK_INVALID; throw; }
@@ -1117,12 +1141,17 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
             }
         } else if (msg.type == 'Z') {
             in_txn_ = !msg.body.empty() && msg.body[0] != 'I';
+            reply_done = true;
             break;
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
-            while (true) { try { auto m=read_message(); if(m.type=='Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; break; } } catch(...){break;} }
+            while (true) { try { auto m=read_message(); if(m.type=='Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; reply_done = true; break; } } catch(...){break;} }
             throw std::runtime_error(err);
         }
+    }
+    } catch (...) {
+        if (!reply_done && sock_ != PG_SOCK_INVALID) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID; }
+        throw;
     }
     return rows;
 }

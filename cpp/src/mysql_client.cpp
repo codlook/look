@@ -300,7 +300,14 @@ void MySQLClient::ensure_connected() {
     // Sunucu bosta bekleyen baglantiyi kapattiysa (wait_timeout, yeniden baslatma, KILL) bunu
     // sorguyu GONDERMEDEN anla: eskiden ilk sorgu kapali sokete gidip hata veriyordu (sabahin ilk
     // istegi 500). Gonderilmis bir sorgu asla tekrarlanmaz — bu yalniz gonderimden onceki yoklama.
-    if (sock_ != SOCK_INVALID && idle_socket_unusable(sock_)) disconnect();
+    // Okuma tamponunda (ya da TLS tamponunda) okunmamış bayt kaldıysa önceki bir cevap yarıda
+    // bırakılmıştır (ayrıştırma hatası): bu bağlantıda okunan her şey bir sorgu geriden gelirdi.
+    // Soketteki artığı idle_socket_unusable görür; tampondakini o göremez.
+    bool unread = rbuf_len_ != rbuf_pos_;
+#ifndef _WIN32
+    if (ssl_ && SSL_pending((SSL*)ssl_) > 0) unread = true;
+#endif
+    if (sock_ != SOCK_INVALID && (unread || idle_socket_unusable(sock_))) disconnect();
     if (sock_ != SOCK_INVALID) return;  // socket alive — skip round-trip ping
     // Transaction icinde kopan baglantinin yerine yenisi ACILMAZ: sunucu transaction'i geri aldi;
     // yeni baglantida sonraki komutlar transaction DISINDA kalici yazilirdi (sessiz tutarsizlik).

@@ -90,6 +90,16 @@ def handle(c):
             # DataRow, RowDescription'DAN ONCE (columns bos)
             c.sendall(pre + data_row("saglam") + row_desc() +
                       msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
+        if MODE == "desync":
+            # FIRST: bozuk DataRow (100 bayt diyor, 2 veriyor) + ardından C ve Z. Sonraki sorgular
+            # kendi adlarını tek satır olarak döndürür. İstemci bozuk satırda bağlantıyı kapatmazsa
+            # okunmamış C/Z sonraki sorgunun cevabı sanılır: SECOND boş, THIRD "second" döner.
+            if "FIRST" in q:
+                c.sendall(pre + row_desc() + data_row("truncated") +
+                          msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
+            name = b"second" if "SECOND" in q else b"third"
+            c.sendall(pre + row_desc() + msg(b"D", struct.pack("!H", 1) + struct.pack("!i", len(name)) + name) +
+                      msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
         if MODE == "erken_c":
             c.sendall(pre + msg(b"C", cstr("SELECT 0")) + msg(b"Z", b"I")); return False
         c.sendall(pre + row_desc() + data_row(MODE) +
