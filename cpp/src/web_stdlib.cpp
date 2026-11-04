@@ -1221,6 +1221,12 @@ struct ConnPool {
         look::FiberScheduler* sched = look::get_thread_scheduler();
         std::shared_ptr<look::Fiber> shared_fiber;
         if (fiber && sched) shared_fiber = fiber->shared_from_this_fiber();
+        // Doğrudan teslim yuvası: release() bekleyen fiber'a bağlantıyı listeye koymadan BURAYA
+        // verir. Eskiden bağlantı listeye konup bekleyen uyandırılıyordu; uyanan fiber sırası
+        // gelene dek yeni gelen bir istek onu kapıyor, uyanan kuyruğun SONUNA dönüyordu — yük
+        // altında aynı istek defalarca sıra kaybediyordu (c=1000'de p99 kuyruğu). Fiber askıdayken
+        // yığını yerinde durur, yuva geçerlidir.
+        std::shared_ptr<DbConnection> handed;
 
         while (true) {
             bool grow = false;
@@ -1228,7 +1234,7 @@ struct ConnPool {
                 // Karar AYNI havuz kilidi altında: boşta bağlantı → al; yer varsa → yer ayır, kilit
                 // dışında aç; yoksa bekle. Bekleyen fiber'ın kuyruğa girişi de bu kilit altında: arada
                 // gelen release() onu görmeyip uyandırmayı kaybetmesin. Kilit sırası mtx →
-                // g_fiber_waiters_mtx; release() ikisini iç içe almaz.
+                // g_fiber_waiters_mtx (release() de aynı sırayla alır).
                 std::unique_lock<std::mutex> lk(mtx);
                 if (!available.empty()) {
                     auto c = available.back(); available.pop_back();
@@ -1238,7 +1244,7 @@ struct ConnPool {
                     ++opening; grow = true;
                 } else if (shared_fiber) {
                     std::lock_guard<std::mutex> wl(g_fiber_waiters_mtx);
-                    g_fiber_waiters.push_back({shared_fiber, sched, this});
+                    g_fiber_waiters.push_back({shared_fiber, sched, this, &handed});
                 } else {
                     // İş parçacığı bağlamı: engelleyen bekleme (cv.wait burada güvenli)
                     cv.wait(lk, [this] {
@@ -1263,18 +1269,34 @@ struct ConnPool {
                 return c;
             }
             look::FiberScheduler::suspend_current();   // release() ya da başarısız açılış uyandırır
+            if (handed) return std::move(handed);      // bağlantı doğrudan bize teslim edildi
+            // Teslim yoksa başarısız bir açılış uyandırdı (ayrılan yer boşaldı): baştan dene.
         }
     }
 
     void release(std::shared_ptr<DbConnection> c) {
+        std::shared_ptr<look::Fiber> wake;
+        look::FiberScheduler* wake_sched = nullptr;
         {
+            // Kilit sırası acquire ile aynı: mtx → g_fiber_waiters_mtx.
             std::lock_guard<std::mutex> lk(mtx);
-            available.push_back(c);
+            {
+                std::lock_guard<std::mutex> wl(g_fiber_waiters_mtx);
+                // En uzun bekleyene (FIFO). Ölçüldü: önce aynı iş parçacığındaki bekleyene vermek
+                // daha kötü (o fiber ancak bırakan fiber sırayı bırakınca koşar) — sade FIFO.
+                for (auto it = g_fiber_waiters.begin(); it != g_fiber_waiters.end(); ++it) {
+                    if (it->pool != this) continue;
+                    *it->slot  = std::move(c);   // doğrudan teslim
+                    wake       = std::move(it->fiber);
+                    wake_sched = it->sched;
+                    g_fiber_waiters.erase(it);
+                    break;
+                }
+            }
+            if (!wake) available.push_back(std::move(c));
         }
-        // Wake one fiber waiter first (cross-scheduler safe)
-        notify_fiber_waiters(this);
-        // Then wake one blocking thread waiter
-        cv.notify_one();
+        if (wake) { wake_sched->resume_fiber(std::move(wake)); return; }
+        cv.notify_one();   // bekleyen fiber yok: engelleyen iş parçacığı bekleyenini uyandır
     }
 
 private:
@@ -1285,6 +1307,7 @@ private:
         std::shared_ptr<look::Fiber>  fiber;
         look::FiberScheduler*          sched;
         ConnPool*                      pool;
+        std::shared_ptr<DbConnection>* slot;   // release() bağlantıyı buraya teslim eder
     };
 
     static std::mutex               g_fiber_waiters_mtx;

@@ -625,6 +625,14 @@ jobs:
           cd cpp
           bash tests/sqlite_stmt_cache_test.sh ./build/lk ./build/lk-fcgi
 
+      # A connection that comes back goes straight to the request that has waited longest. It used
+      # to go on the free list, where a newly arriving request could take it first; the woken one
+      # went back to the end of the queue (p99 270 ms at c=1000 on MySQL).
+      - name: "Requests waiting for a pooled database connection are served in order"
+        run: |
+          cd cpp
+          bash tests/db_pool_fairness_test.sh ./build/lk-fcgi
+
       # Long CPU work (a LOOK loop, deep calls, password hashing) must hold only its own request:
       # up to 1.0.24 LOOK code never gave up its turn under fibers (0.7–1 s waits, 32 s on the
       # interpreter).
