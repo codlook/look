@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -208,6 +209,65 @@ void fiber_trampoline(uint32_t hi, uint32_t lo) noexcept {
     // This line is never reached — swapcontext does not return here.
 }
 
+// ── Yığın önbelleği ───────────────────────────────────────────────────────────
+// Her bağlantı bir fiber; yığını mmap + mprotect ile açılıp munmap ile kapanıyordu. Ölçüm
+// (gdb örnekleme, WS bağlantı yağmuru): fiber iş parçacıklarının zamanının çoğu Fiber::Fiber
+// içinde — mmap, mprotect ve yeni sayfanın ilk dokunuşu (makecontext). Biten yığın (koruma
+// sayfası yerinde) SÜREÇ GENELİ bir önbelleğe döner (fiber çoğu zaman onu açan iş parçacığında
+// değil başka birinde yıkılır). Ölçüm (160k WS yağmuru, 16 çekirdek): önbelleksiz 15k bağlantı/sn;
+// tavan 256 → 40k; 1024 → 53k; 4096 → 86k; 16384 → 95k.
+// Bellek: önbellek yeni bellek ayırmaz; aynı anda çalışmış fiber'ların bıraktığı yığınları tutar
+// (tepe eşzamanlılık kadar, en fazla 4096). Her yığından en fazla KEEP kadarı dokunulmuş kalır.
+namespace {
+struct StackCache {
+    static constexpr size_t MAX = 4096;
+    std::mutex m;
+    std::vector<std::pair<void*, size_t>> free_;   // (taban, toplam boy)
+    void* take(size_t n) {
+        std::lock_guard<std::mutex> lk(m);
+        for (size_t i = free_.size(); i-- > 0;)
+            if (free_[i].second == n) { void* p = free_[i].first; free_[i] = free_.back(); free_.pop_back(); return p; }
+        return nullptr;
+    }
+    // KEEP: yığının üstünden (yüksek adres; yığın aşağı büyür) bu kadarı önbellekte dokunulmuş
+    // kalabilir, altı madvise ile geri verilir: derin özyineleme yapmış bir fiber'ın megabaytları
+    // önbellekte tutulmaz (yoksa 4096 × 8 MB'a kadar bellek kalabilirdi). Her dönüşte madvise
+    // kabul hızını üçte birine indiriyordu (84k → 29k/sn), bu yüzden yalnız gerekince: yığın
+    // KEEP'in altına indiyse hemen altındaki BAND yazılmıştır (yığın kesintisiz büyür). Bandı
+    // okumak sistem çağrısı değildir (hiç yazılmamış sayfa sıfır sayfaya eşlenir); madvise
+    // sonrası bant yine sıfırdır. 96 KB: bağlantı işleyicisinin yığınında 64 KB okuma tamponu
+    // var — ölçümde sıradan bir WS bağlantısı 64 KB'ın altına iniyor, 72 KB'ın altına inmiyor.
+    static constexpr size_t KEEP = 96 * 1024;
+    static constexpr size_t BAND = 16 * 1024;
+    // Ölü fiber'ın yığınını okur: ASan'ın yığın kırmızı bölgeleri orada kalmış olabilir.
+#if defined(__SANITIZE_ADDRESS__)
+    __attribute__((no_sanitize_address))
+#endif
+    static bool went_deep(const char* top) {
+        const uint64_t* w = reinterpret_cast<const uint64_t*>(top - KEEP - BAND);
+        for (size_t i = 0; i < BAND / sizeof(uint64_t); ++i) if (w[i]) return true;
+        return false;
+    }
+    bool give(void* p, size_t n) {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            if (free_.size() >= MAX) return false;
+        }
+        const size_t page = (size_t)::getpagesize();
+        const size_t guard = (Fiber::GUARD_SIZE + page - 1) / page * page;
+        char* top = static_cast<char*>(p) + n;
+        if (n > guard + KEEP + BAND && went_deep(top))
+            ::madvise(static_cast<char*>(p) + guard, n - guard - KEEP, MADV_DONTNEED);
+        std::lock_guard<std::mutex> lk(m);
+        if (free_.size() >= MAX) return false;
+        free_.emplace_back(p, n);
+        return true;
+    }
+};
+// Süreç ömrü boyunca yaşar (sızdırılmış tekil): çıkışta yıkıcı sırası sorunu yok.
+StackCache& stack_cache() { static StackCache* c = new StackCache(); return *c; }
+}
+
 // ── Fiber construction ────────────────────────────────────────────────────────
 
 Fiber::Fiber(Fn fn, size_t stack_size)
@@ -222,8 +282,11 @@ Fiber::Fiber(Fn fn, size_t stack_size)
     const size_t aligned_stack = (stack_size + page_size - 1) / page_size * page_size;
     const size_t total_alloc   = guard_bytes + aligned_stack;
 
+    // Önbellekte aynı boyda yığın varsa onu al (koruma sayfası zaten kurulu).
+    void* mem = stack_cache().take(total_alloc);
+    const bool reused = mem != nullptr;
     // Allocate stack with mmap (necessary for mprotect)
-    void* mem = ::mmap(nullptr, total_alloc,
+    if (!reused) mem = ::mmap(nullptr, total_alloc,
                        PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
                        -1, 0);
@@ -236,7 +299,7 @@ Fiber::Fiber(Fn fn, size_t stack_size)
     impl_->stack_size  = aligned_stack;
 
     // Guard page at bottom (lowest address)
-    install_guard_page();
+    if (!reused) install_guard_page();
 
     // Usable stack starts after guard page
     void* usable_stack = static_cast<char*>(mem) + guard_bytes;
@@ -262,6 +325,7 @@ Fiber::Fiber(Fn fn, size_t stack_size)
 
 Fiber::~Fiber() {
     if (impl_ && impl_->stack_base) {
+        if (stack_cache().give(impl_->stack_base, impl_->stack_alloc)) { impl_->stack_base = nullptr; return; }
         remove_guard_page();
         ::munmap(impl_->stack_base, impl_->stack_alloc);
         impl_->stack_base = nullptr;
