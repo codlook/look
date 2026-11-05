@@ -88,13 +88,20 @@ Each domain added in the panel gets its own systemd service, `look-<domain>.serv
 - **Script** — the `.lk` file chosen in the panel (default `index.lk` in the document
   root). It must be inside the domain's document root. When it does not exist, a small
   sample app is created, owned by the domain's user.
-- **Env file** (optional) — a file of `KEY=VALUE` lines inside the document root, for
-  example `.look.env`. The domain's user reads it when the service starts, so it can be
-  mode `600`. Lines starting with `#` are comments; there are no comments at the end of
-  a line: in `APP_NAME=Shop # title` the value is `Shop # title` (the service log warns
-  about it). Quotes around a value are removed.
+- **Env file** (optional) — a file of `KEY=VALUE` lines in the domain user's home,
+  preferably outside the web root, for example `/var/www/vhosts/example.com/.look/site.env`
+  (a file inside the document root is accepted too). The domain's user reads it when the
+  service starts, so it can be mode `600`. Lines starting with `#` are comments; there are
+  no comments at the end of a line: in `APP_NAME=Shop # title` the value is `Shop # title`
+  (the service log warns about it). Quotes around a value are removed.
+- **LOOK_SECRET** — LOOK 2 does not start an application that uses cookies without it.
+  When the site has none, the extension creates one when the site is enabled: 32 random
+  bytes in `/var/www/vhosts/<subscription>/.look/look-<domain>.secret`, mode `600`, owned
+  by the domain's user, outside the web root, never shown. It is kept across restarts and
+  updates; a `LOOK_SECRET` in the site's own env file takes precedence.
 - **Remove** stops the service and deletes `look-<domain>.service` and its
-  `look-<domain>.service.d` folder; **Stop** only stops it.
+  `look-<domain>.service.d` folder; **Stop** only stops it. Either way the site's Apache
+  configuration keeps refusing `/.look*` files, so a stopped site does not serve them.
 - **Mode on shared hosting with a memory limit** — use **FastCGI**. On a host
   that limits each site's virtual memory (for example CloudLinux, about 1 GB),
   HTTP mode starts a database thread per worker and, on a server with many

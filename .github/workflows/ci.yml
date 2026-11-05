@@ -1159,6 +1159,11 @@ jobs:
       - name: Plesk panel has no sudo rights
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_no_sudo_test.sh
 
+      # A site's env file may live outside its web root, a stopped site keeps refusing /.look*
+      # files, and LOOK 2 gets a LOOK_SECRET created as the domain's user (0600, never printed).
+      - name: "Plesk keeps secrets out of the web root and creates LOOK_SECRET"
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_env_secret_test.sh
+
       # LOOK 2 web runs only on the VM: a program the VM cannot compile does not start (exit 1),
       # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear
       # 500, LOOK_BYTECODE=0 is ignored, a script without routes runs whole per request.

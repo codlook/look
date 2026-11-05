@@ -113,9 +113,14 @@ case "$SCRIPT" in
     *) echo "ERROR: the script must be inside the document root of $DOMAIN ($DOC_ROOT)" >&2; exit 1 ;;
 esac
 if [ -n "$ENV_FILE" ]; then
+    # Ortam dosyası domain kullanıcısının KENDİ alanında olmalı: ev dizini (web kökünün dışı —
+    # önerilen) ya da document root. Eskiden yalnız document root kabul ediliyordu: site
+    # durdurulunca Apache vekil kuralı kalkar ve web kökü düz dosya olarak sunulur — /.look.env
+    # (veritabanı parolası) indirilebilirdi.
     case "$ENV_FILE" in
         "$DOC_ROOT"/*) ;;
-        *) echo "ERROR: the env file must be inside the document root of $DOMAIN ($DOC_ROOT)" >&2; exit 1 ;;
+        "${RUN_HOME%/}"/*) case "$RUN_HOME" in /var/www/vhosts/?*) ;; *) echo "ERROR: the env file must be inside the home of $RUN_USER or the document root of $DOMAIN" >&2; exit 1 ;; esac ;;
+        *) echo "ERROR: the env file must be inside the home of $RUN_USER ($RUN_HOME) or the document root of $DOMAIN ($DOC_ROOT)" >&2; exit 1 ;;
     esac
     # Okunabilirligi servisin kullanicisi olarak sina (root her dosyayi okur)
     if ! runuser -u "$RUN_USER" -- test -f "$ENV_FILE" -a -r "$ENV_FILE"; then
@@ -148,11 +153,37 @@ if [ "$MODE" = "http" ]; then
 else
     EXEC_CMD="$LK_FCGI --port $PORT --workers $WORKERS --script $SCRIPT"
 fi
+install -m 755 "$(dirname "$0")/look-env.sh" /opt/look/look-env
 if [ -n "$ENV_FILE" ]; then
     # Ortam dosyasini servisin kullanicisi okur: look-env.sh root'a ait /opt/look'a kopyalanir
-    install -m 755 "$(dirname "$0")/look-env.sh" /opt/look/look-env
     EXEC_CMD="/bin/bash /opt/look/look-env $ENV_FILE $EXEC_CMD"
 fi
+
+# ─── LOOK_SECRET ───────────────────────────────────────────────────────────
+# LOOK 2 çerez kullanan uygulamayı LOOK_SECRET olmadan başlatmaz (CSRF imzası). Sitenin yoksa
+# burada üretilir — domain kullanıcısı OLARAK (runuser): root kullanıcının ev dizinine hiçbir şey
+# yazmaz (oradaki bir symlink root'u herhangi bir dosyaya yönlendirebilirdi). /dev/urandom'dan
+# 32 bayt, 0700 klasörde 0600 dosya, web kökünün dışında; hiçbir çıktıya yazılmaz. Var olan
+# korunur. Dıştaki look-env önce bunu, içteki sitenin kendi dosyasını yükler: sitenin kendi
+# LOOK_SECRET'ı kazanır.
+case "$RUN_HOME" in
+    /var/www/vhosts/?*)
+        SECRET_FILE="${RUN_HOME%/}/.look/${SVC_NAME}.secret"
+        if runuser -u "$RUN_USER" -- /bin/bash -c '
+                umask 077
+                mkdir -p "$(dirname "$1")" 2>/dev/null || exit 1
+                if [ ! -s "$1" ]; then
+                    k=$(od -An -tx1 -N32 /dev/urandom | tr -d " \n")
+                    [ ${#k} -eq 64 ] || exit 1
+                    printf "LOOK_SECRET=%s\n" "$k" > "$1" || exit 1
+                fi
+                chmod 600 "$1"' _ "$SECRET_FILE" 2>/dev/null; then
+            EXEC_CMD="/bin/bash /opt/look/look-env $SECRET_FILE $EXEC_CMD"
+        else
+            echo "WARNING: could not create $SECRET_FILE as $RUN_USER; set LOOK_SECRET in the site's env file (LOOK 2 needs it for applications that use cookies)"
+        fi
+        ;;
+esac
 
 cat > "$SVC_FILE" << SYSTEMD
 [Unit]
@@ -197,14 +228,20 @@ mkdir -p "$CONF_DIR"
 
 if [ "$MODE" = "http" ]; then
     # HTTP Proxy modu
-    PROXY_CONF="ProxyRequests Off
+    PROXY_CONF="<FilesMatch \"^\.look\">
+    Require all denied
+</FilesMatch>
+ProxyRequests Off
 ProxyPreserveHost On
 ProxyPass /.well-known !
 ProxyPass / http://127.0.0.1:${PORT}/
 ProxyPassReverse / http://127.0.0.1:${PORT}/"
 else
     # FastCGI modu (ProxyPass ile — mod_proxy_fcgi)
-    PROXY_CONF="ProxyRequests Off
+    PROXY_CONF="<FilesMatch \"^\.look\">
+    Require all denied
+</FilesMatch>
+ProxyRequests Off
 ProxyPreserveHost On
 ProxyPass /.well-known !
 ProxyPass / fcgi://127.0.0.1:${PORT}/

@@ -34,11 +34,18 @@ if [ "$REMOVE" = "remove" ]; then
     /bin/systemctl daemon-reload
 fi
 
-# vhost config temizle (Apache proxy'yi kaldir)
+# vhost config: Apache vekil kuralı kalkar, yerine /.look* dosyalarını reddeden kural kalır.
+# Eskiden dosyalar silinirdi: Apache web kökünü düz dosya olarak sunmaya döner ve web kökündeki
+# /.look.env (veritabanı parolası) indirilebilirdi. Kural site durduğu sürece kalır; site yeniden
+# etkinleştirilince enable.sh dosyaları vekil kuralıyla (aynı reddetme kuralı dahil) yazar.
 if [ -n "$DOMAIN" ]; then
     CONF_DIR="/var/www/vhosts/system/${DOMAIN}/conf"
+    mkdir -p "$CONF_DIR"
+    DENY_CONF='<FilesMatch "^\.look">
+    Require all denied
+</FilesMatch>'
     for f in vhost.conf vhost_ssl.conf; do
-        [ -f "$CONF_DIR/$f" ] && rm -f "$CONF_DIR/$f"
+        printf '%s\n' "$DENY_CONF" > "$CONF_DIR/$f"
     done
 
     # websrvmng Plesk Obsidian'da yok; httpdmng olmadan vhost.conf silinse de Apache eski proxy'yi tutar
