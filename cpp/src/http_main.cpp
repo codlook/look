@@ -1942,6 +1942,14 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
         web.host        = resolve_host(req);
+        // Başlıklar ve çerezler sıradan istekteki gibi: request::header / session:: / cookie:: WS
+        // rotasında ve geri çağrılarında çalışır (eskiden boştu → çerezle WS kimlik doğrulaması
+        // yapılamıyordu, sessizce null).
+        web.headers_in = req.headers;
+        if (auto ck = req.headers.find("cookie"); ck != req.headers.end())
+            web.cookies_in = look::WebContext::parse_cookies(ck->second);
+        // CSWSH (başka sitenin ziyaretçi çereziyle WS açması) el sıkışmadan ÖNCE http_server.cpp'de
+        // reddedilir (handle_ws_upgrade): varsayılan aynı köken, LOOK_WS_ORIGINS izin listesi.
 
         // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
         // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
@@ -1967,6 +1975,11 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
         web.is_https    = resolve_is_https(req);
         web.host        = resolve_host(req);
+        // WS ile aynı: başlıklar ve çerezler. (Origin denetimi gerekmez: EventSource bir GET'tir ve
+        // başka bir sitenin akışı okuması CORS ile engellenir.)
+        web.headers_in = req.headers;
+        if (auto ck = req.headers.find("cookie"); ck != req.headers.end())
+            web.cookies_in = look::WebContext::parse_cookies(ck->second);
 
         // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
         // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.

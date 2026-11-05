@@ -2299,6 +2299,8 @@ LOG_DIR=C:/app/logs</code></pre>
     <tr><td><code>ws::clients()</code></td><td>Number of active WS connections</td></tr>
   </table>
 
+  <p>The WebSocket route and its <code>ws::on</code> callbacks see the handshake request: <code>request::get</code>, <code>request::header</code>, cookies and <code>session::get</code> work as in an ordinary route, so a WebSocket can be authenticated with the visitor's session. A browser handshake from another site is refused (see <code>LOOK_WS_ORIGINS</code>).</p>
+
   <h3>Architecture</h3>
   <pre><code>HTTP GET /chat
   Upgrade: websocket
@@ -4529,7 +4531,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
     <tr><td><code>LOOK_ALLOW_SSRF</code></td><td><em>off</em></td><td>When set to <code>1</code>, allows <code>http::</code> requests to private / loopback addresses. Off by default, so outbound calls to internal ranges are blocked (SSRF protection).</td></tr>
-    <tr><td><code>LOOK_WS_ORIGINS</code></td><td><em>all</em></td><td>Comma-separated allowlist of accepted WebSocket <code>Origin</code> headers. Unset = every origin is accepted; set it to lock WS to your own domains.</td></tr>
+    <tr><td><code>LOOK_WS_ORIGINS</code></td><td><em>same origin</em></td><td>Comma-separated allowlist of accepted WebSocket <code>Origin</code> headers (<code>*</code> = any). Unset = a browser handshake is accepted only when its <code>Origin</code> host is the request's <code>Host</code> (another site cannot open a WebSocket with your visitors' cookies); a client that sends no <code>Origin</code> (not a browser) is accepted.</td></tr>
     <tr><td><code>LOOK_MAX_BODY_SIZE</code></td><td><code>10485760</code> (10&nbsp;MB)</td><td>Maximum request body in bytes. Requests above the cap are rejected before buffering.</td></tr>
     <tr><td><code>LOOK_HTTP_MAX_CONNS_IP</code></td><td><em>off</em></td><td>Max concurrent connections from a single IP; over the cap → <code>429</code>. Stops one IP from tying up the whole worker pool; open WebSocket and SSE connections count too. Not set and no <code>LOOK_TRUSTED_PROXY</code>: one address may still hold at most 1000 open WebSocket / SSE connections (a default; there is no limit on the total). <strong>Opt-in</strong>, and keyed on the real TCP peer: enable it only when LOOK is <strong>directly</strong> internet-facing. Behind a reverse proxy every connection shares the proxy's IP, so a single counter would throttle the entire site — cap connections at the proxy instead (nginx <code>limit_conn</code>). Complements the per-minute <code>LOOK_RATE_LIMIT_RPM</code> limiter.</td></tr>
     <tr><td><code>LOOK_SESSION_SECURE</code></td><td><em>auto</em></td><td>Controls the <code>Secure</code> flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (detected from an <code>HTTPS</code> FCGI param or <code>X-Forwarded-Proto: https</code> from a trusted proxy); the runtime warns once if it ships a session cookie without <code>Secure</code> so a misconfiguration can't silently downgrade. <code>1</code> = always set it; <code>0</code> = never (for plain-HTTP local dev).</td></tr>

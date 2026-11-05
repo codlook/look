@@ -2276,6 +2276,8 @@ route("WS", "/chat", function($ws) use ($hub) {
 | `ws::broadcast($msg)` | Send to all connected WS clients (broadcast-safe) |
 | `ws::clients()` | Number of active WS connections |
 
+The WebSocket route and its `ws::on` callbacks see the handshake request: `request::get`, `request::header`, cookies and `session::get` work as in an ordinary route, so a WebSocket can be authenticated with the visitor's session. A browser handshake from another site is refused (see `LOOK_WS_ORIGINS`).
+
 ### Architecture
 
 ```lk
@@ -4531,7 +4533,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `LOOK_ALLOW_SSRF` | *off* | When set to `1`, allows `http::` requests to private / loopback addresses. Off by default, so outbound calls to internal ranges are blocked (SSRF protection). |
-| `LOOK_WS_ORIGINS` | *all* | Comma-separated allowlist of accepted WebSocket `Origin` headers. Unset = every origin is accepted; set it to lock WS to your own domains. |
+| `LOOK_WS_ORIGINS` | *same origin* | Comma-separated allowlist of accepted WebSocket `Origin` headers (`*` = any). Unset = a browser handshake is accepted only when its `Origin` host is the request's `Host` (another site cannot open a WebSocket with your visitors' cookies); a client that sends no `Origin` (not a browser) is accepted. |
 | `LOOK_MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body in bytes. Requests above the cap are rejected before buffering. |
 | `LOOK_DB_REQUIRE_TLS` | *off* | `1` refuses a **plaintext** DB connection (MySQL/MariaDB/PostgreSQL/Redis) to a **remote** host. Loopback / Unix-socket always allowed (app+DB same machine never blocked). Allow a trusted remote plaintext link with the TLS scheme (`mysqls://`/`postgresqls://`/`rediss://`) or `?insecure_plaintext=1` on the DSN. Loopback matched on the **literal** host (a hostname resolving to 127.0.0.1 counts as remote). Especially relevant for Redis (`AUTH` sends the password in cleartext). |
 | `LOOK_HTTP_MAX_CONNS_IP` | *off* | Max concurrent connections from a single IP; over the cap → `429`. Stops one IP from tying up the whole worker pool; open WebSocket and SSE connections count too. Not set and no `LOOK_TRUSTED_PROXY`: one address may still hold at most 1000 open WebSocket / SSE connections (a default; there is no limit on the total). **Opt-in**, and keyed on the real TCP peer: enable it only when LOOK is **directly** internet-facing. Behind a reverse proxy every connection shares the proxy's IP, so a single counter would throttle the entire site — cap connections at the proxy instead (nginx `limit_conn`). Complements the per-minute `LOOK_RATE_LIMIT_RPM` limiter. |
