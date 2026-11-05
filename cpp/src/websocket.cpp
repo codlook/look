@@ -229,6 +229,7 @@ bool WsConnection::send_text(const std::string& msg) {
 }
 
 void WsConnection::close_conn() {
+    server_closed.store(true);           // sunucu kapattı: "close" geri çağrısı çalışmaz (belge kuralı)
     if (closed.exchange(true)) return;  // already closed — yalnız ilk çağıran ilerler
     std::string frame = ws_encode_close_frame();
     std::lock_guard<std::mutex> lk(write_mutex);

@@ -817,6 +817,37 @@ struct HttpServer::Impl {
         }
     }
 
+    // ── WS geri çağrıları: bağlantı başına sırayla ──────────────────────────
+    // İş bağlantının gelen kutusuna girer; kutuyu boşaltan iş yoksa havuza bir tane verilir.
+    // Boşaltıcı işleri tek tek çalıştırır; WS_DRAIN_BATCH işten sonra kendini yeniden kuyruğa
+    // koyar ki çok konuşan tek bağlantı bir havuz iş parçacığını tekeline almasın.
+    static constexpr int WS_DRAIN_BATCH = 64;
+    void ws_in_order(const std::shared_ptr<WsConnection>& conn, std::function<void()> job) {
+        bool start;
+        {
+            std::lock_guard<std::mutex> lk(conn->inbox_mtx);
+            conn->inbox.push_back(std::move(job));
+            start = !conn->inbox_running;
+            conn->inbox_running = true;
+        }
+        if (start) ws_drain(conn);
+    }
+    void ws_drain(std::shared_ptr<WsConnection> conn) {
+        pool->submit([this, conn]() {
+            for (int k = 0; k < WS_DRAIN_BATCH; ++k) {
+                std::function<void()> job;
+                {
+                    std::lock_guard<std::mutex> lk(conn->inbox_mtx);
+                    if (conn->inbox.empty()) { conn->inbox_running = false; return; }
+                    job = std::move(conn->inbox.front());
+                    conn->inbox.pop_front();
+                }
+                try { job(); } catch (...) {}   // geri çağrı kendi hatasını günlüğe yazar; kutu takılmasın
+            }
+            ws_drain(conn);
+        });
+    }
+
     // ── WS frame I/O ─────────────────────────────────────────────────────────
     void on_ws_data(int fd, const char* data, size_t len) {
         // len==0 = bağlantı kapandı (event loop clean-FIN/hata bildirimi). Registry
@@ -828,17 +859,7 @@ struct HttpServer::Impl {
             // "close" geri çağırması yalnız kapanış çerçevesinde ateşleniyordu → bu yolda hiç
             // çalışmıyor, uygulamanın bağlantı listesi/temizliği sızıyordu (SSE'de kopuş zaten
             // ateşliyor). Kural: istemci gidince bir kez; sunucu kendisi kapattıysa (closed) yok.
-            std::shared_ptr<WsConnection> gone;
-            {
-                std::lock_guard<std::mutex> lk(ws_mtx);
-                auto it = ws_clients.find(fd);
-                if (it != ws_clients.end()) gone = it->second;
-            }
-            if (gone && !gone->closed.exchange(true) && gone->on_close) {
-                auto cb = gone->on_close;
-                pool->submit([cb]() { cb(); });
-            }
-            close_ws(fd);
+            close_ws(fd);   // "close" geri çağrısı close_ws'de (tek yer)
             return;
         }
         std::shared_ptr<WsConnection> conn;
@@ -879,7 +900,7 @@ struct HttpServer::Impl {
             auto ws_deliver = [&](const std::string& msg) {
                 if (conn->on_message) {
                     auto cb = conn->on_message;
-                    pool->submit([cb, msg]() { cb(msg); });
+                    ws_in_order(conn, [cb, msg]() { cb(msg); });
                 }
             };
             auto ws_proto_close = [&]() {
@@ -919,11 +940,7 @@ struct HttpServer::Impl {
                 std::string cf = ws_encode_close_frame();
                 { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
                 conn->closed.store(true);
-                if (conn->on_close) {
-                    auto cb = conn->on_close;
-                    pool->submit([cb]() { cb(); });
-                }
-                close_ws(fd);
+                close_ws(fd);   // "close" geri çağrısı close_ws'de (tek yer)
                 return;
             }
         }
@@ -952,6 +969,13 @@ struct HttpServer::Impl {
         // write_mutex'i DRAIN et (uçuştaki send bitene kadar bekle) — write_mutex tutulurken
         // hiçbir send_raw ::send içinde olamaz → close_fd güvenli. Kilit close_fd'yi de kapsar.
         if (conn) {
+            // "close" geri çağrısı — TEK yer: bağlantı hangi yoldan biterse bitsin (kapanış çerçevesi,
+            // kopma, gönderim hatası, protokol hatası) bir kez; sunucu ws::close ile kapattıysa hiç.
+            // Gelen kutusundan geçer: bekleyen mesaj geri çağrılarından SONRA çalışır.
+            if (conn->on_close && !conn->server_closed.load() && !conn->close_fired.exchange(true)) {
+                auto cb = conn->on_close;
+                ws_in_order(conn, [cb]() { cb(); });
+            }
             held_ip_release(conn->held_ip);
             conn->closed.store(true);
             std::lock_guard<std::mutex> wlk(conn->write_mutex);  // uçuştaki send'i drain et

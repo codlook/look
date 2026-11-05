@@ -567,6 +567,13 @@ jobs:
           cd cpp
           bash tests/ws_capacity_guard_test.sh ./build/lk-fcgi
 
+      # The messages of one WebSocket ran on different pool threads at the same time and could
+      # finish out of order; the close callback was skipped when a send to a departed client failed.
+      - name: WebSocket messages handled in order; close callback after them
+        run: |
+          cd cpp
+          bash tests/ws_message_order_test.sh ./build/lk-fcgi
+
       # setup data is shared with every request instead of being copied for it; a write
       # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.
       - name: Shared setup data under concurrent requests

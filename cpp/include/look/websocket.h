@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <list>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -18,6 +19,11 @@ struct WsConnection {
     std::string          client_ip;
     std::string          held_ip;     // LOOK_HTTP_MAX_CONNS_IP yuvası bu adres için tutuluyor (boş = yok)
     std::atomic<bool>    closed{false};
+    // "close" geri çağrısı: istemci gidince (kapanış çerçevesi, kopma, gönderim hatası) BİR kez;
+    // sunucu ws::close ile kapattıysa hiç. closed tek başına ayırt etmiyordu: istemci gittikten
+    // sonra başarısız bir ws::send closed=true yapıyor, geri çağrı atlanıyordu.
+    std::atomic<bool>    server_closed{false};
+    std::atomic<bool>    close_fired{false};
     std::mutex           write_mutex;
 
     // Callbacks — set by ws::on() from LOOK code
@@ -29,6 +35,13 @@ struct WsConnection {
     std::string frag_buf;
     uint8_t     frag_opcode = 0;
     bool        frag_active = false;
+
+    // Gelen kutusu: bu bağlantının geri çağrıları (mesaj, kapanış) SIRAYLA ve TEK TEK çalışır.
+    // Eskiden her mesaj havuza ayrı iş olarak gidiyordu: aynı bağlantının mesajları farklı
+    // iş parçacıklarında aynı anda ve ters sırada işleniyordu (2000 mesajda ~%10 ters sıra).
+    std::mutex                         inbox_mtx;
+    std::list<std::function<void()>>   inbox;   // list: boşken bellek ayırmaz (deque ~600 B ayırır)
+    bool                               inbox_running = false;   // bir boşaltıcı iş havuzda
 
     explicit WsConnection(int fd_, std::string ip = "")
         : fd(fd_), client_ip(std::move(ip)) {}
