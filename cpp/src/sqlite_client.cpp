@@ -186,6 +186,10 @@ void SqliteClient::open(const std::string& path) {
     sqlite3_exec(db_, "PRAGMA foreign_keys=ON;", nullptr, nullptr, nullptr);
 }
 
+bool SqliteClient::in_transaction() const {
+    return db_ != nullptr && (sqlite3_get_autocommit(db_) == 0 || tx_depth > 0);
+}
+
 void SqliteClient::close() {
     runner_.reset();   // bağlantının iş parçacığı (varsa) — üzerinde iş yokken kapanır
     if (gate_held_) { gate_held_ = false; gate_->release(); }   // açık işlem kapanışta geri alınır

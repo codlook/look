@@ -1490,6 +1490,20 @@ int cfs_quota_cpus() {
 // düz metin dönen rota ~1 sn).
 void release_thread_connections() {
     auto& conns = active_conns();
+    // İstek açık bir işlemle bittiyse (db::begin sonra hata, ya da commit unutuldu) bağlantı havuza
+    // O İŞLEMLE dönüyordu: sonraki istek onun içinde çalışıyor, kendi "commit"iyle başarısız
+    // isteğin yazdıklarını da kalıcı yapıyordu; SQLite'ta yazma kapısı tutulu kalıp diğer yazmalar
+    // 10 sn sonra düşüyordu. Şimdi geri alınır; geri alınamazsa bağlantı kapatılır (havuz yenisini
+    // açar). Kilitten ÖNCE: ROLLBACK ağ çağrısıdır, fiber askıya alınabilir.
+    for (auto& [key, conn] : conns) {
+        if (!conn || !conn->is_connected() || !conn->in_transaction()) { if (conn) conn->tx_depth = 0; continue; }
+        look::Logger::instance().log(look::LogLevel::LOG_WARN, "DB",
+            std::string("a request ended inside an open transaction (") + conn->driver_name() +
+            "); it was rolled back. Call db::commit() or db::rollback(), or use db::transaction($conn, fn)");
+        try { conn->query("ROLLBACK"); } catch (...) {}
+        conn->tx_depth = 0;
+        if (conn->in_transaction()) { try { conn->close(); } catch (...) {} }
+    }
     {
         std::lock_guard<std::mutex> lk(g_pools_mtx);
         for (auto& [key, conn] : conns)

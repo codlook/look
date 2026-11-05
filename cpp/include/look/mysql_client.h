@@ -68,6 +68,7 @@ public:
     void    close()          override       { disconnect(); }
     bool    is_connected()   const override { return sock_ != SOCK_INVALID; }
     const char* driver_name() const override { return "mysql"; }
+    bool in_transaction() const override { return in_txn_ || tx_depth > 0; }
 
     // MySQL'e özgü — arayüzde yok
     bool    ping();

@@ -39,6 +39,7 @@ public:
     bool    is_connected()   const override { return db_ != nullptr; }
     const char* driver_name() const override { return "sqlite"; }
     const char* begin_stmt()  const override { return "BEGIN IMMEDIATE"; }
+    bool in_transaction() const override;   // sqlite3_get_autocommit == 0
 
 private:
     sqlite3* db_             = nullptr;

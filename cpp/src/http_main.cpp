@@ -539,6 +539,11 @@ static std::string read_file(const fs::path& p) {
 
 static void run_setup_http(const fs::path& script) {
     look::clear_db_pools();
+    // Kurulumun (üst düzey kod) aldığı veritabanı bağlantıları kurulum bitince havuza döner.
+    // Eskiden kurulum iş parçacığında kalıyordu: üst düzeyde bir db::exec (CREATE TABLE gibi)
+    // havuzdan bir bağlantıyı süreç ömrü boyunca tutuyordu — LOOK_DB_POOL_SIZE=1 iken her DB
+    // isteği sonsuza dek bekliyordu (v2'nin tembel havuzuyla gelen gerileme). Hata ile çıkışta da.
+    struct SetupConnRelease { ~SetupConnRelease() { look::release_thread_connections(); } } setup_conn_release;
 
     auto src = read_file(script);
 

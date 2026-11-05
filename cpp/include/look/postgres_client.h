@@ -63,6 +63,7 @@ public:
     void    close()          override       { disconnect(); }
     bool    is_connected()   const override { return sock_ != PG_SOCK_INVALID; }
     const char* driver_name() const override { return "postgres"; }
+    bool in_transaction() const override { return in_txn_ || tx_depth > 0; }
 
 private:
     pg_sock_t   sock_               = PG_SOCK_INVALID;

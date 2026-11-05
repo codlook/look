@@ -65,6 +65,10 @@ public:
     // EDEMEZ (snapshot izolasyonunu bozardı). SQLite "BEGIN IMMEDIATE" ile write
     // kilidini baştan alır. MySQL/PG'de "BEGIN IMMEDIATE" geçersiz → varsayılan "BEGIN".
     virtual const char* begin_stmt() const { return "BEGIN"; }
+    // Sunucuya göre açık bir işlem var mı (MySQL SERVER_STATUS_IN_TRANS, PG ReadyForQuery durumu,
+    // SQLite autocommit kapalı). Uygulamanın ne çağırdığından bağımsız: db::exec("BEGIN") da sayılır.
+    // Bağlantı havuza dönerken açık işlem geri alınır (bkz. release_thread_connections).
+    virtual bool in_transaction() const { return tx_depth > 0; }
 };
 
 } // namespace look
