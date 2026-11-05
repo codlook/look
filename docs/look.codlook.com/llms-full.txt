@@ -1628,13 +1628,15 @@ route("POST", "/login", function() {
 | session::regenerate() | Issue a fresh session ID, migrate the existing data to it, and invalidate the old ID. Returns the new ID. **Call it right after a privilege change (login, role change) to prevent session fixation.** If the app uses csrf::, it also gets a new token base |
 | session::destroy() | Delete the session (with csrf::: a new token base too) |
 
-> **The session cookie is always `Secure`.** It is sent by the browser
- only over HTTPS (or to `localhost`, which browsers treat as a secure context). Behind an
- HTTPS reverse proxy — the recommended production setup — this is exactly right and sessions work
- normally. But if you expose `--mode http` **directly over plain HTTP on a real
- host** (non-localhost, no TLS), the browser won't send the cookie back, so the session never
- persists. Put a TLS-terminating proxy (nginx/Apache) in front, or use `localhost` for
- local development.
+> **The session cookie's `Secure` flag follows the connection.** By default the runtime marks the
+> cookie `Secure` only when the request is HTTPS (from an HTTPS FCGI param, or `X-Forwarded-Proto: https`
+> sent by a trusted proxy — see `LOOK_TRUSTED_PROXY`). Over plain HTTP the flag is omitted, so the
+> browser still sends the cookie back and sessions work (it logs a one-time warning when it omits
+> `Secure` without an HTTPS signal). Force it with `LOOK_SESSION_SECURE=1` (always) or
+> `LOOK_SESSION_SECURE=0` (never, and silence the warning).
+>
+> **Only ids the server issued are used.** A `LOOK_SESSION` cookie the server did not issue (or one
+> that has expired) is replaced with a fresh id, so an attacker cannot choose a visitor's session id.
 
 ### Multi-Server / Load Balancer — Redis Session
 
@@ -1664,6 +1666,7 @@ route("POST", "/login", function() use ($conn) {
     $body = request::json()
     # ... validation ...
     session::start()
+    session::regenerate()   # new id after login
     session::set("admin_id", $admin["id"])
     session::set("email", $admin["email"])
     print(json::encode(["ok" => true]))

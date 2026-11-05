@@ -666,7 +666,21 @@ static Module make_cookie_module(WebRef ctx) {
                 path_c = args[i].to_string();
             }
         }
-        path_c = sanitize_header(path_c);
+        // Yol ve SameSite öznitelik olarak Set-Cookie'ye girer: ';' yeni öznitelik açardı
+        // (yoldan "; Domain=evil.example; Max-Age=…" — kullanıcı girdisi yol olursa). RFC 6265
+        // path-av: kontrol karakteri ve ';' yok. Sessiz temizlik değil, açık hata.
+        for (unsigned char c : path_c)
+            if (c == ';' || c < 0x20 || c == 0x7f)
+                throw std::runtime_error("cookie::set() path must not contain ';' or control characters");
+        {
+            std::string s = samesite;
+            for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+            if (s == "strict") samesite = "Strict";
+            else if (s == "lax") samesite = "Lax";
+            else if (s == "none") samesite = "None";
+            else if (!(s.empty() || s == "false" || s == "0"))
+                throw std::runtime_error("cookie::set() samesite must be \"Strict\", \"Lax\" or \"None\"");
+        }
 
         std::string cookie = name + "=" + value + "; Path=" + path_c;
         if (expires > 0) {
@@ -686,7 +700,7 @@ static Module make_cookie_module(WebRef ctx) {
         if (httponly) cookie += "; HttpOnly";
         if (secure)   cookie += "; Secure";
         if (!samesite.empty() && samesite != "false" && samesite != "0")
-            cookie += "; SameSite=" + sanitize_header(samesite);
+            cookie += "; SameSite=" + samesite;
         // Her çerez ayrı Set-Cookie satırı — std::map tek anahtarı ezerdi.
         ctx->set_cookies_out.push_back(cookie);
         return Value();
@@ -812,6 +826,14 @@ static void sess_store(const std::string& sid, const std::string& blob) {
     }
     look::session_file_write(sid, blob);   // 0600, bağlantı izlenmez
     look::session_files_gc(session_ttl());  // süresi dolanları arka planda sil
+}
+static bool sess_exists(const std::string& sid) {
+    if (session_use_redis()) {
+        bool e = false;
+        with_session_redis([&](RespClient& r) { e = r.exists("look_sess:" + sid); });
+        return e;
+    }
+    return look::session_file_exists(sid, session_ttl());
 }
 static void sess_remove(const std::string& sid) {
     if (session_use_redis()) {
@@ -1031,21 +1053,29 @@ bool csrf_request_ok(WebContext* ctx, std::string& why) {
     return true;
 }
 
+// Bu isteğin oturum kimliği — yalnız bu sunucunun VERDİĞİ ve süresi dolmamış bir kimlik (katı mod).
+// Çerez yoksa, biçimi bozuksa ya da depoda böyle bir oturum yoksa yeni CSPRNG kimlik verilir,
+// depoya boş kayıt yazılır ve çerez gönderilir. Eskiden yalnız biçim denetleniyordu: saldırgan
+// kurbanın tarayıcısına "LOOK_SESSION=<32 hex>" yerleştirirse (kardeş alt alan, düz HTTP) kurban
+// giriş yapınca saldırgan aynı kimlikle onun oturumunu kullanıyordu (oturum sabitleme).
+// Bir istekte bir kez karar verilir: yeni kimlik cookies_in'e yazıldığı için ikinci çağrı onu bulur.
+static std::string session_issued_sid(WebContext* ctx) {
+    auto it = ctx->cookies_in.find("LOOK_SESSION");
+    if (it != ctx->cookies_in.end() && valid_sid(it->second) && sess_exists(it->second)) return it->second;
+    std::string sid = gen_session_id();
+    sess_store(sid, "");
+    ctx->cookies_in["LOOK_SESSION"] = sid;
+    ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
+    return sid;
+}
+
 static Module make_session_module(WebRef ctx) {
     Module m;
     m.name = "session";
 
     m.functions["start"] = [ctx](auto) -> Value {
-        // Cookie yoksa VEYA client geçersiz/kötü niyetli bir SID gönderdiyse
-        // (path traversal denemesi dahil) yeni CSPRNG ID üret — client değerine
-        // asla güvenme.
-        auto sit = ctx->cookies_in.find("LOOK_SESSION");
-        if (sit == ctx->cookies_in.end() || !valid_sid(sit->second)) {
-            std::string sid = gen_session_id();
-            ctx->cookies_in["LOOK_SESSION"] = sid;
-            ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
-        }
-        return Value(ctx->cookies_in["LOOK_SESSION"]);
+        // Çerezdeki kimliğe asla güvenme: yalnız bu sunucunun verdiği kimlik (session_issued_sid).
+        return Value(session_issued_sid(ctx));
     };
     // session::regenerate() — session fixation koruması. Login / yetki değişiminde
     // çağrılır: mevcut session verisini KORUYARAK yeni bir SID'e taşır, eskisini
@@ -1061,7 +1091,7 @@ static Module make_session_module(WebRef ctx) {
         std::string sid = gen_session_id();
         ctx->cookies_in["LOOK_SESSION"] = sid;
         ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
-        if (!blob.empty()) sess_store(sid, blob);   // veriyi yeni SID'e taşı
+        sess_store(sid, blob);   // veriyi yeni SID'e taşı (boşsa da: katı modda "verilmiş" sayılsın)
         csrf_rotate_if_used(ctx);                   // giriş: yeni CSRF tabanı (csrf:: kullanılıyorsa)
         return Value(sid);
     };
@@ -1078,9 +1108,11 @@ static Module make_session_module(WebRef ctx) {
             default:
                 throw std::runtime_error("session::set() — session values must be a string or number");
         }
-        auto it = ctx->cookies_in.find("LOOK_SESSION");
-        if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value();  // traversal guard
-        std::string blob = sess_load(it->second);
+        // Yazma, verilmiş bir oturuma olur: çerezdeki kimlik geçersiz ya da bu sunucunun vermediği
+        // bir kimlikse yeni kimlik verilir (eskiden set, start'sız bile, çerezdeki herhangi bir
+        // 32 hex kimliğe yazıp onu "var" yapıyordu — sabitleme bu yoldan da işliyordu).
+        const std::string sid = session_issued_sid(ctx);
+        std::string blob = sess_load(sid);
         sess_blob_set(blob, args[0].to_string(), args[1].to_string());
         // Oturumun üst sınırı (Redis ve dosya sürücüsünde aynı): eskiden yoktu — bir ziyaretçi
         // kendi oturumunu megabaytlarca büyütüp her istekte o kadar okutabiliyor, birkaç
@@ -1090,7 +1122,7 @@ static Module make_session_module(WebRef ctx) {
             throw std::runtime_error("session::set() — the session would be " + std::to_string(blob.size()) +
                 " bytes, more than the limit of " + std::to_string(session_max_bytes()) +
                 " (LOOK_SESSION_MAX_BYTES); keep large data in the database and store its id in the session");
-        sess_store(it->second, blob);
+        sess_store(sid, blob);
         return Value();
     };
     m.functions["get"] = [ctx](auto args) -> Value {

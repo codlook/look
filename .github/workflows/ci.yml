@@ -507,6 +507,13 @@ jobs:
           cd cpp
           bash tests/csrf_core_test.sh ./build/lk-fcgi ./build/lk-cgi
 
+      # Only session ids the server issued are used (session fixation); cookie::set cannot be made
+      # to write extra attributes through its path or SameSite value.
+      - name: Session fixation and cookie attribute injection
+        run: |
+          cd cpp
+          bash tests/session_fixation_test.sh ./build/lk-fcgi
+
       # Paket modülü (~/.look/modules) sıcak yeniden yüklemeden sonra da çalışır: derleyici yüklenen
       # modülleri süreç boyunca hatırlıyordu, yeniden yüklemede `use paket` boş geçiyor, istekler 500.
       - name: Package modules survive a hot reload

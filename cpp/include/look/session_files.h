@@ -183,6 +183,26 @@ inline std::string session_file_read(const std::string& sid, bool* foreign = nul
 #endif
 }
 
+// Bu süreç bu oturumu verdi mi (dosya var, bizim, süresi dolmamış)? session_file_read ile aynı
+// denetimler; içerik okunmaz. Boş oturum (veri yazılmamış) da vardır — okumanın "" dönüşü
+// "yok" ile "boş"u ayırt etmez. session::start'ın katı modu bunu kullanır (sabitleme).
+inline bool session_file_exists(const std::string& sid, long ttl_sec = 0) {
+    const std::string path = session_file(sid);
+#ifndef _WIN32
+    int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) return false;
+    struct stat st{};
+    bool ok = ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == ::geteuid() &&
+              (st.st_mode & 077) == 0 && st.st_nlink == 1 &&
+              !(ttl_sec > 0 && (long long)std::time(nullptr) - (long long)st.st_mtime > ttl_sec);
+    ::close(fd);
+    return ok;
+#else
+    std::ifstream f(path, std::ios::binary);
+    return (bool)f;
+#endif
+}
+
 // Yaz: aynı dizinde 0600 geçici dosya → içerik → rename (yarım okunan oturum olmaz; hedef bir
 // sembolik bağlantıysa rename onu değiştirir, izlemez).
 inline void session_file_write(const std::string& sid, const std::string& blob) {

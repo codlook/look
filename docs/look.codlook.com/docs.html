@@ -1650,6 +1650,7 @@ Stack trace:
     <code>LOOK_SESSION_SECURE=0</code> (never, and silence the warning). Behind an HTTPS
     reverse proxy — the recommended production setup — set <code>LOOK_TRUSTED_PROXY</code> so the
     proxy's <code>X-Forwarded-Proto</code> is honoured and the cookie is marked <code>Secure</code>.</p>
+    <p><strong>Only ids the server issued are used.</strong> A <code>LOOK_SESSION</code> cookie the server did not issue (or one that has expired) is replaced with a fresh id, so an attacker cannot choose a visitor's session id.</p>
   </div>
 
   <h3>Multi-Server / Load Balancer — Redis Session</h3>
@@ -1678,6 +1679,7 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
     <span class="var">$body</span> = <span class="ns">request::</span><span class="fn">json</span>()
     <span class="cm"># ... validation ...</span>
     <span class="ns">session::</span><span class="fn">start</span>()
+    <span class="ns">session::</span><span class="fn">regenerate</span>()   <span class="cm"># new id after login</span>
     <span class="ns">session::</span><span class="fn">set</span>(<span class="str">"admin_id"</span>, <span class="var">$admin</span>[<span class="str">"id"</span>])
     <span class="ns">session::</span><span class="fn">set</span>(<span class="str">"email"</span>, <span class="var">$admin</span>[<span class="str">"email"</span>])
     <span class="kw">print</span>(<span class="ns">json::</span><span class="fn">encode</span>([<span class="str">"ok"</span> => <span class="lit">true</span>]))
