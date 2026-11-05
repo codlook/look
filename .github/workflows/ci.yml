@@ -560,6 +560,13 @@ jobs:
           cd cpp
           bash tests/ws_cookie_origin_test.sh ./build/lk-fcgi
 
+      # Capacity regressions were found only by a hand-run 700,000-connection benchmark: memory
+      # per open WebSocket doubled (1.0.34), and fiber stacks were mapped anew for every connection.
+      - name: WebSocket capacity — memory per connection and fiber stack reuse
+        run: |
+          cd cpp
+          bash tests/ws_capacity_guard_test.sh ./build/lk-fcgi
+
       # setup data is shared with every request instead of being copied for it; a write
       # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.
       - name: Shared setup data under concurrent requests
