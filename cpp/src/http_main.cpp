@@ -1514,10 +1514,40 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // hiçbir şey yeniden çalıştırılmaz.
             // handshake: ws geri cagrisinda el sikisma isteginin kopyasi — request::get ws adresinin
             // parametrelerini dondurur (v1 ile ayni kural); diger olaylarda bos istek.
-            auto run_cb = [](const look::Value& fnv, std::vector<look::Value> cb_args, const char* tag, const char* kind,
-                             const look::WebContext* handshake = nullptr) {
+            // Saklama biçimi: el sıkışma isteğinin İSTEK alanları tek bir dizgide (uzunluk önekli).
+            // Açık bağlantı başına tam bir WebContext tutmak (~10 string + ~9 map, boş olsalar da)
+            // bağlantı başına ~0,7 KB ediyordu (700k WS: ~618 MB -> ~1156 MB). Yanıt alanları ve
+            // yüklenen dosyalar el sıkışmaya aittir; geri çağrının yanıtı zaten hiçbir yere gitmez.
+            auto pack_req = [](const look::WebContext& w) {
+                std::string b;
+                auto s = [&b](const std::string& v) { uint32_t n = (uint32_t)v.size(); b.append((const char*)&n, 4); b.append(v); };
+                auto m = [&b, &s](const std::map<std::string, std::string>& mp) {
+                    uint32_t n = (uint32_t)mp.size(); b.append((const char*)&n, 4);
+                    for (const auto& [k, v] : mp) { s(k); s(v); }
+                };
+                s(w.method); s(w.path); s(w.query_string); s(w.body); s(w.remote_addr); s(w.content_type);
+                s(w.host); s(w.csrf_base); s(w.csrf_exempt_rule);
+                b.push_back(w.is_https ? 1 : 0); b.push_back(w.route_matched ? 1 : 0);
+                m(w.get_params); m(w.post_params); m(w.cookies_in); m(w.headers_in); m(w.route_params);
+                b.shrink_to_fit();
+                return b;
+            };
+            auto unpack_req = [](const std::string& b, look::WebContext& w) {
+                size_t i = 0;
+                auto u = [&b, &i]() { uint32_t n; std::memcpy(&n, b.data() + i, 4); i += 4; std::string v = b.substr(i, n); i += n; return v; };
+                auto m = [&b, &i, &u](std::map<std::string, std::string>& mp) {
+                    uint32_t n; std::memcpy(&n, b.data() + i, 4); i += 4;
+                    for (uint32_t k = 0; k < n; ++k) { std::string key = u(); mp.emplace_hint(mp.end(), std::move(key), u()); }
+                };
+                w.method = u(); w.path = u(); w.query_string = u(); w.body = u(); w.remote_addr = u(); w.content_type = u();
+                w.host = u(); w.csrf_base = u(); w.csrf_exempt_rule = u();
+                w.is_https = b[i++] != 0; w.route_matched = b[i++] != 0;
+                m(w.get_params); m(w.post_params); m(w.cookies_in); m(w.headers_in); m(w.route_params);
+            };
+            auto run_cb = [unpack_req](const look::Value& fnv, std::vector<look::Value> cb_args, const char* tag, const char* kind,
+                             const std::string* handshake = nullptr) {
                 look::WebContext ctx;
-                if (handshake) ctx = *handshake;
+                if (handshake) unpack_req(*handshake, ctx);
                 else ctx.method = "__EVENT__";
                 std::ostringstream sink;
                 direct().closure = fnv.as_bytecode_fn().get();
@@ -1535,7 +1565,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             };
             // ws::on el sikisma istegi icinde cagrilir: baglami SIMDI (istek canliyken) kopyala.
             // Geri cagri istek bittikten sonra baska thread'de calisir; her olay kendi taze kopyasini alir.
-            req_builtins[BI("ws::on")] = [ws_of, run_cb](std::vector<look::Value>& args) -> look::Value {
+            req_builtins[BI("ws::on")] = [ws_of, run_cb, pack_req](std::vector<look::Value>& args) -> look::Value {
                 const look::WebContext* web_now = look::current_request_web();
                 if (!web_now) throw std::runtime_error("ws::on() runs only inside a request");
                 if (args.size() != 3) throw std::runtime_error("ws::on() takes 3 arguments");
@@ -1544,7 +1574,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     throw std::runtime_error("ws::on() third argument must be a function");
                 const std::string ev = args[1].to_string();
                 look::Value fnv = args[2].clone_for_thread();
-                auto handshake = std::make_shared<const look::WebContext>(*web_now);
+                auto handshake = std::make_shared<const std::string>(pack_req(*web_now));
                 if (ev == "message")
                     conn->on_message = [fnv, run_cb, handshake](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "ws message callback", handshake.get()); };
                 else if (ev == "close")

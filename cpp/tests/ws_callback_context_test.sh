@@ -14,7 +14,7 @@ PORT="${PORT:-7741}"
 cat > "$TMP/app.lk" <<'LK'
 use cache
 route("WS", "/ws", function($ws) {
-    ws::on($ws, "message", function($m) { ws::send($ws, "u=" . request::get("u", "")) })
+    ws::on($ws, "message", function($m) { ws::send($ws, "u=" . request::get("u", "") . ";p=" . request::path() . ";m=" . request::method() . ";ip=" . request::ip()) })
     ws::on($ws, "close", function() { cache::set("closed_u", request::get("u", ""), 60) })
 })
 route("GET", "/other", fn() => response::text("other " . request::get("u", "")))
@@ -60,8 +60,8 @@ fail=0
 for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/closed" && break; sleep 0.1; done
 got="$(python3 "$TMP/client.py" "$PORT" 2>&1)"
 sleep 0.8
-want="u=alice u=alice u=alice u=alice u=alice u=alice"
-if [ "$got" = "$want" ]; then echo "  OK   message callback: request::get is the handshake's, 6/6"
+w1="u=alice;p=/ws;m=WS;ip=127.0.0.1"; want="$w1 $w1 $w1 $w1 $w1 $w1"
+if [ "$got" = "$want" ]; then echo "  OK   message callback: request::get, path, method and ip are the handshake's, 6/6"
 else echo "  FAIL message callback: $got"; fail=1; fi
 closed="$(curl -s -m 3 "localhost:$PORT/closed")"
 if [ "$closed" = "alice" ]; then echo "  OK   close callback: request::get is the handshake's"
