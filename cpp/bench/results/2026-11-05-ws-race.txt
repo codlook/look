@@ -1,0 +1,22 @@
+==================================================================
+ WebSocket RACE @2CPU/2GB — 2026-11-05   LOOK: LOOK 1.0.45 (src, linux/amd64)
+==================================================================
+  LOOK   (idle RSS 3.113MiB)
+      echo  n=100   ECHO open=100 failed=0 msgs_s=208159 p50_ms=0.33 p99_ms=1.34 max_ms=27.22   RSS 3.25MiB
+      echo  n=1000   ECHO open=1000 failed=0 msgs_s=197028 p50_ms=3.42 p99_ms=34.71 max_ms=40.45   RSS 5.684MiB
+      hold  n=10000   HOLD open=10000 failed=0 dial_s=0.5   ALIVE 197/197   RSS(open)=36.06MiB
+      hold  n=50000   HOLD open=50000 failed=0 dial_s=11.3   ALIVE 200/200   RSS(open)=172.2MiB
+      server log error lines: 0
+  Node 22 (ws, cluster x2)   (idle RSS 39.42MiB)
+      echo  n=100   ECHO open=100 failed=0 msgs_s=74241 p50_ms=1.27 p99_ms=2.68 max_ms=26.00   RSS 68.11MiB
+      echo  n=1000   ECHO open=1000 failed=0 msgs_s=68566 p50_ms=14.42 p99_ms=21.53 max_ms=49.24   RSS 77.89MiB
+      hold  n=10000   HOLD open=10000 failed=0 dial_s=1.8   ALIVE 197/197   RSS(open)=117.2MiB
+      hold  n=50000   HOLD open=50000 failed=0 dial_s=16.8   ALIVE 200/200   RSS(open)=297.1MiB
+      server log error lines: 0
+  Go 1.22 (gorilla/websocket)   (idle RSS 1.191MiB)
+      echo  n=100   ECHO open=100 failed=0 msgs_s=238450 p50_ms=0.36 p99_ms=1.53 max_ms=11.74   RSS 7.242MiB
+      echo  n=1000   ECHO open=1000 failed=0 msgs_s=225371 p50_ms=4.26 p99_ms=8.41 max_ms=15.88   RSS 39.75MiB
+      hold  n=10000   HOLD open=10000 failed=0 dial_s=0.5   ALIVE 197/197   RSS(open)=201MiB
+      hold  n=50000   HOLD open=50000 failed=0 dial_s=11.3   ALIVE 200/200   RSS(open)=994.2MiB
+      server log error lines: 0
+DONE

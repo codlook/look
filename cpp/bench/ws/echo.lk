@@ -1,0 +1,7 @@
+// WebSocket echo — the same job as echo.js (Node) and main.go (Go): every text frame is sent back.
+route("WS", "/ws", function($conn) {
+    ws::on($conn, "message", function($m) {
+        ws::send($conn, $m)
+    })
+})
+route("GET", "/", fn() => response::text("ok"))
