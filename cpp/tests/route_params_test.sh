@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: a route handler takes path parameters by NAME.
+# a route handler takes path parameters by NAME.
 #
 #   route("GET", "/c/{id}/{slug}", function($slug) { ... })     $slug is the slug
 #

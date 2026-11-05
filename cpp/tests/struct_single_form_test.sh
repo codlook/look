@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: a struct field has ONE spelling — "name type [= default]". The two v1 spellings
+# a struct field has ONE spelling — "name type [= default]". The two v1 spellings
 # (an untyped field, and "name: default") are parse errors that say what to write instead.
 # Usage: struct_single_form_test.sh <lk>
 LK="${1:?usage: $0 <lk>}"

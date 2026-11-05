@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: a command-line script ends when its last line has run (Go/Rust: the program's life is
+# a command-line script ends when its last line has run (Go/Rust: the program's life is
 # its top level; waiting is written out), and the timers it leaves behind are named, not lost
 # without a word.
 #   * a timer::after that has not fired when the script ends does not run; one WARN line says so

@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: ["**"]
 
-# LOOK 2: a program that uses cookies does not start without LOOK_SECRET (CSRF signing key).
+# a program that uses cookies does not start without LOOK_SECRET (CSRF signing key).
 # CI's own test key; test scripts that start servers with env -i pass their own.
 env:
   LOOK_SECRET: look-ci-secret-0123456789abcdef0123456789abcdef
@@ -92,7 +92,7 @@ jobs:
             exit 1
           fi
 
-      # LOOK 2 typed structs: a field is name + type + default. One rule set
+      # typed structs: a field is name + type + default. One rule set
       # (include/look/struct_types.h): type checked at construction and on
       # assignment, zero values, fixed shape, per-instance default arrays.
       - name: Typed struct guard
@@ -111,7 +111,7 @@ jobs:
           cd cpp
           bash tests/job_handler_context_test.sh ./build/lk-fcgi
 
-      # LOOK 2: a job handler returns true or false; any other result is logged and the job is not
+      # a job handler returns true or false; any other result is logged and the job is not
       # run again (a forgotten return ran it three times); a retry waits.
       - name: Job handler result and retry wait
         run: |
@@ -126,7 +126,7 @@ jobs:
           cd cpp
           bash tests/jobs_test.sh ./build/lk
 
-      # LOOK 2: a timer armed and a job handler registered at the top level run on the VM once
+      # a timer armed and a job handler registered at the top level run on the VM once
       # its setup has succeeded (they stayed on the tree-walk engine while the routes ran on the VM).
       - name: Top-level timers and job handlers on the VM
         run: |
@@ -154,7 +154,7 @@ jobs:
           cd cpp
           bash tests/random_per_request_test.sh ./build/lk-fcgi
 
-      # LOOK 2: a route that calls a module function that does not exist stops the application at
+      # a route that calls a module function that does not exist stops the application at
       # startup (it was handed to the tree-walk engine and failed on the first request to reach it).
       - name: A call to a function that does not exist stops startup
         run: |
@@ -168,7 +168,7 @@ jobs:
           cd cpp
           ./build/lk --vm-report
 
-      # LOOK 2: the command line runs only on the VM — a script that does not compile does not
+      # the command line runs only on the VM — a script that does not compile does not
       # run (exit 1, the reason), LOOK_CLI_VM=0 / LOOK_BYTECODE=0 are ignored with a warning, job
       # handlers and timers run on the VM and their output reaches stdout, ws::/sse:: say they
       # belong to a web application, and a line starting with ++ or -- is a statement.
@@ -244,7 +244,7 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "^PASS: an element assignment yields the element" || { echo "::error::assignment expression test FAILED"; exit 1; }
 
-      # LOOK 2: ++ and -- on an element or a field, with the meaning they have on a variable; an
+      # ++ and -- on an element or a field, with the meaning they have on a variable; an
       # element assignment used as an expression yields the element (the VM yielded the container).
       - name: Increment and decrement on elements
         run: |
@@ -253,7 +253,7 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "^PASS: ++ and -- on elements" || { echo "::error::element step test FAILED"; exit 1; }
 
-      # LOOK 2: indexing a value that is not an array, a map or a struct is an error, always
+      # indexing a value that is not an array, a map or a struct is an error, always
       # with the same message; a missing key still gives null.
       - name: Indexing a non-array
         run: |
@@ -262,7 +262,7 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "^PASS: indexing a value that is not an array" || { echo "::error::index test FAILED"; exit 1; }
 
-      # LOOK 2 value semantics: assigning, passing or returning an array, map or struct gives
+      # value semantics: assigning, passing or returning an array, map or struct gives
       # the receiver its own value (copy on write); push/pop change their variable only.
       - name: Value semantics guard
         run: |
@@ -274,7 +274,7 @@ jobs:
             exit 1
           fi
 
-      # LOOK 2: a struct is declared once, at the top level of a file. A second, different
+      # a struct is declared once, at the top level of a file. A second, different
       # definition of the same name is an error at load (same file: parse error; another
       # file: when it is loaded). This also removes the only way to reach a stale field cache.
       - name: Struct is declared once, at the top level
@@ -282,7 +282,7 @@ jobs:
           cd cpp
           bash tests/struct_declare_once_test.sh ./build/lk
 
-      # LOOK 2: a block scopes the variables first assigned in it, at the top level too
+      # a block scopes the variables first assigned in it, at the top level too
       # (the VM used to make them globals there while the tree-walk engine did not).
       - name: Block scope
         run: |
@@ -294,7 +294,7 @@ jobs:
             exit 1
           fi
 
-      # LOOK 2: http::stream passes state explicitly (callback($chunk, $state) returns the
+      # http::stream passes state explicitly (callback($chunk, $state) returns the
       # next state), since a closure can no longer keep it in a captured variable.
       - name: http::stream state
         run: |
@@ -308,7 +308,7 @@ jobs:
           cd cpp
           bash tests/block_scope_web_test.sh build/lk-fcgi
 
-      # LOOK 2 transition: calls with the wrong number of arguments, listed by `lk --check`.
+      # transition: calls with the wrong number of arguments, listed by `lk --check`.
       - name: Argument count check (lk --check warnings)
         run: |
           cd cpp
@@ -322,7 +322,7 @@ jobs:
           cd cpp
           bash tests/ecosystem_scan.sh ./build/lk
 
-      # LOOK 2: a call must give a function the arguments it declares (the
+      # a call must give a function the arguments it declares (the
       # VM used to accept too many and too few).
       - name: Argument count
         run: |
@@ -334,7 +334,7 @@ jobs:
             exit 1
           fi
 
-      # LOOK 2 closure rule: a closure captures the value and cannot change it. A write to a
+      # closure rule: a closure captures the value and cannot change it. A write to a
       # captured variable is a parse error; a variable that changes after it
       # was captured is a warning from `lk --check`.
       - name: Closure capture rule (refused at load + lk --check warnings)
@@ -342,7 +342,7 @@ jobs:
           cd cpp
           bash tests/capture_check_test.sh ./build/lk
 
-      # LOOK 2: one spelling for a struct field ("name type [= default]"); the two v1
+      # one spelling for a struct field ("name type [= default]"); the two v1
       # spellings are parse errors that say what to write instead.
       - name: Struct field single form
         run: |
@@ -391,7 +391,7 @@ jobs:
           cd cpp
           bash tests/timer_late_test.sh ./build/lk-fcgi
 
-      # LOOK 2: a timer armed in a route runs on the VM (its callback like a new request, with
+      # a timer armed in a route runs on the VM (its callback like a new request, with
       # the declared globals); the route is no longer placed on the tree-walk engine.
       - name: Timers on the VM
         run: |
@@ -419,7 +419,7 @@ jobs:
           cd cpp
           bash tests/error_location_test.sh ./build/lk
 
-      # LOOK 2: an application with a job handler and a draining timer at the top level runs
+      # an application with a job handler and a draining timer at the top level runs
       # on the VM (each used to send the whole application to the tree-walk engine).
       - name: Job queue on the VM
         run: |
@@ -433,14 +433,14 @@ jobs:
           cd cpp
           bash tests/jobs_concurrent_test.sh ./build/lk-fcgi
 
-      # LOOK 2: a route handler takes path parameters by name; a handler parameter the route
+      # a route handler takes path parameters by name; a handler parameter the route
       # does not have stops the application at startup.
       - name: Route parameters by name
         run: |
           cd cpp
           bash tests/route_params_test.sh ./build/lk-fcgi
 
-      # LOOK 2: ordinary routes that use ws:: / sse:: run on the VM; a WebSocket message handler
+      # ordinary routes that use ws:: / sse:: run on the VM; a WebSocket message handler
       # runs once per message and its errors are logged.
       - name: WebSocket and SSE functions on the VM
         run: |
@@ -547,20 +547,20 @@ jobs:
           bash tests/ws_close_callback_test.sh ./build/lk-fcgi
 
       # A WebSocket callback sees its own handshake request (v1 had no web context there and
-      # request::get killed the process; LOOK 2 ran the callback with an empty request).
+      # request::get killed the process; this version ran the callback with an empty request).
       - name: WebSocket callbacks read their handshake request
         run: |
           cd cpp
           bash tests/ws_callback_context_test.sh ./build/lk-fcgi
 
-      # LOOK 2: setup data is shared with every request instead of being copied for it; a write
+      # setup data is shared with every request instead of being copied for it; a write
       # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.
       - name: Shared setup data under concurrent requests
         run: |
           cd cpp
           bash tests/shared_setup_concurrency_test.sh ./build/lk-fcgi
 
-      # LOOK 2: a function that changes a parameter and never returns it is reported — an error
+      # a function that changes a parameter and never returns it is reported — an error
       # under `lk --check`, a warning at load (CLI, web startup, files loaded with `use`).
       - name: Parameter-write check
         run: |
@@ -1160,11 +1160,11 @@ jobs:
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_no_sudo_test.sh
 
       # A site's env file may live outside its web root, a stopped site keeps refusing /.look*
-      # files, and LOOK 2 gets a LOOK_SECRET created as the domain's user (0600, never printed).
+      # files, and LOOK gets a LOOK_SECRET created as the domain's user (0600, never printed).
       - name: "Plesk keeps secrets out of the web root and creates LOOK_SECRET"
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_env_secret_test.sh
 
-      # LOOK 2 web runs only on the VM: a program the VM cannot compile does not start (exit 1),
+      # web runs only on the VM: a program the VM cannot compile does not start (exit 1),
       # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear
       # 500, LOOK_BYTECODE=0 is ignored, a script without routes runs whole per request.
       - name: The web server runs only on the VM

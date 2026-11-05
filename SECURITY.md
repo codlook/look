@@ -8,9 +8,8 @@ a description, the affected version, and a reproduction if possible. Please do n
 open a public issue for undisclosed vulnerabilities. We aim to acknowledge reports
 within 72 hours.
 
-Supported versions: the latest release of each supported line. After LOOK 2.0 is released,
-LOOK 1 (1.0.x) keeps receiving security fixes for at least 12 months; its end is announced at
-least 6 months before it (see [Moving from LOOK 1 to LOOK 2](docs/migrating-to-look-2.md)).
+Supported versions: the latest release. What changes when you upgrade from 1.0.x is listed in
+[Upgrading from LOOK 1.0.x](docs/upgrading-from-1.0.md).
 
 Machine-readable contact: [`/.well-known/security.txt`](https://look.codlook.com/.well-known/security.txt) (RFC 9116).
 
@@ -134,8 +133,8 @@ error behaviour in both.
 `LOOK_FIBER_DISPATCH=0` — the server logs a warning at start when no reverse proxy is
 configured.
 
-**What to do:** upgrade. To go back to the old model on Linux, set `LOOK_FIBER_DISPATCH=0`
-(LOOK 2 will not have that switch). On Windows, put a reverse proxy in front and set
+**What to do:** upgrade. To go back to the old model on Linux, set `LOOK_FIBER_DISPATCH=0`.
+On Windows, put a reverse proxy in front and set
 `LOOK_TRUSTED_PROXY`, or set `LOOK_HTTP_MAX_CONNS_IP`.
 
 ### 2026-10-13 — SMTP `AUTH` sent the password in clear text from any address (1.0.19)

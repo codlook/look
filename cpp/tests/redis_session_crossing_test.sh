@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Redis sessions never reach another user's request.
 #
-# LOOK 1 keeps one Redis connection per worker thread, used by every request on that thread in
+# 1.0.x keeps one Redis connection per worker thread, used by every request on that thread in
 # turn. If a reply is left half-read on a connection that stays open, the next request on that
 # thread reads the rest of it as its own reply, and from then on every request reads the reply
 # meant for the request before it — one user's session data goes to another user. A reply is
@@ -13,7 +13,7 @@
 #      read only their own session afterwards.
 # Usage: redis_session_crossing_test.sh <lk-fcgi>   (needs python3, curl)
 set -u
-# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 T=$(mktemp -d); trap '{ kill $pid $rpid; wait; } 2>/dev/null; rm -rf "$T"' EXIT

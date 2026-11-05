@@ -10,7 +10,7 @@
 # Cozum: tek ifadelik atomik claim (UPDATE ... WHERE id=(SELECT ...) AND
 # status='pending' RETURNING ...) + WAL + busy_timeout.
 #
-# LOOK 2: yeniden deneme BEKLER (c4d1471; jobs::fail elle çağrılınca da). Akış testi tabanı 1 sn
+# yeniden deneme BEKLER (c4d1471; jobs::fail elle çağrılınca da). Akış testi tabanı 1 sn
 # yapar: başarısız iş hemen yeniden alınmamalı, bekleme geçince alınmalı, 3. denemede failed.
 # (Bu test v2 CI'ında koşmuyordu; eski "hemen yeniden al" beklentisiyle kırmızı kalmıştı.)
 # Kullanim: bash jobs_test.sh <lk_yolu>
@@ -42,7 +42,7 @@ print($s)
 LK
 cat > akis.lk <<'LK'
 use jobs
-# retry: LOOK 2'de yeniden deneme BEKLER (taban LOOK_JOBS_RETRY_SECONDS; burada 1 sn → 1, 2 sn);
+# retry: LOOK'de yeniden deneme BEKLER (taban LOOK_JOBS_RETRY_SECONDS; burada 1 sn → 1, 2 sn);
 # beklemeden önce iş alınmamalı, sonra alınmalı; max_retries (3) dolunca failed (sonsuz denenmemeli)
 jobs::push("r", "x")
 $j = jobs::next("r"); jobs::fail($j.id)

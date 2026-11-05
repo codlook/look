@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# LOOK 2 closure rule, as seen at load (include/look/capture_check.h):
+# LOOK closure rule, as seen at load (include/look/capture_check.h):
 #   * a closure that changes a variable it captured is a PARSE ERROR,
 #     before anything runs: $x = ..., $x[i] = ..., $x.f = ..., $x += ..., $x++, push($x, ...),
 #     pop($x); the same for a named function declared inside another function;
 #   * a variable that changes after a closure captured it is reported as a WARNING by
-#     `lk --check` (capture-stale): the closure keeps the value it captured, where LOOK 1 saw
+#     `lk --check` (capture-stale): the closure keeps the value it captured, where 1.0.x saw
 #     the later one. The exit code and the final "OK" line do not change.
 # The own local of a closure, even with a name the outer function also uses, and an arrow
 # function that only reads, must stay silent.

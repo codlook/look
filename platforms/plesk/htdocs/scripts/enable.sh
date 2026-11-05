@@ -160,7 +160,7 @@ if [ -n "$ENV_FILE" ]; then
 fi
 
 # ─── LOOK_SECRET ───────────────────────────────────────────────────────────
-# LOOK 2 çerez kullanan uygulamayı LOOK_SECRET olmadan başlatmaz (CSRF imzası). Sitenin yoksa
+# LOOK çerez kullanan uygulamayı LOOK_SECRET olmadan başlatmaz (CSRF imzası). Sitenin yoksa
 # burada üretilir — domain kullanıcısı OLARAK (runuser): root kullanıcının ev dizinine hiçbir şey
 # yazmaz (oradaki bir symlink root'u herhangi bir dosyaya yönlendirebilirdi). /dev/urandom'dan
 # 32 bayt, 0700 klasörde 0600 dosya, web kökünün dışında; hiçbir çıktıya yazılmaz. Var olan
@@ -180,7 +180,7 @@ case "$RUN_HOME" in
                 chmod 600 "$1"' _ "$SECRET_FILE" 2>/dev/null; then
             EXEC_CMD="/bin/bash /opt/look/look-env $SECRET_FILE $EXEC_CMD"
         else
-            echo "WARNING: could not create $SECRET_FILE as $RUN_USER; set LOOK_SECRET in the site's env file (LOOK 2 needs it for applications that use cookies)"
+            echo "WARNING: could not create $SECRET_FILE as $RUN_USER; set LOOK_SECRET in the site's env file (LOOK needs it for applications that use cookies)"
         fi
         ;;
 esac

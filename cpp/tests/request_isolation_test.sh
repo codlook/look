@@ -3,7 +3,7 @@
 # request uses them. A request that WRITES one of them must not change what the next request
 # reads.
 #
-# LOOK 2 closes most of this by rule rather than by copying:
+# LOOK closes most of this by rule rather than by copying:
 #   * values: assigning or passing an array gives a copy, so a write through an alias cannot
 #     reach the original (tests/value_semantics_test.lk);
 #   * captured variables: a closure captures the VALUE and may not change it. A route or a

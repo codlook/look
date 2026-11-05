@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: the command line runs only on the VM, like the web server.
+# the command line runs only on the VM, like the web server.
 #
 # `lk` used to fall back to the tree-walk engine — with a warning — when the VM could not compile
 # a script, when the script used timer:: or jobs::worker, or when it called a module function the
@@ -46,7 +46,7 @@ else bad "typo.lk: rc=$rc out=[$out] err=[$err]"; fi
 echo 'print("ok")' > "$TMP/small.lk"
 for sw in LOOK_CLI_VM=0 LOOK_BYTECODE=0; do
     run "$sw" "$LK" small.lk
-    if [ "$rc" = 0 ] && [ "$out" = ok ] && echo "$err" | grep -qF "${sw} is ignored: LOOK 2 runs only on the VM"; then
+    if [ "$rc" = 0 ] && [ "$out" = ok ] && echo "$err" | grep -qF "${sw} is ignored: LOOK runs only on the VM"; then
         ok "$sw is ignored with a warning; the script runs on the VM"
     else bad "$sw: rc=$rc out=[$out] err=[$err]"; fi
 done

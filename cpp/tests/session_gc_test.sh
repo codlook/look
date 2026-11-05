@@ -10,7 +10,7 @@
 # every TTL seconds when the TTL is shorter).
 # Usage: session_gc_test.sh <lk-fcgi>   (needs curl)
 set -u
-# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 P=7620

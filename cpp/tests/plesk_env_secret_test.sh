@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The Plesk extension keeps a site's secrets out of its web root and gives LOOK 2 its LOOK_SECRET.
+# The Plesk extension keeps a site's secrets out of its web root and gives LOOK its LOOK_SECRET.
 #
 # 1. The env file had to be inside the document root. A disabled site's proxy rule is removed and
 #    Apache then serves the document root as plain files — /.look.env with the database password
 #    could be downloaded. Now the env file may live anywhere in the domain user's own home (outside
 #    the web root), and a disabled site keeps a rule that refuses /.look* files.
-# 2. LOOK 2 does not start an application that uses cookies without LOOK_SECRET. enable.sh creates
+# 2. LOOK does not start an application that uses cookies without LOOK_SECRET. enable.sh creates
 #    one when the site has none: as the domain's user (root never writes into the user's home —
 #    a symlink there could otherwise point root at any file), from /dev/urandom, 0600, outside the
 #    web root, and never printed. An existing secret is kept; one set in the site's own env file wins.
@@ -115,5 +115,5 @@ check "… the same for HTTPS" 'grep -q "Require all denied" /var/www/vhosts/sys
 check "no sudo in any command of the scripts (comments aside)" '! grep -nE "^[^#]*\bsudo " "$PLUG"/*.sh'
 
 echo
-[ $fails = 0 ] && echo "PASS: secrets stay out of the web root; LOOK 2 gets its LOOK_SECRET" || echo "FAIL: $fails"
+[ $fails = 0 ] && echo "PASS: secrets stay out of the web root; LOOK gets its LOOK_SECRET" || echo "FAIL: $fails"
 exit $fails

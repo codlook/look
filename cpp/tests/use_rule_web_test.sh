@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: the `use` rule holds in a web application whose top level runs only on the VM.
+# the `use` rule holds in a web application whose top level runs only on the VM.
 #
 # The top level used to run first on the tree-walk engine, and its `use` lines were what opened a
 # module and what rejected a module that does not exist. That pass is gone; the VM now applies the

@@ -94,7 +94,7 @@ Each domain added in the panel gets its own systemd service, `look-<domain>.serv
   service starts, so it can be mode `600`. Lines starting with `#` are comments; there are
   no comments at the end of a line: in `APP_NAME=Shop # title` the value is `Shop # title`
   (the service log warns about it). Quotes around a value are removed.
-- **LOOK_SECRET** — LOOK 2 does not start an application that uses cookies without it.
+- **LOOK_SECRET** — LOOK does not start an application that uses cookies without it.
   When the site has none, the extension creates one when the site is enabled: 32 random
   bytes in `/var/www/vhosts/<subscription>/.look/look-<domain>.secret`, mode `600`, owned
   by the domain's user, outside the web root, never shown. It is kept across restarts and

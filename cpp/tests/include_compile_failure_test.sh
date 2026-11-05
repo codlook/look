@@ -6,7 +6,7 @@
 # run again on the tree-walk engine, which hid it. Since 1.0.8 nothing is run twice, so every
 # route that called a function of that file answered 500 "Undefined variable: <function>" —
 # also functions that had nothing to do with the line the VM could not compile.
-# Now the compile fails as a whole. LOOK 2 runs only on the VM, so the application does not
+# Now the compile fails as a whole. LOOK runs only on the VM, so the application does not
 # start (exit 1), and the error names the included file and the reason — nothing is dropped
 # silently and no route answers "Undefined variable".
 # The included file here is valid LOOK: one call in it passes 65535 arguments, more than the VM

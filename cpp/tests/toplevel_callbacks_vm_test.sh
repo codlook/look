@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: callbacks registered at the top level run on the VM — a timer armed there and a
+# callbacks registered at the top level run on the VM — a timer armed there and a
 # job handler registered with jobs::worker.
 #
 # The top level of a web application used to run first on the tree-walk engine. A timer or a
@@ -9,7 +9,7 @@
 # level runs only on the VM, once, and registers the VM's closures directly.
 # How this test sees the engine: each callback runs a loop the tree-walk engine needed seconds
 # for and the VM a fraction of one, and the test measures from outside how long it took.
-# (LOOK 2 web runs only on the VM; the tree-walk comparison run was removed with the fallback.)
+# (LOOK web runs only on the VM; the tree-walk comparison run was removed with the fallback.)
 #   * both callbacks finish fast, the server says how many it handed over
 #   * a job's result is respected: true = done; false or an error = tried again up to its
 #     limit (3), then failed

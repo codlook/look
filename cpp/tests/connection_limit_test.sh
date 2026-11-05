@@ -6,10 +6,10 @@
 # the port could stop the application by opening 1025 connections — no login, no valid
 # request needed. Measured on the published 1.0.13 and 1.0.14, for WebSocket and for SSE.
 #
-# What holds in LOOK 2:
+# What holds in LOOK:
 #   1. No limit on the total of open connections, and no setting for one. The operating
 #      system's open-file limit is the limit, and the server raises its own soft limit to
-#      the hard limit at start. (LOOK 1 had LOOK_WS_MAX_CONN / LOOK_SSE_MAX_CONN.)
+#      the hard limit at start. (1.0.x had LOOK_WS_MAX_CONN / LOOK_SSE_MAX_CONN.)
 #   2. One address may hold 1000 open WebSocket / SSE connections by default when the server
 #      faces the internet directly (no LOOK_TRUSTED_PROXY); over that the connection gets 429
 #      and the address is logged once. With no total limit this is what keeps one source from
@@ -106,10 +106,10 @@ stop
 if [ "$out" = "opened: {'101': 1100} | /ok while full: alive" ]; then echo "  OK   [ws] with LOOK_TRUSTED_PROXY set there is no default per-address limit (1100 open from one address)"
 else echo "  FAIL [ws] with a trusted proxy: $out"; fail=1; fi
 
-# 1d. the settings LOOK 1 had for a total limit are gone: they change nothing and the log says so
+# 1d. the settings 1.0.x had for a total limit are gone: they change nothing and the log says so
 srv LOOK_WS_MAX_CONN=40 LOOK_SSE_MAX_CONN=40
 out="$(python3 "$TMP/many.py" "$PORT" ws 60 0 2>&1 | head -1)"
-said="$(grep -c 'is set but is not used in LOOK 2' "$TMP/log.txt")"
+said="$(grep -c 'is set but is no longer used' "$TMP/log.txt")"
 stop
 if [ "$out" = "opened: {'101': 60} | /ok while full: alive" ] && [ "$said" = 2 ]; then echo "  OK   LOOK_WS_MAX_CONN / LOOK_SSE_MAX_CONN are not used: 60 open with both set to 40, and the log says so"
 else echo "  FAIL removed settings: $out | log lines: $said"; fail=1; fi

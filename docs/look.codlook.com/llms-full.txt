@@ -532,7 +532,7 @@ $i--  # postfix
 --$i  # prefix
 ```
 
-LOOK 2: `++` and `--` also work on an element or a field — `$count["views"]++`, `++$cart.items`,
+`++` and `--` also work on an element or a field — `$count["views"]++`, `++$cart.items`,
 `$grid[$y][$x]--` — with the same meaning as on a variable: the postfix form yields the old value,
 the prefix form the new one. The element must exist and hold a number; a missing key is an
 error, as it is for `+=`.
@@ -4569,7 +4569,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `LOOK_BYTECODE` | `1` | Bytecode VM on (default). `0` forces the tree-walk interpreter. |
-| `LOOK_FIBER_DISPATCH` | *on (Linux)* | `0` selects a worker per connection instead of fibers (see [Concurrent Runtime](#concurrent)). Windows always uses a worker per connection. Not in LOOK 2. |
+| `LOOK_FIBER_DISPATCH` | *on (Linux)* | `0` selects a worker per connection instead of fibers (see [Concurrent Runtime](#concurrent)). Windows always uses a worker per connection. |
 | `LOOK_WARN_UNDEF` | *off* | Undefined variables are a hard error by default. `1` restores lenient mode with a warning instead. |
 
 > **systemd example:**

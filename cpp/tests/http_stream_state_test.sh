@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# http::stream carries state explicitly. A LOOK 2 closure captures the value and cannot change
+# http::stream carries state explicitly. A LOOK closure captures the value and cannot change
 # it, so a streaming callback cannot keep "the half line from the last chunk" in a captured
 # variable any more. Instead: the first state is $opts["state"], the callback receives
 # ($chunk, $state) and what it returns is the next state; the last one comes back in the

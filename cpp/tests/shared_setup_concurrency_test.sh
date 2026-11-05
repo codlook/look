@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: setup data is SHARED with every request, not copied for it — and a request that
+# setup data is SHARED with every request, not copied for it — and a request that
 # writes still changes only its own copy, also when many requests run at once.
 #
 # Until this change a request got a deep copy of every top-level array it touched, of every

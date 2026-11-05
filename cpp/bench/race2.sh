@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2 vs LOOK 1 vs Node vs Go vs Elixir vs PHP — the same two endpoints, the same container shape.
+# LOOK (this branch) vs LOOK 1.0.45 vs Node vs Go vs Elixir vs PHP — the same two endpoints, the same container shape.
 #   1) trivial JSON     GET / → {"ok":true,"msg":"hello"}
 #   2) one DB row       GET / → SELECT id, name, email FROM users WHERE id = 42 (MySQL 8) → JSON
 # Servers: --cpus=2 --memory=4g. Load generator (wrk): separate, uncapped container. Warm-up, then
@@ -9,7 +9,7 @@
 # GOMAXPROCS=2 (Go 1.22 does not read the cgroup quota). LOOK, Node (cluster ×2), BEAM and
 # PHP-FPM run as shipped. Elixir's MyXQL pool gets socket_options: [nodelay: true]: without it every
 # query waited ~40 ms on Nagle + delayed ACK (360 req/s instead of 15k) — a setting any user would fix.
-# Usage: race2.sh <look repo root> <LOOK 2 bin dir> <LOOK 1 bin dir>     (bin dir: lk-fcgi inside)
+# Usage: race2.sh <look repo root> <LOOK bin dir> <LOOK 1.0.45 bin dir>     (bin dir: lk-fcgi inside)
 #   needs images: look-build, look-bench-go, look-bench-elixir (cpp/bench/{go,elixir}/Dockerfile),
 #   node:22-alpine, trafex/php-nginx, mysql:8, williamyeh/wrk, curlimages/curl
 export MSYS_NO_PATHCONV=1
@@ -77,12 +77,12 @@ look(){  # look <bin dir> <app.lk> [docker env...]
 
 echo "=================================================================="
 echo " RACE @2CPU/4GB — best-of-3 · wrk -t8 -d8s · $(date -u +%F)"
-echo " LOOK 2: $(docker run --rm -v "$V2:/b:ro" look-build /b/lk-fcgi --version 2>&1 | head -1)"
-echo " LOOK 1: $(docker run --rm -v "$V1:/b:ro" look-build /b/lk-fcgi --version 2>&1 | head -1)"
+echo " LOOK:        $(docker run --rm -v "$V2:/b:ro" look-build /b/lk-fcgi --version 2>&1 | head -1)"
+echo " LOOK 1.0.45: $(docker run --rm -v "$V1:/b:ro" look-build /b/lk-fcgi --version 2>&1 | head -1)"
 echo "=================================================================="
 echo; echo "########## 1) TRIVIAL JSON ##########"
-look "$V2" bench.lk;                                              sweep "LOOK 2"
-look "$V1" bench.lk;                                              sweep "LOOK 1 (1.0.45)"
+look "$V2" bench.lk;                                              sweep "LOOK"
+look "$V1" bench.lk;                                              sweep "LOOK 1.0.45"
 run -v "$ROOT/cpp/bench:/app:ro" -w /app node:22-alpine node app.js;  sweep "Node 22 (cluster x2)"
 run -e GOMAXPROCS=2 look-bench-go;                                sweep "Go 1.22 net/http"
 run look-bench-elixir;                                            sweep "Elixir (Bandit)"
@@ -90,8 +90,8 @@ run -v "$ROOT/cpp/bench/phproot:/var/www/html:ro" trafex/php-nginx:latest; sweep
 
 echo; echo "########## 2) ONE DB ROW (MySQL 8) ##########"
 setup_db
-look "$V2" dbbench/look/dbapp.lk -e DB_DSN=$DSN;                  sweep "LOOK 2"
-look "$V1" dbbench/look/dbapp.lk -e DB_DSN=$DSN;                  sweep "LOOK 1 (1.0.45)"
+look "$V2" dbbench/look/dbapp.lk -e DB_DSN=$DSN;                  sweep "LOOK"
+look "$V1" dbbench/look/dbapp.lk -e DB_DSN=$DSN;                  sweep "LOOK 1.0.45"
 run $DBENV -v "$ROOT/cpp/bench/dbbench/node:/app:ro" -w /app node:22-alpine node dbapp.js; sweep "Node 22 (cluster x2)"
 run $DBENV -e GOMAXPROCS=2 look-bench-go;                         sweep "Go 1.22 net/http"
 run $DBENV look-bench-elixir;                                     sweep "Elixir (Bandit)"

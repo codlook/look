@@ -4,7 +4,7 @@
 //                                                          chain through a missing step is null
 //                                                          and `?? default` works without help)
 //   reading from a string, a number, a boolean   -> error (not a missing value: a wrong type)
-// In LOOK 1 the tree-walk engine raised an error for all of these, null included, and the VM
+// In 1.0.x the tree-walk engine raised an error for all of these, null included, and the VM
 // returned null for all of them, wrong types included.
 use json
 function attempt($f) { try { return json::encode($f()) } catch ($e) { return "ERROR: " . $e } }

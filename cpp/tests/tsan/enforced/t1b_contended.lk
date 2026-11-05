@@ -1,5 +1,5 @@
 # t1b — DETERMINISTIK: 8 thread AYNI yakalanan diziyle ayni anda baslar ve her biri onu
-# kendi degiskenine alip yazar. LOOK 2'de closure DEGERI yakalar ve yakalanana yazamaz
+# kendi degiskenine alip yazar. LOOK'de closure DEGERI yakalar ve yakalanana yazamaz
 # (yuklemede hata), o yuzden eski "herkes $shared[0]'a yazar" hali artik gecerli kod degil.
 # Sinanan sey ayni kaldi: depolamayi paylasan degerlere es-anli ilk yazma (yazinca-kopyala
 # ayrilmasi + atomik sayac) yarissiz olmali ve kimse digerinin yazdigini gormemeli.

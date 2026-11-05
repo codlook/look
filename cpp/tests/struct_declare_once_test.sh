@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: a struct is declared once, at the top level of a file.
+# a struct is declared once, at the top level of a file.
 #   * inside a function, a closure or a block      -> parse error
 #   * same name, different fields, same file       -> parse error naming the first line
 #   * same name, different fields, another file    -> error when the file is loaded

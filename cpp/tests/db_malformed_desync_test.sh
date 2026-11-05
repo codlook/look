@@ -6,7 +6,7 @@
 # half-way (a malformed row, a column count over the limit) its unread rest stayed in that buffer.
 # Before each query the client checks the socket for leftovers — but bytes already in the buffer
 # are not on the socket: the next query read the rest of the old reply as its own (no rows), the
-# query after it got the previous query's row, and so on, with no error. LOOK 1 read without a
+# query after it got the previous query's row, and so on, with no error. 1.0.x read without a
 # buffer and its socket check caught the leftovers. Now a reply that cannot be read to its end
 # closes the connection, and leftovers in the buffer (or in TLS) count as a stale connection too.
 # Fake servers send the bad reply for the first query only.

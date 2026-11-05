@@ -1,9 +1,9 @@
-# Moving from LOOK 1 to LOOK 2
+# Upgrading from LOOK 1.0.x
 
-LOOK 2 is developed on the `v2` branch and is not released yet. This page lists every
-change that can make a LOOK 1 program behave differently, what you see when it does, and
-what to write instead. It is updated in the same commit as each change, so it is complete
-for the current state of `v2`.
+This page lists every change that can make a program written for LOOK 1.0.x behave
+differently, what you see when it does, and what to write instead. The changes are developed
+on the `v2` branch; this page is updated in the same commit as each change, so it is complete
+for the current state of that branch.
 
 Each entry says how the change shows up:
 
@@ -11,13 +11,6 @@ Each entry says how the change shows up:
 - **Error at run time** — the statement throws; the message names the cause.
 - **Silent** — the program runs and gives a different result. These are the ones to read
   carefully.
-
-## How long LOOK 1 is supported
-
-LOOK 1 (1.0.x) keeps receiving security fixes and fixes for silent failures for **at least 12
-months after LOOK 2.0 is released**, so you can move each application when it suits you. It gets
-no new features. The end of LOOK 1 support is announced **at least 6 months before it**, in the
-release notes, in the README and on this page.
 
 ## Structs
 
@@ -36,7 +29,7 @@ struct User {
 }
 ```
 
-The two LOOK 1 spellings, a bare `name` and `name: default`, are parse errors. The message
+The two 1.0.x spellings, a bare `name` and `name: default`, are parse errors. The message
 says what to write.
 
 Types: `int`, `float`, `string`, `bool`, `array`, `map`, `fn`, `any`, or the name of a
@@ -45,7 +38,7 @@ startup, before the first request.
 
 ### A field without a default starts at its zero value — silent
 
-In LOOK 1 a field without a default was null. Now `int` starts at `0`, `float` at `0.0`,
+In 1.0.x a field without a default was null. Now `int` starts at `0`, `float` at `0.0`,
 `string` at `""`, `bool` at `false`, `array` and `map` empty (a fresh one per instance).
 `?type`, `any`, `fn` and struct-typed fields start at null.
 
@@ -59,7 +52,7 @@ fields.
 
 ### The shape is fixed — error at run time
 
-Reading or writing a field that the struct does not declare is an error. LOOK 1 returned
+Reading or writing a field that the struct does not declare is an error. 1.0.x returned
 null on read and silently added the field on write.
 
 ### A struct is declared once, at the top level — error at load
@@ -73,7 +66,7 @@ second file is loaded otherwise. Reading the identical declaration again is fine
 
 ### A struct is not an array — error at run time
 
-In LOOK 1 a struct was a map internally, so `count()` and `array::` functions worked on
+In 1.0.x a struct was a map internally, so `count()` and `array::` functions worked on
 it, and `array::set` could bypass the declaration. A struct is now its own kind of value.
 
 - `$s.field` reads and writes a field. `$s["field"]` does the same and is the way to use a
@@ -92,14 +85,14 @@ $b = $a
 $b[0] = 9          # $a is still [1, 2, 3]
 ```
 
-In LOOK 1 `$a` and `$b` were the same array. The same holds for function arguments and
+In 1.0.x `$a` and `$b` were the same array. The same holds for function arguments and
 return values, for maps and for structs, at every depth.
 
 The pattern that breaks is a function that changes its parameter and does not return it:
 
 ```
 function add_total($order) { $order["total"] = 42 }
-add_total($o)      # LOOK 1: $o has "total".  LOOK 2: $o is unchanged.
+add_total($o)      # 1.0.x: $o has "total".  Now: $o is unchanged.
 ```
 
 Return the value and assign it:
@@ -126,7 +119,7 @@ does not change — return the new value
 
 The program still runs. `lk --check` reports the same finding as an error (a `CHECK` line,
 exit status 1), so it can stop a build. Run `lk --check` on every file of an application
-before moving it to LOOK 2 and return the changed value from each function it names.
+before upgrading and return the changed value from each function it names.
 
 The check is deliberately narrow and prefers missing a case to a false alarm: a parameter
 the function assigns as a whole (`$p = …`) is its own variable and is not checked, nor is
@@ -138,7 +131,7 @@ a variadic parameter.
 `push($order["lines"], $x)`. Two differences:
 
 - they change only that variable, not other variables that held the same array;
-- `push` returns the new length. In LOOK 1 it returned the array.
+- `push` returns the new length. In 1.0.x it returned the array.
 
 ### A closure captures the value — silent; writing to it is an error at load
 
@@ -152,13 +145,13 @@ function report() {
     $n = 1
     $f = fn() => $n
     $n = 2
-    return $f()        # LOOK 2: 1.  LOOK 1: 2.
+    return $f()        # Now: 1.  1.0.x: 2.
 }
 ```
 
 Two things follow.
 
-**A later change outside is not seen (silent).** In LOOK 1 the closure saw the variable as
+**A later change outside is not seen (silent).** In 1.0.x the closure saw the variable as
 it was when called. `lk --check file.lk` lists every such place as `WARN ... [capture-stale]`
 with the line of the later change. A closure created in a loop keeps the value of its own
 iteration.
@@ -168,11 +161,11 @@ an element or a field, `+=` and the like, `++`, `push()` and `pop()` on a captur
 are parse errors; the program does not start. Return the new value and assign it outside:
 
 ```
-# LOOK 1
+# 1.0.x
 $add = function($x) use ($list) { push($list, $x) }
 $add(1)
 
-# LOOK 2
+# Now
 $add = fn($list, $x) => array::push($list, $x)
 $list = $add($list, 1)
 ```
@@ -215,16 +208,16 @@ $count["x"]                         # error when $count is a number
 
 The same holds for `$x.field`.
 
-What changes from LOOK 1 depends on the engine the code ran on. On the VM (the default)
+What changes from 1.0.x depends on the engine the code ran on. On the VM (the default)
 all of these read as `null`, the wrong types included: `"abc"["k"]` and `$number["k"]` are
 errors now. On the tree-walk engine all of them were errors, `null` included: reading from
 `null` gives `null` now. Running LookPress and every published module, package and example
-on LOOK 2 did not hit the error once.
+on this version did not hit the error once.
 
 ### `==` compares content — silent
 
 `==` and `!=` on two arrays, maps or structs compare what they hold, at every depth.
-In LOOK 1 the result was always false for arrays and maps.
+In 1.0.x the result was always false for arrays and maps.
 
 - lists: same length and equal elements in the same order;
 - maps: the same keys with equal values; the order the keys were added in does not matter;
@@ -244,7 +237,7 @@ accepted the call, dropped the extra arguments and made the missing parameter nu
 
 ```
 function price($amount, $currency) { ... }
-price(10)          # LOOK 1, default engine: $currency is null.  LOOK 2: error.
+price(10)          # 1.0.x, default engine: $currency is null.  Now: error.
 ```
 
 A parameter with a default is optional, and a variadic function (`...$rest`) takes any
@@ -270,7 +263,7 @@ variable as a global, while the tree-walk engine did not:
 
 ```
 if ($debug) { $level = "verbose" } else { $level = "quiet" }
-print($level)      # LOOK 1, default engine: prints.  LOOK 2: Undefined variable: $level
+print($level)      # 1.0.x, default engine: prints.  Now: Undefined variable: $level
 ```
 
 Declare the variable before the block; the block then assigns the one outside:
@@ -285,7 +278,7 @@ if ($debug) { $level = "verbose" }
 ### The default 404 body is plain text — silent
 
 When no route matches and the application has no handler of its own, the response is
-`404 Not Found` as `text/plain`. LOOK 1 answered with a JSON object. A client that parsed
+`404 Not Found` as `text/plain`. 1.0.x answered with a JSON object. A client that parsed
 that body must look at the status code, or the application must register its own 404
 handler.
 
@@ -295,7 +288,7 @@ handler.
 route("GET", "/c/{id}/{slug}", function($slug) { ... })
 ```
 
-In LOOK 1 path parameters were passed by position: `$slug` above silently received the
+In 1.0.x path parameters were passed by position: `$slug` above silently received the
 `id`, and a parameter the route does not have was silently null. Now each handler parameter
 takes the path parameter of the same name, in any order and any subset; the others are read
 with `request::param("name")`.
@@ -310,8 +303,8 @@ renamed.
 
 ### Open connections: no total limit, and a default limit per address — silent
 
-LOOK 1 had `LOOK_WS_MAX_CONN` and `LOOK_SSE_MAX_CONN` (1024 each until 1.0.14, off by default
-from 1.0.15). LOOK 2 has no limit on the total of open connections and no setting for one: the
+1.0.x had `LOOK_WS_MAX_CONN` and `LOOK_SSE_MAX_CONN` (1024 each until 1.0.14, off by default
+from 1.0.15). LOOK has no limit on the total of open connections and no setting for one: the
 operating system's open-file limit is the limit, and the server raises its own soft limit to
 the hard limit at start. If one of the two settings is still set, the log says at start that it
 is not used.
@@ -337,11 +330,11 @@ the response as `state`. A callback declared with one parameter must add the sec
 This replaces keeping the unfinished line in a captured variable, which no longer loads:
 
 ```
-# LOOK 1
+# 1.0.x
 $buf = ["rest" => ""]
 http::stream("GET", $url, "", [], function($chunk) use ($buf) { $buf["rest"] = ... })
 
-# LOOK 2
+# Now
 http::stream("GET", $url, "", [], function($chunk, $rest) { ...; return $new_rest },
              ["state" => ""])
 ```
@@ -368,7 +361,7 @@ Error: route GET:/report calls string::uper(), which does not exist — check th
 the module and the function.
 ```
 
-In LOOK 1 the server started, put that route on the tree-walk engine with a warning, and the
+In 1.0.x the server started, put that route on the tree-walk engine with a warning, and the
 mistake showed on the first request that reached the line. `lk --check` reports the same for
 the core modules (`CHECK … [undefined-function]`, exit status 1).
 
@@ -390,8 +383,8 @@ their own: on the VM, with the top-level variables at their declared values.
 
 ```
 jobs::worker("mail", function($job) {
-    mail::send(...)          # LOOK 1: no `return` counted as failed and the job was run again
-})                           #         at once — three mails. LOOK 2: an error in the log,
+    mail::send(...)          # 1.0.x: no `return` counted as failed and the job was run again
+})                           #         at once — three mails. Now: an error in the log,
                              #         the job is marked failed and is NOT run again.
 ```
 
@@ -399,7 +392,7 @@ jobs::worker("mail", function($job) {
   job's limit. Anything else is a mistake of the handler: one `ERROR` line names the queue
   and what was returned, and the job is not repeated. Make every handler end with
   `return true` or `return false`.
-- A retry waits. In LOOK 1 a failed job was tried again immediately, all tries in the same
+- A retry waits. In 1.0.x a failed job was tried again immediately, all tries in the same
   pass. Now the next try comes after 30 seconds, then 60, then 120 (the base is
   `LOOK_JOBS_RETRY_SECONDS`; at most an hour). This also holds for `jobs::fail($id)` called
   by hand: `jobs::next` does not return that job again until its wait is over.
@@ -409,7 +402,7 @@ jobs::worker("mail", function($job) {
 `session::set` that would make the session larger than `LOOK_SESSION_MAX_BYTES` (default
 1048576 bytes, 1 MB) throws an error naming the limit. Nothing is written, and nothing is cut:
 the session keeps what it had. The limit is the same for the file and the Redis driver. In
-LOOK 1 a session had no limit of its own, so a visitor could grow their session to megabytes,
+1.0.x a session had no limit of its own, so a visitor could grow their session to megabytes,
 read on every request; a few could fill Redis's memory.
 
 A session normally holds a few kilobytes (who is logged in, a cart). Keep large data in the
@@ -417,7 +410,7 @@ database and store its id in the session.
 
 ### Redis sessions: an unreachable or silent Redis is an error — was silent
 
-With `LOOK_SESSION_DRIVER=redis`, LOOK 1 swallowed every Redis error: a Redis that was down
+With `LOOK_SESSION_DRIVER=redis`, 1.0.x swallowed every Redis error: a Redis that was down
 gave an empty session (the user looked logged out) and `session::set` lost its data without a
 word. A Redis that accepted the connection but never answered held the request forever.
 
@@ -433,7 +426,7 @@ Session connections are taken from a pool per request and opened when needed.
 
 If your program uses `session::`, `csrf::` or `cookie::`, every `POST`, `PUT`, `PATCH` and
 `DELETE` request must now carry a CSRF token; without one it gets `403` before `before_route`
-and the route run, and the log names the request and what to change. LOOK 1 left this to each
+and the route run, and the log names the request and what to change. 1.0.x left this to each
 application, and a route that forgot the check was open without a word. Programs that do not use
 cookies (token APIs) are not affected.
 
@@ -451,7 +444,7 @@ What to change:
 
 Nothing is stored on the server: the token's base is in a signed cookie (`look_csrf`,
 `__Host-look_csrf` over HTTPS). `session::regenerate()` and `session::destroy()` give a new
-token base. If your LOOK 1 application had its own token in the session, remove that code.
+token base. If your 1.0.x application had its own token in the session, remove that code.
 
 ### CGI: request headers reach the application — was silent
 
@@ -474,12 +467,12 @@ connection, as under FastCGI and `--mode http`. LOOK 1.0.43 has the same fix.
 
 ### Workers follow the usable CPUs; database connections open as needed — silent
 
-LOOK 1 started CPUs × 4 worker threads (at most 64) and opened one database connection per
+1.0.x started CPUs × 4 worker threads (at most 64) and opened one database connection per
 worker at `db::connect`. With fiber dispatch (`--mode http` on Linux, the default) a worker runs
-other requests while one waits on the database or the network, so LOOK 2 starts as many workers
+other requests while one waits on the database or the network, so LOOK starts as many workers
 as there are usable CPUs — the CPUs the process may run on (`taskset`, systemd `CPUAffinity=`,
-container cpuset) and a CPU quota, like Go's `GOMAXPROCS`. LOOK 1 counted every CPU of the
-machine. Measured on 8 CPUs, against LOOK 1's 32 workers: the same or higher throughput and a
+container cpuset) and a CPU quota, like Go's `GOMAXPROCS`. 1.0.x counted every CPU of the
+machine. Measured on 8 CPUs, against 1.0.x's 32 workers: the same or higher throughput and a
 much lower tail latency (p99 1.4 ms instead of 14 ms on a trivial route, 59 ms instead of 113 ms
 on a CPU-bound one), 42 threads instead of 114. FastCGI, Windows and `LOOK_FIBER_DISPATCH=0`,
 where a thread waits for its request, keep CPUs × 4.
@@ -487,16 +480,16 @@ where a thread waits for its request, keep CPUs × 4.
 The pool no longer follows the workers. `db::connect` opens one connection — a wrong password
 or an unreachable server still stops the start — and the rest open when requests need them, up
 to `LOOK_DB_POOL_SIZE` (default 4 × usable CPUs, 8–64; SQLite 4). `--workers`, `LOOK_WORKERS`
-and `LOOK_DB_POOL_SIZE` are applied as given; set them as before if you tuned them for LOOK 1.
+and `LOOK_DB_POOL_SIZE` are applied as given; set them as before if you tuned them for 1.0.x.
 
-`LOOK_DB_ASYNC_THREADS` is gone. In LOOK 1 it started a set of threads (one per worker by
-default) that nothing ever used. LOOK 2 does not start them; if the variable is still set, the
+`LOOK_DB_ASYNC_THREADS` is gone. In 1.0.x it started a set of threads (one per worker by
+default) that nothing ever used. LOOK does not start them; if the variable is still set, the
 server logs a warning at start and otherwise ignores it.
 
 ### The SMTP server offers STARTTLS
 
 With `LOOK_SMTP_CERT` / `LOOK_SMTP_KEY` set, the embedded SMTP server advertises and performs
-STARTTLS on port 25 and on the submission port. LOOK 1 did not offer it (its STARTTLS never
+STARTTLS on port 25 and on the submission port. 1.0.x did not offer it (its STARTTLS never
 answered after the handshake and was withdrawn in 1.0.18): it accepted mail in plain text and,
 with a certificate set, refused AUTH on the submission port. Now on the submission port AUTH
 and MAIL are accepted after STARTTLS (before it: `530 Must issue a STARTTLS command first`), and
@@ -510,7 +503,7 @@ from this machine only.
 
 ```
 $x--
---$y        # LOOK 1: Parse Error "Expect ';'"; LOOK 2: decrements $y
+--$y        # 1.0.x: Parse Error "Expect ';'"; Now: decrements $y
 ```
 
 A line that starts with `+` or `-` continues the expression of the line before; that is
@@ -525,13 +518,13 @@ the prefix form the new one. A missing key is an error, as it is for `+=`.
 
 ### One engine: the VM — error at load
 
-LOOK 1 had two engines, the VM and a slower tree-walk interpreter, and fell back to the
-second when the VM could not run something. LOOK 2 runs only on the VM, on the web server
+1.0.x had two engines, the VM and a slower tree-walk interpreter, and fell back to the
+second when the VM could not run something. LOOK runs only on the VM, on the web server
 and on the command line.
 
 - A program the VM cannot compile does not run. The web server does not start (exit
   status 1); `lk` prints the reason and exits with status 1, before any output. An included
-  file is named: `Error: use "lib/big.lk": a call has more than 65534 arguments`. In LOOK 1
+  file is named: `Error: use "lib/big.lk": a call has more than 65534 arguments`. In 1.0.x
   the whole program ran on the tree-walk engine instead, about 40 times slower.
 - `LOOK_BYTECODE=0` and `LOOK_CLI_VM=0` are ignored, with one `WARN` line. `LOOK_VM_STRICT`
   changes nothing.
@@ -544,7 +537,7 @@ and on the command line.
 ### Code that silently did nothing stops the program — error at load
 
 ```
-array::push($notes, $note)          # LOOK 2: error — the result is not used
+array::push($notes, $note)          # Now: error — the result is not used
 $notes = array::push($notes, $note) # what was meant
 ```
 
@@ -559,7 +552,7 @@ $notes = array::push($notes, $note) # what was meant
   `LOOK_HEALTH_PATH` — never ran: the server replied before the application. The application
   does not start; use another path or move the health check with `LOOK_HEALTH_PATH`.
 
-LOOK 1 (1.0.26) reports both with a warning and runs the program.
+1.0.26 reports both with a warning and runs the program.
 
 ### `lk-cgi` uses the web server's engine — silent
 
@@ -573,7 +566,7 @@ FastCGI.
 - A route that both prints and returns a `response::` value answers with the `response::`
   body only, as `lk-fcgi` does (CGI wrote both, one after the other).
 - A request that succeeds writes nothing to stderr — Apache's error log — as before.
-- CGI starts a new process for every request, and LOOK 2 checks and compiles the whole program
+- CGI starts a new process for every request, and LOOK checks and compiles the whole program
   each time (measured on a mid-size application: about 12 ms per request; 8 ms on the tree-walk
   engine, which ran only the matched route). When speed matters, use `lk-fcgi`: it loads the
   program once and keeps it.
@@ -583,7 +576,7 @@ FastCGI.
 Test files and REPL lines used to run on the tree-walk engine, so a test did not exercise the
 engine the program runs on. They run on the VM now, with the same built-ins as `lk`:
 
-- A test file is a LOOK 2 program like any other: what the VM refuses at load (a discarded
+- A test file is a LOOK program like any other: what the VM refuses at load (a discarded
   pure result, a module function that does not exist, `assert::eqq`) is reported as
   `(load error)` before any test runs.
 - Nothing else changes in `lk test`: `test()`, the `assert_*()` functions, `use assert` with
@@ -595,7 +588,7 @@ engine the program runs on. They run on the VM now, with the same built-ins as `
 ### Callbacks on the command line: on the VM, output on stdout — silent
 
 A job handler (`jobs::worker` + `jobs::run`), a timer callback and a `parallel()` task run
-on the VM from the command line too; in LOOK 1 a script that used `jobs::worker` or `timer::`
+on the VM from the command line too; in 1.0.x a script that used `jobs::worker` or `timer::`
 ran on the tree-walk engine as a whole. Their `print` output reaches stdout; the tree-walk
 engine threw it away (fixed in 1.0.28 as well). `ws::` and `sse::` on the command line are an
 error: they belong to a web application.
@@ -608,7 +601,7 @@ timer::wait()               # wait for timer::after callbacks (at most 5 s; time
 ```
 
 The program's life is its top level, as in Go and Rust: when the script ends, the process
-ends, and a timer that has not fired yet does not run. In LOOK 1 such a timer was lost
+ends, and a timer that has not fired yet does not run. In 1.0.x such a timer was lost
 without a word. Now one `WARN` line says how many `timer::after` callbacks never ran and how
 many `timer::every` timers were still set. To wait, write it: `timer::wait([ms])` waits until
 every `timer::after` callback has run and returns `true`, or `false` when `ms` (default 5000)
@@ -616,15 +609,15 @@ runs out — the same shape as `parallel::wait`. It does not wait for `timer::ev
 not end; stop one with `timer::cancel($id)`. In a web application `timer::wait()` is an error:
 a request does not wait for timers.
 
-`parallel()` follows the same rule. In LOOK 1 the command line waited up to 5 seconds for
+`parallel()` follows the same rule. In 1.0.x the command line waited up to 5 seconds for
 tasks still running when the script ended, without saying so. Now a task still running stops
 with the script and one `WARN` line names it; to let it finish, call `parallel::wait([ms])`
 before the end. A script that collects its tasks' results with `receive()` already waits for
 them and is not affected.
 
-## Not part of LOOK 2
+## Already in 1.0.x
 
-These arrived in 1.0.x releases and apply to LOOK 1 as well; they are listed because a
+These arrived in 1.0.x releases; they are listed because a
 program coming from 1.0.0 meets them at the same time.
 
 - Single-quoted strings are raw: `'{$x}'` is the literal text (1.0.1).

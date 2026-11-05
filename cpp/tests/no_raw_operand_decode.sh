@@ -2,7 +2,7 @@
 # Bytecode operands are combined only through the helpers in bytecode.h.
 #
 # Two operands form a 32-bit field (constant index, jump target, built-in index, closure
-# index). When the operand width changed from 8 to 16 bits (LOOK 2), one reader outside the
+# index). When the operand width changed from 8 to 16 bits (LOOK), one reader outside the
 # VM and the compiler — the route scanner in http_main.cpp — still combined them by hand
 # with the old shift and would have read the wrong constant without any error. Every file
 # that reads bytecode must use Instruction::bx() / bx_lohi() / builtin_index(); a hand-made

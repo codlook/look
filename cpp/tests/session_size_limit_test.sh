@@ -3,12 +3,12 @@
 #
 # A session had no limit (only Redis's 64 MB single-reply limit): a visitor could grow their own
 # session to megabytes, which was then read on every request, and a few visitors could fill
-# Redis's memory. LOOK 2: at most LOOK_SESSION_MAX_BYTES (default 1 MB) per session, the same for
+# Redis's memory. at most LOOK_SESSION_MAX_BYTES (default 1 MB) per session, the same for
 # the file and the Redis driver. session::set over the limit throws an error naming the limit;
 # nothing is written and the session keeps what it had. The application can catch the error.
 # Usage: session_size_limit_test.sh <lk-fcgi> [redis-url]   (needs curl)
 set -u
-# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 RURL="${2:-}"

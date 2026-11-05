@@ -1,4 +1,4 @@
-# LOOK 2 typed struct guard: a field is name + TYPE + default.
+# LOOK typed struct guard: a field is name + TYPE + default.
 #
 #   name string          typed, no default -> zero value ("")
 #   age  int = 18        typed + default

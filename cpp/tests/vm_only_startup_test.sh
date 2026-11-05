@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2 web runs only on the VM: no tree-walk fallback, and a program the VM cannot run does
+# LOOK web runs only on the VM: no tree-walk fallback, and a program the VM cannot run does
 # not start.
 #
 # Up to now an application the VM could not compile — or set up — ran on the tree-walk

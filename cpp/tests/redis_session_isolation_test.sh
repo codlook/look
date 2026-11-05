@@ -10,10 +10,10 @@
 # Then it points the server at a Redis that accepts but never answers (a silent TCP listener)
 # and checks the request gets 503 within LOOK_REDIS_TIMEOUT_MS (logged) instead of hanging; an
 # application try/catch sees the error; with no Redis at all the request gets 503, not an empty
-# session (LOOK 1 swallowed Redis errors: users looked logged out and session data was lost).
+# session (1.0.x swallowed Redis errors: users looked logged out and session data was lost).
 # Usage: redis_session_isolation_test.sh <lk-fcgi> <redis-url>   (needs python3, curl)
 set -u
-# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$1"; URL="$2"
 PORT=7461; SPORT=7462; MUTE=7463; DPORT=7464; DOWN=7465

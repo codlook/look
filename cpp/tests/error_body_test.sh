@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: an unmatched route answers "404 Not Found" as plain text, and an application can
+# an unmatched route answers "404 Not Found" as plain text, and an application can
 # replace that answer with route("404", ...).
 # Also: 'use timer' (a built-in namespace, not a module) must say so, in English, instead
 # of telling the author to install a module that does not exist.
@@ -16,7 +16,7 @@ echo 'route("GET", "/ok", fn() => response::text("ok"))' > "$TMP/app.lk"
 for i in $(seq 1 40); do [ "$(curl -s -m 1 "localhost:$PORT/ok")" = ok ] && break; sleep 0.1; done
 body="$(curl -s -m 3 "localhost:$PORT/no-such-route")"
 kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-# LOOK 2: one answer for an unmatched route — the plain text the VM has
+# one answer for an unmatched route — the plain text the VM has
 # always sent. (In 1.x the interpreter path sent JSON instead; that divergence is gone.)
 [ "$body" = "404 Not Found" ] && ok "unmatched route answers '404 Not Found'" || bad "404 body: $body"
 # An application that wants its own body defines route("404", ...).

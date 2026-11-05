@@ -8,7 +8,7 @@
 #   * a misspelled module function, an undefined function and a run-time error are reported and
 #     the session goes on, keeping what was set before
 #   * :vars lists variables as $name and functions as name()
-#   * LOOK 2: lines run on the VM — a rule only the VM applies (a discarded pure result inside a
+#   * lines run on the VM — a rule only the VM applies (a discarded pure result inside a
 #     line) is reported
 # Usage: repl_test.sh <lk>
 LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"

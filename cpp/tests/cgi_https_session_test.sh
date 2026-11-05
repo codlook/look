@@ -7,7 +7,7 @@
 # server, as FastCGI does (the client cannot set these).
 # Usage: cgi_https_session_test.sh <lk-cgi>
 set -u
-# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 CGI="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT

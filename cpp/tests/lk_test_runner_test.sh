@@ -10,7 +10,7 @@
 #     top-level value in the next test
 #   * `lk test name` runs tests/test_name.lk; functions from `use "lib.lk"` are available
 #   * a top-level error and a parse error are reported as such, not as a passing run
-#   * LOOK 2: the test file runs on the VM — a rule only the VM applies stops it at load, and a
+#   * the test file runs on the VM — a rule only the VM applies stops it at load, and a
 #     misspelled assert::… function is named
 # Usage: lk_test_runner_test.sh <lk>
 LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"

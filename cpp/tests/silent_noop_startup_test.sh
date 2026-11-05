@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: two kinds of code that silently did nothing now stop the application at startup, with
+# two kinds of code that silently did nothing now stop the application at startup, with
 # the reason — the same as a call to a function that does not exist.
 #
 #   1. The result of a pure built-in is thrown away: `array::push($list, $x)` alone on a line.

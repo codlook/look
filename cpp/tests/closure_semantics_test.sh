@@ -2,7 +2,7 @@
 # closure_semantics_test.sh — closure yakalama guard'ı (58. bug).
 #
 # Her vaka beklenen DEĞERE karşı sınanır (aşağıdaki WANT tablosu); 12 vaka closure
-# semantiğinin tüm köşelerini kapsar. (Eskiden tree-walk ile VM paritesiydi; LOOK 2'de
+# semantiğinin tüm köşelerini kapsar. (Eskiden tree-walk ile VM paritesiydi; LOOK'de
 # tek motor var.)
 set -u
 LK="${1:-./build/lk}"
@@ -102,7 +102,7 @@ function outer($p){ function inner(){ return $p } $p=$p+7; return inner() }
 print(outer(10))
 LK
 
-# LOOK 2: closure DEGERI yakalar (olusturuldugu andaki) — include/look/capture_check.h.
+# closure DEGERI yakalar (olusturuldugu andaki) — include/look/capture_check.h.
 #   ust duzeyde use'suz ad = global erisim, CANLI kalir .............. A=10  E=333  H=222
 #   fonksiyon icinde, dongude dogan adda, catch/param/foreach'te deger . B=5 C=012 D=012
 #                                                                        I=e0e1e2 J=5 K=1,2

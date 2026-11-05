@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: a misspelled field type must stop the web application at START-UP, not when the
+# a misspelled field type must stop the web application at START-UP, not when the
 # one route that builds the struct is finally called (possibly days later, in production).
 # Structs may refer to structs declared later, so the check runs once setup has finished
 # and every struct is known.

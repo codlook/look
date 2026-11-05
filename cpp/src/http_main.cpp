@@ -577,7 +577,7 @@ static void run_setup_http(const fs::path& script) {
         if (e && std::string(e) == "0" && !warned) {
             warned = true;
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-                "LOOK_BYTECODE=0 is ignored: LOOK 2 runs only on the VM.");
+                "LOOK_BYTECODE=0 is ignored: LOOK runs only on the VM.");
         }
     }
 

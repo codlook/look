@@ -7,7 +7,7 @@
 #   * a path no route matches gets 404, and route("404", fn) answers it with status 404
 #   * a script without routes runs whole and its output is the body
 #   * a run-time error in a handler is a 500; a script that does not load is an error status
-#   * LOOK 2: the application runs on the VM (the web engine of lk-fcgi) — a rule only the VM
+#   * the application runs on the VM (the web engine of lk-fcgi) — a rule only the VM
 #     applies stops it at load
 # Usage: cgi_test.sh <lk-cgi>
 CGI="$(cd "$(dirname "${1:?usage: $0 <lk-cgi>}")" && pwd)/$(basename "$1")"
@@ -77,7 +77,7 @@ printf 'route("GET", "/", fn() => response::text("x")\n' > "$TMP/broken.lk"
 req broken.lk GET /
 [ "${status:-200}" -ge 500 ] && ok "a script that does not load is an error status ($status)" || bad "broken: status=$status body=[$body]"
 
-# LOOK 2: the application runs on the VM — a rule only the VM applies stops it at load, the reason
+# the application runs on the VM — a rule only the VM applies stops it at load, the reason
 # in the development error body
 printf 'use array\n$a = [1]\narray::push($a, 2)\nroute("GET", "/", fn() => response::text("x"))\n' > "$TMP/vmrule.lk"
 req vmrule.lk GET /

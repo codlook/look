@@ -1026,7 +1026,7 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
     for (const char* gone : {"LOOK_WS_MAX_CONN", "LOOK_SSE_MAX_CONN"}) {
         const char* e = std::getenv(gone);
         if (e && *e) look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
-            std::string(gone) + " is set but is not used in LOOK 2: there is no limit on the total of open connections. "
+            std::string(gone) + " is set but is no longer used: there is no limit on the total of open connections. "
             "Limit connections per address with LOOK_HTTP_MAX_CONNS_IP.");
     }
     if (!fiber_dispatch_on()) {

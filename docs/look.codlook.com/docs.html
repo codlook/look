@@ -2357,7 +2357,7 @@ ExecStart=/opt/look/look-fcgi --mode http --port 8090 --workers 4 /var/www/myapp
     <tr><td><code>timer::after(ms, fn)</code></td><td>Call fn once after ms → returns an int id</td></tr>
     <tr><td><code>timer::every(ms, fn)</code></td><td>Call fn repeatedly every ms → returns an int id</td></tr>
     <tr><td><code>timer::cancel($id)</code></td><td>Cancel the timer</td></tr>
-    <tr><td><code>timer::wait([ms])</code></td><td>LOOK 2, command line: wait until every <code>timer::after</code> callback has run → <code>true</code>, or <code>false</code> when ms (default 5000) runs out. A script ends when its last line has run; timers it leaves are named in a warning. Not for <code>timer::every</code> (stop it with <code>timer::cancel</code>); an error in a web request.</td></tr>
+    <tr><td><code>timer::wait([ms])</code></td><td>Command line: wait until every <code>timer::after</code> callback has run → <code>true</code>, or <code>false</code> when ms (default 5000) runs out. A script ends when its last line has run; timers it leaves are named in a warning. Not for <code>timer::every</code> (stop it with <code>timer::cancel</code>); an error in a web request.</td></tr>
   </table>
 
   <h3>sse:: API</h3>
@@ -2627,7 +2627,7 @@ LOOK_PARALLEL_LIMIT=50</code></pre>
 
   <h3>Dispatch — fibers (default on Linux) or a worker per connection</h3>
   <p>On Linux, connections are served by <strong>fibers</strong>: stackful green threads parked on <code>epoll</code> (the Go netpoller model). A connection that waits — idle, slow, or kept open by a browser between requests — holds no worker. This is the default from 1.0.20. The older model gives each open connection a worker until it sends a request or times out; with no reverse proxy in front, as many open connections as there are workers make every other client wait. It is still selectable on Linux, and it is the only model on Windows:</p>
-  <pre><code>LOOK_FIBER_DISPATCH=0 lk-fcgi --mode http --port 9000 --workers 4   # worker per connection (LOOK 1 only)</code></pre>
+  <pre><code>LOOK_FIBER_DISPATCH=0 lk-fcgi --mode http --port 9000 --workers 4   # worker per connection</code></pre>
   <p>Throughput measured before 1.0.20 (the worker-per-connection model is somewhat faster on short routes; fibers are far better when requests wait on I/O, and they keep serving everyone when connections stay open):</p>
   <table>
     <tr><th>Workload</th><th>Worker per connection</th><th>Fibers</th><th>Use</th></tr>
@@ -4567,7 +4567,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
     <tr><td><code>LOOK_BYTECODE</code></td><td><code>1</code></td><td>Bytecode VM on (default). <code>0</code> forces the tree-walk interpreter.</td></tr>
-    <tr><td><code>LOOK_FIBER_DISPATCH</code></td><td><em>on (Linux)</em></td><td><code>0</code> selects a worker per connection instead of fibers (see <a href="#concurrent">Concurrent Runtime</a>). Windows always uses a worker per connection. Not in LOOK 2.</td></tr>
+    <tr><td><code>LOOK_FIBER_DISPATCH</code></td><td><em>on (Linux)</em></td><td><code>0</code> selects a worker per connection instead of fibers (see <a href="#concurrent">Concurrent Runtime</a>). Windows always uses a worker per connection.</td></tr>
     <tr><td><code>LOOK_WARN_UNDEF</code></td><td><em>off</em></td><td>Undefined variables are a hard error by default. <code>1</code> restores lenient mode with a warning instead.</td></tr>
   </table>
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: an application that uses the job queue runs on the VM.
+# an application that uses the job queue runs on the VM.
 #
 # The usual shape is a handler registered at the top level and a timer that drains the queue:
 #     jobs::worker("mail", function($job) { ... })

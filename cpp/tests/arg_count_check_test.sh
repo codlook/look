@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2 transition check: `lk --check` lists calls to a named function of the same file with
+# LOOK transition check: `lk --check` lists calls to a named function of the same file with
 # the wrong number of arguments. The two engines disagree on these today (the tree-walk
 # engine raises an error, the VM accepts the call and a missing parameter is null), so the
 # places are counted before one rule is chosen. Warnings only: exit code and "OK" unchanged.

@@ -6,7 +6,7 @@
 #   1) CLI-VM     : lk <script>  — bytecode VM, main.cpp/build_cli_builtins
 #   2) web-VM     : lk-fcgi --mode http (route)  — bytecode VM, http_main.cpp/req_builtins
 #
-# LOOK 2 tek motorludur (yorumlayıcı silindi); eskiden üçüncü bir "tree-walk" sütunu vardı.
+# LOOK tek motorludur (yorumlayıcı silindi); eskiden üçüncü bir "tree-walk" sütunu vardı.
 # NEDEN 2 SÜTUN: builtin wiring İKİ ayrı elle-yazılmış yerde duruyor (build_cli_builtins
 # ve req_builtins). Bunlar sessizce birbirinden kayabilir — nitekim kaydı da (math::round
 # bir dönem web'de çalışıp CLI-VM'de çalışmadı). Tek sütunlu test bu kaymayı GÖREMEZ.
@@ -14,7 +14,7 @@
 # Her motor değişikliğinden (opcode/builtin/Value/köprü) sonra çalıştır.
 # Kullanım: bash differential_test.sh [lk_yolu] [lk-fcgi_yolu]
 set -u
-# LOOK 2: çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LK="${1:-$DIR/../build/lk}"
@@ -50,7 +50,7 @@ WEBVM=$(curl -s --max-time 15 "http://127.0.0.1:$PORT/t")
 
 fail=0
 # ── Guard'ın KENDİ pozitif kontrolü (2026-09-30) ─────────────────────────────────
-# VM script'i çalıştıramazsa sessizce başka bir yola düşmek yerine HATA vermeli (LOOK 2'de
+# VM script'i çalıştıramazsa sessizce başka bir yola düşmek yerine HATA vermeli (LOOK'de
 # başka yol yok). Bu önkoşul bozulursa guard sahte-yeşil verir — tam da gövdenin 255-register
 # sınırını aşıp aylarca VM'siz (yorumlayıcıda) koştuğu gibi. İki yönü de kanıtla:
 printf 'use cache\nprint(cache::__guard_probe_not_a_fn())\n' > "$TMP/strict_probe.lk"

@@ -2,9 +2,9 @@
 # VM operand-width guard.
 #
 # Operands travel in 16 bits and two of them form a 32-bit field (constant index, jump
-# target). Up to LOOK 1 they were 8 bits: past 255 arguments / parameters / captures /
+# target). Up to 1.0.x they were 8 bits: past 255 arguments / parameters / captures /
 # registers (and 65535 constants, or a loop body longer than 65535 instructions) a program
-# did not compile on the VM, and LOOK 2 refuses to start an app the VM cannot compile. Each
+# did not compile on the VM, and LOOK refuses to start an app the VM cannot compile. Each
 # case here runs on the VM and must give the right answer. Above the real
 # limit (65534) the compiler still refuses, and names the limit (no silent wrap-around: in
 # v1 a call with 300 arguments once delivered 44).

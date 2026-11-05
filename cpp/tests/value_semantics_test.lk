@@ -1,9 +1,9 @@
-# LOOK 2 value semantics guard.
+# LOOK value semantics guard.
 #
 # Arrays, maps and structs are VALUES: assigning one, passing it to a function or returning
 # it gives the receiver its own value, and changing one never changes another. Storage is
 # shared until someone writes (copy on write), so none of this copies eagerly.
-# In LOOK 1 they were shared references: `$a = $b; $a[0] = 9` changed $b too, a function
+# In 1.0.x they were shared references: `$a = $b; $a[0] = 9` changed $b too, a function
 # could change its caller's array, and one request could change another's.
 #
 # Both engines get the rule from one header (include/look/value_path.h).

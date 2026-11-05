@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: a timer armed in a route runs on the VM.
+# a timer armed in a route runs on the VM.
 #
 # timer:: used to exist only inside the tree-walk engine. A route that armed a timer could
 # not run on the VM at all: until 1.0.7 it worked through a second run of the request, since

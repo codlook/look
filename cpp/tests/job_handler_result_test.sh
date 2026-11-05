@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# LOOK 2: a job handler says what happened, and a retry waits.
+# a job handler says what happened, and a retry waits.
 #
 #   return true    the job is done
 #   return false   the job failed and is tried again LATER, up to its limit (3)
 #   an error       the same as false; the error is logged
 #   anything else  — most often a forgotten `return` — is a mistake of the handler: it is
 #                  logged and the job is marked failed WITHOUT being run again
-# In LOOK 1 a handler that returned nothing counted as failed and was run again at once: three
+# In 1.0.x a handler that returned nothing counted as failed and was run again at once: three
 # runs in the same millisecond, so a handler that sent a mail and forgot `return true` sent it
 # three times. And a retry after a real failure came immediately, which helps nothing when the
 # cause is a mail server that did not answer for a moment.

@@ -19,7 +19,7 @@ struct DifUser {
   role any = "member"
   tag any = $dif_sd
 }
-# LOOK 2 tipli struct (ad + tip + varsayılan) — üç motorda aynı sıfır değeri ve aynı hata.
+# LOOK tipli struct (ad + tip + varsayılan) — üç motorda aynı sıfır değeri ve aynı hata.
 struct DifTyped {
   n int = 1
   s string
@@ -31,7 +31,7 @@ struct DifTyped {
 # sınırını aşıyordu → CLI VE web TÜM programı SESSİZCE yorumlayıcıya veriyordu; bu guard'ın
 # "tree-walk == CLI-VM == web-VM" satırı gövde için yorumlayıcı×3 idi (bugünkü derleyiciyle
 # ~2026-07-18'den beri). Artık her parça sınırın çok altında ve differential_test.sh CLI+web
-# sütunları yalnız VM'de koşar (LOOK 2'de başka motor yok): VM derleyemezse guard KIRMIZI olur, sessiz geçmez.
+# sütunları yalnız VM'de koşar (LOOK'de başka motor yok): VM derleyemezse guard KIRMIZI olur, sessiz geçmez.
 # YENİ KATEGORİ EKLERKEN: tek bir dif_pN'i şişirme — yeni bir dif_pN aç.
 function dif_p1() {
   $o = "";
@@ -214,7 +214,7 @@ function dif_p7() {
   $o .= "X:" . $im . ";";
   # Y: struct — varsayılan uygulanır · literal ters sırada verilse de alan sırası bildirimdeki
   # gibi · dinamik varsayılan · bilinmeyen alanlı literal CLI ve web'de AYNI hatayı verir ·
-  # LOOK 2: şekil SABİT — sonradan bildirilmemiş alana atama CLI ve web'de AYNI hatayı verir.
+  # şekil SABİT — sonradan bildirilmemiş alana atama CLI ve web'de AYNI hatayı verir.
   $su1 = DifUser{name: "Can"}
   $su2 = DifUser{role: "admin", name: "Ada"}
   $ye = "";

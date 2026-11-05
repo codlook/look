@@ -1,11 +1,11 @@
-# LOOK 2 design: value semantics for arrays, maps and structs
+# Design: value semantics for arrays, maps and structs
 
 Status: **accepted (2026-10-04), not implemented yet.** Branch: `v2`. Decided: structs are value
 types; the parameter-write check runs by default at load and is an error under `lk --check`.
 
 ## The problem
 
-In LOOK 1, arrays are shared by reference. `$a = $b` does not copy, passing an array to a
+In 1.0.x, arrays are shared by reference. `$a = $b` does not copy, passing an array to a
 function does not copy, and `$a[0] = x` changes the array for every name that refers to it.
 This is undocumented behaviour that PHP-shaped syntax leads people to expect the opposite of,
 and it is the single root of a whole class of defects found in 1.0.x:
@@ -174,8 +174,8 @@ check that only runs when someone remembers to run it does not make it loud. So:
   into a parameter and never returns or stores it produces a warning that names the
   function and the parameter.
 - **`lk --check` turns the same finding into an error**, for CI.
-- An existing LOOK 1 application (LookPress included) has to come out of this check clean
-  before it moves to LOOK 2.
+- An application written for 1.0.x (LookPress included) has to come out of this check clean
+  before it is upgraded.
 
 The check is part of the work, not an afterthought.
 

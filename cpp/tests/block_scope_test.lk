@@ -1,4 +1,4 @@
-# LOOK 2: a block scopes the variables first assigned in it — at the top level of a file too.
+# a block scopes the variables first assigned in it — at the top level of a file too.
 # Inside a function both engines already did this; at the top level the VM made such a
 # variable a global, so `if (c) { $z = 1 } print($z)` printed 1 on the VM and failed with
 # "Undefined variable" on the tree-walk engine (also in 1.0.x). One rule now: moving code

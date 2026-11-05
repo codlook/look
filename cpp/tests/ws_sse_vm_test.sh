@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LOOK 2: WebSocket and SSE run on the VM — the routes, the connection handlers and the
+# WebSocket and SSE run on the VM — the routes, the connection handlers and the
 # callbacks given to ws::on / sse::on.
 #
 # They used to run on the tree-walk engine: a WS or SSE route was dispatched there directly,

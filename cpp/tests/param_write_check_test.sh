@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# LOOK 2: a function that changes a parameter and never returns it is reported.
+# a function that changes a parameter and never returns it is reported.
 #
 # Arrays and structs are values: what a function writes into a parameter does not reach the
-# caller. In LOOK 1 it did. That difference raises no error — the code runs and the caller
+# caller. In 1.0.x it did. That difference raises no error — the code runs and the caller
 # simply does not see the change — so it is reported instead (look/param_write_check.h):
 #   * `lk --check` : an error, one CHECK line per finding, exit status 1
 #   * at load (CLI, web startup, files loaded with `use`): one WARN line per finding; the

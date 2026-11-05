@@ -501,7 +501,7 @@ int main(int argc, char* argv[]) {
                 const char* v = std::getenv(var);
                 if (v && v[0] == '0')
                     look::Logger::instance().log(look::LogLevel::LOG_WARN, "VM",
-                        std::string(var) + "=0 is ignored: LOOK 2 runs only on the VM.");
+                        std::string(var) + "=0 is ignored: LOOK runs only on the VM.");
             }
             const std::filesystem::path script_dir = std::filesystem::absolute(filename).parent_path();
             look::CompiledProgram compiled;

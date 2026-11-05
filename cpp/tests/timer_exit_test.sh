@@ -4,7 +4,7 @@
 # The timer thread is stopped at exit. The stop flag used to be written without the timer
 # lock: when it landed after the thread had checked the flag but before it went to sleep,
 # the wake-up was lost, the thread slept to its deadline (30 seconds when idle) and the
-# exit waited for it. Measured: about 1 run in 20 hung. LOOK 2 made it every script's
+# exit waited for it. Measured: about 1 run in 20 hung. LOOK made it every script's
 # problem: the end-of-script timer warning started the timer thread just to ask for
 # pending timers.
 #   * a script without timers ends at once (and starts no timer thread)

@@ -1,5 +1,5 @@
 # LOOK — kapsamlı regresyon suite (analizcinin 8 turdaki bulguları)
-# Çalıştır: lk tests/regression_all.lk   (LOOK 2: komut satırı da web de aynı VM)
+# Çalıştır: lk tests/regression_all.lk   (komut satırı da web de aynı VM)
 use string
 use json
 

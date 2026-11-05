@@ -145,14 +145,14 @@ bash cpp/tests/differential_test.sh build/lk build/lk-fcgi
 `v2` at bb118f4: everything below plus the pool handoff (735278f — a returned connection goes to
 the request that waited longest), the buffered-reply fix (7f84edd) and no self-wake on a fiber's
 own scheduler thread (bb118f4). Raw output: `cpp/bench/results/2026-11-05-race2.txt`. The machine
-was idle throughout: the LOOK 2 HTTP layer alone answered 142,404 requests/s before the run and
+was idle throughout: the LOOK HTTP layer alone answered 142,404 requests/s before the run and
 141,447 after.
 
 **Trivial JSON**
 
 | Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| LOOK 2 | 93,858 | 2.2 ms | 88,928 | 16 ms | **4.4 MB** |
+| LOOK | 93,858 | 2.2 ms | 88,928 | 16 ms | **4.4 MB** |
 | LOOK 1.0.45 | 22,051 | 78 ms | 17,474 | 301 ms | 7.3 MB |
 | Go 1.22 | **110,879** | 2.7 ms | **100,629** | **15 ms** | 37 MB |
 | Node 22 (cluster ×2) | 98,085 | **2.0 ms** | 77,140 | 1.03 s | 119 MB |
@@ -163,23 +163,23 @@ was idle throughout: the LOOK 2 HTTP layer alone answered 142,404 requests/s bef
 
 | Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| LOOK 2 | **30,258** | **5.3 ms** | **30,351** | **47 ms** | **25 MB** |
+| LOOK | **30,258** | **5.3 ms** | **30,351** | **47 ms** | **25 MB** |
 | LOOK 1.0.45 | 6,087 | 176 ms | 5,068 | 1.37 s | 57 MB |
 | Go 1.22 | 25,568 | 48 ms | 23,988 | 1.09 s | 51 MB |
 | Node 22 (cluster ×2) | 14,127 | 15 ms | 12,092 | 384 ms | 287 MB |
 | Elixir (Bandit) | 13,801 | 9.1 ms | 13,016 | 115 ms | 143 MB |
 | PHP (FPM + nginx) | 2,212 | 356 ms | 2,570 | 770 ms | 128 MB |
 
-Go had 5–60 wrk timeouts per level on the DB test, Node 89 at c=1000 on JSON; LOOK 2 had none.
+Go had 5–60 wrk timeouts per level on the DB test, Node 89 at c=1000 on JSON; LOOK had none.
 
 What it says:
-- **Trivial JSON:** LOOK 2 is level with Node at c=100 (96%) and ahead of it at c=1000 (115%, with
+- **Trivial JSON:** LOOK is level with Node at c=100 (96%) and ahead of it at c=1000 (115%, with
   a 16 ms p99 against Node's 1.03 s); 85–88% of Go, and the smallest memory of the six.
-- **Database:** LOOK 2 serves the most requests of the six and now also has the steadiest tail —
+- **Database:** LOOK serves the most requests of the six and now also has the steadiest tail —
   p99 5.3 ms at c=100 and 47 ms at c=1000, where Elixir has 115 ms and Go 1.09 s. The pool handoff
   cost ~10% of the requests/s of the previous run (34,215 → 30,258 at c=100) and took the c=1000
   p99 from 311 ms to 47 ms — the trade BENCHMARK.md's regression rule asks for.
-- **LOOK 2 vs LOOK 1:** 4–5× on trivial JSON, 5–6× on MySQL.
+- **LOOK vs 1.0.45:** 4–5× on trivial JSON, 5–6× on MySQL.
 
 ## Results — 2026-11-04, after the per-request work (tests 8 and 12, six runtimes)
 
@@ -187,7 +187,7 @@ The same script, the same machine, later the same day, on `v2` at 60c5da9: per-r
 tables built once per worker thread (731b141), MySQL statements prepared once per connection with
 buffered reads (993658f), PostgreSQL in one send with buffered reads (af006d3), SQLite statements
 prepared once per connection (60c5da9). Raw output: `cpp/bench/results/2026-11-04-race2-after.txt`.
-The machine was idle for this run: the LOOK 2 HTTP layer alone (`/health`) answered 136–140k
+The machine was idle for this run: the LOOK HTTP layer alone (`/health`) answered 136–140k
 requests/s before it and 125k after. (An earlier run the same afternoon, while the machine was busy,
 had moved by up to 40% between runtimes measured minutes apart; it is not used.)
 
@@ -195,44 +195,44 @@ had moved by up to 40% between runtimes measured minutes apart; it is not used.)
 
 | Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| LOOK 2 | 92,692 | **2.0 ms** | 78,157 | 19 ms | **4.9 MB** |
+| LOOK | 92,692 | **2.0 ms** | 78,157 | 19 ms | **4.9 MB** |
 | LOOK 1.0.45 | 18,047 | 81 ms | 21,294 | 189 ms | 9.8 MB |
 | Go 1.22 | **112,992** | 2.8 ms | **106,375** | **15 ms** | 35 MB |
 | Node 22 (cluster ×2) | 96,120 | 2.4 ms | 85,084 | 1.05 s | 117 MB |
 | Elixir (Bandit) | 51,741 | 3.6 ms | 46,893 | 43 ms | 116 MB |
 | PHP (FPM + nginx) | 3,886 | 80 ms | 3,835 | 397 ms | 113 MB |
 
-Measured back to back (LOOK 2, Go, Node, twice, c=100): LOOK 2 95,467 / 95,890, Go 115,143 /
-111,698, Node 98,464 / 94,512 — LOOK 2 level with Node, about 84% of Go, with the lowest p99.
+Measured back to back (LOOK 2, Go, Node, twice, c=100): LOOK 95,467 / 95,890, Go 115,143 /
+111,698, Node 98,464 / 94,512 — LOOK level with Node, about 84% of Go, with the lowest p99.
 
 **One DB row** (MySQL 8)
 
 | Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| LOOK 2 | **34,215** | 24 ms | **29,447** | 311 ms | **25 MB** |
+| LOOK | **34,215** | 24 ms | **29,447** | 311 ms | **25 MB** |
 | LOOK 1.0.45 | 5,097 | 183 ms | 4,963 | 1.32 s | 58 MB |
 | Go 1.22 | 22,034 | 68 ms | 20,496 | 1.07 s | 51 MB |
 | Node 22 (cluster ×2) | 11,273 | 18 ms | 9,601 | 502 ms | 285 MB |
 | Elixir (Bandit) | 11,606 | **15 ms** | 11,080 ² | **173 ms** | 217 MB |
 | PHP (FPM + nginx) | 2,068 | 197 ms | 2,180 | 875 ms | 126 MB |
 
-² 1,084 non-2xx responses at c=1000. Go had 35 wrk timeouts at c=1000; LOOK 2 had 19 at c=50.
+² 1,084 non-2xx responses at c=1000. Go had 35 wrk timeouts at c=1000; LOOK had 19 at c=50.
 
 **The same row on PostgreSQL 16 and SQLite** (LOOK only — the other apps have no such variant yet;
 `cpp/bench/dbbench/look/dbapp.lk` and `sqliteapp.lk`, c=100)
 
-| | LOOK 2 | p99 | LOOK 1.0.45 | p99 |
+| | LOOK | p99 | LOOK 1.0.45 | p99 |
 | --- | ---: | ---: | ---: | ---: |
 | PostgreSQL 16 | 37,099 | 19 ms | 5,770 | 217 ms |
 | SQLite | 69,576 | 1.9 ms | 13,381 | 84 ms |
 
 What it says:
-- **Trivial JSON:** LOOK 2 went from about a third of Node's throughput to level with it, and is
+- **Trivial JSON:** LOOK went from about a third of Node's throughput to level with it, and is
   at 82–84% of Go, with the lowest p99 at c=100 and the smallest memory of the six.
-- **Database:** LOOK 2 now serves the most requests of the six on MySQL — about 1.6× Go and 3× Node
+- **Database:** LOOK now serves the most requests of the six on MySQL — about 1.6× Go and 3× Node
   and Elixir — with the smallest memory. Elixir keeps the steadiest tail.
-- **LOOK 2 vs LOOK 1:** 5× on trivial JSON, 6–7× on MySQL and PostgreSQL, 5× on SQLite.
-- **Open for LOOK 2 (then):** the DB p99 at c=1000 (311 ms against Elixir's 173 ms) — how requests waiting
+- **LOOK vs 1.0.45:** 5× on trivial JSON, 6–7× on MySQL and PostgreSQL, 5× on SQLite.
+- **Open then:** the DB p99 at c=1000 (311 ms against Elixir's 173 ms) — how requests waiting
   for a pooled connection are ordered (fixed in 735278f, see the current run above).
 
 ## Results — 2026-11-04, before (tests 8 and 12, six runtimes)
@@ -241,13 +241,13 @@ What it says:
 and PHP 8 (FPM + nginx). Raw output: `cpp/bench/results/2026-11-04-race2.txt`. Servers `--cpus=2
 --memory=4g`, wrk `-t8 -d8s` from a separate container, warm-up, best of 3. Host: 16 CPUs, Windows 11
 + Docker Desktop 29.7 (WSL2) — a developer machine, so read the numbers relative to each other.
-LOOK 2 is the `v2` branch after the idle-thread removal (a072aac). Requests per second · p99 · RSS.
+LOOK is the `v2` branch after the idle-thread removal (a072aac). Requests per second · p99 · RSS.
 
 **Trivial JSON** (`{"ok":true,"msg":"hello"}`)
 
 | Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| LOOK 2 | 32,760 | 4.6 ms | 32,990 | 41 ms | **7.9 MB** |
+| LOOK | 32,760 | 4.6 ms | 32,990 | 41 ms | **7.9 MB** |
 | LOOK 1.0.45 | 17,199 | 83 ms | 17,391 | 303 ms | 6.2 MB |
 | Go 1.22 | **119,454** | 2.3 ms | **108,260** | **16 ms** | 36 MB |
 | Node 22 (cluster ×2) | 102,812 | **2.1 ms** | 88,038 | 1.06 s | 119 MB |
@@ -258,7 +258,7 @@ LOOK 2 is the `v2` branch after the idle-thread removal (a072aac). Requests per 
 
 | Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| LOOK 2 | 14,553 | 41 ms | 13,449 | 533 ms | 53 MB |
+| LOOK | 14,553 | 41 ms | 13,449 | 533 ms | 53 MB |
 | LOOK 1.0.45 | 6,888 | 147 ms | 5,762 | 722 ms | 56 MB |
 | Go 1.22 | **26,017** | 47 ms | **23,914** | 1.15 s | **51 MB** |
 | Node 22 (cluster ×2) | 14,771 | 15 ms | 12,709 | 903 ms | 288 MB |
@@ -266,15 +266,15 @@ LOOK 2 is the `v2` branch after the idle-thread removal (a072aac). Requests per 
 | PHP (FPM + nginx) | 2,585 | 118 ms | 2,864 | 577 ms | 126 MB |
 
 ¹ 8,752 non-2xx responses at c=1000 (pool queue timeouts). Node had a few dozen wrk timeouts per
-run and Go 72 at c=1000 on the DB test; LOOK 2 had 3 at c=1000 on the DB test.
+run and Go 72 at c=1000 on the DB test; LOOK had 3 at c=1000 on the DB test.
 
 What it says:
-- **LOOK 2 vs LOOK 1:** about 2× the throughput on both tests and a far lower tail (trivial JSON at
+- **LOOK vs 1.0.45:** about 2× the throughput on both tests and a far lower tail (trivial JSON at
   c=1000: p99 303 ms → 41 ms). CPU throttling under the 2-CPU quota fell from 245 to 44 periods.
-- **Memory:** LOOK 2 serves 1000 connections in 8 MB on the trivial test — the smallest of the six.
+- **Memory:** LOOK serves 1000 connections in 8 MB on the trivial test — the smallest of the six.
 - **Raw throughput:** Go and Node lead the trivial test by about 3×; on the DB test LOOK 2, Node and
   Elixir are level and Go leads. Elixir has the steadiest DB tail at c=100.
-- **Open for LOOK 2 (then):** the DB p99 at c=1000 (533 ms) — measured against in the run above.
+- **Open then:** the DB p99 at c=1000 (533 ms) — measured against in the run above.
 
 ## Baseline & regression discipline
 

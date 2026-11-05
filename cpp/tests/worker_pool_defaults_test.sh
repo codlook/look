@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Default workers follow the CPUs LOOK may use; the database pool opens connections as needed.
 #
-# LOOK 1 started CPUs × 4 worker threads (at most 64) everywhere and opened the whole database
+# 1.0.x started CPUs × 4 worker threads (at most 64) everywhere and opened the whole database
 # pool — one connection per worker — at db::connect. With fiber dispatch (Linux --mode http) a
 # worker no longer waits on the database, so the extra threads only cost memory and tail latency
 # (measured: same throughput at 8 and 32 workers, p99 16 ms vs 34 ms). The CPU count also ignored
@@ -72,7 +72,7 @@ is "LOOK_DB_POOL_SIZE=1: four parallel queries all answered" "$ok" 1
 is "… on one connection"                                  "$(curl -s --max-time 5 "http://127.0.0.1:$P/pool")" 1
 
 echo "== no idle threads (LOOK_DB_ASYNC_THREADS is gone)"
-# LOOK 1 ayrıca işçi sayısı kadar "database" thread'i açıyordu; hiçbir şey onları kullanmıyordu.
+# 1.0.x ayrıca işçi sayısı kadar "database" thread'i açıyordu; hiçbir şey onları kullanmıyordu.
 # Thread'lerin adı yok: varsayılanla açılan thread sayısı, eskiden havuzu kapatan
 # LOOK_DB_ASYNC_THREADS=0 ile açılanla AYNI olmalı (eskisi işçi sayısı kadar fazlaydı).
 threads() { ls /proc/$pid/task | wc -l; }
