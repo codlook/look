@@ -477,6 +477,30 @@ struct SmtpSession {
     }
 };
 
+// ── TLS (STARTTLS) — bellek BIO'ları ile olay döngüsünde ─────────────────────
+// Soket olay döngüsünde kalır: döngünün okuduğu ham baytlar SSL'in okuma BIO'suna yazılır,
+// SSL'in ürettiği şifreli baytlar yazma BIO'sundan alınıp döngünün normal yazma yoluyla
+// (async_write) gönderilir. İşçi iş parçacığı beklemez, soket el değiştirmez.
+// 1.0.17'ye dek el sıkışma işçide soket üzerinde yapılıyor, sonra döngü ham baytları kendisi
+// okuyup SSL_read'e soketten TEKRAR okumasını söylüyordu (baytlar tüketilmişti) ve yanıtlar
+// şifresiz yazılıyordu: TLS'li gönderen hiçbir yanıt alamıyordu (ölçüldü). epoll'de bir fd için
+// tek bekleyen yazma vardır: bir adımın bütün şifreli çıktısı TEK async_write'ta gider.
+static std::string smtp_tls_drain(SSL* ssl) {
+    std::string out;
+    BIO* w = SSL_get_wbio(ssl);
+    char b[16384];
+    int n;
+    while ((n = BIO_read(w, b, (int)sizeof(b))) > 0) out.append(b, (size_t)n);
+    return out;
+}
+
+// Oturuma gidecek yanıt: TLS etkinse şifreli, değilse olduğu gibi.
+static std::string smtp_wire(SmtpSession* s, const std::string& plain) {
+    if (!s->ssl || !s->tls_active) return plain;
+    if (!plain.empty()) SSL_write(s->ssl, plain.data(), (int)plain.size());   // bellek BIO: tam yazılır
+    return smtp_tls_drain(s->ssl);
+}
+
 // ── Address extraction ─────────────────────────────────────────────────────────
 // Extract <addr> from "MAIL FROM:<addr>" or "RCPT TO:<addr>".
 // "MAIL FROM:<addr>" / "RCPT TO:<addr>" parametresini ayrıştır (RFC 5321 §4.1.2).
@@ -750,7 +774,7 @@ private:
                 // olabilir. Ölçüldü: yanıt o İLGİSİZ bağlantıya, 220 banner'ının
                 // ardından yazılıyordu. Oturum kapandıysa yanıtın alıcısı yok.
                 if (session->closed) return;
-                loop->async_write(fd, reply, [loop, fd, session, resume = std::move(resume)](bool ok) {
+                loop->async_write(fd, smtp_wire(session.get(), reply), [loop, fd, session, resume = std::move(resume)](bool ok) {
                     session->reset_envelope();
                     // Yanıt yazıldı: noktadan sonra art arda gönderilmiş komutlar tamponda bekliyor.
                     if (ok && !session->closed && resume) resume();
@@ -912,9 +936,15 @@ struct SmtpServer::Impl {
         loop->async_write(fd, banner, [this, fd, sess](bool ok) {
             if (!ok) { close_session(fd); return; }
             sess->state = SmtpState::EHLO;
-            loop->async_read(fd, [this, fd, sess](const char* data, size_t len) {
-                on_data(fd, sess, data, len);
-            });
+            read_more(fd, sess);
+        });
+    }
+
+    // Sonraki okumayı kur: TLS başladıysa ham baytlar önce SSL'den geçer.
+    void read_more(int fd, std::shared_ptr<SmtpSession> sess) {
+        loop->async_read(fd, [this, fd, sess](const char* data, size_t len) {
+            if (sess->ssl) on_raw_tls(fd, sess, data, len);
+            else on_data(fd, sess, data, len);
         });
     }
 
@@ -932,7 +962,7 @@ struct SmtpServer::Impl {
     void send_reply(int fd, std::shared_ptr<SmtpSession> sess,
                     const std::string& reply,
                     std::function<void()> then = nullptr) {
-        loop->async_write(fd, reply, [this, fd, sess, then](bool ok) {
+        loop->async_write(fd, smtp_wire(sess.get(), reply), [this, fd, sess, then](bool ok) {
             if (!ok) { close_session(fd); return; }
             if (then) then();
             else resume(fd, sess);
@@ -995,9 +1025,7 @@ struct SmtpServer::Impl {
         }
 
         // Need more data
-        loop->async_read(fd, [this, fd, sess](const char* data, size_t len) {
-            on_data(fd, sess, data, len);
-        });
+        read_more(fd, sess);
     }
 
     // Returns false when reading is handed off to async_write or session is closed
@@ -1057,15 +1085,15 @@ struct SmtpServer::Impl {
                         "250-8BITMIME\r\n"
                         "250-PIPELINING\r\n"
                         "250-SMTPUTF8\r\n";
-        // STARTTLS İLAN EDİLMEZ (1.0.18). 1.0.17'ye dek sertifika varken ilan ediliyordu ama el
-        // sıkışmadan sonra oturum hiç yanıt almıyordu (yanıtlar şifrelenmeden yazılıyor, okuma
-        // yolu TLS ile uyumsuz): TLS deneyen her gönderen postasını teslim edemiyordu. İlan
-        // olmayınca gönderen düz metinle teslim eder. Sertifika tanımlıysa AUTH de ilan edilmez:
-        // şifreleme olmadan parola kabul edilmez (aşağıda 530), yani başarılamayacak bir şey sunulmaz.
-        // AUTH PLAIN/LOGIN parolayı yalnız base64 ile KODLAR, şifrelemez; bu sunucuda TLS de yok.
-        // Bu yüzden AUTH yalnız aynı makineden gelen bağlantıya sunulur (1.0.19): ağdan parola
-        // açık gitmez. Adres getpeername'den gelir (on_accept), hiçbir başlığa güvenilmez.
-        if (sess->submission && !ssl_ctx && smtp_is_loopback(sess->msg.remote_ip))
+        // STARTTLS: sertifika tanımlıysa ve oturum henüz şifreli değilse ilan edilir (bellek BIO'lu
+        // TLS, yukarıda). 1.0.18–bu sürüm arası ilan edilmiyordu: o zamanki uygulama el sıkışmadan
+        // sonra hiç yanıt vermiyordu.
+        if (ssl_ctx && !sess->tls_active) r += "250-STARTTLS\r\n";
+        // AUTH PLAIN/LOGIN parolayı yalnız base64 ile KODLAR, şifrelemez. Sertifika varsa AUTH
+        // yalnız TLS içinde sunulur; sertifika yoksa yalnız aynı makineden gelen bağlantıya (1.0.19):
+        // ağdan parola açık gitmez. Adres getpeername'den gelir (on_accept), hiçbir başlığa güvenilmez.
+        if (sess->submission &&
+            (sess->tls_active || (!ssl_ctx && smtp_is_loopback(sess->msg.remote_ip))))
             r += "250-AUTH PLAIN LOGIN\r\n";
         r += "250 OK\r\n";
         sess->state = SmtpState::READY;
@@ -1076,9 +1104,12 @@ struct SmtpServer::Impl {
     bool handle_ready(int fd, std::shared_ptr<SmtpSession> sess,
                       const std::string& verb, const std::string& line) {
         if (verb == "STARTTLS") {
-            // İlan edilmiyor (bkz. handle_ehlo); yine de gönderen bir istemci dürüst bir ret alır
-            // ve düz metinle sürdürebilir. do_starttls / on_data_tls çağrılmıyor.
-            return error_reply(fd, sess, "502 5.5.1 STARTTLS is not available on this server\r\n");
+            if (!ssl_ctx)
+                return error_reply(fd, sess, "502 5.5.1 STARTTLS is not available on this server (no certificate)\r\n");
+            if (sess->ssl)
+                return error_reply(fd, sess, "503 5.5.1 TLS is already active\r\n");
+            start_tls(fd, sess);
+            return false;
         }
         // AUTH PLAIN [initial-response]
         if (verb == "AUTH") {
@@ -1089,7 +1120,7 @@ struct SmtpServer::Impl {
                 return error_reply(fd, sess, "503 5.5.1 Already authenticated\r\n");
             }
             if (!sess->tls_active && ssl_ctx) {
-                return error_reply(fd, sess, "530 5.7.0 Encryption is required for AUTH and STARTTLS is not available on this server\r\n");
+                return error_reply(fd, sess, "530 5.7.0 Must issue a STARTTLS command first\r\n");
             }
             if (!sess->tls_active && !smtp_is_loopback(sess->msg.remote_ip)) {
                 // Parola okunmadan reddedilir (satırdaki base64 çözülmez).
@@ -1120,7 +1151,7 @@ struct SmtpServer::Impl {
         if (verb == "MAIL") {
             // :587 submission requires TLS before MAIL FROM (RFC 8314)
             if (sess->submission && !sess->tls_active && ssl_ctx) {
-                return error_reply(fd, sess, "530 5.7.0 Encryption is required on this port and STARTTLS is not available on this server\r\n");
+                return error_reply(fd, sess, "530 5.7.0 Must issue a STARTTLS command first\r\n");
             }
             // SIZE (RFC 1870): ilan edilen tavanı aşan bildirimi gövdeyi okumadan reddet.
             {
@@ -1155,83 +1186,86 @@ struct SmtpServer::Impl {
         return error_reply(fd, sess, "503 5.5.1 Need MAIL command\r\n");
     }
 
-    void do_starttls(int fd, std::shared_ptr<SmtpSession> sess) {
-        // GÜVENLİK (RFC 3207 §4): STARTTLS'ten sonra, TLS handshake'inden ÖNCE
-        // buffer'da kalan plaintext komutlar ATILMALI. Aksi halde saldırgan
-        // `STARTTLS\r\nMAIL FROM:<x>\r\nRCPT TO:<y>\r\n`'i tek plaintext segment'te
-        // yollayıp, bu satırların TLS içinde gelmiş gibi işlenmesini sağlar
-        // (STARTTLS command injection / auth-boundary bypass — CVE-2011-0411 sınıfı).
-        sess->buf.clear();
-        sess->reset_envelope();
-        // Detach fd from EventLoop BEFORE handing it to the worker thread.
-        // This prevents epoll/IOCP from delivering events on the same fd
-        // while SSL_accept() is reading from it on the worker thread.
-        // add_client() re-registers the fd after the handshake completes.
-        loop->detach_fd(fd);
-
-        pool.enqueue_raw([this, fd, sess]() {
-            // fd is now owned exclusively by this worker thread — set blocking
-#if defined(__linux__) || defined(__APPLE__)
-            int flags = fcntl(fd, F_GETFL, 0);
-            fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-#endif
+    // STARTTLS (RFC 3207): "220 Ready" düz metinle gider; yazıldıktan sonra oturum TLS'e geçer.
+    void start_tls(int fd, std::shared_ptr<SmtpSession> sess) {
+        send_reply(fd, sess, "220 2.0.0 Ready to start TLS\r\n", [this, fd, sess] {
+            if (sess->closed) return;
+            // GÜVENLİK (RFC 3207 §4): STARTTLS'ten sonra, el sıkışmadan ÖNCE tamponda kalan düz
+            // metin ATILIR. Aksi halde saldırgan `STARTTLS\r\nMAIL FROM:<x>\r\n`'i tek düz metin
+            // parçasında yollayıp o satırların TLS içinde gelmiş gibi işlenmesini sağlar (STARTTLS
+            // komut enjeksiyonu — CVE-2011-0411 sınıfı). Sonradan gelen düz metin de el sıkışmayı
+            // bozar ve bağlantı kapanır.
+            sess->buf.clear();
+            sess->reset_envelope();
+            // pump() STARTTLS satırından önce waiting=true yaptı; normalde resume() kapatır, burada
+            // özel devam kullanıldığı için biz kapatırız (yoksa TLS'te gelen her satır bekler).
+            sess->waiting = false;
+            // RFC 3207 §4.2: TLS'ten önceki bilgi unutulur — istemci yeniden EHLO göndermeli.
+            sess->state       = SmtpState::EHLO;
+            sess->ehlo_domain.clear();
+            sess->auth_ok     = false;
+            sess->msg.authenticated = false;
             SSL* ssl = SSL_new(ssl_ctx);
-            if (!ssl) {
-                loop->post([this, fd]{ close_session(fd); });
+            BIO* rb  = BIO_new(BIO_s_mem());
+            BIO* wb  = BIO_new(BIO_s_mem());
+            if (!ssl || !rb || !wb) {
+                if (ssl) SSL_free(ssl);
+                if (rb) BIO_free(rb);
+                if (wb) BIO_free(wb);
+                close_session(fd);
                 return;
             }
-            SSL_set_fd(ssl, fd);
-            int r = SSL_accept(ssl);
-            if (r != 1) {
-                unsigned long e = ERR_get_error();
-                char buf[256]; ERR_error_string_n(e, buf, sizeof(buf));
-                Logger::instance().log(LogLevel::LOG_ERROR, "smtp",
-                    std::string("STARTTLS handshake failed: ") + buf);
-                SSL_free(ssl);
-                loop->post([this, fd]{ close_session(fd); });
-                return;
-            }
-            // Handshake complete — restore non-blocking, update session
-            sess->ssl        = ssl;
-            sess->tls_active = true;
-            sess->msg.tls    = true;
-            sess->state      = SmtpState::EHLO; // client must re-EHLO after STARTTLS
-            // Re-wrap fd with TLS-aware reads via BIO
-            // For simplicity: re-register with EventLoop using SSL_read wrapper
-            loop->post([this, fd, sess]() {
-                // Re-register fd for reading — session now uses SSL_read path
-                loop->add_client(fd, [this, fd, sess](const char* data, size_t len) {
-                    on_data_tls(fd, sess, data, len);
-                });
-                // detach_fd + add_client yeni FdEntry yarattı → idle takibini
-                // yeniden uygula (STARTTLS sonrası da slowloris korumalı kalsın).
-                if (smtp_idle_timeout() > 0)
-                    loop->set_idle_timeout(fd, smtp_idle_timeout());
-            });
+            SSL_set_bio(ssl, rb, wb);   // BIO'lar artık SSL'in (SSL_free bırakır)
+            SSL_set_accept_state(ssl);
+            sess->ssl = ssl;
+            read_more(fd, sess);
         });
     }
 
-    // TLS-aware read path — called after STARTTLS handshake
-    // EventLoop still delivers raw bytes, but we pass through SSL_read
-    void on_data_tls(int fd, std::shared_ptr<SmtpSession> sess,
-                     const char* /*raw*/, size_t raw_len) {
-        // len==0 = EventLoop "bağlantı bitti" sinyali (FIN / hata / idle-timeout
-        // sweep). Idle timeout'ta soket açık ama veri yok → SSL_read WANT_READ
-        // döner ve close_session'ı ÇAĞIRMAZDI; conn_count/sessions sızardı.
-        // Terminal sinyali doğrudan ele al ki üst-katman temizliği (ip_release,
-        // sessions.erase, conn_count--) her yolda çalışsın.
-        if (raw_len == 0) { close_session(fd); return; }
-        // With SSL_set_fd the BIO wraps the fd — SSL_read handles decryption
-        char buf[4096];
-        while (true) {
-            int n = SSL_read(sess->ssl, buf, sizeof(buf));
-            if (n <= 0) {
-                int err = SSL_get_error(sess->ssl, n);
-                if (err == SSL_ERROR_WANT_READ) break; // need more data
-                close_session(fd); return;
+    // TLS başladıktan sonra döngünün okuduğu ham baytlar buraya gelir.
+    void on_raw_tls(int fd, std::shared_ptr<SmtpSession> sess, const char* data, size_t len) {
+        // len==0 = döngünün "bağlantı bitti" sinyali (FIN / hata / idle-timeout): üst katman
+        // temizliği (ip_release, sessions.erase, conn_count--) her yolda çalışsın.
+        if (len == 0) { close_session(fd); return; }
+        BIO_write(SSL_get_rbio(sess->ssl), data, (int)len);
+        bool fatal = false;
+        if (!sess->tls_active) {
+            int r = SSL_do_handshake(sess->ssl);
+            if (r == 1) {
+                sess->tls_active = true;
+                sess->msg.tls    = true;
+            } else if (SSL_get_error(sess->ssl, r) != SSL_ERROR_WANT_READ) {
+                unsigned long e = ERR_get_error();
+                char buf[256]; ERR_error_string_n(e, buf, sizeof(buf));
+                Logger::instance().log(LogLevel::LOG_WARN, "smtp",
+                    std::string("STARTTLS handshake failed: ") + buf);
+                fatal = true;
             }
-            on_data(fd, sess, buf, (size_t)n);
         }
+        std::string plain;
+        if (sess->tls_active && !fatal) {
+            char b[16384];
+            for (;;) {
+                int n = SSL_read(sess->ssl, b, (int)sizeof(b));
+                if (n > 0) { plain.append(b, (size_t)n); continue; }
+                int e = SSL_get_error(sess->ssl, n);
+                if (e != SSL_ERROR_WANT_READ) fatal = true;   // close_notify ya da hata
+                break;
+            }
+        }
+        // El sıkışma mesajları, uyarılar, oturum biletleri: hepsi tek yazmada (bkz. smtp_tls_drain).
+        std::string out = smtp_tls_drain(sess->ssl);
+        auto next = [this, fd, sess, plain = std::move(plain), fatal]() {
+            if (sess->closed) return;
+            if (fatal && plain.empty()) { close_session(fd); return; }
+            if (plain.empty()) read_more(fd, sess);
+            else on_data(fd, sess, plain.data(), plain.size());   // satırlar düz metin yoluyla aynı
+        };
+        if (out.empty()) { next(); return; }
+        loop->async_write(fd, std::move(out), [this, fd, next](bool ok) {
+            if (!ok) { close_session(fd); return; }
+            next();
+        });
     }
 
     // Validate recipient: open relay prevention + rcpt limit
@@ -1370,10 +1404,8 @@ SmtpServer::SmtpServer(int port_smtp, int port_sub, int port_smtps,
             "is refused — run it in the same container, or put a relay with TLS in front.");
     }
     if (impl_->ssl_ctx) {
-        Logger::instance().log(LogLevel::LOG_WARN, "smtp",
-            "LOOK_SMTP_CERT is set, but this version does not offer STARTTLS on the SMTP server: "
-            "mail is accepted in plain text, and AUTH on the submission port is refused. "
-            "Put a relay with TLS in front if you need encryption in transit.");
+        Logger::instance().log(LogLevel::LOG_INFO, "smtp",
+            "STARTTLS is offered (LOOK_SMTP_CERT). On the submission port, AUTH and MAIL need TLS first.");
     }
     impl_->pool.start(workers);
 

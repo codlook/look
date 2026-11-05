@@ -493,6 +493,17 @@ and `LOOK_DB_POOL_SIZE` are applied as given; set them as before if you tuned th
 default) that nothing ever used. LOOK 2 does not start them; if the variable is still set, the
 server logs a warning at start and otherwise ignores it.
 
+### The SMTP server offers STARTTLS
+
+With `LOOK_SMTP_CERT` / `LOOK_SMTP_KEY` set, the embedded SMTP server advertises and performs
+STARTTLS on port 25 and on the submission port. LOOK 1 did not offer it (its STARTTLS never
+answered after the handshake and was withdrawn in 1.0.18): it accepted mail in plain text and,
+with a certificate set, refused AUTH on the submission port. Now on the submission port AUTH
+and MAIL are accepted after STARTTLS (before it: `530 Must issue a STARTTLS command first`), and
+lines sent in plain text together with STARTTLS are discarded (RFC 3207). Without a
+certificate nothing changes: mail is accepted in plain text and AUTH is offered to connections
+from this machine only.
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

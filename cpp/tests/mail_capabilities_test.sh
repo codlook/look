@@ -4,7 +4,9 @@
 #
 # Two SMTP capabilities were advertised and did not work: PIPELINING lost mail (fixed in
 # 1.0.17) and STARTTLS completed the handshake and then never answered, so a sender using TLS
-# could not deliver (measured on 1.0.16 and 1.0.17; no longer advertised from 1.0.18). Neither
+# could not deliver (measured on 1.0.16 and 1.0.17; not advertised in 1.0.18; with a certificate it
+# is offered again and checked end to end below: delivery over TLS, PIPELINING inside TLS,
+# AUTH only after TLS, and plain-text lines sent with STARTTLS discarded). Neither
 # had a test. This one reads the advertised lists and fails on a keyword it has no check for.
 # Usage: mail_capabilities_test.sh <lk-fcgi> [base port]
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi> [base port]}")" && pwd)/$(basename "$1")"
@@ -53,8 +55,11 @@ UTF8_RCPT = b"RCPT TO:<\xc3\xbc@localhost>\r\n"
 # ---- SMTP, port 25
 s, caps = ehlo(sport)
 known = {"SIZE", "8BITMIME", "PIPELINING", "SMTPUTF8", "OK"}
-check(caps == known, "[SMTP %s] advertises exactly SIZE 8BITMIME PIPELINING SMTPUTF8 (each checked below)" % tag, sorted(caps))
-check(one(s, b"STARTTLS\r\n").startswith("502"), "[SMTP] STARTTLS is not advertised and is refused with 502")
+if cert:
+    check(caps == known | {"STARTTLS"}, "[SMTP certificate] advertises exactly SIZE 8BITMIME PIPELINING SMTPUTF8 STARTTLS (each checked below)", sorted(caps))
+else:
+    check(caps == known, "[SMTP %s] advertises exactly SIZE 8BITMIME PIPELINING SMTPUTF8 (each checked below)" % tag, sorted(caps))
+    check(one(s, b"STARTTLS\r\n").startswith("502"), "[SMTP] without a certificate STARTTLS is not advertised and is refused with 502")
 check(one(s, b"MAIL FROM:<> SIZE=999999999\r\n").startswith("552"), "[SMTP SIZE] a declared size over the limit is refused before the body"); one(s, b"RSET\r\n")
 check(one(s, b"MAIL FROM:<> SIZE=100\r\n").startswith("250"), "[SMTP SIZE] a declared size within the limit is accepted"); one(s, b"RSET\r\n")
 s.sendall(b"MAIL FROM:<> BODY=8BITMIME\r\nRCPT TO:<u@localhost>\r\nDATA\r\n"); r = rd(s, 4, b"354")
@@ -65,12 +70,61 @@ a = one(s, UTF8_FROM); b = one(s, UTF8_RCPT); c = one(s, b"DATA\r\n"); d = one(s
 check(a.startswith("250") and b.startswith("250") and c.startswith("354") and d.startswith("250") and wait_for(b"Subject: UTF8BOX"), "[SMTP SMTPUTF8] a message with UTF-8 addresses is accepted and delivered", [a, b, c, d])
 s.close()
 
+def tls_after_starttls(s):
+    r = one(s, b"STARTTLS\r\n")
+    s.settimeout(5)
+    try: return r, ctx.wrap_socket(s)
+    except Exception as e: return r + " (%s)" % type(e).__name__, None
+def caps_of(t):
+    t.sendall(b"EHLO t\r\n"); r = rd(t)
+    return set(x[4:].split(" ")[0] for x in r.split("\r\n")[1:] if x.startswith("250"))
+
+# ---- SMTP STARTTLS (1.0.16-1.0.17: the handshake completed and then nothing was answered)
+if cert:
+    s, _ = ehlo(sport)
+    r, t = tls_after_starttls(s)
+    check(r.startswith("220") and t is not None, "[SMTP STARTTLS] 220, then the TLS handshake completes", r)
+    if t:
+        check(caps_of(t) == known, "[SMTP STARTTLS] after TLS a new EHLO is answered, STARTTLS no longer offered")
+        a = one(t, b"MAIL FROM:<>\r\n"); b = one(t, b"RCPT TO:<u@localhost>\r\n"); c = one(t, b"DATA\r\n")
+        d = one(t, b"Subject: OVERTLS\r\n\r\nsent over tls\r\n.\r\n", 6)
+        check(a.startswith("250") and b.startswith("250") and c.startswith("354") and d.startswith("250") and wait_for(b"Subject: OVERTLS"),
+              "[SMTP STARTTLS] a message sent over TLS is answered and delivered", [a, b, c, d])
+        t.sendall(b"MAIL FROM:<>\r\nRCPT TO:<u@localhost>\r\nDATA\r\n"); r = rd(t, 4, b"354")
+        check([x[:3] for x in r.split("\r\n") if x] == ["250", "250", "354"], "[SMTP STARTTLS + PIPELINING] MAIL, RCPT and DATA in one TLS record are answered in order", r)
+        check(one(t, b"Subject: PIPETLS\r\n\r\nx\r\n.\r\n", 6).startswith("250") and wait_for(b"Subject: PIPETLS"), "[SMTP STARTTLS + PIPELINING] … and delivered")
+        check(one(t, b"STARTTLS\r\n").startswith("503"), "[SMTP STARTTLS] a second STARTTLS inside TLS is refused")
+        one(t, b"QUIT\r\n"); t.close()
+    # RFC 3207 §4 / CVE-2011-0411: lines sent in plain text together with STARTTLS are discarded
+    # The injected lines include EHLO: if they ran inside TLS, MAIL would be accepted and the RCPT
+    # below would get 250; discarded, the session waits for EHLO and the RCPT gets 503.
+    s, _ = ehlo(sport)
+    s.sendall(b"STARTTLS\r\nEHLO evil\r\nMAIL FROM:<evil@x.test>\r\n"); r = rd(s, 3, b"220"); s.settimeout(5)
+    try:
+        t = ctx.wrap_socket(s); r2 = one(t, b"RCPT TO:<u@localhost>\r\n")
+        check(r2.startswith("503"), "[SMTP STARTTLS] EHLO and MAIL sent in plain text with STARTTLS are not run inside TLS", r2)
+        t.close()
+    except Exception as e: check(False, "[SMTP STARTTLS] injection case: handshake", type(e).__name__)
+
 # ---- SMTP, submission port
 s, caps = ehlo(subport)
 cred = base64.b64encode(b"\0u@localhost\0tok123")
 if cert:
-    check(caps == known, "[SMTP submission, certificate] AUTH is not advertised (it cannot succeed without encryption)", sorted(caps))
+    check(caps == known | {"STARTTLS"}, "[SMTP submission, certificate] STARTTLS advertised, AUTH not (AUTH needs TLS)", sorted(caps))
     check(one(s, b"AUTH PLAIN " + cred + b"\r\n").startswith("530"), "[SMTP submission, certificate] AUTH in plain text is refused")
+    check(one(s, b"MAIL FROM:<u@localhost>\r\n").startswith("530"), "[SMTP submission, certificate] MAIL in plain text is refused")
+    r, t = tls_after_starttls(s)
+    check(t is not None, "[SMTP submission STARTTLS] the handshake completes", r)
+    if t:
+        check(caps_of(t) == known | {"AUTH"}, "[SMTP submission STARTTLS] after TLS AUTH is advertised")
+        check(one(t, b"AUTH PLAIN " + base64.b64encode(b"\0u@localhost\0wrong") + b"\r\n").startswith("535"), "[SMTP submission STARTTLS] a wrong password is refused")
+        check(one(t, b"AUTH PLAIN " + cred + b"\r\n").startswith("235"), "[SMTP submission STARTTLS] the right password is accepted")
+        a = one(t, b"MAIL FROM:<u@localhost>\r\n"); b = one(t, b"RCPT TO:<u@localhost>\r\n"); c = one(t, b"DATA\r\n")
+        d = one(t, b"Subject: SUBTLS\r\n\r\nx\r\n.\r\n", 6)
+        check(a.startswith("250") and b.startswith("250") and c.startswith("354") and d.startswith("250") and wait_for(b"Subject: SUBTLS"),
+              "[SMTP submission STARTTLS] an authenticated message over TLS is delivered", [a, b, c, d])
+        t.close()
+    s = None
 else:
     check(caps == known | {"AUTH"}, "[SMTP submission] advertises AUTH", sorted(caps))
     check(one(s, b"MAIL FROM:<>\r\n").startswith("530"), "[SMTP AUTH] MAIL before AUTH is refused")
@@ -92,7 +146,7 @@ else:
         r2.close()
     else:
         check(False, "[SMTP AUTH] this machine has no non-loopback address, the refusal cannot be tested", lan)
-s.close()
+if s: s.close()
 
 # ---- IMAP
 s = socket.create_connection(("127.0.0.1", iport), timeout=5); g = rd(s)
