@@ -47,6 +47,19 @@
 #ifdef LOOK_ASAN_FIBER
 #  include <sanitizer/common_interface_defs.h>
 #endif
+// TSan derlemesinde de geçişler bildirilir: bildirilmezse TSan ucontext geçişini görmez, bir
+// fiber'ın yığınını başka "iş parçacığının" sanır → yanlış yarış raporları / çökme. Her fiber bir
+// TSan fiber'ı; geçişte (flags=0) sıralama ilişkisi kurulur (aynı iş parçacığında sıralı koşar).
+#if defined(__SANITIZE_THREAD__)
+#  define LOOK_TSAN_FIBER 1
+#elif defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+#    define LOOK_TSAN_FIBER 1
+#  endif
+#endif
+#ifdef LOOK_TSAN_FIBER
+#  include <sanitizer/tsan_interface.h>
+#endif
 
 namespace look {
 
@@ -65,6 +78,10 @@ struct Fiber::Impl {
     void*       fake_stack    = nullptr;   // fiber'ın askıdaki sahte yığını
     const void* caller_bottom = nullptr;   // dönülecek (iş parçacığı) yığın sınırları
     size_t      caller_size   = 0;
+#endif
+#ifdef LOOK_TSAN_FIBER
+    void* tsan_fiber  = nullptr;   // bu fiber'ın TSan kimliği
+    void* tsan_caller = nullptr;   // resume() eden (iş parçacığının) TSan fiber'ı
 #endif
 };
 
@@ -205,6 +222,9 @@ void fiber_trampoline(uint32_t hi, uint32_t lo) noexcept {
 #ifdef LOOK_ASAN_FIBER
     __sanitizer_start_switch_fiber(nullptr, f->impl_->caller_bottom, f->impl_->caller_size);   // son çıkış
 #endif
+#ifdef LOOK_TSAN_FIBER
+    __tsan_switch_to_fiber(f->impl_->tsan_caller, 0);
+#endif
     ::swapcontext(&f->impl_->fiber_ctx, &f->impl_->caller_ctx);
     // This line is never reached — swapcontext does not return here.
 }
@@ -312,6 +332,9 @@ Fiber::Fiber(Fn fn, size_t stack_size)
     impl_->fiber_ctx.uc_stack.ss_sp   = usable_stack;
     impl_->fiber_ctx.uc_stack.ss_size = aligned_stack;
     impl_->fiber_ctx.uc_link          = nullptr;  // we manage return manually
+#ifdef LOOK_TSAN_FIBER
+    impl_->tsan_fiber = __tsan_create_fiber(0);
+#endif
 
     // Split this pointer into two uint32_t for makecontext
     uintptr_t ptr = reinterpret_cast<uintptr_t>(this);
@@ -324,6 +347,9 @@ Fiber::Fiber(Fn fn, size_t stack_size)
 }
 
 Fiber::~Fiber() {
+#ifdef LOOK_TSAN_FIBER
+    if (impl_ && impl_->tsan_fiber) { __tsan_destroy_fiber(impl_->tsan_fiber); impl_->tsan_fiber = nullptr; }
+#endif
     if (impl_ && impl_->stack_base) {
         if (stack_cache().give(impl_->stack_base, impl_->stack_alloc)) { impl_->stack_base = nullptr; return; }
         remove_guard_page();
@@ -352,6 +378,10 @@ void Fiber::resume() {
     void* caller_fake = nullptr;
     __sanitizer_start_switch_fiber(&caller_fake, impl_->usable_stack, impl_->stack_size);
 #endif
+#ifdef LOOK_TSAN_FIBER
+    impl_->tsan_caller = __tsan_get_current_fiber();
+    __tsan_switch_to_fiber(impl_->tsan_fiber, 0);
+#endif
     ::swapcontext(&impl_->caller_ctx, &impl_->fiber_ctx);
 #ifdef LOOK_ASAN_FIBER
     __sanitizer_finish_switch_fiber(caller_fake, nullptr, nullptr);
@@ -369,6 +399,9 @@ void Fiber::yield() {
 #ifdef LOOK_ASAN_FIBER
     __sanitizer_start_switch_fiber(&self->impl_->fake_stack,
                                    self->impl_->caller_bottom, self->impl_->caller_size);
+#endif
+#ifdef LOOK_TSAN_FIBER
+    __tsan_switch_to_fiber(self->impl_->tsan_caller, 0);
 #endif
     ::swapcontext(&self->impl_->fiber_ctx, &self->impl_->caller_ctx);
 #ifdef LOOK_ASAN_FIBER

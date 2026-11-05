@@ -63,7 +63,31 @@ jobs:
         run: |
           cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                 -DLOOK_SANITIZE=thread -DLOOK_STATIC_SSL=OFF
-          cmake --build build-tsan --target look -j"$(nproc)"
+          cmake --build build-tsan --target look look-fcgi -j"$(nproc)"
+      # The web server under TSan: fibers (switches are announced to TSan in fiber_posix.cpp),
+      # requests suspended mid-way, WebSocket inboxes and close callbacks, timers / SSE. Any TSan
+      # report fails the step. Tests with timing limits (cpu_turn) are left out: TSan is ~10x slower.
+      # setarch -R: TSan maps its shadow at fixed addresses; with high ASLR entropy it can crash
+      # at startup (measured locally).
+      - name: Web server under TSan — fibers, WebSocket, timers
+        working-directory: cpp
+        env:
+          TSAN_OPTIONS: halt_on_error=0:report_thread_leaks=0:history_size=7:log_path=/tmp/tsan
+        run: |
+          mkdir -p /tmp/w
+          printf '#!/bin/sh\nexec setarch "$(uname -m)" -R %s/build-tsan/lk-fcgi "$@"\n' "$PWD" > /tmp/w/lk-fcgi
+          chmod +x /tmp/w/lk-fcgi
+          # warm start: the first start of a large TSan binary can outlast a test's readiness wait
+          ( /tmp/w/lk-fcgi --version >/dev/null 2>&1 || true )
+          fail=0
+          for t in fiber_request_isolation_test ws_message_order_test ws_close_callback_test \
+                   ws_callback_context_test realtime_isolation_test; do
+            echo "== $t"; bash tests/$t.sh /tmp/w/lk-fcgi || fail=1
+          done
+          if ls /tmp/tsan* >/dev/null 2>&1 && grep -q "WARNING: ThreadSanitizer" /tmp/tsan*; then
+            grep -h -A30 "WARNING: ThreadSanitizer" /tmp/tsan* | head -200; fail=1
+          fi
+          exit $fail
       - name: Yaris testleri — ENFORCED (yesil olmali; kirilirsa CI kirmizi)
         working-directory: cpp
         env:
