@@ -129,3 +129,24 @@ jobs:
             ./"$h" -max_len=8192 -max_total_time=30 "${C[$h]}" || {
               echo "!!! $h fuzz bulgusu — crash artefakti yukarida"; exit 1; }
           done
+      # Bundled decoders that take attacker bytes and need their own sources: the gzip response
+      # decoder of http:: (miniz tinfl — the client path of the Node2Shell / CVE-2026-111497 class)
+      # and the WebSocket frame decoder. -timeout catches a decoder that loops on a malformed stream.
+      - name: Fuzz — gzip response decoder (miniz) + WebSocket frame decoder
+        working-directory: cpp/tests/fuzz
+        env:
+          ASAN_OPTIONS: abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          sudo apt-get install -y libssl-dev
+          python3 make_seeds.py .
+          S="-g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -I../../include -I../../src"
+          clang -g -O1 -fsanitize=fuzzer-no-link,address,undefined -c ../../src/miniz/miniz.c -I../../src -o miniz.o
+          clang++ -std=c++23 $S fuzz_gzip_inflate.cpp miniz.o -o fuzz_gzip_inflate
+          clang++ -std=c++23 $S fuzz_ws_frame.cpp ../../src/websocket.cpp -lssl -lcrypto -o fuzz_ws_frame
+          for h in fuzz_gzip_inflate:corpus_gzip fuzz_ws_frame:corpus_ws; do
+            b=${h%%:*}; c=${h##*:}
+            echo "== $b (60s) =="
+            ./"$b" -max_len=65536 -timeout=10 -max_total_time=60 "$c" || {
+              echo "!!! $b fuzz finding — crash artifact above"; exit 1; }
+          done

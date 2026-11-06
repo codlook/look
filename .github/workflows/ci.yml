@@ -529,6 +529,7 @@ jobs:
         run: |
           cd cpp
           bash tests/http_send_guard_test.sh ./build/lk-fcgi
+          bash tests/http_response_cap_test.sh ./build/lk-fcgi
 
       # A hot reload while a request waited (http::get) freed that request's bytecode: SIGSEGV.
       - name: Hot reload never frees a running request's program (fibers and pool)

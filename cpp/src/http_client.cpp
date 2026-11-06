@@ -4,7 +4,7 @@
 
 #include "look/http_client.h"
 #include "look/ssrf_safe.h"   // SSRF private/özel-blok kararı (saf, tablo-test edilebilir)
-#include "miniz/miniz.h"      // gzip response decode (raw deflate; header parsed by hand)
+#include "look/gzip_inflate.h"   // gzip response decode (pure, fuzzed)
 #include "look/charset.h"     // single-byte charset → UTF-8 (iso-8859-9 etc.)
 #include <stdexcept>
 #include <sstream>
@@ -250,49 +250,26 @@ static std::string build_request(const std::string& method,
 }
 
 // ── gzip response decode ──────────────────────────────────────────────────────
-// We advertise Accept-Encoding: gzip, so decode it transparently. The gzip header
-// is parsed by hand and the payload is raw-inflated with miniz (window_bits < 0),
-// which avoids depending on miniz's optional gzip-wrapper support. Bounded output:
-// decompression stops and fails past `cap`, so a gzip bomb cannot exhaust memory.
-static bool gzip_inflate(const std::string& in, size_t cap, std::string& out) {
-    if (in.size() < 18) return false;                       // 10-byte hdr + 8-byte trailer min
-    const unsigned char* p = reinterpret_cast<const unsigned char*>(in.data());
-    if (p[0] != 0x1f || p[1] != 0x8b || p[2] != 0x08) return false;  // magic + DEFLATE method
-    unsigned char flg = p[3];
-    size_t off = 10;
-    if (flg & 0x04) {                                       // FEXTRA
-        if (off + 2 > in.size()) return false;
-        size_t xlen = (size_t)p[off] | ((size_t)p[off + 1] << 8);
-        off += 2 + xlen;
-    }
-    if (flg & 0x08) { while (off < in.size() && p[off] != 0) ++off; ++off; }  // FNAME
-    if (flg & 0x10) { while (off < in.size() && p[off] != 0) ++off; ++off; }  // FCOMMENT
-    if (flg & 0x02) off += 2;                               // FHCRC
-    if (off >= in.size()) return false;
+// We advertise Accept-Encoding: gzip, so decode it transparently — look/gzip_inflate.h (pure,
+// fuzzed: tests/fuzz/fuzz_gzip_inflate.cpp). Bounded output: a gzip bomb cannot exhaust memory.
+using look::gzip_inflate;
 
-    mz_stream strm;
-    std::memset(&strm, 0, sizeof(strm));
-    if (mz_inflateInit2(&strm, -MZ_DEFAULT_WINDOW_BITS) != MZ_OK) return false;  // raw deflate
-    strm.next_in  = p + off;
-    strm.avail_in = (unsigned int)(in.size() - off);        // trailer left over; inflate stops at stream end
-
-    out.clear();
-    char obuf[16384];
-    int ret;
-    do {
-        do {
-            strm.next_out  = reinterpret_cast<unsigned char*>(obuf);
-            strm.avail_out = sizeof(obuf);
-            ret = mz_inflate(&strm, MZ_NO_FLUSH);
-            if (ret != MZ_OK && ret != MZ_STREAM_END && ret != MZ_BUF_ERROR) {
-                mz_inflateEnd(&strm); return false;
-            }
-            out.append(obuf, sizeof(obuf) - strm.avail_out);
-            if (out.size() > cap) { mz_inflateEnd(&strm); return false; }  // bomb guard
-        } while (strm.avail_out == 0 && ret != MZ_STREAM_END);
-    } while (ret != MZ_STREAM_END && strm.avail_in > 0);
-    mz_inflateEnd(&strm);
-    return ret == MZ_STREAM_END;
+// Tamponlanan (akışsız) yanıtın üst sınırı — LOOK_HTTP_MAX_RESPONSE bayt, varsayılan 64 MB (gzip
+// çözmenin sınırıyla aynı). Eskiden sınırsızdı: sonsuz gövde gönderen tek bir sunucuya yapılan
+// tek http::get, LOOK sürecini 25 sn'de 15 GB'a çıkardı (makine süreci, yani bütün siteyi öldürür).
+// Kullanıcının verdiği adresi çeken her özellik (önizleme, webhook, içe aktarma) buna açıktı.
+// Büyük indirmeler için akış (geri çağrılı) yol tampon tutmaz, sınırdan etkilenmez.
+static size_t http_max_response() {
+    static const size_t v = [] {
+        const char* e = std::getenv("LOOK_HTTP_MAX_RESPONSE");
+        if (e && *e) { long long n = std::atoll(e); if (n > 0) return (size_t)n; }
+        return (size_t)64 << 20;
+    }();
+    return v;
+}
+static std::string http_max_response_error() {
+    return "http:: response exceeded " + std::to_string(http_max_response()) +
+           " bytes (LOOK_HTTP_MAX_RESPONSE); use http::stream() for large downloads";
 }
 
 // ── Response parser ───────────────────────────────────────────────────────────
@@ -540,7 +517,11 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     char buf[8192];
     int n;
     while ((n = recv(s, buf, sizeof(buf), 0)) > 0) {
-        if (sink) sink->feed(buf, n); else raw.append(buf, n);
+        if (sink) sink->feed(buf, n);
+        else {
+            raw.append(buf, n);
+            if (raw.size() > http_max_response()) { closesocket(s); resp.error = http_max_response_error(); return resp; }
+        }
     }
     if (n == SOCKET_ERROR) {
         int e = WSAGetLastError();
@@ -898,7 +879,12 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
         int w = client_wait_readable(s, opts.timeout_ms);
         if (w == 0) { resp.error = "timeout"; break; }
         n = recv(s, buf, sizeof(buf), 0);
-        if (n > 0) { if (sink) sink->feed(buf, n); else raw.append(buf, n); continue; }
+        if (n > 0) {
+            if (sink) { sink->feed(buf, n); continue; }
+            raw.append(buf, n);
+            if (raw.size() > http_max_response()) { resp.error = http_max_response_error(); break; }
+            continue;
+        }
         if (n < 0) resp.error = "timeout";
         break;
     }
@@ -982,7 +968,12 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
             if (w == 0) { resp.error = "timeout"; break; }
         }
         n = SSL_read(ssl, buf, sizeof(buf));
-        if (n > 0) { if (sink) sink->feed(buf, n); else raw.append(buf, n); continue; }
+        if (n > 0) {
+            if (sink) { sink->feed(buf, n); continue; }
+            raw.append(buf, n);
+            if (raw.size() > http_max_response()) { resp.error = http_max_response_error(); break; }
+            continue;
+        }
         if (n < 0) {
             int err = SSL_get_error(ssl, n);
             if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) continue;  // devam et → yield
