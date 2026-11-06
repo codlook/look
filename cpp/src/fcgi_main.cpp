@@ -271,6 +271,7 @@ void FcgiConn::parse_params(const uint8_t* p, size_t len,
 bool FcgiConn::accept(FcgiRequest& req) {
     req = FcgiRequest{};
     bool in_request = false;
+    size_t params_bytes = 0;
     while (true) {
         uint8_t type; uint16_t rid;
         std::vector<uint8_t> content;
@@ -282,10 +283,15 @@ bool FcgiConn::accept(FcgiRequest& req) {
                     req.id        = rid;
                     req.keep_conn = fcgi_begin_keep_conn(content.data(), content.size());
                     in_request    = true;
+                    params_bytes  = 0;
                 }
                 break;
             case FCGI_PARAMS:
                 if (in_request && rid == req.id) {
+                    // Toplam PARAMS sınırı = HTTP modundaki başlık sınırı (2 MB). Eskiden sınırsızdı:
+                    // FCGI portuna doğrudan ulaşan biri sonsuz PARAMS kaydıyla belleği doldurabiliyordu.
+                    params_bytes += content.size();
+                    if (params_bytes > 2 * 1024 * 1024) { end_request(rid, 1); return false; }
                     if (!content.empty())
                         parse_params(content.data(), content.size(), req.params);
                 }
@@ -309,7 +315,7 @@ bool FcgiConn::accept(FcgiRequest& req) {
                 break;
             case FCGI_ABORT_REQUEST:
                 end_request(rid, 1);
-                req = FcgiRequest{}; in_request = false;
+                req = FcgiRequest{}; in_request = false; params_bytes = 0;
                 break;
             case FCGI_GET_VALUES:
                 write_record(FCGI_GET_VALUES_RESULT, 0, nullptr, 0);
