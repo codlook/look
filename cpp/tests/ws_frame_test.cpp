@@ -35,8 +35,10 @@ int main() {
     // ── GÜVENLİK: maskesiz client frame → protokol hatası (RFC §5.1) ──
     chk("unmasked len0",         B({0x81,0x00}),                  false, true);
     // ── GÜVENLİK: 64-bit uzunluk 16MB cap (dev resize DoS reddi, RFC §5.2) ──
-    chk("127 huge 2^63",         B({0x82,0xFF,0x80,0,0,0,0,0,0,0,0,0,0,0}), false, false);
-    chk("127 just over 16MB",    B({0x82,0xFF,0,0,0,0,0x01,0x00,0x00,0x01,0,0,0,0}), false, false);
+    // >16 MB bildiren çerçeve PROTOKOL HATASI (bağlantı kapanır). Eskiden "daha çok bayt bekle"
+    // idi: istemcinin akıttığı her bayt sonsuza dek tamponlanıyordu (bellek DoS, a9c74a0).
+    chk("127 huge 2^63",         B({0x82,0xFF,0x80,0,0,0,0,0,0,0,0,0,0,0}), false, true);
+    chk("127 just over 16MB",    B({0x82,0xFF,0,0,0,0,0x01,0x00,0x00,0x01,0,0,0,0}), false, true);
     // ── GÜVENLİK: kontrol frame ≤125 + parçalanamaz (RFC §5.5) ──
     chk("close plen=126",        B({0x88,0xFE,0x00,0x7E}),        false, true);
     chk("ping FIN=0 fragmented", B({0x09,0x80,0,0,0,0}),          false, true);
