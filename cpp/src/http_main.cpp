@@ -449,6 +449,9 @@ struct DirectState {
     // Doğrudan çağrının sonucu ve hata durumu (iş işleyicisi dönüş değerine bakar).
     look::Value result;
     bool failed = false;
+    // WS/SSE geri çağrısının bağlantısının kurulduğu nesil (program + kurulum değerleri). Varsa
+    // dispatch güncel nesil yerine bunu kullanır: geri çağrı kendi programının bytecode'udur.
+    std::shared_ptr<const HttpApp::Snap> gen;
 };
 // fiber-ok: yalnız fiber dışı yedek; fiber içinde direct() FiberLocal::http_direct döner
 static thread_local DirectState t_direct_thread;
@@ -1404,7 +1407,12 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     // Bu isteğin nesli: kilit altında yalnız görüntü kopyalanır; istek bitene dek görüntü (ve onun
     // programı, closure'ları, ana makinesi) yaşar — bkz. HttpApp::Snap.
     std::shared_ptr<const HttpApp::Snap> snap;
-    { std::shared_lock<std::shared_mutex> sl(g_http_mutex); snap = g_http_app.snap; }
+    if (direct().closure && direct().gen)
+        // Açık bir WS/SSE bağlantısının geri çağrısı: bağlantının nesli. Eskiden güncel nesil
+        // alınıyordu → sıcak yeniden yüklemeden sonra eski geri çağrı yeni programın değerleri
+        // ve işlevleriyle karışık çalışıyordu (tests/hot_reload_ws_callback_test.sh).
+        snap = direct().gen;
+    else { std::shared_lock<std::shared_mutex> sl(g_http_mutex); snap = g_http_app.snap; }
     // vm_routes_ready: VM'nin dispatch_routes() kullanabilmesi için
     // native function wiring tamamlanmış olmalı (Phase 16.5 Adım 5.5)
     bool use_bc = snap && snap->compiled && snap->vm_routes_ready;   // başarısız yüklemede vm_routes_ready false
@@ -1633,11 +1641,16 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 w.is_https = b[i++] != 0; w.route_matched = b[i++] != 0;
                 m(w.get_params); m(w.post_params); m(w.cookies_in); m(w.headers_in); m(w.route_params);
             };
+            // Geri çağrının kökeni: el sıkışma isteği (paketli; SSE'de boş) + kaydedildiği nesil.
+            // Nesil tutulur: geri çağrı o programın bytecode'udur, hep onun değerleriyle çalışır;
+            // eski nesil son bağlantısı kapanınca serbest kalır (çalışan HTTP isteğiyle aynı kural).
+            struct CbOrigin { std::string req; std::shared_ptr<const HttpApp::Snap> gen; };
             auto run_cb = [unpack_req](const look::Value& fnv, std::vector<look::Value> cb_args, const char* tag, const char* kind,
-                             const std::string* handshake = nullptr) {
+                             const CbOrigin* origin) {
                 look::WebContext ctx;
-                if (handshake) unpack_req(*handshake, ctx);
+                if (!origin->req.empty()) unpack_req(origin->req, ctx);
                 else ctx.method = "__EVENT__";
+                direct().gen = origin->gen;
                 std::ostringstream sink;
                 direct().closure = fnv.as_bytecode_fn().get();
                 direct().args    = &cb_args;
@@ -1651,10 +1664,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 direct().closure = nullptr;
                 direct().args    = nullptr;
                 direct().what    = nullptr;
+                direct().gen.reset();
             };
             // ws::on el sikisma istegi icinde cagrilir: baglami SIMDI (istek canliyken) kopyala.
             // Geri cagri istek bittikten sonra baska thread'de calisir; her olay kendi taze kopyasini alir.
-            req_builtins[BI("ws::on")] = [ws_of, run_cb, pack_req](std::vector<look::Value>& args) -> look::Value {
+            req_builtins[BI("ws::on")] = [ws_of, run_cb, pack_req, snap](std::vector<look::Value>& args) -> look::Value {
                 const look::WebContext* web_now = look::current_request_web();
                 if (!web_now) throw std::runtime_error("ws::on() runs only inside a request");
                 if (args.size() != 3) throw std::runtime_error("ws::on() takes 3 arguments");
@@ -1663,21 +1677,22 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     throw std::runtime_error("ws::on() third argument must be a function");
                 const std::string ev = args[1].to_string();
                 look::Value fnv = args[2].clone_for_thread();
-                auto handshake = std::make_shared<const std::string>(pack_req(*web_now));
+                auto handshake = std::make_shared<const CbOrigin>(CbOrigin{pack_req(*web_now), snap});
                 if (ev == "message")
                     conn->set_on_message([fnv, run_cb, handshake](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "ws message callback", handshake.get()); });
                 else if (ev == "close")
                     conn->set_on_close([fnv, run_cb, handshake]() { run_cb(fnv, {}, "ws", "ws close callback", handshake.get()); });
                 return look::Value();
             };
-            req_builtins[BI("sse::on")] = [sse_of, run_cb](std::vector<look::Value>& args) -> look::Value {
+            req_builtins[BI("sse::on")] = [sse_of, run_cb, snap](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 3) throw std::runtime_error("sse::on() takes 3 arguments");
                 auto conn = sse_of(args[0], "sse::on() first argument must be an SSE connection");
                 if (args[2].type() != look::Value::BYTECODE_FN)
                     throw std::runtime_error("sse::on() third argument must be a function");
                 look::Value fnv = args[2].clone_for_thread();
+                auto origin = std::make_shared<const CbOrigin>(CbOrigin{std::string(), snap});
                 if (args[1].to_string() == "close")
-                    conn->set_on_close_cb([fnv, run_cb]() { run_cb(fnv, {}, "sse", "sse close callback"); });
+                    conn->set_on_close_cb([fnv, run_cb, origin]() { run_cb(fnv, {}, "sse", "sse close callback", origin.get()); });
                 return look::Value();
             };
             req_builtins[BI("ws::send")] = [ws_of](std::vector<look::Value>& args) -> look::Value {

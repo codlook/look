@@ -538,6 +538,8 @@ jobs:
         run: |
           cd cpp
           bash tests/hot_reload_inflight_test.sh ./build/lk-fcgi
+          # an open WebSocket keeps its program across a reload; new connections get the new one
+          bash tests/hot_reload_ws_callback_test.sh ./build/lk-fcgi
           bash tests/fatal_error_isolation_test.sh ./build/lk-fcgi
           bash tests/auth_long_password_test.sh ./build/lk
 

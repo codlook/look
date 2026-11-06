@@ -4163,6 +4163,7 @@ EVERY subsequent request → dispatch phase:
 
   <h3>Hot Reload</h3>
   <p>When the <code>index.lk</code> file changes (mtime), FastCGI reloads automatically. No need to restart the server.</p>
+  <p>A request that is running during a reload finishes on the program it started with. An open WebSocket or SSE connection works the same way: its <code>ws::on</code> / <code>sse::on</code> callbacks keep running on the program the connection was opened with, until it closes. Connections opened after the reload get the new program. The old program stays in memory until its last request or connection ends.</p>
 
   <h3>Critical Rules</h3>
   <div class="callout danger">

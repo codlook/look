@@ -4214,6 +4214,8 @@ EVERY subsequent request → dispatch phase:
 
 When the `index.lk` file changes (mtime), FastCGI reloads automatically. No need to restart the server.
 
+A request that is running during a reload finishes on the program it started with. An open WebSocket or SSE connection works the same way: its `ws::on` / `sse::on` callbacks keep running on the program the connection was opened with, until it closes. Connections opened after the reload get the new program. The old program stays in memory until its last request or connection ends.
+
 ### Critical Rules
 
 > **WarmApp::program** — the AST must stay alive for the life of the process. Closures hold pointers to AST nodes.
