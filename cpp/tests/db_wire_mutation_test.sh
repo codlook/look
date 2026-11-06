@@ -11,9 +11,21 @@ N="${2:-1500}"; SEED="${3:-1}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; s1=""; s2=""; trap '[ -n "$s1" ] && kill $s1 2>/dev/null; [ -n "$s2" ] && kill $s2 2>/dev/null; rm -rf "$T"' EXIT
 MP="${MP:-33111}"; PP="${PP:-55111}"
-python3 "$HERE/db_wire_mutator.py" mysql "$MP" "$SEED" > "$T/my.log" 2>&1 & s1=$!
-python3 "$HERE/db_wire_mutator.py" pg "$PP" "$SEED" > "$T/pg.log" 2>&1 & s2=$!
-for p in $MP $PP; do for i in $(seq 1 50); do (echo > "/dev/tcp/127.0.0.1/$p") 2>/dev/null && break; sleep 0.1; done; done
+# Sahte sunucu dinlemeye başlayamazsa (port geçici aralıkta başka bir soketle dolu: bind hatası)
+# başka portla yeniden dene — yoksa istemci "bağlanamadı" der ve bu, ayrıştırıcı bulgusu sanılırdı.
+start_mutator() {   # proto port log → yazdırır: pid port
+    local proto=$1 port=$2 log=$3 pid
+    for try in 1 2 3 4 5; do
+        python3 "$HERE/db_wire_mutator.py" "$proto" "$port" "$SEED" > "$log" 2>&1 & pid=$!
+        for i in $(seq 1 100); do grep -q "^mutator" "$log" 2>/dev/null && break; kill -0 $pid 2>/dev/null || break; sleep 0.05; done
+        if kill -0 $pid 2>/dev/null && grep -q "^mutator" "$log"; then echo "$pid $port"; return 0; fi
+        echo "  ..   harness: $proto mutator could not listen on $port ($(tail -1 "$log")); trying another port" >&2
+        port=$((port + 1000))
+    done
+    return 1
+}
+read -r s1 MP <<< "$(start_mutator mysql "$MP" "$T/my.log")" || { echo "FAIL: harness: the mysql mutator did not start"; exit 2; }
+read -r s2 PP <<< "$(start_mutator pg "$PP" "$T/pg.log")" || { echo "FAIL: harness: the pg mutator did not start"; exit 2; }
 fail=0
 for drv in mysql pg; do
     if [ $drv = mysql ]; then dsn="mysql://u:p@127.0.0.1:$MP/d"; else dsn="postgres://u:p@127.0.0.1:$PP/d"; fi
@@ -37,6 +49,8 @@ LK
     else
         echo "  FAIL [$drv] rc=$rc after ${dt} s: $(echo "$out" | grep -E 'ERROR: AddressSanitizer|runtime error|SUMMARY|Segmentation|Abort' | head -3) $last"
         echo "$out" | grep -A20 "ERROR: AddressSanitizer" | head -30
+        echo "  ..   client output (last lines):"; echo "$out" | grep -v '^\[20' | tail -6 | sed 's/^/         /'
+        kill -0 $s1 2>/dev/null && kill -0 $s2 2>/dev/null || echo "  ..   harness: a mutator process is gone"
         fail=1
     fi
 done
