@@ -22,7 +22,7 @@ cd "$TMP" || exit 1
 
 # 1) Host kisiti — github.com disi reddedilmeli (ag GEREKTIRMEZ)
 out=$("$LK" module install evil.com/user/repo 2>&1 | head -3)
-if echo "$out" | grep -qi "sadece github.com"; then
+if echo "$out" | grep -qi "only github.com is supported"; then
   echo "  PASS host kisiti: github.com disi reddediliyor"
 else
   echo "  FAIL host kisiti calismiyor: [$out]"; fail=1

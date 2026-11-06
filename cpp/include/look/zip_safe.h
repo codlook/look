@@ -7,8 +7,27 @@
 // eşleşir (sibling-prefix escape → dest DIŞINA yazma). Önek + AYIRICI-SINIRI zorunlu.
 #include <string>
 #include <filesystem>
+#include <vector>
+#include <cstdint>
 
 namespace look {
+
+// ZIP bombası kararı: arşivin merkez dizinindeki girdi sayısı ve bildirilen açılmış boyutları.
+// miniz açarken gerçek boyutu bildirilene karşı doğrular (fazlası hatadır), yani bildirilen toplam
+// gerçek üst sınırdır. Boş dönüş = kabul; dolu = kullanıcıya gösterilecek İngilizce neden.
+inline constexpr uint64_t ZIP_MAX_TOTAL   = 256ull * 1024 * 1024;   // paketler kaynak koddur
+inline constexpr size_t   ZIP_MAX_ENTRIES = 20000;
+inline std::string zip_size_problem(const std::vector<uint64_t>& uncomp_sizes) {
+    if (uncomp_sizes.size() > ZIP_MAX_ENTRIES)
+        return "the archive has more than " + std::to_string(ZIP_MAX_ENTRIES) + " entries";
+    uint64_t total = 0;
+    for (uint64_t s : uncomp_sizes) {
+        if (s > ZIP_MAX_TOTAL - total)   // taşma-güvenli toplam
+            return "the archive unpacks to more than " + std::to_string(ZIP_MAX_TOTAL >> 20) + " MB";
+        total += s;
+    }
+    return "";
+}
 
 inline bool zip_entry_inside_dest(const std::string& filename,
                                   const std::filesystem::path& dest_dir) {

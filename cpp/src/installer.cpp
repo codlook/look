@@ -207,6 +207,24 @@ static bool extract_zip(const std::vector<char>& data,
     // subdir filter prefix: after stripping GitHub prefix, files must start with "subdir/"
     std::string subdir_prefix = subdir_filter.empty() ? "" : (subdir_filter + "/");
 
+    // ZIP bombası sınırı: açılmış toplam boyut (merkez dizindeki bildirilen boyutlar — miniz açarken
+    // gerçek boyutu ve CRC'yi bildirilene karşı doğrular). Eskiden sınır yoktu: birkaç KB'lık arşiv
+    // bellekte ve diskte GB'larca yer açtırabiliyordu. Karar saf dikişte (look/zip_safe.h).
+    {
+        std::vector<uint64_t> sizes;
+        // girdi sayısı önce: zip64 milyarlarca girdi bildirebilir — vektörü onlarla doldurma
+        int upto = n > (int)look::ZIP_MAX_ENTRIES ? (int)look::ZIP_MAX_ENTRIES + 1 : n;
+        for (int i = 0; i < upto; ++i) {
+            mz_zip_archive_file_stat st;
+            sizes.push_back(mz_zip_reader_file_stat(&zip, i, &st) ? st.m_uncomp_size : 0);
+        }
+        std::string why = look::zip_size_problem(sizes);
+        if (!why.empty()) {
+            std::cerr << "Error: " << why << "; not installed.\n";
+            mz_zip_reader_end(&zip); return false;
+        }
+    }
+
     fs::create_directories(dest_dir);
     int extracted = 0;
 

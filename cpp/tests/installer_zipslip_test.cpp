@@ -33,7 +33,25 @@ int main() {
     chk("a/../../out.lk", false);   // alt-dizinden kaçış
     chk("../../../../tmp/x", false);// derin traversal
 
-    const int EXPECTED = 8;
+    // ZIP bombası kararı (zip_size_problem): boş = kabul
+    printf("ZIP size limit:\n");
+    auto zchk = [&](const char* name, const std::vector<uint64_t>& sizes, bool want_ok) {
+        ran++;
+        std::string why = zip_size_problem(sizes);
+        bool ok = (why.empty() == want_ok);
+        printf("  %-34s -> %s  %s\n", name, why.empty() ? "accepted" : why.c_str(), ok ? "OK" : "FAIL");
+        if (!ok) fails++;
+    };
+    const uint64_t MB = 1024 * 1024;
+    zchk("ordinary package (3 files)",      {1200, 40 * 1024, 9}, true);
+    zchk("exactly 256 MB",                  {128 * MB, 128 * MB}, true);
+    zchk("256 MB + 1 byte",                 {128 * MB, 128 * MB, 1}, false);
+    zchk("one 4 GB entry (bomb)",           {4096 * MB}, false);
+    zchk("sizes that overflow uint64",      {UINT64_MAX, 2}, false);
+    zchk("20000 empty entries",             std::vector<uint64_t>(20000, 0), true);
+    zchk("20001 entries",                   std::vector<uint64_t>(20001, 0), false);
+
+    const int EXPECTED = 15;
     if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
     printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (sibling-prefix kaçışı dahil, Zip-Slip kilitli)\n", fails);
     return fails ? 1 : 0;
