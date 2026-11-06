@@ -135,7 +135,10 @@ std::string ws_encode_pong_frame(const std::string& payload) {
 
 // ── Frame decode (client→server, always masked) ───────────────────────────────
 
-WsFrame ws_try_decode_frame(const std::string& buf) {
+WsFrame ws_try_decode_frame(const std::string& buf) { return ws_try_decode_frame(std::string_view(buf)); }
+
+// string_view: olay döngüsü tamponu baştan sona tek geçişte çözer (her çerçevede kopya/silme yok).
+WsFrame ws_try_decode_frame(std::string_view buf) {
     WsFrame f;
     if (buf.size() < 2) return f;
 
@@ -168,7 +171,10 @@ WsFrame ws_try_decode_frame(const std::string& buf) {
         pos = 10;
         // RFC 6455 §5.2: sunucu 16 MB'ı aşan frame'leri reddeder
         static constexpr size_t WS_MAX_FRAME = 16 * 1024 * 1024;
-        if (plen > WS_MAX_FRAME) { f.complete = false; f.consumed = 0; return f; }
+        // Protokol hatası (kapat). Eskiden "daha fazla veri gerekiyor" dönüyordu: 2^40 bildiren bir
+        // çerçeve gelen baytları sonsuza dek tamponlatıyor, her okumada tampon baştan kopyalanıyordu
+        // (tek olay döngüsü %100 CPU, öteki WebSocket'ler saniyelerce bekledi).
+        if (plen > WS_MAX_FRAME) { f.protocol_error = true; return f; }
     }
 
     // RFC 6455 §5.5: kontrol frame'leri (close 0x8 / ping 0x9 / pong 0xA) ≤125

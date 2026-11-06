@@ -41,8 +41,14 @@ public:
     // Register server socket — calls cb with each accepted client fd.
     virtual void listen(int server_fd, AcceptCb cb) = 0;
 
-    // Register client fd for reading — calls cb when data arrives.
+    // Register client fd for reading — calls cb when data arrives. Duraklatılmış okumayı da sürdürür.
     virtual void async_read(int fd, ReadCb cb) = 0;
+
+    // Geri basınç: bu fd'den okumayı durdur (yalnız loop iş parçacığında, okuma geri çağrısının içinden
+    // de). Okuma geri çağrısı kalıcıdır; durdurmanın tek yolu bu — async_read ile sürer. Kenar
+    // tetiklemeli okuma EAGAIN'e dek okur: duraksız veri gönderen bir istemci onu hiç durdurmazdı.
+    // Varsayılan: yok (Windows IOCP — geliştirme ortamı).
+    virtual void pause_read(int /*fd*/) {}
 
     // Yeni (blocking) fd'yi loop'a ekle: set_nonblocking + EPOLL_CTL_ADD + read kaydı.
     // WS/SSE upgrade: worker thread'deki blocking fd'yi async loop'a devretmek için.
@@ -86,6 +92,7 @@ public:
     void post(TaskFn fn) override;
     void listen(int server_fd, AcceptCb cb) override;
     void async_read(int fd, ReadCb cb) override;
+    void pause_read(int fd) override;
     void add_client(int fd, ReadCb cb) override;
     void async_write(int fd, std::string data, WriteCb cb) override;
     void close_fd(int fd) override;

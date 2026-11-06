@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <list>
 #include <functional>
 #include <memory>
@@ -47,8 +48,13 @@ struct WsConnection {
     // Eskiden her mesaj havuza ayrı iş olarak gidiyordu: aynı bağlantının mesajları farklı
     // iş parçacıklarında aynı anda ve ters sırada işleniyordu (2000 mesajda ~%10 ters sıra).
     std::mutex                         inbox_mtx;
-    std::list<std::function<void()>>   inbox;   // list: boşken bellek ayırmaz (deque ~600 B ayırır)
+    struct InboxItem { std::function<void()> fn; size_t bytes; };
+    std::list<InboxItem>               inbox;   // list: boşken bellek ayırmaz (deque ~600 B ayırır)
     bool                               inbox_running = false;   // bir boşaltıcı iş havuzda
+    // Geri basınç: kutu üst sınırı aşınca bu soketten okuma durur, alt sınırın altına inince sürer
+    // (eskiden sınırsızdı: 1 baytlık çerçeve seli tek bağlantıyla GB'larca bellek büyütüyordu).
+    size_t                             inbox_bytes = 0;
+    bool                               read_paused = false;
 
     explicit WsConnection(int fd_, std::string ip = "")
         : fd(fd_), client_ip(std::move(ip)) {}
@@ -101,6 +107,7 @@ struct WsFrame {
 
 // Try to decode one frame from buf — returns complete=false if more data needed.
 WsFrame ws_try_decode_frame(const std::string& buf);
+WsFrame ws_try_decode_frame(std::string_view buf);
 
 // ── HTTP → WebSocket handshake (RFC 6455 §4) ─────────────────────────────────
 

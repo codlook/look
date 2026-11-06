@@ -48,6 +48,7 @@ struct FdEntry {
     size_t      write_pos = 0;
     std::mutex  mtx;
     std::atomic<bool> closed{false};   // close_fd sonrası read-loop'un tekrar okumasını/çift-close'u önler
+    std::atomic<bool> read_paused{false};   // geri basınç: okuma döngüsü okumaz (pause_read / async_read)
 
     // Idle/slowloris takibi (opt-in). idle_timeout_sec>0 ise loop bu fd'yi tarar.
     // last_activity yalnız loop thread'inde (accept + her read) yazılır → kilit yok.
@@ -142,6 +143,10 @@ void EpollEventLoop::add_client(int fd, ReadCb cb) {
     epoll_ctl(impl_->epfd, EPOLL_CTL_ADD, fd, &ev);
 }
 
+void EpollEventLoop::pause_read(int fd) {
+    if (auto entry = impl_->get(fd)) entry->read_paused.store(true);
+}
+
 void EpollEventLoop::async_read(int fd, ReadCb cb) {
     auto entry = impl_->get(fd);
     if (!entry) return;
@@ -149,6 +154,9 @@ void EpollEventLoop::async_read(int fd, ReadCb cb) {
         std::lock_guard<std::mutex> lk(entry->mtx);
         entry->read_cb = std::move(cb);
     }
+    // Duraklatılmışsa sürdür. EPOLL_CTL_MOD hazır olma durumunu yeniden değerlendirir: duraklama
+    // sırasında gelmiş veri için olay yeniden gelir (kenar tetiklemede kaybolmaz).
+    entry->read_paused.store(false);
     epoll_event ev{};
     ev.events  = EPOLLIN | EPOLLET;
     ev.data.fd = fd;
@@ -298,6 +306,7 @@ void EpollEventLoop::run() {
                 ReadCb cb;
                 { std::lock_guard<std::mutex> lk(entry->mtx); cb = entry->read_cb; }
                 while (true) {
+                    if (entry->read_paused.load()) break;   // geri basınç: async_read sürdürür
                     ssize_t r = read(fd, read_buf, sizeof(read_buf));
                     if (r > 0) {
                         if (entry->idle_timeout_sec > 0)

@@ -821,25 +821,62 @@ struct HttpServer::Impl {
     // Boşaltıcı işleri tek tek çalıştırır; WS_DRAIN_BATCH işten sonra kendini yeniden kuyruğa
     // koyar ki çok konuşan tek bağlantı bir havuz iş parçacığını tekeline almasın.
     static constexpr int WS_DRAIN_BATCH = 64;
-    void ws_in_order(const std::shared_ptr<WsConnection>& conn, std::function<void()> job) {
+    // Geri basınç sınırları (bağlantı başına bekleyen geri çağrılar): üstü aşılınca okuma durur,
+    // altına inince sürer. Mesaj sayısı da sayılır: 1 baytlık çerçeve başına iş ~100 B tutar.
+    static constexpr size_t WS_INBOX_HIGH_MSGS = 1000, WS_INBOX_LOW_MSGS = 250;
+    static constexpr size_t WS_INBOX_HIGH_BYTES = 16u << 20, WS_INBOX_LOW_BYTES = 4u << 20;
+    void ws_in_order(const std::shared_ptr<WsConnection>& conn, std::function<void()> job, size_t bytes = 0) {
         bool start;
         {
             std::lock_guard<std::mutex> lk(conn->inbox_mtx);
-            conn->inbox.push_back(std::move(job));
+            conn->inbox.push_back({std::move(job), bytes});
+            conn->inbox_bytes += bytes;
             start = !conn->inbox_running;
             conn->inbox_running = true;
         }
         if (start) ws_drain(conn);
     }
+    // Olay döngüsünde: kutu doluysa okumayı durdur (yeniden kurma). true = duraklatıldı.
+    bool ws_pause_if_full(const std::shared_ptr<WsConnection>& conn) {
+        std::lock_guard<std::mutex> lk(conn->inbox_mtx);
+        if (conn->inbox.size() > WS_INBOX_HIGH_MSGS || conn->inbox_bytes > WS_INBOX_HIGH_BYTES) {
+            conn->read_paused = true;
+            // Okuma geri çağrısı kalıcı (kenar tetiklemeli, EAGAIN'e dek okur): yeniden kurmamak
+            // okumayı durdurmaz — döngüye açıkça söylenir. Kilit altında: boşaltıcının sürdürmesiyle yarışmaz.
+            loop->pause_read(conn->fd);
+            return true;
+        }
+        return false;
+    }
+    void ws_arm_read(int fd) {
+        loop->async_read(fd, [this, fd](const char* d, size_t l) { on_ws_data(fd, d, l); });
+    }
     void ws_drain(std::shared_ptr<WsConnection> conn) {
         pool->submit([this, conn]() {
             for (int k = 0; k < WS_DRAIN_BATCH; ++k) {
                 std::function<void()> job;
+                bool resume = false;
                 {
                     std::lock_guard<std::mutex> lk(conn->inbox_mtx);
                     if (conn->inbox.empty()) { conn->inbox_running = false; return; }
-                    job = std::move(conn->inbox.front());
+                    job = std::move(conn->inbox.front().fn);
+                    conn->inbox_bytes -= conn->inbox.front().bytes;
                     conn->inbox.pop_front();
+                    if (conn->read_paused && conn->inbox.size() <= WS_INBOX_LOW_MSGS &&
+                        conn->inbox_bytes <= WS_INBOX_LOW_BYTES) {
+                        conn->read_paused = false;
+                        resume = true;
+                    }
+                }
+                if (resume) {
+                    // Okumayı olay döngüsünde yeniden kur — bağlantı hâlâ bu fd'deyse (kapanıp fd
+                    // yeniden kullanılmışsa başka bağlantının okumasına dokunma).
+                    int fd = conn->fd;
+                    loop->post([this, conn, fd]() {
+                        bool same;
+                        { std::lock_guard<std::mutex> lk(ws_mtx); auto it = ws_clients.find(fd); same = it != ws_clients.end() && it->second == conn; }
+                        if (same && !conn->closed.load()) ws_arm_read(fd);
+                    });
                 }
                 try { job(); } catch (...) {}   // geri çağrı kendi hatasını günlüğe yazar; kutu takılmasın
             }
@@ -862,24 +899,24 @@ struct HttpServer::Impl {
             return;
         }
         std::shared_ptr<WsConnection> conn;
+        // Tampon olay döngüsünde bir kez alınır, baştan sona tek geçişte çözülür, kalan sonda geri
+        // konur. Eskiden HER çerçevede tamponun tamamı kopyalanıp baştan siliniyordu (karesel: tek
+        // okumadaki binlerce küçük çerçeve ya da büyük bir çerçevenin parçaları olay döngüsünü kilitliyordu).
+        std::string buf;
         {
             std::lock_guard<std::mutex> lk(ws_mtx);
             auto it = ws_clients.find(fd);
             if (it == ws_clients.end()) return;
             conn = it->second;
-            ws_bufs[fd].append(data, len);
+            auto& b = ws_bufs[fd];
+            b.append(data, len);
+            buf.swap(b);
         }
         if (!conn || conn->closed.load()) { close_ws(fd); return; }
 
+        size_t off = 0;
         while (true) {
-            std::string snap;
-            {
-                std::lock_guard<std::mutex> lk(ws_mtx);
-                auto it = ws_bufs.find(fd);
-                if (it == ws_bufs.end()) break;
-                snap = it->second;
-            }
-            WsFrame frame = ws_try_decode_frame(snap);
+            WsFrame frame = ws_try_decode_frame(std::string_view(buf).substr(off));
             if (frame.protocol_error) {
                 // RFC 6455 §5.1: maskesiz client frame → 1002 ile kapat
                 std::string cf = ws_encode_close_frame();
@@ -888,17 +925,12 @@ struct HttpServer::Impl {
                 break;
             }
             if (!frame.complete) break;
-
-            {
-                std::lock_guard<std::mutex> lk(ws_mtx);
-                auto it = ws_bufs.find(fd);
-                if (it != ws_bufs.end()) it->second.erase(0, frame.consumed);
-            }
+            off += frame.consumed;
 
             // RFC 6455 §5.4 parça birleştirme + §5.1 protokol ihlallerinde 1002.
             auto ws_deliver = [&](const std::string& msg) {
                 if (auto cb = conn->get_on_message())   // kilitli kopya: ws::on aynı anda atayabilir
-                    ws_in_order(conn, [cb, msg]() { cb(msg); });
+                    ws_in_order(conn, [cb, msg]() { cb(msg); }, msg.size() + 128);
             };
             auto ws_proto_close = [&]() {
                 std::string cf = ws_encode_close_frame();
@@ -942,10 +974,15 @@ struct HttpServer::Impl {
             }
         }
 
+        // Çözülmemiş kalan (yarım çerçeve) geri konur — bağlantı bu arada kapandıysa giriş yoktur.
+        {
+            std::lock_guard<std::mutex> lk(ws_mtx);
+            auto it = ws_bufs.find(fd);
+            if (it != ws_bufs.end()) it->second.assign(buf, off, std::string::npos);
+        }
         if (!conn->closed.load()) {
-            loop->async_read(fd, [this, fd](const char* d, size_t l) {
-                on_ws_data(fd, d, l);
-            });
+            // Geri basınç: gelen kutusu doluysa okuma kurulmaz; boşaltıcı alt sınıra inince kurar.
+            if (!ws_pause_if_full(conn)) ws_arm_read(fd);
         } else {
             close_ws(fd);
         }
