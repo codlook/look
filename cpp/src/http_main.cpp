@@ -1892,7 +1892,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 output.clear();
                 web.response_body = "Service temporarily unavailable. Please try again shortly.";
                 web.headers_out["Content-Type"] = "text/plain; charset=utf-8";
-            } else if (web.status_code == 200) {
+            } else if (web.status_code < 400) {
+                // Hata = 500. Eskiden yalnız 200 ise: rota hatadan önce response::status(201) / 302
+                // dediyse başarısız istek "201 Created" ile gidiyordu — istemci başarısız işlemi
+                // başarılı sanıyordu. Uygulamanın kendi koyduğu 4xx/5xx korunur.
                 web.status_code = 500;
                 web.status_text = "Internal Server Error";
             }
