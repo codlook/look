@@ -302,12 +302,14 @@ struct HttpApp {
     std::atomic<uint64_t>                    generation{0};
 
     // ── Modül ev sahibi (RuntimeHost) + program ───────────────────────────────
-    std::unique_ptr<look::RuntimeHost>       interp;
-    std::unique_ptr<look::Program>           program;
+    // shared_ptr: nesil görüntüsü (Snap) da tutar — sıcak yeniden yükleme yenisini kurarken eski
+    // nesli kullanan istekler bitene dek eskisi yaşar.
+    std::shared_ptr<look::RuntimeHost>       interp;
+    std::shared_ptr<look::Program>           program;
     std::ostringstream                       setup_out;
 
     // ── Bytecode VM (tek motor — derlenemezse uygulama başlamaz) ──────────────
-    std::unique_ptr<look::CompiledProgram>   compiled;
+    std::shared_ptr<look::CompiledProgram>   compiled;
 
     // VM route registry: setup fazında VM çalıştırılarak doldurulur.
     // pattern = "GET:/path/{id}", closure = compiled closure ptr (BYTECODE_FN value)
@@ -328,11 +330,69 @@ struct HttpApp {
 
     fs::path                                 script_path;
     fs::file_time_type                       mtime;
+
+    // ── Nesil görüntüsü: bir isteğin kullandığı her şey, değişmez ──────────────
+    // İstek g_http_mutex altında yalnız bu shared_ptr'ı kopyalar, kilidi bırakır ve bundan sonra
+    // YALNIZ bu görüntüden okur. Sıcak yeniden yükleme yeni bir görüntü yayınlar; eskisi (program,
+    // closure'lar, ana makine) onu kullanan son istek bitince serbest kalır.
+    // Eskiden istek kilidi rota çalışmadan önce bırakıp g_http_app'e ham işaretçilerle devam
+    // ediyordu: istek bir sorguda / http::get'te beklerken dosya değişince yeniden yükleme eski bayt
+    // kodunu serbest bırakıyor, istek dönünce süreç SIGSEGV ile düşüyordu (ASan: heap-use-after-free
+    // VM::run; fiber ve iş parçacığı modunda). Kilidi istek boyunca tutmak çözüm değil: askıdaki bir
+    // fiber okuma kilidini tutarken aynı iş parçacığında yazma kilidi beklenirse iş parçacığı kilitlenir.
+    struct Snap {
+        std::shared_ptr<look::RuntimeHost>             interp;
+        std::shared_ptr<look::Program>                 program;
+        std::shared_ptr<look::CompiledProgram>         compiled;
+        std::vector<VmRouteRaw>                        vm_routes;          // closure'ların sahibi
+        std::vector<look::Value>                       vm_before_routes;
+        std::unordered_map<std::string, look::Value>   vm_setup_globals;
+        std::vector<std::string>                       csrf_exempt;
+        bool                                           csrf_on = false;
+        bool                                           script_mode = false;
+        bool                                           vm_routes_ready = false;
+        // Rota listesi (statikler önce) — vm_routes'taki closure'lara ham işaretçi; bu görüntü yaşadıkça geçerli.
+        std::shared_ptr<std::vector<look::VmRoute>>    route_closures;
+    };
+    std::shared_ptr<const Snap>                      snap;
 };
 
 static HttpApp                  g_http_app;
 static std::shared_mutex        g_http_mutex;
 static std::atomic<bool>        g_http_ready{false};
+
+// Kurulumun bıraktığı durumdan değişmez görüntü yayınla (g_http_mutex YAZMA kilidi altında çağrılır).
+// Başarısız yükleme de yayınlanır (vm_routes_ready=false → istek 500), bugünkü davranışla aynı.
+static void publish_http_snapshot() {
+    auto s = std::make_shared<HttpApp::Snap>();
+    s->interp           = g_http_app.interp;
+    s->program          = g_http_app.program;
+    s->compiled         = g_http_app.compiled;
+    s->vm_routes        = g_http_app.vm_routes;
+    s->vm_before_routes = g_http_app.vm_before_routes;
+    s->vm_setup_globals = g_http_app.vm_setup_globals;
+    s->csrf_exempt      = g_http_app.csrf_exempt;
+    s->csrf_on          = g_http_app.csrf_on;
+    s->script_mode      = g_http_app.script_mode;
+    s->vm_routes_ready  = g_http_app.vm_routes_ready;
+    // Rota listesi bir kez, yüklemede (eskiden her iş parçacığında, nesil değişince).
+    auto rc = std::make_shared<std::vector<look::VmRoute>>();
+    rc->reserve(s->vm_routes.size());
+    for (auto& r : s->vm_routes) {
+        if (r.fn.type() != look::Value::BYTECODE_FN) continue;
+        look::VmRoute vr;
+        vr.pattern = r.pattern;
+        vr.fn      = r.fn.as_bytecode_fn().get();
+        for (auto& mw : r.middlewares)
+            if (mw.type() == look::Value::BYTECODE_FN) vr.middlewares.push_back(mw.as_bytecode_fn().get());
+        rc->push_back(std::move(vr));
+    }
+    // Statik route'ları ({param} içermeyenler) dinamiklerden ÖNCE: /user/new, /user/{id}'den önce eşleşsin.
+    std::stable_partition(rc->begin(), rc->end(),
+        [](const look::VmRoute& r) { return r.pattern.find('{') == std::string::npos; });
+    s->route_closures = std::move(rc);
+    g_http_app.snap = std::move(s);
+}
 
 // LOOK 2: bu iş parçacığı bir zamanlayıcı geri çağırması koşturuyorsa çağrılacak closure.
 // look_app_dispatch bunu görünce rota eşleştirmez, closure'ı istek VM'inde doğrudan çağırır.
@@ -544,6 +604,8 @@ static void run_setup_http(const fs::path& script) {
     // havuzdan bir bağlantıyı süreç ömrü boyunca tutuyordu — LOOK_DB_POOL_SIZE=1 iken her DB
     // isteği sonsuza dek bekliyordu (v2'nin tembel havuzuyla gelen gerileme). Hata ile çıkışta da.
     struct SetupConnRelease { ~SetupConnRelease() { look::release_thread_connections(); } } setup_conn_release;
+    // Kurulum nasıl biterse bitsin (başarı / hata) istekler için yeni değişmez görüntü yayınlanır.
+    struct SnapPublish { ~SnapPublish() { publish_http_snapshot(); } } snap_publish;
 
     auto src = read_file(script);
 
@@ -1300,10 +1362,13 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         }
     } cur_guard{cur_web, cur_out, outer_web, outer_out, cur_fiber == nullptr};
 
-    std::shared_lock<std::shared_mutex> sl(g_http_mutex);
+    // Bu isteğin nesli: kilit altında yalnız görüntü kopyalanır; istek bitene dek görüntü (ve onun
+    // programı, closure'ları, ana makinesi) yaşar — bkz. HttpApp::Snap.
+    std::shared_ptr<const HttpApp::Snap> snap;
+    { std::shared_lock<std::shared_mutex> sl(g_http_mutex); snap = g_http_app.snap; }
     // vm_routes_ready: VM'nin dispatch_routes() kullanabilmesi için
     // native function wiring tamamlanmış olmalı (Phase 16.5 Adım 5.5)
-    bool use_bc = g_http_app.compiled && g_http_app.vm_routes_ready;   // başarısız yüklemede vm_routes_ready false
+    bool use_bc = snap && snap->compiled && snap->vm_routes_ready;   // başarısız yüklemede vm_routes_ready false
 
     auto t_copy_start    = std::chrono::steady_clock::now();
     auto t_copy_end      = t_copy_start;
@@ -1323,18 +1388,24 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // Güvenlik: her worker tek isteği aynı anda işler → thread_local kopya güvenli.
         // Hot-reload'da generation artar → kopya tazelenir.
         // İZOLASYON: RuntimeHost LOOK global'i tutmaz (VM kendi globals'ını her istekte
-        // g_http_app.vm_setup_globals'tan alır) → klon gereksiz.
+        // snap->vm_setup_globals'tan alır) → klon gereksiz.
         t_copy_start = std::chrono::steady_clock::now();
         // fiber-ok: nesil-sabit dağıtım kopyası; isteğe özgü bağlam her istekte bağlanır, fiber modunda istek tablosu istek-başına kurulur (tests/fiber_request_isolation_test.sh askı boyunca ölçer)
-        static thread_local std::unique_ptr<look::RuntimeHost> tl_copy;
-        static thread_local uint64_t tl_gen = (uint64_t)-1;
-        const uint64_t cur_gen = g_http_app.generation.load(std::memory_order_acquire);
-        if (!tl_copy || tl_gen != cur_gen) {
-            tl_copy = g_http_app.interp->make_dispatch_copy();
+        // Önbellekler hangi görüntüden kurulduysa ona bağlıdır (tl_*_of). shared_ptr: bu istek
+        // kullandığını tutar — aynı iş parçacığındaki başka bir istek yeni nesle geçip önbelleği
+        // yeniden kurarsa, askıdaki bu istek eski kopyayı kullanmaya devam eder (eskiden yerinde
+        // yeniden kuruluyordu: askıdaki istek serbest bırakılmış ana makineye/tabloya dönüyordu).
+        static thread_local std::shared_ptr<look::RuntimeHost> tl_copy;
+        // Görüntünün kendisi de tutulur: yalnız adres saklansaydı, eski görüntü serbest kalıp yenisi aynı
+        // adrese ayrılınca eski kopya "güncel" sanılırdı (ABA).
+        static thread_local std::shared_ptr<const HttpApp::Snap> tl_copy_of;   // fiber-ok: nesil anahtarı
+        if (!tl_copy || tl_copy_of != snap) {
+            tl_copy = std::shared_ptr<look::RuntimeHost>(snap->interp->make_dispatch_copy());
             tl_copy->bind_web_to_current_request();   // web modülleri bir kez; bağlam çağrı anında
-            tl_gen  = cur_gen;
+            tl_copy_of = snap;
         }
-        look::RuntimeHost* copy = tl_copy.get();
+        std::shared_ptr<look::RuntimeHost> copy_hold = tl_copy;
+        look::RuntimeHost* copy = copy_hold.get();
         t_copy_end = std::chrono::steady_clock::now();
         copy->set_output(output);
         // İstek tutamacı: modüller ve print bu isteğin bağlamını/çıktısını buradan okur (fiber'ın
@@ -1343,44 +1414,15 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         if (nested && outer_web && outer_out)
             depth_guard.restore = [copy, outer_out]() { copy->set_output(*outer_out); };
 
-        // VM routes'u shared_lock altında alıyoruz (g_http_app read-only erişim).
-        // PERF: route_closures listesi vm_routes'tan türetilir (istek-bağımsız, yalnız
-        // hot-reload'da değişir) — tl_copy gibi thread_local + generation-cache. Eskiden
-        // HER İSTEKTE N VmRoute (pattern string kopyası + middleware vector) + stable_partition
-        // kuruluyordu (N-route app'te O(N) per request). Artık yalnız generation değişince
-        // yeniden kurulur. Ham pointer'lar (vr.fn) generation-içi geçerli (vm_routes sabit);
-        // generation artınca cache tazelenir — tl_copy ile aynı güvenlik.
-        // fiber-ok: nesil-sabit, salt-okunur rota listesi (istekten bağımsız)
-        static thread_local std::vector<look::VmRoute> tl_route_closures;
-        static thread_local uint64_t tl_routes_gen = (uint64_t)-1;
-        if (tl_routes_gen != cur_gen) {
-            tl_route_closures.clear();
-            tl_route_closures.reserve(g_http_app.vm_routes.size());
-            for (size_t ri = 0; ri < g_http_app.vm_routes.size(); ++ri) {
-                auto& r = g_http_app.vm_routes[ri];
-                if (r.fn.type() != look::Value::BYTECODE_FN) continue;
-                look::VmRoute vr;
-                vr.pattern   = r.pattern;
-                vr.fn        = r.fn.as_bytecode_fn().get();
-                for (auto& mw : r.middlewares)
-                    if (mw.type() == look::Value::BYTECODE_FN)
-                        vr.middlewares.push_back(mw.as_bytecode_fn().get());
-                tl_route_closures.push_back(std::move(vr));
-            }
-            // Statik route'ları ({param} içermeyenler) dinamiklerden ÖNCE sırala:
-            // /user/new, /user/{id}'den önce eşleşsin (deterministik routing).
-            std::stable_partition(tl_route_closures.begin(), tl_route_closures.end(),
-                [](const look::VmRoute& r){ return r.pattern.find('{') == std::string::npos; });
-            tl_routes_gen = cur_gen;
-        }
-        std::vector<look::VmRoute>& route_closures = tl_route_closures;
-        sl.unlock();
+        // Rota listesi görüntüyle birlikte bir kez kurulur (publish_http_snapshot); closure'lara
+        // ham işaretçiler bu görüntü yaşadıkça geçerli (snap isteğin sonuna dek tutuluyor).
+        std::vector<look::VmRoute>& route_closures = *snap->route_closures;
 
         // Builtin tablosu: modül fonksiyonları dağıtım kopyasından (RuntimeHost) alınır; kopya web
         // modüllerini çağrı anındaki isteğe bağlamıştır (bind_web_to_current_request).
         // fiber-ok: tablodaki hiçbir giriş isteğe özgü değil (bağlam/çıktı istek tutamacından, fiber-başına) — tests/fiber_request_isolation_test.sh askı boyunca ölçer
-        static thread_local std::vector<look::BuiltinFn> tl_req_builtins;
-        static thread_local uint64_t tl_builtins_gen = (uint64_t)-1;   // fiber-ok: nesil sayacı
+        static thread_local std::shared_ptr<std::vector<look::BuiltinFn>> tl_req_builtins;
+        static thread_local std::shared_ptr<const HttpApp::Snap> tl_builtins_of;   // fiber-ok: nesil anahtarı (ABA yok)
         // Tablo artık fiber modunda da iş parçacığı başına bir kez kurulur: isteğe özgü hiçbir şey
         // yakalanmaz — print çıktıyı, web modülleri bağlamı çağrı anında istek tutamacından okur
         // (look/request_scope.h, fiber'ın kendi alanı). Eskiden fiber modunda her istekte ~190
@@ -1388,8 +1430,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // İç içe dağıtım (zamanlayıcı/WS geri çağırması) dış isteğin tablosuna dokunmaz: kendi tablosu.
         std::vector<look::BuiltinFn> nested_req_builtins;
         const bool local_table = nested;
-        std::vector<look::BuiltinFn>& req_builtins = local_table ? nested_req_builtins : tl_req_builtins;
-        const bool need_build = local_table || (tl_builtins_gen != cur_gen);
+        const bool need_build = local_table || !tl_req_builtins || (tl_builtins_of != snap);
+        // Yeni nesil: YENİ tablo (askıdaki istekler eskisini tutar — yerinde yeniden kurulmaz).
+        if (need_build && !local_table) tl_req_builtins = std::make_shared<std::vector<look::BuiltinFn>>();
+        std::shared_ptr<std::vector<look::BuiltinFn>> builtins_hold = local_table ? nullptr : tl_req_builtins;
+        std::vector<look::BuiltinFn>& req_builtins = local_table ? nested_req_builtins : *builtins_hold;
         if (need_build) {
         req_builtins.assign(look::builtin_names().size(), look::BuiltinFn{});
 
@@ -1697,13 +1742,13 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             return last;
         };
 
-        if (!local_table) tl_builtins_gen = cur_gen;   // geçerli: bir sonraki sıcak yeniden yüklemeye dek
+        if (!local_table) tl_builtins_of = snap;   // geçerli: bir sonraki sıcak yeniden yüklemeye dek
         }   // end if(need_build) — iş parçacığı başına nesilde bir kez (iç içe dağıtım: kendi tablosu)
 
         // before_route closures: route_closures ile aynı yapıda
         std::vector<look::Closure*> before_closures;
-        before_closures.reserve(g_http_app.vm_before_routes.size());
-        for (auto& val : g_http_app.vm_before_routes)
+        before_closures.reserve(snap->vm_before_routes.size());
+        for (auto& val : snap->vm_before_routes)
             if (val.type() == look::Value::BYTECODE_FN)
                 before_closures.push_back(val.as_bytecode_fn().get());
 
@@ -1717,7 +1762,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             look::VM vm(sh, output);
             // Kurulum global'leri istekle paylaşılır (harita istek başına kopyalanır, değerler
             // paylaşılır); istek birine yazarsa yazma yolu önce kendi kopyasını alır.
-            vm.set_globals(g_http_app.vm_setup_globals);
+            vm.set_globals(snap->vm_setup_globals);
             vm.set_web_context(&web);
             // LOOK 2: bağlantı işleyicisi (WS/SSE rotası) VM'de — bağlantı işleyiciye ilk argüman olarak gider.
             if (direct().conn.type() == look::Value::WEBSOCKET) vm.set_ws_connection(direct().conn.as_websocket());
@@ -1736,9 +1781,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             bool stopped = stopped_direct;
             // Varsayılan CSRF kapısı — rotadan ve before_route'tan ÖNCE, üç modda aynı yer. Bağlantı
             // işleyicisi (WS/SSE) ve zamanlayıcı geri çağırması istek değildir.
-            if (!stopped && g_http_app.csrf_on && direct().conn.type() == look::Value::NONE &&
+            if (!stopped && snap->csrf_on && direct().conn.type() == look::Value::NONE &&
                 (web.method == "POST" || web.method == "PUT" || web.method == "PATCH" || web.method == "DELETE")) {
-                for (const auto& rule : g_http_app.csrf_exempt)
+                for (const auto& rule : snap->csrf_exempt)
                     if (csrf_exempt_match(rule, web.path)) { web.csrf_exempt_rule = rule; break; }
                 std::string why;
                 if (web.csrf_exempt_rule.empty() && !look::csrf_request_ok(&web, why)) {
@@ -1765,11 +1810,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             }
 
             if (!stopped) {
-                if (g_http_app.script_mode) {
+                if (snap->script_mode) {
                     // Rotasız betik (PHP gibi): programın tamamı bu istekte, taze global'lerle çalışır.
                     look::VM script_vm(sh, output);
                     script_vm.set_web_context(&web);
-                    script_vm.execute(*g_http_app.compiled);
+                    script_vm.execute(*snap->compiled);
                 } else {
                     vm.dispatch_routes(web.method, web.path);
                 }
@@ -1825,7 +1870,6 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     } else {
         // Uygulama yüklenemedi (sıcak yeniden yükleme başarısız: VM derleyemedi/kuramadı). LOOK 2:
         // yorumlayıcı yedeği yok — istek açık bir 500 alır; dosya düzeltilince sonraki yükleme toparlar.
-        sl.unlock();
         t_dispatch_start = std::chrono::steady_clock::now();
         web.status_code = 500;
         web.status_text = "Internal Server Error";
