@@ -11,7 +11,8 @@
 # Usage: redis_session_restart_test.sh <lk-fcgi> <redis-url>   (needs curl)
 set -u
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
-FCGI="$(cd "$(dirname "${1:?usage}")" && pwd)/$(basename "$1")"; URL="${2:?usage}"
+FCGI="$(cd "$(dirname "${1:?usage}")" && pwd)/$(basename "$1")"
+URL="${2:?usage}"
 PORT="${PORT:-7466}"
 T="$(mktemp -d)"; pid=""; trap '[ -n "$pid" ] && kill $pid 2>/dev/null; rm -rf "$T"' EXIT
 fail=0; ok() { echo "  OK   $1"; }; bad() { echo "  FAIL $1"; fail=1; }
@@ -29,8 +30,8 @@ route("GET", "/set", function() { session::start(); session::set("v", request::g
 route("GET", "/get", function() { session::start(); return response::text(session::get("v") ?? "none") })
 route("GET", "/ping", fn() => response::text("ok"))
 LK
-( cd "$T" && exec env LOOK_SESSION_DRIVER=redis LOOK_REDIS_URL="$URL" \
-    "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$T/log.txt" 2>&1 ) & pid=$!
+export LOOK_SESSION_DRIVER=redis LOOK_REDIS_URL="$URL"
+( cd "$T" && exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$T/log.txt" 2>&1 ) & pid=$!
 for i in $(seq 1 50); do curl -s -m 5 -o /dev/null -m 1 "localhost:$PORT/ping" && break; sleep 0.1; done
 U="http://localhost:$PORT"
 
