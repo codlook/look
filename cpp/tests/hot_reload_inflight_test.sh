@@ -41,6 +41,8 @@ write_v2() {
     touch -d "+5 seconds" "$TMP/app.lk.new"; mv "$TMP/app.lk.new" "$TMP/app.lk"
 }
 python3 "$TMP/slow.py" "$UP" & up=$!
+# The upstream must be listening before the first /slow (CI: the first run got connection refused).
+for i in $(seq 1 100); do (echo > /dev/tcp/127.0.0.1/$UP) 2>/dev/null && break; sleep 0.1; done
 fail=0
 for mode in "" "LOOK_FIBER_DISPATCH=0"; do
     write_v1
