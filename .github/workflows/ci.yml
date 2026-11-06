@@ -529,6 +529,8 @@ jobs:
           bash tests/fcgi_request_env_test.sh ./build/lk-fcgi
           # PARAMS limited to 2 MB per request (were unlimited: 200 MB accepted, +315 MB memory)
           bash tests/fcgi_params_limit_test.sh ./build/lk-fcgi
+          # a connection that never sends its first request is closed after LOOK_HTTP_IDLE_MS
+          bash tests/fcgi_idle_connect_test.sh ./build/lk-fcgi
 
       # A response is sent whole or its connection closed; clients that never read cannot freeze a
       # worker thread (fibers).

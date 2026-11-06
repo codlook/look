@@ -816,6 +816,15 @@ int main(int argc, char* argv[]) {
                 auto conn_ptr = std::make_shared<look::FcgiConn>(std::move(conn_val));
                 pool.submit([conn_ptr]() mutable {
                     look::FcgiRequest req;
+                    // İlk istek için de okuma zaman aşımı = HTTP kipinin boşta süresi (LOOK_HTTP_IDLE_MS,
+                    // varsayılan 30 sn; her recv için, toplam değil). Eskiden yoktu: bağlanıp hiçbir
+                    // şey göndermeyen her bağlantı bir işçi iş parçacığını süresiz tutuyordu.
+                    static const int idle_s = [] {
+                        const char* e = std::getenv("LOOK_HTTP_IDLE_MS");
+                        long ms = (e && *e) ? std::atol(e) : 30000L;
+                        return (int)std::max(1L, ms / 1000);
+                    }();
+                    conn_ptr->set_read_timeout(idle_s);
                     while (conn_ptr->accept(req)) {
                         handle_request(req, *conn_ptr);
                         if (!req.keep_conn) break;
