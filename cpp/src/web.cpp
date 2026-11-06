@@ -256,6 +256,7 @@ void WebContext::init_from_cgi() {
     // Remote addr
     const char* ra = std::getenv("REMOTE_ADDR");
     remote_addr = ra ? ra : "";
+    { const char* dr = std::getenv("DOCUMENT_ROOT"); document_root = dr ? dr : ""; }
 
     // HTTPS ve Host: CGI ortamını web sunucusu kurar (istemci değil) — FastCGI ile aynı kural.
     // Eskiden CGI'de is_https hiç ayarlanmıyordu: HTTPS sitede oturum çerezi Secure almıyordu.

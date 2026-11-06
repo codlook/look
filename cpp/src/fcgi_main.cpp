@@ -449,15 +449,13 @@ static std::string build_error_response(int status, const std::string& title,
            "Access-Control-Allow-Origin: *\r\n\r\n" + body;
 }
 
-static void set_env_from_params(const std::map<std::string, std::string>& params) {
-    for (auto& [k, v] : params) {
-#ifdef _WIN32
-        SetEnvironmentVariableA(k.c_str(), v.c_str());
-#else
-        setenv(k.c_str(), v.c_str(), 1);
-#endif
-    }
-}
+// İstek parametreleri süreç ortamına YAZILMAZ. Eskiden her isteğin bütün parametreleri (istemcinin
+// başlıkları HTTP_* olarak) setenv ile süreç ortamına yazılıyordu, 64 iş parçacığından aynı anda:
+//   * getenv (env(), çok parçalı yüklemede TEMP) eşzamanlı setenv ile yarışıp SIGSEGV veriyordu;
+//   * glibc eski ortam dizgilerini hiç bırakmaz: her yeni başlık değeri kalıcı bellek (+49 MB / 5000
+//     istek), ortam büyüdükçe her getenv yavaşlıyordu;
+//   * bir isteğin başlığı (X-Secret) sonraki isteklerin env("HTTP_X_SECRET")'inde görünüyordu.
+// İsteğin bilgisi request:: ile okunur (make_web_context); env() yapılandırmadır (.env + süreç ortamı).
 
 static std::string resolve_script(const std::map<std::string, std::string>& params) {
     auto get = [&](const std::string& k) {
@@ -537,6 +535,7 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
 
     web.method = param("REQUEST_METHOD");
     if (web.method.empty()) web.method = "GET";
+    web.document_root = param("DOCUMENT_ROOT");   // file::store web-kökü denetimi (eskiden setenv ile)
 
     // Path: REQUEST_URI'dan al
     {
@@ -587,8 +586,6 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path);
 
 static void handle_request(look::FcgiRequest& req, look::FcgiConn& conn) {
-    set_env_from_params(req.params);
-
     // Built-in health endpoint — no LOOK context, no script needed
     {
         const std::string& health_path = look::health_path();

@@ -1,5 +1,6 @@
 #include "look/stdlib.h"
 #include "look/web.h"
+#include "look/request_scope.h"   // current_request_web: isteğin DOCUMENT_ROOT değeri
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -26,8 +27,11 @@ static std::string get_upload_url() {
     return uu ? uu : "";
 }
 
-// Web root tespiti — DOCUMENT_ROOT env ile
+// Web root tespiti — isteğin DOCUMENT_ROOT'u (FastCGI parametresi / CGI ortamı), yoksa süreç ortamı.
+// FastCGI'de istek parametreleri artık süreç ortamına yazılmıyor (fcgi_main.cpp): değer isteğin
+// bağlamından okunur, yoksa bu denetim FastCGI'de sessizce devre dışı kalırdı.
 static std::string get_web_root() {
+    if (auto* w = look::current_request_web(); w && !w->document_root.empty()) return w->document_root;
     const char* dr = std::getenv("DOCUMENT_ROOT");
     return dr ? dr : "";
 }

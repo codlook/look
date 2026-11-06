@@ -514,6 +514,14 @@ jobs:
           cd cpp
           bash tests/session_fixation_test.sh ./build/lk-fcgi
 
+      # FastCGI wrote every request's parameters (client headers as HTTP_*) into the process
+      # environment from all threads: getenv crashed, memory grew for good, and one visitor's header
+      # showed in the next request's env().
+      - name: FastCGI request parameters stay out of the process environment
+        run: |
+          cd cpp
+          bash tests/fcgi_request_env_test.sh ./build/lk-fcgi
+
       # Paket modülü (~/.look/modules) sıcak yeniden yüklemeden sonra da çalışır: derleyici yüklenen
       # modülleri süreç boyunca hatırlıyordu, yeniden yüklemede `use paket` boş geçiyor, istekler 500.
       - name: Package modules survive a hot reload

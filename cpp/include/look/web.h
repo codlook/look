@@ -77,6 +77,7 @@ struct WebContext {
     // Geçersiz değer (boşluk, kontrol karakteri, '/', '@' …) → "" (clean_host).
     std::string host;
     // csrf:: — bu istekte kullanılan anahtar tabanı (çerez aynı istekte cookies_in'e dönmez).
+    std::string document_root;   // FastCGI/CGI DOCUMENT_ROOT (file::store web-kökü denetimi); http modunda boş
     std::string csrf_base;
     // Bu istek csrf::exempt kuralıyla denetimsiz geçtiyse o kural (session:: burada yasak).
     std::string csrf_exempt_rule;
