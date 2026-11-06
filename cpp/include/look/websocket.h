@@ -29,6 +29,7 @@ struct WsConnection {
     // sonra başarısız bir ws::send closed=true yapıyor, geri çağrı atlanıyordu.
     std::atomic<bool>    server_closed{false};
     std::atomic<bool>    close_fired{false};
+    bool                 fd_released = false;   // write_mutex altında: close_ws fd'yi kapattı (yeniden kullanılabilir)
     std::mutex           write_mutex;
 
     // Callbacks — set by ws::on() from LOOK code. YALNIZ aşağıdaki kilitli yardımcılarla: ws::on bir

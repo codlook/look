@@ -245,7 +245,9 @@ void WsConnection::close_conn() {
         // BUG (düzeltildi): closed ARTIK true → send_raw close-frame'i düşürürdü; sunucu-başlatan
         // ws::close istemciye HİÇ close-frame göndermiyordu (RFC 6455 §5.5.1 ihlali, SSE ikizinin
         // kapatılmamış hali). write_all closed-guard'sız → close-frame gerçekten telde.
-        write_all(frame);
+        // fd_released: closed'u aldıktan sonra kilidi beklerken close_ws fd'yi kapatmış olabilir;
+        // o fd numarası artık başka bir bağlantının olabilir → yazma.
+        if (!fd_released) write_all(frame);
     }
     // fd'yi sunucu kapatır (close_ws, olay döngüsünde). Eskiden yalnız istemci bir şey gönderince
     // ya da gidince kapanıyordu: cevap vermeyen istemcide bağlantı ve fd süresiz kalıyordu.

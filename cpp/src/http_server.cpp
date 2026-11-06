@@ -1107,6 +1107,7 @@ struct HttpServer::Impl {
             held_ip_release(conn->held_ip);
             conn->closed.store(true);
             std::lock_guard<std::mutex> wlk(conn->write_mutex);  // uçuştaki send'i drain et
+            conn->fd_released = true;   // kilidi bekleyen close_conn kapanmış fd'ye yazmasın
             look::g_ws_registry.remove(fd);
             loop->close_fd(fd);
         } else {
