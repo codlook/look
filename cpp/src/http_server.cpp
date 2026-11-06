@@ -803,9 +803,13 @@ struct HttpServer::Impl {
 
         ws_handler(conn, req);
 
-        // fd'yi event loop'a devret: blocking → non-blocking + EPOLL_CTL_ADD
-        loop->add_client(fd, [this, fd](const char* d, size_t l) {
-            on_ws_data(fd, d, l);
+        // fd'yi event loop'a devret: blocking → non-blocking + EPOLL_CTL_ADD. Kayıt olay döngüsünde,
+        // kapanışla (close_ws) aynı iş parçacığında: işleyici ws::close çağırdıysa kapanış önce koşar
+        // ve bağlantı artık bu fd'de değildir → kaydedilmez. Eskiden işçi kaydediyordu: döngü fd'yi
+        // kapatırken epoll_ctl aynı (ya da yeniden kullanılmış, başka bağlantının) fd'ye gidebiliyordu.
+        loop->post([this, fd, conn]() {
+            { std::lock_guard<std::mutex> lk(ws_mtx); auto it = ws_clients.find(fd); if (it == ws_clients.end() || it->second != conn) return; }
+            loop->add_client(fd, [this, fd](const char* d, size_t l) { on_ws_data(fd, d, l); });
         });
     }
 
@@ -839,9 +843,11 @@ struct HttpServer::Impl {
 
         sse_handler(conn, req);
 
-        // fd'yi event loop'a devret — disconnect tespiti için
-        loop->add_client(fd, [this, fd](const char* d, size_t l) {
-            on_sse_data(fd, d, l);
+        // fd'yi event loop'a devret — disconnect tespiti için. WS ile aynı: kayıt olay döngüsünde,
+        // close_sse ile sıralı (işleyici sse::close dediyse kaydedilmez — TSan: close_fd ↔ epoll_ctl).
+        loop->post([this, fd, conn]() {
+            { std::lock_guard<std::mutex> lk(sse_mtx); auto it = sse_clients.find(fd); if (it == sse_clients.end() || it->second != conn) return; }
+            loop->add_client(fd, [this, fd](const char* d, size_t l) { on_sse_data(fd, d, l); });
         });
     }
 
