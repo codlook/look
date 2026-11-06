@@ -518,6 +518,8 @@ jobs:
         run: |
           cd cpp
           bash tests/session_fixation_test.sh ./build/lk-fcgi
+          # a logout is never undone by a session::set running at the same time (file driver)
+          bash tests/session_destroy_race_test.sh ./build/lk-fcgi
           bash tests/proxy_trust_test.sh ./build/lk-fcgi
 
       # FastCGI wrote every request's parameters (client headers as HTTP_*) into the process
@@ -1541,6 +1543,7 @@ jobs:
           bash tests/redis_session_isolation_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
           # A pooled connection Redis closed (restart, timeout, CLIENT KILL) is replaced before use
           bash tests/redis_session_restart_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
+          bash tests/session_destroy_race_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
       # A session is at most LOOK_SESSION_MAX_BYTES (1 MB): over it session::set is an error,
       # nothing is written or cut. Same rule for the file and the Redis driver.
       - name: "Session size limit (file driver, and Redis on live redis:7)"

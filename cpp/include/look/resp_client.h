@@ -23,6 +23,7 @@ public:
 
     // Komutlar — hepsi network hatasında std::runtime_error fırlatır
     void        set(const std::string& key, const std::string& val, int ttl_sec = 0);
+    bool        set_if_exists(const std::string& key, const std::string& val, int ttl_sec = 0);  // SET XX; false = anahtar yok
     std::string get(const std::string& key);      // bulunamazsa "" döner
     void        del(const std::string& key);
     bool        exists(const std::string& key);

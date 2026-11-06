@@ -231,8 +231,53 @@ inline void session_file_write(const std::string& sid, const std::string& blob) 
 #endif
 }
 
+// Güncelle — YALNIZ oturum hâlâ varsa. false: oturum yok (bu istek sürerken session::destroy ya da
+// regenerate ile silindi). Eskiden session::set var-mı denetimi → yükle → yaz yapıyordu: arada başka
+// bir sekme çıkış yaparsa yazma dosyayı ESKİ verilerle yeniden yaratıyordu (çıkış geri alınıyordu).
+// Şimdi: var olan dosya açılır, kilitlenir (flock), hâlâ bağlıysa (nlink) yerine yenisi konur;
+// silme de aynı kilitle yapılır. Kilit beklerken dosya başka bir güncellemeyle değiştiyse yenisine
+// yeniden bakılır (son yazan kazanır — eskisi gibi).
+inline bool session_file_update(const std::string& sid, const std::string& blob) {
+#ifndef _WIN32
+    const std::string path = session_file(sid);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        int lfd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        if (lfd < 0) return false;                         // silinmiş
+        while (::flock(lfd, LOCK_EX) != 0 && errno == EINTR) {}
+        struct stat st{};
+        if (::fstat(lfd, &st) != 0 || st.st_nlink == 0) { ::close(lfd); continue; }   // değişti/silindi: yeniden bak
+        try { session_file_write(sid, blob); } catch (...) { ::close(lfd); throw; }
+        ::close(lfd);                                       // kilit eski dosyayla birlikte bırakılır
+        return true;
+    }
+    throw std::runtime_error("session: the session file kept changing while it was being written");
+#else
+    if (!session_file_exists(sid)) return false;
+    session_file_write(sid, blob);
+    return true;
+#endif
+}
+
 inline void session_file_remove(const std::string& sid) {
+#ifndef _WIN32
+    // Güncellemeyle aynı kilit: kilidi tutan bir güncelleme bitmeden silinmez, bittikten sonra
+    // yolda duran (onun yazdığı) dosya silinir — çıkış her zaman kazanır.
+    // Kilitlenen dosya bu arada değiştirildiyse (nlink 0) yoldaki yenisi kilitlenir.
+    const std::string path = session_file(sid);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        int lfd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        if (lfd < 0) { ::unlink(path.c_str()); return; }   // yok (ya da bağlantı: yine de kaldır)
+        while (::flock(lfd, LOCK_EX) != 0 && errno == EINTR) {}
+        struct stat st{};
+        if (::fstat(lfd, &st) == 0 && st.st_nlink == 0) { ::close(lfd); continue; }
+        ::unlink(path.c_str());
+        ::close(lfd);
+        return;
+    }
+    ::unlink(path.c_str());
+#else
     std::remove(session_file(sid).c_str());
+#endif
 }
 
 // Süresi dolan oturum dosyalarını sil. Eskiden hiç silinmiyordu: yeni ziyaretçinin oturumuna

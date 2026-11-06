@@ -425,6 +425,15 @@ std::string RespClient::read_response(int depth) {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
+// SET ... XX: yalnız anahtar varsa yazar (tek komut, atomik). Yanıt +OK ya da nil.
+bool RespClient::set_if_exists(const std::string& key, const std::string& val, int ttl_sec) {
+    if (ttl_sec > 0)
+        send_command({"SET", key, val, "EX", std::to_string(ttl_sec), "XX"});
+    else
+        send_command({"SET", key, val, "XX"});
+    return read_response() == "OK";
+}
+
 void RespClient::set(const std::string& key, const std::string& val, int ttl_sec) {
     if (ttl_sec > 0)
         send_command({"SET", key, val, "EX", std::to_string(ttl_sec)});

@@ -834,6 +834,17 @@ static void sess_store(const std::string& sid, const std::string& blob) {
     look::session_file_write(sid, blob);   // 0600, bağlantı izlenmez
     look::session_files_gc(session_ttl());  // süresi dolanları arka planda sil
 }
+// Var olan oturumu güncelle; false = oturum bu arada silindi (session_file_update'e bakın).
+static bool sess_update(const std::string& sid, const std::string& blob) {
+    if (session_use_redis()) {
+        bool ok = false;
+        with_session_redis([&](RespClient& r) { ok = r.set_if_exists("look_sess:" + sid, blob, session_ttl()); });
+        return ok;
+    }
+    bool ok = look::session_file_update(sid, blob);
+    look::session_files_gc(session_ttl());
+    return ok;
+}
 static bool sess_exists(const std::string& sid) {
     if (session_use_redis()) {
         bool e = false;
@@ -1139,7 +1150,16 @@ static Module make_session_module(WebRef ctx) {
             throw std::runtime_error("session::set() — the session would be " + std::to_string(blob.size()) +
                 " bytes, more than the limit of " + std::to_string(session_max_bytes()) +
                 " (LOOK_SESSION_MAX_BYTES); keep large data in the database and store its id in the session");
-        sess_store(sid, blob);
+        if (!sess_update(sid, blob)) {
+            // Bu istek sürerken oturum silindi (başka sekmede çıkış / regenerate): eski veri geri
+            // YAZILMAZ — eskiden yazılıyordu ve çıkış geri alınıyordu. Yeni, boş bir oturuma
+            // yalnız bu anahtar yazılır.
+            ctx->cookies_in.erase("LOOK_SESSION");
+            const std::string nsid = session_issued_sid(ctx);
+            std::string fresh;
+            sess_blob_set(fresh, args[0].to_string(), args[1].to_string());
+            sess_update(nsid, fresh);
+        }
         return Value();
     };
     m.functions["get"] = [ctx](auto args) -> Value {
