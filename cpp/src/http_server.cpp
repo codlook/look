@@ -811,9 +811,8 @@ struct HttpServer::Impl {
             std::lock_guard<std::mutex> wlk(conn->write_mutex);
             loop->close_fd(fd);   // own-once → tam bir kez (çift-close yok)
         }
-        if (fire_cb && conn->on_close_cb) {
-            auto cb = conn->on_close_cb;
-            pool->submit([cb]() { cb(); });
+        if (fire_cb) {
+            if (auto cb = conn->get_on_close_cb()) pool->submit([cb]() { cb(); });
         }
     }
 
@@ -898,10 +897,8 @@ struct HttpServer::Impl {
 
             // RFC 6455 §5.4 parça birleştirme + §5.1 protokol ihlallerinde 1002.
             auto ws_deliver = [&](const std::string& msg) {
-                if (conn->on_message) {
-                    auto cb = conn->on_message;
+                if (auto cb = conn->get_on_message())   // kilitli kopya: ws::on aynı anda atayabilir
                     ws_in_order(conn, [cb, msg]() { cb(msg); });
-                }
             };
             auto ws_proto_close = [&]() {
                 std::string cf = ws_encode_close_frame();
@@ -972,10 +969,8 @@ struct HttpServer::Impl {
             // "close" geri çağrısı — TEK yer: bağlantı hangi yoldan biterse bitsin (kapanış çerçevesi,
             // kopma, gönderim hatası, protokol hatası) bir kez; sunucu ws::close ile kapattıysa hiç.
             // Gelen kutusundan geçer: bekleyen mesaj geri çağrılarından SONRA çalışır.
-            if (conn->on_close && !conn->server_closed.load() && !conn->close_fired.exchange(true)) {
-                auto cb = conn->on_close;
+            if (auto cb = conn->get_on_close(); cb && !conn->server_closed.load() && !conn->close_fired.exchange(true))
                 ws_in_order(conn, [cb]() { cb(); });
-            }
             held_ip_release(conn->held_ip);
             conn->closed.store(true);
             std::lock_guard<std::mutex> wlk(conn->write_mutex);  // uçuştaki send'i drain et

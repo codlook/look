@@ -96,7 +96,7 @@ void SseConnection::close_conn() {
     } else {
         // Loop yok (CLI/test bağlamı): en azından registry + cb.
         g_sse_registry.remove(fd);
-        if (on_close_cb) on_close_cb();
+        if (auto cb = get_on_close_cb()) cb();
     }
 }
 

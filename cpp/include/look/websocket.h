@@ -26,9 +26,16 @@ struct WsConnection {
     std::atomic<bool>    close_fired{false};
     std::mutex           write_mutex;
 
-    // Callbacks — set by ws::on() from LOOK code
+    // Callbacks — set by ws::on() from LOOK code. YALNIZ aşağıdaki kilitli yardımcılarla: ws::on bir
+    // havuz iş parçacığında (geri çağrının içinden de) atar, olay döngüsü aynı anda kopyalar.
+    // Kilitsiz std::function ataması + kopyası yarışıyordu (ASan: heap-use-after-free, sessiz mesaj kaybı).
     std::function<void(const std::string&)> on_message;
     std::function<void()>                   on_close;
+    std::mutex                              cb_mtx;
+    void set_on_message(std::function<void(const std::string&)> f) { std::lock_guard<std::mutex> l(cb_mtx); on_message = std::move(f); }
+    void set_on_close(std::function<void()> f) { std::lock_guard<std::mutex> l(cb_mtx); on_close = std::move(f); }
+    std::function<void(const std::string&)> get_on_message() { std::lock_guard<std::mutex> l(cb_mtx); return on_message; }
+    std::function<void()> get_on_close() { std::lock_guard<std::mutex> l(cb_mtx); return on_close; }
 
     // Parça birleştirme durumu (RFC 6455 §5.4) — sadece tek-akışlı ws okuma
     // callback'inden erişilir (fd başına tek in-flight recv), kilit gerekmez.

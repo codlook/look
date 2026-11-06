@@ -80,7 +80,7 @@ jobs:
           # warm start: the first start of a large TSan binary can outlast a test's readiness wait
           ( /tmp/w/lk-fcgi --version >/dev/null 2>&1 || true )
           fail=0
-          for t in fiber_request_isolation_test ws_message_order_test ws_close_callback_test \
+          for t in fiber_request_isolation_test ws_message_order_test ws_on_reregister_test ws_close_callback_test \
                    ws_callback_context_test realtime_isolation_test; do
             echo "== $t"; bash tests/$t.sh /tmp/w/lk-fcgi || fail=1
           done

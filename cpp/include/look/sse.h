@@ -17,7 +17,10 @@ struct SseConnection {
     std::string held_ip;     // LOOK_HTTP_MAX_CONNS_IP yuvası bu adres için tutuluyor (boş = yok)
     std::atomic<bool> closed{false};
     std::mutex write_mutex;
-    std::function<void()> on_close_cb;
+    std::function<void()> on_close_cb;   // YALNIZ kilitli yardımcılarla (WsConnection ile aynı yarış)
+    std::mutex            cb_mtx;
+    void set_on_close_cb(std::function<void()> f) { std::lock_guard<std::mutex> l(cb_mtx); on_close_cb = std::move(f); }
+    std::function<void()> get_on_close_cb() { std::lock_guard<std::mutex> l(cb_mtx); return on_close_cb; }
     // Sunucu-tetikli kapatma (sse::close) worker thread'inden gelir; fd/epoll/map temizliği
     // loop thread'ine AİT → bu köprü close_sse'yi loop->post ile oraya devreder (yarış yok).
     // http_server bağlantı kurulurken set eder; loop yoksa (CLI) boş → close_conn fallback.
