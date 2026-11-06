@@ -117,6 +117,7 @@ public:
     void post(TaskFn fn) override;
     void listen(int server_fd, AcceptCb cb) override;
     void async_read(int fd, ReadCb cb) override;
+    void pause_read(int fd) override;   // geri basınç: tamamlanan okuma yeniden kurulmaz (async_read sürdürür)
     void add_client(int fd, ReadCb cb) override;
     void async_write(int fd, std::string data, WriteCb cb) override;
     void close_fd(int fd) override;

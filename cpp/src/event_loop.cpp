@@ -406,6 +406,10 @@ struct SockState {
     AcceptCb accept_cb;
     ReadCb   read_cb;
     std::mutex mtx;
+    // Geri basınç (Linux EpollEventLoop::pause_read ile aynı anlam): duraklatılınca tamamlanan okuma
+    // yeniden kurulmaz; async_read devam ettirir. read_pending: havada bir WSARecv var (mtx altında).
+    bool     read_paused  = false;
+    bool     read_pending = false;
 
     // Idle/slowloris takibi (opt-in) — Linux EpollEventLoop ile paralel.
     int idle_timeout_sec = 0;
@@ -440,8 +444,10 @@ struct IocpEventLoop::Impl {
         ov->sock    = st->sock;
         ov->wsabuf  = { sizeof(ov->buf), ov->buf };
         DWORD flags = 0, bytes = 0;
+        { std::lock_guard<std::mutex> lk(st->mtx); st->read_pending = true; }
         int r = WSARecv(st->sock, &ov->wsabuf, 1, &bytes, &flags, &ov->ov, nullptr);
         if (r == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING) {
+            { std::lock_guard<std::mutex> lk(st->mtx); st->read_pending = false; }
             delete ov;
             return false;
         }
@@ -568,9 +574,22 @@ void IocpEventLoop::add_client(int fd, ReadCb cb) {
 void IocpEventLoop::async_read(int fd, ReadCb cb) {
     auto st = impl_->get_state(static_cast<SOCKET>(fd));
     if (!st) return;
+    bool repost = false;
+    {
+        std::lock_guard<std::mutex> lk(st->mtx);
+        st->read_cb = std::move(cb);
+        // Havada WSARecv varsa tamamlanması yeni geri çağrıyı kullanır; duraklatılmışsa (geri
+        // basınç) okuma burada yeniden kurulur.
+        if (st->read_paused) { st->read_paused = false; repost = !st->read_pending && !st->closed; }
+    }
+    if (repost) impl_->post_read(st);
+}
+
+void IocpEventLoop::pause_read(int fd) {
+    auto st = impl_->get_state(static_cast<SOCKET>(fd));
+    if (!st) return;
     std::lock_guard<std::mutex> lk(st->mtx);
-    st->read_cb = std::move(cb);
-    // Pending WSARecv in flight -- completion uses updated callback
+    st->read_paused = true;   // havadaki okuma tamamlanır, sonra yeniden kurulmaz
 }
 
 void IocpEventLoop::async_write(int fd, std::string data, WriteCb cb) {
@@ -746,12 +765,15 @@ void IocpEventLoop::run() {
                 ReadCb cb;
                 {
                     std::lock_guard<std::mutex> lk(st->mtx);
+                    st->read_pending = false;
                     cb = st->read_cb;
                     if (st->idle_timeout_sec > 0)
                         st->last_activity = std::chrono::steady_clock::now();
                 }
                 if (cb) cb(ov->buf, static_cast<size_t>(bytes));
-                if (!st->closed) impl_->post_read(st);
+                bool repost;
+                { std::lock_guard<std::mutex> lk(st->mtx); repost = !st->closed && !st->read_paused && !st->read_pending; }
+                if (repost) impl_->post_read(st);
             }
 
             delete ov;

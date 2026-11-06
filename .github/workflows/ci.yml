@@ -622,6 +622,7 @@ jobs:
           bash tests/ws_dos_guard_test.sh ./build/lk-fcgi
           # same-origin rule with IPv6 / letter case; handshakes without a valid key are 400
           bash tests/ws_handshake_check_test.sh ./build/lk-fcgi
+          python3 tests/ws_backpressure_portable_test.py ./build/lk-fcgi 7795
 
       # setup data is shared with every request instead of being copied for it; a write
       # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.

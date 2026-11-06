@@ -73,3 +73,12 @@ jobs:
             -Exe cpp/build-win/Release/lk-fcgi.exe `
             -Script cpp/tests/win_http_idle_app.lk `
             -Port 7788
+      # WebSocket backpressure on IOCP: a flood of tiny frames to a slow handler must not grow the
+      # server's memory (the full inbox stops reading, as epoll's pause_read does on Linux), and
+      # another client keeps getting answers. Before IOCP had pause_read the server read it all.
+      - name: "WebSocket backpressure (IOCP pause_read)"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python cpp/tests/ws_backpressure_portable_test.py cpp/build-win/Release/lk-fcgi.exe 7795
+          if ($LASTEXITCODE -ne 0) { throw "ws_backpressure_portable_test failed" }
