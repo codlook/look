@@ -104,6 +104,9 @@ private:
     uint64_t stmt_tick_ = 0;
     static constexpr size_t STMT_CACHE_MAX = 64;
     void clear_stmt_cache(bool close_on_server);
+    // Satırlar arasında gelen hata paketi ve CALL'un ek sonuç kümeleri (SERVER_MORE_RESULTS_EXISTS)
+    [[noreturn]] void throw_err_packet(const std::vector<uint8_t>& pkt, const char* prefix);
+    void drain_more_results(uint16_t status, uint8_t& seq);
 
     // Okuma tamponu: bir recv ile birden çok paket (eskiden paket başına başlık + gövde = iki recv).
     std::unique_ptr<uint8_t[]> rbuf_;

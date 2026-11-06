@@ -162,9 +162,57 @@ void MySQLClient::disconnect() {
 }
 
 void MySQLClient::clear_stmt_cache(bool close_on_server) {
-    if (close_on_server && sock_ != SOCK_INVALID)
-        for (auto& kv : stmt_cache_) stmt_close(kv.second.meta.id);
+    // Önce haritayı devral: stmt_close gönderimi başarısız olursa disconnect() → buraya
+    // (false) yeniden girer ve stmt_cache_'i döngü ortasında temizlerdi → yineleyici UAF.
+    auto old = std::move(stmt_cache_);
     stmt_cache_.clear();
+    if (close_on_server)
+        for (auto& kv : old) {
+            if (sock_ == SOCK_INVALID) break;   // bağlantı koptu: sunucu ifadeleri zaten bıraktı
+            stmt_close(kv.second.meta.id);
+        }
+}
+
+[[noreturn]] void MySQLClient::throw_err_packet(const std::vector<uint8_t>& pkt, const char* prefix) {
+    const uint8_t* p = pkt.data() + 1;
+    const uint8_t* end = pkt.data() + pkt.size();
+    last_error_code_ = 0;
+    if (p + 2 <= end) { last_error_code_ = (uint16_t)(p[0] | (p[1] << 8)); p += 2; } else p = end;
+    if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE'
+    throw std::runtime_error(std::string(prefix) + std::string(p, end));
+}
+
+// CALL bir sonuç kümesinin ardından en az bir OK daha gönderir (durum bayrağı 0x0008,
+// SERVER_MORE_RESULTS_EXISTS). Okunmazsa bağlantıda kalır ve SONRAKİ sorgu — havuzda başka
+// bir isteğin sorgusu — onu kendi cevabı sanar. Hepsi son OK'a kadar okunur; ilk küme döner.
+void MySQLClient::drain_more_results(uint16_t status, uint8_t& seq) {
+    while (status & 0x0008) {
+        auto r = read_packet(seq);
+        if (r.empty()) throw std::runtime_error("db: empty response");
+        if (r[0] == 0xFF) throw_err_packet(r, "db: ");
+        const uint8_t* p = r.data();
+        const uint8_t* end = p + r.size();
+        if (r[0] == 0x00) {
+            p++; read_lenenc(p, end); read_lenenc(p, end);
+            status = (end - p >= 2) ? (uint16_t)(p[0] | (p[1] << 8)) : 0;
+            in_txn_ = (status & 0x0001) != 0;
+            continue;
+        }
+        uint64_t cols = read_lenenc(p, end);
+        if (cols > MYSQL_MAX_COLUMNS)
+            throw std::runtime_error("db mysql: column count limit exceeded (malicious server?)");
+        for (uint64_t i = 0; i < cols; i++) read_packet(seq);
+        read_packet(seq);   // EOF
+        status = 0;
+        while (true) {
+            auto row = read_packet(seq);
+            if (!row.empty() && row[0] == 0xFF) throw_err_packet(row, "db: ");
+            if (row.empty() || (row[0] == 0xFE && row.size() < 9)) {
+                if (row.size() >= 5) { status = (uint16_t)(row[3] | (row[4] << 8)); in_txn_ = (status & 0x0001) != 0; }
+                break;
+            }
+        }
+    }
 }
 
 // ── Socket timeout ────────────────────────────────────────────────────────────
@@ -613,7 +661,11 @@ void MySQLClient::do_handshake(const std::string& user,
     };
 
     std::string cur_plugin = srv_plugin;
-    uint32_t client_flags = 0x000FA685;
+    // CLIENT_MULTI_STATEMENTS (0x10000) ve CLIENT_LOCAL_FILES (0x80) İSTENMEZ: kullanıcı SQL'i
+    // yalnız hazırlanmış ifadeyle gider (ikisini de kullanamaz); metin sorgusu yalnız sabit
+    // BEGIN/COMMIT/SAVEPOINT. Bayrak açıkken "a; b" metin sorgusu ikinci sonucu bağlantıda
+    // bırakır, kötü niyetli sunucu da LOCAL INFILE isteğiyle dosya isteyebilirdi.
+    uint32_t client_flags = 0x000EA605;
     if (!database.empty()) client_flags |= 0x00000008;
 
     uint8_t auth_seq = 1;
@@ -701,6 +753,7 @@ void MySQLClient::do_handshake(const std::string& user,
         if (r.size() > 3) {
             size_t off = 3;
             if (r[off] == '#') off += 6;
+            if (off > r.size()) off = r.size();   // kısa hata paketi: aralık dışına çıkma (R24)
             msg = "db: " + std::string(r.begin() + off, r.end());
         }
         throw std::runtime_error(msg);
@@ -803,7 +856,9 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     }
     if (resp[0] == 0x00) {
         p++; affected_rows_=read_lenenc(p,end); last_insert_id_=read_lenenc(p,end);
-        if (end - p >= 2) in_txn_ = (p[0] & 0x01) != 0;   // SERVER_STATUS_IN_TRANS
+        uint16_t st = (end - p >= 2) ? (uint16_t)(p[0] | (p[1] << 8)) : 0;
+        in_txn_ = (st & 0x01) != 0;   // SERVER_STATUS_IN_TRANS
+        drain_more_results(st, seq);
         return {};
     }
 
@@ -833,11 +888,19 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     read_packet(seq); // EOF packet
 
     std::vector<DbRow> rows;
+    uint16_t st = 0;
     while (true) {
         auto row_pkt = read_packet(seq);
-        if (row_pkt.size() >= 5 && row_pkt.size() < 9 && row_pkt[0] == 0xFE)
-            in_txn_ = (row_pkt[3] & 0x01) != 0;   // EOF: [FE][uyari 2][durum 2]
-        if (row_pkt.empty() || row_pkt[0]==0xFE || row_pkt[0]==0xFF) break;
+        // Satırlar arasında hata (sorgu yarıda kesildi: zaman aşımı, KILL, dönüşüm hatası) →
+        // eskiden döngü sessizce biter, EKSİK sonuç tam sonuç gibi dönerdi.
+        if (!row_pkt.empty() && row_pkt[0] == 0xFF) throw_err_packet(row_pkt, "db: query error: ");
+        if (row_pkt.empty() || (row_pkt[0] == 0xFE && row_pkt.size() < 9)) {
+            if (row_pkt.size() >= 5) {   // EOF: [FE][uyari 2][durum 2]
+                st = (uint16_t)(row_pkt[3] | (row_pkt[4] << 8));
+                in_txn_ = (st & 0x01) != 0;
+            }
+            break;
+        }
         DbRow row;
         const uint8_t* rp = row_pkt.data();
         const uint8_t* re = rp + row_pkt.size();
@@ -852,8 +915,9 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
             }
             row.push_back({col.name, std::move(dv)});
         }
-        rows.push_back(row);
+        rows.push_back(std::move(row));
     }
+    drain_more_results(st, seq);
     return rows;
 }
 
@@ -996,7 +1060,9 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
         const uint8_t* end = resp.data() + resp.size();
         affected_rows_  = read_lenenc(p, end);
         last_insert_id_ = read_lenenc(p, end);
-        if (end - p >= 2) in_txn_ = (p[0] & 0x01) != 0;   // SERVER_STATUS_IN_TRANS
+        uint16_t st = (end - p >= 2) ? (uint16_t)(p[0] | (p[1] << 8)) : 0;
+        in_txn_ = (st & 0x01) != 0;   // SERVER_STATUS_IN_TRANS
+        drain_more_results(st, seq);
         return {};
     }
 
@@ -1028,11 +1094,18 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     read_packet(seq); // EOF
 
     std::vector<DbRow> rows;
+    uint16_t st = 0;
     while (true) {
         auto row_pkt = read_packet(seq);
-        if (row_pkt.size() >= 5 && row_pkt.size() < 9 && row_pkt[0] == 0xFE)
-            in_txn_ = (row_pkt[3] & 0x01) != 0;   // EOF: [FE][uyari 2][durum 2]
-        if (row_pkt.empty() || row_pkt[0]==0xFE || row_pkt[0]==0xFF) break;
+        // Satırlar arasında hata → eksik sonuç sessizce dönerdi (bkz. query()).
+        if (!row_pkt.empty() && row_pkt[0] == 0xFF) throw_err_packet(row_pkt, "db: ");
+        if (row_pkt.empty() || row_pkt[0] == 0xFE) {   // ikili satır 0x00 ile başlar
+            if (row_pkt.size() >= 5) {   // EOF: [FE][uyari 2][durum 2]
+                st = (uint16_t)(row_pkt[3] | (row_pkt[4] << 8));
+                in_txn_ = (st & 0x01) != 0;
+            }
+            break;
+        }
 
         // binary row: 0x00 header + null_bitmap
         const uint8_t* rp = row_pkt.data();
@@ -1104,8 +1177,9 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                     case 0x08:            dv.str = std::to_string(read_le(8)); break;
                     // Dilin tek double formatı (look/format.h) — NaN/Inf + kısa round-trip, her
                     // sürücüde AYNI metin. (Eski to_string=%f 6-hane hassasiyet kaybı yapardı.)
-                    case 0x04: { float f;  if(rp+4<=re){memcpy(&f,rp,4);rp+=4;} dv.str=look_format_double(f); break; }
-                    case 0x05: { double d; if(rp+8<=re){memcpy(&d,rp,8);rp+=8;} dv.str=look_format_double(d); break; }
+                    // Kırpık paket: değer başlatılmamış yığın belleği olarak dönmez (R24)
+                    case 0x04: { float f = 0;  if(rp+4<=re){memcpy(&f,rp,4);rp+=4;} else rp=re; dv.str=look_format_double(f); break; }
+                    case 0x05: { double d = 0; if(rp+8<=re){memcpy(&d,rp,8);rp+=8;} else rp=re; dv.str=look_format_double(d); break; }
                     case 0x10:            dv.str = std::to_string(read_le(1)); break;
                     // Temporal: DATE(0x0A)/NEWDATE(0x0E)/TIMESTAMP(0x07)/DATETIME(0x0C) → tarih,
                     // TIME(0x0B) → saat. L uzunluğu (0/4/7/11, TIME 0/8/12) formatı belirler.
@@ -1119,6 +1193,7 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
         }
         rows.push_back(std::move(row));
     }
+    drain_more_results(st, seq);
     return rows;
 }
 
@@ -1163,8 +1238,10 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
         auto old = stmt_cache_.begin();
         for (auto i = stmt_cache_.begin(); i != stmt_cache_.end(); ++i)
             if (i->second.used < old->second.used) old = i;
-        stmt_close(old->second.meta.id);
-        stmt_cache_.erase(old);
+        uint32_t old_id = old->second.meta.id;
+        stmt_cache_.erase(old);   // ÖNCE sil: stmt_close başarısızsa disconnect() haritayı boşaltır
+        stmt_close(old_id);
+        if (!is_connected()) throw std::runtime_error("db: send failed — connection lost");
     }
     stmt_cache_.emplace(sql, CachedStmt{meta, ++stmt_tick_});
     return stmt_execute(meta, params);

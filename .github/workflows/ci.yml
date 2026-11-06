@@ -1459,6 +1459,12 @@ jobs:
         run: |
           cd cpp
           bash tests/mysql_stmt_cache_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci"
+      # An error in the middle of the rows is an error (not a partial result); CALL's extra results
+      # are read, so the next query and an open transaction are not affected.
+      - name: "MySQL 8 — complete answers: mid-row errors, CALL results"
+        run: |
+          cd cpp
+          bash tests/mysql_result_integrity_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci"
       # A PostgreSQL query goes out in one send and replies are read through a buffer; results must
       # stay exact: 1 MB values, results spanning many buffers, failing queries, a terminated
       # connection, concurrent web requests.
