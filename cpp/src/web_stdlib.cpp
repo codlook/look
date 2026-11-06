@@ -750,9 +750,16 @@ static void with_session_redis(const std::function<void(RespClient&)>& op) {
     static std::mutex mu;
     static std::vector<std::unique_ptr<RespClient>> idle;
     std::unique_ptr<RespClient> c;
-    {
-        std::lock_guard<std::mutex> g(mu);
-        if (!idle.empty()) { c = std::move(idle.back()); idle.pop_back(); }
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> g(mu);
+            if (idle.empty()) break;
+            c = std::move(idle.back()); idle.pop_back();
+        }
+        // Redis yeniden başladıysa havuzdaki her bağlantı ölüdür: gönderimden önce anlaşılır,
+        // atılır, sıradaki denenir (yoksa yenisi açılır). Hiçbir komut tekrarlanmaz.
+        if (c->usable_when_idle()) break;
+        c.reset();
     }
     try {
         if (!c) {   // kilit dışında: bağlanırken fiber askıya alınabilir

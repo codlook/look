@@ -26,6 +26,7 @@
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
 #endif
+#include "look/sock_idle.h"   // idle_socket_unusable: havuzdan alınan bağlantının oluluk yoklaması
 #include "look/fiber_net.h"   // fiber içinde Redis beklenirken (DNS/connect/TLS/yazma/okuma) iş parçacığı serbest kalır
 
 #ifndef MSG_NOSIGNAL
@@ -149,6 +150,19 @@ void RespClient::drop() {
 #endif
     if (fd_ >= 0) { CLOSESOCKET(fd_); fd_ = -1; }
     rpos_ = rlen_ = 0;   // eski bağlantıdan kalan okunmamış veri yeni bağlantıya taşınmasın
+}
+
+// Havuzda bekleyen bağlantı hâlâ kullanılabilir mi — HİÇBİR ŞEY GÖNDERMEDEN (MySQL/PG ile aynı
+// yoklama). Redis yeniden başladıysa ya da timeout ile kapattıysa soket okunabilir (EOF) olur;
+// eskiden ilk komut ölü sokete gidip oturum isteği 503 alıyordu.
+bool RespClient::usable_when_idle() {
+    bool ok = fd_ >= 0 && rpos_ == rlen_;
+#ifndef _WIN32
+    if (ok && ssl_ && SSL_pending((SSL*)ssl_) > 0) ok = false;
+#endif
+    if (ok && idle_socket_unusable(fd_)) ok = false;
+    if (!ok) drop();
+    return ok;
 }
 
 void RespClient::fail(const std::string& msg) {

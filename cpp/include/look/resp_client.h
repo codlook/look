@@ -18,6 +18,8 @@ public:
     // Bağlan (constructor'da otomatik çağrılır; reconnect için tekrar çağır)
     void connect();
     bool is_connected() const { return fd_ >= 0; }
+    // Boşta beklemiş bağlantı: sunucu kapattıysa ya da okunmamış bayt varsa kapatır, false döner
+    bool usable_when_idle();
 
     // Komutlar — hepsi network hatasında std::runtime_error fırlatır
     void        set(const std::string& key, const std::string& val, int ttl_sec = 0);
