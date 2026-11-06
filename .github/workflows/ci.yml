@@ -960,6 +960,8 @@ jobs:
           cd cpp
           bash tests/http_smuggle_test.sh build/lk-fcgi
           bash tests/http_slowloris_test.sh build/lk-fcgi 7622
+          # pipelined requests answered in order; unterminated chunked trailer 400; linear header scan
+          bash tests/http_pipelining_test.sh build/lk-fcgi
 
       # SSE sse::close() fd-sızıntısı — bug-avı bulgusu (957d11e). Sunucu sse::close çağırınca
       # fd/epoll/map istemci TCP-kopana kadar sızıyordu (+ soket kapanmadığı için istemci asılı).

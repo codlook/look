@@ -421,8 +421,9 @@ struct HttpServer::Impl {
         return false;
     }
 
+    // rest: gövdeden SONRA gelen baytlar (aynı gönderimdeki sonraki istek — pipelining)
     static bool read_chunked_body(int fd, std::string& buf, size_t start,
-                                  char* tmp, size_t tmp_sz, std::string& out) {
+                                  char* tmp, size_t tmp_sz, std::string& out, std::string& rest) {
         std::string stream = buf.substr(start);   // gövde baytları (henüz çözülmemiş)
         size_t p = 0;
         const size_t cap    = max_body_size();
@@ -479,12 +480,19 @@ struct HttpServer::Impl {
         }
         // trailer başlıklarını yut: boş satıra (\r\n) kadar. Keep-alive'da
         // sonraki isteğin sınırı doğru olsun diye akıştan tüketilir.
+        // Bağlantı boş satırdan önce kapanırsa istek EKSİKTİR → 400 (eskiden kabul ediliyordu:
+        // "0\r\n" + EOF tam istek sayılıyordu; önündeki bir vekil bunu başka çerçeveleyebilir).
         while (true) {
             size_t nl2 = stream.find("\r\n", p);
-            if (nl2 == std::string::npos) { if (!refill()) { if (timed_out) { send_simple(fd, 408, "Request Timeout"); return false; } break; } else continue; }
+            if (nl2 == std::string::npos) {
+                if (stream.size() - p > 8192) { send_simple(fd, 400, "Bad Request"); return false; }
+                if (!refill()) { send_simple(fd, timed_out ? 408 : 400, timed_out ? "Request Timeout" : "Bad Request"); return false; }
+                continue;
+            }
             if (nl2 == p) { p += 2; break; }             // boş satır → gövde bitti
             p = nl2 + 2;                                  // trailer satırını atla
         }
+        rest.assign(stream, p, std::string::npos);
         return true;
     }
 
@@ -551,11 +559,21 @@ struct HttpServer::Impl {
             return std::chrono::milliseconds(ms);
         }();
 
+        // Bir önceki isteğin gövdesinden sonra aynı gönderimde gelen baytlar (HTTP/1.1 pipelining:
+        // istemci yanıtı beklemeden ikinci isteği yazar). Eskiden her istek taze tamponla başlıyordu
+        // → ikinci istek sessizce düşüyor, istemci yanıt beklerken boşta zaman aşımına kadar asılıyordu.
+        std::string carry;
         while (true) {
             // Headers gelene kadar blocking oku
-            std::string buf;
+            std::string buf = std::move(carry);
+            carry.clear();
             std::chrono::steady_clock::time_point rd_start{};   // ilk baytta set
-            while (buf.find("\r\n\r\n") == std::string::npos) {
+            if (!buf.empty()) rd_start = std::chrono::steady_clock::now();
+            // Terminatör yalnız YENİ gelen kısımda aranır (+3 bayt örtüşme): eskiden her recv'de
+            // bütün tampon baştan taranıyordu → 2 MB başlık 64 B parçalarla ~3 CPU-saniye (karesel).
+            size_t scan = 0, hdr_pos;
+            while ((hdr_pos = buf.find("\r\n\r\n", scan)) == std::string::npos) {
+                scan = buf.size() >= 3 ? buf.size() - 3 : 0;
                 ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
                 if (r <= 0) { ::close(fd); return; }
                 if (rd_start == std::chrono::steady_clock::time_point{})
@@ -571,7 +589,7 @@ struct HttpServer::Impl {
             req.remote_addr = remote_addr;
             if (!parse_request(buf, req)) { ::close(fd); return; }
 
-            size_t header_end  = buf.find("\r\n\r\n") + 4;
+            size_t header_end  = hdr_pos + 4;
             size_t body_in_buf = buf.size() - header_end;
             auto clen_it = req.headers.find("content-length");
             auto te_it   = req.headers.find("transfer-encoding");
@@ -595,7 +613,7 @@ struct HttpServer::Impl {
                 if (te != "chunked") {
                     send_simple(fd, 400, "Bad Request"); ::close(fd); return;
                 }
-                if (!read_chunked_body(fd, buf, header_end, tmp, sizeof(tmp), req.body)) {
+                if (!read_chunked_body(fd, buf, header_end, tmp, sizeof(tmp), req.body, carry)) {
                     // malformed chunk veya body cap aşımı → read_chunked_body yanıtı gönderdi
                     ::close(fd); return;
                 }
@@ -620,6 +638,8 @@ struct HttpServer::Impl {
                 if (body_in_buf > 0)
                     req.body = buf.substr(header_end,
                                           std::min(body_in_buf, content_len));
+                if (body_in_buf > content_len)   // gövdeden sonrası: sonraki istek
+                    carry.assign(buf, header_end + content_len, std::string::npos);
                 // Gövde okuma deadline'ı — slow-body worker açlığını (DoS) kapatır.
                 auto body_start = std::chrono::steady_clock::now();
                 while (req.body.size() < content_len) {
@@ -636,7 +656,12 @@ struct HttpServer::Impl {
                     // min() ile kırpıyordu; bu döngü kırpmıyordu.
                     size_t need = content_len - req.body.size();
                     req.body.append(tmp, std::min((size_t)r, need));
+                    if ((size_t)r > need) carry.assign(tmp + need, (size_t)r - need);   // sonraki istek
                 }
+            } else if (body_in_buf > 0) {
+                // Gövdesiz istek (CL/TE yok → gövde 0 bayt, RFC 9112 §6.3): başlıktan sonrası
+                // sonraki istektir.
+                carry.assign(buf, header_end, std::string::npos);
             }
 
             // WS upgrade → event loop'a devret, worker serbest kalır
