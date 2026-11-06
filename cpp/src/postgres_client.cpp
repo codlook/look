@@ -874,6 +874,17 @@ std::vector<DbRow> PostgresClient::query(const std::string& sql) {
     }
 }
 
+// COPY ... FROM STDIN / TO STDOUT: db:: veri akışı taşımaz. Eskiden FROM STDIN'de sunucu istemciden
+// veri, istemci sunucudan cevap bekliyordu → okuma zaman aşımına (30 sn) kadar asılıp ilgisiz bir
+// hata; TO STDOUT satırları sessizce atıp boş sonuç dönüyordu. Şimdi ikisi de hemen, nedenli hata.
+static std::vector<uint8_t> pg_copy_fail_body() {
+    static const char m[] = "COPY FROM STDIN is not supported by db:: (send the rows with INSERT)";
+    return std::vector<uint8_t>(m, m + sizeof(m));   // NUL dahil
+}
+static std::string pg_copy_out_unsupported() {
+    return "db postgres: COPY TO STDOUT is not supported by db:: (read the rows with SELECT)";
+}
+
 std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
     // Query mesajı: 'Q' + sql + '\0'
     std::vector<uint8_t> body(sql.begin(), sql.end());
@@ -892,6 +903,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
     // mesajlar sonraki sorgunun cevabı sanılırdı (her sonuç bir sorgu geriden; hata yok —
     // tests/pg_malformed_desync_test.sh). Sunucu hatası ('E') 'Z'ye kadar okunur, bağlantı kalır.
     bool reply_done = false;
+    bool copy_out = false;
     try {
     while (true) {
         PgMsg msg;
@@ -975,7 +987,12 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
             // ReadyForQuery — bitti.
             in_txn_ = !msg.body.empty() && msg.body[0] != 'I';
             reply_done = true;
+            if (copy_out) throw std::runtime_error(pg_copy_out_unsupported());
             break;
+        } else if (msg.type == 'G' || msg.type == 'W') {
+            send_message('f', pg_copy_fail_body());   // CopyFail → sunucu 'E' + 'Z' gönderir
+        } else if (msg.type == 'H') {
+            copy_out = true;                          // 'd'/'c' yutulur, 'Z'de hata
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
             // ReadyForQuery'ye kadar drain et
@@ -1075,6 +1092,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
 
     // simple_query ile aynı kural: cevap 'Z'ye kadar okunmadan hata atılırsa bağlantı kapanır.
     bool reply_done = false;
+    bool copy_out = false;
     try {
     while (true) {
         PgMsg msg;
@@ -1142,7 +1160,14 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
         } else if (msg.type == 'Z') {
             in_txn_ = !msg.body.empty() && msg.body[0] != 'I';
             reply_done = true;
+            if (copy_out) throw std::runtime_error(pg_copy_out_unsupported());
             break;
+        } else if (msg.type == 'G' || msg.type == 'W') {
+            // Kopyalama kipinde sunucu önceki Sync'i yok saydı: CopyFail'den sonra yeni Sync gerekir
+            queue_message('f', pg_copy_fail_body());
+            send_message('S', {});
+        } else if (msg.type == 'H') {
+            copy_out = true;
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
             while (true) { try { auto m=read_message(); if(m.type=='Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; reply_done = true; break; } } catch(...){break;} }
