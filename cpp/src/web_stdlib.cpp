@@ -925,8 +925,11 @@ static std::vector<std::string> csrf_secrets(bool require) {
             "random value, the same on every server (e.g. openssl rand -hex 32): CSRF tokens are signed with it");
     }
     std::vector<std::string> v{c};
+    // Önceki anahtar da aynı kurala uyar (≥ 32): kısa bir önceki anahtar ("x") tahmin edilip geçerli
+    // CSRF çerezi imzalanabilirdi — güncel anahtarın uzunluk kuralı bu yoldan aşılıyordu. Kısa olan
+    // hiç kullanılmaz; başlangıç denetimi (csrf_secret_problem) uygulamayı nedeniyle durdurur.
     const char* p = std::getenv("LOOK_SECRET_PREVIOUS");
-    if (p && *p) v.push_back(p);
+    if (p && std::strlen(p) >= 32) v.push_back(p);
     return v;
 }
 // Secure: oturum çereziyle aynı karar (LOOK_SESSION_SECURE 1/0 zorlar; yoksa gerçek HTTPS).
@@ -1023,7 +1026,14 @@ static Module make_csrf_module(WebRef ctx) {
 // POST/PUT/PATCH/DELETE rotadan ve before_route'tan ÖNCE burada denetlenir.
 std::string csrf_secret_problem() {
     const char* cur = std::getenv("LOOK_SECRET");
-    if (cur && std::string(cur).size() >= 32) return "";
+    const char* prev = std::getenv("LOOK_SECRET_PREVIOUS");
+    if (cur && std::string(cur).size() >= 32) {
+        if (prev && *prev && std::strlen(prev) < 32)
+            return "LOOK_SECRET_PREVIOUS is shorter than 32 characters. It still verifies tokens signed before the "
+                   "key changed, so a short value would let anyone who guesses it sign their own; set it to the "
+                   "previous LOOK_SECRET (32+ characters) or remove it";
+        return "";
+    }
     return "LOOK_SECRET is not set or shorter than 32 characters. This application uses cookies, and every "
            "application that uses cookies is protected against cross-site request forgery: its POST, PUT, PATCH and "
            "DELETE requests carry a token signed with LOOK_SECRET. Set it to a random value, the same on every server "

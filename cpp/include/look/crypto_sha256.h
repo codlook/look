@@ -84,6 +84,11 @@ inline std::vector<uint8_t> pbkdf2_sha256(
     uint32_t iterations, uint32_t dk_len)
 {
     std::vector<uint8_t> pwd(password.begin(), password.end());
+    // HMAC, blok boyundan (64) uzun anahtarı önce özetler — burada BİR KEZ (sonuç aynı, RFC 2104).
+    // Eskiden hmac_sha256 bunu her turda yapıyordu: maliyet parola uzunluğu × tur sayısıydı. 100 KB
+    // parola 10 000 turda 3,1 sn (16 bayt: 55 ms); 1 MB parola varsayılan 100 000 turda ~5 dk —
+    // giriş formuna uzun parola gönderen birkaç istek havuzu kilitliyordu (Django CVE-2013-1443 sınıfı).
+    if (pwd.size() > 64) pwd = sha256(pwd);
     std::vector<uint8_t> dk;
     uint32_t blocks = (dk_len + 31) / 32;
     for (uint32_t block = 1; block <= blocks; block++) {

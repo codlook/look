@@ -537,6 +537,7 @@ jobs:
           cd cpp
           bash tests/hot_reload_inflight_test.sh ./build/lk-fcgi
           bash tests/fatal_error_isolation_test.sh ./build/lk-fcgi
+          bash tests/auth_long_password_test.sh ./build/lk
 
       # Paket modülü (~/.look/modules) sıcak yeniden yüklemeden sonra da çalışır: derleyici yüklenen
       # modülleri süreç boyunca hatırlıyordu, yeniden yüklemede `use paket` boş geçiyor, istekler 500.

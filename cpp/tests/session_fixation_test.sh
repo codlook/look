@@ -59,5 +59,11 @@ grep -q "cookie::set() path must not contain ';'" "$TMP/log.txt" && ok "the log 
 curl -s -D - -o /dev/null "$U/ss?s=strict" | grep -qi 'samesite=Strict' && ok "SameSite strict is written as Strict" || bad "SameSite strict not written"
 
 kill -0 "$pid" 2>/dev/null && ok "the server is still running" || bad "the server died"
+# A short LOOK_SECRET_PREVIOUS still verified CSRF cookies: a guessable previous key let anyone sign
+# their own. Now the application does not start with one, and says why.
+( cd "$TMP" && exec env LOOK_SECRET=fix-test-0123456789abcdef0123456789abcdef LOOK_SECRET_PREVIOUS=x \
+    LOOK_SESSION_DIR="$TMP/s2" timeout 10 "$FCGI" --mode http --port $((PORT + 1)) --workers 1 app.lk > "$TMP/log2.txt" 2>&1 ); rc=$?
+[ $rc != 0 ] && [ $rc != 124 ] && grep -q "LOOK_SECRET_PREVIOUS is shorter than 32 characters" "$TMP/log2.txt" \
+    && ok "a short LOOK_SECRET_PREVIOUS stops the start with the reason" || bad "short LOOK_SECRET_PREVIOUS: exit $rc, $(tail -1 "$TMP/log2.txt")"
 [ $fail = 0 ] && echo "PASS: only issued session ids are used; cookie attributes cannot be injected" \
              || { echo "FAIL: session fixation / cookie attributes"; exit 1; }
