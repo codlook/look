@@ -265,6 +265,12 @@ void PostgresClient::do_scram_sha256(const std::vector<uint8_t>& /*mechanisms_bo
     }
     if (s_nonce.empty() || s_salt_b64.empty() || iter <= 0)
         throw std::runtime_error("db postgres: malformed SASLContinue");
+    // Yineleme sayısını sunucu verir: kötü niyetli sunucu (ya da araya giren) i=2147483647 ile
+    // bağlantıyı açan iş parçacığını dakikalarca PBKDF2'de tutabilirdi. PG varsayılanı 4096;
+    // OWASP önerisi 600 000 — 1 000 000 üstü reddedilir (nedeniyle).
+    if (iter > 1000000)
+        throw std::runtime_error("db postgres: the server asks for " + std::to_string(iter) +
+                                 " SCRAM iterations (limit 1000000) — refusing to connect");
     // Verify client nonce is prefix
     if (s_nonce.substr(0, c_nonce.size()) != c_nonce)
         throw std::runtime_error("db postgres: SCRAM nonce mismatch");

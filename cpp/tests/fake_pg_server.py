@@ -58,6 +58,19 @@ def handle(c):
         # AuthenticationOk yerine ErrorResponse
         eb = b"SFATAL\x00C28000\x00Mtest reddi\x00\x00"
         c.sendall(msg(b"E", eb)); c.close(); return
+    if MODE == "scram_iter":
+        # SCRAM: sunucu i=2147483647 yineleme ister — istemci dakikalarca PBKDF2'de kalmamalı
+        c.sendall(msg(b"R", struct.pack("!I", 10) + cstr("SCRAM-SHA-256") + b"\x00"))
+        t = c.recv(1)
+        ln = struct.unpack("!I", c.recv(4))[0]
+        body = b""
+        while len(body) < ln - 4: body += c.recv(ln - 4 - len(body))
+        first = body.split(b"n,,", 1)[-1].decode()
+        cnonce = [p[2:] for p in first.split(",") if p.startswith("r=")][0]
+        c.sendall(msg(b"R", struct.pack("!I", 11) + ("r=%ssrv,s=c2FsdHNhbHQ=,i=2147483647" % cnonce).encode()))
+        try: c.recv(1)   # istemci vazgeçip kapatana dek bekle
+        except Exception: pass
+        c.close(); return
     if MODE == "param_seli":
         c.sendall(msg(b"R", struct.pack("!I", 0)))    # AuthenticationOk
         for _ in range(200000):                        # ParameterStatus seli (bellek?)

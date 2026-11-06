@@ -705,6 +705,8 @@ jobs:
         run: |
           cd cpp
           bash tests/db_malformed_desync_test.sh ./build/lk
+          # a server asking for 2^31 SCRAM iterations is refused at once (was minutes of PBKDF2)
+          bash tests/pg_scram_iterations_test.sh ./build/lk
 
       # Long CPU work (a LOOK loop, deep calls, password hashing) must hold only its own request:
       # up to 1.0.24 LOOK code never gave up its turn under fibers (0.7–1 s waits, 32 s on the
