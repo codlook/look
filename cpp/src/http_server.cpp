@@ -710,17 +710,44 @@ struct HttpServer::Impl {
 
     // ── WebSocket upgrade — worker thread'de çalışır ──────────────────────────
     // Origin başlığından host[:port] kısmını çıkar (scheme:// ve yolu at).
+    // "host[:port]" → host (küçük harf). IPv6 "[::1]:8080" → "[::1]": port yalnız ']' SONRASINDAKİ
+    // ':' ise kırpılır. Eskiden son ':' her durumda kırpılıyordu → portsuz "[::1]" ve "[::2]"
+    // ikisi de "[:" oluyordu (farklı IPv6 adresleri "aynı köken" sayılıyordu).
+    static std::string ws_strip_port(std::string h) {
+        if (!h.empty() && h[0] == '[') {
+            auto rb = h.find(']');
+            if (rb != std::string::npos) h.resize(rb + 1);
+        } else {
+            auto colon = h.rfind(':');
+            if (colon != std::string::npos) h.resize(colon);
+        }
+        for (auto& ch : h) ch = (char)std::tolower((unsigned char)ch);   // host büyük/küçük harf duyarsız
+        return h;
+    }
     static std::string ws_origin_host(const std::string& origin) {
         auto p = origin.find("://");
         std::string h = (p == std::string::npos) ? origin : origin.substr(p + 3);
         auto slash = h.find('/');
         if (slash != std::string::npos) h = h.substr(0, slash);
-        auto colon = h.rfind(':');           // :port'u at — host bazlı karşılaştır
-        if (colon != std::string::npos) h = h.substr(0, colon);
-        return h;
+        return ws_strip_port(h);              // host bazlı karşılaştır
+    }
+
+    // RFC 6455 §4.2.1: Sec-WebSocket-Key = 16 baytın base64'ü (24 karakter, "==" ile biter).
+    static bool ws_key_valid(const std::string& k) {
+        if (k.size() != 24 || k[22] != '=' || k[23] != '=') return false;
+        for (size_t i = 0; i < 22; i++) {
+            char c = k[i];
+            if (!std::isalnum((unsigned char)c) && c != '+' && c != '/') return false;
+        }
+        return true;
     }
 
     void handle_ws_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
+        // Anahtarsız/bozuk anahtarlı ya da GET olmayan el sıkışma 101 almaz (eskiden boş anahtarla
+        // bile 101 dönüyordu → yarım el sıkışmış bağlantılar olay döngüsünde yer tutuyordu).
+        if (req.method != "GET" || !ws_key_valid(req.ws_key)) {
+            send_simple(fd, 400, "Bad Request"); ::close(fd); return;
+        }
         // CSWSH (Cross-Site WebSocket Hijacking) koruması.
         auto it = req.headers.find("origin");
         if (!allowed_origins.empty()) {
@@ -749,11 +776,8 @@ struct HttpServer::Impl {
             std::string oh = ws_origin_host(it->second);
             auto host_it = req.headers.find("host");
             std::string hh;
-            if (host_it != req.headers.end()) {
-                hh = host_it->second;                    // "host[:port]"
-                auto c = hh.rfind(':');
-                if (c != std::string::npos) hh = hh.substr(0, c);
-            }
+            if (host_it != req.headers.end())
+                hh = ws_strip_port(host_it->second);    // "host[:port]"
             if (oh.empty() || hh.empty() || oh != hh) {
                 send_ws_reject(fd, "403 Forbidden - Cross-origin WebSocket rejected "
                                    "(same-origin default; use LOOK_WS_ORIGINS to allow)");
