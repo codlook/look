@@ -319,6 +319,41 @@ struct HttpServer::Impl {
 #endif
     }
 
+    // ── Tam gönderim (fiber-aware) ───────────────────────────────────────────
+    // Hepsi gönderilene dek yazar; true = tamamı gitti. İki eski hata:
+    //   * tek ::send() yapılıyordu, kısa yazım başarı sayılıyordu: yavaş okuyan istemcide yanıtın
+    //     bir kısmı gidiyor, bağlantı açık kalıyor, sonraki yanıt aynı bağlantıda ilkinin gövdesinin
+    //     devamı gibi okunuyordu (Content-Length 8 MB, gelen 1,8 MB + sonraki "HTTP/1.1 200 OK");
+    //   * fiber modunda soket engelleyiciydi: okumayan TEK istemci, gönderim tamponu dolunca işçi iş
+    //     parçacığını (üzerindeki 1024'e kadar fiber'la) SO_SNDTIMEO kadar donduruyordu.
+    // Fiber içinde soket doluysa fiber yazılabilir olana dek askıya alınır (iş parçacığı serbest);
+    // timeout_ms boyunca yazılamazsa false (bağlantı kapatılır). Fiber dışında engelleyen yazım.
+    static bool send_all(int fd, const char* p, size_t n, int timeout_ms) {
+#ifdef __linux__
+        look::FiberScheduler* sched = look::get_thread_scheduler();
+        look::Fiber*          cur   = look::Fiber::current();
+        std::shared_ptr<look::Fiber> self = (sched && cur) ? cur->shared_from_this_fiber() : nullptr;
+        while (n > 0) {
+            ssize_t w = ::send(fd, p, n, MSG_NOSIGNAL | (self ? MSG_DONTWAIT : 0));
+            if (w > 0) { p += w; n -= (size_t)w; continue; }
+            if (w < 0 && errno == EINTR) continue;
+            if (w < 0 && self && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                if (sched->wait_writable_tmo(self, fd, timeout_ms) == 1) continue;
+                return false;   // yazılamadı (zaman aşımı / epoll yok)
+            }
+            return false;       // hata ya da SO_SNDTIMEO doldu
+        }
+        return true;
+#else
+        while (n > 0) {
+            int w = ::send(fd, p, (int)n, 0);
+            if (w <= 0) return false;
+            p += w; n -= (size_t)w;
+        }
+        return true;
+#endif
+    }
+
     // ── Fiber-aware recv (Go netpoller) ──────────────────────────────────────
     // Fiber içindeyse ve soket veri yoksa BLOKLAMAZ: wait_readable ile yield eder,
     // scheduler başka fiber (goroutine) koşturur; veri gelince epoll resume eder.
@@ -642,12 +677,8 @@ struct HttpServer::Impl {
             }
 
             std::string raw = resp.build();
-#ifdef _WIN32
-            ssize_t w = ::send(fd, raw.data(), (int)raw.size(), 0);
-#else
-            ssize_t w = ::send(fd, raw.data(), raw.size(), MSG_NOSIGNAL);
-#endif
-            if (w <= 0 || !resp.keep_alive) { ::close(fd); return; }
+            // Tamamı gitmezse bağlantı kapanır: yarım yanıtlı bağlantıda sonraki yanıt yazılmaz.
+            if (!send_all(fd, raw.data(), raw.size(), (int)idle_ms) || !resp.keep_alive) { ::close(fd); return; }
             // keep-alive: sonraki isteği bekle
         }
     }
@@ -875,7 +906,12 @@ struct HttpServer::Impl {
                     loop->post([this, conn, fd]() {
                         bool same;
                         { std::lock_guard<std::mutex> lk(ws_mtx); auto it = ws_clients.find(fd); same = it != ws_clients.end() && it->second == conn; }
-                        if (same && !conn->closed.load()) ws_arm_read(fd);
+                        if (!same) return;
+                        // Okuma duraklıyken bağlantı kapandıysa (gitmiş istemciye ws::send başarısız →
+                        // closed) kapanışı burada yap: okuma kurulmadığı için EOF hiç okunmaz, close_ws
+                        // çağrılmaz, "close" geri çağrısı çalışmaz ve bağlantı sızardı.
+                        if (conn->closed.load()) close_ws(fd);
+                        else ws_arm_read(fd);
                     });
                 }
                 try { job(); } catch (...) {}   // geri çağrı kendi hatasını günlüğe yazar; kutu takılmasın
@@ -1135,12 +1171,24 @@ void HttpServer::run() {
     }
 #endif
 
+    // Başlangıç kapısı (fiber modu): hiçbir işçi, HEPSİ hazır olmadan (soket bağlandı, kabul fiber'ı
+    // kuruldu) dinlemeye başlamaz. Eskiden her işçi kendi soketini hemen dinliyordu: sanal bellek
+    // sınırında bir sonraki işçi fiber'ını açamayıp süreç nedenini yazarak çıkarken port bir an
+    // açıktı — istemci bağlanıp yanıt alamıyordu ("ya hizmet ver ya nedenini söyle" sözü bozuluyordu).
+    struct StartGate { std::mutex m; std::condition_variable cv; int ready = 0; bool abort = false; } gate;
+    auto gate_arrive_and_wait = [&gate, this]() -> bool {
+        std::unique_lock<std::mutex> lk(gate.m);
+        if (++gate.ready >= impl_->workers) gate.cv.notify_all();
+        gate.cv.wait(lk, [&] { return gate.abort || gate.ready >= impl_->workers; });
+        return !gate.abort;
+    };
+
     std::vector<std::thread> workers;
     workers.reserve(impl_->workers);
     for (int i = 0; i < impl_->workers; ++i) {
       try {
 #ifdef __linux__
-        workers.emplace_back([this, shared_port, i]() {
+        workers.emplace_back([this, shared_port, i, &gate_arrive_and_wait]() {
 #else
         workers.emplace_back([this]() {
 #endif
@@ -1159,8 +1207,8 @@ void HttpServer::run() {
                     waddr.sin_family      = AF_INET;
                     waddr.sin_addr.s_addr = http_bind_addr();
                     waddr.sin_port        = htons((uint16_t)shared_port);
-                    if (::bind(worker_fd, (sockaddr*)&waddr, sizeof(waddr)) < 0 ||
-                        ::listen(worker_fd, 16384) < 0) {
+                    // listen() başlangıç kapısından SONRA (aşağıda) — burada yalnız bağla.
+                    if (::bind(worker_fd, (sockaddr*)&waddr, sizeof(waddr)) < 0) {
                         ::close(worker_fd);
                         worker_fd = -1;
                     } else {
@@ -1173,6 +1221,9 @@ void HttpServer::run() {
             // fiber-ok: iş parçacığının zamanlayıcısı (iş parçacığı yapısı)
             static thread_local look::FiberScheduler tl_srv_sched;
             if (fiber_burst && worker_fd >= 0) look::set_thread_scheduler(&tl_srv_sched);
+            bool gate_passed = !fiber_burst;   // fiber modunda: ilk kabul fiber'ı kurulunca kapıda bekle
+            // Soketini bağlayamayan işçi de kapıya uğrar (yoksa ötekiler onu sonsuza dek beklerdi).
+            if (fiber_burst && worker_fd < 0) { gate_passed = true; gate_arrive_and_wait(); }
 #endif
 
             while (impl_->running) {
@@ -1262,6 +1313,20 @@ void HttpServer::run() {
                         std::fflush(nullptr);
                         std::_Exit(1);
                     }
+                    // Başlangıç kapısı: bütün işçiler kabul fiber'ını kurdu → şimdi dinle. Kapı
+                    // iptal edildiyse (başka bir iş parçacığı açılamadı) dinlemeden çık.
+                    if (!gate_passed) {
+                        gate_passed = true;
+                        if (!gate_arrive_and_wait()) { impl_->running = false; tl_srv_sched.run_until_complete(); break; }
+                        if (::listen(worker_fd, 16384) < 0) {
+                            std::string msg = "HTTP worker " + std::to_string(i + 1) + " could not listen on port " +
+                                std::to_string(shared_port) + " (" + std::strerror(errno) + ")";
+                            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", msg);
+                            std::fprintf(stderr, "Error: %s\n", msg.c_str());
+                            std::fflush(nullptr);
+                            std::_Exit(1);
+                        }
+                    }
                     // Acceptor + tüm bağlantı fiber'ları bitene dek çalış.
                     // Acceptor running=false görünce (≤200ms) çıkar; bağlantı
                     // fiber'ları idle-timeout ile kapanır → temiz wind-down.
@@ -1308,6 +1373,9 @@ void HttpServer::run() {
         // Islemci thread'i acilamadi: baslatilanlari durdur (≤200 ms'de running'i gorurler),
         // birlestir, nedenli hata — joinable thread'le cikmak std::terminate idi.
         impl_->running = false;
+        // Kapıda bekleyen işçileri bırak (dinlemeden çıkarlar) — yoksa join sonsuza dek beklerdi.
+        { std::lock_guard<std::mutex> lk(gate.m); gate.abort = true; }
+        gate.cv.notify_all();
         for (auto& t : workers) if (t.joinable()) t.join();
         impl_->loop->stop();
         if (impl_->loop_thread.joinable()) impl_->loop_thread.join();

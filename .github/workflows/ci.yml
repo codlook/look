@@ -522,6 +522,13 @@ jobs:
           cd cpp
           bash tests/fcgi_request_env_test.sh ./build/lk-fcgi
 
+      # A response is sent whole or its connection closed; clients that never read cannot freeze a
+      # worker thread (fibers).
+      - name: HTTP responses sent whole; non-reading clients do not freeze workers
+        run: |
+          cd cpp
+          bash tests/http_send_guard_test.sh ./build/lk-fcgi
+
       # A hot reload while a request waited (http::get) freed that request's bytecode: SIGSEGV.
       - name: Hot reload never frees a running request's program (fibers and pool)
         run: |
