@@ -15,6 +15,10 @@ namespace look {
 
 // ── WsConnection — single client handle ──────────────────────────────────────
 
+// ws::close sonrası fd'yi kapatma kancası — HttpServer kurar (süreçte tek sunucu); bağlantı
+// başına alan eklemez. fd ile çağrılır; sunucu o fd'deki bağlantı hâlâ sunucu-kapalıysa kapatır.
+extern void (*g_ws_server_close_hook)(int fd);
+
 struct WsConnection {
     int                  fd;
     std::string          client_ip;

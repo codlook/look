@@ -1073,6 +1073,17 @@ struct HttpServer::Impl {
         }
     }
 
+    // ws::close (WsConnection::close_conn) sonrası: kapanış çerçevesi gitti, bağlantıyı olay
+    // döngüsünde kapat. fd bu arada yeniden kullanıldıysa yeni bağlantı server_closed değildir →
+    // dokunulmaz (kimlik karşılaştırması gerekmez).
+    void ws_server_closed(int fd) {
+        loop->post([this, fd]() {
+            std::shared_ptr<WsConnection> conn;
+            { std::lock_guard<std::mutex> lk(ws_mtx); auto it = ws_clients.find(fd); if (it != ws_clients.end()) conn = it->second; }
+            if (conn && conn->server_closed.load() && conn->closed.load()) close_ws(fd);
+        });
+    }
+
     void close_ws(int fd) {
         std::shared_ptr<WsConnection> conn;
         {
@@ -1122,10 +1133,18 @@ static uint32_t http_bind_addr() {
     return a.s_addr;
 }
 
+// Süreçteki HTTP sunucusu (tek) — ws::close kancası için.
+static std::atomic<void*> s_ws_close_impl{nullptr};
+void HttpServer::ws_close_hook(int fd) {
+    if (void* p = s_ws_close_impl.load()) static_cast<Impl*>(p)->ws_server_closed(fd);
+}
+
 HttpServer::HttpServer(int port, int workers, HttpHandler handler,
                        WsHandler ws_handler, SseHandler sse_handler)
     : impl_(std::make_unique<Impl>())
 {
+    s_ws_close_impl.store(impl_.get());
+    g_ws_server_close_hook = &HttpServer::ws_close_hook;
     impl_->port        = port;
     impl_->workers     = workers;
     impl_->handler     = std::move(handler);
@@ -1191,6 +1210,8 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
 }
 
 HttpServer::~HttpServer() {
+    void* me = impl_.get();
+    s_ws_close_impl.compare_exchange_strong(me, nullptr);
     impl_->running = false;
     if (impl_->server_fd >= 0) ::close(impl_->server_fd);
 }

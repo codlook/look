@@ -109,6 +109,32 @@ else echo "  OK ws::close → istemci close-frame aldı (server-başlatan)"; fi
 if [ "${safter:-99}" -eq "$base" ]; then echo "  OK server-close sonrası fd base'e döndü ($safter)"
 else echo "  FAIL: server-close sonrası fd=$safter (base=$base) — SIZINTI"; fail=1; fi
 
+# ws::close sonrası CEVAP VERMEYEN istemci: sunucu bağlantıyı kendisi kapatmalı (eskiden fd ve
+# bağlantı istemci bir şey gönderene dek süresiz kalıyordu).
+qout=$(PORT="$PORT" python3 - <<'PYEOF'
+import socket, os, base64, time
+port = int(os.environ["PORT"])
+def masked(op, payload=b""):
+    m = os.urandom(4)
+    return bytes([0x80 | op, 0x80 | len(payload)]) + m + bytes(b ^ m[i % 4] for i, b in enumerate(payload))
+s = socket.create_connection(("127.0.0.1", port), timeout=5); s.settimeout(3)
+s.sendall(("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+           "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % base64.b64encode(os.urandom(16)).decode()).encode())
+s.recv(1024); s.sendall(masked(0x1, b"bye"))
+data = b""; eof = False; t0 = time.time()
+try:
+    while True:
+        c = s.recv(256)
+        if not c: eof = True; break
+        data += c
+except socket.timeout: pass
+print("EOF=%s IN=%.1f" % (eof, time.time() - t0))
+PYEOF
+)
+echo "  $qout"
+if echo "$qout" | grep -q 'EOF=True'; then echo "  OK ws::close: cevap vermeyen istemcinin bağlantısını sunucu kapattı"
+else echo "  FAIL ws::close: sunucu bağlantıyı kapatmadı (istemci cevap vermeyince açık kalıyor)"; fail=1; fi
+
 # Regresyon: 3 ani-kopma (close-frame'siz abandon) → sızıntı/crash yok
 python3 - "$PORT" <<'PYEOF'
 import socket, os, base64

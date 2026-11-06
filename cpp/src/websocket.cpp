@@ -234,16 +234,22 @@ bool WsConnection::send_text(const std::string& msg) {
     return send_raw(frame);
 }
 
+void (*g_ws_server_close_hook)(int fd) = nullptr;
+
 void WsConnection::close_conn() {
     server_closed.store(true);           // sunucu kapattı: "close" geri çağrısı çalışmaz (belge kuralı)
     if (closed.exchange(true)) return;  // already closed — yalnız ilk çağıran ilerler
     std::string frame = ws_encode_close_frame();
-    std::lock_guard<std::mutex> lk(write_mutex);
-    // BUG (düzeltildi): closed ARTIK true → send_raw close-frame'i düşürürdü; sunucu-başlatan
-    // ws::close istemciye HİÇ close-frame göndermiyordu (RFC 6455 §5.5.1 ihlali, SSE ikizinin
-    // kapatılmamış hali). write_all closed-guard'sız → close-frame gerçekten telde.
-    write_all(frame);
-    // fd will be closed by HttpServer::close_ws()
+    {
+        std::lock_guard<std::mutex> lk(write_mutex);
+        // BUG (düzeltildi): closed ARTIK true → send_raw close-frame'i düşürürdü; sunucu-başlatan
+        // ws::close istemciye HİÇ close-frame göndermiyordu (RFC 6455 §5.5.1 ihlali, SSE ikizinin
+        // kapatılmamış hali). write_all closed-guard'sız → close-frame gerçekten telde.
+        write_all(frame);
+    }
+    // fd'yi sunucu kapatır (close_ws, olay döngüsünde). Eskiden yalnız istemci bir şey gönderince
+    // ya da gidince kapanıyordu: cevap vermeyen istemcide bağlantı ve fd süresiz kalıyordu.
+    if (auto hook = g_ws_server_close_hook) hook(fd);
 }
 
 // ── WsRegistry ───────────────────────────────────────────────────────────────

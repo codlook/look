@@ -81,6 +81,7 @@ public:
     void stop();
 
 private:
+    static void ws_close_hook(int fd);   // ws::close sonrası fd kapatma (g_ws_server_close_hook)
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
