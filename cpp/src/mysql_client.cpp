@@ -1244,7 +1244,18 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
         if (!is_connected()) throw std::runtime_error("db: send failed — connection lost");
     }
     stmt_cache_.emplace(sql, CachedStmt{meta, ++stmt_tick_});
-    return stmt_execute(meta, params);
+    try {
+        return stmt_execute(meta, params);
+    } catch (const std::runtime_error&) {
+        // Önbellek yolunun aynası: hazırlama ile yürütme arasında paylaştırıcı arka uç değiştirdiyse
+        // (1243) sorgu ÇALIŞMADI — bir kez yeniden hazırla ve dene. Başka her hata çağırana.
+        if (last_error_code_ != 1243 || !is_connected()) throw;
+        stmt_cache_.erase(sql);
+        last_error_code_ = 0;
+        StmtMeta again = stmt_prepare(sql);
+        stmt_cache_.emplace(sql, CachedStmt{again, ++stmt_tick_});
+        return stmt_execute(again, params);
+    }
 }
 
 // ── Escape ────────────────────────────────────────────────────────────────────

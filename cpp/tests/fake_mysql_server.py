@@ -52,7 +52,7 @@ def handle(c):
     seq, _ = recv_pkt(c)            # istemcinin kimlik cevabı — her şey kabul
     if seq is None: return
     c.sendall(ok(seq + 1))
-    stmts, next_id = {}, 1
+    stmts, next_id, prepared, ran_once = {}, 1, {}, set()
     while True:
         seq, body = recv_pkt(c)
         if body is None or not body: return
@@ -64,10 +64,24 @@ def handle(c):
         if cmd == 0x16:                                  # STMT_PREPARE
             sid = next_id; next_id += 1
             stmts[sid] = body[1:].decode("utf-8", "replace").upper()
+            # e1243: bir ifade metni ikinci kez hazırlanınca (yeniden hazırlama) artık çalışır
+            if MODE in ("e1243", "e1243first"):
+                prepared[stmts[sid]] = prepared.get(stmts[sid], 0) + 1
+                if prepared[stmts[sid]] > 1: stmts[sid] += "#RUN"
             c.sendall(pkt(1, b"\x00" + struct.pack("<IHH", sid, 1, 0) + b"\x00" + b"\x00\x00") + coldef(2) + eof(3))
             continue
         if cmd == 0x17:                                  # STMT_EXECUTE
-            sql = stmts.get(struct.unpack("<I", body[1:5])[0], "")
+            sid = struct.unpack("<I", body[1:5])[0]
+            if MODE in ("e1243", "e1243first") and sid in stmts and not stmts[sid].endswith("#RUN"):
+                if sid in ran_once or MODE == "e1243first":   # e1243first: hazırlamadan hemen sonra
+                    # Bağlantı paylaştırıcısı (ProxySQL) sorgular arasında başka arka uca geçti:
+                    # önbellekteki kimlik orada yok. İstemci yeniden hazırlayıp bir kez denemeli
+                    # (sorgu ÇALIŞMADI).
+                    del stmts[sid]
+                    c.sendall(pkt(1, b"\xff" + struct.pack("<H", 1243) + b"#HY000Unknown prepared statement handler"))
+                    continue
+                ran_once.add(sid)
+            sql = stmts.get(sid, "")
             name = "first" if "FIRST" in sql else ("second" if "SECOND" in sql else "third")
             row = pkt(4, b"\x00" + b"\x00" + lenenc_str(name))
             if MODE == "desync" and name == "first":
