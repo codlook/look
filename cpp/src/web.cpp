@@ -13,6 +13,11 @@ extern char** environ;   // CGI istek başlıkları (HTTP_*) — init_from_cgi
 #include <iomanip>
 #include <stdexcept>
 #include <filesystem>
+#ifndef _WIN32
+#  include <fcntl.h>
+#  include <unistd.h>
+#  include <cerrno>
+#endif
 #ifdef _WIN32
 #  ifndef NOMINMAX
 #    define NOMINMAX
@@ -432,12 +437,45 @@ void WebContext::parse_multipart(const std::string& boundary) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 // Content-Disposition: form-data; name="field"; filename="file.jpg"
                 if (line.find("Content-Disposition:") != std::string::npos) {
-                    auto extract = [&](const std::string& key) {
-                        size_t k = line.find(key + "=\"");
-                        if (k == std::string::npos) return std::string{};
-                        k += key.size() + 2;
-                        size_t e = line.find('"', k);
-                        return e != std::string::npos ? line.substr(k, e-k) : std::string{};
+                    // Parametreler ';' ile ayrılır, sıra serbesttir (RFC 7578), değer tırnaklı olabilir.
+                    // Eskiden "name=\"" metin olarak aranıyordu: `filename="a.jpg"; name="avatar"`
+                    // sırasında alan adı "a.jpg" çıkıyordu (filename= içindeki name= eşleşiyordu).
+                    auto extract = [&](const std::string& key) -> std::string {
+                        size_t i = line.find(':');
+                        if (i == std::string::npos) return {};
+                        size_t n = line.size();
+                        i++;
+                        while (i < n) {
+                            while (i < n && (line[i] == ' ' || line[i] == '\t' || line[i] == ';')) i++;
+                            size_t ks = i;
+                            while (i < n && line[i] != '=' && line[i] != ';') i++;
+                            std::string k = line.substr(ks, i - ks);
+                            while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+                            std::string v;
+                            if (i < n && line[i] == '=') {
+                                i++;
+                                while (i < n && (line[i] == ' ' || line[i] == '\t')) i++;
+                                if (i < n && line[i] == '"') {
+                                    i++;
+                                    while (i < n && line[i] != '"') {
+                                        if (line[i] == '\\' && i + 1 < n) i++;   // \" ve \\ kaçışı
+                                        v.push_back(line[i++]);
+                                    }
+                                    if (i < n) i++;   // kapanış tırnağı
+                                    while (i < n && line[i] != ';') i++;
+                                } else {
+                                    size_t vs = i;
+                                    while (i < n && line[i] != ';') i++;
+                                    v = line.substr(vs, i - vs);
+                                    while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
+                                }
+                            }
+                            if (k.size() == key.size() &&
+                                std::equal(k.begin(), k.end(), key.begin(),
+                                           [](char a, char b) { return std::tolower((unsigned char)a) == b; }))
+                                return v;
+                        }
+                        return {};
                     };
                     field_name = extract("name");
                     filename   = extract("filename");
@@ -481,10 +519,32 @@ void WebContext::parse_multipart(const std::string& boundary) {
             std::string tmp_name = look_internal::random_hex(16) + ext;
             uf.temp_path = tmp_dir + "/" + tmp_name;
 
-            // Diske yaz
-            std::ofstream out(uf.temp_path, std::ios::binary);
-            if (out) {
-                out.write(part_data.data(), (std::streamsize)part_data.size());
+            // Diske yaz — yalnız sahibi okuyabilir (0600) ve var olan bir dosyanın üstüne yazılmaz
+            // (O_EXCL: önceden konmuş symlink'i izlemez). Eskiden umask'a göre 0644'tü: paylaşımlı
+            // /tmp'de makinedeki her kullanıcı yüklenen dosyaları okuyabiliyordu.
+            bool wrote = false;
+#ifndef _WIN32
+            {
+                int wfd = ::open(uf.temp_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+                if (wfd >= 0) {
+                    size_t off = 0;
+                    while (off < part_data.size()) {
+                        ssize_t w = ::write(wfd, part_data.data() + off, part_data.size() - off);
+                        if (w < 0) { if (errno == EINTR) continue; break; }
+                        off += (size_t)w;
+                    }
+                    wrote = off == part_data.size();
+                    ::close(wfd);
+                    if (!wrote) ::unlink(uf.temp_path.c_str());
+                }
+            }
+#else
+            {
+                std::ofstream out(uf.temp_path, std::ios::binary);
+                if (out) { out.write(part_data.data(), (std::streamsize)part_data.size()); wrote = (bool)out; }
+            }
+#endif
+            if (wrote) {
                 uf.valid = true;
                 // RAII cleanup: tüketilmeyen temp dosya WebContext ölünce silinir.
                 uf.temp_cleanup = std::make_shared<TempFileGuard>();

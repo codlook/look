@@ -506,6 +506,11 @@ jobs:
         run: |
           cd cpp
           bash tests/csrf_core_test.sh ./build/lk-fcgi ./build/lk-cgi
+      # multipart parameters read by name in any order; uploads wait in a 0600 temp file
+      - name: "multipart uploads — parameter order, private temp file"
+        run: |
+          cd cpp
+          bash tests/multipart_upload_test.sh ./build/lk-fcgi
 
       # Only session ids the server issued are used (session fixation); cookie::set cannot be made
       # to write extra attributes through its path or SameSite value.

@@ -11,6 +11,13 @@
 
 namespace fs = std::filesystem;
 
+#ifndef _WIN32
+#  include <sys/stat.h>
+// Süreç umask'ı — statik başlatmada (main'den önce, tek iş parçacığı) bir kez okunur: umask()
+// okuma-yazma birlikte yapar, istek sırasında çağırmak başka iş parçacığının dosyasını etkilerdi.
+static const mode_t g_process_umask = [] { mode_t m = ::umask(0); ::umask(m); return m; }();
+#endif
+
 namespace look {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -251,9 +258,14 @@ Module make_file_module() {
         fs::path dest = dest_dir / safe_name;
 
         // Taşı (aynı dosya zaten varsa — deduplication)
-        if (!fs::exists(dest))
+        if (!fs::exists(dest)) {
             fs::rename(temp_path, dest);
-        else
+#ifndef _WIN32
+            // Geçici yükleme dosyası 0600 açılır (paylaşımlı /tmp'de başkası okumasın). Saklanan
+            // dosya ise UPLOAD_URL ile web sunucusunca sunulur: normal dosya izni (0666 & ~umask).
+            ::chmod(dest.c_str(), 0666 & ~g_process_umask);
+#endif
+        } else
             fs::remove(temp_path);  // duplicate — temp sil
 
         // Public URL
