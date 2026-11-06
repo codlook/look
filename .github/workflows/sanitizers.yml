@@ -81,7 +81,8 @@ jobs:
           ( /tmp/w/lk-fcgi --version >/dev/null 2>&1 || true )
           fail=0
           for t in fiber_request_isolation_test ws_message_order_test ws_on_reregister_test ws_close_callback_test \
-                   ws_callback_context_test realtime_isolation_test; do
+                   ws_callback_context_test realtime_isolation_test hot_reload_ws_callback_test \
+                   session_destroy_race_test ws_handshake_check_test; do
             echo "== $t"; bash tests/$t.sh /tmp/w/lk-fcgi || fail=1
           done
           if ls /tmp/tsan* >/dev/null 2>&1 && grep -q "WARNING: ThreadSanitizer" /tmp/tsan*; then
