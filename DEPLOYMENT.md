@@ -87,6 +87,7 @@ server {
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;   # lets LOOK set Secure cookies
+        proxy_set_header X-Forwarded-Host  $host;     # overwrite: a client's own value must not pass
     }
 }
 
@@ -106,6 +107,13 @@ location /ws {
     proxy_http_version 1.1;
     proxy_set_header Upgrade    $http_upgrade;
     proxy_set_header Connection "upgrade";
+    # The same forwarding headers as above: without them a client's own X-Forwarded-* reach LOOK
+    # unchanged, and the browser WebSocket same-origin check needs the real Host.
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
     proxy_read_timeout 3600s;      # long-lived connection
     proxy_buffering off;           # stream frames through, don't buffer
 }
@@ -127,6 +135,19 @@ LOOK_TRUSTED_PROXY=127.0.0.1        # or the proxy's LAN IP / CIDR
 Without this, a spoofed `X-Forwarded-For` is correctly ignored — but so is your real
 proxy, so every request looks like it comes from the proxy. Set it exactly once, to a
 host you control.
+
+How LOOK reads the headers from a trusted proxy:
+
+- `X-Forwarded-For` is read **from the right**: trusted proxies are skipped, and the first
+  address that is not a trusted proxy is the client. The leftmost entry is whatever the client
+  sent, so it is never taken on trust. `X-Real-IP` is used only when there is no
+  `X-Forwarded-For` (Apache does not set it, so a client's own value would pass).
+- `X-Forwarded-Host` and `X-Forwarded-Proto`: the rightmost value (the closest proxy's).
+- The proxy must **set** `X-Forwarded-Host` and `X-Forwarded-Proto`, as in the configuration
+  above. nginx does not add them by itself; if they are not set, a client's own values reach
+  LOOK and `request::host()` (password-reset links, the CSRF Origin check) is whatever the
+  client chose. Apache adds `X-Forwarded-Host` itself; set the scheme with
+  `RequestHeader set X-Forwarded-Proto "https"` in the HTTPS virtual host.
 
 ---
 

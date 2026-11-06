@@ -248,8 +248,18 @@ ProxyPass / fcgi://127.0.0.1:${PORT}/
 ProxyPassReverse / fcgi://127.0.0.1:${PORT}/"
 fi
 
-echo "$PROXY_CONF" > "$CONF_DIR/vhost.conf"
-echo "$PROXY_CONF" > "$CONF_DIR/vhost_ssl.conf"
+# X-Forwarded-Proto Apache tarafından YAZILIR (eklenmez): mod_proxy bunu kendiliğinden koymaz, istemcinin
+# gönderdiği aynen geçerdi — LOOK HTTP isteğini HTTPS sanıp (oturum çerezi Secure, request::scheme)
+# ona göre davranırdı. X-Forwarded-For / X-Forwarded-Host'u mod_proxy ekler; LOOK en sağdakini okur.
+# IfModule: mod_headers yoksa yapılandırma bozulmasın (site düşmesin).
+XFP_HTTP="<IfModule mod_headers.c>
+    RequestHeader set X-Forwarded-Proto \"http\"
+</IfModule>"
+XFP_HTTPS="<IfModule mod_headers.c>
+    RequestHeader set X-Forwarded-Proto \"https\"
+</IfModule>"
+printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTP"  > "$CONF_DIR/vhost.conf"
+printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTPS" > "$CONF_DIR/vhost_ssl.conf"
 
 # Apache reconfigure (Plesk yolu) — ARKA PLANDA çalışır. Plesk reconfigure 10-30sn
 # sürer; senkron çalışırsa panel AJAX'ı kilitler/timeout olur (domain görünmez).

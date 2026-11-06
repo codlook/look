@@ -242,21 +242,62 @@ static bool is_trusted_proxy(const std::string& ip) {
 //   X-Forwarded-For: <çöp>      -> doğrulanmadan log'a/sorguya/ban listesine
 // IP'ye dayalı yetkilendirme, ban ve denetim kaydı güvenilmez hale geliyordu.
 // Artık tek kaynak: üç çağrı yeri de bu fonksiyonu kullanıyor (S2 — kopya sapar).
+static std::string trim_sp(std::string s) {
+    s.erase(0, s.find_first_not_of(" \t"));
+    auto last = s.find_last_not_of(" \t");
+    s.erase(last == std::string::npos ? 0 : last + 1);
+    return s;
+}
+// IPv4 (dört sekizli) ya da IPv6 (onaltılık, ':' içerir) biçimi — başlıktaki çöp adres olmasın.
+static bool looks_like_ip(const std::string& s) {
+    if (s.empty() || s.size() > 45) return false;
+    if (s.find(':') != std::string::npos) {
+        for (char c : s) if (!(std::isxdigit((unsigned char)c) || c == ':' || c == '.')) return false;
+        return true;
+    }
+    int parts = 0; size_t i = 0;
+    while (i <= s.size()) {
+        size_t j = s.find('.', i); if (j == std::string::npos) j = s.size();
+        if (j == i || j - i > 3) return false;
+        int v = 0; for (size_t k = i; k < j; ++k) { if (!std::isdigit((unsigned char)s[k])) return false; v = v * 10 + (s[k] - '0'); }
+        if (v > 255) return false;
+        ++parts; i = j + 1;
+    }
+    return parts == 4;
+}
+// Virgüllü bir yönlendirme başlığının EN SAĞDAKİ değeri — en yakın vekilin eklediği/yazdığı.
+static std::string last_list_value(const std::string& h) {
+    auto comma = h.rfind(',');
+    return trim_sp(comma == std::string::npos ? h : h.substr(comma + 1));
+}
+
+// İstemci adresi (güvenilir vekil arkasında): X-Forwarded-For SAĞDAN sola okunur, güvenilir vekiller
+// atlanır, ilk güvenilmeyen adres istemcidir. Eskiden önce X-Real-IP, sonra XFF'nin EN SOLDAKİ girdisi
+// alınıyordu: ekleyen bir vekilin (Apache mod_proxy, nginx $proxy_add_x_forwarded_for) arkasında en
+// soldaki değeri istemci yazar (X-Forwarded-For: 6.6.6.6 → request::ip() = 6.6.6.6; hız sınırı, ban ve
+// denetim kaydı aşılıyordu); Apache X-Real-IP koymaz, istemcinin gönderdiği aynen geçerdi. X-Real-IP
+// yalnız XFF hiç yoksa kullanılır. Biçimi bozuk girdi istemci sayılmaz: vekilin kendi adresi döner.
 template <typename Req>
 static std::string resolve_client_ip(const Req& req) {
     std::string ip = req.remote_addr;              // gerçek TCP peer
     if (!is_trusted_proxy(ip)) return ip;          // güvenilmeyen kaynak: başlıklara BAKMA
-    auto ireal = req.headers.find("x-real-ip");
-    if (ireal != req.headers.end()) return ireal->second;
     auto ixff = req.headers.find("x-forwarded-for");
-    if (ixff == req.headers.end()) return ip;
-    std::string xff = ixff->second;
-    auto comma = xff.find(',');                    // "client, proxy1, proxy2" → ilki
-    if (comma != std::string::npos) xff = xff.substr(0, comma);
-    xff.erase(0, xff.find_first_not_of(" \t"));
-    auto last = xff.find_last_not_of(" \t");
-    xff.erase(last == std::string::npos ? 0 : last + 1);
-    return xff.empty() ? ip : xff;
+    if (ixff != req.headers.end()) {
+        std::vector<std::string> hops;
+        std::istringstream ss(ixff->second);
+        for (std::string t; std::getline(ss, t, ',');) hops.push_back(trim_sp(t));
+        for (auto it = hops.rbegin(); it != hops.rend(); ++it) {
+            if (!looks_like_ip(*it)) return ip;
+            if (!is_trusted_proxy(*it)) return *it;
+        }
+        return (!hops.empty() && looks_like_ip(hops.front())) ? hops.front() : ip;   // hepsi güvenilir vekil
+    }
+    auto ireal = req.headers.find("x-real-ip");
+    if (ireal != req.headers.end()) {
+        std::string r = trim_sp(ireal->second);
+        if (looks_like_ip(r)) return r;
+    }
+    return ip;
 }
 
 // Is the ORIGINAL client connection HTTPS? The http server itself is plain HTTP (TLS is a front
@@ -268,10 +309,7 @@ static bool resolve_is_https(const Req& req) {
     if (!is_trusted_proxy(req.remote_addr)) return false;
     auto it = req.headers.find("x-forwarded-proto");
     if (it == req.headers.end()) return false;
-    std::string p = it->second;
-    auto comma = p.find(','); if (comma != std::string::npos) p = p.substr(0, comma);
-    p.erase(0, p.find_first_not_of(" \t"));
-    auto last = p.find_last_not_of(" \t"); p.erase(last == std::string::npos ? 0 : last + 1);
+    std::string p = last_list_value(it->second);   // en yakın vekilin değeri (en soldakini istemci yazabilir)
     for (auto& c : p) c = (char)std::tolower((unsigned char)c);
     return p == "https";
 }
@@ -283,8 +321,9 @@ static std::string resolve_host(const Req& req) {
     if (is_trusted_proxy(req.remote_addr)) {
         auto it = req.headers.find("x-forwarded-host");
         if (it != req.headers.end()) {
-            std::string h = it->second;
-            auto comma = h.find(','); if (comma != std::string::npos) h = h.substr(0, comma);
+            // En sağdaki: Apache mod_proxy ekler ("istemcinin, gerçek"); en soldakini istemci yazar.
+            // (nginx kendiliğinden koymaz: yapılandırma X-Forwarded-Host $host ile YAZMALI — belge.)
+            std::string h = last_list_value(it->second);
             std::string c = look::WebContext::clean_host(h);
             if (!c.empty()) return c;
         }

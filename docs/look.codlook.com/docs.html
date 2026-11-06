@@ -2453,7 +2453,10 @@ location /events {
     proxy_pass http://127.0.0.1:8090
     proxy_buffering off
     proxy_cache off
+    proxy_set_header Host $host
     proxy_set_header X-Forwarded-For $remote_addr
+    proxy_set_header X-Forwarded-Proto $scheme
+    proxy_set_header X-Forwarded-Host $host
     proxy_read_timeout 3600s
 }</code></pre>
 
@@ -2758,7 +2761,10 @@ server {
     server_name domain.com
     location / {
         proxy_pass http://127.0.0.1:8090
+        proxy_set_header Host $host
         proxy_set_header X-Forwarded-For $remote_addr
+        proxy_set_header X-Forwarded-Proto $scheme
+        proxy_set_header X-Forwarded-Host $host
     }
 
     location /chat {
@@ -2766,6 +2772,10 @@ server {
         proxy_http_version 1.1
         proxy_set_header Upgrade $http_upgrade
         proxy_set_header Connection <span class="str">"upgrade"</span>
+        proxy_set_header Host $host
+        proxy_set_header X-Forwarded-For $remote_addr
+        proxy_set_header X-Forwarded-Proto $scheme
+        proxy_set_header X-Forwarded-Host $host
         proxy_read_timeout 3600s
     }
 }</code></pre>
@@ -4537,7 +4547,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
     <tr><td><code>LOOK_MAX_BODY_SIZE</code></td><td><code>10485760</code> (10&nbsp;MB)</td><td>Maximum request body in bytes. Requests above the cap are rejected before buffering.</td></tr>
     <tr><td><code>LOOK_HTTP_MAX_CONNS_IP</code></td><td><em>off</em></td><td>Max concurrent connections from a single IP; over the cap → <code>429</code>. Stops one IP from tying up the whole worker pool; open WebSocket and SSE connections count too. Not set and no <code>LOOK_TRUSTED_PROXY</code>: one address may still hold at most 1000 open WebSocket / SSE connections (a default; there is no limit on the total). <strong>Opt-in</strong>, and keyed on the real TCP peer: enable it only when LOOK is <strong>directly</strong> internet-facing. Behind a reverse proxy every connection shares the proxy's IP, so a single counter would throttle the entire site — cap connections at the proxy instead (nginx <code>limit_conn</code>). Complements the per-minute <code>LOOK_RATE_LIMIT_RPM</code> limiter.</td></tr>
     <tr><td><code>LOOK_SESSION_SECURE</code></td><td><em>auto</em></td><td>Controls the <code>Secure</code> flag on the session cookie. Unset (default) = set it only when the connection is HTTPS (detected from an <code>HTTPS</code> FCGI param or <code>X-Forwarded-Proto: https</code> from a trusted proxy); the runtime warns once if it ships a session cookie without <code>Secure</code> so a misconfiguration can't silently downgrade. <code>1</code> = always set it; <code>0</code> = never (for plain-HTTP local dev).</td></tr>
-    <tr><td><code>LOOK_TRUSTED_PROXY</code></td><td>— (disabled)</td><td>Comma-separated proxy IPs / CIDRs to trust. Behind them, <code>X-Forwarded-For</code> sets the real client IP (<code>request::ip()</code>, rate limiter) <strong>and</strong> <code>X-Forwarded-Proto: https</code> marks the request HTTPS (so the session cookie gets <code>Secure</code>; <code>request::scheme()</code>), and <code>X-Forwarded-Host</code> sets <code>request::host()</code> (the <code>csrf::</code> Origin check). Unset = these headers are ignored, so a client cannot forge them.</td></tr>
+    <tr><td><code>LOOK_TRUSTED_PROXY</code></td><td>— (disabled)</td><td>Comma-separated proxy IPs / CIDRs to trust. Behind them, <code>X-Forwarded-For</code> sets the real client IP (<code>request::ip()</code>, rate limiter) <strong>and</strong> <code>X-Forwarded-Proto: https</code> marks the request HTTPS (so the session cookie gets <code>Secure</code>; <code>request::scheme()</code>), and <code>X-Forwarded-Host</code> sets <code>request::host()</code> (the <code>csrf::</code> Origin check). Unset = these headers are ignored, so a client cannot forge them. <code>X-Forwarded-For</code> is read from the right: trusted proxies are skipped and the first other address is the client (the leftmost entry is what the client sent). <code>X-Forwarded-Host</code> / <code>-Proto</code>: the rightmost value. The proxy must set them (DEPLOYMENT.md).</td></tr>
     <tr><td><code>LOOK_SECRET</code></td><td>—</td><td>Signs the CSRF cookie. At least 32 characters, the same on every server (<code>openssl rand -hex 32</code>). Required by every program that uses cookies (<code>session::</code>, <code>csrf::</code>, <code>cookie::</code>): without it such a program does not start.</td></tr>
     <tr><td><code>LOOK_SECRET_PREVIOUS</code></td><td>—</td><td>The previous <code>LOOK_SECRET</code> while it is being changed: cookies signed with it are still accepted and are signed again with the new one.</td></tr>
     <tr><td><code>LOOK_BIND</code> / <code>--bind</code></td><td><em>all interfaces</em></td><td>The IPv4 address <code>--mode http</code> listens on. Behind a reverse proxy on the same machine set <code>127.0.0.1</code>, so the app's own port is not reachable from outside and the proxy cannot be bypassed (the Plesk extension does this since 1.4.2). A name such as <code>localhost</code> is refused — give an address. FastCGI mode already listens on <code>127.0.0.1</code> (<code>LOOK_FCGI_BIND</code>).</td></tr>
