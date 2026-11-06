@@ -1296,6 +1296,12 @@ struct ConnPool {
         // altında aynı istek defalarca sıra kaybediyordu (c=1000'de p99 kuyruğu). Fiber askıdayken
         // yığını yerinde durur, yuva geçerlidir.
         std::shared_ptr<DbConnection> handed;
+        // Kuyrukta mıyız (g_fiber_waiters_mtx altında; release/notify kaydı silerken false yapar).
+        // Sahte uyanma (başka bir beklemeden kalan erken devam — pending_resume_) kaydımız hâlâ
+        // kuyruktayken askıdan döndürür: eskiden döngü kendini İKİNCİ kez kuyruğa ekliyordu, eski
+        // kayıt kalıyordu ve acquire döndükten sonra bir release bağlantıyı o kayıttaki ölü yığın
+        // yuvasına yazıp ilgisiz bir fiber'ı uyandırabiliyordu. Şimdi kuyruktaysak beklemeye devam.
+        bool queued = false;
 
         while (true) {
             bool grow = false;
@@ -1313,7 +1319,8 @@ struct ConnPool {
                     ++opening; grow = true;
                 } else if (shared_fiber) {
                     std::lock_guard<std::mutex> wl(g_fiber_waiters_mtx);
-                    g_fiber_waiters.push_back({shared_fiber, sched, this, &handed});
+                    g_fiber_waiters.push_back({shared_fiber, sched, this, &handed, &queued});
+                    queued = true;
                 } else {
                     // İş parçacığı bağlamı: engelleyen bekleme (cv.wait burada güvenli)
                     cv.wait(lk, [this] {
@@ -1337,7 +1344,11 @@ struct ConnPool {
                 all.push_back(c);
                 return c;
             }
-            look::FiberScheduler::suspend_current();   // release() ya da başarısız açılış uyandırır
+            for (;;) {
+                look::FiberScheduler::suspend_current();   // release() ya da başarısız açılış uyandırır
+                std::lock_guard<std::mutex> wl(g_fiber_waiters_mtx);
+                if (!queued) break;                        // kaydımızı bizi uyandıran sildi
+            }
             if (handed) return std::move(handed);      // bağlantı doğrudan bize teslim edildi
             // Teslim yoksa başarısız bir açılış uyandırdı (ayrılan yer boşaldı): baştan dene.
         }
@@ -1356,6 +1367,7 @@ struct ConnPool {
                 for (auto it = g_fiber_waiters.begin(); it != g_fiber_waiters.end(); ++it) {
                     if (it->pool != this) continue;
                     *it->slot  = std::move(c);   // doğrudan teslim
+                    *it->queued = false;
                     wake       = std::move(it->fiber);
                     wake_sched = it->sched;
                     g_fiber_waiters.erase(it);
@@ -1377,6 +1389,7 @@ private:
         look::FiberScheduler*          sched;
         ConnPool*                      pool;
         std::shared_ptr<DbConnection>* slot;   // release() bağlantıyı buraya teslim eder
+        bool*                          queued; // kaydı silen false yapar (g_fiber_waiters_mtx altında)
     };
 
     static std::mutex               g_fiber_waiters_mtx;
@@ -1389,6 +1402,7 @@ private:
         std::lock_guard<std::mutex> lk(g_fiber_waiters_mtx);
         for (auto it = g_fiber_waiters.begin(); it != g_fiber_waiters.end(); ++it) {
             if (it->pool != pool) continue;
+            *it->queued = false;
             it->sched->resume_fiber(std::move(it->fiber));
             g_fiber_waiters.erase(it);
             return;
