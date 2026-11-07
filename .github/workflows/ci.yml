@@ -714,6 +714,10 @@ jobs:
           bash tests/pg_scram_iterations_test.sh ./build/lk
           # MySQL statement cache behind a multiplexer: 1243 → prepared again, run once (both paths)
           bash tests/mysql_stmt_1243_test.sh ./build/lk
+          # a connection lost after a query was sent is an error, never a silent second INSERT
+          bash tests/db_retry_test.sh ./build/lk
+          # out-of-order / early / flooding PostgreSQL replies are handled without a crash
+          bash tests/db_stateful_test.sh ./build/lk
 
       # Long CPU work (a LOOK loop, deep calls, password hashing) must hold only its own request:
       # up to 1.0.24 LOOK code never gave up its turn under fibers (0.7–1 s waits, 32 s on the
@@ -858,6 +862,8 @@ jobs:
         run: |
           cd cpp
           bash tests/error_body_test.sh ./build/lk ./build/lk-fcgi
+          # a failing route's 500 carries nothing from the error (debug, JSON, pool); no DSN password in the log
+          bash tests/error_leak_test.sh ./build/lk-fcgi 7906
 
       # A comparison operator inside a quoted value must not split a template condition.
       - name: Template condition guard
@@ -951,6 +957,8 @@ jobs:
           bash tests/smtp_late_reply_test.sh build/lk-fcgi 7834
           bash tests/smtp_pipelining_test.sh build/lk-fcgi 7841
           bash tests/mail_capabilities_test.sh build/lk-fcgi 7860
+          # IMAP: login required, mailbox names checked (no traversal), literal size limit
+          bash tests/imap_test.sh build/lk-fcgi 7157
 
       # Motor paritesi — bu guard'lar repoda vardı ama HİÇBİR workflow'da koşmuyordu
       # (olgunluk denetimi 2026-08-11: "guard var, CI'da yok" = regresyon manuel-koşuma

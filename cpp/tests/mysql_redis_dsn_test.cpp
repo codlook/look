@@ -119,6 +119,10 @@ int main() {
     chkw("postgres://u:p@pg/app?x=tls=insecure",           'U', true); // (c) PG, canlı doğrulandı
     chkw("postgres://u:p@pg/app?sslmode=verify-ca",        'N', true); // 558d735 sınıfı: eski 'U' derdi
     chkw("mysql://u:p?tls=insecure@db:3306/app",           'U', true); // userinfo'daki '?' sorgu değil
+    // Yolsuz DSN: bağlantı (parse_dsn_part, Go net/url) sorguyu okur → uyarı da okumalı.
+    chkw("mysql://u:p@db:3306?tls=insecure",               'I');
+    chkw("mysql://u:p@db:3306?tls=1",                      'N');
+    chkw("postgres://u:p@pg:5432?sslmode=require",         'I');
 
     // Redis bölme sırası: önce son '@', sonra '?'. Eski sıra ('?' önce) parolasında '?'
     // olan URL'de host'u ":pa", sorguyu "ss@r:6379" çıkarıyordu.
@@ -143,7 +147,7 @@ int main() {
     chkw("redis://:pa?tls=insecure@r:6379",                'U', true); // parolada '?': sorgu değil
     chkw("rediss://:pa?ss@r:6379",                         'N');
 
-    const int EXPECTED = 60;
+    const int EXPECTED = 63;
     if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
     printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (verify=true güvenli-varsayılan + ?tls=insecure opt-out kilitli)\n", fails);
     return fails ? 1 : 0;

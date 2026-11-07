@@ -1,0 +1,70 @@
+name: db-latest
+
+# The database clients against the newest MySQL, MariaDB and PostgreSQL releases (`latest`
+# images). The CI matrix pins the versions LOOK is tested with; this job watches what comes
+# next, so a server release that breaks the wire protocol or authentication (MySQL 8's switch
+# to caching_sha2_password was one) shows up the week it ships, not when a user reports it.
+#
+# Schedule + manual dispatch only, like deps-cve: a red run is an alert about an upstream
+# release, not a merge blocker.
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"   # weekly, Monday 06:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:latest
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: lookci
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      mariadb:
+        image: mariadb:latest
+        env:
+          MARIADB_ROOT_PASSWORD: rootpw
+          MARIADB_DATABASE: lookci
+        ports: ["3307:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: lookci
+          POSTGRES_PASSWORD: lookci
+          POSTGRES_DB: lookci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U lookci -d lookci"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev
+          if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
+      - name: Build lk (Release)
+        run: |
+          cd cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target look --parallel $(nproc)
+      - name: Connect, write and read back on the latest MySQL / MariaDB / PostgreSQL
+        env:
+          LOOK_MYSQL_LATEST_DSN:   "mysql://root:rootpw@127.0.0.1:3306/lookci"
+          LOOK_MARIADB_LATEST_DSN: "mysql://root:rootpw@127.0.0.1:3307/lookci"
+          LOOK_PG_LATEST_DSN:      "postgres://lookci:lookci@127.0.0.1:5432/lookci"
+        run: |
+          cd cpp
+          bash tests/db_latest_test.sh ./build/lk

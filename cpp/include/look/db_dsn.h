@@ -148,11 +148,11 @@ inline std::string db_dsn_query(const std::string& dsn) {
     }
     size_t at = rest.rfind('@');
     if (at != std::string::npos) rest = rest.substr(at + 1);
-    size_t slash = rest.find('/');
-    if (slash == std::string::npos) return "";
-    std::string db = rest.substr(slash + 1);
-    size_t q = db.find('?');
-    return q == std::string::npos ? "" : db.substr(q + 1);
+    // parse_dsn_part ile AYNI bölme: yetki bölümü ilk '/' ya da '?' ile biter (Go net/url).
+    // Eskiden yalnız '/' aranıyordu → yolsuz "h:3306?tls=1" bağlantıda TLS kurarken bu uyarı
+    // sorguyu boş görüp "plaintext" diyordu (uyarı ile gerçek bağlantı ayrışıyordu).
+    size_t q = rest.find('?');
+    return q == std::string::npos ? "" : rest.substr(q + 1);
 }
 // Boş dönüş → uyarı yok. Metinler kullanıcıya görünür (İngilizce).
 inline std::string db_tls_warning(const std::string& dsn) {
