@@ -35,6 +35,7 @@ struct ParsedUrl {
     std::string host;
     int         port = 80;
     std::string path;   // includes query string
+    std::string basic_auth;   // "user:pass@" in the URL → base64 for "Authorization: Basic" (Go URL.User)
 };
 
 ParsedUrl   parse_url(const std::string& url);

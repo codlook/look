@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
+#include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <openssl/ssl.h>
@@ -126,3 +127,60 @@ inline int fiber_getaddrinfo(const char* node, const char* service,
 }
 } // namespace look
 #endif // !_WIN32
+
+#include <string>
+namespace look {
+#ifdef _WIN32
+using dial_sock_t = SOCKET;
+constexpr dial_sock_t DIAL_INVALID = INVALID_SOCKET;
+#else
+using dial_sock_t = int;
+constexpr dial_sock_t DIAL_INVALID = -1;
+#endif
+
+// Go net.Dial modeli: adı AF_UNSPEC ile çözümle, dönen adresleri (IPv4 ve IPv6) sırayla dene, ilk
+// bağlananı döndür. Eskiden MySQL/PG istemcileri yalnız AF_INET çözüyordu → "[::1]:5432" ya da
+// yalnız AAAA kaydı olan bir sunucuya hiç bağlanılamıyordu. Her deneme en çok timeout_ms.
+// Dönüş: bağlı (engelleyen kipte) soket ya da DIAL_INVALID; resolved=false → ad çözülemedi;
+// timed_out → en az bir deneme süre aşımına uğradı.
+inline dial_sock_t tcp_dial(const std::string& host, int port, int timeout_ms,
+                            bool& resolved, bool& timed_out) {
+    resolved = false; timed_out = false;
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    const std::string ps = std::to_string(port);
+    if (fiber_getaddrinfo(host.c_str(), ps.c_str(), &hints, &res) != 0 || !res) return DIAL_INVALID;
+    resolved = true;
+    dial_sock_t s = DIAL_INVALID;
+    for (auto* r = res; r; r = r->ai_next) {
+        s = (dial_sock_t)::socket(r->ai_family, r->ai_socktype, r->ai_protocol);
+        if (s == DIAL_INVALID) continue;
+#ifndef _WIN32
+        if (fiber_connect(s, r->ai_addr, (socklen_t)r->ai_addrlen, timeout_ms) == 0) break;
+        if (errno == ETIMEDOUT) timed_out = true;
+        ::close(s);
+#else
+        u_long nb = 1; ioctlsocket(s, FIONBIO, &nb);
+        ::connect(s, r->ai_addr, (int)r->ai_addrlen);
+        fd_set wfds; FD_ZERO(&wfds); FD_SET(s, &wfds);
+        fd_set efds; FD_ZERO(&efds); FD_SET(s, &efds);
+        struct timeval tv; tv.tv_sec = timeout_ms / 1000; tv.tv_usec = (timeout_ms % 1000) * 1000;
+        int sel = ::select(0, nullptr, &wfds, &efds, timeout_ms > 0 ? &tv : nullptr);
+        int err = 0; int el = sizeof(err);
+        if (sel > 0) getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &el);
+        if (sel > 0 && err == 0 && FD_ISSET(s, &wfds)) { u_long b = 0; ioctlsocket(s, FIONBIO, &b); break; }
+        if (sel == 0) timed_out = true;
+        ::closesocket(s);
+#endif
+        s = DIAL_INVALID;
+    }
+    freeaddrinfo(res);
+    return s;
+}
+
+// Hata metninde adres: IPv6 köşeli parantezde ("[::1]:5432"), Go net.JoinHostPort gibi.
+inline std::string join_host_port(const std::string& host, int port) {
+    return (host.find(':') != std::string::npos ? "[" + host + "]" : host) + ":" + std::to_string(port);
+}
+} // namespace look

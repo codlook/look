@@ -1,5 +1,6 @@
 #include "look/resp_client.h"
 #include "look/db_dsn.h"   // redis_resolve_tls (saf TLS-karar dikişi)
+#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli)
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
@@ -89,21 +90,22 @@ static void parse_url(const std::string& url,
       rest = hostpart; }
 
     // /db
+    // Go-redis ParseURL modeli: bozuk veritabanı numarası ya da port HATA. Eskiden ikisi de sessizce
+    // varsayılana düşüyordu ("/abc" → db 0: başka uygulamanın anahtarlarına yazmak; ":63799" kabul).
     auto slash = rest.find('/');
     if (slash != std::string::npos) {
-        try { db = std::stoi(rest.substr(slash + 1)); } catch (...) {}
+        const std::string ds = rest.substr(slash + 1);
+        if (!ds.empty()) {
+            if (ds.size() > 9 || ds.find_first_not_of("0123456789") != std::string::npos)
+                throw std::runtime_error("Redis: invalid database number \"" + ds + "\" in the URL");
+            db = std::stoi(ds);
+        }
         rest = rest.substr(0, slash);
     }
 
-    // host:port
-    auto colon = rest.rfind(':');
-    if (colon != std::string::npos) {
-        host = rest.substr(0, colon);
-        try { port = std::stoi(rest.substr(colon + 1)); } catch (...) {}
-    } else {
-        host = rest;
-    }
-    if (host.empty()) host = "127.0.0.1";
+    // host:port — IPv6 köşeli parantezde ("[::1]:6379"); eskiden rfind(':') ile "[::1]" → host "[:"
+    std::string err = look::split_host_port(rest, host, port);
+    if (!err.empty()) throw std::runtime_error("Redis: invalid URL: " + err);
 }
 
 // ── Constructor / Destructor ─────────────────────────────────────────────────

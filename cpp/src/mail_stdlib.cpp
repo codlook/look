@@ -6,6 +6,7 @@
 #include "look/mail.h"
 #include "look/smtp_server.h"
 #include "look/http_client.h"
+#include "look/host_port.h"   // SMTP_PORT doğrulama
 #include "look/logger.h"
 #include <stdexcept>
 #include <map>
@@ -416,7 +417,13 @@ static MailResult send_smtp(const std::string& from, const std::string& to,
                             const std::string& html) {
     MailResult r;
     std::string host = env_get("SMTP_HOST", "");
-    int         port = atoi(env_get("SMTP_PORT", "587").c_str());
+    // Eskiden atoi: "587x" → 587, "abc" → 0 → "connect failed: host:0". Yalnız rakam, 1-65535.
+    int         port = 587;
+    { const std::string ps = env_get("SMTP_PORT", "587");
+      if (!ps.empty() && !parse_port_number(ps, port)) {
+          r.message = "SMTP_PORT=\"" + ps + "\" is not a valid port (expected a number from 1 to 65535)";
+          return r;
+      } }
     std::string user = env_get("SMTP_USER", "");
     std::string pass = env_get("SMTP_PASS", "");
     std::string tls  = env_get("SMTP_TLS",  "");            // "" | starttls | implicit | none

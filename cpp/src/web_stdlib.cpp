@@ -3,6 +3,7 @@
 #include "look/web.h"
 #include "look/struct_types.h"
 #include "look/db_dsn.h"   // pg_resolve_tls (saf TLS-karar dikişi)
+#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli; saf, tablo-testli)
 #include "look/session_files.h" // dosya sürücüsü: 0700 dizin, 0600 dosya, sahiplik denetimi
 #include "look/crypto_sha256.h"  // csrf:: HMAC-SHA256
 #include "look/session_esc.h"   // valid_sid + sess_esc/blob (saf, tablo-test edilebilir)
@@ -1250,12 +1251,16 @@ static std::string parse_dsn_part(const std::string& dsn,
         if (colon != std::string::npos) { user = userinfo.substr(0, colon); pass = userinfo.substr(colon + 1); }
         else user = userinfo;
     }
-    size_t slash = rest.find('/');
+    // Yetki bölümü ilk '/' ya da '?' ile biter (Go net/url). Yolsuz "h:3306?tls=1" eskiden
+    // sorguyu port metnine katıyordu → ?tls sessizce kayboluyordu. db, sorguyu taşır ("?tls=1").
+    size_t slash = rest.find_first_of("/?");
     std::string hostport = (slash != std::string::npos) ? rest.substr(0, slash) : rest;
-    db = (slash != std::string::npos) ? rest.substr(slash + 1) : "";
-    size_t colon = hostport.find(':');
-    if (colon != std::string::npos) { host = hostport.substr(0, colon); port = std::stoi(hostport.substr(colon + 1)); }
-    else host = hostport;
+    db = (slash == std::string::npos) ? "" : rest[slash] == '/' ? rest.substr(slash + 1) : rest.substr(slash);
+    // host[:port] — Go net/url modeli (look/host_port.h): yalnız rakam, 1-65535, boş port =
+    // varsayılan, IPv6 köşeli parantezde. Eskiden stoi: "3306x" → 3306, "abc" → çıplak "stoi".
+    // Hata metni DSN'in tamamını İÇERMEZ (parola sızmasın) — yalnız host:port kısmı.
+    std::string err = look::split_host_port(hostport, host, port);
+    if (!err.empty()) throw std::runtime_error("db::connect(): invalid DSN: " + err);
 
     return scheme;
 }

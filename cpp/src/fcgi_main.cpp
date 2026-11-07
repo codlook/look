@@ -24,6 +24,7 @@
 #include "look/fcgi.h"
 #include "look/health_path.h"  // yerleşik sağlık yolu — tek kaynak (HTTP modu da kullanır)
 #include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
+#include "look/host_port.h"    // --port: Go flag modeli (yalnız rakam, 1-65535)
 #include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
 #include "look/http_client.h"
 #include "look/thread_start.h"     // start_pool_threads
@@ -701,8 +702,15 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; i++) {
         if ((std::strcmp(argv[i], "--port") == 0 || std::strcmp(argv[i], "-p") == 0)
-            && i + 1 < argc)
-            tcp_port = std::atoi(argv[++i]);
+            && i + 1 < argc) {
+            // Go flag modeli: bozuk değer → hata + çıkış 2. Eskiden atoi: "--port 80a" → 80,
+            // "--port abc" → 0 → http kipinde sessizce 9000, fcgi kipinde sessizce stdin kipi.
+            if (!look::parse_port_number(argv[++i], tcp_port)) {
+                std::cerr << "lk-fcgi: invalid --port value \"" << argv[i]
+                          << "\" (expected a number from 1 to 65535)\n";
+                return 2;
+            }
+        }
         else if ((std::strcmp(argv[i], "--workers") == 0 || std::strcmp(argv[i], "-w") == 0)
             && i + 1 < argc)
             workers = std::atoi(argv[++i]);

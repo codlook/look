@@ -3,8 +3,12 @@
 // Windows: Schannel (built-in, WinSSL)
 
 #include "look/http_client.h"
+#ifndef LOOK_VERSION
+#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#endif
 #include "look/ssrf_safe.h"   // SSRF private/özel-blok kararı (saf, tablo-test edilebilir)
 #include "look/gzip_inflate.h"   // gzip response decode (pure, fuzzed)
+#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli)
 #include "look/charset.h"     // single-byte charset → UTF-8 (iso-8859-9 etc.)
 #include <stdexcept>
 #include <sstream>
@@ -132,46 +136,77 @@ static thread_local const char* t_conn_error = nullptr;
 
 // ── URL parser ────────────────────────────────────────────────────────────────
 
+static std::string hc_pct_decode(const std::string& s) {
+    std::string o; o.reserve(s.size());
+    auto hx = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size() && hx(s[i + 1]) >= 0 && hx(s[i + 2]) >= 0) {
+            o += (char)(hx(s[i + 1]) * 16 + hx(s[i + 2])); i += 2;
+        } else o += s[i];
+    }
+    return o;
+}
+
+static std::string hc_base64(const std::string& in) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8) | (unsigned char)in[i + 2];
+        o += T[v >> 18]; o += T[(v >> 12) & 63]; o += T[(v >> 6) & 63]; o += T[v & 63];
+    }
+    if (i + 1 == in.size()) {
+        unsigned v = (unsigned char)in[i] << 16;
+        o += T[v >> 18]; o += T[(v >> 12) & 63]; o += "==";
+    } else if (i + 2 == in.size()) {
+        unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8);
+        o += T[v >> 18]; o += T[(v >> 12) & 63]; o += T[(v >> 6) & 63]; o += '=';
+    }
+    return o;
+}
+
+// Go net/url modeli:
+//   * şema büyük/küçük harf duyarsız ("HTTPS://" geçerli);
+//   * yetki bölümü ilk '/', '?' ya da '#' ile biter — eskiden yalnız '/': "http://h?q=1" → host "h?q=1";
+//   * parça (#...) sunucuya gönderilmez (RFC 9110 §4.2.4);
+//   * "user:pass@" → Basic kimlik (yüzde kodu çözülür; Go Request.URL.User); eskiden host'a karışıyordu;
+//   * port: yalnız rakam, 1-65535, boş = varsayılan; IPv6 köşeli parantezde (look/host_port.h).
+//     Eskiden bozuk port sessizce 80/443'e düşüyordu ("http://h:8O80/" → 80'e bağlan).
 ParsedUrl parse_url(const std::string& url) {
     ParsedUrl r;
-    std::string s = url;
-
-    if (s.substr(0, 8) == "https://") { r.tls = true;  s = s.substr(8); r.port = 443; }
-    else if (s.substr(0, 7) == "http://") { r.tls = false; s = s.substr(7); r.port = 80; }
+    size_t se = url.find("://");
+    std::string scheme = (se == std::string::npos) ? "" : url.substr(0, se);
+    for (auto& c : scheme) c = (char)std::tolower((unsigned char)c);
+    if (scheme == "https")     { r.tls = true;  r.port = 443; }
+    else if (scheme == "http") { r.tls = false; r.port = 80; }
     else throw std::runtime_error("http:: Unsupported URL scheme: " + url);
+    std::string s = url.substr(se + 3);
 
-    auto path_pos = s.find('/');
-    std::string host_port = (path_pos != std::string::npos) ? s.substr(0, path_pos) : s;
-    r.path = (path_pos != std::string::npos) ? s.substr(path_pos) : "/";
+    size_t end = s.find_first_of("/?#");
+    std::string auth = s.substr(0, end);
+    std::string rest = (end == std::string::npos) ? "" : s.substr(end);
+    size_t hash = rest.find('#');
+    if (hash != std::string::npos) rest.erase(hash);
+    if (rest.empty() || rest[0] == '?') rest = "/" + rest;
+    r.path = rest;
 
-    // IPv6 literal: RFC 3986 gereği köşeli parantez içinde — "[::1]", "[::1]:8080".
-    // ESKİ HATA: parantezler sıyrılmıyordu ve port ayracı `rfind(':')` ile
-    // aranıyordu. Sonuç:
-    //   "[::1]:8080" -> host "[::1]"   (parantezli → getaddrinfo başarısız)
-    //   "[::1]"      -> host "[:"      (adresin İÇİNDEKİ iki nokta port sanıldı)
-    // Yani hiçbir IPv6 literal URL'i çalışmıyordu; hata da "DNS çözümlenemedi"
-    // olduğu için sebep görünmüyordu (bu bug zaten gizliydi; SSRF hata mesajları
-    // ayrıştırılınca ortaya çıktı).
-    if (!host_port.empty() && host_port[0] == '[') {
-        auto rb = host_port.find(']');
-        if (rb == std::string::npos)
-            throw std::runtime_error("http:: Invalid IPv6 URL (missing closing ']'): " + url);
-        r.host = host_port.substr(1, rb - 1);          // parantezler host'a DAHİL DEĞİL
-        if (rb + 1 < host_port.size() && host_port[rb + 1] == ':') {
-            try { r.port = std::stoi(host_port.substr(rb + 2)); }
-            catch (...) { r.port = r.tls ? 443 : 80; }  // bozuk port → varsayılan
-        }
-        return r;
+    size_t at = auth.rfind('@');
+    if (at != std::string::npos) {
+        std::string ui = auth.substr(0, at);
+        auth = auth.substr(at + 1);
+        size_t c = ui.find(':');
+        std::string user = hc_pct_decode(c == std::string::npos ? ui : ui.substr(0, c));
+        std::string pass = c == std::string::npos ? "" : hc_pct_decode(ui.substr(c + 1));
+        r.basic_auth = hc_base64(user + ":" + pass);
     }
-
-    auto colon = host_port.rfind(':');
-    if (colon != std::string::npos) {
-        r.host = host_port.substr(0, colon);
-        try { r.port = std::stoi(host_port.substr(colon + 1)); }  // bozuk port → default
-        catch (...) { r.port = r.tls ? 443 : 80; }
-    } else {
-        r.host = host_port;
-    }
+    std::string err = look::split_host_port(auth, r.host, r.port);
+    if (!err.empty()) throw std::runtime_error("http:: invalid URL: " + err);
+    if (r.host.empty()) throw std::runtime_error("http:: invalid URL: missing host: " + url);
     return r;
 }
 
@@ -187,23 +222,30 @@ static std::string hc_strip_crlf(const std::string& s) {
     return r;
 }
 
-// Parse a proxy spec ("http://host:port", "host:port", "host") into host + port.
+// Host başlığı / CONNECT hedefi: IPv6 köşeli parantezde ("[::1]:8080"); eskiden parantezsiz yazılıyordu
+// ("Host: ::1:8080" — sunucu bozuk Host görür). with_port=false → varsayılan port yazılmaz.
+static std::string url_authority(const ParsedUrl& u, bool with_port) {
+    std::string h = hc_strip_crlf(u.host);
+    if (h.find(':') != std::string::npos) h = "[" + h + "]";
+    if (with_port || (u.tls && u.port != 443) || (!u.tls && u.port != 80)) h += ":" + std::to_string(u.port);
+    return h;
+}
+
+// Parse a proxy spec ("http://host:port", "host:port", "host", "[::1]:3128") into host + port.
+// Go modeli (http.ProxyURL + canonicalAddr): port yoksa 80; IPv6 köşeli parantezde.
+// "https://" vekil: LOOK vekile TLS ile bağlanmaz — eskiden şema sessizce atılıp düz metin
+// konuşuluyordu (TLS bekleyen vekil bağlantıyı bozar). Artık açık hata.
 static bool parse_proxy(const std::string& spec, std::string& host, int& port) {
     std::string s = spec;
-    if (s.rfind("http://", 0) == 0)       s = s.substr(7);
-    else if (s.rfind("https://", 0) == 0) s = s.substr(8);
-    auto slash = s.find('/'); if (slash != std::string::npos) s = s.substr(0, slash);
-    port = 8080;
-    auto colon = s.rfind(':');
-    if (colon != std::string::npos) {
-        host = s.substr(0, colon);
-        const std::string ps = s.substr(colon + 1);
-        if (ps.empty() || ps.find_first_not_of("0123456789") != std::string::npos) return false;
-        try { port = std::stoi(ps); } catch (...) { return false; }
-    } else {
-        host = s;
-    }
-    return !host.empty() && port > 0 && port < 65536;
+    std::string low = s.substr(0, 8);
+    for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+    if (low.rfind("http://", 0) == 0)       s = s.substr(7);
+    else if (low.rfind("https://", 0) == 0) return false;
+    else if (s.find("://") != std::string::npos) return false;
+    s = s.substr(0, s.find_first_of("/?#"));
+    port = 80;
+    host.clear();
+    return look::split_host_port(s, host, port).empty() && !host.empty();
 }
 
 static std::string build_request(const std::string& method,
@@ -215,19 +257,21 @@ static std::string build_request(const std::string& method,
 {
     std::ostringstream req;
     std::string target = hc_strip_crlf(url.path);
-    if (absolute_uri) {
-        std::ostringstream u;
-        u << (url.tls ? "https://" : "http://") << hc_strip_crlf(url.host);
-        if ((url.tls && url.port != 443) || (!url.tls && url.port != 80)) u << ":" << url.port;
-        u << hc_strip_crlf(url.path);
-        target = u.str();
-    }
+    if (absolute_uri)
+        target = std::string(url.tls ? "https://" : "http://") + url_authority(url, false) + hc_strip_crlf(url.path);
     req << hc_strip_crlf(method) << " " << target << " HTTP/1.1\r\n";
-    req << "Host: " << hc_strip_crlf(url.host);
-    if ((url.tls && url.port != 443) || (!url.tls && url.port != 80))
-        req << ":" << url.port;
-    req << "\r\n";
-    req << "User-Agent: LOOK/0.19\r\n";
+    req << "Host: " << url_authority(url, false) << "\r\n";
+    // Eskiden sabit "LOOK/0.19" yazıyordu (sürümle birlikte güncellenmemişti).
+    req << "User-Agent: LOOK/" LOOK_VERSION "\r\n";
+    // URL'deki "user:pass@" → Basic kimlik (Go): çağıran kendi Authorization'ını verdiyse o kazanır.
+    if (!url.basic_auth.empty()) {
+        bool has_auth = false;
+        for (auto& [k, v] : extra_headers) {
+            std::string lk = k; for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
+            if (lk == "authorization") { has_auth = true; break; }
+        }
+        if (!has_auth) req << "Authorization: Basic " << url.basic_auth << "\r\n";
+    }
     req << "Connection: close\r\n";
     req << "Accept: */*\r\n";
     // Ask for gzip only when we can decode it (non-streaming) and the caller
@@ -500,7 +544,7 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     HttpClientResponse resp;
     bool via_proxy = !opts.proxy.empty();
     std::string phost; int pport = 0;
-    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy \"" + opts.proxy + "\" (expected http://host:port)"; return resp; }
     sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
                          : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
@@ -546,14 +590,14 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     if (on_chunk) sink = std::make_unique<StreamSink>(*on_chunk);
     bool via_proxy = !opts.proxy.empty();
     std::string phost; int pport = 0;
-    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy \"" + opts.proxy + "\" (expected http://host:port)"; return resp; }
     sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
                          : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     if (via_proxy) {
         // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
-        std::string tgt = hc_strip_crlf(url.host) + ":" + std::to_string(url.port);
+        std::string tgt = url_authority(url, true);   // IPv6 köşeli parantezde
         std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
         bool ctmo = false;
         if (!send_all(s, creq.data(), creq.size(), &ctmo)) { closesocket(s); resp.error = "proxy CONNECT send failed"; return resp; }
@@ -857,7 +901,7 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     HttpClientResponse resp;
     bool via_proxy = !opts.proxy.empty();
     std::string phost; int pport = 0;
-    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy \"" + opts.proxy + "\" (expected http://host:port)"; return resp; }
     sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
                          : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
@@ -906,14 +950,14 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
 
     bool via_proxy = !opts.proxy.empty();
     std::string phost; int pport = 0;
-    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy: " + opts.proxy; return resp; }
+    if (via_proxy && !parse_proxy(opts.proxy, phost, pport)) { resp.error = "http:: invalid proxy \"" + opts.proxy + "\" (expected http://host:port)"; return resp; }
     sock_t s = via_proxy ? tcp_connect(phost, pport, opts.timeout_ms)
                          : tcp_connect(url.host, url.port, opts.timeout_ms);
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     if (via_proxy) {
         // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
-        std::string tgt = hc_strip_crlf(url.host) + ":" + std::to_string(url.port);
+        std::string tgt = url_authority(url, true);   // IPv6 köşeli parantezde
         std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
         if (!look::fiber_send_all(s, nullptr, creq.data(), creq.size(), opts.timeout_ms)) { close(s); resp.error = "proxy CONNECT send failed"; return resp; }
         std::string pr; char pb[1024];
@@ -1006,7 +1050,7 @@ static std::string resolve_url(const std::string& base, const std::string& loc) 
     else if (base.rfind("http://",  0) == 0) { scheme = "http";  rest = base.substr(7); }
     else return "";
 
-    std::string authority = rest.substr(0, rest.find('/'));      // host[:port]
+    std::string authority = rest.substr(0, rest.find_first_of("/?#"));   // [userinfo@]host[:port]
     if (loc.rfind("//", 0) == 0) return scheme + ":" + loc;      // scheme-relative
     if (loc[0] == '/')           return scheme + "://" + authority + loc;  // path-absolute
 
@@ -1019,14 +1063,14 @@ static std::string resolve_url(const std::string& base, const std::string& loc) 
 }
 
 // scheme + lowercased host[:port] of a URL — the "origin" for credential-scoping.
+// parse_url ile (şema + küçük harf host + port): kimlik bilgisi, '?' ya da '#' kökene karışmaz.
 static std::string url_origin(const std::string& u) {
-    std::string scheme, rest;
-    if      (u.rfind("https://", 0) == 0) { scheme = "https"; rest = u.substr(8); }
-    else if (u.rfind("http://",  0) == 0) { scheme = "http";  rest = u.substr(7); }
-    else return u;
-    std::string authority = rest.substr(0, rest.find('/'));
-    for (char& c : authority) c = (char)std::tolower((unsigned char)c);
-    return scheme + "://" + authority;
+    try {
+        ParsedUrl p = parse_url(u);
+        std::string h = p.host;
+        for (char& c : h) c = (char)std::tolower((unsigned char)c);
+        return std::string(p.tls ? "https://" : "http://") + h + ":" + std::to_string(p.port);
+    } catch (...) { return u; }
 }
 
 // Erase a header by name, case-insensitively (user-supplied keys are arbitrary case).

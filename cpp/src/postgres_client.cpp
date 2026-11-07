@@ -623,64 +623,18 @@ void PostgresClient::do_connect() {
     rbuf_pos_ = rbuf_len_ = 0;
     out_.clear();
 
-    sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock_ == PG_SOCK_INVALID)
-        throw std::runtime_error("db postgres: socket creation failed");
-
-    struct sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons((uint16_t)port_);
-
-    // Ad çözümleme fiber içinde iş havuzunda (yavaş çözücü iş parçacığını tutmasın).
-    struct addrinfo* res = nullptr;
-    struct addrinfo  hints{};
-    hints.ai_family   = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    if (fiber_getaddrinfo(host_.c_str(), nullptr, &hints, &res) != 0 || !res) {
-        pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-        throw std::runtime_error("db postgres: cannot resolve host: " + host_);
+    // Go net.Dial modeli (IPv4 + IPv6, adresleri sırayla dene) — look/fiber_net.h tcp_dial.
+    // Fiber içinde bağlanırken ve ad çözerken yalnız fiber bekler.
+    {
+        bool resolved = false, timed_out = false;
+        auto s = tcp_dial(host_, port_, connect_timeout_ms_, resolved, timed_out);
+        if (s == DIAL_INVALID) {
+            if (!resolved) throw std::runtime_error("db postgres: cannot resolve host: " + host_);
+            throw std::runtime_error((timed_out ? "db postgres: timeout connecting to " : "db postgres: cannot connect to ") +
+                                     join_host_port(host_, port_));
+        }
+        sock_ = s;
     }
-    addr.sin_addr = ((struct sockaddr_in*)res->ai_addr)->sin_addr;
-    freeaddrinfo(res);
-
-#ifndef _WIN32
-    // Fiber içinde bağlantı kurulurken yalnız fiber bekler (fiber dışında poll); soket engelleyen
-    // kipe döner. select() kullanılmaz: fd_set 1024'ten büyük tanıtıcıda yığını taşırır.
-    if (fiber_connect((int)sock_, (struct sockaddr*)&addr, sizeof(addr), connect_timeout_ms_) != 0) {
-        bool timed_out = (errno == ETIMEDOUT);
-        pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-        throw std::runtime_error((timed_out ? "db postgres: timeout connecting to " : "db postgres: cannot connect to ") +
-                                 host_ + ":" + std::to_string(port_));
-    }
-#else
-    u_long mode = 1;
-    ioctlsocket(sock_, FIONBIO, &mode);
-    ::connect(sock_, (struct sockaddr*)&addr, sizeof(addr));
-
-    fd_set wfds;
-    FD_ZERO(&wfds);
-    FD_SET(sock_, &wfds);
-    struct timeval tv;
-    tv.tv_sec  = connect_timeout_ms_ / 1000;
-    tv.tv_usec = (connect_timeout_ms_ % 1000) * 1000;
-    int sel = select(0, nullptr, &wfds, nullptr, &tv);
-    if (sel <= 0) {
-        pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-        throw std::runtime_error("db postgres: timeout connecting to " + host_ + ":" + std::to_string(port_));
-    }
-
-    int err = 0;
-    int elen = sizeof(err);
-    getsockopt(sock_, SOL_SOCKET, SO_ERROR, (char*)&err, &elen);
-    if (err != 0) {
-        pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-        throw std::runtime_error("db postgres: cannot connect to " + host_ + ":" + std::to_string(port_));
-    }
-
-    // Blocking moduna geri al
-    u_long bmode = 0;
-    ioctlsocket(sock_, FIONBIO, &bmode);
-#endif
 
     // Nagle algoritmasını kapat — küçük paketlerde 40ms gecikmeyi önler
     {

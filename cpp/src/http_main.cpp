@@ -9,6 +9,7 @@
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/builtins.h"
 #include "look/route_group.h"
+#include "look/host_port.h"   // LOOK_SMTP_PORT / LOOK_IMAP_PORT doğrulama
 #include "look/metrics.h"
 #include "look/array_count.h"
 #include "look/http_server.h"
@@ -2102,14 +2103,27 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
 
 #ifndef _WIN32   // Gömülü mail sunucuları POSIX-only (OpenSSL). Windows = XAMPP dev.
     // SMTP server — LOOK_SMTP_PORT env var set edilirse HTTP ile birlikte başlar
+    // Port ortam değişkeni: yalnız rakam, 1-65535 (look/host_port.h). Eskiden atoi: "25x" → 25,
+    // "abc" → 0 → sunucu hiçbir iz bırakmadan başlamıyordu. Bozuk değer → açık ERROR, o sunucu başlamaz.
+    // Boş/tanımsız isteğe bağlı değişken → 0 (yok).
+    auto env_port = [](const char* name, int& out) -> bool {
+        out = 0;
+        const char* e = std::getenv(name);
+        if (!e || !*e) return true;
+        if (look::parse_port_number(e, out)) return true;
+        look::Logger::instance().log(look::LogLevel::LOG_ERROR, "config",
+            std::string(name) + "=\"" + e + "\" is not a valid port (expected a number from 1 to 65535)");
+        return false;
+    };
     std::unique_ptr<look::SmtpServer> smtp_srv;
     std::thread smtp_thread;
     const char* smtp_port_env = std::getenv("LOOK_SMTP_PORT");
     if (smtp_port_env && *smtp_port_env) {
-        int smtp_port = std::atoi(smtp_port_env);
-        int sub_port  = 0;
-        if (const char* e = std::getenv("LOOK_SMTP_SUB_PORT")) sub_port = std::atoi(e);
-        if (smtp_port > 0) {
+        int smtp_port = 0, sub_port = 0;
+        bool ports_ok = env_port("LOOK_SMTP_PORT", smtp_port) && env_port("LOOK_SMTP_SUB_PORT", sub_port);
+        if (!ports_ok)
+            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "smtp", "SMTP server not started (invalid port setting)");
+        if (ports_ok && smtp_port > 0) {
             smtp_srv = std::make_unique<look::SmtpServer>(
                 smtp_port, sub_port, 0, workers,
                 [](const look::SmtpMessage& msg) -> bool {
@@ -2164,10 +2178,11 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
     std::unique_ptr<look::ImapServer> imap_srv;
     const char* imap_port_env = std::getenv("LOOK_IMAP_PORT");
     if (imap_port_env && *imap_port_env) {
-        int imap_port = std::atoi(imap_port_env);
-        int imaps_port = 0;
-        if (const char* e = std::getenv("LOOK_IMAP_PORT_TLS")) imaps_port = std::atoi(e);
-        if (imap_port > 0) {
+        int imap_port = 0, imaps_port = 0;
+        bool ports_ok = env_port("LOOK_IMAP_PORT", imap_port) && env_port("LOOK_IMAP_PORT_TLS", imaps_port);
+        if (!ports_ok)
+            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "imap", "IMAP server not started (invalid port setting)");
+        if (ports_ok && imap_port > 0) {
             imap_srv = std::make_unique<look::ImapServer>(
                 imap_port, imaps_port, workers,
                 [](const std::string& user, const std::string& pass) -> look::ImapAuthResult {

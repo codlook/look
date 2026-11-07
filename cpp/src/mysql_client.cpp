@@ -251,66 +251,18 @@ void MySQLClient::connect(const DbConfig& cfg) {
 void MySQLClient::do_connect() {
     if (sock_ != SOCK_INVALID) disconnect();
 
-    sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock_ == SOCK_INVALID)
-        throw std::runtime_error("db: socket creation failed");
-
-    struct sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons((uint16_t)cfg_.port);
-
-    // Ad çözümleme fiber içinde iş havuzunda (yavaş çözücü iş parçacığını tutmasın).
-    struct addrinfo* res = nullptr;
-    struct addrinfo  hints{};
-    hints.ai_family   = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    if (look::fiber_getaddrinfo(cfg_.host.c_str(), nullptr, &hints, &res) != 0 || !res) {
-        disconnect();
-        throw std::runtime_error("db: cannot resolve host: " + cfg_.host);
+    // Go net.Dial modeli (IPv4 + IPv6, adresleri sırayla dene) — look/fiber_net.h tcp_dial.
+    // Fiber içinde bağlanırken ve ad çözerken yalnız fiber bekler.
+    {
+        bool resolved = false, timed_out = false;
+        auto s = look::tcp_dial(cfg_.host, cfg_.port, cfg_.connect_timeout_ms, resolved, timed_out);
+        if (s == look::DIAL_INVALID) {
+            if (!resolved) throw std::runtime_error("db: cannot resolve host: " + cfg_.host);
+            throw std::runtime_error((timed_out ? "db: connection timeout to " : "db: cannot connect to ") +
+                                     look::join_host_port(cfg_.host, cfg_.port));
+        }
+        sock_ = s;
     }
-    addr.sin_addr = ((struct sockaddr_in*)res->ai_addr)->sin_addr;
-    freeaddrinfo(res);
-
-#ifndef _WIN32
-    // Fiber içinde bağlantı kurulurken yalnız fiber bekler (fiber dışında poll); soket engelleyen
-    // kipe döner. select() kullanılmaz: fd_set 1024'ten büyük tanıtıcıda yığını taşırır.
-    if (look::fiber_connect((int)sock_, (struct sockaddr*)&addr, sizeof(addr), cfg_.connect_timeout_ms) != 0) {
-        bool timed_out = (errno == ETIMEDOUT);
-        disconnect();
-        throw std::runtime_error((timed_out ? "db: connection timeout to " : "db: cannot connect to ") +
-                                 cfg_.host + ":" + std::to_string(cfg_.port));
-    }
-#else
-    u_long mode = 1;
-    ioctlsocket(sock_, FIONBIO, &mode);
-    ::connect(sock_, (struct sockaddr*)&addr, sizeof(addr));
-
-    // Wait for connect with timeout
-    fd_set wfds;
-    FD_ZERO(&wfds);
-    FD_SET(sock_, &wfds);
-    struct timeval tv;
-    tv.tv_sec  = cfg_.connect_timeout_ms / 1000;
-    tv.tv_usec = (cfg_.connect_timeout_ms % 1000) * 1000;
-
-    int sel = select(0, nullptr, &wfds, nullptr, &tv);
-    if (sel <= 0) {
-        disconnect();
-        throw std::runtime_error("db: connection timeout to " + cfg_.host + ":" + std::to_string(cfg_.port));
-    }
-
-    int err = 0;
-    int len = sizeof(err);
-    getsockopt(sock_, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
-    if (err != 0) {
-        disconnect();
-        throw std::runtime_error("db: cannot connect to " + cfg_.host + ":" + std::to_string(cfg_.port));
-    }
-
-    // Blocking mode geri al
-    u_long bmode = 0;
-    ioctlsocket(sock_, FIONBIO, &bmode);
-#endif
 
     // Nagle algoritmasını kapat — küçük paketlerde 40ms gecikmeyi önler
     {

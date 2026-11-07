@@ -5,6 +5,8 @@
 #include "look/dkim.h"
 #include "look/smtp_parse.h"   // smtp_extract_addr + smtp_verb (dikişi aç — saf, fuzz'lanır)
 #include "look/mysql_client.h"
+#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli)
+#include "look/db_dsn.h"   // mysql_resolve_tls (db::connect ile aynı TLS kararı)
 
 #include <sstream>
 #include <thread>
@@ -270,11 +272,12 @@ static bool smtp_ct_equal(const std::string& a, const std::string& b) {
 
 // DSN'den MySQL baglantisi olustur — smtp_validate_auth icin
 static std::shared_ptr<MySQLClient> smtp_make_db_conn(const std::string& dsn) {
-    std::string user, pass, host, db;
+    std::string user, pass, host = "127.0.0.1", db;
     int port = 3306;
-    // mysql://user:pass@host:port/db
+    // mysql://user:pass@host:port/db?tls=...  — db::connect ile aynı bölme (son '@', ilk '/' ya da '?')
     size_t se = dsn.find("://");
     if (se == std::string::npos) throw std::runtime_error("invalid DSN");
+    const std::string scheme = dsn.substr(0, se);
     std::string rest = dsn.substr(se + 3);
     size_t at = rest.rfind('@');
     if (at != std::string::npos) {
@@ -283,19 +286,23 @@ static std::shared_ptr<MySQLClient> smtp_make_db_conn(const std::string& dsn) {
         if (c != std::string::npos) { user = ui.substr(0, c); pass = ui.substr(c + 1); }
         else user = ui;
     }
-    size_t sl = rest.find('/');
+    size_t sl = rest.find_first_of("/?");
     std::string hp = (sl != std::string::npos) ? rest.substr(0, sl) : rest;
-    db = (sl != std::string::npos) ? rest.substr(sl + 1) : "";
-    size_t c = hp.find(':');
-    if (c != std::string::npos) {
-        host = hp.substr(0, c);
-        try { port = std::stoi(hp.substr(c + 1)); } catch (...) { /* varsayılan port korunur */ }
-    }
-    else host = hp;
+    db = (sl == std::string::npos) ? "" : rest[sl] == '/' ? rest.substr(sl + 1) : rest.substr(sl);
+    // Go net/url modeli; eskiden stoi: "3306x" → 3306, bozuk port → sessizce 3306.
+    std::string err = look::split_host_port(hp, host, port);
+    if (!err.empty()) throw std::runtime_error("invalid DSN: " + err);
+    // Sorgu: eskiden veritabanı adına karışıyordu ("mail?tls=1" adlı veritabanı) ve ?tls yok
+    // sayılıyordu. db::connect ile aynı TLS kararı (look/db_dsn.h).
+    std::string query;
+    { size_t q = db.find('?'); if (q != std::string::npos) { query = db.substr(q + 1); db = db.substr(0, q); } }
+    bool tls = (scheme == "mysqls" || scheme == "mariadbs"), tls_verify = false;
+    look::mysql_resolve_tls(query, tls, tls, tls_verify);
 
     DbConfig cfg;
     cfg.host = host; cfg.port = port;
     cfg.user = user; cfg.password = pass; cfg.database = db;
+    cfg.tls = tls; cfg.tls_verify = tls_verify;
     auto conn = std::make_shared<MySQLClient>();
     conn->connect(cfg);
     return conn;
