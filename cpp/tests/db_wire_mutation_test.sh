@@ -10,9 +10,11 @@ LK="$(cd "$(dirname "${1:?usage}")" && pwd)/$(basename "$1")"
 N="${2:-1500}"; SEED="${3:-1}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; s1=""; s2=""; trap '[ -n "$s1" ] && kill $s1 2>/dev/null; [ -n "$s2" ] && kill $s2 2>/dev/null; rm -rf "$T"' EXIT
-MP="${MP:-33111}"; PP="${PP:-55111}"
-# Sahte sunucu dinlemeye başlayamazsa (port geçici aralıkta başka bir soketle dolu: bind hatası)
-# başka portla yeniden dene — yoksa istemci "bağlanamadı" der ve bu, ayrıştırıcı bulgusu sanılırdı.
+# Portlar geçici (ephemeral, 32768+) aralığın ALTINDA: orada istemci bağlantılarının TIME_WAIT
+# soketleri portu tutar ve SO_REUSEADDR'a rağmen bind EADDRINUSE verir (5 saatlik koşuda görüldü).
+MP="${MP:-23111}"; PP="${PP:-25111}"
+# Sahte sunucu dinlemeye başlayamazsa başka portla yeniden dene — yoksa istemci "bağlanamadı" der
+# ve bu, ayrıştırıcı bulgusu sanılırdı.
 start_mutator() {   # proto port log → yazdırır: pid port
     local proto=$1 port=$2 log=$3 pid
     for try in 1 2 3 4 5; do
@@ -20,12 +22,13 @@ start_mutator() {   # proto port log → yazdırır: pid port
         for i in $(seq 1 100); do grep -q "^mutator" "$log" 2>/dev/null && break; kill -0 $pid 2>/dev/null || break; sleep 0.05; done
         if kill -0 $pid 2>/dev/null && grep -q "^mutator" "$log"; then echo "$pid $port"; return 0; fi
         echo "  ..   harness: $proto mutator could not listen on $port ($(tail -1 "$log")); trying another port" >&2
-        port=$((port + 1000))
+        port=$((port + 997))
     done
     return 1
 }
-read -r s1 MP <<< "$(start_mutator mysql "$MP" "$T/my.log")" || { echo "FAIL: harness: the mysql mutator did not start"; exit 2; }
-read -r s2 PP <<< "$(start_mutator pg "$PP" "$T/pg.log")" || { echo "FAIL: harness: the pg mutator did not start"; exit 2; }
+# read boş satırı da başarı sayar — çıktının dolu olduğunu ayrıca denetle
+read -r s1 MP <<< "$(start_mutator mysql "$MP" "$T/my.log")"; [ -n "$s1" ] || { echo "FAIL: harness: the mysql mutator did not start"; exit 2; }
+read -r s2 PP <<< "$(start_mutator pg "$PP" "$T/pg.log")"; [ -n "$s2" ] || { echo "FAIL: harness: the pg mutator did not start"; exit 2; }
 fail=0
 for drv in mysql pg; do
     if [ $drv = mysql ]; then dsn="mysql://u:p@127.0.0.1:$MP/d"; else dsn="postgres://u:p@127.0.0.1:$PP/d"; fi
