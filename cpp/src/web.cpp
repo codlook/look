@@ -392,13 +392,76 @@ void WebContext::set_status(int code) {
 
 // POST gövdesi — content_type'a göre. TEK kaynak; FastCGI, --mode http ve CGI
 // giriş noktalarının hepsi bunu çağırır (bkz. web.h).
+// Content-Type → ortam türü (küçük harf) + parametreler (ad küçük harf; değer token ya da tırnaklı
+// dize, \ kaçışı çözülür). Go mime.ParseMediaType modeli. false = sözdizimi bozuk.
+static bool parse_media_type(const std::string& ct, std::string& type,
+                             std::map<std::string, std::string>& params) {
+    auto lower = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    auto trim = [](const std::string& s) {
+        size_t a = s.find_first_not_of(" \t"), b = s.find_last_not_of(" \t");
+        return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+    };
+    size_t semi = ct.find(';');
+    type = lower(trim(ct.substr(0, semi)));
+    if (type.empty()) return false;
+    size_t i = (semi == std::string::npos) ? ct.size() : semi + 1;
+    while (i < ct.size()) {
+        while (i < ct.size() && (ct[i] == ' ' || ct[i] == '\t' || ct[i] == ';')) i++;
+        if (i >= ct.size()) break;
+        size_t ks = i;
+        while (i < ct.size() && ct[i] != '=' && ct[i] != ';') i++;
+        if (i >= ct.size() || ct[i] != '=') return false;            // değersiz parametre
+        std::string key = lower(trim(ct.substr(ks, i - ks)));
+        i++;
+        std::string val;
+        if (i < ct.size() && ct[i] == '"') {
+            i++;
+            bool closed = false;
+            while (i < ct.size()) {
+                if (ct[i] == '\\' && i + 1 < ct.size()) { val.push_back(ct[i + 1]); i += 2; continue; }
+                if (ct[i] == '"') { closed = true; i++; break; }
+                val.push_back(ct[i++]);
+            }
+            if (!closed) return false;
+        } else {
+            size_t vs = i;
+            while (i < ct.size() && ct[i] != ';') i++;
+            val = trim(ct.substr(vs, i - vs));
+        }
+        if (key.empty() || params.count(key)) return false;           // boş ya da yinelenen ad
+        params[key] = val;
+    }
+    return true;
+}
+
+// RFC 2046 §5.1.1: sınır 1-70 karakter, bchars kümesi, sonda boşluk yok.
+static bool multipart_boundary_ok(const std::string& b) {
+    if (b.empty() || b.size() > 70 || b.back() == ' ') return false;
+    for (unsigned char c : b) {
+        if (std::isalnum(c)) continue;
+        switch (c) { case '\'': case '(': case ')': case '+': case '_': case ',': case '-': case '.':
+                     case '/': case ':': case '=': case '?': case ' ': continue; default: return false; }
+    }
+    return true;
+}
+
 void WebContext::parse_post_body() {
-    if (content_type.find("application/x-www-form-urlencoded") != std::string::npos) {
+    // Ortam türü TAM eşleşir (Go). Eskiden alt dize aranıyordu ve boundary ham kesiliyordu:
+    // boundary="B" (tırnaklı — .NET MultipartFormDataContent, bazı Java istemcileri),
+    // "boundary=B; charset=utf-8" ve "BOUNDARY=B" gövdelerinin bütün alanları SESSİZCE kayboluyordu.
+    std::string type;
+    std::map<std::string, std::string> params;
+    if (!parse_media_type(content_type, type, params)) return;   // türü okunamayan gövde: ayrıştırılmaz
+    if (type == "application/x-www-form-urlencoded") {
         post_params = parse_query(body);
-    } else if (content_type.find("multipart/form-data") != std::string::npos) {
-        size_t bpos = content_type.find("boundary=");
-        if (bpos != std::string::npos)
-            parse_multipart(content_type.substr(bpos + 9));
+    } else if (type == "multipart/form-data") {
+        auto b = params.find("boundary");
+        if (b == params.end() || !multipart_boundary_ok(b->second)) {
+            body_error_status = 400;
+            body_error = "multipart/form-data without a valid boundary parameter";
+            return;
+        }
+        parse_multipart(b->second);
     }
 }
 
@@ -416,9 +479,16 @@ void WebContext::parse_multipart(const std::string& boundary) {
     static constexpr int MAX_PARTS = 1000;
 
     while (true) {
-        if (++part_count > MAX_PARTS) break;   // amplifikasyon DoS koruması
         pos += delim.size();
-        if (pos + 2 <= body.size() && body.substr(pos, 2) == "--") break;
+        if (pos + 2 <= body.size() && body.compare(pos, 2, "--") == 0) break;   // kapanış sınırı
+        // Sınır aşılınca açık hata (413; Go "multipart: message too large"). Eskiden döngü kırılıp
+        // kalan parçalar SESSİZCE atılıyordu (1001. alandaki _csrf ya da veri kayboluyordu). Sayaç
+        // kapanış sınırından SONRA: tam 1000 parça geçerli.
+        if (++part_count > MAX_PARTS) {
+            body_error_status = 413;
+            body_error = "multipart/form-data with more than " + std::to_string(MAX_PARTS) + " parts";
+            break;
+        }
         if (pos < body.size() && body[pos] == '\r') pos++;
         if (pos < body.size() && body[pos] == '\n') pos++;
 
@@ -436,7 +506,12 @@ void WebContext::parse_multipart(const std::string& boundary) {
             while (std::getline(hs, line)) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 // Content-Disposition: form-data; name="field"; filename="file.jpg"
-                if (line.find("Content-Disposition:") != std::string::npos) {
+                // Başlık adı harfe duyarsız (RFC 7578 → RFC 2183/822; Go textproto). Eskiden
+                // "content-disposition:" yazan istemcinin alanları yok sayılıyordu.
+                static const std::string CD = "content-disposition:";
+                if (line.size() >= CD.size() &&
+                    std::equal(CD.begin(), CD.end(), line.begin(),
+                               [](char a, char b) { return a == std::tolower((unsigned char)b); })) {
                     // Parametreler ';' ile ayrılır, sıra serbesttir (RFC 7578), değer tırnaklı olabilir.
                     // Eskiden "name=\"" metin olarak aranıyordu: `filename="a.jpg"; name="avatar"`
                     // sırasında alan adı "a.jpg" çıkıyordu (filename= içindeki name= eşleşiyordu).

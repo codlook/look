@@ -118,6 +118,10 @@ struct WebContext {
     // yalnızca urlencoded dalı vardı → `request::file` FastCGI'de çalışıp
     // `--mode http`'de çalışmıyordu (mod-özgü boşluk, S12).
     void parse_post_body();
+    // Gövde ayrıştırılamadıysa: yanıt durumu (400 / 413) ve neden. Dağıtım, rotadan ve CSRF
+    // kapısından önce bu yanıtı verir (Go mime/multipart gibi açık hata; eskiden sessizce boş).
+    int         body_error_status = 0;
+    std::string body_error;
 
     // Helpers
     // plus_is_space: query strings encode space as '+', but in a PATH segment '+' is literal.

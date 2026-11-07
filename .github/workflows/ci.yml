@@ -513,6 +513,8 @@ jobs:
         run: |
           cd cpp
           bash tests/multipart_upload_test.sh ./build/lk-fcgi
+          # media type read like Go (quoted/parametered boundary, header case); >1000 parts 413, bad boundary 400
+          bash tests/multipart_media_type_test.sh ./build/lk-fcgi 7941
           # no path or symbolic link (dangling ones too) leads outside the root: file::, template::,
           # use; file::store accepts only a file from request::file() in the same request
           bash tests/file_root_escape_test.sh ./build/lk ./build/lk-fcgi 7912

@@ -457,7 +457,10 @@ static Module make_request(WebRef ctx) {
         // "null döner" derken kod exception atıyordu; dokümanı takip eden `if($f==null)`
         // dalına HİÇ ulaşamıyordu (dogfooding #3-A, session::has'ın kardeşi). Ayrıca ileride
         // multipart --mode http'ye tam bağlanınca da doğru sözleşme: dosya-yoksa-null.
-        if (ctx->content_type.find("multipart/form-data") == std::string::npos)
+        // Yüklenen dosya yalnız multipart gövdede olur (web.cpp ortam türünü tam ayrıştırır). Eskiden
+        // content_type'ta küçük harfli alt dize aranıyordu: "Multipart/Form-Data" gövdesinde alanlar
+        // okunurken request::file null dönüyordu.
+        if (ctx->uploaded_files.empty())
             return Value();  // null — dosya yok
 
         std::string field = args[0].to_string();

@@ -2123,7 +2123,7 @@ Environment=LOOK_FILE_ROOT=/var/www/vhosts/domain.com/httpdocs
   </div>
 
   <h3>Secure Upload</h3>
-  <p><code>request::file()</code> is in core — no <code>use</code> needed. Magic-byte checking, MIME validation, SHA-256 hashing and a random file name are applied automatically. It can't be disabled.</p>
+  <p><code>request::file()</code> is in core — no <code>use</code> needed. Magic-byte checking, MIME validation, SHA-256 hashing and a random file name are applied automatically. It can't be disabled. The body is read the way Go's <code>mime/multipart</code> reads it: the <code>boundary</code> may be quoted or followed by other parameters; a body without a valid boundary gets <code>400</code>, and one with more than 1000 parts <code>413</code> — before the route runs, never silently empty. Several files under one field name: <code>request::file()</code> returns the last.</p>
   <p style="background:rgba(120,170,255,.10);border-left:3px solid var(--blue,#4a90d9);padding:10px 14px;border-radius:6px">
     <strong>ℹ️ Works in both serving modes.</strong> <code>multipart/form-data</code> is parsed on
     the <strong>FastCGI</strong> path (<code>lk-fcgi</code> behind Apache/nginx) <strong>and</strong>

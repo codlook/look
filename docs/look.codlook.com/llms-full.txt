@@ -2094,7 +2094,7 @@ file::read("../../etc/passwd")
 
 ### Secure Upload
 
-`request::file()` is in core — no `use` needed. Magic-byte checking, MIME validation, SHA-256 hashing and a random file name are applied automatically. It can't be disabled.
+`request::file()` is in core — no `use` needed. Magic-byte checking, MIME validation, SHA-256 hashing and a random file name are applied automatically. It can't be disabled. The body is read the way Go's `mime/multipart` reads it: the `boundary` may be quoted or followed by other parameters; a body without a valid boundary gets `400`, and one with more than 1000 parts `413` — before the route runs, never silently empty. Several files under one field name: `request::file()` returns the last.
 
 **ℹ️ Works in both serving modes.** `multipart/form-data` is parsed on
  the **FastCGI** path (`lk-fcgi` behind Apache/nginx) **and**

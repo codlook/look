@@ -1836,6 +1836,17 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             bool stopped = stopped_direct;
             // Varsayılan CSRF kapısı — rotadan ve before_route'tan ÖNCE, üç modda aynı yer. Bağlantı
             // işleyicisi (WS/SSE) ve zamanlayıcı geri çağırması istek değildir.
+            // Ayrıştırılamayan gövde (geçersiz multipart sınırı, parça sınırı aşıldı): rotadan önce açık
+            // yanıt — eskiden alanlar sessizce boştu ve uygulama "eksik alan" sanıyordu.
+            if (!stopped && web.body_error_status != 0 && direct().conn.type() == look::Value::NONE) {
+                stopped = true;
+                web.status_code = web.body_error_status;
+                web.status_text = web.body_error_status == 413 ? "Payload Too Large" : "Bad Request";
+                web.headers_out["Content-Type"] = "text/plain; charset=utf-8";
+                web.response_body = web.status_text + ": " + web.body_error;
+                look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
+                    web.method + " " + web.path + " refused: " + web.body_error);
+            }
             // Güvenli yöntemler (GET/HEAD/OPTIONS) DIŞINDA her yöntem (Go 1.25 CrossOriginProtection).
             // Eskiden liste POST/PUT/PATCH/DELETE'ti: route("PROPFIND"/"PURGE", …) gibi rotalar kapıdan
             // hiç geçmiyordu (ölçüldü) — yeni bir yöntem sessizce korumasız kalıyordu.
