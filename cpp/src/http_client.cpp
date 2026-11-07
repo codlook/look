@@ -46,6 +46,7 @@ static const sock_t INVALID = INVALID_SOCKET;
 #  include <unistd.h>
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
+#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
 typedef int sock_t;
 static const sock_t INVALID = -1;
 #endif
@@ -856,6 +857,7 @@ struct SslCtxGuard {
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         ctx = SSL_CTX_new(TLS_client_method());
+        look::tls_client_defaults(ctx);   // en az TLS 1.2, makineden bağımsız
         if (ctx) {
             SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
             SSL_CTX_set_default_verify_paths(ctx);   // SSL_CERT_FILE/DIR'i okur
@@ -979,15 +981,19 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     if (!ssl) { close(s); resp.error = "SSL_new failed"; return resp; }
 
     SSL_set_fd(ssl, s);
-    SSL_set_tlsext_host_name(ssl, url.host.c_str());
-
-    // SNI + hostname verification
-    SSL_set1_host(ssl, url.host.c_str());
-
-    if (look::fiber_ssl_connect(ssl, s, opts.timeout_ms) != 1) {
-        ERR_clear_error();
+    // SNI + ad doğrulaması (IP → IP SAN, SNI yok — Go crypto/tls); kurulamazsa bağlanma.
+    if (!look::tls_set_peer(ssl, url.host, true)) {
         SSL_free(ssl); close(s);
-        resp.error = "TLS handshake failed";
+        resp.error = "http:: could not set up TLS name verification for " + url.host;
+        return resp;
+    }
+
+    if (int hs = look::fiber_ssl_connect(ssl, s, opts.timeout_ms); hs != 1) {
+        // Neden kullanıcıya gider (eskiden yalnız "TLS handshake failed": süresi dolmuş, yanlış ad,
+        // bilinmeyen CA ayırt edilemiyordu).
+        std::string why = hs == 0 ? std::string("timeout") : look::tls_failure_reason(ssl);
+        SSL_free(ssl); close(s);
+        resp.error = "TLS handshake failed" + (why.empty() ? std::string() : ": " + why);
         return resp;
     }
 

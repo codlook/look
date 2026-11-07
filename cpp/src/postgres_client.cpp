@@ -24,6 +24,7 @@
   // DB-TLS: PostgreSQL SSLRequest → TLS upgrade (Linux; Windows OpenSSL'siz derlenir).
   #include <openssl/ssl.h>
   #include <openssl/err.h>
+#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
 #endif
 
 #ifndef MSG_NOSIGNAL
@@ -58,6 +59,7 @@ static SSL_CTX* pg_ssl_ctx() {
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         SSL_CTX* c = SSL_CTX_new(TLS_client_method());
+        look::tls_client_defaults(c);   // en az TLS 1.2, makineden bağımsız
         if (c) SSL_CTX_set_default_verify_paths(c);   // sistem CA'ları (verify modu için)
         return c;
     }();
@@ -679,23 +681,19 @@ void PostgresClient::do_connect() {
         if (!s) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
                   throw std::runtime_error("db postgres: SSL_new failed (TLS)"); }
         SSL_set_fd(s, (int)sock_);
-        SSL_set_tlsext_host_name(s, host_.c_str());   // SNI
-        if (tls_verify_) {
-            // Sertifika zinciri + HOSTNAME doğrula (MITM'e karşı). SSL_set1_host başarısızsa
-            // hostname kontrolü sessizce kapanır → "geçerli CA + yanlış host" MITM'i açılır → reddet.
-            SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
-            if (SSL_set1_host(s, host_.c_str()) != 1) {
-                SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
-                throw std::runtime_error("db postgres: could not set up TLS hostname verification");
-            }
+        // SNI + ad doğrulaması (IP → IP SAN, ad → DNS adı; look/tls_peer.h). Kurulamazsa ad
+        // kontrolü sessizce kapanırdı → "geçerli CA + yanlış host" MITM'i açılır → reddet.
+        if (tls_verify_) SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
+        if (!tls_set_peer(s, host_, tls_verify_)) {
+            SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
+            throw std::runtime_error("db postgres: could not set up TLS hostname verification");
         }
         int hs = fiber_ssl_connect(s, (int)sock_, connect_timeout_ms_);
         if (hs != 1) {
-            unsigned long e = ERR_get_error();
-            char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
+            std::string why = hs == 0 ? std::string() : tls_failure_reason(s);   // look/tls_peer.h
             SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
             throw std::runtime_error(hs == 0 ? std::string("db postgres: TLS handshake timed out")
-                                             : std::string("db postgres: TLS handshake failed: ") + eb);
+                                             : "db postgres: TLS handshake failed: " + why);
         }
         ssl_ = s;   // bundan sonra send/recv_bytes SSL üstünden (startup+auth+sorgu dahil)
     }

@@ -53,6 +53,16 @@ int main() {
     v4("172.15 disi",  172,15,0,1,   false);     // 172.16/12 sınır-altı
     v4("172.32 disi",  172,32,0,1,   false);     // sınır-üstü
     v4("192.167 disi", 192,167,1,1,  false);
+    // IANA özel amaçlı bloklar (2026-11-07 eklendi — eskiden izinliydi)
+    v4("192.0.0/24",   192,0,0,1,    true);
+    v4("TEST-NET-1",   192,0,2,10,   true);
+    v4("198.18/15 alt",198,18,0,1,   true);
+    v4("198.18/15 ust",198,19,255,1, true);
+    v4("198.20 disi",  198,20,0,1,   false);     // /15 sınır-üstü
+    v4("198.17 disi",  198,17,255,1, false);     // /15 sınır-altı
+    v4("TEST-NET-2",   198,51,100,7, true);
+    v4("TEST-NET-3",   203,0,113,9,  true);
+    v4("192.0.1 disi", 192,0,1,1,    false);
 
     // IPv6
     uint8_t buf[16];
@@ -81,8 +91,14 @@ int main() {
     // 2001:4860:: — public v6 (Google) → izinli
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x20; buf[1]=0x01; buf[2]=0x48; buf[3]=0x60; buf[15]=0x88;
     v6("public v6", buf, false);
+    // 2026-11-07 eklendi — eskiden izinliydi
+    for(int i=0;i<16;i++) buf[i]=0; buf[0]=0xFF; buf[1]=0x02; buf[15]=1; v6("ff02::1 multicast", buf, true);
+    for(int i=0;i<16;i++) buf[i]=0; buf[0]=0xFE; buf[1]=0xC0; buf[15]=1; v6("fec0 site-local", buf, true);
+    for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x20; buf[1]=0x01; buf[2]=0x0D; buf[3]=0xB8; buf[15]=1; v6("2001:db8 belge", buf, true);
+    for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x01; buf[15]=1; v6("100:: discard", buf, true);
+    for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x01; buf[7]=1; buf[15]=1; v6("100:0:0:1:: disi", buf, false);
 
-    const int EXPECTED = 27;
+    const int EXPECTED = 41;
     if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
     printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (metadata/NAT64/6to4/mapped bypass kilitli)\n", fails);
     return fails ? 1 : 0;

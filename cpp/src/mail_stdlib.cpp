@@ -25,6 +25,7 @@
 #include <ctime>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
 #include "look/fiber_io.h"   // fiber içinde SMTP yanıtı beklenirken iş parçacığı serbest kalır
 #include "look/fiber_net.h"  // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
 #endif
@@ -319,6 +320,7 @@ static bool smtp_cmd(SmtpConn& c, const std::string& cmd, int ok, int ok2, std::
 static SSL_CTX* smtp_ssl_ctx() {
     static SSL_CTX* ctx = [] {
         SSL_CTX* x = SSL_CTX_new(TLS_client_method());
+        look::tls_client_defaults(x);   // en az TLS 1.2, makineden bağımsız
         if (x) {
             SSL_CTX_set_verify(x, SSL_VERIFY_PEER, nullptr);
             SSL_CTX_set_default_verify_paths(x);            // reads SSL_CERT_FILE/DIR
@@ -334,10 +336,9 @@ static bool smtp_tls(SmtpConn& c, const std::string& host) {
     c.ssl = SSL_new(ctx);
     if (!c.ssl) return false;
     SSL_set_fd(c.ssl, c.fd);
-    SSL_set_tlsext_host_name(c.ssl, host.c_str());          // SNI
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-    SSL_set1_host(c.ssl, host.c_str());                     // reject a mismatched cert
-#endif
+    // SNI + ad doğrulaması (IP → IP SAN, ad → DNS adı; look/tls_peer.h). Sonuç eskiden
+    // denetlenmiyordu: kurulamazsa ad kontrolü sessizce kapanırdı → bağlanma.
+    if (!look::tls_set_peer(c.ssl, host, true)) return false;
     // Fiber içinde el sıkışmanın her tur yolculuğunda yalnız fiber bekler.
     return look::fiber_ssl_connect(c.ssl, c.fd, c.tmo_ms) == 1;
 }

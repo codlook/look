@@ -15,6 +15,7 @@
 #  include <openssl/rsa.h>
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
+#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
 #endif
 #include <cstring>
 #include <cstdio>
@@ -58,6 +59,7 @@ static SSL_CTX* mysql_ssl_ctx() {
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         SSL_CTX* c = SSL_CTX_new(TLS_client_method());
+        look::tls_client_defaults(c);   // en az TLS 1.2, makineden bağımsız
         if (c) {
             // CTX default: doğrulama YOK. verify modu (?tls=verify) per-SSL açılır.
             SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr);
@@ -648,29 +650,21 @@ void MySQLClient::do_handshake(const std::string& user,
         SSL* s = SSL_new(ctx);
         if (!s) throw std::runtime_error("db mysql: SSL_new failed (TLS)");
         SSL_set_fd(s, (int)sock_);
-        // SNI — sunucunun doğru sertifikayı seçmesi için host adını gönder (her modda).
-        SSL_set_tlsext_host_name(s, cfg_.host.c_str());
-        if (cfg_.tls_verify) {
-            // ?tls=verify → sertifika + hostname doğrula (MITM'e karşı). SSL_set1_host
-            // hostname eşleşmesini zorlar; SSL_VERIFY_PEER kötü/güvenilmez cert'te
-            // SSL_connect'i başarısız kılar. Self-signed/yanlış-host → bağlantı REDDEDİLİR.
-            SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
-            // SSL_set1_host dönüşü KONTROL EDİLMELİ: başarısız olursa (nadir — bellek/bozuk
-            // string) VERIFY_PEER zinciri doğrular ama hostname kontrolü SESSİZCE kapanır →
-            // "geçerli CA cert'i + yanlış host" MITM'i mümkün olur. verify modu her zaman
-            // gerçekten hostname doğrulasın diye kurulamıyorsa bağlantıyı reddet.
-            if (SSL_set1_host(s, cfg_.host.c_str()) != 1) {
-                SSL_free(s);
-                throw std::runtime_error("db mysql: could not set up TLS hostname verification (verify)");
-            }
+        // SNI (adla bağlanınca) + verify modunda ad doğrulaması: IP → IP SAN, ad → DNS adı
+        // (look/tls_peer.h, Go crypto/tls). SSL_VERIFY_PEER kötü/güvenilmez cert'te SSL_connect'i
+        // başarısız kılar. Ad doğrulaması kurulamazsa (nadir — bellek/bozuk string) bağlanılmaz:
+        // yoksa zincir doğrulanır ama ad SESSİZCE denetlenmez ("geçerli CA + yanlış host" MITM).
+        if (cfg_.tls_verify) SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
+        if (!look::tls_set_peer(s, cfg_.host, cfg_.tls_verify)) {
+            SSL_free(s);
+            throw std::runtime_error("db mysql: could not set up TLS hostname verification (verify)");
         }
         int hs = look::fiber_ssl_connect(s, (int)sock_, cfg_.connect_timeout_ms);
         if (hs != 1) {
-            unsigned long e = ERR_get_error();
-            char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
+            std::string why = hs == 0 ? std::string() : look::tls_failure_reason(s);   // look/tls_peer.h
             SSL_free(s);
             throw std::runtime_error(hs == 0 ? std::string("db mysql: TLS handshake timed out")
-                                             : std::string("db mysql: TLS handshake failed: ") + eb);
+                                             : "db mysql: TLS handshake failed: " + why);
         }
         ssl_     = s;   // bundan sonra send/recv_bytes SSL üstünden (auth dahil)
         auth_seq = 2;   // auth paketi TLS içinde, SSLRequest'ten sonraki seq

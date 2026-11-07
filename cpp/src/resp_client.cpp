@@ -26,6 +26,7 @@
 #ifndef _WIN32
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
+#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
 #endif
 #include "look/sock_idle.h"   // idle_socket_unusable: havuzdan alınan bağlantının oluluk yoklaması
 #include "look/fiber_net.h"   // fiber içinde Redis beklenirken (DNS/connect/TLS/yazma/okuma) iş parçacığı serbest kalır
@@ -47,6 +48,7 @@ static SSL_CTX* redis_ssl_ctx() {
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         SSL_CTX* c = SSL_CTX_new(TLS_client_method());
+        look::tls_client_defaults(c);   // en az TLS 1.2, makineden bağımsız
         if (c) { SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr); SSL_CTX_set_default_verify_paths(c); }
         return c;
     }();
@@ -236,23 +238,19 @@ void RespClient::connect() {
         SSL* s = SSL_new(ctx);
         if (!s) throw std::runtime_error("Redis: SSL_new failed (TLS)");
         SSL_set_fd(s, fd_);
-        SSL_set_tlsext_host_name(s, host_.c_str());   // SNI
-        if (tls_verify_) {
-            // ?tls=verify → sertifika + hostname doğrula (MITM'e karşı). set1_host dönüşü
-            // KONTROL EDİLİR (başarısızsa hostname kontrolü sessizce kapanmasın — bkz mysql_client).
-            SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
-            if (SSL_set1_host(s, host_.c_str()) != 1) {
-                SSL_free(s);
-                fail("Redis: could not set up TLS hostname verification (verify)");
-            }
+        // SNI + ad doğrulaması (IP → IP SAN, ad → DNS adı; look/tls_peer.h). Kurulamazsa ad
+        // kontrolü sessizce kapanmasın diye bağlanılmaz (bkz mysql_client).
+        if (tls_verify_) SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
+        if (!tls_set_peer(s, host_, tls_verify_)) {
+            SSL_free(s);
+            fail("Redis: could not set up TLS hostname verification (verify)");
         }
         int hs = fiber_ssl_connect(s, fd_, tmo_ms_);
         if (hs == 0) { SSL_free(s); fail_timeout("the TLS handshake with"); }
         if (hs != 1) {
-            unsigned long e = ERR_get_error();
-            char eb[256]; ERR_error_string_n(e, eb, sizeof(eb));
+            std::string why = tls_failure_reason(s);   // look/tls_peer.h
             SSL_free(s);
-            fail(std::string("Redis: TLS handshake failed: ") + eb);
+            fail("Redis: TLS handshake failed: " + why);
         }
         ssl_ = s;   // bundan sonra send_command/read_* SSL üstünden
 #else

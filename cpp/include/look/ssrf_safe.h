@@ -17,6 +17,13 @@ inline bool is_private_v4(uint32_t ip) {
     if ((ip >> 24) == 0)   return true;             // 0/8
     if ((ip >> 28) == 0xE) return true;             // 224/4 multicast
     if ((ip >> 28) == 0xF) return true;             // 240/4 reserved (255.255.255.255 dahil)
+    // IANA özel amaçlı, küresel yönlendirilmeyen bloklar (RFC 6890). Eksikti (2026-11-07 ölçüldü):
+    // 198.18/15 bazı bulut/kurum ağlarında İÇ ağ olarak kullanılır; 192.0.0/24 IETF protokol ataması.
+    if ((ip >> 8)  == ((192u << 16) | 0))          return true; // 192.0.0.0/24
+    if ((ip >> 8)  == ((192u << 16) | (0 << 8) | 2)) return true; // 192.0.2.0/24 TEST-NET-1
+    if ((ip >> 17) == ((198u << 7) | (18 >> 1)))   return true; // 198.18.0.0/15
+    if ((ip >> 8)  == ((198u << 16) | (51 << 8) | 100)) return true; // 198.51.100.0/24 TEST-NET-2
+    if ((ip >> 8)  == ((203u << 16) | (0 << 8) | 113))  return true; // 203.0.113.0/24 TEST-NET-3
     return false;
 }
 
@@ -32,6 +39,11 @@ inline bool ssrf_blocked_v6(const uint8_t b[16]) {
     if (is_lo && b[15] == 0) return true;   // ::/128 unspecified
     if ((b[0] & 0xFE) == 0xFC) return true; // fc00::/7 unique-local
     if ((b[0] == 0xFE) && ((b[1] & 0xC0) == 0x80)) return true; // fe80::/10 link-local
+    if ((b[0] == 0xFE) && ((b[1] & 0xC0) == 0xC0)) return true; // fec0::/10 site-local (eski, iç ağ)
+    if (b[0] == 0xFF) return true;                              // ff00::/8 multicast (eksikti)
+    if (b[0]==0x20 && b[1]==0x01 && b[2]==0x0D && b[3]==0xB8) return true; // 2001:db8::/32 belgeleme
+    { bool disc = b[0]==0x01 && b[1]==0x00; for (int i = 2; i < 8 && disc; ++i) disc = (b[i] == 0);
+      if (disc) return true; }                                  // 100::/64 discard
 
     bool hi80_zero = true;
     for (int i = 0; i < 10; ++i) if (b[i]) { hi80_zero = false; break; }
