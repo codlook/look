@@ -18,7 +18,8 @@ fail=0
 probe() {   # ad url beklenen-metin
     printf 'use http\n$r = http::get("%s")\nprint("status=" . ($r["status"] ?? "") . " body=" . ($r["body"] ?? "") . " err=" . ($r["error"] ?? ""))\n' "$2" > "$T/t.lk"
     out="$(cd "$T" && SSL_CERT_FILE="$T/ca.pem" LOOK_ALLOW_SSRF=1 "$LK" t.lk 2>&1 | tail -1)"
-    if echo "$out" | grep -qF -- "$3"; then echo "  OK   $1"; else echo "  FAIL $1: want \"$3\", got: $out"; fail=1; fi
+    # OpenSSL sürümleri metnin harf durumunu farklı yazar ("Hostname mismatch" / "hostname mismatch")
+    if echo "$out" | grep -qiF -- "$3"; then echo "  OK   $1"; else echo "  FAIL $1: want \"$3\", got: $out"; fail=1; fi
 }
 probe "valid name"                    https://localhost:8441/   "status=200 body=ok sni=localhost"
 probe "valid IP address (IP SAN)"     https://127.0.0.1:8442/   "status=200 body=ok sni= "
