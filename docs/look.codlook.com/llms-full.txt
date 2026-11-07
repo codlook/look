@@ -6062,6 +6062,7 @@ File access is **sandboxed** to a root directory (`LOOK_FILE_ROOT`); paths can't
 | `SVG upload requires allow_svg: true option` | SVG is blocked by default (it can carry scripts). | Only set `allow_svg: true` if you sanitize/trust the SVG. |
 | `file::store(): upload dir cannot be under web root — set UPLOAD_DIR to a path outside web root` | Saving uploads inside the web root would make them executable/served. | Point `UPLOAD_DIR` outside the public web root. |
 | `file::store(): subdir must be a simple name, not a path` | The subdir argument contained path separators. | Use a single folder name (no `/`, no `..`). |
+| `file::store(): the first argument must be a file from request::file() in this request` | The array was built by hand, or comes from another request. Only an upload LOOK received in this request is stored, with its own path, name and type. | Pass the value `request::file()` returned in the same request. |
 
 ---
 

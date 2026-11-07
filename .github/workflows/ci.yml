@@ -511,6 +511,9 @@ jobs:
         run: |
           cd cpp
           bash tests/multipart_upload_test.sh ./build/lk-fcgi
+          # no path or symbolic link (dangling ones too) leads outside the root: file::, template::,
+          # use; file::store accepts only a file from request::file() in the same request
+          bash tests/file_root_escape_test.sh ./build/lk ./build/lk-fcgi 7912
 
       # Only session ids the server issued are used (session fixation); cookie::set cannot be made
       # to write extra attributes through its path or SameSite value.

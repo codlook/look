@@ -79,16 +79,45 @@ static std::string get_file_root() {
     return root;
 }
 
+// Yolu bileşen bileşen çöz; karşılaşılan HER symlink izlenir — hedefi var olmasa bile (Go 1.24
+// os.Root modeli: kök dışını gösteren bağlantı hiçbir koşulda izlenmez). ESKİ AÇIK: weakly_canonical
+// var olmayan hedefi çözemediği için sarkan bir bağlantıyı ("dangle" → /dışarı/yeni.txt) kök içinde
+// sanıyordu → file::put kök DIŞINDA dosya yaratıyordu (ölçüldü). ".." bağlantı izlendikten sonra
+// uygulanır (POSIX çözümüyle aynı). 40 bağlantı sınırı (Linux ELOOP).
+static fs::path resolve_all_links(const fs::path& abs, int depth = 0) {
+    if (depth > 40) throw std::runtime_error("file: too many levels of symbolic links: " + abs.string());
+    fs::path cur = abs.root_path();
+    const fs::path rel = abs.relative_path();
+    for (auto it = rel.begin(); it != rel.end(); ++it) {
+        const fs::path& comp = *it;
+        if (comp.empty() || comp == ".") continue;
+        if (comp == "..") { cur = cur.parent_path(); continue; }
+        fs::path next = cur / comp;
+        std::error_code ec;
+        if (fs::is_symlink(fs::symlink_status(next, ec)) && !ec) {
+            fs::path tgt = fs::read_symlink(next, ec);
+            if (ec) throw std::runtime_error("file: cannot read symbolic link: " + next.string());
+            if (tgt.is_relative()) tgt = cur / tgt;
+            for (auto j = std::next(it); j != rel.end(); ++j) tgt /= *j;
+            return resolve_all_links(tgt, depth + 1);
+        }
+        cur = next;
+    }
+    return cur.lexically_normal();
+}
+
 static void assert_in_file_root(const std::string& path) {
     std::string root = get_file_root();
     if (root.empty()) return; // unrestricted
     std::error_code ec;
-    // Yol ÖNCE cwd-tabanlı mutlağa çevrilmeli. weakly_canonical, var-olmayan ÇIPLAK
-    // göreli bir isim ("out.txt") için yolu GÖRELİ bırakır (cwd eklemez) → mutlak kökle
-    // ("/…/cwd") mismatch → kök-içi meşru YENİ dosya (file::put/exists) yanlışça reddedilirdi
-    // (alt-dizinli "sub/x.txt" tesadüfen çalışıyordu — "sub" çözülüp mutlaklaşınca). fs::absolute
-    // göreli yolu cwd'ye göre mutlaklaştırır (OS ile aynı çözüm) → kök kontrolü doğru işler.
-    fs::path resolved = fs::weakly_canonical(fs::absolute(fs::path(path), ec), ec);
+    // Yol ÖNCE cwd-tabanlı mutlağa çevrilir (göreli "out.txt" cwd'ye göre — OS ile aynı çözüm),
+    // sonra her bileşen ve her symlink (sarkan dahil) çözülür.
+    fs::path abs = fs::absolute(fs::path(path), ec);
+    if (ec) throw std::runtime_error("file: invalid path: " + path);
+    fs::path resolved = resolve_all_links(abs);
+    // Kökle AYNI biçime getir (kök weakly_canonical ile hesaplandı): Windows'ta sürücü harfi/büyük-küçük
+    // harf farkı ("c:" ↔ "C:") meşru erişimi reddettirirdi. resolved'da artık bağlantı yok, güvenli.
+    resolved = fs::weakly_canonical(resolved, ec);
     if (ec) throw std::runtime_error("file: invalid path: " + path);
     // Store root as a named variable — iterators from temporaries dangle.
     // Use 4-arg mismatch to guard against resolved being shorter than root.
@@ -246,6 +275,20 @@ Module make_file_module() {
         bool upload_dir_explicit = (std::getenv("UPLOAD_DIR") && *std::getenv("UPLOAD_DIR"));
         if (!upload_dir_explicit && is_under_web_root(dest_dir.string()))
             throw std::runtime_error("file::store(): upload dir cannot be under web root — set UPLOAD_DIR to a path outside web root");
+
+        // Yalnız BU isteğin request::file() ile aldığı geçici dosya saklanır; yol, sha256 ve mime
+        // LOOK'un kendi kaydından alınır, çağıranın dizisinden DEĞİL. ESKİ AÇIK: dizi elle kurulursa
+        // "path" sunucudaki herhangi bir dosyayı (.env) yükleme klasörüne taşıyıp UPLOAD_URL'den
+        // sunduruyordu; "sha256" alanı dosya adına girdiği için "../../" ile klasör dışına yazılıyordu.
+        {
+            const UploadedFile* own = nullptr;
+            if (auto* w = look::current_request_web())
+                for (const auto& [name, uf] : w->uploaded_files)
+                    if (uf.valid && uf.temp_path == temp_path) { own = &uf; break; }
+            if (!own)
+                throw std::runtime_error("file::store(): the first argument must be a file from request::file() in this request");
+            temp_path = own->temp_path; mime = own->mime; sha256 = own->sha256;
+        }
 
         fs::create_directories(dest_dir);
 

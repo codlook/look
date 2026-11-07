@@ -764,6 +764,17 @@ file::store($f, "a/b/c")    # separators not allowed
 <span class="eg-good"># ✓ fix</span>
 file::store($f, "avatars")</code></pre>
     </div>
+    <div class="err" id="e98" data-cat="Files &amp; uploads (file::)" data-text="file::store(): the first argument must be a file from request::file() in this request the array was built by hand, or comes from another request. pass the value request::file() returned in the same request.">
+      <div class="err-msg"><code>file::store(): the first argument must be a file from request::file() in this request</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> The array was built by hand, or comes from another request. Only an upload LOOK received in this request is stored, with its own path, name and type.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the value <code>request::file()</code> returned in the same request.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+file::store(["path" => "/var/www/.env"], "docs")
+<span class="eg-good"># ✓ fix</span>
+file::store(request::file("doc"), "docs")</code></pre>
+    </div>
   </div>
   </div>
 </section>
