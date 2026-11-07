@@ -1604,6 +1604,14 @@ function json_error($message, $code) {
  re-emits the value as a JSON string (`"9223372036854775809"`), not a bare number. This matters
  if you proxy/forward JSON verbatim to a strict downstream API.
 
+> **Invalid JSON is `null`.** `json::decode` and `request::json()` accept exactly what the JSON
+ standard (RFC 8259) and Go's `encoding/json` accept, and return `null` for anything else: a
+ missing `:` or `,`, a trailing comma, text after the value, a leading zero (`01`), an unknown
+ escape (`"\x"`), a raw control character inside a string, a number too large for a float
+ (`1e999`). A server and a proxy in front of it therefore read a body the same way. A duplicated
+ key keeps its first position and takes the last value. An unpaired UTF-16 surrogate (`"\ud800"`)
+ becomes U+FFFD. Nesting deeper than 256 levels is `null`.
+
 ## session::
 
 > **Critical rule in FastCGI:** `session::start()` must be called *inside* a route callback — if called in global scope (outside route()) it silently fails. The reason: during look-fcgi's setup phase there is no HTTP context (and therefore no response to send a `Set-Cookie` header). Once a session is broken, a hot reload is required.

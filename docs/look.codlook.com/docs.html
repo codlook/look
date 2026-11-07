@@ -1610,6 +1610,13 @@ Stack trace:
     (2) <strong>Round-trip changes the type</strong>: <code>json::decode</code> then <code>json::encode</code>
     re-emits the value as a JSON string (<code>"9223372036854775809"</code>), not a bare number. This matters
     if you proxy/forward JSON verbatim to a strict downstream API.</p>
+    <p><strong>Invalid JSON is <code>null</code>.</strong> <code>json::decode</code> and <code>request::json()</code> accept exactly what the JSON
+    standard (RFC 8259) and Go's <code>encoding/json</code> accept, and return <code>null</code> for anything else: a
+    missing <code>:</code> or <code>,</code>, a trailing comma, text after the value, a leading zero (<code>01</code>), an unknown
+    escape (<code>"\x"</code>), a raw control character inside a string, a number too large for a float
+    (<code>1e999</code>). A server and a proxy in front of it therefore read a body the same way. A duplicated
+    key keeps its first position and takes the last value. An unpaired UTF-16 surrogate (<code>"\ud800"</code>)
+    becomes U+FFFD. Nesting deeper than 256 levels is <code>null</code>.</p>
   </div>
 </section>
 

@@ -9,7 +9,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     std::string s((const char*)data, size);
     size_t i = 0;
     volatile bool ok = true;
-    { std::string r = look::json_decode_str(s, i); (void)r; }
+    { std::string r; ok = look::json_decode_str(s, i, r); (void)r; }
     (void)ok;
     return 0;
 }

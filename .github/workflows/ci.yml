@@ -1029,6 +1029,8 @@ jobs:
           build/lk tests/repro/regex_leak_check.lk
           build/lk tests/repro/file_root_traversal.lk
           build/lk tests/repro/msvc_mul_ovf.lk
+          # json::decode / request::json: Go encoding/json's verdict on 64 inputs; 100k keys linear
+          bash tests/json_strict_test.sh build/lk
 
       # Davranışsal .lk testleri — gömülü SQLite / in-process (harici sunucu YOK). Bu
       # kalemler eskiden "TEST-EDİLMİŞ ama CI-dışı"ydı (env-DSN/canlı-DB isterdi); SQLite

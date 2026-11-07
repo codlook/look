@@ -42,48 +42,52 @@ inline int json_read_u4(const std::string& s, size_t& i) {
     i += 4;
     return cp;
 }
-inline std::string json_decode_str(const std::string& s, size_t& i) {
+// RFC 8259 / Go encoding/json kuralları. Dönüş false = geçersiz string (çağıran tüm belgeyi
+// reddeder). ESKİ GEVŞEKLİK: bilinmeyen kaçış ("\x" → "x"), bozuk \u ("\u12" → "\\u12"), ham
+// kontrol karakteri ve kapanmamış string kabul ediliyordu — bir ağ geçidi aynı gövdeyi geçersiz
+// sayıp LOOK geçerli sayınca ayrışma (HTTP smuggling'in JSON karşılığı). Eşi olmayan surrogate
+// Go gibi U+FFFD olur (eskiden geçersiz UTF-8 — CESU — üretiyordu). i: açılış '"' üzerinde.
+inline bool json_decode_str(const std::string& s, size_t& i, std::string& result) {
     i++; // skip "
-    std::string result;
+    result.clear();
     while (i < s.size() && s[i] != '"') {
-        if (s[i] == '\\') {
-            i++;
-            if (i >= s.size()) break;   // yalniz backslash sonda — s[i]=s[size()] tanimli
-                                        // ('\0') ama kirilgan; acikca sinirla.
-            switch (s[i]) {
-                case '"':  result += '"';  break;
-                case '\\': result += '\\'; break;
-                case '/':  result += '/';  break;
-                case 'n':  result += '\n'; break;
-                case 't':  result += '\t'; break;
-                case 'r':  result += '\r'; break;
-                case 'b':  result += '\b'; break;
-                case 'f':  result += '\f'; break;
-                case 'u': {
-                    // \uXXXX unicode escape — surrogate çifti (emoji vb.) birleştir
-                    i++;  // 'u'yu geç
-                    int cp = json_read_u4(s, i);
-                    if (cp < 0) { result += "\\u"; break; }
-                    if (cp >= 0xD800 && cp <= 0xDBFF &&
-                        i + 1 < s.size() && s[i] == '\\' && s[i+1] == 'u') {
-                        size_t save = i; i += 2;
-                        int lo = json_read_u4(s, i);
-                        if (lo >= 0xDC00 && lo <= 0xDFFF)
-                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                        else { i = save; }  // eşleşmeyen — yalnız yüksek surrogate
-                    }
-                    json_append_utf8(result, (uint32_t)cp);
-                    continue;  // i zaten ilerledi; sondaki i++ atla
+        unsigned char c = (unsigned char)s[i];
+        if (c < 0x20) return false;                       // ham kontrol karakteri
+        if (c != '\\') { result += (char)c; i++; continue; }
+        i++;
+        if (i >= s.size()) return false;
+        switch (s[i]) {
+            case '"':  result += '"';  break;
+            case '\\': result += '\\'; break;
+            case '/':  result += '/';  break;
+            case 'n':  result += '\n'; break;
+            case 't':  result += '\t'; break;
+            case 'r':  result += '\r'; break;
+            case 'b':  result += '\b'; break;
+            case 'f':  result += '\f'; break;
+            case 'u': {
+                i++;  // 'u'yu geç
+                int cp = json_read_u4(s, i);
+                if (cp < 0) return false;                 // \u ardından 4 hex hane şart
+                if (cp >= 0xD800 && cp <= 0xDBFF) {
+                    size_t save = i;
+                    int lo = -1;
+                    if (i + 1 < s.size() && s[i] == '\\' && s[i + 1] == 'u') { i += 2; lo = json_read_u4(s, i); }
+                    if (lo >= 0xDC00 && lo <= 0xDFFF) cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    else { i = save; cp = 0xFFFD; }       // eşsiz yüksek surrogate
+                } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                    cp = 0xFFFD;                          // eşsiz düşük surrogate
                 }
-                default:   result += s[i]; break;
+                json_append_utf8(result, (uint32_t)cp);
+                continue;  // i zaten ilerledi
             }
-        } else {
-            result += s[i];
+            default: return false;                        // bilinmeyen kaçış
         }
         i++;
     }
+    if (i >= s.size()) return false;                      // kapanmamış string
     i++; // skip closing "
-    return result;
+    return true;
 }
 
 } // namespace look

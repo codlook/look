@@ -39,6 +39,7 @@
 #include <atomic>
 #include <filesystem>
 #include <system_error>
+#include <unordered_map>
 #include "look/json_str_parse.h"   // saf JSON string-unescape (fuzz ile paylasilan tek tanim)
 #ifdef _WIN32
   #include <windows.h>
@@ -144,85 +145,108 @@ struct JsonTooDeep {};
 // yakalanır → temiz null döner.
 struct JsonParseError {};
 
+// Katı dilbilgisi (RFC 8259, Go encoding/json): ':' ve ',' zorunlu, sondaki virgül yok, sayı
+// -?(0|[1-9]d*)(.d+)?([eE][+-]?d+)?, literal tam "true"/"false"/"null". ESKİ GEVŞEKLİK (ölçüldü):
+// {"a" 1}, [1 2 3], [1,], {"a":1,}, 01 kabul ediliyordu — ağ geçidi ile LOOK aynı gövdeyi farklı
+// okur (JSON ayrışması). Sondaki çöp public giriş noktasında reddedilir (json_decode_document).
 static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     if (depth > JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS savunması
     json_skip_ws(s, i);
-    if (i >= s.size()) return Value();
+    if (i >= s.size()) throw JsonParseError{};
 
     if (s[i] == '"') {
-        return Value(json_decode_str(s, i));
+        std::string str;
+        if (!json_decode_str(s, i, str)) throw JsonParseError{};
+        return Value(std::move(str));
     }
-    // JSON object { } â†’ assoc array
+    // JSON object { } → assoc array
     if (s[i] == '{') {
         i++;
         auto arr = std::make_shared<std::vector<Value>>();
         arr->push_back(Value(std::string("__assoc__")));
+        // Anahtar → değer konumu. ESKİ: her anahtarda önceki bütün anahtarlar taranıyordu (O(n²)):
+        // 1 MB'lık 100k anahtarlı gövde tek istekte 50 sn CPU (ölçüldü) — kimliksiz uzak DoS.
+        // Küçük nesnede (gerçek gövdelerin çoğu) doğrusal tarama ucuz ve tahsissiz; indeks yalnız
+        // SMALL anahtarı aşınca kurulur → küçük nesnede eskisi kadar hızlı, büyükte O(n).
+        constexpr size_t SMALL = 16;
+        std::unordered_map<std::string, size_t> pos;   // boşken tahsis yok
+        auto find_key = [&](const std::string& key) -> size_t {   // değer konumu; 0 = yok
+            size_t nkeys = (arr->size() - 1) / 2;
+            if (nkeys <= SMALL) {
+                for (size_t k = 1; k + 1 < arr->size(); k += 2)
+                    if ((*arr)[k].as_string() == key) return k + 1;
+                return 0;
+            }
+            if (pos.empty())   // eşik ilk aşıldığında mevcut anahtarlardan kur
+                for (size_t k = 1; k + 1 < arr->size(); k += 2) pos.emplace((*arr)[k].as_string(), k + 1);
+            auto it = pos.find(key);
+            return it == pos.end() ? 0 : it->second;
+        };
         json_skip_ws(s, i);
-        while (i < s.size() && s[i] != '}') {
-            size_t before = i;                       // ilerleme güvencesi
-            // key — açılış tırnağı yoksa bozuk (aksi halde ilerlemeyebilir)
-            if (s[i] != '"') throw JsonParseError{};
-            std::string key = json_decode_str(s, i);
+        if (i < s.size() && s[i] == '}') { i++; return Value(arr); }
+        for (;;) {
             json_skip_ws(s, i);
-            if (i < s.size() && s[i] == ':') i++;
+            if (i >= s.size() || s[i] != '"') throw JsonParseError{};
+            std::string key;
+            if (!json_decode_str(s, i, key)) throw JsonParseError{};
             json_skip_ws(s, i);
-            // value
+            if (i >= s.size() || s[i] != ':') throw JsonParseError{};
+            i++;
             Value val = json_decode_value(s, i, depth + 1);
             // B-04: yinelenen anahtar → SON kazanır, anahtar KONUMU korunur
             // (JS/Go/Python/PHP ile aynı). Eski davranış "ilk kazanır + ikisini de tut"
             // idi → gateway "user" görüp geçirir, backend "admin" görür (JSON interop
             // yetki atlatma). Yerinde güncelle: anahtar sona kaymasın (o da uyumsuzluk).
-            bool dup = false;
-            for (size_t k = 1; k + 1 < arr->size(); k += 2) {
-                if ((*arr)[k].type() == Value::STRING && (*arr)[k].to_string() == key) {
-                    (*arr)[k + 1] = val;   // konum sabit, değer güncellenir
-                    dup = true;
-                    break;
-                }
+            if (size_t at = find_key(key)) (*arr)[at] = std::move(val);
+            else {
+                if (!pos.empty()) pos.emplace(key, arr->size() + 1);
+                arr->push_back(Value(std::move(key))); arr->push_back(std::move(val));
             }
-            if (!dup) { arr->push_back(Value(key)); arr->push_back(val); }
             json_skip_ws(s, i);
-            if (i < s.size() && s[i] == ',') i++;
-            json_skip_ws(s, i);
-            if (i == before) throw JsonParseError{};  // ilerleme yok → sonsuz döngü engeli
+            if (i >= s.size()) throw JsonParseError{};
+            if (s[i] == ',') { i++; continue; }
+            if (s[i] == '}') { i++; return Value(arr); }
+            throw JsonParseError{};
         }
-        if (i < s.size()) i++; // skip }
-        return Value(arr);
     }
 
     if (s[i] == '[') {
         i++;
         auto arr = std::make_shared<std::vector<Value>>();
         json_skip_ws(s, i);
-        while (i < s.size() && s[i] != ']') {
-            size_t before = i;                       // ilerleme güvencesi
+        if (i < s.size() && s[i] == ']') { i++; return Value(arr); }
+        for (;;) {
             arr->push_back(json_decode_value(s, i, depth + 1));
             json_skip_ws(s, i);
-            if (i < s.size() && s[i] == ',') i++;
-            json_skip_ws(s, i);
-            if (i == before) throw JsonParseError{};  // ilerleme yok → sonsuz döngü engeli
+            if (i >= s.size()) throw JsonParseError{};
+            if (s[i] == ',') { i++; continue; }
+            if (s[i] == ']') { i++; return Value(arr); }
+            throw JsonParseError{};
         }
-        if (i < s.size()) i++; // skip ]
-        return Value(arr);
     }
-    if (s.substr(i, 4) == "true")  { i += 4; return Value(true); }
-    if (s.substr(i, 5) == "false") { i += 5; return Value(false); }
-    if (s.substr(i, 4) == "null")  { i += 4; return Value(); }
-    // Number — geçerli bir sayı başlangıcı DEĞİLSE reddet. Aksi halde `i`
-    // ilerlemeden Value(0) dönerdi → çağıran döngüde sonsuz döngü (DoS). Ayrıca
-    // json::decode("garbage")→0 correctness bug'ını da giderir.
-    if (s[i] != '-' && !std::isdigit((unsigned char)s[i]))
-        throw JsonParseError{};
-    // Number
+    if (s.compare(i, 4, "true") == 0)  { i += 4; return Value(true); }
+    if (s.compare(i, 5, "false") == 0) { i += 5; return Value(false); }
+    if (s.compare(i, 4, "null") == 0)  { i += 4; return Value(); }
+    // Sayı: -?(0|[1-9]d*)(.d+)?([eE][+-]?d+)?
     size_t start = i;
     bool is_float = false;
-    if (s[i] == '-') i++;
-    while (i < s.size() && (std::isdigit(s[i]) || s[i]=='.' || s[i]=='e' || s[i]=='E' || s[i]=='+' || s[i]=='-')) {
-        if (s[i]=='.' || s[i]=='e' || s[i]=='E') is_float = true;
-        i++;
+    auto digit = [&](size_t k) { return k < s.size() && s[k] >= '0' && s[k] <= '9'; };
+    if (i < s.size() && s[i] == '-') i++;
+    if (!digit(i)) throw JsonParseError{};
+    if (s[i] == '0') { i++; if (digit(i)) throw JsonParseError{}; }   // baştaki sıfır ("01") yok
+    else while (digit(i)) i++;
+    if (i < s.size() && s[i] == '.') {
+        is_float = true; i++;
+        if (!digit(i)) throw JsonParseError{};
+        while (digit(i)) i++;
+    }
+    if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+        is_float = true; i++;
+        if (i < s.size() && (s[i] == '+' || s[i] == '-')) i++;
+        if (!digit(i)) throw JsonParseError{};
+        while (digit(i)) i++;
     }
     std::string num = s.substr(start, i - start);
-    if (num.empty() || num == "-") return Value((int64_t)0);
     try {
         if (is_float) return Value(std::stod(num));
         return Value((int64_t)std::stoll(num));   // 32-bit stoi taşıp 0 döndürüyordu
@@ -237,8 +261,24 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         // DB'ye/karşılaştırmaya birebir gider). Float form (is_float) zaten
         // kesinlik kaybını göze aldığı için double kalır.
         if (!is_float) return Value(num);
-        try { return Value(std::stod(num)); } catch (...) { return Value((int64_t)0); }
+        // Ondalık taşma (1e999): eskiden sessizce 0 dönüyordu (yanlış değer). Go: "number out of
+        // range" hatası → belge geçersiz.
+        throw JsonParseError{};
     }
+}
+
+// Belge = tek değer + yalnız boşluk. ESKİ: sondaki çöp yok sayılıyordu ("[1] xyz" → [1]).
+// Geçersiz / aşırı derin belge → null (json::decode ve request::json sözleşmesi).
+static Value json_decode_document(const std::string& s) {
+    size_t i = 0;
+    try {
+        Value v = json_decode_value(s, i);
+        json_skip_ws(s, i);
+        if (i != s.size()) return Value();
+        return v;
+    }
+    catch (const JsonTooDeep&) { return Value(); }   // aşırı derin → null (DoS savunması)
+    catch (const JsonParseError&) { return Value(); } // bozuk → null
 }
 
 // â”€â”€ Route matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -390,10 +430,7 @@ static Module make_request(WebRef ctx) {
     // request::json() â€” parse JSON body otomatik
     m.functions["json"] = [ctx](auto) -> Value {
         if (ctx->body.empty()) return Value();
-        size_t i = 0;
-        try { return json_decode_value(ctx->body, i); }
-        catch (const JsonTooDeep&) { return Value(); }   // aşırı derin gövde → null (DoS savunması)
-        catch (const JsonParseError&) { return Value(); } // bozuk gövde → null (sonsuz döngü DoS savunması)
+        return json_decode_document(ctx->body);
     };
     // request::all() â€” GET + POST params birleÅŸik
     m.functions["all"] = [ctx](auto) -> Value {
@@ -572,11 +609,7 @@ static Module make_json_module() {
     };
     m.functions["decode"] = [](auto args) -> Value {
         if (args.empty()) return Value();
-        std::string s = args[0].to_string();
-        size_t i = 0;
-        try { return json_decode_value(s, i); }
-        catch (const JsonTooDeep&) { return Value(); }   // aşırı derin → null (DoS savunması)
-        catch (const JsonParseError&) { return Value(); } // bozuk → null (sonsuz döngü DoS savunması)
+        return json_decode_document(args[0].to_string());
     };
 
     return m;
