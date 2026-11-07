@@ -81,6 +81,10 @@ struct WebContext {
     std::string csrf_base;
     // Bu istek csrf::exempt kuralıyla denetimsiz geçtiyse o kural (session:: burada yasak).
     std::string csrf_exempt_rule;
+    // session::start'ta okunan oturum (kimlik + içerik): eşzamanlı regenerate eski kaydı bu istekten
+    // önce sildiyse veri buradan taşınır (scs modeli). Yalnız istek başında var olan kimlik için dolar.
+    std::string sess_snap_sid;
+    std::string sess_snap;
     std::map<std::string, std::string> get_params;
     std::map<std::string, std::string> post_params;
     std::map<std::string, std::string> cookies_in;

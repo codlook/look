@@ -447,6 +447,21 @@ std::string RespClient::get(const std::string& key) {
     return read_response();  // "" if nil
 }
 
+// GET, ama "yok" (nil, $-1) ile "boş değer" ($0) ayrı: true = anahtar var. EXISTS ile aynı tek tur.
+bool RespClient::get_if_exists(const std::string& key, std::string& out) {
+    out.clear();
+    send_command({"GET", key});
+    auto line = read_line();
+    if (line.empty()) fail("Redis: empty response");
+    if (line[0] == '-') throw std::runtime_error("Redis: " + line.substr(1));   // akış hizalı
+    if (line[0] != '$') fail("Redis: unexpected reply to GET");
+    long len = 0;
+    try { len = std::stol(line.substr(1)); } catch (...) { fail("Redis: invalid bulk length"); }
+    if (len == -1) return false;
+    out = read_bulk(len);
+    return true;
+}
+
 void RespClient::del(const std::string& key) {
     send_command({"DEL", key});
     read_response();

@@ -506,6 +506,8 @@ jobs:
         run: |
           cd cpp
           bash tests/csrf_core_test.sh ./build/lk-fcgi ./build/lk-cgi
+          # every unsafe method (PROPFIND, PURGE…) and Sec-Fetch-Site cross-site/same-site (Go CrossOriginProtection)
+          bash tests/csrf_gate_test.sh ./build/lk-fcgi 7921
       # multipart parameters read by name in any order; uploads wait in a 0600 temp file
       - name: "multipart uploads — parameter order, private temp file"
         run: |
@@ -523,6 +525,8 @@ jobs:
           bash tests/session_fixation_test.sh ./build/lk-fcgi
           # a logout is never undone by a session::set running at the same time (file driver)
           bash tests/session_destroy_race_test.sh ./build/lk-fcgi
+          # concurrent session::regenerate keeps the data; a logout during it is not undone
+          bash tests/session_regenerate_race_test.sh ./build/lk-fcgi "" 7931
           bash tests/proxy_trust_test.sh ./build/lk-fcgi
 
       # FastCGI wrote every request's parameters (client headers as HTTP_*) into the process
@@ -1588,6 +1592,8 @@ jobs:
           # A pooled connection Redis closed (restart, timeout, CLIENT KILL) is replaced before use
           bash tests/redis_session_restart_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
           bash tests/session_destroy_race_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
+          # concurrent session::regenerate keeps the data; a logout during it is not undone
+          bash tests/session_regenerate_race_test.sh ./build/lk-fcgi redis://127.0.0.1:6381 7932
           # LOOK_REDIS_URL: bad port / database number is an error; /2 is used; [::1] connects
           bash tests/redis_url_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
       # A session is at most LOOK_SESSION_MAX_BYTES (1 MB): over it session::set is an error,

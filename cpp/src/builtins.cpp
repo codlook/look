@@ -217,7 +217,7 @@ const std::vector<std::string>& builtin_names() {
         // request::scheme/host — istemcinin gördüğü şema ve ana bilgisayar (güvenilen vekil kuralıyla).
         "request::scheme", "request::host",
         // csrf:: — sunucuda durumsuz CSRF koruması (imzalı çift-gönderim çerezi, LOOK_SECRET). Denetim
-        // varsayılan: çerez kullanan uygulamada her POST/PUT/PATCH/DELETE (http_main kapısı); exempt muafiyet.
+        // varsayılan: çerez kullanan uygulamada GET/HEAD/OPTIONS dışındaki her istek (http_main kapısı); exempt muafiyet.
         "csrf::token", "csrf::field", "csrf::exempt",
     };
     return NAMES;

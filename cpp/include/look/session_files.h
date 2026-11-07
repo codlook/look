@@ -203,6 +203,38 @@ inline bool session_file_exists(const std::string& sid, long ttl_sec = 0) {
 #endif
 }
 
+// session_file_exists + içerik, tek açılışta: true = bu sürecin verdiği, süresi dolmamış oturum
+// (içerik boş olabilir). session::start bunu kullanır: varlık denetimiyle AYNI maliyette isteğin
+// başındaki veriyi de alır (eşzamanlı regenerate'te o isteğin kopyası — bkz. web_stdlib).
+inline bool session_file_read_if_exists(const std::string& sid, std::string& out, long ttl_sec = 0) {
+    out.clear();
+    const std::string path = session_file(sid);
+#ifndef _WIN32
+    int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) return false;
+    struct stat st{};
+    bool ok = ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == ::geteuid() &&
+              (st.st_mode & 077) == 0 && st.st_nlink == 1 &&
+              !(ttl_sec > 0 && (long long)std::time(nullptr) - (long long)st.st_mtime > ttl_sec);
+    if (ok) {
+        char buf[65536];
+        for (;;) {
+            ssize_t n = ::read(fd, buf, sizeof(buf));
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) break;
+            out.append(buf, (size_t)n);
+        }
+    }
+    ::close(fd);
+    return ok;
+#else
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::stringstream ss; ss << f.rdbuf(); out = ss.str();
+    return true;
+#endif
+}
+
 // Yaz: aynı dizinde 0600 geçici dosya → içerik → rename (yarım okunan oturum olmaz; hedef bir
 // sembolik bağlantıysa rename onu değiştirir, izlemez).
 inline void session_file_write(const std::string& sid, const std::string& blob) {

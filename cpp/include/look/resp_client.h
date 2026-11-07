@@ -25,6 +25,7 @@ public:
     void        set(const std::string& key, const std::string& val, int ttl_sec = 0);
     bool        set_if_exists(const std::string& key, const std::string& val, int ttl_sec = 0);  // SET XX; false = anahtar yok
     std::string get(const std::string& key);      // bulunamazsa "" döner
+    bool        get_if_exists(const std::string& key, std::string& out);  // false = anahtar yok (nil); boş değer true
     void        del(const std::string& key);
     bool        exists(const std::string& key);
     void        expire(const std::string& key, int ttl_sec);

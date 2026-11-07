@@ -1710,8 +1710,8 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
 <section id="csrf">
   <h2>csrf::</h2>
   <p><strong>Every application that uses cookies is protected against cross-site request forgery.</strong>
-  If the program uses <code>session::</code>, <code>csrf::</code> or <code>cookie::</code>, every <code>POST</code>,
-  <code>PUT</code>, <code>PATCH</code> and <code>DELETE</code> request must carry a token; it is checked before
+  If the program uses <code>session::</code>, <code>csrf::</code> or <code>cookie::</code>, every request other than <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code> (<code>POST</code>,
+  <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code>, and any other method a route uses) must carry a token; it is checked before
   <code>before_route</code> and the route run, under <code>--mode http</code>, FastCGI and CGI alike. A request without
   a valid token gets <code>403</code>, and the log says why and what to change. Programs that do not use cookies
   (token APIs) are not affected. Nothing is stored on the server: the token's base is in a signed cookie.</p>
@@ -1741,7 +1741,7 @@ Environment=LOOK_SESSION_TTL=3600</code></pre>
     a new token base: a token obtained or planted before login does not work after it.</li>
     <li><strong>The cookie</strong> is <code>look_csrf</code>; over HTTPS it is <code>__Host-look_csrf</code> with
     <code>Secure</code>, which a subdomain cannot set. Always <code>HttpOnly</code>, <code>SameSite=Lax</code>.</li>
-    <li>When an <code>Origin</code> header is sent it must be this site. Behind a reverse proxy, set
+    <li>A request the browser marks <code>Sec-Fetch-Site: cross-site</code> or <code>same-site</code> (sent from another site, or a sibling subdomain) is refused, as in Go's <code>CrossOriginProtection</code>. When an <code>Origin</code> header is sent it must be this site. Behind a reverse proxy, set
     <code>LOOK_TRUSTED_PROXY</code> so the check sees the public host (<code>X-Forwarded-Host</code>); a client's own
     <code>X-Forwarded-Host</code> is never trusted.</li>
   </ul>

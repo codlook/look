@@ -1836,8 +1836,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             bool stopped = stopped_direct;
             // Varsayılan CSRF kapısı — rotadan ve before_route'tan ÖNCE, üç modda aynı yer. Bağlantı
             // işleyicisi (WS/SSE) ve zamanlayıcı geri çağırması istek değildir.
+            // Güvenli yöntemler (GET/HEAD/OPTIONS) DIŞINDA her yöntem (Go 1.25 CrossOriginProtection).
+            // Eskiden liste POST/PUT/PATCH/DELETE'ti: route("PROPFIND"/"PURGE", …) gibi rotalar kapıdan
+            // hiç geçmiyordu (ölçüldü) — yeni bir yöntem sessizce korumasız kalıyordu.
             if (!stopped && snap->csrf_on && direct().conn.type() == look::Value::NONE &&
-                (web.method == "POST" || web.method == "PUT" || web.method == "PATCH" || web.method == "DELETE")) {
+                web.method != "GET" && web.method != "HEAD" && web.method != "OPTIONS") {
                 for (const auto& rule : snap->csrf_exempt)
                     if (csrf_exempt_match(rule, web.path)) { web.csrf_exempt_rule = rule; break; }
                 std::string why;

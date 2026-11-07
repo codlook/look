@@ -1697,7 +1697,7 @@ route("GET", "/admin/panel", function() {
 
 ## csrf::
 
-**Every application that uses cookies is protected against cross-site request forgery.** If the program uses `session::`, `csrf::` or `cookie::`, every `POST`, `PUT`, `PATCH` and `DELETE` request must carry a token; it is checked before `before_route` and the route run, under `--mode http`, FastCGI and CGI alike. A request without a valid token gets `403`, and the log says why and what to change. Programs that do not use cookies (token APIs) are not affected. Nothing is stored on the server: the token's base is in a signed cookie.
+**Every application that uses cookies is protected against cross-site request forgery.** If the program uses `session::`, `csrf::` or `cookie::`, every request other than `GET`, `HEAD` and `OPTIONS` (`POST`, `PUT`, `PATCH`, `DELETE`, and any other method a route uses) must carry a token; it is checked before `before_route` and the route run, under `--mode http`, FastCGI and CGI alike. A request without a valid token gets `403`, and the log says why and what to change. Programs that do not use cookies (token APIs) are not affected. Nothing is stored on the server: the token's base is in a signed cookie.
 
 | Function | Description |
 | --- | --- |
@@ -1719,7 +1719,7 @@ csrf::exempt("/webhooks/stripe")   # verified by its signature, not by a cookie
 - **Changing the secret:** put the old value in `LOOK_SECRET_PREVIOUS` while forms signed with it are still open; their cookies are signed again with the new secret on the next page.
 - **Login and logout** (`session::regenerate()`, `session::destroy()`) give a new token base: a token obtained or planted before login does not work after it.
 - **The cookie** is `look_csrf`; over HTTPS it is `__Host-look_csrf` with `Secure`, which a subdomain cannot set. Always `HttpOnly`, `SameSite=Lax`.
-- When an `Origin` header is sent it must be this site. Behind a reverse proxy, set `LOOK_TRUSTED_PROXY` so the check sees the public host (`X-Forwarded-Host`); a client's own `X-Forwarded-Host` is never trusted.
+- A request the browser marks `Sec-Fetch-Site: cross-site` or `same-site` (sent from another site, or a sibling subdomain) is refused, as in Go's `CrossOriginProtection`. When an `Origin` header is sent it must be this site. Behind a reverse proxy, set `LOOK_TRUSTED_PROXY` so the check sees the public host (`X-Forwarded-Host`); a client's own `X-Forwarded-Host` is never trusted.
 
 ## cookie::
 

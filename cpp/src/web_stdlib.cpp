@@ -1075,7 +1075,7 @@ static Module make_csrf_module(WebRef ctx) {
 
 // ── Varsayılan CSRF kapısı (http_main: üç mod aynı motordan) ─────────────────────
 // Kural: çerez kullanan her uygulama korunur — programda session::/csrf::/cookie:: varsa
-// POST/PUT/PATCH/DELETE rotadan ve before_route'tan ÖNCE burada denetlenir.
+// GET/HEAD/OPTIONS dışındaki her istek rotadan ve before_route'tan ÖNCE burada denetlenir.
 std::string csrf_secret_problem() {
     const char* cur = std::getenv("LOOK_SECRET");
     const char* prev = std::getenv("LOOK_SECRET_PREVIOUS");
@@ -1087,12 +1087,26 @@ std::string csrf_secret_problem() {
         return "";
     }
     return "LOOK_SECRET is not set or shorter than 32 characters. This application uses cookies, and every "
-           "application that uses cookies is protected against cross-site request forgery: its POST, PUT, PATCH and "
-           "DELETE requests carry a token signed with LOOK_SECRET. Set it to a random value, the same on every server "
+           "application that uses cookies is protected against cross-site request forgery: every request other than GET, HEAD and "
+           "OPTIONS carries a token signed with LOOK_SECRET. Set it to a random value, the same on every server "
            "(openssl rand -hex 32) — in the service's environment file, or with Docker: "
            "docker run -e LOOK_SECRET=<value> … or --env-file <file>";
 }
 bool csrf_request_ok(WebContext* ctx, std::string& why) {
+    // Sec-Fetch-Site (tarayıcı kendisi yazar, sayfa değiştiremez): başka siteden ya da kardeş alt
+    // alan adından gelen istek reddedilir (Go 1.25 CrossOriginProtection). "same-origin" ve "none"
+    // (adres çubuğu, yer imi) geçer; başlık yoksa (eski tarayıcı, sunucudan sunucuya) Origin + token.
+    {
+        auto sf = ctx->headers_in.find("sec-fetch-site");
+        if (sf != ctx->headers_in.end()) {
+            std::string v = sf->second;
+            for (auto& c : v) c = (char)std::tolower((unsigned char)c);
+            if (v == "cross-site" || v == "same-site") {
+                why = "Sec-Fetch-Site: " + v + " (the request came from another site)";
+                return false;
+            }
+        }
+    }
     if (!csrf_origin_ok(ctx)) {
         auto o = ctx->headers_in.find("origin");
         why = "Origin " + (o == ctx->headers_in.end() ? std::string("?") : o->second) + " is not this site" +
@@ -1121,9 +1135,50 @@ bool csrf_request_ok(WebContext* ctx, std::string& why) {
 // kurbanın tarayıcısına "LOOK_SESSION=<32 hex>" yerleştirirse (kardeş alt alan, düz HTTP) kurban
 // giriş yapınca saldırgan aynı kimlikle onun oturumunu kullanıyordu (oturum sabitleme).
 // Bir istekte bir kez karar verilir: yeni kimlik cookies_in'e yazıldığı için ikinci çağrı onu bulur.
+// regenerate'in eski kimliğe bıraktığı kısa ömürlü "taşındı" işareti (120 sn). destroy bırakmaz:
+// eşzamanlı bir regenerate, işaret varsa isteğin başındaki kopyayı taşır, yoksa (çıkış) taşımaz.
+static constexpr int SESS_MOVED_TTL = 120;
+static void sess_mark_moved(const std::string& sid) {
+    if (session_use_redis()) {
+        with_session_redis([&](RespClient& r) { r.set("look_sess_moved:" + sid, "1", SESS_MOVED_TTL); });
+        return;
+    }
+    look::session_file_write("moved_" + sid, "");
+}
+static bool sess_was_moved(const std::string& sid) {
+    if (session_use_redis()) {
+        bool e = false;
+        with_session_redis([&](RespClient& r) { e = r.exists("look_sess_moved:" + sid); });
+        return e;
+    }
+    return look::session_file_exists("moved_" + sid, SESS_MOVED_TTL);
+}
+
+// Varlık + içerik, tek tur (Redis GET / tek dosya açılışı) — sess_exists ile aynı maliyet.
+static bool sess_load_if_exists(const std::string& sid, std::string& blob) {
+    if (session_use_redis()) {
+        bool e = false;
+        with_session_redis([&](RespClient& r) { e = r.get_if_exists("look_sess:" + sid, blob); });
+        return e;
+    }
+    return look::session_file_read_if_exists(sid, blob, session_ttl());
+}
+
 static std::string session_issued_sid(WebContext* ctx) {
     auto it = ctx->cookies_in.find("LOOK_SESSION");
-    if (it != ctx->cookies_in.end() && valid_sid(it->second) && sess_exists(it->second)) return it->second;
+    if (it != ctx->cookies_in.end() && valid_sid(it->second)) {
+        // İsteğin başındaki veri saklanır: aynı anda başka istek regenerate edip eski kaydı silerse bu
+        // isteğin regenerate'i veriyi kaybetmesin (ölçüldü: 20 eşzamanlı regenerate'ten 19'u boş oturum
+        // veriyordu → kullanıcı çıkış yapmış gibi). Kayıt silindikten SONRA başlayan istek (saldırganın
+        // sabitlediği eski kimlik dahil) hiçbir şey almaz: kopya yalnız var olan kimlikte dolar.
+        if (ctx->sess_snap_sid == it->second) return it->second;
+        std::string blob;
+        if (sess_load_if_exists(it->second, blob)) {
+            ctx->sess_snap_sid = it->second;
+            ctx->sess_snap = std::move(blob);
+            return it->second;
+        }
+    }
     std::string sid = gen_session_id();
     sess_store(sid, "");
     ctx->cookies_in["LOOK_SESSION"] = sid;
@@ -1147,9 +1202,19 @@ static Module make_session_module(WebRef ctx) {
         std::string blob;
         auto it = ctx->cookies_in.find("LOOK_SESSION");
         if (it != ctx->cookies_in.end() && valid_sid(it->second)) {
-            blob = sess_load(it->second);   // mevcut veriyi al
-            sess_remove(it->second);        // eski session'ı geçersizleştir
+            const std::string old = it->second;
+            bool found = sess_load_if_exists(old, blob);   // mevcut veriyi al (bu arada yazılanlar dahil)
+            if (found) {
+                sess_mark_moved(old);       // önce işaret, sonra sil: eşzamanlı regenerate işareti görür
+                sess_remove(old);           // eski session'ı geçersizleştir
+            } else if (ctx->sess_snap_sid == old && sess_was_moved(old)) {
+                // Eşzamanlı bir regenerate eski kaydı bu istek başladıktan sonra taşıdı → isteğin
+                // başındaki kopya taşınır. destroy (çıkış) silmişse işaret yok → kopya KULLANILMAZ:
+                // çıkış geri alınmaz. Kopya yalnız istek başında var olan kimlikte doludur.
+                blob = ctx->sess_snap;
+            }
         }
+        ctx->sess_snap_sid.clear(); ctx->sess_snap.clear();
         std::string sid = gen_session_id();
         ctx->cookies_in["LOOK_SESSION"] = sid;
         ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
@@ -1217,6 +1282,7 @@ static Module make_session_module(WebRef ctx) {
         auto it = ctx->cookies_in.find("LOOK_SESSION");
         if (it != ctx->cookies_in.end() && valid_sid(it->second)) sess_remove(it->second);
         ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
+        ctx->sess_snap_sid.clear(); ctx->sess_snap.clear();   // çıkıştan sonra kopya taşınmaz
         ctx->set_cookies_out.push_back(
             std::string("LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly") + session_secure_attr(ctx) + "; SameSite=Lax");
         csrf_rotate_if_used(ctx);                   // çıkış: yeni CSRF tabanı
