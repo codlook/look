@@ -6,6 +6,7 @@
 // Mevcut --mode fcgi (default) hiç değişmez.
 // Aynı .lk kodu her iki modda çalışır.
 
+#include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/builtins.h"
 #include "look/route_group.h"
@@ -502,9 +503,7 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
     };
     t[BI("abs")] = [](std::vector<look::Value>& args) -> look::Value {
         if (args.empty()) return look::Value(0);
-        auto& v = args[0];
-        if (v.type() == look::Value::FLOAT) return look::Value(std::abs(v.as_float()));
-        return look::Value(std::abs(v.to_int()));
+        return look::num_abs(args[0]);   // look/num_ops.h (INT64_MIN tanımlı)
     };
     t[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
         if (args.size() < 2) return args.empty() ? look::Value() : args[0];

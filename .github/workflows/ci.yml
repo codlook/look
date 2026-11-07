@@ -1035,6 +1035,8 @@ jobs:
           build/lk tests/repro/regex_leak_check.lk
           build/lk tests/repro/file_root_traversal.lk
           build/lk tests/repro/msvc_mul_ovf.lk
+          # exact int/float comparison; abs(INT64_MIN), int(1e19), floor(1e300) defined (were UB)
+          bash tests/numeric_edges_test.sh build/lk
           # json::decode / request::json: Go encoding/json's verdict on 64 inputs; 100k keys linear
           bash tests/json_strict_test.sh build/lk
 

@@ -25,6 +25,13 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ./build-asan/lk tests/regression_all.lk
+      # Sayısal sınırlar UBSan altında: abs(INT64_MIN), aralık dışı double→int64 eskiden UB'ydi.
+      - name: Numeric edge cases under UBSan (no report)
+        working-directory: cpp
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: bash tests/numeric_edges_test.sh ./build-asan/lk
       # B-01 DÜZELTİLDİ (parser MAX_BINOP_CHAIN=1000): derin ikili zincir + derin paren artık
       # AST kurulmadan parser'da TEMİZ hata verir (çökme DEĞİL) — saldırgan-kontrollü derin girdi
       # DoS'u kapalı. continue-on-error KALDIRILDI → enforced (guard tetiklenmezse/çökerse CI kırmızı).

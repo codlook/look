@@ -1,3 +1,4 @@
+#include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
 #include "look/stdlib.h"
 #include "look/html_escape.h"
 #include "look/charset.h"
@@ -82,20 +83,21 @@ static Module make_math() {
     };
     m.functions["abs"] = [](auto args) {
         check_args("math::abs", args.size(), 1);
-        if (args[0].type() == Value::FLOAT) return Value(std::abs(args[0].as_float()));
-        return Value(std::abs(args[0].to_int()));
+        return num_abs(args[0]);      // look/num_ops.h: INT64_MIN → ondalık (eskiden UB)
     };
+    // floor/ceil/round: sığan sonuç tamsayı, sığmayan ondalık (eskiden (int64_t) dönüşümü UB:
+    // floor(1e300) → INT64_MIN). Tamsayı girdi olduğu gibi döner (2^53 üstünde kesinlik korunur).
     m.functions["floor"] = [](auto args) {
         check_args("math::floor", args.size(), 1);
-        return Value((int64_t)std::floor(args[0].to_float()));
+        return num_floor(args[0]);
     };
     m.functions["ceil"] = [](auto args) {
         check_args("math::ceil", args.size(), 1);
-        return Value((int64_t)std::ceil(args[0].to_float()));
+        return num_ceil(args[0]);
     };
     m.functions["round"] = [](auto args) {
         check_args("math::round", args.size(), 1);
-        return Value((int64_t)std::round(args[0].to_float()));
+        return num_round(args[0]);
     };
     m.functions["max"] = [](auto args) -> Value {
         if (args.size() == 1 && args[0].type() == Value::ARRAY) {

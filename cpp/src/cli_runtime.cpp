@@ -1,6 +1,7 @@
 // cli_runtime.cpp — komut satırı VM ortamı: yerleşik tablo + geri çağırma bağlamaları.
 // `lk` (main.cpp) ve `lk test` (test_runner.cpp) AYNI tabloyu kullanır — testler programın
 // gerçekte koştuğu ortamı sınar (LOOK 2 tek motor, adım 6).
+#include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
 #include "look/cli_runtime.h"
 #include "look/lexer.h"
 #include "look/parser.h"
@@ -58,7 +59,7 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
     b[9] = b[5];  // string alias
     b[22] = [](std::vector<Value>&) -> Value { return Value(); };  // route — CLI'da dispatch yok
     b[BI("strlen")] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? 0 : (int)a[0].to_string().size()); };
-    b[BI("abs")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); if (a[0].type()==Value::FLOAT) return Value(std::abs(a[0].as_float())); return Value(std::abs(a[0].to_int())); };
+    b[BI("abs")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return num_abs(a[0]); };   // look/num_ops.h
     b[BI("max")] = [](std::vector<Value>& a) -> Value { if (a.size()<2) return a.empty()?Value():a[0]; return a[0]>=a[1]?a[0]:a[1]; };
     b[BI("min")] = [](std::vector<Value>& a) -> Value { if (a.size()<2) return a.empty()?Value():a[0]; return a[0]<=a[1]?a[0]:a[1]; };
     b[BI("sqrt")] = [](std::vector<Value>& a) -> Value { return Value(a.empty()?0.0:std::sqrt(a[0].to_float())); };

@@ -78,7 +78,13 @@ double Value::to_float() const {
 int64_t Value::to_int() const {
     switch (type_) {
         case INT:    return int_val;
-        case FLOAT:  return (int64_t)float_val;
+        // Aralık dışı / NaN double → int64 dönüşümü C++'ta TANIMSIZ davranış (eskiden int(1e19) →
+        // INT64_MIN ölçüldü). Tanımlı sınırlama: NaN → 0, aralık dışı → en yakın sınır (Rust `as`).
+        case FLOAT:
+            if (std::isnan(float_val)) return 0;
+            if (float_val >= 9223372036854775808.0) return INT64_MAX;
+            if (float_val < -9223372036854775808.0) return INT64_MIN;
+            return (int64_t)float_val;
         case STRING: try { return std::stoll(str_ref()); } catch(...) { return 0; }
         case BOOL:   return bool_val ? 1 : 0;
         default:     return 0;
@@ -226,6 +232,34 @@ static bool vec_content_equal(const std::vector<Value>& a, const std::vector<Val
     }
     return true;
 }
+// Sayı ↔ sayı KESİN karşılaştırma: -1 / 0 / 1; NaN varsa unordered=true (hiçbir şeye eşit değil,
+// hiçbir sıralama doğru değil — IEEE / Go). int↔double karışık: double'ın tam kısmı int64 aralığındaysa
+// tamsayı olarak, kalan kesir ayrıca karşılaştırılır (Python modeli). ESKİ: karışık çift double'a
+// çevriliyordu → 2^53 üstünde kesinlik kaybı: 9007199254740993 == 9007199254740992.0 → true (ölçüldü).
+static int num_cmp(const Value& a, const Value& b, bool& unordered) {
+    unordered = false;
+    const bool ai = a.type() == Value::INT, bi = b.type() == Value::INT;
+    if (ai && bi) return a.as_int() < b.as_int() ? -1 : a.as_int() > b.as_int() ? 1 : 0;
+    if (!ai && !bi) {                                   // double ↔ double (bool → 0/1)
+        double x = a.to_float(), y = b.to_float();
+        if (std::isnan(x) || std::isnan(y)) { unordered = true; return 0; }
+        return x < y ? -1 : x > y ? 1 : 0;
+    }
+    const int64_t i = ai ? a.as_int() : b.as_int();
+    const double  d = ai ? b.to_float() : a.to_float();
+    int r;                                              // i ile d'nin karşılaştırması
+    if (std::isnan(d)) { unordered = true; return 0; }
+    if (d >= 9223372036854775808.0)       r = -1;      // d her int64'ten büyük (+Inf dahil)
+    else if (d < -9223372036854775808.0)  r = 1;       // d her int64'ten küçük (-Inf dahil)
+    else {
+        const double t = std::trunc(d);
+        const int64_t ti = (int64_t)t;                  // aralık içinde: tanımlı dönüşüm
+        if (i != ti) r = i < ti ? -1 : 1;
+        else { const double f = d - t; r = f > 0 ? -1 : f < 0 ? 1 : 0; }
+    }
+    return ai ? r : -r;
+}
+
 bool Value::operator==(const Value& o) const {
     bool a_num = val_is_number(type_), b_num = val_is_number(o.type_);
     if (a_num && b_num) {
@@ -233,9 +267,10 @@ bool Value::operator==(const Value& o) const {
         // ayrık int64'leri eşitler (9007199254740993==...992, INT64_MAX-1==INT64_MAX →
         // true) — hem dil-düzeyi == yanlışı (LOOK 1'de her iki motorda, differential-görünmez), hem
         // VM constant-pool dedup korupsiyonu (compiler.cpp dedup bu =='i kullanır → int
-        // literalleri çakışıp bozulur). Karışık int/float double kalır (kaçınılmaz).
+        // literalleri çakışıp bozulur). Karışık int/float da kesin (num_cmp).
         if (type_ == INT && o.type_ == INT) return int_val == o.int_val;
-        return to_float() == o.to_float();
+        bool un; int c = num_cmp(*this, o, un);
+        return !un && c == 0;
     }
     if (type_ != o.type_) return false;                     // farklı tür → asla eşit
     switch (type_) {
@@ -265,29 +300,29 @@ bool Value::operator==(const Value& o) const {
         "Incomparable types: '<'/'>' only for number↔number and string↔string — "
         "convert with int()/float()/string() before comparing different types");
 }
-// Sayısal sıralama: int↔int KESİN int64 (2^53 üstü ayrık int64 double'da eşitlenir →
-// yanlış sıralama, bkz operator==). Karışık int/float double.
+// Sayısal sıralama: int↔int ve karışık int/float KESİN (num_cmp; 2^53 üstü ayrık değerler
+// double'da eşitlenirdi). NaN ile her sıralama false (IEEE / Go).
 bool Value::operator<(const Value& o)  const {
     if (type_ == INT && o.type_ == INT) return int_val < o.int_val;
-    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() < o.to_float();
+    if (val_is_number(type_) && val_is_number(o.type_)) { bool un; int c = num_cmp(*this, o, un); return !un && c < 0; }
     if (type_ == STRING && o.type_ == STRING) return str_ref() < o.str_ref();
     cmp_type_error();
 }
 bool Value::operator<=(const Value& o) const {
     if (type_ == INT && o.type_ == INT) return int_val <= o.int_val;
-    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() <= o.to_float();
+    if (val_is_number(type_) && val_is_number(o.type_)) { bool un; int c = num_cmp(*this, o, un); return !un && c <= 0; }
     if (type_ == STRING && o.type_ == STRING) return str_ref() <= o.str_ref();
     cmp_type_error();
 }
 bool Value::operator>(const Value& o)  const {
     if (type_ == INT && o.type_ == INT) return int_val > o.int_val;
-    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() > o.to_float();
+    if (val_is_number(type_) && val_is_number(o.type_)) { bool un; int c = num_cmp(*this, o, un); return !un && c > 0; }
     if (type_ == STRING && o.type_ == STRING) return str_ref() > o.str_ref();
     cmp_type_error();
 }
 bool Value::operator>=(const Value& o) const {
     if (type_ == INT && o.type_ == INT) return int_val >= o.int_val;
-    if (val_is_number(type_) && val_is_number(o.type_)) return to_float() >= o.to_float();
+    if (val_is_number(type_) && val_is_number(o.type_)) { bool un; int c = num_cmp(*this, o, un); return !un && c >= 0; }
     if (type_ == STRING && o.type_ == STRING) return str_ref() >= o.str_ref();
     cmp_type_error();
 }
@@ -306,7 +341,10 @@ Value Value::shift_left(const Value& o)  const {
 }
 Value Value::shift_right(const Value& o) const {
     int64_t a = to_int(), n = o.to_int();
-    if (n < 0 || n >= 64) return Value((int64_t)0);
+    if (n < 0) return Value((int64_t)0);
+    // Aritmetik kaydırma: 63'ten büyük kaydırma işaret bitiyle dolar (Go: -8 >> 70 == -1). Eskiden 0
+    // dönüyordu — -8 >> 63 == -1 iken -8 >> 64 == 0 tutarsızdı.
+    if (n >= 64) return Value((int64_t)(a < 0 ? -1 : 0));
     return Value((int64_t)(a >> n));
 }
 
