@@ -1,0 +1,4 @@
+route("GET", "/", fn() => response::text("ok"))
+route("POST", "/", fn() => response::text("B[" . request::body() . "]"))
+route("OPTIONS", "/", fn() => response::text("ok"))
+route("GET", "/host", fn() => response::text("H[" . (request::header("host") ?? "") . "]"))

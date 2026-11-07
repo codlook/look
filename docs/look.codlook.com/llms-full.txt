@@ -3731,7 +3731,7 @@ A self-contained HTTP/HTTPS client — uses the system OpenSSL on Linux and Scha
 | http::stream($method, $url, $body, $headers, $callback [,$opts]) | **Streaming** — body chunks (chunked-decoded) delivered to $callback($chunk, $state) as they arrive; what the callback returns is the next $state. For SSE / live token streams (e.g. LLM APIs). |
 
 **$headers** — assoc array (optional): `["Authorization" => "Bearer token"]`
- **$opts** — assoc array (optional): `["timeout" => 5000]` (ms, default 10000) · `["follow" => true]` follows 3xx redirects (default off; each hop re-checks the SSRF guard) · `["max_redirects" => 5]` hop cap · `["proxy" => "http://host:port"]` routes through an HTTP proxy. On a cross-origin redirect, `Authorization`, `Cookie` and `Proxy-Authorization` are dropped before the request is re-sent, so an open redirect on a trusted host can't leak them. Responses are transparently gzip-decoded (bomb-guarded) and, when the Content-Type declares a supported single-byte charset (iso-8859-9, windows-1254, …), converted to UTF-8.
+ **$opts** — assoc array (optional): `["timeout" => 5000]` (ms, default 10000) · `["follow" => true]` follows 3xx redirects (default off; each hop re-checks the SSRF guard) · `["max_redirects" => 5]` hop cap · `["proxy" => "http://host:port"]` routes through an HTTP proxy (no port → 80; an `https://` proxy is refused — the connection to the proxy is plain HTTP). A `user:pass@` in the URL is sent as `Authorization: Basic` (percent-decoded; an `Authorization` header you pass wins); the `#fragment` is not sent. On a cross-origin redirect, `Authorization`, `Cookie` and `Proxy-Authorization` are dropped before the request is re-sent, so an open redirect on a trusted host can't leak them. Responses are transparently gzip-decoded (bomb-guarded) and, when the Content-Type declares a supported single-byte charset (iso-8859-9, windows-1254, …), converted to UTF-8.
 
 **Note on `proxy`:** when a proxy is set, the SSRF guard applies to the *proxy* address, not the final destination (the proxy resolves the target). If the request URL can be influenced by untrusted input, keep the destination on a trusted allow-list.
 
@@ -4394,6 +4394,9 @@ RewriteRule ^ fcgi://127.0.0.1:9000/index.lk [P,QSA,L]
 | SQLite | `sqlite://./data.db` or `sqlite://:memory:` | File or in-memory |
 | PostgreSQL | `postgres://user:password@127.0.0.1/dbname` | Protocol v3, MD5 auth |
 | PostgreSQL (port) | `postgres://user:password@host:5432/dbname` | Specify the port |
+| IPv6 address | `postgres://user:password@[::1]:5432/dbname` | The address in brackets |
+
+The `host:port` part follows the URL rules (as in Go's `net/url`): the port is digits only, from 1 to 65535; an empty port (`host:/db`) means the default; an IPv6 address goes in brackets. Anything else is an error that names the port — `db::connect(): invalid DSN: invalid port "3306x"` — and never shows the password. Options may follow the host directly: `mysql://user:pass@host:3306?tls=verify`. `LOOK_REDIS_URL` uses the same rules, and its database is digits only (`redis://host:6379/2`).
 
 ### Common Installation Problems
 
@@ -4539,7 +4542,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 | `LOOK_FCGI_BIND` | `127.0.0.1` | Bind address. Set to `0.0.0.0` (or `any`) to listen on all interfaces. |
 | `LOOK_HEALTH_PATH` | `/health` | Path that returns a plain health-check response. |
 | `LOOK_HTTP_IDLE_MS` | `30000` | Keep-alive idle timeout in ms — how long an idle connection is held open. In FastCGI TCP mode it is also how long a new connection may wait before sending its first request. |
-| `LOOK_HEADER_TIMEOUT` | `15000` | Max ms allowed to receive the full request headers (slow-loris guard). |
+| `LOOK_HEADER_TIMEOUT` | `15000` | Max ms allowed to receive the full request headers (slow-loris guard). The header block itself is limited to 1 MB and 500 fields (as in Go's `net/http`); over either → `431`. A malformed request gets its status before the connection closes: `400` (bad request line, header name or value, a missing or repeated `Host` on HTTP/1.1, bare LF, folded header, `Content-Length` with `Transfer-Encoding`), `501` (a `Transfer-Encoding` other than `chunked`), `505` (an HTTP version other than 1.x), `417` (an `Expect` other than `100-continue`). `Expect: 100-continue` is answered with `100 Continue` before the body is read. |
 | `LOOK_BODY_TIMEOUT` | `30000` | Max ms allowed to receive the full request body — the slow-body counterpart of the header guard (a full header + large `Content-Length` then a byte every few seconds would otherwise hold a worker forever). Applies to both `Content-Length` and chunked bodies; over the deadline → `408`. |
 | `LOOK_BODY_MIN_RATE` | *off* | Optional minimum average body throughput in **bytes/sec**, enforced after a 5 s grace. Off by default (the deadline above is the gentler guard that doesn't penalise large-but-fast uploads); set it for a stricter floor. Under the rate → `408`. |
 
@@ -6068,7 +6071,9 @@ File access is **sandboxed** to a root directory (`LOOK_FILE_ROOT`); paths can't
 |---|---|---|
 | `http::get() — URL required` (and `post/put/delete/patch`) | No URL (or body) passed. | Pass the URL; `post/put/patch` also need a body. |
 | `http:: Unsupported URL scheme: …` | Not `http`/`https`. | Use an `http(s)://` URL. |
-| `http:: Invalid IPv6 URL (missing closing ']'): …` | An IPv6 host wasn't bracketed. | Wrap the address: `http://[::1]:8080/`. |
+| `http:: invalid URL: …` | The port is not a number from 1 to 65535 (`invalid port "80x"`), or an IPv6 address is not in brackets (`must be in brackets`, `missing ']'`). An empty port (`http://host:/`) means the default port. | Write the port as digits only; wrap the address: `http://[::1]:8080/`. |
+| `db::connect(): invalid DSN: …` | Same rules for the `host:port` part of a database DSN. The message never contains the password. | `mysql://user:pass@db.example:3306/app`, `postgres://user:pass@[::1]:5432/app`. |
+| `Redis: invalid URL: …` / `Redis: invalid database number "…" in the URL` | Same rules for `LOOK_REDIS_URL`; the database is digits only (`redis://host:6379/2`). | Fix the URL; a session request gets `503` until it is valid. |
 | `http::stream() — the 5th arg (callback) must be a function` | The streaming callback wasn't a function. | Pass `function($chunk){ … }` as the 5th argument. |
 
 ---

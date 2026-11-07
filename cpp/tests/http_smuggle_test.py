@@ -22,9 +22,9 @@ def body_overshoot():
 CH = b"5\r\nhello\r\n0\r\n\r\n"
 cases = [
     (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"+CH, 200, "TE chunked gecerli"),
-    (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: xchunked\r\n\r\n"+CH, 400, "TE xchunked ret"),
-    (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunkedx\r\n\r\n"+CH, 400, "TE chunkedx ret"),
-    (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, gzip\r\n\r\n"+CH, 400, "TE chunked,gzip ret"),
+    (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: xchunked\r\n\r\n"+CH, 501, "TE xchunked ret (501, Go)"),
+    (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunkedx\r\n\r\n"+CH, 501, "TE chunkedx ret (501, Go)"),
+    (b"POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, gzip\r\n\r\n"+CH, 501, "TE chunked,gzip ret (501, Go)"),
     (b"POST /e HTTP/1.1\r\nHost: x\r\nContent-Length : 5\r\n\r\nhello", 0, "CL bosluk-once-kolon ret"),
     (b"POST /e HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello", 200, "CL 5 gecerli"),
     (b"POST /e HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n 6\r\n\r\nhello!", 0, "obs-fold CL ret"),

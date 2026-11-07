@@ -189,8 +189,12 @@ req http GET /info "" "" "" "" >/dev/null;   is "plain request" "$(cat "$T/b")" 
 curl -s -o "$T/b" -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: x.example" "$BASE/info"
 is "X-Forwarded-* from an untrusted client is ignored" "$(cat "$T/b")" "http|127.0.0.1:$P"
 curl -s -o "$T/b" -H "Host: Shop.Example.COM:8080" "$BASE/info"; is "host is lower case, port kept" "$(cat "$T/b")" "http|shop.example.com:8080"
-curl -s -o "$T/b" -H "Host: evil.example/x" "$BASE/info";        is "a host with a path is not a host" "$(cat "$T/b")" "http|"
-curl -s -o "$T/b" -H "Host: a@b" "$BASE/info";                    is "a host with @ is not a host" "$(cat "$T/b")" "http|"
+# HTTP kipi: geçersiz Host isteği uygulamaya ulaşmadan 400 (Go net/http gibi, http_parse.h).
+is "HTTP: a host with a path is refused (400)" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example/x" "$BASE/info")" 400
+is "HTTP: a host with @ is refused (400)"      "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: a@b" "$BASE/info")" 400
+# FastCGI: Host'u vekil iletir, ayrıştırıcı görmez → request::host kendi denetimini yapmalı.
+is "FastCGI: a host with a path is not a host" "$(python3 "$T/fcgi.py" $FP REQUEST_METHOD=GET REQUEST_URI=/info SCRIPT_FILENAME="$T/app.lk" HTTP_HOST=evil.example/x | tr -d '\r' | sed '1,/^$/d')" "http|"
+is "FastCGI: a host with @ is not a host"      "$(python3 "$T/fcgi.py" $FP REQUEST_METHOD=GET REQUEST_URI=/info SCRIPT_FILENAME="$T/app.lk" HTTP_HOST=a@b | tr -d '\r' | sed '1,/^$/d')" "http|"
 is "FastCGI: HTTPS=on and HTTP_HOST" "$(python3 "$T/fcgi.py" $FP REQUEST_METHOD=GET REQUEST_URI=/info SCRIPT_FILENAME="$T/app.lk" HTTPS=on HTTP_HOST=Site.Example:8443 | tr -d '\r' | sed '1,/^$/d')" "https|site.example:8443"
 is "FastCGI: X-Forwarded-Host from the client is ignored" "$(python3 "$T/fcgi.py" $FP REQUEST_METHOD=GET REQUEST_URI=/info SCRIPT_FILENAME="$T/app.lk" HTTP_HOST=site.example HTTP_X_FORWARDED_HOST=evil.example HTTP_X_FORWARDED_PROTO=https | tr -d '\r' | sed '1,/^$/d')" "http|site.example"
 cg() { (cd "$T" && env -i PATH=/usr/bin:/bin REQUEST_METHOD=GET SCRIPT_FILENAME="$T/app.lk" PATH_INFO=/info REQUEST_URI=/info \

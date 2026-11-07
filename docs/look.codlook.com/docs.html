@@ -3662,7 +3662,7 @@ look install github.com/Codlook/look-packages
   <strong>$opts</strong> — assoc array (optional): <code>["timeout" => 5000]</code> (ms, default 10000) ·
   <code>["follow" => true]</code> follows 3xx redirects (default off; each hop re-checks the SSRF guard) ·
   <code>["max_redirects" => 5]</code> hop cap ·
-  <code>["proxy" => "http://host:port"]</code> routes the request through an HTTP proxy.
+  <code>["proxy" => "http://host:port"]</code> routes the request through an HTTP proxy (no port → 80; an <code>https://</code> proxy is refused — the connection to the proxy is plain HTTP). A <code>user:pass@</code> in the URL is sent as <code>Authorization: Basic</code> (percent-decoded; an <code>Authorization</code> header you pass wins); the <code>#fragment</code> is not sent.
   On a cross-origin redirect, <code>Authorization</code>, <code>Cookie</code> and <code>Proxy-Authorization</code>
   headers are dropped before the request is re-sent, so an open redirect on a trusted host can't leak them.
   Responses are transparently gzip-decoded (bomb-guarded) and, when the Content-Type declares a supported
@@ -4403,7 +4403,9 @@ RewriteRule ^ fcgi://127.0.0.1:9000/index.lk [P,QSA,L]</code></pre>
     <tr><td>SQLite</td><td><code>sqlite://./data.db</code> or <code>sqlite://:memory:</code></td><td>File or in-memory</td></tr>
     <tr><td>PostgreSQL</td><td><code>postgres://user:password@127.0.0.1/dbname</code></td><td>Protocol v3, MD5 auth</td></tr>
     <tr><td>PostgreSQL (port)</td><td><code>postgres://user:password@host:5432/dbname</code></td><td>Specify the port</td></tr>
+    <tr><td>IPv6 address</td><td><code>postgres://user:password@[::1]:5432/dbname</code></td><td>The address in brackets</td></tr>
   </table>
+  <p>The <code>host:port</code> part follows the URL rules (as in Go's <code>net/url</code>): the port is digits only, from 1 to 65535; an empty port (<code>host:/db</code>) means the default; an IPv6 address goes in brackets. Anything else is an error that names the port — <code>db::connect(): invalid DSN: invalid port "3306x"</code> — and never shows the password. Options may follow the host directly: <code>mysql://user:pass@host:3306?tls=verify</code>. <code>LOOK_REDIS_URL</code> uses the same rules, and its database is digits only (<code>redis://host:6379/2</code>).</p>
 
   <h3>Common Installation Problems</h3>
   <table>
@@ -4535,7 +4537,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
     <tr><td><code>LOOK_FCGI_BIND</code></td><td><code>127.0.0.1</code></td><td>Bind address. Set to <code>0.0.0.0</code> (or <code>any</code>) to listen on all interfaces.</td></tr>
     <tr><td><code>LOOK_HEALTH_PATH</code></td><td><code>/health</code></td><td>Path that returns a plain health-check response.</td></tr>
     <tr><td><code>LOOK_HTTP_IDLE_MS</code></td><td><code>30000</code></td><td>Keep-alive idle timeout in ms — how long an idle connection is held open. In FastCGI TCP mode it is also how long a new connection may wait before sending its first request.</td></tr>
-    <tr><td><code>LOOK_HEADER_TIMEOUT</code></td><td><code>15000</code></td><td>Max ms allowed to receive the full request headers (slow-loris guard).</td></tr>
+    <tr><td><code>LOOK_HEADER_TIMEOUT</code></td><td><code>15000</code></td><td>Max ms allowed to receive the full request headers (slow-loris guard). The header block itself is limited to 1&nbsp;MB and 500 fields (as in Go's <code>net/http</code>); over either → <code>431</code>. A malformed request gets its status before the connection closes: <code>400</code> (bad request line, header name or value, a missing or repeated <code>Host</code> on HTTP/1.1, bare LF, folded header, <code>Content-Length</code> with <code>Transfer-Encoding</code>), <code>501</code> (a <code>Transfer-Encoding</code> other than <code>chunked</code>), <code>505</code> (an HTTP version other than 1.x), <code>417</code> (an <code>Expect</code> other than <code>100-continue</code>). <code>Expect: 100-continue</code> is answered with <code>100 Continue</code> before the body is read.</td></tr>
     <tr><td><code>LOOK_BODY_TIMEOUT</code></td><td><code>30000</code></td><td>Max ms allowed to receive the full request body — the slow-body counterpart of the header guard (a full header + large <code>Content-Length</code> then a byte every few seconds would otherwise hold a worker forever). Applies to both <code>Content-Length</code> and chunked bodies; over the deadline → <code>408</code>.</td></tr>
     <tr><td><code>LOOK_BODY_MIN_RATE</code></td><td><em>off</em></td><td>Optional minimum average body throughput in <strong>bytes/sec</strong>, enforced after a 5&nbsp;s grace. Off by default (the deadline above is the gentler guard that doesn't penalise large-but-fast uploads); set it for a stricter floor. Under the rate → <code>408</code>.</td></tr>
   </table>

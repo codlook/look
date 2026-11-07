@@ -174,7 +174,9 @@ File access is **sandboxed** to a root directory (`LOOK_FILE_ROOT`); paths can't
 |---|---|---|
 | `http::get() — URL required` (and `post/put/delete/patch`) | No URL (or body) passed. | Pass the URL; `post/put/patch` also need a body. |
 | `http:: Unsupported URL scheme: …` | Not `http`/`https`. | Use an `http(s)://` URL. |
-| `http:: Invalid IPv6 URL (missing closing ']'): …` | An IPv6 host wasn't bracketed. | Wrap the address: `http://[::1]:8080/`. |
+| `http:: invalid URL: …` | The port is not a number from 1 to 65535 (`invalid port "80x"`), or an IPv6 address is not in brackets (`must be in brackets`, `missing ']'`). An empty port (`http://host:/`) means the default port. | Write the port as digits only; wrap the address: `http://[::1]:8080/`. |
+| `db::connect(): invalid DSN: …` | Same rules for the `host:port` part of a database DSN. The message never contains the password. | `mysql://user:pass@db.example:3306/app`, `postgres://user:pass@[::1]:5432/app`. |
+| `Redis: invalid URL: …` / `Redis: invalid database number "…" in the URL` | Same rules for `LOOK_REDIS_URL`; the database is digits only (`redis://host:6379/2`). | Fix the URL; a session request gets `503` until it is valid. |
 | `http::stream() — the 5th arg (callback) must be a function` | The streaming callback wasn't a function. | Pass `function($chunk){ … }` as the 5th argument. |
 
 ---

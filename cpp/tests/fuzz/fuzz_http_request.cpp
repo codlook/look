@@ -16,7 +16,7 @@
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     std::string raw(reinterpret_cast<const char*>(data), size);
     look::HttpRequest req;
-    volatile bool ok = look::http_parse_request(raw, req);  // volatile: optimize-away engelle
+    volatile int ok = look::http_parse_request(raw, req);  // volatile: optimize-away engelle
     (void)ok;
     return 0;
 }

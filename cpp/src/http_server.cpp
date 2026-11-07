@@ -93,7 +93,7 @@ bool http_fiber_dispatch_enabled() { return fiber_dispatch_on(); }
 // Saf ayrıştırma mantığı look/http_parse.h'ye taşındı (fuzz + test hedefi, drift
 // yok). Buradaki thin wrapper mevcut çağrı yerlerini korur.
 
-static bool parse_request(const std::string& raw, HttpRequest& req) {
+static int parse_request(const std::string& raw, HttpRequest& req) {
     return http_parse_request(raw, req);
 }
 
@@ -449,6 +449,10 @@ struct HttpServer::Impl {
                 if (!refill()) { send_simple(fd, timed_out ? 408 : 400, timed_out ? "Request Timeout" : "Bad Request"); return false; }
             }
             std::string sizeline = stream.substr(p, nl - p);
+            // chunk-ext dahil satırda kontrol karakteri yok (HTAB hariç). Eskiden ext atılmadan önce
+            // bakılmıyordu: "3;a\nb\r\n" kabul ediliyordu — çıplak LF'yi satır sonu sayan bir vekil
+            // aynı akışı farklı çerçeveler (smuggling). Başlık bloğundaki katı CRLF kuralının aynısı.
+            if (!http_field_value_ok(sizeline)) { send_simple(fd, 400, "Bad Request"); return false; }
             size_t semi = sizeline.find(';');            // chunk-ext'i at
             if (semi != std::string::npos) sizeline = sizeline.substr(0, semi);
             // hex parse (katı)
@@ -482,6 +486,7 @@ struct HttpServer::Impl {
         // sonraki isteğin sınırı doğru olsun diye akıştan tüketilir.
         // Bağlantı boş satırdan önce kapanırsa istek EKSİKTİR → 400 (eskiden kabul ediliyordu:
         // "0\r\n" + EOF tam istek sayılıyordu; önündeki bir vekil bunu başka çerçeveleyebilir).
+        size_t trailers = 0;
         while (true) {
             size_t nl2 = stream.find("\r\n", p);
             if (nl2 == std::string::npos) {
@@ -490,6 +495,17 @@ struct HttpServer::Impl {
                 continue;
             }
             if (nl2 == p) { p += 2; break; }             // boş satır → gövde bitti
+            // Trailer = başlık alanı kuralları (Go textproto): "ad: değer", ad token, değerde CTL yok.
+            // Eskiden satır bakılmadan atlanıyordu (çıplak LF, ':'siz satır geçiyordu).
+            {
+                std::string tl = stream.substr(p, nl2 - p);
+                size_t tc = tl.find(':');
+                if (tc == std::string::npos || !http_token(tl.substr(0, tc)) ||
+                    !http_field_value_ok(tl.substr(tc + 1))) {
+                    send_simple(fd, 400, "Bad Request"); return false;
+                }
+            }
+            if (++trailers > HTTP_MAX_HEADER_FIELDS) { send_simple(fd, 431, "Request Header Fields Too Large"); return false; }
             p = nl2 + 2;                                  // trailer satırını atla
         }
         rest.assign(stream, p, std::string::npos);
@@ -579,7 +595,12 @@ struct HttpServer::Impl {
                 if (rd_start == std::chrono::steady_clock::time_point{})
                     rd_start = std::chrono::steady_clock::now();
                 buf.append(tmp, (size_t)r);
-                if (buf.size() > 2 * 1024 * 1024) { ::close(fd); return; }
+                // Go MaxHeaderBytes (1 MB) → 431. Eskiden 2 MB'ta yanıtsız kapatılıyordu. Döngü tavanı
+                // bir okuma payı geniş (son okuma gövdenin başını da getirebilir); kesin sınırı
+                // ayrıştırıcı başlık sonuna göre uygular.
+                if (buf.size() > HTTP_MAX_HEADER_BYTES + sizeof(tmp)) {
+                    send_simple(fd, 431, "Request Header Fields Too Large"); ::close(fd); return;
+                }
                 if (std::chrono::steady_clock::now() - rd_start > HDR_TMO) {
                     send_simple(fd, 408, "Request Timeout"); ::close(fd); return;
                 }
@@ -587,7 +608,11 @@ struct HttpServer::Impl {
 
             HttpRequest req;
             req.remote_addr = remote_addr;
-            if (!parse_request(buf, req)) { ::close(fd); return; }
+            // Reddedilen istek: Go gibi durum yanıtı yaz, sonra kapat (eskiden yanıtsız kapatılıyordu —
+            // istemci ve vekil yalnız "bağlantı kesildi" görüyordu, neden 400 olduğu bilinmiyordu).
+            if (int st = parse_request(buf, req)) {
+                send_simple(fd, st, http_status_reason(st)); ::close(fd); return;
+            }
 
             size_t header_end  = hdr_pos + 4;
             size_t body_in_buf = buf.size() - header_end;
@@ -596,8 +621,24 @@ struct HttpServer::Impl {
 
             // HTTP Request Smuggling koruması: Content-Length ve Transfer-Encoding
             // aynı anda gelirse istek belirsizdir (RFC 7230 §3.3.3) — katı ret.
+            // (Go burada Content-Length'i silip devam eder; biz katı kalırız — smuggling savunması.)
             if (te_it != req.headers.end() && clen_it != req.headers.end()) {
                 send_simple(fd, 400, "Bad Request"); ::close(fd); return;
+            }
+
+            // Expect (RFC 9110 §10.1.1, Go): "100-continue" → gövde okunmadan önce "100 Continue"
+            // (eskiden yazılmıyordu: curl gibi istemciler gövdeyi göndermeden önce ~1 sn bekliyordu);
+            // bilinmeyen beklenti → 417. 100 yalnız HTTP/1.1'de ve gövde henüz gelmemişse yazılır.
+            static const char k100[] = "HTTP/1.1 100 Continue\r\n\r\n";
+            bool want_continue = false;
+            {
+                auto ex = req.headers.find("expect");
+                if (ex != req.headers.end()) {
+                    std::string ev = ex->second;
+                    std::transform(ev.begin(), ev.end(), ev.begin(), ::tolower);
+                    if (ev != "100-continue") { send_simple(fd, 417, "Expectation Failed"); ::close(fd); return; }
+                    want_continue = (req.version == "HTTP/1.1");
+                }
             }
 
             // ── Transfer-Encoding: chunked gövde çözme ────────────────────────
@@ -610,9 +651,13 @@ struct HttpServer::Impl {
                 // 200/blen=5). Bir front-end bunları farklı çerçevelerse desync
                 // (request smuggling). LOOK yalnız chunked destekler → TAM eşleşme:
                 // değer birebir "chunked" değilse reddet (gzip/compress zaten çözülemez).
+                // Desteklenmeyen kodlama: Go gibi 501 (eskiden 400 — istek bozuk değil, sunucu
+                // o kodlamayı desteklemiyor).
                 if (te != "chunked") {
-                    send_simple(fd, 400, "Bad Request"); ::close(fd); return;
+                    send_simple(fd, 501, "Not Implemented"); ::close(fd); return;
                 }
+                if (want_continue && body_in_buf == 0 &&
+                    !send_all(fd, k100, sizeof(k100) - 1, (int)idle_ms)) { ::close(fd); return; }
                 if (!read_chunked_body(fd, buf, header_end, tmp, sizeof(tmp), req.body, carry)) {
                     // malformed chunk veya body cap aşımı → read_chunked_body yanıtı gönderdi
                     ::close(fd); return;
@@ -635,6 +680,8 @@ struct HttpServer::Impl {
                 if (content_len > max_body_size()) {
                     send_simple(fd, 413, "Payload Too Large"); ::close(fd); return;
                 }
+                if (want_continue && body_in_buf < content_len &&
+                    !send_all(fd, k100, sizeof(k100) - 1, (int)idle_ms)) { ::close(fd); return; }
                 if (body_in_buf > 0)
                     req.body = buf.substr(header_end,
                                           std::min(body_in_buf, content_len));
@@ -686,6 +733,17 @@ struct HttpServer::Impl {
                     if (cv.find("close")      != std::string::npos) req_keep_alive = false;
                     if (cv.find("keep-alive") != std::string::npos) req_keep_alive = true;
                 }
+            }
+
+            // "OPTIONS *" (sunucunun kendisi hakkında; ayrıştırıcı '*'ı yalnız OPTIONS'ta kabul eder):
+            // Go globalOptionsHandler gibi uygulamaya gitmeden 200, gövdesiz. Eskiden "*" yolu rota
+            // aranıp 404 dönüyordu.
+            if (req.path == "*") {
+                HttpResponse o;
+                o.keep_alive = req_keep_alive;
+                std::string raw = o.build();
+                if (!send_all(fd, raw.data(), raw.size(), (int)idle_ms) || !o.keep_alive) { ::close(fd); return; }
+                continue;
             }
 
             // Dispatch — worker thread doğrudan işler

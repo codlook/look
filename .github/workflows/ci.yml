@@ -982,6 +982,16 @@ jobs:
           bash tests/http_slowloris_test.sh build/lk-fcgi 7622
           # pipelined requests answered in order; unterminated chunked trailer 400; linear header scan
           bash tests/http_pipelining_test.sh build/lk-fcgi
+          # RFC 9112 boundary table (Go net/http as the reference; fiber + pool); rejected requests get a status
+          bash tests/http_rfc9112_test.sh build/lk-fcgi 7796
+
+      # host[:port] parsing (Go net/url model) for DSN, Redis URL, http:: URL, --port, *_PORT
+      - name: "host:port parsing — table + http:: URLs (userinfo, query without a path, IPv6)"
+        run: |
+          cd cpp
+          g++ -std=c++17 -Iinclude tests/host_port_test.cpp -o /tmp/host_port_test
+          /tmp/host_port_test
+          bash tests/http_client_url_test.sh ./build/lk 7797
 
       # SSE sse::close() fd-sızıntısı — bug-avı bulgusu (957d11e). Sunucu sse::close çağırınca
       # fd/epoll/map istemci TCP-kopana kadar sızıyordu (+ soket kapanmadığı için istemci asılı).
@@ -1487,6 +1497,12 @@ jobs:
         run: |
           cd cpp
           bash tests/mysql_result_integrity_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci"
+      # db::connect address: bad port is an error naming it (no password), empty port = default,
+      # [::1] connects (MySQL/PG used to resolve IPv4 only), "host:3306?tls=" keeps its options.
+      - name: "DSN address — ports, IPv6, options without a path (live MySQL 8 + PostgreSQL 16)"
+        run: |
+          cd cpp
+          bash tests/db_dsn_address_test.sh ./build/lk "mysql://root:rootpw@127.0.0.1:3306/lookci" "postgres://lookci:lookci@127.0.0.1:5432/lookci"
       # A PostgreSQL query goes out in one send and replies are read through a buffer; results must
       # stay exact: 1 MB values, results spanning many buffers, failing queries, a terminated
       # connection, concurrent web requests.
@@ -1547,6 +1563,8 @@ jobs:
           # A pooled connection Redis closed (restart, timeout, CLIENT KILL) is replaced before use
           bash tests/redis_session_restart_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
           bash tests/session_destroy_race_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
+          # LOOK_REDIS_URL: bad port / database number is an error; /2 is used; [::1] connects
+          bash tests/redis_url_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
       # A session is at most LOOK_SESSION_MAX_BYTES (1 MB): over it session::set is an error,
       # nothing is written or cut. Same rule for the file and the Redis driver.
       - name: "Session size limit (file driver, and Redis on live redis:7)"

@@ -75,7 +75,7 @@ s.sendall(b"POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n
 r = read_responses(s, 1); s.close()
 (ok if r and r[0].startswith("400") else bad)("a chunked body whose trailer never ends is refused: %s" % r)
 
-# 1.9 MB başlık küçük, aralıklı parçalarla (her parça ayrı recv): SUNUCUNUN CPU süresi doğrusal olmalı
+# 1000 KB başlık (1 MB sınırının hemen altı — üstü 431 ile kesilir) küçük, aralıklı parçalarla (her parça ayrı recv): SUNUCUNUN CPU süresi doğrusal olmalı
 def cpu(pid):
     f = open("/proc/%d/stat" % pid).read().rsplit(")", 1)[1].split()
     return (int(f[11]) + int(f[12])) / float(__import__("os").sysconf("SC_CLK_TCK"))
@@ -83,13 +83,14 @@ spid = int(sys.argv[2]); c0 = cpu(spid)
 s = conn()
 s.sendall(b"GET /a HTTP/1.1\r\nHost: x\r\n")
 piece = b"a:\r\n" * 32   # kısa başlık satırları: her 4 baytta bir \r → tarama memchr ile atlayamaz
-for i in range(1900 * 1024 // 128):
+for i in range(1000 * 1024 // 128):
     s.send(piece)
     time.sleep(0.0001)
 s.sendall(b"\r\n")
 r = read_responses(s, 1); s.close(); dc = cpu(spid) - c0
-# Yanıt 200 ya da başlık-sayısı reddi olabilir; ölçülen sunucunun harcadığı CPU
-(ok if dc < 1.0 else bad)("a 1.9 MB header of short lines in small pieces costs the server %.2f CPU s (%s)" % (dc, r))
+# Yanıt 431 (500 alan sınırı) — ölçülen, tüm başlığı alana dek sunucunun harcadığı CPU. Doğrusal ~0.1 s;
+# eski karesel tarama bu boyutta ~0.75 s (2 MB'ta ~3 s) → eşik 0.4 eski hatayı hâlâ yakalar.
+(ok if dc < 0.4 else bad)("a 1000 KB header of short lines in small pieces costs the server %.2f CPU s (%s)" % (dc, r))
 sys.exit(fail)
 PY
 rc=$?

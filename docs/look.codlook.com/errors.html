@@ -794,11 +794,11 @@ http::get("ftp://host/f")
 <span class="eg-good"># ✓ fix</span>
 http::get("https://host/f")</code></pre>
     </div>
-    <div class="err" id="e56" data-cat="HTTP client (http::)" data-text="http:: invalid ipv6 url (missing closing ']'): … an ipv6 host wasn't bracketed. wrap the address: http://[::1]:8080/.">
-      <div class="err-msg"><code>http:: Invalid IPv6 URL (missing closing ']'): …</code></div>
+    <div class="err" id="e56" data-cat="HTTP client (http::)" data-text="http:: invalid url: … the port is not a number from 1 to 65535, or an ipv6 address is not in brackets. write the port as digits only; wrap the address: http://[::1]:8080/.">
+      <div class="err-msg"><code>http:: invalid URL: …</code></div>
       <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> An IPv6 host wasn't bracketed.</p>
-        <p><span class="err-lbl err-lbl-fix">Fix</span> Wrap the address: <code>http://[::1]:8080/</code>.</p>
+        <p><span class="err-lbl">Cause</span> The port is not a number from 1 to 65535 (<code>invalid port "80x"</code>), or an IPv6 address is not in brackets (<code>must be in brackets</code>, <code>missing ']'</code>). An empty port (<code>http://host:/</code>) means the default port.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Write the port as digits only; wrap the address: <code>http://[::1]:8080/</code>.</p>
       </div>
       <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
 http::get("http://::1:8080/")   # unbracketed
