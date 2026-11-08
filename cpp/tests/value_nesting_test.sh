@@ -62,6 +62,15 @@ run "1000 levels work" '$a = deep(1000); $b = deep(1000); cache::set("k", $a); p
 run "1001 levels error" '$a = deep(1001); print(try_it(fn() => "" . $a))' "$NE"
 run "shallow values unchanged" 'print("" . [1, [2, "x"], ["k" => 3]] . " " . ([1, [2]] == [1, [2]]) . " " . ([1, [2]] == [1, [3]]))' "[1, [2, x], [__assoc__, k, 3]] true false"
 
+# json::encode: same limit, and nothing below it is cut. Before, levels past 256 were silently
+# written as null — the client received damaged data with no error.
+run "json::encode 1M levels"          "$D print(try_it(fn() => json::encode(\$a)))"     "$NE"
+run "json::encode 300 levels is whole" '$s = json::encode(deep(300)); print((string::contains($s, "null") ? "cut " : "whole ") . strlen($s))' "whole 601"
+run "json::encode 1000 levels works"  'print(strlen(json::encode(deep(1000))))'           "2001"
+run "json::encode 1001 levels error"  'print(try_it(fn() => json::encode(deep(1001))))'   "$NE"
+run "json::encode shallow unchanged"  'struct P { name string, n int }
+print(json::encode(["a" => [1, 2.5, "x", null, true], "p" => P{name: "Ada", n: 3}]))' '{"a":[1,2.5,"x",null,true],"p":{"name":"Ada","n":3}}'
+
 # array::flatten: no limit, same order and depth argument as before.
 run "flatten 1M levels" '$a = [1]; for ($i = 0; $i < 1000000; $i = $i + 1) { $a = [$a, 2] } $f = array::flatten($a); print(count($f) . " " . $f[0] . " " . $f[1])' "1000001 1 2"
 run "flatten order and depth" 'print(json::encode(array::flatten([1, [2, [3, [4]]], 5])) . " " . json::encode(array::flatten([1, [2, [3, [4]]], 5], 1)) . " " . json::encode(array::flatten([1, [2, [3]]], 0)))' '[1,2,3,4,5] [1,2,[3,[4]],5] [1,[2,[3]]]'
@@ -73,16 +82,17 @@ cat > app.lk <<'LK'
 function deep($n) { $a = 1; for ($i = 0; $i < $n; $i = $i + 1) { $a = [$a] } return $a }
 route("GET", "/show", function() { return response::text("" . deep(1000000)) })
 route("GET", "/eq", function() { return response::text("" . (deep(1000000) == deep(1000000))) })
+route("GET", "/json", function() { return response::json(["x" => deep(2000)]) })
 route("GET", "/ok", fn() => response::text("alive"))
 LK
 for mode in "" "LOOK_FIBER_DISPATCH=0"; do
     ( exec env $mode "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > log.txt 2>&1 ) & pid=$!
     for i in $(seq 1 50); do curl -s -o /dev/null -m 1 "localhost:$PORT/ok" && break; sleep 0.1; done
-    got=""; for p in show eq ok; do got="$got $(curl -s -m 60 -o /dev/null -w '%{http_code}' "localhost:$PORT/$p")"; done
+    got=""; for p in show eq json ok; do got="$got $(curl -s -m 60 -o /dev/null -w '%{http_code}' "localhost:$PORT/$p")"; done
     up=no; kill -0 "$pid" 2>/dev/null && up=yes
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""
-    [ "$got" = " 500 500 200" ] && [ $up = yes ] && ok "[${mode:-default}] server: deep value is a clean 500, server up" \
-        || bad "[${mode:-default}] server: show/eq/ok -> [$got ] up: $up"
+    [ "$got" = " 500 500 500 200" ] && [ $up = yes ] && ok "[${mode:-default}] server: deep value is a clean 500, server up" \
+        || bad "[${mode:-default}] server: show/eq/json/ok -> [$got ] up: $up"
 done
 
 [ $fail = 0 ] && echo "PASS: walking a deeply nested value ends in a clean error, never a crash" || { echo "FAIL: value nesting"; exit 1; }

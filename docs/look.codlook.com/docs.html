@@ -1633,7 +1633,8 @@ Stack trace:
     escape (<code>"\x"</code>), a raw control character inside a string, a number too large for a float
     (<code>1e999</code>). A server and a proxy in front of it therefore read a body the same way. A duplicated
     key keeps its first position and takes the last value. An unpaired UTF-16 surrogate (<code>"\ud800"</code>)
-    becomes U+FFFD. Nesting deeper than 256 levels is <code>null</code>.</p>
+    becomes U+FFFD. Nesting deeper than 256 levels is <code>null</code>. <code>json::encode</code> writes a value up to
+    1000 levels deep in full; a deeper one is an error ("Value nested too deeply"), it is never cut.</p>
   </div>
 </section>
 

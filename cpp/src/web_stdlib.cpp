@@ -76,10 +76,11 @@ static std::string json_encode_string(const std::string& s) {
 }
 
 static std::string json_encode(const Value& v, int depth) {
-    // Cycle/derinlik guard — LOOK dizileri referans tipi (shared_ptr); `$a[0]=$a`
-    // ile kendine-referanslı yapı kurulabilir → decode'da guard vardı ama encode'da
-    // YOKTU → sonsuz özyineleme → SIGSEGV/worker crash. 256 derinlikte kes.
-    if (depth > 256) return "null";
+    // Derinlik: dizi dalında dilin ortak sınırı (NestingGuard, LOOK_MAX_NESTING = 1000) → açık,
+    // yakalanabilir hata; bir döngüsel yapı da aynı hatayla biter. ESKİ: 256'dan derini sessizce
+    // "null" yazıyordu — veri istemciye bozuk gidiyordu (Go json.Marshal bir değeri asla sessizce
+    // düşürmez; PHP json_encode derinlik aşımında hata). `depth` yalnız imza uyumu için kaldı.
+    (void)depth;
     switch (v.type()) {
         case Value::INT:    return std::to_string(v.as_int());
         case Value::FLOAT:  {
@@ -97,6 +98,7 @@ static std::string json_encode(const Value& v, int depth) {
         // LOOK 2: struct → alan adlarıyla nesne (bildirim sırası).
         case Value::STRUCT: return json_encode(look::struct_to_map(v), depth);
         case Value::ARRAY: {
+            NestingGuard g;
             auto& arr = *v.as_array();
             // Associative array / struct: ["__assoc__", k0, v0, k1, v1, ...]
             if (!arr.empty() && arr[0].type() == Value::STRING &&
