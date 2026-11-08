@@ -15,7 +15,9 @@ namespace look {
 // Derinlik eşiği geçince elemanlar yıkılmaz, listeye TAŞINIR (vektör taşıma O(1)); en dıştaki
 // bırakma (derinlik 0) listeyi döngüyle boşaltır. Liste işaretçi + talep üzerine (thread_local
 // nesne değil): iş parçacığı kapanırken thread_local yıkım sırası, sonradan yıkılan değerlerin
-// ölmüş bir listeye yazmasına yol açabilirdi. Askı yok: yıkım sırasında fiber geçişi olmaz.
+// ölmüş bir listeye yazmasına yol açabilirdi.
+// fiber-ok: yıkım askıya girmez — sayaç ve liste aynı eşzamanlı bırakmanın içinde yazılıp okunur,
+// arada bekleme yok; bırakma bitince sayaç yine 0, liste boş.
 static constexpr int DROP_INLINE_DEPTH = 256;
 static thread_local int t_drop_depth = 0;
 static thread_local std::vector<std::vector<Value>>* t_drop_later = nullptr;
