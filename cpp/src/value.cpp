@@ -11,6 +11,48 @@
 
 namespace look {
 
+// ── Özyinelemesiz bırakma (ValueArray / Closure yıkıcısı) ─────────────────────
+// Derinlik eşiği geçince elemanlar yıkılmaz, listeye TAŞINIR (vektör taşıma O(1)); en dıştaki
+// bırakma (derinlik 0) listeyi döngüyle boşaltır. Liste işaretçi + talep üzerine (thread_local
+// nesne değil): iş parçacığı kapanırken thread_local yıkım sırası, sonradan yıkılan değerlerin
+// ölmüş bir listeye yazmasına yol açabilirdi. Askı yok: yıkım sırasında fiber geçişi olmaz.
+static constexpr int DROP_INLINE_DEPTH = 256;
+static thread_local int t_drop_depth = 0;
+static thread_local std::vector<std::vector<Value>>* t_drop_later = nullptr;
+
+// Nadir yollar satır dışı: içe gömülünce sıcak yol 6 yazmaç kaydetmeye başlıyordu (objdump).
+#if defined(_MSC_VER)
+#  define LOOK_COLD_FN __declspec(noinline)
+#else
+#  define LOOK_COLD_FN __attribute__((noinline, cold))
+#endif
+
+LOOK_COLD_FN static void drain_deferred() noexcept {
+    while (!t_drop_later->empty()) {
+        std::vector<Value> v = std::move(t_drop_later->back());
+        t_drop_later->pop_back();
+        t_drop_depth = 1;
+        v.clear();   // çocuklar yine en fazla DROP_INLINE_DEPTH iner, fazlası listeye
+        t_drop_depth = 0;
+    }
+    delete t_drop_later;
+    t_drop_later = nullptr;
+}
+
+LOOK_COLD_FN static void defer_values(std::vector<Value>& v) noexcept {
+    if (!t_drop_later) t_drop_later = new std::vector<std::vector<Value>>();
+    t_drop_later->push_back(std::move(v));
+}
+
+void look_release_values(std::vector<Value>& v) noexcept {
+    const int d = t_drop_depth;
+    if (d >= DROP_INLINE_DEPTH) { defer_values(v); return; }
+    t_drop_depth = d + 1;
+    v.clear();
+    t_drop_depth = d;
+    if (d == 0 && t_drop_later) drain_deferred();
+}
+
 // ── Value ─────────────────────────────────────────────────────────────────────
 
 // Double → string: kısa ama tam round-trip gösterim (std::to_chars shortest).

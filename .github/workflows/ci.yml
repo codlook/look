@@ -690,6 +690,13 @@ jobs:
           bash tests/idle_connections_test.sh ./build/lk-fcgi
           bash tests/fiber_stack_depth_test.sh ./build/lk-fcgi
 
+      # Dropping a deeply nested value (1M arrays, structs or closures inside each other) must not
+      # overflow the C++ stack: until now one such request killed the whole server.
+      - name: Deeply nested values are released without a crash
+        run: |
+          cd cpp
+          bash tests/value_release_test.sh ./build/lk ./build/lk-fcgi
+
       # Concurrent writers to one SQLite database: until 1.0.20 some of them lost their turn,
       # waited past the busy timeout and got a 500 "database is locked" (the row was not written).
       - name: Concurrent SQLite writers are not refused

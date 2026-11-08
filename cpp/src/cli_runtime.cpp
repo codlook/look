@@ -84,7 +84,7 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
     b[BI("env")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(); const char* e=std::getenv(a[0].to_string().c_str()); if (e) return Value(std::string(e)); return a.size()>=2?Value(a[1].to_string()):Value(std::string()); };
     if (look::builtin_index("args") >= 0)
         b[BI("args")] = [](std::vector<Value>&) -> Value {
-            auto arr = std::make_shared<std::vector<Value>>();
+            auto arr = std::make_shared<ValueArray>();
             for (const auto& s : look::script_args()) arr->push_back(Value(s));
             return Value(arr);
         };

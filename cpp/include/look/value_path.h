@@ -71,7 +71,7 @@ inline void value_set_path(Value& slot, const Value* keys, int n, SetOne&& set_o
                                      + keys[0].to_string() + "' is null; assign a value to it first");
     } else if (!child || child->type() == Value::NONE) {
         const bool map_key = keys[1].type() == Value::STRING && !value_is_int_key(keys[1].str_ref());
-        auto fresh = std::make_shared<std::vector<Value>>();
+        auto fresh = std::make_shared<ValueArray>();
         if (map_key) fresh->push_back(Value(std::string("__assoc__")));
         Value holder(fresh);
         // Ara düzeyi motorun kendi tek-düzey atamasıyla yerleştir (dönüşüm kuralları onda).
@@ -96,7 +96,7 @@ inline Value& value_path_slot(Value& slot, const Value* keys, int n, SetOne&& se
         if (cur->type() == Value::STRUCT) {
             // struct alanı: olduğu gibi kullanılır (null ise çağıran "dizi değil" der)
         } else if (!child) {
-            Value holder(std::make_shared<std::vector<Value>>());
+            Value holder(std::make_shared<ValueArray>());
             set_one(*cur, keys[i], &holder);
             child = value_slot(*cur, keys[i]);
             if (!child) throw std::runtime_error("cannot reach index " + keys[i].to_string());

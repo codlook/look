@@ -202,9 +202,9 @@ Module make_file_module() {
         if (ec) throw std::runtime_error("file::list(): cannot read directory: " + path);
         std::sort(entries.begin(), entries.end(),
                   [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
-        auto out = std::make_shared<std::vector<Value>>();
+        auto out = std::make_shared<ValueArray>();
         for (const auto& [name, is_dir, size] : entries) {
-            auto rec = std::make_shared<std::vector<Value>>();
+            auto rec = std::make_shared<ValueArray>();
             rec->push_back(Value(std::string("__assoc__")));
             rec->push_back(Value(std::string("name"))); rec->push_back(Value(name));
             rec->push_back(Value(std::string("dir")));  rec->push_back(Value(is_dir));
@@ -320,7 +320,7 @@ Module make_file_module() {
         }
 
         // Dönüş değeri
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         result->push_back(Value(std::string("__assoc__")));
         result->push_back(Value(std::string("path")));   result->push_back(Value(dest.string()));
         result->push_back(Value(std::string("name")));   result->push_back(Value(safe_name));

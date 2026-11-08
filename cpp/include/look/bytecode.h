@@ -231,6 +231,12 @@ struct Closure {
     std::function<Value(std::vector<Value>&)> native;
 
     explicit Closure(std::shared_ptr<FunctionProto> p) : proto(std::move(p)) {}
+    // Closure zinciri (her biri öncekini yakalar) ValueArray gibi özyinelemesiz bırakılır.
+    ~Closure() { if (!captures.empty()) look_release_values(captures); }
+    Closure(const Closure&) = default;
+    Closure(Closure&&) = default;
+    Closure& operator=(const Closure&) = default;
+    Closure& operator=(Closure&&) = default;
 };
 
 // ── CallFrame — VM çalışma yığını ─────────────────────────────────────────────

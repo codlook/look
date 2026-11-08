@@ -42,6 +42,10 @@ Value look_explicit_float(const Value& v);
 
 // ── Value ─────────────────────────────────────────────────────────────────────
 
+// Dizi/struct depolaması kurucuları — ValueArray Value'dan sonra tanımlı; sınıf gövdesi bunları kullanır.
+inline std::shared_ptr<std::vector<Value>> look_new_array();
+inline std::shared_ptr<std::vector<Value>> look_new_array(const std::vector<Value>& copy);
+
 class Value {
 public:
     // STRUCT (LOOK 2) sona eklendi → mevcut tiplerin numarası değişmez. Depolaması ARRAY ile
@@ -66,7 +70,7 @@ public:
     // devam eder — onlar da yazılacakları anda aynı kuralla ayrılır.
     void detach() {
         if ((type_ == ARRAY || type_ == STRUCT) && ptr_val && ptr_val.use_count() > 1)
-            ptr_val = std::make_shared<std::vector<Value>>(*vec_ptr());
+            ptr_val = look_new_array(*vec_ptr());
     }
 
     // B5: skalerler union'da (8 byte), STRING pointer arkasında → sizeof 80→32,
@@ -137,7 +141,7 @@ private:
             auto arr = std::static_pointer_cast<std::vector<Value>>(ptr_val);
             if (visited.count(arr.get())) return Value(); // döngü kır — null döndür
             visited.insert(arr.get());
-            auto v = std::make_shared<std::vector<Value>>();
+            auto v = look_new_array();
             v->reserve(arr->size());
             for (const auto& e : *arr) v->push_back(e.deep_clone_impl(visited));
             visited.erase(arr.get());
@@ -148,7 +152,7 @@ private:
             auto sv = std::static_pointer_cast<std::vector<Value>>(ptr_val);
             if (visited.count(sv.get())) return Value();
             visited.insert(sv.get());
-            auto v = std::make_shared<std::vector<Value>>();
+            auto v = look_new_array();
             v->reserve(sv->size());
             for (size_t i = 0; i < sv->size(); ++i)
                 v->push_back(i < 2 ? (*sv)[i] : (*sv)[i].deep_clone_impl(visited));
@@ -177,7 +181,7 @@ private:
                 auto arr = std::static_pointer_cast<std::vector<Value>>(ptr_val);
                 if (visited.count(arr.get())) return Value();
                 visited.insert(arr.get());
-                auto v = std::make_shared<std::vector<Value>>();
+                auto v = look_new_array();
                 v->reserve(arr->size());
                 for (const auto& e : *arr) v->push_back(e.clone_for_thread_impl(visited));
                 visited.erase(arr.get());
@@ -188,7 +192,7 @@ private:
                 auto sv = std::static_pointer_cast<std::vector<Value>>(ptr_val);
                 if (visited.count(sv.get())) return Value();
                 visited.insert(sv.get());
-                auto v = std::make_shared<std::vector<Value>>();
+                auto v = look_new_array();
                 v->reserve(sv->size());
                 for (size_t i = 0; i < sv->size(); ++i)
                     v->push_back(i < 2 ? (*sv)[i] : (*sv)[i].clone_for_thread_impl(visited));
@@ -251,6 +255,35 @@ private:
     // STRING → shared_ptr<std::string>; ARRAY/CHANNEL/WS/SSE/BYTECODE_FN → ilgili tip
     std::shared_ptr<void> ptr_val;
 };
+
+// ── ValueArray — dizi/struct depolaması: özyinelemesiz bırakma ────────────────
+// std::vector<Value>'dan TÜRER (as_array/vec_ptr değişmez); tek farkı yıkıcısı. CPython'un
+// "trashcan"ı gibi bırakma derinliği izlenir; eşiği aşan depolamanın elemanları yıkılmaz, listeye
+// taşınır ve en dıştaki bırakmada döngüyle yıkılır → yığın kullanımı derinlikten bağımsız.
+// ESKİ: iç içe dizi/struct son sahibinden düşünce vector→Value→vector zinciri C++ yığınını
+// taşırıyordu (ölçüldü: ~200k derinlikte segfault; tek istek bütün süreci düşürüyordu).
+// Kanca ~Value'da DEĞİL kapsayıcıda: ~Value'da her eleman yıkımına binerdi (ölçüldü: istek başına
+// +%4,7 komut); burada depolama başına bir kez. Dizi depolaması yalnız bununla kurulur —
+// tests/value_release_test.sh düz std::vector<Value> kuran kaynak satırını reddeder.
+void look_release_values(std::vector<Value>& v) noexcept;   // value.cpp
+
+struct ValueArray : std::vector<Value> {
+    using std::vector<Value>::vector;
+    using std::vector<Value>::operator=;
+    ValueArray() = default;
+    ValueArray(const ValueArray&) = default;
+    ValueArray(ValueArray&&) noexcept = default;
+    ValueArray& operator=(const ValueArray&) = default;
+    ValueArray& operator=(ValueArray&&) noexcept = default;
+    ValueArray(const std::vector<Value>& o) : std::vector<Value>(o) {}
+    ValueArray(std::vector<Value>&& o) noexcept : std::vector<Value>(std::move(o)) {}
+    ~ValueArray() { if (!empty()) look_release_values(*this); }
+};
+
+inline std::shared_ptr<std::vector<Value>> look_new_array() { return std::make_shared<ValueArray>(); }
+inline std::shared_ptr<std::vector<Value>> look_new_array(const std::vector<Value>& copy) {
+    return std::make_shared<ValueArray>(copy);
+}
 
 // ── LookChannel — Go-style channel (defined after Value — queue<Value> needs complete type)
 struct LookChannel {

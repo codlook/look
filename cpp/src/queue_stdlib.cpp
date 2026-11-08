@@ -93,7 +93,7 @@ Module make_queue_module() {
     // queue::names() → string[] (non-empty queues, sorted)
     m.functions["names"] = [](std::vector<Value> args) -> Value {
         auto ns = QueueStore::instance().names();
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         for (auto& n : ns) arr->push_back(Value(n));
         return Value(arr);
     };

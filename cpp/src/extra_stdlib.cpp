@@ -214,7 +214,7 @@ static Module make_validator() {
         const Value& data  = args[0];
         const Value& rules = args[1];
 
-        auto errors_arr = std::make_shared<std::vector<Value>>();
+        auto errors_arr = std::make_shared<ValueArray>();
         errors_arr->push_back(Value(std::string("__assoc__")));
 
         bool ok = true;
@@ -287,7 +287,7 @@ static Module make_validator() {
             }
         }
 
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         result->push_back(Value(std::string("__assoc__")));
         result->push_back(Value(std::string("ok")));
         result->push_back(Value(ok));
@@ -309,7 +309,7 @@ Module make_array_module(ModuleHost* interp) {
     m.functions["push"] = [](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::push() requires array and value");
-        auto result = std::make_shared<std::vector<Value>>(*args[0].as_array());
+        auto result = std::make_shared<ValueArray>(*args[0].as_array());
         result->push_back(args[1]);
         return Value(result);
     };
@@ -328,7 +328,7 @@ Module make_array_module(ModuleHost* interp) {
         if (args.empty()) throw std::runtime_error("array::sort() requires array");
         if (args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::sort() requires array as first argument");
-        auto result = std::make_shared<std::vector<Value>>(*args[0].as_array());
+        auto result = std::make_shared<ValueArray>(*args[0].as_array());
         // Comparator bir VM closure'ıdır (BYTECODE_FN); interp->invoke() onu VM köprüsüyle çalıştırır.
         // ESKİ HATA: yalnız yorumlayıcının fonksiyon türüne bakılıyordu → VM'de comparator SESSİZCE
         // yok sayılıp varsayılan sırayla sıralanıyordu.
@@ -372,7 +372,7 @@ Module make_array_module(ModuleHost* interp) {
         if (args.size() < 2) throw std::runtime_error("array::filter() requires array and callback");
         if (args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::filter() requires array");
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         auto fn = args[1];
         for (auto& elem : *args[0].as_array()) {
             Value keep = interp->invoke(fn, {elem});
@@ -386,7 +386,7 @@ Module make_array_module(ModuleHost* interp) {
         if (args.size() < 2) throw std::runtime_error("array::map() requires array and callback");
         if (args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::map() requires array");
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         auto fn = args[1];
         for (auto& elem : *args[0].as_array())
             result->push_back(interp->invoke(fn, {elem}));
@@ -425,7 +425,7 @@ Module make_array_module(ModuleHost* interp) {
         // vector(first>last) → length_error). Kırpınca doğru: kalanı döndür.
         if (length > n - offset) length = n - offset;
         int64_t end = offset + length;        // artık taşmaz; end ∈ [offset, n]
-        auto result = std::make_shared<std::vector<Value>>(
+        auto result = std::make_shared<ValueArray>(
             src.begin() + offset, src.begin() + end);
         return Value(result);
     };
@@ -440,8 +440,8 @@ Module make_array_module(ModuleHost* interp) {
 
     // unique($arr)
     m.functions["unique"] = [](auto args) -> Value {
-        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<std::vector<Value>>());
-        auto result = std::make_shared<std::vector<Value>>();
+        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<ValueArray>());
+        auto result = std::make_shared<ValueArray>();
         for (auto& elem : *args[0].as_array()) {
             bool found = false;
             for (auto& r : *result) if (r == elem) { found = true; break; }
@@ -452,8 +452,8 @@ Module make_array_module(ModuleHost* interp) {
 
     // reverse($arr)
     m.functions["reverse"] = [](auto args) -> Value {
-        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<std::vector<Value>>());
-        auto result = std::make_shared<std::vector<Value>>(*args[0].as_array());
+        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<ValueArray>());
+        auto result = std::make_shared<ValueArray>(*args[0].as_array());
         std::reverse(result->begin(), result->end());
         return Value(result);
     };
@@ -462,7 +462,7 @@ Module make_array_module(ModuleHost* interp) {
     m.functions["set"] = [](auto args) -> Value {
         if (args.size() < 3 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::set() requires array, key, value");
-        auto result = std::make_shared<std::vector<Value>>(*args[0].as_array());
+        auto result = std::make_shared<ValueArray>(*args[0].as_array());
         const std::string key = args[1].to_string();
         Value val = args[2];
         if (!result->empty() && (*result)[0].type() == Value::STRING &&
@@ -493,7 +493,7 @@ Module make_array_module(ModuleHost* interp) {
             }
             // String anahtar / aralik disi indeks → assoc'a donustur, ama mevcut
             // elemanlari sayisal indeksleriyle anahtarlayarak KORU.
-            auto assoc = std::make_shared<std::vector<Value>>();
+            auto assoc = std::make_shared<ValueArray>();
             assoc->reserve(result->size() * 2 + 3);
             assoc->push_back(Value(std::string("__assoc__")));
             for (size_t i = 0; i < result->size(); ++i) {
@@ -509,16 +509,16 @@ Module make_array_module(ModuleHost* interp) {
 
     // new_assoc() → empty assoc array
     m.functions["new_assoc"] = [](auto args) -> Value {
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         result->push_back(Value(std::string("__assoc__")));
         return Value(result);
     };
 
     // keys($assoc) → array of keys
     m.functions["keys"] = [](auto args) -> Value {
-        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<std::vector<Value>>());
+        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<ValueArray>());
         auto& arr = *args[0].as_array();
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__") {
             for (size_t i = 1; i + 1 < arr.size(); i += 2) result->push_back(arr[i]);
         } else {
@@ -529,9 +529,9 @@ Module make_array_module(ModuleHost* interp) {
 
     // values($assoc) → array of values
     m.functions["values"] = [](auto args) -> Value {
-        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<std::vector<Value>>());
+        if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<ValueArray>());
         auto& arr = *args[0].as_array();
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__") {
             for (size_t i = 2; i < arr.size(); i += 2) result->push_back(arr[i]);
         } else {
@@ -598,7 +598,7 @@ Module make_array_module(ModuleHost* interp) {
         if (args.empty() || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::flatten() requires array");
         int depth = args.size() >= 2 ? args[1].to_int() : -1; // -1 = sonsuz
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         // do_flatten: v bir alt eleman — kendisi array ise depth kadar daha açar
         std::function<void(const Value&, int)> do_flatten = [&](const Value& v, int d) {
             if (v.type() != Value::ARRAY) { result->push_back(v); return; }
@@ -622,10 +622,10 @@ Module make_array_module(ModuleHost* interp) {
         auto& src = *args[0].as_array();
         int chunk_size = args[1].to_int();
         if (chunk_size <= 0) throw std::runtime_error("array::chunk() size must be positive");
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         for (size_t i = 0; i < src.size(); i += (size_t)chunk_size) {
             size_t end = (std::min)(i + (size_t)chunk_size, src.size());
-            auto chunk = std::make_shared<std::vector<Value>>(src.begin() + i, src.begin() + end);
+            auto chunk = std::make_shared<ValueArray>(src.begin() + i, src.begin() + end);
             result->push_back(Value(chunk));
         }
         return Value(result);
@@ -643,9 +643,9 @@ Module make_array_module(ModuleHost* interp) {
             if (sz < min_len) min_len = sz;
         }
         if (min_len == ~(size_t)0) min_len = 0;
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         for (size_t i = 0; i < min_len; ++i) {
-            auto tuple = std::make_shared<std::vector<Value>>();
+            auto tuple = std::make_shared<ValueArray>();
             for (auto& a : args)
                 tuple->push_back((*a.as_array())[i]);
             result->push_back(Value(tuple));
@@ -1076,7 +1076,7 @@ static Module make_runtime_module(ModuleHost* interp) {
         }
 #endif
 
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         auto push = [&](const std::string& k, Value v) {
             arr->push_back(Value(std::string("__assoc__")));
             // reuse flat key-val push
@@ -1213,7 +1213,7 @@ static Module make_look_module() {
         std::string src = args.empty() ? std::string() : args[0].to_string();
 
         auto result = [](bool ok, int line, int col, const std::string& msg) -> Value {
-            auto arr = std::make_shared<std::vector<Value>>();
+            auto arr = std::make_shared<ValueArray>();
             arr->push_back(Value(std::string("__assoc__")));
             arr->push_back(Value(std::string("ok")));   arr->push_back(Value(ok));
             arr->push_back(Value(std::string("line"))); arr->push_back(Value(line));

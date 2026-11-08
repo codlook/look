@@ -82,9 +82,9 @@ inline Value struct_zero_value(const std::string& type) {
     if (type == "float")  return Value(0.0);
     if (type == "string") return Value(std::string());
     if (type == "bool")   return Value(false);
-    if (type == "array")  return Value(std::make_shared<std::vector<Value>>());
+    if (type == "array")  return Value(std::make_shared<ValueArray>());
     if (type == "map") {
-        auto m = std::make_shared<std::vector<Value>>();
+        auto m = std::make_shared<ValueArray>();
         m->push_back(Value(std::string("__assoc__")));
         return Value(m);
     }
@@ -146,7 +146,7 @@ inline int struct_field_index(const std::vector<Value>& def, const std::string& 
 template <class IsStruct>
 inline Value struct_new(const std::string& sname, const Value& def_value, IsStruct&& is_struct) {
     const auto& def = *def_value.as_array();
-    auto sv = std::make_shared<std::vector<Value>>();
+    auto sv = std::make_shared<ValueArray>();
     sv->reserve(STRUCT_SLOT0 + struct_field_count(def));
     sv->push_back(Value(sname));
     sv->push_back(def_value);
@@ -186,7 +186,7 @@ inline void struct_set_named(std::vector<Value>& sv, const std::string& field, V
 inline Value struct_to_map(const Value& s) {
     const auto& sv = *s.as_struct();
     const auto& def = struct_def(sv);
-    auto m = std::make_shared<std::vector<Value>>();
+    auto m = std::make_shared<ValueArray>();
     m->reserve(1 + 2 * struct_field_count(def));
     m->push_back(Value(std::string("__assoc__")));
     for (size_t j = 0, i = 0; j + 2 < def.size(); j += 3, ++i) {

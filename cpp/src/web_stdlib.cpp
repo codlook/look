@@ -165,7 +165,7 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     // JSON object { } → assoc array
     if (s[i] == '{') {
         i++;
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value(std::string("__assoc__")));
         // Anahtar → değer konumu. ESKİ: her anahtarda önceki bütün anahtarlar taranıyordu (O(n²)):
         // 1 MB'lık 100k anahtarlı gövde tek istekte 50 sn CPU (ölçüldü) — kimliksiz uzak DoS.
@@ -215,7 +215,7 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
 
     if (s[i] == '[') {
         i++;
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         json_skip_ws(s, i);
         if (i < s.size() && s[i] == ']') { i++; return Value(arr); }
         for (;;) {
@@ -371,7 +371,7 @@ static Module make_request(WebRef ctx) {
     m.functions["get"] = [ctx](auto args) -> Value {
         if (args.empty()) {
             // Return all as array
-            auto arr = std::make_shared<std::vector<Value>>();
+            auto arr = std::make_shared<ValueArray>();
             for (auto& [k, v] : ctx->get_params) arr->push_back(Value(v));
             return Value(arr);
         }
@@ -384,7 +384,7 @@ static Module make_request(WebRef ctx) {
     };
     m.functions["post"] = [ctx](auto args) -> Value {
         if (args.empty()) {
-            auto arr = std::make_shared<std::vector<Value>>();
+            auto arr = std::make_shared<ValueArray>();
             for (auto& [k, v] : ctx->post_params) arr->push_back(Value(v));
             return Value(arr);
         }
@@ -420,7 +420,7 @@ static Module make_request(WebRef ctx) {
     };
     // request::headers() — tüm header'ları assoc array olarak döner
     m.functions["headers"] = [ctx](auto) -> Value {
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value(std::string("__assoc__")));
         for (auto& [k, v] : ctx->headers_in) { arr->push_back(Value(k)); arr->push_back(Value(v)); }
         return Value(arr);
@@ -439,7 +439,7 @@ static Module make_request(WebRef ctx) {
     };
     // request::all() â€” GET + POST params birleÅŸik
     m.functions["all"] = [ctx](auto) -> Value {
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value(std::string("__assoc__")));
         for (auto& [k, v] : ctx->get_params)  { arr->push_back(Value(k)); arr->push_back(Value(v)); }
         for (auto& [k, v] : ctx->post_params) { arr->push_back(Value(k)); arr->push_back(Value(v)); }
@@ -518,7 +518,7 @@ static Module make_request(WebRef ctx) {
         }
 
         // Dönüş değeri — assoc array
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         result->push_back(Value(std::string("__assoc__")));
         result->push_back(Value(std::string("path")));     result->push_back(Value(uf.temp_path));
         result->push_back(Value(std::string("filename"))); result->push_back(Value(uf.orig_name));
@@ -585,7 +585,7 @@ static Module make_response_module(WebRef ctx) {
         std::string msg = args.size() >= 2 ? args[1].to_string() : "Error";
         ctx->set_status(code);
         ctx->headers_out["Content-Type"] = "application/json; charset=utf-8";
-        auto obj = std::make_shared<std::vector<Value>>();
+        auto obj = std::make_shared<ValueArray>();
         obj->push_back(Value(std::string("__assoc__")));
         obj->push_back(Value(std::string("ok")));   obj->push_back(Value(false));
         obj->push_back(Value(std::string("error")));  obj->push_back(Value(msg));
@@ -1813,7 +1813,7 @@ static std::shared_ptr<DbConnection> open_one_connection(
 
 // Convert DbRow to LOOK array value
 static Value row_to_value(const DbRow& row) {
-    auto arr = std::make_shared<std::vector<Value>>();
+    auto arr = std::make_shared<ValueArray>();
     for (auto& [k, dv] : row) {
         arr->push_back(Value(dv.str));
     }
@@ -1843,10 +1843,10 @@ static bool pg_is_null(uint8_t t)      { return t == pg_type::NUL; }
 static bool pg_is_bool(uint8_t t)      { return t == pg_type::BOOL; }
 
 static Value rows_to_value(const std::vector<DbRow>& rows) {
-    auto result = std::make_shared<std::vector<Value>>();
+    auto result = std::make_shared<ValueArray>();
     for (const auto& row : rows) {
         // Store as assoc array: ["__assoc__", col0, val0, col1, val1, ...]
-        auto row_arr = std::make_shared<std::vector<Value>>();
+        auto row_arr = std::make_shared<ValueArray>();
         row_arr->push_back(Value(std::string("__assoc__")));
         for (auto& [k, dv] : row) {
             row_arr->push_back(Value(k));

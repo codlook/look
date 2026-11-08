@@ -154,7 +154,7 @@ Module make_cache_module() {
     // cache::keys() → string[]
     m.functions["keys"] = [](std::vector<Value> args) -> Value {
         auto ks = CacheStore::instance().keys();
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         for (auto& k : ks) arr->push_back(Value(k));
         return Value(arr);
     };

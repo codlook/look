@@ -486,7 +486,7 @@ static Module make_string() {
         std::string s   = args[0].to_string();
         std::string sep = args[1].to_string();
         int limit       = args.size() >= 3 ? args[2].to_int() : -1;
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         if (sep.empty()) {
             for (char c : s) arr->push_back(Value(std::string(1, c)));
             return Value(arr);
@@ -871,7 +871,7 @@ static Module make_string() {
     // string::regex_match_all($str, $pattern) → [[tam_eşleşme, grup1, ...], ...]
     m.functions["regex_match_all"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("string::regex_match_all() requires string and pattern");
-        auto result = std::make_shared<std::vector<Value>>();
+        auto result = std::make_shared<ValueArray>();
         try {
             std::string s = args[0].to_string();
             std::string pat = args[1].to_string();
@@ -889,7 +889,7 @@ static Module make_string() {
                 return out;
             });
             for (auto& m : matches) {
-                auto match = std::make_shared<std::vector<Value>>();
+                auto match = std::make_shared<ValueArray>();
                 for (auto& s2 : m) match->push_back(Value(s2));
                 result->push_back(Value(match));
             }
@@ -1110,7 +1110,7 @@ static Module make_error_module() {
         int         code    = args.size() >= 3 ? (int)args[2].to_int()  : 0;
 
         // Build assoc array: {type, message, code}
-        auto arr = std::make_shared<std::vector<Value>>();
+        auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value(std::string("type")));    arr->push_back(Value(type));
         arr->push_back(Value(std::string("message"))); arr->push_back(Value(message));
         arr->push_back(Value(std::string("code")));    arr->push_back(Value(code));

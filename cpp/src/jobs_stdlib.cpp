@@ -134,7 +134,7 @@ static sqlite3_stmt* prepare(sqlite3* db, const char* sql) {
 }
 
 static Value make_assoc(std::initializer_list<std::pair<std::string, Value>> kvs) {
-    auto arr = std::make_shared<std::vector<Value>>();
+    auto arr = std::make_shared<ValueArray>();
     arr->push_back(Value(std::string("__assoc__")));  // single sentinel
     for (auto& [k, v] : kvs) {
         arr->push_back(Value(k));
@@ -349,7 +349,7 @@ Value JobStore::list(const std::string& queue, const std::string& status, int li
     sqlite3_bind_text(stmt, 2, status.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int (stmt, 3, limit);
 
-    auto result = std::make_shared<std::vector<Value>>();
+    auto result = std::make_shared<ValueArray>();
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int64_t     id  = sqlite3_column_int64(stmt, 0);
         std::string pay = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));

@@ -173,7 +173,7 @@ Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
         for (int i = 0; i < fixed && i < argc; ++i)
             regs_[base + i] = std::move(args[i]);
         // Variadic: kalan args → ARRAY
-        auto varr = std::make_shared<std::vector<Value>>();
+        auto varr = std::make_shared<ValueArray>();
         for (int i = fixed; i < argc; ++i) varr->push_back(std::move(args[i]));
         if (fixed >= 0 && proto->arity > 0)
             regs_[base + fixed] = Value(varr);
@@ -354,7 +354,7 @@ void VM::set_path(Value& slot, const Value* keys, int n, const Value& val) {
 
 void VM::array_set(Value& arr, const Value& key, const Value& val) {
     if (arr.type() == Value::NONE) {
-        arr = Value(std::make_shared<std::vector<Value>>());
+        arr = Value(std::make_shared<ValueArray>());
     }
     // LOOK strings are immutable (there is no string-mutation builtin, and index assignment
     // has no write path), but the VM used to SILENTLY ignore `$s[0] = "x"` — the silent-wrong
@@ -661,7 +661,7 @@ call_dispatch:
 
             // ── Array ─────────────────────────────────────────────────────────
             case OpCode::NEW_ARRAY: {
-                auto v = std::make_shared<std::vector<Value>>();
+                auto v = std::make_shared<ValueArray>();
                 v->reserve(ins.b);
                 R(ins.a) = Value(v);
                 break;
@@ -674,7 +674,7 @@ call_dispatch:
                 // refcount bump, not an allocation. Thread-safe: magic-static init + atomic
                 // refcount, and the sentinel is only ever compared, never mutated.
                 static const Value assoc_sentinel{std::string("__assoc__")};
-                auto v = std::make_shared<std::vector<Value>>();
+                auto v = std::make_shared<ValueArray>();
                 if (ins.b > 0) v->reserve(ins.b);   // compiler-known final size (sentinel + 2/pair)
                 v->push_back(assoc_sentinel);
                 R(ins.a) = Value(v);
@@ -881,7 +881,7 @@ call_dispatch:
                     int vfixed = cp->arity - 1;
                     for (int i = 0; i < vfixed && i < argc; ++i)
                         regs_[new_base + i] = R(ins.c + i);
-                    auto varr = std::make_shared<std::vector<look::Value>>();
+                    auto varr = std::make_shared<look::ValueArray>();
                     for (int i = vfixed; i < argc; ++i) varr->push_back(R(ins.c + i));
                     if (vfixed >= 0 && cp->arity > 0)
                         regs_[new_base + vfixed] = look::Value(varr);
@@ -994,7 +994,7 @@ call_dispatch:
                 } else {
                     int vfixed = cp->arity - 1;
                     for (int i = 0; i < vfixed && i < argc3; ++i) regs_[new_base+i] = R(ins.c+i);
-                    auto varr = std::make_shared<std::vector<look::Value>>();
+                    auto varr = std::make_shared<look::ValueArray>();
                     for (int i = vfixed; i < argc3; ++i) varr->push_back(R(ins.c+i));
                     if (vfixed >= 0 && cp->arity > 0) regs_[new_base+vfixed] = look::Value(varr);
                 }
