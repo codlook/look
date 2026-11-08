@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <cerrno>
 
 namespace look {
 
@@ -134,25 +135,57 @@ static void arith_check(const Value& v) {
     // 3) Sayı değil ("abc", "12x") → reddet (== tip-katıyken + sessiz 0 vermesin)
     throw std::runtime_error("Arithmetic on a string that cannot be converted to a number: '" + s + "'");
 }
+Value look_explicit_int(const Value& v) {
+    if (v.type() != Value::STRING) return Value(v.to_int());
+    const std::string& s = v.str_ref();
+    try { return Value((int64_t)std::stoll(s)); }
+    catch (const std::out_of_range&) {
+        throw std::runtime_error("int(): \"" + s + "\" does not fit in 64 bits (the range is "
+            "-9223372036854775808 to 9223372036854775807); keep a large ID as a string");
+    }
+    catch (...) { return Value((int64_t)0); }   // sayı değil: gevşek kural (int("abc") == 0) korunur
+}
+Value look_explicit_float(const Value& v) {
+    if (v.type() != Value::STRING) return Value(v.to_float());
+    const std::string& s = v.str_ref();
+    // strtod: taşma ±HUGE_VAL + ERANGE → hata (Go ParseFloat: ±Inf + ErrRange); alttan taşma (1e-400)
+    // en yakın değer (0) — Go'da da hata değil. Eskiden stod her ikisinde de 0 dönüyordu.
+    const char* p = s.c_str(); char* end = nullptr;
+    errno = 0;
+    double d = std::strtod(p, &end);
+    if (end == p) return Value(0.0);            // sayı değil: gevşek kural korunur
+    if (errno == ERANGE && std::isinf(d))
+        throw std::runtime_error("float(): \"" + s + "\" is too large for a 64-bit float");
+    return Value(d);
+}
+
+// Tamsayı taşması AÇIK HATA (Swift, Rust hata ayıklama, C# checked). Eskiden sonuç sessizce double'a
+// düşüyordu (PHP/JS modeli): 9223372036854775807 - (-2) gibi bir sonuç kesinliğini kaybediyordu
+// (…810 yerine …808) — para / kimlik hesabında fark edilmeyen yanlış değer. Go sarmalar (o da
+// sessiz yanlış). Yaklaşık sonuç isteyen ondalıkla hesaplar (1.0 * a).
+[[noreturn]] void look_int_overflow(int64_t a, const char* op, int64_t b) {
+    throw std::runtime_error("Integer overflow: " + std::to_string(a) + " " + op + " " + std::to_string(b) +
+        " does not fit in 64 bits (use a float, e.g. 1.0 * x, if an approximate result is fine)");
+}
 Value Value::operator+(const Value& o) const {
     arith_check(*this); arith_check(o);
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() + o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
-    if (i64_add_ovf(a, b, &r)) return Value((double)a + (double)b);
+    if (i64_add_ovf(a, b, &r)) look_int_overflow(a, "+", b);
     return Value(r);
 }
 Value Value::operator-(const Value& o) const {
     arith_check(*this); arith_check(o);
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() - o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
-    if (i64_sub_ovf(a, b, &r)) return Value((double)a - (double)b);
+    if (i64_sub_ovf(a, b, &r)) look_int_overflow(a, "-", b);
     return Value(r);
 }
 Value Value::operator*(const Value& o) const {
     arith_check(*this); arith_check(o);
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() * o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
-    if (i64_mul_ovf(a, b, &r)) return Value((double)a * (double)b);
+    if (i64_mul_ovf(a, b, &r)) look_int_overflow(a, "*", b);
     return Value(r);
 }
 Value Value::operator/(const Value& o) const {
@@ -162,19 +195,49 @@ Value Value::operator/(const Value& o) const {
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() / d);
     int64_t i = o.to_int();
     int64_t self_i = to_int();  // ham int_val değil — STRING/BOOL de doğru çevrilsin ("6"/2=3)
-    // INT64_MIN / -1 signed-overflow UB — float'a promote
-    if (i == -1 && self_i == INT64_MIN) return Value(-(double)self_i);
+    // INT64_MIN / -1: tam bölünür ama sonuç (2^63) int64'e sığmaz — taşma (C++'ta UB).
+    if (i == -1 && self_i == INT64_MIN) look_int_overflow(self_i, "/", i);
     if (i != 0 && self_i % i == 0) return Value(self_i / i);
     return Value(to_float() / d);
 }
 Value Value::operator%(const Value& o) const {
     arith_check(*this); arith_check(o);
+    // Ondalık işlenen: kayan noktalı kalan, işareti bölünenden (Go math.Mod, C fmod, JS, Java).
+    // Eskiden iki taraf tamsayıya çevriliyordu: 7.5 % 2 → 1 (PHP modeli; ondalık kısım sessizce gidiyordu).
+    if (type_ == FLOAT || o.type_ == FLOAT) {
+        double d = o.to_float();
+        if (d == 0.0) throw std::runtime_error("Modulo by zero");
+        return Value(std::fmod(to_float(), d));
+    }
     int64_t i = o.to_int();
     if (i == 0) throw std::runtime_error("Modulo by zero");
     if (i == -1) return Value((int64_t)0);  // INT64_MIN % -1 UB; a % -1 daima 0
     return Value(to_int() % i);
 }
-Value Value::pow(const Value& o) const { return Value(std::pow(to_float(), o.to_float())); }
+// Üs: tamsayı ** negatif olmayan tamsayı → TAM tamsayı (Python, Ruby); taşarsa hata (toplama ile aynı
+// kural). Eskiden her zaman double hesaplanıyordu: 2^53 üstünde sonuç sessizce yaklaşıktı. Negatif üs
+// ya da ondalık işlenen → double. 0 ** negatif → sıfıra bölme (Python; eskiden sessizce Infinity).
+Value Value::pow(const Value& o) const {
+    arith_check(*this); arith_check(o);
+    if (type_ != FLOAT && o.type_ != FLOAT) {
+        int64_t base = to_int(), e = o.to_int();
+        if (e < 0) {
+            if (base == 0) throw std::runtime_error("Division by zero: 0 ** " + std::to_string(e));
+            return Value(std::pow((double)base, (double)e));
+        }
+        int64_t result = 1, b = base;
+        int64_t n = e;
+        while (n > 0) {
+            if (n & 1) { int64_t r; if (i64_mul_ovf(result, b, &r)) look_int_overflow(base, "**", e); result = r; }
+            n >>= 1;
+            if (n > 0) { int64_t r; if (i64_mul_ovf(b, b, &r)) look_int_overflow(base, "**", e); b = r; }
+        }
+        return Value(result);
+    }
+    double x = to_float(), y = o.to_float();
+    if (x == 0.0 && y < 0) throw std::runtime_error("Division by zero: 0 ** negative");
+    return Value(std::pow(x, y));
+}
 Value Value::concat(const Value& o)    const { return Value(to_string() + o.to_string()); }
 
 void Value::append_in_place(const Value& o) {
@@ -334,14 +397,19 @@ Value Value::bitwise_xor(const Value& o) const { return Value(to_int() ^ o.to_in
 Value Value::bitwise_not()               const { return Value(~to_int()); }
 // Shift miktarı [0,63] dışındaysa (1<<64, 1<<-1) UB — aralık dışı → 0.
 // Sol kaydırmada unsigned kullanılır (signed-overflow UB'sini önler).
+// Negatif kaydırma sayısı açık hata (Go: "negative shift amount"). Eskiden sessizce 0 dönüyordu.
+[[noreturn]] static void negative_shift(int64_t n) {
+    throw std::runtime_error("Negative shift count: " + std::to_string(n));
+}
 Value Value::shift_left(const Value& o)  const {
     int64_t a = to_int(), n = o.to_int();
-    if (n < 0 || n >= 64) return Value((int64_t)0);
+    if (n < 0) negative_shift(n);
+    if (n >= 64) return Value((int64_t)0);   // Go: tamsayı genişliği kadar ya da fazlası → 0
     return Value((int64_t)((uint64_t)a << n));
 }
 Value Value::shift_right(const Value& o) const {
     int64_t a = to_int(), n = o.to_int();
-    if (n < 0) return Value((int64_t)0);
+    if (n < 0) negative_shift(n);
     // Aritmetik kaydırma: 63'ten büyük kaydırma işaret bitiyle dolar (Go: -8 >> 70 == -1). Eskiden 0
     // dönüyordu — -8 >> 63 == -1 iken -8 >> 64 == 0 tutarsızdı.
     if (n >= 64) return Value((int64_t)(a < 0 ? -1 : 0));

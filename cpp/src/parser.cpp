@@ -705,7 +705,16 @@ std::unique_ptr<Expression> Parser::unary() {
     }
     if (match(TokenType::BANG))  { return std::make_unique<UnaryExpression>("!", std::move(unary()),  true); }
     if (match(TokenType::TILDE)) { return std::make_unique<UnaryExpression>("~", std::move(unary()),  true); }
-    if (match(TokenType::MINUS)) { return std::make_unique<UnaryExpression>("-", std::move(unary()),  true); }
+    if (match(TokenType::MINUS)) {
+        // -9223372036854775808 = INT64_MIN: 9223372036854775808 tek başına int64'e sığmaz, eksiyle sığar
+        // (Java/Go aynı istisnayı tanır). Literal doğrudan INT64_MIN olur, taşma hatası verilmez.
+        if (check(TokenType::NUMBER)) {
+            std::string lit = peek().literal.value_or("");
+            lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());
+            if (lit == "9223372036854775808") { advance(); return std::make_unique<NumberLiteral>(INT64_MIN); }
+        }
+        return std::make_unique<UnaryExpression>("-", std::move(unary()),  true);
+    }
     return postfix();
 }
 
@@ -793,16 +802,12 @@ std::unique_ptr<Expression> Parser::primary() {
                 v = (int64_t)std::stoll(lit);                           // decimal
             return std::make_unique<NumberLiteral>(v);
         } catch (...) {
-            // int64'ü aşan tamsayı → float. `strtod`: taşma→±inf, underflow→0,
-            // işaret korunur (stod out_of_range'i 0'a çevirip devasa değeri sessizce
-            // sıfırlıyordu → limit/eşik bypass'ı).
-            // Fail-loud (felsefe: "hiçbir şey gizli değil"): int64'e sığmayan literal
-            // sessizce float'a düşüp presizyon kaybettiriyordu (ör. bir ID/telefon). Yine
-            // float döneriz (bigint yok) AMA stderr'e uyarı — stdout çıktısı değişmez.
-            Logger::instance().log(LogLevel::LOG_WARN, "PARSER",
-                "integer literal '" + lit + "' at line " + std::to_string(previous().line) +
-                " exceeds the 64-bit integer range and is stored as a float (precision may be lost)");
-            return std::make_unique<FloatLiteral>(std::strtod(lit.c_str(), nullptr));
+            // 64 bite sığmayan tamsayı literali DERLEME HATASI (Go: "constant overflows int64").
+            // Eskiden uyarıyla float'a düşüyordu: ID/telefon gibi büyük bir sayı sessizce kesinlik
+            // kaybediyordu. Ondalık değer isteyen açıkça yazar (…0.0), kimlik metin olarak taşınır.
+            throw LookParseError("integer literal " + lit + " does not fit in 64 bits (the largest is "
+                "9223372036854775807): write it as a float (" + lit + ".0) if an approximate value is "
+                "fine, or as a string for an ID", previous().line, previous().column);
         }
     }
     if (match(TokenType::FLOAT_NUM)) {

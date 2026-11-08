@@ -366,6 +366,45 @@ $avg = $sum / $count
 <span class="eg-good"># ✓ fix</span>
 $avg = $count == 0 ? 0 : $sum / $count</code></pre>
     </div>
+    <div class="err" id="e99" data-cat="Types, arithmetic &amp; indexing" data-text="integer overflow: … does not fit in 64 bits an integer result is outside the 64-bit range. use a float when an approximate result is fine; keep ids as strings.">
+      <div class="err-msg"><code>Integer overflow: … does not fit in 64 bits</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> An integer <code>+ - * / **</code>, unary minus or <code>abs</code> result is outside -9223372036854775808…9223372036854775807. LOOK never wraps it or silently turns it into a float.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Use a float when an approximate result is fine; keep IDs as strings.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$big = 2 ** 64
+<span class="eg-good"># ✓ fix</span>
+$big = 2.0 ** 64</code></pre>
+    </div>
+    <div class="err" id="e100" data-cat="Types, arithmetic &amp; indexing" data-text="integer literal … does not fit in 64 bits a decimal integer literal above 9223372036854775807. write it as a float or a string.">
+      <div class="err-msg"><code>integer literal … does not fit in 64 bits</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A decimal integer literal above 9223372036854775807 (a parse error).</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Write it as a float (<code>…0.0</code>), or as a string for an ID.</p>
+      </div>
+    </div>
+    <div class="err" id="e101" data-cat="Types, arithmetic &amp; indexing" data-text="int(): … does not fit in 64 bits / float(): … is too large int() or float() of a numeric string outside the range. keep large ids as strings; validate input.">
+      <div class="err-msg"><code>int(): "…" does not fit in 64 bits / float(): "…" is too large</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>int()</code> / <code>float()</code> of a numeric string outside the range. A non-numeric string still gives <code>0</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Keep large IDs as strings; validate input before converting.</p>
+      </div>
+    </div>
+    <div class="err" id="e102" data-cat="Types, arithmetic &amp; indexing" data-text="negative shift count << or >> with a negative count. check the count.">
+      <div class="err-msg"><code>Negative shift count: …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>&lt;&lt;</code> or <code>&gt;&gt;</code> with a negative count.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the count. Shifting by 64 or more gives 0 (or -1 for a negative number with <code>&gt;&gt;</code>).</p>
+      </div>
+    </div>
+    <div class="err" id="e103" data-cat="Types, arithmetic &amp; indexing" data-text="json::encode: infinity cannot be written as json a float that overflowed to infinity (or nan) was encoded. check the calculation, or encode it as a string.">
+      <div class="err-msg"><code>json::encode: Infinity cannot be written as JSON</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A float that overflowed to <code>Infinity</code> (or a <code>NaN</code>) was encoded; JSON has no such values.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the calculation, or encode the value as a string.</p>
+      </div>
+    </div>
     <div class="err" id="e17" data-cat="Types, arithmetic &amp; indexing" data-text="index operator requires an array you used x[i] on something that isn't an array/object. make sure x is an array; check for null first.">
       <div class="err-msg"><code>Index operator requires an array: cannot read ["name"] of a string</code></div>
       <div class="err-detail">

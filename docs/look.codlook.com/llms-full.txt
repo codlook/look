@@ -457,6 +457,26 @@ $a % $b    # modulo
 $a ** $b   # power (2**10 = 1024)
 ```
 
+> **Numbers never silently change value.** Integers are 64-bit. An integer result that does not fit
+> — `+`, `-`, `*`, `/`, `**`, unary minus, `abs` — is an error (`Integer overflow: … does not fit in
+> 64 bits`), as in Swift or Rust's debug builds; it does not wrap and does not turn into a float. Use a
+> float when an approximate result is fine: `2.0 ** 64`, `1.0 * $a * $b`. An integer literal larger
+> than `9223372036854775807` is a parse error (`-9223372036854775808` is allowed; hex and binary
+> literals are 64-bit patterns, `0xFFFFFFFFFFFFFFFF == -1`).
+>
+> - `/` gives an integer when the division is exact (`6 / 2 == 3`), otherwise a float (`7 / 2 == 3.5`).
+> - `**` with integers gives an exact integer (`3 ** 39`); a negative exponent gives a float
+>   (`2 ** -1 == 0.5`); `0 ** -1` is a division by zero.
+> - `%` with integers truncates toward zero (`-7 % 3 == -1`); with a float it is the floating
+>   remainder (`7.5 % 2 == 1.5`, as `fmod` / Go's `math.Mod`).
+> - A negative shift count is an error; `>>` is arithmetic (`-8 >> 70 == -1`).
+> - Division or modulo by zero is an error. Floats follow IEEE 754 otherwise (`1e308 * 10` is
+>   `Infinity`), but `json::encode` refuses `Infinity` and `NaN` (JSON has no such values).
+> - Comparing an int with a float is exact (`9007199254740993 == 9007199254740992.0` is `false`).
+> - `int()` / `float()` of a numeric string out of range is an error (`int("99999999999999999999")`);
+>   a non-numeric string still gives `0` (`int("abc") == 0`). `int(2.9) == 2`; `int()` of a float
+>   beyond the range gives the nearest limit.
+
 ### String Concatenation
 
 ```lk
@@ -5978,6 +5998,11 @@ LOOK is **strict**: reading a variable that was never assigned is an error, not 
 | `Arithmetic on a string that cannot be converted to a number: '…'` | The string isn't numeric (`"12abc"`). LOOK does **not** silently truncate. | Validate with `validator::integer/numeric`, or clean the string before converting. |
 | `Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '…'` | A numeric string is larger than a 64-bit integer (often a giant ID). | Keep it as a **string** — don't do arithmetic on it. LOOK compares such IDs exactly as strings. |
 | `Division by zero` / `Modulo by zero` | The right operand of `/` or `%` was `0`. | Check the divisor before dividing. |
+| `Integer overflow: … does not fit in 64 bits` | An integer `+ - * / **`, unary minus or `abs` result is outside -9223372036854775808…9223372036854775807. LOOK never wraps or silently turns it into a float. | Use a float when an approximate result is fine (`1.0 * $a * $b`, `2.0 ** 64`); keep IDs as strings. |
+| `integer literal … does not fit in 64 bits` (parse error) | A decimal integer literal above 9223372036854775807. | Write it as a float (`…0.0`) or a string for an ID. |
+| `int(): "…" does not fit in 64 bits` / `float(): "…" is too large` | `int()` / `float()` of a numeric string outside the range (a non-numeric string still gives 0). | Keep large IDs as strings; validate input before converting. |
+| `Negative shift count: …` | `<<` or `>>` with a negative count. | Check the count; shifting by 64 or more gives 0 (or -1 for a negative number with `>>`). |
+| `json::encode: Infinity cannot be written as JSON` / `NaN …` | A float that overflowed to Infinity (or a NaN) was encoded; JSON has no such values. | Check the calculation, or encode the value as a string. |
 | `Index operator requires an array: cannot read ["k"] of a string` | You used `x[i]` or `x.field` on a string, a number or a boolean. A key an array does not have reads as `null`, and so does reading from `null`; neither is this error. | The value has the wrong type: find where it was set. A value that may be missing can stay `null` — `$x["k"] ?? "default"` works. |
 | `Array index out of bounds` / `Array index …` | `arr[i]` with `i` past the end (or negative). | Check `count(arr)` before indexing; array indexes are 0-based. |
 | `foreach requires an array` | `foreach`/`for … as` over a non-array (often `null` from a lookup that missed). | Ensure the value is an array; default to `[]` when a lookup can miss. |

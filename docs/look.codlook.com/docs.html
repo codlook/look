@@ -601,6 +601,23 @@ look-fcgi --mode http --port 8080</code></pre>
 <span class="var">$a</span> / <span class="var">$b</span>    <span class="cm"># division</span>
 <span class="var">$a</span> % <span class="var">$b</span>    <span class="cm"># modulo</span>
 <span class="var">$a</span> ** <span class="var">$b</span>   <span class="cm"># power (2**10 = 1024)</span></code></pre>
+  <div class="callout info">
+    <p><strong>Numbers never silently change value.</strong> Integers are 64-bit. An integer result that does not fit
+    — <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>**</code>, unary minus, <code>abs</code> — is an error
+    (<code>Integer overflow: … does not fit in 64 bits</code>), as in Swift or Rust's debug builds; it does not wrap and does not
+    turn into a float. Use a float when an approximate result is fine: <code>2.0 ** 64</code>, <code>1.0 * $a * $b</code>. An integer
+    literal larger than <code>9223372036854775807</code> is a parse error (<code>-9223372036854775808</code> is allowed; hex and binary
+    literals are 64-bit patterns, <code>0xFFFFFFFFFFFFFFFF == -1</code>).</p>
+    <ul>
+      <li><code>/</code> gives an integer when the division is exact (<code>6 / 2 == 3</code>), otherwise a float (<code>7 / 2 == 3.5</code>).</li>
+      <li><code>**</code> with integers gives an exact integer (<code>3 ** 39</code>); a negative exponent gives a float (<code>2 ** -1 == 0.5</code>); <code>0 ** -1</code> is a division by zero.</li>
+      <li><code>%</code> with integers truncates toward zero (<code>-7 % 3 == -1</code>); with a float it is the floating remainder (<code>7.5 % 2 == 1.5</code>, as <code>fmod</code> / Go's <code>math.Mod</code>).</li>
+      <li>A negative shift count is an error; <code>&gt;&gt;</code> is arithmetic (<code>-8 &gt;&gt; 70 == -1</code>).</li>
+      <li>Division or modulo by zero is an error. Floats follow IEEE 754 otherwise (<code>1e308 * 10</code> is <code>Infinity</code>), but <code>json::encode</code> refuses <code>Infinity</code> and <code>NaN</code> (JSON has no such values).</li>
+      <li>Comparing an int with a float is exact (<code>9007199254740993 == 9007199254740992.0</code> is <code>false</code>).</li>
+      <li><code>int()</code> / <code>float()</code> of a numeric string out of range is an error (<code>int("99999999999999999999")</code>); a non-numeric string still gives <code>0</code> (<code>int("abc") == 0</code>). <code>int(2.9) == 2</code>; <code>int()</code> of a float beyond the range gives the nearest limit.</li>
+    </ul>
+  </div>
 
   <h3>String Concatenation</h3>
   <pre><code><span class="var">$full</span> = <span class="str">"Hello"</span> . <span class="str">" World"</span>  <span class="cm"># "Hello World"</span>

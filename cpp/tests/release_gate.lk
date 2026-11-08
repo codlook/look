@@ -24,9 +24,11 @@ $FAIL = 0
 print("LOOK yayin kapisi")
 
 # --- MSVC 8c63c28: -1 * INT64_MIN cokmemeli (Windows'ta ayrisir) ---
-$m = 0
-try { $m = -1 * -9223372036854775808 } catch ($e) { $m = -1 }
-$FAIL = $FAIL + chk("MSVC carpma-tasma (SIGFPE yok)", $m == 9223372036854775808)
+# 2026-11-08'den beri tamsayi tasmasi ACIK HATA (eskiden float'a donuyordu): surec ayakta kalmali
+# ve yakalanabilir bir "Integer overflow" hatasi vermeli — SIGFPE / cokme yok.
+$m = "no-error"
+try { $m = -1 * -9223372036854775808 } catch ($e) { $m = "caught" }
+$FAIL = $FAIL + chk("MSVC carpma-tasma (SIGFPE yok, yakalanabilir tasma hatasi)", $m == "caught")
 
 # --- B-05: sayisal olmayan string + sayi fail-loud ---
 $b5 = false

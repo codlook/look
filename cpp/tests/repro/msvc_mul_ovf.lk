@@ -1,1 +1,3 @@
-print(-1 * -9223372036854775808)
+# -1 * INT64_MIN: MSVC'de imul SIGFPE ile sureci dusuruyordu (8c63c28). Tamsayi tasmasi artik acik
+# hata (2026-11-08): surec ayakta kalir, hata yakalanir, betik 0 ile biter.
+try { print(-1 * -9223372036854775808) } catch ($e) { print("overflow-error") }

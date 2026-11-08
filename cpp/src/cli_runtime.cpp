@@ -44,8 +44,8 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
         return Value(a.empty() ? 0 : look_count(a[0]));   // assoc: (size-1)/2 (sentinel atlanır)
     };
     b[5] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? std::string() : a[0].to_string()); };  // str
-    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return Value(a[0].to_int()); };  // int — to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + int32 daralması kapandı
-    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); return Value(a[0].to_float()); };  // float — to_float(): to_string() round-trip yok
+    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return look_explicit_int(a[0]); };  // int — to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + int32 daralması kapandı
+    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); return look_explicit_float(a[0]); };  // float — to_float(): to_string() round-trip yok
     b[8] = [](std::vector<Value>& a) -> Value {   // bool
         if (a.empty()) return Value(false);
         auto& v = a[0];

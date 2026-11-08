@@ -73,6 +73,11 @@ LOOK is **strict**: reading a variable that was never assigned is an error, not 
 | `Arithmetic on a string that cannot be converted to a number: '…'` | The string isn't numeric (`"12abc"`). LOOK does **not** silently truncate. | Validate with `validator::integer/numeric`, or clean the string before converting. |
 | `Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '…'` | A numeric string is larger than a 64-bit integer (often a giant ID). | Keep it as a **string** — don't do arithmetic on it. LOOK compares such IDs exactly as strings. |
 | `Division by zero` / `Modulo by zero` | The right operand of `/` or `%` was `0`. | Check the divisor before dividing. |
+| `Integer overflow: … does not fit in 64 bits` | An integer `+ - * / **`, unary minus or `abs` result is outside -9223372036854775808…9223372036854775807. LOOK never wraps or silently turns it into a float. | Use a float when an approximate result is fine (`1.0 * $a * $b`, `2.0 ** 64`); keep IDs as strings. |
+| `integer literal … does not fit in 64 bits` (parse error) | A decimal integer literal above 9223372036854775807. | Write it as a float (`…0.0`) or a string for an ID. |
+| `int(): "…" does not fit in 64 bits` / `float(): "…" is too large` | `int()` / `float()` of a numeric string outside the range (a non-numeric string still gives 0). | Keep large IDs as strings; validate input before converting. |
+| `Negative shift count: …` | `<<` or `>>` with a negative count. | Check the count; shifting by 64 or more gives 0 (or -1 for a negative number with `>>`). |
+| `json::encode: Infinity cannot be written as JSON` / `NaN …` | A float that overflowed to Infinity (or a NaN) was encoded; JSON has no such values. | Check the calculation, or encode the value as a string. |
 | `Index operator requires an array` | You used `x[i]` on something that isn't an array/object. | Make sure `x` is an array; check for `null` first. |
 | `Array index out of bounds` / `Array index …` | `arr[i]` with `i` past the end (or negative). | Check `count(arr)` before indexing; array indexes are 0-based. |
 | `foreach requires an array` | `foreach`/`for … as` over a non-array (often `null` from a lookup that missed). | Ensure the value is an array; default to `[]` when a lookup can miss. |

@@ -627,7 +627,9 @@ call_dispatch:
                     // Eski `-b.as_float()` ham float_val(0.0)'ı okuyup `-"5"`→-0
                     // veriyordu (İ ile divergence). to_int → -"5"=-5, -true=-1.
                     int64_t v = b.to_int();
-                    R(ins.a) = (v == INT64_MIN) ? Value(-(double)v) : Value(-v);
+                    // -INT64_MIN int64'e sığmaz: taşma hatası (eskiden sessizce double).
+                    if (v == INT64_MIN) look::look_int_overflow(0, "-", v);
+                    R(ins.a) = Value(-v);
                 }
                 break;
             }
@@ -1200,8 +1202,8 @@ call_dispatch:
             }
 
             // ── Cast / Type ───────────────────────────────────────────────────
-            case OpCode::TO_INT:   R(ins.a) = Value(R(ins.b).to_int());   break;
-            case OpCode::TO_FLOAT: R(ins.a) = Value(R(ins.b).to_float()); break;
+            case OpCode::TO_INT:   R(ins.a) = look::look_explicit_int(R(ins.b));   break;   // aralık dışı sayısal metin → hata
+            case OpCode::TO_FLOAT: R(ins.a) = look::look_explicit_float(R(ins.b)); break;
             case OpCode::TO_STR:   R(ins.a) = Value(R(ins.b).to_string()); break;
             case OpCode::TO_BOOL:  R(ins.a) = Value(R(ins.b).is_truthy()); break;
             case OpCode::TYPE_OF: {

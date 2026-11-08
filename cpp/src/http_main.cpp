@@ -766,14 +766,14 @@ static void run_setup_http(const fs::path& script) {
                 // bilimsel gösterime çevirir ("1e+06"), stoll 'e'de durup 1 döndürür →
                 // int(float>~1e6) sessizce yanlış. to_int() FLOAT'ı doğrudan (int64_t) cast
                 // eder, STRING'i aynı stoll ile parse eder.
-                return look::Value(args[0].to_int());
+                return look::look_explicit_int(args[0]);   // aralık dışı sayısal metin → hata (Go ErrRange)
             };
             // float (7)
             setup_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value(0.0);
                 // to_float(): int()'teki gibi to_string() round-trip'i ele (FLOAT doğrudan,
                 // string round-trip hassasiyet kaybı yok).
-                return look::Value(args[0].to_float());
+                return look::look_explicit_float(args[0]);
             };
 
             bind_scalar_builtins(setup_builtins);   // strlen, abs, max, min, sqrt, strtoupper, strtolower, join — istek tablosuyla aynı tanım
@@ -1507,11 +1507,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             if (args.empty()) return look::Value(0);
             // to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + (int) int32 daralması
             // ikisini de kapatır. Bkz. setup_builtins[6].
-            return look::Value(args[0].to_int());
+            return look::look_explicit_int(args[0]);   // aralık dışı sayısal metin → hata (Go ErrRange)
         };
         req_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0.0);
-            return look::Value(args[0].to_float());  // to_float(): to_string() round-trip yok
+            return look::look_explicit_float(args[0]);  // aralık dışı → hata
         };
         // bool (8) ve string (9): bind_scalar_builtins (kurulum tablosuyla tek tanım)
 

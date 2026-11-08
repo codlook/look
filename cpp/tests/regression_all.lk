@@ -17,7 +17,7 @@ chk("json int64",         json::decode("{\"id\":5551234567}")["id"], 5551234567)
 # ── #4 + #31 float format + bilimsel literal round-trip ──
 chk("float roundtrip",    123456789.123, 123456789.123)
 chk("sci literal",        1e3, 1000)
-chk("sci roundtrip eq",   1e20 == 100000000000000000000, true)
+chk("sci roundtrip eq",   1e20 == 100000000000000000000.0, true)   # 64 bite sigmayan tamsayi literali artik derleme hatasi
 
 # ── #30 hex/binary/underscore ──
 chk("hex",                0xFF, 255)

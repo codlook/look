@@ -932,8 +932,8 @@ static Module make_type() {
     // is_function onunla hizalı olmalı.
     m.functions["is_function"] = [](auto a) { check_args("type::is_function", a.size(),1);
         return Value(a[0].type()==Value::BYTECODE_FN); };
-    m.functions["to_int"]    = [](auto a) { check_args("type::to_int",    a.size(),1); return Value(a[0].to_int()); };
-    m.functions["to_float"]  = [](auto a) { check_args("type::to_float",  a.size(),1); return Value(a[0].to_float()); };
+    m.functions["to_int"]    = [](auto a) { check_args("type::to_int",    a.size(),1); return look_explicit_int(a[0]); };
+    m.functions["to_float"]  = [](auto a) { check_args("type::to_float",  a.size(),1); return look_explicit_float(a[0]); };
     m.functions["to_string"] = [](auto a) { check_args("type::to_string", a.size(),1); return Value(a[0].to_string()); };
     m.functions["to_bool"]   = [](auto a) { check_args("type::to_bool",   a.size(),1); return Value(a[0].is_truthy()); };
 

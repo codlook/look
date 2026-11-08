@@ -32,6 +32,14 @@ struct WsConnection;   // defined in websocket.h
 struct SseConnection;  // defined in sse.h
 struct Closure;        // defined in bytecode.h — BYTECODE_FN type
 
+// Tamsayı taşması hatası (value.cpp) — aritmetik, tekli eksi, abs ve ** aynı mesajı verir.
+[[noreturn]] void look_int_overflow(int64_t a, const char* op, int64_t b);
+class Value;
+// Açık dönüşüm int() / float() (TO_INT / TO_FLOAT): to_int/to_float gibi gevşek ("abc" → 0) ama SAYISAL
+// metin aralık dışıysa hata (Go strconv ErrRange) — eskiden int("99999999999999999999") → 0 sessizce.
+Value look_explicit_int(const Value& v);
+Value look_explicit_float(const Value& v);
+
 // ── Value ─────────────────────────────────────────────────────────────────────
 
 class Value {

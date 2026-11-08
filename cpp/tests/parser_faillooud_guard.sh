@@ -4,7 +4,8 @@
 #   #C  kapatılmamış `/*` → EOF'a kadar sessizce yutulup kodun yarısını kaybettiriyordu
 #       (exit 0, hata yok) → artık "Unterminated block comment" hatası.
 #   #2  int64'ü aşan tamsayı literali → sessizce float'a düşüp presizyon kaybettiriyordu
-#       → artık stderr'e WARN (stdout DEĞİŞMEZ, davranış aynı: yine float).
+#       → önce stderr WARN'du; 2026-11-08'den beri DERLEME HATASI (Go: "constant overflows int64";
+#       tamsayı taşması kuralıyla aynı — tests/numeric_edges_test.sh).
 # Pozitif+negatif kontrollü: meşru davranış korunmalı (kapalı yorum çalışır, in-range uyarmaz).
 #   Kullanım: bash tests/parser_faillooud_guard.sh ./build/lk
 set -u
@@ -26,11 +27,11 @@ printf '/* h */ print(42) /* m */\nprint(7)' > "$TMP/c2.lk"
 out=$("$LK" "$TMP/c2.lk" 2>/dev/null); rc=$?
 [ $rc -eq 0 ] && [ "$(echo "$out" | tr -d '[:space:]')" = "427" ]; chk "#C kapali /* */ calisir (42,7)" $?
 
-# #2: int64-asan literal -> stdout float DEGISMEZ + stderr WARN
+# #2: int64-asan literal -> derleme hatasi (calismaz, cikti yok)
 echo 'print(999999999999999999999999999999999999)' > "$TMP/n.lk"
-so=$("$LK" "$TMP/n.lk" 2>/dev/null); se=$("$LK" "$TMP/n.lk" 2>&1 1>/dev/null)
-[ "$so" = "1e+36" ]; chk "#2 stdout float degismez (1e+36)" $?
-echo "$se" | grep -qiE "exceeds the 64-bit integer range"; chk "#2 stderr WARN var" $?
+out=$("$LK" "$TMP/n.lk" 2>&1); rc=$?
+[ $rc -ne 0 ]; chk "#2 int64-asan literal -> hata (exit!=0)" $?
+echo "$out" | grep -qiE "does not fit in 64 bits"; chk "#2 mesaj literali ve siniri soyler" $?
 
 # #2 negatif: in-range int UYARMAZ (9007199254740993 = 2^53+1, int64 icinde)
 echo 'print(9007199254740993)' > "$TMP/n2.lk"

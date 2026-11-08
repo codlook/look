@@ -84,8 +84,11 @@ static std::string json_encode(const Value& v, int depth) {
         case Value::INT:    return std::to_string(v.as_int());
         case Value::FLOAT:  {
             double d = v.as_float();
-            // NaN/Infinity JSON'da geçersiz — null olarak serileştir.
-            if (!std::isfinite(d)) return "null";
+            // NaN/Infinity JSON'da yok: açık hata (Go json.Marshal: "unsupported value"). Eskiden
+            // sessizce null yazılıyordu — taşan bir hesap (1e308 * 10) istemciye "değer yok" gibi gidiyordu.
+            if (!std::isfinite(d))
+                throw std::runtime_error(std::string("json::encode: ") + (std::isnan(d) ? "NaN" : "Infinity") +
+                    " cannot be written as JSON (check the calculation, or encode it as a string)");
             return look_format_double(d);
         }
         case Value::STRING: return json_encode_string(v.as_string());
@@ -269,6 +272,8 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
 
 // Belge = tek değer + yalnız boşluk. ESKİ: sondaki çöp yok sayılıyordu ("[1] xyz" → [1]).
 // Geçersiz / aşırı derin belge → null (json::decode ve request::json sözleşmesi).
+std::string json_encode_value(const Value& v) { return json_encode(v); }
+
 static Value json_decode_document(const std::string& s) {
     size_t i = 0;
     try {

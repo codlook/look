@@ -1,6 +1,7 @@
 // http_stdlib.cpp — LOOK `use http;` module binding
 #include "look/runtime_host.h"
 #include "look/http_client.h"
+#include "look/stdlib.h"     // json_encode_value (json::encode ile ayni kodlayici)
 #include <sstream>
 #include <stdexcept>
 
@@ -124,59 +125,10 @@ Module make_http_module(ModuleHost* interp) {
         if (args.size() < 2) throw std::runtime_error("http::post_json() — URL and data required");
         std::string url = args[0].to_string();
 
-        // Serialize the second arg to JSON manually
-        // We reuse the same JSON encoder as json::encode (value_to_json)
-        std::function<std::string(const Value&)> to_json = [&](const Value& v) -> std::string {
-            if (v.type() == Value::NONE)   return "null";
-            if (v.type() == Value::BOOL)   return v.as_bool() ? "true" : "false";
-            if (v.type() == Value::INT)    return std::to_string(v.to_int());
-            if (v.type() == Value::FLOAT) {
-                std::ostringstream ss;
-                ss << v.to_float();
-                std::string s = ss.str();
-                if (s.find('.') == std::string::npos && s.find('e') == std::string::npos) s += ".0";
-                return s;
-            }
-            if (v.type() == Value::STRING) {
-                std::string s = v.as_string();
-                std::string out = "\"";
-                for (char c : s) {
-                    if (c == '"')  out += "\\\"";
-                    else if (c == '\\') out += "\\\\";
-                    else if (c == '\n') out += "\\n";
-                    else if (c == '\r') out += "\\r";
-                    else if (c == '\t') out += "\\t";
-                    else out += c;
-                }
-                return out + "\"";
-            }
-            if (v.type() == Value::ARRAY) {
-                auto& arr = *v.as_array();
-                bool is_assoc = !arr.empty() && arr[0].type() == Value::STRING
-                                && arr[0].as_string() == "__assoc__";
-                if (is_assoc) {
-                    std::string out = "{";
-                    bool first = true;
-                    for (size_t i = 1; i + 1 < arr.size(); i += 2) {
-                        if (!first) out += ",";
-                        out += "\"" + arr[i].to_string() + "\":";
-                        out += to_json(arr[i+1]);
-                        first = false;
-                    }
-                    return out + "}";
-                } else {
-                    std::string out = "[";
-                    for (size_t i = 0; i < arr.size(); ++i) {
-                        if (i) out += ",";
-                        out += to_json(arr[i]);
-                    }
-                    return out + "]";
-                }
-            }
-            return "null";
-        };
-
-        std::string body = to_json(args[1]);
+        // json::encode ile AYNI kodlayıcı (look/stdlib.h json_encode_value). Eskiden burada ikinci bir
+        // kopya vardı: anahtarlar kaçışlanmıyordu (anahtardaki " giden JSON'a alan ekliyordu), kontrol
+        // karakterleri ham, ondalıklar 6 haneye kesik (3.14159265 → 3.14159), Infinity "inf", struct null.
+        std::string body = json_encode_value(args[1]);
 
         auto hdrs = args.size() >= 3 ? extract_headers(args[2]) : std::map<std::string,std::string>{};
         hdrs["Content-Type"] = "application/json";   // force JSON content type
