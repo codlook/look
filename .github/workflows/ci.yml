@@ -696,6 +696,7 @@ jobs:
         run: |
           cd cpp
           bash tests/value_release_test.sh ./build/lk ./build/lk-fcgi
+          bash tests/value_nesting_test.sh ./build/lk ./build/lk-fcgi
 
       # Concurrent writers to one SQLite database: until 1.0.20 some of them lost their turn,
       # waited past the busy timeout and got a 500 "database is locked" (the row was not written).

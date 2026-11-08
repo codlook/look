@@ -11,6 +11,11 @@
 
 namespace look {
 
+[[noreturn]] void look_nesting_error() {
+    throw std::runtime_error("Value nested too deeply: more than " + std::to_string(LOOK_MAX_NESTING) +
+        " levels of arrays/structs inside each other (keep deep data flat, e.g. a list of rows with parent ids)");
+}
+
 // ── Özyinelemesiz bırakma (ValueArray / Closure yıkıcısı) ─────────────────────
 // Derinlik eşiği geçince elemanlar yıkılmaz, listeye TAŞINIR (vektör taşıma O(1)); en dıştaki
 // bırakma (derinlik 0) listeyi döngüyle boşaltır. Liste işaretçi + talep üzerine (thread_local
@@ -71,6 +76,7 @@ std::string Value::to_string() const {
         case BOOL:   return bool_val ? "true" : "false";
         case NONE:   return "null";
         case ARRAY: {
+            NestingGuard g;
             auto arr = as_array();
             std::string s = "[";
             for (size_t i = 0; i < arr->size(); ++i) {
@@ -81,6 +87,7 @@ std::string Value::to_string() const {
         }
         case STRUCT: {
             // User{name: Ada, age: 18}
+            NestingGuard g;
             const auto& sv = *as_struct();
             const auto& def = look::struct_def(sv);
             std::string s = look::struct_name(sv) + "{";
@@ -387,6 +394,7 @@ bool Value::operator==(const Value& o) const {
         case ARRAY: {
             if (ptr_val == o.ptr_val) return true;          // aynı depolama (henüz ayrılmamış kopya)
             if (!ptr_val || !o.ptr_val) return false;
+            NestingGuard g;
             return vec_content_equal(*vec_ptr(), *o.vec_ptr());
         }
         case STRUCT: {
@@ -394,6 +402,7 @@ bool Value::operator==(const Value& o) const {
             if (!ptr_val || !o.ptr_val) return false;
             const auto& a = *vec_ptr(); const auto& b = *o.vec_ptr();
             if (a.size() != b.size() || a[0].str_ref() != b[0].str_ref()) return false;
+            NestingGuard g;
             for (size_t i = 2; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
             return true;
         }

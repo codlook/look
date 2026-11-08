@@ -599,19 +599,25 @@ Module make_array_module(ModuleHost* interp) {
             throw std::runtime_error("array::flatten() requires array");
         int depth = args.size() >= 2 ? args[1].to_int() : -1; // -1 = sonsuz
         auto result = std::make_shared<ValueArray>();
-        // do_flatten: v bir alt eleman — kendisi array ise depth kadar daha açar
-        std::function<void(const Value&, int)> do_flatten = [&](const Value& v, int d) {
-            if (v.type() != Value::ARRAY) { result->push_back(v); return; }
-            auto& arr = *v.as_array();
+        // Açık yığınla (özyinelemesiz): çerçeve = (dizi, sıradaki indeks, kalan derinlik). ESKİ:
+        // özyinelemeli lambda ~100k iç içe dizide C++ yığınını taşırıp süreci çökertiyordu (ölçüldü).
+        // Düzleştirme derinlikten bağımsız çalışabildiği için sınır yerine döngü; sıra aynı (soldan
+        // sağa, önce derin). Dış dizi her zaman açılır; her eleman kalan derinlikle denetlenir.
+        struct Frame { const std::vector<Value>* arr; size_t i; int d; };
+        std::vector<Frame> st;   // alt diziler ebeveynlerince yaşatılır (args[0] çağrı boyunca sabit)
+        st.push_back({args[0].vec_ptr(), 0, depth});
+        while (!st.empty()) {
+            Frame& f = st.back();
+            if (f.i >= f.arr->size()) { st.pop_back(); continue; }
+            const Value& v = (*f.arr)[f.i++];
+            const int d = f.d;
+            if (v.type() != Value::ARRAY) { result->push_back(v); continue; }
+            const auto& arr = *v.vec_ptr();
             bool is_assoc = !arr.empty() && arr[0].type() == Value::STRING &&
                             arr[0].as_string() == "__assoc__";
-            if (is_assoc || d == 0) { result->push_back(v); return; }
-            for (auto& elem : arr)
-                do_flatten(elem, d > 0 ? d - 1 : -1);
-        };
-        // Dış dizi her zaman açılır; her eleman depth ile kontrol edilir
-        for (auto& elem : *args[0].as_array())
-            do_flatten(elem, depth);
+            if (is_assoc || d == 0) { result->push_back(v); continue; }
+            st.push_back({&arr, 0, d > 0 ? d - 1 : -1});   // f bundan sonra kullanılmaz (geçersiz olabilir)
+        }
         return Value(result);
     };
 

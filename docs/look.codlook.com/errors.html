@@ -405,6 +405,13 @@ $big = 2.0 ** 64</code></pre>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Check the calculation, or encode the value as a string.</p>
       </div>
     </div>
+    <div class="err" id="e104" data-cat="Types, arithmetic &amp; indexing" data-text="value nested too deeply: more than 1000 levels of arrays/structs inside each other a value nested more than 1000 levels deep was printed, compared, converted to a string or copied. keep deep data flat, e.g. a list of rows with parent ids.">
+      <div class="err-msg"><code>Value nested too deeply: more than 1000 levels of arrays/structs inside each other</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A value with arrays/structs nested more than 1000 levels deep was printed, compared with <code>==</code>, converted to a string or copied (<code>cache::</code>, threads). Up to 1000 levels everything works; dropping such a value always works.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Keep deep data flat, e.g. a list of rows with parent ids.</p>
+      </div>
+    </div>
     <div class="err" id="e17" data-cat="Types, arithmetic &amp; indexing" data-text="index operator requires an array you used x[i] on something that isn't an array/object. make sure x is an array; check for null first.">
       <div class="err-msg"><code>Index operator requires an array: cannot read ["name"] of a string</code></div>
       <div class="err-detail">

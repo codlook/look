@@ -40,6 +40,24 @@ class Value;
 Value look_explicit_int(const Value& v);
 Value look_explicit_float(const Value& v);
 
+// İç içe değer derinliği (dizi/struct içinde dizi/struct). Değeri DOLAŞAN özyinelemeli işlemler
+// (string'e çevirme, ==, klonlama) bu sınırı aşınca yakalanabilir hata verir — Python'un
+// RecursionError'ı gibi (PHP json 512, .NET 64). ESKİ: sınır yoktu; ölçüldü — normal derlemede
+// ~40–80k, ASan'da ~3–7k derinlikte C++ yığını taşıp SÜRECİN TAMAMI çöküyordu. 1000 en kötü durumun
+// (240 iç içe callback içinden, ASan) altında. Değerin BIRAKILMASI sınırsızdır (ValueArray).
+constexpr int LOOK_MAX_NESTING = 1000;
+[[noreturn]] void look_nesting_error();
+// Yalnız dizi/struct dallarında kurulur (skaler sıcak yol dokunulmaz).
+struct NestingGuard {
+    // fiber-ok: bu işlemler askıya girmez (kullanıcı kodu çağırmaz, G/Ç yok) — sayaç aynı eşzamanlı
+    // dolaşımın içinde artıp azalır, dolaşım bitince yine 0.
+    static int& depth() { thread_local int d = 0; return d; }
+    NestingGuard() { if (++depth() > LOOK_MAX_NESTING) { --depth(); look_nesting_error(); } }
+    ~NestingGuard() { --depth(); }
+    NestingGuard(const NestingGuard&) = delete;
+    NestingGuard& operator=(const NestingGuard&) = delete;
+};
+
 // ── Value ─────────────────────────────────────────────────────────────────────
 
 // Dizi/struct depolaması kurucuları — ValueArray Value'dan sonra tanımlı; sınıf gövdesi bunları kullanır.
@@ -138,6 +156,7 @@ public:
 private:
     Value deep_clone_impl(std::unordered_set<const void*>& visited) const {
         if (type_ == ARRAY && ptr_val) {
+            NestingGuard g;
             auto arr = std::static_pointer_cast<std::vector<Value>>(ptr_val);
             if (visited.count(arr.get())) return Value(); // döngü kır — null döndür
             visited.insert(arr.get());
@@ -149,6 +168,7 @@ private:
         }
         if (type_ == STRUCT && ptr_val) {
             // Alan değerleri klonlanır; [0] ad ve [1] tanım değişmez → paylaşılır.
+            NestingGuard g;
             auto sv = std::static_pointer_cast<std::vector<Value>>(ptr_val);
             if (visited.count(sv.get())) return Value();
             visited.insert(sv.get());
@@ -178,6 +198,7 @@ private:
                 return ptr_val ? Value(*static_cast<const std::string*>(ptr_val.get())) : *this;
             case ARRAY: {
                 if (!ptr_val) return *this;
+                NestingGuard g;
                 auto arr = std::static_pointer_cast<std::vector<Value>>(ptr_val);
                 if (visited.count(arr.get())) return Value();
                 visited.insert(arr.get());
@@ -189,6 +210,7 @@ private:
             }
             case STRUCT: {
                 if (!ptr_val) return *this;
+                NestingGuard g;
                 auto sv = std::static_pointer_cast<std::vector<Value>>(ptr_val);
                 if (visited.count(sv.get())) return Value();
                 visited.insert(sv.get());
