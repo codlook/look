@@ -151,6 +151,28 @@ Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
 
 // ── push_frame ────────────────────────────────────────────────────────────────
 
+// Hata yolu (soğuk): run()'ın çerçevesi = tabanı `base`, proto'su `proto` olan EN ALTTAKİ çerçeve.
+// run() `Frame& frame = call_stack_.back()` referansını tutar; geri çağırma (array::map/sort… →
+// call_closure) VM'e yeniden girip call_stack_'i büyütünce vektör taşınır ve referans serbest
+// bırakılmış belleği gösterir — hata satırı oradan okunuyordu (ASan: heap-use-after-free,
+// tests/callback_error_frame.lk). Normal akış her builtin'den sonra call_dispatch'e döndüğü için
+// etkilenmez. Çerçeve indeksi tutan bir değişken run()'ın C++ çerçevesini büyütüyordu (v2'de
+// ölçüldü: 0x218 → 0x4e8, her geri çağırma seviyesi pahalılaşır); base ve proto zaten canlı.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+__attribute__((noinline, cold))
+#endif
+void VM::note_error_line_for(int base, const FunctionProto* proto) {
+    const Frame* found = nullptr;
+    for (size_t i = call_stack_.size(); i-- > 0;) {
+        const Frame& f = call_stack_[i];
+        if (f.base < base) break;
+        if (f.base == base && f.proto == proto) found = &f;
+    }
+    if (found) note_error_line(*found, proto);
+}
+
 int VM::push_frame(const Closure* cl, int reg_count, int ret_reg) {
     int base = (int)regs_.size();
     regs_.resize(base + reg_count);
@@ -1167,7 +1189,7 @@ call_dispatch:
         catch (const LookVmThrow& t) {
             // C++ sınırını geçmiş LOOK throw (iç run() → builtin/interpreter → buraya).
             // DEĞER korunur (error::new gibi tipli değerler dahil) — e.what() değil.
-            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
+            if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = t.value;
             while ((int)call_stack_.size() > entry.frame_depth) {
@@ -1183,7 +1205,7 @@ call_dispatch:
             // değişkenini "[type, E_DB, message, ...]" string'i yapar → error::is()
             // false döner, error::message() tüm nesneyi verir (sessizce yanlış hata
             // yönetimi). interpreter.cpp'deki catch ile birebir: has_value ? value : message.
-            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
+            if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = e.has_value ? e.value : Value(e.message);
             while ((int)call_stack_.size() > entry.frame_depth) {
@@ -1194,7 +1216,7 @@ call_dispatch:
             goto call_dispatch;
         }
         catch (const std::exception& e) {
-            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
+            if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = Value(std::string(e.what()));
             while ((int)call_stack_.size() > entry.frame_depth) {

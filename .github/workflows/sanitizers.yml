@@ -25,6 +25,14 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ./build-asan/lk tests/regression_all.lk
+      # Geri çağırma zincirinin dibindeki hata: her iç içe run() hata satırını taşınmış bir çerçeve
+      # referansından okuyordu (heap-use-after-free) — yalnız ASan görür. 1.0.45'te ASan bu adımda durur.
+      - name: Error deep inside nested callbacks (no use-after-free)
+        working-directory: cpp
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ./build-asan/lk tests/callback_error_frame.lk
       # B-01 DÜZELTİLDİ (parser MAX_BINOP_CHAIN=1000): derin ikili zincir + derin paren artık
       # AST kurulmadan parser'da TEMİZ hata verir (çökme DEĞİL) — saldırgan-kontrollü derin girdi
       # DoS'u kapalı. continue-on-error KALDIRILDI → enforced (guard tetiklenmezse/çökerse CI kırmızı).

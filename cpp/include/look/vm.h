@@ -140,6 +140,9 @@ private:
 
     // Hata dışarı sızarken çalışan opcode'un satırını kaydet. frame.ip zaten bir sonraki
     // komutu gösterir (fetch sırasında ip++) → hatalı komut ip-1'dedir.
+    // Hata yolu: bu run()'ın çerçevesini (register tabanı + proto) ile call_stack_'te bulup satırını
+    // kaydeder — run()'daki `frame` referansı iç içe çağrıdan sonra geçersiz olabilir (vm.cpp).
+    void note_error_line_for(int base, const FunctionProto* proto);
     template <class F, class P>
     void note_error_line(const F& frame, const P* proto) {
         int i = frame.ip - 1;
