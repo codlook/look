@@ -891,7 +891,7 @@ look-fcgi --mode http --port 8080</code></pre>
 <span class="kw">print</span>(<span class="fn">factorial</span>(<span class="num">10</span>))  <span class="cm"># 3628800</span></code></pre>
 
   <div class="callout">
-    <p><strong>Stack overflow protection:</strong> up to 1,000,000 nested calls (a 256 MB call stack); a function that calls itself through a builtin's callback (<code>array::map</code>, <code>array::sort</code>, ...) up to 4,000 levels. Past that a catchable <code>Stack overflow</code> error; the process never crashes.</p>
+    <p><strong>Stack overflow protection:</strong> up to 10,000 nested calls (an 8 MB call stack); a function that calls itself through a builtin's callback (<code>array::map</code>, <code>array::sort</code>, ...) up to 4,000 levels. Past that a catchable <code>Stack overflow</code> error; the process never crashes.</p>
   </div>
 
   <h3>Function as a Value</h3>
@@ -1160,13 +1160,13 @@ Stack trace:
 }</code></pre>
 
   <h3>Stack Overflow Protection</h3>
-  <p>Recursion is limited by memory, not by a small fixed depth: up to 1,000,000 nested calls and a 256 MB call stack (100,000 levels take about 25 MB). A function that calls itself through a builtin's callback (<code>array::map</code>, <code>array::filter</code>, <code>array::sort</code>, ...) uses the native stack and stops at 4,000 levels, or earlier when the stack is small. Past any of these limits the call throws a catchable <code>Stack overflow</code> error: the request fails, the process never crashes.</p>
+  <p>Recursion goes up to 10,000 nested calls and an 8 MB call stack per request (about 3 MB at 10,000 levels). The limit is per request and concurrent requests add up, so it stays near Node's: many endless recursions at once cannot exhaust the server's memory. A function that calls itself through a builtin's callback (<code>array::map</code>, <code>array::filter</code>, <code>array::sort</code>, ...) uses the native stack and stops at 4,000 levels, or earlier when the stack is small. Past any of these limits the call throws a catchable <code>Stack overflow</code> error: the request fails, the process never crashes.</p>
   <pre><code><span class="kw">function</span> <span class="fn">infinite</span>(<span class="var">$n</span>) { <span class="kw">return</span> <span class="fn">infinite</span>(<span class="var">$n</span> + <span class="num">1</span>) }
 
 <span class="kw">try</span> {
     <span class="fn">infinite</span>(<span class="num">0</span>)
 } <span class="kw">catch</span> (<span class="var">$e</span>) {
-    <span class="kw">print</span>(<span class="var">$e</span>)  <span class="cm"># "Stack overflow: more than 1000000 nested calls (endless recursion?)"</span>
+    <span class="kw">print</span>(<span class="var">$e</span>)  <span class="cm"># "Stack overflow: more than 10000 nested calls (endless recursion?)"</span>
 }</code></pre>
 
   <h3>runtime::stats()</h3>
@@ -4853,7 +4853,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td>auth:: — PBKDF2-SHA256</td><td class="yes">✅</td><td></td></tr>
     <tr><td>validator:: / html:: / type::</td><td class="yes">✅</td><td></td></tr>
     <tr><td>math:: / string:: / array::</td><td class="yes">✅</td><td>including array::find/any/all, array::push/pop, string::pad_left/pad_right</td></tr>
-    <tr><td>Stack overflow protection (1M calls / 256 MB; 4,000 nested callbacks)</td><td class="yes">✅</td><td></td></tr>
+    <tr><td>Stack overflow protection (10,000 calls / 8 MB; 4,000 nested callbacks)</td><td class="yes">✅</td><td></td></tr>
     <tr><td>GC — reference counting</td><td class="yes">✅</td><td></td></tr>
     <tr><td>struct — Go-style data grouping</td><td class="yes">✅</td><td>Default values, nested structs, arrays, <code>$obj.field</code> read/write, clean json::encode output</td></tr>
     <tr><td>const iota — constant groups</td><td class="yes">✅</td><td>Go-style chain, expression iota, top-level const global scope</td></tr>

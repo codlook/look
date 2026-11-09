@@ -165,10 +165,10 @@ Value make_native_fn(const std::string& name, BuiltinFn fn) {
 #endif
 // ── Yığın sınırları (look/vm.h MAX_* açıklaması) ──────────────────────────────
 [[noreturn]] LOOK_VM_COLD static void stack_overflow_calls() {
-    throw LookVmError("Stack overflow: more than 1000000 nested calls (endless recursion?)");
+    throw LookVmError("Stack overflow: more than 10000 nested calls (endless recursion?)");
 }
 [[noreturn]] LOOK_VM_COLD static void stack_overflow_memory() {
-    throw LookVmError("Stack overflow: the call stack is larger than 256 MB (endless recursion?)");
+    throw LookVmError("Stack overflow: the call stack is larger than 8 MB (endless recursion?)");
 }
 [[noreturn]] LOOK_VM_COLD static void stack_overflow_callbacks() {
     throw LookVmError("Stack overflow: more than 4000 nested callbacks (a function given to "
@@ -192,8 +192,8 @@ LOOK_VM_COLD void VM::note_error_line_for(int base, const FunctionProto* proto) 
 }
 
 LOOK_VM_COLD void VM::reserve_regs(size_t n) {
-    static_assert(MAX_CALL_DEPTH == 1000000 && MAX_NATIVE_DEPTH == 4000 &&
-                  MAX_STACK_VALUES * sizeof(Value) == 256u * 1024 * 1024,
+    static_assert(MAX_CALL_DEPTH == 10000 && MAX_NATIVE_DEPTH == 4000 &&
+                  MAX_STACK_VALUES * sizeof(Value) == 8u * 1024 * 1024,
                   "the Stack overflow messages above name these limits: update them together");
     if (n > MAX_STACK_VALUES) stack_overflow_memory();
     // İki katına büyü ama bütçeyi geçme: geçici tahsis (eski + yeni) en fazla bütçe kadar kalır.

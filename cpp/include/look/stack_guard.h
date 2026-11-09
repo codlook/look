@@ -16,10 +16,13 @@
 
 namespace look {
 
-// Bir geri çağırma seviyesi daha açmadan önce kalması gereken yığın: yığının 1/8'i, en fazla
-// 256 KB. Sabit 1 MB pay ölçüldü ve YANLIŞTI: 1 MB'lık yığında (Windows iş parçacığı varsayılanı)
-// ilk geri çağırma bile hata veriyordu. 8 MB'ta 256 KB: 4.000 seviye (~6 MB) sayacı asıl sınır
-// kalır, pay son seviyedeki değer dolaşımına (1000 iç içe to_string ~190 KB, ölçüldü) yeter.
+// Bir geri çağırma seviyesi daha açmadan önce kalması gereken yığın: yığının 1/8'i, 64 KB ile
+// 256 KB arasına sıkıştırılmış. Sabit 1 MB pay ölçüldü ve YANLIŞTI: 1 MB'lık yığında (Windows iş
+// parçacığı varsayılanı) ilk geri çağırma bile hata veriyordu. 8 MB'ta 256 KB: 4.000 seviye (~6 MB)
+// sayacı asıl sınır kalır, pay son seviyedeki değer dolaşımına (1000 iç içe to_string ~190 KB,
+// ölçüldü) yeter. Alt sınır 64 KB: 128 KB'lık yığında 1/8 (16 KB) ASan'ın büyük çerçeveli tek bir
+// seviyesine yetmiyor, süreç aralıklı çöküyordu (ölçüldü, 3'te 2).
+constexpr size_t LOOK_STACK_RESERVE_MIN = 64 * 1024;
 constexpr size_t LOOK_STACK_RESERVE_MAX = 256 * 1024;
 
 inline const char* look_stack_pointer() noexcept {
@@ -53,7 +56,9 @@ inline bool look_native_stack_low() noexcept {
         }
         const size_t size = static_cast<size_t>(hi - lo);
         r.lo = lo; r.hi = hi;
-        r.reserve = size / 8 < LOOK_STACK_RESERVE_MAX ? size / 8 : LOOK_STACK_RESERVE_MAX;
+        const size_t eighth = size / 8;
+        r.reserve = eighth < LOOK_STACK_RESERVE_MIN ? LOOK_STACK_RESERVE_MIN
+                  : eighth > LOOK_STACK_RESERVE_MAX ? LOOK_STACK_RESERVE_MAX : eighth;
     }
     return static_cast<size_t>(sp - r.lo) < r.reserve;   // yığın aşağı doğru büyür
 }

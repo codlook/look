@@ -4,19 +4,19 @@
 # MAX_CALL_DEPTH kontrolü yalnız call_closure'daydı (host→VM); bytecode CALL opcode'u frame'i
 # limitsiz push ediyordu → doğrudan LOOK özyinelemesi SINIRSIZDI: runaway özyineleme graceful
 # "Stack overflow" yerine bellek tükenene dek gidiyordu (OOM DoS). Fix: CALL yolu da sınırı zorlar.
-# 2026-11-09: sınır 500'den 1M çağrıya / 256 MB çağrı yığınına çıktı (tests/call_depth_test.sh) —
+# 2026-11-09: sınır 500.den 10.000 çağrıya / 8 MB çağrı yığınına çıktı (tests/call_depth_test.sh) —
 # bu guard sonsuz özyinelemenin hâlâ SINIRLI olduğunu ve derin ama sonlu özyinelemenin çalıştığını
 # doğrular.
 set -u
 LK="${1:-./build/lk}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fail=0
-printf 'function r($n){ if($n<=0){return 0} return 1+r($n-1) }\nprint(r(100000))\n' > "$TMP/deep.lk"
+printf 'function r($n){ if($n<=0){return 0} return 1+r($n-1) }\nprint(r(9000))\n' > "$TMP/deep.lk"
 printf 'function f($n){ return f($n+1) + 1 }\nprint(f(0))\n' > "$TMP/endless.lk"
 
-# Derin ama sonlu: 100000 seviye çalışır (Node ~9k'da durur)
+# Derin ama sonlu: 9000 seviye çalışır (sınır 10.000, Node ~9k)
 out=$(timeout 30 "$LK" "$TMP/deep.lk" 2>&1 | tr '\n' ' ')
-if echo "$out" | grep -q "^100000"; then echo "  PASS deep recursion: r(100000) = 100000"
+if echo "$out" | grep -q "^9000"; then echo "  PASS deep recursion: r(9000) = 9000"
 else echo "  FAIL deep recursion: beklenmedik: [$out]"; fail=1; fi
 
 # Sonsuz: graceful "Stack overflow" (bellek tükenene dek gitmez), çökme yok
