@@ -86,7 +86,26 @@ public:
     const std::unordered_map<std::string, Value>& get_globals() const { return globals_; }
 
 private:
-    static constexpr int MAX_CALL_DEPTH = 500;
+    // Çağrı yığını sınırları (ölçüldü, 2026-11-09). LOOK çağrısı C++ yığını DEĞİL heap kullanır
+    // (çerçeve + register'lar): sınırı bellek belirler. Eski sabit 500 çağrı Node'un (~9k) çok
+    // altındaydı. Şimdi: register'lar en fazla 256 MB (~800k derinlik, ölçüldü ~330 B/seviye) ve en
+    // fazla 1M çerçeve — aşınca yakalanabilir "Stack overflow". Go 1 GB'ta süreci öldürür; burada
+    // istek hata alır, süreç ayakta kalır. 256 MB: eşzamanlı birkaç sonsuz özyineleme belleği bitirmesin.
+    static constexpr int    MAX_CALL_DEPTH   = 1000000;
+    static constexpr size_t MAX_STACK_VALUES = (256u * 1024 * 1024) / sizeof(Value);
+    // Geri çağırma iç içeliği (map/filter/sort… içinden LOOK fonksiyonu): her seviye C++ yığınında
+    // ~1,5 KB (run + call_closure + builtin). Ölçüldü: 8 MB yığında 5.000 çalışır, 6.000 çöker
+    // (fiber ve iş parçacığı aynı). 4.000 (Node ~2k) + altında gerçek kalan yığın denetimi
+    // (look/stack_guard.h): küçük ulimit -s ya da küçük fiber yığınında da çökme yok.
+    static constexpr int    MAX_NATIVE_DEPTH = 4000;
+    int native_depth_ = 0;
+    // Register dizisini büyüt: bütçe denetimi yalnız kapasite dolunca (sıcak yolda tek karşılaştırma);
+    // büyüme bütçeyle kırpılır → iki katına çıkarken bütçeyi aşan geçici tahsis olmaz.
+    void grow_regs(size_t n) {
+        if (n > regs_.capacity()) reserve_regs(n);
+        regs_.resize(n);
+    }
+    void reserve_regs(size_t n);   // vm.cpp: bütçe aşımında "Stack overflow"
 
     std::vector<Value> regs_;
 
@@ -131,6 +150,9 @@ private:
 
     // Hata dışarı sızarken çalışan opcode'un satırını kaydet. frame.ip zaten bir sonraki
     // komutu gösterir (fetch sırasında ip++) → hatalı komut ip-1'dedir.
+    // Hata yolu: bu run()'ın çerçevesini (register tabanı + proto) ile call_stack_'te bulup satırını
+    // kaydeder — run()'daki `frame` referansı iç içe çağrıdan sonra geçersiz olabilir (vm.cpp).
+    void note_error_line_for(int base, const FunctionProto* proto);
     template <class F, class P>
     void note_error_line(const F& frame, const P* proto) {
         int i = frame.ip - 1;

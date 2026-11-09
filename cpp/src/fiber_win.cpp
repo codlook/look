@@ -9,6 +9,7 @@
 
 #include "look/fiber.h"
 #include "look/logger.h"
+#include "look/stack_guard.h"
 
 #ifndef _WIN32
 #  error "fiber_win.cpp must only be compiled on Windows"
@@ -52,6 +53,22 @@ static LPVOID ensure_thread_fiber() {
 }
 
 Fiber* Fiber::current() noexcept { return tl_current_fiber; }
+
+// Windows fiber'ı değiştiğinde işletim sistemi TIB'deki yığın sınırlarını da değiştirir;
+// look/stack_guard.h o anki (fiber) yığını TIB + VirtualQuery ile okur.
+bool Fiber::stack_range(const char*&, const char*&) const noexcept { return false; }
+
+// look/stack_guard.h: o anki yığın. Üst sınır TIB'deki StackBase (fiber değişince işletim sistemi
+// günceller), alt sınır yığın rezervasyonunun başı (VirtualQuery). GetCurrentThreadStackLimits
+// Windows 8 API'si ve _WIN32_WINNT'ye bağlı — bu yol her sürümde var.
+bool look_read_stack_range(const char*& lo, const char*& hi) noexcept {
+    MEMORY_BASIC_INFORMATION mbi{};
+    const char* sp = look_stack_pointer();
+    if (VirtualQuery(sp, &mbi, sizeof mbi) == 0 || !mbi.AllocationBase) return false;
+    lo = static_cast<const char*>(mbi.AllocationBase);
+    hi = static_cast<const char*>(reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackBase);
+    return lo < hi;
+}
 
 FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
 

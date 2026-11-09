@@ -17,6 +17,8 @@
 #include "look/builtins.h"      // builtin_names() — hata mesajinda modul/fonksiyon adi
 #include "look/int_overflow.h"  // i64_add_ovf — INT+INT aritmetik fast-path
 #include "look/route_params.h"   // LOOK 2: yol parametreleri ada göre
+#include "look/stack_guard.h"   // look_native_stack_low — geri çağırmada gerçek kalan yığın
+#include <algorithm>
 
 #include <sstream>
 #include <cmath>
@@ -154,10 +156,58 @@ Value make_native_fn(const std::string& name, BuiltinFn fn) {
     return Value(cl);
 }
 
+// Nadir yollar satır dışı: run() içine gömülünce onun C++ çerçevesini büyütüp her geri çağırma
+// seviyesinin yığın payını artırıyordu (objdump: run() 0x218 → 0x4e8).
+#if defined(_MSC_VER)
+#  define LOOK_VM_COLD __declspec(noinline)
+#else
+#  define LOOK_VM_COLD __attribute__((noinline, cold))
+#endif
+// ── Yığın sınırları (look/vm.h MAX_* açıklaması) ──────────────────────────────
+[[noreturn]] LOOK_VM_COLD static void stack_overflow_calls() {
+    throw LookVmError("Stack overflow: more than 1000000 nested calls (endless recursion?)");
+}
+[[noreturn]] LOOK_VM_COLD static void stack_overflow_memory() {
+    throw LookVmError("Stack overflow: the call stack is larger than 256 MB (endless recursion?)");
+}
+[[noreturn]] LOOK_VM_COLD static void stack_overflow_callbacks() {
+    throw LookVmError("Stack overflow: more than 4000 nested callbacks (a function given to "
+                      "map/filter/sort/... that calls itself through it)");
+}
+[[noreturn]] LOOK_VM_COLD static void stack_overflow_native() {
+    throw LookVmError("Stack overflow: the native stack is nearly full (too many nested callbacks)");
+}
+
+// Hata yolu (soğuk): run()'ın çerçevesi = tabanı `base`, proto'su `proto` olan EN ALTTAKİ çerçeve.
+// Üstündekiler (iç içe çağrıların bıraktıkları) tabanı ≥ base olanlardır; tabanı küçük olana
+// gelince dur. Bulunamazsa satır kaydedilmez (eskisi gibi 0 kalır).
+LOOK_VM_COLD void VM::note_error_line_for(int base, const FunctionProto* proto) {
+    const Frame* found = nullptr;
+    for (size_t i = call_stack_.size(); i-- > 0;) {
+        const Frame& f = call_stack_[i];
+        if (f.base < base) break;
+        if (f.base == base && f.proto == proto) found = &f;
+    }
+    if (found) note_error_line(*found, proto);
+}
+
+LOOK_VM_COLD void VM::reserve_regs(size_t n) {
+    static_assert(MAX_CALL_DEPTH == 1000000 && MAX_NATIVE_DEPTH == 4000 &&
+                  MAX_STACK_VALUES * sizeof(Value) == 256u * 1024 * 1024,
+                  "the Stack overflow messages above name these limits: update them together");
+    if (n > MAX_STACK_VALUES) stack_overflow_memory();
+    // İki katına büyü ama bütçeyi geçme: geçici tahsis (eski + yeni) en fazla bütçe kadar kalır.
+    regs_.reserve(std::min(MAX_STACK_VALUES, std::max(n, regs_.capacity() * 2)));
+}
+
 Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
     if (closure.native) return closure.native(args);   // ev sahibi fonksiyonu
-    if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
-        throw LookVmError("Stack overflow (max " + std::to_string(MAX_CALL_DEPTH) + ")");
+    if ((int)call_stack_.size() >= MAX_CALL_DEPTH) stack_overflow_calls();
+    // Geri çağırma iç içeliği: her seviye C++ yığını harcar (run() yeniden girişi). Sayaç her
+    // ortamda aynı davranışı, gerçek yığın denetimi küçük yığında bile çökmemeyi sağlar.
+    if (native_depth_ >= MAX_NATIVE_DEPTH) stack_overflow_callbacks();
+    if (look_native_stack_low()) stack_overflow_native();
+    struct NativeDepth { int& d; explicit NativeDepth(int& x) : d(x) { ++d; } ~NativeDepth() { --d; } } nd(native_depth_);
 
     auto* proto = closure.proto.get();
     int base = push_frame(&closure, proto->reg_count, -1);
@@ -186,7 +236,7 @@ Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
 
 int VM::push_frame(const Closure* cl, int reg_count, int ret_reg) {
     int base = (int)regs_.size();
-    regs_.resize(base + reg_count);
+    grow_regs((size_t)base + reg_count);
     call_stack_.push_back({cl->proto.get(), cl, 0, base, ret_reg});
     return base;
 }
@@ -469,6 +519,11 @@ Value VM::run() {
 call_dispatch:
     while (!call_stack_.empty()) {
         Frame& frame = call_stack_.back();
+        // Hata yolu `frame` referansını KULLANMAZ: geri çağırma (map/sort… → call_closure) VM'e
+        // yeniden girip call_stack_'i büyütünce vektör taşınır ve referans serbest bırakılmış
+        // belleği gösterir (ASan: heap-use-after-free). Çerçeve (base, proto) ile yeniden bulunur
+        // (note_error_line_for). Ek canlı değişken (indeks) denendi: run()'ın C++ çerçevesini
+        // 0x218'den 0x4e8'e büyütüp her geri çağırma seviyesini pahalılaştırdı (ölçüldü).
         const FunctionProto* proto = frame.proto;
         int base = frame.base;
 
@@ -871,7 +926,7 @@ call_dispatch:
                 auto* cp = cl->proto.get();
                 check_argc(cp, argc);
                 int new_base = (int)regs_.size();
-                regs_.resize(new_base + cp->reg_count);
+                grow_regs((size_t)new_base + cp->reg_count);
                 if (!cp->variadic) {
                     for (int i = 0; i < argc && i < cp->arity; ++i)
                         regs_[new_base + i] = R(ins.c + i);
@@ -892,7 +947,7 @@ call_dispatch:
                 // özyineleme graceful hata yerine bellek tükenene dek gidiyordu
                 // (OOM DoS) ve tree-walk'un 256 sınırından ayrışıyordu.
                 if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
-                    throw LookVmError("Stack overflow (max " + std::to_string(MAX_CALL_DEPTH) + ")");
+                    stack_overflow_calls();
                 int ret_abs = base + ins.a;
                 call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, ret_abs, (int)argc});
                 goto call_dispatch; // callee frame'e geç
@@ -988,7 +1043,7 @@ call_dispatch:
                 auto* cp = cl->proto.get();
                 check_argc(cp, argc3);
                 int new_base = (int)regs_.size();
-                regs_.resize(new_base + cp->reg_count);
+                grow_regs((size_t)new_base + cp->reg_count);
                 if (!cp->variadic) {
                     for (int i = 0; i < argc3 && i < cp->arity; ++i) regs_[new_base+i] = R(ins.c+i);
                 } else {
@@ -1000,7 +1055,7 @@ call_dispatch:
                 }
                 // MAX_CALL_DEPTH — CALL_METHOD/ikinci CALL yolu (57. bug, bkz. yukarı)
                 if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
-                    throw LookVmError("Stack overflow (max " + std::to_string(MAX_CALL_DEPTH) + ")");
+                    stack_overflow_calls();
                 call_stack_.push_back({cp, cl.get(), 0, new_base, base+ins.a, (int)argc3});
                 goto call_dispatch; // callee frame'e geç
             }
@@ -1241,7 +1296,7 @@ call_dispatch:
         catch (const LookVmThrow& t) {
             // C++ sınırını geçmiş LOOK throw (iç run() → builtin → buraya).
             // DEĞER korunur (error::new gibi tipli değerler dahil) — e.what() değil.
-            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
+            if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = t.value;
             while ((int)call_stack_.size() > entry.frame_depth) {
@@ -1257,7 +1312,7 @@ call_dispatch:
             // değişkenini "[type, E_DB, message, ...]" string'i yapar → error::is()
             // false döner, error::message() tüm nesneyi verir (sessizce yanlış hata
             // yönetimi). Kural: has_value ? value : message.
-            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
+            if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = e.has_value ? e.value : Value(e.message);
             while ((int)call_stack_.size() > entry.frame_depth) {
@@ -1268,7 +1323,7 @@ call_dispatch:
             goto call_dispatch;
         }
         catch (const std::exception& e) {
-            if (try_stack_.size() <= try_floor_) { note_error_line(frame, proto); throw; }
+            if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = Value(std::string(e.what()));
             while ((int)call_stack_.size() > entry.frame_depth) {

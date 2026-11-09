@@ -1,0 +1,14 @@
+# A runtime error deep inside callbacks (array::map calling a LOOK function that recurses through
+# it) unwinds through every nested VM run. Each run recorded the error's line through a reference
+# to its call frame that the nested calls had already moved (the frame vector grows and is
+# reallocated) — a heap-use-after-free that ASan reports and that, without ASan, reads freed memory.
+# 200 levels stay inside the old 500-call limit, so this ran on every release before the fix.
+use array
+function down($n) {
+  if ($n <= 0) { return 1 / 0 }
+  return array::map([1], fn($x) => down($n - 1))[0]
+}
+$msg = "no-error"
+try { down(200) } catch ($e) { $msg = "" . $e }
+print($msg)
+if ($msg == "no-error") { exit(1) }

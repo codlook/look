@@ -412,6 +412,13 @@ $big = 2.0 ** 64</code></pre>
         <p><span class="err-lbl err-lbl-fix">Fix</span> Keep deep data flat, e.g. a list of rows with parent ids.</p>
       </div>
     </div>
+    <div class="err" id="e105" data-cat="Types, arithmetic &amp; indexing" data-text="stack overflow: more than 1000000 nested calls the call stack is larger than 256 mb more than 4000 nested callbacks the native stack is nearly full a function calls itself without end or far too deep. check the stopping condition; for very deep work use a loop with an explicit list.">
+      <div class="err-msg"><code>Stack overflow: more than 1000000 nested calls</code> / <code>the call stack is larger than 256 MB</code> / <code>more than 4000 nested callbacks</code> / <code>the native stack is nearly full</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A function calls itself without end (or far too deep). A call made through a builtin's callback (<code>array::map</code>, <code>array::sort</code>, ...) has a lower limit because it uses the native stack. The request fails; the process keeps running.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Check the stopping condition. For very deep work use a loop with an explicit list instead of recursion.</p>
+      </div>
+    </div>
     <div class="err" id="e17" data-cat="Types, arithmetic &amp; indexing" data-text="index operator requires an array you used x[i] on something that isn't an array/object. make sure x is an array; check for null first.">
       <div class="err-msg"><code>Index operator requires an array: cannot read ["name"] of a string</code></div>
       <div class="err-detail">

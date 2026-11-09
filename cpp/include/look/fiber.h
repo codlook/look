@@ -159,6 +159,10 @@ public:
     // Returns nullptr if called from thread context (not inside any fiber)
     static Fiber* current() noexcept;
 
+    // Bu fiber'ın kullanılabilir yığın aralığı [lo, hi) — look/stack_guard.h kalan yığını ölçer.
+    // Bilinmiyorsa false (Windows: işletim sistemi fiber yığınını iş parçacığı sınırlarına yazar).
+    bool stack_range(const char*& lo, const char*& hi) const noexcept;
+
 private:
     explicit Fiber(Fn fn, size_t stack_size);
 

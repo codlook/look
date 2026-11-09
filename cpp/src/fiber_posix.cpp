@@ -13,6 +13,7 @@
 
 #include "look/fiber.h"
 #include "look/logger.h"
+#include "look/stack_guard.h"
 
 #include <cassert>
 #include <cerrno>
@@ -31,6 +32,7 @@
 #include <sys/eventfd.h>
 #include <ucontext.h>
 #include <unistd.h>
+#include <pthread.h>
 
 // ASan derlemesinde fiber geçişleri ASan'a bildirilir. Bildirilmezse ASan fiber yığınını
 // tanımaz: istisna fırlatılınca (__asan_handle_no_return) yanlış yığını temizler, ve
@@ -92,6 +94,33 @@ static thread_local Fiber*           tl_current_fiber   = nullptr;
 static thread_local FiberScheduler*  tl_scheduler       = nullptr;
 
 Fiber* Fiber::current() noexcept { return tl_current_fiber; }
+
+bool Fiber::stack_range(const char*& lo, const char*& hi) const noexcept {
+    if (!impl_ || !impl_->usable_stack || !impl_->stack_size) return false;
+    lo = static_cast<const char*>(impl_->usable_stack);
+    hi = lo + impl_->stack_size;
+    return true;
+}
+
+// look/stack_guard.h: o anki yığın — fiber'ınki ya da iş parçacığınınki.
+bool look_read_stack_range(const char*& lo, const char*& hi) noexcept {
+    if (Fiber* f = Fiber::current()) { if (f->stack_range(lo, hi)) return true; }
+#if defined(__APPLE__)
+    pthread_t t = pthread_self();
+    hi = static_cast<const char*>(pthread_get_stackaddr_np(t));
+    lo = hi - pthread_get_stacksize_np(t);
+    return true;
+#else
+    pthread_attr_t a;
+    if (pthread_getattr_np(pthread_self(), &a) != 0) return false;
+    void* addr = nullptr; size_t size = 0;
+    const bool ok = pthread_attr_getstack(&a, &addr, &size) == 0 && addr && size;
+    pthread_attr_destroy(&a);
+    if (!ok) return false;
+    lo = static_cast<const char*>(addr); hi = lo + size;
+    return true;
+#endif
+}
 
 FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
 

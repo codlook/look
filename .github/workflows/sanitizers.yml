@@ -25,6 +25,14 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ./build-asan/lk tests/regression_all.lk
+      # Geri çağırma zincirinin dibindeki hata: her iç içe run() hata satırını taşınmış bir çerçeve
+      # referansından okuyordu (heap-use-after-free) — yalnız ASan görür.
+      - name: Error deep inside nested callbacks (no use-after-free)
+        working-directory: cpp
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ./build-asan/lk tests/callback_error_frame.lk
       # Sayısal sınırlar UBSan altında: abs(INT64_MIN), aralık dışı double→int64 eskiden UB'ydi.
       - name: Numeric edge cases under UBSan (no report)
         working-directory: cpp
