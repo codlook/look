@@ -288,6 +288,31 @@ a function cannot change variables outside it — pass the value as a parameter 
 Reading a top-level variable still works, and a plain `$x = …` inside a function makes a local
 as before. This is the closure rule above, applied to every function.
 
+A related trap is refused too. Inside a function, one name cannot be both the outer variable
+(read) and a new local (assigned):
+
+```
+$hits = 0
+function count_hit() {
+    $hits = $hits + 1      # 1.0.x: makes a local, the outer $hits stays 0 — silently
+    return $hits           # Now: error at load
+}
+```
+
+```
+Error: line 3: function count_hit() reads $hits from outside it and also assigns $hits; the assignment
+makes a new local and leaves the outer $hits unchanged — pass the value as a parameter and return
+the new value, or use another name
+```
+
+As in Python, the order does not matter: `$hits += 1`, `$hits = $hits + 1`, reading in one
+branch of an `if` and assigning in the other, or reading on the first turn of a loop and
+assigning later in it are all refused. So is reading a name after the block that first assigned
+it has ended (there it is the outer variable): declare it before the block instead. A plain `$x = 5` with no read before it is still a
+local; parameters, loop variables and a local updated after it was assigned (`$t = 0` then
+`$t += 1`) are unaffected. The top level of a file is not a function: a block there updates the
+outer variable as before.
+
 A common case is a note kept for the current request in a top-level array:
 
 ```

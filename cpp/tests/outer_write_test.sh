@@ -2,8 +2,8 @@
 # A function — named, a closure, or one that comes from a `use "file.lk"` — cannot change a
 # variable outside it in place. Every way the VM writes into a variable in place is listed here
 # (SET_PATH / PUSH_PATH / POP_PATH with a top-level root, and ++/-- on a top-level name); each must
-# stop the program at load with the same message, in all three contexts. Plain `$x = …`, `$x += …`
-# and `$x .= …` inside a function make a local (unchanged); reading an outer variable still works.
+# stop the program at load with the same message, in all three contexts. A plain `$x = …` inside a
+# function makes a local (unchanged); reading an outer variable still works.
 # Usage: outer_write_test.sh <lk> [<lk-fcgi>]
 LK=${1:?usage: outer_write_test.sh <lk> [<lk-fcgi>]}; FCGI=$2
 LK=$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")
@@ -38,7 +38,8 @@ CHANGES=(
   'preinc_var|++$n|it is changed with ++'
   'postdec_var|$n--|it is changed with --'
 )
-LOCALS=('assign_var|$n = 100' 'plus_eq_var|$n += 1' 'concat_eq_var|$w .= "z"')
+# `$n += 1` / `$w .= …` read the outer value and assign the name: refused (tests/outer_read_assign_test.sh)
+LOCALS=('assign_var|$n = 100')
 
 make() {  # make <ctx> <name> <code> → file name
   case $1 in
@@ -98,6 +99,6 @@ if [ -n "$FCGI" ]; then
     || { echo "  FAIL web server: rc=$rc (want a start failure naming \$memo)"; tail -3 web.log; fail=1; }
 fi
 
-[ $fail = 0 ] && echo "PASS: a function cannot change a variable outside it ($n cases: ${#CHANGES[@]} ways x 3 contexts, locals, reads, web)" \
+[ $fail = 0 ] && echo "PASS: a function cannot change a variable outside it ($n cases: ${#CHANGES[@]} ways x 3 contexts, a local, reads, web)" \
               || echo "FAIL: a function changed or was allowed to change a variable outside it"
 exit $fail

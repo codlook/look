@@ -350,6 +350,15 @@ jobs:
           cd cpp
           bash tests/outer_write_test.sh ./build/lk ./build/lk-fcgi
 
+      # inside a function a name cannot be both the outer variable (read) and a new local (assigned):
+      # `$n += 1` / `$n = $n + 1` would leave the outer $n unchanged silently — as Python's
+      # UnboundLocalError, in any order, across branches and loop turns. Parameters, loop variables
+      # and locals updated after they were assigned load as before.
+      - name: A function cannot read an outer variable and assign the same name (refused at load)
+        run: |
+          cd cpp
+          bash tests/outer_read_assign_test.sh ./build/lk ./build/lk-fcgi
+
       # one spelling for a struct field ("name type [= default]"); the two v1
       # spellings are parse errors that say what to write instead.
       - name: Struct field single form

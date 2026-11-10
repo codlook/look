@@ -4711,7 +4711,7 @@ There's no separate router library. `route()` is a built-in — when you run the
 
 HTTP data is accessed via `request::get()`, `request::post()`, `request::json()`. Sessions via `session::`, cookies via `cookie::`. Everything is explicit and traceable.
 
-**Function scope is isolated.** Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). Changing an outer variable in place — `$t["k"] = …`, `$t.f = …`, `$t["k"]++`, `$n++`, `push($t, …)`, `pop($t)` — is an error at load, for named functions, closures, route handlers and functions from `use "file.lk"` alike: `function f() changes $t, a variable outside it (…)`. To change a value in a function, pass it as a parameter and return the new value.
+**Function scope is isolated.** Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). Changing an outer variable in place — `$t["k"] = …`, `$t.f = …`, `$t["k"]++`, `$n++`, `push($t, …)`, `pop($t)` — is an error at load, for named functions, closures, route handlers and functions from `use "file.lk"` alike: `function f() changes $t, a variable outside it (…)`. Inside one function a name also cannot be both read from outside and assigned (`$n += 1`, `$n = $n + 1`, or a read and an assignment in different branches or loop turns — the order does not matter, as in Python): the assignment would make a new local and leave the outer value unchanged, so it is an error at load too. To change a value in a function, pass it as a parameter and return the new value.
 
 > **`app::set()` is not a place for state.** It is one registry shared by every request the process serves: a value set while handling one request is seen by all the others. Register services there once at setup (a database connection, read-only configuration) — never anything that belongs to one user or one request (a cart, a user id, a CSRF token). Per-request data stays in local variables and parameters; per-user data goes in `session::`.
 
@@ -5672,6 +5672,7 @@ route("POST", "/upload", function() use ($conn) {
     $title = request::post("title") ?? ""
 
     # request::file() does magic-byte + MIME + size checking
+    $file = null                           # declared before try: the value is used after it
     try {
         $file = request::file("file", [
             "max_size"   => 5242880,           # 5 MB

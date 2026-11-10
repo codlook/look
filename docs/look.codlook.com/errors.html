@@ -263,6 +263,30 @@ function base() { $memo["base"] = make_base(); return $memo["base"] }
 function base() { return make_base() }
 route("GET", "/", function() { $b = base(); return response::text(use_it($b)) })</code></pre>
     </div>
+    <div class="err" id="e107" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="function f() reads $n from outside it and also assigns $n inside one function the same name is read from outside and assigned. the assignment would make a new local and the outer value would never change. pass the value as a parameter and return the new value, or use another name.">
+      <div class="err-msg"><code>function f() reads $n from outside it and also assigns $n; …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Inside one function the same name is read from outside and assigned: <code>$n += 1</code>, <code>$n = $n + 1</code>, or a read and an assignment in different branches or loop turns. The assignment would make a new local and the outer <code>$n</code> would never change — silently.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the value as a parameter and return the new value, or use another name for the local. A plain <code>$n = 5</code> with no read before it is fine.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$hits = 0
+function count_hit() { $hits = $hits + 1; return $hits }
+<span class="eg-good"># ✓ fix</span>
+function count_hit($hits) { return $hits + 1 }
+$hits = count_hit($hits)</code></pre>
+    </div>
+    <div class="err" id="e108" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="function f() reads $n, which it assigned only inside a block that has ended inside a function the name was first assigned inside a block, so it was that block's local; after the block it is the outer variable again. declare it before the block.">
+      <div class="err-msg"><code>function f() reads $n, which it assigned only inside a block that has ended (line M); …</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> Inside a function <code>$n</code> was first assigned inside an <code>if</code>/<code>for</code>/<code>while</code>/<code>try</code> block, so it was that block's local; after the block, <code>$n</code> is the outer variable again.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Declare <code>$n</code> before the block (<code>$n = null</code>), then assign it inside: the value is carried out.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+function load() { try { $f = read_it() } catch ($e) { return null } return $f }
+<span class="eg-good"># ✓ fix</span>
+function load() { $f = null; try { $f = read_it() } catch ($e) { return null } return $f }</code></pre>
+    </div>
   </div>
   </div>
 </section>

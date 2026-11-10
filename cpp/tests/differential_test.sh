@@ -639,12 +639,13 @@ echo "$ji" | grep -q "18446744073709551615" || { echo "FAIL: json uint64-max KES
 # ── Dispatch kopyasi worker'da YENIDEN KULLANILIYOR mu, izolasyon bozuldu mu? ──
 # Kopya artik thread_local (per-request make_dispatch_copy 30-63us idi — route'u
 # calistirmaktan pahali). Sozlesme: paylasilan kopya istekler arasi SIZINTI yapmamali.
-#   $sayac = $sayac + 1  → fonksiyon-local (her istek 1)  — atama izole
-#   push($liste, ...)    → yakalanan diziyi paylasir (LOOK modeli: $db gibi) — DEGISMEMELI
+#   $s = $sayac + 1  → fonksiyon-local (her istek 1)  — atama izole
+#   ($sayac = $sayac + 1 artik yuklemede hata: disaridan okunan ad ayni fonksiyonda atanamaz —
+#    tests/outer_read_assign_test.sh)
 # Bu degerler thread_local optimizasyonu ONCESI ile BIREBIR ayni olmali.
 cat > "$TMP/iso.lk" <<'LK'
 $sayac = 0
-route("GET","/inc", function(){ $sayac = $sayac + 1; return response::text("s=" . $sayac) })
+route("GET","/inc", function(){ $s = $sayac + 1; return response::text("s=" . $s) })
 LK
 ISO_PORT=9613
 "$FCGI" --mode http --port $ISO_PORT "$TMP/iso.lk" >/dev/null 2>&1 &

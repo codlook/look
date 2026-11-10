@@ -1109,7 +1109,10 @@ bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
     uint16_t kind; uint32_t ix;
     if (wloc.kind == VarKind::LOCAL && rloc.kind == VarKind::LOCAL && wloc.index == rloc.index) {
         kind = 0; ix = rloc.index;
-    } else if (wloc.kind == VarKind::GLOBAL && rloc.kind == VarKind::GLOBAL) {
+    } else if (!parent_ && wloc.kind == VarKind::GLOBAL && rloc.kind == VarKind::GLOBAL) {
+        // Yalnız betiğin KENDİ üst düzeyi. Fonksiyon içinde yazma çözümlemesi de GLOBAL döner ama
+        // atama orada yeni bir YEREL yaratır: hızlı yol global'e eklerdi (2ca4aea–7dd626f arası
+        // hata: `function f() { $a = array::push($a, 2) }` üst düzey $a'yı büyütüyordu).
         // Eski yol $a'yı değerden ÖNCE okur (tanımsızsa hata önce o): aynı okuma, sonra yazmacı bırak
         // (geçici yazmaçta kalan ikinci sahip yerinde büyütmeyi kopyaya zorlardı).
         uint16_t t = compile_expr(*call->arguments[0]);
@@ -1146,6 +1149,17 @@ void FunctionCompiler::check_no_outer_write(const std::string& name, const std::
     throw LookProgramError(at + who + " changes $" + bare + ", a variable outside it (" + how + "); a function "
         "cannot change variables outside it — pass the value as a parameter and return the new value",
         cur_line_);
+}
+
+// Bir fonksiyonda aynı ad önce dışarıdan okunuyor, sonra yerel olarak atanıyor (Python
+// UnboundLocalError). Ters sıra (bloğu bitmiş yerelden sonra okuma) Variable okumasında ayrı mesajla.
+void FunctionCompiler::throw_outer_read_assign(const std::string& name) {
+    const std::string bare = (!name.empty() && name[0] == '$') ? name.substr(1) : name;
+    const std::string who = proto_.name == "<closure>" ? "closure" : "function " + proto_.name + "()";
+    const std::string at = cur_line_ > 0 ? "line " + std::to_string(cur_line_) + ": " : "";
+    throw LookProgramError(at + who + " reads $" + bare + " from outside it and also assigns $" + bare
+        + "; the assignment makes a new local and leaves the outer $" + bare + " unchanged — pass the "
+        "value as a parameter and return the new value, or use another name", cur_line_);
 }
 
 void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
@@ -1318,6 +1332,14 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // gövdesi local'leri global olduğundan eş zamanlı isteklerde de race'liydi).
         // Okuma hâlâ global'e düşer; val (RHS) yukarıda compile edildiği için
         // aynı-isim okuması doğru şekilde global'i gördü.
+        // LOOK 2 (Python UnboundLocalError gibi): bu fonksiyonda ad önce DIŞARIDAN okunduysa (ya da
+        // `+=`/`.=` dış değeri okuyorsa) yeni yerel yaratmak sessiz tuzaktır — `$n += 1` / `$n = $n + 1`
+        // dıştaki sayacı artırıyor gibi görünür, dıştaki hiç değişmez. Okuma başka dalda ya da döngünün
+        // önceki satırında olsa da (ilk tur dışı okur) hata. Hiç okunmadan `$n = 5` yerel kalır.
+        if (parent_) {
+            if (e.op != "=" || outer_reads_.count(e.name)) throw_outer_read_assign(e.name);
+            local_made_at_.emplace(e.name, cur_line_);   // ters sıra: sonradan dışarıdan okunursa da hata
+        }
         uint16_t result = val;
         if (e.op != "=") {
             // compound: mevcut değeri GLOBAL'den oku (isim henüz local değil)
@@ -1425,6 +1447,20 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
             emit_read_capture(r, loc.index);
         } else {
             uint32_t ni = add_const(Value(e->name));
+            if (parent_ && !e->name.empty() && e->name[0] == '$') {
+                // Aynı ad bu fonksiyonda yerel olarak atanmıştı (bloğu bitti) — `if (c) { $n = 5 } else { print($n) }`
+                auto made = local_made_at_.find(e->name);
+                if (made != local_made_at_.end()) {
+                    const std::string bare = e->name.substr(1);
+                    const std::string who = proto_.name == "<closure>" ? "closure" : "function " + proto_.name + "()";
+                    const std::string at = cur_line_ > 0 ? "line " + std::to_string(cur_line_) + ": " : "";
+                    throw LookProgramError(at + who + " reads $" + bare + ", which it assigned only inside a block "
+                        "that has ended (line " + std::to_string(made->second) + "); here $" + bare + " is the outer "
+                        "variable, not that local — declare $" + bare + " before the block, or pass the value as a "
+                        "parameter and return the new value", cur_line_);
+                }
+                outer_reads_.insert(e->name);
+            }
             emit(OpCode::LOAD_GLOBAL, r, hi16(ni), lo16(ni));
             // Çıplak ('$'sız) ad DEĞER olarak okunuyor. ESKİ HATA: LOAD_GLOBAL çıplak adı
             // ıskalayınca sessizce null veriyordu ("mod::fn"/çağrı hedefi için gerekli),

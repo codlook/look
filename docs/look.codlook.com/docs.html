@@ -4697,7 +4697,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
 
   <h3>No global variables</h3>
   <p>HTTP data is accessed via <code>request::get()</code>, <code>request::post()</code>, <code>request::json()</code>. Sessions via <code>session::</code>, cookies via <code>cookie::</code>. Everything is explicit and traceable.</p>
-  <p><strong>Function scope is isolated.</strong> Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). Changing an outer variable in place — <code>$t["k"] = …</code>, <code>$t.f = …</code>, <code>$t["k"]++</code>, <code>$n++</code>, <code>push($t, …)</code>, <code>pop($t)</code> — is an error at load, for named functions, closures, route handlers and functions from <code>use "file.lk"</code> alike: <code>function f() changes $t, a variable outside it (…)</code>. To change a value in a function, pass it as a parameter and return the new value.</p>
+  <p><strong>Function scope is isolated.</strong> Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). Changing an outer variable in place — <code>$t["k"] = …</code>, <code>$t.f = …</code>, <code>$t["k"]++</code>, <code>$n++</code>, <code>push($t, …)</code>, <code>pop($t)</code> — is an error at load, for named functions, closures, route handlers and functions from <code>use "file.lk"</code> alike: <code>function f() changes $t, a variable outside it (…)</code>. Inside one function a name also cannot be both read from outside and assigned (<code>$n += 1</code>, <code>$n = $n + 1</code>, or a read and an assignment in different branches or loop turns — the order does not matter, as in Python): the assignment would make a new local and leave the outer value unchanged, so it is an error at load too. To change a value in a function, pass it as a parameter and return the new value.</p>
   <div class="callout">
     <p><strong><code>app::set()</code> is not a place for state.</strong> It is one registry shared by every request the process serves: a value set while handling one request is seen by all the others. Register services there once at setup (a database connection, read-only configuration) — never anything that belongs to one user or one request (a cart, a user id, a CSRF token). Per-request data stays in local variables and parameters; per-user data goes in <code>session::</code>.</p>
   </div>
@@ -5589,6 +5589,7 @@ DB_PASS=</code></pre>
     <span class="var">$title</span> = <span class="fn">request</span>::<span class="fn">post</span>(<span class="str">"title"</span>) ?? <span class="str">""</span>
 
     <span class="cm"># request::file() does magic-byte + MIME + size checking</span>
+    <span class="var">$file</span> = <span class="kw">null</span>                           <span class="cm"># declared before try: the value is used after it</span>
     <span class="kw">try</span> {
         <span class="var">$file</span> = <span class="fn">request</span>::<span class="fn">file</span>(<span class="str">"file"</span>, [
             <span class="str">"max_size"</span>   => <span class="num">5242880</span>,           <span class="cm"># 5 MB</span>

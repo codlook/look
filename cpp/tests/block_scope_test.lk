@@ -60,14 +60,15 @@ $out = null
 if (true) { $out = "set" }
 chk("declared before the block, assigned in it", $out, "set")
 
-# The same code inside a function means the same.
+# The same rule inside a function: declare before the block to carry a value out. Reading a
+# block's local after the block ended is an error at load there (it would read the outer
+# variable) — tests/outer_read_assign_test.sh.
 function in_fn() {
-    $r = ""
+    $fz = 0
     if (true) { $fz = 1 }
-    try { $r = $r . $fz } catch ($e) { $r = $r . "undefined" }
-    for ($fi = 0; $fi < 1; $fi = $fi + 1) { $fw = 1 }
-    try { $r = $r . $fi } catch ($e) { $r = $r . ",undefined" }
-    return $r
+    $fi = 0
+    for ($k = 0; $k < 3; $k = $k + 1) { $fi = $k }
+    return $fz . "," . $fi
 }
-chk("inside a function: the same rule", in_fn(), "undefined,undefined")
+chk("inside a function: declared before the block, assigned in it", in_fn(), "1,2")
 print("=== block scope guard done ===")
