@@ -1268,10 +1268,22 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
                 "browser connections included - make every other client wait. Put a reverse proxy in "
                 "front and set LOOK_TRUSTED_PROXY, or set LOOK_HTTP_MAX_CONNS_IP.");
     }
-    if (::listen(srv, 16384) < 0)
-        throw std::runtime_error("listen() failed");
-
+    // listen() BURADA DEĞİL: port, işçiler hazır olunca run()'da açılır. Eskiden burada dinleniyordu:
+    // kurucu ile run() arası bağlanan istemci (fiber modunda bu soket run()'da kapatılır; bellek
+    // sınırında süreç işçi açamayıp çıkar) bağlantısı kabul edilip yanıtsız kalıyordu (ölçüldü:
+    // yük altında 1024 MB'ta nedenli 40 çıkışın 17'si önce bağlantı kabul etmişti). Bind burada
+    // kalır: port meşgulse hata hemen.
     impl_->server_fd = srv;
+}
+
+// "Listening on …" yalnız port gerçekten dinlenince (bir kez) — önceden kurucudan hemen sonra yazılıyordu.
+static void log_listening(int port) {
+    static std::once_flag once;
+    std::call_once(once, [port] {
+        const char* b = std::getenv("LOOK_BIND");
+        look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
+            "Listening on " + std::string(b && *b ? b : "0.0.0.0") + ":" + std::to_string(port));
+    });
 }
 
 HttpServer::~HttpServer() {
@@ -1317,15 +1329,24 @@ void HttpServer::run() {
         gate.cv.wait(lk, [&] { return gate.abort || gate.ready >= impl_->workers; });
         return !gate.abort;
     };
+    // Bağlantı başına işçi modeli (fiber yok / Windows): ortak soket, BÜTÜN işçi iş parçacıkları
+    // açıldıktan sonra ana iş parçacığında dinlenir; işçiler o ana dek burada bekler (açılmamış
+    // sokette accept EINVAL ile hemen döner — dönüp durmasınlar). Açılamazsa kapı iptal: dinlemeden çık.
+    struct ListenGate { std::mutex m; std::condition_variable cv; bool open = false, abort = false; } lgate;
+    auto wait_listening = [&lgate]() -> bool {
+        std::unique_lock<std::mutex> lk(lgate.m);
+        lgate.cv.wait(lk, [&] { return lgate.open || lgate.abort; });
+        return lgate.open;
+    };
 
     std::vector<std::thread> workers;
     workers.reserve(impl_->workers);
     for (int i = 0; i < impl_->workers; ++i) {
       try {
 #ifdef __linux__
-        workers.emplace_back([this, shared_port, i, &gate_arrive_and_wait]() {
+        workers.emplace_back([this, shared_port, i, &gate_arrive_and_wait, &wait_listening]() {
 #else
-        workers.emplace_back([this]() {
+        workers.emplace_back([this, &wait_listening]() {
 #endif
             look::set_thread_event_loop(impl_->loop.get());
 
@@ -1359,6 +1380,9 @@ void HttpServer::run() {
             bool gate_passed = !fiber_burst;   // fiber modunda: ilk kabul fiber'ı kurulunca kapıda bekle
             // Soketini bağlayamayan işçi de kapıya uğrar (yoksa ötekiler onu sonsuza dek beklerdi).
             if (fiber_burst && worker_fd < 0) { gate_passed = true; gate_arrive_and_wait(); }
+            if (!fiber_burst && !wait_listening()) return;
+#else
+            if (!wait_listening()) return;
 #endif
 
             while (impl_->running) {
@@ -1461,6 +1485,7 @@ void HttpServer::run() {
                             std::fflush(nullptr);
                             std::_Exit(1);
                         }
+                        log_listening(shared_port);
                     }
                     // Acceptor + tüm bağlantı fiber'ları bitene dek çalış.
                     // Acceptor running=false görünce (≤200ms) çıkar; bağlantı
@@ -1511,6 +1536,8 @@ void HttpServer::run() {
         // Kapıda bekleyen işçileri bırak (dinlemeden çıkarlar) — yoksa join sonsuza dek beklerdi.
         { std::lock_guard<std::mutex> lk(gate.m); gate.abort = true; }
         gate.cv.notify_all();
+        { std::lock_guard<std::mutex> lk(lgate.m); lgate.abort = true; }
+        lgate.cv.notify_all();
         for (auto& t : workers) if (t.joinable()) t.join();
         impl_->loop->stop();
         if (impl_->loop_thread.joinable()) impl_->loop_thread.join();
@@ -1518,6 +1545,24 @@ void HttpServer::run() {
             std::to_string(impl_->workers) + " (" + e.what() + "). Use fewer threads (--workers) or "
             "raise the process's limits (ulimit -u, ulimit -v).");
       }
+    }
+
+    // Bağlantı başına işçi modeli: bütün işçiler açıldı → şimdi dinle, sonra işçileri bırak.
+    if (!fiber_burst) {
+        const int lr = (impl_->server_fd >= 0) ? ::listen(impl_->server_fd, 16384) : -1;
+        if (lr < 0) {
+            const std::string why = std::strerror(errno);
+            impl_->running = false;
+            { std::lock_guard<std::mutex> lk(lgate.m); lgate.abort = true; }
+            lgate.cv.notify_all();
+            for (auto& t : workers) if (t.joinable()) t.join();
+            impl_->loop->stop();
+            if (impl_->loop_thread.joinable()) impl_->loop_thread.join();
+            throw std::runtime_error("could not listen on port " + std::to_string(impl_->port) + " (" + why + ")");
+        }
+        log_listening(impl_->port);
+        { std::lock_guard<std::mutex> lk(lgate.m); lgate.open = true; }
+        lgate.cv.notify_all();
     }
 
     for (auto& t : workers) {

@@ -816,8 +816,11 @@ int main(int argc, char* argv[]) {
             " | workers=" + std::to_string(workers)); }
 
         try {
-            look::FcgiServer server(tcp_port);
+            // Önce işçiler, SONRA port: kurucu dinlemeye başlar. Eskiden port önce açılıyordu; havuz
+            // (bellek sınırında) kurulamayınca süreç nedenini yazıp çıkarken bağlanan istemci
+            // kabul edilip yanıtsız kalıyordu (HTTP kipindeki başlangıç kapısının karşılığı).
             ThreadPool pool(workers);
+            look::FcgiServer server(tcp_port);
 
             server.run([&pool](look::FcgiConn conn_val) {
                 // move conn into heap so the lambda owns it across thread boundary

@@ -485,6 +485,14 @@ jobs:
           cd cpp
           bash tests/startup_resource_failure_test.sh ./build/lk-fcgi
 
+      # The port opens only when the server can serve: a probe connecting as fast as it can during
+      # startup must get an answer on its first accepted connection, and a start that fails for
+      # lack of memory must never accept one (http fiber, http per-connection, FastCGI).
+      - name: The port opens only when the server can serve
+        run: |
+          cd cpp
+          bash tests/listen_when_ready_test.sh ./build/lk-fcgi
+
       # http:: sent the request with one send(): a slow server let the send timeout expire and
       # the rest of the body was never sent, with no error (8 MB POST: 2.6 MB arrived).
       - name: "http:: sends the whole request body to a slow server"
