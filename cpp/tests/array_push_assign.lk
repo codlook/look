@@ -84,5 +84,14 @@ $secs = date::timestamp() - $t0
 $fails = $fails + check("100k appends", $c, 100000)
 if ($secs > 20) { print("FAIL 100k appends took " . $secs . " s (the array is copied on every append)"); $fails = $fails + 1 }
 
+# a top-level variable with a value from a call: no function can change $top while the value is
+# computed (that is an error at load), so this is the fast path too
+$top = []
+$t0 = date::timestamp()
+for ($i = 0; $i < 100000; $i = $i + 1) { $top = array::push($top, string::upper("r" . $i)) }
+$secs = date::timestamp() - $t0
+$fails = $fails + check("top-level appends from a call", [count($top), $top[0], $top[99999]], [100000, "R0", "R99999"])
+if ($secs > 20) { print("FAIL 100k top-level appends from a call took " . $secs . " s"); $fails = $fails + 1 }
+
 if ($fails > 0) { exit(1) }
 print("PASS: $a = array::push($a, v) appends in place with the same results and errors")
