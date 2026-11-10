@@ -862,10 +862,18 @@ call_dispatch:
                 // sahipli hale getirilir (yazınca-kopyala), sonra yerinde büyür/küçülür.
                 Value* root = path_root(proto->code[frame.ip++]);
                 const bool is_push = ins.op == OpCode::PUSH_PATH;
-                Value pv = is_push ? R(proto->code[frame.ip++].a) : Value();
+                const Instruction* vh = is_push ? &proto->code[frame.ip++] : nullptr;
+                Value pv = is_push ? R(vh->a) : Value();
                 R(ins.a) = vm_struct([&] {
                     Value& target = look::value_path_slot(*root, &R(ins.b), ins.c,
                         [&](Value& c, const Value& k, const Value* forced) { array_set(c, k, *forced); });
+                    // `$a = array::push($a, v)` yerinde derlendi (compiler try_compile_push_assign): aynı mesaj.
+                    if (is_push && vh->b && target.type() != Value::ARRAY) {
+                        if (target.type() == Value::STRUCT)   // extra_stdlib.cpp array:: sarmalayıcısıyla aynı
+                            throw std::runtime_error("array::push() does not take a struct ('"
+                                + (*target.as_struct())[0].str_ref() + "'): a struct is not an array, use its fields");
+                        throw std::runtime_error("array::push() requires array and value");
+                    }
                     return is_push ? look::value_push(target, pv) : look::value_pop(target);
                 });
                 break;

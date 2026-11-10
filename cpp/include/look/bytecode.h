@@ -142,6 +142,7 @@ enum class OpCode : uint8_t {
                      //   shared) in the variable's own slot before the write.
     PUSH_PATH,       // r[a] = push(root[k0]..[kc-1], value): keys in r[b]..; next NOP = root (as SET_PATH),
                      //   then a NOP whose a = the value register. Appends to the VARIABLE (copy on write).
+                     //   That NOP's b = 1: compiled from `$a = array::push($a, v)` (its error message).
     POP_PATH,        // r[a] = pop(root[k0]..[kc-1]); next NOP = root. Removes the last element.
 };
 

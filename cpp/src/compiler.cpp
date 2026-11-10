@@ -308,7 +308,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         // MOVE'u atla. Aksi halde compile_expr(Assignment) her seferinde slot'u temp'e
         // kopyalar; `$s .= x` gibi akümülatörde bu O(n²) yaratır (kopya = tüm string).
         if (auto* a = node_as<AssignmentExpression>(s->expression.get())) {
-            compile_assign_expr(*a);
+            if (!try_compile_push_assign(*a)) compile_assign_expr(*a);
         } else {
             // Sonucu atılan SAF yerleşik (array::push($l, $x) tek başına): hiçbir şey yapmaz, sessiz
             // hatadır → program başlamaz, nedeni söylenir (var olmayan fonksiyon kuralı gibi).
@@ -1007,6 +1007,130 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
 }
 
 // ── compile_assign_expr ───────────────────────────────────────────────────────
+
+// `$a = array::push($a, v)` deyimi: array::push her çağrıda tüm diziyi kopyalar → döngüde karesel
+// (20k eleman × 320 istek: 257 sn, `$a[$i] = v` 6 sn). Deyim olarak, hedef ilk argümanla AYNI düz
+// değişkense sonuç `push($a, v)` ile aynıdır: $a'nın deposu yerinde büyür (Go append), paylaşılıyorsa
+// bir kez kopyalanır (yazınca-kopyala) — başka değişken etkilenmez.
+// Koşul: değer hesaplanırken $a DEĞİŞEMEMELİ — eski sırada ekleme değerden ÖNCE okunan diziye
+// yapılır, yerinde eklemede o anki $a'ya. $a'yı doğrudan değiştirebilenler her durumda dışarıda:
+// atama, ++/--, çekirdek push()/pop() (değişkeni yerinde değiştirir) — ifadenin herhangi bir
+// yerinde. Fonksiyon çağrısı ise yalnız $a bir fonksiyonun YERELİYSE serbest: başka fonksiyon onu
+// göremez, closure değer yakalar. Betiğin üst düzey değişkeni (GLOBAL) fonksiyondan değiştirilebilir
+// (`function f() { $a[0] = 99 }`, `fn() => push($a, 1)` — ölçüldü) → global'de çağrı da dışarıda.
+// Bu varsayımları tests/array_push_assign.lk sabitler (yerel: değişmez; global: değişir ve sonuç
+// eskisiyle aynı); dile referans parametresi / değiştirilebilir yakalama gelirse test kırılır.
+// Closure gövdesine inilmez (kendi yerelleri).
+// Çözümleme ve okuma sırası eskisiyle aynı (önce yazma, sonra okuma çözümlemesi; global önce okunur)
+// → hatalar aynı sırada, aynı mesajla.
+static bool push_value_is_pure(const Expression& x, bool calls_ok) {
+    switch (x.kind) {
+        case NodeKind::NumberLiteral: case NodeKind::FloatLiteral: case NodeKind::BooleanLiteral:
+        case NodeKind::NullLiteral: case NodeKind::Variable: case NodeKind::ScopeResolution:
+        case NodeKind::IotaExpression: case NodeKind::FunctionExpression:
+            return true;
+        case NodeKind::StringLiteral: {
+            // {$…} parçası derlemede ayrıştırılır: atama/++/--/push/pop (ve global'de çağrı) içerebilecek
+            // her metin eski yola — metin üzerinde temkinli bakış.
+            const auto& s = static_cast<const StringLiteral&>(x);
+            if (s.raw || s.value.find("{$") == std::string::npos) return true;
+            const std::string& v = s.value;
+            if (!calls_ok && v.find('(') != std::string::npos) return false;
+            return v.find('=') == std::string::npos && v.find("++") == std::string::npos &&
+                   v.find("--") == std::string::npos && v.find("push") == std::string::npos &&
+                   v.find("pop") == std::string::npos;
+        }
+        case NodeKind::CallExpression: {
+            if (!calls_ok) return false;
+            const auto& c = static_cast<const CallExpression&>(x);
+            if (auto* v = node_as<Variable>(c.callee.get()))
+                if (v->name == "push" || v->name == "pop") return false;   // ilk argümanın DEĞİŞKENİNİ değiştirir
+            if (!c.callee || !push_value_is_pure(*c.callee, calls_ok)) return false;
+            for (const auto& a : c.arguments)
+                if (!a || !push_value_is_pure(*a, calls_ok)) return false;
+            return true;
+        }
+        case NodeKind::StructLiteralExpression: {
+            for (const auto& f : static_cast<const StructLiteralExpression&>(x).fields)
+                if (!f.second || !push_value_is_pure(*f.second, calls_ok)) return false;
+            return true;
+        }
+        case NodeKind::ArrayLiteral: {
+            for (const auto& el : static_cast<const ArrayLiteral&>(x).elements)
+                if (!el || !push_value_is_pure(*el, calls_ok)) return false;
+            return true;
+        }
+        case NodeKind::AssocArrayLiteral: {
+            for (const auto& kv : static_cast<const AssocArrayLiteral&>(x).pairs)
+                if (!kv.first || !kv.second || !push_value_is_pure(*kv.first, calls_ok) ||
+                    !push_value_is_pure(*kv.second, calls_ok))
+                    return false;
+            return true;
+        }
+        case NodeKind::IndexExpression: {
+            const auto& ix = static_cast<const IndexExpression&>(x);
+            return ix.object && ix.index && push_value_is_pure(*ix.object, calls_ok) &&
+                   push_value_is_pure(*ix.index, calls_ok);
+        }
+        case NodeKind::MemberAccessExpression: {
+            const auto& ma = static_cast<const MemberAccessExpression&>(x);
+            return ma.object && push_value_is_pure(*ma.object, calls_ok);
+        }
+        case NodeKind::UnaryExpression: {
+            const auto& u = static_cast<const UnaryExpression&>(x);
+            return u.op != "++" && u.op != "--" && u.right && push_value_is_pure(*u.right, calls_ok);
+        }
+        case NodeKind::BinaryExpression: {
+            const auto& b = static_cast<const BinaryExpression&>(x);
+            return b.left && b.right && push_value_is_pure(*b.left, calls_ok) &&
+                   push_value_is_pure(*b.right, calls_ok);
+        }
+        case NodeKind::TernaryExpression: {
+            const auto& t = static_cast<const TernaryExpression&>(x);
+            return t.condition && t.then_expr && t.else_expr && push_value_is_pure(*t.condition, calls_ok) &&
+                   push_value_is_pure(*t.then_expr, calls_ok) && push_value_is_pure(*t.else_expr, calls_ok);
+        }
+        default:
+            return false;   // atama ve bilinmeyen her düğüm → eski yol
+    }
+}
+
+bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
+    if (e.op != "=" || e.index || e.object || !e.value) return false;
+    auto* call = node_as<CallExpression>(e.value.get());
+    if (!call || call->arguments.size() != 2) return false;
+    auto* sr = node_as<ScopeResolution>(call->callee.get());
+    if (!sr || sr->module_name != "array" || sr->member_name != "push") return false;
+    if (builtin_index("array::push") < 0) return false;
+    auto* first = node_as<Variable>(call->arguments[0].get());
+    if (!first || first->name != e.name || !call->arguments[1]) return false;
+    const bool pure_strict = push_value_is_pure(*call->arguments[1], /*calls_ok=*/false);
+    if (!pure_strict && !push_value_is_pure(*call->arguments[1], /*calls_ok=*/true)) return false;
+    // compile_assign_expr ile aynı sıra: önce yazma çözümlemesi, sonra (değer derlenirken) okuma.
+    const auto wloc = resolve_var(e.name, /*for_write=*/true);
+    const auto rloc = resolve_var(e.name, /*for_write=*/false);
+    uint16_t kind; uint32_t ix;
+    if (wloc.kind == VarKind::LOCAL && rloc.kind == VarKind::LOCAL && wloc.index == rloc.index) {
+        kind = 0; ix = rloc.index;
+    } else if (pure_strict && wloc.kind == VarKind::GLOBAL && rloc.kind == VarKind::GLOBAL) {
+        // Eski yol $a'yı değerden ÖNCE okur (tanımsızsa hata önce o): aynı okuma, sonra yazmacı bırak
+        // (geçici yazmaçta kalan ikinci sahip yerinde büyütmeyi kopyaya zorlardı).
+        uint16_t t = compile_expr(*call->arguments[0]);
+        emit(OpCode::LOAD_NULL, t);
+        free_temp(t);
+        kind = 4; ix = add_const(Value(e.name));
+    } else {
+        return false;   // capture / gölgeleme: eski yol (kendi hatası ve anlamıyla)
+    }
+    uint16_t val = compile_expr(*call->arguments[1]);
+    uint16_t r = alloc_temp();
+    emit(OpCode::PUSH_PATH, r, 0, 0);
+    emit(OpCode::NOP, kind, hi16(ix), lo16(ix));
+    emit(OpCode::NOP, val, 1);   // b=1: dizi değilse array::push'un kendi hata mesajı
+    free_temp(val);
+    free_temp(r);
+    return true;
+}
 
 void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     // Plain `$x = v` yazma target'ı (auto-capture YOK → dış değişkene atama yeni

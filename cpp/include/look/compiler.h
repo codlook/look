@@ -325,6 +325,7 @@ private:
     void compile_const_block(const ConstBlock& s);
     void compile_struct_decl(const StructDeclaration& s);
     void compile_assign_expr(const AssignmentExpression& e);
+    bool try_compile_push_assign(const AssignmentExpression& e);   // `$a = array::push($a, v)` → yerinde
     // Eleman/alan ataması İFADE olarak kullanıldığında değerinin konacağı yazmaç (-1: istenmiyor).
     int assign_result_reg_ = -1;
 

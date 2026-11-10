@@ -903,6 +903,14 @@ jobs:
           cd cpp
           ./build/lk tests/crypto_vectors.lk
 
+      # `$a = array::push($a, v)` yerinde eklenir (eskiden her çağrıda tüm dizi kopyalanıyordu: 100k
+      # ekleme ~60 sn). Sonuç ve hatalar kopyalayan sürümle birebir; "fonksiyon çağıranın yerelini
+      # değiştiremez" varsayımını sabitler — dil değişirse kırılır.
+      - name: array::push assigned to its own variable appends in place (same results)
+        run: |
+          cd cpp
+          ./build/lk tests/array_push_assign.lk
+
       # RS256 known-answer — crypto_vectors sha/hmac/base64'ü kapsıyordu ama rs256'yı
       # kapsamıyordu (olgunluk denetimi 2026-08-11 boşluğu). Sabit imza (openssl dış
       # oracle, PKCS#1 v1.5 deterministik) + reddetme tarafı (bozuk mesaj/imza). POSIX
