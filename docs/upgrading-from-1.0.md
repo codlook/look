@@ -273,6 +273,50 @@ $level = "quiet"
 if ($debug) { $level = "verbose" }
 ```
 
+### A function cannot change a variable outside it — error at load
+
+A function — named, a closure, a route handler, or one that comes from `use "file.lk"` —
+cannot change a top-level variable in place. Assigning to an element or a field, `+=`, `.=`
+or `++` on an element, `++`/`--` on the variable, `push()` and `pop()` were allowed in 1.0.x
+and changed the top-level variable; now the program does not start:
+
+```
+Error: line 4: closure changes $memo, a variable outside it (an element or field of it is assigned);
+a function cannot change variables outside it — pass the value as a parameter and return the new value
+```
+
+Reading a top-level variable still works, and a plain `$x = …` inside a function makes a local
+as before. This is the closure rule above, applied to every function.
+
+A common case is a note kept for the current request in a top-level array:
+
+```
+# 1.0.x — a route writes the request's value into a top-level array
+$memo = ["base" => ""]
+function csrf_base() {
+    if ($memo["base"] != "") { return $memo["base"] }
+    $memo["base"] = make_base()          # Now: error at load
+    return $memo["base"]
+}
+route("GET", "/form", function() { return view("form", ["token" => csrf_token(csrf_base())]) })
+```
+
+Carry the value through the call instead: compute it once in the handler, pass it to what
+needs it, and return a new value where it changes.
+
+```
+# Now — the request's value lives in the handler and travels as a parameter
+function csrf_base() { return make_base() }
+route("GET", "/form", function() {
+    $base = csrf_base()
+    return view("form", ["token" => csrf_token($base)])
+})
+```
+
+Do **not** move such a value to `app::set()`: that registry is one per process and every
+request sees what another request stored there, so one user's value would reach the next user.
+Per-request data belongs in local variables and parameters, per-user data in `session::`.
+
 ## Web
 
 ### The default 404 body is plain text — silent

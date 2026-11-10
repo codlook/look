@@ -14,7 +14,8 @@
 #   * a job's result is respected: true = done; false or an error = tried again up to its
 #     limit (3), then failed
 #   * a timer id taken at the top level still cancels that timer from a route
-#   * a global written by a callback does not reach a later request
+#   * a callback's copy of a global, written, does not reach a later request (writing the global
+#     itself is an error at load — tests/outer_write_test.sh)
 #   * a job handler run from inside a request (a route calls jobs::run) gets its own request
 #     context, and the request that ran it keeps its own status, headers and parameters
 # Usage: toplevel_callbacks_vm_test.sh <lk-fcgi>
@@ -29,13 +30,13 @@ use jobs
 \$G = ["g0"]
 function spin() { \$s = 0; for (\$i = 0; \$i < 1500000; \$i++) { \$s = \$s + \$i % 7 }; return \$s }
 jobs::worker("mail", function(\$job) {
-    spin(); \$G[0] = "job"
+    spin(); \$g = \$G; \$g[0] = "job"
     cache::set("job_runs", (cache::get("job_runs") ?? 0) + 1, 600)
     if (\$job["payload"] == "bad") { return false }
     if (\$job["payload"] == "boom") { throw "boom in job" }
     return true
 })
-timer::after(300, function() { spin(); \$G[0] = "timer"; cache::set("timer_done", 1, 600) })
+timer::after(300, function() { spin(); \$g = \$G; \$g[0] = "timer"; cache::set("timer_done", 1, 600) })
 \$tick = timer::every(100, function() { cache::set("ticks", (cache::get("ticks") ?? 0) + 1, 600) })
 route("GET", "/push", function() { jobs::push("mail", request::get("to")); return response::text("pushed") })
 route("GET", "/drain", function() { jobs::run(0); return response::text("drained") })

@@ -13,4 +13,6 @@ route("GET", "/struct",  function() {
     for ($i = 0; $i < 50; $i++) { $r = Row { id: $i }; $n = $n + count($r.tags) }
     return response::text($n)
 })
-route("GET", "/write",   function() { $CFG[10]["name"] = "changed"; return response::text($CFG[10]["name"] . ":" . count($CFG)) })
+// a route cannot change a top-level variable (error at load): it writes its own copy — the
+// copy-on-write cost being measured is the same
+route("GET", "/write",   function() { $c = $CFG; $c[10]["name"] = "changed"; return response::text($c[10]["name"] . ":" . count($c)) })

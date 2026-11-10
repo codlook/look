@@ -4,7 +4,8 @@
 # the request's copy; that second-level copy forgot where the setup globals live, so
 # functions called from the handler read and WROTE the real setup values — a const or a
 # top-level array changed by a WebSocket message changed for every later HTTP request.
-# Each handler records that it ran (cache::) and writes into a const and a top-level array;
+# Each handler records that it ran (cache::) and writes into its copy of a const and of a
+# top-level array (writing the top-level array itself is an error at load);
 # a later HTTP request must still read the declared values.
 # Usage: realtime_isolation_test.sh <lk-fcgi>
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
@@ -15,7 +16,7 @@ use json
 use cache
 const { LIST = ["c0"] }
 $G = ["g0"]
-function w($who) { cache::set("ran_" . $who, "yes", 60); $G[0] = $who; $l = LIST; $l[0] = $who; return 1 }
+function w($who) { cache::set("ran_" . $who, "yes", 60); $g = $G; $g[0] = $who; $l = LIST; $l[0] = $who; return 1 }
 function ran($who) { return cache::get("ran_" . $who) ?? "no" }
 function arm() { timer::after(50, fn() => w("TIMER")); return 1 }
 route("GET", "/arm", fn() => response::json(arm()))

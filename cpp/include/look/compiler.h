@@ -326,6 +326,7 @@ private:
     void compile_struct_decl(const StructDeclaration& s);
     void compile_assign_expr(const AssignmentExpression& e);
     bool try_compile_push_assign(const AssignmentExpression& e);   // `$a = array::push($a, v)` → yerinde
+    void check_no_outer_write(const std::string& name, const std::string& how);   // fonksiyon dışını değiştiremez
     // Eleman/alan ataması İFADE olarak kullanıldığında değerinin konacağı yazmaç (-1: istenmiyor).
     int assign_result_reg_ = -1;
 

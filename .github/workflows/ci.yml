@@ -342,6 +342,14 @@ jobs:
           cd cpp
           bash tests/capture_check_test.sh ./build/lk
 
+      # the same rule for every function: a function, closure, route handler or a function from
+      # `use "file.lk"` cannot change a top-level variable in place (every in-place write the VM has:
+      # element/field, compound, ++/--, push, pop) — error at load, web server does not start.
+      - name: A function cannot change a variable outside it (refused at load)
+        run: |
+          cd cpp
+          bash tests/outer_write_test.sh ./build/lk ./build/lk-fcgi
+
       # one spelling for a struct field ("name type [= default]"); the two v1
       # spellings are parse errors that say what to write instead.
       - name: Struct field single form

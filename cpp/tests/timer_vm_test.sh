@@ -8,7 +8,8 @@
 # its own VM, the declared values of the globals, the values it captured.
 #   * the route stays on the VM (nothing falls back)
 #   * the callback runs, with the value it captured
-#   * what the callback writes to a global reaches no later request
+#   * what the callback writes to its copy of a global reaches no later request (writing the
+#     global itself is an error at load — tests/outer_write_test.sh)
 #   * timer::every repeats until timer::cancel
 #   * an error in a callback is logged and the server keeps answering
 # Usage: timer_vm_test.sh <lk-fcgi>
@@ -20,7 +21,7 @@ use json
 use cache
 const { LIST = ["c0"] }
 $G = ["g0"]
-function mark($who) { cache::set("ran_" . $who, "yes", 60); $G[0] = $who; return 1 }
+function mark($who) { cache::set("ran_" . $who, "yes", 60); $g = $G; $g[0] = $who; return 1 }
 function ran($who) { return cache::get("ran_" . $who) ?? "no" }
 function tick() { cache::set("ticks", (cache::get("ticks") ?? 0) + 1, 60); return 1 }
 function arm() { timer::after(50, fn() => mark("NAMED")); return 1 }

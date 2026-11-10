@@ -250,6 +250,19 @@ function huge() { /* 64KB+ of code */ }
 function part1() { ... }
 function part2() { ... }</code></pre>
     </div>
+    <div class="err" id="e106" data-cat="Syntax &amp; parse errors (before your code runs)" data-text="function f() changes $t, a variable outside it closure changes a function, closure or route handler changes a top-level variable in place. pass the value as a parameter and return the new value. never app::set().">
+      <div class="err-msg"><code>function f() changes $t, a variable outside it (…)</code> / <code>closure changes $t, a variable outside it (…)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A function, closure or route handler changes a top-level variable in place: <code>$t["k"] = …</code>, <code>$t.f = …</code>, <code>$t["k"]++</code>, <code>$n++</code>, <code>push($t, …)</code>, <code>pop($t)</code>. A function may read outer variables but not change them. The program does not start.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass the value as a parameter and return the new value. Per-request data stays in local variables; per-user data goes in <code>session::</code>. Never <code>app::set()</code> — it is shared by every request.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$memo = ["base" => ""]
+function base() { $memo["base"] = make_base(); return $memo["base"] }
+<span class="eg-good"># ✓ fix</span>
+function base() { return make_base() }
+route("GET", "/", function() { $b = base(); return response::text(use_it($b)) })</code></pre>
+    </div>
   </div>
   </div>
 </section>

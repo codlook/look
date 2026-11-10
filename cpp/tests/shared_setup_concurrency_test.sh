@@ -8,8 +8,8 @@
 # the copy, so the copies in advance are gone: a route that only reads a 2000-element setup
 # list went from 3 000 to 51 000 requests per second (cpp/bench/isolation).
 # What must hold, and is checked here with 4 workers and 8 clients at once:
-#   * every writing request reads back exactly what it wrote (global, nested, pushed,
-#     struct default, captured list copied and written)
+#   * every writing request reads back exactly what it wrote (its copy of a global, nested,
+#     pushed, struct default, captured list copied and written)
 #   * every reading request, at any time, sees the declared values
 # tests/request_isolation_test.sh proves the same for one request after another, and turns
 # red for each of the three copy-on-write points when it is removed.
@@ -26,16 +26,22 @@ $P = ["p0"]
 $BIG = []
 for ($i = 0; $i < 500; $i++) { push($BIG, ["id" => $i, "tags" => ["x", "y"]]) }
 $captured = $BIG
+// A function cannot change a top-level variable (error at load): it takes the shared values into
+// its own variables and writes there — those writes must stay in this request.
 function work($u) {
-    $G[1] = $u
-    $N["k"][0] = $u
-    $N["deep"]["a"]["b"][0] = $u
-    push($P, $u)
-    $BIG[7]["tags"][1] = $u
+    $g = $G
+    $n = $N
+    $p = $P
+    $big = $BIG
+    $g[1] = $u
+    $n["k"][0] = $u
+    $n["deep"]["a"]["b"][0] = $u
+    push($p, $u)
+    $big[7]["tags"][1] = $u
     $c = Cart { owner: $u }
     push($c.items, $u)
     $c.meta["tags"][0] = $u
-    return [$G[0], $G[1], $N["k"][0], $N["deep"]["a"]["b"][0], count($P), $P[1], $BIG[7]["tags"][1], $BIG[8]["tags"][1],
+    return [$g[0], $g[1], $n["k"][0], $n["deep"]["a"]["b"][0], count($p), $p[1], $big[7]["tags"][1], $big[8]["tags"][1],
             count($c.items), $c.items[1], $c.meta["tags"][0]]
 }
 route("GET", "/w", function() {

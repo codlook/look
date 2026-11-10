@@ -6,8 +6,7 @@
 # - A function cannot change the caller's local variable (there is no `global`, no reference
 #   parameter, and a closure captures by value). Pinned below — if the language ever gains a way,
 #   this test fails and the rewrite in compiler.cpp (try_compile_push_assign) must be revisited.
-# - A top-level (global) variable CAN be changed by a function, so for globals the rewrite is only
-#   used when the value contains no call; the results below pin the old order there too.
+# - A function cannot change a top-level variable either (compile error — tests/outer_write_test.sh).
 use array
 use string
 struct P { x any }
@@ -61,12 +60,6 @@ function caller() {
   return $a
 }
 $fails = $fails + check("function cannot change the caller's local", caller(), [1, 5, 2])
-
-# a function CAN change a top-level variable: the old order is kept (value computed after the read)
-$t = [1]
-function bump() { push($t, 99); return 5 }
-$t = array::push($t, bump())
-$fails = $fails + check("function changes the global during the value", $t, [1, 5])
 
 # an error in the value leaves $a as it was
 function bad() { throw "boom" }

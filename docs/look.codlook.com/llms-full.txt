@@ -305,10 +305,12 @@ JSON-shaped data (strings, integers, booleans, null, lists, maps) and nothing el
 does not fail on other values, it changes them: a float such as `1.0` comes back as the
 integer `1`, a struct comes back as a plain map, and a closure comes back as `null`.
 
-**Between requests** the web server isolates you from this: every request gets its own
-copy of the arrays created while the script was set up (`const` arrays, top-level arrays,
-arrays captured by a route with `use`, struct defaults). A request may change them freely;
-the next request sees the declared values again. State that is meant to outlive a request
+**Between requests** the web server isolates you from this: the arrays created while the
+script was set up (`const` arrays, top-level arrays, arrays captured by a route with `use`,
+struct defaults) are shared by every request and never changed by one. A route or a function
+cannot change a top-level variable in place (an error at load); a request that copies one into
+its own variable (`$mine = $LIST`) may change the copy freely, and the next request sees the
+declared values again. State that is meant to outlive a request
 belongs in `cache::`, `session::` or the database — never in a top-level array.
 
 ### Type Conversions
@@ -4709,7 +4711,7 @@ There's no separate router library. `route()` is a built-in — when you run the
 
 HTTP data is accessed via `request::get()`, `request::post()`, `request::json()`. Sessions via `session::`, cookies via `cookie::`. Everything is explicit and traceable.
 
-**Function scope is isolated.** Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). To change a value in a function, pass it as a parameter and return the new value.
+**Function scope is isolated.** Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). Changing an outer variable in place — `$t["k"] = …`, `$t.f = …`, `$t["k"]++`, `$n++`, `push($t, …)`, `pop($t)` — is an error at load, for named functions, closures, route handlers and functions from `use "file.lk"` alike: `function f() changes $t, a variable outside it (…)`. To change a value in a function, pass it as a parameter and return the new value.
 
 > **`app::set()` is not a place for state.** It is one registry shared by every request the process serves: a value set while handling one request is seen by all the others. Register services there once at setup (a database connection, read-only configuration) — never anything that belongs to one user or one request (a cart, a user id, a CSRF token). Per-request data stays in local variables and parameters; per-user data goes in `session::`.
 

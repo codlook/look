@@ -1132,6 +1132,25 @@ bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
     return true;
 }
 
+// LOOK 2: bir fonksiyon (adlı ya da closure; `use` ile gelen dosyadakiler dahil) kendi dışındaki
+// bir değişkeni YERİNDE değiştiremez — closure yakalama kuralının (capture_check.h) fonksiyon
+// karşılığı. Eskiden `$t[k] = …`, `$t.f = …`, `$t[k] += …`, `$t[k]++`, push/pop($t…), `$t++`
+// üst düzey $t'yi sessizce değiştiriyordu; düz `$t = …` ve `$t += …` ise yerel yaratıyordu
+// (belge: "fonksiyon kapsamı yalıtılmıştır"). Okuma serbest. Derlemede hata: program başlamaz.
+// Kapsam VM'den çıkarıldı: değişkene yerinde yazan yollar SET_PATH / PUSH_PATH / POP_PATH (kökü
+// GLOBAL) ve ++/-- (STORE_GLOBAL); başka bir yerleşik argümanının deposunu değiştirmez.
+// Öneri app::set() DEĞİL: o kayıt bütün isteklerce paylaşılır (istek başına veri sızar).
+void FunctionCompiler::check_no_outer_write(const std::string& name, const std::string& how) {
+    if (!parent_) return;   // üst düzeyin kendisi
+    const std::string bare = (!name.empty() && name[0] == '$') ? name.substr(1) : name;
+    const std::string who = proto_.name == "<closure>" ? "closure" : "function " + proto_.name + "()";
+    // Satır mesajda (unused_result_message gibi): komut satırı derleme hatasında yalnız dosyayı yazar.
+    const std::string at = cur_line_ > 0 ? "line " + std::to_string(cur_line_) + ": " : "";
+    throw LookProgramError(at + who + " changes $" + bare + ", a variable outside it (" + how + "); a function "
+        "cannot change variables outside it — pass the value as a parameter and return the new value",
+        cur_line_);
+}
+
 void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     // Plain `$x = v` yazma target'ı (auto-capture YOK → dış değişkene atama yeni
     // local yaratır). `$arr[i]=v` ise $arr container'ı OKUNUP yerinde mutasyona
@@ -1169,6 +1188,10 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         if (is_path && key_exprs.size() <= 250) {
             const std::string& root_name = root ? root->name : e.name;
             auto rloc = resolve_var(root_name, /*for_write=*/false);
+            if (rloc.kind == VarKind::GLOBAL)
+                // `$t[k]++` ayrıştırıcıda `+= 1` olur: kullanıcının yazmadığı işleci söyleme.
+                check_no_outer_write(root_name, e.op == "=" ? "an element or field of it is assigned"
+                                                            : "an element or field of it is changed");
             const uint16_t n = u16(key_exprs.size(), "index path length");
             uint16_t base = regs_->alloc_seq(n);
             for (uint16_t k = 0; k < n; ++k) {
@@ -1455,6 +1478,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
             auto loc = resolve_var(var->name);
             if (loc.kind == VarKind::CAPTURE)
                 throw LookCompileError("Captured variable cannot be reassigned: $" + var->name);
+            if (loc.kind == VarKind::GLOBAL) check_no_outer_write(var->name, "it is changed with " + e->op);
 
             uint16_t r = ensure_dest();
             if (loc.kind == VarKind::LOCAL) {
@@ -1690,6 +1714,7 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             if (root && rev.size() <= 250) {
                 const bool is_push = var->name == "push";
                 auto rloc = resolve_var(root->name, /*for_write=*/false);
+                if (rloc.kind == VarKind::GLOBAL) check_no_outer_write(root->name, var->name + "() changes it");
                 const uint16_t n = u16(rev.size(), "index path length");
                 uint16_t base = (n > 0) ? regs_->alloc_seq(n) : 0;
                 for (uint16_t k = 0; k < n; ++k) {

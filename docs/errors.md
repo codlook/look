@@ -47,6 +47,7 @@ These come from the parser/compiler. Your program never starts until they are fi
 | `an expression is required after throw` | `throw` with nothing after it. | `throw "message"` — throw needs a value. |
 | `Expression nested too deep (max N)` / `Expression chain too long (max N)` / `Expression/block nested too deep` | A single expression or block nests far deeper than the limit (often machine-generated code, or a runaway `a.b.c.d…` chain). This limit prevents a parser stack overflow. | Break the expression into intermediate variables / smaller statements. |
 | `Jump target too far` | A single function compiled to more than 64 KB of bytecode — a jump can't reach that far. | Split the function into smaller functions. |
+| `function f() changes $t, a variable outside it (…)` / `closure changes $t, a variable outside it (…)` | A function, closure or route handler changes a top-level variable in place: `$t["k"] = …`, `$t.f = …`, `$t["k"]++`, `$n++`, `push($t, …)`, `pop($t)`. A function may read outer variables but not change them. | Pass the value as a parameter and return the new value. Per-request data stays in local variables; per-user data goes in `session::`. Never `app::set()` — it is shared by every request. |
 
 ---
 
