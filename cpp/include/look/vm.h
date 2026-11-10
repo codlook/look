@@ -157,12 +157,22 @@ private:
     // Hata yolu: bu run()'ın çerçevesini (register tabanı + proto) ile call_stack_'te bulup satırını
     // kaydeder — run()'daki `frame` referansı iç içe çağrıdan sonra geçersiz olabilir (vm.cpp).
     void note_error_line_for(int base, const FunctionProto* proto);
+    // AYNI hata için İLK (en içteki) kayıt kalır: hata geri çağırma zincirinden (array::map → LOOK
+    // fonksiyonu) dışarı çıkarken her iç içe run() kendi çağrı yerini yazıyordu; en dıştaki
+    // kazanıyor, rapor hatanın satırı yerine map çağrısının satırını gösteriyordu (eski
+    // yorumlayıcı doğruydu). Hata katmanlardan `throw;` ile aynı nesne olarak geçer: kimliği
+    // (exception_ptr) kayıtlıysa yazma. Yalnız hata yolunda (catch içinden) çağrılır → normal yolda
+    // maliyet yok, sıfırlama gerekmez (bayraklı ilk sürüm her call_closure'a dal ekliyordu: +%0,26).
+    std::exception_ptr noted_error_;
     template <class F, class P>
     void note_error_line(const F& frame, const P* proto) {
+        std::exception_ptr cur = std::current_exception();
+        if (cur && cur == noted_error_) return;
         int i = frame.ip - 1;
         if (proto && i >= 0 && i < (int)proto->lines.size() && proto->lines[i] > 0) {
             last_error_line_ = proto->lines[i];
             last_error_file_ = proto->file_at(i);
+            noted_error_ = cur;
         }
     }
 

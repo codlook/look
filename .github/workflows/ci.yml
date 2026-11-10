@@ -501,6 +501,13 @@ jobs:
           cd cpp
           bash tests/assoc_marker_test.sh ./build/lk ./build/lk-fcgi
 
+      # An error inside a callback (array::map / filter / sort calling a LOOK function) is reported
+      # at its own line and file, not at the builtin's call site — as the 1.0.x tree-walk engine did.
+      - name: An error inside a callback is reported at its own line
+        run: |
+          cd cpp
+          bash tests/callback_error_line_test.sh ./build/lk
+
       # http:: sent the request with one send(): a slow server let the send timeout expire and
       # the rest of the body was never sent, with no error (8 MB POST: 2.6 MB arrived).
       - name: "http:: sends the whole request body to a slow server"
