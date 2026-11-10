@@ -914,7 +914,7 @@ route("GET", "/menu/{company}", function($company) {
 
 | Function | Description |
 | --- | --- |
-| app::set("name", $value) | Register a service (usually at setup) |
+| app::set("name", $value) | Register a service at setup — shared by every request, never per-user or per-request data |
 | app::get("name") | Fetch a service (null if absent) |
 | app::has("name") | Is it registered? (bool) |
 | app::db() | shortcut for `app::get("db")` — the most common use |
@@ -922,6 +922,11 @@ route("GET", "/menu/{company}", function($company) {
 > **Concurrency:** services are kept in a single registry shared across all
  dispatches (mutex-protected). Today's `use ($conn)` already shares the same
  connection, so the behaviour is identical — thread-safety is unchanged.
+
+> **Never per-user or per-request data.** Because the registry is shared, `app::set()` called
+ while handling a request is visible to every other request, including other users'. A user id,
+ a cart or a CSRF token stored there leaks from one user to the next. Keep such data in local
+ variables and parameters (one request) or `session::` (one user).
 
 ## struct — Grouping Data
 
@@ -4704,7 +4709,9 @@ There's no separate router library. `route()` is a built-in — when you run the
 
 HTTP data is accessed via `request::get()`, `request::post()`, `request::json()`. Sessions via `session::`, cookies via `cookie::`. Everything is explicit and traceable.
 
-**Function scope is isolated.** Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). To share mutable state, register it once with `app::set()` and read it with `app::get()` / `app::()`.
+**Function scope is isolated.** Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). To change a value in a function, pass it as a parameter and return the new value.
+
+> **`app::set()` is not a place for state.** It is one registry shared by every request the process serves: a value set while handling one request is seen by all the others. Register services there once at setup (a database connection, read-only configuration) — never anything that belongs to one user or one request (a cart, a user id, a CSRF token). Per-request data stays in local variables and parameters; per-user data goes in `session::`.
 
 ### Explicit closure capture
 

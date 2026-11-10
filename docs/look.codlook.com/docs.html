@@ -950,7 +950,7 @@ look-fcgi --mode http --port 8080</code></pre>
 })</code></pre>
   <table>
     <tr><th>Function</th><th>Description</th></tr>
-    <tr><td>app::set("name", $value)</td><td>Register a service (usually at setup)</td></tr>
+    <tr><td>app::set("name", $value)</td><td>Register a service at setup — shared by every request, never per-user or per-request data</td></tr>
     <tr><td>app::get("name")</td><td>Fetch a service (null if absent)</td></tr>
     <tr><td>app::has("name")</td><td>Is it registered? (bool)</td></tr>
     <tr><td>app::db()</td><td>shortcut for <code>app::get("db")</code> — the most common use</td></tr>
@@ -959,6 +959,12 @@ look-fcgi --mode http --port 8080</code></pre>
     <p><strong>Concurrency:</strong> services are kept in a single registry shared across all
     dispatches (mutex-protected). Today's <code>use ($conn)</code> already shares the same
     connection, so the behaviour is identical — thread-safety is unchanged.</p>
+  </div>
+  <div class="callout">
+    <p><strong>Never per-user or per-request data.</strong> Because the registry is shared, <code>app::set()</code> called
+    while handling a request is visible to every other request, including other users'. A user id,
+    a cart or a CSRF token stored there leaks from one user to the next. Keep such data in local
+    variables and parameters (one request) or <code>session::</code> (one user).</p>
   </div>
 </section>
 
@@ -4691,7 +4697,10 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
 
   <h3>No global variables</h3>
   <p>HTTP data is accessed via <code>request::get()</code>, <code>request::post()</code>, <code>request::json()</code>. Sessions via <code>session::</code>, cookies via <code>cookie::</code>. Everything is explicit and traceable.</p>
-  <p><strong>Function scope is isolated.</strong> Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). To share mutable state, register it once with <code>app::set()</code> and read it with <code>app::get()</code> / <code>app::&lt;name&gt;()</code>.</p>
+  <p><strong>Function scope is isolated.</strong> Assigning a variable inside a function creates a function-local — it never silently overwrites an outer/top-level variable (reading an outer value still works). To change a value in a function, pass it as a parameter and return the new value.</p>
+  <div class="callout">
+    <p><strong><code>app::set()</code> is not a place for state.</strong> It is one registry shared by every request the process serves: a value set while handling one request is seen by all the others. Register services there once at setup (a database connection, read-only configuration) — never anything that belongs to one user or one request (a cart, a user id, a CSRF token). Per-request data stays in local variables and parameters; per-user data goes in <code>session::</code>.</p>
+  </div>
 
   <h3>Explicit closure capture</h3>
   <p>To access an outer variable you must write <code>use ($conn)</code>. Which data goes where is always visible.</p>
