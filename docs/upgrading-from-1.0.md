@@ -125,6 +125,18 @@ The check is deliberately narrow and prefers missing a case to a false alarm: a 
 the function assigns as a whole (`$p = …`) is its own variable and is not checked, nor is
 a variadic parameter.
 
+### A list is never a map, and a map prints as `[k => v]` — security fix, silent
+
+In 1.0.x a map was a list whose first element was the text `"__assoc__"`, so any list starting
+with that text was taken for a map: a JSON body `["__assoc__", "role", "admin"]` reached the
+application as a map with `role => admin`, and form or query arrays could do the same. Now a
+list stays a list whatever it contains — from JSON, a form, a query string or a literal — and
+`json::encode` writes it back as an array.
+
+Converting a map to text shows its keys and values: `"" . ["k" => 3, "ad" => "x"]` is
+`[k => 3, ad => x]` (it was `[__assoc__, k, 3, ad, x]`). Use `json::encode` when the text is
+meant for another program.
+
 ### `push` and `pop` change the variable you name — silent
 
 `push($list, $x)` and `pop($list)` still modify `$list` in place, including paths such as

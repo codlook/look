@@ -354,7 +354,7 @@ Value VM::array_get(const Value& arr, const Value& key) {
     // Assoc: ["__assoc__", k0, v0, k1, v1, ...] — sentinel at position 0
     // str_ref(): B5'te string pointer arkasında — as_string()/to_string() her erişimde
     // kopya döndürür. Sentinel ve key karşılaştırmaları kopyasız (nesne-lookup sıcak yolu).
-    if (!vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__") {
+    if (!vec.empty() && vec[0].is_assoc_marker()) {
         // Lookup-key kopyasız: STRING anahtar (sıcak yol, $row["name"]) doğrudan
         // str_ref(); sayısal anahtar ($a[5]) yine "5"e coerce edilir (semantik korunur).
         std::string ktmp;
@@ -426,7 +426,7 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
     auto& vec = *arr.as_array();
 
     // Assoc: ["__assoc__", k0, v0, ...] — sentinel at position 0
-    bool is_assoc = !vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__";
+    bool is_assoc = !vec.empty() && vec[0].is_assoc_marker();
     // "12"/"-3" gibi tam sayi METNI sayisal indekstir, assoc anahtari degil
     // (yorumlayici bu metinleri hep sayisal indeks sayiyordu — motorlar ayrisiyordu).
     bool str_key = key.type() == Value::STRING && !look_is_int_key(key.str_ref());
@@ -445,7 +445,7 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
         if (!is_assoc) {
             std::vector<Value> conv;
             conv.reserve(vec.size() * 2 + 1);
-            conv.push_back(Value(std::string("__assoc__")));
+            conv.push_back(Value::assoc_marker());
             for (size_t i = 0; i < vec.size(); ++i) {
                 conv.push_back(Value(std::to_string(i)));
                 conv.push_back(vec[i]);
@@ -728,7 +728,7 @@ call_dispatch:
                 // the web path). Share one immutable instance — push_back is a shared_ptr
                 // refcount bump, not an allocation. Thread-safe: magic-static init + atomic
                 // refcount, and the sentinel is only ever compared, never mutated.
-                static const Value assoc_sentinel{std::string("__assoc__")};
+                static const Value assoc_sentinel = Value::assoc_marker();
                 auto v = std::make_shared<ValueArray>();
                 if (ins.b > 0) v->reserve(ins.b);   // compiler-known final size (sentinel + 2/pair)
                 v->push_back(assoc_sentinel);
@@ -772,7 +772,7 @@ call_dispatch:
                 if (arr.type() == Value::ARRAY) {
                     auto& vec = *arr.as_array();
                     // Sentinel-first: ["__assoc__", k, v, ...] → (size-1)/2 pairs
-                    if (!vec.empty() && vec[0].type()==Value::STRING && vec[0].as_string()=="__assoc__") {
+                    if (!vec.empty() && vec[0].is_assoc_marker()) {
                         size_t data_start = 1;
                         if (vec.size()>2 && vec[1].as_string()=="__struct__") data_start=3;
                         len = (int)(vec.size()-data_start)/2;
@@ -1103,8 +1103,7 @@ call_dispatch:
                 if (arr.type() != Value::ARRAY) { frame.ip=ins.bx(); break; }
                 auto& vec = *arr.as_array();
                 // Sentinel-first: ["__assoc__", k0, v0, k1, v1, ...]
-                bool is_assoc = !vec.empty() && vec[0].type()==Value::STRING
-                                && vec[0].as_string()=="__assoc__";
+                bool is_assoc = !vec.empty() && vec[0].is_assoc_marker();
                 if (is_assoc) {
                     // Skip __assoc__ sentinel + optional __struct__ tag
                     int data_start = 1;

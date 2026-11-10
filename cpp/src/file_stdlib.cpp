@@ -205,7 +205,7 @@ Module make_file_module() {
         auto out = std::make_shared<ValueArray>();
         for (const auto& [name, is_dir, size] : entries) {
             auto rec = std::make_shared<ValueArray>();
-            rec->push_back(Value(std::string("__assoc__")));
+            rec->push_back(Value::assoc_marker());
             rec->push_back(Value(std::string("name"))); rec->push_back(Value(name));
             rec->push_back(Value(std::string("dir")));  rec->push_back(Value(is_dir));
             rec->push_back(Value(std::string("size"))); rec->push_back(Value(size));
@@ -245,7 +245,7 @@ Module make_file_module() {
             throw std::runtime_error("file::store(): first argument must be a file from request::file()");
 
         auto& arr = *args[0].as_array();
-        bool is_assoc = !arr.empty() && arr[0].to_string() == "__assoc__";
+        bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
         if (!is_assoc)
             throw std::runtime_error("file::store(): invalid file argument");
 
@@ -321,7 +321,7 @@ Module make_file_module() {
 
         // Dönüş değeri
         auto result = std::make_shared<ValueArray>();
-        result->push_back(Value(std::string("__assoc__")));
+        result->push_back(Value::assoc_marker());
         result->push_back(Value(std::string("path")));   result->push_back(Value(dest.string()));
         result->push_back(Value(std::string("name")));   result->push_back(Value(safe_name));
         result->push_back(Value(std::string("url")));    result->push_back(Value(url));

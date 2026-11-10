@@ -98,14 +98,14 @@ static std::string repl_display(const Value& v) {
         // Check if assoc (has __assoc__ sentinel)
         bool is_assoc = false;
         for (auto& e : arr)
-            if (e.type() == Value::STRING && e.as_string() == "__assoc__") { is_assoc = true; break; }
+            if (e.is_assoc_marker()) { is_assoc = true; break; }
         if (is_assoc) {
             std::ostringstream oss;
             oss << "{";
             bool first = true, skip_next = false;
             bool found_sentinel = false;
             for (size_t i = 0; i < arr.size(); ++i) {
-                if (!found_sentinel && arr[i].type() == Value::STRING && arr[i].as_string() == "__assoc__") {
+                if (!found_sentinel && arr[i].is_assoc_marker()) {
                     found_sentinel = true; ++i; continue;
                 }
                 if (!first) oss << ", ";

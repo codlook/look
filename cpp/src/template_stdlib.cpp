@@ -91,7 +91,7 @@ Value TemplateEngine::resolve(const std::string& path, const TplContext& ctx) {
         size_t start = 0;
         bool   is_assoc = !arr.empty() &&
                           arr[0].type() == Value::STRING &&
-                          (arr[0].as_string() == "__assoc__" ||
+                          (arr[0].is_assoc_marker() ||
                            arr[0].as_string() == "__struct__");
         if (is_assoc) start = 1;
 
@@ -726,7 +726,7 @@ static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx
                 // Determine whether to skip sentinel at index 0
                 bool is_assoc = !arr.empty() &&
                                 arr[0].type() == Value::STRING &&
-                                (arr[0].as_string() == "__assoc__" ||
+                                (arr[0].is_assoc_marker() ||
                                  arr[0].as_string() == "__struct__");
 
                 std::vector<const Value*> elems;
@@ -784,7 +784,7 @@ static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx
                         size_t start = 0;
                         if (!arr.empty() &&
                             arr[0].type() == Value::STRING &&
-                            (arr[0].as_string() == "__assoc__" ||
+                            (arr[0].is_assoc_marker() ||
                              arr[0].as_string() == "__struct__"))
                             start = 1;
                         for (size_t j = start; j + 1 < arr.size(); j += 2) {
@@ -817,7 +817,7 @@ static TplContext value_to_context(const Value& v) {
     size_t start = 0;
     if (!arr.empty() &&
         arr[0].type() == Value::STRING &&
-        (arr[0].as_string() == "__assoc__" || arr[0].as_string() == "__struct__"))
+        (arr[0].is_assoc_marker() || arr[0].as_string() == "__struct__"))
         start = 1;
     for (size_t i = start; i + 1 < arr.size(); i += 2) {
         if (arr[i].type() == Value::STRING)

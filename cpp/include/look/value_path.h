@@ -41,7 +41,7 @@ inline Value* value_slot(Value& arr, const Value& key) {
     }
     if (arr.type() != Value::ARRAY) return nullptr;
     auto& vec = *arr.vec_ptr();
-    if (!vec.empty() && vec[0].type() == Value::STRING && vec[0].str_ref() == "__assoc__") {
+    if (!vec.empty() && vec[0].is_assoc_marker()) {
         std::string ktmp;
         const std::string& k = (key.type() == Value::STRING) ? key.str_ref() : (ktmp = key.to_string());
         for (size_t i = 1; i + 1 < vec.size(); i += 2)
@@ -72,7 +72,7 @@ inline void value_set_path(Value& slot, const Value* keys, int n, SetOne&& set_o
     } else if (!child || child->type() == Value::NONE) {
         const bool map_key = keys[1].type() == Value::STRING && !value_is_int_key(keys[1].str_ref());
         auto fresh = std::make_shared<ValueArray>();
-        if (map_key) fresh->push_back(Value(std::string("__assoc__")));
+        if (map_key) fresh->push_back(Value::assoc_marker());
         Value holder(fresh);
         // Ara düzeyi motorun kendi tek-düzey atamasıyla yerleştir (dönüşüm kuralları onda).
         // (forced != nullptr: bu değeri olduğu gibi yerleştir; nullptr: asıl yazma)

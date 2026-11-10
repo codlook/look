@@ -73,11 +73,11 @@ echo "DB_PASS=topsecret" > "$A/.env"
 cat > "$A/st.lk" <<LK
 use file
 route("GET", "/steal", function() {
-    try { \$r = file::store(["__assoc__", "path", "$A/.env", "mime", "text/plain", "sha256", "0123456789abcdef0123456789abcdef"], "u"); return response::text("STORED") }
+    try { \$r = file::store(["path" => "$A/.env", "mime" => "text/plain", "sha256" => "0123456789abcdef0123456789abcdef"], "u"); return response::text("STORED") }
     catch (\$e) { return response::text("REFUSED " . \$e) }
 })
 route("GET", "/escape", function() {
-    try { \$r = file::store(["__assoc__", "path", "$A/.env", "mime", "text/plain", "sha256", "../../../out/escaped"], "u"); return response::text("STORED") }
+    try { \$r = file::store(["path" => "$A/.env", "mime" => "text/plain", "sha256" => "../../../out/escaped"], "u"); return response::text("STORED") }
     catch (\$e) { return response::text("REFUSED " . \$e) }
 })
 LK

@@ -101,8 +101,7 @@ static std::string json_encode(const Value& v, int depth) {
             NestingGuard g;
             auto& arr = *v.as_array();
             // Associative array / struct: ["__assoc__", k0, v0, k1, v1, ...]
-            if (!arr.empty() && arr[0].type() == Value::STRING &&
-                arr[0].as_string() == "__assoc__") {
+            if (!arr.empty() && arr[0].is_assoc_marker()) {
                 std::string out = "{";
                 bool first = true;
                 for (size_t i = 1; i + 1 < arr.size(); i += 2) {
@@ -168,7 +167,7 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     if (s[i] == '{') {
         i++;
         auto arr = std::make_shared<ValueArray>();
-        arr->push_back(Value(std::string("__assoc__")));
+        arr->push_back(Value::assoc_marker());
         // Anahtar → değer konumu. ESKİ: her anahtarda önceki bütün anahtarlar taranıyordu (O(n²)):
         // 1 MB'lık 100k anahtarlı gövde tek istekte 50 sn CPU (ölçüldü) — kimliksiz uzak DoS.
         // Küçük nesnede (gerçek gövdelerin çoğu) doğrusal tarama ucuz ve tahsissiz; indeks yalnız
@@ -423,7 +422,7 @@ static Module make_request(WebRef ctx) {
     // request::headers() — tüm header'ları assoc array olarak döner
     m.functions["headers"] = [ctx](auto) -> Value {
         auto arr = std::make_shared<ValueArray>();
-        arr->push_back(Value(std::string("__assoc__")));
+        arr->push_back(Value::assoc_marker());
         for (auto& [k, v] : ctx->headers_in) { arr->push_back(Value(k)); arr->push_back(Value(v)); }
         return Value(arr);
     };
@@ -442,7 +441,7 @@ static Module make_request(WebRef ctx) {
     // request::all() â€” GET + POST params birleÅŸik
     m.functions["all"] = [ctx](auto) -> Value {
         auto arr = std::make_shared<ValueArray>();
-        arr->push_back(Value(std::string("__assoc__")));
+        arr->push_back(Value::assoc_marker());
         for (auto& [k, v] : ctx->get_params)  { arr->push_back(Value(k)); arr->push_back(Value(v)); }
         for (auto& [k, v] : ctx->post_params) { arr->push_back(Value(k)); arr->push_back(Value(v)); }
         return Value(arr);
@@ -484,8 +483,7 @@ static Module make_request(WebRef ctx) {
 
         if (args.size() >= 2 && args[1].type() == Value::ARRAY) {
             auto& arr = *args[1].as_array();
-            bool is_assoc = !arr.empty() && arr[0].type() == Value::STRING
-                            && arr[0].to_string() == "__assoc__";
+            bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
             if (is_assoc) {
                 for (size_t i = 1; i + 1 < arr.size(); i += 2) {
                     std::string key = arr[i].to_string();
@@ -494,7 +492,7 @@ static Module make_request(WebRef ctx) {
                     if (key == "allow_svg") allow_svg = val.is_truthy();
                     if (key == "allow_mime" && val.type() == Value::ARRAY) {
                         for (auto& v : *val.as_array()) {
-                            if (v.type() != Value::STRING || v.to_string() == "__assoc__") continue;
+                            if (v.type() != Value::STRING || v.is_assoc_marker()) continue;
                             allow_mime.push_back(v.to_string());
                         }
                     }
@@ -521,7 +519,7 @@ static Module make_request(WebRef ctx) {
 
         // Dönüş değeri — assoc array
         auto result = std::make_shared<ValueArray>();
-        result->push_back(Value(std::string("__assoc__")));
+        result->push_back(Value::assoc_marker());
         result->push_back(Value(std::string("path")));     result->push_back(Value(uf.temp_path));
         result->push_back(Value(std::string("filename"))); result->push_back(Value(uf.orig_name));
         result->push_back(Value(std::string("mime")));     result->push_back(Value(uf.mime));
@@ -588,7 +586,7 @@ static Module make_response_module(WebRef ctx) {
         ctx->set_status(code);
         ctx->headers_out["Content-Type"] = "application/json; charset=utf-8";
         auto obj = std::make_shared<ValueArray>();
-        obj->push_back(Value(std::string("__assoc__")));
+        obj->push_back(Value::assoc_marker());
         obj->push_back(Value(std::string("ok")));   obj->push_back(Value(false));
         obj->push_back(Value(std::string("error")));  obj->push_back(Value(msg));
         std::string s = json_encode(Value(obj));
@@ -697,7 +695,7 @@ static Module make_cookie_module(WebRef ctx) {
         for (size_t i = 2; i < args.size(); ++i) {
             if (args[i].type() == Value::ARRAY) {
                 auto& a = *args[i].as_array();
-                size_t s = (!a.empty() && a[0].to_string() == "__assoc__") ? 1 : 0;
+                size_t s = (!a.empty() && a[0].is_assoc_marker()) ? 1 : 0;
                 for (size_t j = s; j + 1 < a.size(); j += 2) {
                     std::string k = a[j].to_string();
                     if      (k == "httponly") httponly = a[j+1].is_truthy();
@@ -1849,7 +1847,7 @@ static Value rows_to_value(const std::vector<DbRow>& rows) {
     for (const auto& row : rows) {
         // Store as assoc array: ["__assoc__", col0, val0, col1, val1, ...]
         auto row_arr = std::make_shared<ValueArray>();
-        row_arr->push_back(Value(std::string("__assoc__")));
+        row_arr->push_back(Value::assoc_marker());
         for (auto& [k, dv] : row) {
             row_arr->push_back(Value(k));
             if (dv.is_null || sqlite_is_null(dv.type) || pg_is_null(dv.type)) {
@@ -2197,8 +2195,7 @@ static Module make_db_module(ModuleHost* interp) {
         auto& arr = *args[0].as_array();
 
         // Assoc array row: ["__assoc__", col0, val0, col1, val1, ...]
-        if (!arr.empty() && arr[0].type() == Value::STRING &&
-            arr[0].as_string() == "__assoc__") {
+        if (!arr.empty() && arr[0].is_assoc_marker()) {
             // String key: find by name
             if (args[1].type() == Value::STRING) {
                 const std::string& key = args[1].as_string();

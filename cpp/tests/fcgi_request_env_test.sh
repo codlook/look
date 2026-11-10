@@ -18,7 +18,7 @@ cat > "$TMP/app.lk" <<'LK'
 route("GET", "/env", function() { print("[" . env("HTTP_X_SECRET") . "][" . (request::header("x-secret") ?? "") . "]") })
 route("GET", "/store", function() {
     file::put("up.txt", "hello")
-    try { file::store(["__assoc__", "path", "up.txt", "mime", "text/plain"], "u"); print("stored") }
+    try { file::store(["path" => "up.txt", "mime" => "text/plain"], "u"); print("stored") }
     catch ($e) { print("refused: " . $e) }
 })
 LK

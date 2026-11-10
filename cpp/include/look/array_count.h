@@ -16,7 +16,7 @@ namespace look {
 inline int look_count(const Value& v) {
     if (v.type() == Value::ARRAY) {
         auto& arr = *v.as_array();
-        if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__")
+        if (!arr.empty() && arr[0].is_assoc_marker())
             return (int)((arr.size() - 1) / 2);
         return (int)arr.size();
     }

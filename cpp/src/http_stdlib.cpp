@@ -10,7 +10,7 @@ namespace look {
 // Build Value assoc-array from HttpClientResponse
 static Value response_to_value(const HttpClientResponse& resp) {
     auto arr = std::make_shared<ValueArray>();
-    arr->push_back(Value(std::string("__assoc__")));  // sentinel
+    arr->push_back(Value::assoc_marker());  // sentinel
 
     arr->push_back(Value(std::string("status")));
     arr->push_back(Value((int)resp.status));
@@ -20,7 +20,7 @@ static Value response_to_value(const HttpClientResponse& resp) {
 
     // headers as nested assoc array
     auto hdrs = std::make_shared<ValueArray>();
-    hdrs->push_back(Value(std::string("__assoc__")));
+    hdrs->push_back(Value::assoc_marker());
     for (auto& [k, v] : resp.headers) {
         hdrs->push_back(Value(k));
         hdrs->push_back(Value(v));

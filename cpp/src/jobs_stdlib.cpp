@@ -135,7 +135,7 @@ static sqlite3_stmt* prepare(sqlite3* db, const char* sql) {
 
 static Value make_assoc(std::initializer_list<std::pair<std::string, Value>> kvs) {
     auto arr = std::make_shared<ValueArray>();
-    arr->push_back(Value(std::string("__assoc__")));  // single sentinel
+    arr->push_back(Value::assoc_marker());  // single sentinel
     for (auto& [k, v] : kvs) {
         arr->push_back(Value(k));
         arr->push_back(v);

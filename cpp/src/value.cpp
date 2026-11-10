@@ -79,6 +79,15 @@ std::string Value::to_string() const {
             NestingGuard g;
             auto arr = as_array();
             std::string s = "[";
+            // Sözlük LOOK'un yazımıyla: [k => 3, ad => x] (listeler gibi metinler tırnaksız).
+            // Eskiden iç işaret görünüyordu: [__assoc__, k, 3, ad, x].
+            if (!arr->empty() && (*arr)[0].is_assoc_marker()) {
+                for (size_t i = 1; i + 1 < arr->size(); i += 2) {
+                    if (i > 1) s += ", ";
+                    s += (*arr)[i].to_string() + " => " + (*arr)[i + 1].to_string();
+                }
+                return s + "]";
+            }
             for (size_t i = 0; i < arr->size(); ++i) {
                 if (i) s += ", ";
                 s += (*arr)[i].to_string();
@@ -303,7 +312,9 @@ void Value::append_in_place(const Value& o) {
         // paylaşan diğer Value'ları bozardı. İlk append'ten sonra tekil → amortize O(1).
         // NOT: ptr_val.use_count() doğrudan kullanılır — ara shared_ptr kopyası
         // ekstra owner yaratıp use_count'u daima >1 yapar (→ her adım COW = O(n²)).
-        if (ptr_val.use_count() > 1)
+        // != 1: sayaçsız sabit metin (sözlük işareti, use_count()==0) de kopyalanır — yerinde
+        // değiştirilirse bütün sözlükler bozulurdu.
+        if (ptr_val.use_count() != 1)
             ptr_val = std::make_shared<std::string>(*static_cast<std::string*>(ptr_val.get()));
     }
     static_cast<std::string*>(ptr_val.get())->append(rhs);
@@ -326,7 +337,7 @@ static inline bool val_is_number(Value::Type t) { return t == Value::INT || t ==
 //   struct : aynı ad + eşit alanlar
 // Boş liste ile boş map eşittir ([] henüz anahtar almamış bir map olarak da yazılır).
 static bool vec_is_map(const std::vector<Value>& v) {
-    return !v.empty() && v[0].type() == Value::STRING && v[0].str_ref() == "__assoc__";
+    return !v.empty() && v[0].is_assoc_marker();
 }
 static bool vec_content_equal(const std::vector<Value>& a, const std::vector<Value>& b) {
     const bool am = vec_is_map(a), bm = vec_is_map(b);

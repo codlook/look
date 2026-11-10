@@ -32,11 +32,11 @@ chk("entity-once", template::escape("&amp;"), "&amp;amp;"); $ran = $ran + 1
 
 # template::render_string — {$var} otomatik kaçmalı (auto-escape)
 chk("render-autoescape", template::render_string("<p>{$c}</p>",
-    ["__assoc__", "c", "<script>x</script>"]),
+    ["c" => "<script>x</script>"]),
     "<p>&lt;script&gt;x&lt;/script&gt;</p>"); $ran = $ran + 1
 # {!$var} ham (kaçışsız) — bilinçli raw çıkış (tasarım gereği kaçmaz)
 chk("render-rawvar", template::render_string("<p>{!$c}</p>",
-    ["__assoc__", "c", "<b>ok</b>"]),
+    ["c" => "<b>ok</b>"]),
     "<p><b>ok</b></p>"); $ran = $ran + 1
 
 const { EXPECTED = 14 }

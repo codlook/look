@@ -169,7 +169,7 @@ static Module make_auth() {
 static std::string get_field(const Value& data, const std::string& key) {
     if (data.type() != Value::ARRAY) return "";
     auto& arr = *data.as_array();
-    if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__") {
+    if (!arr.empty() && arr[0].is_assoc_marker()) {
         for (size_t i = 1; i + 1 < arr.size(); i += 2)
             if (arr[i].to_string() == key) return arr[i+1].to_string();
     }
@@ -215,7 +215,7 @@ static Module make_validator() {
         const Value& rules = args[1];
 
         auto errors_arr = std::make_shared<ValueArray>();
-        errors_arr->push_back(Value(std::string("__assoc__")));
+        errors_arr->push_back(Value::assoc_marker());
 
         bool ok = true;
 
@@ -223,7 +223,7 @@ static Module make_validator() {
         if (rules.type() != Value::ARRAY) return Value(false);
         auto& rules_arr = *rules.as_array();
 
-        size_t start = (!rules_arr.empty() && rules_arr[0].as_string() == "__assoc__") ? 1 : 0;
+        size_t start = (!rules_arr.empty() && rules_arr[0].is_assoc_marker()) ? 1 : 0;
 
         for (size_t i = start; i + 1 < rules_arr.size(); i += 2) {
             std::string field = rules_arr[i].to_string();
@@ -288,7 +288,7 @@ static Module make_validator() {
         }
 
         auto result = std::make_shared<ValueArray>();
-        result->push_back(Value(std::string("__assoc__")));
+        result->push_back(Value::assoc_marker());
         result->push_back(Value(std::string("ok")));
         result->push_back(Value(ok));
         result->push_back(Value(std::string("errors")));
@@ -465,8 +465,7 @@ Module make_array_module(ModuleHost* interp) {
         auto result = std::make_shared<ValueArray>(*args[0].as_array());
         const std::string key = args[1].to_string();
         Value val = args[2];
-        if (!result->empty() && (*result)[0].type() == Value::STRING &&
-            (*result)[0].as_string() == "__assoc__") {
+        if (!result->empty() && (*result)[0].is_assoc_marker()) {
             for (size_t i = 1; i + 1 < result->size(); i += 2) {
                 if ((*result)[i].to_string() == key) { (*result)[i + 1] = val; return Value(result); }
             }
@@ -495,7 +494,7 @@ Module make_array_module(ModuleHost* interp) {
             // elemanlari sayisal indeksleriyle anahtarlayarak KORU.
             auto assoc = std::make_shared<ValueArray>();
             assoc->reserve(result->size() * 2 + 3);
-            assoc->push_back(Value(std::string("__assoc__")));
+            assoc->push_back(Value::assoc_marker());
             for (size_t i = 0; i < result->size(); ++i) {
                 assoc->push_back(Value(std::to_string(i)));
                 assoc->push_back((*result)[i]);
@@ -510,7 +509,7 @@ Module make_array_module(ModuleHost* interp) {
     // new_assoc() → empty assoc array
     m.functions["new_assoc"] = [](auto args) -> Value {
         auto result = std::make_shared<ValueArray>();
-        result->push_back(Value(std::string("__assoc__")));
+        result->push_back(Value::assoc_marker());
         return Value(result);
     };
 
@@ -519,7 +518,7 @@ Module make_array_module(ModuleHost* interp) {
         if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<ValueArray>());
         auto& arr = *args[0].as_array();
         auto result = std::make_shared<ValueArray>();
-        if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__") {
+        if (!arr.empty() && arr[0].is_assoc_marker()) {
             for (size_t i = 1; i + 1 < arr.size(); i += 2) result->push_back(arr[i]);
         } else {
             for (size_t i = 0; i < arr.size(); i++) result->push_back(Value((int)i));
@@ -532,7 +531,7 @@ Module make_array_module(ModuleHost* interp) {
         if (args.empty() || args[0].type() != Value::ARRAY) return Value(std::make_shared<ValueArray>());
         auto& arr = *args[0].as_array();
         auto result = std::make_shared<ValueArray>();
-        if (!arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__") {
+        if (!arr.empty() && arr[0].is_assoc_marker()) {
             for (size_t i = 2; i < arr.size(); i += 2) result->push_back(arr[i]);
         } else {
             *result = arr;
@@ -547,7 +546,7 @@ Module make_array_module(ModuleHost* interp) {
         auto& arr = *args[0].as_array();
         auto fn = args[1];
         // assoc array: değerler üzerinde iterate
-        bool is_assoc = !arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__";
+        bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
         if (is_assoc) {
             for (size_t i = 1; i + 1 < arr.size(); i += 2) {
                 if (interp->invoke(fn, {arr[i+1]}).is_truthy()) return arr[i+1];
@@ -565,7 +564,7 @@ Module make_array_module(ModuleHost* interp) {
             throw std::runtime_error("array::any() requires array and callback");
         auto& arr = *args[0].as_array();
         auto fn = args[1];
-        bool is_assoc = !arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__";
+        bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
         if (is_assoc) {
             for (size_t i = 1; i + 1 < arr.size(); i += 2)
                 if (interp->invoke(fn, {arr[i+1]}).is_truthy()) return Value(true);
@@ -582,7 +581,7 @@ Module make_array_module(ModuleHost* interp) {
             throw std::runtime_error("array::all() requires array and callback");
         auto& arr = *args[0].as_array();
         auto fn = args[1];
-        bool is_assoc = !arr.empty() && arr[0].type() == Value::STRING && arr[0].as_string() == "__assoc__";
+        bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
         if (is_assoc) {
             for (size_t i = 1; i + 1 < arr.size(); i += 2)
                 if (!interp->invoke(fn, {arr[i+1]}).is_truthy()) return Value(false);
@@ -613,8 +612,7 @@ Module make_array_module(ModuleHost* interp) {
             const int d = f.d;
             if (v.type() != Value::ARRAY) { result->push_back(v); continue; }
             const auto& arr = *v.vec_ptr();
-            bool is_assoc = !arr.empty() && arr[0].type() == Value::STRING &&
-                            arr[0].as_string() == "__assoc__";
+            bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
             if (is_assoc || d == 0) { result->push_back(v); continue; }
             st.push_back({&arr, 0, d > 0 ? d - 1 : -1});   // f bundan sonra kullanılmaz (geçersiz olabilir)
         }
@@ -1084,11 +1082,11 @@ static Module make_runtime_module(ModuleHost* interp) {
 
         auto arr = std::make_shared<ValueArray>();
         auto push = [&](const std::string& k, Value v) {
-            arr->push_back(Value(std::string("__assoc__")));
+            arr->push_back(Value::assoc_marker());
             // reuse flat key-val push
         };
         // assoc array: ["__assoc__", k, v, k, v, ...]
-        arr->push_back(Value(std::string("__assoc__")));
+        arr->push_back(Value::assoc_marker());
         arr->push_back(Value(std::string("uptime_sec")));   arr->push_back(Value((int)uptime));
         arr->push_back(Value(std::string("request_count"))); arr->push_back(Value(reqs));
         arr->push_back(Value(std::string("route_count")));  arr->push_back(Value(routes));
@@ -1220,7 +1218,7 @@ static Module make_look_module() {
 
         auto result = [](bool ok, int line, int col, const std::string& msg) -> Value {
             auto arr = std::make_shared<ValueArray>();
-            arr->push_back(Value(std::string("__assoc__")));
+            arr->push_back(Value::assoc_marker());
             arr->push_back(Value(std::string("ok")));   arr->push_back(Value(ok));
             arr->push_back(Value(std::string("line"))); arr->push_back(Value(line));
             arr->push_back(Value(std::string("col")));  arr->push_back(Value(col));

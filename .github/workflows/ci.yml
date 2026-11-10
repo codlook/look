@@ -493,6 +493,14 @@ jobs:
           cd cpp
           bash tests/listen_when_ready_test.sh ./build/lk-fcgi
 
+      # A list never passes for a map: the map marker is recognised by identity, not by the text
+      # "__assoc__" — a JSON body ["__assoc__","role","admin"] used to arrive as role => admin.
+      # JSON, form, query and literals stay lists; maps survive threads, JSON and `.=`.
+      - name: A list never passes for a map (JSON, form, query input)
+        run: |
+          cd cpp
+          bash tests/assoc_marker_test.sh ./build/lk ./build/lk-fcgi
+
       # http:: sent the request with one send(): a slow server let the send timeout expire and
       # the rest of the body was never sent, with no error (8 MB POST: 2.6 MB arrived).
       - name: "http:: sends the whole request body to a slow server"

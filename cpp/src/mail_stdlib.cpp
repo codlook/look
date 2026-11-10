@@ -561,7 +561,7 @@ Module make_mail_module() {
         }
 
         auto arr = std::make_shared<ValueArray>();
-        arr->push_back(Value(std::string("__assoc__")));
+        arr->push_back(Value::assoc_marker());
         arr->push_back(Value(std::string("ok")));      arr->push_back(Value(r.ok));
         arr->push_back(Value(std::string("status")));  arr->push_back(Value(r.status));
         arr->push_back(Value(std::string("message"))); arr->push_back(Value(r.message));
@@ -582,7 +582,7 @@ Module make_mail_module() {
         MailResult r = dispatch_send(to, subject, "", html, from);
 
         auto arr = std::make_shared<ValueArray>();
-        arr->push_back(Value(std::string("__assoc__")));
+        arr->push_back(Value::assoc_marker());
         arr->push_back(Value(std::string("ok")));      arr->push_back(Value(r.ok));
         arr->push_back(Value(std::string("status")));  arr->push_back(Value(r.status));
         arr->push_back(Value(std::string("message"))); arr->push_back(Value(r.message));

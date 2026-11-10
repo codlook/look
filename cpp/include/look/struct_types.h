@@ -49,7 +49,7 @@ inline std::string struct_value_type_name(const Value& v) {
         case Value::STRUCT: return struct_name(*v.as_struct());
         case Value::ARRAY: {
             const auto& a = *v.as_array();
-            if (!a.empty() && a[0].type() == Value::STRING && a[0].str_ref() == "__assoc__") return "map";
+            if (!a.empty() && a[0].is_assoc_marker()) return "map";
             return "array";
         }
         default: return "value";
@@ -85,7 +85,7 @@ inline Value struct_zero_value(const std::string& type) {
     if (type == "array")  return Value(std::make_shared<ValueArray>());
     if (type == "map") {
         auto m = std::make_shared<ValueArray>();
-        m->push_back(Value(std::string("__assoc__")));
+        m->push_back(Value::assoc_marker());
         return Value(m);
     }
     return Value();   // any, fn, struct adı → null
@@ -188,7 +188,7 @@ inline Value struct_to_map(const Value& s) {
     const auto& def = struct_def(sv);
     auto m = std::make_shared<ValueArray>();
     m->reserve(1 + 2 * struct_field_count(def));
-    m->push_back(Value(std::string("__assoc__")));
+    m->push_back(Value::assoc_marker());
     for (size_t j = 0, i = 0; j + 2 < def.size(); j += 3, ++i) {
         m->push_back(def[j]);
         m->push_back(sv[STRUCT_SLOT0 + i]);

@@ -195,6 +195,8 @@ private:
                 return *this;   // değer tipleri + paylaşımı KASITLI handle'lar
             case STRING:
                 // append_in_place YERİNDE mutasyon → paylaşılan capture'da yarış; izole et.
+                // Sözlük işareti adresle tanınır: kopyalanırsa sözlük listeye dönerdi (değişmez de).
+                if (is_assoc_marker()) return *this;
                 return ptr_val ? Value(*static_cast<const std::string*>(ptr_val.get())) : *this;
             case ARRAY: {
                 if (!ptr_val) return *this;
@@ -254,6 +256,21 @@ public:
     Value bitwise_not()               const;
     Value shift_left(const Value& o)  const;
     Value shift_right(const Value& o) const;
+
+    // ── Sözlük (map) işareti ──────────────────────────────────────────────────
+    // Sözlük = ["<işaret>", k0, v0, k1, v1, …]. İşaret İÇERİKLE değil ADRESLE tanınır: tek bir sabit
+    // metne işaret eden, sayaçsız (boş kontrol bloğu) bir STRING. ESKİ: işaret "__assoc__" METNİYDİ —
+    // ilk elemanı o metin olan her liste sözlük sayılıyordu; saldırganın JSON dizisi
+    // ["__assoc__","role","admin"] uygulamada role=>admin sözlüğüne dönüşüyordu (ölçüldü). JSON/form/
+    // sorgu/LOOK kodu her metni yeni nesne olarak yaratır → işaret taklit edilemez. Kopyası ücretsiz
+    // (atomik sayaç yok); append_in_place sayaçsız metni yerinde DEĞİŞTİRMEZ (use_count()==0 → kopya).
+    static const std::string& assoc_marker_text() { static const std::string s("__assoc__"); return s; }
+    static Value assoc_marker() {
+        Value v; v.type_ = STRING;
+        v.ptr_val = std::shared_ptr<void>(std::shared_ptr<void>(), const_cast<std::string*>(&assoc_marker_text()));
+        return v;
+    }
+    bool is_assoc_marker() const { return type_ == STRING && ptr_val.get() == &assoc_marker_text(); }
 
     // STRING içeriğine kopyasız erişim (yalnız type_==STRING; diğerlerinde boş).
     // İç metodlar (to_string/operatörler) str_val yerine bunu kullanır.
