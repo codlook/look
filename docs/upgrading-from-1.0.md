@@ -139,15 +139,16 @@ struct is written in quotes, so a number and a text never look the same: `"" . [
 is `[1, "a", "1"]` (it was `[1, a, 1]`); a text on its own prints without quotes, as before.
 Use `json::encode` when the text is meant for another program.
 
-### The value of `error::new()` is a map — was silent
+### The value of `error::new()` is an `Error` struct — was silent
 
-In a `catch`, the value thrown by `error::new($type, $message, $code)` is a map:
-`["type" => …, "message" => …, "code" => …]`. In 1.0.x it was a plain list, so `$e["type"]`
-was always `null`, `json::encode($e)` gave an array, and `error::is` read any list in pairs —
-`error::is(["type", "admin"], "admin")` was `true`. Now `$e["type"]`, `$e["message"]` and
-`$e["code"]` work, `error::is`, `error::message` and `error::code` read only that map, and an
-uncaught one is reported as `type: message`. `error::new(...)` on a line of its own still throws;
-`throw` in front of it stays optional.
+In a `catch`, the value thrown by `error::new($type, $message, $code)` is the built-in struct
+`Error{type, message, code}`: read it with `$e.type` or `$e["type"]`, and `json::encode($e)` writes
+`{"type": …, "message": …, "code": …}`. In 1.0.x it was a plain list, so `$e["type"]` was always
+`null` and `error::is` read any list in pairs — `error::is(["type", "admin"], "admin")` was
+`true`. Now `error::is`, `error::message` and `error::code` read only an `Error` made by
+`error::new()`: no list, map or value decoded from JSON passes for one. A program cannot declare
+its own `struct Error`. An uncaught one is reported as `type: message`. `error::new(...)` on a
+line of its own still throws; `throw` in front of it stays optional.
 
 ### `push` and `pop` change the variable you name — silent
 

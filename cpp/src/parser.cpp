@@ -340,6 +340,11 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
             if (tokens_[i].type != TokenType::SEMICOLON && tokens_[i].type != TokenType::COMMA) {
                 sig += tokens_[i].literal.value_or(tokens_[i].lexeme); sig += '\x1f';
             }
+        // Error yerleşik: error::new() onu kurar, error::is yalnız onu tanır (tanımın kimliğiyle).
+        // Aynı adlı bir kullanıcı struct'ı aynı görünüp hata olmayan ikinci bir anlam olurdu.
+        if (stmt->name == "Error")
+            throw LookParseError("struct 'Error' is built in — error::new(type, message, code) makes one; "
+                "give your struct another name", name.line, name.column);
         auto it = struct_seen_.find(stmt->name);
         if (it != struct_seen_.end() && it->second.first != sig)
             throw LookParseError("struct '" + stmt->name + "' is already declared at line "

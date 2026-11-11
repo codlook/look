@@ -1155,7 +1155,7 @@ Stack trace:
   </div>
 
   <h3>Catching with try/catch</h3>
-  <p>Runtime errors and string throws arrive as their value; structured errors as a map <code>["type" =&gt; …, "message" =&gt; …, "code" =&gt; …]</code> — read them with <code>$e["type"]</code>, or with <code>error::is()</code> / <code>error::message()</code> / <code>error::code()</code>, which also accept a plain thrown string:</p>
+  <p>Runtime errors and string throws arrive as their value; structured errors as the built-in struct <code>Error{type, message, code}</code> — read them with <code>$e["type"]</code>, or with <code>error::is()</code> / <code>error::message()</code> / <code>error::code()</code>, which also accept a plain thrown string:</p>
   <pre><code><span class="kw">try</span> {
     <span class="var">$conn</span> = <span class="ns">db::</span><span class="fn">connect</span>(<span class="str">"mysql://root:@127.0.0.1/mydb"</span>)
     <span class="var">$rows</span> = <span class="ns">db::</span><span class="fn">query</span>(<span class="var">$conn</span>, <span class="str">"SELECT * FROM nonexistent_table"</span>, [])

@@ -1,8 +1,10 @@
-# error::new() değeri bir SÖZLÜK: ["type" => …, "message" => …, "code" => …]. Eskiden başında sözlük
-# işareti olmayan düz listeydi: $e["type"] hep null, json::encode dizi veriyordu, error::is herhangi
-# bir listeyi ikişer okuyup ["type","admin"] gibi sıradan bir listeyi hata sanıyordu.
+# error::new() değeri yerleşik STRUCT Error{type, message, code}: $e.type ve $e["type"] okunur,
+# json::encode sözlük yazar. Eskiden başında sözlük işareti olmayan düz listeydi: $e["type"] hep
+# null, error::is herhangi bir listeyi ikişer okuyup ["type","admin"] listesini hata sanıyordu.
+# Taklit edilemez: error::is yalnız yerleşik struct'ı tanır (liste, sözlük, JSON asla).
 use error
 use json
+use cache
 function ok($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . " got[" . json::encode($g) . "] want[" . json::encode($w) . "]") } }
 
 function find($id) {
@@ -10,19 +12,22 @@ function find($id) {
 }
 $e = null
 try { find(7) } catch ($x) { $e = $x }
-ok("the value is a map", json::encode($e), "{\"type\":\"not_found\",\"message\":\"no user\",\"code\":404}")
+ok("json::encode writes an object", json::encode($e), "{\"type\":\"not_found\",\"message\":\"no user\",\"code\":404}")
 ok("type by key", $e["type"], "not_found")
+ok("type by field", $e.type, "not_found")
 ok("message by key", $e["message"], "no user")
 ok("code by key", $e["code"], 404)
 ok("error::is", error::is($e, "not_found"), true)
 ok("error::is other type", error::is($e, "denied"), false)
 ok("error::message", error::message($e), "no user")
 ok("error::code", error::code($e), 404)
-ok("prints as a map", "" . $e, "[\"type\" => \"not_found\", \"message\" => \"no user\", \"code\" => 404]")
+ok("prints as a struct", "" . $e, "Error{type: \"not_found\", message: \"no user\", code: 404}")
 
-# A list is never an error value.
+# A list, a map or anything decoded from JSON is never an error value.
 ok("a list is not an error (is)", error::is(["type", "admin"], "admin"), false)
 ok("a list is not an error (code)", error::code(["code", 7]), 0)
+ok("a map is not an error", error::is(["type" => "admin", "message" => "m", "code" => 0], "admin"), false)
+ok("a JSON object is not an error", error::is(json::decode("{\"type\":\"admin\",\"message\":\"m\",\"code\":0}"), "admin"), false)
 ok("a JSON array is not an error", error::is(json::decode("[\"type\",\"admin\"]"), "admin"), false)
 
 # throw of a plain value keeps working with error::message.
@@ -37,4 +42,16 @@ ok("thrown text has no type", $t, false)
 $c = -1
 try { error::new("bad", "x") } catch ($x) { $c = $x["code"] }
 ok("default code", $c, 0)
+# Across threads (channel, cache::) it stays an error value.
+function from_task() {
+  $ch = channel(1)
+  parallel(function() { try { error::new("t", "m", 5) } catch ($x) { send($ch, $x) } })
+  $v = receive($ch)
+  parallel::wait()
+  return $v
+}
+$v = from_task()
+ok("through a channel", [error::is($v, "t"), error::code($v)], [true, 5])
+cache::set("err", $v)
+ok("through cache::", error::is(cache::get("err"), "t"), true)
 print("=== error value done ===")
