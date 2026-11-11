@@ -8,7 +8,6 @@
 // The thread must be converted to a fiber before switching to any fiber.
 
 #include "look/fiber.h"
-#include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include "look/stack_guard.h"
 
@@ -76,7 +75,8 @@ FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
 // Sıra bırakma (fiber.h preempt_point): Windows'ta fiber dağıtımı yok — yalnız sayaç tazelenir.
 // fiber-ok: iş parçacığının preempt sayacı
 thread_local int t_preempt_budget = 1024;
-void preempt_slow() noexcept { task_preempt_check(); t_preempt_budget = 1024; }
+PreemptHook g_preempt_hook = nullptr;
+void preempt_slow() noexcept { if (PreemptHook h = g_preempt_hook) h(); t_preempt_budget = 1024; }
 void fiber_offload_run(const std::function<void()>& job) { job(); }
 void            set_thread_scheduler(FiberScheduler* s) noexcept { tl_scheduler = s; }
 

@@ -1,4 +1,5 @@
 #include "look/parallel_runtime.h"
+#include "look/fiber.h"
 #include <stdexcept>
 #include <string>
 #include <cstdlib>
@@ -153,6 +154,9 @@ bool task_point_slow(TaskExit* t, bool effect) noexcept {
     if (g_task_script_ending.load()) task_stop_here(t);
     return true;
 }
+
+// fiber.h kancası: preempt yavaş yolu (her 1024 noktada bir) betik sonunda görevi sınırlar.
+[[maybe_unused]] static const bool s_preempt_hook_set = (g_preempt_hook = &task_preempt_check, true);
 
 void task_preempt_check() noexcept {
     if (TaskExit* t = t_task_exit; t && g_task_script_ending.load()) task_point_slow(t, false);

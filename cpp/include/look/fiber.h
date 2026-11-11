@@ -335,6 +335,10 @@ void            set_thread_scheduler(FiberScheduler* s) noexcept;
 // fiber-ok: iş parçacığının preempt sayacı (fiber_posix.cpp), istek verisi değil
 extern thread_local int t_preempt_budget;
 void preempt_slow() noexcept;
+// Yavaş yolda çağrılan kanca (null = yok). parallel_runtime.cpp betik-sonu denetimi için kurar;
+// fiber katmanı görevleri bilmez, tek başına bağlanır (CI'daki elle derlenen testler).
+using PreemptHook = void (*)() noexcept;
+extern PreemptHook g_preempt_hook;
 inline void preempt_point() noexcept {
     if (--t_preempt_budget <= 0) preempt_slow();
 }
