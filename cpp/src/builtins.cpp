@@ -260,7 +260,7 @@ const std::vector<EffectRow>& effect_rows() {
             "crypto::hmac_sha256", "crypto::hmac_sha256_raw", "crypto::constant_compare",
             "date::format", "date::add", "date::sub", "date::diff", "date::from_timestamp",
             "date::is_valid", "date::weekday", "date::week",
-            "error::new", "error::is", "error::message", "error::code",
+            "error::is", "error::message", "error::code",
             "html::escape", "html::attr", "html::strip",
             "json::encode",
             "math::abs", "math::floor", "math::ceil", "math::round", "math::pow", "math::sqrt",
@@ -303,6 +303,9 @@ const std::vector<EffectRow>& effect_rows() {
         { BuiltinEffect::Effect, {
             "print", "write", "push", "pop", "send", "receive", "close", "route", "channel",
             "before_route", "stop", "exit", "die",
+            // error::new HER ZAMAN fırlatır (throw gerekmez — belgeli kullanım); Pure sanılıp tek
+            // başına satırda "sonucu kullanılmıyor" derleme hatası veriyordu.
+            "error::new",
             "app::set",
             "cache::set", "cache::delete", "cache::flush",
             "cookie::set", "cookie::delete",
