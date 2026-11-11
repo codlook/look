@@ -191,6 +191,43 @@ LOOK_VM_COLD void VM::note_error_line_for(int base, const FunctionProto* proto) 
     if (found) note_error_line(*found, proto);
 }
 
+// Çağrı zinciri: call_stack_[k] (k ≥ 1) bir çağrıdır — adı kendi proto'sunun, satırı çağıranın
+// (call_stack_[k-1]) o anki komutunun (ip-1 = çağrı komutu; geri çağırmada array::map gibi
+// yerleşiğin çağrıldığı satır). Eski yorumlayıcıyla aynı: en içteki önce. Derin özyinelemede
+// (10 000 çağrı) en içteki ve en dıştaki 50'si yazılır, arası tek satır — Go da ortayı atlar.
+LOOK_VM_COLD void VM::capture_error_stack() {
+    last_error_stack_.clear();
+    const size_t n = call_stack_.size();
+    if (n < 2) return;
+    constexpr size_t kEdge = 50;
+    auto add = [&](size_t k) {
+        StackFrame sf;
+        const Frame& callee = call_stack_[k];
+        const Frame& caller = call_stack_[k - 1];
+        sf.function = callee.proto ? callee.proto->name : std::string();
+        // Satırsız komut (ör. fn($v) => f($v) gövdesindeki çağrı) → önceki en yakın satır.
+        int i = caller.ip - 1;
+        if (caller.proto) {
+            const auto& ln = caller.proto->lines;
+            if (i >= (int)ln.size()) i = (int)ln.size() - 1;
+            while (i >= 0 && ln[i] <= 0) --i;
+            if (i >= 0) { sf.line = ln[i]; sf.file = caller.proto->file_at(i); }
+        }
+        last_error_stack_.push_back(std::move(sf));
+    };
+    const size_t calls = n - 1;
+    if (calls <= 2 * kEdge) {
+        for (size_t k = 1; k < n; ++k) add(k);
+        return;
+    }
+    for (size_t k = 1; k <= kEdge; ++k) add(k);
+    StackFrame gap;
+    gap.line = -1;
+    gap.function = "... " + std::to_string(calls - 2 * kEdge) + " more calls ...";
+    last_error_stack_.push_back(std::move(gap));
+    for (size_t k = n - kEdge; k < n; ++k) add(k);
+}
+
 LOOK_VM_COLD void VM::reserve_regs(size_t n) {
     static_assert(MAX_CALL_DEPTH == 10000 && MAX_NATIVE_DEPTH == 4000 &&
                   MAX_STACK_VALUES * sizeof(Value) == 8u * 1024 * 1024,

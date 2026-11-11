@@ -1,0 +1,85 @@
+# Eski yorumlayıcıda düzeltilip testi yazılmamış düzeltmeler — VM'de de geçerli kalsın diye
+# (2026-11-11 kayıp-düzeltme taraması: interpreter.cpp'ye dokunan Fix commit'leri). Her satır
+# commit kimliğiyle; FAIL basarsa CI kırmızı.
+use array
+use string
+use json
+use html
+use error
+function ok($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . " got[" . json::encode($g) . "] want[" . json::encode($w) . "]") } }
+function thr($l, $f) { try { $f(); print("FAIL " . $l . " (no error)") } catch ($e) { print("OK   " . $l) } }
+
+# 58eb033 — callback'te dış fonksiyonun yereli (implicit capture) + map/filter/reduce
+function cap() {
+  $m = 3
+  $a = array::map([1, 2, 3], fn($x) => $x * $m)
+  $b = array::filter([1, 2, 3, 4], fn($x) => $x > $m - 1)
+  $c = array::reduce([1, 2, 3], fn($acc, $x) => $acc + $x * $m, 0)
+  return [$a, $b, $c]
+}
+$r = cap()
+ok("58eb033 map capture", $r[0], [3, 6, 9])
+ok("58eb033 filter capture", count($r[1]), 2)
+ok("58eb033 reduce capture", $r[2], 18)
+
+# 9670c18 — kanaldan gönderilen dizi, gönderenin sonraki değişikliğinden etkilenmez
+function chan_snap() {
+  $ch = channel(2)
+  $a = [1, 2, 3]
+  send($ch, $a)
+  $a = array::push($a, 4)
+  $a[0] = 99
+  $got = receive($ch)
+  return $got
+}
+ok("9670c18 channel snapshot", chan_snap(), [1, 2, 3])
+
+# d752afe — 2^53 üstü int64 karşılaştırma + sabit havuzu
+ok("d752afe 2^53+1 != 2^53", 9007199254740993 == 9007199254740992, false)
+ok("d752afe max-1 < max", 9223372036854775806 < 9223372036854775807, true)
+ok("d752afe max-1 != max", 9223372036854775806 != 9223372036854775807, true)
+$x = 9007199254740992
+$y = 9007199254740993
+ok("d752afe literal pool", $y - $x, 1)
+ok("d752afe >", 9007199254740993 > 9007199254740992, true)
+
+# 9f1fd9d B-08 — html::escape ters tırnak
+ok("9f1fd9d escape backtick", html::escape("`x`"), "&#96;x&#96;")
+# 9f1fd9d B-05 — sayı olmayan metin aritmetikte hata
+thr("9f1fd9d \"abc\"+1 fails", fn() => "abc" + 1)
+ok("9f1fd9d \"5\"+1", "5" + 1, 6)
+# 9f1fd9d B-04 — JSON yinelenen anahtar: son kazanır, konum korunur
+$d = json::decode("{\"role\":\"user\",\"a\":1,\"role\":\"admin\"}")
+ok("9f1fd9d dup key last wins", $d["role"], "admin")
+ok("9f1fd9d dup key position", array::keys($d), ["role", "a"])
+
+# ce94bd2 / 215c69c — paralel görev yakalanan kapsamın kopyasını alır
+function iso() {
+  $c = 0
+  $reader = fn() => $c
+  $ch = channel(1)
+  parallel(function() { send($ch, $reader()) })
+  $c = 999
+  $v = receive($ch)
+  parallel::wait()
+  return $v
+}
+ok("215c69c parallel closure isolated", iso(), 0)
+
+# 3d2b762 — sayısal listeye metin anahtar
+# (liste + tam sayı olmayan metin anahtar → elemanlar sayısal anahtarlarıyla korunarak sözlük)
+function list_key() { $l = [1, 2, 3]; $l["k"] = "X"; return $l }
+ok("3d2b762 list + string key keeps the items", json::encode(list_key()), "{\"0\":1,\"1\":2,\"2\":3,\"k\":\"X\"}")
+function list_intkey() { $l = [1, 2, 3]; $l["1"] = "Y"; return $l }
+ok("3d2b762 integer text is an index", list_intkey(), [1, "Y", 3])
+# 31ee310 — çağrılamayan ad hatası adı söyler
+function call_int() { $v = 5; return $v() }
+$msg = ""
+try { call_int() } catch ($e) { $msg = "" . $e }
+ok("31ee310 not callable names it", string::contains($msg, '$v'), true)
+# error::new tek başına satırda: her zaman fırlatır (throw isteğe bağlı — belgeli). v2'nin "sonucu
+# kullanılmayan saf yerleşik" kuralı onu Pure sanıp programı başlatmıyordu.
+$caught = ""
+try { error::new("not_found", "no user", 404) } catch ($e) { $caught = error::message($e) }
+ok("error::new alone throws", $caught, "no user")
+print("=== carried fixes done ===")

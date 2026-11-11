@@ -146,6 +146,13 @@
   <pre class="err-pre"><code>Runtime Error: Undefined variable: $userr
   File: app.lk
   Line: 42</code></pre>
+  <p>When the error happens inside a function, the command line also prints the calls that led to it, innermost first — each with the line the call was made on:</p>
+  <pre class="err-pre"><code>Runtime Error: Division by zero
+  File: app.lk
+  Line: 2
+Stack trace:
+  at average (line 9)
+  at report (line 14)</code></pre>
   <p>Parse/compile errors also give the <strong>column</strong>:</p>
   <pre class="err-pre"><code>Parse Error: Unexpected token: ')'
   File: app.lk

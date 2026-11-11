@@ -1974,6 +1974,9 @@ uint16_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint16_t
     for (size_t i = 0; i < e.captures.size(); ++i)
         inner.captures_.push_back({e.captures[i], u16(i, "capture count")});
 
+    // fn($x) => ifade: gövde satırı olmayan tek bir return; satırı closure'ın kendisinden al
+    // (yoksa komutları satırsız kalıyordu — hata ve çağrı zinciri satır göstermiyordu).
+    inner.cur_line_ = e.loc.line > 0 ? e.loc.line : cur_line_;
     auto proto = inner.compile(*e.body, &e.defaults);
     int fn_idx = (int)proto_.nested.size();
     proto_.nested.push_back(proto);

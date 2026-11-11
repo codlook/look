@@ -550,7 +550,18 @@ int main(int argc, char* argv[]) {
                 vm.execute(compiled);
             } catch (const look::ExitException&)         { throw; }
               catch (const look::RouteMatchedException&) { throw; }
-              catch (const look::LookRuntimeError&)      { throw; }  // zaten konumlu
+              catch (const look::LookRuntimeError& e) {
+                // error::new() değeri konumsuz gelir: satırı ve çağrı zincirini VM'den tamamla.
+                if (!e.stack.empty() || vm.last_error_stack().empty()) throw;
+                auto err = e;
+                if (err.location.line <= 0) {
+                    const std::string& ef = vm.last_error_file();
+                    err.location.file = ef.empty() ? filename : (std::filesystem::path(filename).parent_path() / ef).generic_string();
+                    err.location.line = vm.last_error_line();
+                }
+                err.stack = vm.last_error_stack();
+                throw err;
+            }
               catch (const std::exception& ex) {
                 look::SourceLocation loc;
                 // Dahil edilen dosyadaki hata o dosyanın adıyla (ESKİ HATA: ana betiğin adı + dahil
@@ -558,7 +569,7 @@ int main(int argc, char* argv[]) {
                 const std::string& ef = vm.last_error_file();
                 loc.file = ef.empty() ? filename : (std::filesystem::path(filename).parent_path() / ef).generic_string();
                 loc.line = vm.last_error_line();
-                throw look::LookRuntimeError(ex.what(), loc, {});
+                throw look::LookRuntimeError(ex.what(), loc, vm.last_error_stack());
             }
         } catch (const look::RouteMatchedException&) {
             // route() flow control — normal

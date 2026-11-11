@@ -508,6 +508,26 @@ jobs:
           cd cpp
           bash tests/callback_error_line_test.sh ./build/lk
 
+      # An uncaught error prints the chain of calls that led to it, innermost first, as the 1.0.x
+      # tree-walk engine did; an fn(…) => … closure carries its line.
+      - name: An uncaught error prints its call chain
+        run: |
+          cd cpp
+          bash tests/stack_trace_test.sh ./build/lk
+
+      # Fixes made in the tree-walk interpreter without a test of their own, pinned on the VM
+      # (channel snapshot, callback capture, list + string key, …), plus older repros that were
+      # not run anywhere.
+      - name: Fixes carried over from the tree-walk interpreter
+        run: |
+          cd cpp
+          out="$(./build/lk tests/carried_fixes_test.lk 2>&1)"; echo "$out"
+          echo "$out" | grep -q '^=== carried fixes done ===$' && ! echo "$out" | grep -q '^FAIL'
+          out="$(./build/lk tests/repro/arith_coercion.lk 2>&1)"; echo "$out"
+          echo "$out" | grep -q 'arith_coercion bitti' && ! echo "$out" | grep -q '^FAIL'
+          [ "$(./build/lk tests/closure_parallel/np1.lk 2>/dev/null)" = 0 ]
+          [ "$(./build/lk tests/closure_parallel/np2.lk 2>/dev/null)" = 123 ]
+
       # The deepest expressions and blocks the parser accepts compile on a small stack or fail with
       # the reason, never crash (a 1,000-term `1 + 1 + …` was a SIGSEGV on a 512 KB stack). Binary
       # chains are walked with a loop everywhere; other nesting is checked against the real stack.

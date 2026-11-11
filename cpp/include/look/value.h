@@ -380,7 +380,8 @@ struct ServiceRegistry {
 
 struct StackFrame {
     std::string function;  // function/closure name, empty = top-level
-    int         line = 0;
+    int         line = 0;  // çağrının yapıldığı satır; -1 = "… N more calls" ara satırı (function metni)
+    std::string file;      // çağrı yerinin dosyası, "" = ana betik (dahil edilen dosyada adı yazılır)
 };
 
 class LookRuntimeError : public std::exception {
@@ -415,9 +416,13 @@ public:
         if (!stack.empty()) {
             out += "Stack trace:\n";
             for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
+                if (it->line < 0) { out += "  " + it->function + "\n"; continue; }
                 out += "  at " + (it->function.empty() ? "<main>" : it->function);
-                if (it->line > 0)
-                    out += " (line " + std::to_string(it->line) + ")";
+                if (it->line > 0) {
+                    out += " (line " + std::to_string(it->line);
+                    if (!it->file.empty()) out += " in " + it->file;
+                    out += ")";
+                }
                 out += "\n";
             }
         }

@@ -82,6 +82,8 @@ public:
     int   last_error_line() const { return last_error_line_; }
     // Hatanın dosyası: "" = ana betik, yoksa ana betiğin dizinine göre göreli yol (dahil edilen dosya).
     const std::string& last_error_file() const { return last_error_file_; }
+    // Hatanın çağrı zinciri (dıştan içe; LookRuntimeError::format en içtekini önce yazar).
+    const std::vector<StackFrame>& last_error_stack() const { return last_error_stack_; }
     Value call_closure(const Closure& closure, std::vector<Value> args);
     const std::unordered_map<std::string, Value>& get_globals() const { return globals_; }
 
@@ -151,6 +153,11 @@ private:
 
     int last_error_line_ = 0;   // yakalanmamış hatanın satırı (proto->lines[ip-1])
     std::string last_error_file_;   // ...ve dosyası (proto->file_at; "" = ana betik)
+    // ...ve çağrı zinciri. Eski yorumlayıcı "Stack trace: at f (line N)" yazıyordu, VM'e geçişte
+    // kaybolmuştu. Hata ilk kaydedildiğinde (en içte, çerçeveler henüz sökülmeden) call_stack_'ten
+    // kurulur — yalnız hata yolunda, normal yolda maliyet yok.
+    std::vector<StackFrame> last_error_stack_;
+    void capture_error_stack();
 
     // Hata dışarı sızarken çalışan opcode'un satırını kaydet. frame.ip zaten bir sonraki
     // komutu gösterir (fetch sırasında ip++) → hatalı komut ip-1'dedir.
@@ -173,6 +180,10 @@ private:
             last_error_line_ = proto->lines[i];
             last_error_file_ = proto->file_at(i);
             noted_error_ = cur;
+            // Dış bir run()'da try varsa hata orada yakalanacak: zinciri boşuna kurma (geri
+            // çağırmadan fırlayıp dışarıda yakalanan hata döngüsünde +%1,7 ölçüldü → 0).
+            if (try_stack_.empty()) capture_error_stack();
+            else last_error_stack_.clear();
         }
     }
 

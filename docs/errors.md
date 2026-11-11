@@ -14,6 +14,18 @@ Runtime Error: Undefined variable: $userr
   Line: 42
 ```
 
+When the error happens inside a function, the command line also prints the calls that led
+to it, innermost first — each with the line the call was made on:
+
+```
+Runtime Error: Division by zero
+  File: app.lk
+  Line: 2
+Stack trace:
+  at average (line 9)
+  at report (line 14)
+```
+
 Parse/compile errors also give the **column**:
 
 ```
