@@ -23,14 +23,20 @@ req() {   # bir CGI isteği (Apache'nin verdiği ortamla); çıktı = yanıt
 }
 files() { find "$T/s" -name 'look_sess_*' | wc -l; }
 fail=0
-TTL=4
+# Create the sessions with a TTL that cannot run out meanwhile, then make them expired by their file
+# times. (It used TTL=4 and slept: on a slow machine the 300 requests took 9-12 s, the first files
+# expired and were swept during the loop, and the count came out below 100 — a red that depended on
+# the machine's speed, not on LOOK.)
+TTL=86400
 for i in $(seq 1 300); do req >/dev/null; done
 before=$(files)
-sleep 5
+find "$T/s" -name 'look_sess_*' -exec touch -d '1 hour ago' {} +
+[ -f "$T/s/.gc-stamp" ] && touch -d '1 hour ago' "$T/s/.gc-stamp"
+TTL=4
 for i in $(seq 1 20); do req >/dev/null; done
 sleep 1
 after=$(files)
-if [ "$before" -ge 100 ] && [ "$after" -le 25 ]; then echo "  OK   CGI: $before files after 300 requests, $after after the TTL"
+if [ "$before" -ge 300 ] && [ "$after" -le 25 ]; then echo "  OK   CGI: $before files after 300 requests, $after after the TTL"
 else echo "  FAIL CGI: $before files after 300 requests, still $after after the TTL"; fail=1; fi
 
 # Yanıt taramayı beklemez: 100 000 süresi dolmuş dosya varken yanıt (çıktının sonu, EOF) taramadan
