@@ -291,6 +291,7 @@ Regex has built-in ReDoS and size protections.
 
 | Message | Cause | Fix |
 |---|---|---|
+| `import cycle: a.lk -> b.lk -> a.lk (…)` | A file uses, directly or through others, a file that uses it. The program does not start. | Move the code both files need into a third file and `use` that from both. |
 | `Only github.com is supported at the moment.` | An install source other than `github.com`. | Use `github.com/user/repo`. |
 | `Invalid package (user/repo required): …` | The path isn't `user/repo`. | Give the full `github.com/user/repo[/subdir]`. |
 | `Invalid package <what> (path-escape character): …` | The user/subdir contained `..` or path separators (traversal attempt). | Use plain names — no `..`, no slashes inside a component. |

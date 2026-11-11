@@ -462,7 +462,7 @@ int main(int argc, char* argv[]) {
             // web) — burada adıyla söylenir, hata. Çalıştırma yok.
             // Temel dizin web yolundaki gibi verilir: `use "dosya.lk"` dahil edilenler de derlenir.
             try {
-                auto checked = look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string());
+                auto checked = look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string(), filename);
                 // Var olmayan modül fonksiyonu: `string::uper(...)`. Yalnız ÇEKİRDEK modüller için söylenir
                 // (adı yerleşik tablosunda geçen modüller) — paket modüllerinin fonksiyonları burada bilinmez.
                 std::set<std::string> core_modules;
@@ -515,7 +515,7 @@ int main(int argc, char* argv[]) {
             const std::filesystem::path script_dir = std::filesystem::absolute(filename).parent_path();
             look::CompiledProgram compiled;
             try {
-                compiled = look::Compiler::compile(*program, script_dir.string());
+                compiled = look::Compiler::compile(*program, script_dir.string(), filename);
             } catch (const std::exception& ex) {
                 std::cerr << "Error: " << ex.what() << "\n  File: " << filename << std::endl;
                 return 1;

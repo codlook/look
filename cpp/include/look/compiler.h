@@ -361,7 +361,9 @@ class Compiler {
 public:
     // base_dir: directory of the main script — the root for resolving `use "file.lk"`
     // (file includes) and the sandbox boundary. Empty → a file include is a compile error.
-    static CompiledProgram compile(const Program& program, const std::string& base_dir = "");
+    // main_file: the main script's path (if any) — a `use` back to it is an import cycle.
+    static CompiledProgram compile(const Program& program, const std::string& base_dir = "",
+                                   const std::string& main_file = "");
     // host_modules: çalıştırıcının (ör. `lk test`: assert) kendisi sağladığı modüller — `use <ad>`
     // reddedilmez, `ad::fn(...)` çağrısı çalıştırıcının global'e koyduğu "ad::fn" değerine gider.
     static CompiledProgram compile(const Program& program, const std::string& base_dir,

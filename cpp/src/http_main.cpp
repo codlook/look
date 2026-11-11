@@ -695,7 +695,7 @@ static void run_setup_http(const fs::path& script) {
             startup_note("[BYTECODE] Compiling...");
             auto compiled = std::make_unique<look::CompiledProgram>(
                 look::Compiler::compile(*g_http_app.program,
-                                        g_http_app.script_path.parent_path().string()));
+                                        g_http_app.script_path.parent_path().string(), g_http_app.script_path.string()));
             // Yalnız programın `use` ettiği stdlib modülleri açılır (dahil edilen dosyalarınkiler de —
             // derleyici zaten okuduğu `use` satırlarından toplar; CLI ile aynı liste). `use` edilmeyen
             // modülün yuvası boş kalır → VM "Module 'x' not loaded." verir. Paket modülü

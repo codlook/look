@@ -578,6 +578,17 @@ lines sent in plain text together with STARTTLS are discarded (RFC 3207). Withou
 certificate nothing changes: mail is accepted in plain text and AUTH is offered to connections
 from this machine only.
 
+### `use` cycles are an error at load — was silent
+
+`a.lk` using `b.lk` that uses `a.lk` ran the main file twice; a cycle between included files was
+skipped without a word. Now the program does not start and says which files form the cycle:
+
+```
+Error: use "a.lk": import cycle: a.lk -> b.lk -> a.lk (a file cannot use a file that uses it; move the shared code into a third file)
+```
+
+A file used by two others (a diamond) is still compiled once.
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

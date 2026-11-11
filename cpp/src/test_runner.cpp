@@ -437,7 +437,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
 
     // ── Derle ───────────────────────────────────────────────────────────────
     look::CompiledProgram compiled;
-    try { compiled = look::Compiler::compile(*program, dir.string(), {"assert", "ws"}); }
+    try { compiled = look::Compiler::compile(*program, dir.string(), std::set<std::string>{"assert", "ws"}); }
     catch (std::exception& e) { return one("(load error)", e.what()); }
     for (const auto& m : compiled.use_modules) interp.load_stdlib_module(m);   // derleyicinin listesi
     // Yerleşik de ev sahibi fonksiyonu da olmayan mod::fn → yazım hatası (komut satırındaki kural).

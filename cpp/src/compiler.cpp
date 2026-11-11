@@ -34,6 +34,12 @@ thread_local std::string                    g_compile_root;      // main-script 
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
 thread_local std::vector<std::string>       g_compile_file;      // derlenen dosya yığını (hata konumu); boş = ana betik
+// fiber-ok: yukarıdakiler gibi yalnız derleme anı durumu (derleme askıya girmez).
+// Şu an derlenmekte olan dosyalar (ana betik dahil, mutlak yol) ve gösterim adları: döngü = bu
+// yığındaki bir dosyayı yeniden `use` etmek (Go: import cycle). g_compile_included'dan ayrı: orada
+// TAMAMLANMIŞ dosyalar da var (elmas biçimi — iki dosyanın aynı dosyayı kullanması — serbest).
+thread_local std::vector<std::string>       g_compile_stack;
+thread_local std::vector<std::string>       g_compile_stack_names;
 thread_local std::set<std::string>          g_host_modules;     // çalıştırıcının sağladığı modüller (lk test: assert)
 thread_local std::vector<std::string>       g_use_modules;      // görülen stdlib `use` modülleri → CompiledProgram::use_modules
 // Bu derlemede yüklenmiş kullanıcı/paket modülleri (aynı modül iki kez use edilirse bir kez derlensin).
@@ -522,7 +528,19 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             std::string root = cfs::weakly_canonical(cfs::path(g_compile_root)).string();
             if (abs.compare(0, root.size(), root) != 0)
                 throw LookCompileError("use \"" + ufs->path + "\": the file is outside the application directory");
-            if (g_compile_included.count(abs))          { emit(OpCode::NOP); return; }  // dedup/circular
+            // Döngü (Go: "import cycle not allowed"): derlenmekte olan bir dosyayı yeniden istemek.
+            // Eskiden ana betik yığında değildi → a.lk → b.lk → a.lk ana dosyayı İKİNCİ kez derleyip
+            // çalıştırıyordu ("a b a"); dahil edilenler arasındaki döngü ise sessizce atlanıyordu.
+            const std::string rel_name = cfs::path(abs).lexically_relative(cfs::path(root)).generic_string();
+            for (size_t k = 0; k < g_compile_stack.size(); ++k) {
+                if (g_compile_stack[k] != abs) continue;
+                std::string chain;
+                for (size_t j = k; j < g_compile_stack_names.size(); ++j) chain += g_compile_stack_names[j] + " -> ";
+                throw LookProgramError("import cycle: " + chain + rel_name +
+                    " (a file cannot use a file that uses it; move the shared code into a third file)",
+                    stmt.loc.line);
+            }
+            if (g_compile_included.count(abs))          { emit(OpCode::NOP); return; }  // elmas: bir kez derlenir
             std::ifstream f(abs);
             if (!f) throw LookCompileError("use \"" + ufs->path + "\": the file cannot be opened");
             std::string src = look::read_stream(f);
@@ -535,8 +553,13 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             look::log_param_writes(p.warnings(), abs);
             g_file_asts.push_back(prog);
             g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
-            g_compile_file.push_back(cfs::path(abs).lexically_relative(cfs::path(root)).generic_string());
-            struct DirPop { ~DirPop() { g_compile_cur_dir.pop_back(); g_compile_file.pop_back(); } } dir_pop;
+            g_compile_file.push_back(rel_name);
+            g_compile_stack.push_back(abs);
+            g_compile_stack_names.push_back(rel_name);
+            struct DirPop { ~DirPop() {
+                g_compile_cur_dir.pop_back(); g_compile_file.pop_back();
+                g_compile_stack.pop_back(); g_compile_stack_names.pop_back();
+            } } dir_pop;
             for (auto& sub : prog->statements) compile_stmt(*sub);
         } catch (const LookCompileError& ex) {
             // Hangi dosyada olduğu söylenir (içteki bir dahil etme zaten adını koyduysa yinelenmez).
@@ -2191,10 +2214,19 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile_stmts(
 
 // ── Compiler::compile — public entry point ────────────────────────────────────
 
-CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir) {
+CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir,
+                                  const std::string& main_file) {
     g_compile_root = base_dir;
     g_compile_included.clear();
     g_compile_file.clear();
+    g_compile_stack.clear();
+    g_compile_stack_names.clear();
+    if (!main_file.empty()) {   // ana betik de yığında: a.lk → b.lk → a.lk döngüdür
+        std::error_code ec;
+        const std::string abs = cfs::weakly_canonical(cfs::absolute(main_file), ec).string();
+        g_compile_stack.push_back(ec ? main_file : abs);
+        g_compile_stack_names.push_back(cfs::path(main_file).filename().generic_string());
+    }
     g_compile_structs.clear();
     g_compile_cur_dir.clear();
     g_use_modules.clear();

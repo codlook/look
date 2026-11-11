@@ -516,6 +516,13 @@ jobs:
           cd cpp
           bash tests/deep_expression_compile_test.sh ./build/lk
 
+      # `use "file.lk"` cycles stop the program at load with the chain (Go: import cycle); the main
+      # script ran twice for a.lk -> b.lk -> a.lk. A file used by two others still compiles once.
+      - name: use cycles are refused at load; a diamond compiles once
+        run: |
+          cd cpp
+          bash tests/use_cycle_test.sh ./build/lk ./build/lk-fcgi
+
       # http:: sent the request with one send(): a slow server let the send timeout expire and
       # the rest of the body was never sent, with no error (8 MB POST: 2.6 MB arrived).
       - name: "http:: sends the whole request body to a slow server"
