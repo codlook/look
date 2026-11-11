@@ -1129,7 +1129,7 @@ throw error::new("unauthorized", "Invalid token", 401)
 
 ### Catching with try/catch
 
-Runtime errors and string throws arrive as their value; structured errors as an assoc — read them safely with `error::message()` / `error::code()`:
+Runtime errors and string throws arrive as their value; structured errors as a map `["type" => …, "message" => …, "code" => …]` — read them with `$e["type"]`, or with `error::is()` / `error::message()` / `error::code()`, which also accept a plain thrown string:
 
 ```lk
 try {

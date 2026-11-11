@@ -68,6 +68,26 @@ void look_release_values(std::vector<Value>& v) noexcept {
 // to_chars shortest: gereken must be at least basamak, makul buyuklukte sabit gosterim.
 // look_format_double → look/format.h (dilin tek double formatı; DB sürücüleri de kullanır)
 
+// Liste/sözlük/struct İÇİNDEKİ metin LOOK yazımıyla tırnaklı: [1, "a", "1"], ["k" => 3, "n" => "3"].
+// Tırnaksızken 3 ile "3" aynı görünüyordu (hata ayıklamada tür karışıyordu — Node/Python/Rust da
+// tırnaklar). Tek başına metin (print("x")) tırnaksız kalır: yalnız iç içe gösterim.
+static void append_nested(std::string& s, const Value& v) {
+    if (v.type() != Value::STRING) { s += v.to_string(); return; }
+    const std::string& t = v.str_ref();
+    s += '"';
+    for (char c : t) {
+        switch (c) {
+            case '"':  s += "\\\""; break;
+            case '\\': s += "\\\\"; break;
+            case '\n': s += "\\n"; break;
+            case '\r': s += "\\r"; break;
+            case '\t': s += "\\t"; break;
+            default:   s += c;
+        }
+    }
+    s += '"';
+}
+
 std::string Value::to_string() const {
     switch (type_) {
         case INT:    return std::to_string(int_val);
@@ -79,30 +99,33 @@ std::string Value::to_string() const {
             NestingGuard g;
             auto arr = as_array();
             std::string s = "[";
-            // Sözlük LOOK'un yazımıyla: [k => 3, ad => x] (listeler gibi metinler tırnaksız).
+            // Sözlük LOOK'un yazımıyla: ["k" => 3, "ad" => "x"].
             // Eskiden iç işaret görünüyordu: [__assoc__, k, 3, ad, x].
             if (!arr->empty() && (*arr)[0].is_assoc_marker()) {
                 for (size_t i = 1; i + 1 < arr->size(); i += 2) {
                     if (i > 1) s += ", ";
-                    s += (*arr)[i].to_string() + " => " + (*arr)[i + 1].to_string();
+                    append_nested(s, (*arr)[i]);
+                    s += " => ";
+                    append_nested(s, (*arr)[i + 1]);
                 }
                 return s + "]";
             }
             for (size_t i = 0; i < arr->size(); ++i) {
                 if (i) s += ", ";
-                s += (*arr)[i].to_string();
+                append_nested(s, (*arr)[i]);
             }
             return s + "]";
         }
         case STRUCT: {
-            // User{name: Ada, age: 18}
+            // User{name: "Ada", age: 18}
             NestingGuard g;
             const auto& sv = *as_struct();
             const auto& def = look::struct_def(sv);
             std::string s = look::struct_name(sv) + "{";
             for (size_t j = 0, i = 0; j + 2 < def.size(); j += 3, ++i) {
                 if (i) s += ", ";
-                s += def[j].str_ref() + ": " + sv[look::STRUCT_SLOT0 + i].to_string();
+                s += def[j].str_ref() + ": ";
+                append_nested(s, sv[look::STRUCT_SLOT0 + i]);
             }
             return s + "}";
         }

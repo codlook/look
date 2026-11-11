@@ -1,0 +1,17 @@
+# Liste/sözlük/struct İÇİNDEKİ metin tırnaklı yazılır (LOOK yazımı), sayı ve metin karışmaz:
+# [1, "a", "1"], ["k" => 3, "n" => "3"]. Tek başına metin tırnaksız kalır.
+use json
+function ok($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . " got[" . $g . "] want[" . $w . "]") } }
+struct P { name string; age int }
+
+ok("list", "" . [1, "a", "1", true, null, 1.5], "[1, \"a\", \"1\", true, null, 1.5]")
+ok("map", "" . ["k" => 3, "n" => "3"], "[\"k\" => 3, \"n\" => \"3\"]")
+ok("nested", "" . ["u" => ["id" => 1, "tags" => ["a", "b"]]], "[\"u\" => [\"id\" => 1, \"tags\" => [\"a\", \"b\"]]]")
+ok("struct", "" . P{name: "Ada", age: 3}, "P{name: \"Ada\", age: 3}")
+ok("quote and backslash escaped", "" . ["a\"b", "c\\d"], "[\"a\\\"b\", \"c\\\\d\"]")
+ok("newline and tab escaped", "" . ["x\ny\tz"], "[\"x\\ny\\tz\"]")
+ok("empty list", "" . [], "[]")
+ok("a string alone stays bare", "" . "x", "x")
+ok("concatenation", "v: " . [1, "2"], "v: [1, \"2\"]")
+ok("json is unchanged", json::encode([1, "a"]), "[1,\"a\"]")
+print("=== print nested done ===")

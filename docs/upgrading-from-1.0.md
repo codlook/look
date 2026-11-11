@@ -125,7 +125,7 @@ The check is deliberately narrow and prefers missing a case to a false alarm: a 
 the function assigns as a whole (`$p = …`) is its own variable and is not checked, nor is
 a variadic parameter.
 
-### A list is never a map, and a map prints as `[k => v]` — security fix, silent
+### A list is never a map, and a map prints as `["k" => v]` — security fix, silent
 
 In 1.0.x a map was a list whose first element was the text `"__assoc__"`, so any list starting
 with that text was taken for a map: a JSON body `["__assoc__", "role", "admin"]` reached the
@@ -134,8 +134,20 @@ list stays a list whatever it contains — from JSON, a form, a query string or 
 `json::encode` writes it back as an array.
 
 Converting a map to text shows its keys and values: `"" . ["k" => 3, "ad" => "x"]` is
-`[k => 3, ad => x]` (it was `[__assoc__, k, 3, ad, x]`). Use `json::encode` when the text is
-meant for another program.
+`["k" => 3, "ad" => "x"]` (it was `[__assoc__, k, 3, ad, x]`). Text inside a list, map or
+struct is written in quotes, so a number and a text never look the same: `"" . [1, "a", "1"]`
+is `[1, "a", "1"]` (it was `[1, a, 1]`); a text on its own prints without quotes, as before.
+Use `json::encode` when the text is meant for another program.
+
+### The value of `error::new()` is a map — was silent
+
+In a `catch`, the value thrown by `error::new($type, $message, $code)` is a map:
+`["type" => …, "message" => …, "code" => …]`. In 1.0.x it was a plain list, so `$e["type"]`
+was always `null`, `json::encode($e)` gave an array, and `error::is` read any list in pairs —
+`error::is(["type", "admin"], "admin")` was `true`. Now `$e["type"]`, `$e["message"]` and
+`$e["code"]` work, `error::is`, `error::message` and `error::code` read only that map, and an
+uncaught one is reported as `type: message`. `error::new(...)` on a line of its own still throws;
+`throw` in front of it stays optional.
 
 ### `push` and `pop` change the variable you name — silent
 

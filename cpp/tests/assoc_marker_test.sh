@@ -9,7 +9,7 @@
 # identity, not by content: no input and no LOOK code can produce it.
 # Checked: JSON, form and query input stay lists; a LOOK list literal stays a list; maps stay maps
 # across threads (timer, cache::, channel), through JSON and after `.=` on their values; a map
-# prints as [k => v].
+# prints as ["k" => v] (text in quotes).
 # Usage: assoc_marker_test.sh <lk> <lk-fcgi>
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> <lk-fcgi>}")" && pwd)/$(basename "$1")"
 FCGI="$(cd "$(dirname "${2:?usage: $0 <lk> <lk-fcgi>}")" && pwd)/$(basename "$2")"
@@ -34,13 +34,13 @@ $l = ["__assoc__", "a", 1]
 $fails = $fails + chk("LOOK list literal stays a list", [count($l), $l[2]], [3, 1])
 $fails = $fails + chk("keys of such a list are its indexes", array::keys($l), [0, 1, 2])
 $m = ["k" => 3, "ad" => "x"]
-$fails = $fails + chk("map prints as [k => v]", "" . $m, "[k => 3, ad => x]")
-$fails = $fails + chk("nested map prints", "" . [1, ["a" => [2]]], "[1, [a => [2]]]")
+$fails = $fails + chk("map prints as [\"k\" => v]", "" . $m, "[\"k\" => 3, \"ad\" => \"x\"]")
+$fails = $fails + chk("nested map prints", "" . [1, ["a" => [2]]], "[1, [\"a\" => [2]]]")
 $fails = $fails + chk("map JSON round trip", json::decode(json::encode($m))["ad"], "x")
 $s = ["t" => "a"]
 $s["t"] .= "b"
 $fails = $fails + chk("append to a map value", $s["t"], "ab")
-$fails = $fails + chk("a new map after .= is still a map", "" . ["z" => 1], "[z => 1]")
+$fails = $fails + chk("a new map after .= is still a map", "" . ["z" => 1], "[\"z\" => 1]")
 cache::set("m", ["role" => "user", "n" => [1, 2]], 60)
 $c = cache::get("m")
 $fails = $fails + chk("map through cache:: (another copy)", [$c["role"], count($c), count($c["n"])], ["user", 2, 2])

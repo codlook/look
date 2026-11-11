@@ -1103,60 +1103,57 @@ static Module make_error_module() {
     Module m;
     m.name = "error";
 
-    // error::new(type, message [, code=0]) → throws LookRuntimeError with Value payload
+    // error::new(type, message [, code=0]) → fırlatır; catch'teki değer bir SÖZLÜK:
+    // ["type" => …, "message" => …, "code" => …]. Eskiden başında sözlük işareti olmayan düz liste
+    // kuruyordu: $e["type"] hep null, error::is de herhangi bir listeyi ikişer okuyup
+    // ["type","admin"] gibi sıradan bir listeyi hata sanıyordu (13. bulgudaki "liste sözlük
+    // sanılır" sınıfı). Yakalanmazsa ileti "type: message" (çağrı zinciriyle).
     m.functions["new"] = [](auto args) -> Value {
         std::string type    = args.size() >= 1 ? args[0].to_string() : "error";
         std::string message = args.size() >= 2 ? args[1].to_string() : "";
         int         code    = args.size() >= 3 ? (int)args[2].to_int()  : 0;
 
-        // Build assoc array: {type, message, code}
         auto arr = std::make_shared<ValueArray>();
+        arr->push_back(Value::assoc_marker());
         arr->push_back(Value(std::string("type")));    arr->push_back(Value(type));
         arr->push_back(Value(std::string("message"))); arr->push_back(Value(message));
         arr->push_back(Value(std::string("code")));    arr->push_back(Value(code));
-        Value payload(arr);
-
-        throw LookRuntimeError(payload);
+        LookRuntimeError err{Value(arr)};
+        err.message = message.empty() ? type : type + ": " + message;
+        throw err;
         return Value(); // unreachable
     };
 
-    // error::is(e, type) → bool — safe type check in catch block
-    m.functions["is"] = [](auto args) -> Value {
-        if (args.size() < 2) return Value(false);
-        // e can be assoc array (from error::new) or plain string
-        Value& e = args[0];
-        if (e.type() == Value::ARRAY) {
-            auto& arr = *e.as_array();
-            for (size_t i = 0; i + 1 < arr.size(); i += 2) {
-                if (arr[i].to_string() == "type")
-                    return Value(arr[i+1].to_string() == args[1].to_string());
-            }
-        }
-        return Value(false);
+    // Hata değerinin alanı: yalnız SÖZLÜK (işaretli) ve metin anahtar; liste asla.
+    auto field = [](const Value& e, const char* key) -> const Value* {
+        if (e.type() != Value::ARRAY) return nullptr;
+        const auto& arr = *e.as_array();
+        if (arr.empty() || !arr[0].is_assoc_marker()) return nullptr;
+        for (size_t i = 1; i + 1 < arr.size(); i += 2)
+            if (arr[i].type() == Value::STRING && arr[i].str_ref() == key) return &arr[i + 1];
+        return nullptr;
     };
 
-    // error::message(e) → string — safe message extraction
-    m.functions["message"] = [](auto args) -> Value {
+    // error::is(e, type) → bool — catch'te tür denetimi
+    m.functions["is"] = [field](auto args) -> Value {
+        if (args.size() < 2) return Value(false);
+        const Value* t = field(args[0], "type");
+        return Value(t && t->to_string() == args[1].to_string());
+    };
+
+    // error::message(e) → string — hata değerinin iletisi; başka bir değer (throw "metin") kendisi
+    m.functions["message"] = [field](auto args) -> Value {
         if (args.empty()) return Value(std::string(""));
-        Value& e = args[0];
-        if (e.type() == Value::ARRAY) {
-            auto& arr = *e.as_array();
-            for (size_t i = 0; i + 1 < arr.size(); i += 2)
-                if (arr[i].to_string() == "message") return Value(arr[i+1].to_string());
-        }
+        if (const Value* msg = field(args[0], "message")) return Value(msg->to_string());
+        const Value& e = args[0];
         return e.type() == Value::STRING ? e : Value(e.to_string());
     };
 
     // error::code(e) → int
-    m.functions["code"] = [](auto args) -> Value {
+    m.functions["code"] = [field](auto args) -> Value {
         if (args.empty()) return Value(0);
-        Value& e = args[0];
-        if (e.type() == Value::ARRAY) {
-            auto& arr = *e.as_array();
-            for (size_t i = 0; i + 1 < arr.size(); i += 2)
-                if (arr[i].to_string() == "code") return Value((int)arr[i+1].to_int());
-        }
-        return Value(0);
+        const Value* c = field(args[0], "code");
+        return c ? Value((int)c->to_int()) : Value(0);
     };
 
     return m;

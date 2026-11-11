@@ -60,7 +60,7 @@ print(nest(240))' "$NE"
 # The limit itself: 1000 levels work everywhere (as before), 1001 is the error.
 run "1000 levels work" '$a = deep(1000); $b = deep(1000); cache::set("k", $a); print(strlen("" . $a) . " " . ($a == $b) . " " . (cache::get("k") == $a))' "2001 true true"
 run "1001 levels error" '$a = deep(1001); print(try_it(fn() => "" . $a))' "$NE"
-run "shallow values unchanged" 'print("" . [1, [2, "x"], ["k" => 3]] . " " . ([1, [2]] == [1, [2]]) . " " . ([1, [2]] == [1, [3]]))' "[1, [2, x], [k => 3]] true false"
+run "shallow values unchanged" 'print("" . [1, [2, "x"], ["k" => 3]] . " " . ([1, [2]] == [1, [2]]) . " " . ([1, [2]] == [1, [3]]))' '[1, [2, "x"], ["k" => 3]] true false'
 
 # json::encode: same limit, and nothing below it is cut. Before, levels past 256 were silently
 # written as null — the client received damaged data with no error.

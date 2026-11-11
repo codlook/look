@@ -1,0 +1,40 @@
+# error::new() değeri bir SÖZLÜK: ["type" => …, "message" => …, "code" => …]. Eskiden başında sözlük
+# işareti olmayan düz listeydi: $e["type"] hep null, json::encode dizi veriyordu, error::is herhangi
+# bir listeyi ikişer okuyup ["type","admin"] gibi sıradan bir listeyi hata sanıyordu.
+use error
+use json
+function ok($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . " got[" . json::encode($g) . "] want[" . json::encode($w) . "]") } }
+
+function find($id) {
+  error::new("not_found", "no user", 404)
+}
+$e = null
+try { find(7) } catch ($x) { $e = $x }
+ok("the value is a map", json::encode($e), "{\"type\":\"not_found\",\"message\":\"no user\",\"code\":404}")
+ok("type by key", $e["type"], "not_found")
+ok("message by key", $e["message"], "no user")
+ok("code by key", $e["code"], 404)
+ok("error::is", error::is($e, "not_found"), true)
+ok("error::is other type", error::is($e, "denied"), false)
+ok("error::message", error::message($e), "no user")
+ok("error::code", error::code($e), 404)
+ok("prints as a map", "" . $e, "[\"type\" => \"not_found\", \"message\" => \"no user\", \"code\" => 404]")
+
+# A list is never an error value.
+ok("a list is not an error (is)", error::is(["type", "admin"], "admin"), false)
+ok("a list is not an error (code)", error::code(["code", 7]), 0)
+ok("a JSON array is not an error", error::is(json::decode("[\"type\",\"admin\"]"), "admin"), false)
+
+# throw of a plain value keeps working with error::message.
+$m = ""
+try { throw "plain text" } catch ($x) { $m = error::message($x) }
+ok("thrown text", $m, "plain text")
+$t = true
+try { throw "plain text" } catch ($x) { $t = error::is($x, "plain text") }
+ok("thrown text has no type", $t, false)
+
+# Default code is 0.
+$c = -1
+try { error::new("bad", "x") } catch ($x) { $c = $x["code"] }
+ok("default code", $c, 0)
+print("=== error value done ===")
