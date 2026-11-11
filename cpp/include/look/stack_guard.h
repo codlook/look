@@ -22,8 +22,22 @@ namespace look {
 // sayacı asıl sınır kalır, pay son seviyedeki değer dolaşımına (1000 iç içe to_string ~190 KB,
 // ölçüldü) yeter. Alt sınır 64 KB: 128 KB'lık yığında 1/8 (16 KB) ASan'ın büyük çerçeveli tek bir
 // seviyesine yetmiyor, süreç aralıklı çöküyordu (ölçüldü, 3'te 2).
-constexpr size_t LOOK_STACK_RESERVE_MIN = 64 * 1024;
-constexpr size_t LOOK_STACK_RESERVE_MAX = 256 * 1024;
+// AddressSanitizer her çerçeveye koruma bölgesi ekler (çerçeveler ~4 kat): pay aynı oranda büyür.
+// Ölçüldü: ASan'da 64 KB pay, 128–256 KB yığında iki denetim arası kodu (iç içe atama derlemesi,
+// ayrıştırıcının öncelik zinciri) karşılamıyordu → ASan yığın taşması; normal derleme etkilenmez.
+#if defined(__SANITIZE_ADDRESS__)
+constexpr size_t LOOK_STACK_FRAME_SCALE = 4;
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+constexpr size_t LOOK_STACK_FRAME_SCALE = 4;
+#  else
+constexpr size_t LOOK_STACK_FRAME_SCALE = 1;
+#  endif
+#else
+constexpr size_t LOOK_STACK_FRAME_SCALE = 1;
+#endif
+constexpr size_t LOOK_STACK_RESERVE_MIN = 64 * 1024 * LOOK_STACK_FRAME_SCALE;
+constexpr size_t LOOK_STACK_RESERVE_MAX = 256 * 1024 * LOOK_STACK_FRAME_SCALE;
 
 inline const char* look_stack_pointer() noexcept {
 #if defined(_MSC_VER)
@@ -61,6 +75,16 @@ inline bool look_native_stack_low() noexcept {
                   : eighth > LOOK_STACK_RESERVE_MAX ? LOOK_STACK_RESERVE_MAX : eighth;
     }
     return static_cast<size_t>(sp - r.lo) < r.reserve;   // yığın aşağı doğru büyür
+}
+
+// Sözdizimi ağacını özyinelemeyle gezen her yer (ayrıştırıcı, yakalama / parametre / argüman
+// denetimleri, tanımsız çağrı arama) girişte bunu çağırır: yığın azaldıysa ayrıştırma hatası
+// (satır/sütunlu), çökme değil. Ayrıştırıcının sayaçları (iç içe 150, zincir 1000) gerçek yığına
+// bakmaz: iç içe her parantez ~15 C++ çerçevesi harcar → 128 KB'ta 140 parantez, 256 KB'ta 140
+// iç içe blok (yakalama denetimi) çöküyordu (ölçüldü). Gövde parser.cpp'de (LookParseError).
+[[noreturn]] void look_throw_nested_too_deep(int line, int col);
+inline void look_ast_guard(int line = 0, int col = 0) {
+    if (look_native_stack_low()) look_throw_nested_too_deep(line, col);
 }
 
 } // namespace look

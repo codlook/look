@@ -1,4 +1,6 @@
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
+#include "look/stack_guard.h"
+#include "look/ast_spine.h"
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/capture_check.h"
@@ -97,6 +99,7 @@ void walk_expr(const Expression* e, const std::function<void(const Expression*)>
 void walk_block(const BlockStatement* b, const std::function<void(const Expression*)>& v);
 
 void walk_stmt(const Statement* s, const std::function<void(const Expression*)>& v) {
+    if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
     if (!s) return;
     if (auto* x = node_as<ExpressionStatement>(s)) walk_expr(x->expression.get(), v);
     else if (auto* x = node_as<PrintStatement>(s)) { for (auto& e : x->expressions) walk_expr(e.get(), v); }
@@ -118,6 +121,7 @@ void walk_block(const BlockStatement* b, const std::function<void(const Expressi
 }
 
 void walk_expr(const Expression* e, const std::function<void(const Expression*)>& v) {
+    if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
     if (!e) return;
     v(e);
     if (auto* x = node_as<ArrayLiteral>(e)) { for (auto& el : x->elements) walk_expr(el.get(), v); }
@@ -125,7 +129,12 @@ void walk_expr(const Expression* e, const std::function<void(const Expression*)>
     else if (auto* x = node_as<FunctionExpression>(e)) walk_block(x->body.get(), v);
     else if (auto* x = node_as<IndexExpression>(e)) { walk_expr(x->object.get(), v); walk_expr(x->index.get(), v); }
     else if (auto* x = node_as<UnaryExpression>(e)) walk_expr(x->right.get(), v);
-    else if (auto* x = node_as<BinaryExpression>(e)) { walk_expr(x->left.get(), v); walk_expr(x->right.get(), v); }
+    else if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+        std::vector<const BinaryExpression*> sp; const Expression* lm = binary_left_spine(x, sp);
+        for (size_t k = 1; k < sp.size(); ++k) v(sp[k]);   // iç düğümler, özyinelemedeki sırayla
+        walk_expr(lm, v);
+        for (size_t k = sp.size(); k-- > 0;) walk_expr(sp[k]->right.get(), v);
+    }
     else if (auto* x = node_as<AssignmentExpression>(e)) { walk_expr(x->index.get(), v); walk_expr(x->value.get(), v); }
     else if (auto* x = node_as<CallExpression>(e)) { walk_expr(x->callee.get(), v); for (auto& a : x->arguments) walk_expr(a.get(), v); }
     else if (auto* x = node_as<TernaryExpression>(e)) { walk_expr(x->condition.get(), v); walk_expr(x->then_expr.get(), v); walk_expr(x->else_expr.get(), v); }

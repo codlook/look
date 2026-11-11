@@ -17,6 +17,7 @@
 #include "look/runtime_host.h"
 #include "look/lexer.h"
 #include "look/parser.h"
+#include "look/stack_guard.h"   // look_native_stack_low — derin iç içe ifade/blokta çökme yerine hata
 
 #include <fstream>
 #include <cassert>
@@ -298,7 +299,18 @@ void FunctionCompiler::compile_block(const BlockStatement& block) {
 
 // ── compile_stmt — dispatch ───────────────────────────────────────────────────
 
+// Derleyici ağacı özyinelemeyle gezer: ayrıştırıcı derinliği sınırlar (iç içe 150, zincir 1000) ama
+// bu sınırlar küçük yığında (Windows ana iş parçacığı 1 MB, musl iş parçacığı 128 KB) yetmeyebilir.
+// Uzun ikili zincirler döngüyle derlenir (compile_binary/compile_logical); kalan iç içe biçimler
+// için gerçek kalan yığın denetlenir: çökme yerine açık hata (ölçüldü: 1000 terim 512 KB'ta segfault).
+[[noreturn]] static void compile_stack_exhausted(int line) {
+    throw LookProgramError((line > 0 ? "line " + std::to_string(line) + ": " : std::string()) +
+        "this expression or block is nested too deeply to compile on this thread's stack; "
+        "split it into smaller expressions or functions", line);
+}
+
 void FunctionCompiler::compile_stmt(const Statement& stmt) {
+    if (look_native_stack_low()) compile_stack_exhausted(stmt.loc.line > 0 ? stmt.loc.line : cur_line_);
     // Satır takibi: bundan sonra emit edilen opcode'lar bu statement'ın satırına yazılır.
     // proto_.lines ZATEN vardı ama emit() hep 0 basıyordu ("sonradan eklenecek") → VM
     // hataları satır/konum veremiyordu (tree-walk "File/Line" veriyordu, VM sadece mesaj).
@@ -1397,6 +1409,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
 // ── compile_expr — dispatch ───────────────────────────────────────────────────
 
 uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
+    if (look_native_stack_low()) compile_stack_exhausted(expr.loc.line > 0 ? expr.loc.line : cur_line_);
     auto ensure_dest = [&]() -> uint16_t {
         return (dest == NO_REG) ? alloc_temp() : dest;
     };
@@ -1625,6 +1638,22 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
 
 // ── compile_binary ────────────────────────────────────────────────────────────
 
+// İkili operatörlerin opcode'ları (&&, ||, ?? ayrı derlenir).
+static const std::unordered_map<std::string, OpCode>& binary_ops() {
+    static const std::unordered_map<std::string, OpCode> OPS = {
+        {"+",   OpCode::ADD},   {"-",  OpCode::SUB},  {"*",  OpCode::MUL},
+        {"/",   OpCode::DIV},   {"%",  OpCode::MOD},  {"**", OpCode::POW},
+        {".",   OpCode::CONCAT},{"..", OpCode::CONCAT},
+        {"==",  OpCode::EQ},    {"!=", OpCode::NEQ},
+        {"<",   OpCode::LT},    {">",  OpCode::GT},
+        {"<=",  OpCode::LTE},   {">=", OpCode::GTE},
+        {"<=>", OpCode::CMP3},
+        {"&",   OpCode::BAND},  {"|",  OpCode::BOR},  {"^",  OpCode::BXOR},
+        {"<<",  OpCode::SHL},   {">>", OpCode::SHR},
+    };
+    return OPS;
+}
+
 uint16_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint16_t dest) {
     // Kritik 2. nokta: && ve || short-circuit
     if (e.op == "&&" || e.op == "||") return compile_logical(e, dest);
@@ -1647,28 +1676,29 @@ uint16_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint16_t de
         return r;
     }
 
-    uint16_t l = compile_expr(*e.left);
-    uint16_t r2 = compile_expr(*e.right);
-    uint16_t r  = (dest == NO_REG) ? alloc_temp() : dest;
-
-    static const std::unordered_map<std::string, OpCode> OPS = {
-        {"+",   OpCode::ADD},   {"-",  OpCode::SUB},  {"*",  OpCode::MUL},
-        {"/",   OpCode::DIV},   {"%",  OpCode::MOD},  {"**", OpCode::POW},
-        {".",   OpCode::CONCAT},{"..", OpCode::CONCAT},
-        {"==",  OpCode::EQ},    {"!=", OpCode::NEQ},
-        {"<",   OpCode::LT},    {">",  OpCode::GT},
-        {"<=",  OpCode::LTE},   {">=", OpCode::GTE},
-        {"<=>", OpCode::CMP3},
-        {"&",   OpCode::BAND},  {"|",  OpCode::BOR},  {"^",  OpCode::BXOR},
-        {"<<",  OpCode::SHL},   {">>", OpCode::SHR},
-    };
-    auto it = OPS.find(e.op);
-    if (it == OPS.end())
-        throw LookCompileError("Unknown binary op: " + e.op, e.loc.line);
-
-    emit(it->second, r, l, r2);
-    free_temp(r2); free_temp(l);
-    return r;
+    // Sol omurga DÖNGÜYLE: `a + b + c + …` ((a+b)+c)+… diye sola doğru iç içe bir ağaçtır; her düğüm
+    // için özyineleme 1000 operatörlük zincirde 1000 C++ çerçevesi demekti (ölçüldü: 512 KB yığında
+    // segfault, compile_binary × 580). Sıra aynı: en soldaki terim, sonra içten dışa her düğümün
+    // sağı ve işlemi. Omurga, opcode'lu ikili operatör olmayan ilk düğümde biter (&&, ||, ?? …).
+    const auto& OPS = binary_ops();
+    if (!OPS.count(e.op)) throw LookCompileError("Unknown binary op: " + e.op, e.loc.line);
+    std::vector<const BinaryExpression*> spine;   // dıştan içe
+    const Expression* leftmost = &e;
+    while (auto* b = node_as<BinaryExpression>(leftmost)) {
+        if (!OPS.count(b->op)) break;
+        spine.push_back(b);
+        leftmost = b->left.get();
+    }
+    uint16_t l = compile_expr(*leftmost);
+    for (size_t k = spine.size(); k-- > 0;) {
+        const BinaryExpression& n = *spine[k];
+        uint16_t r2 = compile_expr(*n.right);
+        uint16_t r  = (k == 0 && dest != NO_REG) ? dest : alloc_temp();
+        emit(OPS.at(n.op), r, l, r2);
+        free_temp(r2); free_temp(l);
+        l = r;
+    }
+    return l;
 }
 
 // ── compile_logical — short-circuit && / || ────────────────────────────────────
@@ -1676,22 +1706,27 @@ uint16_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint16_t de
 uint16_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint16_t dest) {
     uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
 
-    uint16_t lhs = compile_expr(*e.left, r);
+    // `a && b && c || d …` sola iç içe: omurga DÖNGÜYLE (bkz. compile_binary). Her düğüm, solunun
+    // sonucu r'deyken kendi kısa devre atlamasını yazar, sonra sağını r'ye derler; atlama sağından
+    // sonraya bağlanır — özyinelemeli sürümün ürettiği komutların aynısı.
+    std::vector<const BinaryExpression*> spine;   // dıştan içe
+    const Expression* leftmost = &e;
+    while (auto* b = node_as<BinaryExpression>(leftmost)) {
+        if (b->op != "&&" && b->op != "||") break;
+        spine.push_back(b);
+        leftmost = b->left.get();
+    }
+    uint16_t lhs = compile_expr(*leftmost, r);
     if (lhs != r) { emit(OpCode::MOVE, r, lhs); free_temp(lhs); }
 
-    int short_circuit;
-    if (e.op == "&&") {
-        // lhs false → sonuç false, rhs değerlendirilmez
-        short_circuit = emit_jump(OpCode::JUMP_IF_FALSE, r);
-    } else {
-        // lhs true → sonuç true, rhs değerlendirilmez
-        short_circuit = emit_jump(OpCode::JUMP_IF_TRUE, r);
+    for (size_t k = spine.size(); k-- > 0;) {
+        const BinaryExpression& n = *spine[k];
+        // &&: sol false → sonuç false, sağ değerlendirilmez; ||: sol true → sonuç true
+        int short_circuit = emit_jump(n.op == "&&" ? OpCode::JUMP_IF_FALSE : OpCode::JUMP_IF_TRUE, r);
+        uint16_t rhs = compile_expr(*n.right, r);
+        if (rhs != r) { emit(OpCode::MOVE, r, rhs); free_temp(rhs); }
+        patch_jump(short_circuit, current_ip());
     }
-
-    uint16_t rhs = compile_expr(*e.right, r);
-    if (rhs != r) { emit(OpCode::MOVE, r, rhs); free_temp(rhs); }
-
-    patch_jump(short_circuit, current_ip());
     return r;
 }
 

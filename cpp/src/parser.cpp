@@ -1,6 +1,7 @@
 #include "look/parser.h"
 #include "look/capture_check.h"
 #include "look/param_write_check.h"
+#include "look/stack_guard.h"
 #include "look/runtime_host.h"
 #include "look/logger.h"
 #include <stdexcept>
@@ -8,6 +9,11 @@
 #include <cstdlib>
 
 namespace look {
+
+void look_throw_nested_too_deep(int line, int col) {
+    throw LookParseError("this expression or block is nested too deeply to process on this thread's stack; "
+                         "split it into smaller expressions or functions", line, col);
+}
 
 Parser::Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
 
@@ -33,6 +39,7 @@ std::unique_ptr<Program> Parser::parse() {
 // ── Statements ────────────────────────────────────────────────────────────────
 
 std::unique_ptr<Statement> Parser::statement() {
+    look_ast_guard(peek().line, peek().column);   // gerçek kalan yığın (sayaç tek başına yetmez)
     // Recursion guard: derin iç içe blok/if/while ({{{...}}}) parser yığınını
     // taşırır — ifade guard'ıyla aynı gerekçe. RAII ile sayaç azaltılır.
     static constexpr int MAX_STMT_DEPTH = 150;
@@ -436,6 +443,7 @@ std::unique_ptr<BlockStatement> Parser::block() {
 // ── Expressions ───────────────────────────────────────────────────────────────
 
 std::unique_ptr<Expression> Parser::expression() {
+    look_ast_guard(peek().line, peek().column);   // gerçek kalan yığın (sayaç tek başına yetmez)
     // Recursion guard: derin iç içe ifade (((((...))))) veya [[[[...]]]]
     // recursive-descent yığınını taşırıp SIGSEGV/worker crash yapar. Kod
     // üretici (Looky AI), kullanıcı-yüklenen .lk veya use "dosya.lk" bu yoldan

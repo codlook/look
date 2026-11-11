@@ -20,6 +20,8 @@
 // değildir — LOOK 1'de de öyleydi — denetlenmez. Değişken sayıda argüman parametresi (`...$a`)
 // her zaman yeni bir dizidir, denetlenmez. Yanlış alarm vermektense kaçırmayı seçer.
 #include "look/ast.h"
+#include "look/stack_guard.h"
+#include "look/ast_spine.h"
 #include "look/capture_check.h"
 #include "look/logger.h"
 #include <algorithm>
@@ -66,6 +68,7 @@ struct Walk {
 
     // `value` = bu ifadenin DEĞERİ bir yere akıyor mu (döndürülüyor, atanıyor, veriliyor).
     void expr(const Expression* e, bool value) {
+        if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
         if (!e) return;
         if (auto* v = node_as<Variable>(e)) { if (value) use(v->name); return; }
         if (auto* f = node_as<FunctionExpression>(e)) {
@@ -119,7 +122,11 @@ struct Walk {
         }
         if (auto* x = node_as<IndexExpression>(e)) { expr(x->object.get(), false); expr(x->index.get(), false); return; }
         if (auto* x = node_as<MemberAccessExpression>(e)) { expr(x->object.get(), false); return; }
-        if (auto* x = node_as<BinaryExpression>(e)) { expr(x->left.get(), false); expr(x->right.get(), false); return; }
+        if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+            std::vector<const BinaryExpression*> sp; expr(binary_left_spine(x, sp), false);
+            for (size_t k = sp.size(); k-- > 0;) expr(sp[k]->right.get(), false);
+            return;
+        }
         if (auto* x = node_as<TernaryExpression>(e)) { expr(x->condition.get(), false); expr(x->then_expr.get(), value); expr(x->else_expr.get(), value); return; }
         if (auto* x = node_as<ArrayLiteral>(e)) { for (auto& el : x->elements) expr(el.get(), true); return; }
         if (auto* x = node_as<AssocArrayLiteral>(e)) { for (auto& p : x->pairs) { expr(p.first.get(), false); expr(p.second.get(), true); } return; }
@@ -135,6 +142,7 @@ struct Walk {
     }
 
     void stmt(const Statement* s) {
+        if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
         if (!s) return;
         if (s->loc.line > 0) cur_line = s->loc.line;
         if (auto* x = node_as<ExpressionStatement>(s)) { expr(x->expression.get(), false); return; }

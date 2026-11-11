@@ -1,4 +1,6 @@
 #include "look/stdlib.h"
+#include "look/stack_guard.h"
+#include "look/ast_spine.h"
 #include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (saf, RFC-KAT edilebilir)
 #include "look/fiber.h"           // fiber_offload — uzun PBKDF2 ortak havuzda
 #include "look/metrics.h"         // g_http_request_count() — web dispatch istek sayacı
@@ -1125,6 +1127,7 @@ static void chk_walk_expr(const Expression* e, const std::function<void(const Ex
 static void chk_walk_block(const BlockStatement* b, const std::function<void(const Expression*)>& v);
 
 static void chk_walk_stmt(const Statement* s, const std::function<void(const Expression*)>& v) {
+    if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
     if (!s) return;
     if (auto* x = node_as<ExpressionStatement>(s)) chk_walk_expr(x->expression.get(), v);
     else if (auto* x = node_as<PrintStatement>(s)) { for (auto& e : x->expressions) chk_walk_expr(e.get(), v); }
@@ -1146,6 +1149,7 @@ static void chk_walk_block(const BlockStatement* b, const std::function<void(con
 }
 
 static void chk_walk_expr(const Expression* e, const std::function<void(const Expression*)>& v) {
+    if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
     if (!e) return;
     v(e);
     if (auto* x = node_as<ArrayLiteral>(e)) { for (auto& el : x->elements) chk_walk_expr(el.get(), v); }
@@ -1153,7 +1157,12 @@ static void chk_walk_expr(const Expression* e, const std::function<void(const Ex
     else if (auto* x = node_as<FunctionExpression>(e)) chk_walk_block(x->body.get(), v);
     else if (auto* x = node_as<IndexExpression>(e)) { chk_walk_expr(x->object.get(), v); chk_walk_expr(x->index.get(), v); }
     else if (auto* x = node_as<UnaryExpression>(e)) chk_walk_expr(x->right.get(), v);
-    else if (auto* x = node_as<BinaryExpression>(e)) { chk_walk_expr(x->left.get(), v); chk_walk_expr(x->right.get(), v); }
+    else if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+        std::vector<const BinaryExpression*> sp; const Expression* lm = binary_left_spine(x, sp);
+        for (size_t k = 1; k < sp.size(); ++k) v(sp[k]);   // iç düğümler, özyinelemedeki sırayla
+        chk_walk_expr(lm, v);
+        for (size_t k = sp.size(); k-- > 0;) chk_walk_expr(sp[k]->right.get(), v);
+    }
     else if (auto* x = node_as<AssignmentExpression>(e)) { chk_walk_expr(x->object.get(), v); chk_walk_expr(x->index.get(), v); chk_walk_expr(x->value.get(), v); }
     else if (auto* x = node_as<CallExpression>(e)) { chk_walk_expr(x->callee.get(), v); for (auto& a : x->arguments) chk_walk_expr(a.get(), v); }
     else if (auto* x = node_as<TernaryExpression>(e)) { chk_walk_expr(x->condition.get(), v); chk_walk_expr(x->then_expr.get(), v); chk_walk_expr(x->else_expr.get(), v); }

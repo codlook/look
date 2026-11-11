@@ -14,6 +14,8 @@
 //                    tutar. LOOK 1'de sonraki değeri görürdü → UYARI (sessiz fark)
 // Özyineleme: closure kendini yakalayamaz (o an henüz tanımsız) — adlı fonksiyon yazılır.
 #include "look/ast.h"
+#include "look/stack_guard.h"
+#include "look/ast_spine.h"
 #include <map>
 #include <set>
 #include <string>
@@ -52,6 +54,7 @@ struct Scan {
     }
 
     void expr(const Expression* e) {
+        if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
         if (!e) return;
         if (auto* v = node_as<Variable>(e)) { reads.insert(v->name); first.emplace(v->name, 'r'); return; }
         if (auto* f = node_as<FunctionExpression>(e)) {
@@ -96,7 +99,11 @@ struct Scan {
         }
         if (auto* x = node_as<IndexExpression>(e)) { expr(x->object.get()); expr(x->index.get()); return; }
         if (auto* x = node_as<MemberAccessExpression>(e)) { expr(x->object.get()); return; }
-        if (auto* x = node_as<BinaryExpression>(e)) { expr(x->left.get()); expr(x->right.get()); return; }
+        if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+            std::vector<const BinaryExpression*> sp; expr(binary_left_spine(x, sp));
+            for (size_t k = sp.size(); k-- > 0;) expr(sp[k]->right.get());
+            return;
+        }
         if (auto* x = node_as<TernaryExpression>(e)) { expr(x->condition.get()); expr(x->then_expr.get()); expr(x->else_expr.get()); return; }
         if (auto* x = node_as<ArrayLiteral>(e)) { for (auto& el : x->elements) expr(el.get()); return; }
         if (auto* x = node_as<AssocArrayLiteral>(e)) { for (auto& p : x->pairs) { expr(p.first.get()); expr(p.second.get()); } return; }
@@ -118,6 +125,7 @@ struct Scan {
     void block(const BlockStatement* b) { if (b) for (auto& s : b->statements) stmt(s.get()); }
 
     void stmt(const Statement* s) {
+        if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
         if (!s) return;
         if (s->loc.line > 0) cur_line = s->loc.line;
         if (auto* x = node_as<ExpressionStatement>(s)) { expr(x->expression.get()); return; }
@@ -230,6 +238,7 @@ inline void check_scope(const Scan& sc, const std::set<std::string>& scope_local
 inline void check_function_decls(const std::vector<std::unique_ptr<Statement>>& stmts, std::vector<CaptureWarning>& out);
 
 inline void walk_decls(const Statement* s, std::vector<CaptureWarning>& out, const std::set<std::string>* enclosing = nullptr) {
+    if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
     if (!s) return;
     if (auto* fd = node_as<FunctionDeclaration>(s)) {
         Scan sc; sc.block(fd->body.get());

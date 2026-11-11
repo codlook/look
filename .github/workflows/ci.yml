@@ -508,6 +508,14 @@ jobs:
           cd cpp
           bash tests/callback_error_line_test.sh ./build/lk
 
+      # The deepest expressions and blocks the parser accepts compile on a small stack or fail with
+      # the reason, never crash (a 1,000-term `1 + 1 + …` was a SIGSEGV on a 512 KB stack). Binary
+      # chains are walked with a loop everywhere; other nesting is checked against the real stack.
+      - name: Deep expressions compile on a small stack or say why, never crash
+        run: |
+          cd cpp
+          bash tests/deep_expression_compile_test.sh ./build/lk
+
       # http:: sent the request with one send(): a slow server let the send timeout expire and
       # the rest of the body was never sent, with no error (8 MB POST: 2.6 MB arrived).
       - name: "http:: sends the whole request body to a slow server"
