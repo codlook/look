@@ -228,6 +228,26 @@ LOOK_VM_COLD void VM::capture_error_stack() {
     for (size_t k = n - kEdge; k < n; ++k) add(k);
 }
 
+// parallel() görevi: dışarıda iz bırakan yerleşik mi (etki sınıfı Effect ya da sınıfsız)?
+// Pure/Reads/ThrowCheck/Callback betik bittikten sonra da çalışır (parallel_runtime.h).
+static const std::vector<char>& builtin_leaves_trace() {
+    static const std::vector<char> t = [] {
+        const auto& names = builtin_names();
+        std::vector<char> v(names.size());
+        for (size_t i = 0; i < names.size(); ++i) {
+            const BuiltinEffect e = builtin_effect(names[i]);
+            v[i] = (e == BuiltinEffect::Effect || e == BuiltinEffect::Unknown);
+        }
+        return v;
+    }();
+    return t;
+}
+// Görevin etki noktası sonu: yerleşik/kanal dönünce (ya da fırlatınca) yeniden RUNNING.
+struct TaskEffectEnd {
+    TaskExit* t;
+    ~TaskEffectEnd() { if (t) task_effect_end(t); }
+};
+
 LOOK_VM_COLD void VM::reserve_regs(size_t n) {
     static_assert(MAX_CALL_DEPTH == 10000 && MAX_NATIVE_DEPTH == 4000 &&
                   MAX_STACK_VALUES * sizeof(Value) == 8u * 1024 * 1024,
@@ -1034,6 +1054,13 @@ call_dispatch:
                         throw LookVmError("Built-in '" + (nm.empty() ? std::to_string(bidx) : nm) +
                                           "' unavailable (not linked)");
                     }
+                    // parallel() görevi (betik sonu): iz bırakan yerleşik bir etki noktasıdır.
+                    bool in_effect = false;
+                    if (task_) {
+                        const auto& lt = builtin_leaves_trace();
+                        in_effect = task_point(task_, bidx >= lt.size() || lt[bidx]);
+                    }
+                    TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
                     R(ins.a) = bfn(args);
                 }
                 // Re-entrancy güvenliği: builtin (ör. array::map) callback aracılığıyla
@@ -1204,6 +1231,8 @@ call_dispatch:
             case OpCode::PARALLEL_CALL: {
                 if (R(ins.a).type() != Value::BYTECODE_FN)
                     throw LookVmError("parallel(): BYTECODE_FN expected");
+                const bool in_effect = task_ && task_point(task_, true);   // görev içinden görev
+                TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
                 task_acquire(); // THROW mode: throws if LOOK_PARALLEL_LIMIT reached
                 auto src_cl = R(ins.a).as_bytecode_fn();
                 // Yakalanan değerler thread'e taşınırken klonlanır: closure ile
@@ -1247,7 +1276,10 @@ call_dispatch:
                 std::vector<BuiltinFn> builtins_copy = sh.builtins ? *sh.builtins : std::vector<BuiltinFn>{};
                 sh.builtins = nullptr;
                 sh.routes   = nullptr; // parallel task dispatch_routes çağırmaz
-                std::thread([cl_copy, sh, g_copy, builtins_copy = std::move(builtins_copy)]() mutable {
+                // Betik-sonu kaydı iş parçacığı BAŞLAMADAN: betik hemen biterse görev de sayılır.
+                TaskExit* texit = task_exit_new();
+                try {
+                std::thread([cl_copy, sh, g_copy, builtins_copy = std::move(builtins_copy), texit]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
                     // DB bağlantısı iadesi: task
                     // içinde db::query çağrılırsa get_conn bu thread'e tembel bir conn
@@ -1258,6 +1290,9 @@ call_dispatch:
                     VM tvm(sh, sink);
                     tvm.set_globals(std::move(g_copy));
                     tvm.set_builtins(&builtins_copy);
+                    tvm.set_task(texit);
+                    task_exit_enter(texit);   // bu iş parçacığının görev kaydı (preempt denetimi)
+                    struct ExitDone { TaskExit* t; ~ExitDone() { task_exit_done(t); } } _done{texit};
                     try { tvm.call_closure(*cl_copy, {}); }
                     catch (const std::exception& e) {
                         Logger::instance().log(LogLevel::LOG_ERROR, "VM",
@@ -1267,6 +1302,7 @@ call_dispatch:
                             "parallel() panic: unknown error");
                     }
                 }).detach();
+                } catch (...) { task_exit_done(texit); throw; }   // iş parçacığı açılamadı
                 break;
             }
             // CHAN_* — TİP KONTROLÜ ŞART: as_channel() type_ bakmadan static_pointer_cast
@@ -1277,18 +1313,24 @@ call_dispatch:
             case OpCode::CHAN_SEND: {
                 if (R(ins.a).type() != Value::CHANNEL)
                     throw LookVmError("send(): argument is not a channel");
-                R(ins.a).as_channel()->send_val(R(ins.b));
+                const bool in_effect = task_ && task_point(task_, true);
+                TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
+                R(ins.a).as_channel()->send_val(R(ins.b), in_effect ? &task_->phase : nullptr);
                 break;
             }
             case OpCode::CHAN_RECV: {
                 if (R(ins.b).type() != Value::CHANNEL)
                     throw LookVmError("receive(): argument is not a channel");
+                const bool in_effect = task_ && task_point(task_, true);
+                TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
                 R(ins.a) = R(ins.b).as_channel()->recv_val();
                 break;
             }
             case OpCode::CHAN_CLOSE: {
                 if (R(ins.a).type() != Value::CHANNEL)
                     throw LookVmError("close(): argument is not a channel");
+                const bool in_effect = task_ && task_point(task_, true);
+                TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
                 auto ch = R(ins.a).as_channel();
                 { std::unique_lock<std::mutex> lk(ch->mtx); ch->closed = true; ch->not_empty.notify_all(); }
                 break;

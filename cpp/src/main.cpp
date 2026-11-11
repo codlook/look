@@ -197,7 +197,10 @@ bool find_undefined_call(const Program& prog, std::string& name, int& line, int&
 // zamanlayıcılar sessizce kayboluyordu — iki ayrı kural; artık tek kural.)
 static void warn_pending_timers();
 static int finish_script(int code) {
-    const int running = look::task_active();
+    // Yalnız İŞİ KALMIŞ görevler sayılır: çalışan görev dönene ya da dışarıda iz bırakan bir işe
+    // başlayana dek ilerler (zaman yok, beklenmez — parallel_runtime.h). send()'den sonra yalnız
+    // dönüşü kalan görev artık "still running" sayılmıyor (eskiden her koşuda yanlış uyarı).
+    const int running = look::task_settle_for_exit();
     if (running > 0)
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "parallel",
             std::to_string(running) + (running == 1 ? " parallel() task was" : " parallel() tasks were") +

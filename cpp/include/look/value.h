@@ -341,7 +341,11 @@ struct LookChannel {
     explicit LookChannel(size_t cap = 128)
         : capacity(cap == 0 ? 1 : cap), unbuffered(cap == 0) {}
 
-    void  send_val(Value val);
+    // phase: parallel() görevinin betik-sonu durumu (parallel_runtime.h TaskExit::phase). Görev
+    // beklerken IN_EFFECT'tir; değer TESLİM edilmeden hemen önce RUNNING'e alınır (tamponsuzda
+    // alıcı aldığı anda) — teslimden sonra yalnız dönüşü kalan görev "bitmiş" sayılabilsin.
+    void  send_val(Value val, std::atomic<int>* phase = nullptr);
+    std::atomic<int>*       rv_phase = nullptr;   // tamponsuz: bekleyen göndericinin durumu
     Value recv_val();
     void  close_chan();
     bool  is_closed() { std::unique_lock<std::mutex> lk(mtx); return closed; }

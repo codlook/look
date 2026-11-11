@@ -12,6 +12,8 @@
 
 namespace look {
 
+struct TaskExit;   // parallel_runtime.h
+
 // ── VM runtime hata ───────────────────────────────────────────────────────────
 
 class LookVmError : public std::runtime_error {
@@ -73,6 +75,8 @@ public:
     void set_sse_connection(std::shared_ptr<SseConnection> sse);
     // Per-request builtins — her request'te çağrılmalı (module fn'ler ctx'e bağlıdır)
     void set_builtins(const std::vector<BuiltinFn>* b) { shared_.builtins = b; }
+    // parallel() görevinin VM'i: betik sonunda "işi kalmış mı" noktaları (parallel_runtime.h).
+    void set_task(TaskExit* t) { task_ = t; }
 
     // Üst düzey `return <ifade>` değerini döndürür (REPL son ifadeyi böyle gösterir); yoksa null.
     Value execute(const CompiledProgram& prog);
@@ -151,6 +155,7 @@ private:
     Value       get_field(const Value& obj, const std::string& field);
     void        set_field(Value& obj, const std::string& field, const Value& val);
 
+    TaskExit* task_ = nullptr;  // parallel() görevi değilse null — kancalar tek dal
     int last_error_line_ = 0;   // yakalanmamış hatanın satırı (proto->lines[ip-1])
     std::string last_error_file_;   // ...ve dosyası (proto->file_at; "" = ana betik)
     // ...ve çağrı zinciri. Eski yorumlayıcı "Stack trace: at f (line N)" yazıyordu, VM'e geçişte

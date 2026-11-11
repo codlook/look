@@ -124,6 +124,8 @@ jobs:
           for f in tests/tsan/enforced/*.lk; do
             echo "== $f"; ./build-tsan/lk "$f" || exit 1
           done
+          # Betik sonu: görev kaydı, durum atomikleri, kanal teslim anı (parallel_runtime.h)
+          bash tests/parallel_exit_warning_test.sh ./build-tsan/lk 3
 
   fuzz:
     # Surdurulebilirlik: wire-protocol parser'lari her push'ta kisa fuzzlanir (libFuzzer,

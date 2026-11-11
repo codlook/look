@@ -12,6 +12,7 @@
 //   If this becomes a problem, replace with asm context switch (50 lines).
 
 #include "look/fiber.h"
+#include "look/parallel_runtime.h"
 #include "look/logger.h"
 #include "look/stack_guard.h"
 
@@ -140,6 +141,7 @@ static bool preempt_every_point() {
 }
 
 void preempt_slow() noexcept {
+    task_preempt_check();   // betik bittiyse parallel() görevinin saf hesabı sınırlı (parallel_runtime.h)
     const bool every = preempt_every_point();
     t_preempt_budget = every ? 1 : PREEMPT_CHECK_EVERY;
     if (!tl_current_fiber || !tl_scheduler) return;   // fiber dışında: sıra bırakılmaz

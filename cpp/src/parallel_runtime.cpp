@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <string>
 #include <cstdlib>
+#include <vector>
 
 namespace look {
 
@@ -100,6 +101,71 @@ bool task_wait(int timeout_ms) {
     return s_cv.wait_for(lk,
         std::chrono::milliseconds(timeout_ms),
         []{ return s_count.load() <= 0; });
+}
+
+// ── Betik sonu (parallel_runtime.h) ── kayıt da KASITLI sızdırılır (yukarıdaki gerekçe).
+static std::mutex&                     s_exit_mtx = *new std::mutex();
+static std::condition_variable&        s_exit_cv  = *new std::condition_variable();
+static std::condition_variable&        s_park_cv  = *new std::condition_variable();  // hiç uyandırılmaz
+static std::vector<TaskExit*>&         s_exit_reg = *new std::vector<TaskExit*>();
+std::atomic<bool> g_task_script_ending{false};   // betik sonu (main.cpp finish_script)
+// fiber-ok: parallel() görevinin kendi iş parçacığı (fiber değil); istek verisi değil
+thread_local TaskExit* t_task_exit = nullptr;
+
+TaskExit* task_exit_new() {
+    auto* t = new TaskExit();
+    std::lock_guard<std::mutex> lk(s_exit_mtx);
+    s_exit_reg.push_back(t);
+    return t;
+}
+
+void task_exit_enter(TaskExit* t) noexcept { t_task_exit = t; }
+
+void task_exit_done(TaskExit* t) noexcept {
+    t_task_exit = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(s_exit_mtx);
+        t->phase.store(TASK_DONE);
+        for (size_t i = 0; i < s_exit_reg.size(); ++i)
+            if (s_exit_reg[i] == t) { s_exit_reg[i] = s_exit_reg.back(); s_exit_reg.pop_back(); break; }
+        s_exit_cv.notify_all();
+    }
+    delete t;
+}
+
+
+void task_stop_here(TaskExit* t) noexcept {
+    std::unique_lock<std::mutex> lk(s_exit_mtx);
+    t->phase.store(TASK_STOPPED);
+    s_exit_cv.notify_all();
+    for (;;) s_park_cv.wait(lk);   // süreç _Exit ile biter; bu iş parçacığı bir daha ilerlemez
+}
+
+bool task_point_slow(TaskExit* t, bool effect) noexcept {
+    if (g_task_script_ending.load()) {
+        if (effect || --t->after_budget <= 0) task_stop_here(t);
+        return false;
+    }
+    if (!effect) return false;
+    // Dekker: önce durumu yaz, sonra işarete bak (ikisi de seq_cst). Ana iş parçacığı işareti
+    // yazıp durumu okur → biri ötekini mutlaka görür.
+    t->phase.store(TASK_IN_EFFECT);
+    if (g_task_script_ending.load()) task_stop_here(t);
+    return true;
+}
+
+void task_preempt_check() noexcept {
+    if (TaskExit* t = t_task_exit; t && g_task_script_ending.load()) task_point_slow(t, false);
+}
+
+int task_settle_for_exit() {
+    std::unique_lock<std::mutex> lk(s_exit_mtx);
+    g_task_script_ending.store(true);
+    s_exit_cv.wait(lk, [] {
+        for (TaskExit* t : s_exit_reg) if (t->phase.load() == TASK_RUNNING) return false;
+        return true;
+    });
+    return (int)s_exit_reg.size();
 }
 
 } // namespace look

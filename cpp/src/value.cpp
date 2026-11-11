@@ -519,7 +519,7 @@ static long channel_timeout_ms() {
     return v;
 }
 
-void LookChannel::send_val(Value val) {
+void LookChannel::send_val(Value val, std::atomic<int>* phase) {
     std::unique_lock<std::mutex> lk(mtx);
     long to = channel_timeout_ms();
     auto has_room = [this]{ return closed || queue.size() < capacity; };
@@ -537,9 +537,17 @@ void LookChannel::send_val(Value val) {
     // heap race (cache'in ikizi; TSan push_back/_M_realloc_insert). deep_clone snapshot
     // → queue izole değer tutar, gönderen ve alıcı ayrışır. Tek-alıcılı (pop) olduğu için
     // send'de tek klon yeter (cache multi-reader olduğundan get'te de klonluyordu).
-    queue.push(val.deep_clone());
+    Value item = val.deep_clone();
+    // Teslim anı (parallel_runtime.h): tamponluda alıcı bu push'tan sonra uyanabilir → önce
+    // RUNNING; tamponsuzda gönderici alıcıyı bekler → alıcı alırken RUNNING'e çeker (recv_val).
+    if (phase) { if (unbuffered) rv_phase = phase; else phase->store(0); }
+    queue.push(std::move(item));
     not_empty.notify_one();
     if (unbuffered) {
+        // Çıkarken (alındı, kapandı ya da süre doldu) bizim durum işaretçimizi bırak: görev
+        // bitince silinir, sonradan öğeyi alan alıcı ona yazmasın.
+        struct ClearRv { LookChannel* c; std::atomic<int>* p;
+            ~ClearRv() { if (p && c->rv_phase == p) c->rv_phase = nullptr; } } clear_rv{this, phase};
         // Rendezvous: alıcı BU öğeyi alana dek bloke ol (Go unbuffered channel).
         // recv_gen ile kendi öğemizin alındığını izleriz; yanlış uyandırmada
         // (başka gönderici) bekleme sürer.
@@ -567,6 +575,7 @@ Value LookChannel::recv_val() {
     if (queue.empty()) return Value();  // closed + empty → null
     Value v = std::move(queue.front());
     queue.pop();
+    if (rv_phase) { rv_phase->store(0); rv_phase = nullptr; }   // send_val: teslim anı
     ++recv_gen;                 // rendezvous: bekleyen göndericiyi serbest bırak
     not_full.notify_all();      // birden çok gönderici bekliyor olabilir
     return v;

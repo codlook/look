@@ -537,6 +537,13 @@ jobs:
           # every built-in, top level / function / route: a local passed in keeps its value
           bash tests/builtin_arg_intact_test.sh ./build/lk ./build/lk-fcgi
 
+      # When a script ends, a parallel() task is named only if it still had work that leaves a
+      # trace — not when all it had left was to return after its last send(); never waited for.
+      - name: Only tasks with work left are named when a script ends
+        run: |
+          cd cpp
+          bash tests/parallel_exit_warning_test.sh ./build/lk 20
+
       # error::new() gives a map (a list is never an error value); text inside a printed list,
       # map or struct is quoted, so 3 and "3" never look the same.
       - name: Error values are maps; printed values keep their types
