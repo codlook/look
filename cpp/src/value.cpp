@@ -559,6 +559,12 @@ void LookChannel::send_val(Value val, std::atomic<int>* phase) {
         } else {
             not_full.wait(lk, taken);
         }
+        // Alınmadan kapandı: değer teslim edilmedi → Go gibi "send on closed channel" (öğe
+        // kuyruktan geri alınır, kapandıktan sonra alıcıya ulaşmaz).
+        if (recv_gen == gen) {
+            if (!queue.empty()) queue.pop();
+            throw std::runtime_error("send on closed channel");
+        }
     }
 }
 

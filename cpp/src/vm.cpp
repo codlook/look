@@ -1331,8 +1331,10 @@ call_dispatch:
                     throw LookVmError("close(): argument is not a channel");
                 const bool in_effect = task_ && task_point(task_, true);
                 TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
-                auto ch = R(ins.a).as_channel();
-                { std::unique_lock<std::mutex> lk(ch->mtx); ch->closed = true; ch->not_empty.notify_all(); }
+                // close_chan: alıcıları VE bekleyen göndericileri uyandırır (gönderici "send on
+                // closed channel" alır). Eskiden yalnız alıcılar uyanıyordu → dolu kanalda
+                // bekleyen send sonsuza dek asılı kalıyordu.
+                R(ins.a).as_channel()->close_chan();
                 break;
             }
             case OpCode::CHAN_SIZE: {
