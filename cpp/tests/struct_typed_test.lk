@@ -144,7 +144,7 @@ $seen = ""
 foreach ($p2 as $k => $v) { $seen = $seen . $k . "=" . $v . ";" }
 chk("foreach walks the fields in declaration order", $seen, "x=2;pad=0;name=two;")
 chk("json::encode writes an object", json::encode($p1), "{\"name\":\"one\",\"x\":1}")
-chk("printing a struct", "" . $p1, "P1{name: one, x: 1}")
+chk("printing a struct", "" . $p1, "P1{name: \"one\", x: 1}")
 chk("template resolves a struct field", template::render_string('{$u.name}/{$u.x}', ["u" => $p1]), "one/1")
 struct Outer { inner P1, items array }
 $o = Outer{inner: P1{name: "in", x: 5}}
