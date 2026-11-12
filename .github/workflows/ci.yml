@@ -569,6 +569,14 @@ jobs:
       # closure = 12 vaka parite; recursion = graceful stack-overflow; parallel_db = iki
       # motorda conn-sızıntısı + havuz baskısı. (differential yol-çözme bug'ı düzeltildi:
       # alt-testler $TMP'ye cd ediyordu, göreli build/lk çözülmüyordu.)
+      # print() writes its whole line at once: printing a local variable leaves it unchanged (it
+      # used to become null in a function or a route), and every built-in keeps a local passed in.
+      - name: print keeps a local variable; every built-in keeps its argument
+        run: |
+          cd cpp
+          bash tests/print_line_test.sh build/lk
+          bash tests/builtin_arg_intact_test.sh build/lk build/lk-fcgi
+
       - name: Motor paritesi (differential + closure + recursion + parallel)
         run: |
           cd cpp

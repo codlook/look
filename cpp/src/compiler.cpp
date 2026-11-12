@@ -769,20 +769,27 @@ void FunctionCompiler::check_builtin_index(int bidx, const std::string& name) {
 void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs,
                                         bool newline) {
     // builtin 0 (print) ve 1 (write) ikisi de argümanı HAM yazar (newline/ayraç eklemez)
-    // → ayraç ve newline burada, interpreter'la aynı kuralla üretilir.
-    auto emit_literal = [&](const char* text) {
-        uint8_t r = alloc_temp();
-        emit_load_const(r, Value(std::string(text)), 0);
-        emit(OpCode::CALL_BUILTIN, r, 1 /*write*/, r);
-        free_temp(r);
+    // → ayraç ve newline burada, interpreter'la aynı kuralla üretilir. Satır GEÇİCİ bir metinde
+    // kurulur ve TEK write ile yazılır. Eskiden her parça ayrı write'tı ve write'ın dönüşü (null)
+    // argümanın register'ına yazılıyordu → fonksiyon/route içinde print($a) yerel $a'yı null
+    // yapıyordu (VM; yorumlayıcı doğruydu). Ayrıca parallel() satırları birbirine karışıyordu.
+    const uint8_t line = alloc_temp();
+    auto append_text = [&](const char* text) {
+        uint8_t c = alloc_temp();
+        emit_load_const(c, Value(std::string(text)), 0);
+        emit(OpCode::CONCAT, line, line, c);     // a == b → yerinde ekleme
+        free_temp(c);
     };
+    if (exprs.empty()) emit_load_const(line, Value(std::string()), 0);
     for (size_t i = 0; i < exprs.size(); ++i) {
-        if (i > 0) emit_literal(" ");            // build_output: argümanlar arası " "
         uint8_t r = compile_expr(*exprs[i]);
-        emit(OpCode::CALL_BUILTIN, r, 1 /*write*/, r);  // sonuç atılır
+        if (i == 0) emit(OpCode::TO_STR, line, r);
+        else { append_text(" "); emit(OpCode::CONCAT, line, line, r); }   // argümanlar arası " "
         free_temp(r);
     }
-    if (newline) emit_literal("\n");             // PrintStatement: sonda "\n"
+    if (newline) append_text("\n");              // PrintStatement: sonda "\n"
+    emit(OpCode::CALL_BUILTIN, line, 1 /*write*/, line);   // dönüş geçici register'a
+    free_temp(line);
 }
 
 void FunctionCompiler::compile_try(const TryCatchStatement& s) {
