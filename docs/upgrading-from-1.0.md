@@ -444,6 +444,25 @@ application and used by a route is the same channel for every request and every 
 Use that when requests are meant to talk to each other; do not use a handle to get around
 the closure rule inside one request — pass the value in and return the new one.
 
+### `channel(0)` is unbuffered, and a deadlock is an error — was silent
+
+`channel(0)` is what the docs always said it was: unbuffered, as in Go — `send()` waits until a
+`receive()` takes the value, so a producer never runs ahead of its consumer. In 1.0.x it was an
+unlimited buffer on the command line and 1,048,576 places on the web, so memory grew without
+bound behind a slow consumer. `channel()` keeps its 128 places and `channel(N)` its N; a negative
+or non-integer size is an error everywhere (the web used to fall back to 128 without a word).
+
+On the command line, when the script and every `parallel()` task wait on channels and no timer is
+left to wake one, the script stops with `deadlock: the script and every parallel() task are
+waiting on a channel, and nothing is left that could send or receive` (with the call chain)
+instead of hanging for ever. `send()` on `channel(0)` with no other task to receive is the usual
+cause: receive in another task, or use a buffered channel.
+
+### Closing a channel wakes its waiting senders — was a hang
+
+`close()` woke only receivers: a `send()` waiting on a full channel stayed blocked for ever. Now
+it wakes and gets `send on closed channel`, as in Go.
+
 ### A call to a module function that does not exist stops the application at startup
 
 ```

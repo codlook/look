@@ -2504,7 +2504,7 @@ LOOK brings language-level concurrency. `parallel()` starts a new task and `chan
 # channel([size]) — create a channel
 $ch = channel()  # default buffer: 128
 $ch = channel(10)  # 10-slot buffer
-$ch = channel(0)  # unbuffered — synchronous rendezvous (Go semantics)
+$sync = channel(0)  # unbuffered — send() waits until a receive() takes the value (Go semantics)
 
 # send / receive / close / chan_size
 send($ch, 42)  # send a value to the channel (blocks if the buffer is full)

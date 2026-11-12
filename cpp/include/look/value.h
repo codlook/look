@@ -325,7 +325,7 @@ inline std::shared_ptr<std::vector<Value>> look_new_array(const std::vector<Valu
 }
 
 // ── LookChannel — Go-style channel (defined after Value — queue<Value> needs complete type)
-struct LookChannel {
+struct LookChannel : std::enable_shared_from_this<LookChannel> {
     std::queue<Value>       queue;
     std::mutex              mtx;
     std::condition_variable not_empty;  // receivers wait
@@ -351,6 +351,11 @@ struct LookChannel {
     bool  is_closed() { std::unique_lock<std::mutex> lk(mtx); return closed; }
     int   sz()        { std::unique_lock<std::mutex> lk(mtx); return (int)queue.size(); }
 };
+
+// channel([size]) — TEK tanım (komut satırı + web): boyutsuz 128, 0 = tamponsuz (Go), N > 0 = N yer,
+// negatif ya da tamsayı olmayan = hata. Eskiden 0 komut satırında SINIRSIZ, web'de 1 048 576 yerdi
+// (belgedeki "tamponsuz" hiçbir yoldan kurulamıyordu; yavaş alıcıda bellek sınırsız büyüyordu).
+std::shared_ptr<LookChannel> make_channel(const std::vector<Value>& args);
 
 // ── VM geri çağırma köprüsü ───────────────────────────────────────────────────
 // Higher-order builtin'ler (array::map/filter/reduce…) callback'i ev sahibinin invoke'uyla

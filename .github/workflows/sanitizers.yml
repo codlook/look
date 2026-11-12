@@ -126,6 +126,8 @@ jobs:
           done
           # Betik sonu: görev kaydı, durum atomikleri, kanal teslim anı (parallel_runtime.h)
           bash tests/parallel_exit_warning_test.sh ./build-tsan/lk 3
+          # Kanal kilitlenmesi muhasebesi + tamponsuz teslim (parallel_runtime.h ChanWait)
+          bash tests/channel_unbuffered_test.sh ./build-tsan/lk ./build-tsan/lk-fcgi
 
   fuzz:
     # Surdurulebilirlik: wire-protocol parser'lari her push'ta kisa fuzzlanir (libFuzzer,

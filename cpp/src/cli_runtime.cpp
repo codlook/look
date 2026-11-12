@@ -94,15 +94,7 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
     // parallel+channel tree-walk'ta çalışıp VM'de (DEFAULT) çöküyordu. Semantik:
     // default 128, n<0 hata, n==0 → unbuffered ((size_t)-1).
     if (look::builtin_index("channel") >= 0)
-        b[BI("channel")] = [](std::vector<Value>& a) -> Value {
-            size_t cap = 128;
-            if (!a.empty()) {
-                int n = a[0].to_int();
-                if (n < 0) throw std::runtime_error("channel: capacity cannot be negative");
-                cap = (n == 0) ? (size_t)-1 : (size_t)n;
-            }
-            return Value(std::make_shared<look::LookChannel>(cap));
-        };
+        b[BI("channel")] = [](std::vector<Value>& a) -> Value { return Value(look::make_channel(a)); };   // value.h
     // config() — channel ile AYNI SINIF: web'de (http_main) bağlı, CLI-VM'de eksikti →
     // tree-walk "def" dönerken VM "kullanilamiyor" veriyordu. Kural: "section.key" →
     // "SECTION_KEY" env anahtarı, g_env_vars+getenv'e bakılır (look_get_env AYNI kaynağı

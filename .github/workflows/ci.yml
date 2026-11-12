@@ -545,6 +545,8 @@ jobs:
           bash tests/parallel_exit_warning_test.sh ./build/lk 20
           # closing a channel wakes its waiting senders with "send on closed channel"
           bash tests/channel_close_test.sh ./build/lk
+          # channel(0) is unbuffered; a deadlock on the command line is an error, never a hang
+          bash tests/channel_unbuffered_test.sh ./build/lk ./build/lk-fcgi
 
       # error::new() gives a map (a list is never an error value); text inside a printed list,
       # map or struct is quoted, so 3 and "3" never look the same.

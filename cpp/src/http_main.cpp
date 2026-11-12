@@ -860,9 +860,7 @@ static void run_setup_http(const fs::path& script) {
             // fonksiyonuna bağlanır (kurulum tek geçiş: havuz bir kez açılır).
             auto SBI = [](const char* n) { return (size_t)look::builtin_index(n); };
             setup_builtins[SBI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
-                int buf = args.empty() ? 128 : (args[0].type() == look::Value::INT ? args[0].as_int() : 128);
-                if (buf <= 0) buf = (1 << 20);
-                return look::Value(std::make_shared<look::LookChannel>(buf));
+                return look::Value(look::make_channel(args));   // value.h: komut satırıyla aynı kural
             };
             setup_builtins[SBI("args")] = [](std::vector<look::Value>&) -> look::Value {
                 return look::Value(std::make_shared<look::ValueArray>());
@@ -1729,9 +1727,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         // channel()
         req_builtins[BI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
-            int buf = args.empty() ? 128 : (args[0].type() == look::Value::INT ? args[0].as_int() : 128);
-            if (buf <= 0) buf = (1 << 20);
-            return look::Value(std::make_shared<look::LookChannel>(buf));
+            return look::Value(look::make_channel(args));   // value.h: komut satırıyla aynı kural
         };
         // args() — web/CGI'de CLI argümanı yok → boş dizi (CLI-only anlamlı).
         req_builtins[BI("args")] = [](std::vector<look::Value>&) -> look::Value {

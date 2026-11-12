@@ -197,6 +197,7 @@ bool find_undefined_call(const Program& prog, std::string& name, int& line, int&
 // zamanlayıcılar sessizce kayboluyordu — iki ayrı kural; artık tek kural.)
 static void warn_pending_timers();
 static int finish_script(int code) {
+    look::chan_deadlock_main(false);   // betik bitti: bekleyen görevler artık kilitlenme değil
     // Yalnız İŞİ KALMIŞ görevler sayılır: çalışan görev dönene ya da dışarıda iz bırakan bir işe
     // başlayana dek ilerler (zaman yok, beklenmez — parallel_runtime.h). send()'den sonra yalnız
     // dönüşü kalan görev artık "still running" sayılmıyor (eskiden her koşuda yanlış uyarı).
@@ -549,6 +550,7 @@ int main(int argc, char* argv[]) {
             struct MainVmGone { std::shared_ptr<look::CliCallbacks> c; ~MainVmGone() { c->main_vm = nullptr; } } main_vm_gone{callbacks};
             // Yakalanmamış hata "Runtime Error ... File/Line" biçiminde raporlanır: VM'in kaydettiği satır
             // (proto.lines) LookRuntimeError'a sarılır. ExitException/RouteMatched kontrol akışıdır.
+            look::chan_deadlock_main(true);   // kanal kilitlenmesi: betik + görevler (parallel_runtime.h)
             try {
                 vm.execute(compiled);
             } catch (const look::ExitException&)         { throw; }

@@ -1,6 +1,7 @@
 #include "look/value.h"
 #include "look/int_overflow.h"
 #include "look/struct_types.h"
+#include "look/parallel_runtime.h"   // kanal kilitlenmesi (ChanWait)
 #include <mutex>
 #include <cmath>
 #include <climits>
@@ -519,16 +520,39 @@ static long channel_timeout_ms() {
     return v;
 }
 
+// Kanal beklemesi (üç yer: dolu tamponda send, tamponsuz send'in teslimi, receive). Hazırsa
+// beklemez; bekliyorsa kilitlenme muhasebesine girer (parallel_runtime.h ChanWait) — betik ve
+// bütün görevler kanalda bekliyorsa hepsi uyanır ve "deadlock" hatası alır, sonsuza dek asılmaz.
+template <class Ready>
+static void chan_wait(LookChannel* ch, std::unique_lock<std::mutex>& lk, std::condition_variable& cv,
+                      long to, int kind, uint64_t gen, Ready ready, const char* timeout_msg) {
+    if (ready()) return;
+    if (g_chan_deadlock.load()) throw std::runtime_error(chan_deadlock_message());
+    ChanWait w(ch->shared_from_this(), kind, gen);
+    if (w.suspect) { lk.unlock(); chan_deadlock_try(); lk.lock(); }   // karar kanal kilitleri olmadan
+    auto pred = [&] { return ready() || g_chan_deadlock.load(); };
+    if (to > 0) {
+        if (!cv.wait_for(lk, std::chrono::milliseconds(to), pred)) throw std::runtime_error(timeout_msg);
+    } else {
+        cv.wait(lk, pred);
+    }
+    if (!ready()) throw std::runtime_error(chan_deadlock_message());
+}
+
+std::shared_ptr<LookChannel> make_channel(const std::vector<Value>& args) {
+    if (args.empty()) return std::make_shared<LookChannel>(128);
+    if (args[0].type() != Value::INT)
+        throw std::runtime_error("channel(): the size must be a whole number (0 = unbuffered)");
+    const int64_t n = args[0].as_int();
+    if (n < 0) throw std::runtime_error("channel: capacity cannot be negative");
+    return std::make_shared<LookChannel>((size_t)n);   // 0 → tamponsuz (LookChannel)
+}
+
 void LookChannel::send_val(Value val, std::atomic<int>* phase) {
     std::unique_lock<std::mutex> lk(mtx);
     long to = channel_timeout_ms();
-    auto has_room = [this]{ return closed || queue.size() < capacity; };
-    if (to > 0) {
-        if (!not_full.wait_for(lk, std::chrono::milliseconds(to), has_room))
-            throw std::runtime_error("channel send timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
-    } else {
-        not_full.wait(lk, has_room);
-    }
+    chan_wait(this, lk, not_full, to, CHAN_WAIT_ROOM, 0, [this]{ return closed || queue.size() < capacity; },
+              "channel send timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
     if (closed) throw std::runtime_error("send on closed channel");
     // İZOLASYON (cache/parallel deep_clone disiplini ile aynı): channel parallel'in
     // cross-thread iletişim primitive'i. Value ARRAY/MAP ise shared_ptr<container>'ı
@@ -552,13 +576,8 @@ void LookChannel::send_val(Value val, std::atomic<int>* phase) {
         // recv_gen ile kendi öğemizin alındığını izleriz; yanlış uyandırmada
         // (başka gönderici) bekleme sürer.
         uint64_t gen = recv_gen;
-        auto taken = [this, gen]{ return closed || recv_gen > gen; };
-        if (to > 0) {
-            if (!not_full.wait_for(lk, std::chrono::milliseconds(to), taken))
-                throw std::runtime_error("channel send (rendezvous) timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
-        } else {
-            not_full.wait(lk, taken);
-        }
+        chan_wait(this, lk, not_full, to, CHAN_WAIT_TAKEN, gen, [this, gen]{ return closed || recv_gen > gen; },
+                  "channel send (rendezvous) timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
         // Alınmadan kapandı: değer teslim edilmedi → Go gibi "send on closed channel" (öğe
         // kuyruktan geri alınır, kapandıktan sonra alıcıya ulaşmaz).
         if (recv_gen == gen) {
@@ -571,13 +590,8 @@ void LookChannel::send_val(Value val, std::atomic<int>* phase) {
 Value LookChannel::recv_val() {
     std::unique_lock<std::mutex> lk(mtx);
     long to = channel_timeout_ms();
-    auto has_item = [this]{ return closed || !queue.empty(); };
-    if (to > 0) {
-        if (!not_empty.wait_for(lk, std::chrono::milliseconds(to), has_item))
-            throw std::runtime_error("channel receive timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
-    } else {
-        not_empty.wait(lk, has_item);
-    }
+    chan_wait(this, lk, not_empty, to, CHAN_WAIT_RECV, 0, [this]{ return closed || !queue.empty(); },
+              "channel receive timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
     if (queue.empty()) return Value();  // closed + empty → null
     Value v = std::move(queue.front());
     queue.pop();

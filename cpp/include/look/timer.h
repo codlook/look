@@ -32,6 +32,8 @@ public:
     // tetiklenmemiş) ve tekrarlayanlar. Bitişteki uyarı bunları sayar.
     struct Pending { int once = 0; int repeating = 0; };
     Pending pending();
+    // Kurulu ya da şu an çalışan bir zamanlayıcı var mı (kanal kilitlenmesi: geri çağırma gönderebilir).
+    bool active();
 
     // timer::wait([ms]) — bütün tek seferlik zamanlayıcılar tetiklenip geri çağırmaları bitene kadar
     // (ya da ms dolana kadar) bekler; true = hepsi bitti. Tekrarlayanları beklemez (bitmezler).

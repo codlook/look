@@ -1138,6 +1138,27 @@ $ch = channel(-1)
 <span class="eg-good"># ✓ fix</span>
 $ch = channel(0)   # unbuffered, or a positive size</code></pre>
     </div>
+    <div class="err" id="e109" data-cat="Realtime — WebSocket, SSE, channels" data-text="channel(): the size must be a whole number (0 = unbuffered) channel(&quot;10&quot;) channel(1.5) pass an integer">
+      <div class="err-msg"><code>channel(): the size must be a whole number (0 = unbuffered)</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>channel("10")</code> or <code>channel(1.5)</code>.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass an integer: <code>channel()</code> (128 places), <code>channel(0)</code> (unbuffered) or <code>channel(N)</code>.</p>
+      </div>
+    </div>
+    <div class="err" id="e110" data-cat="Realtime — WebSocket, SSE, channels" data-text="deadlock: the script and every parallel() task are waiting on a channel, and nothing is left that could send or receive">
+      <div class="err-msg"><code>deadlock: the script and every parallel() task are waiting on a channel, and nothing is left that could send or receive</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> On the command line, every task and the script itself wait on <code>send()</code>/<code>receive()</code> and no timer is left to wake one — e.g. <code>send()</code> on <code>channel(0)</code> with no other task to receive, or <code>receive()</code> after the only sender ended. The script stops with this error (and the call chain) instead of hanging.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Make sure every <code>send()</code> has a <code>receive()</code> in another task (or use a buffered channel), and that a sender is still running when you <code>receive()</code>.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$ch = channel(0)
+send($ch, 1)
+<span class="eg-good"># ✓ fix</span>
+$ch = channel(0)
+parallel(function() { send($ch, 1) })
+print(receive($ch))</code></pre>
+    </div>
   </div>
   <div class="err-note">Channels/<code>go{}</code> are an experimental, opt-in feature — see the docs before relying on them.</div>
   </div>

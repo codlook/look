@@ -2505,7 +2505,7 @@ location /events {
   <pre><code><span class="cm"># channel([size]) — create a channel</span>
 <span class="var">$ch</span> = <span class="fn">channel</span>()  <span class="cm"># default buffer: 128</span>
 <span class="var">$ch</span> = <span class="fn">channel</span>(<span class="num">10</span>)  <span class="cm"># 10-slot buffer</span>
-<span class="var">$ch</span> = <span class="fn">channel</span>(<span class="num">0</span>)  <span class="cm"># unbuffered — synchronous rendezvous (Go semantics)</span>
+<span class="var">$sync</span> = <span class="fn">channel</span>(<span class="num">0</span>)  <span class="cm"># unbuffered — send() waits until a receive() takes the value (Go semantics)</span>
 
 <span class="cm"># send / receive / close / chan_size</span>
 <span class="fn">send</span>(<span class="var">$ch</span>, <span class="num">42</span>)  <span class="cm"># send a value to the channel (blocks if the buffer is full)</span>

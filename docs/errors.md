@@ -247,6 +247,8 @@ File access is **sandboxed** to a root directory (`LOOK_FILE_ROOT`); paths can't
 | `send on closed channel` | You sent to a channel after it was closed. | Don't send after `close()`; coordinate producers/consumers. |
 | `channel send/receive timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)` | A channel op blocked past the timeout — often no counterpart is reading/writing (deadlock). | Ensure a receiver exists for every sender; adjust `LOOK_CHANNEL_TIMEOUT_MS` for genuinely slow work. |
 | `channel: capacity cannot be negative` | `channel(-1)`. | Use a capacity `>= 0`. |
+| `channel(): the size must be a whole number (0 = unbuffered)` | `channel("10")` or `channel(1.5)`. | Pass an integer: `channel()` (128 places), `channel(0)` (unbuffered) or `channel(N)`. |
+| `deadlock: the script and every parallel() task are waiting on a channel, and nothing is left that could send or receive` | On the command line, every task and the script itself wait on `send()`/`receive()` and no timer is left to wake one — e.g. `send()` on `channel(0)` with no other task to receive, or `receive()` after the only sender ended. The script stops with this error (and the call chain) instead of hanging. | Make sure every `send()` has a `receive()` in another task (or use a buffered channel), and that a sender is still running when you `receive()`. |
 
 > Channels/`go{}` are an experimental, opt-in feature — see the docs before relying on them.
 

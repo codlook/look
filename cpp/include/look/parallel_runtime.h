@@ -2,6 +2,8 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <memory>
+#include <vector>
 
 namespace look {
 
@@ -73,5 +75,33 @@ void task_preempt_check() noexcept;        // preempt_slow'dan (her 1024 noktada
 int task_settle_for_exit();
 // fiber-ok: iş parçacığının kendi görev kaydı (parallel() iş parçacığı), istek verisi değil
 extern thread_local TaskExit* t_task_exit;
+
+// ── Kanal kilitlenmesi (Go: "all goroutines are asleep - deadlock!") ───────────
+// Komut satırında betik ve bütün parallel() görevleri kanalda bekliyor, ve kurulu ya da çalışan bir
+// zamanlayıcı da yoksa hiçbiri bir daha uyanamaz: bekleyenler uyandırılır, hepsi hata alır (ana
+// betiğin hatası çağrı zinciriyle yazılır). Eskiden süreç sonsuza dek asılı kalıyordu. Web'de kapalı
+// (istekler ve fiber'lar varken "herkes bekliyor" tanımsız; orada LOOK_CHANNEL_TIMEOUT_MS var).
+// Kilit sırası: kanalın mtx'i → muhasebe kilidi; uyandırma muhasebe kilidi BIRAKILDIKTAN sonra.
+struct LookChannel;
+void chan_deadlock_main(bool on) noexcept;   // komut satırı: betik başı true, sonu false
+extern std::atomic<bool> g_chan_deadlock;    // bir kez tespit edilince kalıcı
+using TimersActiveFn = bool (*)();
+extern TimersActiveFn g_timers_active;       // timer_stdlib kurar: kurulu/çalışan zamanlayıcı var mı
+const char* chan_deadlock_message() noexcept;
+// Kanal beklemesi süresince (kanalın kilidi tutulurken kurulur ve yıkılır). Sayılar (bekleyen ==
+// canlı) yalnız ŞÜPHEDİR: uyarılmış ama henüz uyanmamış bir bekleyen de sayılır (tamponsuz send
+// alıcıyı uyarıp hemen teslim beklemesine girer). Karar chan_deadlock_try'da: her bekleyenin kanalı
+// kendi kilidiyle okunur — biri ilerleyebiliyorsa kilitlenme yok; arada bir şey değiştiyse karar
+// verilmez (değiştiren denetimi kendisi yineler).
+enum ChanWaitKind : int { CHAN_WAIT_RECV = 0, CHAN_WAIT_ROOM = 1, CHAN_WAIT_TAKEN = 2 };
+struct ChanWait {
+    ChanWait(std::shared_ptr<LookChannel> ch, int kind, uint64_t gen);
+    ~ChanWait();
+    ChanWait(const ChanWait&) = delete;
+    ChanWait& operator=(const ChanWait&) = delete;
+    bool suspect = false;   // girişte bekleyen == canlı → kanal kilidi BIRAKILIP chan_deadlock_try()
+    std::shared_ptr<LookChannel> ch;
+};
+void chan_deadlock_try() noexcept;   // hiçbir kanal kilidi tutulmadan çağrılır
 
 } // namespace look

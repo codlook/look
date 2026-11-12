@@ -1,5 +1,6 @@
 #include "look/parallel_runtime.h"
 #include "look/fiber.h"
+#include "look/value.h"   // LookChannel (kilitlenmede uyandırma)
 #include <stdexcept>
 #include <string>
 #include <cstdlib>
@@ -113,8 +114,12 @@ std::atomic<bool> g_task_script_ending{false};   // betik sonu (main.cpp finish_
 // fiber-ok: parallel() görevinin kendi iş parçacığı (fiber değil); istek verisi değil
 thread_local TaskExit* t_task_exit = nullptr;
 
+static std::atomic<int> s_live_tasks{0};   // kayıtlı, bitmemiş görev (kanal kilitlenmesi sayımı)
+static void chan_deadlock_recheck() noexcept;
+
 TaskExit* task_exit_new() {
     auto* t = new TaskExit();
+    s_live_tasks.fetch_add(1);
     std::lock_guard<std::mutex> lk(s_exit_mtx);
     s_exit_reg.push_back(t);
     return t;
@@ -132,6 +137,8 @@ void task_exit_done(TaskExit* t) noexcept {
         s_exit_cv.notify_all();
     }
     delete t;
+    s_live_tasks.fetch_sub(1);
+    chan_deadlock_recheck();   // betiğin beklediği son görev göndermeden bittiyse
 }
 
 
@@ -160,6 +167,85 @@ bool task_point_slow(TaskExit* t, bool effect) noexcept {
 
 void task_preempt_check() noexcept {
     if (TaskExit* t = t_task_exit; t && g_task_script_ending.load()) task_point_slow(t, false);
+}
+
+// ── Kanal kilitlenmesi (parallel_runtime.h) ── kayıt da sızdırılır (yukarıdaki gerekçe).
+struct DlWaiter { ChanWait* w; std::shared_ptr<LookChannel> ch; int kind; uint64_t gen; };
+static std::mutex&            s_dl_mtx     = *new std::mutex();
+static std::vector<DlWaiter>& s_dl_waiting = *new std::vector<DlWaiter>();
+static bool     s_dl_main  = false;  // s_dl_mtx altında: komut satırı betiği çalışıyor (ana iş parçacığı canlı)
+static uint64_t s_dl_epoch = 0;      // s_dl_mtx altında: her giriş/çıkış/görev bitişinde artar
+std::atomic<bool> g_chan_deadlock{false};
+TimersActiveFn    g_timers_active = nullptr;
+
+const char* chan_deadlock_message() noexcept {
+    return "deadlock: the script and every parallel() task are waiting on a channel, and nothing "
+           "is left that could send or receive";
+}
+
+// s_dl_mtx tutulurken: sayılar kilitlenme gösteriyor mu (şüphe)?
+static bool dl_suspect_locked() {
+    return s_dl_main && !g_chan_deadlock.load() &&
+           (int)s_dl_waiting.size() == 1 + s_live_tasks.load();
+}
+
+ChanWait::ChanWait(std::shared_ptr<LookChannel> c, int kind, uint64_t gen) : ch(std::move(c)) {
+    std::lock_guard<std::mutex> lk(s_dl_mtx);
+    s_dl_waiting.push_back({this, ch, kind, gen});
+    ++s_dl_epoch;
+    suspect = dl_suspect_locked();
+}
+
+ChanWait::~ChanWait() {
+    std::lock_guard<std::mutex> lk(s_dl_mtx);
+    for (size_t i = 0; i < s_dl_waiting.size(); ++i)
+        if (s_dl_waiting[i].w == this) { s_dl_waiting[i] = s_dl_waiting.back(); s_dl_waiting.pop_back(); break; }
+    ++s_dl_epoch;
+}
+
+// Bekleyen artık ilerleyebilir mi (kanalın kilidiyle okunur).
+static bool dl_waiter_ready(const DlWaiter& d) {
+    std::lock_guard<std::mutex> lk(d.ch->mtx);
+    if (d.ch->closed) return true;
+    switch (d.kind) {
+        case CHAN_WAIT_RECV:  return !d.ch->queue.empty();
+        case CHAN_WAIT_ROOM:  return d.ch->queue.size() < d.ch->capacity;
+        default:              return d.ch->recv_gen > d.gen;
+    }
+}
+
+void chan_deadlock_try() noexcept {
+    std::vector<DlWaiter> snap;
+    uint64_t epoch;
+    {
+        std::lock_guard<std::mutex> lk(s_dl_mtx);
+        if (!dl_suspect_locked()) return;
+        snap = s_dl_waiting;
+        epoch = s_dl_epoch;
+    }
+    if (g_timers_active && g_timers_active()) return;      // geri çağırma gönderebilir
+    for (const auto& d : snap) if (dl_waiter_ready(d)) return;   // biri ilerleyebiliyor
+    {
+        std::lock_guard<std::mutex> lk(s_dl_mtx);
+        if (s_dl_epoch != epoch || !dl_suspect_locked()) return;   // arada değişti: değiştiren yineler
+        g_chan_deadlock.store(true);
+    }
+    for (const auto& d : snap) {   // kaybolan uyandırma olmasın: kilitle, sonra bildir
+        std::lock_guard<std::mutex> lk(d.ch->mtx);
+        d.ch->not_empty.notify_all();
+        d.ch->not_full.notify_all();
+    }
+}
+
+static void chan_deadlock_recheck() noexcept {
+    { std::lock_guard<std::mutex> lk(s_dl_mtx); ++s_dl_epoch; }
+    chan_deadlock_try();
+}
+
+void chan_deadlock_main(bool on) noexcept {
+    std::lock_guard<std::mutex> lk(s_dl_mtx);
+    s_dl_main = on;
+    ++s_dl_epoch;
 }
 
 int task_settle_for_exit() {

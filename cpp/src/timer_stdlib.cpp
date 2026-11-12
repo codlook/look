@@ -1,4 +1,5 @@
 #include "look/timer.h"
+#include "look/parallel_runtime.h"   // g_timers_active
 
 namespace look {
 
@@ -71,6 +72,17 @@ TimerManager::Pending TimerManager::pending() {
     }
     return p;
 }
+
+bool TimerManager::active() {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (running_cbs_ > 0) return true;
+    for (auto& [id, e] : entries_) if (!e.cancelled) return true;
+    return false;
+}
+
+// Kanal kilitlenmesi (parallel_runtime.h): zamanlayıcı kuruluyken "herkes bekliyor" değildir.
+[[maybe_unused]] static const bool s_timers_hook_set =
+    (g_timers_active = [] { return TimerManager::exists() && TimerManager::instance().active(); }, true);
 
 bool TimerManager::wait_one_shots(int timeout_ms) {
     std::unique_lock<std::mutex> lk(mtx_);
