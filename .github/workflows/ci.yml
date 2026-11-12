@@ -547,6 +547,8 @@ jobs:
           bash tests/channel_close_test.sh ./build/lk
           # channel(0) is unbuffered; a deadlock on the command line is an error, never a hang
           bash tests/channel_unbuffered_test.sh ./build/lk ./build/lk-fcgi
+          # lk --check loads and compiles only — the Plesk extension runs it before moving a site
+          bash tests/lk_check_no_side_effects_test.sh ./build/lk
 
       # error::new() gives a map (a list is never an error value); text inside a printed list,
       # map or struct is quoted, so 3 and "3" never look the same.
@@ -1413,6 +1415,12 @@ jobs:
       # files, and LOOK gets a LOOK_SECRET created as the domain's user (0600, never printed).
       - name: "Plesk keeps secrets out of the web root and creates LOOK_SECRET"
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_env_secret_test.sh
+
+      # A site moves to a new LOOK release only when its code passes `lk --check` of that release;
+      # a site that does not keeps the release it ran, and the panel names the lines and says it
+      # receives no fixes, security fixes included. Unused releases are removed.
+      - name: Plesk moves a site to a new LOOK only when its code passes the check
+        run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_release_check_test.sh
 
       # web runs only on the VM: a program the VM cannot compile does not start (exit 1),
       # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear

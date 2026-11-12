@@ -91,6 +91,32 @@ function svc_status(string $svc): array {
 function valid_svc(string $svc): bool {
     return (bool)preg_match('/^look-[a-z0-9-]+$/', $svc);
 }
+// LOOK sürümü durumu (sbin/look-setup + scripts/enable.sh yazar, root; panel yalnız okur): site en yeni
+// LOOK'ta mı, yoksa kodu yeni sürümün `lk --check`ini geçemediği için çalıştığı sürümde mi kaldı. Kalan
+// site hiçbir düzeltme (güvenlik dahil) almaz — panel bunu ve düzeltilecek satırları gösterir.
+function release_status(string $svc): ?array {
+    if (!valid_svc($svc)) return null;
+    $f = LOOK_CONF . '/status/' . $svc . '.json';
+    if (!is_file($f)) return null;
+    $j = json_decode((string)file_get_contents($f), true);
+    return is_array($j) ? $j : null;
+}
+// `lk --check` çıktısı: "CHECK <satır> <sütun> <ileti>" satırları; başka satırlar iletiyle olduğu gibi.
+function check_lines(string $out): array {
+    $rows = [];
+    foreach (preg_split('/\R/', $out) as $l) {
+        $l = trim($l);
+        if ($l === '' || $l === 'OK') continue;
+        if (preg_match('/^CHECK (\d+) (\d+) (.*)$/', $l, $m)) $rows[] = ['line' => (int)$m[1], 'col' => (int)$m[2], 'msg' => $m[3]];
+        else $rows[] = ['line' => 0, 'col' => 0, 'msg' => $l];
+    }
+    return array_slice($rows, 0, 50);
+}
+function release_map(array $domains): array {
+    $m = [];
+    foreach ($domains as $d) { if (!empty($d['svc']) && ($st = release_status((string)$d['svc']))) $m[$d['svc']] = $st; }
+    return $m;
+}
 function next_free_port(array $domains): int {
     $used = array_column($domains, 'port');
     $sys  = array_map(fn($l) => (int)(explode(':', trim($l))[1] ?? 0),
@@ -181,7 +207,7 @@ if ($action !== '') {
         echo json_encode(['ok'=>true] + svc_status($svc)); exit;
     }
     if ($action === 'list') {
-        echo json_encode(['ok'=>true,'domains'=>$domains,'version'=>look_version()]); exit;
+        echo json_encode(['ok'=>true,'domains'=>$domains,'version'=>look_version(),'release_status'=>release_map($domains)]); exit;
     }
     if ($action === 'next_port') {
         echo json_encode(['port' => next_free_port($domains)]); exit;
@@ -329,4 +355,5 @@ $plesk_domains = get_plesk_domains();
 $look_ver      = look_version();
 $bin_ok        = file_exists(LOOK_BIN) || is_link(LOOK_BIN);
 $stats         = system_stats();
+$releases      = release_map($domains);
 include __DIR__ . '/phtml/index.phtml';

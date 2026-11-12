@@ -46,14 +46,27 @@ if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
     echo "ERROR: port must be between 1024 and 65535 (the service does not run as root)" >&2; exit 1
 fi
 
-LK_FCGI="/opt/look/lk-fcgi"
-LK_BIN="/opt/look/lk"
-
-# lk-fcgi binary kontrol
-if [ ! -x "$LK_FCGI" ]; then
-    echo "ERROR: $LK_FCGI not found or not executable" >&2
+# LOOK sürümleri yan yana (sbin/look-setup): /opt/look/releases/<sürüm>-<damga>/, /opt/look/lk* en yeniyi
+# gösterir. Site, kodu en yeni sürümün `lk --check`ini geçince ona bağlanır; geçemezse çalıştığı sürümde
+# kalır (aşağıda). Eski düzende (releases yok) /opt/look/lk-fcgi düz dosyadır — o da çalışır.
+OPT=/opt/look
+REL="$OPT/releases"
+STATUS_DIR="$OPT/conf/status"
+LATEST_FCGI="$(readlink -f "$OPT/lk-fcgi" 2>/dev/null || true)"
+if [ -z "$LATEST_FCGI" ] || [ ! -x "$LATEST_FCGI" ]; then
+    echo "ERROR: $OPT/lk-fcgi not found or not executable" >&2
     exit 1
 fi
+LATEST_DIR="$(dirname "$LATEST_FCGI")"
+# Sürüm adı: releases altındaki dizinin adı, değilse ikilinin --version'ından "<sürüm>-<damga>"
+rel_name() {
+    case "$1" in
+        "$REL"/?*) basename "$1" ;;
+        *) "$1/lk-fcgi" --version 2>/dev/null | head -1 | sed -n 's/^LOOK \([0-9][0-9A-Za-z.+-]*\) (\([0-9a-f]\{7,\}\)[,)].*/\1-\2/p' ;;
+    esac
+}
+# JSON metni (durum dosyası): ters bölü, tırnak, satır sonu ve denetim karakterleri kaçışlı
+json_str() { printf '%s' "$1" | tr -d '\r' | tr '\000-\010\013-\037' ' ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' | awk 'BEGIN{ORS=""} NR>1{print "\\n"} {print}'; }
 
 # Servis adi: look.codlook.com -> look-look-codlook-com
 SVC_NAME="look-$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')"
@@ -146,17 +159,11 @@ fi
 # ─── systemd servis dosyasi ────────────────────────────────────────────────
 SVC_FILE="/etc/systemd/system/${SVC_NAME}.service"
 
-if [ "$MODE" = "http" ]; then
-    # Yalniz yerel adreste dinler: Apache vekili 127.0.0.1:$PORT'a gider (asagida). Eskiden tum
-    # arayuzlerde dinliyordu — site kendi portunda internete de acikti, Apache atlanabiliyordu.
-    EXEC_CMD="$LK_FCGI --mode http --bind 127.0.0.1 --port $PORT --workers $WORKERS --script $SCRIPT"
-else
-    EXEC_CMD="$LK_FCGI --port $PORT --workers $WORKERS --script $SCRIPT"
-fi
 install -m 755 "$(dirname "$0")/look-env.sh" /opt/look/look-env
+ENV_WRAP=""
 if [ -n "$ENV_FILE" ]; then
     # Ortam dosyasini servisin kullanicisi okur: look-env.sh root'a ait /opt/look'a kopyalanir
-    EXEC_CMD="/bin/bash /opt/look/look-env $ENV_FILE $EXEC_CMD"
+    ENV_WRAP="/bin/bash /opt/look/look-env $ENV_FILE"
 fi
 
 # ─── LOOK_SECRET ───────────────────────────────────────────────────────────
@@ -178,12 +185,72 @@ case "$RUN_HOME" in
                     printf "LOOK_SECRET=%s\n" "$k" > "$1" || exit 1
                 fi
                 chmod 600 "$1"' _ "$SECRET_FILE" 2>/dev/null; then
-            EXEC_CMD="/bin/bash /opt/look/look-env $SECRET_FILE $EXEC_CMD"
+            ENV_WRAP="/bin/bash /opt/look/look-env $SECRET_FILE${ENV_WRAP:+ $ENV_WRAP}"
         else
             echo "WARNING: could not create $SECRET_FILE as $RUN_USER; set LOOK_SECRET in the site's env file (LOOK needs it for applications that use cookies)"
         fi
         ;;
 esac
+
+# ─── Hangi LOOK sürümü? ────────────────────────────────────────────────────
+# En yeni sürümün `lk --check`i sitenin koduyla — sitenin kullanıcısı olarak, kendi dizininde ve kendi
+# ortamıyla (servisle aynı). --check yalnız yükler ve derler, programı ÇALIŞTIRMAZ (kurulum kodu,
+# veritabanı geçişleri çalışmaz; tests/lk_check_no_side_effects_test.sh). Geçerse en yeni sürüm; geçemezse
+# site çalıştığı sürümde kalır ve durum dosyası nedenini satır satır tutar — panel bunu "bu site güvenlik
+# düzeltmeleri dahil hiçbir düzeltme almıyor" diye gösterir. Daha önce hiç çalışmamış (yeni) bir site
+# geçemezse kurulmaz.
+LATEST_REL="$(rel_name "$LATEST_DIR")"
+CUR_FCGI=""
+if [ -f "$SVC_FILE" ]; then
+    CUR_FCGI="$(sed -n 's#^ExecStart=\(.* \)\{0,1\}\(/opt/look/[^ ]*lk-fcgi\) .*#\2#p' "$SVC_FILE" | head -1)"
+    # Eklentinin sürümsüz düzeninde yazılmış servis /opt/look/lk-fcgi'yi çalıştırıyordu: o ikili ilk
+    # güncellemede kendi sürüm dizinine kopyalandı (look-setup) — site onu çalıştırıyor sayılır.
+    if [ "$CUR_FCGI" = "$OPT/lk-fcgi" ] && [ -s "$OPT/conf/legacy-release" ]; then
+        CUR_FCGI="$REL/$(tr -cd 'A-Za-z0-9.+-' < "$OPT/conf/legacy-release")/lk-fcgi"
+    fi
+fi
+CHECK_RC=0
+if [ -x "$LATEST_DIR/lk" ]; then
+    CHECK_OUT="$(cd "$DOC_ROOT" && runuser -u "$RUN_USER" -- env LOOK_FILE_ROOT="$DOC_ROOT" $ENV_WRAP "$LATEST_DIR/lk" --check "$SCRIPT" 2>&1)" || CHECK_RC=$?
+else
+    # lk olmadan denetlenemez — siteyi bu yüzden durdurma; söyle ve en yeni sürümle devam et
+    CHECK_OUT="OK"
+    echo "WARNING: $LATEST_DIR/lk is missing, so $DOMAIN was not checked against LOOK $LATEST_REL before it was moved to it"
+fi
+CHECK_OUT="$(printf '%s
+' "$CHECK_OUT" | head -50)"
+HELD=false
+if [ "$CHECK_RC" = 0 ]; then
+    BIN_DIR="$LATEST_DIR"
+elif [ -n "$CUR_FCGI" ] && [ -x "$CUR_FCGI" ] && [ "$(dirname "$CUR_FCGI")" != "$LATEST_DIR" ]; then
+    BIN_DIR="$(dirname "$CUR_FCGI")"
+    HELD=true
+    echo "WARNING: $DOMAIN stays on LOOK $(rel_name "$BIN_DIR") and receives no fixes, security fixes included: its code does not pass the check of LOOK $LATEST_REL ($(printf '%s' "$CHECK_OUT" | grep -E '^CHECK ' | head -3 | tr '
+' ';' | sed 's/;$//'))"
+else
+    echo "ERROR: $DOMAIN: the code does not pass the check of LOOK $LATEST_REL; fix these lines and try again:" >&2
+    printf '%s
+' "$CHECK_OUT" >&2
+    exit 3   # look-setup: servise dokunma (çalışan site düşmesin), yalnız bildir
+fi
+mkdir -p "$STATUS_DIR"; chmod 755 "$OPT/conf" "$STATUS_DIR"
+printf '{
+  "domain": "%s",
+  "release": "%s",
+  "latest": "%s",
+  "held": %s,
+  "check": "%s"
+}
+'     "$DOMAIN" "$(rel_name "$BIN_DIR")" "$LATEST_REL" "$HELD" "$( [ "$HELD" = true ] && json_str "$CHECK_OUT" )"     > "$STATUS_DIR/.$SVC_NAME.json.new" && chmod 644 "$STATUS_DIR/.$SVC_NAME.json.new"     && mv -f "$STATUS_DIR/.$SVC_NAME.json.new" "$STATUS_DIR/$SVC_NAME.json"
+
+if [ "$MODE" = "http" ]; then
+    # Yalniz yerel adreste dinler: Apache vekili 127.0.0.1:$PORT'a gider (asagida). Eskiden tum
+    # arayuzlerde dinliyordu — site kendi portunda internete de acikti, Apache atlanabiliyordu.
+    EXEC_CMD="$BIN_DIR/lk-fcgi --mode http --bind 127.0.0.1 --port $PORT --workers $WORKERS --script $SCRIPT"
+else
+    EXEC_CMD="$BIN_DIR/lk-fcgi --port $PORT --workers $WORKERS --script $SCRIPT"
+fi
+EXEC_CMD="${ENV_WRAP:+$ENV_WRAP }$EXEC_CMD"
 
 cat > "$SVC_FILE" << SYSTEMD
 [Unit]

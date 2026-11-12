@@ -133,6 +133,12 @@ $icons = [
   padding:2px 7px;border-radius:6px;color:var(--ink2)}
 .lk-cfg{font-size:12px;color:var(--ink2)}
 .lk-empty{text-align:center;padding:44px 20px;color:var(--ink2)}
+.lk-held td{padding:0 12px 14px}
+.lk-held-box{border:1px solid color-mix(in srgb,var(--crit) 35%,var(--line));background:color-mix(in srgb,var(--crit) 6%,var(--card));
+  border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ink)}
+.lk-held-box b{color:var(--crit)}
+.lk-held-box ul{margin:8px 0;padding-left:18px}.lk-held-box li{margin:3px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.lk-rel{font-size:11.5px;color:var(--ink3)}
 .lk-empty .em-t{font-size:13.5px;font-weight:600;color:var(--ink)}.lk-empty .em-s{font-size:12.5px;margin-top:4px}
 
 /* status */
@@ -385,7 +391,7 @@ $icons = [
                 <td><span class="lk-status lk-st-loading" id="lkst-<?= $sv ?>"><span class="lk-dot"></span><span class="lk-slabel">loading…</span></span></td>
                 <td><span class="lk-code-box">:<?= (int)$d['port'] ?></span></td>
                 <td><span class="lk-code" title="<?= htmlspecialchars($d['script']) ?>"><?= htmlspecialchars(basename($d['script'])) ?></span></td>
-                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?></span></td>
+                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?></span><?php $rs = $releases[$d['svc']] ?? null; if ($rs): ?><br><span class="lk-rel">LOOK <?= htmlspecialchars((string)$rs['release']) ?></span><?php endif; ?></td>
                 <td class="lk-actions">
                   <button class="lk-btn lk-btn-sm lk-btn-primary" onclick='lkOpenEditor(<?= $dj ?>)'>Edit Code</button>
                   <div class="lk-menu-wrap">
@@ -402,6 +408,18 @@ $icons = [
                   </div>
                 </td>
               </tr>
+              <?php if ($rs && !empty($rs['held'])): $check_lines = check_lines((string)($rs['check'] ?? '')); ?>
+              <tr class="lk-held" id="lkheld-<?= $sv ?>"><td colspan="6"><div class="lk-held-box">
+                <b>This site still runs LOOK <?= htmlspecialchars((string)$rs['release']) ?> and receives no fixes, security fixes included.</b>
+                LOOK <?= htmlspecialchars((string)$rs['latest']) ?> is installed, but the site's code does not pass its check
+                (<code>lk --check</code>), so the site was left on the release it ran. Fix these lines, then check again:
+                <ul><?php foreach ($check_lines as $c): ?>
+                  <li><?= $c['line'] > 0 ? 'line ' . (int)$c['line'] . ':' . (int)$c['col'] . ' — ' : '' ?><?= htmlspecialchars($c['msg']) ?></li>
+                <?php endforeach; ?></ul>
+                <button class="lk-btn lk-btn-sm lk-btn-primary" onclick="lkRecheck('<?= htmlspecialchars($d['domain']) ?>','<?= $sv ?>')">Check again</button>
+                <button class="lk-btn lk-btn-sm" onclick='lkOpenEditor(<?= $dj ?>)'>Edit Code</button>
+              </div></td></tr>
+              <?php endif; ?>
             <?php endforeach; endif; ?>
             </tbody>
           </table></div>
@@ -656,6 +674,13 @@ async function lkRestart(domain,svc){
   if(el){el.className='lk-status lk-st-loading';el.querySelector('.lk-slabel').textContent='restarting…';}
   const d=await lkApi({action:'restart',domain});
   lkSetStatus(svc,d.state||(d.ok?'active':'unknown'));lkToast(d.ok?'Restarted':(d.error||'Error'),d.ok);
+}
+// Yeniden denetle: enable.sh siteyi en yeni LOOK'un `lk --check`iyle yeniden denetler — geçerse site yeni
+// sürüme geçer, geçmezse eski sürümde kalır; sonuç durum kutusuna yansısın diye sayfa tazelenir.
+async function lkRecheck(domain,svc){
+  const box=document.getElementById('lkheld-'+svc); if(box)box.style.opacity='.5';
+  const d=await lkApi({action:'restart',domain});
+  lkToast(d.ok?'Checked':(d.error||'Error'),d.ok); setTimeout(()=>location.reload(),700);
 }
 async function lkDelete(domain,svc){
   if(!confirm(`Remove "${domain}"?\nThe service will be stopped.`))return;

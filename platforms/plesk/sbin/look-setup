@@ -8,9 +8,10 @@
 # servisleri yeniliyordu. Root yolu Plesk'in belgeledigi pm_ApiCli::callSbin: post-install.php
 # bu betigi cagirir, kayitli domain'leri (domains.json'dan) arguman olarak verir.
 #
-# Yapar: (1) LOOK ikilisini yeniler, (2) eski sudoers kuralini kaldirir, (3) her domain'in servisini enable.sh
+# Yapar: (1) LOOK ikilisini yeni sürüm dizinine kurar (eskisi kalır), (2) eski sudoers kuralini kaldirir, (3) her domain'in servisini enable.sh
 # ile yeniden yazar (servis domain kullanicisiyla calisir). Root olmadan calisamayan bir
-# servisi DURDURUR — 1.1.x'in root servisi sessizce calismaya devam etmez.
+# servisi DURDURUR — 1.1.x'in root servisi sessizce calismaya devam etmez. (4) Kullanilmayan
+# LOOK surumlerini siler.
 # Hata = sifir olmayan cikis + mesaj (Plesk kurulumda gosterir); hicbir cikti susturulmaz.
 set -u
 
@@ -22,20 +23,48 @@ err() { echo "ERROR: $*" >&2; fail=1; }
 
 mkdir -p "$OPT/conf" /var/log/look
 
-# ─── 1) LOOK ikilisi ─────────────────────────────────────────────────────────
-# Calisan bir ikilinin uzerine cp "Text file busy" ile duser (servisler guncellemede calisiyor):
-# yaninda yeni dosya + atomik mv. Eski surec eski inode'la calisir, restart yenisini alir.
-replaced=0
-for b in lk lk-fcgi lk-cgi; do
-    src="$MOD/bin/$b"
-    [ -f "$src" ] || continue
-    if install -m 755 "$src" "$OPT/.$b.new" && mv -f "$OPT/.$b.new" "$OPT/$b"; then
-        replaced=$((replaced + 1))
-    else
-        rm -f "$OPT/.$b.new"; err "could not install $OPT/$b"
-    fi
-done
-if [ "$replaced" = 0 ] && [ ! -x "$OPT/lk-fcgi" ]; then
+# ─── 1) LOOK sürümleri yan yana ──────────────────────────────────────────────
+# Her sürüm kendi dizininde: /opt/look/releases/<sürüm>-<damga>/{lk,lk-fcgi,lk-cgi}; /opt/look/lk* en yeniyi
+# gösterir (komut satırı ve yeni siteler). Bir site, kodu yeni sürümün `lk --check`ini geçince ona bağlanır
+# (enable.sh, adım 3); geçemeyen site çalıştığı sürümde kalır. Hiçbir servisin kullanmadığı sürüm adım 4'te
+# silinir. Değişimler atomik (yanında hazırla + mv): çalışan ikilinin üzerine yazılmaz ("Text file busy").
+REL="$OPT/releases"
+rel_id() { "$1" --version 2>/dev/null | head -1 | sed -n 's/^LOOK \([0-9][0-9A-Za-z.+-]*\) (\([0-9a-f]\{7,\}\)[,)].*/\1-\2/p'; }
+put_release() { # <kaynak dizin> <ad>: lk, lk-fcgi, lk-cgi → $REL/<ad>/ (yoksa)
+    [ -d "$REL/$2" ] && return 0
+    rm -rf "$REL/.$2.new"; mkdir -p "$REL/.$2.new" || return 1
+    for b in lk lk-fcgi lk-cgi; do
+        [ -e "$1/$b" ] || continue
+        install -m 755 "$(readlink -f "$1/$b")" "$REL/.$2.new/$b" || return 1
+    done
+    mv -T "$REL/.$2.new" "$REL/$2"
+}
+mkdir -p "$REL"; chmod 755 "$REL"
+# Sürümsüz düzenden gelen kurulum: siteler bugün /opt/look/lk-fcgi'yi çalıştırıyor — o ikili kendi sürüm
+# dizinine KOPYALANIR ki kodu yeni sürüme uymayan site onda kalabilsin.
+if [ -e "$OPT/lk-fcgi" ]; then
+    case "$(readlink -f "$OPT/lk-fcgi")" in
+        "$REL"/*) ;;
+        *)  old="$(rel_id "$OPT/lk-fcgi")"
+            if [ -n "$old" ]; then
+                put_release "$OPT" "$old" && printf '%s\n' "$old" > "$OPT/conf/legacy-release" \
+                    || err "could not keep the running LOOK ($old) in $REL"
+            fi ;;
+    esac
+fi
+new=""
+if [ -e "$MOD/bin/lk-fcgi" ]; then
+    new="$(rel_id "$MOD/bin/lk-fcgi")"
+    if [ -z "$new" ]; then err "the extension's LOOK binary does not say its version ($MOD/bin/lk-fcgi --version)"
+    else put_release "$MOD/bin" "$new" || err "could not install LOOK $new in $REL"; fi
+fi
+if [ -n "$new" ] && [ -d "$REL/$new" ]; then
+    for b in lk lk-fcgi lk-cgi; do
+        [ -e "$REL/$new/$b" ] || continue
+        ln -sfn "$REL/$new/$b" "$OPT/.$b.new" && mv -Tf "$OPT/.$b.new" "$OPT/$b" || err "could not point $OPT/$b at LOOK $new"
+    done
+fi
+if [ ! -x "$OPT/lk-fcgi" ]; then
     err "the extension has no LOOK binary ($MOD/bin) and $OPT/lk-fcgi does not exist"
 fi
 if [ -x "$OPT/lk" ]; then echo "LOOK binary: $("$OPT/lk" --version 2>&1 | head -1)"; fi
@@ -55,8 +84,13 @@ done_svcs=" "
 while [ "$#" -ge 6 ]; do
     d="$1"; s="$2"; w="$3"; m="$4"; p="$5"; e="$6"; shift 6
     svc="$(svc_of "$d")"; done_svcs="$done_svcs$svc "
-    if out="$(/bin/bash "$SCRIPTS/enable.sh" "$d" "$s" "$w" "$m" "$p" ${e:+"$e"} 2>&1)"; then
+    rc=0; out="$(/bin/bash "$SCRIPTS/enable.sh" "$d" "$s" "$w" "$m" "$p" ${e:+"$e"} 2>&1)" || rc=$?
+    if [ "$rc" = 0 ]; then
         echo "$d: $(printf '%s\n' "$out" | grep -E '^(OK|WARNING)' | tr '\n' ' ')"
+    elif [ "$rc" = 3 ]; then
+        # Kod LOOK'un bu sürümünün denetimini geçmiyor ve sitenin kalabileceği eski bir sürüm yok:
+        # servise dokunulmaz (çalışıyorsa çalışmaya devam eder), panel nedeni gösterir.
+        err "$d: not moved to the new LOOK — $(printf '%s\n' "$out" | grep -E '^(ERROR|CHECK)' | head -3 | tr '\n' ' ')"
     else
         stop_svc "$svc"
         err "$d: the service was STOPPED — it cannot run as the domain's user: $(printf '%s\n' "$out" | grep -E 'ERROR' | head -1)"
@@ -73,6 +107,20 @@ for f in /etc/systemd/system/look-*.service; do
     grep -q '^User=' "$f" && continue
     stop_svc "$svc"
     err "$svc was STOPPED: it ran as root and is not registered in the panel; add the domain again in the panel"
+done
+
+# ─── 4) Hiçbir servisin kullanmadığı LOOK sürümünü sil ───────────────────────
+# En yeni sürüm hep kalır; bir servisin ExecStart'ında geçen (sitesi eski sürümde kalan) sürüm kalır.
+in_use=" $(basename "$(dirname "$(readlink -f "$OPT/lk-fcgi" 2>/dev/null)")") "
+for f in /etc/systemd/system/look-*.service; do
+    [ -f "$f" ] || continue
+    for r in $(grep -o "$REL/[^/ ]*/lk-fcgi" "$f" | sed "s#^$REL/##; s#/lk-fcgi\$##"); do in_use="$in_use$r "; done
+done
+for d in "$REL"/*/; do
+    [ -d "$d" ] || continue
+    r="$(basename "$d")"
+    case "$in_use" in *" $r "*) continue ;; esac
+    rm -rf "${REL:?}/$r" && echo "removed LOOK $r (no service uses it)"
 done
 
 exit "$fail"

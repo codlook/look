@@ -60,12 +60,31 @@ Open the panel: **Plesk → Extensions → LOOK Language**, or directly at
 Every install and every update of the extension, from the UI or the CLI, runs its
 setup as root:
 
-- installs the bundled LOOK binaries to `/opt/look`, replacing the old ones;
+- installs the bundled LOOK release next to the ones already there
+  (`/opt/look/releases/<version>-<build>/`) and points `/opt/look/lk`, `lk-fcgi` and `lk-cgi`
+  at it;
 - removes the sudo rule `/etc/sudoers.d/look-lang` that versions up to 1.0.33 wrote. The
   panel needs no sudo: its root actions go through the extension's `look-ctl` script, which
   Plesk runs as root and which accepts only LOOK services (`look-…`), one per call;
 - rewrites the service of every domain in the panel with the current rules and
-  restarts it.
+  restarts it — on the new release only if the domain's code passes that release's
+  `lk --check` (see below);
+- removes releases that no service uses any more.
+
+**A site moves to a new LOOK release only when its code passes the check.** Before a domain's
+service is moved, the new release's `lk --check` runs on the domain's script — as the
+domain's user, in its document root, with its env file. `lk --check` only loads and compiles
+the code; it never runs it, so setup code and database migrations do not run. A domain whose
+code passes runs the new release. A domain whose code does not pass keeps running the release
+it ran, and the panel shows, on that domain, the lines to fix and that the site **receives no
+fixes, security fixes included**, until they are fixed. *Check again* (or a restart) checks
+it again and moves it when it passes. Nobody chooses a version: every domain whose code
+passes is on the newest release. A new domain whose code does not pass is not installed;
+the error lists the lines.
+
+The check sees what stops a program from loading — the rules on functions and variables,
+`use` cycles, struct declarations, syntax. It cannot see what only happens while a program
+runs; the release notes and the upgrade guide list those changes.
 
 A domain whose service cannot run as the domain's user (for example a document
 root owned by root) is **stopped**, not left running as root. The install then
