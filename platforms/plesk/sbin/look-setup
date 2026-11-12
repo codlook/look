@@ -54,9 +54,20 @@ if [ -e "$OPT/lk-fcgi" ]; then
 fi
 new=""
 if [ -e "$MOD/bin/lk-fcgi" ]; then
-    new="$(rel_id "$MOD/bin/lk-fcgi")"
-    if [ -z "$new" ]; then err "the extension's LOOK binary does not say its version ($MOD/bin/lk-fcgi --version)"
-    else put_release "$MOD/bin" "$new" || err "could not install LOOK $new in $REL"; fi
+    # Plesk eklentiyi çalıştırma izinleri olmadan açar: ikililer önce 755 ile ara dizine kurulur,
+    # sürüm oradan okunur, sonra sürüm dizinine taşınır.
+    stage="$REL/.incoming"; rm -rf "$stage"; mkdir -p "$stage"
+    for b in lk lk-fcgi lk-cgi; do
+        [ -f "$MOD/bin/$b" ] && { install -m 755 "$MOD/bin/$b" "$stage/$b" || err "could not stage $MOD/bin/$b"; }
+    done
+    new="$(rel_id "$stage/lk-fcgi")"
+    if [ -z "$new" ]; then
+        err "the extension's LOOK binary does not say its version ($MOD/bin/lk-fcgi --version)"; rm -rf "$stage"
+    elif [ -d "$REL/$new" ]; then
+        rm -rf "$stage"
+    else
+        mv -T "$stage" "$REL/$new" || err "could not install LOOK $new in $REL"
+    fi
 fi
 if [ -n "$new" ] && [ -d "$REL/$new" ]; then
     for b in lk lk-fcgi lk-cgi; do

@@ -68,7 +68,8 @@ site() { # <domain> <user> <uid> <code> — a site under /var/www/vhosts owned b
     printf '%s\n' "$4" > "/var/www/vhosts/$1/httpdocs/index.lk"; chown "$2":psacln "/var/www/vhosts/$1/httpdocs/index.lk"
 }
 unit_bin() { sed -n 's#^ExecStart=\(.* \)\{0,1\}\(/opt/look/[^ ]*lk-fcgi\) .*#\2#p' "$SYS/look-$(echo "$1" | tr . -).service"; }
-setup() { bash "$PL/sbin/look-setup" "$@" 2>&1; }
+# Plesk unpacks the extension without exec bits — the bundled binaries are not executable
+setup() { chmod 644 "$MOD"/bin/* 2>/dev/null; bash "$PL/sbin/look-setup" "$@" 2>&1; }
 args_for() { echo "$1 /var/www/vhosts/$1/httpdocs/index.lk 2 http $2"; }
 
 echo "== upgrade from an extension without releases: one site passes, one does not =="
