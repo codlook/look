@@ -296,6 +296,10 @@ jobs:
               echo "$out"; echo "::error::value semantics with the map index check FAILED ($b)"; exit 1
             fi
           done
+          # many worker threads read one shared map for the first time at once (app::set)
+          cmake --build build-assoc-verify --target look-fcgi --parallel $(nproc) > /dev/null
+          bash tests/shared_map_concurrent_test.sh ./build/lk-fcgi 7931
+          bash tests/shared_map_concurrent_test.sh ./build-assoc-verify/lk-fcgi 7932
 
       # a struct is declared once, at the top level of a file. A second, different
       # definition of the same name is an error at load (same file: parse error; another

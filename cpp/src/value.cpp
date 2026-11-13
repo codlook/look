@@ -72,10 +72,17 @@ void look_assoc_index_free(AssocIndex* ix) noexcept { delete ix; }
 namespace {
 struct SipKey { uint64_t k0, k1; };
 const SipKey& sip_key() {
+    // Tohum alınamazsa sabit bir değere DÜŞÜLMEZ: öngörülebilir hash = hash flooding geri gelir.
+    // Süreç açık bir mesajla durur (rastgele kaynağı olmayan makine zaten oturum/CSRF üretemez).
     static const SipKey k = [] {
-        std::random_device rd;
-        auto w = [&] { return ((uint64_t)rd() << 32) ^ (uint64_t)rd(); };
-        return SipKey{ w(), w() };
+        try {
+            std::random_device rd;
+            auto w = [&] { return ((uint64_t)rd() << 32) ^ (uint64_t)rd(); };
+            return SipKey{ w(), w() };
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "LOOK cannot start: no source of random numbers for the map hash key (%s)\n", e.what());
+            std::abort();
+        }
     }();
     return k;
 }

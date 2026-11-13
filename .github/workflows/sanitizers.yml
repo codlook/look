@@ -67,6 +67,8 @@ jobs:
           bash tests/fiber_request_isolation_test.sh ./build-asan/lk-fcgi
           LOOK_TEST_PREEMPT=1 bash tests/fiber_request_isolation_test.sh ./build-asan/lk-fcgi
           bash tests/cpu_turn_test.sh ./build-asan/lk-fcgi
+          bash tests/shared_map_concurrent_test.sh ./build-asan/lk-fcgi
+          ./build-asan/lk tests/assoc_index_test.lk | grep -q 'all checks passed'
       # MySQL and PostgreSQL clients against a hostile server: mutated replies (cut, flipped,
       # repeated packets, broken lengths, extra result sets, errors between rows) through the real
       # buffered socket path — every query ends with rows or an error, no memory error, no hang.
@@ -107,7 +109,7 @@ jobs:
           fail=0
           for t in fiber_request_isolation_test ws_message_order_test ws_on_reregister_test ws_close_callback_test \
                    ws_callback_context_test realtime_isolation_test hot_reload_ws_callback_test \
-                   session_destroy_race_test ws_handshake_check_test; do
+                   session_destroy_race_test ws_handshake_check_test shared_map_concurrent_test; do
             echo "== $t"; bash tests/$t.sh /tmp/w/lk-fcgi || fail=1
           done
           if ls /tmp/tsan* >/dev/null 2>&1 && grep -q "WARNING: ThreadSanitizer" /tmp/tsan*; then
