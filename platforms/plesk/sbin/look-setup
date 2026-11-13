@@ -52,23 +52,38 @@ if [ -e "$OPT/lk-fcgi" ]; then
             fi ;;
     esac
 fi
-new=""
-if [ -e "$MOD/bin/lk-fcgi" ]; then
-    # Plesk eklentiyi çalıştırma izinleri olmadan açar: ikililer önce 755 ile ara dizine kurulur,
-    # sürüm oradan okunur, sonra sürüm dizinine taşınır.
-    stage="$REL/.incoming"; rm -rf "$stage"; mkdir -p "$stage"
+# Paketle gelen sürümler: bin/ en yeni (komut satırı ve /opt/look/lk* onu gösterir), bin-<çizgi>/ bakım
+# çizgisinin son sürümü (ör. bin-1.0). En yeni sürümün denetimini geçemeyen site, kodunun geçtiği en yeni
+# sürüme taşınır (enable.sh) — kırıcı değişikliğe henüz uyamayan site en azından düzeltme sürümlerini alır.
+# Plesk eklentiyi çalıştırma izinleri olmadan açar: ikililer önce 755 ile ara dizine kurulur, sürüm
+# oradan okunur, sonra sürüm dizinine taşınır.
+install_bundled() { # <paket dizini> → sürüm adını yazar; hata → stderr + 1 (alt kabukta err fail'i taşımaz)
+    local src="$1" stage="$REL/.incoming" id
+    rm -rf "$stage"; mkdir -p "$stage"
     for b in lk lk-fcgi lk-cgi; do
-        [ -f "$MOD/bin/$b" ] && { install -m 755 "$MOD/bin/$b" "$stage/$b" || err "could not stage $MOD/bin/$b"; }
+        [ -f "$src/$b" ] && { install -m 755 "$src/$b" "$stage/$b" || { echo "ERROR: could not stage $src/$b" >&2; return 1; }; }
     done
-    new="$(rel_id "$stage/lk-fcgi")"
-    if [ -z "$new" ]; then
-        err "the extension's LOOK binary does not say its version ($MOD/bin/lk-fcgi --version)"; rm -rf "$stage"
-    elif [ -d "$REL/$new" ]; then
+    id="$(rel_id "$stage/lk-fcgi")"
+    if [ -z "$id" ]; then
+        echo "ERROR: a LOOK binary of the extension does not say its version ($src/lk-fcgi --version)" >&2; rm -rf "$stage"; return 1
+    elif [ -d "$REL/$id" ]; then
         rm -rf "$stage"
     else
-        mv -T "$stage" "$REL/$new" || err "could not install LOOK $new in $REL"
+        mv -T "$stage" "$REL/$id" || { echo "ERROR: could not install LOOK $id in $REL" >&2; return 1; }
     fi
+    printf '%s\n' "$id"
+}
+new=""
+bundled=" "
+if [ -e "$MOD/bin/lk-fcgi" ]; then
+    new="$(install_bundled "$MOD/bin")" || fail=1
+    [ -n "$new" ] && bundled="$bundled$new "
 fi
+for d in "$MOD"/bin-*/; do
+    [ -e "$d/lk-fcgi" ] || continue
+    r="$(install_bundled "${d%/}")" || fail=1
+    [ -n "$r" ] && bundled="$bundled$r "
+done
 if [ -n "$new" ] && [ -d "$REL/$new" ]; then
     for b in lk lk-fcgi lk-cgi; do
         [ -e "$REL/$new/$b" ] || continue
@@ -121,8 +136,8 @@ for f in /etc/systemd/system/look-*.service; do
 done
 
 # ─── 4) Hiçbir servisin kullanmadığı LOOK sürümünü sil ───────────────────────
-# En yeni sürüm hep kalır; bir servisin ExecStart'ında geçen (sitesi eski sürümde kalan) sürüm kalır.
-in_use=" $(basename "$(dirname "$(readlink -f "$OPT/lk-fcgi" 2>/dev/null)")") "
+# En yeni ve paketle gelen sürümler hep kalır; bir servisin ExecStart'ında geçen (sitesi eski sürümde kalan) sürüm kalır.
+in_use=" $(basename "$(dirname "$(readlink -f "$OPT/lk-fcgi" 2>/dev/null)")") ""$bundled"
 for f in /etc/systemd/system/look-*.service; do
     [ -f "$f" ] || continue
     for r in $(grep -o "$REL/[^/ ]*/lk-fcgi" "$f" | sed "s#^$REL/##; s#/lk-fcgi\$##"); do in_use="$in_use$r "; done

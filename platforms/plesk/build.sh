@@ -67,6 +67,16 @@ fi
 
 # RPM — RHEL/AlmaLinux birincil yol (dnf update look-lang). post-install önce
 # bunu dener; yoksa yukarıdaki static binary'ye düşer.
+# Bakım çizgisinin son sürümü (ör. bin-1.0/): en yeni sürümün denetimini geçemeyen site kodunun geçtiği
+# en yeni sürüme taşınır (sbin/look-setup + scripts/enable.sh) — yayın iş akışı bunu indirip koyar.
+for dir in bin-*/; do
+    [ -f "$dir/lk-fcgi" ] || continue
+    mkdir -p "$TMP/htdocs/$dir"
+    for bin in lk lk-fcgi lk-cgi; do
+        [ -f "$dir/$bin" ] && { cp "$dir/$bin" "$TMP/htdocs/$dir"; chmod +x "$TMP/htdocs/$dir/$bin"; }
+    done
+    echo "  + ${dir%/}: $("$dir/lk" --version 2>/dev/null | head -1)"
+done
 RPM_SRC="$(ls ../linux/rpm/out/look-lang-${VERSION}*.rpm 2>/dev/null | head -1)"
 if [ -n "$RPM_SRC" ] && [ -f "$RPM_SRC" ]; then
     cp "$RPM_SRC" "$TMP/htdocs/look-lang.rpm"

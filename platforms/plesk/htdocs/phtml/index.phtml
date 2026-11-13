@@ -139,6 +139,8 @@ $icons = [
 .lk-held-box b{color:var(--crit)}
 .lk-held-box ul{margin:8px 0;padding-left:18px}.lk-held-box li{margin:3px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 .lk-rel{font-size:11.5px;color:var(--ink3)}
+.lk-held-box.behind{border-color:color-mix(in srgb,var(--warn) 35%,var(--line));background:color-mix(in srgb,var(--warn) 7%,var(--card))}
+.lk-held-box.behind b{color:var(--warn)}
 .lk-empty .em-t{font-size:13.5px;font-weight:600;color:var(--ink)}.lk-empty .em-s{font-size:12.5px;margin-top:4px}
 
 /* status */
@@ -408,11 +410,17 @@ $icons = [
                   </div>
                 </td>
               </tr>
-              <?php if ($rs && !empty($rs['held'])): $check_lines = check_lines((string)($rs['check'] ?? '')); ?>
-              <tr class="lk-held" id="lkheld-<?= $sv ?>"><td colspan="6"><div class="lk-held-box">
+              <?php if ($rs && (!empty($rs['held']) || !empty($rs['behind']))): $check_lines = check_lines((string)($rs['check'] ?? '')); $behind = empty($rs['held']); ?>
+              <tr class="lk-held" id="lkheld-<?= $sv ?>"><td colspan="6"><div class="lk-held-box<?= $behind ? ' behind' : '' ?>">
+                <?php if ($behind): ?>
+                <b>This site runs LOOK <?= htmlspecialchars((string)$rs['release']) ?>, the newest release its code passes, and gets that release line's fixes.</b>
+                The newest LOOK, <?= htmlspecialchars((string)$rs['latest']) ?>, does not accept the site's code yet
+                (<code>lk --check</code>). Fix these lines, then check again to move to it:
+                <?php else: ?>
                 <b>This site still runs LOOK <?= htmlspecialchars((string)$rs['release']) ?> and receives no fixes, security fixes included.</b>
                 LOOK <?= htmlspecialchars((string)$rs['latest']) ?> is installed, but the site's code does not pass its check
-                (<code>lk --check</code>), so the site was left on the release it ran. Fix these lines, then check again:
+                (<code>lk --check</code>), nor that of any release in between, so the site was left on the release it ran. Fix these lines, then check again:
+                <?php endif; ?>
                 <ul><?php foreach ($check_lines as $c): ?>
                   <li><?= $c['line'] > 0 ? 'line ' . (int)$c['line'] . ':' . (int)$c['col'] . ' — ' : '' ?><?= htmlspecialchars($c['msg']) ?></li>
                 <?php endforeach; ?></ul>

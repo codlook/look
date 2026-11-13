@@ -209,25 +209,51 @@ if [ -f "$SVC_FILE" ]; then
         CUR_FCGI="$REL/$(tr -cd 'A-Za-z0-9.+-' < "$OPT/conf/legacy-release")/lk-fcgi"
     fi
 fi
-CHECK_RC=0
-if [ -x "$LATEST_DIR/lk" ]; then
-    CHECK_OUT="$(cd "$DOC_ROOT" && runuser -u "$RUN_USER" -- env LOOK_FILE_ROOT="$DOC_ROOT" $ENV_WRAP "$LATEST_DIR/lk" --check "$SCRIPT" 2>&1)" || CHECK_RC=$?
-else
-    # lk yoksa (bozuk paket) site denetlenemez: denetimden geçmemiş sayılır — çalışan site
-    # çalıştığı sürümde kalır, yeni site kurulmaz. Koruma tam bir şey ters gittiğinde gevşemesin.
-    CHECK_RC=127
-    CHECK_OUT="LOOK $LATEST_REL has no lk ($LATEST_DIR/lk), so this site could not be checked against it; install the extension again"
-fi
-CHECK_OUT="$(printf '%s\n' "$CHECK_OUT" | head -50)"
+# Adaylar: önce en yeni sürüm (bin/, /opt/look/lk*), sonra sitenin çalıştığından daha yeni olan diğer
+# sürümler — numarası en yüksek olan önce (bakım çizgisi, ör. 1.0.47). Site, kodunun geçtiği İLK adaya
+# taşınır: kırıcı değişikliğe henüz uyamayan site en azından düzeltme sürümlerini alır ("geride"). Hiçbiri
+# geçmezse çalıştığı sürümde kalır ("kaldı": hiçbir düzeltme almaz). lk'si olmayan aday (bozuk paket)
+# denetlenemez = geçmedi; koruma bir şey ters gittiğinde gevşemez.
+run_check() { # <sürüm dizini> → çıktı; dönüş = lk --check'in dönüşü (lk yoksa 127)
+    if [ -x "$1/lk" ]; then
+        (cd "$DOC_ROOT" && runuser -u "$RUN_USER" -- env LOOK_FILE_ROOT="$DOC_ROOT" $ENV_WRAP "$1/lk" --check "$SCRIPT" 2>&1)
+    else
+        echo "LOOK $(rel_name "$1") has no lk ($1/lk), so this site could not be checked against it; install the extension again"
+        return 127
+    fi
+}
+ver_of() { printf '%s' "$1" | sed 's/-[0-9a-f]\{7,\}$//'; }   # 1.0.48-7654321 → 1.0.48
+CUR_DIR=""; CUR_REL=""
+if [ -n "$CUR_FCGI" ] && [ -x "$CUR_FCGI" ]; then CUR_DIR="$(dirname "$CUR_FCGI")"; CUR_REL="$(rel_name "$CUR_DIR")"; fi
+newer_than_cur() { # <sürüm adı>: sitenin çalıştığından daha yeni mi (çalıştığı bilinmiyorsa evet)
+    [ -z "$CUR_REL" ] && return 0
+    [ "$(ver_of "$1")" = "$(ver_of "$CUR_REL")" ] && return 1
+    [ "$(printf '%s\n%s\n' "$(ver_of "$CUR_REL")" "$(ver_of "$1")" | sort -V | tail -1)" = "$(ver_of "$1")" ]
+}
+CANDS="$LATEST_DIR"
+for r in $(ls -1 "$REL" 2>/dev/null | grep -v '^\.' | sort -V -r); do
+    d="$REL/$r"
+    [ "$d" = "$LATEST_DIR" ] || [ "$d" = "$CUR_DIR" ] || [ ! -d "$d" ] && continue
+    newer_than_cur "$r" && CANDS="$CANDS $d"
+done
+BIN_DIR=""; LATEST_RC=0; LATEST_OUT=""
+for c in $CANDS; do
+    rc=0; out="$(run_check "$c")" || rc=$?
+    if [ "$c" = "$LATEST_DIR" ]; then LATEST_RC=$rc; LATEST_OUT="$(printf '%s\n' "$out" | head -50)"; fi
+    if [ "$rc" = 0 ]; then BIN_DIR="$c"; break; fi
+done
+CHECK_OUT="$LATEST_OUT"
 CHECK_SHORT="$(printf '%s\n' "$CHECK_OUT" | grep -E '^(CHECK |LOOK )' | head -3 | tr '\n' ';' | sed 's/;$//')"
-HELD=false
-if [ "$CHECK_RC" = 0 ]; then
-    BIN_DIR="$LATEST_DIR"
-elif [ -n "$CUR_FCGI" ] && [ -x "$CUR_FCGI" ] && [ "$(dirname "$CUR_FCGI")" != "$LATEST_DIR" ]; then
-    BIN_DIR="$(dirname "$CUR_FCGI")"
-    HELD=true
-    echo "WARNING: $DOMAIN stays on LOOK $(rel_name "$BIN_DIR") and receives no fixes, security fixes included: it does not pass the check of LOOK $LATEST_REL ($CHECK_SHORT)"
-elif [ "$CHECK_RC" = 127 ] && [ -n "$CUR_FCGI" ] && [ "$(dirname "$CUR_FCGI")" = "$LATEST_DIR" ]; then
+HELD=false; BEHIND=false
+if [ -n "$BIN_DIR" ] && [ "$BIN_DIR" = "$LATEST_DIR" ]; then
+    :
+elif [ -n "$BIN_DIR" ]; then
+    BEHIND=true
+    echo "WARNING: $DOMAIN runs LOOK $(rel_name "$BIN_DIR"), the newest release its code passes, and gets that line's fixes; LOOK $LATEST_REL needs these lines fixed: $CHECK_SHORT"
+elif [ -n "$CUR_DIR" ] && [ "$CUR_DIR" != "$LATEST_DIR" ]; then
+    BIN_DIR="$CUR_DIR"; HELD=true
+    echo "WARNING: $DOMAIN stays on LOOK $CUR_REL and receives no fixes, security fixes included: it does not pass the check of LOOK $LATEST_REL ($CHECK_SHORT) or of any release between"
+elif [ "$LATEST_RC" = 127 ] && [ "$CUR_DIR" = "$LATEST_DIR" ]; then
     # Zaten en yeni sürümde (yeniden başlatma): taşınan bir şey yok — çalışmaya devam eder
     BIN_DIR="$LATEST_DIR"
     echo "WARNING: $CHECK_OUT"
@@ -237,8 +263,9 @@ else
     exit 3   # look-setup: servise dokunma (çalışan site düşmesin), yalnız bildir
 fi
 mkdir -p "$STATUS_DIR"; chmod 755 "$OPT/conf" "$STATUS_DIR"
-printf '{\n  "domain": "%s",\n  "release": "%s",\n  "latest": "%s",\n  "held": %s,\n  "check": "%s"\n}\n' \
-    "$DOMAIN" "$(rel_name "$BIN_DIR")" "$LATEST_REL" "$HELD" "$( [ "$HELD" = true ] && json_str "$CHECK_OUT" )" \
+printf '{\n  "domain": "%s",\n  "release": "%s",\n  "latest": "%s",\n  "held": %s,\n  "behind": %s,\n  "check": "%s"\n}\n' \
+    "$DOMAIN" "$(rel_name "$BIN_DIR")" "$LATEST_REL" "$HELD" "$BEHIND" \
+    "$( { [ "$HELD" = true ] || [ "$BEHIND" = true ]; } && json_str "$CHECK_OUT" )" \
     > "$STATUS_DIR/.$SVC_NAME.json.new" && chmod 644 "$STATUS_DIR/.$SVC_NAME.json.new" \
     && mv -f "$STATUS_DIR/.$SVC_NAME.json.new" "$STATUS_DIR/$SVC_NAME.json"
 
