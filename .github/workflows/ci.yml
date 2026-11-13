@@ -577,6 +577,17 @@ jobs:
           bash tests/print_line_test.sh build/lk
           bash tests/builtin_arg_intact_test.sh build/lk build/lk-fcgi
 
+      # array::contains on a map looks at its values only: it used to match keys too, so a role
+      # check expecting a list passed with {"roles": {"admin": 0}}. Both engines.
+      - name: array::contains on a map looks at values only
+        run: |
+          cd cpp
+          for mode in 1 0; do
+            out="$(LOOK_CLI_VM=$mode ./build/lk tests/contains_map_values_test.lk 2>&1)"
+            echo "VM=$mode: $out"
+            echo "$out" | grep -q 'contains map values: all checks passed' || { echo "::error::contains FAILED (VM=$mode)"; exit 1; }
+          done
+
       - name: Motor paritesi (differential + closure + recursion + parallel)
         run: |
           cd cpp

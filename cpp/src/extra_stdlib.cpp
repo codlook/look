@@ -433,7 +433,18 @@ Module make_array_module(Interpreter* interp) {
     // contains($arr, $val)
     m.functions["contains"] = [](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY) return Value(false);
-        for (auto& elem : *args[0].as_array())
+        const auto& src = *args[0].as_array();
+        if (!src.empty() && src[0].type() == Value::STRING && src[0].as_string() == "__assoc__") {
+            // Sözlük: yalnız DEĞERLER. GÜVENLİK — ESKİ: iç düzen ["__assoc__", k0, v0, …] liste
+            // sanılıyor, anahtarlarda (ve işarette) da aranıyordu: liste beklenen
+            // array::contains($body["roles"], "admin") {"roles": {"admin": 0}} ile geçiyordu.
+            size_t start = 1;
+            if (src.size() > 2 && src[1].type() == Value::STRING && src[1].as_string() == "__struct__") start = 3;
+            for (size_t i = start; i + 1 < src.size(); i += 2)
+                if (src[i + 1] == args[1]) return Value(true);
+            return Value(false);
+        }
+        for (auto& elem : src)
             if (elem == args[1]) return Value(true);
         return Value(false);
     };

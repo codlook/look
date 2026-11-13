@@ -1,0 +1,27 @@
+use array
+use json
+// array::contains bir sözlükte yalnız DEĞERLERE bakar (güvenlik). ESKİ: anahtarlarda ve iç işarette
+// de arıyordu — liste beklenen bir rol denetimi {"roles": {"admin": 0}} ile geçiyordu.
+$fails = 0
+function ok($name, $got, $want) {
+    if ($got != $want) { print("FAIL " . $name . ": got " . json::encode($got)); return 1 }
+    return 0
+}
+$m = ["x" => "y", "n" => 2]
+$fails += ok("key is not a match", array::contains($m, "x"), false)
+$fails += ok("value is a match", array::contains($m, "y"), true)
+$fails += ok("int value", array::contains($m, 2), true)
+$fails += ok("marker is not a match", array::contains($m, "__assoc__"), false)
+$big = []
+for ($i = 0; $i < 20; $i++) { $big["k" . $i] = "v" . $i }
+$fails += ok("big map key", array::contains($big, "k3"), false)
+$fails += ok("big map value", array::contains($big, "v19"), true)
+$body = json::decode("{\"roles\": {\"admin\": 0}}")
+$fails += ok("role check from JSON object", array::contains($body["roles"], "admin"), false)
+$list = json::decode("{\"roles\": [\"admin\"]}")
+$fails += ok("role check from JSON list", array::contains($list["roles"], "admin"), true)
+$fails += ok("list", array::contains([1, 2, 3], 2), true)
+$fails += ok("list miss", array::contains([1, 2, 3], 5), false)
+$fails += ok("empty map", array::contains(json::decode("{}"), "x"), false)
+if ($fails == 0) { print("contains map values: all checks passed") }
+else { print("contains map values: " . $fails . " FAIL") }
