@@ -96,21 +96,10 @@ jobs:
           bash platforms/linux/build.sh
           mkdir -p platforms/plesk/bin
           cp cpp/build-portable/lk cpp/build-portable/lk-fcgi cpp/build-portable/lk-cgi platforms/plesk/bin/
-          # The Plesk extension also carries the latest release of the maintenance line (release-1.0):
-          # a site whose code does not pass the newest release moves to the newest one it passes, so it
-          # still gets that line's fixes. Not when this release is itself on that line.
-          git fetch -q --tags origin release-1.0 || true
-          if git rev-parse -q --verify FETCH_HEAD >/dev/null && ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
-            MT=$(git tag --merged FETCH_HEAD --sort=-v:refname 'v1.0.*' | head -1)
-            if [ -n "$MT" ] && [ "$MT" != "$GITHUB_REF_NAME" ]; then
-              mkdir -p /tmp/maint platforms/plesk/bin-1.0
-              gh release download "$MT" --repo "$GITHUB_REPOSITORY" -p "look-lang-linux-${MT#v}.zip" -D /tmp/maint
-              unzip -oq "/tmp/maint/look-lang-linux-${MT#v}.zip" -d /tmp/maint/x
-              for b in lk lk-fcgi lk-cgi; do cp "$(find /tmp/maint/x -name "$b" -type f | head -1)" platforms/plesk/bin-1.0/; done
-              chmod +x platforms/plesk/bin-1.0/*
-              echo "maintenance release bundled: $MT ($(platforms/plesk/bin-1.0/lk --version))"
-            fi
-          fi
+          # The Plesk extension also carries the latest release of the maintenance line (release-1.0),
+          # checked against its SHA256SUMS.txt and its tag's commit; when that line exists and cannot be
+          # bundled, the release stops (platforms/plesk/bundle-maintenance.sh).
+          bash platforms/plesk/bundle-maintenance.sh
           bash platforms/plesk/build.sh --with-binaries
 
       # Belgelerde adı geçen her ikili pakette olmalı (lk-cgi 1.0.40'a dek hiçbir pakette yoktu:
