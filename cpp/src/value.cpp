@@ -2,6 +2,9 @@
 #include "look/int_overflow.h"
 #include "look/struct_types.h"
 #include "look/parallel_runtime.h"   // kanal kilitlenmesi (ChanWait)
+#include "look/assoc_index.h"
+#include <cstring>
+#include <random>
 #include <mutex>
 #include <cmath>
 #include <climits>
@@ -60,6 +63,49 @@ void look_release_values(std::vector<Value>& v) noexcept {
     t_drop_depth = d;
     if (d == 0 && t_drop_later) drain_deferred();
 }
+
+// ── Sözlük dizini (look/assoc_index.h) ────────────────────────────────────────
+void look_assoc_index_free(AssocIndex* ix) noexcept { delete ix; }
+
+// Süreç başına rastgele 128 bit tohum. random_device Linux'ta getrandom/urandom, Windows'ta
+// RtlGenRandom okur. Tohum hiçbir yere yazılmaz; yalnız hash'i saldırgan için öngörülemez kılar.
+namespace {
+struct SipKey { uint64_t k0, k1; };
+const SipKey& sip_key() {
+    static const SipKey k = [] {
+        std::random_device rd;
+        auto w = [&] { return ((uint64_t)rd() << 32) ^ (uint64_t)rd(); };
+        return SipKey{ w(), w() };
+    }();
+    return k;
+}
+inline uint64_t rotl(uint64_t x, int b) { return (x << b) | (x >> (64 - b)); }
+#define LOOK_SIPROUND do { v0 += v1; v1 = rotl(v1, 13); v1 ^= v0; v0 = rotl(v0, 32); \
+                           v2 += v3; v3 = rotl(v3, 16); v3 ^= v2; \
+                           v0 += v3; v3 = rotl(v3, 21); v3 ^= v0; \
+                           v2 += v1; v1 = rotl(v1, 17); v1 ^= v2; v2 = rotl(v2, 32); } while (0)
+} // namespace
+
+// SipHash-1-3 (Rust'ın HashMap varsayılanı): 1 sıkıştırma, 3 bitiş turu.
+uint64_t look_key_hash(const char* p, size_t n) noexcept {
+    const SipKey& key = sip_key();
+    uint64_t v0 = 0x736f6d6570736575ULL ^ key.k0, v1 = 0x646f72616e646f6dULL ^ key.k1;
+    uint64_t v2 = 0x6c7967656e657261ULL ^ key.k0, v3 = 0x7465646279746573ULL ^ key.k1;
+    const unsigned char* s = reinterpret_cast<const unsigned char*>(p);
+    const size_t full = n & ~(size_t)7;
+    for (size_t i = 0; i < full; i += 8) {
+        uint64_t m;
+        std::memcpy(&m, s + i, 8);   // küçük-endian makineler (x86-64/arm64)
+        v3 ^= m; LOOK_SIPROUND; v0 ^= m;
+    }
+    uint64_t b = (uint64_t)n << 56;
+    for (size_t i = 0; i < (n & 7); ++i) b |= (uint64_t)s[full + i] << (8 * i);
+    v3 ^= b; LOOK_SIPROUND; v0 ^= b;
+    v2 ^= 0xff;
+    LOOK_SIPROUND; LOOK_SIPROUND; LOOK_SIPROUND;
+    return v0 ^ v1 ^ v2 ^ v3;
+}
+#undef LOOK_SIPROUND
 
 // ── Value ─────────────────────────────────────────────────────────────────────
 

@@ -417,15 +417,9 @@ Value VM::array_get(const Value& arr, const Value& key) {
         std::string ktmp;
         const std::string& k = (key.type() == Value::STRING) ? key.str_ref()
                                                              : (ktmp = key.to_string());
-        // Also handle __struct__ tag: ["__assoc__", "__struct__", "Name", k, v, ...]
-        size_t start = 1;
-        if (vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__")
-            start = 3;
-        for (size_t i = start; i + 1 < vec.size(); i += 2) {
-            if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
-                return vec[i+1];
-        }
-        return Value();
+        // Büyük sözlükte dizinli (look/assoc_index.h); küçükte ve eski __struct__ etiketinde doğrusal.
+        size_t pos = look::assoc_find(vec, k);
+        return pos ? vec[pos + 1] : Value();
     }
     // Liste + tam-sayi-olmayan string anahtar: boyle bir anahtar yok (assoc'ta
     // bulunamayan anahtarla ayni sozlesme). $obj.alan erisimi de buraya duser.
@@ -509,12 +503,8 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
             }
             vec.swap(conv);
         }
-        // Find existing (skip sentinel at [0] and optional struct tags)
-        size_t start = 1;
-        for (size_t i = start; i + 1 < vec.size(); i += 2) {
-            if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
-                { vec[i+1] = val; return; }
-        }
+        // Var olan anahtar: değeri yerinde değiştir (büyük sözlükte dizinli arama).
+        if (size_t pos = look::assoc_find_for_write(vec, k)) { vec[pos + 1] = val; return; }
         // New entry — append key, value at end. When the key is already a STRING Value,
         // store it directly (shared_ptr copy) instead of re-materializing it with a fresh
         // make_shared<string> — the key literal already lives in the constant pool, so
@@ -523,6 +513,7 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
         if (key.type() == Value::STRING) vec.push_back(key);
         else                             vec.push_back(Value(k));
         vec.push_back(val);
+        look::assoc_appended(vec);
         return;
     }
     // Sayisal indeks — REFERANS SEMANTIGI (eski tree-walk'takiyle ayni):

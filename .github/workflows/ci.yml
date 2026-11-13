@@ -274,6 +274,29 @@ jobs:
             exit 1
           fi
 
+      # a large map keeps an index of its keys (include/look/assoc_index.h). Every way of
+      # changing a map must give the same answers on a small map (no index) and a large one.
+      # The second run uses a build where every indexed lookup is checked against a full scan
+      # and aborts on a difference — a new code path that changes a map without keeping its
+      # index right fails here.
+      - name: Map key index guard
+        run: |
+          cd cpp
+          cmake -S . -B build-assoc-verify -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-DLOOK_ASSOC_INDEX_VERIFY > /dev/null
+          cmake --build build-assoc-verify --target look --parallel $(nproc) > /dev/null
+          for b in build build-assoc-verify; do
+            out="$(./$b/lk tests/assoc_index_test.lk 2>&1)"; rc=$?
+            echo "$b: $out"
+            if [ $rc != 0 ] || ! echo "$out" | grep -q 'assoc index: all checks passed'; then
+              echo "::error::map key index guard FAILED ($b)"
+              exit 1
+            fi
+            out="$(./$b/lk tests/value_semantics_test.lk 2>&1)"; rc=$?
+            if [ $rc != 0 ] || echo "$out" | grep -q '^FAIL'; then
+              echo "$out"; echo "::error::value semantics with the map index check FAILED ($b)"; exit 1
+            fi
+          done
+
       # a struct is declared once, at the top level of a file. A second, different
       # definition of the same name is an error at load (same file: parse error; another
       # file: when it is loaded). This also removes the only way to reach a stale field cache.

@@ -1,0 +1,110 @@
+use json
+use string
+use array
+// Büyük sözlük (dizinli arama, look/assoc_index.h) — küçük sözlükle aynı sonucu vermeli.
+// Her durum küçük (dizinsiz) ve büyük (dizinli) sözlükte koşar; sonuçlar karşılaştırılır.
+// FAIL satırı = hata. tests/assoc_index_test.sh bunu doğrulama kipinde de (her dizinli arama
+// doğrusal taramayla karşılaştırılır) koşar.
+
+$fails = 0
+
+function check($name, $got, $want) {
+    if ($got != $want) {
+        print("FAIL " . $name . ": got " . json::encode($got) . " want " . json::encode($want))
+        return 1
+    }
+    return 0
+}
+
+function make($n) {
+    $m = ["start" => 0]
+    for ($i = 0; $i < $n; $i++) { $m["k" . $i] = $i }
+    return $m
+}
+
+foreach ([3, 40, 3000] as $n) {
+    $t = "n=" . $n
+    $m = make($n)
+    // okuma: var olan, olmayan, sayı-metni anahtar
+    $fails += check($t . " read first", $m["k0"], 0)
+    $fails += check($t . " read last", $m["k" . ($n - 1)], $n - 1)
+    $fails += check($t . " read missing", $m["nope"], null)
+    $fails += check($t . " count", count($m), $n + 1)
+
+    // üzerine yazma boyu değiştirmez, sırayı korur
+    $m["k1"] = "X"
+    $fails += check($t . " overwrite", $m["k1"], "X")
+    $fails += check($t . " overwrite count", count($m), $n + 1)
+    $fails += check($t . " order", array::keys($m)[2], "k1")
+
+    // yazınca-kopyala: kopya bağımsız
+    $c = $m
+    $c["k0"] = "C"
+    $c["new"] = 1
+    $fails += check($t . " cow original", $m["k0"], 0)
+    $fails += check($t . " cow original missing", $m["new"], null)
+    $fails += check($t . " cow copy", $c["k0"], "C")
+    $fails += check($t . " cow copy new", $c["new"], 1)
+
+    // iç içe yol ataması
+    $m["nest"]["a"] = 1
+    $m["nest"]["b"] = 2
+    $fails += check($t . " nested", $m["nest"]["b"], 2)
+    $m["obj"] = ["x" => 5]
+    $m["obj"]["x"] = 6
+    $fails += check($t . " nested overwrite", $m["obj"]["x"], 6)
+
+    // fonksiyonel işlemler yeni sözlük döndürür; okuma doğru kalır
+    $s = array::set($m, "k0", "S")
+    $fails += check($t . " array::set", $s["k0"], "S")
+    $fails += check($t . " array::set original", $m["k0"], 0)
+
+    // json gidiş-dönüş, sonra okuma ve ekleme
+    $j = json::decode(json::encode($m))
+    $fails += check($t . " json read", $j["k" . ($n - 1)], $n - 1)
+    $j["after"] = "A"
+    $fails += check($t . " json append", $j["after"], "A")
+    $fails += check($t . " json old", $j["k0"], 0)
+
+    // foreach ile kopyalama (gelen gövdeyi temizleme kalıbı)
+    $clean = []
+    foreach ($j as $k => $v) { $clean[$k] = $v }
+    $fails += check($t . " foreach copy count", count($clean), count($j))
+    $fails += check($t . " foreach copy last", $clean["after"], "A")
+
+    // push/pop sözlüğün sonuna TEK değer koyar/alır: dizinin boy değişimini izlemesi sınanır
+    // (doğrulama kipi her aramayı doğrusal taramayla karşılaştırır). push sonrası çift hizası
+    // kayar (sonraki anahtarlar okunamaz) — var olan ayrı bir hata; burada yalnız eski anahtar.
+    $p = make($n)
+    push($p, "tail")
+    $p["after_push"] = 7
+    $fails += check($t . " after push old", $p["k0"], 0)
+    pop($p)
+    pop($p)
+    $fails += check($t . " after pop", $p["k0"], 0)
+    $p["z"] = 9
+}
+
+// sayı-metni anahtarlar
+$num = []
+for ($i = 0; $i < 50; $i++) { $num["id" . $i] = $i }
+$num["5"] = "five"
+$fails += check("int key text", $num["5"], "five")
+
+// yinelenen anahtarlı JSON: ilk/son kuralı küçük ve büyük sözlükte aynı
+$parts = []
+for ($i = 0; $i < 30; $i++) { push($parts, "\"a" . $i . "\":" . $i) }
+push($parts, "\"a3\":\"dup\"")
+$d = json::decode("{" . string::join($parts, ",") . "}")
+$small = json::decode("{\"a3\":3,\"a3\":\"dup\"}")
+$fails += check("dup key big vs small", $d["a3"], $small["a3"])
+
+// çok anahtar ekleme + hepsini okuma
+$big = []
+for ($i = 0; $i < 20000; $i++) { $big["key_" . $i] = $i }
+$sum = 0
+for ($i = 0; $i < 20000; $i++) { $sum += $big["key_" . $i] }
+$fails += check("big sum", $sum, 199990000)
+
+if ($fails == 0) { print("assoc index: all checks passed") }
+else { print("assoc index: " . $fails . " FAIL") }

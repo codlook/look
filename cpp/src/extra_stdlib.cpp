@@ -1,5 +1,6 @@
 #include "look/stdlib.h"
 #include "look/stack_guard.h"
+#include "look/assoc_index.h"
 #include "look/ast_spine.h"
 #include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (saf, RFC-KAT edilebilir)
 #include "look/fiber.h"           // fiber_offload — uzun PBKDF2 ortak havuzda
@@ -172,8 +173,8 @@ static std::string get_field(const Value& data, const std::string& key) {
     if (data.type() != Value::ARRAY) return "";
     auto& arr = *data.as_array();
     if (!arr.empty() && arr[0].is_assoc_marker()) {
-        for (size_t i = 1; i + 1 < arr.size(); i += 2)
-            if (arr[i].to_string() == key) return arr[i+1].to_string();
+        // Kural başına bir arama; büyük gövdede dizinli (look/assoc_index.h).
+        if (size_t pos = look::assoc_find(arr, key)) return arr[pos + 1].to_string();
     }
     return "";
 }

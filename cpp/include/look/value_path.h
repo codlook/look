@@ -13,6 +13,7 @@
 // Eleman arama (value_slot) ve yol yürüyüşü (value_set_path) tek yerde. Son düzeydeki
 // yazma VM'in tek-düzey atamasıdır (VM::array_set) ve geri çağrı olarak verilir.
 #include "look/struct_types.h"
+#include "look/assoc_index.h"
 
 namespace look {
 
@@ -44,10 +45,9 @@ inline Value* value_slot(Value& arr, const Value& key) {
     if (!vec.empty() && vec[0].is_assoc_marker()) {
         std::string ktmp;
         const std::string& k = (key.type() == Value::STRING) ? key.str_ref() : (ktmp = key.to_string());
-        for (size_t i = 1; i + 1 < vec.size(); i += 2)
-            if (vec[i].type() == Value::STRING ? vec[i].str_ref() == k : vec[i].to_string() == k)
-                return &vec[i + 1];
-        return nullptr;
+        // Çağıranlar (yol ataması) depoyu önce detach eder → tek sahipli: yazma yolu araması.
+        size_t pos = assoc_find_for_write(vec, k);
+        return pos ? &vec[pos + 1] : nullptr;
     }
     if (key.type() == Value::STRING && !value_is_int_key(key.str_ref())) return nullptr;
     int64_t i = key.to_int();

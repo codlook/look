@@ -306,17 +306,31 @@ private:
 // tests/value_release_test.sh düz std::vector<Value> kuran kaynak satırını reddeder.
 void look_release_values(std::vector<Value>& v) noexcept;   // value.cpp
 
+// Büyük sözlüğün anahtar dizini (look/assoc_index.h). Depolama yine düz liste; dizin yalnız
+// arama hızlandırıcısıdır ve kopyalanmaz (kopya ilk aramada kendi dizinini kurar).
+struct AssocIndex;
+void look_assoc_index_free(AssocIndex* ix) noexcept;   // value.cpp
+
 struct ValueArray : std::vector<Value> {
     using std::vector<Value>::vector;
     using std::vector<Value>::operator=;
     ValueArray() = default;
-    ValueArray(const ValueArray&) = default;
-    ValueArray(ValueArray&&) noexcept = default;
-    ValueArray& operator=(const ValueArray&) = default;
-    ValueArray& operator=(ValueArray&&) noexcept = default;
+    ValueArray(const ValueArray& o) : std::vector<Value>(o) {}
+    ValueArray(ValueArray&& o) noexcept : std::vector<Value>(std::move(o)) {}
+    ValueArray& operator=(const ValueArray& o) { drop_index(); std::vector<Value>::operator=(o); return *this; }
+    ValueArray& operator=(ValueArray&& o) noexcept { drop_index(); std::vector<Value>::operator=(std::move(o)); return *this; }
+    ValueArray& operator=(const std::vector<Value>& o) { drop_index(); std::vector<Value>::operator=(o); return *this; }
+    ValueArray& operator=(std::vector<Value>&& o) noexcept { drop_index(); std::vector<Value>::operator=(std::move(o)); return *this; }
     ValueArray(const std::vector<Value>& o) : std::vector<Value>(o) {}
     ValueArray(std::vector<Value>&& o) noexcept : std::vector<Value>(std::move(o)) {}
-    ~ValueArray() { if (!empty()) look_release_values(*this); }
+    ~ValueArray() { drop_index(); if (!empty()) look_release_values(*this); }
+
+    // Okuma yolu dizini tembel kurar (yalnız boştan → kurulu, CAS); birden çok iş parçacığı aynı
+    // paylaşılan sözlüğü okuyabilir. Dizini DEĞİŞTİREN yazma yolu depoyu tek sahipli tutar (COW).
+    std::atomic<AssocIndex*> assoc_idx{nullptr};
+    void drop_index() noexcept {
+        if (AssocIndex* ix = assoc_idx.exchange(nullptr, std::memory_order_acq_rel)) look_assoc_index_free(ix);
+    }
 };
 
 inline std::shared_ptr<std::vector<Value>> look_new_array() { return std::make_shared<ValueArray>(); }
