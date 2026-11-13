@@ -238,6 +238,7 @@ type::is_bool
 type::is_float
 type::is_function
 type::is_int
+type::is_map
 type::is_null
 type::is_string
 type::of
