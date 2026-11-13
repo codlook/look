@@ -107,9 +107,22 @@ inline Value& value_path_slot(Value& slot, const Value* keys, int n, SetOne&& se
     return *cur;
 }
 
+// Sözlüğe push HATADIR (her push yolu bunu çağırır: push(), array::push(), CLI/web yerleşikleri).
+// ESKİ: push sözlüğün sonuna anahtarsız tek değer ekliyordu → çift hizası kayıyor, sonra eklenen
+// anahtarlar sessizce null okunuyor, bir değer tamamen kayboluyordu (1.0.x'te iç işaret çıktıya da
+// sızıyordu). Sözlüğe eklemenin tek yolu $m[$k] = $v.
+inline void value_push_not_map(const Value& target, const char* fn) {
+    if (target.type() == Value::ARRAY) {
+        const auto& v = *target.vec_ptr();
+        if (!v.empty() && v[0].is_assoc_marker())
+            throw std::runtime_error(std::string(fn) + " cannot add to a map; use $m[$key] = $value");
+    }
+}
+
 // push/pop'un tek tanımı. Hedef tek sahipli bir yerdir.
-inline Value value_push(Value& target, const Value& v) {
+inline Value value_push(Value& target, const Value& v, const char* fn = "push()") {
     if (target.type() != Value::ARRAY) throw std::runtime_error("push() requires array as first argument");
+    value_push_not_map(target, fn);
     target.vec_ptr()->push_back(v);
     // Yeni uzunluk döner. (LOOK 1 dizinin kendisini döndürüyordu; değer semantiğinde o,
     // değişkenin deposuna ikinci bir sahip olur ve bir sonraki push'u kopyaya zorlardı.)

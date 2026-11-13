@@ -72,17 +72,20 @@ foreach ([3, 40, 3000] as $n) {
     $fails += check($t . " foreach copy count", count($clean), count($j))
     $fails += check($t . " foreach copy last", $clean["after"], "A")
 
-    // push/pop sözlüğün sonuna TEK değer koyar/alır: dizinin boy değişimini izlemesi sınanır
-    // (doğrulama kipi her aramayı doğrusal taramayla karşılaştırır). push sonrası çift hizası
-    // kayar (sonraki anahtarlar okunamaz) — var olan ayrı bir hata; burada yalnız eski anahtar.
+    // sözlüğe push hatadır; sözlük değişmez ve yazmaya devam edilebilir
     $p = make($n)
-    push($p, "tail")
+    $err = ""
+    try { push($p, "tail") } catch ($e) { $err = "" . $e }
+    $fails += check($t . " push on map is an error", string::contains($err, "cannot add to a map"), true)
     $p["after_push"] = 7
-    $fails += check($t . " after push old", $p["k0"], 0)
-    pop($p)
+    $fails += check($t . " after push", $p["after_push"], 7)
+    $fails += check($t . " after push count", count($p), $n + 2)
+    // pop sözlüğün son DEĞERİNİ alır (boy tek sayıya düşer): dizinin boy küçülmesini izlemesi sınanır
+    // (doğrulama kipi her aramayı doğrusal taramayla karşılaştırır)
     pop($p)
     $fails += check($t . " after pop", $p["k0"], 0)
     $p["z"] = 9
+    $fails += check($t . " after pop old", $p["k1"], 1)
 }
 
 // sayı-metni anahtarlar

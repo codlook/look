@@ -301,6 +301,21 @@ jobs:
           bash tests/shared_map_concurrent_test.sh ./build/lk-fcgi 7931
           bash tests/shared_map_concurrent_test.sh ./build-assoc-verify/lk-fcgi 7932
 
+      # push() / array::push() on a map is an error with its line (it used to add a value without
+      # a key: later keys read as null). Every push path: variable, nested, function, expression,
+      # array::push in place and copying, web request and web setup.
+      - name: push onto a map is an error
+        run: |
+          cd cpp
+          bash tests/push_map_error_test.sh ./build/lk ./build/lk-fcgi 7933
+
+      # The web server log names the line (and file) of an uncaught error: route, included
+      # file, script without routes, setup.
+      - name: Web errors are logged with their line
+        run: |
+          cd cpp
+          bash tests/web_error_line_test.sh ./build/lk-fcgi 7934
+
       # a struct is declared once, at the top level of a file. A second, different
       # definition of the same name is an error at load (same file: parse error; another
       # file: when it is loaded). This also removes the only way to reach a stale field cache.

@@ -40,6 +40,14 @@ Parse Error: Unexpected token: ')'
 - **`File:` / `Line:` (and `Column:` for parse errors)** — exactly where it happened.
   Parse errors point at the offending token; runtime errors point at the line being executed.
 
+In a web application the server log writes the same error on one line, with the line at the
+end (and the file when it is not the main script):
+
+```
+[ERROR] [HTTP] Dispatch error: Division by zero (line 2 in lib/report.lk)
+[ERROR] [HTTP] Setup error: Undefined variable: $userr (line 42) — the application does not start.
+```
+
 > Messages are matched by their **leading text**. Where a message ends with `…` or a
 > value (`Undefined variable: $x`), look it up by the part before the value.
 
@@ -97,6 +105,7 @@ LOOK is **strict**: reading a variable that was never assigned is an error, not 
 | `Stack overflow: more than 10000 nested calls` / `the call stack is larger than 8 MB` / `more than 4000 nested callbacks` / `the native stack is nearly full` | A function calls itself without end (or far too deep). A call made through a builtin's callback (`array::map`, `array::sort`, ...) has a lower limit because it uses the native stack. The request fails; the process keeps running. | Check the stopping condition. For very deep work use a loop with an explicit list instead of recursion. |
 | `Index operator requires an array` | You used `x[i]` on something that isn't an array/object. | Make sure `x` is an array; check for `null` first. |
 | `Array index out of bounds` / `Array index …` | `arr[i]` with `i` past the end (or negative). | Check `count(arr)` before indexing; array indexes are 0-based. |
+| `push() cannot add to a map; use $m[$key] = $value` (or `array::push() …`) | `push()` / `array::push()` on a map. A map entry needs a key; `push` only appends to a list. | `$m[$key] = $value`. |
 | `foreach requires an array` | `foreach`/`for … as` over a non-array (often `null` from a lookup that missed). | Ensure the value is an array; default to `[]` when a lookup can miss. |
 | `++/-- requires a variable` | `++`/`--` applied to something that isn't a variable (e.g. `++5`, `++foo()`). | Apply it to a variable: `$i++`. |
 

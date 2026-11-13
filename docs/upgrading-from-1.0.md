@@ -158,6 +158,14 @@ line of its own still throws; `throw` in front of it stays optional.
 - they change only that variable, not other variables that held the same array;
 - `push` returns the new length. In 1.0.x it returned the array.
 
+### `push` onto a map is an error — was silent data loss
+
+`push($m, $x)` and `array::push($m, $x)` on a map now stop with
+`push() cannot add to a map; use $m[$key] = $value` (the error names `array::push()` when that
+was the call), with its line. In 1.0.x the value was added without a key: the keys and values
+after it no longer lined up, keys added later read as `null`, and printing the map showed its
+internal marker. Add to a map with `$m[$key] = $value`. `push` onto a list is unchanged.
+
 ### A closure captures the value — silent; writing to it is an error at load
 
 A closure takes the value of what it captures at the moment it is created, and cannot

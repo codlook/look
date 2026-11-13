@@ -161,6 +161,9 @@ Stack trace:
   <p>  <code>Runtime Error</code> happens *while* it runs (bad value, missing file, failed connection).</p>
   <ul class="err-ul"><li><strong>The message</strong> — the specific problem. Everything below is organized by this text.</li><li><strong><code>File:</code> / <code>Line:</code> (and <code>Column:</code> for parse errors)</strong> — exactly where it happened.</li></ul>
   <p>  Parse errors point at the offending token; runtime errors point at the line being executed.</p>
+  <p>In a web application the server log writes the same error on one line, with the line at the end (and the file when it is not the main script):</p>
+  <pre class="err-pre"><code>[ERROR] [HTTP] Dispatch error: Division by zero (line 2 in lib/report.lk)
+[ERROR] [HTTP] Setup error: Undefined variable: $userr (line 42) — the application does not start.</code></pre>
   <div class="err-note">Messages are matched by their <strong>leading text</strong>. Where a message ends with <code>…</code> or a value (<code>Undefined variable: $x</code>), look it up by the part before the value.</div>
   </div>
 </section>
@@ -484,6 +487,18 @@ $name = $profile["name"] ?? ""   # $profile is the map of the user — or null w
 $first = $rows[0]           # $rows may be empty
 <span class="eg-good"># ✓ fix</span>
 if (count($rows) &gt; 0) { $first = $rows[0] }</code></pre>
+    </div>
+    <div class="err" id="e111" data-cat="Types, arithmetic &amp; indexing" data-text="push() cannot add to a map; use $m[$key] = $value (or array::push() …) push() / array::push() on a map. a map entry needs a key; push only appends to a list. $m[$key] = $value.">
+      <div class="err-msg"><code>push() cannot add to a map; use $m[$key] = $value</code> (or <code>array::push() …</code>)</div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> <code>push()</code> / <code>array::push()</code> on a map. A map entry needs a key; <code>push</code> only appends to a list.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> <code>$m[$key] = $value</code>.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$user = ["name" =&gt; "Ada"]
+push($user, "admin")
+<span class="eg-good"># ✓ fix</span>
+$user["role"] = "admin"</code></pre>
     </div>
     <div class="err" id="e19" data-cat="Types, arithmetic &amp; indexing" data-text="foreach requires an array foreach/for … as over a non-array (often null from a lookup that missed). ensure the value is an array; default to [] when a lookup can miss.">
       <div class="err-msg"><code>foreach requires an array</code></div>

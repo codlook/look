@@ -3332,7 +3332,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
 
   <table>
     <tr><th>Function</th><th>Description</th></tr>
-    <tr><td>array::push($arr, $v)</td><td>Append an element, returns a new array</td></tr>
+    <tr><td>array::push($arr, $v)</td><td>Append an element to a list, returns a new array (on a map it is an error: use <code>$m[$key] = $v</code>)</td></tr>
     <tr><td>array::pop($arr)</td><td>Returns the last element of the array</td></tr>
     <tr><td>array::set($arr, $key, $val)</td><td>Add/update a key in an assoc array → returns a new array (immutable)</td></tr>
     <tr><td>array::new_assoc()</td><td>Create an empty assoc array</td></tr>

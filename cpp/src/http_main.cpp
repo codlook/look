@@ -9,6 +9,7 @@
 #include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/builtins.h"
+#include "look/value_path.h"   // value_push_not_map — sözlüğe push hatası (tek tanım)
 #include "look/route_group.h"
 #include "look/host_port.h"   // LOOK_SMTP_PORT / LOOK_IMAP_PORT doğrulama
 #include "look/metrics.h"
@@ -483,6 +484,20 @@ static look::Value run_closure_as_request(const look::Value& fnv, std::vector<lo
 // İSTEK tablosu ve KURULUM tablosu aynı tanımı kullanır. Eskiden yalnız istek tablosunda vardılar:
 // VM kurulum geçişinde boş değer dönüyor, üst düzeyde `$x = strtoupper("a")` ile hesaplanan
 // değişken rotalarda null oluyordu (yorumlayıcıda doğruydu) — sessiz yanlış değer.
+// Web'de yakalanmamış hatanın YERİ günlüğe yazılır: " (line 3)" / " (line 3 in lib/x.lk)". Komut
+// satırı bunu VM'in son hata satırından alıyordu (main.cpp); web günlüğü yalnız mesajı yazıyordu
+// ("Dispatch error: boom" — hangi satır?). Nesne VM'le aynı kapsamda kurulur; hata VM'den çıkıp
+// kapsamı terk ederken (yığın açılırken) yeri kaydeder — catch bloğunda VM artık yoktur.
+struct VmErrorPlace {
+    const look::VM& vm;
+    std::string& out;
+    ~VmErrorPlace() {
+        if (std::uncaught_exceptions() > 0 && vm.last_error_line() > 0)
+            out = " (line " + std::to_string(vm.last_error_line())
+                + (vm.last_error_file().empty() ? std::string() : " in " + vm.last_error_file()) + ")";
+    }
+};
+
 static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
     auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
     t[BI("bool")] = [](std::vector<look::Value>& args) -> look::Value {
@@ -717,6 +732,7 @@ static void run_setup_http(const fs::path& script) {
     g_http_app.vm_routes_ready = false;
     g_http_app.script_mode     = false;
     if (g_http_app.compiled) {
+        std::string setup_err_place;   // kurulum hatasının satırı (VmErrorPlace)
         try {
             // Setup builtins: route() (index 22) ve temel veri fonksiyonları
             // Diğer builtin'ler setup'ta çağrılmaz (db::query vb. HTTP context ister)
@@ -741,6 +757,7 @@ static void run_setup_http(const fs::path& script) {
             setup_builtins[3] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                     return look::Value();
+                look::value_push_not_map(args[0], "push()");
                 args[0].detach();   // LOOK 2: paylaşılan depoyu yerinde değiştirme (değişken yolu PUSH_PATH ile gelir)
                 args[0].as_array()->push_back(args[1]);
                 return look::Value();
@@ -999,6 +1016,7 @@ static void run_setup_http(const fs::path& script) {
             setup_sh.builtins = &setup_builtins;
             std::ostringstream vm_setup_out;
             look::VM setup_vm(setup_sh, vm_setup_out);
+            VmErrorPlace setup_place{setup_vm, setup_err_place};
             // Kurulum sürüyor: db::query gibi modüller bunu ModuleHost::is_setup_mode ile görür.
             struct SetupMode { look::RuntimeHost* h; SetupMode(look::RuntimeHost* x) : h(x) { h->set_setup_mode(true); }
                                ~SetupMode() { h->set_setup_mode(false); } } setup_mode{g_http_app.interp.get()};
@@ -1089,7 +1107,7 @@ static void run_setup_http(const fs::path& script) {
             // throw, `use` edilmemiş modül …), "VM bu programı çalıştıramıyor" değil — mesaj olduğu
             // gibi iletilir (çağıran "Setup error: …" diye yazar, uygulama başlamaz).
             g_http_app.vm_routes_ready = false;
-            throw std::runtime_error(e.what());
+            throw std::runtime_error(e.what() + setup_err_place);
         }
     }
     }
@@ -1777,6 +1795,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         req_builtins[BI("push")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                 throw std::runtime_error("push() requires array and value");
+            look::value_push_not_map(args[0], "push()");
             args[0].detach();   // LOOK 2: paylaşılan depoyu yerinde değiştirme (değişken yolu PUSH_PATH ile gelir)
             args[0].as_array()->push_back(args[1]);
             return args[0];
@@ -1805,11 +1824,13 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         t_dispatch_start = std::chrono::steady_clock::now();
         bool vm_ok = false;
         bool stopped_direct = false;   // zamanlayıcı geri çağırması doğrudan çağrıldı
+        std::string err_place;         // hatanın satırı — günlük satırına eklenir
         try {
             look::VM::SharedState sh;
             sh.routes         = &route_closures;
             sh.builtins       = &req_builtins;
             look::VM vm(sh, output);
+            VmErrorPlace vm_place{vm, err_place};
             // Kurulum global'leri istekle paylaşılır (harita istek başına kopyalanır, değerler
             // paylaşılır); istek birine yazarsa yazma yolu önce kendi kopyasını alır.
             vm.set_globals(snap->vm_setup_globals);
@@ -1877,6 +1898,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 if (snap->script_mode) {
                     // Rotasız betik (PHP gibi): programın tamamı bu istekte, taze global'lerle çalışır.
                     look::VM script_vm(sh, output);
+                    VmErrorPlace script_place{script_vm, err_place};
                     script_vm.set_web_context(&web);
                     script_vm.execute(*snap->compiled);
                 } else {
@@ -1925,7 +1947,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 web.status_text = "Internal Server Error";
             }
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
-                (direct().what ? std::string(direct().what) + " error: " : std::string("Dispatch error: ")) + what);
+                (direct().what ? std::string(direct().what) + " error: " : std::string("Dispatch error: ")) + what + err_place);
             if (direct().closure) direct().failed = true;
             vm_ok = true;   // yanıt hazır (500) — yorumlayıcıda YENİDEN ÇALIŞTIRMA yok
         }

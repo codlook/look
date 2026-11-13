@@ -922,7 +922,8 @@ call_dispatch:
                                 + (*target.as_struct())[0].str_ref() + "'): a struct is not an array, use its fields");
                         throw std::runtime_error("array::push() requires array and value");
                     }
-                    return is_push ? look::value_push(target, pv) : look::value_pop(target);
+                    return is_push ? look::value_push(target, pv, vh->b ? "array::push()" : "push()")
+                                   : look::value_pop(target);
                 });
                 break;
             }

@@ -1,6 +1,7 @@
 #include "look/stdlib.h"
 #include "look/stack_guard.h"
 #include "look/assoc_index.h"
+#include "look/value_path.h"   // value_push_not_map
 #include "look/ast_spine.h"
 #include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (saf, RFC-KAT edilebilir)
 #include "look/fiber.h"           // fiber_offload — uzun PBKDF2 ortak havuzda
@@ -312,6 +313,7 @@ Module make_array_module(ModuleHost* interp) {
     m.functions["push"] = [](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::push() requires array and value");
+        look::value_push_not_map(args[0], "array::push()");
         auto result = std::make_shared<ValueArray>(*args[0].as_array());
         result->push_back(args[1]);
         return Value(result);
