@@ -75,12 +75,16 @@ setup as root:
 service is moved, the new release's `lk --check` runs on the domain's script — as the
 domain's user, in its document root, with its env file. `lk --check` only loads and compiles
 the code; it never runs it, so setup code and database migrations do not run. A domain whose
-code passes runs the new release. A domain whose code does not pass keeps running the release
-it ran, and the panel shows, on that domain, the lines to fix and that the site **receives no
-fixes, security fixes included**, until they are fixed. *Check again* (or a restart) checks
-it again and moves it when it passes. Nobody chooses a version: every domain whose code
-passes is on the newest release. A new domain whose code does not pass is not installed;
-the error lists the lines.
+code passes runs the new release.
+
+The extension also carries the latest release of the maintenance line (1.0.x). A domain whose
+code does not pass the newest release moves to the newest release it does pass, so it still
+gets that line's fixes; the panel shows the lines to fix to reach the newest. Only a domain
+whose code passes no newer release keeps running the release it ran; the panel then says the
+site **receives no fixes, security fixes included**, until the lines are fixed. *Check again*
+(or a restart) checks it again and moves it when it passes. Nobody chooses a version: every
+domain is on the newest release its code passes. A new domain whose code passes no release
+is not installed; the error lists the lines.
 
 The check sees what stops a program from loading — the rules on functions and variables,
 `use` cycles, struct declarations, syntax. It cannot see what only happens while a program
