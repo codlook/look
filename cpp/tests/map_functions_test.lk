@@ -2,11 +2,16 @@ use array
 use json
 use string
 use math
+use type
 // Dizi alan her fonksiyon sözlükle (boş, 1 anahtar, 12 anahtar = dizinli): listeye özgü olanlar
 // açık hata verir; anlamı olanlar yalnız DEĞERLERE bakar (map/filter anahtarları korur); hiçbir
 // sonuçta sözlüğün iç işareti (__assoc__) görünmez. FAIL satırı = hata.
 // ESKİ: reverse/join iç işareti sızdırıyordu; slice/chunk/zip yanlış parça; pop veri kaybı;
 // array::contains anahtarlarda da arıyordu (liste beklenen yere {"admin": 0} → yetki atlatma).
+
+struct Pt {
+  x int = 0
+}
 
 $fails = 0
 $LIST_ONLY = 'takes a list, not a map; use array::values($m) first'
@@ -130,6 +135,24 @@ $x = [1, 2]
 $fails += check("list pop", pop($x), 2)
 // liste içindeki sözlük bir DEĞERDİR: contains onu eşitlikle bulur
 $fails += check("list of maps contains", array::contains([["a" => 1]], ["a" => 1]), true)
+
+// type::is_map: liste mi sözlük mü (boş değerler dahil — belirsizliği saldırgan dener)
+$fails += check("is_map literal map", type::is_map(["a" => 1]), true)
+$fails += check("is_map empty list", type::is_map([]), false)
+$fails += check("is_map list", type::is_map([1, 2]), false)
+$fails += check("is_map json {}", type::is_map(json::decode("{}")), true)
+$fails += check("is_map json []", type::is_map(json::decode("[]")), false)
+$fails += check("is_map json object", type::is_map(json::decode("{\"admin\": 0}")), true)
+$fails += check("is_map new_assoc", type::is_map(array::new_assoc()), true)
+$fails += check("is_map indexed map", type::is_map(make(12)), true)
+$fails += check("is_map null", type::is_map(null), false)
+$fails += check("is_map string", type::is_map("{}"), false)
+$fails += check("is_map int", type::is_map(1), false)
+$fails += check("is_map list of maps", type::is_map([["a" => 1]]), false)
+// liste ilk elemanı "__assoc__" metni olan bir listedir (işaret metinle taklit edilemez)
+$fails += check("is_map forged marker", type::is_map(json::decode("[\"__assoc__\", \"role\", \"admin\"]")), false)
+$fails += check("is_map struct", type::is_map(Pt{x: 1}), false)
+$fails += check("type::of unchanged", type::of(["a" => 1]), "array")
 
 if ($fails == 0) { print("map functions: all checks passed") }
 else { print("map functions: " . $fails . " FAIL") }

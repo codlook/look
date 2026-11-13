@@ -3308,7 +3308,8 @@ foreach ($dates as $t) {
 | type::is_string($v) | bool |
 | type::is_bool($v) | bool |
 | type::is_null($v) | bool |
-| type::is_array($v) | bool |
+| type::is_array($v) | bool — true for lists and maps |
+| type::is_map($v) | bool — a map (`["k" => v]`, a JSON object), not a list. `[]` and a JSON array are lists. Use it to check input before a list function: those stop on a map |
 | type::is_function($v) | bool — is it a closure or named function? |
 | type::to_int($v) | Convert to int |
 | type::to_float($v) | Convert to float |

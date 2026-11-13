@@ -182,8 +182,9 @@ left its key, so the next value added was lost.
 - `array::map` and `array::filter` give the callback each value and keep the keys:
   `array::map(["a" => 1], fn($v) => $v * 10)` is `["a" => 10]`.
 
-Lists behave as before. When only the values matter and a value may be either, call
-`array::values($x)` first.
+Lists behave as before. To check input that may be either, use `type::is_map($x)` (new): it is
+`true` for a map and a JSON object, `false` for a list, `[]` and a JSON array. `type::of` still
+says `"array"` for both. When only the values matter, call `array::values($x)` first.
 
 ### A closure captures the value — silent; writing to it is an error at load
 

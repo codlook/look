@@ -933,6 +933,9 @@ static Module make_type() {
     m.functions["is_float"]    = [](auto a) { check_args("type::is_float",    a.size(),1); return Value(a[0].type()==Value::FLOAT); };
     m.functions["is_bool"]     = [](auto a) { check_args("type::is_bool",     a.size(),1); return Value(a[0].type()==Value::BOOL); };
     m.functions["is_array"]    = [](auto a) { check_args("type::is_array",    a.size(),1); return Value(a[0].type()==Value::ARRAY); };
+    // Sözlük mü (liste değil)? `[]` ve json::decode("[]") liste, json::decode("{}") sözlük; struct ve
+    // null sözlük değildir. type::of ikisine de "array" der (değişmedi: mevcut kodu kırmamak için).
+    m.functions["is_map"]      = [](auto a) { check_args("type::is_map",      a.size(),1); return Value(look::value_is_map(a[0])); };
     // Fonksiyon değeri BYTECODE_FN'dir (VM closure). TYPE_OF opcode'u da ona "function" der;
     // is_function onunla hizalı olmalı.
     m.functions["is_function"] = [](auto a) { check_args("type::is_function", a.size(),1);

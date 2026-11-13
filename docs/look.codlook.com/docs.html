@@ -3258,7 +3258,8 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
     <tr><td>type::is_string($v)</td><td>bool</td></tr>
     <tr><td>type::is_bool($v)</td><td>bool</td></tr>
     <tr><td>type::is_null($v)</td><td>bool</td></tr>
-    <tr><td>type::is_array($v)</td><td>bool</td></tr>
+    <tr><td>type::is_array($v)</td><td>bool — true for lists and maps</td></tr>
+    <tr><td>type::is_map($v)</td><td>bool — a map (<code>["k" =&gt; v]</code>, a JSON object), not a list. <code>[]</code> and a JSON array are lists. Use it to check input before a list function: those stop on a map</td></tr>
     <tr><td>type::is_function($v)</td><td>bool — is it a closure or named function?</td></tr>
     <tr><td>type::to_int($v)</td><td>Convert to int</td></tr>
     <tr><td>type::to_float($v)</td><td>Convert to float</td></tr>

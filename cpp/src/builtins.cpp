@@ -219,6 +219,9 @@ const std::vector<std::string>& builtin_names() {
         // csrf:: — sunucuda durumsuz CSRF koruması (imzalı çift-gönderim çerezi, LOOK_SECRET). Denetim
         // varsayılan: çerez kullanan uygulamada GET/HEAD/OPTIONS dışındaki her istek (http_main kapısı); exempt muafiyet.
         "csrf::token", "csrf::field", "csrf::exempt",
+        // type::is_map — liste mi sözlük mü (type::of ikisine de "array" der). Listeye özgü
+        // fonksiyonlar sözlükte hata verdiğinden gelen veri denetlenebilmeli. Sona eklendi.
+        "type::is_map",
     };
     return NAMES;
 }
@@ -273,7 +276,7 @@ const std::vector<EffectRow>& effect_rows() {
             "template::escape",
             "type::is_null", "type::is_int", "type::is_float", "type::is_string", "type::is_bool",
             "type::is_array", "type::is_function", "type::of", "type::to_int", "type::to_float",
-            "type::to_string", "type::to_bool",
+            "type::to_string", "type::to_bool", "type::is_map",
             "validator::required", "validator::email", "validator::integer", "validator::numeric",
             "validator::min", "validator::max", "validator::check",
         }},
