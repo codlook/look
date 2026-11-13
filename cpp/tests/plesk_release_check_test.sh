@@ -118,6 +118,19 @@ check "still on the release it ran, not the one in between"   '[ "$(unit_bin old
 check "the unused in-between release is removed"              '[ ! -e /opt/look/releases/1.0.99-abcdef0 ] && [ -x /opt/look/releases/1.1.0-1234567/lk-fcgi ]'
 check "status names the newest release"                       'grep -q "1.1.0-1234567" $ST/look-old-test.json'
 
+echo "== a new release without lk cannot check a site: the site stays where it is =="
+reset_sandbox
+site good.test good_u 10061 'route("GET", "/", fn() => "ok")'
+fake_look /tmp/rel-old 1.0.47 1b846a3; cp /tmp/rel-old/lk* /opt/look/; legacy_unit good.test 9150
+fake_look "$MOD/bin" 1.0.99 abcdef0; rm -f "$MOD/bin/lk"                       # a broken package
+out="$(setup $(args_for good.test 9150) "")"; rc=$?
+check "the site keeps the release it ran (not moved unchecked)" '[ "$(unit_bin good.test)" = /opt/look/releases/1.0.47-1b846a3/lk-fcgi ]'
+check "status: held, saying it could not be checked"           'grep -q "\"held\": *true" $ST/look-good-test.json && grep -q "could not be checked" $ST/look-good-test.json'
+check "the output names it"                                    '[[ "$out" == *good.test*"could not be checked"* ]]'
+site new.test new_u 10063 'route("GET", "/", fn() => "ok")'
+out="$(bash "$MOD/scripts/enable.sh" $(args_for new.test 9152) 2>&1)"; rc=$?
+check "a new site is not installed unchecked"                  '[ "$rc" != 0 ] && [ ! -e "$SYS/look-new-test.service" ]'
+
 echo "== the panel shows it =="
 P="$PL/htdocs/phtml/index.phtml"
 check "the panel reads the release status"                    'grep -q "release_status" "$PL/htdocs/index.php"'

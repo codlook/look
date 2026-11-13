@@ -213,35 +213,34 @@ CHECK_RC=0
 if [ -x "$LATEST_DIR/lk" ]; then
     CHECK_OUT="$(cd "$DOC_ROOT" && runuser -u "$RUN_USER" -- env LOOK_FILE_ROOT="$DOC_ROOT" $ENV_WRAP "$LATEST_DIR/lk" --check "$SCRIPT" 2>&1)" || CHECK_RC=$?
 else
-    # lk olmadan denetlenemez — siteyi bu yüzden durdurma; söyle ve en yeni sürümle devam et
-    CHECK_OUT="OK"
-    echo "WARNING: $LATEST_DIR/lk is missing, so $DOMAIN was not checked against LOOK $LATEST_REL before it was moved to it"
+    # lk yoksa (bozuk paket) site denetlenemez: denetimden geçmemiş sayılır — çalışan site
+    # çalıştığı sürümde kalır, yeni site kurulmaz. Koruma tam bir şey ters gittiğinde gevşemesin.
+    CHECK_RC=127
+    CHECK_OUT="LOOK $LATEST_REL has no lk ($LATEST_DIR/lk), so this site could not be checked against it; install the extension again"
 fi
-CHECK_OUT="$(printf '%s
-' "$CHECK_OUT" | head -50)"
+CHECK_OUT="$(printf '%s\n' "$CHECK_OUT" | head -50)"
+CHECK_SHORT="$(printf '%s\n' "$CHECK_OUT" | grep -E '^(CHECK |LOOK )' | head -3 | tr '\n' ';' | sed 's/;$//')"
 HELD=false
 if [ "$CHECK_RC" = 0 ]; then
     BIN_DIR="$LATEST_DIR"
 elif [ -n "$CUR_FCGI" ] && [ -x "$CUR_FCGI" ] && [ "$(dirname "$CUR_FCGI")" != "$LATEST_DIR" ]; then
     BIN_DIR="$(dirname "$CUR_FCGI")"
     HELD=true
-    echo "WARNING: $DOMAIN stays on LOOK $(rel_name "$BIN_DIR") and receives no fixes, security fixes included: its code does not pass the check of LOOK $LATEST_REL ($(printf '%s' "$CHECK_OUT" | grep -E '^CHECK ' | head -3 | tr '
-' ';' | sed 's/;$//'))"
+    echo "WARNING: $DOMAIN stays on LOOK $(rel_name "$BIN_DIR") and receives no fixes, security fixes included: it does not pass the check of LOOK $LATEST_REL ($CHECK_SHORT)"
+elif [ "$CHECK_RC" = 127 ] && [ -n "$CUR_FCGI" ] && [ "$(dirname "$CUR_FCGI")" = "$LATEST_DIR" ]; then
+    # Zaten en yeni sürümde (yeniden başlatma): taşınan bir şey yok — çalışmaya devam eder
+    BIN_DIR="$LATEST_DIR"
+    echo "WARNING: $CHECK_OUT"
 else
     echo "ERROR: $DOMAIN: the code does not pass the check of LOOK $LATEST_REL; fix these lines and try again:" >&2
-    printf '%s
-' "$CHECK_OUT" >&2
+    printf '%s\n' "$CHECK_OUT" >&2
     exit 3   # look-setup: servise dokunma (çalışan site düşmesin), yalnız bildir
 fi
 mkdir -p "$STATUS_DIR"; chmod 755 "$OPT/conf" "$STATUS_DIR"
-printf '{
-  "domain": "%s",
-  "release": "%s",
-  "latest": "%s",
-  "held": %s,
-  "check": "%s"
-}
-'     "$DOMAIN" "$(rel_name "$BIN_DIR")" "$LATEST_REL" "$HELD" "$( [ "$HELD" = true ] && json_str "$CHECK_OUT" )"     > "$STATUS_DIR/.$SVC_NAME.json.new" && chmod 644 "$STATUS_DIR/.$SVC_NAME.json.new"     && mv -f "$STATUS_DIR/.$SVC_NAME.json.new" "$STATUS_DIR/$SVC_NAME.json"
+printf '{\n  "domain": "%s",\n  "release": "%s",\n  "latest": "%s",\n  "held": %s,\n  "check": "%s"\n}\n' \
+    "$DOMAIN" "$(rel_name "$BIN_DIR")" "$LATEST_REL" "$HELD" "$( [ "$HELD" = true ] && json_str "$CHECK_OUT" )" \
+    > "$STATUS_DIR/.$SVC_NAME.json.new" && chmod 644 "$STATUS_DIR/.$SVC_NAME.json.new" \
+    && mv -f "$STATUS_DIR/.$SVC_NAME.json.new" "$STATUS_DIR/$SVC_NAME.json"
 
 if [ "$MODE" = "http" ]; then
     # Yalniz yerel adreste dinler: Apache vekili 127.0.0.1:$PORT'a gider (asagida). Eskiden tum

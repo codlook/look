@@ -45,6 +45,11 @@ echo "USER=$(id -un)"; echo "ARGS=$*"; echo "DB_DSN=${DB_DSN-<unset>}"; echo "AP
 echo "LOOK_FILE_ROOT=${LOOK_FILE_ROOT-<unset>}"
 EOF
 chmod 755 /opt/look/lk-fcgi
+# lk stand-in: the extension checks a site with `lk --check` before it runs it (every package ships lk)
+printf '#!/bin/bash
+[ "$1" = --check ] && { echo OK; exit 0; }
+exit 0
+' > /opt/look/lk; chmod 755 /opt/look/lk
 export PATH="$STUB:$PATH"
 
 getent group psacln >/dev/null || groupadd psacln

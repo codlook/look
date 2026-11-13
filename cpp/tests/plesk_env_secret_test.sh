@@ -39,6 +39,11 @@ echo "USER=$(id -un)"; echo "DB_DSN=${DB_DSN-<unset>}"
 if [ -n "${LOOK_SECRET:-}" ]; then echo "SECRET_LEN=${#LOOK_SECRET}"; echo "SECRET_HASH=$(printf %s "$LOOK_SECRET" | sha256sum | cut -c1-12)"; else echo "SECRET_LEN=0"; fi
 EOF
 chmod 755 /opt/look/lk-fcgi
+# lk stand-in: the extension checks a site with `lk --check` before it runs it (every package ships lk)
+printf '#!/bin/bash
+[ "$1" = --check ] && { echo OK; exit 0; }
+exit 0
+' > /opt/look/lk; chmod 755 /opt/look/lk
 export PATH="$STUB:$PATH"
 
 getent group psacln >/dev/null || groupadd psacln
