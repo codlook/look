@@ -1,0 +1,135 @@
+use array
+use json
+use string
+use math
+// Dizi alan her fonksiyon sözlükle (boş, 1 anahtar, 12 anahtar = dizinli): listeye özgü olanlar
+// açık hata verir; anlamı olanlar yalnız DEĞERLERE bakar (map/filter anahtarları korur); hiçbir
+// sonuçta sözlüğün iç işareti (__assoc__) görünmez. FAIL satırı = hata.
+// ESKİ: reverse/join iç işareti sızdırıyordu; slice/chunk/zip yanlış parça; pop veri kaybı;
+// array::contains anahtarlarda da arıyordu (liste beklenen yere {"admin": 0} → yetki atlatma).
+
+$fails = 0
+$LIST_ONLY = 'takes a list, not a map; use array::values($m) first'
+
+function make($n) {
+    $m = array::new_assoc()
+    for ($i = 0; $i < $n; $i++) { $m["k" . $i] = $i }
+    return $m
+}
+
+function leak($r) {
+    return string::contains(json::encode($r), "__assoc__") || string::contains("" . $r, "__assoc__")
+}
+
+function check($name, $got, $want) {
+    if ($got != $want || leak($got)) {
+        print("FAIL " . $name . ": got " . json::encode($got) . " want " . json::encode($want))
+        return 1
+    }
+    return 0
+}
+
+// f() hata vermeli; mesaj "<ad> takes a list, not a map; use array::values($m) first"
+function must_fail($name, $fname, $f, $tail) {
+    $msg = ""
+    try { $r = $f(); $msg = "no error, got " . json::encode($r) } catch ($e) { $msg = "" . $e }
+    if (!string::contains($msg, $fname . " " . $tail) || string::contains($msg, "__assoc__")) {
+        print("FAIL " . $name . ": want '" . $fname . " " . $tail . "', got: " . $msg)
+        return 1
+    }
+    return 0
+}
+
+foreach ([0, 1, 12] as $n) {
+    $t = "n=" . $n . " "
+    $m = make($n)
+    $sum = 0
+    $vals = []
+    $keys = []
+    for ($i = 0; $i < $n; $i++) { $sum += $i; push($vals, $i); push($keys, "k" . $i) }
+
+    // listeye özgü: açık hata
+    $fails += must_fail($t . "array::pop", "array::pop()", fn() => array::pop($m), $LIST_ONLY)
+    $fails += must_fail($t . "array::sort", "array::sort()", fn() => array::sort($m), $LIST_ONLY)
+    $fails += must_fail($t . "array::sort cb", "array::sort()", fn() => array::sort($m, fn($a, $b) => $a <=> $b), $LIST_ONLY)
+    $fails += must_fail($t . "array::slice", "array::slice()", fn() => array::slice($m, 0, 1), $LIST_ONLY)
+    $fails += must_fail($t . "array::unique", "array::unique()", fn() => array::unique($m), $LIST_ONLY)
+    $fails += must_fail($t . "array::reverse", "array::reverse()", fn() => array::reverse($m), $LIST_ONLY)
+    $fails += must_fail($t . "array::flatten", "array::flatten()", fn() => array::flatten($m), $LIST_ONLY)
+    $fails += must_fail($t . "array::chunk", "array::chunk()", fn() => array::chunk($m, 2), $LIST_ONLY)
+    $fails += must_fail($t . "array::zip first", "array::zip()", fn() => array::zip($m, [1, 2]), $LIST_ONLY)
+    $fails += must_fail($t . "array::zip second", "array::zip()", fn() => array::zip([1, 2], $m), $LIST_ONLY)
+    $fails += must_fail($t . "string::join", "string::join()", fn() => string::join($m, ","), $LIST_ONLY)
+    $fails += must_fail($t . "join", "join()", fn() => join($m, ","), $LIST_ONLY)
+    $fails += must_fail($t . "max", "max()", fn() => max($m), $LIST_ONLY)
+    $fails += must_fail($t . "min", "min()", fn() => min($m, 1), $LIST_ONLY)
+    $fails += must_fail($t . "math::max", "math::max()", fn() => math::max($m), $LIST_ONLY)
+    $fails += must_fail($t . "math::min", "math::min()", fn() => math::min($m), $LIST_ONLY)
+    $fails += must_fail($t . "array::push", "array::push()", fn() => array::push($m, 1), 'cannot add to a map; use $m[$key] = $value')
+    $p = $m
+    $err = ""
+    try { pop($p) } catch ($e) { $err = "" . $e }
+    $fails += check($t . "pop error", string::contains($err, "pop() " . $LIST_ONLY), true)
+    $fails += check($t . "pop leaves the map", $p, $m)
+    try { push($p, 1) } catch ($e) { $err = "" . $e }
+    $fails += check($t . "push error", string::contains($err, "push() cannot add to a map"), true)
+
+    // yalnız değerler
+    $fails += check($t . "contains value", array::contains($m, $n - 1), $n > 0)
+    $fails += check($t . "contains key", array::contains($m, "k0"), false)
+    $fails += check($t . "reduce", array::reduce($m, fn($c, $v) => $c + $v, 0), $sum)
+    $fails += check($t . "find", array::find($m, fn($v) => $v == $n - 1), $n > 0 ? $n - 1 : null)
+    $fails += check($t . "find key", array::find($m, fn($v) => $v == "k0"), null)
+    $fails += check($t . "any", array::any($m, fn($v) => $v == 0), $n > 0)
+    $fails += check($t . "any key", array::any($m, fn($v) => $v == "k0"), false)
+    $fails += check($t . "all", array::all($m, fn($v) => $v >= 0), true)
+
+    // map/filter: anahtarlar korunur, geri çağrı değeri alır
+    $mm = array::map($m, fn($v) => $v * 10)
+    $fails += check($t . "map keys", array::keys($mm), $keys)
+    $fails += check($t . "map last", $n > 0 ? $mm["k" . ($n - 1)] : null, $n > 0 ? ($n - 1) * 10 : null)
+    $fm = array::filter($m, fn($v) => $v % 2 == 0)
+    $even = []
+    for ($i = 0; $i < $n; $i += 2) { push($even, "k" . $i) }
+    $fails += check($t . "filter keys", array::keys($fm), $even)
+    $fails += check($t . "filter value", $n > 0 ? $fm["k0"] : null, $n > 0 ? 0 : null)
+    $fails += check($t . "filter count", count($fm), count($even))
+
+    // sözlüğe özgü ve dil içi
+    $fails += check($t . "count", count($m), $n)
+    $fails += check($t . "keys", array::keys($m), $keys)
+    $fails += check($t . "values", array::values($m), $vals)
+    $fails += check($t . "set", array::set($m, "z", 9)["z"], 9)
+    $fails += check($t . "json round trip", json::decode(json::encode($m)) == $m || $n == 0, true)
+    $fe = []
+    foreach ($m as $k => $v) { push($fe, $k) }
+    $fails += check($t . "foreach keys", $fe, $keys)
+    $fails += check($t . "print has no marker", leak($m), false)
+    // listeye çevirince listeye özgü işlemler çalışır (hata mesajındaki çözüm)
+    $fails += check($t . "values then sort", array::sort(array::values($m)), $vals)
+    $fails += check($t . "values then max", $n > 0 ? math::max(array::values($m)) : null, $n > 0 ? $n - 1 : null)
+}
+
+// listeler değişmedi
+$l = [3, 1, 2]
+$fails += check("list sort", array::sort($l), [1, 2, 3])
+$fails += check("list reverse", array::reverse($l), [2, 1, 3])
+$fails += check("list slice", array::slice($l, 0, 2), [3, 1])
+$fails += check("list contains", array::contains($l, 1), true)
+$fails += check("list join", string::join($l, ","), "3,1,2")
+$fails += check("list map", array::map($l, fn($v) => $v * 2), [6, 2, 4])
+$fails += check("list filter", array::filter($l, fn($v) => $v > 1), [3, 2])
+$fails += check("list reduce", array::reduce($l, fn($c, $v) => $c + $v, 0), 6)
+$fails += check("list chunk", array::chunk($l, 2), [[3, 1], [2]])
+$fails += check("list zip", array::zip($l, [4, 5, 6]), [[3, 4], [1, 5], [2, 6]])
+$fails += check("list unique", array::unique([1, 1, 2]), [1, 2])
+$fails += check("list flatten keeps nested map", array::flatten([[1], ["a" => 1]]), [1, ["a" => 1]])
+$fails += check("math::max list", math::max([1, 5, 2]), 5)
+$fails += check("max two", max(1, 5), 5)
+$x = [1, 2]
+$fails += check("list pop", pop($x), 2)
+// liste içindeki sözlük bir DEĞERDİR: contains onu eşitlikle bulur
+$fails += check("list of maps contains", array::contains([["a" => 1]], ["a" => 1]), true)
+
+if ($fails == 0) { print("map functions: all checks passed") }
+else { print("map functions: " . $fails . " FAIL") }

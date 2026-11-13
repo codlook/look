@@ -500,6 +500,18 @@ push($user, "admin")
 <span class="eg-good"># ✓ fix</span>
 $user["role"] = "admin"</code></pre>
     </div>
+    <div class="err" id="e112" data-cat="Types, arithmetic &amp; indexing" data-text="… takes a list, not a map; use array::values($m) first a function that works on positions (pop, array::sort, slice, chunk, zip, reverse, unique, flatten, join, max, min) was given a map. pass array::values($m) for the values as a list, or array::keys($m) for the keys.">
+      <div class="err-msg"><code>… takes a list, not a map; use array::values($m) first</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A function that works on positions (<code>pop</code>, <code>array::sort</code>, <code>slice</code>, <code>chunk</code>, <code>zip</code>, <code>reverse</code>, <code>unique</code>, <code>flatten</code>, <code>join</code>, <code>max</code>, <code>min</code>) was given a map.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> Pass <code>array::values($m)</code> for the values as a list, or <code>array::keys($m)</code> for the keys.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+$prices = ["tea" =&gt; 3, "coffee" =&gt; 5]
+$top = math::max($prices)
+<span class="eg-good"># ✓ fix</span>
+$top = math::max(array::values($prices))</code></pre>
+    </div>
     <div class="err" id="e19" data-cat="Types, arithmetic &amp; indexing" data-text="foreach requires an array foreach/for … as over a non-array (often null from a lookup that missed). ensure the value is an array; default to [] when a lookup can miss.">
       <div class="err-msg"><code>foreach requires an array</code></div>
       <div class="err-detail">

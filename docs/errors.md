@@ -106,6 +106,7 @@ LOOK is **strict**: reading a variable that was never assigned is an error, not 
 | `Index operator requires an array` | You used `x[i]` on something that isn't an array/object. | Make sure `x` is an array; check for `null` first. |
 | `Array index out of bounds` / `Array index …` | `arr[i]` with `i` past the end (or negative). | Check `count(arr)` before indexing; array indexes are 0-based. |
 | `push() cannot add to a map; use $m[$key] = $value` (or `array::push() …`) | `push()` / `array::push()` on a map. A map entry needs a key; `push` only appends to a list. | `$m[$key] = $value`. |
+| `… takes a list, not a map; use array::values($m) first` | A function that works on positions (`pop`, `array::sort`, `slice`, `chunk`, `zip`, `reverse`, `unique`, `flatten`, `join`, `max`, `min`) was given a map. | Pass `array::values($m)` for the values as a list, or `array::keys($m)` for the keys. |
 | `foreach requires an array` | `foreach`/`for … as` over a non-array (often `null` from a lookup that missed). | Ensure the value is an array; default to `[]` when a lookup can miss. |
 | `++/-- requires a variable` | `++`/`--` applied to something that isn't a variable (e.g. `++5`, `++foo()`). | Apply it to a variable: `$i++`. |
 

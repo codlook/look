@@ -80,11 +80,13 @@ foreach ([3, 40, 3000] as $n) {
     $p["after_push"] = 7
     $fails += check($t . " after push", $p["after_push"], 7)
     $fails += check($t . " after push count", count($p), $n + 2)
-    // pop sözlüğün son DEĞERİNİ alır (boy tek sayıya düşer): dizinin boy küçülmesini izlemesi sınanır
-    // (doğrulama kipi her aramayı doğrusal taramayla karşılaştırır)
-    pop($p)
-    $fails += check($t . " after pop", $p["k0"], 0)
+    // sözlükte pop da hatadır; sözlük değişmez
+    $err = ""
+    try { pop($p) } catch ($e) { $err = "" . $e }
+    $fails += check($t . " pop on map is an error", string::contains($err, "takes a list, not a map"), true)
+    $fails += check($t . " after pop", $p["after_push"], 7)
     $p["z"] = 9
+    $fails += check($t . " after pop write", $p["z"], 9)
     $fails += check($t . " after pop old", $p["k1"], 1)
 }
 

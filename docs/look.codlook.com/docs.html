@@ -3313,13 +3313,13 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
   <table>
     <tr><th>Function</th><th>Description</th></tr>
     <tr><td>array::sort($arr)</td><td>Sort (returns a new array)</td></tr>
-    <tr><td>array::filter($arr, $fn)</td><td>Filter</td></tr>
-    <tr><td>array::map($arr, $fn)</td><td>Transform</td></tr>
-    <tr><td>array::reduce($arr, $fn, $init)</td><td>Reduce</td></tr>
+    <tr><td>array::filter($arr, $fn)</td><td>Filter — on a map the callback gets each value and the kept entries keep their keys</td></tr>
+    <tr><td>array::map($arr, $fn)</td><td>Transform — on a map the callback gets each value and the result has the same keys</td></tr>
+    <tr><td>array::reduce($arr, $fn, $init)</td><td>Reduce (on a map: over its values)</td></tr>
     <tr><td>array::slice($arr, $start, $len)</td><td>Sub-array</td></tr>
     <tr><td>array::unique($arr)</td><td>List of distinct elements</td></tr>
     <tr><td>array::reverse($arr)</td><td>Reverse</td></tr>
-    <tr><td>array::contains($arr, $v)</td><td>Does the element exist? (bool)</td></tr>
+    <tr><td>array::contains($arr, $v)</td><td>Does the element exist? (bool) — on a map it looks at the values, never the keys</td></tr>
     <tr><td>array::keys($arr)</td><td>Get the keys (for an assoc array)</td></tr>
     <tr><td>array::values($arr)</td><td>Get the values (for an assoc array)</td></tr>
     <tr><td>array::find($arr, $fn)</td><td>Returns the first matching element, or <code>null</code> if none</td></tr>
@@ -3340,6 +3340,8 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
     <tr><td>pop($arr)</td><td>Global built-in — no <code>use array</code> needed</td></tr>
     <tr><td>count($arr)</td><td>Number of elements (alias: len)</td></tr>
   </table>
+
+  <p><strong>Lists and maps.</strong> Functions that work on positions — <code>push</code>, <code>pop</code>, <code>sort</code>, <code>slice</code>, <code>chunk</code>, <code>zip</code>, <code>reverse</code>, <code>unique</code>, <code>flatten</code>, <code>join</code>, <code>max</code>, <code>min</code> — take a list. Given a map they stop with <code>… takes a list, not a map; use array::values($m) first</code> (push: <code>use $m[$key] = $value</code>). <code>contains</code>, <code>find</code>, <code>any</code>, <code>all</code>, <code>reduce</code>, <code>map</code> and <code>filter</code> work on a map's values; <code>map</code> and <code>filter</code> keep the keys. <code>keys</code>, <code>values</code>, <code>set</code>, <code>count</code>, <code>foreach</code> and <code>json::encode</code> work on both.</p>
 
   <pre><code><span class="kw">use</span> <span class="ns">array</span>
 <span class="var">$numbers</span> = [<span class="num">5</span>, <span class="num">2</span>, <span class="num">8</span>, <span class="num">1</span>, <span class="num">9</span>, <span class="num">3</span>]

@@ -309,6 +309,17 @@ jobs:
           cd cpp
           bash tests/push_map_error_test.sh ./build/lk ./build/lk-fcgi 7933
 
+      # Every function that takes an array, given an empty, a one-key and an indexed (12-key) map:
+      # list functions stop with "takes a list, not a map"; contains/find/any/all/reduce look at
+      # values (contains used to search keys too: {"admin": 0} passed a role check); map/filter
+      # keep the keys; no result shows the map's internal marker.
+      - name: List functions on a map
+        run: |
+          cd cpp
+          out="$(./build/lk tests/map_functions_test.lk 2>&1)" || { echo "$out"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q 'map functions: all checks passed' || { echo "::error::map functions FAILED"; exit 1; }
+
       # The web server log names the line (and file) of an uncaught error: route, included
       # file, script without routes, setup.
       - name: Web errors are logged with their line

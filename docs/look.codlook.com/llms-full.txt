@@ -3374,13 +3374,13 @@ array::zip([1, 2], ["a", "b"])         # [[1, "a"], [2, "b"]]
 | Function | Description |
 | --- | --- |
 | array::sort($arr) | Sort (returns a new array) |
-| array::filter($arr, $fn) | Filter |
-| array::map($arr, $fn) | Transform |
-| array::reduce($arr, $fn, $init) | Reduce |
+| array::filter($arr, $fn) | Filter — on a map the callback gets each value and the kept entries keep their keys |
+| array::map($arr, $fn) | Transform — on a map the callback gets each value and the result has the same keys |
+| array::reduce($arr, $fn, $init) | Reduce (on a map: over its values) |
 | array::slice($arr, $start, $len) | Sub-array |
 | array::unique($arr) | List of distinct elements |
 | array::reverse($arr) | Reverse |
-| array::contains($arr, $v) | Does the element exist? (bool) |
+| array::contains($arr, $v) | Does the element exist? (bool) — on a map it looks at the values, never the keys |
 | array::keys($arr) | Get the keys (for an assoc array) |
 | array::values($arr) | Get the values (for an assoc array) |
 | array::find($arr, $fn) | Returns the first matching element, or `null` if none |
@@ -3399,6 +3399,8 @@ array::zip([1, 2], ["a", "b"])         # [[1, "a"], [2, "b"]]
 | push($arr, $v) | Global built-in — no `use array` needed |
 | pop($arr) | Global built-in — no `use array` needed |
 | count($arr) | Number of elements (alias: len) |
+
+**Lists and maps.** Functions that work on positions — `push`, `pop`, `sort`, `slice`, `chunk`, `zip`, `reverse`, `unique`, `flatten`, `join`, `max`, `min` — take a list. Given a map they stop with `… takes a list, not a map; use array::values($m) first` (push: `use $m[$key] = $value`). `contains`, `find`, `any`, `all`, `reduce`, `map` and `filter` work on a map's values; `map` and `filter` keep the keys. `keys`, `values`, `set`, `count`, `foreach` and `json::encode` work on both.
 
 ```lk
 use array
@@ -6030,6 +6032,7 @@ LOOK is **strict**: reading a variable that was never assigned is an error, not 
 | `Index operator requires an array: cannot read ["k"] of a string` | You used `x[i]` or `x.field` on a string, a number or a boolean. A key an array does not have reads as `null`, and so does reading from `null`; neither is this error. | The value has the wrong type: find where it was set. A value that may be missing can stay `null` — `$x["k"] ?? "default"` works. |
 | `Array index out of bounds` / `Array index …` | `arr[i]` with `i` past the end (or negative). | Check `count(arr)` before indexing; array indexes are 0-based. |
 | `push() cannot add to a map; use $m[$key] = $value` (or `array::push() …`) | `push()` / `array::push()` on a map. A map entry needs a key; `push` only appends to a list. | `$m[$key] = $value`. |
+| `… takes a list, not a map; use array::values($m) first` | A function that works on positions (`pop`, `array::sort`, `slice`, `chunk`, `zip`, `reverse`, `unique`, `flatten`, `join`, `max`, `min`) was given a map. | Pass `array::values($m)` for the values as a list, or `array::keys($m)` for the keys. |
 | `foreach requires an array` | `foreach`/`for … as` over a non-array (often `null` from a lookup that missed). | Ensure the value is an array; default to `[]` when a lookup can miss. |
 | `++/-- requires a variable` | `++`/`--` applied to something that is not a variable, an element or a field (e.g. `++5`, `++foo()`). | Apply it to a variable, an element or a field: `$i++`, `$a["n"]++`. |
 

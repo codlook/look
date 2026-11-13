@@ -166,6 +166,25 @@ was the call), with its line. In 1.0.x the value was added without a key: the ke
 after it no longer lined up, keys added later read as `null`, and printing the map showed its
 internal marker. Add to a map with `$m[$key] = $value`. `push` onto a list is unchanged.
 
+### List functions on a map are an error; `contains` looks at values only — security fix
+
+In 1.0.x the `array::` functions saw a map's internal layout, not its entries:
+`array::contains(["admin" => 0], "admin")` was `true` (it searched the keys too, so a check
+like `array::contains($body["roles"], "admin")` passed when a client sent
+`{"roles": {"admin": 0}}` instead of a list); `reverse` and `join` printed the internal
+marker; `slice`, `chunk` and `zip` cut it in the wrong places; `pop` took the last value and
+left its key, so the next value added was lost.
+
+- `pop`, `array::pop`, `array::sort`, `slice`, `chunk`, `zip`, `reverse`, `unique`, `flatten`,
+  `join` / `string::join`, `max` / `min` / `math::max` / `math::min` on a map stop with
+  `<function> takes a list, not a map; use array::values($m) first`.
+- `array::contains`, `find`, `any`, `all` and `reduce` look at the map's values.
+- `array::map` and `array::filter` give the callback each value and keep the keys:
+  `array::map(["a" => 1], fn($v) => $v * 10)` is `["a" => 10]`.
+
+Lists behave as before. When only the values matter and a value may be either, call
+`array::values($x)` first.
+
 ### A closure captures the value — silent; writing to it is an error at load
 
 A closure takes the value of what it captures at the moment it is created, and cannot

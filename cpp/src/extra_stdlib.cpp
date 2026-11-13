@@ -379,7 +379,16 @@ Module make_array_module(ModuleHost* interp) {
             throw std::runtime_error("array::filter() requires array");
         auto result = std::make_shared<ValueArray>();
         auto fn = args[1];
-        for (auto& elem : *args[0].as_array()) {
+        const auto& src = *args[0].as_array();
+        if (look::value_is_map(args[0])) {
+            // Sözlük: geri çağrı DEĞERİ alır; geçen çiftler anahtarlarıyla, sırayla kalır.
+            // ESKİ: düz düzen liste sanılıyordu — iç işaret ve anahtarlar da geri çağrıya gidiyordu.
+            result->push_back(Value::assoc_marker());
+            for (size_t i = 1; i + 1 < src.size(); i += 2)
+                if (interp->invoke(fn, {src[i + 1]}).is_truthy()) { result->push_back(src[i]); result->push_back(src[i + 1]); }
+            return Value(result);
+        }
+        for (auto& elem : src) {
             Value keep = interp->invoke(fn, {elem});
             if (keep.is_truthy()) result->push_back(elem);
         }
@@ -393,7 +402,19 @@ Module make_array_module(ModuleHost* interp) {
             throw std::runtime_error("array::map() requires array");
         auto result = std::make_shared<ValueArray>();
         auto fn = args[1];
-        for (auto& elem : *args[0].as_array())
+        const auto& src = *args[0].as_array();
+        if (look::value_is_map(args[0])) {
+            // Sözlük: aynı anahtarlar, yeni değerler (geri çağrı yalnız değeri alır). ESKİ: iç işaret
+            // ve anahtarlar da geri çağrıya gidiyordu (fn($v) => $v * 10 → '__assoc__' hatası).
+            result->reserve(src.size());
+            result->push_back(Value::assoc_marker());
+            for (size_t i = 1; i + 1 < src.size(); i += 2) {
+                result->push_back(src[i]);
+                result->push_back(interp->invoke(fn, {src[i + 1]}));
+            }
+            return Value(result);
+        }
+        for (auto& elem : src)
             result->push_back(interp->invoke(fn, {elem}));
         return Value(result);
     };
@@ -405,7 +426,12 @@ Module make_array_module(ModuleHost* interp) {
             throw std::runtime_error("array::reduce() requires array");
         auto fn  = args[1];
         Value acc = args[2];
-        for (auto& elem : *args[0].as_array())
+        const auto& src = *args[0].as_array();
+        if (look::value_is_map(args[0])) {   // sözlük: yalnız değerler, sırayla
+            for (size_t i = 1; i + 1 < src.size(); i += 2) acc = interp->invoke(fn, {acc, src[i + 1]});
+            return acc;
+        }
+        for (auto& elem : src)
             acc = interp->invoke(fn, {acc, elem});
         return acc;
     };
@@ -438,7 +464,15 @@ Module make_array_module(ModuleHost* interp) {
     // contains($arr, $val)
     m.functions["contains"] = [](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY) return Value(false);
-        for (auto& elem : *args[0].as_array())
+        const auto& src = *args[0].as_array();
+        if (look::value_is_map(args[0])) {
+            // Sözlük: yalnız DEĞERLER. GÜVENLİK — ESKİ: anahtarlarda da arıyordu:
+            // array::contains($body["roles"], "admin") liste beklerken {"admin": 0} ile geçiyordu.
+            for (size_t i = 1; i + 1 < src.size(); i += 2)
+                if (src[i + 1] == args[1]) return Value(true);
+            return Value(false);
+        }
+        for (auto& elem : src)
             if (elem == args[1]) return Value(true);
         return Value(false);
     };
@@ -665,11 +699,22 @@ Module make_array_module(ModuleHost* interp) {
     // LOOK 2: struct bir dizi değildir. array:: fonksiyonları onu eskiden "dizi değil" sayıp
     // sessizce boş sonuç veriyordu (array::keys($s) → []); artık hata. Yalnız İLK argümana
     // bakılır: struct bir listenin ELEMANI olarak verilebilir (array::contains($list, $s)).
+    // Listeye özgü fonksiyonlar sözlükte hatadır (look/value_path.h value_list_only); zip her
+    // argümanına bakar. Sözlükte anlamı olanlar kendi gövdelerinde yalnız DEĞERLERE bakar:
+    // contains/any/all/find/reduce; map/filter anahtarları korur; keys/values/set sözlüğe özgü.
+    static const std::unordered_set<std::string> list_only = {
+        "pop", "sort", "slice", "unique", "reverse", "flatten", "chunk", "zip" };
     for (auto& entry : m.functions) {
-        entry.second = [fname = entry.first, inner = std::move(entry.second)](std::vector<Value> args) -> Value {
+        const bool lo = list_only.count(entry.first) > 0;
+        const bool all_args = entry.first == "zip";
+        entry.second = [fname = entry.first, lo, all_args, inner = std::move(entry.second)](std::vector<Value> args) -> Value {
             if (!args.empty() && args[0].type() == Value::STRUCT)
                 throw std::runtime_error("array::" + fname + "() does not take a struct ('"
                     + (*args[0].as_struct())[0].str_ref() + "'): a struct is not an array, use its fields");
+            if (lo) {
+                const size_t n = all_args ? args.size() : (args.empty() ? 0 : 1);
+                for (size_t i = 0; i < n; ++i) look::value_list_only(args[i], "array::" + fname + "()");
+            }
             return inner(std::move(args));
         };
     }

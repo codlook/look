@@ -1,5 +1,6 @@
 #include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
 #include "look/stdlib.h"
+#include "look/value_path.h"   // value_list_only — listeye özgü işlem sözlükte hata (tek tanım)
 #include "look/html_escape.h"
 #include "look/charset.h"
 #include "look/parallel_runtime.h"
@@ -101,6 +102,7 @@ static Module make_math() {
         return num_round(args[0]);
     };
     m.functions["max"] = [](auto args) -> Value {
+        for (auto& x : args) look::value_list_only(x, "math::max()");   // sözlük: hata (value_path.h)
         if (args.size() == 1 && args[0].type() == Value::ARRAY) {
             auto& arr = *args[0].as_array();
             if (arr.empty()) return Value();
@@ -116,6 +118,7 @@ static Module make_math() {
         return best;
     };
     m.functions["min"] = [](auto args) -> Value {
+        for (auto& x : args) look::value_list_only(x, "math::min()");
         if (args.size() == 1 && args[0].type() == Value::ARRAY) {
             auto& arr = *args[0].as_array();
             if (arr.empty()) return Value();
@@ -507,6 +510,7 @@ static Module make_string() {
     m.functions["join"] = [](auto args) -> Value {
         check_args_min("string::join", args.size(), 1);
         if (args[0].type() != Value::ARRAY) return Value(args[0].to_string());
+        look::value_list_only(args[0], "string::join()");
         std::string sep = args.size() >= 2 ? args[1].to_string() : "";
         std::string result;
         auto& arr = *args[0].as_array();

@@ -119,6 +119,21 @@ inline void value_push_not_map(const Value& target, const char* fn) {
     }
 }
 
+inline bool value_is_map(const Value& v) {
+    if (v.type() != Value::ARRAY) return false;
+    const auto& a = *v.vec_ptr();
+    return !a.empty() && a[0].is_assoc_marker();
+}
+
+// Listeye özgü işlemler (pop, sort, slice, chunk, zip, reverse, unique, flatten, join, max/min)
+// sözlükte HATADIR. ESKİ: sözlüğün iç düz düzenini ["<işaret>", k0, v0, …] liste sanıyorlardı —
+// reverse/join iç işareti çıktıya sızdırıyor, slice/chunk/zip yanlış parça, pop veri kaybı
+// (anahtar kalıyor, sonra eklenen değer kayboluyordu). Tek kural, tek mesaj (fn = "array::sort()").
+inline void value_list_only(const Value& v, const std::string& fn) {
+    if (value_is_map(v))
+        throw std::runtime_error(fn + " takes a list, not a map; use array::values($m) first");
+}
+
 // push/pop'un tek tanımı. Hedef tek sahipli bir yerdir.
 inline Value value_push(Value& target, const Value& v, const char* fn = "push()") {
     if (target.type() != Value::ARRAY) throw std::runtime_error("push() requires array as first argument");
@@ -130,6 +145,7 @@ inline Value value_push(Value& target, const Value& v, const char* fn = "push()"
 }
 inline Value value_pop(Value& target) {
     if (target.type() != Value::ARRAY) throw std::runtime_error("pop() requires array");
+    value_list_only(target, "pop()");
     auto& vec = *target.vec_ptr();
     if (vec.empty()) return Value();
     Value last = std::move(vec.back());

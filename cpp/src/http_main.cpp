@@ -521,10 +521,12 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
         return look::num_abs(args[0]);   // look/num_ops.h (INT64_MIN tanımlı)
     };
     t[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
+        for (auto& x : args) look::value_list_only(x, "max()");   // sözlük: hata (value_path.h)
         if (args.size() < 2) return args.empty() ? look::Value() : args[0];
         return args[0] >= args[1] ? args[0] : args[1];
     };
     t[BI("min")] = [](std::vector<look::Value>& args) -> look::Value {
+        for (auto& x : args) look::value_list_only(x, "min()");
         if (args.size() < 2) return args.empty() ? look::Value() : args[0];
         return args[0] <= args[1] ? args[0] : args[1];
     };
@@ -545,6 +547,7 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
     t[BI("join")] = [](std::vector<look::Value>& args) -> look::Value {
         if (args.empty() || args[0].type() != look::Value::ARRAY)
             return look::Value(args.empty() ? std::string() : args[0].to_string());
+        look::value_list_only(args[0], "join()");
         std::string sep = args.size() >= 2 ? args[1].to_string() : "";
         std::string result;
         auto& arr = *args[0].as_array();
@@ -766,6 +769,7 @@ static void run_setup_http(const fs::path& script) {
             setup_builtins[4] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty() || args[0].type() != look::Value::ARRAY)
                     return look::Value();
+                look::value_list_only(args[0], "pop()");
                 args[0].detach();
                 auto& v = *args[0].as_array();
                 if (v.empty()) return look::Value();
@@ -1803,6 +1807,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         req_builtins[BI("pop")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty() || args[0].type() != look::Value::ARRAY)
                 throw std::runtime_error("pop() requires array");
+            look::value_list_only(args[0], "pop()");
             args[0].detach();
             auto a = args[0].as_array();
             if (a->empty()) return look::Value();
