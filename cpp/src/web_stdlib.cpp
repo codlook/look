@@ -758,6 +758,21 @@ static Module make_cookie_module(WebRef ctx) {
         return Value(ctx->cookies_in.count(args[0].to_string()) > 0);
     };
 
+    // csrf::exempt ile muaf geçen istekte çerez YOK (session:: ile aynı kural — make_session_module).
+    // ESKİ: session:: hata veriyordu ama cookie:: açıktı → muaf rota çerezle kimlik doğrulayabiliyordu
+    // (CSRF açığı); çerez YAZMAK da başka siteden tetiklenebilir (login CSRF: kurbanı saldırganın
+    // hesabına sokmak), SİLMEK kurbanı oturumdan atar. Muaf rota çereze hiç dokunmaz. Muafiyet yalnız
+    // güvenli olmayan yöntemlerde işler: GET'te ve muaf olmayan rotada çerez her zamanki gibi.
+    for (auto& [name, fn] : m.functions) {
+        auto inner = fn;
+        fn = [ctx, inner, name = name](std::vector<Value> args) -> Value {
+            if (ctx && !ctx->csrf_exempt_rule.empty())
+                throw std::runtime_error("cookie::" + name + "() in a request exempted from the CSRF check by csrf::exempt(\"" +
+                    ctx->csrf_exempt_rule + "\"): an exempt route cannot use cookies. If the route needs to know the user, "
+                    "do not exempt it (send the CSRF token); a webhook verifies its signature instead");
+            return inner(args);
+        };
+    }
     return m;
 }
 

@@ -49,6 +49,14 @@ route("POST", "/hook-with-session", fn() => response::text("x"))
 csrf::exempt("/hook-with-session")
 route("POST", "/hook-session", function() { session::start(); return response::text("s"); })
 csrf::exempt("/hook-session")
+# cookie:: in an exempt route is an error too (reading would authenticate by cookie; writing is a
+# login CSRF; deleting logs the victim out). GET on the same path and a protected route are unchanged.
+csrf::exempt("/hook-cookie/*")
+route("POST", "/hook-cookie/get", fn() => response::text("c:" . (cookie::get("pref") ?? "none")))
+route("POST", "/hook-cookie/set", function() { cookie::set("pref", "evil"); return response::text("set"); })
+route("POST", "/hook-cookie/delete", function() { cookie::delete("pref"); return response::text("del"); })
+route("GET", "/hook-cookie/get", fn() => response::text("c:" . (cookie::get("pref") ?? "none")))
+route("POST", "/cookie-ok", fn() => response::text("c:" . (cookie::get("pref") ?? "none")))
 route("GET", "/login", function() { session::start(); session::regenerate(); return response::text("in"); })
 route("GET", "/logout", function() { session::start(); session::destroy(); return response::text("out"); })
 route("GET", "/info", fn() => response::text(request::scheme() . "|" . request::host()))
@@ -163,7 +171,16 @@ for mode in http fcgi cgi; do
     is "$mode: csrf::exempt(\"/hook\"): no token needed"           "$(req $mode POST /hook "" "" application/x-www-form-urlencoded "$T/fb")" 200
     is "$mode: csrf::exempt(\"/token-api/*\"): prefix"             "$(req $mode POST /token-api/42 "" "" application/x-www-form-urlencoded "$T/fb")" 200
     is "$mode: an exempt route that uses session:: is an error"    "$(req $mode POST /hook-session "" "" application/x-www-form-urlencoded "$T/fb")" 500
+    for op in get set delete; do
+        is "$mode: an exempt route that uses cookie::$op is an error" "$(req $mode POST /hook-cookie/$op "pref=mine" "" application/x-www-form-urlencoded "$T/fb")" 500
+    done
+    is "$mode: GET on the exempt path still reads cookies"  "$(req $mode GET /hook-cookie/get "pref=mine" "" "" "")" 200
+    is "$mode: … and gets the value"                        "$(cat "$T/b")" c:mine
+    is "$mode: a protected POST still reads cookies"        "$(req $mode POST /cookie-ok "$C; pref=mine" "$K" application/x-www-form-urlencoded "$T/fb")" 200
+    is "$mode: … and gets the value"                        "$(cat "$T/b")" c:mine
 done
+grep -q 'cookie::get() in a request exempted from the CSRF check by csrf::exempt("/hook-cookie/\*"): an exempt route cannot use cookies' "$T/log" \
+    && ok "the log names the cookie call in an exempt route and says what to do" || bad "no explanation for cookie:: in an exempt route"
 grep -q 'POST /submit refused: no _csrf field or X-CSRF-Token header. Every application that uses cookies is protected' "$T/log" \
     && ok "the log says why and what to do" || bad "no explanation in the log"
 grep -q 'session::start() in a request exempted from the CSRF check by csrf::exempt("/hook-session")' "$T/log" \

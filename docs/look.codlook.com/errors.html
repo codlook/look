@@ -1083,6 +1083,21 @@ crypto::rs256_verify($data, $sig, $public_pem)</code></pre>
         <p><span class="err-lbl err-lbl-fix">Fix</span> System-level; ensure <code>/dev/urandom</code> (or the Windows CSPRNG) is available.</p>
       </div>
     </div>
+    <div class="err" id="e113" data-cat="Sessions, cookies &amp; auth" data-text="session::…() / cookie::…() in a request exempted from the csrf check by csrf::exempt(&quot;…&quot;) a route let through without a csrf token used the session or a cookie. if the route needs to know the user, do not exempt it (send the csrf token). a webhook verifies its signature instead of a cookie.">
+      <div class="err-msg"><code>session::…() / cookie::…() in a request exempted from the CSRF check by csrf::exempt("…")</code></div>
+      <div class="err-detail">
+        <p><span class="err-lbl">Cause</span> A route let through without a CSRF token (<code>csrf::exempt</code>) used the session or a cookie. Reading one there would authenticate a request sent from another site; setting or deleting one could log the visitor in or out.</p>
+        <p><span class="err-lbl err-lbl-fix">Fix</span> If the route needs to know the user, do not exempt it (send the CSRF token). A webhook verifies its signature instead of a cookie.</p>
+      </div>
+      <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>
+csrf::exempt("/hooks/pay")
+route("POST", "/hooks/pay", fn() =&gt; response::text(cookie::get("user")))
+<span class="eg-good"># ✓ fix: the webhook proves itself with a signature, not a cookie</span>
+route("POST", "/hooks/pay", function() {
+    if (!crypto::constant_compare(request::header("X-Signature"), crypto::hmac_sha256(request::body(), env("HOOK_SECRET")))) { return response::status(401) }
+    return response::text("ok")
+})</code></pre>
+    </div>
     <div class="err" id="e68" data-cat="Sessions, cookies &amp; auth" data-text="auth::hash() requires password no password passed. pass the plaintext password to hash.">
       <div class="err-msg"><code>auth::hash() requires password</code></div>
       <div class="err-detail">
