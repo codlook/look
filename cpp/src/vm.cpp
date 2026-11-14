@@ -18,6 +18,7 @@
 #include "look/int_overflow.h"  // i64_add_ovf — INT+INT aritmetik fast-path
 #include "look/route_params.h"   // LOOK 2: yol parametreleri ada göre
 #include "look/stack_guard.h"   // look_native_stack_low — geri çağırmada gerçek kalan yığın
+#include "look/mem_budget.h"    // mem_check — güvenli noktada bellek bütçesi
 #include <algorithm>
 
 #include <sstream>
@@ -38,6 +39,13 @@ const bool g_warn_undef = [] {
 } // namespace
 
 namespace look {
+
+// VM'in güvenli noktası (geriye atlama, çağrı): sıra bırakma (fiber.h preempt_point) + bellek bütçesi
+// (look/mem_budget.h). Hızlı yolda tek sayaç azaltma; bütçeyi aşan ayırma sayacı sıfırlar, yavaş yol
+// burada hemen denetler. preempt_point noexcept'tir — bellek hatası ancak buradan fırlatılabilir.
+static inline void vm_safe_point() {
+    if (--t_preempt_budget <= 0) { preempt_slow(); mem_check(); }
+}
 
 // parallel transitif deep-clone hook'u. value.h Closure'ı göremez (bytecode.h
 // onu sonra tanımlar) → deep_clone_impl BYTECODE_FN görünce burada kayıtlı cloner'ı çağırır.
@@ -931,7 +939,7 @@ call_dispatch:
             // ── Jump ──────────────────────────────────────────────────────────
             // Geriye atlama = döngünün yeni turu → sıra bırakma noktası (fiber.h preempt_point).
 #define LOOK_VM_JUMP_TO(target) do { const int _t = (target); \
-                if (_t < frame.ip) preempt_point(); frame.ip = _t; } while (0)
+                if (_t < frame.ip) vm_safe_point(); frame.ip = _t; } while (0)
             case OpCode::JUMP:
                 LOOK_VM_JUMP_TO(ins.bx());
                 break;
@@ -949,7 +957,7 @@ call_dispatch:
             // ── CALL ──────────────────────────────────────────────────────────
             case OpCode::CALL: {
                 // a=ret_reg, b=fn_reg, c=args_base; sonraki NOP(argc)
-                preempt_point();   // özyineleme döngüsüz de uzun sürebilir (fiber.h)
+                vm_safe_point();   // özyineleme döngüsüz de uzun sürebilir (fiber.h)
                 uint16_t argc = 0;
                 uint32_t cname = 0;   // callee adinin sabit indeksi + 1 (0 = ad yok)
                 if (frame.ip < (int)proto->code.size()
@@ -1373,6 +1381,9 @@ call_dispatch:
         catch (const RouteStopException&)   { throw; }
         catch (const RouteMatchedException&){ throw; }
         catch (const ExitException&)        { throw; }
+        // Bellek durdurması LOOK try/catch'ine verilmez (look/mem_budget.h): verilseydi
+        // `try { … } catch` döngüsü durdurmayı yutup büyümeyi sürdürürdü. Satırı günlük için kaydedilir.
+        catch (const MemoryLimitError&)     { note_error_line_for(base, proto); throw; }
         catch (const LookVmThrow& t) {
             // C++ sınırını geçmiş LOOK throw (iç run() → builtin → buraya).
             // DEĞER korunur (error::new gibi tipli değerler dahil) — e.what() değil.

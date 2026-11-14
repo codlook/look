@@ -1,3 +1,4 @@
+#include "look/mem_budget.h"   // bellek bütçesi (LOOK_MEMORY_LIMIT)
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/runtime_host.h"
@@ -157,6 +158,16 @@ int main(int argc, char* argv[]) {
     // → CGI modunda http:: + PostgreSQL TLS (verify VARSAYILAN) dağıtımlar arası kırıktı.
     // SSL_CERT_FILE'i process-global set eder; DB istemcilerinin default_verify_paths'i okur.
     look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
+    // Bellek bütçesi (look/mem_budget.h) — lk-fcgi ile aynı kural; her istek ayrı süreç olduğundan
+    // günlüğe yazılmaz, yalnız geçersiz LOOK_MEMORY_LIMIT bildirilir.
+    {
+        std::string why, describe;
+        if (!look::mem_budget_configure(why, describe)) {
+            std::cerr << "Error: LOOK could not start: " << why << "\n";
+            send_error(500, "Internal Server Error", "LOOK could not start; see the server log.");
+            return 1;
+        }
+    }
     // CGI'da süreç tek istek yaşar: süresi dolan oturum dosyalarının temizliği (zamanı geldiyse)
     // yanıt gönderildikten SONRA yapılır. Çıktı önce kapatılır: web sunucusu yanıtın bittiğini
     // çıktının kapanmasından anlar, ziyaretçi taramayı beklemez. Her dönüş yolunu kapsar.

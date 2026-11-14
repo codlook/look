@@ -11,6 +11,8 @@
 #include "look/builtins.h"
 #include "look/value_path.h"   // value_push_not_map — sözlüğe push hatası (tek tanım)
 #include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
+#include "look/mem_budget.h"   // bellek bütçesi: istek hesabı + %90'da 503
+#include <optional>
 #include "look/route_group.h"
 #include "look/host_port.h"   // LOOK_SMTP_PORT / LOOK_IMAP_PORT doğrulama
 #include "look/metrics.h"
@@ -1832,6 +1834,15 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         bool stopped_direct = false;   // zamanlayıcı geri çağırması doğrudan çağrıldı
         std::string err_place;         // hatanın satırı — günlük satırına eklenir
         try {
+            // Bellek (look/mem_budget.h): süreç sınırının %90'ı doluysa yeni istek 503 alır (yarıdakiler
+            // sürer); istek hesabı VM'den önce kurulur, sonra yıkılır. İç içe dağıtım (rota içinden
+            // jobs::run) dış isteğin hesabını kullanır.
+            if (!nested && !look::mem_admit())
+                throw look::ServiceUnavailable("request refused: the server is near its memory limit (" +
+                    look::mem_format_bytes(look::mem_process_bytes()) + " of " +
+                    look::mem_format_bytes(look::mem_process_limit()) + ", LOOK_MEMORY_LIMIT)");
+            std::optional<look::MemScope> mem_scope;
+            if (!nested) mem_scope.emplace();
             look::VM::SharedState sh;
             sh.routes         = &route_closures;
             sh.builtins       = &req_builtins;
@@ -1936,7 +1947,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // LOOK_VM_STRICT=1 eskiden burada yeniden fırlatıyordu: istisna worker'dan çıkıyor,
             // bağlantılar bırakılmıyor ve worker sayısı kadar hatadan sonra sunucu asılıyordu.
             const std::string what = vm_e.what();
-            if (dynamic_cast<const look::ServiceUnavailable*>(&vm_e)) {
+            const auto* mem_e = dynamic_cast<const look::MemoryLimitError*>(&vm_e);
+            if (dynamic_cast<const look::ServiceUnavailable*>(&vm_e) || (mem_e && mem_e->server_full)) {
+                // Sunucu dolu olduğu için durdurulan istek (look/mem_budget.h) de 503: kendi hatası değil.
                 // Bağımlı servis kesintisi (ör. oturum deposu Redis): uygulama hatası değil →
                 // 503 ve yarım kalmış sayfa yerine kısa bir açıklama. Hata yine günlüğe yazılır.
                 web.status_code = 503;
@@ -1945,6 +1958,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 output.clear();
                 web.response_body = "Service temporarily unavailable. Please try again shortly.";
                 web.headers_out["Content-Type"] = "text/plain; charset=utf-8";
+                web.headers_out["Retry-After"] = "1";   // geçici: istemci kısa süre sonra yeniden denesin
             } else if (web.status_code < 400) {
                 // Hata = 500. Eskiden yalnız 200 ise: rota hatadan önce response::status(201) / 302
                 // dediyse başarısız istek "201 Created" ile gidiyordu — istemci başarısız işlemi

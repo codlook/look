@@ -14,12 +14,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
       - name: Build (ASan+UBSan)
+        timeout-minutes: 20
         working-directory: cpp
         run: |
           cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                 -DLOOK_SANITIZE=address,undefined -DLOOK_STATIC_SSL=OFF
           cmake --build build-asan --target look look-fcgi -j"$(nproc)"
       - name: Regression (zorunlu — yesil olmali)
+        timeout-minutes: 20
         working-directory: cpp
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
@@ -28,6 +30,7 @@ jobs:
       # Geri çağırma zincirinin dibindeki hata: her iç içe run() hata satırını taşınmış bir çerçeve
       # referansından okuyordu (heap-use-after-free) — yalnız ASan görür.
       - name: Error deep inside nested callbacks (no use-after-free)
+        timeout-minutes: 20
         working-directory: cpp
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
@@ -35,6 +38,7 @@ jobs:
         run: ./build-asan/lk tests/callback_error_frame.lk
       # Sayısal sınırlar UBSan altında: abs(INT64_MIN), aralık dışı double→int64 eskiden UB'ydi.
       - name: Numeric edge cases under UBSan (no report)
+        timeout-minutes: 20
         working-directory: cpp
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
@@ -44,12 +48,14 @@ jobs:
       # AST kurulmadan parser'da TEMİZ hata verir (çökme DEĞİL) — saldırgan-kontrollü derin girdi
       # DoS'u kapalı. continue-on-error KALDIRILDI → enforced (guard tetiklenmezse/çökerse CI kırmızı).
       - name: B-01 eval-guard — ENFORCED (derin girdi temiz-hata, çökme değil)
+        timeout-minutes: 20
         working-directory: cpp
         env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1" }
         run: bash tests/eval_depth_guard.sh ./build-asan/lk
       # select() cannot take a descriptor above 1023: FD_SET writes outside the fd_set. Answers stay
       # correct, so only this build shows it. The test fails if a low descriptor was still free.
       - name: Sockets above 1023 — database connect and IMAP idle with 1100 connections held
+        timeout-minutes: 20
         working-directory: cpp
         run: bash tests/high_fd_sockets_test.sh ./build-asan/lk-fcgi
       # Database queries suspend the fiber mid-call (lock waits, long statements, a full write
@@ -57,6 +63,7 @@ jobs:
       # the test fails. Fiber switches are announced to ASan (fiber_posix.cpp), so the
       # use-after-return check stays on.
       - name: Waiting database queries and concurrent SQLite writers under ASan
+        timeout-minutes: 20
         working-directory: cpp
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:detect_stack_use_after_return=1
@@ -73,6 +80,7 @@ jobs:
       # repeated packets, broken lengths, extra result sets, errors between rows) through the real
       # buffered socket path — every query ends with rows or an error, no memory error, no hang.
       - name: Database clients against hostile replies (mutation fuzz, ASan)
+        timeout-minutes: 20
         working-directory: cpp
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
@@ -86,6 +94,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
       - name: Build (TSan)
+        timeout-minutes: 20
         working-directory: cpp
         run: |
           cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -97,6 +106,7 @@ jobs:
       # setarch -R: TSan maps its shadow at fixed addresses; with high ASLR entropy it can crash
       # at startup (measured locally).
       - name: Web server under TSan — fibers, WebSocket, timers
+        timeout-minutes: 20
         working-directory: cpp
         env:
           TSAN_OPTIONS: halt_on_error=0:report_thread_leaks=0:history_size=7:log_path=/tmp/tsan
@@ -113,11 +123,17 @@ jobs:
                    graceful_shutdown_test; do
             echo "== $t"; bash tests/$t.sh /tmp/w/lk-fcgi || fail=1
           done
-          if ls /tmp/tsan* >/dev/null 2>&1 && grep -q "WARNING: ThreadSanitizer" /tmp/tsan*; then
+          # memory limit: request accounts follow fibers across threads; the biggest request is
+          # chosen under a lock while others allocate
+          echo "== memory_budget_test"
+          bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7940 "$PWD/build-tsan/lk" || fail=1
+          LOOK_FIBER_DISPATCH=0 bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7950 "$PWD/build-tsan/lk" || fail=1
+          if ls /tmp/tsan*>/dev/null 2>&1 && grep -q "WARNING: ThreadSanitizer" /tmp/tsan*; then
             grep -h -A30 "WARNING: ThreadSanitizer" /tmp/tsan* | head -200; fail=1
           fi
           exit $fail
       - name: Yaris testleri — ENFORCED (yesil olmali; kirilirsa CI kirmizi)
+        timeout-minutes: 20
         working-directory: cpp
         env:
           TSAN_OPTIONS: halt_on_error=1:exitcode=66:history_size=7:report_thread_leaks=0
@@ -142,6 +158,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y clang
       - name: Fuzz — PG + MySQL + HTTP istek/wire parser (kisa, yesil olmali)
+        timeout-minutes: 20
         working-directory: cpp/tests/fuzz
         env:
           ASAN_OPTIONS: abort_on_error=1
@@ -166,6 +183,7 @@ jobs:
       # decoder of http:: (miniz tinfl — the client path of the Node2Shell / CVE-2026-111497 class)
       # and the WebSocket frame decoder. -timeout catches a decoder that loops on a malformed stream.
       - name: Fuzz — gzip response decoder (miniz) + WebSocket frame decoder
+        timeout-minutes: 20
         working-directory: cpp/tests/fuzz
         env:
           ASAN_OPTIONS: abort_on_error=1

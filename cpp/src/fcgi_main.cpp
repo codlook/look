@@ -23,6 +23,7 @@
 #include <ctime>
 #include "look/fcgi.h"
 #include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
+#include "look/mem_budget.h"   // bellek bütçesi (LOOK_MEMORY_LIMIT)
 #include "look/health_path.h"  // yerleşik sağlık yolu — tek kaynak (HTTP modu da kullanır)
 #include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
 #include "look/host_port.h"    // --port: Go flag modeli (yalnız rakam, 1-65535)
@@ -786,6 +787,18 @@ int main(int argc, char* argv[]) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "SESSION", "could not start: " + why);
             return 1;
         }
+    }
+
+    // Bellek bütçesi (look/mem_budget.h): süreç sınırı LOOK_MEMORY_LIMIT ya da otomatik (kabın %80'i,
+    // yoksa 1 GiB), istek bütçesi otomatik. Geçersiz değerle başlamaz (Go: GOMEMLIMIT hatası).
+    {
+        std::string why, describe;
+        if (!look::mem_budget_configure(why, describe)) {
+            std::cerr << "Error: LOOK could not start: " << why << "\n";
+            look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", "could not start: " + why);
+            return 1;
+        }
+        look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", describe);
     }
 
     // ── --mode http — event loop, Apache bypass ───────────────────────────────

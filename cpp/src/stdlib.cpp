@@ -1,3 +1,4 @@
+#include "look/mem_budget.h"   // mem_reserve — büyük ayırmadan önce bütçe
 #include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
 #include "look/stdlib.h"
 #include "look/value_path.h"   // value_list_only — listeye özgü işlem sözlükte hata (tek tanım)
@@ -446,6 +447,7 @@ static Module make_string() {
         static constexpr int64_t MAX_REPEAT = 10 * 1024 * 1024; // 10 MB
         if ((int64_t)n * (int64_t)s.size() > MAX_REPEAT)
             throw std::runtime_error("string::repeat: result exceeds the 10 MB limit");
+        look::mem_reserve((int64_t)n * (int64_t)s.size(), "string::repeat()");   // ayırmadan önce bütçe
         std::string result;
         result.reserve((size_t)n * s.size());
         for (int i = 0; i < n; i++) result += s;
@@ -511,6 +513,7 @@ static Module make_string() {
         int64_t     len = args[1].as_int();
         if (len < 0) len = 0;
         if (len > PAD_MAX) throw std::runtime_error("string::pad_left: target length exceeds the 10 MB limit");
+        look::mem_reserve(len, "string::pad_left()");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
         return Value(pad_to(s, len, pad, true));
@@ -522,6 +525,7 @@ static Module make_string() {
         int64_t     len = args[1].as_int();
         if (len < 0) len = 0;
         if (len > PAD_MAX) throw std::runtime_error("string::pad_right: target length exceeds the 10 MB limit");
+        look::mem_reserve(len, "string::pad_right()");
         std::string pad = args[2].to_string();
         if (pad.empty()) pad = " ";
         return Value(pad_to(s, len, pad, false));

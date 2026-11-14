@@ -1,4 +1,5 @@
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
+#include "look/mem_budget.h"    // MemoryLimitError — include içinden geçerken türü korunur
 #include "look/template.h"
 #include "look/struct_types.h"
 #include "look/stdlib.h"
@@ -796,6 +797,8 @@ static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx
                 }
                 try {
                     render_file_into(n.text, *use_ctx, out, env);
+                } catch (const MemoryLimitError&) {
+                    throw;   // bellek durdurması türünü korur (yakalanamaz, 500/503 ayrımı)
                 } catch (const std::exception& e) {
                     throw std::runtime_error(
                         std::string("Template include error (") + n.text + "): " + e.what());

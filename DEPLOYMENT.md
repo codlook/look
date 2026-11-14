@@ -168,6 +168,7 @@ LOOK's built-in limits exist for the **directly internet-facing** case (no proxy
 | `LOOK_BODY_MIN_RATE` | off | Min average bytes/sec for the body after a 5s grace — **opt-in** |
 | `LOOK_HTTP_MAX_CONNS_IP` | off | Max concurrent connections per IP → 429 — **opt-in** |
 | `LOOK_MAX_BODY_SIZE` | `10485760` (10 MB) | Max request body → 413 |
+| `LOOK_MEMORY_LIMIT` | 80% of the container limit, else 1 GiB | Process memory; one request ≤ half of it, at most 256 MiB → 500; at 90% new requests → 503; at the limit the biggest request → 503 |
 | `LOOK_RATE_LIMIT_RPM` / `_GLOBAL_RPM` / `_BURST` | off | Per-IP + global request-rate token bucket |
 
 `LOOK_HTTP_MAX_CONNS_IP` and `LOOK_BODY_MIN_RATE` are **opt-in** on purpose: they key on

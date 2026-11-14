@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
+        timeout-minutes: 10
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev
@@ -30,6 +31,7 @@ jobs:
       # (ör. eksik <cstdint>) burada yakalar; MSVC'nin transitive include'ları
       # gizleyebildiği sorunlar CI'da ortaya çıkar.
       - name: Build lk + lk-fcgi + lk-cgi (Release)
+        timeout-minutes: 10
         run: |
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -41,6 +43,7 @@ jobs:
       # Regresyon suite — assertion dosyası "OK/FAIL" basar.
       # Herhangi bir FAIL satırı işi kırar.
       - name: Regression suite
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/regression_all.lk)"
@@ -55,6 +58,7 @@ jobs:
       # previously-unlocked stdlib surface (array boundary, regex ReDoS, template
       # inertness, date parse, timestamp overflow). Any FAIL breaks CI.
       - name: stdlib adversarial guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(env TZ=UTC ./build/lk tests/stdlib_adversarial.lk)"
@@ -69,6 +73,7 @@ jobs:
       # constant index to 8 bits, so in any function with 256+ constants `$obj.field`
       # read/wrote the WRONG key (silent wrong data). Any FAIL breaks CI.
       - name: VM wide-constant field access guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/vm_wide_const_test.lk)"
@@ -83,6 +88,7 @@ jobs:
       # non-builtin module functions (they used to push the CLI onto the tree-walk
       # engine and hide the VM bug). Any FAIL breaks CI.
       - name: Struct VM parity guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/struct_vm_parity_test.lk)"
@@ -96,6 +102,7 @@ jobs:
       # (include/look/struct_types.h): type checked at construction and on
       # assignment, zero values, fixed shape, per-instance default arrays.
       - name: Typed struct guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/struct_typed_test.lk || true)"
@@ -107,6 +114,7 @@ jobs:
 
       # A job handler started from inside a request has its own context (1.0.13).
       - name: Job handler does not share the request
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/job_handler_context_test.sh ./build/lk-fcgi
@@ -114,6 +122,7 @@ jobs:
       # a job handler returns true or false; any other result is logged and the job is not
       # run again (a forgotten return ran it three times); a retry waits.
       - name: Job handler result and retry wait
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/job_handler_result_test.sh ./build/lk-fcgi
@@ -122,6 +131,7 @@ jobs:
       # waits and ends in failed, delayed jobs, recovery of a claimed job, done jobs not taken
       # again, and a cold start with several processes creating the schema at once.
       - name: Job queue (multi-process claim, retries, delays, recovery)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/jobs_test.sh ./build/lk
@@ -129,6 +139,7 @@ jobs:
       # a timer armed and a job handler registered at the top level run on the VM once
       # its setup has succeeded (they stayed on the tree-walk engine while the routes ran on the VM).
       - name: Top-level timers and job handlers on the VM
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/toplevel_callbacks_vm_test.sh ./build/lk-fcgi
@@ -136,6 +147,7 @@ jobs:
       # A top-level variable computed with a plain built-in (max, strtoupper, strlen, ...) was null
       # in routes on the default engine: the VM's setup pass did not connect those functions.
       - name: Built-ins at the top level
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/toplevel_builtins_test.sh ./build/lk-fcgi
@@ -143,6 +155,7 @@ jobs:
       # Generated from the binary's own built-in table: every pure built-in is called at the top
       # level and inside a route; the two results must be equal.
       - name: Built-ins at the top level (generated from the built-in table)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/builtin_toplevel_auto_test.sh ./build/lk ./build/lk-fcgi
@@ -150,6 +163,7 @@ jobs:
       # math::random used the C generator, re-seeded with the current second for every new copy of the standard
       # library: the first requests of each worker got the same number.
       - name: math::random differs between requests
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/random_per_request_test.sh ./build/lk-fcgi
@@ -157,6 +171,7 @@ jobs:
       # a route that calls a module function that does not exist stops the application at
       # startup (it was handed to the tree-walk engine and failed on the first request to reach it).
       - name: A call to a function that does not exist stops startup
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/undefined_function_startup_test.sh ./build/lk ./build/lk-fcgi
@@ -164,6 +179,7 @@ jobs:
       # Every module function is provided by the VM. A program that reaches one the VM does not
       # provide does not start; `lk --vm-report` lists such functions and fails when there is one.
       - name: VM provides every module function
+        timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk --vm-report
@@ -173,6 +189,7 @@ jobs:
       # handlers and timers run on the VM and their output reaches stdout, ws::/sse:: say they
       # belong to a web application, and a line starting with ++ or -- is a statement.
       - name: The command line runs only on the VM
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/cli_vm_only_test.sh ./build/lk
@@ -180,6 +197,7 @@ jobs:
       # On the command line the output of a job handler, a timer callback and a parallel() task
       # reaches stdout; a handler a web route runs does not write into that route's response.
       - name: Callback output reaches stdout on the command line
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/callback_output_cli_test.sh ./build/lk ./build/lk-fcgi
@@ -187,6 +205,7 @@ jobs:
       # A command-line script ends when its last line has run (Go/Rust): timers left are named in a
       # WARN line, timer::wait([ms]) waits for timer::after callbacks, and a web request may not wait.
       - name: A script ends when its last line has run
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/timer_script_end_test.sh ./build/lk ./build/lk-fcgi
@@ -194,12 +213,14 @@ jobs:
       # lk test does what the documentation says: counting, every assert, before_each/after_each,
       # use assert, isolation between tests, setup and parse errors.
       - name: lk test does what the documentation says
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/lk_test_runner_test.sh ./build/lk
 
       # lk repl runs on the VM: state between lines, shown values, errors, :vars.
       - name: lk repl
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/repl_test.sh ./build/lk
@@ -207,12 +228,14 @@ jobs:
       # lk-cgi (the Apache/Plesk CGI path) serves a LOOK application: routes, parameters, JSON,
       # status and headers, 404, a script without routes, errors.
       - name: lk-cgi serves a LOOK application
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/cgi_test.sh ./build/lk-cgi
 
       # httpoxy: under CGI a Proxy: request header becomes HTTP_PROXY; http:: must not use it.
       - name: No httpoxy under lk-cgi
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/httpoxy_test.sh ./build/lk-cgi
@@ -220,24 +243,28 @@ jobs:
       # A host function value (lk test helpers) travels like any function value: parallel, timer,
       # cache, json, type::of, == — no crash, errors named.
       - name: Host function values at the boundaries
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/native_fn_boundary_test.sh ./build/lk
 
       # type::of says "function" for a function on the VM (command line and web).
       - name: type::of says function for a function
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/type_of_function_test.sh ./build/lk ./build/lk-fcgi
 
       # type::of and type::is_* agree for a value of every kind (one fixed, its neighbour forgotten → red).
       - name: type::of and type::is_* agree
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/type_of_is_consistency_test.sh ./build/lk ./build/lk-fcgi
 
       # An element assignment used as an expression yields the element (1.0.12).
       - name: Element assignment as an expression
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/assign_expr_value_test.lk || true)"
@@ -247,6 +274,7 @@ jobs:
       # ++ and -- on an element or a field, with the meaning they have on a variable; an
       # element assignment used as an expression yields the element (the VM yielded the container).
       - name: Increment and decrement on elements
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/element_step_test.lk || true)"
@@ -256,6 +284,7 @@ jobs:
       # indexing a value that is not an array, a map or a struct is an error, always
       # with the same message; a missing key still gives null.
       - name: Indexing a non-array
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/index_non_array_test.lk || true)"
@@ -265,6 +294,7 @@ jobs:
       # value semantics: assigning, passing or returning an array, map or struct gives
       # the receiver its own value (copy on write); push/pop change their variable only.
       - name: Value semantics guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/value_semantics_test.lk || true)"
@@ -280,6 +310,7 @@ jobs:
       # and aborts on a difference — a new code path that changes a map without keeping its
       # index right fails here.
       - name: Map key index guard
+        timeout-minutes: 10
         run: |
           cd cpp
           cmake -S . -B build-assoc-verify -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-DLOOK_ASSOC_INDEX_VERIFY > /dev/null
@@ -305,6 +336,7 @@ jobs:
       # a key: later keys read as null). Every push path: variable, nested, function, expression,
       # array::push in place and copying, web request and web setup.
       - name: push onto a map is an error
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/push_map_error_test.sh ./build/lk ./build/lk-fcgi 7933
@@ -314,6 +346,7 @@ jobs:
       # values (contains used to search keys too: {"admin": 0} passed a role check); map/filter
       # keep the keys; no result shows the map's internal marker.
       - name: List functions on a map
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/map_functions_test.lk 2>&1)" || { echo "$out"; exit 1; }
@@ -324,14 +357,27 @@ jobs:
       # with "Connection: close", new connections are refused, an idle keep-alive connection does
       # not hold the exit, exit code 0; a second signal stops at once. HTTP and FastCGI.
       - name: Graceful shutdown on SIGTERM
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/graceful_shutdown_test.sh ./build/lk-fcgi 7960
           LOOK_FIBER_DISPATCH=1 bash tests/graceful_shutdown_test.sh ./build/lk-fcgi 7965
 
+      # Memory limit (LOOK_MEMORY_LIMIT, automatic by default): one request cannot kill the server.
+      # A request over its budget gets 500; at the process limit the biggest request gets 503; the
+      # stop cannot be caught; joined strings take their own size; the command line has no default
+      # limit. Fiber (the default) and the worker pool.
+      - name: One request cannot use up the server's memory
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/memory_budget_test.sh ./build/lk-fcgi 7940
+          LOOK_FIBER_DISPATCH=0 bash tests/memory_budget_test.sh ./build/lk-fcgi 7945
+
       # The web server log names the line (and file) of an uncaught error: route, included
       # file, script without routes, setup.
       - name: Web errors are logged with their line
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/web_error_line_test.sh ./build/lk-fcgi 7934
@@ -340,6 +386,7 @@ jobs:
       # definition of the same name is an error at load (same file: parse error; another
       # file: when it is loaded). This also removes the only way to reach a stale field cache.
       - name: Struct is declared once, at the top level
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/struct_declare_once_test.sh ./build/lk
@@ -347,6 +394,7 @@ jobs:
       # a block scopes the variables first assigned in it, at the top level too
       # (the VM used to make them globals there while the tree-walk engine did not).
       - name: Block scope
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/block_scope_test.lk || true)"
@@ -359,6 +407,7 @@ jobs:
       # http::stream passes state explicitly (callback($chunk, $state) returns the
       # next state), since a closure can no longer keep it in a captured variable.
       - name: http::stream state
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/http_stream_state_test.sh ./build/lk
@@ -366,12 +415,14 @@ jobs:
       # Block scope on the web path: a variable first assigned in a top-level block is not a
       # global, so no route sees it (the command-line case is the step above).
       - name: Block scope on the web path
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/block_scope_web_test.sh build/lk-fcgi
 
       # transition: calls with the wrong number of arguments, listed by `lk --check`.
       - name: Argument count check (lk --check warnings)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/arg_count_check_test.sh ./build/lk
@@ -379,6 +430,7 @@ jobs:
       # Information only: which published modules, packages and example applications this
       # build would stop from loading. Never fails the job.
       - name: Ecosystem scan (modules, packages, examples — information only)
+        timeout-minutes: 10
         continue-on-error: true
         run: |
           cd cpp
@@ -387,6 +439,7 @@ jobs:
       # a call must give a function the arguments it declares (the
       # VM used to accept too many and too few).
       - name: Argument count
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/arg_count_test.lk || true)"
@@ -400,6 +453,7 @@ jobs:
       # captured variable is a parse error; a variable that changes after it
       # was captured is a warning from `lk --check`.
       - name: Closure capture rule (refused at load + lk --check warnings)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/capture_check_test.sh ./build/lk
@@ -408,6 +462,7 @@ jobs:
       # `use "file.lk"` cannot change a top-level variable in place (every in-place write the VM has:
       # element/field, compound, ++/--, push, pop) — error at load, web server does not start.
       - name: A function cannot change a variable outside it (refused at load)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/outer_write_test.sh ./build/lk ./build/lk-fcgi
@@ -417,6 +472,7 @@ jobs:
       # UnboundLocalError, in any order, across branches and loop turns. Parameters, loop variables
       # and locals updated after they were assigned load as before.
       - name: A function cannot read an outer variable and assign the same name (refused at load)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/outer_read_assign_test.sh ./build/lk ./build/lk-fcgi
@@ -424,12 +480,14 @@ jobs:
       # one spelling for a struct field ("name type [= default]"); the two v1
       # spellings are parse errors that say what to write instead.
       - name: Struct field single form
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/struct_single_form_test.sh ./build/lk
 
       # A misspelled field type stops the web app at start-up, not when a rare route runs.
       - name: Struct field types checked at start-up
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/struct_type_startup_test.sh ./build/lk-fcgi
@@ -437,6 +495,7 @@ jobs:
       # A struct default array/map was shared by every instance, so one request's data
       # appeared in the next user's new instance. Two requests.
       - name: Struct default isolation (two requests)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/struct_default_isolation_test.sh ./build/lk-fcgi
@@ -444,6 +503,7 @@ jobs:
       # Arrays created at setup (const, top-level, captured by a route or by a stored
       # closure) were shared by every request: one request's in-place write reached the next.
       - name: Request isolation (const, global, captured arrays)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/request_isolation_test.sh ./build/lk-fcgi
@@ -451,6 +511,7 @@ jobs:
       # Handlers that outlive a request (timer, WebSocket message, SSE) ran on a
       # second-level interpreter copy that wrote into the real setup values.
       - name: Realtime isolation (timer, SSE, WebSocket)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/realtime_isolation_test.sh ./build/lk-fcgi
@@ -459,6 +520,7 @@ jobs:
       # the server run the same request again on the other engine: duplicate writes), and an
       # error no longer takes a worker down.
       - name: A failing handler runs once
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/no_double_execution_test.sh ./build/lk-fcgi
@@ -466,6 +528,7 @@ jobs:
       # A timer fires when it is due. One armed while the timer thread was already asleep
       # used to wait for the old deadline (up to 30 seconds).
       - name: Timers fire on time
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/timer_late_test.sh ./build/lk-fcgi
@@ -473,6 +536,7 @@ jobs:
       # a timer armed in a route runs on the VM (its callback like a new request, with
       # the declared globals); the route is no longer placed on the tree-walk engine.
       - name: Timers on the VM
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/timer_vm_test.sh ./build/lk-fcgi
@@ -480,6 +544,7 @@ jobs:
       # A script ends at once. The timer thread's stop used to lose its wake-up now and then and
       # the exit waited up to 30 seconds (about 1 run in 20, also for scripts without timers).
       - name: Scripts end at once
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/timer_exit_test.sh ./build/lk
@@ -487,6 +552,7 @@ jobs:
       # A script starts no thread it does not use. The regex guard's pool of 8 threads used to
       # start in every process (every lk run, every lk-cgi request); now the first regex starts it.
       - name: No idle threads at startup
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/startup_threads_test.sh ./build/lk
@@ -494,6 +560,7 @@ jobs:
       # A run-time error names the file it happened in. An error in an included file used to
       # be reported with the main script's name and the included file's line number.
       - name: Errors name the right file
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/error_location_test.sh ./build/lk
@@ -501,6 +568,7 @@ jobs:
       # an application with a job handler and a draining timer at the top level runs
       # on the VM (each used to send the whole application to the tree-walk engine).
       - name: Job queue on the VM
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/jobs_vm_test.sh ./build/lk-fcgi
@@ -508,6 +576,7 @@ jobs:
       # A job is handled exactly once when several consumers drain the queue at once (the
       # claim of the next job is one atomic statement; this once was a SELECT then an UPDATE).
       - name: Concurrent queue consumers
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/jobs_concurrent_test.sh ./build/lk-fcgi
@@ -515,6 +584,7 @@ jobs:
       # a route handler takes path parameters by name; a handler parameter the route
       # does not have stops the application at startup.
       - name: Route parameters by name
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/route_params_test.sh ./build/lk-fcgi
@@ -522,6 +592,7 @@ jobs:
       # ordinary routes that use ws:: / sse:: run on the VM; a WebSocket message handler
       # runs once per message and its errors are logged.
       - name: WebSocket and SSE functions on the VM
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_sse_vm_test.sh ./build/lk-fcgi
@@ -529,6 +600,7 @@ jobs:
       # string::regex_* take up to 64 KB of input. std::regex recurses once per character and
       # the regex threads had an 8 MB stack: a ~20 KB input killed the whole process (SIGSEGV).
       - name: Long regex inputs do not kill the process
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/regex_long_input_test.sh ./build/lk
@@ -536,6 +608,7 @@ jobs:
       # ...and under a virtual memory limit (shared hosting): 1.0.34 started all 8 regex threads
       # of 256 MB at once and hung under ulimit -v; they now start one at a time as needed.
       - name: Regex under a virtual memory limit
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/regex_memory_limit_test.sh ./build/lk ./build/lk-fcgi
@@ -543,6 +616,7 @@ jobs:
       # A start that cannot get its threads or stacks (a memory limit) says why and exits
       # non-zero: lk-fcgi hung (alive, port never opened), died in std::terminate, or exited 0.
       - name: Startup without enough resources fails with the reason
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/startup_resource_failure_test.sh ./build/lk-fcgi
@@ -551,6 +625,7 @@ jobs:
       # startup must get an answer on its first accepted connection, and a start that fails for
       # lack of memory must never accept one (http fiber, http per-connection, FastCGI).
       - name: The port opens only when the server can serve
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/listen_when_ready_test.sh ./build/lk-fcgi
@@ -559,6 +634,7 @@ jobs:
       # "__assoc__" — a JSON body ["__assoc__","role","admin"] used to arrive as role => admin.
       # JSON, form, query and literals stay lists; maps survive threads, JSON and `.=`.
       - name: A list never passes for a map (JSON, form, query input)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/assoc_marker_test.sh ./build/lk ./build/lk-fcgi
@@ -566,6 +642,7 @@ jobs:
       # An error inside a callback (array::map / filter / sort calling a LOOK function) is reported
       # at its own line and file, not at the builtin's call site — as the 1.0.x tree-walk engine did.
       - name: An error inside a callback is reported at its own line
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/callback_error_line_test.sh ./build/lk
@@ -573,6 +650,7 @@ jobs:
       # An uncaught error prints the chain of calls that led to it, innermost first, as the 1.0.x
       # tree-walk engine did; an fn(…) => … closure carries its line.
       - name: An uncaught error prints its call chain
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/stack_trace_test.sh ./build/lk
@@ -581,6 +659,7 @@ jobs:
       # (channel snapshot, callback capture, list + string key, …), plus older repros that were
       # not run anywhere.
       - name: Fixes carried over from the tree-walk interpreter
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/carried_fixes_test.lk 2>&1)"; echo "$out"
@@ -593,6 +672,7 @@ jobs:
       # print() writes its whole line at once: printing a local variable leaves it unchanged (it
       # used to become null), and lines printed by parallel() tasks never run into each other.
       - name: print writes its whole line at once
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/print_line_test.sh ./build/lk
@@ -602,6 +682,7 @@ jobs:
       # When a script ends, a parallel() task is named only if it still had work that leaves a
       # trace — not when all it had left was to return after its last send(); never waited for.
       - name: Only tasks with work left are named when a script ends
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/parallel_exit_warning_test.sh ./build/lk 20
@@ -615,6 +696,7 @@ jobs:
       # error::new() gives a map (a list is never an error value); text inside a printed list,
       # map or struct is quoted, so 3 and "3" never look the same.
       - name: Error values are maps; printed values keep their types
+        timeout-minutes: 10
         run: |
           cd cpp
           for t in error_value_test print_nested_test; do
@@ -626,6 +708,7 @@ jobs:
       # the reason, never crash (a 1,000-term `1 + 1 + …` was a SIGSEGV on a 512 KB stack). Binary
       # chains are walked with a loop everywhere; other nesting is checked against the real stack.
       - name: Deep expressions compile on a small stack or say why, never crash
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/deep_expression_compile_test.sh ./build/lk
@@ -633,6 +716,7 @@ jobs:
       # `use "file.lk"` cycles stop the program at load with the chain (Go: import cycle); the main
       # script ran twice for a.lk -> b.lk -> a.lk. A file used by two others still compiles once.
       - name: use cycles are refused at load; a diamond compiles once
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/use_cycle_test.sh ./build/lk ./build/lk-fcgi
@@ -640,6 +724,7 @@ jobs:
       # http:: sent the request with one send(): a slow server let the send timeout expire and
       # the rest of the body was never sent, with no error (8 MB POST: 2.6 MB arrived).
       - name: "http:: sends the whole request body to a slow server"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/http_partial_send_test.sh ./build/lk
@@ -651,6 +736,7 @@ jobs:
       # put there was accepted as a session (user=admin). Now: a 0700 directory owned by the
       # process's user, 0600 files, links not followed, foreign files ignored.
       - name: Session files are private and a foreign file is never a session
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/session_file_security_test.sh ./build/lk-fcgi
@@ -659,6 +745,7 @@ jobs:
       # file for ever: requests without a cookie could fill the disk), and LOOK_SESSION_TTL was not
       # applied to files. And the default directory is one no other user can create first.
       - name: Expired sessions are removed; the default session directory cannot be taken
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/session_gc_test.sh ./build/lk-fcgi
@@ -672,6 +759,7 @@ jobs:
       # csrf:: (signed double-submit cookie, LOOK_SECRET) and request::scheme/host (trusted-proxy
       # rule); also CGI over HTTPS, which sent the session cookie without Secure.
       - name: "csrf:: and request::scheme/host"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/csrf_core_test.sh ./build/lk-fcgi ./build/lk-cgi
@@ -679,6 +767,7 @@ jobs:
           bash tests/csrf_gate_test.sh ./build/lk-fcgi 7921
       # multipart parameters read by name in any order; uploads wait in a 0600 temp file
       - name: "multipart uploads — parameter order, private temp file"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/multipart_upload_test.sh ./build/lk-fcgi
@@ -691,6 +780,7 @@ jobs:
       # Only session ids the server issued are used (session fixation); cookie::set cannot be made
       # to write extra attributes through its path or SameSite value.
       - name: Session fixation and cookie attribute injection
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/session_fixation_test.sh ./build/lk-fcgi
@@ -704,6 +794,7 @@ jobs:
       # environment from all threads: getenv crashed, memory grew for good, and one visitor's header
       # showed in the next request's env().
       - name: FastCGI request parameters stay out of the process environment
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/fcgi_request_env_test.sh ./build/lk-fcgi
@@ -715,6 +806,7 @@ jobs:
       # A response is sent whole or its connection closed; clients that never read cannot freeze a
       # worker thread (fibers).
       - name: HTTP responses sent whole; non-reading clients do not freeze workers
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/http_send_guard_test.sh ./build/lk-fcgi
@@ -722,6 +814,7 @@ jobs:
 
       # A hot reload while a request waited (http::get) freed that request's bytecode: SIGSEGV.
       - name: Hot reload never frees a running request's program (fibers and pool)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/hot_reload_inflight_test.sh ./build/lk-fcgi
@@ -733,6 +826,7 @@ jobs:
       # Paket modülü (~/.look/modules) sıcak yeniden yüklemeden sonra da çalışır: derleyici yüklenen
       # modülleri süreç boyunca hatırlıyordu, yeniden yüklemede `use paket` boş geçiyor, istekler 500.
       - name: Package modules survive a hot reload
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/package_hot_reload_test.sh build/lk-fcgi
@@ -740,12 +834,14 @@ jobs:
       # Varsayılan işçi = kullanılabilir CPU (affinity + cgroup) fiber dağıtımında; engelleyen modelde
       # CPU × 4. Havuz işçiden bağımsız ve tembel: db::connect bir bağlantı açar, gerisi gerektikçe.
       - name: Workers follow usable CPUs; the database pool opens connections as needed
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/worker_pool_defaults_test.sh build/lk-fcgi
 
       # "Hi {$u["name"]}": iç çift tırnak string'i bitirir — hata yeri ve doğru yazımı ({$u['name']}) söyler.
       - name: A quote inside {…} gets an error that shows the right spelling
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/interpolation_quote_message_test.sh build/lk
@@ -753,11 +849,13 @@ jobs:
       # --mode http listened on every interface with no way to narrow it: behind a reverse proxy
       # (Plesk) the site was also open on its own port, and the proxy could be bypassed.
       - name: --bind keeps --mode http on the address given
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/bind_test.sh ./build/lk-fcgi
 
       - name: Redis sessions never reach another user's request
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/redis_session_crossing_test.sh ./build/lk-fcgi
@@ -765,6 +863,7 @@ jobs:
       # The close callback of a WebSocket runs when the client goes away, also without a
       # close frame (dropped connection); not when the server closes the connection itself.
       - name: WebSocket close callback (dropped client)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_close_callback_test.sh ./build/lk-fcgi
@@ -772,6 +871,7 @@ jobs:
       # A WebSocket callback sees its own handshake request (v1 had no web context there and
       # request::get killed the process; this version ran the callback with an empty request).
       - name: WebSocket callbacks read their handshake request
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_callback_context_test.sh ./build/lk-fcgi
@@ -779,6 +879,7 @@ jobs:
       # A WebSocket / SSE route sees the request's headers and cookies (a session can authenticate
       # it); a browser handshake from another site is still refused.
       - name: WebSocket and SSE routes see headers and cookies; cross-site WebSockets refused
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_cookie_origin_test.sh ./build/lk-fcgi
@@ -786,6 +887,7 @@ jobs:
       # Capacity regressions were found only by a hand-run 700,000-connection benchmark: memory
       # per open WebSocket doubled (1.0.34), and fiber stacks were mapped anew for every connection.
       - name: WebSocket capacity — memory per connection and fiber stack reuse
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_capacity_guard_test.sh ./build/lk-fcgi
@@ -793,6 +895,7 @@ jobs:
       # The messages of one WebSocket ran on different pool threads at the same time and could
       # finish out of order; the close callback was skipped when a send to a departed client failed.
       - name: WebSocket messages handled in order; close callback after them
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_message_order_test.sh ./build/lk-fcgi
@@ -805,6 +908,7 @@ jobs:
       # setup data is shared with every request instead of being copied for it; a write
       # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.
       - name: Shared setup data under concurrent requests
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/shared_setup_concurrency_test.sh ./build/lk-fcgi
@@ -812,6 +916,7 @@ jobs:
       # a function that changes a parameter and never returns it is reported — an error
       # under `lk --check`, a warning at load (CLI, web startup, files loaded with `use`).
       - name: Parameter-write check
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/param_write_check_test.sh ./build/lk ./build/lk-fcgi
@@ -819,6 +924,7 @@ jobs:
       # string::random reduced a random byte with `% 36`: the first four characters of its
       # alphabet came out about 14% more often. Every character is equally likely now.
       - name: string::random is uniform
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/string_random_uniform_test.lk || true)"
@@ -828,6 +934,7 @@ jobs:
       # The WebSocket / SSE connection limit refuses the next connection with 503. It used to raise
       # an error nothing caught: one connection over the limit ended the whole server.
       - name: No built-in connection limit; a full limit never stops the server
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/connection_limit_test.sh ./build/lk-fcgi
@@ -835,6 +942,7 @@ jobs:
       # select() cannot take a descriptor above 1023 (FD_SET writes out of bounds). With thousands
       # of open connections every later socket is above that.
       - name: No select() outside Windows-only code
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/no_select_test.sh
@@ -842,11 +950,13 @@ jobs:
       # A test that changes directory and runs a relative ./build/lk does not find it: this
       # broke CI three times (run locally with absolute paths, it never showed).
       - name: Test scripts run their binary arguments by an absolute path
+        timeout-minutes: 10
         run: bash cpp/tests/test_path_guard.sh
 
       # A WebSocket / SSE connection callback has no response to carry an error: if the log does
       # not have it either, the handler fails without a trace.
       - name: Connection callback errors are logged
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/callback_error_log_test.sh ./build/lk-fcgi
@@ -854,6 +964,7 @@ jobs:
       # Open connections — idle, slow, or kept open by a browser — must not make other clients
       # wait (up to 1.0.19 a few of them stalled every other client for 30 s).
       - name: Open connections do not make other clients wait
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/idle_connections_test.sh ./build/lk-fcgi
@@ -862,6 +973,7 @@ jobs:
       # Dropping a deeply nested value (1M arrays, structs or closures inside each other) must not
       # overflow the C++ stack: until now one such request killed the whole server.
       - name: Deeply nested values are released without a crash
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/value_release_test.sh ./build/lk ./build/lk-fcgi
@@ -872,6 +984,7 @@ jobs:
       # Concurrent writers to one SQLite database: until 1.0.20 some of them lost their turn,
       # waited past the busy timeout and got a 500 "database is locked" (the row was not written).
       - name: Concurrent SQLite writers are not refused
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/sqlite_concurrent_writers_test.sh ./build/lk-fcgi
@@ -880,6 +993,7 @@ jobs:
       # or keep a read open: ALTER on the same connection and from another process, a checkpoint
       # after thousands of cached reads, errors, more statements than the cache holds.
       - name: "SQLite statements prepared once per connection, never a wrong result"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/sqlite_stmt_cache_test.sh ./build/lk ./build/lk-fcgi
@@ -888,6 +1002,7 @@ jobs:
       # to go on the free list, where a newly arriving request could take it first; the woken one
       # went back to the end of the queue (p99 270 ms at c=1000 on MySQL).
       - name: "Requests waiting for a pooled database connection are served in order"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/db_pool_fairness_test.sh ./build/lk-fcgi
@@ -895,6 +1010,7 @@ jobs:
       # After a reply the client could not read to its end (fake MySQL and PostgreSQL servers send
       # one), the next queries must get their own results, not the old reply's rest.
       - name: "No result shifts after a refused MySQL / PostgreSQL reply"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/db_malformed_desync_test.sh ./build/lk
@@ -911,6 +1027,7 @@ jobs:
       # up to 1.0.24 LOOK code never gave up its turn under fibers (0.7–1 s waits, 32 s on the
       # interpreter).
       - name: Long CPU work does not hold other requests
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/cpu_turn_test.sh ./build/lk-fcgi
@@ -920,6 +1037,7 @@ jobs:
       # that wrongly lives per thread crosses between requests on the first try instead of once
       # in a while (shown: the 1.0.24 bug put back passes 960/960 normally, crashes with this).
       - name: Fiber tests with a turn given up at every point
+        timeout-minutes: 10
         env:
           LOOK_TEST_PREEMPT: "1"
         run: |
@@ -933,6 +1051,7 @@ jobs:
       # With fibers one thread runs many requests and switches between them while one waits.
       # Per-request data must never reach another request across such a switch.
       - name: Suspended requests keep their own data
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/fiber_request_isolation_test.sh ./build/lk-fcgi
@@ -942,6 +1061,7 @@ jobs:
       # counted as nested and never returned its DB connection: the pool ran out and
       # concurrent requests hung without a response.
       - name: Requests on fibers return their DB connection
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/fiber_pool_release_test.sh ./build/lk-fcgi
@@ -949,6 +1069,7 @@ jobs:
       # A request that ends inside an open transaction: rolled back, not handed to the next request
       # (which committed the failed work); setup's top-level query no longer keeps a connection.
       - name: Open transaction rolled back at request end; setup returns its connection
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/db_open_transaction_release_test.sh ./build/lk-fcgi ./build/lk
@@ -957,6 +1078,7 @@ jobs:
       # its own request. In 1.0.20–1.0.21 SQLite/PostgreSQL/MySQL-over-TLS queries held the whole
       # fiber thread, and every request waited for a pool connection even without using one.
       - name: A waiting database query does not hold other requests
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/db_wait_test.sh ./build/lk-fcgi
@@ -964,6 +1086,7 @@ jobs:
       # An included file the VM cannot compile used to be dropped silently: "compile OK" and
       # 500 "Undefined variable" for every route that called one of its functions.
       - name: Included file the VM cannot compile
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/include_compile_failure_test.sh ./build/lk-fcgi
@@ -971,6 +1094,7 @@ jobs:
       # The top level of a web application runs once at startup: the VM's
       # setup pass replays the first pass instead of calling module functions again.
       - name: Top-level code runs once at startup
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/setup_once_test.sh ./build/lk-fcgi
@@ -978,6 +1102,7 @@ jobs:
       # Single quotes are raw + an undefined bare name is an error.
       # The run must reach its last line: a crash that prints no FAIL must not pass.
       - name: Raw string + bare name guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/raw_string_bare_name_test.lk || true)"
@@ -989,6 +1114,7 @@ jobs:
 
       # Argument count / parameter index are 8-bit: past 255 they wrapped silently on the VM.
       - name: VM operand limits
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/vm_operand_limits_test.sh ./build/lk
@@ -996,6 +1122,7 @@ jobs:
       # No bare narrowing casts in the compiler: every value that goes into an 8/16-bit
       # operand passes through a checked helper (a value that does not fit is an error).
       - name: No unchecked narrowing in the compiler
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/no_unchecked_narrowing.sh
@@ -1003,21 +1130,25 @@ jobs:
       # bx_lohi / builtin_index. When the operands widened to 16 bits, a hand-made shift in the
       # route scanner would have read the wrong constant without any error.
       - name: No hand-made bytecode operand decoding
+        timeout-minutes: 10
         run: bash cpp/tests/no_raw_operand_decode.sh
       # While a fiber waits for the database, Redis, SMTP or HTTP, the worker thread serves other
       # requests: no poll with a timeout and no blocking read in the clients' fiber paths (a 1 ms
       # poll cost ~15% on database load; blocking Redis reads halved session throughput). DNS,
       # connect, the TLS handshake and sends go through look/fiber_net.h for the same reason.
       - name: Network clients never block the worker thread in a fiber
+        timeout-minutes: 10
         run: bash cpp/tests/fiber_blocking_io_guard.sh
       # A thread variable written before a wait and read after it can belong to another request
       # once the thread ran other fibers meanwhile (a user received another user's session).
       # Each thread_local states why it is safe ("fiber-ok: …").
       - name: Every thread_local states why it is safe with fibers
+        timeout-minutes: 10
         run: bash cpp/tests/thread_local_guard.sh
       # Register reuse — one function far past the old 72-route / 63-call ceiling, plus
       # more than 256 closures. A compile failure is an error, not a fallback.
       - name: Register reuse guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/register_reuse_test.lk || true)"
@@ -1029,24 +1160,29 @@ jobs:
 
       # A merge that duplicates a CI step must not pass silently.
       - name: No duplicated CI steps
+        timeout-minutes: 10
         run: bash cpp/tests/ci_no_duplicate_steps.sh
 
       # One source for the version number; docs link to unversioned download names.
       - name: Version has a single source
+        timeout-minutes: 10
         run: bash cpp/tests/version_single_source.sh
 
       # Everything the runtime shows a user is English (messages, logs, CLI output).
       - name: No Turkish text in runtime strings
+        timeout-minutes: 10
         run: bash cpp/tests/no_turkish_user_strings.sh
 
       # A double-quoted render_string template and a value interpolated into SQL may not
       # appear in any documentation file.
       - name: No unsafe examples in the documentation
+        timeout-minutes: 10
         run: bash cpp/tests/docs_no_unsafe_examples.sh
 
       # JSON error bodies carry "error" (with "hata" beside it for 1.x); 'use timer' and
       # other built-in namespaces explain themselves instead of suggesting an install.
       - name: Error bodies and module messages
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/error_body_test.sh ./build/lk ./build/lk-fcgi
@@ -1055,6 +1191,7 @@ jobs:
 
       # A comparison operator inside a quoted value must not split a template condition.
       - name: Template condition guard
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(./build/lk tests/template_cond_test.lk || true)"
@@ -1068,6 +1205,7 @@ jobs:
       # RFC 4231/4648 vektörlerine pinler. differential sütunları KARŞILAŞTIRIR
       # (ikisi de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
       - name: Crypto known-answer vectors
+        timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/crypto_vectors.lk
@@ -1076,6 +1214,7 @@ jobs:
       # ekleme ~60 sn). Sonuç ve hatalar kopyalayan sürümle birebir; "fonksiyon çağıranın yerelini
       # değiştiremez" varsayımını sabitler — dil değişirse kırılır.
       - name: array::push assigned to its own variable appends in place (same results)
+        timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/array_push_assign.lk
@@ -1086,6 +1225,7 @@ jobs:
       # yolu burada TAM doğrulanır; Windows verify STUB (throw) — bu KAT, Windows NCrypt
       # impl'i geldiğinde onu AYNI imzaya karşı doğrulayacak silahtır.
       - name: RS256 known-answer (verify + reject + deterministik sign)
+        timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/rs256_kat.lk
@@ -1094,6 +1234,7 @@ jobs:
       # 86400-saniye yolu DST fall-back'te (25s gün) +1 günü AYNI güne kaydırıyordu
       # (sessiz 1-gün: abonelik/rezervasyon). DST'li TZ ŞART — UTC tek başına görmez.
       - name: date DST (calendar arithmetic, TZ=America/New_York)
+        timeout-minutes: 10
         run: |
           cd cpp
           TZ=America/New_York ./build/lk tests/date_dst_test.lk
@@ -1102,6 +1243,7 @@ jobs:
       # DKIM tag-parser ① KAT — RFC 6376 tag ayirma dogru mu (bh= icindeki h='e carpmasin).
       # Saf parser (look/dkim_tag.h), pozitif kontrollu: eski find() parser'i ①'de bozuk.
       - name: DKIM tag-parser KAT
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/dkim_tag_test.cpp -o /tmp/dkim_tag_test
@@ -1111,6 +1253,7 @@ jobs:
       # Pozitif kontrol (geçerli imza→TRUE) + iki yön çoklu-From→FALSE. Bir refactor bu
       # fail-safe davranışı bozarsa (find/rfind aynı From'a yaklaşırken) KIRMIZI.
       - name: DKIM verify table (seam + çoklu-From)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/dkim_verify_test.cpp src/dkim.cpp src/dns.cpp \
@@ -1121,6 +1264,7 @@ jobs:
       # adres, <> null-sender, iç içe '<') kilitli. ASan+UBSan: adversarial + 100K girdide
       # OOB/çökme yok. Ağa açık PRE-AUTH kod; bir refactor sağlamlığı bozarsa KIRMIZI.
       - name: SMTP addr parser table (seam + adversarial)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -1131,6 +1275,7 @@ jobs:
       # mailbox_name_ok GÜVENLİK guard'ı. Belgeli geçmiş bug `INBOX; rm -rf /` KABUL'dü;
       # artık RED (kilitli). ASan+UBSan: adversarial + 100K çökme yok.
       - name: IMAP parser table (seam + mailbox guard)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -1146,6 +1291,7 @@ jobs:
       #     numarasını almış BAŞKA bağlantıya yazılmaz. Worker DNS ile değil,
       #     yarım bırakılan STARTTLS el sıkışmasıyla tutulur (belirlenimli).
       - name: SMTP runtime (parser + relay + slowloris idle-timeout)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/smtp_test.sh build/lk-fcgi 7826
@@ -1163,6 +1309,7 @@ jobs:
       # conn-sızıntısı + havuz baskısı. (differential yol-çözme bug'ı düzeltildi:
       # alt-testler $TMP'ye cd ediyordu, göreli build/lk çözülmüyordu.)
       - name: Motor paritesi (differential + closure + recursion + parallel)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/differential_test.sh build/lk build/lk-fcgi
@@ -1180,6 +1327,7 @@ jobs:
       # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
       # slowloris header-deadline. Testler vardı, CI'da değildi.
       - name: HTTP sertleştirme (smuggling + slowloris)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/http_smuggle_test.sh build/lk-fcgi
@@ -1191,6 +1339,7 @@ jobs:
 
       # host[:port] parsing (Go net/url model) for DSN, Redis URL, http:: URL, --port, *_PORT
       - name: "host:port parsing — table + http:: URLs (userinfo, query without a path, IPv6)"
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/host_port_test.cpp -o /tmp/host_port_test
@@ -1201,6 +1350,7 @@ jobs:
       # fd/epoll/map istemci TCP-kopana kadar sızıyordu (+ soket kapanmadığı için istemci asılı).
       # fd-sayacı guard'ı (TSan bu fd-yaşam yarışına kör). Pozitif kontrol: fix öncesi fd=base+1.
       - name: SSE sse::close fd-sızıntısı (runtime)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/sse_close_test.sh build/lk-fcgi 7768
@@ -1209,6 +1359,7 @@ jobs:
       # handshake 101 → echo → istemci close-frame → server close + fd serbest + ani-kopma
       # regresyonu. WS EWOULDBLOCK (yavaş-istemci write-drop) kapsam dışı (ayrı yük-testi).
       - name: WS close fd-sızıntısı (runtime)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_close_test.sh build/lk-fcgi 7769
@@ -1217,6 +1368,7 @@ jobs:
       # (encoded/çift-encoded), i64 overflow. NOT: msvc_mul_ovf Linux yolunu kilitler;
       # MSVC dalı Windows CI gerektirir (olgunluk denetimi Tema B).
       - name: Güvenlik repro'ları (ReDoS + traversal + i64)
+        timeout-minutes: 10
         run: |
           cd cpp
           build/lk tests/repro/regex_leak_check.lk
@@ -1233,6 +1385,7 @@ jobs:
       # jobs:: lifecycle+retry, parallel() fan-out+izolasyon, prepared bind matrisi.
       # (mail:: harici HTTP-provider ister → CI-dışı; MySQL/PG wire-lehçesi ayrı canlı-DSN.)
       - name: Davranışsal (db/jobs/parallel/prepared, SQLite)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/behavioral_test.sh build/lk
@@ -1242,6 +1395,7 @@ jobs:
       # rewrite). Speed numbers say nothing about correctness; this does. Fault injection: removing
       # the HTML escape makes it fail.
       - name: Template render golden (byte-identical)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/template_golden_test.sh ./build/lk
@@ -1249,6 +1403,7 @@ jobs:
       # lk-cgi --version prints the build (the release check reads its stamp), but not under CGI:
       # a web server may pass a query string without "=" as an argument ("?--version").
       - name: lk-cgi --version outside CGI only
+        timeout-minutes: 10
         run: |
           cd cpp
           v="$(./build/lk-cgi --version)"; echo "$v"
@@ -1262,6 +1417,7 @@ jobs:
       # class release-consistency once had). If CI=true detection ever breaks, this step goes
       # red. The SKIP line must not contain "ran=", so the existing ran= guards still catch it.
       - name: Env-dependent test contract (SKIP locally, FAIL in CI)
+        timeout-minutes: 10
         run: |
           cd cpp
           UNSET="-u MYSQL_DSN -u PG_DSN -u BT_DIR -u LOOK_FILE_ROOT -u LOOK_TEST_DSN"
@@ -1283,6 +1439,7 @@ jobs:
       # (verify-ca dalı silinirse verify-ca vakası tls=false → FAIL). Gerçek TLS-handshake
       # matrisi (db_tls/, Docker+cert) ayrı/nightly kalır — bu yalnız parse ekseni.
       - name: PG DSN TLS-karar tablosu (seam + verify-ca regresyonu)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/pg_dsn_test.cpp -o /tmp/pg_dsn_test
@@ -1291,6 +1448,7 @@ jobs:
       # PostgreSQL INSERT id: the target table, the user's own RETURNING, the RETURNING added
       # (look/pg_insert.h). The live behaviour runs against postgres:16 in the db-live job.
       - name: PostgreSQL INSERT id — SQL table test
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/pg_insert_test.cpp -o /tmp/pg_insert_test
@@ -1300,6 +1458,7 @@ jobs:
       # (DB cert self-signed; kablo-şifreleme amaç). Ağsız tablo mevcut kararı kilitler; varsayılan
       # bir gün değişirse (kırıcı-karar) RED. POZİTİF-KONTROLLÜ.
       - name: MySQL/Redis DSN TLS-karar (seam tablosu)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/mysql_redis_dsn_test.cpp -o /tmp/mrdsn
@@ -1309,6 +1468,7 @@ jobs:
       # Uzak-düz-metin RED / loopback+unix SERBEST / ?insecure_plaintext opt-out. Ağsız,
       # POZİTİF-KONTROLLÜ (loopback dalı veya opt-out silinirse RED).
       - name: DB require-TLS karar (seam tablosu)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/db_require_tls_test.cpp -o /tmp/drt
@@ -1318,6 +1478,7 @@ jobs:
       # devam paketlerini birleştirmeli (yoksa 16MB+ payload'da havuz-bağlantısı YANLIŞ VERİ döner).
       # Reader bellek-tamponu → canlı MySQL YOK. cap/0-terminatör/kopuk-akış POZİTİF-KONTROLLÜ.
       - name: MySQL multi-packet birleştirme (seam tablosu)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/mysql_reassemble_test.cpp -o /tmp/mra
@@ -1327,6 +1488,7 @@ jobs:
       # JWT(HS256)/DKIM/session/auth'u besler; "kendi çıktısına değil SPEC'e pinle": NIST SHA-256
       # + RFC 4231 HMAC + RFC 7914 PBKDF2 vektörleri. POZİTİF-KONTROLLÜ. Yeni builtin YOK.
       - name: SHA-256/HMAC/PBKDF2 RFC-KAT (seam)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/crypto_sha256_test.cpp -o /tmp/csha
@@ -1337,6 +1499,7 @@ jobs:
       # adaptörüyle DELEGE eder (paralel kopya birleştirildi); test regresyon-guard'ı: adaptör bağı
       # koparsa/tek-block yol kayarsa vektör tutmaz → RED. postgres_client.cpp + OpenSSL link eder.
       - name: PG SCRAM crypto agreement RFC-KAT (seam)
+        timeout-minutes: 10
         run: |
           cd cpp
           # fiber_posix + logger: PG reads suspend the fiber while waiting (fiber_io.h)
@@ -1348,6 +1511,7 @@ jobs:
       # verify-full untrusted cert'i REDDEDER (SSL_VERIFY_PEER çalışıyor mu) + insecure kabul
       # eder (pozitif-kontrol: red verify'dan; verify kırık olsa insecure gibi davranırdı).
       - name: PG TLS gerçek-handshake verify (mock, Docker'sız)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/pg_tls_handshake_test.sh build/lk 7799
@@ -1360,6 +1524,7 @@ jobs:
         with:
           go-version: "1.22"
       - name: "http:: TLS verification (Go test servers)"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/http_client_tls_test.sh ./build/lk
@@ -1369,6 +1534,7 @@ jobs:
       # meşru ad parse'ı geçmeli. (Zip-slip/redirect gerçek indirme ister → C++ unit-test
       # hedefli-takip; tam installer_test.sh ağlı → manuel/nightly.)
       - name: "installer:: parse-katmanı (host/ad/traversal, ağsız)"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/installer_parse_test.sh build/lk
@@ -1377,6 +1543,7 @@ jobs:
       # extract/miniz OLMADAN: entry dest içine mi açılır. Sibling-prefix kaçışı (repo→repo-evil,
       # ayırıcı-sınır zorunlu) dahil, POZİTİF-KONTROLLÜ (sınır kaldırılırsa sibling-prefix kaçar→FAIL).
       - name: "installer:: Zip-Slip containment (seam tablosu)"
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/installer_zipslip_test.cpp -o /tmp/izt
@@ -1386,6 +1553,7 @@ jobs:
       # şema-düşürme (http://) + host-kaçışı (evilgithub.com / github.com.evil.com) reddi.
       # POZİTİF-KONTROLLÜ (https zorunluluğu kaldırılırsa http:// kaçar→FAIL).
       - name: "installer:: redirect güvenlik-kararı (seam tablosu)"
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/installer_redirect_test.cpp -o /tmp/irt
@@ -1396,6 +1564,7 @@ jobs:
       # (metadata 169.254.169.254 · NAT64 64:ff9b · 6to4 2002 · v4-mapped bypass'ları).
       # POZİTİF-KONTROLLÜ (bir dal silinirse ilgili satır RED).
       - name: SSRF private/özel-blok kararı (seam tablosu)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/ssrf_safe_test.cpp -o /tmp/ssrf
@@ -1405,6 +1574,7 @@ jobs:
       # (signed-overflow UB YOK). Taşma sınırları + INT64_MIN*-1 #DE(SIGFPE) tuzağı tablo-test.
       # POZİTİF-KONTROLLÜ. (Linux/CI __builtin dalı; MSVC dalı Tier-2 Windows.)
       - name: int64 taşma-tespiti (seam tablosu)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/int_overflow_test.cpp -o /tmp/iov
@@ -1414,6 +1584,7 @@ jobs:
       # Ağsız: 32-hex allowlist (traversal reddi) + \n/= enjeksiyonu ile uydurma yetki-alanı
       # (admin=1) ENJEKTE EDİLEMEZ. POZİTİF-KONTROLLÜ (değer-kaçırma kalkarsa enjeksiyon geçer).
       - name: "session:: SID + blob enjeksiyon (seam tablosu)"
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude tests/session_esc_test.cpp -o /tmp/sess
@@ -1423,24 +1594,28 @@ jobs:
       # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
       # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
       - name: docs-conformance (docs API ↔ builtin_names)
+        timeout-minutes: 10
         run: bash cpp/tests/docs_conformance.sh
 
       # TERS-YÖN: builtin_names()'teki her namespaced mod::fn docs/index.html'de belgeli mi?
       # docs_conformance'ın eksik yarısı — yeni builtin belgelenmeden CI'dan geçemez.
       # Dışlama listesi gerekçeli (validator kuralları + template {#} sözdizimi), known_fail değil.
       - name: docs-conformance TERS-YÖN (builtin_names ↔ docs API)
+        timeout-minutes: 10
         run: bash cpp/tests/doc_conformance_reverse.sh
 
       # SSRF DNS-rebinding pin değişmezi — ölçüldü: is_ssrf_blocked + connect AYNI çözümlenmiş
       # res->ai_addr'ı kullanır (resolve-once, yeniden-çözme yok → rebinding imkânsız). Bu guard
       # kaynak-değişmezini kilitler; biri connect'i yeniden-çözmeye çevirirse RED. Pozitif-kontrollü.
       - name: SSRF DNS-rebinding pin değişmezi (kaynak guard)
+        timeout-minutes: 10
         run: bash cpp/tests/ssrf_pin_guard.sh
 
       # Plesk installer privesc-sağlamlaştırma — ağsız, Plesk'siz. Domain/script/svc sanitizasyonu
       # (PHP regex + bash tr -cd + case guard) enjeksiyonu (satır-sonu→systemd unit root-komut)
       # engelliyor mu? Pozitif-kontrollü (sanitizasyon kalkarsa privesc payload'ı 2-satır unit üretir).
       - name: "Plesk installer enjeksiyon-guard'ları (ağsız)"
+        timeout-minutes: 10
         run: |
           sudo apt-get install -y php-cli
           bash cpp/tests/plesk_inject_test.sh
@@ -1450,11 +1625,13 @@ jobs:
       # root; the env file is read with that user's rights; Remove deletes the unit and its
       # .service.d. Runs the real enable.sh/disable.sh in a throwaway container (it creates users).
       - name: Plesk services run as the domain's user
+        timeout-minutes: 10
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_service_user_test.sh
 
       # install.sh ignored every option it was given (the guide's --with-nginx went through without
       # a word and the port stayed open). An unknown option stops it before anything is installed.
       - name: Linux installer refuses options it does not have (Ubuntu, Debian, AlmaLinux)
+        timeout-minutes: 10
         run: |
           for img in ubuntu:24.04 debian:12 almalinux:8 almalinux:9; do
             echo "== $img"
@@ -1465,29 +1642,34 @@ jobs:
       # hook as psaadm, the root step goes through sbin/look-setup. Plays a 1.1.0 → new upgrade
       # with the old binary running; a service that cannot leave root is stopped and reported.
       - name: Plesk update rewrites every service and updates LOOK
+        timeout-minutes: 10
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_upgrade_test.sh
 
       # The panel user has no sudo rights: a '*' in sudoers also matches spaces, so
       # "systemctl enable look-*" allowed "systemctl enable look-a /tmp/evil.service". Root work
       # goes through sbin/look-ctl (callSbin), which checks the action, name and argument count.
       - name: Plesk panel has no sudo rights
+        timeout-minutes: 10
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_no_sudo_test.sh
 
       # A site's env file may live outside its web root, a stopped site keeps refusing /.look*
       # files, and LOOK gets a LOOK_SECRET created as the domain's user (0600, never printed).
       - name: "Plesk keeps secrets out of the web root and creates LOOK_SECRET"
+        timeout-minutes: 10
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_env_secret_test.sh
 
       # A site moves to a new LOOK release only when its code passes `lk --check` of that release;
       # a site that does not keeps the release it ran, and the panel names the lines and says it
       # receives no fixes, security fixes included. Unused releases are removed.
       - name: Plesk moves a site to a new LOOK only when its code passes the check
+        timeout-minutes: 10
         run: docker run --rm -v "$PWD:/w" -w /w almalinux:8 bash cpp/tests/plesk_release_check_test.sh
 
       # web runs only on the VM: a program the VM cannot compile does not start (exit 1),
       # a runtime error is a 500 run once, a failed hot reload keeps the server up with a clear
       # 500, LOOK_BYTECODE=0 is ignored, a script without routes runs whole per request.
       - name: The web server runs only on the VM
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/vm_only_startup_test.sh ./build/lk-fcgi
@@ -1496,6 +1678,7 @@ jobs:
       # stops startup (top level) or fails the request (route); a use line in an included file
       # opens the module; an unknown module and use timer stop startup.
       - name: The use rule holds in a web application
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/use_rule_web_test.sh ./build/lk-fcgi
@@ -1503,6 +1686,7 @@ jobs:
       # Code that silently did nothing stops startup with the reason: the discarded result of a
       # pure built-in (array::push alone on a line) and a route on the built-in health path.
       - name: Silent no-ops stop the application at startup
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/silent_noop_startup_test.sh ./build/lk ./build/lk-fcgi
@@ -1510,6 +1694,7 @@ jobs:
       # Every built-in has an effect class (src/builtins.cpp: builtin_effect): the discarded-result
       # rule applies only to Pure built-ins, so a new built-in without a class fails here.
       - name: Every built-in has an effect class
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/builtin_effect_table_test.sh
@@ -1518,6 +1703,7 @@ jobs:
       # RS256→HS256 key-confusion reddi, exp expiry, imza-kurcalama + pozitif. verify header
       # alg'ini OKUMAZ (koşulsuz HMAC) → alg-confusion yapısal imkânsız. Pozitif-kontrollü.
       - name: JWT güvenlik (alg=none / key-confusion / exp / tamper + pozitif)
+        timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/jwt_security.lk
@@ -1527,6 +1713,7 @@ jobs:
       # uzunluk alanı → parse_params sonsuz-döngü (worker DoS); progress-guard kilitli. ASan tablo
       # + 200K fuzz + POZİTİF-KONTROL (clamp'siz varyant → ASan heap-overflow).
       - name: FastCGI wire-parse (seam tablo + fuzz + DoS-regresyon)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -1542,6 +1729,7 @@ jobs:
       # zorunlu, 16MB cap, kontrol-frame ≤125+FIN) + RFC 6455 §5.2 konformans fix'i
       # (sıfır-dışı RSV + ayrılmış opcode → protokol hatası) pinlenir.
       - name: WebSocket frame-decode (seam tablo, ASan/UBSan)
+        timeout-minutes: 10
         run: |
           cd cpp
           g++ -std=c++17 -Iinclude -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -1554,6 +1742,7 @@ jobs:
       # (MAX_STMT_DEPTH/EXPR_DEPTH/BINOP_CHAIN) iki modda (--check/VM) pinler:
       # derin-yuvalama → temiz parse-hatası, ASLA crash/hang.
       - name: Parser DoS-guard (derin-yuvalama, --check + VM)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/parser_dos_guard.sh ./build/lk
@@ -1562,6 +1751,7 @@ jobs:
       # `/*` (kod-yutma → exit 0) artık hata; int64-aşan literal (sessiz float presizyon-kaybı)
       # artık stderr WARN (stdout değişmez). Pozitif+negatif kontrollü (meşru davranış korunur).
       - name: Parser fail-loud (unterminated comment + int-overflow warn)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/parser_faillooud_guard.sh ./build/lk
@@ -1571,6 +1761,7 @@ jobs:
       # istemcinin seçtiği oturum kimliği, istek başlıkları. Eskiden yalnız --mode http sınanıyordu;
       # CGI üç kez geride kaldı (temizlik, HTTPS, başlıklar). Bir modda eksik davranış CI'ı kırar.
       - name: Session and cookie security in all three modes
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/session_cookie_modes_test.sh build/lk-fcgi build/lk-cgi
@@ -1580,6 +1771,7 @@ jobs:
       # use "lib.lk" (>10 kardeş fn) + top-level timer::every → port bağlanmalı+servis vermeli.
       # POZİTİF-KONTROL: eski yolda hiç bind etmezdi → timeout → RED.
       - name: "file-include + timer::every startup binds (regresyon)"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/timer_include_bind_test.sh build/lk-fcgi 7794
@@ -1589,6 +1781,7 @@ jobs:
       # /tasks) auth'suz açılır = sessiz yetki atlatması. lk-fcgi --mode http'ye karşı 403/200 + nested
       # doğrular. POZİTİF-KONTROLLÜ: guard'sız varyant /admin=200 (test discriminador — sabote→RED).
       - name: before_route prefix guard (yetki atlatma regresyonu)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/middleware_guard_test.sh build/lk-fcgi 7795
@@ -1597,6 +1790,7 @@ jobs:
       # minimal). lk-fcgi --mode http'ye karşı. Kendinden-ayırt-edici: prefix
       # kırılırsa bare /solo açılır (404 değil 200), mw kırılırsa no-token 200 döner → test RED.
       - name: "route::group prefix + middleware kalıtımı"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/route_group_test.sh build/lk-fcgi 7715
@@ -1605,6 +1799,7 @@ jobs:
       # request_count bir kez web'de 0'a kırılmıştı (setup interpreter vs VM yolu). Kendinden-ayırt-edici
       # delta assertion'ları: sayaç no-op'a kırılırsa değer düz kalır → RED (sabote→0 delta doğrulandı).
       - name: "runtime::stats sayaçları (sessiz-sorun göstergeleri)"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/runtime_stats_test.sh build/lk-fcgi 7778
@@ -1613,6 +1808,7 @@ jobs:
       # dizisi değişirse İPTAL eder (anlam-koruma). Guard: idempotency + anlam-koruma + --check
       # exit kodları + yorum/çok-satırlı-string koruma. Pozitif-kontrollü (string-içi bozulursa RED).
       - name: lk fmt (idempotent + anlam-koruma + yorum/string)
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/fmt_test.sh build/lk
@@ -1648,18 +1844,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
+        timeout-minutes: 10
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev
           # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
           if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
       - name: Build lk (Release)
+        timeout-minutes: 10
         run: |
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target look look-fcgi --parallel $(nproc)
       # caching_sha2: root@mysql:8 TLS'siz TCP → taze önbellek → full-auth RSA yolu (sonra fast).
       - name: "caching_sha2_password — gerçek MySQL 8 (full-auth RSA + fast yol)"
+        timeout-minutes: 10
         env:
           MYDSN: "mysql://root:rootpw@127.0.0.1:3306/lookci"
           MYUSER: root
@@ -1672,6 +1871,7 @@ jobs:
       # A connection MySQL closes (wait_timeout, restart, KILL) does not kill LOOK: SIGPIPE killed
       # lk and lk-fcgi in FastCGI mode (exit 141). The test KILLs the connections itself.
       - name: "A dropped MySQL connection does not kill lk / lk-fcgi"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/db_dropped_connection_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci" root
@@ -1680,12 +1880,14 @@ jobs:
       # sent again, and inside a transaction it is an error (PostgreSQL used to reconnect there and
       # keep the rest of the transaction outside it).
       - name: "A connection the server closed is replaced before the query (MySQL 8 + PostgreSQL 16)"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/db_stale_connection_test.sh ./build/lk ./build/lk-fcgi \
             "mysql://root:rootpw@127.0.0.1:3306/lookci" root "postgres://lookci:lookci@127.0.0.1:5432/lookci" lookci
       # native prepared bind matrisi — MySQL COM_STMT_EXECUTE + PG extended-query.
       - name: "Prepared bind matrisi — MySQL 8 + PostgreSQL 16 (native)"
+        timeout-minutes: 10
         env:
           MYSQL_DSN: "mysql://root:rootpw@127.0.0.1:3306/lookci"
           PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"
@@ -1706,6 +1908,7 @@ jobs:
       # MySQL connections end with COM_QUIT: without it MySQL counted each closed connection as
       # aborted (Aborted_clients) and logged a warning — every connection of a script's pool.
       - name: "MySQL 8 — a script leaves no aborted connection"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/mysql_quit_test.sh ./build/lk "mysql://root:rootpw@127.0.0.1:3306/lookci"
@@ -1714,18 +1917,21 @@ jobs:
       # result: changed tables, one database per shop, a KILLed connection (statement ids restart
       # there), the server's global statement limit, transactions, concurrent web requests.
       - name: "MySQL 8 — statements prepared once per connection, never a wrong result"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/mysql_stmt_cache_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci"
       # An error in the middle of the rows is an error (not a partial result); CALL's extra results
       # are read, so the next query and an open transaction are not affected.
       - name: "MySQL 8 — complete answers: mid-row errors, CALL results"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/mysql_result_integrity_test.sh ./build/lk ./build/lk-fcgi "mysql://root:rootpw@127.0.0.1:3306/lookci"
       # db::connect address: bad port is an error naming it (no password), empty port = default,
       # [::1] connects (MySQL/PG used to resolve IPv4 only), "host:3306?tls=" keeps its options.
       - name: "DSN address — ports, IPv6, options without a path (live MySQL 8 + PostgreSQL 16)"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/db_dsn_address_test.sh ./build/lk "mysql://root:rootpw@127.0.0.1:3306/lookci" "postgres://lookci:lookci@127.0.0.1:5432/lookci"
@@ -1733,12 +1939,14 @@ jobs:
       # stay exact: 1 MB values, results spanning many buffers, failing queries, a terminated
       # connection, concurrent web requests.
       - name: "PostgreSQL 16 — one send per query, buffered replies, exact results"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/pg_transport_test.sh ./build/lk ./build/lk-fcgi "postgres://lookci:lookci@127.0.0.1:5432/lookci"
           # COPY FROM STDIN / TO STDOUT: an error at once (was a 30 s hang / a silent empty result)
           bash tests/pg_copy_test.sh ./build/lk "postgres://lookci:lookci@127.0.0.1:5432/lookci"
       - name: "PostgreSQL 16 — INSERT in a transaction is kept; last_id is that INSERT's"
+        timeout-minutes: 10
         env:
           PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"
         run: |
@@ -1751,6 +1959,7 @@ jobs:
       # hold only their own request (1.0.20–1.0.21 held the whole fiber thread). After the MySQL
       # auth steps: a TLS login caches the password and would hide the full-auth path above.
       - name: "Slow PostgreSQL 16 / MySQL 8 (TLS) query holds only its own request"
+        timeout-minutes: 10
         env:
           PG_DSN: "postgres://lookci:lookci@127.0.0.1:5432/lookci"
           MY_DSN: "mysql://root:rootpw@127.0.0.1:3306/lookci?tls=insecure"
@@ -1764,6 +1973,7 @@ jobs:
       # Real server: the right password works, a wrong one and none are refused — the two
       # refusals prove the server really enforces the password.
       - name: "Redis — password containing '?' (live redis:7)"
+        timeout-minutes: 10
         run: |
           set -e
           docker run -d --name look-redis-q -p 6380:6379 redis:7 redis-server --requirepass 'pa?ss'
@@ -1781,6 +1991,7 @@ jobs:
       # only the fiber, two requests on one thread shared it and one could read the other's
       # session. A Redis that never answers used to hang the request forever.
       - name: "Redis sessions — each request sees only its own; a silent Redis times out (live redis:7)"
+        timeout-minutes: 10
         run: |
           docker run -d --name look-redis-s -p 6381:6379 redis:7
           for i in $(seq 1 20); do docker exec look-redis-s redis-cli ping 2>/dev/null | grep -q PONG && break; sleep 1; done
@@ -1796,6 +2007,7 @@ jobs:
       # A session is at most LOOK_SESSION_MAX_BYTES (1 MB): over it session::set is an error,
       # nothing is written or cut. Same rule for the file and the Redis driver.
       - name: "Session size limit (file driver, and Redis on live redis:7)"
+        timeout-minutes: 10
         run: |
           cd cpp
           bash tests/session_size_limit_test.sh ./build/lk-fcgi
@@ -1811,12 +2023,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build + postgres + openssl
+        timeout-minutes: 10
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev postgresql openssl
           # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
           if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
       - name: Build lk (Release)
+        timeout-minutes: 10
         run: |
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -1824,6 +2038,7 @@ jobs:
       # Vacuous-green guard (Rule-2): harness postgres/openssl yoksa exit 0 ile ATLAR;
       # gerçek PASS satırını zorunlu kıl — atlanırsa job KIRILIR (sessiz-yeşil yok).
       - name: PG TLS gerçek-sunucu interop (6-vaka + pozitif-kontrol)
+        timeout-minutes: 10
         run: |
           cd cpp
           out="$(bash tests/pg_tls_realserver_test.sh build/lk 54330 54331)"; echo "$out"
@@ -1840,17 +2055,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
+        timeout-minutes: 10
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y cmake g++ libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev python3
           # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
           if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
       - name: Build lk-fcgi (Release)
+        timeout-minutes: 10
         run: |
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target look-fcgi --parallel $(nproc)
       - name: Concurrency hang smoke (c=50 × 20, pool + fiber)
+        timeout-minutes: 10
         run: bash cpp/tests/concurrency_smoke.sh cpp/build/lk-fcgi 50 20
       # Fiber-mode per-request web-context leak guard: many concurrent requests
       # with unique values, each yielding at http::get() between reading its input
@@ -1858,4 +2076,5 @@ jobs:
       # the interpreter dispatch path shared a thread_local copy across interleaved
       # fibers → one user's data leaked into another's response.
       - name: Fiber web-context correctness (concurrent-different-output)
+        timeout-minutes: 10
         run: bash cpp/tests/fiber_ctx/guard.sh cpp/build/lk-fcgi

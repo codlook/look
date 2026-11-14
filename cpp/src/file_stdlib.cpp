@@ -1,3 +1,4 @@
+#include "look/mem_budget.h"   // mem_reserve — büyük ayırmadan önce bütçe
 #include "look/stdlib.h"
 #include "look/web.h"
 #include "look/request_scope.h"   // current_request_web: isteğin DOCUMENT_ROOT değeri
@@ -141,6 +142,13 @@ Module make_file_module() {
         assert_in_file_root(path);
         std::ifstream f(path, std::ios::binary);
         if (!f) throw std::runtime_error("file::read(): cannot open: " + path);
+        // Bellek bütçesi: dosya okunmadan ÖNCE boyutu sorulur (look/mem_budget.h) — büyük dosya
+        // güvenli noktaya varmadan belleği bitirmesin. Okuma birkaç kopya yapar (ostringstream + değer).
+        {
+            std::error_code ec;
+            auto sz = std::filesystem::file_size(path, ec);
+            if (!ec) look::mem_reserve((int64_t)sz * 2, "file::read()");
+        }
         std::ostringstream ss;
         ss << f.rdbuf();
         return Value(ss.str());

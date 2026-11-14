@@ -8,6 +8,7 @@
 // The thread must be converted to a fiber before switching to any fiber.
 
 #include "look/fiber.h"
+#include "look/mem_budget.h"   // fiber geçişinde istek bellek hesabı
 #include "look/logger.h"
 #include "look/stack_guard.h"
 
@@ -152,11 +153,15 @@ void Fiber::resume() {
 
     Fiber* prev      = tl_current_fiber;
     tl_current_fiber = this;
+    // Bellek hesabı fiber'la birlikte geçer (look/mem_budget.h)
+    MemAccount* prev_acct = mem_current_account();
+    mem_set_current_account(static_cast<MemAccount*>(local.mem_acct));
 
     ::SwitchToFiber(impl_->fiber_handle);
 
     // Returns here when fiber calls yield() or completes
     tl_current_fiber = prev;
+    mem_set_current_account(prev_acct);
 }
 
 void Fiber::yield() {

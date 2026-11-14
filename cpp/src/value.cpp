@@ -3,6 +3,8 @@
 #include "look/struct_types.h"
 #include "look/parallel_runtime.h"   // kanal kilitlenmesi (ChanWait)
 #include "look/assoc_index.h"
+#include "look/mem_budget.h"      // mem_reserve — büyük birleştirmeden önce bütçe
+#include <algorithm>
 #include <cstring>
 #include <random>
 #include <mutex>
@@ -375,7 +377,23 @@ Value Value::pow(const Value& o) const {
     if (x == 0.0 && y < 0) throw std::runtime_error("Division by zero: 0 ** negative");
     return Value(std::pow(x, y));
 }
-Value Value::concat(const Value& o)    const { return Value(to_string() + o.to_string()); }
+// Yeni metin TAM boyutta (ESKİ: to_string() + … geçici kopyaya eklerken sığa ikiye katlanıyordu:
+// 1 MiB . "x" = 2 MiB). Metin operand kopyalanmadan okunur.
+Value Value::concat(const Value& o) const {
+    std::string ls, rs;
+    const std::string& l = (type_ == STRING && ptr_val) ? *static_cast<const std::string*>(ptr_val.get())
+                                                        : (ls = to_string());
+    const std::string& r = (o.type_ == STRING && o.ptr_val) ? *static_cast<const std::string*>(o.ptr_val.get())
+                                                            : (rs = o.to_string());
+    // Büyük birleştirme bütçeye önceden sorulur: `$s = $s . $s` tek adımda yüz MiB'lerce ayırabilir,
+    // güvenli noktayı beklemeden (look/mem_budget.h).
+    const size_t n = l.size() + r.size();
+    if (n >= (size_t(1) << 20)) mem_reserve((int64_t)n, "joining strings with .");
+    std::string out;
+    out.reserve(n);
+    out.append(l).append(r);
+    return Value(std::move(out));
+}
 
 void Value::append_in_place(const Value& o) {
     // o.to_string() önce kopyalanır → `$s .= $s` gibi aliasing güvenli.
@@ -394,7 +412,12 @@ void Value::append_in_place(const Value& o) {
         if (ptr_val.use_count() != 1)
             ptr_val = std::make_shared<std::string>(*static_cast<std::string*>(ptr_val.get()));
     }
-    static_cast<std::string*>(ptr_val.get())->append(rhs);
+    std::string* buf = static_cast<std::string*>(ptr_val.get());
+    // Büyüme (en çok iki katı) 1 MiB'i geçiyorsa bütçeye önceden sorulur (look/mem_budget.h).
+    const size_t need = buf->size() + rhs.size();
+    if (need > buf->capacity() && need >= (size_t(1) << 20))
+        mem_reserve((int64_t)std::max(need, buf->capacity() * 2), "joining strings with .=");
+    buf->append(rhs);
 }
 
 // Python-benzeri katı karşılaştırma: türler-arası coercion YOK. (Go değil — Go

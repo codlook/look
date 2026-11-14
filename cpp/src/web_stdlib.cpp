@@ -1,4 +1,5 @@
 ﻿#define _CRT_RAND_S
+#include "look/mem_budget.h"   // mem_reserve — büyük ayırmadan önce bütçe
 #include "look/stdlib.h"
 #include "look/web.h"
 #include "look/struct_types.h"
@@ -628,6 +629,9 @@ static Module make_json_module() {
     };
     m.functions["decode"] = [](auto args) -> Value {
         if (args.empty()) return Value();
+        // Bellek bütçesi: çözülen değerler metinden büyüktür (her değer 32 bayt + metinler) — kabaca
+        // 4 katı önceden sorulur (look/mem_budget.h); dev bir belge güvenli noktaya varmadan bitirmesin.
+        if (args[0].type() == Value::STRING) look::mem_reserve((int64_t)args[0].str_ref().size() * 4, "json::decode()");
         return json_decode_document(args[0].to_string());
     };
 

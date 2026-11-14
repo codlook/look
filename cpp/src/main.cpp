@@ -10,6 +10,7 @@
 #include "look/array_count.h"
 #include "look/http_client.h"
 #include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
+#include "look/mem_budget.h"      // komut satırı: yalnız LOOK_MEMORY_LIMIT verilirse süreç sınırı
 #include "look/test_runner.h"
 #include "look/repl.h"
 #include "look/web.h"
@@ -263,6 +264,15 @@ struct PipeGuard : std::streambuf {
 
 int main(int argc, char* argv[]) {
     look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
+    // Bellek (look/mem_budget.h): komut satırında varsayılan sınır YOK (Go gibi); yalnız LOOK_MEMORY_LIMIT
+    // açıkça verilirse süreç sınırı. İstek bütçesi (256 MiB) yalnız web isteklerinindir.
+    {
+        std::string why;
+        if (!look::mem_budget_configure_cli(why)) {
+            std::cerr << "Error: " << why << std::endl;
+            return 1;
+        }
+    }
 #ifndef _WIN32
     // Hic yok edilmez: cikista std::cout bu sarmalayici uzerinden bosaltilir (static olsaydi once o
     // yikilir, ardindan ios_base::Init olu nesneye yazardi).

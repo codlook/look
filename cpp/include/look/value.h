@@ -64,6 +64,17 @@ struct NestingGuard {
 inline std::shared_ptr<std::vector<Value>> look_new_array();
 inline std::shared_ptr<std::vector<Value>> look_new_array(const std::vector<Value>& copy);
 
+// Değere dönüşen metin boşa sığa taşımaz. ESKİ: eklemeyle kurulan metin (birleştirme, "a{$x}b",
+// JSON çıktısı) büyürken sığasını ikiye katlıyordu → 1 MiB'lik metin 2 MiB tutuyordu (ölçüldü:
+// istek bellek bütçesi gerçek ihtiyacın yarısında doluyordu). 4 KiB'ten ve %25'ten fazla boşluk
+// varsa tam boyuta indirilir. Biriktirme (`.=`, `$s = $s . x`) append_in_place'te kendi tamponunda
+// büyür (amortize) — bu yoldan geçmez.
+inline std::string&& fit_string(std::string& s) {
+    const size_t slack = s.capacity() - s.size();
+    if (slack > 4096 && slack > s.size() / 4) s.shrink_to_fit();
+    return std::move(s);
+}
+
 class Value {
 public:
     // STRUCT (LOOK 2) sona eklendi → mevcut tiplerin numarası değişmez. Depolaması ARRAY ile
@@ -100,7 +111,7 @@ public:
     explicit Value(double d)                        : type_(FLOAT),    float_val(d) {}
     explicit Value(bool b)                          : type_(BOOL),     bool_val(b)  {}
     explicit Value(const std::string& s)            : type_(STRING),   int_val(0), ptr_val(std::make_shared<std::string>(s)) {}
-    explicit Value(std::string&& s)                 : type_(STRING),   int_val(0), ptr_val(std::make_shared<std::string>(std::move(s))) {}
+    explicit Value(std::string&& s)                 : type_(STRING),   int_val(0), ptr_val(std::make_shared<std::string>(fit_string(s))) {}
     explicit Value(std::shared_ptr<std::vector<Value>> a) : type_(ARRAY), int_val(0), ptr_val(std::move(a)) {}
     explicit Value(std::shared_ptr<LookChannel>        c) : type_(CHANNEL),   int_val(0), ptr_val(std::move(c)) {}
     explicit Value(std::shared_ptr<WsConnection>       w) : type_(WEBSOCKET), int_val(0), ptr_val(std::move(w)) {}

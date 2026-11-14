@@ -88,6 +88,10 @@ struct FiberLocal {
     void* req_web = nullptr;   // look::WebContext*
     void* req_out = nullptr;   // std::ostream*
 
+    // İsteğin bellek hesabı (look/mem_budget.h). Fiber::resume iş parçacığının o anki hesabını
+    // buna çevirir, dönüşte geri alır: ayırmalar askıdaki başka isteğe yazılmaz.
+    void* mem_acct = nullptr;  // look::MemAccount*
+
     // Extend here for other fiber-specific state as needed
     // (e.g., per-request log context, tracing IDs)
 

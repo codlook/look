@@ -111,6 +111,7 @@ endif()
 
 set(LOOK_CORE
     src/token.cpp
+    src/mem_budget.cpp   # bellek bütçesi: operator new/delete sayımı (look/mem_budget.h)
     src/lexer.cpp
     src/parser.cpp
     src/format_src.cpp   # lk fmt — kaynak biçimlendirici (lexer'a bağlı)

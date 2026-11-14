@@ -628,6 +628,25 @@ responses say `Connection: close`), closes its database connections and exits wi
 request still running after 30 seconds is cut and the exit code is 1; a second signal stops at
 once. WebSocket and SSE connections are closed when the requests have finished.
 
+### One request can no longer use up the server's memory — new limit
+
+In 1.0.x nothing limited memory: one request that kept growing a list or a string (a loop with
+a wrong condition, a huge upload decoded at once) made the kernel kill `lk-fcgi` within a
+second in a 512 MB container, and every other request on the server failed with it. Now the
+server has a memory limit: by default 80% of the container's memory limit (systemd
+`MemoryMax`, Docker `--memory`), or 1 GiB when there is none; the startup log states it.
+`LOOK_MEMORY_LIMIT` changes it (`512MiB`, `2GiB`, bytes, or `off`).
+
+- One request may use half of the limit, at most 256 MiB. A request that goes over is stopped
+  and gets `500`; the log says `the request would use more than 256 MiB of memory and was
+  stopped` with the line. Keep large data out of memory: stream it, page through it, or store it.
+- At 90% of the limit new requests get `503` with `Retry-After: 1`; the requests in progress go
+  on. At the limit the request using the most memory is stopped and gets `503`; what it did
+  before stopping (a database write, for example) is not undone, and the log says so.
+- The stop cannot be caught with `try`/`catch`.
+- A script run with `lk` has no limit unless `LOOK_MEMORY_LIMIT` is set; then the limit applies
+  to the whole program (there is no per-request budget on the command line).
+
 ### Workers follow the usable CPUs; database connections open as needed — silent
 
 1.0.x started CPUs × 4 worker threads (at most 64) and opened one database connection per
