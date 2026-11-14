@@ -1504,7 +1504,7 @@ jobs:
           cd cpp
           # fiber_posix + logger: PG reads suspend the fiber while waiting (fiber_io.h)
           g++ -std=c++17 -Iinclude tests/pg_scram_crypto_kat.cpp src/postgres_client.cpp \
-              src/fiber_posix.cpp src/logger.cpp -lssl -lcrypto -lpthread -o /tmp/pgkat
+              src/fiber_posix.cpp src/mem_budget.cpp src/logger.cpp -lssl -lcrypto -lpthread -o /tmp/pgkat
           /tmp/pgkat
 
       # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
@@ -1980,7 +1980,8 @@ jobs:
           for i in $(seq 1 20); do docker exec look-redis-q redis-cli -a 'pa?ss' --no-auth-warning ping 2>/dev/null | grep -q PONG && break; sleep 1; done
           cd cpp
           g++ -std=c++23 -Iinclude tests/redis_tls/harness.cpp build/CMakeFiles/look.dir/src/resp_client.cpp.o \
-            build/CMakeFiles/look.dir/src/fiber_posix.cpp.o -lssl -lcrypto -lpthread -o /tmp/resp_harness
+            build/CMakeFiles/look.dir/src/fiber_posix.cpp.o build/CMakeFiles/look.dir/src/mem_budget.cpp.o \
+            -lssl -lcrypto -lpthread -o /tmp/resp_harness
           ok="$(/tmp/resp_harness 'redis://:pa?ss@127.0.0.1:6380/1' 2>&1 || true)";  echo "right password : $ok"
           bad="$(/tmp/resp_harness 'redis://:wrong@127.0.0.1:6380' 2>&1 || true)";   echo "wrong password : $bad"
           none="$(/tmp/resp_harness 'redis://127.0.0.1:6380' 2>&1 || true)";         echo "no password    : $none"
