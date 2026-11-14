@@ -80,6 +80,11 @@ public:
     // Stop the server.
     void stop();
 
+    // Zarif kapanma (look/shutdown.h): yeni bağlantı kabulü durur, boşta bekleyen bağlantılar
+    // kapanır, işlenen istekler biter ve "Connection: close" ile yanıtlanır; run() işçiler
+    // bitince döner. Herhangi bir iş parçacığından çağrılabilir.
+    void begin_shutdown();
+
 private:
     static void ws_close_hook(int fd);   // ws::close sonrası fd kapatma (g_ws_server_close_hook)
     struct Impl;

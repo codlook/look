@@ -198,6 +198,7 @@ add_executable(look-fcgi
     src/fcgi_main.cpp
     src/http_main.cpp
     src/http_server.cpp
+    src/shutdown.cpp
     src/event_loop.cpp
     src/compiler.cpp
     src/vm.cpp

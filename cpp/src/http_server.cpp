@@ -10,6 +10,7 @@
 #include <sstream>
 #include <thread>
 #include <mutex>
+#include <unordered_set>
 #include <queue>
 #include <condition_variable>
 #include <vector>
@@ -280,6 +281,31 @@ struct HttpServer::Impl {
 
     int  server_fd = -1;
     std::atomic<bool> running{false};
+
+    // Zarif kapanma: draining true olunca yeni istek okunmaz. Bir sonraki isteği BEKLEYEN
+    // bağlantılar idle_fds'de durur; begin_shutdown onların okuma yönünü kapatır (recv 0 döner,
+    // bağlantı kapanır) — keep-alive bağlantısı işçiyi boşta süresi (30 sn) boyunca tutmasın.
+    // Kayıt/silme ve shutdown aynı kilitte: kapatılan fd yeniden kullanılmış başka bağlantı olamaz.
+    std::atomic<bool> draining{false};
+    std::mutex idle_mtx;
+    std::unordered_set<int> idle_fds;
+    // fd'yi boşta-bekleyen olarak kaydet; kapanma başladıysa false (çağıran bağlantıyı kapatır)
+    bool idle_enter(int fd) {
+        std::lock_guard<std::mutex> lk(idle_mtx);
+        if (draining.load(std::memory_order_acquire)) return false;
+        idle_fds.insert(fd);
+        return true;
+    }
+    void idle_leave(int fd) {
+        std::lock_guard<std::mutex> lk(idle_mtx);
+        idle_fds.erase(fd);
+    }
+
+    // İşçi başına dinleyen soketler (fiber modu, SO_REUSEPORT). begin_shutdown portu hemen
+    // bırakabilsin diye izlenir; işçi kendi soketini bu kilit altında kayıttan siler ve kapatır.
+    std::mutex lfd_mtx;
+    std::vector<int> listen_fds;
+
 
     std::unique_ptr<WorkerPool> pool;
 
@@ -590,7 +616,11 @@ struct HttpServer::Impl {
             size_t scan = 0, hdr_pos;
             while ((hdr_pos = buf.find("\r\n\r\n", scan)) == std::string::npos) {
                 scan = buf.size() >= 3 ? buf.size() - 3 : 0;
+                // Sonraki isteği bekliyor (henüz bayt yok): zarif kapanmada bu bekleme kesilir.
+                const bool waiting = buf.empty();
+                if (waiting && !idle_enter(fd)) { ::close(fd); return; }
                 ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
+                if (waiting) idle_leave(fd);
                 if (r <= 0) { ::close(fd); return; }
                 if (rd_start == std::chrono::steady_clock::time_point{})
                     rd_start = std::chrono::steady_clock::now();
@@ -758,6 +788,9 @@ struct HttpServer::Impl {
                 resp.body        = "{\"ok\":false,\"error\":\"Server error\",\"hata\":\"Server error\"}";
                 resp.keep_alive  = false;
             }
+            // Kapanma sürüyor (istek işlenirken başladı): yanıt "Connection: close" ile gider,
+            // bağlantı kapanır — istemci sonraki isteğini kapanan sürece göndermesin (Go Shutdown).
+            if (draining.load(std::memory_order_acquire)) resp.keep_alive = false;
 
             std::string raw = resp.build();
             // Tamamı gitmezse bağlantı kapanır: yarım yanıtlı bağlantıda sonraki yanıt yazılmaz.
@@ -1370,6 +1403,8 @@ void HttpServer::run() {
                     } else {
                         int flags = fcntl(worker_fd, F_GETFL, 0);
                         fcntl(worker_fd, F_SETFL, flags | O_NONBLOCK);
+                        std::lock_guard<std::mutex> lk(impl_->lfd_mtx);
+                        impl_->listen_fds.push_back(worker_fd);
                     }
                 }
             }
@@ -1525,6 +1560,9 @@ void HttpServer::run() {
 #ifdef __linux__
             if (worker_fd >= 0) {
                 look::set_thread_scheduler(nullptr);
+                std::lock_guard<std::mutex> lk(impl_->lfd_mtx);
+                auto& v = impl_->listen_fds;
+                v.erase(std::remove(v.begin(), v.end(), worker_fd), v.end());
                 ::close(worker_fd);
             }
 #endif
@@ -1578,6 +1616,36 @@ void HttpServer::stop() {
     ::close(impl_->server_fd);
     impl_->server_fd = -1;
     impl_->loop->stop();
+}
+
+void HttpServer::begin_shutdown() {
+    {
+        // draining kilit altında: idle_enter ile yarışmasın (kayıt ya kapanmadan önce olur ve
+        // aşağıda kapatılır, ya sonra olur ve kayıt reddedilir).
+        std::lock_guard<std::mutex> lk(impl_->idle_mtx);
+        impl_->draining.store(true, std::memory_order_release);
+        impl_->running = false;
+#ifndef _WIN32
+        // Boşta bekleyen bağlantılar: okuma yönü kapanır → recv 0 → bağlantı kapanır.
+        for (int fd : impl_->idle_fds) ::shutdown(fd, SHUT_RD);
+#endif
+    }
+#ifndef _WIN32
+    // Dinleyen soketler: port HEMEN bırakılır (Go Shutdown dinleyicileri kapatır). Kapanma sürerken
+    // port bağlı kalsaydı aynı porta başlayan yeni süreç (restart, deploy) bind edemezdi (ölçüldü).
+    // fd'nin kendisi kapatılmaz — başka bir iş parçacığı onu hâlâ kullanıyor olabilir ve kapanan
+    // numara yeni bir bağlantıya verilirse accept onda yapılırdı. Bunun yerine: shutdown (accept'te
+    // bekleyen uyanır), sonra aynı numaraya dinlemeyen boş bir soket dup2 edilir — eski soketin son
+    // başvurusu düşer, port boşalır; numara kapanış bitene dek geçerli kalır (accept EINVAL döner).
+    auto release = [](int fd) {
+        ::shutdown(fd, SHUT_RDWR);
+        int ph = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (ph >= 0) { ::dup2(ph, fd); ::close(ph); }
+    };
+    if (impl_->server_fd >= 0) release(impl_->server_fd);   // bağlantı başına işçi modeli: ortak soket
+    std::lock_guard<std::mutex> lk(impl_->lfd_mtx);          // fiber modu: işçi başına soketler
+    for (int fd : impl_->listen_fds) release(fd);
+#endif
 }
 
 } // namespace look

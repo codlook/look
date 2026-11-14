@@ -320,6 +320,15 @@ jobs:
           echo "$out"
           echo "$out" | grep -q 'map functions: all checks passed' || { echo "::error::map functions FAILED"; exit 1; }
 
+      # SIGTERM (systemd stop/restart, a Plesk release switch): the request in progress finishes
+      # with "Connection: close", new connections are refused, an idle keep-alive connection does
+      # not hold the exit, exit code 0; a second signal stops at once. HTTP and FastCGI.
+      - name: Graceful shutdown on SIGTERM
+        run: |
+          cd cpp
+          bash tests/graceful_shutdown_test.sh ./build/lk-fcgi 7960
+          LOOK_FIBER_DISPATCH=1 bash tests/graceful_shutdown_test.sh ./build/lk-fcgi 7965
+
       # The web server log names the line (and file) of an uncaught error: route, included
       # file, script without routes, setup.
       - name: Web errors are logged with their line

@@ -148,6 +148,10 @@ public:
     using Handler = std::function<void(FcgiConn)>;
     void run(Handler handler);
 
+    // Zarif kapanma: yeni bağlantı kabulü durur, run() döner (look/shutdown.h). Herhangi bir iş
+    // parçacığından çağrılabilir.
+    void stop();
+
 private:
 #ifdef _WIN32
     SOCKET listen_sock_ = INVALID_SOCKET;

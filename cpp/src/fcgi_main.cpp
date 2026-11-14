@@ -22,6 +22,7 @@
 #endif
 #include <ctime>
 #include "look/fcgi.h"
+#include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
 #include "look/health_path.h"  // yerleşik sağlık yolu — tek kaynak (HTTP modu da kullanır)
 #include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
 #include "look/host_port.h"    // --port: Go flag modeli (yalnız rakam, 1-65535)
@@ -406,6 +407,15 @@ FcgiServer::~FcgiServer() {
 #endif
 }
 
+void FcgiServer::stop() {
+    // accept'te bekleyen run() döngüsünü uyandırır (soket kapatılmaz: yıkıcı kapatır).
+#ifdef _WIN32
+    if (listen_sock_ != INVALID_SOCKET) ::shutdown(listen_sock_, SD_BOTH);
+#else
+    if (listen_sock_ >= 0) ::shutdown(listen_sock_, SHUT_RDWR);
+#endif
+}
+
 void FcgiServer::run(Handler handler) {
     while (true) {
 #ifdef _WIN32
@@ -662,6 +672,9 @@ int main(int argc, char* argv[]) {
     // tz global state'ini thread'ler başlamadan doldur (localtime_r yarış fix'i)
     tzset();
 #endif
+    // Zarif kapanma: SIGTERM/SIGINT ayrı iş parçacığında alınır — HİÇBİR iş parçacığı açılmadan
+    // (runtime_init ve kurulum açabilir; maske kalıtılır). look/shutdown.h
+    look::shutdown::install();
     look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
     // --port NNNN     → TCP modu (fcgi) veya http modu
     // --workers N     → concurrent dispatch thread sayısı (default: CPU çekirdeği)
@@ -821,6 +834,9 @@ int main(int argc, char* argv[]) {
             // kabul edilip yanıtsız kalıyordu (HTTP kipindeki başlangıç kapısının karşılığı).
             ThreadPool pool(workers);
             look::FcgiServer server(tcp_port);
+            // Zarif kapanma: kabul durur, run() döner; kapsam sonunda havuz kuyruktaki ve işlenen
+            // istekleri bitirip birleşir (ThreadPool yıkıcısı), sonra aşağıda finish(0).
+            look::shutdown::on_begin([&server] { server.stop(); });
 
             server.run([&pool](look::FcgiConn conn_val) {
                 // move conn into heap so the lambda owns it across thread boundary
@@ -839,16 +855,20 @@ int main(int argc, char* argv[]) {
                     while (conn_ptr->accept(req)) {
                         handle_request(req, *conn_ptr);
                         if (!req.keep_conn) break;
+                        if (look::shutdown::requested()) break;   // kapanma: sonraki isteği bekleme
                         // KEEP_CONN: sonraki istegi beklerken idle timeout —
                         // bos baglantilar worker thread'leri suresiz pinlemesin
                         conn_ptr->set_read_timeout(5);
                     }
                 });
             });
+            look::shutdown::on_begin(nullptr);   // server kapsamdan çıkıyor
         } catch (const std::exception& e) {
+            look::shutdown::on_begin(nullptr);
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "FCGI", e.what());
             return 1;
         }
+        if (look::shutdown::requested()) look::shutdown::finish(0);
     } else {
         // ── stdin/stdout modu — mod_fcgid, tek thread yeterli ────────────────
         look::Logger::instance().log(look::LogLevel::LOG_INFO, "FCGI",
@@ -856,8 +876,26 @@ int main(int argc, char* argv[]) {
 
         look::FcgiConn conn;
         look::FcgiRequest req;
+        // Zarif kapanma: istek beklerken gelen sinyal hemen çıkarır; istek işlenirken gelen sinyalde
+        // istek biter, sonra çıkılır (kilit: ikisi arasında yarış yok).
+        static std::mutex pipe_mtx;
+        static bool pipe_busy = false;
+        look::shutdown::on_begin([] {
+            std::lock_guard<std::mutex> lk(pipe_mtx);
+            if (!pipe_busy) look::shutdown::finish(0);
+        });
         while (conn.accept(req)) {
+            {
+                std::lock_guard<std::mutex> lk(pipe_mtx);
+                if (look::shutdown::requested()) look::shutdown::finish(0);
+                pipe_busy = true;
+            }
             handle_request(req, conn);
+            {
+                std::lock_guard<std::mutex> lk(pipe_mtx);
+                pipe_busy = false;
+                if (look::shutdown::requested()) look::shutdown::finish(0);
+            }
         }
     }
 

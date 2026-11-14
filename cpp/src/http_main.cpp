@@ -10,6 +10,7 @@
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/builtins.h"
 #include "look/value_path.h"   // value_push_not_map — sözlüğe push hatası (tek tanım)
+#include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
 #include "look/route_group.h"
 #include "look/host_port.h"   // LOOK_SMTP_PORT / LOOK_IMAP_PORT doğrulama
 #include "look/metrics.h"
@@ -2246,7 +2247,18 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
 
     try {
         look::HttpServer server(port, workers, http_handler, ws_handler, sse_handler);
+        // Zarif kapanma (look/shutdown.h): SIGTERM/SIGINT yeni bağlantıyı durdurur, işlenenler biter,
+        // run() işçiler bitince döner.
+        look::shutdown::on_begin([&server] { server.begin_shutdown(); });
         server.run();   // "Listening on …" run() yazar — port gerçekten dinlendiğinde (işçiler hazır)
+        if (look::shutdown::requested()) {
+#ifndef _WIN32
+            if (imap_srv) { imap_srv->stop(); }
+            if (smtp_srv) { smtp_srv->stop(); }
+            if (smtp_thread.joinable()) smtp_thread.join();
+#endif
+            look::shutdown::finish(0);
+        }
     } catch (const std::exception& e) {
         // Sunucu kurulamadi/calisamadi: hata koduyla CIK. Eskiden loglayip normal donuyordu →
         // surec 0 ile bitiyor, systemd Restart=on-failure bunu basari sayip yeniden baslatmiyordu.

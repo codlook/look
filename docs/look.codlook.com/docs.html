@@ -4412,6 +4412,8 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload &amp;&amp systemctl enable look-fcgi &amp;&amp systemctl start look-fcgi</code></pre>
 
+  <p><strong>Stop and restart are graceful.</strong> On <code>SIGTERM</code> (what <code>systemctl stop</code> and <code>restart</code> send) or <code>SIGINT</code>, <code>lk-fcgi</code> stops accepting connections, closes idle keep-alive connections, lets the requests in progress finish (their responses say <code>Connection: close</code>), closes its database connections and exits with code 0. A request still running after 30 seconds is cut and the exit code is 1; a second signal stops at once. systemd's default stop timeout (90 s) leaves room for this.</p>
+
   <h3>Plesk — .htaccess (AllowOverride FileInfo)</h3>
   <pre><code><span class="cm"># /var/www/vhosts/domain.com/httpdocs/.htaccess</span>
 <span class="cm"># NOTE: don't write Options +FollowSymLinks — Plesk blocks it (returns 500)</span>

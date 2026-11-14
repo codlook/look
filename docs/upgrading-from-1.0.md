@@ -606,6 +606,16 @@ rule `request::ip()` already follows. An application that read these headers its
 went out without `Secure` (with a warning in the log on every request). It now follows the
 connection, as under FastCGI and `--mode http`. LOOK 1.0.43 has the same fix.
 
+### Stop and restart let the requests in progress finish — silent
+
+In 1.0.x `SIGTERM` (`systemctl stop` / `restart`, a deploy, a Plesk update) ended `lk-fcgi` at
+once: a request in progress was cut and the client saw a broken connection. Now, on `SIGTERM` or
+`SIGINT`, `lk-fcgi` (`--mode http`, FastCGI over TCP and under `mod_fcgid`) stops accepting
+connections, closes idle keep-alive connections, lets the requests in progress finish (their
+responses say `Connection: close`), closes its database connections and exits with code 0. A
+request still running after 30 seconds is cut and the exit code is 1; a second signal stops at
+once. WebSocket and SSE connections are closed when the requests have finished.
+
 ### Workers follow the usable CPUs; database connections open as needed — silent
 
 1.0.x started CPUs × 4 worker threads (at most 64) and opened one database connection per

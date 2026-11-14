@@ -4407,6 +4407,8 @@ EOF
 systemctl daemon-reload && systemctl enable look-fcgi && systemctl start look-fcgi
 ```
 
+**Stop and restart are graceful.** On `SIGTERM` (what `systemctl stop` and `restart` send) or `SIGINT`, `lk-fcgi` stops accepting connections, closes idle keep-alive connections, lets the requests in progress finish (their responses say `Connection: close`), closes its database connections and exits with code 0. A request still running after 30 seconds is cut and the exit code is 1; a second signal stops at once. systemd's default stop timeout (90 s) leaves room for this.
+
 ### Plesk — .htaccess (AllowOverride FileInfo)
 
 ```lk
