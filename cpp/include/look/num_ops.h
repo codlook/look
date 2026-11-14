@@ -28,4 +28,24 @@ inline Value num_floor(const Value& v) { return v.type() == Value::INT ? v : num
 inline Value num_ceil(const Value& v)  { return v.type() == Value::INT ? v : num_integral_value(std::ceil(v.to_float())); }
 inline Value num_round(const Value& v) { return v.type() == Value::INT ? v : num_integral_value(std::round(v.to_float())); }
 
+// max/min'in TEK tanımı (çekirdek max()/min() ve math::max/min). Tek liste → en büyük/küçük eleman,
+// boş liste → null. ESKİ: çekirdek max([3,9,2]) listenin KENDİSİNİ döndürüyordu (math::max 9) —
+// sessiz yanlış sonuç. Birden çok argüman: aralarından seçer. Eşitlikte ilk değil SON geçen döner
+// (max: >=, min: <=) — math::max'in eski davranışı korunur. Sözlük çağıranın denetimindedir
+// (value_list_only).
+inline Value num_extreme(const std::vector<Value>& args, bool want_max) {
+    auto better = [want_max](const Value& a, const Value& best) { return want_max ? a >= best : a <= best; };
+    if (args.size() == 1 && args[0].type() == Value::ARRAY) {
+        const auto& arr = *args[0].vec_ptr();
+        if (arr.empty()) return Value();
+        Value best = arr[0];
+        for (size_t i = 1; i < arr.size(); ++i) if (better(arr[i], best)) best = arr[i];
+        return best;
+    }
+    if (args.empty()) return Value();
+    Value best = args[0];
+    for (size_t i = 1; i < args.size(); ++i) if (better(args[i], best)) best = args[i];
+    return best;
+}
+
 } // namespace look

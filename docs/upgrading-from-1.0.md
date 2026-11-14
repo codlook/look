@@ -186,6 +186,13 @@ Lists behave as before. To check input that may be either, use `type::is_map($x)
 `true` for a map and a JSON object, `false` for a list, `[]` and a JSON array. `type::of` still
 says `"array"` for both. When only the values matter, call `array::values($x)` first.
 
+### `max` and `min` work as documented — was silent
+
+`max($list)` / `min($list)` returned the list itself (`max([3, 9, 2])` was `[3, 9, 2]`), and with
+more than two arguments only the first two were compared (`max(1, 2, 8)` was `2`). They now give
+the largest / smallest element or argument, like `math::max` / `math::min`; an empty list gives
+`null`.
+
 ### A closure captures the value — silent; writing to it is an error at load
 
 A closure takes the value of what it captures at the moment it is created, and cannot

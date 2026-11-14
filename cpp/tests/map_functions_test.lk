@@ -131,6 +131,17 @@ $fails += check("list unique", array::unique([1, 1, 2]), [1, 2])
 $fails += check("list flatten keeps nested map", array::flatten([[1], ["a" => 1]]), [1, ["a" => 1]])
 $fails += check("math::max list", math::max([1, 5, 2]), 5)
 $fails += check("max two", max(1, 5), 5)
+// çekirdek max/min = math::max/min (tek tanım): tek liste → eleman (eskiden listenin kendisi),
+// üç argüman → üçüne de bakar (eskiden yalnız ilk ikisi)
+$fails += check("max list", max([3, 9, 2]), 9)
+$fails += check("min list", min([3, 9, 2]), 2)
+$fails += check("max empty list", max([]), null)
+$fails += check("max three", max(1, 5, 3), 5)
+$fails += check("max third is largest", max(1, 2, 8), 8)
+$fails += check("min three", min(4, 2, 3), 2)
+$fails += check("max one", max(7), 7)
+$fails += check("max strings", max(["b", "c", "a"]), "c")
+$fails += check("math::max = max", math::max([4, 1, 6]), max([4, 1, 6]))
 $x = [1, 2]
 $fails += check("list pop", pop($x), 2)
 // liste içindeki sözlük bir DEĞERDİR: contains onu eşitlikle bulur

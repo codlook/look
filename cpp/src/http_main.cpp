@@ -523,13 +523,11 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
     };
     t[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
         for (auto& x : args) look::value_list_only(x, "max()");   // sözlük: hata (value_path.h)
-        if (args.size() < 2) return args.empty() ? look::Value() : args[0];
-        return args[0] >= args[1] ? args[0] : args[1];
+        return look::num_extreme(args, true);                     // tek tanım (look/num_ops.h)
     };
     t[BI("min")] = [](std::vector<look::Value>& args) -> look::Value {
         for (auto& x : args) look::value_list_only(x, "min()");
-        if (args.size() < 2) return args.empty() ? look::Value() : args[0];
-        return args[0] <= args[1] ? args[0] : args[1];
+        return look::num_extreme(args, false);
     };
     t[BI("sqrt")] = [](std::vector<look::Value>& args) -> look::Value {
         return look::Value(args.empty() ? 0.0 : std::sqrt(args[0].to_float()));
