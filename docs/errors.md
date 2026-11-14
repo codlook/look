@@ -242,7 +242,7 @@ File access is **sandboxed** to a root directory (`LOOK_FILE_ROOT`); paths can't
 | Message | Cause | Fix |
 |---|---|---|
 | `session: could not obtain secure randomness (…)` | The OS CSPRNG was unavailable when creating a session ID. | System-level; ensure `/dev/urandom` (or the Windows CSPRNG) is available. |
-| `session::…() / cookie::…() in a request exempted from the CSRF check by csrf::exempt("…")` | A route let through without a CSRF token (`csrf::exempt`) used the session or a cookie. Reading one there would authenticate a request sent from another site; setting or deleting one could log the visitor in or out. | If the route needs to know the user, do not exempt it (send the CSRF token). A webhook verifies its signature instead of a cookie. |
+| `session::…() / cookie::…() / request::header("Cookie") / response::header("Set-Cookie") / env("HTTP_COOKIE") in a request exempted from the CSRF check by csrf::exempt("…")` | A route let through without a CSRF token (`csrf::exempt`) used the session or a cookie (also through the `Cookie` / `Set-Cookie` headers). Reading one there would authenticate a request sent from another site; setting or deleting one could log the visitor in or out. | If the route needs to know the user, do not exempt it (send the CSRF token). A webhook verifies its signature instead of a cookie. |
 | `auth::hash() requires password` | No password passed. | Pass the plaintext password to hash. |
 | `auth: could not read enough random bytes` | CSPRNG failure while hashing. | System-level randomness problem; check the environment. |
 

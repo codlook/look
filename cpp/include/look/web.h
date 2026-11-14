@@ -151,6 +151,8 @@ class RouteStopException : public std::exception {
 void release_thread_connections();   // return all conns borrowed by this request to pools
 void set_db_pool_size(int n);        // set pool size before any db::connect call
 void clear_db_pools();               // close all pools — called before hot reload
+// csrf::exempt ile muaf geçen istekte çereze dokunan her yol hata verir (what: "cookie::get()" …).
+void csrf_exempt_cookie_guard(const WebContext* w, const char* what);
 
 // Kullanılabilir CPU sayısı — cgroup CPU limitini (container/Docker/systemd CPUQuota,
 // kısıtlı cloud vCPU) dikkate alır. std::thread::hardware_concurrency() FİZİKSEL

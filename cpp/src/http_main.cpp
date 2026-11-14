@@ -1759,6 +1759,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             if (args.empty()) return look::Value();
             std::string key = args[0].to_string();
             std::string def = (args.size() >= 2) ? args[1].to_string() : "";
+            // lk-cgi: istek başlıkları süreç ortamındadır — muaf istekte çerez buradan da okunmaz
+            if (key == "HTTP_COOKIE") look::csrf_exempt_cookie_guard(look::current_request_web(), "env(\"HTTP_COOKIE\")");
             return look::Value(look::look_get_env(key, def));
         };
         {

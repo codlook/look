@@ -415,6 +415,7 @@ static Module make_request(WebRef ctx) {
         if (args.empty()) return Value();
         std::string key = args[0].to_string();
         for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+        if (key == "cookie") csrf_exempt_cookie_guard(ctx.get(), "request::header(\"Cookie\")");
         auto it = ctx->headers_in.find(key);
         if (it != ctx->headers_in.end()) return Value(it->second);
         return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
@@ -423,7 +424,12 @@ static Module make_request(WebRef ctx) {
     m.functions["headers"] = [ctx](auto) -> Value {
         auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value::assoc_marker());
-        for (auto& [k, v] : ctx->headers_in) { arr->push_back(Value(k)); arr->push_back(Value(v)); }
+        // csrf::exempt ile muaf istekte çerez başlığı verilmez (csrf_exempt_cookie_guard)
+        const bool no_cookie = !ctx->csrf_exempt_rule.empty();
+        for (auto& [k, v] : ctx->headers_in) {
+            if (no_cookie && k == "cookie") continue;
+            arr->push_back(Value(k)); arr->push_back(Value(v));
+        }
         return Value(arr);
     };
     m.functions["is_get"]     = [ctx](auto) -> Value { return Value(ctx->method == "GET");     };
@@ -553,6 +559,11 @@ static Module make_response_module(WebRef ctx) {
         return Value(ctx->status_code);
     };
     m.functions["header"] = [ctx](auto args) -> Value {
+        if (args.size() >= 2) {
+            std::string lk = args[0].to_string();
+            for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
+            if (lk == "set-cookie") csrf_exempt_cookie_guard(ctx.get(), "response::header(\"Set-Cookie\")");
+        }
         if (args.size() >= 2)
             ctx->headers_out[sanitize_header(args[0].to_string())] =
                 sanitize_header(args[1].to_string());
@@ -766,14 +777,22 @@ static Module make_cookie_module(WebRef ctx) {
     for (auto& [name, fn] : m.functions) {
         auto inner = fn;
         fn = [ctx, inner, name = name](std::vector<Value> args) -> Value {
-            if (ctx && !ctx->csrf_exempt_rule.empty())
-                throw std::runtime_error("cookie::" + name + "() in a request exempted from the CSRF check by csrf::exempt(\"" +
-                    ctx->csrf_exempt_rule + "\"): an exempt route cannot use cookies. If the route needs to know the user, "
-                    "do not exempt it (send the CSRF token); a webhook verifies its signature instead");
+            csrf_exempt_cookie_guard(ctx, ("cookie::" + name + "()").c_str());
             return inner(args);
         };
     }
     return m;
+}
+
+// csrf::exempt ile muaf geçen istekte çerez HİÇBİR yoldan okunmaz/yazılmaz — cookie::, request::header
+// ("Cookie"), response::header("Set-Cookie"), CGI'de env("HTTP_COOKIE"). ESKİ: yalnız cookie:: kapalıydı;
+// aynı çerez başlıktan okunabiliyordu (ölçüldü: Cookie: sid=VICTIM → yanıt sid=VICTIM). request::headers()
+// muaf istekte çerez başlığını hiç vermez. Mesaj tek yerde.
+void csrf_exempt_cookie_guard(const WebContext* w, const char* what) {
+    if (w && !w->csrf_exempt_rule.empty())
+        throw std::runtime_error(std::string(what) + " in a request exempted from the CSRF check by csrf::exempt(\"" +
+            w->csrf_exempt_rule + "\"): an exempt route cannot use cookies. If the route needs to know the user, "
+            "do not exempt it (send the CSRF token); a webhook verifies its signature instead");
 }
 
 // ── Session depolama backend'i ────────────────────────────────────────────────

@@ -29,6 +29,7 @@ is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: got '$2', want '$3'"; fi
 mkdir -m 700 "$T/s"
 
 cat > "$T/app.lk" <<'EOF'
+use string
 before_route(function() { response::header("X-Mw", "ran"); })
 route("GET", "/form", fn() => response::html(csrf::field()))
 route("GET", "/tok", fn() => response::text(csrf::token()))
@@ -57,6 +58,12 @@ route("POST", "/hook-cookie/set", function() { cookie::set("pref", "evil"); retu
 route("POST", "/hook-cookie/delete", function() { cookie::delete("pref"); return response::text("del"); })
 route("GET", "/hook-cookie/get", fn() => response::text("c:" . (cookie::get("pref") ?? "none")))
 route("POST", "/cookie-ok", fn() => response::text("c:" . (cookie::get("pref") ?? "none")))
+# … nor through the headers: the Cookie header, request::headers(), Set-Cookie, env("HTTP_COOKIE") (CGI)
+route("POST", "/hook-cookie/header", fn() => response::text("h:" . (request::header("Cookie") ?? "none")))
+route("POST", "/hook-cookie/headers", fn() => response::text(request::headers()["cookie"] == null ? "no-cookie" : "has-cookie"))
+route("POST", "/hook-cookie/setheader", function() { response::header("Set-Cookie", "pref=evil"); return response::text("set"); })
+route("POST", "/hook-cookie/env", fn() => response::text("e:" . env("HTTP_COOKIE", "none")))
+route("POST", "/header-ok", fn() => response::text(string::contains(request::header("Cookie") ?? "", "pref=mine") ? "h:yes" : "h:no"))
 route("GET", "/login", function() { session::start(); session::regenerate(); return response::text("in"); })
 route("GET", "/logout", function() { session::start(); session::destroy(); return response::text("out"); })
 route("GET", "/info", fn() => response::text(request::scheme() . "|" . request::host()))
@@ -178,9 +185,18 @@ for mode in http fcgi cgi; do
     is "$mode: … and gets the value"                        "$(cat "$T/b")" c:mine
     is "$mode: a protected POST still reads cookies"        "$(req $mode POST /cookie-ok "$C; pref=mine" "$K" application/x-www-form-urlencoded "$T/fb")" 200
     is "$mode: … and gets the value"                        "$(cat "$T/b")" c:mine
+    for p in header setheader env; do
+        is "$mode: an exempt route that reaches the cookie through $p is an error" "$(req $mode POST /hook-cookie/$p "pref=mine" "" application/x-www-form-urlencoded "$T/fb")" 500
+    done
+    is "$mode: request::headers() in an exempt route"       "$(req $mode POST /hook-cookie/headers "pref=mine" "" application/x-www-form-urlencoded "$T/fb")" 200
+    is "$mode: … has no Cookie header"                      "$(cat "$T/b")" no-cookie
+    is "$mode: a protected POST still reads the Cookie header" "$(req $mode POST /header-ok "$C; pref=mine" "$K" application/x-www-form-urlencoded "$T/fb")" 200
+    is "$mode: … and gets it"                               "$(cat "$T/b")" h:yes
 done
 grep -q 'cookie::get() in a request exempted from the CSRF check by csrf::exempt("/hook-cookie/\*"): an exempt route cannot use cookies' "$T/log" \
     && ok "the log names the cookie call in an exempt route and says what to do" || bad "no explanation for cookie:: in an exempt route"
+grep -q 'request::header("Cookie") in a request exempted from the CSRF check' "$T/log" \
+    && ok "the log names the Cookie header in an exempt route" || bad "no explanation for the Cookie header in an exempt route"
 grep -q 'POST /submit refused: no _csrf field or X-CSRF-Token header. Every application that uses cookies is protected' "$T/log" \
     && ok "the log says why and what to do" || bad "no explanation in the log"
 grep -q 'session::start() in a request exempted from the CSRF check by csrf::exempt("/hook-session")' "$T/log" \

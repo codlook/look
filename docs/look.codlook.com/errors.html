@@ -1084,9 +1084,9 @@ crypto::rs256_verify($data, $sig, $public_pem)</code></pre>
       </div>
     </div>
     <div class="err" id="e113" data-cat="Sessions, cookies &amp; auth" data-text="session::…() / cookie::…() in a request exempted from the csrf check by csrf::exempt(&quot;…&quot;) a route let through without a csrf token used the session or a cookie. if the route needs to know the user, do not exempt it (send the csrf token). a webhook verifies its signature instead of a cookie.">
-      <div class="err-msg"><code>session::…() / cookie::…() in a request exempted from the CSRF check by csrf::exempt("…")</code></div>
+      <div class="err-msg"><code>session::…() / cookie::…() / request::header("Cookie") / response::header("Set-Cookie") / env("HTTP_COOKIE") in a request exempted from the CSRF check by csrf::exempt("…")</code></div>
       <div class="err-detail">
-        <p><span class="err-lbl">Cause</span> A route let through without a CSRF token (<code>csrf::exempt</code>) used the session or a cookie. Reading one there would authenticate a request sent from another site; setting or deleting one could log the visitor in or out.</p>
+        <p><span class="err-lbl">Cause</span> A route let through without a CSRF token (<code>csrf::exempt</code>) used the session or a cookie (also through the <code>Cookie</code> / <code>Set-Cookie</code> headers). Reading one there would authenticate a request sent from another site; setting or deleting one could log the visitor in or out.</p>
         <p><span class="err-lbl err-lbl-fix">Fix</span> If the route needs to know the user, do not exempt it (send the CSRF token). A webhook verifies its signature instead of a cookie.</p>
       </div>
       <pre class="err-eg"><code><span class="eg-bad"># ✗ triggers the error</span>

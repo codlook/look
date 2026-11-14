@@ -584,7 +584,9 @@ What to change:
 - Send `csrf::token()` in an `X-CSRF-Token` header from `fetch`/AJAX requests.
 - Exempt webhooks and token APIs, which do not use cookies, with `csrf::exempt("/webhooks/stripe")`
   or `csrf::exempt("/api/*")` at the top of the program. A request let through this way cannot
-  use `session::` or `cookie::` — that is an error (reading a cookie there would authenticate a
+  use `session::` or `cookie::`, read the `Cookie` header (`request::header("Cookie")`, and under
+  CGI `env("HTTP_COOKIE")`) or write a `Set-Cookie` header — that is an error; `request::headers()`
+  leaves the `Cookie` header out (reading a cookie there would authenticate a
   request from another site; setting or deleting one could log the visitor in or out). A route
   that needs to know the user stays protected; a webhook verifies its signature instead. A `GET`
   on the same path and every protected route use cookies as before.
