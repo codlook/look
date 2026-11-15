@@ -1330,6 +1330,10 @@ jobs:
           bash tests/smtp_late_reply_test.sh build/lk-fcgi 7834
           bash tests/smtp_pipelining_test.sh build/lk-fcgi 7841
           bash tests/mail_capabilities_test.sh build/lk-fcgi 7860
+          # mail::send to a remote SMTP server: TLS before the login, an untrusted or wrongly
+          # named certificate refused, no fall back to plain text, a refused login reported
+          # without the password
+          bash tests/smtp_client_tls_test.sh build/lk 7880
           # IMAP: login required, mailbox names checked (no traversal), literal size limit
           bash tests/imap_test.sh build/lk-fcgi 7157
 

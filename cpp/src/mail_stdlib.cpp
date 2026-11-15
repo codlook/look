@@ -302,8 +302,10 @@ static int smtp_reply(SmtpConn& c, std::string& text) {
         if (!c.read_line(line)) return -1;
         text += line + "\n";
         if (line.size() < 3) return -1;
-        if (line.size() == 3 || line[3] == ' ')             // final line (not "NNN-")
+        if (line.size() == 3 || line[3] == ' ') {           // final line (not "NNN-")
+            text.pop_back();   // sondaki satır sonu hata iletisine girmesin ("STARTTLS refused: 502 …\n")
             return (line[0]-'0')*100 + (line[1]-'0')*10 + (line[2]-'0');
+        }
     }
 }
 // send cmd (skip if empty), read reply, accept `ok` or `ok2` (0 = no alt).
