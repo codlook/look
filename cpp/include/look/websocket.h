@@ -108,6 +108,8 @@ std::string ws_encode_binary_frame(const std::string& payload);
 // gecerli UTF-8 olmali (RFC 6455 §8.1): olmayani tarayici baglantiyi kapatarak reddeder.
 bool ws_utf8_valid(const std::string& s);
 std::string ws_encode_close_frame();
+// Durum kodlu kapanış (RFC 6455 §7.4): 1007 = geçersiz veri (metin çerçevesinde geçersiz UTF-8).
+std::string ws_encode_close_frame_code(uint16_t code);
 std::string ws_encode_pong_frame (const std::string& payload);
 
 struct WsFrame {

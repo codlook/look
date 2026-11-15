@@ -5,13 +5,14 @@
 # edilemiyordu. Şimdi: ws::send_binary / ws::broadcast_binary ikili çerçeve (0x2) gönderir; ws::send ve
 # ws::broadcast geçerli UTF-8 olmayan metinde açık hata verir; işleyici fn($data, $binary) ikili mi
 # olduğunu alır (tek parametreli eski işleyici aynı çalışır); sınır metin ve ikili için aynı (16 MB).
+# Gelen metin geçerli UTF-8 olmalı: değilse 1007 ile kapanır, işleyici görmez (parçalıda birleşik mesaj).
 # Usage: ws_binary_test.sh <lk-fcgi> [port]
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi> [port]}")" && pwd)/$(basename "$1")"
 PORT="${2:-7748}"
 TMP="$(mktemp -d)"; wd=""
 trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null; [ -n "$wd" ] && kill "$wd" 2>/dev/null' EXIT
 # Takılırsa 180 sn'de kırmızı; bekçi çıkışta öldürülür (bitmiş testin PID'ine sinyal gitmesin)
-( sleep 180; echo "FAIL: ws binary test timed out (180 s)"; kill -TERM $$ ) 2>/dev/null & wd=$!
+( sleep 180; echo "FAIL: ws binary test timed out (180 s)"; kill -TERM $$ ) 2>/dev/null & wd=$!; disown $wd   # disown: öldürülünce kabuk "Terminated" basmasın
 cat > "$TMP/app.lk" <<'LK'
 route("GET", "/ok", fn() => response::text("ok"))
 // ikili geri ikili, metin geri "text:" + metin
@@ -33,7 +34,12 @@ route("WS", "/astext", function($ws) {
 route("WS", "/bcast", function($ws) {
     ws::on($ws, "message", function($m, $bin) {
         if ($bin) { ws::broadcast_binary($m) }
-        else { try { ws::broadcast($m) } catch ($e) { ws::send($ws, "error:" . $e) } }
+        else { ws::broadcast($m) }
+    })
+})
+route("WS", "/bcastbad", function($ws) {
+    ws::on($ws, "message", function($m) {
+        try { ws::broadcast($m) } catch ($e) { ws::send($ws, "error:" . $e) }
     })
 })
 LK
@@ -114,11 +120,36 @@ a = connect("/bcast"); b = connect("/bcast"); time.sleep(0.2)
 send_frame(a, 0x2, BIN); op, p = recv_frame(b)
 check("ws::broadcast_binary reaches another client as binary", op == 2 and p == BIN, "op=%d len=%d" % (op, len(p)))
 recv_frame(a)   # a da yayını alır
-send_frame(a, 0x1, b"\xff\xfe"); op, p = recv_frame(a)   # geçersiz UTF-8 metin → ws::broadcast reddeder
-want = b"error:ws::broadcast(): the message is not valid UTF-8 text; send binary data with ws::broadcast_binary()"
-check("ws::broadcast of bytes that are not UTF-8 is an error that names ws::broadcast_binary", op == 1 and p == want, repr(p[:120]))
 send_frame(a, 0x1, b"ok"); recv_frame(a); recv_frame(b)
 a.close(); b.close()
+
+s = connect("/bcastbad")                                     # ikili veriyi ws::broadcast ile yaymayı dener
+send_frame(s, 0x2, BIN); op, p = recv_frame(s)
+want = b"error:ws::broadcast(): the message is not valid UTF-8 text; send binary data with ws::broadcast_binary()"
+check("ws::broadcast of bytes that are not UTF-8 is an error that names ws::broadcast_binary", op == 1 and p == want, repr(p[:120]))
+s.close()
+
+# ── gelen metin geçerli UTF-8 olmalı: değilse 1007 ile kapanır, işleyici görmez ──
+def close_code(frames):
+    s = connect("/echo")
+    try:
+        for f in frames: send_frame(s, *f)
+        s.settimeout(10)
+        op, p = recv_frame(s)
+        return (op, struct.unpack(">H", p[:2])[0] if op == 8 and len(p) >= 2 else p)
+    finally:
+        s.close()
+r = close_code([(0x1, b"ab\xff\xfecd")])
+check("a text frame that is not UTF-8 closes the connection with 1007 (the handler never sees it)", r == (8, 1007), repr(r))
+r = close_code([(0x1, b"\xed\xa0\x80")])                      # vekil (U+D800) — UTF-8'de yasak
+check("an encoded surrogate in text closes with 1007", r == (8, 1007), repr(r))
+euro = "x€y".encode()                                        # € = 3 bayt; parçalar arasında bölünür
+r = close_code([(0x1, euro[:2], False), (0x0, euro[2:], True)])
+check("a character split between two parts of a text message is accepted", r == (1, b"text:x\xe2\x82\xacy"), repr(r))
+r = close_code([(0x1, b"ok", False), (0x0, b"\xc3", True)])  # birleşince yarım karakter
+check("a text message in parts that is not UTF-8 when joined closes with 1007", r == (8, 1007), repr(r))
+r = close_code([(0x2, b"\xff\xfe\x00")])
+check("a binary message is not checked for UTF-8", r == (2, b"\xff\xfe\x00"), repr(r))
 
 def closed_after(frames):
     s = connect("/echo")

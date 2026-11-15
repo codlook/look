@@ -150,6 +150,13 @@ std::string ws_encode_close_frame() {
     return std::string("\x88\x00", 2);  // FIN + close, no payload
 }
 
+std::string ws_encode_close_frame_code(uint16_t code) {
+    std::string f("\x88\x02", 2);       // FIN + close, 2 baytlık durum kodu (ağ sırası)
+    f += (char)((code >> 8) & 0xFF);
+    f += (char)(code & 0xFF);
+    return f;
+}
+
 std::string ws_encode_pong_frame(const std::string& payload) {
     std::string f;
     // RFC 6455 §5.5: kontrol frame payload'u ≤125 bayt. Decoder zaten aşırı boy

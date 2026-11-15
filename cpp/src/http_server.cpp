@@ -1163,6 +1163,18 @@ struct HttpServer::Impl {
                 { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
                 conn->closed.store(true);
             };
+            // Metin mesajı geçerli UTF-8 olmalı (RFC 6455 §8.1): değilse 1007 ile kapat, işleyici
+            // görmez. ESKİ: bozuk baytlar işleyiciye teslim ediliyor, oradan JSON/veritabanı/HTML'e
+            // gidebiliyordu (gönderirken artık reddedildiğinden almada kabul etmek de tutarsızdı).
+            // Parçalı mesajda birleştirilmiş mesaj denetlenir (karakter parçalar arasında bölünebilir).
+            // İkili mesaj denetlenmez.
+            auto ws_text_ok = [&](const std::string& msg) -> bool {
+                if (ws_utf8_valid(msg)) return true;
+                std::string cf = ws_encode_close_frame_code(1007);
+                { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
+                conn->closed.store(true);
+                return false;
+            };
 
             uint8_t op = frame.opcode;
             if (op == 0x00 || op == 0x01 || op == 0x02) {
@@ -1175,7 +1187,11 @@ struct HttpServer::Impl {
                 } else {
                     // Yeni text/binary — önceki parça bitmeden yenisi başlayamaz.
                     if (conn->frag_active) { ws_proto_close(); break; }
-                    if (frame.fin) { ws_deliver(frame.payload, op == 0x02); continue; }  // tek-frame
+                    if (frame.fin) {                                               // tek-frame
+                        if (op == 0x01 && !ws_text_ok(frame.payload)) break;
+                        ws_deliver(frame.payload, op == 0x02);
+                        continue;
+                    }
                     conn->frag_active = true;
                     conn->frag_opcode = op;
                     conn->frag_buf    = frame.payload;
@@ -1185,6 +1201,7 @@ struct HttpServer::Impl {
                     std::string msg = std::move(conn->frag_buf);
                     conn->frag_buf.clear();
                     conn->frag_active = false;
+                    if (conn->frag_opcode == 0x01 && !ws_text_ok(msg)) break;
                     ws_deliver(msg, conn->frag_opcode == 0x02);
                 }
             } else if (frame.opcode == 0x09) {

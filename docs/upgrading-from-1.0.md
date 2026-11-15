@@ -704,6 +704,8 @@ and the application never saw why) and an incoming binary message looked like te
   `ws::send(): the message is not valid UTF-8 text; send binary data with ws::send_binary()`.
 - A message handler may take a second parameter: `ws::on($ws, "message", fn($data, $binary) …)`;
   `$binary` is `true` for a binary message. A handler with one parameter works as before.
+- An incoming text message that is not valid UTF-8 closes the connection with code 1007; the
+  handler never sees it (1.0.x handed it over). A browser never sends one.
 - A message is at most 16 MB, text or binary, in one frame or in parts (as before).
 
 ## Statements and the command line
