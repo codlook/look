@@ -37,7 +37,27 @@ std::mutex  g_list_mtx;
 MemAccount* g_head = nullptr;
 constexpr int64_t kFlush = int64_t(1) << 20;   // 1 MiB
 
+// İstek hesabına da partiyle yazılır (64 KiB): her ayırmada hesabın bellek satırına okuma+yazma
+// yapmak fiber kipinde ayırma ağırlıklı istekte ~%3,5 tutuyordu, parti bunun yarısını geri alır
+// (ölçüldü). Boyut ayırmada ve bırakmada AYNI yoldan sayılır; parti yalnız yazmayı seyreltir.
+// Hesap değişmeden önce (fiber geçişi, istek başı/sonu) ve güvenli noktada boşaltılır.
+// fiber-ok: o anki hesaba (t_acct) henüz yazılmamış fark; t_acct değişmeden önce acct_flush boşaltır.
+thread_local int64_t t_acct_delta = 0;
+constexpr int64_t kAcctFlush = int64_t(64) << 10;   // 64 KiB
+inline void acct_flush() noexcept {
+    if (MemAccount* a = t_acct) {
+        // Başka isteğin ayırdığı (paylaşılan) veriyi bırakmak hesabı sıfırın altına indirmez:
+        // indirseydi istek bütçesinin üstünde bellek kullanabilirdi.
+        int64_t b = a->bytes.load(std::memory_order_relaxed) + t_acct_delta;
+        if (b < 0) b = 0;
+        a->bytes.store(b, std::memory_order_relaxed);
+        if (b > a->limit || a->kill.load(std::memory_order_relaxed)) t_preempt_budget = 0;
+    }
+    t_acct_delta = 0;
+}
+
 inline void on_alloc_sz(int64_t sz) noexcept {
+    if ((t_acct_delta += sz) >= kAcctFlush) acct_flush();
     if ((t_delta += sz) >= kFlush) {
         const int64_t now = g_bytes.fetch_add(t_delta, std::memory_order_relaxed) + t_delta;
         t_delta = 0;
@@ -46,22 +66,12 @@ inline void on_alloc_sz(int64_t sz) noexcept {
             t_preempt_budget = 0;   // bir sonraki güvenli nokta denetlesin
         }
     }
-    if (MemAccount* a = t_acct) {
-        const int64_t b = a->bytes.load(std::memory_order_relaxed) + sz;
-        a->bytes.store(b, std::memory_order_relaxed);
-        if (b > a->limit || a->kill.load(std::memory_order_relaxed)) t_preempt_budget = 0;
-    }
 }
 inline void on_free_sz(int64_t sz) noexcept {
+    if ((t_acct_delta -= sz) <= -kAcctFlush) acct_flush();
     if ((t_delta -= sz) <= -kFlush) {
         g_bytes.fetch_add(t_delta, std::memory_order_relaxed);
         t_delta = 0;
-    }
-    if (MemAccount* a = t_acct) {
-        // Başka isteğin ayırdığı (paylaşılan) veriyi bırakmak bu hesabı sıfırın altına indirmez:
-        // indirseydi istek bütçesinin üstünde bellek kullanabilirdi.
-        const int64_t b = a->bytes.load(std::memory_order_relaxed) - sz;
-        a->bytes.store(b > 0 ? b : 0, std::memory_order_relaxed);
     }
 }
 
@@ -205,7 +215,7 @@ bool mem_admit() {
 }
 
 MemAccount* mem_current_account() noexcept { return t_acct; }
-void        mem_set_current_account(MemAccount* a) noexcept { t_acct = a; }
+void        mem_set_current_account(MemAccount* a) noexcept { acct_flush(); t_acct = a; }   // fark eski hesaba
 
 MemScope::MemScope() {
     // Kapalıyken ya da istek bütçesi yokken (komut satırı) hesap kurulmaz; yıkıcı limit==0'a bakar.
@@ -218,11 +228,13 @@ MemScope::MemScope() {
         g_head = &acct_;
     }
     prev_ = t_acct;
+    acct_flush();   // önceki hesabın farkı ona
     t_acct = &acct_;
     if (Fiber* f = Fiber::current()) f->local.mem_acct = &acct_;
 }
 MemScope::~MemScope() {
     if (!acct_.limit) return;   // bütçe kapalıyken kurulmuştu
+    acct_flush();
     t_acct = prev_;
     if (Fiber* f = Fiber::current()) f->local.mem_acct = prev_;
     std::lock_guard<std::mutex> lk(g_list_mtx);
@@ -267,6 +279,7 @@ MemAccount* kill_biggest() {
 } // namespace
 
 void mem_check() {
+    acct_flush();
     MemAccount* a = t_acct;
     if (!a) {
         // Komut satırı: betiğin kendisi süreç sınırında durur. Web'de hesapsız kod (kurulum,
@@ -284,6 +297,7 @@ void mem_check() {
 
 void mem_reserve(int64_t bytes, const char* what) {
     if (!mem_budget_enabled() || bytes <= 0) return;
+    acct_flush();
     MemAccount* a = t_acct;
     if (a && a->bytes.load(std::memory_order_relaxed) + bytes > a->limit) throw_request_over(what, bytes);
     // Süreç sınırı: ayırmayı yapan değil, en büyük istek durur (mem_check ile aynı kural).

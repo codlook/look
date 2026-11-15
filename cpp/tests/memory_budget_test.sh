@@ -9,6 +9,8 @@
 #   5) bellek durdurması try/catch ile yutulamaz
 #   6) birleştirme ve ara değer metni tam boyutta: 1 MiB . "y" 1 MiB tutar (ESKİ: 2 MiB)
 #   7) komut satırı: varsayılan sınır yok, istek bütçesi yok; LOOK_MEMORY_LIMIT verilirse süreç sınırı
+#   8) sayaç kaymaz: ayırma ve bırakma aynı boyutla sayılır (istek hesabı partiyle yazılsa da) —
+#      tek istekte 20 × 100 MiB, art arda 150 istek × 100 MiB: kayma birikse istek 500 / 503 alırdı
 # Usage: memory_budget_test.sh <lk-fcgi> [base-port] [lk]   (needs curl; LOOK_FIBER_DISPATCH ortamdan geçer:
 #        Linux --mode http varsayılanı fiber, havuz için LOOK_FIBER_DISPATCH=0)
 set -u
@@ -81,6 +83,15 @@ route("GET", "/interp", function() {
     $s = string::repeat("x", 1048576)
     for ($i = 0; $i < 100; $i++) { push($a, "{$s}y") }
     return response::text("interp " . count($a))
+})
+// 100 MiB ayır, bırak — 20 kez (istek bütçesi 128 MiB): hesap kayarsa istek durur
+route("GET", "/churn", function() {
+    for ($k = 0; $k < int(request::get("k")); $k++) {
+        $a = []
+        for ($i = 0; $i < 100; $i++) { push($a, string::repeat("c", 1048576)) }
+        $a = []
+    }
+    return response::text("churned")
 })
 LK
 start() { # <limit> <port>
@@ -155,6 +166,20 @@ fi
 echo "== 4) an invalid LOOK_MEMORY_LIMIT"
 LOOK_MEMORY_LIMIT=1GB timeout 10 "$LKF" --mode http --port $((P + 3)) --workers 2 "$T/app.lk" > "$T/bad.log" 2>&1; rc=$?
 check "exit 1 with the reason (rc=$rc)" "$( [ $rc = 1 ] && grep -q 'LOOK_MEMORY_LIMIT=1GB is not a size' "$T/bad.log" && echo ok)" "$(head -2 "$T/bad.log")"
+
+echo "== 8) the counters do not drift"
+P8=$((P + 4))
+if start 256MiB $P8; then   # istek bütçesi 128 MiB; %90 = 230 MiB
+    # TSan (LOOK_TEST_NO_TIMING=1) çok yavaş: hafif (yarışı sınar, kaymayı değil)
+    K8=20; N8=150; [ "${LOOK_TEST_NO_TIMING:-}" = 1 ] && { K8=3; N8=10; }
+    c8=$(code "http://127.0.0.1:$P8/churn?k=$K8" 120)
+    check "one request allocates and frees 100 MiB $K8 times ($c8)" "$( [ "$c8" = 200 ] && echo ok)" "got $c8: $(grep ERROR "$T/srv.log" | tail -1)"
+    bad8=0
+    for i in $(seq 1 $N8); do r=$(code "http://127.0.0.1:$P8/hold?mb=100&name=" 30); [ "$r" = 200 ] || bad8=$((bad8 + 1)); done
+    check "$N8 requests of 100 MiB in a row all finish ($bad8 refused)" "$( [ $bad8 = 0 ] && echo ok)" "$bad8 not 200: $(grep ERROR "$T/srv.log" | tail -1)"
+    check "afterwards a request is not refused" "$( [ "$(code "http://127.0.0.1:$P8/ok" 5)" = 200 ] && echo ok)" "refused"
+    stop
+fi
 
 echo "== 7) the command line: no limit by default, LOOK_MEMORY_LIMIT when given"
 if [ -x "$LK" ]; then

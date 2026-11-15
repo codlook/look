@@ -126,8 +126,8 @@ jobs:
           # memory limit: request accounts follow fibers across threads; the biggest request is
           # chosen under a lock while others allocate
           echo "== memory_budget_test"
-          bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7940 "$PWD/build-tsan/lk" || fail=1
-          LOOK_FIBER_DISPATCH=0 bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7950 "$PWD/build-tsan/lk" || fail=1
+          LOOK_TEST_NO_TIMING=1 bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7940 "$PWD/build-tsan/lk" || fail=1
+          LOOK_TEST_NO_TIMING=1 LOOK_FIBER_DISPATCH=0 bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7950 "$PWD/build-tsan/lk" || fail=1
           # the monitor thread reads every worker's scheduler and spawns on an idle one; no timing under TSan
           echo "== stuck_worker_test"
           LOOK_TEST_NO_TIMING=1 bash tests/stuck_worker_test.sh /tmp/w/lk-fcgi 7690 || fail=1
