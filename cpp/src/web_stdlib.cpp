@@ -276,7 +276,16 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
 // Geçersiz / aşırı derin belge → null (json::decode ve request::json sözleşmesi).
 std::string json_encode_value(const Value& v) { return json_encode(v); }
 
+static Value json_decode_document_here(const std::string& s);
+// Büyük belge fiber içinde ortak havuzda çözülür (fiber.h fiber_offload): bölünemeyen uzun C++ işi
+// iş parçacığını tutarsa aynı iş parçacığındaki öteki istekler bitene dek bekler.
 static Value json_decode_document(const std::string& s) {
+    // Ölçüldü (16 CPU, 4 × 12 MB decode dönerken): aynı iş parçacığına bağlı keep-alive /ok p99
+    // 99 ms → 0,7 ms. Küçük belge burada çözülür (havuza geçiş maliyeti kazançtan büyük).
+    if (s.size() >= (size_t(256) << 10)) return fiber_offload([&] { return json_decode_document_here(s); });
+    return json_decode_document_here(s);
+}
+static Value json_decode_document_here(const std::string& s) {
     size_t i = 0;
     try {
         Value v = json_decode_value(s, i);

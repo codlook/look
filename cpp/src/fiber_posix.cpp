@@ -191,8 +191,14 @@ void fiber_offload_run(const std::function<void()>& job) {
     if (!sp) { job(); return; }
     std::exception_ptr err;
     std::atomic<bool> done{false};
-    offload_pool().post([&, sched, sp] {
+    // İsteğin bellek hesabı işle birlikte havuza geçer (look/mem_budget.h): havuzdaki ayırmalar
+    // isteğin bütçesinden düşer. Tek yazar korunur — fiber iş bitene dek askıda.
+    MemAccount* acct = mem_current_account();
+    offload_pool().post([&, sched, sp, acct] {
+        MemAccount* prev = mem_current_account();
+        mem_set_current_account(acct);
         try { job(); } catch (...) { err = std::current_exception(); }
+        mem_set_current_account(prev);
         done.store(true, std::memory_order_release);
         sched->resume_fiber(sp);
     });
@@ -482,7 +488,10 @@ bool FiberScheduler::run_one() {
 
     f->sched_state_.store(Fiber::SchedState::RUNNING, std::memory_order_release);
     tl_slice_start = std::chrono::steady_clock::now();   // sıra bırakma ölçüsü bu andan başlar
+    running_since_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        tl_slice_start.time_since_epoch()).count(), std::memory_order_relaxed);
     f->resume();
+    running_since_ns_.store(0, std::memory_order_relaxed);
 
     // Yield dönüşü — fiber'ın akıbetine TEK yetkili burası karar verir.
     // resume_fiber() başka thread'den yalnızca WAITING durumundaki fiber'ı

@@ -289,7 +289,13 @@ public:
     // Total fibers (ready + suspended)
     size_t total_count() const;
 
+    // Şu an çalışan fiber'ın başladığı an (steady_clock, ns); 0 = fiber çalışmıyor. Başka iş
+    // parçacığından okunur (sunucunun gözetleyicisi): VM döngüsü 1 ms'de sırayı bırakır, uzun bir
+    // yerleşik bırakmaz — değer eskiyse iş parçacığı bölünemeyen bir işte takılıdır.
+    int64_t running_since_ns() const noexcept { return running_since_ns_.load(std::memory_order_relaxed); }
+
 private:
+    std::atomic<int64_t> running_since_ns_{0};
     // Ready queue — FIFO; fibers waiting to be resumed
     std::vector<std::shared_ptr<Fiber>> ready_;
 
@@ -351,7 +357,9 @@ inline void preempt_point() noexcept {
 // Ortasından kesilemeyen uzun bir yerleşik (parola özetleme: PBKDF2 100k tur ≈ 100 ms) fiber
 // içinde çağrılınca sabit boyutlu ortak bir iş parçacığı havuzunda çalışır, fiber o sırada
 // askıdadır — iş parçacığı öteki isteklere döner. Fiber dışında doğrudan çalışır. İş KİLİT
-// TUTMAMALI ve LOOK değerlerine dokunmamalı (yalnız C++ verisi): başka iş parçacığında koşar.
+// TUTMAMALI ve PAYLAŞILAN LOOK değerlerini değiştirmemeli: başka iş parçacığında koşar. YENİ değer
+// üretebilir (json::decode büyük belgeyi burada çözer; parallel() görevleri gibi). İsteğin bellek
+// hesabı işle birlikte geçer (look/mem_budget.h).
 void fiber_offload_run(const std::function<void()>& job);
 template <class F> auto fiber_offload(F&& f) -> decltype(f()) {
     decltype(f()) out{};

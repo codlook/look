@@ -374,6 +374,16 @@ jobs:
           bash tests/memory_budget_test.sh ./build/lk-fcgi 7940
           LOOK_FIBER_DISPATCH=0 bash tests/memory_budget_test.sh ./build/lk-fcgi 7945
 
+      # Fiber dispatch: a long builtin (a 12 MB json::decode) does not hold the other requests of
+      # its worker. New connections waiting on a stuck worker's socket are drained by an idle
+      # worker; a large json::decode runs on the shared pool, so keep-alive connections on that
+      # worker are served too.
+      - name: A long builtin does not hold other requests
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/stuck_worker_test.sh ./build/lk-fcgi 7690
+
       # The web server log names the line (and file) of an uncaught error: route, included
       # file, script without routes, setup.
       - name: Web errors are logged with their line

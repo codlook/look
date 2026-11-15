@@ -23,8 +23,10 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #ifdef __linux__
 #include <sys/resource.h>
+#include <poll.h>   // gözetleyici: takılan işçinin soketinde bekleyen bağlantı var mı
 #endif
 
 // Açık bağlantı sayısına LOOK bir sınır koymaz; sınır işletim sisteminin tanıtıcı sınırıdır.
@@ -301,10 +303,50 @@ struct HttpServer::Impl {
         idle_fds.erase(fd);
     }
 
+#ifdef __linux__
+    // Gözetleyicinin isteğiyle (bkz. watched): takılan işçinin soketinde bekleyen bağlantıları BU
+    // iş parçacığında kabul et (en çok 64) ve çık — kalıcı ikinci dinleyici değil (her bağlantıda
+    // bütün işçileri uyandıran ortak dinleme yeni bağlantıyla hızı dörtte birine düşürüyordu).
+    // Soket hâlâ kayıtlıysa (işçi çıkmadı, kapanış başlamadı) — kilit, kapatmayla yarışmasın diye.
+    void drain_listen(int fd) {
+        FiberScheduler* s = get_thread_scheduler();
+        if (!s) return;
+        std::lock_guard<std::mutex> lk(lfd_mtx);
+        if (std::find(listen_fds.begin(), listen_fds.end(), fd) == listen_fds.end()) return;
+        for (int k = 0; k < 64 && running; ++k) {
+            sockaddr_storage peer{};
+            socklen_t peer_len = sizeof(peer);
+            int client = accept4(fd, reinterpret_cast<sockaddr*>(&peer), &peer_len, 0);
+            if (client < 0) { if (errno == EINTR) continue; break; }   // EAGAIN: kuyruk boş
+            char peer_ip[INET6_ADDRSTRLEN] = {};
+            if (peer.ss_family == AF_INET)
+                inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(&peer)->sin_addr, peer_ip, sizeof(peer_ip));
+            else if (peer.ss_family == AF_INET6)
+                inet_ntop(AF_INET6, &reinterpret_cast<sockaddr_in6*>(&peer)->sin6_addr, peer_ip, sizeof(peer_ip));
+            std::string ip_str = peer_ip;
+            try { s->spawn([this, client, ip_str]() { handle_connection(client, ip_str); }); }
+            catch (...) { ::close(client); }
+        }
+    }
+#endif
+
     // İşçi başına dinleyen soketler (fiber modu, SO_REUSEPORT). begin_shutdown portu hemen
     // bırakabilsin diye izlenir; işçi kendi soketini bu kilit altında kayıttan siler ve kapatır.
     std::mutex lfd_mtx;
     std::vector<int> listen_fds;
+
+    // Takılan işçinin soketi (fiber modu). SO_REUSEPORT'ta çekirdek yeni bağlantıyı işçinin meşgul
+    // olup olmadığına bakmadan bir sokete atar; işçi bölünemeyen uzun bir yerleşikteyse (büyük
+    // json::decode, sort …) o sokete düşen bağlantı iş bitene dek kabul edilmez (ölçüldü: /ok p99
+    // 310 ms; VM döngüsü 1 ms'de sırayı bıraktığı için yalnız yerleşiklerde). Gözetleyici (Go'nun
+    // sysmon'u gibi) takılan işçinin bekleyen bağlantılarını boştaki bir işçiye boşalttırır.
+    // Normal yükte hiçbir şey yapmaz. Kayıt lfd_mtx altında; işçi çıkarken kendini siler.
+    struct Watched {
+        FiberScheduler* sched;
+        int fd;
+        std::shared_ptr<std::atomic<bool>> draining = std::make_shared<std::atomic<bool>>(false);
+    };
+    std::vector<Watched> watched;
 
 
     std::unique_ptr<WorkerPool> pool;
@@ -1433,8 +1475,7 @@ void HttpServer::run() {
                     // yeni bağlantı gelince epoll acceptor'ı uyandırır.
                     constexpr int FIBER_CAP = 1024;  // worker başına fiber üst sınırı
                     FiberScheduler* sched = &tl_srv_sched;
-                    try {
-                    sched->spawn([this, worker_fd, sched]() {
+                    auto acceptor = [this, sched](int worker_fd) {
                         auto self = look::Fiber::current()->shared_from_this_fiber();
                         while (impl_->running) {
                             // Backpressure: fiber tavanındayken accept'i durdur,
@@ -1493,7 +1534,9 @@ void HttpServer::run() {
                             }
                             break;   // gerçek accept hatası
                         }
-                    });
+                    };
+                    try {
+                    sched->spawn([acceptor, worker_fd]() { acceptor(worker_fd); });
                     } catch (const std::exception& e) {
                         // Acceptor fiber'i acilamadi: bu worker'in soketine gelen baglantilar
                         // hic kabul edilmezdi. Go gibi: nedeni yaz, hata koduyla cik (systemd
@@ -1521,6 +1564,10 @@ void HttpServer::run() {
                             std::_Exit(1);
                         }
                         log_listening(shared_port);
+                        // Gözetleyiciye kayıt (aşağıda, run sonu): bu işçi takılırsa soketini boşaltacak
+                        // boştaki işçiyi o seçer. Çıkışta (thread sonu) kayıt zamanlayıcı yıkılmadan silinir.
+                        std::lock_guard<std::mutex> lk(impl_->lfd_mtx);
+                        impl_->watched.push_back({sched, worker_fd});
                     }
                     // Acceptor + tüm bağlantı fiber'ları bitene dek çalış.
                     // Acceptor running=false görünce (≤200ms) çıkar; bağlantı
@@ -1563,6 +1610,9 @@ void HttpServer::run() {
                 std::lock_guard<std::mutex> lk(impl_->lfd_mtx);
                 auto& v = impl_->listen_fds;
                 v.erase(std::remove(v.begin(), v.end(), worker_fd), v.end());
+                auto& w = impl_->watched;   // gözetleyici bu zamanlayıcıya bir daha dokunmaz
+                w.erase(std::remove_if(w.begin(), w.end(),
+                    [&](const Impl::Watched& x) { return x.fd == worker_fd; }), w.end());
                 ::close(worker_fd);
             }
 #endif
@@ -1603,9 +1653,56 @@ void HttpServer::run() {
         lgate.cv.notify_all();
     }
 
+#ifdef __linux__
+    // Gözetleyici (bkz. Impl::watched): 2 ms'de bir, 3 ms'den uzun süredir aynı fiber'ı çalıştıran
+    // (bölünemeyen işte takılı) işçinin soketinde bekleyen bağlantı varsa, şu an fiber çalıştırmayan
+    // en az yüklü işçiye boşalttırır. Tek iş parçacığı; işçiler çıkarken kayıttan kendilerini siler.
+    std::thread monitor;
+    if (fiber_burst) {
+        try {
+            monitor = std::thread([this]() {
+                using namespace std::chrono;
+                constexpr int64_t kStuckNs = 3'000'000;   // VM döngüsü 1 ms'de sırayı bırakır
+                while (impl_->running) {
+                    std::this_thread::sleep_for(milliseconds(2));
+                    const int64_t now = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+                    std::lock_guard<std::mutex> lk(impl_->lfd_mtx);
+                    for (auto& w : impl_->watched) {
+                        const int64_t since = w.sched->running_since_ns();
+                        if (!since || now - since < kStuckNs || w.draining->load(std::memory_order_acquire)) continue;
+                        pollfd p{w.fd, POLLIN, 0};
+                        if (::poll(&p, 1, 0) <= 0 || !(p.revents & POLLIN)) continue;   // bekleyen yok
+                        Impl::Watched* to = nullptr;
+                        size_t best = SIZE_MAX;
+                        for (auto& c : impl_->watched) {
+                            if (&c == &w || c.sched->running_since_ns() != 0) continue;
+                            const size_t n = c.sched->total_count();
+                            if (n < best) { best = n; to = &c; }
+                        }
+                        if (!to) continue;   // hepsi meşgul: yapacak bir şey yok
+                        w.draining->store(true, std::memory_order_release);
+                        const int fd = w.fd;
+                        auto flag = w.draining;
+                        try {
+                            to->sched->spawn([this, fd, flag]() {
+                                impl_->drain_listen(fd);
+                                flag->store(false, std::memory_order_release);
+                            });
+                            to->sched->wake();
+                        } catch (...) { flag->store(false, std::memory_order_release); }
+                    }
+                }
+            });
+        } catch (const std::system_error&) {}   // açılamadı: gözetleyicisiz (eski davranış)
+    }
+#endif
+
     for (auto& t : workers) {
         if (t.joinable()) t.join();
     }
+#ifdef __linux__
+    if (monitor.joinable()) monitor.join();
+#endif
 
     impl_->loop->stop();
     if (impl_->loop_thread.joinable()) impl_->loop_thread.join();
