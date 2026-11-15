@@ -35,12 +35,14 @@ struct WsConnection {
     // Callbacks — set by ws::on() from LOOK code. YALNIZ aşağıdaki kilitli yardımcılarla: ws::on bir
     // havuz iş parçacığında (geri çağrının içinden de) atar, olay döngüsü aynı anda kopyalar.
     // Kilitsiz std::function ataması + kopyası yarışıyordu (ASan: heap-use-after-free, sessiz mesaj kaybı).
-    std::function<void(const std::string&)> on_message;
+    // on_message: (veri, ikili mi) — ikili çerçeve (opcode 0x2) metinden ayırt edilir (ws::on işleyicisinin
+    // ikinci parametresi). Eskiden ikisi de düz metin olarak teslim ediliyordu.
+    std::function<void(const std::string&, bool)> on_message;
     std::function<void()>                   on_close;
     std::mutex                              cb_mtx;
-    void set_on_message(std::function<void(const std::string&)> f) { std::lock_guard<std::mutex> l(cb_mtx); on_message = std::move(f); }
+    void set_on_message(std::function<void(const std::string&, bool)> f) { std::lock_guard<std::mutex> l(cb_mtx); on_message = std::move(f); }
     void set_on_close(std::function<void()> f) { std::lock_guard<std::mutex> l(cb_mtx); on_close = std::move(f); }
-    std::function<void(const std::string&)> get_on_message() { std::lock_guard<std::mutex> l(cb_mtx); return on_message; }
+    std::function<void(const std::string&, bool)> get_on_message() { std::lock_guard<std::mutex> l(cb_mtx); return on_message; }
     std::function<void()> get_on_close() { std::lock_guard<std::mutex> l(cb_mtx); return on_close; }
 
     // Parça birleştirme durumu (RFC 6455 §5.4) — sadece tek-akışlı ws okuma
@@ -64,8 +66,10 @@ struct WsConnection {
     explicit WsConnection(int fd_, std::string ip = "")
         : fd(fd_), client_ip(std::move(ip)) {}
 
-    // Thread-safe: encode + send text frame
+    // Thread-safe: encode + send text frame (çağıran UTF-8 olduğunu denetler: ws_utf8_valid)
     bool send_text(const std::string& msg);
+    // Thread-safe: encode + send binary frame (opcode 0x2) — ws::send_binary
+    bool send_binary(const std::string& bytes);
 
     // Send close frame and mark as closed
     void close_conn();
@@ -90,6 +94,7 @@ public:
     void   add(std::shared_ptr<WsConnection> conn);
     void   remove(int fd);
     void   broadcast(const std::string& msg);
+    void   broadcast_binary(const std::string& bytes);   // ws::broadcast_binary
     size_t count();
 };
 
@@ -98,6 +103,10 @@ extern WsRegistry g_ws_registry;
 // ── RFC 6455 frame codec ──────────────────────────────────────────────────────
 
 std::string ws_encode_text_frame (const std::string& payload);
+std::string ws_encode_binary_frame(const std::string& payload);
+// RFC 3629 kati UTF-8 (fazla uzun kodlama, vekil U+D800–DFFF ve U+10FFFF ustu RED). Metin cercevesi
+// gecerli UTF-8 olmali (RFC 6455 §8.1): olmayani tarayici baglantiyi kapatarak reddeder.
+bool ws_utf8_valid(const std::string& s);
 std::string ws_encode_close_frame();
 std::string ws_encode_pong_frame (const std::string& payload);
 

@@ -222,6 +222,9 @@ const std::vector<std::string>& builtin_names() {
         // type::is_map — liste mi sözlük mü (type::of ikisine de "array" der). Listeye özgü
         // fonksiyonlar sözlükte hata verdiğinden gelen veri denetlenebilmeli. Sona eklendi.
         "type::is_map",
+        // ws::send_binary / ws::broadcast_binary — ikili çerçeve (opcode 0x2); ws::send geçerli UTF-8 ister.
+        // Sona eklendi.
+        "ws::send_binary", "ws::broadcast_binary",
     };
     return NAMES;
 }
@@ -334,7 +337,7 @@ const std::vector<EffectRow>& effect_rows() {
             "template::render", "template::include", "template::block", "template::extends",
             "template::render_string",
             "timer::after", "timer::every", "timer::cancel", "timer::wait",
-            "ws::send", "ws::close", "ws::broadcast", "ws::on",
+            "ws::send", "ws::close", "ws::broadcast", "ws::on", "ws::send_binary", "ws::broadcast_binary",
         }},
         { BuiltinEffect::Callback, {
             "array::map", "array::filter", "array::reduce", "array::find", "array::sort",

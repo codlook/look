@@ -2324,11 +2324,13 @@ LOG_DIR=C:/app/logs</code></pre>
   <h3>ws:: API</h3>
   <table>
     <tr><th>Function</th><th>Description</th></tr>
-    <tr><td><code>ws::send($ws, $msg)</code></td><td>Send a text frame to this WS connection</td></tr>
-    <tr><td><code>ws::on($ws, "message", fn)</code></td><td>Message callback — <code>fn($data)</code> is called on every frame</td></tr>
+    <tr><td><code>ws::send($ws, $msg)</code></td><td>Send a text frame to this WS connection. The text must be valid UTF-8 (a browser closes the connection on anything else): other bytes are an error that says to use <code>ws::send_binary</code></td></tr>
+    <tr><td><code>ws::send_binary($ws, $bytes)</code></td><td>Send a binary frame (any bytes: an image, a compressed or protobuf message)</td></tr>
+    <tr><td><code>ws::on($ws, "message", fn)</code></td><td>Message callback — <code>fn($data)</code> or <code>fn($data, $binary)</code> is called on every message; <code>$binary</code> is <code>true</code> for a binary message, <code>false</code> for text. A message is at most 16 MB, text or binary, in one frame or in parts; over it the connection is closed</td></tr>
     <tr><td><code>ws::on($ws, "close", fn)</code></td><td>The client went away — <code>fn()</code> runs once, on a close frame or a dropped connection; not when the server calls <code>ws::close</code></td></tr>
     <tr><td><code>ws::close($ws)</code></td><td>Send a close frame, close the connection</td></tr>
-    <tr><td><code>ws::broadcast($msg)</code></td><td>Send to all connected WS clients (broadcast-safe)</td></tr>
+    <tr><td><code>ws::broadcast($msg)</code></td><td>Send a text frame to all connected WS clients (broadcast-safe); valid UTF-8, as <code>ws::send</code></td></tr>
+    <tr><td><code>ws::broadcast_binary($bytes)</code></td><td>Send a binary frame to all connected WS clients</td></tr>
     <tr><td><code>ws::clients()</code></td><td>Number of active WS connections</td></tr>
   </table>
 

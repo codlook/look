@@ -248,7 +248,9 @@ type::to_int
 type::to_string
 validator::check
 ws::broadcast
+ws::broadcast_binary
 ws::clients
 ws::close
 ws::on
 ws::send
+ws::send_binary

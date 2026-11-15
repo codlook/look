@@ -2311,11 +2311,13 @@ route("WS", "/chat", function($ws) use ($hub) {
 
 | Function | Description |
 | --- | --- |
-| `ws::send($ws, $msg)` | Send a text frame to this WS connection |
-| `ws::on($ws, "message", fn)` | Message callback — `fn($data)` is called on every frame |
+| `ws::send($ws, $msg)` | Send a text frame to this WS connection. The text must be valid UTF-8 (a browser closes the connection on anything else): other bytes are an error that says to use `ws::send_binary` |
+| `ws::send_binary($ws, $bytes)` | Send a binary frame (any bytes: an image, a compressed or protobuf message) |
+| `ws::on($ws, "message", fn)` | Message callback — `fn($data)` or `fn($data, $binary)` is called on every message; `$binary` is `true` for a binary message, `false` for text. A message is at most 16 MB, text or binary, in one frame or in parts; over it the connection is closed |
 | `ws::on($ws, "close", fn)` | The client went away — `fn()` runs once, on a close frame or a dropped connection; not when the server calls `ws::close` |
 | `ws::close($ws)` | Send a close frame, close the connection |
-| `ws::broadcast($msg)` | Send to all connected WS clients (broadcast-safe) |
+| `ws::broadcast($msg)` | Send a text frame to all connected WS clients (broadcast-safe); valid UTF-8, as `ws::send` |
+| `ws::broadcast_binary($bytes)` | Send a binary frame to all connected WS clients |
 | `ws::clients()` | Number of active WS connections |
 
 The WebSocket route and its `ws::on` callbacks see the handshake request: `request::get`, `request::header`, cookies and `session::get` work as in an ordinary route, so a WebSocket can be authenticated with the visitor's session. A browser handshake from another site is refused (see `LOOK_WS_ORIGINS`).

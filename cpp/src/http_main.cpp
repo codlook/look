@@ -1700,7 +1700,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 look::Value fnv = args[2].clone_for_thread();
                 auto handshake = std::make_shared<const CbOrigin>(CbOrigin{pack_req(*web_now), snap});
                 if (ev == "message")
-                    conn->set_on_message([fnv, run_cb, handshake](const std::string& msg) { run_cb(fnv, { look::Value(msg) }, "ws", "ws message callback", handshake.get()); });
+                    conn->set_on_message([fnv, run_cb, handshake](const std::string& msg, bool binary) {
+                        // fn($data) ya da fn($data, $binary): fazla argümanı çağrı yok sayar (eski işleyiciler aynı)
+                        run_cb(fnv, { look::Value(msg), look::Value(binary) }, "ws", "ws message callback", handshake.get()); });
                 else if (ev == "close")
                     conn->set_on_close([fnv, run_cb, handshake]() { run_cb(fnv, {}, "ws", "ws close callback", handshake.get()); });
                 return look::Value();
@@ -1716,9 +1718,19 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     conn->set_on_close_cb([fnv, run_cb, origin]() { run_cb(fnv, {}, "sse", "sse close callback", origin.get()); });
                 return look::Value();
             };
+            // Metin çerçevesi geçerli UTF-8 olmalı (RFC 6455 §8.1). ESKİ: ikili veri metin çerçevesiyle
+            // sessizce gidiyor, tarayıcı bağlantıyı kapatıyordu (uygulama nedenini göremiyordu).
             req_builtins[BI("ws::send")] = [ws_of](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 2) throw std::runtime_error("ws::send() takes 2 arguments");
-                return look::Value(ws_of(args[0], "ws::send() first argument must be a websocket")->send_text(args[1].to_string()));
+                auto conn = ws_of(args[0], "ws::send() first argument must be a websocket");
+                const std::string msg = args[1].to_string();
+                if (!look::ws_utf8_valid(msg))
+                    throw std::runtime_error("ws::send(): the message is not valid UTF-8 text; send binary data with ws::send_binary()");
+                return look::Value(conn->send_text(msg));
+            };
+            req_builtins[BI("ws::send_binary")] = [ws_of](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() != 2) throw std::runtime_error("ws::send_binary() takes 2 arguments");
+                return look::Value(ws_of(args[0], "ws::send_binary() first argument must be a websocket")->send_binary(args[1].to_string()));
             };
             req_builtins[BI("ws::close")] = [ws_of](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 1) throw std::runtime_error("ws::close() takes 1 argument");
@@ -1727,7 +1739,15 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             };
             req_builtins[BI("ws::broadcast")] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 1) throw std::runtime_error("ws::broadcast() takes 1 argument");
-                look::g_ws_registry.broadcast(args[0].to_string());
+                const std::string msg = args[0].to_string();
+                if (!look::ws_utf8_valid(msg))
+                    throw std::runtime_error("ws::broadcast(): the message is not valid UTF-8 text; send binary data with ws::broadcast_binary()");
+                look::g_ws_registry.broadcast(msg);
+                return look::Value();
+            };
+            req_builtins[BI("ws::broadcast_binary")] = [](std::vector<look::Value>& args) -> look::Value {
+                if (args.size() != 1) throw std::runtime_error("ws::broadcast_binary() takes 1 argument");
+                look::g_ws_registry.broadcast_binary(args[0].to_string());
                 return look::Value();
             };
             req_builtins[BI("ws::clients")] = [](std::vector<look::Value>&) -> look::Value {

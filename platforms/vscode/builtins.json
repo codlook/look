@@ -11,7 +11,7 @@
   "name": "app::get",
   "module": "app",
   "fn": "get",
-  "sig": "app::get()",
+  "sig": "app::get(\"config\")",
   "detail": "Uygulama durumu modülü",
   "documented": true
  },
@@ -424,6 +424,30 @@
   "documented": true
  },
  {
+  "name": "csrf::exempt",
+  "module": "csrf",
+  "fn": "exempt",
+  "sig": "csrf::exempt(\"/webhooks/stripe\")",
+  "detail": "csrf modülü",
+  "documented": true
+ },
+ {
+  "name": "csrf::field",
+  "module": "csrf",
+  "fn": "field",
+  "sig": "csrf::field()",
+  "detail": "csrf modülü",
+  "documented": true
+ },
+ {
+  "name": "csrf::token",
+  "module": "csrf",
+  "fn": "token",
+  "sig": "csrf::token()",
+  "detail": "csrf modülü",
+  "documented": true
+ },
+ {
   "name": "date::add",
   "module": "date",
   "fn": "add",
@@ -460,6 +484,14 @@
   "module": "date",
   "fn": "is_valid",
   "sig": "date::is_valid($date)",
+  "detail": "Tarih & saat modülü",
+  "documented": true
+ },
+ {
+  "name": "date::mono_us",
+  "module": "date",
+  "fn": "mono_us",
+  "sig": "date::mono_us()",
   "detail": "Tarih & saat modülü",
   "documented": true
  },
@@ -568,6 +600,14 @@
   "documented": true
  },
  {
+  "name": "db::driver",
+  "module": "db",
+  "fn": "driver",
+  "sig": "db::driver($conn)",
+  "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
+  "documented": true
+ },
+ {
   "name": "db::escape",
   "module": "db",
   "fn": "escape",
@@ -595,7 +635,7 @@
   "name": "db::query",
   "module": "db",
   "fn": "query",
-  "sig": "db::query($conn, \"SELECT * FROM p WHERE company_id=? AND active=?\", [$fid, 1])",
+  "sig": "db::query($conn, $sql, [$id])",
   "detail": "Veritabanı (MySQL/PG/SQLite) modülü",
   "documented": true
  },
@@ -660,6 +700,14 @@
   "module": "file",
   "fn": "exists",
   "sig": "file::exists($path)",
+  "detail": "Dosya sistemi modülü",
+  "documented": true
+ },
+ {
+  "name": "file::list",
+  "module": "file",
+  "fn": "list",
+  "sig": "file::list($dir)",
   "detail": "Dosya sistemi modülü",
   "documented": true
  },
@@ -1256,6 +1304,14 @@
   "documented": true
  },
  {
+  "name": "request::host",
+  "module": "request",
+  "fn": "host",
+  "sig": "request::host()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
   "name": "request::ip",
   "module": "request",
   "fn": "ip",
@@ -1356,6 +1412,14 @@
   "module": "request",
   "fn": "post",
   "sig": "request::post()",
+  "detail": "HTTP istek verisi modülü",
+  "documented": true
+ },
+ {
+  "name": "request::scheme",
+  "module": "request",
+  "fn": "scheme",
+  "sig": "request::scheme()",
   "detail": "HTTP istek verisi modülü",
   "documented": true
  },
@@ -1544,6 +1608,14 @@
   "documented": true
  },
  {
+  "name": "string::decode",
+  "module": "string",
+  "fn": "decode",
+  "sig": "string::decode($bytes, $charset)",
+  "detail": "Metin işlemleri modülü",
+  "documented": true
+ },
+ {
   "name": "string::ends_with",
   "module": "string",
   "fn": "ends_with",
@@ -1640,14 +1712,6 @@
   "documented": true
  },
  {
-  "name": "string::decode",
-  "module": "string",
-  "fn": "decode",
-  "sig": "string::decode($bytes, $charset)",
-  "detail": "Metin işlemleri modülü",
-  "documented": true
- },
- {
   "name": "string::regex_replace",
   "module": "string",
   "fn": "regex_replace",
@@ -1699,7 +1763,7 @@
   "name": "string::split",
   "module": "string",
   "fn": "split",
-  "sig": "string::split($s,$sep)",
+  "sig": "string::split($st[\"rest\"] . $chunk, \"\\n\")",
   "detail": "Metin işlemleri modülü",
   "documented": true
  },
@@ -1808,10 +1872,18 @@
   "documented": true
  },
  {
+  "name": "timer::wait",
+  "module": "timer",
+  "fn": "wait",
+  "sig": "timer::wait([ms])",
+  "detail": "Zamanlayıcı modülü",
+  "documented": true
+ },
+ {
   "name": "type::is_array",
   "module": "type",
   "fn": "is_array",
-  "sig": "type::is_array($v)",
+  "sig": "type::is_array($x)",
   "detail": "Tip dönüşüm & sorgu modülü",
   "documented": true
  },
@@ -1844,6 +1916,14 @@
   "module": "type",
   "fn": "is_int",
   "sig": "type::is_int($v)",
+  "detail": "Tip dönüşüm & sorgu modülü",
+  "documented": true
+ },
+ {
+  "name": "type::is_map",
+  "module": "type",
+  "fn": "is_map",
+  "sig": "type::is_map($v)",
   "detail": "Tip dönüşüm & sorgu modülü",
   "documented": true
  },
@@ -1968,6 +2048,14 @@
   "documented": true
  },
  {
+  "name": "ws::broadcast_binary",
+  "module": "ws",
+  "fn": "broadcast_binary",
+  "sig": "ws::broadcast_binary($bytes)",
+  "detail": "WebSocket modülü",
+  "documented": true
+ },
+ {
   "name": "ws::clients",
   "module": "ws",
   "fn": "clients",
@@ -1996,6 +2084,14 @@
   "module": "ws",
   "fn": "send",
   "sig": "ws::send($ws, $msg)",
+  "detail": "WebSocket modülü",
+  "documented": true
+ },
+ {
+  "name": "ws::send_binary",
+  "module": "ws",
+  "fn": "send_binary",
+  "sig": "ws::send_binary($ws, $bytes)",
   "detail": "WebSocket modülü",
   "documented": true
  }

@@ -1152,9 +1152,11 @@ struct HttpServer::Impl {
             off += frame.consumed;
 
             // RFC 6455 §5.4 parça birleştirme + §5.1 protokol ihlallerinde 1002.
-            auto ws_deliver = [&](const std::string& msg) {
+            // binary: ikili çerçeve (0x2); parçalı mesajda ilk çerçevenin opcode'u (frag_opcode).
+            // Sınır ikisinde aynı: çerçeve 16 MB (ws_try_decode_frame), birleştirilmiş mesaj 16 MB.
+            auto ws_deliver = [&](const std::string& msg, bool binary) {
                 if (auto cb = conn->get_on_message())   // kilitli kopya: ws::on aynı anda atayabilir
-                    ws_in_order(conn, [cb, msg]() { cb(msg); }, msg.size() + 128);
+                    ws_in_order(conn, [cb, msg, binary]() { cb(msg, binary); }, msg.size() + 128);
             };
             auto ws_proto_close = [&]() {
                 std::string cf = ws_encode_close_frame();
@@ -1173,7 +1175,7 @@ struct HttpServer::Impl {
                 } else {
                     // Yeni text/binary — önceki parça bitmeden yenisi başlayamaz.
                     if (conn->frag_active) { ws_proto_close(); break; }
-                    if (frame.fin) { ws_deliver(frame.payload); continue; }  // tek-frame
+                    if (frame.fin) { ws_deliver(frame.payload, op == 0x02); continue; }  // tek-frame
                     conn->frag_active = true;
                     conn->frag_opcode = op;
                     conn->frag_buf    = frame.payload;
@@ -1183,7 +1185,7 @@ struct HttpServer::Impl {
                     std::string msg = std::move(conn->frag_buf);
                     conn->frag_buf.clear();
                     conn->frag_active = false;
-                    ws_deliver(msg);
+                    ws_deliver(msg, conn->frag_opcode == 0x02);
                 }
             } else if (frame.opcode == 0x09) {
                 std::string pong = ws_encode_pong_frame(frame.payload);

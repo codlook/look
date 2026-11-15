@@ -98,10 +98,40 @@ std::string ws_handshake_101(const std::string& client_key) {
 
 // ── Frame encode (server→client, no masking) ──────────────────────────────────
 
-std::string ws_encode_text_frame(const std::string& payload) {
+static std::string ws_encode_data_frame(uint8_t opcode, const std::string& payload);
+std::string ws_encode_text_frame(const std::string& payload)   { return ws_encode_data_frame(0x1, payload); }
+std::string ws_encode_binary_frame(const std::string& payload) { return ws_encode_data_frame(0x2, payload); }
+
+// RFC 3629: 1–4 bayt, en kısa kodlama, vekil (U+D800–DFFF) yok, en çok U+10FFFF.
+bool ws_utf8_valid(const std::string& s) {
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
+    const size_t n = s.size();
+    size_t i = 0;
+    while (i < n) {
+        const unsigned char c = p[i];
+        if (c < 0x80) { ++i; continue; }
+        size_t len; uint32_t cp;
+        if      (c >= 0xC2 && c <= 0xDF) { len = 2; cp = c & 0x1F; }
+        else if (c >= 0xE0 && c <= 0xEF) { len = 3; cp = c & 0x0F; }
+        else if (c >= 0xF0 && c <= 0xF4) { len = 4; cp = c & 0x07; }
+        else return false;                                   // 0x80–0xC1, 0xF5–0xFF
+        if (i + len > n) return false;
+        for (size_t k = 1; k < len; ++k) {
+            if ((p[i + k] & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (p[i + k] & 0x3F);
+        }
+        if ((len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000)) return false;   // fazla uzun
+        if (cp >= 0xD800 && cp <= 0xDFFF) return false;                              // vekil
+        if (cp > 0x10FFFF) return false;
+        i += len;
+    }
+    return true;
+}
+
+static std::string ws_encode_data_frame(uint8_t opcode, const std::string& payload) {
     std::string f;
     size_t len = payload.size();
-    f += (char)0x81;  // FIN + text opcode
+    f += (char)(0x80 | opcode);  // FIN + text (0x1) / binary (0x2)
     if (len < 126) {
         f += (char)len;
     } else if (len < 65536) {
@@ -234,6 +264,13 @@ bool WsConnection::send_text(const std::string& msg) {
     return send_raw(frame);
 }
 
+bool WsConnection::send_binary(const std::string& bytes) {
+    if (closed.load()) return false;
+    std::string frame = ws_encode_binary_frame(bytes);
+    std::lock_guard<std::mutex> lk(write_mutex);
+    return send_raw(frame);
+}
+
 void (*g_ws_server_close_hook)(int fd) = nullptr;
 
 void WsConnection::close_conn() {
@@ -279,6 +316,16 @@ void WsRegistry::broadcast(const std::string& msg) {
         for (auto& [fd, conn] : clients_) snapshot.push_back(conn);
     }
     for (auto& conn : snapshot) conn->send_text(msg);
+}
+
+void WsRegistry::broadcast_binary(const std::string& bytes) {
+    std::vector<std::shared_ptr<WsConnection>> snapshot;
+    {
+        std::shared_lock<std::shared_mutex> lk(mutex_);
+        snapshot.reserve(clients_.size());
+        for (auto& [fd, conn] : clients_) snapshot.push_back(conn);
+    }
+    for (auto& conn : snapshot) conn->send_binary(bytes);
 }
 
 size_t WsRegistry::count() {

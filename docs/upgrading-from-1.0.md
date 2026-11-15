@@ -693,6 +693,19 @@ Error: use "a.lk": import cycle: a.lk -> b.lk -> a.lk (a file cannot use a file 
 
 A file used by two others (a diamond) is still compiled once.
 
+### WebSocket: binary messages; `ws::send` takes text only — error at run time
+
+1.0.x sent every message as a text frame and delivered every message as a string, so binary
+data could not be sent (a browser closes the connection on a text frame that is not valid UTF-8,
+and the application never saw why) and an incoming binary message looked like text.
+
+- `ws::send_binary($ws, $bytes)` and `ws::broadcast_binary($bytes)` send a binary frame.
+- `ws::send` and `ws::broadcast` refuse bytes that are not valid UTF-8:
+  `ws::send(): the message is not valid UTF-8 text; send binary data with ws::send_binary()`.
+- A message handler may take a second parameter: `ws::on($ws, "message", fn($data, $binary) …)`;
+  `$binary` is `true` for a binary message. A handler with one parameter works as before.
+- A message is at most 16 MB, text or binary, in one frame or in parts (as before).
+
 ## Statements and the command line
 
 ### A line starting with `++` or `--` is a new statement — was an error

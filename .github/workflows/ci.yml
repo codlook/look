@@ -926,6 +926,16 @@ jobs:
           bash tests/ws_handshake_check_test.sh ./build/lk-fcgi
           python3 tests/ws_backpressure_portable_test.py ./build/lk-fcgi 7795
 
+      # Binary WebSocket messages: ws::send_binary / ws::broadcast_binary send a binary frame, the
+      # handler is told a message is binary (one-parameter handlers unchanged), ws::send and
+      # ws::broadcast refuse bytes that are not UTF-8 (a browser closes the connection on them),
+      # a message in parts keeps its type, over 16 MB closes the connection as for text.
+      - name: WebSocket binary messages
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/ws_binary_test.sh ./build/lk-fcgi 7748
+
       # setup data is shared with every request instead of being copied for it; a write
       # makes the copy. 1200 concurrent requests must each see their own writes and nothing else.
       - name: Shared setup data under concurrent requests
