@@ -4488,6 +4488,7 @@ Plesk Panel → **Extensions → LOOK Language**, or `https://:8443/modules/look
 ### Step 3 — Add a Domain & Write Code
 
     - **Applications → Add New Domain** — pick a domain (script path and a free port fill in automatically), choose the mode, **Add & Start**.
+    - **Memory limit** — the most memory the site may use (systemd `MemoryMax`), so one site cannot use up the server's memory (MySQL, the other sites). `auto` (the default): a quarter of the server's memory, at most 1G, at least 256M. Write `512M` or `2G` to choose, `off` for none; change it later with **Configure**. LOOK makes 80% of it its own limit (`LOOK_MEMORY_LIMIT`): a request that would go over is stopped instead of the site being killed. Measured: a LookPress site uses about 24 MB.
 
     - It shows **Running** in the list. Use **Edit Code** to edit `index.lk` in the browser → **Save & Redeploy**.
 

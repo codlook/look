@@ -1,7 +1,10 @@
 #!/bin/bash
 # LOOK Language — Domain etkinlestirme
-# Kullanim: enable.sh <domain> <script> <workers> <mode> <port> [<env-file>]
-# Ornek:    enable.sh look.codlook.com /var/www/.../index.lk 4 fcgi 9100 /var/www/.../.look.env
+# Kullanim: enable.sh <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
+# Ornek:    enable.sh look.codlook.com /var/www/.../index.lk 4 fcgi 9100 /var/www/.../.look.env 1G
+#   <memory>: sitenin bellek tavani (systemd MemoryMax) — 512M, 2G; "auto" ya da bos = otomatik
+#   (makine belleginin %25'i, en cok 1G, en az 256M); "off" = tavan yok. LOOK bu tavanin %80'ini kendi
+#   siniri yapar (LOOK_MEMORY_LIMIT otomatik; include/look/mem_budget.h).
 #
 # Servis ASLA root calismaz: unit'e User= olarak domain'in sistem kullanicisi (document
 # root'un sahibi) yazilir. Ortam dosyasini systemd (root) degil, o kullanici okur
@@ -16,9 +19,10 @@ WORKERS="${3:-4}"
 MODE="${4:-fcgi}"
 PORT="${5:-9100}"
 ENV_FILE="${6:-}"
+MEMORY="${7:-auto}"
 
 if [ -z "$DOMAIN" ] || [ -z "$SCRIPT" ] || [ -z "$PORT" ]; then
-    echo "Usage: $0 <domain> <script> <workers> <mode> <port> [<env-file>]" >&2
+    echo "Usage: $0 <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]" >&2
     exit 1
 fi
 
@@ -45,6 +49,32 @@ case "$ENV_FILE" in *..*) echo "ERROR: path traversal" >&2; exit 1 ;; esac
 if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
     echo "ERROR: port must be between 1024 and 65535 (the service does not run as root)" >&2; exit 1
 fi
+
+# ─── Bellek tavani (systemd MemoryMax) ──────────────────────────────────────
+# Tek bir site sunucunun bellegini (MySQL, oteki siteler) bitiremesin. Otomatik deger olculdu
+# (test sunucusu, 2026-11-15): LookPress sitesi bosta ve uc paralel tarama altinda 24 MB; 1G tavan
+# ~40 kat pay birakir, LOOK %80'ini (≈ 819 MiB) siniri yapar, tek istek 256 MiB'de kalir. Kucuk
+# makinede (2 GB) makinenin dortte biri: 512M. Unit'e yazildigindan (heredoc) yalniz rakam + M/G.
+case "$MEMORY" in
+    ""|auto)
+        ram_mb=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
+        q=$(( ${ram_mb:-4096} / 4 ))
+        [ "$q" -gt 1024 ] && q=1024
+        [ "$q" -lt 256 ] && q=256
+        MEM_MAX="${q}M" ;;
+    off) MEM_MAX="" ;;
+    *)
+        if ! [[ "$MEMORY" =~ ^([0-9]{1,7})([MG])$ ]]; then
+            echo "ERROR: memory limit '$MEMORY' is not a size: write megabytes or gigabytes, for example 512M or 2G (or auto, or off)" >&2; exit 1
+        fi
+        mb=${BASH_REMATCH[1]}; [ "${BASH_REMATCH[2]}" = G ] && mb=$(( mb * 1024 ))
+        if [ "$mb" -lt 128 ]; then
+            echo "ERROR: memory limit $MEMORY is below 128M; LOOK cannot serve a site in less" >&2; exit 1
+        fi
+        MEM_MAX="$MEMORY" ;;
+esac
+MEM_LINE=""
+[ -n "$MEM_MAX" ] && MEM_LINE="MemoryMax=${MEM_MAX}"
 
 # LOOK sürümleri yan yana (sbin/look-setup): /opt/look/releases/<sürüm>-<damga>/, /opt/look/lk* en yeniyi
 # gösterir. Site, kodu en yeni sürümün `lk --check`ini geçince ona bağlanır; geçemezse çalıştığı sürümde
@@ -297,6 +327,7 @@ StandardOutput=journal
 StandardError=journal
 Environment=LOOK_FILE_ROOT=${DOC_ROOT}
 ${SESSION_ENV}
+${MEM_LINE}
 
 [Install]
 WantedBy=multi-user.target
@@ -374,4 +405,5 @@ if [ "$ROOT_FILES" -gt 0 ]; then
     echo "WARNING: $ROOT_FILES file(s) in $DOC_ROOT are owned by root; the service runs as $RUN_USER and cannot write them (find $DOC_ROOT -user root)"
 fi
 
+echo "memory limit: ${MEM_MAX:-off}"
 echo "OK:${SVC_NAME}:${PORT}"

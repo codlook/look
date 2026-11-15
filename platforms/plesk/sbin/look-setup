@@ -1,6 +1,6 @@
 #!/bin/bash
 # LOOK Language — kurulum/yukseltme (ROOT)
-# Kullanim: look-setup [<domain> <script> <workers> <mode> <port> <env-file>]...
+# Kullanim: look-setup [<domain> <script> <workers> <mode> <port> <env-file> <memory>]...
 #
 # Plesk eklenti kancalarini (plib/scripts/post-install.php) ROOT degil psaadm olarak
 # calistirir (olculdu: euid=983); eskiden kanca setup.sh'i psaadm ile kosuyordu, /opt/look'a,
@@ -107,10 +107,10 @@ echo 'export PATH="/opt/look:$PATH"' > /etc/profile.d/look.sh
 svc_of() { echo "look-$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')"; }
 stop_svc() { /bin/systemctl stop "$1" 2>/dev/null; /bin/systemctl disable "$1" 2>/dev/null; true; }
 done_svcs=" "
-while [ "$#" -ge 6 ]; do
-    d="$1"; s="$2"; w="$3"; m="$4"; p="$5"; e="$6"; shift 6
+while [ "$#" -ge 7 ]; do
+    d="$1"; s="$2"; w="$3"; m="$4"; p="$5"; e="$6"; mem="$7"; shift 7
     svc="$(svc_of "$d")"; done_svcs="$done_svcs$svc "
-    rc=0; out="$(/bin/bash "$SCRIPTS/enable.sh" "$d" "$s" "$w" "$m" "$p" ${e:+"$e"} 2>&1)" || rc=$?
+    rc=0; out="$(/bin/bash "$SCRIPTS/enable.sh" "$d" "$s" "$w" "$m" "$p" "$e" "${mem:-auto}" 2>&1)" || rc=$?
     if [ "$rc" = 0 ]; then
         echo "$d: $(printf '%s\n' "$out" | grep -E '^(OK|WARNING)' | tr '\n' ' ')"
     elif [ "$rc" = 3 ]; then
@@ -122,7 +122,7 @@ while [ "$#" -ge 6 ]; do
         err "$d: the service was STOPPED — it cannot run as the domain's user: $(printf '%s\n' "$out" | grep -E 'ERROR' | head -1)"
     fi
 done
-[ "$#" = 0 ] || err "ignored $# trailing argument(s): domains are given as groups of 6"
+[ "$#" = 0 ] || err "ignored $# trailing argument(s): domains are given as groups of 7"
 
 # Eklentinin yazdigi (Description imzasi) ama kaydi olmayan, User= tasimayan unit = root servis
 for f in /etc/systemd/system/look-*.service; do

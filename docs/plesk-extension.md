@@ -51,6 +51,9 @@ mini grafikle (4 saniyede bir örneklenir, uydurma geçmiş yoktur). Altında uy
 ### Applications (Uygulama Yöneticisi)
 - **Add New Domain** formu (listenin üstünde): domain seç → script yolu ve boş port
   otomatik dolar → workers + mod → **Add & Start**.
+- **Memory limit**: the most memory the site may use (systemd `MemoryMax`). `auto` (default) =
+  a quarter of the server's memory, at most 1G, at least 256M; `512M`, `2G` or `off`. LOOK makes
+  80% of it its own limit: a request that would go over is stopped, the site keeps running.
 - Uygulama tablosu: domain, canlı durum, port, script, worker/mod.
 - **Edit Code** — `index.lk`'i tarayıcıda düzenle → **Save & Redeploy**.
 - **Actions ▾** menüsü: Configure · Restart · Stop/Start · **Monitor** · View Logs · Remove.
@@ -174,7 +177,7 @@ look-lang-plesk.zip
 ## Servis Yönetimi
 
 ```bash
-enable.sh <domain> <script> <workers> <mode> <port>
+enable.sh <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
 ```
 
 - systemd birimi: `/etc/systemd/system/look-<domain>.service`

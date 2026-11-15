@@ -84,7 +84,7 @@ old_unit orphan.com /var/www/vhosts/orphan.com/httpdocs 9152
 cp /bin/sleep /opt/look/lk-fcgi; cp /bin/sleep /opt/look/lk
 (exec -a lk-fcgi /opt/look/lk-fcgi 300) & OLD=$!
 sleep 0.3
-out="$(hook app.site.com "$A/index.lk" 2 http 9150 "" rootsite.com "$B/index.lk" 2 http 9151 "")"; rc=$?
+out="$(hook app.site.com "$A/index.lk" 2 http 9150 "" "" rootsite.com "$B/index.lk" 2 http 9151 "" "")"; rc=$?
 kill "$OLD" 2>/dev/null
 echo "$out" | sed 's/^/       | /'
 check "the running LOOK binary is replaced"            '/opt/look/lk-fcgi --version 2>/dev/null | grep -q "LOOK 1.0.99"'
@@ -102,7 +102,7 @@ echo "== a clean upgrade succeeds =="
 reset_sandbox
 mkdir -p "$A"; chown site.com_a1:psacln "$A"
 old_unit app.site.com "$A" 9150
-out="$(hook app.site.com "$A/index.lk" 2 http 9150 "")"; rc=$?
+out="$(hook app.site.com "$A/index.lk" 2 http 9150 "" "")"; rc=$?
 check "exit 0 when every service could be rewritten" '[ "$rc" = 0 ]'
 check "the service runs as the domain's user"       'grep -qx "User=site.com_a1" "$SYS/look-app-site-com.service"'
 

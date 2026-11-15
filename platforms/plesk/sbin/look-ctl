@@ -1,7 +1,7 @@
 #!/bin/bash
 # LOOK Language — panelin root islemleri (ROOT, pm_ApiCli::callSbin ile)
 # Kullanim: look-ctl <eylem> <argumanlar>
-#   enable  <domain> <script> <workers> <mode> <port> [<env-file>]
+#   enable  <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
 #   disable <svc> [<domain>] [remove]
 #   start   <svc>
 #   status  <svc>
@@ -24,7 +24,7 @@ domain_ok() { [[ "$1" =~ ^[A-Za-z0-9.-]{1,253}$ ]] || die "invalid domain"; }
 action="$1"; shift
 case "$action" in
     enable)
-        [ "$#" -eq 5 ] || [ "$#" -eq 6 ] || die "enable takes 5 or 6 arguments"
+        [ "$#" -ge 5 ] && [ "$#" -le 7 ] || die "enable takes 5 to 7 arguments"
         domain_ok "$1"
         exec /bin/bash "$SCRIPTS/enable.sh" "$@" ;;
     disable)

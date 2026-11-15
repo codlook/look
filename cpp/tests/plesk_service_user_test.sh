@@ -131,6 +131,29 @@ out="$(enable app.site.com "$DOC/new.lk" 2 http 9150)"
 check "the sample is never written through a symlink as root" '[ ! -e /etc/look-pwn.lk ]'
 rm -f "$DOC/new.lk"
 
+echo "== the site's memory limit (systemd MemoryMax) =="
+# Tek bir site sunucunun belleğini (MySQL, öteki siteler) bitiremez. Otomatik: makinenin %25'i,
+# en çok 1G, en az 256M; LOOK bu tavanın %80'ini kendi sınırı yapar (cgroup'tan okur).
+ram_mb=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo); q=$((ram_mb / 4)); [ $q -gt 1024 ] && q=1024; [ $q -lt 256 ] && q=256
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150)"
+check "by default the unit has MemoryMax=${q}M (a quarter of ${ram_mb} MB, at most 1G)" 'grep -qx "MemoryMax=${q}M" "$UNIT"'
+check "the output states the limit"                   '[[ "$out" == *"memory limit: ${q}M"* ]]'
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150 "" 512M)"
+check "a chosen limit is written (512M)"              'grep -qx "MemoryMax=512M" "$UNIT"'
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150 "" 2G)"
+check "gigabytes are accepted (2G)"                   'grep -qx "MemoryMax=2G" "$UNIT"'
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150 "" off)"
+check "off writes no limit"                           '! grep -q "^MemoryMax=" "$UNIT" && [[ "$out" == *"memory limit: off"* ]]'
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150 "" auto)"
+check "auto is the default value"                     'grep -qx "MemoryMax=${q}M" "$UNIT"'
+rm -f "$UNIT"
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150 "" 64M)"
+check "below 128M is refused with the reason"         '[[ "$out" == *"below 128M"* ]] && [ ! -f "$UNIT" ]'
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150 "" 1GB)"
+check "a value that is not a size is refused"         '[[ "$out" == *"is not a size"* ]] && [ ! -f "$UNIT" ]'
+out="$(enable app.site.com "$DOC/app.lk" 2 http 9150 "" "$(printf '1G\nExecStartPre=/bin/touch /tmp/pwn')")"
+check "a newline cannot add a directive to the unit"  '[ ! -f "$UNIT" ] && [ ! -e /tmp/pwn ]'
+
 echo "== stop keeps the unit, remove deletes it =="
 enable app.site.com "$DOC/app.lk" 2 http 9150 >/dev/null
 mkdir -p "$UNIT.d"; echo "[Service]" > "$UNIT.d/override.conf"

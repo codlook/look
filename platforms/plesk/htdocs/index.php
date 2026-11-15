@@ -63,13 +63,19 @@ function safe_script_path(?array $d): ?string {
     if (strpos($p, '..') !== false) return null;
     return $p;
 }
-// enable.sh argumanlari: <domain> <script> <workers> <mode> <port> [<env-file>]
-// (eski domains.json kayitlarinda 'env' yok → ortam dosyasiz)
+// enable.sh argumanlari: <domain> <script> <workers> <mode> <port> <env-file> <memory>
+// (eski domains.json kayitlarinda 'env'/'memory' yok → ortam dosyasiz, otomatik bellek tavani)
 function enable_args(array $d): array {
-    $a = ['enable', (string)$d['domain'], (string)$d['script'], (string)(int)$d['workers'],
-          (string)$d['mode'], (string)(int)$d['port']];
-    if (($d['env'] ?? '') !== '') $a[] = (string)$d['env'];
-    return $a;
+    return ['enable', (string)$d['domain'], (string)$d['script'], (string)(int)$d['workers'],
+            (string)$d['mode'], (string)(int)$d['port'], (string)($d['env'] ?? ''), valid_memory((string)($d['memory'] ?? 'auto'))];
+}
+// Sitenin bellek tavani (systemd MemoryMax): "auto" (makinenin %25'i, en cok 1G), "off" ya da 512M / 2G.
+// enable.sh ayrica dogrular (unit'e yazilir); burada gecersiz deger "auto"ya duser.
+function valid_memory(string $m): string {
+    $m = strtoupper(trim($m));
+    if ($m === '' || $m === 'AUTO') return 'auto';
+    if ($m === 'OFF') return 'off';
+    return preg_match('/^[0-9]{1,7}[MG]$/', $m) ? $m : 'auto';
 }
 // Root islemleri: sudo YOK. Plesk'in root yolu pm_ApiCli::callSbin → sbin/look-ctl (eylem, servis
 // adi ve arguman sayisi orada denetlenir). Argumanlar kabuk olmadan (argv) gider.
@@ -222,7 +228,12 @@ if ($action !== '') {
         $workers = max(1, (int)($_POST['workers'] ?? 4));
         $mode    = in_array($_POST['mode'] ?? 'fcgi', ['fcgi','http']) ? $_POST['mode'] : 'fcgi';
         $port    = (int)($_POST['port']   ?? next_free_port($domains));
+        $memory_in = trim((string)($_POST['memory'] ?? 'auto'));
+        $memory  = valid_memory($memory_in);
         if (!$domain) { echo json_encode(['ok'=>false,'error'=>'Domain is required']); exit; }
+        if ($memory === 'auto' && $memory_in !== '' && strcasecmp($memory_in, 'auto') !== 0) {
+            echo json_encode(['ok'=>false,'error'=>'Memory limit: write megabytes or gigabytes (512M, 2G), auto or off']); exit;
+        }
         // GUVENLIK: domain/script HAM olarak enable.sh'a, oradan tirnaksiz heredoc ile
         // systemd unit'ine geciyor (root systemctl restart). Format dogrulamasi
         // olmadan gomulu satir-sonu iceren bir domain, unit'e kendi [Service]/ExecStartPre
@@ -247,9 +258,9 @@ if ($action !== '') {
                 : "/var/www/vhosts/$domain/httpdocs/index.lk";
         }
         $svc    = 'look-' . preg_replace('/[^a-z0-9]/', '-', strtolower($domain));
-        $result = ctl(enable_args(compact('domain','script','workers','mode','port','env')));
+        $result = ctl(enable_args(compact('domain','script','workers','mode','port','env','memory')));
         if (str_contains($result['output'], 'OK:')) {
-            $entry = compact('domain','script','env','workers','mode','port','svc');
+            $entry = compact('domain','script','env','workers','mode','port','memory','svc');
             $idx   = array_search($domain, array_column($domains, 'domain'));
             if ($idx !== false) $domains[$idx] = $entry; else $domains[] = $entry;
             if (!save_domains($domains)) {

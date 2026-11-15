@@ -646,6 +646,9 @@ server has a memory limit: by default 80% of the container's memory limit (syste
 - The stop cannot be caught with `try`/`catch`.
 - A script run with `lk` has no limit unless `LOOK_MEMORY_LIMIT` is set; then the limit applies
   to the whole program (there is no per-request budget on the command line).
+- Plesk: each site's service now has a memory limit (systemd `MemoryMax`), set when the
+  extension is updated: a quarter of the server's memory, at most 1G, at least 256M. Change it
+  per site in the panel (**Configure → Memory limit**: `512M`, `2G`, `auto` or `off`).
 
 ### Workers follow the usable CPUs; database connections open as needed — silent
 

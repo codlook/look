@@ -17,7 +17,8 @@ $args = [];
 foreach ($domains as $d) {
     if (empty($d['domain']) || empty($d['script'])) continue;
     array_push($args, (string)$d['domain'], (string)$d['script'], (string)(int)($d['workers'] ?? 4),
-        (string)($d['mode'] ?? 'fcgi'), (string)(int)($d['port'] ?? 9100), (string)($d['env'] ?? ''));
+        (string)($d['mode'] ?? 'fcgi'), (string)(int)($d['port'] ?? 9100), (string)($d['env'] ?? ''),
+        (string)($d['memory'] ?? 'auto'));   // bellek tavanı: eski kayıtta yok → otomatik
 }
 
 $r = pm_ApiCli::callSbin('look-setup', $args, pm_ApiCli::RESULT_FULL);

@@ -347,7 +347,7 @@ $icons = [
                 <td><span class="lk-status lk-st-loading" id="lkdst-<?= $sv ?>"><span class="lk-dot"></span><span class="lk-slabel">…</span></span></td>
                 <td><span class="lk-code-box">:<?= (int)$d['port'] ?></span></td>
                 <td><span class="lk-cfg"><?= $mt?date('d.m.Y H:i',$mt):'—' ?></span></td>
-                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?></span></td>
+                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?> · <?= htmlspecialchars((string)($d['memory'] ?? 'auto')) ?> memory</span></td>
               </tr>
             <?php endforeach; endif; ?>
             </tbody>
@@ -368,6 +368,7 @@ $icons = [
               <div class="lk-fg"><label>Script (index.lk path)</label><input type="text" id="lkFscript" placeholder="/var/www/vhosts/.../index.lk"></div>
               <div class="lk-fg"><label>Env file (optional)</label><input type="text" id="lkFenv" placeholder="/var/www/vhosts/.../.look.env"></div>
               <div class="lk-fg"><label>Workers</label><input type="number" id="lkFwork" value="4" min="1" max="64"></div>
+              <div class="lk-fg"><label>Memory limit</label><input type="text" id="lkFmem" value="auto" placeholder="auto, 512M, 2G, off" title="Most memory the site may use (systemd MemoryMax). auto: a quarter of the server's memory, at most 1G. LOOK stops a request that would go over it instead of letting the site be killed."></div>
               <div class="lk-fg"><label>Mode</label><select id="lkFmode"><option value="fcgi">FastCGI</option><option value="http">HTTP</option></select></div>
               <div class="lk-fg"><label>Port</label><input type="number" id="lkFport" value="9100" min="1025" max="65535"></div>
               <div class="lk-fg lk-fg-btn"><button class="lk-btn lk-btn-primary" id="lkAddBtn" onclick="lkAdd()">Add &amp; Start</button></div>
@@ -393,7 +394,7 @@ $icons = [
                 <td><span class="lk-status lk-st-loading" id="lkst-<?= $sv ?>"><span class="lk-dot"></span><span class="lk-slabel">loading…</span></span></td>
                 <td><span class="lk-code-box">:<?= (int)$d['port'] ?></span></td>
                 <td><span class="lk-code" title="<?= htmlspecialchars($d['script']) ?>"><?= htmlspecialchars(basename($d['script'])) ?></span></td>
-                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?></span><?php $rs = $releases[$d['svc']] ?? null; if ($rs): ?><br><span class="lk-rel">LOOK <?= htmlspecialchars((string)$rs['release']) ?></span><?php endif; ?></td>
+                <td><span class="lk-cfg"><?= (int)$d['workers'] ?> worker · <?= htmlspecialchars(strtoupper($d['mode'])) ?> · <?= htmlspecialchars((string)($d['memory'] ?? 'auto')) ?> memory</span><?php $rs = $releases[$d['svc']] ?? null; if ($rs): ?><br><span class="lk-rel">LOOK <?= htmlspecialchars((string)$rs['release']) ?></span><?php endif; ?></td>
                 <td class="lk-actions">
                   <button class="lk-btn lk-btn-sm lk-btn-primary" onclick='lkOpenEditor(<?= $dj ?>)'>Edit Code</button>
                   <div class="lk-menu-wrap">
@@ -494,6 +495,7 @@ route("404", fn() =&gt; response::error(404, "Not found"))</code></pre>
         <div class="lk-mfg"><label>Workers</label><input type="number" id="lkEWork" min="1" max="64"></div>
         <div class="lk-mfg"><label>Mode</label><select id="lkEMode"><option value="fcgi">FastCGI</option><option value="http">HTTP</option></select></div>
         <div class="lk-mfg"><label>Port</label><input type="number" id="lkEPort" min="1025" max="65535"></div>
+        <div class="lk-mfg"><label>Memory limit</label><input type="text" id="lkEMem" placeholder="auto, 512M, 2G, off"></div>
       </div>
       <div class="lk-log" id="lkEditLog"></div>
     </div>
@@ -645,7 +647,7 @@ document.addEventListener('DOMContentLoaded',lkDomChange);
 async function lkAdd(){
   const btn=document.getElementById('lkAddBtn'),log=document.getElementById('lkAddLog');
   btn.disabled=true;btn.textContent='Starting…';log.style.display='block';log.textContent='$ enable.sh…';
-  const d=await lkApi({action:'add',domain:lkV('lkFdom'),script:lkV('lkFscript'),env:lkV('lkFenv'),workers:lkV('lkFwork'),mode:lkV('lkFmode'),port:lkV('lkFport')});
+  const d=await lkApi({action:'add',domain:lkV('lkFdom'),script:lkV('lkFscript'),env:lkV('lkFenv'),workers:lkV('lkFwork'),mode:lkV('lkFmode'),port:lkV('lkFport'),memory:lkV('lkFmem')});
   log.textContent=d.out||d.error||'';btn.disabled=false;btn.textContent='Add & Start';
   if(d.ok){lkToast('Domain added');setTimeout(()=>location.reload(),1000);}else lkToast(d.error||'Error',false);
 }
@@ -704,6 +706,7 @@ function lkEdit(data){
   document.getElementById('lkEScript').value=data.script;document.getElementById('lkEEnv').value=data.env||'';
   document.getElementById('lkEWork').value=data.workers;
   document.getElementById('lkEMode').value=data.mode;document.getElementById('lkEPort').value=data.port;
+  document.getElementById('lkEMem').value=data.memory||'auto';
   document.getElementById('lkEditLog').style.display='none';document.getElementById('lkModal').classList.add('open');
 }
 function lkCloseModal(){document.getElementById('lkModal').classList.remove('open');}
@@ -711,7 +714,7 @@ document.getElementById('lkModal').addEventListener('click',e=>{if(e.target===e.
 async function lkSaveEdit(){
   const btn=document.getElementById('lkESave'),log=document.getElementById('lkEditLog');
   btn.disabled=true;btn.textContent='Saving…';log.style.display='block';log.textContent='$ enable.sh…';
-  const d=await lkApi({action:'edit',domain:lkV('lkEDom'),script:lkV('lkEScript'),env:lkV('lkEEnv'),workers:lkV('lkEWork'),mode:lkV('lkEMode'),port:lkV('lkEPort')});
+  const d=await lkApi({action:'edit',domain:lkV('lkEDom'),script:lkV('lkEScript'),env:lkV('lkEEnv'),workers:lkV('lkEWork'),mode:lkV('lkEMode'),port:lkV('lkEPort'),memory:lkV('lkEMem')});
   log.textContent=d.out||d.error||'';btn.disabled=false;btn.textContent='Save & Restart';
   if(d.ok){lkToast('Saved');setTimeout(()=>location.reload(),900);}else lkToast(d.error||'Error',false);
 }

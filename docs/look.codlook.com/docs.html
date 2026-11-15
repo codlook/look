@@ -4483,6 +4483,7 @@ plesk bin extension --install /tmp/look-lang-plesk.zip</code></pre>
   <h3>Step 3 — Add a Domain &amp; Write Code</h3>
   <ol style="line-height:2.2;padding-left:1.5rem">
     <li><strong>Applications &rarr; Add New Domain</strong> — pick a domain (script path and a free port fill in automatically), choose the mode, <strong>Add &amp; Start</strong>.</li>
+    <li><strong>Memory limit</strong> — the most memory the site may use (systemd <code>MemoryMax</code>), so one site cannot use up the server's memory (MySQL, the other sites). <code>auto</code> (the default): a quarter of the server's memory, at most 1G, at least 256M. Write <code>512M</code> or <code>2G</code> to choose, <code>off</code> for none; change it later with <strong>Configure</strong>. LOOK makes 80% of it its own limit (<code>LOOK_MEMORY_LIMIT</code>): a request that would go over is stopped instead of the site being killed. Measured: a LookPress site uses about 24 MB.</li>
     <li>It shows <strong>Running</strong> in the list. Use <strong>Edit Code</strong> to edit <code>index.lk</code> in the browser &rarr; <strong>Save &amp; Redeploy</strong>.</li>
   </ol>
 

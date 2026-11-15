@@ -79,7 +79,7 @@ site old.test  old_u  10062 $'route("GET", "/", fn() => "ok")\n$x = 1  # BREAKS-
 fake_look /tmp/rel-old 1.0.47 1b846a3; cp /tmp/rel-old/lk* /opt/look/       # what the sites run today
 legacy_unit good.test 9150; legacy_unit old.test 9151
 fake_look "$MOD/bin" 1.0.99 abcdef0                                          # the extension's new LOOK
-out="$(setup $(args_for good.test 9150) "" $(args_for old.test 9151) "")"; rc=$?
+out="$(setup $(args_for good.test 9150) "" "" $(args_for old.test 9151) "" "")"; rc=$?
 echo "$out" | sed 's/^/       | /'
 check "the hook succeeds (a held site is not a failure)"      '[ "$rc" = 0 ]'
 check "both releases are kept side by side"                   '[ -x /opt/look/releases/1.0.47-1b846a3/lk-fcgi ] && [ -x /opt/look/releases/1.0.99-abcdef0/lk-fcgi ]'
@@ -99,7 +99,7 @@ out="$(bash "$MOD/scripts/enable.sh" $(args_for old.test 9151) 2>&1)"; rc=$?
 check "enable (the restart in the panel) succeeds"                 '[ "$rc" = 0 ]'
 check "the site moves to the new release"                     '[ "$(unit_bin old.test)" = /opt/look/releases/1.0.99-abcdef0/lk-fcgi ]'
 check "status: no longer held"                                'grep -q "\"held\": *false" $ST/look-old-test.json'
-out="$(setup $(args_for good.test 9150) "" $(args_for old.test 9151) "")"
+out="$(setup $(args_for good.test 9150) "" "" $(args_for old.test 9151) "" "")"
 check "the next setup removes the release no service uses"    '[ ! -e /opt/look/releases/1.0.47-1b846a3 ] && [ -x /opt/look/releases/1.0.99-abcdef0/lk-fcgi ]'
 
 echo "== a new site that does not pass is not installed =="
@@ -112,8 +112,8 @@ echo "== a held site stays held across two more releases until it passes =="
 reset_sandbox
 site old.test old_u 10062 $'$x = 1  # BREAKS-1.0.99 BREAKS-1.1.0'
 fake_look /tmp/rel-old 1.0.47 1b846a3; cp /tmp/rel-old/lk* /opt/look/; legacy_unit old.test 9151
-fake_look "$MOD/bin" 1.0.99 abcdef0; setup $(args_for old.test 9151) "" > /dev/null
-fake_look "$MOD/bin" 1.1.0 1234567; out="$(setup $(args_for old.test 9151) "")"
+fake_look "$MOD/bin" 1.0.99 abcdef0; setup $(args_for old.test 9151) "" "" > /dev/null
+fake_look "$MOD/bin" 1.1.0 1234567; out="$(setup $(args_for old.test 9151) "" "")"
 check "still on the release it ran, not the one in between"   '[ "$(unit_bin old.test)" = /opt/look/releases/1.0.47-1b846a3/lk-fcgi ]'
 check "the unused in-between release is removed"              '[ ! -e /opt/look/releases/1.0.99-abcdef0 ] && [ -x /opt/look/releases/1.1.0-1234567/lk-fcgi ]'
 check "status names the newest release"                       'grep -q "1.1.0-1234567" $ST/look-old-test.json'
@@ -123,7 +123,7 @@ reset_sandbox
 site good.test good_u 10061 'route("GET", "/", fn() => "ok")'
 fake_look /tmp/rel-old 1.0.47 1b846a3; cp /tmp/rel-old/lk* /opt/look/; legacy_unit good.test 9150
 fake_look "$MOD/bin" 1.0.99 abcdef0; rm -f "$MOD/bin/lk"                       # a broken package
-out="$(setup $(args_for good.test 9150) "")"; rc=$?
+out="$(setup $(args_for good.test 9150) "" "")"; rc=$?
 check "the site keeps the release it ran (not moved unchecked)" '[ "$(unit_bin good.test)" = /opt/look/releases/1.0.47-1b846a3/lk-fcgi ]'
 check "status: held, saying it could not be checked"           'grep -q "\"held\": *true" $ST/look-good-test.json && grep -q "could not be checked" $ST/look-good-test.json'
 check "the output names it"                                    '[[ "$out" == *good.test*"could not be checked"* ]]'
@@ -142,7 +142,7 @@ site fresh.test  fresh_u  10066 $'$x = 1  # BREAKS-1.1.0'
 fake_look /tmp/rel-old 1.0.42 cf5e2f0; cp /tmp/rel-old/lk* /opt/look/
 legacy_unit behind.test 9153; legacy_unit stuck.test 9154
 fake_look "$MOD/bin" 1.1.0 1234567; fake_look "$MOD/bin-1.0" 1.0.48 7654321
-out="$(setup $(args_for behind.test 9153) "" $(args_for stuck.test 9154) "")"; rc=$?
+out="$(setup $(args_for behind.test 9153) "" "" $(args_for stuck.test 9154) "" "")"; rc=$?
 echo "$out" | sed 's/^/       | /'
 check "both bundled releases are installed"                     '[ -x /opt/look/releases/1.1.0-1234567/lk-fcgi ] && [ -x /opt/look/releases/1.0.48-7654321/lk-fcgi ]'
 check "/opt/look/lk is the newest (bin/), not the highest number" '/opt/look/lk --version | grep -q "1.1.0 (1234567"'
@@ -151,7 +151,7 @@ check "status: behind (gets the 1.0 line fixes), not held"      'grep -q "\"held
 check "a site that passes neither stays where it was, held"     '[ "$(unit_bin stuck.test)" = /opt/look/releases/1.0.42-cf5e2f0/lk-fcgi ] && grep -q "\"held\": *true" $ST/look-stuck-test.json'
 out="$(bash "$MOD/scripts/enable.sh" $(args_for fresh.test 9155) 2>&1)"; rc=$?
 check "a new site that passes only the maintenance release is installed on it" '[ "$rc" = 0 ] && [ "$(unit_bin fresh.test)" = /opt/look/releases/1.0.48-7654321/lk-fcgi ]'
-setup $(args_for behind.test 9153) "" $(args_for stuck.test 9154) "" > /dev/null
+setup $(args_for behind.test 9153) "" "" $(args_for stuck.test 9154) "" "" > /dev/null
 check "a bundled release is kept even when no service uses it"  '[ -x /opt/look/releases/1.0.48-7654321/lk-fcgi ] && [ -x /opt/look/releases/1.1.0-1234567/lk-fcgi ]'
 check "the panel tells a site behind which lines move it to the newest" 'grep -q "behind" "$PL/htdocs/phtml/index.phtml"'
 
