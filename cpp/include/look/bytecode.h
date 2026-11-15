@@ -144,6 +144,8 @@ enum class OpCode : uint8_t {
                      //   then a NOP whose a = the value register. Appends to the VARIABLE (copy on write).
                      //   That NOP's b = 1: compiled from `$a = array::push($a, v)` (its error message).
     POP_PATH,        // r[a] = pop(root[k0]..[kc-1]); next NOP = root. Removes the last element.
+    APPEND_GLOBAL,   // globals[pool[b<<16|c]] .= r[a] IN PLACE (`$s .= x`, `$s = $s . x` at top level;
+                     //   copied once if shared). "Undefined variable" when the global does not exist.
 };
 
 // ── Instruction ───────────────────────────────────────────────────────────────

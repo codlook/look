@@ -693,6 +693,28 @@ call_dispatch:
                 (*gcache)[ni] = &slot;          // sonraki yazma/okuma için çivile
                 break;
             }
+            case OpCode::APPEND_GLOBAL: {
+                // `$s .= x` / `$s = $s . x` üst düzeyde: global'in KENDİ yuvasına yerinde ekle (amortize
+                // O(1); paylaşılıyorsa append_in_place bir kez kopyalar). ESKİ: oku → yeni metin → yaz,
+                // her adımda bütün metnin kopyası (döngüde karesel).
+                uint32_t ni = ins.bx();
+                Value* slot = (*gcache)[ni];
+                if (!slot) {
+                    const std::string& gname = CONST(ni).str_ref();
+                    auto it = globals_.find(gname);
+                    if (it == globals_.end()) {
+                        // LOAD_GLOBAL ile aynı kural: STRICT; geçiş kipinde null'dan başlar (uyarıyla)
+                        if (!g_warn_undef) throw LookVmError("Undefined variable: " + gname);
+                        Logger::instance().log(LogLevel::LOG_WARN, "VM",
+                            "Undefined variable read (LOOK_WARN_UNDEF transition mode, returned null): " + gname);
+                        it = globals_.emplace(gname, Value()).first;
+                    }
+                    slot = &it->second;
+                    (*gcache)[ni] = slot;
+                }
+                slot->append_in_place(R(ins.a));
+                break;
+            }
 
             // ── Aritmetik — Value'nun operatörlerini kullan ───────────────────
             case OpCode::ADD: {

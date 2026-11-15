@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/compiler.h"
+#include "look/ast_spine.h"   // binary_left_spine — `$s = $s . a . b` zinciri döngüyle
 #include "look/param_write_check.h"   // log_param_writes — dahil edilen dosyaların uyarıları
 #include "look/builtins.h"
 #include "look/unused_result.h"   // is_pure_builtin — sonucu atılan saf yerleşik
@@ -1332,6 +1333,44 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         return;
     }
 
+    // `$s = $s . a . b` — tanım gereği `$s .= a . b`: hedefe YERİNDE eklenir. ESKİ: sağ taraf geçici
+    // kayıtta baştan kurulup yazılıyordu → her adımda bütün metnin kopyası, döngüde karesel (ölçüldü:
+    // fonksiyon içinde 100 bin ekleme 175 ms, `.=` ile 1 milyon 33 ms). İşlenenler ÖNCE sırayla
+    // değerlendirilir (hepsi eski $s'yi görür, özgün sıra), sonra sırayla eklenir; işlenen hedefin
+    // kendisiyse anlık kopyası alınır (paylaşılan değer eklemede bir kez kopyalanır — sonuç aynı).
+    // Yalnız yerel ve üst düzey global hedefte; zincir ≤ 16 işlenen (kayıt baskısı).
+    const bool global_target = loc.kind != VarKind::LOCAL && loc.kind != VarKind::CAPTURE &&
+        !(parent_ != nullptr || (scope_depth_ > 1 && !outer_globals_.count(e.name)));
+    if (e.op == "=" && (loc.kind == VarKind::LOCAL || global_target)) {
+        if (auto* b = node_as<BinaryExpression>(e.value.get())) {
+            std::vector<const BinaryExpression*> spine;
+            const Expression* first = binary_left_spine(b, spine);
+            bool all_concat = spine.size() <= 16;
+            for (auto* x : spine) if (x->op != "." && x->op != "..") { all_concat = false; break; }
+            auto* fv = node_as<Variable>(first);
+            if (all_concat && fv && fv->name == e.name) {
+                std::vector<uint16_t> parts;
+                for (size_t k = spine.size(); k-- > 0; ) {           // içten dışa = soldan sağa
+                    uint16_t r = compile_expr(*spine[k]->right);
+                    if (loc.kind == VarKind::LOCAL && r == loc.index) {   // hedefin anlık kopyası
+                        uint16_t t = alloc_temp();
+                        emit(OpCode::MOVE, t, r);
+                        r = t;
+                    }
+                    parts.push_back(r);
+                }
+                uint32_t ni = 0;
+                if (global_target) { outer_globals_.insert(e.name); ni = add_const(Value(e.name)); }
+                for (uint16_t r : parts) {
+                    if (global_target) emit(OpCode::APPEND_GLOBAL, r, hi16(ni), lo16(ni));
+                    else               emit(OpCode::CONCAT, loc.index, loc.index, r);
+                }
+                for (size_t k = parts.size(); k-- > 0; ) free_temp(parts[k]);
+                return;
+            }
+        }
+    }
+
     uint16_t val = compile_expr(*e.value);
 
     if (loc.kind == VarKind::LOCAL) {
@@ -1411,6 +1450,13 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         // yaratmaz, bu global'e yazar.
         outer_globals_.insert(e.name);   // bu dala yalnız üst düzey (blok dışı) ya da bilinen global gelir
         uint32_t ni = add_const(Value(e.name));
+        // `.=` global'de YERİNDE (APPEND_GLOBAL). ESKİ: oku → yeni metin → yaz; her adım bütün metni
+        // kopyalıyordu (üst düzey döngüde 1 milyon `.=`: 66 sn).
+        if (e.op == ".=") {
+            emit(OpCode::APPEND_GLOBAL, val, hi16(ni), lo16(ni));
+            free_temp(val);
+            return;
+        }
         // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
         // "$t = $i" olarak derleniyordu (sol operand atılıyor). Diğer üç dal
         // (index, local, fonksiyon-içi) compound'u doğru yapıyordu; yalnız GLOBAL

@@ -353,6 +353,17 @@ jobs:
           echo "$out"
           echo "$out" | grep -q 'map functions: all checks passed' || { echo "::error::map functions FAILED"; exit 1; }
 
+      # `$s .= x` and `$s = $s . x` append in place, in a function and at top level (they copied
+      # the whole string every time: 300k appends took 0.8-1.8 s, now about 10 ms); the operands
+      # still see the old value, a copy of the string is not changed.
+      - name: Appending to a string is linear
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          out="$(./build/lk tests/concat_in_place_test.lk 2>&1)" || { echo "$out"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q 'concat in place: all checks passed' || { echo "::error::concat in place FAILED"; exit 1; }
+
       # SIGTERM (systemd stop/restart, a Plesk release switch): the request in progress finishes
       # with "Connection: close", new connections are refused, an idle keep-alive connection does
       # not hold the exit, exit code 0; a second signal stops at once. HTTP and FastCGI.
