@@ -6,8 +6,13 @@
 #include "look/http_client.h"
 #include "look/zip_safe.h"   // zip_entry_inside_dest (Zip-Slip containment dikişi)
 #include "look/url_safe.h"   // redirect_allowed (yönlendirme güvenlik-kararı dikişi)
+#include "look/crypto_sha256.h"  // içerik özeti (look.lock "h1:" — Go dirhash Hash1 eşdeğeri)
 #include "miniz/miniz.h"
 
+#include <chrono>
+#include <cstdlib>
+#include <random>
+#include <utility>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -27,7 +32,21 @@ namespace look {
 struct LockEntry {
     std::string ref;    // "main", "v1.2", commit sha
     std::string sha;    // resolved commit sha (or "" if unknown)
+    std::string hash;   // içerik özeti "h1:<base64>" (eski kilitte yok → "")
 };
+
+// Satır biçimi:  "user/repo[/subdir]" = "ref@sha h1:<base64>"
+// Özet, değerin SON boşluktan sonraki "h1:" parçasıdır; eski satırlarda (özetsiz) yoktur ve
+// aynen eskisi gibi ayrışır. Ref'ler (git) boşluk içeremez → ayırıcı belirsiz değil.
+static void split_lock_hash(std::string& val, std::string& hash) {
+    auto sp = val.rfind(' ');
+    if (sp == std::string::npos) return;
+    std::string tail = val.substr(sp + 1);
+    if (tail.rfind("h1:", 0) != 0) return;
+    hash = tail;
+    val.erase(sp);
+    while (!val.empty() && val.back() == ' ') val.pop_back();
+}
 
 // Read look.lock → map{"user/repo" → LockEntry}
 static std::map<std::string, LockEntry> read_lock(const fs::path& lock_path) {
@@ -51,6 +70,7 @@ static std::map<std::string, LockEntry> read_lock(const fs::path& lock_path) {
         strip(key); strip(val);
 
         LockEntry e;
+        split_lock_hash(val, e.hash);
         auto at = val.find('@');
         if (at != std::string::npos) {
             e.ref = val.substr(0, at);
@@ -72,8 +92,93 @@ static void write_lock(const fs::path& lock_path,
     for (auto& [key, e] : entries) {
         f << '"' << key << '"' << " = \"" << e.ref;
         if (!e.sha.empty()) f << '@' << e.sha;
+        if (!e.hash.empty()) f << ' ' << e.hash;
         f << "\"\n";
     }
+}
+
+// ── Content checksum (look.lock "h1:") ────────────────────────────────────────
+//
+// NEDEN ZIP baytları değil de İÇERİK: GitHub zipball'ı her istekte yeniden üretebilir (sıkıştırma
+// ayarı / zaman damgası / kök klasör adı değişebilir; GitHub arşiv bayt kararlılığını garanti
+// etmiyor, 2023'te git-archive değişikliği yüzünden dünya çapında checksum'lar kırıldı). Aynı
+// commit'in ZIP özeti sahte uyuşmazlık verebilir. Bunun yerine Go'nun dirhash "h1" algoritması:
+// her dosya için "sha256hex  yol\n" (yollar sıralı, '/' ayırıcılı, kurulum köküne göreli), sonra
+// bu özet metninin SHA-256'sı, base64. Dosya sistemine değil ARŞİVDEN okunan baytlara uygulanır
+// (Windows'ta büyük/küçük harf duyarsız disk aynı içeriğe farklı özet vermesin).
+static std::string base64_std(const std::vector<uint8_t>& in) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        uint32_t v = (uint32_t(in[i]) << 16) | (uint32_t(in[i + 1]) << 8) | in[i + 2];
+        out += T[(v >> 18) & 63]; out += T[(v >> 12) & 63]; out += T[(v >> 6) & 63]; out += T[v & 63];
+    }
+    if (i + 1 == in.size()) {
+        uint32_t v = uint32_t(in[i]) << 16;
+        out += T[(v >> 18) & 63]; out += T[(v >> 12) & 63]; out += "==";
+    } else if (i + 2 == in.size()) {
+        uint32_t v = (uint32_t(in[i]) << 16) | (uint32_t(in[i + 1]) << 8);
+        out += T[(v >> 18) & 63]; out += T[(v >> 12) & 63]; out += T[(v >> 6) & 63]; out += '=';
+    }
+    return out;
+}
+
+static std::string hex_lower(const std::vector<uint8_t>& in) {
+    static const char* H = "0123456789abcdef";
+    std::string s;
+    for (uint8_t b : in) { s += H[b >> 4]; s += H[b & 15]; }
+    return s;
+}
+
+// files: (göreli yol, dosya sha256 hex) — sıralanır, yani arşiv içi sıra özeti etkilemez.
+static std::string content_hash_h1(std::vector<std::pair<std::string, std::string>> files) {
+    std::sort(files.begin(), files.end());
+    std::string summary;
+    for (auto& [name, h] : files) summary += h + "  " + name + "\n";
+    return "h1:" + base64_std(sha256(std::vector<uint8_t>(summary.begin(), summary.end())));
+}
+
+// ── Atomic replace (temp dir next to the target, then rename) ─────────────────
+//
+// Eskiden önce eski paket remove_all ile siliniyor, sonra yeni açılıyordu: indirme sonrası her
+// hata (bozuk ZIP, disk dolu, özet uyuşmazlığı) projeyi paketsiz bırakıyordu. Şimdi: hedefin
+// YANINDA (aynı dosya sistemi → rename atomik) geçici dizine aç, doğrula, sonra yer değiştir.
+static fs::path temp_sibling(const fs::path& dest, const char* tag) {
+    static std::mt19937_64 rng(std::random_device{}() ^
+        (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count());
+    std::string name = "." + dest.filename().string() + ".look-" + tag + "-" +
+                       std::to_string(rng() % 100000000ull);
+    return dest.parent_path() / name;
+}
+
+// tmp → dest. Başarısızlıkta eski paket yerinde kalır ve tmp silinir.
+static bool swap_into_place(const fs::path& tmp, const fs::path& dest, std::string& err) {
+    std::error_code ec;
+    fs::path backup;
+    if (fs::exists(dest, ec) || fs::is_symlink(dest, ec)) {
+        backup = temp_sibling(dest, "old");
+        fs::rename(dest, backup, ec);
+        if (ec) {
+            err = "could not move the old " + dest.string() + " aside: " + ec.message();
+            fs::remove_all(tmp, ec);
+            return false;
+        }
+    }
+    fs::rename(tmp, dest, ec);
+    if (ec) {
+        err = "could not move the new files into " + dest.string() + ": " + ec.message();
+        std::error_code ec2;
+        if (!backup.empty()) fs::rename(backup, dest, ec2);
+        fs::remove_all(tmp, ec2);
+        return false;
+    }
+    if (!backup.empty()) {
+        fs::remove_all(backup, ec);
+        if (ec) std::cerr << "  warning: could not remove " << backup.string()
+                          << ": " << ec.message() << "\n";
+    }
+    return true;
 }
 
 // ── Package name parsing ──────────────────────────────────────────────────────
@@ -182,7 +287,8 @@ static PkgSpec parse_pkg(const std::string& input) {
 static bool extract_zip(const std::vector<char>& data,
                          const fs::path& dest_dir,
                          bool verbose,
-                         const std::string& subdir_filter = "")
+                         const std::string& subdir_filter,
+                         std::vector<std::pair<std::string, std::string>>& digests)
 {
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_mem(&zip, data.data(), data.size(), 0)) {
@@ -262,16 +368,29 @@ static bool extract_zip(const std::vector<char>& data,
 
         fs::create_directories(out_path.parent_path());
 
+        // Açılamayan girdi (CRC/boyut uyuşmazlığı = bozuk/tahrif edilmiş arşiv) veya yazılamayan
+        // dosya artık KURULUMU durdurur — eskiden atlanıyordu ve eksik paket "kuruldu" sayılıyordu.
         size_t out_size = 0;
         void* buf = mz_zip_reader_extract_to_heap(&zip, i, &out_size, 0);
         if (!buf) {
-            if (verbose) std::cerr << "  Could not extract: " << filename << "\n";
-            continue;
+            std::cerr << "Error: could not extract " << filename << " ("
+                      << mz_zip_get_error_string(mz_zip_get_last_error(&zip)) << ")\n";
+            mz_zip_reader_end(&zip);
+            return false;
         }
 
+        const uint8_t* bytes = (const uint8_t*)buf;
+        digests.emplace_back(filename,
+            hex_lower(sha256(std::vector<uint8_t>(bytes, bytes + out_size))));
         std::ofstream ofs(out_path, std::ios::binary);
-        if (ofs) ofs.write((char*)buf, (std::streamsize)out_size);
+        if (ofs) ofs.write((const char*)buf, (std::streamsize)out_size);
         mz_free(buf);
+        if (!ofs) {
+            std::cerr << "Error: could not write " << out_path.string() << "\n";
+            mz_zip_reader_end(&zip);
+            return false;
+        }
+        ofs.close();
         ++extracted;
 
         if (verbose) std::cout << "  + " << filename << "\n";
@@ -336,12 +455,46 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
     return r;
 }
 
+// Ağsız test dikişi: LOOK_INSTALL_ARCHIVE_DIR ayarlıysa arşiv GitHub yerine
+// <dir>/<user>/<repo>/<ref>.zip dosyasından okunur. Commit sha'sı GitHub'ın
+// Content-Disposition başlığı gibi taklit edilir: <ref>.sha dosyası varsa o, ref 40 hex ise ref.
+// (tests/installer_integrity_test.sh). Kullanıcı ortamı zaten güvenilir; yine de her
+// kullanımda stderr'e yazılır — sessiz kaynak değişimi olmasın.
+static const char* archive_dir_override() {
+    const char* d = std::getenv("LOOK_INSTALL_ARCHIVE_DIR");
+    return (d && *d) ? d : nullptr;
+}
+
+static HttpClientResponse fetch_archive(const PkgSpec& spec, bool verbose) {
+    const char* dir = archive_dir_override();
+    if (!dir) return download_follow(spec.zip_url(), verbose);
+
+    std::cerr << "  NOTE: LOOK_INSTALL_ARCHIVE_DIR is set; reading the archive from "
+              << dir << ", not from GitHub\n";
+    HttpClientResponse r;
+    fs::path base = fs::path(dir) / spec.user / spec.repo;
+    std::ifstream zf(base / (spec.ref + ".zip"), std::ios::binary);
+    if (!zf) { r.status = 404; return r; }
+    r.body.assign(std::istreambuf_iterator<char>(zf), std::istreambuf_iterator<char>());
+    r.status = 200;
+    std::string sha;
+    std::ifstream sf(base / (spec.ref + ".sha"));
+    if (sf) std::getline(sf, sha);
+    else if (spec.ref.size() == 40) sha = spec.ref;
+    while (!sha.empty() && (sha.back() == '\r' || sha.back() == ' ')) sha.pop_back();
+    if (!sha.empty())
+        r.headers["content-disposition"] =
+            "attachment; filename=" + spec.user + "-" + spec.repo + "-" + sha + ".zip";
+    return r;
+}
+
 // ── Resolve commit SHA via GitHub API ─────────────────────────────────────────
 
 static std::string resolve_sha(const PkgSpec& spec, bool verbose) {
     // GET https://api.github.com/repos/{user}/{repo}/commits/{ref}
     std::string url = "https://api.github.com/repos/" + spec.user + "/" + spec.repo
                     + "/commits/" + spec.ref;
+    if (archive_dir_override()) return "";   // test dikişi: ağa çıkma
     if (verbose) std::cout << "  resolving SHA...\n";
 
     std::map<std::string, std::string> hdrs;
@@ -398,7 +551,7 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
     std::cout << " (" << spec.ref << ")\n";
 
     // Download ZIP
-    HttpClientResponse resp = download_follow(spec.zip_url(), verbose);
+    HttpClientResponse resp = fetch_archive(spec, verbose);
     if (!resp.error.empty()) {
         std::cerr << "Download error: " << resp.error << "\n";
         return 1;
@@ -411,22 +564,9 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
 
     std::cout << "  " << (resp.body.size() / 1024) << " KB downloaded\n";
 
-    // Extract
-    fs::path dest = spec.pkg_dir();
-    if (fs::exists(dest)) {
-        if (verbose) std::cout << "  Cleaning up the previous installation...\n";
-        fs::remove_all(dest);
-    }
-
-    std::vector<char> zip_data(resp.body.begin(), resp.body.end());
-    if (!extract_zip(zip_data, dest, verbose, spec.subdir)) {
-        std::cerr << "ZIP extraction error\n";
-        return 1;
-    }
-
-    std::cout << "  → " << dest.string() << "\n";
-
     // look.lock zaten yukarıda okundu (lock_path/lock/locked_sha).
+    // Commit sha'sı ÇIKARMADAN ÖNCE belirlenir: özet doğrulaması ve --locked sha kontrolü
+    // eski paket yerinden oynamadan yapılmalı.
     // Try to extract commit SHA from Content-Disposition or URL
     // GitHub sends: attachment; filename=user-repo-{sha}.zip
     std::string sha;
@@ -455,17 +595,66 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
     // Try to resolve exact commit SHA if not already extracted from zip filename
     if (sha.empty()) sha = resolve_sha(spec, verbose);
 
+    // Kilitli kurulum: içeriğin gerçekten kilitli sha olduğunu doğrula (GitHub sha URL'i
+    // için bunu garanti eder; yine de tahrif-kanıtı olarak kontrol et). Eski paket henüz yerinde.
+    if (locked && !sha.empty() && !locked_sha.empty() && sha != locked_sha) {
+        std::cerr << "Error: locked install integrity check failed for "
+                  << spec.lock_key() << " — expected " << locked_sha
+                  << " got " << sha << "\n";
+        return 1;
+    }
+
+    // Extract into a temp dir next to the target; the old package stays until the swap.
+    fs::path dest = spec.pkg_dir();
+    std::error_code ec;
+    fs::create_directories(dest.parent_path(), ec);
+    fs::path tmp = temp_sibling(dest, "new");
+
+    std::vector<char> zip_data(resp.body.begin(), resp.body.end());
+    std::vector<std::pair<std::string, std::string>> digests;
+    if (!extract_zip(zip_data, tmp, verbose, spec.subdir, digests)) {
+        fs::remove_all(tmp, ec);
+        std::cerr << "ZIP extraction error; " << dest.string() << " was not changed\n";
+        return 1;
+    }
+    const std::string hash = content_hash_h1(digests);
+
+    // go.sum gibi: look.lock bu commit için bir içerik özeti kaydetmişse indirilen içerik ONA
+    // eşit olmalı. Aynı commit = kilitteki sha (sha bilinmiyorsa: ref'in kendisi kilitteki sha).
+    const std::string locked_hash = (lock_it != lock.end()) ? lock_it->second.hash : "";
+    const bool same_commit = !locked_sha.empty() &&
+                             (sha == locked_sha || (sha.empty() && spec.ref == locked_sha));
+    if (same_commit && sha.empty()) sha = locked_sha;
+    if (same_commit && !locked_hash.empty() && hash != locked_hash) {
+        fs::remove_all(tmp, ec);
+        std::cerr << "Error: checksum mismatch for " << spec.lock_key()
+                  << " at commit " << locked_sha << "\n"
+                  << "  look.lock:  " << locked_hash << "\n"
+                  << "  downloaded: " << hash << "\n"
+                  << "The downloaded content is not what look.lock recorded; nothing was installed"
+                  << " and " << dest.string() << " was not changed.\n";
+        return 1;
+    }
+
+    std::string swap_err;
+    if (!swap_into_place(tmp, dest, swap_err)) {
+        std::cerr << "Error: " << swap_err << "; the previous installation was kept.\n";
+        return 1;
+    }
+    std::cout << "  → " << dest.string() << "\n";
+    if (same_commit && !locked_hash.empty())
+        std::cout << "  checksum verified (" << hash << ")\n";
+
     if (locked) {
-        // Kilitli kurulum: içeriğin gerçekten kilitli sha olduğunu doğrula (GitHub
-        // sha URL'i için bunu garanti eder; yine de tahrif-kanıtı olarak kontrol et)
-        // ve look.lock'u DEĞİŞTİRME (kayıtlı ref/sha korunur).
-        if (!sha.empty() && !locked_sha.empty() && sha != locked_sha) {
-            std::cerr << "Error: locked install integrity check failed for "
-                      << spec.lock_key() << " — expected " << locked_sha
-                      << " got " << sha << "\n";
-            return 1;
+        // --locked look.lock'un ref/sha'sını DEĞİŞTİRMEZ. Tek istisna: eski kilitte özet yoksa
+        // ilk görülen içerik kaydedilir (trust on first use).
+        if (locked_hash.empty()) {
+            lock[spec.lock_key()].hash = hash;
+            write_lock(lock_path, lock);
+            std::cout << "  look.lock: recorded checksum " << hash << " for "
+                      << spec.lock_key() << "\n";
         }
-        std::cout << "  --locked: verified " << locked_sha << " (look.lock unchanged)\n";
+        std::cout << "  --locked: verified " << locked_sha << "\n";
     } else {
         // Sessiz-ikame görünürlüğü: kullanıcı bir dal/etiket kurdu ve o ref kilitten
         // bu yana FARKLI bir commit'e çözüldüyse (etiket taşındı / dal ilerledi) bunu
@@ -476,10 +665,16 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
                       << "  (updating; use --locked to pin to the recorded commit)\n";
         }
         LockEntry entry;
-        entry.ref = spec.ref;
+        // `lk install` (argümansız) kilitteki sha'yı kurar: kayıtlı ref'i (ör. "main") sha ile ezme.
+        entry.ref = (lock_it != lock.end() && spec.ref == locked_sha && !lock_it->second.ref.empty())
+                        ? lock_it->second.ref : spec.ref;
         entry.sha = sha;
+        entry.hash = hash;
         lock[spec.lock_key()] = entry;
         write_lock(lock_path, lock);
+        if (same_commit && locked_hash.empty())
+            std::cout << "  look.lock: recorded checksum " << hash << " for "
+                      << spec.lock_key() << "\n";
         std::cout << "  look.lock updated\n";
     }
     std::cout << "✓ " << spec.lock_key() << " installed\n\n";
@@ -571,7 +766,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
     std::cout << " (" << spec.ref << ")\n";
 
     // Download ZIP from GitHub
-    HttpClientResponse resp = download_follow(spec.zip_url(), verbose);
+    HttpClientResponse resp = fetch_archive(spec, verbose);
     if (!resp.error.empty()) {
         std::cerr << "Download error: " << resp.error << "\n";
         return 1;
@@ -584,16 +779,25 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
 
     std::cout << "  " << (resp.body.size() / 1024) << " KB downloaded\n";
 
-    // Extract to ~/.look/modules/<mod_name>/
-    fs::path dest_dir = modules_dir() / mod_name;
-    if (fs::exists(dest_dir)) {
-        if (verbose) std::cout << "  Cleaning up the previous installation...\n";
-        fs::remove_all(dest_dir);
-    }
+    // Extract to ~/.look/modules/<mod_name>/ — temp dir next to it, then swap (paketle aynı).
+    // Modüllerin kilit dosyası yok: özet kaydı/doğrulaması yalnız proje paketlerinde (look.lock).
+    fs::path dest_dir;
+    try { dest_dir = modules_dir() / mod_name; }
+    catch (const std::exception& e) { std::cerr << "Error: " << e.what() << "\n"; return 1; }
+    std::error_code ec;
+    fs::create_directories(dest_dir.parent_path(), ec);
+    fs::path tmp = temp_sibling(dest_dir, "new");
 
     std::vector<char> zip_data(resp.body.begin(), resp.body.end());
-    if (!extract_zip(zip_data, dest_dir, verbose, spec.subdir)) {
-        std::cerr << "ZIP extraction error\n";
+    std::vector<std::pair<std::string, std::string>> digests;
+    if (!extract_zip(zip_data, tmp, verbose, spec.subdir, digests)) {
+        fs::remove_all(tmp, ec);
+        std::cerr << "ZIP extraction error; " << dest_dir.string() << " was not changed\n";
+        return 1;
+    }
+    std::string swap_err;
+    if (!swap_into_place(tmp, dest_dir, swap_err)) {
+        std::cerr << "Error: " << swap_err << "; the previous installation was kept.\n";
         return 1;
     }
 

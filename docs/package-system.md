@@ -17,11 +17,28 @@ Most of this document is a design. The parts that the current `lk` command actua
 
 | Command | What it does |
 |---------|--------------|
-| `lk module install github.com/<user>/<repo>[/<subdir>][@<ref>]` | Downloads the GitHub zipball and extracts it to `~/.look/modules/<name>/` (`<name>` = subdir if given, otherwise the repo name). Does not touch `look.lock`. |
+| `lk module install github.com/<user>/<repo>[/<subdir>][@<ref>]` | Downloads the GitHub zipball and extracts it to `~/.look/modules/<name>/` (`<name>` = subdir if given, otherwise the repo name). Does not touch `look.lock`; modules have no lock file and no checksum. The replace is atomic (see below). |
 | `lk module list` | Lists the official modules (`github.com/codlook/look-modules`) and the locally installed ones. |
-| `lk install github.com/<user>/<repo>[/<subdir>][@<ref>]` | Downloads the zipball into the project: `pkg/<subdir>/` (or `pkg/<user>/<repo>/` without a subdir), relative to the current directory, and records `ref@sha` in `./look.lock`. `<ref>` defaults to `main`. |
+| `lk install github.com/<user>/<repo>[/<subdir>][@<ref>]` | Downloads the zipball into the project: `pkg/<subdir>/` (or `pkg/<user>/<repo>/` without a subdir), relative to the current directory, and records `ref@sha h1:<checksum>` in `./look.lock`. `<ref>` defaults to `main`. If look.lock has a checksum for the commit being installed, the content must match. |
 | `lk install` | Reinstalls every entry in `./look.lock`, pinned to the recorded commit sha. |
-| `lk install [pkg] --locked` (or `--frozen`) | Installs exactly the commit recorded in `look.lock` and fails if there is none; `look.lock` is not modified. |
+| `lk install [pkg] --locked` (or `--frozen`) | Installs exactly the commit recorded in `look.lock` and fails if there is none; the ref and sha in `look.lock` are not modified (a missing checksum is added). |
+
+Checksums and atomic installs:
+
+- **Checksum (`h1:`)** — like Go's `go.sum`: `h1:` + base64 of the SHA-256 of a summary that lists,
+  for every extracted file in sorted path order, `sha256hex  path`. It is computed from the files
+  in the archive after the GitHub `repo-sha/` prefix (and the subdir) are stripped, not from the
+  ZIP bytes: GitHub does not promise byte-identical archives, so a ZIP hash could change for the
+  same commit. When the commit being installed has a checksum in look.lock and the content differs,
+  `lk install` stops with an error naming the package, the expected and the downloaded checksum,
+  and installs nothing. A line without a checksum (written by an older `lk`) is trusted on first
+  use: the package is installed, the checksum is added, and one line says so. A new commit gets a
+  new checksum.
+- **Atomic replace** — the archive is extracted into a temporary folder next to the target (same
+  file system), verified, and then renamed into place; the old folder is removed only after that.
+  A failed download, a corrupt or truncated archive (a file that does not extract is an error, no
+  longer skipped) or a checksum mismatch leaves the previous installation as it was. The same
+  applies to `lk module install`.
 
 How code loads them:
 
@@ -95,7 +112,8 @@ with the requested ref and the resolved commit sha:
 ```
 
 The commit sha is the pin: `lk install` without arguments installs that exact commit, so a moved
-branch or re-tagged release cannot silently change the code. Commit `look.lock` to Git.
+branch or re-tagged release cannot silently change the code. Each line also carries an `h1:`
+content checksum (`"main@0123… h1:Xq3n…="`); see section 0. Commit `look.lock` to Git.
 
 Design (not implemented yet) — a richer format with versions, sources and checksums:
 
@@ -317,7 +335,8 @@ look publish --dry    # simulate, do not upload
 | Locked install | `--locked` installs and verifies the recorded sha (today) |
 | Download path | github.com only; redirects may not downgrade to HTTP or leave the allowed hosts (today) |
 | Extraction | Zip Slip protection, size and entry-count limits (today) |
-| Checksum verification | SHA-256 stored in look.lock (design) |
+| Checksum verification | `h1:` content checksum (SHA-256, Go dirhash) stored in look.lock; a mismatch stops the install (today) |
+| Atomic install | Extract beside the target, verify, rename; a failure keeps the old package (today) |
 | Sandbox | Pure packages: only .lk, no C++ |
 | Native package | v1.1 — separate security model (design) |
 | Official packages | `codlook/` prefix → manual review |

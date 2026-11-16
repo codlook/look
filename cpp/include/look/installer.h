@@ -7,6 +7,10 @@ namespace look {
 // pkg format: "github.com/user/repo[@ref]"
 // locked=true: install the exact commit recorded in look.lock (reproducible +
 // tamper-evident); errors if there is no locked sha for the package.
+// look.lock satırı: "user/repo" = "ref@sha h1:<base64>" — h1 = çıkarılmış içeriğin özeti (Go
+// dirhash). Aynı commit için kayıtlı özet uyuşmazsa kurulum durur. Kurulum atomik: hedefin
+// yanındaki geçici dizine açılır, sonra rename (hata → eski paket yerinde).
+// Test dikişi: LOOK_INSTALL_ARCHIVE_DIR=<dir> → arşiv <dir>/<user>/<repo>/<ref>.zip'ten (ağsız).
 int cmd_install(const std::string& pkg, bool verbose, bool locked = false);
 
 // lk install (no args) — re-install all packages from look.lock (pinned to sha).
