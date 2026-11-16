@@ -805,6 +805,13 @@ std::unique_ptr<Expression> Parser::primary() {
         // fırlatır → float'a promote (yalnızca ~9.2e18 üstü decimal için).
         std::string lit = previous().literal.value();
         lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());
+        // Rakamsız taban öneki ("0x", "0b"): eskiden ondalık dala düşüp stoll("0x") = 0 oluyordu —
+        // sessizce yanlış değer. Go: "hexadecimal literal has no digits".
+        if (lit.size() == 2 && lit[0] == '0' &&
+            (lit[1] == 'x' || lit[1] == 'X' || lit[1] == 'b' || lit[1] == 'B')) {
+            throw LookParseError(std::string(lit[1] == 'x' || lit[1] == 'X' ? "hexadecimal" : "binary") +
+                " literal " + lit + " has no digits", previous().line, previous().column);
+        }
         try {
             int64_t v;
             if (lit.size() > 2 && lit[0] == '0' && (lit[1] == 'x' || lit[1] == 'X'))

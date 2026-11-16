@@ -225,7 +225,16 @@ int64_t Value::to_int() const {
             if (float_val >= 9223372036854775808.0) return INT64_MAX;
             if (float_val < -9223372036854775808.0) return INT64_MIN;
             return (int64_t)float_val;
-        case STRING: try { return std::stoll(str_ref()); } catch(...) { return 0; }
+        // Sayı olmayan metin → 0 (gevşek kural, değişmedi). Ama 64 bite SIĞMAYAN tam sayı metni
+        // eskiden de 0 oluyordu: liste["99999999999999999999"] sessizce 0. elemanı, bit işlemleri
+        // sessizce 0 veriyordu. Artık açık hata (Go strconv: ErrRange; int() ile aynı kural).
+        case STRING:
+            try { return std::stoll(str_ref()); }
+            catch (const std::out_of_range&) {
+                throw std::runtime_error("\"" + str_ref() + "\" does not fit in 64 bits (the range is "
+                    "-9223372036854775808 to 9223372036854775807); keep a large ID as a string");
+            }
+            catch (...) { return 0; }
         case BOOL:   return bool_val ? 1 : 0;
         default:     return 0;
     }
