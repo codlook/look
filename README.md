@@ -256,17 +256,17 @@ compiling to native machine code is not a goal.
   For nested / partial rollback use `db::transaction($c, fn)`, which uses real
   `SAVEPOINT`s and behaves the same on every engine.
 
-## Compatibility (1.x)
+## Compatibility
 
-LOOK follows semantic versioning, with a deliberately **narrow** promise for the 1.x line — enough to
-build on without waiting for a full behavioral spec:
+LOOK develops on one line. Behavior changes are written down in each release's notes and in the
+upgrade guide ([docs/upgrading-from-1.0.md](docs/upgrading-from-1.0.md)) — with the reason and what to
+do — and are never shipped silently:
 
-- **The documented `mod::fn` API surface is stable.** A function listed in the docs will not be removed
-  or have its signature changed within 1.x. New functions may be added.
-- **Breaking changes are collected into the next major (2.0)** — never shipped silently in a 1.x update.
-- **Bug fixes ship within 1.x.** Correcting a behavior that produced a *wrong* result (e.g. `count()` on
-  an associative array returning the wrong number) is a fix, not a breaking change — it isn't held for a major.
-- **Security-default hardening may ship within 1.x** when the previous default is a known risk, and an
+- **The documented `mod::fn` API surface is stable.** A function listed in the docs is not removed or
+  changed without that change being listed in the release notes and the upgrade guide. New functions may be added.
+- **Bug fixes ship in the next release.** Correcting a behavior that produced a *wrong* result (e.g.
+  `count()` on an associative array returning the wrong number) is a fix and is not held back.
+- **Security-default hardening ships** when the previous default is a known risk, and an
   explicit opt-out is always provided. This is narrower than a general breaking change: it only tightens a
   default, never removes a capability. Precedents: MySQL/Redis TLS now verifies by default (opt out with
   `?tls=insecure`); `cookie::set` now sends `HttpOnly` + `SameSite=Lax` by default (opt out with the options

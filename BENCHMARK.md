@@ -202,7 +202,7 @@ had moved by up to 40% between runtimes measured minutes apart; it is not used.)
 | Elixir (Bandit) | 51,741 | 3.6 ms | 46,893 | 43 ms | 116 MB |
 | PHP (FPM + nginx) | 3,886 | 80 ms | 3,835 | 397 ms | 113 MB |
 
-Measured back to back (LOOK 2, Go, Node, twice, c=100): LOOK 95,467 / 95,890, Go 115,143 /
+Measured back to back (LOOK, Go, Node, twice, c=100): LOOK 95,467 / 95,890, Go 115,143 /
 111,698, Node 98,464 / 94,512 — LOOK level with Node, about 84% of Go, with the lowest p99.
 
 **One DB row** (MySQL 8)
@@ -237,7 +237,7 @@ What it says:
 
 ## Results — 2026-11-04, before (tests 8 and 12, six runtimes)
 
-`cpp/bench/race2.sh` — the same two endpoints in LOOK 2, LOOK 1.0.45, Node 22, Go 1.22, Elixir 1.16
+`cpp/bench/race2.sh` — the same two endpoints in LOOK (current development line), LOOK 1.0.45, Node 22, Go 1.22, Elixir 1.16
 and PHP 8 (FPM + nginx). Raw output: `cpp/bench/results/2026-11-04-race2.txt`. Servers `--cpus=2
 --memory=4g`, wrk `-t8 -d8s` from a separate container, warm-up, best of 3. Host: 16 CPUs, Windows 11
 + Docker Desktop 29.7 (WSL2) — a developer machine, so read the numbers relative to each other.
@@ -272,7 +272,7 @@ What it says:
 - **LOOK vs 1.0.45:** about 2× the throughput on both tests and a far lower tail (trivial JSON at
   c=1000: p99 303 ms → 41 ms). CPU throttling under the 2-CPU quota fell from 245 to 44 periods.
 - **Memory:** LOOK serves 1000 connections in 8 MB on the trivial test — the smallest of the six.
-- **Raw throughput:** Go and Node lead the trivial test by about 3×; on the DB test LOOK 2, Node and
+- **Raw throughput:** Go and Node lead the trivial test by about 3×; on the DB test LOOK, Node and
   Elixir are level and Go leads. Elixir has the steadiest DB tail at c=100.
 - **Open then:** the DB p99 at c=1000 (533 ms) — measured against in the run above.
 
