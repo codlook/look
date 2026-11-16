@@ -1,5 +1,5 @@
 Name:           look-lang
-Version:        1.0.46
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        LOOK — a language built for the web (embedded SMTP/IMAP, bytecode VM, DB clients)
 
