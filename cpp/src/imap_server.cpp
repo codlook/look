@@ -1029,11 +1029,11 @@ bool ImapServer::start() {
         if (impl_->listen_fd_tls >= 0) {
             impl_->accept_thread_tls = std::thread([this]() { impl_->accept_loop(impl_->listen_fd_tls, true); });
             Logger::instance().log(LogLevel::LOG_INFO, "IMAP",
-                "IMAPS (implicit TLS) dinliyor — port " + std::to_string(impl_->port_imaps));
+                "IMAPS (implicit TLS) listening on port " + std::to_string(impl_->port_imaps));
         }
     }
     Logger::instance().log(LogLevel::LOG_INFO, "IMAP",
-        std::string("IMAP4rev1 dinliyor — port ") + std::to_string(impl_->port_imap) +
+        std::string("IMAP4rev1 listening on port ") + std::to_string(impl_->port_imap) +
         (impl_->ssl_ctx ? " (STARTTLS enabled)" : " (TLS not configured — plaintext)"));
     return true;
 }

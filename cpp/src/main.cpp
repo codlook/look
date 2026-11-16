@@ -72,6 +72,8 @@ static void print_usage() {
     std::cout << "  lk test <pattern>                — run matching tests\n";
     std::cout << "  lk test --verbose                — verbose output\n";
     std::cout << "  lk repl                          — interactive REPL\n";
+    std::cout << "  lk fmt <file.lk>...              — format files in place (no files: stdin to stdout)\n";
+    std::cout << "  lk fmt --check <file.lk>...      — list unformatted files; exit 1 if any\n";
     std::cout << "  lk module install <github.com/user/repo>  — install module from GitHub\n";
     std::cout << "  lk module list                            — list official modules\n";
     std::cout << "  lk install <pkg>                 — install package (e.g. github.com/codlook/look-packages/firebase)\n";

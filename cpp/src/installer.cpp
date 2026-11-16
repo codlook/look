@@ -1,6 +1,6 @@
 // installer.cpp — look install <github.com/user/repo[@ref]>
 // Downloads ZIP from GitHub, extracts to pkg/user/repo/, updates look.lock.
-// Zero dependencies: uses existing http_client (Schannel/OpenSSL) + miniz.
+// No extra dependencies: uses existing http_client (Schannel/OpenSSL) + miniz.
 #include <cstring>
 #include "look/installer.h"
 #include "look/http_client.h"
@@ -409,7 +409,7 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
         return 1;
     }
 
-    std::cout << "  " << (resp.body.size() / 1024) << " KB indirildi\n";
+    std::cout << "  " << (resp.body.size() / 1024) << " KB downloaded\n";
 
     // Extract
     fs::path dest = spec.pkg_dir();
@@ -582,7 +582,7 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
         return 1;
     }
 
-    std::cout << "  " << (resp.body.size() / 1024) << " KB indirildi\n";
+    std::cout << "  " << (resp.body.size() / 1024) << " KB downloaded\n";
 
     // Extract to ~/.look/modules/<mod_name>/
     fs::path dest_dir = modules_dir() / mod_name;
@@ -691,7 +691,7 @@ int cmd_module_list() {
             std::string status = is_installed(name) ? " [installed]" : "";
             std::cout << "  " << name << status << "\n";
         }
-        std::cout << "\nKurulum: lk module install github.com/codlook/look-modules/<isim>\n";
+        std::cout << "\nInstall: lk module install github.com/codlook/look-modules/<name>\n";
     }
 
     // Print any extra locally installed (non-official) modules
