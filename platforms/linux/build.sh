@@ -14,7 +14,7 @@ PORT="../../cpp/build-portable"
 TMP="$(mktemp -d)"
 
 for b in lk lk-fcgi lk-cgi; do
-    [ -f "$PORT/$b" ] || { echo "HATA: portatif binary yok ($PORT/$b) — önce build-portable.sh" >&2; exit 1; }
+    [ -f "$PORT/$b" ] || { echo "ERROR: portable binary missing ($PORT/$b) — run build-portable.sh first" >&2; exit 1; }
 done
 
 echo "Building LOOK Linux package v$VERSION..."
@@ -28,7 +28,7 @@ done
 
 # Portatiflik teyidi — dinamik ssl/crypto/stdc++ olmamalı
 if ldd "$TMP/bin/lk-fcgi" 2>/dev/null | grep -qiE 'ssl|crypto|stdc\+\+'; then
-    echo "UYARI: bin/lk-fcgi dinamik ssl/crypto/stdc++ bağlı — portatif DEĞİL!" >&2; exit 1
+    echo "WARNING: bin/lk-fcgi is dynamically linked to ssl/crypto/stdc++ — NOT portable!" >&2; exit 1
 fi
 
 (cd "$TMP" && zip -r "$(pwd)/$OUT" . >/dev/null)

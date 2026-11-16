@@ -10,6 +10,9 @@ function grep(re, files) {
   for (const f of files) {
     let txt = '';
     try { txt = fs.readFileSync(f, 'utf8'); } catch (e) { continue; }
+    // C++ yorumlarındaki örnek adlar ("mod::fn" gibi) katalog girdisi olmasın: satır yorumunu sök
+    // ("http://" içindeki // dokunulmasın diye yalnız boşluk/satır başından sonraki //).
+    txt = txt.replace(/(^|\s)\/\/.*$/gm, '$1');
     let m; const r = new RegExp(re, 'g');
     while ((m = r.exec(txt))) out.add(m[1]);
   }
@@ -47,13 +50,13 @@ function bestArgs(c) {
   })[0];
 }
 const MOD = {
-  math:'Matematik', string:'Metin işlemleri', array:'Dizi/koleksiyon', type:'Tip dönüşüm & sorgu',
-  request:'HTTP istek verisi', response:'HTTP yanıt', db:'Veritabanı (MySQL/PG/SQLite)', date:'Tarih & saat',
-  http:'HTTP istemci', file:'Dosya sistemi', crypto:'Kriptografi', validator:'Doğrulama', session:'Oturum',
-  cookie:'Çerez', json:'JSON', mail:'E-posta (SMTP)', cache:'Önbellek', queue:'Kuyruk', jobs:'Arka plan işleri',
-  log:'Günlükleme', template:'Şablon', parallel:'Paralel çalıştırma', ws:'WebSocket', sse:'Server-Sent Events',
-  timer:'Zamanlayıcı', route:'Yönlendirme', app:'Uygulama durumu', auth:'Kimlik doğrulama', html:'HTML',
-  error:'Hata', runtime:'Çalışma zamanı', module:'Modül', mod:'Modül', look:'LOOK'
+  math:'Math', string:'String operations', array:'Arrays & collections', type:'Type conversion & checks',
+  request:'HTTP request data', response:'HTTP response', db:'Database (MySQL/PG/SQLite)', date:'Date & time',
+  http:'HTTP client', file:'File system', crypto:'Cryptography', validator:'Validation', session:'Session',
+  cookie:'Cookie', json:'JSON', mail:'Email (SMTP)', cache:'Cache', queue:'Queue', jobs:'Background jobs',
+  log:'Logging', template:'Template', parallel:'Parallel execution', ws:'WebSocket', sse:'Server-Sent Events',
+  timer:'Timer', route:'Routing', app:'Application state', auth:'Authentication', html:'HTML',
+  error:'Error', runtime:'Runtime', module:'Module', mod:'Module', look:'LOOK', csrf:'CSRF protection'
 };
 // ── SUPPLEMENT: kaynakta "mod::fn" string literali OLARAK geçmeyen ama GERÇEK olan
 //    fonksiyonlar (interpreter.cpp `fn == "x"` dispatch'i + jobs_stdlib functions[]).
@@ -88,7 +91,7 @@ const out = names.map(n => {
   const [mod, fn] = n.split('::');
   const a = bestArgs(byName[n]);
   return { name: n, module: mod, fn, sig: a != null ? `${n}(${a})` : `${n}(…)`,
-           detail: (MOD[mod] || mod) + ' modülü', documented: !!byName[n] };
+           detail: (MOD[mod] || mod) + ' module', documented: !!byName[n] };
 });
 fs.writeFileSync('platforms/vscode/builtins.json', JSON.stringify(out, null, 1));
-console.log(`yazildi: ${out.length} fonksiyon, ${out.filter(o => o.documented).length} imzali`);
+console.log(`wrote: ${out.length} functions, ${out.filter(o => o.documented).length} with signatures`);

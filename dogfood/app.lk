@@ -69,7 +69,7 @@ route("GET", "/", fn() => response::redirect("/tasks"))
 route("GET", "/register", function() {
     session::start()
     response::html(template::render("views/auth/register", [
-        "title" => "Kayıt", "user" => current_user(),
+        "title" => "Sign up", "user" => current_user(),
         "csrf" => csrf_token(), "error" => "", "email" => "",
         "errors" => []
     ]))
@@ -85,7 +85,7 @@ route("POST", "/register", function() use ($conn) {
     ])
     if (!$result["ok"]) {
         return response::html(template::render("views/auth/register", [
-            "title" => "Kayıt", "user" => null, "csrf" => csrf_token(),
+            "title" => "Sign up", "user" => null, "csrf" => csrf_token(),
             "error" => "", "email" => $data["email"] ?? "",
             "errors" => $result["errors"]
         ]))
@@ -93,8 +93,8 @@ route("POST", "/register", function() use ($conn) {
     $exists = db::query($conn, "SELECT id FROM users WHERE email=?", [$data["email"]])
     if (count($exists) > 0) {
         return response::html(template::render("views/auth/register", [
-            "title" => "Kayıt", "user" => null, "csrf" => csrf_token(),
-            "error" => "Bu e-posta zaten kayıtlı.", "email" => $data["email"],
+            "title" => "Sign up", "user" => null, "csrf" => csrf_token(),
+            "error" => "This email is already registered.", "email" => $data["email"],
             "errors" => []
         ]))
     }
@@ -107,7 +107,7 @@ route("POST", "/register", function() use ($conn) {
 route("GET", "/login", function() {
     session::start()
     response::html(template::render("views/auth/login", [
-        "title" => "Giriş", "user" => current_user(),
+        "title" => "Log in", "user" => current_user(),
         "csrf" => csrf_token(), "error" => "", "email" => ""
     ]))
 })
@@ -119,8 +119,8 @@ route("POST", "/login", function() use ($conn) {
     $rows = db::query($conn, "SELECT password FROM users WHERE email=?", [$data["email"] ?? ""])
     if (count($rows) == 0 || !auth::verify($data["password"] ?? "", $rows[0]["password"])) {
         return response::html(template::render("views/auth/login", [
-            "title" => "Giriş", "user" => null, "csrf" => csrf_token(),
-            "error" => "E-posta veya parola hatalı.", "email" => $data["email"] ?? ""
+            "title" => "Log in", "user" => null, "csrf" => csrf_token(),
+            "error" => "Wrong email or password.", "email" => $data["email"] ?? ""
         ]))
     }
     session::set("user_email", $data["email"])
@@ -175,7 +175,7 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
             "id"    => $r["id"],
             "title" => $r["title"],
             "cls"   => ($r["done"] == 1) ? "done" : "",
-            "toggle_label" => ($r["done"] == 1) ? "Geri al" : "Bitti",
+            "toggle_label" => ($r["done"] == 1) ? "Undo" : "Done",
             "has_attach" => ($r["attachment"] != null),
             "attach_url" => $r["attachment"] ?? ""
         ])
@@ -185,7 +185,7 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
     # Pager linklerinde filtreyi koru (query-string parçası)
     $filter_qs = "&q=" . $q . "&status=" . $status
     response::html(template::render("views/tasks/list", [
-        "title" => "Görevler", "user" => $email, "csrf" => csrf_token(),
+        "title" => "Tasks", "user" => $email, "csrf" => csrf_token(),
         "tasks" => $tasks, "flash" => $flash,
         "q" => $q, "status" => $status, "filter_qs" => $filter_qs,
         "page" => $page, "total_pages" => $total_pages,
@@ -196,8 +196,8 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
 
 route("GET", "/tasks/new", function() {
     response::html(template::render("views/tasks/form", [
-        "title" => "Yeni Görev", "user" => current_user(), "csrf" => csrf_token(),
-        "heading" => "Yeni Görev", "action" => "/tasks", "title_val" => "",
+        "title" => "New Task", "user" => current_user(), "csrf" => csrf_token(),
+        "heading" => "New Task", "action" => "/tasks", "title_val" => "",
         "errors" => []
     ]))
 })
@@ -209,22 +209,22 @@ route("POST", "/tasks", function() use ($conn) {
     $result = validator::check($data, ["title" => ["required", "min:1"]])
     if (!$result["ok"]) {
         return response::html(template::render("views/tasks/form", [
-            "title" => "Yeni Görev", "user" => current_user(), "csrf" => csrf_token(),
-            "heading" => "Yeni Görev", "action" => "/tasks",
+            "title" => "New Task", "user" => current_user(), "csrf" => csrf_token(),
+            "heading" => "New Task", "action" => "/tasks",
             "title_val" => $data["title"] ?? "", "errors" => $result["errors"]
         ]))
     }
     db::exec($conn, "INSERT INTO tasks (user_id, title) VALUES (?,?)", [$uid, $data["title"]])
-    response::redirect("/tasks?flash=Görev eklendi")
+    response::redirect("/tasks?flash=Task added")
 })
 
 route("GET", "/tasks/{id}/edit", function($id) use ($conn) {
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
-    if (count($rows) == 0) { return response::error(404, "Görev yok") }
+    if (count($rows) == 0) { return response::error(404, "Task not found") }
     response::html(template::render("views/tasks/form", [
-        "title" => "Düzenle", "user" => current_user(), "csrf" => csrf_token(),
-        "heading" => "Görevi Düzenle", "action" => "/tasks/" . $id . "/edit",
+        "title" => "Edit", "user" => current_user(), "csrf" => csrf_token(),
+        "heading" => "Edit Task", "action" => "/tasks/" . $id . "/edit",
         "title_val" => $rows[0]["title"], "errors" => []
     ]))
 })
@@ -236,14 +236,14 @@ route("POST", "/tasks/{id}/edit", function($id) use ($conn) {
     $result = validator::check($data, ["title" => ["required", "min:1"]])
     if (!$result["ok"]) {
         return response::html(template::render("views/tasks/form", [
-            "title" => "Düzenle", "user" => current_user(), "csrf" => csrf_token(),
-            "heading" => "Görevi Düzenle", "action" => "/tasks/" . $id . "/edit",
+            "title" => "Edit", "user" => current_user(), "csrf" => csrf_token(),
+            "heading" => "Edit Task", "action" => "/tasks/" . $id . "/edit",
             "title_val" => $data["title"] ?? "", "errors" => $result["errors"]
         ]))
     }
     db::exec($conn, "UPDATE tasks SET title=? WHERE id=? AND user_id=?",
         [$data["title"], int($id), $uid])
-    response::redirect("/tasks?flash=Görev güncellendi")
+    response::redirect("/tasks?flash=Task updated")
 })
 
 route("POST", "/tasks/{id}/toggle", function($id) use ($conn) {
@@ -257,16 +257,16 @@ route("POST", "/tasks/{id}/delete", function($id) use ($conn) {
     if (!csrf_ok()) { return response::error(419, "CSRF") }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     db::exec($conn, "DELETE FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
-    response::redirect("/tasks?flash=Görev silindi")
+    response::redirect("/tasks?flash=Task deleted")
 })
 
 # ── Dosya eki (upload) ─────────────────────────────────────────────────────
 route("GET", "/tasks/{id}/attach", function($id) use ($conn) {
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
-    if (count($rows) == 0) { return response::error(404, "Görev yok") }
+    if (count($rows) == 0) { return response::error(404, "Task not found") }
     response::html(template::render("views/tasks/attach", [
-        "title" => "Dosya Ekle", "user" => current_user(), "csrf" => csrf_token(),
+        "title" => "Attach File", "user" => current_user(), "csrf" => csrf_token(),
         "task_title" => $rows[0]["title"], "action" => "/tasks/" . $id . "/attach",
         "error" => ""
     ]))
@@ -276,7 +276,7 @@ route("POST", "/tasks/{id}/attach", function($id) use ($conn) {
     if (!csrf_ok()) { return response::error(419, "CSRF") }
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])
-    if (count($rows) == 0) { return response::error(404, "Görev yok") }
+    if (count($rows) == 0) { return response::error(404, "Task not found") }
 
     $err = ""
     try {
@@ -285,18 +285,18 @@ route("POST", "/tasks/{id}/attach", function($id) use ($conn) {
             "allow_mime" => ["image/png", "image/jpeg", "text/plain", "application/pdf"]
         ])
         if ($f == null) {
-            $err = "Dosya seçilmedi."
+            $err = "No file selected."
         } else {
             $record = file::store($f, "task-" . $id)
             db::exec($conn, "UPDATE tasks SET attachment=? WHERE id=? AND user_id=?",
                 [$record["url"], int($id), $uid])
-            return response::redirect("/tasks?flash=Dosya eklendi")
+            return response::redirect("/tasks?flash=File attached")
         }
     } catch ($e) {
         $err = "" . $e
     }
     response::html(template::render("views/tasks/attach", [
-        "title" => "Dosya Ekle", "user" => current_user(), "csrf" => csrf_token(),
+        "title" => "Attach File", "user" => current_user(), "csrf" => csrf_token(),
         "task_title" => $rows[0]["title"], "action" => "/tasks/" . $id . "/attach",
         "error" => $err
     ]))
@@ -311,4 +311,4 @@ route("GET", "/api/tasks", function() use ($conn) {
     response::json(["ok" => true, "count" => count($rows), "tasks" => $rows])
 })
 
-route("404", fn() => response::error(404, "Sayfa bulunamadı"))
+route("404", fn() => response::error(404, "Page not found"))

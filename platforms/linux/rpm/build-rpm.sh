@@ -24,8 +24,8 @@ cmake -S . -B build-rpm -DCMAKE_BUILD_TYPE=Release \
       -DLOOK_BUILD="${LOOK_BUILD:-src}" \
       -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" > /tmp/cmake.log 2>&1
 cmake --build build-rpm --target look look-fcgi look-cgi -j8 > /tmp/build.log 2>&1
-echo "[rpm] binary derlendi (dinamik OpenSSL):"
-ldd build-rpm/lk-fcgi | grep -iE "ssl|crypto" | sed 's/^/    /' || echo "    (!! OpenSSL statik olmamalı)"
+echo "[rpm] binary built (dynamic OpenSSL):"
+ldd build-rpm/lk-fcgi | grep -iE "ssl|crypto" | sed 's/^/    /' || echo "    (!! OpenSSL must not be static)"
 
 # ── 2. rpmbuild ağacı ─────────────────────────────────────────────────────────
 RPMTOP=/root/rpmbuild
@@ -38,6 +38,6 @@ rpmbuild -bb "$RPMTOP/SPECS/look-lang.spec" > /tmp/rpmbuild.log 2>&1 || { echo "
 RPM=$(find "$RPMTOP/RPMS" -name "look-lang-${VERSION}*.rpm" | head -1)
 mkdir -p /look/platforms/linux/rpm/out
 cp "$RPM" /look/platforms/linux/rpm/out/
-echo "[rpm] ÜRETİLDİ: platforms/linux/rpm/out/$(basename "$RPM")"
+echo "[rpm] BUILT: platforms/linux/rpm/out/$(basename "$RPM")"
 rpm -qpi "$RPM" 2>/dev/null | grep -iE "Name|Version|Size|Requires" | sed 's/^/    /'
-echo "[rpm] bağımlılıklar:"; rpm -qpR "$RPM" 2>/dev/null | grep -iE "openssl|libssl|glibc|libc.so" | sed 's/^/    /'
+echo "[rpm] dependencies:"; rpm -qpR "$RPM" 2>/dev/null | grep -iE "openssl|libssl|glibc|libc.so" | sed 's/^/    /'

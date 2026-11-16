@@ -72,7 +72,7 @@ warn() { echo -e "${c_y}!${c_0} $*"; }
 die()  { echo -e "${c_r}✗ $*${c_0}" >&2; exit 1; }
 
 # ── 0. Ön kontroller ────────────────────────────────────────────────────────
-[ "$(id -u)" = "0" ] || die "root gerekli — 'sudo' ile çalıştır."
+[ "$(id -u)" = "0" ] || die "root required — run it with 'sudo'."
 # curl yalnizca indirme (LOOK_BIN_URL) yolunda gerekir; self-contained zip'te bin/
 # gomulu oldugundan cogu zaman hic kullanilmaz. Yoksa distro-bagimsiz kur.
 if ! command -v curl >/dev/null 2>&1; then
@@ -85,9 +85,9 @@ if ! command -v curl >/dev/null 2>&1; then
   elif command -v yum     >/dev/null 2>&1; then yum install -y -q curl || true
   fi
 fi
-ARCH="$(uname -m)"; [ "$ARCH" = "x86_64" ] || warn "test edilen mimari x86_64 (senin: $ARCH)"
+ARCH="$(uname -m)"; [ "$ARCH" = "x86_64" ] || warn "tested architecture is x86_64 (yours: $ARCH)"
 . /etc/os-release 2>/dev/null || true
-say "Kurulum başlıyor — ${ID:-linux} ${VERSION_ID:-} · port ${LOOK_PORT}"
+say "Starting installation — ${ID:-linux} ${VERSION_ID:-} · port ${LOOK_PORT}"
 
 # ── 1. Binary'yi getir ────────────────────────────────────────────────────────
 install_bin() { # $1 = isim
@@ -96,13 +96,13 @@ install_bin() { # $1 = isim
     install -m 0755 "$LOOK_BIN_SRC/$name" "$BIN_DIR/$name"
   elif [ -n "${LOOK_BIN_URL:-}" ]; then
     curl -fsSL "$LOOK_BIN_URL/$name" -o "$BIN_DIR/$name" \
-      || die "binary indirilemedi: $LOOK_BIN_URL/$name"
+      || die "could not download the binary: $LOOK_BIN_URL/$name"
     chmod +x "$BIN_DIR/$name"
   else
-    die "binary bulunamadı — install.sh'i açılmış release zip'inin içinden çalıştır (bin/ yanında olmalı), ya da LOOK_BIN_URL/LOOK_BIN_SRC ayarla"
+    die "binary not found — run install.sh from inside the extracted release zip (bin/ must be next to it), or set LOOK_BIN_URL/LOOK_BIN_SRC"
   fi
 }
-say "Binary kuruluyor → $BIN_DIR/{lk, lk-fcgi}"
+say "Installing binaries → $BIN_DIR/{lk, lk-fcgi}"
 install_bin lk
 install_bin lk-fcgi
 # lk-cgi (Apache CGI için) 1.0.41'den beri pakette; elle verilen eski bir klasörde yoksa atlanır.
@@ -110,33 +110,33 @@ if [ -n "${LOOK_BIN_SRC:-}" ] && [ -f "$LOOK_BIN_SRC/lk-cgi" ]; then
   install -m 0755 "$LOOK_BIN_SRC/lk-cgi" "$BIN_DIR/lk-cgi"
   ok "lk-cgi → $BIN_DIR/lk-cgi"
 fi
-ok "lk $("$BIN_DIR/lk" --version 2>/dev/null || echo '(kuruldu)')"
+ok "lk $("$BIN_DIR/lk" --version 2>/dev/null || echo '(installed)')"
 
 # ── 2. Uygulama + .env ────────────────────────────────────────────────────────
 mkdir -p "$LOOK_APP_DIR" "$ETC_DIR"
 if [ ! -f "$LOOK_APP_DIR/index.lk" ]; then
   cat > "$LOOK_APP_DIR/index.lk" <<'APP'
-# LOOK — örnek uygulama (düzenle: /var/www/look/index.lk)
+# LOOK — sample app (edit: /var/www/look/index.lk)
 route("GET", "/", fn() => response::json(["ok" => true, "message" => "Hello from LOOK!"]))
 
-route("GET", "/selam/{ad}", function($ad) {
-    response::json(["selam" => $ad])
+route("GET", "/hello/{name}", function($name) {
+    response::json(["hello" => $name])
 })
 
-route("404", fn() => response::error(404, "Bulunamadı"))
+route("404", fn() => response::error(404, "Not Found"))
 APP
-  ok "örnek uygulama: $LOOK_APP_DIR/index.lk"
+  ok "sample app: $LOOK_APP_DIR/index.lk"
 else
-  warn "mevcut uygulama korundu: $LOOK_APP_DIR/index.lk"
+  warn "existing app kept: $LOOK_APP_DIR/index.lk"
 fi
 [ -f "$ETC_DIR/look.env" ] || cat > "$ETC_DIR/look.env" <<ENV
-# LOOK ortam değişkenleri
+# LOOK environment variables
 LOOK_PORT=$LOOK_PORT
 LOOK_WORKERS=$LOOK_WORKERS
 # Behind nginx or Apache on this machine, listen on 127.0.0.1 only:
 # LOOK_BIND=127.0.0.1
 # DB_DSN=mysql://user:pass@127.0.0.1/db
-# Gömülü mail sunucusu için (opsiyonel):
+# For the built-in mail server (optional):
 # LOOK_SMTP_PORT=25
 # LOOK_IMAP_PORT=143
 # LOOK_MAIL_DIR=/var/mail/look
@@ -154,7 +154,7 @@ if ! grep -q '^LOOK_SECRET=' "$ETC_DIR/look.env"; then
   unset secret
   ok "LOOK_SECRET created in $ETC_DIR/look.env (mode 0600)"
 fi
-ok "yapılandırma: $ETC_DIR/look.env"
+ok "configuration: $ETC_DIR/look.env"
 
 # ── 3. Servis kullanıcısı ─────────────────────────────────────────────────────
 # Servis root olarak çalışıyordu (User= yoktu): uygulamadaki bir açık bütün sunucuyu verirdi.
@@ -201,25 +201,25 @@ HAS_SYSTEMD=0
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then HAS_SYSTEMD=1; fi
 
 if [ "$HAS_SYSTEMD" = "1" ]; then
-  say "Servis başlatılıyor..."
+  say "Starting the service..."
   systemctl daemon-reload
   systemctl enable --now look.service >/dev/null 2>&1 || systemctl restart look.service
   sleep 2
   if curl -fsS "http://127.0.0.1:${LOOK_PORT}/" >/dev/null 2>&1; then
-    ok "servis çalışıyor ve yanıt veriyor"
+    ok "service is running and responding"
   else
-    warn "servis başladı ama yanıt yok — 'journalctl -u look -n 50' ile bak"
+    warn "service started but is not responding — check 'journalctl -u look -n 50'"
   fi
 else
-  warn "systemd yok (container?) — servis kurulmadı. Elle çalıştır:"
+  warn "no systemd (container?) — service not installed. Run it manually:"
   echo "    lk-fcgi --mode http --port $LOOK_PORT $LOOK_APP_DIR/index.lk"
 fi
 
 # ── 6. Özet ───────────────────────────────────────────────────────────────────
 echo
-ok "LOOK kuruldu 🎉"
-echo -e "   Uygulama : ${c_b}$LOOK_APP_DIR/index.lk${c_0}  (düzenle, servis otomatik yeniden yükler)"
+ok "LOOK installed 🎉"
+echo -e "   App      : ${c_b}$LOOK_APP_DIR/index.lk${c_0}  (edit it; the service reloads automatically)"
 echo -e "   URL      : ${c_b}http://127.0.0.1:${LOOK_PORT}/${c_0}"
-[ "$HAS_SYSTEMD" = "1" ] && echo -e "   Servis   : ${c_b}systemctl {status|restart|stop} look${c_0}"
-echo -e "   Loglar   : ${c_b}journalctl -u look -f${c_0}"
-echo -e "   REPL     : ${c_b}lk repl${c_0}   ·   Çalıştır: ${c_b}lk dosya.lk${c_0}"
+[ "$HAS_SYSTEMD" = "1" ] && echo -e "   Service  : ${c_b}systemctl {status|restart|stop} look${c_0}"
+echo -e "   Logs     : ${c_b}journalctl -u look -f${c_0}"
+echo -e "   REPL     : ${c_b}lk repl${c_0}   ·   Run: ${c_b}lk file.lk${c_0}"

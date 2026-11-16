@@ -1,137 +1,144 @@
-# LOOK — Gömülü IMAP Sunucu
+# LOOK — Embedded IMAP Server
 
-LOOK gömülü, sıfır bağımlılık bir **IMAP4rev1** sunucu içerir (RFC 3501 + RFC 2177 IDLE).
-Dış servis (Dovecot, Courier) gerekmez. Gömülü SMTP sunucu ile aynı Maildir deposunu
-paylaşır: **SMTP mektubu teslim eder → IMAP istemcilere sunar.** Yalnızca `--mode http`
-modunda aktif olur.
+LOOK includes an embedded **IMAP4rev1** server (RFC 3501 + RFC 2177 IDLE) with minimal
+external runtime dependencies. No external service (Dovecot, Courier) is needed. It shares
+the same Maildir store with the embedded SMTP server: **SMTP delivers the mail → IMAP serves
+it to clients.** It is active only in `--mode http`, and only in Linux/POSIX builds (the
+embedded mail servers are not part of the Windows build).
 
-Gerçek istemciler (Thunderbird, Roundcube, Apple Mail, K-9 / mobil) bağlanıp mail
-**listeler, okur, yazar, bayraklar, siler, arar ve anlık bildirim (IDLE push) alır** —
-hepsi TLS altında.
+Clients can connect and **list, read, write (APPEND), flag, delete, search, and receive
+instant notifications (IDLE push)** — all over TLS. Messages are addressed by sequence
+number: persistent UIDs are not supported yet, so the `UID` command and the `UID` FETCH item
+are answered with `NO [CANNOT]`. Clients that depend on UID commands will not work fully.
 
 ---
 
-## Hızlı Başlangıç
+## Quick Start
 
-`.env` dosyasına ekle:
+Add to your `.env` file:
 
 ```
-# --- Gelen posta zinciri (SMTP alır → Maildir → IMAP sunar) ---
-LOOK_SMTP_PORT=25                 # MTA (sunucu→sunucu teslim)
-LOOK_SMTP_SUB_PORT=587            # Submission (authenticated giden)
-LOOK_SMTP_LOCAL_DOMAINS=myapp.com # yerel domainler (open relay engeli)
+# --- Incoming mail chain (SMTP receives → Maildir → IMAP serves) ---
+LOOK_SMTP_PORT=25                 # MTA (server→server delivery)
+LOOK_SMTP_SUB_PORT=587            # Submission (authenticated outgoing)
+LOOK_SMTP_LOCAL_DOMAINS=myapp.com # local domains (open relay prevention)
 
-LOOK_IMAP_PORT=143                # IMAP (STARTTLS ile yükseltilir)
-LOOK_IMAP_PORT_TLS=993            # IMAPS (implicit TLS) — opsiyonel
-LOOK_IMAP_CERT=/etc/look/mail.crt # TLS sertifikası (yoksa LOOK_SMTP_CERT paylaşılır)
+LOOK_IMAP_PORT=143                # IMAP (upgraded with STARTTLS)
+LOOK_IMAP_PORT_TLS=993            # IMAPS (implicit TLS) — optional
+LOOK_IMAP_CERT=/etc/look/mail.crt # TLS certificate (if unset, LOOK_SMTP_CERT is shared)
 LOOK_IMAP_KEY=/etc/look/mail.key
 
-# --- Ortak kimlik + depo ---
-LOOK_MAIL_USER_DB=mysql://user:pass@127.0.0.1/mydb  # mail_users tablosu (SMTP ile ortak)
-LOOK_MAIL_DIR=/var/mail/look                          # Maildir kökü
+# --- Shared identity + store ---
+LOOK_SMTP_USER_DB=mysql://user:pass@127.0.0.1/mydb  # mail_users table (read by SMTP AUTH and IMAP LOGIN)
+LOOK_MAIL_DIR=/var/mail/look                          # Maildir root
 ```
 
 ```bash
 lk-fcgi --mode http --port 7400 --workers 4
-# Aynı anda: HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993
+# At the same time: HTTP :7400 · SMTP :25/:587 · IMAP :143 · IMAPS :993
 ```
 
 ---
 
-## Env Değişkenleri
+## Environment Variables
 
-| Değişken | Varsayılan | Açıklama |
-|----------|-----------|----------|
-| `LOOK_IMAP_PORT` | — | IMAP portu (143). Boşsa IMAP devre dışı. |
-| `LOOK_IMAP_PORT_TLS` | 0 | IMAPS / implicit TLS portu (993). Yalnız sertifika varsa açılır. |
-| `LOOK_IMAP_CERT` | — | TLS sertifikası (PEM zinciri). Yoksa `LOOK_SMTP_CERT` kullanılır. |
-| `LOOK_IMAP_KEY` | — | TLS özel anahtarı (PEM). Yoksa `LOOK_SMTP_KEY` kullanılır. |
-| `LOOK_MAIL_USER_DB` | — | `mysql://...` DSN. `mail_users` tablosundan LOGIN doğrulama. Yoksa `LOOK_SMTP_USER_DB`. |
-| `LOOK_MAIL_USER` / `LOOK_MAIL_PASS` | — | DB yoksa tek-kullanıcı fallback (dev / basit deployment). Sabit-zamanlı karşılaştırma. |
-| `LOOK_MAIL_DIR` | `/var/mail/look` | Maildir kökü. Kullanıcının INBOX'ı: `<dir>/<user>/inbox`. |
-| `LOOK_IMAP_MAX_CONN` | 1000 | Maksimum eş zamanlı bağlantı (DoS sınırı). |
-| `LOOK_IMAP_MAX_LINE` | 8192 | Komut satırı üst sınırı (satır bombası → bağlantı kesilir). |
-| `LOOK_IMAP_MAX_LITERAL` | 33554432 | APPEND literal üst sınırı (32 MB). Aşılırsa **veri okunmadan** `NO [TOOBIG]`. |
-| `LOOK_IMAP_MAX_ERRORS` | 5 | Bağlantı başına protokol hatası limiti (sonra kes). |
-| `LOOK_IMAP_AUTH_DELAY_MS` | 500 | Başarısız LOGIN'de sabit gecikme (brute-force yavaşlatma). |
-| `LOOK_IMAP_IDLE_TIMEOUT` | 1800 | Boşta bağlantı recv timeout'u — saniye (Slowloris + RFC autologout). |
-| `LOOK_IMAP_IDLE_TICK_MS` | 15000 | IDLE sırasında mailbox tarama periyodu (yeni-mail tespiti). |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOOK_IMAP_PORT` | — | IMAP port (143). If empty, IMAP is disabled. An invalid value logs an error and IMAP does not start. |
+| `LOOK_IMAP_PORT_TLS` | 0 | IMAPS / implicit TLS port (993). Opened only when a certificate is configured. |
+| `LOOK_IMAP_CERT` | — | TLS certificate (PEM chain). If unset, `LOOK_SMTP_CERT` is used. |
+| `LOOK_IMAP_KEY` | — | TLS private key (PEM). If unset, `LOOK_SMTP_KEY` is used. |
+| `LOOK_MAIL_USER_DB` | — | `mysql://...` DSN. LOGIN is checked against the `mail_users` table. If unset, `LOOK_SMTP_USER_DB` is used. (SMTP AUTH reads only `LOOK_SMTP_USER_DB`, so set that one to share users between SMTP and IMAP.) |
+| `LOOK_MAIL_USER` / `LOOK_MAIL_PASS` | — | Single-user fallback when no DB is configured (dev / simple deployment). Constant-time comparison. |
+| `LOOK_MAIL_DIR` | `/var/mail/look` | Maildir root. The user's INBOX: `<dir>/<user>/inbox`. |
+| `LOOK_IMAP_MAX_CONN` | 1000 | Maximum concurrent connections (DoS limit). |
+| `LOOK_IMAP_MAX_LINE` | 8192 | Command line limit (line bomb → connection is closed). |
+| `LOOK_IMAP_MAX_LITERAL` | 33554432 | APPEND literal limit (32 MB). If exceeded: `NO [TOOBIG]` **without reading the data**. Messages larger than this are also skipped by FETCH and SEARCH. |
+| `LOOK_IMAP_MAX_ERRORS` | 5 | Protocol error limit per connection (then disconnect). |
+| `LOOK_IMAP_AUTH_DELAY_MS` | 500 | Fixed delay after a failed LOGIN (slows down brute force). |
+| `LOOK_IMAP_IDLE_TIMEOUT` | 1800 | Receive timeout for an idle connection, in seconds (Slowloris + RFC autologout). |
+| `LOOK_IMAP_IDLE_TICK_MS` | 15000 | Mailbox scan interval during IDLE (new-mail detection). |
 
 ---
 
-## Desteklenen Komutlar
+## Supported Commands
 
-| Komut | Durum | Not |
-|-------|-------|-----|
-| `CAPABILITY` | ✅ | `IMAP4rev1 IDLE` (+ `STARTTLS LOGINDISABLED` düz-metinde) |
+| Command | Status | Note |
+|---------|--------|------|
+| `CAPABILITY` | ✅ | `IMAP4rev1 IDLE` (+ `STARTTLS LOGINDISABLED` on plain text when a certificate is configured) |
 | `NOOP` · `LOGOUT` | ✅ | |
-| `STARTTLS` | ✅ | RFC 3501 §6.2.1 — sonrası oturum durumu sıfırlanır |
-| `LOGIN` | ✅ | `mail_users` pbkdf2 veya tek-kullanıcı fallback |
-| `SELECT` / `EXAMINE` | ✅ | Kararlı sequence snapshot; EXISTS/RECENT/UIDVALIDITY/FLAGS |
-| `LIST` / `LSUB` | ✅ | Maildir++ alt klasörler (`.Sent` → `Sent`) |
+| `STARTTLS` | ✅ | RFC 3501 §6.2.1 — the session state is reset afterwards |
+| `LOGIN` | ✅ | `mail_users` pbkdf2 or the single-user fallback |
+| `SELECT` / `EXAMINE` | ✅ | Stable sequence snapshot; EXISTS/RECENT/UIDVALIDITY/FLAGS |
+| `LIST` / `LSUB` | ✅ | Maildir++ subfolders (`.Sent` → `Sent`) |
 | `STATUS` | ✅ | MESSAGES / RECENT |
-| `FETCH` | ✅ | seq-set, `FLAGS` `UID` `RFC822.SIZE` `BODY[]` `BODY[HEADER]` `BODY[TEXT]` |
+| `FETCH` | ✅ | seq-set, `FLAGS` `RFC822.SIZE` `BODY[]` `BODY[HEADER]` `BODY[TEXT]` `RFC822` `RFC822.HEADER` (the `UID` item → `NO [CANNOT]`) |
 | `STORE` | ✅ | `+FLAGS` `-FLAGS` `FLAGS` (+`.SILENT`), Maildir `:2,` rename |
-| `EXPUNGE` | ✅ | `\Deleted` işaretli mesajları siler + `* n EXPUNGE` bildirimi |
-| `APPEND` | ✅ | literal + flag; boyut sınırı OOM'a karşı önden doğrulanır |
-| `SEARCH` | ✅ | aşağıya bakın |
-| `IDLE` | ✅ | RFC 2177 — canlı yeni-mail push |
+| `EXPUNGE` | ✅ | Deletes messages marked `\Deleted` + `* n EXPUNGE` notification |
+| `APPEND` | ✅ | literal + flags; size limit checked up front against OOM |
+| `SEARCH` | ✅ | see below |
+| `IDLE` | ✅ | RFC 2177 — live new-mail push (after `SELECT`) |
+| `UID` | ❌ | `NO [CANNOT]` — no persistent UIDs yet; use sequence-based FETCH/STORE/SEARCH |
+| `CREATE` · `DELETE` · `RENAME` · `SUBSCRIBE` · `UNSUBSCRIBE` | ❌ | `NO [CANNOT]` — not supported |
 
-### SEARCH ölçütleri
+### SEARCH criteria
 
-Çoklu ölçüt **AND**'lenir. Tırnaklı argüman desteklenir (`SEARCH FROM "ali veli"`).
+Multiple criteria are **AND**ed. Quoted arguments are supported (`SEARCH FROM "ali veli"`).
+Text matching is case-insensitive.
 
 ```
 ALL · SEEN/UNSEEN · DELETED/UNDELETED · FLAGGED/UNFLAGGED · ANSWERED/UNANSWERED
 DRAFT/UNDRAFT · NEW/OLD/RECENT
-FROM · TO · CC · SUBJECT   (başlık alanı, alan-bazlı — yanlış-pozitif yok)
-BODY · TEXT                (gövde / tam metin — bellek sınırlı okuma)
-HEADER <alan> <değer>
-<seq-set>  (ör. 1:3, 2:*)  ·  UID <seq-set>
+FROM · TO · CC · SUBJECT   (header field, per field — no false positives)
+BODY · TEXT                (body / full text — memory-bounded read)
+HEADER <field> <value>
+<seq-set>  (e.g. 1:3, 2:*)  ·  UID <seq-set>  (read as a sequence set)
+CHARSET <name>             (accepted and ignored)
 ```
 
-Bilinmeyen ölçüt → `BAD`. Gövde/tam-metin araması `read_file_capped` ile sınırlıdır (OOM yok).
+Unknown criterion → `BAD`. Body/full-text search reads at most `LOOK_IMAP_MAX_LITERAL` bytes
+per message (no OOM).
 
 ---
 
-## IDLE — Anlık Bildirim (RFC 2177)
+## IDLE — Instant Notification (RFC 2177)
 
-Profesyonel ve mobil istemciler yeni mektubu polling yerine **push** ile alır:
+Professional and mobile clients receive new mail via **push** instead of polling:
 
 ```
 C: a1 IDLE
 S: + idling
-   ... (SMTP yeni mektup teslim eder) ...
+   ... (SMTP delivers a new message) ...
 S: * 2 EXISTS
 S: * 2 RECENT
 C: DONE
-S: a1 OK IDLE tamamlandı
+S: a1 OK IDLE completed
 ```
 
-Sunucu, IDLE sırasında hem soketi (`DONE`) hem mailbox'ı (`LOOK_IMAP_IDLE_TICK_MS`
-periyodunda) izler. Yeni mesajlar mevcut sequence snapshot'ının **sonuna** eklenir —
-oturum içi sequence numaraları RFC 3501 uyarınca sabit kalır.
+During IDLE the server watches both the socket (`DONE`) and the mailbox (every
+`LOOK_IMAP_IDLE_TICK_MS`). New messages are appended to the **end** of the current sequence
+snapshot — sequence numbers within a session stay fixed, as RFC 3501 requires.
 
 ---
 
-## Kullanıcı Veritabanı (`mail_users`) — SMTP ile Ortak
+## User Database (`mail_users`) — Shared with SMTP
 
-IMAP LOGIN, SMTP AUTH ile **aynı tabloyu ve aynı pbkdf2 doğrulamasını** kullanır.
-Tek kullanıcı kaydı hem giden (SMTP submission) hem gelen (IMAP) için geçerlidir.
+IMAP LOGIN uses **the same table and the same pbkdf2 verification** as SMTP AUTH.
+A single user record is valid for both outgoing (SMTP submission) and incoming (IMAP) mail.
 
 ```sql
 CREATE TABLE mail_users (
     id       INT AUTO_INCREMENT PRIMARY KEY,
     email    VARCHAR(255) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,  -- pbkdf2$sha256$... (auth::hash ile üret)
+    password VARCHAR(255) NOT NULL,  -- pbkdf2$sha256$... (generate with auth::hash)
     active   TINYINT DEFAULT 1
 );
 ```
 
 ```lk
-route("POST", "/admin/mail-user-ekle", function() {
+route("POST", "/admin/mail-user-add", function() {
     $conn = db::connect(env("DB_DSN", ""))
-    $hash = auth::hash(request::post("sifre"))
+    $hash = auth::hash(request::post("password"))
     db::exec($conn,
         "INSERT INTO mail_users (email, password, active) VALUES (?, ?, 1)",
         [request::post("email"), $hash]
@@ -140,80 +147,81 @@ route("POST", "/admin/mail-user-ekle", function() {
 })
 ```
 
-Kullanıcı adı (e-posta), giriş sonrası Maildir yol bileşeni olur; bu yüzden `/`, `\`,
-`..`, kontrol karakteri içeren adlar reddedilir (defense-in-depth).
+After login, the user name (e-mail) becomes a Maildir path component; therefore names that
+contain `/`, `\`, `..` or control characters are rejected (defense in depth).
 
 ---
 
-## Maildir Hizalaması — SMTP ↔ IMAP
+## Maildir Alignment — SMTP ↔ IMAP
 
-Gömülü SMTP, her **yerel alıcıya** ayrı Maildir'e teslim eder; IMAP `INBOX` tam olarak
-aynı yeri okur:
+The embedded SMTP server delivers to a separate Maildir for each **local recipient**; IMAP
+`INBOX` reads exactly the same location:
 
 ```
 /var/mail/look/
   alice@myapp.com/
     inbox/
-      new/  1751234567.abc   ← SMTP'nin teslim ettiği mektup
-      cur/                    ← okunmuş/bayraklı (STORE → :2,S rename)
+      new/  1751234567.abc   ← message delivered by SMTP
+      cur/                    ← read/flagged (STORE → :2,S rename)
       tmp/
   bob@myapp.com/
     inbox/ ...
 ```
 
-Böylece `RCPT TO:<alice@myapp.com>` ile gelen mektup, `LOGIN alice@myapp.com` yapan
-istemcinin INBOX'ında görünür. Ek klasörler (Sent, Drafts) Maildir++ nokta-önekiyle
-tutulur (`.Sent`) ve `LIST`'te `Sent` olarak görünür.
+So a message that arrives with `RCPT TO:<alice@myapp.com>` appears in the INBOX of the client
+that does `LOGIN alice@myapp.com`. Additional folders (Sent, Drafts) are stored with the
+Maildir++ dot prefix (`.Sent`) and appear as `Sent` in `LIST`. Folders are not created over
+IMAP (`CREATE` is not supported); create the directory on disk.
 
 ---
 
-## TLS — STARTTLS ve IMAPS
+## TLS — STARTTLS and IMAPS
 
-İki yükseltme yolu da desteklenir:
+Both upgrade paths are supported:
 
-- **STARTTLS (143):** İstemci düz-metin bağlanır, `STARTTLS` ile TLS'e yükseltir.
-  Sertifika yapılıyken sunucu `LOGINDISABLED` reklamı yapar ve TLS öncesi `LOGIN`'i
-  `NO [PRIVACYREQUIRED]` ile reddeder — **kimlik bilgisi asla şifresiz gitmez.**
-- **IMAPS (993):** Bağlantı açılır açılmaz TLS el sıkışması (implicit TLS).
+- **STARTTLS (143):** The client connects in plain text and upgrades to TLS with `STARTTLS`.
+  When a certificate is configured, the server advertises `LOGINDISABLED` and refuses `LOGIN`
+  before TLS with `NO [PRIVACYREQUIRED]` — **credentials never travel unencrypted.**
+- **IMAPS (993):** TLS handshake as soon as the connection opens (implicit TLS).
 
-TLS 1.2 taban; SSLv2/SSLv3/TLS1.0/TLS1.1 kapalıdır. Sertifika `LOOK_IMAP_CERT/KEY` ile,
-yoksa gömülü SMTP'nin `LOOK_SMTP_CERT/KEY` sertifikası paylaşılarak sağlanır. Sertifika
-hiç yoksa sunucu düz-metin çalışır (yalnız geliştirme).
+TLS 1.2 is the minimum; SSLv2/SSLv3/TLS1.0/TLS1.1 are disabled. The certificate comes from
+`LOOK_IMAP_CERT/KEY`, or, if those are unset, the embedded SMTP server's `LOOK_SMTP_CERT/KEY`
+is shared. If there is no certificate at all, the server runs in plain text (development only).
 
 ```bash
-# Self-signed test sertifikası
+# Self-signed test certificate
 openssl req -x509 -newkey rsa:2048 -keyout mail.key -out mail.crt \
   -days 365 -nodes -subj "/CN=mail.myapp.com"
 ```
 
 ---
 
-## Güvenlik Özellikleri
+## Security Features
 
-| Özellik | Detay |
-|---------|-------|
-| Kimlik bilgisi gizliliği | TLS varken düz-metin LOGIN reddedilir (`LOGINDISABLED` / `PRIVACYREQUIRED`) |
-| OOM koruması | APPEND literal boyutu **okumadan önce** doğrulanır (`LOOK_IMAP_MAX_LITERAL`) → `NO [TOOBIG]` |
-| Satır bombası | Komut satırı `LOOK_IMAP_MAX_LINE` ile sınırlı |
-| Bağlantı taşması | `LOOK_IMAP_MAX_CONN` eş zamanlı bağlantı tavanı |
+| Feature | Detail |
+|---------|--------|
+| Credential privacy | With TLS configured, plain-text LOGIN is refused (`LOGINDISABLED` / `PRIVACYREQUIRED`) |
+| OOM protection | APPEND literal size is checked **before reading** (`LOOK_IMAP_MAX_LITERAL`) → `NO [TOOBIG]` |
+| Line bomb | Command line limited by `LOOK_IMAP_MAX_LINE` |
+| Connection flood | `LOOK_IMAP_MAX_CONN` concurrent connection ceiling |
 | Slowloris | `SO_RCVTIMEO` idle timeout (`LOOK_IMAP_IDLE_TIMEOUT`) |
-| Brute-force | Başarısız LOGIN'de sabit gecikme + hata limiti (bağlantıyı keser) |
-| Path traversal | mailbox adı + kullanıcı adı + SMTP alıcısı — üç katmanda `..`/mutlak yol/kontrol-karakteri reddi + `weakly_canonical` kök-içi doğrulama |
-| Sequence kararlılığı | RFC 3501 — seq numaraları oturum içinde sabit; yalnız EXPUNGE değiştirir (yanlış mesaj silinmesini önler) |
-| Sabit-zamanlı karşılaştırma | pbkdf2 doğrulama ve tek-kullanıcı fallback timing-attack'a karşı |
+| Brute force | Fixed delay after a failed LOGIN + error limit (closes the connection) |
+| Path traversal | mailbox name + user name + SMTP recipient — `..`/absolute path/control characters rejected at three layers + `weakly_canonical` check that the path stays inside the root |
+| Sequence stability | RFC 3501 — sequence numbers are fixed within a session; only EXPUNGE changes them (prevents deleting the wrong message) |
+| Constant-time comparison | pbkdf2 verification and the single-user fallback, against timing attacks |
 
-Doğrulama: ASan+UBSan fuzzing (taşan/negatif literal, bozuk seq-set, tokenizer uç
-durumları, protokol ihlali, path traversal bombardımanı) → **0 UB, 0 çökme.** Uçtan uca
-interop testi: SMTP teslim → disk → IMAP LOGIN+SELECT+FETCH aynı mesajı okur.
+Verification: ASan+UBSan fuzzing (overflowing/negative literals, malformed seq-sets,
+tokenizer edge cases, protocol violations, path traversal bombardment) → **0 UB, 0 crashes.**
+End-to-end interop test: SMTP delivery → disk → IMAP LOGIN+SELECT+FETCH reads the same message.
 
 ---
 
-## Test
+## Testing
 
 ```bash
-# STARTTLS + LOGIN (openssl s_client STARTTLS'i otomatik yönetir)
+# STARTTLS + LOGIN (openssl s_client handles STARTTLS automatically)
 openssl s_client -quiet -crlf -starttls imap -connect localhost:143
-a1 LOGIN alice@myapp.com sifre
+a1 LOGIN alice@myapp.com password
 a2 SELECT INBOX
 a3 FETCH 1 (BODY[HEADER])
 a4 LOGOUT
@@ -222,16 +230,17 @@ a4 LOGOUT
 openssl s_client -quiet -crlf -connect localhost:993
 ```
 
-Depodaki hazır senaryolar: `cpp/docker/imap_test.sh` (SEARCH), `imap_build_test.sh`
-(TLS + IDLE), `imap_fuzz.sh` (ASan+UBSan), `imap_interop.sh` (uçtan uca SMTP→IMAP).
+Ready-made scenarios in the repository: `cpp/docker/imap_test.sh` (SEARCH), `imap_build_test.sh`
+(TLS + IDLE), `imap_fuzz.sh` (ASan+UBSan), `imap_interop.sh` (end-to-end SMTP→IMAP).
 
 ---
 
-## Mimari Notlar
+## Architecture Notes
 
-- **Thread-per-connection** — IMAP oturumları uzun ömürlüdür (IDLE); her bağlantı kendi
-  thread'inde. `MAX_CONN` ile toplam kaynak sınırlı. TLS I/O `thread_local` üzerinden
-  ele alınır, böylece tüm komut yolları şifrelidir.
-- **Sıfır bağımlılık** — yalnız OpenSSL (TLS için, gömülü SMTP zaten linkler). Maildir
-  ayrıştırma, sequence yönetimi, SEARCH tümü LOOK çekirdeğinde.
-- **Warm start** — sunucu ana binary ile birlikte ayağa kalkar; ayrı süreç/servis yok.
+- **Thread-per-connection** — IMAP sessions are long-lived (IDLE); each connection runs in
+  its own thread. Total resources are bounded by `LOOK_IMAP_MAX_CONN`. TLS I/O is handled
+  through a `thread_local`, so every command path is encrypted.
+- **Minimal external runtime dependencies** — only OpenSSL (for TLS; the embedded SMTP server
+  links it already). Maildir parsing, sequence management and SEARCH all live in the LOOK core.
+- **Warm start** — the server comes up together with the main binary; no separate process or
+  service.

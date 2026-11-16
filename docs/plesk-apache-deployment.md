@@ -2,7 +2,7 @@
 
 > **Use the Plesk extension if you can.** It writes everything below for each domain, keeps it
 > correct across updates and is tested on every release: see
-> [plesk-extension-kurulum.md](plesk-extension-kurulum.md). This guide is for servers where the
+> [plesk-extension-install.md](plesk-extension-install.md). This guide is for servers where the
 > extension is not installed. It sets up the same configuration the extension writes.
 
 Requirements: root SSH access, Plesk Obsidian with Apache, AlmaLinux 8/9 or Ubuntu 22.04/24.04.

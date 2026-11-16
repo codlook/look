@@ -613,10 +613,10 @@ ones carry the original attack payload — the cookie check sends
 `admin=1`, and the IP check sends a spoofed `X-Forwarded-For` **without**
 `LOOK_TRUSTED_PROXY` set and requires the real peer back. A guard that cannot fail
 on the original bug is not a guard, so each one was verified against the pre-fix
-behaviour. The suite runs the same program through all three engines (tree-walk
-interpreter, CLI bytecode VM, web VM) and fails on any divergence: a security fix
-that only lands in one engine is itself a vulnerability. See
-[BUG_AVI_HARITASI.md](BUG_AVI_HARITASI.md) for the method and the full log.
+behaviour. LOOK runs every program on one engine, the bytecode VM, and the suite
+runs the same program through the command line and the web server and fails on
+any divergence: a security fix that only lands in one of them is itself a
+vulnerability.
 
 ### Resolved issues
 

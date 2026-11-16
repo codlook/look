@@ -1,7 +1,7 @@
 {
   "name": "look-lang",
   "displayName": "LOOK Language",
-  "description": "LOOK dili için tam destek: sözdizimi vurgusu, canlı hata denetimi (lk --check), otomatik tamamlama, hover imzaları, snippet'ler ve Çalıştır/Servis/REPL kısayolları.",
+  "description": "Full support for the LOOK language: syntax highlighting, live error checking (lk --check), autocompletion, hover signatures, snippets and Run/Serve/REPL shortcuts.",
   "version": "2.0.2",
   "publisher": "codlook",
   "license": "Apache-2.0",
@@ -36,10 +36,10 @@
       { "language": "look", "path": "./snippets/look.json" }
     ],
     "commands": [
-      { "command": "look.run",   "title": "LOOK: Dosyayı Çalıştır (lk)",           "icon": "$(play)" },
-      { "command": "look.serve", "title": "LOOK: Web Sunucusu Başlat (lk-fcgi http)", "icon": "$(server-process)" },
-      { "command": "look.repl",  "title": "LOOK: REPL Aç (lk repl)",                "icon": "$(terminal)" },
-      { "command": "look.check", "title": "LOOK: Bu Dosyayı Denetle (lk --check)" }
+      { "command": "look.run",   "title": "LOOK: Run File (lk)",                    "icon": "$(play)" },
+      { "command": "look.serve", "title": "LOOK: Start Web Server (lk-fcgi http)",  "icon": "$(server-process)" },
+      { "command": "look.repl",  "title": "LOOK: Open REPL (lk repl)",              "icon": "$(terminal)" },
+      { "command": "look.check", "title": "LOOK: Check This File (lk --check)" }
     ],
     "menus": {
       "editor/title/run": [
@@ -60,28 +60,28 @@
         "look.binaryPath": {
           "type": "string",
           "default": "lk",
-          "description": "'lk' çalıştırılabilir dosyasının yolu. PATH'te değilse tam yol verin (ör. C:\\\\look\\\\lk.exe veya /usr/local/bin/lk)."
+          "description": "Path to the 'lk' executable. Give the full path if it is not on PATH (e.g. C:\\\\look\\\\lk.exe or /usr/local/bin/lk)."
         },
         "look.fcgiPath": {
           "type": "string",
           "default": "lk-fcgi",
-          "description": "'lk-fcgi' web sunucusu çalıştırılabilir dosyasının yolu (LOOK: Web Sunucusu Başlat komutu için)."
+          "description": "Path to the 'lk-fcgi' web server executable (used by the LOOK: Start Web Server command)."
         },
         "look.serve.port": {
           "type": "number",
           "default": 7400,
-          "description": "LOOK: Web Sunucusu Başlat komutunun kullanacağı port."
+          "description": "Port used by the LOOK: Start Web Server command."
         },
         "look.diagnostics.enable": {
           "type": "boolean",
           "default": true,
-          "description": "Canlı hata denetimini aç (lk --check ile parse + tanımsız fonksiyon çağrısı)."
+          "description": "Enable live error checking (parse errors + calls to undefined functions, via lk --check)."
         },
         "look.diagnostics.run": {
           "type": "string",
           "enum": ["onType", "onSave"],
           "default": "onType",
-          "description": "Denetimin ne zaman çalışacağı: yazarken (onType, ~400ms gecikmeli) veya kaydederken (onSave)."
+          "description": "When checking runs: while typing (onType, ~400ms delay) or on save (onSave)."
         }
       }
     }

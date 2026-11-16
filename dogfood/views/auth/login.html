@@ -1,14 +1,14 @@
 {#extends "views/layout/base"}
 {#block "content"}
-<h1>Giriş</h1>
+<h1>Log in</h1>
 {#if $error}<p class="err">{$error}</p>{/if}
 <form method="POST" action="/login">
   <input type="hidden" name="csrf" value="{$csrf}">
-  <label>E-posta</label>
+  <label>Email</label>
   <input type="email" name="email" value="{$email}">
-  <label>Parola</label>
+  <label>Password</label>
   <input type="password" name="password">
-  <button type="submit">Giriş yap</button>
+  <button type="submit">Log in</button>
 </form>
-<p><a href="/register">Hesabın yok mu? Kayıt ol</a></p>
+<p><a href="/register">No account? Sign up</a></p>
 {/block}

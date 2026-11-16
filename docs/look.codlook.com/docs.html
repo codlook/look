@@ -4727,11 +4727,11 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
 </section>
 
 <section id="bytecode-vm">
-  <h2>Bytecode VM — the default engine</h2>
-  <p class="lead">A register-based bytecode VM is <strong>now the default engine</strong> for both the CLI (<code>lk</code>, <code>lk -c</code>) and the web server (<code>lk-fcgi</code>, in <em>both</em> <code>--mode fcgi</code> and <code>--mode http</code>). The compiler (AST → FunctionProto bytecode) + VM (switch(opcode) dispatch) pair replaced the tree-walk interpreter as the hot path: roughly <strong>41–51× faster</strong> on the CLI and up to <strong>7.8×</strong> on compute-bound web workloads. The tree-walk interpreter remains only as a fallback (and still powers the REPL, <code>lk-cgi</code> and <code>lk test</code>, where the VM isn't linked).</p>
+  <h2>Bytecode VM — the only engine</h2>
+  <p class="lead">LOOK runs every program on one engine: a register-based bytecode VM. The CLI (<code>lk</code>, <code>lk -c</code>, <code>lk test</code>, the REPL), the web server (<code>lk-fcgi</code>, in <em>both</em> <code>--mode fcgi</code> and <code>--mode http</code>) and <code>lk-cgi</code> all compile the program (AST → FunctionProto bytecode) and run it on the VM (switch(opcode) dispatch).</p>
 
   <div class="callout tip">
-    <p><strong>Safe fallback, on by default:</strong> the VM is chosen automatically. If a script uses something the compiler can't yet handle, execution falls back to the tree-walk interpreter <em>before</em> any output is committed — production never crashes. You can force the interpreter with <code>LOOK_CLI_VM=0</code> (CLI) or <code>LOOK_BYTECODE=0</code> (web). A healthy web deploy shows <strong>zero</strong> route-level fallbacks in the log.</p>
+    <p><strong>No second engine, no silent fallback:</strong> a program the compiler rejects does not start — the error says why and where, and <code>lk</code> exits with 1. The same program behaves the same in every mode. <code>LOOK_CLI_VM=0</code> and <code>LOOK_BYTECODE=0</code>, which selected an older engine in 1.0.x, are ignored with one warning line.</p>
   </div>
 
   <h3>Architecture</h3>

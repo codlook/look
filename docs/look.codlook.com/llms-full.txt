@@ -4738,11 +4738,11 @@ LOOK has no classes, interfaces or traits. The vast majority of web applications
 
 Numeric arrays and associative arrays are separate concepts and don't blend together. Data-structure clarity is preferred.
 
-## Bytecode VM — the default engine
+## Bytecode VM — the only engine
 
-A register-based bytecode VM is **now the default engine** for both the CLI (`lk`, `lk -c`) and the web server (`lk-fcgi`, in *both* `--mode fcgi` and `--mode http`). The compiler (AST → FunctionProto bytecode) + VM (switch(opcode) dispatch) pair replaced the tree-walk interpreter as the hot path: roughly **41–51× faster** on the CLI and up to **7.8×** on compute-bound web workloads. The tree-walk interpreter remains only as a fallback (and still powers the REPL, `lk-cgi` and `lk test`, where the VM isn't linked).
+LOOK runs every program on one engine: a register-based bytecode VM. The CLI (`lk`, `lk -c`, `lk test`, the REPL), the web server (`lk-fcgi`, in *both* `--mode fcgi` and `--mode http`) and `lk-cgi` all compile the program (AST → FunctionProto bytecode) and run it on the VM (switch(opcode) dispatch).
 
-> **Safe fallback, on by default:** the VM is chosen automatically. If a script uses something the compiler can't yet handle, execution falls back to the tree-walk interpreter *before* any output is committed — production never crashes. You can force the interpreter with `LOOK_CLI_VM=0` (CLI) or `LOOK_BYTECODE=0` (web). A healthy web deploy shows **zero** route-level fallbacks in the log.
+> **No second engine, no silent fallback:** a program the compiler rejects does not start — the error says why and where, and `lk` exits with 1. The same program behaves the same in every mode. `LOOK_CLI_VM=0` and `LOOK_BYTECODE=0`, which selected an older engine in 1.0.x, are ignored with one warning line.
 
 ### Architecture
 

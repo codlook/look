@@ -1,20 +1,51 @@
-# LOOK Paket Sistemi — Mimari Tasarım
+# LOOK Package System — Architecture Design
 
-> Bu belge v1.0 öncesi alınmış mimari kararlardır. Sonradan değiştirilmez.
+> This document records the architecture decisions taken before v1.0. The decisions themselves are not changed afterwards.
 
-> **Okuma notu (2026-07-18) — tasarım değişmedi, yalnızca netleştirme:**
-> Aşağıdaki örneklerde geçen `codlook/http`, `codlook/cache`, `codlook/mail` gibi
-> adlar **bağımlılık sözdizimini göstermek için** kullanılmıştır. Bu yetenekler
-> v1.0'da **dile gömülü** olarak geldi (`http::`, `cache::`, `mail::`, `crypto::`,
-> `queue::`, `db::`, `template::` …) — **kurulum gerektirmezler**. Gerçekten
-> kurulabilir olanlar: modüller (`jwt`, `ai`) ve paketler (`firebase`, `iyzico`).
-> Güncel liste: [packages.codlook.com](https://packages.codlook.com).
+> **Reading note (2026-07-18) — the design has not changed, this is only a clarification:**
+> Names such as `codlook/http`, `codlook/cache` and `codlook/mail` in the examples below are used
+> **to show the dependency syntax**. These capabilities shipped **built into the language** in v1.0
+> (`http::`, `cache::`, `mail::`, `crypto::`, `queue::`, `db::`, `template::` …) — **they need no
+> installation**. What can actually be installed: modules (`jwt`, `ai`) and packages (`firebase`, `iyzico`).
+> Current list: [packages.codlook.com](https://packages.codlook.com).
 
 ---
 
-## 1. look.toml — Paket Tanım Dosyası
+## 0. What the `lk` binary implements today
 
-### 1a. Kütüphane paketi
+Most of this document is a design. The parts that the current `lk` command actually implements:
+
+| Command | What it does |
+|---------|--------------|
+| `lk module install github.com/<user>/<repo>[/<subdir>][@<ref>]` | Downloads the GitHub zipball and extracts it to `~/.look/modules/<name>/` (`<name>` = subdir if given, otherwise the repo name). Does not touch `look.lock`. |
+| `lk module list` | Lists the official modules (`github.com/codlook/look-modules`) and the locally installed ones. |
+| `lk install github.com/<user>/<repo>[/<subdir>][@<ref>]` | Downloads the zipball into the project: `pkg/<subdir>/` (or `pkg/<user>/<repo>/` without a subdir), relative to the current directory, and records `ref@sha` in `./look.lock`. `<ref>` defaults to `main`. |
+| `lk install` | Reinstalls every entry in `./look.lock`, pinned to the recorded commit sha. |
+| `lk install [pkg] --locked` (or `--frozen`) | Installs exactly the commit recorded in `look.lock` and fails if there is none; `look.lock` is not modified. |
+
+How code loads them:
+
+- `use <name>;` — a built-in module (no-op), or an installed module: the compiler loads
+  `~/.look/modules/<name>/<name>.lk` and compiles it into the same program. An unknown name is a
+  compile error that suggests `lk module install`.
+- `use "pkg/firebase/firebase.lk";` — a file include, resolved relative to the including file; the
+  file must be inside the application directory. Import cycles are a compile error.
+
+Safety measures in the installer: only `github.com` is accepted; user/repo/subdir names are checked
+for path-escape characters; ZIP entries that would land outside the target directory are skipped
+(Zip Slip); the unpacked size and the entry count are capped (ZIP bomb); redirects that downgrade
+to `http://` or leave the allowed hosts are refused.
+
+**Not implemented yet** (design only): `look.toml`, semver ranges and dependency resolution,
+`packages.codlook.com` as a registry, path/git dependency entries, the `add` / `remove` / `update` /
+`publish` / `vendor` / `tidy` / `build` commands, the versioned `~/.look/packages/` layout and
+`checksums.db`, SHA-256 checksums in the lock file, and native extensions.
+
+---
+
+## 1. look.toml — Package Manifest (design)
+
+### 1a. Library package
 
 ```toml
 [package]
@@ -23,18 +54,18 @@ version = "1.2.0"
 author  = "ali"
 look    = ">=1.0.0"
 entry   = "stripe.lk"
-# type = "pure"  ← varsayılan, belirtilmeyebilir
+# type = "pure"  ← default, may be omitted
 # type = "native" ← C++ extension (v1.1)
 
 [dependencies]
 "codlook/http" = "^1.0"
 ```
 
-### 1b. Uygulama projesi
+### 1b. Application project
 
 ```toml
 [project]
-name    = "siparis-servisi"
+name    = "order-service"
 version = "1.0.0"
 entry   = "index.lk"
 
@@ -47,17 +78,31 @@ entry   = "index.lk"
 "codlook/test"  = "^1.0"
 ```
 
-**Kural:** `[package]` = kütüphane (yayınlanabilir). `[project]` = uygulama (yayınlanmaz).  
-Aynı `look.toml`'da ikisi birden olamaz.
+**Rule:** `[package]` = library (publishable). `[project]` = application (not published).  
+The same `look.toml` cannot contain both.
 
 ---
 
-## 2. look.lock — Deterministik Kilitleme
+## 2. look.lock — Deterministic Locking
+
+What `lk install` writes today: one line per package, keyed by `user/repo` (or `user/repo/subdir`),
+with the requested ref and the resolved commit sha:
 
 ```toml
-# Otomatik oluşturulur — elle düzenleme
-# Git'e commit edilir — CI/CD reproduciblity için
-# look install → bu dosyadan tam versiyonları yükler
+# look.lock — generated by look install, do not edit manually
+"codlook/look-packages/firebase" = "main@0123456789abcdef0123456789abcdef01234567"
+"ali/stripe" = "v3.1.0@89abcdef0123456789abcdef0123456789abcdef"
+```
+
+The commit sha is the pin: `lk install` without arguments installs that exact commit, so a moved
+branch or re-tagged release cannot silently change the code. Commit `look.lock` to Git.
+
+Design (not implemented yet) — a richer format with versions, sources and checksums:
+
+```toml
+# Generated automatically — do not edit by hand
+# Committed to Git — for CI/CD reproducibility
+# look install → installs the exact versions from this file
 
 [[package]]
 name     = "codlook/cache"
@@ -80,78 +125,120 @@ checksum = "sha256:ghi789..."
 
 ---
 
-## 3. Semver Kural Tablosu
+## 3. Semver Rule Table (design)
 
-| Belirtim | Anlam | Örnek — izin verilen |
-|----------|-------|---------------------|
+| Specifier | Meaning | Example — allowed |
+|-----------|---------|-------------------|
 | `"^1.2.3"` | `>=1.2.3 <2.0.0` | 1.2.3, 1.3.0, 1.9.9 ✅ — 2.0.0 ❌ |
 | `"~1.2.3"` | `>=1.2.3 <1.3.0` | 1.2.3, 1.2.9 ✅ — 1.3.0 ❌ |
-| `">=1.0.0"` | Tam sürüm alt sınır | 1.0.0, 2.0.0, 3.5.1 ✅ |
-| `"1.2.3"` | Tam sürüm pin | sadece 1.2.3 ✅ |
-| `"*"` | Herhangi | tüm sürümler (önerilmez) |
+| `">=1.0.0"` | Lower bound only | 1.0.0, 2.0.0, 3.5.1 ✅ |
+| `"1.2.3"` | Exact version pin | only 1.2.3 ✅ |
+| `"*"` | Any | all versions (not recommended) |
+
+Today `lk install` takes a single Git ref (branch, tag or commit sha) after `@`; there are no ranges.
 
 ---
 
-## 4. Paket Kaynak Türleri
+## 4. Package Source Types
 
-### 4a. GitHub (resmi community yolu)
+### 4a. GitHub (the official community path)
 
 ```toml
 "ali/stripe" = "^3.1"
-# → github.com/ali/look-stripe veya github.com/ali/stripe
-# look CLI önce look- öneki dener, sonra düz isim
+# → github.com/ali/look-stripe or github.com/ali/stripe
+# the look CLI tries the look- prefix first, then the plain name
 ```
 
-### 4b. packages.codlook.com (resmi index)
+Today: the full path is given on the command line (`lk install github.com/ali/stripe@v3.1.0`); there
+is no `look-` prefix lookup. GitHub is the only supported host.
+
+### 4b. packages.codlook.com (official index) — design
 
 ```toml
 "codlook/cache" = "^1.0"
-# → packages.codlook.com/codlook/cache → GitHub kaynağını işaret eder
-# Registry sadece index + checksum, depolama GitHub'da
+# → packages.codlook.com/codlook/cache → points to the GitHub source
+# The registry is only an index + checksums; storage stays on GitHub
 ```
 
-### 4c. Lokal / Vendor
+### 4c. Local / Vendor
 
 ```toml
-# look.toml'da yol belirtimi
+# Path specifier in look.toml (design)
 "mylib" = { path = "./vendor/mylib" }
+```
 
-# Veya doğrudan .lk import (look.toml gerektirmez)
+```lk
+# Or a direct .lk include (no look.toml needed) — works today
 use "vendor/mylib/mylib.lk";
 ```
 
-### 4d. Git URL (kilitli versiyon)
+### 4d. Git URL (locked version) — design
 
 ```toml
 "ali/stripe" = { git = "https://github.com/ali/stripe", rev = "a1b2c3d" }
 ```
 
+Today the equivalent is `lk install github.com/ali/stripe@<commit-sha>`.
+
 ---
 
-## 5. CLI Komutları
+## 5. CLI Commands
+
+Implemented (the binary is `lk`):
 
 ```bash
-look install                    # look.lock'dan tam yükle (CI/prod)
-look install ali/stripe         # tek paket ekle + look.toml güncelle
-look add codlook/cache          # add alias
-look remove ali/stripe          # kaldır
-look update                     # look.lock'u semver sınırları içinde güncelle
-look update ali/stripe          # tek paket güncelle
-look publish                    # packages.codlook.com'a yayınla
-look vendor                     # bağımlılıkları vendor/ altına kopyala
-look tidy                       # kullanılmayan bağımlılıkları temizle
+lk install                                          # install everything in look.lock (pinned to the sha)
+lk install github.com/codlook/look-packages/firebase  # add one package + update look.lock
+lk install github.com/ali/stripe@v3.1.0             # a specific branch/tag/commit
+lk install --locked                                 # exact commits from look.lock (CI/prod)
+lk module install github.com/codlook/look-modules/jwt  # install a module into ~/.look/modules/
+lk module list                                      # official + installed modules
+```
+
+Design (not implemented yet):
+
+```bash
+look add codlook/cache          # alias for install
+look remove ali/stripe          # remove
+look update                     # update look.lock within the semver bounds
+look update ali/stripe          # update a single package
+look publish                    # publish to packages.codlook.com
+look vendor                     # copy dependencies under vendor/
+look tidy                       # clean up unused dependencies
 ```
 
 ---
 
-## 6. Kurulum Dizin Yapısı
+## 6. Installation Directory Layout
+
+Today:
+
+```
+<project>/
+  look.lock
+  pkg/
+    firebase/           ← lk install github.com/codlook/look-packages/firebase
+      firebase.lk
+    ali/
+      stripe/           ← lk install github.com/ali/stripe (no subdir)
+        stripe.lk
+
+~/.look/
+  modules/
+    jwt/                ← lk module install github.com/codlook/look-modules/jwt
+      jwt.lk
+```
+
+Reinstalling a package or module replaces its directory.
+
+Design (not implemented yet):
 
 ```
 ~/.look/
   packages/
     codlook/
       cache/
-        1.2.3/          ← sürüm altında saklanır
+        1.2.3/          ← stored under the version
           cache.lk
           look.toml
     ali/
@@ -162,16 +249,18 @@ look tidy                       # kullanılmayan bağımlılıkları temizle
           look.toml
   registry-cache/       ← packages.codlook.com index cache
     codlook_cache.json
-  checksums.db          ← doğrulanmış checksum'lar (SQLite)
+  checksums.db          ← verified checksums (SQLite)
 ```
 
 ---
 
-## 7. Paket İçinde use Kullanımı
+## 7. Using `use` Inside a Package
+
+Today a package's entry file loads built-in modules by name and other files by path:
 
 ```lk
-# stripe.lk — kütüphane entry point
-use "codlook/http";          # bağımlılık
+# stripe.lk — library entry point
+use http;                    # built-in module
 
 function stripe_charge($key, $amount, $currency) {
     $resp = http::post_json("https://api.stripe.com/v1/charges", [...], [
@@ -182,69 +271,76 @@ function stripe_charge($key, $amount, $currency) {
 ```
 
 ```lk
-# index.lk — uygulama
-use "ali/stripe";            # look.toml'daki bağımlılık
+# index.lk — application
+use "pkg/ali/stripe/stripe.lk";   # installed with lk install github.com/ali/stripe
 
-route("POST", "/odeme", function() {
+route("POST", "/payment", function() {
     $resp = stripe_charge(env("STRIPE_KEY"), 1000, "TRY");
     print(json::encode(["ok" => $resp["status"] == 200]));
 });
 ```
 
+A module installed with `lk module install` is loaded by name instead: `use jwt;`.
+
+Design (not implemented yet): `use "ali/stripe";` resolving a dependency declared in `look.toml`.
+
 ---
 
-## 8. Paket Yayınlama — look publish
+## 8. Publishing a Package — look publish (design)
 
 ```toml
-# look.toml'da gerekli
+# required in look.toml
 [package]
 name    = "stripe"
 version = "1.2.0"
 # ...
 
 [publish]
-registry  = "packages.codlook.com"   # varsayılan
+registry  = "packages.codlook.com"   # default
 license   = "MIT"
 tags      = ["payment", "stripe", "api"]
 readme    = "README.md"
 ```
 
 ```bash
-look publish          # packages.codlook.com'a yükle
-look publish --dry    # simüle et, yükleme
+look publish          # upload to packages.codlook.com
+look publish --dry    # simulate, do not upload
 ```
 
 ---
 
-## 9. Güvenlik Modeli
+## 9. Security Model
 
-| Kontrol | Mekanizma |
+| Control | Mechanism |
 |---------|-----------|
-| Checksum doğrulama | SHA-256, look.lock'ta saklı |
-| Versiyon pin | look.lock commit'lenir |
-| Sandbox | Pure paketler: sadece .lk, C++ yok |
-| Native paket | v1.1 — ayrı güvenlik modeli |
-| Resmi paketler | `codlook/` prefix → manuel inceleme |
-| Yayın imzası | Gelecek (v1.1) |
+| Version pin | Commit sha in look.lock; look.lock is committed (today) |
+| Locked install | `--locked` installs and verifies the recorded sha (today) |
+| Download path | github.com only; redirects may not downgrade to HTTP or leave the allowed hosts (today) |
+| Extraction | Zip Slip protection, size and entry-count limits (today) |
+| Checksum verification | SHA-256 stored in look.lock (design) |
+| Sandbox | Pure packages: only .lk, no C++ |
+| Native package | v1.1 — separate security model (design) |
+| Official packages | `codlook/` prefix → manual review |
+| Release signing | Future (v1.1) |
 
 ---
 
-## 10. Native Extension API — v1.1 Tasarım Taslağı
+## 10. Native Extension API — v1.1 Design Draft
 
-> **v1.0'da implement edilmez.** Bu bölüm API kararlılığı için şimdiden belgelenir.
+> **Not implemented in v1.0.** This section is documented now for API stability.
 
 ```cpp
-// look_extension.h — v1.1, ABI sabit olacak
+// look_extension.h — v1.1, the ABI will be stable
 #pragma once
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Opaque handle — VM'e erişim
+// Opaque handle — access to the VM
 typedef struct LookVM LookVM;
 
-// LOOK değer tipi (Value'nun C ABI karşılığı)
+// LOOK value type (C ABI counterpart of Value)
 typedef struct {
     int   type;           // 0=null 1=int 2=float 3=string 4=bool 5=array
     union {
@@ -252,29 +348,29 @@ typedef struct {
         double      f;
         const char* s;
         int         b;
-        void*       arr;  // LookArray* — look_array_* fonksiyonlarıyla kullan
+        void*       arr;  // LookArray* — use with the look_array_* functions
     } v;
 } LookValue;
 
 // Extension lifecycle
-void look_extension_init(LookVM* vm);       // modül yüklenince
-void look_extension_shutdown(LookVM* vm);   // modül kapanınca
+void look_extension_init(LookVM* vm);       // when the module is loaded
+void look_extension_shutdown(LookVM* vm);   // when the module is unloaded
 
-// Fonksiyon tipi — her C++ fonksiyonu bu imzayı taşır
+// Function type — every C++ function has this signature
 typedef LookValue (*LookExtFn)(LookVM* vm, LookValue* args, int argc);
 
-// Extension fonksiyonu kaydet — init içinde çağrılır
+// Register an extension function — called inside init
 void look_register_fn(LookVM* vm, const char* module, const char* name, LookExtFn fn);
 
-// Value oluşturucular
+// Value constructors
 LookValue look_int(long long v);
 LookValue look_float(double v);
-LookValue look_string(const char* v);   // kopyalanır
+LookValue look_string(const char* v);   // copied
 LookValue look_bool(int v);
 LookValue look_null(void);
 
-// String helper
-const char* look_to_string(LookValue v);   // geçici buffer, kopyala
+// String helpers
+const char* look_to_string(LookValue v);   // temporary buffer, copy it
 long long   look_to_int(LookValue v);
 double      look_to_float(LookValue v);
 
@@ -283,7 +379,7 @@ double      look_to_float(LookValue v);
 #endif
 ```
 
-### Örnek native extension
+### Example native extension
 
 ```cpp
 // example_ext.cpp
@@ -291,50 +387,50 @@ double      look_to_float(LookValue v);
 #include <cstring>
 
 static LookValue ext_hello(LookVM* vm, LookValue* args, int argc) {
-    const char* name = argc > 0 ? look_to_string(args[0]) : "dünya";
+    const char* name = argc > 0 ? look_to_string(args[0]) : "world";
     char buf[256];
-    snprintf(buf, sizeof(buf), "Merhaba, %s!", name);
+    snprintf(buf, sizeof(buf), "Hello, %s!", name);
     return look_string(buf);
 }
 
 void look_extension_init(LookVM* vm) {
-    look_register_fn(vm, "ornek", "merhaba", ext_hello);
+    look_register_fn(vm, "example", "hello", ext_hello);
 }
 
 void look_extension_shutdown(LookVM* vm) {
-    // temizlik
+    // cleanup
 }
 ```
 
 ```toml
 # look.toml
 [package]
-name  = "ornek-ext"
+name  = "example-ext"
 type  = "native"
-entry = "ornek.lk"   # wrapper .lk
+entry = "example.lk"   # .lk wrapper
 ```
 
 ```lk
-# ornek.lk — native modülü sarmalar
-# use "codlook/ornek-ext"; yazıldığında bu çalışır
+# example.lk — wraps the native module
+# this runs when you write use "codlook/example-ext";
 ```
 
-### Derleme
+### Building
 
 ```bash
 # look build → .so (Linux) / .dll (Windows)
 look build --native
-# Çıktı: build/ornek-ext.so
+# Output: build/example-ext.so
 ```
 
 ---
 
-## Karar Geçmişi
+## Decision History
 
-| Tarih | Karar | Gerekçe |
-|-------|-------|---------|
-| 20 Haz 2026 | look.toml formatı onaylandı | Go modules mantığı, semver |
-| 20 Haz 2026 | Registry = GitHub tabanlı | v1.0'da infra gerekmez |
-| 20 Haz 2026 | Native extension v1.1'e ertelendi | ABI sabit olmadan dağıtılamaz |
-| 20 Haz 2026 | `codlook/` resmi prefix | npm @scope mantığı |
-| 20 Haz 2026 | look.lock Git'e commit edilir | Reproducible builds |
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 20 Jun 2026 | look.toml format approved | Go modules approach, semver |
+| 20 Jun 2026 | Registry = GitHub based | No infrastructure needed for v1.0 |
+| 20 Jun 2026 | Native extensions deferred to v1.1 | Cannot be distributed without a stable ABI |
+| 20 Jun 2026 | `codlook/` official prefix | npm @scope approach |
+| 20 Jun 2026 | look.lock is committed to Git | Reproducible builds |

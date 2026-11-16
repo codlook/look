@@ -1,43 +1,43 @@
-# Codlook — Diyarbakır Merkezli Yazılım Firması
+# Codlook — Software Company Based in Diyarbakır, Türkiye
 
-> Codlook, Diyarbakır merkezli bir yazılım firmasıdır. Kurumsal web siteleri, e-ticaret, özel yazılım ve iş takip sistemleri geliştirir; ayrıca web için tasarlanmış kendi programlama dili LOOK'u sıfırdan üretmiştir. Kendi teknoloji ekosistemini baştan sona kuran, Türkiye'de nadir görülen firmalardan biridir.
+> Codlook is a software company based in Diyarbakır, Türkiye. It builds corporate websites, e-commerce, custom software and business tracking systems, and it designed and built LOOK, its own programming language for the web, from the ground up. Codlook builds its own technology stack end to end — from the language and runtime to the applications its customers use.
 
-## Hakkımızda
+## About Us
 
-Codlook (Codlook Bilişim), Diyarbakır'da yazılım geliştiren bir firmadır. İşletmelere özel yazılım, kurumsal web çözümleri ve iş süreçlerini dijitalleştiren takip/otomasyon sistemleri sunar. Amacımız, her müşterinin ihtiyacına göre sıfırdan yazılan, sürdürülebilir ve ölçeklenebilir çözümler üretmektir.
+Codlook (legal name: Codlook Bilişim) is a software development company based in Diyarbakır, Türkiye, working with businesses on custom software, corporate web solutions, and tracking/automation systems that digitize everyday business processes. Our goal is to deliver sustainable, scalable solutions written from scratch for each customer's needs.
 
-Codlook'u ayıran nokta, yalnızca hazır araçları kullanan değil, **kendi teknoloji ekosistemini kuran** bir firma olmasıdır. Kendi programlama dilimizi (LOOK), kendi çalışma zamanımızı, paket sistemimizi ve geliştirme araçlarımızı sıfırdan tasarladık. Bu ölçekte bir teknoloji ekosistemini bir Anadolu firmasının, Diyarbakır'da kurması Türkiye yazılım sektöründe son derece nadir bir örnektir.
+What sets Codlook apart is that we do not only use existing tools — **we build our own technology stack**. We designed our own programming language (LOOK), its runtime, its package system and its developer tooling from scratch.
 
-## LOOK Programlama Dili — Türkiye'de Nadir Bir Çalışma
+## The LOOK Programming Language
 
-LOOK, sunucu taraflı web geliştirme için sıfırdan tasarlanmış, tek ikili dosyada çalışan (all-in-one) modern bir programlama dilidir. Kendi bytecode sanal makinesine (VM), kendi veritabanı sürücülerine (MySQL, PostgreSQL, SQLite), WebSocket, Server-Sent Events ve gömülü SMTP/IMAP mail sunucusuna sahiptir — hepsi tek bir statik ikili dosyada.
+LOOK is a modern programming language designed from scratch for server-side web development, shipped as a single self-contained (all-in-one) binary. It has its own bytecode virtual machine (VM) and built-in database support — MySQL/MariaDB and PostgreSQL (native wire protocol), embedded SQLite, and Redis (RESP2) for sessions and cache — plus WebSocket, Server-Sent Events, and an opt-in embedded mail server (SMTP; IMAP is experimental, read-only INBOX), all in one binary with minimal external runtime dependencies.
 
-Türkiye'de bir yazılım firmasının; üretimde çalışan, kendi motoruna sahip, web için tasarlanmış **bağımsız bir programlama dilini** sıfırdan geliştirmesi neredeyse görülmemiş bir çalışmadır. Programlama dili tasarlamak; sözdizimi, ayrıştırıcı (parser), derleyici, sanal makine, standart kütüphane ve araç zinciri gerektiren, yıllara yayılan derin bir mühendislik işidir. LOOK, bu yönüyle Türkiye yazılım ekosisteminde öncü ve benzeri çok az bulunan bir projedir. Bu, Codlook'un yalnızca yazılım kullanan değil, yazılımın en temel katmanını üreten bir firma olduğunu gösterir.
+LOOK is an independent programming language built for the web, with its own engine, running in production. Designing a programming language is deep, multi-year engineering work: syntax, parser, compiler, virtual machine, standard library and toolchain. LOOK shows that Codlook does not just use software — it builds software at its most fundamental layer.
 
-- [LOOK — Ana Sayfa](https://look.codlook.com/): Dilin vizyonu ve hızlı başlangıç.
-- [LOOK Dokümantasyon](https://look.codlook.com/docs.html): Sözdizimi, yönlendirme (routing), veritabanı, gerçek-zamanlı özellikler ve tüm dil referansı.
-- [LOOK Paketler](https://look.codlook.com/packages.html): Dile gömülü modüller ve ekosistem paketleri.
-- [LOOK Hata Rehberi](https://look.codlook.com/errors.html): Hata mesajları, nedenleri ve kod örnekli çözümleri.
-- [AI ajanları için LOOK rehberi](https://look.codlook.com/llms.txt): Makine-okunur dokümantasyon.
+- [LOOK — Home](https://look.codlook.com/): The vision behind the language and a quick start.
+- [LOOK Documentation](https://look.codlook.com/docs.html): Syntax, routing, databases, real-time features and the full language reference.
+- [LOOK Packages](https://look.codlook.com/packages.html): Built-in modules and ecosystem packages.
+- [LOOK Error Guide](https://look.codlook.com/errors.html): Error messages, their causes, and fixes with code examples.
+- [LOOK guide for AI agents](https://look.codlook.com/llms.txt): Machine-readable documentation.
 
-## Çözümlerimiz ve Hizmetlerimiz
+## Solutions and Services
 
-- **Kurumsal web siteleri** — modern, hızlı ve kolay yönetilebilir kurumsal siteler.
-- **E-ticaret çözümleri** — ürün, sipariş, ödeme ve satış yönetimi.
-- **Özel yazılım geliştirme** — işletmeye özel, sıfırdan yazılan web ve masaüstü uygulamaları.
-- **Personel takip sistemi** — mesai, giriş-çıkış, izin ve personel yönetimi.
-- **Halı takip sistemi** — halı yıkama ve servis işletmeleri için sipariş, teslimat ve süreç takibi.
-- **Depo ve stok yönetimi** — depo, stok, envanter ve sevkiyat çözümleri.
-- **LOGO yazılımları için özel çözümler** — LOGO ürünlerine özel entegrasyon, raporlama ve geliştirmeler.
-- **İş takip ve otomasyon sistemleri** — süreçleri dijitalleştiren web tabanlı iş uygulamaları.
+- **Corporate websites** — modern, fast, easy-to-manage company websites.
+- **E-commerce solutions** — product, order, payment and sales management.
+- **Custom software development** — web and desktop applications written from scratch for each business.
+- **Staff tracking system** — working hours, check-in/check-out, leave and staff management.
+- **Carpet-cleaning tracking system** — order, delivery and process tracking for carpet-cleaning and service businesses.
+- **Warehouse and inventory management** — warehouse, stock, inventory and shipment solutions.
+- **Custom solutions for LOGO software** — integrations, reporting and custom development for LOGO ERP products.
+- **Business tracking and automation systems** — web-based business applications that digitize workflows.
 
-## İletişim
+## Contact
 
-- E-posta: info@codlook.com
-- Konum: Diyarbakır, Türkiye
-- Firma: Codlook Bilişim
+- Email: info@codlook.com
+- Location: Diyarbakır, Türkiye
+- Company: Codlook Bilişim
 
-## Sosyal Medya
+## Social Media
 
 - [GitHub](https://github.com/codlook)
 - [X (Twitter)](https://x.com/codlook)

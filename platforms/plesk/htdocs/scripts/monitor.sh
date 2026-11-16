@@ -5,7 +5,7 @@
 SVC="$1"
 case "$SVC" in
     look-*) ;;
-    *) echo "gecersiz servis: $SVC" >&2; exit 1 ;;
+    *) echo "ERROR: invalid service name: $SVC" >&2; exit 1 ;;
 esac
 
 # systemd durum alanlari (zaten key=value)

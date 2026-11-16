@@ -15,7 +15,7 @@ class IndexController extends pm_Controller_Action
         if (is_file($htdocs)) {
             include $htdocs;   // auto_setup + (?action ? JSON+exit : phtml render)
         } else {
-            echo 'LOOK Language: htdocs/index.php bulunamadı.';
+            echo 'LOOK Language: htdocs/index.php not found.';
         }
     }
 }

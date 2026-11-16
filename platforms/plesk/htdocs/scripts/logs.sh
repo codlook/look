@@ -8,7 +8,7 @@ N="${2:-200}"
 # Yalnizca gecerli LOOK servis adlari
 case "$SVC" in
     look-*) ;;
-    *) echo "gecersiz servis: $SVC" >&2; exit 1 ;;
+    *) echo "ERROR: invalid service name: $SVC" >&2; exit 1 ;;
 esac
 # Satir sayisi sinirla
 case "$N" in

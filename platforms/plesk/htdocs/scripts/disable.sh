@@ -11,7 +11,7 @@ DOMAIN="$2"
 REMOVE="$3"
 
 if [ -z "$SVC_NAME" ]; then
-    echo "Kullanim: $0 <svc_name> [domain]" >&2
+    echo "Usage: $0 <svc_name> [<domain>] [remove]" >&2
     exit 1
 fi
 

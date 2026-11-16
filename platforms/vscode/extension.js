@@ -58,8 +58,8 @@ function runCheck(doc) {
       if (!binaryMissingWarned) {
         binaryMissingWarned = true;
         vscode.window.showWarningMessage(
-          "LOOK: 'lk' çalıştırılabilir dosyası bulunamadı — canlı hata denetimi kapalı. " +
-          "Ayarlardan look.binaryPath yolunu verin.", 'Ayarları Aç'
+          "LOOK: the 'lk' executable was not found — live error checking is off. " +
+          "Set its path in the look.binaryPath setting.", 'Open Settings'
         ).then(sel => { if (sel) vscode.commands.executeCommand('workbench.action.openSettings', 'look.binaryPath'); });
       }
       diagCollection.delete(doc.uri);
@@ -148,14 +148,14 @@ const completionProvider = {
     const modules = [...new Set(BUILTINS.map(b => b.module))];
     for (const mod of modules) {
       const it = new vscode.CompletionItem(mod, vscode.CompletionItemKind.Module);
-      it.detail = 'LOOK modülü';
+      it.detail = 'LOOK module';
       it.insertText = new vscode.SnippetString(mod + '::');
       it.command = { command: 'editor.action.triggerSuggest', title: 're-trigger' };
       items.push(it);
     }
     for (const g of GLOBALS) {
       const it = new vscode.CompletionItem(g, vscode.CompletionItemKind.Function);
-      it.detail = 'global fonksiyon';
+      it.detail = 'global function';
       items.push(it);
     }
     for (const b of BUILTINS) {
@@ -168,7 +168,7 @@ const completionProvider = {
     }
     for (const f of sym.funcs) {
       const it = new vscode.CompletionItem(f, vscode.CompletionItemKind.Function);
-      it.detail = 'bu dosyadaki fonksiyon';
+      it.detail = 'function in this file';
       items.push(it);
     }
     return items;
@@ -206,7 +206,7 @@ const hoverProvider = {
     if (!b) return;
     const md = new vscode.MarkdownString();
     md.appendCodeblock(b.sig, 'look');
-    md.appendMarkdown('\n' + b.detail + '  \n_LOOK built-in fonksiyon_');
+    md.appendMarkdown('\n' + b.detail + '  \n_LOOK built-in function_');
     return new vscode.Hover(md, range);
   }
 };
@@ -259,7 +259,7 @@ function quote(p) { return /\s/.test(p) ? '"' + p + '"' : p; }
 
 function cmdRun() {
   const ed = vscode.window.activeTextEditor;
-  if (!ed || ed.document.languageId !== 'look') { vscode.window.showInformationMessage('Aktif bir .lk dosyası yok.'); return; }
+  if (!ed || ed.document.languageId !== 'look') { vscode.window.showInformationMessage('No active .lk file.'); return; }
   ed.document.save().then(() => {
     const t = termFor('LOOK Run');
     t.show();
@@ -274,7 +274,7 @@ function cmdServe() {
   t.show();
   if (dir) t.sendText('cd ' + quote(dir));
   t.sendText(quote(cfg().get('fcgiPath', 'lk-fcgi')) + ' --mode http --port ' + port + ' --workers 4');
-  vscode.window.showInformationMessage('LOOK web sunucusu: http://localhost:' + port + '/');
+  vscode.window.showInformationMessage('LOOK web server: http://localhost:' + port + '/');
 }
 function cmdRepl() {
   const t = termFor('LOOK REPL');

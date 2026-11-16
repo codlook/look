@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{$title} — Görev Yöneticisi</title>
+  <title>{$title} — Task Manager</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
     header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: .5rem; }
@@ -19,12 +19,12 @@
 </head>
 <body>
   <header>
-    <strong>Görev Yöneticisi</strong>
+    <strong>Task Manager</strong>
     <nav>
       {#if $user}
-        {$user} · <a href="/tasks">Görevler</a> · <a href="/logout">Çıkış</a>
+        {$user} · <a href="/tasks">Tasks</a> · <a href="/logout">Log out</a>
       {#else}
-        <a href="/login">Giriş</a> · <a href="/register">Kayıt</a>
+        <a href="/login">Log in</a> · <a href="/register">Sign up</a>
       {/if}
     </nav>
   </header>

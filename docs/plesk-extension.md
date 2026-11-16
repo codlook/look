@@ -1,21 +1,21 @@
-# LOOK Language — Plesk Eklentisi
+# LOOK Language — Plesk Extension
 
-**Sürüm:** 1.0.0
-**Eklenti ID:** `look-lang`
-**Hedef:** Plesk Obsidian 18.0+ · systemd Linux (AlmaLinux/RHEL/Rocky/CloudLinux · Ubuntu/Debian Plesk)
-**Kaynak:** `platforms/plesk/`
-**Canlı örnek:** [test.codlook.com](https://test.codlook.com) — AlmaLinux 8.10, Plesk Obsidian, nginx→Apache→lk-fcgi
+**Version:** 1.6.0
+**Extension ID:** `look-lang`
+**Target:** Plesk Obsidian 18.0+ · systemd Linux (AlmaLinux/RHEL/Rocky/CloudLinux · Ubuntu/Debian Plesk)
+**Source:** `platforms/plesk/`
+**Live example:** [test.codlook.com](https://test.codlook.com) — AlmaLinux 8.10, Plesk Obsidian, nginx→Apache→lk-fcgi
 
-LOOK Plesk eklentisi, tek tıkla her Plesk domainini bir **LOOK uygulaması** (kendi
-systemd servisi) olarak yayına alır. Tarayıcı-içi kod editörü, canlı per-domain
-monitör, log görüntüleyici ve sistem panosuyla tam bir barındırma çalışma alanıdır.
-Panel arayüzü **İngilizce**dir (public dağıtım).
+The LOOK Plesk extension publishes any Plesk domain as a **LOOK application** (its own
+systemd service) in one click. With an in-browser code editor, a live per-domain monitor, a log
+viewer and a system dashboard, it is a complete hosting workspace. The panel interface is in
+**English**.
 
 ---
 
-## Kurulum
+## Installation
 
-Sunucuda **root** olarak (SSH veya Plesk → Tools & Settings → Terminal):
+On the server, as **root** (SSH or Plesk → Tools & Settings → Terminal):
 
 ```bash
 plesk bin extension --uninstall look-lang 2>/dev/null
@@ -23,213 +23,289 @@ wget -O /tmp/look-lang-plesk.zip "https://github.com/codlook/look/releases/lates
 plesk bin extension --install /tmp/look-lang-plesk.zip
 ```
 
-Beklenen çıktı: `The extension was successfully installed.`
+Expected output: `The extension was successfully installed.`
 
-Alternatif — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.zip`**.
+Alternative — Plesk UI: **Extensions → Upload Extension → `look-lang-plesk.zip`**.
 
-Paneli aç: **Plesk → Extensions → LOOK Language**, veya doğrudan
-`https://<sunucu>:8443/modules/look-lang/`.
+Open the panel: **Plesk → Extensions → LOOK Language**, or directly at
+`https://<server>:8443/modules/look-lang/`.
 
-> **Kurulum notu:** Plesk eklentinin `post-install.php` kancasını kurulumda ve güncellemede
-> çalıştırır, ama root değil `psaadm` olarak. Root gerektiren adım (ikili, servis unit'leri)
-> `sbin/look-setup`'tadır ve kanca onu Plesk'in root yolu `pm_ApiCli::callSbin` ile çağırır;
-> panelin root işlemleri de aynı yoldan `sbin/look-ctl`'e gider (sudo yok, aşağıdaki
-> [Root işlemleri](#root-işlemleri-sudo-yok)). Adımı elle tekrar çalıştırmak için:
+> **Installation note:** Plesk runs the extension's `post-install.php` hook on install and on
+> upgrade, but as `psaadm`, not as root. The step that needs root (binaries, service units) lives in
+> `sbin/look-setup`, and the hook calls it through Plesk's root path `pm_ApiCli::callSbin`; the
+> panel's root operations take the same path to `sbin/look-ctl` (no sudo, see
+> [Root operations](#root-operations-no-sudo) below). To run the step again by hand:
 > `plesk bin extension --exec look-lang post-install.php`.
 
 ---
 
-## Çalışma Alanı (Panel)
+## Workspace (Panel)
 
-Sol kenar çubuğu dört görünüme ayrılır:
+The left sidebar has four views:
 
 ### Dashboard
-Gerçek zamanlı sistem metrikleri — **CPU · Memory · Disk · Uptime** — her biri canlı
-mini grafikle (4 saniyede bir örneklenir, uydurma geçmiş yoktur). Altında uygulama
-özet tablosu (durum, port, son deploy).
+Real-time system metrics — **CPU · Memory · Disk · Uptime**. CPU, Memory and Disk each have a
+live mini chart (sampled every 4 seconds; there is no made-up history). Below them is an
+application summary table (status, port, last deploy, configuration).
 
-### Applications (Uygulama Yöneticisi)
-- **Add New Domain** formu (listenin üstünde): domain seç → script yolu ve boş port
-  otomatik dolar → workers + mod → **Add & Start**.
+### Applications (Application Manager)
+- **Add New Domain** form (above the list): pick a domain → the script path and a free port
+  (the first free one from 9100) are filled in → optional env file, workers, memory limit and
+  mode → **Add & Start**.
+- **Env file** (optional): a `KEY=VALUE` file read by the service's own user at start. It must be
+  inside the home directory of the domain's system user (recommended: outside the web root) or
+  inside the domain's document root.
 - **Memory limit**: the most memory the site may use (systemd `MemoryMax`). `auto` (default) =
-  a quarter of the server's memory, at most 1G, at least 256M; `512M`, `2G` or `off`. LOOK makes
-  80% of it its own limit: a request that would go over is stopped, the site keeps running.
-- Uygulama tablosu: domain, canlı durum, port, script, worker/mod.
-- **Edit Code** — `index.lk`'i tarayıcıda düzenle → **Save & Redeploy**.
-- **Actions ▾** menüsü: Configure · Restart · Stop/Start · **Monitor** · View Logs · Remove.
+  a quarter of the server's memory, at most 1G, at least 256M; `512M`, `2G` or `off`. A limit
+  below 128M is refused. LOOK makes 80% of it its own limit: a request that would go over is
+  stopped, the site keeps running.
+- Application table: domain, live status, port, script, configuration (workers · mode · memory
+  limit) and the LOOK release the site runs.
+- **Edit Code** — edit `index.lk` in the browser → **Save & Redeploy**.
+- **Actions ▾** menu: Configure · Restart · Stop/Start · **Monitor** · View Logs · Remove.
 
 ### Logs
-Servis günlükleri (`journalctl -u look-<domain>`), seviye renklendirmeli
-(ERR/WARN/OK), **Copy** düğmesiyle panoya kopyalanır.
+Service journal (`journalctl -u look-<domain>`, last 200 lines), colored by level
+(ERR/WARN/OK), copied to the clipboard with the **Copy** button.
 
 ### Documentation
-Panel içinde LOOK hızlı başlangıç, örnek route kodu, mod/servis rehberi.
+In-panel LOOK quick start, sample route code, and a guide to modes and services.
 
-### Kod Editörü
-`index.lk` içeriğini okur → düzenle → **Save & Redeploy** dosyayı yazıp servisi
-yeniden başlatır. Yol güvenliği sıkı: yalnızca `domains.json`'daki kayıtlı `.lk`
-yolu, `/var/www/vhosts` altında, `..` reddedilir.
+### Code Editor
+Reads the contents of `index.lk` → edit → **Save & Redeploy** writes the file (at most 1 MB) and
+redeploys the service. Path safety is strict: only the `.lk` path registered in `domains.json`,
+under `/var/www/vhosts`; `..` is refused.
 
-### Monitör (per-domain, canlı)
-3 saniyede bir gerçek metrik: **durum, CPU%, bellek (RSS), PID, aktif bağlantı,
-port, restart sayısı, çalışma süresi** + canlı log kuyruğu. Modaldan doğrudan
-yeniden başlat; kapanınca yoklama durur.
+### Monitor (per domain, live)
+Real metrics every 3 seconds: **status, CPU%, memory (RSS), PID, active connections, port,
+restart count, uptime** plus a live log tail. Restart straight from the dialog; polling stops
+when it is closed.
 
 ---
 
-## Mimari
+## Architecture
 
-Her domain, `index.lk` dosyasını çalıştıran bir **systemd servisidir**:
-`look-<domain>` (nokta/özel karakterler `-`). Web trafiği:
+Each domain is a **systemd service** that runs its `index.lk` file:
+`look-<domain>` (lowercased; dots and other special characters become `-`). Web traffic:
 
 ```
 nginx :443  →  Apache :7081 (vhost_ssl.conf ProxyPass)  →  lk-fcgi :<port>
 ```
 
-- **FastCGI modu** (`fcgi`) — Apache `mod_proxy_fcgi` ile; üretim önerisi.
-- **HTTP modu** (`http`) — `lk-fcgi --mode http --bind 127.0.0.1`; Apache yerel porta vekil olur. 1.4.2 öncesi sürümler tüm arayüzlerde dinliyordu (port dışarıdan erişilebilirdi); güncelleme mevcut servisleri de yeniden yazar.
+- **FastCGI mode** (`fcgi`) — through Apache `mod_proxy_fcgi`; recommended for production.
+- **HTTP mode** (`http`) — `lk-fcgi --mode http --bind 127.0.0.1`; Apache proxies to the local
+  port. Versions before 1.4.2 listened on all interfaces (the port was reachable from outside);
+  the update rewrites existing services too.
 
-Servis + Apache proxy config'i `enable.sh` oluşturur; `httpdmng --reconfigure-domain`
-arka planda uygular (panel bloke olmaz).
+`enable.sh` writes the service and the Apache proxy config; `httpdmng --reconfigure-domain`
+applies it in the background (the panel does not block).
 
-Örnek: `example.com` → servis `look-example-com`, port `9100`.
+Example: `example.com` → service `look-example-com`, port `9100`.
+
+### Service user
+
+A LOOK service **never runs as root**. The unit's `User=` is the domain's system user (the owner
+of the document root). If the document root is owned by root or by a system account (uid below
+1000), the service is not installed. The env file is read by that user too (through
+`/opt/look/look-env`), so a symlink to another site's file stops with "Permission denied".
 
 ---
 
-## Binary
+## Binaries and LOOK releases
 
-Eklenti `/opt/look/{lk,lk-fcgi,lk-cgi}` sağlar:
-- **RHEL/AlmaLinux:** gömülü RPM `dnf` ile kurulur → `dnf update look-lang` ile
-  güncellenir; binary sistem OpenSSL'e dinamik bağlıdır (OS güvenlik yaması korur).
-- **Diğer:** gömülü portatif static binary'ye düşer (statik OpenSSL 3.5 LTS + static
-  libstdc++, sıfır bağımlılık, tek dosya; sistem CA otomatik tespit).
+The extension carries the portable static LOOK binaries (`lk`, `lk-fcgi`, `lk-cgi`): OpenSSL and
+libstdc++ are built in, only glibc and libz are linked dynamically (minimal external runtime
+dependencies, a single file each; the system CA store is detected automatically).
+
+Releases are installed side by side: `/opt/look/releases/<version>-<stamp>/{lk,lk-fcgi,lk-cgi}`.
+`/opt/look/lk*` point at the newest one (command line and new sites). The package can also carry
+the latest release of the maintenance line (for example `bin-1.0/`).
+
+On every install, upgrade, restart, save or **Check again**, `enable.sh` runs the newest
+release's `lk --check` on the site's code — as the site's user, in its directory, with its
+environment. `--check` only loads and compiles; it does not run the program.
+
+- The code passes → the site runs the newest release.
+- It does not pass, but a newer release of the maintenance line does → the site moves to that
+  release and gets that line's fixes; the panel lists the lines to fix to reach the newest.
+- Nothing newer passes → the site stays on the release it ran and **receives no fixes, security
+  fixes included**; the panel shows this with the lines to fix and a **Check again** button.
+- A new site whose code does not pass is not installed; the error lists the lines.
+
+A release that no service uses any more is removed on the next install or upgrade (the newest
+and the bundled releases always stay).
 
 ---
 
-## Durum (State)
+## State
 
-Domain listesi panel-yazılabilir Plesk modül var dizininde tutulur:
+The domain list is kept in Plesk's panel-writable module var directory:
 
 ```
 /usr/local/psa/var/modules/look-lang/domains.json
 ```
 
-> `/opt/look/conf` root'a aittir (ikili klasörü); panel `psaadm` olarak
-> çalışır ve oraya yazamaz. Bu yüzden state modül var dizinindedir.
+> `/opt/look/conf` belongs to root (the binary directory); the panel runs as `psaadm` and cannot
+> write there. That is why the state lives in the module var directory.
 
 ```json
 [
   {
-    "domain": "look.codlook.com",
-    "script": "/var/www/vhosts/codlook.com/look.codlook.com/index.lk",
+    "domain": "example.com",
+    "script": "/var/www/vhosts/example.com/httpdocs/index.lk",
+    "env": "",
     "workers": 4,
     "mode": "fcgi",
     "port": 9100,
-    "svc": "look-look-codlook-com"
+    "memory": "auto",
+    "svc": "look-example-com"
   }
 ]
 ```
 
----
-
-## Root işlemleri (sudo yok)
-
-Panel `psaadm` olarak çalışır ve **sudo kullanmaz**. Servis kurma/durdurma, durum, log ve
-monitör gibi root gerektiren her işlem Plesk'in root yolu `pm_ApiCli::callSbin` ile eklentinin
-`sbin/look-ctl` betiğine gider. `look-ctl` eylemi, argüman sayısını ve servis adını
-(`^look-[a-z0-9-]+$`, çağrı başına tek servis) denetler; başka bir servise ya da dosyaya
-dokunamaz.
-
-1.0.33'e kadarki sürümler `/etc/sudoers.d/look-lang` yazıyordu. sudoers'ta `*` boşlukları da
-kapsadığından `systemctl enable look-*` kuralı `systemctl enable look-a /tmp/evil.service` ve
-`systemctl stop look-a sshd`'yi de izinliyordu. Güncelleme bu dosyayı siler.
+Older entries without `env` or `memory` mean no env file and an automatic memory limit. The
+release status of each site is written by root to `/opt/look/conf/status/<svc>.json`; the panel
+only reads it.
 
 ---
 
-## Paket Yapısı
+## Root operations (no sudo)
+
+The panel runs as `psaadm` and **does not use sudo**. Every operation that needs root — setting up
+or stopping a service, status, logs and the monitor — goes through Plesk's root path
+`pm_ApiCli::callSbin` to the extension's `sbin/look-ctl` script. `look-ctl` checks the action,
+the argument count and the service name (`^look-[a-z0-9-]+$`, one service per call); it cannot
+touch any other service or file.
+
+```
+look-ctl enable  <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
+look-ctl disable <svc> [<domain>] [remove]
+look-ctl start   <svc>
+look-ctl status  <svc>
+look-ctl logs    <svc> <lines>
+look-ctl monitor <svc>
+```
+
+Versions up to 1.0.33 wrote `/etc/sudoers.d/look-lang`. Since `*` in sudoers also matches spaces,
+the rule `systemctl enable look-*` also allowed `systemctl enable look-a /tmp/evil.service` and
+`systemctl stop look-a sshd`. The update deletes that file.
+
+---
+
+## Package Layout
 
 ```
 look-lang-plesk.zip
-├── meta.xml                       # Plesk eklenti tanımı
-├── post-install / pre-uninstall   # lifecycle hook'ları
-├── plib/controllers/IndexController.php   # Plesk Obsidian MVC köprüsü
+├── meta.xml                              # Plesk extension definition
+├── plib/controllers/IndexController.php  # Plesk Obsidian MVC bridge
+├── plib/scripts/post-install.php         # install/upgrade hook (runs as psaadm)
+├── sbin/
+│   ├── look-setup   # root install step: binaries, services (called with callSbin)
+│   └── look-ctl     # the panel's only way to root (called with callSbin)
 └── htdocs/
-    ├── index.php                  # backend (AJAX action'lar + render)
-    ├── phtml/index.phtml          # çalışma alanı arayüzü (İngilizce)
-    ├── dist/main.js
-    ├── bin/{lk,lk-fcgi,lk-cgi}    # portatif static binary (fallback)
-    ├── look-lang.rpm              # RHEL/AlmaLinux birincil kurulum
+    ├── index.php                  # backend (AJAX actions + render)
+    ├── phtml/index.phtml          # workspace interface
+    ├── bin/{lk,lk-fcgi,lk-cgi}    # portable static binaries (newest release)
+    ├── bin-1.0/                   # maintenance line release (when bundled)
     └── scripts/
-        ├── enable.sh   # domain → systemd servisi + Apache proxy config
-        ├── disable.sh  # servisi durdur/kaldır
-        ├── status.sh   # servis durumu
-        ├── logs.sh     # journalctl (Log görüntüleyici)
-        └── monitor.sh  # canlı metrik (Monitör)
+        ├── enable.sh   # domain → systemd service + Apache proxy config
+        ├── disable.sh  # stop/remove the service
+        ├── status.sh   # service status
+        ├── logs.sh     # journalctl (log viewer)
+        ├── monitor.sh  # live metrics (Monitor)
+        ├── look-env.sh # loads the env file as the service user
+        └── setup.sh    # re-runs the install step by hand
 ```
 
-> **Paketleme notu:** Plesk zip'i PHP `ZipArchive` ile açar ve unix çalıştırma
-> bitini korumaz. Bu yüzden zip'in exec izni önemsizdir (script'ler `/bin/bash` ile
-> çağrılır); yalnızca **forward-slash yollar + LF satır sonu + `meta.xml` kökte**
-> gerekir. Linux'ta `bash platforms/plesk/build.sh` doğru paketi üretir.
+> **Packaging note:** Plesk unpacks the zip with PHP `ZipArchive`, which does not keep the unix
+> execute bit. So the zip's exec permissions do not matter (the scripts are called with
+> `/bin/bash`); only **forward-slash paths + LF line endings + `meta.xml` at the root** are
+> required. On Linux, `bash platforms/plesk/build.sh` produces the correct package.
 
 ---
 
-## Servis Yönetimi
+## Service Management
 
 ```bash
 enable.sh <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
 ```
 
-- systemd birimi: `/etc/systemd/system/look-<domain>.service`
-- Apache proxy: `/var/www/vhosts/system/<domain>/conf/vhost.conf` + `vhost_ssl.conf`
-- Script yoksa örnek `index.lk` oluşturulur
-- `httpdmng --reconfigure-domain` arka planda Apache'yi yeniden yükler
+- `<mode>`: `fcgi` (default) or `http`.
+- `<port>`: 1024–65535 (the service does not run as root, so it cannot open a lower port).
+- `<script>`: must be inside the domain's document root, under `/var/www/vhosts`.
+- `<env-file>`: optional; inside the domain user's home or the document root, readable by that
+  user.
+- `<memory>`: `auto` (or empty) = a quarter of the server's memory, at most 1G, at least 256M;
+  `off` = no limit; otherwise megabytes or gigabytes such as `512M` or `2G`. Below 128M is refused.
+  Written to the unit as `MemoryMax=`.
+- systemd unit: `/etc/systemd/system/look-<domain>.service` (`User=` the domain's user,
+  `NoNewPrivileges=true`, `PrivateTmp=true`, `Restart=on-failure`,
+  `Environment=LOOK_FILE_ROOT=<document root>`)
+- When the domain user's home is under `/var/www/vhosts` (the Plesk default): sessions are kept
+  per site in `~/.look/sessions-<svc>`, and
+  if the site has no `LOOK_SECRET`, a random one is created in `~/.look/<svc>.secret`
+  (mode 0600, as the domain user, outside the web root); a `LOOK_SECRET` in the site's own env
+  file wins.
+- Apache proxy: `/var/www/vhosts/system/<domain>/conf/vhost.conf` + `vhost_ssl.conf` (the proxy
+  rule, a rule that denies `/.look*` files, and `X-Forwarded-Proto` set by Apache)
+- If the script does not exist, a sample `index.lk` is created (as the domain user)
+- `httpdmng --reconfigure-domain` reloads Apache in the background
+- Output ends with `OK:<svc>:<port>`; exit code 3 means the code does not pass `lk --check` (see
+  [Binaries and LOOK releases](#binaries-and-look-releases)).
+
+`disable.sh <svc> [<domain>] [remove]` stops and disables the service; `remove` also deletes the
+unit file. The vhost files then keep only the rule that denies `/.look*` files, so `/.look.env`
+cannot be downloaded while the site is stopped.
 
 ---
 
-## Güvenlik Ortam Değişkenleri
+## Security Environment Variables
 
-Her domain servisine `Environment=` ile verilir (Configure ekranı üzerinden veya
-birim dosyasında):
+Set them in the site's env file (the **Env file** field in the add form or in Configure):
 
-| Değişken | Açıklama |
+| Variable | Description |
 |---|---|
-| `LOOK_FILE_ROOT` | Dosya erişimini bu dizinle sınırlar; path traversal engellenir. **Ayarlanmazsa varsayılan güvenli: çalışma dizinine kısıtlıdır.** `*` ile kısıtsız (opt-out) |
-| `LOOK_RATE_LIMIT_RPM` / `_BURST` | IP başına dakika limiti + burst (token bucket) |
-| `LOOK_RATE_LIMIT_GLOBAL_RPM` / `_BURST` | Tüm IP toplamı limiti — botnet koruması |
-| `LOOK_TRUSTED_PROXY` | Bu IP'den gelen `X-Forwarded-For` gerçek IP kabul edilir |
-| `LOOK_SESSION_DRIVER=redis` + `LOOK_REDIS_URL` | Çok sunucu session (RESP2 çekirdekte) |
-
-SMTP relay koruması: port 25 outbound engelli; yalnızca kimlik doğrulamalı 587/465.
+| `LOOK_FILE_ROOT` | Limits file access to this directory; path traversal is blocked. The unit sets it to the domain's document root. `*` removes the limit (opt-out) |
+| `LOOK_RATE_LIMIT_RPM` / `_BURST` | Per-IP limit per minute + burst (token bucket) |
+| `LOOK_RATE_LIMIT_GLOBAL_RPM` / `_BURST` | Limit across all IPs — botnet protection |
+| `LOOK_TRUSTED_PROXY` | `X-Forwarded-For` from this IP is accepted as the real IP |
+| `LOOK_SESSION_DRIVER=redis` + `LOOK_REDIS_URL` | Multi-server sessions (RESP2 built into the core) |
 
 ---
 
-## Sorun Giderme
+## Troubleshooting
 
-**Kurulum "setup failed" hatası verdi** — hata metni nedeni ve durdurulan domain'i adıyla
-söyler. Nedeni gider, sonra eklentiyi yeniden kur ya da root olarak:
+**Installation failed with "setup failed"** — the error text names the cause and the domain whose
+service was stopped. Fix the cause, then install the extension again or run, as root:
 `plesk bin extension --exec look-lang post-install.php`.
 
-**Domain eklendi ama listede yok** — panel `domains.json`'a yazamıyor. Kontrol:
+**"not moved to the new LOOK"** — the site's code does not pass the new release's `lk --check`;
+the service was left as it was. Fix the lines listed, then use **Check again** in the panel.
+
+**Domain added but not in the list** — the panel cannot write `domains.json`. Check:
 ```bash
-ls -l /usr/local/psa/var/modules/look-lang/domains.json   # psaadm:psaadm olmalı
+ls -l /usr/local/psa/var/modules/look-lang/domains.json   # must be psaadm:psaadm
 ```
 
-**Site 502/403** — servis çalışıyor mu + Apache proxy var mı:
+**Site 502/403** — is the service running, and is the Apache proxy in place:
 ```bash
 systemctl status look-<domain>; ss -tlnp | grep :<port>
-cat /var/www/vhosts/system/<domain>/conf/vhost_ssl.conf   # ProxyPass görünmeli
+cat /var/www/vhosts/system/<domain>/conf/vhost_ssl.conf   # ProxyPass must be there
 ```
 
-**Servis "failed"** — genelde `index.lk` yok veya syntax hatası:
+**Service "failed"** — usually `index.lk` is missing or has a syntax error:
 ```bash
 journalctl -u look-<domain> -n 50 --no-pager
 ```
 
 ---
 
-## Sürüm Geçmişi
+## Version History
 
-| Sürüm | Değişiklikler |
+| Version | Changes |
 |---|---|
-| **1.0.0** | Çalışma alanı arayüzü (sidebar: Dashboard/Applications/Logs/Documentation), tarayıcı-içi **kod editörü** (Save & Redeploy), canlı **per-domain monitör** (CPU/RSS/PID/bağlantı/uptime + log kuyruğu), **log görüntüleyici** (journalctl + kopyala), canlı sparkline'lı sistem panosu, **İngilizce** UI. State Plesk modül var dizininde. Script'ler `sudo /bin/bash` ile (exec-bit bağımsız). RPM/dnf birincil + portatif static fallback (statik OpenSSL 3.5 LTS). |
+| **1.0.0** | Workspace interface (sidebar: Dashboard/Applications/Logs/Documentation), in-browser **code editor** (Save & Redeploy), live **per-domain monitor** (CPU/RSS/PID/connections/uptime + log tail), **log viewer** (journalctl + copy), system dashboard with live sparklines, **English** UI. State in the Plesk module var directory. |
+
+Later versions removed sudo (root operations go through `sbin/look-ctl`), run each service as the
+domain's user, bind HTTP mode to 127.0.0.1 (1.4.2), install LOOK releases side by side with a
+per-site `lk --check`, and add the per-site memory limit — see the sections above.

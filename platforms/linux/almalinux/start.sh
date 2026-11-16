@@ -73,15 +73,15 @@ grep -q "^LoadModule rewrite_module" /etc/httpd/conf.modules.d/*.conf 2>/dev/nul
     echo "LoadModule rewrite_module modules/mod_rewrite.so" >> /etc/httpd/conf.d/look.conf
 
 # look-fcgi başlat
-echo "--- look-fcgi başlatılıyor ---"
+echo "--- starting look-fcgi ---"
 /usr/local/bin/look-fcgi --port 9000 &
 sleep 2
 
 # httpd başlat
-echo "--- httpd başlatılıyor ---"
+echo "--- starting httpd ---"
 httpd -k start
 sleep 1
 
-echo "=== AlmaLinux 8 + Apache (httpd) hazır ==="
+echo "=== AlmaLinux 8 + Apache (httpd) ready ==="
 echo "=== http://localhost:8081/ ==="
 sleep infinity

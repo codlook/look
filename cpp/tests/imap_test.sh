@@ -4,7 +4,7 @@
 # NEDEN: disariya port dinliyor, kimlik dogrulama yapiyor, guard'i YOKTU.
 # Bu dosya YALNIZCA duzeltilmis/dogrulanmis davranisi kilitler; bilinen
 # eksikler (UID komutu, UID kaliciligi, CREATE/DELETE, BODY[HEADER.FIELDS])
-# BUG_AVI_HARITASI 7d'de ACIK olarak kayitli — guard'a konmadi ki yaniltmasin.
+# guard'a konmadi ki yaniltmasin.
 #
 # Kilitlenenler:
 #  1) Kimlik dogrulama zorunlulugu (auth'suz SELECT/FETCH/APPEND reddedilmeli)

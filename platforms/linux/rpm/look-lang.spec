@@ -1,7 +1,7 @@
 Name:           look-lang
 Version:        1.0.46
 Release:        1%{?dist}
-Summary:        LOOK — sıfır bağımlılık web scripting dili (gömülü SMTP/IMAP, VM, DB)
+Summary:        LOOK — a language built for the web (embedded SMTP/IMAP, bytecode VM, DB clients)
 
 License:        Apache-2.0
 URL:            https://codlook.com
@@ -14,15 +14,16 @@ Requires:       openssl-libs >= 1.1.1
 Requires:       glibc
 
 %description
-LOOK, sunucu taraflı web geliştirme için tasarlanmış tek-binary bir scripting
-dilidir. Routing, DB (MySQL/SQLite/PostgreSQL), eşzamanlılık, WebSocket/SSE,
-şablon motoru ve gömülü SMTP/IMAP sunucusu — hepsi dile gömülü, sıfır 3rd-party
-bağımlılık (yalnız sistem OpenSSL'e dinamik bağlı).
+LOOK is a single-binary language built for server-side web development.
+Routing, databases (MySQL/MariaDB, PostgreSQL, SQLite, Redis), concurrency,
+WebSocket/SSE, a template engine and an embedded SMTP/IMAP server are part of
+the language, with minimal external runtime dependencies (this package links
+the system OpenSSL dynamically).
 
-Bileşenler:
-  lk       — CLI / interpreter / REPL / test runner
-  lk-fcgi  — uygulama sunucusu (--mode http veya FastCGI)
-  lk-cgi   — klasik CGI köprüsü
+Components:
+  lk       — CLI / REPL / test runner
+  lk-fcgi  — application server (--mode http or FastCGI)
+  lk-cgi   — classic CGI bridge
 
 %prep
 # Prebuilt binary paketleme — kaynak derleme burada yapılmaz.
@@ -40,9 +41,9 @@ install -m 0755 %{_sourcedir}/lk-cgi   %{buildroot}%{_bindir}/lk-cgi
 %{_bindir}/lk-cgi
 
 %post
-echo "LOOK %{version} kuruldu — 'lk --version' ile doğrula. Güncelleme: dnf update look-lang"
+echo "LOOK %{version} installed — check with 'lk --version'. Update: dnf update look-lang"
 
 %changelog
 * Tue Jul 08 2026 Codlook <info@codlook.com> - 1.0.0-1
-- İlk v1 sürümü: gömülü SMTP/IMAP, fn/app::/response::error sözdizimi, VM
-- Sistem OpenSSL'e dinamik bağlı (dnf ile güvenlik güncellemesi)
+- First release: embedded SMTP/IMAP, fn/app::/response::error syntax, VM
+- Links the system OpenSSL dynamically (security updates through dnf)

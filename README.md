@@ -348,10 +348,11 @@ This repository is **the LOOK language core** only. Everything else lives on its
 
 ## Project status
 
-See [BUG_AVI_HARITASI.md](BUG_AVI_HARITASI.md) (Turkish) for the honest, up-to-date
-engineering log: the systematic bug-hunt map, every bug we closed and **why it hid for
-so long**, the bug-class catalogue, and the rules we work by. Each fix lands with a
-regression guard, so the list doubles as a record of what is now locked down.
+Every fix lands with a regression test that fails on the original bug, and the suite runs
+on every build. What changed in each release is in the
+[release notes](https://github.com/codlook/look/releases); behavior changes since 1.0 are
+listed with the reason and what to do in [docs/upgrading-from-1.0.md](docs/upgrading-from-1.0.md);
+resolved security issues are in [SECURITY.md](SECURITY.md).
 
 ## Security
 
