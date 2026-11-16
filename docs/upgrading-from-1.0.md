@@ -1,9 +1,8 @@
 # Upgrading from LOOK 1.0.x
 
 This page lists every change that can make a program written for LOOK 1.0.x behave
-differently, what you see when it does, and what to write instead. The changes are developed
-on the `v2` branch; this page is updated in the same commit as each change, so it is complete
-for the current state of that branch.
+differently, what you see when it does, and what to write instead. This page is updated in the
+same commit as each change, so it is complete for the code it ships with.
 
 Each entry says how the change shows up:
 
@@ -243,7 +242,7 @@ named function when you need recursion.
 A closure handed to another thread (`parallel`, timers, WebSocket and SSE handlers) still
 gets its own copy of everything it captured.
 
-### Reading with `[...]` follows one rule on both engines
+### Reading with `[...]` follows one rule
 
 ```
 $row["missing"]                     # null — a key the map does not have
