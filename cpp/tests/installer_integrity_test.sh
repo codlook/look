@@ -9,7 +9,7 @@
 #  1) ilk kurulum özeti look.lock'a yazar ("ref@sha h1:...")
 #  2) aynı commit + aynı içerik (FARKLI ZIP baytları) → kurulur, "checksum verified"
 #  3) aynı commit + değişmiş içerik → net hata, eski paket ve look.lock dokunulmamış
-#  4) özetsiz eski kilit satırı → kurulur, özet eklenir (trust on first use), --locked dahil
+#  4) özetsiz eski kilit satırı → lk install kurar ve özeti ekler; --locked açık hata verir, kilide yazmaz
 #  5) yeni commit'e geçiş → yeni özet
 #  6) bozuk/yarım arşiv (CRC hatası, ZIP değil) → eski paket sağlam, geçici dizin kalmaz
 #  7) lk module install: aynı atomiklik (modüllerin kilidi yok)
@@ -105,13 +105,21 @@ cp "$TMP/main.good" "$AR/main.zip"
 
 # ── 4) özetsiz eski satır → kurulur ve özet eklenir ───────────────────────────
 mkzip "$AR/$A.zip" "$A" deflate "widget.lk=v1" "lib/util.lk=util-v1"
-for args in "install" "install --locked"; do
-  printf '# look.lock\n"acme/widget" = "main@%s"\n' "$A" > look.lock
-  out=$("$LK" $args 2>&1); rc=$?
-  if [ $rc = 0 ] && [ "$(echo "$out" | grep -c "recorded checksum $H1 for acme/widget")" = 1 ] \
-     && [ "$(lockhash)" = "$H1" ]; then ok "old lock line without a hash works and gets one (lk $args)"
-  else bad "old lock line (lk $args): rc=$rc lock=[$(lockline)] out=[$out]"; fi
-done
+# --locked kilide HİÇ yazmaz, doğrulayamadığını kurmaz (Go -mod=readonly): özetsiz satır = hata
+printf '# look.lock\n"acme/widget" = "main@%s"\n' "$A" > look.lock
+cp look.lock "$TMP/lock.before"; echo old > pkg/acme/widget/widget.lk
+out=$("$LK" install --locked 2>&1); rc=$?
+if [ $rc != 0 ] && echo "$out" | grep -q "look.lock has no checksum for acme/widget" \
+   && cmp -s look.lock "$TMP/lock.before" && [ "$(cat pkg/acme/widget/widget.lk)" = old ]; then
+  ok "lk install --locked refuses a lock line without a hash; look.lock and the package untouched"
+else bad "--locked without a hash: rc=$rc lock=[$(lockline)] out=[$out]"; fi
+out=$("$LK" install 2>&1); rc=$?
+if [ $rc = 0 ] && [ "$(echo "$out" | grep -c "recorded checksum $H1 for acme/widget")" = 1 ] \
+   && [ "$(lockhash)" = "$H1" ]; then ok "old lock line without a hash works and gets one (lk install)"
+else bad "old lock line (lk install): rc=$rc lock=[$(lockline)] out=[$out]"; fi
+out=$("$LK" install --locked 2>&1); rc=$?
+if [ $rc = 0 ] && echo "$out" | grep -q "checksum verified"; then ok "after that, lk install --locked verifies it"
+else bad "--locked after recording: rc=$rc out=[$out]"; fi
 
 # ── 5) yeni commit → yeni özet ───────────────────────────────────────────────
 mkzip "$AR/main.zip" "$B" deflate "widget.lk=v2" "lib/util.lk=util-v2"

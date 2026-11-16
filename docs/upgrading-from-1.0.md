@@ -875,8 +875,9 @@ them and is not affected.
 When the commit being installed already has a checksum in look.lock and the downloaded files
 differ from it, `lk install` stops with an error that names the package, the checksum in
 look.lock and the downloaded one, and installs nothing. A look.lock written by 1.0.x has no
-checksums; it keeps working, and the first install adds one per package (one line says so).
-Commit the updated look.lock. An `lk` from 1.0.x cannot read a line with a checksum.
+checksums; it keeps working, and the first `lk install` adds one per package (one line says so).
+Commit the updated look.lock. `lk install --locked` (CI, production) never writes look.lock and
+stops on a line without a checksum, so run `lk install` once first. An `lk` from 1.0.x cannot read a line with a checksum.
 
 Installs no longer delete the old package first: the new one is extracted beside it and
 swapped in only when it is complete, so a failed download, a corrupt archive or a checksum

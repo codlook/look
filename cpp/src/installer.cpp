@@ -539,7 +539,17 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
         // o sha için tam olarak o ağacı verir, sessiz ikame imkansız.
         if (locked_sha.empty()) {
             std::cerr << "Error: no locked version for " << spec.lock_key()
-                      << " in look.lock — run 'look install " << pkg << "' first.\n";
+                      << " in look.lock — run 'lk install " << pkg << "' first.\n";
+            return 1;
+        }
+        // --locked look.lock'a HİÇ yazmaz ve doğrulanamayanı kurmaz (Go -mod=readonly: go.sum
+        // kaydı yoksa hata). Eskiden özetsiz eski satırda ilk görülen içerik sorgusuz kurulup
+        // özeti kilide yazılıyordu — CI/üretimde ele geçirilmiş bir paket ilk kurulumda kabul olurdu.
+        if (lock_it->second.hash.empty()) {
+            std::cerr << "Error: look.lock has no checksum for " << spec.lock_key()
+                      << " — --locked installs only what it can verify and never writes look.lock.\n"
+                      << "Run 'lk install' once (without --locked) to record the checksum, review and"
+                         " commit look.lock, then use --locked.\n";
             return 1;
         }
         spec.ref = locked_sha;
@@ -646,14 +656,7 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
         std::cout << "  checksum verified (" << hash << ")\n";
 
     if (locked) {
-        // --locked look.lock'un ref/sha'sını DEĞİŞTİRMEZ. Tek istisna: eski kilitte özet yoksa
-        // ilk görülen içerik kaydedilir (trust on first use).
-        if (locked_hash.empty()) {
-            lock[spec.lock_key()].hash = hash;
-            write_lock(lock_path, lock);
-            std::cout << "  look.lock: recorded checksum " << hash << " for "
-                      << spec.lock_key() << "\n";
-        }
+        // --locked look.lock'a dokunmaz (özetsiz satır yukarıda reddedildi).
         std::cout << "  --locked: verified " << locked_sha << "\n";
     } else {
         // Sessiz-ikame görünürlüğü: kullanıcı bir dal/etiket kurdu ve o ref kilitten

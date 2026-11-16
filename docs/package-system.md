@@ -21,7 +21,7 @@ Most of this document is a design. The parts that the current `lk` command actua
 | `lk module list` | Lists the official modules (`github.com/codlook/look-modules`) and the locally installed ones. |
 | `lk install github.com/<user>/<repo>[/<subdir>][@<ref>]` | Downloads the zipball into the project: `pkg/<subdir>/` (or `pkg/<user>/<repo>/` without a subdir), relative to the current directory, and records `ref@sha h1:<checksum>` in `./look.lock`. `<ref>` defaults to `main`. If look.lock has a checksum for the commit being installed, the content must match. |
 | `lk install` | Reinstalls every entry in `./look.lock`, pinned to the recorded commit sha. |
-| `lk install [pkg] --locked` (or `--frozen`) | Installs exactly the commit recorded in `look.lock` and fails if there is none; the ref and sha in `look.lock` are not modified (a missing checksum is added). |
+| `lk install [pkg] --locked` (or `--frozen`) | Installs exactly the commit recorded in `look.lock` and fails if there is none; never writes `look.lock`; a line without a checksum is an error (run `lk install` once to record it). |
 
 Checksums and atomic installs:
 
