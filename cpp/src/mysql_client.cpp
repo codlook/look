@@ -5,6 +5,7 @@
 #include "look/fiber_io.h"
 #include "look/fiber_net.h"   // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
 #include "look/format.h"   // look_format_double (dilin tek double formati)
+#include "look/logger.h"
 #ifndef _WIN32
 // caching_sha2_password (MySQL 8+ varsayilan): SHA-256 + RSA-OAEP.
 // OpenSSL zaten linkli (POSIX); Windows'ta yalniz ws2_32+bcrypt linkleniyor —
@@ -279,8 +280,14 @@ void MySQLClient::do_connect() {
     set_socket_timeout(cfg_.query_timeout_ms);
     do_handshake(cfg_.user, cfg_.password, cfg_.database);
     // NO_BACKSLASH_ESCAPES modunu devre dışı bırak — aksi hâlde escape() güvensiz olur
+    // Yalnız NO_BACKSLASH_ESCAPES'i çıkarır; katı kipi (STRICT_*) KURMAZ — sunucunun kipi korunur.
+    // Kaçış güvenliği buna bağlı değil (db::escape '' ikiler, sorgular gerçek parametre bağlar),
+    // ama başarısızlık eskiden tamamen yutuluyordu: günlüğe yaz, bağlantı sürer.
     try { query("SET SESSION sql_mode = REPLACE(@@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES', '')"); }
-    catch (...) {}
+    catch (const std::exception& e) {
+        Logger::instance().log(LogLevel::LOG_WARN, "db",
+            std::string("MySQL: could not clear NO_BACKSLASH_ESCAPES from sql_mode (the connection is used as is): ") + e.what());
+    }
 }
 
 // ── Ping ──────────────────────────────────────────────────────────────────────

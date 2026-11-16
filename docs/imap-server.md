@@ -72,7 +72,7 @@ lk-fcgi --mode http --port 7400 --workers 4
 | `SELECT` / `EXAMINE` | ✅ | Stable sequence snapshot; EXISTS/RECENT/UIDVALIDITY/FLAGS |
 | `LIST` / `LSUB` | ✅ | Maildir++ subfolders (`.Sent` → `Sent`) |
 | `STATUS` | ✅ | MESSAGES / RECENT |
-| `FETCH` | ✅ | seq-set, `FLAGS` `RFC822.SIZE` `BODY[]` `BODY[HEADER]` `BODY[TEXT]` `RFC822` `RFC822.HEADER` (the `UID` item → `NO [CANNOT]`) |
+| `FETCH` | ✅ | seq-set, `FLAGS` `RFC822.SIZE` `BODY[]` `BODY[HEADER]` `BODY[TEXT]` `RFC822` `RFC822.HEADER` (the `UID` item → `NO [CANNOT]`; any other item, e.g. `BODY.PEEK[]`, `BODY[HEADER.FIELDS (…)]`, `ENVELOPE`, `INTERNALDATE` → `BAD FETCH item not supported: <item>`, never an empty answer) |
 | `STORE` | ✅ | `+FLAGS` `-FLAGS` `FLAGS` (+`.SILENT`), Maildir `:2,` rename |
 | `EXPUNGE` | ✅ | Deletes messages marked `\Deleted` + `* n EXPUNGE` notification |
 | `APPEND` | ✅ | literal + flags; size limit checked up front against OOM |

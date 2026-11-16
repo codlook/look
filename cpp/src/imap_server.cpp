@@ -700,6 +700,37 @@ struct ImapServer::Impl {
                                        "(Milestone 1). Use sequence numbers.\r\n");
                     continue;
                 }
+                // Desteklenmeyen öğe: eskiden alt-dize araması onu görmezden geliyordu —
+                // BODY[HEADER.FIELDS (FROM)], BODY.PEEK[], ENVELOPE … isteyen istemci sessizce
+                // BOŞ bir FETCH alıyordu. Artık her öğe tanınmalı; değilse açık BAD.
+                {
+                    std::string list = items;
+                    while (!list.empty() && list.front() == ' ') list.erase(0, 1);
+                    while (!list.empty() && list.back() == ' ') list.pop_back();
+                    if (list.size() >= 2 && list.front() == '(' && list.back() == ')')
+                        list = list.substr(1, list.size() - 2);
+                    std::vector<std::string> toks; std::string cur; int depth = 0;
+                    for (char ch : list) {
+                        if (ch == '[' || ch == '(') depth++;
+                        else if ((ch == ']' || ch == ')') && depth > 0) depth--;
+                        if (ch == ' ' && depth == 0) { if (!cur.empty()) toks.push_back(cur); cur.clear(); }
+                        else cur += ch;
+                    }
+                    if (!cur.empty()) toks.push_back(cur);
+                    static const char* const kOk[] = { "FLAGS", "RFC822.SIZE", "RFC822", "RFC822.HEADER",
+                                                       "BODY[]", "BODY[HEADER]", "BODY[TEXT]" };
+                    std::string bad;
+                    for (const auto& t : toks) {
+                        bool ok = false;
+                        for (const char* k : kOk) if (t == k) { ok = true; break; }
+                        if (!ok) { bad = t; break; }
+                    }
+                    if (toks.empty() || !bad.empty()) {
+                        send_all(fd, tag + " BAD FETCH item not supported: " + (toks.empty() ? std::string("(none)") : bad) +
+                                     " (supported: FLAGS RFC822.SIZE RFC822 RFC822.HEADER BODY[] BODY[HEADER] BODY[TEXT])\r\n");
+                        continue;
+                    }
+                }
 
                 auto& msgs = messages;   // kararlı snapshot
                 size_t lo = 0, hi = 0;
