@@ -13,10 +13,9 @@ TMP="$(mktemp -d)"
 echo "Building LOOK Plesk Extension v$VERSION..."
 
 # Temel dosyalar
+# (Kancalar plib/scripts/post-install.php'dedir; kökteki eski post-install/pre-uninstall Plesk
+# tarafından hiç çalıştırılmıyordu ve sudoers yazan eski akışı taşıyordu — kaldırıldı.)
 cp meta.xml     "$TMP/"
-cp post-install "$TMP/"
-cp pre-uninstall "$TMP/"
-chmod +x "$TMP/post-install" "$TMP/pre-uninstall"
 
 # plib — Plesk Obsidian MVC controller (Extensions paneli buradan dispatch eder)
 if [ -d plib ]; then
@@ -80,9 +79,9 @@ done
 RPM_SRC="$(ls ../linux/rpm/out/look-lang-${VERSION}*.rpm 2>/dev/null | head -1)"
 if [ -n "$RPM_SRC" ] && [ -f "$RPM_SRC" ]; then
     cp "$RPM_SRC" "$TMP/htdocs/look-lang.rpm"
-    echo "  + RPM dahil edildi: $(basename "$RPM_SRC")"
+    echo "  + RPM included: $(basename "$RPM_SRC")"
 else
-    echo "  ! RPM bulunamadı (önce: bash platforms/linux/rpm/build-rpm.sh) — sadece static binary"
+    echo "  ! no RPM found (build it first: bash platforms/linux/rpm/build-rpm.sh) — static binary only"
 fi
 
 # ZIP olustur
