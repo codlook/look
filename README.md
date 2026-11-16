@@ -276,7 +276,7 @@ build on without waiting for a full behavioral spec:
   internals, integer-vs-float division). These settle with real-world use before they are frozen.
 
 This is not a hand-wave. The API surface is checked on **every push** by `docs_conformance` (docs ↔
-implementation), `differential` (both engines produce identical output), and the regression suite — so
+implementation), `differential` (the CLI and the web server produce identical output), and the regression suite — so
 the promise is simply the name for a guard that already runs.
 
 ## Build

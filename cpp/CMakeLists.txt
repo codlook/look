@@ -165,7 +165,7 @@ endif()
 add_executable(look
     src/main.cpp
     src/event_loop.cpp
-    src/compiler.cpp   # C9: CLI-VM (opt-in LOOK_CLI_VM) — bytecode derleyici
+    src/compiler.cpp   # bytecode derleyici (tek motor: VM)
     src/vm.cpp         # C9: CLI-VM — bytecode yürütücü
     src/cli_runtime.cpp # LOOK 2: lk ve lk test aynı VM ortamı
     src/test_runner.cpp # LOOK 2: lk test VM'de (cli_runtime kullanır)

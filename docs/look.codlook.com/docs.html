@@ -215,7 +215,7 @@
   <h2>Technical Summary</h2>
   <table>
     <tr><th>Feature</th><th>Detail</th></tr>
-    <tr><td>Runtime</td><td>C++23 — register-based bytecode VM (default engine, ~41–51× faster on the CLI) with a tree-walk interpreter as a safety-net fallback</td></tr>
+    <tr><td>Runtime</td><td>C++23 — register-based bytecode VM, the only engine (CLI, <code>lk test</code>, REPL, web, CGI); a program the compiler rejects does not start</td></tr>
     <tr><td>Web mode</td><td>FastCGI — port 9000 (production) · HTTP mode (WebSocket) · CGI (fallback)</td></tr>
     <tr><td>Database</td><td>MySQL · SQLite · PostgreSQL — self-contained, wire protocol</td></tr>
     <tr><td>Install</td><td>Copy the binary, register it with Apache, run</td></tr>
@@ -2622,7 +2622,7 @@ LOOK_PARALLEL_LIMIT=50</code></pre>
   <h3>Two Layers</h3>
   <table>
     <tr><th>Layer</th><th>Model</th><th>Developer Effort</th></tr>
-    <tr><td><strong>Runtime (look-fcgi)</strong></td><td>N worker threads — each HTTP request in an isolated interpreter copy</td><td>Zero — the runtime handles it</td></tr>
+    <tr><td><strong>Runtime (look-fcgi)</strong></td><td>N worker threads — each HTTP request in an isolated runtime copy</td><td>Zero — the runtime handles it</td></tr>
     <tr><td><strong>Language (parallel + channel)</strong></td><td>LOOK tasks — parallel work within a single request</td><td>Minimal — channel design is enough</td></tr>
   </table>
 
@@ -2648,7 +2648,7 @@ LOOK_PARALLEL_LIMIT=50</code></pre>
   <h3>Thread Safety</h3>
   <table>
     <tr><th>Problem</th><th>Solution</th></tr>
-    <tr><td>Two threads modify the same interpreter state</td><td><code>make_dispatch_copy()</code> — each request in its own copy</td></tr>
+    <tr><td>Two threads modify the same runtime state</td><td><code>make_dispatch_copy()</code> — each request in its own copy</td></tr>
     <tr><td>Two threads use the same DB connection</td><td><code>ConnPool</code> — each thread borrows a separate connection</td></tr>
     <tr><td>A request arrives during hot reload</td><td><code>shared_mutex</code> — reload exclusive, dispatch shared</td></tr>
     <tr><td>WS broadcast deadlock</td><td>The client list is copied, the lock released, then sent</td></tr>
@@ -2703,7 +2703,7 @@ Each request → a worker thread from the ThreadPool:
   2. make_dispatch_copy()   — built ONCE PER WORKER (thread_local), not per request
                               (rebuilt only when the app is hot-reloaded)
   3. acquire_thread_connections()  — one connection borrowed from each pool
-  4. dispatch_routes() / interpret()  — fully isolated, thread-safe
+  4. route match → handler runs on the VM  — fully isolated, thread-safe
   5. release_thread_connections()  — connections returned to the pool
   6. HTTP response is written</code></pre>
 
@@ -2712,7 +2712,7 @@ Each request → a worker thread from the ThreadPool:
     <tr><th>Component</th><th>File</th><th>Description</th></tr>
     <tr><td>ThreadPool</td><td>fcgi_main.cpp</td><td>N worker threads; each incoming TCP connection is assigned to a thread</td></tr>
     <tr><td>ConnPool</td><td>web_stdlib.cpp</td><td>Per-DSN connection pool — SQLite: 1, MySQL/PG: N connections</td></tr>
-    <tr><td>make_dispatch_copy()</td><td>interpreter.cpp</td><td>Setup state is shared (read-only); output and call stack are per-request from scratch. The copy itself is <strong>thread_local — built once per worker</strong>, not per request (building it per request cost 30–63 µs, more than running the route; making it per-worker gave <strong>2–3× web throughput</strong>). Invalidated on hot reload via <code>HttpApp::generation</code>.</td></tr>
+    <tr><td>make_dispatch_copy()</td><td>runtime_host.cpp</td><td>Setup state is shared (read-only); output and call stack are per-request from scratch. The copy itself is <strong>thread_local — built once per worker</strong>, not per request (building it per request cost 30–63 µs, more than running the route; making it per-worker gave <strong>2–3× web throughput</strong>). Invalidated on hot reload via <code>HttpApp::generation</code>.</td></tr>
     <tr><td>shared_mutex</td><td>fcgi_main.cpp</td><td>Shared lock for concurrent dispatch; exclusive lock for hot reload</td></tr>
   </table>
 
@@ -3811,7 +3811,7 @@ look install github.com/Codlook/look-packages
 
   <table>
     <tr><th>Function</th><th>Description</th></tr>
-    <tr><td><code>runtime::stats()</code></td><td>Returns the interpreter state as an assoc array</td></tr>
+    <tr><td><code>runtime::stats()</code></td><td>Returns runtime statistics as an assoc array</td></tr>
     <tr><td><code>runtime::gc()</code></td><td>Trigger garbage collection — returns "ok"</td></tr>
   </table>
 
@@ -3823,7 +3823,7 @@ look install github.com/Codlook/look-packages
     <tr><td><code>route_count</code></td><td>int</td><td>Number of registered routes</td></tr>
     <tr><td><code>working_mb</code></td><td>float</td><td>Resident set size — RSS (MB)</td></tr>
     <tr><td><code>private_mb</code></td><td>float</td><td>Private resident memory — RssAnon on Linux, PrivateUsage on Windows (MB)</td></tr>
-    <tr><td><code>vm_disabled_routes</code></td><td>int</td><td>Distinct routes that permanently fell back from the VM to the interpreter (not total fallbacks — one per route). <strong>&gt; 0 means a VM bug degraded those routes (~37% slower); investigate.</strong></td></tr>
+    <tr><td><code>vm_disabled_routes</code></td><td>int</td><td>Always <code>0</code>. Kept so existing dashboards keep working: in 1.0.x it counted routes moved off the VM to a slower second engine. LOOK now has one engine and never moves a route off the VM.</td></tr>
     <tr><td><code>errors_5xx</code></td><td>int</td><td>Count of 5xx responses served (silent server errors)</td></tr>
     <tr><td><code>latency_last_us</code></td><td>int</td><td>Dispatch time of the most recent request (microseconds)</td></tr>
     <tr><td><code>latency_avg_us</code></td><td>int</td><td>Average dispatch time across all requests (microseconds). Percentiles (p50/p99) are intentionally not here — compute them in a package by polling, so the hot path stays free of per-request histograms.</td></tr>
@@ -4182,18 +4182,18 @@ LOOK_MAIL_DIR=/var/mail/look</code></pre>
 <section id="fastcgi">
   <h2>FastCGI Warm Start</h2>
 
-  <p class="lead">LOOK's most important performance feature. In FastCGI mode, <code>index.lk</code> is loaded, parsed and interpreted only once.</p>
+  <p class="lead">LOOK's most important performance feature. In FastCGI mode, <code>index.lk</code> is loaded, parsed and compiled to bytecode only once.</p>
 
   <h3>How It Works</h3>
   <pre><code><span class="cm"># look-fcgi.exe --port 9000</span>
 
-First request arrives → setup phase:
-  1. index.lk is parsed → AST (kept in WarmApp::program)
-  2. set_setup_mode(true) → interpret()
-     - route() calls → registered in route_registry_
-     - db::connect() → $conn stays in interpreter globals_
+At startup → setup phase:
+  1. index.lk is parsed → AST → bytecode (a compile error stops the start, with the reason)
+  2. setup mode on → the top level runs ONCE, on the VM
+     - route() calls → registered in the route table
+     - db::connect() → $conn stays in the setup globals
      - a DB error is caught via try/catch, $conn stays as null
-  3. set_setup_mode(false)
+  3. setup mode off
 
 EVERY subsequent request → dispatch phase:
   1. make_web_context(req) → REQUEST_URI, METHOD, headers, cookies
@@ -4629,7 +4629,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <h3>Engine</h3>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
-    <tr><td><code>LOOK_BYTECODE</code></td><td><code>1</code></td><td>Bytecode VM on (default). <code>0</code> forces the tree-walk interpreter.</td></tr>
+    <tr><td><code>LOOK_BYTECODE</code> / <code>LOOK_CLI_VM</code></td><td>—</td><td>Ignored (1.0.x only). LOOK runs only on the bytecode VM; <code>0</code> writes one <code>WARN</code> line and changes nothing.</td></tr>
     <tr><td><code>LOOK_FIBER_DISPATCH</code></td><td><em>on (Linux)</em></td><td><code>0</code> selects a worker per connection instead of fibers (see <a href="#concurrent">Concurrent Runtime</a>). Windows always uses a worker per connection.</td></tr>
     <tr><td><code>LOOK_WARN_UNDEF</code></td><td><em>off</em></td><td>Undefined variables are a hard error by default. <code>1</code> restores lenient mode with a warning instead.</td></tr>
   </table>
@@ -4653,7 +4653,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
     <tr><th>Binary</th><th>Purpose</th><th>Status</th></tr>
     <tr><td>look-fcgi.exe</td><td>FastCGI — production (port 9000)</td><td><span class="badge badge-done">✅ Active</span></td></tr>
     <tr><td>look-cgi.exe</td><td>Apache CGI — fallback mode</td><td><span class="badge badge-done">✅ Stable</span></td></tr>
-    <tr><td>look.exe</td><td>CLI interpreter</td><td><span class="badge badge-done">✅ Stable</span></td></tr>
+    <tr><td>look.exe</td><td>CLI — scripts, <code>lk test</code>, REPL</td><td><span class="badge badge-done">✅ Stable</span></td></tr>
   </table>
 
   <h3>Source Files (<code>cpp/src/</code>)</h3>
@@ -4661,7 +4661,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
     <tr><th>File</th><th>Contents</th></tr>
     <tr><td>lexer.cpp</td><td>Tokenizer, <code>$</code> prefix, all token types</td></tr>
     <tr><td>parser.cpp</td><td>Precedence-aware parser, AST nodes, SourceLocation</td></tr>
-    <tr><td>interpreter.cpp</td><td>Tree-walk interpreter, GC, route() setup_mode, dispatch_routes(), make_dispatch_copy()</td></tr>
+    <tr><td>runtime_host.cpp</td><td>Runtime host — built-in module table, web context, make_dispatch_copy() (per-worker request copy)</td></tr>
     <tr><td>stdlib.cpp</td><td>math:: string:: type:: array:: — all standard modules</td></tr>
     <tr><td>extra_stdlib.cpp</td><td>env() config() runtime::stats()</td></tr>
     <tr><td>web.cpp</td><td>route() request:: response:: json:: session:: cookie:: — HTTP primitives</td></tr>
@@ -4679,7 +4679,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
     <tr><td>event_loop.cpp</td><td>Abstract EventLoop — epoll (Linux) / IOCP (Windows)</td></tr>
     <tr><td>websocket.cpp</td><td>SHA-1, Base64, RFC 6455 frame codec, WsConnection, WsRegistry</td></tr>
     <tr><td>sse.cpp</td><td>SseConnection, SseRegistry — SSE frame sending, disconnect detection</td></tr>
-    <tr><td>timer_stdlib.cpp</td><td>TimerManager singleton — background thread, after/every/cancel, interpreter binding</td></tr>
+    <tr><td>timer_stdlib.cpp</td><td>TimerManager singleton — background thread, after/every/cancel, callbacks run on the VM</td></tr>
     <tr><td>compiler.cpp</td><td>AST → FunctionProto bytecode compiler — RegisterAllocator, alloc_seq(), short-circuit &&/||, closure capture hints, try/catch TRY_PUSH/POP</td></tr>
     <tr><td>vm.cpp</td><td>Register-based VM — switch(opcode) dispatch, CallFrame stack, TryCatchEntry, PARALLEL_CALL (thread detach), CHAN_*/WS_*/SSE_* opcodes</td></tr>
     <tr><td>cgi_main.cpp</td><td>CGI entry — fallback mode</td></tr>
@@ -4687,7 +4687,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
   </table>
 
   <h3>Headers (<code>cpp/include/look/</code>)</h3>
-  <p style="color:var(--muted);font-size:.85rem"><code>token.h</code> · <code>lexer.h</code> · <code>parser.h</code> · <code>ast.h</code> · <code>interpreter.h</code> · <code>fcgi.h</code> · <code>http_server.h</code> · <code>event_loop.h</code> · <code>websocket.h</code> · <code>sse.h</code> · <code>timer.h</code> · <code>bytecode.h</code> · <code>compiler.h</code> · <code>vm.h</code> · <code>logger.h</code></p>
+  <p style="color:var(--muted);font-size:.85rem"><code>token.h</code> · <code>lexer.h</code> · <code>parser.h</code> · <code>ast.h</code> · <code>runtime_host.h</code> · <code>fcgi.h</code> · <code>http_server.h</code> · <code>event_loop.h</code> · <code>websocket.h</code> · <code>sse.h</code> · <code>timer.h</code> · <code>bytecode.h</code> · <code>compiler.h</code> · <code>vm.h</code> · <code>logger.h</code></p>
 
   <h3>Mode Compatibility</h3>
   <table>
@@ -4747,20 +4747,17 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk</cod
   <div class="callout warn">
     <p><strong>Port note:</strong> <code>--mode http</code> runs independently of FastCGI. Port 9000 is reserved for FastCGI; use a separate port for <code>--mode http</code> (e.g. 8090, 9001).</p>
   </div>
-  <pre><code><span class="cm"># --mode http — VM active (default), a separate port from FastCGI</span>
+  <pre><code><span class="cm"># --mode http — a separate port from FastCGI</span>
 ./look-fcgi --mode http --port 8090 --workers 8 /var/www/myapp/index.lk
 
-<span class="cm"># VM disabled — interpreter fallback</span>
-LOOK_BYTECODE=0 ./look-fcgi --mode http --port 8090 --workers 8 /var/www/myapp/index.lk
-
 <span class="cm"># the chat service</span>
-LOOK_BYTECODE=1 ./look-fcgi --mode http --port 9001 --workers 8 chat.lk
+./look-fcgi --mode http --port 9001 --workers 8 chat.lk
 
-<span class="cm"># --mode fcgi — FastCGI (via Apache mod_proxy_fcgi) — VM also default here</span>
+<span class="cm"># --mode fcgi — FastCGI (via Apache mod_proxy_fcgi) — the same VM</span>
 ./look-fcgi --port 9000 --workers 8</code></pre>
 
   <div class="callout">
-    <p><strong>Your LOOK code doesn't change:</strong> when the VM kicks in, nothing in your .lk files needs changing. Existing scripts run as-is.</p>
+    <p><strong>Your LOOK code doesn't change:</strong> there is no engine to switch on — every .lk file runs on the VM as-is.</p>
   </div>
 </section>
 
@@ -4891,7 +4888,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/posts"</span>, <span c
     <tr><td>sse:: module</td><td class="yes">✅</td><td><code>sse::send / on / close / clients</code> — named events, disconnect detection, <code>--mode http</code> only</td></tr>
     <tr><td>timer:: module</td><td class="yes">✅</td><td><code>timer::after / every / cancel</code> — global TimerManager, background thread, lock-free callback</td></tr>
     <tr><td><code>--mode http</code> bug fix</td><td class="yes">✅</td><td>EPOLLOUT edge-triggered bug fixed (level-triggered); SIGPIPE ignore added — the connection was dropping after the first request</td></tr>
-    <tr><td>Bytecode VM</td><td class="yes">✅</td><td>Register-based VM; compiler.cpp (AST→FunctionProto); vm.cpp (switch dispatch); 30/30 tests PASS; 7.8x compute speedup; <code>LOOK_BYTECODE=0</code> fallback</td></tr>
+    <tr><td>Bytecode VM</td><td class="yes">✅</td><td>Register-based VM; compiler.cpp (AST→FunctionProto); vm.cpp (switch dispatch); 30/30 tests PASS; 7.8x compute speedup; the only engine, no fallback</td></tr>
     <tr><td>timer::cancel fix</td><td class="yes">✅</td><td>Cancellation is now instant — erase(id) + cv_.notify_one(); the old behavior waited 30s</td></tr>
     <tr><td>WebSocket chat</td><td class="yes">✅</td><td>WebSocket + broadcast + <code>timer::</code> keepalive — real-time messaging</td></tr>
     <tr><td>VM CALL goto fix</td><td class="yes">✅</td><td>The run() outer while loop wasn't restarting after push_back → named function bodies never ran; fixed with goto call_dispatch</td></tr>
@@ -5131,10 +5128,12 @@ Usage:
         helpers.lk</code></pre>
 
   <h3>look.lock Format</h3>
-  <p>Generated automatically. <code>ref@sha</code> per package — the same commit is installed on reinstall.</p>
+  <p>Generated automatically. <code>ref@sha h1:checksum</code> per package — the same commit is installed on reinstall, and its content must match the recorded checksum.</p>
   <pre><code><span class="cm"># look.lock — generated by look install, do not edit manually</span>
-<span class="str">"ali/look-stripe"</span> = <span class="str">"main@a3f8c21d..."</span>
-<span class="str">"zeynep/look-mail"</span> = <span class="str">"v2.1@b7e4d09f..."</span></code></pre>
+<span class="str">"ali/look-stripe"</span> = <span class="str">"main@a3f8c21d... h1:Xq3n...="</span>
+<span class="str">"zeynep/look-mail"</span> = <span class="str">"v2.1@b7e4d09f... h1:9fKc...="</span></code></pre>
+  <p>The <code>h1:</code> checksum works like Go's <code>go.sum</code>: a SHA-256 over the extracted files (sorted paths and the SHA-256 of each file), not over the ZIP bytes, which GitHub may regenerate. When <code>look install</code> downloads a commit that look.lock already has a checksum for, the content must match; on a mismatch it stops with an error naming the package, the expected and the downloaded checksum, and installs nothing. A line without a checksum (an older look.lock) still works: the package is installed and the checksum is recorded, with one line saying so. Moving to a new commit records the new checksum.</p>
+  <p>Installs are atomic: the package is extracted into a temporary folder next to its target and swapped in only when it is complete and verified. A failed download, a corrupt archive or a checksum mismatch leaves the previous installation untouched. <code>lk module install</code> (<code>~/.look/modules/</code>) is atomic the same way; modules have no lock file, so there is no checksum for them.</p>
 
   <h3>Usage — index.lk</h3>
   <pre><code><span class="cm"># load a file under pkg/ directly with use "..."</span>
@@ -5154,11 +5153,13 @@ jobs.db</code></pre>
   <table>
     <tr><th>Step</th><th>Detail</th></tr>
     <tr><td>Download</td><td>GitHub API zipball endpoint — <code>api.github.com/repos/{user}/{repo}/zipball/{ref}</code></td></tr>
-    <tr><td>HTTPS</td><td>The existing http_client (Schannel / OpenSSL) — zero extra dependency</td></tr>
+    <tr><td>HTTPS</td><td>The existing http_client (Schannel / OpenSSL) — no extra dependency</td></tr>
     <tr><td>Redirect</td><td>The GitHub 302 → codeload.github.com chain is followed automatically</td></tr>
     <tr><td>ZIP extraction</td><td>miniz amalgamation (322 KB, included) — the GitHub prefix (<code>repo-sha/</code>) is stripped automatically</td></tr>
     <tr><td>SHA resolution</td><td><code>api.github.com/repos/{user}/{repo}/commits/{ref}</code> — full 40-character commit hash</td></tr>
-    <tr><td>look.lock</td><td>Sorted, deterministic <code>"user/repo" = "ref@sha"</code> format</td></tr>
+    <tr><td>look.lock</td><td>Sorted, deterministic <code>"user/repo" = "ref@sha h1:checksum"</code> format</td></tr>
+    <tr><td>Checksum</td><td><code>h1:</code> + base64 SHA-256 of the extracted content (Go dirhash); a mismatch for the same commit stops the install</td></tr>
+    <tr><td>Atomic install</td><td>Extract to a temp folder beside the target, verify, then rename; on failure the old package stays</td></tr>
   </table>
 
   <h3>Official Codlook Repositories</h3>
@@ -5680,16 +5681,16 @@ DB_PASS=</code></pre>
   <h3 style="margin-bottom:.8rem">Performance</h3>
 
   <div style="border-left:3px solid var(--accent);padding-left:1rem;margin-bottom:1.2rem">
-    <p><strong>Isn't a tree-walk interpreter slow?</strong></p>
+    <p><strong>Isn't an interpreted language slow?</strong></p>
     <p style="color:var(--text-muted);margin-top:.4rem">
-      The "tree-walk = slow" cliché is true for models that <strong>re-parse on every request</strong>.
-      In LOOK, thanks to FastCGI Warm Start the code is parsed <strong>once</strong> and the AST stays in memory.
-      Each request only runs <code>dispatch → callback</code>; the parse cost is zero.
-      Hot paths also run on the bytecode VM — 10,000+ RPS on a single core on a direct port.
+      The "interpreted = slow" cliché is true for models that <strong>re-parse on every request</strong>.
+      In LOOK, thanks to FastCGI Warm Start the code is parsed and compiled to bytecode <strong>once</strong> and stays in memory.
+      Each request only runs <code>dispatch → callback</code> on the bytecode VM; the parse cost is zero.
+      10,000+ RPS on a single core on a direct port.
     </p>
     <p style="color:var(--muted);margin-top:.4rem">
-      Moreover, in web apps the bottleneck isn't the interpreter: 70–80% of response time is the DB query,
-      10–15% is network/I/O. The interpreter's share is 5–10%. LOOK solves the real bottleneck (the DB) with a C++ connection pool.
+      Moreover, in web apps the bottleneck isn't the language runtime: 70–80% of response time is the DB query,
+      10–15% is network/I/O. The runtime's share is 5–10%. LOOK solves the real bottleneck (the DB) with a C++ connection pool.
       Phase 12 added ThreadPool + ConnPool — N worker threads run concurrently.
       <strong>Field proof:</strong> 700k+ requests in 72 hours, a steady 134 ms average response, 0 CPU locks.
     </p>

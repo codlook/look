@@ -34,7 +34,7 @@ production configuration:
 | --- | --- | --- |
 | **Node.js** | 22.x LTS | default production run (`node app.js`); **JIT ON** (never `--jitless`), cluster only where the test explicitly measures multi-process |
 | **PHP** | 8.3.x | **OPcache ON + JIT ON** (`opcache.enable_cli=1`, `opcache.jit=tracing`, `opcache.jit_buffer_size=128M`); FPM for web tests, CLI for language-core |
-| **LOOK** | build stamped via `--version` (git sha) | bytecode VM default (`LOOK_CLI_VM=1`), `lk-fcgi` for web |
+| **LOOK** | build stamped via `--version` (git sha) | bytecode VM (the only engine), `lk-fcgi` for web |
 | **Go** | 1.22.x | `net/http`, `database/sql` + go-sql-driver/mysql; `GOMAXPROCS=2` (Go 1.22 does not read the cgroup quota) |
 | **Elixir** | 1.16 / OTP | Plug on Bandit, MyXQL pool with `nodelay: true` (without it every query waits ~40 ms on Nagle + delayed ACK) |
 

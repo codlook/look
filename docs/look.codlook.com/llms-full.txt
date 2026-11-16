@@ -55,7 +55,7 @@ route("404", fn() => response::error(404, "Endpoint not found"))
 
 | Feature | Detail |
 | --- | --- |
-| Runtime | C++23 — register-based bytecode VM (default engine, ~41–51× faster on the CLI) with a tree-walk interpreter as a safety-net fallback |
+| Runtime | C++23 — register-based bytecode VM, the only engine (CLI, `lk test`, REPL, web, CGI); a program the compiler rejects does not start |
 | Web mode | FastCGI — port 9000 (production) · HTTP mode (WebSocket) · CGI (fallback) |
 | Database | MySQL · SQLite · PostgreSQL — self-contained, wire protocol |
 | Install | Copy the binary, register it with Apache, run |
@@ -2631,7 +2631,7 @@ LOOK offers concurrency at two levels: at the runtime level (each HTTP request o
 
 | Layer | Model | Developer Effort |
 | --- | --- | --- |
-| **Runtime (look-fcgi)** | N worker threads — each HTTP request in an isolated interpreter copy | Zero — the runtime handles it |
+| **Runtime (look-fcgi)** | N worker threads — each HTTP request in an isolated runtime copy | Zero — the runtime handles it |
 | **Language (parallel + channel)** | LOOK tasks — parallel work within a single request | Minimal — channel design is enough |
 
 ### When to Use What?
@@ -2657,7 +2657,7 @@ LOOK offers concurrency at two levels: at the runtime level (each HTTP request o
 
 | Problem | Solution |
 | --- | --- |
-| Two threads modify the same interpreter state | `make_dispatch_copy()` — each request in its own copy |
+| Two threads modify the same runtime state | `make_dispatch_copy()` — each request in its own copy |
 | Two threads use the same DB connection | `ConnPool` — each thread borrows a separate connection |
 | A request arrives during hot reload | `shared_mutex` — reload exclusive, dispatch shared |
 | WS broadcast deadlock | The client list is copied, the lock released, then sent |
@@ -2719,7 +2719,7 @@ Each request → a worker thread from the ThreadPool:
   2. make_dispatch_copy()   — built ONCE PER WORKER (thread_local), not per request
                               (rebuilt only when the app is hot-reloaded)
   3. acquire_thread_connections()  — one connection borrowed from each pool
-  4. dispatch_routes() / interpret()  — fully isolated, thread-safe
+  4. route match → handler runs on the VM  — fully isolated, thread-safe
   5. release_thread_connections()  — connections returned to the pool
   6. HTTP response is written
 ```
@@ -2730,7 +2730,7 @@ Each request → a worker thread from the ThreadPool:
 | --- | --- | --- |
 | ThreadPool | fcgi_main.cpp | N worker threads; each incoming TCP connection is assigned to a thread |
 | ConnPool | web_stdlib.cpp | Per-DSN connection pool — SQLite: 1, MySQL/PG: N connections |
-| make_dispatch_copy() | interpreter.cpp | Setup state is shared (read-only); output and call stack are per-request from scratch. The copy itself is **thread_local — built once per worker**, not per request (building it per request cost 30–63 µs, more than running the route; making it per-worker gave **2–3× web throughput**). Invalidated on hot reload via `HttpApp::generation`. |
+| make_dispatch_copy() | runtime_host.cpp | Setup state is shared (read-only); output and call stack are per-request from scratch. The copy itself is **thread_local — built once per worker**, not per request (building it per request cost 30–63 µs, more than running the route; making it per-worker gave **2–3× web throughput**). Invalidated on hot reload via `HttpApp::generation`. |
 | shared_mutex | fcgi_main.cpp | Shared lock for concurrent dispatch; exclusive lock for hot reload |
 
 ### Your LOOK Code Doesn't Change
@@ -3890,7 +3890,7 @@ Runtime statistics. No `use` required — always active.
 
 | Function | Description |
 | --- | --- |
-| `runtime::stats()` | Returns the interpreter state as an assoc array |
+| `runtime::stats()` | Returns runtime statistics as an assoc array |
 | `runtime::gc()` | Trigger garbage collection — returns "ok" |
 
 ### stats() Output
@@ -3902,7 +3902,7 @@ Runtime statistics. No `use` required — always active.
 | `route_count` | int | Number of registered routes |
 | `working_mb` | float | Resident set size — RSS (MB) |
 | `private_mb` | float | Private resident memory — RssAnon on Linux, PrivateUsage on Windows (MB) |
-| `vm_disabled_routes` | int | Distinct routes that permanently fell back from the VM to the interpreter (not total fallbacks — one per route). **> 0 means a VM bug degraded those routes (~37% slower); investigate.** |
+| `vm_disabled_routes` | int | Always `0`. Kept so existing dashboards keep working: in 1.0.x it counted routes moved off the VM to a slower second engine. LOOK now has one engine and never moves a route off the VM. |
 | `errors_5xx` | int | Count of 5xx responses served (silent server errors) |
 | `latency_last_us` | int | Dispatch time of the most recent request (microseconds) |
 | `latency_avg_us` | int | Average dispatch time across all requests (microseconds). Percentiles (p50/p99) are intentionally not here — compute them in a package by polling, so the hot path stays free of per-request histograms. |
@@ -4233,20 +4233,20 @@ LOOK_MAIL_DIR=/var/mail/look
 
 ## FastCGI Warm Start
 
- LOOK's most important performance feature. In FastCGI mode, `index.lk` is loaded, parsed and interpreted only once.
+ LOOK's most important performance feature. In FastCGI mode, `index.lk` is loaded, parsed and compiled to bytecode only once.
 
 ### How It Works
 
 ```lk
 # look-fcgi.exe --port 9000
 
-First request arrives → setup phase:
-  1. index.lk is parsed → AST (kept in WarmApp::program)
-  2. set_setup_mode(true) → interpret()
-     - route() calls → registered in route_registry_
-     - db::connect() → $conn stays in interpreter globals_
+At startup → setup phase:
+  1. index.lk is parsed → AST → bytecode (a compile error stops the start, with the reason)
+  2. setup mode on → the top level runs ONCE, on the VM
+     - route() calls → registered in the route table
+     - db::connect() → $conn stays in the setup globals
      - a DB error is caught via try/catch, $conn stays as null
-  3. set_setup_mode(false)
+  3. setup mode off
 
 EVERY subsequent request → dispatch phase:
   1. make_web_context(req) → REQUEST_URI, METHOD, headers, cookies
@@ -4639,7 +4639,7 @@ look-fcgi reads these from the process environment — set them in your systemd 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `LOOK_BYTECODE` | `1` | Bytecode VM on (default). `0` forces the tree-walk interpreter. |
+| `LOOK_BYTECODE` / `LOOK_CLI_VM` | — | Ignored (1.0.x only). LOOK runs only on the bytecode VM; `0` writes one `WARN` line and changes nothing. |
 | `LOOK_FIBER_DISPATCH` | *on (Linux)* | `0` selects a worker per connection instead of fibers (see [Concurrent Runtime](#concurrent)). Windows always uses a worker per connection. |
 | `LOOK_WARN_UNDEF` | *off* | Undefined variables are a hard error by default. `1` restores lenient mode with a warning instead. |
 
@@ -4662,7 +4662,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk
 | --- | --- | --- |
 | look-fcgi.exe | FastCGI — production (port 9000) | ✅ Active |
 | look-cgi.exe | Apache CGI — fallback mode | ✅ Stable |
-| look.exe | CLI interpreter | ✅ Stable |
+| look.exe | CLI — scripts, `lk test`, REPL | ✅ Stable |
 
 ### Source Files (`cpp/src/`)
 
@@ -4670,7 +4670,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk
 | --- | --- |
 | lexer.cpp | Tokenizer, `$` prefix, all token types |
 | parser.cpp | Precedence-aware parser, AST nodes, SourceLocation |
-| interpreter.cpp | Tree-walk interpreter, GC, route() setup_mode, dispatch_routes(), make_dispatch_copy() |
+| runtime_host.cpp | Runtime host — built-in module table, web context, make_dispatch_copy() (per-worker request copy) |
 | stdlib.cpp | math:: string:: type:: array:: — all standard modules |
 | extra_stdlib.cpp | env() config() runtime::stats() |
 | web.cpp | route() request:: response:: json:: session:: cookie:: — HTTP primitives |
@@ -4688,7 +4688,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk
 | event_loop.cpp | Abstract EventLoop — epoll (Linux) / IOCP (Windows) |
 | websocket.cpp | SHA-1, Base64, RFC 6455 frame codec, WsConnection, WsRegistry |
 | sse.cpp | SseConnection, SseRegistry — SSE frame sending, disconnect detection |
-| timer_stdlib.cpp | TimerManager singleton — background thread, after/every/cancel, interpreter binding |
+| timer_stdlib.cpp | TimerManager singleton — background thread, after/every/cancel, callbacks run on the VM |
 | compiler.cpp | AST → FunctionProto bytecode compiler — RegisterAllocator, alloc_seq(), short-circuit &&/\|\|, closure capture hints, try/catch TRY_PUSH/POP |
 | vm.cpp | Register-based VM — switch(opcode) dispatch, CallFrame stack, TryCatchEntry, PARALLEL_CALL (thread detach), CHAN_*/WS_*/SSE_* opcodes |
 | cgi_main.cpp | CGI entry — fallback mode |
@@ -4696,7 +4696,7 @@ ExecStart=/opt/look/lk-fcgi --mode http --port 9000 /var/www/myapp/index.lk
 
 ### Headers (`cpp/include/look/`)
 
-`token.h` · `lexer.h` · `parser.h` · `ast.h` · `interpreter.h` · `fcgi.h` · `http_server.h` · `event_loop.h` · `websocket.h` · `sse.h` · `timer.h` · `bytecode.h` · `compiler.h` · `vm.h` · `logger.h`
+`token.h` · `lexer.h` · `parser.h` · `ast.h` · `runtime_host.h` · `fcgi.h` · `http_server.h` · `event_loop.h` · `websocket.h` · `sse.h` · `timer.h` · `bytecode.h` · `compiler.h` · `vm.h` · `logger.h`
 
 ### Mode Compatibility
 
@@ -4757,20 +4757,17 @@ LOOK runs every program on one engine: a register-based bytecode VM. The CLI (`l
 > **Port note:** `--mode http` runs independently of FastCGI. Port 9000 is reserved for FastCGI; use a separate port for `--mode http` (e.g. 8090, 9001).
 
 ```lk
-# --mode http — VM active (default), a separate port from FastCGI
+# --mode http — a separate port from FastCGI
 ./look-fcgi --mode http --port 8090 --workers 8 /var/www/myapp/index.lk
 
-# VM disabled — interpreter fallback
-LOOK_BYTECODE=0 ./look-fcgi --mode http --port 8090 --workers 8 /var/www/myapp/index.lk
-
 # the chat service
-LOOK_BYTECODE=1 ./look-fcgi --mode http --port 9001 --workers 8 chat.lk
+./look-fcgi --mode http --port 9001 --workers 8 chat.lk
 
-# --mode fcgi — FastCGI (via Apache mod_proxy_fcgi) — VM also default here
+# --mode fcgi — FastCGI (via Apache mod_proxy_fcgi) — the same VM
 ./look-fcgi --port 9000 --workers 8
 ```
 
-> **Your LOOK code doesn't change:** when the VM kicks in, nothing in your .lk files needs changing. Existing scripts run as-is.
+> **Your LOOK code doesn't change:** there is no engine to switch on — every .lk file runs on the VM as-is.
 
 ## Design Limits
 
@@ -4898,7 +4895,7 @@ LOOK v1.0.0 — all completed features.
 | sse:: module | ✅ | `sse::send / on / close / clients` — named events, disconnect detection, `--mode http` only |
 | timer:: module | ✅ | `timer::after / every / cancel` — global TimerManager, background thread, lock-free callback |
 | `--mode http` bug fix | ✅ | EPOLLOUT edge-triggered bug fixed (level-triggered); SIGPIPE ignore added — the connection was dropping after the first request |
-| Bytecode VM | ✅ | Register-based VM; compiler.cpp (AST→FunctionProto); vm.cpp (switch dispatch); 30/30 tests PASS; 7.8x compute speedup; `LOOK_BYTECODE=0` fallback |
+| Bytecode VM | ✅ | Register-based VM; compiler.cpp (AST→FunctionProto); vm.cpp (switch dispatch); 30/30 tests PASS; 7.8x compute speedup; the only engine, no fallback |
 | timer::cancel fix | ✅ | Cancellation is now instant — erase(id) + cv_.notify_one(); the old behavior waited 30s |
 | WebSocket chat | ✅ | WebSocket + broadcast + `timer::` keepalive — real-time messaging |
 | VM CALL goto fix | ✅ | The run() outer while loop wasn't restarting after push_back → named function bodies never ran; fixed with goto call_dispatch |
@@ -5174,13 +5171,17 @@ project/
 
 ### look.lock Format
 
-Generated automatically. `ref@sha` per package — the same commit is installed on reinstall.
+Generated automatically. `ref@sha h1:checksum` per package — the same commit is installed on reinstall, and its content must match the recorded checksum.
 
 ```lk
 # look.lock — generated by look install, do not edit manually
-"ali/look-stripe" = "main@a3f8c21d..."
-"zeynep/look-mail" = "v2.1@b7e4d09f..."
+"ali/look-stripe" = "main@a3f8c21d... h1:Xq3n...="
+"zeynep/look-mail" = "v2.1@b7e4d09f... h1:9fKc...="
 ```
+
+The `h1:` checksum works like Go's `go.sum`: a SHA-256 over the extracted files (sorted paths and the SHA-256 of each file), not over the ZIP bytes, which GitHub may regenerate. When `look install` downloads a commit that look.lock already has a checksum for, the content must match; on a mismatch it stops with an error naming the package, the expected and the downloaded checksum, and installs nothing. A line without a checksum (an older look.lock) still works: the package is installed and the checksum is recorded, with one line saying so. Moving to a new commit records the new checksum.
+
+Installs are atomic: the package is extracted into a temporary folder next to its target and swapped in only when it is complete and verified. A failed download, a corrupt archive or a checksum mismatch leaves the previous installation untouched. `lk module install` (`~/.look/modules/`) is atomic the same way; modules have no lock file, so there is no checksum for them.
 
 ### Usage — index.lk
 
@@ -5207,11 +5208,13 @@ jobs.db
 | Step | Detail |
 | --- | --- |
 | Download | GitHub API zipball endpoint — `api.github.com/repos/{user}/{repo}/zipball/{ref}` |
-| HTTPS | The existing http_client (Schannel / OpenSSL) — zero extra dependency |
+| HTTPS | The existing http_client (Schannel / OpenSSL) — no extra dependency |
 | Redirect | The GitHub 302 → codeload.github.com chain is followed automatically |
 | ZIP extraction | miniz amalgamation (322 KB, included) — the GitHub prefix (`repo-sha/`) is stripped automatically |
 | SHA resolution | `api.github.com/repos/{user}/{repo}/commits/{ref}` — full 40-character commit hash |
-| look.lock | Sorted, deterministic `"user/repo" = "ref@sha"` format |
+| look.lock | Sorted, deterministic `"user/repo" = "ref@sha h1:checksum"` format |
+| Checksum | `h1:` + base64 SHA-256 of the extracted content (Go dirhash); a mismatch for the same commit stops the install |
+| Atomic install | Extract to a temp folder beside the target, verify, then rename; on failure the old package stays |
 
 ### Official Codlook Repositories
 
@@ -5757,15 +5760,15 @@ The technical questions developers ask when they first see LOOK, and the answers
 
 ### Performance
 
-**Isn't a tree-walk interpreter slow?**
+**Isn't an interpreted language slow?**
 
-The "tree-walk = slow" cliché is true for models that **re-parse on every request**.
- In LOOK, thanks to FastCGI Warm Start the code is parsed **once** and the AST stays in memory.
- Each request only runs `dispatch → callback`; the parse cost is zero.
- Hot paths also run on the bytecode VM — 10,000+ RPS on a single core on a direct port.
+The "interpreted = slow" cliché is true for models that **re-parse on every request**.
+ In LOOK, thanks to FastCGI Warm Start the code is parsed and compiled to bytecode **once** and stays in memory.
+ Each request only runs `dispatch → callback` on the bytecode VM; the parse cost is zero.
+ 10,000+ RPS on a single core on a direct port.
 
-Moreover, in web apps the bottleneck isn't the interpreter: 70–80% of response time is the DB query,
- 10–15% is network/I/O. The interpreter's share is 5–10%. LOOK solves the real bottleneck (the DB) with a C++ connection pool.
+Moreover, in web apps the bottleneck isn't the language runtime: 70–80% of response time is the DB query,
+ 10–15% is network/I/O. The runtime's share is 5–10%. LOOK solves the real bottleneck (the DB) with a C++ connection pool.
  Phase 12 added ThreadPool + ConnPool — N worker threads run concurrently.
  **Field proof:** 700k+ requests in 72 hours, a steady 134 ms average response, 0 CPU locks.
 

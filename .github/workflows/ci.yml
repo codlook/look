@@ -364,6 +364,15 @@ jobs:
           echo "$out"
           echo "$out" | grep -q 'concat in place: all checks passed' || { echo "::error::concat in place FAILED"; exit 1; }
 
+      # A literal 0x / 0b with no digits was 0, and a string holding a whole number over 64 bits
+      # became 0 when used as a number ($list["99999999999999999999"] read element 0). Both are
+      # errors now; a non-numeric string stays lenient (int("abc") == 0).
+      - name: No silent wrong numbers (0x, strings over 64 bits)
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/numeric_overflow_test.sh build/lk
+
       # SIGTERM (systemd stop/restart, a Plesk release switch): the request in progress finishes
       # with "Connection: close", new connections are refused, an idle keep-alive connection does
       # not hold the exit, exit code 0; a second signal stops at once. HTTP and FastCGI.
@@ -1593,6 +1602,17 @@ jobs:
           cd cpp
           g++ -std=c++17 -Iinclude tests/installer_redirect_test.cpp -o /tmp/irt
           /tmp/irt
+
+      # look.lock content checksum (h1:, like go.sum) and atomic install, without the network
+      # (LOOK_INSTALL_ARCHIVE_DIR serves local zipballs): first install records it, same content
+      # installs, changed content at the same commit is refused with the old package and look.lock
+      # untouched, an old line without a checksum gets one, a corrupt archive keeps the old package
+      # (packages and modules).
+      - name: "installer:: look.lock checksum + atomic install (no network)"
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/installer_integrity_test.sh build/lk
 
       # SSRF private/özel-blok kararı — seam (look/ssrf_safe.h). http_client'ın getaddrinfo
       # döngüsü bu predikatlara delege eder. Ağsız/DNS'siz: ham byte'tan karar tablosu

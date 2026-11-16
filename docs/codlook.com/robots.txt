@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://codlook.com/sitemap.xml

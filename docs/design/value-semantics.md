@@ -1,7 +1,12 @@
 # Design: value semantics for arrays, maps and structs
 
-Status: **accepted (2026-10-04), not implemented yet.** Branch: `v2`. Decided: structs are value
-types; the parameter-write check runs by default at load and is an error under `lk --check`.
+Status: **accepted (2026-10-04); implemented on the VM** (steps 5 and 6 below). Branch: `v2`.
+Decided: structs are value types; the parameter-write check runs by default at load and is an
+error under `lk --check`.
+
+Note: this document was written while 1.0.x still had a second engine, a tree-walk interpreter.
+That engine has since been removed — the bytecode VM is the only engine — so every mention of
+the tree-walk interpreter below is history, kept as it was decided and measured.
 
 ## The problem
 
@@ -74,8 +79,9 @@ work this way (the register *is* the variable). Globals, captured variables and 
 need the new code path. This is the bulk of the work, and it is why the benchmark below
 exists before any code.
 
-The same applies to the tree-walk interpreter, which stays as the test oracle: index
-assignment must work on the variable's slot, not on a copy of the value.
+The same applied to the tree-walk interpreter, which at the time was planned to stay as a
+reference for tests: index assignment must work on the variable's slot, not on a copy of the
+value. (It was removed instead; the VM is the only engine.)
 
 ## Answers to the design questions
 
@@ -100,8 +106,7 @@ that case; a separate per-request copy of every captured cell was needed to clos
 
 With value capture and no writes, the case cannot be written: the program above is a parse
 error. What a closure holds is immutable for its whole life, so there is nothing to isolate
-and nothing to race on. The rule is enforced in one place for both engines, from the
-parser's tree, before anything runs (`include/look/capture_check.h`).
+and nothing to race on. The rule is enforced in one place, from the parser's tree, before anything runs (`include/look/capture_check.h`).
 
 The cost was measured before the change, with the parser rather than a text search: in
 LookPress, the example applications, the packages and the modules there is one closure
@@ -143,7 +148,8 @@ copies it if it writes. These become plain shares.
 requests must keep giving each request its own instance of that variable:
 
 - the setup environment that functions close over in the tree-walk interpreter
-  (`Interpreter::request_env`, including the 1.0.5 fix for copies of copies);
+  (`Interpreter::request_env`, including the 1.0.5 fix for copies of copies) — gone with that
+  engine;
 - the per-request global table in the VM (already a per-request map).
 
 They get cheaper — an environment pointing at the same value instead of a deep copy — but
@@ -201,7 +207,7 @@ because today it is silently changing `$a`. Its output also changes from
 1. Structs become their own value kind with slots (no behaviour change yet; `array::`
    rejects structs; field access by index).
 2. Copy-on-write writes in the VM: locals, globals, captures, nested paths.
-3. The same in the tree-walk interpreter.
+3. The same in the tree-walk interpreter. (Dropped: that engine was removed.)
 4. Content equality.
 5. Replace the deep copies of 1.0.3/1.0.4 with plain shares; keep the per-request variables
    (cells, environments). The isolation tests must still pass.
@@ -235,9 +241,9 @@ when it is removed (plain write, write through a path, push / pop as the first w
 `shared_setup_concurrency_test.sh` runs 1 200 concurrent requests on 4 workers and checks
 that every writer reads back its own writes and every reader the declared values.
 
-The tree-walk engine still copies its setup environment per request
-(`Interpreter::request_env`). It is the fallback engine and goes away with the single-engine
-work; it is not worth optimising on the way out.
+The tree-walk engine, then the fallback engine, still copied its setup environment per request
+(`Interpreter::request_env`); it was not optimised because it was on the way out. It has since
+been removed: the VM is the only engine.
 
 Not done here: the per-request copy of the global *table* itself (names and value handles,
 not the data). It is proportional to the number of top-level names, not to the size of the

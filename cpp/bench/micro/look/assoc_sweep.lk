@@ -7,8 +7,7 @@
 # K = assoc'taki anahtar sayısı; her tur K okuma yapar; TOTAL ~ sabit tutulur ki
 # ölçüm K'dan bağımsız per-lookup maliyeti yakalasın (küçük-K = fast-path baskın).
 #
-# Kullanım:  lk assoc_sweep.lk            (CLI-VM, DEFAULT motor)
-#            LOOK_CLI_VM=0 lk assoc_sweep.lk   (tree-walk / interpreter)
+# Kullanım:  lk assoc_sweep.lk            (VM — tek motor; tree-walk yorumlayıcı silindi)
 use date
 
 const { TOTAL = 5000000 }   # her K için toplam lookup sayısı (~5M)

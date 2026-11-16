@@ -126,7 +126,7 @@
     <div class="item"><div class="n">10,558<span class="r">/s</span></div><div class="l">requests/sec — c=200, 0 errors</div></div>
     <div class="item"><div class="n">3–5<span class="r">×</span></div><div class="l">less RAM used</div></div>
     <div class="item"><div class="n">1</div><div class="l">static binary · glibc ≥ 2.28</div></div>
-    <div class="item"><div class="n">C++<span class="r">23</span></div><div class="l">dual engine: bytecode VM + tree-walk</div></div>
+    <div class="item"><div class="n">C++<span class="r">23</span></div><div class="l">one engine: register bytecode VM</div></div>
   </div>
 </section>
 
@@ -180,8 +180,8 @@
       </div>
       <div class="fcard">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></div>
-        <h3>Dual engine, for speed</h3>
-        <p>The default <b>bytecode VM</b> is ~41× faster than the tree-walking interpreter on the CLI. On the web, a route-level safety-net fallback.</p>
+        <h3>One engine, everywhere</h3>
+        <p>Every program runs on one register-based <b>bytecode VM</b> — CLI, tests, REPL, FastCGI, HTTP and CGI. A program the compiler rejects does not start: the error says why.</p>
       </div>
       <div class="fcard">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H4z"/><path d="M2 20h20"/><path d="M8 8l3 3-3 3M13 14h4"/></svg></div>
@@ -226,7 +226,7 @@
       <div class="rcard"><span class="badge">Queue</span><h4>queue:: — FIFO queue</h4><p>In-memory, thread-safe, named queue. <code>queue::push / pop / peek / size</code>.</p></div>
       <div class="rcard"><span class="badge">Cache</span><h4>cache:: — in-process cache</h4><p>TTL-aware, thread-safe singleton. Shared across all workers. <code>cache::get / set / has / flush</code>.</p></div>
       <div class="rcard"><span class="badge">Template</span><h4>template:: — view engine</h4><p>Layout inheritance, partial include, <code>{#each}</code> loop, <code>{#if}</code> condition. Server-rendered — no runtime.</p></div>
-      <div class="rcard"><span class="badge">VM</span><h4>Bytecode VM</h4><p>AST → register bytecode → switch dispatch. The default engine everywhere — ~41× faster than tree-walking on the CLI.</p></div>
+      <div class="rcard"><span class="badge">VM</span><h4>Bytecode VM</h4><p>AST → register bytecode → switch dispatch. The only engine, in every mode — no second engine, no fallback.</p></div>
       <div class="rcard"><span class="badge">Security</span><h4>crypto:: + auth:: + JWT</h4><p><code>sha256</code>, <code>hmac_sha256</code>, <code>rs256_sign/verify</code>, base64url, UUID v4, timing-safe <code>constant_compare</code> — no external deps. Passwords: <code>auth::hash</code> (PBKDF2). JWT builds on this.</p></div>
       <div class="rcard"><span class="badge">Security</span><h4>Rate limiter — token bucket</h4><p>Two layers: per-IP burst + global cap. <code>LOOK_RATE_LIMIT_*</code> — your code doesn't change, it's at the runtime level.</p></div>
       <div class="rcard"><span class="badge">Security</span><h4>DKIM + SMTP hardening</h4><p>Outbound email is signed RSA-SHA256 automatically. Port 25 relay is off — authenticated SMTP only (587/465).</p></div>
@@ -406,7 +406,7 @@
         <span class="kicker">parallel() + channel()</span>
         <h3>Concurrency <span class="r">at the language level.</span></h3>
         <p>Run 3 DB queries at once in a single request — <b>total time equals the slowest query</b>, not the sum of all three. Go's channel model, in LOOK syntax: <span class="mono">parallel()</span> starts a task, <span class="mono">channel()</span> carries the result back. There's blocking (natural backpressure), no callback hell.</p>
-        <p style="color:var(--ink-faint);font-size:15px;margin-top:12px;">Every HTTP request already runs on its own worker thread — <span class="mono">--workers N</span>, no code changes. An isolated interpreter copy + a connection pool.</p>
+        <p style="color:var(--ink-faint);font-size:15px;margin-top:12px;">Every HTTP request already runs on its own worker thread — <span class="mono">--workers N</span>, no code changes. An isolated runtime copy + a connection pool.</p>
       </div>
       <div class="code-side">
         <div class="codewin">
@@ -468,8 +468,8 @@
     </div>
     <div class="stackgrid">
       <div class="scard"><span class="tag">Parser</span><h4>Lexer · Parser · AST</h4><p>Precedence-aware parser, full operator set, string interpolation, error reporting with line/column positions.</p></div>
-      <div class="scard"><span class="tag">VM</span><h4>Bytecode VM</h4><p>AST → 3-address register bytecode → switch dispatch. <code>41×</code> faster than tree-walking on the CLI. Safety net: tree-walk fallback.</p></div>
-      <div class="scard"><span class="tag">Concurrency</span><h4>ThreadPool + ConnPool</h4><p><code>--workers N</code>, a per-request interpreter copy, a per-DSN connection pool. Hot reload: zero downtime.</p></div>
+      <div class="scard"><span class="tag">VM</span><h4>Bytecode VM</h4><p>AST → 3-address register bytecode → switch dispatch. The only engine: CLI, tests, REPL and web run the same VM.</p></div>
+      <div class="scard"><span class="tag">Concurrency</span><h4>ThreadPool + ConnPool</h4><p><code>--workers N</code>, a per-request runtime copy, a per-DSN connection pool. Hot reload: zero downtime.</p></div>
       <div class="scard"><span class="tag">Networking</span><h4>HTTP/1.1 · WebSocket · SSE</h4><p>epoll (Linux), IOCP (Windows). RFC 6455 WS, an SSE frame codec. Optional fiber runtime (Go netpoller model).</p></div>
       <div class="scard"><span class="tag">DB</span><h4>MySQL · SQLite · PostgreSQL</h4><p>Wire protocol from scratch. No driver. One <code>db::</code> API, different DSNs — only the connection string changes.</p></div>
       <div class="scard"><span class="tag">Deploy</span><h4>CGI · FastCGI · HTTP</h4><p>Apache/nginx FastCGI, standalone HTTP, CGI fallback. One binary, three modes.</p></div>
@@ -487,7 +487,7 @@
     <div class="benchgrid">
       <div class="bcard"><div class="num">10,558</div><div class="unit">req/sec</div><div class="lbl">HTTP + VM router</div><div class="sub">c=200, 0 errors</div></div>
       <div class="bcard"><div class="num">1<span class="r">M</span></div><div class="unit">requests</div><div class="lbl">Endurance run</div><div class="sub">c=10,000, 0 errors</div></div>
-      <div class="bcard"><div class="num">41–51<span class="r">×</span></div><div class="unit">faster</div><div class="lbl">Bytecode VM speedup</div><div class="sub">CLI: 3652 ms → 72 ms</div></div>
+      <div class="bcard"><div class="num">41–51<span class="r">×</span></div><div class="unit">faster</div><div class="lbl">Bytecode VM speedup</div><div class="sub">vs the 1.0.x tree-walk engine: 3652 ms → 72 ms</div></div>
       <div class="bcard"><div class="num">28</div><div class="unit">MB</div><div class="lbl">Memory — flat</div><div class="sub">didn't grow across 1.75M requests</div></div>
     </div>
     <div style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--red);border-radius:14px;padding:26px 30px;margin-top:26px;">

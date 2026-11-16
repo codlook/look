@@ -1,7 +1,7 @@
 # In-process template micro-benchmark: microseconds per render, no HTTP and no database.
 # Used to attribute template-engine cost layer by layer (tpl_race.sh is the end-to-end
 # number). Run from this directory on a container-local copy:
-#   cp -r cpp/bench/tpl /root/tpl && cd /root/tpl && LOOK_VM_STRICT=1 lk micro.lk
+#   cp -r cpp/bench/tpl /root/tpl && cd /root/tpl && lk micro.lk
 use template
 use date
 

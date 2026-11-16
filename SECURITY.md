@@ -33,8 +33,9 @@ header in an `array::map` callback after an outgoing HTTP call — another user'
 then the process crashed. With `LOOK_FIBER_DISPATCH=0` every answer was correct.
 
 The running program is now kept per request. The same test gives 1920 correct answers of 1920 and
-no crash. Routes that the VM cannot compile and that run on the interpreter now also get their own
-copy of the interpreter per request in fiber mode (they shared one per thread).
+no crash. In 1.0.24, routes that the VM could not compile and that ran on the 1.0.x tree-walk
+engine also got their own copy of that engine per request in fiber mode (they shared one per
+thread). Today there is no such engine: every route runs on the VM.
 
 **What to do:** if you run 1.0.20, 1.0.21, 1.0.22 or 1.0.23 on Linux, upgrade to 1.0.24 now —
 an application that calls a database or `http::get` and then a built-in with a callback could
@@ -316,12 +317,12 @@ payload. Handlers run only from a timer or a separate worker process were not af
 ### 2026-10-07 — Top-level code ran twice at startup; values read at setup were lost (1.0.9)
 
 **Affected:** every release up to and including 1.0.8, on the default engine (the bytecode
-VM), in `--mode http` and FastCGI. Applications started with `LOOK_BYTECODE=0` are not
-affected. **Fixed in:** 1.0.9.
+VM), in `--mode http` and FastCGI. Applications started with `LOOK_BYTECODE=0` (a 1.0.x
+setting that ran them on the tree-walk engine only) were not affected. **Fixed in:** 1.0.9.
 
-At startup the server runs the top level of the script twice: once on the tree-walk engine
-and once on the VM, which needs it to build the routes. The second pass called some module
-functions again and skipped others by a fixed list of name prefixes:
+Up to 1.0.8, at startup the server ran the top level of the script twice: once on the
+tree-walk engine and once on the VM, which needed it to build the routes. The second pass
+called some module functions again and skipped others by a fixed list of name prefixes:
 
 - `file::put` and `file::append` at the top level ran twice: one start wrote two lines to a
   log file (measured on 1.0.8), and a file written at setup was written a second time;
@@ -334,10 +335,13 @@ functions again and skipped others by a fixed list of name prefixes:
 
 Database writes at the top level (`db::exec`) were on the skip list and ran once (measured).
 
-The second pass now replays the results of the first, in order, and calls nothing again.
-If the two passes do not make the same calls in the same order, the VM setup stops and the
-application runs on the tree-walk engine (`LOOK_VM_STRICT=1` refuses to start); there is no
-silently different value.
+In 1.0.9 the second pass replayed the results of the first, in order, and called nothing
+again; if the two passes did not make the same calls in the same order, the VM setup stopped
+and the application ran on the tree-walk engine.
+
+Today there is one pass: the top level runs once, on the VM, which is the only engine. There
+is no second pass to replay and no other engine to fall back to; a program the compiler
+rejects does not start, and the error says why.
 
 **What to do:** upgrade to 1.0.9. If your script writes files at the top level, expect one
 write per start from now on. If it reads configuration at the top level through `cache::`
@@ -346,8 +350,8 @@ or another function listed above, routes will now see the value that was read.
 ### 2026-10-06 — A failing route handler ran twice in one request (duplicate writes)
 
 **Affected:** every release up to and including 1.0.7, on the default engine (the bytecode
-VM), in `--mode http` and FastCGI. Applications started with `LOOK_BYTECODE=0` are not
-affected. **Fixed in:** 1.0.8.
+VM), in `--mode http` and FastCGI. Applications started with `LOOK_BYTECODE=0` (1.0.x
+only) were not affected. **Fixed in:** 1.0.8.
 
 When a route handler ended with an uncaught error — a plain `throw`, a failed database
 query, an undefined variable, any run-time error — the server treated it as a fault of the
@@ -362,21 +366,25 @@ Measured on 1.0.7: a handler that inserts one row and then fails wrote two rows 
 request.
 
 A run-time error is now answered with `500` once; the handler is never run again and the
-route stays on the VM.
+route stays on the VM. LOOK now has only the VM, so there is no other engine a request could
+be run again on.
 
-Related, test mode only: with `LOOK_VM_STRICT=1` the same error escaped the worker without
+Related, test mode only: with `LOOK_VM_STRICT=1` (a 1.0.x setting) the same error escaped the worker without
 releasing its database connections, and after as many errors as there are workers the
 server stopped answering. Fixed in the same release.
 
-**Behaviour change in 1.0.8.** Routes that call a module function the VM does not provide
-(`timer::after`, `timer::every`, `jobs::worker`, ...) used to work only because of that
-second run. The server now finds them at startup — through the route, its nested functions
-and the global functions it calls by name — runs them on the tree-walk engine from the
-first request, and writes one line per route to the log (`Route ... runs on the
-interpreter: it reaches ...`). A route that reaches such a function only through a
-variable (for example a function stored in an array and called from there) cannot be found
-that way; it used to answer after running twice and now answers `500`. Call the function
-by name, or start the server with `LOOK_BYTECODE=0`.
+**Behaviour change in 1.0.8 (1.0.x only).** Routes that called a module function the VM did
+not provide then (`timer::after`, `timer::every`, `jobs::worker`, ...) used to work only
+because of that second run. From 1.0.8 the 1.0.x server found them at startup — through the
+route, its nested functions and the global functions it calls by name — ran them on the
+tree-walk engine from the first request, and wrote one line per route to the log (`Route ...
+runs on the interpreter: it reaches ...`). A route that reached such a function only through
+a variable (for example a function stored in an array and called from there) could not be
+found that way; it used to answer after running twice and from 1.0.8 answered `500`.
+
+Today every module function runs on the VM and there is no second engine: a route that
+calls a module function that does not exist stops the start, with a message naming the route
+and the function.
 
 Also in 1.0.8, not a security matter: a timer armed while the timer thread was already
 waiting (in practice every timer after the first one in the process) could fire up to 30
@@ -390,8 +398,9 @@ on every version, because the failed attempt is rolled back.
 
 ### 2026-10-04 — Timer and WebSocket handlers could still change setup arrays (1.0.5)
 
-**Affected:** every release up to and including 1.0.4, when the application runs on the
-interpreter (`LOOK_BYTECODE=0`, or after a VM fallback). **Fixed in:** 1.0.5.
+**Affected:** every release up to and including 1.0.4, when the application ran on the
+1.0.x tree-walk engine (`LOOK_BYTECODE=0`, or after a VM fallback; neither exists today).
+**Fixed in:** 1.0.5.
 
 1.0.4 isolated requests from each other, but two kinds of handler slipped through: a timer
 armed by a route (`timer::after`, `timer::every`) and a WebSocket message handler
@@ -400,8 +409,8 @@ armed by a route (`timer::after`, `timer::every`) and a WebSocket message handle
 HTTP request saw the change. Writes made directly in the handler body, SSE handlers and
 the WebSocket open handler were already isolated.
 
-The handlers run on an interpreter copy made from the request's copy; that second-level
-copy did not remember where the setup values live. It does now.
+The handlers ran on a copy of that engine made from the request's copy; that second-level
+copy did not remember where the setup values live. It did from 1.0.5.
 
 **What to do:** upgrade to 1.0.5.
 
@@ -635,10 +644,11 @@ vulnerability.
   `cpp/tests/session_cookie_modes_test.sh` in `--mode http`, FastCGI and CGI (HTTPS, HTTP,
   forged-header, both overrides, and the warning).
 
-- **Cross-request data leak under fiber dispatch (interpreter path) — fixed.** When the
+- **Cross-request data leak under fiber dispatch (interpreter path, 1.0.x) — fixed.** When the
   optional fiber dispatch mode (`LOOK_FIBER_DISPATCH=1`) was enabled *and* a request ran on
-  the tree-walk interpreter path (which happens when bytecode compilation falls back for a
-  script, not only under an explicit debug flag), the interpreter's `request::`/`response::`
+  the 1.0.x tree-walk interpreter path (which happened when bytecode compilation fell back for
+  a script, not only under an explicit debug flag; today there is no such path — every request
+  runs on the VM), the interpreter's `request::`/`response::`
   binding used a dispatch copy shared across the many fibers interleaved on one worker thread.
   When a handler yielded on I/O (`http_client` / `db::query`), another fiber could rebind that
   shared copy to its own request, so the first handler's `request::get()` could then read

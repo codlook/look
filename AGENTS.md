@@ -9,8 +9,8 @@ LOOK is a **scripting language built for the web** — one static binary with **
 runtime dependencies**. It embeds MySQL/PostgreSQL/SQLite (wire protocols implemented in-house),
 WebSocket, Server-Sent Events, and an SMTP/IMAP mail server. A complete web app runs from one
 `.lk` file: you write routes, database queries, templates and background jobs; the runtime handles
-concurrency, connection pooling and hot reload. Default engine is a register-based **bytecode VM**,
-with a tree-walk interpreter as a fallback.
+concurrency, connection pooling and hot reload. Every program runs on one engine, a register-based
+**bytecode VM**; a program the compiler rejects does not start.
 
 LOOK is **its own language for the web** — it is *not* positioned as a replacement for PHP, Node,
 Go or Rust. Comparisons are only for measurement/context, never as an "X vs LOOK" or "use LOOK
@@ -26,7 +26,6 @@ instead of X" frame.
 
 Websites (served from `docs/` in the main repo):
 - **look.codlook.com** — the LOOK language site (source: `docs/look.codlook.com/`), English.
-- **codlook.com** — the company site (source: `docs/codlook.com/`), Turkish.
 - **looky.codlook.com** — Looky, the AI assistant for LOOK (source: `docs/looky.codlook.com/`).
 - AI/SEO files live at each site root: `llms.txt`, `llms-full.txt`, `sitemap.xml`, `robots.txt`, plus per-page JSON-LD.
 
@@ -34,7 +33,7 @@ Websites (served from `docs/` in the main repo):
 
 ```
 cpp/                 C++23 runtime — the language itself
-  src/               lexer.cpp, parser.cpp, compiler.cpp, vm/interpreter, stdlib (*_stdlib.cpp),
+  src/               lexer.cpp, parser.cpp, compiler.cpp, vm.cpp, runtime_host.cpp, stdlib (*_stdlib.cpp),
                      db clients (mysql/postgres/resp), servers (http/smtp/imap), fibers, jobs…
   include/look/      headers (ast.h, bytecode.h, builtins.h, crypto_sha256.h, wire parsers…)
   tests/             differential + guard scripts, fuzzers
@@ -84,10 +83,14 @@ look.codlook.com/docs.html → Environment Variables).
 
 ## Engine & test guards
 
-- **Bytecode VM is the default** for `lk` and `lk-fcgi`; tree-walk is the fallback. Undefined
-  variables are a **hard error** in both engines (`LOOK_WARN_UNDEF=1` restores lenient mode).
+- **The bytecode VM is the only engine** — `lk` (scripts, `lk -c`, `lk test`, REPL), `lk-fcgi`
+  (`--mode http` and FastCGI) and `lk-cgi`. There is no fallback: a program the compiler rejects
+  does not start (the error says why, exit 1). `LOOK_BYTECODE=0` / `LOOK_CLI_VM=0` (1.0.x) are
+  ignored with one `WARN` line. Undefined variables are a **hard error** (`LOOK_WARN_UNDEF=1`
+  restores lenient mode).
 - After **any** engine change, run the guards:
-  - `bash cpp/tests/differential_test.sh <lk> <lk-fcgi>` — 3 engines × many categories must agree.
+  - `bash cpp/tests/differential_test.sh <lk> <lk-fcgi>` — the CLI and the web server (two
+    separately wired builtin tables on the same VM) must agree across many categories.
   - `bash cpp/tests/parallel_db_test.sh <lk-fcgi>` — parallel + DB isolation (one request isn't enough).
 - CI (`.github/workflows/`) runs the build, sanitizers (ASan/UBSan/TSan), security/fuzz, Windows,
   and release consistency. Keep it green; a "green" run with 0 jobs means the workflow failed to

@@ -287,6 +287,18 @@ In 1.0.x the result was always false for arrays and maps.
 Elements compare by the usual rule: `[1] == [1.0]` is true, `[1] == ["1"]` is false.
 Functions, channels and connections still compare by identity.
 
+### A number that does not fit is an error — was silent
+
+- A literal `0x` or `0b` with no digits after it was `0`. It is now an error at load:
+  `hexadecimal literal 0x has no digits`.
+- A string holding a whole number outside the 64-bit range became `0` wherever it was used as a
+  number: `$list["99999999999999999999"]` read the first element, `6 & "99999999999999999999"`
+  gave `0`. It is now an error that says the value does not fit in 64 bits (`int()` and
+  `type::to_int()` already worked this way). Keep a large ID as a string; as a map key it works
+  as before.
+
+A string that is not a number at all keeps the lenient rule: `int("abc")` is `0`.
+
 ## Calls
 
 ### A call gives a function the arguments it declares — error at run time
@@ -693,6 +705,19 @@ sent — not the login, not the message. Sending without a login (`SMTP_USER` em
 text still works with any server. If you relied on the old behavior, use `SMTP_TLS=starttls`
 (the default) or `implicit`.
 
+### IMAP: an unsupported FETCH item is an error — was an empty answer
+
+The embedded IMAP server (experimental) answered a FETCH that asked for an item it does not
+support — `BODY.PEEK[]`, `BODY[HEADER.FIELDS (FROM)]`, `ENVELOPE` — with an empty result and
+`OK`. It now answers `BAD FETCH item not supported: <item>` and lists the items it supports.
+
+### MySQL: a failed session setup is logged — was silent
+
+When a connection opens, LOOK removes `NO_BACKSLASH_ESCAPES` from the session's `sql_mode`. If the
+server refused, the error was dropped. It is now a `WARN` line in the log; the connection is still
+used. LOOK does not change any other part of `sql_mode` — the server's strict mode stays as the
+server sets it.
+
 ### `use` cycles are an error at load — was silent
 
 `a.lk` using `b.lk` that uses `a.lk` ran the main file twice; a cycle between included files was
@@ -836,6 +861,27 @@ tasks still running when the script ended, without saying so. Now a task still r
 with the script and one `WARN` line names it; to let it finish, call `parallel::wait([ms])`
 before the end. A script that collects its tasks' results with `receive()` already waits for
 them and is not affected.
+
+## Packages
+
+### look.lock lines carry a checksum, and a mismatch stops the install — new
+
+`lk install` now writes a content checksum after the commit, like Go's `go.sum`:
+
+```
+"ali/look-stripe" = "main@a3f8c21d0123456789abcdef0123456789abcdef h1:Xq3n...="
+```
+
+When the commit being installed already has a checksum in look.lock and the downloaded files
+differ from it, `lk install` stops with an error that names the package, the checksum in
+look.lock and the downloaded one, and installs nothing. A look.lock written by 1.0.x has no
+checksums; it keeps working, and the first install adds one per package (one line says so).
+Commit the updated look.lock. An `lk` from 1.0.x cannot read a line with a checksum.
+
+Installs no longer delete the old package first: the new one is extracted beside it and
+swapped in only when it is complete, so a failed download, a corrupt archive or a checksum
+mismatch leaves the installed package as it was (`lk module install` too). A file in the
+archive that does not extract is now an error; 1.0.x skipped it and reported success.
 
 ## Already in 1.0.x
 

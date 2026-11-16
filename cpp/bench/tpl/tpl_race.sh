@@ -2,8 +2,8 @@
 # Template benchmark — BENCHMARK.md test 10 (T1 static / T2 dynamic / T3 real).
 # Same hygiene as cpp/bench/race.sh: server capped at 2 CPU / 4 GB, wrk in a separate
 # container, identical warm-up, best-of-3, rps reported together with p99, cpu.stat
-# throttling, and a correctness gate before any timing. The server runs with
-# LOOK_VM_STRICT=1 so it can never silently measure the tree-walk interpreter.
+# throttling, and a correctness gate before any timing. The server runs on the VM, the only
+# engine; the gate below checks the start line to be sure.
 # Usage: bash cpp/bench/tpl/tpl_race.sh <repo-root> [label]
 export MSYS_NO_PATHCONV=1
 set -u
@@ -29,7 +29,7 @@ docker rm -f srv >/dev/null 2>&1
 # mechanism, not memory: the server REFUSES to start if the directory it serves is on any
 # mount other than the container's own root filesystem. APP_DIR exists only for the positive
 # control (point it at the bind mount and the run must refuse).
-docker run -d --name srv --network $NET $CAP -e LOOK_WORKERS=2 -e LOOK_VM_STRICT=1 \
+docker run -d --name srv --network $NET $CAP -e LOOK_WORKERS=2 \
   -e APP_DIR="${APP_DIR:-}" -e BIN_DIR="$BIN_DIR" -v "$ROOT/cpp:/look/cpp" look-build bash -c '
     if [ -z "$APP_DIR" ]; then cp -r /look/cpp/bench/tpl /root/tpl && APP_DIR=/root/tpl; fi
     cd "$APP_DIR" || exit 3
@@ -42,7 +42,7 @@ if docker logs srv 2>&1 | grep -q REFUSE; then
   echo "FAIL: $(docker logs srv 2>&1 | grep REFUSE)"; docker rm -f srv >/dev/null 2>&1; exit 1
 fi
 
-# Correctness gate — never time a wrong page or an interpreter fallback.
+# Correctness gate — never time a wrong page or a server that did not start on the VM.
 docker logs srv 2>&1 | grep -q "^\[BYTECODE\] OK" || { echo "FAIL: server is not running on the VM"; docker logs srv | tail -5; exit 1; }
 t3=$(curlq http://$IP:8080/t3)
 echo "$t3" | grep -q "&lt;script&gt;" && ! echo "$t3" | grep -q "<script>alert" \
