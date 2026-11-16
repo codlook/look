@@ -682,6 +682,17 @@ lines sent in plain text together with STARTTLS are discarded (RFC 3207). Withou
 certificate nothing changes: mail is accepted in plain text and AUTH is offered to connections
 from this machine only.
 
+### `mail::send` with `SMTP_TLS=none` sends a login only to a loopback server — was any server
+
+In 1.0.x, `SMTP_TLS=none` with `SMTP_USER` set sent the user name and password in clear text to
+whatever server `SMTP_HOST` named, with only a warning in the log. Now, as Go's `net/smtp`
+does, a login without TLS goes only to a server on `127.0.0.0/8` or `::1`. The check is made on
+the address actually connected to, so a `localhost` that resolves elsewhere is refused too. To
+any other server `mail::send` returns `ok: false` with a message that says why, and nothing is
+sent — not the login, not the message. Sending without a login (`SMTP_USER` empty) in clear
+text still works with any server. If you relied on the old behavior, use `SMTP_TLS=starttls`
+(the default) or `implicit`.
+
 ### `use` cycles are an error at load — was silent
 
 `a.lk` using `b.lk` that uses `a.lk` ran the main file twice; a cycle between included files was

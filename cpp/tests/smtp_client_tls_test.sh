@@ -8,7 +8,9 @@
 #   - kendinden imzalı / başka ada verilmiş sertifika: reddedilir, AUTH hiç gönderilmez
 #   - sunucu STARTTLS sunmaz: düz metne DÜŞÜLMEZ (indirgeme), AUTH gönderilmez
 #   - doğrudan TLS (465 / SMTP_TLS=implicit) güvenilen sertifikayla çalışır
-#   - SMTP_TLS=none: düz metin, günlükte açık uyarı
+#   - SMTP_TLS=none: düz metin, günlükte açık uyarı; parola YALNIZ bu makinedeki sunucuya
+#     (127.0.0.0/8, ::1 — karar bağlanılan adrese göre). Uzak adreste açık hata, parola gitmez;
+#     parolasız düz metin her yerde çalışır (Go net/smtp kuralı)
 # Usage: smtp_client_tls_test.sh <lk> [base-port]   (needs python3, openssl)
 set -u
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> [base-port]}")" && pwd)/$(basename "$1")"
@@ -88,7 +90,7 @@ def serve(c):
     finally:
         try: c.close()
         except Exception: pass
-s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", port)); s.listen(8)
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", port)); s.listen(8)
 print("ready", flush=True)
 while True:
     c, _ = s.accept(); threading.Thread(target=serve, args=(c,), daemon=True).start()
@@ -98,12 +100,12 @@ use mail
 use json
 print(json::encode(mail::send("to@example.com", "Hello", "body text")))
 LK
-# <sunucu kipi> <sertifika> <SMTP_TLS> → $out (mail::send sonucu + stderr), $log (sunucu kaydı)
+# <sunucu kipi> <sertifika> <SMTP_TLS> [SMTP_HOST] [SMTP_USER] → $out (mail::send sonucu + stderr), $log (sunucu kaydı)
 run() {
     : > "$TMP/srv.log"
     python3 "$TMP/server.py" "$P" "$1" "$TMP/$2" "$TMP/srv.log" > "$TMP/srv.out" 2>&1 & spid=$!
     for i in $(seq 1 50); do grep -q ready "$TMP/srv.out" && break; sleep 0.1; done
-    out=$(cd "$TMP" && env -i PATH="$PATH" MAIL_PROVIDER=smtp SMTP_HOST=localhost SMTP_PORT="$P" SMTP_USER=user \
+    out=$(cd "$TMP" && env -i PATH="$PATH" MAIL_PROVIDER=smtp SMTP_HOST="${4:-localhost}" SMTP_PORT="$P" SMTP_USER="${5-user}" \
           SMTP_PASS="$PW" SMTP_TLS="$3" MAIL_FROM=from@example.com SSL_CERT_FILE="$TMP/ca.pem" \
           timeout 30 "$LK" "$TMP/send.lk" 2>&1)
     sleep 0.3; log=$(tr '\n' ' ' < "$TMP/srv.log")
@@ -149,6 +151,19 @@ run notls good none
 check "plain text works when chosen" "$( [[ "$out" == *'"ok":true'* ]] && [[ "$log" == *"AUTH PLAIN-TEXT"* ]] && echo ok)" "$out | $log"
 check "with a warning that says so" "$( [[ "$out" == *"clear text"* ]] && echo ok)" "$out"
 check "the password is in no output" "$(nopw && echo ok)" "password printed"
+run notls good none 127.0.0.2
+check "a login to another loopback address (127.0.0.2) works" "$( [[ "$out" == *'"ok":true'* ]] && [[ "$log" == *"AUTH PLAIN-TEXT"* ]] && echo ok)" "$out | $log"
+
+echo "== SMTP_TLS=none to a server on another machine"
+EXT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(("192.0.2.1", 9)); print(s.getsockname()[0])' 2>/dev/null)
+case "$EXT" in ""|127.*) check "a non-loopback address for this machine" fail "none found ($EXT)" ;; *)
+run notls good none "$EXT"
+check "the login is refused with a clear error ($EXT)" "$( [[ "$out" == *'"ok":false'* ]] && [[ "$out" == *"not sent in clear text"* ]] && echo ok)" "$out"
+check "the login and the message never reach the server" "$( [[ "$log" != *AUTH* ]] && [[ "$log" != *PASS* ]] && [[ "$log" != *DATA* ]] && echo ok)" "$log"
+check "the password is in no output" "$(nopw && echo ok)" "password printed"
+run notls good none "$EXT" ""
+check "without a login, plain text still works there" "$( [[ "$out" == *'"ok":true'* ]] && [[ "$log" == *DATA* ]] && [[ "$log" != *AUTH* ]] && echo ok)" "$out | $log"
+esac
 
 [ $fail = 0 ] && echo "PASS: mail::send over SMTP keeps TLS and the login safe" || echo "FAIL: mail::send over SMTP"
 exit $fail

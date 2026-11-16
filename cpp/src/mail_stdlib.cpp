@@ -369,6 +369,25 @@ static bool smtp_connect(SmtpConn& c, const std::string& host, int port, int tim
     return true;
 }
 
+// Bağlanılan karşı uç bu makine mi? Karar sunucu ADINA değil, gerçekten bağlanılan ADRESE göre:
+// "localhost" başka bir adrese çözülürse (hosts dosyası, DNS) parola yine dışarı gitmez.
+// 127.0.0.0/8, ::1 ve IPv4-eşlemeli ::ffff:127.x.y.z.
+static bool smtp_peer_is_loopback(int fd) {
+    struct sockaddr_storage ss; socklen_t len = sizeof(ss);
+    if (getpeername(fd, reinterpret_cast<struct sockaddr*>(&ss), &len) != 0) return false;
+    if (ss.ss_family == AF_INET) {
+        const auto* a = reinterpret_cast<const struct sockaddr_in*>(&ss);
+        return (ntohl(a->sin_addr.s_addr) >> 24) == 127;
+    }
+    if (ss.ss_family == AF_INET6) {
+        const auto* a = reinterpret_cast<const struct sockaddr_in6*>(&ss);
+        const unsigned char* b = a->sin6_addr.s6_addr;
+        if (IN6_IS_ADDR_LOOPBACK(&a->sin6_addr)) return true;
+        return IN6_IS_ADDR_V4MAPPED(&a->sin6_addr) && b[12] == 127;
+    }
+    return false;
+}
+
 // normalize line endings to '\n', then CRLF + dot-stuff for the DATA phase.
 static std::string smtp_encode_data(const std::string& raw) {
     std::string lf;                                          // collapse \r\n and bare \r to \n
@@ -433,16 +452,24 @@ static MailResult send_smtp(const std::string& from, const std::string& to,
 
     bool implicit = (tls == "implicit") || (tls.empty() && port == 465);
     bool starttls = !implicit && (tls != "none");
-    if (tls == "none") {
-        // gate #2: refusing TLS ships the password in clear text — say so, loudly.
-        Logger::instance().log(LogLevel::LOG_WARN, "mail::send",
-            "SMTP_TLS=none — credentials and message sent in clear text to " + host);
-    }
-
     SmtpConn c;
     if (!smtp_connect(c, host, port, 15000)) {
         r.message = "SMTP connect failed: " + host + ":" + std::to_string(port);
         return r;
+    }
+    if (tls == "none") {
+        // Go net/smtp kuralı: TLS yoksa parola yalnız bu makinedeki sunucuya gider. Uzak sunucuda
+        // tek bayt göndermeden açık hata (eskiden yalnız uyarı yazıp parolayı düz metin yolluyordu).
+        // Parolasız düz metin gönderim her yerde çalışır.
+        if (!user.empty() && !smtp_peer_is_loopback(c.fd)) {
+            r.message = "SMTP_TLS=none: the login is not sent in clear text to " + host +
+                        " (not a loopback address; without TLS only 127.0.0.0/8 or ::1 is allowed); "
+                        "use STARTTLS or implicit TLS, or leave SMTP_USER empty";
+            return r;
+        }
+        Logger::instance().log(LogLevel::LOG_WARN, "mail::send",
+            std::string("SMTP_TLS=none — ") + (user.empty() ? "message" : "credentials and message") +
+            " sent in clear text to " + host);
     }
     std::string reply;
     if (implicit && !smtp_tls(c, host)) { r.message = "SMTP implicit-TLS handshake failed for " + host; return r; }

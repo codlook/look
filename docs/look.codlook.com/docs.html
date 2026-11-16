@@ -3947,7 +3947,10 @@ MAIL_FROM=noreply@myapp.com
   <p>The <code>smtp</code> provider talks SMTP directly to your mail server — the transport a
   shared-hosting site already has, with no HTTP-API account. <strong>TLS certificate
   verification is on by default</strong> (an untrusted or hostname-mismatched certificate
-  fails the send); <code>SMTP_TLS=none</code> is allowed but logs a clear-text warning. The
+  fails the send). <code>SMTP_TLS=none</code> sends in clear text and logs a warning; with
+  <code>SMTP_USER</code> set, the login goes only to a server on a loopback address
+  (<code>127.0.0.0/8</code> or <code>::1</code>, checked on the address actually connected to,
+  not the name) — to any other server the send fails before anything is sent. The
   recipient, subject and from fields are stripped of CR/LF, so form input cannot inject extra
   headers. Non-ASCII subjects (e.g. Turkish) are MIME encoded-word automatically. The
   <code>smtp</code> provider is available on the Linux/macOS build.</p>
