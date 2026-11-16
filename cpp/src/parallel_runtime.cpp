@@ -234,6 +234,8 @@ void chan_deadlock_try() noexcept {
         std::lock_guard<std::mutex> lk(d.ch->mtx);
         d.ch->not_empty.notify_all();
         d.ch->not_full.notify_all();
+        LookChannel::wake_fibers(d.ch->fiber_recv);   // fiber'da bekleyenler de hatayı görsün
+        LookChannel::wake_fibers(d.ch->fiber_send);
     }
 }
 

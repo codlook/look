@@ -28,6 +28,8 @@ namespace look {
 
 // ── Forward declarations for Value members ────────────────────────────────────
 struct LookChannel;    // defined after Value (queue<Value> needs complete type)
+class Fiber;           // fiber.h — kanalda bekleyen fiber'lar (LookChannel::FiberWaiter)
+class FiberScheduler;
 struct WsConnection;   // defined in websocket.h
 struct SseConnection;  // defined in sse.h
 struct Closure;        // defined in bytecode.h — BYTECODE_FN type
@@ -359,6 +361,24 @@ struct LookChannel : std::enable_shared_from_this<LookChannel> {
     bool                    closed = false;
     bool                    unbuffered = false;  // channel(0): Go rendezvous
     uint64_t                recv_gen = 0;         // her recv'de artar (rendezvous)
+
+    // Fiber içinde bekleyenler (web isteği, fiber dağıtımı). Eskiden onlar da cv.wait ile İŞ
+    // PARÇACIĞINI tutuyordu: kanalda bekleyen bir istek, aynı iş parçacığındaki öteki istekleri
+    // (keep-alive bağlantılar, askıdaki fiber'lar) bekleme bitene dek durduruyordu (ölçüldü: 400 ms
+    // receive sırasında aynı işçideki /ok 350–400 ms). Şimdi fiber kaydolup askıya girer; bildiren
+    // taraf (send/recv/close, kilitlenme kararı) onu kendi planlayıcısında uyandırır — DB havuzu
+    // bekleyeniyle aynı kalıp (web_stdlib.cpp ConnPool). İş parçacığı bekleyenleri (parallel() görevi,
+    // komut satırı) cv'de kalır. Hepsi mtx altında.
+    struct FiberWaiter {
+        std::shared_ptr<Fiber> fiber;
+        FiberScheduler*        sched;
+        bool*                  queued;   // kaydı silen false yapar (mtx altında); bekleyenin yığınında
+    };
+    std::vector<FiberWaiter> fiber_recv;   // not_empty bekleyenleri
+    std::vector<FiberWaiter> fiber_send;   // not_full bekleyenleri (dolu tampon, tamponsuz teslim)
+    // Listedeki herkesi uyandır (mtx tutulurken çağrılır). Uyananlar yüklemi yeniden dener —
+    // cv.notify_all gibi; kazanamayan yeniden kaydolur.
+    static void wake_fibers(std::vector<FiberWaiter>& list);
 
     // channel(0) = unbuffered/senkron (Go semantiği): gönderici alıcı öğeyi
     // alana dek bloke olur. Eskiden 0 = SINIRSIZ buffer'dı → backpressure yok,

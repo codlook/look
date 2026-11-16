@@ -4,6 +4,7 @@
 #include "look/parallel_runtime.h"   // kanal kilitlenmesi (ChanWait)
 #include "look/assoc_index.h"
 #include "look/mem_budget.h"      // mem_reserve — büyük birleştirmeden önce bütçe
+#include "look/fiber.h"           // kanalda bekleyen fiber (iş parçacığını tutmadan)
 #include <algorithm>
 #include <cstring>
 #include <random>
@@ -608,14 +609,56 @@ static long channel_timeout_ms() {
 // Kanal beklemesi (üç yer: dolu tamponda send, tamponsuz send'in teslimi, receive). Hazırsa
 // beklemez; bekliyorsa kilitlenme muhasebesine girer (parallel_runtime.h ChanWait) — betik ve
 // bütün görevler kanalda bekliyorsa hepsi uyanır ve "deadlock" hatası alır, sonsuza dek asılmaz.
+void LookChannel::wake_fibers(std::vector<FiberWaiter>& list) {
+    // Kilit sırası: kanal mtx → planlayıcı mtx_ (resume_fiber). Planlayıcı kanal kilidi almaz.
+    for (auto& w : list) { *w.queued = false; w.sched->resume_fiber(std::move(w.fiber)); }
+    list.clear();
+}
+
 template <class Ready>
 static void chan_wait(LookChannel* ch, std::unique_lock<std::mutex>& lk, std::condition_variable& cv,
+                      std::vector<LookChannel::FiberWaiter>& fw,
                       long to, int kind, uint64_t gen, Ready ready, const char* timeout_msg) {
     if (ready()) return;
     if (g_chan_deadlock.load()) throw std::runtime_error(chan_deadlock_message());
     ChanWait w(ch->shared_from_this(), kind, gen);
     if (w.suspect) { lk.unlock(); chan_deadlock_try(); lk.lock(); }   // karar kanal kilitleri olmadan
     auto pred = [&] { return ready() || g_chan_deadlock.load(); };
+
+    // Fiber içinde: iş parçacığını değil yalnız bu fiber'ı beklet (LookChannel::FiberWaiter).
+    Fiber* cur = Fiber::current();
+    FiberScheduler* sched = cur ? get_thread_scheduler() : nullptr;
+    std::shared_ptr<Fiber> self = (cur && sched) ? cur->shared_from_this_fiber() : nullptr;
+    if (self) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(to > 0 ? to : 0);
+        while (!pred()) {
+            if (to > 0) {
+                // Süreli bekleme (LOOK_CHANNEL_TIMEOUT_MS): kayıt YOK — zamanlayıcıyla askıdaki bir
+                // fiber'ı başka iş parçacığı da devam ettirirse iki kez kuyruğa girerdi. Kısa
+                // aralıklarla (≤ 2 ms) yeniden bakar; yalnız bu ayar açıkken.
+                auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                deadline - std::chrono::steady_clock::now()).count();
+                if (left <= 0) throw std::runtime_error(timeout_msg);
+                int step = (int)std::min<long long>(2, left);
+                lk.unlock();
+                int r = sched->wait_readable_tmo(self, -1, step);
+                lk.lock();
+                if (r < 0) cv.wait_for(lk, std::chrono::milliseconds(step), pred);   // zamanlayıcı yok
+                continue;
+            }
+            bool queued = true;
+            fw.push_back({self, sched, &queued});
+            lk.unlock();
+            for (;;) {
+                FiberScheduler::suspend_current();
+                lk.lock();
+                if (!queued) break;   // kaydımızı bizi uyandıran sildi
+                lk.unlock();          // sahte erken devam (önceki bir beklemeden kalan): beklemeye devam
+            }
+        }
+        if (!ready()) throw std::runtime_error(chan_deadlock_message());
+        return;
+    }
     if (to > 0) {
         if (!cv.wait_for(lk, std::chrono::milliseconds(to), pred)) throw std::runtime_error(timeout_msg);
     } else {
@@ -636,7 +679,7 @@ std::shared_ptr<LookChannel> make_channel(const std::vector<Value>& args) {
 void LookChannel::send_val(Value val, std::atomic<int>* phase) {
     std::unique_lock<std::mutex> lk(mtx);
     long to = channel_timeout_ms();
-    chan_wait(this, lk, not_full, to, CHAN_WAIT_ROOM, 0, [this]{ return closed || queue.size() < capacity; },
+    chan_wait(this, lk, not_full, fiber_send, to, CHAN_WAIT_ROOM, 0, [this]{ return closed || queue.size() < capacity; },
               "channel send timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
     if (closed) throw std::runtime_error("send on closed channel");
     // İZOLASYON (cache/parallel deep_clone disiplini ile aynı): channel parallel'in
@@ -652,6 +695,7 @@ void LookChannel::send_val(Value val, std::atomic<int>* phase) {
     if (phase) { if (unbuffered) rv_phase = phase; else phase->store(0); }
     queue.push(std::move(item));
     not_empty.notify_one();
+    wake_fibers(fiber_recv);
     if (unbuffered) {
         // Çıkarken (alındı, kapandı ya da süre doldu) bizim durum işaretçimizi bırak: görev
         // bitince silinir, sonradan öğeyi alan alıcı ona yazmasın.
@@ -661,7 +705,7 @@ void LookChannel::send_val(Value val, std::atomic<int>* phase) {
         // recv_gen ile kendi öğemizin alındığını izleriz; yanlış uyandırmada
         // (başka gönderici) bekleme sürer.
         uint64_t gen = recv_gen;
-        chan_wait(this, lk, not_full, to, CHAN_WAIT_TAKEN, gen, [this, gen]{ return closed || recv_gen > gen; },
+        chan_wait(this, lk, not_full, fiber_send, to, CHAN_WAIT_TAKEN, gen, [this, gen]{ return closed || recv_gen > gen; },
                   "channel send (rendezvous) timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
         // Alınmadan kapandı: değer teslim edilmedi → Go gibi "send on closed channel" (öğe
         // kuyruktan geri alınır, kapandıktan sonra alıcıya ulaşmaz).
@@ -675,7 +719,7 @@ void LookChannel::send_val(Value val, std::atomic<int>* phase) {
 Value LookChannel::recv_val() {
     std::unique_lock<std::mutex> lk(mtx);
     long to = channel_timeout_ms();
-    chan_wait(this, lk, not_empty, to, CHAN_WAIT_RECV, 0, [this]{ return closed || !queue.empty(); },
+    chan_wait(this, lk, not_empty, fiber_recv, to, CHAN_WAIT_RECV, 0, [this]{ return closed || !queue.empty(); },
               "channel receive timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
     if (queue.empty()) return Value();  // closed + empty → null
     Value v = std::move(queue.front());
@@ -683,6 +727,7 @@ Value LookChannel::recv_val() {
     if (rv_phase) { rv_phase->store(0); rv_phase = nullptr; }   // send_val: teslim anı
     ++recv_gen;                 // rendezvous: bekleyen göndericiyi serbest bırak
     not_full.notify_all();      // birden çok gönderici bekliyor olabilir
+    wake_fibers(fiber_send);
     return v;
 }
 
@@ -691,6 +736,8 @@ void LookChannel::close_chan() {
     closed = true;
     not_empty.notify_all();
     not_full.notify_all();
+    wake_fibers(fiber_recv);
+    wake_fibers(fiber_send);
 }
 
 } // namespace look

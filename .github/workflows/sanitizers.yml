@@ -150,6 +150,8 @@ jobs:
           bash tests/parallel_exit_warning_test.sh ./build-tsan/lk 3
           # Kanal kilitlenmesi muhasebesi + tamponsuz teslim (parallel_runtime.h ChanWait)
           bash tests/channel_unbuffered_test.sh ./build-tsan/lk ./build-tsan/lk-fcgi
+          # Kanalda bekleyen fiber: kayıt, askı, başka iş parçacığından devam (LookChannel::FiberWaiter)
+          LOOK_TEST_NO_TIMING=1 bash tests/channel_fiber_test.sh ./build-tsan/lk-fcgi
 
   fuzz:
     # Surdurulebilirlik: wire-protocol parser'lari her push'ta kisa fuzzlanir (libFuzzer,

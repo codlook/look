@@ -720,6 +720,9 @@ jobs:
           bash tests/channel_close_test.sh ./build/lk
           # channel(0) is unbuffered; a deadlock on the command line is an error, never a hang
           bash tests/channel_unbuffered_test.sh ./build/lk ./build/lk-fcgi
+          # a request waiting in receive()/send() suspends its fiber, not the worker: other
+          # requests on the same worker keep answering (they waited as long as the receive)
+          bash tests/channel_fiber_test.sh ./build/lk-fcgi
           # lk --check loads and compiles only — the Plesk extension runs it before moving a site
           bash tests/lk_check_no_side_effects_test.sh ./build/lk
 
