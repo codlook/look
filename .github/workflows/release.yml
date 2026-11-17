@@ -61,6 +61,22 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "version $VERSION, tag $TAG"
 
+      # 0b) En yeni mi? "Latest" işareti (/releases/latest/download/... bağlantıları, kurulum betikleri)
+      # ve Docker :latest YALNIZ en yüksek numaralı yayına gider. Bakım çizgisinin bir sürümü (1.0.49)
+      # yeni çizgiden (1.1.1) sonra çıkınca eskiden ikisini de alıyordu: kurulumlar eski çizgiye dönerdi.
+      - name: Is this the newest release?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          CUR="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+          CUR="${CUR#v}"
+          if [ -z "$CUR" ] || [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -1)" = "$VERSION" ]; then
+            echo "IS_NEWEST=1" >> "$GITHUB_ENV"; echo "newest: $VERSION (current Latest: ${CUR:-none})"
+          else
+            echo "IS_NEWEST=0" >> "$GITHUB_ENV"; echo "not the newest: $VERSION < $CUR — Latest and docker :latest stay on $CUR"
+          fi
+
       # 1) Toolchain imajı (gcc-toolset-12 + cmake gömülü)
       - name: Build look-build image
         run: docker build -t look-build -f cpp/Dockerfile.build cpp/
@@ -229,8 +245,10 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           if [[ "$TAG" == *-rc* ]]; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
-          else
+          elif [ "$IS_NEWEST" = 1 ]; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets \
             --jq '"published: \(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets | length)"'
@@ -245,4 +263,4 @@ jobs:
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
           # Yalnız :$VERSION ve :latest. Eski sürüm etiketlerine (ör. :1.0.0) DOKUNULMAZ.
           docker push "codlook/look:$VERSION"
-          docker push codlook/look:latest
+          if [ "$IS_NEWEST" = 1 ]; then docker push codlook/look:latest; else echo "codlook/look:latest not moved (not the newest release)"; fi
