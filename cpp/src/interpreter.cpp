@@ -2,6 +2,7 @@
 #include "look/fiber.h"         // preempt_point — döngü/çağrı sıra bırakma noktası
 #include "look/int_overflow.h"
 #include "look/array_count.h"
+#include "look/num_extreme.h"   // max/min tek tanım
 #include "look/builtins.h"
 #include "look/route_group.h"
 #include "look/stdlib.h"
@@ -2203,8 +2204,13 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         if (fn_name == "bool"  || fn_name == "boolval")  { Value v = evaluate_expression(*e->arguments[0]); return Value(v.to_int() != 0 || (v.type() == Value::STRING && !v.as_string().empty() && v.as_string() != "false" && v.as_string() != "0")); }
         if (fn_name == "strlen")    { return Value((int)evaluate_expression(*e->arguments[0]).to_string().size()); }
         if (fn_name == "abs")       { Value v = evaluate_expression(*e->arguments[0]); if(v.type()==Value::FLOAT) return Value(std::abs(v.as_float())); return Value(std::abs(v.to_int())); }
-        if (fn_name == "max")       { Value a=evaluate_expression(*e->arguments[0]),b=evaluate_expression(*e->arguments[1]); return a>=b?a:b; }
-        if (fn_name == "min")       { Value a=evaluate_expression(*e->arguments[0]),b=evaluate_expression(*e->arguments[1]); return a<=b?a:b; }
+        // max/min: VM ile tek tanım (look/num_extreme.h). ESKİ: yalnız ilk iki argüman, tek argümanda
+        // arguments[1] okunuyordu (dizi dışı).
+        if (fn_name == "max" || fn_name == "min") {
+            std::vector<Value> av; av.reserve(e->arguments.size());
+            for (auto& x : e->arguments) av.push_back(evaluate_expression(*x));
+            return num_extreme(av, fn_name == "max");
+        }
         if (fn_name == "sqrt")      { return Value(std::sqrt(evaluate_expression(*e->arguments[0]).to_float())); }
         if (fn_name == "strtoupper") { std::string s=evaluate_expression(*e->arguments[0]).to_string(); for(char&c:s)c=toupper((unsigned char)c); return Value(s); }
         if (fn_name == "strtolower") { std::string s=evaluate_expression(*e->arguments[0]).to_string(); for(char&c:s)c=tolower((unsigned char)c); return Value(s); }

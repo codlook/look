@@ -7,6 +7,7 @@
 // Aynı .lk kodu her iki modda çalışır.
 
 #include "look/builtins.h"
+#include "look/num_extreme.h"   // max/min tek tanım
 #include "look/route_group.h"
 #include "look/metrics.h"
 #include "look/array_count.h"
@@ -358,12 +359,10 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
         return look::Value(std::abs(v.to_int()));
     };
     t[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
-        if (args.size() < 2) return args.empty() ? look::Value() : args[0];
-        return args[0] >= args[1] ? args[0] : args[1];
+        return look::num_extreme(args, true);    // tek tanım (look/num_extreme.h)
     };
     t[BI("min")] = [](std::vector<look::Value>& args) -> look::Value {
-        if (args.size() < 2) return args.empty() ? look::Value() : args[0];
-        return args[0] <= args[1] ? args[0] : args[1];
+        return look::num_extreme(args, false);
     };
     t[BI("sqrt")] = [](std::vector<look::Value>& args) -> look::Value {
         return look::Value(args.empty() ? 0.0 : std::sqrt(args[0].to_float()));

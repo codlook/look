@@ -1,6 +1,7 @@
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/format_src.h"   // lk fmt
+#include "look/num_extreme.h"  // max/min tek tanım
 #include "look/interpreter.h"
 #include "look/array_count.h"
 #include "look/http_client.h"
@@ -203,8 +204,8 @@ static std::vector<look::BuiltinFn> build_cli_builtins(look::Interpreter& interp
     b[22] = [](std::vector<Value>&) -> Value { return Value(); };  // route — CLI'da dispatch yok
     b[BI("strlen")] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? 0 : (int)a[0].to_string().size()); };
     b[BI("abs")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); if (a[0].type()==Value::FLOAT) return Value(std::abs(a[0].as_float())); return Value(std::abs(a[0].to_int())); };
-    b[BI("max")] = [](std::vector<Value>& a) -> Value { if (a.size()<2) return a.empty()?Value():a[0]; return a[0]>=a[1]?a[0]:a[1]; };
-    b[BI("min")] = [](std::vector<Value>& a) -> Value { if (a.size()<2) return a.empty()?Value():a[0]; return a[0]<=a[1]?a[0]:a[1]; };
+    b[BI("max")] = [](std::vector<Value>& a) -> Value { return look::num_extreme(a, true); };    // look/num_extreme.h
+    b[BI("min")] = [](std::vector<Value>& a) -> Value { return look::num_extreme(a, false); };
     b[BI("sqrt")] = [](std::vector<Value>& a) -> Value { return Value(a.empty()?0.0:std::sqrt(a[0].to_float())); };
     b[BI("strtoupper")] = [](std::vector<Value>& a) -> Value { std::string s=a.empty()?"":a[0].to_string(); for(char&c:s)c=(char)std::toupper((unsigned char)c); return Value(s); };
     b[BI("strtolower")] = [](std::vector<Value>& a) -> Value { std::string s=a.empty()?"":a[0].to_string(); for(char&c:s)c=(char)std::tolower((unsigned char)c); return Value(s); };

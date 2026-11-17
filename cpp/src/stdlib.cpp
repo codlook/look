@@ -1,4 +1,5 @@
 #include "look/stdlib.h"
+#include "look/num_extreme.h"     // max/min tek tanım
 #include "look/html_escape.h"
 #include "look/charset.h"
 #include "look/parallel_runtime.h"
@@ -98,34 +99,14 @@ static Module make_math() {
         return Value((int64_t)std::round(args[0].to_float()));
     };
     m.functions["max"] = [](auto args) -> Value {
-        if (args.size() == 1 && args[0].type() == Value::ARRAY) {
-            auto& arr = *args[0].as_array();
-            if (arr.empty()) return Value();
-            Value best = arr[0];
-            for (size_t i = 1; i < arr.size(); ++i)
-                if (arr[i] >= best) best = arr[i];
-            return best;
-        }
-        if (args.size() < 2) throw std::runtime_error("math::max() expects 2+ arguments or 1 array");
-        Value best = args[0];
-        for (size_t i = 1; i < args.size(); ++i)
-            if (args[i] >= best) best = args[i];
-        return best;
+        if (args.size() < 2 && !(args.size() == 1 && args[0].type() == Value::ARRAY))
+            throw std::runtime_error("math::max() expects 2+ arguments or 1 array");
+        return num_extreme(args, true);   // çekirdek max() ile tek tanım (look/num_extreme.h)
     };
     m.functions["min"] = [](auto args) -> Value {
-        if (args.size() == 1 && args[0].type() == Value::ARRAY) {
-            auto& arr = *args[0].as_array();
-            if (arr.empty()) return Value();
-            Value best = arr[0];
-            for (size_t i = 1; i < arr.size(); ++i)
-                if (arr[i] <= best) best = arr[i];
-            return best;
-        }
-        if (args.size() < 2) throw std::runtime_error("math::min() expects 2+ arguments or 1 array");
-        Value best = args[0];
-        for (size_t i = 1; i < args.size(); ++i)
-            if (args[i] <= best) best = args[i];
-        return best;
+        if (args.size() < 2 && !(args.size() == 1 && args[0].type() == Value::ARRAY))
+            throw std::runtime_error("math::min() expects 2+ arguments or 1 array");
+        return num_extreme(args, false);
     };
     m.functions["pi"] = [](auto args) {
         return Value(3.14159265358979323846);
