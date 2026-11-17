@@ -20,11 +20,14 @@ rc=0; git ls-remote --exit-code --heads origin release-1.0 >/dev/null 2>&1 || rc
 if [ "$rc" = 2 ]; then echo "maintenance release: there is no release-1.0 branch — nothing to bundle"; exit 0; fi
 [ "$rc" = 0 ] || die "could not read the branches of origin (git ls-remote exit $rc)"
 
-# actions/checkout is shallow by default: the ancestry questions below need the history
+# actions/checkout is shallow by default: the ancestry questions below need the history.
+# --force: checkout writes the release tag as a lightweight ref to the commit, while the tag on
+# origin is annotated (git tag -a); without it fetch refuses ("would clobber existing tag") and the
+# release stopped here (v1.1.0). Same name, same commit — only the ref kind changes.
 if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-    git fetch -q --unshallow --tags origin || die "could not fetch the history of the repository"
+    git fetch -q --unshallow --tags --force origin || die "could not fetch the history of the repository"
 fi
-git fetch -q --tags origin release-1.0 || die "could not fetch release-1.0"
+git fetch -q --tags --force origin release-1.0 || die "could not fetch release-1.0"
 MAINT_HEAD="$(git rev-parse FETCH_HEAD)"
 if git merge-base --is-ancestor HEAD "$MAINT_HEAD"; then
     echo "maintenance release: $REF is itself on the maintenance line — nothing to bundle"; exit 0
