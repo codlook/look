@@ -25,6 +25,7 @@ check() { if [ "$2" = ok ]; then echo "  OK   $1"; else echo "  FAIL $1: $3"; fa
 mkdir -p "$T/sig"
 cat > "$T/app.lk" <<LK
 use string
+use array
 use date
 use cache
 use file
@@ -40,25 +41,25 @@ function wait_for($name) {
 // n MiB tut (her eleman tam 1 MiB), sonra "<name>.ready" yaz, "<name>.go" gelene dek tut
 function fill($n, $name) {
     $a = []
-    for ($i = 0; $i < $n; $i++) { push($a, string::repeat("x", 1048576)) }
+    for ($i = 0; $i < $n; $i++) { $a = array::push($a, string::repeat("x", 1048576)) }
     if ($name != "") { file::put($SIG . $name . ".ready", "1"); wait_for($name . ".go") }
     return count($a)
 }
 route("GET", "/ok", fn() => response::text("ok"))
-route("GET", "/grow", function() { $a = []; while (true) { push($a, string::repeat("x", 1048576) . count($a)) } })
+route("GET", "/grow", function() { $a = []; while (true) { $a = array::push($a, string::repeat("x", 1048576) . count($a)) } })
 route("GET", "/hold", function() { return response::text("held " . fill(int(request::get("mb")), request::get("name"))) })
 // C: m1 MiB, "c.ready" yaz, "c.go" bekle, sonra m2 MiB daha (süreç sınırını o geçer)
 route("GET", "/climb", function() {
     $a = []
-    for ($i = 0; $i < int(request::get("m1")); $i++) { push($a, string::repeat("y", 1048576)) }
+    for ($i = 0; $i < int(request::get("m1")); $i++) { $a = array::push($a, string::repeat("y", 1048576)) }
     file::put($SIG . "c.ready", "1")
     wait_for("c.go")
-    for ($i = 0; $i < int(request::get("m2")); $i++) { push($a, string::repeat("z", 1048576)) }
+    for ($i = 0; $i < int(request::get("m2")); $i++) { $a = array::push($a, string::repeat("z", 1048576)) }
     return response::text("climbed " . count($a))
 })
 route("GET", "/stash", function() {
     $a = []
-    for ($i = 0; $i < 90; $i++) { push($a, string::repeat("s", 1048576)) }
+    for ($i = 0; $i < 90; $i++) { $a = array::push($a, string::repeat("s", 1048576)) }
     cache::set("big", $a, 600)
     return response::text("stashed")
 })
@@ -69,26 +70,26 @@ route("GET", "/unstash-then-grow", function() {
 // try/catch durdurmayı yutamaz: yutsaydı döngü sonsuza dek dönerdi (curl zaman aşımı)
 route("GET", "/catchgrow", function() {
     $a = []
-    while (true) { try { push($a, string::repeat("x", 1048576)) } catch ($e) { } }
+    while (true) { try { $a = array::push($a, string::repeat("x", 1048576)) } catch ($e) { } }
 })
 // 100 × (1 MiB . "y") ve 100 × "{1 MiB}y": tam boyutta 100 MiB < 128 MiB bütçe (ESKİ: 200 MiB → durdu)
 route("GET", "/concat", function() {
     $a = []
     $s = string::repeat("x", 1048576)
-    for ($i = 0; $i < 100; $i++) { push($a, $s . "y") }
+    for ($i = 0; $i < 100; $i++) { $a = array::push($a, $s . "y") }
     return response::text("concat " . count($a))
 })
 route("GET", "/interp", function() {
     $a = []
     $s = string::repeat("x", 1048576)
-    for ($i = 0; $i < 100; $i++) { push($a, "{$s}y") }
+    for ($i = 0; $i < 100; $i++) { $a = array::push($a, "{$s}y") }
     return response::text("interp " . count($a))
 })
 // 100 MiB ayır, bırak — 20 kez (istek bütçesi 128 MiB): hesap kayarsa istek durur
 route("GET", "/churn", function() {
     for ($k = 0; $k < int(request::get("k")); $k++) {
         $a = []
-        for ($i = 0; $i < 100; $i++) { push($a, string::repeat("c", 1048576)) }
+        for ($i = 0; $i < 100; $i++) { $a = array::push($a, string::repeat("c", 1048576)) }
         $a = []
     }
     return response::text("churned")
@@ -185,14 +186,16 @@ echo "== 7) the command line: no limit by default, LOOK_MEMORY_LIMIT when given"
 if [ -x "$LK" ]; then
     cat > "$T/big.lk" <<'LK'
 use string
+use array
 $a = []
-for ($i = 0; $i < 300; $i++) { push($a, string::repeat("x", 1048576)) }
+for ($i = 0; $i < 300; $i++) { $a = array::push($a, string::repeat("x", 1048576)) }
 print("held " . count($a))
 LK
     cat > "$T/catch.lk" <<'LK'
 use string
+use array
 $a = []
-while (true) { try { push($a, string::repeat("x", 1048576)) } catch ($e) { } }
+while (true) { try { $a = array::push($a, string::repeat("x", 1048576)) } catch ($e) { } }
 LK
     out=$(env -u LOOK_MEMORY_LIMIT timeout 60 "$LK" "$T/big.lk" 2>&1); rc=$?
     check "300 MiB with no setting: no request budget, no default limit (rc=$rc)" "$( [ $rc = 0 ] && [ "$out" = "held 300" ] && echo ok)" "$out"

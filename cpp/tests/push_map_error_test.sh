@@ -60,7 +60,8 @@ $b = array::push($a, 5)
 $e = []
 push($e, "x")
 print(json::encode([$a, $b, $e]))' > "$T/c.lk"
-out=$("$LK" "$T/c.lk" 2>&1)
+# çıplak push() kullanımdan kalktı: dosya başına tek uyarı satırı (konu burada push'un kendisi) — onu ayıkla
+out=$("$LK" "$T/c.lk" 2>&1 | grep -vF 'push($list, $x) changes the variable it is given')
 if [ "$out" = '[[1,2,3,4],[1,2,3,4,5],["x"]]' ]; then echo "PASS push on lists"; else echo "FAIL push on lists: $out"; fail=1; fi
 
 # web: istek içinde (hata yanıtı + günlük), kurulumda (başlamaz)
