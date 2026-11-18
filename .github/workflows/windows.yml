@@ -45,6 +45,20 @@ jobs:
           }
           Write-Host "PASS: Windows Tier-2 gate (crypto_vectors + rs256_kat + date_dst)"
 
+      # Yayın paketi: release.yml'in `windows` işiyle AYNI adım (build.ps1 kapısı + zip). Her push'ta
+      # koşar ki paketleme yayın gününden önce kırılırsa burada görülsün; zip bir iş artefaktıdır.
+      - name: Gate + package (platforms/windows/build.ps1, as in a release)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & platforms/windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: platforms/windows/look-lang-windows-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
       # int64 taşma-tespiti MSVC #else dalı — Linux __builtin yüzünden HİÇ egzersizde değildi.
       # int_overflow_test.cpp header-only → cl.exe ile derlenince MSVC dalı (unsigned-sarma +
       # INT64_MIN*-1 idiv #DE guard'ı) gerçekten koşar. vswhere+vcvars self-contained (cmake
