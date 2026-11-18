@@ -29,6 +29,11 @@ private:
     struct Deprecated { int calls = 0; size_t warn = (size_t)-1; };   // warn: uyarının warnings_ içindeki yeri
     Deprecated deps_[DEP_COUNT];
     static std::string deprecation_message(int dep, int count);
+    // `use array` olmadan yerinde array::push/slice (gizli kural; --check uyarısı "use-array-missing")
+    struct InPlaceArray { int calls = 0, line = 0, column = 0; };
+    InPlaceArray in_place_array_;
+    bool has_use_array_ = false;
+    static bool is_in_place_array_call(const std::string& name, const Expression* val);
     static constexpr int MAX_EXPR_DEPTH = 150;  // ifade özyineleme tavanı (expression+unary+power ortak)
     int    expr_depth_  = 0;  // ifade özyineleme derinliği — derin iç içe paren/array
                               // parser'ın recursive-descent yığınını taşırıp SIGSEGV

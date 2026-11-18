@@ -478,7 +478,8 @@ int main(int argc, char* argv[]) {
             // push($l, $x) → $l = array::push($l, $x); pop($l) / array::pop($l) → $l[-1] +
             // $l = array::slice($l, 0, -1): bir sürüm uyarı (sonra hata). `lk fix` yeniden yazar.
             for (const auto& w : parser.warnings())
-                if (w.kind == "push-deprecated" || w.kind == "pop-deprecated" || w.kind == "array-pop-deprecated")
+                if (w.kind == "push-deprecated" || w.kind == "pop-deprecated" || w.kind == "array-pop-deprecated" ||
+                    w.kind == "use-array-missing")
                     std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                               << " [" << w.kind << "] " << w.message << "\n";
             for (const auto& w : look::check_arg_counts(*program))

@@ -373,7 +373,14 @@ of the empty-list difference above. A call inside a larger expression (`print(po
 then exits 1. Rewrite those by hand.
 
 The new form calls `array::`, so a file without `use array` gets that line at the top (after a
-`#!` line). One more difference: `push($m["new"], $x)` created a missing key, while
+`#!` line).
+
+`$l = array::push($l, $x)` and `$l = array::slice($l, 0, -1)` are done in place and, until now, ran
+without `use array`, while `$m["k"] = array::push($m["k"], $x)` stopped with
+`Module 'array' not loaded.`. In this release the in-place form still runs without `use array` but
+warns: once per place at run time in the log, and from `lk --check` as `WARN … [use-array-missing]`.
+A later release, together with the `push`/`pop` error, makes it an error. Add `use array` (or run
+`lk fix`). One more difference: `push($m["new"], $x)` created a missing key, while
 `$m["new"] = array::push($m["new"], $x)` stops with an error when `"new"` is not in the map. Set the
 key to `[]` first where it can be missing.
 

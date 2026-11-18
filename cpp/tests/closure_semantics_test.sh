@@ -20,12 +20,14 @@ function m(){ $v=5; $f=fn()=>$v; $v=10; return $f() }
 print(m())
 LK
 cat > "$TMP/C.lk" <<'LK'
+use array
 $fns=[]
 $i=0
 while($i<3){ $v=$i; $fns = array::push($fns, fn()=>$v); $i=$i+1 }
 print($fns[0]() . $fns[1]() . $fns[2]())
 LK
 cat > "$TMP/D.lk" <<'LK'
+use array
 function m(){
   $fns=[]
   $i=0
@@ -35,6 +37,7 @@ function m(){
 print(m())
 LK
 cat > "$TMP/E.lk" <<'LK'
+use array
 $fns=[]
 $i=0
 while($i<3){ $fns = array::push($fns, fn()=>$i); $i=$i+1 }
@@ -55,6 +58,7 @@ LK
 # $v global kalır → parite. Bu, fix'in route/setup var'larını (döngü-dışı) bozmadığını
 # kilitler (analizci güvenlik koşulu a).
 cat > "$TMP/H.lk" <<'LK'
+use array
 $v=99
 $fns=[]
 $i=0
@@ -66,6 +70,7 @@ LK
 # Fix: boxed catch-var'a cell tahsis + exception cell[0]'a. Döngü-içi → per-iter →
 # e0e1e2 (fix ÖNCESİ VM null null null verirdi). Cell'in atama-DIŞI bildirim yollarını kilitler.
 cat > "$TMP/I.lk" <<'LK'
+use array
 $fns=[]
 $i=0
 while($i<3){
@@ -87,6 +92,7 @@ LK
 # manuel kayıtla (locals_.push_back) declare_local'ı atlar → cell yok. Fix: boxed loop
 # var ayrı cell-slot, FOR_STEP sonrası her iter taze cell. tw=101,102; fix ÖNCESİ vm=1,2.
 cat > "$TMP/K.lk" <<'LK'
+use array
 $fns=[]
 foreach([1,2] as $v){ $fns = array::push($fns, fn()=>$v); $v=$v+100 }
 print($fns[0]() . "," . $fns[1]())

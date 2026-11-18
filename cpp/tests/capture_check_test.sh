@@ -12,9 +12,9 @@
 LK="${1:?usage: $0 <lk>}"; D="$(dirname "$0")/capture_check"; fail=0
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 out="$("$LK" --check "$D/sample.lk" 2>&1)"; rc=$?
-want="3 [capture-stale] \$g
-10 [capture-stale] \$n
-15 [capture-stale] \$i"
+want="4 [capture-stale] \$g
+11 [capture-stale] \$n
+16 [capture-stale] \$i"
 got="$(echo "$out" | sed -nE 's/^WARN ([0-9]+) [0-9]+ (\[[a-z-]+\]) [^$]*(\$[a-z]+).*/\1 \2 \3/p')"
 [ "$got" = "$want" ] || { echo "  FAIL warnings differ:"; echo "$got"; fail=1; }
 [ $rc = 0 ] && [ "$(echo "$out" | tail -1)" = "OK" ] || { echo "  FAIL exit code or last line changed (rc=$rc)"; fail=1; }

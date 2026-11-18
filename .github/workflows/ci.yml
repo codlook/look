@@ -1000,6 +1000,14 @@ jobs:
           cd cpp
           bash tests/lk_fix_test.sh ./build/lk
 
+      # $l = array::push($l, $x) / $l = array::slice($l, 0, -1) skip the module check in place: without
+      # `use array` they warn (lk --check and at run time, once per place); a later release errors.
+      - name: In-place array:: without use array is reported
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/use_array_missing_test.sh ./build/lk
+
       # string::random reduced a random byte with `% 36`: the first four characters of its
       # alphabet came out about 14% more often. Every character is equally likely now.
       - name: string::random is uniform

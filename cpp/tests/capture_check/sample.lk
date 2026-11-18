@@ -1,3 +1,4 @@
+use array
 $g = 1
 $top = function() use ($g) { return $g }
 $g = 2

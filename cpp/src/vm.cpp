@@ -28,6 +28,8 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <unordered_set>
+#include <mutex>
+#include <set>
 
 namespace {
 // LOOK_WARN_UNDEF=1 → tanımsız değişken okumalarını logla (davranışı DEĞİŞTİRMEZ).
@@ -203,6 +205,27 @@ LOOK_VM_COLD void VM::note_error_line_for(int base, const FunctionProto* proto) 
 // (call_stack_[k-1]) o anki komutunun (ip-1 = çağrı komutu; geri çağırmada array::map gibi
 // yerleşiğin çağrıldığı satır). Eski yorumlayıcıyla aynı: en içteki önce. Derin özyinelemede
 // (10 000 çağrı) en içteki ve en dıştaki 50'si yazılır, arası tek satır — Go da ortayı atlar.
+// `$l = array::push($l, $x)` / `$l = array::slice($l, 0, -1)` yerinde derlenir ve çağrıyı atlar;
+// `use array` yokken de çalışıyordu (yol biçimi ise "Module 'array' not loaded." veriyor). Bir sürüm
+// uyarı, sonra hata (push/pop ile aynı takvim). Yer başına bir kez (süreç ömrü) — döngü günlüğü doldurmasın.
+static LOOK_VM_COLD void warn_in_place_without_use_array(const FunctionProto* proto, int ip, const char* fn) {
+    static std::mutex mu;
+    static std::set<std::pair<const FunctionProto*, int>> seen;
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        if (!seen.insert({proto, ip}).second) return;
+    }
+    int line = 0;
+    std::string file;
+    if (proto && ip >= 0 && ip < (int)proto->lines.size()) { line = proto->lines[ip]; file = proto->file_at(ip); }
+    // "" = ana betik (bytecode.h file_runs) → yalnız satır; dahil edilen dosyada dosya:satır
+    std::string where = line <= 0 ? std::string()
+                      : file.empty() ? "line " + std::to_string(line) + ": " : file + ":" + std::to_string(line) + ": ";
+    Logger::instance().log(LogLevel::LOG_WARN, "check",
+        where + std::string(fn) + " is used without `use array`; it runs only because this form skips the "
+        "module check (add `use array`; this will be an error in a later release; lk fix adds it)");
+}
+
 LOOK_VM_COLD void VM::capture_error_stack() {
     last_error_stack_.clear();
     const size_t n = call_stack_.size();
@@ -938,10 +961,16 @@ call_dispatch:
             case OpCode::PUSH_PATH: case OpCode::POP_PATH: {
                 // push/pop ilk argümanı olan DEĞİŞKENİ değiştirir: hedef, kökün kendi yerinde tek
                 // sahipli hale getirilir (yazınca-kopyala), sonra yerinde büyür/küçülür.
+                const int ins_ip = frame.ip - 1;
                 Value* root = path_root(proto->code[frame.ip++]);
                 const bool is_push = ins.op == OpCode::PUSH_PATH;
                 const Instruction* vh = is_push ? &proto->code[frame.ip++] : nullptr;
                 Value pv = is_push ? R(vh->a) : Value();
+                if (is_push && vh->b) {   // `$a = array::push($a, v)` — `use array` yoksa uyar (sonra hata)
+                    static const int push_ix = builtin_index("array::push");
+                    if (push_ix >= 0 && !(*shared_.builtins)[push_ix])
+                        warn_in_place_without_use_array(proto, ins_ip, "array::push()");
+                }
                 R(ins.a) = vm_struct([&] {
                     Value& target = look::value_path_slot(*root, &R(ins.b), ins.c,
                         [&](Value& c, const Value& k, const Value* forced) { array_set(c, k, *forced); });
@@ -961,7 +990,13 @@ call_dispatch:
                 // `$a = array::slice($a, 0, -1)` yerinde (compiler try_compile_push_assign): son eleman
                 // değişkenin kendi yerinde atılır (paylaşılıyorsa bir kez kopya). Hatalar çağrınınkiyle
                 // aynı sırada ve metinde (extra_stdlib.cpp array:: sarmalayıcısı + slice gövdesi).
+                const int ins_ip = frame.ip - 1;
                 Value* root = path_root(proto->code[frame.ip++]);
+                {   // `use array` yoksa uyar (PUSH_PATH'teki gibi; sonra hata)
+                    static const int slice_ix = builtin_index("array::slice");
+                    if (slice_ix >= 0 && !(*shared_.builtins)[slice_ix])
+                        warn_in_place_without_use_array(proto, ins_ip, "array::slice()");
+                }
                 vm_struct([&] {
                     Value& t = *root;
                     if (t.type() == Value::STRUCT)

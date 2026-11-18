@@ -77,6 +77,7 @@ done
 
 # Reading outer variables, writing own locals and parameters, and top-level blocks still work.
 cat > ok.lk <<'E'
+use array
 $t = ["k" => 1]
 $l = [1, 2]
 function reads() { return $t["k"] + count($l) }

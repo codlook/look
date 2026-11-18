@@ -38,6 +38,23 @@ std::unique_ptr<Program> Parser::parse() {
     for (int k = 0; k < DEP_COUNT; ++k)
         if (deps_[k].calls > 1 && deps_[k].warn < warnings_.size())
             warnings_[deps_[k].warn].message = deprecation_message(k, deps_[k].calls);
+    // `$l = array::push($l, $x)` / `$l = array::slice($l, 0, -1)` yerinde derlenir ve çağrıyı
+    // atlar: `use array` olmadan da çalışıyordu, oysa yol biçimi (`$m["k"] = array::push(...)`)
+    // "Module 'array' not loaded." veriyor — gizli kural. Bir sürüm uyarı (lk --check; çalışırken
+    // VM uyarır), sonra push/pop ile birlikte hata. Dahil edilen dosya modülü üst dosyadan alabilir;
+    // bu yüzden yüklemede değil yalnız --check'te gösterilir (kind "use-array-missing").
+    if (in_place_array_.calls > 0 && !has_use_array_) {
+        CaptureWarning w;
+        w.line = in_place_array_.line;
+        w.column = in_place_array_.column;
+        w.kind = "use-array-missing";
+        w.message = "array:: is used without `use array`" +
+            (in_place_array_.calls > 1 ? " (" + std::to_string(in_place_array_.calls) + " places in this file, the first here)"
+                                       : std::string()) +
+            "; it runs only because $l = array::push(...) and $l = array::slice($l, 0, -1) skip the module "
+            "check (add `use array`; this will be an error in a later release; lk fix adds it)";
+        warnings_.push_back(std::move(w));
+    }
     return program;
 }
 
@@ -199,6 +216,7 @@ std::unique_ptr<Statement> Parser::use_statement() {
         alias = al.lexeme;
     }
     consume_semi();
+    if (name.lexeme == "array" && alias.empty()) has_use_array_ = true;
     return std::make_unique<UseStatement>(name.lexeme, alias);
 }
 
@@ -550,8 +568,13 @@ std::unique_ptr<Expression> Parser::assignment() {
                 return std::make_unique<AssignmentExpression>("", op, std::move(val), std::move(index), std::move(obj));
             }
             // $var = val
-            if (auto* var = node_as<Variable>(expr.get()))
+            if (auto* var = node_as<Variable>(expr.get())) {
+                if (op == "=" && is_in_place_array_call(var->name, val.get()) && in_place_array_.calls++ == 0) {
+                    in_place_array_.line = var->loc.line > 0 ? var->loc.line : previous().line;
+                    in_place_array_.column = var->loc.line > 0 ? var->loc.column : previous().column;
+                }
                 return std::make_unique<AssignmentExpression>(var->name, op, std::move(val));
+            }
 
             throw look::LookParseError("Invalid assignment target.", previous().line, previous().column);
         }
@@ -791,6 +814,29 @@ std::unique_ptr<Expression> Parser::call() {
         }
     }
     return expr;
+}
+
+// `$name = array::push($name, v)` ya da `$name = array::slice($name, 0, -1)` mi? (derleyicinin
+// yerinde yolu: compiler.cpp try_compile_push_assign — o yol modül denetimini atlar.)
+static bool parser_int_literal(const Expression* x, int64_t v) {
+    if (!x) return false;
+    if (auto* n = node_as<NumberLiteral>(x)) return n->value == v;
+    if (auto* u = node_as<UnaryExpression>(x); u && u->op == "-" && u->prefix && u->right)
+        if (auto* n = node_as<NumberLiteral>(u->right.get())) return v != INT64_MIN && n->value == -v;
+    return false;
+}
+bool Parser::is_in_place_array_call(const std::string& name, const Expression* val) {
+    auto* call = node_as<CallExpression>(val);
+    if (!call) return false;
+    auto* sr = node_as<ScopeResolution>(call->callee.get());
+    if (!sr || sr->module_name != "array") return false;
+    const bool push = sr->member_name == "push" && call->arguments.size() == 2;
+    const bool shrink = sr->member_name == "slice" && call->arguments.size() == 3 &&
+                        parser_int_literal(call->arguments[1].get(), 0) &&
+                        parser_int_literal(call->arguments[2].get(), -1);
+    if (!push && !shrink) return false;
+    auto* first = node_as<Variable>(call->arguments[0].get());
+    return first && first->name == name;
 }
 
 // Kullanımdan kalkan çağrının uyarı metni (count > 1: dosyadaki toplam da yazılır).
