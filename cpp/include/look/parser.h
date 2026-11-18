@@ -24,8 +24,11 @@ private:
     int    scope_depth_ = 0;  // fonksiyon iç içeliği — use "file" top-level guard için
     std::map<std::string, std::pair<std::string, int>> struct_seen_;  // LOOK 2: ad → (tanım imzası, satır)
     std::vector<CaptureWarning> warnings_;   // LOOK 2: yüklemede gösterilecek uyarılar (capture-stale)
-    int    push_calls_ = 0;                   // çıplak push() çağrıları — dosya başına TEK uyarı
-    size_t push_warn_ = (size_t)-1;           // o uyarının warnings_ içindeki yeri
+    // Kullanımdan kalkan çağrılar — her tür için dosya başına TEK uyarı (ilk yer + toplam)
+    enum { DEP_PUSH, DEP_POP, DEP_ARRAY_POP, DEP_COUNT };
+    struct Deprecated { int calls = 0; size_t warn = (size_t)-1; };   // warn: uyarının warnings_ içindeki yeri
+    Deprecated deps_[DEP_COUNT];
+    static std::string deprecation_message(int dep, int count);
     static constexpr int MAX_EXPR_DEPTH = 150;  // ifade özyineleme tavanı (expression+unary+power ortak)
     int    expr_depth_  = 0;  // ifade özyineleme derinliği — derin iç içe paren/array
                               // parser'ın recursive-descent yığınını taşırıp SIGSEGV

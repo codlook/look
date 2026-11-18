@@ -6,6 +6,7 @@
 #include "look/capture_check.h"
 #include "look/arg_check.h"
 #include "look/format_src.h"   // lk fmt
+#include "look/fix_src.h"      // lk fix
 #include "look/runtime_host.h"
 #include "look/array_count.h"
 #include "look/http_client.h"
@@ -74,6 +75,8 @@ static void print_usage() {
     std::cout << "  lk repl                          — interactive REPL\n";
     std::cout << "  lk fmt <file.lk>...              — format files in place (no files: stdin to stdout)\n";
     std::cout << "  lk fmt --check <file.lk>...      — list unformatted files; exit 1 if any\n";
+    std::cout << "  lk fix <file.lk>...              — rewrite push()/pop()/array::pop() in place (no files: stdin to stdout)\n";
+    std::cout << "  lk fix --check <file.lk>...      — list what would be rewritten; exit 1 if anything would\n";
     std::cout << "  lk module install <github.com/user/repo>  — install module from GitHub\n";
     std::cout << "  lk module list                            — list official modules\n";
     std::cout << "  lk install <pkg>                 — install package (e.g. github.com/codlook/look-packages/firebase)\n";
@@ -360,6 +363,18 @@ int main(int argc, char* argv[]) {
             return look::run_fmt(files, fmt_check);
         }
 
+        // ── lk fix <file...> [--check] : push/pop/array::pop → yeni yazım (look/fix_src.h) ──
+        if (cmd == "fix") {
+            bool fix_check = false;
+            std::vector<std::string> files;
+            for (int i = 2; i < argc; ++i) {
+                std::string arg = argv[i];
+                if (arg == "--check") fix_check = true;
+                else files.push_back(arg);
+            }
+            return look::run_fix(files, fix_check);
+        }
+
         // ── lk module <sub> ──────────────────────────────────────────────────
         if (cmd == "module") {
             if (argc < 3) {
@@ -460,11 +475,12 @@ int main(int argc, char* argv[]) {
                           << " [" << w.kind << "] " << w.message << "\n";
             // LOOK 2 geçiş denetimi: adlı fonksiyona yanlış sayıda argümanla çağrı (1.0.x'te iki
             // motor ayrışıyordu; kural kesinleşmeden önce sayım için).
-            // push($l, $x) → $l = array::push($l, $x): bir sürüm uyarı (sonra hata).
+            // push($l, $x) → $l = array::push($l, $x); pop($l) / array::pop($l) → $l[-1] +
+            // $l = array::slice($l, 0, -1): bir sürüm uyarı (sonra hata). `lk fix` yeniden yazar.
             for (const auto& w : parser.warnings())
-                if (w.kind == "push-deprecated")
+                if (w.kind == "push-deprecated" || w.kind == "pop-deprecated" || w.kind == "array-pop-deprecated")
                     std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
-                              << " [push-deprecated] " << w.message << "\n";
+                              << " [" << w.kind << "] " << w.message << "\n";
             for (const auto& w : look::check_arg_counts(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [arg-count] " << w.message << "\n";

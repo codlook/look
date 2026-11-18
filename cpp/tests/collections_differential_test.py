@@ -19,7 +19,8 @@
 #   * Listeye tam-sayı olmayan metin anahtarla yazmak listeyi sözlüğe çevirir ("0","1",…
 #     anahtarlarıyla) — kodun davranışı (vm.cpp array_set).
 #   * Listede tam-sayı olmayan metin anahtarı okumak null; sözlükte eksik anahtar null.
-#   * push/pop yalnız listede; sözlükte hata. pop boş listede null.
+#   * push/pop yalnız listede; sözlükte hata. pop boş listede null. Yeni yazım (take):
+#     $x = $l[-1] + $l = array::slice($l, 0, -1) — boş listede ve sözlükte hata; çıplak pop az.
 #   * == içerik karşılaştırır: liste sıralı, sözlük sırasız; string/sayı dönüşümü yok.
 #   * string::len/substr/reverse/index_of Unicode kod noktası üzerinde çalışır.
 import argparse
@@ -229,7 +230,7 @@ def rand_key(r):
 def gen_op(r, state):
     kinds = [
         ("init_list", 3), ("init_map", 3), ("copy", 6), ("set", 18), ("set2", 7), ("push", 8),
-        ("push2", 3), ("pop", 4), ("aset", 3), ("mut", 3), ("fill", 2), ("dump", 8), ("count", 3),
+        ("push2", 3), ("take", 4), ("pop", 1), ("aset", 3), ("mut", 3), ("fill", 2), ("dump", 8), ("count", 3),
         ("keys", 3), ("values", 2), ("contains", 3), ("read", 6), ("eq", 5), ("json_rt", 3),
         ("foreach", 2), ("str", 6), ("bad_sort", 1), ("slice", 3),
     ]
@@ -302,8 +303,11 @@ def render(op):
         e = f"{op[1]}[{lit(op[2])}]"
         return (f"try {{ {e} = array::push({e}, {lit(op[3])})\n"
                 f"print(\"I \" . count({e})) }} catch ($e) {{ print(\"ERR\") }}")
-    if k == "pop":
+    if k == "pop":   # kullanımdan kalktı (uyarı stderr'e); birkaç tane kalsın
         return f"try {{ print(\"J \" . {J}(pop({op[1]}))) }} catch ($e) {{ print(\"ERR\") }}"
+    if k == "take":  # pop'un yeni yazımı: son eleman + yerinde kısaltma (SHRINK_PATH)
+        return (f"try {{ $tk = {op[1]}[-1]\n{op[1]} = array::slice({op[1]}, 0, -1)\n"
+                f"print(\"J \" . {J}($tk)) }} catch ($e) {{ print(\"ERR\") }}")
     if k == "aset":
         return f"try {{ {op[1]} = array::set({op[2]}, {lit(op[3])}, {lit(op[4])}) }} catch ($e) {{ print(\"ERR\") }}"
     if k == "slice":
@@ -452,6 +456,17 @@ def model_run(ops):
                 if not isinstance(c, list):
                     raise Invalid()
                 J(c.pop() if c else None)
+            guarded(f)
+        elif k == "take":
+            def f(op=op):
+                c = env[op[1]]
+                if isinstance(c, MapV):
+                    raise LookErr()   # array::slice sözlükte hata ($m[-1] okuması önce, hata yok)
+                if not isinstance(c, list):
+                    raise Invalid()
+                if not c:
+                    raise LookErr()   # $l[-1] boş listede hata
+                J(c.pop())
             guarded(f)
         elif k == "slice":
             # array::slice($l, offset[, length]) — PHP array_slice: eksi offset sondan; eksi

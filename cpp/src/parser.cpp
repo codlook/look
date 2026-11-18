@@ -33,12 +33,11 @@ std::unique_ptr<Program> Parser::parse() {
     }
     // LOOK 2 parametreye-yazma denetimi (look/param_write_check.h): çağırana ulaşmayan yazma.
     for (auto& w : check_param_writes(*program)) warnings_.push_back(std::move(w));
-    // Çıplak push(): dosya başına tek satır (ilk çağrının yeri + toplam) — yüzlerce çağrılı bir
-    // uygulama başlangıç günlüğünü doldurmasın.
-    if (push_calls_ > 1 && push_warn_ < warnings_.size())
-        warnings_[push_warn_].message = "push($list, $x) changes the variable it is given (" +
-            std::to_string(push_calls_) + " calls in this file, the first here); write "
-            "$list = array::push($list, $x) (push() will be an error in a later release)";
+    // Kullanımdan kalkan çağrılar (push / pop / array::pop): dosya başına tek satır (ilk çağrının
+    // yeri + toplam) — yüzlerce çağrılı bir uygulama başlangıç günlüğünü doldurmasın.
+    for (int k = 0; k < DEP_COUNT; ++k)
+        if (deps_[k].calls > 1 && deps_[k].warn < warnings_.size())
+            warnings_[deps_[k].warn].message = deprecation_message(k, deps_[k].calls);
     return program;
 }
 
@@ -794,18 +793,43 @@ std::unique_ptr<Expression> Parser::call() {
     return expr;
 }
 
+// Kullanımdan kalkan çağrının uyarı metni (count > 1: dosyadaki toplam da yazılır).
+std::string Parser::deprecation_message(int dep, int count) {
+    static const char* const head[DEP_COUNT] = {
+        "push($list, $x) changes the variable it is given",
+        "pop($list) changes the variable it is given",
+        "array::pop($list) does not remove anything, it returns the last element" };
+    static const char* const repl[DEP_COUNT] = {
+        "$list = array::push($list, $x)",
+        "$x = $list[-1] and $list = array::slice($list, 0, -1)",
+        "$list[-1]" };
+    static const char* const name[DEP_COUNT] = { "push()", "pop()", "array::pop()" };
+    std::string m = head[dep];
+    if (count > 1) m += " (" + std::to_string(count) + " calls in this file, the first here)";
+    m += std::string("; write ") + repl[dep] + " (" + name[dep] +
+         " will be an error in a later release; lk fix rewrites it)";
+    return m;
+}
+
 std::unique_ptr<Expression> Parser::finish_call(std::unique_ptr<Expression> callee) {
-    // Çıplak push(): bir sürüm uyarı, sonra hata (kullanıcı kararı 2026-11-18). Tek yazım Go'nun
-    // `a = append(a, x)` modeli: `$l = array::push($l, $x)` — değer kuralıyla tutarlı, gizli değiştirme
-    // yok. Konum çağrının başı (callee'nin ad token'ı).
-    if (auto* v = node_as<Variable>(callee.get()); v && v->name == "push" && push_calls_++ == 0) {
-        push_warn_ = warnings_.size();
+    // Çıplak push()/pop() ve array::pop(): bir sürüm uyarı, sonra hata (kullanıcı kararı 2026-11-18).
+    // Tek yazım Go'nun `a = append(a, x)` modeli: `$l = array::push($l, $x)`, son eleman `$l[-1]`,
+    // çıkarma `$l = array::slice($l, 0, -1)` — değer kuralıyla tutarlı, gizli değiştirme yok.
+    // array::pop adı yanıltıcı: son elemanı ÇIKARMADAN döndürür. Konum çağrının başı (ad token'ı).
+    int dep = -1;
+    if (auto* v = node_as<Variable>(callee.get())) {
+        if (v->name == "push") dep = DEP_PUSH;
+        else if (v->name == "pop") dep = DEP_POP;
+    } else if (auto* sr = node_as<ScopeResolution>(callee.get())) {
+        if (sr->module_name == "array" && sr->member_name == "pop") dep = DEP_ARRAY_POP;
+    }
+    if (dep >= 0 && deps_[dep].calls++ == 0) {
+        deps_[dep].warn = warnings_.size();
         CaptureWarning w;
         w.line = callee->loc.line > 0 ? callee->loc.line : previous().line;
         w.column = callee->loc.line > 0 ? callee->loc.column : previous().column;
-        w.kind = "push-deprecated";
-        w.message = "push($list, $x) changes the variable it is given; write $list = array::push($list, $x) "
-                    "(push() will be an error in a later release)";
+        w.kind = dep == DEP_PUSH ? "push-deprecated" : dep == DEP_POP ? "pop-deprecated" : "array-pop-deprecated";
+        w.message = deprecation_message(dep, 1);
         warnings_.push_back(std::move(w));
     }
     auto args = argument_list();
@@ -971,7 +995,9 @@ std::unique_ptr<Expression> Parser::primary() {
         }
         if (match(TokenType::COLON_COLON)) {
             auto member = consume(TokenType::IDENT, "Expect member name after '::'.");
-            return std::make_unique<ScopeResolution>(name, member.lexeme);
+            auto sr = std::make_unique<ScopeResolution>(name, member.lexeme);
+            sr->loc.line = id_tok.line; sr->loc.column = id_tok.column;   // uyarı konumu (array::pop)
+            return sr;
         }
         auto var = std::make_unique<Variable>(name);
         var->loc.line = id_tok.line; var->loc.column = id_tok.column;

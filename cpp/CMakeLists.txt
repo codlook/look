@@ -115,6 +115,7 @@ set(LOOK_CORE
     src/lexer.cpp
     src/parser.cpp
     src/format_src.cpp   # lk fmt — kaynak biçimlendirici (lexer'a bağlı)
+    src/fix_src.cpp      # lk fix — push/pop/array::pop yeni yazıma (ayrıştırıcıya bağlı)
     src/route_group.cpp  # route::group() setup-zamanı prefix+mw kalıtımı context'i
     src/value.cpp        # Value, kanal
     src/runtime_host.cpp # yerleşik modüllerin ev sahibi (LOOK 2: ağaç-yürüten yorumlayıcının yerini aldı)

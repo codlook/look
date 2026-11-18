@@ -984,6 +984,22 @@ jobs:
           cd cpp
           bash tests/push_deprecated_test.sh ./build/lk
 
+      # bare pop($list) changes its variable and array::pop($list) removes nothing: both deprecated
+      # in favour of $list[-1] and $list = array::slice($list, 0, -1). One warning per file per kind.
+      - name: Bare pop() and array::pop() are reported once per file
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/pop_deprecated_test.sh ./build/lk
+
+      # lk fix rewrites push/pop/array::pop by source ranges (comments and other lines kept), reports
+      # what it cannot rewrite (exit 1), is idempotent; --check writes nothing; the output is the same.
+      - name: lk fix rewrites push, pop and array::pop
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/lk_fix_test.sh ./build/lk
+
       # string::random reduced a random byte with `% 36`: the first four characters of its
       # alphabet came out about 14% more often. Every character is equally likely now.
       - name: string::random is uniform

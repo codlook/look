@@ -241,7 +241,8 @@ inline std::vector<CaptureWarning> check_param_writes(const Program& program) {
 // ile yüklenen dosyalar aynı yoldan geçer.
 inline void log_param_writes(const std::vector<CaptureWarning>& ws, const std::string& file) {
     for (const auto& w : ws)
-        if (w.kind == "param-write" || w.kind == "push-deprecated")
+        if (w.kind == "param-write" || w.kind == "push-deprecated" || w.kind == "pop-deprecated" ||
+            w.kind == "array-pop-deprecated")
             Logger::instance().log(LogLevel::LOG_WARN, "check", file + ":" + std::to_string(w.line) + ": " + w.message);
 }
 

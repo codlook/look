@@ -82,6 +82,7 @@ docker rm look-tmp
 | `installer.cpp` | `lk install` / `lk module` — package and module installation from GitHub, `look.lock` |
 | `test_runner.cpp` | `lk test` |
 | `format_src.cpp` | `lk fmt` source formatter |
+| `fix_src.cpp` | `lk fix` — rewrites deprecated `push`/`pop`/`array::pop` |
 | `repl.cpp` | `lk repl` |
 | `http_main.cpp` | HTTP entry (`--mode http`) — shared engine (setup, hot reload, VM), WebSocket, SSE, rate limiter, SMTP/IMAP startup |
 | `fcgi_main.cpp` | FastCGI entry — stdin/stdout (mod_fcgid) and TCP modes, warm start |

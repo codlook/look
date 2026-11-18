@@ -45,7 +45,7 @@ function dif_p1() {
   # bitwise/shift
   $o .= "D:" . (12&10) . "," . (12|1) . "," . (12^5) . "," . (1<<4) . "," . (256>>2) . "," . (~5) . ";";
   # array + push/pop + index + nested
-  $a=[1,2,3]; $a=array::push($a,4); $last=pop($a); $a[0]=99; $n=[[1,2],[3,4]];
+  $a=[1,2,3]; $a=array::push($a,4); $last=$a[-1]; $a=array::slice($a,0,-1); $a[0]=99; $n=[[1,2],[3,4]];
   $o .= "E:" . json::encode($a) . "," . $last . "," . $n[1][0] . ";";
   # object + member + index atama
   $m=["name"=>"ali","age"=>30]; $m.age=31; $m["city"]="ist";
