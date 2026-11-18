@@ -161,6 +161,32 @@ check "the panel reads the release status"                    'grep -q "release_
 check "a held site is told it gets no security fixes"         'grep -q "receives no fixes, security fixes included" "$P"'
 check "the panel shows the lines to fix"                      'grep -q "check_lines" "$P"'
 check "the panel offers to check again"                       'grep -q "Check again" "$P"'
+echo "== the web server is reconfigured only when the site's proxy settings change =="
+# httpdmng --reconfigure-domain reloads the web server: measured on a Plesk server, connections got no
+# answer for about half a second (curl 000) plus a 4 s stall. Plesk's httpd.conf includes vhost.conf and
+# vhost_ssl.conf by path, so when their content is the same and they are included, nothing is reloaded.
+reset_sandbox
+mkdir -p /usr/local/psa/admin/bin
+printf '#!/bin/bash\necho "$*" >> /tmp/httpdmng.log\n' > /usr/local/psa/admin/bin/httpdmng
+chmod 755 /usr/local/psa/admin/bin/httpdmng; : > /tmp/httpdmng.log
+site good.test good_u 10061 'route("GET", "/", fn() => "ok")'
+fake_look "$MOD/bin" 1.0.99 abcdef0; setup > /dev/null
+C=/var/www/vhosts/system/good.test/conf
+reconf_count() { sleep 1; grep -c . /tmp/httpdmng.log; }   # the call runs in the background
+plesk_includes() { printf 'Include "%s/vhost_ssl.conf"\nInclude "%s/vhost.conf"\n' "$C" "$C" > "$C/httpd.conf"; }
+bash "$MOD/scripts/enable.sh" $(args_for good.test 9150) > /dev/null 2>&1
+check "a new site: the web server is reconfigured"                    '[ "$(reconf_count)" = 1 ]'
+plesk_includes
+bash "$MOD/scripts/enable.sh" $(args_for good.test 9150) > /dev/null 2>&1
+check "the same settings again (an update, a restart): no reconfigure" '[ "$(reconf_count)" = 1 ]'
+check "the proxy files are still there"                                'grep -q "127.0.0.1:9150" "$C/vhost.conf" && grep -q "127.0.0.1:9150" "$C/vhost_ssl.conf"'
+bash "$MOD/scripts/enable.sh" $(args_for good.test 9153) > /dev/null 2>&1
+check "another port: reconfigured, files rewritten"                    '[ "$(reconf_count)" = 2 ] && grep -q "127.0.0.1:9153" "$C/vhost.conf"'
+: > "$C/httpd.conf"
+bash "$MOD/scripts/enable.sh" $(args_for good.test 9153) > /dev/null 2>&1
+check "files not included by the web server yet: reconfigured"         '[ "$(reconf_count)" = 3 ]'
+rm -f /usr/local/psa/admin/bin/httpdmng
+
 if command -v php >/dev/null; then
     check "index.php parses" 'php -l "$PL/htdocs/index.php" >/dev/null'
     check "index.phtml parses" 'php -l "$P" >/dev/null'

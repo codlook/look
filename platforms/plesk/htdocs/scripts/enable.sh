@@ -382,13 +382,29 @@ XFP_HTTP="<IfModule mod_headers.c>
 XFP_HTTPS="<IfModule mod_headers.c>
     RequestHeader set X-Forwarded-Proto \"https\"
 </IfModule>"
-printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTP"  > "$CONF_DIR/vhost.conf"
-printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTPS" > "$CONF_DIR/vhost_ssl.conf"
+NEW_HTTP="$(printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTP")"
+NEW_HTTPS="$(printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTPS")"
+# Plesk'in ürettiği httpd.conf iki dosyayı YOLUYLA içerir (Include …/vhost.conf). İçerik aynıysa ve
+# Include zaten varsa Apache bu yapılandırmayla çalışıyor: reconfigure GEREKMEZ. Ölçüldü (test.codlook.com,
+# 2026-11-18): httpdmng --reconfigure-domain sonunda web sunucusu yeniden yüklenirken ~0,5 sn bağlantılar
+# yanıtsız kalıyor (curl 000) + ~4 sn takılma — her eklenti güncellemesinde/yeniden başlatmada üretimde kesinti.
+NEED_RECONF=1
+if [ -f "$CONF_DIR/vhost.conf" ] && [ -f "$CONF_DIR/vhost_ssl.conf" ] \
+   && [ "$(cat "$CONF_DIR/vhost.conf")" = "$NEW_HTTP" ] && [ "$(cat "$CONF_DIR/vhost_ssl.conf")" = "$NEW_HTTPS" ] \
+   && grep -qF "Include \"$CONF_DIR/vhost.conf\"" "$CONF_DIR/httpd.conf" 2>/dev/null \
+   && grep -qF "Include \"$CONF_DIR/vhost_ssl.conf\"" "$CONF_DIR/httpd.conf" 2>/dev/null; then
+    NEED_RECONF=0
+fi
+if [ "$NEED_RECONF" = 1 ]; then
+    printf '%s\n' "$NEW_HTTP"  > "$CONF_DIR/vhost.conf"
+    printf '%s\n' "$NEW_HTTPS" > "$CONF_DIR/vhost_ssl.conf"
+fi
 
 # Apache reconfigure (Plesk yolu) — ARKA PLANDA çalışır. Plesk reconfigure 10-30sn
 # sürer; senkron çalışırsa panel AJAX'ı kilitler/timeout olur (domain görünmez).
 # systemd servisi + vhost config zaten hazır → reconfigure birkaç saniye içinde
 # uygular. Hemen OK dönüyoruz, UI anında domain'i listeye ekler.
+if [ "$NEED_RECONF" = 1 ]; then
 nohup bash -c '
     if [ -x /usr/local/psa/admin/bin/httpdmng ]; then
         /usr/local/psa/admin/bin/httpdmng --reconfigure-domain "'"$DOMAIN"'"
@@ -396,6 +412,7 @@ nohup bash -c '
         /usr/local/psa/admin/sbin/websrvmng --reconfigure-vhost --vhost-name="'"$DOMAIN"'"
     fi
 ' >/dev/null 2>&1 &
+fi
 
 # Eski surum servisi root ile calistiriyordu: onun yazdigi dosyalar (SQLite, yuklemeler) root'a
 # ait kalmis olabilir ve servis artik onlara yazamaz. Otomatik chown yok (root olarak site
