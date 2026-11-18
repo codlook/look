@@ -7,8 +7,12 @@
 # again: measured on MySQL at c=1000, p99 270 ms. Now a returned connection goes straight to the
 # oldest waiter (p99 52 ms there).
 # Here: a pool of one connection, a query of ~2 ms, 48 clients sending requests one after another.
-# With a fair queue every request waits about as long as the others: p99 within 1.5x and the
-# slowest within 2x the median (measured ~1.1x; before, p99 2-5x and the slowest 3-5x).
+# The test counts, for each request, how many other requests were answered while it waited
+# ("overtaken"). In a fair queue that is the number of other clients, 47, however fast or busy the
+# machine is. Measured: now p99 47-48 and at most 51, with and without other load on the CPU;
+# before the fix p99 ~139 and at most 185-273. Limits: p99 within 1.5x and the most within 2x of 47.
+# (The test used to compare latencies — p99 within 1.5x of the median. On the same build that ratio
+# swung between 1.1x and 2x with the load of the machine, and the test went red with no regression.)
 # Usage: db_pool_fairness_test.sh <lk-fcgi>
 set -u
 FCGI="$(cd "$(dirname "${1:?usage}")" && pwd)/$(basename "$1")"
@@ -29,26 +33,30 @@ LK
 for i in $(seq 1 50); do curl -s -m 1 -o /dev/null localhost:7764/ok && break; sleep 0.1; done
 cat > "$T/load.py" <<'PY'
 import http.client, threading, time, statistics
-lat, bad, lock = [], [0], threading.Lock()
+N = 48
+lat, over, bad, done, lock = [], [], [0], [0], threading.Lock()
 def client():
     c = http.client.HTTPConnection("127.0.0.1", 7764, timeout=60)
     for _ in range(25):
+        with lock: before = done[0]
         t = time.time(); c.request("GET", "/q"); r = c.getresponse(); body = r.read(); d = time.time() - t
         with lock:
+            over.append(done[0] - before); done[0] += 1   # answered while this one waited
             lat.append(d)
             if body != b"20000": bad[0] += 1
-ts = [threading.Thread(target=client) for _ in range(48)]
+ts = [threading.Thread(target=client) for _ in range(N)]
 [t.start() for t in ts]; [t.join() for t in ts]
-lat.sort(); med = statistics.median(lat); p99 = lat[int(len(lat) * 0.99)]
-print("%d %d %.1f %.1f %.1f" % (len(lat), bad[0], med * 1000, p99 * 1000, lat[-1] * 1000))
+lat.sort(); over.sort(); med = statistics.median(lat)
+print("%d %d %d %d %d %.1f %.1f" % (len(lat), bad[0], N - 1, over[int(len(over) * 0.99)], over[-1],
+                                    med * 1000, lat[int(len(lat) * 0.99)] * 1000))
 PY
-read -r n bad med p99 mx < <(python3 "$T/load.py")
+read -r n bad others op99 omax med p99 < <(python3 "$T/load.py")
 kill $pid 2>/dev/null; wait $pid 2>/dev/null; pid=""
-echo "  requests=$n wrong=$bad median=${med}ms p99=${p99}ms max=${mx}ms"
+echo "  requests=$n wrong=$bad overtaken: p99=$op99 max=$omax (fair: $others)  latency: median=${med}ms p99=${p99}ms"
 fail=0
 [ "$n" = 1200 ] && [ "$bad" = 0 ] && echo "  OK   1200 requests, all answered correctly" || { echo "  FAIL requests: $n, wrong: $bad"; fail=1; }
-# Ölçüm: adil kuyrukta p99 ve en yavaş istek medyanın ~1.1 katı; eski davranışta (sıra kaybı) p99 2 kat, en yavaş 3-4 kat.
-if awk "BEGIN{exit !($p99 <= 1.5 * $med && $mx <= 2 * $med)}"; then echo "  OK   p99 within 1.5x and the slowest within 2x the median: waiting requests are served in order"
-else echo "  FAIL p99 ${p99}ms / slowest ${mx}ms against a median of ${med}ms: some requests lose their turn"; fail=1; fi
+if awk "BEGIN{exit !($op99 <= 1.5 * $others && $omax <= 2 * $others)}"; then
+    echo "  OK   overtaken p99 within 1.5x and the most within 2x of $others: waiting requests are served in order"
+else echo "  FAIL overtaken p99 $op99 / most $omax against $others other clients: some requests lose their turn"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: pool waiters are served in order" || echo "FAIL: pool fairness"
 exit $fail
