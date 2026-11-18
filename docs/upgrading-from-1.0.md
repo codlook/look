@@ -298,6 +298,35 @@ Functions, channels and connections still compare by identity.
 
 A string that is not a number at all keeps the lenient rule: `int("abc")` is `0`.
 
+### `len` and `count` count the characters of a text — was its bytes
+
+`len($s)`, documented as the short form of `string::len`, counted bytes: `len("éé")` was `4`.
+It now counts characters, as `string::len` does (`2`); so does `count($s)`. Lists and maps are
+unchanged.
+
+### `array::set` on a list: a whole-number key is an index — was a duplicate key
+
+`array::set($list, "1", $v)` turned the list into a map and kept both `"1"` entries:
+`array::set([1, 2, 3], "1", "X")` was `{"0":1,"1":2,"2":3,"1":"X"}` with a `count` of 4. A key
+that is a whole number, written as a number or as text (`"1"`, `"01"`, `"+1"`), is now an index,
+and a negative one counts from the end, as in `$list[k] = $v`: the result is `[1, "X", 3]`.
+
+### A failed nested write changes nothing — was a half-made level
+
+`$m["q"][3] = 1` where `$m` has no `"q"` fails (a new list starts at index 0), but it used to
+create `"q"` first: after a `try`/`catch`, `$m` held an empty `"q"`. The write now checks the
+whole path before it creates a level, so a failed write leaves the variable as it was.
+
+### `push($list, $x)` is deprecated — write `$list = array::push($list, $x)`
+
+There were two ways to add to a list. `push($list, $x)` changed the variable it was given, the one
+exception to the rule that values are values; `$list = array::push($list, $x)` returns the new list,
+as Go's `a = append(a, x)` does, and is compiled to an in-place append (no copy). The second is the
+way to write it. In this release `push()` still works, and each file that uses it gets one warning
+— at load in the log, and from `lk --check` as `WARN … [push-deprecated]` — naming the first call
+and how many there are. A later release will make `push()` an error. A path works the same way:
+`$order["lines"] = array::push($order["lines"], $line)`.
+
 ## Calls
 
 ### A call gives a function the arguments it declares — error at run time

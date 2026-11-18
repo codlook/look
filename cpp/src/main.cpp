@@ -460,6 +460,11 @@ int main(int argc, char* argv[]) {
                           << " [" << w.kind << "] " << w.message << "\n";
             // LOOK 2 geçiş denetimi: adlı fonksiyona yanlış sayıda argümanla çağrı (1.0.x'te iki
             // motor ayrışıyordu; kural kesinleşmeden önce sayım için).
+            // push($l, $x) → $l = array::push($l, $x): bir sürüm uyarı (sonra hata).
+            for (const auto& w : parser.warnings())
+                if (w.kind == "push-deprecated")
+                    std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
+                              << " [push-deprecated] " << w.message << "\n";
             for (const auto& w : look::check_arg_counts(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [arg-count] " << w.message << "\n";

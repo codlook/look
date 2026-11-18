@@ -33,6 +33,12 @@ std::unique_ptr<Program> Parser::parse() {
     }
     // LOOK 2 parametreye-yazma denetimi (look/param_write_check.h): çağırana ulaşmayan yazma.
     for (auto& w : check_param_writes(*program)) warnings_.push_back(std::move(w));
+    // Çıplak push(): dosya başına tek satır (ilk çağrının yeri + toplam) — yüzlerce çağrılı bir
+    // uygulama başlangıç günlüğünü doldurmasın.
+    if (push_calls_ > 1 && push_warn_ < warnings_.size())
+        warnings_[push_warn_].message = "push($list, $x) changes the variable it is given (" +
+            std::to_string(push_calls_) + " calls in this file, the first here); write "
+            "$list = array::push($list, $x) (push() will be an error in a later release)";
     return program;
 }
 
@@ -789,6 +795,19 @@ std::unique_ptr<Expression> Parser::call() {
 }
 
 std::unique_ptr<Expression> Parser::finish_call(std::unique_ptr<Expression> callee) {
+    // Çıplak push(): bir sürüm uyarı, sonra hata (kullanıcı kararı 2026-11-18). Tek yazım Go'nun
+    // `a = append(a, x)` modeli: `$l = array::push($l, $x)` — değer kuralıyla tutarlı, gizli değiştirme
+    // yok. Konum çağrının başı (callee'nin ad token'ı).
+    if (auto* v = node_as<Variable>(callee.get()); v && v->name == "push" && push_calls_++ == 0) {
+        push_warn_ = warnings_.size();
+        CaptureWarning w;
+        w.line = callee->loc.line > 0 ? callee->loc.line : previous().line;
+        w.column = callee->loc.line > 0 ? callee->loc.column : previous().column;
+        w.kind = "push-deprecated";
+        w.message = "push($list, $x) changes the variable it is given; write $list = array::push($list, $x) "
+                    "(push() will be an error in a later release)";
+        warnings_.push_back(std::move(w));
+    }
     auto args = argument_list();
     consume(TokenType::RPAREN, "Expect ')' after arguments.");
     return std::make_unique<CallExpression>(std::move(callee), std::move(args));

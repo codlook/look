@@ -45,7 +45,7 @@ function dif_p1() {
   # bitwise/shift
   $o .= "D:" . (12&10) . "," . (12|1) . "," . (12^5) . "," . (1<<4) . "," . (256>>2) . "," . (~5) . ";";
   # array + push/pop + index + nested
-  $a=[1,2,3]; push($a,4); $last=pop($a); $a[0]=99; $n=[[1,2],[3,4]];
+  $a=[1,2,3]; $a=array::push($a,4); $last=pop($a); $a[0]=99; $n=[[1,2],[3,4]];
   $o .= "E:" . json::encode($a) . "," . $last . "," . $n[1][0] . ";";
   # object + member + index atama
   $m=["name"=>"ali","age"=>30]; $m.age=31; $m["city"]="ist";
@@ -133,13 +133,13 @@ function dif_p4() {
   $mk = function($base){ return function($x) use ($base) { return $base + $x } }
   $add10 = $mk(10)
   $fns = []; $ri = 0
-  while ($ri < 3) { $rv = $ri; push($fns, function() use ($rv) { return $rv * 100 }); $ri = $ri + 1 }
+  while ($ri < 3) { $rv = $ri; $fns = array::push($fns, function() use ($rv) { return $rv * 100 }); $ri = $ri + 1 }
   $rm = ["a"=>1, "b"=>2]; $rs = ""
   foreach ($rm as $rk => $rvv) { $rs .= $rk . $rvv }
   # 3b kilidi: use()-yakalanan FOREACH loop-local VM'de array-sarılı DÖNMEMELİ (["x"] değil
   # "x"). json::encode wrap'ı ifşa eder; eski bug'da VM explicit-use() capture'ın CELL [0]
   # deref'ini atlıyordu → tree-walk "x", VM ["x"] = ayrışma. İki motor da "pq" vermeli.
-  $cap = []; foreach (["p","q"] as $cx) { push($cap, function() use ($cx) { return $cx }) }
+  $cap = []; foreach (["p","q"] as $cx) { $cap = array::push($cap, function() use ($cx) { return $cx }) }
   $capj = json::encode($cap[0]()) . "-" . json::encode($cap[1]());
   $o .= "R:" . dif_fib(12) . "," . $add10(5) . "," . $fns[0]() . $fns[1]() . $fns[2]() . "," . $rs . "," . $capj . ";";
   return $o;

@@ -22,14 +22,14 @@ LK
 cat > "$TMP/C.lk" <<'LK'
 $fns=[]
 $i=0
-while($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }
+while($i<3){ $v=$i; $fns = array::push($fns, fn()=>$v); $i=$i+1 }
 print($fns[0]() . $fns[1]() . $fns[2]())
 LK
 cat > "$TMP/D.lk" <<'LK'
 function m(){
   $fns=[]
   $i=0
-  while($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }
+  while($i<3){ $v=$i; $fns = array::push($fns, fn()=>$v); $i=$i+1 }
   return $fns[0]() . $fns[1]() . $fns[2]()
 }
 print(m())
@@ -37,7 +37,7 @@ LK
 cat > "$TMP/E.lk" <<'LK'
 $fns=[]
 $i=0
-while($i<3){ push($fns, fn()=>$i); $i=$i+1 }
+while($i<3){ $fns = array::push($fns, fn()=>$i); $i=$i+1 }
 print($fns[0]() . $fns[1]() . $fns[2]())
 LK
 cat > "$TMP/F.lk" <<'LK'
@@ -58,7 +58,7 @@ cat > "$TMP/H.lk" <<'LK'
 $v=99
 $fns=[]
 $i=0
-while($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }
+while($i<3){ $v=$i; $fns = array::push($fns, fn()=>$v); $i=$i+1 }
 print($fns[0]() . $fns[1]() . $fns[2]())
 LK
 # I = catch değişkeni yakalama (58 simetri). $err catch-var'ı declare_local'dan geçer
@@ -69,7 +69,7 @@ cat > "$TMP/I.lk" <<'LK'
 $fns=[]
 $i=0
 while($i<3){
-  try { throw ("e" . $i) } catch($err) { push($fns, fn()=>$err) }
+  try { throw ("e" . $i) } catch($err) { $fns = array::push($fns, fn()=>$err) }
   $i=$i+1
 }
 print($fns[0]() . $fns[1]() . $fns[2]())
@@ -88,7 +88,7 @@ LK
 # var ayrı cell-slot, FOR_STEP sonrası her iter taze cell. tw=101,102; fix ÖNCESİ vm=1,2.
 cat > "$TMP/K.lk" <<'LK'
 $fns=[]
-foreach([1,2] as $v){ push($fns, fn()=>$v); $v=$v+100 }
+foreach([1,2] as $v){ $fns = array::push($fns, fn()=>$v); $v=$v+100 }
 print($fns[0]() . "," . $fns[1]())
 LK
 

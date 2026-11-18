@@ -12,7 +12,7 @@ function outer() {
 }
 function loops() {
     $fs = []
-    for ($i = 0; $i < 3; $i = $i + 1) { push($fs, function() { return $i }) }
+    for ($i = 0; $i < 3; $i = $i + 1) { $fs = array::push($fs, function() { return $i }) }
     return $fs
 }
 function clean($rows) {

@@ -353,6 +353,16 @@ jobs:
           echo "$out"
           echo "$out" | grep -q 'map functions: all checks passed' || { echo "::error::map functions FAILED"; exit 1; }
 
+      # Random programs on lists, maps and strings (index/key writes, nested writes, push/pop,
+      # copies, array::set, ==, json round trip, foreach, UTF-8 string functions) run on lk and
+      # on a small reference model; any difference fails with the shrunk program. Fixed seed;
+      # LOOK_COLL_FUZZ_ITERATIONS=N runs longer.
+      - name: Collections differential fuzz
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          python3 tests/collections_differential_test.py ./build/lk
+
       # `$s .= x` and `$s = $s . x` append in place, in a function and at top level (they copied
       # the whole string every time: 300k appends took 0.8-1.8 s, now about 10 ms); the operands
       # still see the old value, a copy of the string is not changed.
@@ -965,6 +975,14 @@ jobs:
         run: |
           cd cpp
           bash tests/param_write_check_test.sh ./build/lk ./build/lk-fcgi
+
+      # bare push($list, $x) changes the variable it is given: deprecated in favour of
+      # $list = array::push($list, $x). One warning per file (--check and at load); push still works.
+      - name: Bare push() is reported once per file
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/push_deprecated_test.sh ./build/lk
 
       # string::random reduced a random byte with `% 36`: the first four characters of its
       # alphabet came out about 14% more often. Every character is equally likely now.

@@ -80,11 +80,11 @@ cat > ok.lk <<'E'
 $t = ["k" => 1]
 $l = [1, 2]
 function reads() { return $t["k"] + count($l) }
-function own($p) { $a = [1]; $a[0] = 5; push($a, 6); $a[0]++; $p[0] = 9; push($p, 1); return [$a, $p] }
+function own($p) { $a = [1]; $a[0] = 5; $a = array::push($a, 6); $a[0]++; $p[0] = 9; $p = array::push($p, 1); return [$a, $p] }
 $c = fn($x) => $x + $t["k"]
-if (true) { $b = [1]; $b[0] = 2; push($b, 3); print(json::encode($b)) }
+if (true) { $b = [1]; $b[0] = 2; $b = array::push($b, 3); print(json::encode($b)) }
 $t["k"] = 2
-push($l, 3)
+$l = array::push($l, 3)
 print(reads() . " " . json::encode(own([0])) . " " . $c(1) . " " . json::encode($t) . " " . json::encode($l))
 E
 n=$((n+1)); out=$("$LK" ok.lk 2>&1)
