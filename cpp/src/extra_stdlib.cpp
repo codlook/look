@@ -518,8 +518,15 @@ Module make_array_module(ModuleHost* interp) {
             // Sessiz veri kaybi; hata yok.
             // Sozlesme: gecerli indeks → yerinde degistir, size'a esit → sona ekle
             // ($arr[i] = v ile ayni).
-            if (args[1].type() == Value::INT) {
-                int64_t i = args[1].as_int();
+            // Tam sayı metni ("1") de indekstir, negatif sondan sayar — `$l[k] = v` ile aynı kural
+            // (look/value_path.h). ESKİ: "1" anahtar sayılıp listeyi sözlüğe çeviriyordu ve "1" İKİ KEZ
+            // yer alıyordu: array::set([1,2,3], "1", "X") = {"0":1,"1":2,"2":3,"1":"X"}, count 4
+            // (rastgele karşılaştırmalı test buldu).
+            const bool int_key = args[1].type() == Value::INT ||
+                (args[1].type() == Value::STRING && look::value_is_int_key(args[1].str_ref()));
+            if (int_key) {
+                int64_t i = args[1].to_int();
+                if (i < 0) i += (int64_t)result->size();
                 if (i >= 0 && i < (int64_t)result->size()) {
                     (*result)[(size_t)i] = val;
                     return Value(result);
