@@ -1002,7 +1002,7 @@ jobs:
 
       # $l = array::push($l, $x) / $l = array::slice($l, 0, -1) skip the module check in place: without
       # `use array` they warn (lk --check and at run time, once per place); a later release errors.
-      - name: In-place array:: without use array is reported
+      - name: "In-place array:: without use array is reported"
         timeout-minutes: 10
         run: |
           cd cpp
