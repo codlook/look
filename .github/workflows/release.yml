@@ -25,8 +25,10 @@ name: Release — build, gate & publish (Linux Tier-1 core)
 # prerelease, Docker Hub'a push YOK). Taslak yolunu da provalamak için rc etiketi adına bir
 # taslak release açıp Windows paketini yükle, sonra rc etiketini gönder.
 #
-# NOT: Windows (Tier 2) bu workflow'da YOK — MSVC/OpenSSL CI yolu ayrıca doğrulanmalı,
-# kör eklenmeyecek. Linux/Docker/Plesk = Tier-1 prod hedefi (36-commit'in asıl değeri).
+# WINDOWS (2026-11-18): paket artık bu iş akışında derlenir (iş `windows`, windows-latest + MSVC,
+# platforms/windows/build.ps1 kapısı) ve Linux işi onu yayına ekler. Eskiden elle derlenip taslağa
+# yükleniyordu: yayın, geliştiricinin bilgisayarına bağlıydı. Aynı adımlar windows.yml'de her push'ta
+# koşar (paketleme önceden sınanır). Taslak sürüm yine ZORUNLU — sürüm notu orada yazılır.
 
 on:
   push:
@@ -37,8 +39,39 @@ permissions:
   contents: write   # gh release upload/create için
 
 jobs:
+  windows:
+    name: Windows — MSVC build, gate, package
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      # Damga 7 hane: Linux ikilileriyle aynı (tutarlılık adımı Windows .exe içinde bu damgayı arar).
+      - name: MSVC Release build (lk, lk-fcgi, lk-cgi)
+        shell: pwsh
+        run: |
+          $sha = "${{ github.sha }}".Substring(0,7)
+          cmake -S cpp -B cpp/build-win "-DLOOK_BUILD=$sha"
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+          cmake --build cpp/build-win --config Release --target look look-fcgi look-cgi
+          if ($LASTEXITCODE -ne 0) { throw "MSVC build failed" }
+          $v = & cpp/build-win/Release/lk.exe --version
+          if ($v -notmatch [regex]::Escape($sha)) { throw "build stamp is wrong: [$v], expected $sha" }
+          Write-Host $v
+      # build.ps1: MSVC dallarının kapısı (crypto/rs256/date/release_gate) — kırmızıysa paket YOK.
+      - name: Gate + package (platforms/windows/build.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & platforms/windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: platforms/windows/look-lang-windows-*.zip
+          if-no-files-found: error
+
   linux:
     name: Linux/Docker/Plesk — build, gate, publish
+    needs: windows
     runs-on: ubuntu-latest
     # secrets context 'if:' içinde KULLANILAMAZ → job-level env'e al, if'te env'i kontrol et.
     env:
@@ -129,10 +162,15 @@ jobs:
             -f cpp/docker/Dockerfile.production .
           docker save "codlook/look:$VERSION" | gzip > look-docker.tar.gz
 
-      # 6) Artefaktları topla + Windows/vsix'i çek + SHA256SUMS (HEPSİNİ kapsar)
-      # Windows/vsix Tier-2: ELLE derlenip release'e ÖNCEDEN yüklenir (Linux runner'da MSVC yok).
-      # Var olan release'ten çekilir → SHA256SUMS + inline consistency (adım 7.5) HEPSİNİ kapsasın;
-      # yoksa (rc / ilk yayın) best-effort atlanır ve manifest sadece Linux üçlüsünü sayar.
+      # 5b) Windows paketi — `windows` işinin ürettiği (aynı commit, aynı damga).
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-package
+          path: winpkg
+
+      # 6) Artefaktları topla + vsix'i taslaktan çek + SHA256SUMS (HEPSİNİ kapsar)
+      # Windows paketi `windows` işinden gelir; taslakta elle yüklenmiş eski bir Windows zip'i varsa
+      # bunun üzerine yazılır. vsix elle yüklenir (varsa) — SHA256SUMS + tutarlılık (7.5) hepsini kapsar.
       - name: Collect artifacts + fetch Win/vsix + SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
@@ -144,6 +182,9 @@ jobs:
           cp look-docker.tar.gz dist/
           gh release download "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" \
             --pattern "look-lang-windows-$VERSION.zip" --pattern '*.vsix' --dir dist --clobber 2>/dev/null || true
+          [ -f "winpkg/look-lang-windows-$VERSION.zip" ] \
+            || { echo "::error::the windows job did not produce look-lang-windows-$VERSION.zip"; exit 1; }
+          cp "winpkg/look-lang-windows-$VERSION.zip" dist/
           # Sürümsüz SABİT adlı kopyalar: /releases/latest/download/look-lang-linux.zip her
           # sürümde aynı adresten en son paketi verir (doküman bağlantıları bunu kullanır).
           for p in linux plesk windows; do
@@ -174,7 +215,7 @@ jobs:
               --notes "Release pipeline rehearsal. Build $GITHUB_SHA." \
               *.zip *.tar.gz SHA256SUMS.txt
           else
-            echo "::error::no draft release for $TAG — create a draft release for this tag holding look-lang-windows-$VERSION.zip, then push the tag again"
+            echo "::error::no draft release for $TAG — create a draft release for this tag with the release notes, then push the tag again"
             exit 1
           fi
 

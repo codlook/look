@@ -5,12 +5,13 @@
 #
 # 2026-08-12: ilk workflow_dispatch koşumu İLK denemede yeşil (MSVC build + gate 17/17·5/5·7/7,
 # ortam hatası yok) → push tetikleyicisi eklendi. main'e her push'ta koşar (release main'den çıkar);
-# feature-branch'ler yavaş MSVC ile yorulmasın diye yalnız main + elle-tetik. continue-on-error YOK.
+# feature-branch'ler yavaş MSVC ile yorulmasın diye yalnız main + v2 + elle-tetik. v2 eklendi (2026-10-04):
+# v2 dalının değişiklikleri orada birikiyor; MSVC farkları main'e birleştirme gününe kalmasın. continue-on-error YOK.
 name: windows-tier2
 
 on:
   push:
-    branches: [main]
+    branches: [main, v2, release-1.0]   # release-1.0: 1.0.x bakım sürümleri de CI'da derlenir (2026-11-18)
   workflow_dispatch: {}
 
 jobs:
@@ -19,14 +20,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: MSVC Release build (look + look-fcgi)
+      # look-cgi da: Windows paketinde lk-cgi.exe var (build.ps1); eskiden CI derlemediği için
+      # MSVC'de bağlanmadığı ancak yayın derlemesinde görüldü (shutdown.cpp eksikti).
+      - name: MSVC Release build (look + look-fcgi + look-cgi)
         shell: pwsh
         run: |
-          $sha = "${{ github.sha }}".Substring(0,12)
-          cmake -S cpp -B cpp/build-win -DLOOK_BUILD=$sha
-          cmake --build cpp/build-win --config Release --target look look-fcgi
+          $sha = "${{ github.sha }}".Substring(0,7)   # Linux ile aynı uzunluk (7)
+          cmake -S cpp -B cpp/build-win "-DLOOK_BUILD=$sha"
+          cmake --build cpp/build-win --config Release --target look look-fcgi look-cgi
           if (-not (Test-Path cpp/build-win/Release/lk.exe))      { throw "lk.exe uretilmedi" }
           if (-not (Test-Path cpp/build-win/Release/lk-fcgi.exe)) { throw "lk-fcgi.exe uretilmedi" }
+          if (-not (Test-Path cpp/build-win/Release/lk-cgi.exe))  { throw "lk-cgi.exe uretilmedi" }
+          # Damga gerçekten commit mi: "-DLOOK_BUILD=$sha" tırnaksızken PowerShell genişletmiyordu,
+          # ikililer "($sha, windows/amd64)" diyordu ve kimse görmedi.
+          $v = & cpp/build-win/Release/lk.exe --version
+          if ($v -notmatch [regex]::Escape($sha)) { throw "build stamp is wrong: [$v], expected $sha" }
+          Write-Host $v
 
       # Windows-only dallar (NCrypt rs256 · BCrypt random/sha256 · MSVC CRT date) yalnız GERÇEK
       # MSVC binary'sinde koşar. Herhangi biri kırmızıysa iş düşer (sessiz-delik yok).
@@ -40,6 +49,20 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "GATE RED: $t Windows binary'sinde FAIL (exit $LASTEXITCODE)" }
           }
           Write-Host "PASS: Windows Tier-2 gate (crypto_vectors + rs256_kat + date_dst)"
+
+      # Yayın paketi: release.yml'in `windows` işiyle AYNI adım (build.ps1 kapısı + zip). Her push'ta
+      # koşar ki paketleme yayın gününden önce kırılırsa burada görülsün; zip bir iş artefaktıdır.
+      - name: Gate + package (platforms/windows/build.ps1, as in a release)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & platforms/windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: platforms/windows/look-lang-windows-*.zip
+          if-no-files-found: error
+          retention-days: 7
 
       # int64 taşma-tespiti MSVC #else dalı — Linux __builtin yüzünden HİÇ egzersizde değildi.
       # int_overflow_test.cpp header-only → cl.exe ile derlenince MSVC dalı (unsigned-sarma +
