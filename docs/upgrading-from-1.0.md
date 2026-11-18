@@ -304,6 +304,11 @@ A string that is not a number at all keeps the lenient rule: `int("abc")` is `0`
 It now counts characters, as `string::len` does (`2`); so does `count($s)`. Lists and maps are
 unchanged.
 
+### `array::slice` with a negative length leaves elements out at the end — was an empty list
+
+`array::slice([1, 2, 3], 0, -1)` returned `[]`: a negative length was taken as 0. It now leaves
+that many elements out at the end, as PHP's `array_slice` does: `[1, 2]`.
+
 ### `array::set` on a list: a whole-number key is an index — was a duplicate key
 
 `array::set($list, "1", $v)` turned the list into a map and kept both `"1"` entries:

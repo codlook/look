@@ -450,7 +450,10 @@ Module make_array_module(ModuleHost* interp) {
         // (segfault). Negatif length → end<offset geçersiz iterator aralığı.
         if (offset < 0) offset = 0;
         if (offset > n) offset = n;
-        if (length < 0) length = 0;
+        // Eksi uzunluk = sondan o kadar eleman HARİÇ (PHP array_slice): slice([1,2,3], 0, -1) =
+        // [1,2]. ESKİ: eksi uzunluk sessizce 0 sayılıp BOŞ liste dönüyordu — $l = array::slice($l,
+        // 0, -1) listeyi sessizce boşaltırdı.
+        if (length < 0) { length = (n + length) - offset; if (length < 0) length = 0; }
         // TAŞMA önle: length kalan uzunluğa (n-offset) kırpılır ÖNCE — aksi halde
         // offset+length int64 taşıp negatif end üretir (>n kontrolü negatifi yakalamaz →
         // vector(first>last) → length_error). Kırpınca doğru: kalanı döndür.

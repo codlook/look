@@ -3315,7 +3315,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
     <tr><td>array::filter($arr, $fn)</td><td>Filter — on a map the callback gets each value and the kept entries keep their keys</td></tr>
     <tr><td>array::map($arr, $fn)</td><td>Transform — on a map the callback gets each value and the result has the same keys</td></tr>
     <tr><td>array::reduce($arr, $fn, $init)</td><td>Reduce (on a map: over its values)</td></tr>
-    <tr><td>array::slice($arr, $start, $len)</td><td>Sub-array</td></tr>
+    <tr><td>array::slice($arr, $start, $len)</td><td>Sub-array; a negative start counts from the end, a negative length leaves that many out at the end (<code>array::slice($l, 0, -1)</code> is all but the last)</td></tr>
     <tr><td>array::unique($arr)</td><td>List of distinct elements</td></tr>
     <tr><td>array::reverse($arr)</td><td>Reverse</td></tr>
     <tr><td>array::contains($arr, $v)</td><td>Does the element exist? (bool) — on a map it looks at the values, never the keys</td></tr>

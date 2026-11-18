@@ -231,7 +231,7 @@ def gen_op(r, state):
         ("init_list", 3), ("init_map", 3), ("copy", 6), ("set", 18), ("set2", 7), ("push", 8),
         ("push2", 3), ("pop", 4), ("aset", 3), ("mut", 3), ("fill", 2), ("dump", 8), ("count", 3),
         ("keys", 3), ("values", 2), ("contains", 3), ("read", 6), ("eq", 5), ("json_rt", 3),
-        ("foreach", 2), ("str", 6), ("bad_sort", 1),
+        ("foreach", 2), ("str", 6), ("bad_sort", 1), ("slice", 3),
     ]
     tot = sum(w for _, w in kinds)
     x = r.uniform(0, tot)
@@ -267,6 +267,8 @@ def gen_op(r, state):
         return (kind, Y, X, rand_key(r), rand_scalar(r))
     if kind == "mut":
         return (kind, Y, X, rand_key(r), rand_scalar(r))
+    if kind == "slice":
+        return (kind, Y, X, r.randint(-4, 4), r.choice([None, r.randint(-4, 4), r.randint(-4, 4)]))
     if kind == "fill":
         return (kind, X, r.choice(["f", "g"]), r.randint(1, 30))
     if kind == "contains":
@@ -304,6 +306,9 @@ def render(op):
         return f"try {{ print(\"J \" . {J}(pop({op[1]}))) }} catch ($e) {{ print(\"ERR\") }}"
     if k == "aset":
         return f"try {{ {op[1]} = array::set({op[2]}, {lit(op[3])}, {lit(op[4])}) }} catch ($e) {{ print(\"ERR\") }}"
+    if k == "slice":
+        extra = "" if op[4] is None else f", {op[4]}"
+        return f"try {{ {op[1]} = array::slice({op[2]}, {op[3]}{extra}) }} catch ($e) {{ print(\"ERR\") }}"
     if k == "mut":
         return f"try {{ {op[1]} = mut({op[2]}, {lit(op[3])}, {lit(op[4])}) }} catch ($e) {{ print(\"ERR\") }}"
     if k == "fill":
@@ -447,6 +452,27 @@ def model_run(ops):
                 if not isinstance(c, list):
                     raise Invalid()
                 J(c.pop() if c else None)
+            guarded(f)
+        elif k == "slice":
+            # array::slice($l, offset[, length]) — PHP array_slice: eksi offset sondan; eksi
+            # uzunluk sondan o kadar eleman HARİÇ; sınırlar kırpılır. Sözlükte hata (listeye özgü).
+            def f(op=op):
+                src = env[op[2]]
+                if isinstance(src, MapV):
+                    raise LookErr()
+                if not isinstance(src, list):
+                    raise Invalid()
+                n = len(src)
+                off = op[3] + n if op[3] < 0 else op[3]
+                off = min(max(off, 0), n)
+                ln = op[4]
+                if ln is None:
+                    end = n
+                elif ln < 0:
+                    end = max(n + ln, off)
+                else:
+                    end = min(off + ln, n)
+                env[op[1]] = [deep(x) for x in src[off:end]]
             guarded(f)
         elif k in ("aset", "mut"):
             def f(op=op):
