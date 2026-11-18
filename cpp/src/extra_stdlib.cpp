@@ -491,8 +491,17 @@ Module make_array_module(Interpreter* interp) {
             // Sessiz veri kaybi; hata yok.
             // Sozlesme: gecerli indeks → yerinde degistir, size'a esit → sona ekle
             // ($arr[i] = v ile ayni, iki motor da bu iki durumda hemfikir).
-            if (args[1].type() == Value::INT) {
-                int64_t i = args[1].as_int();
+            // Rakamlardan oluşan metin anahtar ("1") de indekstir — `$l["1"] = v` ile aynı (iki motor).
+            // ESKİ: metin anahtar listeyi sözlüğe çeviriyor ve "1" İKİ KEZ yer alıyordu:
+            // array::set([1,2,3], "1", "X") = {"0":1,"1":2,"2":3,"1":"X"}, count 4 (sessiz bozulma).
+            bool digit_key = false;
+            if (args[1].type() == Value::STRING) {
+                const std::string& ks = args[1].as_string();
+                digit_key = !ks.empty() && ks.size() <= 18 &&
+                            std::all_of(ks.begin(), ks.end(), [](unsigned char c) { return c >= '0' && c <= '9'; });
+            }
+            if (args[1].type() == Value::INT || digit_key) {
+                int64_t i = digit_key ? (int64_t)std::stoll(args[1].as_string()) : args[1].as_int();
                 if (i >= 0 && i < (int64_t)result->size()) {
                     (*result)[(size_t)i] = val;
                     return Value(result);
