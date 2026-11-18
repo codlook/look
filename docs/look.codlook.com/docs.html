@@ -361,9 +361,11 @@
     <tr><td>Run tests</td><td><code>lk test</code></td><td><code>lk test tests/ --verbose</code></td></tr>
     <tr><td>Install a package</td><td><code>lk install</code></td><td><code>lk install github.com/user/repo</code></td></tr>
     <tr><td>Format source (one canonical style — <strong>no options</strong>)</td><td><code>lk fmt</code></td><td><code>lk fmt script.lk</code> · <code>lk fmt --check script.lk</code> (CI: exit 1 if unformatted)</td></tr>
+    <tr><td>Rewrite deprecated <code>push</code> / <code>pop</code> / <code>array::pop</code></td><td><code>lk fix</code></td><td><code>lk fix script.lk</code> · <code>lk fix --check script.lk</code> (CI: exit 1 if anything would change)</td></tr>
   </table>
   <p style="color:var(--muted);margin-top:.6rem"><code>lk --check</code> only parses and reports undefined function calls (e.g. <code>echo(...)</code>) — it <strong>does not run the code</strong> (no DB/mail is triggered). The VS Code extension uses this for live error checking.</p>
   <p style="color:var(--muted);margin-top:.4rem"><code>lk fmt</code> rewrites source in one canonical style — like <code>gofmt</code>, there are <strong>no configuration options</strong>. V1 normalizes indentation (4 spaces per nesting level), trims trailing whitespace, and collapses blank-line runs; comments and multi-line strings are preserved. It never changes program meaning: the formatted output is re-tokenized and compared to the input, and if the token stream differs, formatting is aborted and the file is left untouched. Use <code>lk fmt --check</code> in CI to reject unformatted code.</p>
+  <p style="color:var(--muted);margin-top:.4rem"><code>lk fix</code> rewrites the deprecated calls in place: a statement <code>push($l, $x)</code> becomes <code>$l = array::push($l, $x)</code>, a statement <code>pop($l)</code> becomes <code>$l = array::slice($l, 0, -1)</code>, <code>$v = pop($l)</code> becomes <code>$v = $l[-1]</code> plus <code>$l = array::slice($l, 0, -1)</code> on the next line, and <code>array::pop($l)</code> becomes <code>$l[-1]</code> (a <code>NOTE</code> per rewrite: on an empty list <code>$l[-1]</code> is an error where the old call returned <code>null</code>). Only those calls change — other lines, comments and formatting stay, and a second run changes nothing. A call inside a larger expression is left alone and reported as <code>file:line: not rewritten: …</code> (exit 1). A file without <code>use array</code> gets that line at the top, since the new form calls <code>array::</code>. <code>push($m["new"], $x)</code> created a missing key; <code>$m["new"] = array::push($m["new"], $x)</code> is an error when the key is missing, so set it to <code>[]</code> first. <code>lk fix --check</code> lists what would change and writes nothing; with no file it reads standard input and writes standard output.</p>
 </section>
 
 <section id="ornek-merhaba">
@@ -3332,11 +3334,11 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
   <table>
     <tr><th>Function</th><th>Description</th></tr>
     <tr><td>array::push($arr, $v)</td><td>Append an element to a list, returns a new array (on a map it is an error: use <code>$m[$key] = $v</code>)</td></tr>
-    <tr><td>array::pop($arr)</td><td>Returns the last element of the array</td></tr>
+    <tr><td>array::pop($arr)</td><td>Deprecated (a warning at load): returns the last element <em>without</em> removing it — write <code>$arr[-1]</code></td></tr>
     <tr><td>array::set($arr, $key, $val)</td><td>Add/update a key in an assoc array → returns a new array (immutable)</td></tr>
     <tr><td>array::new_assoc()</td><td>Create an empty assoc array</td></tr>
     <tr><td>push($arr, $v)</td><td>Deprecated (a warning at load): write <code>$arr = array::push($arr, $v)</code></td></tr>
-    <tr><td>pop($arr)</td><td>Global built-in — no <code>use array</code> needed</td></tr>
+    <tr><td>pop($arr)</td><td>Deprecated (a warning at load): write <code>$x = $arr[-1]</code> and <code>$arr = array::slice($arr, 0, -1)</code> (an in-place removal, no copy)</td></tr>
     <tr><td>count($arr)</td><td>Number of elements (alias: len)</td></tr>
   </table>
 

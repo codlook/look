@@ -152,7 +152,7 @@ line of its own still throws; `throw` in front of it stays optional.
 ### `push` and `pop` change the variable you name — silent
 
 `push($list, $x)` and `pop($list)` still modify `$list` in place, including paths such as
-`push($order["lines"], $x)`. Two differences:
+`push($order["lines"], $x)` (both are deprecated now; see below and `lk fix`). Two differences:
 
 - they change only that variable, not other variables that held the same array;
 - `push` returns the new length. In 1.0.x it returned the array.
@@ -331,6 +331,51 @@ way to write it. In this release `push()` still works, and each file that uses i
 — at load in the log, and from `lk --check` as `WARN … [push-deprecated]` — naming the first call
 and how many there are. A later release will make `push()` an error. A path works the same way:
 `$order["lines"] = array::push($order["lines"], $line)`.
+
+### `pop($list)` and `array::pop($list)` are deprecated — write `$list[-1]` and `array::slice`
+
+`pop($list)` changed the variable it was given, like `push()`. `array::pop($list)` did something
+else than its name says: it returned the last element and removed nothing. The one way to write
+both:
+
+```
+$last = $list[-1]                      // the last element (an empty list is an error)
+$list = array::slice($list, 0, -1)     // all but the last (an empty list stays empty)
+```
+
+`$list = array::slice($list, 0, -1)` is compiled to an in-place removal (no copy), as
+`$list = array::push($list, $x)` is to an in-place append. In this release `pop()` and
+`array::pop()` still work; each file that uses them gets one warning per function — at load in the
+log, and from `lk --check` as `WARN … [pop-deprecated]` and `WARN … [array-pop-deprecated]`. A later
+release will make them an error.
+
+One difference to check: on an empty list `pop()` and `array::pop()` returned `null`, while
+`$list[-1]` stops with an error. Test `count($list) > 0` first where the list can be empty.
+
+### `lk fix` rewrites `push`, `pop` and `array::pop`
+
+`lk fix app.lk lib/*.lk` rewrites the deprecated calls in place; `lk fix --check` lists what it
+would change and exits 1 if anything would (for CI). With no file it reads standard input and writes
+the result to standard output, like `lk fmt`.
+
+| Before | After |
+| --- | --- |
+| `push($l, $x)` (a statement) | `$l = array::push($l, $x)` |
+| `pop($l)` (a statement) | `$l = array::slice($l, 0, -1)` |
+| `$v = pop($l)` | `$v = $l[-1]` and, on the next line, `$l = array::slice($l, 0, -1)` |
+| `array::pop($l)` (anywhere) | `$l[-1]` |
+
+The list may be a variable or a path (`$m["rows"]`, `$u.tags`). Only those calls are changed:
+other lines, comments and formatting stay as they are, and running `lk fix` again changes nothing.
+Each `$v = pop(...)` and `array::pop(...)` rewrite prints a `NOTE` with its file and line, because
+of the empty-list difference above. A call inside a larger expression (`print(pop($l))`,
+`if (push($l, $x) > 0)`) is left alone and reported as `file:line: not rewritten: <reason>`; `lk fix`
+then exits 1. Rewrite those by hand.
+
+The new form calls `array::`, so a file without `use array` gets that line at the top (after a
+`#!` line). One more difference: `push($m["new"], $x)` created a missing key, while
+`$m["new"] = array::push($m["new"], $x)` stops with an error when `"new"` is not in the map. Set the
+key to `[]` first where it can be missing.
 
 ## Calls
 

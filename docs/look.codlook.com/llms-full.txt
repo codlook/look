@@ -159,10 +159,13 @@ route("404", function() {
 | Run tests | `lk test` | `lk test tests/ --verbose` |
 | Install a package | `lk install` | `lk install github.com/user/repo` |
 | Format source (one canonical style — **no options**) | `lk fmt` | `lk fmt script.lk` · `lk fmt --check script.lk` (CI: exit 1 if unformatted) |
+| Rewrite deprecated `push` / `pop` / `array::pop` | `lk fix` | `lk fix script.lk` · `lk fix --check script.lk` (CI: exit 1 if anything would change) |
 
 `lk --check` only parses and reports undefined function calls (e.g. `echo(...)`) — it **does not run the code** (no DB/mail is triggered). The VS Code extension uses this for live error checking.
 
 `lk fmt` rewrites source in one canonical style — like `gofmt`, there are **no configuration options**. V1 normalizes indentation (4 spaces per nesting level), trims trailing whitespace, and collapses blank-line runs; comments and multi-line strings are preserved. It never changes program meaning: the formatted output is re-tokenized and compared to the input, and if the token stream differs, formatting is aborted and the file is left untouched. Use `lk fmt --check` in CI to reject unformatted code.
+
+`lk fix` rewrites the deprecated calls in place: a statement `push($l, $x)` becomes `$l = array::push($l, $x)`, a statement `pop($l)` becomes `$l = array::slice($l, 0, -1)`, `$v = pop($l)` becomes `$v = $l[-1]` plus `$l = array::slice($l, 0, -1)` on the next line, and `array::pop($l)` becomes `$l[-1]` (a `NOTE` per rewrite: on an empty list `$l[-1]` is an error where the old call returned `null`). Only those calls change — other lines, comments and formatting stay, and a second run changes nothing. A call inside a larger expression is left alone and reported as `file:line: not rewritten: …` (exit 1). A file without `use array` gets that line at the top, since the new form calls `array::`. `push($m["new"], $x)` created a missing key; `$m["new"] = array::push($m["new"], $x)` is an error when the key is missing, so set it to `[]` first. `lk fix --check` lists what would change and writes nothing; with no file it reads standard input and writes standard output.
 
 # Example 1 — Hello World
 
@@ -3384,11 +3387,11 @@ array::zip([1, 2], ["a", "b"])         # [[1, "a"], [2, "b"]]
 | Function | Description |
 | --- | --- |
 | array::push($arr, $v) | Append an element to a list, returns a new array (on a map it is an error: use `$m[$key] = $v`) |
-| array::pop($arr) | Returns the last element of the array |
+| array::pop($arr) | Deprecated (a warning at load): returns the last element *without* removing it — write `$arr[-1]` |
 | array::set($arr, $key, $val) | Add/update a key in an assoc array → returns a new array (immutable) |
 | array::new_assoc() | Create an empty assoc array |
 | push($arr, $v) | Deprecated (a warning at load): write `$arr = array::push($arr, $v)` |
-| pop($arr) | Global built-in — no `use array` needed |
+| pop($arr) | Deprecated (a warning at load): write `$x = $arr[-1]` and `$arr = array::slice($arr, 0, -1)` (an in-place removal, no copy) |
 | count($arr) | Number of elements (alias: len) |
 
 **Lists and maps.** Functions that work on positions — `push`, `pop`, `sort`, `slice`, `chunk`, `zip`, `reverse`, `unique`, `flatten`, `join`, `max`, `min` — take a list. Given a map they stop with `… takes a list, not a map; use array::values($m) first` (push: `use $m[$key] = $value`). `contains`, `find`, `any`, `all`, `reduce`, `map` and `filter` work on a map's values; `map` and `filter` keep the keys. `keys`, `values`, `set`, `count`, `foreach` and `json::encode` work on both.
