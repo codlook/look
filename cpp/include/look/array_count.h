@@ -20,7 +20,14 @@ inline int look_count(const Value& v) {
             return (int)((arr.size() - 1) / 2);
         return (int)arr.size();
     }
-    if (v.type() == Value::STRING) return (int)v.as_string().size();
+    // Metin: KARAKTER (kod noktası) sayısı — string::len ile aynı. `len` derleyicide count'a eşlenir
+    // ve belgede string::len'in takma adıdır; eskiden bayt sayıyordu: len("éé") = 4 (rastgele
+    // karşılaştırmalı test buldu). Devam baytı (10xxxxxx) sayılmaz.
+    if (v.type() == Value::STRING) {
+        int n = 0;
+        for (unsigned char c : v.as_string()) if ((c & 0xC0) != 0x80) ++n;
+        return n;
+    }
     // LOOK 2: struct bir dizi değildir — eskiden sessizce 0 dönüyordu.
     if (v.type() == Value::STRUCT)
         throw std::runtime_error("count() does not take a struct ('" + (*v.as_struct())[0].str_ref()
