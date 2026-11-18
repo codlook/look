@@ -93,5 +93,38 @@ $secs = date::timestamp() - $t0
 $fails = $fails + check("top-level appends from a call", [count($top), $top[0], $top[99999]], [100000, "R0", "R99999"])
 if ($secs > 20) { print("FAIL 100k top-level appends from a call took " . $secs . " s"); $fails = $fails + 1 }
 
+# `$a = array::slice($a, 0, -1)` drops the last element in place in the same way (the new way to
+# write pop). Results and errors are those of the call; $k = -1 is the copying call itself.
+$k = -1
+function shrink_alias() { $a = [1, 2, 3]; $b = $a; $a = array::slice($a, 0, -1); return [$a, $b] }
+$fails = $fails + check("shrink: another variable is not changed", shrink_alias(), [[1, 2], [1, 2, 3]])
+$e = []
+$e = array::slice($e, 0, -1)
+$fails = $fails + check("shrink: [] stays []", $e, [])
+$nested = ["rows" => [1, 2]]
+$inner = $nested["rows"]
+$inner = array::slice($inner, 0, -1)
+$fails = $fails + check("shrink: the map it came from is not changed", [$nested, $inner], [["rows" => [1, 2]], [1]])
+foreach ([["m", ["a" => 1]], ["n", 5], ["s", P { x: 1 }]] as $case) {
+  $v = $case[1]; $w = $case[1]; $m1 = ""; $m2 = ""
+  try { $v = array::slice($v, 0, -1) } catch ($err) { $m1 = "" . $err }
+  try { $w = array::slice($w, 0, $k) } catch ($err) { $m2 = "" . $err }
+  $fails = $fails + check("shrink error (" . $case[0] . ")", [$m1, $v], [$m2, $case[1]])
+}
+function shrink_many($n) {
+  $a = []
+  for ($i = 0; $i < $n; $i = $i + 1) { $a = array::push($a, $i) }
+  for ($i = 0; $i < $n - 1; $i = $i + 1) { $a = array::slice($a, 0, -1) }
+  return $a
+}
+$t0 = date::timestamp()
+$r = shrink_many(100000)
+$top = []
+for ($i = 0; $i < 100000; $i = $i + 1) { $top = array::push($top, $i) }
+for ($i = 0; $i < 100000; $i = $i + 1) { $top = array::slice($top, 0, -1) }
+$secs = date::timestamp() - $t0
+$fails = $fails + check("100k removals (function, top level)", [$r, $top], [[0], []])
+if ($secs > 20) { print("FAIL 100k removals took " . $secs . " s (the list is copied on every removal)"); $fails = $fails + 1 }
+
 if ($fails > 0) { exit(1) }
-print("PASS: $a = array::push($a, v) appends in place with the same results and errors")
+print("PASS: $a = array::push($a, v) and $a = array::slice($a, 0, -1) work in place with the same results and errors")

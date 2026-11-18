@@ -1137,16 +1137,33 @@ static bool push_value_is_pure(const Expression& x) {
     }
 }
 
+// Sabit tam sayı mı? `-1` ayrıştırıcıda tekli eksi + 1 olarak gelir.
+static bool is_int_literal(const Expression* x, int64_t v) {
+    if (!x) return false;
+    if (auto* n = node_as<NumberLiteral>(x)) return n->value == v;
+    if (auto* u = node_as<UnaryExpression>(x); u && u->op == "-" && u->prefix && u->right)
+        if (auto* n = node_as<NumberLiteral>(u->right.get())) return v != INT64_MIN && n->value == -v;
+    return false;
+}
+
+// `$a = array::push($a, v)` → yerinde ekleme (PUSH_PATH); `$a = array::slice($a, 0, -1)` (sabit 0
+// ve -1) → yerinde son elemanı atma (SHRINK_PATH). Eski yol her adımda bütün listeyi kopyalıyordu
+// (döngüde karesel). Sonuç ve hatalar çağrınınkiyle aynı (VM tarafı aynı mesajları verir).
 bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
     if (e.op != "=" || e.index || e.object || !e.value) return false;
     auto* call = node_as<CallExpression>(e.value.get());
-    if (!call || call->arguments.size() != 2) return false;
+    if (!call) return false;
     auto* sr = node_as<ScopeResolution>(call->callee.get());
-    if (!sr || sr->module_name != "array" || sr->member_name != "push") return false;
-    if (builtin_index("array::push") < 0) return false;
+    if (!sr || sr->module_name != "array") return false;
+    const bool is_push = sr->member_name == "push" && call->arguments.size() == 2;
+    const bool is_shrink = sr->member_name == "slice" && call->arguments.size() == 3 &&
+                           is_int_literal(call->arguments[1].get(), 0) &&
+                           is_int_literal(call->arguments[2].get(), -1);
+    if (!is_push && !is_shrink) return false;
+    if (builtin_index(is_push ? "array::push" : "array::slice") < 0) return false;
     auto* first = node_as<Variable>(call->arguments[0].get());
-    if (!first || first->name != e.name || !call->arguments[1]) return false;
-    if (!push_value_is_pure(*call->arguments[1])) return false;
+    if (!first || first->name != e.name) return false;
+    if (is_push && (!call->arguments[1] || !push_value_is_pure(*call->arguments[1]))) return false;
     // compile_assign_expr ile aynı sıra: önce yazma çözümlemesi, sonra (değer derlenirken) okuma.
     const auto wloc = resolve_var(e.name, /*for_write=*/true);
     const auto rloc = resolve_var(e.name, /*for_write=*/false);
@@ -1165,6 +1182,11 @@ bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
         kind = 4; ix = add_const(Value(e.name));
     } else {
         return false;   // capture / gölgeleme: eski yol (kendi hatası ve anlamıyla)
+    }
+    if (is_shrink) {
+        emit(OpCode::SHRINK_PATH, 0, 0, 0);
+        emit(OpCode::NOP, kind, hi16(ix), lo16(ix));
+        return true;
     }
     uint16_t val = compile_expr(*call->arguments[1]);
     uint16_t r = alloc_temp();

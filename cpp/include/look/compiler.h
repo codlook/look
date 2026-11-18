@@ -325,7 +325,7 @@ private:
     void compile_const_block(const ConstBlock& s);
     void compile_struct_decl(const StructDeclaration& s);
     void compile_assign_expr(const AssignmentExpression& e);
-    bool try_compile_push_assign(const AssignmentExpression& e);   // `$a = array::push($a, v)` → yerinde
+    bool try_compile_push_assign(const AssignmentExpression& e);   // `$a = array::push($a, v)` / `$a = array::slice($a, 0, -1)` → yerinde
     void check_no_outer_write(const std::string& name, const std::string& how);   // fonksiyon dışını değiştiremez
     std::set<std::string> outer_reads_;   // bu fonksiyonda dışarıdan (global) okunan adlar — okunup atanamaz
     std::map<std::string, int> local_made_at_;   // bu fonksiyonda yeni yerel olarak atanan adlar → satır

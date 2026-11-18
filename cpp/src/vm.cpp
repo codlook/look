@@ -957,6 +957,24 @@ call_dispatch:
                 });
                 break;
             }
+            case OpCode::SHRINK_PATH: {
+                // `$a = array::slice($a, 0, -1)` yerinde (compiler try_compile_push_assign): son eleman
+                // değişkenin kendi yerinde atılır (paylaşılıyorsa bir kez kopya). Hatalar çağrınınkiyle
+                // aynı sırada ve metinde (extra_stdlib.cpp array:: sarmalayıcısı + slice gövdesi).
+                Value* root = path_root(proto->code[frame.ip++]);
+                vm_struct([&] {
+                    Value& t = *root;
+                    if (t.type() == Value::STRUCT)
+                        throw std::runtime_error("array::slice() does not take a struct ('"
+                            + (*t.as_struct())[0].str_ref() + "'): a struct is not an array, use its fields");
+                    look::value_list_only(t, "array::slice()");
+                    if (t.type() != Value::ARRAY) throw std::runtime_error("array::slice() requires array");
+                    if (t.vec_ptr()->empty()) return;   // [] → [] (yeni boş liste ile aynı değer)
+                    t.detach();
+                    t.vec_ptr()->pop_back();
+                });
+                break;
+            }
 
             // ── Jump ──────────────────────────────────────────────────────────
             // Geriye atlama = döngünün yeni turu → sıra bırakma noktası (fiber.h preempt_point).

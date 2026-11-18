@@ -146,6 +146,8 @@ enum class OpCode : uint8_t {
     POP_PATH,        // r[a] = pop(root[k0]..[kc-1]); next NOP = root. Removes the last element.
     APPEND_GLOBAL,   // globals[pool[b<<16|c]] .= r[a] IN PLACE (`$s .= x`, `$s = $s . x` at top level;
                      //   copied once if shared). "Undefined variable" when the global does not exist.
+    SHRINK_PATH,     // root = array::slice(root, 0, -1) IN PLACE (`$a = array::slice($a, 0, -1)`); next NOP =
+                     //   root (as SET_PATH). Same errors as the call; an empty list stays empty.
 };
 
 // ── Instruction ───────────────────────────────────────────────────────────────
