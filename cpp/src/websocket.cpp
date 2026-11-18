@@ -1,6 +1,8 @@
 #include "look/websocket.h"
 
 #include <cstring>
+#include <chrono>
+#include <thread>
 #include <stdexcept>
 #include <vector>
 #include <algorithm>
@@ -280,6 +282,25 @@ bool WsConnection::send_binary(const std::string& bytes) {
 
 void (*g_ws_server_close_hook)(int fd) = nullptr;
 
+// Zarif kapanmanın sonunda (look/shutdown.h finish) açık her bağlantıya RFC 6455 §7.4.1 1001
+// "going away". Eskiden süreç çıkarken bağlantı çerçevesiz kopuyordu: istemci 1006 (anormal) görüyor,
+// sunucunun bilerek gittiğini ayıramıyordu (yeniden bağlanma kararı). Süreç hemen çıkacağı için
+// BEKLEMEZ: yazma kilidi kısa sürede alınamazsa ya da soket tamponu doluysa çerçeve atlanır.
+void WsConnection::going_away() {
+    server_closed.store(true);
+    if (closed.exchange(true)) return;
+    const std::string f = ws_encode_close_frame_code(1001);
+    std::unique_lock<std::mutex> lk(write_mutex, std::defer_lock);
+    for (int i = 0; i < 100 && !lk.try_lock(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (!lk.owns_lock() || fd_released) return;
+#if defined(_WIN32)
+    ::send(fd, f.data(), (int)f.size(), 0);
+#else
+    ::send(fd, f.data(), f.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+#endif
+}
+
 void WsConnection::close_conn() {
     server_closed.store(true);           // sunucu kapattı: "close" geri çağrısı çalışmaz (belge kuralı)
     if (closed.exchange(true)) return;  // already closed — yalnız ilk çağıran ilerler
@@ -333,6 +354,16 @@ void WsRegistry::broadcast_binary(const std::string& bytes) {
         for (auto& [fd, conn] : clients_) snapshot.push_back(conn);
     }
     for (auto& conn : snapshot) conn->send_binary(bytes);
+}
+
+void WsRegistry::going_away_all() {
+    std::vector<std::shared_ptr<WsConnection>> snapshot;
+    {
+        std::shared_lock<std::shared_mutex> lk(mutex_);
+        snapshot.reserve(clients_.size());
+        for (auto& [fd, conn] : clients_) snapshot.push_back(conn);
+    }
+    for (auto& conn : snapshot) conn->going_away();
 }
 
 size_t WsRegistry::count() {

@@ -637,7 +637,9 @@ once: a request in progress was cut and the client saw a broken connection. Now,
 connections, closes idle keep-alive connections, lets the requests in progress finish (their
 responses say `Connection: close`), closes its database connections and exits with code 0. A
 request still running after 30 seconds is cut and the exit code is 1; a second signal stops at
-once. WebSocket and SSE connections are closed when the requests have finished.
+once. WebSocket and SSE connections are closed when the requests have finished; each open
+WebSocket gets a close frame with code 1001 (Going Away), so a client can tell a server restart
+from a broken connection (1006) and reconnect.
 
 ### One request can no longer use up the server's memory — new limit
 

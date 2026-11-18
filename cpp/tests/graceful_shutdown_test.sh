@@ -20,6 +20,7 @@ function spin($us) {
 route("GET", "/slow", function() { spin(2000000); return response::text("done") })
 route("GET", "/slow10", function() { spin(10000000); return response::text("done") })
 route("GET", "/fast", function() { return response::text("ok") })
+route("WS", "/ws", function($ws) { ws::on($ws, "message", function($m) { ws::send($ws, "echo:" . $m) }) })
 LK
 now_ms() { date +%s%3N; }
 wait_exit() { # <pid> <max s> → çıkış kodu (124 = süre doldu)
@@ -91,6 +92,50 @@ if [ -n "$up" ]; then
     kill $bg 2>/dev/null; wait $bg 2>/dev/null; bg=""
     check "second signal: exit code 1 in $((t1 - t0)) ms" "$( [ "$rc" = 1 ] && [ $((t1 - t0)) -lt 2000 ] && echo ok)" "rc=$rc after $((t1 - t0)) ms"
     check "the log says so" "$(grep -q 'second signal: stopping now' "$T/srv.log" && echo ok)" "$(grep -E 'signal|stopp' "$T/srv.log" | tr '\n' ' ')"
+else echo "  FAIL server did not start"; cat "$T/srv.log"; fail=1; kill -9 $pid; pid=""; fi
+
+echo "== lk-fcgi (http): open WebSockets get 1001 Going Away"
+# ESKİ: süreç çıkarken WebSocket çerçevesiz kopuyordu (istemci 1006 görüyordu, sunucunun bilerek
+# gittiğini ayıramıyordu).
+port=$((BASE + 1))
+"$LKF" --mode http --port $port --workers 4 "$T/app.lk" > "$T/srv.log" 2>&1 & pid=$!
+up=""; for i in $(seq 1 50); do [ "$(curl -s -m 1 "http://127.0.0.1:$port/fast")" = ok ] && { up=1; break; }; sleep 0.2; done
+if [ -n "$up" ]; then
+    cat > "$T/ws.py" <<'PY'
+import base64, os, socket, struct, sys, time
+port, n = int(sys.argv[1]), int(sys.argv[2])
+socks = []
+for _ in range(n):
+    s = socket.create_connection(("127.0.0.1", port)); s.settimeout(10)
+    key = base64.b64encode(os.urandom(16)).decode()
+    s.sendall(("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+               "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % key).encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf: buf += s.recv(4096)
+    if b" 101 " not in buf.split(b"\r\n")[0]: print("no-upgrade"); sys.exit(1)
+    socks.append((s, buf.split(b"\r\n\r\n", 1)[1]))
+print("ready", flush=True)
+codes = []
+for s, rest in socks:
+    data = rest
+    try:
+        while len(data) < 2 or len(data) < 2 + (data[1] & 0x7F):
+            d = s.recv(4096)
+            if not d: break
+            data += d
+    except socket.timeout: pass
+    if len(data) >= 4 and (data[0] & 0x0F) == 0x8: codes.append(str(struct.unpack(">H", data[2:4])[0]))
+    elif len(data) >= 2 and (data[0] & 0x0F) == 0x8: codes.append("close-without-code")
+    else: codes.append("no-close-frame")
+print(" ".join(codes))
+PY
+    python3 "$T/ws.py" $port 3 > "$T/ws.out" 2>&1 & wsc=$!
+    for i in $(seq 1 50); do grep -q ready "$T/ws.out" 2>/dev/null && break; sleep 0.1; done
+    kill -TERM $pid; wait_exit $pid 10; rc=$?; pid=""
+    wait $wsc 2>/dev/null
+    got="$(tail -1 "$T/ws.out")"
+    check "every open WebSocket gets a close frame with 1001 ($got)" "$( [ "$got" = "1001 1001 1001" ] && echo ok)" "got [$got]"
+    check "exit code 0" "$( [ "$rc" = 0 ] && echo ok)" "rc=$rc"
 else echo "  FAIL server did not start"; cat "$T/srv.log"; fail=1; kill -9 $pid; pid=""; fi
 
 [ $fail = 0 ] && echo "PASS: graceful shutdown" || echo "FAIL: graceful shutdown"

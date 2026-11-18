@@ -73,6 +73,8 @@ struct WsConnection {
 
     // Send close frame and mark as closed
     void close_conn();
+    // Sunucu kapanıyor (zarif kapanmanın sonu): 1001 Going Away çerçevesi, beklemeden (süreç çıkacak).
+    void going_away();
 
     // Raw send (for pong etc.) — caller must hold write_mutex. closed ise düşürür.
     bool send_raw(const std::string& frame);
@@ -95,6 +97,7 @@ public:
     void   remove(int fd);
     void   broadcast(const std::string& msg);
     void   broadcast_binary(const std::string& bytes);   // ws::broadcast_binary
+    void   going_away_all();                             // kapanış: her bağlantıya 1001
     size_t count();
 };
 

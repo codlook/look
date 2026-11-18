@@ -380,7 +380,7 @@ jobs:
         timeout-minutes: 10
         run: |
           cd cpp
-          bash tests/graceful_shutdown_test.sh ./build/lk-fcgi 7960
+          LOOK_FIBER_DISPATCH=0 bash tests/graceful_shutdown_test.sh ./build/lk-fcgi 7960   # worker per connection (fiber is the default)
           LOOK_FIBER_DISPATCH=1 bash tests/graceful_shutdown_test.sh ./build/lk-fcgi 7965
 
       # Memory limit (LOOK_MEMORY_LIMIT, automatic by default): one request cannot kill the server.

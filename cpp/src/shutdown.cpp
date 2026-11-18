@@ -2,6 +2,7 @@
 #include "look/shutdown.h"
 #include "look/logger.h"
 #include "look/web.h"   // clear_db_pools
+#include "look/websocket.h"   // g_ws_registry — kapanışta 1001
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -37,6 +38,8 @@ void on_begin(std::function<void()> fn) {
 }
 
 [[noreturn]] void finish(int code) {
+    // Açık WebSocket'lere 1001 Going Away (istekler bitti ya da süre doldu; süreç çıkıyor).
+    try { g_ws_registry.going_away_all(); } catch (...) {}
     try { clear_db_pools(); } catch (...) {}   // havuz yıkıcıları bağlantıları düzgün kapatır (MySQL COM_QUIT)
     log_line(code == 0 ? LogLevel::LOG_INFO : LogLevel::LOG_WARN,
              code == 0 ? "stopped" : "stopped before every request finished");
