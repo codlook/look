@@ -23,6 +23,7 @@
 #include <ctime>
 #include "look/fcgi.h"
 #include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
+#include "look/weak_settings.h" // başlangıçta zayıflatan ayar uyarıları
 #include "look/mem_budget.h"   // bellek bütçesi (LOOK_MEMORY_LIMIT)
 #include "look/health_path.h"  // yerleşik sağlık yolu — tek kaynak (HTTP modu da kullanır)
 #include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
@@ -839,7 +840,9 @@ int main(int argc, char* argv[]) {
           std::string bindaddr = (be && *be) ? std::string(be) : "127.0.0.1";
           look::Logger::instance().log(look::LogLevel::LOG_INFO, "FCGI",
             "look-fcgi TCP mode — " + bindaddr + ":" + std::to_string(tcp_port) +
-            " | workers=" + std::to_string(workers)); }
+            " | workers=" + std::to_string(workers));
+          for (const auto& w : look::weak_setting_warnings(std::getenv, true))   // look/weak_settings.h
+              look::Logger::instance().log(look::LogLevel::LOG_WARN, "SECURITY", w); }
 
         try {
             // Önce işçiler, SONRA port: kurucu dinlemeye başlar. Eskiden port önce açılıyordu; havuz

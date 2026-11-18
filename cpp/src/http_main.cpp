@@ -9,6 +9,7 @@
 #include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
 #include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
 #include "look/builtins.h"
+#include "look/weak_settings.h"   // başlangıçta zayıflatan ayar uyarıları
 #include "look/value_path.h"   // value_push_not_map — sözlüğe push hatası (tek tanım)
 #include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
 #include "look/mem_budget.h"   // bellek bütçesi: istek hesabı + %90'da 503
@@ -2088,6 +2089,9 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         "look-fcgi --mode http port=" + std::to_string(port) + " workers=" + std::to_string(workers));
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Script: " + script.string());
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Apache bypass — use nginx or a direct connection.");
+    // Güvenliği zayıflatan ayarlar: her biri bir WARN satırı (look/weak_settings.h).
+    for (const auto& w : look::weak_setting_warnings(std::getenv, false))
+        look::Logger::instance().log(look::LogLevel::LOG_WARN, "SECURITY", w);
 
     // Security posture (fail-loud, one-time at startup): no application-level rate
     // limiting AND no declared trusted proxy => this server is likely directly

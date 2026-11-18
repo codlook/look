@@ -822,6 +822,8 @@ jobs:
           # concurrent session::regenerate keeps the data; a logout during it is not undone
           bash tests/session_regenerate_race_test.sh ./build/lk-fcgi "" 7931
           bash tests/proxy_trust_test.sh ./build/lk-fcgi
+          # a setting that weakens security writes a [SECURITY] warning at start; defaults write none
+          bash tests/weak_settings_test.sh ./build/lk-fcgi
 
       # FastCGI wrote every request's parameters (client headers as HTTP_*) into the process
       # environment from all threads: getenv crashed, memory grew for good, and one visitor's header

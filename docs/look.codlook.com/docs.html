@@ -4571,7 +4571,7 @@ cmake --build cpp\build-win --config Release --target look look-fcgi
   <p>look-fcgi reads these from the process environment — set them in your systemd unit, Docker <code>-e</code> flags, or an <code>.env</code> file. All are optional; the defaults below are the built-in values. Anything not listed here is an internal build/test toggle and not meant for production use.</p>
 
   <div class="callout warn">
-    <p><strong>Security-relevant.</strong> <code>LOOK_ALLOW_SSRF</code>, <code>LOOK_WS_ORIGINS</code> and <code>LOOK_MAX_BODY_SIZE</code> change the server's exposure. Review these before going to production.</p>
+    <p><strong>Security-relevant.</strong> <code>LOOK_ALLOW_SSRF</code>, <code>LOOK_WS_ORIGINS</code> and <code>LOOK_MAX_BODY_SIZE</code> change the server's exposure. Review these before going to production. When a setting weakens security — <code>LOOK_ALLOW_SSRF=1</code>, <code>LOOK_SESSION_SECURE=0</code>, <code>*</code> in <code>LOOK_WS_ORIGINS</code>, a <code>LOOK_TRUSTED_PROXY</code> range that covers ordinary clients (e.g. <code>0.0.0.0/0</code>), a FastCGI <code>LOOK_FCGI_BIND</code> other than 127.x, <code>APP_ENV=development</code> or <code>APP_DEBUG=true</code> — the server writes one <code>[SECURITY]</code> warning line for it at start, so a setting left over from testing does not go unnoticed.</p>
   </div>
 
   <h3>Server &amp; workers</h3>
