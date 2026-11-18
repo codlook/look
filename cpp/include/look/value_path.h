@@ -70,6 +70,17 @@ inline void value_set_path(Value& slot, const Value* keys, int n, SetOne&& set_o
             throw std::runtime_error("struct '" + struct_name(*slot.vec_ptr()) + "': field '"
                                      + keys[0].to_string() + "' is null; assign a value to it first");
     } else if (!child || child->type() == Value::NONE) {
+        // Buradan sonraki her düzey YENİ yaratılacak: yeni bir listeye ilk yazma yalnız 0. indekse
+        // olabilir. Yolun geri kalanı bunu bozuyorsa HİÇBİR şey yaratmadan hata ver. ESKİ: ara düzey
+        // önce yaratılıyor, yazma sonra düşüyordu — hata yakalansa da değişken değişmiş kalıyordu:
+        // $m["q"][3] = 1 (try içinde) → $m = {"a":1,"q":[]} (rastgele karşılaştırmalı test buldu).
+        for (int j = 1; j < n; ++j) {
+            const Value& k = keys[j];
+            const bool int_key = k.type() == Value::INT ||
+                                 (k.type() == Value::STRING && value_is_int_key(k.str_ref()));
+            if (int_key && k.to_int() != 0)
+                throw std::runtime_error("Array index " + std::to_string(k.to_int()) + " out of bounds");
+        }
         const bool map_key = keys[1].type() == Value::STRING && !value_is_int_key(keys[1].str_ref());
         auto fresh = std::make_shared<ValueArray>();
         if (map_key) fresh->push_back(Value::assoc_marker());
