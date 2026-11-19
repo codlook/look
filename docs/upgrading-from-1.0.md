@@ -11,6 +11,9 @@ Each entry says how the change shows up:
 - **Silent** — the program runs and gives a different result. These are the ones to read
   carefully.
 
+What still works but warns, and will stop working in a later release, is collected in
+[Deprecations](deprecations.md): what goes away, what to write instead, and what `lk fix` does.
+
 ## Structs
 
 ### One way to write a field — error at load
