@@ -136,7 +136,7 @@ fi
 # in the live binary.
 RECLK58="$LK"; [ -x "$RECLK58" ] || RECLK58="$LKFCGI"
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
-  printf '$fns=[]\n$i=0\nwhile($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }\nprint($fns[0]() . $fns[1]() . $fns[2]())\n' > "$TMP/clo.lk"
+  printf 'use array\n$fns=[]\n$i=0\nwhile($i<3){ $v=$i; $fns = array::push($fns, fn()=>$v); $i=$i+1 }\nprint($fns[0]() . $fns[1]() . $fns[2]())\n' > "$TMP/clo.lk"
   cout=$(timeout 10 "$RECLK58" "$TMP/clo.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
   if [ "$cout" = "012" ]; then
     echo "  PASS 58 (closure capture): per-iter cell is live — fns[0..2]()=012"
@@ -237,14 +237,14 @@ if [ "$iv" = "false" ]; then
 else
   echo "  FAIL int64-compare: [$iv] expected false — d752afe regression"; fail=1
 fi
-printf 'use cache\ncache::set("k",[1,2,3])\n$a=cache::get("k")\npush($a,9)\nprint(count(cache::get("k")))\n' > "$TMP/g_cache.lk"
+printf 'use array\nuse cache\ncache::set("k",[1,2,3])\n$a=cache::get("k")\n$a = array::push($a, 9)\nprint(count(cache::get("k")))\n' > "$TMP/g_cache.lk"
 cv=$("$RECLK58" "$TMP/g_cache.lk" 2>&1 | tr -d '[:space:]')
 if [ "$cv" = "3" ]; then
   echo "  PASS cache-isolation: get+mutate does not corrupt the cache (c7c7427)"
 else
   echo "  FAIL cache-isolation: [$cv] expected 3 — deep_clone regression"; fail=1
 fi
-printf '$ch=channel(1)\n$arr=[1,2,3]\nsend($ch,$arr)\npush($arr,9)\nprint(count(receive($ch)))\n' > "$TMP/g_chan.lk"
+printf 'use array\n$ch=channel(1)\n$arr=[1,2,3]\nsend($ch,$arr)\n$arr = array::push($arr, 9)\nprint(count(receive($ch)))\n' > "$TMP/g_chan.lk"
 chv=$("$RECLK58" "$TMP/g_chan.lk" 2>&1 | tr -d '[:space:]')
 if [ "$chv" = "3" ]; then
   echo "  PASS channel-isolation: send+mutate does not share (9670c18)"
