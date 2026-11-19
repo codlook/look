@@ -22,6 +22,7 @@
 #endif
 #include <ctime>
 #include "look/fcgi.h"
+#include "look/json_str_parse.h"
 #include "look/shutdown.h"     // graceful shutdown (SIGTERM/SIGINT)
 #include "look/weak_settings.h" // weakening-setting warnings at startup
 #include "look/mem_budget.h"   // memory budget (LOOK_MEMORY_LIMIT)
@@ -436,17 +437,9 @@ void FcgiServer::run(Handler handler) {
 
 // ── Helper functions ──────────────────────────────────────────────────────────
 
-static std::string json_escape_str(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        if      (c == '"')  out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else if (c == '\r') out += "\\r";
-        else                out += c;
-    }
-    return out;
-}
+// look/json_str_parse.h json_escape. The copy here escaped only the quote, the backslash, \n and \r: a tab
+// or another control character in the error text made the error body invalid JSON.
+static std::string json_escape_str(const std::string& s) { return look::json_escape(s); }
 
 static bool is_production() {
     const char* env = std::getenv("APP_ENV");

@@ -5,6 +5,7 @@
 // All providers share the same LOOK API — switch provider without code change.
 #include "look/mail.h"
 #include "look/smtp_server.h"
+#include "look/json_str_parse.h"
 #include "look/http_client.h"
 #include "look/host_port.h"   // SMTP_PORT validation
 #include "look/logger.h"
@@ -144,21 +145,7 @@ static MailResult send_sendgrid(const std::string& api_key,
     MailResult r;
     // Build minimal JSON manually (no json:: dep from C++ side)
     // JSON escape: including all control characters (RFC 7159 §7)
-    auto esc = [](const std::string& s) {
-        std::string out;
-        for (unsigned char c : s) {
-            if      (c == '"')  out += "\\\"";
-            else if (c == '\\') out += "\\\\";
-            else if (c == '\n') out += "\\n";
-            else if (c == '\r') out += "\\r";
-            else if (c == '\t') out += "\\t";
-            else if (c < 0x20) {
-                char buf[7]; snprintf(buf, sizeof(buf), "\\u%04x", c);
-                out += buf;
-            } else out += (char)c;
-        }
-        return out;
-    };
+    auto esc = [](const std::string& s) { return json_escape(s); };   // look/json_str_parse.h
 
     std::string content_arr;
     if (!html.empty())
@@ -195,21 +182,7 @@ static MailResult send_postmark(const std::string& api_key,
 {
     MailResult r;
     // JSON escape: including all control characters (RFC 7159 §7)
-    auto esc = [](const std::string& s) {
-        std::string out;
-        for (unsigned char c : s) {
-            if      (c == '"')  out += "\\\"";
-            else if (c == '\\') out += "\\\\";
-            else if (c == '\n') out += "\\n";
-            else if (c == '\r') out += "\\r";
-            else if (c == '\t') out += "\\t";
-            else if (c < 0x20) {
-                char buf[7]; snprintf(buf, sizeof(buf), "\\u%04x", c);
-                out += buf;
-            } else out += (char)c;
-        }
-        return out;
-    };
+    auto esc = [](const std::string& s) { return json_escape(s); };   // look/json_str_parse.h
 
     std::string body = "{\"From\":\"" + esc(from) + "\","
                        "\"To\":\"" + esc(to) + "\","

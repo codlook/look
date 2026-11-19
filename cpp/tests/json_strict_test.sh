@@ -68,6 +68,18 @@ out="$(cd "$T" && "$LK" utf8.lk 2>&1 | tail -1)"
 want="$(printf '2 "\xef\xbf\xbd"=2 "a\xef\xbf\xbd\xef\xbf\xbdb"')"
 if [ "$out" = "$want" ]; then echo "  OK   invalid UTF-8 in a key or a value becomes U+FFFD per byte (as Go)"
 else echo "  FAIL invalid UTF-8: '$out' (want '$want': the two stray-byte keys are one key holding 2)"; fail=1; fi
+# json::encode always writes valid JSON: raw invalid UTF-8 (here from file::read) becomes an escaped
+# U+FFFD per byte, as Go's json.Marshal writes it; control characters are escaped; valid text is unchanged.
+printf 'a\xff\xc0\x80\x01\tb\xc3\xa7\xf0\x9f\x98\x80' > "$T/raw.bin"
+cat > "$T/enc.lk" <<'LK'
+use file
+print(json::encode(["k" => file::read("raw.bin")]))
+LK
+out="$(cd "$T" && "$LK" enc.lk 2>&1 | tail -1)"
+want="$(printf '{"k":"a\\ufffd\\ufffd\\ufffd\\u0001\\tb\xc3\xa7\xf0\x9f\x98\x80"}')"
+if [ "$out" = "$want" ] && printf '%s' "$out" | python3 -c 'import sys,json; json.loads(sys.stdin.buffer.read().decode("utf-8"))' 2>/dev/null
+then echo "  OK   json::encode writes invalid UTF-8 as an escaped U+FFFD per byte (always valid JSON)"
+else echo "  FAIL json::encode of raw bytes: '$out' (want '$want', valid UTF-8 JSON)"; fail=1; fi
 # Nesting: up to 256 levels of arrays/objects decode, 257 are null — whatever the innermost value is.
 python3 - "$T" <<'PY'
 import sys, os

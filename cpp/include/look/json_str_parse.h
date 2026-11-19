@@ -60,9 +60,48 @@ inline size_t utf8_valid_len(const std::string& s, size_t i) {
     return 0;
 }
 
+// The JSON text of a string, without the surrounding quotes — the single definition used by json::encode,
+// the mail API bodies and the CGI/FastCGI error body. '"', '\\' and every control character are escaped;
+// invalid UTF-8 (raw bytes from file::read, a socket, an old value) is written as an escaped U+FFFD, one per invalid
+// byte, as Go's json.Marshal does, so the output is always valid JSON. The copies this replaces passed
+// such bytes through, and one of them left \t and other control characters raw.
+inline std::string json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    size_t run = 0, i = 0;
+    while (i < s.size()) {
+        unsigned char c = (unsigned char)s[i];
+        if (c >= 0x20 && c < 0x80 && c != '"' && c != '\\') { i++; continue; }
+        if (c >= 0x80) {
+            size_t n = utf8_valid_len(s, i);
+            if (n) { i += n; continue; }
+        }
+        out.append(s, run, i - run);   // the plain run before this byte, in one append
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (c < 0x20) {
+                    static const char hex[] = "0123456789abcdef";
+                    out += "\\u00";
+                    out += hex[c >> 4];
+                    out += hex[c & 15];
+                } else {
+                    out += "\\ufffd";   // an invalid UTF-8 byte
+                }
+        }
+        run = ++i;
+    }
+    out.append(s, run, i - run);
+    return out;
+}
+
 // RFC 8259 / Go encoding/json rules. Returns false = invalid string (the caller rejects the whole document).
 // Invalid UTF-8 in the raw text becomes U+FFFD, one per invalid byte, as Go's decoder does: a key or a
-// value with a stray byte reads the same as in Go (two keys "\xff" and "\xfe" are one key, "�").
+// value with a stray byte reads the same as in Go (two keys "\xff" and "\xfe" are one key, U+FFFD).
 // It used to keep the raw bytes, so LOOK and a Go service in front of it could read different keys.
 // OLD LOOSENESS: an unknown escape ("\x" → "x"), a broken \u ("\u12" → "\\u12"), a raw
 // control character and an unterminated string were accepted — if a gateway counted the same body as invalid
