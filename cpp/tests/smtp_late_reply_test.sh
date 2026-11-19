@@ -1,27 +1,27 @@
 #!/bin/bash
-# SMTP gec yanit guard'i — teslim yaniti YANLIS baglantiya yazilmamali.
+# SMTP late-reply guard — the delivery reply must not be written to the WRONG connection.
 #
-# HATA (olculdu, 4/4): worker mesaji bitirince "250 2.6.0 Message accepted"
-# yanitini DATA bittigi andaki ham fd NUMARASINA yaziyordu. Istemci worker
-# mesgulken koptuysa o fd kapanmis, araya giren yeni baglanti ayni numarayi
-# almis oluyordu → yanit ILGISIZ baglantiya, 220 banner'inin hemen ardindan
-# gidiyordu; o istemcinin komut/yanit eslesmesi bir kayiyordu.
+# BUG (measured, 4/4): when the worker finished a message it wrote the "250 2.6.0 Message accepted"
+# reply to the raw fd NUMBER at the moment DATA ended. If the client disconnected while the worker
+# was busy, that fd was closed and a new connection that came in got the same number → the reply
+# went to an UNRELATED connection, right after the 220 banner; that client's command/reply
+# pairing was shifted by one.
 #
-# WORKER'I TUTMA: gercek hatada worker'i yavas DNS (SPF) tutuyordu; guard DNS'e BAGLI
-# OLAMAZ. 20 MB'lik bir mesaj kullanilir: dogrulanmasi ve diske yazilmasi worker'da zaman
-# alir. Gonderen mesaji bitirip sunucunun baglantiyi kapattigini gorur (EOF), ardindan yeni
-# baglantilar acilir ve o fd numarasini alir. MAIL FROM:<> kullanilir → SPF hic DNS sormaz.
-# (1.0.17'ye dek yarim birakilan STARTTLS el sikismasi kullaniliyordu; STARTTLS 1.0.18'de
-# sunulmuyor.)
+# HOLDING THE WORKER: in the real bug a slow DNS (SPF) held the worker; the guard CANNOT DEPEND ON
+# DNS. A 20 MB message is used: validating it and writing it to disk takes time in the worker.
+# The sender finishes the message and sees the server close the connection (EOF), then new
+# connections are opened and get that fd number. MAIL FROM:<> is used → SPF never asks DNS.
+# (Until 1.0.17 a STARTTLS handshake left half-done was used; STARTTLS is not offered as of
+# 1.0.18.)
 #
-# POZITIF KONTROLLER (guard sessizce gecmesin):
-#  0) bekletme YOKKEN teslim 250'yi kendi baglantisina alir (duzeltme mesru yaniti dusurmuyor),
-#  1) yeni baglantilar banner'ini aldiginda buyuk mesaj HENUZ teslim edilmemis olmali; bu her
-#     denemede olculur, tutulamayan deneme sayilmaz; iki tutulan deneme olmadan test KIRMIZI,
-#  2) mesaj sonunda teslim edilir (yanit ani gercekten yasandi),
-#  3) yeni baglanti sonradan NOOP'a tam olarak kendi yanitini alir.
+# POSITIVE CONTROLS (so the guard cannot pass silently):
+#  0) with NO holding, delivery gets the 250 on its own connection (the fix does not drop the legitimate reply),
+#  1) when the new connections get their banner the big message must NOT YET be delivered; this is
+#     measured in every attempt, an attempt that could not hold does not count; without two held attempts the test is RED,
+#  2) the message is delivered at the end (the reply moment really happened),
+#  3) the new connection later gets exactly its own reply to NOOP.
 #
-# Kullanim: bash smtp_late_reply_test.sh <lk-fcgi_yolu> [port]
+# Usage: bash smtp_late_reply_test.sh <lk-fcgi_path> [port]
 set -u
 FCGI="${1:-./build/lk-fcgi}"
 PORT="${2:-7834}"
@@ -62,7 +62,7 @@ def zarf(s):
     if not cmd(s, "DATA").startswith("354"): bitir("FAIL: DATA was not accepted")
     s.sendall(b"Subject: G\r\n\r\ngovde\r\n.\r\n")
 
-# 0) Bekletme yok: yanit kendi baglantisina gelmeli.
+# 0) No holding: the reply must arrive on its own connection.
 k = conn(); zarf(k)
 y = rd(k, 15)
 if not y.startswith("250 2.6.0"): bitir("FAIL: control delivery got [%s], expected 250 2.6.0" % y.strip())
@@ -70,10 +70,10 @@ k.close()
 taban = teslim()
 if taban != 1: bitir("FAIL: control delivery wrote %d files, expected 1" % taban)
 
-# 1) Worker'i TUT: buyuk bir mesajin dogrulanmasi ve diske yazilmasi worker'da zaman alir.
-#    (1.0.17'ye dek yarim birakilan STARTTLS el sikismasi kullaniliyordu; STARTTLS artik
-#    sunulmuyor.) Tutmanin gerceklestigi her denemede OLCULUR: yeni baglantilar banner'ini
-#    aldiginda mesaj henuz teslim edilmemis olmali. Tutulamayan deneme sayilmaz, yeniden denenir.
+# 1) HOLD the worker: validating a big message and writing it to disk takes time in the worker.
+#    (Until 1.0.17 a STARTTLS handshake left half-done was used; STARTTLS is no longer
+#    offered.) Whether the hold happened is MEASURED in every attempt: when the new connections
+#    get their banner the message must not yet be delivered. An attempt that could not hold does not count and is retried.
 SATIR = b"X" * 76 + b"\r\n"
 GOVDE = b"Subject: BIG\r\n\r\n" + SATIR * (20 * 1024 * 1024 // len(SATIR)) + b".\r\n"
 
@@ -83,26 +83,26 @@ def dene():
     if not rd(a).startswith("220"): bitir("FAIL: no 220 banner")
     cmd(a, "EHLO t"); cmd(a, "MAIL FROM:<>"); cmd(a, "RCPT TO:<u@localhost>")
     if not cmd(a, "DATA").startswith("354"): bitir("FAIL: DATA was not accepted")
-    # 2) A: mesaji bitir ve yaniti BEKLEMEDEN kop. Sunucunun fd'yi kapattigini gor (EOF):
-    #    boylece siradaki accept o numarayi alir.
+    # 2) A: finish the message and drop WITHOUT waiting for the reply. See the server close the fd (EOF):
+    #    so the next accept gets that number.
     a.sendall(GOVDE); a.shutdown(socket.SHUT_WR)
     a.settimeout(20)
     try:
         while a.recv(4096): pass
     except Exception: pass
     a.close()
-    # 3) B: A'nin biraktigi fd numarasini alir. Hicbir sey gondermez.
+    # 3) B: gets the fd number A left behind. Sends nothing.
     b = [conn() for _ in range(3)]
     for s in b:
         if not rd(s).startswith("220"): bitir("FAIL: new connection got no 220 banner")
     tutuldu = (teslim() == taban)
-    # 4) Worker biter: mesaj teslim edilir ve yaniti gonderilmek istenir.
+    # 4) The worker finishes: the message is delivered and its reply is about to be sent.
     for _ in range(120):
         if teslim() > taban: break
         time.sleep(0.25)
     else:
         bitir("FAIL: the message of the disconnected sender was never delivered")
-    # 5) B'ye hicbir sey gelmemeli; sonra NOOP kendi yanitini almali.
+    # 5) Nothing must arrive at B; then NOOP must get its own reply.
     time.sleep(1.5)
     for i, s in enumerate(b):
         s.settimeout(0.3)

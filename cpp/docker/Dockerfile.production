@@ -28,8 +28,8 @@ COPY . /build/
 
 WORKDIR /build/cpp
 
-# Build damgasi: .dockerignore .git'i haric tuttugu icin container icinde git yok;
-# SHA'yi disaridan gecir:  docker build --build-arg LOOK_BUILD=$(git rev-parse --short HEAD)
+# Build stamp: the container has no git because .dockerignore excludes .git;
+# pass the SHA in from outside:  docker build --build-arg LOOK_BUILD=$(git rev-parse --short HEAD)
 ARG LOOK_BUILD=docker
 
 # Release build — all three binaries

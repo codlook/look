@@ -1,16 +1,16 @@
 #!/bin/bash
-# LOOK Language — servis loglari (panel Log goruntuleyici)
-# Kullanim: logs.sh <servis> [satir]
-# Guvenlik: yalnizca look-* servisleri; look-ctl (root, callSbin) uzerinden journalctl calisir.
+# LOOK Language — service logs (the panel's Log viewer)
+# Usage: logs.sh <service> [lines]
+# Security: only look-* services; journalctl runs via look-ctl (root, callSbin).
 SVC="$1"
 N="${2:-200}"
 
-# Yalnizca gecerli LOOK servis adlari
+# Only valid LOOK service names
 case "$SVC" in
     look-*) ;;
     *) echo "ERROR: invalid service name: $SVC" >&2; exit 1 ;;
 esac
-# Satir sayisi sinirla
+# Limit the line count
 case "$N" in
     ''|*[!0-9]*) N=200 ;;
 esac

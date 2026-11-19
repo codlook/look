@@ -1,10 +1,10 @@
-# Shell scriptleri Linux'te calisir — Windows checkout'unda bile LF kalmali.
-# core.autocrlf=true CRLF yazarsa bash $'{' diye patlar ve GUARD SESSIZCE
-# CALISMAZ (koruma yok saniliyor ama yok).
+# Shell scripts run on Linux — they must stay LF even in a Windows checkout.
+# If core.autocrlf=true writes CRLF, bash blows up with $'{' and the GUARD SILENTLY
+# DOES NOT RUN (the protection is believed to exist but does not).
 *.sh text eol=lf
 *.lk text eol=lf
-# Golden/expected dosyalari BAYT BAYT karsilastirilir — satir sonu donusumu testi kirar.
+# Golden/expected files are compared BYTE BY BYTE — line-ending conversion breaks the test.
 *.expected text eol=lf
 *.out text eol=lf
-# Uzantisiz shell scriptleri (Plesk eklentisinin root adimi) — *.sh kuralina girmez
+# Extensionless shell scripts (the root step of the Plesk extension) — not covered by the *.sh rule
 platforms/plesk/sbin/* text eol=lf

@@ -1,6 +1,6 @@
 #!/bin/bash
-# LOOK Language — Servis durumu
-# Kullanim: status.sh <svc_name>
+# LOOK Language — Service status
+# Usage: status.sh <svc_name>
 # Cikti:    active|inactive|failed|unknown [PID]
 
 SVC_NAME="$1"
@@ -10,7 +10,7 @@ if [ -z "$SVC_NAME" ]; then
     exit 0
 fi
 
-# GUVENLIK (logs/monitor/disable ile tutarli): yalnizca look-* servisleri sorgula.
+# SECURITY (consistent with logs/monitor/disable): query only look-* services.
 SVC_NAME=$(printf '%s' "$SVC_NAME" | tr -cd 'A-Za-z0-9.-')
 case "$SVC_NAME" in look-*) ;; *) echo "unknown"; exit 0 ;; esac
 

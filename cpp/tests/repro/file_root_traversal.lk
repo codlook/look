@@ -1,8 +1,8 @@
 use file
-// assert_in_file_root tablo testi: her traversal payload REDDEDILMELI, kontrol IZINLI.
-// try_read FAIL'de 1, PASS'te 0 DONER (fonksiyon disardaki degiskeni degistiremez —
-// LOOK'ta cagiran-kapsam yazilamaz); cagiran topluyor. Sonunda >0 ise non-zero cikilir
-// (vacuous-green'i onler: allow-yolu bozulursa CI RED olur).
+// assert_in_file_root table test: every traversal payload must be REJECTED, the control ALLOWED.
+// try_read RETURNS 1 on FAIL, 0 on PASS (a function cannot change an outer variable —
+// in LOOK the caller scope cannot be written); the caller sums. At the end it exits non-zero if >0
+// (prevents vacuous-green: if the allow path breaks, CI goes RED).
 function try_read($label, $path, $should_allow) {
     $ok = false
     try { file::read($path); $ok = true } catch ($e) { $ok = false }
@@ -11,18 +11,18 @@ function try_read($label, $path, $should_allow) {
     print("{$verdict}  {$label}: {$act}")
     return ($verdict == "FAIL") ? 1 : 0
 }
-// kontrol dosyasini kok-icinde OLUSTUR (yoksa allow-yolu hic denenmez → vacuous green).
+// CREATE the control file inside the root (otherwise the allow path is never tried → vacuous green).
 file::put("ok.txt", "x")
 $fails = 0
-// kontrol: kok-ici mevcut dosya -> IZIN (allow-yolunu gercekten egzersiz eder)
+// control: an existing file inside the root -> ALLOW (actually exercises the allow path)
 $fails = $fails + try_read("kontrol kok-ici ok.txt", "ok.txt", true)
-// traversal payload'lari -> REDDEDILMELI
+// traversal payloads -> must be REJECTED
 $fails = $fails + try_read("literal ../secret", "../secret.txt", false)
 $fails = $fails + try_read("cift ../../etc/passwd", "../../etc/passwd", false)
 $fails = $fails + try_read("kok-ici .. escape", "sub/../../secret.txt", false)
 $fails = $fails + try_read("mutlak /etc/passwd", "/etc/passwd", false)
 $fails = $fails + try_read("percent-encoded literal", "%2e%2e%2fsecret.txt", false)
 $fails = $fails + try_read("cift-encoded", "%252e%252e%252fsecret.txt", false)
-// temizlik + kesin sonuc: herhangi bir FAIL varsa non-zero cik (CI yakalar).
+// cleanup + final result: exit non-zero if any FAIL (CI catches it).
 file::remove("ok.txt")
 if ($fails > 0) { exit(1) }

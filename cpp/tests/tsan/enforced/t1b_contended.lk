@@ -1,20 +1,20 @@
-# t1b — DETERMINISTIK: 8 thread AYNI yakalanan diziyle ayni anda baslar ve her biri onu
-# kendi degiskenine alip yazar. LOOK'de closure DEGERI yakalar ve yakalanana yazamaz
-# (yuklemede hata), o yuzden eski "herkes $shared[0]'a yazar" hali artik gecerli kod degil.
-# Sinanan sey ayni kaldi: depolamayi paylasan degerlere es-anli ilk yazma (yazinca-kopyala
-# ayrilmasi + atomik sayac) yarissiz olmali ve kimse digerinin yazdigini gormemeli.
+# t1b — DETERMINISTIC: 8 threads start at the same moment with the SAME captured array and each
+# copies it into its own variable and writes. In LOOK a closure captures the VALUE and cannot write to the captured one
+# (error at load), so the old "everyone writes to $shared[0]" form is no longer valid code.
+# What is tested stays the same: the simultaneous first write to values sharing storage (copy-on-write
+# split + atomic counter) must be race-free and nobody must see what another wrote.
 $shared = [0]
 $gate = channel(8)
 $done = channel(8)
 for ($i=0; $i<8; $i=$i+1) {
   parallel(function() use ($shared, $gate, $done) {
-    receive($gate)                                   # hepsi burada bekler
+    receive($gate)                                   # all wait here
     $mine = $shared
     for ($j=0; $j<2000; $j=$j+1) { $mine[0] = $mine[0] + 1 }
-    send($done, $mine[0] * 10 + $shared[0])          # 20000 + 0 bekleniyor
+    send($done, $mine[0] * 10 + $shared[0])          # expecting 20000 + 0
   })
 }
-for ($k=0; $k<8; $k=$k+1) { send($gate, 1) }         # hepsini birlikte serbest birak
+for ($k=0; $k<8; $k=$k+1) { send($gate, 1) }         # release them all together
 $bad = 0
 for ($k=0; $k<8; $k=$k+1) { if (receive($done) != 20000) { $bad = $bad + 1 } }
 if ($bad != 0 || $shared[0] != 0) { print("BAD " . $bad); exit(1) }

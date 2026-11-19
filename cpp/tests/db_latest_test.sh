@@ -1,29 +1,29 @@
 #!/bin/bash
-# DB SURUM-FARKINDALIK guard'i — MySQL / MariaDB / PostgreSQL / SQLite.
+# DB VERSION-AWARENESS guard — MySQL / MariaDB / PostgreSQL / SQLite.
 #
-# AMAC: "yeni DB surumu cikti ve LOOK'u kirdi" durumunu KULLANICI sikayet etmeden,
-# surumun ciktigi gun yakalamak. Bugun MySQL 8'in caching_sha2_password'e gecmesi
-# tam bu sinifta bir surprizdi (39. bug) — dil sessizce baglanamaz olmustu.
+# GOAL: to catch the "a new DB version came out and broke LOOK" case the day the version
+# ships, before a USER complains. MySQL 8 moving to caching_sha2_password was exactly a
+# surprise of this class (bug 39) — the language could silently no longer connect.
 #
-# Nasil calisir: her DB'nin `latest` etiketli konteynerine baglanip yaz/oku +
-# surum sorgusu yapar. CI'da haftalik kosarsa, upstream bir kirilma getirdiginde
-# FAIL kirmizisi cikar. `latest`, bugunku pin'li matristen (mysql_auth_test.sh)
-# FARKLIDIR: o test edilen surumleri kilitler, bu gelecegi izler.
+# How it works: connects to each DB's `latest`-tagged container, does write/read +
+# a version query. If run weekly in CI, it turns FAIL red when upstream brings a break.
+# `latest` is DIFFERENT from today's pinned matrix (mysql_auth_test.sh):
+# that one locks the tested versions, this one tracks the future.
 #
-# Kullanim:
+# Usage:
 #   bash db_latest_test.sh <lk_yolu>
-# DSN'ler ortamdan (verilmeyen DB atlanir, 'atlandi' yazarak — sessizce degil):
+# DSNs come from the environment (a DB that is not given is skipped with a visible message — not silently):
 #   LOOK_MYSQL_LATEST_DSN   mysql://root:pw@host:3306/db
 #   LOOK_MARIADB_LATEST_DSN mysql://root:pw@host:3306/db
 #   LOOK_PG_LATEST_DSN      postgres://user:pw@host:5432/db
-#   (SQLite gomulu — DSN gerektirmez, her zaman kosar)
+#   (SQLite is embedded — needs no DSN, always runs)
 set -u
 LK="${1:-./build/lk}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 
-# MySQL/MariaDB (ayni wire) — utf8mb4, gidis-donuste Turkce korunmali
+# MySQL/MariaDB (same wire) — utf8mb4, Turkish text must survive the round trip
 cat > "$TMP/my.lk" <<'LK'
 try {
   $c = db::connect(env("D",""))
@@ -34,19 +34,19 @@ try {
 } catch ($e) { print("HATA|" . $e) }
 LK
 
-# PostgreSQL — SERIAL/TEXT + sequence'SIZ tablo transaction (39... lastval veri kaybi)
-# NEDEN: PG'de INSERT sonrasi otomatik SELECT lastval() cagriliyor; tablo SERIAL
-# kullanmiyorsa lastval hata verir ve ACIK TRANSACTION'i abort eder -> COMMIT
-# sessizce ROLLBACK olur -> veri kaybolur. Bu kontrol sequence'SIZ bir tabloya
-# transaction icinde INSERT + COMMIT yapip verinin KALDIGINI dogrular.
+# PostgreSQL — SERIAL/TEXT + a table WITHOUT a sequence in a transaction (39... lastval data loss)
+# WHY: in PG, SELECT lastval() is called automatically after INSERT; if the table does not use SERIAL
+# lastval errors and aborts the OPEN TRANSACTION -> COMMIT
+# silently becomes ROLLBACK -> data is lost. This check does INSERT + COMMIT inside a transaction into a table WITHOUT a sequence
+# and verifies that the data REMAINS.
 cat > "$TMP/pg.lk" <<'LK'
 use string
 try {
   $c = db::connect(env("D",""))
-  # sequence'SIZ tablo + transaction — lastval veri kaybi tuzagi.
-  # DIKKAT: bu test SERIAL insert'ten ONCE olmali. Aksi halde SERIAL insert
-  # session'da lastval'i TANIMLAR ve sequence'siz insert'te lastval artik hata
-  # vermez -> bug tetiklenmez (guard yaniltici PASS verir — bu tam olarak yasandi).
+  # table WITHOUT a sequence + transaction — lastval data-loss trap.
+  # NOTE: this test must come BEFORE the SERIAL insert. Otherwise the SERIAL insert
+  # DEFINES lastval in the session and lastval no longer errors on an insert without a sequence
+  # -> the bug is not triggered (the guard gives a misleading PASS — this is exactly what happened).
   db::exec($c, "DROP TABLE IF EXISTS look_notx")
   db::exec($c, "CREATE TABLE look_notx (n INT)")
   db::begin($c)
@@ -54,7 +54,7 @@ try {
   db::commit($c)
   $kaldi = count(db::query($c, "SELECT n FROM look_notx"))
   if ($kaldi != 1) { print("HATA|sequence'siz tabloda tx-ici INSERT kayboldu (lastval abort): " . $kaldi . " satir"); return }
-  # SERIAL testi (last_id + version)
+  # SERIAL test (last_id + version)
   db::exec($c, "CREATE TABLE IF NOT EXISTS look_lt (id SERIAL PRIMARY KEY, ad TEXT)")
   db::exec($c, "DELETE FROM look_lt")
   db::exec($c, "INSERT INTO look_lt (ad) VALUES (?)", ["şğü"])
@@ -62,7 +62,7 @@ try {
 } catch ($e) { print("HATA|" . $e) }
 LK
 
-# SQLite — gomulu, DSN yok
+# SQLite — embedded, no DSN
 cat > "$TMP/sq.lk" <<'LK'
 use string
 try {

@@ -1,20 +1,20 @@
 #!/bin/bash
-# SMTP sunucusu guard'i — smtp_server.cpp (1373 satir) icin ILK guard.
+# SMTP server guard — the FIRST guard for smtp_server.cpp (1373 lines).
 #
-# NEDEN: bu dosya disariya port dinliyor, kimlik dogrulama yapiyor ve HIC
-# guard'i yoktu (envanterde "en buyuk kor nokta"). Gercek sunucu ayaga
-# kaldirilip ham SMTP konusuluyor.
+# WHY: this file listens on a port to the outside, does authentication and had NO
+# guard at all (the inventory called it "the biggest blind spot"). A real server is
+# started and raw SMTP is spoken to it.
 #
-# Kilitlenenler:
-#  1) ADRES AYRISTIRMA (42. bug): `MAIL FROM:` (adressiz) gonderince adres
-#     "FROM:" oluyordu ve DISKE `Return-Path: <FROM:>` yaziliyordu; bare adres
-#     destegi kirikti (`FROM: a@b.c`); bozuk `<a@b<c>` kabul ediliyordu; ve
-#     null sender `<>` REDDEDILIYORDU — oysa RFC 5321 §4.5.5'te bounce/DSN icin
-#     zorunlu kabul edilir. Ayristirma TERS yonde gevsekti.
-#  2) Relay korumasi: kimlik dogrulamasiz disariya teslim reddedilmeli.
-#  3) Kaynak sinirlari ILAN EDILIP ZORLANIYOR mu (SIZE, RCPT sayisi).
+# Locked down:
+#  1) ADDRESS PARSING (bug 42): sending `MAIL FROM:` (no address) made the address
+#     "FROM:" and `Return-Path: <FROM:>` was written TO DISK; bare address
+#     support was broken (`FROM: a@b.c`); a malformed `<a@b<c>` was accepted; and the
+#     null sender `<>` was REJECTED — yet RFC 5321 §4.5.5 makes it mandatory for bounces/DSNs.
+#     The parsing was lax in the WRONG direction.
+#  2) Relay protection: delivery to the outside without authentication must be rejected.
+#  3) Are resource limits both ADVERTISED AND ENFORCED (SIZE, RCPT count).
 #
-# Kullanim: bash smtp_test.sh <lk-fcgi_yolu> [port]
+# Usage: bash smtp_test.sh <lk-fcgi_path> [port]
 set -u
 FCGI="${1:-./build/lk-fcgi}"
 PORT="${2:-7826}"
@@ -53,17 +53,17 @@ def sohbet(komutlar, govde=None):
     except Exception: pass
     return son.split(" ")[0].split("-")[0]
 sonuc=[]
-# adres ayristirma
-sonuc.append(sohbet(["EHLO t","MAIL FROM:<a@t.com>"]))            # 250 gecerli
-sonuc.append(sohbet(["EHLO t","MAIL FROM:"]))                      # 501 adres yok
-sonuc.append(sohbet(["EHLO t","MAIL FROM:<a@b<c>"]))               # 501 bozuk
+# address parsing
+sonuc.append(sohbet(["EHLO t","MAIL FROM:<a@t.com>"]))            # 250 valid
+sonuc.append(sohbet(["EHLO t","MAIL FROM:"]))                      # 501 no address
+sonuc.append(sohbet(["EHLO t","MAIL FROM:<a@b<c>"]))               # 501 malformed
 sonuc.append(sohbet(["EHLO t","MAIL FROM:<>"]))                    # 250 null sender (RFC)
-sonuc.append(sohbet(["EHLO t","MAIL FROM: bare@t.com"]))           # 250 bare adres
-sonuc.append(sohbet(["EHLO t","MAIL FROM:<a@t.com>","RCPT TO:"]))  # 501 alici yok
-# relay korumasi
+sonuc.append(sohbet(["EHLO t","MAIL FROM: bare@t.com"]))           # 250 bare address
+sonuc.append(sohbet(["EHLO t","MAIL FROM:<a@t.com>","RCPT TO:"]))  # 501 no recipient
+# relay protection
 sonuc.append(sohbet(["EHLO t","MAIL FROM:<a@t.com>","RCPT TO:<v@gmail.com>"]))  # 550
-# komut sirasi
-sonuc.append(sohbet(["MAIL FROM:<a@t.com>"]))                      # 503 EHLO once
+# command order
+sonuc.append(sohbet(["MAIL FROM:<a@t.com>"]))                      # 503 EHLO first
 print("|".join(sonuc))
 PYEOF
 
@@ -78,7 +78,7 @@ else
   fail=1
 fi
 
-# Diske YAZILAN Return-Path cop icermemeli (42. bugin kalbi)
+# The Return-Path WRITTEN to disk must contain no junk (the heart of bug 42)
 cat > "$TMP/teslim.py" <<'PYEOF'
 import socket, sys
 HOST="127.0.0.1"; PORT=int(sys.argv[1])
@@ -94,12 +94,12 @@ try: s.sendall(b"QUIT\r\n"); s.close()
 except Exception: pass
 PYEOF
 timeout 30 python3 "$TMP/teslim.py" $PORT >/dev/null 2>&1
-# Dosyayi SINIRLI sure bekle. Sunucu teslimden once SPF icin DNS'e sorar; DNS
-# yanit vermezse (5 sn x 2 deneme) 250 yaniti ~10 sn sonra gelir — istemcinin
-# okuma zaman asimi da 10 sn, yani istemci 250'yi gormeden cikabiliyor ve mesaj
-# Maildir'e bu satirdan SONRA dusuyordu (olculdu: 200 teslimde 250 her seferinde
-# dosyadan sonra geldi; kopan istemcide dosya 10.0 sn'de belirdi). Yalnizca
-# new/ altina bakilir: tmp/ icindeki yarim dosya teslim sayilmaz.
+# Wait for the file for a BOUNDED time. Before delivery the server queries DNS for SPF; if DNS
+# does not answer (5 s x 2 tries) the 250 reply arrives ~10 s later — the client's read
+# timeout is also 10 s, so the client could leave without seeing the 250 and the message
+# landed in the Maildir AFTER that line (measured: in 200 deliveries the 250 came after the
+# file every time; with a client that dropped, the file appeared at 10.0 s). Only
+# new/ is checked: a half-written file in tmp/ does not count as delivered.
 rp=""
 for i in $(seq 1 90); do
   rp=$(find "$TMP/maildir" -path '*/new/*' -type f -exec grep -h '^Return-Path:' {} + 2>/dev/null | head -1)
@@ -113,13 +113,13 @@ case "$rp" in
   *)                echo "  FAIL Return-Path beklenmedik: $rp"; fail=1 ;;
 esac
 
-# ── EVENT LOOP: fd yasam dongusu + per-IP limiti ────────────────────────────────
-# event_loop.cpp (658 satir) tum sunucularin altinda yatiyor ve guard'i yoktu.
-# Anormal kopmalarda (RST, yarim komut, DATA ortasi) fd SIZMAMALI — sizinti
-# uzun omurlu bir sunucuda fd tukenmesine, yani tam kesintiye goturur.
-# Per-IP limiti de burada kilitleniyor: 220 (kabul) ile 421 (red) AYIRT EDILEREK
-# olculur — recv'den gelen her seyi "banner" saymak yaniltir (bu tam olarak
-# yasandi: 421 reddi banner sanilip "limit calismiyor" sonucu cikarilmisti).
+# ── EVENT LOOP: fd lifecycle + per-IP limit ────────────────────────────────
+# event_loop.cpp (658 lines) underlies all the servers and had no guard.
+# On abnormal disconnects (RST, half a command, mid-DATA) fds must NOT LEAK — a leak
+# in a long-lived server leads to fd exhaustion, i.e. a full outage.
+# The per-IP limit is locked here too: 220 (accept) and 421 (reject) are told APART when
+# measured — counting everything from recv as a "banner" misleads (this is exactly
+# what happened: a 421 reject was taken for a banner and "limit does not work" was concluded).
 cat > "$TMP/fd.py" <<'PYEOF'
 import socket, sys, os, time, struct
 HOST="127.0.0.1"; PORT=int(sys.argv[1]); PID=sys.argv[2]
@@ -134,14 +134,14 @@ def kirli():
     finally: s.close()
 def yarim():
     s=socket.create_connection((HOST,PORT),timeout=4); s.settimeout(4)
-    try: s.recv(200); s.sendall(b"MAIL FROM:<a@b.c")   # CRLF yok
+    try: s.recv(200); s.sendall(b"MAIL FROM:<a@b.c")   # no CRLF
     finally: s.close()
 taban=fd()
 for _ in range(40): kirli()
 for _ in range(40): yarim()
 time.sleep(1.5)
 sizinti = fd() - taban
-# per-IP limiti: 220 kabul vs 421 red
+# per-IP limit: 220 accept vs 421 reject
 kabul=0; red=0; acik=[]
 for i in range(25):
     try:
@@ -173,9 +173,9 @@ else
   echo "  (atlandi: fd sayimi /proc gerektirir)"
 fi
 
-# Bind BASARISIZ oldugunda "started" YALANI basilmamali (45. bug).
-# Olculmustu: bind hatasindan SONRA "IMAP server started on port X" yaziliyordu;
-# kullanici log'a bakip calistigini saniyordu (sessiz basarisizlik).
+# A "started" LIE must not be printed when bind FAILS (bug 45).
+# Measured: after a bind error "IMAP server started on port X" was still printed;
+# the user read the log and thought it was running (silent failure).
 BUSY_PORT=$((PORT + 50))
 BUSY_HTTP=$((HTTP_PORT + 50))
 python3 - "$BUSY_PORT" <<'PYEOF' >/dev/null 2>&1 &

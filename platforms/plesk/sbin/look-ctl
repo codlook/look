@@ -1,18 +1,18 @@
 #!/bin/bash
-# LOOK Language — panelin root islemleri (ROOT, pm_ApiCli::callSbin ile)
-# Kullanim: look-ctl <eylem> <argumanlar>
+# LOOK Language — the panel's root operations (ROOT, via pm_ApiCli::callSbin)
+# Usage: look-ctl <action> <arguments>
 #   enable  <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
 #   disable <svc> [<domain>] [remove]
 #   start   <svc>
 #   status  <svc>
-#   logs    <svc> <satir>
+#   logs    <svc> <lines>
 #   monitor <svc>
 #
-# Eskiden panel (psaadm) bunlari sudoers kuraliyla calistiriyordu. sudoers'ta '*' bosluklari da
-# kapsar: "systemctl enable look-*" kurali "systemctl enable look-a /tmp/evil.service" ve
-# "systemctl stop look-a sshd"i de izinliyordu → psaadm olarak kod calistiran her acik root'a
-# cikabiliyordu. Simdi sudoers YOK; tek giris bu betik: eylem, arguman sayisi ve servis adi
-# (^look-[a-z0-9-]+$) burada denetlenir. callSbin argumanlari kabuk olmadan (argv) gecirir.
+# Previously the panel (psaadm) ran these via a sudoers rule. In sudoers '*' also matches spaces:
+# the rule "systemctl enable look-*" also allowed "systemctl enable look-a /tmp/evil.service" and
+# "systemctl stop look-a sshd" too → anyone able to run code as psaadm through a hole could
+# escalate to root. Now there is NO sudoers; the only entry is this script: the action, argument count and service name
+# (^look-[a-z0-9-]+$) are checked here. callSbin passes arguments without a shell (argv).
 set -u
 SCRIPTS=/usr/local/psa/admin/htdocs/modules/look-lang/scripts
 

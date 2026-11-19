@@ -1,7 +1,7 @@
-# T9: ayni satir ($p.a / $p.a = ...) 8 thread'de ayni anda, IKI farkli struct turuyle.
-# Alan onbellegi VM'e aittir (her parallel thread kendi VM'ini kurar); paylasilan tek sey
-# tanimin kendisi (salt-okunur) ve bayt kodu. Onbellek paylasilsaydi burada yaris cikardi
-# ve bir turun tanimi digerinin slotuyla birlesirdi (yanlis alan -> "BAD").
+# T9: the same line ($p.a / $p.a = ...) in 8 threads at the same moment, with TWO different struct types.
+# The field cache belongs to the VM (each parallel thread builds its own VM); the only shared things are
+# the definition itself (read-only) and the bytecode. If the cache were shared a race would show up here
+# and one type's definition would merge with another's slot (wrong field -> "BAD").
 struct A { a int = 1
   b int = 2 }
 struct B { b int = 2

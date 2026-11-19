@@ -1,23 +1,23 @@
 #!/bin/bash
-# MySQL kimlik dogrulama guard'i — IKI SURUM BIRDEN.
+# MySQL authentication guard — BOTH VERSIONS AT ONCE.
 #
-# NEDEN: mysql_client.cpp yalnizca `mysql_native_password` uyguluyordu ve eklenti
-# adini handshake yanitina SABIT yaziyordu. Sunucunun bildirdigi eklenti
-# okunmuyor, AuthSwitchRequest (0xFE) hic ele alinmiyordu. Sonuc:
-#   MySQL 5.7 / MariaDB                          -> calisiyor
-#   MySQL 8.0 (2018'den beri VARSAYILAN sha2)    -> BAGLANAMIYOR
-#   MySQL 8.4 (native kapali) / 9.x (kaldirildi) -> BAGLANAMIYOR
-# Yani dil pratikte MySQL 5.7 diliydi.
+# WHY: mysql_client.cpp implemented only `mysql_native_password` and wrote the plugin
+# name into the handshake response as a CONSTANT. The plugin the server announced
+# was not read, AuthSwitchRequest (0xFE) was not handled at all. Result:
+#   MySQL 5.7 / MariaDB                          -> works
+#   MySQL 8.0 (sha2 is the DEFAULT since 2018)   -> CANNOT CONNECT
+#   MySQL 8.4 (native off) / 9.x (removed)       -> CANNOT CONNECT
+# So in practice the language was a MySQL 5.7 language.
 #
-# NEDEN IKI SURUM: tek surumde gecen test digerini kirabilir. 8.0 yeni yolu
-# (caching_sha2 + RSA), 5.7 eski yolu (native) dogrular; ikisi ayni handshake
-# kodunu paylasiyor.
+# WHY TWO VERSIONS: a test that passes on one version can break on the other. 8.0 verifies the new path
+# (caching_sha2 + RSA), 5.7 the old path (native); the two share the same handshake
+# code.
 #
-# Kullanim:
+# Usage:
 #   bash mysql_auth_test.sh <lk_yolu>
-# Ortam degiskenleri verilmezse konteynerleri kendi kurar (docker gerekir):
-#   LOOK_MY8_DSN   (varsayilan: mysql://root:sifre123@my8:3306/testdb)
-#   LOOK_MY57_DSN  (varsayilan: mysql://root:sifre123@my57:3306/testdb)
+# If the environment variables are not given it sets up the containers itself (needs docker):
+#   LOOK_MY8_DSN   (default: mysql://root:sifre123@my8:3306/testdb)
+#   LOOK_MY57_DSN  (default: mysql://root:sifre123@my57:3306/testdb)
 set -u
 LK="${1:-./build/lk}"
 MY8="${LOOK_MY8_DSN:-mysql://root:sifre123@my8:3306/testdb}"
@@ -57,15 +57,15 @@ kontrol() {
   esac
 }
 
-# ── GUVENLIK: kacis, SET SESSION'a BAGLI OLMADAN guvenli mi? ────────────────────
-# NEDEN: escape() tirnagi `\'` ile kaciriyordu. MySQL NO_BACKSLASH_ESCAPES modunda
-# ters bolu kacis karakteri DEGILDIR -> `\'` tirnagi kapatir -> SQL ENJEKSIYONU.
-# OLCULDU: oturum o moda alininca `' OR 1=1 -- ` yuku TUM TABLOYU dondurdu (3/3).
-# Bunu tutan tek sey do_connect()'teki `SET SESSION sql_mode = REPLACE(...)`
-# komutunun basarili olmasiydi — yeterli zemin degil (ProxySQL gibi baglanti
-# coklayicilari oturum durumunu sessizce kaybedebilir; SET basarili olur, koruma
-# yok olur). Cozum: `''` (standart SQL) — her iki modda guvenli, SET'ten bagimsiz.
-# Bu kontrol korumayi KASTEN kaldirip saldiriyor: guvenlik SET'e bagli olmamali.
+# ── SECURITY: is escaping safe WITHOUT depending on SET SESSION? ────────────────────
+# WHY: escape() escaped the quote with `\'`. In MySQL NO_BACKSLASH_ESCAPES mode the
+# backslash is NOT an escape character -> `\'` closes the quote -> SQL INJECTION.
+# MEASURED: once the session was switched to that mode, the payload `' OR 1=1 -- ` returned the WHOLE TABLE (3/3).
+# The only thing preventing it was the `SET SESSION sql_mode = REPLACE(...)`
+# command in do_connect() succeeding — not a sufficient basis (connection multiplexers such as ProxySQL
+# can silently lose session state; the SET succeeds, the protection
+# is gone). Fix: `''` (standard SQL) — safe in both modes, independent of SET.
+# This check DELIBERATELY removes the protection and attacks: security must not depend on SET.
 kacis_kontrol() {
   dsn="$1"
   [ -z "$dsn" ] && return
@@ -76,7 +76,7 @@ db::exec($c, "CREATE TABLE look_esc (ad VARCHAR(100)) CHARACTER SET utf8mb4")
 db::exec($c, "INSERT INTO look_esc (ad) VALUES ('a')")
 db::exec($c, "INSERT INTO look_esc (ad) VALUES ('b')")
 db::exec($c, "INSERT INTO look_esc (ad) VALUES ('c')")
-# korumayi KASTEN kaldir — kacis kendi basina guvenli olmali
+# DELIBERATELY remove the protection — escaping must be safe on its own
 db::exec($c, "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'")
 $n1 = count(db::query($c, "SELECT * FROM look_esc WHERE ad = ?", ["' OR 1=1 -- "]))
 $n2 = count(db::query($c, "SELECT * FROM look_esc WHERE ad = ?", ["\\' OR 1=1 -- "]))
@@ -103,13 +103,13 @@ kontrol "MySQL 8.0   (caching_sha2_password)"  "$MY8"  "8.0"
 [ -n "${LOOK_MY91_DSN:-}"  ] && kontrol "MySQL 9.x   (native KALDIRILDI)"           "$LOOK_MY91_DSN"  "9."
 [ -n "${LOOK_MDB_DSN:-}"   ] && kontrol "MariaDB     (native)"                      "$LOOK_MDB_DSN"   "1"
 
-# Ikinci tur: 8.x'te sunucu onbellegi artik dolu -> HIZLI yol (farkli kod dali).
-# Ilk tur RSA tam yolunu, bu tur hizli yolu dogrular. IKISI DE kosulmali:
-# yalniz hizli yol test edilseydi, RSA yolu bozuk olsa bile gecerdi (taze
-# sunucuda ilk baglanti DAIMA RSA'dan gecer).
+# Second round: on 8.x the server cache is now full -> FAST path (a different code branch).
+# The first round verifies the full RSA path, this round the fast path. BOTH must run:
+# if only the fast path were tested, it would pass even if the RSA path were broken (on a fresh
+# server the first connection ALWAYS goes through RSA).
 kontrol "MySQL 8.0   (hizli yol, onbellek dolu)" "$MY8" "8.0"
 
-# Kacis guvenligi — kimlik dogrulamadan bagimsiz, ayni sunucu uzerinde
+# Escape safety — independent of authentication, on the same server
 kacis_kontrol "$MY8"
 
 [ $fail = 0 ] && echo "PASS: MySQL/MariaDB auth — surum matrisi temiz" || echo "FAIL: MySQL auth"

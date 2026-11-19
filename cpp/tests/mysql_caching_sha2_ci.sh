@@ -1,17 +1,17 @@
 #!/bin/bash
-# caching_sha2_password CI guard'i — GERCEK mysql:8'e karsi (GitHub Actions service).
+# caching_sha2_password CI guard — against a REAL mysql:8 (GitHub Actions service).
 #
-# NEDEN AYRI DOSYA: mysql_auth_test.sh docker konteynerlerini kendi kuruyor (my8/my57
-# surum matrisi) ve CI-disi. Bu kosucu ONUN aksine TEK bir mysql:8 servisine karsi
-# kosar (Actions `services: mysql:` health-check'li) — caching_sha2_password auth
-# yolu boylece HER PUSH'ta, gercek MySQL 8 protokolune karsi dogrulanir.
+# WHY A SEPARATE FILE: mysql_auth_test.sh sets up its own docker containers (my8/my57
+# version matrix) and is not for CI. Unlike it, this runner runs against a SINGLE mysql:8 service
+# (Actions `services: mysql:` with a health check) — so the caching_sha2_password auth
+# path is verified on EVERY PUSH against the real MySQL 8 protocol.
 #
-# Sunucu, caching_sha2_password kullanan bir kullaniciya ihtiyac duyar. MySQL 8
-# VARSAYILANI budur; MYSQL_ROOT_PASSWORD ile olusan `root` zaten caching_sha2'dir.
-# Ama root yalniz `localhost` (unix soket) icin caching_sha2 host-eslesmesi
-# yapabilir; TCP icin ayri bir kullanici olustururuz (asagidaki SQL, CI job'inda).
+# The server needs a user that uses caching_sha2_password. This is the MySQL 8
+# DEFAULT; the `root` created by MYSQL_ROOT_PASSWORD is already caching_sha2.
+# But root can only do a caching_sha2 host match for `localhost` (unix socket); for TCP we
+# create a separate user (the SQL below, in the CI job).
 #
-# Kullanim:
+# Usage:
 #   MYDSN=mysql://ci:sifre123@127.0.0.1:3306/testdb \
 #   MYUSER=ci MYHOST=127.0.0.1 MYPORT=3306 MYDB=testdb \
 #   bash mysql_caching_sha2_ci.sh <lk_yolu>
@@ -28,7 +28,7 @@ rej="$(echo "$out"  | grep -E '^AUTH_REJECT$'  | head -1)"
 
 fail=0
 
-# ── EXPECTED-pin: dogru kimlik + utf8 roundtrip ─────────────────────────────────
+# ── EXPECTED-pin: correct credentials + utf8 roundtrip ─────────────────────────
 case "$ok" in
   AUTH_OK\|8.*\|şğü-caching)
     echo "  PASS caching_sha2 roundtrip (MySQL 8, TAM + HIZLI yol): $ok" ;;
@@ -40,7 +40,7 @@ case "$ok" in
     fail=1 ;;
 esac
 
-# ── POZITIF KONTROL: yanlis sifre reddedildi mi? ────────────────────────────────
+# ── POSITIVE CONTROL: was the wrong password rejected? ─────────────────────────
 if [ "$rej" = "AUTH_REJECT" ]; then
   echo "  PASS pozitif kontrol: yanlis sifre REDDEDILDI (auth gercekten dogruluyor)"
 else

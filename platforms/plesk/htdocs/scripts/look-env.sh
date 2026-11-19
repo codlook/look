@@ -1,13 +1,13 @@
 #!/bin/bash
-# LOOK Language — ortam dosyasini yukle, sonra LOOK'u baslat
-# Kullanim: look-env <env-file> <command> [args...]
+# LOOK Language — load the environment file, then start LOOK
+# Usage: look-env <env-file> <command> [args...]
 #
-# enable.sh bunu /opt/look/look-env olarak kurar ve unit'te ExecStart'in basina koyar.
-# Servisin kullanicisi (User=) olarak calisir: dosyayi o kullanicinin haklariyla okur —
-# baska sitenin dosyasina giden symlink "Permission denied" ile durur.
-# Bicim systemd EnvironmentFile ile ayni: KEY=VALUE satirlari, '#' ile baslayan satir yorum,
-# deger cevresindeki "..." / '...' kaldirilir. Satir icinde yorum YOKTUR: "KEY=a # b"
-# degeri "a # b"dir — bu sik bir tuzak oldugu icin journal'a uyari yazilir.
+# enable.sh installs this as /opt/look/look-env and puts it at the start of ExecStart in the unit.
+# Runs as the service's user (User=): reads the file with that user's permissions —
+# a symlink to another site's file stops with "Permission denied".
+# The format is the same as systemd EnvironmentFile: KEY=VALUE lines, a line starting with '#' is a comment,
+# the "..." / '...' around the value is stripped. There are NO inline comments: "KEY=a # b"
+# has the value "a # b" — this is a common trap, so a warning is written to the journal.
 
 ENV_FILE="$1"; shift
 if ! exec 3< "$ENV_FILE"; then

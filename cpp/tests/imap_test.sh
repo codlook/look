@@ -1,18 +1,18 @@
 #!/bin/bash
-# IMAP sunucusu guard'i — imap_server.cpp (1013 satir) icin ILK guard.
+# IMAP server guard — the FIRST guard for imap_server.cpp (1013 lines).
 #
-# NEDEN: disariya port dinliyor, kimlik dogrulama yapiyor, guard'i YOKTU.
-# Bu dosya YALNIZCA duzeltilmis/dogrulanmis davranisi kilitler; bilinen
-# eksikler (UID komutu, UID kaliciligi, CREATE/DELETE, BODY[HEADER.FIELDS])
-# guard'a konmadi ki yaniltmasin.
+# WHY: it listens on a port to the outside, does authentication, and had NO guard.
+# This file locks ONLY fixed/verified behavior; known
+# gaps (UID command, UID persistence, CREATE/DELETE, BODY[HEADER.FIELDS])
+# were not put into the guard so it does not mislead.
 #
-# Kilitlenenler:
-#  1) Kimlik dogrulama zorunlulugu (auth'suz SELECT/FETCH/APPEND reddedilmeli)
-#  2) Mailbox adi dogrulama (43. bug): `INBOX; rm -rf /` KABUL ediliyordu;
-#     ayirici/`;`/kontrol karakteri iceren ad artik red. Var OLMAYAN mailbox
-#     `OK (0 EXISTS)` donuyordu — RFC 3501 §6.3.1: `NO` olmali.
-#  3) Traversal (auth SONRASI da)
-#  4) APPEND literal siniri ILAN EDILIP ZORLANIYOR mu (LOOK_IMAP_MAX_LITERAL)
+# Locked down:
+#  1) Authentication required (SELECT/FETCH/APPEND without auth must be rejected)
+#  2) Mailbox name validation (bug 43): `INBOX; rm -rf /` was ACCEPTED;
+#     a name containing a separator/`;`/control character is now rejected. A NON-EXISTENT mailbox
+#     returned `OK (0 EXISTS)` — RFC 3501 §6.3.1: it must be `NO`.
+#  3) Traversal (also AFTER auth)
+#  4) Is the APPEND literal limit ADVERTISED AND ENFORCED (LOOK_IMAP_MAX_LITERAL)
 set -u
 FCGI="${1:-./build/lk-fcgi}"
 IMAP_PORT="${2:-7157}"
@@ -51,36 +51,36 @@ def rd(s):
         s.setblocking(True); s.settimeout(10); return d
     except Exception: return ""
 def kod(cevap, tag):
-    # "<tag> OK/NO/BAD ..." satirindaki durumu dondur
+    # return the status on the "<tag> OK/NO/BAD ..." line
     for satir in cevap.replace("\r\n","\n").split("\n"):
         if satir.startswith(tag + " "):
             return satir.split(" ")[1]
     return "?"
 sonuc = []
-# 1) auth'suz erisim
+# 1) access without auth
 s = yeni(); rd(s)
 for i, k in enumerate(["SELECT INBOX", "FETCH 1 BODY[]", "APPEND INBOX {10}"]):
     t = "b%d" % i
     s.sendall(("%s %s\r\n" % (t, k)).encode()); sonuc.append(kod(rd(s), t))
 s.close()
-# 2) auth sonrasi mailbox dogrulama
+# 2) mailbox validation after auth
 s = yeni(); rd(s)
 s.sendall(b"c0 LOGIN u@localhost s123\r\n"); sonuc.append(kod(rd(s), "c0"))
 testler = [
-    ("c1", "SELECT INBOX"),                    # OK  — pozitif kontrol
-    ("c2", 'SELECT "INBOX; rm -rf /"'),        # NO  — 43. bug
-    ("c3", 'SELECT "Yok Boyle"'),              # NO  — var olmayan mailbox
+    ("c1", "SELECT INBOX"),                    # OK  — positive control
+    ("c2", 'SELECT "INBOX; rm -rf /"'),        # NO  — bug 43
+    ("c3", 'SELECT "Yok Boyle"'),              # NO  — non-existent mailbox
     ("c4", 'SELECT "../../etc"'),              # NO  — traversal
-    ("c5", 'SELECT "/etc/passwd"'),            # NO  — mutlak yol
-    ("c6", "APPEND INBOX {2147483647}"),       # NO  — literal siniri
-    ("c7", "APPEND INBOX {-5}"),               # BAD — bozuk literal
-    ("c8", "FETCH 1 (UID)"),                   # NO  — kalici UID yok, sessiz bozulma yerine gurultulu hata
-    ("c9", "UID FETCH 1 BODY[]"),              # NO  — UID komutu M1 kapsaminda degil
-    ("c10", "CREATE Sent"),                    # NO  — M1 kapsaminda degil
-    ("c12", "FETCH 1 (BODY[HEADER.FIELDS (FROM)])"),  # BAD — desteklenmeyen oge: eskiden SESSIZ bos FETCH
-    ("c13", "FETCH 1 BODY.PEEK[]"),            # BAD — ayni sinif
-    ("c14", "FETCH 1 (FLAGS BODY[HEADER])"),   # OK  — desteklenen ogeler calismaya devam eder
-    ("c11", "SELECT INBOX"),                   # OK  — hala saglam
+    ("c5", 'SELECT "/etc/passwd"'),            # NO  — absolute path
+    ("c6", "APPEND INBOX {2147483647}"),       # NO  — literal limit
+    ("c7", "APPEND INBOX {-5}"),               # BAD — malformed literal
+    ("c8", "FETCH 1 (UID)"),                   # NO  — no persistent UID, a loud error instead of silent corruption
+    ("c9", "UID FETCH 1 BODY[]"),              # NO  — the UID command is not in M1's scope
+    ("c10", "CREATE Sent"),                    # NO  — not in M1's scope
+    ("c12", "FETCH 1 (BODY[HEADER.FIELDS (FROM)])"),  # BAD — unsupported item: used to be a SILENT empty FETCH
+    ("c13", "FETCH 1 BODY.PEEK[]"),            # BAD — same class
+    ("c14", "FETCH 1 (FLAGS BODY[HEADER])"),   # OK  — supported items keep working
+    ("c11", "SELECT INBOX"),                   # OK  — still intact
 ]
 for t, k in testler:
     s.sendall(("%s %s\r\n" % (t, k)).encode()); sonuc.append(kod(rd(s), t))

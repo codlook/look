@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# http_slowloris_test.sh — Slowloris savunma guard'i (56. bug).
-# Header'lar bir istek basladiktan sonra toplam sure icinde tamamlanmali;
-# yavas-damla baglanti tutamamali. Dusuk LOOK_HEADER_TIMEOUT ile hizli test.
+# http_slowloris_test.sh — Slowloris defense guard (bug 56).
+# The headers must complete within a total time after a request starts;
+# a slow-drip connection must not be able to hold on. Quick test with a low LOOK_HEADER_TIMEOUT.
 set -u
 LKFCGI="${1:-./build/lk-fcgi}"; HERE="$(cd "$(dirname "$0")" && pwd)"; PORT="${2:-7622}"
 LOOK_HEADER_TIMEOUT=2000 "$LKFCGI" --mode http --port "$PORT" --workers 2 "$HERE/http_echo_app.lk" >/tmp/slw.log 2>&1 &

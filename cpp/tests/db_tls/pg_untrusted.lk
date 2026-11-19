@@ -1,6 +1,6 @@
-# PG-TLS matris 2/4: sunucu cert'i GUVENILMEYEN CA'dan (client trust store'da yok).
-# verify DOGRU VARSAYILAN (postgresqls://) → sertifika dogrulanamaz → REDDEDILIR.
-# (SSL_CERT_FILE ayarlanmadan kosulur → bizim CA sistemde yok.)
+# PG-TLS matrix 2/4: the server cert is from an UNTRUSTED CA (not in the client trust store).
+# verify is the CORRECT DEFAULT (postgresqls://) → the certificate cannot be verified → REJECTED.
+# (Run without setting SSL_CERT_FILE → our CA is not on the system.)
 try {
   $db = db::connect("postgresqls://looktest:testpass@look-pg/testdb")
   db::query($db, "SELECT 1")
