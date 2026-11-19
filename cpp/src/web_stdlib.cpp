@@ -42,6 +42,7 @@
 #include <system_error>
 #include <unordered_map>
 #include "look/json_str_parse.h"   // pure JSON string-unescape (the single definition shared with fuzz)
+#include "look/parse_double.h"
 #ifdef _WIN32
   #include <windows.h>
 #else
@@ -252,8 +253,14 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         while (digit(i)) i++;
     }
     std::string num = s.substr(start, i - start);
+    if (is_float) {
+        // 1e-400 / 5e-324 are valid (nearest value, as Go); only an overflow (1e999) makes the document
+        // invalid — Go: "number out of range". std::stod rejected both, so a valid document was null.
+        double d;
+        if (!parse_double(num, d)) throw JsonParseError{};
+        return Value(d);
+    }
     try {
-        if (is_float) return Value(std::stod(num));
         return Value((int64_t)std::stoll(num));   // 32-bit stoi overflowed and returned 0
     } catch (...) {
         // An integer BEYOND the int64 range: falling to float is a SILENT loss of precision.
@@ -265,10 +272,7 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         // (LOOK has no uint64/bignum type; a string carries the exact ID losslessly and
         // goes to the DB/comparison one to one). The float form (is_float) already
         // accepts the loss of precision, so it stays double.
-        if (!is_float) return Value(num);
-        // Decimal overflow (1e999): it used to silently return 0 (a wrong value). Go: a "number out of
-        // range" error → the document is invalid.
-        throw JsonParseError{};
+        return Value(num);
     }
 }
 
@@ -1906,8 +1910,9 @@ static Value rows_to_value(const std::vector<DbRow>& rows) {
                 try { row_arr->push_back(Value((int64_t)std::stoll(dv.str))); }
                 catch (...) { row_arr->push_back(Value(dv.str)); }
             } else if (mysql_is_float(dv.type) || sqlite_is_float(dv.type) || pg_is_float(dv.type)) {
-                try { row_arr->push_back(Value(std::stod(dv.str))); }
-                catch (...) { row_arr->push_back(Value(dv.str)); }
+                double d;
+                if (parse_double(dv.str, d)) row_arr->push_back(Value(d));
+                else row_arr->push_back(Value(dv.str));
             } else {
                 row_arr->push_back(Value(dv.str));
             }
@@ -2233,7 +2238,8 @@ static Module make_db_module(ModuleHost* interp) {
                 try { return Value((int64_t)std::stoll(dv.str)); } catch (...) {}
             }
             if (mysql_is_float(dv.type) || sqlite_is_float(dv.type) || pg_is_float(dv.type)) {
-                try { return Value(std::stod(dv.str)); } catch (...) {}
+                double d;
+                if (parse_double(dv.str, d)) return Value(d);
             }
             return Value(dv.str);
         }

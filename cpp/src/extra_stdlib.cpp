@@ -21,6 +21,7 @@
 #include <set>
 #include <functional>
 #include <memory>
+#include "look/parse_double.h"
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -202,7 +203,8 @@ static bool str_is_integer(const std::string& s) {
 static bool str_is_numeric(const std::string& s) {
     if (s.empty()) return false;
     size_t pos = 0;
-    try { (void)std::stod(s, &pos); } catch (...) { return false; }
+    double d;
+    if (!parse_double(s, d, &pos)) return false;
     while (pos < s.size() && std::isspace((unsigned char)s[pos])) ++pos;
     return pos == s.size();
 }

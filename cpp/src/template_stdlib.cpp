@@ -15,6 +15,7 @@
 #include <memory>
 #include <system_error>
 #include <unordered_map>
+#include "look/parse_double.h"
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
@@ -131,7 +132,7 @@ static Value parse_rhs(const std::string& rhs, const TplContext& ctx) {
     if (!r.empty() && r[0] == '$')
         return TemplateEngine::resolve(r.substr(1), ctx);
     try { return Value((int64_t)std::stoll(r)); } catch (...) {}
-    try { return Value(std::stod(r)); }        catch (...) {}
+    { double d; if (parse_double(r, d)) return Value(d); }
     return Value(r);
 }
 
@@ -185,7 +186,7 @@ bool TemplateEngine::eval_cond(const std::string& cond, const TplContext& ctx) {
             auto to_dbl = [](const Value& v) -> double {
                 if (v.type() == Value::INT)   return (double)v.as_int();
                 if (v.type() == Value::FLOAT) return v.as_float();
-                try { return std::stod(TemplateEngine::to_str(v)); } catch (...) { return 0.0; }
+                { double d = 0.0; parse_double(TemplateEngine::to_str(v), d); return d; }
             };
             double ld = to_dbl(lv), rd = to_dbl(rv);
             if      (op == ">")  result = ld > rd;

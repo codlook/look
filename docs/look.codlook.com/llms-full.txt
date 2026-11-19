@@ -1638,7 +1638,8 @@ function json_error($message, $code) {
  standard (RFC 8259) and Go's `encoding/json` accept, and return `null` for anything else: a
  missing `:` or `,`, a trailing comma, text after the value, a leading zero (`01`), an unknown
  escape (`"\x"`), a raw control character inside a string, a number too large for a float
- (`1e999`). A server and a proxy in front of it therefore read a body the same way. A duplicated
+ (`1e999`). A number too small for a float is its nearest value, as in Go: `1e-400` is `0`,
+ `5e-324` stays `5e-324`. A server and a proxy in front of it therefore read a body the same way. A duplicated
  key keeps its first position and takes the last value. An unpaired UTF-16 surrogate (`"\ud800"`)
  becomes U+FFFD. Nesting deeper than 256 levels is `null`. `json::encode` writes a value up to
  1000 levels deep in full; a deeper one is an error ("Value nested too deeply"), it is never cut.

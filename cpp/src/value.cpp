@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <cerrno>
+#include "look/parse_double.h"
 
 namespace look {
 
@@ -210,7 +211,7 @@ double Value::to_float() const {
     switch (type_) {
         case INT:    return (double)int_val;
         case FLOAT:  return float_val;
-        case STRING: try { return std::stod(str_ref()); } catch(...) { return 0.0; }
+        case STRING: { double d = 0.0; parse_double(str_ref(), d); return d; }
         case BOOL:   return bool_val ? 1.0 : 0.0;
         default:     return 0.0;
     }
@@ -277,10 +278,10 @@ static void arith_check(const Value& v) {
         throw std::runtime_error("Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '" + s + "'");
     } catch (...) {}
     // 2) A decimal/exponent number string ("5.5", "1e3") → valid (float path)
-    try {
-        (void)std::stod(s, &pos);
-        if (pos == s.size()) return;
-    } catch (...) {}
+    {
+        double d;
+        if (parse_double(s, d, &pos) && pos == s.size()) return;
+    }
     // 3) Not a number ("abc", "12x") → reject (so that + does not give a silent 0 while == is type-strict)
     throw std::runtime_error("Arithmetic on a string that cannot be converted to a number: '" + s + "'");
 }
