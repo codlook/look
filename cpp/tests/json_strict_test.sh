@@ -54,4 +54,18 @@ LK
 st=$(date +%s%N); out="$(cd "$T" && timeout 60 "$LK" wide.lk 2>&1 | tail -1)"; ms=$(( ($(date +%s%N) - st) / 1000000 ))
 if [ "$out" = "100000 -1 99999" ] && [ $ms -lt 2000 ]; then echo "  OK   100 000 keys in ${ms} ms; a duplicated key takes the last value in its first position"
 else echo "  FAIL 100 000 keys: '$out' in ${ms} ms (want '100000 -1 99999' under 2000 ms)"; fail=1; fi
+# Invalid UTF-8 inside a string becomes U+FFFD, one per byte, as in Go: two keys with different stray
+# bytes are the same key (a Go proxy in front of LOOK reads the body the same way).
+printf '{"\xff":1,"\xfe":2,"v":"a\xc0\x80b"}' > "$T/utf8.json"
+cat > "$T/utf8.lk" <<'LK'
+use file
+$d = json::decode(file::read("utf8.json"))
+$first = ""
+foreach ($d as $k => $v) { if ($first == "") { $first = json::encode($k) . "=" . $v } }
+print(count($d) . " " . $first . " " . json::encode($d["v"]))
+LK
+out="$(cd "$T" && "$LK" utf8.lk 2>&1 | tail -1)"
+want="$(printf '2 "\xef\xbf\xbd"=2 "a\xef\xbf\xbd\xef\xbf\xbdb"')"
+if [ "$out" = "$want" ]; then echo "  OK   invalid UTF-8 in a key or a value becomes U+FFFD per byte (as Go)"
+else echo "  FAIL invalid UTF-8: '$out' (want '$want': the two stray-byte keys are one key holding 2)"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: json::decode is strict and linear" || { echo "FAIL: json::decode"; exit 1; }

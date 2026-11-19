@@ -42,7 +42,28 @@ inline int json_read_u4(const std::string& s, size_t& i) {
     i += 4;
     return cp;
 }
+// Length of the valid UTF-8 sequence that starts at s[i], or 0 if the bytes there are not one —
+// Go's utf8.DecodeRune rules (RFC 3629): no overlong form, no surrogate (U+D800-DFFF), nothing above
+// U+10FFFF, no truncated sequence.
+inline size_t utf8_valid_len(const std::string& s, size_t i) {
+    auto b = [&](size_t k) -> unsigned { return k < s.size() ? (unsigned char)s[k] : 0x100; };
+    auto cont = [&](size_t k, unsigned lo = 0x80, unsigned hi = 0xBF) { unsigned c = b(k); return c >= lo && c <= hi; };
+    unsigned c = b(i);
+    if (c < 0x80) return 1;
+    if (c >= 0xC2 && c <= 0xDF) return cont(i + 1) ? 2 : 0;
+    if (c == 0xE0) return cont(i + 1, 0xA0) && cont(i + 2) ? 3 : 0;
+    if ((c >= 0xE1 && c <= 0xEC) || c == 0xEE || c == 0xEF) return cont(i + 1) && cont(i + 2) ? 3 : 0;
+    if (c == 0xED) return cont(i + 1, 0x80, 0x9F) && cont(i + 2) ? 3 : 0;
+    if (c == 0xF0) return cont(i + 1, 0x90) && cont(i + 2) && cont(i + 3) ? 4 : 0;
+    if (c >= 0xF1 && c <= 0xF3) return cont(i + 1) && cont(i + 2) && cont(i + 3) ? 4 : 0;
+    if (c == 0xF4) return cont(i + 1, 0x80, 0x8F) && cont(i + 2) && cont(i + 3) ? 4 : 0;
+    return 0;
+}
+
 // RFC 8259 / Go encoding/json rules. Returns false = invalid string (the caller rejects the whole document).
+// Invalid UTF-8 in the raw text becomes U+FFFD, one per invalid byte, as Go's decoder does: a key or a
+// value with a stray byte reads the same as in Go (two keys "\xff" and "\xfe" are one key, "�").
+// It used to keep the raw bytes, so LOOK and a Go service in front of it could read different keys.
 // OLD LOOSENESS: an unknown escape ("\x" → "x"), a broken \u ("\u12" → "\\u12"), a raw
 // control character and an unterminated string were accepted — if a gateway counted the same body as invalid
 // and LOOK as valid there was a mismatch (the JSON counterpart of HTTP smuggling). An unpaired surrogate
@@ -51,9 +72,21 @@ inline bool json_decode_str(const std::string& s, size_t& i, std::string& result
     i++; // skip "
     result.clear();
     while (i < s.size() && s[i] != '"') {
+        // A run of plain characters is validated and copied in one append; an invalid UTF-8 byte
+        // becomes U+FFFD. (Copying byte by byte made a non-ASCII-heavy body ~70% slower to decode.)
+        size_t run = i;
+        while (i < s.size()) {
+            unsigned char p = (unsigned char)s[i];
+            if (p == '"' || p == '\\' || p < 0x20) break;
+            if (p < 0x80) { i++; continue; }
+            size_t n = utf8_valid_len(s, i);
+            if (n == 0) { result.append(s, run, i - run); json_append_utf8(result, 0xFFFD); run = ++i; continue; }
+            i += n;
+        }
+        result.append(s, run, i - run);
+        if (i >= s.size() || s[i] == '"') break;
         unsigned char c = (unsigned char)s[i];
         if (c < 0x20) return false;                       // raw control character
-        if (c != '\\') { result += (char)c; i++; continue; }
         i++;
         if (i >= s.size()) return false;
         switch (s[i]) {
