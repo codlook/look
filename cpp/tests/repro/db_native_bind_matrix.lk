@@ -1,7 +1,7 @@
-// Native prepared-statement tip round-trip + injection matrisi — HER sürücüde koşulur.
-// DSN env'den: LOOK_TEST_DSN=mysql://... / postgres://... / sqlite://:memory:
-// Amaç: from_int/float/bool/null yolları (smtp yalnız from_text kullanıyordu → mysql/pg'de
-// hiç çalışmamış olabilir) sessizce yanlış veri üretmiyor mu — Cephe 2 sınıfı.
+// Native prepared-statement type round-trip + injection matrix — run on EVERY driver.
+// DSN from env: LOOK_TEST_DSN=mysql://... / postgres://... / sqlite://:memory:
+// Goal: do the from_int/float/bool/null paths (smtp used only from_text → may never have
+// run on mysql/pg) silently produce wrong data — the Front 2 class.
 use json
 use array
 use math
@@ -13,20 +13,20 @@ function chk($l, $g, $w) {
 }
 
 $dsn = env("LOOK_TEST_DSN", "")
-// Ortam yoksa: CI'da FAIL, yerelde SKIP (bkz. behavioral/db_bind_mysql.lk — aynı sözleşme).
+// If there is no environment: FAIL in CI, SKIP locally (see behavioral/db_bind_mysql.lk — same contract).
 if ($dsn == "") {
     if (env("CI", "") == "true") { print("FAIL harness: LOOK_TEST_DSN is empty in CI"); exit(1) }
     print("SKIP: LOOK_TEST_DSN not set (mysql://... / postgres://... / sqlite://:memory:)"); exit(0)
 }
-// Yalnız şema basılır: tam DSN parolayı içerir (mysql://user:PAROLA@host) ve eskiden
-// olduğu gibi terminale/loga dökülmemeli.
+// Only the scheme is printed: the full DSN contains the password (mysql://user:PASSWORD@host) and must not be
+// dumped to the terminal/log as it used to be.
 print("=== DSN scheme: " . string::split($dsn, "://")[0] . " ===")
 $c = db::connect($dsn)
 
 db::exec($c, "DROP TABLE IF EXISTS t_bind", [])
 db::exec($c, "CREATE TABLE t_bind (i BIGINT, f DOUBLE PRECISION, b BOOLEAN, s TEXT, n TEXT)", [])
 
-// Tipli parametreler — from_int(2^63-1), from_float, from_bool(true), from_text(injection-benzeri), null()
+// Typed parameters — from_int(2^63-1), from_float, from_bool(true), from_text(injection-like), null()
 db::exec($c, "INSERT INTO t_bind (i,f,b,s,n) VALUES (?,?,?,?,?)",
     [9223372036854775807, 3.141592653589793, true, "o'zel \" karakter \\ son", null])
 
@@ -34,33 +34,33 @@ $r = db::query($c, "SELECT i, f, b, s, n FROM t_bind", [])
 print("ham satir: " . json::encode($r[0]))
 $row = $r[0]
 
-// int64 TAM (2^53 üstü — bilinçli korunan) — bazı sürücü string döndürebilir, sayısal eşitlik
+// int64 EXACT (above 2^53 — deliberately preserved) — some drivers may return a string, numeric equality
 chk("int64 tam (2^63-1)", "" . $row["i"], "9223372036854775807")
-// float round-trip (%.17g disiplini)
+// float round-trip (%.17g discipline)
 chk("float round-trip", "" . $row["f"], "3.141592653589793")
-// bool → 1/true/t (sürücüye göre) — biri olmalı
+// bool → 1/true/t (depending on the driver) — one of them must hold
 $bv = "" . $row["b"]
 $bok = ($bv == "1" || $bv == "true" || $bv == "t")
 chk("bool dogru (1/true/t)", $bok, true)
-// text tırnak/backslash bozulmadan
+// text without quote/backslash corruption
 chk("text ozel-karakter", $row["s"], "o'zel \" karakter \\ son")
-// null → GERÇEK null (boş string DEĞİL)
+// null → a REAL null (NOT an empty string)
 chk("null gercek-null", $row["n"] == null, true)
 
-// ── Injection (T1-T4 üç sürücüde de) ──
+// ── Injection (T1-T4 on all three drivers) ──
 db::exec($c, "INSERT INTO t_bind (s) VALUES (?)", ["admin"])
 $q1 = db::query($c, "SELECT * FROM t_bind WHERE s = ?", ["' OR '1'='1"])
 chk("injection tautoloji bloklu", len($q1), 0)
 $q2 = db::query($c, "SELECT * FROM t_bind WHERE s = ?", ["admin' --"])
 chk("injection yorum bloklu", len($q2), 0)
 
-// Sayım fail-loud (her sürücü)
+// Count fail-loud (every driver)
 $caught = false
 try { db::query($c, "SELECT * FROM t_bind WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
 chk("sayim uyusmazligi reddi", $caught, true)
 
-// Non-finite (Infinity) bind → fail-loud (sqlite/pg sessizce null yapardi, mysql cryptic
-// "Out of range" — 3'u tutarsiz + sessiz-veri-kaybi; LOOK 0.0/0.0 fail-loud'la tutarli).
+// Non-finite (Infinity) bind → fail-loud (sqlite/pg would silently make it null, mysql cryptic
+// "Out of range" — 3 inconsistent + silent data loss; consistent with LOOK's 0.0/0.0 fail-loud).
 $inf_caught = false
 try { db::exec($c, "INSERT INTO t_bind (f) VALUES (?)", [math::pow(10, 400)]) } catch ($e) { $inf_caught = true }
 chk("Inf bind fail-loud (3 surucude tutarli)", $inf_caught, true)

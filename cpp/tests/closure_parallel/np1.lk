@@ -1,5 +1,5 @@
-# np1: parallel task bir CLOSURE yakalar ($reader), o closure mutable cell $c tutar.
-# FIX (transitif deep-clone): task izole cell görür → 0. BUG (cell-only): paylaşımlı → yarış.
+# np1: the parallel task captures a CLOSURE ($reader), and that closure holds a mutable cell $c.
+# FIX (transitive deep-clone): the task sees an isolated cell → 0. BUG (cell-only): shared → race.
 function race(){
   $c = 0
   $reader = fn() => $c

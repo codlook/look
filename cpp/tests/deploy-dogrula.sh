@@ -1,35 +1,35 @@
 #!/usr/bin/env bash
-# deploy-dogrula.sh — DEPLOY SONRASI canlı duman testi.
+# deploy-dogrula.sh — live smoke test AFTER DEPLOY.
 #
-# Guard'lar kaynağı test eder; bu betik DEPLOY EDİLMİŞ BİNARY'nin gerçekten
-# düzeltmeleri içerdiğini DIŞARIDAN (HTTP) ve binary'yi çalıştırarak doğrular —
-# "yapılmış görünen ama yapılmamış" riskine karşı tek dış kanıt. Docker-local
-# deploy'da da, VPS deploy'da da koşulabilir.
+# The guards test the source; this script verifies EXTERNALLY (over HTTP) and by running the binary
+# that the DEPLOYED BINARY really contains the fixes —
+# the one outside proof against the risk of "looks done but isn't". It can be run on a Docker-local
+# deploy and on a VPS deploy alike.
 #
-# Kullanım:
-#   deploy-dogrula.sh [LK] [LKFCGI]      # yerel binary'ler (Docker)
-#   BASE_URL=https://test.codlook.com deploy-dogrula.sh   # canlı site (yalnız HTTP kontrolleri)
+# Usage:
+#   deploy-dogrula.sh [LK] [LKFCGI]      # local binaries (Docker)
+#   BASE_URL=https://test.codlook.com deploy-dogrula.sh   # live site (HTTP checks only)
 #
-# Doğruladığı düzeltmeler:
-#   50 — lk test: assert_throws() gerçekten assert ediyor mu (yalancı yeşil değil)
-#   52 — json::decode int64-aşan ID'yi string olarak koruyor mu (HTTP üzerinden)
+# Fixes it verifies:
+#   50 — lk test: does assert_throws() really assert (not a false green)
+#   52 — does json::decode keep an ID beyond int64 as a string (over HTTP)
 set -u
 LK="${1:-./build/lk}"
 LKFCGI="${2:-./build/lk-fcgi}"
-LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"; LKFCGI="$(cd "$(dirname "$LKFCGI")" && pwd)/$(basename "$LKFCGI")"   # aşağıda cd yapılıyor
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"; LKFCGI="$(cd "$(dirname "$LKFCGI")" && pwd)/$(basename "$LKFCGI")"   # we cd below
 BASE_URL="${BASE_URL:-}"
 fail=0
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"; [ -n "${SRV_PID:-}" ] && kill "$SRV_PID" 2>/dev/null' EXIT
 
 echo "── deploy doğrulama ─────────────────────────────────────────"
 
-# ── 52. bug: json::decode int64 kesinliği — HTTP üzerinden (dış kanıt) ────────
+# ── bug 52: json::decode int64 precision — over HTTP (external proof) ────────
 JBIG='9223372036854775809'
 if [ -n "$BASE_URL" ]; then
-  # Canlı site: /_dogrula_json endpoint'i beklenir (deploy edilen app'te olmalı)
+  # Live site: the /_dogrula_json endpoint is expected (it must be in the deployed app)
   body=$(curl -s --max-time 10 "$BASE_URL/_dogrula_json" 2>/dev/null)
 else
-  # Docker-local: kendi mini app'imizi HTTP modunda kaldır
+  # Docker-local: bring up our own mini app in HTTP mode
   cat > "$TMP/app.lk" <<'EOF'
 use json
 route("GET", "/_dogrula_json", function() {
@@ -41,7 +41,7 @@ EOF
   PORT=7599
   "$LKFCGI" --mode http --port $PORT "$TMP/app.lk" >"$TMP/srv.log" 2>&1 &
   SRV_PID=$!
-  # sunucu ayaga kalksin
+  # let the server come up
   for _ in $(seq 1 20); do
     curl -s --max-time 2 "http://127.0.0.1:$PORT/_health" 2>/dev/null | grep -q ok && break
     sleep 0.3
@@ -57,8 +57,8 @@ else
   echo "  FAIL 52 (HTTP): beklenen yanit alinamadi: [$body]"; fail=1
 fi
 
-# ── 50. bug: lk test assert_throws gercekten assert ediyor mu ─────────────────
-# (yalniz yerel binary ile — canli site HTTP'de lk test kosulmaz)
+# ── bug 50: does lk test assert_throws really assert ─────────────────────────
+# (local binary only — lk test is not run over HTTP on the live site)
 if [ -z "$BASE_URL" ]; then
   mkdir -p "$TMP/tests"
   cat > "$TMP/tests/t.lk" <<'EOF'
@@ -74,8 +74,8 @@ EOF
   fi
 fi
 
-# ── 56. bug: Slowloris header deadline — CANLI ortamda (zamanlama-duyarlı) ────
-# Yalnız yerel binary ile (kendi instance'ını düşük deadline ile başlatır).
+# ── bug 56: Slowloris header deadline — in the LIVE environment (timing-sensitive) ────
+# Local binary only (starts its own instance with a low deadline).
 if [ -z "$BASE_URL" ]; then
   SLPORT=7598
   LOOK_HEADER_TIMEOUT=3000 "$LKFCGI" --mode http --port "$SLPORT" --workers 2 "$TMP/app.lk" >"$TMP/sl.log" 2>&1 &
@@ -112,10 +112,10 @@ PY
   fi
 fi
 
-# ── 57. bug: VM özyineleme bounded (OOM DoS) — CLI, yerel binary ─────────────
-# CALL opcode MAX_CALL_DEPTH'i zorlamalı; runaway özyineleme graceful "Stack
-# overflow" vermeli, bellek tükenene dek gitmemeli. lk-fcgi CLI modu yoksa lk'ye
-# düşer; ikisi de yoksa atlar (canlı HTTP-only modda LK olmayabilir).
+# ── bug 57: VM recursion bounded (OOM DoS) — CLI, local binary ───────────────
+# The CALL opcode must enforce MAX_CALL_DEPTH; runaway recursion must give a graceful "Stack
+# overflow", not continue until memory runs out. If lk-fcgi has no CLI mode it falls back to lk;
+# if neither exists it skips (in live HTTP-only mode there may be no LK).
 RECLK="$LK"; [ -x "$RECLK" ] || RECLK="$LKFCGI"
 if [ -z "$BASE_URL" ] && [ -x "$RECLK" ]; then
   printf 'function r($n){ if($n<=0){return 0} return 1+r($n-1) }\nprint(r(100000))\n' > "$TMP/rec.lk"
@@ -129,11 +129,11 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK" ]; then
   fi
 fi
 
-# ── 58. bug: closure capture parity — CLI, yerel binary (dış kanıt) ──────────
-# VM by-value snapshot bug'ı fix'liyse döngü-içi tanımlı yakalanan var per-iter
-# cell olur: fns[0..2]() → 0,1,2 → "012". Fix YOKSA hepsi son değeri görür → "222".
-# C1 senaryosu (analizci canlı-doğrulama önerisi): 58'in canlı binary'de gerçekten
-# olduğunu dışarıdan kanıtlar.
+# ── bug 58: closure capture parity — CLI, local binary (external proof) ──────
+# If the VM by-value snapshot bug is fixed, a captured var defined inside a loop becomes a per-iter
+# cell: fns[0..2]() → 0,1,2 → "012". WITHOUT the fix all see the last value → "222".
+# The C1 scenario (a live-verification suggestion): proves externally that 58 is really
+# in the live binary.
 RECLK58="$LK"; [ -x "$RECLK58" ] || RECLK58="$LKFCGI"
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf '$fns=[]\n$i=0\nwhile($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }\nprint($fns[0]() . $fns[1]() . $fns[2]())\n' > "$TMP/clo.lk"
@@ -147,11 +147,11 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
-# ── 58+ closure guard: 12 vaka (catch/param/foreach/named-fn dahil) ──────────
-# 58 C1 tek senaryo; closure_semantics_test.sh 12 vakanın TAMAMINI (A-L) beklenen
-# değerlere karşı sınar → bu turda eklenen catch(I)/param(J)/foreach(K)/named-fn(L) fix'lerini
-# de deploy edilen binary'de guard'lar (analizci önerisi). Yalnız yerel binary + guard
-# script mevcutsa (canlı HTTP-only modda atlanır).
+# ── 58+ closure guard: 12 cases (including catch/param/foreach/named-fn) ─────
+# 58 C1 is a single scenario; closure_semantics_test.sh tests ALL 12 cases (A-L) against the expected
+# values → it also guards the catch(I)/param(J)/foreach(K)/named-fn(L) fixes added in this round
+# in the deployed binary. Only if the local binary + guard
+# script exist (skipped in live HTTP-only mode).
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   GUARD="$(dirname "$0")/closure_semantics_test.sh"
   if [ -f "$GUARD" ]; then
@@ -163,10 +163,10 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
-# ── channel(): CLI-VM'de bağlı mı — CLI, yerel binary ────────────────────────
-# channel() builtin'i CLI-VM'de (main.cpp build_cli_builtins) BAĞLI DEĞİLDİ →
-# "kullanilamiyor (baglanmamis)". tree-walk çalışırken VM (DEFAULT) çöküyordu.
-# Fix'liyse channel+send+receive CLI-VM'de 42 döner (fix yoksa hata/boş).
+# ── is channel() wired in the CLI-VM — CLI, local binary ─────────────────────
+# The channel() builtin was NOT WIRED in the CLI-VM (main.cpp build_cli_builtins) →
+# "unavailable (not wired)". While tree-walk worked the VM (DEFAULT) broke.
+# If fixed, channel+send+receive returns 42 in the CLI-VM (without the fix an error/empty).
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf '$ch=channel(1)\nsend($ch, 42)\nprint(receive($ch))\n' > "$TMP/ch.lk"
   chout=$(timeout 10 "$RECLK58" "$TMP/ch.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
@@ -177,10 +177,10 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
-# ── close()/chan_size() argümansız → graceful (SEGFAULT değil) — CLI ─────────
-# compiler close/chan_size için argüman-sayısı doğrulamıyordu → argümansız çağrı
-# e.arguments[0] null deref → DERLEME-ZAMANI SEGFAULT (tree-walk graceful hata).
-# Fix'liyse graceful hata (exit<128), fix yoksa SIGSEGV (exit>=128).
+# ── close()/chan_size() without arguments → graceful (NOT SEGFAULT) — CLI ────
+# the compiler did not validate the argument count for close/chan_size → a call without arguments was a
+# null deref of e.arguments[0] → COMPILE-TIME SEGFAULT (tree-walk gave a graceful error).
+# If fixed, a graceful error (exit<128), without the fix SIGSEGV (exit>=128).
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf 'close()\n' > "$TMP/cl.lk"
   timeout 10 "$RECLK58" "$TMP/cl.lk" >/dev/null 2>&1; crc=$?
@@ -191,10 +191,10 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
-# ── int(float>~1e6): to_string() bilimsel-gösterim bug'ı — CLI ───────────────
-# int() = stoll(to_string(float)) idi → to_string(1e6)="1e+06", stoll 'e'de durup 1
-# döndürürdü → int(1000000.0)=1 (SESSİZ bozulma, timestamp/para/ID aritmetiği). Fix:
-# to_int() doğrudan cast. Fix'liyse int(1000000.0)=1000000, fix yoksa 1.
+# ── int(float>~1e6): the to_string() scientific-notation bug — CLI ───────────
+# int() was stoll(to_string(float)) → to_string(1e6)="1e+06", stoll stopped at 'e' and
+# returned 1 → int(1000000.0)=1 (SILENT corruption, timestamp/money/ID arithmetic). Fix:
+# to_int() is a direct cast. If fixed, int(1000000.0)=1000000, without the fix 1.
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf 'print(int(1700000000.0 * 1000.0))\n' > "$TMP/int.lk"
   iout=$(timeout 10 "$RECLK58" "$TMP/int.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
@@ -207,10 +207,10 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
-# ── file:: path-root guard: meşru göreli çalışır + traversal bloklu — CLI ────
-# assert_in_file_root çıplak göreli ismi (file::put("x.txt")) yanlışça reddediyordu
-# (weakly_canonical göreli bırakıyor → mutlak kökle mismatch). fs::absolute ile düzeldi.
-# Fix'liyse: göreli put çalışır (OK) VE ../etc/passwd bloklanır. İkisi de gerekli.
+# ── file:: path-root guard: a legitimate relative path works + traversal is blocked — CLI ────
+# assert_in_file_root wrongly rejected a bare relative name (file::put("x.txt"))
+# (weakly_canonical leaves it relative → mismatch with the absolute root). Fixed with fs::absolute.
+# If fixed: a relative put works (OK) AND ../etc/passwd is blocked. Both are required.
 if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf 'use file\nfile::put("_dogrula_rel.txt","ok")\nprint(file::read("_dogrula_rel.txt"))\n' > "$TMP/frel.lk"
   ( cd "$TMP" && timeout 10 "$RECLK58" "$TMP/frel.lk" 2>&1 | grep -v "INFO\|Pool" ) > "$TMP/frel.out"
@@ -224,12 +224,12 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   fi
 fi
 
-# ── Oturum guard'lari (2026-07-28): differential-GORUNMEZ regresyonlar ────────
-# Bu 3 fix her yuzeyde ayni yanlisi verebilir → differential YAKALAMAZ. Dis-oracle/
-# davranis guard'i sart. int64 kiyas: operator== int'i double'a cevirirse 2^53 ustu ayrik
-# int64 esitlenir (d752afe). cache/channel izolasyon: deep_clone kalkarsa (biri "gereksiz
-# kopya" diye optimize ederse) cross-thread paylasim + heap race geri gelir (c7c7427/9670c18).
-# encoding-safe (tr -d + exact match, Turkce-grep yok); mutlak $TMP.
+# ── Session guards (2026-07-28): differential-INVISIBLE regressions ──────────
+# These 3 fixes can give the same wrong answer on every surface → the differential does NOT CATCH them. An external-oracle/
+# behavior guard is required. int64 comparison: if operator== converts int to double, distinct int64
+# values above 2^53 become equal (d752afe). cache/channel isolation: if deep_clone is removed (someone optimizes it as an
+# "unnecessary copy") cross-thread sharing + the heap race come back (c7c7427/9670c18).
+# encoding-safe (tr -d + exact match, no Turkish grep); absolute $TMP.
 printf '$a=9007199254740992+1\n$b=9007199254740992\nprint($a==$b)\n' > "$TMP/g_int.lk"
 iv=$("$RECLK58" "$TMP/g_int.lk" 2>&1 | tr -d '[:space:]')
 if [ "$iv" = "false" ]; then

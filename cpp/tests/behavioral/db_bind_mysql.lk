@@ -1,10 +1,10 @@
-# prepared statements (native) — MySQL COM_STMT_PREPARE + COM_STMT_EXECUTE bind matrisi.
-# GERÇEK mysql:8 sunucusu ŞART (CI servis-container'ı; DSN = MYSQL_DSN env). SQLite bind
-# matrisiyle (db_bind_sqlite.lk) TİP-PARİTE: int64 sınır · negatif int64 · float · bool ·
-# UTF-8/özel-karakter · gerçek-NULL · injection(bind escape) · param-sayısı reddi.
-# Binary protokol yolu (LONGLONG/DOUBLE/lenenc-string/NULL-bitmap) burada canlı doğrulanır —
-# seam-testleri (mysql_reassemble) wire-birleştirmeyi kapsar; bu, ELDE-KODLANMIŞ bind
-# kodlamasının gerçek sunucuca DOĞRU çözüldüğünü kanıtlar. fail-loud + empty-green.
+# prepared statements (native) — MySQL COM_STMT_PREPARE + COM_STMT_EXECUTE bind matrix.
+# A REAL mysql:8 server is REQUIRED (CI service container; DSN = MYSQL_DSN env). TYPE PARITY with the
+# SQLite bind matrix (db_bind_sqlite.lk): int64 boundary · negative int64 · float · bool ·
+# UTF-8/special characters · real NULL · injection (bind escape) · param-count rejection.
+# The binary protocol path (LONGLONG/DOUBLE/lenenc-string/NULL-bitmap) is verified live here —
+# the seam tests (mysql_reassemble) cover wire reassembly; this proves that the HAND-CODED bind
+# encoding is decoded CORRECTLY by a real server. fail-loud + empty-green.
 $ran = 0
 function chk($l, $g, $w) {
     if ($g == $w) { print("OK   " . $l) }
@@ -12,9 +12,9 @@ function chk($l, $g, $w) {
 }
 
 $dsn = env("MYSQL_DSN", "")
-# Ortam yoksa: CI'da FAIL (servis/secret bozulmuş = yapılandırma hatası, SUSMAMALI — "boş yeşil"
-# sınıfı), yerelde SKIP (yerel kırmızı = gerçek hata). SKIP satırı "ran=" İÇERMEZ → CI adımının
-# "ran= yok → erken öldü" kilidi atlamayı yine yakalar (iki katman).
+# If the environment is missing: FAIL in CI (a broken service/secret is a configuration error, must NOT be silent — the "empty green"
+# class), SKIP locally (local red = a real error). The SKIP line does NOT contain "ran=" so the CI step's
+# "no ran= → died early" lock still catches the skip (two layers).
 if ($dsn == "") {
     if (env("CI", "") == "true") { print("FAIL harness: MYSQL_DSN is empty in CI — the mysql:8 service or its DSN is misconfigured"); print("=== bind ran=0 ==="); exit(1) }
     print("SKIP: MYSQL_DSN not set — needs a live mysql:8 server (CI provides one)"); exit(0)
@@ -23,13 +23,13 @@ $c = db::connect($dsn)
 
 db::exec($c, "DROP TABLE IF EXISTS bindm", [])
 db::exec($c, "CREATE TABLE bindm (i BIGINT, ni BIGINT, f DOUBLE, b BOOLEAN, s TEXT, n TEXT)", [])
-# TÜM sütunlar parametreli bind (literal-interpolation DEĞİL — pozitif kontrol: injection satırı).
+# ALL columns use parameterized bind (NOT literal interpolation — positive control: the injection line).
 db::exec($c, "INSERT INTO bindm (i,ni,f,b,s,n) VALUES (?,?,?,?,?,?)",
     [9223372036854775807, -9223372036854775807, 3.141592653589793, true, "o'zel \" karakter \\ 日本 son", null])
 $r = db::query($c, "SELECT i,ni,f,b,s,n FROM bindm", [])[0]
 
-# int64 SINIR (2^63-1) — 2^53 üstü; double-promosyon bug'ı (look-int64-karsilastirma-double)
-# bu tam-sayıyı bozardı. Binary LONGLONG (8-bayt) yolu bit-tam taşımalı.
+# int64 BOUNDARY (2^63-1) — above 2^53; the double-promotion bug (look-int64-karsilastirma-double)
+# would have corrupted this integer. The binary LONGLONG (8-byte) path must carry it bit-exact.
 chk("int64 sinir 2^63-1", "" . db::col($r, "i"), "9223372036854775807"); $ran = $ran + 1
 chk("int64 negatif buyuk", "" . db::col($r, "ni"), "-9223372036854775807"); $ran = $ran + 1
 chk("float/ondalik round-trip", "" . db::col($r, "f"), "3.141592653589793"); $ran = $ran + 1
@@ -38,25 +38,25 @@ chk("bool", ($bv == "1" || $bv == "true" || $bv == "t"), true); $ran = $ran + 1
 chk("utf8+ozel-karakter", db::col($r, "s"), "o'zel \" karakter \\ 日本 son"); $ran = $ran + 1
 chk("null gercek-null", db::col($r, "n") == null, true); $ran = $ran + 1
 
-# POZİTİF KONTROL — parametreli bind ≠ string-interpolation. Eğer param SQL'e gömülseydi
-# `' OR '1'='1` tautoloji TÜM satırları döndürürdü; bind literal olarak eşleşme aradığından 0.
+# POSITIVE CONTROL — parameterized bind ≠ string interpolation. If the param were embedded in the SQL,
+# the `' OR '1'='1` tautology would return ALL rows; bind searches for a literal match, so 0.
 chk("injection tautoloji→0", len(db::query($c, "SELECT * FROM bindm WHERE s=?", ["' OR '1'='1"])), 0); $ran = $ran + 1
 
-# POZİTİF KONTROL — SQL-metakarakterli payload VERİ olarak saklanıp aynen geri gelir.
+# POSITIVE CONTROL — a payload with SQL metacharacters is stored as DATA and comes back verbatim.
 $payload = "'); DROP TABLE bindm;--"
 db::exec($c, "INSERT INTO bindm (s) VALUES (?)", [$payload])
 $q = db::query($c, "SELECT s FROM bindm WHERE s=?", [$payload])
 chk("metakarakter payload veri-olarak", len($q), 1); $ran = $ran + 1
 chk("metakarakter payload aynen", db::col($q[0], "s"), $payload); $ran = $ran + 1
-# tablo hâlâ var (DROP çalışmadı) — injection gerçekten etkisiz
+# the table still exists (DROP did not run) — the injection really is ineffective
 chk("tablo hayatta (injection etkisiz)", len(db::query($c, "SELECT i FROM bindm", []) ) >= 1, true); $ran = $ran + 1
 
-# param-sayısı reddi (2 placeholder, 1 param) — sunucu/sürücü RED etmeli
+# param-count rejection (2 placeholders, 1 param) — the server/driver must REJECT
 $caught = false
 try { db::query($c, "SELECT * FROM bindm WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
 chk("param-sayim reddi", $caught, true); $ran = $ran + 1
 
-# ── constraint fail-loud (UNIQUE + NOT NULL) — db::exec kisit ihlalinde THROW etmeli ──
+# ── constraint fail-loud (UNIQUE + NOT NULL) — db::exec must THROW on a constraint violation ──
 db::exec($c, "DROP TABLE IF EXISTS ctm", [])
 db::exec($c, "CREATE TABLE ctm (id INT PRIMARY KEY, email VARCHAR(80) UNIQUE, name VARCHAR(80) NOT NULL)", [])
 db::exec($c, "INSERT INTO ctm (id,email,name) VALUES (?,?,?)", [1, "a@x", "Ali"])
@@ -69,10 +69,10 @@ $nn = false
 try { db::exec($c, "INSERT INTO ctm (id,email,name) VALUES (?,?,?)", [3, "b@x", null]) } catch ($e) { $nn = true }
 chk("NOT NULL fail-loud", $nn, true); $ran = $ran + 1
 
-# ── binary temporal decode — prepared/binary yolda DATETIME/DATE/TIME/TIMESTAMP ham wire
-# baytlari yerine string dönmeli (eskiden default→read_lenenc_str = ham 7/4 bayt; text-protokol
-# hep dogruydu, sadece binary yol isirdi → PG etkilenmedi). WHERE tail=? bind'i binary yolu
-# zorlar. tail sentinel = CURSOR HIZASI: yanlis bayt tüketimi sonraki sütunu SESSIZCE bozar.
+# ── binary temporal decode — on the prepared/binary path DATETIME/DATE/TIME/TIMESTAMP must return a string
+# instead of raw wire bytes (it used to be default→read_lenenc_str = raw 7/4 bytes; the text protocol
+# was always correct, only the binary path bit → PG was not affected). The WHERE tail=? bind
+# forces the binary path. The tail sentinel = CURSOR ALIGNMENT: consuming wrong bytes SILENTLY corrupts the next column.
 db::exec($c, "DROP TABLE IF EXISTS tmm", [])
 db::exec($c, "CREATE TABLE tmm (dt DATETIME NOT NULL, ts TIMESTAMP NOT NULL, dt6 DATETIME(6) NOT NULL, d DATE NOT NULL, t TIME NOT NULL, tail VARCHAR(16) NOT NULL)", [])
 db::exec($c, "INSERT INTO tmm (dt,ts,dt6,d,t,tail) VALUES (?,?,?,?,?,?)", ["2026-01-02 13:14:15", "2026-03-04 05:06:07", "2026-07-08 09:10:11.123456", "2026-01-02", "13:14:15", "SENTINEL"])

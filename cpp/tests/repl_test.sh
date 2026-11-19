@@ -45,7 +45,7 @@ has 'string::uper() does not exist' && has 'Undefined variable: nosuch' && has '
 [ "$(echo "$out" | grep -c '=> 5')" = 2 ] && ok "a value set before an error is kept" || bad "kept: [$out]"
 has 'line 1: the result of array::push() is not used' && ok "lines run on the VM (a discarded pure result inside a line is reported)" \
                                                    || bad "vm rule: [$out]"
-if echo "$out" | grep -qE '(^|>>> )  [$]x$' && echo "$out" | grep -qx '  sq()' && ! echo "$out" | grep -qF '$$'; then   # TTY yok: istem aynı satırda
+if echo "$out" | grep -qE '(^|>>> )  [$]x$' && echo "$out" | grep -qx '  sq()' && ! echo "$out" | grep -qF '$$'; then   # no TTY: the prompt is on the same line
     ok ":vars lists \$x and sq()"
 else bad ":vars: [$out]"; fi
 has 'See you!' && ok ":exit ends the session" || bad "exit: [$out]"

@@ -10,7 +10,7 @@ for i in $(seq 1 60); do
   ( r=$(curl -s "http://127.0.0.1:7610/echo?v=req$i"); echo "$r" > /tmp/resp/$i ) &
   pids="$pids $!"
 done
-wait $pids           # sadece curl job'ları (sunucuyu değil)
+wait $pids           # only the curl jobs (not the server)
 kill $SRV 2>/dev/null
 bad=0; checked=0
 for i in $(seq 1 60); do

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Everything the runtime shows a user is English: error messages, log lines, CLI output,
 # JSON keys. A Turkish message cannot be found in the English documentation or searched for.
-# Comments stay Turkish (internal notes), so this looks only inside string literals, after
+# Comments are not checked, so this looks only inside string literals, after
 # stripping // comments, for the letters that exist in Turkish and not in English.
 # It cannot see Turkish written with plain ASCII letters ("hata", "kuruldu") — those were
 # removed by hand; this rule stops the obvious ones from coming back.

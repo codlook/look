@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# parallel_runtime shutdown yarışı TSan pozitif kontrolü.
-#   BUG (-DLOOK_PR_STATIC_TEST): eski dosya-statik → s_cv destructor yarışı beklenir.
-#   FIX (default): primitifler leak → destructor yok → yarış yok.
-# Not: container'da TSan bazen "FATAL: unexpected memory mapping" verir (ASLR
-# gürültüsü, yarış DEĞİL) → ayrı sayılır. Sadece "data race" gerçek bulgudur.
+# TSan positive control for the parallel_runtime shutdown race.
+#   BUG (-DLOOK_PR_STATIC_TEST): the old file-static → an s_cv destructor race is expected.
+#   FIX (default): the primitives leak → no destructor → no race.
+# Note: in a container TSan sometimes gives "FATAL: unexpected memory mapping" (ASLR
+# noise, NOT a race) → counted separately. Only "data race" is a real finding.
 set +e
 dnf install -y --setopt=sslverify=false gcc-toolset-12-libtsan-devel >/dev/null 2>&1
 source /opt/rh/gcc-toolset-12/enable 2>/dev/null

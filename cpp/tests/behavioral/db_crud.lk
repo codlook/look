@@ -1,5 +1,5 @@
-# db:: davranışsal test — gömülü SQLite (sunucu YOK). CI-koşabilir.
-# CRUD + tx commit/rollback + transaction() closure hata→otomatik rollback.
+# db:: behavioral test — embedded SQLite (NO server). Runnable in CI.
+# CRUD + tx commit/rollback + transaction() closure error→automatic rollback.
 $ran = 0
 function chk($l, $g, $w) {
     if ($g == $w) { print("OK   " . $l) }
@@ -21,13 +21,13 @@ chk("U affected", db::exec($c, "UPDATE u SET ad=? WHERE ad=?", ["ALI", "ali"]), 
 chk("D affected", db::exec($c, "DELETE FROM u WHERE ad=?", ["veli"]), 1); $ran = $ran + 1
 chk("D kalan", len(db::query($c, "SELECT * FROM u", [])), 1); $ran = $ran + 1
 
-# TX commit kalıcı
+# TX commit is durable
 db::begin($c); db::exec($c, "INSERT INTO u (ad) VALUES ('tx1')", []); db::commit($c)
 chk("TX commit kalici", len(db::query($c, "SELECT * FROM u WHERE ad='tx1'", [])), 1); $ran = $ran + 1
-# TX rollback geri alır
+# TX rollback undoes
 db::begin($c); db::exec($c, "INSERT INTO u (ad) VALUES ('tx2')", []); db::rollback($c)
 chk("TX rollback geri", len(db::query($c, "SELECT * FROM u WHERE ad='tx2'", [])), 0); $ran = $ran + 1
-# transaction() closure + hata → otomatik rollback
+# transaction() closure + error → automatic rollback
 try {
     db::transaction($c, function() use ($c) {
         db::exec($c, "INSERT INTO u (ad) VALUES ('t3')", [])

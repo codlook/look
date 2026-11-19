@@ -8,18 +8,18 @@ use crypto;
 use date;
 function dif_fib($n) { if ($n < 2) { return $n } return dif_fib($n-1) + dif_fib($n-2) }
 
-# Struct VM paritesi (2026-09-30): VM struct tanımını hiç bilmiyordu → CLI-VM ve web-VM'de
-# varsayılanlar uygulanmıyor, bilinmeyen alanlı literal sessizce kabul ediliyordu; hiçbir
-# test struct kullanmadığı için bu kategori yoktu. ÜST SEVİYEDE bildirildi: web'de kurulum
-# VM'i çalıştırır ve tanım vm_setup_globals ile isteğin VM'ine taşınır (üretim yolu).
-# `tag: $dif_sd` dinamik varsayılan — bildirim anında değerlendirilir (tree-walk gibi).
+# Struct VM parity (2026-09-30): the VM knew nothing about struct definitions → in CLI-VM and web-VM
+# defaults were not applied, a literal with unknown fields was silently accepted; no
+# test used structs so this category did not exist. Declared at TOP LEVEL: on the web the setup
+# runs the VM and the definition is carried into the request's VM via vm_setup_globals (production path).
+# `tag: $dif_sd` dynamic default — evaluated at declaration time (like tree-walk).
 $dif_sd = "dyn"
 struct DifUser {
   name any
   role any = "member"
   tag any = $dif_sd
 }
-# LOOK tipli struct (ad + tip + varsayılan) — üç motorda aynı sıfır değeri ve aynı hata.
+# LOOK typed struct (name + type + default) — the same zero value and the same error on all three engines.
 struct DifTyped {
   n int = 1
   s string
@@ -27,20 +27,20 @@ struct DifTyped {
   xs array
 }
 
-# GÖVDE KATEGORİ FONKSİYONLARINA BÖLÜNDÜ (2026-09-30). Tek dev run_all() VM'in 255-register
-# sınırını aşıyordu → CLI VE web TÜM programı SESSİZCE yorumlayıcıya veriyordu; bu guard'ın
-# "tree-walk == CLI-VM == web-VM" satırı gövde için yorumlayıcı×3 idi (bugünkü derleyiciyle
-# ~2026-07-18'den beri). Artık her parça sınırın çok altında ve differential_test.sh CLI+web
-# sütunları yalnız VM'de koşar (LOOK'de başka motor yok): VM derleyemezse guard KIRMIZI olur, sessiz geçmez.
-# YENİ KATEGORİ EKLERKEN: tek bir dif_pN'i şişirme — yeni bir dif_pN aç.
+# BODY SPLIT INTO CATEGORY FUNCTIONS (2026-09-30). A single huge run_all() exceeded the VM's 255-register
+# limit → CLI AND web handed the WHOLE program SILENTLY to the interpreter; this guard's
+# "tree-walk == CLI-VM == web-VM" line was interpreter×3 for the body (with today's compiler
+# since ~2026-07-18). Now each piece is far below the limit and the differential_test.sh CLI+web
+# columns run only on the VM (there is no other engine in LOOK): if the VM cannot compile, the guard goes RED, it does not pass silently.
+# WHEN ADDING A NEW CATEGORY: do not bloat a single dif_pN — open a new dif_pN.
 function dif_p1() {
   $o = "";
-  # aritmetik + taşma + INT64 uç + bölme/modulo
+  # arithmetic + overflow + INT64 edges + division/modulo
   $o .= "A:" . (3+4*2) . "," . (10/3) . "," . (10%3) . "," . (2**10) . "," . (-9999999999) . "," . (7/2) . ";";
   # string + COW aliasing + concat
   $s="ab"; $t=$s; $s.="cd"; $u="x"; $u.=$u; $u.=$u;
   $o .= "B:" . $s . "," . $t . "," . $u . ";";
-  # karşılaştırma + coercion
+  # comparison + coercion
   $o .= "C:" . (5==5.0) . "," . ("5"==5) . "," . ("a"<"b") . "," . (0=="") . "," . (1<2) . ";";
   # bitwise/shift
   $o .= "D:" . (12&10) . "," . (12|1) . "," . (12^5) . "," . (1<<4) . "," . (256>>2) . "," . (~5) . ";";
@@ -64,7 +64,7 @@ function dif_p2() {
   # control flow: while+continue+break, if/else, ternary
   $sum=0; $i=0; while($i<6){ if($i==2){$i=$i+1; continue;} if($i==5){break;} $sum=$sum+$i; $i=$i+1; }
   $o .= "H:" . $sum . "," . (5>3?"y":"n") . ";";
-  # string fonksiyonları + builtin alias
+  # string functions + builtin aliases
   $o .= "I:" . len("merhaba") . "," . count([1,2,3]) . "," . intval("42") . "," . strtoupper("abc") . ";";
   # join
   $o .= "J:" . join(["a","b","c"], "-") . ";";
@@ -73,26 +73,26 @@ function dif_p2() {
 
 function dif_p3() {
   $o = "";
-  # try/catch — C++ runtime hata (bölme/mod sıfır) + LOOK throw + finally + iç içe
-  # (VM try/catch operatör exception'larını da yakalamalı — interpreter gibi)
+  # try/catch — C++ runtime error (division/mod by zero) + LOOK throw + finally + nested
+  # (VM try/catch must also catch operator exceptions — like the interpreter)
   $k=""; try{ $qx=10/0 }catch($e){ $k.="d" }
   try{ $qy=10%0 }catch($e){ $k.="m" }
   try{ throw "boom" }catch($e){ $k.=$e }
   $fin=""; try{ $qz=1/0 }catch($e){ $fin.="c" }finally{ $fin.="f" }
-  # fonksiyon-sınırını geçen throw: doğrudan çağrılan LOOK fn içinde throw → çağıranın
-  # catch'i yakalamalı. VM THROW opcode frame-pop + goto call_dispatch (salt break bayat
-  # proto/sarkan frame → sessiz duruş, VM≠interpreter; 2026-08-11 fix). C++ builtin callback
-  # yolu (aşağıda array::map, satır ~63) FARKLI eksen — bu doğrudan-CALL yolunu kilitler.
+  # throw crossing a function boundary: a throw inside a directly called LOOK fn → the caller's
+  # catch must catch it. The VM THROW opcode does frame-pop + goto call_dispatch (a plain break left a stale
+  # proto/dangling frame → silent stop, VM≠interpreter; 2026-08-11 fix). The C++ builtin callback
+  # path (array::map below, line ~63) is a DIFFERENT axis — this locks the direct-CALL path.
   function _thrower() { throw "xfn" }
   try { _thrower() } catch($e) { $k .= "|" . $e }
   $o .= "K:" . $k . "|" . $fin . ";";
-  # string interpolation — '$'-önekli expression formları (VM==interpreter)
+  # string interpolation — '$'-prefixed expression forms (VM==interpreter)
   $ia=5; $ib=3; $iarr=[10,20,30]; $im=["name"=>"ali","age"=>30];
   $o .= "L:{$ia}-{$ia + $ib}-{$iarr[1]}-{$im.name}-{$im.age * 2};";
-  # type:: — is_function VM closure'ı (BYTECODE_FN) da tanımalı
+  # type:: — is_function must also recognize a VM closure (BYTECODE_FN)
   $o .= "M:" . type::is_int(5) . "," . type::is_string("a") . "," . type::is_array([1]) . ","
              . type::is_function(fn($x)=>$x) . "," . type::of(1.5) . "," . type::to_int("42") . ";";
-  # crypto:: — deterministik olanlar (random/uuid hariç: değer karşılaştırılamaz)
+  # crypto:: — the deterministic ones (except random/uuid: the value cannot be compared)
   $o .= "N:" . crypto::base64_encode("merhaba") . "," . crypto::base64_decode("bWVyaGFiYQ==") . ","
              . crypto::hex_encode("ab") . "," . crypto::hmac_sha256("msg","key") . ","
              . crypto::constant_compare("a","b") . ";";
@@ -101,44 +101,44 @@ function dif_p3() {
 
 function dif_p4() {
   $o = "";
-  # VM↔interpreter köprüsü üzerinden exception: array::map callback'i iç run()'da çalışır.
-  # throw/runtime-hata DIŞ try/catch'e ulaşmalı (try_floor_ + LookVmThrow). Taban yoksa
-  # iç run() dış handler'a atlar → call stack bozulur, aradaki C++ catch (ör. db::transaction
-  # ROLLBACK) atlanır. Değer de korunmalı ("stop" — e.what() değil).
+  # exception across the VM↔interpreter bridge: the array::map callback runs in an inner run().
+  # throw/runtime-error must reach the OUTER try/catch (try_floor_ + LookVmThrow). Without a base
+  # the inner run() jumps to the outer handler → the call stack is corrupted, the C++ catch in between (e.g. db::transaction
+  # ROLLBACK) is skipped. The value must also be preserved ("stop" — not e.what()).
   $bo = "";
   try { $bm = array::map([1,2,3], function($x){ if ($x == 2) { throw "stop" } return $x }); $bo .= "no" }
   catch ($e) { $bo .= "caught:" . $e }
   try { $bm2 = array::map([1,0], function($x){ return 10 / $x }); $bo .= "|no" }
   catch ($e) { $bo .= "|rt" }
   $o .= "O:" . $bo . "|" . json::encode(array::map([1,2], function($x){ return $x * 10 })) . ";";
-  # Higher-order kapsam tamamlama: sort(comparator)/find/any/all — guard'da YOKTU,
-  # bu yüzden array::sort'un comparator'ı VM'de SESSİZCE yok sayması kaçmıştı
-  # (callback FUNCTION-only kontrolü BYTECODE_FN'i reddediyordu → varsayılan sıra).
+  # Higher-order coverage completion: sort(comparator)/find/any/all — were MISSING from the guard,
+  # which is why array::sort's comparator being SILENTLY ignored in the VM slipped through
+  # (the callback FUNCTION-only check rejected BYTECODE_FN → default order).
   $o .= "P:" . json::encode(array::sort([3,1,4,1,5], function($a,$b){ return $b - $a })) . ","
              . array::find([1,2,3,4], function($x){ return $x > 2 }) . ","
              . array::any([1,2,3], function($x){ return $x == 9 }) . ","
              . array::all([2,4], function($x){ return $x % 2 == 0 }) . ","
              . json::encode(array::sort([3,1,2])) . ";";
-  # error::new TİPLİ throw — error::new DEĞER DÖNDÜRMEZ, LookRuntimeError(payload) fırlatır.
-  # VM dispatch'i payload'ı korumalı (has_value ? value : message); e.what() string'ine
-  # düşürülürse error::is() false döner, error::message() tüm nesneyi verir → sessizce
-  # yanlış hata yönetimi. Köprü üzerinden (array::map callback) de korunmalı.
+  # error::new TYPED throw — error::new DOES NOT RETURN A VALUE, it throws LookRuntimeError(payload).
+  # VM dispatch must preserve the payload (has_value ? value : message); if it is
+  # degraded to the e.what() string, error::is() returns false, error::message() gives the whole object → silently
+  # wrong error handling. It must also be preserved across the bridge (array::map callback).
   $eo = "";
   try { throw error::new("E_DB", "baglanti yok") }
   catch ($e) { $eo .= error::message($e) . "," . error::is($e, "E_DB") . "," . error::is($e, "E_X") }
   try { $em = array::map([1,2], function($x){ if ($x == 2) { throw error::new("E_MAP", "iki") } return $x }) }
   catch ($e) { $eo .= "|" . error::message($e) . "," . error::is($e, "E_MAP") }
   $o .= "Q:" . $eo . ";";
-  # Çekirdek dil kapsamı: recursion, iç içe closure, döngü-değişkeni yakalama, foreach assoc
+  # Core language coverage: recursion, nested closures, loop-variable capture, foreach assoc
   $mk = function($base){ return function($x) use ($base) { return $base + $x } }
   $add10 = $mk(10)
   $fns = []; $ri = 0
   while ($ri < 3) { $rv = $ri; $fns = array::push($fns, function() use ($rv) { return $rv * 100 }); $ri = $ri + 1 }
   $rm = ["a"=>1, "b"=>2]; $rs = ""
   foreach ($rm as $rk => $rvv) { $rs .= $rk . $rvv }
-  # 3b kilidi: use()-yakalanan FOREACH loop-local VM'de array-sarılı DÖNMEMELİ (["x"] değil
-  # "x"). json::encode wrap'ı ifşa eder; eski bug'da VM explicit-use() capture'ın CELL [0]
-  # deref'ini atlıyordu → tree-walk "x", VM ["x"] = ayrışma. İki motor da "pq" vermeli.
+  # 3b lock: a use()-captured FOREACH loop-local must NOT RETURN array-wrapped in the VM (["x"] not
+  # "x"). json::encode exposes the wrap; in the old bug the VM skipped the CELL [0] deref of the
+  # explicit-use() capture → tree-walk "x", VM ["x"] = divergence. Both engines must give "pq".
   $cap = []; foreach (["p","q"] as $cx) { $cap = array::push($cap, function() use ($cx) { return $cx }) }
   $capj = json::encode($cap[0]()) . "-" . json::encode($cap[1]());
   $o .= "R:" . dif_fib(12) . "," . $add10(5) . "," . $fns[0]() . $fns[1]() . $fns[2]() . "," . $rs . "," . $capj . ";";
@@ -147,18 +147,18 @@ function dif_p4() {
 
 function dif_p5() {
   $o = "";
-  # Tanımsız değişken — STRICT (Go/Node bandı; PHP'den yalnız dağıtım alınıyor, semantik
-  # değil). Eskiden VM sessizce null dönüyordu = bu turun bug sınıfının ta kendisi.
-  # İnterpolasyonda ise interpreter fragment eval-hatasını yakalayıp LİTERAL döner →
-  # VM de fragment'ı runtime try/catch ile sarar (parity). Tanımlı olan bozulmamalı.
+  # Undefined variable — STRICT (Go/Node band; only the distribution is taken from PHP, not the semantics
+  # ). The VM used to return null silently = the very bug class of this round.
+  # In interpolation, though, the interpreter catches the fragment eval error and returns a LITERAL →
+  # the VM also wraps the fragment in a runtime try/catch (parity). A defined one must not break.
   $su = "";
   try { $sx = $kesinlikle_yok; $su .= "SIZDI" } catch ($e) { $su .= $e }
   $sd = 5;
   $o .= "S:" . $su . "|{$hic_yok}|{$sd}-{$sd * 2};";
-  # 256+ indeks bölgesi — CALL_BUILTIN indeksi 16-bit (NOP hint'in b alanı yüksek byte).
-  # 8-bit çağdan kalan sessiz-kırpılma bug'ının regresyon kilidi: liste 285'e çıktığında
-  # cache::size (index 256 → 0) PRINT'i çağırıp null dönmüştü. Bu kategori 256+ indeksli
-  # builtin'lerin DOĞRU fonksiyona gittiğini üç motorda birden doğrular.
+  # 256+ index region — the CALL_BUILTIN index is 16-bit (the NOP hint's b field high byte).
+  # Regression lock for the silent-truncation bug left over from the 8-bit era: when the list grew to 285,
+  # cache::size (index 256 → 0) called PRINT and returned null. This category verifies on all three engines
+  # that builtins with index 256+ go to the CORRECT function.
   cache::set("dk1", "v1"); cache::set("dk2", "v2")
   queue::clear("dq"); queue::push("dq", "is1")
   $o .= "T:" . cache::size() . "," . count(cache::keys()) . "," . queue::peek("dq") . ","
@@ -168,27 +168,27 @@ function dif_p5() {
 
 function dif_p6() {
   $o = "";
-  # U — BİLEŞİK ATAMA (+= -= *= /= %= .=) her kapsamda. Guard'da YOKTU ve tam bu yüzden
-  # kaçtı: compiler'ın TOP-LEVEL GLOBAL dalı e.op'u yok sayıyordu → "$t += $i" sadece
-  # "$t = $i" derleniyordu. Sonuç: interpreter DOĞRU, VM SESSİZCE YANLIŞ (toplamlar/
-  # string birikimleri bozuk, hata yok). Diğer üç dal (index, local, fonksiyon-içi)
-  # doğruydu — o yüzden web route'ları çalışıyor, top-level script'ler bozuktu.
-  # KAPSAM DÜZELTMESİ (2026-09-30, hata enjeksiyonuyla ölçüldü): bu kategori bir FONKSİYONUN
-  # İÇİNDE koşar → yerel zincir, yerel string birikimi, döngüde birikim, dizi elemanı ve
-  # (dif_compound ile) fonksiyon-içi dalları kilitler. ÜST-SEVİYE GLOBAL dalı BURADA TEST
-  # EDİLMEZ (eski yorum "global" diyordu). O dalı differential_test.sh'deki ayrı
-  # "top-level compound" bölümü kilitler: global dalda e.op yok sayılınca o bölüm FAIL verdi,
-  # bu kategori ve regresyon dosyaları vermedi.
+  # U — COMPOUND ASSIGNMENT (+= -= *= /= %= .=) in every scope. It was MISSING from the guard and that is exactly why it
+  # slipped through: the compiler's TOP-LEVEL GLOBAL branch ignored e.op → "$t += $i" was compiled as just
+  # "$t = $i". Result: interpreter CORRECT, VM SILENTLY WRONG (sums/
+  # string accumulations broken, no error). The other three branches (index, local, in-function)
+  # were correct — that is why web routes worked while top-level scripts were broken.
+  # SCOPE CORRECTION (2026-09-30, measured by fault injection): this category runs INSIDE A FUNCTION
+  # → it locks the local chain, local string accumulation, accumulation in a loop, array element and
+  # (together with dif_compound) the in-function branches. The TOP-LEVEL GLOBAL branch is NOT TESTED
+  # HERE (the old comment said "global"). That branch is locked by the separate
+  # "top-level compound" section in differential_test.sh: when e.op was ignored in the global branch that section FAILed,
+  # this category and the regression files did not.
   $ug = 1; $ug += 2; $ug *= 3; $ug -= 1; $ug /= 4; $ug %= 3;      # yerel zincir
   $us = "a"; $us .= "b"; $us .= "c";                              # yerel string birikimi
   $ut = 0; $uk = 0;
-  while ($uk < 5) { $ut += $uk; $uk = $uk + 1 }                   # döngüde birikim
-  $ul = [10]; $ul[0] += 5;                                        # dizi elemanı
-  # V — date:: TAKVIM dogrulamasi + isaretli diff. Guard'da date:: HIC yoktu.
-  # parse() kaba aralik kontrolu yapiyordu (gun <= 31) → 2024-04-31 / 2023-02-29 gecip
-  # mktime ile SESSIZCE 1 Mayis / 1 Mart'a kayiyordu (is_valid ise false diyordu —
-  # kodun kendi hedefi "is_valid ile tutarli" idi ama ay-ozgu gun siniri yoktu).
-  # Sozlesme: imkansiz tarih HATA, gecerli tarih aynen, diff ISARETLI kalir.
+  while ($uk < 5) { $ut += $uk; $uk = $uk + 1 }                   # accumulation in a loop
+  $ul = [10]; $ul[0] += 5;                                        # array element
+  # V — date:: CALENDAR validation + signed diff. date:: was completely MISSING from the guard.
+  # parse() did a coarse range check (day <= 31) → 2024-04-31 / 2023-02-29 passed and were SILENTLY
+  # shifted by mktime to 1 May / 1 March (is_valid said false —
+  # the code's own goal was "consistent with is_valid" but the month-specific day limit was missing).
+  # Contract: an impossible date is an ERROR, a valid date is kept as is, diff stays SIGNED.
   $vb = "";
   try { date::parse("2024-04-31", "Y-m-d"); $vb .= "KACTI" } catch ($e) { $vb .= "red" }
   try { date::parse("2023-02-29", "Y-m-d"); $vb .= "KACTI" } catch ($e) { $vb .= "-red" }
@@ -201,9 +201,9 @@ function dif_p6() {
 
 function dif_p7() {
   $o = "";
-  # count/len — assoc sentinel'i SAYMAMALI. VM builtin'leri (main b[2], http_main setup/req[2])
-  # __assoc__ kontrolunu ATLIYORDU → count(["x"=>1])=3 (sentinel+2n), interpreter=1 ile ayrisir.
-  # Bu case eskiden RED verirdi (assoc testi yoktu, bug differential-gorunmezdi). Beklenen: 2,2,4,0,3.
+  # count/len — must NOT count the assoc sentinel. VM builtins (main b[2], http_main setup/req[2])
+  # SKIPPED the __assoc__ check → count(["x"=>1])=3 (sentinel+2n), diverges from interpreter=1.
+  # This case would have been RED before (there was no assoc test, the bug was differential-invisible). Expected: 2,2,4,0,3.
   $ca = ["x"=>1, "y"=>2]; $cp = [1,2,3,4];
   $o .= "W:" . count($ca) . "," . len($ca) . "," . count($cp) . "," . count([]) . "," . len("abc") . ";";
   # String immutability — $s[0]="X" must FAIL LOUD and identically on the CLI and the web. The VM
@@ -212,9 +212,9 @@ function dif_p7() {
   $im = ""; $ss = "abc";
   try { $ss[0] = "X"; $im = "MUTATED:" . $ss } catch ($e) { $im = $ss . "|" . $e }
   $o .= "X:" . $im . ";";
-  # Y: struct — varsayılan uygulanır · literal ters sırada verilse de alan sırası bildirimdeki
-  # gibi · dinamik varsayılan · bilinmeyen alanlı literal CLI ve web'de AYNI hatayı verir ·
-  # şekil SABİT — sonradan bildirilmemiş alana atama CLI ve web'de AYNI hatayı verir.
+  # Y: struct — the default is applied · field order is as in the declaration even if the literal is given in reverse order ·
+  # dynamic default · a literal with unknown fields gives the SAME error in CLI and web ·
+  # shape is FIXED — assigning to a field not declared gives the SAME error in CLI and web.
   $su1 = DifUser{name: "Can"}
   $su2 = DifUser{role: "admin", name: "Ada"}
   $ye = "";
@@ -233,7 +233,7 @@ function run_all() {
   return dif_p1() . dif_p2() . dif_p3() . dif_p4() . dif_p5() . dif_p6() . dif_p7();
 }
 
-# Fonksiyon-içi (local) bileşik atama — global dalıyla aynı sonucu vermeli.
+# Function-local compound assignment — must give the same result as the global branch.
 function dif_compound() {
   $x = 1; $x += 2; $x *= 3;
   $y = "p"; $y .= "q";

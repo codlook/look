@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# http_smuggle_test.sh — HTTP istek-smuggling / RFC 7230 çerçeve guard'ı (54. bug).
-# TE substring eşlemesi (xchunked→chunked) ve field-name'den önce boşluk
-# (Content-Length :) request smuggling'e zemindi. Bu guard geçersiz çerçeve
-# başlıklarının REDDEDILDIGINI, geçerlilerin işlendiğini doğrular.
+# http_smuggle_test.sh — HTTP request-smuggling / RFC 7230 framing guard (bug 54).
+# TE substring matching (xchunked→chunked) and whitespace before the field-name
+# (Content-Length :) were the ground for request smuggling. This guard verifies that invalid framing
+# headers are REJECTED and valid ones are processed.
 set -u
 LKFCGI="${1:-./build/lk-fcgi}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -1,8 +1,8 @@
 // TLS test servers for tests/http_client_tls_test.sh: makes its own CA (written to the path given),
-//   8441 localhost (geçerli)        8442 IP SAN 127.0.0.1 (geçerli)   8443 yanlış ad (other.example)
-//   8444 süresi dolmuş              8445 kendinden imzalı (CA dışı)   8446 en çok TLS 1.1
-//   8447 DNS SAN "127.0.0.1" (IP SAN yok)   8448 geçerli, gelen SNI'yi gövdede bildirir
-// Gövde: "ok sni=<istemcinin gönderdiği ad>"
+//   8441 localhost (valid)        8442 IP SAN 127.0.0.1 (valid)   8443 wrong name (other.example)
+//   8444 expired              8445 self-signed (not from the CA)   8446 at most TLS 1.1
+//   8447 DNS SAN "127.0.0.1" (no IP SAN)   8448 valid, reports the SNI it received in the body
+// Body: "ok sni=<name the client sent>"
 package main
 
 import (

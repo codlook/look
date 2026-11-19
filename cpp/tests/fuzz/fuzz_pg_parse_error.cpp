@@ -1,8 +1,8 @@
-// libFuzzer harness — PostgreSQL ErrorResponse ayrıştırıcısı (saf fonksiyon).
-// Saldırgan-kontrollü baytlar: sunucudan gelen ERR paketi gövdesi (S4 verify kapalı
-// olduğunda ağdaki herkes besleyebilir). Tarihsel OOB tam bu sınıftaydı.
+// libFuzzer harness — PostgreSQL ErrorResponse parser (pure function).
+// Attacker-controlled bytes: the body of an ERR packet from the server (anyone on the network
+// can feed it when S4 verify is off). The historical OOB was exactly this class.
 //
-// Derle+koş (clang, AlmaLinux 8 fuzz imaji):
+// Build+run (clang, AlmaLinux 8 fuzz image):
 //   clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
 //     -I../../include fuzz_pg_parse_error.cpp -o fuzz_pg_parse_error
 //   ./fuzz_pg_parse_error -max_len=4096 corpus/

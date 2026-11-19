@@ -1,9 +1,9 @@
 # prepared statements (native) — PostgreSQL extended-query (Parse/Bind/Execute/Sync) bind
-# matrisi. GERÇEK postgres:16 sunucusu ŞART (CI servis-container'ı; DSN = PG_DSN env).
-# SQLite bind matrisiyle (db_bind_sqlite.lk) TİP-PARİTE: int64 sınır · negatif int64 ·
-# float · bool · UTF-8/özel-karakter · gerçek-NULL · injection(bind escape) · param-sayısı
-# reddi. `?`→`$1` dönüşümü + text-format param kodlaması (NULL=-1 uzunluk) burada canlı
-# doğrulanır. fail-loud + empty-green.
+# matrix. A REAL postgres:16 server is REQUIRED (CI service container; DSN = PG_DSN env).
+# TYPE PARITY with the SQLite bind matrix (db_bind_sqlite.lk): int64 boundary · negative int64 ·
+# float · bool · UTF-8/special characters · real NULL · injection (bind escape) · param-count
+# rejection. The `?`→`$1` conversion + text-format param encoding (NULL = length -1) is verified
+# live here. fail-loud + empty-green.
 $ran = 0
 function chk($l, $g, $w) {
     if ($g == $w) { print("OK   " . $l) }
@@ -11,7 +11,7 @@ function chk($l, $g, $w) {
 }
 
 $dsn = env("PG_DSN", "")
-# Ortam yoksa: CI'da FAIL, yerelde SKIP (bkz. db_bind_mysql.lk — aynı sözleşme).
+# If the environment is missing: FAIL in CI, SKIP locally (see db_bind_mysql.lk — same contract).
 if ($dsn == "") {
     if (env("CI", "") == "true") { print("FAIL harness: PG_DSN is empty in CI — the postgres:16 service or its DSN is misconfigured"); print("=== bind ran=0 ==="); exit(1) }
     print("SKIP: PG_DSN not set — needs a live postgres:16 server (CI provides one)"); exit(0)
@@ -20,13 +20,13 @@ $c = db::connect($dsn)
 
 db::exec($c, "DROP TABLE IF EXISTS bindp", [])
 db::exec($c, "CREATE TABLE bindp (i BIGINT, ni BIGINT, f DOUBLE PRECISION, b BOOLEAN, s TEXT, n TEXT)", [])
-# TÜM sütunlar parametreli bind (literal-interpolation DEĞİL — pozitif kontrol: injection satırı).
+# ALL columns use parameterized bind (NOT literal interpolation — positive control: the injection line).
 db::exec($c, "INSERT INTO bindp (i,ni,f,b,s,n) VALUES (?,?,?,?,?,?)",
     [9223372036854775807, -9223372036854775807, 3.141592653589793, true, "o'zel \" karakter \\ 日本 son", null])
 $r = db::query($c, "SELECT i,ni,f,b,s,n FROM bindp", [])[0]
 
-# int64 SINIR (2^63-1) — 2^53 üstü; double-promosyon bug'ı (look-int64-karsilastirma-double)
-# bu tam-sayıyı bozardı. text-format param + BIGINT parse bit-tam taşımalı.
+# int64 BOUNDARY (2^63-1) — above 2^53; the double-promotion bug (look-int64-karsilastirma-double)
+# would have corrupted this integer. text-format param + BIGINT parse must carry it bit-exact.
 chk("int64 sinir 2^63-1", "" . db::col($r, "i"), "9223372036854775807"); $ran = $ran + 1
 chk("int64 negatif buyuk", "" . db::col($r, "ni"), "-9223372036854775807"); $ran = $ran + 1
 chk("float/ondalik round-trip", "" . db::col($r, "f"), "3.141592653589793"); $ran = $ran + 1
@@ -35,26 +35,26 @@ chk("bool", ($bv == "1" || $bv == "true" || $bv == "t"), true); $ran = $ran + 1
 chk("utf8+ozel-karakter", db::col($r, "s"), "o'zel \" karakter \\ 日本 son"); $ran = $ran + 1
 chk("null gercek-null", db::col($r, "n") == null, true); $ran = $ran + 1
 
-# POZİTİF KONTROL — parametreli bind ≠ string-interpolation. Param SQL'e gömülseydi
-# `' OR '1'='1` tautoloji TÜM satırları döndürürdü; bind literal eşleşme aradığından 0.
+# POSITIVE CONTROL — parameterized bind ≠ string interpolation. If the param were embedded in the SQL,
+# the `' OR '1'='1` tautology would return ALL rows; bind searches for a literal match, so 0.
 chk("injection tautoloji→0", len(db::query($c, "SELECT * FROM bindp WHERE s=?", ["' OR '1'='1"])), 0); $ran = $ran + 1
 
-# POZİTİF KONTROL — SQL-metakarakterli payload VERİ olarak saklanıp aynen geri gelir.
+# POSITIVE CONTROL — a payload with SQL metacharacters is stored as DATA and comes back verbatim.
 $payload = "'); DROP TABLE bindp;--"
 db::exec($c, "INSERT INTO bindp (s) VALUES (?)", [$payload])
 $q = db::query($c, "SELECT s FROM bindp WHERE s=?", [$payload])
 chk("metakarakter payload veri-olarak", len($q), 1); $ran = $ran + 1
 chk("metakarakter payload aynen", db::col($q[0], "s"), $payload); $ran = $ran + 1
-# tablo hâlâ var (DROP çalışmadı) — injection gerçekten etkisiz
+# the table still exists (DROP did not run) — the injection really is ineffective
 chk("tablo hayatta (injection etkisiz)", len(db::query($c, "SELECT i FROM bindp", []) ) >= 1, true); $ran = $ran + 1
 
-# param-sayısı reddi (2 placeholder, 1 param) — sunucu Bind mesajında RED etmeli
+# param-count rejection (2 placeholders, 1 param) — the server must REJECT in the Bind message
 $caught = false
 try { db::query($c, "SELECT * FROM bindp WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
 chk("param-sayim reddi", $caught, true); $ran = $ran + 1
 
-# ── constraint fail-loud (UNIQUE + NOT NULL) — PG zaten dogruydu (ErrorResponse 'E'),
-# ama artik OLCULU-kilitli (kaynak-okumasi degil test). Uc surucude ayni sozlesme. ──
+# ── constraint fail-loud (UNIQUE + NOT NULL) — PG was already correct (ErrorResponse 'E'),
+# but it is now locked by MEASUREMENT (a test, not a source reading). Same contract on all three drivers. ──
 db::exec($c, "DROP TABLE IF EXISTS ctp", [])
 db::exec($c, "CREATE TABLE ctp (id INT PRIMARY KEY, email VARCHAR(80) UNIQUE, name VARCHAR(80) NOT NULL)", [])
 db::exec($c, "INSERT INTO ctp (id,email,name) VALUES (?,?,?)", [1, "a@x", "Ali"])

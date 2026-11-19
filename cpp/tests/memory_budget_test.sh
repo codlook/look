@@ -1,24 +1,24 @@
 #!/bin/bash
-# Bellek bütçesi (include/look/mem_budget.h): bir istek bütün süreci öldüremez.
-# ESKİ: sınırsız büyüyen tek istek 512 MB'lık kapta sunucuyu 1 sn'de öldürüyordu (rc=137).
-#   1) istek bütçesi: büyüyen istek 500 + açık hata, sunucu yaşar, öteki istekler yanıt alır
-#   2) süreç sınırı: %90'da yeni istek 503; %100'de EN ÇOK bellek kullanan istek 503 ile biter
-#      (ayırmayı yapan değil). Sıra beklemeyle DEĞİL dosya sinyalleriyle kurulur (yüklü makinede kararlı).
-#   3) başka isteğin ayırdığı veriyi bırakan istek fazladan bütçe kazanmaz (sayaç eksiye düşmez)
-#   4) geçersiz LOOK_MEMORY_LIMIT: nedenini yazar, başlamaz
-#   5) bellek durdurması try/catch ile yutulamaz
-#   6) birleştirme ve ara değer metni tam boyutta: 1 MiB . "y" 1 MiB tutar (ESKİ: 2 MiB)
-#   7) komut satırı: varsayılan sınır yok, istek bütçesi yok; LOOK_MEMORY_LIMIT verilirse süreç sınırı
-#   8) sayaç kaymaz: ayırma ve bırakma aynı boyutla sayılır (istek hesabı partiyle yazılsa da) —
-#      tek istekte 20 × 100 MiB, art arda 150 istek × 100 MiB: kayma birikse istek 500 / 503 alırdı
-# Usage: memory_budget_test.sh <lk-fcgi> [base-port] [lk]   (needs curl; LOOK_FIBER_DISPATCH ortamdan geçer:
-#        Linux --mode http varsayılanı fiber, havuz için LOOK_FIBER_DISPATCH=0)
+# Memory budget (include/look/mem_budget.h): one request cannot kill the whole process.
+# OLD: a single request growing without limit killed the server in 1 s in a 512 MB container (rc=137).
+#   1) request budget: the growing request gets 500 + a clear error, the server lives, other requests get answers
+#   2) process limit: at 90% a new request gets 503; at 100% the request using the MOST memory ends with 503
+#      (not the one doing the allocation). The order is built with file signals, NOT with waiting (stable on a loaded machine).
+#   3) a request that releases data allocated by another request gains no extra budget (the counter does not go negative)
+#   4) invalid LOOK_MEMORY_LIMIT: says why, does not start
+#   5) the memory stop cannot be swallowed by try/catch
+#   6) concatenation and the intermediate value text at full size: 1 MiB . "y" is 1 MiB (OLD: 2 MiB)
+#   7) command line: no default limit, no request budget; if LOOK_MEMORY_LIMIT is given, a process limit
+#   8) the counter does not drift: allocation and release are counted with the same size (even if the request's accounting is written in batches) —
+#      20 × 100 MiB in one request, 150 requests × 100 MiB in a row: if drift accumulated a request would get 500 / 503
+# Usage: memory_budget_test.sh <lk-fcgi> [base-port] [lk]   (needs curl; LOOK_FIBER_DISPATCH passes through from the environment:
+#        the Linux --mode http default is fiber, LOOK_FIBER_DISPATCH=0 for the pool)
 set -u
 LKF="$1"; P="${2:-7940}"; LK="${3:-$(dirname "$LKF")/lk}"
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 T=$(mktemp -d); pid=""
 trap '{ [ -n "$pid" ] && kill -9 $pid; jobs -p | xargs -r kill; wait; } 2>/dev/null; rm -rf "$T"' EXIT
-# Takılan test dakikalar içinde kırmızı verir (EXIT tuzağı sunucuyu öldürür).
+# A stuck test goes red within minutes (the EXIT trap kills the server).
 ( sleep 240; echo "FAIL: memory budget test timed out (240 s)"; kill -TERM $$ ) 2>/dev/null &
 fail=0
 check() { if [ "$2" = ok ]; then echo "  OK   $1"; else echo "  FAIL $1: $3"; fail=1; fi; }
@@ -33,12 +33,12 @@ use file
 LK
 cat >> "$T/app.lk" <<'LK'
 function spin($us) { $t = date::mono_us(); while (date::mono_us() - $t < $us) { } }
-// Sinyal: test dosyayı yaratana dek bekle (en çok 30 sn — test kendi süre sınırıyla da korunur)
+// Signal: wait until the test creates the file (at most 30 s — the test is also protected by its own time limit)
 function wait_for($name) {
     $t = date::mono_us()
     while (!file::exists($SIG . $name) && date::mono_us() - $t < 30000000) { spin(5000) }
 }
-// n MiB tut (her eleman tam 1 MiB), sonra "<name>.ready" yaz, "<name>.go" gelene dek tut
+// hold n MiB (each element exactly 1 MiB), then write "<name>.ready", hold until "<name>.go" arrives
 function fill($n, $name) {
     $a = []
     for ($i = 0; $i < $n; $i++) { $a = array::push($a, string::repeat("x", 1048576)) }
@@ -48,7 +48,7 @@ function fill($n, $name) {
 route("GET", "/ok", fn() => response::text("ok"))
 route("GET", "/grow", function() { $a = []; while (true) { $a = array::push($a, string::repeat("x", 1048576) . count($a)) } })
 route("GET", "/hold", function() { return response::text("held " . fill(int(request::get("mb")), request::get("name"))) })
-// C: m1 MiB, "c.ready" yaz, "c.go" bekle, sonra m2 MiB daha (süreç sınırını o geçer)
+// C: m1 MiB, write "c.ready", wait for "c.go", then m2 MiB more (that is what crosses the process limit)
 route("GET", "/climb", function() {
     $a = []
     for ($i = 0; $i < int(request::get("m1")); $i++) { $a = array::push($a, string::repeat("y", 1048576)) }
@@ -67,12 +67,12 @@ route("GET", "/unstash-then-grow", function() {
     cache::delete("big")
     return response::text("grew " . fill(200, ""))
 })
-// try/catch durdurmayı yutamaz: yutsaydı döngü sonsuza dek dönerdi (curl zaman aşımı)
+// try/catch cannot swallow the stop: if it did the loop would spin forever (curl timeout)
 route("GET", "/catchgrow", function() {
     $a = []
     while (true) { try { $a = array::push($a, string::repeat("x", 1048576)) } catch ($e) { } }
 })
-// 100 × (1 MiB . "y") ve 100 × "{1 MiB}y": tam boyutta 100 MiB < 128 MiB bütçe (ESKİ: 200 MiB → durdu)
+// 100 × (1 MiB . "y") and 100 × "{1 MiB}y": at full size 100 MiB < 128 MiB budget (OLD: 200 MiB → stopped)
 route("GET", "/concat", function() {
     $a = []
     $s = string::repeat("x", 1048576)
@@ -85,7 +85,7 @@ route("GET", "/interp", function() {
     for ($i = 0; $i < 100; $i++) { $a = array::push($a, "{$s}y") }
     return response::text("interp " . count($a))
 })
-// 100 MiB ayır, bırak — 20 kez (istek bütçesi 128 MiB): hesap kayarsa istek durur
+// allocate 100 MiB, release — 20 times (request budget 128 MiB): if the accounting drifts the request stops
 route("GET", "/churn", function() {
     for ($k = 0; $k < int(request::get("k")); $k++) {
         $a = []
@@ -102,17 +102,17 @@ start() { # <limit> <port>
 }
 stop() { kill $pid 2>/dev/null; wait $pid 2>/dev/null; pid=""; }
 code() { curl -s -m "${2:-30}" -o "$T/b.$$.$RANDOM" -w '%{http_code}' "$1"; }
-# Sinyal dosyası gelene dek bekle (en çok 30 sn)
+# Wait until the signal file arrives (at most 30 s)
 await() { for i in $(seq 1 300); do [ -e "$T/sig/$1" ] && return 0; sleep 0.1; done; echo "  FAIL no signal $1"; fail=1; return 1; }
 
 echo "== 1) a request that grows without end"
 if start 256MiB $P; then
     check "the startup log states the limits" "$(grep -q 'memory limit 256 MiB (LOOK_MEMORY_LIMIT), 128 MiB per request' "$T/srv.log" && echo ok)" "$(grep -i 'memory limit' "$T/srv.log")"
     ( code "http://127.0.0.1:$P/grow" 60 > "$T/grow.code" ) & g1=$!
-    # Yanıt GELİYOR mu (hız ayrı ölçüldü). Fiber kipinde büyüyen istekle aynı iş parçacığına düşen
-    # istek onu bekler (önceden var olan fiber sıra davranışı; TSan altında ~6 sn) — süre buna göre.
+    # Is a response COMING (speed was measured separately). In fiber mode a request that lands on the same thread as the growing request
+    # waits for it (pre-existing fiber ordering behavior; ~6 s under TSan) — the time is set accordingly.
     sleep 0.3; mid=$(curl -s -m 30 "http://127.0.0.1:$P/ok")
-    wait $g1   # yalnız curl: çıplak wait sunucuyu da bekler (asılır)
+    wait $g1   # curl only: a bare wait also waits for the server (hangs)
     check "the growing request ends with 500 ($(cat "$T/grow.code"))" "$( [ "$(cat "$T/grow.code")" = 500 ] && echo ok)" "code $(cat "$T/grow.code")"
     check "the log says why" "$(grep -q 'the request would use more than 128 MiB of memory and was stopped' "$T/srv.log" && echo ok)" "$(grep -E 'ERROR' "$T/srv.log" | tail -2)"
     check "the server answered during it ('$mid') and after" "$( [ "$mid" = ok ] && [ "$(curl -s -m 5 "http://127.0.0.1:$P/ok")" = ok ] && echo ok)" "during '$mid'"
@@ -131,20 +131,20 @@ fi
 
 echo "== 2) the process limit: 503 near it, the biggest request ends at it"
 P2=$((P + 1))
-if start 300MiB $P2; then   # istek bütçesi 150 MiB; %90 = 270 MiB
-    ( code "http://127.0.0.1:$P2/hold?mb=130&name=a" 60 > "$T/a.code" ) & ja=$!   # A: 130 MiB tutar
+if start 300MiB $P2; then   # request budget 150 MiB; 90% = 270 MiB
+    ( code "http://127.0.0.1:$P2/hold?mb=130&name=a" 60 > "$T/a.code" ) & ja=$!   # A: holds 130 MiB
     await a.ready
     ( code "http://127.0.0.1:$P2/hold?mb=60&name=b" 60 > "$T/b.code" ) & jb=$!    # B: 60 MiB
     await b.ready
-    ( code "http://127.0.0.1:$P2/climb?m1=85&m2=35" 60 > "$T/c.code" ) & jc=$!    # C: 85 MiB (toplam >270)
+    ( code "http://127.0.0.1:$P2/climb?m1=85&m2=35" 60 > "$T/c.code" ) & jc=$!    # C: 85 MiB (total >270)
     await c.ready
     near=$(code "http://127.0.0.1:$P2/ok" 5)
-    touch "$T/sig/c.go"            # C +35 MiB → toplam >300: en büyük (A) durur
+    touch "$T/sig/c.go"            # C +35 MiB → total >300: the largest (A) stops
     wait $jc
     wait $ja
     touch "$T/sig/b.go"
     wait $jb
-    touch "$T/sig/a.go"            # (A durmadıysa takılmasın)
+    touch "$T/sig/a.go"            # (so it does not hang if A did not stop)
     after=$(code "http://127.0.0.1:$P2/ok" 5)
     check "near the limit a new request gets 503 (got $near)" "$( [ "$near" = 503 ] && echo ok)" "got $near"
     check "at the limit the biggest request (A, 130 MiB) ends with 503: $(cat "$T/a.code")" "$( [ "$(cat "$T/a.code")" = 503 ] && echo ok)" "A got $(cat "$T/a.code")"
@@ -157,7 +157,7 @@ fi
 
 echo "== 3) freeing another request's data does not raise the budget"
 P3=$((P + 2))
-if start 400MiB $P3; then   # istek bütçesi 200 MiB
+if start 400MiB $P3; then   # request budget 200 MiB
     s=$(curl -s -m 30 "http://127.0.0.1:$P3/stash")
     g=$(code "http://127.0.0.1:$P3/unstash-then-grow" 60)
     check "stash ($s), then a request frees it and grows 200 MiB: stopped at its own 200 MiB ($g)" "$( [ "$g" = 500 ] && grep -q 'more than 200 MiB' "$T/srv.log" && echo ok)" "got $g"
@@ -170,8 +170,8 @@ check "exit 1 with the reason (rc=$rc)" "$( [ $rc = 1 ] && grep -q 'LOOK_MEMORY_
 
 echo "== 8) the counters do not drift"
 P8=$((P + 4))
-if start 256MiB $P8; then   # istek bütçesi 128 MiB; %90 = 230 MiB
-    # TSan (LOOK_TEST_NO_TIMING=1) çok yavaş: hafif (yarışı sınar, kaymayı değil)
+if start 256MiB $P8; then   # request budget 128 MiB; 90% = 230 MiB
+    # TSan (LOOK_TEST_NO_TIMING=1) is very slow: light (tests the race, not the drift)
     K8=20; N8=150; [ "${LOOK_TEST_NO_TIMING:-}" = 1 ] && { K8=3; N8=10; }
     c8=$(code "http://127.0.0.1:$P8/churn?k=$K8" 120)
     check "one request allocates and frees 100 MiB $K8 times ($c8)" "$( [ "$c8" = 200 ] && echo ok)" "got $c8: $(grep ERROR "$T/srv.log" | tail -1)"

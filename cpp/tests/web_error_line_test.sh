@@ -1,6 +1,6 @@
 #!/bin/bash
-# Web'de yakalanmamış hata günlüğe SATIRIYLA yazılır (http_main.cpp VmErrorPlace): rota işleyicisi,
-# dahil edilen dosyadaki fonksiyon, rotasız betik, kurulum. ESKİ: yalnız mesaj ("Dispatch error: boom").
+# On the web an uncaught error is logged WITH ITS LINE (http_main.cpp VmErrorPlace): route handler,
+# function in an included file, routeless script, setup. OLD: message only ("Dispatch error: boom").
 # Usage: web_error_line_test.sh <lk-fcgi> [port]   (needs curl)
 set -u
 LKF="$1"; PORT="${2:-7934}"
@@ -35,7 +35,7 @@ if wait_up "$PORT"; then
 else echo "FAIL: server did not start"; cat "$T/srv.log"; fail=1; fi
 kill $pid 2>/dev/null; wait $pid 2>/dev/null; pid=""
 
-# Rotasız betik kurulumda bir kez koşar: hata yalnız istekte (?x=1) atılır.
+# A routeless script runs once at setup: the error is thrown only on a request (?x=1).
 printf '%s\n' 'print("hello")' '$x = request::get("x")' 'if ($x == "1") { throw "script mode" }' > "$T/script.lk"
 "$LKF" --mode http --port "$PORT" --workers 1 "$T/script.lk" >"$T/s.log" 2>&1 &
 pid=$!

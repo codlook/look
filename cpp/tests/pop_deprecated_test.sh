@@ -32,7 +32,7 @@ $l = array::slice($l, 0, -1)
 print(json::encode([$l, $x]))
 LK
 
-# lk --check: her tür için tam bir uyarı, ilk çağrının satırı + toplam; çıkış 0, son satır OK
+# lk --check: exactly one warning per kind, the first call's line + total; exit 0, last line OK
 out="$("$LK" --check "$TMP/bare.lk" 2>&1)"; rc=$?
 n1="$(grep -c '^WARN .*\[pop-deprecated\]' <<< "$out")"
 n2="$(grep -c '^WARN .*\[array-pop-deprecated\]' <<< "$out")"
@@ -44,7 +44,7 @@ if [ "$n1" = 1 ] && [ "$n2" = 1 ] && grep -q '^WARN 3 1 \[pop-deprecated\] .*(3 
   echo "  OK   --check: one [pop-deprecated] and one [array-pop-deprecated] warning, exit 0"
 else echo "  FAIL --check on pop/array::pop: rc=$rc warnings=$n1/$n2 out=[$out]"; fail=1; fi
 
-# yüklemede: tür başına tek WARN satırı, program çalışır, pop/array::pop hâlâ çalışır
+# at load: a single WARN line per kind, the program runs, pop/array::pop still work
 o="$("$LK" "$TMP/bare.lk" 2>"$TMP/err.txt")"; rc=$?
 n1="$(grep -cF -- "$POP" "$TMP/err.txt")"; n2="$(grep -cF -- "$APOP" "$TMP/err.txt")"
 if [ "$o" = "[[1,2],4,2,8]" ] && [ "$rc" = 0 ] && [ "$n1" = 1 ] && [ "$n2" = 1 ] \
@@ -52,7 +52,7 @@ if [ "$o" = "[[1,2],4,2,8]" ] && [ "$rc" = 0 ] && [ "$n1" = 1 ] && [ "$n2" = 1 ]
   echo "  OK   at load: one warning per kind, pop() and array::pop() still work"
 else echo "  FAIL at load: output=[$o] rc=$rc warnings=$n1/$n2 stderr=[$(cat "$TMP/err.txt")]"; fail=1; fi
 
-# yeni yazım: uyarı yok
+# new form: no warning
 out="$("$LK" --check "$TMP/new.lk" 2>&1)"; rc=$?
 o="$("$LK" "$TMP/new.lk" 2>"$TMP/err2.txt")"; rc2=$?
 if [ "$out" = "OK" ] && [ "$rc" = 0 ] && [ "$o" = "[[1,2,3,4],5]" ] && [ "$rc2" = 0 ] && ! grep -q 'deprecated\|pop(' "$TMP/err2.txt"; then

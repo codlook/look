@@ -3,11 +3,11 @@ use json
 use string
 use math
 use type
-// Dizi alan her fonksiyon sözlükle (boş, 1 anahtar, 12 anahtar = dizinli): listeye özgü olanlar
-// açık hata verir; anlamı olanlar yalnız DEĞERLERE bakar (map/filter anahtarları korur); hiçbir
-// sonuçta sözlüğün iç işareti (__assoc__) görünmez. FAIL satırı = hata.
-// ESKİ: reverse/join iç işareti sızdırıyordu; slice/chunk/zip yanlış parça; pop veri kaybı;
-// array::contains anahtarlarda da arıyordu (liste beklenen yere {"admin": 0} → yetki atlatma).
+// Every function that takes an array, given a map (empty, 1 key, 12 keys = indexed): the list-specific ones
+// give an explicit error; the meaningful ones look only at the VALUES (map/filter keep the keys); the map's internal
+// marker (__assoc__) never appears in any result. A FAIL line = an error.
+// OLD: reverse/join leaked the internal marker; slice/chunk/zip gave the wrong piece; pop lost data;
+// array::contains also searched in keys (where a list was expected, {"admin": 0} → authorization bypass).
 
 struct Pt {
   x int = 0
@@ -34,7 +34,7 @@ function check($name, $got, $want) {
     return 0
 }
 
-// f() hata vermeli; mesaj "<ad> takes a list, not a map; use array::values($m) first"
+// f() must raise an error; message "<name> takes a list, not a map; use array::values($m) first"
 function must_fail($name, $fname, $f, $tail) {
     $msg = ""
     try { $r = $f(); $msg = "no error, got " . json::encode($r) } catch ($e) { $msg = "" . $e }
@@ -53,7 +53,7 @@ foreach ([0, 1, 12] as $n) {
     $keys = []
     for ($i = 0; $i < $n; $i++) { $sum += $i; push($vals, $i); push($keys, "k" . $i) }
 
-    // listeye özgü: açık hata
+    // list-specific: explicit error
     $fails += must_fail($t . "array::pop", "array::pop()", fn() => array::pop($m), $LIST_ONLY)
     $fails += must_fail($t . "array::sort", "array::sort()", fn() => array::sort($m), $LIST_ONLY)
     $fails += must_fail($t . "array::sort cb", "array::sort()", fn() => array::sort($m, fn($a, $b) => $a <=> $b), $LIST_ONLY)
@@ -79,7 +79,7 @@ foreach ([0, 1, 12] as $n) {
     try { push($p, 1) } catch ($e) { $err = "" . $e }
     $fails += check($t . "push error", string::contains($err, "push() cannot add to a map"), true)
 
-    // yalnız değerler
+    // values only
     $fails += check($t . "contains value", array::contains($m, $n - 1), $n > 0)
     $fails += check($t . "contains key", array::contains($m, "k0"), false)
     $fails += check($t . "reduce", array::reduce($m, fn($c, $v) => $c + $v, 0), $sum)
@@ -89,7 +89,7 @@ foreach ([0, 1, 12] as $n) {
     $fails += check($t . "any key", array::any($m, fn($v) => $v == "k0"), false)
     $fails += check($t . "all", array::all($m, fn($v) => $v >= 0), true)
 
-    // map/filter: anahtarlar korunur, geri çağrı değeri alır
+    // map/filter: keys are kept, the callback receives the value
     $mm = array::map($m, fn($v) => $v * 10)
     $fails += check($t . "map keys", array::keys($mm), $keys)
     $fails += check($t . "map last", $n > 0 ? $mm["k" . ($n - 1)] : null, $n > 0 ? ($n - 1) * 10 : null)
@@ -100,7 +100,7 @@ foreach ([0, 1, 12] as $n) {
     $fails += check($t . "filter value", $n > 0 ? $fm["k0"] : null, $n > 0 ? 0 : null)
     $fails += check($t . "filter count", count($fm), count($even))
 
-    // sözlüğe özgü ve dil içi
+    // map-specific and in-language
     $fails += check($t . "count", count($m), $n)
     $fails += check($t . "keys", array::keys($m), $keys)
     $fails += check($t . "values", array::values($m), $vals)
@@ -110,12 +110,12 @@ foreach ([0, 1, 12] as $n) {
     foreach ($m as $k => $v) { push($fe, $k) }
     $fails += check($t . "foreach keys", $fe, $keys)
     $fails += check($t . "print has no marker", leak($m), false)
-    // listeye çevirince listeye özgü işlemler çalışır (hata mesajındaki çözüm)
+    // converting to a list makes the list-specific operations work (the fix named in the error message)
     $fails += check($t . "values then sort", array::sort(array::values($m)), $vals)
     $fails += check($t . "values then max", $n > 0 ? math::max(array::values($m)) : null, $n > 0 ? $n - 1 : null)
 }
 
-// listeler değişmedi
+// lists unchanged
 $l = [3, 1, 2]
 $fails += check("list sort", array::sort($l), [1, 2, 3])
 $fails += check("list reverse", array::reverse($l), [2, 1, 3])
@@ -131,8 +131,8 @@ $fails += check("list unique", array::unique([1, 1, 2]), [1, 2])
 $fails += check("list flatten keeps nested map", array::flatten([[1], ["a" => 1]]), [1, ["a" => 1]])
 $fails += check("math::max list", math::max([1, 5, 2]), 5)
 $fails += check("max two", max(1, 5), 5)
-// çekirdek max/min = math::max/min (tek tanım): tek liste → eleman (eskiden listenin kendisi),
-// üç argüman → üçüne de bakar (eskiden yalnız ilk ikisi)
+// core max/min = math::max/min (single definition): a single list → its element (used to be the list itself),
+// three arguments → looks at all three (used to look only at the first two)
 $fails += check("max list", max([3, 9, 2]), 9)
 $fails += check("min list", min([3, 9, 2]), 2)
 $fails += check("max empty list", max([]), null)
@@ -144,10 +144,10 @@ $fails += check("max strings", max(["b", "c", "a"]), "c")
 $fails += check("math::max = max", math::max([4, 1, 6]), max([4, 1, 6]))
 $x = [1, 2]
 $fails += check("list pop", pop($x), 2)
-// liste içindeki sözlük bir DEĞERDİR: contains onu eşitlikle bulur
+// a map inside a list is a VALUE: contains finds it by equality
 $fails += check("list of maps contains", array::contains([["a" => 1]], ["a" => 1]), true)
 
-// type::is_map: liste mi sözlük mü (boş değerler dahil — belirsizliği saldırgan dener)
+// type::is_map: list or map (including empty values — an attacker tries the ambiguity)
 $fails += check("is_map literal map", type::is_map(["a" => 1]), true)
 $fails += check("is_map empty list", type::is_map([]), false)
 $fails += check("is_map list", type::is_map([1, 2]), false)
@@ -160,7 +160,7 @@ $fails += check("is_map null", type::is_map(null), false)
 $fails += check("is_map string", type::is_map("{}"), false)
 $fails += check("is_map int", type::is_map(1), false)
 $fails += check("is_map list of maps", type::is_map([["a" => 1]]), false)
-// liste ilk elemanı "__assoc__" metni olan bir listedir (işaret metinle taklit edilemez)
+// a list whose first element is the text "__assoc__" is a list (the marker cannot be forged with text)
 $fails += check("is_map forged marker", type::is_map(json::decode("[\"__assoc__\", \"role\", \"admin\"]")), false)
 $fails += check("is_map struct", type::is_map(Pt{x: 1}), false)
 $fails += check("type::of unchanged", type::of(["a" => 1]), "array")

@@ -1,24 +1,24 @@
 # assoc_sweep — assoc (string-keyed array) read hot-path micro-benchmark.
 #
-# Motivasyon: $row["name"] gibi STRING-anahtarlı assoc okuması, VM/interpreter'da
-# lookup-key başına bir std::string ayırıyordu (key.to_string()). str_ref() fast-path
-# bu ayırmayı STRING anahtarda kaldırır. Bu harness onu ölçer (before/after, best-of-3).
+# Motivation: reading a STRING-keyed assoc such as $row["name"] allocated one std::string
+# per lookup key in the VM/interpreter (key.to_string()). The str_ref() fast path
+# removes that allocation for STRING keys. This harness measures it (before/after, best-of-3).
 #
-# K = assoc'taki anahtar sayısı; her tur K okuma yapar; TOTAL ~ sabit tutulur ki
-# ölçüm K'dan bağımsız per-lookup maliyeti yakalasın (küçük-K = fast-path baskın).
+# K = number of keys in the assoc; each round does K reads; TOTAL is held ~constant so
+# the measurement captures per-lookup cost independent of K (small K = fast path dominates).
 #
-# Kullanım:  lk assoc_sweep.lk            (VM — tek motor; tree-walk yorumlayıcı silindi)
+# Usage:  lk assoc_sweep.lk            (VM — single engine; the tree-walk interpreter was removed)
 use date
 
-const { TOTAL = 5000000 }   # her K için toplam lookup sayısı (~5M)
+const { TOTAL = 5000000 }   # total lookups for each K (~5M)
 
-# Anahtar öneki: MSVC small-string optimization eşiği (15 bayt) ÜSTÜNDE olmalı ki
-# to_string() gerçekten heap ayırsın (kısa anahtar SSO'ya girer, ayırma olmaz →
-# fast-path ölçülemez). Gerçek dünyada assoc anahtarları böyle olabilir:
-# "customer_email_address", "created_at_timestamp" vb.
+# Key prefix: must be ABOVE the MSVC small-string optimization threshold (15 bytes) so
+# to_string() really allocates on the heap (a short key fits in SSO, no allocation →
+# the fast path cannot be measured). In the real world assoc keys can look like this:
+# "customer_email_address", "created_at_timestamp", etc.
 const { KEY_PREFIX = "customer_record_field_" }
 
-# K anahtarlı bir assoc kur
+# build an assoc with K keys
 function build($k) {
     $a = []
     for ($i = 0; $i < $k; $i = $i + 1) {
@@ -27,7 +27,7 @@ function build($k) {
     return $a
 }
 
-# Sabit anahtar listesi (her turda aynı anahtarları döngüde oku)
+# Fixed key list (read the same keys in a loop each round)
 function keys_of($k) {
     $ks = []
     for ($i = 0; $i < $k; $i = $i + 1) {
@@ -38,7 +38,7 @@ function keys_of($k) {
 
 use array
 
-# Tek koşum: TOTAL lookup, sonucu topla (ölü-kod eliminasyonu engeli)
+# Single run: TOTAL lookups, sum the result (guards against dead-code elimination)
 function run_once($a, $ks, $k) {
     $rounds = TOTAL / $k
     $sum = 0

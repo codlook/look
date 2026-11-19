@@ -1,5 +1,5 @@
-// libFuzzer harness — IMAP komut + mailbox adı ayrıştırma (ağa açık, PRE-AUTH).
-// Mailbox guard belgeli geçmiş bug (`INBOX; rm -rf /`) düzeltildi; rastgele girdide ÇÖKME olmamalı.
+// libFuzzer harness — IMAP command + mailbox name parsing (network-facing, PRE-AUTH).
+// The mailbox guard's documented past bug (`INBOX; rm -rf /`) was fixed; there must be no CRASH on random input.
 //   clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined -I../../include fuzz_imap_parse.cpp -o fuzz_imap_parse
 #include "look/imap_parse.h"
 #include <string>

@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-# Koleksiyon diferansiyel fuzz testi: rastgele LOOK programları (liste / sözlük / string
-# işlemleri) üretir, gerçek `lk` ile çalıştırır ve aynı işlem dizisini burada yazılmış
-# basit, apaçık doğru bir referans modelde yürütür. Herhangi bir fark = FAIL; fark eden
-# program ifade-ifade küçültülür (shrink) ve en küçük hali basılır.
+# Collection differential fuzz test: generates random LOOK programs (list / map / string
+# operations), runs them with the real `lk`, and executes the same operation sequence in a
+# simple, obviously correct reference model written here. Any difference = FAIL; the differing
+# program is shrunk statement by statement and the smallest form is printed.
 #
-# Kullanım:
+# Usage:
 #   python3 tests/collections_differential_test.py ./build/lk [--iterations N] [--seed S]
 #   LOOK_COLL_FUZZ_ITERATIONS=5000 python3 tests/collections_differential_test.py ./build/lk
-# Varsayılan: 600 program (~30 sn), sabit tohum (deterministik).
+# Default: 600 programs (~30 s), fixed seed (deterministic).
 #
-# Modelin kuralları (docs/look.codlook.com/docs.html + value_semantics_test.lk):
-#   * Dizi ve sözlük DEĞERDİR: `$b = $a` bağımsız kopya verir (yazınca-kopyala);
-#     fonksiyon parametresi de kopyadır.
-#   * Sözlük ekleme sırasını korur; var olan anahtara yazmak yerini değiştirmez.
-#   * Sözlük anahtarı metindir: $m[3] ile $m["3"] aynı anahtardır; "03", "+3" ayrı anahtarlardır.
-#   * Liste indeksi: tam sayı ya da tam-sayı METNİ ("1", "+1", "01" -> 1); negatif = sondan;
-#     okuma aralık dışı = hata; yazma len konumuna = sona ekleme, ötesi = hata.
-#   * Listeye tam-sayı olmayan metin anahtarla yazmak listeyi sözlüğe çevirir ("0","1",…
-#     anahtarlarıyla) — kodun davranışı (vm.cpp array_set).
-#   * Listede tam-sayı olmayan metin anahtarı okumak null; sözlükte eksik anahtar null.
-#   * push/pop yalnız listede; sözlükte hata. pop boş listede null. Yeni yazım (take):
-#     $x = $l[-1] + $l = array::slice($l, 0, -1) — boş listede ve sözlükte hata; çıplak pop az.
-#   * == içerik karşılaştırır: liste sıralı, sözlük sırasız; string/sayı dönüşümü yok.
-#   * string::len/substr/reverse/index_of Unicode kod noktası üzerinde çalışır.
+# Rules of the model (docs/look.codlook.com/docs.html + value_semantics_test.lk):
+#   * Arrays and maps are VALUES: `$b = $a` gives an independent copy (copy-on-write);
+#     a function parameter is a copy too.
+#   * A map keeps insertion order; writing to an existing key does not change its position.
+#   * A map key is text: $m[3] and $m["3"] are the same key; "03", "+3" are separate keys.
+#   * List index: an integer or integer TEXT ("1", "+1", "01" -> 1); negative = from the end;
+#     reading out of range = error; writing at position len = append, beyond = error.
+#   * Writing to a list with a non-integer text key turns the list into a map (with the keys "0","1",…)
+#     — the behavior of the code (vm.cpp array_set).
+#   * Reading a non-integer text key on a list gives null; a missing key in a map gives null.
+#   * push/pop only on a list; error on a map. pop on an empty list gives null. The new form (take):
+#     $x = $l[-1] + $l = array::slice($l, 0, -1) — error on an empty list and on a map; a bare pop is rarer.
+#   * == compares contents: lists ordered, maps unordered; no string/number conversion.
+#   * string::len/substr/reverse/index_of work on Unicode code points.
 import argparse
 import json
 import os
@@ -42,8 +42,8 @@ class LookErr(Exception):
     """LOOK'ta hata vermesi BEKLENEN işlem (try/catch içinde 'ERR' basılır)."""
 
 
-# ── değer modeli ─────────────────────────────────────────────────────────────
-# liste -> Python list ; sözlük -> MapV (sıralı dict) ; skaler: int / str / bool / None
+# ── value model ──────────────────────────────────────────────────────────────
+# list -> Python list ; map -> MapV (ordered dict) ; scalar: int / str / bool / None
 class MapV:
     __slots__ = ("d",)
 
@@ -104,7 +104,7 @@ def get(c, k):
         if i < 0 or i >= len(c):
             raise LookErr()
         return c[i]
-    raise Invalid()  # skaler indeksleme (string indeksi bu testin konusu değil)
+    raise Invalid()  # scalar indexing (string indexing is not the subject of this test)
 
 
 def set_(c, k, v):
@@ -175,7 +175,7 @@ def from_json(text):
     return json.loads(text, object_pairs_hook=hook)
 
 
-# ── LOOK kaynak üretimi ──────────────────────────────────────────────────────
+# ── LOOK source generation ───────────────────────────────────────────────────
 def lit(v):
     if v is None:
         return "null"
@@ -226,7 +226,7 @@ def rand_key(r):
     return r.choice(STR_KEYS) if r.random() < 0.6 else r.choice(INT_KEYS)
 
 
-# Bir işlem = (tür, argümanlar). render(op) -> LOOK satırı; model.apply(op) -> beklenen çıktı satırları.
+# An operation = (kind, arguments). render(op) -> a LOOK line; model.apply(op) -> the expected output lines.
 def gen_op(r, state):
     kinds = [
         ("init_list", 3), ("init_map", 3), ("copy", 6), ("set", 18), ("set2", 7), ("push", 8),
@@ -303,9 +303,9 @@ def render(op):
         e = f"{op[1]}[{lit(op[2])}]"
         return (f"try {{ {e} = array::push({e}, {lit(op[3])})\n"
                 f"print(\"I \" . count({e})) }} catch ($e) {{ print(\"ERR\") }}")
-    if k == "pop":   # kullanımdan kalktı (uyarı stderr'e); birkaç tane kalsın
+    if k == "pop":   # deprecated (warning goes to stderr); keep a few
         return f"try {{ print(\"J \" . {J}(pop({op[1]}))) }} catch ($e) {{ print(\"ERR\") }}"
-    if k == "take":  # pop'un yeni yazımı: son eleman + yerinde kısaltma (SHRINK_PATH)
+    if k == "take":  # the new form of pop: last element + in-place shortening (SHRINK_PATH)
         return (f"try {{ $tk = {op[1]}[-1]\n{op[1]} = array::slice({op[1]}, 0, -1)\n"
                 f"print(\"J \" . {J}($tk)) }} catch ($e) {{ print(\"ERR\") }}")
     if k == "aset":
@@ -361,10 +361,10 @@ def program(ops):
     return PRELUDE + "\n".join(render(o) for o in ops) + "\nprint(\"END\")\n"
 
 
-# ── referans model ───────────────────────────────────────────────────────────
+# ── reference model ──────────────────────────────────────────────────────────
 def ustr_index_of(s, t):
-    # string::index_of BAYT konumu döndürür (stdlib.cpp; docs "First position" der, birimini
-    # söylemez — len/substr/reverse ise kod noktası). Kodun davranışı modellendi; raporda.
+    # string::index_of returns a BYTE position (stdlib.cpp; the docs say "First position" without
+    # naming the unit — len/substr/reverse use code points). The behavior of the code is modeled; noted in the report.
     i = s.find(t)
     return -1 if i < 0 else len(s[:i].encode("utf-8"))
 
@@ -378,7 +378,7 @@ def model_run(ops):
         out.append(("J", canon(v)))
 
     def guarded(f):
-        # try/catch: hata olursa değişken DEĞİŞMEDEN kalır, "ERR" basılır
+        # try/catch: on error the variable stays UNCHANGED, "ERR" is printed
         saved = {k: deep(v) for k, v in env.items()}
         mark = len(out)
         try:
@@ -407,7 +407,7 @@ def model_run(ops):
                 if isinstance(c, list):
                     i = list_index(op[2])
                     if i is None:
-                        raise Invalid()  # listede metin anahtarlı ara düzey: kapsam dışı
+                        raise Invalid()  # intermediate level with a text key on a list: out of scope
                     j = i + len(c) if i < 0 else i
                     if j > len(c) or j < 0:
                         raise LookErr()
@@ -437,8 +437,8 @@ def model_run(ops):
                 c = env[op[1]]
                 if not isinstance(c, (list, MapV)):
                     raise Invalid()
-                inner = get(c, op[2])   # listede aralık dışı okuma -> hata
-                # array::push(null / sözlük, v) hatadır: eksik anahtar listeyi YARATMAZ
+                inner = get(c, op[2])   # out-of-range read on a list -> error
+                # array::push(null / map, v) is an error: a missing key does NOT CREATE a list
                 if inner is None or isinstance(inner, MapV):
                     raise LookErr()
                 if not isinstance(inner, list):
@@ -461,16 +461,16 @@ def model_run(ops):
             def f(op=op):
                 c = env[op[1]]
                 if isinstance(c, MapV):
-                    raise LookErr()   # array::slice sözlükte hata ($m[-1] okuması önce, hata yok)
+                    raise LookErr()   # array::slice on a map is an error (the $m[-1] read comes first, no error)
                 if not isinstance(c, list):
                     raise Invalid()
                 if not c:
-                    raise LookErr()   # $l[-1] boş listede hata
+                    raise LookErr()   # $l[-1] on an empty list is an error
                 J(c.pop())
             guarded(f)
         elif k == "slice":
-            # array::slice($l, offset[, length]) — PHP array_slice: eksi offset sondan; eksi
-            # uzunluk sondan o kadar eleman HARİÇ; sınırlar kırpılır. Sözlükte hata (listeye özgü).
+            # array::slice($l, offset[, length]) — PHP array_slice: a negative offset counts from the end; a negative
+            # length EXCLUDES that many elements from the end; bounds are clamped. Error on a map (list-specific).
             def f(op=op):
                 src = env[op[2]]
                 if isinstance(src, MapV):
@@ -495,10 +495,10 @@ def model_run(ops):
                 if not isinstance(src, (list, MapV)):
                     raise Invalid()
                 if k == "aset" and isinstance(src, list):
-                    # array::set listede (extra_stdlib.cpp): tam sayı ya da tam sayı metni ("1",
-                    # "01", "+1") $l[k] = v ile aynı indekstir, negatif sondan sayar; 0..len
-                    # yerinde/sona. Aralık dışı ve metin anahtar listeyi "0","1",… anahtarlı
-                    # sözlüğe çevirir (yalnız array::set'e özgü, eski davranış).
+                    # array::set on a list (extra_stdlib.cpp): an integer or integer text ("1",
+                    # "01", "+1") is the same index as $l[k] = v, negative counts from the end; 0..len
+                    # in place/append. Out of range and a text key turn the list into a map with the keys "0","1",…
+                    # (specific to array::set only, the old behavior).
                     kk = op[3]
                     idx = None
                     if isinstance(kk, int) and not isinstance(kk, bool):
@@ -514,7 +514,7 @@ def model_run(ops):
                         m.d[key_str(kk)] = op[4]
                         env[op[1]] = m
                     return
-                # mut(): kopya üzerinde $x[k] = v; array::set sözlükte aynısı
+                # mut(): $x[k] = v on a copy; array::set is the same on a map
                 env[op[1]] = set_(deep(src), op[3], op[4])
             guarded(f)
         elif k == "fill":
@@ -590,7 +590,7 @@ def model_run(ops):
                 if any(isinstance(x, (list, MapV, bool)) or x is None for x in c):
                     raise Invalid()
                 if len({type(x) for x in c}) > 1:
-                    raise Invalid()  # karışık tip sıralaması kapsam dışı
+                    raise Invalid()  # sorting of mixed types is out of scope
                 J(sorted(c))
             guarded(f)
         else:
@@ -619,7 +619,7 @@ def parse_output(text):
     return res
 
 
-# lk yalnız VM ile çalışır (LOOK_CLI_VM=0 artık yok sayılıyor); motor listesi tek elemanlı.
+# lk runs only with the VM (LOOK_CLI_VM=0 is now ignored); the engine list has a single element.
 ENGINES = [("vm", {})]
 
 
@@ -669,7 +669,7 @@ def gen_program(r, length):
     tries = 0
     while len(ops) < length and tries < length * 20:
         tries += 1
-        # şu anki değişken değerleri (üretici liste indeksini buna göre seçer)
+        # current variable values (the generator picks the list index based on this)
         state = model_run(ops)[1]
         op = gen_op(r, state)
         try:

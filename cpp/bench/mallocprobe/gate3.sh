@@ -6,7 +6,7 @@ echo 'route("GET","/v", function(){ return response::text("V1") })' >> /tmp/app.
 /look/cpp/build/lk-fcgi --mode http --port 7611 /tmp/app.lk >/tmp/o.log 2>/tmp/e.log &
 SRV=$!; sleep 1.5
 echo "before reload: $(curl -s http://127.0.0.1:7611/v)"
-# değiştir (hot-reload tetikle)
+# change it (trigger hot-reload)
 echo 'use http' > /tmp/app.lk
 echo 'route("GET","/v", function(){ return response::text("V2") })' >> /tmp/app.lk
 sleep 2.5

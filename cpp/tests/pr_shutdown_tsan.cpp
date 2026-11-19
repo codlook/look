@@ -1,27 +1,27 @@
-// pr_shutdown_tsan.cpp — parallel_runtime shutdown yarışı POZİTİF KONTROL harness'ı.
+// pr_shutdown_tsan.cpp — positive-control harness for the parallel_runtime shutdown race.
 //
-// s_cv/s_mtx dosya-statik → program çıkışında yok edilir. parallel() task'ları
-// detached; main task_wait(timeout) ile drain eder ama timeout'u aşan task TERK
-// edilir. Terk edilen task uyanıp task_release() çağırınca, statikler çoktan yok
-// edilmiş olabilir → pthread_cond_destroy vs notify YARIŞI (TSan: global look::s_cv).
+// s_cv/s_mtx are file-static → destroyed at program exit. parallel() tasks are
+// detached; main drains with task_wait(timeout) but a task that exceeds the timeout is ABANDONED.
+// When the abandoned task wakes and calls task_release(), the statics may already have been
+// destroyed → a pthread_cond_destroy vs notify RACE (TSan: global look::s_cv).
 //
-// BUG'lu (statik) derlemede TSan yarış görmeli; FIX'li (leak) derlemede TEMİZ.
-//   Pozitif kontrol: yarışı ÜRET, fix'in yarışı GİDERDİĞİNİ kanıtla.
+// TSan must see a race in the BUGGY (static) build; the FIXED (leak) build must be CLEAN.
+//   Positive control: PRODUCE the race, prove that the fix removes the race.
 #include "look/parallel_runtime.h"
 #include <thread>
 #include <chrono>
 
 int main() {
-    // task_wait deadline'ını AŞAN bir task: main terk edip çıkacak, statikler yok
-    // edilecek, sonra task uyanıp task_release() ile s_cv'ye dokunacak.
-    look::task_acquire(); // THROW mode, slot al
+    // a task that EXCEEDS the task_wait deadline: main abandons it and exits, the statics are destroyed,
+    // then the task wakes and touches s_cv via task_release().
+    look::task_acquire(); // THROW mode, take a slot
     std::thread([]{
-        look::TaskGuard _g; // scope-exit'te task_release() → s_cv.notify
+        look::TaskGuard _g; // task_release() at scope exit → s_cv.notify
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }).detach();
 
-    // main: kısa timeout ile bekle → task 300ms'de, biz 50ms'de vazgeçiyoruz →
-    // task TERK edilir, main return → static destructor s_cv'yi yok eder.
+    // main: wait with a short timeout → the task takes 300ms, we give up at 50ms →
+    // the task is ABANDONED, main returns → the static destructor destroys s_cv.
     look::task_wait(50);
-    return 0; // ← burada s_cv/s_mtx yok edilir; terk edilen task hâlâ uyuyor
+    return 0; // ← s_cv/s_mtx are destroyed here; the abandoned task is still sleeping
 }

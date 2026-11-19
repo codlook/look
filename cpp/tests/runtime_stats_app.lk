@@ -1,4 +1,4 @@
-# runtime::stats() gözlemlenebilirlik sayaçları — CI guard app. Deterministik.
+# runtime::stats() observability counters — CI guard app. Deterministic.
 use runtime
 $c = db::connect(env("DB_DSN", "sqlite://./_rstats.db"))
 db::exec($c, "CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)", [])

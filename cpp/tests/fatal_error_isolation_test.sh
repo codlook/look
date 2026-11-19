@@ -36,9 +36,9 @@ route("GET", "/exit", function() { response::header("X-Leak", "e"); print("exit-
 route("GET", "/boom-before", fn() => response::text("unreached"))
 route("GET", "/clean", fn() => response::text("clean:" . (session::get("u") ?? "none")))
 LK
-# İki aşama, aynı yedi istek:
-#   off  — LOOK_MEMORY_LIMIT=off: gerçek bellek tükenmesi (std::bad_alloc) yolu
-#   on   — bellek bütçesi açık (include/look/mem_budget.h): istek bütçede durur, sunucu ayakta kalır
+# Two phases, the same seven requests:
+#   off  — LOOK_MEMORY_LIMIT=off: the real out-of-memory (std::bad_alloc) path
+#   on   — memory budget on (include/look/mem_budget.h): the request stops at the budget, the server stays up
 fail=0
 phase() { # <label> <LOOK_MEMORY_LIMIT> <log pattern that proves the case ran> <what it proves>
     : > "$TMP/log.txt"; rm -rf "$TMP/s"

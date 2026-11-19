@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# WebSocket ikili mesajlar (include/look/websocket.h, http_main.cpp ws::*).
-# ESKİ: ws::send her mesajı metin çerçevesiyle gönderiyordu — ikili veri (geçersiz UTF-8) gidince
-# tarayıcı bağlantıyı kapatıyordu, uygulama nedenini göremiyordu; gelen ikili mesaj metinden ayırt
-# edilemiyordu. Şimdi: ws::send_binary / ws::broadcast_binary ikili çerçeve (0x2) gönderir; ws::send ve
-# ws::broadcast geçerli UTF-8 olmayan metinde açık hata verir; işleyici fn($data, $binary) ikili mi
-# olduğunu alır (tek parametreli eski işleyici aynı çalışır); sınır metin ve ikili için aynı (16 MB).
-# Gelen metin geçerli UTF-8 olmalı: değilse 1007 ile kapanır, işleyici görmez (parçalıda birleşik mesaj).
+# WebSocket binary messages (include/look/websocket.h, http_main.cpp ws::*).
+# OLD: ws::send sent every message as a text frame — when binary data (invalid UTF-8) went out
+# the browser closed the connection and the application could not see why; an incoming binary message could not be told
+# from text. Now: ws::send_binary / ws::broadcast_binary send a binary frame (0x2); ws::send and
+# ws::broadcast raise an explicit error on text that is not valid UTF-8; the handler fn($data, $binary) receives whether the message is
+# binary (an old one-parameter handler works the same); the limit is the same for text and binary (16 MB).
+# Incoming text must be valid UTF-8: otherwise the connection closes with 1007 and the handler does not see it (for fragments, the reassembled message).
 # Usage: ws_binary_test.sh <lk-fcgi> [port]
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi> [port]}")" && pwd)/$(basename "$1")"
 PORT="${2:-7748}"
 TMP="$(mktemp -d)"; wd=""
 trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null; [ -n "$wd" ] && kill "$wd" 2>/dev/null' EXIT
-# Takılırsa 180 sn'de kırmızı; bekçi çıkışta öldürülür (bitmiş testin PID'ine sinyal gitmesin)
-( sleep 180; echo "FAIL: ws binary test timed out (180 s)"; kill -TERM $$ ) 2>/dev/null & wd=$!; disown $wd   # disown: öldürülünce kabuk "Terminated" basmasın
+# If it hangs, red after 180 s; the watchdog is killed on exit (so no signal reaches the PID of a finished test)
+( sleep 180; echo "FAIL: ws binary test timed out (180 s)"; kill -TERM $$ ) 2>/dev/null & wd=$!; disown $wd   # disown: so the shell does not print "Terminated" when it is killed
 cat > "$TMP/app.lk" <<'LK'
 route("GET", "/ok", fn() => response::text("ok"))
-// ikili geri ikili, metin geri "text:" + metin
+// binary echoes back binary, text echoes back "text:" + text
 route("WS", "/echo", function($ws) {
     ws::on($ws, "message", function($m, $bin) {
         if ($bin) { ws::send_binary($ws, $m) } else { ws::send($ws, "text:" . $m) }
     })
 })
-// tek parametreli (eski) işleyici
+// one-parameter (old) handler
 route("WS", "/old", function($ws) {
     ws::on($ws, "message", function($m) { ws::send($ws, "old:" . strlen($m)) })
 })
-// gelen veriyi metin olarak geri göndermeyi dener
+// tries to send the incoming data back as text
 route("WS", "/astext", function($ws) {
     ws::on($ws, "message", function($m) {
         try { ws::send($ws, $m); ws::send($ws, "sent") } catch ($e) { ws::send($ws, "error:" . $e) }
@@ -46,7 +46,7 @@ LK
 cat > "$TMP/client.py" <<'PY'
 import socket, base64, os, sys, struct, time
 PORT = int(sys.argv[1])
-# Beklenmedik hata (ör. eski sunucu yanıt vermedi) döküm yerine FAIL satırı olsun
+# An unexpected error (e.g. the old server did not answer) should give a FAIL line instead of a dump
 sys.excepthook = lambda t, v, tb: print("  FAIL unexpected %s: %s" % (t.__name__, v))
 fails = 0
 def check(name, ok, why=""):
@@ -86,7 +86,7 @@ def recv_frame(s):
     if n == 126: n = struct.unpack(">H", recvn(s, 2))[0]
     elif n == 127: n = struct.unpack(">Q", recvn(s, 8))[0]
     return op, recvn(s, n)
-BIN = bytes([0x00, 0xFF, 0xFE, 0x80, 0xC0, 0x41, 0x0A]) + os.urandom(300)   # geçersiz UTF-8 + rastgele
+BIN = bytes([0x00, 0xFF, 0xFE, 0x80, 0xC0, 0x41, 0x0A]) + os.urandom(300)   # invalid UTF-8 + random
 
 s = connect("/echo")
 send_frame(s, 0x2, BIN); op, p = recv_frame(s)
@@ -119,17 +119,17 @@ s.close()
 a = connect("/bcast"); b = connect("/bcast"); time.sleep(0.2)
 send_frame(a, 0x2, BIN); op, p = recv_frame(b)
 check("ws::broadcast_binary reaches another client as binary", op == 2 and p == BIN, "op=%d len=%d" % (op, len(p)))
-recv_frame(a)   # a da yayını alır
+recv_frame(a)   # a also receives the broadcast
 send_frame(a, 0x1, b"ok"); recv_frame(a); recv_frame(b)
 a.close(); b.close()
 
-s = connect("/bcastbad")                                     # ikili veriyi ws::broadcast ile yaymayı dener
+s = connect("/bcastbad")                                     # tries to broadcast binary data with ws::broadcast
 send_frame(s, 0x2, BIN); op, p = recv_frame(s)
 want = b"error:ws::broadcast(): the message is not valid UTF-8 text; send binary data with ws::broadcast_binary()"
 check("ws::broadcast of bytes that are not UTF-8 is an error that names ws::broadcast_binary", op == 1 and p == want, repr(p[:120]))
 s.close()
 
-# ── gelen metin geçerli UTF-8 olmalı: değilse 1007 ile kapanır, işleyici görmez ──
+# ── incoming text must be valid UTF-8: otherwise it closes with 1007 and the handler does not see it ──
 def close_code(frames):
     s = connect("/echo")
     try:
@@ -141,12 +141,12 @@ def close_code(frames):
         s.close()
 r = close_code([(0x1, b"ab\xff\xfecd")])
 check("a text frame that is not UTF-8 closes the connection with 1007 (the handler never sees it)", r == (8, 1007), repr(r))
-r = close_code([(0x1, b"\xed\xa0\x80")])                      # vekil (U+D800) — UTF-8'de yasak
+r = close_code([(0x1, b"\xed\xa0\x80")])                      # surrogate (U+D800) — forbidden in UTF-8
 check("an encoded surrogate in text closes with 1007", r == (8, 1007), repr(r))
-euro = "x€y".encode()                                        # € = 3 bayt; parçalar arasında bölünür
+euro = "x€y".encode()                                        # € = 3 bytes; split across fragments
 r = close_code([(0x1, euro[:2], False), (0x0, euro[2:], True)])
 check("a character split between two parts of a text message is accepted", r == (1, b"text:x\xe2\x82\xacy"), repr(r))
-r = close_code([(0x1, b"ok", False), (0x0, b"\xc3", True)])  # birleşince yarım karakter
+r = close_code([(0x1, b"ok", False), (0x0, b"\xc3", True)])  # a half character once reassembled
 check("a text message in parts that is not UTF-8 when joined closes with 1007", r == (8, 1007), repr(r))
 r = close_code([(0x2, b"\xff\xfe\x00")])
 check("a binary message is not checked for UTF-8", r == (2, b"\xff\xfe\x00"), repr(r))

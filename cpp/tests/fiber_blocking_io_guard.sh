@@ -25,8 +25,8 @@ check_file() {
         depth = 0
         for (i = 1; i <= NR; i++) {
             s = L[i]
-            # Windows dalları: #ifdef _WIN32 / #if defined(_WIN32) gövdesi, #ifndef _WIN32 / #if
-            # !defined(_WIN32) bloğunun #else dalı. Her derinlikte ayrı izlenir (iç içe #if).
+            # Windows branches: the body of #ifdef _WIN32 / #if defined(_WIN32), the #else branch of an #ifndef _WIN32 / #if
+            # !defined(_WIN32) block. Tracked separately at each depth (nested #if).
             if (s ~ /^[ \t]*#[ \t]*if/) {
                 depth++; kind[depth] = 0; inwin[depth] = 0
                 if (s ~ /#[ \t]*ifdef[ \t]+_WIN32/ || s ~ /#[ \t]*if[ \t]+defined\(_WIN32\)/) { kind[depth] = 1; inwin[depth] = 1 }
@@ -36,9 +36,9 @@ check_file() {
             if (s ~ /^[ \t]*#[ \t]*(else|elif)/) { inwin[depth] = (kind[depth] == -1); continue }
             if (s ~ /^[ \t]*#[ \t]*endif/) { inwin[depth] = 0; kind[depth] = 0; depth--; continue }
             win = 0; for (d = 1; d <= depth; d++) if (inwin[d]) win = 1
-            if (win) continue                                      # Windows dalı
-            if (s ~ /^[ \t]*\/\//) continue                        # yorum satırı
-            code = s; sub(/[ \t]*\/\/.*$/, "", code)                # satır sonu yorumu
+            if (win) continue                                      # Windows branch
+            if (s ~ /^[ \t]*\/\//) continue                        # comment line
+            code = s; sub(/[ \t]*\/\/.*$/, "", code)                # end-of-line comment
             mark2 = 0; for (k = i - 2; k <= i; k++) if (k > 0 && L[k] ~ /blocking-ok/) mark2 = 1
             mark3 = 0; for (k = i - 3; k <= i; k++) if (k > 0 && L[k] ~ /blocking-ok/) mark3 = 1
             if (code ~ /(^|[^a-zA-Z_])poll[ \t]*\(/) {
@@ -51,9 +51,9 @@ check_file() {
                 waited = 0; for (k = i - 8; k < i; k++) if (k > 0 && L[k] ~ /fiber_wait_readable|client_wait_readable|wait_readable_tmo/) waited = 1
                 if (!nb && !waited && !mark3) print F ":" i ": read without a fiber wait: " s
             }
-            # 3–5: DNS, bağlantı kurma, TLS el sıkışması ve gönderme look/fiber_net.h yardımcılarından
-            # geçer (fiber_getaddrinfo, fiber_connect, fiber_ssl_connect, fiber_send_all). Ham çağrı
-            # yalnız "fiber-safe" (soket o an engellemesiz / iş havuzunda) ya da "blocking-ok" ile.
+            # 3–5: DNS, connecting, the TLS handshake and sending go through the look/fiber_net.h helpers
+            # (fiber_getaddrinfo, fiber_connect, fiber_ssl_connect, fiber_send_all). A raw call
+            # only with "fiber-safe" (the socket is non-blocking at that moment / on the job pool) or "blocking-ok".
             safe2 = mark2; for (k = i - 2; k <= i; k++) if (k > 0 && L[k] ~ /fiber-safe/) safe2 = 1
             if (code ~ /(^|[^a-zA-Z_:])(::)?getaddrinfo[ \t]*\(/ && !safe2)
                 print F ":" i ": DNS lookup outside fiber_getaddrinfo: " s

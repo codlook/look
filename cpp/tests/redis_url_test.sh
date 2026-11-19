@@ -25,7 +25,7 @@ start() {   # url
     ( cd "$T" && LOOK_SESSION_DRIVER=redis LOOK_REDIS_URL="$1" exec "$FCGI" --mode http --port "$PORT" --workers 1 app.lk > "$T/log.txt" 2>&1 ) & pid=$!
     for i in $(seq 1 50); do curl -s -o /dev/null -m 1 "localhost:$PORT/ping" && break; sleep 0.1; done
 }
-dbsize() {   # db → anahtar sayısı
+dbsize() {   # db → number of keys
     exec 3<>"/dev/tcp/$RH/$RP" || { echo "?"; return; }
     printf '*2\r\n$6\r\nSELECT\r\n$%d\r\n%s\r\n*1\r\n$6\r\nDBSIZE\r\n' "${#1}" "$1" >&3
     read -r -t 2 a <&3; read -r -t 2 b <&3; exec 3<&- 3>&-
@@ -36,7 +36,7 @@ ok_url() {   # ad url
     c="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "localhost:$PORT/set")"
     [ "$c" = 200 ] && echo "  OK   $1" || { echo "  FAIL $1: HTTP $c; $(tail -2 "$T/log.txt")"; fail=1; }
 }
-bad_url() {   # ad url beklenen-günlük-metni
+bad_url() {   # name url expected-log-text
     start "$2"
     c="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "localhost:$PORT/set")"
     if [ "$c" = 503 ] && grep -qF "$3" "$T/log.txt"; then echo "  OK   $1"

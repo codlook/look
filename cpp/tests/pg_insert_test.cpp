@@ -1,5 +1,5 @@
-// PostgreSQL INSERT kimliği — look/pg_insert.h tablo testi (sunucusuz). Canlı davranış:
-// tests/behavioral/pg_insert_id.lk (gerçek postgres:16).
+// PostgreSQL INSERT identity — look/pg_insert.h table test (no server). Live behavior:
+// tests/behavioral/pg_insert_id.lk (real postgres:16).
 //   Build: g++ -std=c++17 -Iinclude tests/pg_insert_test.cpp -o /tmp/pgins && /tmp/pgins
 #include "look/pg_insert.h"
 #include <cstdio>

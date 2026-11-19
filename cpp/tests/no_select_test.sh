@@ -11,7 +11,7 @@
 fail=0
 for f in src/*.cpp include/look/*.h; do
     awk -v F="$f" '
-        # Windows dalı: #ifdef _WIN32 / #if defined(_WIN32) gövdesi ve #ifndef _WIN32 / #if !defined(_WIN32) bloğunun #else dalı.
+        # Windows branch: the body of #ifdef _WIN32 / #if defined(_WIN32) and the #else branch of an #ifndef _WIN32 / #if !defined(_WIN32) block.
         /^[ \t]*#[ \t]*if/    { depth++; neg[depth] = ($0 ~ /_WIN32/ && $0 ~ /!|ifndef/) ? 1 : 0; win[depth] = ($0 ~ /_WIN32/ && !neg[depth]) ? 1 : 0; next }
         /^[ \t]*#[ \t]*(else|elif)/ { win[depth] = neg[depth]; next }
         /^[ \t]*#[ \t]*endif/ { depth--; next }

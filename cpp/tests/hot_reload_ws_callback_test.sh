@@ -47,7 +47,7 @@ def say(c, text):
     except socket.timeout: return "timeout"
     n = buf[1] & 0x7f; c[1] = buf[2 + n:]; return buf[2:2 + n].decode()
 a = opn(); print("A1 " + say(a, "x"))
-sys.stdout.flush(); open(sys.argv[2], "w").close()          # betiğe: şimdi yeniden yükle
+sys.stdout.flush(); open(sys.argv[2], "w").close()          # to the script: reload now
 while os.path.exists(sys.argv[2]): time.sleep(0.05)
 print("A2 " + say(a, "y"))
 b = opn(); print("B1 " + say(b, "z"))

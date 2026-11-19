@@ -1,12 +1,12 @@
-# template:: HTML-kaçış davranışsal testi — XSS sınırı (saf, sunucu YOK). CI-koşabilir.
-# Amaç: kullanıcı verisi HTML'e girerken tehlikeli karakterler kaçırılıyor mu.
-# POZİTİF KONTROL: escape kaldırılırsa (want'ı ham payload'a çevir) → FAIL basar,
-# yani bu test gerçekten kaçışı doğruluyor (yeşil-boşluk değil).
+# template:: HTML-escape behavioral test — the XSS boundary (pure, NO server). Runnable in CI.
+# Goal: are dangerous characters escaped when user data enters HTML.
+# POSITIVE CONTROL: if the escape is removed (turn want into the raw payload) → prints FAIL,
+# i.e. this test really verifies the escaping (not a green void).
 use template
 $ran = 0
 function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
 
-# Tekil meta-karakterler — html_escape.h'deki 6 kural (& < > " ' `)
+# Single meta characters — the 6 rules in html_escape.h (& < > " ' `)
 chk("amp",        template::escape("a&b"),   "a&amp;b"); $ran = $ran + 1
 chk("lt",         template::escape("a<b"),   "a&lt;b"); $ran = $ran + 1
 chk("gt",         template::escape("a>b"),   "a&gt;b"); $ran = $ran + 1
@@ -14,27 +14,27 @@ chk("dquote",     template::escape("a\"b"),  "a&quot;b"); $ran = $ran + 1
 chk("squote",     template::escape("a'b"),   "a&#39;b"); $ran = $ran + 1
 chk("backtick",   template::escape("a`b"),   "a&#96;b"); $ran = $ran + 1
 
-# KaçırılMAYAN güvenli karakterler aynen geçmeli
+# Safe characters that are NOT escaped must pass through unchanged
 chk("safe-plain", template::escape("Merhaba Dunya 123"), "Merhaba Dunya 123"); $ran = $ran + 1
 chk("bos",        template::escape(""), ""); $ran = $ran + 1
 
-# XSS PAYLOAD — script etiketi tamamen etkisizleşmeli (< > " ' hepsi kaçmalı)
+# XSS PAYLOAD — the script tag must be fully neutralized (< > " ' must all be escaped)
 chk("xss-script", template::escape("<script>alert('x')</script>"),
     "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"); $ran = $ran + 1
-# img onerror XSS — attribute-break denemesi (" ve > kaçmalı)
+# img onerror XSS — attribute-break attempt (" and > must be escaped)
 chk("xss-img-onerror", template::escape("<img src=x onerror=\"alert(1)\">"),
     "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"); $ran = $ran + 1
-# JS template-literal enjeksiyonu — backtick + ${} (B-08 kuralı: backtick kaçar)
+# JS template-literal injection — backtick + ${} (B-08 rule: backtick is escaped)
 chk("xss-template-literal", template::escape("`${alert(1)}`"),
     "&#96;${alert(1)}&#96;"); $ran = $ran + 1
-# Ampersan çift-kaçış OLMAMALI — & bir kez &amp; olur (idempotent değil, tek geçiş)
+# Ampersand must NOT be double-escaped — & becomes &amp; once (not idempotent, single pass)
 chk("entity-once", template::escape("&amp;"), "&amp;amp;"); $ran = $ran + 1
 
-# template::render_string — {$var} otomatik kaçmalı (auto-escape)
+# template::render_string — {$var} must be escaped automatically (auto-escape)
 chk("render-autoescape", template::render_string("<p>{$c}</p>",
     ["c" => "<script>x</script>"]),
     "<p>&lt;script&gt;x&lt;/script&gt;</p>"); $ran = $ran + 1
-# {!$var} ham (kaçışsız) — bilinçli raw çıkış (tasarım gereği kaçmaz)
+# {!$var} raw (unescaped) — deliberate raw output (by design it is not escaped)
 chk("render-rawvar", template::render_string("<p>{!$c}</p>",
     ["c" => "<b>ok</b>"]),
     "<p><b>ok</b></p>"); $ran = $ran + 1

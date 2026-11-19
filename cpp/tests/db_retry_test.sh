@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# db_retry_test.sh — PG kör-retry SESSİZ ÇİFT-YAZMA guard'ı (53. bug).
+# db_retry_test.sh — PG blind-retry SILENT DOUBLE-WRITE guard (bug 53).
 #
-# PostgresClient::query()/execute() her std::runtime_error'da bağlantıyı yeniden
-# kurup sorguyu KOŞULSUZ yeniden çalıştırıyordu. Bağlantı isteği gönderdikten
-# SONRA ama yanıt okunmadan koparsa (proxy/failover/blip), sunucu INSERT'i
-# işlemiş olabilir; retry onu İKİNCİ kez çalıştırır → sessiz çift-yazma
-# (çift ödeme/çift sipariş) — bu oturumun ekseni.
+# PostgresClient::query()/execute() reconnected on every std::runtime_error
+# and re-ran the query UNCONDITIONALLY. If the connection drops after the request is sent
+# but BEFORE the reply is read (proxy/failover/blip), the server may have
+# processed the INSERT; the retry runs it a SECOND time → a silent double-write
+# (double payment/double order) — the axis of this session.
 #
-# Fix: retry YALNIZ gönderim başarısızsa (PgSendError = istek sunucuya ulaşmadı,
-# güvenli). Yanıt-okuma kopması retry EDİLMEZ → app fail-loud hata alır.
+# Fix: retry ONLY if the send failed (PgSendError = the request did not reach the server,
+# safe). A drop while reading the reply is NOT retried → the app gets a fail-loud error.
 #
-# Kanıt: sahte-PG "commit_kopar" — INSERT'i sayar, ilk seferinde yanıt vermeden
-# soketi kapatır. İstemci retry ederse sayaç 2 (çift-yazma); fix'te 1 + app hata.
+# Proof: a fake PG "commit_kopar" — counts the INSERT, the first time closes
+# the socket without replying. If the client retries the counter is 2 (double-write); with the fix 1 + an app error.
 set -u
 LK="${1:-./build/lk}"
 PY="${PYTHON:-python3}"
@@ -39,7 +39,7 @@ if [ "$n" != "1" ]; then
 else
   echo "  PASS: post-send kopmada INSERT tek kez ulasti (kor retry yok)"
 fi
-# App fail-loud olmali (sessiz 'done' DEGIL)
+# The app must be fail-loud (NOT a silent 'done')
 if echo "$out" | grep -q "done" && ! echo "$out" | grep -qi "connection lost\|error"; then
   echo "  FAIL fail-loud: app hata gormeden 'done' dedi (sessiz basari — kopma gizlendi)"
   fail=1

@@ -1,17 +1,17 @@
 <?php
 /**
- * LOOK — Plesk index.php giriş-doğrulama enjeksiyon-regresyon guard'ı (AĞSIZ).
+ * LOOK — Plesk index.php input-validation injection-regression guard (NO NETWORK).
  *
- * index.php, add/edit eyleminde domain/script'i enable.sh'a (oradan tırnaksız
- * heredoc → systemd unit → sudo restart → root) veriyor. İLK savunma katmanı:
- *   - domain FQDN regex'i (satır 229)
- *   - script yol regex'i + '..' kontrolü (satır 233)
- *   - valid_svc() look-* regex'i (satır 118) — path-injection'ı kapatır
+ * index.php passes domain/script to enable.sh on the add/edit action (from there the unquoted
+ * heredoc → systemd unit → sudo restart → root). FIRST defense layer:
+ *   - the domain FQDN regex (line 229)
+ *   - the script path regex + '..' check (line 233)
+ *   - the valid_svc() look-* regex (line 118) — closes path-injection
  *
- * Bu guard regex'leri GERÇEK index.php'DEN çıkarır (kopya değil): biri regex'i
- * zayıflatırsa test kırmızı olur. Plesk/ağ GEREKMEZ — saf preg_match.
+ * This guard EXTRACTS the regexes FROM THE REAL index.php (not a copy): if someone
+ * weakens a regex the test goes red. NO Plesk/network needed — pure preg_match.
  *
- * Çalıştırma:  php cpp/tests/_plesk_php_domain_test.php
+ * Run:  php cpp/tests/_plesk_php_domain_test.php
  */
 
 $src = __DIR__ . '/../../platforms/plesk/htdocs/index.php';
@@ -22,7 +22,7 @@ $fail = 0;
 function pass($m){ echo "  \033[32mPASS\033[0m $m\n"; }
 function fl($m){ global $fail; echo "  \033[31mFAIL\033[0m $m\n"; $fail=1; }
 
-/* --- Regex'leri kaynaktan çıkar --- */
+/* --- Extract the regexes from the source --- */
 // domain:  if (!preg_match('/^(?=.{1,253}$)[a-z0-9]...$/i', $domain))
 if (!preg_match('/preg_match\(\s*(\'(?:\\\\.|[^\'\\\\])*\')\s*,\s*\$domain\s*\)/', $code, $m)) {
     fl("domain preg_match satırı çıkarılamadı (kaldırılmış?)"); $DOMAIN_RE = null;
@@ -38,9 +38,9 @@ if (!preg_match('/preg_match\(\s*(\'(?:\\\\.|[^\'\\\\])*\')\s*,\s*\$svc\s*\)/', 
     fl("valid_svc preg_match satırı çıkarılamadı"); $SVC_RE = null;
 } else { $SVC_RE = eval("return {$m[1]};"); pass("valid_svc regex çıkarıldı: {$m[1]}"); }
 
-/* --- Test vektörleri --- */
+/* --- Test vectors --- */
 $bad_domains = [
-    "look.com\nExecStartPre=/bin/touch /tmp/pwn",   // satır-sonu unit enjeksiyonu (asıl privesc)
+    "look.com\nExecStartPre=/bin/touch /tmp/pwn",   // line-end unit injection (the actual privesc)
     "look.com\n[Service]\nExecStart=/bin/sh",
     "look.com; touch /tmp/pwn",
     "look.com\$(id)",
@@ -48,9 +48,9 @@ $bad_domains = [
     "look.com && reboot",
     "look.com | nc x 9",
     "../../etc/passwd",
-    "look .com",                                     // boşluk
+    "look .com",                                     // space
     "look.com/",                                     // slash
-    "",                                              // boş
+    "",                                              // empty
     "look.com\r\nExecStart=/evil",                   // CRLF
 ];
 $good_domains = ["look.codlook.com", "qrmenu.codlook.com", "a.bc", "sub.domain.example.org"];
@@ -58,9 +58,9 @@ $good_domains = ["look.codlook.com", "qrmenu.codlook.com", "a.bc", "sub.domain.e
 $bad_scripts = [
     "/var/www/vhosts/x/app.lk\nExecStart=/evil",
     "/var/www/vhosts/../../etc/x.lk",                // traversal
-    "/etc/passwd",                                   // prefix dışı
+    "/etc/passwd",                                   // outside the prefix
     "/var/www/vhosts/x/app.lk; rm -rf /",
-    "/var/www/vhosts/x/app.php",                     // .lk değil
+    "/var/www/vhosts/x/app.php",                     // not .lk
     "/var/www/vhosts/x/\$(id).lk",
 ];
 $good_scripts = ["/var/www/vhosts/codlook.com/look.codlook.com/index.lk"];
@@ -91,12 +91,12 @@ echo "== 2) domain regex: meşru domain'leri KABUL et ==\n";
 check_accept($DOMAIN_RE, $good_domains, "domain");
 
 echo "== 3) script regex: kötü yolları REDDET ('..' de ayrıca elenir) ==\n";
-// index.php'de script ayrıca str_contains(..'..') ile de elenir; regex tek başına test.
+// in index.php the script is also filtered by str_contains(..'..'); the regex is tested alone.
 foreach ($bad_scripts as $s) {
     if ($SCRIPT_RE === null) break;
     $shown = str_replace(["\n","\r"], ["\\n","\\r"], $s);
     $ok_regex = preg_match($SCRIPT_RE, $s);
-    $has_dotdot = strpos($s, '..') !== false;   // index.php ek kontrolü
+    $has_dotdot = strpos($s, '..') !== false;   // extra check in index.php
     $accepted = $ok_regex && !$has_dotdot;
     $accepted ? fl("script KABUL etti: [$shown]") : pass("script reddetti: [$shown]");
 }
@@ -107,7 +107,7 @@ echo "== 5) valid_svc: path-injection svc'yi REDDET, meşru svc'yi KABUL ==\n";
 check_reject($SVC_RE, $bad_svcs, "svc");
 check_accept($SVC_RE, $good_svcs, "svc");
 
-/* --- POZİTİF KONTROL: kaynak zayıflatılsaydı (permissive regex) enjeksiyon geçerdi --- */
+/* --- POSITIVE CONTROL: if the source were weakened (permissive regex) the injection would pass --- */
 echo "== 6) POZİTİF KONTROL: naif regex privesc payload'ını KABUL eder (test ayırt edici) ==\n";
 $naive = '/.+/';
 $evil  = "look.com\nExecStartPre=/bin/touch /tmp/pwn";

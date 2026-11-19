@@ -222,10 +222,10 @@ req http GET /info "" "" "" "" >/dev/null;   is "plain request" "$(cat "$T/b")" 
 curl -s -o "$T/b" -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: x.example" "$BASE/info"
 is "X-Forwarded-* from an untrusted client is ignored" "$(cat "$T/b")" "http|127.0.0.1:$P"
 curl -s -o "$T/b" -H "Host: Shop.Example.COM:8080" "$BASE/info"; is "host is lower case, port kept" "$(cat "$T/b")" "http|shop.example.com:8080"
-# HTTP kipi: geçersiz Host isteği uygulamaya ulaşmadan 400 (Go net/http gibi, http_parse.h).
+# HTTP mode: an invalid Host request gets 400 before reaching the application (like Go net/http, http_parse.h).
 is "HTTP: a host with a path is refused (400)" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example/x" "$BASE/info")" 400
 is "HTTP: a host with @ is refused (400)"      "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: a@b" "$BASE/info")" 400
-# FastCGI: Host'u vekil iletir, ayrıştırıcı görmez → request::host kendi denetimini yapmalı.
+# FastCGI: the proxy forwards Host, the parser does not see it → request::host must do its own check.
 is "FastCGI: a host with a path is not a host" "$(python3 "$T/fcgi.py" $FP REQUEST_METHOD=GET REQUEST_URI=/info SCRIPT_FILENAME="$T/app.lk" HTTP_HOST=evil.example/x | tr -d '\r' | sed '1,/^$/d')" "http|"
 is "FastCGI: a host with @ is not a host"      "$(python3 "$T/fcgi.py" $FP REQUEST_METHOD=GET REQUEST_URI=/info SCRIPT_FILENAME="$T/app.lk" HTTP_HOST=a@b | tr -d '\r' | sed '1,/^$/d')" "http|"
 is "FastCGI: HTTPS=on and HTTP_HOST" "$(python3 "$T/fcgi.py" $FP REQUEST_METHOD=GET REQUEST_URI=/info SCRIPT_FILENAME="$T/app.lk" HTTPS=on HTTP_HOST=Site.Example:8443 | tr -d '\r' | sed '1,/^$/d')" "https|site.example:8443"
@@ -293,8 +293,8 @@ grep -q "LOOK_SECRET is not set or shorter than 32 characters. This application 
 runs 'route("GET", "/", function() { session::start(); return response::text("g"); })' LOOK_SECRET=short
 is "a LOOK_SECRET shorter than 32 characters: does not start" "$(cat "$T/rs")" nostart
 
-# Paket modülü (~/.look/modules/<ad>/<ad>.lk, `use <ad>`): çerezi uygulama değil paket kullanıyor —
-# hazır bir kimlik doğrulama paketi gibi. Uygulamanın kendi kodunda çerez yok; koruma yine açık olmalı.
+# Package module (~/.look/modules/<name>/<name>.lk, `use <name>`): the package, not the application, uses the cookie —
+# like a ready-made authentication package. The application's own code has no cookie; protection must still be on.
 mkdir -p "$T/home/.look/modules/authpkg"
 printf 'function current_user() { return cookie::get("jwt", "") }\n' > "$T/home/.look/modules/authpkg/authpkg.lk"
 runs 'use authpkg
@@ -305,8 +305,8 @@ runs 'use authpkg
 route("GET", "/", fn() => response::text("g"))
 route("POST", "/", fn() => response::text("p"))' LOOK_SECRET=$S1 HOME="$T/home"
 is "a package that uses cookies, even if the app never calls it: checked" "$(cat "$T/rs")" 403
-# Sıcak yeniden yükleme: derleyici bir paketi süreç başına bir kez derler (çift tanım olmasın). Yeniden
-# yüklemede paket yeniden derlenmezse çerez kullanımı görünmez ve koruma sessizce kapanırdı.
+# Hot reload: the compiler compiles a package once per process (to avoid a double definition). If the package is not
+# recompiled on reload, the cookie use would not be seen and the protection would silently turn off.
 printf 'use authpkg\nroute("GET", "/", fn() => response::text("g2"))\nroute("POST", "/", fn() => response::text("user=" . current_user()))\n' > "$T/p.lk"
 touch -d '+2 seconds' "$T/p.lk"
 for i in $(seq 1 30); do [ "$(curl -s --max-time 1 "$BASE/")" = g2 ] && break; sleep 0.3; done

@@ -36,7 +36,7 @@ for i in $(seq 1 50); do grep -q ready "$T/echo.log" && break; sleep 0.1; done
 v6=1; python3 -c "import socket; socket.create_connection(('::1', $PORT), timeout=2).close()" 2>/dev/null || v6=0
 
 fail=0
-run() {   # ad url beklenen-metin [ek seçenek/başlık lk ifadesi]
+run() {   # name url expected-text [extra option/header lk expression]
     cat > "$T/q.lk" <<LK
 use http
 \$r = http::get("$2"${4:-})

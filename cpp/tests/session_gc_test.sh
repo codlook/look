@@ -10,7 +10,7 @@
 # every TTL seconds when the TTL is shorter).
 # Usage: session_gc_test.sh <lk-fcgi>   (needs curl)
 set -u
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# an app that uses cookies does not start without LOOK_SECRET (CSRF signature) — the test's own key.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 P=7620
@@ -32,8 +32,8 @@ before=$(files)
 curl -s -c "$T/cj" -o /dev/null --max-time 5 "http://127.0.0.1:$P/login"
 now=$(curl -s -b "$T/cj" --max-time 5 "http://127.0.0.1:$P/who")
 [ "$now" = "user=alice" ] && echo "  OK   a fresh session is read ($now)" || { echo "  FAIL a fresh session: '$now'"; fail=1; }
-sleep 4                                                              # TTL 2 s doldu
-curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$P/csrf"         # temizliği tetikler
+sleep 4                                                              # TTL 2 s expired
+curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$P/csrf"         # triggers the cleanup
 sleep 1
 after=$(files)
 if [ "$after" -le 3 ]; then echo "  OK   expired files removed: $before files after 300 requests without a cookie, $after after the TTL"

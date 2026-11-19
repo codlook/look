@@ -12,7 +12,7 @@
 # had last started on that thread, read that request's header and then crashed the process. Run with fibers and with
 # LOOK_FIBER_DISPATCH=0. The fiber run must also show that the requests really overlapped.
 # Usage: fiber_request_isolation_test.sh <lk-fcgi>
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# an app that uses cookies does not start without LOOK_SECRET (CSRF signature) — the test's own key.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null; [ -n "${up:-}" ] && kill "$up" 2>/dev/null' EXIT
@@ -36,7 +36,7 @@ route("GET", "/t/{id}", function(\$id) {
     \$cb = array::map([1], fn(\$x) => request::header("X-Id"))
     return response::text(\$cb[0] . "|" . \$id . "|" . \$h0 . "|" . request::header("X-Id") . "|" . \$c0 . "|" . cookie::get("cid") . "|" . session::get("who"))
 })
-// print çıktısı + POST gövdesi askıdan SONRA okunur (çıktı akışı ve istek gövdesi de isteğe özeldir)
+// the print output + POST body are read AFTER the suspension (the output stream and request body are also per-request)
 csrf::exempt("/p/*")
 route("POST", "/p/{id}", function(\$id) {
     \$b0 = request::post("v")
@@ -88,7 +88,7 @@ def client(c):
         want = "h%d|%d|h%d|h%d|c%d|c%d|%d" % (i, i, i, i, i, i, i)
         ok = st == 200 + (i % 7) and hdr.get("x-echo", [""])[0] == str(i) and body == want
         st2, _, body2 = req("/p/%d" % i, {"X-Id": "h%d" % i}, "v=b%d" % i)
-        want2 = "p|%d\n|b%d|b%d|h%d\n" % (i, i, i, i)   # print her satırın sonuna \n koyar
+        want2 = "p|%d\n|b%d|b%d|h%d\n" % (i, i, i, i)   # print puts \n at the end of every line
         if not (st2 == 200 and body2 == want2):
             ok = False; body = "POST: %s %r want %r" % (st2, body2, want2)
         with lock:

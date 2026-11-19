@@ -1,5 +1,5 @@
-# route::group() guard app — prefix + middleware kalıtımı + nesting. Deterministik (header-token).
-# Kendinden-ayırt-edici: prefix kırılırsa /solo bare-path'te açılır; mw kırılırsa no-token 200 döner.
+# route::group() guard app — prefix + middleware inheritance + nesting. Deterministic (header-token).
+# Self-discriminating: if the prefix breaks /solo opens on the bare path; if the mw breaks a no-token request returns 200.
 use string
 
 $auth = function() {

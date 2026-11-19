@@ -9,7 +9,7 @@
 #   * an error in a nested include names the nested file
 #   * an error in the main script still names the main script
 # Usage: error_location_test.sh <lk>
-LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"   # mutlak: her vaka geçici dizine cd yapar
+LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"   # absolute: each case cds into a temp dir
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/lib"
 

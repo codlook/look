@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# mail::send (MAIL_PROVIDER=smtp) ile uzak SMTP sunucusu: TLS ve kimlik doğrulama koşulları.
-# Bu istemcinin (mail_stdlib.cpp send_smtp) hiç testi yoktu — yalnız LOOK'un kendi SMTP sunucusu
-# sınanıyordu. Gerçek lk + sahte bir SMTP sunucusu (Python, STARTTLS / doğrudan TLS); sunucu TLS'in
-# ne zaman kurulduğunu ve AUTH / parolanın ne zaman geldiğini kaydeder:
-#   - güvenilen sertifikayla STARTTLS: ileti gider, AUTH TLS'ten SONRA
-#   - uzak sunucu kimlik doğrulamayı reddeder (535): açık hata; parola hiçbir çıktıda yok
-#   - kendinden imzalı / başka ada verilmiş sertifika: reddedilir, AUTH hiç gönderilmez
-#   - sunucu STARTTLS sunmaz: düz metne DÜŞÜLMEZ (indirgeme), AUTH gönderilmez
-#   - doğrudan TLS (465 / SMTP_TLS=implicit) güvenilen sertifikayla çalışır
-#   - SMTP_TLS=none: düz metin, günlükte açık uyarı; parola YALNIZ bu makinedeki sunucuya
-#     (127.0.0.0/8, ::1 — karar bağlanılan adrese göre). Uzak adreste açık hata, parola gitmez;
-#     parolasız düz metin her yerde çalışır (Go net/smtp kuralı)
+# mail::send (MAIL_PROVIDER=smtp) with a remote SMTP server: TLS and authentication conditions.
+# This client (mail_stdlib.cpp send_smtp) had no tests at all — only LOOK's own SMTP server was
+# tested. The real lk + a fake SMTP server (Python, STARTTLS / direct TLS); the server records when TLS was
+# established and when AUTH / the password arrived:
+#   - STARTTLS with a trusted certificate: the message goes, AUTH comes AFTER TLS
+#   - the remote server rejects authentication (535): explicit error; the password is in no output
+#   - self-signed / certificate issued for another name: rejected, AUTH is never sent
+#   - the server does not offer STARTTLS: NO FALLBACK to plaintext (downgrade), AUTH is not sent
+#   - direct TLS (465 / SMTP_TLS=implicit) works with a trusted certificate
+#   - SMTP_TLS=none: plaintext, an explicit warning in the log; the password ONLY to a server on this machine
+#     (127.0.0.0/8, ::1 — the decision is by the address connected to). An explicit error on a remote address, the password does not go;
+#     plaintext without a password works everywhere (the Go net/smtp rule)
 # Usage: smtp_client_tls_test.sh <lk> [base-port]   (needs python3, openssl)
 set -u
 LK="$(cd "$(dirname "${1:?usage: $0 <lk> [base-port]}")" && pwd)/$(basename "$1")"
 P="${2:-7880}"
 TMP="$(mktemp -d)"; spid=""; wd=""
 trap '[ -n "$spid" ] && kill "$spid" 2>/dev/null; [ -n "$wd" ] && kill "$wd" 2>/dev/null; rm -rf "$TMP"' EXIT
-( sleep 180; echo "FAIL: smtp client test timed out (180 s)"; kill -TERM $$ ) 2>/dev/null & wd=$!; disown $wd   # disown: öldürülünce kabuk "Terminated" basmasın
+( sleep 180; echo "FAIL: smtp client test timed out (180 s)"; kill -TERM $$ ) 2>/dev/null & wd=$!; disown $wd   # disown: so the shell does not print "Terminated" when it is killed
 fail=0
 check() { if [ "$2" = ok ]; then echo "  OK   $1"; else echo "  FAIL $1: $3"; fail=1; fi; }
 PW="look-test-secret-pw-7731"
 
-# ── sertifikalar: test CA'sı, localhost (SAN), başka ad, kendinden imzalı ──
+# ── certificates: test CA, localhost (SAN), another name, self-signed ──
 cd "$TMP"
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=LOOK Test CA" -keyout ca.key -out ca.pem >/dev/null 2>&1
-leaf() { # <ad> <dosya>
+leaf() { # <name> <file>
     openssl req -newkey rsa:2048 -nodes -subj "/CN=$1" -keyout "$2.key" -out "$2.csr" >/dev/null 2>&1
     printf 'subjectAltName=DNS:%s\nbasicConstraints=CA:FALSE\n' "$1" > "$2.ext"
     openssl x509 -req -in "$2.csr" -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 -extfile "$2.ext" -out "$2.pem" >/dev/null 2>&1
@@ -100,7 +100,7 @@ use mail
 use json
 print(json::encode(mail::send("to@example.com", "Hello", "body text")))
 LK
-# <sunucu kipi> <sertifika> <SMTP_TLS> [SMTP_HOST] [SMTP_USER] → $out (mail::send sonucu + stderr), $log (sunucu kaydı)
+# <server mode> <certificate> <SMTP_TLS> [SMTP_HOST] [SMTP_USER] → $out (mail::send result + stderr), $log (server log)
 run() {
     : > "$TMP/srv.log"
     python3 "$TMP/server.py" "$P" "$1" "$TMP/$2" "$TMP/srv.log" > "$TMP/srv.out" 2>&1 & spid=$!

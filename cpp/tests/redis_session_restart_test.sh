@@ -18,7 +18,7 @@ T="$(mktemp -d)"; pid=""; trap '[ -n "$pid" ] && kill $pid 2>/dev/null; rm -rf "
 fail=0; ok() { echo "  OK   $1"; }; bad() { echo "  FAIL $1"; fail=1; }
 hp="${URL#*://}"; hp="${hp##*@}"; hp="${hp%%/*}"; RH="${hp%%:*}"; RP="${hp##*:}"; [ "$RP" = "$hp" ] && RP=6379
 
-kill_clients() {   # CLIENT KILL TYPE normal SKIPME yes → bizim dışımızdaki her istemci kapanır
+kill_clients() {   # CLIENT KILL TYPE normal SKIPME yes → every client other than ours is closed
     exec 3<>"/dev/tcp/$RH/$RP" || return 1
     printf '*6\r\n$6\r\nCLIENT\r\n$4\r\nKILL\r\n$4\r\nTYPE\r\n$6\r\nnormal\r\n$6\r\nSKIPME\r\n$3\r\nyes\r\n' >&3
     read -r -t 2 line <&3; exec 3<&- 3>&-
@@ -36,7 +36,7 @@ for i in $(seq 1 50); do curl -s -m 5 -o /dev/null -m 1 "localhost:$PORT/ping" &
 U="http://localhost:$PORT"
 
 cp=""; for i in $(seq 1 8); do curl -s -m 5 -c "$T/j$i" "$U/set?v=user$i" > /dev/null & cp="$cp $!"; done
-wait $cp   # havuzda birkaç bağlantı (çıplak wait sunucuyu da beklerdi)
+wait $cp   # a few connections in the pool (a bare wait would also wait for the server)
 for i in $(seq 1 8); do [ "$(curl -s -m 5 -b "$T/j$i" "$U/get")" = "user$i" ] || bad "before: client $i lost its session"; done
 k="$(kill_clients)"; echo "  ..   CLIENT KILL: ${k:-no reply}"
 sleep 0.3

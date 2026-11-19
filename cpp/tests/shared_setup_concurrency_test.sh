@@ -59,8 +59,8 @@ LK
 cat > "$TMP/load.py" <<'PY'
 import sys, json, threading, urllib.request
 port, bad, done = int(sys.argv[1]), [], [0]
-# Sunucu yanıt vermez olursa dur: her istek 10 sn bekler, 1200 istek yarım saat sürer (pozitif kontrolün
-# kasıtlı yarışı sunucuyu kilitleyebiliyor — CI işi 20 dakikada iptal ediliyordu). Hata yine sayılır.
+# Stop if the server stops answering: each request waits 10 s, 1200 requests would take half an hour (the positive control's
+# deliberate race can lock up the server — the CI job was cancelled after 20 minutes). The error is still counted.
 errors, LIMIT = [0], 5
 READ = ["g1", "n0", "d0", 1, "y", "x", 1, "t0"]
 def get(p): return json.loads(urllib.request.urlopen("http://127.0.0.1:%d%s" % (port, p), timeout=10).read().decode())

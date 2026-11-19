@@ -1,4 +1,4 @@
-# queue:: davranışsal test — in-process FIFO (sunucu YOK). CI-koşabilir.
+# queue:: behavioral test — in-process FIFO (NO server). Runnable in CI.
 use queue
 use array
 use type
@@ -18,7 +18,7 @@ chk("FIFO pop2", queue::pop($q), "b"); $ran = $ran + 1
 chk("bosaldi", queue::size($q), 0); $ran = $ran + 1
 queue::push($q, "x")
 chk("names icerir", array::contains(queue::names(), $q), true); $ran = $ran + 1
-# tip-korunumu (array değer)
+# type preservation (array value)
 queue::push($q, [1, 2, 3])
 queue::pop($q)
 chk("array degeri korunur", len(queue::pop($q)), 3); $ran = $ran + 1

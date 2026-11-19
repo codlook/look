@@ -1,6 +1,6 @@
-// SSRF private/özel-blok tablo testi — look/ssrf_safe.h (dikişi aç). Ağsız, DNS YOK.
-// http_client.cpp'nin getaddrinfo döngüsü bu predikatlara delege eder; burada
-// ham byte'lardan karar tablosu POZİTİF-KONTROLLÜ kilitlenir (metadata/NAT64/6to4/mapped).
+// SSRF private/special-block table test — look/ssrf_safe.h (open the seam). No network, NO DNS.
+// http_client.cpp's getaddrinfo loop delegates to these predicates; here the decision table
+// is locked from raw bytes WITH POSITIVE CONTROLS (metadata/NAT64/6to4/mapped).
 //   Build: g++ -std=c++17 -Iinclude tests/ssrf_safe_test.cpp -o /tmp/ssrf && /tmp/ssrf
 #include "look/ssrf_safe.h"
 #include <cstdio>
@@ -10,7 +10,7 @@ using namespace look;
 
 static int fails = 0, ran = 0;
 
-// IPv4: dört sekizli → host-order → beklenen engel
+// IPv4: four octets → host-order → expected block
 static void v4(const char* label, uint8_t a, uint8_t b, uint8_t c, uint8_t d, bool want) {
     ran++;
     uint32_t ip = ((uint32_t)a<<24)|((uint32_t)b<<16)|((uint32_t)c<<8)|d;
@@ -19,7 +19,7 @@ static void v4(const char* label, uint8_t a, uint8_t b, uint8_t c, uint8_t d, bo
     printf("  v4 %-22s %d.%d.%d.%d -> block=%d want=%d %s\n", label, a,b,c,d, got, want, ok?"OK":"FAIL");
     if (!ok) fails++;
 }
-// IPv6: 16 byte dizi → beklenen engel
+// IPv6: 16-byte array → expected block
 static void v6(const char* label, const uint8_t b[16], bool want) {
     ran++;
     bool got = ssrf_blocked_v6(b);
@@ -27,7 +27,7 @@ static void v6(const char* label, const uint8_t b[16], bool want) {
     printf("  v6 %-22s -> block=%d want=%d %s\n", label, got, want, ok?"OK":"FAIL");
     if (!ok) fails++;
 }
-// v6 yardımcı: "::v4" tabanlı 16-byte kur (prefix ilk baytları, v4 son 4 bayta)
+// v6 helper: build a "::v4"-based 16-byte (prefix in the first bytes, v4 in the last 4 bytes)
 static void mk_mapped(uint8_t out[16], uint8_t a, uint8_t bb, uint8_t c, uint8_t d) {
     for (int i=0;i<16;i++) out[i]=0;
     out[10]=0xFF; out[11]=0xFF; out[12]=a; out[13]=bb; out[14]=c; out[15]=d;
@@ -35,31 +35,31 @@ static void mk_mapped(uint8_t out[16], uint8_t a, uint8_t bb, uint8_t c, uint8_t
 
 int main() {
     printf("SSRF karar tablosu:\n");
-    // IPv4 engelli aileler
+    // IPv4 blocked families
     v4("loopback",     127,0,0,1,   true);
     v4("10/8",         10,0,0,1,     true);
     v4("172.16/12",    172,16,5,5,   true);
     v4("172.31 ust",   172,31,255,1, true);
     v4("192.168",      192,168,1,1,  true);
-    v4("metadata",     169,254,169,254, true);   // cloud metadata — kritik
+    v4("metadata",     169,254,169,254, true);   // cloud metadata — critical
     v4("cgnat 100.64", 100,64,0,1,   true);
     v4("0/8",          0,0,0,0,      true);
     v4("multicast",    224,0,0,1,    true);
     v4("reserved 240", 240,0,0,1,    true);
     v4("broadcast",    255,255,255,255, true);
-    // IPv4 İZİNLİ (public)
+    // IPv4 ALLOWED (public)
     v4("google dns",   8,8,8,8,      false);
     v4("public 1.1",   1,1,1,1,      false);
-    v4("172.15 disi",  172,15,0,1,   false);     // 172.16/12 sınır-altı
-    v4("172.32 disi",  172,32,0,1,   false);     // sınır-üstü
+    v4("172.15 disi",  172,15,0,1,   false);     // just below the 172.16/12 range
+    v4("172.32 disi",  172,32,0,1,   false);     // just above the range
     v4("192.167 disi", 192,167,1,1,  false);
-    // IANA özel amaçlı bloklar (2026-11-07 eklendi — eskiden izinliydi)
+    // IANA special-purpose blocks (added 2026-11-07 — they used to be allowed)
     v4("192.0.0/24",   192,0,0,1,    true);
     v4("TEST-NET-1",   192,0,2,10,   true);
     v4("198.18/15 alt",198,18,0,1,   true);
     v4("198.18/15 ust",198,19,255,1, true);
-    v4("198.20 disi",  198,20,0,1,   false);     // /15 sınır-üstü
-    v4("198.17 disi",  198,17,255,1, false);     // /15 sınır-altı
+    v4("198.20 disi",  198,20,0,1,   false);     // just above the /15 range
+    v4("198.17 disi",  198,17,255,1, false);     // just below the /15 range
     v4("TEST-NET-2",   198,51,100,7, true);
     v4("TEST-NET-3",   203,0,113,9,  true);
     v4("192.0.1 disi", 192,0,1,1,    false);
@@ -75,23 +75,23 @@ int main() {
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0xFD; v6("fd00 unique-local", buf, true);
     // fe80::/10 link-local
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0xFE; buf[1]=0x80; v6("fe80 link-local", buf, true);
-    // ::ffff:169.254.169.254 — mapped metadata (kritik gömülü-v4 bypass)
+    // ::ffff:169.254.169.254 — mapped metadata (critical embedded-v4 bypass)
     mk_mapped(buf, 169,254,169,254); v6("mapped metadata", buf, true);
-    // ::ffff:8.8.8.8 — mapped public → izinli
+    // ::ffff:8.8.8.8 — mapped public → allowed
     mk_mapped(buf, 8,8,8,8); v6("mapped public", buf, false);
     // 64:ff9b::10.0.0.1 — NAT64 private
     for(int i=0;i<16;i++) buf[i]=0; buf[1]=0x64; buf[2]=0xFF; buf[3]=0x9B; buf[12]=10; buf[15]=1;
     v6("NAT64 private", buf, true);
-    // 64:ff9b::8.8.8.8 — NAT64 public → izinli
+    // 64:ff9b::8.8.8.8 — NAT64 public → allowed
     for(int i=0;i<16;i++) buf[i]=0; buf[1]=0x64; buf[2]=0xFF; buf[3]=0x9B; buf[12]=8; buf[13]=8; buf[14]=8; buf[15]=8;
     v6("NAT64 public", buf, false);
     // 2002:c0a8:: — 6to4 embedding 192.168.x → private
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x20; buf[1]=0x02; buf[2]=192; buf[3]=168; buf[4]=0; buf[5]=1;
     v6("6to4 private", buf, true);
-    // 2001:4860:: — public v6 (Google) → izinli
+    // 2001:4860:: — public v6 (Google) → allowed
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x20; buf[1]=0x01; buf[2]=0x48; buf[3]=0x60; buf[15]=0x88;
     v6("public v6", buf, false);
-    // 2026-11-07 eklendi — eskiden izinliydi
+    // added 2026-11-07 — it used to be allowed
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0xFF; buf[1]=0x02; buf[15]=1; v6("ff02::1 multicast", buf, true);
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0xFE; buf[1]=0xC0; buf[15]=1; v6("fec0 site-local", buf, true);
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x20; buf[1]=0x01; buf[2]=0x0D; buf[3]=0xB8; buf[15]=1; v6("2001:db8 belge", buf, true);

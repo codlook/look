@@ -1,6 +1,6 @@
-# ?tls=verify → sertifika+hostname doğrulaması. mysql:8 self-signed cert kullandığından
-# BU BAĞLANTI REDDEDİLMELİ (certificate verify failed). Reddedilmesi = verify AKTİF kanıtı.
-# (Güvenilir CA-imzalı cert'le tls=verify KABUL ederdi; self-signed'ı reddetmesi = MITM koruması.)
+# ?tls=verify → certificate+hostname verification. Since mysql:8 uses a self-signed cert
+# THIS CONNECTION MUST BE REJECTED (certificate verify failed). Being rejected = proof that verify is ACTIVE.
+# (With a trusted CA-signed cert tls=verify would ACCEPT; rejecting the self-signed one = MITM protection.)
 try {
   $db = db::connect("mysql://looktest:testpass@look-mysql8/testdb?tls=verify")
   db::query($db, "SELECT 1")

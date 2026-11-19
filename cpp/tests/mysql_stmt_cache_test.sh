@@ -100,14 +100,14 @@ echo "-- a connection the server dropped --"
 cat > "$T/killed.lk" <<'LK'
 use db
 $c = db::connect(env("DSN"))
-$k = db::connect(env("BASE") . "/lk_shop_b")   // başka DSN = başka havuz (aynı DSN aynı bağlantıyı paylaşırdı)
+$k = db::connect(env("BASE") . "/lk_shop_b")   // another DSN = another pool (the same DSN would share the same connection)
 $q = "SELECT v FROM lk_shop_a.items WHERE id = ?"
 $r1 = db::query($c, $q, [3])
 $me = db::query($c, "SELECT CONNECTION_ID() AS id", [])[0]["id"]
 db::exec($k, "KILL " . $me, [])
-// İfade kimlikleri her bağlantıda 1'den başlar: yeni bağlantıda önce BAŞKA bir ifade hazırlanır
-// (eski kimliği o alır). Önbellek eski kimliği tutsaydı aşağıdaki $q bu ifadeyi çalıştırırdı —
-// hata yok, yanlış veri.
+// Statement ids start at 1 on every connection: on a new connection ANOTHER statement is prepared first
+// (it takes the old id). If the cache kept the old id, the $q below would run this statement —
+// no error, wrong data.
 $other = db::query($c, "SELECT 'other' AS v FROM lk_shop_b.items WHERE id = ?", [1])
 $r2 = db::query($c, $q, [4])
 $me2 = db::query($c, "SELECT CONNECTION_ID() AS id", [])[0]["id"]
@@ -176,7 +176,7 @@ LK
 ( cd "$T" && exec "$FCGI" --mode http --port 7761 app.lk > "$T/srv.log" 2>&1 ) & pid=$!
 for i in $(seq 1 50); do curl -s -m 1 -o /dev/null localhost:7761/ok && break; sleep 0.1; done
 cbad=0; for round in 1 2 3 4; do
-    cp=()   # yalnız istemcileri bekle — düz `wait` arka plandaki sunucuyu da beklerdi
+    cp=()   # wait for the clients only — a plain `wait` would also wait for the background server
     for i in $(seq 1 16); do id=$(( (round * 16 + i) % 50 + 1 )); ( r=$(curl -s -m 10 localhost:7761/r/$id); [ "$r" = "b$id" ] || echo x >> "$T/cbad" ) & cp+=($!); done
     wait "${cp[@]}"
 done 2>/dev/null

@@ -1,4 +1,4 @@
-# string:: davranışsal test — saf (sunucu YOK). CI-koşabilir. Sınır: boş/unicode/negatif.
+# string:: behavioral test — pure (NO server). Runnable in CI. Edge cases: empty/unicode/negative.
 use string
 $ran = 0
 function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }

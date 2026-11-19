@@ -44,7 +44,7 @@ bench_one() {   # $1=name $2=container
     if [ "$c" = "1000" ]; then ram_sampled=$(docker stats --no-stream --format '{{.MemUsage}}' "$cont" 2>/dev/null); fi
   done
   echo "  RAM @c=1000: ${ram_sampled:-NA}"
-  # 100k istek — sabit sayı (ab, keep-alive YOK, c=200; entrypoint=ab → args direkt)
+  # 100k requests — fixed count (ab, NO keep-alive, c=200; entrypoint=ab → args direct)
   local ab=$(docker run --rm --network $NET $UL jordi/ab -n 100000 -c 200 "http://$host:8080/" 2>&1)
   local abrps=$(echo "$ab" | awk '/Requests per second/{print $4}')
   local abtime=$(echo "$ab" | awk '/Time taken for tests/{print $5}')

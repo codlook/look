@@ -8,7 +8,7 @@
 # nothing is written and the session keeps what it had. The application can catch the error.
 # Usage: session_size_limit_test.sh <lk-fcgi> [redis-url]   (needs curl)
 set -u
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# an app that uses cookies does not start without LOOK_SECRET (CSRF signature) — the test's own key.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 RURL="${2:-}"
@@ -26,7 +26,7 @@ route("GET", "/caught", function() {
 })
 LK
 fail=0
-start() {   # $1 = ek ortam
+start() {   # $1 = extra environment
     { kill $pid; wait $pid; } 2>/dev/null
     rm -f "$T/cj"
     if [ -n "$RURL" ]; then drv="LOOK_SESSION_DRIVER=redis LOOK_REDIS_URL=$RURL"; else drv=""; fi

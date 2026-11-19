@@ -1,10 +1,10 @@
 use json
 use string
 use array
-// Büyük sözlük (dizinli arama, look/assoc_index.h) — küçük sözlükle aynı sonucu vermeli.
-// Her durum küçük (dizinsiz) ve büyük (dizinli) sözlükte koşar; sonuçlar karşılaştırılır.
-// FAIL satırı = hata. tests/assoc_index_test.sh bunu doğrulama kipinde de (her dizinli arama
-// doğrusal taramayla karşılaştırılır) koşar.
+// Large map (indexed lookup, look/assoc_index.h) — must give the same result as a small map.
+// Every case runs on a small (unindexed) and a large (indexed) map; the results are compared.
+// A FAIL line = error. tests/assoc_index_test.sh also runs this in verification mode (every indexed lookup
+// is compared against a linear scan).
 
 $fails = 0
 
@@ -25,19 +25,19 @@ function make($n) {
 foreach ([3, 40, 3000] as $n) {
     $t = "n=" . $n
     $m = make($n)
-    // okuma: var olan, olmayan, sayı-metni anahtar
+    // read: existing, missing, numeric-text key
     $fails += check($t . " read first", $m["k0"], 0)
     $fails += check($t . " read last", $m["k" . ($n - 1)], $n - 1)
     $fails += check($t . " read missing", $m["nope"], null)
     $fails += check($t . " count", count($m), $n + 1)
 
-    // üzerine yazma boyu değiştirmez, sırayı korur
+    // overwriting does not change the length, keeps the order
     $m["k1"] = "X"
     $fails += check($t . " overwrite", $m["k1"], "X")
     $fails += check($t . " overwrite count", count($m), $n + 1)
     $fails += check($t . " order", array::keys($m)[2], "k1")
 
-    // yazınca-kopyala: kopya bağımsız
+    // copy-on-write: the copy is independent
     $c = $m
     $c["k0"] = "C"
     $c["new"] = 1
@@ -46,7 +46,7 @@ foreach ([3, 40, 3000] as $n) {
     $fails += check($t . " cow copy", $c["k0"], "C")
     $fails += check($t . " cow copy new", $c["new"], 1)
 
-    // iç içe yol ataması
+    // nested path assignment
     $m["nest"]["a"] = 1
     $m["nest"]["b"] = 2
     $fails += check($t . " nested", $m["nest"]["b"], 2)
@@ -54,25 +54,25 @@ foreach ([3, 40, 3000] as $n) {
     $m["obj"]["x"] = 6
     $fails += check($t . " nested overwrite", $m["obj"]["x"], 6)
 
-    // fonksiyonel işlemler yeni sözlük döndürür; okuma doğru kalır
+    // functional operations return a new map; reads stay correct
     $s = array::set($m, "k0", "S")
     $fails += check($t . " array::set", $s["k0"], "S")
     $fails += check($t . " array::set original", $m["k0"], 0)
 
-    // json gidiş-dönüş, sonra okuma ve ekleme
+    // json round trip, then read and append
     $j = json::decode(json::encode($m))
     $fails += check($t . " json read", $j["k" . ($n - 1)], $n - 1)
     $j["after"] = "A"
     $fails += check($t . " json append", $j["after"], "A")
     $fails += check($t . " json old", $j["k0"], 0)
 
-    // foreach ile kopyalama (gelen gövdeyi temizleme kalıbı)
+    // copying with foreach (the pattern for cleaning an incoming body)
     $clean = []
     foreach ($j as $k => $v) { $clean[$k] = $v }
     $fails += check($t . " foreach copy count", count($clean), count($j))
     $fails += check($t . " foreach copy last", $clean["after"], "A")
 
-    // sözlüğe push hatadır; sözlük değişmez ve yazmaya devam edilebilir
+    // push on a map is an error; the map does not change and writing can continue
     $p = make($n)
     $err = ""
     try { push($p, "tail") } catch ($e) { $err = "" . $e }
@@ -80,7 +80,7 @@ foreach ([3, 40, 3000] as $n) {
     $p["after_push"] = 7
     $fails += check($t . " after push", $p["after_push"], 7)
     $fails += check($t . " after push count", count($p), $n + 2)
-    // sözlükte pop da hatadır; sözlük değişmez
+    // pop on a map is an error too; the map does not change
     $err = ""
     try { pop($p) } catch ($e) { $err = "" . $e }
     $fails += check($t . " pop on map is an error", string::contains($err, "takes a list, not a map"), true)
@@ -90,13 +90,13 @@ foreach ([3, 40, 3000] as $n) {
     $fails += check($t . " after pop old", $p["k1"], 1)
 }
 
-// sayı-metni anahtarlar
+// numeric-text keys
 $num = []
 for ($i = 0; $i < 50; $i++) { $num["id" . $i] = $i }
 $num["5"] = "five"
 $fails += check("int key text", $num["5"], "five")
 
-// yinelenen anahtarlı JSON: ilk/son kuralı küçük ve büyük sözlükte aynı
+// JSON with duplicate keys: the first/last rule is the same for small and large maps
 $parts = []
 for ($i = 0; $i < 30; $i++) { push($parts, "\"a" . $i . "\":" . $i) }
 push($parts, "\"a3\":\"dup\"")
@@ -104,7 +104,7 @@ $d = json::decode("{" . string::join($parts, ",") . "}")
 $small = json::decode("{\"a3\":3,\"a3\":\"dup\"}")
 $fails += check("dup key big vs small", $d["a3"], $small["a3"])
 
-// çok anahtar ekleme + hepsini okuma
+// add many keys + read them all
 $big = []
 for ($i = 0; $i < 20000; $i++) { $big["key_" . $i] = $i }
 $sum = 0

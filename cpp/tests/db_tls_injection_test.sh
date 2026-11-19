@@ -11,7 +11,7 @@ LK="$(cd "$(dirname "${1:?usage: db_tls_injection_test.sh <lk> [port]}")" && pwd
 PORT="${2:-55471}"
 T="$(mktemp -d)"; srv=""; trap '[ -n "$srv" ] && kill $srv 2>/dev/null; rm -rf "$T"' EXIT
 cat > "$T/srv.py" <<'PY'
-# Sahte MySQL / PG: TLS'e geçmeden hemen önce düz metin bayt ekler (inject) ya da eklemez (clean).
+# Fake MySQL / PG: right before moving to TLS it adds plain-text bytes (inject) or does not (clean).
 import socket, struct, sys
 proto, mode, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", port)); s.listen(4)
@@ -27,19 +27,19 @@ while True:
                  b"mysql_native_password\x00")
             pkt = struct.pack("<I", len(g))[:3] + b"\x00" + g
             extra = (struct.pack("<I", 7)[:3] + b"\x02" + b"\x00\x00\x00\x02\x00\x00\x00") if mode == "inject" else b""
-            c.sendall(pkt + extra)              # selamlama + (inject) sahte OK, aynı gönderimde
+            c.sendall(pkt + extra)              # greeting + (inject) a fake OK, in the same send
         else:
             c.recv(8)                           # SSLRequest
             extra = (b"R" + struct.pack("!II", 8, 0) + b"Z" + struct.pack("!I", 5) + b"I") if mode == "inject" else b""
-            c.sendall(b"S" + extra)             # 'S' + (inject) sahte AuthenticationOk + ReadyForQuery
+            c.sendall(b"S" + extra)             # 'S' + (inject) a fake AuthenticationOk + ReadyForQuery
         c.settimeout(2)
-        try: c.recv(4096)                       # istemcinin TLS ClientHello'su (ya da kapanışı)
+        try: c.recv(4096)                       # the client's TLS ClientHello (or its close)
         except OSError: pass
     finally:
         c.close()
 PY
 fail=0
-run() {   # proto mode dsn → LOOK çıktısı
+run() {   # proto mode dsn → LOOK output
     python3 "$T/srv.py" "$1" "$2" "$PORT" > "$T/srv.log" 2>&1 & srv=$!
     for i in $(seq 1 50); do grep -q ready "$T/srv.log" && break; sleep 0.1; done
     printf 'use db\ntry { $c = db::connect("%s"); print("CONNECTED") } catch ($e) { print("ERR " . $e) }\n' "$3" > "$T/t.lk"
@@ -54,7 +54,7 @@ for proto in mysql pg; do
     clean="$(run $proto clean "$dsn")"
     if echo "$inj" | grep -qi "$want"; then echo "  OK   [$proto] bytes injected before TLS: refused ($inj)"
     else echo "  FAIL [$proto] bytes injected before TLS: $inj"; fail=1; fi
-    # pozitif kontrol: eklenmemiş bayt → ret nedeni enjeksiyon değil (el sıkışma hatası)
+    # positive control: no added bytes → the refusal reason is not the injection (a handshake error)
     if echo "$clean" | grep -qi "$want"; then echo "  FAIL [$proto] control without injected bytes also says injection: $clean"; fail=1
     else echo "  OK   [$proto] control without injected bytes fails for another reason ($clean)"; fi
 done

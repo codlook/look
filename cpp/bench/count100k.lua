@@ -1,4 +1,4 @@
--- Her thread kendi payını sayar; -t4 ile 4x25000 = 100000 istek sonra durur.
+-- Each thread counts its own share; with -t4, 4x25000 = 100000 requests, then it stops.
 local n = 0
 function response(status, headers, body)
   n = n + 1

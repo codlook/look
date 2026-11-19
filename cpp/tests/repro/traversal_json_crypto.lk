@@ -16,7 +16,7 @@ catch ($e) { show("P3 karisik","engellendi") }
 try { file::put("/tmp/look_pwn.txt","x"); show("P4 tmp yazma","YAZILDI") }
 catch ($e) { show("P4 tmp yazma","engellendi") }
 
-# ── Integer overflow / sinir ──
+# ── Integer overflow / boundary ──
 show("I1 substr negatif", string::substr("abcdef", -9223372036854775808, 5))
 show("I2 substr buyuk",   string::substr("abcdef", 0, 9223372036854775807))
 show("I3 slice tasma",    json::encode(array::slice([1,2,3], -9223372036854775808, 9223372036854775807)))
@@ -33,7 +33,7 @@ show("J2 bozuk utf8", json::encode(json::decode("{\"a\":\"\\ud800\"}")))
 show("J3 buyuk sayi", json::encode(json::decode("{\"n\":123456789012345678901234567890}")))
 show("J4 dup key", json::encode(json::decode("{\"a\":1,\"a\":2}")))
 
-# ── html::escape kapsamı (XSS) ──
+# ── html::escape coverage (XSS) ──
 show("X1 escape", html::escape("<script>alert(1)</script>"))
 show("X2 tirnak", html::escape("\" ' & < > /"))
 show("X3 backtick", html::escape("`onload=x`"))

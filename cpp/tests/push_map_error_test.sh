@@ -1,16 +1,16 @@
 #!/bin/bash
-# Sözlüğe push açık hatadır (include/look/value_path.h value_push_not_map). ESKİ: push sözlüğe
-# anahtarsız tek değer ekliyordu; sonra eklenen anahtarlar sessizce null okunuyordu.
-# Her push yolu: push() (değişken yolu ve ifade), array::push() (yerinde derlenen ve kopyalayan
-# yol), iç içe yol, fonksiyon içi, web kurulumu ve istek. Hata satır numarasıyla gelir, sözlüğün
-# iç işareti (__assoc__) hiçbir çıktıda görünmez, listeye push değişmez.
+# Push to a map is an explicit error (include/look/value_path.h value_push_not_map). OLD: push added a single value
+# to the map without a key; keys added afterwards were silently read as null.
+# Every push path: push() (variable path and expression), array::push() (the in-place compiled and the copying
+# path), nested path, inside a function, web setup and request. The error comes with a line number, the map's
+# internal marker (__assoc__) appears in no output, a push to a list is unchanged.
 # Usage: push_map_error_test.sh <lk> <lk-fcgi> [port]   (needs curl)
 set -u
 LK="$1"; LKF="$2"; PORT="${3:-7933}"
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 T=$(mktemp -d); pid=""; trap '{ [ -n "$pid" ] && kill $pid; wait; } 2>/dev/null; rm -rf "$T"' EXIT
 fail=0
-# case <ad> <beklenen ad (push() | array::push())> <beklenen satır> <betik>
+# case <name> <expected name (push() | array::push())> <expected line> <script>
 case_err() {
     printf '%s\n' "$4" > "$T/c.lk"
     out=$("$LK" "$T/c.lk" 2>&1); rc=$?
@@ -40,7 +40,7 @@ case_err "array::push into another variable" "array::push()" 3 'use array
 $m = ["a" => 1]
 $x = array::push($m, 99)'
 
-# yakalanabilir; sözlük değişmeden kalır
+# can be caught; the map stays unchanged
 printf '%s\n' 'use json
 $m = ["a" => 1, "b" => 2]
 try { push($m, 99) } catch ($e) { print("caught: " . $e) }
@@ -50,7 +50,7 @@ out=$("$LK" "$T/c.lk" 2>&1)
 if grep -qF 'caught: push() cannot add to a map' <<<"$out" && grep -qF '{"a":1,"b":2,"c":3}' <<<"$out" && ! grep -q __assoc__ <<<"$out"
 then echo "PASS caught, map unchanged"; else echo "FAIL caught, map unchanged: $out"; fail=1; fi
 
-# listeye push değişmedi
+# the push to a list is unchanged
 printf '%s\n' 'use array
 use json
 $a = [1, 2]
@@ -60,11 +60,11 @@ $b = array::push($a, 5)
 $e = []
 push($e, "x")
 print(json::encode([$a, $b, $e]))' > "$T/c.lk"
-# çıplak push() kullanımdan kalktı: dosya başına tek uyarı satırı (konu burada push'un kendisi) — onu ayıkla
+# bare push() is gone: one warning line per file (here the subject is push itself) — filter it out
 out=$("$LK" "$T/c.lk" 2>&1 | grep -vF 'push($list, $x) changes the variable it is given')
 if [ "$out" = '[[1,2,3,4],[1,2,3,4,5],["x"]]' ]; then echo "PASS push on lists"; else echo "FAIL push on lists: $out"; fail=1; fi
 
-# web: istek içinde (hata yanıtı + günlük), kurulumda (başlamaz)
+# web: inside a request (error response + log), at setup (does not start)
 cat > "$T/app.lk" <<'LK'
 route("GET", "/p", function() {
     $m = ["a" => 1]

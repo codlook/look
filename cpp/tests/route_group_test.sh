@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# route::group() guard — Go/chi tarzı prefix + middleware kalıtımı + nesting. lk-fcgi --mode http'ye
-# karşı. Kendinden-ayırt-edici:
-#   - prefix kalıtımı: /admin/solo=200 AMA bare /solo=404 (prefix uygulanmazsa /solo açılırdı)
-#   - middleware kalıtımı: /admin/users no-token=403 (mw miras alınmazsa 200 dönerdi)
-#   - nested: /admin/deep/x prefix yığını + dış grup mw'sini miras alır
+# route::group() guard — Go/chi style prefix + middleware inheritance + nesting. Against lk-fcgi --mode http.
+# Self-discriminating:
+#   - prefix inheritance: /admin/solo=200 BUT bare /solo=404 (if the prefix were not applied /solo would open)
+#   - middleware inheritance: /admin/users no-token=403 (if the mw were not inherited it would return 200)
+#   - nested: /admin/deep/x inherits the prefix stack + the outer group's mw
 set -u
 FCGI="${1:-./build/lk-fcgi}"
 PORT="${2:-7715}"
@@ -22,12 +22,12 @@ run_engine() {
   code(){ curl -s -o /dev/null -w "%{http_code}" ${2:-} "$B$1"; }
   chk(){ if [ "$2" = "$3" ]; then echo "  OK   [$label] $1 ($2)"; else echo "  FAIL [$label] $1: $2 beklenen $3"; fail=1; fi; }
   chk "/public"                "$(code /public)"                       "200"
-  chk "/admin/users no-tok"    "$(code /admin/users)"                  "403"   # mw miras
+  chk "/admin/users no-tok"    "$(code /admin/users)"                  "403"   # mw inherited
   chk "/admin/users tok"       "$(code /admin/users '-H X-Token:sekret')" "200"
-  chk "/admin/solo tok"        "$(code /admin/solo '-H X-Token:sekret')"  "200"  # prefix uygulandı
-  chk "/solo (bare) 404"       "$(code /solo)"                         "404"   # prefix YOKSA açılırdı
-  chk "/admin/deep/x no-tok"   "$(code /admin/deep/x)"                 "403"   # nested mw miras
-  chk "/admin/deep/x tok"      "$(code /admin/deep/x '-H X-Token:sekret')" "200" # nested prefix yığını
+  chk "/admin/solo tok"        "$(code /admin/solo '-H X-Token:sekret')"  "200"  # prefix applied
+  chk "/solo (bare) 404"       "$(code /solo)"                         "404"   # would be open if there were NO prefix
+  chk "/admin/deep/x no-tok"   "$(code /admin/deep/x)"                 "403"   # nested mw inherited
+  chk "/admin/deep/x tok"      "$(code /admin/deep/x '-H X-Token:sekret')" "200" # nested prefix stack
   kill "$srv" 2>/dev/null; sleep 0.3; kill -9 "$srv" 2>/dev/null
 }
 

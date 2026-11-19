@@ -1,9 +1,9 @@
 use date
-// `$s .= x` ve `$s = $s . x` YERİNDE eklenir — yerel değişkende ve üst düzey global'de; anlam aynı kalır.
-// ESKİ: global `.=` ve her yerde `$s = $s . x` sağ tarafı baştan kurup yazıyordu → her adım bütün
-// metnin kopyası, döngüde karesel (üst düzey 1 milyon `.=`: 66 sn; fonksiyonda 100 bin `$s = $s . x`:
-// 175 ms). Şimdi işlenenler önce sırayla değerlendirilir (hepsi eski değeri görür), sonra eklenir.
-// FAIL satırı = hata.
+// `$s .= x` and `$s = $s . x` append IN PLACE — on a local variable and on a top-level global; the meaning stays the same.
+// OLD: global `.=` and `$s = $s . x` everywhere rebuilt the right-hand side from scratch → every step was a copy of the
+// whole text, quadratic in a loop (1 million `.=` at top level: 66 s; 100 thousand `$s = $s . x` in a function:
+// 175 ms). Now the operands are evaluated first in order (all see the old value), then appended.
+// A FAIL line = error.
 
 $fails = 0
 function check($name, $got, $want) {
@@ -11,20 +11,20 @@ function check($name, $got, $want) {
     return 0
 }
 
-// ── yerel (fonksiyon içi) ──
+// ── local (inside a function) ──
 function local_cases() {
     $f = 0
     $s = "s"
-    $s = $s . "a" . $s . "b"                      // sağdaki $s ESKİ değer: s a s b
+    $s = $s . "a" . $s . "b"                      // the $s on the right is the OLD value: s a s b
     $f += check("local: target read again in the chain", $s, "sasb")
     $s = "s"
-    $s = $s . $s                                  // kendisiyle
+    $s = $s . $s                                  // with itself
     $f += check('local: $s . $s', $s, "ss")
     $s = "s"
-    $s = $s . "-{$s}-"                            // ara değerde
+    $s = $s . "-{$s}-"                            // in an intermediate value
     $f += check("local: interpolation of the target", $s, "s-s-")
     $s = "s"
-    $t = $s                                       // paylaşılan değer: $t değişmez
+    $t = $s                                       // shared value: $t does not change
     $s = $s . "z"
     $f += check("local: a copy is not changed", $t . "|" . $s, "s|sz")
     $n = 5
@@ -34,7 +34,7 @@ function local_cases() {
     $s .= "b" . "c"
     $f += check("local: .= with a chain", $s, "abc")
     $s = "a"
-    $s = "x" . $s                                 // hedef sağda: yerinde değil, yine doğru
+    $s = "x" . $s                                 // target on the right: not in place, still correct
     $f += check("local: target on the right", $s, "xa")
     $l = ["p"]
     $l[0] = $l[0] . "q"
@@ -43,10 +43,10 @@ function local_cases() {
 }
 $fails += local_cases()
 
-// ── üst düzey (global) ──
+// ── top level (global) ──
 $G = "g"
 function read_g() { return $G }
-$G = $G . "x" . read_g()                          // fonksiyon ESKİ değeri görür: g x g
+$G = $G . "x" . read_g()                          // the function sees the OLD value: g x g
 $fails += check("global: a function in the chain reads the old value", $G, "gxg")
 $G = "g"
 $G = $G . "a" . $G . "b"
@@ -59,13 +59,13 @@ $N = 7
 $N .= "x"
 $fails += check("global: .= on a number", $N, "7x")
 $G = "g"
-for ($i = 0; $i < 3; $i++) { $G = $G . $i }       // döngü gövdesi (blok) üst düzey global'e yazar
+for ($i = 0; $i < 3; $i++) { $G = $G . $i }       // the loop body (block) writes to the top-level global
 $fails += check("global: written in a loop body", $G, "g012")
 $caught = ""
 try { $NOPE .= "x" } catch ($e) { $caught = $e }
 $fails += check("global: .= on an undefined variable", $caught, 'Undefined variable: $NOPE')
 
-// ── doğrusal zaman (karesel olsaydı saniyeler sürerdi) ──
+// ── linear time (it would take seconds if it were quadratic) ──
 function grow_local($n) { $s = ""; for ($i = 0; $i < $n; $i++) { $s = $s . "x" } return strlen($s) }
 $t0 = date::mono_us()
 $len = grow_local(300000)
@@ -80,7 +80,7 @@ for ($i = 0; $i < 300000; $i++) { $S2 = $S2 . "y" }
 $ms_self = (date::mono_us() - $t0) / 1000
 $fails += check("300k appends in a function give 300k bytes", $len, 300000)
 $fails += check("300k appends at top level give 300k bytes", strlen($S) + strlen($S2), 600000)
-// ölçüldü (300 bin): eski 1.764 / 1.006 / 775 ms, yeni 11 / 10 / 9 ms — eşik 500 ms (yavaş CI'da 50 kat pay)
+// measured (300 thousand): old 1.764 / 1.006 / 775 ms, new 11 / 10 / 9 ms — threshold 500 ms (50x margin on a slow CI)
 if ($ms_local > 500) { print('FAIL $s = $s . x in a function is not linear: ' . $ms_local . " ms"); $fails += 1 }
 if ($ms_dot_eq > 500) { print("FAIL .= at top level is not linear: " . $ms_dot_eq . " ms"); $fails += 1 }
 if ($ms_self > 500) { print('FAIL $s = $s . x at top level is not linear: ' . $ms_self . " ms"); $fails += 1 }

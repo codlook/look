@@ -1,7 +1,7 @@
-# error::new() değeri yerleşik STRUCT Error{type, message, code}: $e.type ve $e["type"] okunur,
-# json::encode sözlük yazar. Eskiden başında sözlük işareti olmayan düz listeydi: $e["type"] hep
-# null, error::is herhangi bir listeyi ikişer okuyup ["type","admin"] listesini hata sanıyordu.
-# Taklit edilemez: error::is yalnız yerleşik struct'ı tanır (liste, sözlük, JSON asla).
+# The value of error::new() is the builtin STRUCT Error{type, message, code}: $e.type and $e["type"] can be read,
+# json::encode writes a dictionary. It used to be a plain list without a dictionary marker at the start: $e["type"] was always
+# null, error::is read any list in pairs and took the ["type","admin"] list for an error.
+# Cannot be forged: error::is recognizes only the builtin struct (never a list, dictionary, or JSON).
 use error
 use json
 use cache

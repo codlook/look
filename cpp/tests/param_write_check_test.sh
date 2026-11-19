@@ -20,8 +20,8 @@ out="$("$LK" --check "$HERE/sample.lk" 2>/dev/null)"; rc=$?
 got="$(echo "$out" | grep '^CHECK .*\[param-write\]' | cut -d' ' -f2 | tr '\n' ' ')"
 if [ "$got" = "$want" ] && [ "$rc" = "1" ]; then echo "  OK   --check reports exactly the marked lines ($want) and fails"
 else echo "  FAIL --check: want lines [$want] got [$got] exit=$rc"; fail=1; fi
-# clean.lk push() kullanır (konu: push + return bulgu DEĞİL); push-deprecated satırı bu testin
-# konusu değil (tests/push_deprecated_test.sh) — yalnız o satır elenir.
+# clean.lk uses push() (subject: push + return is NOT a finding); the push-deprecated line is not the subject of this test
+# (tests/push_deprecated_test.sh) — only that line is filtered out.
 out="$("$LK" --check "$HERE/clean.lk" 2>/dev/null)"; rc=$?
 out="$(echo "$out" | grep -vF 'push($list, $x) changes the variable it is given')"
 if [ "$out" = "OK" ] && [ "$rc" = "0" ]; then echo "  OK   --check passes a function that returns what it changed"

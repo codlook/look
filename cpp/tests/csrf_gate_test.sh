@@ -24,7 +24,7 @@ for i in $(seq 1 50); do curl -s -o /dev/null -m 1 "localhost:$PORT/form" && bre
 B="http://localhost:$PORT"; J="$T/jar"
 tok="$(curl -s -c "$J" "$B/form")"
 fail=0
-c() {   # ad beklenen-kod curl-argümanları...
+c() {   # name expected-code curl-arguments...
     local name="$1" want="$2"; shift 2
     got="$(curl -s --path-as-is -o /dev/null -w '%{http_code}' "$@")"
     [ "$got" = "$want" ] && echo "  OK   $name ($got)" || { echo "  FAIL $name: want $want, got $got"; fail=1; }

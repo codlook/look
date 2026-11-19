@@ -22,7 +22,7 @@ ln -s "$O/new_by_dangle.txt" "$A/dangle"; ln -s ../out/rel_dangle.txt "$A/rel_da
 ln -s "$O/secret.html" "$A/views/evil.html"; ln -s "$O/mod.lk" "$A/modlink.lk"
 ln -s real "$A/alias"; ln -s "$A/real/f.txt" "$A/abslink"; ln -s real/new.txt "$A/dangle_in"
 fail=0
-run() {   # ad beklenen-metin lk-kaynağı
+run() {   # name expected-text lk-source
     printf '%s\n' "$3" > "$A/t.lk"
     out="$(cd "$A" && "$LK" t.lk 2>&1 | grep -v '^\[20' | tr '\n' ' ')"
     if echo "$out" | grep -qF -- "$2"; then echo "  OK   $1"; else echo "  FAIL $1: want \"$2\", got: $(echo "$out" | cut -c1-160)"; fail=1; fi

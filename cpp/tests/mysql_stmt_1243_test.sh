@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT="${PORT:-33121}"
 T="$(mktemp -d)"; s=""; trap '[ -n "$s" ] && kill $s 2>/dev/null; rm -rf "$T"' EXIT
 fail=0
-for mode in e1243 e1243first; do   # e1243first: 1243 hazırlamadan hemen sonraki EXECUTE'ta (ayna yolu)
+for mode in e1243 e1243first; do   # e1243first: 1243 on the EXECUTE right after prepare (mirror path)
 [ -n "$s" ] && { kill $s 2>/dev/null; wait $s 2>/dev/null; }
 python3 "$HERE/fake_mysql_server.py" $mode "$PORT" > "$T/my.log" 2>&1 & s=$!
 for i in $(seq 1 50); do (echo > "/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break; sleep 0.1; done

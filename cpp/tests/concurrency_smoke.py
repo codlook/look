@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-# Bounded-concurrency hang smoke-test istemcisi.
+# Bounded-concurrency hang smoke-test client.
 #
-# AMAÇ: worker-pool (default) ve fiber (LOOK_FIBER_DISPATCH=1) dispatch'inin
-# c=50-100 eşzamanlı yükte HANG etmediğini doğrulamak. Geçmişte fiber acceptor'ı
-# keep-alive fiber'larını beklerken YENİ bağlantıları accept etmiyordu → c=100
-# hang (D Fix #2 ile çözüldü: acceptor artık bir fiber, idle-timeout 15s).
-# Bu test o regresyonu yakalayacak POZİTİF-KONTROLE sahiptir (aşağıya bak).
+# PURPOSE: to verify that the worker-pool (default) and fiber (LOOK_FIBER_DISPATCH=1) dispatch do NOT
+# HANG under c=50-100 concurrent load. In the past the fiber acceptor did not accept NEW connections
+# while waiting for keep-alive fibers → c=100
+# hang (solved with D Fix #2: the acceptor is now a fiber, idle-timeout 15s).
+# This test has the POSITIVE CONTROL that catches that regression (see below).
 #
-# Bu bir THROUGHPUT benchmark'ı DEĞİL — sabit iş yapar, "hepsi bitti mi + sunucu
-# hâlâ canlı mı" sorusuna EVET/HAYIR döner. Sayı/rps raporlamaz.
+# This is NOT a THROUGHPUT benchmark — it does a fixed amount of work and answers YES/NO to the question "did everything finish + is the server
+# still alive". It does not report numbers/rps.
 #
-# Kullanım: python3 concurrency_smoke.py <port> <concurrency> <reqs_per_conn>
+# Usage: python3 concurrency_smoke.py <port> <concurrency> <reqs_per_conn>
 #
-# Çıkış kodu 0 = PASS. !=0 = FAIL (stderr'de neden).
+# Exit code 0 = PASS. != 0 = FAIL (the reason on stderr).
 import socket, sys, threading, time
 
 PORT   = int(sys.argv[1]) if len(sys.argv) > 1 else 7402
 CONC   = int(sys.argv[2]) if len(sys.argv) > 2 else 100
 PERCON = int(sys.argv[3]) if len(sys.argv) > 3 else 20
-PATH   = "/ping"   # uygulama rotası: /health sunucunun kendi yanıtıdır, dispatch'e girmez
-# Her bağlantı için cömert tavan. Bir HANG olsaydı bağlantılar bu süreyi aşar →
-# thread bu süre içinde PERCON isteği bitiremez → eksik sayılır → FAIL.
+PATH   = "/ping"   # application route: /health is the server's own response, it does not enter dispatch
+# A generous ceiling per connection. If there were a HANG, connections would exceed this time →
+# the thread cannot finish PERCON requests within this time → counted as missing → FAIL.
 CONN_TIMEOUT = 8.0
 
 req = ("GET %s HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n" % PATH).encode()
 
-results = [0] * CONC          # bağlantı başına tamamlanan 200 sayısı
+results = [0] * CONC          # number of 200s completed per connection
 errors  = [""] * CONC
 
 def read_response(sock, buf):
-    # Content-Length'e göre tam bir yanıtı tüket. keep-alive'da framing şart.
+    # Consume one full response by Content-Length. Framing is required with keep-alive.
     while b"\r\n\r\n" not in buf:
         d = sock.recv(4096)
         if not d:
@@ -77,8 +77,8 @@ def run_wave():
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(CONC)]
     for t in threads:
         t.start()
-    # Toplam duvar-saati tavanı: CONN_TIMEOUT'tan biraz fazla. HANG'de thread'ler
-    # join olmaz → join(timeout) döner → alive thread FAIL sinyali.
+    # Total wall-clock ceiling: a bit more than CONN_TIMEOUT. On a HANG the threads do not
+    # join → join(timeout) returns → an alive thread is the FAIL signal.
     deadline = CONN_TIMEOUT + 4.0
     for t in threads:
         remain = deadline - (time.time() - t0)
@@ -90,7 +90,7 @@ def run_wave():
     return done, want, stuck, dt
 
 def probe_alive():
-    # Yük bittikten SONRA sunucu hâlâ yanıt veriyor mu? (hang → burada takılır)
+    # After the load ends, is the server still responding? (a hang would get stuck here)
     try:
         s = socket.create_connection(("127.0.0.1", PORT), timeout=3)
         s.settimeout(3)

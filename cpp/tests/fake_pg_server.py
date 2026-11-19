@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# Sahte PostgreSQL sunucusu — LOOK'un wire ayristiricisina DUSMANCA mesaj gonderir.
-# Amac: bozuk DataRow'da LOOK sessizce bos veri mi donduruyor, yoksa hata mi veriyor?
+# Fake PostgreSQL server — sends HOSTILE messages to LOOK's wire parser.
+# Goal: on a corrupt DataRow, does LOOK silently return empty data, or does it raise an error?
 import socket, struct, sys, threading, os
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "truncated"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 55432
 
-# commit_kopar modu: INSERT sayacini surecler-arasi (retry yeni baglanti acar)
-# paylasmak icin dosyaya yaz.
+# commit_kopar (drop after commit) mode: write the INSERT counter to a file to share it
+# across processes (a retry opens a new connection).
 COUNT_FILE = os.environ.get("PG_COUNT_FILE", "/tmp/pg_insert_count")
 _insert_lock = threading.Lock()
 def record_insert():
@@ -18,48 +18,48 @@ def record_insert():
         open(COUNT_FILE, "w").write(str(n))
         return n
 
-def msg(t, body):            # tip + uzunluk(kendisi dahil) + govde
+def msg(t, body):            # type + length (including itself) + body
     return t + struct.pack("!I", len(body) + 4) + body
 
 def cstr(s):
     return s.encode() + b"\x00"
 
 def row_desc(name="col"):
-    b = struct.pack("!H", 1)                 # 1 alan
+    b = struct.pack("!H", 1)                 # 1 field
     b += cstr(name)
     b += struct.pack("!IHIhih", 0, 0, 25, -1, -1, 0)   # oid=25 (text)
     return msg(b"T", b)
 
 def data_row(mode):
     if mode == "truncated":
-        # UZUNLUK YALAN SOYLUYOR: 100 bayt diyor, 2 bayt veriyor
+        # LENGTH LIES: says 100 bytes, gives 2 bytes
         return msg(b"D", struct.pack("!H", 1) + struct.pack("!i", 100) + b"ab")
     if mode == "negatif":
-        # -5: NULL (-1) degil ama negatif — tanimsiz bolge
+        # -5: not NULL (-1) but negative — undefined region
         return msg(b"D", struct.pack("!H", 1) + struct.pack("!i", -5) + b"ab")
     if mode == "dev_uzunluk":
-        # int32 max: isaretci tasmasi denemesi
+        # int32 max: pointer overflow attempt
         return msg(b"D", struct.pack("!H", 1) + struct.pack("!i", 2147483647) + b"ab")
     if mode == "eksik_alan":
-        # 3 alan vaat ediyor, 1 tane veriyor
+        # promises 3 fields, gives 1
         return msg(b"D", struct.pack("!H", 3) + struct.pack("!i", 2) + b"ab")
     if mode == "saglam":
         return msg(b"D", struct.pack("!H", 1) + struct.pack("!i", 2) + b"ab")
     raise SystemExit("bilinmeyen mod")
 
 def handle(c):
-    # Startup paketi (tip baytI YOK): uzunluk + surum + key/value
+    # Startup packet (NO type byte): length + version + key/value
     hdr = c.recv(4)
     if len(hdr) < 4: return
     n = struct.unpack("!I", hdr)[0]
     c.recv(n - 4)
-    # ── Handshake-fazı durum-dizili saldırılar (kategori 1) ──────────────────
+    # ── Handshake-phase stateful attacks (category 1) ──────────────────
     if MODE == "hs_error":
-        # AuthenticationOk yerine ErrorResponse
+        # ErrorResponse instead of AuthenticationOk
         eb = b"SFATAL\x00C28000\x00Mtest reddi\x00\x00"
         c.sendall(msg(b"E", eb)); c.close(); return
     if MODE == "scram_iter":
-        # SCRAM: sunucu i=2147483647 yineleme ister — istemci dakikalarca PBKDF2'de kalmamalı
+        # SCRAM: the server asks for i=2147483647 iterations — the client must not stay in PBKDF2 for minutes
         c.sendall(msg(b"R", struct.pack("!I", 10) + cstr("SCRAM-SHA-256") + b"\x00"))
         t = c.recv(1)
         ln = struct.unpack("!I", c.recv(4))[0]
@@ -68,23 +68,23 @@ def handle(c):
         first = body.split(b"n,,", 1)[-1].decode()
         cnonce = [p[2:] for p in first.split(",") if p.startswith("r=")][0]
         c.sendall(msg(b"R", struct.pack("!I", 11) + ("r=%ssrv,s=c2FsdHNhbHQ=,i=2147483647" % cnonce).encode()))
-        try: c.recv(1)   # istemci vazgeçip kapatana dek bekle
+        try: c.recv(1)   # wait until the client gives up and closes
         except Exception: pass
         c.close(); return
     if MODE == "param_seli":
         c.sendall(msg(b"R", struct.pack("!I", 0)))    # AuthenticationOk
-        for _ in range(200000):                        # ParameterStatus seli (bellek?)
+        for _ in range(200000):                        # ParameterStatus flood (memory?)
             c.sendall(msg(b"S", cstr("k") + cstr("v")))
         c.sendall(msg(b"Z", b"I"));
-        # sonra normal sorgu dongusune dus
+        # then fall into the normal query loop
     else:
         c.sendall(msg(b"R", struct.pack("!I", 0)))    # AuthenticationOk
         c.sendall(msg(b"Z", b"I"))                     # ReadyForQuery
-    # Bir sorgunun (simple 'Q' VEYA extended P/B/D/E/S) yanit dizisini uretir.
-    # ext=True → once ParseComplete('1')+BindComplete('2') gonderilir (extended akis).
-    # LOOK'un db::query/exec/one'i artik NATIVE PREPARED (extended) kullaniyor, bu yuzden
-    # sahte sunucu ikisini de konusmali; kotu-DataRow modlari her iki akista ayni.
-    # Doner: True = baglanti kapandi (return), False = devam.
+    # Produces the reply sequence of one query (simple 'Q' OR extended P/B/D/E/S).
+    # ext=True → ParseComplete('1')+BindComplete('2') are sent first (extended flow).
+    # LOOK's db::query/exec/one now use NATIVE PREPARED (extended), so
+    # the fake server must speak both; the bad-DataRow modes are the same in both flows.
+    # Returns: True = connection closed (return), False = continue.
     def respond(q, ext):
         pre = (msg(b"1", b"") + msg(b"2", b"")) if ext else b""
         if MODE == "hs_rst":
@@ -96,17 +96,17 @@ def handle(c):
             if "INSERT" in q:
                 n = record_insert()
                 if n == 1:
-                    c.close(); return True          # commit-sonra-kopar
+                    c.close(); return True          # close-after-commit
                 c.sendall(pre + msg(b"C", cstr("INSERT 0 1")) + msg(b"Z", b"I")); return False
             c.sendall(pre + msg(b"C", cstr("SELECT 0")) + msg(b"Z", b"I")); return False
         if MODE == "sirasiz":
-            # DataRow, RowDescription'DAN ONCE (columns bos)
+            # DataRow BEFORE RowDescription (columns empty)
             c.sendall(pre + data_row("saglam") + row_desc() +
                       msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
         if MODE == "desync":
-            # FIRST: bozuk DataRow (100 bayt diyor, 2 veriyor) + ardından C ve Z. Sonraki sorgular
-            # kendi adlarını tek satır olarak döndürür. İstemci bozuk satırda bağlantıyı kapatmazsa
-            # okunmamış C/Z sonraki sorgunun cevabı sanılır: SECOND boş, THIRD "second" döner.
+            # FIRST: a corrupt DataRow (says 100 bytes, gives 2) + then C and Z. Later queries
+            # return their own names as a single row. If the client does not close the connection on the corrupt row,
+            # the unread C/Z are taken as the next query's reply: SECOND is empty, THIRD returns "second".
             if "FIRST" in q:
                 c.sendall(pre + row_desc() + data_row("truncated") +
                           msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
@@ -118,7 +118,7 @@ def handle(c):
         c.sendall(pre + row_desc() + data_row(MODE) +
                   msg(b"C", cstr("SELECT 1")) + msg(b"Z", b"I")); return False
 
-    ext_query = ""   # extended akista Parse('P')'den alinan sorgu metni
+    ext_query = ""   # query text taken from Parse('P') in the extended flow
     while True:
         t = c.recv(1)
         if not t: return
@@ -136,11 +136,11 @@ def handle(c):
             z1 = body.find(b"\x00")
             z2 = body.find(b"\x00", z1 + 1)
             ext_query = body[z1 + 1:z2].decode("utf-8", "replace").upper()
-        elif t in (b"B", b"D"):             # Bind / Describe — yanit Sync'te
+        elif t in (b"B", b"D"):             # Bind / Describe — reply at Sync
             pass
-        elif t == b"E":                     # Execute — yanit Sync'te (basit model)
+        elif t == b"E":                     # Execute — reply at Sync (simple model)
             pass
-        elif t == b"S":                     # Sync → tum extended yaniti burada gonder
+        elif t == b"S":                     # Sync → send the whole extended reply here
             if respond(ext_query, True): return
         elif t == b"X":
             return

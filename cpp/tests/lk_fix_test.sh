@@ -73,7 +73,7 @@ LK
 cp "$TMP/app.lk" "$TMP/orig.lk"
 before="$("$LK" "$TMP/app.lk" 2>/dev/null)"
 
-# --check: değişecekleri listeler, dosyaya dokunmaz, çıkış 1
+# --check: lists what would change, does not touch the file, exit 1
 out="$("$LK" fix --check "$TMP/app.lk" 2>&1)"; rc=$?
 if [ "$rc" = 1 ] && cmp -s "$TMP/app.lk" "$TMP/orig.lk" \
    && grep -qF "app.lk:5: push(\$l, 6)  ->  \$l = array::push(\$l, 6)" <<< "$out" \
@@ -81,7 +81,7 @@ if [ "$rc" = 1 ] && cmp -s "$TMP/app.lk" "$TMP/orig.lk" \
   ok "--check lists the rewrites, exit 1, file unchanged"
 else bad "--check: rc=$rc out=[$out]"; fi
 
-# yeniden yazma: beklenen metin bayt bayt; d ve c için NOTE; çıkış 0 (kalan yok)
+# rewrite: expected text byte for byte; NOTE for d and c; exit 0 (nothing remains)
 out="$("$LK" fix "$TMP/app.lk" 2>&1)"; rc=$?
 if [ "$rc" = 0 ] && cmp -s "$TMP/app.lk" "$TMP/want.lk"; then ok "cases a-d rewritten, comments and other lines kept"
 else bad "rewrite: rc=$rc out=[$out] diff=[$(diff "$TMP/want.lk" "$TMP/app.lk")]"; fi
@@ -90,13 +90,13 @@ if [ "$n" = 4 ] && grep -q '^.*app.lk:14: NOTE: array::pop' <<< "$out" && grep -
   ok "one NOTE per array::pop rewrite, with file:line"
 else bad "notes: n=$n out=[$out]"; fi
 
-# çıktı aynı, uyarı kalmadı
+# output is the same, no warning remains
 after="$("$LK" "$TMP/app.lk" 2>"$TMP/err.txt")"
 if [ -n "$before" ] && [ "$before" = "$after" ] && ! grep -q 'deprecated\|will be an error' "$TMP/err.txt"; then
   ok "same output before and after, no deprecation warning left"
 else bad "output: before=[$before] after=[$after] stderr=[$(cat "$TMP/err.txt")]"; fi
 
-# ikinci koşu hiçbir şey değiştirmez; --check temiz (0)
+# a second run changes nothing; --check is clean (0)
 cp "$TMP/app.lk" "$TMP/once.lk"
 out="$("$LK" fix "$TMP/app.lk" 2>&1)"; rc=$?
 out2="$("$LK" fix --check "$TMP/app.lk" 2>&1)"; rc2=$?
@@ -104,7 +104,7 @@ if [ "$rc" = 0 ] && [ -z "$out" ] && cmp -s "$TMP/app.lk" "$TMP/once.lk" && [ "$
   ok "idempotent: second run and --check change nothing, exit 0"
 else bad "second run: rc=$rc out=[$out] check rc=$rc2 out=[$out2]"; fi
 
-# yeniden yazılamayanlar: raporlanır, dokunulmaz, çıkış 1 (yazarken de --check'te de)
+# the ones that cannot be rewritten: reported, untouched, exit 1 (both when writing and with --check)
 cat > "$TMP/rest.lk" <<'LK'
 $l = [1, 2, 3]
 print(pop($l))
@@ -122,21 +122,21 @@ else bad "not rewritten: rc=$rc out=[$out] file=[$(cat "$TMP/rest.lk")]"; fi
 "$LK" fix --check "$TMP/rest.lk" > /dev/null 2>&1; rc=$?
 [ "$rc" = 1 ] && ok "--check exits 1 while calls are left" || bad "--check on leftovers: rc=$rc"
 
-# stdin → stdout (dosya yok); raporlar stderr'e
+# stdin → stdout (no file); reports go to stderr
 o="$(printf 'use array\n$l = [1, 2]\npop($l)\nprint(json::encode($l))\n' | "$LK" fix 2>"$TMP/err.txt")"; rc=$?
 if [ "$rc" = 0 ] && [ "$o" = "$(printf 'use array\n$l = [1, 2]\n$l = array::slice($l, 0, -1)\nprint(json::encode($l))')" ] && [ ! -s "$TMP/err.txt" ]; then
   ok "stdin to stdout"
 else bad "stdin: rc=$rc out=[$o] err=[$(cat "$TMP/err.txt")]"; fi
 
-# CRLF dosya: eklenen ikinci satır da CRLF
+# CRLF file: the added second line is CRLF too
 printf 'use array\r\n$l = [1, 2]\r\n$v = pop($l)\r\nprint($v)\r\n' > "$TMP/crlf.lk"
 "$LK" fix "$TMP/crlf.lk" > /dev/null 2>&1; rc=$?
 if [ "$rc" = 0 ] && [ "$(cat "$TMP/crlf.lk")" = "$(printf 'use array\r\n$l = [1, 2]\r\n$v = $l[-1]\r\n$l = array::slice($l, 0, -1)\r\nprint($v)\r')" ]; then
   ok "a CRLF file keeps CRLF line ends"
 else bad "crlf: rc=$rc file=[$(od -c "$TMP/crlf.lk" | head -5)]"; fi
 
-# `use array` yoksa eklenir (yeni yazım array:: kullanır; yoksa "Module 'array' not loaded.");
-# shebang ilk satırda kalır; yalnız array::pop → X[-1] ise modül gerekmez, eklenmez.
+# `use array` is added if missing (the new form uses array::; otherwise "Module 'array' not loaded.");
+# the shebang stays on the first line; if only array::pop → X[-1], no module is needed and none is added.
 printf '#!/usr/bin/env lk\n$l = [1, 2]\n$m = ["a" => [1]]\npush($m["a"], 2)\npop($l)\nprint(json::encode($l) . json::encode($m))\n' > "$TMP/nouse.lk"
 want_out="$("$LK" "$TMP/nouse.lk" 2>/dev/null)"
 "$LK" fix "$TMP/nouse.lk" > /dev/null 2>&1; rc=$?
@@ -149,7 +149,7 @@ printf '$l = [1, 2]\nprint(array::pop($l))\n' > "$TMP/onlyap.lk"
 [ "$(cat "$TMP/onlyap.lk")" = "$(printf '$l = [1, 2]\nprint($l[-1])')" ] && ok "array::pop alone needs no use array" \
   || bad "array::pop alone: file=[$(cat "$TMP/onlyap.lk")]"
 
-# ayrışmayan dosya: dokunulmaz, çıkış 2
+# a file that does not parse: untouched, exit 2
 printf 'push($l, \n' > "$TMP/broken.lk"; cp "$TMP/broken.lk" "$TMP/broken0.lk"
 "$LK" fix "$TMP/broken.lk" > /dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && cmp -s "$TMP/broken.lk" "$TMP/broken0.lk" && ok "a file that does not parse is left alone, exit 2" || bad "broken file: rc=$rc"

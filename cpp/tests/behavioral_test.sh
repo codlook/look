@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Davranışsal .lk testleri — gömülü SQLite / in-process (harici sunucu YOK, CI-koşabilir).
-# Kapsam: db:: CRUD+tx · jobs:: lifecycle+retry · parallel() fan-out+izolasyon · prepared
-# bind matrisi. Her .lk fail-loud ("FAIL " basar) + empty-green ("ran=N" + EXPECTED sabiti).
+# Behavioral .lk tests — embedded SQLite / in-process (NO external server, runnable in CI).
+# Scope: db:: CRUD+tx · jobs:: lifecycle+retry · parallel() fan-out+isolation · prepared
+# bind matrix. Every .lk is fail-loud (prints "FAIL ") + empty-green ("ran=N" + an EXPECTED constant).
 #
-# POZİTİF KONTROL (Kural 1): bir .lk'de beklenen değer bozulursa "FAIL ..." basılır ve bu
-# runner exit 1 döner (ölçüldü). "ran=N" satırı yoksa (script erken öldü) da FAIL.
+# POSITIVE CONTROL (Rule 1): if an expected value in a .lk is broken, "FAIL ..." is printed and this
+# runner returns exit 1 (measured). It is also a FAIL if the "ran=N" line is missing (the script died early).
 set -u
 LK="${1:-./build/lk}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

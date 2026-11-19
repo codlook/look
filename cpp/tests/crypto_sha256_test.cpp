@@ -1,7 +1,7 @@
-// SHA-256 / HMAC / PBKDF2 known-answer test — look/crypto_sha256.h (dikişi aç).
-// Bu üçlü JWT(HS256)/DKIM/session/auth'u besler. RFC vektörleriyle "kendi çıktısına değil,
-// SPEC'e pinle": NIST SHA-256 · RFC 4231 HMAC-SHA256 · RFC 7914 §11 PBKDF2-HMAC-SHA256.
-// POZİTİF-KONTROLLÜ (impl bir bit kayarsa vektör tutmaz → RED). Yeni builtin YOK.
+// SHA-256 / HMAC / PBKDF2 known-answer test — look/crypto_sha256.h (opens the seam).
+// This trio feeds JWT(HS256)/DKIM/session/auth. With RFC vectors "pin to the SPEC,
+// not to its own output": NIST SHA-256 · RFC 4231 HMAC-SHA256 · RFC 7914 §11 PBKDF2-HMAC-SHA256.
+// POSITIVE-CONTROLLED (if the impl is off by one bit the vector does not match → RED). No new builtin.
 //   Build: g++ -std=c++17 -Iinclude tests/crypto_sha256_test.cpp -o /tmp/csha && /tmp/csha
 #include "look/crypto_sha256.h"
 #include <cstdio>
@@ -26,7 +26,7 @@ static std::vector<uint8_t> rep(uint8_t b, size_t n){ return std::vector<uint8_t
 int main(){
     printf("SHA-256 / HMAC / PBKDF2 RFC known-answer:\n");
 
-    // ── SHA-256 (NIST FIPS 180-4 örnekleri) ──
+    // ── SHA-256 (NIST FIPS 180-4 examples) ──
     chk("sha256(\"abc\")", hex(sha256(B("abc"))),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     chk("sha256(\"\")", hex(sha256(B(""))),
@@ -54,10 +54,10 @@ int main(){
     chk("pbkdf2 Password/NaCl/80000/64", hex(pbkdf2_sha256("Password", B("NaCl"), 80000, 64)),
         "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56"
         "a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d");
-    // RFC 6070-türevi kısa: P="password" S="salt" c=1 dkLen=32 (tek-block sınır)
+    // RFC 6070-derived short: P="password" S="salt" c=1 dkLen=32 (single-block bound)
     chk("pbkdf2 password/salt/1/32", hex(pbkdf2_sha256("password", B("salt"), 1, 32)),
         "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
-    // Çok-iterasyon tek-block: c=4096 dkLen=32
+    // Many iterations, single block: c=4096 dkLen=32
     chk("pbkdf2 password/salt/4096/32", hex(pbkdf2_sha256("password", B("salt"), 4096, 32)),
         "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a");
 

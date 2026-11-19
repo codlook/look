@@ -1,14 +1,14 @@
-# JWT güvenlik tablosu — 5 saldırı/pozitif ekseni fail-loud + EXPECTED-pin ile kilitler.
+# JWT security table — locks 5 attack/positive axes with fail-loud + EXPECTED-pin.
 #
-# NEDEN: LOOK JWT modülü (look-modules/jwt/jwt.lk) SADECE HS256. Bu test, verify'in
-# klasik JWT açıklarına GÜVENLİ davrandığını dış-oracle token'larla kanıtlar:
-#   1) alg=none kabul edilmemeli (verify header alg'ini OKUMAZ → hep HMAC uygular)
-#   2) RS256→HS256 key-confusion imkânsız (modül RS256 verify path'i içermez; hep HMAC)
-#   3) süresi geçmiş (exp geçmişte) token REDDEDİLMELİ
-#   4) payload kurcalandı ama imza aynı → REDDEDİLMELİ
-#   5) POZİTİF: geçerli imzalı token KABUL edilmeli
+# WHY: the LOOK JWT module (look-modules/jwt/jwt.lk) is HS256 ONLY. This test proves with external-oracle tokens that verify
+# behaves SAFELY against the classic JWT holes:
+#   1) alg=none must not be accepted (verify does NOT READ the header alg → it always applies HMAC)
+#   2) RS256→HS256 key-confusion is impossible (the module has no RS256 verify path; always HMAC)
+#   3) an expired token (exp in the past) must be REJECTED
+#   4) payload tampered but the same signature → must be REJECTED
+#   5) POSITIVE: a validly signed token must be ACCEPTED
 #
-# Çalıştır: build-win/Release/lk.exe cpp/tests/jwt_security.lk   (exit 1 = FAIL, CI gate)
+# Run: build-win/Release/lk.exe cpp/tests/jwt_security.lk   (exit 1 = FAIL, CI gate)
 
 use crypto;
 use json;
@@ -17,7 +17,7 @@ use date;
 
 $SECRET = "test-hs256-secret-key";
 
-# --- Yardımcı: modül mantığını AYNEN tekrar eden yerel sign/verify (drift yok) ---
+# --- Helper: local sign/verify that repeats the module logic EXACTLY (no drift) ---
 function jwt_sign_local($payload, $secret) {
     $header = ["alg" => "HS256", "typ" => "JWT"];
     $h = crypto::base64url_encode(json::encode($header));
@@ -27,7 +27,7 @@ function jwt_sign_local($payload, $secret) {
     return $si . "." . $sig;
 }
 
-# Modülün verify'ini birebir kopyalar (jwt.lk jwt_verify ile aynı davranış).
+# Copies the module's verify one to one (same behavior as jwt.lk jwt_verify).
 function jwt_verify_local($token, $secret) {
     $parts = string::split($token, ".");
     if (count($parts) != 3) { return null; }
@@ -45,18 +45,18 @@ function jwt_verify_local($token, $secret) {
 $run = 0;
 $fail = 0;
 
-# --- 1) alg=none saldırısı: header {"alg":"none"}, imza boş → REDDEDİLMELİ ---
+# --- 1) alg=none attack: header {"alg":"none"}, empty signature → must be REJECTED ---
 $run = $run + 1;
 $hdr_none = crypto::base64url_encode(json::encode(["alg" => "none", "typ" => "JWT"]));
 $pay_none = crypto::base64url_encode(json::encode(["user" => "admin", "exp" => 9999999999]));
-$tok_none = $hdr_none . "." . $pay_none . ".";      # boş imza
+$tok_none = $hdr_none . "." . $pay_none . ".";      # empty signature
 if (jwt_verify_local($tok_none, $SECRET) != null) {
     print("FAIL 1 (KRITIK): alg=none token KABUL edildi — imza atlanabiliyor"); $fail = $fail + 1;
 }
 
-# --- 2) RS256→HS256 key-confusion: alg=RS256 header, ama HMAC(public_key) ile imzala ---
-# Modül RS256 verify yapmadığı için verify hep HMAC($SECRET) uygular; saldırgan $SECRET'i
-# bilmediğinden imza tutmaz → REDDEDİLMELİ. (public-key'i secret sanan verify tuzağı yok.)
+# --- 2) RS256→HS256 key-confusion: alg=RS256 header, but signed with HMAC(public_key) ---
+# Since the module does no RS256 verify, verify always applies HMAC($SECRET); the attacker does not know $SECRET
+# so the signature does not match → must be REJECTED. (There is no trap of a verify that takes the public key for the secret.)
 $run = $run + 1;
 $hdr_rs = crypto::base64url_encode(json::encode(["alg" => "RS256", "typ" => "JWT"]));
 $pay_rs = crypto::base64url_encode(json::encode(["user" => "admin", "exp" => 9999999999]));
@@ -67,24 +67,24 @@ if (jwt_verify_local($tok_rs, $SECRET) != null) {
     print("FAIL 2 (KRITIK): RS256->HS256 key-confusion token KABUL edildi"); $fail = $fail + 1;
 }
 
-# --- 3) exp süresi geçmiş → REDDEDİLMELİ ---
+# --- 3) exp expired → must be REJECTED ---
 $run = $run + 1;
-$tok_exp = jwt_sign_local(["user" => "bob", "exp" => 1000000000], $SECRET);  # 2001 — geçmiş
+$tok_exp = jwt_sign_local(["user" => "bob", "exp" => 1000000000], $SECRET);  # 2001 — in the past
 if (jwt_verify_local($tok_exp, $SECRET) != null) {
     print("FAIL 3: suresi gecmis (exp) token KABUL edildi"); $fail = $fail + 1;
 }
 
-# --- 4) imza kurcalama: geçerli token üret, payload'ı değiştir, imzayı koru → REDDEDİLMELİ ---
+# --- 4) signature tampering: produce a valid token, change the payload, keep the signature → must be REJECTED ---
 $run = $run + 1;
 $good = jwt_sign_local(["user" => "bob", "rol" => "user"], $SECRET);
 $gp = string::split($good, ".");
 $tampered_pay = crypto::base64url_encode(json::encode(["user" => "bob", "rol" => "admin"]));
-$tok_tamper = $gp[0] . "." . $tampered_pay . "." . $gp[2];   # eski imza
+$tok_tamper = $gp[0] . "." . $tampered_pay . "." . $gp[2];   # old signature
 if (jwt_verify_local($tok_tamper, $SECRET) != null) {
     print("FAIL 4 (KRITIK): kurcalanmis payload (rol=admin) eski imzayla KABUL edildi"); $fail = $fail + 1;
 }
 
-# --- 5) POZİTİF: geçerli imzalı token KABUL + payload doğru ---
+# --- 5) POSITIVE: validly signed token ACCEPTED + payload correct ---
 $run = $run + 1;
 $valid = jwt_sign_local(["user" => "alice", "rol" => "user", "exp" => 9999999999], $SECRET);
 $vp = jwt_verify_local($valid, $SECRET);
@@ -96,7 +96,7 @@ if ($vp == null) {
     }
 }
 
-# --- Guard 1: empty-green — 5 eksen koştu mu? ---
+# --- Guard 1: empty-green — did all 5 axes run? ---
 const { EXPECTED = 5 }
 if ($run != EXPECTED) {
     print("FAIL: " . EXPECTED . " eksen beklendi, " . $run . " kostu — bir dal atlandi");

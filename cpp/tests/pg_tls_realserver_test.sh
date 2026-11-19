@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# PostgreSQL TLS — GERÇEK SUNUCU interop (mock DEĞİL). GitHub Actions ubuntu-latest'te
-# apt ile kurulan gerçek postgres'i initdb ile iki cluster olarak ayağa kaldırır:
-#   * TLS-ON  cluster (ssl=on, CA-imzalı cert, SAN=DNS:localhost, scram-sha-256 auth)
-#   * TLS-OFF cluster (ssl=off) — sessiz-plaintext-düşüş guard'ı için
-# ve LOOK'un postgresqls:// ile GERÇEK SSLRequest→'S'→TLS-upgrade→startup→SCRAM-auth→query
-# roundtrip'ini ölçer.
+# PostgreSQL TLS — REAL SERVER interop (NOT a mock). On GitHub Actions ubuntu-latest, brings up the real postgres installed
+# with apt as two clusters via initdb:
+#   * TLS-ON  cluster (ssl=on, CA-signed cert, SAN=DNS:localhost, scram-sha-256 auth)
+#   * TLS-OFF cluster (ssl=off) — for the silent-plaintext-fallback guard
+# and measures LOOK's REAL postgresqls:// SSLRequest→'S'→TLS-upgrade→startup→SCRAM-auth→query
+# roundtrip.
 #
-# MOCK'un (pg_tls_handshake_test.sh) KANITLAYAMADIĞI, BUNUN kanıtladığı eksen:
-#   - Mock python TLS sunucusu yalnız client'ın verify KARARINI ölçer (S gönderir, TLS sarar,
-#     startup mesajını okumaz, auth yapmaz). "S sonrası PG protokolü çalışıyor mu" AÇIKTA kalır.
-#   - Bu harness gerçek postgres: 'S' baytı gerçek sunucudan, TLS içinde gerçek Startup + gerçek
-#     SCRAM-SHA-256 authentication + gerçek "SELECT" satır dönüşü. Yani TLS-upgrade sonrası
-#     protokol dikişi (encrypted kanal üstünde wire) UÇTAN UCA kanıtlanır.
+# The axis the MOCK (pg_tls_handshake_test.sh) COULD NOT PROVE, that THIS proves:
+#   - The mock python TLS server only measures the client's verify DECISION (sends S, wraps TLS,
+#     does not read the startup message, does no auth). "Does the PG protocol work after S" stays OPEN.
+#   - This harness is a real postgres: the 'S' byte from a real server, a real Startup inside TLS + real
+#     SCRAM-SHA-256 authentication + a real "SELECT" row return. So the protocol seam after the TLS upgrade
+#     (wire over the encrypted channel) is proven END TO END.
 #
-# MATRİS (hepsi gerçek sunucuya karşı):
-#   1) valid     : SSL_CERT_FILE=ca + SAN eşleşir → SELECT döner        (verify PASS + roundtrip)
-#   2) untrusted : CA yok, verify(varsayılan) → certificate verify fail → RED
-#   3) mismatch  : SSL_CERT_FILE=ca AMA 127.0.0.1 (SAN=localhost) → hostname → RED
-#   4) insecure  : ?tls=insecure, güvenilmez cert'e RAĞMEN bağlanır → SELECT (POZİTİF KONTROL:
-#                  2/3 reddi verify'dan gelir, bozuk handshake'ten değil)
-#   5) reject-tls: postgresqls:// → ssl=off sunucu → 'N' → temiz hata (SESSİZ PLAINTEXT DÜŞÜŞ YOK)
-#   6) plain-ok  : postgres:// → ssl=off sunucu → SELECT (POZİTİF KONTROL: 5'in reddi TLS-refuse,
-#                  sunucu-down değil)
+# MATRIX (all against the real server):
+#   1) valid     : SSL_CERT_FILE=ca + SAN matches → SELECT returns        (verify PASS + roundtrip)
+#   2) untrusted : no CA, verify (default) → certificate verify fail → REJECT
+#   3) mismatch  : SSL_CERT_FILE=ca BUT 127.0.0.1 (SAN=localhost) → hostname → REJECT
+#   4) insecure  : ?tls=insecure, connects DESPITE an untrusted cert → SELECT (POSITIVE CONTROL:
+#                  the rejection in 2/3 comes from verify, not from a broken handshake)
+#   5) reject-tls: postgresqls:// → ssl=off server → 'N' → clean error (NO SILENT PLAINTEXT FALLBACK)
+#   6) plain-ok  : postgres:// → ssl=off server → SELECT (POSITIVE CONTROL: the rejection in 5 is a TLS refusal,
+#                  not a server-down)
 set -u
 LK="${1:-./build/lk}"
 TLS_PORT="${2:-54330}"
@@ -42,7 +42,7 @@ trap cleanup EXIT
 
 command -v openssl >/dev/null 2>&1 || { echo "  (atlandi: openssl yok)"; exit 0; }
 
-# postgres binary dizinini bul (apt: /usr/lib/postgresql/<ver>/bin)
+# find the postgres binary directory (apt: /usr/lib/postgresql/<ver>/bin)
 PGBIN=""
 if command -v initdb >/dev/null 2>&1; then PGBIN="$(dirname "$(command -v initdb)")"; fi
 if [ -z "$PGBIN" ]; then
@@ -52,7 +52,7 @@ fi
 [ -n "$PGBIN" ] && [ -x "$PGBIN/initdb" ] || { echo "  (atlandi: postgres server binary yok)"; exit 0; }
 echo "  PGBIN=$PGBIN"
 
-# ── Sertifikalar: kendi CA'mız + CA-imzalı server cert (SAN=DNS:localhost) ──────
+# ── Certificates: our own CA + a CA-signed server cert (SAN=DNS:localhost) ──────
 mkdir -p "$CERTS"
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$CERTS/ca.key" -out "$CERTS/ca.crt" \
   -days 1 -subj "/CN=look-test-ca" >/dev/null 2>&1
@@ -64,7 +64,7 @@ openssl x509 -req -in "$CERTS/server.csr" -CA "$CERTS/ca.crt" -CAkey "$CERTS/ca.
 chmod 600 "$CERTS/server.key"
 [ -s "$CERTS/server.crt" ] || { echo "  (atlandi: cert uretilemedi)"; exit 0; }
 
-# ── initdb: iki cluster (scram varsayilan) ─────────────────────────────────────
+# ── initdb: two clusters (scram default) ─────────────────────────────────────
 "$PGBIN/initdb" -D "$TLSDIR"   -U postgres --auth=trust --auth-host=scram-sha-256 \
   --pwfile=<(echo postgres) >/dev/null 2>&1
 "$PGBIN/initdb" -D "$PLAINDIR" -U postgres --auth=trust --auth-host=scram-sha-256 \
@@ -83,7 +83,7 @@ ssl_cert_file = 'server.crt'
 ssl_key_file = 'server.key'
 password_encryption = scram-sha-256
 EOF
-# scram + TLS zorunlu (hostssl); loopback IPv4/IPv6
+# scram + TLS required (hostssl); loopback IPv4/IPv6
 cat > "$TLSDIR/pg_hba.conf" <<EOF
 local   all all                trust
 hostssl all all 127.0.0.1/32   scram-sha-256
@@ -109,7 +109,7 @@ EOF
 [ -n "$PGT_PID" ] && [ -n "$PGP_PID" ] || {
   echo "  (atlandi: postgres baslatilamadi)"; sed -n '1,20p' "$TMP/tls.log" "$TMP/plain.log" 2>/dev/null; exit 0; }
 
-# scram parolali app rolu + db (her iki cluster)
+# scram-password app role + db (both clusters)
 for D in "$TLSDIR" "$PLAINDIR"; do
   PT=$TLS_PORT; [ "$D" = "$PLAINDIR" ] && PT=$PLAIN_PORT
   PGPASSWORD=postgres "$PGBIN/psql" -h 127.0.0.1 -p "$PT" -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null 2>&1 <<SQL
@@ -119,7 +119,7 @@ CREATE DATABASE testdb OWNER looktest;
 SQL
 done
 
-# ── .lk yardimcilari (DSN env'den; host/port harness kontrolunde) ──────────────
+# ── .lk helpers (DSN from env; host/port under harness control) ───────────
 cat > "$TMP/ok.lk" <<'LKEOF'
 $db = db::connect(env("DSN"))
 print(db::query($db, "SELECT 42 AS n")[0]["n"])
@@ -137,32 +137,32 @@ assert(){ # label expected actual
   if echo "$3" | grep -q "$2"; then echo "  OK  $1"; else echo "  FAIL $1 -> [$3]"; fail=1; fi
 }
 
-# 1) valid — verify PASS + gercek TLS roundtrip (SCRAM auth + SELECT icinde TLS)
+# 1) valid — verify PASS + real TLS roundtrip (SCRAM auth + SELECT inside TLS)
 o=$(SSL_CERT_FILE="$CA" DSN="postgresqls://looktest:testpass@localhost:$TLS_PORT/testdb" \
       timeout 20 "$LK" "$TMP/ok.lk" 2>&1)
 assert "valid: CA-guvenilir + SAN eslesir -> SELECT 42 (TLS roundtrip+SCRAM)" "42" "$o"
 
-# 2) untrusted — CA yok, verify default -> RED
+# 2) untrusted — no CA, verify default -> REJECT
 o=$(DSN="postgresqls://looktest:testpass@localhost:$TLS_PORT/testdb" \
       timeout 20 "$LK" "$TMP/reject.lk" 2>&1)
 assert "untrusted: CA store'da yok + verify -> REJECTED" "REJECTED" "$o"
 
-# 3) mismatch — CA guvenilir ama 127.0.0.1 (SAN=localhost) -> hostname RED
+# 3) mismatch — CA trusted but 127.0.0.1 (SAN=localhost) -> hostname REJECT
 o=$(SSL_CERT_FILE="$CA" DSN="postgresqls://looktest:testpass@127.0.0.1:$TLS_PORT/testdb" \
       timeout 20 "$LK" "$TMP/reject.lk" 2>&1)
 assert "mismatch: gecerli CA ama SAN!=127.0.0.1 -> hostname REJECTED" "REJECTED" "$o"
 
-# 4) insecure — POZITIF KONTROL: dogrulamasiz baglanir
+# 4) insecure — POSITIVE CONTROL: connects without verification
 o=$(DSN="postgresqls://looktest:testpass@127.0.0.1:$TLS_PORT/testdb?tls=insecure" \
       timeout 20 "$LK" "$TMP/ok.lk" 2>&1)
 assert "insecure: guvenilmez cert'e RAGMEN baglanir (verify off) -> 42" "42" "$o"
 
-# 5) reject-tls — ssl=off sunucu, postgresqls:// -> 'N' -> temiz hata (SESSIZ DUSUS YOK)
+# 5) reject-tls — ssl=off server, postgresqls:// -> 'N' -> clean error (NO SILENT FALLBACK)
 o=$(DSN="postgresqls://looktest:testpass@localhost:$PLAIN_PORT/testdb" \
       timeout 20 "$LK" "$TMP/reject.lk" 2>&1)
 assert "reject-tls: ssl=off sunucu + postgresqls:// -> REJECTED (plaintext dususu YOK)" "REJECTED" "$o"
 
-# 6) plain-ok — POZITIF KONTROL: postgres:// ssl=off sunucuya baglanir
+# 6) plain-ok — POSITIVE CONTROL: postgres:// connects to the ssl=off server
 o=$(DSN="postgres://looktest:testpass@localhost:$PLAIN_PORT/testdb" \
       timeout 20 "$LK" "$TMP/ok.lk" 2>&1)
 assert "plain-ok: postgres:// ssl=off sunucu -> 42 (5'in reddi TLS-refuse, down degil)" "42" "$o"

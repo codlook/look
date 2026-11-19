@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Sessiz yanlış sayı kalmasın:
-#   - rakamsız "0x" / "0b" literal'i eskiden 0'dı → derleme hatası (Go: "literal has no digits")
-#   - 64 bite sığmayan tam sayı METNİ örtük çevrimde eskiden 0'dı: $liste["99999999999999999999"]
-#     sessizce 0. eleman, bit işlemleri 0 → açık hata (int() / type::to_int ile aynı kural)
-#   - sayı olmayan metin gevşek kalır: int("abc") == 0 (değişmedi)
+# No silently wrong numbers:
+#   - a "0x" / "0b" literal without digits used to be 0 → compile error (Go: "literal has no digits")
+#   - integer TEXT that does not fit in 64 bits used to be 0 on implicit conversion: $list["99999999999999999999"]
+#     was silently element 0, bit operations gave 0 → explicit error (same rule as int() / type::to_int)
+#   - text that is not a number stays loose: int("abc") == 0 (unchanged)
 # Usage: numeric_overflow_test.sh <lk>
 LK="${1:?usage: $0 <lk>}"
 fail=0

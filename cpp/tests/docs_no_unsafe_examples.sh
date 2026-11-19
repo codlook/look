@@ -15,22 +15,22 @@ bad="$(grep -nE 'render_string(</span>)?\((<span class="str">)?("|&quot;)' $file
 [ -z "$bad" ] || { echo "FAIL: template::render_string with a double-quoted template:"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
 bad="$(grep -nE '\b(WHERE|AND|OR|SET|VALUES)\b[^`"]*\{(<span class="var">)?\$' $files /dev/null || true)"
 [ -z "$bad" ] || { echo "FAIL: a value interpolated into SQL:"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
-# 3. Kurulum: "curl … | sudo bash" yok ve indirme yalnız projenin adreslerinden. Ubuntu rehberi
-#    kayıtlı olmayan bir alan adından (get.look-lang.org) root olarak betik çalıştırtıyordu:
-#    o adı alan herkes rehberi izleyenin sunucusunda kod çalıştırırdı.
+# 3. Installation: no "curl … | sudo bash", and downloads only from the project's own addresses. The Ubuntu guide
+#    made people run a script as root from an unregistered domain name (get.look-lang.org):
+#    whoever registered that name could run code on the server of anyone following the guide.
 ifiles="$( { echo "$files"; git ls-files '*.md' 'platforms/**/*.md' 'platforms/**/*.sh' 2>/dev/null | grep -v '^cpp/tests/'; } | sort -u)"
 bad="$(grep -nE '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z)?sh\b' $ifiles /dev/null || true)"
 [ -z "$bad" ] || { echo "FAIL: a download piped into a shell:"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
 bad="$(grep -nE '(curl|wget)[^#]*https?://' $ifiles /dev/null | grep -vE 'https?://(github\.com/codlook/|([a-z0-9-]+\.)?codlook\.com\b|(127\.0\.0\.1|localhost|\$|<|\{))' | grep -E '(curl|wget)[^#]*https?://[a-z]' | grep -vE 'https?://[^/ ]*(example|myapp|sunucu|domain)' || true)"
 [ -z "$bad" ] || { echo "FAIL: a download from an address that is not the project's (github.com/codlook, codlook.com):"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
-# 4. Belgedeki her systemd servis örneği bir kullanıcıyla çalışır, root'la değil. Plesk elle kurulum
-#    rehberi User= olmadan servis yazdırıyor ve "root yaygın ve pratik" diyordu (eklenti 1.2.0'da
-#    kapattığımız açığın belgedeki kopyası).
+# 4. Every systemd service example in the docs runs as a user, not as root. The Plesk manual install
+#    guide had people write a service without User= and said "root is common and practical" (the docs copy of the hole
+#    we closed in the plugin 1.2.0).
 mdfiles="$(echo "$ifiles" | grep '\.md$')"
 bad="$(awk 'FNR==1{inb=0} /^```/{ if(inb){ if(svc && exe && !usr) print FILENAME":"start": systemd unit without User= (or User=root)"; inb=0 } else { inb=1; svc=0; exe=0; usr=0; start=FNR } next }
      inb && /^\[Service\]/{svc=1} inb && /^ExecStart=.*(lk|look)-(fcgi|cgi)/{exe=1} inb && /^User=/ && !/^User=root/{usr=1}' $mdfiles /dev/null || true)"
 [ -z "$bad" ] || { echo "FAIL: a service example that runs LOOK as root:"; echo "$bad" | sed 's/^/    /'; fail=1; }
-# 5. Web sunucusu lk-fcgi'dir; "lk --mode http" bir dosya adı sanılır ve çalışmaz (SMTP/IMAP belgeleri).
+# 5. The web server is lk-fcgi; "lk --mode http" is taken to be a file name and does not work (SMTP/IMAP docs).
 bad="$(grep -nE '(^|[[:space:]`>])lk --mode http' $ifiles /dev/null | grep -v '^dogfood/' || true)"
 [ -z "$bad" ] || { echo "FAIL: 'lk --mode http' (the server is lk-fcgi):"; echo "$bad" | cut -c1-170 | sed 's/^/    /'; fail=1; }
 [ $fail = 0 ] && echo "PASS: no unsafe examples in the documentation ($(echo "$files" | wc -l) files)" || exit 1

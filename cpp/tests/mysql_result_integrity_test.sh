@@ -32,7 +32,7 @@ db::exec($c, "INSERT INTO lk_integrity SELECT id + 1000 FROM lk_integrity", [])
 $p = db::query($c, "SELECT COUNT(*) AS n FROM information_schema.routines WHERE routine_schema = DATABASE() AND routine_name = 'lk_two'", [])
 print($p[0]["n"] == 1 ? "ready" : "no-proc")
 LK
-# CREATE PROCEDURE hazırlanmış ifade protokolünde yok → mysql istemcisiyle (DSN'den)
+# CREATE PROCEDURE does not exist in the prepared statement protocol → via the mysql client (from the DSN)
 if command -v mysql >/dev/null 2>&1; then
     r="${DSN#mysql://}"; r="${r%%\?*}"; cred="${r%%@*}"; hp="${r#*@}"; hp="${hp%%/*}"; db="${r##*/}"
     MYSQL_PWD="${cred#*:}" mysql -h "${hp%%:*}" -P "${hp##*:}" -u "${cred%%:*}" "$db" \
@@ -44,13 +44,13 @@ s="$(cd "$T" && timeout 120 "$LK" setup.lk 2>&1 | grep -v '^\[20' | tail -1)"
 cat > "$T/app.lk" <<'LK'
 use db
 $c = db::connect(env("DSN"))
-# tek bağlantı: CALL'dan kalan paket aynı bağlantıdaki sonraki sorguya gider
+# a single connection: the packet left over from CALL goes to the next query on the same connection
 route("GET", "/call", function() use ($c) {
     $a = db::query($c, "CALL lk_two()", [])
     $b = db::query($c, "SELECT 2 AS y", [])
     return response::text(json::encode([$a, $b]))
 })
-# satır 1500'de alt sorgu iki satır döndürür → ER_SUBQUERY_NO_1_ROW, ilk satırlar gönderildikten SONRA
+# at row 1500 the subquery returns two rows → ER_SUBQUERY_NO_1_ROW, AFTER the first rows were sent
 route("GET", "/mid", function() use ($c) {
     try {
         $r = db::query($c, "SELECT id FROM lk_integrity WHERE IF(id = 1500, (SELECT 1 UNION SELECT 2), 1)", [])
@@ -59,7 +59,7 @@ route("GET", "/mid", function() use ($c) {
         return response::text("error " . $e)
     }
 })
-# İşlem içinde: eskiden kalan paket bağlantıyı "bozuk" sayıp kapattırıyordu → işlem geri alınıyordu
+# Inside a transaction: the leftover packet used to make the connection count as "corrupt" and get closed → the transaction was rolled back
 route("GET", "/txcall", function() use ($c) {
     try {
         db::begin($c)

@@ -1,7 +1,7 @@
-# prepared statements (native) — SQLite bind matrisi (gömülü, sunucu YOK). CI-koşabilir.
-# Çekirdek round-trip: int64 sınır · float · bool · null-gerçek · UTF-8/özel-karakter ·
-# injection (bind escape) · param-sayısı reddi · Inf/NaN fail-loud. (Sunucu-lehçesi
-# davranışları — MySQL/PG wire — SQLite'ta test EDİLEMEZ, ayrı canlı-DSN matrisi kalır.)
+# prepared statements (native) — SQLite bind matrix (embedded, NO server). Runnable in CI.
+# Core round trip: int64 boundary · float · bool · real null · UTF-8/special characters ·
+# injection (bind escape) · param-count rejection · Inf/NaN fail-loud. (Server-dialect
+# behaviors — MySQL/PG wire — CANNOT be tested on SQLite; a separate live-DSN matrix remains.)
 use math
 
 $ran = 0
@@ -23,22 +23,22 @@ chk("bool", ($bv == "1" || $bv == "true" || $bv == "t"), true); $ran = $ran + 1
 chk("utf8+ozel-karakter", db::col($r, "s"), "o'zel \" karakter \\ 日本 son"); $ran = $ran + 1
 chk("null gercek-null", db::col($r, "n") == null, true); $ran = $ran + 1
 
-# injection: bind'li ' OR '1'='1 literal eşleşme arar → 0 satır (escape değil, parametreli)
+# injection: bound ' OR '1'='1 searches for a literal match → 0 rows (parameterized, not escaped)
 chk("injection tautoloji", len(db::query($c, "SELECT * FROM t WHERE s=?", ["' OR '1'='1"])), 0); $ran = $ran + 1
 
-# param-sayısı reddi (2 placeholder, 1 param)
+# param-count rejection (2 placeholders, 1 param)
 $caught = false
 try { db::query($c, "SELECT * FROM t WHERE i=? AND s=?", [1]) } catch ($e) { $caught = true }
 chk("param-sayim reddi", $caught, true); $ran = $ran + 1
 
-# Inf/NaN fail-loud (non-finite bind reddi)
+# Inf/NaN fail-loud (non-finite bind rejection)
 $inf = false
 try { db::exec($c, "INSERT INTO t (f) VALUES (?)", [math::pow(10, 400)]) } catch ($e) { $inf = true }
 chk("Inf fail-loud", $inf, true); $ran = $ran + 1
 
-# constraint fail-loud — db::exec KISIT ihlalinde THROW etmeli. Eskiden SQLite sessizce
-# yutuyordu (execute() step-dongusu sonrasi rc-check yoktu; kardes query() zaten check'liydi
-# = asimetri). UNIQUE + NOT NULL ayri ayri kilitli (ikisi de ayni SQLITE_CONSTRAINT ailesi).
+# constraint fail-loud — db::exec must THROW on a CONSTRAINT violation. SQLite used to swallow it
+# silently (execute() had no rc check after the step loop; the sibling query() was already checked
+# = asymmetry). UNIQUE + NOT NULL are locked separately (both are the same SQLITE_CONSTRAINT family).
 db::exec($c, "CREATE TABLE ct (id INTEGER PRIMARY KEY, email TEXT UNIQUE, name TEXT NOT NULL)", [])
 db::exec($c, "INSERT INTO ct (id,email,name) VALUES (?,?,?)", [1, "a@x", "Ali"])
 $uq = false

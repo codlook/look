@@ -15,10 +15,10 @@ command -v go >/dev/null || { echo "FAIL: go is needed to build the TLS test ser
 "$T/tlssrv" "$T/ca.pem" > "$T/srv.log" 2>&1 & srv=$!
 for i in $(seq 1 50); do grep -q ready "$T/srv.log" && break; sleep 0.1; done
 fail=0
-probe() {   # ad url beklenen-metin
+probe() {   # name url expected-text
     printf 'use http\n$r = http::get("%s")\nprint("status=" . ($r["status"] ?? "") . " body=" . ($r["body"] ?? "") . " err=" . ($r["error"] ?? ""))\n' "$2" > "$T/t.lk"
     out="$(cd "$T" && SSL_CERT_FILE="$T/ca.pem" LOOK_ALLOW_SSRF=1 "$LK" t.lk 2>&1 | tail -1)"
-    # OpenSSL sürümleri metnin harf durumunu farklı yazar ("Hostname mismatch" / "hostname mismatch")
+    # OpenSSL versions write the case of the text differently ("Hostname mismatch" / "hostname mismatch")
     if echo "$out" | grep -qiF -- "$3"; then echo "  OK   $1"; else echo "  FAIL $1: want \"$3\", got: $out"; fail=1; fi
 }
 probe "valid name"                    https://localhost:8441/   "status=200 body=ok sni=localhost"

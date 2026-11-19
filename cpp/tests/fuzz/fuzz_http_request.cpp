@@ -1,10 +1,10 @@
-// libFuzzer harness — HTTP/1.1 istek/başlık ayrıştırıcısı (saf fonksiyon).
-// EN YÜKSEK MARUZİYET: bu baytlar PRE-AUTH — ağdaki herkes (kimlik doğrulamadan önce)
-// besler. request-line bölme, path/query, header key/value trim, çıplak-CR/LF taraması,
-// obs-fold reddi, çift Content-Length, Upgrade/Accept algılama — hepsi burada.
-// Amaç: OOB/UB/çökme yok mu kanıtla (substr offset aritmetiği + [] erişimleri).
+// libFuzzer harness — HTTP/1.1 request/header parser (pure function).
+// HIGHEST EXPOSURE: these bytes are PRE-AUTH — anyone on the network (before authentication)
+// feeds them. request-line splitting, path/query, header key/value trim, bare-CR/LF scan,
+// obs-fold rejection, duplicate Content-Length, Upgrade/Accept detection — all here.
+// Goal: prove there is no OOB/UB/crash (substr offset arithmetic + [] accesses).
 //
-// Derle+koş (clang):
+// Build+run (clang):
 //   clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
 //     -fno-sanitize-recover=all -I../../include fuzz_http_request.cpp -o fuzz_http_request
 //   ./fuzz_http_request -max_len=8192 corpus_http/

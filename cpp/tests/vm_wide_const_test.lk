@@ -1,12 +1,12 @@
-# VM geniş-sabit guard'ı — GET_FIELD/SET_FIELD 256+ sabitli proto'da (2026-09-30).
-# Hata: GET_FIELD/SET_FIELD alan-adı sabitini 8 bit'e kırpıyordu ((fi & 0xFF)) →
-# 256'dan fazla sabiti olan bir fonksiyonda $obj.alan BAŞKA bir sabitin adıyla
-# okunuyor/yazılıyordu: okuma null (ya da başka alanın değeri), struct literal
-# {"c46":11} gibi yanlış anahtarlarla kuruluyordu. SESSİZ yanlış veri, yalnız VM'de
-# (tree-walk doğru) — hiçbir test 256+ sabitli fonksiyon kullanmadığı için
-# differential görmedi. CALL_BUILTIN aynı duvarı NOP-hint'le aşmıştı; bu iki opcode
-# kaçmıştı (simetrik yüzey). Çalıştır: lk tests/vm_wide_const_test.lk.
-# Herhangi bir FAIL satırı CI'yı kırar.
+# VM wide-constant guard — GET_FIELD/SET_FIELD in a proto with 256+ constants (2026-09-30).
+# Bug: GET_FIELD/SET_FIELD truncated the field-name constant to 8 bits ((fi & 0xFF)) →
+# in a function with more than 256 constants, $obj.field was
+# read/written under ANOTHER constant's name: the read gave null (or another field's value), a struct literal
+# was built with wrong keys like {"c46":11}. SILENT wrong data, only in the VM
+# (tree-walk was correct) — since no test used a function with 256+ constants,
+# the differential test did not see it. CALL_BUILTIN got past the same wall with a NOP hint; these two opcodes
+# had been missed (symmetric surface). Run: lk tests/vm_wide_const_test.lk.
+# Any FAIL line breaks CI.
 use json
 
 function chk($label, $got, $want) {

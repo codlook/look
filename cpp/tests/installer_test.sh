@@ -1,26 +1,26 @@
 #!/bin/bash
-# installer:: guard'i — paket/modul kurulumu (installer.cpp, 617 satir).
+# installer:: guard — package/module installation (installer.cpp, 617 lines).
 #
-# NEDEN: dosya sistemine YAZAN ve AGDAN indiren tek yuzey; paket = calistirilabilir
-# LOOK kodu, yani tedarik zinciri riski. Guard'i yoktu.
+# WHY: the only surface that WRITES to the file system and DOWNLOADS from the NETWORK; a package = executable
+# LOOK code, i.e. a supply-chain risk. It had no guard.
 #
-# Kilitlenenler:
-#  1) YONLENDIRME dogrulamasi (48. bug): `Location` korlemesine takip ediliyordu.
-#     `http://` (sema dusurme) ve farkli host artik REDDEDILIR; mesru GitHub
-#     zinciri (api.github.com -> codeload.github.com) calismaya devam etmeli.
-#  2) Host kisiti: parse_pkg yalniz github.com kabul etmeli.
-#  3) Zip-Slip: cikarilan dosyalar hedef dizin DISINA yazilmamali.
+# What is locked:
+#  1) REDIRECT validation (bug 48): `Location` was followed blindly.
+#     `http://` (scheme downgrade) and a different host are now REJECTED; the legitimate GitHub
+#     chain (api.github.com -> codeload.github.com) must keep working.
+#  2) Host restriction: parse_pkg must accept only github.com.
+#  3) Zip-Slip: extracted files must not be written OUTSIDE the target directory.
 #
-# Ag gerektiren kisim ag yoksa ATLANIR (sessizce degil, 'atlandi' yazarak).
+# The part that needs the network is SKIPPED when there is no network (not silently, printing 'atlandi' = skipped).
 set -u
 LK="${1:-./build/lk}"
-LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # aşağıda cd yapılıyor: mutlak yol
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # cd is done below: absolute path
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 cd "$TMP" || exit 1
 
-# 1) Host kisiti — github.com disi reddedilmeli (ag GEREKTIRMEZ)
+# 1) Host restriction — non-github.com must be rejected (does NOT need the network)
 out=$("$LK" module install evil.com/user/repo 2>&1 | head -3)
 if echo "$out" | grep -qi "only github.com is supported"; then
   echo "  PASS host kisiti: github.com disi reddediliyor"
@@ -28,7 +28,7 @@ else
   echo "  FAIL host kisiti calismiyor: [$out]"; fail=1
 fi
 
-# 2) Gecersiz paket adi — net hata
+# 2) Invalid package name — clear error
 out=$("$LK" module install github.com/tekbasina 2>&1 | head -2)
 if echo "$out" | grep -qi "gecersiz\|geçersiz\|user/repo"; then
   echo "  PASS bozuk paket adi net hata veriyor"
@@ -36,7 +36,7 @@ else
   echo "  FAIL bozuk paket adi: [$out]"; fail=1
 fi
 
-# 3) GERCEK kurulum — mesru GitHub yonlendirme zinciri (ag gerekir)
+# 3) REAL install — legitimate GitHub redirect chain (needs the network)
 if timeout 10 curl -s -o /dev/null https://api.github.com 2>/dev/null; then
   export HOME="$TMP"
   out=$(timeout 120 "$LK" module install github.com/codlook/look-modules/jwt -v 2>&1)
@@ -47,19 +47,19 @@ if timeout 10 curl -s -o /dev/null https://api.github.com 2>/dev/null; then
     echo "$out" | head -5 | sed 's/^/       /'
     fail=1
   fi
-  # Kurulan dosyalar hedef dizin ICINDE mi (Zip-Slip)
+  # Are the installed files INSIDE the target directory (Zip-Slip)
   disari=$(find "$TMP" -maxdepth 1 -name '*.lk' 2>/dev/null | wc -l)
   if [ "$disari" = "0" ]; then
     echo "  PASS Zip-Slip: dosyalar modul dizini disina yazilmadi"
   else
     echo "  FAIL Zip-Slip: $disari dosya hedef dizin DISINA yazildi"; fail=1
   fi
-  # 4) look.lock SHA-PIN (51. bug): PAKET install look.lock'a "ref@sha" yazar;
-  #    `look install` (install-all) kayitli commit SHA'sina sabitlenmeli, dal/
-  #    etikete degil. Temiz bir dizinde paket kur, sonra install-all'un o SHA'yi
-  #    indirdigini (dal HEAD'ini degil) verbose zipball URL'inden dogrula.
-  #    NOT: 'module install' look.lock YAZMAZ (~/.look/modules'a kurar) — bu test
-  #    'install' (paket) formunu kullanmali.
+  # 4) look.lock SHA-PIN (bug 51): a PACKAGE install writes "ref@sha" to look.lock;
+  #    `look install` (install-all) must pin to the recorded commit SHA, not the branch/
+  #    tag. Install a package in a clean directory, then verify from the verbose zipball URL that install-all
+  #    downloaded that SHA (not the branch HEAD).
+  #    NOTE: 'module install' does NOT write look.lock (it installs to ~/.look/modules) — this test
+  #    must use the 'install' (package) form.
   pdir="$TMP/pkgpin"; mkdir -p "$pdir"
   ( cd "$pdir" && HOME="$pdir" timeout 120 "$LK" install github.com/codlook/look-modules/jwt >/dev/null 2>&1 )
   sha=$(grep -o '@[0-9a-f]\{7,40\}' "$pdir/look.lock" 2>/dev/null | head -1 | tr -d '@')

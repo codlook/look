@@ -10,6 +10,6 @@ spec="$(sed -n 's/^Version:[ \t]*//p' platforms/linux/rpm/look-lang.spec)"
 [ "$spec" = "$V" ] || { echo "FAIL: look-lang.spec Version is '$spec', source says '$V'"; fail=1; }
 pinned="$(git grep -nE 'look-lang-(linux|plesk|windows)-[0-9]+\.[0-9]+\.[0-9]+\.zip|codlook/look:[0-9]+\.[0-9]+\.[0-9]+' -- \
     README.md docs platforms .github/workflows 2>/dev/null \
-    | grep -v 'release.yml:.*EZİLMEZ' || true)"
+    | grep -v 'release.yml:.*are never overwritten' || true)"
 [ -z "$pinned" ] || { echo "FAIL: a version number is pinned outside the single source:"; echo "$pinned" | sed 's/^/    /'; fail=1; }
 [ $fail = 0 ] && echo "PASS: version $V has a single source" || exit 1

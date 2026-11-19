@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# LOOK dil-parser'ı DoS-guard'ı — parser adversarial turu (2026-09-21).
-# LOOK'un KENDİ parser'ı (parser.cpp/lexer.cpp) TÜM motorların paylaştığı tek ön-yüz →
-# bir parse bug'ı differential-KÖR (iki motor da aynı yanlış AST'yi alır). Özyinelemeli-inişli
-# parser'da derin-yuvalama fiziksel stack'i taşırır; eval(untrusted) bunu SALDIRGAN-erişimli
-# kılar. parser.cpp'de 3 katmanlı guard var (MAX_STMT_DEPTH=150, MAX_EXPR_DEPTH,
-# MAX_BINOP_CHAIN=1000) — bu test onları CI'da pinler: her patolojik girdi, HER modda
-# (--check / VM) TEMİZ parse-hatası vermeli, ASLA crash/hang olmamalı.
-#   Kullanım: bash tests/parser_dos_guard.sh ./build/lk
+# LOOK language parser DoS guard — parser adversarial round (2026-09-21).
+# LOOK's OWN parser (parser.cpp/lexer.cpp) is the single front end shared by ALL engines →
+# a parse bug is differential-BLIND (both engines get the same wrong AST). In a recursive-descent
+# parser deep nesting overflows the physical stack; eval(untrusted) makes this ATTACKER-reachable.
+# parser.cpp has a 3-layer guard (MAX_STMT_DEPTH=150, MAX_EXPR_DEPTH,
+# MAX_BINOP_CHAIN=1000) — this test pins them in CI: every pathological input, in EVERY mode
+# (--check / VM) must give a CLEAN parse error, NEVER a crash/hang.
+#   Usage: bash tests/parser_dos_guard.sh ./build/lk
 set -u
 LK="${1:-./build/lk}"
 command -v python3 >/dev/null 2>&1 || { echo "  (atlandı: python3 gerekli)"; exit 0; }
@@ -14,7 +14,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ran=0
 
 gen() { python3 -c "$1" > "$TMP/p.lk"; }
-# Her girdiyi 2 modda (--check + çalıştırma) koştur; her modda: crash/hang → FAIL, temiz-hata/ok → PASS.
+# Run each input in 2 modes (--check + execution); in each mode: crash/hang → FAIL, clean-error/ok → PASS.
 probe() {
   local tag="$1"
   for spec in "--check|" "VM|"; do

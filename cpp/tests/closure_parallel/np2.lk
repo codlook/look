@@ -1,4 +1,4 @@
-# np2: parallel task DOĞRUDAN cell yakalar ($arr reassign). Her iki hâlde izole → 123.
+# np2: the parallel task captures a cell DIRECTLY ($arr reassign). Isolated in both cases → 123.
 function race(){
   $arr = [1,2,3]
   $ch = channel(1)

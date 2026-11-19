@@ -57,7 +57,7 @@ r = post('form-data; NAME="avatar"; filename="c\\"q.png"')
 check("parameter names are case-insensitive, quoted value with \\\"", r.startswith('file c"q.png'), r)
 r = post('form-data; xname="avatar"; filename="d.png"')
 check("xname= is not name=", r.startswith("no-file"), r)
-# geçici dosya istek bitince silinir (aşağıda istek sürerken izni yakalanır); saklanan kopya normal izinde
+# the temp file is deleted when the request ends (its mode is caught below while the request is running); the stored copy has the normal mode
 left = [f for f in os.listdir(os.path.join(T, "tmp"))]
 check("no temp file is left behind", not left, str(left))
 stored = [os.path.join(dp, f) for dp, _, fs in os.walk(os.path.join(T, "up")) for f in fs]
@@ -66,12 +66,12 @@ check("the stored copy has the normal file mode (served by the web server)", sto
 sys.exit(fail)
 PY
 rc=$?
-# Geçici dosyanın kendisi: istek sürerken geçici dizini tarayıp iznini yakala (0600 olmalı)
+# The temp file itself: while the request runs, scan the temp directory and catch its mode (must be 0600)
 cat > "$T/web/hold.lk" <<'LK'
 route("POST", "/hold", function() {
-    # geçici dosya gövde ayrıştırılırken (rotadan önce) yazılır; rota yalnız bekletir
+    # the temp file is written while the body is parsed (before the route); the route only delays
     $n = 0
-    for ($i = 0; $i < 3000000; $i++) { $n = $n + 1 }   # istek ~yüz ms sürsün: geçici dosya bu sırada var
+    for ($i = 0; $i < 3000000; $i++) { $n = $n + 1 }   # let the request last ~a hundred ms: the temp file exists during this time
     return response::text("held")
 })
 LK

@@ -1,4 +1,4 @@
-# VM yolu regresyon — aynı düzeltmeler bytecode VM'de. Çalıştır:
+# VM path regression — the same fixes in the bytecode VM. Run:
 #   lk-fcgi --mode http --port 7450 --script tests/regression_all_vm.lk
 #   curl http://127.0.0.1:7450/verify
 use string

@@ -26,7 +26,7 @@ $l = array::push($l, 3)
 print(json::encode($l))
 LK
 
-# lk --check: tam bir uyarı, ilk çağrının satırı (2), toplam 3; çıkış kodu 0, son satır OK
+# lk --check: exactly one warning, the first call's line (2), total 3; exit code 0, last line OK
 out="$("$LK" --check "$TMP/bare.lk" 2>&1)"; rc=$?
 n="$(grep -c '^WARN .*\[push-deprecated\]' <<< "$out")"
 if [ "$n" = 1 ] && grep -q '^WARN 2 [0-9]* \[push-deprecated\] .*(3 calls in this file' <<< "$out" \
@@ -34,14 +34,14 @@ if [ "$n" = 1 ] && grep -q '^WARN 2 [0-9]* \[push-deprecated\] .*(3 calls in thi
   echo "  OK   --check: one [push-deprecated] warning for 3 calls, exit 0"
 else echo "  FAIL --check on bare push: rc=$rc warnings=$n out=[$out]"; fail=1; fi
 
-# yüklemede: tek WARN satırı, program çalışır, push hâlâ çalışır
+# at load: a single WARN line, the program runs, push still works
 o="$("$LK" "$TMP/bare.lk" 2>"$TMP/err.txt")"; rc=$?
 n="$(grep -cF -- "$MSG" "$TMP/err.txt")"
 if [ "$o" = "[1,2,3,4]" ] && [ "$rc" = 0 ] && [ "$n" = 1 ] && grep -q 'WARN.*\[check\] .*bare.lk:2: push(' "$TMP/err.txt"; then
   echo "  OK   at load: one warning, push() still works"
 else echo "  FAIL at load: output=[$o] rc=$rc warnings=$n stderr=[$(cat "$TMP/err.txt")]"; fail=1; fi
 
-# array::push: uyarı yok
+# array::push: no warning
 out="$("$LK" --check "$TMP/new.lk" 2>&1)"; rc=$?
 o="$("$LK" "$TMP/new.lk" 2>"$TMP/err2.txt")"; rc2=$?
 if [ "$out" = "OK" ] && [ "$rc" = 0 ] && [ "$o" = "[1,2,3]" ] && [ "$rc2" = 0 ] && ! grep -qF -- "$MSG" "$TMP/err2.txt"; then

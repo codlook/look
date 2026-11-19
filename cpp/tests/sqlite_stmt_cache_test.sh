@@ -73,7 +73,7 @@ LK
 ( cd "$T" && exec "$FCGI" --mode http --port 7763 app.lk > "$T/srv.log" 2>&1 ) & pid=$!
 for i in $(seq 1 50); do curl -s -m 1 -o /dev/null localhost:7763/ok && break; sleep 0.1; done
 for i in $(seq 1 2000); do echo "url = \"http://127.0.0.1:7763/r/$(( i % 50 + 1 ))\""; done > "$T/urls"
-curl -s -K "$T/urls" --max-time 60 > /dev/null   # -o yalnız ilk adrese uygulanırdı
+curl -s -K "$T/urls" --max-time 60 > /dev/null   # -o would apply to the first address only
 cat > "$T/writer.lk" <<'LK'
 use db
 $w = db::connect("sqlite://" . env("DBF"))
@@ -87,7 +87,7 @@ out=$(run writer.lk); [ "$out" = "busy=0" ] && ok "after 2000 cached reads in th
 r=$(curl -s -m 5 localhost:7763/r/5)
 [ "$r" = '{"id":5,"v":"changed","price":7,"color":"red"}' ] && ok "the server's cached statement sees the other process's new column and row" || bad "after the other process changed the table: $r"
 for round in 1 2 3 4; do
-    cp=()   # yalnız istemcileri bekle — düz `wait` arka plandaki sunucuyu da beklerdi
+    cp=()   # wait for the clients only — a plain `wait` would also wait for the background server
     for i in $(seq 1 16); do id=$(( (round * 16 + i) % 50 + 1 ))
         ( r=$(curl -s -m 10 localhost:7763/r/$id); echo "$r" | grep -q "\"id\":$id," || echo x >> "$T/cbad" ) & cp+=($!); done
     wait "${cp[@]}"

@@ -1,5 +1,5 @@
-# Liste/sözlük/struct İÇİNDEKİ metin tırnaklı yazılır (LOOK yazımı), sayı ve metin karışmaz:
-# [1, "a", "1"], ["k" => 3, "n" => "3"]. Tek başına metin tırnaksız kalır.
+# Text INSIDE a list/map/struct is written quoted (LOOK notation), numbers and text are not mixed up:
+# [1, "a", "1"], ["k" => 3, "n" => "3"]. Text on its own stays unquoted.
 use json
 function ok($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . " got[" . $g . "] want[" . $w . "]") } }
 struct P { name string; age int }

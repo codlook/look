@@ -13,7 +13,7 @@
 # session (1.0.x swallowed Redis errors: users looked logged out and session data was lost).
 # Usage: redis_session_isolation_test.sh <lk-fcgi> <redis-url>   (needs python3, curl)
 set -u
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# an app that uses cookies does not start without LOOK_SECRET (CSRF signature) — the test's own key.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$1"; URL="$2"
 PORT=7461; SPORT=7462; MUTE=7463; DPORT=7464; DOWN=7465
@@ -56,7 +56,7 @@ if bad or errs:
 print("PASS: %d concurrent clients x %d reads on one worker, each saw only its own session" % (N, ROUNDS))
 PY
 
-# Redis kabul eden ama hiç yanıt vermeyen sunucu: istek süre sınırında açık hatayla dönmeli.
+# A server that accepts Redis connections but never answers: the request must return within the time limit with an explicit error.
 python3 -c "
 import socket, time
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -71,7 +71,7 @@ wait_up $SPORT || { echo "FAIL: server (silent Redis) did not start"; cat "$T/mu
 s0=$(date +%s%N)
 code=$(curl -s -o "$T/body" -w '%{http_code}' --max-time 10 "http://127.0.0.1:$SPORT/set?v=x")
 ms=$(( ($(date +%s%N) - s0) / 1000000 ))
-# Bekleme sırasında aynı işçi başka isteğe bakabilmeli (yalnız fiber bekliyor).
+# During the wait the same worker must be able to look at another request (only the fiber waits).
 if [ "$code" = "503" ] && [ "$ms" -lt 3000 ] && grep -q "LOOK_REDIS_TIMEOUT_MS" "$T/mute.log" \
    && grep -q "temporarily unavailable" "$T/body"; then
     echo "PASS: a silent Redis gives 503 after ${ms} ms; the log names LOOK_REDIS_TIMEOUT_MS"
@@ -82,11 +82,11 @@ fi
 h=$(curl -s --max-time 2 "http://127.0.0.1:$SPORT/ping")
 [ "$h" = "ok" ] && echo "PASS: the server still answers after the Redis timeout" \
                 || { echo "FAIL: server stopped answering after the Redis timeout"; fail=1; }
-# Uygulama hatayı kendisi yakalayabilir: try/catch sıradan bir hata mesajı görür.
+# The application can catch the error itself: try/catch sees an ordinary error message.
 c=$(curl -s --max-time 10 "http://127.0.0.1:$SPORT/caught")
 case "$c" in "caught: session: Redis:"*) echo "PASS: try/catch in the application sees the Redis error";;
              *) echo "FAIL: try/catch did not see the Redis error: '$c'"; fail=1;; esac
-# Redis hiç yok (bağlantı reddi): eskiden oturum sessizce boştu, yazılan veri kayboluyordu.
+# No Redis at all (connection refused): the session used to be silently empty and written data was lost.
 LOOK_SESSION_DRIVER=redis LOOK_REDIS_URL="redis://127.0.0.1:$DOWN" \
     "$LKF" --mode http --port $DPORT --workers 1 "$T/app.lk" >"$T/down.log" 2>&1 &
 dpid=$!

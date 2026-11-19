@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Kanalda bekleyen istek iş parçacığını değil yalnız kendi fiber'ını bekletir (fiber dağıtımı).
-# Eskiden receive()/send() cv.wait ile İŞ PARÇACIĞINI tutuyordu:
-#   - aynı işçideki keep-alive istekleri bekleme boyunca duruyordu (400 ms receive → /ok 350–400 ms)
-#   - tek işçide iki istek aynı tamponsuz kanalla konuşamıyordu: gönderen iş parçacığını kilitliyor,
-#     alıcı hiç koşamıyordu (asılma)
+# A request waiting on a channel holds only its own fiber, not the thread (fiber dispatch).
+# Before, receive()/send() held the THREAD with cv.wait:
+#   - keep-alive requests on the same worker stalled for the whole wait (400 ms receive → /ok 350–400 ms)
+#   - two requests on a single worker could not talk over the same unbuffered channel: the sender locked the thread,
+#     and the receiver could never run (hang)
 # Usage: channel_fiber_test.sh <lk-fcgi> [port]   (needs python3; LOOK_TEST_NO_TIMING=1: sanitizer — no latency limits)
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi> [port]}")" && pwd)/$(basename "$1")"
 PORT="${2:-7631}"
@@ -47,7 +47,7 @@ port = int(sys.argv[1]); slow = sys.argv[2]
 def get(path, c=None):
     c = c or http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     t = time.time(); c.request("GET", path); r = c.getresponse(); body = r.read().decode(); return time.time() - t, body, c
-ka = get("/ok")[2]                      # keep-alive bağlantı: aynı (tek) işçide
+ka = get("/ok")[2]                      # keep-alive connection: on the same (single) worker
 out = {}
 th = threading.Thread(target=lambda: out.setdefault("w", get(slow)[:2])); th.start()
 time.sleep(0.05)

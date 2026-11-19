@@ -60,7 +60,7 @@ is "FastCGI (a thread per request): 2 CPUs × 4"           "$(workers_in f1.log)
 echo "== the database pool opens connections as needed"
 start "$ALL" p1.log -- --mode http --port $P; waitup
 is "db::connect opens one connection"                     "$(curl -s --max-time 5 "http://127.0.0.1:$P/pool")" 1
-cp=(); for i in 1 2 3 4 5 6; do curl -s --max-time 30 -o "$T/s$i" "http://127.0.0.1:$P/slow" & cp+=($!); done; wait "${cp[@]}"   # (yalnız curl'ler; sunucu da arka planda)
+cp=(); for i in 1 2 3 4 5 6; do curl -s --max-time 30 -o "$T/s$i" "http://127.0.0.1:$P/slow" & cp+=($!); done; wait "${cp[@]}"   # (only the curls; the server is also in the background)
 ok=1; for i in 1 2 3 4 5 6; do [ "$(cat "$T/s$i")" = 1500000 ] || ok=0; done
 is "six parallel queries all answered"                    "$ok" 1
 n=$(curl -s --max-time 5 "http://127.0.0.1:$P/pool")
@@ -72,9 +72,9 @@ is "LOOK_DB_POOL_SIZE=1: four parallel queries all answered" "$ok" 1
 is "… on one connection"                                  "$(curl -s --max-time 5 "http://127.0.0.1:$P/pool")" 1
 
 echo "== no idle threads (LOOK_DB_ASYNC_THREADS is gone)"
-# 1.0.x ayrıca işçi sayısı kadar "database" thread'i açıyordu; hiçbir şey onları kullanmıyordu.
-# Thread'lerin adı yok: varsayılanla açılan thread sayısı, eskiden havuzu kapatan
-# LOOK_DB_ASYNC_THREADS=0 ile açılanla AYNI olmalı (eskisi işçi sayısı kadar fazlaydı).
+# 1.0.x also opened as many "database" threads as workers; nothing used them.
+# Threads have no names: the number of threads opened by default must be the SAME as the number opened with
+# LOOK_DB_ASYNC_THREADS=0, which used to turn the pool off (the old default had as many more as there were workers).
 threads() { ls /proc/$pid/task | wc -l; }
 start 0,1 t0.log LOOK_DB_ASYNC_THREADS=0 -- --mode http --port $P; waitup; sleep 0.5; base=$(threads)
 start 0,1 t1.log -- --mode http --port $P; waitup; sleep 0.5

@@ -15,7 +15,7 @@ cd "$(dirname "$0")" || exit 1
 bad=""
 n=0
 for f in *.sh; do
-    case "$f" in _*|test_path_guard.sh) continue ;; esac   # _*.sh: yerel karalama betikleri
+    case "$f" in _*|test_path_guard.sh) continue ;; esac   # _*.sh: local scratch scripts
     n=$((n + 1))
     out=$(awk -v F="$f" '
         { L[NR] = $0 }
@@ -25,11 +25,11 @@ for f in *.sh; do
                 if (s ~ /(^|[;&|({ \t])cd[ \t]/ && s !~ /cd[ \t]+"?\$\(dirname[ \t]+"?\$0/) movecd = 1
             }
             if (!movecd) exit
-            # En üst düzeyde konum argümanından okunan değişkenler: NAME="$1" / NAME="${1:-…}"
+            # Top-level variables read from a positional argument: NAME="$1" / NAME="${1:-…}"
             for (i = 1; i <= NR; i++) {
                 s = L[i]
-                if (s ~ /^[ \t]*local[ \t]/) continue                     # fonksiyon argümanı
-                if (s ~ /="?\$\{[1-9]:-[0-9]+\}"?/) continue              # sayısal argüman (port)
+                if (s ~ /^[ \t]*local[ \t]/) continue                     # function argument
+                if (s ~ /="?\$\{[1-9]:-[0-9]+\}"?/) continue              # numeric argument (port)
                 while (match(s, /(^|[; \t])[A-Za-z_][A-Za-z0-9_]*="?\$\{?[1-9]/)) {
                     seg = substr(s, RSTART, RLENGTH); sub(/^[; \t]/, "", seg)
                     v = seg; sub(/=.*/, "", v)
@@ -43,8 +43,8 @@ for f in *.sh; do
                     s = L[i]; sub(/^[ \t]*#.*$/, "", s)
                     if (s ~ ("(^|[; \t])" v "=\"?\\$\\(cd[ \t]+\"?\\$\\(dirname[ \t]+\"?\\$\\{?(" v "|[1-9])")) absd = 1
                     if (s ~ ("(^|[; \t])" v "=.*(realpath|readlink[ \t]+-f)")) absd = 1
-                    if (s ~ ("(^|[; \t])" v "=\"?\\$\\(pwd\\)/\\$\\{?" v)) absd = 1          # göreliyse $(pwd)/ önüne
-                    # komut olarak çalıştırılıyor mu: satır/alt kabuk başında, exec/env/timeout/&&/; sonrası
+                    if (s ~ ("(^|[; \t])" v "=\"?\\$\\(pwd\\)/\\$\\{?" v)) absd = 1          # if relative, prefix $(pwd)/
+                    # is it run as a command: at the start of a line/subshell, after exec/env/timeout/&&/;
                     if (s ~ ("(^|[;&|(]|exec|env[^|;]*|timeout[ \t]+[0-9.]+[a-z]?)[ \t]*\"?\\$\\{?" v "\\}?\"?([ \t]|$)")) ran = 1
                 }
                 if (ran && !absd) print F ":" line[v] ": " v " is run as a command but not made absolute: " L[line[v]]

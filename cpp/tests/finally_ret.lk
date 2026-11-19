@@ -1,24 +1,24 @@
-# finally-on-return davranışı — deterministik sıra. Runner çıktıdaki beklenen satırları
-# doğrular. BUG (düzeltildi): VM `try { return X } finally { ... }`'de finally'yi atlıyordu
-# (interpreter ise catch-içi return'de atlıyordu). İkisi de düzeltildi; bu test regresyon guard'ı.
+# finally-on-return behavior — deterministic order. The runner verifies the expected lines in the
+# output. BUG (fixed): the VM skipped finally in `try { return X } finally { ... }`
+# (the interpreter skipped it in return-inside-catch). Both fixed; this test is the regression guard.
 
-# 1. return-in-try → finally çalışır, dönüş değeri korunur
+# 1. return-in-try → finally runs, the return value is preserved
 function ret_try() { try { return 42 } finally { print("T-FIN") } }
 print("1:" . ret_try())
 
-# 2. nested — içten dışa
+# 2. nested — inside out
 function nested() {
   try { try { return "R" } finally { print("N-IC") } } finally { print("N-DIS") }
 }
 print("2:" . nested())
 
-# 3. return-in-catch → finally çalışır
+# 3. return-in-catch → finally runs
 function ret_catch() {
   try { throw "x" } catch($e) { return "C" } finally { print("C-FIN") }
 }
 print("3:" . ret_catch())
 
-# 4. normal yol (return yok) → finally BİR kez
+# 4. normal path (no return) → finally ONCE
 function normal() { try { print("NORMAL-TRY") } finally { print("NORMAL-FIN") } }
 normal()
 
@@ -26,7 +26,7 @@ normal()
 function thrown() { try { throw "e" } catch($e) { print("CATCH") } finally { print("THROW-FIN") } }
 thrown()
 
-# 6. break out of try-finally → döngü-içi finally çalışır
+# 6. break out of try-finally → the in-loop finally runs
 $i = 0
 while ($i < 3) {
   try {
@@ -38,7 +38,7 @@ while ($i < 3) {
   $i = $i + 1
 }
 
-# 7. continue out of try-finally → finally çalışır
+# 7. continue out of try-finally → finally runs
 $j = 0
 while ($j < 3) {
   $j = $j + 1
@@ -50,11 +50,11 @@ while ($j < 3) {
   }
 }
 
-# 8. uncaught throw (catch yok) → finally çalışır, sonra propagate
+# 8. uncaught throw (no catch) → finally runs, then propagates
 function unc() { try { throw "boom" } finally { print("U-FIN") } }
 try { unc() } catch($e) { print("U-CATCH:" . $e) }
 
-# 9. finally İÇİNDE throw → orijinal exception'ı DEĞİŞTİRİR (Java/JS semantiği)
+# 9. throw INSIDE finally → REPLACES the original exception (Java/JS semantics)
 function fit() { try { throw "ORIG" } finally { throw "FINT" } }
 try { fit() } catch($e) { print("FIT:" . $e) }
 

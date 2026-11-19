@@ -1,19 +1,19 @@
 #!/bin/bash
-# B-01 eval/parse derinlik guard'ı — derin iç içe / uzun ikili zincir DoS testi.
+# B-01 eval/parse depth guard — deep nesting / long binary chain DoS test.
 #
-# Kök neden: '1+1+1+...+1' (N terim) parse'ta İTERATİF kurulur (addition() while
-# döngüsü) — expr_depth_ paren/array guard'ı ARTMAZ, bu yüzden onu YAKALAMAZ. Ama
-# üretilen AST N derinliğinde sola-nested olur; hem interpreter evaluate() hem VM
-# compiler bu iskeleti özyineli gezerek ~7000 terimde C++ stack'ini taşırır → SIGABRT
-# (temiz hata DEĞİL, ÇÖKME). Web sunucusunda saldırgan-kontrollü derin girdi = DoS.
+# Root cause: '1+1+1+...+1' (N terms) is built ITERATIVELY in the parser (addition() while
+# loop) — the expr_depth_ paren/array guard does NOT increase, so it does NOT CATCH it. But the
+# resulting AST becomes left-nested to depth N; both interpreter evaluate() and the VM
+# compiler walk this skeleton recursively and overflow the C++ stack at ~7000 terms → SIGABRT
+# (a CRASH, NOT a clean error). On a web server, attacker-controlled deep input = DoS.
 #
-# Fix: parser'ın ikili-operatör döngülerine MAX_BINOP_CHAIN (1000) sayacı → sınır
-# aşılınca AST HİÇ kurulmadan temiz LookParseError. Ne interpreter ne VM derin ağacı
-# görür; süreç yaşar (web'de 500 döner).
+# Fix: a MAX_BINOP_CHAIN (1000) counter in the parser's binary-operator loops → when the limit is
+# exceeded a clean LookParseError is raised WITHOUT building the AST at all. Neither interpreter nor VM
+# sees the deep tree; the process lives (returns 500 on the web).
 #
-# Bu test: (a) derin girdi TEMİZ hata verir (rc!=0 ama signal/SIGABRT DEĞİL),
-#          (b) normal derinlikteki ifade etkilenmez (doğru sonuç).
-# Kullanım: bash eval_depth_guard.sh [lk_yolu]
+# This test: (a) deep input gives a CLEAN error (rc!=0 but NOT signal/SIGABRT),
+#          (b) an expression of normal depth is unaffected (correct result).
+# Usage: bash eval_depth_guard.sh [lk_path]
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LK="${1:-$DIR/../build/look}"
@@ -25,8 +25,8 @@ fail=0
 gen_chain() { awk -v n="$1" 'BEGIN{printf "print(1"; for(i=0;i<n;i++) printf "+1"; print ")"}'; }
 gen_paren() { awk -v n="$1" 'BEGIN{printf "print("; for(i=0;i<n;i++) printf "("; printf "1"; for(i=0;i<n;i++) printf ")"; print ")"}'; }
 
-# Bir kaynak dosyayı çalıştır; rc'yi döndür. rc>=128 (POSIX) veya
-# 127 (Windows/bash native crash) → sinyal/çökme demek → GUARD BAŞARISIZ.
+# Run a source file; return the rc. rc>=128 (POSIX) or
+# 127 (Windows/bash native crash) → means signal/crash → GUARD FAILS.
 run() { # $1=dosya
   "$LK" "$1" >/dev/null 2>&1
   echo $?
@@ -43,7 +43,7 @@ for kind in chain paren; do
 done
 
 echo "== Regresyon: normal derinlikteki ifade doğru çalışmalı =="
-gen_chain 500 > "$TMP/ok.lk"   # 501 sonucu; guard'ın (1000) çok altında
+gen_chain 500 > "$TMP/ok.lk"   # result 501; far below the guard (1000)
 out=$("$LK" "$TMP/ok.lk" 2>/dev/null)
 if [ "$out" = "501" ]; then echo "  OK   500-terim zincir = 501"; else echo "  FAIL beklenen 501, gelen '$out'"; fail=1; fi
 printf 'print(1+2+3*4-5)\n' > "$TMP/sm.lk"

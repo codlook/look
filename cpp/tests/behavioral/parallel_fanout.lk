@@ -1,12 +1,12 @@
-# parallel() davranışsal test — in-process thread (sunucu YOK). CI-koşabilir.
-# N-task fan-out toplamı · closure izolasyonu (deep-clone) · task-içi exception süreç çökertmez.
+# parallel() behavioral test — in-process thread (NO server). Runnable in CI.
+# N-task fan-out sum · closure isolation (deep-clone) · an exception inside a task does not crash the process.
 $ran = 0
 function chk($l, $g, $w) {
     if ($g == $w) { print("OK   " . $l) }
     else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") }
 }
 
-# T1 — N-task fan-out: her task i gönderir, toplam 0..7 = 28
+# T1 — N-task fan-out: each task i sends, sum of 0..7 = 28
 $N = 8
 $ch = channel($N)
 for ($i = 0; $i < $N; $i = $i + 1) {
@@ -16,7 +16,7 @@ $sum = 0
 for ($k = 0; $k < $N; $k = $k + 1) { $sum = $sum + receive($ch) }
 chk("T1 fan-out toplam", $sum, 28); $ran = $ran + 1
 
-# T2 — izolasyon: task closure kendi cell snapshot'ını görür (parent mutasyonu sızmaz)
+# T2 — isolation: the task closure sees its own cell snapshot (parent mutation does not leak)
 $cnt = 0
 $reader = fn() => $cnt
 $ch2 = channel(1)
@@ -24,7 +24,7 @@ parallel(function() use ($ch2, $reader) { send($ch2, $reader()) })
 $cnt = 999
 chk("T2 izolasyon (999 sizmaz)", receive($ch2), 0); $ran = $ran + 1
 
-# T3 — task-içi exception: diğer task hayatta, süreç çökmez
+# T3 — exception inside a task: the other task stays alive, the process does not crash
 $ch3 = channel(2)
 parallel(function() use ($ch3) { throw "task-panic" })
 parallel(function() use ($ch3) { send($ch3, "alive") })

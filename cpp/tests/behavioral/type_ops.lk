@@ -1,4 +1,4 @@
-# type:: davranışsal test — saf (sunucu YOK). CI-koşabilir. is_*/of/to_*.
+# type:: behavioral test — pure (NO server). Runnable in CI. is_*/of/to_*.
 use type
 $ran = 0
 function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }

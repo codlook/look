@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# Bounded-concurrency HANG regresyon smoke-test'i (worker-pool + fiber dispatch).
+# Bounded-concurrency HANG regression smoke test (worker-pool + fiber dispatch).
 #
-# ── Neyi koruyor ──────────────────────────────────────────────────────────────
-# lk-fcgi --mode http iki dispatch modeliyle gelir:
-#   • worker-pool (DEFAULT)          — N worker thread, her biri accept+handle bloklar.
+# ── What it protects ──────────────────────────────────────────────────────────
+# lk-fcgi --mode http comes with two dispatch models:
+#   • worker-pool (DEFAULT)          — N worker threads, each blocks on accept+handle.
 #   • fiber burst (LOOK_FIBER_DISPATCH=1, Linux) — SO_REUSEPORT + fiber acceptor.
-# Geçmişte fiber modu c=100'de HANG ediyordu: acceptor keep-alive fiber'larını
-# beklerken yeni bağlantıları accept etmiyordu. D Fix #2 (acceptor artık bir fiber +
-# 15s idle-timeout) düzeltti — ama YÜK-REGRESYON guard'ı yoktu. Bu test o guard.
+# In the past the fiber mode HUNG at c=100: the acceptor did not accept new connections while
+# waiting for keep-alive fibers. D Fix #2 (the acceptor is now a fiber +
+# 15s idle-timeout) fixed it — but there was no LOAD-REGRESSION guard. This test is that guard.
 #
-# ── POZİTİF-KONTROL ───────────────────────────────────────────────────────────
-# Test GERÇEKTEN eşzamanlılığı egzersiz eder: CONC bağlantı AYNI ANDA açılır, her
-# biri keep-alive üzerinde PERCON istek yollar (accept + keep-alive-recv ekseni —
-# tam da hang'in kök nedeni). Bir hang OLSAYDI: aç kalan bağlantılar CONN_TIMEOUT
-# içinde işlerini bitiremez → eksik 200 sayısı VE/VEYA yükten sonra probe_alive()
-# false → FAIL. Tek-istek smoke'un yakalayamayacağı sınıfı yakalar.
-# (Bunu kanıtlamak için: workers=1 + düşük timeout ile pool'u aç bırakıp FAIL
-#  gördüğünü doğrula — README'de değil, elle pozitif-kontrol adımı.)
+# ── POSITIVE CONTROL ──────────────────────────────────────────────────────────
+# The test REALLY exercises concurrency: CONC connections are opened AT THE SAME TIME, each
+# sends PERCON requests over keep-alive (the accept + keep-alive-recv axis —
+# exactly the root cause of the hang). If a hang EXISTED: the starved connections cannot finish their work within CONN_TIMEOUT
+# → a missing 200 count AND/OR probe_alive() after the load is
+# false → FAIL. It catches the class that a single-request smoke test cannot.
+# (To prove this: leave the pool starved with workers=1 + a low timeout and verify
+#  that you see a FAIL — not in the README, a manual positive-control step.)
 #
-# ── FLAKY UYARISI ─────────────────────────────────────────────────────────────
-# Yük-testi doğası gereği makine-yüküne duyarlı. Bu harness DÜŞÜK concurrency
-# (default c=50) + CÖMERT timeout (8s/conn) ile flaky payını düşürür ama bir hang
-# regresyonunu hâlâ yakalar (hang saniyeler değil SÜRESİZ askıdır). Yine de
-# 2-core paylaşımlı CI runner'da c=100 gürültü verebilir; oraya c=50 önerilir.
+# ── FLAKY WARNING ─────────────────────────────────────────────────────────────
+# A load test is by nature sensitive to machine load. This harness reduces the flaky margin with LOW concurrency
+# (default c=50) + a GENEROUS timeout (8s/conn) but still catches a hang
+# regression (a hang is not seconds, it is an INDEFINITE stall). Still,
+# c=100 can be noisy on a 2-core shared CI runner; c=50 is recommended there.
 #
-# Kullanım: bash concurrency_smoke.sh [lk-fcgi_yolu] [concurrency] [reqs_per_conn]
+# Usage: bash concurrency_smoke.sh [lk-fcgi_path] [concurrency] [reqs_per_conn]
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 FCGI="${1:-$DIR/../build/lk-fcgi}"
@@ -35,8 +35,8 @@ PORT=7402
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# Minik, CPU-hafif app: /ping hızlı 200 döner (hang'i izole eder — app yavaşlığı
-# değil dispatch'i ölçeriz).
+# A tiny, CPU-light app: /ping quickly returns 200 (isolates the hang — we measure
+# dispatch, not app slowness).
 cat > "$TMP/app.lk" <<'LK'
 route("GET", "/ping", function() {
   return response::text("ok")
@@ -48,12 +48,12 @@ cd "$TMP"
 run_mode() {
   local label="$1"; shift
   local env_pfx="$1"; shift
-  # env_pfx: "" (pool) veya "LOOK_FIBER_DISPATCH=1"
+  # env_pfx: "" (pool) or "LOOK_FIBER_DISPATCH=1"
   echo "[$label] sunucu başlatılıyor..."
   if [ -n "$env_pfx" ]; then export $env_pfx; fi
   "$FCGI" --mode http --port $PORT app.lk >"$TMP/srv.log" 2>&1 &
   local srv=$!
-  # Hazır olana dek bekle (curl ile /ping 200)
+  # Wait until it is ready (/ping 200 via curl)
   local up=0
   for i in $(seq 1 40); do
     if curl -s --max-time 1 "http://127.0.0.1:$PORT/ping" 2>/dev/null | grep -q ok; then up=1; break; fi

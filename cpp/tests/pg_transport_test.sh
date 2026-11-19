@@ -89,7 +89,7 @@ LK
 ( cd "$T" && exec "$FCGI" --mode http --port 7762 app.lk > "$T/srv.log" 2>&1 ) & pid=$!
 for i in $(seq 1 50); do curl -s -m 1 -o /dev/null localhost:7762/ok && break; sleep 0.1; done
 for round in 1 2 3 4; do
-    cp=()   # yalnız istemcileri bekle — düz `wait` arka plandaki sunucuyu da beklerdi
+    cp=()   # wait for the clients only — a plain `wait` would also wait for the background server
     for i in $(seq 1 16); do id=$(( (round * 16 + i) % 50 + 1 )); ( r=$(curl -s -m 10 localhost:7762/r/$id); [ "$r" = "r$id" ] || echo x >> "$T/cbad" ) & cp+=($!); done
     wait "${cp[@]}"
 done 2>/dev/null

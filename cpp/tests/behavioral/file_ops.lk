@@ -1,8 +1,8 @@
-# file:: davranışsal test — yerel FS (sunucu YOK). CI-koşabilir. LOOK_FILE_ROOT + BT_DIR runner'dan.
-# put/read/append/exists/remove/size + traversal-guard reddi. Yol mutlak (kök-içi) olsun.
+# file:: behavioral test — local FS (NO server). Runnable in CI. LOOK_FILE_ROOT + BT_DIR come from the runner.
+# put/read/append/exists/remove/size + traversal-guard rejection. The path should be absolute (inside the root).
 use file
-# Ortam yoksa: CI'da FAIL, yerelde SKIP (bkz. db_bind_mysql.lk). Normalde behavioral_test.sh
-# LOOK_FILE_ROOT+BT_DIR verir; bu kontrol yalnız doğrudan çalıştırmayı kapsar.
+# If the environment is missing: FAIL in CI, SKIP locally (see db_bind_mysql.lk). Normally behavioral_test.sh
+# provides LOOK_FILE_ROOT+BT_DIR; this check only covers direct runs.
 if (env("BT_DIR", "") == "" || env("LOOK_FILE_ROOT", "") == "") {
     if (env("CI", "") == "true") { print("FAIL harness: BT_DIR / LOOK_FILE_ROOT are empty in CI"); exit(1) }
     print("SKIP: BT_DIR / LOOK_FILE_ROOT not set — run it through tests/behavioral_test.sh"); exit(0)
@@ -23,7 +23,7 @@ file::put($f, "çğ")
 chk("size unicode-byte", file::size($f), 4); $ran = $ran + 1
 chk("remove", file::remove($f), true); $ran = $ran + 1
 chk("exists silindi", file::exists($f), false); $ran = $ran + 1
-# kök-DIŞI erişim reddedilmeli (traversal guard)
+# access OUTSIDE the root must be rejected (traversal guard)
 $denied = false
 try { file::read("../../etc/passwd") } catch($e) { $denied = true }
 chk("traversal reddedildi", $denied, true); $ran = $ran + 1

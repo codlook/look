@@ -10,7 +10,7 @@
 # "Another user" is uid 12345 (needs root or passwordless sudo for chown).
 # Usage: session_dir_default_test.sh <lk-fcgi>   (needs curl)
 set -u
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# an app that uses cookies does not start without LOOK_SECRET (CSRF signature) — the test's own key.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 P=7621
@@ -25,7 +25,7 @@ route("GET", "/login", function() { session::start(); session::set("user", "alic
 route("GET", "/who", function() { session::start(); return response::text("user=" . session::get("user")) })
 LK
 fail=0
-# run <beklenen dizin> <açıklama> <ortam...>
+# run <expected dir> <description> <env...>
 run() {
     local want="$1" what="$2"; shift 2
     { kill $pid; wait $pid; } 2>/dev/null
@@ -48,7 +48,7 @@ mkdir -m 0700 "$T/xdg";    run "$T/xdg/look-sessions"  "XDG_RUNTIME_DIR"        
 mkdir -m 0755 "$T/home";   run "$T/home/.look/sessions" "HOME owned by this user"       HOME="$T/home"
 mkdir -m 0755 "$T/rhome"; ${SUDO} chown $OTHER "$T/rhome"
                            run "$T/tmp/look-sessions-$ME" "HOME owned by another user → /tmp" HOME="$T/rhome"
-# Saldırgan /tmp'deki dizini önceden yarattı: HOME varken girişler yine çalışmalı
+# The attacker created the directory in /tmp beforehand: with HOME set the logins must still work
 ${SUDO} rm -rf "$T/tmp/look-sessions-$ME"; mkdir -m 0777 "$T/tmp/look-sessions-$ME"; ${SUDO} chown $OTHER "$T/tmp/look-sessions-$ME"
 mkdir -m 0755 "$T/home2";  run "$T/home2/.look/sessions" "logins work although another user created /tmp/look-sessions-<uid>" HOME="$T/home2"
 [ $fail = 0 ] && echo "PASS: the default session directory is one no other user can create first" \

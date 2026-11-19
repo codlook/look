@@ -1,10 +1,10 @@
 use string
-# 1 ADD/iter (+ MOD + loop) — $i ekle ki constant-fold olmasın
+# 1 ADD/iter (+ MOD + loop) — add $i so it is not constant-folded
 $b_add1 = function() {
   $M=1000000007; $s=0
   for($i=0;$i<20000000;$i=$i+1){ $s=($s + $i) % $M } return $s
 }
-# 5 ADD/iter (aynı loop+MOD) → fark 4 ekstra ADD
+# 5 ADD/iter (same loop+MOD) → difference is 4 extra ADDs
 $b_add5 = function() {
   $M=1000000007; $s=0
   for($i=0;$i<20000000;$i=$i+1){ $s=($s + $i + $i + $i + $i + $i) % $M } return $s

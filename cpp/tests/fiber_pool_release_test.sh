@@ -27,7 +27,7 @@ for mode in 1 0; do
     rm -f "$TMP"/w.db* "$TMP"/codes.txt
     ( cd "$TMP" && LOOK_FIBER_DISPATCH=$mode exec "$FCGI" --mode http --port "$PORT" --workers 4 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
     for i in $(seq 1 50); do curl -s -o /dev/null -m 1 "localhost:$PORT/busy" && break; sleep 0.1; done
-    busy0="$(curl -s -m 10 "localhost:$PORT/busy")"   # kurulum bağlantısı + bu isteğin kendisi
+    busy0="$(curl -s -m 10 "localhost:$PORT/busy")"   # setup connection + this request itself
     for p in $(seq 1 16); do
         ( for j in $(seq 1 10); do curl -s -m 10 -o /dev/null -w '%{http_code}\n' "localhost:$PORT/w"; done >> "$TMP/codes.txt" ) &
     done

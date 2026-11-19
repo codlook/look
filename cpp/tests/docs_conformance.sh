@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# docs-conformance — dokümandaki mod::fn API'si çekirdekte (builtin_names) karşılanıyor mu?
+# docs-conformance — is the mod::fn API in the documentation provided by the core (builtin_names)?
 #
-# NEDEN: `session::has` bug'ı (dogfooding #1) — docs bir fonksiyonu VAAT ediyordu, çekirdek
-# vermiyordu → dokümanı takip eden kullanıcı 500. Differential göremez (iki motor da eksik),
-# regression göremez (kimse çağırmıyor). Bir örnek = bir SINIF; bu tarama sınıfı kapatır.
+# WHY: the `session::has` bug (dogfooding #1) — docs PROMISED a function, the core
+# did not provide it → a user following the docs got a 500. Differential cannot see it (both engines lack it),
+# regression cannot see it (nobody calls it). One example = one CLASS; this scan closes the class.
 #
-# İKİ TARAFLI KAPALILIK (docs/ REPO'DA DEĞİL — gitignored website kaynağı, CI'da yok):
-#   • Fixture (cpp/tests/docs_api.txt) = docs'un CI'a giren commit'li GÖLGESİ.
-#   • YEREL (docs var):  fixture'ı docs'tan yeniden üret → commit'liyle KARŞILAŞTIR.
-#     Farklıysa FAIL: "docs değişti, fixture bayat" (bayat fixture = sahte yeşil).
-#   • HER ZAMAN (CI dahil): fixture − allowlist ⊆ builtin_names()  → asıl guard.
+# TWO-SIDED CLOSURE (docs/ is NOT IN THE REPO — a gitignored website source, absent in CI):
+#   • Fixture (cpp/tests/docs_api.txt) = the committed SHADOW of docs that enters CI.
+#   • LOCAL (docs present):  regenerate the fixture from docs → COMPARE with the committed one.
+#     If different FAIL: "docs changed, fixture stale" (a stale fixture = false green).
+#   • ALWAYS (incl. CI): fixture − allowlist ⊆ builtin_names()  → the real guard.
 #
-# Fixture güncelle:  bash cpp/tests/docs_conformance.sh --update   (docs erişilebilir olmalı)
+# Update the fixture:  bash cpp/tests/docs_conformance.sh --update   (docs must be accessible)
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"
@@ -22,15 +22,15 @@ FIXTURE="$DIR/docs_api.txt"
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-# Docs'tan belgeli mod::fn'leri üret (TEK yer — üretim ve bayatlama-kontrolü aynı komut).
-# Tag'leri BOŞLUKLA sil (prose yapışmasını önle); C++ örnek gürültüsünü (std/pp/...) ayıkla.
+# Generate the documented mod::fn from docs (a SINGLE place — generation and staleness check use the same command).
+# Delete tags WITH A SPACE (prevent prose from sticking together); filter out C++ example noise (std/pp/...).
 gen_from_docs() {
   sed 's/<[^>]*>/ /g' "$DOCS" \
     | grep -oE '[a-z_][a-z0-9_]*::[a-z_][a-z0-9_]*' \
     | grep -vE '^(std|pp|condition_variable)::' | sort -u
 }
 
-# --update: fixture'ı docs'tan yeniden yaz
+# --update: rewrite the fixture from docs
 if [ "${1:-}" = "--update" ]; then
   [ -f "$DOCS" ] || { echo "--update için docs/index.html gerekli (bulunamadı: $DOCS)"; exit 2; }
   gen_from_docs > "$FIXTURE"
@@ -40,7 +40,7 @@ fi
 
 [ -f "$FIXTURE" ] || { echo "fixture yok: $FIXTURE (önce --update ile üret)"; exit 2; }
 
-# ── Bayatlama kontrolü (yalnız docs erişilebilirse — yerelde) ──
+# ── Staleness check (only if docs is accessible — locally) ──
 if [ -f "$DOCS" ]; then
   gen_from_docs > "$TMP/fresh.txt"
   if ! diff -q "$FIXTURE" "$TMP/fresh.txt" >/dev/null; then
@@ -54,19 +54,19 @@ else
   echo "(docs/ yok — bayatlama kontrolü atlandı; fixture↔builtin_names asıl guard koşuyor)"
 fi
 
-# builtin_names()'teki mod::fn (tek programatik kaynak)
+# mod::fn in builtin_names() (the single programmatic source)
 grep -oE '"[a-z_][a-z0-9_]*::[a-z_][a-z0-9_]*"' "$BUILTINS" | tr -d '"' | sort -u > "$TMP/vm.txt"
 
-# ── Allowlist: belgeli ama builtin_names()'te OLMAMASI DOĞRU olanlar (gerekçeli) ──
+# ── Allowlist: documented but CORRECTLY ABSENT from builtin_names() (with reasons) ──
 grep -vE '^\s*#|^\s*$' <<'ALLOW' | sort -u > "$TMP/allow.txt"
-# Docs prose: bilinçli YOKLUĞU anlatıyor (fonksiyon değil)
+# Docs prose: describes the deliberate ABSENCE (not a function)
 cache::remember
 db::pool
 route::run
 str::length
-# Yalnız `lk test` bağlamı (web builtin değil)
+# `lk test` context only (not a web builtin)
 assert::eq
-# Interpreter'da ÖZEL-DURUM (scope-resolution; builtin_names dışı ama çalışır)
+# SPECIAL CASE in the interpreter (scope-resolution; outside builtin_names but works)
 ws::on
 ws::send
 ws::close
@@ -81,16 +81,16 @@ timer::every
 timer::cancel
 jobs::run
 jobs::worker
-# Regex artefaktı: docs'taki "type::is_*" (predicate ailesi) `::[a-z_0-9]+` ile "type::is_"e
-# kesiliyor — gerçek fonksiyon değil (type::is_int/is_string/... ayrı ayrı belgeli ve builtin).
+# Regex artifact: "type::is_*" in docs (the predicate family) gets cut to "type::is_" by `::[a-z_0-9]+` —
+# not a real function (type::is_int/is_string/... are documented and builtin separately).
 type::is_
 ALLOW
 
-# Vacuous-green guard (Kural 2): boş/kesik fixture hiçbir şey test etmeden GEÇER —
-# CI'da docs/ gitignore olduğundan staleness kontrolü (satır 44) atlanır, geriye yalnız
-# aşağıdaki üyelik kontrolü kalır; fixture boşsa violations de boş → exit 0 (sahte-yeşil).
-# ÖLÇÜLDÜ (2026-08-11): docs yok + boş fixture → "GEÇTİ" hiçbir şey test etmeden.
-# Fixture satır sayısını tabana pinle (gerçek ~239); truncation/bozuk-merge fail-loud.
+# Vacuous-green guard (Rule 2): an empty/truncated fixture PASSES without testing anything —
+# since docs/ is gitignored in CI the staleness check (line 44) is skipped, only the
+# membership check below remains; if the fixture is empty violations is empty too → exit 0 (false green).
+# MEASURED (2026-08-11): no docs + empty fixture → "PASSED" without testing anything.
+# Pin the fixture line count to a floor (real ~239); truncation/bad merge fails loudly.
 FIXTURE_MIN=200
 fixture_lines=$(grep -c . "$FIXTURE")
 if [ "$fixture_lines" -lt "$FIXTURE_MIN" ]; then
@@ -98,10 +98,10 @@ if [ "$fixture_lines" -lt "$FIXTURE_MIN" ]; then
   exit 1
 fi
 
-# YÖN 1 — fixture var, vm yok, allowlist'te de yok → HATA (kullanıcı 500 riski)
+# DIRECTION 1 — in fixture, not in vm, not in allowlist either → ERROR (user 500 risk)
 comm -23 "$FIXTURE" "$TMP/vm.txt" > "$TMP/docs_only.txt"
 comm -23 "$TMP/docs_only.txt" "$TMP/allow.txt" > "$TMP/violations.txt"
-# YÖN 2 — vm var, fixture yok → bilgilendirme (belgesiz yüzey)
+# DIRECTION 2 — in vm, not in fixture → informational (undocumented surface)
 comm -13 "$FIXTURE" "$TMP/vm.txt" > "$TMP/vm_only.txt"
 
 echo "=== YÖN 2 (bilgilendirme) — builtin_names'te VAR, docs'ta YOK ($(wc -l < "$TMP/vm_only.txt")) ==="

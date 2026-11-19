@@ -123,9 +123,9 @@ if [ -r /proc/self/stat ]; then
 ' ' ')"
     t1="$(awk '{print $14+$15}' /proc/$pid/stat 2>/dev/null)"; up=no; kill -0 "$pid" 2>/dev/null && up=yes
     stop
-    # Counter anahtarları ilk görülme sırasında: '101' ilk sırada olmayabilir — {'waiting': 57, '101': 60}
-    # (kabul sırası değişince, ör. LOOK_TEST_PREEMPT=1) — sıradan bağımsız oku. ESKİ HATA: sayı okunamıyor,
-    # doğru davranan sunucu FAIL alıyordu (fd sızıntısı sanıldı).
+    # Counter keys are in order of first sight: '101' may not come first — {'waiting': 57, '101': 60}
+    # (when the accept order changes, e.g. LOOK_TEST_PREEMPT=1) — read independently of order. OLD BUG: the count could not be read,
+    # and a correctly behaving server got FAIL (it was mistaken for an fd leak).
     acc="$(echo "$out" | grep -o "opened: {[^}]*}" | grep -o "'101': [0-9]*" | grep -o '[0-9]*$')"
     late="$(echo "$out" | grep -o "waiting ones now: {[^}]*}" | grep -o "'101': [0-9]*" | grep -o '[0-9]*$')"
     if [ "$up" = yes ] && [ "${acc:-0}" -gt 250 ] && [ "${late:-0}" = 60 ] && [ "$((t1 - t0))" -lt 1000 ]; then

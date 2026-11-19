@@ -1,6 +1,6 @@
-// resp_tls_harness.cpp — Redis TLS (rediss://) canlı smoke-test.
-// RespClient'ı doğrudan kullanır: rediss:// bağlan → SET/GET → değer parite mi.
-// tls=verify ayrı test edilir (self-signed → reddedilmeli). Docker redis:7 + TLS gerektirir.
+// resp_tls_harness.cpp — Redis TLS (rediss://) live smoke test.
+// Uses RespClient directly: connect via rediss:// → SET/GET → is the value in parity.
+// tls=verify is tested separately (self-signed → must be rejected). Needs Docker redis:7 + TLS.
 #include "look/resp_client.h"
 #include <cstdio>
 #include <string>

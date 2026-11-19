@@ -1,28 +1,28 @@
-# RS256 (RSASSA-PKCS#1 v1.5 + SHA-256) known-answer testi.
+# RS256 (RSASSA-PKCS#1 v1.5 + SHA-256) known-answer test.
 #
-# NEDEN SABİT İMZA, sign→verify DEĞİL: sign→verify→true SAHTE-YEŞİL üretir — aynı yığın
-# kendini doğrular, ikisi birden yanlışsa yine eşleşir. Burada beklenen imza DIŞ ORACLE ile
-# üretildi (`openssl dgst -sha256 -sign`, PKCS#1 v1.5 DETERMİNİSTİK olduğu için sabit) ve
-# LOOK'un çıktısı ona pinlenir. Ayrıca REDDETME tarafı da test edilir (bozuk mesaj/imza →
-# false); yoksa "verify çalışıyor" hükmü verilemez.
+# WHY A FIXED SIGNATURE, NOT sign→verify: sign→verify→true produces a FALSE GREEN — the same stack
+# verifies itself, if both are wrong they still match. Here the expected signature was produced with an EXTERNAL ORACLE
+# (`openssl dgst -sha256 -sign`, fixed because PKCS#1 v1.5 is DETERMINISTIC) and
+# LOOK's output is pinned to it. The REJECT side is also tested (corrupt message/signature →
+# false); otherwise the verdict "verify works" cannot be given.
 #
-# Platform notu (olgunluk denetimi Tema B): POSIX yolu (OpenSSL) burada TAM doğrulanır.
-# Windows rs256_verify şu an STUB (`throw`) — dürüst başarısızlık, güvenli. Bu KAT, bir
-# Windows CI geldiğinde NCrypt impl'ini AYNI sabit imzaya karşı doğrulayacak SİLAHTIR.
+# Platform note: the POSIX path (OpenSSL) is FULLY verified here.
+# On Windows rs256_verify is currently a STUB (`throw`) — an honest failure, safe. This KAT is the WEAPON that
+# will verify the NCrypt impl against the SAME fixed signature once a Windows CI exists.
 #
-# ⚠️ TEST KEY ONLY — NEVER USE IN PRODUCTION. 2048-bit (küçük anahtar bazı OpenSSL
-#    yapılandırmalarında reddedilir → sahte-kırmızı; 2048 güvenli taban).
-#   Çalıştır: build/lk cpp/tests/rs256_kat.lk   (exit 1 = FAIL, CI gate)
+# ⚠️ TEST KEY ONLY — NEVER USE IN PRODUCTION. 2048-bit (a small key is rejected in some OpenSSL
+#    configurations → false red; 2048 is a safe floor).
+#   Run: build/lk cpp/tests/rs256_kat.lk   (exit 1 = FAIL, CI gate)
 
 use crypto
 
-# PEM'ler base64-of-PEM olarak tek satır embed (newline/tırnak sorunu sıfır; çalışma-anında decode).
+# The PEMs are embedded as base64-of-PEM in a single line (zero newline/quote problems; decoded at run time).
 $pub  = crypto::base64_decode("LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUExTTJNcStobWtYaW9vUzR6WE83awpZYW53L05XdzBxb01OOHpNMFVaOW1kY29aQy8vUEJMZzdDWTBRbHdCdkJPNWtLY1NZVUoxSXFWOVNBWXpLcEVuCjJmRlYyOXZJSFZ5bTZ3a2ZuSkdERWNKeXlWblBWOXhPcWdqd1VVazUwVVFDd3VwdmI3Zm13dkNFVmtNOWVjemgKTThNeGxJZGxTZXhibFVONzBhUHY5SlZuQkdiNGFtdmRjbWo0Q3UxZEFHaG5uenV6Ny9yODlDeS9HVVdlWlZKKwpMM0tSUzdpWHJWd3R1czNpZEtXbnFsbEV0RDhLemRiQkM0SURBL3pJZWNqZlB2YjFDSzVOZTRUMkRZVUdTanJmCjRMdWlUYmlKZ2hLbFY5eVJQZjZPcjArMXF1Nk5ZZmswVmE5MkVzamJyb3BvYzN6U1ozSWJ5Y3p2OW5yU2F4MWIKbHdJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==")
 # ⚠️ TEST KEY ONLY — NEVER USE IN PRODUCTION
 $priv = crypto::base64_decode("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRRFV6WXlyNkdhUmVLaWgKTGpOYzd1UmhxZkQ4MWJEU3FndzN6TXpSUm4yWjF5aGtMLzg4RXVEc0pqUkNYQUc4RTdtUXB4SmhRblVpcFgxSQpCak1xa1NmWjhWWGIyOGdkWEtickNSK2NrWU1Sd25MSldjOVgzRTZxQ1BCUlNUblJSQUxDNm05dnQrYkM4SVJXClF6MTV6T0V6d3pHVWgyVko3RnVWUTN2Um8rLzBsV2NFWnZocWE5MXlhUGdLN1YwQWFHZWZPN1B2K3Z6MExMOFoKUlo1bFVuNHZjcEZMdUpldFhDMjZ6ZUowcGFlcVdVUzBQd3JOMXNFTGdnTUQvTWg1eU44Kzl2VUlyazE3aFBZTgpoUVpLT3QvZ3U2Sk51SW1DRXFWWDNKRTkvbzZ2VDdXcTdvMWgrVFJWcjNZU3lOdXVpbWh6Zk5KbmNodkp6Ty8yCmV0SnJIVnVYQWdNQkFBRUNnZ0VBYndIbXJzcGxydDc5UUU5RWRlY2NkYUhiMTFoMWkvOHVybkVFS3VzVm5BbXoKeFVlUVlqc0szOFV5SDZlMU0vSXFLNzRyaFZiUW1ja3dLRUVyc2JuVXl3anNtK3J6WWZXeUVRdEtWVGRHNHgzSApHU2ZqVkZiVkpqZlJmT1d3NW13TzhMU3dldHU0NGRucmZzQkdzbUhnM0VxbmMyNkp0TjA2RFF3TjdCY1Rsa2JoCjFQTGVIbHpXVDV6VDBlbGtHVXJXenVHRDJtdCtScjVqU2JQUElHQ3IrdzhNVG9rRHhWNVpTU3cwMUdwUnp2OFYKWlQ3dzlwOHZ5ZklPYkxHUHFVRDdTalVINUhQYUhjK3U1UzFCMXJWWndnT2hEZlpsU3pVaGlCUUcyRUZYOHpIdgp5cXFPdlNxVlhzY3N0TzlYQzNSdEpTOHFMRktCcXpSaUp0SUVyRlNUd1FLQmdRRHNmc3k3TmFlaEFLOERWMENWCmE2cDlobnB4NFhVRC9KSlg1TDVOa3JjK3BXYWI3M3FOUGlwZndvMnRiaThld1B4TXowV09ZSnI1MVNMMHRCYXYKOEkxaUYzeEpFOXEwWkYybFovN1ZMdXpKOGZ1cjU4QVRxNUdGSDgwWEhIQ1lHV1Z5U3BxNTUvb2IwU0p2T3A1KwpKOHhzQXBrZW13eHBzU3lJNkE3R1pCOGxkd0tCZ1FEbVdvWmxFSEVGbXNhYmxEVXpOakJBWFBoaGdCSjczK1hlCmg0Y0FveW1jbHdmMC9URWZDK3dYZmlMNUczZGs3NDZGd2FTQUp0QW5nS1FGQ3laR1Y4cFFzK04yRVVUTS9tM1AKdHlDNzFYUVQwMkNqQ1BMTUd2R1FRNFZQK0dJRFpzTTRQSjBNNStRcUFlL3BvY3NLVld2UU5CVXVqb2dyNnJWWQpMdVd3aE1HQzRRS0JnRm1jbm5VZG1wd09SMEtyMENRT1BQYjlldTRsOFJJR3BXazZtc1dJSDNsVWNUSUxKMVBYCngzU3Jvc1docDZjdWx5dC9xcXFOZm92R01FMnE0NkhkTTZXRW9xcUtKR2dRVTgrMlBVQ0lYRjhWR3prRFFxdngKYWQyWXREemFvT3R4VEJobm5vTnRIRDlvR25VdE1CczdkMkZDQnNVckdTUC9aNUdrNU54VjJkdDNBb0dCQUlYegpramltNWpKYUpMQUg2VC9VZlE2UWdhZEE4SDYwWGxtZStmUjI3Uld3QmVLQzhYT2FYVG4wRWFaR1FKR2pkSDkzCmNZOU1Bck5WN1FzNXhwSVZMd0xxK0pTSnlqWmlwYnlxUXhDM09YN2w1a1lvUi9oRW1zQkhZMWh6bVp0Y3dKME4KTWs1MDhvc3pBUzRjOVpNV3hWRVhXRkh3ZEdNRlkxcmFPcHNCTi81QkFvR0FFTXVFbnhScEFnTDRlSHhqWjYxUQpoOHJHOGhrZ0lhbGp5QThseStlaTFnM28rVVkwMmdUSlRSUzlPNmt4WVJvK21xcXFoMWxHRmxKQ1pZeXZKTVhJCmMxeEZNZ1BaV013a2kwOEZyL29iUVhSbEVCWHVWd2NjWExNTkZDZ2dJaXc1aWViRDNQRlZOWHd2Y050ZE9qWXgKVnF4OWJPalI0cDNOWWtxV3J3aWlaMUk9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K")
 
 $msg = "LOOK rs256 KAT vector v1"
-# Dış oracle imzası (openssl dgst -sha256 -sign, deterministik):
+# External oracle signature (openssl dgst -sha256 -sign, deterministic):
 $sig = crypto::base64_decode("oAh8HT42H1B+CeRdZCWhPf8YdA2X3LaI+WJd1Qkwkz0NKbkhi6yFVTHfCBNX/md3cETN1NwSAT8AISijImbsHk8gJjFtRgYhDmzkgjImakUNtu/QkvQXEyUr7W4Ctis77bNhgdW8fHfh57oGfMDB/VWl6BPo/4ki4dRnc8xu3i9YtkjgK/a1X40j9c4+L69gI7QDySUVKYjsG40TmL1fSe1DDL8bPKgVFkAyv2NNU3VtfLgMqnmEuVjz684lxCrlsCttpz6miPOPZV3lrPADS2Ol2dVWRKxFHqwITWOnmyCMB6MTa9ApmJrzpg2dnktOnrxh/ynQlpSGhW1o078iMg==")
 
 $SIG_B64 = "oAh8HT42H1B+CeRdZCWhPf8YdA2X3LaI+WJd1Qkwkz0NKbkhi6yFVTHfCBNX/md3cETN1NwSAT8AISijImbsHk8gJjFtRgYhDmzkgjImakUNtu/QkvQXEyUr7W4Ctis77bNhgdW8fHfh57oGfMDB/VWl6BPo/4ki4dRnc8xu3i9YtkjgK/a1X40j9c4+L69gI7QDySUVKYjsG40TmL1fSe1DDL8bPKgVFkAyv2NNU3VtfLgMqnmEuVjz684lxCrlsCttpz6miPOPZV3lrPADS2Ol2dVWRKxFHqwITWOnmyCMB6MTa9ApmJrzpg2dnktOnrxh/ynQlpSGhW1o078iMg=="
@@ -30,34 +30,34 @@ $SIG_B64 = "oAh8HT42H1B+CeRdZCWhPf8YdA2X3LaI+WJd1Qkwkz0NKbkhi6yFVTHfCBNX/md3cETN
 $run = 0
 $fail = 0
 
-# 1) POZİTİF (dış-oracle imzası kabul edilmeli). SIGN değil — sabit imza.
+# 1) POSITIVE (the external-oracle signature must be accepted). Not SIGN — a fixed signature.
 $run = $run + 1
 if (crypto::rs256_verify($msg, $sig, $pub) != true) {
     print("FAIL 1: gecerli dis-oracle imzasi REDDEDILDI (verify kirik)"); $fail = $fail + 1
 }
 
-# 2) REDDET: bozuk mesaj → false
+# 2) REJECT: corrupt message → false
 $run = $run + 1
 if (crypto::rs256_verify("DEGISTIRILMIS mesaj", $sig, $pub) != false) {
     print("FAIL 2: bozuk mesaj KABUL edildi (verify her seye true donuyor)"); $fail = $fail + 1
 }
 
-# 3) REDDET: yanlis imza (baska mesajin gecerli imzasi) → false
+# 3) REJECT: wrong signature (a valid signature of another message) → false
 $run = $run + 1
 $wrong = crypto::rs256_sign("baska bir mesaj", $priv)
 if (crypto::rs256_verify($msg, $wrong, $pub) != false) {
     print("FAIL 3: yanlis imza KABUL edildi"); $fail = $fail + 1
 }
 
-# 4) SIGN deterministik: rs256_sign cikitisi dis-oracle imzasina birebir eslesmeli
+# 4) SIGN deterministic: the rs256_sign output must match the external-oracle signature exactly
 $run = $run + 1
 if (crypto::base64_encode(crypto::rs256_sign($msg, $priv)) != $SIG_B64) {
     print("FAIL 4: rs256_sign dis-oracle imzasindan SAPTI (PKCS#1 v1.5 determinizmi bozuk)"); $fail = $fail + 1
 }
 
-# 5) EC (RSA-olmayan) key REDDEDİLMELİ — rs256 = RSA-only. POSIX EVP EC'yi ECDSA olarak
-# imzalardı (yanlış-alg, boş-olmayan, sessiz); Windows sessizce BOŞ imza dönerdi. İkisi de
-# fail-loud'a çekildi → çapraz-platform simetri (2026-08-11 bug-avı). throw beklenir.
+# 5) an EC (non-RSA) key MUST BE REJECTED — rs256 = RSA-only. POSIX EVP would sign EC as ECDSA
+# (wrong-alg, non-empty, silent); Windows would silently return an EMPTY signature. Both were
+# pulled to fail-loud → cross-platform symmetry (2026-08-11 bug hunt). A throw is expected.
 $run = $run + 1
 $ec = crypto::base64_decode("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JR0hBZ0VBTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5QXdFSEJHMHdhd0lCQVFRZ3MxK2cvUzFiMzF6OHRxc1oKMXVxMlJPOFlRZmlPRUMxRFpjalE5aXR3UlptaFJBTkNBQVRVdjZTN01DSEdFelZuZ0J5VkExSUNMQTJCNStNKwplNE1wb0hhNW1UaHJjRTErdTlsTm9TRTJpSmF1NXNrZ1o1cGg1R29vMlFCa2REd2xEN1h6NjFMRQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==")
 $ec_rejected = false
@@ -66,7 +66,7 @@ if ($ec_rejected != true) {
     print("FAIL 5: EC key rs256_sign'da REDDEDILMEDI (RSA-only ihlali; POSIX ECDSA / Win bos-imza)"); $fail = $fail + 1
 }
 
-# Guard 1 — empty-green: 5 kontrol koştu mu (bir dal atlanmadi)?
+# Guard 1 — empty-green: did all 5 checks run (no branch skipped)?
 const { EXPECTED = 5 }
 if ($run != EXPECTED) {
     print("FAIL: " . EXPECTED . " kontrol beklendi, " . $run . " kostu — bir dal atlandi")

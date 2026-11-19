@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# jobs-canli-dogrula.sh — jobs claim yarışı + soğuk açılış, GERÇEK ortamda.
+# jobs-canli-dogrula.sh — jobs claim race + cold start, in a REAL environment.
 #
-# 46 (atomik claim) ve 47 (busy_timeout soğuk açılış) ortam-duyarlı bulgulardı;
-# yarış-penceresi dosya sistemi/çekirdek hızına bağlı. Bu betik deploy edilen
-# ortamda (ör. test.codlook.com AlmaLinux 8) koşulup çift-işleme ve kilit
-# hatalarını ölçer. Analizci parametresi: 6 süreç × 8 tur = 48 claim.
+# 46 (atomic claim) and 47 (busy_timeout cold start) were environment-sensitive findings;
+# the race window depends on file system/kernel speed. This script is run in the deployed
+# environment (e.g. test.codlook.com AlmaLinux 8) and measures double processing and lock
+# errors. Default parameters: 6 processes × 8 rounds = 48 claims.
 #
-# Kullanım: jobs-canli-dogrula.sh <lk> [nproc=6] [rounds=8]
+# Usage: jobs-canli-dogrula.sh <lk> [nproc=6] [rounds=8]
 set -u
 LK="${1:-./build/lk}"
-LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # aşağıda cd yapılıyor: mutlak yol
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # cd is done below: absolute path
 NPROC="${2:-6}"; ROUNDS="${3:-8}"; TOTAL=$((NPROC*ROUNDS))
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 cd "$TMP" || exit 1
@@ -42,7 +42,7 @@ total=$(wc -l < claims.txt); uniq=$(sort -u claims.txt | wc -l); dupe=$((total -
 echo "  claim yarisi: $total claim / $uniq tekil / $dupe cift / $locks kilit-hatasi  (hedef $TOTAL/$TOTAL/0/0)"
 [ "$total" = "$TOTAL" ] && [ "$dupe" = 0 ] && [ "$locks" = 0 ] || { echo "  FAIL: claim yarisi hedefi tutmadi"; fail=1; }
 
-# Soğuk açılış: DB hiç yokken NPROC süreç aynı anda schema oluşturur.
+# Cold start: with no DB at all, NPROC processes create the schema at the same time.
 rm -f "$TMP/cold.db"*
 export JOBS_DB="$TMP/cold.db"
 cat > cold.lk <<'LK'

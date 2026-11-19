@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Düşmanca MySQL / PostgreSQL sunucusu — wire ayrıştırıcıları için mutasyon fuzz'u.
-# Her sorguya GEÇERLİ ama zengin bir cevap kurar (çok sütun/tür, NULL, çok satır, bazen ek sonuç
-# kümesi ya da satır arası hata), sonra tohumlu rastgele bozar (bayt çevirme, kırpma, uzatma,
-# paket silme/çoğaltma, uzunluk alanını bozma, tür baytını değiştirme), gönderir ve bağlantıyı
-# kapatır (istemci beklemeye kalmasın: her bozuk cevap EOF ile biter). Sayaç dosyası yok; tohum
-# bağlantı sırasıdır — aynı çalıştırma aynı dizileri üretir.
-#   Kullanım: db_wire_mutator.py mysql|pg <port> [tohum]
+# Hostile MySQL / PostgreSQL server — mutation fuzz for the wire parsers.
+# For every query it builds a VALID but rich reply (many columns/types, NULL, many rows, sometimes an extra result
+# set or an error between rows), then corrupts it randomly with a seed (byte flip, truncate, extend,
+# packet drop/duplicate, break the length field, change the type byte), sends it, and closes the connection
+# (so the client does not wait: every corrupt reply ends with EOF). No counter file; the seed
+# is the connection order — the same run produces the same sequences.
+#   Usage: db_wire_mutator.py mysql|pg <port> [seed]
 import socket, struct, sys, threading, random
 
 PROTO = sys.argv[1]
@@ -24,11 +24,11 @@ def mutate(rng, chunks):
         if not chunks: break
         i = rng.randrange(len(chunks)); c = bytearray(chunks[i]); op = rng.randrange(9)
         if op == 0 and c: c[rng.randrange(len(c))] ^= 1 << rng.randrange(8)
-        elif op == 1 and c: c = c[:rng.randrange(len(c))]                          # kırp
-        elif op == 2: c += bytes(rng.randrange(256) for _ in range(rng.randrange(1, 40)))  # uzat
-        elif op == 3: del chunks[i]; continue                                      # paketi sil
-        elif op == 4: chunks.insert(i, bytes(c))                                   # çoğalt
-        elif op == 5 and len(c) > 4: c[rng.randrange(4)] = rng.choice([0, 1, 0x7f, 0xff, rng.randrange(256)])  # başlık/uzunluk
+        elif op == 1 and c: c = c[:rng.randrange(len(c))]                          # truncate
+        elif op == 2: c += bytes(rng.randrange(256) for _ in range(rng.randrange(1, 40)))  # extend
+        elif op == 3: del chunks[i]; continue                                      # drop the packet
+        elif op == 4: chunks.insert(i, bytes(c))                                   # duplicate
+        elif op == 5 and len(c) > 4: c[rng.randrange(4)] = rng.choice([0, 1, 0x7f, 0xff, rng.randrange(256)])  # header/length
         elif op == 6 and len(c) > 4: c[4 if len(c) > 4 else 0] = rng.choice([0x00, 0xfb, 0xfc, 0xfd, 0xfe, 0xff])
         elif op == 7 and c: c[rng.randrange(len(c))] = rng.choice([0x00, 0xff, 0x80, 0xfe])
         elif op == 8: chunks.insert(i, bytes(rng.randrange(256) for _ in range(rng.randrange(1, 12))))
@@ -67,7 +67,7 @@ def mysql_resultset(rng, seq, status_more):
             if rng.random() < 0.15: nb[(i + 2) // 8] |= 1 << ((i + 2) % 8)
             else: vals += mval(rng, t)
         out.append(mpkt(seq, b"\x00" + bytes(nb) + vals)); seq += 1
-    if rng.random() < 0.1:   # satırlar arasında hata
+    if rng.random() < 0.1:   # error between rows
         out.append(mpkt(seq, b"\xff" + struct.pack("<H", 1242) + b"#21000Subquery returns more than 1 row")); seq += 1
     st = 0x0002 | (0x0008 if status_more else 0) | (0x0001 if rng.random() < 0.2 else 0)
     out.append(mpkt(seq, b"\xfe\x00\x00" + struct.pack("<H", st))); seq += 1
@@ -75,7 +75,7 @@ def mysql_resultset(rng, seq, status_more):
 def mysql_execute_reply(rng):
     more = rng.random() < 0.3
     out, seq = mysql_resultset(rng, 1, more)
-    if more:   # CALL: ek küme(ler) ve son OK
+    if more:   # CALL: extra set(s) and the final OK
         if rng.random() < 0.5:
             o2, seq = mysql_resultset(rng, seq, False); out += o2
         out.append(mpkt(seq, b"\x00\x00\x00" + struct.pack("<H", 0x0002) + b"\x00\x00"))
@@ -97,7 +97,7 @@ def mysql_handle(c):
         if cmd == 0x01: return
         if cmd in (0x03, 0x0e): c.sendall(mpkt(1, b"\x00\x00\x00\x02\x00\x00\x00")); continue
         if cmd == 0x19: continue
-        if cmd == 0x16:   # PREPARE: geçerli (0 parametre, sütun tanımları) — bazen bozuk
+        if cmd == 0x16:   # PREPARE: valid (0 params, column definitions) — sometimes corrupt
             ncol = rng.randrange(0, 4)
             rep = [mpkt(1, b"\x00" + struct.pack("<IHH", 1, ncol, 0) + b"\x00\x00\x00")]
             for i in range(ncol): rep.append(mpkt(2 + i, mcoldef("c%d" % i, 0xfd)))

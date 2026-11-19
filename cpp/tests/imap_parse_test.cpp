@@ -1,5 +1,5 @@
-// IMAP saf parser tablo testi — look/imap_parse.h (dikişi aç).
-// Kilit güvenlik: mailbox adı guard'ı — belgeli geçmiş bug `INBOX; rm -rf /` KABUL'dü, red olmalı.
+// IMAP pure-parser table test — look/imap_parse.h (open the seam).
+// Key security check: the mailbox-name guard — the documented past bug `INBOX; rm -rf /` was ACCEPTED, it must be rejected.
 //   Build (ASan): g++ -std=c++17 -Iinclude -fsanitize=address,undefined tests/imap_parse_test.cpp -o /tmp/ipt
 #include "look/imap_parse.h"
 #include <cstdio>
@@ -12,7 +12,7 @@ static void eq(const char* what, const std::string& got, const std::string& want
     printf("    %-22s = %-18s %s\n", what, ("\""+got+"\"").c_str(), ok?"OK":("FAIL want \""+want+"\"").c_str());
     if (!ok) fails++;
 }
-// mailbox guard: reddedilmeli (false) mi, kabul (true, cleaned) mı?
+// mailbox guard: must it be rejected (false) or accepted (true, cleaned)?
 static void mb(const char* name, bool want_ok, const char* want_clean) {
     std::string cleaned;
     bool ok = imap_mailbox_name_ok(name, cleaned);
@@ -32,25 +32,25 @@ int main() {
       eq("tag-only",t,"justtag"); eq("cmd(bos)",c,""); }
 
     printf("IMAP split_two:\n");
-    { std::string a,b; imap_split_two("\"john\" \"p@ss word\"", a,b);  // tırnaklı, boşluklu pass
+    { std::string a,b; imap_split_two("\"john\" \"p@ss word\"", a,b);  // quoted password with spaces
       eq("a",a,"john"); eq("b",b,"p@ss word"); }
     { std::string a,b; imap_split_two("bob secret", a,b);
       eq("a",a,"bob"); eq("b",b,"secret"); }
 
     printf("IMAP mailbox_name_ok (GÜVENLİK — traversal/enjeksiyon):\n");
     mb("INBOX",              true,  "INBOX");
-    mb("",                   true,  "INBOX");     // boş → INBOX
-    mb("\"INBOX\"",          true,  "INBOX");     // tırnaklı
+    mb("",                   true,  "INBOX");     // empty → INBOX
+    mb("\"INBOX\"",          true,  "INBOX");     // quoted
     mb("Sent",               true,  "Sent");
     mb("\"Drafts\"",         true,  "Drafts");
-    mb("INBOX; rm -rf /",    false, "");          // KRİTİK: eskiden KABUL — ';' + boşluk red
+    mb("INBOX; rm -rf /",    false, "");          // CRITICAL: used to be ACCEPTED — ';' + space is rejected
     mb("../../etc/passwd",   false, "");          // '..' traversal
     mb("/etc/passwd",        false, "");          // mutlak yol
-    mb("a/b",                false, "");          // ayırıcı
-    mb("a\\b",               false, "");          // ters ayırıcı
+    mb("a/b",                false, "");          // separator
+    mb("a\\b",               false, "");          // backslash separator
     mb("bad\ttab",           false, "");          // kontrol karakteri
 
-    // --- ADVERSARIAL: ÇÖKME OLMAMALI (ASan) ---
+    // --- ADVERSARIAL: MUST NOT CRASH (ASan) ---
     const char* adv[] = { "", "\"", "\"\"", ";;;;", "\x01\x02", "/", "..", "\\" };
     for (auto s : adv) { std::string c; (void)imap_mailbox_name_ok(s, c);
                          std::string t,cm,a; imap_parse_command(s,t,cm,a);

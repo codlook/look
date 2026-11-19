@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# before_route prefix-guard guard'ı — lk-fcgi --mode http'ye karşı. Prefix guard artık dogfood'un
-# kimlik doğrulama mekanizması (9→1 refactor); kırılırsa /tasks (burada /admin) auth'suz açılır =
-# SESSİZ YETKİ ATLATMASI. POZİTİF-KONTROLLÜ: guard'sız varyant /admin 200 döndürür → RED discriminasyonu.
+# before_route prefix-guard guard — against lk-fcgi --mode http. The prefix guard is now dogfood's
+# authentication mechanism (9→1 refactor); if it breaks, /tasks (here /admin) opens without auth =
+# SILENT AUTHORIZATION BYPASS. WITH A POSITIVE CONTROL: the variant without the guard returns 200 for /admin → RED discrimination.
 set -u
 FCGI="${1:-./build/lk-fcgi}"
 PORT="${2:-7795}"
@@ -25,14 +25,14 @@ chk "public serbest"          "$(code public/hello)"                     "200"
 chk "admin header YOK -> 403"  "$(code admin/secret '' '')"              "403"
 chk "admin dogru token -> 200" "$(code admin/secret '' '-H X-Token:sekret')" "200"
 chk "admin yanlis token -> 403" "$(code admin/secret '' '-H X-Token:yanlis')" "403"
-chk "admin NESTED header YOK -> 403" "$(code admin/deep/x)"             "403"   # prefix nested'i de kapatir
+chk "admin NESTED header YOK -> 403" "$(code admin/deep/x)"             "403"   # the prefix closes nested paths too
 
-# ── POZİTİF KONTROL: before_route SABOTE (no-op) → /admin auth'suz AÇILIR (200) ──
-# Bu, guard kırılırsa testin gerçekten RED vereceğini kanıtlar (sessiz-atlatma tespiti).
+# ── POSITIVE CONTROL: before_route SABOTAGED (no-op) → /admin OPENS without auth (200) ──
+# This proves the test really goes RED if the guard breaks (silent-bypass detection).
 SAB="$(mktemp --suffix=.lk)"
 cat > "$SAB" <<'LK'
 use string
-before_route(function() { })   # SABOTE: guard yok
+before_route(function() { })   # SABOTAGE: no guard
 route("GET", "/admin/secret", function() { response::json(["zone" => "admin"]) })
 LK
 "$FCGI" --mode http --port "$((PORT+1))" "$SAB" >/dev/null 2>&1 &

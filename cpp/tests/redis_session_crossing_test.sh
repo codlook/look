@@ -13,7 +13,7 @@
 #      read only their own session afterwards.
 # Usage: redis_session_crossing_test.sh <lk-fcgi>   (needs python3, curl)
 set -u
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# an app that uses cookies does not start without LOOK_SECRET (CSRF signature) — the test's own key.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 LKF="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 T=$(mktemp -d); trap '{ kill $pid $rpid; wait; } 2>/dev/null; rm -rf "$T"' EXIT
@@ -50,14 +50,14 @@ route("GET", "/get", function() { session::start(); return response::text("v=" .
 LK
 RP=7496; P=7497
 start_redis() { python3 "$T/fake_redis.py" $RP & rpid=$!; sleep 0.3; }
-start_lk() {   # $1 = ek ortam (ör. LOOK_REDIS_MAX_BULK=...)
+start_lk() {   # $1 = extra environment (e.g. LOOK_REDIS_MAX_BULK=...)
     env $1 LOOK_SESSION_DRIVER=redis LOOK_REDIS_URL="redis://127.0.0.1:$RP" LOOK_SESSION_SECURE=0 \
         "$LKF" --mode http --port $P --workers 1 "$T/app.lk" >"$T/srv.log" 2>&1 & pid=$!
     for i in $(seq 1 50); do curl -s --max-time 1 "http://127.0.0.1:$P/health" >/dev/null && break; sleep 0.2; done
 }
-q() { curl -s -b "$T/cj_$1" -c "$T/cj_$1" --max-time 5 "http://127.0.0.1:$P$2"; }   # q <kullanıcı> <yol>
+q() { curl -s -b "$T/cj_$1" -c "$T/cj_$1" --max-time 5 "http://127.0.0.1:$P$2"; }   # q <user> <path>
 fail=0
-# 1. Redis yeniden başlatma
+# 1. Redis restart
 start_redis; start_lk ""
 q A "/set?v=A0" >/dev/null; q B "/set?v=B0" >/dev/null
 kill $rpid; wait $rpid 2>/dev/null; start_redis
@@ -72,11 +72,11 @@ if [ -z "$crossed" ]; then echo "PASS: after a Redis restart no user read anothe
 else echo "FAIL: after a Redis restart sessions crossed:$crossed (A/B reads:$reads)"; fail=1; fi
 { kill $pid $rpid; wait $pid $rpid; } 2>/dev/null
 rm -f "$T"/cj_*
-# 2. Yarım okunmuş yanıt (oturum LOOK_REDIS_MAX_BULK'tan büyük)
+# 2. Half-read reply (the session is larger than LOOK_REDIS_MAX_BULK)
 start_redis; start_lk "LOOK_REDIS_MAX_BULK=300"
 q B "/set?v=B-secret" >/dev/null; q C "/set?v=C-secret" >/dev/null
 big=$(head -c 400 /dev/zero | tr '\0' 'x')
-q A "/set?v=$big" >/dev/null; q A /get >/dev/null      # A'nın oturumu sınırın üstünde
+q A "/set?v=$big" >/dev/null; q A /get >/dev/null      # A's session is over the limit
 crossed=""; reads=""
 for i in 1 2 3 4; do
     b=$(q B /get); c=$(q C /get); reads="$reads $b/$c"

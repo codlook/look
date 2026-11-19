@@ -1,6 +1,6 @@
-// MySQL multi-packet birleştirme tablo testi — look/mysql_wire_parse.h (dikişi aç).
-// mysql_client.cpp read_packet bunu çağırır; reader = socket recv. Burada reader BELLEK-tamponu
-// besler (canlı MySQL YOK) → 0xFFFFFF devam, cap, sıfır-uzunluk son-parça POZİTİF-KONTROLLÜ.
+// MySQL multi-packet reassembly table test — look/mysql_wire_parse.h (open the seam).
+// mysql_client.cpp read_packet calls this; reader = socket recv. Here the reader is fed a MEMORY buffer
+// (NO live MySQL) → 0xFFFFFF continuation, cap, zero-length last-part WITH POSITIVE CONTROLS.
 //   Build: g++ -std=c++17 -Iinclude tests/mysql_reassemble_test.cpp -o /tmp/mra && /tmp/mra
 #include "look/mysql_wire_parse.h"
 #include <cstdio>
@@ -15,13 +15,13 @@ static void ok(const char* label, bool cond) {
     if (!cond) fails++;
 }
 
-// Bir MySQL paketi (4-byte başlık + gövde) wire baytlarına ekle.
+// Append a MySQL packet (4-byte header + body) to the wire bytes.
 static void push_pkt(std::vector<uint8_t>& wire, uint32_t len, uint8_t seq, uint8_t fill) {
     wire.push_back((uint8_t)len); wire.push_back((uint8_t)(len>>8)); wire.push_back((uint8_t)(len>>16));
     wire.push_back(seq);
     for (uint32_t i = 0; i < len; ++i) wire.push_back(fill);
 }
-// wire tamponundan sıralı okuyan reader üretir.
+// builds a reader that reads sequentially from the wire buffer.
 struct Reader {
     const std::vector<uint8_t>& wire; size_t pos = 0;
     bool operator()(uint8_t* buf, size_t n) {
@@ -33,7 +33,7 @@ struct Reader {
 
 int main() {
     printf("MySQL multi-packet birleştirme tablosu:\n");
-    // ── tek paket (<0xFFFFFF) — döngü bir kez, tek-paket davranışı ──
+    // ── single packet (<0xFFFFFF) — loop once, single-packet behavior ──
     {
         std::vector<uint8_t> w; push_pkt(w, 5, 7, 0xAB);
         Reader r{w}; uint8_t seq = 0;
@@ -41,18 +41,18 @@ int main() {
         ok("tek paket: 5 bayt", p.size() == 5 && p[0] == 0xAB);
         ok("tek paket: seq korunur", seq == 7);
     }
-    // ── sıfır-uzunluk paket → boş payload, akış senkron ──
+    // ── zero-length packet → empty payload, stream in sync ──
     {
         std::vector<uint8_t> w; push_pkt(w, 0, 3, 0);
         Reader r{w}; uint8_t seq = 0;
         auto p = mysql_reassemble([&r](uint8_t* b, size_t n){ return r(b, n); }, seq);
         ok("sıfır-uzunluk: boş payload", p.empty() && seq == 3);
     }
-    // ── multi-packet: 0xFFFFFF devam + küçük son-parça → BİRLEŞTİR ──
+    // ── multi-packet: 0xFFFFFF continuation + small last part → REASSEMBLE ──
     {
         std::vector<uint8_t> w;
-        push_pkt(w, 0xFFFFFF, 0, 0x11);   // ilk tam parça (16MB-1)
-        push_pkt(w, 10,       1, 0x22);   // son parça (<0xFFFFFF)
+        push_pkt(w, 0xFFFFFF, 0, 0x11);   // first full part (16MB-1)
+        push_pkt(w, 10,       1, 0x22);   // last part (<0xFFFFFF)
         Reader r{w}; uint8_t seq = 0;
         auto p = mysql_reassemble([&r](uint8_t* b, size_t n){ return r(b, n); }, seq);
         ok("multi: toplam boyut = 0xFFFFFF+10", p.size() == (size_t)0xFFFFFF + 10);
@@ -60,17 +60,17 @@ int main() {
         ok("multi: son parça baytı", p[(size_t)0xFFFFFF + 5] == 0x22);
         ok("multi: son seq döner", seq == 1);
     }
-    // ── multi-packet: TAM-0xFFFFFF ardından SIFIR-uzunluk son-parça (RFC gereği: payload tam
-    //    16MB katıysa 0-uzunluk terminatör paketi gelir) → birleştirme burada biter ──
+    // ── multi-packet: EXACT 0xFFFFFF followed by a ZERO-length last part (per the RFC: when the payload is exactly
+    //    a multiple of 16MB a 0-length terminator packet follows) → reassembly ends here ──
     {
         std::vector<uint8_t> w;
         push_pkt(w, 0xFFFFFF, 0, 0x33);
-        push_pkt(w, 0,        1, 0);       // 0-uzunluk terminatör
+        push_pkt(w, 0,        1, 0);       // 0-length terminator
         Reader r{w}; uint8_t seq = 0;
         auto p = mysql_reassemble([&r](uint8_t* b, size_t n){ return r(b, n); }, seq);
         ok("multi+0-terminatör: boyut = 0xFFFFFF", p.size() == (size_t)0xFFFFFF);
     }
-    // ── güvenlik cap: küçük max_recv aşılırsa fırlat (sonsuz-devam DoS savunması) ──
+    // ── security cap: throw if a small max_recv is exceeded (defense against endless-continuation DoS) ──
     {
         std::vector<uint8_t> w; push_pkt(w, 100, 0, 0x44);
         Reader r{w}; uint8_t seq = 0; bool threw = false;
@@ -78,9 +78,9 @@ int main() {
         catch (const std::exception&) { threw = true; }
         ok("cap aşımı fırlatır (100 > max 50)", threw);
     }
-    // ── eksik/kopuk akış: başlık okunamaz → fırlat ──
+    // ── missing/broken stream: header cannot be read → throw ──
     {
-        std::vector<uint8_t> w; w.push_back(0x05); // yarım başlık
+        std::vector<uint8_t> w; w.push_back(0x05); // half header
         Reader r{w}; uint8_t seq = 0; bool threw = false;
         try { mysql_reassemble([&r](uint8_t* b, size_t n){ return r(b, n); }, seq); }
         catch (const std::exception&) { threw = true; }

@@ -1,6 +1,6 @@
-// installer yönlendirme güvenlik-kararı tablo testi — look/url_safe.h (dikişi aç). Ağsız,
-// gerçek HTTP/3xx YOK — yalnız "bu redirect'e izin var mı" kararı. Şema-düşürme + host-kaçışı
-// (evilgithub.com / github.com.evil.com) dahil, pozitif-kontrollü.
+// installer redirect security-decision table test — look/url_safe.h (open the seam). No network,
+// NO real HTTP/3xx — only the "is this redirect allowed" decision. Includes scheme downgrade + host escape
+// (evilgithub.com / github.com.evil.com), with a positive control.
 //   Build: g++ -std=c++17 -Iinclude tests/installer_redirect_test.cpp -o /tmp/irt && /tmp/irt
 #include "look/url_safe.h"
 #include <cstdio>
@@ -19,18 +19,18 @@ static void chk(const char* url, bool want) {
 
 int main() {
     printf("Redirect güvenlik-karar tablosu:\n");
-    // İZİN — meşru GitHub zinciri
+    // ALLOW — legitimate GitHub chain
     chk("https://codeload.github.com/u/r/zip", true);
     chk("https://api.github.com/repos/u/r",    true);
     chk("https://github.com/u/r",              true);
     chk("https://objects.githubusercontent.com/x", true);
-    // RED — şema düşürme
+    // REJECT — scheme downgrade
     chk("http://github.com/u/r",               false);   // 48. bug: https→http
     chk("ftp://github.com/x",                  false);
-    // RED — host kaçışı
+    // REJECT — host escape
     chk("https://evil.com/x",                  false);
-    chk("https://evilgithub.com/x",            false);    // öneksiz (".github.com" değil)
-    chk("https://github.com.evil.com/x",       false);    // sonek yanlış-alan
+    chk("https://evilgithub.com/x",            false);    // no prefix (not ".github.com")
+    chk("https://github.com.evil.com/x",       false);    // suffix wrong-domain
     chk("https://api.github.com.attacker.net/x", false);
 
     const int EXPECTED = 10;

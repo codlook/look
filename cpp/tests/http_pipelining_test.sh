@@ -24,7 +24,7 @@ LK
 ( cd "$T" && exec "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$T/log.txt" 2>&1 ) & pid=$!
 for i in $(seq 1 50); do curl -s -o /dev/null -m 1 "localhost:$PORT/a" && break; sleep 0.1; done
 
-python3 - "$PORT" "$pid" <<'PY'   # alt kabuk exec'lediği için $pid sunucunun kendisi
+python3 - "$PORT" "$pid" <<'PY'   # the subshell execs, so $pid is the server itself
 import socket, sys, time, re
 port = int(sys.argv[1]); fail = 0
 def ok(m): print("  OK   " + m)
@@ -64,7 +64,7 @@ s.sendall(b"POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n
 r = read_responses(s, 2); s.close()
 (ok if r == ["200 E:abc", "200 A"] else bad)("a request after a chunked body in the same send: %s" % r)
 
-s = conn()   # gövde ayrı gönderimde gelir, sonu sonraki istekle aynı parçada
+s = conn()   # the body arrives in a separate send, its end in the same chunk as the next request
 s.sendall(b"POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\n"); time.sleep(0.2)
 s.sendall(b"abcdGET /b HTTP/1.1\r\nHost: x\r\n\r\n")
 r = read_responses(s, 2); s.close()
@@ -75,21 +75,21 @@ s.sendall(b"POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n
 r = read_responses(s, 1); s.close()
 (ok if r and r[0].startswith("400") else bad)("a chunked body whose trailer never ends is refused: %s" % r)
 
-# 1000 KB başlık (1 MB sınırının hemen altı — üstü 431 ile kesilir) küçük, aralıklı parçalarla (her parça ayrı recv): SUNUCUNUN CPU süresi doğrusal olmalı
+# 1000 KB header (just under the 1 MB limit — above it is cut off with 431) in small, spaced pieces (each piece a separate recv): the SERVER's CPU time must be linear
 def cpu(pid):
     f = open("/proc/%d/stat" % pid).read().rsplit(")", 1)[1].split()
     return (int(f[11]) + int(f[12])) / float(__import__("os").sysconf("SC_CLK_TCK"))
 spid = int(sys.argv[2]); c0 = cpu(spid)
 s = conn()
 s.sendall(b"GET /a HTTP/1.1\r\nHost: x\r\n")
-piece = b"a:\r\n" * 32   # kısa başlık satırları: her 4 baytta bir \r → tarama memchr ile atlayamaz
+piece = b"a:\r\n" * 32   # short header lines: a \r every 4 bytes → the scan cannot skip with memchr
 for i in range(1000 * 1024 // 128):
     s.send(piece)
     time.sleep(0.0001)
 s.sendall(b"\r\n")
 r = read_responses(s, 1); s.close(); dc = cpu(spid) - c0
-# Yanıt 431 (500 alan sınırı) — ölçülen, tüm başlığı alana dek sunucunun harcadığı CPU. Doğrusal ~0.1 s;
-# eski karesel tarama bu boyutta ~0.75 s (2 MB'ta ~3 s) → eşik 0.4 eski hatayı hâlâ yakalar.
+# Response 431 (500 field limit) — measured: the CPU the server spends until it receives the whole header. Linear ~0.1 s;
+# the old quadratic scan takes ~0.75 s at this size (~3 s at 2 MB) → threshold 0.4 still catches the old bug.
 (ok if dc < 0.4 else bad)("a 1000 KB header of short lines in small pieces costs the server %.2f CPU s (%s)" % (dc, r))
 sys.exit(fail)
 PY

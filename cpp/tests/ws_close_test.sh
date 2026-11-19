@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# WebSocket close + fd-sızıntısı fonksiyonel guard'ı (SSE sse_close_test.sh ikizi, TSan-siz).
-# Ham-socket handshake (python3 stdlib — CI'da websocket-client YOK) + /proc/PID/fd sayacı.
-# Kapsam: handshake 101 · echo · istemci close-frame → server close + fd serbest · regresyon.
-# NOT: WS EWOULDBLOCK (yavaş-istemci write-drop) bu fonksiyonel testin KAPSAMI DIŞI — ayrı
-# yük/backpressure testi ister (send_raw blocking; kayıtta).
+# WebSocket close + fd-leak functional guard (twin of SSE sse_close_test.sh, without TSan).
+# Raw-socket handshake (python3 stdlib — CI has no websocket-client) + a /proc/PID/fd counter.
+# Scope: handshake 101 · echo · client close frame → server close + fd freed · regression.
+# NOTE: WS EWOULDBLOCK (slow-client write drop) is OUT OF SCOPE for this functional test — it needs a separate
+# load/backpressure test (send_raw is blocking; on record).
 set -u
 FCGI="${1:-./build/lk-fcgi}"
 PORT="${2:-7769}"
@@ -18,7 +18,7 @@ fail=0
 cat > "$TMP/app.lk" <<'LKEOF'
 route("WS", "/ws", function($conn) {
     ws::on($conn, "message", function($m) {
-        if ($m == "bye") { ws::close($conn) }   // SUNUCU-taraflı kapatma
+        if ($m == "bye") { ws::close($conn) }   // SERVER-side close
         else { ws::send($conn, "echo:" . $m) }
     })
 })
@@ -31,7 +31,7 @@ for i in $(seq 1 40); do curl -s -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/n
 sleep 1
 base=$(ls "/proc/$SRV/fd" 2>/dev/null | wc -l)
 
-# Ham-socket WS istemcisi: handshake→echo→close; bağlıyken ve close sonrası fd döner.
+# Raw-socket WS client: handshake→echo→close; fds are counted while connected and after close.
 out=$(PORT="$PORT" python3 - "$SRV" "$base" <<'PYEOF'
 import socket, os, base64, struct, sys, time
 pid, base = sys.argv[1], int(sys.argv[2])
@@ -52,7 +52,7 @@ ok101 = b"101" in resp.split(b"\r\n")[0]
 s.sendall(masked(0x1, b"ping"))                 # text frame
 fr = s.recv(256)                                # server echo (unmasked)
 echoed = b"echo:ping" in fr
-time.sleep(0.3); conn = fdcount()               # bağlıyken fd
+time.sleep(0.3); conn = fdcount()               # fd while connected
 s.sendall(masked(0x8))                          # close frame
 try: tail = s.recv(256)                          # server close frame + EOF
 except Exception: tail = b""
@@ -64,16 +64,16 @@ echo "  $out"
 ok101=$(echo "$out" | grep -o 'OK101=True'); echoed=$(echo "$out" | grep -o 'ECHO=True')
 conn=$(echo "$out" | sed -n 's/.*CONN=\([0-9]*\).*/\1/p'); after=$(echo "$out" | sed -n 's/.*AFTER=\([0-9]*\).*/\1/p')
 
-# Sanity (Kural 3): handshake + echo gerçekten oldu mu (test WS yolunu egzersiz etti mi)
+# Sanity (Rule 3): did the handshake + echo really happen (did the test exercise the WS path)
 if [ -z "$ok101" ] || [ -z "$echoed" ] || [ "${conn:-0}" -ne $((base+1)) ]; then
   echo "  FAIL sanity: WS bağlanmadı/echo yok (fd $base→${conn:-?})"; fail=1
 else echo "  OK handshake 101 + echo:ping + bağlı fd=$conn"; fi
-# Asıl: close sonrası fd base'e döndü mü (sızıntı yok)
+# The point: did the fd count return to base after close (no leak)
 if [ "${after:-99}" -eq "$base" ]; then echo "  OK close sonrası fd base'e döndü ($after) — sızıntı yok"
 else echo "  FAIL: close sonrası fd=$after (base=$base) — SIZINTI"; fail=1; fi
 
-# SUNUCU-taraflı close (ws::close): istemci "bye" yollar, SUNUCU kapatır → istemci close-frame
-# (opcode 0x8) alır ve fd base'e döner (SSE server-close ikizi). İstemci close-frame BAŞLATMAZ.
+# SERVER-side close (ws::close): the client sends "bye", the SERVER closes → the client gets a close frame
+# (opcode 0x8) and the fd count returns to base (twin of SSE server-close). The client does NOT initiate a close frame.
 sout=$(PORT="$PORT" python3 - "$SRV" "$base" <<'PYEOF'
 import socket, os, base64, sys, time
 pid, base = sys.argv[1], int(sys.argv[2])
@@ -90,10 +90,10 @@ key = base64.b64encode(os.urandom(16)).decode()
 s.sendall(("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
            "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % key).encode())
 r = s.recv(1024); ok101 = b"101" in r.split(b"\r\n")[0]
-s.sendall(masked(0x1, b"bye"))                  # sunucu bunda ws::close çağırır
+s.sendall(masked(0x1, b"bye"))                  # the server calls ws::close on this
 got_close = False
 try:
-    fr = s.recv(256)                             # sunucu close-frame'i (unmasked, opcode 0x8)
+    fr = s.recv(256)                             # the server's close frame (unmasked, opcode 0x8)
     if fr and (fr[0] & 0x0F) == 0x8: got_close = True
 except Exception: pass
 s.close(); time.sleep(1); after = fdcount()
@@ -109,8 +109,8 @@ else echo "  OK ws::close → istemci close-frame aldı (server-başlatan)"; fi
 if [ "${safter:-99}" -eq "$base" ]; then echo "  OK server-close sonrası fd base'e döndü ($safter)"
 else echo "  FAIL: server-close sonrası fd=$safter (base=$base) — SIZINTI"; fail=1; fi
 
-# ws::close sonrası CEVAP VERMEYEN istemci: sunucu bağlantıyı kendisi kapatmalı (eskiden fd ve
-# bağlantı istemci bir şey gönderene dek süresiz kalıyordu).
+# A client that does NOT ANSWER after ws::close: the server must close the connection itself (the fd and
+# the connection used to stay open indefinitely until the client sent something).
 qout=$(PORT="$PORT" python3 - <<'PYEOF'
 import socket, os, base64, time
 port = int(os.environ["PORT"])
@@ -135,7 +135,7 @@ echo "  $qout"
 if echo "$qout" | grep -q 'EOF=True'; then echo "  OK ws::close: cevap vermeyen istemcinin bağlantısını sunucu kapattı"
 else echo "  FAIL ws::close: sunucu bağlantıyı kapatmadı (istemci cevap vermeyince açık kalıyor)"; fail=1; fi
 
-# Regresyon: 3 ani-kopma (close-frame'siz abandon) → sızıntı/crash yok
+# Regression: 3 abrupt disconnects (abandon without a close frame) → no leak/crash
 python3 - "$PORT" <<'PYEOF'
 import socket, os, base64
 port = int(__import__("sys").argv[1])
@@ -144,7 +144,7 @@ for _ in range(3):
     key = base64.b64encode(os.urandom(16)).decode()
     s.sendall(("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % key).encode())
-    s.recv(256); s.close()   # ani kopma
+    s.recv(256); s.close()   # abrupt disconnect
 PYEOF
 sleep 1
 recyc=$(ls "/proc/$SRV/fd" 2>/dev/null | wc -l)

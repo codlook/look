@@ -12,7 +12,7 @@ echo 'route("GET", "/ok", fn() => response::text("ok"))' > "$TMP/app.lk"
 cat > "$TMP/c.py" <<'PY'
 import socket, struct, sys, time
 port, script, mode = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-if mode == "hold":                      # sessiz bağlantılar: hiçbir şey gönderme
+if mode == "hold":                      # silent connections: send nothing
     ss = [socket.create_connection(("127.0.0.1", port)) for _ in range(int(sys.argv[4]))]
     time.sleep(60); sys.exit(0)
 def rec(t, rid, c): return struct.pack("!BBHHBx", 1, t, rid, len(c), 0) + c

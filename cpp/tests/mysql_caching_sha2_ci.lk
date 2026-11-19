@@ -1,15 +1,15 @@
-# caching_sha2_password (MySQL 8 VARSAYILAN eklentisi) — CI roundtrip + auth kaniti.
+# caching_sha2_password (the DEFAULT plugin of MySQL 8) — CI roundtrip + auth proof.
 #
-# Bu program TEK bir mysql:8 servisine karsi kosar (GitHub Actions service container).
-# Amac: caching_sha2_password auth yolunun (TLS'siz localhost = once RSA/cleartext
-# TAM yol, taze sunucuda onbellek bos oldugu icin) GERCEK bir sunucuya karsi
-# calistigini KANITLAMAK — kaynak degismedi, yalnizca CI-disi shell guard'daki
-# kapsam CI'ya tasindi.
+# This program runs against a SINGLE mysql:8 service (GitHub Actions service container).
+# Goal: to PROVE that the caching_sha2_password auth path (without TLS on localhost = first the RSA/cleartext
+# FULL path, because the cache is empty on a fresh server) runs against a REAL server —
+# the source did not change, only the coverage in the non-CI shell guard was moved
+# to CI.
 #
-# Cikti sozlesmesi (fail-loud, EXPECTED-pin):
-#   dogru kimlik   -> "AUTH_OK|<version>|<utf8-deger>"
-#   yanlis sifre   -> "AUTH_REJECT" (POZITIF KONTROL — auth gercekten dogruluyor)
-# Kosucu .sh her iki satiri de sabit degerlere pinler.
+# Output contract (fail-loud, EXPECTED-pin):
+#   correct credentials -> "AUTH_OK|<version>|<utf8-value>"
+#   wrong password      -> "AUTH_REJECT" (POSITIVE CONTROL — auth really verifies)
+# The runner .sh pins both lines to fixed values.
 
 $dsn  = env("MYDSN", "")
 $user = env("MYUSER", "")
@@ -17,21 +17,21 @@ $host = env("MYHOST", "127.0.0.1")
 $port = env("MYPORT", "3306")
 $db   = env("MYDB", "testdb")
 
-# ── 1) DOGRU kimlik: caching_sha2 kullanici ile tam roundtrip ────────────────────
-# Taze sunucu + TLS yok => AuthMoreData 0x04 (TAM yol) tetiklenir: RSA acik anahtar
-# istegi (0x02) + RSA-OAEP sifreli parola. Onbellek dolduktan sonra 2. baglanti
-# HIZLI yolu (0x03) kullanir; iki baglanti da burada egzersiz edilir.
+# ── 1) CORRECT credentials: full roundtrip with a caching_sha2 user ────────────────────
+# Fresh server + no TLS => AuthMoreData 0x04 (FULL path) is triggered: an RSA public key
+# request (0x02) + an RSA-OAEP encrypted password. After the cache fills, the 2nd connection
+# uses the FAST path (0x03); both connections are exercised here.
 try {
   $c = db::connect($dsn)
   db::exec($c, "CREATE TABLE IF NOT EXISTS look_csha2_ci (id INT PRIMARY KEY AUTO_INCREMENT, ad VARCHAR(64)) CHARACTER SET utf8mb4")
   db::exec($c, "DELETE FROM look_csha2_ci")
-  # Literal değer (prepared-bind DEĞİL) — bu test AUTH yolunu izole eder; bind kapsamı
-  # ayrı testte (db_bind_mysql). caching_sha2 fail'i bind fail'iyle karışmasın.
+  # Literal value (NOT prepared-bind) — this test isolates the AUTH path; the bind coverage is
+  # in a separate test (db_bind_mysql). A caching_sha2 failure must not be confused with a bind failure.
   db::exec($c, "INSERT INTO look_csha2_ci (ad) VALUES ('şğü-caching')")
   $v = db::query($c, "SELECT VERSION() AS v")
 
-  # 2. baglanti — sunucu onbellegi artik dolu => HIZLI yol (0x03). Ayri kod dali;
-  # ilk baglanti RSA/TAM yolunu, bu HIZLI yolu dogrular.
+  # 2nd connection — the server cache is now full => FAST path (0x03). A separate code branch;
+  # the first connection verifies the RSA/FULL path, this one the FAST path.
   $c2 = db::connect($dsn)
   $r  = db::query($c2, "SELECT ad FROM look_csha2_ci")
 
@@ -40,9 +40,9 @@ try {
   print("AUTH_FAIL|" . $e)
 }
 
-# ── 2) POZITIF KONTROL: YANLIS sifre => baglanti REDDEDILMELI ────────────────────
-# Auth-yolunun gercekten dogrulama yaptigini kanitlar. Eger yanlis sifreyle de
-# baglaniyorsak scramble/RSA adimi ATLANIYOR demektir (test vacuous olurdu).
+# ── 2) POSITIVE CONTROL: WRONG password => the connection MUST BE REJECTED ────────────────────
+# Proves that the auth path really verifies. If we also connect with the wrong password
+# the scramble/RSA step is BEING SKIPPED (the test would be vacuous).
 $bad = "mysql://" . $user . ":yanlis_sifre_zzz@" . $host . ":" . $port . "/" . $db
 try {
   $bc = db::connect($bad)

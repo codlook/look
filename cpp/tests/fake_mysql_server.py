@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# Sahte MySQL sunucusu — LOOK'un MySQL istemcisine bozuk bir cevap gönderir.
-# Mod "desync": FIRST içeren ifadenin EXECUTE cevabı sınırı aşan bir sütun sayısıyla başlar
-# (istemci hata atar), ardından cevabın geri kalanı (sütun tanımı, EOF, satır, EOF) gelir. Öteki
-# ifadeler tek sütun, tek satır döndürür: değer ifadedeki addır (SECOND → "second").
-# İstemci yarım kalan cevabı atmazsa okunmamış paketler sonraki sorgunun cevabı sanılır.
+# Fake MySQL server — sends a corrupt reply to LOOK's MySQL client.
+# Mode "desync": the EXECUTE reply of the statement containing FIRST starts with a column count over the limit
+# (the client raises an error), then the rest of the reply (column definition, EOF, row, EOF) follows. Other
+# statements return one column, one row: the value is the name in the statement (SECOND → "second").
+# If the client does not discard the half-finished reply, the unread packets are taken as the next query's reply.
 import socket, struct, sys, threading
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "desync"
@@ -49,7 +49,7 @@ def handle(c):
              struct.pack("<H", caps >> 16) + bytes([21]) + b"\x00" * 10 + b"ijklmnopqrst\x00" +
              b"mysql_native_password\x00")
     c.sendall(pkt(0, greet))
-    seq, _ = recv_pkt(c)            # istemcinin kimlik cevabı — her şey kabul
+    seq, _ = recv_pkt(c)            # the client's auth reply — accept everything
     if seq is None: return
     c.sendall(ok(seq + 1))
     stmts, next_id, prepared, ran_once = {}, 1, {}, set()
@@ -64,7 +64,7 @@ def handle(c):
         if cmd == 0x16:                                  # STMT_PREPARE
             sid = next_id; next_id += 1
             stmts[sid] = body[1:].decode("utf-8", "replace").upper()
-            # e1243: bir ifade metni ikinci kez hazırlanınca (yeniden hazırlama) artık çalışır
+            # e1243: when a statement text is prepared a second time (re-prepare) it now works
             if MODE in ("e1243", "e1243first"):
                 prepared[stmts[sid]] = prepared.get(stmts[sid], 0) + 1
                 if prepared[stmts[sid]] > 1: stmts[sid] += "#RUN"
@@ -73,10 +73,10 @@ def handle(c):
         if cmd == 0x17:                                  # STMT_EXECUTE
             sid = struct.unpack("<I", body[1:5])[0]
             if MODE in ("e1243", "e1243first") and sid in stmts and not stmts[sid].endswith("#RUN"):
-                if sid in ran_once or MODE == "e1243first":   # e1243first: hazırlamadan hemen sonra
-                    # Bağlantı paylaştırıcısı (ProxySQL) sorgular arasında başka arka uca geçti:
-                    # önbellekteki kimlik orada yok. İstemci yeniden hazırlayıp bir kez denemeli
-                    # (sorgu ÇALIŞMADI).
+                if sid in ran_once or MODE == "e1243first":   # e1243first: right after prepare
+                    # A connection multiplexer (ProxySQL) switched to another backend between queries:
+                    # the cached id does not exist there. The client must re-prepare and retry once
+                    # (the query DID NOT RUN).
                     del stmts[sid]
                     c.sendall(pkt(1, b"\xff" + struct.pack("<H", 1243) + b"#HY000Unknown prepared statement handler"))
                     continue
@@ -85,7 +85,7 @@ def handle(c):
             name = "first" if "FIRST" in sql else ("second" if "SECOND" in sql else "third")
             row = pkt(4, b"\x00" + b"\x00" + lenenc_str(name))
             if MODE == "desync" and name == "first":
-                head = pkt(1, b"\xfd" + struct.pack("<I", 70000)[:3])   # 70000 sütun (sınır 65535)
+                head = pkt(1, b"\xfd" + struct.pack("<I", 70000)[:3])   # 70000 columns (limit 65535)
             else:
                 head = pkt(1, b"\x01")
             c.sendall(head + coldef(2) + eof(3) + row + eof(5))

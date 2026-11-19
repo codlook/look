@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# test_runner_test.sh — `lk test` çerçevesinin KENDİ doğruluğunu doğrular.
+# test_runner_test.sh — verifies the correctness of the `lk test` framework itself.
 #
-# 50. bug: assert_throws()/assert::throws() eskiden bir marker array döndürüp
-# runner'ın testin DÖNÜŞ değerinde bulmasını beklerdi. Ama LOOK son ifadeyi
-# örtük DÖNDÜRMEZ → marker daima atılırdı → assert_throws() hiçbir zaman assert
-# ETMEZDİ. Belgelenen kullanım (assert_throws son ifade) dahil, yakalanması
-# gereken hata sessizce kaçar, test YALANCI YEŞİL verirdi.
+# Bug 50: assert_throws()/assert::throws() used to return a marker array and
+# expect the runner to find it in the test's RETURN value. But LOOK does not
+# implicitly RETURN the last expression → the marker was always dropped → assert_throws() never
+# asserted. Even the documented usage (assert_throws as the last expression) let an error that
+# should be caught slip by silently, and the test reported a FALSE GREEN.
 #
-# Bu guard, "fırlatMASI gereken ama fırlatMAYAN" fonksiyonların assert_throws
-# tarafından yakalandığını (test BAŞARISIZ olduğunu) doğrular. Eski bozuk kodda
-# bu testler YEŞİL geçerdi → guard bu regresyonu yakalar (pozitif kontrol).
+# This guard verifies that functions that SHOULD throw but DON'T are caught by assert_throws
+# (the test FAILS). With the old broken code
+# these tests passed GREEN → the guard catches this regression (positive control).
 set -u
 LK="${1:-./build/lk}"
-# mutlak yola cevir (asagida test dizinine cd ediyoruz)
+# convert to an absolute path (we cd into the test directory below)
 case "$LK" in /*) ;; *) LK="$(pwd)/$LK" ;; esac
 fail=0
 work="$(mktemp -d)"; mkdir -p "$work/tests"
 trap 'rm -rf "$work"' EXIT
 
-# Beklenti: assert_throws, fn firlatMAZSA testi BASARISIZ yapmali.
+# Expectation: assert_throws must FAIL the test if fn does NOT throw.
 cat > "$work/tests/t.lk" <<'EOF'
 test("son ifade, fn firlatmiyor", function() {
     assert_throws(function() { $x = 1 })
@@ -38,10 +38,10 @@ test("dogru kullanim, fn firlatiyor => GECMELI", function() {
 EOF
 
 out="$(cd "$work" && "$LK" test 2>&1 || true)"
-# Renk kodlarini soy
+# Strip color codes
 plain="$(printf '%s' "$out" | sed 's/\x1b\[[0-9;]*m//g')"
 
-# 3 basarisiz + 1/4 gecti beklenir
+# expect 3 failed + 1 of 4 passed
 if ! printf '%s' "$plain" | grep -q "3 başarısız"; then
     echo "FAIL: assert_throws firlatMAYAN fn'i yakalamiyor (3 basarisiz bekleniyordu)"
     printf '%s\n' "$plain" | grep -E "❌|✅|geçti|başarısız"

@@ -22,7 +22,7 @@ while IFS= read -r f; do
                 s = L[i]
                 if (s !~ /(^|[^a-zA-Z_])thread_local([^a-zA-Z_]|$)/) continue
                 code = s; sub(/\/\/.*$/, "", code)
-                if (code !~ /(^|[^a-zA-Z_])thread_local([^a-zA-Z_]|$)/) continue   # yalnız yorumda geçiyor
+                if (code !~ /(^|[^a-zA-Z_])thread_local([^a-zA-Z_]|$)/) continue   # only appears in a comment
                 ok = 0; for (k = i - 8; k <= i; k++) if (k > 0 && L[k] ~ /fiber-ok:/) ok = 1
                 print (ok ? "OK " : "BAD ") F ":" i ": " s
             }

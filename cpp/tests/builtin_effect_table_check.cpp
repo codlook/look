@@ -1,5 +1,5 @@
-// tests/builtin_effect_table_test.sh derler: her yerleşik (builtin_names) tam bir etki sınıfına sahip mi,
-// sınıflandırmada yerleşik olmayan (yazım hatası) ad var mı? Sınıfsız yeni yerleşik → kırmızı.
+// tests/builtin_effect_table_test.sh compiles this: does every built-in (builtin_names) have exactly one effect class,
+// and is there a name in the classification that is not a built-in (a typo)? A new built-in without a class → red.
 #include "look/builtins.h"
 #include <iostream>
 #include <map>
@@ -7,7 +7,7 @@ int main() {
     int bad = 0;
     std::map<std::string, int> seen;
     for (const auto& n : look::builtin_names()) {
-        if (++seen[n] > 1) continue;   // tabloda yinelenen ad (join) bir kez sayılır
+        if (++seen[n] > 1) continue;   // a duplicate name in the table (join) is counted once
         if (look::builtin_effect(n) == look::BuiltinEffect::Unknown) {
             std::cout << "unclassified built-in: " << n << "\n"; ++bad;
         }

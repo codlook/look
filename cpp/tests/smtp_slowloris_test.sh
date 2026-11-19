@@ -1,14 +1,14 @@
 #!/bin/bash
-# SMTP slowloris / idle-timeout guard — EventLoop katmanı koruması.
-# IMAP'te SO_RCVTIMEO ile olan koruma SMTP'nin async EventLoop path'inde
-# EKSİKTİ. Non-blocking ET soketinde SO_RCVTIMEO çalışmadığı için koruma
-# EventLoop'a (epoll_wait sonlu tick + idle tarama) eklendi.
+# SMTP slowloris / idle-timeout guard — protection at the EventLoop layer.
+# The protection that exists in IMAP with SO_RCVTIMEO was
+# MISSING in SMTP's async EventLoop path. Since SO_RCVTIMEO does not work on a non-blocking ET socket the protection
+# was added to the EventLoop (epoll_wait with a finite tick + idle scan).
 #
-# POZİTİF KONTROL (README kural 2): guard'ın GERÇEKTEN ateşlediğini ölç —
-#  1) idle bağlantı (banner alıp hiç veri göndermeyen) timeout SONRA kapanmalı,
-#     ÖNCE değil (yani kapanmayı tetikleyen gerçekten idle-timeout).
-#  2) AKTİF bağlantı (NOOP gönderen) timeout'u AŞSA da açık kalmalı (yanlış-pozitif yok).
-#  3) idle reap sonrası conn_count düşmeli → yeni bağlantı kabul edilir (fd/sayaç sızmaz).
+# POSITIVE CONTROL (README rule 2): measure that the guard REALLY fires —
+#  1) an idle connection (one that gets the banner and sends no data at all) must close AFTER the timeout,
+#     NOT before (i.e. what triggers the close is really the idle timeout).
+#  2) an ACTIVE connection (sending NOOP) must stay open EVEN if it exceeds the timeout (no false positive).
+#  3) after the idle reap conn_count must drop → a new connection is accepted (no fd/counter leak).
 set -u
 FCGI="${1:-./build/lk-fcgi}"
 PORT="${2:-7830}"
@@ -37,20 +37,20 @@ def fdcount():
     try: return len(os.listdir("/proc/%s/fd" % PID))
     except Exception: return -1
 
-# 1) IDLE bağlantı: banner al, hiç veri gönderme → kapanma süresini ölç
+# 1) IDLE connection: get the banner, send no data at all → measure the time to close
 s=socket.create_connection((HOST,PORT),timeout=IDLE+10); s.settimeout(IDLE+10)
 s.recv(256)  # banner
 t0=time.time()
 closed_at=None
 try:
     while time.time()-t0 < IDLE+8:
-        d=s.recv(256)      # EOF (b"") ya da RST → kapandı
+        d=s.recv(256)      # EOF (b"") or RST → closed
         if d==b"": closed_at=time.time()-t0; break
 except Exception:
     closed_at=time.time()-t0
 s.close()
 
-# 2) AKTİF bağlantı: NOOP göndererek timeout'u aş → açık kalmalı
+# 2) ACTIVE connection: exceed the timeout by sending NOOP → must stay open
 a=socket.create_connection((HOST,PORT),timeout=IDLE+10); a.settimeout(IDLE+10)
 a.recv(256)
 active_alive=True
@@ -64,7 +64,7 @@ except Exception:
     active_alive=False
 a.close()
 
-# 3) reap sonrası yeni bağlantı kabul (conn_count sızmadı)
+# 3) a new connection is accepted after the reap (conn_count did not leak)
 time.sleep(1)
 try:
     n=socket.create_connection((HOST,PORT),timeout=5); n.settimeout(5)
@@ -82,7 +82,7 @@ ca=$(echo "$out" | sed -n 's/.*CLOSED_AT=\([0-9.-]*\).*/\1/p')
 aa=$(echo "$out" | grep -o 'ACTIVE_ALIVE=True' || true)
 no=$(echo "$out" | grep -o 'NEW_OK=True' || true)
 
-# idle kapanma IDLE..IDLE+5 aralığında olmalı (öncesinde DEĞİL — pozitif kontrol)
+# the idle close must be in the IDLE..IDLE+5 range (NOT before — positive control)
 if awk "BEGIN{exit !($ca >= $IDLE-0.5 && $ca <= $IDLE+5)}" 2>/dev/null; then
   echo "  PASS idle bağlantı ~${ca}s sonra kapandı (timeout=${IDLE}s) — slowloris reap ATEŞLEDİ"
 else

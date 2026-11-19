@@ -1,35 +1,35 @@
 #!/bin/bash
-# İKİ SÜTUN differential regresyon testi — ikisi BİREBİR aynı çıktıyı vermeli ve sabit
-# referansa (tests/golden/differential/*.out) ve beklenen değerlere (*_bek) uymalı.
-# Felsefe koruması: yüzeyler SEMANTİK olarak ayrışmamalı ("bagsız ve stabil").
+# TWO-COLUMN differential regression test — both must give EXACTLY the same output and match the fixed
+# reference (tests/golden/differential/*.out) and the expected values (*_bek).
+# Philosophy guard: the surfaces must not diverge SEMANTICALLY ("independent and stable").
 #
 #   1) CLI-VM     : lk <script>  — bytecode VM, main.cpp/build_cli_builtins
 #   2) web-VM     : lk-fcgi --mode http (route)  — bytecode VM, http_main.cpp/req_builtins
 #
-# LOOK tek motorludur (yorumlayıcı silindi); eskiden üçüncü bir "tree-walk" sütunu vardı.
-# NEDEN 2 SÜTUN: builtin wiring İKİ ayrı elle-yazılmış yerde duruyor (build_cli_builtins
-# ve req_builtins). Bunlar sessizce birbirinden kayabilir — nitekim kaydı da (math::round
-# bir dönem web'de çalışıp CLI-VM'de çalışmadı). Tek sütunlu test bu kaymayı GÖREMEZ.
+# LOOK has a single engine (the interpreter was removed); there used to be a third "tree-walk" column.
+# WHY 2 COLUMNS: the builtin wiring lives in TWO separate hand-written places (build_cli_builtins
+# and req_builtins). They can silently drift apart — and they did (math::round
+# worked on the web for a while but not in the CLI-VM). A single-column test cannot SEE this drift.
 #
-# Her motor değişikliğinden (opcode/builtin/Value/köprü) sonra çalıştır.
-# Kullanım: bash differential_test.sh [lk_yolu] [lk-fcgi_yolu]
+# Run after every engine change (opcode/builtin/Value/bridge).
+# Usage: bash differential_test.sh [lk_path] [lk-fcgi_path]
 set -u
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz (CSRF imzası) — testin kendi anahtarı.
+# an app that uses cookies does not start without LOOK_SECRET (CSRF signature) — the test's own key.
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LK="${1:-$DIR/../build/lk}"
 FCGI="${2:-$DIR/../build/lk-fcgi}"
-# Mutlak yola çevir: alt-testler $TMP'ye cd ediyor; göreli "build/lk" argümanı orada
-# çözülmez (template/array::set testi "No such file" ile YANLIŞ FAIL veriyordu). CI
-# guard'ı build/lk gibi göreli yol geçtiğinde de sağlam çalışsın.
+# Convert to an absolute path: sub-tests cd into $TMP; the relative "build/lk" argument is not
+# resolved there (the template/array::set test gave a FALSE FAIL with "No such file"). So the CI
+# guard also works when given a relative path such as build/lk.
 LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"
 FCGI="$(cd "$(dirname "$FCGI")" && pwd)/$(basename "$FCGI")"
 BODY="$DIR/differential_body.lk"
 PORT=9611
 TMP=$(mktemp -d)
 SRV=""
-# Temizlik PID ile — GENİŞ "pkill -f" ASLA (paylaşımlı/prod sunucuda baska sürecleri
-# öldürür; bir kez prod kesintisine yol açtı).
+# Cleanup by PID — NEVER a broad "pkill -f" (on a shared/prod server it kills other processes;
+# it once caused a prod outage).
 cleanup() {
   [ -n "$SRV" ] && kill "$SRV" 2>/dev/null
   sleep 1
@@ -49,10 +49,10 @@ sleep 2
 WEBVM=$(curl -s --max-time 15 "http://127.0.0.1:$PORT/t")
 
 fail=0
-# ── Guard'ın KENDİ pozitif kontrolü (2026-09-30) ─────────────────────────────────
-# VM script'i çalıştıramazsa sessizce başka bir yola düşmek yerine HATA vermeli (LOOK'de
-# başka yol yok). Bu önkoşul bozulursa guard sahte-yeşil verir — tam da gövdenin 255-register
-# sınırını aşıp aylarca VM'siz (yorumlayıcıda) koştuğu gibi. İki yönü de kanıtla:
+# ── The guard's OWN positive check (2026-09-30) ─────────────────────────────────
+# If the VM cannot run a script it must give an ERROR instead of silently falling to another path (LOOK has
+# no other path). If this precondition breaks the guard goes falsely green — exactly like the body
+# exceeding the 255-register limit and running for months without the VM (in the interpreter). Prove both directions:
 printf 'use cache\nprint(cache::__guard_probe_not_a_fn())\n' > "$TMP/strict_probe.lk"
 if "$LK" "$TMP/strict_probe.lk" >/dev/null 2>&1; then
   echo "FAIL: a call to a function that does not exist did not fail on the command line — the CLI-VM column cannot be trusted"; fail=1
@@ -62,17 +62,17 @@ grep -q "^\[BYTECODE\] OK" "$TMP/web_main.log" \
 [ -z "$CLIVM" ] && { echo "FAIL: CLI-VM gave no output (script error?)"; fail=1; }
 [ "$CLIVM" = "$WEBVM" ] || { echo "FAIL: CLI-VM != web-VM"; fail=1; }
 
-# ── SABİT REFERANS (beklenen sonuç dosyaları, tests/golden/differential/) ────────────
-# Sütunlar arası karşılaştırma, iki sütunun ORTAK kullandığı koda (VM ve yerleşik modüller
-# ortak) giren hatayı göremez: ikisi de aynı yanlışı verir. Bu dosyalar, üç motorun (yorumlayıcı
-# silinmeden önce) birbirini doğruladığı anki çıktıları sabitler (2026-10-19, motorların birebir
-# aynı çıktısı). Bilinçli değişiklikte: UPDATE_GOLDEN=1 ile yeniden yaz ve farkı commit'te
-# açıkla. Dosya yoksa FAIL (sessiz yeşil yok).
-# Güncelleme yalnız sütunlar AYNI çıktıyı verirse yazar: aynı ad bu koşuda farklı değerle
-# ikinci kez gelirse FAIL (son yazan sessizce kazanmasın).
+# ── FIXED REFERENCE (expected result files, tests/golden/differential/) ────────────
+# Cross-column comparison cannot see a bug in the code the two columns SHARE (VM and builtin modules
+# are common): both give the same wrong answer. These files pin the outputs from the moment the three engines (before the
+# interpreter was removed) validated each other (2026-10-19, identical output from the engines). On an intentional change:
+# rewrite with UPDATE_GOLDEN=1 and explain the diff in the commit.
+# If the file is missing: FAIL (no silent green).
+# Updating writes only if the columns give the SAME output: if the same name comes a
+# second time in this run with a different value, FAIL (the last writer must not silently win).
 GOLDEN_DIR="$DIR/golden/differential"
 GOLDEN_SEEN=" "
-golden() {   # golden <ad> <değer> <etiket>
+golden() {   # golden <name> <value> <label>
   local f="$GOLDEN_DIR/$1.out"
   if [ "${UPDATE_GOLDEN:-0}" = 1 ]; then
     mkdir -p "$GOLDEN_DIR"
@@ -87,10 +87,10 @@ golden() {   # golden <ad> <değer> <etiket>
 golden run_all "$CLIVM" "run_all (CLI-VM)"
 golden run_all "$WEBVM" "run_all (web-VM)"
 
-# ── CLI'ye özgü yüzey: print/write BAYT BAYT + exit kodu ─────────────────────────
-# Yukarıdaki $(...) karşılaştırması trailing newline'ı YUTAR ve gövde tek kez print
-# eder → print'in newline/" " ayraç semantiği görünmez. Nitekim VM'de print newline de
-# ayraç da eklemiyordu (interpreter: args " " ile + "\n") ve bu guard'dan KAÇMIŞTI.
+# ── CLI-specific surface: print/write BYTE BY BYTE + exit code ─────────────────────
+# The $(...) comparison above SWALLOWS the trailing newline and the body prints
+# once → print's newline/" " separator semantics are invisible. Indeed the VM's print added neither newline nor
+# separator (interpreter: args joined with " " + "\n") and this guard MISSED it.
 cat > "$TMP/io.lk" <<'LK'
 print("A")
 write("B")
@@ -100,11 +100,11 @@ write("p", "q")
 print("son")
 LK
 "$LK" "$TMP/io.lk" > "$TMP/io_vm.out" 2>&1
-# Bayt-bayt karsilastirma HARICI ARACA BAGLI OLMAMALI: `cmp`/`diff` (diffutils) minimal
-# konteynerlerde YOK — komut bulunamayinca non-zero doner ve "baytlar farkli" sanilir
-# (YANLIS ALARM: bu tam olarak yasandi, AlmaLinux 8 minimal'da cmp yok). od + $(...)
-# de guvenli degil: $(...) trailing newline'i yutar. Cozum: od dump'ini DOSYAYA yaz,
-# shell string karsilastirmasi yap — od her yerde var (coreutils).
+# Byte-by-byte comparison must NOT DEPEND ON AN EXTERNAL TOOL: `cmp`/`diff` (diffutils) minimal
+# are ABSENT in containers — when the command is not found it returns non-zero and "bytes differ" is assumed
+# (FALSE ALARM: this exactly happened, there is no cmp on AlmaLinux 8 minimal). od + $(...)
+# is not safe either: $(...) swallows the trailing newline. Fix: write the od dump to a FILE,
+# compare as shell strings — od is available everywhere (coreutils).
 od -c < "$TMP/io_vm.out"   > "$TMP/io_vm.od"
 io_vm_dump=$(cat "$TMP/io_vm.od")
 golden print_write_bytes "$io_vm_dump"   "print/write baytlari (CLI-VM)"
@@ -115,13 +115,13 @@ if [ "$v_code" != "3" ]; then
   fail=1
 fi
 
-# ── TOP-LEVEL bileşik atama (+= -= *= /= %= .=) — GLOBAL kapsam ──────────────────
-# NEDEN AYRI: differential gövdesi run_all() FONKSİYONU içinde çalışır → oradaki
-# bileşik atamalar fonksiyon-local yolunu test eder ve o yol ZATEN doğruydu.
-# Bug compiler'ın TOP-LEVEL GLOBAL dalındaydı: e.op yok sayılıyordu → "$t += $i"
-# sadece "$t = $i" derleniyordu. Sonuç: interpreter DOĞRU, VM SESSİZCE YANLIŞ
-# (toplam/string birikimi bozuk, hata yok). Bu yüzden kontrol TOP-LEVEL olmalı —
-# gövdeye eklemek bug'ı YAKALAMAZDI. (Guard'ın kapsamadığı yüzey = bug'ın yeri.)
+# ── TOP-LEVEL compound assignment (+= -= *= /= %= .=) — GLOBAL scope ──────────────
+# WHY SEPARATE: the differential body runs INSIDE the run_all() FUNCTION → the compound
+# assignments there test the function-local path and that path was ALREADY correct.
+# The bug was in the compiler's TOP-LEVEL GLOBAL branch: e.op was ignored → "$t += $i"
+# was compiled as just "$t = $i". Result: interpreter CORRECT, VM SILENTLY WRONG
+# (sum/string accumulation broken, no error). So the check must be TOP-LEVEL —
+# adding it to the body would NOT CATCH the bug. (The surface the guard does not cover = where the bug lives.)
 cat > "$TMP/ca.lk" <<'LK'
 $a = "x"
 $a .= "y"
@@ -144,13 +144,13 @@ ca_vm=$("$LK" "$TMP/ca.lk" 2>&1)
 ca_bek="xy|3|7|12|3|2|10"
 [ "$ca_vm"   = "$ca_bek" ] || { echo "FAIL: top-level compound CLI-VM: [$ca_vm] (beklenen $ca_bek) — compiler global dalinda e.op yok sayiliyor olabilir"; fail=1; }
 
-# ── TEMPLATE motoru: dil semantigiyle AYNI olmali ────────────────────────────────
-# NEDEN: sablon motoru truthiness'i ve float bicimlemesini DILDEN KOPYALAMISTI ve
-# ikisinde de sapmisti:
-#   {#if "0"}      → sablon TRUE, dil FALSE  (DB'den string "0" gelen alanlar!)
-#   {$1234567.5}   → sablon "1.23457e+06" (bilimsel + HASSASIYET KAYBI), dil "1234567.5"
-# Ikisi de SESSIZ: hata yok, yalnizca yanlis dal / yanlis sayi. Sablon motorunun
-# guard'i HIC YOKTU — bu yuzden kacti. Artik dile delege ediyor; bu kontrol kilitler.
+# ── TEMPLATE engine: must be IDENTICAL to the language semantics ──────────────────
+# WHY: the template engine had COPIED truthiness and float formatting FROM THE LANGUAGE and
+# diverged in both:
+#   {#if "0"}      → the template TRUE, the language FALSE  (fields that come from the DB as the string "0"!)
+#   {$1234567.5}   → the template "1.23457e+06" (scientific + LOSS OF PRECISION), the language "1234567.5"
+# Both are SILENT: no error, only the wrong branch / wrong number. The template engine had
+# NO guard AT ALL — that is why it slipped through. It now delegates to the language; this check locks it in.
 cat > "$TMP/tpl.html" <<'TPLEOF'
 if0:{#if s0}T{#else}F{/if} ifs:{#if ss}T{#else}F{/if} f:{$big} esc:{$xss}
 TPLEOF
@@ -169,15 +169,15 @@ echo "$tpl_out" | grep -q 'KOD:if0:F ifs:T f:1234567.5' || { echo "FAIL: templat
 echo "$tpl_out" | grep -q 'if0:F ifs:T f:1234567.5' || { echo "FAIL: TEMPLATE dil semantiginden SAPIYOR (truthiness \"0\" veya float formati): [$tpl_out]"; fail=1; }
 echo "$tpl_out" | grep -q 'esc:&lt;b&gt;&amp;' || { echo "FAIL: template HTML escaping bozuk (XSS riski): [$tpl_out]"; fail=1; }
 
-# ── array::set — SAYISAL dizide veri yok ediyordu ────────────────────────────────
-# NEDEN: "Convert numeric array to assoc" dali donusturmuyor, DEGISTIRIYORDU —
-# yalniz yeni anahtar/degeri iceren yepyeni bir assoc kurup orijinal elemanlari
-# atiyordu. GECERLI indekste bile:
-#   array::set([1,2,3], 1, "X") = {"1":"X"}   (beklenen [1,"X",3])
-# Sessiz veri kaybi: hata yok, count degisiyor, eski elemanlar erisilemez.
-# Guard'da array::set HIC yoktu (assoc yolu dogruydu, yalniz o kullaniliyordu).
-# Sozlesme: gecerli indeks → yerinde degistir; size'a esit → sona ekle; string
-# anahtar / aralik disi → assoc'a donustur ama MEVCUT ELEMANLARI KORU.
+# ── array::set — it DESTROYED data in a NUMERIC array ──────────────────────────────
+# WHY: the "Convert numeric array to assoc" branch did not convert, it REPLACED —
+# only built a brand-new assoc holding the new key/value and
+# dropped the original elements. Even at a VALID index:
+#   array::set([1,2,3], 1, "X") = {"1":"X"}   (expected [1,"X",3])
+# Silent data loss: no error, count changes, old elements become unreachable.
+# array::set was NOT in the guard AT ALL (the assoc path was correct, only it was used).
+# Contract: valid index → replace in place; equal to size → append; string
+# key / out of range → convert to assoc but KEEP THE EXISTING ELEMENTS.
 cat > "$TMP/aset.lk" <<'LK'
 use array
 print(json::encode(array::set([1,2,3], 1, "X")) . "|" .
@@ -190,17 +190,17 @@ as_vm=$("$LK" "$TMP/aset.lk" 2>&1)
 as_bek='[1,"X",3]|[1,2,3,"X"]|{"0":1,"1":2,"2":3,"k":"X"}|{"k":"X"}|{"a":9,"b":2}'
 [ "$as_vm"   = "$as_bek" ] || { echo "FAIL: array::set CLI-VM: [$as_vm] (beklenen $as_bek) — sayisal dizide veri yok ediliyor olabilir"; fail=1; }
 
-# ── $arr["anahtar"] — SAYISAL listeye string anahtar ─────────────────────────────
-# NEDEN: iki motor da yanlisti, farkli sekilde (guard'da bu vaka HIC yoktu):
-#   VM        : listeyi cift listesi sanip basina sentinel ekliyordu ->
-#               $a=[1,2,3]; $a["k"]="X"  =>  {"1":2,"3":"k"}  TUM VERI YOK OLUYOR,
-#               yazilan deger bile erisilemez ($a["k"] -> null)
-#   tree-walk : assoc dalina girmeyip sayisal dala dusuyor, to_int("k")=0 ->
-#               ["X",2,3]  yanlis eleman eziliyor, anahtar kayboluyor
-# Ikisi de SESSIZ. Sozlesme: listeyi assoc'a donustur ama MEVCUT ELEMANLARI
-# sayisal indeksleriyle anahtarlayarak KORU (array::set ile ayni).
-# Ayrica "1" gibi TAM SAYI metni sayisal indekstir, assoc anahtari degil —
-# eskiden VM assoc'a cevirip tree-walk indekse yaziyordu (ayrisma).
+# ── $arr["key"] — string key on a NUMERIC list ─────────────────────────────────
+# WHY: both engines were wrong, in different ways (this case was NOT in the guard AT ALL):
+#   VM        : treated the list as a pair list and prepended a sentinel ->
+#               $a=[1,2,3]; $a["k"]="X"  =>  {"1":2,"3":"k"}  ALL DATA IS DESTROYED,
+#               even the written value is unreachable ($a["k"] -> null)
+#   tree-walk : did not enter the assoc branch but fell into the numeric branch, to_int("k")=0 ->
+#               ["X",2,3]  the wrong element is overwritten, the key vanishes
+# Both are SILENT. Contract: convert the list to assoc but KEEP THE EXISTING ELEMENTS
+# by keying them with their numeric indexes (same as array::set).
+# Also, an INTEGER string such as "1" is a numeric index, not an assoc key —
+# it used to be: the VM converted to assoc and the tree-walk wrote to the index (divergence).
 cat > "$TMP/ikey.lk" <<'LK'
 $a = [1,2,3]
 $a["k"] = "X"
@@ -213,16 +213,16 @@ print(json::encode($a) . "|" . $a["k"] . "|" . $a["1"] . "|" .
       json::encode($b) . "|" . json::encode($c) . "|" .
       json::encode($d["k"]) . "|" . $d["1"])
 LK
-# SAYISAL indeks uclari — VM tree-walk'a (referans semantik) hizalandi.
-# ESKI HATA: VM aralik disinda ve negatifte SESSIZDI, interpreter ise hata
-# firlatiyor/sondan sayiyordu — ayni program iki motorda iki farkli sonuc:
-#   $a[99] oku    -> VM null / tree-walk HATA
-#   $a[-1] oku    -> VM null / tree-walk 3
-#   $a[99]="X"    -> VM atamayi SESSIZCE ATLIYOR / tree-walk HATA
-#   $a[-1]="X"    -> VM atamayi SESSIZCE ATLIYOR / tree-walk [1,2,"X"]
-# "Yazdim ama yazilmadi" ve "okudum, null geldi (oysa hata olmaliydi)" ayni
-# sinif: sessiz yanlis veri. Sozlesme: negatif = sondan, aralik disi = HATA,
-# size'a esit yazma = sona ekleme.
+# NUMERIC index edges — the VM was aligned to tree-walk (the reference semantics).
+# OLD BUG: the VM was SILENT for out-of-range and negative, while the interpreter
+# threw an error / counted from the end — the same program gave two different results on two engines:
+#   read $a[99]    -> VM null / tree-walk ERROR
+#   read $a[-1]    -> VM null / tree-walk 3
+#   $a[99]="X"    -> VM SILENTLY SKIPS the assignment / tree-walk ERROR
+#   $a[-1]="X"    -> VM SILENTLY SKIPS the assignment / tree-walk [1,2,"X"]
+# "I wrote it but it was not written" and "I read it, got null (though it should have been an error)" are the same
+# class: silently wrong data. Contract: negative = from the end, out of range = ERROR,
+# writing at index == size = append.
 cat > "$TMP/inum.lk" <<'LK'
 function t($f) { try { return json::encode($f()) } catch ($e) { return "HATA" } }
 print(t(function(){ $a=[1,2,3]; return $a[-1] }) . "|" .
@@ -241,15 +241,15 @@ ik_bek='{"0":1,"1":2,"2":3,"k":"X"}|X|2|{"k":"X"}|[1,"X",3]|null|2'
 [ "$ik_vm"   = "$ik_bek" ] || { echo "FAIL: \$arr[str] CLI-VM: [$ik_vm] (beklenen $ik_bek) — liste assoc'a cevrilirken elemanlar korunmuyor veya string anahtar sayisal indekse zorlaniyor olabilir"; fail=1; }
 
 
-# ── string::replace — BOS arama dizesi ASIYORDU (DoS) ───────────────────────────
-# NEDEN: s.find("", pos) her zaman pos'u dondurur -> dongu her turda araya 'to'
-# ekliyor, string surekli buyuyor: SONSUZ DONGU + SINIRSIZ BELLEK. Web'de
-# string::replace($metin, $kullaniciGirdisi, $x) cagrisinda kullanici bos string
-# gonderirse worker sonsuza kadar kilitleniyordu — tek istekle DoS.
-# Sozlesme: Go (strings.Replace(s,"",new,-1)) — bos arama dizesi metnin BASINDA
-# ve her UTF-8 dizisinden SONRA eslesir, k kod noktasi icin k+1 ekleme.
-# TIMEOUT ile kosuluyor: asilma regresyonu FAIL olarak gorunsun (sessizce
-# bekleyip CI'yi kilitlemesin).
+# ── string::replace — an EMPTY search string used to HANG (DoS) ───────────────────────────
+# WHY: s.find("", pos) always returns pos -> every round the loop inserts 'to' between
+# characters, the string keeps growing: INFINITE LOOP + UNBOUNDED MEMORY. On the web
+# string::replace($text, $userInput, $x) call, if the user sends an empty string
+# the worker locked up forever — a DoS with a single request.
+# Contract: Go (strings.Replace(s,"",new,-1)) — an empty search string matches at the START of the text
+# and matches AFTER every UTF-8 sequence, k+1 insertions for k code points.
+# Run with a TIMEOUT: a hang regression should show up as a FAIL (not silently
+# waiting and locking up CI).
 cat > "$TMP/rep.lk" <<'LK'
 use string
 print(string::replace("abc", "", "X") . "|" . string::replace("abc", "", "") . "|" .
@@ -262,18 +262,18 @@ rp_vm=$(timeout 10 "$LK" "$TMP/rep.lk" 2>&1); rp_rc2=$?
 [ $rp_rc2 -eq 124 ] || [ "$rp_vm" = "$rp_bek" ] || { echo "FAIL: string::replace CLI-VM: [$rp_vm] (beklenen $rp_bek)"; fail=1; }
 
 
-# ── string::pad_* — GECERSIZ UTF-8 uretiyordu + bayt/kod-noktasi tutarsizligi ───
-# NEDEN (uc bug tek kokten):
-#   1) Uzun metni KIRPIYORDU: pad_left("abcdef",3,"0") = "def" (sessiz veri kaybi;
-#      PHP str_pad / Python ljust / Go fmt kirpmaz — genislik ASGARI'dir)
-#   2) Kirpma BAYT tabanliydi -> cok baytli karakteri ortadan boluyordu:
-#      pad_left("şğü",3,"x") = 0x9F 0xC3 0xBC — oksuz devam baytiyla baslayan
-#      GECERSIZ UTF-8. Bozuk metin JSON'a/DB'ye/HTTP yanitina aynen gidiyordu.
-#   3) Genislik BAYT sayiyordu, oysa len/substr/upper/reverse kod noktasi sayar:
-#      pad_left("ş",3,"x") = "xş", gorunen uzunluk 2 (beklenen 3) — modul kendi
-#      icinde tutarsizdi.
-# Sozlesme: Go fmt "%Ns" — genislik ASGARI ve KOD NOKTASI. Kirpma yok.
-# Guard cikti gecerli UTF-8 mi diye de bakar (iconv) — 2. bugin dogrudan kilidi.
+# ── string::pad_* — it PRODUCED INVALID UTF-8 + byte/code-point inconsistency ───
+# WHY (three bugs from a single root):
+#   1) TRUNCATED long text: pad_left("abcdef",3,"0") = "def" (silent data loss;
+#      PHP str_pad / Python ljust / Go fmt do not truncate — width is a MINIMUM)
+#   2) Truncation was BYTE-based -> it split a multi-byte character in the middle:
+#      pad_left("şğü",3,"x") = 0x9F 0xC3 0xBC — starts with an orphan continuation byte, i.e.
+#      INVALID UTF-8. The corrupt text went as-is into JSON/DB/HTTP responses.
+#   3) Width counted BYTES, whereas len/substr/upper/reverse count code points:
+#      pad_left("ş",3,"x") = "xş", visible length 2 (expected 3) — the module was inconsistent
+#      within itself.
+# Contract: Go fmt "%Ns" — width is a MINIMUM and in CODE POINTS. No truncation.
+# The guard also checks whether the output is valid UTF-8 (iconv) — a direct lock for the 2nd bug.
 cat > "$TMP/pad.lk" <<'LK'
 use string
 print(string::pad_left("ş",3,"x") . "|" . string::len(string::pad_left("ş",3,"x")) . "|" .
@@ -289,15 +289,15 @@ if command -v iconv >/dev/null 2>&1; then
 fi
 
 
-# ── string::upper/lower — "global" iddiasi + Turkce locale OLMAMASI ─────────────
-# IKI YONLU KILIT:
-# 1) TURKCE LOCALE YOK (dil global): upper("i") = "I" olmali, "İ" DEGIL.
-#    ı → I, İ → i (standart Unicode). Bu bilincli bir karar — Latin Ext-A'nin
-#    genel cift/tek kurali ı(0x131) -> İ(0x130) verir, yani kural yanlis sirayla
-#    yazilirsa Turkce locale SESSIZCE geri gelir. Bu kontrol onu yakalar.
-# 2) KAPSAM gercekten global mi: eskiden tablo ASCII + Latin-1 + 3 Turkce kod
-#    noktasindan ibaretti; Kiril/Yunan/Latin Ext-A sessizce donusmeden geciyordu
-#    (upper("привет") = "привет", upper("łódź") = "łÓDź" — YARIM donusum).
+# ── string::upper/lower — the "global" claim + there is NO Turkish locale ─────────────
+# TWO-WAY LOCK:
+# 1) NO TURKISH LOCALE (the language is global): upper("i") = "I" must hold, NOT "İ".
+#    ı → I, İ → i (standard Unicode). This is a deliberate decision — the general
+#    even/odd rule of Latin Ext-A gives ı(0x131) -> İ(0x130), so if the rule is
+#    written in the wrong order the Turkish locale SILENTLY comes back. This check catches it.
+# 2) is the COVERAGE really global: the table used to consist of ASCII + Latin-1 + 3 Turkish code
+#    points; Cyrillic/Greek/Latin Ext-A passed through silently unconverted
+#    (upper("привет") = "привет", upper("łódź") = "łÓDź" — HALF conversion).
 cat > "$TMP/case.lk" <<'LK'
 use string
 print(string::upper("i") . string::lower("I") . string::upper("ı") . string::lower("İ") . "|" .
@@ -310,16 +310,16 @@ cs_vm=$(timeout 10 "$LK" "$TMP/case.lk" 2>&1)
 [ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (beklenen $cs_bek) — Turkce locale geri gelmis veya kapsam eksik olabilir"; fail=1; }
 
 
-# ── GUVENLIK: request::ip() sahtelenemez mi? ────────────────────────────────────
-# NEDEN: ctx.remote_addr yalnizca X-Forwarded-For basligindan dolduruluyordu ve
-# guvenilir-proxy kontrolu YOKTU. Istemci kendi IP'sini seciyordu:
+# ── SECURITY: can request::ip() be spoofed? ────────────────────────────────────
+# WHY: ctx.remote_addr was filled only from the X-Forwarded-For header and
+# there was NO trusted-proxy check. The client picked its own IP:
 #   curl -H "X-Forwarded-For: 9.9.9.9"  ->  request::ip() = "9.9.9.9"
-# IP'ye dayali yetkilendirme, ban listesi ve rate-limit bypass edilebiliyordu.
-# Baslik hic yoksa da "" donuyordu (gercek peer yok sayiliyor).
-# Sozlesme: GERCEK TCP peer esastir; X-Real-IP / X-Forwarded-For'a yalnizca
-# baglanan IP LOOK_TRUSTED_PROXY listesindeyse bakilir; zincirin ILKI alinir.
-# Bu kontrol LOOK_TRUSTED_PROXY OLMADAN kosar: baslik ne gonderilirse gonderilsin
-# sonuc gercek peer olmali.
+# IP-based authorization, the ban list and rate-limit could be bypassed.
+# It also returned "" when there was no header at all (the real peer was ignored).
+# Contract: the REAL TCP peer is authoritative; X-Real-IP / X-Forwarded-For are consulted only if the
+# connecting IP is in the LOOK_TRUSTED_PROXY list; the FIRST of the chain is taken.
+# This check runs WITHOUT LOOK_TRUSTED_PROXY: whatever header is sent,
+# the result must be the real peer.
 IP_PORT=9616
 cat > "$TMP/ip.lk" <<'LK'
 route("GET", "/ip", function(){ return response::text(request::ip()) })
@@ -338,14 +338,14 @@ kill $IPPID 2>/dev/null; wait $IPPID 2>/dev/null
 [ "$ip_real"  = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() X-Real-IP'ye guveniyor: [$ip_real]"; fail=1; }
 
 
-# ── GUVENLIK: session verisi enjekte edilebiliyor mu? ───────────────────────────
-# NEDEN: session blob'u satir tabanli "anahtar=deger\n" formatinda ve anahtar/deger
-# HIC KACIRILMIYORDU -> degerin icindeki \n YENI BIR ALAN tanimliyordu.
-# Uygulama kullanici verisini oturuma yaziyorsa (isim/not/arama — cok yaygin):
+# ── SECURITY: can session data be injected? ───────────────────────────
+# WHY: the session blob is in a line-based "key=value\n" format and keys/values were
+# NOT ESCAPED AT ALL -> a \n inside a value defined A NEW FIELD.
+# If the app writes user data into the session (name/note/search — very common):
 #   ?isim=bob\nrol=admin\nadmin=1  ->  session::get("admin") = "1"
-# HIC VAR OLMAYAN yetki alani enjekte ediliyordu (login oncesi istekte bile).
-# Sozlesme: kacirarak sakla — mesru satir sonu VERI olarak korunur, ayrac anlami
-# tasimaz. Guard hem saldiriyi hem gidis-donusu kontrol eder.
+# an authorization field that DID NOT EXIST AT ALL was injected (even in a pre-login request).
+# Contract: store escaped — a legitimate line end is preserved as DATA, it carries
+# no separator meaning. The guard checks both the attack and the round trip.
 SS_PORT=9617
 cat > "$TMP/sess.lk" <<'LK'
 route("GET", "/s", function(){
@@ -365,14 +365,14 @@ kill $SSPID 2>/dev/null; wait $SSPID 2>/dev/null
 [ "$ss_out" = '"uye"|null' ] || { echo "FAIL: GUVENLIK — session verisi ENJEKTE EDILEBILIYOR: [$ss_out] (beklenen \"uye\"|null; deger icindeki satir sonu yeni alan tanimliyor olabilir)"; fail=1; }
 
 
-# ── GUVENLIK: cookie::set oznitelik enjeksiyonu ─────────────────────────────────
-# NEDEN: sanitize_header() yalnizca CR/LF/NUL temizliyordu; cerezde ';' YAPISAL
-# AYRAC oldugu icin kullanici kontrolundeki deger oznitelik enjekte edebiliyordu:
+# ── SECURITY: cookie::set attribute injection ─────────────────────────────────
+# WHY: sanitize_header() cleaned only CR/LF/NUL; in a cookie ';' is a STRUCTURAL
+# SEPARATOR, so a value under user control could inject an attribute:
 #   ?v=x; HttpOnly; Domain=evil.com
 #   -> Set-Cookie: tercih=x; HttpOnly; Domain=evil.com; Path=/
-# Domain'i ust alan adina cekip cerezi tum alt alan adlarina sizdirmak mumkundu.
-# Sozlesme: PHP setcookie() gibi — yazarken yuzde-kodla, okurken coz. Mesru
-# deger korunur ama yapi anlami tasiyamaz.
+# It was possible to pull the Domain up to the parent domain and leak the cookie to all subdomains.
+# Contract: like PHP setcookie(), percent-encode on write, decode on read. A legitimate
+# value is preserved but structure cannot be carried.
 CK_PORT=9618
 cat > "$TMP/ck.lk" <<'LK'
 route("GET", "/c", function(){ cookie::set("tercih", request::get("v")); return response::text("ok") })
@@ -384,29 +384,29 @@ for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$CK_PORT/r" && b
 ck_hdr=$(curl -s -D - -o /dev/null "http://127.0.0.1:$CK_PORT/c?v=x%3B%20HttpOnly%3B%20Domain%3Devil.com" | grep -i "^set-cookie")
 ck_rt=$(curl -s -c "$TMP/ckj" "http://127.0.0.1:$CK_PORT/c?v=a%3Bb" >/dev/null; curl -s -b "$TMP/ckj" "http://127.0.0.1:$CK_PORT/r")
 kill $CKPID 2>/dev/null; wait $CKPID 2>/dev/null
-# DIKKAT: kelimeyi basligin tamaminda ARAMA — kodlanmis deger "HttpOnly" metnini
-# duz metin olarak icerir (x%3B%20HttpOnly%3B%20...) ve bu GUVENLIDIR. Enjeksiyon
-# ancak GERCEK ';' ayraciyla olur, o yuzden OZNITELIK BICIMI aranir.
-# NOT (2026-08 flip): cookie::set artik VARSAYILAN "; HttpOnly; SameSite=Lax" ekliyor →
-# "; HttpOnly" kanaryasi mesru-defaultla cakisir, kullanilamaz. Domain ENJEKSIYON kanaryasi
-# (asagida) kalir (Domain default DEGIL → varligi = enjeksiyon). HttpOnly icin: degerin
-# GERCEKTEN encode edildigini POZITIF dogrula (deger icindeki ';' %3B olmali).
+# NOTE: do NOT search for the word in the whole header — the encoded value contains the text "HttpOnly"
+# as plain text (x%3B%20HttpOnly%3B%20...) and that is SAFE. Injection
+# happens only with a REAL ';' separator, so search for the ATTRIBUTE FORM.
+# NOTE (2026-08 flip): cookie::set now adds the DEFAULT "; HttpOnly; SameSite=Lax" →
+# the "; HttpOnly" canary collides with the legitimate default, cannot be used. Domain is the INJECTION canary
+# (below) remains (Domain is NOT a default → its presence = injection). For HttpOnly: POSITIVELY verify that the value was
+# ACTUALLY encoded (the ';' inside the value must be %3B).
 echo "$ck_hdr" | grep -qi "; *Domain=" && { echo "FAIL: GUVENLIK — cookie::set OZNITELIK ENJEKTE EDILEBILIYOR: [$ck_hdr]"; fail=1; }
 echo "$ck_hdr" | grep -qi "tercih=x%3b" || { echo "FAIL: GUVENLIK — cookie deger ';' ENCODE EDILMEDI (enjeksiyon acik): [$ck_hdr]"; fail=1; }
 [ "$ck_rt" = '"a;b"' ] || { echo "FAIL: cookie gidis-donus bozuk: [$ck_rt] (beklenen \"a;b\" — kodlama var ama cozme yok olabilir)"; fail=1; }
 
 
-# ── db:: parametre baglama — literal icindeki '?' + sayi uyusmazligi ────────────
-# NEDEN: bind_params TUM '?' karakterlerini kor sekilde degistiriyordu; string
-# literali/tanimlayici/yorum icindeki '?' de placeholder saniliyordu:
+# ── db:: parameter binding — '?' inside a literal + count mismatch ───────────────
+# WHY: bind_params blindly replaced ALL '?' characters; string
+# '?' inside literals/identifiers/comments was also taken as a placeholder:
 #   "SELECT 'Hazir mi?' AS s, ? AS p" + ["DEGER"]
-#   -> SELECT 'Hazir mi'DEGER'' AS s, ? AS p   (literal bozuldu, param kaydi)
-# Icinde soru isareti gecen HERHANGI bir metin SQL literalinde kullanilamiyordu
-# (Turkce cumlelerde cok yaygin; PostgreSQL'de '?' ayrica JSONB operatorudur).
-# Parametre sayisi uyusmazligi da IKI YONDE SESSIZDI: fazla param atiliyordu,
-# eksik param '?' birakiyor ve SQLite onu kendi placeholder'i sayip NULL veriyordu.
-# Sozlesme: '?' yalnizca SQL GOVDESINDE placeholder; sayi uyusmazligi HATA (Go'da
-# db.Query da hata doner). SQL ENJEKSIYONU kontrolu de burada kilitleniyor.
+#   -> SELECT 'Hazir mi'DEGER'' AS s, ? AS p   (literal broken, param shifted)
+# ANY text containing a question mark could not be used in a SQL literal
+# (very common in Turkish sentences; in PostgreSQL '?' is also a JSONB operator).
+# Parameter count mismatch was also SILENT IN BOTH DIRECTIONS: extra params were dropped,
+# missing params left '?' and SQLite took it as its own placeholder and gave NULL.
+# Contract: '?' is a placeholder only in the SQL BODY; count mismatch is an ERROR (in Go
+# db.Query also returns an error). The SQL INJECTION check is also locked in here.
 cat > "$TMP/db.lk" <<'LK'
 $c = db::connect("sqlite://:memory:")
 db::exec($c, "CREATE TABLE k (ad TEXT)")
@@ -425,15 +425,15 @@ db_bek='Hazir mi?|D|0|1|hata|hata'
 [ "$db_out" = "$db_bek" ] || { echo "FAIL: db:: parametre baglama: [$db_out] (beklenen $db_bek) — literal icindeki '?' placeholder saniliyor veya sayi uyusmazligi SESSIZ olabilir"; fail=1; }
 
 
-# ── HATA MESAJI paritesi — 'use' unutuldugunda ──────────────────────────────────
-# NEDEN: modul 'use' edilmemisse VM builtin tablosundaki giris BOS std::function'dir;
-# cagrilinca C++ std::bad_function_call firlatiyor ve kullaniciya OLDUGU GIBI
-# ciktiyordu:
+# ── ERROR MESSAGE parity — when 'use' is forgotten ───────────────────────────────
+# WHY: if the module was not 'use'd, the VM builtin table entry is an EMPTY std::function;
+# when called, C++ throws std::bad_function_call and it reaches the user AS IS
+# it came out like this:
 #   print(string::len("abc"))  ->  "Runtime Error: bad_function_call"
-# Ne modulu ne fonksiyonu soyluyor, ustelik bir C++ ic terimi. tree-walk (REFERANS)
-# ise dogru mesaji veriyordu: "Module 'string' not loaded."
-# 'use' unutmak LOOK'ta EN SIK yapilan hata, yani VARSAYILAN motor en kotu mesaji
-# veriyordu. Hata metni de sozlesmenin parcasidir (S3): sabit referans (golden) onu kilitler.
+# It names neither the module nor the function, and it is a C++ internal term. tree-walk (REFERENCE)
+# gave the right message: "Module 'string' not loaded."
+# Forgetting 'use' is THE MOST COMMON mistake in LOOK, so the DEFAULT engine gave the worst message.
+# The error text is also part of the contract (S3): the fixed reference (golden) locks it.
 cat > "$TMP/uerr.lk" <<'LK'
 print(string::len("abc"))
 LK
@@ -447,12 +447,12 @@ echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM
 golden use_missing_error "$ue_vm"   "'use' unutulunca hata mesaji (CLI-VM)"
 [ "$uo_vm" = "3" ] || { echo "FAIL: 'use' VARKEN modul cagrisi bozuldu (pozitif kontrol): [$uo_vm]"; fail=1; }
 
-# Cagrilamayan AD — mesaj adi soylemeli.
-# ESKI HATA (iki yonlu): VM adi bilmiyordu ("Cagrilabilir degil (BYTECODE_FN
-# bekleniyor)" — hangi ad?); tree-walk ise her durumda "is not defined" diyordu,
-# oysa deger TANIMLI olabilir ve yalnizca cagrilabilir degildir ($x = 5; $x(1)).
-# Yani REFERANS MOTOR da yaniliyordu. Ad, compiler tarafindan NOP hint'ine
-# gomulup VM'e tasiniyor (CALL_BUILTIN'in 16-bit indeks kalibi).
+# The NAME that cannot be called — the message must say the name.
+# OLD BUG (both directions): the VM did not know the name ("Not callable (BYTECODE_FN
+# expected)" — which name?); tree-walk always said "is not defined",
+# yet the value may be DEFINED and merely not callable ($x = 5; $x(1)).
+# So the REFERENCE ENGINE was wrong too. The name is embedded by the compiler into a NOP hint
+# and carried into the VM (the 16-bit index pattern of CALL_BUILTIN).
 printf 'print(olmayan_fonksiyon(1))\n' > "$TMP/c1.lk"
 printf '$x = 5\nprint($x(1))\n'        > "$TMP/c2.lk"
 for cf in c1 c2; do
@@ -463,16 +463,16 @@ echo "$("$LK" "$TMP/c2.lk" 2>&1)" | grep -q "is not defined" && {
   echo "FAIL: tanimli ama cagrilamayan deger icin yaniltici 'is not defined' mesaji"; fail=1; }
 
 
-# ── PostgreSQL wire — BOZUK DataRow sessizce yanlis veri uretiyor mu? ───────────
-# NEDEN: postgres_client.cpp'nin (1023 satir) HIC guard'i yoktu. Sahte sunucuyla
-# olculdu — bozuk DataRow'da LOOK sessizce yanlis veri donduruyordu:
-#   uzunluk 100 der, 2 bayt gonderir  -> alan "" (bos string), HATA YOK
-#   int32-max uzunluk                 -> alan "" , HATA YOK
-#   3 alan vaat eder, 1 tane gonderir -> satir 1 sutunla doner, HATA YOK
-# Cokme yoktu (sinir kontrolu tutuyordu) ama uygulama bos degeri gercek veri
-# sanip ona gore davraniyordu. Sessiz yanlis veri bu projede cokmeden tehlikeli.
-# Ayrica 'p + field_len <= end' isaretci TASMASINA acikti.
-# Sozlesme: bozuk DataRow -> NET HATA; gecerli satir bozulmadan calisir.
+# ── PostgreSQL wire — does a CORRUPT DataRow silently produce wrong data? ──────────
+# WHY: postgres_client.cpp (1023 lines) had NO guard AT ALL. Measured
+# with a fake server — on a corrupt DataRow LOOK silently returned wrong data:
+#   says length 100, sends 2 bytes   -> field "" (empty string), NO ERROR
+#   int32-max length                 -> field "" , NO ERROR
+#   promises 3 fields, sends 1       -> row returns with 1 column, NO ERROR
+# There was no crash (the bounds check held) but the app took the empty value
+# as real data and acted on it. Silent wrong data is more dangerous than a crash in this project.
+# Also 'p + field_len <= end' was open to pointer OVERFLOW.
+# Contract: corrupt DataRow -> CLEAR ERROR; a valid row works unchanged.
 if command -v python3 >/dev/null 2>&1 && [ -f "$(dirname "$0")/fake_pg_server.py" ]; then
   FPG="$(dirname "$0")/fake_pg_server.py"
   cat > "$TMP/pg.lk" <<'LK'
@@ -482,10 +482,10 @@ try {
 } catch ($e) { print("HATA") }
 LK
   pg_sonuc=""
-  # Portlar geçici (ephemeral) aralığın DIŞINDAN ve her durum için ayrı seçilir. Eskiden
-  # 55700-55899 arasından rastgele alınıyordu: o aralık çıkış bağlantılarının kaynak portu
-  # olarak da kullanılır, sahte sunucu ara sıra "Address already in use" ile açılamıyor ve
-  # sağlam durum HATA dönüyordu (yerelde 40 denemede 4).
+  # Ports are chosen OUTSIDE the ephemeral range and separately for each case. It used to
+  # pick randomly from 55700-55899: that range is also used as the source port of outgoing
+  # connections, the fake server occasionally failed to open with "Address already in use" and
+  # the healthy case returned ERROR (4 in 40 tries locally).
   pgbase=$((21700 + RANDOM % 190)); pgi=0
   for mod in saglam truncated negatif dev_uzunluk eksik_alan; do
     pgport=$((pgbase + pgi)); pgi=$((pgi + 1))
@@ -496,7 +496,7 @@ LK
     kill $fpgpid 2>/dev/null; wait $fpgpid 2>/dev/null
     pg_sonuc="$pg_sonuc${out%%=*}|"
   done
-  # saglam=SONUC, digerlerinin HEPSI hata vermeli
+  # healthy=SONUC, ALL the others must give an error
   pg_bek='SONUC|HATA|HATA|HATA|HATA|'
   [ "$pg_sonuc" = "$pg_bek" ] || { echo "FAIL: PostgreSQL wire — bozuk DataRow sessizce veri donduruyor olabilir: [$pg_sonuc] (beklenen $pg_bek)"; fail=1; }
 else
@@ -504,14 +504,14 @@ else
 fi
 
 
-# ── MOD PARITESI: multipart yukleme --mode http'de de calisiyor mu? ─────────────
-# NEDEN: govde ayristirma UC yerde ayri yaziliydi ve http_main'deki kopyada
-# multipart dali HIC YOKTU -> request::file() FastCGI'de calisiyor, --mode http'de
-# "requires multipart/form-data request" hatasi veriyordu. Ayni uygulama moda gore
-# farkli davraniyordu (S12). README'de "bilinen sinir" diye yaziliydi; oysa
-# unutulmus bir daldi. Ayrica http_main method kapisi koyuyordu (POST-only),
-# FastCGI koymuyordu -> PUT/PATCH govdeleri de modlara gore ayrisiyordu.
-# Sozlesme: govde ayristirma TEK kaynaktan (WebContext::parse_post_body).
+# ── MODE PARITY: does multipart upload also work in --mode http? ─────────────
+# WHY: body parsing was written in THREE separate places and the copy in http_main
+# there was NO multipart branch AT ALL -> request::file() works in FastCGI, in --mode http it
+# gave a "requires multipart/form-data request" error. The same app behaved
+# differently by mode (S12). The README listed it as a "known limit"; but it was
+# a forgotten branch. Also http_main imposed a method gate (POST-only),
+# FastCGI did not -> PUT/PATCH bodies were also parsed differently by mode.
+# Contract: body parsing from a SINGLE source (WebContext::parse_post_body).
 MP_PORT=9619
 cat > "$TMP/up.lk" <<'LK'
 route("POST","/u", function(){
@@ -532,20 +532,20 @@ kill $MPPID 2>/dev/null; wait $MPPID 2>/dev/null
 [ "$put_out" = '"putdan"' ] || { echo "FAIL: --mode http'de PUT govdesi ayrismiyor (FastCGI ile parite yok): [$put_out]"; fail=1; }
 
 
-# ── http:: SSRF + IPv6 URL ayristirma ───────────────────────────────────────────
-# IKI SEY KILITLENIYOR:
-# 1) SSRF ENGELI ile GERCEK AG HATASI ayirt edilebilmeli. tcp_connect DNS hatasi,
-#    SSRF engeli ve baglanti hatasi icin ayni INVALID'i donduruyor, cagiran da
-#    hepsine "connection failed" diyordu -> ic servisine ulasamayan gelistirici
-#    bir GUVENLIK POLITIKASININ engelledigini goremiyordu.
-# 2) IPv6 literal URL'ler HIC CALISMIYORDU: parse_url kosleli parantezleri
-#    siyirmiyor, port ayracini rfind(':') ile ariyordu ->
-#      "[::1]:8080" -> host "[::1]"  (parantezli, getaddrinfo basarisiz)
-#      "[::1]"      -> host "[:"     (adresin ICINDEKI iki nokta port sanildi)
-#    Hata "DNS cozumlenemedi" oldugu icin sebep gorunmuyordu; ancak (1) yapilip
-#    mesajlar ayrisinca ortaya cikti.
-# Bu kontrol SUNUCU GEREKTIRMEZ: SSRF korumasi ACIKKEN [::1] icin beklenen hata
-# SSRF'tir. Parse tekrar bozulursa hata "DNS cozumlenemedi"ye doner ve FAIL olur.
+# ── http:: SSRF + IPv6 URL parsing ────────────────────────────────────────
+# TWO THINGS ARE LOCKED:
+# 1) the SSRF BLOCK must be distinguishable from a REAL NETWORK ERROR. tcp_connect returns the same INVALID for a DNS error,
+#    an SSRF block and a connection error, and the caller
+#    said "connection failed" for all of them -> a developer who could not reach an internal service
+#    could not see that a SECURITY POLICY had blocked it.
+# 2) IPv6 literal URLs DID NOT WORK AT ALL: parse_url did not strip the square brackets,
+#    looking for the port separator with rfind(':') ->
+#      "[::1]:8080" -> host "[::1]"  (bracketed, getaddrinfo fails)
+#      "[::1]"      -> host "[:"     (the colon INSIDE the address was taken as a port)
+#    Since the error was "DNS could not be resolved" the cause was not visible; only once (1) was done and
+#    the messages were told apart did it surface.
+# This check DOES NOT NEED A SERVER: with SSRF protection ON the expected error for [::1]
+# is SSRF. If parsing breaks again the error returns to "DNS could not be resolved" and it FAILs.
 cat > "$TMP/ssrf.lk" <<'LK'
 use http
 $a = http::get("http://[::1]:9/")
@@ -555,8 +555,8 @@ $c = $r.error
 print($a.error . "|" . $b.error . "|" . $c)
 LK
 sf_out=$(timeout 30 "$LK" "$TMP/ssrf.lk" 2>&1 | tail -1)
-# Tek regex yerine UC AYRI kosul — grep'te '|' duz karakterdir, alternation
-# beklemek yanlis alarm uretir (bu kontrolu yazarken tam bunu yasadim).
+# THREE SEPARATE conditions instead of a single regex — in grep '|' is a plain character, expecting
+# alternation gives a false alarm (this exact mistake happened while writing this check).
 sf_ok=1
 if echo "$sf_out" | grep -q "DNS resolution failed"; then
   echo "FAIL: IPv6 literal URL ayristirma bozuk — [::1] icin DNS hatasi doniyor,"
@@ -572,14 +572,14 @@ echo "$sf_out" | grep -qi "ipv6" || {
 [ $sf_ok = 1 ] || { echo "  cikti: [$sf_out]"; fail=1; }
 
 
-# ── KULLANICI MODÜLÜ (`use`) VM'de de yükleniyor mu? ────────────────────────────
-# NEDEN: `use <ad>` iki şeyi karşılar — stdlib modülü (builtin tablosunda zaten
-# bağlı) ve KULLANICI MODÜLÜ (~/.look/modules/<ad>/<ad>.lk). Compiler ikisinde de
-# NOP üretiyordu; kullanıcı modülünün fonksiyonları VM globals'ında hiç oluşmuyor,
-# route "Undefined variable: <fn>" verip KALICI olarak interpreter'a düşüyordu.
-# Çıktı DOĞRU çıktığı için sessiz kalıyordu — fallback bug'ı maskeliyor (1. kural).
-# Yani dilin "use ile çok dosyalı proje" yolu web'de HIZINI kaybediyordu.
-# Bu kontrol hem çıktıyı hem "VM BUG yok"u doğrular.
+# ── Is the USER MODULE (`use`) also loaded in the VM? ───────────────────────────
+# WHY: `use <name>` covers two things — a stdlib module (already bound
+# in the builtin table) and a USER MODULE (~/.look/modules/<name>/<name>.lk). The compiler
+# produced a NOP for both; the user module's functions never appeared in the VM globals,
+# the route gave "Undefined variable: <fn>" and fell PERMANENTLY to the interpreter.
+# It stayed silent because the output was CORRECT — the fallback masks the bug (rule 1).
+# I.e. the language's "multi-file project via use" path was LOSING ITS SPEED on the web.
+# This check verifies both the output and "no VM BUG".
 UM_HOME="$TMP/umhome"
 mkdir -p "$UM_HOME/.look/modules/umtest"
 cat > "$UM_HOME/.look/modules/umtest/umtest.lk" <<'LK'
@@ -605,44 +605,44 @@ if grep -q "VM BUG" "$TMP/um.log" 2>/dev/null; then
 fi
 
 
-# ── LEXER — bozuk/kötü niyetli kaynağa dayanıklılık ─────────────────────────────
-# Dilin girdi kapısı; guard'ı yoktu. Tarandı, ciddi bug ÇIKMADI — bu kontrol
-# sağlam çıkan davranışları REGRESYONA karşı kilitler:
-#   sonlanmama -> hata (sonsuz okuma değil), derin iç içe -> parser guard (stack
-#   overflow değil), unicode surrogate -> doğru (tek surrogate güvenli, çift
-#   birleşiyor). Hepsi tek sütunda (lexer paylaşımlı) — iki sütuna gerek yok.
+# ── LEXER — resilience to corrupt/malicious source ─────────────────────────────
+# The language's input gate; it had no guard. It was scanned, no serious bug was FOUND — this check locks
+# the behaviors that turned out sound against REGRESSION:
+#   unterminated -> error (not an endless read), deep nesting -> parser guard (not a stack
+#   overflow), unicode surrogate -> correct (a lone surrogate is safe, a pair
+#   combines). All in a single column (the lexer is shared) — two columns not needed.
 lx_fail=0
 printf 'print("acik' > "$TMP/lx_str.lk"
 "$LK" --check "$TMP/lx_str.lk" 2>&1 | grep -qi "Unterminated\|sonland" || { echo "FAIL: lexer sonlanmamis string'i yakalamiyor"; lx_fail=1; }
-# derin ic ice — stack overflow degil, net hata
+# deep nesting — not a stack overflow, a clear error
 python3 -c 'open("'"$TMP"'/lx_deep.lk","w").write("print(" + "("*20000 + "1" + ")"*20000 + ")")' 2>/dev/null && {
   dc=$(timeout 10 "$LK" --check "$TMP/lx_deep.lk" 2>&1 | head -1)
   echo "$dc" | grep -qi "derin\|deep\|max" || { echo "FAIL: derin ic ice parser guard'i yok: [$dc]"; lx_fail=1; }
 }
-# unicode surrogate cifti -> tek kod noktasi
+# unicode surrogate pair -> a single code point
 printf 'use string\nprint(string::len("\\uD83D\\uDE00"))' > "$TMP/lx_emoji.lk"
 em=$("$LK" "$TMP/lx_emoji.lk" 2>&1 | tail -1)
 [ "$em" = "1" ] || { echo "FAIL: surrogate cifti tek kod noktasina birlesmiyor: [$em] (beklenen 1)"; lx_fail=1; }
 [ $lx_fail = 0 ] || fail=1
 
 
-# ── JSON int64-aşan tamsayı KESİNLİĞİ (52. bug) ─────────────────────────────
-# json::decode int64'ü aşan tamsayıyı sessizce float'a düşürüyordu → ID sessizce
-# bozuluyordu (9223372036854775809 -> ...808). Kesinlik korunmalı: string olarak
-# birebir dönmeli. json_decode_value tek kaynak (stdlib) — tek motorda test yeterli.
+# ── JSON integer PRECISION beyond int64 (bug 52) ───────────────────────────────
+# json::decode silently dropped an integer beyond int64 to float → the ID was silently
+# corrupted (9223372036854775809 -> ...808). Precision must be preserved: it must come back
+# exactly as a string. json_decode_value is a single source (stdlib) — testing on one engine is enough.
 printf 'use json\n$d = json::decode("{\\"id\\": 9223372036854775809, \\"big\\": 18446744073709551615}")\nprint($d["id"])\nprint($d["big"])' > "$TMP/js_int.lk"
 ji=$("$LK" "$TMP/js_int.lk" 2>&1)
 echo "$ji" | grep -q "9223372036854775809" || { echo "FAIL: json int64-asan id KESINLIK kaybi (beklenen 9223372036854775809): [$ji]"; fail=1; }
 echo "$ji" | grep -q "18446744073709551615" || { echo "FAIL: json uint64-max KESINLIK kaybi (beklenen 18446744073709551615): [$ji]"; fail=1; }
 
 
-# ── Dispatch kopyasi worker'da YENIDEN KULLANILIYOR mu, izolasyon bozuldu mu? ──
-# Kopya artik thread_local (per-request make_dispatch_copy 30-63us idi — route'u
-# calistirmaktan pahali). Sozlesme: paylasilan kopya istekler arasi SIZINTI yapmamali.
-#   $s = $sayac + 1  → fonksiyon-local (her istek 1)  — atama izole
-#   ($sayac = $sayac + 1 artik yuklemede hata: disaridan okunan ad ayni fonksiyonda atanamaz —
+# ── Is the dispatch copy REUSED in the worker, is isolation broken? ──
+# The copy is now thread_local (the per-request make_dispatch_copy took 30-63us — more expensive than
+# running the route). Contract: the shared copy must not LEAK between requests.
+#   $s = $counter + 1  → function-local (1 per request)  — assignment is isolated
+#   ($counter = $counter + 1 is now a load-time error: a name read from outside cannot be assigned in the same function —
 #    tests/outer_read_assign_test.sh)
-# Bu degerler thread_local optimizasyonu ONCESI ile BIREBIR ayni olmali.
+# These values must be IDENTICAL to those before the thread_local optimization.
 cat > "$TMP/iso.lk" <<'LK'
 $sayac = 0
 route("GET","/inc", function(){ $s = $sayac + 1; return response::text("s=" . $s) })
@@ -656,14 +656,14 @@ for i in 1 2 3 4 5; do iso_all="$iso_all$(curl -s --max-time 8 "http://127.0.0.1
 kill $IS 2>/dev/null; sleep 1; kill -9 $IS 2>/dev/null
 [ "$iso_all" = "s=1s=1s=1s=1s=1" ] || { echo "FAIL: dispatch kopyasi izolasyonu BOZUK (global sizinti): [$iso_all] (beklenen s=1 x5)"; fail=1; }
 
-# ── ODR: istemci/sunucu tip cakismasi (LTO ile CRASH) ────────────────────────
-# look::HttpResponse HEM http_client.h HEM http_server.h'de FARKLI tanimliydi (ayni
-# namespace!). look-fcgi ikisini de linkler → TANIMSIZ DAVRANIS; LTO acikken iki
-# layout tek tip sanilip birlestiriliyor → nesne bir duzenle kurulup digeriyle
-# yikiliyor → "free(): invalid pointer"/segfault. Web route'undan http::get cagirmak
-# sunucuyu COKERTIYORDU (tek istek yetiyordu). CLI'de yoktu (http_server.cpp linkli
-# degil), ASan'da yoktu (o build'de LTO kapali) — bu yuzden aylarca gorunmedi.
-# Sozlesme: http::get web route'unda calismali ve sunucu AYAKTA kalmali.
+# ── ODR: client/server type clash (CRASH with LTO) ───────────────────────────
+# look::HttpResponse was defined DIFFERENTLY in BOTH http_client.h AND http_server.h (same
+# namespace!). look-fcgi links both → UNDEFINED BEHAVIOR; with LTO on, the two
+# layouts are taken as a single type and merged → an object built with one layout and
+# is destroyed with the other → "free(): invalid pointer"/segfault. Calling http::get from a web route
+# CRASHED the server (a single request was enough). It was absent in the CLI (http_server.cpp is not
+# linked), absent in ASan (LTO is off in that build) — so it went unseen for months.
+# Contract: http::get must work in a web route and the server must STAY UP.
 cat > "$TMP/odr_up.lk" <<'LK'
 route("GET","/u", function(){ response::json(["ok" => true]) })
 LK

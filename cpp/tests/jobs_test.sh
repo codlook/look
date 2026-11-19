@@ -1,22 +1,22 @@
 #!/bin/bash
-# jobs:: guard'i — kuyruk kaliciligi ve ÇOK SÜREÇLİ claim yarisi.
+# jobs:: guard — queue persistence and the MULTI-PROCESS claim race.
 #
-# NEDEN: jobs_stdlib.cpp (457 satir) guard'siz bir yuzeydi ve claim yolu
-# SELECT+UPDATE seklinde, ARADA transaction/durum kontrolu OLMADAN yaziliydi.
-# Aradaki std::lock_guard yalnizca SUREC ICI mutex — FastCGI multi-worker'da
-# her worker AYRI SUREC oldugu icin hicbir koruma saglamiyordu.
-# OLCULDU (duzeltme oncesi): 4 surec / 40 is -> 34 claim, 29 tekil
-#   => 5 is BIRDEN FAZLA surece verildi (ayni e-posta iki kez, ayni odeme iki kez).
-# Cozum: tek ifadelik atomik claim (UPDATE ... WHERE id=(SELECT ...) AND
+# WHY: jobs_stdlib.cpp (457 lines) was an unguarded surface and the claim path was written
+# as SELECT+UPDATE, with NO transaction/state check BETWEEN them.
+# The std::lock_guard in between is only an IN-PROCESS mutex — in FastCGI multi-worker
+# each worker is a SEPARATE PROCESS so it gave no protection at all.
+# MEASURED (before the fix): 4 processes / 40 jobs -> 34 claims, 29 unique
+#   => 5 jobs were given to MORE THAN ONE process (the same e-mail twice, the same payment twice).
+# Fix: a single-statement atomic claim (UPDATE ... WHERE id=(SELECT ...) AND
 # status='pending' RETURNING ...) + WAL + busy_timeout.
 #
-# yeniden deneme BEKLER (c4d1471; jobs::fail elle çağrılınca da). Akış testi tabanı 1 sn
-# yapar: başarısız iş hemen yeniden alınmamalı, bekleme geçince alınmalı, 3. denemede failed.
-# (Bu test v2 CI'ında koşmuyordu; eski "hemen yeniden al" beklentisiyle kırmızı kalmıştı.)
-# Kullanim: bash jobs_test.sh <lk_yolu>
+# a retry WAITS (c4d1471; also when jobs::fail is called by hand). The flow test sets the base to 1 s:
+# a failed job must not be taken again immediately, must be taken once the wait has passed, and be failed on the 3rd attempt.
+# (This test was not run in CI; it had stayed red with the old "retake immediately" expectation.)
+# Usage: bash jobs_test.sh <lk_path>
 set -u
 LK="${1:-./build/lk}"
-LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # aşağıda cd yapılıyor: mutlak yol
+LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # cd is done below: absolute path
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0
@@ -42,8 +42,8 @@ print($s)
 LK
 cat > akis.lk <<'LK'
 use jobs
-# retry: LOOK'de yeniden deneme BEKLER (taban LOOK_JOBS_RETRY_SECONDS; burada 1 sn → 1, 2 sn);
-# beklemeden önce iş alınmamalı, sonra alınmalı; max_retries (3) dolunca failed (sonsuz denenmemeli)
+# retry: in LOOK a retry WAITS (base LOOK_JOBS_RETRY_SECONDS; here 1 s → 1, 2 s);
+# the job must not be taken before the wait, then it must be; once max_retries (3) is used up it is failed (must not retry forever)
 jobs::push("r", "x")
 $j = jobs::next("r"); jobs::fail($j.id)
 $hemen = jobs::next("r")
@@ -53,15 +53,15 @@ timer::after(2300, fn() => null); timer::wait(5000)
 $j = jobs::next("r"); jobs::fail($j.id)
 $son = jobs::next("r")
 $rs = jobs::stats("r")
-# run_after: 4. parametre GECIKME (3. parametre max_retries — kolay karistirilir)
+# run_after: the 4th parameter is the DELAY (the 3rd parameter is max_retries — easy to confuse)
 jobs::push("d", "gec", 3, 3600)
 $erken = jobs::next("d")
-# asili is: claim edilip done/fail denmezse recover geri almali
+# a stuck job: if it is claimed and neither done nor fail is called, recover must take it back
 jobs::push("s", "asili")
 jobs::next("s")
 $kurt = jobs::recover("s", 0)
 $tekrar = jobs::next("s")
-# done edilen is tekrar alinmamali
+# a job that was done must not be taken again
 jobs::push("o", "bir")
 $o = jobs::next("o")
 jobs::done($o.id)
@@ -99,11 +99,11 @@ else
   fail=1
 fi
 
-# SOGUK ACILIS: DB HIC YOKKEN N surec ayni anda schema olusturur.
-# busy_timeout sqlite3_open'dan HEMEN SONRA ayarlanmazsa, WAL gecisi ve
-# create_schema() ozel kilit isterken aninda SQLITE_BUSY doner ve surecler
-# 'schema hatasi: database is locked' ile COKER. Daha kotusu: olen surecler
-# claim yarisini MASKELER (az surec kalinca yaris gorunmez).
+# COLD START: with NO DB at all, N processes create the schema at the same time.
+# If busy_timeout is not set RIGHT AFTER sqlite3_open, the WAL switch and
+# create_schema() immediately return SQLITE_BUSY while asking for an exclusive lock and the processes
+# CRASH with 'schema hatasi: database is locked'. Worse: dying processes
+# MASK the claim race (the race is not visible when few processes remain).
 rm -f "$TMP/cold.db"*
 export JOBS_DB="$TMP/cold.db"
 cat > cold.lk <<'LK'

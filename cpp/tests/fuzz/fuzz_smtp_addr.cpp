@@ -1,6 +1,6 @@
-// libFuzzer harness — SMTP MAIL FROM/RCPT TO adres ayrıştırma (ağa açık, PRE-AUTH).
-// Geçmiş bug'lar (bare adres, <>, iç içe '<') kodda belgeli; bu parser artık bounds-checked.
-// Fuzzer: rastgele/adversarial satırda ÇÖKME (OOB/segfault) OLMAMALI — dönüş değeri önemsiz.
+// libFuzzer harness — SMTP MAIL FROM/RCPT TO address parsing (network-facing, PRE-AUTH).
+// Past bugs (bare address, <>, nested '<') are documented in the code; this parser is now bounds-checked.
+// Fuzzer: there must be NO CRASH (OOB/segfault) on a random/adversarial line — the return value is irrelevant.
 //
 //   clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
 //     -I../../include fuzz_smtp_addr.cpp -o fuzz_smtp_addr

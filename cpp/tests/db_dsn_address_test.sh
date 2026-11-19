@@ -15,12 +15,12 @@ MY="${2:?mysql dsn}"; PG="${3:?pg dsn}"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 fail=0
 
-# DSN parçaları: şema://kimlik@127.0.0.1:port/db
+# DSN parts: scheme://credentials@127.0.0.1:port/db
 my_auth="${MY#*://}"; my_auth="${my_auth%@*}"; my_rest="${MY##*@}"; my_port="${my_rest#*:}"; my_port="${my_port%%/*}"; my_db="${my_rest#*/}"
 pg_auth="${PG#*://}"; pg_auth="${pg_auth%@*}"; pg_rest="${PG##*@}"; pg_port="${pg_rest#*:}"; pg_port="${pg_port%%/*}"; pg_db="${pg_rest#*/}"
 my_pass="${my_auth#*:}"
 
-# ::1 erişilebilir mi (IPv6 kapalı makine): CI'da kırmızı, yerelde atla
+# is ::1 reachable (a machine with IPv6 off): red in CI, skip locally
 v6=1
 python3 -c "import socket; socket.create_connection(('::1', $my_port), timeout=2).close(); socket.create_connection(('::1', $pg_port), timeout=2).close()" 2>/dev/null || v6=0
 if [ $v6 = 0 ]; then
@@ -28,7 +28,7 @@ if [ $v6 = 0 ]; then
     else echo "  SKIP IPv6 rows: ::1 is not reachable on ports $my_port/$pg_port"; fi
 fi
 
-ok_case() {   # ad dsn
+ok_case() {   # name dsn
     cat > "$T/q.lk" <<LK
 use db
 \$c = db::connect("$2")
@@ -38,7 +38,7 @@ LK
     out="$("$LK" "$T/q.lk" 2>&1 | grep -v '^\[20')"
     if echo "$out" | grep -q "^one=1$"; then echo "  OK   $1"; else echo "  FAIL $1: $out"; fail=1; fi
 }
-err_case() {   # ad dsn beklenen-metin
+err_case() {   # name dsn expected-text
     cat > "$T/q.lk" <<LK
 use db
 try { \$c = db::connect("$2"); print("CONNECTED") }
@@ -57,7 +57,7 @@ err_case "mysql IPv6 no brackets"  "mysql://$my_auth@::1:$my_port/$my_db"       
 err_case "pg port 5432x"           "postgres://$pg_auth@127.0.0.1:${pg_port}x/$pg_db"  "invalid port \"${pg_port}x\""
 ok_case  "mysql 127.0.0.1"         "$MY"
 ok_case  "pg 127.0.0.1"            "$PG"
-# Sorgu yolsuz: bağlanması yetmez, ?tls gerçekten uygulanmış olmalı (Ssl_cipher dolu)
+# Query without a path: connecting is not enough, ?tls must really be applied (Ssl_cipher filled)
 cat > "$T/q.lk" <<LK
 use db
 \$c = db::connect("mysql://$my_auth@127.0.0.1:$my_port?tls=insecure")

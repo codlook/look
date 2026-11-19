@@ -1,7 +1,7 @@
 use string
-// F-01: 11 ardışık başarılı regex — sayaç sızmıyorsa hepsi çalışır.
-// (Eski hatalı fix'te 8 timeout sonrası "max 8" kalıcı reddederdi; burada timeout yok
-//  ama pespese >8 çağrı sayacın normal azaldığını doğrular.)
+// F-01: 11 consecutive successful regexes — if the counter does not leak they all work.
+// (In the old faulty fix "max 8" would be rejected permanently after 8 timeouts; here there is no timeout
+//  but >8 back-to-back calls verify that the counter decreases normally.)
 $ok = 0
 for ($i = 0; $i < 11; $i = $i + 1) {
     if (string::regex_match("abc123", "[a-z]+[0-9]+")) { $ok = $ok + 1 }

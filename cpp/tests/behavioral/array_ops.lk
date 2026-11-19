@@ -1,10 +1,10 @@
-# array:: davranışsal test — saf (sunucu YOK). CI-koşabilir. push/pop immutable, closure, assoc.
+# array:: behavioral test — pure (NO server). Runnable in CI. push/pop immutable, closure, assoc.
 use array
 use type
 $ran = 0
 function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . "  got[" . $g . "] want[" . $w . "]") } }
 
-# push/pop — YENİ dizi döner (mutasyon yok)
+# push/pop — returns a NEW array (no mutation)
 chk("push len", len(array::push([1, 2], 3)), 3); $ran = $ran + 1
 $base = [1, 2]; $copy = array::push($base, 9)
 chk("push immutable", len($base), 2); $ran = $ran + 1
@@ -22,15 +22,15 @@ chk("flatten derin", len(array::flatten([[1, [2]], [3]])), 3); $ran = $ran + 1
 chk("map+reduce", array::reduce(array::map([1, 2, 3], fn($x) => $x * 2), fn($a, $x) => $a + $x, 0), 12); $ran = $ran + 1
 chk("filter", len(array::filter([1, 2, 3, 4], fn($x) => $x > 2)), 2); $ran = $ran + 1
 chk("reduce", array::reduce([1, 2, 3, 4], fn($a, $x) => $a + $x, 0), 10); $ran = $ran + 1
-# sort — default + comparator (indeksle, join yok)
+# sort — default + comparator (by index, no join)
 $s = array::sort([3, 1, 2])
 chk("sort default[0]", $s[0], 1); $ran = $ran + 1
 chk("sort default[2]", $s[2], 3); $ran = $ran + 1
 $sc = array::sort([1, 2, 3], fn($a, $b) => $b - $a)
 chk("sort comparator[0]", $sc[0], 3); $ran = $ran + 1
-# slice — negatif offset
+# slice — negative offset
 chk("slice neg", len(array::slice([1, 2, 3, 4], -2)), 2); $ran = $ran + 1
-# tip-karışımı unique (== eşitlik)
+# mixed-type unique (== equality)
 chk("unique tip-karisik", len(array::unique([1, "1", 1])), 2); $ran = $ran + 1
 
 const { EXPECTED = 18 }

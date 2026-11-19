@@ -1,7 +1,7 @@
-// MySQL + Redis DSN TLS-karar tablo testi — look/db_dsn.h (dikişi aç). Ağsız, handshake YOK.
-// GÜVENLİ-VARSAYILAN (2026-08-11 flip): TLS açıkken verify=true VARSAYILAN (http/PG ile hizalı);
-// self-signed DB için AÇIK opt-out ?tls=insecure. Bu test yeni kararı + kaçış-kapağını
-// POZİTİF-KONTROLLÜ kilitler (biri varsayılanı geri çevirirse veya insecure dalını silerse RED).
+// MySQL + Redis DSN TLS-decision table test — look/db_dsn.h (open the seam). No network, NO handshake.
+// SAFE DEFAULT (2026-08-11 flip): when TLS is on verify=true is the DEFAULT (aligned with http/PG);
+// for a self-signed DB an EXPLICIT opt-out ?tls=insecure. This test locks the new decision + the escape hatch
+// WITH POSITIVE CONTROLS (RED if someone reverts the default or deletes the insecure branch).
 //   Build: g++ -std=c++17 -Iinclude tests/mysql_redis_dsn_test.cpp -o /tmp/mrdsn && /tmp/mrdsn
 #include "look/db_dsn.h"
 #include <cstdio>
@@ -21,16 +21,16 @@ static void chk(Drv d, const char* q, bool sec, bool wtls, bool wver) {
     if (!ok) fails++;
 }
 
-// ── Havuz-açılış DB-TLS uyarısı (db_tls_warning, 2026-09-30) ──
-// Uyarı GERÇEK karara eşit olmalı. Beklenen: 'N' uyarı yok · 'U' UNENCRYPTED · 'I' NOT VERIFIED.
+// ── Pool-open DB-TLS warning (db_tls_warning, 2026-09-30) ──
+// The warning must equal the REAL decision. Expected: 'N' no warning · 'U' UNENCRYPTED · 'I' NOT VERIFIED.
 static char wkind(const std::string& w) {
     if (w.empty()) return 'N';
     if (w.find("UNENCRYPTED") != std::string::npos) return 'U';
     if (w.find("NOT VERIFIED") != std::string::npos) return 'I';
     return '?';
 }
-// Pozitif kontrol: ESKİ çıplak-substring mantığının birebir kopyası (web_stdlib, abb5e2e).
-// Bug vakalarında eski mantık YANLIŞ sonuç vermeli — vermiyorsa tablo ayrımcı değildir.
+// Positive control: an exact copy of the OLD bare-substring logic (web_stdlib, abb5e2e).
+// On the bug cases the old logic must give a WRONG result — if not, the table is not discriminating.
 static char legacy_kind(const std::string& dsn) {
     std::string sch = dsn.substr(0, dsn.find(':'));
     bool has_tls = dsn.find("tls=") != std::string::npos || dsn.find("ssl=") != std::string::npos;
@@ -59,42 +59,42 @@ static void chkw(const char* dsn, char want, bool legacy_wrong = false) {
 int main() {
     printf("MySQL/Redis DSN TLS-karar tablosu (verify=true GÜVENLİ-VARSAYILAN + ?tls=insecure opt-out):\n");
     // ── MySQL ──
-    chk(MY, "",            false, false, true);  // mysql:// düz → TLS yok (verify önemsiz, true)
-    chk(MY, "",            true,  true,  true);  // mysqls:// → şifreli + DOĞRULANMIŞ (güvenli varsayılan)
-    chk(MY, "tls=1",       false, true,  true);  // TLS aç → verify güvenli-varsayılan
+    chk(MY, "",            false, false, true);  // mysql:// plain → no TLS (verify irrelevant, true)
+    chk(MY, "",            true,  true,  true);  // mysqls:// → encrypted + VERIFIED (safe default)
+    chk(MY, "tls=1",       false, true,  true);  // enable TLS → verify safe default
     chk(MY, "tls=true",    false, true,  true);
-    chk(MY, "ssl=1",       false, true,  true);  // herhangi ssl= → TLS + verify
-    chk(MY, "tls=insecure",false, true,  false); // AÇIK opt-out → şifreli AMA doğrulamasız
+    chk(MY, "ssl=1",       false, true,  true);  // any ssl= → TLS + verify
+    chk(MY, "tls=insecure",false, true,  false); // EXPLICIT opt-out → encrypted BUT unverified
     chk(MY, "ssl=insecure",false, true,  false);
-    chk(MY, "tls=verify",  false, true,  true);  // açık verify (varsayılanla aynı)
+    chk(MY, "tls=verify",  false, true,  true);  // explicit verify (same as the default)
     chk(MY, "ssl=verify",  false, true,  true);
-    chk(MY, "ssl=verify_identity", false, true, true); // MySQL'e özgü
-    chk(MY, "foo=bar",     true,  true,  true);  // bilinmeyen query → şema + güvenli-varsayılan
+    chk(MY, "ssl=verify_identity", false, true, true); // MySQL-specific
+    chk(MY, "foo=bar",     true,  true,  true);  // unknown query → scheme + safe default
     chk(MY, "foo=bar",     false, false, true);
-    // ── parser adversarial turu (2026-09-21): sınır-duyarlı param eşleme ──
-    // #1: ssl/tls FALSEY değeri TLS'i ZORLAMAZ (eski çıplak-substring "ssl=" TLS'i açıyordu).
+    // ── parser adversarial round (2026-09-21): boundary-aware param matching ──
+    // #1: a FALSEY ssl/tls value does NOT FORCE TLS (the old bare substring "ssl=" turned TLS on).
     chk(MY, "ssl=false",   false, false, true);
     chk(MY, "ssl=0",       false, false, true);
     chk(MY, "ssl=off",     false, false, true);
     chk(MY, "ssl=disable", false, false, true);
     chk(MY, "tls=false",   false, false, true);
-    chk(MY, "sslmode=disable", false, false, true); // "ssl=" substring'i DEĞİL → TLS yok
-    // #4: değer-içi enjeksiyon (opt=tls=insecure) verify'ı DÜŞÜRMEZ — "tls" param sınırında değil.
+    chk(MY, "sslmode=disable", false, false, true); // NOT the "ssl=" substring → no TLS
+    // #4: injection inside a value (opt=tls=insecure) does NOT drop verify — "tls" is not at a param boundary.
     chk(MY, "dbname=x&opt=tls=insecure", false, false, true);
     chk(MY, "name=tls=verify_notreal",   false, false, true);
     // ── Redis ──
-    chk(RD, "",            false, false, true);  // redis:// düz
-    chk(RD, "",            true,  true,  true);  // rediss:// → şifreli + DOĞRULANMIŞ
+    chk(RD, "",            false, false, true);  // redis:// plain
+    chk(RD, "",            true,  true,  true);  // rediss:// → encrypted + VERIFIED
     chk(RD, "tls=1",       false, true,  true);
     chk(RD, "ssl=1",       false, true,  true);
-    chk(RD, "tls=insecure",false, true,  false); // AÇIK opt-out
+    chk(RD, "tls=insecure",false, true,  false); // EXPLICIT opt-out
     chk(RD, "ssl=insecure",false, true,  false);
     chk(RD, "tls=verify",  false, true,  true);
     chk(RD, "ssl=verify",  false, true,  true);
     chk(RD, "foo=bar",     false, false, true);
-    chk(RD, "ssl=false",   false, false, true);  // #1: falsey → TLS yok
+    chk(RD, "ssl=false",   false, false, true);  // #1: falsey → no TLS
 
-    // ── Uyarı = karar (db_tls_warning) ──
+    // ── Warning = decision (db_tls_warning) ──
     chkw("mysql://u:p@db:3306/app",                        'U');
     chkw("mysqls://u:p@db:3306/app",                       'N');
     chkw("mysql://u:p@db:3306/app?tls=1",                  'N');
@@ -105,27 +105,27 @@ int main() {
     chkw("redis://r:6379?tls=insecure",                    'I');
     chkw("postgres://u:p@pg/app",                          'U');
     chkw("postgresqls://u:p@pg/app",                       'N');
-    chkw("postgres://u:p@pg/app?sslmode=require",          'I', true); // eski 'U' derdi (şifreli ama doğrulamasız)
+    chkw("postgres://u:p@pg/app?sslmode=require",          'I', true); // the old one would say 'U' (encrypted but unverified)
     chkw("postgres://u:p@pg/app?tls=verify",               'N');
     chkw("sqlite://app.db",                                'N');
-    // bug vakaları — eski substring mantığı YANLIŞ (pozitif kontrol)
-    chkw("mysql://u:tls=1@db:3306/app",                    'U', true); // (a) parolada tls=
-    chkw("postgres://u:tls=1@pg/app",                      'U', true); // (a) PG, canlı doğrulandı
-    chkw("redis://:ssl=1@r:6379",                          'U', true); // (a) redis parola
-    chkw("mysql://u:p@db:3306/app?ssl=false",              'U', true); // (b) ssl=false = TLS yok
+    // bug cases — the old substring logic is WRONG (positive control)
+    chkw("mysql://u:tls=1@db:3306/app",                    'U', true); // (a) tls= in the password
+    chkw("postgres://u:tls=1@pg/app",                      'U', true); // (a) PG, verified live
+    chkw("redis://:ssl=1@r:6379",                          'U', true); // (a) redis password
+    chkw("mysql://u:p@db:3306/app?ssl=false",              'U', true); // (b) ssl=false = no TLS
     chkw("redis://r:6379?tls=0",                           'U', true); // (b) redis falsey
-    chkw("mysql://u:p@db:3306/app?x=tls=insecure",         'U', true); // (c) değer-içi, plaintext
-    chkw("mysqls://u:p@db:3306/app?x=tls=insecure",        'N', true); // (c) mysqls doğrulanmış
-    chkw("postgres://u:p@pg/app?x=tls=insecure",           'U', true); // (c) PG, canlı doğrulandı
-    chkw("postgres://u:p@pg/app?sslmode=verify-ca",        'N', true); // 558d735 sınıfı: eski 'U' derdi
-    chkw("mysql://u:p?tls=insecure@db:3306/app",           'U', true); // userinfo'daki '?' sorgu değil
-    // Yolsuz DSN: bağlantı (parse_dsn_part, Go net/url) sorguyu okur → uyarı da okumalı.
+    chkw("mysql://u:p@db:3306/app?x=tls=insecure",         'U', true); // (c) inside a value, plaintext
+    chkw("mysqls://u:p@db:3306/app?x=tls=insecure",        'N', true); // (c) mysqls verified
+    chkw("postgres://u:p@pg/app?x=tls=insecure",           'U', true); // (c) PG, verified live
+    chkw("postgres://u:p@pg/app?sslmode=verify-ca",        'N', true); // 558d735 class: the old one would say 'U'
+    chkw("mysql://u:p?tls=insecure@db:3306/app",           'U', true); // a '?' in the userinfo is not a query
+    // DSN without a path: the connection (parse_dsn_part, Go net/url) reads the query → the warning must read it too.
     chkw("mysql://u:p@db:3306?tls=insecure",               'I');
     chkw("mysql://u:p@db:3306?tls=1",                      'N');
     chkw("postgres://u:p@pg:5432?sslmode=require",         'I');
 
-    // Redis bölme sırası: önce son '@', sonra '?'. Eski sıra ('?' önce) parolasında '?'
-    // olan URL'de host'u ":pa", sorguyu "ss@r:6379" çıkarıyordu.
+    // Redis split order: first the last '@', then '?'. The old order ('?' first) on a URL with a '?' in the password
+    // produced host ":pa" and query "ss@r:6379".
     {
         struct S { const char* in; const char* ui; const char* hp; const char* q; };
         const S cases[] = {
@@ -144,7 +144,7 @@ int main() {
             ++ran;
         }
     }
-    chkw("redis://:pa?tls=insecure@r:6379",                'U', true); // parolada '?': sorgu değil
+    chkw("redis://:pa?tls=insecure@r:6379",                'U', true); // '?' in the password: not a query
     chkw("rediss://:pa?ss@r:6379",                         'N');
 
     const int EXPECTED = 63;

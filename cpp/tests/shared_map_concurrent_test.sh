@@ -1,7 +1,7 @@
 #!/bin/bash
-# Paylaşılan büyük sözlüğü (app::set) birçok işçi iş parçacığı AYNI ANDA ilk kez okur: anahtar dizini
-# (include/look/assoc_index.h) okuma yolunda kurulur — kurulum yarışsız olmalı (TSan derlemesiyle de
-# koşulur) ve her istek doğru değeri görmeli.
+# A shared large map (app::set) is read for the first time by many worker threads AT THE SAME TIME: the key index
+# (include/look/assoc_index.h) is built on the read path — the build must be race-free (it is also
+# run with a TSan build) and every request must see the correct value.
 # Usage: shared_map_concurrent_test.sh <lk-fcgi> [port]   (needs python3, curl)
 set -u
 export LOOK_SECRET="${LOOK_SECRET:-look-test-secret-0123456789abcdef0123456789}"
@@ -10,11 +10,11 @@ T=$(mktemp -d); pid=""; trap '{ [ -n "$pid" ] && kill $pid; wait; } 2>/dev/null;
 cat > "$T/app.lk" <<'LK'
 use json
 use string
-// json::decode ile kurulan sözlüğün dizini yok: ilk okuyan istekler onu aynı anda kurar.
+// the map built with json::decode has no index: the first requests that read it build it at the same time.
 $parts = []
 for ($i = 0; $i < 2000; $i++) { push($parts, "\"key_" . $i . "\":" . $i) }
 app::set("decoded", json::decode("{" . string::join($parts, ",") . "}"))
-// döngüyle kurulan sözlüğün dizini yazarken kurulmuştur: yalnız okunur.
+// the index of a map built with a loop was built while writing: it is only read.
 $built = []
 for ($i = 0; $i < 2000; $i++) { $built["key_" . $i] = $i }
 app::set("built", $built)
@@ -45,7 +45,7 @@ def want(i): return 2 * sum((i + j) % 2000 for j in range(50))
 def client(t):
     try:
         c = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
-        gate.wait()   # ilk istekler aynı anda: dizini birlikte kurmaya çalışırlar
+        gate.wait()   # the first requests at the same time: they try to build the index together
         for r in range(ROUNDS):
             i = t * 97 + r * 13
             c.request("GET", "/r?i=%d" % i); resp = c.getresponse()

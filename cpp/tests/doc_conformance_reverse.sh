@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# TERS-YÖN doküman uyumluluk guard'ı (kod → docs). Mevcut conformance guard docs→kod'u kontrol eder
-# (docs'ta yazan mod::fn gerçekten var mı — session::has sınıfı). Bu onun eksik yarısı: builtin_names()'teki
-# HER namespaced builtin docs/index.html'de belgeli Mİ? Değilse ya belgelenmeli ya (gerekçeyle) dışlanmalı.
-# Böylece yeni builtin eklenince belgelenmeden CI'dan geçemez. Pozitif kontrol: bir fonksiyonu docs'tan sil → RED.
+# REVERSE-direction doc conformance guard (code → docs). The existing conformance guard checks docs→code
+# (is the mod::fn written in docs really there — the session::has class). This is its missing half: is EVERY
+# namespaced builtin in builtin_names() documented in docs/index.html? If not it must be documented or excluded (with a reason).
+# So a new builtin cannot pass CI without being documented. Positive check: delete a function from docs → RED.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILTINS="$ROOT/cpp/src/builtins.cpp"
 DOCS="$ROOT/docs/look.codlook.com/docs.html"
 fail=0
 
-# GEREKÇELİ DIŞLAMA (known_fail DEĞİL — her biri docs'ta BAŞKA formda belgeli):
-#  - validator::* : "Rule strings" olarak belgeli (fonksiyon değil, check()'e geçen kural adları)
-#  - template::extends/block/include : {#extends}/{#block}/{#include} SÖZDİZİMİ olarak belgeli
-# Yeni bir builtin bu listeye eklenirse GEREKÇE şart (yorumla), yoksa liste known_fail'e döner.
+# JUSTIFIED EXCLUSIONS (NOT known_fail — each is documented in docs in ANOTHER form):
+#  - validator::* : documented as "Rule strings" (not functions, rule names passed to check())
+#  - template::extends/block/include : documented as {#extends}/{#block}/{#include} SYNTAX
+# If a new builtin is added to this list a REASON is required (as a comment), otherwise the list turns into known_fail.
 EXCLUDE="validator::required validator::email validator::integer validator::numeric validator::min validator::max template::extends template::block template::include"
 
-# builtin_names()'ten namespaced isimleri çıkar (mod::fn)
+# extract the namespaced names from builtin_names() (mod::fn)
 names=$(grep -oE '"[a-z_]+::[a-z_0-9]+"' "$BUILTINS" | tr -d '"' | sort -u)
 undoc=""
 for n in $names; do
-  case " $EXCLUDE " in *" $n "*) continue;; esac   # gerekçeli dışlama
+  case " $EXCLUDE " in *" $n "*) continue;; esac   # justified exclusion
   grep -qF "$n" "$DOCS" || undoc="$undoc $n"
 done
 
@@ -31,10 +31,10 @@ else
   echo "  OK   tüm namespaced builtin belgeli (veya gerekçeli dışlamada)"
 fi
 
-# BARE (namespaced-OLMAYAN) builtin'ler — KÖR NOKTAYDI: args() belgesiz eklenip guard'dan
-# geçebildi çünkü yukarıdaki tarama yalnız "mod::fn" biçimini kontrol ediyordu. Bunları da
-# denetle. Bazı bare isimler KASITEN belgesizdir: kanonik biçimi belgeli geri-uyumluluk
-# takma adları (json_encode→json::encode, strlen→string::len...). Onlar BARE_EXCLUDE'da.
+# BARE (non-namespaced) builtins — were a BLIND SPOT: args() could be added undocumented and pass the guard
+# because the scan above only checked the "mod::fn" form. Check these too.
+# Some bare names are INTENTIONALLY undocumented: backward-compatibility aliases
+# whose canonical form is documented (json_encode→json::encode, strlen→string::len...). They are in BARE_EXCLUDE.
 BARE_EXCLUDE="json_encode json_decode strlen strtolower strtoupper"
 bare=$(sed -n '/const std::vector<std::string>& builtin_names/,/return NAMES;/p' "$BUILTINS" \
   | grep -oE '"[a-z_][a-z0-9_]*"' | tr -d '"' | grep -vE '::' | sort -u)
@@ -51,7 +51,7 @@ else
   echo "  OK   tüm bare builtin belgeli (veya gerekçeli dışlamada)"
 fi
 
-# POZİTİF KONTROL: belgeli bir fonksiyon (session::regenerate) docs'tan geçici çıkarılınca guard RED vermeli.
+# POSITIVE CHECK: when a documented function (session::regenerate) is temporarily removed from docs the guard must go RED.
 if grep -qF "session::regenerate" "$DOCS"; then
   echo "  OK   pozitif-kontrol referansı mevcut (session::regenerate belgeli)"
 else

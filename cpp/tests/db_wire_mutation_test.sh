@@ -10,12 +10,12 @@ LK="$(cd "$(dirname "${1:?usage}")" && pwd)/$(basename "$1")"
 N="${2:-1500}"; SEED="${3:-1}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; s1=""; s2=""; trap '[ -n "$s1" ] && kill $s1 2>/dev/null; [ -n "$s2" ] && kill $s2 2>/dev/null; rm -rf "$T"' EXIT
-# Portlar geçici (ephemeral, 32768+) aralığın ALTINDA: orada istemci bağlantılarının TIME_WAIT
-# soketleri portu tutar ve SO_REUSEADDR'a rağmen bind EADDRINUSE verir (5 saatlik koşuda görüldü).
+# The ports are BELOW the ephemeral (32768+) range: there the TIME_WAIT sockets of client connections
+# hold the port and bind gives EADDRINUSE despite SO_REUSEADDR (seen in a 5-hour run).
 MP="${MP:-23111}"; PP="${PP:-25111}"
-# Sahte sunucu dinlemeye başlayamazsa başka portla yeniden dene — yoksa istemci "bağlanamadı" der
-# ve bu, ayrıştırıcı bulgusu sanılırdı.
-start_mutator() {   # proto port log → yazdırır: pid port
+# If the fake server cannot start listening, retry with another port — otherwise the client says "could not connect"
+# and that would be mistaken for a parser finding.
+start_mutator() {   # proto port log → prints: pid port
     local proto=$1 port=$2 log=$3 pid
     for try in 1 2 3 4 5; do
         python3 "$HERE/db_wire_mutator.py" "$proto" "$port" "$SEED" > "$log" 2>&1 & pid=$!
@@ -26,7 +26,7 @@ start_mutator() {   # proto port log → yazdırır: pid port
     done
     return 1
 }
-# read boş satırı da başarı sayar — çıktının dolu olduğunu ayrıca denetle
+# read counts an empty line as success too — separately check that the output is non-empty
 read -r s1 MP <<< "$(start_mutator mysql "$MP" "$T/my.log")"; [ -n "$s1" ] || { echo "FAIL: harness: the mysql mutator did not start"; exit 2; }
 read -r s2 PP <<< "$(start_mutator pg "$PP" "$T/pg.log")"; [ -n "$s2" ] || { echo "FAIL: harness: the pg mutator did not start"; exit 2; }
 fail=0

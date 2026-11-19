@@ -47,7 +47,7 @@ out="$(LOOK_BIN_SRC="$STUB" bash "$INST" 2>&1)"; rc=$?
 check "exit 0 ($(echo "$out" | tail -1 | cut -c1-60))" '[ "$rc" = 0 ]'
 check "lk-fcgi installed"                              '[ -x /usr/local/bin/lk-fcgi ]'
 check "the unit runs as user look"                     'grep -qx "User=look" /etc/systemd/system/look.service'
-# çerez kullanan uygulama LOOK_SECRET olmadan başlamaz → kurulum üretir; gizli kalır.
+# an app that uses cookies does not start without LOOK_SECRET → the install generates one; it stays secret.
 check "look.env is mode 0600, owned by root"           '[ "$(stat -c %a:%U /etc/look/look.env)" = 600:root ]'
 check "look.env has a 64-hex LOOK_SECRET"              'grep -qE "^LOOK_SECRET=[0-9a-f]{64}$" /etc/look/look.env'
 sec="$(sed -n 's/^LOOK_SECRET=//p' /etc/look/look.env)"

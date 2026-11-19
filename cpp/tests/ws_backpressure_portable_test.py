@@ -35,7 +35,7 @@ try:
     def frame(p):
         m = os.urandom(4); hdr = bytes([0x81]) + (bytes([0x80 | len(p)]) if len(p) < 126 else bytes([0x80 | 126]) + len(p).to_bytes(2, "big"))
         return hdr + m + bytes(b ^ m[i % 4] for i, b in enumerate(p))
-    def rss_mb():   # sunucunun yerleşik belleği — /proc olmadan da (Windows: GetProcessMemoryInfo)
+    def rss_mb():   # the server's resident memory — also without /proc (Windows: GetProcessMemoryInfo)
         if os.name == "nt":
             import ctypes, ctypes.wintypes as w
             class PMC(ctypes.Structure):
@@ -50,7 +50,7 @@ try:
         for l in open("/proc/%d/status" % srv.pid):
             if l.startswith("VmRSS:"): return int(l.split()[1]) / 1024.0
         return 0.0
-    msg = b"".join(frame(b"x") for _ in range(2000))   # küçük çerçeve seli: her biri ayrı gelen-kutusu öğesi
+    msg = b"".join(frame(b"x") for _ in range(2000))   # a flood of small frames: each is a separate inbox item
     flood = hs("/sink"); flood.setblocking(False)
     echo = hs("/ws")
     m0 = rss_mb()

@@ -15,7 +15,7 @@ named=$(cat $docs 2>/dev/null | grep -ohE '\blk(-fcgi|-cgi)(\.exe)?\b' | sort -u
 unix="lk $(echo "$named" | grep -v '\.exe$' | tr '\n' ' ')"
 win="lk.exe $(echo "$named" | grep '\.exe$' | tr '\n' ' ')"
 fail=0
-has() {   # has <zip> <regex> — zip içinde yolu regex'e uyan bir dosya var mı
+has() {   # has <zip> <regex> — is there a file in the zip whose path matches the regex
     unzip -Z1 "$1" 2>/dev/null | grep -qE "$2"
 }
 for b in $unix; do

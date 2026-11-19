@@ -1,6 +1,6 @@
-# before_route prefix guard'ı — CI kilidi. /admin/* X-Token ister; /public serbest.
-# Deterministik (header-tabanlı, cookie/db yok). Kırılırsa /admin auth'suz açılır = sessiz
-# yetki atlatması → middleware_guard_test.sh RED verir.
+# before_route prefix guard — CI lock. /admin/* requires X-Token; /public is free.
+# Deterministic (header-based, no cookie/db). If broken, /admin opens without auth = silent
+# authorization bypass → middleware_guard_test.sh goes RED.
 use string
 
 before_route(function() {

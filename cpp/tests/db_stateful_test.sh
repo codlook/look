@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# db_stateful_test.sh — PG wire-parser DURUM-DİZİLİ dayanıklılık guard'ı (kategori 1).
+# db_stateful_test.sh — PG wire-parser STATE-SEQUENCE robustness guard (category 1).
 #
-# Sahte-PG sunucusu durum-dizili/sırasız yanıtlar gönderir; istemci ÇÖKMEDEN
-# (segfault/OOM/NULL-deref) nazikçe işlemeli. 53. bug (commit_kopar) bu harness'ten
-# çıktı; bu guard kalan durum-dizili senaryoları kapatır:
-#   sirasiz     — DataRow, RowDescription'DAN ÖNCE (columns boş → default, deref yok)
-#   erken_c     — CommandComplete, hiç DataRow/RowDescription olmadan
-#   hs_error    — handshake'te AuthenticationOk yerine ErrorResponse
-#   param_seli  — 200000 ParameterStatus seli (bellek sınırlı mı?)
+# A fake PG server sends state-sequenced/out-of-order replies; the client must handle them gracefully
+# WITHOUT crashing (segfault/OOM/NULL-deref). Bug 53 (commit_kopar) came out of this harness;
+# this guard closes the remaining state-sequence scenarios:
+#   sirasiz     — DataRow BEFORE RowDescription (columns empty → default, no deref)
+#   erken_c     — CommandComplete with no DataRow/RowDescription at all
+#   hs_error    — ErrorResponse instead of AuthenticationOk in the handshake
+#   param_seli  — a flood of 200000 ParameterStatus (is memory bounded?)
 set -u
 LK="${1:-./build/lk}"
 PY="${PYTHON:-python3}"

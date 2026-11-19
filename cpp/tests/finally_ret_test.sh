@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# finally-on-return guard — doğru sıra + beklenen satırlar. BUG: finally return'de atlanıyordu
-# (VM'de try-return, eski interpreter'da catch-return) → sessiz kaynak-sızıntısı.
+# finally-on-return guard — correct order + expected lines. BUG: finally was skipped on return
+# (try-return in the VM, catch-return in the old interpreter) → silent resource leak.
 set -u
 LK="${1:-./build/lk}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -9,28 +9,28 @@ fail=0
 
 vm=$("$LK" "$APP" 2>&1)
 
-# Beklenen davranış
+# Expected behavior
 chk() { echo "$vm" | grep -qF "$1" || { echo "  FAIL: beklenen satır yok: [$1]"; fail=1; }; }
-chk "T-FIN"         # return-in-try finally çalıştı
-chk "1:42"          # dönüş değeri korundu
-chk "N-IC"          # nested iç finally
-chk "N-DIS"         # nested dış finally
-chk "C-FIN"         # return-in-catch finally çalıştı
+chk "T-FIN"         # return-in-try finally ran
+chk "1:42"          # return value preserved
+chk "N-IC"          # nested inner finally
+chk "N-DIS"         # nested outer finally
+chk "C-FIN"         # return-in-catch finally ran
 chk "3:C"
-chk "NORMAL-FIN"    # normal yol finally
+chk "NORMAL-FIN"    # normal path finally
 chk "THROW-FIN"     # caught-throw finally
-chk "B-FIN 1"       # break-out-of-try finally çalıştı
-chk "K-FIN 2"       # continue-out-of-try finally çalıştı
-chk "U-FIN"         # uncaught-throw finally çalıştı
-chk "U-CATCH:boom"  # bug #2 fix: finally-catch'siz throw PROPAGATE eder (yutulmaz) → dışta yakalanır
-chk "FIT:FINT"      # finally İÇİNDE throw → orijinali (ORIG) değiştirir (FINT dışta yakalanır)
+chk "B-FIN 1"       # break-out-of-try finally ran
+chk "K-FIN 2"       # continue-out-of-try finally ran
+chk "U-FIN"         # uncaught-throw finally ran
+chk "U-CATCH:boom"  # bug #2 fix: a throw without catch PROPAGATES through finally (not swallowed) → caught outside
+chk "FIT:FINT"      # throw INSIDE finally → replaces the original (ORIG) (FINT is caught outside)
 
-# finally BİR kez (çift-çalışma yok) — normal yolda NORMAL-FIN tam 1 kere
+# finally ONCE (no double run) — on the normal path NORMAL-FIN exactly 1 time
 n=$(echo "$vm" | grep -cF "NORMAL-FIN")
 [ "$n" -eq 1 ] || { echo "  FAIL: NORMAL-FIN $n kez (1 olmalı — finally çift-çalışıyor)"; fail=1; }
 
-# bug #2 açık pozitif-kontrol: catch'siz try-finally exception'ı YUTMAMALI. Ayrı program:
-# "Z" (finally) yazılmalı AMA "YUTULDU" (sonraki satır) YAZILMAMALI + exit≠0 (propagate).
+# explicit positive control for bug #2: try-finally without catch must NOT SWALLOW the exception. Separate program:
+# "Z" (finally) must be printed BUT "YUTULDU" (next line) must NOT BE PRINTED + exit≠0 (propagate).
 tmp2="$(mktemp)"
 printf 'try { throw "err" } finally { print("Z") }\nprint("YUTULDU")\n' > "$tmp2"
 out=$("$LK" "$tmp2" 2>&1); rc=$?
