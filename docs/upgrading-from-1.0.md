@@ -302,7 +302,8 @@ A string that is not a number at all keeps the lenient rule: `int("abc")` is `0`
 
 `len($s)`, documented as the short form of `string::len`, counted bytes: `len("éé")` was `4`.
 It now counts characters, as `string::len` does (`2`); so does `count($s)`. Lists and maps are
-unchanged.
+unchanged. Where you need the number of bytes (a `Content-Length`, binary data, a protocol
+field), use `strlen($s)`: `strlen("éé")` is `4`.
 
 ### `array::slice` with a negative length leaves elements out at the end — was an empty list
 

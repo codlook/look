@@ -350,7 +350,8 @@ if (type::is_array($x)) { }    # same, namespaced
 
 | Function | Description |
 | --- | --- |
-| count($arr) | Number of array elements |
+| len($v) / count($v) | Number of elements of a list or map; number of **characters** of a text |
+| strlen($s) | Number of **bytes** of a text (UTF-8) |
 | int($v) | Convert to integer |
 | float($v) | Convert to float |
 | string($v) | Convert to string |
@@ -359,6 +360,8 @@ if (type::is_array($x)) { }    # same, namespaced
 | is_int($v) … is_function($v) | Type predicates (also as `type::is_*`) — see [type::](#type) |
 | print($v) | Output (writes to the HTTP response body) |
 | write($v) | Same as print() |
+
+> **Characters or bytes — which function counts what.** `len($s)`, `count($s)` and `string::len($s)` count **characters**: `len("éé")` is `2`. Use them for anything a person reads, such as "at most 20 characters". `strlen($s)` counts **bytes**: `strlen("éé")` is `4`. Use it when bytes matter: a `Content-Length`, binary data, a protocol field. For ASCII text the two are equal. On a list or map, `len` and `count` give the number of elements.
 
 ## const / iota — Constant Groups
 
@@ -3253,7 +3256,7 @@ $n  = math::random(1, 6)  # rolling a die
 | string::regex_replace($s, $pat, $rep) | Replace with a regex → string |
 | string::regex_match_all($s, $pat) | Returns all matches → `[[full, group1, ...], ...]` |
 
-> **UTF-8 aware.** `len`, `substr`, `reverse` operate on Unicode characters (code points), not bytes — so `string::len("İstanbul")` is `8` and `substr`/`reverse` never split a multi-byte character into invalid UTF-8. `upper`/`lower` are **locale-independent** (like most languages: `i↔I`); Turkish letters (ç, ğ, ö, ş, ü, ı, İ) map to their standard Unicode counterparts.
+> **UTF-8 aware.** `len`, `substr`, `reverse` operate on Unicode characters (code points), not bytes — so `string::len("İstanbul")` is `8` and `substr`/`reverse` never split a multi-byte character into invalid UTF-8. For the number of bytes use `strlen($s)` (`strlen("İstanbul")` is `9`). `upper`/`lower` are **locale-independent** (like most languages: `i↔I`); Turkish letters (ç, ğ, ö, ş, ü, ı, İ) map to their standard Unicode counterparts.
 
 ```lk
 use string

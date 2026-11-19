@@ -508,7 +508,8 @@ look-fcgi --mode http --port 8080</code></pre>
   <h3>Built-in Functions</h3>
   <table>
     <tr><th>Function</th><th>Description</th></tr>
-    <tr><td>count($arr)</td><td>Number of array elements</td></tr>
+    <tr><td>len($v) / count($v)</td><td>Number of elements of a list or map; number of <strong>characters</strong> of a text</td></tr>
+    <tr><td>strlen($s)</td><td>Number of <strong>bytes</strong> of a text (UTF-8)</td></tr>
     <tr><td>int($v)</td><td>Convert to integer</td></tr>
     <tr><td>float($v)</td><td>Convert to float</td></tr>
     <tr><td>string($v)</td><td>Convert to string</td></tr>
@@ -518,6 +519,8 @@ look-fcgi --mode http --port 8080</code></pre>
     <tr><td>print($v)</td><td>Output (writes to the HTTP response body)</td></tr>
     <tr><td>write($v)</td><td>Same as print()</td></tr>
   </table>
+
+  <div class="callout"><p><strong>Characters or bytes — which function counts what.</strong> <code>len($s)</code>, <code>count($s)</code> and <code>string::len($s)</code> count <strong>characters</strong>: <code>len("éé")</code> is <code>2</code>. Use them for anything a person reads, such as "at most 20 characters". <code>strlen($s)</code> counts <strong>bytes</strong>: <code>strlen("éé")</code> is <code>4</code>. Use it when bytes matter: a <code>Content-Length</code>, binary data, a protocol field. For ASCII text the two are equal. On a list or map, <code>len</code> and <code>count</code> give the number of elements.</p></div>
 </section>
 
 <section id="const-iota">
@@ -3209,7 +3212,7 @@ route(<span class="str">"GET"</span>, <span class="str">"/api/stats"</span>, <sp
   </table>
 
   <div class="callout">
-    <p><strong>UTF-8 aware.</strong> <code>len</code>, <code>substr</code>, <code>reverse</code> operate on Unicode characters (code points), not bytes — so <code>string::len("İstanbul")</code> is <code>8</code> and <code>substr</code>/<code>reverse</code> never split a multi-byte character into invalid UTF-8. <code>upper</code>/<code>lower</code> are <strong>locale-independent</strong> (like most languages: <code>i↔I</code>); Turkish letters (ç, ğ, ö, ş, ü, ı, İ) map to their standard Unicode counterparts.</p>
+    <p><strong>UTF-8 aware.</strong> <code>len</code>, <code>substr</code>, <code>reverse</code> operate on Unicode characters (code points), not bytes — so <code>string::len("İstanbul")</code> is <code>8</code> and <code>substr</code>/<code>reverse</code> never split a multi-byte character into invalid UTF-8. For the number of bytes use <code>strlen($s)</code> (<code>strlen("İstanbul")</code> is <code>9</code>). <code>upper</code>/<code>lower</code> are <strong>locale-independent</strong> (like most languages: <code>i↔I</code>); Turkish letters (ç, ğ, ö, ş, ü, ı, İ) map to their standard Unicode counterparts.</p>
   </div>
 
   <pre><code><span class="kw">use</span> <span class="ns">string</span>
