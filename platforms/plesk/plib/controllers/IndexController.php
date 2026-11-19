@@ -1,13 +1,13 @@
 <?php
-// Plesk Obsidian MVC controller — Extensions paneli UI'yi buradan dispatch eder
+// Plesk Obsidian MVC controller — the Extensions panel dispatches the UI from here
 // (/usr/local/psa/admin/plib/modules/look-lang/controllers/IndexController.php).
-// Kendi kendine yeten htdocs/index.php'ye köprü kurar: auto_setup + AJAX (?action)
-// + sayfa render (phtml). Böylece tek mantık yeri korunur.
+// Bridges to the self-contained htdocs/index.php: auto_setup + AJAX (?action)
+// + page render (phtml). This keeps a single place for the logic.
 class IndexController extends pm_Controller_Action
 {
     public function indexAction()
     {
-        // htdocs/index.php doğrudan HTML/JSON basar → Zend layout/view'i kapat.
+        // htdocs/index.php emits HTML/JSON directly → turn off the Zend layout/view.
         $this->_helper->layout->disableLayout();
         $this->_helper->viewRenderer->setNoRender(true);
 

@@ -15,7 +15,7 @@ jobs:
   sanitizers:
     name: "Regression under ASan/UBSan"
     runs-on: ubuntu-latest
-    timeout-minutes: 20   # güvenlik ağı: ASan HTTP smoke'ta --max-time'sız curl bir deadlock'ta asılırsa erken kes
+    timeout-minutes: 20   # safety net: if a curl without --max-time hangs on a deadlock in the ASan HTTP smoke, cut early
 
     steps:
       - uses: actions/checkout@v4
@@ -27,15 +27,15 @@ jobs:
           # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
           if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
 
-      # (Release build + regresyon için bkz. ci.yml — burası yalnızca sanitizer.)
+      # (For the Release build + regression see ci.yml — this is only for sanitizers.)
       - name: Build (ASan + UBSan)
         run: |
           cd cpp
           cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLOOK_SANITIZE=address,undefined
           cmake --build build-asan --target look --target look-fcgi --parallel $(nproc)
 
-      # Regresyon suite'i ASan+UBSan altında — dil işlemleri sırasında bellek
-      # hatası / tanımsız davranış varsa sanitizer abort eder, iş kırılır.
+      # The regression suite under ASan+UBSan — if there is a memory
+      # error / undefined behaviour during language operations the sanitizer aborts and the job breaks.
       - name: Regression suite (ASan + UBSan)
         run: |
           cd cpp
@@ -46,8 +46,8 @@ jobs:
           ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=0"
           UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
 
-      # HTTP sunucusunu ASan altında ayağa kaldır, normal + bozuk istekler gönder,
-      # worker'ın hayatta kaldığını (sanitizer abort YOK) doğrula.
+      # Bring the HTTP server up under ASan, send normal + malformed requests, verify
+      # that the worker survives (NO sanitizer abort).
       - name: HTTP smoke under ASan
         run: |
           printf 'route("GET","/",function(){response::json(["ok"=>true])})\nroute("GET","/sess",function(){session::start();session::set("k","v");response::json(["has"=>session::has("k"),"no"=>session::has("z")])})\nroute("404",function(){response::status(404);response::json(["ok"=>false])})\n' > /tmp/app.lk
@@ -55,18 +55,18 @@ jobs:
           SRV=$!
           sleep 3
           curl -s "http://127.0.0.1:7411/" | grep -q '"ok":true'
-          # session::has — docs'ta belgeli, bir dönem EKSİKTİ (dogfooding #1). set→has=true, olmayan=false.
+          # session::has — documented in the docs, once MISSING (dogfooding #1). set→has=true, nonexistent=false.
           curl -s "http://127.0.0.1:7411/sess" | grep -q '"has":true,"no":false' || { echo "::error::session::has KIRIK"; exit 1; }
-          curl -s "http://127.0.0.1:7411/yok" > /dev/null           # 404 yolu
+          curl -s "http://127.0.0.1:7411/yok" > /dev/null           # 404 path
           printf 'GET / HTTP/1.1\r\nContent-Length: abc\r\n\r\n' | curl -s --max-time 3 "http://127.0.0.1:7411/" > /dev/null || true
-          # sunucu hâlâ ayakta mı? (ASan çökmesi olsaydı bağlantı reddedilirdi)
+          # is the server still alive? (an ASan crash would have refused the connection)
           curl -s --max-time 3 "http://127.0.0.1:7411/" | grep -q '"ok":true'
           kill $SRV 2>/dev/null || true
 
   tsan:
     name: "ThreadSanitizer (blocking mode)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20   # güvenlik ağı: hang olursa 6-saat GitHub varsayılanı yerine erken kes
+    timeout-minutes: 20   # safety net: if it hangs, cut early instead of the 6-hour GitHub default
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
@@ -76,8 +76,8 @@ jobs:
           # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
           if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
 
-      # TSan blocking-mode data race taraması. Fiber path'i ucontext annotation
-      # gerektirdiği için ayrı; burada production default (blocking) taranır.
+      # TSan blocking-mode data race scan. The fiber path needs ucontext annotation,
+      # so it is separate; here the production default (blocking) is scanned.
       - name: Build (TSan)
         run: |
           cd cpp
@@ -90,13 +90,13 @@ jobs:
           TSAN_OPTIONS="halt_on_error=0" cpp/build-tsan/lk-fcgi --mode http --port 7411 --workers 8 /tmp/tsan_app.lk &
           SRV=$!
           sleep 3
-          # SADECE curl PID'lerini bekle — argümansız 'wait' sunucuyu ($SRV, --mode http sonsuz) da
-          # beklerdi → asla dönmez, 'kill $SRV' hiç çalışmaz, job 6 saat hang olurdu (kök-neden).
+          # Wait ONLY for the curl PIDs — a bare 'wait' without arguments would also wait for the server ($SRV, --mode http is endless)
+          # → it would never return, 'kill $SRV' would never run, the job would hang for 6 hours (root cause).
           pids=""
           for i in $(seq 1 500); do curl -s "http://127.0.0.1:7411/ping" > /dev/null & pids="$pids $!"; done
           wait $pids
           kill $SRV 2>/dev/null || true
-        continue-on-error: true  # TSan bulguları baseline kurulana dek uyarı
+        continue-on-error: true  # TSan findings are a warning until a baseline is established
 
       # setup arrays are shared between request threads and copied on write. Writers and
       # readers run at once on 4 workers; any ThreadSanitizer report fails the job.

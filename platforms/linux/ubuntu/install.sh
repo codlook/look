@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 # ============================================================================
-# LOOK — Ubuntu/Debian tek-komut kurulum
+# LOOK — Ubuntu/Debian single-command install
 #
-#   1) look-lang-linux.zip indir (GitHub Releases):
+#   1) download look-lang-linux.zip (GitHub Releases):
 #      https://github.com/codlook/look/releases/latest/download/look-lang-linux.zip
-#   2) unzip look-lang-linux.zip -d look-lang && cd look-lang   (zip'te üst klasör yok)
-#   3) sudo bash install.sh      # bin/ zip'in içinde gömülü — indirme yok
+#   2) unzip look-lang-linux.zip -d look-lang && cd look-lang   (the zip has no top-level folder)
+#   3) sudo bash install.sh      # bin/ is embedded in the zip — no download
 #
-# Ne yapar: binary'yi kurar → örnek uygulama + .env → systemd servisi →
-# başlatır → doğrular. Geliştirici tek komutla çalışan bir LOOK sunucusu alır.
+# What it does: installs the binary → sample app + .env → systemd service →
+# starts it → verifies. The developer gets a working LOOK server with a single command.
 #
-# Ayarlar (env ile geçilebilir):
-#   LOOK_PORT=9000            HTTP portu
-#   LOOK_WORKERS=0            0 = otomatik (CPU*4, max 64)
-#   LOOK_APP_DIR=/var/www/look   uygulama dizini
-#   LOOK_BIN_SRC=<yol>        yerel binary klasörü (lk, lk-fcgi) — offline kurulum
-#   LOOK_BIN_URL=<url>        opsiyonel: loose binary (lk, lk-fcgi) sunan bir ayna kök URL'si
-#                             (normalde gerekmez — release zip'i bin/ ile gelir)
+# Settings (can be passed through the environment):
+#   LOOK_PORT=9000            HTTP port
+#   LOOK_WORKERS=0            0 = automatic (CPU*4, max 64)
+#   LOOK_APP_DIR=/var/www/look   application directory
+#   LOOK_BIN_SRC=<yol>        local binary folder (lk, lk-fcgi) — offline install
+#   LOOK_BIN_URL=<url>        optional: root URL of a mirror serving loose binaries (lk, lk-fcgi)
+#                             (normally not needed — the release zip comes with bin/)
 # ============================================================================
 set -euo pipefail
 
-# Seçenek yok; ayarlar ortam değişkeniyle. Eskiden verilen her seçenek sessizce yok sayılıyordu
-# (belge --with-nginx diyordu: kullanıcı nginx kuruldu sandı, port dışarıya açık kaldı).
-# Bilinmeyen seçenek → hiçbir şey kurmadan, nedenini söyleyerek dur.
+# No options; settings are environment variables. Any option given used to be ignored silently
+# (the documentation said --with-nginx: the user thought nginx was installed and the port stayed open to the outside).
+# Unknown option → stop without installing anything, saying why.
 usage() {
   cat <<'USAGE'
 Usage: sudo bash install.sh
@@ -58,8 +58,8 @@ LOOK_BIN_URL="${LOOK_BIN_URL:-}"
 BIN_DIR=/usr/local/bin
 ETC_DIR=/etc/look
 
-# Self-contained kurulum: script'in yanindaki bin/ klasorunde binary varsa onu kullan
-# (release zip'inden cikarilinca 'sudo bash install.sh' dogrudan calisir, indirme yok).
+# Self-contained install: if there is a binary in the bin/ folder next to the script, use it
+# (once extracted from the release zip, 'sudo bash install.sh' works directly, no download).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -z "${LOOK_BIN_SRC:-}" ] && [ -f "$SCRIPT_DIR/bin/lk-fcgi" ]; then
   LOOK_BIN_SRC="$SCRIPT_DIR/bin"
@@ -71,15 +71,15 @@ ok()   { echo -e "${c_g}✓${c_0} $*"; }
 warn() { echo -e "${c_y}!${c_0} $*"; }
 die()  { echo -e "${c_r}✗ $*${c_0}" >&2; exit 1; }
 
-# ── 0. Ön kontroller ────────────────────────────────────────────────────────
+# ── 0. Preliminary checks ────────────────────────────────────────────────────────
 [ "$(id -u)" = "0" ] || die "root required — run it with 'sudo'."
-# curl yalnizca indirme (LOOK_BIN_URL) yolunda gerekir; self-contained zip'te bin/
-# gomulu oldugundan cogu zaman hic kullanilmaz. Yoksa distro-bagimsiz kur.
+# curl is needed only on the download path (LOOK_BIN_URL); with the self-contained zip, bin/
+# is embedded, so it is mostly never used. If missing, install it in a distro-independent way.
 if ! command -v curl >/dev/null 2>&1; then
-  # curl KURULUMU opsiyonel/kolaylık — self-contained zip'te (bin/ gömülü) hiç kullanılmaz.
-  # set -e altında ağ yoksa 'apt-get install' patlar ve KRİTİK binary kurulumundan ÖNCE tüm
-  # script'i düşürür (XAMPP install.ps1 bug'ının kardeşi). '|| true' ile best-effort yap;
-  # curl gerçekten gerekiyorsa (indirme yolu) install_bin'in kendi 'die'ı net hata verir.
+  # Installing curl is optional/a convenience — it is never used with the self-contained zip (bin/ embedded).
+  # Under set -e, with no network 'apt-get install' fails and kills the whole script BEFORE the CRITICAL
+  # binary install (sibling of the XAMPP install.ps1 bug). Make it best-effort with '|| true';
+  # if curl is really needed (download path), install_bin's own 'die' gives a clear error.
   if   command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq curl || true
   elif command -v dnf     >/dev/null 2>&1; then dnf install -y -q curl || true
   elif command -v yum     >/dev/null 2>&1; then yum install -y -q curl || true
@@ -89,8 +89,8 @@ ARCH="$(uname -m)"; [ "$ARCH" = "x86_64" ] || warn "tested architecture is x86_6
 . /etc/os-release 2>/dev/null || true
 say "Starting installation — ${ID:-linux} ${VERSION_ID:-} · port ${LOOK_PORT}"
 
-# ── 1. Binary'yi getir ────────────────────────────────────────────────────────
-install_bin() { # $1 = isim
+# ── 1. Fetch the binary ────────────────────────────────────────────────────────
+install_bin() { # $1 = name
   local name="$1"
   if [ -n "${LOOK_BIN_SRC:-}" ] && [ -f "$LOOK_BIN_SRC/$name" ]; then
     install -m 0755 "$LOOK_BIN_SRC/$name" "$BIN_DIR/$name"
@@ -105,14 +105,14 @@ install_bin() { # $1 = isim
 say "Installing binaries → $BIN_DIR/{lk, lk-fcgi}"
 install_bin lk
 install_bin lk-fcgi
-# lk-cgi (Apache CGI için) 1.0.41'den beri pakette; elle verilen eski bir klasörde yoksa atlanır.
+# lk-cgi (for Apache CGI) has been in the package since 1.0.41; skipped if an old, manually supplied folder lacks it.
 if [ -n "${LOOK_BIN_SRC:-}" ] && [ -f "$LOOK_BIN_SRC/lk-cgi" ]; then
   install -m 0755 "$LOOK_BIN_SRC/lk-cgi" "$BIN_DIR/lk-cgi"
   ok "lk-cgi → $BIN_DIR/lk-cgi"
 fi
 ok "lk $("$BIN_DIR/lk" --version 2>/dev/null || echo '(installed)')"
 
-# ── 2. Uygulama + .env ────────────────────────────────────────────────────────
+# ── 2. Application + .env ────────────────────────────────────────────────────────
 mkdir -p "$LOOK_APP_DIR" "$ETC_DIR"
 if [ ! -f "$LOOK_APP_DIR/index.lk" ]; then
   cat > "$LOOK_APP_DIR/index.lk" <<'APP'
@@ -141,11 +141,11 @@ LOOK_WORKERS=$LOOK_WORKERS
 # LOOK_IMAP_PORT=143
 # LOOK_MAIL_DIR=/var/mail/look
 ENV
-# Gizli değerler (DB_DSN parolası, LOOK_SECRET) burada: yalnız root okur (systemd EnvironmentFile'ı
-# root olarak okur, servis değerleri ortamdan alır). Eskiden 0644'tü — sunucudaki her kullanıcı okurdu.
+# Secret values (DB_DSN password, LOOK_SECRET) are here: only root reads them (systemd reads the EnvironmentFile
+# as root, the service gets the values from the environment). It used to be 0644 — every user on the server could read it.
 chown root:root "$ETC_DIR/look.env"; chmod 600 "$ETC_DIR/look.env"
-# LOOK_SECRET — çerez kullanan uygulama onsuz başlamaz (CSRF imzası). İşletim sisteminin kriptografik
-# kaynağından üretilir; ekrana, log'a, komut satırına yazılmaz. Varsa dokunulmaz (her sunucuda aynı olmalı).
+# LOOK_SECRET — an application that uses cookies does not start without it (CSRF signature). It is generated from the operating system's cryptographic
+# source; it is never written to the screen, the log or the command line. If present it is left alone (it must be the same on every server).
 if ! grep -q '^LOOK_SECRET=' "$ETC_DIR/look.env"; then
   secret="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
   [ "${#secret}" = 64 ] || die "could not read 32 random bytes from /dev/urandom"
@@ -156,9 +156,9 @@ if ! grep -q '^LOOK_SECRET=' "$ETC_DIR/look.env"; then
 fi
 ok "configuration: $ETC_DIR/look.env"
 
-# ── 3. Servis kullanıcısı ─────────────────────────────────────────────────────
-# Servis root olarak çalışıyordu (User= yoktu): uygulamadaki bir açık bütün sunucuyu verirdi.
-# Artık kendi sistem kullanıcısı: uygulama dizini ona ait (SQLite, yüklenen dosyalar yazılabilsin).
+# ── 3. Service user ─────────────────────────────────────────────────────
+# The service used to run as root (no User=): a hole in the application would have given away the whole server.
+# Now it has its own system user: the application directory belongs to it (so SQLite and uploaded files can be written).
 if ! id look >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/look --no-create-home --shell /usr/sbin/nologin look \
     || die "could not create the system user 'look'"
@@ -166,7 +166,7 @@ if ! id look >/dev/null 2>&1; then
 fi
 chown -R look:look "$LOOK_APP_DIR"
 
-# ── 4. systemd servisi ────────────────────────────────────────────────────────
+# ── 4. systemd service ────────────────────────────────────────────────────────
 UNIT=/etc/systemd/system/look.service
 cat > "$UNIT" <<UNITEOF
 [Unit]
@@ -178,8 +178,8 @@ Type=simple
 User=look
 Group=look
 EnvironmentFile=$ETC_DIR/look.env
-# Oturum dosyaları kalıcı, yalnız look kullanıcısına ait 0700 dizinde (yeniden başlatmada düşmez);
-# /tmp servise özel. Düşük portlar (80, 25) root olmadan da açılabilsin.
+# Session files are persistent, in a 0700 directory owned only by the look user (they survive a restart);
+# /tmp is private to the service. Low ports (80, 25) can be opened without root.
 StateDirectory=look
 StateDirectoryMode=0700
 Environment=LOOK_SESSION_DIR=/var/lib/look/sessions
@@ -196,7 +196,7 @@ WantedBy=multi-user.target
 UNITEOF
 ok "systemd unit: $UNIT"
 
-# ── 5. Başlat + doğrula ───────────────────────────────────────────────────────
+# ── 5. Start + verify ───────────────────────────────────────────────────────
 HAS_SYSTEMD=0
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then HAS_SYSTEMD=1; fi
 
@@ -215,7 +215,7 @@ else
   echo "    lk-fcgi --mode http --port $LOOK_PORT $LOOK_APP_DIR/index.lk"
 fi
 
-# ── 6. Özet ───────────────────────────────────────────────────────────────────
+# ── 6. Summary ───────────────────────────────────────────────────────────────────
 echo
 ok "LOOK installed 🎉"
 echo -e "   App      : ${c_b}$LOOK_APP_DIR/index.lk${c_0}  (edit it; the service reloads automatically)"

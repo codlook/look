@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# LOOK — AlmaLinux/RHEL RPM paketi üret (dnf install/update look-lang).
+# LOOK — build the AlmaLinux/RHEL RPM package (dnf install/update look-lang).
 #
-# Binary DİNAMİK OpenSSL'e bağlanır (kurumsal doğru yol): 'dnf update openssl-libs'
-# güvenlik yamasını bize de yansıtır, crypto-policies/FIPS'e uyulur. libstdc++/gcc
-# STATİK linklenir (gcc-toolset-12 binary'si stok AlmaLinux 8 libstdc++'ında
-# GLIBCXX_3.4.29 eksikliği yaşamasın).
+# The binary links to OpenSSL DYNAMICALLY (the right enterprise path): 'dnf update openssl-libs'
+# carries the security patch through to us as well, and crypto-policies/FIPS are respected. libstdc++/gcc
+# are linked STATICALLY (so a gcc-toolset-12 binary does not hit the missing
+# GLIBCXX_3.4.29 in the stock AlmaLinux 8 libstdc++).
 #
-# Çalıştırma (repo kökünden, Docker):
+# Run (from the repo root, Docker):
 #   docker run --rm -v "$PWD:/look" -w /look almalinux:8 bash platforms/linux/rpm/build-rpm.sh
 set -euo pipefail
 VERSION="${VERSION:-$(bash "$(dirname "$0")/../../version.sh")}"
@@ -16,7 +16,7 @@ dnf install -y --setopt=sslverify=false gcc-toolset-12 cmake make openssl-devel 
     rpm-build rpmdevtools > /tmp/dnf.log 2>&1
 source /opt/rh/gcc-toolset-12/enable
 
-# ── 1. DİNAMİK binary derle (sistem OpenSSL + statik libstdc++) ────────────────
+# ── 1. Build the DYNAMIC binary (system OpenSSL + static libstdc++) ────────────────
 cd /look/cpp
 rm -rf build-rpm
 cmake -S . -B build-rpm -DCMAKE_BUILD_TYPE=Release \
@@ -27,13 +27,13 @@ cmake --build build-rpm --target look look-fcgi look-cgi -j8 > /tmp/build.log 2>
 echo "[rpm] binary built (dynamic OpenSSL):"
 ldd build-rpm/lk-fcgi | grep -iE "ssl|crypto" | sed 's/^/    /' || echo "    (!! OpenSSL must not be static)"
 
-# ── 2. rpmbuild ağacı ─────────────────────────────────────────────────────────
+# ── 2. rpmbuild tree ─────────────────────────────────────────────────────────
 RPMTOP=/root/rpmbuild
 rpmdev-setuptree
 cp build-rpm/lk build-rpm/lk-fcgi build-rpm/lk-cgi "$RPMTOP/SOURCES/"
 cp "$SPEC" "$RPMTOP/SPECS/"
 
-# ── 3. RPM üret ───────────────────────────────────────────────────────────────
+# ── 3. Build the RPM ───────────────────────────────────────────────────────────────
 rpmbuild -bb "$RPMTOP/SPECS/look-lang.spec" > /tmp/rpmbuild.log 2>&1 || { echo "RPMBUILD FAIL"; tail -20 /tmp/rpmbuild.log; exit 1; }
 RPM=$(find "$RPMTOP/RPMS" -name "look-lang-${VERSION}*.rpm" | head -1)
 mkdir -p /look/platforms/linux/rpm/out

@@ -1,8 +1,8 @@
 #!/bin/bash
-# LOOK Language — Domain devre disi birak
-# Kullanim: disable.sh <svc_name> [<domain>] [remove]
-# 'remove' (panelde domain kaldirma): unit dosyasini ve <svc>.service.d klasorunu da siler;
-# yoksa (Stop) unit kalir, Start ile yeniden baslatilabilir.
+# LOOK Language — disable a domain
+# Usage: disable.sh <svc_name> [<domain>] [remove]
+# 'remove' (removing a domain in the panel): also deletes the unit file and the <svc>.service.d folder;
+# otherwise (Stop) the unit stays and can be started again with Start.
 
 set -e
 
@@ -15,9 +15,9 @@ if [ -z "$SVC_NAME" ]; then
     exit 1
 fi
 
-# GUVENLIK: SVC_NAME sudo systemctl stop/disable'a gidiyor. look-* kisitlamasi olmadan
-# panel kullanicisi ARBITRARY servisi (sshd, mariadb) root olarak durdurabilir (cok-kiracili
-# DoS). look-* zorunlu + gecerli unit karakterlerine daralt. DOMAIN de dosya yolu/rm'e giriyor.
+# SECURITY: SVC_NAME goes to sudo systemctl stop/disable. Without the look-* restriction
+# the panel user could stop an ARBITRARY service (sshd, mariadb) as root (multi-tenant
+# DoS). Require look-* + narrow to valid unit characters. DOMAIN also goes into a file path/rm.
 SVC_NAME=$(printf '%s' "$SVC_NAME" | tr -cd 'A-Za-z0-9.-')
 DOMAIN=$(printf '%s' "$DOMAIN" | tr -cd 'A-Za-z0-9.-')
 case "$SVC_NAME" in
@@ -34,10 +34,10 @@ if [ "$REMOVE" = "remove" ]; then
     /bin/systemctl daemon-reload
 fi
 
-# vhost config: Apache vekil kuralı kalkar, yerine /.look* dosyalarını reddeden kural kalır.
-# Eskiden dosyalar silinirdi: Apache web kökünü düz dosya olarak sunmaya döner ve web kökündeki
-# /.look.env (veritabanı parolası) indirilebilirdi. Kural site durduğu sürece kalır; site yeniden
-# etkinleştirilince enable.sh dosyaları vekil kuralıyla (aynı reddetme kuralı dahil) yazar.
+# vhost config: the Apache proxy rule is removed and a rule that denies /.look* files stays in its place.
+# Files used to be deleted: Apache reverted to serving the web root as plain files and the /.look.env
+# in the web root (database password) could be downloaded. The rule stays as long as the site is stopped; when the site is
+# enabled again, enable.sh writes the files with the proxy rule (including the same deny rule).
 if [ -n "$DOMAIN" ]; then
     CONF_DIR="/var/www/vhosts/system/${DOMAIN}/conf"
     mkdir -p "$CONF_DIR"
@@ -48,7 +48,7 @@ if [ -n "$DOMAIN" ]; then
         printf '%s\n' "$DENY_CONF" > "$CONF_DIR/$f"
     done
 
-    # websrvmng Plesk Obsidian'da yok; httpdmng olmadan vhost.conf silinse de Apache eski proxy'yi tutar
+    # websrvmng does not exist in Plesk Obsidian; without httpdmng Apache keeps the old proxy even if vhost.conf is deleted
     if [ -x /usr/local/psa/admin/bin/httpdmng ]; then
         /usr/local/psa/admin/bin/httpdmng --reconfigure-domain "$DOMAIN" >/dev/null 2>&1 || true
     elif [ -x /usr/local/psa/admin/sbin/websrvmng ]; then

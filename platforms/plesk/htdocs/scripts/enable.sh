@@ -1,15 +1,15 @@
 #!/bin/bash
-# LOOK Language — Domain etkinlestirme
-# Kullanim: enable.sh <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
-# Ornek:    enable.sh look.codlook.com /var/www/.../index.lk 4 fcgi 9100 /var/www/.../.look.env 1G
-#   <memory>: sitenin bellek tavani (systemd MemoryMax) — 512M, 2G; "auto" ya da bos = otomatik
-#   (makine belleginin %25'i, en cok 1G, en az 256M); "off" = tavan yok. LOOK bu tavanin %80'ini kendi
-#   siniri yapar (LOOK_MEMORY_LIMIT otomatik; include/look/mem_budget.h).
+# LOOK Language — enable a domain
+# Usage: enable.sh <domain> <script> <workers> <mode> <port> [<env-file> [<memory>]]
+# Example:    enable.sh look.codlook.com /var/www/.../index.lk 4 fcgi 9100 /var/www/.../.look.env 1G
+#   <memory>: the site's memory cap (systemd MemoryMax) — 512M, 2G; "auto" or empty = automatic
+#   (25% of the machine's memory, at most 1G, at least 256M); "off" = no cap. LOOK makes 80% of this cap its own
+#   limit (LOOK_MEMORY_LIMIT automatic; include/look/mem_budget.h).
 #
-# Servis ASLA root calismaz: unit'e User= olarak domain'in sistem kullanicisi (document
-# root'un sahibi) yazilir. Ortam dosyasini systemd (root) degil, o kullanici okur
-# (look-env.sh) — EnvironmentFile= root ile okudugundan, site sahibi baska sitenin
-# .look.env'ine symlink verip onun sifrelerini kendi sureci icine alabilirdi.
+# The service NEVER runs as root: the domain's system user (the owner of the document
+# root) is written into the unit as User=. The environment file is read by that user, not by systemd (root)
+# (look-env.sh) — since EnvironmentFile= reads as root, a site owner could symlink to another site's
+# .look.env and pull its secrets into their own process.
 
 set -e
 
@@ -26,11 +26,11 @@ if [ -z "$DOMAIN" ] || [ -z "$SCRIPT" ] || [ -z "$PORT" ]; then
     exit 1
 fi
 
-# GUVENLIK (derinlemesine savunma): cagiranin (PHP) dogruladigina GUVENME. Bu script
-# sudoers'ta '*' joker'iyle cagrilabilir ve icerigi asagida TIRNAKSIZ heredoc ile systemd
-# unit'ine yaziliyor; sanitizasyon olmadan gomulu satir-sonu iceren bir arg, unit'e kendi
-# direktifini enjekte edip 'sudo systemctl restart' ile root komut kosturur. Kaynagi ne
-# olursa olsun arglari daralt:
+# SECURITY (defense in depth): do NOT trust what the caller (PHP) validated. This script
+# can be called with a '*' wildcard in sudoers and its content is written into the systemd
+# unit below through an UNQUOTED heredoc; without sanitization an arg with an embedded line end injects its own
+# directive into the unit and runs a root command via 'sudo systemctl restart'. Whatever its
+# source, narrow the args:
 DOMAIN=$(printf '%s' "$DOMAIN" | tr -cd 'A-Za-z0-9.-')
 SCRIPT=$(printf '%s' "$SCRIPT" | tr -cd 'A-Za-z0-9._/-')
 WORKERS=$(printf '%s' "$WORKERS" | tr -cd '0-9'); WORKERS="${WORKERS:-4}"
@@ -45,16 +45,16 @@ esac
 case "$SCRIPT" in *..*) echo "ERROR: path traversal" >&2; exit 1 ;; esac
 ENV_FILE=$(printf '%s' "$ENV_FILE" | tr -cd 'A-Za-z0-9._/-')
 case "$ENV_FILE" in *..*) echo "ERROR: path traversal" >&2; exit 1 ;; esac
-# Servis root olmadigindan 1024 alti portu acamaz — systemd'nin anlasilmaz hatasi yerine burada soyle
+# The service is not root, so it cannot open a port below 1024 — say so here instead of systemd's cryptic error
 if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
     echo "ERROR: port must be between 1024 and 65535 (the service does not run as root)" >&2; exit 1
 fi
 
-# ─── Bellek tavani (systemd MemoryMax) ──────────────────────────────────────
-# Tek bir site sunucunun bellegini (MySQL, oteki siteler) bitiremesin. Otomatik deger olculdu
-# (test sunucusu, 2026-11-15): LookPress sitesi bosta ve uc paralel tarama altinda 24 MB; 1G tavan
-# ~40 kat pay birakir, LOOK %80'ini (≈ 819 MiB) siniri yapar, tek istek 256 MiB'de kalir. Kucuk
-# makinede (2 GB) makinenin dortte biri: 512M. Unit'e yazildigindan (heredoc) yalniz rakam + M/G.
+# ─── Memory cap (systemd MemoryMax) ──────────────────────────────────────
+# A single site must not exhaust the server's memory (MySQL, other sites). The automatic value was measured
+# (test server, 2026-11-15): a LookPress site uses 24 MB idle and under three parallel scans; a 1G cap
+# leaves ~40x headroom, LOOK makes 80% of it (≈ 819 MiB) its limit, a single request stays within 256 MiB. On a small
+# machine (2 GB) a quarter of the machine: 512M. Since it is written into the unit (heredoc), only digits + M/G.
 case "$MEMORY" in
     ""|auto)
         ram_mb=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
@@ -76,9 +76,9 @@ esac
 MEM_LINE=""
 [ -n "$MEM_MAX" ] && MEM_LINE="MemoryMax=${MEM_MAX}"
 
-# LOOK sürümleri yan yana (sbin/look-setup): /opt/look/releases/<sürüm>-<damga>/, /opt/look/lk* en yeniyi
-# gösterir. Site, kodu en yeni sürümün `lk --check`ini geçince ona bağlanır; geçemezse çalıştığı sürümde
-# kalır (aşağıda). Eski düzende (releases yok) /opt/look/lk-fcgi düz dosyadır — o da çalışır.
+# LOOK releases side by side (sbin/look-setup): /opt/look/releases/<version>-<stamp>/, /opt/look/lk* points to the newest
+# one. A site is bound to the newest release when its code passes that release's `lk --check`; if it fails, it stays
+# on the release it runs (below). In the old layout (no releases) /opt/look/lk-fcgi is a plain file — that works too.
 OPT=/opt/look
 REL="$OPT/releases"
 STATUS_DIR="$OPT/conf/status"
@@ -88,22 +88,22 @@ if [ -z "$LATEST_FCGI" ] || [ ! -x "$LATEST_FCGI" ]; then
     exit 1
 fi
 LATEST_DIR="$(dirname "$LATEST_FCGI")"
-# Sürüm adı: releases altındaki dizinin adı, değilse ikilinin --version'ından "<sürüm>-<damga>"
+# Release name: the name of the directory under releases, otherwise "<version>-<stamp>" from the binary's --version
 rel_name() {
     case "$1" in
         "$REL"/?*) basename "$1" ;;
         *) "$1/lk-fcgi" --version 2>/dev/null | head -1 | sed -n 's/^LOOK \([0-9][0-9A-Za-z.+-]*\) (\([0-9a-f]\{7,\}\)[,)].*/\1-\2/p' ;;
     esac
 }
-# JSON metni (durum dosyası): ters bölü, tırnak, satır sonu ve denetim karakterleri kaçışlı
+# JSON text (state file): backslash, quote, line end and control characters are escaped
 json_str() { printf '%s' "$1" | tr -d '\r' | tr '\000-\010\013-\037' ' ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' | awk 'BEGIN{ORS=""} NR>1{print "\\n"} {print}'; }
 
-# Servis adi: look.codlook.com -> look-look-codlook-com
+# Service name: look.codlook.com -> look-look-codlook-com
 SVC_NAME="look-$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')"
 
-# Domain document root'unu bul — once hizli filesystem yolu. Standart Plesk yollari
-# genelde tutar; tuttugunda 'plesk bin site --info' (~0.5sn) hic cagrilmaz.
-# Ornek: look.codlook.com -> /var/www/vhosts/codlook.com/look.codlook.com/
+# Find the domain's document root — fast filesystem path first. The standard Plesk paths
+# usually match; when they do, 'plesk bin site --info' (~0.5s) is never called.
+# Example: look.codlook.com -> /var/www/vhosts/codlook.com/look.codlook.com/
 DOC_ROOT=""
 PARENT=$(echo "$DOMAIN" | sed 's/^[^.]*\.//')
 if [ -d "/var/www/vhosts/$PARENT/$DOMAIN" ]; then
@@ -111,15 +111,15 @@ if [ -d "/var/www/vhosts/$PARENT/$DOMAIN" ]; then
 elif [ -d "/var/www/vhosts/$DOMAIN/httpdocs" ]; then
     DOC_ROOT="/var/www/vhosts/$DOMAIN/httpdocs"
 fi
-# Fallback: Plesk API (yalnizca fs yolu tutmazsa — nadir)
+# Fallback: Plesk API (only if the fs path does not match — rare)
 if [ -z "$DOC_ROOT" ] && command -v plesk &>/dev/null; then
     DOC_ROOT=$(plesk bin site --info "$DOMAIN" 2>/dev/null | grep -i 'document root\|www_root\|httpdocs' | head -1 | awk '{print $NF}')
 fi
 if [ -z "$DOC_ROOT" ] || [ ! -d "$DOC_ROOT" ]; then
     DOC_ROOT=$(dirname "$SCRIPT")
 fi
-# DOC_ROOT de heredoc'a (WorkingDirectory/LOOK_FILE_ROOT) giriyor — Plesk API ciktisi veya
-# dirname olsa bile son bir kez daralt (satir-sonu enjeksiyonuna karsi):
+# DOC_ROOT also goes into the heredoc (WorkingDirectory/LOOK_FILE_ROOT) — even if it comes from the Plesk API output or
+# dirname, narrow it one last time (against line-end injection):
 DOC_ROOT=$(printf '%s' "$DOC_ROOT" | tr -cd 'A-Za-z0-9._/-')
 DOC_ROOT="${DOC_ROOT%/}"
 case "$DOC_ROOT" in
@@ -127,8 +127,8 @@ case "$DOC_ROOT" in
     *) echo "ERROR: document root of $DOMAIN not found under /var/www/vhosts" >&2; exit 1 ;;
 esac
 
-# Servisin kullanicisi = document root'un sahibi (Plesk: domain'in sistem kullanicisi).
-# Sahip root ya da bir sistem hesabi ise (uid < 1000) servisi KURMA — root'a dusmek yok.
+# The service's user = the owner of the document root (Plesk: the domain's system user).
+# If the owner is root or a system account (uid < 1000) do NOT create the service — never fall back to root.
 RUN_UID=$(stat -c %u "$DOC_ROOT")
 RUN_USER=$(stat -c %U "$DOC_ROOT")
 if [ "$RUN_UID" -lt 1000 ] || [ "$(printf '%s' "$RUN_USER" | tr -cd 'A-Za-z0-9._-')" != "$RUN_USER" ]; then
@@ -138,41 +138,41 @@ fi
 RUN_GROUP=$(id -gn "$RUN_USER")
 RUN_GROUP=$(printf '%s' "$RUN_GROUP" | tr -cd 'A-Za-z0-9._-')
 
-# Oturum dosyalari: site kullanicisinin ev dizininde (web kokunun disinda), site basina, kalici.
-# Servis PrivateTmp ile calisir; eskiden oturumlar ozel /tmp'de kaliyor, her yeniden baslatmada
-# (eklenti guncellemesi dahil) dusuyordu. Dizini LOOK kendisi, site kullanicisi olarak 0700 ile
-# yaratir — bu betik (root) kullanicinin ev dizininde hicbir sey yaratmaz/degistirmez.
-# Ev dizini vhost altinda degilse (alisilmadik kurulum) satir yazilmaz: LOOK kendi varsayilan
-# sirasini kullanir ($HOME bu kullaniciya aitse orada, degilse servisin ozel /tmp'si).
+# Session files: in the site user's home directory (outside the web root), per site, persistent.
+# The service runs with PrivateTmp; sessions used to stay in the private /tmp and were lost on every restart
+# (including a plugin update). LOOK creates the directory itself, as the site user, with 0700
+# — this script (root) creates/changes nothing in the user's home directory.
+# If the home directory is not under the vhost (an unusual setup) no line is written: LOOK uses its own default
+# order ($HOME if it belongs to this user, otherwise the service's private /tmp).
 RUN_HOME=$(getent passwd "$RUN_USER" | cut -d: -f6 | tr -cd 'A-Za-z0-9._/-')
 SESSION_ENV=""
 case "$RUN_HOME" in
     /var/www/vhosts/?*) SESSION_ENV="Environment=LOOK_SESSION_DIR=${RUN_HOME%/}/.look/sessions-${SVC_NAME}" ;;
 esac
 
-# Betik ve ortam dosyasi domain'in document root'u icinde olmali (baska sitenin dosyasi degil)
+# The script and the environment file must be inside the domain's document root (not another site's file)
 case "$SCRIPT" in
     "$DOC_ROOT"/*) ;;
     *) echo "ERROR: the script must be inside the document root of $DOMAIN ($DOC_ROOT)" >&2; exit 1 ;;
 esac
 if [ -n "$ENV_FILE" ]; then
-    # Ortam dosyası domain kullanıcısının KENDİ alanında olmalı: ev dizini (web kökünün dışı —
-    # önerilen) ya da document root. Eskiden yalnız document root kabul ediliyordu: site
-    # durdurulunca Apache vekil kuralı kalkar ve web kökü düz dosya olarak sunulur — /.look.env
-    # (veritabanı parolası) indirilebilirdi.
+    # The environment file must be in the domain user's OWN area: the home directory (outside the web root —
+    # recommended) or the document root. Only the document root used to be accepted: when the site
+    # was stopped, the Apache proxy rule went away and the web root was served as plain files — /.look.env
+    # (the database password) could be downloaded.
     case "$ENV_FILE" in
         "$DOC_ROOT"/*) ;;
         "${RUN_HOME%/}"/*) case "$RUN_HOME" in /var/www/vhosts/?*) ;; *) echo "ERROR: the env file must be inside the home of $RUN_USER or the document root of $DOMAIN" >&2; exit 1 ;; esac ;;
         *) echo "ERROR: the env file must be inside the home of $RUN_USER ($RUN_HOME) or the document root of $DOMAIN ($DOC_ROOT)" >&2; exit 1 ;;
     esac
-    # Okunabilirligi servisin kullanicisi olarak sina (root her dosyayi okur)
+    # Test readability as the service's user (root reads every file)
     if ! runuser -u "$RUN_USER" -- test -f "$ENV_FILE" -a -r "$ENV_FILE"; then
         echo "ERROR: env file not found or not readable by $RUN_USER: $ENV_FILE" >&2; exit 1
     fi
 fi
 
-# Script dosyasi yoksa ornek uygulama olustur — domain kullanicisi olarak (root bir
-# symlink'i izleyip sistem dosyasi yazmasin; dosya da kullanicinin olsun ki duzenleyebilsin)
+# If the script file does not exist, create a sample application — as the domain user (so root does not
+# follow a symlink and write a system file; and the file belongs to the user so they can edit it)
 if [ ! -e "$SCRIPT" ] && [ ! -L "$SCRIPT" ]; then
     runuser -u "$RUN_USER" -- mkdir -p "$(dirname "$SCRIPT")"
     runuser -u "$RUN_USER" -- tee "$SCRIPT" > /dev/null << 'INDEXLK'
@@ -186,23 +186,23 @@ INDEXLK
     echo "sample app created: $SCRIPT"
 fi
 
-# ─── systemd servis dosyasi ────────────────────────────────────────────────
+# ─── systemd service file ────────────────────────────────────────────────
 SVC_FILE="/etc/systemd/system/${SVC_NAME}.service"
 
 install -m 755 "$(dirname "$0")/look-env.sh" /opt/look/look-env
 ENV_WRAP=""
 if [ -n "$ENV_FILE" ]; then
-    # Ortam dosyasini servisin kullanicisi okur: look-env.sh root'a ait /opt/look'a kopyalanir
+    # The environment file is read by the service's user: look-env.sh is copied into /opt/look, which belongs to root
     ENV_WRAP="/bin/bash /opt/look/look-env $ENV_FILE"
 fi
 
 # ─── LOOK_SECRET ───────────────────────────────────────────────────────────
-# LOOK çerez kullanan uygulamayı LOOK_SECRET olmadan başlatmaz (CSRF imzası). Sitenin yoksa
-# burada üretilir — domain kullanıcısı OLARAK (runuser): root kullanıcının ev dizinine hiçbir şey
-# yazmaz (oradaki bir symlink root'u herhangi bir dosyaya yönlendirebilirdi). /dev/urandom'dan
-# 32 bayt, 0700 klasörde 0600 dosya, web kökünün dışında; hiçbir çıktıya yazılmaz. Var olan
-# korunur. Dıştaki look-env önce bunu, içteki sitenin kendi dosyasını yükler: sitenin kendi
-# LOOK_SECRET'ı kazanır.
+# LOOK does not start an application that uses cookies without LOOK_SECRET (CSRF signature). If the site has none,
+# it is generated here — AS the domain user (runuser): nothing is written to root's
+# home directory (a symlink there could have pointed root at any file). 32 bytes from /dev/urandom,
+# a 0600 file in a 0700 folder, outside the web root; it is never written to any output. An existing one
+# is kept. The outer look-env loads this first, the inner one the site's own file: the site's own
+# LOOK_SECRET wins.
 case "$RUN_HOME" in
     /var/www/vhosts/?*)
         SECRET_FILE="${RUN_HOME%/}/.look/${SVC_NAME}.secret"
@@ -222,29 +222,29 @@ case "$RUN_HOME" in
         ;;
 esac
 
-# ─── Hangi LOOK sürümü? ────────────────────────────────────────────────────
-# En yeni sürümün `lk --check`i sitenin koduyla — sitenin kullanıcısı olarak, kendi dizininde ve kendi
-# ortamıyla (servisle aynı). --check yalnız yükler ve derler, programı ÇALIŞTIRMAZ (kurulum kodu,
-# veritabanı geçişleri çalışmaz; tests/lk_check_no_side_effects_test.sh). Geçerse en yeni sürüm; geçemezse
-# site çalıştığı sürümde kalır ve durum dosyası nedenini satır satır tutar — panel bunu "bu site güvenlik
-# düzeltmeleri dahil hiçbir düzeltme almıyor" diye gösterir. Daha önce hiç çalışmamış (yeni) bir site
-# geçemezse kurulmaz.
+# ─── Which LOOK release? ────────────────────────────────────────────────────
+# The newest release's `lk --check` runs against the site's code — as the site's user, in its own directory and with its own
+# environment (the same as the service). --check only loads and compiles, it does NOT RUN the program (setup code,
+# database migrations do not run; tests/lk_check_no_side_effects_test.sh). If it passes, the newest release; if it fails,
+# the site stays on the release it runs and the state file keeps the reason line by line — the panel shows this as "this site receives no
+# fixes, security fixes included". A site that has never run before (new)
+# is not installed if it fails.
 LATEST_REL="$(rel_name "$LATEST_DIR")"
 CUR_FCGI=""
 if [ -f "$SVC_FILE" ]; then
     CUR_FCGI="$(sed -n 's#^ExecStart=\(.* \)\{0,1\}\(/opt/look/[^ ]*lk-fcgi\) .*#\2#p' "$SVC_FILE" | head -1)"
-    # Eklentinin sürümsüz düzeninde yazılmış servis /opt/look/lk-fcgi'yi çalıştırıyordu: o ikili ilk
-    # güncellemede kendi sürüm dizinine kopyalandı (look-setup) — site onu çalıştırıyor sayılır.
+    # A service written in the extension's unversioned layout ran /opt/look/lk-fcgi: that binary was copied to its own release directory
+    # at the first update (look-setup) — the site counts as running it.
     if [ "$CUR_FCGI" = "$OPT/lk-fcgi" ] && [ -s "$OPT/conf/legacy-release" ]; then
         CUR_FCGI="$REL/$(tr -cd 'A-Za-z0-9.+-' < "$OPT/conf/legacy-release")/lk-fcgi"
     fi
 fi
-# Adaylar: önce en yeni sürüm (bin/, /opt/look/lk*), sonra sitenin çalıştığından daha yeni olan diğer
-# sürümler — numarası en yüksek olan önce (bakım çizgisi, ör. 1.0.47). Site, kodunun geçtiği İLK adaya
-# taşınır: kırıcı değişikliğe henüz uyamayan site en azından düzeltme sürümlerini alır ("geride"). Hiçbiri
-# geçmezse çalıştığı sürümde kalır ("kaldı": hiçbir düzeltme almaz). lk'si olmayan aday (bozuk paket)
-# denetlenemez = geçmedi; koruma bir şey ters gittiğinde gevşemez.
-run_check() { # <sürüm dizini> → çıktı; dönüş = lk --check'in dönüşü (lk yoksa 127)
+# Candidates: first the newest release (bin/, /opt/look/lk*), then the other releases newer than the one the site runs —
+# the highest number first (maintenance line, e.g. 1.0.47). The site is moved to the FIRST candidate its code passes:
+# a site that cannot yet adapt to a breaking change at least gets the fix releases ("behind"). If none
+# passes, it stays on the release it runs ("stayed": it gets no fixes). A candidate without an lk (broken package)
+# cannot be checked = did not pass; the protection does not loosen when something goes wrong.
+run_check() { # <release directory> → output; return = lk --check's return (127 if there is no lk)
     if [ -x "$1/lk" ]; then
         (cd "$DOC_ROOT" && runuser -u "$RUN_USER" -- env LOOK_FILE_ROOT="$DOC_ROOT" $ENV_WRAP "$1/lk" --check "$SCRIPT" 2>&1)
     else
@@ -255,7 +255,7 @@ run_check() { # <sürüm dizini> → çıktı; dönüş = lk --check'in dönüş
 ver_of() { printf '%s' "$1" | sed 's/-[0-9a-f]\{7,\}$//'; }   # 1.0.48-7654321 → 1.0.48
 CUR_DIR=""; CUR_REL=""
 if [ -n "$CUR_FCGI" ] && [ -x "$CUR_FCGI" ]; then CUR_DIR="$(dirname "$CUR_FCGI")"; CUR_REL="$(rel_name "$CUR_DIR")"; fi
-newer_than_cur() { # <sürüm adı>: sitenin çalıştığından daha yeni mi (çalıştığı bilinmiyorsa evet)
+newer_than_cur() { # <release name>: is it newer than the one the site runs (yes if what it runs is unknown)
     [ -z "$CUR_REL" ] && return 0
     [ "$(ver_of "$1")" = "$(ver_of "$CUR_REL")" ] && return 1
     [ "$(printf '%s\n%s\n' "$(ver_of "$CUR_REL")" "$(ver_of "$1")" | sort -V | tail -1)" = "$(ver_of "$1")" ]
@@ -284,13 +284,13 @@ elif [ -n "$CUR_DIR" ] && [ "$CUR_DIR" != "$LATEST_DIR" ]; then
     BIN_DIR="$CUR_DIR"; HELD=true
     echo "WARNING: $DOMAIN stays on LOOK $CUR_REL and receives no fixes, security fixes included: it does not pass the check of LOOK $LATEST_REL ($CHECK_SHORT) or of any release between"
 elif [ "$LATEST_RC" = 127 ] && [ "$CUR_DIR" = "$LATEST_DIR" ]; then
-    # Zaten en yeni sürümde (yeniden başlatma): taşınan bir şey yok — çalışmaya devam eder
+    # Already on the newest release (restart): nothing is moved — it keeps running
     BIN_DIR="$LATEST_DIR"
     echo "WARNING: $CHECK_OUT"
 else
     echo "ERROR: $DOMAIN: the code does not pass the check of LOOK $LATEST_REL; fix these lines and try again:" >&2
     printf '%s\n' "$CHECK_OUT" >&2
-    exit 3   # look-setup: servise dokunma (çalışan site düşmesin), yalnız bildir
+    exit 3   # look-setup: do not touch the service (so a running site does not go down), only report
 fi
 mkdir -p "$STATUS_DIR"; chmod 755 "$OPT/conf" "$STATUS_DIR"
 printf '{\n  "domain": "%s",\n  "release": "%s",\n  "latest": "%s",\n  "held": %s,\n  "behind": %s,\n  "check": "%s"\n}\n' \
@@ -300,8 +300,8 @@ printf '{\n  "domain": "%s",\n  "release": "%s",\n  "latest": "%s",\n  "held": %
     && mv -f "$STATUS_DIR/.$SVC_NAME.json.new" "$STATUS_DIR/$SVC_NAME.json"
 
 if [ "$MODE" = "http" ]; then
-    # Yalniz yerel adreste dinler: Apache vekili 127.0.0.1:$PORT'a gider (asagida). Eskiden tum
-    # arayuzlerde dinliyordu — site kendi portunda internete de acikti, Apache atlanabiliyordu.
+    # Listens on the local address only: the Apache proxy goes to 127.0.0.1:$PORT (below). It used to listen on all
+    # interfaces — the site was also open to the internet on its own port and Apache could be bypassed.
     EXEC_CMD="$BIN_DIR/lk-fcgi --mode http --bind 127.0.0.1 --port $PORT --workers $WORKERS --script $SCRIPT"
 else
     EXEC_CMD="$BIN_DIR/lk-fcgi --port $PORT --workers $WORKERS --script $SCRIPT"
@@ -337,7 +337,7 @@ SYSTEMD
 /bin/systemctl enable "$SVC_NAME" 2>/dev/null || true
 /bin/systemctl restart "$SVC_NAME"
 
-# Port acilana kadar bekle (max 5s)
+# Wait until the port opens (max 5s)
 for i in $(seq 1 10); do
     if ss -tlnp | grep -q ":$PORT "; then
         break
@@ -351,7 +351,7 @@ CONF_DIR="/var/www/vhosts/system/${DOMAIN}/conf"
 mkdir -p "$CONF_DIR"
 
 if [ "$MODE" = "http" ]; then
-    # HTTP Proxy modu
+    # HTTP Proxy mode
     PROXY_CONF="<FilesMatch \"^\.look\">
     Require all denied
 </FilesMatch>
@@ -361,7 +361,7 @@ ProxyPass /.well-known !
 ProxyPass / http://127.0.0.1:${PORT}/
 ProxyPassReverse / http://127.0.0.1:${PORT}/"
 else
-    # FastCGI modu (ProxyPass ile — mod_proxy_fcgi)
+    # FastCGI mode (with ProxyPass — mod_proxy_fcgi)
     PROXY_CONF="<FilesMatch \"^\.look\">
     Require all denied
 </FilesMatch>
@@ -372,10 +372,10 @@ ProxyPass / fcgi://127.0.0.1:${PORT}/
 ProxyPassReverse / fcgi://127.0.0.1:${PORT}/"
 fi
 
-# X-Forwarded-Proto Apache tarafından YAZILIR (eklenmez): mod_proxy bunu kendiliğinden koymaz, istemcinin
-# gönderdiği aynen geçerdi — LOOK HTTP isteğini HTTPS sanıp (oturum çerezi Secure, request::scheme)
-# ona göre davranırdı. X-Forwarded-For / X-Forwarded-Host'u mod_proxy ekler; LOOK en sağdakini okur.
-# IfModule: mod_headers yoksa yapılandırma bozulmasın (site düşmesin).
+# X-Forwarded-Proto is SET by Apache (not appended): mod_proxy does not add it by itself, and what the client
+# sent would pass through unchanged — LOOK would take an HTTP request for HTTPS (session cookie Secure, request::scheme)
+# and behave accordingly. mod_proxy adds X-Forwarded-For / X-Forwarded-Host; LOOK reads the rightmost one.
+# IfModule: so the configuration does not break (the site does not go down) if mod_headers is missing.
 XFP_HTTP="<IfModule mod_headers.c>
     RequestHeader set X-Forwarded-Proto \"http\"
 </IfModule>"
@@ -384,10 +384,10 @@ XFP_HTTPS="<IfModule mod_headers.c>
 </IfModule>"
 NEW_HTTP="$(printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTP")"
 NEW_HTTPS="$(printf '%s\n%s\n' "$PROXY_CONF" "$XFP_HTTPS")"
-# Plesk'in ürettiği httpd.conf iki dosyayı YOLUYLA içerir (Include …/vhost.conf). İçerik aynıysa ve
-# Include zaten varsa Apache bu yapılandırmayla çalışıyor: reconfigure GEREKMEZ. Ölçüldü (test.codlook.com,
-# 2026-11-18): httpdmng --reconfigure-domain sonunda web sunucusu yeniden yüklenirken ~0,5 sn bağlantılar
-# yanıtsız kalıyor (curl 000) + ~4 sn takılma — her eklenti güncellemesinde/yeniden başlatmada üretimde kesinti.
+# The httpd.conf generated by Plesk includes the two files BY PATH (Include …/vhost.conf). If the content is the same and
+# the Include already exists, Apache is running with this configuration: reconfigure is NOT NEEDED. Measured (test.codlook.com,
+# 2026-11-18): while the web server reloads at the end of httpdmng --reconfigure-domain, connections go
+# unanswered for ~0.5 s (curl 000) + a ~4 s stall — an outage in production on every plugin update/restart.
 NEED_RECONF=1
 if [ -f "$CONF_DIR/vhost.conf" ] && [ -f "$CONF_DIR/vhost_ssl.conf" ] \
    && [ "$(cat "$CONF_DIR/vhost.conf")" = "$NEW_HTTP" ] && [ "$(cat "$CONF_DIR/vhost_ssl.conf")" = "$NEW_HTTPS" ] \
@@ -400,10 +400,10 @@ if [ "$NEED_RECONF" = 1 ]; then
     printf '%s\n' "$NEW_HTTPS" > "$CONF_DIR/vhost_ssl.conf"
 fi
 
-# Apache reconfigure (Plesk yolu) — ARKA PLANDA çalışır. Plesk reconfigure 10-30sn
-# sürer; senkron çalışırsa panel AJAX'ı kilitler/timeout olur (domain görünmez).
-# systemd servisi + vhost config zaten hazır → reconfigure birkaç saniye içinde
-# uygular. Hemen OK dönüyoruz, UI anında domain'i listeye ekler.
+# Apache reconfigure (the Plesk way) — runs IN THE BACKGROUND. Plesk reconfigure takes 10-30 s;
+# if it ran synchronously it would lock the panel AJAX/time out (the domain would not show).
+# The systemd service + vhost config are already ready → reconfigure applies
+# them within a few seconds. We return OK immediately and the UI adds the domain to the list at once.
 if [ "$NEED_RECONF" = 1 ]; then
 nohup bash -c '
     if [ -x /usr/local/psa/admin/bin/httpdmng ]; then
@@ -414,9 +414,9 @@ nohup bash -c '
 ' >/dev/null 2>&1 &
 fi
 
-# Eski surum servisi root ile calistiriyordu: onun yazdigi dosyalar (SQLite, yuklemeler) root'a
-# ait kalmis olabilir ve servis artik onlara yazamaz. Otomatik chown yok (root olarak site
-# agacinda gezinmek riskli) — yalniz soyle.
+# The old release ran the service as root: the files it wrote (SQLite, uploads) may have stayed
+# owned by root and the service can no longer write to them. There is no automatic chown (walking the site
+# tree as root is risky) — it only says so.
 ROOT_FILES=$(find "$DOC_ROOT" -xdev -user root 2>/dev/null | head -1000 | wc -l)
 if [ "$ROOT_FILES" -gt 0 ]; then
     echo "WARNING: $ROOT_FILES file(s) in $DOC_ROOT are owned by root; the service runs as $RUN_USER and cannot write them (find $DOC_ROOT -user root)"

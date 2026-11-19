@@ -7,9 +7,9 @@ License:        Apache-2.0
 URL:            https://codlook.com
 BuildArch:      x86_64
 
-# Sistem OpenSSL'e DİNAMİK bağlı (kurumsal doğru yol): CVE'de 'dnf update
-# openssl-libs' bizi de korur; crypto-policies/FIPS'e uyar. LOOK'un kendini
-# güncellemesi: 'dnf update look-lang'.
+# DYNAMICALLY linked to the system OpenSSL (the right enterprise path): on a CVE 'dnf update
+# openssl-libs' protects us as well; it respects crypto-policies/FIPS. LOOK's own
+# update: 'dnf update look-lang'.
 Requires:       openssl-libs >= 1.1.1
 Requires:       glibc
 
@@ -26,7 +26,7 @@ Components:
   lk-cgi   — classic CGI bridge
 
 %prep
-# Prebuilt binary paketleme — kaynak derleme burada yapılmaz.
+# Packaging a prebuilt binary — no source build happens here.
 
 %install
 rm -rf %{buildroot}

@@ -1,4 +1,4 @@
-# Docker build context — ağır/gereksiz dosyaları hariç tut (Dockerfile.production COPY .)
+# Docker build context — exclude heavy/unneeded files (Dockerfile.production COPY .)
 .git
 releases
 look-packages

@@ -1,12 +1,12 @@
-# Windows (Tier-2) CI — MSVC build + Windows-only kripto/tarih dallarının known-answer kapısı.
-# Kapsam build.ps1 pre-release gate'i ile BİREBİR: look + look-fcgi MSVC build, sonra gerçek
-# MSVC binary'sine karşı crypto_vectors (SHA/HMAC/base64 + BCrypt random) · rs256_kat (NCrypt
-# rs256 verify/sign) · date_dst (MSVC CRT takvim). Bu dallar Linux CI'da HİÇ egzersizde değil.
+# Windows (Tier-2) CI — MSVC build + known-answer gate for the Windows-only crypto/date branches.
+# Scope is IDENTICAL to the build.ps1 pre-release gate: look + look-fcgi MSVC build, then against the real
+# MSVC binary crypto_vectors (SHA/HMAC/base64 + BCrypt random) · rs256_kat (NCrypt
+# rs256 verify/sign) · date_dst (MSVC CRT calendar). These branches are NEVER exercised in Linux CI.
 #
-# 2026-08-12: ilk workflow_dispatch koşumu İLK denemede yeşil (MSVC build + gate 17/17·5/5·7/7,
-# ortam hatası yok) → push tetikleyicisi eklendi. main'e her push'ta koşar (release main'den çıkar);
-# feature-branch'ler yavaş MSVC ile yorulmasın diye yalnız main + v2 + elle-tetik. v2 eklendi (2026-10-04):
-# v2 dalının değişiklikleri orada birikiyor; MSVC farkları main'e birleştirme gününe kalmasın. continue-on-error YOK.
+# 2026-08-12: the first workflow_dispatch run was green on the FIRST try (MSVC build + gate 17/17·5/5·7/7,
+# no environment error) → the push trigger was added. Runs on every push to main (releases come from main);
+# so that feature branches are not tired out by the slow MSVC, only main + v2 + manual trigger. v2 added (2026-10-04):
+# the v2 branch's changes accumulate there; MSVC differences should not wait for merge day into main. NO continue-on-error.
 name: windows-tier2
 
 on:
@@ -20,25 +20,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # look-cgi da: Windows paketinde lk-cgi.exe var (build.ps1); eskiden CI derlemediği için
-      # MSVC'de bağlanmadığı ancak yayın derlemesinde görüldü (shutdown.cpp eksikti).
+      # look-cgi too: the Windows package contains lk-cgi.exe (build.ps1); because CI did not build it
+      # the failure to link on MSVC was seen only in the release build (shutdown.cpp was missing).
       - name: MSVC Release build (look + look-fcgi + look-cgi)
         shell: pwsh
         run: |
-          $sha = "${{ github.sha }}".Substring(0,7)   # Linux ile aynı uzunluk (7)
+          $sha = "${{ github.sha }}".Substring(0,7)   # same length as Linux (7)
           cmake -S cpp -B cpp/build-win "-DLOOK_BUILD=$sha"
           cmake --build cpp/build-win --config Release --target look look-fcgi look-cgi
           if (-not (Test-Path cpp/build-win/Release/lk.exe))      { throw "lk.exe uretilmedi" }
           if (-not (Test-Path cpp/build-win/Release/lk-fcgi.exe)) { throw "lk-fcgi.exe uretilmedi" }
           if (-not (Test-Path cpp/build-win/Release/lk-cgi.exe))  { throw "lk-cgi.exe uretilmedi" }
-          # Damga gerçekten commit mi: "-DLOOK_BUILD=$sha" tırnaksızken PowerShell genişletmiyordu,
-          # ikililer "($sha, windows/amd64)" diyordu ve kimse görmedi.
+          # Is the stamp really the commit: with "-DLOOK_BUILD=$sha" unquoted PowerShell did not expand it,
+          # the binaries said "($sha, windows/amd64)" and nobody noticed.
           $v = & cpp/build-win/Release/lk.exe --version
           if ($v -notmatch [regex]::Escape($sha)) { throw "build stamp is wrong: [$v], expected $sha" }
           Write-Host $v
 
-      # Windows-only dallar (NCrypt rs256 · BCrypt random/sha256 · MSVC CRT date) yalnız GERÇEK
-      # MSVC binary'sinde koşar. Herhangi biri kırmızıysa iş düşer (sessiz-delik yok).
+      # The Windows-only branches (NCrypt rs256 · BCrypt random/sha256 · MSVC CRT date) run only on a REAL
+      # MSVC binary. If any is red the job fails (no silent hole).
       - name: Pre-release gate (MSVC binary'sine karşı)
         shell: pwsh
         run: |
@@ -50,8 +50,8 @@ jobs:
           }
           Write-Host "PASS: Windows Tier-2 gate (crypto_vectors + rs256_kat + date_dst)"
 
-      # Yayın paketi: release.yml'in `windows` işiyle AYNI adım (build.ps1 kapısı + zip). Her push'ta
-      # koşar ki paketleme yayın gününden önce kırılırsa burada görülsün; zip bir iş artefaktıdır.
+      # Release package: the SAME step as release.yml's `windows` job (build.ps1 gate + zip). Runs on every push
+      # so that if packaging breaks before release day it shows up here; the zip is a job artifact.
       - name: Gate + package (platforms/windows/build.ps1, as in a release)
         shell: pwsh
         run: |
@@ -64,10 +64,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # int64 taşma-tespiti MSVC #else dalı — Linux __builtin yüzünden HİÇ egzersizde değildi.
-      # int_overflow_test.cpp header-only → cl.exe ile derlenince MSVC dalı (unsigned-sarma +
-      # INT64_MIN*-1 idiv #DE guard'ı) gerçekten koşar. vswhere+vcvars self-contained (cmake
-      # build'inin ortamını bozmaz — ayrı step). continue-on-error YOK.
+      # int64 overflow detection, MSVC #else branch — it was NEVER exercised because of the Linux __builtin.
+      # int_overflow_test.cpp is header-only → compiled with cl.exe the MSVC branch (unsigned wraparound +
+      # the INT64_MIN*-1 idiv #DE guard) really runs. vswhere+vcvars is self-contained (does not disturb the cmake
+      # build's environment — a separate step). NO continue-on-error.
       - name: int64 taşma-tespiti (MSVC #else dalı)
         shell: cmd
         run: |
@@ -77,19 +77,19 @@ jobs:
           if errorlevel 1 exit /b 1
           iov_msvc.exe
 
-      # --mode http HTTP sunucusu Windows'ta gerçekten koşuyor mu: 200 + idle-timeout close.
-      # İlk step'te üretilen (düzeltilmiş SO_RCVTIMEO DWORD-ms dalı) MSVC binary'sini egzersiz eder.
-      # LOOK_HTTP_IDLE_MS=1000 → idle-close ~1s (test hızı; default 30s). Süreç PID ile öldürülür
-      # (broad kill yok). Pozitif-kontrol: yanlış port reddi + gövde doğrulama + idle ÖNCE canlı SONRA
-      # kapalı. continue-on-error YOK. (ESKİ BUG: Win'de timeval→30ms; DWORD-ms fix'iyle düzeltildi.)
+      # Does the --mode http HTTP server really run on Windows: 200 + idle-timeout close.
+      # Exercises the MSVC binary produced in the first step (the fixed SO_RCVTIMEO DWORD-ms branch).
+      # LOOK_HTTP_IDLE_MS=1000 → idle-close ~1s (test speed; default 30s). The process is killed by PID
+      # (no broad kill). Positive control: wrong-port refusal + body check + idle alive BEFORE, closed AFTER.
+      # NO continue-on-error. (OLD BUG: on Win timeval→30ms; fixed with the DWORD-ms fix.)
       - name: "--mode http + idle-timeout (Windows HTTP sunucu kanıtı)"
         shell: pwsh
         env:
           LOOK_HTTP_IDLE_MS: "1000"
         run: |
-          # win_http_idle.ps1 tüm hata vakalarında throw eder (exit kullanmaz) → terminating
-          # error pwsh step'ini kırar. $LASTEXITCODE kontrolü YANLIŞTI: başarıda ps1 exit set
-          # etmez ($null kalır), $null -ne 0 → true → sahte throw. Kontrol kaldırıldı.
+          # win_http_idle.ps1 throws in every failure case (does not use exit) → a terminating
+          # error breaks the pwsh step. The $LASTEXITCODE check was WRONG: on success the ps1 does not set
+          # exit (stays $null), $null -ne 0 → true → false throw. The check was removed.
           $ErrorActionPreference = "Stop"
           & cpp/tests/win_http_idle.ps1 `
             -Exe cpp/build-win/Release/lk-fcgi.exe `

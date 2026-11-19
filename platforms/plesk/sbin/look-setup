@@ -1,18 +1,18 @@
 #!/bin/bash
-# LOOK Language — kurulum/yukseltme (ROOT)
-# Kullanim: look-setup [<domain> <script> <workers> <mode> <port> <env-file> <memory>]...
+# LOOK Language — install/upgrade (ROOT)
+# Usage: look-setup [<domain> <script> <workers> <mode> <port> <env-file> <memory>]...
 #
-# Plesk eklenti kancalarini (plib/scripts/post-install.php) ROOT degil psaadm olarak
-# calistirir (olculdu: euid=983); eskiden kanca setup.sh'i psaadm ile kosuyordu, /opt/look'a,
-# sudoers'a ve unit'lere yazamadan dusuyor, hata gizleniyordu → guncelleme ne ikiliyi ne de
-# servisleri yeniliyordu. Root yolu Plesk'in belgeledigi pm_ApiCli::callSbin: post-install.php
-# bu betigi cagirir, kayitli domain'leri (domains.json'dan) arguman olarak verir.
+# Plesk runs the extension hooks (plib/scripts/post-install.php) as psaadm, NOT root
+# (measured: euid=983); the hook used to run setup.sh as psaadm, which failed without being able to write to /opt/look,
+# sudoers and the units, and the error was hidden → an update refreshed neither the binary nor
+# the services. The root path is the one Plesk documents, pm_ApiCli::callSbin: post-install.php
+# calls this script and passes the registered domains (from domains.json) as arguments.
 #
-# Yapar: (1) LOOK ikilisini yeni sürüm dizinine kurar (eskisi kalır), (2) eski sudoers kuralini kaldirir, (3) her domain'in servisini enable.sh
-# ile yeniden yazar (servis domain kullanicisiyla calisir). Root olmadan calisamayan bir
-# servisi DURDURUR — 1.1.x'in root servisi sessizce calismaya devam etmez. (4) Kullanilmayan
-# LOOK surumlerini siler.
-# Hata = sifir olmayan cikis + mesaj (Plesk kurulumda gosterir); hicbir cikti susturulmaz.
+# Does: (1) installs the LOOK binary into the new release directory (the old one stays), (2) removes the old sudoers rule, (3) rewrites each domain's service with enable.sh
+# (the service runs as the domain user). A service that cannot run without root
+# is STOPPED — a 1.1.x root service does not silently keep running. (4) Deletes the
+# unused LOOK releases.
+# Error = non-zero exit + message (Plesk shows it on install); no output is silenced.
 set -u
 
 MOD=/usr/local/psa/admin/htdocs/modules/look-lang
@@ -23,14 +23,14 @@ err() { echo "ERROR: $*" >&2; fail=1; }
 
 mkdir -p "$OPT/conf" /var/log/look
 
-# ─── 1) LOOK sürümleri yan yana ──────────────────────────────────────────────
-# Her sürüm kendi dizininde: /opt/look/releases/<sürüm>-<damga>/{lk,lk-fcgi,lk-cgi}; /opt/look/lk* en yeniyi
-# gösterir (komut satırı ve yeni siteler). Bir site, kodu yeni sürümün `lk --check`ini geçince ona bağlanır
-# (enable.sh, adım 3); geçemeyen site çalıştığı sürümde kalır. Hiçbir servisin kullanmadığı sürüm adım 4'te
-# silinir. Değişimler atomik (yanında hazırla + mv): çalışan ikilinin üzerine yazılmaz ("Text file busy").
+# ─── 1) LOOK releases side by side ──────────────────────────────────────────────
+# Each release in its own directory: /opt/look/releases/<version>-<stamp>/{lk,lk-fcgi,lk-cgi}; /opt/look/lk* points to the newest
+# (command line and new sites). A site is bound to a new release when its code passes that release's `lk --check`
+# (enable.sh, step 3); a site that fails stays on the release it runs. A release no service uses is
+# deleted in step 4. Changes are atomic (prepare next to it + mv): a running binary is never overwritten ("Text file busy").
 REL="$OPT/releases"
 rel_id() { "$1" --version 2>/dev/null | head -1 | sed -n 's/^LOOK \([0-9][0-9A-Za-z.+-]*\) (\([0-9a-f]\{7,\}\)[,)].*/\1-\2/p'; }
-put_release() { # <kaynak dizin> <ad>: lk, lk-fcgi, lk-cgi → $REL/<ad>/ (yoksa)
+put_release() { # <source dir> <name>: lk, lk-fcgi, lk-cgi → $REL/<name>/ (if missing)
     [ -d "$REL/$2" ] && return 0
     rm -rf "$REL/.$2.new"; mkdir -p "$REL/.$2.new" || return 1
     for b in lk lk-fcgi lk-cgi; do
@@ -40,8 +40,8 @@ put_release() { # <kaynak dizin> <ad>: lk, lk-fcgi, lk-cgi → $REL/<ad>/ (yoksa
     mv -T "$REL/.$2.new" "$REL/$2"
 }
 mkdir -p "$REL"; chmod 755 "$REL"
-# Sürümsüz düzenden gelen kurulum: siteler bugün /opt/look/lk-fcgi'yi çalıştırıyor — o ikili kendi sürüm
-# dizinine KOPYALANIR ki kodu yeni sürüme uymayan site onda kalabilsin.
+# An install coming from the unversioned layout: sites run /opt/look/lk-fcgi today — that binary is COPIED to its own release
+# directory so a site whose code does not fit the new release can stay on it.
 if [ -e "$OPT/lk-fcgi" ]; then
     case "$(readlink -f "$OPT/lk-fcgi")" in
         "$REL"/*) ;;
@@ -52,12 +52,12 @@ if [ -e "$OPT/lk-fcgi" ]; then
             fi ;;
     esac
 fi
-# Paketle gelen sürümler: bin/ en yeni (komut satırı ve /opt/look/lk* onu gösterir), bin-<çizgi>/ bakım
-# çizgisinin son sürümü (ör. bin-1.0). En yeni sürümün denetimini geçemeyen site, kodunun geçtiği en yeni
-# sürüme taşınır (enable.sh) — kırıcı değişikliğe henüz uyamayan site en azından düzeltme sürümlerini alır.
-# Plesk eklentiyi çalıştırma izinleri olmadan açar: ikililer önce 755 ile ara dizine kurulur, sürüm
-# oradan okunur, sonra sürüm dizinine taşınır.
-install_bundled() { # <paket dizini> → sürüm adını yazar; hata → stderr + 1 (alt kabukta err fail'i taşımaz)
+# Releases that come with the package: bin/ is the newest (the command line and /opt/look/lk* point to it), bin-<line>/ is the latest release of
+# the maintenance line (e.g. bin-1.0). A site that fails the newest release's check is moved to the newest release its code passes
+# (enable.sh) — a site that cannot yet adapt to a breaking change at least gets the fix releases.
+# Plesk unpacks the extension without execute permissions: the binaries are first installed with 755 into an intermediate directory, the release
+# is read from there, then moved to the release directory.
+install_bundled() { # <package dir> → prints the release name; error → stderr + 1 (inside a subshell err does not carry the failure)
     local src="$1" stage="$REL/.incoming" id
     rm -rf "$stage"; mkdir -p "$stage"
     for b in lk lk-fcgi lk-cgi; do
@@ -95,15 +95,15 @@ if [ ! -x "$OPT/lk-fcgi" ]; then
 fi
 if [ -x "$OPT/lk" ]; then echo "LOOK binary: $("$OPT/lk" --version 2>&1 | head -1)"; fi
 
-# ─── 2) sudoers YOK — panel root islerini sbin/look-ctl ile (callSbin) yapar ──
-# Eski surumlerin kurali ('systemctl enable look-*' — '*' bosluklari da kapsar) psaadm'e
-# root veriyordu; guncellemede kaldirilir.
+# ─── 2) NO sudoers — the panel does root work through sbin/look-ctl (callSbin) ──
+# The old releases' rule ('systemctl enable look-*' — '*' also covers spaces) gave psaadm
+# root; it is removed on update.
 if [ -e /etc/sudoers.d/look-lang ]; then
     rm -f /etc/sudoers.d/look-lang && echo "removed /etc/sudoers.d/look-lang (the panel no longer uses sudo)"
 fi
 echo 'export PATH="/opt/look:$PATH"' > /etc/profile.d/look.sh
 
-# ─── 3) servisleri yeni kurala gore yeniden yaz ─────────────────────────────
+# ─── 3) rewrite the services according to the new rule ─────────────────────────────
 svc_of() { echo "look-$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')"; }
 stop_svc() { /bin/systemctl stop "$1" 2>/dev/null; /bin/systemctl disable "$1" 2>/dev/null; true; }
 done_svcs=" "
@@ -114,8 +114,8 @@ while [ "$#" -ge 7 ]; do
     if [ "$rc" = 0 ]; then
         echo "$d: $(printf '%s\n' "$out" | grep -E '^(OK|WARNING)' | tr '\n' ' ')"
     elif [ "$rc" = 3 ]; then
-        # Kod LOOK'un bu sürümünün denetimini geçmiyor ve sitenin kalabileceği eski bir sürüm yok:
-        # servise dokunulmaz (çalışıyorsa çalışmaya devam eder), panel nedeni gösterir.
+        # The code fails this LOOK release's check and there is no older release the site could stay on:
+        # the service is left alone (if it is running it keeps running), the panel shows the reason.
         err "$d: not moved to the new LOOK — $(printf '%s\n' "$out" | grep -E '^(ERROR|CHECK)' | head -3 | tr '\n' ' ')"
     else
         stop_svc "$svc"
@@ -124,7 +124,7 @@ while [ "$#" -ge 7 ]; do
 done
 [ "$#" = 0 ] || err "ignored $# trailing argument(s): domains are given as groups of 7"
 
-# Eklentinin yazdigi (Description imzasi) ama kaydi olmayan, User= tasimayan unit = root servis
+# A unit written by the extension (Description signature) that has no record and carries no User= = a root service
 for f in /etc/systemd/system/look-*.service; do
     [ -f "$f" ] || continue
     svc="$(basename "$f" .service)"
@@ -135,8 +135,8 @@ for f in /etc/systemd/system/look-*.service; do
     err "$svc was STOPPED: it ran as root and is not registered in the panel; add the domain again in the panel"
 done
 
-# ─── 4) Hiçbir servisin kullanmadığı LOOK sürümünü sil ───────────────────────
-# En yeni ve paketle gelen sürümler hep kalır; bir servisin ExecStart'ında geçen (sitesi eski sürümde kalan) sürüm kalır.
+# ─── 4) Delete the LOOK releases no service uses ───────────────────────
+# The newest and the packaged releases always stay; a release that appears in a service's ExecStart (whose site stays on the old release) stays.
 in_use=" $(basename "$(dirname "$(readlink -f "$OPT/lk-fcgi" 2>/dev/null)")") ""$bundled"
 for f in /etc/systemd/system/look-*.service; do
     [ -f "$f" ] || continue

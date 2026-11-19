@@ -1,7 +1,7 @@
 #!/bin/bash
-# LOOK Language Plesk Extension — ZIP paketi olustur
-# Kullanim: ./build.sh [--with-binaries]
-# Calistirma: repo kökünden: bash platforms/plesk/build.sh
+# LOOK Language Plesk Extension — build the ZIP package
+# Usage: ./build.sh [--with-binaries]
+# Run: from the repo root: bash platforms/plesk/build.sh
 
 set -e
 cd "$(dirname "$0")"
@@ -12,19 +12,19 @@ TMP="$(mktemp -d)"
 
 echo "Building LOOK Plesk Extension v$VERSION..."
 
-# Temel dosyalar
-# (Kancalar plib/scripts/post-install.php'dedir; kökteki eski post-install/pre-uninstall Plesk
-# tarafından hiç çalıştırılmıyordu ve sudoers yazan eski akışı taşıyordu — kaldırıldı.)
+# Core files
+# (The hooks are in plib/scripts/post-install.php; the old post-install/pre-uninstall in the root were never run by Plesk
+# and carried the old flow that wrote sudoers — removed.)
 cp meta.xml     "$TMP/"
 
-# plib — Plesk Obsidian MVC controller (Extensions paneli buradan dispatch eder)
+# plib — Plesk Obsidian MVC controller (the Extensions panel dispatches from here)
 if [ -d plib ]; then
     mkdir -p "$TMP/plib/controllers"
     cp -r plib/* "$TMP/plib/"
 fi
 
-# sbin — root adimi (ikili, sudoers, servis unit'leri). post-install.php bunu
-# pm_ApiCli::callSbin ile cagirir; Plesk kancalari root degil psaadm olarak calisir.
+# sbin — the root step (binary, sudoers, service units). post-install.php calls this
+# with pm_ApiCli::callSbin; Plesk hooks run as psaadm, not root.
 mkdir -p "$TMP/sbin"
 cp sbin/look-setup sbin/look-ctl "$TMP/sbin/"
 chmod 755 "$TMP/sbin/look-setup" "$TMP/sbin/look-ctl"
@@ -33,7 +33,7 @@ chmod 755 "$TMP/sbin/look-setup" "$TMP/sbin/look-ctl"
 mkdir -p "$TMP/htdocs/scripts" "$TMP/htdocs/bin"
 cp htdocs/index.php "$TMP/htdocs/"
 
-# UI: phtml view + derlenmiş frontend (bunlar olmadan panel arayüzü render olmaz)
+# UI: phtml view + compiled frontend (without these the panel UI does not render)
 if [ -d htdocs/phtml ]; then
     mkdir -p "$TMP/htdocs/phtml"
     cp htdocs/phtml/*.phtml "$TMP/htdocs/phtml/" 2>/dev/null || true
@@ -53,7 +53,7 @@ if [ -f "htdocs/icon.png" ]; then
     cp htdocs/icon.png "$TMP/htdocs/"
 fi
 
-# Portatif static binary'ler — fallback (Debian-Plesk / RPM olmayan sistemler)
+# Portable static binaries — fallback (Debian-Plesk / systems without RPM)
 if [ "$1" = "--with-binaries" ] || [ -d "bin" ]; then
     for bin in lk lk-fcgi lk-cgi; do
         if [ -f "bin/$bin" ]; then
@@ -64,10 +64,10 @@ if [ "$1" = "--with-binaries" ] || [ -d "bin" ]; then
 fi
 
 
-# RPM — RHEL/AlmaLinux birincil yol (dnf update look-lang). post-install önce
-# bunu dener; yoksa yukarıdaki static binary'ye düşer.
-# Bakım çizgisinin son sürümü (ör. bin-1.0/): en yeni sürümün denetimini geçemeyen site kodunun geçtiği
-# en yeni sürüme taşınır (sbin/look-setup + scripts/enable.sh) — yayın iş akışı bunu indirip koyar.
+# RPM — the primary path for RHEL/AlmaLinux (dnf update look-lang). post-install tries
+# this first; if missing it falls back to the static binary above.
+# Latest release of the maintenance line (e.g. bin-1.0/): a site whose code fails the check of the newest release is moved to the newest release
+# that passes (sbin/look-setup + scripts/enable.sh) — the release workflow downloads and places it.
 for dir in bin-*/; do
     [ -f "$dir/lk-fcgi" ] || continue
     mkdir -p "$TMP/htdocs/$dir"
@@ -84,7 +84,7 @@ else
     echo "  ! no RPM found (build it first: bash platforms/linux/rpm/build-rpm.sh) — static binary only"
 fi
 
-# ZIP olustur
+# Build the ZIP
 (cd "$TMP" && zip -r "$(pwd)/$OUT" .)
 mv "$TMP/$OUT" "./$OUT"
 rm -rf "$TMP"

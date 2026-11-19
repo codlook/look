@@ -1,9 +1,9 @@
 #!/bin/bash
-# LOOK — Linux standalone (Ubuntu/Debian + AlmaLinux/RHEL) paketi olustur.
-# Çalıştırma: repo kökünden `bash platforms/linux/build.sh`
+# LOOK — build the Linux standalone package (Ubuntu/Debian + AlmaLinux/RHEL).
+# Run from the repo root: `bash platforms/linux/build.sh`
 #
-# Gömülü binary = PORTATİF statik build (cpp/build-portable): statik OpenSSL/libstdc++,
-# glibc 2.28 → glibc>=2.28 tüm dağıtımlarda + gelecek sürümlerde çalışır. Önce üret:
+# Embedded binary = PORTABLE static build (cpp/build-portable): static OpenSSL/libstdc++,
+# glibc 2.28 → works on every distribution with glibc>=2.28 and on future releases. Build it first:
 #   docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build bash build-portable.sh
 set -e
 cd "$(dirname "$0")"
@@ -26,7 +26,7 @@ for b in lk lk-fcgi lk-cgi; do
     chmod +x "$TMP/bin/$b"
 done
 
-# Portatiflik teyidi — dinamik ssl/crypto/stdc++ olmamalı
+# Portability check — there must be no dynamic ssl/crypto/stdc++
 if ldd "$TMP/bin/lk-fcgi" 2>/dev/null | grep -qiE 'ssl|crypto|stdc\+\+'; then
     echo "WARNING: bin/lk-fcgi is dynamically linked to ssl/crypto/stdc++ — NOT portable!" >&2; exit 1
 fi

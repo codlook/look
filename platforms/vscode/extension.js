@@ -1,6 +1,6 @@
-// LOOK Language — VSCode eklentisi
-// Codlook. Saf JS (derleme yok). Özellikler: canlı hata denetimi (lk --check),
-// otomatik tamamlama, hover imzaları, imza yardımı, Çalıştır/Servis/REPL komutları.
+// LOOK Language — VSCode extension
+// Codlook. Plain JS (no build). Features: live error checking (lk --check),
+// autocompletion, hover signatures, signature help, Run/Serve/REPL commands.
 'use strict';
 
 const vscode = require('vscode');
@@ -9,9 +9,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// ── Built-in fonksiyon veritabanı (üretilmiş: builtins.json) ──────────────────
+// ── Built-in function database (generated: builtins.json) ──────────────────
 let BUILTINS = [];           // [{name, module, fn, sig, detail}]
-const BUILTIN_BY_NAME = {};  // "math::sqrt" -> kayıt
+const BUILTIN_BY_NAME = {};  // "math::sqrt" -> record
 
 const KEYWORDS = [
   'if', 'else', 'elseif', 'while', 'for', 'foreach', 'as', 'break', 'continue',
@@ -31,11 +31,11 @@ function loadBuiltins(ctx) {
   }
 }
 
-// ── Ayarlar ───────────────────────────────────────────────────────────────────
+// ── Settings ───────────────────────────────────────────────────────────────────
 function cfg() { return vscode.workspace.getConfiguration('look'); }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 1) CANLI HATA DENETİMİ — lk --check
+// 1) LIVE ERROR CHECKING — lk --check
 // ═══════════════════════════════════════════════════════════════════════════
 let diagCollection;
 let binaryMissingWarned = false;
@@ -46,14 +46,14 @@ function runCheck(doc) {
   if (!cfg().get('diagnostics.enable', true)) { diagCollection.delete(doc.uri); return; }
 
   const bin = cfg().get('binaryPath', 'lk');
-  // İçeriği geçici bir .lk dosyasına yaz (kaydedilmemiş düzenlemeler de denetlensin)
+  // Write the content to a temporary .lk file (so unsaved edits are checked too)
   const tmp = path.join(os.tmpdir(), 'look-check-' + Buffer.from(doc.uri.toString()).toString('hex').slice(0, 24) + '.lk');
   try { fs.writeFileSync(tmp, doc.getText()); } catch (e) { return; }
 
   cp.execFile(bin, ['--check', tmp], { timeout: 5000 }, (err, stdout, stderr) => {
     try { fs.unlinkSync(tmp); } catch (e) {}
 
-    // Binary bulunamadı → bir kez uyar, denetimi sessizce kapat
+    // Binary not found → warn once, turn the check off silently
     if (err && (err.code === 'ENOENT' || /ENOENT|not found|not recognized/i.test(String(stderr)))) {
       if (!binaryMissingWarned) {
         binaryMissingWarned = true;
@@ -68,13 +68,13 @@ function runCheck(doc) {
 
     const out = String(stdout).trim();
     const diags = [];
-    // Format: "OK"  ya da  "CHECK <satır> <sütun> <mesaj>"
+    // Format: "OK"  or  "CHECK <line> <column> <message>"
     const m = out.match(/^CHECK\s+(\d+)\s+(\d+)\s+([\s\S]*)$/);
     if (m) {
       const line = Math.max(0, parseInt(m[1], 10) - 1);
       const col = Math.max(0, parseInt(m[2], 10) - 1);
       const message = m[3].trim();
-      // Hatalı token'ı altını çiz: sütundan satır sonuna (ya da kelime sonuna)
+      // Underline the faulty token: from the column to the end of the line (or the end of the word)
       const textLine = line < doc.lineCount ? doc.lineAt(line).text : '';
       let endCol = textLine.length;
       const wordMatch = /[A-Za-z_$][A-Za-z0-9_:]*/.exec(textLine.slice(col));
@@ -98,7 +98,7 @@ function scheduleCheck(doc) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2) OTOMATİK TAMAMLAMA
+// 2) AUTOCOMPLETION
 // ═══════════════════════════════════════════════════════════════════════════
 function documentSymbols(doc) {
   const text = doc.getText();
@@ -117,7 +117,7 @@ const completionProvider = {
     const line = doc.lineAt(pos.line).text.slice(0, pos.character);
     const items = [];
 
-    // "modül::" yazıldıysa → o modülün fonksiyonları
+    // if "module::" was typed → that module's functions
     const modMatch = /([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z0-9_]*)$/.exec(line);
     if (modMatch) {
       const mod = modMatch[1];
@@ -132,18 +132,18 @@ const completionProvider = {
       return items;
     }
 
-    // "$" yazıldıysa → dosyadaki değişkenler
+    // if "$" was typed → the variables in the file
     const sym = documentSymbols(doc);
     if (/\$[A-Za-z0-9_]*$/.test(line)) {
       for (const v of sym.vars) {
         const it = new vscode.CompletionItem(v, vscode.CompletionItemKind.Variable);
-        it.insertText = v; // '$' zaten yazıldı
+        it.insertText = v; // '$' was already typed
         items.push(it);
       }
       return items;
     }
 
-    // Genel bağlam: keyword'ler + modüller + global'ler + tüm builtin'ler + kullanıcı fonksiyonları
+    // General context: keywords + modules + globals + all builtins + user functions
     for (const k of KEYWORDS) items.push(new vscode.CompletionItem(k, vscode.CompletionItemKind.Keyword));
     const modules = [...new Set(BUILTINS.map(b => b.module))];
     for (const mod of modules) {
@@ -175,7 +175,7 @@ const completionProvider = {
   }
 };
 
-// İmzadan tab-stop'lu snippet üret: math::sqrt($x) -> math::sqrt(${1:$x})
+// Generate a snippet with tab stops from the signature: math::sqrt($x) -> math::sqrt(${1:$x})
 function snippetFromSig(b) {
   const m = /\(([\s\S]*)\)$/.exec(b.sig);
   if (!m || !m[1].trim()) return b.fn + '()';
@@ -212,12 +212,12 @@ const hoverProvider = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4) İMZA YARDIMI (parametre ipucu)
+// 4) SIGNATURE HELP (parameter hint)
 // ═══════════════════════════════════════════════════════════════════════════
 const signatureProvider = {
   provideSignatureHelp(doc, pos) {
     const line = doc.lineAt(pos.line).text.slice(0, pos.character);
-    // En yakın açık parantezin öncesindeki fonksiyon adını bul
+    // Find the function name before the nearest open parenthesis
     let depth = 0, i = line.length - 1, commas = 0;
     for (; i >= 0; i--) {
       const ch = line[i];
@@ -249,7 +249,7 @@ const signatureProvider = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 5) KOMUTLAR — Çalıştır / Servis / REPL
+// 5) COMMANDS — Run / Serve / REPL
 // ═══════════════════════════════════════════════════════════════════════════
 function termFor(name) {
   const existing = vscode.window.terminals.find(t => t.name === name);
@@ -305,7 +305,7 @@ function activate(ctx) {
     vscode.commands.registerCommand('look.check', cmdCheck)
   );
 
-  // Denetim tetikleyicileri
+  // Check triggers
   ctx.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(scheduleCheck),
     vscode.workspace.onDidChangeTextDocument(e => {
@@ -314,7 +314,7 @@ function activate(ctx) {
     vscode.workspace.onDidSaveTextDocument(runCheck),
     vscode.workspace.onDidCloseTextDocument(doc => diagCollection.delete(doc.uri))
   );
-  // Açık olan dosyaları hemen denetle
+  // Check the open files right away
   vscode.workspace.textDocuments.forEach(scheduleCheck);
 }
 

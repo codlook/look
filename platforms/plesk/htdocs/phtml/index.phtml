@@ -1,5 +1,5 @@
 <?php
-// index.php'den gelen degiskenler: $domains, $plesk_domains, $look_ver, $bin_ok, $stats
+// variables coming from index.php: $domains, $plesk_domains, $look_ver, $bin_ok, $stats
 $pleskDoms  = $plesk_domains ?? ['example.com'];
 $lookVer    = $look_ver      ?? '—';
 $binOk      = $bin_ok        ?? false;
@@ -16,7 +16,7 @@ $icons = [
 <style>
 /* ══════════════════════════════════════════════════════════════════════════
    LOOK Language — Plesk Extension · workspace UI (sidebar + views)
-   minimal / kurumsal · Light + Dark · her sey .lk-app altinda scope'lu
+   minimal / corporate · Light + Dark · everything is scoped under .lk-app
 ═══════════════════════════════════════════════════════════════════════════ */
 .lk-app{
   --bg:#fbfbfd; --card:#ffffff; --ink:#1f2430; --ink2:#727a8a; --ink3:#9aa1b0;
@@ -355,7 +355,7 @@ $icons = [
         </div>
       </section>
 
-      <!-- ─────────── UYGULAMALAR ─────────── -->
+      <!-- ─────────── APPLICATIONS ─────────── -->
       <section class="lk-view" id="view-apps">
         <div class="lk-panel" id="lkAddBox">
           <div class="lk-panel-head"><h2>Add New Domain</h2></div>
@@ -435,7 +435,7 @@ $icons = [
         </div>
       </section>
 
-      <!-- ─────────── LOGLAR ─────────── -->
+      <!-- ─────────── LOGS ─────────── -->
       <section class="lk-view" id="view-logs">
         <div class="lk-logbar">
           <select id="lkLogSvc">
@@ -450,7 +450,7 @@ $icons = [
         <div class="lk-logout" id="lkLogOut">Select an application and click “Fetch” to view logs.</div>
       </section>
 
-      <!-- ─────────── DOKÜMANTASYON ─────────── -->
+      <!-- ─────────── DOCUMENTATION ─────────── -->
       <section class="lk-view" id="view-docs">
         <div class="lk-docs">
           <h3>What is LOOK?</h3>
@@ -482,7 +482,7 @@ route("404", fn() =&gt; response::error(404, "Not found"))</code></pre>
   </div>
 </div>
 
-<!-- ══ EDIT (yapılandırma) MODAL ══ -->
+<!-- ══ EDIT (configuration) MODAL ══ -->
 <div class="lk-overlay" id="lkModal">
   <div class="lk-modal">
     <div class="lk-modal-head"><h3>Configure Domain</h3><button class="lk-modal-x" onclick="lkCloseModal()">&times;</button></div>
@@ -586,7 +586,7 @@ async function lkApi(data){
   return r.json();
 }
 
-// ── Status (hem dashboard hem apps satirlari) ──────────────────────────────────
+// ── Status (both the dashboard and the apps rows) ──────────────────────────────────
 const ST_LABELS={active:'Running',inactive:'Stopped',failed:'Failed',unknown:'Unknown'};
 function lkPaintStatus(id,state){
   const el=document.getElementById(id); if(!el) return;
@@ -607,7 +607,7 @@ function lkRefresh(){
 }
 document.addEventListener('DOMContentLoaded',lkRefresh);
 
-// ── Live sparklines (gercek veri, periyodik ornekleme) ─────────────────────────
+// ── Live sparklines (real data, periodic sampling) ─────────────────────────
 const LK_HIST={cpu:[],ram:[],disk:[]};
 function lkSpark(id,val){
   const h=LK_HIST[id]; if(!h) return;
@@ -660,15 +660,15 @@ function lkMenu(e,svc){
   const m=document.getElementById('lkmenu-'+svc), open=m.classList.contains('open');
   lkCloseMenus(); if(open) return;
   const r=e.currentTarget.getBoundingClientRect();
-  m.classList.add('open');                 // önce göster ki ölçülebilsin
+  m.classList.add('open');                 // show first so it can be measured
   const mw=m.offsetWidth, mh=m.offsetHeight;
   let left=Math.max(8, r.right-mw);
   let top=r.bottom+4;
-  if(top+mh>window.innerHeight-8) top=Math.max(8, r.top-4-mh); // alta sığmazsa yukarı aç
+  if(top+mh>window.innerHeight-8) top=Math.max(8, r.top-4-mh); // open upwards if it does not fit below
   m.style.left=left+'px'; m.style.top=top+'px';
 }
 document.addEventListener('click',lkCloseMenus);
-// içerik/pencere kaydırılınca menü kapansın (fixed konum kaymasın)
+// close the menu when the content/window scrolls (so the fixed position does not drift)
 window.addEventListener('scroll',lkCloseMenus,true);
 document.addEventListener('DOMContentLoaded',()=>{const b=document.querySelector('.lk-body');if(b)b.addEventListener('scroll',lkCloseMenus);});
 
@@ -685,8 +685,8 @@ async function lkRestart(domain,svc){
   const d=await lkApi({action:'restart',domain});
   lkSetStatus(svc,d.state||(d.ok?'active':'unknown'));lkToast(d.ok?'Restarted':(d.error||'Error'),d.ok);
 }
-// Yeniden denetle: enable.sh siteyi en yeni LOOK'un `lk --check`iyle yeniden denetler — geçerse site yeni
-// sürüme geçer, geçmezse eski sürümde kalır; sonuç durum kutusuna yansısın diye sayfa tazelenir.
+// Re-check: enable.sh re-checks the site with the newest LOOK's `lk --check` — if it passes the site moves to the new
+// release, if it fails it stays on the old one; the page is refreshed so the result shows in the status box.
 async function lkRecheck(domain,svc){
   const box=document.getElementById('lkheld-'+svc); if(box)box.style.opacity='.5';
   const d=await lkApi({action:'restart',domain});
@@ -735,7 +735,7 @@ async function lkOpenEditor(data){
 }
 function lkCloseEditor(){document.getElementById('lkEdModal').classList.remove('open');}
 document.getElementById('lkEdModal').addEventListener('click',e=>{if(e.target===e.currentTarget)lkCloseEditor();});
-// TAB tuşu editörde girinti eklesin
+// the TAB key inserts indentation in the editor
 document.getElementById('lkEdArea').addEventListener('keydown',function(e){
   if(e.key==='Tab'){e.preventDefault();const s=this.selectionStart,en=this.selectionEnd;
     this.value=this.value.slice(0,s)+'  '+this.value.slice(en);this.selectionStart=this.selectionEnd=s+2;}
@@ -779,7 +779,7 @@ async function lkMonTick(){
     document.getElementById('mon-port').innerHTML=m.PORT?':'+m.PORT:'—';
     document.getElementById('mon-restart').textContent=m.NRestarts!==undefined?m.NRestarts:'0';
     document.getElementById('lkMonUp').textContent=active?('uptime '+lkFmtUptime(m.ETIMES)):(m.SubState||m.ActiveState||'');
-    // log kuyrugu (son 30)
+    // log tail (last 30)
     const lg=await lkApi({action:'logs',svc:s.svc,n:30}); if(!LK_MON||LK_MON.svc!==s.svc)return;
     if(lg.ok){const el=document.getElementById('lkMonLog');const near=el.scrollTop+el.clientHeight>=el.scrollHeight-30;
       el.innerHTML=lkEsc(lg.log||'').split('\n').map(l=>/\b(ERR|ERROR|hata|failed|Fatal)\b/i.test(l)?'<span class="err">'+l+'</span>':/\b(WARN|uyar|warning)\b/i.test(l)?'<span class="warn">'+l+'</span>':/\b(OK|aktif|Listening|Started|haz)\b/i.test(l)?'<span class="ok">'+l+'</span>':l).join('\n');
@@ -787,7 +787,7 @@ async function lkMonTick(){
   }catch{}
 }
 
-// ── Log kopyala (clipboard API + fallback) ─────────────────────────────────────
+// ── Copy log (clipboard API + fallback) ─────────────────────────────────────
 async function lkCopyLog(id){
   const el=document.getElementById(id); if(!el)return;
   const txt=el.innerText||el.textContent||'';

@@ -1,10 +1,10 @@
 # .github/workflows/workflow-lint.yml
-# Bütün iş akışı dosyalarını denetler — AYRI bir dosyada, çünkü denetlediği dosyanın içindeki bir
-# denetim, o dosya bozulunca kendisi de çalışmaz. İki kez yaşandı: ci.yml'de tırnaksız bir adım adı
-# ("name: csrf:: and …") YAML'ı bozdu; GitHub dosyayı okuyamadı, ana CI'ın HİÇBİR işi koşmadı, öbür
-# iş akışları yeşil göründüğü için fark edilmedi. actionlint YAML sözdizimini, iş akışı şemasını ve
-# ${{ }} ifadelerini denetler. (shellcheck/pyflakes kapalı: amaç iş akışlarının OKUNABİLMESİ; betik
-# kalitesi ayrı iş.) İkili sürümü VE SHA-256'sı sabit — indirilen değişirse adım kırılır.
+# Checks all workflow files — in a SEPARATE file, because a check inside the file it checks
+# does not run either when that file breaks. It happened twice: an unquoted step name in ci.yml
+# ("name: csrf:: and …") broke the YAML; GitHub could not read the file, NOT ONE job of the main CI ran, and it went
+# unnoticed because the other workflows looked green. actionlint checks the YAML syntax, the workflow schema and
+# ${{ }} expressions. (shellcheck/pyflakes are off: the goal is that workflows can be READ; script
+# quality is a separate job.) The binary's version AND its SHA-256 are pinned — if the download changes the step breaks.
 name: workflow-lint
 on: [push, pull_request]
 

@@ -1,8 +1,8 @@
 <?php
 /**
  * LOOK Language — Plesk Extension
- * AJAX: action parametresi ile JSON doner
- * Page: pm_Application->run() ile Plesk frame icinde render edilir
+ * AJAX: returns JSON based on the action parameter
+ * Page: rendered inside the Plesk frame via pm_Application->run()
  */
 
 define('LOOK_OPT',     '/opt/look');
@@ -11,26 +11,26 @@ define('LOOK_BIN',     LOOK_OPT . '/lk-fcgi');
 define('SCRIPTS_DIR',  __DIR__ . '/scripts');
 define('BASE_PORT',    9100);
 
-// pm_ApiCli::callSbin eklentinin baglamini ister. Panel bu dosyaya IndexController (zaten
-// baglamli) ya da dogrudan /modules/look-lang/index.php uzerinden gelir — ikincisinde baglam yok.
+// pm_ApiCli::callSbin needs the extension's context. The panel reaches this file through IndexController (which already
+// has the context) or directly via /modules/look-lang/index.php — the latter has no context.
 pm_Context::init('look-lang');
 
-// State (domains.json) — Plesk'in panel-yazilabilir modul var dizininde tutulur.
-// /opt/look/conf root'a ait (dnf/RPM binary klasoru); panel psaadm olarak calisir
-// ve oraya YAZAMAZ → domain eklense de kaydedilmez, listede gorunmezdi. Bu dizin
-// psaadm sahipli. CLI/fallback icin /opt/look/conf'a duser.
+// State (domains.json) — kept in Plesk's panel-writable module var directory.
+// /opt/look/conf belongs to root (the dnf/RPM binary folder); the panel runs as psaadm
+// and CANNOT WRITE there → a domain added would not be saved and would not show in the list. This directory
+// is owned by psaadm. For CLI/fallback it falls back to /opt/look/conf.
 define('LOOK_VAR', is_dir('/usr/local/psa/var/modules/look-lang')
     ? '/usr/local/psa/var/modules/look-lang'
     : LOOK_CONF);
 define('DOMAINS_JSON', LOOK_VAR . '/domains.json');
 
 function auto_setup(): void {
-    // Ikili, sudoers ve servis unit'leri ROOT isidir: kurulum/yukseltme kancasi
-    // (plib/scripts/post-install.php → pm_ApiCli::callSbin('look-setup')) yapar. Panel psaadm
-    // olarak calisir; burada /opt/look'a kopyalama denemesi hep "Permission denied" ile dusup
-    // Plesk loguna uyari yaziyordu.
+    // The binary, sudoers and service units are ROOT's job: the install/upgrade hook
+    // (plib/scripts/post-install.php → pm_ApiCli::callSbin('look-setup')) does them. The panel runs as
+    // psaadm; an attempt to copy into /opt/look here always failed with "Permission denied" and
+    // wrote a warning to the Plesk log.
 
-    // State dizini + eski /opt/look/conf/domains.json'dan tek seferlik tasima
+    // State directory + one-time migration from the old /opt/look/conf/domains.json
     if (!is_dir(LOOK_VAR)) @mkdir(LOOK_VAR, 0755, true);
     if (!file_exists(DOMAINS_JSON)) {
         $legacy = LOOK_CONF . '/domains.json';
@@ -49,12 +49,12 @@ function load_domains(): array {
 function save_domains(array $domains): bool {
     return file_put_contents(DOMAINS_JSON, json_encode($domains, JSON_PRETTY_PRINT)) !== false;
 }
-// Domain kaydini domains.json'dan bul (guvenli — istemciden ham yol ALINMAZ).
+// Find the domain record in domains.json (safe — no raw path is TAKEN from the client).
 function find_domain(array $domains, string $name): ?array {
     foreach ($domains as $d) if (($d['domain'] ?? '') === $name) return $d;
     return null;
 }
-// Bir domain'in kayitli script yolunu dogrula: /var/www/vhosts altinda + .lk uzantili.
+// Validate a domain's registered script path: under /var/www/vhosts + with a .lk extension.
 function safe_script_path(?array $d): ?string {
     if (!$d || empty($d['script'])) return null;
     $p = $d['script'];
@@ -63,24 +63,24 @@ function safe_script_path(?array $d): ?string {
     if (strpos($p, '..') !== false) return null;
     return $p;
 }
-// enable.sh argumanlari: <domain> <script> <workers> <mode> <port> <env-file> <memory>
-// (eski domains.json kayitlarinda 'env'/'memory' yok → ortam dosyasiz, otomatik bellek tavani)
+// enable.sh arguments: <domain> <script> <workers> <mode> <port> <env-file> <memory>
+// (old domains.json records have no 'env'/'memory' → no environment file, automatic memory cap)
 function enable_args(array $d): array {
     return ['enable', (string)$d['domain'], (string)$d['script'], (string)(int)$d['workers'],
             (string)$d['mode'], (string)(int)$d['port'], (string)($d['env'] ?? ''), valid_memory((string)($d['memory'] ?? 'auto'))];
 }
-// Sitenin bellek tavani (systemd MemoryMax): "auto" (makinenin %25'i, en cok 1G), "off" ya da 512M / 2G.
-// enable.sh ayrica dogrular (unit'e yazilir); burada gecersiz deger "auto"ya duser.
+// The site's memory cap (systemd MemoryMax): "auto" (25% of the machine, at most 1G), "off" or 512M / 2G.
+// enable.sh validates it too (it is written into the unit); here an invalid value falls back to "auto".
 function valid_memory(string $m): string {
     $m = strtoupper(trim($m));
     if ($m === '' || $m === 'AUTO') return 'auto';
     if ($m === 'OFF') return 'off';
     return preg_match('/^[0-9]{1,7}[MG]$/', $m) ? $m : 'auto';
 }
-// Root islemleri: sudo YOK. Plesk'in root yolu pm_ApiCli::callSbin → sbin/look-ctl (eylem, servis
-// adi ve arguman sayisi orada denetlenir). Argumanlar kabuk olmadan (argv) gider.
-// Eskiden sudoers 'systemctl enable look-*' kuraliyla psaadm'e root veriyordu; '*' bosluklari da
-// kapsadigindan 'systemctl enable look-a /tmp/evil.service' de izinliydi.
+// Root operations: NO sudo. Plesk's root path is pm_ApiCli::callSbin → sbin/look-ctl (the action, service
+// name and argument count are checked there). The arguments go without a shell (argv).
+// Sudoers used to give psaadm root with the rule 'systemctl enable look-*'; since '*' also matches spaces,
+// 'systemctl enable look-a /tmp/evil.service' was allowed too.
 function ctl(array $args): array {
     $r = pm_ApiCli::callSbin('look-ctl', $args, pm_ApiCli::RESULT_FULL);
     return ['output' => trim(($r['stdout'] ?? '') . ($r['stderr'] ?? '')), 'code' => (int)($r['code'] ?? 1)];
@@ -90,16 +90,16 @@ function svc_status(string $svc): array {
     if (str_starts_with($out, 'active:')) return ['state'=>'active','pid'=>substr($out,7)];
     return ['state' => $out ?: 'unknown', 'pid' => ''];
 }
-// GUVENLIK: svc her zaman 'look-' + alfanumerik/dash (enable.sh SVC_NAME uretimi:
-// domain'deki [^a-z0-9] -> '-'). svc root'ta systemctl'e gider (look-ctl ayni kurali bir kez
-// daha uygular); systemctl '/' iceren argi PATH olarak yukler -> 'look-../../tmp/evil.service'
-// saldirgan unit'ini ROOT baslatirdi. Slash/'..' iceren svc'yi burada da reddet.
+// SECURITY: svc is always 'look-' + alphanumeric/dash (enable.sh SVC_NAME generation:
+// [^a-z0-9] in the domain -> '-'). svc goes to systemctl as root (look-ctl applies the same rule once
+// more); systemctl loads an argument containing '/' as a PATH -> 'look-../../tmp/evil.service'
+// would have started the attacker's unit as ROOT. Reject an svc containing slash/'..' here too.
 function valid_svc(string $svc): bool {
     return (bool)preg_match('/^look-[a-z0-9-]+$/', $svc);
 }
-// LOOK sürümü durumu (sbin/look-setup + scripts/enable.sh yazar, root; panel yalnız okur): site en yeni
-// LOOK'ta mı, yoksa kodu yeni sürümün `lk --check`ini geçemediği için çalıştığı sürümde mi kaldı. Kalan
-// site hiçbir düzeltme (güvenlik dahil) almaz — panel bunu ve düzeltilecek satırları gösterir.
+// LOOK version state (written by sbin/look-setup + scripts/enable.sh, as root; the panel only reads it): is the site on the newest
+// LOOK, or did it stay on the release it runs because its code fails the new release's `lk --check`. A site that stays
+// receives no fixes (security included) — the panel shows this and the lines to fix.
 function release_status(string $svc): ?array {
     if (!valid_svc($svc)) return null;
     $f = LOOK_CONF . '/status/' . $svc . '.json';
@@ -107,7 +107,7 @@ function release_status(string $svc): ?array {
     $j = json_decode((string)file_get_contents($f), true);
     return is_array($j) ? $j : null;
 }
-// `lk --check` çıktısı: "CHECK <satır> <sütun> <ileti>" satırları; başka satırlar iletiyle olduğu gibi.
+// `lk --check` output: "CHECK <line> <column> <message>" lines; other lines are taken as the message as they are.
 function check_lines(string $out): array {
     $rows = [];
     foreach (preg_split('/\R/', $out) as $l) {
@@ -138,13 +138,13 @@ function get_plesk_domains(): array {
     return array_values($lines) ?: ['example.com'];
 }
 function look_version(): string {
-    // "LOOK 1.0.0 (linux/amd64)" -> "1.0.0" (phtml zaten "LOOK " ön eki koyar)
+    // "LOOK 1.0.0 (linux/amd64)" -> "1.0.0" (phtml already adds the "LOOK " prefix)
     $raw = trim(shell_exec(LOOK_OPT . '/lk --version 2>/dev/null | head -1') ?? '');
     if (preg_match('/([0-9]+\.[0-9]+\.[0-9]+)/', $raw, $m)) return $m[1];
     return $raw ?: '—';
 }
 
-// Sistem istatistikleri — üst bar (CPU/RAM/disk/load/uptime)
+// System statistics — top bar (CPU/RAM/disk/load/uptime)
 function system_stats(): array {
     $s = ['cpu'=>0,'ram_used'=>0,'ram_total'=>0,'ram_pct'=>0,'disk_pct'=>0,
           'load'=>'—','uptime'=>'—','os'=>PHP_OS];
@@ -155,7 +155,7 @@ function system_stats(): array {
         if ($t && $a) { $tot=$t[1]/1024; $av=$a[1]/1024; $s['ram_total']=round($tot); $s['ram_used']=round($tot-$av);
             $s['ram_pct']=$tot? round(($tot-$av)/$tot*100):0; }
     }
-    // CPU (kısa örnekleme yerine loadavg/core ile yaklaşık)
+    // CPU (approximated with loadavg/core instead of short sampling)
     $ncpu = (int)trim(shell_exec('nproc 2>/dev/null') ?? '1') ?: 1;
     if (is_readable('/proc/loadavg')) {
         $la = explode(' ', trim(file_get_contents('/proc/loadavg')));
@@ -179,22 +179,22 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 if ($action !== '') {
     header('Content-Type: application/json; charset=utf-8');
 
-    // GUVENLIK — CSRF: eylemler servis kurar/siler, root scriptleri cagirir, site .lk
-    // dosyasina yazar (save_script -> enable.sh restart -> yazilan kod calisir). Token
-    // korumasi olmadan, oturumu acik yoneticiye kotu sayfa actirarak capraz-site tetiklenebilir.
-    // Ustelik $action GET'ten de okunuyordu (<img src=?action=delete>).
-    // FAIL-SAFE (denylist DEGIL allowlist): guard'i ISTISNASIZ HER eyleme uygula. Eylem
-    // adlarini saymak yerine ('$MUTATING' listesi save_script/delete'i kacirmisti — allowlist
-    // fail-open) tersine cevir: lkApi() zaten TUM eylemleri POST+same-origin gonderiyor, o
-    // yuzden guard-all paneli KIRMAZ ve gelecekte eklenecek her eylem otomatik korunur.
-    // read_script'i de kapsar (site kaynagi capraz-site okunamaz). (1) YALNIZ POST;
-    // (2) same-origin (Origin/Referer host == Host); ikisi de yoksa fail-closed 403.
+    // SECURITY — CSRF: actions create/delete services, call root scripts, write the site's .lk
+    // file (save_script -> enable.sh restart -> the written code runs). Without token
+    // protection, it can be triggered cross-site by making a logged-in administrator open a bad page.
+    // On top of that $action was also read from GET (<img src=?action=delete>).
+    // FAIL-SAFE (allowlist, NOT denylist): apply the guard to EVERY action WITHOUT EXCEPTION. Instead of
+    // listing action names (the '$MUTATING' list had missed save_script/delete — an allowlist
+    // that fails open) invert it: lkApi() already sends ALL actions as POST+same-origin, so
+    // guarding all does NOT break the panel and every action added in the future is protected automatically.
+    // It covers read_script too (the site source cannot be read cross-site). (1) POST ONLY;
+    // (2) same-origin (Origin/Referer host == Host); if neither is present, fail-closed 403.
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         http_response_code(405);
         echo json_encode(['ok'=>false,'error'=>'POST required']); exit;
     }
-    // HTTP_HOST porti icerir (host:8443) ama parse_url(...HOST) PORTSUZ doner ->
-    // ikisini de host-only'ye indir, yoksa mesru panel istegi (8443) bloke olur.
+    // HTTP_HOST includes the port (host:8443) but parse_url(...HOST) returns it WITHOUT the port ->
+    // reduce both to host-only, otherwise a legitimate panel request (8443) is blocked.
     $host   = preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST'] ?? '');
     $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
     $ref    = $_SERVER['HTTP_REFERER'] ?? '';
@@ -234,10 +234,10 @@ if ($action !== '') {
         if ($memory === 'auto' && $memory_in !== '' && strcasecmp($memory_in, 'auto') !== 0) {
             echo json_encode(['ok'=>false,'error'=>'Memory limit: write megabytes or gigabytes (512M, 2G), auto or off']); exit;
         }
-        // GUVENLIK: domain/script HAM olarak enable.sh'a, oradan tirnaksiz heredoc ile
-        // systemd unit'ine geciyor (root systemctl restart). Format dogrulamasi
-        // olmadan gomulu satir-sonu iceren bir domain, unit'e kendi [Service]/ExecStartPre
-        // direktifini yazip root komut kosturur (panel kullanicisi -> root). Kati dogrula:
+        // SECURITY: domain/script go RAW to enable.sh, and from there into the systemd unit
+        // through an unquoted heredoc (root systemctl restart). Without format validation
+        // a domain containing an embedded line end writes its own [Service]/ExecStartPre
+        // directive into the unit and runs a root command (panel user -> root). Validate strictly:
         if (!preg_match('/^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i', $domain)) {
             echo json_encode(['ok'=>false,'error'=>'Invalid domain']); exit;
         }
@@ -245,8 +245,8 @@ if ($action !== '') {
             (!preg_match('#^/var/www/vhosts/[A-Za-z0-9._/-]+\.lk$#', $script) || str_contains($script, '..'))) {
             echo json_encode(['ok'=>false,'error'=>'Invalid script path']); exit;
         }
-        // Ortam dosyasi (istege bagli): enable.sh ayrica domain'in document root'u icinde
-        // oldugunu ve servisin kullanicisinin okuyabildigini dogrular
+        // Environment file (optional): enable.sh also checks that it is inside the domain's document root
+        // and that the service's user can read it
         if ($env !== '' &&
             (!preg_match('#^/var/www/vhosts/[A-Za-z0-9._/-]+$#', $env) || str_contains($env, '..'))) {
             echo json_encode(['ok'=>false,'error'=>'Invalid env file path']); exit;
@@ -301,17 +301,17 @@ if ($action !== '') {
         $domain = trim($_POST['domain'] ?? '');
         $svc    = trim($_POST['svc']    ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
-        // 'remove': unit dosyasi ve .service.d de silinir (Stop'ta kalir)
+        // 'remove': the unit file and .service.d are deleted too (they stay on Stop)
         ctl(['disable', $svc, $domain, 'remove']);
         $domains = array_values(array_filter($domains, fn($d) => $d['domain'] !== $domain));
         save_domains($domains);
         echo json_encode(['ok'=>true]); exit;
     }
-    // Canli sistem metrikleri (dashboard sparkline'lari icin periyodik cekilir)
+    // Live system metrics (fetched periodically for the dashboard sparklines)
     if ($action === 'sysstats') {
         echo json_encode(system_stats()); exit;
     }
-    // index.lk icerigini oku (yalnizca kayitli domain'in guvenli yolu)
+    // Read the contents of index.lk (only the safe path of a registered domain)
     if ($action === 'read_script') {
         $domain = trim($_POST['domain'] ?? $_GET['domain'] ?? '');
         $path   = safe_script_path(find_domain($domains, $domain));
@@ -319,7 +319,7 @@ if ($action !== '') {
         if (!file_exists($path)) { echo json_encode(['ok'=>true,'content'=>'','path'=>$path,'exists'=>false]); exit; }
         echo json_encode(['ok'=>true,'content'=>file_get_contents($path),'path'=>$path,'exists'=>true]); exit;
     }
-    // index.lk kaydet + servisi yeniden baslat (kod editoru)
+    // Save index.lk + restart the service (code editor)
     if ($action === 'save_script') {
         $domain  = trim($_POST['domain'] ?? '');
         $content = (string)($_POST['content'] ?? '');
@@ -330,11 +330,11 @@ if ($action !== '') {
         if (@file_put_contents($path, $content) === false) {
             echo json_encode(['ok'=>false,'error'=>'Could not write: '.$path.' (permissions?)']); exit;
         }
-        // yeniden deploy — enable.sh restart mantigi (bytecode cache'i tazeler)
+        // redeploy — enable.sh restart logic (refreshes the bytecode cache)
         $result = ctl(enable_args($d));
         echo json_encode(['ok'=>str_contains($result['output'],'OK:'),'out'=>$result['output']]); exit;
     }
-    // Servis loglari (journalctl — look-ctl logs)
+    // Service logs (journalctl — look-ctl logs)
     if ($action === 'logs') {
         $svc = trim($_POST['svc'] ?? $_GET['svc'] ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
@@ -342,7 +342,7 @@ if ($action !== '') {
         $out = ctl(['logs', $svc, (string)$n])['output'];
         echo json_encode(['ok'=>true,'log'=>trim($out ?? '')]); exit;
     }
-    // Canli servis monitoru (durum, PID, uptime, RSS, CPU%, restart, port, baglanti)
+    // Live service monitor (status, PID, uptime, RSS, CPU%, restart, port, connections)
     if ($action === 'monitor') {
         $svc = trim($_POST['svc'] ?? $_GET['svc'] ?? '');
         if (!valid_svc($svc)) { echo json_encode(['ok'=>false,'error'=>'Invalid service']); exit; }
@@ -357,10 +357,10 @@ if ($action !== '') {
     echo json_encode(['ok'=>false,'error'=>'Unknown action']); exit;
 }
 
-// ─── Page render — self-contained (phtml doğrudan; pm_Application MVC değil) ──
-// Not: Extensions paneli bu sayfayı plib/controllers/IndexController.php üzerinden
-// dispatch eder; o da bu dosyayı include eder. AJAX yukarıda handle edilip exit
-// eder, buraya yalnız sayfa yüklemede gelinir.
+// ─── Page render — self-contained (phtml directly; not the pm_Application MVC) ──
+// Note: the Extensions panel dispatches this page through plib/controllers/IndexController.php;
+// that in turn includes this file. AJAX is handled above and exits,
+// so only a page load reaches here.
 $domains       = load_domains();
 $plesk_domains = get_plesk_domains();
 $look_ver      = look_version();

@@ -1,12 +1,12 @@
-# LOOK derleme/test ortami — AlmaLinux 8 (VPS ile ayni taban).
+# LOOK build/test environment — AlmaLinux 8 (same base as the VPS).
 #
-# NEDEN: her `docker run --rm almalinux:8` cagrisinda toolchain'i bastan kurmak
-# build basina dakikalar goturuyordu. Bu imaj bir kez pisirilir, sonra tum
-# derleme ve guard kosumlari saniyeler icinde baslar.
+# WHY: installing the toolchain from scratch on every `docker run --rm almalinux:8`
+# cost minutes per build. This image is baked once, after which all
+# build and guard runs start within seconds.
 #
-# Kur (bir kez):
+# Build (once):
 #   docker build -t look-build -f cpp/Dockerfile.build cpp/
-# Kullan:
+# Use:
 #   docker run --rm -v "%USERPROFILE%\Desktop\look\cpp:/look/cpp" -w /look/cpp look-build \
 #     bash -c "source /opt/rh/gcc-toolset-12/enable && cmake --build build --target look-fcgi -j8"
 FROM almalinux:8
@@ -17,18 +17,18 @@ RUN dnf install -y --setopt=sslverify=false \
         perl-core zip \
     && dnf clean all
 
-# Guard script'leri iconv (UTF-8 dogrulama), curl (HTTP probe'lari) ve
-# python3 (JSON dogrulama) kullanir. perl-core + zip: portatif plugin build'i icin
-# (statik OpenSSL Configure perl ister; build.sh zip ile paketler).
+# The guard scripts use iconv (UTF-8 validation), curl (HTTP probes) and
+# python3 (JSON validation). perl-core + zip: for the portable plugin build
+# (static OpenSSL Configure needs perl; build.sh packages with zip).
 
-# ── Statik OpenSSL 1.1.1 (portatif binary reçetesi) ───────────────────────────
-# LOOK_STATIC_SSL=ON ile derlenen binary OpenSSL'i statik linkler → libssl.so.1.1'e
-# BAGIMLI DEGIL → AlmaLinux 8 (OpenSSL 1.1) VE AlmaLinux 9/Ubuntu (OpenSSL 3.x)
-# HEPSINDE calisir. Sistem openssl-devel'de statik .a YOK; kaynaktan derlenir.
-# Kullanim: cmake ... -DLOOK_STATIC_SSL=ON -DOPENSSL_ROOT_DIR=/opt/openssl-static \
+# ── Static OpenSSL (portable binary recipe) ───────────────────────────────────
+# A binary built with LOOK_STATIC_SSL=ON links OpenSSL statically → it does NOT
+# depend on libssl.so.1.1 → it runs on AlmaLinux 8 (OpenSSL 1.1) AND on
+# AlmaLinux 9/Ubuntu (OpenSSL 3.x) alike. The system openssl-devel has no static .a; build from source.
+# Usage: cmake ... -DLOOK_STATIC_SSL=ON -DOPENSSL_ROOT_DIR=/opt/openssl-static \
 #   -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
-# OpenSSL 3.5.x LTS (statik). 1.1.1 serisi EOL (2023-09-11); 3.5 LTS 2030'a kadar.
-# --libdir=lib: 3.x x86_64'te lib64'e kurar; tüketiciler lib/ bekliyor → sabitle.
+# OpenSSL 3.5.x LTS (static). The 1.1.1 series is EOL (2023-09-11); 3.5 LTS is supported until 2030.
+# --libdir=lib: 3.x installs to lib64 on x86_64; consumers expect lib/ → pin it.
 RUN source /opt/rh/gcc-toolset-12/enable && cd /tmp \
     && curl -sL -o o.tgz https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz \
     && echo "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2  o.tgz" | sha256sum -c - \

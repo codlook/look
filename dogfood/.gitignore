@@ -1,4 +1,4 @@
-# Çalışma-zamanı artefaktları (uygulama kaynağı değil)
+# Runtime artifacts (not application source)
 data.db
 sessions/
 server.log

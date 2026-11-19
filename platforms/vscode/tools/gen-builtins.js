@@ -1,7 +1,7 @@
-// builtins.json ureticisi — LOOK dili yeni fonksiyon kazandiginda yeniden calistir.
+// builtins.json generator — rerun it when the LOOK language gains a new function.
 //   node platforms/vscode/tools/gen-builtins.js
-// Kaynaklar: cpp/src/*.cpp (fonksiyon adlari) + docs/index.html (imzalar).
-// Repo kokunden calistirilmali.
+// Sources: cpp/src/*.cpp (function names) + docs/index.html (signatures).
+// Must be run from the repo root.
 const fs = require('fs');
 const cp = require('child_process');
 
@@ -10,8 +10,8 @@ function grep(re, files) {
   for (const f of files) {
     let txt = '';
     try { txt = fs.readFileSync(f, 'utf8'); } catch (e) { continue; }
-    // C++ yorumlarındaki örnek adlar ("mod::fn" gibi) katalog girdisi olmasın: satır yorumunu sök
-    // ("http://" içindeki // dokunulmasın diye yalnız boşluk/satır başından sonraki //).
+    // Example names in C++ comments (like "mod::fn") must not become catalog entries: strip the line comment
+    // (only a // after whitespace/line start, so the // inside "http://" is left alone).
     txt = txt.replace(/(^|\s)\/\/.*$/gm, '$1');
     let m; const r = new RegExp(re, 'g');
     while ((m = r.exec(txt))) out.add(m[1]);
@@ -22,18 +22,18 @@ function grep(re, files) {
 const srcFiles = fs.readdirSync('cpp/src').filter(f => f.endsWith('.cpp')).map(f => 'cpp/src/' + f);
 const names = grep('"([a-z_]+::[a-z_]+)"', srcFiles).sort();
 
-// docs/index.html'i düz metne indir: HTML etiketlerini sök + varlıkları çöz.
-// Aksi halde <pre> içindeki vurgulu imzalar <span>...</span> ile kirlenir.
+// Reduce docs/index.html to plain text: strip HTML tags + decode entities.
+// Otherwise the highlighted signatures inside <pre> are polluted with <span>...</span>.
 let docs = fs.readFileSync('docs/look.codlook.com/docs.html', 'utf8');
 docs = docs.replace(/<[^>]+>/g, '')
            .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
            .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 const byName = {};
-let m; const rsig = /([a-z_]+::[a-z_]+)\(([^)\n<]*)\)/g;  // tek satır, HTML yok
+let m; const rsig = /([a-z_]+::[a-z_]+)\(([^)\n<]*)\)/g;  // single line, no HTML
 while ((m = rsig.exec(docs))) {
   const args = m[2].trim();
-  if (args.includes('<') || args.includes('=>')) continue; // kalıntı/lambda gövdesi değil
-  // dengeli parantez/köşeli olmalı (yarım kesilmiş örnekleri ele: "..., function($x")
+  if (args.includes('<') || args.includes('=>')) continue; // not a leftover/lambda body
+  // parentheses/brackets must be balanced (drop half-cut examples: "..., function($x")
   let d = 0, ok = true;
   for (const c of args) { if (c === '(' || c === '[') d++; else if (c === ')' || c === ']') d--; if (d < 0) { ok = false; break; } }
   if (!ok || d !== 0) continue;
@@ -58,9 +58,9 @@ const MOD = {
   timer:'Timer', route:'Routing', app:'Application state', auth:'Authentication', html:'HTML',
   error:'Error', runtime:'Runtime', module:'Module', mod:'Module', look:'LOOK', csrf:'CSRF protection'
 };
-// ── SUPPLEMENT: kaynakta "mod::fn" string literali OLARAK geçmeyen ama GERÇEK olan
-//    fonksiyonlar (interpreter.cpp `fn == "x"` dispatch'i + jobs_stdlib functions[]).
-//    Her biri interpreter.cpp/jobs_stdlib.cpp'den DOĞRULANDI (2026-07-29). İmzalar kaynaktan.
+// ── SUPPLEMENT: functions that do not appear in the source AS a "mod::fn" string literal but are REAL
+//    (the interpreter.cpp `fn == "x"` dispatch + jobs_stdlib functions[]).
+//    Each was VERIFIED against interpreter.cpp/jobs_stdlib.cpp (2026-07-29). Signatures are from the source.
 const SUPPLEMENT = [
   ['ws::on', '$ws, "message", $fn'], ['ws::send', '$ws, $msg'], ['ws::close', '$ws'],
   ['ws::broadcast', '$msg'], ['ws::clients', ''],
@@ -68,20 +68,20 @@ const SUPPLEMENT = [
   ['sse::close', '$sse'], ['sse::clients', ''],
   ['timer::after', '$ms, $fn'], ['timer::every', '$ms, $fn'], ['timer::cancel', '$id'],
   ['jobs::run', '$interval_ms, $fn'], ['jobs::worker', '$name, $fn'],
-  // crypto:: — kaynakta ayrı kayıtlı (docs referansından doğrulandı)
+  // crypto:: — registered separately in the source (verified against the docs reference)
   ['crypto::sha256', '$data'], ['crypto::hmac_sha256', '$data, $key'],
   ['crypto::hmac_sha256_raw', '$data, $key'],
   ['crypto::base64_encode', '$s'], ['crypto::base64_decode', '$s'],
   ['crypto::base64url_encode', '$s'], ['crypto::base64url_decode', '$s'],
   ['crypto::rs256_sign', '$data, $pem_key'], ['crypto::rs256_sign_b64url', '$data, $pem_key'],
   ['crypto::rs256_verify', '$data, $sig, $pem_key'],
-  // route::group — docs örneğindeki closure gövdesi ({...}) rsig'i şaşırtıyor → elle imza.
+  // route::group — the closure body ({...}) in the docs example confuses rsig → hand-written signature.
   ['route::group', '$prefix, [$middleware], $fn'],
 ];
 for (const [nm, args] of SUPPLEMENT) {
   if (!names.includes(nm)) names.push(nm);
-  // SUPPLEMENT elle-doğrulanmış imza taşır. Docs auto-çıkarımı boş-string ("") ile kirlenmişse
-  // (bestArgs boşu gerçek args'a tercih ediyor) elle imzayı kullan; docs'ta gerçek args varsa onu tut.
+  // SUPPLEMENT carries a hand-verified signature. If the docs auto-extraction is polluted with an empty string ("")
+  // (bestArgs prefers the empty one over the real args) use the hand signature; if the docs have real args, keep them.
   const good = (byName[nm] || []).filter(a => a && a.trim() !== '');
   byName[nm] = good.length ? good : [args];
 }

@@ -5,7 +5,7 @@ cp /src/build-almalinux8/look-fcgi /usr/local/bin/look-fcgi
 cp /src/build-almalinux8/look-cgi  /usr/local/bin/look-cgi
 chmod +x /usr/local/bin/look-fcgi /usr/local/bin/look-cgi
 
-# AlmaLinux 8 httpd default ScriptAlias /var/www/cgi-bin/ kullanır
+# AlmaLinux 8 httpd uses the default ScriptAlias /var/www/cgi-bin/
 mkdir -p /var/www/cgi-bin
 cp /usr/local/bin/look-cgi /var/www/cgi-bin/look-cgi
 chmod +x /var/www/cgi-bin/look-cgi
@@ -28,8 +28,8 @@ ENVEOF
 mkdir -p /var/log/look
 chown apache:apache /var/log/look 2>/dev/null || true
 
-# AlmaLinux 8 httpd — mpm_prefork varsayılan, mod_cgi zaten aktif
-# mod_proxy_fcgi ve mod_actions'ı etkinleştir
+# AlmaLinux 8 httpd — mpm_prefork is the default, mod_cgi is already active
+# enable mod_proxy_fcgi and mod_actions
 cat > /etc/httpd/conf.d/look.conf << 'APACHECONF'
 LoadModule proxy_module modules/mod_proxy.so
 LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so
@@ -68,16 +68,16 @@ AddHandler look-handler .lk
 </VirtualHost>
 APACHECONF
 
-# mod_rewrite etkin mi kontrol et
+# check whether mod_rewrite is enabled
 grep -q "^LoadModule rewrite_module" /etc/httpd/conf.modules.d/*.conf 2>/dev/null || \
     echo "LoadModule rewrite_module modules/mod_rewrite.so" >> /etc/httpd/conf.d/look.conf
 
-# look-fcgi başlat
+# start look-fcgi
 echo "--- starting look-fcgi ---"
 /usr/local/bin/look-fcgi --port 9000 &
 sleep 2
 
-# httpd başlat
+# start httpd
 echo "--- starting httpd ---"
 httpd -k start
 sleep 1

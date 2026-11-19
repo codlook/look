@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -e
 source /opt/rh/gcc-toolset-12/enable 2>/dev/null
-# OpenSSL 3.5.x LTS (statik). Prefix sürüme-özel → sürüm bump'ı eski cache'i doğal
-# olarak geçersiz kılar (eskiden sabit _ssl-static, bayat 1.1.1w'yi ship edebilirdi).
-# --libdir=lib: OpenSSL 3.x x86_64'te lib64'e kurar; CMake yolları lib/ bekliyor → sabitle.
+# OpenSSL 3.5.x LTS (static). The prefix is version-specific → a version bump naturally invalidates the old cache
+# (previously a fixed _ssl-static could ship a stale 1.1.1w).
+# --libdir=lib: OpenSSL 3.x installs to lib64 on x86_64; the CMake paths expect lib/ → pin it.
 OSSL_VER=3.5.8
 OSSL_SHA=a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
 S=/look/cpp/_ssl-static-$OSSL_VER
@@ -20,8 +20,8 @@ if [ ! -f "$S/lib/libcrypto.a" ]; then
   make -j8 >/dev/null 2>&1; make install_sw >/dev/null 2>&1
 fi
 cd /look/cpp; rm -rf build-portable
-# LOOK_BUILD env varsa damgayı ONA sabitle (container'da .git yok → git rev-parse "src"e düşer,
-# ama release "1.0.0 sabit, ayrım damgada" modeli git-sha ister). Env yoksa CMakeLists git/src'e düşer.
+# If the LOOK_BUILD env var is set, pin the stamp to it (no .git in the container → git rev-parse falls back to "src",
+# but the release model "1.0.0 fixed, distinction in the stamp" wants the git-sha). Without the env var CMakeLists falls back to git/src.
 cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release -DLOOK_STATIC_SSL=ON \
   ${LOOK_BUILD:+-DLOOK_BUILD="$LOOK_BUILD"} \
   -DOPENSSL_INCLUDE_DIR="$S/include" -DOPENSSL_SSL_LIBRARY="$S/lib/libssl.a" -DOPENSSL_CRYPTO_LIBRARY="$S/lib/libcrypto.a" \

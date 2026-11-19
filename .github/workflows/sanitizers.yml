@@ -1,9 +1,9 @@
 # .github/workflows/sanitizers.yml
-# Release build'in yakalayamadigi siniftaki hatalari (data race, stack overflow, UB)
-# yakalar. Tasarim: yaris testleri enforced/ altinda ZORUNLU (kirilirsa CI kirmizi).
-# (Onceki "known_fail/ + continue-on-error" bolgesi kaldirildi: fail-loud prensibinin
-#  tersi bir "basarisizligin kabul edildigi yer"di; R-02/R-03 kapaninca bosaldi. Yeni bir
-#  yaris cikarsa enforced/'a eklenir ve HEMEN kirar — "simdilik oraya koyalim" yok.)
+# Catches errors of the class the Release build cannot catch (data race, stack overflow, UB).
+# Design: race tests under enforced/ are MANDATORY (if they break CI goes red).
+# (The earlier "known_fail/ + continue-on-error" area was removed: it was a "place where failure is accepted",
+#  the opposite of the fail-loud principle; it emptied when R-02/R-03 closed. If a new
+#  race shows up it is added to enforced/ and breaks IMMEDIATELY — no "let's put it there for now".)
 name: sanitizers
 on: [push, pull_request]
 
@@ -27,8 +27,8 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ./build-asan/lk tests/regression_all.lk
-      # Geri çağırma zincirinin dibindeki hata: her iç içe run() hata satırını taşınmış bir çerçeve
-      # referansından okuyordu (heap-use-after-free) — yalnız ASan görür.
+      # Error at the bottom of a callback chain: every nested run() read the error line from a moved frame
+      # reference (heap-use-after-free) — only ASan sees it.
       - name: Error deep inside nested callbacks (no use-after-free)
         timeout-minutes: 20
         working-directory: cpp
@@ -36,7 +36,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ./build-asan/lk tests/callback_error_frame.lk
-      # Sayısal sınırlar UBSan altında: abs(INT64_MIN), aralık dışı double→int64 eskiden UB'ydi.
+      # Numeric limits under UBSan: abs(INT64_MIN) and an out-of-range double→int64 used to be UB.
       - name: Numeric edge cases under UBSan (no report)
         timeout-minutes: 20
         working-directory: cpp
@@ -44,9 +44,9 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: bash tests/numeric_edges_test.sh ./build-asan/lk
-      # B-01 DÜZELTİLDİ (parser MAX_BINOP_CHAIN=1000): derin ikili zincir + derin paren artık
-      # AST kurulmadan parser'da TEMİZ hata verir (çökme DEĞİL) — saldırgan-kontrollü derin girdi
-      # DoS'u kapalı. continue-on-error KALDIRILDI → enforced (guard tetiklenmezse/çökerse CI kırmızı).
+      # B-01 FIXED (parser MAX_BINOP_CHAIN=1000): a deep binary chain + deep parens now give a CLEAN
+      # error in the parser before the AST is built (NOT a crash) — the attacker-controlled deep-input
+      # DoS is closed. continue-on-error REMOVED → enforced (if the guard does not trigger/crashes CI goes red).
       - name: B-01 eval-guard — ENFORCED (derin girdi temiz-hata, çökme değil)
         timeout-minutes: 20
         working-directory: cpp
@@ -141,23 +141,23 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1:exitcode=66:history_size=7:report_thread_leaks=0
         run: |
-          # t4 = SQLITE_THREADSAFE=2 regresyonu (0 yaris vermeli). ext4 runner'da
-          # overlayfs kilit belirsizligi yok — asil temiz A/B ortami burasi.
+          # t4 = SQLITE_THREADSAFE=2 regression (must give 0 races). On an ext4 runner
+          # there is no overlayfs lock ambiguity — this is the real clean A/B environment.
           for f in tests/tsan/enforced/*.lk; do
             echo "== $f"; ./build-tsan/lk "$f" || exit 1
           done
-          # Betik sonu: görev kaydı, durum atomikleri, kanal teslim anı (parallel_runtime.h)
+          # End of script: task record, state atomics, the channel hand-over moment (parallel_runtime.h)
           bash tests/parallel_exit_warning_test.sh ./build-tsan/lk 3
-          # Kanal kilitlenmesi muhasebesi + tamponsuz teslim (parallel_runtime.h ChanWait)
+          # Channel lock accounting + unbuffered hand-over (parallel_runtime.h ChanWait)
           bash tests/channel_unbuffered_test.sh ./build-tsan/lk ./build-tsan/lk-fcgi
-          # Kanalda bekleyen fiber: kayıt, askı, başka iş parçacığından devam (LookChannel::FiberWaiter)
+          # A fiber waiting on a channel: record, suspension, resuming from another thread (LookChannel::FiberWaiter)
           LOOK_TEST_NO_TIMING=1 bash tests/channel_fiber_test.sh ./build-tsan/lk-fcgi
 
   fuzz:
-    # Surdurulebilirlik: wire-protocol parser'lari her push'ta kisa fuzzlanir (libFuzzer,
-    # clang zorunlu — GCC'de -fsanitize=fuzzer yok). Tek-seferlik denetim yerine surekli
-    # tarama; bir regresyon (parser'a sinir-disi erisim) aninda CI'i kirar. Uzun kampanya
-    # nightly/manuel. Hedefler saf ayristiricilar (look/*_parse.h) — socket'siz.
+    # Sustainability: the wire-protocol parsers are fuzzed briefly on every push (libFuzzer,
+    # clang required — GCC has no -fsanitize=fuzzer). Continuous scanning instead of a one-off audit;
+    # a regression (an out-of-bounds access in a parser) breaks CI immediately. The long campaign is
+    # nightly/manual. The targets are pure parsers (look/*_parse.h) — no sockets.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

@@ -1,5 +1,5 @@
-# Görev Yöneticisi — LOOK dogfooding uygulaması.
-# Çalıştır: lk-fcgi --mode http --port 7600 app.lk
+# Task Manager — LOOK dogfooding application.
+# Run: lk-fcgi --mode http --port 7600 app.lk
 use template
 use auth
 use validator
@@ -7,7 +7,7 @@ use crypto
 use file
 use string
 
-# ── Kurulum ────────────────────────────────────────────────────────────────
+# ── Setup ────────────────────────────────────────────────────────────────
 $conn = db::connect(env("DB_DSN", "sqlite://./data.db"))
 
 db::exec($conn, "CREATE TABLE IF NOT EXISTS users (
@@ -27,8 +27,8 @@ db::exec($conn, "CREATE TABLE IF NOT EXISTS tasks (
 
 $PER_PAGE = 5
 
-# ── Yardımcılar ────────────────────────────────────────────────────────────
-# Oturumdaki CSRF token'ı döndür (yoksa üret + sakla).
+# ── Helpers ────────────────────────────────────────────────────────────
+# Return the CSRF token in the session (generate + store it if missing).
 function csrf_token() {
     if (!session::has("csrf")) {
         session::set("csrf", crypto::random_string(32))
@@ -36,24 +36,24 @@ function csrf_token() {
     return session::get("csrf")
 }
 
-# POST'taki csrf alanı oturumdakiyle eşleşiyor mu?
+# Does the csrf field in the POST match the one in the session?
 function csrf_ok() {
     $given = request::post("csrf")
     if (!session::has("csrf")) { return false }
     return crypto::constant_compare($given, session::get("csrf"))
 }
 
-# Giriş yapılmışsa e-posta, değilse null.
+# The e-mail if logged in, otherwise null.
 function current_user() {
     session::start()
     if (session::has("user_email")) { return session::get("user_email") }
     return null
 }
 
-# Grup koruması — /tasks* altındaki HER rota giriş ister, TEK yerde.
-# before_route her istekte route eşleşmeden önce koşar; prefix tutarsa ve kullanıcı
-# yoksa /login'e yönlendirip stop() ile route'u iptal eder. Eskiden bu kontrol 9
-# ayrı handler'da elle (`if (!require_login()) { return }`) tekrarlanıyordu — artık 1.
+# Group protection — EVERY route under /tasks* requires login, in ONE place.
+# before_route runs on every request before route matching; if the prefix matches and there is no
+# user, it redirects to /login and cancels the route with stop(). This check used to be repeated by hand in 9
+# separate handlers (`if (!require_login()) { return }`) — now it is 1.
 before_route(function() {
     if (string::starts_with(request::path(), "/tasks")) {
         if (current_user() == null) {
@@ -63,7 +63,7 @@ before_route(function() {
     }
 })
 
-# ── Rotalar: kimlik ────────────────────────────────────────────────────────
+# ── Routes: identity ────────────────────────────────────────────────────────
 route("GET", "/", fn() => response::redirect("/tasks"))
 
 route("GET", "/register", function() {
@@ -133,7 +133,7 @@ route("GET", "/logout", function() {
     response::redirect("/login")
 })
 
-# ── Rotalar: görevler (CRUD) ───────────────────────────────────────────────
+# ── Routes: tasks (CRUD) ───────────────────────────────────────────────
 route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
     $email = current_user()
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [$email])
@@ -141,7 +141,7 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
     $page = int(request::get("page") ?? "1")
     if ($page < 1) { $page = 1 }
 
-    # Arama/filtre — dinamik WHERE (opsiyonel param'lar). LIKE + durum filtresi.
+    # Search/filter — dynamic WHERE (optional params). LIKE + status filter.
     $q = request::get("q") ?? ""
     $status = request::get("status") ?? "all"
     $where = "user_id=?"
@@ -154,12 +154,12 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
     if ($status == "done")   { $where = $where . " AND done=1" }
 
     $total = db::col($conn, "SELECT COUNT(*) FROM tasks WHERE " . $where, $params)
-    # int/int → float (belgeli); ceil-bölme için int() ile taban al, yoksa "2.2 sayfa" sızar
+    # int/int → float (documented); for ceil-division take the floor with int(), otherwise "2.2 pages" leaks out
     $total_pages = int(($total + $PER_PAGE - 1) / $PER_PAGE)
     if ($total_pages < 1) { $total_pages = 1 }
     $offset = ($page - 1) * $PER_PAGE
 
-    # Sorgu param'ları = filtre param'ları + LIMIT/OFFSET
+    # Query params = filter params + LIMIT/OFFSET
     $qparams = $params
     push($qparams, $PER_PAGE)
     push($qparams, $offset)
@@ -167,7 +167,7 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
         "SELECT id, title, done, attachment FROM tasks WHERE " . $where . " ORDER BY id DESC LIMIT ? OFFSET ?",
         $qparams)
 
-    # Görünüm için satırları hazırla (template'te hesap yapılamaz).
+    # Prepare the rows for the view (no computation is possible in the template).
     $tasks = []
     for ($i = 0; $i < count($rows); $i = $i + 1) {
         $r = $rows[$i]
@@ -182,7 +182,7 @@ route("GET", "/tasks", function() use ($conn, $PER_PAGE) {
     }
 
     $flash = request::get("flash") ?? ""
-    # Pager linklerinde filtreyi koru (query-string parçası)
+    # Keep the filter in the pager links (query-string part)
     $filter_qs = "&q=" . $q . "&status=" . $status
     response::html(template::render("views/tasks/list", [
         "title" => "Tasks", "user" => $email, "csrf" => csrf_token(),
@@ -260,7 +260,7 @@ route("POST", "/tasks/{id}/delete", function($id) use ($conn) {
     response::redirect("/tasks?flash=Task deleted")
 })
 
-# ── Dosya eki (upload) ─────────────────────────────────────────────────────
+# ── File attachment (upload) ─────────────────────────────────────────────────────
 route("GET", "/tasks/{id}/attach", function($id) use ($conn) {
     $uid = db::col($conn, "SELECT id FROM users WHERE email=?", [current_user()])
     $rows = db::query($conn, "SELECT title FROM tasks WHERE id=? AND user_id=?", [int($id), $uid])

@@ -27,21 +27,21 @@ jobs:
           # Ubuntu 26.04's static libcrypto also needs libjitterentropy.a (the package does not exist on 24.04)
           if apt-cache show libjitterentropy3-dev >/dev/null 2>&1; then sudo apt-get install -y libjitterentropy3-dev; fi
 
-      # Temiz bir GCC/Linux ortamında derleme — portability regresyonlarını
-      # (ör. eksik <cstdint>) burada yakalar; MSVC'nin transitive include'ları
-      # gizleyebildiği sorunlar CI'da ortaya çıkar.
+      # Build in a clean GCC/Linux environment — catches portability regressions
+      # (e.g. a missing <cstdint>) here; problems that MSVC's transitive includes
+      # can hide show up in CI.
       - name: Build lk + lk-fcgi + lk-cgi (Release)
         timeout-minutes: 10
         run: |
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          # look-cgi DE derlenir: yalnız look+look-fcgi derlemek look-cgi'yi kör bırakıyordu —
-          # Katman 0 (is_reserved_builtin) look-cgi link'ini sessizce kırdı, yalnız 3-target
-          # release build yakaladı (kırık lk-cgi = Plesk CGI yolu yayınlanacaktı). 3 target = kapalı.
+          # look-cgi is built TOO: building only look+look-fcgi left look-cgi blind —
+          # layer 0 (is_reserved_builtin) silently broke the look-cgi link, and only the 3-target
+          # release build caught it (a broken lk-cgi = the Plesk CGI path would have shipped). 3 targets = closed.
           cmake --build build --target look --target look-fcgi --target look-cgi --parallel $(nproc)
 
-      # Regresyon suite — assertion dosyası "OK/FAIL" basar.
-      # Herhangi bir FAIL satırı işi kırar.
+      # Regression suite — the assertion file prints "OK/FAIL".
+      # Any FAIL line breaks the job.
       - name: Regression suite
         timeout-minutes: 10
         run: |
@@ -868,23 +868,23 @@ jobs:
           bash tests/fatal_error_isolation_test.sh ./build/lk-fcgi
           bash tests/auth_long_password_test.sh ./build/lk
 
-      # Paket modülü (~/.look/modules) sıcak yeniden yüklemeden sonra da çalışır: derleyici yüklenen
-      # modülleri süreç boyunca hatırlıyordu, yeniden yüklemede `use paket` boş geçiyor, istekler 500.
+      # A package module (~/.look/modules) also works after a hot reload: the compiler remembered the loaded
+      # modules for the life of the process, so on reload `use package` passed empty and requests returned 500.
       - name: Package modules survive a hot reload
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/package_hot_reload_test.sh build/lk-fcgi
 
-      # Varsayılan işçi = kullanılabilir CPU (affinity + cgroup) fiber dağıtımında; engelleyen modelde
-      # CPU × 4. Havuz işçiden bağımsız ve tembel: db::connect bir bağlantı açar, gerisi gerektikçe.
+      # Default workers = available CPUs (affinity + cgroup) with fiber dispatch; CPU × 4 with the blocking model.
+      # The pool is independent of workers and lazy: db::connect opens one connection, the rest as needed.
       - name: Workers follow usable CPUs; the database pool opens connections as needed
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/worker_pool_defaults_test.sh build/lk-fcgi
 
-      # "Hi {$u["name"]}": iç çift tırnak string'i bitirir — hata yeri ve doğru yazımı ({$u['name']}) söyler.
+      # "Hi {$u["name"]}": the inner double quote ends the string — it reports the error location and the correct spelling ({$u['name']}).
       - name: A quote inside {…} gets an error that shows the right spelling
         timeout-minutes: 10
         run: |
@@ -1288,38 +1288,38 @@ jobs:
             exit 1
           fi
 
-      # Kripto known-answer testi — el-yazması SHA-256/HMAC/base64'ü NIST FIPS 180-4 +
-      # RFC 4231/4648 vektörlerine pinler. differential sütunları KARŞILAŞTIRIR
-      # (ikisi de aynı yanlışı verse geçer); bu SPEC'e karşı doğrular. exit 1 ile fail-loud.
+      # Crypto known-answer test — pins the hand-written SHA-256/HMAC/base64 to the NIST FIPS 180-4 +
+      # RFC 4231/4648 vectors. The differential columns COMPARE engines
+      # (it passes even if both give the same wrong answer); this verifies against the SPEC. Fails loudly with exit 1.
       - name: Crypto known-answer vectors
         timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/crypto_vectors.lk
 
-      # `$a = array::push($a, v)` yerinde eklenir (eskiden her çağrıda tüm dizi kopyalanıyordu: 100k
-      # ekleme ~60 sn). Sonuç ve hatalar kopyalayan sürümle birebir; "fonksiyon çağıranın yerelini
-      # değiştiremez" varsayımını sabitler — dil değişirse kırılır.
+      # `$a = array::push($a, v)` appends in place (it used to copy the whole array on every call: 100k
+      # appends ~60 s). Results and errors identical to the copying version; pins the "a function cannot
+      # change the caller's local" assumption — it breaks if the language changes.
       - name: array::push assigned to its own variable appends in place (same results)
         timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/array_push_assign.lk
 
-      # RS256 known-answer — crypto_vectors sha/hmac/base64'ü kapsıyordu ama rs256'yı
-      # kapsamıyordu (olgunluk denetimi 2026-08-11 boşluğu). Sabit imza (openssl dış
-      # oracle, PKCS#1 v1.5 deterministik) + reddetme tarafı (bozuk mesaj/imza). POSIX
-      # yolu burada TAM doğrulanır; Windows verify STUB (throw) — bu KAT, Windows NCrypt
-      # impl'i geldiğinde onu AYNI imzaya karşı doğrulayacak silahtır.
+      # RS256 known-answer — crypto_vectors covered sha/hmac/base64 but did not cover rs256
+      # (a gap found in the maturity audit of 2026-08-11). A fixed signature (openssl as external
+      # oracle, PKCS#1 v1.5 deterministic) + the rejecting side (corrupt message/signature). The POSIX
+      # path is verified FULLY here; Windows verify is a STUB (throw) — this KAT is the weapon that will verify the Windows NCrypt
+      # implementation against the SAME signature when it arrives.
       - name: RS256 known-answer (verify + reject + deterministik sign)
         timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/rs256_kat.lk
 
-      # date:: DST regresyon — add/sub/diff gün-aritmetiği TAKVİM-tabanlı mı. Eski
-      # 86400-saniye yolu DST fall-back'te (25s gün) +1 günü AYNI güne kaydırıyordu
-      # (sessiz 1-gün: abonelik/rezervasyon). DST'li TZ ŞART — UTC tek başına görmez.
+      # date:: DST regression — is add/sub/diff day arithmetic CALENDAR-based. The old
+      # 86400-second path shifted +1 day to the SAME day on a DST fall-back (25-hour day)
+      # (silent 1-day error: subscription/reservation). A TZ with DST is REQUIRED — UTC alone does not see it.
       - name: date DST (calendar arithmetic, TZ=America/New_York)
         timeout-minutes: 10
         run: |
@@ -1327,8 +1327,8 @@ jobs:
           TZ=America/New_York ./build/lk tests/date_dst_test.lk
           TZ=UTC ./build/lk tests/date_dst_test.lk
 
-      # DKIM tag-parser ① KAT — RFC 6376 tag ayirma dogru mu (bh= icindeki h='e carpmasin).
-      # Saf parser (look/dkim_tag.h), pozitif kontrollu: eski find() parser'i ①'de bozuk.
+      # DKIM tag-parser (1) KAT — is RFC 6376 tag splitting correct (h= inside bh= must not collide).
+      # Pure parser (look/dkim_tag.h), with a positive control: the old find() parser is broken at (1).
       - name: DKIM tag-parser KAT
         timeout-minutes: 10
         run: |
@@ -1336,9 +1336,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/dkim_tag_test.cpp -o /tmp/dkim_tag_test
           /tmp/dkim_tag_test
 
-      # DKIM verify tablo testi — seam (dkim_verify_with_key) + ② çoklu-From FAIL-SAFE.
-      # Pozitif kontrol (geçerli imza→TRUE) + iki yön çoklu-From→FALSE. Bir refactor bu
-      # fail-safe davranışı bozarsa (find/rfind aynı From'a yaklaşırken) KIRMIZI.
+      # DKIM verify table test — seam (dkim_verify_with_key) + (2) multiple-From FAIL-SAFE.
+      # Positive control (valid signature→TRUE) + both directions multiple-From→FALSE. RED if a refactor breaks this
+      # fail-safe behaviour (find/rfind approaching the same From).
       - name: DKIM verify table (seam + çoklu-From)
         timeout-minutes: 10
         run: |
@@ -1347,9 +1347,9 @@ jobs:
             -lssl -lcrypto -lresolv -o /tmp/dkim_verify_test
           /tmp/dkim_verify_test
 
-      # SMTP adres parser tablo testi — seam (look/smtp_parse.h) + geçmiş bug'lar (bare
-      # adres, <> null-sender, iç içe '<') kilitli. ASan+UBSan: adversarial + 100K girdide
-      # OOB/çökme yok. Ağa açık PRE-AUTH kod; bir refactor sağlamlığı bozarsa KIRMIZI.
+      # SMTP address parser table test — seam (look/smtp_parse.h) + past bugs (bare
+      # address, <> null-sender, nested '<') locked. ASan+UBSan: adversarial + 100K inputs with no
+      # OOB/crash. Network-facing PRE-AUTH code; RED if a refactor breaks robustness.
       - name: SMTP addr parser table (seam + adversarial)
         timeout-minutes: 10
         run: |
@@ -1358,9 +1358,9 @@ jobs:
             tests/smtp_parse_test.cpp -o /tmp/smtp_parse_test
           /tmp/smtp_parse_test
 
-      # IMAP parser tablo testi — seam (look/imap_parse.h): parse_command/split_two +
-      # mailbox_name_ok GÜVENLİK guard'ı. Belgeli geçmiş bug `INBOX; rm -rf /` KABUL'dü;
-      # artık RED (kilitli). ASan+UBSan: adversarial + 100K çökme yok.
+      # IMAP parser table test — seam (look/imap_parse.h): parse_command/split_two +
+      # the mailbox_name_ok SECURITY guard. The documented past bug `INBOX; rm -rf /` was ACCEPTED;
+      # now REJECTED (locked). ASan+UBSan: adversarial + 100K with no crash.
       - name: IMAP parser table (seam + mailbox guard)
         timeout-minutes: 10
         run: |
@@ -1369,14 +1369,14 @@ jobs:
             tests/imap_parse_test.cpp -o /tmp/imap_parse_test
           /tmp/imap_parse_test
 
-      # SMTP runtime guard'ları — gerçek sunucu ayağa kaldırılıp ham SMTP konuşulur.
-      #  1) smtp_test.sh: adres ayrıştırma + relay + per-IP limit + fd sızıntısı.
-      #  2) smtp_slowloris_test.sh: EventLoop idle-timeout POZİTİF KONTROL — idle
-      #     bağlantı timeout sonra kapanır, aktif bağlantı kapanmaz, conn_count sızmaz.
-      #     (Non-blocking ET soketinde SO_RCVTIMEO çalışmaz → koruma EventLoop katmanında.)
-      #  3) smtp_late_reply_test.sh: worker'dan geç dönen teslim yanıtı, aynı fd
-      #     numarasını almış BAŞKA bağlantıya yazılmaz. Worker DNS ile değil,
-      #     yarım bırakılan STARTTLS el sıkışmasıyla tutulur (belirlenimli).
+      # SMTP runtime guards — a real server is brought up and raw SMTP is spoken.
+      #  1) smtp_test.sh: address parsing + relay + per-IP limit + fd leak.
+      #  2) smtp_slowloris_test.sh: EventLoop idle-timeout POSITIVE CONTROL — an idle
+      #     connection closes after the timeout, an active one does not, conn_count does not leak.
+      #     (SO_RCVTIMEO does not work on a non-blocking ET socket → the protection lives in the EventLoop layer.)
+      #  3) smtp_late_reply_test.sh: a delivery reply returning late from a worker is not written to
+      #     ANOTHER connection that got the same fd number. The worker is held not by DNS but by
+      #     a half-finished STARTTLS handshake (deterministic).
       - name: SMTP runtime (parser + relay + slowloris idle-timeout)
         timeout-minutes: 10
         run: |
@@ -1393,12 +1393,12 @@ jobs:
           # IMAP: login required, mailbox names checked (no traversal), literal size limit
           bash tests/imap_test.sh build/lk-fcgi 7157
 
-      # Motor paritesi — bu guard'lar repoda vardı ama HİÇBİR workflow'da koşmuyordu
-      # (olgunluk denetimi 2026-08-11: "guard var, CI'da yok" = regresyon manuel-koşuma
-      # bağlı). Şimdi bağlandı. differential = CLI-VM/web-VM 22 kat×2 birebir + golden;
-      # closure = 12 vaka parite; recursion = graceful stack-overflow; parallel_db = web'de
-      # conn-sızıntısı + havuz baskısı. (differential yol-çözme bug'ı düzeltildi:
-      # alt-testler $TMP'ye cd ediyordu, göreli build/lk çözülmüyordu.)
+      # Engine parity — these guards existed in the repo but ran in NO workflow
+      # (maturity audit 2026-08-11: "guard exists, not in CI" = a regression depends on a
+      # manual run). Wired up now. differential = CLI-VM/web-VM 22 categories ×2 identical + golden;
+      # closure = 12-case parity; recursion = graceful stack-overflow; parallel_db = connection leak
+      # on web + pool pressure. (A differential path-resolution bug was fixed:
+      # the sub-tests cd'd into $TMP, so the relative build/lk did not resolve.)
       - name: Motor paritesi (differential + closure + recursion + parallel)
         timeout-minutes: 10
         run: |
@@ -1415,8 +1415,8 @@ jobs:
           python3 tests/docs_examples_check.py build/lk ../docs/look.codlook.com/docs.html ../docs/look.codlook.com/index.html
           bash tests/route_param_decode.sh build/lk-fcgi   # path params URL-decoded
 
-      # HTTP sertleştirme runtime — request smuggling (çift-CL/TE-varyant/obs-fold) +
-      # slowloris header-deadline. Testler vardı, CI'da değildi.
+      # HTTP hardening runtime — request smuggling (double-CL/TE-variant/obs-fold) +
+      # slowloris header-deadline. The tests existed but were not in CI.
       - name: HTTP sertleştirme (smuggling + slowloris)
         timeout-minutes: 10
         run: |
@@ -1437,27 +1437,27 @@ jobs:
           /tmp/host_port_test
           bash tests/http_client_url_test.sh ./build/lk 7797
 
-      # SSE sse::close() fd-sızıntısı — bug-avı bulgusu (957d11e). Sunucu sse::close çağırınca
-      # fd/epoll/map istemci TCP-kopana kadar sızıyordu (+ soket kapanmadığı için istemci asılı).
-      # fd-sayacı guard'ı (TSan bu fd-yaşam yarışına kör). Pozitif kontrol: fix öncesi fd=base+1.
+      # SSE sse::close() fd leak — found by a bug hunt (957d11e). When the server called sse::close,
+      # the fd/epoll/map leaked until the client's TCP dropped (+ the client hung because the socket was not closed).
+      # fd-counter guard (TSan is blind to this fd-lifetime race). Positive control: before the fix fd=base+1.
       - name: SSE sse::close fd-sızıntısı (runtime)
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/sse_close_test.sh build/lk-fcgi 7768
 
-      # WS close + fd-sızıntısı — fonksiyonel (TSan-siz), ham-socket handshake (python3 stdlib).
-      # handshake 101 → echo → istemci close-frame → server close + fd serbest + ani-kopma
-      # regresyonu. WS EWOULDBLOCK (yavaş-istemci write-drop) kapsam dışı (ayrı yük-testi).
+      # WS close + fd leak — functional (no TSan), raw-socket handshake (python3 stdlib).
+      # handshake 101 → echo → client close-frame → server close + fd freed + abrupt-disconnect
+      # regression. WS EWOULDBLOCK (slow-client write-drop) is out of scope (separate load test).
       - name: WS close fd-sızıntısı (runtime)
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/ws_close_test.sh build/lk-fcgi 7769
 
-      # Güvenlik repro'ları — ReDoS/F-01 thread sızıntısı, file-root path-traversal
-      # (encoded/çift-encoded), i64 overflow. NOT: msvc_mul_ovf Linux yolunu kilitler;
-      # MSVC dalı Windows CI gerektirir (olgunluk denetimi Tema B).
+      # Security repros — ReDoS/F-01 thread leak, file-root path-traversal
+      # (encoded/double-encoded), i64 overflow. NOTE: msvc_mul_ovf locks the Linux path;
+      # the MSVC branch needs Windows CI (maturity audit theme B).
       - name: Güvenlik repro'ları (ReDoS + traversal + i64)
         timeout-minutes: 10
         run: |
@@ -1470,11 +1470,11 @@ jobs:
           # json::decode / request::json: Go encoding/json's verdict on 64 inputs; 100k keys linear
           bash tests/json_strict_test.sh build/lk
 
-      # Davranışsal .lk testleri — gömülü SQLite / in-process (harici sunucu YOK). Bu
-      # kalemler eskiden "TEST-EDİLMİŞ ama CI-dışı"ydı (env-DSN/canlı-DB isterdi); SQLite
-      # backend + in-process thread ile çekirdek davranış CI'da KANITLANIR. db:: CRUD+tx,
-      # jobs:: lifecycle+retry, parallel() fan-out+izolasyon, prepared bind matrisi.
-      # (mail:: harici HTTP-provider ister → CI-dışı; MySQL/PG wire-lehçesi ayrı canlı-DSN.)
+      # Behavioural .lk tests — embedded SQLite / in-process (NO external server). These
+      # items used to be "TESTED but outside CI" (they needed an env-DSN/live DB); with the SQLite
+      # backend + an in-process thread the core behaviour is PROVEN in CI. db:: CRUD+tx,
+      # jobs:: lifecycle+retry, parallel() fan-out+isolation, prepared bind matrix.
+      # (mail:: needs an external HTTP provider → outside CI; the MySQL/PG wire dialect is a separate live-DSN check.)
       - name: Davranışsal (db/jobs/parallel/prepared, SQLite)
         timeout-minutes: 10
         run: |
@@ -1525,10 +1525,10 @@ jobs:
             echo "  OK $t (CI -> FAIL, local -> SKIP)"
           done
 
-      # PG DSN TLS-karar tablo testi — seam (look/db_dsn.h). sslmode/tls→(tls,verify) mantığı
-      # ağsız kilitlenir; verify-ca sessiz-plaintext regresyonu (558d735) POZİTİF-KONTROLLÜ
-      # (verify-ca dalı silinirse verify-ca vakası tls=false → FAIL). Gerçek TLS-handshake
-      # matrisi (db_tls/, Docker+cert) ayrı/nightly kalır — bu yalnız parse ekseni.
+      # PG DSN TLS decision table test — seam (look/db_dsn.h). The sslmode/tls→(tls,verify) logic
+      # is locked without a network; the verify-ca silent-plaintext regression (558d735) is POSITIVE-CONTROLLED
+      # (if the verify-ca branch is deleted, the verify-ca case gets tls=false → FAIL). The real TLS-handshake
+      # matrix (db_tls/, Docker+cert) stays separate/nightly — this covers only the parse axis.
       - name: PG DSN TLS-karar tablosu (seam + verify-ca regresyonu)
         timeout-minutes: 10
         run: |
@@ -1545,9 +1545,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/pg_insert_test.cpp -o /tmp/pg_insert_test
           /tmp/pg_insert_test
 
-      # MySQL/Redis DSN TLS-karar — seam (look/db_dsn.h). PG'den fark: verify=false VARSAYILAN
-      # (DB cert self-signed; kablo-şifreleme amaç). Ağsız tablo mevcut kararı kilitler; varsayılan
-      # bir gün değişirse (kırıcı-karar) RED. POZİTİF-KONTROLLÜ.
+      # MySQL/Redis DSN TLS decision — seam (look/db_dsn.h). Difference from PG: verify=false is the DEFAULT
+      # (the DB cert is self-signed; wire encryption is the goal). The network-free table locks the current decision; RED if
+      # the default ever changes (breaking decision). POSITIVE-CONTROLLED.
       - name: MySQL/Redis DSN TLS-karar (seam tablosu)
         timeout-minutes: 10
         run: |
@@ -1555,9 +1555,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/mysql_redis_dsn_test.cpp -o /tmp/mrdsn
           /tmp/mrdsn
 
-      # LOOK_DB_REQUIRE_TLS refuse-plaintext karar tablosu — seam (look/db_dsn.h).
-      # Uzak-düz-metin RED / loopback+unix SERBEST / ?insecure_plaintext opt-out. Ağsız,
-      # POZİTİF-KONTROLLÜ (loopback dalı veya opt-out silinirse RED).
+      # LOOK_DB_REQUIRE_TLS refuse-plaintext decision table — seam (look/db_dsn.h).
+      # Remote plaintext REFUSED / loopback+unix ALLOWED / ?insecure_plaintext opt-out. Network-free,
+      # POSITIVE-CONTROLLED (RED if the loopback branch or the opt-out is deleted).
       - name: DB require-TLS karar (seam tablosu)
         timeout-minutes: 10
         run: |
@@ -1565,9 +1565,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/db_require_tls_test.cpp -o /tmp/drt
           /tmp/drt
 
-      # MySQL multi-packet birleştirme — seam (look/mysql_wire_parse.h). read_packet 0xFFFFFF
-      # devam paketlerini birleştirmeli (yoksa 16MB+ payload'da havuz-bağlantısı YANLIŞ VERİ döner).
-      # Reader bellek-tamponu → canlı MySQL YOK. cap/0-terminatör/kopuk-akış POZİTİF-KONTROLLÜ.
+      # MySQL multi-packet joining — seam (look/mysql_wire_parse.h). read_packet must join the 0xFFFFFF
+      # continuation packets (otherwise a pooled connection returns WRONG DATA for payloads of 16MB+).
+      # The reader is a memory buffer → NO live MySQL. cap/0-terminator/broken-stream POSITIVE-CONTROLLED.
       - name: MySQL multi-packet birleştirme (seam tablosu)
         timeout-minutes: 10
         run: |
@@ -1575,9 +1575,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/mysql_reassemble_test.cpp -o /tmp/mra
           /tmp/mra
 
-      # SHA-256 / HMAC / PBKDF2 RFC known-answer — seam (look/crypto_sha256.h). Bu üçlü
-      # JWT(HS256)/DKIM/session/auth'u besler; "kendi çıktısına değil SPEC'e pinle": NIST SHA-256
-      # + RFC 4231 HMAC + RFC 7914 PBKDF2 vektörleri. POZİTİF-KONTROLLÜ. Yeni builtin YOK.
+      # SHA-256 / HMAC / PBKDF2 RFC known-answer — seam (look/crypto_sha256.h). This trio
+      # feeds JWT(HS256)/DKIM/session/auth; "pin to the SPEC, not to its own output": NIST SHA-256
+      # + RFC 4231 HMAC + RFC 7914 PBKDF2 vectors. POSITIVE-CONTROLLED. NO new builtin.
       - name: SHA-256/HMAC/PBKDF2 RFC-KAT (seam)
         timeout-minutes: 10
         run: |
@@ -1585,10 +1585,10 @@ jobs:
           g++ -std=c++17 -Iinclude tests/crypto_sha256_test.cpp -o /tmp/csha
           /tmp/csha
 
-      # PG SCRAM crypto agreement — GERÇEK PostgresClient::sha256/hmac/pbkdf2 (postgres_client.cpp)
-      # aynı RFC vektörlerine pinli mi? Bu üçlü artık look::crypto_sha256.h'ye array<32>↔vector
-      # adaptörüyle DELEGE eder (paralel kopya birleştirildi); test regresyon-guard'ı: adaptör bağı
-      # koparsa/tek-block yol kayarsa vektör tutmaz → RED. postgres_client.cpp + OpenSSL link eder.
+      # PG SCRAM crypto agreement — are the REAL PostgresClient::sha256/hmac/pbkdf2 (postgres_client.cpp)
+      # pinned to the same RFC vectors? This trio now DELEGATES to look::crypto_sha256.h through an array<32>↔vector
+      # adapter (the parallel copy was merged); the test is a regression guard: if the adapter link
+      # breaks / the single-block path drifts, the vectors do not match → RED. Links postgres_client.cpp + OpenSSL.
       - name: PG SCRAM crypto agreement RFC-KAT (seam)
         timeout-minutes: 10
         run: |
@@ -1598,9 +1598,9 @@ jobs:
               src/fiber_posix.cpp src/mem_budget.cpp src/logger.cpp -lssl -lcrypto -lpthread -o /tmp/pgkat
           /tmp/pgkat
 
-      # PG TLS GERÇEK handshake — mock TLS PG sunucusu (python ssl, self-signed cert), Docker YOK.
-      # verify-full untrusted cert'i REDDEDER (SSL_VERIFY_PEER çalışıyor mu) + insecure kabul
-      # eder (pozitif-kontrol: red verify'dan; verify kırık olsa insecure gibi davranırdı).
+      # PG TLS REAL handshake — mock TLS PG server (python ssl, self-signed cert), NO Docker.
+      # verify-full REFUSES an untrusted cert (does SSL_VERIFY_PEER work) + insecure accepts
+      # it (positive control: the refusal comes from verify; if verify were broken it would behave like insecure).
       - name: PG TLS gerçek-handshake verify (mock, Docker'sız)
         timeout-minutes: 10
         run: |
@@ -1620,19 +1620,19 @@ jobs:
           cd cpp
           bash tests/http_client_tls_test.sh ./build/lk
 
-      # installer:: parse-katmanı — AĞSIZ (parse_pkg redleri indirmeden ÖNCE): host kısıtı
-      # (yalnız github.com), geçersiz ad, path-traversal (user + subdir). Pozitif-kontrol:
-      # meşru ad parse'ı geçmeli. (Zip-slip/redirect gerçek indirme ister → C++ unit-test
-      # hedefli-takip; tam installer_test.sh ağlı → manuel/nightly.)
+      # installer:: parse layer — NETWORK-FREE (parse_pkg rejections happen BEFORE the download): host restriction
+      # (github.com only), invalid name, path-traversal (user + subdir). Positive control:
+      # a legitimate name must pass the parse. (Zip-slip/redirect need a real download → C++ unit test
+      # targeted follow-up; the full installer_test.sh needs a network → manual/nightly.)
       - name: "installer:: parse-katmanı (host/ad/traversal, ağsız)"
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/installer_parse_test.sh build/lk
 
-      # installer:: Zip-Slip containment — güvenlik-kararı seam (look/zip_safe.h). Gerçek
-      # extract/miniz OLMADAN: entry dest içine mi açılır. Sibling-prefix kaçışı (repo→repo-evil,
-      # ayırıcı-sınır zorunlu) dahil, POZİTİF-KONTROLLÜ (sınır kaldırılırsa sibling-prefix kaçar→FAIL).
+      # installer:: Zip-Slip containment — security-decision seam (look/zip_safe.h). WITHOUT the real
+      # extract/miniz: does the entry extract inside dest. Includes the sibling-prefix escape (repo→repo-evil,
+      # separator boundary required), POSITIVE-CONTROLLED (if the boundary is removed the sibling-prefix escapes→FAIL).
       - name: "installer:: Zip-Slip containment (seam tablosu)"
         timeout-minutes: 10
         run: |
@@ -1640,9 +1640,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/installer_zipslip_test.cpp -o /tmp/izt
           /tmp/izt
 
-      # installer:: redirect güvenlik-kararı seam (look/url_safe.h). Gerçek HTTP/3xx OLMADAN:
-      # şema-düşürme (http://) + host-kaçışı (evilgithub.com / github.com.evil.com) reddi.
-      # POZİTİF-KONTROLLÜ (https zorunluluğu kaldırılırsa http:// kaçar→FAIL).
+      # installer:: redirect security-decision seam (look/url_safe.h). WITHOUT a real HTTP/3xx:
+      # refusal of scheme downgrade (http://) + host escape (evilgithub.com / github.com.evil.com).
+      # POSITIVE-CONTROLLED (if the https requirement is removed http:// escapes→FAIL).
       - name: "installer:: redirect güvenlik-kararı (seam tablosu)"
         timeout-minutes: 10
         run: |
@@ -1661,10 +1661,10 @@ jobs:
           cd cpp
           bash tests/installer_integrity_test.sh build/lk
 
-      # SSRF private/özel-blok kararı — seam (look/ssrf_safe.h). http_client'ın getaddrinfo
-      # döngüsü bu predikatlara delege eder. Ağsız/DNS'siz: ham byte'tan karar tablosu
-      # (metadata 169.254.169.254 · NAT64 64:ff9b · 6to4 2002 · v4-mapped bypass'ları).
-      # POZİTİF-KONTROLLÜ (bir dal silinirse ilgili satır RED).
+      # SSRF private/special-block decision — seam (look/ssrf_safe.h). http_client's getaddrinfo
+      # loop delegates to these predicates. No network/DNS: a decision table from raw bytes
+      # (metadata 169.254.169.254 · NAT64 64:ff9b · 6to4 2002 · v4-mapped bypasses).
+      # POSITIVE-CONTROLLED (if a branch is deleted the matching row goes RED).
       - name: SSRF private/özel-blok kararı (seam tablosu)
         timeout-minutes: 10
         run: |
@@ -1672,9 +1672,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/ssrf_safe_test.cpp -o /tmp/ssrf
           /tmp/ssrf
 
-      # int64 taşma-tespiti — seam (look/int_overflow.h). operator+/-/* taşınca float promote
-      # (signed-overflow UB YOK). Taşma sınırları + INT64_MIN*-1 #DE(SIGFPE) tuzağı tablo-test.
-      # POZİTİF-KONTROLLÜ. (Linux/CI __builtin dalı; MSVC dalı Tier-2 Windows.)
+      # int64 overflow detection — seam (look/int_overflow.h). operator+/-/* promotes to float on overflow
+      # (NO signed-overflow UB). Table test of the overflow bounds + the INT64_MIN*-1 #DE(SIGFPE) trap.
+      # POSITIVE-CONTROLLED. (Linux/CI __builtin branch; the MSVC branch is Tier-2 Windows.)
       - name: int64 taşma-tespiti (seam tablosu)
         timeout-minutes: 10
         run: |
@@ -1682,9 +1682,9 @@ jobs:
           g++ -std=c++17 -Iinclude tests/int_overflow_test.cpp -o /tmp/iov
           /tmp/iov
 
-      # session:: SID doğrulama + blob enjeksiyon savunması — seam (look/session_esc.h).
-      # Ağsız: 32-hex allowlist (traversal reddi) + \n/= enjeksiyonu ile uydurma yetki-alanı
-      # (admin=1) ENJEKTE EDİLEMEZ. POZİTİF-KONTROLLÜ (değer-kaçırma kalkarsa enjeksiyon geçer).
+      # session:: SID validation + blob injection defence — seam (look/session_esc.h).
+      # Network-free: 32-hex allowlist (traversal refused) + a forged privilege field (admin=1)
+      # CANNOT BE INJECTED via \n/=. POSITIVE-CONTROLLED (if value escaping is removed the injection passes).
       - name: "session:: SID + blob enjeksiyon (seam tablosu)"
         timeout-minutes: 10
         run: |
@@ -1692,30 +1692,30 @@ jobs:
           g++ -std=c++17 -Iinclude tests/session_esc_test.cpp -o /tmp/sess
           /tmp/sess
 
-      # docs-conformance — docs'taki her mod::fn çekirdekte (builtin_names) var mı?
-      # session::has sınıfını (docs vaat ediyor, çekirdek yok → kullanıcı 500) toplu kapatır.
-      # Saf metin karşılaştırması (build yok); allowlist gerekçeli, yeni drift fail eder.
+      # docs-conformance — is every mod::fn in the docs present in the core (builtin_names)?
+      # Closes the session::has class (docs promise it, core lacks it → user gets a 500) in bulk.
+      # Pure text comparison (no build); the allowlist is justified, new drift fails.
       - name: docs-conformance (docs API ↔ builtin_names)
         timeout-minutes: 10
         run: bash cpp/tests/docs_conformance.sh
 
-      # TERS-YÖN: builtin_names()'teki her namespaced mod::fn docs/index.html'de belgeli mi?
-      # docs_conformance'ın eksik yarısı — yeni builtin belgelenmeden CI'dan geçemez.
-      # Dışlama listesi gerekçeli (validator kuralları + template {#} sözdizimi), known_fail değil.
+      # REVERSE DIRECTION: is every namespaced mod::fn in builtin_names() documented in docs/index.html?
+      # The missing half of docs_conformance — a new builtin cannot pass CI without being documented.
+      # The exclusion list is justified (validator rules + template {#} syntax), not known_fail.
       - name: docs-conformance TERS-YÖN (builtin_names ↔ docs API)
         timeout-minutes: 10
         run: bash cpp/tests/doc_conformance_reverse.sh
 
-      # SSRF DNS-rebinding pin değişmezi — ölçüldü: is_ssrf_blocked + connect AYNI çözümlenmiş
-      # res->ai_addr'ı kullanır (resolve-once, yeniden-çözme yok → rebinding imkânsız). Bu guard
-      # kaynak-değişmezini kilitler; biri connect'i yeniden-çözmeye çevirirse RED. Pozitif-kontrollü.
+      # SSRF DNS-rebinding pin invariant — measured: is_ssrf_blocked + connect use the SAME resolved
+      # res->ai_addr (resolve-once, no re-resolution → rebinding is impossible). This guard
+      # locks the source invariant; RED if someone turns connect into a re-resolve. Positive-controlled.
       - name: SSRF DNS-rebinding pin değişmezi (kaynak guard)
         timeout-minutes: 10
         run: bash cpp/tests/ssrf_pin_guard.sh
 
-      # Plesk installer privesc-sağlamlaştırma — ağsız, Plesk'siz. Domain/script/svc sanitizasyonu
-      # (PHP regex + bash tr -cd + case guard) enjeksiyonu (satır-sonu→systemd unit root-komut)
-      # engelliyor mu? Pozitif-kontrollü (sanitizasyon kalkarsa privesc payload'ı 2-satır unit üretir).
+      # Plesk installer privesc hardening — network-free, no Plesk. Do the domain/script/svc sanitization
+      # (PHP regex + bash tr -cd + case guard) block injection (newline→systemd unit root command)?
+      # Positive-controlled (if the sanitization is removed the privesc payload yields a 2-line unit).
       - name: "Plesk installer enjeksiyon-guard'ları (ağsız)"
         timeout-minutes: 10
         run: |
@@ -1801,19 +1801,19 @@ jobs:
           cd cpp
           bash tests/builtin_effect_table_test.sh
 
-      # JWT güvenlik tablosu — HS256 modülü klasik açıklara GÜVENLİ mi: alg=none reddi,
-      # RS256→HS256 key-confusion reddi, exp expiry, imza-kurcalama + pozitif. verify header
-      # alg'ini OKUMAZ (koşulsuz HMAC) → alg-confusion yapısal imkânsız. Pozitif-kontrollü.
+      # JWT security table — is the HS256 module SAFE against the classic holes: alg=none refusal,
+      # RS256→HS256 key-confusion refusal, exp expiry, signature tampering + positive. verify does NOT
+      # read the header alg (unconditional HMAC) → alg-confusion is structurally impossible. Positive-controlled.
       - name: JWT güvenlik (alg=none / key-confusion / exp / tamper + pozitif)
         timeout-minutes: 10
         run: |
           cd cpp
           ./build/lk tests/jwt_security.lk
 
-      # FastCGI wire-parse tablo + fuzz — seam (look/fcgi_parse.h). Ağa açık PRE-DISPATCH kod
-      # (nginx/Apache→FCGI record veya LOOK_FCGI_BIND). BULUNAN+DÜZELTİLEN BUG: kesik 4-bayt
-      # uzunluk alanı → parse_params sonsuz-döngü (worker DoS); progress-guard kilitli. ASan tablo
-      # + 200K fuzz + POZİTİF-KONTROL (clamp'siz varyant → ASan heap-overflow).
+      # FastCGI wire-parse table + fuzz — seam (look/fcgi_parse.h). Network-facing PRE-DISPATCH code
+      # (nginx/Apache→FCGI record or LOOK_FCGI_BIND). BUG FOUND+FIXED: a truncated 4-byte
+      # length field → parse_params infinite loop (worker DoS); the progress guard is locked. ASan table
+      # + 200K fuzz + POSITIVE CONTROL (variant without the clamp → ASan heap-overflow).
       - name: FastCGI wire-parse (seam tablo + fuzz + DoS-regresyon)
         timeout-minutes: 10
         run: |
@@ -1826,10 +1826,10 @@ jobs:
           if timeout 30 /tmp/fcgi_posctl; then echo "::error::POSCTL dişsiz"; exit 1; \
           else echo "POSCTL ASan yakaladı (beklenen)"; fi
 
-      # WebSocket frame-decode (seam tablo, ASan/UBSan) — untrusted-NETWORK yüzeyi.
-      # Parser adversarial turu: decode_frame'in birim-guard'ı yoktu. Güvenlik (mask
-      # zorunlu, 16MB cap, kontrol-frame ≤125+FIN) + RFC 6455 §5.2 konformans fix'i
-      # (sıfır-dışı RSV + ayrılmış opcode → protokol hatası) pinlenir.
+      # WebSocket frame-decode (seam table, ASan/UBSan) — untrusted-NETWORK surface.
+      # Parser adversarial round: decode_frame had no unit guard. Security (mask
+      # required, 16MB cap, control frame ≤125+FIN) + the RFC 6455 §5.2 conformance fix
+      # (non-zero RSV + reserved opcode → protocol error) are pinned.
       - name: WebSocket frame-decode (seam tablo, ASan/UBSan)
         timeout-minutes: 10
         run: |
@@ -1838,88 +1838,88 @@ jobs:
             tests/ws_frame_test.cpp src/websocket.cpp -o /tmp/ws_frame_test
           timeout 60 /tmp/ws_frame_test
 
-      # LOOK dil-parser DoS-guard — parser.cpp TÜM motorların paylaştığı tek ön-yüz (parse
-      # bug'ı differential-KÖR). Özyinelemeli-inişli parser'da derin-yuvalama fiziksel stack'i
-      # taşırır; eval(untrusted) bunu saldırgan-erişimli kılar. 3 katmanlı depth guard'ı
-      # (MAX_STMT_DEPTH/EXPR_DEPTH/BINOP_CHAIN) iki modda (--check/VM) pinler:
-      # derin-yuvalama → temiz parse-hatası, ASLA crash/hang.
+      # LOOK language-parser DoS guard — parser.cpp is the single front end shared by ALL engines (a parse
+      # bug is differential-BLIND). In a recursive-descent parser deep nesting overflows the physical stack;
+      # eval(untrusted) makes that attacker-reachable. The 3-layer depth guard
+      # (MAX_STMT_DEPTH/EXPR_DEPTH/BINOP_CHAIN) is pinned in two modes (--check/VM):
+      # deep nesting → a clean parse error, NEVER a crash/hang.
       - name: Parser DoS-guard (derin-yuvalama, --check + VM)
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/parser_dos_guard.sh ./build/lk
 
-      # LOOK parser fail-loud — iki fail-SILENT footgun fail-LOUD yapıldı: kapatılmamış
-      # `/*` (kod-yutma → exit 0) artık hata; int64-aşan literal (sessiz float presizyon-kaybı)
-      # artık stderr WARN (stdout değişmez). Pozitif+negatif kontrollü (meşru davranış korunur).
+      # LOOK parser fail-loud — two fail-SILENT footguns made fail-LOUD: an unclosed
+      # `/*` (swallowed code → exit 0) is now an error; an int64-exceeding literal (silent float precision loss)
+      # is now a stderr WARN (stdout unchanged). Positive+negative controlled (legitimate behaviour preserved).
       - name: Parser fail-loud (unterminated comment + int-overflow warn)
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/parser_faillooud_guard.sh ./build/lk
 
-      # Oturum + çerez güvenliği ÜÇ MODDA (--mode http, FastCGI, CGI): cookie:: bayrakları, oturum
-      # çerezinin Secure'u (yalnız gerçek HTTPS; istemcinin X-Forwarded-Proto'su sayılmaz), 0600/0700,
-      # istemcinin seçtiği oturum kimliği, istek başlıkları. Eskiden yalnız --mode http sınanıyordu;
-      # CGI üç kez geride kaldı (temizlik, HTTPS, başlıklar). Bir modda eksik davranış CI'ı kırar.
+      # Session + cookie security in THREE MODES (--mode http, FastCGI, CGI): cookie:: flags, the session
+      # cookie's Secure (real HTTPS only; the client's X-Forwarded-Proto does not count), 0600/0700,
+      # the session id chosen by the client, request headers. Previously only --mode http was tested;
+      # CGI fell behind three times (cleanup, HTTPS, headers). Missing behaviour in any mode breaks CI.
       - name: Session and cookie security in all three modes
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/session_cookie_modes_test.sh build/lk-fcgi build/lk-cgi
 
-      # file-include + timer::every birlikte lk-fcgi başlangıcını KİLİTLİYORDU (clone_for_thread
-      # env klonu, paylaşımlı closure env'i her fonksiyon için yeniden klonlayıp O(N!) patlıyordu).
-      # use "lib.lk" (>10 kardeş fn) + top-level timer::every → port bağlanmalı+servis vermeli.
-      # POZİTİF-KONTROL: eski yolda hiç bind etmezdi → timeout → RED.
+      # file-include + timer::every together LOCKED the lk-fcgi start (the clone_for_thread
+      # env clone re-cloned the shared closure env for every function and blew up as O(N!)).
+      # use "lib.lk" (>10 sibling fns) + a top-level timer::every → the port must bind and serve.
+      # POSITIVE CONTROL: the old path never bound at all → timeout → RED.
       - name: "file-include + timer::every startup binds (regresyon)"
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/timer_include_bind_test.sh build/lk-fcgi 7794
 
-      # before_route prefix guard — GÜVENLİK-KRİTİK. Dogfood'un kimlik doğrulaması artık tek
-      # before_route + request::path() prefix'i (9 elle require_login → 1). Kırılırsa /admin (dogfood'da
-      # /tasks) auth'suz açılır = sessiz yetki atlatması. lk-fcgi --mode http'ye karşı 403/200 + nested
-      # doğrular. POZİTİF-KONTROLLÜ: guard'sız varyant /admin=200 (test discriminador — sabote→RED).
+      # before_route prefix guard — SECURITY-CRITICAL. The dogfood's authentication is now a single
+      # before_route + request::path() prefix (9 hand-written require_login → 1). If it breaks, /admin (/tasks in the dogfood)
+      # opens without auth = a silent authorization bypass. Verifies 403/200 + nested against
+      # lk-fcgi --mode http. POSITIVE-CONTROLLED: the variant without the guard gives /admin=200 (the test discriminates — sabotage→RED).
       - name: before_route prefix guard (yetki atlatma regresyonu)
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/middleware_guard_test.sh build/lk-fcgi 7795
 
-      # route::group() — Go/chi tarzı prefix + middleware kalıtımı (name/namespace YOK, bilinçli
-      # minimal). lk-fcgi --mode http'ye karşı. Kendinden-ayırt-edici: prefix
-      # kırılırsa bare /solo açılır (404 değil 200), mw kırılırsa no-token 200 döner → test RED.
+      # route::group() — Go/chi-style prefix + middleware inheritance (NO name/namespace, deliberately
+      # minimal). Against lk-fcgi --mode http. Self-discriminating: if the prefix
+      # breaks bare /solo opens (200, not 404), if mw breaks a no-token request returns 200 → the test goes RED.
       - name: "route::group prefix + middleware kalıtımı"
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/route_group_test.sh build/lk-fcgi 7715
 
-      # runtime::stats() gözlemlenebilirlik sayaçları — request_count/errors_5xx/latency/db_pool.
-      # request_count bir kez web'de 0'a kırılmıştı (setup interpreter vs VM yolu). Kendinden-ayırt-edici
-      # delta assertion'ları: sayaç no-op'a kırılırsa değer düz kalır → RED (sabote→0 delta doğrulandı).
+      # runtime::stats() observability counters — request_count/errors_5xx/latency/db_pool.
+      # request_count was once broken to 0 on the web (setup interpreter vs VM path). Self-discriminating
+      # delta assertions: if a counter is broken into a no-op the value stays flat → RED (sabotage→0 delta verified).
       - name: "runtime::stats sayaçları (sessiz-sorun göstergeleri)"
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/runtime_stats_test.sh build/lk-fcgi 7778
 
-      # lk fmt — kaynak biçimlendirici (gofmt modeli). Girinti/boşluk kanonikleştirir; token
-      # dizisi değişirse İPTAL eder (anlam-koruma). Guard: idempotency + anlam-koruma + --check
-      # exit kodları + yorum/çok-satırlı-string koruma. Pozitif-kontrollü (string-içi bozulursa RED).
+      # lk fmt — source formatter (gofmt model). Canonicalizes indentation/whitespace; ABORTS if the token
+      # sequence changes (meaning preservation). Guard: idempotency + meaning preservation + --check
+      # exit codes + comment/multi-line-string preservation. Positive-controlled (RED if in-string content is corrupted).
       - name: lk fmt (idempotent + anlam-koruma + yorum/string)
         timeout-minutes: 10
         run: |
           cd cpp
           bash tests/fmt_test.sh build/lk
 
-  # ── Canlı DB job'u: gerçek MySQL 8 + PostgreSQL 16 servis-container'ları ──────────
-  # caching_sha2_password (MySQL 8 VARSAYILAN auth) + native prepared-bind (MySQL
-  # COM_STMT_EXECUTE + PG extended-query) — üç KISMİ item'ın "canlı-DSN/nightly" boşluğu.
-  # Taze mysql:8 = boş önbellek → ilk bağlantı full-auth (RSA) yolu; bind matrisi gerçek
-  # binary protokolü egzersiz eder. Gömülü sürücüler (libmysqlclient/libpq YOK) → yalnız lk.
+  # ── Live DB job: real MySQL 8 + PostgreSQL 16 service containers ──────────
+  # caching_sha2_password (MySQL 8 DEFAULT auth) + native prepared bind (MySQL
+  # COM_STMT_EXECUTE + PG extended-query) — the "live-DSN/nightly" gap of three PARTIAL items.
+  # A fresh mysql:8 = empty cache → the first connection takes the full-auth (RSA) path; the bind matrix exercises the real
+  # binary protocol. Embedded drivers (NO libmysqlclient/libpq) → lk only.
   db-live:
     name: "Canlı DB — caching_sha2 (MySQL 8) + prepared bind (MySQL 8 + PG 16)"
     runs-on: ubuntu-latest
@@ -1958,7 +1958,7 @@ jobs:
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target look look-fcgi --parallel $(nproc)
-      # caching_sha2: root@mysql:8 TLS'siz TCP → taze önbellek → full-auth RSA yolu (sonra fast).
+      # caching_sha2: root@mysql:8 over TCP without TLS → fresh cache → full-auth RSA path (then fast).
       - name: "caching_sha2_password — gerçek MySQL 8 (full-auth RSA + fast yol)"
         timeout-minutes: 10
         env:
@@ -2116,10 +2116,10 @@ jobs:
           bash tests/session_size_limit_test.sh ./build/lk-fcgi
           bash tests/session_size_limit_test.sh ./build/lk-fcgi redis://127.0.0.1:6381
 
-  # ── PG TLS gerçek-sunucu interop job'u ───────────────────────────────────────────
-  # mock (pg_tls_handshake_test) yalnız client verify-kararını ölçer; bu, apt postgres'i
-  # initdb ile (TLS-on + TLS-off cluster, CA-imzalı SAN=localhost cert, scram) ayağa kaldırıp
-  # GERÇEK SSLRequest→'S'→TLS→startup→SCRAM-auth→SELECT roundtrip'ini uçtan uca kanıtlar.
+  # ── PG TLS real-server interop job ───────────────────────────────────────
+  # the mock (pg_tls_handshake_test) measures only the client's verify decision; this brings up the apt postgres
+  # with initdb (a TLS-on + a TLS-off cluster, CA-signed SAN=localhost cert, scram) and proves the
+  # REAL SSLRequest→'S'→TLS→startup→SCRAM-auth→SELECT roundtrip end to end.
   pg-tls-live:
     name: "PG TLS gerçek-sunucu interop (SSLRequest→TLS→startup→SCRAM)"
     runs-on: ubuntu-latest
@@ -2138,8 +2138,8 @@ jobs:
           cd cpp
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target look --parallel $(nproc)
-      # Vacuous-green guard (Rule-2): harness postgres/openssl yoksa exit 0 ile ATLAR;
-      # gerçek PASS satırını zorunlu kıl — atlanırsa job KIRILIR (sessiz-yeşil yok).
+      # Vacuous-green guard (Rule-2): if the harness has no postgres/openssl it SKIPS with exit 0;
+      # require the real PASS line — if it is skipped the job BREAKS (no silent green).
       - name: PG TLS gerçek-sunucu interop (6-vaka + pozitif-kontrol)
         timeout-minutes: 10
         run: |
@@ -2147,11 +2147,11 @@ jobs:
           out="$(bash tests/pg_tls_realserver_test.sh build/lk 54330 54331)"; echo "$out"
           echo "$out" | grep -q '^PASS: PG TLS' || { echo "::error::PG TLS testi ATLANDI veya kirildi (vacuous-green guard)"; exit 1; }
 
-  # ── Eşzamanlılık hang smoke job'u (worker-pool + fiber) ──────────────────────────
-  # c=100 hang regresyonu (acceptor açlığı, D Fix #2) için bounded-concurrency guard'ı: c=50
-  # eşzamanlı × 20 keep-alive istek, iki dispatch modunda (pool + fiber), TÜMÜ 200 + sunucu
-  # canlı. Pozitif-kontrollü (dead-port + accept-only-hang sunucu → RED). c=100 üst-ucu nightly
-  # (yük makine-gürültüsüne duyarlı); c=50 mantık-starvation'ını CI'da güvenilir egzersiz eder.
+  # ── Concurrency hang smoke job (worker-pool + fiber) ──────────────────────
+  # A bounded-concurrency guard for the c=100 hang regression (acceptor starvation, D Fix #2): c=50
+  # concurrent × 20 keep-alive requests, in two dispatch modes (pool + fiber), ALL 200 + server
+  # alive. Positive-controlled (dead-port + accept-only-hang server → RED). The c=100 upper end is nightly
+  # (load is sensitive to machine noise); c=50 reliably exercises logic starvation in CI.
   concurrency-smoke:
     name: "Eşzamanlılık hang smoke (pool + fiber, c=50)"
     runs-on: ubuntu-latest

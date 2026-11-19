@@ -1,10 +1,10 @@
 <?php
-// Plesk extension install/upgrade hook. Plesk bunu kurulumda VE yukseltmede calistirir
-// (yukseltmede argv = ["upgrade", "<eski surum>"]) — ama ROOT DEGIL, psaadm olarak (olculdu).
-// Root gerektiren is (ikili, sudoers, servis unit'leri) sbin/look-setup'ta; ona Plesk'in
-// root yolu pm_ApiCli::callSbin ile gidilir. Kayitli domain'ler arguman olarak verilir ki
-// her servis yeni kurala (domain kullanicisi) gore yeniden yazilsin.
-// Hata SUSTURULMAZ: cikti basilir, sifir olmayan cikis Plesk'te kurulum hatasi olarak gorunur.
+// Plesk extension install/upgrade hook. Plesk runs this on install AND on upgrade
+// (on upgrade argv = ["upgrade", "<old release>"]) — but NOT as ROOT, as psaadm (measured).
+// The work that needs root (binary, sudoers, service units) is in sbin/look-setup; it is reached through Plesk's
+// root path pm_ApiCli::callSbin. The registered domains are passed as arguments so that
+// every service is rewritten according to the new rule (the domain user).
+// Errors are NOT silenced: the output is printed, a non-zero exit shows up in Plesk as an install error.
 pm_Context::init('look-lang');
 
 $domains = [];
@@ -18,7 +18,7 @@ foreach ($domains as $d) {
     if (empty($d['domain']) || empty($d['script'])) continue;
     array_push($args, (string)$d['domain'], (string)$d['script'], (string)(int)($d['workers'] ?? 4),
         (string)($d['mode'] ?? 'fcgi'), (string)(int)($d['port'] ?? 9100), (string)($d['env'] ?? ''),
-        (string)($d['memory'] ?? 'auto'));   // bellek tavanı: eski kayıtta yok → otomatik
+        (string)($d['memory'] ?? 'auto'));   // memory cap: absent in an old record → automatic
 }
 
 $r = pm_ApiCli::callSbin('look-setup', $args, pm_ApiCli::RESULT_FULL);
