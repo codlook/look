@@ -1,7 +1,7 @@
 // http_stdlib.cpp — LOOK `use http;` module binding
 #include "look/runtime_host.h"
 #include "look/http_client.h"
-#include "look/stdlib.h"     // json_encode_value (json::encode ile ayni kodlayici)
+#include "look/stdlib.h"     // json_encode_value (same encoder as json::encode)
 #include <sstream>
 #include <stdexcept>
 
@@ -67,8 +67,8 @@ Module make_http_module(ModuleHost* interp) {
     m.name = "http";
 
     // http::stream($method, $url, $body, $headers, $callback [, $opts])
-    // Streaming istek — govde parcalari (chunked cozulmus) geldikce $callback($chunk)
-    // cagrilir. SSE/token akisi icin. Doner: response assoc (status, headers, error).
+    // Streaming request -- as body chunks (chunked-decoded) arrive, $callback($chunk)
+    // is called. For SSE/token streams. Returns: response assoc (status, headers, error).
     m.functions["stream"] = [interp](std::vector<Value> args) -> Value {
         if (args.size() < 5)
             throw std::runtime_error("http::stream() — method, url, body, headers, callback required");
@@ -81,10 +81,10 @@ Module make_http_module(ModuleHost* interp) {
         if (cb.type() != Value::BYTECODE_FN)
             throw std::runtime_error("http::stream() — the 5th arg (callback) must be a function");
 
-        // LOOK 2 — DURUM: geri cagirma, cagrilar arasinda bir sey tasimak icin (yarim kalan satir,
-        // sayac) yakaladigi degiskene yazamaz (closure degeri yakalar). Durum ACIKCA akar:
-        // ilk deger $opts["state"] (yoksa null); geri cagirma ($chunk, $state) alir ve DONUS
-        // degeri sonraki cagrinin $state'idir; sonuncusu yanitta "state" olarak doner.
+        // STATE: to carry something between calls (a partial line, a counter) the callback
+        // cannot write to a variable it captured (a closure captures by value). State flows EXPLICITLY:
+        // the first value is $opts["state"] (null if absent); the callback takes ($chunk, $state) and its RETURN
+        // value is the next call's $state; the last one is returned in the response as "state".
         Value state;
         if (args.size() >= 6 && args[5].type() == Value::ARRAY) {
             const auto& o = *args[5].as_array();
@@ -110,7 +110,7 @@ Module make_http_module(ModuleHost* interp) {
         return response_to_value(http_request("GET", url, "", hdrs, opts));
     };
 
-    // http::post($url, $body [, $headers [, $opts]])  — form-encoded body
+    // http::post($url, $body [, $headers [, $opts]])  -- form-encoded body
     m.functions["post"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("http::post() — URL and body required");
         std::string url  = args[0].to_string();
@@ -125,9 +125,9 @@ Module make_http_module(ModuleHost* interp) {
         if (args.size() < 2) throw std::runtime_error("http::post_json() — URL and data required");
         std::string url = args[0].to_string();
 
-        // json::encode ile AYNI kodlayıcı (look/stdlib.h json_encode_value). Eskiden burada ikinci bir
-        // kopya vardı: anahtarlar kaçışlanmıyordu (anahtardaki " giden JSON'a alan ekliyordu), kontrol
-        // karakterleri ham, ondalıklar 6 haneye kesik (3.14159265 → 3.14159), Infinity "inf", struct null.
+        // The SAME encoder as json::encode (look/stdlib.h json_encode_value). There used to be a second
+        // copy here: keys were not escaped (a " in a key added a field to the outgoing JSON), control
+        // characters were raw, decimals were truncated to 6 digits (3.14159265 -> 3.14159), Infinity was "inf", struct was null.
         std::string body = json_encode_value(args[1]);
 
         auto hdrs = args.size() >= 3 ? extract_headers(args[2]) : std::map<std::string,std::string>{};

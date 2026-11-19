@@ -1,16 +1,16 @@
 name: Docker Hub publish (tarball → load → push, rebuild YOK)
 
-# Docker Hub'ı GitHub v1.0'daki GÜNCEL look-docker.tar.gz'den yayınlar — YENİDEN DERLEMEZ
-# (release.yml'in koşullu Hub adımı tag başına ~10dk build ister; bu, doğrulanmış tarball'ı
-# doğrudan kullanır). Neden ayrı: Docker Hub, GitHub v1.0'dan bağımsız bir dağıtım yüzeyi ve
-# kolayca bayatlıyor (`docker run codlook/look` eski imajı alır) — GitHub drift'inin ikizi.
+# Publishes Docker Hub from the CURRENT look-docker.tar.gz in GitHub v1.0 -- DOES NOT REBUILD
+# (release.yml's conditional Hub step needs a ~10 min build per tag; this one uses the
+# verified tarball directly). Why it is separate: Docker Hub is a distribution surface independent of GitHub v1.0 and
+# goes stale easily (`docker run codlook/look` pulls the old image) -- the twin of GitHub drift.
 #
-# Elle tetiklenir (Actions → Run workflow) VEYA API ile. Secret YOKSA login/push atlanır
-# (kuru-prova: tarball load + tag doğrulanır, "eklendi ama çalışıyor mu?" açık kalmaz).
+# Triggered manually (Actions -> Run workflow) OR via the API. If the secret is MISSING, login/push is skipped
+# (dry run: tarball load + tag are verified, so "added but does it work?" is not left open).
 #
-# ÖN KOŞUL: repo secret'ı DOCKERHUB_TOKEN (Settings → Secrets → Actions). Kullanıcı adı sabit (codlook).
-# ⚠️ TOKEN İZNİ **Read & Write** OLMALI. Read-only token push'ta kriptik "denied/insufficient scopes"
-#    verir (2026-08-06'da bir kez oldu: ilk token Public-Repo-Read-only'di). Token yenilerken kontrol et.
+# PREREQUISITE: repo secret DOCKERHUB_TOKEN (Settings -> Secrets -> Actions). The username is fixed (codlook).
+# ⚠️ THE TOKEN PERMISSION MUST BE **Read & Write**. A read-only token gives a cryptic "denied/insufficient scopes"
+#    on push (it happened once on 2026-08-06: the first token was Public-Repo-Read-only). Check when renewing the token.
 
 on:
   workflow_dispatch:
@@ -27,7 +27,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      DOCKERHUB_USERNAME: codlook   # public namespace — sabit; sadece TOKEN secret
+      DOCKERHUB_USERNAME: codlook   # public namespace -- fixed; only the TOKEN is a secret
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: look-docker.tar.gz indir (release tarball, güncel)
@@ -43,13 +43,13 @@ jobs:
       - name: docker load + tag doğrula (secret olmadan da koşar)
         run: |
           set -e
-          # İmaj etiketi tarball içinden okunur (codlook/look:<sürüm>); sürüm burada gömülü değil.
+          # The image tag is read from inside the tarball (codlook/look:<version>); the version is not embedded here.
           IMG="$(docker load < look-docker.tar.gz | sed -n 's/^Loaded image: //p' | head -1)"
           [ -n "$IMG" ] || { echo "::error::no image in the tarball"; exit 1; }
           echo "IMG=$IMG" >> "$GITHUB_ENV"
           echo "=== yüklenen imaj ($IMG) + LOOK damgası ==="
           docker images codlook/look
-          # damgayı imajdan oku (git-sha; "src"/"docker" ise release.yml stamp bug'ı geri gelmiş)
+          # read the stamp from the image (git-sha; if it is "src"/"docker" the release.yml stamp bug is back)
           docker run --rm "$IMG" lk --version || true
 
       - name: Docker Hub push (secret varsa; yoksa atla)

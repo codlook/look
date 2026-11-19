@@ -7,20 +7,20 @@
 
 namespace look {
 
-// Süreç başlangıcında, WORKER THREAD'LERİNDEN ÖNCE bir kez. Sıra önemli değil; ikisi de
-// idempotent + thread'lerden önce çalışması gereken bir-kez init'ler.
+// Once at process start, BEFORE the WORKER THREADS. Order does not matter; both are
+// idempotent + once-only inits that must run before the threads.
 void runtime_init() {
 #ifndef _WIN32
-    // Kapanmis bir sokete yazmak SIGPIPE uretir; varsayilan davranis SURECI oldurur. Yalniz
-    // `--mode http` yok sayiyordu: MySQL bosta bekleyen havuz baglantisini kapatinca (wait_timeout,
-    // yeniden baslatma, KILL) sonraki yazma lk-fcgi'yi FastCGI modunda (Plesk varsayilani) ve
-    // `lk`'yi oldurdu (exit 141). Uc giris noktasi da burayi cagirir. Yazma artik EPIPE hatasi
-    // doner; DB istemcileri ayrica MSG_NOSIGNAL ile yazar. (`lk` kendi stdout'u kapaninca yine
-    // sonlanir — bkz. main.cpp PipeGuard.)
+    // Writing to a closed socket raises SIGPIPE; the default behavior KILLS THE PROCESS. Only
+    // `--mode http` ignored it: when MySQL closed an idle pooled connection (wait_timeout,
+    // restart, KILL) the next write killed lk-fcgi in FastCGI mode (the Plesk default) and
+    // `lk` (exit 141). All three entry points call this. A write now
+    // returns an EPIPE error; DB clients also write with MSG_NOSIGNAL. (`lk` still
+    // terminates when its own stdout is closed -- see main.cpp PipeGuard.)
     std::signal(SIGPIPE, SIG_IGN);
 #endif
-    configure_system_ca_bundle();  // statik OpenSSL: sistem CA'sını bul (Windows'ta no-op — Schannel)
-    sqlite_global_init();          // SQLite lazy global init'leri (isInit/PRNG) serialize et (t4 race)
+    configure_system_ca_bundle();  // static OpenSSL: find the system CA (no-op on Windows -- Schannel)
+    sqlite_global_init();          // serialize SQLite's lazy global inits (isInit/PRNG) (t4 race)
 }
 
 } // namespace look

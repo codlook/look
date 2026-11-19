@@ -1,4 +1,4 @@
-// lk fmt — kaynak biçimlendirici. Bkz. look/format_src.h (tasarım + güvence).
+// lk fmt -- source formatter. See look/format_src.h (design + guarantee).
 #include "look/format_src.h"
 #include "look/lexer.h"
 #include "look/token.h"
@@ -11,24 +11,24 @@ namespace look {
 
 namespace {
 
-// Bir satırı, taşınan string-durumuyla tara. in_str: 0=string dışı, aksi halde açık tırnak.
-// Döner: net derinlik değişimi (delta), satır-başı kapatıcı sayısı (leading_closers).
-// in_str referansla güncellenir (çok-satırlı string desteği).
+// Scan one line, with the carried string state. in_str: 0 = outside a string, otherwise the open quote.
+// Returns: net depth change (delta), count of line-leading closers (leading_closers).
+// in_str is updated by reference (multi-line string support).
 struct ScanResult { int delta = 0; int leading_closers = 0; };
 
 ScanResult scan_line(const std::string& s, char& in_str) {
     ScanResult r;
-    bool leading = true;            // hâlâ satır-başı kapatıcılarını sayıyoruz
+    bool leading = true;            // still counting the line-leading closers
     bool line_comment = false;
     for (size_t i = 0; i < s.size(); ++i) {
         char c = s[i];
         if (line_comment) break;
         if (in_str) {
-            if (c == '\\') { if (i + 1 < s.size()) ++i; continue; }  // kaçış
-            if (c == in_str) in_str = 0;                              // string kapandı
+            if (c == '\\') { if (i + 1 < s.size()) ++i; continue; }  // escape
+            if (c == in_str) in_str = 0;                              // string closed
             continue;
         }
-        // string dışı
+        // outside a string
         if (c == '#') { line_comment = true; break; }
         if (c == '/' && i + 1 < s.size() && s[i+1] == '/') { line_comment = true; break; }
         if (c == '"' || c == '\'') { in_str = c; leading = false; continue; }
@@ -52,8 +52,8 @@ std::string lstrip(const std::string& s) {
     return b == std::string::npos ? "" : s.substr(b);
 }
 
-// Trivia-dışı token dizileri eşit mi (anlam-koruma doğrulaması). Lexer yorumları zaten
-// atar; whitespace de token değil → yalnız gerçek program token'ları karşılaştırılır.
+// Are the non-trivia token sequences equal (meaning-preservation check)? The lexer already drops
+// comments; whitespace is not a token either -> only real program tokens are compared.
 bool same_tokens(const std::string& a, const std::string& b) {
     try {
         auto ta = Lexer(a).scan_tokens();
@@ -65,7 +65,7 @@ bool same_tokens(const std::string& a, const std::string& b) {
         }
         return true;
     } catch (...) {
-        return false;   // biri parse edilemiyorsa güvenli tarafta kal
+        return false;   // if one cannot be parsed, stay on the safe side
     }
 }
 
@@ -82,20 +82,20 @@ std::string look_format_source(const std::string& src, bool* ok) {
 
     for (const std::string& raw : lines) {
         if (in_str) {
-            // Çok-satırlı string İÇİ — satırı AYNEN koru (girinti string verisidir).
+            // INSIDE a multi-line string -- keep the line AS IS (indentation is string data).
             out += raw; out += "\n";
-            scan_line(raw, in_str);   // yalnız in_str güncellensin
+            scan_line(raw, in_str);   // only update in_str
             blank_run = 0;
             continue;
         }
         std::string content = rstrip(lstrip(raw));
         if (content.empty()) {
-            if (++blank_run <= 1) out += "\n";   // ardışık boşları tek boşluğa indir
+            if (++blank_run <= 1) out += "\n";   // collapse consecutive blank lines into one
             continue;
         }
         blank_run = 0;
 
-        char probe = in_str;                       // in_str burada 0
+        char probe = in_str;                       // in_str is 0 here
         ScanResult sr = scan_line(content, probe);
         int indent = depth - sr.leading_closers;
         if (indent < 0) indent = 0;
@@ -105,17 +105,17 @@ std::string look_format_source(const std::string& src, bool* ok) {
 
         depth += sr.delta;
         if (depth < 0) depth = 0;
-        in_str = probe;                            // çok-satırlı string taşınır
+        in_str = probe;                            // a multi-line string is carried over
     }
 
-    // Sondaki tek newline garantisi (dosya sonu temizliği)
+    // Guarantee a single trailing newline (end-of-file cleanup)
     while (out.size() >= 2 && out[out.size()-1] == '\n' && out[out.size()-2] == '\n') out.pop_back();
     if (out.empty() || out.back() != '\n') out += "\n";
 
-    // ── ANLAM-KORUMA GÜVENCESİ ──────────────────────────────────────────────────
+    // -- MEANING-PRESERVATION GUARANTEE ------------------------------------------------------
     bool safe = same_tokens(src, out);
     if (ok) *ok = safe;
-    return safe ? out : src;   // güvenli değilse ORİJİNALİ döndür (bozma yok)
+    return safe ? out : src;   // if not safe, return the ORIGINAL (no breakage)
 }
 
 int run_fmt(const std::vector<std::string>& files, bool check) {
@@ -125,7 +125,7 @@ int run_fmt(const std::vector<std::string>& files, bool check) {
         std::stringstream ss; ss << f.rdbuf(); out = ss.str(); return true;
     };
 
-    if (files.empty()) {   // stdin → stdout
+    if (files.empty()) {   // stdin -> stdout
         std::stringstream ss; ss << std::cin.rdbuf();
         bool ok = false;
         std::string res = look_format_source(ss.str(), &ok);
@@ -142,10 +142,10 @@ int run_fmt(const std::vector<std::string>& files, bool check) {
         std::string res = look_format_source(src, &ok);
         if (!ok) { std::cerr << "lk fmt: " << file << " — formatting skipped (semantics-preservation failed, file unchanged)\n"; rc = 2; continue; }
         if (res == src) {
-            // zaten biçimli
+            // already formatted
         } else if (check) {
             std::cout << "unformatted: " << file << "\n";
-            rc = 1;   // CI modu: biçimsiz dosya var
+            rc = 1;   // CI mode: there is an unformatted file
         } else {
             std::ofstream of(file, std::ios::binary | std::ios::trunc);
             of << res;

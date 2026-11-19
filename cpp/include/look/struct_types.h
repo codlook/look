@@ -1,29 +1,29 @@
 #pragma once
-// LOOK 2 — tipli struct: ad + TİP + varsayılan; struct kendi DEĞER TÜRÜDÜR (Value::STRUCT).
+// Typed struct: name + TYPE + default; a struct is its own VALUE KIND (Value::STRUCT).
 //
 //   struct User {
-//       name  string              # varsayılansız → sıfır değeri ("")
-//       age   int = 18            # tipli + varsayılan
-//       score ?float              # null olabilir
-//       boss  User                # başka bir struct (null olabilir)
-//       note  any                 # her değeri alır
+//       name  string              # no default -> zero value ("")
+//       age   int = 18            # typed + default
+//       score ?float              # may be null
+//       boss  User                # another struct (may be null)
+//       note  any                 # accepts any value
 //   }
-// Tek yazım: `ad tip [= varsayılan]`. Tipsiz alan ve v1'in `ad: varsayılan` yazımı
-// ayrıştırıcıda reddedilir (parser.cpp).
+// Single syntax: `name type [= default]`. An untyped field and v1's `name: default` syntax
+// are rejected in the parser (parser.cpp).
 //
-// DÜZEN (tek yerde tanımlı):
-//   tanım (def)  = ARRAY, üçlüler [alan, varsayılan, tip]          (bildirim sırası)
-//   örnek        = Value::STRUCT, slotlar [ad, def, alan0, alan1, ...]
-// Alan i'nin değeri slot 2+i'dedir → erişim ad araması değil İNDEKSTİR. Struct bir dizi
-// değildir: array:: fonksiyonları, sayısal indeksleme ve dizi sanan her kod onu reddeder
-// (v1'de struct içeride bir assoc dizisiydi; array::set tip denetimini atlatabiliyordu).
+// LAYOUT (defined in one place):
+//   definition (def) = ARRAY, triples [field, default, type]          (declaration order)
+//   instance         = Value::STRUCT, slots [name, def, field0, field1, ...]
+// Field i's value is in slot 2+i -> access is by INDEX, not by name lookup. A struct is not an
+// array: array:: functions, numeric indexing and any code that assumes an array reject it
+// (in v1 a struct was internally an assoc array; array::set could bypass the type check).
 //
-// Kurallar HER İKİ motorda bu tek başlıktan gelir (iki ayrı uygulama = ayrışma):
-//   * tip adı bilinmeli (yerleşik ya da bildirilmiş bir struct);
-//   * alana uymayan değer → hata (kurulumda da, sonradan atamada da);
-//   * int, float alana yazılabilir (float'a çevrilir); tersi ve diğer tüm karışımlar hata;
-//   * null yalnız ?tip, any, fn ve struct tipli alanlara yazılabilir;
-//   * şekil SABİT: bildirilmemiş alan yok (ne okunur ne yazılır).
+// The rules come from this single header in BOTH engines (two separate implementations = divergence):
+//   * the type name must be known (builtin or a declared struct);
+//   * a value that does not fit the field -> error (at construction and on later assignment);
+//   * int may be written to a float field (converted to float); the reverse and all other mixes are errors;
+//   * null may be written only to ?type, any, fn and struct-typed fields;
+//   * the shape is FIXED: no undeclared field (neither read nor written).
 #include "look/runtime_host.h"
 #include <stdexcept>
 #include <string>
@@ -31,13 +31,13 @@
 
 namespace look {
 
-constexpr size_t STRUCT_SLOT0 = 2;   // slot vektöründe ilk alanın konumu
+constexpr size_t STRUCT_SLOT0 = 2;   // position of the first field in the slot vector
 
 inline const std::string& struct_name(const std::vector<Value>& sv)       { return sv[0].str_ref(); }
 inline const std::vector<Value>& struct_def(const std::vector<Value>& sv) { return *sv[1].as_array(); }
 inline size_t struct_field_count(const std::vector<Value>& def)           { return def.size() / 3; }
 
-// Kullanıcıya gösterilen tip adı (hata mesajları).
+// Type name shown to the user (error messages).
 inline std::string struct_value_type_name(const Value& v) {
     switch (v.type()) {
         case Value::NONE:   return "null";
@@ -61,9 +61,9 @@ inline bool struct_type_is_builtin(const std::string& base) {
         || base == "array" || base == "map" || base == "fn" || base == "any";
 }
 
-// Tip adı bilinen bir şey mi: yerleşik tip ya da bildirilmiş struct. `is_struct(ad)` motordan
-// gelir. Struct'lar birbirine ileriden başvurabildiği için denetim bildirimde değil, struct
-// kurulurken (ve web'de kurulumun sonunda toplu olarak) yapılır.
+// Is it a known type name: builtin type or declared struct. `is_struct(name)` comes from the engine.
+// Structs may refer forward to each other, so the check happens not at declaration but when a
+// struct is constructed (and on the web, in bulk at the end of setup).
 template <class IsStruct>
 inline void struct_check_type_known(const std::string& sname, const std::string& fname,
                                     const std::string& type, IsStruct&& is_struct) {
@@ -75,7 +75,7 @@ inline void struct_check_type_known(const std::string& sname, const std::string&
                                "or the name of a struct)");
 }
 
-// Tipli alanın varsayılansız değeri. array/map HER örnek için taze üretilir.
+// Default value of a typed field when none is declared. array/map are produced fresh for EVERY instance.
 inline Value struct_zero_value(const std::string& type) {
     if (type.empty() || type[0] == '?') return Value();
     if (type == "int")    return Value((int64_t)0);
@@ -88,22 +88,22 @@ inline Value struct_zero_value(const std::string& type) {
         m->push_back(Value::assoc_marker());
         return Value(m);
     }
-    return Value();   // any, fn, struct adı → null
+    return Value();   // any, fn, struct name -> null
 }
 
-// Varsayılan değer örnekle PAYLAŞILIR (LOOK 2 yazınca-kopyala): örnek alana yazarsa yazma
-// yolu önce kendi kopyasını alır, bildirimdeki değer değişmez. (1.0.3'te burada derin kopya
-// vardı — o zaman diziler referansla paylaşılıyordu.)
+// The default value is SHARED with the instance (copy-on-write): if the instance writes to a field the write
+// path takes its own copy first, and the value in the declaration does not change. (1.0.3 made a deep
+// copy here -- arrays were shared by reference back then.)
 inline Value struct_instance_default(const Value& def, const std::string& type) {
     if (def.type() == Value::NONE) return struct_zero_value(type);
     return def;
 }
 
-// Değer alan tipine uyuyor mu? Uymuyorsa fırlatır; int→float'ı yerinde çevirir.
+// Does the value fit the field type? Throws if not; converts int->float in place.
 inline void struct_check_field(const std::string& sname, const std::string& fname,
                                const std::string& type, Value& v) {
     if (type.empty()) return;
-    // Hızlı yol (her alan yazımında çalışır): yaygın eşleşmeler metin üretmeden biter.
+    // Fast path (runs on every field write): the common matches finish without building a string.
     switch (v.type()) {
         case Value::INT:    if (type == "int"    || type == "?int")    return; break;
         case Value::STRING: if (type == "string" || type == "?string") return; break;
@@ -123,7 +123,7 @@ inline void struct_check_field(const std::string& sname, const std::string& fnam
     if (base == "float" && v.type() == Value::INT) { v = Value((double)v.as_int()); return; }
     std::string got = struct_value_type_name(v);
     if (got == base) return;
-    // Boş liste [] henüz anahtar almamış bir map olarak da yazılabilir.
+    // An empty list [] may also be written as a map that has not received a key yet.
     if (base == "map" && got == "array" && v.as_array()->empty()) return;
     throw std::runtime_error("struct '" + sname + "': field '" + fname + "' expects "
                              + type + ", got " + got);
@@ -133,16 +133,16 @@ inline void struct_check_field(const std::string& sname, const std::string& fnam
     throw std::runtime_error("struct '" + sname + "' has no field '" + fname + "'");
 }
 
-// Alan adı → alan sırası (0..n-1); yoksa -1. Tanım üzerinde doğrusal arama: yalnız önbellek
-// ıskasında çalışır; VM sıcak yolu sonucu talimat başına önbellekler.
+// Field name -> field order (0..n-1); -1 if absent. Linear search over the definition: runs only on a
+// cache miss; the VM hot path caches the result per instruction.
 inline int struct_field_index(const std::vector<Value>& def, const std::string& field) {
     for (size_t j = 0; j + 2 < def.size(); j += 3)
         if (def[j].str_ref() == field) return (int)(j / 3);
     return -1;
 }
 
-// Yeni örnek: her alan varsayılanıyla (örnek başına kopya), tip adları ve varsayılanlar
-// denetlenmiş. Literal alanları ardından struct_set ile yerine konur.
+// New instance: every field with its default (a copy per instance), type names and defaults
+// already checked. Literal fields are then placed with struct_set.
 template <class IsStruct>
 inline Value struct_new(const std::string& sname, const Value& def_value, IsStruct&& is_struct) {
     const auto& def = *def_value.as_array();
@@ -161,15 +161,15 @@ inline Value struct_new(const std::string& sname, const Value& def_value, IsStru
     return Value::make_struct(std::move(sv));
 }
 
-// i. alana tip denetimli yazma.
+// Type-checked write to field i.
 inline void struct_set(std::vector<Value>& sv, int i, Value v) {
     const auto& def = struct_def(sv);
-    // str_ref(): tip adı kopyalanmaz (to_string her yazmada bir std::string ayırıyordu).
+    // str_ref(): the type name is not copied (to_string allocated a std::string on every write).
     struct_check_field(struct_name(sv), def[(size_t)i * 3].str_ref(), def[(size_t)i * 3 + 2].str_ref(), v);
     sv[STRUCT_SLOT0 + (size_t)i] = std::move(v);
 }
 
-// Ada göre okuma/yazma (VM'in önbelleksiz yolu). Bilinmeyen alan → hata.
+// Read/write by name (the VM's uncached path). Unknown field -> error.
 inline const Value& struct_get_named(const std::vector<Value>& sv, const std::string& field) {
     int i = struct_field_index(struct_def(sv), field);
     if (i < 0) struct_no_field(struct_name(sv), field);
@@ -181,8 +181,8 @@ inline void struct_set_named(std::vector<Value>& sv, const std::string& field, V
     struct_set(sv, i, std::move(v));
 }
 
-// Struct'ın alanlarını map olarak verir (["__assoc__", ad, değer, ...]) — JSON, şablon ve
-// foreach gibi SICAK OLMAYAN tüketiciler için. Değerler paylaşılır (kopya değil).
+// Returns the struct's fields as a map (["__assoc__", name, value, ...]) -- for NON-HOT consumers
+// such as JSON, templates and foreach. Values are shared (not copied).
 inline Value struct_to_map(const Value& s) {
     const auto& sv = *s.as_struct();
     const auto& def = struct_def(sv);

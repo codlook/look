@@ -1,56 +1,56 @@
 #pragma once
 
-// builtins.h — VM builtin tablosunun TEK kaynağı
+// builtins.h -- the SINGLE source of the VM builtin table
 //
-// Bu tablo iki tüketiciyi senkron tutar:
-//   1. compiler.cpp  — isim → builtin index (CALL_BUILTIN opcode'u üretir)
-//   2. http_main.cpp — index → çalışma zamanı fonksiyonu (req_builtins wiring)
+// This table keeps two consumers in sync:
+//   1. compiler.cpp  -- name -> builtin index (emits the CALL_BUILTIN opcode)
+//   2. http_main.cpp -- index -> runtime function (req_builtins wiring)
 //
-// Kural: "mod::fn" biçimindeki isimler http_main tarafında OTOMATİK wire edilir
-// (RuntimeHost'un modül fonksiyonu üzerinden). "::" içermeyen isimler (print,
-// count, strlen, route...) özel semantik taşır ve http_main'de elle bağlanır.
+// Rule: names of the form "mod::fn" are wired AUTOMATICALLY on the http_main side
+// (through the RuntimeHost module function). Names without "::" (print,
+// count, strlen, route...) carry special semantics and are bound by hand in http_main.
 //
-// YENİ BUILTIN EKLEME: listenin SONUNA ekle (mevcut indeksler .lkc bytecode
-// cache'lerinde gömülü — araya ekleme tüm cache'leri bozar). "mod::fn" ise
-// başka hiçbir şey gerekmez; özel isim ise http_main'de lambda ekle.
+// ADDING A NEW BUILTIN: append it to the END of the list (existing indexes are embedded in
+// .lkc bytecode caches -- inserting in the middle breaks all caches). For "mod::fn" nothing
+// else is needed; for a special name, add a lambda in http_main.
 
 #include <string>
 #include <vector>
 
 namespace look {
 
-// Kanonik builtin isim listesi — index == vector pozisyonu
+// Canonical builtin name list -- index == vector position
 const std::vector<std::string>& builtin_names();
 
-// CLI argümanları — `lk script.lk <args...>`'daki script'ten SONRAKI kelimeler.
-// main() bir kez doldurur; args() builtin'i buradan okur (salt-okunur, süreç-global).
+// CLI arguments -- the words AFTER the script in `lk script.lk <args...>`.
+// main() fills it once; the args() builtin reads from here (read-only, process-global).
 std::vector<std::string>& script_args();
 
-// İsim → index; bulunamazsa -1. O(1) (ilk çağrıda hash map kurulur).
+// Name -> index; -1 if not found. O(1) (a hash map is built on the first call).
 int builtin_index(const std::string& name);
 
-// Rezerve bare builtin adı mı? (kullanıcı fonksiyonu bu adı GÖLGELEYEMEZ)
+// Is it a reserved bare builtin name? (a user function CANNOT SHADOW this name)
 //
-// Kaynak PROGRAMATİK: builtin_names()'in "::" İÇERMEYEN girdileri (print, count,
-// route, config, env, stop, before_route, strlen, abs...). El-listesi TUTULMAZ —
-// dispatcher'ın tek kaynağından türer; yeni bare builtin eklenince otomatik kapsanır.
+// The source is PROGRAMMATIC: builtin_names() entries WITHOUT "::" (print, count,
+// route, config, env, stop, before_route, strlen, abs...). No hand list is kept --
+// it derives from the dispatcher's single source; a new bare builtin is covered automatically.
 //
-// NEDEN: compiler bare builtin'i kullanıcı fonksiyonundan ÖNCE dispatch eder →
-// `function config() {...}` SESSİZCE ölü koda dönüşüyordu. Artık tanım anında hata.
+// WHY: the compiler dispatches a bare builtin BEFORE a user function ->
+// `function config() {...}` silently became dead code. Now it is an error at definition time.
 bool is_reserved_builtin(const std::string& name);
 
-// Yerleşiğin etkisi — HER builtin_names() girdisi sınıflandırılmış OLMALI (CI:
-// tests/builtin_effect_table_test.sh; sınıfsız yeni yerleşik → kırmızı). Tüketici: sonucu atılan
-// saf yerleşik kuralı (look/unused_result.h) — yalnız Pure'a uygulanır.
-//   Pure       argümanı değiştirmez, dışarıya etkisi yok, yalnız değer döndürür
-//              (array::push yeni dizi döndürür → Pure; global push diziyi YERİNDE değiştirir → Effect)
-//   Reads      dışarıdaki durumu okur (istek, oturum, önbellek, saat, rastgele, ortam)
-//   Effect     bir şeyi değiştirir ya da yazar (çıktı, veritabanı, dosya, ağ, argümanı)
-//   Callback   geri çağırma alır — onun etkisi olabilir (array::map …)
-//   ThrowCheck tek başına "fırlatıyor mu" diye çağrılabilir (json::decode, date::parse …)
+// A builtin's effect -- EVERY builtin_names() entry MUST be classified (CI:
+// tests/builtin_effect_table_test.sh; a new unclassified builtin -> red). Consumer: the rule
+// for a pure builtin whose result is discarded (look/unused_result.h) -- applies to Pure only.
+//   Pure       does not modify its argument, no outside effect, only returns a value
+//              (array::push returns a new array -> Pure; global push modifies the array IN PLACE -> Effect)
+//   Reads      reads outside state (request, session, cache, clock, random, environment)
+//   Effect     changes or writes something (output, database, file, network, its argument)
+//   Callback   takes a callback -- the callback may have effects (array::map ...)
+//   ThrowCheck can be called on its own to check "does it throw" (json::decode, date::parse ...)
 enum class BuiltinEffect { Unknown, Pure, Reads, Effect, Callback, ThrowCheck };
 BuiltinEffect builtin_effect(const std::string& name);
-// Sınıflandırmada adı geçen ama builtin_names()'de olmayan girdiler (yazım hatası denetimi — CI).
+// Entries named in the classification but absent from builtin_names() (typo check -- CI).
 std::vector<std::string> builtin_effect_strays();
 
 } // namespace look

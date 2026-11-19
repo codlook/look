@@ -1,11 +1,11 @@
 #pragma once
-// Bir havuzun iş parçacıklarını başlat — biri başlatılamazsa (bellek, ulimit -u, ulimit -v)
-// başlatılanları DURDUR ve BİRLEŞTİR, sonra nedeni yazan bir istisna fırlat.
+// Start a pool's threads -- if one cannot be started (memory, ulimit -u, ulimit -v)
+// STOP and JOIN the ones already started, then throw an exception stating the reason.
 //
-// Eskiden kurucu emplace_back'in istisnasıyla yarıda kalıyordu: başlamış iş parçacıkları
-// koşul değişkeninde beklerken onu yok etmek glibc 2.28'de SONSUZA DEK takılıyordu (süreç ayakta,
-// port açık değil, log yok), takılmazsa joinable std::thread → std::terminate. Go'da olduğu gibi:
-// iş parçacığı açılamıyorsa program nedenini söyler ve hata koduyla çıkar (bkz. main).
+// The constructor used to be left half-done by emplace_back's exception: destroying started threads
+// while they waited on a condition variable hung FOREVER on glibc 2.28 (process alive,
+// port not open, no log); if it did not hang, a joinable std::thread -> std::terminate. As in Go:
+// if a thread cannot be created the program states the reason and exits with an error code (see main).
 #include <stdexcept>
 #include <string>
 #include <system_error>

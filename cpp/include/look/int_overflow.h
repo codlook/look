@@ -1,7 +1,7 @@
-// int_overflow.h — int64 aritmetiği taşma-tespiti (SAF, tablo-test edilebilir).
-// value.cpp'nin operator+/-/* bunları çağırır; taşınca çağıran float'a promote eder
-// (büyük-literal float davranışıyla tutarlı, signed-overflow UB YOK).
-// Portatif: GCC/Clang __builtin_*_overflow; MSVC unsigned-sarma + bölme kontrolü.
+// int_overflow.h -- overflow detection for int64 arithmetic (PURE, table-testable).
+// operator+/-/* in value.cpp call these; on overflow the caller promotes to float
+// (consistent with big-literal float behavior, no signed-overflow UB).
+// Portable: GCC/Clang __builtin_*_overflow; MSVC unsigned wrap + division check.
 #pragma once
 #include <cstdint>
 
@@ -30,9 +30,9 @@ inline bool i64_mul_ovf(int64_t a, int64_t b, int64_t* r) {
     return __builtin_mul_overflow(a, b, r);
 #else
     *r = (int64_t)((uint64_t)a * (uint64_t)b);
-    // INT64_MIN / -1 matematiksel sonucu 2^63 → int64'e sığmaz → x86 idiv #DE (SIGFPE).
-    // Bu guard'ı BÖLMEDEN ÖNCE koy: kısa-devreli || içinde bölmeden sonra gelirse, guard'a
-    // ulaşmadan süreç çöker (-1 * INT64_MIN). Yalnız MSVC dalı — GCC/Clang __builtin kullanır.
+    // INT64_MIN / -1: the mathematical result 2^63 does not fit int64 -> x86 idiv #DE (SIGFPE).
+    // Put this guard BEFORE the division: if it comes after the division inside a short-circuit ||, the process
+    // crashes before reaching the guard (-1 * INT64_MIN). MSVC branch only -- GCC/Clang use __builtin.
     if (a == -1 && b == INT64_MIN) return true;
     if (a != 0 && *r / a != b)     return true;
     return false;

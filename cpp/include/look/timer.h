@@ -12,8 +12,8 @@ namespace look {
 class TimerManager {
 public:
     static TimerManager& instance();
-    // Yönetici (ve iş parçacığı) bu süreçte kuruldu mu? Betik sonundaki uyarı, zamanlayıcı
-    // kullanmayan betikte yalnız sormak için iş parçacığı başlatmasın.
+    // Has the manager (and thread) been set up in this process? The warning at script end must not start a
+    // thread just to ask, in a script that uses no timers.
     static bool exists();
 
     // Schedule one-shot callback after ms milliseconds. Returns timer id.
@@ -28,15 +28,15 @@ public:
     // Shutdown timer thread.
     void shutdown();
 
-    // LOOK 2 (komut satırı): betik biterken kurulu kalan zamanlayıcılar — tek seferlikler (henüz
-    // tetiklenmemiş) ve tekrarlayanlar. Bitişteki uyarı bunları sayar.
+    // (command line): timers still installed when the script ends -- one-shots (not yet
+    // fired) and repeating ones. The warning at exit counts these.
     struct Pending { int once = 0; int repeating = 0; };
     Pending pending();
-    // Kurulu ya da şu an çalışan bir zamanlayıcı var mı (kanal kilitlenmesi: geri çağırma gönderebilir).
+    // Is there an installed or currently running timer (channel deadlock: a callback may send).
     bool active();
 
-    // timer::wait([ms]) — bütün tek seferlik zamanlayıcılar tetiklenip geri çağırmaları bitene kadar
-    // (ya da ms dolana kadar) bekler; true = hepsi bitti. Tekrarlayanları beklemez (bitmezler).
+    // timer::wait([ms]) -- waits until all one-shot timers have fired and finished their callbacks
+    // (or until ms elapses); true = all finished. Does not wait for repeating ones (they never finish).
     bool wait_one_shots(int timeout_ms);
 
 private:
@@ -58,9 +58,9 @@ private:
     std::map<int, Entry> entries_;
     std::thread          thread_;
     std::atomic<bool>    running_{true};
-    bool                 dirty_ = false;   // mtx_ altında: liste değişti → bekleme süresi yeniden hesaplanır
-    int                  running_cbs_ = 0; // mtx_ altında: şu an çalışan tek seferlik geri çağırma sayısı
-    std::condition_variable idle_cv_;      // tek seferlik iş azaldı (tetiklendi/bitti/iptal) → wait_one_shots
+    bool                 dirty_ = false;   // under mtx_: the list changed -> the wait time is recomputed
+    int                  running_cbs_ = 0; // under mtx_: number of one-shot callbacks currently running
+    std::condition_variable idle_cv_;      // one-shot work decreased (fired/finished/cancelled) -> wait_one_shots
 };
 
 } // namespace look

@@ -1,6 +1,6 @@
-# Yerleşik × bağlam: argüman YEREL değişken, çağrıdan sonra değişken yeniden okunur
-# (builtin_arg_intact_test.sh). Çıktı satırı: "<ad>|<örnek>|<arity>|same" ya da "...|CHANGED <json>".
-# Kullanım: python3 builtin_arg_intact_gen.py <src/builtins.cpp> <çıkış dizini>
+# Builtin x context: the argument is a LOCAL variable, and the variable is re-read after the call
+# (builtin_arg_intact_test.sh). Output line: "<name>|<example>|<arity>|same" or "...|CHANGED <json>".
+# Usage: python3 builtin_arg_intact_gen.py <src/builtins.cpp> <output dir>
 import os
 import re
 import sys
@@ -10,7 +10,7 @@ i = src.index('builtin_names()')
 j = src.index('};', i)
 names = re.findall(r'"([a-z_][a-z0-9_:]*)"', src[i:j])
 
-# Dış sunucu, süreç sonu, dosyaya yazma ya da istek bağlamı isteyenler dışarıda.
+# Excludes anything that needs an external server, process exit, file writes or a request context.
 SKIP_PREFIX = ('db::', 'http::', 'mail::', 'session::', 'cookie::', 'response::', 'csrf::', 'timer::',
                'ws::', 'sse::', 'jobs::', 'template::render', 'template::include', 'template::block',
                'template::extends', 'crypto::rs256', 'route::', 'request::')
@@ -64,19 +64,19 @@ def write(name, text):
         f.write(text)
 
 
-# Bağlam 1: fonksiyon (her yerleşik ayrı fonksiyonda — register sınırı)
+# Context 1: function (each builtin in its own function -- register limit)
 fn = [header]
 for k, n in enumerate(keep):
     fn.append(f'function t{k}() {{\n{builtin_body(n)}}}\nt{k}()\n')
 fn.append('function tp() {\n' + print_body() + '}\ntp()\n')
 write('fn.lk', ''.join(fn))
-# Bağlam 2: üst düzey blok (v2'de bloğun değişkenleri yereldir)
+# Context 2: top-level block (in v2 the block's variables are local)
 top = [header]
 for n in keep:
     top.append('if (true) {\n' + builtin_body(n) + '}\n')
 top.append('if (true) {\n' + print_body() + '}\n')
 write('top.lk', ''.join(top))
-# Bağlam 3: route (her yerleşik bir rota)
+# Context 3: route (each builtin is a route)
 rt = [header]
 for k, n in enumerate(keep):
     rt.append(f'route("GET", "/t{k}", function() {{\n{builtin_body(n)}}})\n')

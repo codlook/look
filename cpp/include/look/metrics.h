@@ -1,34 +1,34 @@
-// metrics.h — süreç-ömürlü runtime sayaçları (runtime::stats için). Salt-okunur gözlemlenebilirlik.
-// request_count neden burada: eskiden sayaç SETUP yorumlayıcısının üyesiydi; web istekleri
-// VM/per-request kopya üzerinden gider, setup nesnesini hiç görmez → 0 kalırdı.
-// Süreç-global atomik web dispatch'te (http_main) artar; runtime::stats bunu okur. Format/endpoint/dashboard YOK — onlar paket (bkz. monitor kararı).
+// metrics.h -- process-lifetime runtime counters (for runtime::stats). Read-only observability.
+// Why request_count lives here: the counter used to be a member of the SETUP interpreter; web requests
+// go through the VM/per-request copy and never see the setup object -> it would stay 0.
+// A process-global atomic is incremented in web dispatch (http_main); runtime::stats reads it. NO format/endpoint/dashboard -- those are packages.
 #pragma once
 #include <atomic>
 #include <cstdint>
 
 namespace look {
 
-// Web dispatch'in artırdığı süreç-global HTTP istek sayacı.
+// Process-global HTTP request counter incremented by web dispatch.
 inline std::atomic<uint64_t>& g_http_request_count() {
     static std::atomic<uint64_t> c{0};
     return c;
 }
 
-// LOOK 1'de VM'den kalıcı olarak yorumlayıcıya düşen DISTINCT route sayısıydı (>0 → VM'de bug).
-// LOOK 2'de yedek motor yok: hiçbir yol artırmaz, runtime::stats "vm_disabled_routes" olarak 0 okur.
+// In 1.x this was the count of DISTINCT routes permanently dropped from the VM to the interpreter (>0 -> a bug in the VM).
+// There is no fallback engine here: no path increments it, runtime::stats reads 0 as "vm_disabled_routes".
 inline std::atomic<uint64_t>& g_vm_disabled_routes() {
     static std::atomic<uint64_t> c{0};
     return c;
 }
 
-// 5xx yanıt sayısı (sessiz sunucu hatası — kullanıcı şikâyet edene kadar görünmez).
+// Number of 5xx responses (silent server errors -- invisible until a user complains).
 inline std::atomic<uint64_t>& g_error_5xx_count() {
     static std::atomic<uint64_t> c{0};
     return c;
 }
 
-// Dispatch süresi toplamı (us) + son istek (us). avg = sum / request_count. Clock'lar zaten
-// çağrılıyor (t_dispatch_end koşulsuz) → sadece toplama; sıcak yola yeni clock EKLEMEZ.
+// Total dispatch time (us) + last request (us). avg = sum / request_count. The clocks are already
+// being called (t_dispatch_end is unconditional) -> only accumulation; it does NOT ADD a new clock to the hot path.
 inline std::atomic<uint64_t>& g_latency_us_sum() {
     static std::atomic<uint64_t> c{0};
     return c;
@@ -38,8 +38,8 @@ inline std::atomic<uint64_t>& g_latency_us_last() {
     return c;
 }
 
-// DB havuzu anlık durumu (web_stdlib.cpp'de tanımlı — g_pools orada). total_size = tüm havuzların
-// bağlantı sayısı, busy = checked-out (meşgul). Havuz dolunca busy→size, istekler bekler.
+// Current state of the DB pools (defined in web_stdlib.cpp -- g_pools lives there). total_size = connection count
+// of all pools, busy = checked-out. When a pool is full busy->size and requests wait.
 void db_pool_stats(int& total_size, int& busy);
 
 } // namespace look

@@ -33,30 +33,30 @@ std::string svg_sanitize(const std::string& input);
 
 // ── Uploaded File ─────────────────────────────────────────────────────────────
 
-// Temp dosya RAII bekçisi — son referans (shared_ptr) yok olunca dosyayı siler.
-// UploadedFile kopyalanabilir kalır (WebContext kopyalanıyor); shared refcount
-// sayesinde dosya yalnız TÜM kopyalar gidince silinir (erken silme yok).
+// Temp-file RAII guard — deletes the file when the last reference (shared_ptr) goes away.
+// UploadedFile stays copyable (WebContext is copied); thanks to the shared refcount
+// the file is deleted only when ALL copies are gone (no early deletion).
 struct TempFileGuard {
     std::string path;
     ~TempFileGuard() { if (!path.empty()) std::remove(path.c_str()); }
 };
 
 struct UploadedFile {
-    std::string field_name;     // form field adı
-    std::string orig_name;      // istemcinin gönderdiği dosya adı (basename, sanitize — GÜVENİLMEZ, kullanımda escape)
-    std::string temp_path;      // temp dosya yolu
-    std::string mime;           // doğrulanmış MIME (magic byte'dan)
-    std::string sha256;         // dosya içeriğinin SHA-256 hex hash'i
-    size_t      size = 0;       // byte
-    bool        valid = false;  // parse başarılı mı
-    // WebContext yıkılınca uygulama file::store() ile TÜKETMEDİĞİ temp dosya silinir
-    // (aksi halde disk/inode tükenmesi). file::store dosyayı taşımışsa std::remove
-    // no-op olur → zararsız. Parser her yeni temp dosya için bunu set eder.
+    std::string field_name;     // form field name
+    std::string orig_name;      // filename sent by the client (basename, sanitized — UNTRUSTED, escape on use)
+    std::string temp_path;      // temp file path
+    std::string mime;           // validated MIME (from magic bytes)
+    std::string sha256;         // SHA-256 hex hash of the file contents
+    size_t      size = 0;       // bytes
+    bool        valid = false;  // whether parsing succeeded
+    // When the WebContext is destroyed, a temp file the app did NOT consume with file::store() is deleted
+    // (otherwise disk/inode exhaustion). If file::store moved the file, std::remove
+    // is a no-op → harmless. The parser sets this for every new temp file.
     std::shared_ptr<TempFileGuard> temp_cleanup;
 };
 
 // ── Web Context ───────────────────────────────────────────────────────────────
-// CGI isteğinin tüm bilgilerini tutar. RuntimeHost ve VM tarafından paylaşılır.
+// Holds all information about a CGI request. Shared by RuntimeHost and the VM.
 
 struct WebContext {
     // Request
@@ -71,33 +71,33 @@ struct WebContext {
     // Secure flag is gated on this: Secure only helps under TLS, so setting it over plain HTTP
     // just stops the cookie from being sent (which silently breaks local http:// dev).
     bool is_https = false;
-    // İsteğin ana bilgisayarı (request::host, csrf:: Origin denetimi). is_https ile aynı kural:
-    // --mode http'de Host; X-Forwarded-Host yalnız bağlanan adres LOOK_TRUSTED_PROXY'deyse.
-    // FastCGI/CGI'de web sunucusunun HTTP_HOST'u (önündeki sunucu güvenilen taraftır).
-    // Geçersiz değer (boşluk, kontrol karakteri, '/', '@' …) → "" (clean_host).
+    // Request host (request::host, csrf:: Origin check). Same rule as is_https:
+    // in --mode http the Host header; X-Forwarded-Host only if the connecting address is in LOOK_TRUSTED_PROXY.
+    // In FastCGI/CGI the web server's HTTP_HOST (the server in front is the trusted party).
+    // Invalid value (space, control character, '/', '@' …) → "" (clean_host).
     std::string host;
-    // csrf:: — bu istekte kullanılan anahtar tabanı (çerez aynı istekte cookies_in'e dönmez).
-    std::string document_root;   // FastCGI/CGI DOCUMENT_ROOT (file::store web-kökü denetimi); http modunda boş
+    // csrf:: — key base used for this request (the cookie does not come back in cookies_in within the same request).
+    std::string document_root;   // FastCGI/CGI DOCUMENT_ROOT (file::store web-root check); empty in http mode
     std::string csrf_base;
-    // Bu istek csrf::exempt kuralıyla denetimsiz geçtiyse o kural (session:: burada yasak).
+    // The csrf::exempt rule if this request passed unchecked through it (session:: is forbidden here).
     std::string csrf_exempt_rule;
-    // session::start'ta okunan oturum (kimlik + içerik): eşzamanlı regenerate eski kaydı bu istekten
-    // önce sildiyse veri buradan taşınır (scs modeli). Yalnız istek başında var olan kimlik için dolar.
+    // Session read in session::start (id + content): if a concurrent regenerate deleted the old record
+    // before this request, the data is carried from here (scs model). Filled only for an id that existed at request start.
     std::string sess_snap_sid;
     std::string sess_snap;
     std::map<std::string, std::string> get_params;
     std::map<std::string, std::string> post_params;
     std::map<std::string, std::string> cookies_in;
     std::map<std::string, std::string> headers_in;   // request headers, lowercase keys
-    std::map<std::string, UploadedFile> uploaded_files;  // multipart dosyaları
+    std::map<std::string, UploadedFile> uploaded_files;  // multipart files
 
     // Response
     int status_code = 200;
     std::string status_text = "OK";
     std::map<std::string, std::string> headers_out;
-    std::vector<std::string> set_cookies_out;  // Set-Cookie: std::map tek anahtarı
-                                               // ezerdi; her çerez ayrı satır olur.
-    std::string response_body;   // response::json/text/html tarafından set edilir
+    std::vector<std::string> set_cookies_out;  // Set-Cookie: a std::map would overwrite the single key;
+                                               // each cookie becomes a separate line.
+    std::string response_body;   // set by response::json/text/html
     bool headers_sent = false;
 
     // Routing
@@ -108,18 +108,18 @@ struct WebContext {
     // Initialize from CGI environment
     void init_from_cgi();
 
-    // Multipart parser — init_from_cgi tarafından çağrılır
+    // Multipart parser — called by init_from_cgi
     void parse_multipart(const std::string& boundary);
 
-    // POST gövdesini content_type'a göre ayrıştır: urlencoded → post_params,
-    // multipart/form-data → parse_multipart (dosyalar + alanlar).
-    // TEK KAYNAK: üç giriş noktası da (FastCGI, --mode http, CGI) bunu çağırır.
-    // Eskiden aynı 6 satır fcgi_main ve web.cpp'de KOPYALANMIŞTI, http_main'de ise
-    // yalnızca urlencoded dalı vardı → `request::file` FastCGI'de çalışıp
-    // `--mode http`'de çalışmıyordu (mod-özgü boşluk, S12).
+    // Parse the POST body by content_type: urlencoded → post_params,
+    // multipart/form-data → parse_multipart (files + fields).
+    // SINGLE SOURCE: all three entry points (FastCGI, --mode http, CGI) call this.
+    // Previously the same 6 lines were COPIED in fcgi_main and web.cpp, while http_main had
+    // only the urlencoded branch → `request::file` worked under FastCGI but
+    // not under `--mode http` (a mode-specific gap, S12).
     void parse_post_body();
-    // Gövde ayrıştırılamadıysa: yanıt durumu (400 / 413) ve neden. Dağıtım, rotadan ve CSRF
-    // kapısından önce bu yanıtı verir (Go mime/multipart gibi açık hata; eskiden sessizce boş).
+    // If the body could not be parsed: response status (400 / 413) and reason. Dispatch sends this response before routing and the CSRF
+    // gate (explicit error like Go mime/multipart; previously silently empty).
     int         body_error_status = 0;
     std::string body_error;
 
@@ -128,7 +128,7 @@ struct WebContext {
     static std::string url_decode(const std::string& s, bool plus_is_space = true);
     static std::map<std::string, std::string> parse_query(const std::string& qs);
     static std::map<std::string, std::string> parse_cookies(const std::string& raw);
-    // Host başlığı değerini doğrula + küçük harfe çevir: ad[:port] ya da [ipv6][:port]; değilse "".
+    // Validate the Host header value + lowercase it: name[:port] or [ipv6][:port]; otherwise "".
     static std::string clean_host(const std::string& raw);
 
     // Header output
@@ -141,23 +141,23 @@ class RouteMatchedException : public std::exception {
     const char* what() const noexcept override { return "route_matched"; }
 };
 
-// stop() — before_route middleware'den route execution'ı iptal eder
+// stop() — cancels route execution from before_route middleware
 class RouteStopException : public std::exception {
     const char* what() const noexcept override { return "route_stop"; }
 };
 
 // ── Connection pool — thread-safe, per-request borrow/return ──────────────────
-// Bağlantı ilk db:: çağrısında tembel alınır; istek/geri çağrı sonunda hepsi iade edilir.
+// The connection is borrowed lazily on the first db:: call; all are returned at the end of the request/callback.
 void release_thread_connections();   // return all conns borrowed by this request to pools
 void set_db_pool_size(int n);        // set pool size before any db::connect call
 void clear_db_pools();               // close all pools — called before hot reload
-// csrf::exempt ile muaf geçen istekte çereze dokunan her yol hata verir (what: "cookie::get()" …).
+// Any path that touches a cookie in a request exempted via csrf::exempt raises an error (what: "cookie::get()" …).
 void csrf_exempt_cookie_guard(const WebContext* w, const char* what);
 
-// Kullanılabilir CPU sayısı — cgroup CPU limitini (container/Docker/systemd CPUQuota,
-// kısıtlı cloud vCPU) dikkate alır. std::thread::hardware_concurrency() FİZİKSEL
-// çekirdeği döndürür; kısıtlı ortamda worker/pool default'u aşırı thread açıp boşa
-// RAM harcardı. Worker ve DB-pool default'ları bunu kullanır → ortama otomatik uyum.
+// Available CPU count — honors the cgroup CPU limit (container/Docker/systemd CPUQuota,
+// constrained cloud vCPU). std::thread::hardware_concurrency() returns PHYSICAL
+// cores; in a constrained environment the worker/pool default would spawn too many threads and waste
+// RAM. Worker and DB-pool defaults use this → automatic fit to the environment.
 int available_cpus();
 // CFS CPU quota (cgroup) rounded to whole cores, or -1 if no quota is set.
 // For the startup warning: workers > quota → CFS throttling spikes tail latency.

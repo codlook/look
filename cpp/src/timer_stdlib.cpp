@@ -56,11 +56,11 @@ int TimerManager::every(int ms, std::function<void()> cb) {
 void TimerManager::cancel(int id) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        entries_.erase(id);   // Hemen sil — callback lambda ($ws shared_ptr) serbest kalır
+        entries_.erase(id);   // Erase immediately -- the callback lambda ($ws shared_ptr) is released
         dirty_ = true;
     }
-    cv_.notify_one();         // Thread'i uyandır — deadline güncellensin
-    idle_cv_.notify_all();    // timer::wait iptal edilen tek seferliği beklemesin
+    cv_.notify_one();         // Wake the thread -- so the deadline is updated
+    idle_cv_.notify_all();    // timer::wait must not wait for a cancelled one-shot
 }
 
 TimerManager::Pending TimerManager::pending() {
@@ -80,7 +80,7 @@ bool TimerManager::active() {
     return false;
 }
 
-// Kanal kilitlenmesi (parallel_runtime.h): zamanlayıcı kuruluyken "herkes bekliyor" değildir.
+// Channel deadlock (parallel_runtime.h): while a timer is installed "everyone is waiting" does not hold.
 [[maybe_unused]] static const bool s_timers_hook_set =
     (g_timers_active = [] { return TimerManager::exists() && TimerManager::instance().active(); }, true);
 
@@ -97,10 +97,10 @@ bool TimerManager::wait_one_shots(int timeout_ms) {
 }
 
 void TimerManager::shutdown() {
-    // Bayrak mtx_ ALTINDA yazılır. ESKİ HATA (kaybolan uyandırma): kilitsiz yazılınca, iş parçacığı
-    // yüklemi (running_ hâlâ true) değerlendirip henüz uykuya geçmemişken gelen notify kayboluyor,
-    // iş parçacığı deadline'a (boşken 30 sn) kadar uyuyor ve çıkıştaki join süreci o kadar
-    // bekletiyordu — ölçüm: zamanlayıcıya dokunan betiklerin ~%5'i çıkışta asılıyordu.
+    // The flag is written UNDER mtx_. OLD BUG (lost wake-up): when written without the lock, a notify arriving while the thread
+    // had evaluated the predicate (running_ still true) but not yet gone to sleep was lost,
+    // the thread slept until the deadline (30 s when idle) and the join at exit kept the
+    // process waiting that long -- measured: ~5% of scripts that touched a timer hung at exit.
     { std::lock_guard<std::mutex> lk(mtx_); running_.store(false); }
     cv_.notify_all();
     if (thread_.joinable()) thread_.join();
@@ -117,12 +117,12 @@ void TimerManager::run() {
                 deadline = e.next_fire;
         }
 
-        // 1.0.8: `deadline` beklemeye girmeden ÖNCE hesaplanır. Beklerken eklenen (ya da iptal
-        // edilen) bir zamanlayıcı cv'yi uyandırıyordu ama yüklem "henüz vakti gelmedi" deyip
-        // ESKİ deadline'a (boşken 30 sn) kadar yeniden uyuyordu → yönetici boştayken kurulan
-        // zamanlayıcı 30 saniyeye kadar geç çalışıyordu. Yalnız süreçteki İLK zamanlayıcı,
-        // iş parçacığı henüz beklemeye girmeden eklendiği için zamanında çalışıyordu.
-        // Liste değişince (dirty_) uyan ve deadline'ı yeniden hesapla.
+        // 1.0.8: `deadline` is computed BEFORE entering the wait. A timer added (or
+        // cancelled) while waiting woke the cv but the predicate said "not due yet"
+        // and it went back to sleep until the OLD deadline (30 s when idle) -> a timer
+        // installed while the manager was idle ran up to 30 seconds late. Only the FIRST timer in the process,
+        // added before the thread had entered the wait, ran on time.
+        // Wake when the list changes (dirty_) and recompute the deadline.
         dirty_ = false;
         cv_.wait_until(lk, deadline, [&] {
             if (!running_.load() || dirty_) return true;
@@ -137,7 +137,7 @@ void TimerManager::run() {
         now = std::chrono::steady_clock::now();
 
         std::vector<std::function<void()>> cbs;
-        std::vector<bool> once;   // cbs[i] tek seferlik mi (timer::wait onu bekler)
+        std::vector<bool> once;   // is cbs[i] a one-shot (timer::wait waits for it)
         std::vector<int> to_remove;
 
         for (auto& [id, e] : entries_) {
@@ -149,7 +149,7 @@ void TimerManager::run() {
                     e.next_fire = now + std::chrono::milliseconds(e.interval_ms);
                 else {
                     to_remove.push_back(id);
-                    ++running_cbs_;   // listeden çıktı ama geri çağırması henüz bitmedi
+                    ++running_cbs_;   // left the list but its callback has not finished yet
                 }
             }
         }

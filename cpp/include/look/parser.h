@@ -15,41 +15,41 @@ class Parser {
 public:
     explicit Parser(std::vector<Token> tokens);
     std::unique_ptr<Program> parse();
-    // LOOK 2: parse() sonrası — sessiz davranış farkı yaratan yerler (capture-stale).
+    // After parse() -- places that create a silent behavior difference (capture-stale).
     const std::vector<CaptureWarning>& warnings() const { return warnings_; }
 
 private:
     std::vector<Token> tokens_;
     size_t current_ = 0;
-    int    scope_depth_ = 0;  // fonksiyon iç içeliği — use "file" top-level guard için
-    std::map<std::string, std::pair<std::string, int>> struct_seen_;  // LOOK 2: ad → (tanım imzası, satır)
-    std::vector<CaptureWarning> warnings_;   // LOOK 2: yüklemede gösterilecek uyarılar (capture-stale)
-    // Kullanımdan kalkan çağrılar — her tür için dosya başına TEK uyarı (ilk yer + toplam)
+    int    scope_depth_ = 0;  // function nesting -- for the `use "file"` top-level guard
+    std::map<std::string, std::pair<std::string, int>> struct_seen_;  // name -> (definition signature, line)
+    std::vector<CaptureWarning> warnings_;   // warnings to show at load time (capture-stale)
+    // Deprecated calls -- ONE warning per file for each kind (first location + total)
     enum { DEP_PUSH, DEP_POP, DEP_ARRAY_POP, DEP_COUNT };
-    struct Deprecated { int calls = 0; size_t warn = (size_t)-1; };   // warn: uyarının warnings_ içindeki yeri
+    struct Deprecated { int calls = 0; size_t warn = (size_t)-1; };   // warn: the warning's position in warnings_
     Deprecated deps_[DEP_COUNT];
     static std::string deprecation_message(int dep, int count);
-    // `use array` olmadan yerinde array::push/slice (gizli kural; --check uyarısı "use-array-missing")
+    // array::push/slice in place without `use array` (hidden rule; the --check warning is "use-array-missing")
     struct InPlaceArray { int calls = 0, line = 0, column = 0; };
     InPlaceArray in_place_array_;
     bool has_use_array_ = false;
     static bool is_in_place_array_call(const std::string& name, const Expression* val);
-    static constexpr int MAX_EXPR_DEPTH = 150;  // ifade özyineleme tavanı (expression+unary+power ortak)
-    int    expr_depth_  = 0;  // ifade özyineleme derinliği — derin iç içe paren/array
-                              // parser'ın recursive-descent yığınını taşırıp SIGSEGV
-                              // yapmasını engeller (JSON parser'daki koruma gibi).
-    int    stmt_depth_  = 0;  // statement/blok iç içeliği — derin iç içe {}/if/while
-                              // aynı stack-taşma riskini taşır; ayrı sayaçla korunur.
-    // Sol-yaslı ikili zincir ('1+1+1+...+1' N terim) parse'ta İTERATİF kurulur
-    // (while döngüsü) — expr_depth_ ARTMAZ, yani paren/array guard'ı bunu YAKALAMAZ.
-    // Ama üretilen AST N derinliğinde sola-nested olur; VM compiler bu iskeleti
-    // ÖZYİNELİ gezerek ~7000 terimde stack-overflow (SIGABRT)
-    // yapar → saldırgan-kontrollü derin girdi = DoS. Tek terim ~1 zincir demek; gerçek
-    // kodda bin+ ardışık ikili operatör görülmez. Sınır aşılınca AST HİÇ kurulmadan
-    // temiz parse hatası atılır → derleyici derin ağacı görmez.
-    static constexpr int MAX_BINOP_CHAIN = 1000;  // tek ifadedeki ikili-operatör tavanı
-    int    binop_depth_ = 0;  // kurulan ikili-operatör düğüm sayacı (expression() başında sıfırlanır)
-    void   check_binop_chain();  // her ikili düğümden önce çağrılır; aşımda temiz hata
+    static constexpr int MAX_EXPR_DEPTH = 150;  // expression recursion cap (shared by expression+unary+power)
+    int    expr_depth_  = 0;  // expression recursion depth -- stops deeply nested paren/array
+                              // from overflowing the parser's recursive-descent stack with a SIGSEGV
+                              // (like the guard in the JSON parser).
+    int    stmt_depth_  = 0;  // statement/block nesting -- deeply nested {}/if/while
+                              // carry the same stack-overflow risk; guarded by a separate counter.
+    // A left-leaning binary chain ('1+1+1+...+1' with N terms) is built ITERATIVELY in the parser
+    // (a while loop) -- expr_depth_ does NOT grow, so the paren/array guard does NOT CATCH it.
+    // But the resulting AST is left-nested N deep; the VM compiler walks this skeleton
+    // RECURSIVELY and overflows the stack (SIGABRT) at ~7000 terms
+    // -> attacker-controlled deep input = DoS. One term ~ 1 chain link; real
+    // code never has a thousand consecutive binary operators. When the limit is exceeded
+    // a clean parse error is raised WITHOUT building the AST at all -> the compiler never sees a deep tree.
+    static constexpr int MAX_BINOP_CHAIN = 1000;  // cap on binary operators in a single expression
+    int    binop_depth_ = 0;  // counter of binary-operator nodes built (reset at the start of expression())
+    void   check_binop_chain();  // called before every binary node; clean error on overflow
 
     // Statements
     std::unique_ptr<Statement>      statement();
@@ -98,7 +98,7 @@ private:
 
     bool          match(TokenType type);
     const Token&  consume(TokenType type, const std::string& message);
-    void          consume_semi();  // ';' tüket — yoksa } veya EOF'ta sessiz geç (ASI opsiyonel)
+    void          consume_semi();  // consume ';' -- if absent, pass silently at } or EOF (ASI optional)
     bool          check(TokenType type) const;
     bool          is_at_end() const;
     const Token&  advance();

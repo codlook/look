@@ -1,11 +1,11 @@
-// crypto_sha256.h — saf SHA-256 / HMAC-SHA256 / PBKDF2-HMAC-SHA256 (dikişi aç).
-// Bu üçlü JWT (HS256), DKIM, session imzası, auth::hash yollarını besler. Saf + kendine-yeten
-// (yalnız std) → RFC known-answer test edilebilir (NIST SHA-256 · RFC 4231 HMAC · RFC 7914 PBKDF2).
-// extra_stdlib.cpp bunları using-alias ile forward eder; tek tanım → drift yok.
-// BİRLEŞTİRİLDİ (2026-08-12): postgres_client.cpp SCRAM eskiden PARALEL bir pbkdf2/sha256
-// (array<32>, tek-block) taşıyordu; RFC-KAT iki kopyanın AYRIŞMADIĞINI kanıtlayınca kaldırıldı →
-// PG artık bu üçlüye array<32>↔vector adaptörüyle delege eder (tek tanım, drift yok).
-// PG-agreement oracle'ı: tests/pg_scram_crypto_kat.cpp (gerçek PostgresClient:: statiklerini pinler).
+// crypto_sha256.h -- pure SHA-256 / HMAC-SHA256 / PBKDF2-HMAC-SHA256 (seam opened).
+// This trio feeds the JWT (HS256), DKIM, session signature and auth::hash paths. Pure and self-contained
+// (std only) -> testable with RFC known-answer tests (NIST SHA-256 · RFC 4231 HMAC · RFC 7914 PBKDF2).
+// extra_stdlib.cpp forwards these with using-aliases; single definition -> no drift.
+// MERGED (2026-08-12): the SCRAM code in postgres_client.cpp used to carry a PARALLEL pbkdf2/sha256
+// (array<32>, single block); it was removed once the RFC KAT showed the two copies did NOT diverge ->
+// PG now delegates to this trio through an array<32><->vector adapter (single definition, no drift).
+// PG-agreement oracle: tests/pg_scram_crypto_kat.cpp (pins the real PostgresClient:: statics).
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -78,16 +78,16 @@ inline std::vector<uint8_t> hmac_sha256(
     return sha256(outer);
 }
 
-// PBKDF2-HMAC-SHA256 (RFC 8018). Platform bağımsız; büyük-endian block index.
+// PBKDF2-HMAC-SHA256 (RFC 8018). Platform independent; big-endian block index.
 inline std::vector<uint8_t> pbkdf2_sha256(
     const std::string& password, const std::vector<uint8_t>& salt,
     uint32_t iterations, uint32_t dk_len)
 {
     std::vector<uint8_t> pwd(password.begin(), password.end());
-    // HMAC, blok boyundan (64) uzun anahtarı önce özetler — burada BİR KEZ (sonuç aynı, RFC 2104).
-    // Eskiden hmac_sha256 bunu her turda yapıyordu: maliyet parola uzunluğu × tur sayısıydı. 100 KB
-    // parola 10 000 turda 3,1 sn (16 bayt: 55 ms); 1 MB parola varsayılan 100 000 turda ~5 dk —
-    // giriş formuna uzun parola gönderen birkaç istek havuzu kilitliyordu (Django CVE-2013-1443 sınıfı).
+    // HMAC first hashes a key longer than the block size (64) -- here ONCE (same result, RFC 2104).
+    // Previously hmac_sha256 did this on every round: the cost was password length x round count. A 100 KB
+    // password at 10 000 rounds took 3.1 s (16 bytes: 55 ms); a 1 MB password at the default 100 000 rounds ~5 min --
+    // a few requests sending a long password to a login form locked up the pool (same class as Django CVE-2013-1443).
     if (pwd.size() > 64) pwd = sha256(pwd);
     std::vector<uint8_t> dk;
     uint32_t blocks = (dk_len + 31) / 32;

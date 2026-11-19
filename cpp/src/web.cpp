@@ -1,6 +1,6 @@
 #include "look/web.h"
 #ifndef _WIN32
-extern char** environ;   // CGI istek başlıkları (HTTP_*) — init_from_cgi
+extern char** environ;   // CGI request headers (HTTP_*) — init_from_cgi
 #endif
 #include <cstdlib>
 #include <sstream>
@@ -25,7 +25,7 @@ extern char** environ;   // CGI istek başlıkları (HTTP_*) — init_from_cgi
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
 #  endif
-#  include <windows.h>   // bcrypt.h'dan ÖNCE gelmeli (BCRYPT tipleri için)
+#  include <windows.h>   // must come BEFORE bcrypt.h (for the BCRYPT types)
 #  include <bcrypt.h>
 #  pragma comment(lib, "bcrypt.lib")
 #else
@@ -118,10 +118,10 @@ static std::string detect_mime(const std::string& data) {
     // SVG — text based, check content
     if (data.find("<svg") != std::string::npos ||
         data.find("<?xml") != std::string::npos)    return "image/svg+xml";
-    // Düz metin — magic-byte'ı YOK (SVG içerik-kontrolü deseninin tamamlanması, dogfooding #4):
-    // magic-byte'sız text/csv/log allow_mime:["text/plain"] ile eşleşemiyordu (octet-stream dönüyordu).
-    // Muhafazakâr sezgi: boş değil + NUL yok + C0 kontrol karakteri yok (TAB/CR/LF hariç).
-    // Binary formatlar zaten yukarıda yakalandı; NUL/kontrol içeren ikili octet-stream kalır.
+    // Plain text — NO magic bytes (completes the SVG content-check pattern, dogfooding #4):
+    // text/csv/log without magic bytes could not match allow_mime:["text/plain"] (it returned octet-stream).
+    // Conservative heuristic: non-empty + no NUL + no C0 control character (except TAB/CR/LF).
+    // Binary formats were already caught above; binary with NUL/control characters stays octet-stream.
     if (!data.empty()) {
         bool is_text = true;
         for (unsigned char c : data) {
@@ -135,10 +135,10 @@ static std::string detect_mime(const std::string& data) {
 
 // ── Random hex filename ───────────────────────────────────────────────────────
 
-// CSPRNG tabanlı geçici dosya adı (rand() kaldırıldı — tahmin edilebilir rastgelelik düzeltmesi)
+// CSPRNG-based temp file name (rand() removed — fix for predictable randomness)
 static std::string random_hex(int bytes = 16) {
     std::vector<unsigned char> buf(bytes);
-    // Fail-closed: CSPRNG başarısızsa sıfır-buffer ile tahmin edilebilir ad üretmek yerine hata fırlat.
+    // Fail-closed: if the CSPRNG fails, throw an error instead of generating a predictable name from a zeroed buffer.
 #ifdef _WIN32
     if (BCryptGenRandom(nullptr, buf.data(), (ULONG)bytes,
                         BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
@@ -189,21 +189,21 @@ void WebContext::init_from_cgi() {
     const char* m = std::getenv("REQUEST_METHOD");
     method = m ? m : "GET";
 
-    // Path resolution — iki mod:
+    // Path resolution — two modes:
     //
     // 1. Apache Action (CGI): PATH_INFO = /index.lk/menu/route
-    //    .lk prefix'ini soy, geri kalan route path
+    //    strip the .lk prefix; the rest is the route path
     //
-    // 2. mod_proxy_fcgi RewriteRule [P] (FastCGI): PATH_INFO bos,
-    //    REQUEST_URI = /menu/route (query string dahil degil)
-    //    SCRIPT_NAME = /index.lk (ekledigimiz hedef)
-    //    Gercek route = REQUEST_URI - SCRIPT_NAME prefix'i (varsa)
+    // 2. mod_proxy_fcgi RewriteRule [P] (FastCGI): PATH_INFO empty,
+    //    REQUEST_URI = /menu/route (query string not included)
+    //    SCRIPT_NAME = /index.lk (the target we added)
+    //    Real route = REQUEST_URI minus the SCRIPT_NAME prefix (if any)
     {
         const char* pi_env = std::getenv("PATH_INFO");
         std::string pi_str = pi_env ? pi_env : "";
 
         if (!pi_str.empty()) {
-            // Mod 1: CGI Action — PATH_INFO icinde .lk varsa soyu
+            // Mode 1: CGI Action — strip .lk if present in PATH_INFO
             size_t lk = pi_str.find(".lk");
             if (lk != std::string::npos) {
                 size_t slash = pi_str.find('/', lk + 3);
@@ -212,17 +212,17 @@ void WebContext::init_from_cgi() {
                 path = pi_str;
             }
         } else {
-            // Mod 2: FastCGI (mod_proxy_fcgi RewriteRule [P]) — REQUEST_URI kullan
-            // REQUEST_URI = /menu/burger-cafe (orijinal URL, routing icin dogru)
-            // SCRIPT_NAME = Apache'nin atadigi: /index.lk ise soyu, degilse kullanma
+            // Mode 2: FastCGI (mod_proxy_fcgi RewriteRule [P]) — use REQUEST_URI
+            // REQUEST_URI = /menu/burger-cafe (original URL, correct for routing)
+            // SCRIPT_NAME = assigned by Apache: strip if /index.lk, otherwise do not use
             const char* ru = std::getenv("REQUEST_URI");
             if (ru && *ru) {
                 std::string uri(ru);
-                // Query string'i kopar (?...) — sadece path
+                // Cut off the query string (?...) — path only
                 size_t q = uri.find('?');
                 if (q != std::string::npos) uri = uri.substr(0, q);
-                // Sadece SCRIPT_NAME /index.lk gibi .lk ile bitiyorsa soy
-                // /menu/burger-cafe gibi route path'lerini soyma
+                // Strip only if SCRIPT_NAME ends with .lk like /index.lk
+                // Do not strip route paths like /menu/burger-cafe
                 const char* sn = std::getenv("SCRIPT_NAME");
                 if (sn && *sn) {
                     std::string script_name(sn);
@@ -263,17 +263,17 @@ void WebContext::init_from_cgi() {
     remote_addr = ra ? ra : "";
     { const char* dr = std::getenv("DOCUMENT_ROOT"); document_root = dr ? dr : ""; }
 
-    // HTTPS ve Host: CGI ortamını web sunucusu kurar (istemci değil) — FastCGI ile aynı kural.
-    // Eskiden CGI'de is_https hiç ayarlanmıyordu: HTTPS sitede oturum çerezi Secure almıyordu.
+    // HTTPS and Host: the web server sets up the CGI environment (not the client) — same rule as FastCGI.
+    // Previously is_https was never set in CGI: on an HTTPS site the session cookie did not get Secure.
     { const char* h = std::getenv("HTTPS"); std::string hs = h ? h : "";
       for (auto& c : hs) c = (char)std::tolower((unsigned char)c);
       const char* rs = std::getenv("REQUEST_SCHEME");
       is_https = (hs == "on" || hs == "1" || (rs && std::string(rs) == "https")); }
     { const char* hh = std::getenv("HTTP_HOST"); host = clean_host(hh ? hh : ""); }
 
-    // İstek başlıkları: web sunucusu her başlığı HTTP_<AD> ortam değişkeni olarak verir (RFC 3875
-    // 4.1.18) — FastCGI'deki HTTP_* parametreleriyle aynı dönüşüm. Eskiden CGI'de headers_in hiç
-    // doldurulmuyordu: request::header() hep null, X-CSRF-Token ve Origin görünmüyordu.
+    // Request headers: the web server passes each header as an HTTP_<NAME> environment variable (RFC 3875
+    // 4.1.18) — same conversion as the HTTP_* parameters in FastCGI. Previously headers_in was never
+    // filled in CGI: request::header() was always null, X-CSRF-Token and Origin were not visible.
     for (char** e = look_environ(); e && *e; ++e) {
         std::string kv = *e;
         auto eq = kv.find('=');
@@ -300,7 +300,7 @@ std::string WebContext::url_decode(const std::string& s, bool plus_is_space) {
                 result += (char)h;
                 i += 2;
             } catch (...) {
-                result += s[i];  // geçersiz %xx → literal '%' olarak bırak
+                result += s[i];  // invalid %xx → leave a literal '%'
             }
         } else {
             result += s[i];
@@ -325,8 +325,8 @@ std::map<std::string, std::string> WebContext::parse_query(const std::string& qs
 }
 
 std::string WebContext::clean_host(const std::string& raw) {
-    // Host istemciden gelir: Origin karşılaştırmasında ve uygulamanın kurduğu bağlantılarda
-    // kullanılır. Yalnız ad[:port] / [ipv6][:port] kabul; başka her şey "" (yok sayılır).
+    // Host comes from the client: used in the Origin comparison and in connections the application builds.
+    // Only name[:port] / [ipv6][:port] is accepted; anything else is "" (ignored).
     std::string h = raw;
     h.erase(0, h.find_first_not_of(" \t"));
     auto last = h.find_last_not_of(" \t"); h.erase(last == std::string::npos ? 0 : last + 1);
@@ -390,10 +390,10 @@ void WebContext::set_status(int code) {
     }
 }
 
-// POST gövdesi — content_type'a göre. TEK kaynak; FastCGI, --mode http ve CGI
-// giriş noktalarının hepsi bunu çağırır (bkz. web.h).
-// Content-Type → ortam türü (küçük harf) + parametreler (ad küçük harf; değer token ya da tırnaklı
-// dize, \ kaçışı çözülür). Go mime.ParseMediaType modeli. false = sözdizimi bozuk.
+// POST body — by content_type. SINGLE source; the FastCGI, --mode http and CGI
+// entry points all call this (see web.h).
+// Content-Type → media type (lowercase) + parameters (name lowercase; value a token or quoted
+// string, \ escapes decoded). Go mime.ParseMediaType model. false = malformed syntax.
 static bool parse_media_type(const std::string& ct, std::string& type,
                              std::map<std::string, std::string>& params) {
     auto lower = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
@@ -410,7 +410,7 @@ static bool parse_media_type(const std::string& ct, std::string& type,
         if (i >= ct.size()) break;
         size_t ks = i;
         while (i < ct.size() && ct[i] != '=' && ct[i] != ';') i++;
-        if (i >= ct.size() || ct[i] != '=') return false;            // değersiz parametre
+        if (i >= ct.size() || ct[i] != '=') return false;            // parameter without a value
         std::string key = lower(trim(ct.substr(ks, i - ks)));
         i++;
         std::string val;
@@ -428,13 +428,13 @@ static bool parse_media_type(const std::string& ct, std::string& type,
             while (i < ct.size() && ct[i] != ';') i++;
             val = trim(ct.substr(vs, i - vs));
         }
-        if (key.empty() || params.count(key)) return false;           // boş ya da yinelenen ad
+        if (key.empty() || params.count(key)) return false;           // empty or duplicate name
         params[key] = val;
     }
     return true;
 }
 
-// RFC 2046 §5.1.1: sınır 1-70 karakter, bchars kümesi, sonda boşluk yok.
+// RFC 2046 §5.1.1: boundary is 1-70 characters, bchars set, no trailing space.
 static bool multipart_boundary_ok(const std::string& b) {
     if (b.empty() || b.size() > 70 || b.back() == ' ') return false;
     for (unsigned char c : b) {
@@ -446,12 +446,12 @@ static bool multipart_boundary_ok(const std::string& b) {
 }
 
 void WebContext::parse_post_body() {
-    // Ortam türü TAM eşleşir (Go). Eskiden alt dize aranıyordu ve boundary ham kesiliyordu:
-    // boundary="B" (tırnaklı — .NET MultipartFormDataContent, bazı Java istemcileri),
-    // "boundary=B; charset=utf-8" ve "BOUNDARY=B" gövdelerinin bütün alanları SESSİZCE kayboluyordu.
+    // The media type must match EXACTLY (Go). Previously a substring was searched and the boundary was cut raw:
+    // bodies with boundary="B" (quoted — .NET MultipartFormDataContent, some Java clients),
+    // "boundary=B; charset=utf-8" and "BOUNDARY=B" had ALL their fields SILENTLY lost.
     std::string type;
     std::map<std::string, std::string> params;
-    if (!parse_media_type(content_type, type, params)) return;   // türü okunamayan gövde: ayrıştırılmaz
+    if (!parse_media_type(content_type, type, params)) return;   // body with an unreadable type: not parsed
     if (type == "application/x-www-form-urlencoded") {
         post_params = parse_query(body);
     } else if (type == "multipart/form-data") {
@@ -473,17 +473,17 @@ void WebContext::parse_multipart(const std::string& boundary) {
     size_t pos = body.find(delim);
     if (pos == std::string::npos) return;
 
-    // Parça sayısı tavanı — 10MB gövde ~40-baytlık dosya parçalarıyla ~250K parça
-    // içerebilir → her biri SHA-256 + temp dosya = disk/CPU amplifikasyon DoS.
+    // Part count cap — a 10MB body can hold ~250K parts of ~40-byte file parts
+    // → each one costs SHA-256 + a temp file = disk/CPU amplification DoS.
     int part_count = 0;
     static constexpr int MAX_PARTS = 1000;
 
     while (true) {
         pos += delim.size();
-        if (pos + 2 <= body.size() && body.compare(pos, 2, "--") == 0) break;   // kapanış sınırı
-        // Sınır aşılınca açık hata (413; Go "multipart: message too large"). Eskiden döngü kırılıp
-        // kalan parçalar SESSİZCE atılıyordu (1001. alandaki _csrf ya da veri kayboluyordu). Sayaç
-        // kapanış sınırından SONRA: tam 1000 parça geçerli.
+        if (pos + 2 <= body.size() && body.compare(pos, 2, "--") == 0) break;   // closing delimiter
+        // Explicit error when the limit is exceeded (413; Go "multipart: message too large"). Previously the loop broke and
+        // the remaining parts were SILENTLY dropped (_csrf or data in the 1001st field was lost). The counter is
+        // checked AFTER the closing delimiter: exactly 1000 parts are valid.
         if (++part_count > MAX_PARTS) {
             body_error_status = 413;
             body_error = "multipart/form-data with more than " + std::to_string(MAX_PARTS) + " parts";
@@ -492,13 +492,13 @@ void WebContext::parse_multipart(const std::string& boundary) {
         if (pos < body.size() && body[pos] == '\r') pos++;
         if (pos < body.size() && body[pos] == '\n') pos++;
 
-        // Header bölümünü oku (\r\n\r\n'e kadar)
+        // Read the header section (up to \r\n\r\n)
         size_t header_end = body.find("\r\n\r\n", pos);
         if (header_end == std::string::npos) break;
         std::string raw_headers = body.substr(pos, header_end - pos);
         pos = header_end + 4;
 
-        // Content-Disposition header'ını parse et
+        // Parse the Content-Disposition header
         std::string field_name, filename;
         {
             std::istringstream hs(raw_headers);
@@ -506,15 +506,15 @@ void WebContext::parse_multipart(const std::string& boundary) {
             while (std::getline(hs, line)) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 // Content-Disposition: form-data; name="field"; filename="file.jpg"
-                // Başlık adı harfe duyarsız (RFC 7578 → RFC 2183/822; Go textproto). Eskiden
-                // "content-disposition:" yazan istemcinin alanları yok sayılıyordu.
+                // Header name is case-insensitive (RFC 7578 → RFC 2183/822; Go textproto). Previously
+                // fields from a client writing "content-disposition:" were ignored.
                 static const std::string CD = "content-disposition:";
                 if (line.size() >= CD.size() &&
                     std::equal(CD.begin(), CD.end(), line.begin(),
                                [](char a, char b) { return a == std::tolower((unsigned char)b); })) {
-                    // Parametreler ';' ile ayrılır, sıra serbesttir (RFC 7578), değer tırnaklı olabilir.
-                    // Eskiden "name=\"" metin olarak aranıyordu: `filename="a.jpg"; name="avatar"`
-                    // sırasında alan adı "a.jpg" çıkıyordu (filename= içindeki name= eşleşiyordu).
+                    // Parameters are separated by ';', order is free (RFC 7578), the value may be quoted.
+                    // Previously "name=\"" was searched as plain text: with the order `filename="a.jpg"; name="avatar"`
+                    // the field name came out "a.jpg" (the name= inside filename= matched).
                     auto extract = [&](const std::string& key) -> std::string {
                         size_t i = line.find(':');
                         if (i == std::string::npos) return {};
@@ -533,10 +533,10 @@ void WebContext::parse_multipart(const std::string& boundary) {
                                 if (i < n && line[i] == '"') {
                                     i++;
                                     while (i < n && line[i] != '"') {
-                                        if (line[i] == '\\' && i + 1 < n) i++;   // \" ve \\ kaçışı
+                                        if (line[i] == '\\' && i + 1 < n) i++;   // \" and \\ escapes
                                         v.push_back(line[i++]);
                                     }
-                                    if (i < n) i++;   // kapanış tırnağı
+                                    if (i < n) i++;   // closing quote
                                     while (i < n && line[i] != ';') i++;
                                 } else {
                                     size_t vs = i;
@@ -558,14 +558,14 @@ void WebContext::parse_multipart(const std::string& boundary) {
             }
         }
 
-        // Part gövdesini bul (sonraki delimiter'a kadar)
+        // Find the part body (up to the next delimiter)
         size_t part_end = body.find("\r\n" + delim, pos);
         if (part_end == std::string::npos) break;
         std::string part_data = body.substr(pos, part_end - pos);
         pos = part_end + 2;
 
         if (!filename.empty() && !field_name.empty()) {
-            // Dosya parçası — temp dosyaya yaz
+            // File part — write to a temp file
             UploadedFile uf;
             uf.field_name = field_name;
             // Client filename is UNTRUSTED: take the basename (some browsers send a
@@ -584,7 +584,7 @@ void WebContext::parse_multipart(const std::string& boundary) {
             uf.mime       = look_internal::detect_mime(part_data);
             uf.sha256     = look_internal::sha256(part_data);
 
-            // Temp dosya yolu
+            // Temp file path
             std::string tmp_dir;
             const char* td = std::getenv("TEMP");
             if (!td) td = std::getenv("TMP");
@@ -594,9 +594,9 @@ void WebContext::parse_multipart(const std::string& boundary) {
             std::string tmp_name = look_internal::random_hex(16) + ext;
             uf.temp_path = tmp_dir + "/" + tmp_name;
 
-            // Diske yaz — yalnız sahibi okuyabilir (0600) ve var olan bir dosyanın üstüne yazılmaz
-            // (O_EXCL: önceden konmuş symlink'i izlemez). Eskiden umask'a göre 0644'tü: paylaşımlı
-            // /tmp'de makinedeki her kullanıcı yüklenen dosyaları okuyabiliyordu.
+            // Write to disk — only the owner can read (0600) and an existing file is not overwritten
+            // (O_EXCL: does not follow a pre-planted symlink). Previously 0644 depending on umask: in a shared
+            // /tmp every user on the machine could read the uploaded files.
             bool wrote = false;
 #ifndef _WIN32
             {
@@ -621,17 +621,17 @@ void WebContext::parse_multipart(const std::string& boundary) {
 #endif
             if (wrote) {
                 uf.valid = true;
-                // RAII cleanup: tüketilmeyen temp dosya WebContext ölünce silinir.
+                // RAII cleanup: a temp file that is not consumed is deleted when WebContext dies.
                 uf.temp_cleanup = std::make_shared<TempFileGuard>();
                 uf.temp_cleanup->path = uf.temp_path;
             }
             uploaded_files[field_name] = std::move(uf);
         } else if (!field_name.empty()) {
-            // Normal form alanı
+            // Normal form field
             post_params[field_name] = part_data;
         }
 
-        // Sonraki delimiter'ı bul
+        // Find the next delimiter
         size_t next = body.find(delim, pos);
         if (next == std::string::npos) break;
         pos = next;
@@ -642,8 +642,8 @@ std::string WebContext::build_headers() const {
     std::string out = "Status: " + std::to_string(status_code) + " " + status_text + "\r\n";
     // Content-Type default
     bool has_ct = false;
-    // Defense-in-depth: CR/LF içeren header adı/değerini yaz — response splitting
-    // engellenir (giriş katmanı da sanitize eder; bu son savunma hattı).
+    // Defense-in-depth: truncate a header name/value at CR/LF when writing — response splitting
+    // is prevented (the input layer also sanitizes; this is the last line of defense).
     auto strip_crlf = [](const std::string& s) {
         size_t cut = s.find_first_of("\r\n");
         return cut == std::string::npos ? s : s.substr(0, cut);
@@ -652,7 +652,7 @@ std::string WebContext::build_headers() const {
         out += strip_crlf(k) + ": " + strip_crlf(v) + "\r\n";
         if (k == "Content-Type") has_ct = true;
     }
-    // Her çerez ayrı Set-Cookie satırı (std::map birden fazla aynı-anahtarı tutamaz)
+    // Each cookie is a separate Set-Cookie line (a std::map cannot hold the same key more than once)
     for (auto& c : set_cookies_out)
         out += "Set-Cookie: " + strip_crlf(c) + "\r\n";
     if (!has_ct)

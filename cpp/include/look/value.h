@@ -1,9 +1,9 @@
 #pragma once
-// Dilin değeri (Value) ve yanındaki çekirdek türler: kanal, modül tablosu, hata türleri.
-// Ev sahibi sınıfı (RuntimeHost) look/runtime_host.h'ta.
+// The language's value (Value) and the core types beside it: channel, module table, error types.
+// The host class (RuntimeHost) is in look/runtime_host.h.
 
 #include "look/ast.h"
-#include "look/format.h"   // look_format_double — dilin tek double formatlayıcısı
+#include "look/format.h"   // look_format_double — the language's single double formatter
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -28,31 +28,31 @@ namespace look {
 
 // ── Forward declarations for Value members ────────────────────────────────────
 struct LookChannel;    // defined after Value (queue<Value> needs complete type)
-class Fiber;           // fiber.h — kanalda bekleyen fiber'lar (LookChannel::FiberWaiter)
+class Fiber;           // fiber.h — fibers waiting on a channel (LookChannel::FiberWaiter)
 class FiberScheduler;
 struct WsConnection;   // defined in websocket.h
 struct SseConnection;  // defined in sse.h
 struct Closure;        // defined in bytecode.h — BYTECODE_FN type
 
-// Tamsayı taşması hatası (value.cpp) — aritmetik, tekli eksi, abs ve ** aynı mesajı verir.
+// Integer overflow error (value.cpp) — arithmetic, unary minus, abs and ** give the same message.
 [[noreturn]] void look_int_overflow(int64_t a, const char* op, int64_t b);
 class Value;
-// Açık dönüşüm int() / float() (TO_INT / TO_FLOAT): to_int/to_float gibi gevşek ("abc" → 0) ama SAYISAL
-// metin aralık dışıysa hata (Go strconv ErrRange) — eskiden int("99999999999999999999") → 0 sessizce.
+// Explicit conversion int() / float() (TO_INT / TO_FLOAT): loose like to_int/to_float ("abc" → 0), but an error if NUMERIC
+// text is out of range (Go strconv ErrRange) — it used to be int("99999999999999999999") → 0 silently.
 Value look_explicit_int(const Value& v);
 Value look_explicit_float(const Value& v);
 
-// İç içe değer derinliği (dizi/struct içinde dizi/struct). Değeri DOLAŞAN özyinelemeli işlemler
-// (string'e çevirme, ==, klonlama) bu sınırı aşınca yakalanabilir hata verir — Python'un
-// RecursionError'ı gibi (PHP json 512, .NET 64). ESKİ: sınır yoktu; ölçüldü — normal derlemede
-// ~40–80k, ASan'da ~3–7k derinlikte C++ yığını taşıp SÜRECİN TAMAMI çöküyordu. 1000 en kötü durumun
-// (240 iç içe callback içinden, ASan) altında. Değerin BIRAKILMASI sınırsızdır (ValueArray).
+// Nesting depth of values (array/struct inside array/struct). Recursive operations that WALK the value
+// (to-string conversion, ==, cloning) raise a catchable error when this limit is exceeded — like Python's
+// RecursionError (PHP json 512, .NET 64). OLD: there was no limit; measured — the C++ stack overflowed at
+// ~40–80k depth in a normal build and ~3–7k under ASan, and the WHOLE PROCESS crashed. 1000 is below the worst case
+// (240 nested callbacks, ASan). RELEASING a value is unlimited (ValueArray).
 constexpr int LOOK_MAX_NESTING = 1000;
 [[noreturn]] void look_nesting_error();
-// Yalnız dizi/struct dallarında kurulur (skaler sıcak yol dokunulmaz).
+// Set up only in array/struct branches (the scalar hot path is untouched).
 struct NestingGuard {
-    // fiber-ok: bu işlemler askıya girmez (kullanıcı kodu çağırmaz, G/Ç yok) — sayaç aynı eşzamanlı
-    // dolaşımın içinde artıp azalır, dolaşım bitince yine 0.
+    // fiber-ok: these operations never suspend (no user code is called, no I/O) — the counter rises and falls
+    // within the same synchronous walk and is back to 0 when the walk ends.
     static int& depth() { thread_local int d = 0; return d; }
     NestingGuard() { if (++depth() > LOOK_MAX_NESTING) { --depth(); look_nesting_error(); } }
     ~NestingGuard() { --depth(); }
@@ -62,15 +62,15 @@ struct NestingGuard {
 
 // ── Value ─────────────────────────────────────────────────────────────────────
 
-// Dizi/struct depolaması kurucuları — ValueArray Value'dan sonra tanımlı; sınıf gövdesi bunları kullanır.
+// Constructors of array/struct storage — ValueArray is defined after Value; the class body uses them.
 inline std::shared_ptr<std::vector<Value>> look_new_array();
 inline std::shared_ptr<std::vector<Value>> look_new_array(const std::vector<Value>& copy);
 
-// Değere dönüşen metin boşa sığa taşımaz. ESKİ: eklemeyle kurulan metin (birleştirme, "a{$x}b",
-// JSON çıktısı) büyürken sığasını ikiye katlıyordu → 1 MiB'lik metin 2 MiB tutuyordu (ölçüldü:
-// istek bellek bütçesi gerçek ihtiyacın yarısında doluyordu). 4 KiB'ten ve %25'ten fazla boşluk
-// varsa tam boyuta indirilir. Biriktirme (`.=`, `$s = $s . x`) append_in_place'te kendi tamponunda
-// büyür (amortize) — bu yoldan geçmez.
+// Text that becomes a value does not carry spare capacity. OLD: text built by appending (concatenation, "a{$x}b",
+// JSON output) doubled its capacity as it grew → a 1 MiB text took 2 MiB (measured:
+// the request memory budget filled at half the real need). If there is more than 4 KiB and 25% slack
+// it is shrunk to the exact size. Accumulation (`.=`, `$s = $s . x`) grows in its own buffer in append_in_place
+// (amortized) — it does not go through this path.
 inline std::string&& fit_string(std::string& s) {
     const size_t slack = s.capacity() - s.size();
     if (slack > 4096 && slack > s.size() / 4) s.shrink_to_fit();
@@ -79,34 +79,34 @@ inline std::string&& fit_string(std::string& s) {
 
 class Value {
 public:
-    // STRUCT (LOOK 2) sona eklendi → mevcut tiplerin numarası değişmez. Depolaması ARRAY ile
-    // aynıdır (shared_ptr<vector<Value>>) ama düzeni farklı ve SABİTTİR:
-    //   [0] = struct adı (STRING)   [1] = tanım (ARRAY, üçlüler [alan, varsayılan, tip])
-    //   [2 + i] = i. alanın değeri (bildirim sırası)
-    // Ayrı tip olduğu için dizi bekleyen her kod (array::, indeksleme, foreach) onu DİZİ
-    // sanmaz; alan erişimi ad araması değil indekstir. Kurallar: look/struct_types.h.
-    // Fonksiyon değeri tek türdür: BYTECODE_FN (VM closure'ı). LOOK 2 öncesindeki FUNCTION
-    // (ağaç-yürüten yorumlayıcının closure'ı) yorumlayıcıyla birlikte kalktı.
+    // STRUCT was appended at the end → the numbers of existing types do not change. Its storage is the same as ARRAY
+    // (shared_ptr<vector<Value>>) but its layout is different and FIXED:
+    //   [0] = struct name (STRING)   [1] = definition (ARRAY, triples [field, default, type])
+    //   [2 + i] = value of the i-th field (declaration order)
+    // Being a separate type, no code that expects an array (array::, indexing, foreach) mistakes it for
+    // an ARRAY; field access is an index, not a name lookup. Rules: look/struct_types.h.
+    // The function value is a single kind: BYTECODE_FN (a VM closure). The FUNCTION kind that existed
+    // (the tree-walking interpreter's closure) was removed together with the interpreter.
     enum Type { INT, FLOAT, STRING, BOOL, ARRAY, CHANNEL, WEBSOCKET, SSE_CONN, BYTECODE_FN, NONE, STRUCT };
     static Value make_struct(std::shared_ptr<std::vector<Value>> slots) {
         Value v(std::move(slots)); v.type_ = STRUCT; return v;
     }
-    // STRUCT'ın slot vektörü (as_array ile aynı işaretçi; ad niyeti belli etsin diye ayrı).
+    // Slot vector of a STRUCT (the same pointer as as_array; separate so the name shows the intent).
     std::shared_ptr<std::vector<Value>> as_struct() const { return std::static_pointer_cast<std::vector<Value>>(ptr_val); }
-    // Sıcak yol için sahipliksiz erişim: shared_ptr kopyası (atomik sayaç artır/azalt) yok.
-    // Yalnız bu Value yaşarken geçerlidir.
+    // Non-owning access for the hot path: no shared_ptr copy (atomic counter increment/decrement).
+    // Valid only while this Value is alive.
     std::vector<Value>* vec_ptr() const { return static_cast<std::vector<Value>*>(ptr_val.get()); }
-    // LOOK 2 yazınca-kopyala: dizi/struct depolaması başka bir Value ile paylaşılıyorsa bu Value
-    // kendi (üst düzey) kopyasını alır; tek sahipse hiçbir şey yapmaz. Elemanlar paylaşılmaya
-    // devam eder — onlar da yazılacakları anda aynı kuralla ayrılır.
+    // Copy-on-write: if the array/struct storage is shared with another Value, this Value
+    // takes its own (top-level) copy; if it is the sole owner it does nothing. Elements stay
+    // shared — they are detached by the same rule at the moment they are written.
     void detach() {
         if ((type_ == ARRAY || type_ == STRUCT) && ptr_val && ptr_val.use_count() > 1)
             ptr_val = look_new_array(*vec_ptr());
     }
 
-    // B5: skalerler union'da (8 byte), STRING pointer arkasında → sizeof 80→32,
-    // skaler kopyada string ctor/dtor yok. String literal'leri constant pool'dan
-    // LOAD_CONST ile paylaşılır (refcount-bump, kopya yok) → RAM + hız.
+    // B5: scalars live in a union (8 bytes), STRING is behind a pointer → sizeof 80→32,
+    // no string ctor/dtor on scalar copy. String literals are shared from the constant pool
+    // via LOAD_CONST (refcount bump, no copy) → RAM + speed.
     Value()                                         : type_(NONE),     int_val(0)   {}
     explicit Value(int64_t i)                       : type_(INT),      int_val(i)   {}
     explicit Value(int i)                           : type_(INT),      int_val((int64_t)i) {}
@@ -128,7 +128,7 @@ public:
             ? *static_cast<const std::string*>(ptr_val.get()) : std::string();
     }
     bool        as_bool()   const { return bool_val; }
-    // Tek shared_ptr<void>'dan tipli erişim — type_ hangi tipin aktif olduğunu garanti eder.
+    // Typed access from the single shared_ptr<void> — type_ guarantees which type is active.
     std::shared_ptr<std::vector<Value>>  as_array()    const { return std::static_pointer_cast<std::vector<Value>>(ptr_val); }
     std::shared_ptr<LookChannel>         as_channel()    const { return std::static_pointer_cast<LookChannel>(ptr_val); }
     std::shared_ptr<WsConnection>        as_websocket()  const { return std::static_pointer_cast<WsConnection>(ptr_val); }
@@ -140,24 +140,24 @@ public:
     int64_t     to_int()    const;
     bool        is_truthy() const;
 
-    // ARRAY için recursive deep copy; döngüsel referans güvenli (visited set ile kırılır)
+    // Recursive deep copy for ARRAY; safe against cyclic references (broken with a visited set)
     Value deep_clone() const {
         std::unordered_set<const void*> visited;
         return deep_clone_impl(visited);
     }
 
-    // BYTECODE_FN (Closure) transitif deep-clone hook'u. value.h Closure'ı GÖREMEZ
-    // (bytecode.h bunu sonra include eder) → vm katmanı bir cloner kaydeder. Kayıtsızsa
-    // eski davranış (shallow). 58 parallel: bir closure yakalanınca, deep_clone onu shallow
-    // kopyalarsa closure-içi cell'ler parent'la PAYLAŞIMLI kalır → veri yarışı (np1). Cloner
-    // closure'ı klonlayıp cell-capture'larını + iç closure'ları özyineli klonlar.
+    // Transitive deep-clone hook for BYTECODE_FN (Closure). value.h CANNOT SEE Closure
+    // (bytecode.h includes it later) → the vm layer registers a cloner. If none is registered,
+    // the old behavior (shallow). 58 parallel: when a closure is captured and deep_clone copies it
+    // shallowly, the cells inside the closure stay SHARED with the parent → data race (np1). The cloner
+    // clones the closure and recursively clones its cell captures + inner closures.
     using BcFnCloner = Value(*)(const Value&, std::unordered_set<const void*>&);
     static BcFnCloner& bc_fn_cloner() { static BcFnCloner h = nullptr; return h; }
-    // Hook özyinelemesi için visited-paylaşımlı deep-clone (deep_clone_impl private).
+    // Deep clone with a shared visited set for hook recursion (deep_clone_impl is private).
     Value deep_clone_tracked(std::unordered_set<const void*>& visited) const { return deep_clone_impl(visited); }
 
-    // THREAD-SINIRI klonu: deep_clone gibi AMA STRING dahil (append_in_place yerinde yazar).
-    // YALNIZ thread-crossing site'larda (parallel/timer/ws/sse/channel/cache) çağrılır.
+    // THREAD-BOUNDARY clone: like deep_clone BUT including STRING (append_in_place writes in place).
+    // Called ONLY at thread-crossing sites (parallel/timer/ws/sse/channel/cache).
     Value clone_for_thread() const {
         std::unordered_set<const void*> visited;
         return clone_for_thread_impl(visited);
@@ -171,7 +171,7 @@ private:
         if (type_ == ARRAY && ptr_val) {
             NestingGuard g;
             auto arr = std::static_pointer_cast<std::vector<Value>>(ptr_val);
-            if (visited.count(arr.get())) return Value(); // döngü kır — null döndür
+            if (visited.count(arr.get())) return Value(); // break the cycle — return null
             visited.insert(arr.get());
             auto v = look_new_array();
             v->reserve(arr->size());
@@ -180,7 +180,7 @@ private:
             return Value(v);
         }
         if (type_ == STRUCT && ptr_val) {
-            // Alan değerleri klonlanır; [0] ad ve [1] tanım değişmez → paylaşılır.
+            // Field values are cloned; [0] name and [1] definition do not change → shared.
             NestingGuard g;
             auto sv = std::static_pointer_cast<std::vector<Value>>(ptr_val);
             if (visited.count(sv.get())) return Value();
@@ -193,22 +193,22 @@ private:
             return make_struct(std::move(v));
         }
         if (type_ == BYTECODE_FN && ptr_val) {
-            // Closure → transitif klonla (cloner kayıtlıysa). Yoksa shallow (eski).
+            // Closure → clone transitively (if a cloner is registered). Otherwise shallow (old behavior).
             if (auto h = bc_fn_cloner()) return h(*this, visited);
         }
-        return *this; // scalar, channel, ws, sse — shallow copy yeterli (paylaşım kasıtlı)
+        return *this; // scalar, channel, ws, sse — a shallow copy is enough (sharing is intentional)
     }
 
-    // Thread-sınırı klonu (yalnız clone_for_thread'den). deep_clone_impl'in kopyası + STRING
-    // dalı. deep_clone SICAK YOLDA olduğu için ayrı tutuluyor.
+    // Thread-boundary clone (only from clone_for_thread). A copy of deep_clone_impl + the STRING
+    // branch. Kept separate because deep_clone is on the HOT PATH.
     Value clone_for_thread_impl(std::unordered_set<const void*>& visited) const {
         switch (type_) {
             case INT: case FLOAT: case BOOL: case NONE:
             case CHANNEL: case WEBSOCKET: case SSE_CONN:
-                return *this;   // değer tipleri + paylaşımı KASITLI handle'lar
+                return *this;   // value types + handles whose sharing is INTENTIONAL
             case STRING:
-                // append_in_place YERİNDE mutasyon → paylaşılan capture'da yarış; izole et.
-                // Sözlük işareti adresle tanınır: kopyalanırsa sözlük listeye dönerdi (değişmez de).
+                // append_in_place mutates IN PLACE → a race on a shared capture; isolate it.
+                // The map marker is recognized by address: if it were copied, the map would turn into a list (it does not change either).
                 if (is_assoc_marker()) return *this;
                 return ptr_val ? Value(*static_cast<const std::string*>(ptr_val.get())) : *this;
             case ARRAY: {
@@ -240,7 +240,7 @@ private:
                 if (ptr_val) { if (auto h = bc_fn_cloner()) return h(*this, visited); }
                 return *this;
         }
-        return *this; // unreachable — tüm Type'lar kapsandı (default YOK: yeni tip -> -Wswitch)
+        return *this; // unreachable — all Types are covered (NO default: a new type -> -Wswitch)
     }
 public:
 
@@ -251,9 +251,9 @@ public:
     Value operator%(const Value& o) const;
     Value pow(const Value& o)       const;
     Value concat(const Value& o)    const;
-    // B7: akümülatör string'ine yerinde ekleme (amortize O(1)). `$s .= x` / `$s=$s.x`
-    // döngüsünde her adımda tüm string'i kopyalayan O(n²) davranışı O(n)'e indirir.
-    // STRING inline saklandığı ve register'lar bağımsız olduğu için mutasyon güvenli.
+    // B7: in-place append to the accumulator string (amortized O(1)). Reduces the O(n²) behavior of copying
+    // the whole string on every step of a `$s .= x` / `$s=$s.x`
+    // loop to O(n). Mutation is safe because STRING is stored inline and registers are independent.
     void append_in_place(const Value& o);
 
     bool operator==(const Value& o) const;
@@ -270,13 +270,13 @@ public:
     Value shift_left(const Value& o)  const;
     Value shift_right(const Value& o) const;
 
-    // ── Sözlük (map) işareti ──────────────────────────────────────────────────
-    // Sözlük = ["<işaret>", k0, v0, k1, v1, …]. İşaret İÇERİKLE değil ADRESLE tanınır: tek bir sabit
-    // metne işaret eden, sayaçsız (boş kontrol bloğu) bir STRING. ESKİ: işaret "__assoc__" METNİYDİ —
-    // ilk elemanı o metin olan her liste sözlük sayılıyordu; saldırganın JSON dizisi
-    // ["__assoc__","role","admin"] uygulamada role=>admin sözlüğüne dönüşüyordu (ölçüldü). JSON/form/
-    // sorgu/LOOK kodu her metni yeni nesne olarak yaratır → işaret taklit edilemez. Kopyası ücretsiz
-    // (atomik sayaç yok); append_in_place sayaçsız metni yerinde DEĞİŞTİRMEZ (use_count()==0 → kopya).
+    // ── Map (assoc) marker ────────────────────────────────────────────────────
+    // Map = ["<marker>", k0, v0, k1, v1, …]. The marker is recognized by ADDRESS, not by CONTENT: a counter-less
+    // (empty control block) STRING pointing at a single constant text. OLD: the marker was the TEXT "__assoc__" —
+    // every list whose first element was that text counted as a map; an attacker's JSON array
+    // ["__assoc__","role","admin"] turned into a role=>admin map in the app (measured). JSON/form/
+    // query/LOOK code creates every text as a new object → the marker cannot be forged. Its copy is free
+    // (no atomic counter); append_in_place does NOT modify a counter-less text in place (use_count()==0 → copy).
     static const std::string& assoc_marker_text() { static const std::string s("__assoc__"); return s; }
     static Value assoc_marker() {
         Value v; v.type_ = STRING;
@@ -285,8 +285,8 @@ public:
     }
     bool is_assoc_marker() const { return type_ == STRING && ptr_val.get() == &assoc_marker_text(); }
 
-    // STRING içeriğine kopyasız erişim (yalnız type_==STRING; diğerlerinde boş).
-    // İç metodlar (to_string/operatörler) str_val yerine bunu kullanır.
+    // Copy-free access to STRING content (only type_==STRING; empty for the others).
+    // Internal methods (to_string/operators) use this instead of str_val.
     const std::string& str_ref() const {
         static const std::string kEmpty;
         return (type_ == STRING && ptr_val)
@@ -294,33 +294,33 @@ public:
     }
 
 private:
-    // B5: Value depolama — skalerler (int/float/bool) union'da tek 8-byte payload;
-    // STRING ve tüm referans tipleri ptr_val arkasında. sizeof(Value) 80→32:
-    //   type_(4)+pad(4) + union(8) + shared_ptr(16). Skaler kopya trivial-ucuz
-    //   (string ctor/dtor yok, null shared_ptr kopyası atomiksiz).
+    // B5: Value storage — scalars (int/float/bool) share a single 8-byte payload in a union;
+    // STRING and all reference types sit behind ptr_val. sizeof(Value) 80→32:
+    //   type_(4)+pad(4) + union(8) + shared_ptr(16). Scalar copy is trivially cheap
+    //   (no string ctor/dtor, copying a null shared_ptr is non-atomic).
     Type type_ = NONE;
     union {
         int64_t int_val;
         double  float_val;
         bool    bool_val;
     };
-    // STRING → shared_ptr<std::string>; ARRAY/CHANNEL/WS/SSE/BYTECODE_FN → ilgili tip
+    // STRING → shared_ptr<std::string>; ARRAY/CHANNEL/WS/SSE/BYTECODE_FN → the respective type
     std::shared_ptr<void> ptr_val;
 };
 
-// ── ValueArray — dizi/struct depolaması: özyinelemesiz bırakma ────────────────
-// std::vector<Value>'dan TÜRER (as_array/vec_ptr değişmez); tek farkı yıkıcısı. CPython'un
-// "trashcan"ı gibi bırakma derinliği izlenir; eşiği aşan depolamanın elemanları yıkılmaz, listeye
-// taşınır ve en dıştaki bırakmada döngüyle yıkılır → yığın kullanımı derinlikten bağımsız.
-// ESKİ: iç içe dizi/struct son sahibinden düşünce vector→Value→vector zinciri C++ yığınını
-// taşırıyordu (ölçüldü: ~200k derinlikte segfault; tek istek bütün süreci düşürüyordu).
-// Kanca ~Value'da DEĞİL kapsayıcıda: ~Value'da her eleman yıkımına binerdi (ölçüldü: istek başına
-// +%4,7 komut); burada depolama başına bir kez. Dizi depolaması yalnız bununla kurulur —
-// tests/value_release_test.sh düz std::vector<Value> kuran kaynak satırını reddeder.
+// ── ValueArray — array/struct storage: non-recursive release ──────────────────
+// DERIVES from std::vector<Value> (as_array/vec_ptr do not change); its only difference is the destructor. Like CPython's
+// "trashcan", release depth is tracked; the elements of storage past the threshold are not destroyed but
+// moved to a list and destroyed in a loop at the outermost release → stack use is independent of depth.
+// OLD: when a nested array/struct dropped from its last owner, the vector→Value→vector chain
+// overflowed the C++ stack (measured: segfault at ~200k depth; a single request brought down the whole process).
+// The hook is NOT in ~Value but in the container: in ~Value it would ride on every element destruction (measured: +4.7%
+// instructions per request); here it is once per storage. Array storage is built only with this —
+// tests/value_release_test.sh rejects a source line that builds a plain std::vector<Value>.
 void look_release_values(std::vector<Value>& v) noexcept;   // value.cpp
 
-// Büyük sözlüğün anahtar dizini (look/assoc_index.h). Depolama yine düz liste; dizin yalnız
-// arama hızlandırıcısıdır ve kopyalanmaz (kopya ilk aramada kendi dizinini kurar).
+// Key index of a large map (look/assoc_index.h). Storage is still a plain list; the index is only
+// a lookup accelerator and is not copied (a copy builds its own index on first lookup).
 struct AssocIndex;
 void look_assoc_index_free(AssocIndex* ix) noexcept;   // value.cpp
 
@@ -338,8 +338,8 @@ struct ValueArray : std::vector<Value> {
     ValueArray(std::vector<Value>&& o) noexcept : std::vector<Value>(std::move(o)) {}
     ~ValueArray() { drop_index(); if (!empty()) look_release_values(*this); }
 
-    // Okuma yolu dizini tembel kurar (yalnız boştan → kurulu, CAS); birden çok iş parçacığı aynı
-    // paylaşılan sözlüğü okuyabilir. Dizini DEĞİŞTİREN yazma yolu depoyu tek sahipli tutar (COW).
+    // The read path builds the index lazily (only empty → built, CAS); several threads can read the same
+    // shared map. The write path that CHANGES the index keeps the storage single-owner (COW).
     std::atomic<AssocIndex*> assoc_idx{nullptr};
     void drop_index() noexcept {
         if (AssocIndex* ix = assoc_idx.exchange(nullptr, std::memory_order_acq_rel)) look_assoc_index_free(ix);
@@ -360,55 +360,55 @@ struct LookChannel : std::enable_shared_from_this<LookChannel> {
     size_t                  capacity;
     bool                    closed = false;
     bool                    unbuffered = false;  // channel(0): Go rendezvous
-    uint64_t                recv_gen = 0;         // her recv'de artar (rendezvous)
+    uint64_t                recv_gen = 0;         // increments on every recv (rendezvous)
 
-    // Fiber içinde bekleyenler (web isteği, fiber dağıtımı). Eskiden onlar da cv.wait ile İŞ
-    // PARÇACIĞINI tutuyordu: kanalda bekleyen bir istek, aynı iş parçacığındaki öteki istekleri
-    // (keep-alive bağlantılar, askıdaki fiber'lar) bekleme bitene dek durduruyordu (ölçüldü: 400 ms
-    // receive sırasında aynı işçideki /ok 350–400 ms). Şimdi fiber kaydolup askıya girer; bildiren
-    // taraf (send/recv/close, kilitlenme kararı) onu kendi planlayıcısında uyandırır — DB havuzu
-    // bekleyeniyle aynı kalıp (web_stdlib.cpp ConnPool). İş parçacığı bekleyenleri (parallel() görevi,
-    // komut satırı) cv'de kalır. Hepsi mtx altında.
+    // Waiters inside a fiber (web request, fiber dispatch). They used to hold the THREAD with cv.wait too:
+    // a request waiting on a channel stopped the other requests on the same thread
+    // (keep-alive connections, suspended fibers) until the wait ended (measured: during a 400 ms
+    // receive, /ok on the same worker took 350–400 ms). Now the fiber registers and suspends; the notifying
+    // side (send/recv/close, the deadlock decision) wakes it on its own scheduler — the same pattern as the DB pool
+    // waiter (web_stdlib.cpp ConnPool). Thread waiters (parallel() task, the
+    // command line) stay on the cv. All under mtx.
     struct FiberWaiter {
         std::shared_ptr<Fiber> fiber;
         FiberScheduler*        sched;
-        bool*                  queued;   // kaydı silen false yapar (mtx altında); bekleyenin yığınında
+        bool*                  queued;   // whoever removes the entry sets it false (under mtx); lives on the waiter's stack
     };
-    std::vector<FiberWaiter> fiber_recv;   // not_empty bekleyenleri
-    std::vector<FiberWaiter> fiber_send;   // not_full bekleyenleri (dolu tampon, tamponsuz teslim)
-    // Listedeki herkesi uyandır (mtx tutulurken çağrılır). Uyananlar yüklemi yeniden dener —
-    // cv.notify_all gibi; kazanamayan yeniden kaydolur.
+    std::vector<FiberWaiter> fiber_recv;   // not_empty waiters
+    std::vector<FiberWaiter> fiber_send;   // not_full waiters (full buffer, unbuffered handoff)
+    // Wake everyone in the list (called while holding mtx). Those woken retry the predicate —
+    // like cv.notify_all; whoever does not win registers again.
     static void wake_fibers(std::vector<FiberWaiter>& list);
 
-    // channel(0) = unbuffered/senkron (Go semantiği): gönderici alıcı öğeyi
-    // alana dek bloke olur. Eskiden 0 = SINIRSIZ buffer'dı → backpressure yok,
-    // hızlı üretici + yavaş tüketici = OOM. Artık kapasite 1 + rendezvous.
+    // channel(0) = unbuffered/synchronous (Go semantics): the sender blocks until a receiver
+    // takes the item. It used to be 0 = UNBOUNDED buffer → no backpressure,
+    // fast producer + slow consumer = OOM. Now capacity 1 + rendezvous.
     explicit LookChannel(size_t cap = 128)
         : capacity(cap == 0 ? 1 : cap), unbuffered(cap == 0) {}
 
-    // phase: parallel() görevinin betik-sonu durumu (parallel_runtime.h TaskExit::phase). Görev
-    // beklerken IN_EFFECT'tir; değer TESLİM edilmeden hemen önce RUNNING'e alınır (tamponsuzda
-    // alıcı aldığı anda) — teslimden sonra yalnız dönüşü kalan görev "bitmiş" sayılabilsin.
+    // phase: script-end state of a parallel() task (parallel_runtime.h TaskExit::phase). While the task
+    // waits it is IN_EFFECT; just before the value is DELIVERED it is moved to RUNNING (for unbuffered,
+    // the moment the receiver takes it) — so a task with only its return left after delivery can count as "finished".
     void  send_val(Value val, std::atomic<int>* phase = nullptr);
-    std::atomic<int>*       rv_phase = nullptr;   // tamponsuz: bekleyen göndericinin durumu
+    std::atomic<int>*       rv_phase = nullptr;   // unbuffered: state of the waiting sender
     Value recv_val();
     void  close_chan();
     bool  is_closed() { std::unique_lock<std::mutex> lk(mtx); return closed; }
     int   sz()        { std::unique_lock<std::mutex> lk(mtx); return (int)queue.size(); }
 };
 
-// channel([size]) — TEK tanım (komut satırı + web): boyutsuz 128, 0 = tamponsuz (Go), N > 0 = N yer,
-// negatif ya da tamsayı olmayan = hata. Eskiden 0 komut satırında SINIRSIZ, web'de 1 048 576 yerdi
-// (belgedeki "tamponsuz" hiçbir yoldan kurulamıyordu; yavaş alıcıda bellek sınırsız büyüyordu).
+// channel([size]) — a SINGLE definition (command line + web): no size = 128, 0 = unbuffered (Go), N > 0 = N slots,
+// negative or non-integer = error. It used to be 0 = UNBOUNDED on the command line and 1,048,576 slots on the web
+// (the documented "unbuffered" could not be created by any path; with a slow receiver memory grew without bound).
 std::shared_ptr<LookChannel> make_channel(const std::vector<Value>& args);
 
-// ── VM geri çağırma köprüsü ───────────────────────────────────────────────────
-// Higher-order builtin'ler (array::map/filter/reduce…) callback'i ev sahibinin invoke'uyla
-// çağırır; callback bir BYTECODE_FN (VM closure) olur. Etkin VM kendini thread-local kaydeder;
-// invoke buraya delege eder. Kayıtlı VM yoksa available()==false.
+// ── VM callback bridge ────────────────────────────────────────────────────────
+// Higher-order builtins (array::map/filter/reduce…) call the callback through the host's invoke;
+// the callback is a BYTECODE_FN (VM closure). The active VM registers itself thread-locally;
+// invoke delegates here. If no VM is registered, available()==false.
 bool  vm_bridge_available();
 Value vm_bridge_invoke(const Value& fn, std::vector<Value>& args);
-// VM (vm.cpp) çalışırken kendi closure-invoker hook'unu kaydeder.
+// While running, the VM (vm.cpp) registers its own closure-invoker hook.
 void  register_vm_bridge(Value (*hook)(const Value& fn, std::vector<Value>& args));
 
 // ── Module ────────────────────────────────────────────────────────────────────
@@ -420,11 +420,11 @@ struct Module {
     std::map<std::string, NativeFn> functions;
 };
 
-// ── Servis kaydı (app::set / app::get) ────────────────────────────────────────
-// Setup'ta yazılan paylaşılan servisleri (db, cache, config…) tutar. Tüm
-// dispatch kopyaları shared_ptr ile AYNI registry'yi paylaşır (make_dispatch_copy).
-// Mutex: setup tek thread yazar, dispatch çok thread okur; nadir request-içi
-// yazma da güvenli. Kilit maliyeti route başına 1 kez, DB I/O yanında ihmal.
+// ── Service registry (app::set / app::get) ────────────────────────────────────
+// Holds the shared services written during setup (db, cache, config…). All
+// dispatch copies share the SAME registry via shared_ptr (make_dispatch_copy).
+// Mutex: setup writes from a single thread, dispatch reads from many threads; the rare in-request
+// write is safe too. The lock cost is once per route, negligible next to DB I/O.
 struct ServiceRegistry {
     std::mutex                   mtx;
     std::map<std::string, Value> items;
@@ -434,8 +434,8 @@ struct ServiceRegistry {
 
 struct StackFrame {
     std::string function;  // function/closure name, empty = top-level
-    int         line = 0;  // çağrının yapıldığı satır; -1 = "… N more calls" ara satırı (function metni)
-    std::string file;      // çağrı yerinin dosyası, "" = ana betik (dahil edilen dosyada adı yazılır)
+    int         line = 0;  // line the call was made at; -1 = the "… N more calls" filler row (function text)
+    std::string file;      // file of the call site, "" = main script (the name is written for an included file)
 };
 
 class LookRuntimeError : public std::exception {
@@ -508,7 +508,7 @@ public:
     }
 };
 
-// exit(code) — script'i tamamen durdurur, FastCGI döngüsünü bozmaz
+// exit(code) — stops the script completely, without breaking the FastCGI loop
 class ExitException : public std::exception {
 public:
     explicit ExitException(int code = 0) : code_(code) {}
@@ -522,7 +522,7 @@ private:
 
 struct StructFieldDef {
     std::string name;
-    std::string type;                // LOOK 2: "" = tipsiz
+    std::string type;                // "" = untyped
     bool        has_default = false;
     Value       default_val;
 };

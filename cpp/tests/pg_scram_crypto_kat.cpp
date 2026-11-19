@@ -1,9 +1,9 @@
-// PG SCRAM crypto oracle — GERÇEK PostgresClient::sha256/hmac_sha256/pbkdf2_sha256'ı aynı RFC
-// vektörlerine pinler. Birleştirme SONRASI bu üçlü look::crypto_sha256.h'ye array<32>↔vector
-// adaptörüyle delege eder; test artık REGRESYON GUARD'ı: adaptörler doğru bağlı + PG'nin tek-block
-// (dkLen=32) yolu RFC'ye pinli kalmalı. Bir bayt kayarsa vektör tutmaz → RED (pozitif-kontrol).
-// PG yalnız TEK-BLOCK yol taşır (array<32>): dkLen=32 vakaları PG'nin canlı auth yolunu birebir
-// egzersiz eder. Private static'lere `#define private public` ile eriş (test-only trick).
+// PG SCRAM crypto oracle -- pins the REAL PostgresClient::sha256/hmac_sha256/pbkdf2_sha256 to the same RFC
+// vectors. AFTER the merge this trio delegates to look::crypto_sha256.h through an array<32><->vector
+// adapter; the test is now a REGRESSION GUARD: the adapters must be wired correctly + PG's single-block
+// (dkLen=32) path must stay pinned to the RFC. If a byte shifts the vector does not match -> RED (positive control).
+// PG carries only the SINGLE-BLOCK path (array<32>): the dkLen=32 cases exercise PG's live auth path
+// exactly. Access the private statics with `#define private public` (test-only trick).
 //   Build (VPS): g++ -std=c++17 -Iinclude tests/pg_scram_crypto_kat.cpp src/postgres_client.cpp \
 //                -lssl -lcrypto -o /tmp/pgkat && /tmp/pgkat
 #define private public
@@ -53,12 +53,12 @@ int main(){
       chk("pg hmac RFC4231 #3", hex32(PostgresClient::hmac_sha256(k.data(),k.size(),d.data(),d.size())),
           "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe"); }
 
-    // ── PBKDF2-HMAC-SHA256 tek-block (dkLen=32, PG'nin CANLI auth yolu) ──
-    // RFC 6070-türevi: P="password" S="salt" c=1  → tek-block, INT(1) big-endian
+    // ── PBKDF2-HMAC-SHA256 single-block (dkLen=32, PG's LIVE auth path) ──
+    // RFC 6070-derived: P="password" S="salt" c=1  -> single block, INT(1) big-endian
     { std::string s="salt";
       chk("pg pbkdf2 password/salt/1/32", hex32(PostgresClient::pbkdf2_sha256("password",(const uint8_t*)s.data(),s.size(),1)),
           "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"); }
-    // Çok-iterasyon tek-block: c=4096 (SCRAM iter sayısına yakın gerçekçi yük)
+    // Multi-iteration single block: c=4096 (a realistic load close to the SCRAM iteration count)
     { std::string s="salt";
       chk("pg pbkdf2 password/salt/4096/32", hex32(PostgresClient::pbkdf2_sha256("password",(const uint8_t*)s.data(),s.size(),4096)),
           "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"); }

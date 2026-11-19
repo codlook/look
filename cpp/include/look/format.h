@@ -1,9 +1,9 @@
-// Dilin TEK double formatlayıcısı — çalışma zamanından BAĞIMSIZ (DB sürücüleri de kullanır).
-// NaN/Infinity açıkça ele alınır, aksi halde std::to_chars shortest (round-trip-güvenli,
-// locale-bağımsız '.'). Aynı değer her yerde (to_string, JSON, sqlite/mysql/pg sonuç) AYNI
-// metin → "kavram başına tek yapı". Önceki 4 ayrı impl (interpreter to_chars, sqlite %.17g,
-// pg precision(17), mysql satır-içi to_chars) round-trip'te güvenliydi ama FARKLI string
-// üretiyordu (3.141592653589793 vs 3.1415926535897931) ve NaN/Inf'i yalnız bu ele alıyordu.
+// The language's SINGLE double formatter -- INDEPENDENT of the runtime (DB drivers use it too).
+// NaN/Infinity are handled explicitly, otherwise std::to_chars shortest (round-trip-safe,
+// locale-independent '.'). The same value gives the SAME text everywhere (to_string, JSON, sqlite/mysql/pg results)
+// -> "one structure per concept". The previous 4 separate impls (interpreter to_chars, sqlite %.17g,
+// pg precision(17), mysql inline to_chars) were round-trip-safe but produced DIFFERENT strings
+// (3.141592653589793 vs 3.1415926535897931) and only this one handled NaN/Inf.
 #pragma once
 #include <charconv>
 #include <cmath>

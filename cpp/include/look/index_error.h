@@ -1,16 +1,16 @@
 #pragma once
-// LOOK 2 — indeksleme kuralı ve hata metni: TEK tanım.
+// Indexing rule and error text: SINGLE definition.
 //
-// Kural (Go'daki map okuma gibi, tek cümle):
-//   * dizide/map'te olmayan ANAHTAR  → null
-//   * null'ı indekslemek             → null   (null boş bir map gibi okunur; Go'da nil map okumak
-//                                              hata değildir). `$row["address"]["city"] ?? ""`
-//                                              bu yüzden kendiliğinden çalışır — `??` için özel
-//                                              bir anlam yoktur.
-//   * dizi, map ya da struct OLMAYAN başka bir değeri (metin, sayı, bool, fonksiyon) indekslemek
-//                                    → HATA   (bu eksik bir değer değil, yanlış türdür)
-// LOOK 1'de yorumlayıcı null dahil hepsinde hata veriyordu, VM hepsinde sessizce null dönüyordu:
-// aynı satır motora göre farklı davranıyor, yanlış tür null olarak yayılıyordu.
+// Rule (like map reads in Go, in one sentence):
+//   * a KEY missing in an array/map  -> null
+//   * indexing null                  -> null   (null reads like an empty map; reading a nil map in Go
+//                                              is not an error). `$row["address"]["city"] ?? ""`
+//                                              therefore works on its own -- `??` has no
+//                                              special meaning here.
+//   * indexing any other value that is NOT an array, map or struct (string, number, bool, function)
+//                                    -> ERROR   (this is not a missing value, it is the wrong type)
+// In 1.x the interpreter raised an error on all of them including null, while the VM silently returned null on all of them:
+// the same line behaved differently per engine, and a wrong type propagated as null.
 #include "look/runtime_host.h"
 #include <string>
 

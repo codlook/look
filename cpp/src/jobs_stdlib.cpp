@@ -48,24 +48,24 @@ void JobStore::init_locked(const std::string& db_path) {
         throw std::runtime_error("jobs:: could not open DB (" + db_path + "): " + err);
     }
 
-    // busy_timeout İLK İŞ olmalı — SONRAKİ her adımdan önce.
+    // busy_timeout must be the FIRST thing -- before EVERY following step.
     //
-    // ESKİ HATA (bu satır aşağıdaydı): `PRAGMA journal_mode=WAL` geçişi ÖZEL KİLİT
-    // ister; busy_timeout henüz ayarlı olmadığı için çekişmede anında SQLITE_BUSY
-    // döner ve süreç "jobs:: schema error: database is locked" ile ÇÖKER.
-    // create_schema() de aynı pencerede.
-    // İki katmanlı sonuç: (a) worker'lar açılışta ölür, (b) ÖLEN worker'lar claim
-    // yarışını MASKELER — az sayıda süreç hayatta kalınca yarış görünmez olur;
-    // hayatta kalan sayısı arttığında çift-claim ortaya çıkar (WAL geçişi
-    // başarısız olan süreç rollback-journal modunda kalır → izolasyon farklılaşır).
-    // Bu, ölçümü yapan ortamın I/O hızına göre açılıp kapanan bir yarış penceresi.
+    // OLD BUG (this line used to be further down): the `PRAGMA journal_mode=WAL` switch needs an
+    // EXCLUSIVE LOCK; since busy_timeout was not yet set, under contention SQLITE_BUSY comes
+    // back immediately and the process CRASHES with "jobs:: schema error: database is locked".
+    // create_schema() is in the same window.
+    // Two-layer consequence: (a) workers die at startup, (b) the DYING workers MASK the claim
+    // race -- when few processes survive the race is invisible;
+    // when the number of survivors grows a double claim appears (a process whose WAL switch
+    // failed stays in rollback-journal mode -> isolation differs).
+    // This is a race window that opens and closes depending on the I/O speed of the measuring environment.
     sqlite3_busy_timeout(db_, 5000);
     sqlite3_exec(db_, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
     sqlite3_exec(db_, "PRAGMA foreign_keys=OFF;", nullptr, nullptr, nullptr);
-    // WAL: okuyucu yazarı, yazar okuyucuyu bloke etmez (çok süreçli erişim şart).
+    // WAL: a reader does not block the writer, a writer does not block the reader (required for multi-process access).
     sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
-    // WAL gerçekten etkin mi — SESSİZCE rollback modunda kalmasın. Kalırsa
-    // çok süreçli davranış farklılaşır ve bunu ancak üretimde fark ederiz.
+    // Is WAL really active -- it must not stay SILENTLY in rollback mode. If it does,
+    // multi-process behavior differs and we would only notice it in production.
     {
         sqlite3_stmt* jm = nullptr;
         if (sqlite3_prepare_v2(db_, "PRAGMA journal_mode;", -1, &jm, nullptr) == SQLITE_OK) {
@@ -195,19 +195,19 @@ Value JobStore::next(const std::string& queue) {
     ensure_init();
     std::lock_guard<std::mutex> lk(mtx_);
 
-    // ATOMİK CLAIM — tek ifade (SQLite RETURNING, 3.35+; gömülü sürüm 3.47.2).
+    // ATOMIC CLAIM -- a single statement (SQLite RETURNING, 3.35+; embedded version 3.47.2).
     //
-    // ESKİ HATA — ÇİFT İŞLEME (ölçüldü: 4 süreç, 40 iş → 34 claim / 29 tekil,
-    // yani 5 iş birden fazla sürece verildi):
-    //   SELECT ... WHERE status='pending' LIMIT 1     ← A ve B aynı id'yi görür
-    //   UPDATE ... SET status='processing' WHERE id=? ← status kontrolü YOK
-    // Aradaki `std::lock_guard` yalnız SÜREÇ İÇİ mutex'tir; FastCGI multi-worker'da
-    // her worker AYRI SÜREÇ olduğu için hiçbir koruma sağlamaz. Sonuç: aynı iş iki
-    // kez işlenir — aynı e-posta iki kez gider, aynı ödeme iki kez çekilir.
+    // OLD BUG -- DOUBLE PROCESSING (measured: 4 processes, 40 jobs -> 34 claims / 29 unique,
+    // i.e. 5 jobs were given to more than one process):
+    //   SELECT ... WHERE status='pending' LIMIT 1     <- A and B see the same id
+    //   UPDATE ... SET status='processing' WHERE id=? <- NO status check
+    // The `std::lock_guard` in between is only an IN-PROCESS mutex; with FastCGI multi-worker
+    // every worker is a SEPARATE PROCESS, so it gives no protection. Result: the same job is processed
+    // twice -- the same e-mail is sent twice, the same payment is charged twice.
     //
-    // Çözüm: seçme ve claim TEK ifadede + `AND status='pending'` koruması.
-    // İkinci süreç aynı satırı hedeflese bile durum artık 'processing' olduğu için
-    // 0 satır günceller ve RETURNING satır döndürmez → o süreç boş döner (doğru).
+    // Fix: select and claim in a SINGLE statement + the `AND status='pending'` guard.
+    // Even if a second process targets the same row, the status is now 'processing', so it
+    // updates 0 rows and RETURNING returns no row -> that process comes back empty (correct).
     sqlite3_stmt* upd = prepare(db_,
         "UPDATE look_jobs SET status='processing', updated_at=?"
         " WHERE id = (SELECT id FROM look_jobs"
@@ -221,7 +221,7 @@ Value JobStore::next(const std::string& queue) {
     sqlite3_bind_int64(upd, 3, ts);
 
     int rc = sqlite3_step(upd);
-    if (rc != SQLITE_ROW) {          // iş yok VEYA başka süreç kaptı
+    if (rc != SQLITE_ROW) {          // no job OR another process grabbed it
         sqlite3_finalize(upd);
         return Value();
     }
@@ -256,14 +256,14 @@ void JobStore::done(int64_t id) {
     sqlite3_finalize(stmt);
 }
 
-// Yeniden deneme beklemesinin tabanı (saniye). Ortam değişkeni: LOOK_JOBS_RETRY_SECONDS.
+// Base of the retry wait (seconds). Environment variable: LOOK_JOBS_RETRY_SECONDS.
 static int64_t retry_base_seconds() {
     const char* e = std::getenv("LOOK_JOBS_RETRY_SECONDS");
     if (e && *e) { long v = std::atol(e); if (v >= 0 && v <= 3600) return v; }
     return 30;
 }
 
-// İşi YENİDEN DENEMEDEN başarısız say (işleyici true/false dışında bir şey döndürdü).
+// Count the job as failed WITHOUT RETRYING (the handler returned something other than true/false).
 void JobStore::fail_final(int64_t id) {
     ensure_init();
     std::lock_guard<std::mutex> lk(mtx_);
@@ -293,10 +293,10 @@ void JobStore::fail(int64_t id) {
     int         new_count  = retry_count + 1;
     const char* new_status = (new_count >= max_retries) ? "failed" : "pending";
 
-    // LOOK 2: yeniden deneme BEKLER. Eskiden iş hemen "pending" oluyor ve aynı jobs::run geçişi onu
-    // hemen yeniden alıyordu: üç deneme aynı milisaniyede bitiyordu (geçici bir hatada — SMTP bir an
-    // yanıt vermedi — hiçbir işe yaramayan tekrarlar). Bekleme her denemede ikiye katlanır:
-    // taban × 1, × 2, × 4 … (taban LOOK_JOBS_RETRY_SECONDS, varsayılan 30 sn; en çok 1 saat).
+    // A retry WAITS. Previously the job became "pending" immediately and the same jobs::run pass
+    // picked it up again right away: three attempts finished in the same millisecond (on a transient failure -- SMTP did not
+    // respond for a moment -- the repeats were useless). The wait doubles on every attempt:
+    // base x 1, x 2, x 4 ... (base LOOK_JOBS_RETRY_SECONDS, default 30 s; at most 1 hour).
     int64_t delay = retry_base_seconds();
     for (int i = 1; i < new_count && delay < 3600; ++i) delay *= 2;
     if (delay > 3600) delay = 3600;
@@ -521,7 +521,7 @@ Module make_jobs_module() {
     // Called at setup time. jobs::run() will invoke these handlers.
     m.functions["worker"] = [](std::vector<Value> args) -> Value {
         if (args.size() < 2) throw std::runtime_error("jobs::worker() — expects (queue, function)");
-        // LOOK 2: VM closure'ı (BYTECODE_FN) da işleyici olabilir — jobs::run onu invoke() köprüsüyle çağırır.
+        // A VM closure (BYTECODE_FN) can also be a handler -- jobs::run calls it through the invoke() bridge.
         if (args[1].type() != Value::BYTECODE_FN)
             throw std::runtime_error("jobs::worker() — second argument must be a function");
         JobStore::instance().register_worker(args[0].to_string(), args[1]);

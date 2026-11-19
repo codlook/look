@@ -1,7 +1,7 @@
-// MySQL wire-protocol saf ayrıştırıcılar — socket'ten AYRI (fuzz + test hedefi).
-// "Dikişi aç": length-encoded int/str okuma mantığı burada; tarihsel OOB ("MySQL hata
-// paketinde OOB okuma") tam bu sınıftaydı. Tek tanım (mysql_client.cpp include eder) →
-// drift yok. Saldırgan-kontrollü baytlar: sunucu paketi gövdesi (S4 verify kapalı → MITM).
+// Pure MySQL wire-protocol parsers -- SEPARATE from the socket (fuzz + test target).
+// "Open the seam": the length-encoded int/str reading logic lives here; the historical OOB ("OOB read in
+// the MySQL error packet") was exactly this class. Single definition (mysql_client.cpp includes it) ->
+// no drift. Attacker-controlled bytes: the server packet body (S4 verify off -> MITM).
 #pragma once
 #include <cstdint>
 #include <cstring>
@@ -12,7 +12,7 @@
 
 namespace look {
 
-// length-encoded integer (MySQL protokolü). Her multi-byte durum p+N<=end ile sınırlı.
+// length-encoded integer (MySQL protocol). Every multi-byte case is bounded by p+N<=end.
 inline uint64_t mysql_read_lenenc(const uint8_t*& p, const uint8_t* end) {
     if (p >= end) return 0;
     uint8_t first = *p++;
@@ -23,9 +23,9 @@ inline uint64_t mysql_read_lenenc(const uint8_t*& p, const uint8_t* end) {
     return 0;
 }
 
-// length-encoded string. TAŞMA-GÜVENLİ: len sunucudan gelir ve 0xFE'de ~2^64 olabilir →
-// `p+len` işaretçi taşması (UB) yapıp wrap'lar → kontrol atlanır → ~2^64 overread. p<=end
-// invariantı gereği `end-p` güvenli; len'i mevcut bayta clamp'le.
+// length-encoded string. OVERFLOW-SAFE: len comes from the server and can be ~2^64 at 0xFE ->
+// `p+len` overflows the pointer (UB) and wraps -> the check is skipped -> ~2^64 overread. Given the p<=end
+// invariant `end-p` is safe; clamp len to the bytes available.
 inline std::string mysql_read_lenenc_str(const uint8_t*& p, const uint8_t* end) {
     if (p >= end) return "";
     if (*p == 0xFB) { p++; return ""; }
@@ -36,13 +36,13 @@ inline std::string mysql_read_lenenc_str(const uint8_t*& p, const uint8_t* end) 
     return s;
 }
 
-// Multi-packet birleştirme (RFC yok — MySQL wire): 16 MB'i aşan payload sunucu tarafından
-// TAM-0xFFFFFF paketlere bölünür; alıcı, uzunluğu 0xFFFFFF'ten KÜÇÜK bir paket gelene kadar
-// okuyup BİRLEŞTİRMELİ. Bu mantık olmadan ilk 16 MB tam-paket sanılır → akış desenkronize →
-// havuzdaki bağlantı sessizce YANLIŞ VERİ döner (LONGBLOB / geniş SELECT * / büyük GROUP_CONCAT).
-// Toplam cap: 24-bit alan artık üst-sınır DEĞİL → açık cap (kötü niyetli sunucu sonsuz 0xFFFFFF
-// devamıyla bellek tüketmesin). read: hedefe N bayt oku, başarısızsa false. Socket'ten AYRI →
-// tablo-test edilebilir (canlı MySQL YOK). seq son paketin sequence'ını döndürür.
+// Multi-packet reassembly (no RFC -- MySQL wire): a payload over 16 MB is split by the server into
+// FULL 0xFFFFFF packets; the receiver MUST keep reading and concatenating until a packet whose length is
+// LESS than 0xFFFFFF arrives. Without this logic the first 16 MB is taken as a complete packet -> the stream desyncs ->
+// the pooled connection silently returns WRONG DATA (LONGBLOB / wide SELECT * / large GROUP_CONCAT).
+// Total cap: the 24-bit field is no longer an upper bound -> an explicit cap (so a malicious server cannot exhaust memory with endless 0xFFFFFF
+// continuations). read: read N bytes into the target, false on failure. SEPARATE from the socket ->
+// table-testable (no live MySQL). seq returns the sequence number of the last packet.
 inline std::vector<uint8_t> mysql_reassemble(
         const std::function<bool(uint8_t*, size_t)>& read,
         uint8_t& seq, size_t max_recv = 256ull * 1024 * 1024) {
@@ -58,12 +58,12 @@ inline std::vector<uint8_t> mysql_reassemble(
         payload.resize(off + len);
         if (len > 0 && !read(payload.data() + off, len))
             throw std::runtime_error("db: connection lost reading payload");
-        if (len < 0xFFFFFF) break;   // son parça (0-uzunluk dahil)
+        if (len < 0xFFFFFF) break;   // last chunk (including zero length)
     }
     return payload;
 }
 
-// Sabit-genişlik okuyucular — end YOK, çağıran p+N<=end guard'lamalı (fixed-layout yollar).
+// Fixed-width readers -- NO end; the caller must guard p+N<=end (fixed-layout paths).
 inline uint16_t mysql_read_u16(const uint8_t*& p) { uint16_t v = p[0] | (p[1] << 8); p += 2; return v; }
 inline uint32_t mysql_read_u32(const uint8_t*& p) { uint32_t v; memcpy(&v, p, 4); p += 4; return v; }
 inline uint64_t mysql_read_u64(const uint8_t*& p) { uint64_t v; memcpy(&v, p, 8); p += 8; return v; }

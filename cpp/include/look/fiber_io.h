@@ -1,8 +1,8 @@
 #pragma once
-// Veritabanı istemcilerinin ortak bekleme noktası: fiber içindeyken soket okunabilir olana
-// (ya da süre dolana) dek İŞ PARÇACIĞINI DEĞİL yalnız fiber'ı askıya alır. MySQL ve
-// PostgreSQL aynı yolu kullanır — bir istemcinin beklemesi o iş parçacığındaki öteki
-// isteklere yansımaz.
+// Common wait point of the database clients: while inside a fiber, until the socket becomes readable
+// (or time runs out) it suspends only the fiber, NOT THE THREAD. MySQL and
+// PostgreSQL use the same path -- one client's wait does not affect the other
+// requests on that thread.
 #include "look/fiber.h"
 #ifndef _WIN32
 #  include <poll.h>
@@ -10,8 +10,8 @@
 
 namespace look {
 
-// Dönüş: 1 = okunabilir, 0 = süre doldu, -1 = fiber yok/desteklenmiyor (çağıran bloklayarak okur).
-// timeout_ms <= 0 → süresiz.
+// Return: 1 = readable, 0 = timed out, -1 = no fiber/unsupported (the caller reads by blocking).
+// timeout_ms <= 0 -> unbounded.
 inline int fiber_wait_readable(int fd, int timeout_ms) {
 #ifdef _WIN32
     (void)fd; (void)timeout_ms;
@@ -21,10 +21,10 @@ inline int fiber_wait_readable(int fd, int timeout_ms) {
     if (!cur) return -1;
     FiberScheduler* sched = get_thread_scheduler();
     if (!sched) return -1;
-    // Askıya almadan önce BEKLEMESİZ yoklama: yanıt zaten geldiyse askı/uyanma yaşanmaz.
-    // Eskiden 1 ms BEKLEYEN poll vardı ("askı+uyanma ~1 ms" varsayımıyla): her DB beklemesinde
-    // iş parçacığı 1 ms başka hiçbir isteğe bakamıyordu. Ölçüldü (8 işçi, havuz 32, MySQL 5 ms,
-    // wrk): off-CPU profilinde işçiler çoğu örnekte bu poll'da; DB rotası 32 işçinin ~%15 gerisindeydi.
+    // NON-WAITING poll before suspending: if the response has already arrived there is no suspend/wake-up.
+    // It used to be a poll that WAITED 1 ms (assuming "suspend+wake-up ~1 ms"): on every DB wait the
+    // thread could not serve any other request for 1 ms. Measured (8 workers, pool 32, MySQL 5 ms,
+    // wrk): in the off-CPU profile the workers were in this poll in most samples; the DB route was ~15% behind 32 workers.
     struct pollfd pfd{};
     pfd.fd = fd;
     pfd.events = POLLIN;
@@ -35,8 +35,8 @@ inline int fiber_wait_readable(int fd, int timeout_ms) {
 #endif
 }
 
-// Yazılabilir olana dek (engellemesiz connect'in bitmesi) yalnız fiber'ı askıya al.
-// Dönüş: 1 = yazılabilir, 0 = süre doldu, -1 = fiber yok (çağıran poll ile bekler).
+// Suspend only the fiber until writable (until a non-blocking connect finishes).
+// Return: 1 = writable, 0 = timed out, -1 = no fiber (the caller waits with poll).
 inline int fiber_wait_writable(int fd, int timeout_ms) {
 #ifdef _WIN32
     (void)fd; (void)timeout_ms;

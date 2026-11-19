@@ -12,20 +12,20 @@ namespace look {
 
 // ── OpCode ────────────────────────────────────────────────────────────────────
 //
-// 3-adres register tabanlı instruction set.
-// Her instruction: opcode (1B) + a,b,c register/index alanları (2B her biri)
-// Geniş sabit için OP_LOAD_CONST_W: a=reg, b<<16|c = 32-bit pool index.
+// 3-address register-based instruction set.
+// Each instruction: opcode (1B) + a,b,c register/index fields (2B each)
+// For a wide constant, OP_LOAD_CONST_W: a=reg, b<<16|c = 32-bit pool index.
 
 enum class OpCode : uint8_t {
-    // ── Sabit yükleme ─────────────────────────────────────────────────────────
+    // ── Constant loading ──────────────────────────────────────────────────────
     LOAD_CONST,      // r[a] = pool[b]          — b < 65536
     LOAD_CONST_W,    // r[a] = pool[b<<16|c]    — 32-bit pool index
     LOAD_NULL,       // r[a] = null
     LOAD_TRUE,       // r[a] = true
     LOAD_FALSE,      // r[a] = false
-    LOAD_INT,        // r[a] = (int16_t)b       — küçük literal (-32768..32767)
+    LOAD_INT,        // r[a] = (int16_t)b       — small literal (-32768..32767)
 
-    // ── Register / değişken ───────────────────────────────────────────────────
+    // ── Register / variable ───────────────────────────────────────────────────
     MOVE,            // r[a] = r[b]
     LOAD_VAR,        // r[a] = vars[b]          — locals/upvalues
     STORE_VAR,       // vars[a] = r[b]
@@ -41,15 +41,15 @@ enum class OpCode : uint8_t {
 
     // ── String ────────────────────────────────────────────────────────────────
     CONCAT,          // r[a] = r[b] . r[c]
-    // String interpolation: compiler parçalara ayırıp CONCAT zinciri üretir.
+    // String interpolation: the compiler splits it into parts and emits a CONCAT chain.
 
-    // ── Karşılaştırma (r[a] = bool) ───────────────────────────────────────────
+    // ── Comparison (r[a] = bool) ──────────────────────────────────────────────
     EQ, NEQ, LT, GT, LTE, GTE,
     CMP3,            // r[a] = r[b] <=> r[c]   — -1/0/1
 
-    // ── Mantıksal ─────────────────────────────────────────────────────────────
+    // ── Logical ───────────────────────────────────────────────────────────────
     NOT,             // r[a] = !r[b]
-    // AND/OR short-circuit: JUMP_IF_FALSE / JUMP_IF_TRUE ile kurulur
+    // AND/OR short-circuit: built from JUMP_IF_FALSE / JUMP_IF_TRUE
 
     // ── Null coalescing ───────────────────────────────────────────────────────
     COALESCE,        // r[a] = r[b] ?? r[c]
@@ -66,45 +66,45 @@ enum class OpCode : uint8_t {
     NEW_STRUCT,      // r[a] = StructDef[pool[b]]{}   — compile-time def index
     GET_FIELD,       // r[a] = r[b].field[c]          — c = field index (compile-time)
     SET_FIELD,       // r[a].field[b] = r[c]
-    // "field index" compile-time'da struct_def.fields[] sırasından hesaplanır.
+    // The "field index" is computed at compile time from the order of struct_def.fields[].
 
-    // ── Kontrol akışı ─────────────────────────────────────────────────────────
+    // ── Control flow ──────────────────────────────────────────────────────────
     JUMP,            // ip = a<<16|b             — 16-bit offset
     JUMP_IF_FALSE,   // if !r[a]: ip = b<<16|c
     JUMP_IF_TRUE,    // if  r[a]: ip = b<<16|c
     JUMP_IF_NULL,    // if r[a]==null: ip = b<<16|c
 
-    // ── Fonksiyon çağrısı ─────────────────────────────────────────────────────
-    // Çağrı convention:
+    // ── Function call ─────────────────────────────────────────────────────────
+    // Call convention:
     //   CALL r_fn, r_args_base, argc
-    //   Argümanlar r_args_base .. r_args_base+argc-1 aralığında hazır olmalı.
-    //   Sonuç r[a]'ya yazılır.
+    //   Arguments must be ready in the range r_args_base .. r_args_base+argc-1.
+    //   The result is written to r[a].
     CALL,            // r[a] = call r[b](r[b+1]..r[b+c])
     CALL_BUILTIN,    // r[a] = builtins[b](r[c]...) — c=args_base, count in next byte
-    TAIL_CALL,       // tail call optimizasyonu — RETURN olmadan CALL
+    TAIL_CALL,       // tail call optimization — CALL without RETURN
     RETURN,          // return r[a]
     RETURN_NULL,     // return null
 
     // ── Closure ───────────────────────────────────────────────────────────────
     MAKE_CLOSURE,    // r[a] = Closure{fn_pool[b], captures...}
-                     // Sonraki N instruction: CAPTURE_VAL r[x] (derleme ek bilgisi)
+                     // Next N instructions: CAPTURE_VAL r[x] (extra compile-time info)
     LOAD_CAPTURE,    // r[a] = current_closure.captures[b]
-    // STORE_CAPTURE yok — LOOK by-value capture, değiştirme yok
+    // No STORE_CAPTURE — LOOK captures by value, no mutation
 
-    // ── Iterasyon ─────────────────────────────────────────────────────────────
+    // ── Iteration ─────────────────────────────────────────────────────────────
     FOR_PREP,        // r[a]=iter_state, r[a+1]=0(idx)  — r[b]=array
     FOR_STEP,        // if end: ip=c<<16|d; else r[a+2]=val, r[a+3]=idx, ++r[a+1]
     // foreach ($arr as $v)        → r[a+2]=value
     // foreach ($arr as $k => $v)  → r[a+2]=key, r[a+3]=value
 
-    // ── Hata yönetimi ─────────────────────────────────────────────────────────
-    TRY_PUSH,        // catch_stack.push(ip=a<<16|b)    — catch block başlangıcı
+    // ── Error handling ────────────────────────────────────────────────────────
+    TRY_PUSH,        // catch_stack.push(ip=a<<16|b)    — start of the catch block
     TRY_POP,         // catch_stack.pop()
     THROW,           // throw r[a]
-    LOAD_EXC,        // r[a] = current_exception (catch bloğu başında)
-    LOAD_ARGC,       // r[a] = çağrıda sağlanan arg sayısı (varsayılan param prologue'u)
+    LOAD_EXC,        // r[a] = current_exception (at the start of the catch block)
+    LOAD_ARGC,       // r[a] = number of args supplied at the call (default-param prologue)
 
-    // ── LOOK'a özgü ───────────────────────────────────────────────────────────
+    // ── LOOK-specific ─────────────────────────────────────────────────────────
     PARALLEL_CALL,   // spawn thread: closure=r[a]     — fire and forget
     CHAN_SEND,        // send(r[a], r[b])
     CHAN_RECV,        // r[a] = receive(r[b])
@@ -113,7 +113,7 @@ enum class OpCode : uint8_t {
     WS_SEND,         // ws::send(r[a], r[b])
     WS_BROADCAST,    // ws::broadcast(r[a])
     SSE_SEND,        // sse::send(r[a], r[b] [, r[c]])
-    ROUTE_MATCH,     // dispatcher — internal, tek instruction
+    ROUTE_MATCH,     // dispatcher — internal, a single instruction
 
     // ── Type / cast ───────────────────────────────────────────────────────────
     TYPE_OF,         // r[a] = type::of(r[b])
@@ -135,7 +135,7 @@ enum class OpCode : uint8_t {
                      // are distinct string literals, so the runtime scan is provably redundant
     CHECK_DEFINED,   // throw "Undefined variable: <const b<<16|c>" when r[a] is null — emitted
                      // right after LOAD_GLOBAL for a bare (no '$') name read as a VALUE
-    SET_PATH,        // LOOK 2 copy-on-write assignment through an index path:
+    SET_PATH,        // copy-on-write assignment through an index path:
                      //   root[k0][k1]...[kn-1] = r[a];  keys in r[b]..r[b+c-1];  next NOP: a = root
                      //   kind (0 local, 4 global), b<<16|c = its
                      //   register / name constant. Each level is detached (copied if
@@ -152,9 +152,9 @@ enum class OpCode : uint8_t {
 
 // ── Instruction ───────────────────────────────────────────────────────────────
 
-// LOOK 2: operandlar 16 bit (v1'de 8 bitti → fonksiyon başına 255 register / parametre /
-// yakalama ve 65535 sabit sınırı; "VM derleyemezse uygulama başlamaz" kuralından önce
-// kaldırıldı). İki operand birleşince 32 bitlik alan: b<<16|c (sabit indeksi, atlama hedefi).
+// Operands are 16 bits (they were 8 bits in 1.x → a limit of 255 registers / parameters /
+// captures per function and 65535 constants; lifted so that "the app does not start if the VM
+// cannot compile it" never trips). Two operands combine into a 32-bit field: b<<16|c (constant index, jump target).
 struct Instruction {
     OpCode   op;
     uint8_t  pad_ = 0;
@@ -166,14 +166,14 @@ struct Instruction {
     static Instruction make(OpCode op, uint16_t a=0, uint16_t b=0, uint16_t c=0) {
         return {op, 0, a, b, c};
     }
-    // 32-bit b<<16|c alanı (sabit indeksi, atlama hedefi, ad sabiti)
+    // 32-bit b<<16|c field (constant index, jump target, name constant)
     uint32_t bx() const { return (uint32_t(b) << 16) | c; }
-    // 32-bit b|c<<16 alanı — MAKE_CLOSURE'ın iç fonksiyon indeksi (b düşük, c yüksek)
+    // 32-bit b|c<<16 field — MAKE_CLOSURE's inner function index (b low, c high)
     uint32_t bx_lohi() const { return uint32_t(b) | (uint32_t(c) << 16); }
-    // CALL_BUILTIN'in yerleşik indeksi: düşük yarısı bu komutun b'sinde, yüksek yarısı
-    // ardından gelen NOP'un b'sinde. Operandlar YALNIZ bu yardımcılarla birleştirilir —
-    // tests/no_raw_operand_decode.sh elle bit kaydırmayı yasaklar (biçim değişince gözden
-    // kaçan bir okuyucu sessizce yanlış değer okur: rota tarayıcısında oldu).
+    // CALL_BUILTIN's builtin index: the low half is in this instruction's b, the high half
+    // in the b of the NOP that follows. Operands are combined ONLY through these helpers —
+    // tests/no_raw_operand_decode.sh forbids hand-written bit shifts (when the layout changes,
+    // a missed reader silently reads a wrong value: it happened in the route scanner).
     static uint32_t builtin_index(const Instruction& call, const Instruction& nop_hint) {
         return uint32_t(call.b) | (uint32_t(nop_hint.b) << 16);
     }
@@ -183,31 +183,31 @@ static_assert(sizeof(Instruction) == 8, "Instruction must be 8 bytes");
 
 // ── Constant pool ─────────────────────────────────────────────────────────────
 //
-// Per-function. Her sabit literali (sayı, string, bool, null) buraya girer.
-// Bir fonksiyonun sabit sayısı pratikte sınırsız (LOAD_CONST_W 32-bit).
+// Per-function. Every constant literal (number, string, bool, null) goes here.
+// A function's constant count is practically unlimited (LOAD_CONST_W is 32-bit).
 
 using ConstantPool = std::vector<Value>;
 
-// ── FunctionProto — derleme çıktısı ──────────────────────────────────────────
+// ── FunctionProto — compiler output ──────────────────────────────────────────
 //
-// Her LOOK fonksiyonu (lambda dahil) için üretilir.
-// VM çalışırken CallFrame bu proto'ya pointer tutar.
+// Produced for every LOOK function (lambdas included).
+// While the VM runs, CallFrame holds a pointer to this proto.
 
 struct FunctionProto {
     std::string                          name;         // debug
-    int                                  arity  = 0;   // zorunlu parametre sayısı
-    int                                  required = 0; // LOOK 2: varsayılanı olmayan (ve variadic kalan olmayan) param sayısı — eksik argüman denetimi
+    int                                  arity  = 0;   // number of required parameters
+    int                                  required = 0; // number of params without a default (and not the variadic rest) — missing-argument check
     bool                                 variadic = false;
-    int                                  reg_count = 0;// max register sayısı (compiler hesaplar)
+    int                                  reg_count = 0;// max register count (computed by the compiler)
     ConstantPool                         constants;
     std::vector<Instruction>             code;
-    std::vector<std::shared_ptr<FunctionProto>> nested; // iç fonksiyonlar
+    std::vector<std::shared_ptr<FunctionProto>> nested; // inner functions
 
-    // Kaynak konum bilgisi — her instruction için satır numarası
+    // Source location info — line number for each instruction
     std::vector<int>                     lines;
-    // ...ve dosyası: (ilk komut, dosya) — yalnız dosya değişince bir satır; "" = ana betik.
-    // Dahil edilen dosyanın üst düzey kodu ana fonksiyona derlenir → bir proto'da birden çok
-    // dosya olabilir. Dosya adı ana betiğin dizinine göre göreli (lib/util.lk).
+    // ...and the file: (first instruction, file) — one row only when the file changes; "" = main script.
+    // The top-level code of an included file is compiled into the main function → one proto
+    // may span several files. The file name is relative to the main script's directory (lib/util.lk).
     std::vector<std::pair<int, std::string>> file_runs;
     const std::string& file_at(int ip) const {
         static const std::string kMain;
@@ -216,27 +216,27 @@ struct FunctionProto {
         return *f;
     }
 
-    // Parametre isimleri (hata mesajı için)
+    // Parameter names (for error messages)
     std::vector<std::string>             params;
 };
 
 // ── Closure object — runtime ──────────────────────────────────────────────────
 //
-// FunctionProto + capture edilmiş değerler.
-// parallel() thread'e taşınırken snapshot alınır — sonradan değişmez.
+// FunctionProto + captured values.
+// A snapshot is taken when handed to a parallel() thread — it does not change afterwards.
 
 struct Closure {
     std::shared_ptr<FunctionProto> proto;
-    std::vector<Value>             captures; // use ($a,$b,...) sırasıyla
-    // LOOK 2: ev sahibi (C++) fonksiyonu — doluysa çağrı bytecode yerine bunu çalıştırır.
-    // Yerleşik tabloya girmeyen, yalnız bir çalıştırıcının sağladığı adlar için (`lk test`:
-    // test(), assert_eq(), assert::eq …): global'e konur, LOOK fonksiyonu gibi çağrılır,
-    // geri çağırma olarak geçirilebilir. proto boş-ama-geçerli kalır (değişken argümanlı,
-    // register'sız) → proto'ya dokunan her yer (argüman denetimi, kopyalama) çalışır.
+    std::vector<Value>             captures; // in use ($a,$b,...) order
+    // Host (C++) function — when set, a call runs this instead of bytecode.
+    // For names not in the builtin table and provided only by a runner (`lk test`:
+    // test(), assert_eq(), assert::eq …): bound as a global, called like a LOOK function,
+    // and can be passed as a callback. proto stays empty-but-valid (variadic,
+    // no registers) → every place that touches the proto (argument check, copy) works.
     std::function<Value(std::vector<Value>&)> native;
 
     explicit Closure(std::shared_ptr<FunctionProto> p) : proto(std::move(p)) {}
-    // Closure zinciri (her biri öncekini yakalar) ValueArray gibi özyinelemesiz bırakılır.
+    // Closure chains (each captures the previous one) are released non-recursively, like ValueArray.
     ~Closure() { if (!captures.empty()) look_release_values(captures); }
     Closure(const Closure&) = default;
     Closure(Closure&&) = default;
@@ -244,31 +244,31 @@ struct Closure {
     Closure& operator=(Closure&&) = default;
 };
 
-// ── CallFrame — VM çalışma yığını ─────────────────────────────────────────────
+// ── CallFrame — VM call stack ─────────────────────────────────────────────────
 
 struct CallFrame {
     std::shared_ptr<Closure> closure;
     int                      ip      = 0;   // instruction pointer
-    int                      base    = 0;   // register array başlangıç offset'i
-    int                      ret_reg = 0;   // caller'ın sonucu koyacağı register
+    int                      base    = 0;   // start offset in the register array
+    int                      ret_reg = 0;   // register where the caller wants the result
 };
 
-// ── CompiledProgram — tüm programın bytecode çıktısı ─────────────────────────
+// ── CompiledProgram — bytecode output of the whole program ───────────────────
 
 struct CompiledProgram {
     std::shared_ptr<FunctionProto> main_proto; // top-level
-    // Programda builtin OLMAYAN bir "mod::fn" çağrısı var mı? (ör. cache::keys —
-    // modül tablosunda var ama builtin_names'de yok). Böyle bir çağrı derlenir ama
-    // RUNTIME'da "Çağrılabilir değil" fırlatır. Komut satırı / REPL / lk test bu bayrağı
-    // görünce çalıştırmadan "does not exist" hatası verir (EXECUTION ÖNCESİ).
+    // Does the program call a "mod::fn" that is NOT a builtin? (e.g. cache::keys —
+    // present in the module table but not in builtin_names). Such a call compiles but
+    // throws "not callable" at RUNTIME. The CLI / REPL / lk test see this flag and
+    // report a "does not exist" error without running anything (BEFORE EXECUTION).
     bool uses_non_builtin_module_fn = false;
-    std::vector<std::string> non_builtin_module_fns;   // adlar (LOOK_VM_STRICT raporu)
-    // Programın (dahil edilen dosyaları dahil) `use` ettiği stdlib modülleri, görüldükleri sırayla.
-    // Çalıştırıcı derlemeden SONRA bunları açar, sonra yerleşik tabloyu kurar. ESKİ YOL: ayrı bir
-    // tarama (collect_use_modules) dahil edilen her dosyayı İKİNCİ KEZ ayrıştırıyordu — qr-menu
-    // CGI isteğinin %37'si oydu.
+    std::vector<std::string> non_builtin_module_fns;   // names (LOOK_VM_STRICT report)
+    // stdlib modules the program (including included files) `use`s, in the order seen.
+    // The runner opens them AFTER compilation, then builds the builtin table. OLD WAY: a separate
+    // scan (collect_use_modules) parsed every included file a SECOND time — qr-menu
+    // was 37% of a CGI request because of it.
     std::vector<std::string> use_modules;
-    // Struct tanımları, route kayıtları setup fazında çalıştırılarak kurulur.
+    // Struct definitions and route registrations are set up by running the setup phase.
 };
 
 } // namespace look

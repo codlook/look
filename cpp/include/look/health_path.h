@@ -1,7 +1,7 @@
 #pragma once
-// Sunucunun yerleşik sağlık yolu (GET, betik çalışmadan "ok" döner). Varsayılan /health,
-// LOOK_HEALTH_PATH ile taşınır. Tek kaynak: HTTP ve FCGI isteği burada karşılar, başlangıç
-// denetimi aynı yolla çakışan kullanıcı rotasını bununla bulur.
+// The server's builtin health path (GET, returns "ok" without running the script). Default /health,
+// moved with LOOK_HEALTH_PATH. Single source: HTTP and FCGI requests are answered here, and the startup
+// check uses the same path to find a user route that collides with it.
 #include <cctype>
 #include <cstdlib>
 #include <stdexcept>
@@ -17,10 +17,10 @@ inline const std::string& health_path() {
     return p;
 }
 
-// Kullanıcı rotası yerleşik sağlık yoluyla çakışıyorsa (GET + aynı yol) o rota HİÇ çalışmaz —
-// sunucu isteği betikten önce kendisi karşılar. Eskiden sessizce ölü koddu (VS Code örneği);
-// LOOK 2'de uygulama başlamaz, nedeni söylenir. (Parametreli kalıp, ör. /{sayfa}, yalnız bir
-// değeri kaybeder — o çakışma değil, denetlenmez.)
+// If a user route collides with the builtin health path (GET + same path) that route NEVER runs --
+// the server answers the request itself before the script. It used to be silently dead code (VS Code example);
+// now the application does not start and the reason is stated. (A parameterized pattern, e.g. /{page}, only
+// loses one value -- that is not a collision and is not checked.)
 inline void route_check_builtin_path(const std::string& method, const std::string& pattern) {
     std::string m = method;
     for (auto& c : m) c = (char)std::toupper((unsigned char)c);

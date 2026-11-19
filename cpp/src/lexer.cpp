@@ -16,7 +16,7 @@ static const std::unordered_map<std::string, TokenType> keywords = {
     {"break",    TokenType::BREAK},
     {"continue", TokenType::CONTINUE},
     {"function", TokenType::FUNCTION},
-    {"fn",       TokenType::FUNCTION},   // kısa lambda takma adı — function ile birebir aynı
+    {"fn",       TokenType::FUNCTION},   // short lambda alias -- exactly the same as function
     {"return",   TokenType::RETURN},
     {"print",    TokenType::PRINT},
     {"write",    TokenType::WRITE},
@@ -40,7 +40,7 @@ static const std::unordered_map<std::string, TokenType> keywords = {
 
 Lexer::Lexer(std::string source)
     : source_(std::move(source)), tokens_(), start_(0), current_(0), line_(1) {
-    // UTF-8 BOM (EF BB BF) varsa atla
+    // Skip the UTF-8 BOM (EF BB BF) if present
     if (source_.size() >= 3 &&
         (unsigned char)source_[0] == 0xEF &&
         (unsigned char)source_[1] == 0xBB &&
@@ -51,15 +51,15 @@ Lexer::Lexer(std::string source)
 }
 
 std::vector<Token> Lexer::scan_tokens() {
-    tokens_.reserve(source_.size() / 4 + 16);   // kaba tahmin: ~4 bayt kaynak başına bir token
+    tokens_.reserve(source_.size() / 4 + 16);   // rough estimate: about one token per 4 source bytes
     while (!is_at_end()) {
         start_ = current_;
         start_col_ = col_;
         scan_token();
     }
-    // ASI at EOF — dosya newline olmadan bitiyorsa son ifadeyi kapat
-    // paren_depth==0: normal durum. paren_depth>0 ama closure body içindeyse de tetikle.
-    // closure body: brace_depth > brace_depth'te (ilgili paren açıldığında snapshot alınır)
+    // ASI at EOF -- close the last statement if the file ends without a newline
+    // paren_depth==0: normal case. Also trigger when paren_depth>0 but we are inside a closure body.
+    // closure body: brace_depth > brace_depth at the time (a snapshot is taken when the relevant paren opens)
     bool _asi_ok_eof = paren_depth_ == 0 ||
         (!paren_brace_stack_.empty() && brace_depth_ > paren_brace_stack_.back());
     if (_asi_ok_eof && bracket_depth_ == 0 &&
@@ -69,28 +69,28 @@ std::vector<Token> Lexer::scan_tokens() {
         last_token_type_ = TokenType::SEMICOLON;
     }
     tokens_.push_back(Token{TokenType::EOF_TOKEN, "", std::nullopt, line_, col_});
-    return std::move(tokens_);   // üye — `return tokens_` bütün vektörü (her token'ın metniyle) KOPYALIYORDU
+    return std::move(tokens_);   // member -- `return tokens_` used to COPY the whole vector (with every token's text)
 }
 
-// Sonraki satır bir devam operatörüyle başlıyorsa ASI bastır.
-// Örnek: "mysql://" . env(...)\n    . "@"  — . ile başlayan satır devam eder.
+// Suppress ASI if the next line starts with a continuation operator.
+// Example: "mysql://" . env(...)\n    . "@"  -- the line starting with . continues.
 bool Lexer::is_continuation_ahead() const {
     size_t pos = current_;
-    // Mevcut satırdaki kalan boşlukları atla
+    // Skip the remaining whitespace on the current line
     while (pos < source_.size() && source_[pos] != '\n' &&
            (source_[pos] == ' ' || source_[pos] == '\t' || source_[pos] == '\r'))
         pos++;
-    // Satır sonuna geldik, bir sonraki satırın başına geç
+    // We reached the end of the line, move to the start of the next line
     if (pos < source_.size() && source_[pos] == '\n') pos++;
-    // Yeni satırdaki leading boşlukları atla
+    // Skip the leading whitespace on the new line
     while (pos < source_.size() && (source_[pos] == ' ' || source_[pos] == '\t'))
         pos++;
     if (pos >= source_.size()) return false;
     char c = source_[pos];
-    // `++$x` / `--$x` ile başlayan satır YENİ bir deyimdir, önceki satırın devamı değil.
-    // (Eskiden `-`/`+` ile başladığı için devam sayılıyor ve "Expect ';'" hatası veriyordu.)
+    // A line starting with `++$x` / `--$x` is a NEW statement, not a continuation of the previous line.
+    // (It used to count as a continuation because it started with `-`/`+` and gave an "Expect ';'" error.)
     if ((c == '+' || c == '-') && pos + 1 < source_.size() && source_[pos + 1] == c) return false;
-    // Bu karakterlerle başlayan satır ifade devamıdır, yeni statement değil
+    // A line starting with these characters continues the expression, it is not a new statement
     return (c == '.' || c == '+' || c == '-' || c == '*' || c == '/' ||
             c == '%' || c == '&' || c == '|' || c == '^' || c == '?');
 }
@@ -192,8 +192,8 @@ void Lexer::scan_token() {
                     if (peek() == '\n') line_++;
                     advance();
                 }
-                // Fail-loud: kapatılmamış `/*` EOF'a kadar SESSİZCE yutulup kodun yarısını
-                // kaybettiriyordu (exit 0, hata yok). Kapanmadıysa net hata ver.
+                // Fail-loud: an unclosed `/*` used to be SILENTLY swallowed up to EOF and half of the code
+                // was lost (exit 0, no error). If it is not closed, give a clear error.
                 if (!closed)
                     throw std::runtime_error("Unterminated block comment starting at line " +
                                              std::to_string(comment_line));
@@ -284,9 +284,9 @@ void Lexer::scan_token() {
         // Whitespace
         case ' ': case '\r': case '\t': break;
         case '\n':
-            // ASI: satır sonu + trigger token → sanal ; ekle
-            // closure body: paren içinde olsak bile { açıldıktan sonraysa ASI tetikle
-            // Ancak sonraki satır devam operatörüyle başlıyorsa (. + - * / % & | ^ ?) ASI bastırılır
+            // ASI: end of line + trigger token -> insert a virtual ;
+            // closure body: trigger ASI even inside parens, if it is after a { has opened
+            // But ASI is suppressed if the next line starts with a continuation operator (. + - * / % & | ^ ?)
             {
                 bool _asi_ok = paren_depth_ == 0 ||
                     (!paren_brace_stack_.empty() && brace_depth_ > paren_brace_stack_.back());
@@ -339,9 +339,9 @@ static void lex_append_utf8(std::string& out, uint32_t cp) {
     else { out += (char)(0xF0|(cp>>18)); out += (char)(0x80|((cp>>12)&0x3F)); out += (char)(0x80|((cp>>6)&0x3F)); out += (char)(0x80|(cp&0x3F)); }
 }
 
-// value: kapanan tırnağa kadar okunan string; current_ kapanan tırnağın üzerinde.
+// value: the string read up to the closing quote; current_ is on the closing quote.
 void Lexer::check_quote_inside_placeholder(const std::string& value) {
-    // Açık kalan ilk '{' (iç içe sayarak)
+    // The first '{' that stays open (counting nesting)
     std::vector<size_t> open;
     for (size_t i = 0; i < value.size(); ++i) {
         if (value[i] == '{') open.push_back(i);
@@ -349,12 +349,12 @@ void Lexer::check_quote_inside_placeholder(const std::string& value) {
     }
     if (open.empty()) return;
     size_t start = open.front();
-    size_t after = current_ + 1;                       // kapanan tırnaktan sonraki karakter
+    size_t after = current_ + 1;                       // the character after the closing quote
     if (after >= source_.size()) return;
     char n = source_[after];
-    if (!(std::isalnum((unsigned char)n) || n == '_')) return;   // tırnağın arkasında ad yok
+    if (!(std::isalnum((unsigned char)n) || n == '_')) return;   // no name after the quote
     std::string head = value.substr(start);           // "{$u["
-    // Kaynağın devamından {…}'i kapatan '}'e kadar al (en çok 80 karakter); yoksa öneri yapma.
+    // Take from the rest of the source up to the '}' that closes the {...} (at most 80 characters); if none, make no suggestion.
     int depth = (int)open.size();
     std::string tail;
     for (size_t j = after; j < source_.size() && tail.size() < 80; ++j) {
@@ -365,7 +365,7 @@ void Lexer::check_quote_inside_placeholder(const std::string& value) {
         else if (c == '}' && --depth == 0) break;
     }
     if (depth != 0) tail.clear();
-    std::string written = head + "\"" + tail;          // kullanıcının yazdığı: {$u["name"]}
+    std::string written = head + "\"" + tail;          // what the user wrote: {$u["name"]}
     std::string msg = "Line " + std::to_string(line_) + ": the \" in " + (tail.empty() ? head + "\"…" : written) +
         " ends the string, so the rest of the line is not part of it.";
     if (head.size() >= 2 && head[1] == '$') {
@@ -377,7 +377,7 @@ void Lexer::check_quote_inside_placeholder(const std::string& value) {
             msg += " Inside {…} write single quotes, e.g. {$u['name']}";
         }
     } else {
-        // {cache::get("k")} — yalnız {$…} değiştirilir; dolarsız {…} metin olarak kalır.
+        // {cache::get("k")} -- only {$...} is substituted; {...} without a dollar stays as text.
         msg += " Only {$…} is replaced inside a string: put the value in a variable first, then write {$value}";
     }
     throw std::runtime_error(msg);
@@ -405,7 +405,7 @@ void Lexer::string(char quote) {
                 case 'f':  value += '\f'; break;
                 case '0':  value += '\0'; break;
                 case 'u': {
-                    // \uXXXX unicode escape (surrogate çifti → emoji dahil)
+                    // \uXXXX unicode escape (surrogate pair -> including emoji)
                     uint32_t cp = 0; bool ok = true;
                     for (int k = 0; k < 4; k++) {
                         int h = lex_hex(peek());
@@ -438,16 +438,16 @@ void Lexer::string(char quote) {
     if (is_at_end())
         throw std::runtime_error("Unterminated string at line " + std::to_string(line_));
 
-    // "Hi {$u["name"]}" — iç çift tırnak string'i BİTİRİR; sonraki kelime parser'da anlamsız bir
-    // hataya dönüşüyordu ("Expect ')' after print arguments. (got 'name')"). String kapandığında
-    // açık bir '{' varsa ve tırnağın hemen arkasından bir ad devam ediyorsa, tırnak yanlışlıkla
-    // {…}'in içindedir: nedeni ve doğru yazımı söyle. (Yeni yazım YOK — tek tırnak zaten çalışıyor.)
+    // "Hi {$u["name"]}" -- the inner double quote ENDS the string; the next word became a meaningless
+    // error in the parser ("Expect ')' after print arguments. (got 'name')"). When the string closes
+    // with an open '{' and a name continues right after the quote, the quote is mistakenly
+    // inside the {...}: state the cause and the correct syntax. (No new syntax -- single quotes already work.)
     if (quote == '"') check_quote_inside_placeholder(value);
 
     advance(); // closing quote
     add_token(TokenType::STRING, std::move(value));
-    // Tek tırnak = HAM: {$x} metin olarak kalır (doküman hep böyle diyordu; eskiden üç
-    // tırnak türü de interpolasyon yapıyordu → şablon kaynağını güvenle yazmanın yolu yoktu).
+    // Single quote = RAW: {$x} stays as text (the docs always said so; previously all three
+    // quote kinds interpolated -> there was no way to safely write template source).
     if (quote == '\'') tokens_.back().raw = true;
 }
 
@@ -464,8 +464,8 @@ void Lexer::raw_string() {
 }
 
 void Lexer::number() {
-    // Hex (0xFF) / binary (0b1010) taban — girişte current_==start_, peek()=ilk rakam.
-    // Rakam gruplama için '_' (1_000, 0xFF_FF) her tabanda kabul edilir; parser ayırır.
+    // Hex (0xFF) / binary (0b1010) base -- on entry current_==start_, peek()=first digit.
+    // '_' for digit grouping (1_000, 0xFF_FF) is accepted in every base; the parser separates it.
     if (peek() == '0' && (peek_next() == 'x' || peek_next() == 'X')) {
         advance(); advance();  // '0' 'x'
         while (!is_at_end() && (std::isxdigit((unsigned char)peek()) || peek() == '_')) advance();
@@ -488,8 +488,8 @@ void Lexer::number() {
         while (!is_at_end() && (std::isdigit(peek()) || peek() == '_')) advance();
     }
 
-    // Bilimsel gösterim: 1e3, 1.5e-2, 2E+10 — mantissa'dan sonra e/E [+/-] rakam.
-    // (to_chars büyük/küçük float'ı bu formatta üretiyor; round-trip için gerekli.)
+    // Scientific notation: 1e3, 1.5e-2, 2E+10 -- e/E [+/-] digit after the mantissa.
+    // (to_chars produces large/small floats in this format; needed for round-trip.)
     if (peek() == 'e' || peek() == 'E') {
         char c1 = peek_next();
         bool valid = std::isdigit((unsigned char)c1) ||
@@ -509,7 +509,7 @@ void Lexer::number() {
 void Lexer::identifier() {
     while (!is_at_end() && (std::isalnum(peek()) || peek() == '_')) advance();
     std::string text = source_.substr(start_, current_ - start_);
-    // $ önekli ad hiçbir zaman anahtar kelime değildir — yalnız öneksiz ad tabloda aranır.
+    // A name with a $ prefix is never a keyword -- only names without the prefix are looked up in the table.
     TokenType type = TokenType::IDENT;
     if (text[0] != '$') {
         auto it = keywords.find(text);

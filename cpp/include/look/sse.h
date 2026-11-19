@@ -14,16 +14,16 @@ namespace look {
 struct SseConnection {
     int fd;
     std::string client_ip;
-    std::string held_ip;     // LOOK_HTTP_MAX_CONNS_IP yuvası bu adres için tutuluyor (boş = yok)
+    std::string held_ip;     // the LOOK_HTTP_MAX_CONNS_IP slot is held for this address (empty = none)
     std::atomic<bool> closed{false};
     std::mutex write_mutex;
-    std::function<void()> on_close_cb;   // YALNIZ kilitli yardımcılarla (WsConnection ile aynı yarış)
+    std::function<void()> on_close_cb;   // ONLY through the locked helpers (same race as WsConnection)
     std::mutex            cb_mtx;
     void set_on_close_cb(std::function<void()> f) { std::lock_guard<std::mutex> l(cb_mtx); on_close_cb = std::move(f); }
     std::function<void()> get_on_close_cb() { std::lock_guard<std::mutex> l(cb_mtx); return on_close_cb; }
-    // Sunucu-tetikli kapatma (sse::close) worker thread'inden gelir; fd/epoll/map temizliği
-    // loop thread'ine AİT → bu köprü close_sse'yi loop->post ile oraya devreder (yarış yok).
-    // http_server bağlantı kurulurken set eder; loop yoksa (CLI) boş → close_conn fallback.
+    // A server-triggered close (sse::close) comes from a worker thread; fd/epoll/map cleanup
+    // BELONGS to the loop thread -> this bridge hands close_sse over to it with loop->post (no race).
+    // http_server sets it when the connection is established; with no loop (CLI) it is empty -> close_conn fallback.
     std::function<void()> request_loop_close;
 
     explicit SseConnection(int fd_, std::string ip = "")

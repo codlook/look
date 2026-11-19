@@ -1,15 +1,15 @@
 #pragma once
-// LOOK 2 — rota yol parametreleri işleyiciye ADA göre verilir (tek tanım).
+// Route path parameters are passed to the handler BY NAME (single definition).
 //
-//   route("GET", "/c/{id}/{slug}", function($slug) { ... })     → $slug = yoldaki slug
+//   route("GET", "/c/{id}/{slug}", function($slug) { ... })     -> $slug = the slug in the path
 //
-// Eskiden sıraya göre eşleşiyordu: function($slug) yukarıdaki rotada sessizce `id` değerini
-// alırdı; fazladan yazılan parametre de sessizce null olurdu. Artık:
-//   * işleyicinin her parametresi, rotanın aynı adlı yol parametresinin değerini alır;
-//   * rotada olmayan bir ad HATADIR (rota kaydedilirken — yüklemede — ve çağrılırken);
-//   * işleyici yol parametrelerinin hepsini, bir kısmını ya da hiçbirini bildirebilir;
-//     bildirmedikleri request::param("ad") ile okunur.
-// WS ve SSE rotalarında ilk parametre bağlantının kendisidir (adı serbest); kural kalanlara uygulanır.
+// They used to be matched by position: function($slug) in the route above would silently receive the
+// value of `id`; an extra parameter would silently be null. Now:
+//   * each handler parameter receives the value of the route path parameter with the same name;
+//   * a name that is not in the route is an ERROR (at route registration -- at load -- and at call time);
+//   * the handler may declare all, some or none of the path parameters;
+//     the ones it does not declare are read with request::param("name").
+// In WS and SSE routes the first parameter is the connection itself (any name); the rule applies to the rest.
 #include "look/runtime_host.h"
 #include <map>
 #include <stdexcept>
@@ -20,7 +20,7 @@ namespace look {
 
 inline std::string route_bare(const std::string& n) { return (!n.empty() && n[0] == '$') ? n.substr(1) : n; }
 
-// "/c/{id}/{slug}" → ["id", "slug"]
+// "/c/{id}/{slug}" -> ["id", "slug"]
 inline std::vector<std::string> route_placeholders(const std::string& pattern) {
     std::vector<std::string> out;
     for (size_t i = 0; i < pattern.size(); ++i) {
@@ -45,7 +45,7 @@ inline size_t route_handler_skip(const std::string& method) { return (method == 
         + "); a handler parameter takes the path parameter of the same name");
 }
 
-// Kayıt anında: işleyicinin (bağlantı parametresi dışındaki) her adı rotada var mı?
+// At registration: does every name of the handler (other than the connection parameter) exist in the route?
 inline void route_check_handler(const std::string& method, const std::string& pattern,
                                 const std::vector<std::string>& handler_params) {
     if (method == "404") return;
@@ -58,7 +58,7 @@ inline void route_check_handler(const std::string& method, const std::string& pa
     }
 }
 
-// Çağrı anında: işleyicinin (skip'ten sonraki) parametreleri için değerler, ADA göre.
+// At call time: values for the handler's parameters (after skip), BY NAME.
 template <class Map>
 inline void route_args_by_name(const std::string& method, const std::string& pattern,
                                const std::vector<std::string>& handler_params, size_t skip,

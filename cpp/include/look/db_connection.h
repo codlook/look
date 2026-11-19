@@ -6,16 +6,16 @@
 
 namespace look {
 
-// Tek bir hücre değeri
+// A single cell value
 struct DbValue {
     std::string str;
-    uint8_t     type    = 0xFE;  // driver'a özgü tip kodu
-    bool        is_null = false; // SQL NULL ise true
+    uint8_t     type    = 0xFE;  // driver-specific type code
+    bool        is_null = false; // true if SQL NULL
 };
 
 using DbRow = std::vector<std::pair<std::string, DbValue>>;
 
-// SQLite type sabitleri — 0x81-0x85 aralığı (MySQL 0x01-0x1F ile çakışmaz)
+// SQLite type constants -- range 0x81-0x85 (does not collide with MySQL 0x01-0x1F)
 namespace sqlite_type {
     static constexpr uint8_t INTEGER = 0x81;
     static constexpr uint8_t FLOAT   = 0x82;
@@ -24,7 +24,7 @@ namespace sqlite_type {
     static constexpr uint8_t NUL     = 0x85;
 }
 
-// Driver-bağımsız parametre tipi — Value'ya bağımlılık olmadan real prepared statement binding
+// Driver-independent parameter type -- real prepared statement binding without depending on Value
 struct DbParam {
     enum Kind { NULL_VAL, INT_VAL, FLOAT_VAL, TEXT_VAL, BOOL_VAL } kind = NULL_VAL;
     int64_t     i = 0;
@@ -39,18 +39,18 @@ struct DbParam {
     static DbParam from_bool(bool v)            { DbParam p; p.kind = BOOL_VAL;  p.b = v; return p; }
 };
 
-// Soyut DB bağlantı arayüzü.
+// Abstract DB connection interface.
 class DbConnection {
 public:
-    int tx_depth = 0;  // nested transaction derinliği (0 = autocommit)
+    int tx_depth = 0;  // nested transaction depth (0 = autocommit)
 
     virtual ~DbConnection() = default;
 
-    // Parametresiz DDL / dahili sorgular için (driver internal)
+    // For parameterless DDL / internal queries (driver internal)
     virtual std::vector<DbRow> query(const std::string& sql) = 0;
 
-    // Gerçek prepared statement ile parameterize sorgu — SQL injection güvenli
-    // ? placeholder'ları driver-native binding ile değiştirilir
+    // Parameterized query with a real prepared statement -- safe against SQL injection
+    // ? placeholders are replaced by driver-native binding
     virtual std::vector<DbRow> execute(const std::string& sql,
                                        const std::vector<DbParam>& params) = 0;
 
@@ -60,14 +60,14 @@ public:
     virtual bool    is_connected()   const = 0;
     virtual const char* driver_name() const = 0;
 
-    // Transaction başlangıç deyimi — sürücüye özgü. SQLite WAL modunda düz "BEGIN"
-    // (=DEFERRED) ilk yazımda SQLITE_BUSY_SNAPSHOT üretir ve busy_timeout bunu retry
-    // EDEMEZ (snapshot izolasyonunu bozardı). SQLite "BEGIN IMMEDIATE" ile write
-    // kilidini baştan alır. MySQL/PG'de "BEGIN IMMEDIATE" geçersiz → varsayılan "BEGIN".
+    // Transaction start statement -- driver-specific. In SQLite WAL mode a plain "BEGIN"
+    // (=DEFERRED) produces SQLITE_BUSY_SNAPSHOT on the first write and busy_timeout CANNOT
+    // retry it (it would break snapshot isolation). SQLite takes the write lock up front with
+    // "BEGIN IMMEDIATE". In MySQL/PG "BEGIN IMMEDIATE" is invalid -> default "BEGIN".
     virtual const char* begin_stmt() const { return "BEGIN"; }
-    // Sunucuya göre açık bir işlem var mı (MySQL SERVER_STATUS_IN_TRANS, PG ReadyForQuery durumu,
-    // SQLite autocommit kapalı). Uygulamanın ne çağırdığından bağımsız: db::exec("BEGIN") da sayılır.
-    // Bağlantı havuza dönerken açık işlem geri alınır (bkz. release_thread_connections).
+    // Is there an open transaction according to the server (MySQL SERVER_STATUS_IN_TRANS, PG ReadyForQuery state,
+    // SQLite autocommit off). Independent of what the application called: db::exec("BEGIN") counts too.
+    // An open transaction is rolled back when the connection returns to the pool (see release_thread_connections).
     virtual bool in_transaction() const { return tx_depth > 0; }
 };
 

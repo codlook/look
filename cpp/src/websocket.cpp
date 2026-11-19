@@ -104,7 +104,7 @@ static std::string ws_encode_data_frame(uint8_t opcode, const std::string& paylo
 std::string ws_encode_text_frame(const std::string& payload)   { return ws_encode_data_frame(0x1, payload); }
 std::string ws_encode_binary_frame(const std::string& payload) { return ws_encode_data_frame(0x2, payload); }
 
-// RFC 3629: 1–4 bayt, en kısa kodlama, vekil (U+D800–DFFF) yok, en çok U+10FFFF.
+// RFC 3629: 1-4 bytes, shortest encoding, no surrogates (U+D800-DFFF), at most U+10FFFF.
 bool ws_utf8_valid(const std::string& s) {
     const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
     const size_t n = s.size();
@@ -122,8 +122,8 @@ bool ws_utf8_valid(const std::string& s) {
             if ((p[i + k] & 0xC0) != 0x80) return false;
             cp = (cp << 6) | (p[i + k] & 0x3F);
         }
-        if ((len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000)) return false;   // fazla uzun
-        if (cp >= 0xD800 && cp <= 0xDFFF) return false;                              // vekil
+        if ((len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000)) return false;   // overlong
+        if (cp >= 0xD800 && cp <= 0xDFFF) return false;                              // surrogate
         if (cp > 0x10FFFF) return false;
         i += len;
     }
@@ -153,7 +153,7 @@ std::string ws_encode_close_frame() {
 }
 
 std::string ws_encode_close_frame_code(uint16_t code) {
-    std::string f("\x88\x02", 2);       // FIN + close, 2 baytlık durum kodu (ağ sırası)
+    std::string f("\x88\x02", 2);       // FIN + close, 2-byte status code (network order)
     f += (char)((code >> 8) & 0xFF);
     f += (char)(code & 0xFF);
     return f;
@@ -161,9 +161,9 @@ std::string ws_encode_close_frame_code(uint16_t code) {
 
 std::string ws_encode_pong_frame(const std::string& payload) {
     std::string f;
-    // RFC 6455 §5.5: kontrol frame payload'u ≤125 bayt. Decoder zaten aşırı boy
-    // ping'i reddediyor ama savunma amaçlı burada da kısıtla — aksi halde
-    // uzunluk baytı (7-bit) gerçek gövdeyle uyuşmayıp wire'ı desync ederdi.
+    // RFC 6455 §5.5: a control frame payload is <=125 bytes. The decoder already rejects an
+    // oversized ping, but restrict here too as defense in depth -- otherwise the
+    // length byte (7-bit) would not match the real body and desync the wire.
     size_t n = payload.size();
     if (n > 125) n = 125;
     f += (char)0x8A;  // FIN + pong
@@ -176,7 +176,7 @@ std::string ws_encode_pong_frame(const std::string& payload) {
 
 WsFrame ws_try_decode_frame(const std::string& buf) { return ws_try_decode_frame(std::string_view(buf)); }
 
-// string_view: olay döngüsü tamponu baştan sona tek geçişte çözer (her çerçevede kopya/silme yok).
+// string_view: the event loop decodes the buffer front to back in a single pass (no copy/erase per frame).
 WsFrame ws_try_decode_frame(std::string_view buf) {
     WsFrame f;
     if (buf.size() < 2) return f;
@@ -189,12 +189,12 @@ WsFrame ws_try_decode_frame(std::string_view buf) {
     size_t plen      = b1 & 0x7F;
     size_t pos       = 2;
 
-    // RFC 6455 §5.2: RSV1-3 (0x70) sıfır olmalı — hiçbir uzantı müzakere edilmediğinden
-    // (LOOK permessage-deflate desteklemez) sıfır-dışı RSV protokol hatasıdır. Ayrıştırıcı
-    // adversarial tur (2026-09-21): sıfır-dışı RSV eskiden SESSİZCE kabul ediliyordu.
+    // RFC 6455 §5.2: RSV1-3 (0x70) must be zero -- since no extension is negotiated
+    // (LOOK does not support permessage-deflate), a non-zero RSV is a protocol error. Parser
+    // adversarial round (2026-09-21): a non-zero RSV used to be accepted SILENTLY.
     if ((b0 & 0x70) != 0) { f.protocol_error = true; return f; }
-    // RFC 6455 §5.2: yalnız tanımlı opcode'lar — data 0x0/0x1/0x2, kontrol 0x8/0x9/0xA.
-    // Ayrılmış opcode'lar (0x3-0x7, 0xB-0xF) → protokol hatası (eskiden sessizce düşürülüyordu).
+    // RFC 6455 §5.2: only defined opcodes -- data 0x0/0x1/0x2, control 0x8/0x9/0xA.
+    // Reserved opcodes (0x3-0x7, 0xB-0xF) -> protocol error (they used to be dropped silently).
     if (f.opcode > 0x0A || (f.opcode > 0x02 && f.opcode < 0x08)) {
         f.protocol_error = true; return f;
     }
@@ -208,26 +208,26 @@ WsFrame ws_try_decode_frame(std::string_view buf) {
         plen = 0;
         for (int i = 0; i < 8; i++) plen = (plen << 8) | (uint8_t)buf[2+i];
         pos = 10;
-        // RFC 6455 §5.2: sunucu 16 MB'ı aşan frame'leri reddeder
+        // RFC 6455 §5.2: the server rejects frames larger than 16 MB
         static constexpr size_t WS_MAX_FRAME = 16 * 1024 * 1024;
-        // Protokol hatası (kapat). Eskiden "daha fazla veri gerekiyor" dönüyordu: 2^40 bildiren bir
-        // çerçeve gelen baytları sonsuza dek tamponlatıyor, her okumada tampon baştan kopyalanıyordu
-        // (tek olay döngüsü %100 CPU, öteki WebSocket'ler saniyelerce bekledi).
+        // Protocol error (close). It used to return "more data needed": a frame declaring 2^40
+        // made the incoming bytes buffer forever and the buffer was copied from the start on every read
+        // (the single event loop at 100% CPU, other WebSockets waited for seconds).
         if (plen > WS_MAX_FRAME) { f.protocol_error = true; return f; }
     }
 
-    // RFC 6455 §5.5: kontrol frame'leri (close 0x8 / ping 0x9 / pong 0xA) ≤125
-    // bayt olmalı ve parçalanamaz (FIN=1). Aşırı boy/parçalı kontrol frame →
-    // protokol hatası. (Aksi halde >125 ping'e üretilecek pong'un 7-bit uzunluğu
-    // taşıp wire'ı desync ederdi.)
+    // RFC 6455 §5.5: control frames (close 0x8 / ping 0x9 / pong 0xA) must be <=125
+    // bytes and cannot be fragmented (FIN=1). An oversized/fragmented control frame ->
+    // protocol error. (Otherwise the 7-bit length of the pong generated for a >125 ping
+    // would overflow and desync the wire.)
     if ((f.opcode & 0x08) != 0 && (plen > 125 || !f.fin)) {
         f.protocol_error = true;
         return f;
     }
 
-    // RFC 6455 §5.1: client→server frame'leri MUTLAKA maskeli olmalı. Maskesiz
-    // frame gelirse sunucu bağlantıyı 1002 (protocol error) ile kapatmalı —
-    // cache poisoning / proxy zehirlenmesi savunması. Sessizce kabul edilmez.
+    // RFC 6455 §5.1: client->server frames MUST be masked. If an unmasked
+    // frame arrives the server must close the connection with 1002 (protocol error) --
+    // defense against cache poisoning / proxy poisoning. It is not accepted silently.
     if (!masked) { f.protocol_error = true; return f; }
     if (buf.size() < pos + 4 + plen) return f;
     uint8_t mask[4] = {
@@ -282,10 +282,10 @@ bool WsConnection::send_binary(const std::string& bytes) {
 
 void (*g_ws_server_close_hook)(int fd) = nullptr;
 
-// Zarif kapanmanın sonunda (look/shutdown.h finish) açık her bağlantıya RFC 6455 §7.4.1 1001
-// "going away". Eskiden süreç çıkarken bağlantı çerçevesiz kopuyordu: istemci 1006 (anormal) görüyor,
-// sunucunun bilerek gittiğini ayıramıyordu (yeniden bağlanma kararı). Süreç hemen çıkacağı için
-// BEKLEMEZ: yazma kilidi kısa sürede alınamazsa ya da soket tamponu doluysa çerçeve atlanır.
+// At the end of graceful shutdown (look/shutdown.h finish) send RFC 6455 §7.4.1 1001
+// "going away" to every open connection. Previously connections were dropped without a frame on process exit: the client saw 1006 (abnormal)
+// and could not tell that the server left on purpose (reconnect decision). Since the process exits right away it
+// does NOT WAIT: if the write lock cannot be taken quickly or the socket buffer is full, the frame is skipped.
 void WsConnection::going_away() {
     server_closed.store(true);
     if (closed.exchange(true)) return;
@@ -302,20 +302,20 @@ void WsConnection::going_away() {
 }
 
 void WsConnection::close_conn() {
-    server_closed.store(true);           // sunucu kapattı: "close" geri çağrısı çalışmaz (belge kuralı)
-    if (closed.exchange(true)) return;  // already closed — yalnız ilk çağıran ilerler
+    server_closed.store(true);           // the server closed: the "close" callback does not run (documented rule)
+    if (closed.exchange(true)) return;  // already closed -- only the first caller proceeds
     std::string frame = ws_encode_close_frame();
     {
         std::lock_guard<std::mutex> lk(write_mutex);
-        // BUG (düzeltildi): closed ARTIK true → send_raw close-frame'i düşürürdü; sunucu-başlatan
-        // ws::close istemciye HİÇ close-frame göndermiyordu (RFC 6455 §5.5.1 ihlali, SSE ikizinin
-        // kapatılmamış hali). write_all closed-guard'sız → close-frame gerçekten telde.
-        // fd_released: closed'u aldıktan sonra kilidi beklerken close_ws fd'yi kapatmış olabilir;
-        // o fd numarası artık başka bir bağlantının olabilir → yazma.
+        // BUG (fixed): closed is NOW true -> send_raw would drop the close frame; a server-initiated
+        // ws::close never sent the client ANY close frame (RFC 6455 §5.5.1 violation, the
+        // unclosed counterpart of the SSE twin). write_all has no closed guard -> the close frame really goes on the wire.
+        // fd_released: while waiting for the lock after taking closed, close_ws may have closed the fd;
+        // that fd number may now belong to another connection -> do not write.
         if (!fd_released) write_all(frame);
     }
-    // fd'yi sunucu kapatır (close_ws, olay döngüsünde). Eskiden yalnız istemci bir şey gönderince
-    // ya da gidince kapanıyordu: cevap vermeyen istemcide bağlantı ve fd süresiz kalıyordu.
+    // The server closes the fd (close_ws, in the event loop). It used to close only when the client sent something
+    // or left: with an unresponsive client the connection and fd stayed forever.
     if (auto hook = g_ws_server_close_hook) hook(fd);
 }
 
@@ -323,8 +323,8 @@ void WsConnection::close_conn() {
 
 WsRegistry g_ws_registry;
 
-// Açık bağlantı sayısına sınır yoktur (LOOK 2): tavan işletim sisteminin dosya sınırıdır;
-// adres başına sınır http_server'dadır.
+// There is no limit on the number of open connections: the ceiling is the operating system's file limit;
+// the per-address limit is in http_server.
 void WsRegistry::add(std::shared_ptr<WsConnection> conn) {
     std::unique_lock<std::shared_mutex> lk(mutex_);
     clients_[conn->fd] = std::move(conn);
@@ -336,7 +336,7 @@ void WsRegistry::remove(int fd) {
 }
 
 void WsRegistry::broadcast(const std::string& msg) {
-    // Analyst note: copy list first, release lock, then send — no deadlock.
+    // Note: copy the list first, release the lock, then send -- no deadlock.
     std::vector<std::shared_ptr<WsConnection>> snapshot;
     {
         std::shared_lock<std::shared_mutex> lk(mutex_);

@@ -1,19 +1,19 @@
 #pragma once
-// Dosya sürücüsünün oturum dosyaları (LOOK_SESSION_DRIVER=file, varsayılan).
+// Session files of the file driver (LOOK_SESSION_DRIVER=file, the default).
 //
-// GÜVENLİK (analizci 1.0.36'da, biz 1.0.37'de doğruladık): dosyalar herkesin listeleyebildiği
-// /tmp'ye "look_sess_<kimlik>" adıyla 0644 izinle yazılıyordu. Aynı sunucudaki her kullanıcı
-// kimlikleri ve içerikleri okuyup oturumu çalabiliyordu; /tmp'ye kendi yazdığı bir
-// look_sess_<kimlik> dosyası (içinde user=admin) çerezle gönderilince oturum olarak kabul
-// ediliyordu. Şimdi (tmux / ssh-agent kuralı):
-//   * dizin yalnız bu sürecin kullanıcısına ait ve 0700 olmalı, sembolik bağlantı olmamalı —
-//     değilse kullanılmaz, neden söylenir. Varsayılan dizin: session_dir_path() (başkasının önceden
-//     yaratamayacağı ilk yer; yoksa 0700 ile yaratılır); LOOK_SESSION_DIR aynı denetimlerle.
-//   * süresi dolan (LOOK_SESSION_TTL) dosya okunmaz; arka planda düzenli silinir (session_files_gc).
-//   * dosyalar 0600, sembolik bağlantı izlenmeden (O_NOFOLLOW), geçici dosya + rename ile yazılır;
-//   * okunan dosya bu kullanıcıya ait, 0600'den gevşek olmayan, tek bağlantılı düz dosya olmalı —
-//     değilse oturum yok sayılır (başkasının bıraktığı dosya asla oturum olmaz).
-// Windows: %TEMP% zaten kullanıcıya özel; izin denetimi yok, dosyalar %TEMP%\look-sessions altında.
+// SECURITY (fixed in 1.0.37): files were written to the world-listable
+// /tmp as "look_sess_<id>" with mode 0644. Any user on the same server
+// could read ids and contents and steal sessions; a look_sess_<id> file they wrote to /tmp
+// themselves (containing user=admin) was accepted as a session when sent in the cookie.
+// Now (tmux / ssh-agent rule):
+//   * the directory must belong only to this process's user, be 0700, and not be a symlink —
+//     otherwise it is not used and the reason is stated. Default directory: session_dir_path() (the first place someone else
+//     cannot pre-create; created with 0700 if missing); LOOK_SESSION_DIR gets the same checks.
+//   * an expired (LOOK_SESSION_TTL) file is not read; it is deleted periodically in the background (session_files_gc).
+//   * files are written 0600, without following symlinks (O_NOFOLLOW), via temp file + rename;
+//   * a file that is read must be a regular file owned by this user, no looser than 0600, with a single link —
+//     otherwise the session is ignored (a file left by someone else never becomes a session).
+// Windows: %TEMP% is already per-user; no permission checks, files live under %TEMP%\look-sessions.
 #include <string>
 #include <stdexcept>
 #include <mutex>
@@ -39,7 +39,7 @@
 
 namespace look {
 
-// Dizin uygun mu; değilse why'a İngilizce neden. create: yoksa 0700 ile yarat.
+// Is the directory suitable; if not, an English reason in why. create: create with 0700 if missing.
 inline bool session_dir_ok(const std::string& dir, bool create, std::string& why) {
 #ifndef _WIN32
     struct stat st{};
@@ -79,26 +79,26 @@ inline bool session_dir_ok(const std::string& dir, bool create, std::string& why
 }
 
 #ifndef _WIN32
-// Var olan, bu kullanıcıya ait bir dizin mi (bağlantı izlenir: $HOME bir bağlantı olabilir).
+// Is it an existing directory owned by this user (links are followed: $HOME may be a link).
 inline bool session_dir_owned(const char* p) {
     struct stat st{};
     return p && *p && ::stat(p, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == ::geteuid();
 }
 #endif
 
-// Kullanılacak dizin: LOOK_SESSION_DIR; yoksa BAŞKA BİR KULLANICININ ÖNCEDEN YARATAMAYACAĞI ilk yer:
-//   $STATE_DIRECTORY/sessions (systemd StateDirectory=; kalıcı),
-//   $XDG_RUNTIME_DIR/look-sessions (/run/user/<uid>, yalnız o kullanıcı),
-//   $HOME/.look/sessions ($HOME bu kullanıcıya aitse — Debian'da www-data'nın /var/www'su root'un),
-//   en son ${TMPDIR:-/tmp}/look-sessions-<uid>.
-// 1.0.38 doğrudan /tmp'yi kullanıyordu: başka bir kullanıcı o dizini önceden yaratınca oturum
-// kullanan her istek reddediliyordu (site ayakta, girişler çalışmıyor).
+// Directory to use: LOOK_SESSION_DIR; otherwise the first place ANOTHER USER CANNOT PRE-CREATE:
+//   $STATE_DIRECTORY/sessions (systemd StateDirectory=; persistent),
+//   $XDG_RUNTIME_DIR/look-sessions (/run/user/<uid>, only that user),
+//   $HOME/.look/sessions (if $HOME belongs to this user — on Debian www-data's /var/www is root's),
+//   finally ${TMPDIR:-/tmp}/look-sessions-<uid>.
+// 1.0.38 used /tmp directly: when another user pre-created that directory, every request that
+// used sessions was rejected (site up, logins broken).
 inline std::string session_dir_path() {
     if (const char* e = std::getenv("LOOK_SESSION_DIR")) if (*e) return e;
 #ifndef _WIN32
     if (const char* s = std::getenv("STATE_DIRECTORY")) if (*s) {
         std::string first(s);
-        first = first.substr(0, first.find(':'));   // birden çok StateDirectory: ilki
+        first = first.substr(0, first.find(':'));   // with multiple StateDirectory entries: the first
         if (session_dir_owned(first.c_str())) return first + "/sessions";
     }
     if (const char* x = std::getenv("XDG_RUNTIME_DIR")) if (session_dir_owned(x)) return std::string(x) + "/look-sessions";
@@ -112,8 +112,8 @@ inline std::string session_dir_path() {
 #endif
 }
 
-// Eksik üst dizinler (ör. LOOK_SESSION_DIR=$HOME/.look/sessions-site) bu kullanıcı olarak 0700 ile
-// yaratılır — kök (root) kullanıcının başkasının dizininde iş yapması gerekmez. Var olana dokunulmaz.
+// Missing parent directories (e.g. LOOK_SESSION_DIR=$HOME/.look/sessions-site) are created as this user with 0700 —
+// root need not work inside someone else's directory. Existing ones are left alone.
 inline void session_dir_make_parents(const std::string& dir) {
 #ifndef _WIN32
     for (size_t p = dir.find('/', 1); p != std::string::npos; p = dir.find('/', p + 1))
@@ -123,7 +123,7 @@ inline void session_dir_make_parents(const std::string& dir) {
 #endif
 }
 
-// Denetlenmiş dizin (başarılı sonuç süreç boyunca saklanır); uygun değilse nedenle hata.
+// Checked directory (a successful result is kept for the lifetime of the process); error with reason if unsuitable.
 inline std::string session_dir() {
     static std::mutex mu;
     static std::string ok_dir;
@@ -144,11 +144,11 @@ inline std::string session_file(const std::string& sid) {
 #endif
 }
 
-// Oku. Dosya yoksa — ya da bu sürecin yazdığı bir oturum dosyası değilse, ya da ttl_sec
-// saniyedir yazılmamışsa (süresi dolmuş: silinir) — boş döner. Eskiden dosya sürücüsü
-// LOOK_SESSION_TTL'yi hiç uygulamıyordu: eski bir dosya hâlâ geçerli oturumdu (Redis EXPIRE ile
-// siliyordu). Süre son YAZMADAN sayılır — Redis'teki SET ... EX ile aynı.
-// foreign: dosya vardı ama reddedildi (çağıran uyarı yazabilir).
+// Read. Returns empty if the file does not exist — or is not a session file written by this process, or if it was
+// not written within ttl_sec seconds (expired: deleted). Previously the file driver
+// never enforced LOOK_SESSION_TTL: an old file was still a valid session (Redis expired it
+// with EXPIRE). The time counts from the last WRITE — same as SET ... EX in Redis.
+// foreign: the file existed but was rejected (the caller may log a warning).
 inline std::string session_file_read(const std::string& sid, bool* foreign = nullptr, long ttl_sec = 0) {
     if (foreign) *foreign = false;
     const std::string path = session_file(sid);
@@ -164,7 +164,7 @@ inline std::string session_file_read(const std::string& sid, bool* foreign = nul
     }
     if (ttl_sec > 0 && (long long)std::time(nullptr) - (long long)st.st_mtime > ttl_sec) {
         ::close(fd);
-        ::unlink(path.c_str());   // süresi dolmuş
+        ::unlink(path.c_str());   // expired
         return "";
     }
     std::string out;
@@ -183,9 +183,9 @@ inline std::string session_file_read(const std::string& sid, bool* foreign = nul
 #endif
 }
 
-// Bu süreç bu oturumu verdi mi (dosya var, bizim, süresi dolmamış)? session_file_read ile aynı
-// denetimler; içerik okunmaz. Boş oturum (veri yazılmamış) da vardır — okumanın "" dönüşü
-// "yok" ile "boş"u ayırt etmez. session::start'ın katı modu bunu kullanır (sabitleme).
+// Did this process issue this session (file exists, ours, not expired)? Same checks as session_file_read;
+// content is not read. An empty session (no data written) also exists — read returning ""
+// cannot tell "absent" from "empty". Strict mode of session::start uses this (fixation protection).
 inline bool session_file_exists(const std::string& sid, long ttl_sec = 0) {
     const std::string path = session_file(sid);
 #ifndef _WIN32
@@ -203,9 +203,9 @@ inline bool session_file_exists(const std::string& sid, long ttl_sec = 0) {
 #endif
 }
 
-// session_file_exists + içerik, tek açılışta: true = bu sürecin verdiği, süresi dolmamış oturum
-// (içerik boş olabilir). session::start bunu kullanır: varlık denetimiyle AYNI maliyette isteğin
-// başındaki veriyi de alır (eşzamanlı regenerate'te o isteğin kopyası — bkz. web_stdlib).
+// session_file_exists + content in a single open: true = a non-expired session issued by this process
+// (content may be empty). session::start uses this: at the same cost as the existence check it also gets
+// the data at the start of the request (for a concurrent regenerate, that request's copy — see web_stdlib).
 inline bool session_file_read_if_exists(const std::string& sid, std::string& out, long ttl_sec = 0) {
     out.clear();
     const std::string path = session_file(sid);
@@ -235,8 +235,8 @@ inline bool session_file_read_if_exists(const std::string& sid, std::string& out
 #endif
 }
 
-// Yaz: aynı dizinde 0600 geçici dosya → içerik → rename (yarım okunan oturum olmaz; hedef bir
-// sembolik bağlantıysa rename onu değiştirir, izlemez).
+// Write: 0600 temp file in the same directory → content → rename (no half-read session; if the target is a
+// symlink, rename replaces it rather than following it).
 inline void session_file_write(const std::string& sid, const std::string& blob) {
     const std::string path = session_file(sid);
 #ifndef _WIN32
@@ -263,23 +263,23 @@ inline void session_file_write(const std::string& sid, const std::string& blob) 
 #endif
 }
 
-// Güncelle — YALNIZ oturum hâlâ varsa. false: oturum yok (bu istek sürerken session::destroy ya da
-// regenerate ile silindi). Eskiden session::set var-mı denetimi → yükle → yaz yapıyordu: arada başka
-// bir sekme çıkış yaparsa yazma dosyayı ESKİ verilerle yeniden yaratıyordu (çıkış geri alınıyordu).
-// Şimdi: var olan dosya açılır, kilitlenir (flock), hâlâ bağlıysa (nlink) yerine yenisi konur;
-// silme de aynı kilitle yapılır. Kilit beklerken dosya başka bir güncellemeyle değiştiyse yenisine
-// yeniden bakılır (son yazan kazanır — eskisi gibi).
+// Update — ONLY if the session still exists. false: no session (deleted by session::destroy or
+// regenerate while this request was running). Previously session::set did check-exists → load → write: if another
+// tab logged out in between, the write re-created the file with OLD data (the logout was undone).
+// Now: the existing file is opened, locked (flock), and replaced with the new one only if still linked (nlink);
+// deletion uses the same lock. If the file was replaced by another update while waiting for the lock,
+// the new one is looked up again (last writer wins — as before).
 inline bool session_file_update(const std::string& sid, const std::string& blob) {
 #ifndef _WIN32
     const std::string path = session_file(sid);
     for (int attempt = 0; attempt < 16; ++attempt) {
         int lfd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-        if (lfd < 0) return false;                         // silinmiş
+        if (lfd < 0) return false;                         // deleted
         while (::flock(lfd, LOCK_EX) != 0 && errno == EINTR) {}
         struct stat st{};
-        if (::fstat(lfd, &st) != 0 || st.st_nlink == 0) { ::close(lfd); continue; }   // değişti/silindi: yeniden bak
+        if (::fstat(lfd, &st) != 0 || st.st_nlink == 0) { ::close(lfd); continue; }   // changed/deleted: look again
         try { session_file_write(sid, blob); } catch (...) { ::close(lfd); throw; }
-        ::close(lfd);                                       // kilit eski dosyayla birlikte bırakılır
+        ::close(lfd);                                       // the lock is released together with the old file
         return true;
     }
     throw std::runtime_error("session: the session file kept changing while it was being written");
@@ -292,13 +292,13 @@ inline bool session_file_update(const std::string& sid, const std::string& blob)
 
 inline void session_file_remove(const std::string& sid) {
 #ifndef _WIN32
-    // Güncellemeyle aynı kilit: kilidi tutan bir güncelleme bitmeden silinmez, bittikten sonra
-    // yolda duran (onun yazdığı) dosya silinir — çıkış her zaman kazanır.
-    // Kilitlenen dosya bu arada değiştirildiyse (nlink 0) yoldaki yenisi kilitlenir.
+    // Same lock as update: no deletion before an update holding the lock finishes; afterward
+    // the file on the path (the one it wrote) is deleted — logout always wins.
+    // If the locked file was replaced in the meantime (nlink 0), the new one on the path is locked.
     const std::string path = session_file(sid);
     for (int attempt = 0; attempt < 16; ++attempt) {
         int lfd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-        if (lfd < 0) { ::unlink(path.c_str()); return; }   // yok (ya da bağlantı: yine de kaldır)
+        if (lfd < 0) { ::unlink(path.c_str()); return; }   // missing (or a link: remove anyway)
         while (::flock(lfd, LOCK_EX) != 0 && errno == EINTR) {}
         struct stat st{};
         if (::fstat(lfd, &st) == 0 && st.st_nlink == 0) { ::close(lfd); continue; }
@@ -312,24 +312,24 @@ inline void session_file_remove(const std::string& sid) {
 #endif
 }
 
-// Süresi dolan oturum dosyalarını sil. Eskiden hiç silinmiyordu: yeni ziyaretçinin oturumuna
-// yazan her istek (her sayfada CSRF anahtarı) kalıcı bir dosya bırakıyordu — çerezsiz istekler,
-// giriş yapmadan, diski ve inode'ları doldurabiliyordu (ölçüldü: 3000 istek, 3000 dosya).
-// Ne zaman: en çok 5 dakikada bir (TTL daha kısaysa TTL'de bir), TÜM SÜREÇLER için bir kez. Son
-// temizliğin zamanı dizindeki .gc-stamp dosyasında tutulur ve kilitlenir (flock): 1.0.39'da
-// süreç belleğindeydi — CGI'da her istek yeni bir süreç olduğu için temizlik ya her istekte
-// başlıyor ya da süreç kapanınca yarıda ölüyordu (ölçüldü: süre dolduktan sonra 320 dosyanın
-// hiçbiri silinmedi). Uzun yaşayan sunucuda arka plan iş parçacığında; kısa ömürlü süreçte
-// (CGI: session_gc_short_lived) yanıt gönderildikten sonra session_gc_run_pending ile.
-// Yarım kalmış geçici dosyalar (look_sess_<id>.XXXXXX) en az bir saat sonra silinir. Yalnız bu
-// kullanıcının düz dosyalarına dokunulur.
+// Delete expired session files. Previously never deleted: every request writing to a new visitor's
+// session (a CSRF key on every page) left a permanent file — cookieless requests, without
+// logging in, could fill disk and inodes (measured: 3000 requests, 3000 files).
+// When: at most every 5 minutes (every TTL if shorter), once for ALL PROCESSES. The time of the last
+// cleanup is kept in the .gc-stamp file in the directory and locked (flock): in 1.0.39 it was
+// in process memory — in CGI every request is a new process, so cleanup either started on every request
+// or died half-done when the process exited (measured: after expiry none of 320 files
+// was deleted). In a long-lived server in a background thread; in a short-lived process
+// (CGI: session_gc_short_lived) after the response is sent via session_gc_run_pending.
+// Half-written temp files (look_sess_<id>.XXXXXX) are deleted after at least an hour. Only this
+// user's regular files are touched.
 inline std::atomic<bool>& session_gc_short_lived_flag() { static std::atomic<bool> v{false}; return v; }
 inline std::atomic<long>& session_gc_pending_ttl()    { static std::atomic<long> v{0};     return v; }
 inline void session_gc_short_lived(bool on) { session_gc_short_lived_flag() = on; }
 #ifndef _WIN32
 
-// Bu süreç temizliği üstlenebilir mi: damga yoksa ya da eskiyse, kilit alınabiliyorsa evet.
-// Dönüş: kilitli damga fd'si (tarama bitince kapatılır) ya da -1.
+// Can this process take over cleanup: yes if the stamp is missing or old and the lock can be acquired.
+// Returns: the locked stamp fd (closed when the scan finishes) or -1.
 inline int session_gc_claim(const std::string& dir, long long every, long long now) {
     const std::string stamp = dir + "/.gc-stamp";
     int fd = ::open(stamp.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -337,7 +337,7 @@ inline int session_gc_claim(const std::string& dir, long long every, long long n
     struct stat st{};
     if (::flock(fd, LOCK_EX | LOCK_NB) != 0 || ::fstat(fd, &st) != 0 ||
         !S_ISREG(st.st_mode) || st.st_uid != ::geteuid() ||
-        (st.st_size > 0 && now - (long long)st.st_mtime < every)) {   // boyut 0 = hiç taranmadı
+        (st.st_size > 0 && now - (long long)st.st_mtime < every)) {   // size 0 = never scanned
         ::close(fd);
         return -1;
     }
@@ -367,7 +367,7 @@ inline void session_gc_run(long ttl_sec) {
     std::string dir;
     try { dir = session_dir(); } catch (...) { return; }
     int fd = session_gc_claim(dir, every, now);
-    if (fd < 0) return;   // aralık dolmadı ya da başka bir süreç tarıyor
+    if (fd < 0) return;   // interval not elapsed or another process is scanning
     session_gc_sweep(dir, ttl_sec, now);
     ::close(fd);
 }
@@ -381,19 +381,19 @@ inline void session_files_gc(long ttl_sec) {
     const long long now = (long long)std::time(nullptr);
     const long long every = ttl_sec < 300 ? ttl_sec : 300;
     long long prev = last.load();
-    if (now - prev < every || !last.compare_exchange_strong(prev, now)) return;   // süreç içi kısayol
-    if (session_gc_short_lived_flag()) { session_gc_pending_ttl() = ttl_sec; return; }   // yanıttan sonra
+    if (now - prev < every || !last.compare_exchange_strong(prev, now)) return;   // in-process shortcut
+    if (session_gc_short_lived_flag()) { session_gc_pending_ttl() = ttl_sec; return; }   // after the response
     bool idle = false;
     if (!running.compare_exchange_strong(idle, true)) return;
     auto job = [ttl_sec]() { session_gc_run(ttl_sec); running = false; };
     try { std::thread(job).detach(); }
-    catch (...) { job(); }   // iş parçacığı açılamadı (bellek sınırı): bu istekte tara
+    catch (...) { job(); }   // could not start a thread (memory limit): scan on this request
 #else
     (void)ttl_sec;
 #endif
 }
 
-// Kısa ömürlü süreç (CGI): yanıt gönderildikten sonra, bu istekte temizlik zamanı geldiyse tara.
+// Short-lived process (CGI): after the response is sent, scan if cleanup is due on this request.
 inline void session_gc_run_pending() {
 #ifndef _WIN32
     long ttl = session_gc_pending_ttl().exchange(0);
@@ -401,9 +401,9 @@ inline void session_gc_run_pending() {
 #endif
 }
 
-// Başlangıç denetimi: LOOK_SESSION_DIR açıkça verilmişse (yöneticinin ayarı) uygun değilse
-// süreç başlamaz. Boş dönüş = sorun yok. Varsayılan dizin ilk kullanımda denetlenir: oturum
-// kullanmayan bir uygulama, /tmp'de başkasının önceden yarattığı bir dizin yüzünden durmasın.
+// Startup check: if LOOK_SESSION_DIR was given explicitly (administrator's setting) and is unsuitable,
+// the process does not start. Empty return = no problem. The default directory is checked on first use: an app
+// that does not use sessions should not stop because of a directory someone else pre-created in /tmp.
 inline std::string session_dir_startup_problem() {
     const char* d = std::getenv("LOOK_SESSION_DRIVER");
     if (d && std::string(d) == "redis") return "";

@@ -6,7 +6,7 @@
 #include "look/mail.h"
 #include "look/smtp_server.h"
 #include "look/http_client.h"
-#include "look/host_port.h"   // SMTP_PORT doğrulama
+#include "look/host_port.h"   // SMTP_PORT validation
 #include "look/logger.h"
 #include <stdexcept>
 #include <map>
@@ -25,9 +25,9 @@
 #include <ctime>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
-#include "look/fiber_io.h"   // fiber içinde SMTP yanıtı beklenirken iş parçacığı serbest kalır
-#include "look/fiber_net.h"  // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
+#include "look/tls_peer.h"   // SNI + name verification (IP -> IP SAN), handshake failure reason
+#include "look/fiber_io.h"   // while waiting for the SMTP reply inside a fiber the thread is released
+#include "look/fiber_net.h"  // DNS/connect/TLS/send must not hold the thread inside a fiber
 #endif
 
 namespace look {
@@ -143,7 +143,7 @@ static MailResult send_sendgrid(const std::string& api_key,
 {
     MailResult r;
     // Build minimal JSON manually (no json:: dep from C++ side)
-    // JSON escape: tüm kontrol karakterleri dahil (RFC 7159 §7)
+    // JSON escape: including all control characters (RFC 7159 §7)
     auto esc = [](const std::string& s) {
         std::string out;
         for (unsigned char c : s) {
@@ -194,7 +194,7 @@ static MailResult send_postmark(const std::string& api_key,
                                  const std::string& html)
 {
     MailResult r;
-    // JSON escape: tüm kontrol karakterleri dahil (RFC 7159 §7)
+    // JSON escape: including all control characters (RFC 7159 §7)
     auto esc = [](const std::string& s) {
         std::string out;
         for (unsigned char c : s) {
@@ -267,13 +267,13 @@ static std::string smtp_date() {
 // A plain-fd-or-TLS connection with line-oriented read and reply-code parsing.
 struct SmtpConn {
     int      fd  = -1;
-    int      tmo_ms = 30000;   // okuma süresi sınırı (SO_RCVTIMEO ile aynı) — fiber beklemesi de buna uyar
+    int      tmo_ms = 30000;   // read time limit (same as SO_RCVTIMEO) -- a fiber wait obeys it too
     SSL*     ssl = nullptr;
     ~SmtpConn() {
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
         if (fd >= 0) ::close(fd);
     }
-    // Gönderme tamponu doluysa fiber içinde yalnız fiber bekler (fiber dışı: SO_SNDTIMEO).
+    // If the send buffer is full, inside a fiber only the fiber waits (outside a fiber: SO_SNDTIMEO).
     bool write_all(const std::string& s) {
         return look::fiber_send_all(fd, ssl, s.data(), s.size(), tmo_ms);
     }
@@ -281,9 +281,9 @@ struct SmtpConn {
         line.clear();
         char c;
         for (;;) {
-            // Eskiden recv/SSL_read doğrudan engelliyordu: web isteğindeki mail::send uzak sunucunun her
-            // yanıtı boyunca İŞ PARÇACIĞINI tutuyordu. Fiber içinde yalnız fiber bekler; fiber dışı → -1,
-            // okuma eskisi gibi SO_RCVTIMEO ile engeller (blocking-ok: fiber yok).
+            // Previously recv/SSL_read blocked directly: mail::send in a web request held the THREAD
+            // for every reply of the remote server. Inside a fiber only the fiber waits; outside a fiber -> -1,
+            // the read blocks with SO_RCVTIMEO as before (blocking-ok: no fiber).
             if (!(ssl && SSL_pending(ssl) > 0) && look::fiber_wait_readable(fd, tmo_ms) == 0) return false;
             int n = ssl ? SSL_read(ssl, &c, 1) : (int)::recv(fd, &c, 1, 0);
             if (n <= 0) return false;                       // error / timeout / EOF
@@ -303,7 +303,7 @@ static int smtp_reply(SmtpConn& c, std::string& text) {
         text += line + "\n";
         if (line.size() < 3) return -1;
         if (line.size() == 3 || line[3] == ' ') {           // final line (not "NNN-")
-            text.pop_back();   // sondaki satır sonu hata iletisine girmesin ("STARTTLS refused: 502 …\n")
+            text.pop_back();   // so the trailing line break does not end up in the error message ("STARTTLS refused: 502 ...\n")
             return (line[0]-'0')*100 + (line[1]-'0')*10 + (line[2]-'0');
         }
     }
@@ -317,12 +317,12 @@ static bool smtp_cmd(SmtpConn& c, const std::string& cmd, int ok, int ok2, std::
 
 // client-side TLS handshake on c.fd, verifying the peer against the system CA
 // bundle and enforcing the hostname (gate #2: verification on by default).
-// İstemci SSL_CTX'i süreç başına bir kez: eskiden her mail::send yeni bağlam kurup sistem CA
-// paketini diskten okuyup ayrıştırıyordu (işçi iş parçacığında, her gönderimde).
+// The client SSL_CTX is built once per process: previously every mail::send built a new context and
+// read and parsed the system CA bundle from disk (on a worker thread, on every send).
 static SSL_CTX* smtp_ssl_ctx() {
     static SSL_CTX* ctx = [] {
         SSL_CTX* x = SSL_CTX_new(TLS_client_method());
-        look::tls_client_defaults(x);   // en az TLS 1.2, makineden bağımsız
+        look::tls_client_defaults(x);   // at least TLS 1.2, machine-independent
         if (x) {
             SSL_CTX_set_verify(x, SSL_VERIFY_PEER, nullptr);
             SSL_CTX_set_default_verify_paths(x);            // reads SSL_CERT_FILE/DIR
@@ -338,10 +338,10 @@ static bool smtp_tls(SmtpConn& c, const std::string& host) {
     c.ssl = SSL_new(ctx);
     if (!c.ssl) return false;
     SSL_set_fd(c.ssl, c.fd);
-    // SNI + ad doğrulaması (IP → IP SAN, ad → DNS adı; look/tls_peer.h). Sonuç eskiden
-    // denetlenmiyordu: kurulamazsa ad kontrolü sessizce kapanırdı → bağlanma.
+    // SNI + name verification (IP -> IP SAN, name -> DNS name; look/tls_peer.h). The result used to
+    // go unchecked: if it could not be set up, name checking would silently turn off -> connect.
     if (!look::tls_set_peer(c.ssl, host, true)) return false;
-    // Fiber içinde el sıkışmanın her tur yolculuğunda yalnız fiber bekler.
+    // Inside a fiber, only the fiber waits at each round trip of the handshake.
     return look::fiber_ssl_connect(c.ssl, c.fd, c.tmo_ms) == 1;
 }
 
@@ -369,9 +369,9 @@ static bool smtp_connect(SmtpConn& c, const std::string& host, int port, int tim
     return true;
 }
 
-// Bağlanılan karşı uç bu makine mi? Karar sunucu ADINA değil, gerçekten bağlanılan ADRESE göre:
-// "localhost" başka bir adrese çözülürse (hosts dosyası, DNS) parola yine dışarı gitmez.
-// 127.0.0.0/8, ::1 ve IPv4-eşlemeli ::ffff:127.x.y.z.
+// Is the peer we connected to this machine? The decision is based not on the server NAME but on the ADDRESS actually connected to:
+// if "localhost" resolves to another address (hosts file, DNS) the password still does not go out.
+// 127.0.0.0/8, ::1 and the IPv4-mapped ::ffff:127.x.y.z.
 static bool smtp_peer_is_loopback(int fd) {
     struct sockaddr_storage ss; socklen_t len = sizeof(ss);
     if (getpeername(fd, reinterpret_cast<struct sockaddr*>(&ss), &len) != 0) return false;
@@ -439,7 +439,7 @@ static MailResult send_smtp(const std::string& from, const std::string& to,
                             const std::string& html) {
     MailResult r;
     std::string host = env_get("SMTP_HOST", "");
-    // Eskiden atoi: "587x" → 587, "abc" → 0 → "connect failed: host:0". Yalnız rakam, 1-65535.
+    // It used to be atoi: "587x" -> 587, "abc" -> 0 -> "connect failed: host:0". Digits only, 1-65535.
     int         port = 587;
     { const std::string ps = env_get("SMTP_PORT", "587");
       if (!ps.empty() && !parse_port_number(ps, port)) {
@@ -458,9 +458,9 @@ static MailResult send_smtp(const std::string& from, const std::string& to,
         return r;
     }
     if (tls == "none") {
-        // Go net/smtp kuralı: TLS yoksa parola yalnız bu makinedeki sunucuya gider. Uzak sunucuda
-        // tek bayt göndermeden açık hata (eskiden yalnız uyarı yazıp parolayı düz metin yolluyordu).
-        // Parolasız düz metin gönderim her yerde çalışır.
+        // Go net/smtp rule: without TLS the password goes only to a server on this machine. For a remote server,
+        // a clear error without sending a single byte (it used to only print a warning and send the password in plain text).
+        // Plain-text sending without a password works everywhere.
         if (!user.empty() && !smtp_peer_is_loopback(c.fd)) {
             r.message = "SMTP_TLS=none: the login is not sent in clear text to " + host +
                         " (not a loopback address; without TLS only 127.0.0.0/8 or ::1 is allowed); "
@@ -618,7 +618,7 @@ Module make_mail_module() {
         return Value(arr);
     };
 
-    // mail::provider() → string (aktif provider adı)
+    // mail::provider() -> string (name of the active provider)
     m.functions["provider"] = [](std::vector<Value>) -> Value {
         return Value(std::string(env_get("MAIL_PROVIDER", "mailgun")));
     };

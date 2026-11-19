@@ -1,11 +1,11 @@
 #include "look/http_server.h"
-#include "look/http_parse.h"   // saf parse_request seam (fuzz + test hedefi)
+#include "look/http_parse.h"   // pure parse_request seam (fuzz + test target)
 #include "look/websocket.h"
 #include "look/sse.h"
 #include "look/event_loop.h"
 #include "look/fiber.h"
 #include "look/logger.h"
-#include "look/thread_start.h"   // start_pool_threads: baslatilamazsa durdur+birlestir+nedenli hata
+#include "look/thread_start.h"   // start_pool_threads: if it cannot start, stop + join + error with a reason
 
 #include <sstream>
 #include <thread>
@@ -26,11 +26,11 @@
 #include <cstdint>
 #ifdef __linux__
 #include <sys/resource.h>
-#include <poll.h>   // gözetleyici: takılan işçinin soketinde bekleyen bağlantı var mı
+#include <poll.h>   // watcher: does the stuck worker's socket have a waiting connection
 #endif
 
-// Açık bağlantı sayısına LOOK bir sınır koymaz; sınır işletim sisteminin tanıtıcı sınırıdır.
-// Yumuşak sınır çoğu sistemde 1024 gelir: başlangıçta sert sınıra çekilir (Go da böyle yapar).
+// LOOK imposes no limit on the number of open connections; the limit is the operating system's descriptor limit.
+// The soft limit is 1024 on most systems: it is raised to the hard limit at startup (Go does the same).
 static void raise_fd_limit() {
 #ifdef __linux__
     struct rlimit rl;
@@ -41,8 +41,8 @@ static void raise_fd_limit() {
 #endif
 }
 
-// Dağıtım modeli (1.0.20): Linux'ta VARSAYILAN fiber — bağlantı beklerken işçiyi tutmaz.
-// "0" = eski model (bağlantı başına işçi). Linux dışında fiber dağıtımı yok.
+// Dispatch model (1.0.20): on Linux fiber is the DEFAULT — it does not hold a worker while waiting on a connection.
+// "0" = the old model (one worker per connection). There is no fiber dispatch outside Linux.
 static bool fiber_dispatch_on() {
 #ifdef __linux__
     const char* v = std::getenv("LOOK_FIBER_DISPATCH");
@@ -52,9 +52,9 @@ static bool fiber_dispatch_on() {
 #endif
 }
 
-// accept tanıtıcı/bellek tükendiği için başarısızsa bağlantı kuyrukta bekler ve accept hemen
-// aynı hatayı yeniden verir: beklemeden dönmek çekirdeği %100 yakar. Kısa bekle, yeniden dene;
-// açık bağlantılardan biri kapanınca kabul kendiliğinden sürer.
+// If accept fails because descriptors/memory are exhausted, the connection waits in the queue and accept immediately
+// returns the same error again: returning without waiting burns the kernel at 100%. Wait briefly, retry;
+// when one of the open connections closes, accepting resumes by itself.
 static void accept_backoff() {
 #ifndef _WIN32
     int e = errno;
@@ -89,12 +89,12 @@ static void accept_backoff() {
 
 namespace look {
 
-// fcgi_main varsayılan işçi sayısını dağıtım modeline göre seçer (bkz. fiber_dispatch_on).
+// fcgi_main picks the default worker count according to the dispatch model (see fiber_dispatch_on).
 bool http_fiber_dispatch_enabled() { return fiber_dispatch_on(); }
 
 // ── HTTP/1.1 parser ───────────────────────────────────────────────────────────
-// Saf ayrıştırma mantığı look/http_parse.h'ye taşındı (fuzz + test hedefi, drift
-// yok). Buradaki thin wrapper mevcut çağrı yerlerini korur.
+// Pure parsing logic moved to look/http_parse.h (fuzz + test target, no
+// drift). The thin wrapper here preserves the existing call sites.
 
 static int parse_request(const std::string& raw, HttpRequest& req) {
     return http_parse_request(raw, req);
@@ -105,14 +105,14 @@ static int parse_request(const std::string& raw, HttpRequest& req) {
 std::string HttpResponse::build() const {
     std::ostringstream out;
     out << "HTTP/1.1 " << status_code << " " << status_text << "\r\n";
-    // Defense-in-depth: CR/LF strip — HTTP response splitting engellenir
-    // (giriş katmanı response::header/redirect/cookie zaten sanitize eder).
+    // Defense-in-depth: CR/LF strip — prevents HTTP response splitting
+    // (the input layer response::header/redirect/cookie already sanitizes).
     auto strip_crlf = [](const std::string& s) {
         size_t cut = s.find_first_of("\r\n");
         return cut == std::string::npos ? s : s.substr(0, cut);
     };
     for (auto& [k, v] : headers) out << strip_crlf(k) << ": " << strip_crlf(v) << "\r\n";
-    // Her çerez ayrı Set-Cookie satırı (std::map birden fazla aynı-anahtarı tutamaz)
+    // Each cookie is a separate Set-Cookie line (a std::map cannot hold the same key more than once)
     for (auto& c : set_cookies) out << "Set-Cookie: " << strip_crlf(c) << "\r\n";
     out << "Content-Length: " << body.size() << "\r\n";
     out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
@@ -174,32 +174,32 @@ static void send_ws_reject(int fd, const std::string& reason) {
 }
 
 // ── Per-IP concurrent-connection limit (worker-scope) ─────────────────────────
-// SMTP/IMAP tarafındaki LOOK_SMTP_MAX_CONNS_IP modelinin HTTP karşılığı. Tek bir
-// IP'nin worker havuzunu tüketmesini engeller (slow-body/slowloris'i tek kaynaktan
-// çok daha zorlaştırır — ① ile birlikte savunma katmanı). Sayaç, bağlantının
-// worker'ı tuttuğu süre boyunca artık (handle_connection RAII kapsamı); WS/SSE
-// event-loop'a devredince worker serbest kalır ve slot da serbest kalır — bu tam
-// olarak "bir IP kaç worker tutabilir" eşiğidir.
+// The HTTP counterpart of the LOOK_SMTP_MAX_CONNS_IP model on the SMTP/IMAP side. Prevents a single
+// IP from exhausting the worker pool (makes slow-body/slowloris much harder from a single source
+// — a defense layer together with ①). The counter stays incremented for as long as the connection holds
+// a worker (handle_connection RAII scope); when WS/SSE is handed over to the
+// event loop the worker is freed and the slot is freed too — this is exactly
+// the threshold of "how many workers can one IP hold".
 //
-// VARSAYILAN KAPALI (0). Anahtar TCP peer IP'sidir; PROD'da LOOK bir ters-proxy
-// (nginx/Apache) ARKASINDADIR → tüm bağlantılar proxy'nin IP'sinden görünür, tek
-// sayaç tüm siteyi kısıtlar. Bu yüzden yalnız LOOK doğrudan internete BAKARKEN
-// açılmalı (LOOK_HTTP_MAX_CONNS_IP=N); proxy arkasında hız-sınırı proxy'de yapılır.
-// (① LOOK_BODY_MIN_RATE ile aynı gerekçe: proxy'li kurulumu bozmayan opt-in.)
+// DEFAULT OFF (0). The key is the TCP peer IP; in PROD LOOK sits BEHIND a reverse proxy
+// (nginx/Apache) → all connections appear from the proxy's IP, and a single
+// counter would throttle the whole site. So it should be enabled only when LOOK faces the internet
+// directly (LOOK_HTTP_MAX_CONNS_IP=N); behind a proxy, rate limiting is done at the proxy.
+// (① same rationale as LOOK_BODY_MIN_RATE: opt-in that does not break proxied setups.)
 static int http_max_conns_per_ip() {
     static int v = []() {
         const char* e = std::getenv("LOOK_HTTP_MAX_CONNS_IP");
         if (e && *e) { int x = std::atoi(e); if (x > 0) return x; }
-        return 0;   // 0/negatif/tanımsız = devre dışı (opt-in)
+        return 0;   // 0/negative/unset = disabled (opt-in)
     }();
     return v;
 }
 static std::mutex                            g_http_ip_mutex;
 static std::unordered_map<std::string, int>  g_http_ip_conns;
 
-// Sınıra takılan adres günlüğe BİR KEZ yazılır (sayaç sınırın altına inene dek yinelenmez):
-// sınırın gerçek kullanıcıları mı yoksa bir saldırıyı mı kestiği günlükten görülebilsin,
-// ama saldırı günlüğü de doldurmasın. g_http_ip_mutex altında çağrılır.
+// An address hitting the limit is logged ONCE (not repeated until the counter drops below the limit):
+// so the log shows whether the limit is cutting real users or an attack,
+// but an attack cannot fill the log either. Called under g_http_ip_mutex.
 static std::unordered_map<std::string, bool> g_ip_limit_logged;
 static void note_ip_limit(const std::string& ip, int lim, const char* what) {
     if (g_ip_limit_logged[ip]) return;
@@ -209,10 +209,10 @@ static void note_ip_limit(const std::string& ip, int lim, const char* what) {
         std::to_string(lim) + " (logged once until it drops below)");
 }
 
-// true → slot alındı (limit kapalıysa her zaman true). false → IP tavanda.
+// true → slot acquired (always true if the limit is off). false → IP is at the ceiling.
 static bool http_ip_acquire(const std::string& ip) {
     int lim = http_max_conns_per_ip();
-    if (lim <= 0 || ip.empty()) return true;   // devre dışı ya da IP bilinmiyor
+    if (lim <= 0 || ip.empty()) return true;   // disabled or IP unknown
     std::lock_guard<std::mutex> lk(g_http_ip_mutex);
     int& n = g_http_ip_conns[ip];
     if (n >= lim) { note_ip_limit(ip, lim, "a connection"); return false; }
@@ -228,15 +228,15 @@ static void http_ip_release(const std::string& ip) {
     if (it->second <= 0) g_http_ip_conns.erase(it);
 }
 
-// ── Uzun ömürlü bağlantılar (WebSocket / SSE): adres başına VARSAYILAN tavan ──
-// Açık bağlantıların toplamına sınır yoktur (tavan işletim sisteminin dosya sınırıdır). O
-// yüzden tek bir adres, önünde hiçbir şey yokken, sürecin bütün tanıtıcılarını tüketebilir.
-// LOOK doğrudan internete bakıyorsa (LOOK_TRUSTED_PROXY tanımsız) bir adres en çok
-// HELD_DEFAULT_PER_IP açık WebSocket/SSE bağlantısı tutar. 1000: tek adresin arkasında çok
-// kullanıcı olabilir (mobil operatör, şirket ağı) — sınır onları değil, binlerce bağlantı açan
-// tek kaynağı keser. Ters vekil arkasında bütün bağlantılar vekilin adresinden görünür: orada
-// varsayılan uygulanmaz, sınır vekilde konur. LOOK_HTTP_MAX_CONNS_IP verilmişse o geçerlidir
-// (bütün bağlantıları sayar) ve bu varsayılan devreye girmez.
+// ── Long-lived connections (WebSocket / SSE): DEFAULT per-address cap ──
+// There is no limit on the total number of open connections (the ceiling is the operating system's file limit). So
+// a single address, with nothing in front, can consume all of the process's descriptors.
+// If LOOK faces the internet directly (LOOK_TRUSTED_PROXY unset), one address holds at most
+// HELD_DEFAULT_PER_IP open WebSocket/SSE connections. 1000: many users can sit behind a single address
+// (mobile carrier, corporate network) — the limit does not cut them, it cuts the single source opening thousands of connections.
+// Behind a reverse proxy all connections appear from the proxy's address: the
+// default is not applied there, the limit is set at the proxy. If LOOK_HTTP_MAX_CONNS_IP is given it applies
+// (it counts all connections) and this default does not kick in.
 static constexpr int HELD_DEFAULT_PER_IP = 1000;
 static int held_default_limit() {
     static int v = []() {
@@ -255,7 +255,7 @@ static bool held_ip_acquire(const std::string& ip) {
     if (n >= lim) { note_ip_limit(ip, lim, "a WebSocket / SSE connection"); return false; }
     ++n; return true;
 }
-// Bağlantı kapanınca: açık sınırda worker'dan devralınan yuva, varsayılanda held sayacı bırakılır.
+// When the connection closes: under an explicit limit the slot taken over from the worker is released, under the default the held counter is released.
 static void held_ip_release(const std::string& ip) {
     if (ip.empty()) return;
     if (http_max_conns_per_ip() > 0) { http_ip_release(ip); return; }
@@ -274,24 +274,24 @@ struct HttpServer::Impl {
     HttpHandler  handler;
     WsHandler    ws_handler;
     SseHandler   sse_handler;
-    // CSWSH koruması (gerçek davranış — handle_ws_upgrade): BOŞ = güvenli-varsayılan
-    // SAME-ORIGIN (Origin varsa Host'la eşleşmeli; cross-origin tarayıcı isteği=CSWSH
-    // vektörü reddedilir; Origin'siz backend/wscat izinli). DOLU (LOOK_WS_ORIGINS) = yalnız
-    // listedeki origin'ler (Origin is required). NOT: "boş=tüm originlere izin" DEĞİL (eski
-    // yorum yanıltıcıydı; same-origin eklenmeden önceki davranışı anlatıyordu).
+    // CSWSH protection (actual behavior — handle_ws_upgrade): EMPTY = safe default
+    // SAME-ORIGIN (if Origin is present it must match Host; a cross-origin browser request = the CSWSH
+    // vector is rejected; a backend/wscat client without Origin is allowed). SET (LOOK_WS_ORIGINS) = only the origins
+    // in the list (Origin is required). NOTE: NOT "empty = allow all origins" (the old
+    // comment was misleading; it described the behavior before same-origin was added).
     std::vector<std::string> allowed_origins;
 
     int  server_fd = -1;
     std::atomic<bool> running{false};
 
-    // Zarif kapanma: draining true olunca yeni istek okunmaz. Bir sonraki isteği BEKLEYEN
-    // bağlantılar idle_fds'de durur; begin_shutdown onların okuma yönünü kapatır (recv 0 döner,
-    // bağlantı kapanır) — keep-alive bağlantısı işçiyi boşta süresi (30 sn) boyunca tutmasın.
-    // Kayıt/silme ve shutdown aynı kilitte: kapatılan fd yeniden kullanılmış başka bağlantı olamaz.
+    // Graceful shutdown: once draining is true no new request is read. Connections WAITING for the next request
+    // sit in idle_fds; begin_shutdown closes their read side (recv returns 0,
+    // the connection closes) — so a keep-alive connection does not hold a worker for the idle period (30 s).
+    // Registration/removal and shutdown are under the same lock: a closed fd cannot be a reused fd of another connection.
     std::atomic<bool> draining{false};
     std::mutex idle_mtx;
     std::unordered_set<int> idle_fds;
-    // fd'yi boşta-bekleyen olarak kaydet; kapanma başladıysa false (çağıran bağlantıyı kapatır)
+    // register the fd as idle-waiting; false if shutdown has begun (the caller closes the connection)
     bool idle_enter(int fd) {
         std::lock_guard<std::mutex> lk(idle_mtx);
         if (draining.load(std::memory_order_acquire)) return false;
@@ -304,10 +304,10 @@ struct HttpServer::Impl {
     }
 
 #ifdef __linux__
-    // Gözetleyicinin isteğiyle (bkz. watched): takılan işçinin soketinde bekleyen bağlantıları BU
-    // iş parçacığında kabul et (en çok 64) ve çık — kalıcı ikinci dinleyici değil (her bağlantıda
-    // bütün işçileri uyandıran ortak dinleme yeni bağlantıyla hızı dörtte birine düşürüyordu).
-    // Soket hâlâ kayıtlıysa (işçi çıkmadı, kapanış başlamadı) — kilit, kapatmayla yarışmasın diye.
+    // At the watcher's request (see watched): accept the connections waiting on the stuck worker's socket in THIS
+    // thread (at most 64) and exit — not a permanent second listener (a shared listen that wakes all
+    // workers on every connection cut the rate to a quarter with new connections).
+    // If the socket is still registered (worker has not exited, shutdown has not begun) — the lock so it does not race with closing.
     void drain_listen(int fd) {
         FiberScheduler* s = get_thread_scheduler();
         if (!s) return;
@@ -317,7 +317,7 @@ struct HttpServer::Impl {
             sockaddr_storage peer{};
             socklen_t peer_len = sizeof(peer);
             int client = accept4(fd, reinterpret_cast<sockaddr*>(&peer), &peer_len, 0);
-            if (client < 0) { if (errno == EINTR) continue; break; }   // EAGAIN: kuyruk boş
+            if (client < 0) { if (errno == EINTR) continue; break; }   // EAGAIN: queue empty
             char peer_ip[INET6_ADDRSTRLEN] = {};
             if (peer.ss_family == AF_INET)
                 inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(&peer)->sin_addr, peer_ip, sizeof(peer_ip));
@@ -330,17 +330,17 @@ struct HttpServer::Impl {
     }
 #endif
 
-    // İşçi başına dinleyen soketler (fiber modu, SO_REUSEPORT). begin_shutdown portu hemen
-    // bırakabilsin diye izlenir; işçi kendi soketini bu kilit altında kayıttan siler ve kapatır.
+    // Per-worker listening sockets (fiber mode, SO_REUSEPORT). Tracked so begin_shutdown can
+    // release the port immediately; the worker removes its own socket from the registry under this lock and closes it.
     std::mutex lfd_mtx;
     std::vector<int> listen_fds;
 
-    // Takılan işçinin soketi (fiber modu). SO_REUSEPORT'ta çekirdek yeni bağlantıyı işçinin meşgul
-    // olup olmadığına bakmadan bir sokete atar; işçi bölünemeyen uzun bir yerleşikteyse (büyük
-    // json::decode, sort …) o sokete düşen bağlantı iş bitene dek kabul edilmez (ölçüldü: /ok p99
-    // 310 ms; VM döngüsü 1 ms'de sırayı bıraktığı için yalnız yerleşiklerde). Gözetleyici (Go'nun
-    // sysmon'u gibi) takılan işçinin bekleyen bağlantılarını boştaki bir işçiye boşalttırır.
-    // Normal yükte hiçbir şey yapmaz. Kayıt lfd_mtx altında; işçi çıkarken kendini siler.
+    // Stuck worker's socket (fiber mode). With SO_REUSEPORT the kernel assigns a new connection to a socket
+    // without checking whether the worker is busy; if the worker is inside an indivisible builtin (large
+    // json::decode, sort …) the connection that landed on that socket is not accepted until the work finishes (measured: /ok p99
+    // 310 ms; only in builtins, since the VM loop yields every 1 ms). The watcher (like Go's
+    // sysmon) has an idle worker drain the waiting connections of the stuck worker.
+    // Does nothing under normal load. Registration is under lfd_mtx; the worker removes itself on exit.
     struct Watched {
         FiberScheduler* sched;
         int fd;
@@ -351,7 +351,7 @@ struct HttpServer::Impl {
 
     std::unique_ptr<WorkerPool> pool;
 
-    // Event loop — yalnızca WS/SSE async frame okuma için
+    // Event loop — only for WS/SSE async frame reading
     std::unique_ptr<EventLoop> loop;
     std::thread loop_thread;
 
@@ -364,8 +364,8 @@ struct HttpServer::Impl {
     std::unordered_map<int, std::shared_ptr<SseConnection>> sse_clients;
     std::mutex sse_mtx;
 
-    // Maksimum request body boyutu (byte) — LOOK_MAX_BODY_SIZE ile ayarlanır,
-    // varsayılan 10 MB. Sınırsız body bellek tüketimi DoS'unu engeller.
+    // Maximum request body size (bytes) — set via LOOK_MAX_BODY_SIZE,
+    // default 10 MB. An unbounded body would allow a memory-exhaustion DoS.
     static size_t max_body_size() {
         static const size_t v = []() -> size_t {
             const char* e = std::getenv("LOOK_MAX_BODY_SIZE");
@@ -375,7 +375,7 @@ struct HttpServer::Impl {
         return v;
     }
 
-    // Header-only kısa yanıt — body okumadan önce reddetme yolları için.
+    // Header-only short response — for the paths that reject before reading the body.
     static void send_simple(int fd, int code, const char* reason) {
         std::string r = "HTTP/1.1 " + std::to_string(code) + " " + reason + "\r\n"
                         "Content-Length: 0\r\nConnection: close\r\n\r\n";
@@ -387,15 +387,15 @@ struct HttpServer::Impl {
 #endif
     }
 
-    // ── Tam gönderim (fiber-aware) ───────────────────────────────────────────
-    // Hepsi gönderilene dek yazar; true = tamamı gitti. İki eski hata:
-    //   * tek ::send() yapılıyordu, kısa yazım başarı sayılıyordu: yavaş okuyan istemcide yanıtın
-    //     bir kısmı gidiyor, bağlantı açık kalıyor, sonraki yanıt aynı bağlantıda ilkinin gövdesinin
-    //     devamı gibi okunuyordu (Content-Length 8 MB, gelen 1,8 MB + sonraki "HTTP/1.1 200 OK");
-    //   * fiber modunda soket engelleyiciydi: okumayan TEK istemci, gönderim tamponu dolunca işçi iş
-    //     parçacığını (üzerindeki 1024'e kadar fiber'la) SO_SNDTIMEO kadar donduruyordu.
-    // Fiber içinde soket doluysa fiber yazılabilir olana dek askıya alınır (iş parçacığı serbest);
-    // timeout_ms boyunca yazılamazsa false (bağlantı kapatılır). Fiber dışında engelleyen yazım.
+    // ── Full send (fiber-aware) ───────────────────────────────────────────
+    // Writes until everything is sent; true = all of it went out. Two old bugs:
+    //   * a single ::send() was made and a short write counted as success: with a slow-reading client part of the
+    //     response went out, the connection stayed open, and the next response was read on the same connection as
+    //     the continuation of the first one's body (Content-Length 8 MB, 1.8 MB received + next "HTTP/1.1 200 OK");
+    //   * in fiber mode the socket was blocking: a SINGLE client that does not read froze the worker thread
+    //     (with up to 1024 fibers on it) for SO_SNDTIMEO once the send buffer filled.
+    // Inside a fiber, if the socket is full the fiber is suspended until writable (the thread is free);
+    // if it cannot write within timeout_ms, false (connection is closed). Outside a fiber, a blocking write.
     static bool send_all(int fd, const char* p, size_t n, int timeout_ms) {
 #ifdef __linux__
         look::FiberScheduler* sched = look::get_thread_scheduler();
@@ -407,9 +407,9 @@ struct HttpServer::Impl {
             if (w < 0 && errno == EINTR) continue;
             if (w < 0 && self && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                 if (sched->wait_writable_tmo(self, fd, timeout_ms) == 1) continue;
-                return false;   // yazılamadı (zaman aşımı / epoll yok)
+                return false;   // could not write (timeout / no epoll)
             }
-            return false;       // hata ya da SO_SNDTIMEO doldu
+            return false;       // error or SO_SNDTIMEO expired
         }
         return true;
 #else
@@ -423,11 +423,11 @@ struct HttpServer::Impl {
     }
 
     // ── Fiber-aware recv (Go netpoller) ──────────────────────────────────────
-    // Fiber içindeyse ve soket veri yoksa BLOKLAMAZ: wait_readable ile yield eder,
-    // scheduler başka fiber (goroutine) koşturur; veri gelince epoll resume eder.
-    // Eskiden düz ::recv() worker thread'ini bloklyordu → keep-alive'da sonraki
-    // isteği beklerken tüm worker kilitleniyor, diğer bağlantılar açlıkta kalıyordu
-    // (fiber dispatch'in c=100 hang'inin KÖK NEDENİ). Fiber dışında düz blocking recv.
+    // Inside a fiber, if the socket has no data it does NOT BLOCK: yields with wait_readable,
+    // the scheduler runs another fiber (goroutine); epoll resumes when data arrives.
+    // Previously a plain ::recv() blocked the worker thread → while waiting for the next
+    // request on keep-alive every worker was locked and other connections starved
+    // (the ROOT CAUSE of the fiber dispatch c=100 hang). Outside a fiber, a plain blocking recv.
     static ssize_t fiber_aware_recv(int fd, char* buf, size_t len) {
 #ifdef __linux__
         look::FiberScheduler* sched = look::get_thread_scheduler();
@@ -439,29 +439,29 @@ struct HttpServer::Impl {
                 if (r >= 0) return r;
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // Veri yok → yield. wait_readable_tmo epoll'a park eder + 15s idle
-                    // sınırı (D Fix #2): keep-alive'da istemci sonraki isteği hiç
-                    // göndermezse fiber SÜRESİZ askıda kalmaz — timeout'ta 0 döneriz
-                    // (peer-kapandı gibi) → bağlantı kapanır, fiber biter. ab -k
-                    // wind-down stall'ının ve kapanışta fiber birikmesinin çözümü.
+                    // No data → yield. wait_readable_tmo parks on epoll + a 15s idle
+                    // limit (D Fix #2): on keep-alive, if the client never sends the next request
+                    // the fiber does not hang INDEFINITELY — on timeout we return 0
+                    // (like peer-closed) → the connection closes, the fiber ends. The fix for the ab -k
+                    // wind-down stall and for fiber accumulation at shutdown.
                     if (self) {
                         int w = sched->wait_readable_tmo(self, fd, 15000);
-                        if (w == 1) continue;      // okunabilir — recv'i tekrar dene
-                        if (w == 0) return 0;      // idle timeout → bağlantıyı kapat
+                        if (w == 1) continue;      // readable — try recv again
+                        if (w == 0) return 0;      // idle timeout → close the connection
                     }
-                    return ::recv(fd, buf, len, 0);  // epoll yok → blocking fallback
+                    return ::recv(fd, buf, len, 0);  // no epoll → blocking fallback
                 }
-                return r;  // gerçek hata
+                return r;  // real error
             }
         }
 #endif
-        return ::recv(fd, buf, len, 0);  // fiber dışı: blocking (mevcut davranış)
+        return ::recv(fd, buf, len, 0);  // non-fiber: blocking (existing behavior)
     }
 
-    // Transfer-Encoding: chunked gövdeyi çöz (RFC 7230 §4.1).
-    // buf: header'lar + gövdenin ilk parçası; start: gövde offset'i.
-    // Çözülen gövde out'a yazılır. Body cap ve malformed kontrolleri dahil.
-    // false → istek reddedildi (yanıt gönderildi), caller fd'yi kapatmalı.
+    // Decode a Transfer-Encoding: chunked body (RFC 7230 §4.1).
+    // buf: headers + the first part of the body; start: body offset.
+    // The decoded body is written to out. Includes body cap and malformed checks.
+    // false → request rejected (response sent), the caller must close the fd.
     // Body-read deadline. LOOK_HEADER_TIMEOUT only covers the header phase; without a
     // body deadline a slow-body attacker (a full header + large Content-Length, then a
     // byte every few seconds) holds a worker forever in pool mode — a proven DoS. This
@@ -489,41 +489,41 @@ struct HttpServer::Impl {
         return false;
     }
 
-    // rest: gövdeden SONRA gelen baytlar (aynı gönderimdeki sonraki istek — pipelining)
+    // rest: bytes after the body (the next request in the same send — pipelining)
     static bool read_chunked_body(int fd, std::string& buf, size_t start,
                                   char* tmp, size_t tmp_sz, std::string& out, std::string& rest) {
-        std::string stream = buf.substr(start);   // gövde baytları (henüz çözülmemiş)
+        std::string stream = buf.substr(start);   // body bytes (not yet decoded)
         size_t p = 0;
         const size_t cap    = max_body_size();
-        const size_t raw_lim = cap + 1024 * 1024; // ham akış tavanı (chunk header payı)
+        const size_t raw_lim = cap + 1024 * 1024; // raw stream ceiling (chunk header allowance)
 
-        // Gövde okuma deadline'ı — slow-body drip'i chunked yolda da worker'ı tutabilir.
+        // Body-read deadline — a slow-body drip can hold the worker on the chunked path too.
         auto body_start = std::chrono::steady_clock::now();
         bool timed_out = false;
         auto refill = [&]() -> bool {
             ssize_t r = fiber_aware_recv(fd, tmp, tmp_sz);
             if (r <= 0) return false;
-            if (stream.size() + (size_t)r > raw_lim) return false; // akış patlaması
+            if (stream.size() + (size_t)r > raw_lim) return false; // stream blow-up
             stream.append(tmp, (size_t)r);
             if (body_read_too_slow(body_start, stream.size())) { timed_out = true; return false; }
             return true;
         };
 
         while (true) {
-            // 1) chunk boyutu satırını al (hex, ; ile chunk-ext olabilir)
+            // 1) get the chunk size line (hex, there may be a chunk-ext after ';')
             size_t nl;
             while ((nl = stream.find("\r\n", p)) == std::string::npos) {
                 if (stream.size() - p > 64) { send_simple(fd, 400, "Bad Request"); return false; }
                 if (!refill()) { send_simple(fd, timed_out ? 408 : 400, timed_out ? "Request Timeout" : "Bad Request"); return false; }
             }
             std::string sizeline = stream.substr(p, nl - p);
-            // chunk-ext dahil satırda kontrol karakteri yok (HTAB hariç). Eskiden ext atılmadan önce
-            // bakılmıyordu: "3;a\nb\r\n" kabul ediliyordu — çıplak LF'yi satır sonu sayan bir vekil
-            // aynı akışı farklı çerçeveler (smuggling). Başlık bloğundaki katı CRLF kuralının aynısı.
+            // no control characters in the line including chunk-ext (except HTAB). Previously the ext was not checked
+            // before being discarded: "3;a\nb\r\n" was accepted — a proxy that treats a bare LF as a line end
+            // would frame the same stream differently (smuggling). The same as the strict CRLF rule in the header block.
             if (!http_field_value_ok(sizeline)) { send_simple(fd, 400, "Bad Request"); return false; }
-            size_t semi = sizeline.find(';');            // chunk-ext'i at
+            size_t semi = sizeline.find(';');            // discard the chunk-ext
             if (semi != std::string::npos) sizeline = sizeline.substr(0, semi);
-            // hex parse (katı)
+            // hex parse (strict)
             if (sizeline.empty() ||
                 sizeline.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
                 send_simple(fd, 400, "Bad Request"); return false;
@@ -533,15 +533,15 @@ struct HttpServer::Impl {
             catch (...) { send_simple(fd, 400, "Bad Request"); return false; }
             p = nl + 2;
 
-            if (chunk_sz == 0) break;                    // son chunk
-            // Taşma-güvenli: `out.size() + chunk_sz` chunk_sz ~2^64 (hex
-            // fffffffffffffffb) ile wrap yapıp cap kontrolünü atlayabilirdi.
-            // out.size() <= cap invariantı gereği `cap - out.size()` güvenli;
-            // bu ayrıca chunk_sz'yi ≤cap'e sınırlayıp 280'deki `p+chunk_sz+2`
-            // taşmasını da önler.
+            if (chunk_sz == 0) break;                    // last chunk
+            // Overflow-safe: `out.size() + chunk_sz` could wrap with chunk_sz ~2^64 (hex
+            // fffffffffffffffb) and skip the cap check.
+            // Given the out.size() <= cap invariant, `cap - out.size()` is safe;
+            // this also bounds chunk_sz to ≤cap and prevents the `p+chunk_sz+2`
+            // overflow at line 280.
             if (chunk_sz > cap - out.size()) { send_simple(fd, 413, "Payload Too Large"); return false; }
 
-            // 2) chunk verisi + kapanış CRLF'i gelene kadar oku
+            // 2) read until the chunk data + closing CRLF arrive
             while (stream.size() < p + chunk_sz + 2) {
                 if (!refill()) { send_simple(fd, timed_out ? 408 : 400, timed_out ? "Request Timeout" : "Bad Request"); return false; }
             }
@@ -550,10 +550,10 @@ struct HttpServer::Impl {
             if (stream.compare(p, 2, "\r\n") != 0) { send_simple(fd, 400, "Bad Request"); return false; }
             p += 2;
         }
-        // trailer başlıklarını yut: boş satıra (\r\n) kadar. Keep-alive'da
-        // sonraki isteğin sınırı doğru olsun diye akıştan tüketilir.
-        // Bağlantı boş satırdan önce kapanırsa istek EKSİKTİR → 400 (eskiden kabul ediliyordu:
-        // "0\r\n" + EOF tam istek sayılıyordu; önündeki bir vekil bunu başka çerçeveleyebilir).
+        // swallow trailer headers: up to the empty line (\r\n). Consumed from the stream so
+        // the next request's boundary is correct on keep-alive.
+        // If the connection closes before the empty line the request is INCOMPLETE → 400 (previously accepted:
+        // "0\r\n" + EOF counted as a complete request; a proxy in front could frame it differently).
         size_t trailers = 0;
         while (true) {
             size_t nl2 = stream.find("\r\n", p);
@@ -562,9 +562,9 @@ struct HttpServer::Impl {
                 if (!refill()) { send_simple(fd, timed_out ? 408 : 400, timed_out ? "Request Timeout" : "Bad Request"); return false; }
                 continue;
             }
-            if (nl2 == p) { p += 2; break; }             // boş satır → gövde bitti
-            // Trailer = başlık alanı kuralları (Go textproto): "ad: değer", ad token, değerde CTL yok.
-            // Eskiden satır bakılmadan atlanıyordu (çıplak LF, ':'siz satır geçiyordu).
+            if (nl2 == p) { p += 2; break; }             // empty line → body done
+            // Trailer = header field rules (Go textproto): "name: value", name a token, no CTL in value.
+            // Previously lines were skipped without inspection (bare LF, lines without ':' passed).
             {
                 std::string tl = stream.substr(p, nl2 - p);
                 size_t tc = tl.find(':');
@@ -574,43 +574,43 @@ struct HttpServer::Impl {
                 }
             }
             if (++trailers > HTTP_MAX_HEADER_FIELDS) { send_simple(fd, 431, "Request Header Fields Too Large"); return false; }
-            p = nl2 + 2;                                  // trailer satırını atla
+            p = nl2 + 2;                                  // skip the trailer line
         }
         rest.assign(stream, p, std::string::npos);
         return true;
     }
 
-    // ── Blocking HTTP bağlantı yöneticisi — worker thread'de çalışır ──────────
+    // ── Blocking HTTP connection handler — runs on a worker thread ──────────
     //
-    // Her bağlantı için:
-    //   1. blocking recv() → headers tamamlanana dek oku
-    //   2. parse → WS/SSE upgrade tespiti
-    //   3. HTTP: handler → send() → keep-alive döngüsü
-    //   4. WS/SSE: event loop'a devret, worker serbest kalır
+    // For each connection:
+    //   1. blocking recv() → read until headers are complete
+    //   2. parse → detect WS/SSE upgrade
+    //   3. HTTP: handler → send() → keep-alive loop
+    //   4. WS/SSE: hand over to the event loop, the worker is freed
     //
-    // Event loop yok — Apache ile aynı model.
+    // No event loop — same model as Apache.
     void handle_connection(int fd, std::string remote_addr = "") {
-        // Per-IP eşzamanlı bağlantı tavanı (opt-in, LOOK_HTTP_MAX_CONNS_IP). Aşılırsa
-        // 429 gönder ve kapat — bu IP zaten worker(lar) tutuyor, yenisini alma.
+        // Per-IP concurrent-connection ceiling (opt-in, LOOK_HTTP_MAX_CONNS_IP). If exceeded,
+        // send 429 and close — this IP already holds worker(s), do not take another.
         if (!http_ip_acquire(remote_addr)) {
             send_simple(fd, 429, "Too Many Requests"); ::close(fd); return;
         }
-        // RAII: handle_connection'ın HANGİ yoldan dönerse dönsün (erken close, WS/SSE
-        // devri, keep-alive bitişi) slot serbest kalır — worker-scope semantiği.
+        // RAII: the slot is released however handle_connection returns (early close, WS/SSE
+        // handover, end of keep-alive) — worker-scope semantics.
         struct IpSlot {
             const std::string& ip;
-            // WS/SSE'ye yükselen bağlantı yuvasını yanında götürür (close_ws / close_sse bırakır):
-            // burada bırakıp orada yeniden almak bağlantıyı kısa süre İKİ kez sayıyordu ve sınırın
-            // bir eksiğindeki adres haksız 429 alıyordu.
+            // A connection upgraded to WS/SSE carries the slot with it (close_ws / close_sse release it):
+            // releasing here and re-acquiring there counted the connection TWICE for a short time, and an address
+            // one below the limit got an unjustified 429.
             bool moved = false;
             ~IpSlot() { if (!moved) http_ip_release(ip); }
         } ip_slot{ remote_addr };
 
-        // Boşta timeout — istemci N ms yanıt vermezse kapat (default 30s). LOOK_HTTP_IDLE_MS
-        // ile ayarlanabilir (test hızı için). PLATFORM-DOĞRU TİP: Windows SO_RCVTIMEO bir
-        // DWORD-milisaniye bekler, POSIX timeval bekler. ESKİ BUG: Windows'a timeval{30,0}
-        // geçiliyordu → Winsock ilk DWORD'ü (=30) okuyup 30sn'yi 30ms'ye çeviriyordu (idle
-        // keep-alive Win'de ~30ms'de düşüyordu). Ampirik ölçüldü (~34ms), düzeltildi.
+        // Idle timeout — close if the client does not respond for N ms (default 30s). Configurable
+        // via LOOK_HTTP_IDLE_MS (for test speed). PLATFORM-CORRECT TYPE: Windows SO_RCVTIMEO expects a
+        // DWORD of milliseconds, POSIX expects a timeval. OLD BUG: timeval{30,0} was
+        // passed on Windows → Winsock read the first DWORD (=30) and turned 30s into 30ms (idle
+        // keep-alive dropped at ~30ms on Win). Measured empirically (~34ms), fixed.
         static const long idle_ms = []{
             const char* e = std::getenv("LOOK_HTTP_IDLE_MS");
             return (e && *e) ? std::atol(e) : 30000L;
@@ -623,19 +623,19 @@ struct HttpServer::Impl {
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 #ifndef _WIN32
-        // Nagle kapalı — küçük paketler hemen gönderilir
+        // Nagle off — small packets are sent immediately
         int nd = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nd, sizeof(nd));
 #endif
 
         char tmp[65536];
 
-        // Slowloris savunması: bir istek BAŞLADIKTAN (ilk bayt) sonra header'lar
-        // toplam bu süre içinde tamamlanmalı. idle timeout (15s/30s) her baytta
-        // sıfırlandığı için tek başına yetmez — yavaş-damla (idle altında bayt/6s)
-        // bağlantıyı süresiz tutup pool modunda worker thread'i tüketir (DoS).
-        // LOOK_HEADER_TIMEOUT ms ile ayarlanır (varsayılan 15s). Keep-alive'da
-        // istekLER ARASI boşta bekleme buna dahil DEĞİL (timer ilk baytta başlar).
+        // Slowloris defense: after a request has STARTED (first byte) the headers
+        // must complete within this total time. The idle timeout (15s/30s) is reset on every byte
+        // so it is not enough alone — a slow drip (a byte per 6s, under idle) holds
+        // the connection indefinitely and exhausts worker threads in pool mode (DoS).
+        // Set with LOOK_HEADER_TIMEOUT ms (default 15s). On keep-alive, the idle
+        // wait BETWEEN requests is NOT included (the timer starts at the first byte).
         static const auto HDR_TMO = []() -> std::chrono::milliseconds {
             const char* e = std::getenv("LOOK_HEADER_TIMEOUT");
             long ms = (e && *e) ? std::atol(e) : 15000;
@@ -643,22 +643,22 @@ struct HttpServer::Impl {
             return std::chrono::milliseconds(ms);
         }();
 
-        // Bir önceki isteğin gövdesinden sonra aynı gönderimde gelen baytlar (HTTP/1.1 pipelining:
-        // istemci yanıtı beklemeden ikinci isteği yazar). Eskiden her istek taze tamponla başlıyordu
-        // → ikinci istek sessizce düşüyor, istemci yanıt beklerken boşta zaman aşımına kadar asılıyordu.
+        // Bytes that arrived after the previous request's body in the same send (HTTP/1.1 pipelining:
+        // the client writes the second request without waiting for the response). Previously every request started with a fresh buffer
+        // → the second request was silently dropped, and the client hung until the idle timeout waiting for a response.
         std::string carry;
         while (true) {
-            // Headers gelene kadar blocking oku
+            // Read blocking until headers arrive
             std::string buf = std::move(carry);
             carry.clear();
-            std::chrono::steady_clock::time_point rd_start{};   // ilk baytta set
+            std::chrono::steady_clock::time_point rd_start{};   // set at the first byte
             if (!buf.empty()) rd_start = std::chrono::steady_clock::now();
-            // Terminatör yalnız YENİ gelen kısımda aranır (+3 bayt örtüşme): eskiden her recv'de
-            // bütün tampon baştan taranıyordu → 2 MB başlık 64 B parçalarla ~3 CPU-saniye (karesel).
+            // The terminator is searched only in the NEWLY arrived part (+3 bytes overlap): previously on every recv
+            // the whole buffer was rescanned from the start → a 2 MB header in 64 B pieces cost ~3 CPU-seconds (quadratic).
             size_t scan = 0, hdr_pos;
             while ((hdr_pos = buf.find("\r\n\r\n", scan)) == std::string::npos) {
                 scan = buf.size() >= 3 ? buf.size() - 3 : 0;
-                // Sonraki isteği bekliyor (henüz bayt yok): zarif kapanmada bu bekleme kesilir.
+                // Waiting for the next request (no bytes yet): this wait is cut short on graceful shutdown.
                 const bool waiting = buf.empty();
                 if (waiting && !idle_enter(fd)) { ::close(fd); return; }
                 ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
@@ -667,9 +667,9 @@ struct HttpServer::Impl {
                 if (rd_start == std::chrono::steady_clock::time_point{})
                     rd_start = std::chrono::steady_clock::now();
                 buf.append(tmp, (size_t)r);
-                // Go MaxHeaderBytes (1 MB) → 431. Eskiden 2 MB'ta yanıtsız kapatılıyordu. Döngü tavanı
-                // bir okuma payı geniş (son okuma gövdenin başını da getirebilir); kesin sınırı
-                // ayrıştırıcı başlık sonuna göre uygular.
+                // Go MaxHeaderBytes (1 MB) → 431. Previously closed without a response at 2 MB. The loop ceiling is
+                // one read allowance wider (the last read can bring the start of the body too); the exact limit is
+                // enforced by the parser against the end of the headers.
                 if (buf.size() > HTTP_MAX_HEADER_BYTES + sizeof(tmp)) {
                     send_simple(fd, 431, "Request Header Fields Too Large"); ::close(fd); return;
                 }
@@ -680,8 +680,8 @@ struct HttpServer::Impl {
 
             HttpRequest req;
             req.remote_addr = remote_addr;
-            // Reddedilen istek: Go gibi durum yanıtı yaz, sonra kapat (eskiden yanıtsız kapatılıyordu —
-            // istemci ve vekil yalnız "bağlantı kesildi" görüyordu, neden 400 olduğu bilinmiyordu).
+            // Rejected request: write a status response like Go, then close (previously closed without a response —
+            // the client and proxy only saw "connection dropped", with no way to know why it was 400).
             if (int st = parse_request(buf, req)) {
                 send_simple(fd, st, http_status_reason(st)); ::close(fd); return;
             }
@@ -691,16 +691,16 @@ struct HttpServer::Impl {
             auto clen_it = req.headers.find("content-length");
             auto te_it   = req.headers.find("transfer-encoding");
 
-            // HTTP Request Smuggling koruması: Content-Length ve Transfer-Encoding
-            // aynı anda gelirse istek belirsizdir (RFC 7230 §3.3.3) — katı ret.
-            // (Go burada Content-Length'i silip devam eder; biz katı kalırız — smuggling savunması.)
+            // HTTP Request Smuggling protection: if Content-Length and Transfer-Encoding
+            // arrive together the request is ambiguous (RFC 7230 §3.3.3) — strict rejection.
+            // (Go deletes Content-Length here and continues; we stay strict — smuggling defense.)
             if (te_it != req.headers.end() && clen_it != req.headers.end()) {
                 send_simple(fd, 400, "Bad Request"); ::close(fd); return;
             }
 
-            // Expect (RFC 9110 §10.1.1, Go): "100-continue" → gövde okunmadan önce "100 Continue"
-            // (eskiden yazılmıyordu: curl gibi istemciler gövdeyi göndermeden önce ~1 sn bekliyordu);
-            // bilinmeyen beklenti → 417. 100 yalnız HTTP/1.1'de ve gövde henüz gelmemişse yazılır.
+            // Expect (RFC 9110 §10.1.1, Go): "100-continue" → "100 Continue" before the body is read
+            // (previously not written: clients like curl waited ~1 s before sending the body);
+            // unknown expectation → 417. 100 is written only for HTTP/1.1 and if the body has not arrived yet.
             static const char k100[] = "HTTP/1.1 100 Continue\r\n\r\n";
             bool want_continue = false;
             {
@@ -713,30 +713,30 @@ struct HttpServer::Impl {
                 }
             }
 
-            // ── Transfer-Encoding: chunked gövde çözme ────────────────────────
+            // ── Transfer-Encoding: chunked body decoding ────────────────────────
             if (te_it != req.headers.end()) {
                 std::string te = te_it->second;
                 std::transform(te.begin(), te.end(), te.begin(), ::tolower);
-                // RFC 7230 §3.3.1: TE token-listesidir; "chunked" son coding olmalı.
-                // Eskiden `find("chunked")` SUBSTRING eşliyordu → "xchunked",
-                // "chunkedx", "chunked, gzip" hepsi chunked sanılıyordu (ölçüldü:
-                // 200/blen=5). Bir front-end bunları farklı çerçevelerse desync
-                // (request smuggling). LOOK yalnız chunked destekler → TAM eşleşme:
-                // değer birebir "chunked" değilse reddet (gzip/compress zaten çözülemez).
-                // Desteklenmeyen kodlama: Go gibi 501 (eskiden 400 — istek bozuk değil, sunucu
-                // o kodlamayı desteklemiyor).
+                // RFC 7230 §3.3.1: TE is a token list; "chunked" must be the final coding.
+                // Previously `find("chunked")` matched a SUBSTRING → "xchunked",
+                // "chunkedx", "chunked, gzip" were all taken as chunked (measured:
+                // 200/blen=5). If a front-end frames these differently there is desync
+                // (request smuggling). LOOK supports only chunked → EXACT match:
+                // reject if the value is not exactly "chunked" (gzip/compress cannot be decoded anyway).
+                // Unsupported coding: 501 like Go (previously 400 — the request is not malformed, the server
+                // does not support that coding).
                 if (te != "chunked") {
                     send_simple(fd, 501, "Not Implemented"); ::close(fd); return;
                 }
                 if (want_continue && body_in_buf == 0 &&
                     !send_all(fd, k100, sizeof(k100) - 1, (int)idle_ms)) { ::close(fd); return; }
                 if (!read_chunked_body(fd, buf, header_end, tmp, sizeof(tmp), req.body, carry)) {
-                    // malformed chunk veya body cap aşımı → read_chunked_body yanıtı gönderdi
+                    // malformed chunk or body cap exceeded → read_chunked_body already sent the response
                     ::close(fd); return;
                 }
             } else if (clen_it != req.headers.end()) {
-                // Content-Length güvenli parse — bozuk/taşan değer worker'ı
-                // düşürmesin (std::stoul exception fırlatıyordu = DoS).
+                // Safe Content-Length parse — a malformed/overflowing value must not
+                // take the worker down (std::stoul threw an exception = DoS).
                 size_t content_len = 0;
                 {
                     const std::string& cl = clen_it->second;
@@ -747,8 +747,8 @@ struct HttpServer::Impl {
                     try { content_len = std::stoull(cl); }
                     catch (...) { send_simple(fd, 400, "Bad Request"); ::close(fd); return; }
                 }
-                // Maksimum body boyutu — sınırsız body bellek tüketimi DoS'u.
-                // LOOK_MAX_BODY_SIZE (byte) ile ayarlanır, varsayılan 10 MB.
+                // Maximum body size — an unbounded body is a memory-exhaustion DoS.
+                // Set with LOOK_MAX_BODY_SIZE (bytes), default 10 MB.
                 if (content_len > max_body_size()) {
                     send_simple(fd, 413, "Payload Too Large"); ::close(fd); return;
                 }
@@ -757,9 +757,9 @@ struct HttpServer::Impl {
                 if (body_in_buf > 0)
                     req.body = buf.substr(header_end,
                                           std::min(body_in_buf, content_len));
-                if (body_in_buf > content_len)   // gövdeden sonrası: sonraki istek
+                if (body_in_buf > content_len)   // after the body: the next request
                     carry.assign(buf, header_end + content_len, std::string::npos);
-                // Gövde okuma deadline'ı — slow-body worker açlığını (DoS) kapatır.
+                // Body-read deadline — closes slow-body worker starvation (DoS).
                 auto body_start = std::chrono::steady_clock::now();
                 while (req.body.size() < content_len) {
                     ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
@@ -767,35 +767,35 @@ struct HttpServer::Impl {
                     if (body_read_too_slow(body_start, req.body.size())) {
                         send_simple(fd, 408, "Request Timeout"); ::close(fd); return;
                     }
-                    // Content-Length KESİN üst sınır (55. bug): body ayrı segmentte
-                    // gelip son recv fazla bayt getirirse (pipeline'daki sonraki
-                    // isteğin başlangıcı), o baytları body'ye YUTMA — yoksa gövde
-                    // CL'yi aşar (app bozuk gövde görür + smuggling-bitişik: sonraki
-                    // istek bu gövdeye karışır). İlk-buffer yolu (yukarıda) zaten
-                    // min() ile kırpıyordu; bu döngü kırpmıyordu.
+                    // Content-Length is a HARD upper bound (bug 55): if the body arrives in a separate segment
+                    // and the last recv brings extra bytes (the start of the next
+                    // pipelined request), do NOT swallow those bytes into the body — otherwise the body
+                    // exceeds CL (the app sees a corrupt body + smuggling-adjacent: the next
+                    // request gets mixed into this body). The first-buffer path (above) already
+                    // clipped with min(); this loop did not.
                     size_t need = content_len - req.body.size();
                     req.body.append(tmp, std::min((size_t)r, need));
-                    if ((size_t)r > need) carry.assign(tmp + need, (size_t)r - need);   // sonraki istek
+                    if ((size_t)r > need) carry.assign(tmp + need, (size_t)r - need);   // next request
                 }
             } else if (body_in_buf > 0) {
-                // Gövdesiz istek (CL/TE yok → gövde 0 bayt, RFC 9112 §6.3): başlıktan sonrası
-                // sonraki istektir.
+                // Bodyless request (no CL/TE → body is 0 bytes, RFC 9112 §6.3): what follows the headers
+                // is the next request.
                 carry.assign(buf, header_end, std::string::npos);
             }
 
-            // WS upgrade → event loop'a devret, worker serbest kalır
+            // WS upgrade → hand over to the event loop, the worker is freed
             if (req.upgrade_websocket && ws_handler) {
                 handle_ws_upgrade(fd, req, ip_slot.moved);
                 return;
             }
 
-            // SSE upgrade → event loop'a devret
+            // SSE upgrade → hand over to the event loop
             if (req.upgrade_sse && sse_handler) {
                 handle_sse_upgrade(fd, req, ip_slot.moved);
                 return;
             }
 
-            // Keep-alive tespiti (HTTP/1.1 default = keep-alive)
+            // Keep-alive detection (HTTP/1.1 default = keep-alive)
             bool req_keep_alive = (req.version == "HTTP/1.1");
             {
                 auto ci = req.headers.find("connection");
@@ -807,9 +807,9 @@ struct HttpServer::Impl {
                 }
             }
 
-            // "OPTIONS *" (sunucunun kendisi hakkında; ayrıştırıcı '*'ı yalnız OPTIONS'ta kabul eder):
-            // Go globalOptionsHandler gibi uygulamaya gitmeden 200, gövdesiz. Eskiden "*" yolu rota
-            // aranıp 404 dönüyordu.
+            // "OPTIONS *" (about the server itself; the parser accepts '*' only for OPTIONS):
+            // like Go's globalOptionsHandler, 200 with no body without going to the app. Previously the "*" path looked up
+            // a route and returned 404.
             if (req.path == "*") {
                 HttpResponse o;
                 o.keep_alive = req_keep_alive;
@@ -818,7 +818,7 @@ struct HttpServer::Impl {
                 continue;
             }
 
-            // Dispatch — worker thread doğrudan işler
+            // Dispatch — the worker thread handles it directly
             HttpResponse resp;
             resp.keep_alive = req_keep_alive;
             resp.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -830,22 +830,22 @@ struct HttpServer::Impl {
                 resp.body        = "{\"ok\":false,\"error\":\"Server error\",\"hata\":\"Server error\"}";
                 resp.keep_alive  = false;
             }
-            // Kapanma sürüyor (istek işlenirken başladı): yanıt "Connection: close" ile gider,
-            // bağlantı kapanır — istemci sonraki isteğini kapanan sürece göndermesin (Go Shutdown).
+            // Shutdown in progress (started while the request was being handled): the response goes with "Connection: close",
+            // the connection closes — so the client does not send its next request to a process that is closing (Go Shutdown).
             if (draining.load(std::memory_order_acquire)) resp.keep_alive = false;
 
             std::string raw = resp.build();
-            // Tamamı gitmezse bağlantı kapanır: yarım yanıtlı bağlantıda sonraki yanıt yazılmaz.
+            // If it does not all go out the connection closes: on a half-written response the next response is not written.
             if (!send_all(fd, raw.data(), raw.size(), (int)idle_ms) || !resp.keep_alive) { ::close(fd); return; }
-            // keep-alive: sonraki isteği bekle
+            // keep-alive: wait for the next request
         }
     }
 
-    // ── WebSocket upgrade — worker thread'de çalışır ──────────────────────────
-    // Origin başlığından host[:port] kısmını çıkar (scheme:// ve yolu at).
-    // "host[:port]" → host (küçük harf). IPv6 "[::1]:8080" → "[::1]": port yalnız ']' SONRASINDAKİ
-    // ':' ise kırpılır. Eskiden son ':' her durumda kırpılıyordu → portsuz "[::1]" ve "[::2]"
-    // ikisi de "[:" oluyordu (farklı IPv6 adresleri "aynı köken" sayılıyordu).
+    // ── WebSocket upgrade — runs on a worker thread ──────────────────────────
+    // Extract the host[:port] part from the Origin header (drop scheme:// and the path).
+    // "host[:port]" → host (lowercase). IPv6 "[::1]:8080" → "[::1]": the port is trimmed only if the
+    // ':' is AFTER the ']'. Previously the last ':' was always trimmed → portless "[::1]" and "[::2]"
+    // both became "[:" (different IPv6 addresses counted as "same origin").
     static std::string ws_strip_port(std::string h) {
         if (!h.empty() && h[0] == '[') {
             auto rb = h.find(']');
@@ -854,7 +854,7 @@ struct HttpServer::Impl {
             auto colon = h.rfind(':');
             if (colon != std::string::npos) h.resize(colon);
         }
-        for (auto& ch : h) ch = (char)std::tolower((unsigned char)ch);   // host büyük/küçük harf duyarsız
+        for (auto& ch : h) ch = (char)std::tolower((unsigned char)ch);   // host is case-insensitive
         return h;
     }
     static std::string ws_origin_host(const std::string& origin) {
@@ -862,10 +862,10 @@ struct HttpServer::Impl {
         std::string h = (p == std::string::npos) ? origin : origin.substr(p + 3);
         auto slash = h.find('/');
         if (slash != std::string::npos) h = h.substr(0, slash);
-        return ws_strip_port(h);              // host bazlı karşılaştır
+        return ws_strip_port(h);              // compare by host
     }
 
-    // RFC 6455 §4.2.1: Sec-WebSocket-Key = 16 baytın base64'ü (24 karakter, "==" ile biter).
+    // RFC 6455 §4.2.1: Sec-WebSocket-Key = base64 of 16 bytes (24 characters, ends with "==").
     static bool ws_key_valid(const std::string& k) {
         if (k.size() != 24 || k[22] != '=' || k[23] != '=') return false;
         for (size_t i = 0; i < 22; i++) {
@@ -876,15 +876,15 @@ struct HttpServer::Impl {
     }
 
     void handle_ws_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
-        // Anahtarsız/bozuk anahtarlı ya da GET olmayan el sıkışma 101 almaz (eskiden boş anahtarla
-        // bile 101 dönüyordu → yarım el sıkışmış bağlantılar olay döngüsünde yer tutuyordu).
+        // A handshake with a missing/malformed key or a non-GET does not get 101 (previously even an empty key
+        // got 101 → half-handshaken connections occupied space in the event loop).
         if (req.method != "GET" || !ws_key_valid(req.ws_key)) {
             send_simple(fd, 400, "Bad Request"); ::close(fd); return;
         }
-        // CSWSH (Cross-Site WebSocket Hijacking) koruması.
+        // CSWSH (Cross-Site WebSocket Hijacking) protection.
         auto it = req.headers.find("origin");
         if (!allowed_origins.empty()) {
-            // Açık allowlist yapılandırılmış (LOOK_WS_ORIGINS) — tam eşleşme.
+            // An explicit allowlist is configured (LOOK_WS_ORIGINS) — exact match.
             if (it == req.headers.end()) {
                 send_ws_reject(fd, "403 Forbidden - Origin header required");
                 ::close(fd);
@@ -900,12 +900,12 @@ struct HttpServer::Impl {
                 return;
             }
         } else if (it != req.headers.end()) {
-            // Allowlist yok → güvenli varsayılan: SAME-ORIGIN uygula. Tarayıcı
-            // isteği (Origin başlığı var) ancak host'u Host başlığıyla eşleşirse
-            // kabul edilir; cross-origin tarayıcı isteği (asıl CSWSH vektörü)
-            // reddedilir. Origin başlığı OLMAYAN istekler (backend servis, wscat
-            // gibi tarayıcı-dışı client'lar) etkilenmez — çapraz-site riski yok.
-            // Allow-all'a dönmek için: LOOK_WS_ORIGINS=*
+            // No allowlist → safe default: enforce SAME-ORIGIN. A browser
+            // request (Origin header present) is accepted only if its host matches the Host header;
+            // a cross-origin browser request (the real CSWSH vector) is
+            // rejected. Requests WITHOUT an Origin header (backend services, non-browser
+            // clients like wscat) are unaffected — no cross-site risk.
+            // To go back to allow-all: LOOK_WS_ORIGINS=*
             std::string oh = ws_origin_host(it->second);
             auto host_it = req.headers.find("host");
             std::string hh;
@@ -936,17 +936,17 @@ struct HttpServer::Impl {
 
         ws_handler(conn, req);
 
-        // fd'yi event loop'a devret: blocking → non-blocking + EPOLL_CTL_ADD. Kayıt olay döngüsünde,
-        // kapanışla (close_ws) aynı iş parçacığında: işleyici ws::close çağırdıysa kapanış önce koşar
-        // ve bağlantı artık bu fd'de değildir → kaydedilmez. Eskiden işçi kaydediyordu: döngü fd'yi
-        // kapatırken epoll_ctl aynı (ya da yeniden kullanılmış, başka bağlantının) fd'ye gidebiliyordu.
+        // Hand the fd to the event loop: blocking → non-blocking + EPOLL_CTL_ADD. Registration happens in the event loop,
+        // on the same thread as close (close_ws): if the handler called ws::close, the close runs first
+        // and the connection is no longer on this fd → it is not registered. Previously the worker registered: while the loop
+        // closed the fd, epoll_ctl could go to the same fd (or a reused fd of another connection).
         loop->post([this, fd, conn]() {
             { std::lock_guard<std::mutex> lk(ws_mtx); auto it = ws_clients.find(fd); if (it == ws_clients.end() || it->second != conn) return; }
             loop->add_client(fd, [this, fd](const char* d, size_t l) { on_ws_data(fd, d, l); });
         });
     }
 
-    // ── SSE upgrade — worker thread'de çalışır ───────────────────────────────
+    // ── SSE upgrade — runs on a worker thread ───────────────────────────────
     void handle_sse_upgrade(int fd, const HttpRequest& req, bool& ip_slot_moved) {
         if (!held_ip_acquire(req.remote_addr)) { send_simple(fd, 429, "Too Many Requests"); ::close(fd); return; }
         const char* hdrs =
@@ -963,9 +963,9 @@ struct HttpServer::Impl {
         ::send(fd, hdrs, strlen(hdrs), MSG_NOSIGNAL);
 #endif
         auto conn = std::make_shared<SseConnection>(fd);
-        // sse::close (worker thread) → close_sse'yi loop thread'inde koştur (fd/epoll/map
-        // temizliği loop'a ait). Bu köprü olmadan sse::close yalnız closed işaretliyordu →
-        // kaynak istemci TCP-kopana kadar sızıyordu (ölçüldü).
+        // sse::close (worker thread) → run close_sse on the loop thread (fd/epoll/map
+        // cleanup belongs to the loop). Without this bridge sse::close only marked closed →
+        // the resource leaked until the client's TCP dropped (measured).
         conn->request_loop_close = [this, fd]() { loop->post([this, fd]() { close_sse(fd); }); };
         {
             std::lock_guard<std::mutex> lk(sse_mtx);
@@ -976,8 +976,8 @@ struct HttpServer::Impl {
 
         sse_handler(conn, req);
 
-        // fd'yi event loop'a devret — disconnect tespiti için. WS ile aynı: kayıt olay döngüsünde,
-        // close_sse ile sıralı (işleyici sse::close dediyse kaydedilmez — TSan: close_fd ↔ epoll_ctl).
+        // Hand the fd to the event loop — for disconnect detection. Same as WS: registration in the event loop,
+        // ordered with close_sse (not registered if the handler called sse::close — TSan: close_fd ↔ epoll_ctl).
         loop->post([this, fd, conn]() {
             { std::lock_guard<std::mutex> lk(sse_mtx); auto it = sse_clients.find(fd); if (it == sse_clients.end() || it->second != conn) return; }
             loop->add_client(fd, [this, fd](const char* d, size_t l) { on_sse_data(fd, d, l); });
@@ -1006,42 +1006,42 @@ struct HttpServer::Impl {
             auto it = sse_clients.find(fd);
             if (it != sse_clients.end()) { conn = it->second; sse_clients.erase(it); owned = true; }
         }
-        // OWN-ONCE: bu fd'yi map'ten erase eden TEK çağrı temizler. İki close_sse yolu var —
-        // client-FIN (on_sse_data read-event) ve sse::close (loop->post). Her ikisi de loop
-        // thread'inde sıralı koşar; ilki sahiplenir, ikincisi buradan çıkar. Eski kod conn
-        // bulunamayınca yine `loop->close_fd(fd)` çağırıyordu → ÇİFT close_fd = fd yeniden
-        // kullanıldıysa YANLIŞ-fd kapatma. O tehlikeli dal kaldırıldı (own-once ile yapısal).
+        // OWN-ONCE: the ONLY call that erases this fd from the map does the cleanup. There are two close_sse paths —
+        // client-FIN (on_sse_data read-event) and sse::close (loop->post). Both run
+        // in order on the loop thread; the first takes ownership, the second leaves here. The old code still called
+        // `loop->close_fd(fd)` when conn was not found → DOUBLE close_fd = closing the WRONG fd
+        // if the fd had been reused. That dangerous branch was removed (structural via own-once).
         if (!owned) return;
         held_ip_release(conn->held_ip);
         look::g_sse_registry.remove(fd);
         bool fire_cb = false;
         {
             fire_cb = !conn->closed.exchange(true);
-            // SAVUNMA (close_ws 0525ba7 drain'inin aynası): close_fd ÖNCESİ write_mutex'i al.
-            // Handler send'i timer::every / parallel ile ERTELERSE (doğal SSE push kalıbı),
-            // o callback AYRI thread'de SseConnection::send() → write_mutex altında closed'ı
-            // kontrol edip ::send(fd) yapar. Drain olmadan: send() closed-kontrolü (sse.cpp:61)
-            // ile ::send(63) arasındayken close_sse (event-loop) close_fd(fd) → use-after-close
-            // (fd yeniden kullanıldıysa yanlış istemciye yazma). write_mutex uçuştaki send'i
-            // bekletir; sonraki send closed=true görür.
-            // NOT: fd-YAŞAM-SÜRESİ semantik yarışı — kernel fd üzerinde, kullanıcı-belleğinde
-            // DEĞİL → TSan GÖREMEZ (pozitif kontrol iki variantta da 0, bkz [[tsan-heap-yaris-atfi]]).
-            // Kanıt: kod-mantığı + threading. Şiddet DÜŞÜK-ORTA (bozulma değil, yanlış-fd yazımı).
+            // DEFENSE (mirror of close_ws's 0525ba7 drain): take write_mutex BEFORE close_fd.
+            // If the handler DEFERS send with timer::every / parallel (the natural SSE push pattern),
+            // that callback calls SseConnection::send() on a SEPARATE thread: it checks closed under write_mutex
+            // and then does ::send(fd). Without the drain: while send() is between the closed check (sse.cpp:61)
+            // and ::send(63), close_sse (event loop) does close_fd(fd) → use-after-close
+            // (if the fd was reused, writing to the wrong client). write_mutex makes the in-flight send
+            // wait; the next send sees closed=true.
+            // NOTE: this is an fd-LIFETIME semantic race — on a kernel fd, not in user
+            // memory → TSan CANNOT SEE it (the positive control is 0 in both variants).
+            // Evidence: code logic + threading. Severity LOW-MEDIUM (not corruption, a wrong-fd write).
             std::lock_guard<std::mutex> wlk(conn->write_mutex);
-            loop->close_fd(fd);   // own-once → tam bir kez (çift-close yok)
+            loop->close_fd(fd);   // own-once → exactly once (no double close)
         }
         if (fire_cb) {
             if (auto cb = conn->get_on_close_cb()) pool->submit([cb]() { cb(); });
         }
     }
 
-    // ── WS geri çağrıları: bağlantı başına sırayla ──────────────────────────
-    // İş bağlantının gelen kutusuna girer; kutuyu boşaltan iş yoksa havuza bir tane verilir.
-    // Boşaltıcı işleri tek tek çalıştırır; WS_DRAIN_BATCH işten sonra kendini yeniden kuyruğa
-    // koyar ki çok konuşan tek bağlantı bir havuz iş parçacığını tekeline almasın.
+    // ── WS callbacks: in order per connection ──────────────────────────
+    // Work goes into the connection's inbox; if no job is draining the inbox, one is given to the pool.
+    // The drainer runs jobs one at a time; after WS_DRAIN_BATCH jobs it requeues itself
+    // so that a single chatty connection does not monopolize a pool thread.
     static constexpr int WS_DRAIN_BATCH = 64;
-    // Geri basınç sınırları (bağlantı başına bekleyen geri çağrılar): üstü aşılınca okuma durur,
-    // altına inince sürer. Mesaj sayısı da sayılır: 1 baytlık çerçeve başına iş ~100 B tutar.
+    // Backpressure limits (pending callbacks per connection): above the limit reading stops,
+    // below it resumes. Message count is counted too: each 1-byte frame costs ~100 B of work.
     static constexpr size_t WS_INBOX_HIGH_MSGS = 1000, WS_INBOX_LOW_MSGS = 250;
     static constexpr size_t WS_INBOX_HIGH_BYTES = 16u << 20, WS_INBOX_LOW_BYTES = 4u << 20;
     void ws_in_order(const std::shared_ptr<WsConnection>& conn, std::function<void()> job, size_t bytes = 0) {
@@ -1055,13 +1055,13 @@ struct HttpServer::Impl {
         }
         if (start) ws_drain(conn);
     }
-    // Olay döngüsünde: kutu doluysa okumayı durdur (yeniden kurma). true = duraklatıldı.
+    // In the event loop: if the inbox is full, stop reading (do not re-arm). true = paused.
     bool ws_pause_if_full(const std::shared_ptr<WsConnection>& conn) {
         std::lock_guard<std::mutex> lk(conn->inbox_mtx);
         if (conn->inbox.size() > WS_INBOX_HIGH_MSGS || conn->inbox_bytes > WS_INBOX_HIGH_BYTES) {
             conn->read_paused = true;
-            // Okuma geri çağrısı kalıcı (kenar tetiklemeli, EAGAIN'e dek okur): yeniden kurmamak
-            // okumayı durdurmaz — döngüye açıkça söylenir. Kilit altında: boşaltıcının sürdürmesiyle yarışmaz.
+            // The read callback is persistent (edge-triggered, reads until EAGAIN): not re-arming
+            // does not stop reading — the loop is told explicitly. Under the lock: so it does not race with the drainer's resume.
             loop->pause_read(conn->fd);
             return true;
         }
@@ -1088,44 +1088,44 @@ struct HttpServer::Impl {
                     }
                 }
                 if (resume) {
-                    // Okumayı olay döngüsünde yeniden kur — bağlantı hâlâ bu fd'deyse (kapanıp fd
-                    // yeniden kullanılmışsa başka bağlantının okumasına dokunma).
+                    // Re-arm reading in the event loop — if the connection is still on this fd (if it closed and the fd
+                    // was reused, do not touch the other connection's read).
                     int fd = conn->fd;
                     loop->post([this, conn, fd]() {
                         bool same;
                         { std::lock_guard<std::mutex> lk(ws_mtx); auto it = ws_clients.find(fd); same = it != ws_clients.end() && it->second == conn; }
                         if (!same) return;
-                        // Okuma duraklıyken bağlantı kapandıysa (gitmiş istemciye ws::send başarısız →
-                        // closed) kapanışı burada yap: okuma kurulmadığı için EOF hiç okunmaz, close_ws
-                        // çağrılmaz, "close" geri çağrısı çalışmaz ve bağlantı sızardı.
+                        // If the connection closed while reading was paused (ws::send to a gone client failed →
+                        // closed) do the close here: since reading is not armed, EOF is never read, close_ws
+                        // is not called, the "close" callback does not run and the connection would leak.
                         if (conn->closed.load()) close_ws(fd);
                         else ws_arm_read(fd);
                     });
                 }
-                try { job(); } catch (...) {}   // geri çağrı kendi hatasını günlüğe yazar; kutu takılmasın
+                try { job(); } catch (...) {}   // the callback logs its own error; the inbox must not get stuck
             }
             ws_drain(conn);
         });
     }
 
-    // ── WS frame I/O ─────────────────────────────────────────────────────────
+    // ── WS frame I/O ─────────────────────────────────────────────────────
     void on_ws_data(int fd, const char* data, size_t len) {
-        // len==0 = bağlantı kapandı (event loop clean-FIN/hata bildirimi). Registry
-        // + buffer'ı reap et — aksi halde her temiz disconnect'te ws_clients/ws_bufs/
-        // g_ws_registry sızar → MAX_WS'e ulaşınca yeni upgrade'ler kalıcı reddedilir
-        // + broadcast kapalı/yeniden-açılmış fd'ye yazmaya devam eder.
+        // len==0 = connection closed (event loop clean-FIN/error notification). Reap the registry
+        // + buffer — otherwise on every clean disconnect ws_clients/ws_bufs/
+        // g_ws_registry leak → when MAX_WS is reached new upgrades are permanently rejected
+        // + broadcast keeps writing to a closed/reopened fd.
         if (len == 0) {
-            // İstemci kapanış çerçevesi GÖNDERMEDEN gitti (ağ koptu, sekme kapandı, mobil uyku).
-            // "close" geri çağırması yalnız kapanış çerçevesinde ateşleniyordu → bu yolda hiç
-            // çalışmıyor, uygulamanın bağlantı listesi/temizliği sızıyordu (SSE'de kopuş zaten
-            // ateşliyor). Kural: istemci gidince bir kez; sunucu kendisi kapattıysa (closed) yok.
-            close_ws(fd);   // "close" geri çağrısı close_ws'de (tek yer)
+            // The client left WITHOUT SENDING a close frame (network dropped, tab closed, mobile sleep).
+            // The "close" callback fired only on a close frame → on this path it never
+            // ran, and the application's connection list/cleanup leaked (on SSE a drop already
+            // fires). Rule: once when the client leaves; not if the server closed it itself (closed).
+            close_ws(fd);   // the "close" callback is in close_ws (single place)
             return;
         }
         std::shared_ptr<WsConnection> conn;
-        // Tampon olay döngüsünde bir kez alınır, baştan sona tek geçişte çözülür, kalan sonda geri
-        // konur. Eskiden HER çerçevede tamponun tamamı kopyalanıp baştan siliniyordu (karesel: tek
-        // okumadaki binlerce küçük çerçeve ya da büyük bir çerçevenin parçaları olay döngüsünü kilitliyordu).
+        // The buffer is taken once in the event loop, decoded in a single pass from start to end, and the remainder put back
+        // at the end. Previously the WHOLE buffer was copied and erased from the front on EVERY frame (quadratic: thousands of small frames
+        // in a single read, or pieces of a large frame, locked up the event loop).
         std::string buf;
         {
             std::lock_guard<std::mutex> lk(ws_mtx);
@@ -1142,7 +1142,7 @@ struct HttpServer::Impl {
         while (true) {
             WsFrame frame = ws_try_decode_frame(std::string_view(buf).substr(off));
             if (frame.protocol_error) {
-                // RFC 6455 §5.1: maskesiz client frame → 1002 ile kapat
+                // RFC 6455 §5.1: unmasked client frame → close with 1002
                 std::string cf = ws_encode_close_frame();
                 { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
                 conn->closed.store(true);
@@ -1151,11 +1151,11 @@ struct HttpServer::Impl {
             if (!frame.complete) break;
             off += frame.consumed;
 
-            // RFC 6455 §5.4 parça birleştirme + §5.1 protokol ihlallerinde 1002.
-            // binary: ikili çerçeve (0x2); parçalı mesajda ilk çerçevenin opcode'u (frag_opcode).
-            // Sınır ikisinde aynı: çerçeve 16 MB (ws_try_decode_frame), birleştirilmiş mesaj 16 MB.
+            // RFC 6455 §5.4 fragment reassembly + 1002 on §5.1 protocol violations.
+            // binary: binary frame (0x2); for a fragmented message the opcode of the first frame (frag_opcode).
+            // The limit is the same for both: frame 16 MB (ws_try_decode_frame), reassembled message 16 MB.
             auto ws_deliver = [&](const std::string& msg, bool binary) {
-                if (auto cb = conn->get_on_message())   // kilitli kopya: ws::on aynı anda atayabilir
+                if (auto cb = conn->get_on_message())   // locked copy: ws::on may assign at the same time
                     ws_in_order(conn, [cb, msg, binary]() { cb(msg, binary); }, msg.size() + 128);
             };
             auto ws_proto_close = [&]() {
@@ -1163,11 +1163,11 @@ struct HttpServer::Impl {
                 { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
                 conn->closed.store(true);
             };
-            // Metin mesajı geçerli UTF-8 olmalı (RFC 6455 §8.1): değilse 1007 ile kapat, işleyici
-            // görmez. ESKİ: bozuk baytlar işleyiciye teslim ediliyor, oradan JSON/veritabanı/HTML'e
-            // gidebiliyordu (gönderirken artık reddedildiğinden almada kabul etmek de tutarsızdı).
-            // Parçalı mesajda birleştirilmiş mesaj denetlenir (karakter parçalar arasında bölünebilir).
-            // İkili mesaj denetlenmez.
+            // A text message must be valid UTF-8 (RFC 6455 §8.1): otherwise close with 1007, the handler
+            // does not see it. OLD: corrupt bytes were delivered to the handler and could go from there to JSON/database/HTML
+            // (since sending now rejects them, accepting on receive was inconsistent too).
+            // For a fragmented message the reassembled message is checked (a character can be split across fragments).
+            // A binary message is not checked.
             auto ws_text_ok = [&](const std::string& msg) -> bool {
                 if (ws_utf8_valid(msg)) return true;
                 std::string cf = ws_encode_close_frame_code(1007);
@@ -1178,16 +1178,16 @@ struct HttpServer::Impl {
 
             uint8_t op = frame.opcode;
             if (op == 0x00 || op == 0x01 || op == 0x02) {
-                // Birleştirilmiş mesaj tavanı — parça yığma DoS'una karşı.
+                // Reassembled message cap — against fragment-accumulation DoS.
                 static constexpr size_t WS_MAX_MESSAGE = 16 * 1024 * 1024;
                 if (op == 0x00) {
-                    // Continuation — aktif bir parçalı mesaj olmalı (RFC §5.4).
+                    // Continuation — there must be an active fragmented message (RFC §5.4).
                     if (!conn->frag_active) { ws_proto_close(); break; }
                     conn->frag_buf += frame.payload;
                 } else {
-                    // Yeni text/binary — önceki parça bitmeden yenisi başlayamaz.
+                    // New text/binary — a new one cannot start before the previous fragment finishes.
                     if (conn->frag_active) { ws_proto_close(); break; }
-                    if (frame.fin) {                                               // tek-frame
+                    if (frame.fin) {                                               // single frame
                         if (op == 0x01 && !ws_text_ok(frame.payload)) break;
                         ws_deliver(frame.payload, op == 0x02);
                         continue;
@@ -1197,7 +1197,7 @@ struct HttpServer::Impl {
                     conn->frag_buf    = frame.payload;
                 }
                 if (conn->frag_buf.size() > WS_MAX_MESSAGE) { ws_proto_close(); break; }
-                if (frame.fin) {                       // parçalı mesaj tamamlandı
+                if (frame.fin) {                       // fragmented message complete
                     std::string msg = std::move(conn->frag_buf);
                     conn->frag_buf.clear();
                     conn->frag_active = false;
@@ -1212,28 +1212,28 @@ struct HttpServer::Impl {
                 std::string cf = ws_encode_close_frame();
                 { std::lock_guard<std::mutex> lk(conn->write_mutex); conn->send_raw(cf); }
                 conn->closed.store(true);
-                close_ws(fd);   // "close" geri çağrısı close_ws'de (tek yer)
+                close_ws(fd);   // the "close" callback is in close_ws (single place)
                 return;
             }
         }
 
-        // Çözülmemiş kalan (yarım çerçeve) geri konur — bağlantı bu arada kapandıysa giriş yoktur.
+        // The leftover (half frame) is put back — if the connection closed in the meantime there is no entry.
         {
             std::lock_guard<std::mutex> lk(ws_mtx);
             auto it = ws_bufs.find(fd);
             if (it != ws_bufs.end()) it->second.assign(buf, off, std::string::npos);
         }
         if (!conn->closed.load()) {
-            // Geri basınç: gelen kutusu doluysa okuma kurulmaz; boşaltıcı alt sınıra inince kurar.
+            // Backpressure: if the inbox is full reading is not armed; the drainer arms it when it drops to the low watermark.
             if (!ws_pause_if_full(conn)) ws_arm_read(fd);
         } else {
             close_ws(fd);
         }
     }
 
-    // ws::close (WsConnection::close_conn) sonrası: kapanış çerçevesi gitti, bağlantıyı olay
-    // döngüsünde kapat. fd bu arada yeniden kullanıldıysa yeni bağlantı server_closed değildir →
-    // dokunulmaz (kimlik karşılaştırması gerekmez).
+    // After ws::close (WsConnection::close_conn): the close frame has gone out, close the connection in the
+    // event loop. If the fd was reused in the meantime the new connection is not server_closed →
+    // untouched (no identity comparison needed).
     void ws_server_closed(int fd) {
         loop->post([this, fd]() {
             std::shared_ptr<WsConnection> conn;
@@ -1251,21 +1251,21 @@ struct HttpServer::Impl {
             ws_clients.erase(fd);
             ws_bufs.erase(fd);
         }
-        // fd close-vs-send yarışı (TSan-kanıtlı): broadcast/send_raw ::send(fd) yaparken
-        // close_fd(fd) fd'yi kapatırsa → kapalı/yeniden-kullanılan fd'ye yazma (cross-talk).
-        // Çözüm: closed=true (yeni send başlamaz — send_raw/send_text closed kontrolü) SONRA
-        // write_mutex'i DRAIN et (uçuştaki send bitene kadar bekle) — write_mutex tutulurken
-        // hiçbir send_raw ::send içinde olamaz → close_fd güvenli. Kilit close_fd'yi de kapsar.
+        // fd close-vs-send race (TSan-proven): while broadcast/send_raw does ::send(fd),
+        // if close_fd(fd) closes the fd → a write to a closed/reused fd (cross-talk).
+        // Fix: closed=true (no new send starts — send_raw/send_text closed check) THEN
+        // DRAIN write_mutex (wait for in-flight sends to finish) — while write_mutex is held
+        // no send_raw can be inside ::send → close_fd is safe. The lock also covers close_fd.
         if (conn) {
-            // "close" geri çağrısı — TEK yer: bağlantı hangi yoldan biterse bitsin (kapanış çerçevesi,
-            // kopma, gönderim hatası, protokol hatası) bir kez; sunucu ws::close ile kapattıysa hiç.
-            // Gelen kutusundan geçer: bekleyen mesaj geri çağrılarından SONRA çalışır.
+            // "close" callback — the SINGLE place: once however the connection ends (close frame,
+            // drop, send error, protocol error); never if the server closed with ws::close.
+            // Goes through the inbox: runs AFTER pending message callbacks.
             if (auto cb = conn->get_on_close(); cb && !conn->server_closed.load() && !conn->close_fired.exchange(true))
                 ws_in_order(conn, [cb]() { cb(); });
             held_ip_release(conn->held_ip);
             conn->closed.store(true);
-            std::lock_guard<std::mutex> wlk(conn->write_mutex);  // uçuştaki send'i drain et
-            conn->fd_released = true;   // kilidi bekleyen close_conn kapanmış fd'ye yazmasın
+            std::lock_guard<std::mutex> wlk(conn->write_mutex);  // drain the in-flight send
+            conn->fd_released = true;   // so a close_conn waiting on the lock does not write to a closed fd
             look::g_ws_registry.remove(fd);
             loop->close_fd(fd);
         } else {
@@ -1277,11 +1277,11 @@ struct HttpServer::Impl {
 
 // ── HttpServer public API ─────────────────────────────────────────────────────
 
-// HTTP modunun dinleme adresi: --bind / LOOK_BIND (IPv4). Boş → tüm arayüzler (varsayılan
-// değişmedi: Ubuntu kurulumu ve Docker doğrudan hizmet verir). Eskiden adres seçilemiyordu: bir
-// ters vekilin (Plesk'te Apache) arkasındaki site kendi portunda internete de açıktı — vekil
-// atlanıp HTTPS, vekil kuralları ve güvenilen vekil başlıkları devre dışı bırakılabiliyordu.
-// Ad (localhost) kabul edilmez: çözümlemede ::1'e düşüp IPv4 dinleyiciyle eşleşmeyebilir.
+// Listen address of HTTP mode: --bind / LOOK_BIND (IPv4). Empty → all interfaces (the default
+// is unchanged: the Ubuntu setup and Docker serve directly). Previously the address could not be chosen: a site behind
+// a reverse proxy (Apache on Plesk) was also open to the internet on its own port — the proxy could be
+// bypassed, disabling HTTPS, proxy rules and trusted proxy headers.
+// A name (localhost) is not accepted: resolution may fall to ::1 and fail to match an IPv4 listener.
 static uint32_t http_bind_addr() {
     const char* e = std::getenv("LOOK_BIND");
     if (!e || !*e) return htonl(INADDR_ANY);
@@ -1292,7 +1292,7 @@ static uint32_t http_bind_addr() {
     return a.s_addr;
 }
 
-// Süreçteki HTTP sunucusu (tek) — ws::close kancası için.
+// The process's HTTP server (single) — for the ws::close hook.
 static std::atomic<void*> s_ws_close_impl{nullptr};
 void HttpServer::ws_close_hook(int fd) {
     if (void* p = s_ws_close_impl.load()) static_cast<Impl*>(p)->ws_server_closed(fd);
@@ -1311,7 +1311,7 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
     impl_->sse_handler = std::move(sse_handler);
     impl_->loop        = EventLoop::create();
 
-    // CSWSH koruması: LOOK_WS_ORIGINS=https://site.com,https://other.com
+    // CSWSH protection: LOOK_WS_ORIGINS=https://site.com,https://other.com
     if (const char* env = std::getenv("LOOK_WS_ORIGINS")) {
         std::string s = env;
         size_t pos = 0, found;
@@ -1349,10 +1349,10 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
             "Limit connections per address with LOOK_HTTP_MAX_CONNS_IP.");
     }
     if (!fiber_dispatch_on()) {
-        // Bağlantı başına işçi modeli (LOOK_FIBER_DISPATCH=0 ya da fiber olmayan platform, ör.
-        // Windows): açık bağlantı bir istek gönderene ya da zaman aşımına dek işçiyi tutar. Önünde
-        // vekil yoksa işçi sayısı kadar açık bağlantı (boşta tarayıcı bağlantıları dahil) herkesi
-        // bekletir (ölçüldü: 8 işçi, 8 bağlantı → 30 sn). Sessiz kalmasın.
+        // Worker-per-connection model (LOOK_FIBER_DISPATCH=0 or a non-fiber platform, e.g.
+        // Windows): an open connection holds a worker until it sends a request or times out. With no
+        // proxy in front, as many open connections as workers (including idle browser connections) make everyone
+        // wait (measured: 8 workers, 8 connections → 30 s). Do not stay silent.
         const char* tp = std::getenv("LOOK_TRUSTED_PROXY");
         if (!(tp && *tp))
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
@@ -1362,15 +1362,15 @@ HttpServer::HttpServer(int port, int workers, HttpHandler handler,
                 "browser connections included - make every other client wait. Put a reverse proxy in "
                 "front and set LOOK_TRUSTED_PROXY, or set LOOK_HTTP_MAX_CONNS_IP.");
     }
-    // listen() BURADA DEĞİL: port, işçiler hazır olunca run()'da açılır. Eskiden burada dinleniyordu:
-    // kurucu ile run() arası bağlanan istemci (fiber modunda bu soket run()'da kapatılır; bellek
-    // sınırında süreç işçi açamayıp çıkar) bağlantısı kabul edilip yanıtsız kalıyordu (ölçüldü:
-    // yük altında 1024 MB'ta nedenli 40 çıkışın 17'si önce bağlantı kabul etmişti). Bind burada
-    // kalır: port meşgulse hata hemen.
+    // listen() NOT HERE: the port is opened in run() once the workers are ready. Previously it listened here:
+    // a client connecting between the constructor and run() (in fiber mode this socket is closed in run(); under the memory
+    // limit the process cannot start workers and exits) had its connection accepted and left without a response (measured:
+    // under load at 1024 MB, 17 of 40 exits with a stated reason had accepted a connection first). Bind stays here:
+    // if the port is busy, the error is immediate.
     impl_->server_fd = srv;
 }
 
-// "Listening on …" yalnız port gerçekten dinlenince (bir kez) — önceden kurucudan hemen sonra yazılıyordu.
+// "Listening on …" only once the port is really listening — previously printed right after the constructor.
 static void log_listening(int port) {
     static std::once_flag once;
     std::call_once(once, [port] {
@@ -1390,7 +1390,7 @@ HttpServer::~HttpServer() {
 void HttpServer::run() {
     impl_->running = true;
 
-    // Event loop — arka planda, sadece WS/SSE için
+    // Event loop — in the background, only for WS/SSE
     impl_->loop_thread = std::thread([this]() {
         impl_->loop->run();
     });
@@ -1412,10 +1412,10 @@ void HttpServer::run() {
     }
 #endif
 
-    // Başlangıç kapısı (fiber modu): hiçbir işçi, HEPSİ hazır olmadan (soket bağlandı, kabul fiber'ı
-    // kuruldu) dinlemeye başlamaz. Eskiden her işçi kendi soketini hemen dinliyordu: sanal bellek
-    // sınırında bir sonraki işçi fiber'ını açamayıp süreç nedenini yazarak çıkarken port bir an
-    // açıktı — istemci bağlanıp yanıt alamıyordu ("ya hizmet ver ya nedenini söyle" sözü bozuluyordu).
+    // Startup gate (fiber mode): no worker starts listening until ALL are ready (socket bound, accept fiber
+    // set up). Previously every worker listened on its socket immediately: when under a virtual memory
+    // limit the next worker could not start its fiber and the process exited writing its reason, the port was
+    // briefly open — a client connected and got no response (breaking the promise "either serve or say why").
     struct StartGate { std::mutex m; std::condition_variable cv; int ready = 0; bool abort = false; } gate;
     auto gate_arrive_and_wait = [&gate, this]() -> bool {
         std::unique_lock<std::mutex> lk(gate.m);
@@ -1423,9 +1423,9 @@ void HttpServer::run() {
         gate.cv.wait(lk, [&] { return gate.abort || gate.ready >= impl_->workers; });
         return !gate.abort;
     };
-    // Bağlantı başına işçi modeli (fiber yok / Windows): ortak soket, BÜTÜN işçi iş parçacıkları
-    // açıldıktan sonra ana iş parçacığında dinlenir; işçiler o ana dek burada bekler (açılmamış
-    // sokette accept EINVAL ile hemen döner — dönüp durmasınlar). Açılamazsa kapı iptal: dinlemeden çık.
+    // Worker-per-connection model (no fiber / Windows): the shared socket is listened on the main thread
+    // after ALL worker threads have started; workers wait here until then (accept on an
+    // unopened socket returns immediately with EINVAL — they must not spin). If one cannot start the gate is cancelled: exit without listening.
     struct ListenGate { std::mutex m; std::condition_variable cv; bool open = false, abort = false; } lgate;
     auto wait_listening = [&lgate]() -> bool {
         std::unique_lock<std::mutex> lk(lgate.m);
@@ -1457,7 +1457,7 @@ void HttpServer::run() {
                     waddr.sin_family      = AF_INET;
                     waddr.sin_addr.s_addr = http_bind_addr();
                     waddr.sin_port        = htons((uint16_t)shared_port);
-                    // listen() başlangıç kapısından SONRA (aşağıda) — burada yalnız bağla.
+                    // listen() AFTER the startup gate (below) — only bind here.
                     if (::bind(worker_fd, (sockaddr*)&waddr, sizeof(waddr)) < 0) {
                         ::close(worker_fd);
                         worker_fd = -1;
@@ -1470,11 +1470,11 @@ void HttpServer::run() {
                 }
             }
 
-            // fiber-ok: iş parçacığının zamanlayıcısı (iş parçacığı yapısı)
+            // fiber-ok: the thread's scheduler (thread structure)
             static thread_local look::FiberScheduler tl_srv_sched;
             if (fiber_burst && worker_fd >= 0) look::set_thread_scheduler(&tl_srv_sched);
-            bool gate_passed = !fiber_burst;   // fiber modunda: ilk kabul fiber'ı kurulunca kapıda bekle
-            // Soketini bağlayamayan işçi de kapıya uğrar (yoksa ötekiler onu sonsuza dek beklerdi).
+            bool gate_passed = !fiber_burst;   // in fiber mode: wait at the gate once the first accept fiber is set up
+            // A worker that could not bind its socket also visits the gate (otherwise the others would wait for it forever).
             if (fiber_burst && worker_fd < 0) { gate_passed = true; gate_arrive_and_wait(); }
             if (!fiber_burst && !wait_listening()) return;
 #else
@@ -1484,22 +1484,22 @@ void HttpServer::run() {
             while (impl_->running) {
 #ifdef __linux__
                 if (fiber_burst && worker_fd >= 0) {
-                    // ── D Fix #2: acceptor artık BİR FİBER — accept fd, bağlantı
-                    // fd'leriyle AYNI scheduler epoll'unda multiplex edilir (Go
-                    // netpoller modeli). Eski model: poll(accept) DIŞARIDA +
-                    // run_until_complete() TÜM fiber'lar bitene dek bloklar →
-                    // keep-alive fiber'ları beklerken YENİ bağlantılar hiç accept
-                    // edilmiyordu (c=100 hang'inin accept ayağı). Şimdi acceptor
-                    // yield eder etmez scheduler bağlantı fiber'larını koşturur;
-                    // yeni bağlantı gelince epoll acceptor'ı uyandırır.
-                    constexpr int FIBER_CAP = 1024;  // worker başına fiber üst sınırı
+                    // ── D Fix #2: the acceptor is now A FIBER — the accept fd is multiplexed
+                    // in the SAME scheduler epoll as the connection fds (Go
+                    // netpoller model). Old model: poll(accept) OUTSIDE +
+                    // run_until_complete() blocks until ALL fibers finish →
+                    // while keep-alive fibers waited NEW connections were never
+                    // accepted (the accept leg of the c=100 hang). Now as soon as the acceptor
+                    // yields the scheduler runs the connection fibers;
+                    // epoll wakes the acceptor when a new connection arrives.
+                    constexpr int FIBER_CAP = 1024;  // per-worker fiber cap
                     FiberScheduler* sched = &tl_srv_sched;
                     auto acceptor = [this, sched](int worker_fd) {
                         auto self = look::Fiber::current()->shared_from_this_fiber();
                         while (impl_->running) {
-                            // Backpressure: fiber tavanındayken accept'i durdur,
-                            // saf zamanlayıcıyla kısa çekil (fd<0 → epoll kaydı yok,
-                            // accept-ready spin'i imkansız); bağlantılar bu arada biter.
+                            // Backpressure: while at the fiber cap, stop accept,
+                            // back off briefly with a pure timer (fd<0 → no epoll registration,
+                            // an accept-ready spin is impossible); connections finish meanwhile.
                             if ((int)sched->total_count() > FIBER_CAP) {
                                 sched->wait_readable_tmo(self, -1, 5);
                                 continue;
@@ -1524,9 +1524,9 @@ void HttpServer::run() {
                                         impl_->handle_connection(client, ip_str);
                                     });
                                 } catch (const std::exception& e) {
-                                    // Baglantinin fiber'i acilamadi (bellek): yalniz bu baglantiyi
-                                    // kapat. Eskiden istisna acceptor'u dusuruyor, fd sizip istemci
-                                    // cevapsiz kaliyordu.
+                                    // The connection's fiber could not be started (memory): close only this
+                                    // connection. Previously the exception took down the acceptor, the fd leaked and the client
+                                    // was left with no response.
                                     ::close(client);
                                     static std::atomic<unsigned> dropped{0};
                                     unsigned n = ++dropped;
@@ -1535,32 +1535,32 @@ void HttpServer::run() {
                                             "closed a connection: its fiber could not start (" + std::string(e.what()) +
                                             "); " + std::to_string(n) + " so far. Is the process's virtual memory limited (ulimit -v)?");
                                 }
-                                continue;   // kuyruk boşalana dek accept'e devam
+                                continue;   // keep accepting until the queue drains
                             }
                             if (errno == EINTR) continue;
                             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                                // Kuyruk boş → accept fd'yi scheduler epoll'una park et.
-                                // 200ms tavan: kapanışta (running=false) en geç 200ms'de
-                                // uyanıp çıkarız (eskiden süresiz bekleme riski vardı).
+                                // Queue empty → park the accept fd in the scheduler's epoll.
+                                // 200ms ceiling: on shutdown (running=false) we wake up
+                                // and exit within 200ms at the latest (previously there was a risk of waiting indefinitely).
                                 if (sched->wait_readable_tmo(self, worker_fd, 200) < 0)
-                                    break;   // epoll yok (olmamalı) — fiber modu bırak
+                                    break;   // no epoll (should not happen) — leave fiber mode
                                 continue;
                             }
                             if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
-                                // Tanıtıcı/bellek tükendi: dinlemeyi BIRAKMA, kısa çekil (bkz. accept_backoff).
+                                // Descriptors/memory exhausted: do NOT stop listening, back off briefly (see accept_backoff).
                                 sched->wait_readable_tmo(self, -1, 50);
                                 continue;
                             }
-                            break;   // gerçek accept hatası
+                            break;   // real accept error
                         }
                     };
                     try {
                     sched->spawn([acceptor, worker_fd]() { acceptor(worker_fd); });
                     } catch (const std::exception& e) {
-                        // Acceptor fiber'i acilamadi: bu worker'in soketine gelen baglantilar
-                        // hic kabul edilmezdi. Go gibi: nedeni yaz, hata koduyla cik (systemd
-                        // yeniden baslatir, panel/journal gosterir). Eskiden istisna thread'den
-                        // kacip std::terminate ile "terminate called without an active exception".
+                        // The acceptor fiber could not be started: connections arriving on this worker's socket
+                        // would never be accepted. Like Go: write the reason, exit with an error code (systemd
+                        // restarts, the panel/journal shows it). Previously the exception escaped the thread
+                        // and std::terminate produced "terminate called without an active exception".
                         std::string msg = "could not start the connection fiber of HTTP worker " +
                             std::to_string(i + 1) + " (" + e.what() + "). Use fewer workers (--workers) "
                             "or raise the process's limits (ulimit -v).";
@@ -1569,8 +1569,8 @@ void HttpServer::run() {
                         std::fflush(nullptr);
                         std::_Exit(1);
                     }
-                    // Başlangıç kapısı: bütün işçiler kabul fiber'ını kurdu → şimdi dinle. Kapı
-                    // iptal edildiyse (başka bir iş parçacığı açılamadı) dinlemeden çık.
+                    // Startup gate: all workers have set up their accept fiber → now listen. If the gate
+                    // was cancelled (another thread could not start), exit without listening.
                     if (!gate_passed) {
                         gate_passed = true;
                         if (!gate_arrive_and_wait()) { impl_->running = false; tl_srv_sched.run_until_complete(); break; }
@@ -1583,16 +1583,16 @@ void HttpServer::run() {
                             std::_Exit(1);
                         }
                         log_listening(shared_port);
-                        // Gözetleyiciye kayıt (aşağıda, run sonu): bu işçi takılırsa soketini boşaltacak
-                        // boştaki işçiyi o seçer. Çıkışta (thread sonu) kayıt zamanlayıcı yıkılmadan silinir.
+                        // Registration with the watcher (below, at the end of run): if this worker gets stuck, the idle
+                        // worker it picks will drain its socket. On exit (thread end) the registration is removed before the scheduler is torn down.
                         std::lock_guard<std::mutex> lk(impl_->lfd_mtx);
                         impl_->watched.push_back({sched, worker_fd});
                     }
-                    // Acceptor + tüm bağlantı fiber'ları bitene dek çalış.
-                    // Acceptor running=false görünce (≤200ms) çıkar; bağlantı
-                    // fiber'ları idle-timeout ile kapanır → temiz wind-down.
+                    // Run until the acceptor + all connection fibers finish.
+                    // The acceptor exits when it sees running=false (≤200ms); the connection
+                    // fibers close via idle-timeout → clean wind-down.
                     tl_srv_sched.run_until_complete();
-                    continue;   // running hâlâ true ise (olağandışı) yeniden kur
+                    continue;   // if running is still true (unusual) set up again
                 }
 #endif
                 // Blocking path (non-fiber or Windows)
@@ -1629,7 +1629,7 @@ void HttpServer::run() {
                 std::lock_guard<std::mutex> lk(impl_->lfd_mtx);
                 auto& v = impl_->listen_fds;
                 v.erase(std::remove(v.begin(), v.end(), worker_fd), v.end());
-                auto& w = impl_->watched;   // gözetleyici bu zamanlayıcıya bir daha dokunmaz
+                auto& w = impl_->watched;   // the watcher will not touch this scheduler again
                 w.erase(std::remove_if(w.begin(), w.end(),
                     [&](const Impl::Watched& x) { return x.fd == worker_fd; }), w.end());
                 ::close(worker_fd);
@@ -1637,10 +1637,10 @@ void HttpServer::run() {
 #endif
         });
       } catch (const std::system_error& e) {
-        // Islemci thread'i acilamadi: baslatilanlari durdur (≤200 ms'de running'i gorurler),
-        // birlestir, nedenli hata — joinable thread'le cikmak std::terminate idi.
+        // The worker thread could not be started: stop the ones already started (they see running within ≤200 ms),
+        // join, error with a reason — exiting with a joinable thread was a std::terminate.
         impl_->running = false;
-        // Kapıda bekleyen işçileri bırak (dinlemeden çıkarlar) — yoksa join sonsuza dek beklerdi.
+        // Release the workers waiting at the gate (they exit without listening) — otherwise join would wait forever.
         { std::lock_guard<std::mutex> lk(gate.m); gate.abort = true; }
         gate.cv.notify_all();
         { std::lock_guard<std::mutex> lk(lgate.m); lgate.abort = true; }
@@ -1654,7 +1654,7 @@ void HttpServer::run() {
       }
     }
 
-    // Bağlantı başına işçi modeli: bütün işçiler açıldı → şimdi dinle, sonra işçileri bırak.
+    // Worker-per-connection model: all workers started → now listen, then release the workers.
     if (!fiber_burst) {
         const int lr = (impl_->server_fd >= 0) ? ::listen(impl_->server_fd, 16384) : -1;
         if (lr < 0) {
@@ -1673,15 +1673,15 @@ void HttpServer::run() {
     }
 
 #ifdef __linux__
-    // Gözetleyici (bkz. Impl::watched): 2 ms'de bir, 3 ms'den uzun süredir aynı fiber'ı çalıştıran
-    // (bölünemeyen işte takılı) işçinin soketinde bekleyen bağlantı varsa, şu an fiber çalıştırmayan
-    // en az yüklü işçiye boşalttırır. Tek iş parçacığı; işçiler çıkarken kayıttan kendilerini siler.
+    // Watcher (see Impl::watched): every 2 ms, if there is a connection waiting on the socket of a worker that has been running the same fiber
+    // for more than 3 ms (stuck in indivisible work), have the least-loaded worker that is not currently running a fiber
+    // drain it. A single thread; workers remove themselves from the registry on exit.
     std::thread monitor;
     if (fiber_burst) {
         try {
             monitor = std::thread([this]() {
                 using namespace std::chrono;
-                constexpr int64_t kStuckNs = 3'000'000;   // VM döngüsü 1 ms'de sırayı bırakır
+                constexpr int64_t kStuckNs = 3'000'000;   // the VM loop yields every 1 ms
                 while (impl_->running) {
                     std::this_thread::sleep_for(milliseconds(2));
                     const int64_t now = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
@@ -1690,7 +1690,7 @@ void HttpServer::run() {
                         const int64_t since = w.sched->running_since_ns();
                         if (!since || now - since < kStuckNs || w.draining->load(std::memory_order_acquire)) continue;
                         pollfd p{w.fd, POLLIN, 0};
-                        if (::poll(&p, 1, 0) <= 0 || !(p.revents & POLLIN)) continue;   // bekleyen yok
+                        if (::poll(&p, 1, 0) <= 0 || !(p.revents & POLLIN)) continue;   // none waiting
                         Impl::Watched* to = nullptr;
                         size_t best = SIZE_MAX;
                         for (auto& c : impl_->watched) {
@@ -1698,7 +1698,7 @@ void HttpServer::run() {
                             const size_t n = c.sched->total_count();
                             if (n < best) { best = n; to = &c; }
                         }
-                        if (!to) continue;   // hepsi meşgul: yapacak bir şey yok
+                        if (!to) continue;   // all busy: nothing to do
                         w.draining->store(true, std::memory_order_release);
                         const int fd = w.fd;
                         auto flag = w.draining;
@@ -1712,7 +1712,7 @@ void HttpServer::run() {
                     }
                 }
             });
-        } catch (const std::system_error&) {}   // açılamadı: gözetleyicisiz (eski davranış)
+        } catch (const std::system_error&) {}   // could not start: no watcher (old behavior)
     }
 #endif
 
@@ -1736,30 +1736,30 @@ void HttpServer::stop() {
 
 void HttpServer::begin_shutdown() {
     {
-        // draining kilit altında: idle_enter ile yarışmasın (kayıt ya kapanmadan önce olur ve
-        // aşağıda kapatılır, ya sonra olur ve kayıt reddedilir).
+        // draining is under the lock: so it does not race with idle_enter (the registration either happens before the close and
+        // is closed below, or happens after and the registration is rejected).
         std::lock_guard<std::mutex> lk(impl_->idle_mtx);
         impl_->draining.store(true, std::memory_order_release);
         impl_->running = false;
 #ifndef _WIN32
-        // Boşta bekleyen bağlantılar: okuma yönü kapanır → recv 0 → bağlantı kapanır.
+        // Connections waiting idle: the read side is closed → recv 0 → the connection closes.
         for (int fd : impl_->idle_fds) ::shutdown(fd, SHUT_RD);
 #endif
     }
 #ifndef _WIN32
-    // Dinleyen soketler: port HEMEN bırakılır (Go Shutdown dinleyicileri kapatır). Kapanma sürerken
-    // port bağlı kalsaydı aynı porta başlayan yeni süreç (restart, deploy) bind edemezdi (ölçüldü).
-    // fd'nin kendisi kapatılmaz — başka bir iş parçacığı onu hâlâ kullanıyor olabilir ve kapanan
-    // numara yeni bir bağlantıya verilirse accept onda yapılırdı. Bunun yerine: shutdown (accept'te
-    // bekleyen uyanır), sonra aynı numaraya dinlemeyen boş bir soket dup2 edilir — eski soketin son
-    // başvurusu düşer, port boşalır; numara kapanış bitene dek geçerli kalır (accept EINVAL döner).
+    // Listening sockets: the port is released IMMEDIATELY (Go Shutdown closes listeners). If the port stayed bound
+    // while shutdown was in progress, a new process started on the same port (restart, deploy) could not bind (measured).
+    // The fd itself is not closed — another thread may still be using it and if the freed
+    // number were given to a new connection, accept would happen on it. Instead: shutdown (the thread waiting in accept
+    // wakes), then a non-listening empty socket is dup2'd onto the same number — the old socket's last
+    // reference drops, the port is freed; the number stays valid until shutdown ends (accept returns EINVAL).
     auto release = [](int fd) {
         ::shutdown(fd, SHUT_RDWR);
         int ph = ::socket(AF_INET, SOCK_STREAM, 0);
         if (ph >= 0) { ::dup2(ph, fd); ::close(ph); }
     };
-    if (impl_->server_fd >= 0) release(impl_->server_fd);   // bağlantı başına işçi modeli: ortak soket
-    std::lock_guard<std::mutex> lk(impl_->lfd_mtx);          // fiber modu: işçi başına soketler
+    if (impl_->server_fd >= 0) release(impl_->server_fd);   // per-connection worker model: the shared socket
+    std::lock_guard<std::mutex> lk(impl_->lfd_mtx);          // fiber mode: per-worker sockets
     for (int fd : impl_->listen_fds) release(fd);
 #endif
 }

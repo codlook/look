@@ -1,24 +1,24 @@
 #pragma once
-// LOOK 2 — değer semantiği: bir indeks YOLU boyunca yazınca-kopyala ataması.
+// Value semantics: copy-on-write assignment along an index PATH.
 //
-//   $root[k0][k1]...[kn-1] = değer
+//   $root[k0][k1]...[kn-1] = value
 //
-// Kural: dizi, map ve struct DEĞERDİR; atamak/geçmek/döndürmek alana kendi değerini verir.
-// Uygulama: depolama paylaşılır ve sayılır, kopya yalnız hâlâ paylaşılan bir depoya
-// YAZILIRKEN yapılır. Bunun doğru çalışması için yazma, değişkenin KENDİ yerinden başlamalı
-// ve her düzeyi orada tek sahipli hale getirerek inmelidir. Diziyi önce bir geçiciye alıp
-// onun üzerinden yazmak (LOOK 1'in yaptığı) geçiciyi ikinci sahip yapar: ya her yazmada kopya
-// (karesel döngü) ya da kaybolan yazma olur.
+// Rule: arrays, maps and structs are VALUES; assigning/passing/returning gives the target its own value.
+// Implementation: storage is shared and reference-counted; a copy is made only when WRITING to a
+// storage that is still shared. For this to work the write must start at the variable's OWN slot
+// and descend, making every level uniquely owned there. Copying the array into a temporary first
+// and writing through it (what 1.x did) makes the temporary a second owner: either every write
+// copies (quadratic loop) or the write is lost.
 //
-// Eleman arama (value_slot) ve yol yürüyüşü (value_set_path) tek yerde. Son düzeydeki
-// yazma VM'in tek-düzey atamasıdır (VM::array_set) ve geri çağrı olarak verilir.
+// Element lookup (value_slot) and the path walk (value_set_path) live in one place. The write at
+// the last level is the VM's single-level assignment (VM::array_set), passed in as a callback.
 #include "look/struct_types.h"
 #include "look/assoc_index.h"
 
 namespace look {
 
-// "12" / "-3" gibi TAM SAYI metni mi? Dizi anahtarı sayısal indeks mi yoksa map anahtarı mı
-// diye ayırır. (Eskiden vm.cpp ve interpreter.cpp'de iki ayrı kopyaydı.)
+// Is this a WHOLE-NUMBER string such as "12" / "-3"? Distinguishes a numeric array index from a
+// map key. (It used to be two separate copies in vm.cpp and interpreter.cpp.)
 inline bool value_is_int_key(const std::string& s) {
     if (s.empty()) return false;
     size_t i = (s[0] == '-' || s[0] == '+') ? 1 : 0;
@@ -27,9 +27,9 @@ inline bool value_is_int_key(const std::string& s) {
     return true;
 }
 
-// Var olan elemanın YERİ; yoksa nullptr (fırlatmaz — yol ataması eksik ara düzeyi yaratır).
-// Arama kuralları okuma ile aynı: map anahtarı, tam-sayı metni = sayısal indeks, negatif =
-// sondan. Struct: alan adı; bilinmeyen alan ve sayısal indeks HATA (şekil sabit).
+// The SLOT of an existing element; nullptr if absent (does not throw -- path assignment creates a missing middle level).
+// Lookup rules match reads: map key; integer string = numeric index; negative = from the
+// end. Struct: field name; an unknown field or a numeric index is an ERROR (fixed shape).
 inline Value* value_slot(Value& arr, const Value& key) {
     if (arr.type() == Value::STRUCT) {
         auto& sv = *arr.vec_ptr();
@@ -45,7 +45,7 @@ inline Value* value_slot(Value& arr, const Value& key) {
     if (!vec.empty() && vec[0].is_assoc_marker()) {
         std::string ktmp;
         const std::string& k = (key.type() == Value::STRING) ? key.str_ref() : (ktmp = key.to_string());
-        // Çağıranlar (yol ataması) depoyu önce detach eder → tek sahipli: yazma yolu araması.
+        // Callers (path assignment) detach the storage first -> uniquely owned: write-path lookup.
         size_t pos = assoc_find_for_write(vec, k);
         return pos ? &vec[pos + 1] : nullptr;
     }
@@ -56,10 +56,10 @@ inline Value* value_slot(Value& arr, const Value& key) {
     return &vec[(size_t)i];
 }
 
-// slot[k0][k1]...[kn-1] üzerinde son düzeyi `set_one(container, key, nullptr)` ile yazar.
-//   * her düzey önce detach edilir (paylaşılıyorsa üst düzeyi kopyalanır);
-//   * eksik ya da null ara düzey yaratılır (sonraki anahtar map anahtarıysa map, değilse liste);
-//   * struct alanı tipli olduğu için null bir alanın İÇİNE yazılmaz — hata.
+// Writes the last level of slot[k0][k1]...[kn-1] with `set_one(container, key, nullptr)`.
+//   * every level is detached first (the parent level is copied if shared);
+//   * a missing or null middle level is created (a map if the next key is a map key, otherwise a list);
+//   * a struct field is typed, so nothing is written INSIDE a null field -- error.
 template <class SetOne>
 inline void value_set_path(Value& slot, const Value* keys, int n, SetOne&& set_one) {
     slot.detach();
@@ -70,10 +70,10 @@ inline void value_set_path(Value& slot, const Value* keys, int n, SetOne&& set_o
             throw std::runtime_error("struct '" + struct_name(*slot.vec_ptr()) + "': field '"
                                      + keys[0].to_string() + "' is null; assign a value to it first");
     } else if (!child || child->type() == Value::NONE) {
-        // Buradan sonraki her düzey YENİ yaratılacak: yeni bir listeye ilk yazma yalnız 0. indekse
-        // olabilir. Yolun geri kalanı bunu bozuyorsa HİÇBİR şey yaratmadan hata ver. ESKİ: ara düzey
-        // önce yaratılıyor, yazma sonra düşüyordu — hata yakalansa da değişken değişmiş kalıyordu:
-        // $m["q"][3] = 1 (try içinde) → $m = {"a":1,"q":[]} (rastgele karşılaştırmalı test buldu).
+        // Every level from here on will be newly created: the first write to a new list may only be at index 0.
+        // If the rest of the path breaks that, raise the error WITHOUT creating anything. OLD: the middle level was
+        // created first and the write failed afterwards -- even when the error was caught, the variable stayed modified:
+        // $m["q"][3] = 1 (inside try) -> $m = {"a":1,"q":[]} (found by a randomized comparison test).
         for (int j = 1; j < n; ++j) {
             const Value& k = keys[j];
             const bool int_key = k.type() == Value::INT ||
@@ -85,8 +85,8 @@ inline void value_set_path(Value& slot, const Value* keys, int n, SetOne&& set_o
         auto fresh = std::make_shared<ValueArray>();
         if (map_key) fresh->push_back(Value::assoc_marker());
         Value holder(fresh);
-        // Ara düzeyi motorun kendi tek-düzey atamasıyla yerleştir (dönüşüm kuralları onda).
-        // (forced != nullptr: bu değeri olduğu gibi yerleştir; nullptr: asıl yazma)
+        // Place the middle level with the engine's own single-level assignment (conversion rules live there).
+        // (forced != nullptr: place this value as is; nullptr: the real write)
         set_one(slot, keys[0], &holder);
         child = value_slot(slot, keys[0]);
         if (!child) throw std::runtime_error("cannot assign through index " + keys[0].to_string());
@@ -95,9 +95,9 @@ inline void value_set_path(Value& slot, const Value* keys, int n, SetOne&& set_o
 }
 
 
-// slot[k0]...[kn-1] konumundaki değerin YERİNİ verir; yol boyunca ve hedefin kendisinde
-// yazınca-kopyala uygular (n == 0: kökün kendisi). push/pop gibi "değişkeni yerinde
-// değiştiren" işlemler için: hedef tek sahipli olarak döner, çağıran doğrudan değiştirir.
+// Returns the SLOT of the value at slot[k0]...[kn-1]; applies copy-on-write along the path and at
+// the target itself (n == 0: the root itself). For operations like push/pop that "modify the
+// variable in place": the target comes back uniquely owned and the caller modifies it directly.
 template <class SetOne>
 inline Value& value_path_slot(Value& slot, const Value* keys, int n, SetOne&& set_one) {
     Value* cur = &slot;
@@ -105,7 +105,7 @@ inline Value& value_path_slot(Value& slot, const Value* keys, int n, SetOne&& se
         cur->detach();
         Value* child = value_slot(*cur, keys[i]);
         if (cur->type() == Value::STRUCT) {
-            // struct alanı: olduğu gibi kullanılır (null ise çağıran "dizi değil" der)
+            // struct field: used as is (if null the caller reports "not an array")
         } else if (!child) {
             Value holder(std::make_shared<ValueArray>());
             set_one(*cur, keys[i], &holder);
@@ -118,10 +118,10 @@ inline Value& value_path_slot(Value& slot, const Value* keys, int n, SetOne&& se
     return *cur;
 }
 
-// Sözlüğe push HATADIR (her push yolu bunu çağırır: push(), array::push(), CLI/web yerleşikleri).
-// ESKİ: push sözlüğün sonuna anahtarsız tek değer ekliyordu → çift hizası kayıyor, sonra eklenen
-// anahtarlar sessizce null okunuyor, bir değer tamamen kayboluyordu (1.0.x'te iç işaret çıktıya da
-// sızıyordu). Sözlüğe eklemenin tek yolu $m[$k] = $v.
+// push onto a map is an ERROR (every push path calls this: push(), array::push(), CLI/web builtins).
+// OLD: push appended a single keyless value to the end of the map -> the pair alignment shifted,
+// keys added later were silently read as null and one value vanished entirely (in 1.0.x the internal
+// marker also leaked into the output). The only way to add to a map is $m[$k] = $v.
 inline void value_push_not_map(const Value& target, const char* fn) {
     if (target.type() == Value::ARRAY) {
         const auto& v = *target.vec_ptr();
@@ -136,22 +136,22 @@ inline bool value_is_map(const Value& v) {
     return !a.empty() && a[0].is_assoc_marker();
 }
 
-// Listeye özgü işlemler (pop, sort, slice, chunk, zip, reverse, unique, flatten, join, max/min)
-// sözlükte HATADIR. ESKİ: sözlüğün iç düz düzenini ["<işaret>", k0, v0, …] liste sanıyorlardı —
-// reverse/join iç işareti çıktıya sızdırıyor, slice/chunk/zip yanlış parça, pop veri kaybı
-// (anahtar kalıyor, sonra eklenen değer kayboluyordu). Tek kural, tek mesaj (fn = "array::sort()").
+// List-only operations (pop, sort, slice, chunk, zip, reverse, unique, flatten, join, max/min)
+// are an ERROR on a map. OLD: they treated the map's internal flat layout ["<marker>", k0, v0, ...] as a list --
+// reverse/join leaked the internal marker into the output, slice/chunk/zip gave wrong pieces, pop lost data
+// (the key stayed, the value added later vanished). One rule, one message (fn = "array::sort()").
 inline void value_list_only(const Value& v, const std::string& fn) {
     if (value_is_map(v))
         throw std::runtime_error(fn + " takes a list, not a map; use array::values($m) first");
 }
 
-// push/pop'un tek tanımı. Hedef tek sahipli bir yerdir.
+// The single definition of push/pop. The target is a uniquely owned slot.
 inline Value value_push(Value& target, const Value& v, const char* fn = "push()") {
     if (target.type() != Value::ARRAY) throw std::runtime_error("push() requires array as first argument");
     value_push_not_map(target, fn);
     target.vec_ptr()->push_back(v);
-    // Yeni uzunluk döner. (LOOK 1 dizinin kendisini döndürüyordu; değer semantiğinde o,
-    // değişkenin deposuna ikinci bir sahip olur ve bir sonraki push'u kopyaya zorlardı.)
+    // Returns the new length. (1.x returned the array itself; under value semantics that
+    // makes a second owner of the variable's storage and would force the next push to copy.)
     return Value((int64_t)target.vec_ptr()->size());
 }
 inline Value value_pop(Value& target) {

@@ -1,8 +1,8 @@
-// route_group.h — route::group() setup-zamanı context'i (Go/chi tarzı prefix + middleware kalıtımı).
-// route::group("/admin", [$auth], fn) → fn() içindeki route() çağrıları prefix'i ve middleware'leri
-// MİRAS alır. SADECE kayıt-zamanı dönüşümü: dispatch'e dokunmaz (prefix normal eşleşir, mw'ler zaten
-// çalışır). Nesting stack ile doğal (Go/chi). name/namespace/domain YOK — bilinçli minimal.
-// Tek tanım (route_group.cpp) → builtins.cpp ve http_main.cpp paylaşır (drift yok).
+// route_group.h -- setup-time context of route::group() (Go/chi style prefix + middleware inheritance).
+// route::group("/admin", [$auth], fn) -> route() calls inside fn() INHERIT the prefix and the middlewares.
+// ONLY a registration-time transformation: it does not touch dispatch (the prefix matches normally, the mws
+// already run). Nesting is natural via a stack (Go/chi). No name/namespace/domain -- deliberately minimal.
+// Single definition (route_group.cpp) -> shared by builtins.cpp and http_main.cpp (no drift).
 #pragma once
 #include <string>
 #include <vector>
@@ -10,15 +10,15 @@
 
 namespace look {
 
-// Grup çerçevesini yığına it (route::group girişinde). mws: bu grubun middleware'leri.
+// Push a group frame onto the stack (on entering route::group). mws: this group's middlewares.
 void route_group_push(const std::string& prefix, std::vector<Value> mws);
-// Çerçeveyi çıkar (route::group çıkışında — closure çağrısı bittiğinde).
+// Pop the frame (on leaving route::group -- when the closure call finishes).
 void route_group_pop();
-// Şu an bir grup içinde miyiz?
+// Are we currently inside a group?
 bool route_group_active();
-// Tüm aktif grup prefix'lerinin birleşimi (en dış → en iç), ör. "/admin" + "/users" = "/admin/users".
+// Concatenation of all active group prefixes (outermost -> innermost), e.g. "/admin" + "/users" = "/admin/users".
 std::string route_group_prefix();
-// Tüm aktif grup middleware'leri, en-dış-önce sırayla düzleştirilmiş.
+// All active group middlewares, flattened outermost-first.
 std::vector<Value> route_group_middlewares();
 
 } // namespace look

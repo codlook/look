@@ -26,7 +26,7 @@ public:
 
     // Mark as failed. retry_count < max_retries → pending; else → failed.
     void fail(int64_t id);
-    void fail_final(int64_t id);   // LOOK 2: yeniden deneme yok (işleyici true/false döndürmedi)
+    void fail_final(int64_t id);   // no retry (the handler returned neither true nor false)
 
     // Stats: {pending, processing, done, failed}
     Value stats(const std::string& queue);

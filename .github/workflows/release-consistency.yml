@@ -1,13 +1,13 @@
 name: Release consistency — tüm asset'ler AYNI damga mı?
 
-# Yayın-sonrası guard: bir release'in TÜM binary asset'leri (linux/plesk/windows/docker)
-# aynı git-sha damgasını taşımalı. Windows ELLE derlenip yüklendiği için (Tier 2, otomasyonda
-# değil) diğerlerinden AYRIŞABİLİR — ve bu OTURUMDA BİR KEZ OLDU: 403d2dd yayınında Linux/Plesk/
-# Docker güncellendi, Windows 5465074'te kaldı, elle işaret edilene kadar fark edilmedi.
-# Bu guard o sınıfı kapatır — MSVC CI kurmadan (Windows binary Linux runner'da ÇALIŞTIRILMAZ,
-# `grep` ile referans damganın .exe içinde olduğu doğrulanır).
+# Post-release guard: ALL binary assets of a release (linux/plesk/windows/docker)
+# must carry the same git-sha stamp. Because Windows is built BY HAND and uploaded (Tier 2, not in automation)
+# it CAN DIVERGE from the others -- and this HAS HAPPENED: in the 403d2dd release Linux/Plesk/
+# Docker were updated, Windows stayed at 5465074, and it went unnoticed until someone pointed it out by hand.
+# This guard closes that class -- without setting up an MSVC CI (the Windows binary is NOT RUN on a Linux runner;
+# `grep` verifies that the reference stamp is inside the .exe).
 #
-# Pozitif kontrol: bir asset'e eski-damgalı binary koy → guard KIRMIZI olmalı.
+# Positive control: put an old-stamped binary into an asset -> the guard must go RED.
 
 on:
   release:
@@ -26,7 +26,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # Depo: belgelerde adı geçen ikilileri okuyan guard (cpp/tests/package_binaries_guard.sh) için.
+      # Repo: for the guard that reads the binaries named in the docs (cpp/tests/package_binaries_guard.sh).
       - uses: actions/checkout@v4
       - name: Asset'leri indir
         env:
@@ -45,17 +45,17 @@ jobs:
         run: |
           set -e
           cd assets
-          # --- REFERANS: Linux binary (CI-üretimi, otoriter) ---
+          # --- REFERENCE: Linux binary (CI-built, authoritative) ---
           unzip -oq look-lang-linux-*.zip -d linux
           REF=$(linux/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
           [ -n "$REF" ] || { echo "::error::Linux damgası okunamadı"; exit 1; }
           echo "Referans damga (linux): $REF"
 
           fail=0
-          # --- Plesk: binary htdocs/bin/lk'de (ÖLÇÜLDÜ — 'bin/lk' değil; ilk guard yanlış yola
-          #     bakıp SESSİZCE ATLIYORDU = boş-yeşil, Kural 2 ihlali). Bulunamazsa FAIL: Plesk
-          #     drift geçmişi en kötü artefakt, sessiz skip bırakılmaz. Paketleme bilerek binary
-          #     taşımaz olursa guard KIRMIZI → guard'ı GÜNCELLEME kararı zorlanır. ---
+          # --- Plesk: the binary is at htdocs/bin/lk (MEASURED -- not 'bin/lk'; the first guard looked at the wrong path
+          #     and SILENTLY SKIPPED = empty-green, a rule violation). FAIL if not found: Plesk
+          #     drift history is the worst artifact, a silent skip is not allowed. If packaging deliberately stops
+          #     carrying a binary the guard goes RED -> forces a decision to UPDATE the guard. ---
           unzip -oq look-lang-plesk-*.zip -d plesk
           if [ -f plesk/htdocs/bin/lk ]; then
             chmod +x plesk/htdocs/bin/lk
@@ -70,14 +70,14 @@ jobs:
           D=$(docker run --rm "$IMG" lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
           [ "$D" = "$REF" ] && echo "  OK   docker $D" || { echo "  FAIL docker $D != $REF"; fail=1; }
 
-          # --- Windows: ÇALIŞTIRMADAN — referans damga .exe içinde geçiyor mu (strings/grep) ---
+          # --- Windows: WITHOUT RUNNING -- does the reference stamp appear inside the .exe (strings/grep) ---
           unzip -oq look-lang-windows-*.zip -d win
           if grep -aq "$REF" win/lk.exe && grep -aq "$REF" win/lk-fcgi.exe && grep -aq "$REF" win/lk-cgi.exe; then
             echo "  OK   windows (damga $REF .exe içinde)"
           else
             echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe/lk-cgi.exe içinde YOK (eski elle-derleme?)"; fail=1
           fi
-          # Belgelerde adı geçen her ikili (lk-cgi dahil) pakette mi
+          # Is every binary named in the docs (including lk-cgi) in the package
           bash ../cpp/tests/package_binaries_guard.sh look-lang-linux-[0-9]*.zip look-lang-plesk-[0-9]*.zip \
             look-lang-windows-[0-9]*.zip || fail=1
 
@@ -88,11 +88,11 @@ jobs:
           fi
           echo "TUTARLI: tüm asset'ler $REF"
 
-      # MANİFEST KAPSAM KİLİDİ: damga kontrolü asset'lerin AYNI olduğunu doğrular ama HEPSİNİN
-      # SHA256SUMS'ta olduğunu DEĞİL. Bir asset manifest'ten düşerse (bu turda vsix düştü) indirilir
-      # ama doğrulanamaz — sessiz gerileme. Sayı-kilidi: asset sayısı (SHA256SUMS.txt hariç) ==
-      # manifest satırı. crypto_vectors EXPECTED_VECTORS deseninin aynısı (boş-yeşile karşı sayı kilidi).
-      # Pozitif kontrol: manifest'ten bir satır sil → asset > satır → KIRMIZI.
+      # MANIFEST COVERAGE LOCK: the stamp check verifies that the assets are the SAME but not that ALL of them
+      # are in SHA256SUMS. If an asset drops out of the manifest (the vsix did in this round) it is downloaded
+      # but cannot be verified -- a silent regression. Count lock: asset count (excluding SHA256SUMS.txt) ==
+      # manifest line count. Same as the crypto_vectors EXPECTED_VECTORS pattern (a count lock against empty-green).
+      # Positive control: delete a line from the manifest -> assets > lines -> RED.
       - name: Manifest kapsamı — her asset SHA256SUMS'ta mı (sayı-kilidi)
         env:
           GH_TOKEN: ${{ github.token }}

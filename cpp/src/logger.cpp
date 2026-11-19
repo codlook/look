@@ -17,7 +17,7 @@
 #define MAKE_DIR(p) mkdir(p, 0755)
 #endif
 
-// Windows ERROR/DEBUG makro çakışmasını önle
+// Avoid the Windows ERROR/DEBUG macro collision
 #ifdef ERROR
 #undef ERROR
 #endif
@@ -34,7 +34,7 @@ struct LoggerState {
     std::mutex  mtx;
 
     LoggerState() {
-        // Başlangıçta system env'den oku
+        // Read from the system env at startup
         const char* app_env = std::getenv("APP_ENV");
         const char* debug   = std::getenv("APP_DEBUG");
         const char* log_d   = std::getenv("LOG_DIR");
@@ -111,34 +111,34 @@ void Logger::log(LogLevel level, const std::string& category, const std::string&
     auto& s = state();
     if (level < s.min_level) return;
 
-    // Log injection koruması: \r \n ve kontrol karakterleri kaldır
+    // Log injection protection: remove \r \n and control characters
     std::string safe_msg;
     safe_msg.reserve(message.size());
     for (unsigned char c : message)
-        if (c >= 0x20 || c == '\t') safe_msg += c;  // tab dışındaki kontrol karakterlerini at
+        if (c >= 0x20 || c == '\t') safe_msg += c;  // drop control characters other than tab
         else safe_msg += ' ';
     std::string line = "[" + timestamp_str() + "] [" + level_str(level) + "] [" + category + "] " + safe_msg;
 
     std::lock_guard<std::mutex> lock(s.mtx);
 
-    // logs/ klasörünü oluştur
+    // Create the logs/ directory
     MAKE_DIR(s.log_dir.c_str());
 
-    // Dosyaya yaz — Windows: FILE_SHARE_READ|FILE_SHARE_WRITE ile
-    // 1000 eşzamanlı process aynı anda yazabilsin (exclusive lock yok)
+    // Write to the file -- Windows: with FILE_SHARE_READ|FILE_SHARE_WRITE
+    // so 1000 concurrent processes can write at once (no exclusive lock)
     std::string path = s.log_dir + "/look-" + today_str() + ".log";
 #ifdef _WIN32
-    // Dizini backslash ile olustur — tum parent'lar dahil (recursive)
+    // Create the directory with backslashes -- including all parents (recursive)
     std::string win_dir = s.log_dir;
     for (char& c : win_dir) if (c == '/') c = '\\';
-    // Her seviyeyi tek tek olustur
+    // Create each level one by one
     for (size_t i = 1; i < win_dir.size(); ++i) {
         if (win_dir[i] == '\\') {
             std::string sub = win_dir.substr(0, i);
             CreateDirectoryA(sub.c_str(), NULL);
         }
     }
-    CreateDirectoryA(win_dir.c_str(), NULL); // son seviye + ERROR_ALREADY_EXISTS tamam
+    CreateDirectoryA(win_dir.c_str(), NULL); // last level + ERROR_ALREADY_EXISTS is fine
 
     std::string win_path = path;
     for (char& c : win_path) if (c == '/') c = '\\';
@@ -158,7 +158,7 @@ void Logger::log(LogLevel level, const std::string& category, const std::string&
         WriteFile(hFile, out.c_str(), (DWORD)out.size(), &written, NULL);
         CloseHandle(hFile);
     } else {
-        // Fallback: stderr'e yaz, hata kodunu da ekle
+        // Fallback: write to stderr, also include the error code
         std::cerr << "[LOGGER-ERR] CreateFileA failed for: " << win_path
                   << " err=" << GetLastError() << "\n";
     }
@@ -167,7 +167,7 @@ void Logger::log(LogLevel level, const std::string& category, const std::string&
     if (f) f << line << "\n";
 #endif
 
-    // stderr'e her zaman yaz (Apache error.log'a düşer)
+    // Always write to stderr (ends up in the Apache error.log)
     std::cerr << line << "\n";
 }
 

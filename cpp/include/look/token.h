@@ -100,7 +100,7 @@ enum class TokenType {
     AS,
     BREAK,
     CONTINUE,
-    TRUE_KW,   // "true" — TRUE/FALSE windows.h macro'larıyla çakışır
+    TRUE_KW,   // "true" -- collides with the TRUE/FALSE windows.h macros
     FALSE_KW,  // "false"
     NULL_TOKEN,
     USE,

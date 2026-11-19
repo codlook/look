@@ -1,17 +1,17 @@
 #pragma once
 
-// FastCGI 1.0 wire protocol — sifir bagimlilik, sifirdan yazildi.
+// FastCGI 1.0 wire protocol -- written from scratch with minimal external runtime dependencies.
 // Spec: https://fastcgi-archives.github.io/FastCGI_Specification.html
 //
-// Iki mod:
+// Two modes:
 //   1. stdin/stdout (mod_fcgid):
 //      FcgiServer server;
 //
-//   2. TCP (mod_proxy_fcgi, PHP-FPM modeli):
-//      FcgiServer server(9000);   // port 9000'de dinle
-//      server.run(handler);       // her baglanti icin handler cagir
+//   2. TCP (mod_proxy_fcgi, PHP-FPM model):
+//      FcgiServer server(9000);   // listen on port 9000
+//      server.run(handler);       // call handler for each connection
 //
-// Her iki modda da .lk kodu degismez.
+// The .lk code does not change in either mode.
 
 #include <cstdint>
 #include <string>
@@ -20,7 +20,7 @@
 #include <functional>
 
 #ifdef _WIN32
-  // winsock2.h windows.h'dan ONCE gelmeli
+  // winsock2.h must come BEFORE windows.h
   #ifndef WIN32_LEAN_AND_MEAN
   #define WIN32_LEAN_AND_MEAN
   #endif
@@ -71,15 +71,15 @@ struct FcgiRequest {
     std::string body;
 };
 
-// ── FcgiConn — tek bir baglanti uzerindeki I/O ────────────────────────────────
-// TCP modunda her kabul edilen socket bir FcgiConn olur.
-// stdin/stdout modunda process omru boyunca tek bir FcgiConn kullanilir.
+// ── FcgiConn -- I/O on a single connection ────────────────────────────────
+// In TCP mode every accepted socket becomes an FcgiConn.
+// In stdin/stdout mode a single FcgiConn is used for the whole process lifetime.
 class FcgiConn {
 public:
-    // stdin/stdout modu
+    // stdin/stdout mode
     FcgiConn();
 
-    // TCP modu — kabul edilmis socket
+    // TCP mode -- accepted socket
 #ifdef _WIN32
     explicit FcgiConn(SOCKET sock);
 #else
@@ -93,16 +93,16 @@ public:
     FcgiConn(FcgiConn&&) noexcept;
     FcgiConn& operator=(FcgiConn&&) noexcept;
 
-    // Bir sonraki istegi oku. false = baglanti kapandi.
+    // Read the next request. false = connection closed.
     bool accept(FcgiRequest& req);
 
-    // Keep-alive idle timeout (saniye) — TCP modunda SO_RCVTIMEO.
-    // KEEP_CONN baglantisinda bir sonraki istegi beklerken worker thread'in
-    // suresiz pinlenmesini onler: timeout → accept() false → baglanti kapanir,
-    // thread havuza doner. Apache kopan baglantiyi transparan yeniden acar.
+    // Keep-alive idle timeout (seconds) -- SO_RCVTIMEO in TCP mode.
+    // While waiting for the next request on a KEEP_CONN connection it prevents the worker thread from
+    // being pinned indefinitely: timeout -> accept() false -> the connection closes,
+    // the thread returns to the pool. Apache transparently reopens a dropped connection.
     void set_read_timeout(int seconds);
 
-    // Response yaz
+    // Write response
     void write_stdout(uint16_t req_id, const std::string& data);
     void write_stderr(uint16_t req_id, const std::string& data);
     void end_request(uint16_t req_id, uint32_t app_status = 0);
@@ -128,8 +128,8 @@ private:
 #endif
 };
 
-// ── FcgiServer — TCP listener (PHP-FPM modeli) ────────────────────────────────
-// Kullanim:
+// ── FcgiServer -- TCP listener (PHP-FPM model) ────────────────────────────────
+// Usage:
 //   FcgiServer srv(9000);
 //   srv.run([](FcgiConn& conn) {
 //       FcgiRequest req;
@@ -143,13 +143,13 @@ public:
     explicit FcgiServer(int port);
     ~FcgiServer();
 
-    // Surekli baglanti kabul et, her baglanti icin handler cagir.
-    // handler(conn) — conn'u thread pool'a devretmek icin by-value.
+    // Accept connections continuously, call handler for each connection.
+    // handler(conn) -- by value, so conn can be handed to the thread pool.
     using Handler = std::function<void(FcgiConn)>;
     void run(Handler handler);
 
-    // Zarif kapanma: yeni bağlantı kabulü durur, run() döner (look/shutdown.h). Herhangi bir iş
-    // parçacığından çağrılabilir.
+    // Graceful shutdown: new connection acceptance stops, run() returns (look/shutdown.h). May be called from any
+    // thread.
     void stop();
 
 private:
@@ -161,16 +161,16 @@ private:
     int port_;
 };
 
-// ── Geriye donuk uyumluluk: eski FcgiServer API'si (stdin/stdout) ─────────────
-// fcgi_main.cpp'deki mevcut kod degismeden calisir.
-// Yeni TCP kodu FcgiServer(port) + FcgiConn kullanir.
+// ── Backward compatibility: the old FcgiServer API (stdin/stdout) ─────────────
+// Existing code in fcgi_main.cpp works unchanged.
+// New TCP code uses FcgiServer(port) + FcgiConn.
 //
-// Eski kullanim:
+// Old usage:
 //   FcgiServer server;
 //   FcgiRequest req;
 //   while (server.accept(req)) { ... }
 //
-// Bu alias FcgiConn'u wrap eder — degisiklik gerekmez.
+// This alias wraps FcgiConn -- no change needed.
 class FcgiServerLegacy {
 public:
     FcgiServerLegacy() : conn_() {}

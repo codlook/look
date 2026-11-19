@@ -1,24 +1,24 @@
 // LOOK Bytecode Compiler — AST → FunctionProto
 //
-// Her FunctionCompiler bir LOOK fonksiyonu/closure için bytecode üretir.
-// Compiler::compile() programın tamamını derler.
+// Each FunctionCompiler produces bytecode for one LOOK function/closure.
+// Compiler::compile() compiles the whole program.
 //
-// 3 kritik tasarım kararı:
-//   1. Register allocation: temp'ler free() ile geri verilir, 256 sınırı korunur
-//   2. Short-circuit: && ve || JUMP_IF_FALSE/TRUE zinciri ile üretilir
-//   3. try/catch: catch bloğuna girerken sadece STORE_VAR yapılanlar geçerli
+// 3 key design decisions:
+//   1. Register allocation: temps are given back with free(), the register limit is enforced
+//   2. Short-circuit: && and || are produced as a JUMP_IF_FALSE/TRUE chain
+//   3. try/catch: on entering the catch block only the STORE_VARs are valid
 
 #include <unordered_set>
-#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
+#include "look/read_stream.h"   // read_stream — read the file in one go
 #include "look/compiler.h"
-#include "look/ast_spine.h"   // binary_left_spine — `$s = $s . a . b` zinciri döngüyle
-#include "look/param_write_check.h"   // log_param_writes — dahil edilen dosyaların uyarıları
+#include "look/ast_spine.h"   // binary_left_spine — `$s = $s . a . b` chain handled with a loop
+#include "look/param_write_check.h"   // log_param_writes — warnings for included files
 #include "look/builtins.h"
-#include "look/unused_result.h"   // is_pure_builtin — sonucu atılan saf yerleşik
+#include "look/unused_result.h"   // is_pure_builtin — a pure builtin whose result is discarded
 #include "look/runtime_host.h"
 #include "look/lexer.h"
 #include "look/parser.h"
-#include "look/stack_guard.h"   // look_native_stack_low — derin iç içe ifade/blokta çökme yerine hata
+#include "look/stack_guard.h"   // look_native_stack_low — an error instead of a crash on a deeply nested expression/block
 
 #include <fstream>
 #include <cassert>
@@ -30,26 +30,26 @@ namespace cfs = std::filesystem;
 // Context for compiling `use "file.lk"` includes into the same bytecode unit (mirrors
 // the UseStatement/module path). Compilation runs single-threaded at load; thread_local
 // keeps it isolated per compile. Empty root → a file include is a compile error.
-// fiber-ok: yalnız derleme anı durumu; derleme askıya girmez (dosyalar eşzamanlı okunur)
+// fiber-ok: compile-time state only; compilation never suspends (files are read synchronously)
 thread_local std::string                    g_compile_root;      // main-script dir = sandbox root
 thread_local std::vector<std::string>       g_compile_cur_dir;   // dir stack of the file being compiled
 thread_local std::unordered_set<std::string> g_compile_included; // dedup / circular guard
-thread_local std::vector<std::string>       g_compile_file;      // derlenen dosya yığını (hata konumu); boş = ana betik
-// fiber-ok: yukarıdakiler gibi yalnız derleme anı durumu (derleme askıya girmez).
-// Şu an derlenmekte olan dosyalar (ana betik dahil, mutlak yol) ve gösterim adları: döngü = bu
-// yığındaki bir dosyayı yeniden `use` etmek (Go: import cycle). g_compile_included'dan ayrı: orada
-// TAMAMLANMIŞ dosyalar da var (elmas biçimi — iki dosyanın aynı dosyayı kullanması — serbest).
+thread_local std::vector<std::string>       g_compile_file;      // stack of files being compiled (error location); empty = main script
+// fiber-ok: compile-time state only, like the ones above (compilation never suspends).
+// Files currently being compiled (including the main script, absolute path) and their display names: a cycle = `use`-ing
+// a file that is already on this stack again (Go: import cycle). Separate from g_compile_included: that
+// also holds COMPLETED files (the diamond shape — two files using the same file — is allowed).
 thread_local std::vector<std::string>       g_compile_stack;
 thread_local std::vector<std::string>       g_compile_stack_names;
-thread_local std::set<std::string>          g_host_modules;     // çalıştırıcının sağladığı modüller (lk test: assert)
-thread_local std::vector<std::string>       g_use_modules;      // görülen stdlib `use` modülleri → CompiledProgram::use_modules
-// Bu derlemede yüklenmiş kullanıcı/paket modülleri (aynı modül iki kez use edilirse bir kez derlensin).
-// Derleme başına: eskiden süreç ömrü boyunca duran bir listeydi — sıcak yeniden yüklemede `use paket`
-// boş geçiyordu, paketin fonksiyonları yok oluyordu ("Undefined variable") ve paketin çerez kullanımı
-// görünmediği için CSRF denetimi sessizce kapanıyordu.
-// fiber-ok: yalnız derleme anı durumu; derleme askıya girmez
+thread_local std::set<std::string>          g_host_modules;     // modules provided by the runner (lk test: assert)
+thread_local std::vector<std::string>       g_use_modules;      // stdlib `use` modules seen → CompiledProgram::use_modules
+// User/package modules loaded in this compilation (so a module `use`d twice is compiled once).
+// Per compilation: it used to be a list that lived for the whole process — on a hot reload `use package`
+// passed through empty, the package's functions vanished ("Undefined variable") and the package's cookie use
+// was not visible, so the CSRF check was silently turned off.
+// fiber-ok: compile-time state only; compilation never suspends
 thread_local std::unordered_set<std::string> g_compile_modules;
-// Bu derleme biriminde (dahil edilen dosyalar dahil) görülen struct bildirimleri: ad → (imza, satır).
+// Struct declarations seen in this compilation unit (including included files): name → (signature, line).
 thread_local std::unordered_map<std::string, std::pair<std::string, int>> g_compile_structs;
 }
 #include <stdexcept>
@@ -57,12 +57,12 @@ thread_local std::unordered_map<std::string, std::pair<std::string, int>> g_comp
 
 namespace look {
 
-// ── Builtin indeksi — TEK kaynak: look/builtins.h (src/builtins.cpp) ─────────
+// ── Builtin index — SINGLE source: look/builtins.h (src/builtins.cpp) ────────
 //
-// CALL_BUILTIN instruction'ı için: string isim → index.
-// Liste buradan src/builtins.cpp'ye TAŞINDI — http_main.cpp wiring aynı
-// tablodan beslenir, iki dosyanın elle senkron tutulması gerekmez
-// (strlen bug'ının kökü bu senkron kopukluğuydu).
+// For the CALL_BUILTIN instruction: string name → index.
+// The list MOVED from here to src/builtins.cpp — the http_main.cpp wiring is fed from the same
+// table, so the two files do not have to be kept in sync by hand
+// (the root of the strlen bug was this sync gap).
 
 
 // ── FunctionCompiler ──────────────────────────────────────────────────────────
@@ -78,11 +78,11 @@ FunctionCompiler::FunctionCompiler(const std::string& name,
     proto_.variadic = variadic;
     proto_.params   = params;
 
-    // Parametreler ilk local slot'ları alır
-    // regs_ params tamamlandıktan sonra kurulur — declare_local içinde
-    // Önce locals_ listesini kur, sonra RegisterAllocator'ı
+    // Parameters take the first local slots
+    // regs_ is built after the params are done — inside declare_local
+    // First build the locals_ list, then the RegisterAllocator
     scope_depth_ = 0;
-    // Parametre register indeksi 16 bit (v1: 8 bit, 255 üstü sessizce sarıyordu: 300 parametre → 44.).
+    // The parameter register index is 16 bits (1.x: 8 bits, above 255 it silently wrapped: 300 parameters → 44).
     if ((long long)params.size() > REG_LIMIT)
         throw LookCompileError("function '" + name + "' has more than 65534 parameters");
     for (auto& p : params) {
@@ -101,8 +101,8 @@ FunctionCompiler::FunctionCompiler(const std::string& name,
 int FunctionCompiler::emit(OpCode op, uint16_t a, uint16_t b, uint16_t c) {
     int ip = (int)proto_.code.size();
     proto_.code.push_back(Instruction::make(op, a, b, c));
-    proto_.lines.push_back(cur_line_); // satır tablosu — VM hata konumu için (compile_stmt doldurur)
-    // Dosya tablosu: derlenen dosya değiştiyse (dahil etmeye girildi/çıkıldı) bir satır.
+    proto_.lines.push_back(cur_line_); // line table — for the VM error location (compile_stmt fills it)
+    // File table: one row when the file being compiled changes (entered/left an include).
     static const std::string kMain;
     const std::string& cf = g_compile_file.empty() ? kMain : g_compile_file.back();
     if (proto_.file_runs.empty() ? !cf.empty() : proto_.file_runs.back().second != cf)
@@ -111,13 +111,13 @@ int FunctionCompiler::emit(OpCode op, uint16_t a, uint16_t b, uint16_t c) {
 }
 
 int FunctionCompiler::emit_jump(OpCode op, uint16_t cond_reg) {
-    // Hedef bilinmiyor — b ve c alanı 0, sonradan patch_jump ile doldurulur
+    // Target unknown — b and c fields are 0, filled in later by patch_jump
     return emit(op, cond_reg, 0, 0);
 }
 
 void FunctionCompiler::patch_jump(int offset, int target) {
-    // 32-bit target: b = hi, c = lo (hi16/lo16 sığmayanı derleme hatasına çevirir;
-    // v1'de 16 bitti → 65535 komuttan uzun döngü "Jump target too far" ile derlenmiyordu)
+    // 32-bit target: b = hi, c = lo (hi16/lo16 turn a value that does not fit into a compile error;
+    // in 1.x it was 16 bits → a loop longer than 65535 instructions failed to compile with "Jump target too far")
     proto_.code[offset].b = hi16(target);
     proto_.code[offset].c = lo16(target);
 }
@@ -125,9 +125,9 @@ void FunctionCompiler::patch_jump(int offset, int target) {
 // ── Constant pool ─────────────────────────────────────────────────────────────
 
 uint32_t FunctionCompiler::add_const(Value v) {
-    // Tekilleştir. Sayı ve metin sabitleri karma tabloyla (eskiden her sabitte bütün havuz
-    // taranıyordu: sınır 65535 iken önemsizdi, 70 000 sabitte derleme karesel uzardı).
-    // Anahtar tür + birebir değer: 1 ile 1.0 ve "1" ayrı sabitlerdir.
+    // Deduplicate. Number and text constants use a hash table (it used to scan the whole pool on every
+    // constant: trivial while the limit was 65535, but with 70,000 constants compile time grew quadratically).
+    // The key is type + exact value: 1 and 1.0 and "1" are separate constants.
     std::string key;
     switch (v.type()) {
         case Value::INT:    key = "i" + std::to_string(v.as_int()); break;
@@ -149,7 +149,7 @@ uint32_t FunctionCompiler::add_const(Value v) {
 }
 
 void FunctionCompiler::emit_load_const(uint16_t dest, Value v, int /*line*/) {
-    // Küçük integer optimizasyonu: 16-bit işaretli aralık → LOAD_INT (sabit havuzu yok)
+    // Small integer optimization: 16-bit signed range → LOAD_INT (no constant pool)
     if (v.type() == Value::INT && v.as_int() >= -32768 && v.as_int() <= 32767) {
         emit(OpCode::LOAD_INT, dest, i16_bits(v.as_int()));
         return;
@@ -184,7 +184,7 @@ void FunctionCompiler::push_scope() {
 }
 
 void FunctionCompiler::pop_scope() {
-    // Scope'a ait local'ları listeden çıkar — register'lar serbest kalır
+    // Remove the scope's locals from the list — their registers become free
     while (!locals_.empty() && locals_.back().depth == scope_depth_) {
         regs_->free_local(locals_.back().reg);
         locals_.pop_back();
@@ -193,14 +193,14 @@ void FunctionCompiler::pop_scope() {
 }
 
 uint16_t FunctionCompiler::declare_local(const std::string& name, int line) {
-    // Aynı scope'ta aynı isim zaten var mı?
+    // Is the same name already defined in the same scope?
     for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
         if (it->depth < scope_depth_) break;
         if (it->name == name)
             throw LookCompileError("'" + name + "' already defined in this scope", line);
     }
-    // Yeni korumalı local slot — free() bunu havuza atmaz (aksi halde compile_expr'in
-    // "local slot'unu doğrudan döndür" optimizasyonu + free_temp local'i bozardı).
+    // New protected local slot — free() does not put it back in the pool (otherwise compile_expr's
+    // "return the local's slot directly" optimization + free_temp would corrupt the local).
     uint16_t slot = regs_->alloc_local();
     locals_.push_back({name, slot, scope_depth_});
     return slot;
@@ -211,16 +211,16 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     for (auto it = locals_.rbegin(); it != locals_.rend(); ++it)
         if (it->name == name) return {VarKind::LOCAL, it->reg};
 
-    // 2. Capture (use() listesinden VEYA daha önce otomatik yakalanan)
+    // 2. Capture (from the use() list OR automatically captured earlier)
     for (auto& c : captures_)
         if (c.name == name) return {VarKind::CAPTURE, c.capture_index};
 
-    // 3. Otomatik (implicit) capture — OKUMA'da: isim dış fonksiyonun local/capture'ı
-    //    ise closure'a by-value snapshot olarak yakala. Eskiden GLOBAL'e düşüyordu →
-    //    `$m=3; array::map($a, fn($x)=>$x*$m)` VM'de $m'i göremeyip 0 veriyordu
-    //    (interpreter lexical scope ile 3 görüyordu — sessiz divergence). YAZMA'da
-    //    yakalamayız: dış değişkene atama yeni local yaratır (Python-benzeri, mevcut
-    //    davranış korunur; capture'lar zaten değiştirilemez).
+    // 3. Automatic (implicit) capture — on READ: if the name is a local/capture of the
+    //    outer function, capture it into the closure as a by-value snapshot. It used to fall to GLOBAL →
+    //    `$m=3; array::map($a, fn($x)=>$x*$m)` could not see $m in the VM and gave 0
+    //    (the interpreter saw 3 with lexical scope — a silent divergence). On WRITE
+    //    we do not capture: assigning to an outer variable creates a new local (Python-like, the existing
+    //    behavior is kept; captures cannot be modified anyway).
     if (!for_write && parent_) {
         VarLoc pl = parent_->resolve_var(name, /*for_write=*/false);
         if (pl.kind != VarKind::GLOBAL) {
@@ -236,9 +236,9 @@ FunctionCompiler::VarLoc FunctionCompiler::resolve_var(const std::string& name, 
     return {VarKind::GLOBAL, 0};
 }
 
-// ── Yerel / yakalanan erişim yardımcıları ─────────────────────────────────────
-// Tüm yerel ve yakalanan değişken erişimi bu üç noktadan geçer: yerel bir
-// register'dır (MOVE), yakalanan değer closure'ın kendi kopyasıdır (LOAD_CAPTURE).
+// ── Local / captured access helpers ───────────────────────────────────────────
+// All local and captured variable access goes through these three points: a local is a
+// register (MOVE), a captured value is the closure's own copy (LOAD_CAPTURE).
 void FunctionCompiler::emit_read_local(uint16_t dest, uint16_t slot) {
     emit(OpCode::MOVE, dest, slot);
 }
@@ -253,14 +253,14 @@ void FunctionCompiler::emit_read_capture(uint16_t dest, uint16_t cap_index) {
 
 std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& body,
         const std::vector<std::unique_ptr<Expression>>* defaults) {
-    // LOOK 2 (look/capture_check.h): closure DEĞERİ yakalar → hiçbir yerel ya da
-    // parametre sarılmaz; hepsi düz register'dır.
+    // (look/capture_check.h): a closure captures by VALUE → no local or
+    // parameter is wrapped; all are plain registers.
 
-    // ── Prologue: varsayılan parametreler ────────────────────────────────────
-    // Param i sağlanmadıysa (çağrıdaki argc <= i) varsayılanı doldur. Param'lar
-    // ilk yerel register'ları (0..arity-1) tutar. Varsayılan ifade önceki
-    // param'ları görebilir (soldan sağa).
-    // LOOK 2: zorunlu parametre sayısı (argüman sayısı denetimi — vm.cpp check_argc).
+    // ── Prologue: default parameters ─────────────────────────────────────────
+    // If param i was not supplied (argc in the call <= i), fill in its default. Params
+    // hold the first local registers (0..arity-1). A default expression may
+    // see the earlier params (left to right).
+    // Number of required params (argument count check — vm.cpp check_argc).
     {
         const int fixed = proto_.variadic ? proto_.arity - 1 : proto_.arity;
         proto_.required = 0;
@@ -275,12 +275,12 @@ std::shared_ptr<FunctionProto> FunctionCompiler::compile(const BlockStatement& b
             uint16_t lim = alloc_temp();
             emit_load_const(lim, Value((int64_t)i), 0);
             uint16_t cond = alloc_temp();
-            emit(OpCode::LTE, cond, ac, lim);         // argc <= i  → param i sağlanmadı
+            emit(OpCode::LTE, cond, ac, lim);         // argc <= i  → param i was not supplied
             free_temp(ac); free_temp(lim);
-            int skip = emit_jump(OpCode::JUMP_IF_FALSE, cond);  // sağlandıysa varsayılanı atla
+            int skip = emit_jump(OpCode::JUMP_IF_FALSE, cond);  // if supplied, skip the default
             free_temp(cond);
-            uint16_t dr = compile_expr(*(*defaults)[i]); // varsayılan değeri
-            emit(OpCode::MOVE, u16(i, "parameter index"), dr);          // param i = varsayılan (reg i)
+            uint16_t dr = compile_expr(*(*defaults)[i]); // the default value
+            emit(OpCode::MOVE, u16(i, "parameter index"), dr);          // param i = default (reg i)
             free_temp(dr);
             patch_jump(skip, current_ip());
         }
@@ -306,10 +306,10 @@ void FunctionCompiler::compile_block(const BlockStatement& block) {
 
 // ── compile_stmt — dispatch ───────────────────────────────────────────────────
 
-// Derleyici ağacı özyinelemeyle gezer: ayrıştırıcı derinliği sınırlar (iç içe 150, zincir 1000) ama
-// bu sınırlar küçük yığında (Windows ana iş parçacığı 1 MB, musl iş parçacığı 128 KB) yetmeyebilir.
-// Uzun ikili zincirler döngüyle derlenir (compile_binary/compile_logical); kalan iç içe biçimler
-// için gerçek kalan yığın denetlenir: çökme yerine açık hata (ölçüldü: 1000 terim 512 KB'ta segfault).
+// The compiler walks the tree recursively: the parser limits depth (nesting 150, chain 1000) but
+// these limits may not be enough on a small stack (the Windows main thread 1 MB, a musl thread 128 KB).
+// Long binary chains are compiled with a loop (compile_binary/compile_logical); for the remaining nested forms
+// the real remaining stack is checked: a clear error instead of a crash (measured: 1000 terms segfault at 512 KB).
 [[noreturn]] static void compile_stack_exhausted(int line) {
     throw LookProgramError((line > 0 ? "line " + std::to_string(line) + ": " : std::string()) +
         "this expression or block is nested too deeply to compile on this thread's stack; "
@@ -318,39 +318,39 @@ void FunctionCompiler::compile_block(const BlockStatement& block) {
 
 void FunctionCompiler::compile_stmt(const Statement& stmt) {
     if (look_native_stack_low()) compile_stack_exhausted(stmt.loc.line > 0 ? stmt.loc.line : cur_line_);
-    // Satır takibi: bundan sonra emit edilen opcode'lar bu statement'ın satırına yazılır.
-    // proto_.lines ZATEN vardı ama emit() hep 0 basıyordu ("sonradan eklenecek") → VM
-    // hataları satır/konum veremiyordu (tree-walk "File/Line" veriyordu, VM sadece mesaj).
+    // Line tracking: opcodes emitted from here on are written with this statement's line.
+    // proto_.lines ALREADY existed but emit() always wrote 0 ("to be added later") → VM
+    // errors could not give a line/location (tree-walk gave "File/Line", the VM only the message).
     if (stmt.loc.line > 0) cur_line_ = stmt.loc.line;
     if (auto* s = node_as<ExpressionStatement>(&stmt)) {
-        // Atama statement olarak kullanılıyorsa sonuç atılır → değeri geri-okuyan
-        // MOVE'u atla. Aksi halde compile_expr(Assignment) her seferinde slot'u temp'e
-        // kopyalar; `$s .= x` gibi akümülatörde bu O(n²) yaratır (kopya = tüm string).
+        // If the assignment is used as a statement the result is discarded → skip the MOVE that reads
+        // the value back. Otherwise compile_expr(Assignment) copies the slot to a temp every time;
+        // in an accumulator like `$s .= x` this creates O(n²) (the copy = the whole string).
         if (auto* a = node_as<AssignmentExpression>(s->expression.get())) {
             if (!try_compile_push_assign(*a)) compile_assign_expr(*a);
         } else {
-            // Sonucu atılan SAF yerleşik (array::push($l, $x) tek başına): hiçbir şey yapmaz, sessiz
-            // hatadır → program başlamaz, nedeni söylenir (var olmayan fonksiyon kuralı gibi).
+            // A PURE builtin whose result is discarded (array::push($l, $x) on its own): does nothing, a silent
+            // bug → the program does not start and the reason is stated (like the rule for a non-existent function).
             if (auto* call = node_as<CallExpression>(s->expression.get())) {
                 std::string full;
                 if (auto* sr = node_as<ScopeResolution>(call->callee.get()))
                     full = sr->module_name + "::" + sr->member_name;
                 else if (auto* v = node_as<Variable>(call->callee.get()))
-                    if (is_reserved_builtin(v->name)) full = v->name;   // count(), strtoupper() … (gölgelenemez)
+                    if (is_reserved_builtin(v->name)) full = v->name;   // count(), strtoupper() … (cannot be shadowed)
                 if (!full.empty() && is_pure_builtin(full))
                     throw LookProgramError(unused_result_message(full, stmt.loc.line), stmt.loc.line);
             }
-            // Sonuç kullanılmıyor — geçici register al, hemen bırak
+            // The result is unused — take a temp register, release it right away
             uint16_t r = compile_expr(*s->expression);
             free_temp(r);
         }
     }
-    // print/write semantiği (eski yorumlayıcının build_output + PrintStatement kuralı):
-    //   argümanlar " " ile AYRILIR;  print: sonuna "\n" EKLER;  write: eklemez.
-    // Eskiden burada her argüman için tek tek builtin çağrılıyordu → ayraç da newline de
-    // yoktu: print($a,$b) yorumlayıcıda "a b\n", VM'de "ab" üretiyordu (hem CLI-VM hem
-    // web-VM). Differential kaçırmıştı: gövde tek argümanla print ediyor ve $(...) zaten
-    // trailing newline'ı yutuyor.
+    // print/write semantics (the old interpreter's build_output + PrintStatement rule):
+    //   arguments are SEPARATED by " ";  print: APPENDS "\n";  write: does not.
+    // It used to call a builtin once per argument here → there was neither a separator nor a newline:
+    // print($a,$b) produced "a b\n" in the interpreter and "ab" in the VM (both CLI-VM and
+    // web-VM). The differential missed it: the body printed a single argument and $(...) already swallows the
+    // trailing newline.
     else if (auto* s = node_as<PrintStatement>(&stmt)) {
         emit_output_args(s->expressions, /*newline=*/true);
     }
@@ -361,32 +361,32 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         compile_return(*s);
     }
     else if (auto* s = node_as<ThrowStatement>(&stmt)) {
-        // throw <ifade> → değeri hesapla, THROW opcode (try_stack_ / LOAD_EXC yakalar)
+        // throw <expr> → compute the value, THROW opcode (caught via try_stack_ / LOAD_EXC)
         uint16_t r = compile_expr(*s->expression);
         emit(OpCode::THROW, r);
         free_temp(r);
     }
     else if (node_as<BreakStatement>(&stmt)) {
-        // break en yakın breakable bağlama gider — switch veya döngü.
+        // break goes to the nearest breakable context — a switch or a loop.
         if (loop_stack_.empty())
             throw LookCompileError("break outside a loop/switch");
-        // döngü-içi try-finally'leri çalıştır (loop'un floor'una kadar), SONRA sıçra.
+        // run the try-finallys inside the loop (down to the loop's floor), THEN jump.
         emit_pending_finallys(loop_stack_.back().finally_floor);
         int p = emit_jump(OpCode::JUMP);
         loop_stack_.back().break_patches.push_back(p);
     }
     else if (node_as<ContinueStatement>(&stmt)) {
-        // continue switch'i ATLAR — en yakın gerçek DÖNGÜYE gider (C semantiği).
+        // continue SKIPS a switch — it goes to the nearest real LOOP (C semantics).
         int idx = -1;
         for (int i = (int)loop_stack_.size() - 1; i >= 0; --i)
             if (!loop_stack_[i].is_switch) { idx = i; break; }
         if (idx < 0)
             throw LookCompileError("continue outside a loop");
-        // hedef döngünün floor'una kadarki finally'leri çalıştır, SONRA sıçra.
+        // run the finallys down to the target loop's floor, THEN jump.
         emit_pending_finallys(loop_stack_[idx].finally_floor);
         int target = loop_stack_[idx].continue_target;
         if (target >= 0) {
-            // Hedef biliniyor (while/foreach)
+            // Target known (while/foreach)
             emit(OpCode::JUMP, 0, hi16(target), lo16(target));
         } else {
             int p = emit_jump(OpCode::JUMP);
@@ -424,24 +424,24 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
         compile_block(*s);
     }
     else if (auto* us = node_as<UseStatement>(&stmt)) {
-        // `use <ad>` iki farklı şeyi karşılar:
-        //   1) stdlib modülü (string, jobs, template…) → builtin tablosunda ZATEN
-        //      bağlı; bytecode'da yapılacak bir şey yok → NOP (eski davranış doğru).
-        //   2) KULLANICI MODÜLÜ (~/.look/modules/<ad>/<ad>.lk) → dosya yüklenip
-        //      fonksiyonları global olarak TANIMLANMALI.
+        // `use <name>` covers two different things:
+        //   1) a stdlib module (string, jobs, template…) → ALREADY bound in the builtin table;
+        //      nothing to do in bytecode → NOP (the old behavior was right).
+        //   2) a USER MODULE (~/.look/modules/<name>/<name>.lk) → the file must be loaded and its
+        //      functions DEFINED as globals.
         //
-        // ESKİ HATA: her iki durumda da NOP vardı. Kullanıcı modülünün fonksiyonları
-        // VM globals'ında hiç oluşmuyordu; interpreter onları yüklediği için çıktı
-        // DOĞRU çıkıyor ama web'de route "Undefined variable: <fn>" verip KALICI
-        // olarak interpreter'a düşüyordu. Ölçüldü (çok dosyalı proje, use model):
-        //   [ERROR] VM BUG — route kalıcı interpreter'a düştü (YAVAŞ YOL):
+        // OLD BUG: both cases produced a NOP. The user module's functions were never created in the
+        // VM globals; since the interpreter loaded them the output came out
+        // CORRECT, but on the web the route gave "Undefined variable: <fn>" and fell to the interpreter
+        // PERMANENTLY. Measured (multi-file project, use model):
+        //   [ERROR] VM BUG — route permanently fell to the interpreter (SLOW PATH):
         //           GET:/urun/{id} — Undefined variable: urun_getir
-        // Yani dilin "use ile çok dosyalı proje" yolu web'de HIZINI kaybediyordu —
-        // sonuç doğru olduğu için de sessiz kalıyordu (fallback maskeliyor).
+        // That is, the language's "multi-file project with use" path lost its SPEED on the web —
+        // and since the result was correct it stayed silent (the fallback masks it).
         //
-        // Çözüm: modül dosyasını burada parse edip statement'larını AYNI derleme
-        // birimine kat. Böylece fonksiyonlar VM globals'ında BYTECODE_FN olur.
-        // Ayrım basit: kullanıcı modülünün DOSYASI vardır, stdlib'inki yoktur.
+        // Fix: parse the module file here and fold its statements into the SAME compilation
+        // unit. That way the functions become BYTECODE_FN in the VM globals.
+        // The distinction is simple: a user module has a FILE, a stdlib module does not.
         bool loaded = false;
         {
 #ifdef _WIN32
@@ -453,8 +453,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             if (home && *home) {
                 std::string path = std::string(home) + "/.look/modules/" +
                                    us->module_name + "/" + us->module_name + ".lk";
-                // Aynı modül bu derlemede iki kez use edilirse tekrar derleme — çift tanım ve şişme olmasın.
-                static std::vector<std::shared_ptr<Program>> g_module_asts;  // AST ömrü
+                // If the same module is `use`d twice in this compilation, do not compile it again — avoid double definitions and bloat.
+                static std::vector<std::shared_ptr<Program>> g_module_asts;  // AST lifetime
                 if (g_compile_modules.count(path)) { emit(OpCode::NOP); return; }
 
                 std::ifstream f(path);
@@ -467,13 +467,13 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                         look::log_param_writes(p.warnings(), path);
                         g_compile_modules.insert(path);
                         g_module_asts.push_back(prog);
-                        g_compile_file.push_back(path);   // paket: uygulama dizini dışında → tam yol
+                        g_compile_file.push_back(path);   // package: outside the application directory → full path
                         struct FilePop { ~FilePop() { g_compile_file.pop_back(); } } file_pop;
                         for (auto& sub : prog->statements) compile_stmt(*sub);
                         loaded = true;
                     } catch (const std::exception& ex) {
-                        // LOOK 2: yorumlayıcı yedeği yok — derlenemeyen paket nedenini söyleyerek
-                        // durdurur (eskiden NOP: paketin fonksiyonları sessizce eksik kalıyordu).
+                        // No interpreter fallback: a package that fails to compile stops with the reason
+                        // (it used to be a NOP: the package's functions were silently missing).
                         const std::string m = ex.what();
                         if (m.rfind("use " + us->module_name + ":", 0) == 0) throw;
                         if (dynamic_cast<const LookProgramError*>(&ex))
@@ -484,13 +484,13 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             }
         }
         if (!loaded && g_host_modules.count(us->module_name)) {
-            // Çalıştırıcının sağladığı modül (lk test: `use assert`) — fonksiyonları global'de hazır.
+            // A module provided by the runner (lk test: `use assert`) — its functions are ready in globals.
             emit(OpCode::NOP);
             return;
         }
         if (!loaded) {
-            // Paket değil: stdlib modülü olmalı. Eski yorumlayıcının `use` denetimindeki iki mesaj —
-            // bu denetim eskiden yalnız yorumlayıcı geçişindeydi (LOOK 2'de o geçiş yok).
+            // Not a package: must be a stdlib module. The two messages of the old interpreter's `use` check —
+            // this check used to exist only in the interpreter pass (that pass is gone).
             const std::string& m = us->module_name;
             if (m == "ws" || m == "timer" || m == "sse")
                 throw LookCompileError("'" + m + "' is built in and is not a module: remove the 'use "
@@ -506,7 +506,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             if (!stdlib_mods.count(m))
                 throw LookCompileError("Unknown module: '" + m
                     + "'. If it is a package, install it with: lk module install " + m);
-            // Çalıştırıcı bunu derlemeden sonra açar (CompiledProgram::use_modules).
+            // The runner opens this after compilation (CompiledProgram::use_modules).
             if (std::find(g_use_modules.begin(), g_use_modules.end(), m) == g_use_modules.end())
                 g_use_modules.push_back(m);
             emit(OpCode::NOP);
@@ -529,9 +529,9 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             std::string root = cfs::weakly_canonical(cfs::path(g_compile_root)).string();
             if (abs.compare(0, root.size(), root) != 0)
                 throw LookCompileError("use \"" + ufs->path + "\": the file is outside the application directory");
-            // Döngü (Go: "import cycle not allowed"): derlenmekte olan bir dosyayı yeniden istemek.
-            // Eskiden ana betik yığında değildi → a.lk → b.lk → a.lk ana dosyayı İKİNCİ kez derleyip
-            // çalıştırıyordu ("a b a"); dahil edilenler arasındaki döngü ise sessizce atlanıyordu.
+            // Cycle (Go: "import cycle not allowed"): requesting a file that is being compiled.
+            // It used to be that the main script was not on the stack → a.lk → b.lk → a.lk compiled and ran
+            // the main file a SECOND time ("a b a"); a cycle among included files was silently skipped.
             const std::string rel_name = cfs::path(abs).lexically_relative(cfs::path(root)).generic_string();
             for (size_t k = 0; k < g_compile_stack.size(); ++k) {
                 if (g_compile_stack[k] != abs) continue;
@@ -541,7 +541,7 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
                     " (a file cannot use a file that uses it; move the shared code into a third file)",
                     stmt.loc.line);
             }
-            if (g_compile_included.count(abs))          { emit(OpCode::NOP); return; }  // elmas: bir kez derlenir
+            if (g_compile_included.count(abs))          { emit(OpCode::NOP); return; }  // diamond: compiled once
             std::ifstream f(abs);
             if (!f) throw LookCompileError("use \"" + ufs->path + "\": the file cannot be opened");
             std::string src = look::read_stream(f);
@@ -549,8 +549,8 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             Lexer lx(src);
             Parser p(lx.scan_tokens());
             auto prog = std::shared_ptr<Program>(p.parse().release());
-            // Dahil edilen dosyanın parametre-yazma uyarıları (ana dosyanınkiler çağıran tarafta
-            // loglanır). LOOK 2: bunu eskiden yalnız yorumlayıcı, dosyayı yüklerken yapıyordu.
+            // Parameter-write warnings of the included file (the main file's are
+            // logged on the caller side). This used to be done only by the interpreter when loading the file.
             look::log_param_writes(p.warnings(), abs);
             g_file_asts.push_back(prog);
             g_compile_cur_dir.push_back(cfs::path(abs).parent_path().string());
@@ -563,19 +563,19 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
             } } dir_pop;
             for (auto& sub : prog->statements) compile_stmt(*sub);
         } catch (const LookCompileError& ex) {
-            // Hangi dosyada olduğu söylenir (içteki bir dahil etme zaten adını koyduysa yinelenmez).
+            // States which file it is in (not repeated if an inner include already named it).
             const std::string m = ex.what();
             if (m.rfind("use \"", 0) == 0) throw;
-            // Programın kendi hatası türünü korur.
+            // Preserves the program's own error type.
             if (dynamic_cast<const LookProgramError*>(&ex))
                 throw LookProgramError("use \"" + ufs->path + "\": " + m, ex.line);
             throw LookCompileError("use \"" + ufs->path + "\": " + m);
         } catch (const std::exception& ex) {
-            // ESKİ HATA: burada her hata yutulup NOP yazılıyordu ("yorumlayıcı yedeği halleder").
-            // 1.0.8'den beri istek yorumlayıcıda yeniden çalıştırılmıyor → dahil edilen dosyanın
-            // fonksiyonları sessizce YOK oluyor, derleme "tamam" deniyor ve onları çağıran her rota
-            // "Undefined variable" ile 500 veriyordu. Artık derleme bütünüyle başarısız olur:
-            // çağıran nedeni yazar ve program başlamaz.
+            // OLD BUG: every error was swallowed here and a NOP was written ("the interpreter fallback handles it").
+            // Since 1.0.8 the request is not re-run in the interpreter → the included file's
+            // functions silently VANISH, compilation is reported "ok" and every route calling them
+            // gave a 500 with "Undefined variable". Now compilation fails as a whole:
+            // the caller writes the reason and the program does not start.
             throw LookCompileError("use \"" + ufs->path + "\": " + ex.what());
         } catch (...) {
             throw LookCompileError("use \"" + ufs->path + "\": the file could not be compiled");
@@ -588,12 +588,12 @@ void FunctionCompiler::compile_stmt(const Statement& stmt) {
 
 // ── compile_return ────────────────────────────────────────────────────────────
 
-// try/catch içindeki return, RETURN'den ÖNCE bekleyen finally'leri içten-dışa çalıştırmalı.
-// pending_finally_ geçici temizlenir ki finally-içi return kendini tekrar tetiklemesin.
+// A return inside try/catch must run the pending finallys, innermost to outermost, BEFORE RETURN.
+// pending_finally_ is cleared temporarily so a return inside a finally does not trigger itself again.
 void FunctionCompiler::emit_pending_finallys(size_t floor) {
     if (pending_finally_.size() <= floor) return;
-    // [floor..end) suffix'ini içten-dışa çalıştır; geçici çıkar ki finally-içi return/break
-    // kendini tekrar tetiklemesin, sonra geri koy.
+    // Run the [floor..end) suffix innermost to outermost; remove it temporarily so a return/break inside
+    // a finally does not trigger itself again, then put it back.
     std::vector<const BlockStatement*> suffix(pending_finally_.begin() + (long)floor, pending_finally_.end());
     pending_finally_.resize(floor);
     for (auto it = suffix.rbegin(); it != suffix.rend(); ++it)
@@ -608,7 +608,7 @@ void FunctionCompiler::compile_return(const ReturnStatement& s) {
         return;
     }
     uint16_t r = compile_expr(*s.expression);
-    // r TAHSİSLİ kalır → emit_pending_finallys'ın temp'leri onu ezmez (temp'ler üstte).
+    // r stays ALLOCATED → the temps of emit_pending_finallys do not overwrite it (temps are above).
     emit_pending_finallys();
     emit(OpCode::RETURN, r);
     free_temp(r);
@@ -649,7 +649,7 @@ void FunctionCompiler::compile_while(const WhileStatement& s) {
 
     // continue → loop_start
     for (int p : ctx.continue_patches) patch_jump(p, loop_start);
-    // döngüye geri dön
+    // jump back to the loop
     emit(OpCode::JUMP, 0, hi16(loop_start), lo16(loop_start));
 
     int after = current_ip();
@@ -671,7 +671,7 @@ void FunctionCompiler::compile_for(const ForStatement& s) {
         free_temp(cond);
     }
 
-    loop_stack_.push_back({.continue_target = -1, .finally_floor = pending_finally_.size()}); // continue hedefi post sonrası
+    loop_stack_.push_back({.continue_target = -1, .finally_floor = pending_finally_.size()}); // continue target is after post
     compile_block(*s.body);
     auto ctx = loop_stack_.back();
     loop_stack_.pop_back();
@@ -707,22 +707,22 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
 
     uint16_t r_arr = compile_expr(*s.iterable);
     // alloc_seq(4): r_iter, r_iter+1(idx), r_iter+2(val), r_iter+3(key)
-    // FOR_STEP bu 4 register'a doğrudan yazar; loop body'deki alloc_temp()
-    // çağrıları bu bloğa girmemeli — alloc_seq bunu garanti eder.
+    // FOR_STEP writes directly to these 4 registers; alloc_temp()
+    // calls in the loop body must not land in this block — alloc_seq guarantees that.
     uint16_t r_iter = regs_->alloc_seq(4);
     emit(OpCode::FOR_PREP, r_iter, r_arr);
     free_temp(r_arr);
 
-    // value ve key register'ları r_iter+2 ve r_iter+3 — FOR_STEP convention
+    // value and key registers are r_iter+2 and r_iter+3 — FOR_STEP convention
     uint16_t r_val = r_iter + 2;
     uint16_t r_key = r_iter + 3;
 
-    // Döngü değişkenleri doğrudan FOR_STEP'in yazdığı register'lara bağlanır.
+    // Loop variables are bound directly to the registers FOR_STEP writes.
     if (!s.value_var.empty()) locals_.push_back({s.value_var, r_val, scope_depth_});
     if (!s.key_var.empty())   locals_.push_back({s.key_var,   r_key, scope_depth_});
 
     int loop_start = current_ip();
-    // FOR_STEP: a=r_iter, b=exit_hi, c=exit_lo (sonradan patch)
+    // FOR_STEP: a=r_iter, b=exit_hi, c=exit_lo (patched later)
     int step_ip = emit(OpCode::FOR_STEP, r_iter, 0, 0);
 
     loop_stack_.push_back({.continue_target = loop_start, .finally_floor = pending_finally_.size()});
@@ -734,29 +734,29 @@ void FunctionCompiler::compile_foreach(const ForeachStatement& s) {
     emit(OpCode::JUMP, 0, hi16(loop_start), lo16(loop_start));
 
     int after = current_ip();
-    // FOR_STEP exit patch: b ve c alanına after yaz
+    // FOR_STEP exit patch: write after into the b and c fields
     proto_.code[step_ip].b = hi16(after);
     proto_.code[step_ip].c = lo16(after);
 
     for (int p : ctx.break_patches) patch_jump(p, after);
 
-    // alloc_seq(4) ile alındı — 4 register birden serbest bırak
+    // Obtained with alloc_seq(4) — release all 4 registers at once
     regs_->release_seq(r_iter, 4);
     pop_scope();
 }
 
 // ── compile_try ───────────────────────────────────────────────────────────────
 //
-// Kritik 3. nokta: catch bloğuna girerken sadece STORE_VAR olanlar geçerli.
-// Temp register'lar try bloğu bitince serbest bırakılmış olur (normal akış).
-// catch bloğu ayrı scope — try içindeki temp'ler zaten geri verilmiş.
+// Key point 3: on entering the catch block only STORE_VARs are valid.
+// Temp registers are already released when the try block ends (normal flow).
+// The catch block is a separate scope — the temps inside try have already been given back.
 
-// Builtin indeksi artık 16-BİT: düşük 8 bit CALL_BUILTIN.b'de, yüksek 8 bit takip eden
-// NOP hint'inin b alanında (bit-uyumlu: idx<=255 için NOP.b=0 = eski kodlama).
-// Tarih: alan 8-bit'ken 255 üstü SESSİZCE kırpılıp YANLIŞ builtin çağrılıyordu
-// (ampirik: liste 285'e çıkınca cache::size index 256 → 0 → print'i çağırdı, null döndü).
-// Bu guard artık yalnız 16-bit tavanını (65535) korur — pratikte ulaşılmaz, ama sessiz
-// kırpılma sınıfı bir daha ASLA sessiz olmasın diye duruyor.
+// The builtin index is now 16-BIT: the low 8 bits are in CALL_BUILTIN.b, the high 8 bits in the b field of
+// the following NOP hint (bit-compatible: for idx<=255, NOP.b=0 = the old encoding).
+// History: while the field was 8-bit, anything above 255 was SILENTLY truncated and the WRONG builtin was called
+// (empirically: when the list grew to 285, cache::size index 256 → 0 → called print and returned null).
+// This guard now only protects the 16-bit ceiling (65535) — practically unreachable, but it stays so that
+// the silent-truncation class can NEVER be silent again.
 void FunctionCompiler::check_builtin_index(int bidx, const std::string& name) {
     if (bidx > 65535)
         throw LookCompileError("builtin index exceeded 16-bit ceiling: '" + name + "' index=" +
@@ -765,53 +765,53 @@ void FunctionCompiler::check_builtin_index(int bidx, const std::string& name) {
 
 void FunctionCompiler::emit_output_args(const std::vector<std::unique_ptr<Expression>>& exprs,
                                         bool newline) {
-    // builtin 0 (print) ve 1 (write) ikisi de argümanı HAM yazar (newline/ayraç eklemez)
-    // → ayraç ve newline burada üretilir. Satır GEÇİCİ bir metinde kurulur ve TEK write ile
-    // yazılır (Go Println gibi). Eskiden her parça ayrı write'tı: (1) write'ın dönüşü (null)
-    // argümanın register'ına yazılıyordu → yerel değişken için print($a) $a'yı null yapıyordu
-    // (VM'e geçişten beri; v2'de üst düzey de register olunca for ($i…) { print($i) } bozuldu);
-    // (2) parallel() görevlerinin satırları birbirine karışıyordu ("1after").
+    // builtin 0 (print) and 1 (write) both write the argument RAW (no newline/separator added)
+    // → the separator and newline are produced here. The line is built in a TEMPORARY text and
+    // written with a SINGLE write (like Go's Println). It used to be a separate write per part: (1) write's return (null)
+    // was written into the argument's register → for a local variable print($a) turned $a into null
+    // (since the move to the VM; once top level also became registers, for ($i…) { print($i) } broke);
+    // (2) the lines of parallel() tasks got mixed together ("1after").
     const uint16_t line = alloc_temp();
     auto append_text = [&](const char* text) {
         uint16_t c = alloc_temp();
         emit_load_const(c, Value(std::string(text)), 0);
-        emit(OpCode::CONCAT, line, line, c);     // a == b → yerinde ekleme
+        emit(OpCode::CONCAT, line, line, c);     // a == b → append in place
         free_temp(c);
     };
     if (exprs.empty()) emit_load_const(line, Value(std::string()), 0);
     for (size_t i = 0; i < exprs.size(); ++i) {
         uint16_t r = compile_expr(*exprs[i]);
         if (i == 0) emit(OpCode::TO_STR, line, r);
-        else { append_text(" "); emit(OpCode::CONCAT, line, line, r); }   // argümanlar arası " "
+        else { append_text(" "); emit(OpCode::CONCAT, line, line, r); }   // " " between arguments
         free_temp(r);
     }
-    if (newline) append_text("\n");              // PrintStatement: sonda "\n"
-    emit(OpCode::CALL_BUILTIN, line, 1 /*write*/, line);   // dönüş geçici register'a
+    if (newline) append_text("\n");              // PrintStatement: "\n" at the end
+    emit(OpCode::CALL_BUILTIN, line, 1 /*write*/, line);   // the return goes to a temp register
     free_temp(line);
 }
 
 void FunctionCompiler::compile_try(const TryCatchStatement& s) {
-    // finally'yi return-yolu için "bekleyen" yap: try+catch içindeki return önce onu çalıştırır.
-    // Normal yol için ayrıca inline emit edilir (aşağıda). Yalnız try+catch derlenirken aktif.
+    // Make the finally "pending" for the return path: a return inside try+catch runs it first.
+    // A separate inline copy is emitted for the normal path (below). Active only while compiling try+catch.
     if (s.finally_block) pending_finally_.push_back(s.finally_block.get());
 
-    // TRY_PUSH: catch IP'si sonradan patch edilecek (b,c = catch_ip)
+    // TRY_PUSH: the catch IP will be patched later (b,c = catch_ip)
     int try_push_ip = emit(OpCode::TRY_PUSH, 0, 0, 0);
 
     compile_block(*s.try_block);
 
     emit(OpCode::TRY_POP);
 
-    // try başarılı → catch'i atla
+    // try succeeded → skip the catch
     int jump_end = emit_jump(OpCode::JUMP);
 
-    // catch bloğu
+    // catch block
     int catch_ip = current_ip();
-    patch_jump(try_push_ip, catch_ip); // TRY_PUSH'ın b,c alanına catch_ip
+    patch_jump(try_push_ip, catch_ip); // catch_ip into TRY_PUSH's b,c fields
 
     if (s.catch_block) {
         push_scope();
-        // catch değişkeni ($e) — exception değeri LOAD_EXC ile gelir
+        // catch variable ($e) — the exception value arrives via LOAD_EXC
         if (!s.catch_var.empty()) {
             uint16_t e_reg = declare_local(s.catch_var, 0);
             emit(OpCode::LOAD_EXC, e_reg);
@@ -820,53 +820,53 @@ void FunctionCompiler::compile_try(const TryCatchStatement& s) {
         pop_scope();
     }
 
-    // return-yolu "bekleyen" finally'yi burada bırak — try+catch derlendi (return-in-catch onu
-    // kullandı). Bundan SONRAki finally emission'ları return için değil, normal/throw yol içindir.
+    // Drop the return-path "pending" finally here — try+catch is compiled (a return-in-catch
+    // used it). Finally emissions AFTER this are for the normal/throw path, not for return.
     if (s.finally_block && !pending_finally_.empty() && pending_finally_.back() == s.finally_block.get())
         pending_finally_.pop_back();
 
     if (s.catch_block) {
-        // catch YAKALADI → normal akış: finally (paylaşımlı) çalışır, re-raise YOK.
+        // catch CAUGHT → normal flow: the finally (shared) runs, NO re-raise.
         int after_catch = current_ip();
         patch_jump(jump_end, after_catch);
         if (s.finally_block) compile_block(*s.finally_block);
     } else {
-        // BUG #2 FIX: catch YOK. Eskiden throw catch_ip'e atlayıp inline finally'yi çalıştırıp
-        // devam ediyordu → exception SESSİZCE YUTULUYORDU. Şimdi: throw-yolu (catch_ip'te)
-        // exception'ı LOAD_EXC ile yakalar, finally çalıştırır, THROW ile YENİDEN fırlatır
-        // (dıştaki try'a/C++'a propagate). Normal-yol AYRI finally kopyası çalıştırıp devam eder.
+        // BUG #2 FIX: NO catch. It used to be that a throw jumped to catch_ip, ran the inline finally and
+        // continued → the exception was SILENTLY SWALLOWED. Now: the throw path (at catch_ip)
+        // catches the exception with LOAD_EXC, runs the finally, RE-THROWS with THROW
+        // (propagates to the outer try/C++). The normal path runs a SEPARATE copy of the finally and continues.
         uint16_t exc = alloc_temp();
-        emit(OpCode::LOAD_EXC, exc);                        // orijinal exception (finally'den önce)
-        if (s.finally_block) compile_block(*s.finally_block);  // throw-yolu finally
+        emit(OpCode::LOAD_EXC, exc);                        // original exception (before the finally)
+        if (s.finally_block) compile_block(*s.finally_block);  // finally of the throw path
         emit(OpCode::THROW, exc);                           // re-raise
         free_temp(exc);
         int after = current_ip();
-        patch_jump(jump_end, after);                        // normal-yol buraya iner
-        if (s.finally_block) compile_block(*s.finally_block);  // normal-yol finally (ayrı kopya)
+        patch_jump(jump_end, after);                        // the normal path lands here
+        if (s.finally_block) compile_block(*s.finally_block);  // finally of the normal path (separate copy)
     }
 }
 
 // ── compile_func_decl ─────────────────────────────────────────────────────────
 
 void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
-    // Builtin gölgeleme = hata, tanım anında (derleme hatası → program başlamaz).
+    // Shadowing a builtin = error, at definition time (compile error → the program does not start).
     if (is_reserved_builtin(s.name))
         throw std::runtime_error("'" + s.name + "' is a builtin — cannot be redefined");
-    // İç fonksiyon derle
+    // Compile the inner function
     FunctionCompiler inner(s.name, s.parameters, s.is_variadic, this);
     auto proto = inner.compile(*s.body, &s.defaults);
     int fn_idx = (int)proto_.nested.size();
     proto_.nested.push_back(proto);
 
-    // Fonksiyon adı global scope'a kaydedilir
+    // The function name is registered in the global scope
     uint32_t name_idx = add_const(Value(s.name));
     uint16_t  r        = alloc_temp();
 
-    // İç fonksiyon dıştaki local/capture'ları yakalıyorsa (implicit capture —
-    // inner.compile sırasında toplandı) compile_closure ile AYNI capture kurulumunu
-    // yap. Eskiden bu blok YOKTU → proto gövdesindeki LOAD_CAPTURE'lar runtime'da
-    // "Capture index out of range" ile ÇÖKÜYORDU (named nested fn capture, tree-walk çalışırken
-    // VM crash). Capture yükleme MAKE_CLOSURE'dan hemen önce; hint'ler hemen sonra.
+    // If the inner function captures the outer locals/captures (implicit capture —
+    // collected during inner.compile), do the SAME capture setup as compile_closure.
+    // It used to be that this block did NOT EXIST → the LOAD_CAPTUREs in the proto body CRASHED at runtime
+    // with "Capture index out of range" (named nested fn capture; the VM crashed while tree-walk worked).
+    // Capture loading is right before MAKE_CLOSURE; the hints right after.
     std::vector<uint16_t> cap_regs;
     for (auto& cap : inner.captures_) {
         auto loc = resolve_var(cap.name);
@@ -879,26 +879,26 @@ void FunctionCompiler::compile_func_decl(const FunctionDeclaration& s) {
     // MAKE_CLOSURE: a=r, b=fn_idx (nested index)
     emit_make_closure(r, fn_idx);
     for (uint16_t cr : cap_regs) { emit(OpCode::LOAD_CAPTURE, 0, cr); free_temp(cr); }
-    // Global'e kaydet — top-level function declaration (16-bit const index)
+    // Register as a global — top-level function declaration (16-bit const index)
     emit(OpCode::STORE_GLOBAL, r, hi16(name_idx), lo16(name_idx));
     free_temp(r);
 }
 
 // ── compile_switch ────────────────────────────────────────────────────────────
 //
-// Go stili — her case otomatik break, fallthrough yok.
+// Go style — every case breaks automatically, no fallthrough.
 
 void FunctionCompiler::compile_switch(const SwitchStatement& s) {
     uint16_t subj = compile_expr(*s.subject);
 
-    std::vector<int> case_jumps;   // her case'in başına jump
-    std::vector<int> end_jumps;    // her case sonunda switch dışına jump
+    std::vector<int> case_jumps;   // jump to the start of each case
+    std::vector<int> end_jumps;    // jump out of the switch at the end of each case
 
-    // Her case için: koşul kontrol et → eşleşmezse next case'e atla
+    // For each case: check the condition → if no match, jump to the next case
     std::vector<int> body_ips;
-    std::vector<int> default_ip_holder; // default case IP
+    std::vector<int> default_ip_holder; // IP of the default case
 
-    // İlk pass: condition check'ler
+    // First pass: condition checks
     struct CaseEntry { std::vector<int> cond_jumps; bool is_default; };
     std::vector<CaseEntry> entries;
 
@@ -911,7 +911,7 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
                 uint16_t eq = alloc_temp();
                 emit(OpCode::EQ, eq, subj, r);
                 free_temp(r);
-                // EQ true → bu case'e gir
+                // EQ true → enter this case
                 entry.cond_jumps.push_back(emit_jump(OpCode::JUMP_IF_TRUE, eq));
                 free_temp(eq);
             }
@@ -919,21 +919,21 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
         entries.push_back(std::move(entry));
     }
 
-    // Hiçbir case eşleşmedi → default veya sona
+    // No case matched → default or the end
     int no_match_jump = emit_jump(OpCode::JUMP);
 
-    // switch bağlamı: case içindeki `break` switch sonuna atlar (dıştaki döngüye
-    // DEĞİL). is_switch=true → continue bu bağlamı atlar, dıştaki döngüye gider.
+    // switch context: a `break` inside a case jumps to the end of the switch (NOT to the
+    // enclosing loop). is_switch=true → continue skips this context and goes to the enclosing loop.
     loop_stack_.push_back({.is_switch = true, .finally_floor = pending_finally_.size()});
 
-    // İkinci pass: body'ler
+    // Second pass: bodies
     for (size_t i = 0; i < s.cases.size(); ++i) {
         auto& c    = s.cases[i];
         auto& entry = entries[i];
         int body_ip = current_ip();
 
         if (entry.is_default) {
-            // default case: no_match_jump buraya gelir
+            // default case: no_match_jump arrives here
             patch_jump(no_match_jump, body_ip);
         } else {
             for (int j : entry.cond_jumps) patch_jump(j, body_ip);
@@ -950,13 +950,13 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
 
     int after = current_ip();
 
-    // default yoksa no_match_jump → after
+    // without a default, no_match_jump → after
     bool has_default = false;
     for (auto& e : entries) if (e.is_default) { has_default = true; break; }
     if (!has_default) patch_jump(no_match_jump, after);
 
     for (int p : end_jumps)          patch_jump(p, after);
-    for (int p : sctx.break_patches) patch_jump(p, after);  // break → switch sonu
+    for (int p : sctx.break_patches) patch_jump(p, after);  // break → end of the switch
     free_temp(subj);
 }
 
@@ -964,21 +964,21 @@ void FunctionCompiler::compile_switch(const SwitchStatement& s) {
 
 void FunctionCompiler::compile_const_block(const ConstBlock& s) {
     iota_val_ = 0;
-    // iota_expr_: ilk iota içeren expression — sonraki satırlar aynı ifadeyi tekrar eder
+    // iota_expr_: the first expression containing iota — later lines repeat the same expression
     const Expression* last_iota_expr = nullptr;
 
     for (auto& item : s.items) {
         Value v;
         if (!item.value) {
-            // Önceki iota ifadesini yeniden değerlendir (iota değeri artmış)
-            // Compiler basitleştirmesi: iota_ doğrusal → sadece sayısal destekle
+            // Re-evaluate the previous iota expression (the iota value has advanced)
+            // Compiler simplification: iota_ is linear → support numeric only
             v = Value(iota_val_++);
         } else if (auto* iota = node_as<IotaExpression>(item.value.get())) {
             v = Value(iota_val_++);
             last_iota_expr = nullptr;
         } else {
-            // Sabit expression — compile-time eval girişimi
-            // Basit literaller için direkt değer al
+            // Constant expression — attempt compile-time evaluation
+            // Take the value directly for simple literals
             if (auto* n = node_as<NumberLiteral>(item.value.get())) {
                 v = Value(n->value);
             } else if (auto* f = node_as<FloatLiteral>(item.value.get())) {
@@ -988,7 +988,7 @@ void FunctionCompiler::compile_const_block(const ConstBlock& s) {
             } else if (auto* b = node_as<BooleanLiteral>(item.value.get())) {
                 v = Value(b->value);
             } else {
-                // Karmaşık expression: runtime'da değerlendir, global'e store et
+                // Complex expression: evaluate at runtime, store to the global
                 uint16_t r = compile_expr(*item.value);
                 uint32_t name_idx = add_const(Value(item.name));
                 emit(OpCode::STORE_GLOBAL, r, hi16(name_idx), lo16(name_idx));
@@ -996,7 +996,7 @@ void FunctionCompiler::compile_const_block(const ConstBlock& s) {
                 continue;
             }
         }
-        // Sabit değeri global'e yükle
+        // Load the constant value into the global
         uint16_t r = alloc_temp();
         emit_load_const(r, v, 0);
         uint32_t name_idx = add_const(Value(item.name));
@@ -1008,19 +1008,19 @@ void FunctionCompiler::compile_const_block(const ConstBlock& s) {
 // ── compile_struct_decl ───────────────────────────────────────────────────────
 
 void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
-    // v1 bağlantı düzeltmesi (2026-09-30): VM struct tanımını HİÇ bilmiyordu — eski
-    // kod bildirimde sahte bir NEW_STRUCT basıp alan adlarını atlatıyordu, varsayılan
-    // ifadeleri hiç derlemiyordu; VM'in shared_.struct_defs işaretçisini de hiçbir kod
-    // atamıyordu. Sonuç VM'de (CLI + web üretim yolu): varsayılanlar UYGULANMIYOR,
-    // bilinmeyen alanlı literal sessizce kabul. Artık tanım bildirimin KENDİ konumunda
-    // (`a: $d` dinamik varsayılan doğru) gizli bir global'e yazılır:
-    //   "__sdef:Name" = [f1, d1, f2, d2, ...]   (varsayılansız alan → null)
-    // CLI'da tek VM çalıştırır; web'de kurulum VM'i çalıştırır ve vm_setup_globals her
-    // isteğin VM'ine taşır. ':' tanımlayıcıda geçersiz → kullanıcı adıyla çakışamaz.
-    // LOOK 2: üçlüler [ad, varsayılan, tip] — tip "" = tipsiz (kurallar look/struct_types.h).
-    // Aynı adla FARKLI ikinci bildirim = hata; birebir aynısı serbest. Aynı dosyadaki durumu
-    // ayrıştırıcı yakalar; burası dahil edilen dosyalar arası (yorumlayıcı bunu yüklemede
-    // yakalıyordu, VM hiç bakmıyordu — komut satırı dahil edilenleri derlemeye başlayınca göründü).
+    // 1.x linking fix (2026-09-30): the VM did NOT know the struct definition AT ALL — the old
+    // code emitted a fake NEW_STRUCT at the declaration and dropped the field names, never compiled the default
+    // expressions; and no code ever assigned the VM's shared_.struct_defs pointer.
+    // Result in the VM (CLI + web production path): defaults were NOT APPLIED and
+    // a literal with an unknown field was silently accepted. Now the definition is written to a hidden global
+    // at the declaration's OWN position (a dynamic default like `a: $d` is correct):
+    //   "__sdef:Name" = [f1, d1, f2, d2, ...]   (a field with no default → null)
+    // On the CLI a single VM runs it; on the web the setup VM runs it and vm_setup_globals carries it to
+    // every request's VM. ':' is invalid in an identifier → it cannot collide with a user name.
+    // Triples [name, default, type] — type "" = untyped (rules in look/struct_types.h).
+    // A DIFFERENT second declaration with the same name = error; an identical one is allowed. The parser catches the case
+    // within the same file; this is the one across included files (the interpreter caught it at load,
+    // the VM never looked — it showed up once the command line started compiling included files).
     {
         auto seen = g_compile_structs.find(s.name);
         if (seen != g_compile_structs.end() && seen->second.first != s.signature)
@@ -1052,21 +1052,21 @@ void FunctionCompiler::compile_struct_decl(const StructDeclaration& s) {
 
 // ── compile_assign_expr ───────────────────────────────────────────────────────
 
-// `$a = array::push($a, v)` deyimi: array::push her çağrıda tüm diziyi kopyalar → döngüde karesel
-// (20k eleman × 320 istek: 257 sn, `$a[$i] = v` 6 sn). Deyim olarak, hedef ilk argümanla AYNI düz
-// değişkense sonuç `push($a, v)` ile aynıdır: $a'nın deposu yerinde büyür (Go append), paylaşılıyorsa
-// bir kez kopyalanır (yazınca-kopyala) — başka değişken etkilenmez.
-// Koşul: değer hesaplanırken $a DEĞİŞEMEMELİ — eski sırada ekleme değerden ÖNCE okunan diziye
-// yapılır, yerinde eklemede o anki $a'ya. $a'yı doğrudan değiştirebilenler her durumda dışarıda:
-// atama, ++/--, çekirdek push()/pop() (değişkeni yerinde değiştirir) — ifadenin herhangi bir
-// yerinde. Fonksiyon çağrısı serbest: hiçbir fonksiyon kendi dışındaki değişkeni değiştiremez —
-// başkasının yereli görünmez, closure değer yakalar, üst düzey değişkene yerinde yazmak derleme
-// hatası (check_no_outer_write; eskiden fonksiyon global'i değiştirebiliyordu ve o zaman global'de
-// çağrı dışarıdaydı). Bu varsayımları tests/array_push_assign.lk ve tests/outer_write_test.sh
-// sabitler; dile referans parametresi / değiştirilebilir yakalama gelirse kırılırlar.
-// Closure gövdesine inilmez (kendi yerelleri).
-// Çözümleme ve okuma sırası eskisiyle aynı (önce yazma, sonra okuma çözümlemesi; global önce okunur)
-// → hatalar aynı sırada, aynı mesajla.
+// The `$a = array::push($a, v)` statement: array::push copies the whole array on each call → quadratic in a loop
+// (20k elements × 320 requests: 257 s, `$a[$i] = v` 6 s). As a statement, if the target is the SAME plain
+// variable as the first argument, the result is the same as `push($a, v)`: $a's storage grows in place (Go append), and if shared
+// it is copied once (copy-on-write) — no other variable is affected.
+// Condition: $a MUST NOT CHANGE while the value is computed — in the old order the append goes to the array read BEFORE the value,
+// with in-place append to the current $a. Anything that can change $a directly stays out in every case:
+// assignment, ++/--, the core push()/pop() (modify the variable in place) — anywhere in the
+// expression. A function call is allowed: no function can change a variable outside itself —
+// another's locals are invisible, a closure captures by value, writing in place to a top-level variable is a compile
+// error (check_no_outer_write; a function used to be able to change a global, and then a call at global
+// level was outside). tests/array_push_assign.lk and tests/outer_write_test.sh pin these assumptions;
+// they break if the language gains a reference parameter / mutable capture.
+// Closure bodies are not descended into (their own locals).
+// Resolution and read order are the same as before (write resolution first, then read resolution; the global is read first)
+// → errors in the same order, with the same message.
 static bool push_value_is_pure(const Expression& x) {
     switch (x.kind) {
         case NodeKind::NumberLiteral: case NodeKind::FloatLiteral: case NodeKind::BooleanLiteral:
@@ -1074,8 +1074,8 @@ static bool push_value_is_pure(const Expression& x) {
         case NodeKind::IotaExpression: case NodeKind::FunctionExpression:
             return true;
         case NodeKind::StringLiteral: {
-            // {$…} parçası derlemede ayrıştırılır: atama/++/--/push/pop içerebilecek her metin eski
-            // yola — metin üzerinde temkinli bakış.
+            // The {$…} part is parsed at compile time: any text that could contain assignment/++/--/push/pop goes to the old
+            // path — a conservative look at the text.
             const auto& s = static_cast<const StringLiteral&>(x);
             if (s.raw || s.value.find("{$") == std::string::npos) return true;
             const std::string& v = s.value;
@@ -1086,7 +1086,7 @@ static bool push_value_is_pure(const Expression& x) {
         case NodeKind::CallExpression: {
             const auto& c = static_cast<const CallExpression&>(x);
             if (auto* v = node_as<Variable>(c.callee.get()))
-                if (v->name == "push" || v->name == "pop") return false;   // ilk argümanın DEĞİŞKENİNİ değiştirir
+                if (v->name == "push" || v->name == "pop") return false;   // changes the VARIABLE of the first argument
             if (!c.callee || !push_value_is_pure(*c.callee)) return false;
             for (const auto& a : c.arguments)
                 if (!a || !push_value_is_pure(*a)) return false;
@@ -1133,11 +1133,11 @@ static bool push_value_is_pure(const Expression& x) {
                    push_value_is_pure(*t.then_expr) && push_value_is_pure(*t.else_expr);
         }
         default:
-            return false;   // atama ve bilinmeyen her düğüm → eski yol
+            return false;   // assignment and every unknown node → the old path
     }
 }
 
-// Sabit tam sayı mı? `-1` ayrıştırıcıda tekli eksi + 1 olarak gelir.
+// Is it a constant integer? `-1` comes from the parser as unary minus + 1.
 static bool is_int_literal(const Expression* x, int64_t v) {
     if (!x) return false;
     if (auto* n = node_as<NumberLiteral>(x)) return n->value == v;
@@ -1146,9 +1146,9 @@ static bool is_int_literal(const Expression* x, int64_t v) {
     return false;
 }
 
-// `$a = array::push($a, v)` → yerinde ekleme (PUSH_PATH); `$a = array::slice($a, 0, -1)` (sabit 0
-// ve -1) → yerinde son elemanı atma (SHRINK_PATH). Eski yol her adımda bütün listeyi kopyalıyordu
-// (döngüde karesel). Sonuç ve hatalar çağrınınkiyle aynı (VM tarafı aynı mesajları verir).
+// `$a = array::push($a, v)` → in-place append (PUSH_PATH); `$a = array::slice($a, 0, -1)` (constants 0
+// and -1) → in-place drop of the last element (SHRINK_PATH). The old path copied the whole list on every step
+// (quadratic in a loop). The result and errors are the same as the call's (the VM side gives the same messages).
 bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
     if (e.op != "=" || e.index || e.object || !e.value) return false;
     auto* call = node_as<CallExpression>(e.value.get());
@@ -1164,24 +1164,24 @@ bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
     auto* first = node_as<Variable>(call->arguments[0].get());
     if (!first || first->name != e.name) return false;
     if (is_push && (!call->arguments[1] || !push_value_is_pure(*call->arguments[1]))) return false;
-    // compile_assign_expr ile aynı sıra: önce yazma çözümlemesi, sonra (değer derlenirken) okuma.
+    // Same order as compile_assign_expr: write resolution first, then (while compiling the value) the read.
     const auto wloc = resolve_var(e.name, /*for_write=*/true);
     const auto rloc = resolve_var(e.name, /*for_write=*/false);
     uint16_t kind; uint32_t ix;
     if (wloc.kind == VarKind::LOCAL && rloc.kind == VarKind::LOCAL && wloc.index == rloc.index) {
         kind = 0; ix = rloc.index;
     } else if (!parent_ && wloc.kind == VarKind::GLOBAL && rloc.kind == VarKind::GLOBAL) {
-        // Yalnız betiğin KENDİ üst düzeyi. Fonksiyon içinde yazma çözümlemesi de GLOBAL döner ama
-        // atama orada yeni bir YEREL yaratır: hızlı yol global'e eklerdi (2ca4aea–7dd626f arası
-        // hata: `function f() { $a = array::push($a, 2) }` üst düzey $a'yı büyütüyordu).
-        // Eski yol $a'yı değerden ÖNCE okur (tanımsızsa hata önce o): aynı okuma, sonra yazmacı bırak
-        // (geçici yazmaçta kalan ikinci sahip yerinde büyütmeyi kopyaya zorlardı).
+        // Only the script's OWN top level. Inside a function the write resolution also returns GLOBAL but
+        // the assignment creates a new LOCAL there: the fast path would append to the global (a bug between 2ca4aea–7dd626f:
+        // `function f() { $a = array::push($a, 2) }` grew the top-level $a).
+        // The old path reads $a BEFORE the value (if undefined, that error comes first): do the same read, then release the register
+        // (a second owner left in the temp register would force the in-place growth into a copy).
         uint16_t t = compile_expr(*call->arguments[0]);
         emit(OpCode::LOAD_NULL, t);
         free_temp(t);
         kind = 4; ix = add_const(Value(e.name));
     } else {
-        return false;   // capture / gölgeleme: eski yol (kendi hatası ve anlamıyla)
+        return false;   // capture / shadowing: the old path (with its own error and meaning)
     }
     if (is_shrink) {
         emit(OpCode::SHRINK_PATH, 0, 0, 0);
@@ -1192,33 +1192,33 @@ bool FunctionCompiler::try_compile_push_assign(const AssignmentExpression& e) {
     uint16_t r = alloc_temp();
     emit(OpCode::PUSH_PATH, r, 0, 0);
     emit(OpCode::NOP, kind, hi16(ix), lo16(ix));
-    emit(OpCode::NOP, val, 1);   // b=1: dizi değilse array::push'un kendi hata mesajı
+    emit(OpCode::NOP, val, 1);   // b=1: if not an array, array::push's own error message
     free_temp(val);
     free_temp(r);
     return true;
 }
 
-// LOOK 2: bir fonksiyon (adlı ya da closure; `use` ile gelen dosyadakiler dahil) kendi dışındaki
-// bir değişkeni YERİNDE değiştiremez — closure yakalama kuralının (capture_check.h) fonksiyon
-// karşılığı. Eskiden `$t[k] = …`, `$t.f = …`, `$t[k] += …`, `$t[k]++`, push/pop($t…), `$t++`
-// üst düzey $t'yi sessizce değiştiriyordu; düz `$t = …` ve `$t += …` ise yerel yaratıyordu
-// (belge: "fonksiyon kapsamı yalıtılmıştır"). Okuma serbest. Derlemede hata: program başlamaz.
-// Kapsam VM'den çıkarıldı: değişkene yerinde yazan yollar SET_PATH / PUSH_PATH / POP_PATH (kökü
-// GLOBAL) ve ++/-- (STORE_GLOBAL); başka bir yerleşik argümanının deposunu değiştirmez.
-// Öneri app::set() DEĞİL: o kayıt bütün isteklerce paylaşılır (istek başına veri sızar).
+// A function (named or closure; including those in files brought in by `use`) cannot modify a variable
+// outside itself IN PLACE — the function counterpart of the closure capture rule (capture_check.h). It used to be that `$t[k] = …`,
+// `$t.f = …`, `$t[k] += …`, `$t[k]++`, push/pop($t…), `$t++`
+// silently modified the top-level $t, while plain `$t = …` and `$t += …` created a local
+// (docs: "function scope is isolated"). Reading is free. A compile error: the program does not start.
+// The scope was derived from the VM: the paths that write to a variable in place are SET_PATH / PUSH_PATH / POP_PATH (root
+// GLOBAL) and ++/-- (STORE_GLOBAL); it does not change the storage of another builtin's argument.
+// The suggestion is NOT app::set(): that registry is shared by all requests (per-request data would leak).
 void FunctionCompiler::check_no_outer_write(const std::string& name, const std::string& how) {
-    if (!parent_) return;   // üst düzeyin kendisi
+    if (!parent_) return;   // the top level itself
     const std::string bare = (!name.empty() && name[0] == '$') ? name.substr(1) : name;
     const std::string who = proto_.name == "<closure>" ? "closure" : "function " + proto_.name + "()";
-    // Satır mesajda (unused_result_message gibi): komut satırı derleme hatasında yalnız dosyayı yazar.
+    // The line goes in the message (like unused_result_message): on a compile error the command line prints only the file.
     const std::string at = cur_line_ > 0 ? "line " + std::to_string(cur_line_) + ": " : "";
     throw LookProgramError(at + who + " changes $" + bare + ", a variable outside it (" + how + "); a function "
         "cannot change variables outside it — pass the value as a parameter and return the new value",
         cur_line_);
 }
 
-// Bir fonksiyonda aynı ad önce dışarıdan okunuyor, sonra yerel olarak atanıyor (Python
-// UnboundLocalError). Ters sıra (bloğu bitmiş yerelden sonra okuma) Variable okumasında ayrı mesajla.
+// In a function the same name is first read from outside and then assigned as a local (Python
+// UnboundLocalError). The reverse order (reading after a local whose block has ended) has a separate message in the Variable read.
 void FunctionCompiler::throw_outer_read_assign(const std::string& name) {
     const std::string bare = (!name.empty() && name[0] == '$') ? name.substr(1) : name;
     const std::string who = proto_.name == "<closure>" ? "closure" : "function " + proto_.name + "()";
@@ -1229,20 +1229,20 @@ void FunctionCompiler::throw_outer_read_assign(const std::string& name) {
 }
 
 void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
-    // Plain `$x = v` yazma target'ı (auto-capture YOK → dış değişkene atama yeni
-    // local yaratır). `$arr[i]=v` ise $arr container'ı OKUNUP yerinde mutasyona
-    // uğrar → auto-capture gerekir (referans tipi paylaşılır).
-    const int want = assign_result_reg_;   // ifade değeri isteniyor mu (iç atamalar kendi isteğini kurar)
+    // Plain `$x = v` write target (NO auto-capture → assigning to an outer variable creates a new
+    // local). With `$arr[i]=v`, the $arr container is READ and mutated in place →
+    // auto-capture is needed (the reference type is shared).
+    const int want = assign_result_reg_;   // whether the expression value is wanted (inner assignments set up their own request)
     assign_result_reg_ = -1;
     auto loc = resolve_var(e.name, /*for_write=*/(e.index == nullptr));
 
     if (e.index) {
-        // $arr[i] = val  ·  zincirli $l.s.x = v / $m["rows"][0] = v
-        // LOOK 2 (değer semantiği): hedef bir YOL olarak derlenir — kök değişken + anahtarlar —
-        // ve SET_PATH kökün kendi yerinde, düzey düzey yazınca-kopyala yapar. Eskiden container
-        // bir geçici yazmaca yüklenip ARRAY_SET ile yerinde değiştiriliyordu (referans semantiği).
-        std::vector<const Expression*> key_exprs;      // dıştan içe sırayla
-        std::vector<std::string>       key_fields;     // key_exprs[i] == nullptr ise alan adı
+        // $arr[i] = val  ·  chained $l.s.x = v / $m["rows"][0] = v
+        // (value semantics): the target is compiled as a PATH — root variable + keys —
+        // and SET_PATH does copy-on-write level by level in the root's own slot. It used to load the container
+        // into a temp register and modify it in place with ARRAY_SET (reference semantics).
+        std::vector<const Expression*> key_exprs;      // in order, outermost to innermost
+        std::vector<std::string>       key_fields;     // field name when key_exprs[i] == nullptr
         const Variable* root = nullptr;
         bool is_path = true;
         {
@@ -1255,7 +1255,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                     rev.push_back({nullptr, ma->field}); cur = ma->object.get();
                 } else if (auto* v = node_as<Variable>(cur)) {
                     root = v; break;
-                } else { is_path = false; break; }       // f()[0] = x gibi: kök bir değişken değil
+                } else { is_path = false; break; }       // like f()[0] = x: the root is not a variable
             }
             for (auto it = rev.rbegin(); it != rev.rend(); ++it) {
                 key_exprs.push_back(it->first); key_fields.push_back(it->second);
@@ -1266,7 +1266,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             const std::string& root_name = root ? root->name : e.name;
             auto rloc = resolve_var(root_name, /*for_write=*/false);
             if (rloc.kind == VarKind::GLOBAL)
-                // `$t[k]++` ayrıştırıcıda `+= 1` olur: kullanıcının yazmadığı işleci söyleme.
+                // `$t[k]++` becomes `+= 1` in the parser: do not name an operator the user did not write.
                 check_no_outer_write(root_name, e.op == "=" ? "an element or field of it is assigned"
                                                             : "an element or field of it is changed");
             const uint16_t n = u16(key_exprs.size(), "index path length");
@@ -1282,7 +1282,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             }
             uint16_t val = compile_expr(*e.value);
             if (e.op != "=") {
-                // Compound (+= -= …): mevcut değeri AYNI anahtarlarla oku, birleştir, sonra yaz.
+                // Compound (+= -= …): read the current value with the SAME keys, combine, then write.
                 static const std::unordered_map<std::string, OpCode> COMPOUND = {
                     {"+=", OpCode::ADD},  {"-=", OpCode::SUB},  {"*=", OpCode::MUL},
                     {"/=", OpCode::DIV},  {"%=", OpCode::MOD},  {".=", OpCode::CONCAT},
@@ -1299,13 +1299,13 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 }
                 for (uint16_t k = 0; k < n; ++k)
                     emit(OpCode::ARRAY_GET, cur, cur, u16(base + k, "register index"));
-                if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u16(want, "register index"), cur);   // sonek ++/--: eski değer
+                if (want >= 0 && e.yield_old) emit(OpCode::MOVE, u16(want, "register index"), cur);   // postfix ++/--: the old value
                 uint16_t res = alloc_temp();
                 emit(it->second, res, cur, val);
                 free_temp(cur); free_temp(val);
                 val = res;
             }
-            // Kök: 0 yerel · 4 global. Yakalanan değişken değiştirilemez.
+            // Root: 0 local · 4 global. A captured variable cannot be modified.
             uint16_t kind; uint32_t ix;
             if (rloc.kind == VarKind::LOCAL) {
                 kind = 0; ix = rloc.index;
@@ -1313,13 +1313,13 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
                 throw LookCompileError("Captured variable cannot be changed: $" + root_name);
             } else {
                 kind = 4; ix = add_const(Value(root_name));
-                if (parent_ == nullptr && scope_depth_ <= 1) outer_globals_.insert(root_name);   // üst düzeyde yolla doğan global
+                if (parent_ == nullptr && scope_depth_ <= 1) outer_globals_.insert(root_name);   // a global born through a path at top level
             }
             emit(OpCode::SET_PATH, val, base, n);
             emit(OpCode::NOP, kind, hi16(ix), lo16(ix));
             if (want >= 0 && !e.yield_old) {
-                // İfadenin değeri YAZILAN değerdir (alan tipine çevrilmiş haliyle) — aynı anahtarlarla
-                // geri okunur; anahtarlar yeniden hesaplanmaz. Eskiden kök değişkenin TAMAMI dönüyordu.
+                // The value of the expression is the WRITTEN value (as converted to the field type) — it is read
+                // back with the same keys; the keys are not recomputed. It used to return the WHOLE root variable.
                 const uint16_t w = u16(want, "register index");
                 if (rloc.kind == VarKind::LOCAL) emit_read_local(w, rloc.index);
                 else { uint32_t ni = add_const(Value(root_name)); emit(OpCode::LOAD_GLOBAL, w, hi16(ni), lo16(ni)); }
@@ -1329,7 +1329,7 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             regs_->release_seq(base, n);
             return;
         }
-        // Kökü değişken olmayan hedef (geçici bir değere yazma): eski yol.
+        // A target whose root is not a variable (writing to a temporary value): the old path.
         uint16_t arr = compile_expr(*e.object);
         uint16_t idx = compile_expr(*e.index);
         uint16_t val = compile_expr(*e.value);
@@ -1355,12 +1355,12 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         return;
     }
 
-    // `$s = $s . a . b` — tanım gereği `$s .= a . b`: hedefe YERİNDE eklenir. ESKİ: sağ taraf geçici
-    // kayıtta baştan kurulup yazılıyordu → her adımda bütün metnin kopyası, döngüde karesel (ölçüldü:
-    // fonksiyon içinde 100 bin ekleme 175 ms, `.=` ile 1 milyon 33 ms). İşlenenler ÖNCE sırayla
-    // değerlendirilir (hepsi eski $s'yi görür, özgün sıra), sonra sırayla eklenir; işlenen hedefin
-    // kendisiyse anlık kopyası alınır (paylaşılan değer eklemede bir kez kopyalanır — sonuç aynı).
-    // Yalnız yerel ve üst düzey global hedefte; zincir ≤ 16 işlenen (kayıt baskısı).
+    // `$s = $s . a . b` — by definition `$s .= a . b`: appended to the target IN PLACE. OLD: the right side was built
+    // from scratch in a temp register and written → a copy of the whole text at every step, quadratic in a loop (measured:
+    // 100k appends inside a function 175 ms, 1 million with `.=` 33 ms). The operands are FIRST evaluated in order
+    // (all see the old $s, the original order), then appended in order; if an operand is the target
+    // itself an instant copy is taken (a shared value is copied once on append — same result).
+    // Only for a local and a top-level global target; chain ≤ 16 operands (register pressure).
     const bool global_target = loc.kind != VarKind::LOCAL && loc.kind != VarKind::CAPTURE &&
         !(parent_ != nullptr || (scope_depth_ > 1 && !outer_globals_.count(e.name)));
     if (e.op == "=" && (loc.kind == VarKind::LOCAL || global_target)) {
@@ -1372,9 +1372,9 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             auto* fv = node_as<Variable>(first);
             if (all_concat && fv && fv->name == e.name) {
                 std::vector<uint16_t> parts;
-                for (size_t k = spine.size(); k-- > 0; ) {           // içten dışa = soldan sağa
+                for (size_t k = spine.size(); k-- > 0; ) {           // innermost to outermost = left to right
                     uint16_t r = compile_expr(*spine[k]->right);
-                    if (loc.kind == VarKind::LOCAL && r == loc.index) {   // hedefin anlık kopyası
+                    if (loc.kind == VarKind::LOCAL && r == loc.index) {   // instant copy of the target
                         uint16_t t = alloc_temp();
                         emit(OpCode::MOVE, t, r);
                         r = t;
@@ -1396,13 +1396,13 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
     uint16_t val = compile_expr(*e.value);
 
     if (loc.kind == VarKind::LOCAL) {
-        // B7: `$s .= x` → yerinde CONCAT (dst==b==slot). VM append_in_place ile
-        // amortize O(1); ayrıca cur/tmp MOVE'ları (iki O(n) kopya) elenir.
+        // B7: `$s .= x` → in-place CONCAT (dst==b==slot). Amortized O(1) with the VM's append_in_place;
+        // the cur/tmp MOVEs (two O(n) copies) are also eliminated.
         if (e.op == ".=") {
             emit(OpCode::CONCAT, loc.index, loc.index, val);
             free_temp(val);
         }
-        // Compound assign için mevcut değeri oku
+        // For compound assign, read the current value
         else if (e.op != "=") {
             uint16_t cur = alloc_temp();
             emit_read_local(cur, loc.index);
@@ -1423,30 +1423,30 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
             free_temp(val);
         }
     } else if (loc.kind == VarKind::CAPTURE) {
-        // LOOK by-value capture — capture değiştirilemiyor (felsefe)
+        // LOOK captures by value — a capture cannot be modified (philosophy)
         throw LookCompileError("Captured variable cannot be reassigned: $" + e.name);
-    } else if (parent_ != nullptr || (scope_depth_ > 1 && !outer_globals_.count(e.name))) {   // 1 = üst düzeyin kendi kapsamı (compile_stmts)
-        // LOOK 2: ÜST DÜZEYDE de blok kapsamı. Bir if/for/while/try gövdesinde İLK KEZ atanan ad
-        // o bloğun yerelidir (fonksiyon içinde ve yorumlayıcıda zaten böyleydi; VM üst düzeyde
-        // onu global yapıyordu → `if (c) { $z = 1 } print($z)` VM'de 1, yorumlayıcıda hata).
-        // Bloktan önce üst düzeyde atanmış ad (outer_globals_) global kalır: blok ona yazar.
-        // Fonksiyon içi + isim local/capture değil → yeni FONKSIYON-LOCAL yarat.
-        // Scope izolasyonu: fonksiyon dıştaki (global) değişkeni implicit ezemez
-        // (VM'de eskiden STORE_GLOBAL ile sızıyordu — route
-        // gövdesi local'leri global olduğundan eş zamanlı isteklerde de race'liydi).
-        // Okuma hâlâ global'e düşer; val (RHS) yukarıda compile edildiği için
-        // aynı-isim okuması doğru şekilde global'i gördü.
-        // LOOK 2 (Python UnboundLocalError gibi): bu fonksiyonda ad önce DIŞARIDAN okunduysa (ya da
-        // `+=`/`.=` dış değeri okuyorsa) yeni yerel yaratmak sessiz tuzaktır — `$n += 1` / `$n = $n + 1`
-        // dıştaki sayacı artırıyor gibi görünür, dıştaki hiç değişmez. Okuma başka dalda ya da döngünün
-        // önceki satırında olsa da (ilk tur dışı okur) hata. Hiç okunmadan `$n = 5` yerel kalır.
+    } else if (parent_ != nullptr || (scope_depth_ > 1 && !outer_globals_.count(e.name))) {   // 1 = the top level's own scope (compile_stmts)
+        // Block scope AT TOP LEVEL too. A name assigned for the FIRST time in an if/for/while/try body
+        // is that block's local (it already worked this way inside functions and in the interpreter; the VM at top level
+        // made it a global → `if (c) { $z = 1 } print($z)` gave 1 in the VM and an error in the interpreter).
+        // A name assigned at top level before the block (outer_globals_) stays global: the block writes to it.
+        // Inside a function + the name is not a local/capture → create a new FUNCTION-LOCAL.
+        // Scope isolation: a function cannot implicitly overwrite an outer (global) variable
+        // (in the VM it used to leak via STORE_GLOBAL — since route
+        // body locals were globals it also raced under concurrent requests).
+        // Reading still falls to the global; since val (RHS) was compiled above,
+        // a same-name read correctly saw the global.
+        // (like Python's UnboundLocalError): if in this function the name was first read from OUTSIDE (or
+        // `+=`/`.=` reads the outer value), creating a new local is a silent trap — `$n += 1` / `$n = $n + 1`
+        // looks like it increments the outer counter, but the outer one never changes. It is an error even if the read is in another branch or
+        // on an earlier line of the loop (reads from outside on the first iteration). `$n = 5` with no read stays local.
         if (parent_) {
             if (e.op != "=" || outer_reads_.count(e.name)) throw_outer_read_assign(e.name);
-            local_made_at_.emplace(e.name, cur_line_);   // ters sıra: sonradan dışarıdan okunursa da hata
+            local_made_at_.emplace(e.name, cur_line_);   // reverse order: an error if it is read from outside later, too
         }
         uint16_t result = val;
         if (e.op != "=") {
-            // compound: mevcut değeri GLOBAL'den oku (isim henüz local değil)
+            // compound: read the current value from the GLOBAL (the name is not a local yet)
             uint32_t ni = add_const(Value(e.name));
             uint16_t cur = alloc_temp();
             emit(OpCode::LOAD_GLOBAL, cur, hi16(ni), lo16(ni));
@@ -1466,25 +1466,25 @@ void FunctionCompiler::compile_assign_expr(const AssignmentExpression& e) {
         emit(OpCode::MOVE, slot, result);
         free_temp(result);
     } else {
-        // Top-level (script global) → STORE_GLOBAL. Route/setup global'leri, app::
-        // servisleri ve module referansları burada yaşar; davranış korunur.
-        // Ad outer_globals_'a yazılır: sonraki bir blok bu ada atarsa yeni yerel
-        // yaratmaz, bu global'e yazar.
-        outer_globals_.insert(e.name);   // bu dala yalnız üst düzey (blok dışı) ya da bilinen global gelir
+        // Top-level (script global) → STORE_GLOBAL. Route/setup globals, app::
+        // services and module references live here; the behavior is preserved.
+        // The name is written to outer_globals_: if a later block assigns to this name it does not
+        // create a new local, it writes to this global.
+        outer_globals_.insert(e.name);   // only top level (outside a block) or a known global reaches this branch
         uint32_t ni = add_const(Value(e.name));
-        // `.=` global'de YERİNDE (APPEND_GLOBAL). ESKİ: oku → yeni metin → yaz; her adım bütün metni
-        // kopyalıyordu (üst düzey döngüde 1 milyon `.=`: 66 sn).
+        // `.=` on a global is IN PLACE (APPEND_GLOBAL). OLD: read → new text → write; every step
+        // copied the whole text (1 million `.=` in a top-level loop: 66 s).
         if (e.op == ".=") {
             emit(OpCode::APPEND_GLOBAL, val, hi16(ni), lo16(ni));
             free_temp(val);
             return;
         }
-        // BUG FIX: bu dal e.op'u YOK SAYIYORDU → top-level "$t += $i" sadece
-        // "$t = $i" olarak derleniyordu (sol operand atılıyor). Diğer üç dal
-        // (index, local, fonksiyon-içi) compound'u doğru yapıyordu; yalnız GLOBAL
-        // yolu bozuktu → interpreter DOĞRU, VM SESSİZCE YANLIŞ (motor ayrışması).
-        // Örn. top-level: $t=0; $t+=5 → VM'de 5 yerine... 5 (doğru sanılır) ama
-        // $t=1; $t+=2 → 2 (3 değil); $s="x"; $s.="y" → "y" ("xy" değil).
+        // BUG FIX: this branch IGNORED e.op → top-level "$t += $i" was compiled as just
+        // "$t = $i" (the left operand was dropped). The other three branches
+        // (index, local, in-function) did compound correctly; only the GLOBAL
+        // path was broken → the interpreter was RIGHT, the VM SILENTLY WRONG (engine divergence).
+        // E.g. top-level: $t=0; $t+=5 → 5 in the VM (looks right) but
+        // $t=1; $t+=2 → 2 (not 3); $s="x"; $s.="y" → "y" (not "xy").
         if (e.op != "=") {
             uint16_t cur = alloc_temp();
             emit(OpCode::LOAD_GLOBAL, cur, hi16(ni), lo16(ni));
@@ -1535,9 +1535,9 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
     }
     if (auto* e = node_as<StringLiteral>(&expr)) {
         uint16_t r = ensure_dest();
-        // Interpolation içeriyor mu? Lexer raw string gönderir
-        // Basit string (interpolation yok) → LOAD_CONST
-        // İnterpolasyon → compile_string_interp
+        // Does it contain interpolation? The lexer sends a raw string
+        // Simple string (no interpolation) → LOAD_CONST
+        // Interpolation → compile_string_interp
         if (!e->raw && e->value.find("{$") != std::string::npos) {
             return compile_string_interp(e->value, expr.loc.line, r);
         }
@@ -1548,7 +1548,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
     if (auto* e = node_as<Variable>(&expr)) {
         auto loc = resolve_var(e->name);
         if (loc.kind == VarKind::LOCAL) {
-            // Hedef verilmediyse yerelin kendi register'ı döner (kopya yok).
+            // If no destination is given, the local's own register is returned (no copy).
             if (dest == NO_REG) return loc.index;
             uint16_t r = ensure_dest();
             emit_read_local(r, loc.index);
@@ -1560,7 +1560,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
         } else {
             uint32_t ni = add_const(Value(e->name));
             if (parent_ && !e->name.empty() && e->name[0] == '$') {
-                // Aynı ad bu fonksiyonda yerel olarak atanmıştı (bloğu bitti) — `if (c) { $n = 5 } else { print($n) }`
+                // The same name had been assigned as a local in this function (its block ended) — `if (c) { $n = 5 } else { print($n) }`
                 auto made = local_made_at_.find(e->name);
                 if (made != local_made_at_.end()) {
                     const std::string bare = e->name.substr(1);
@@ -1574,11 +1574,11 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
                 outer_reads_.insert(e->name);
             }
             emit(OpCode::LOAD_GLOBAL, r, hi16(ni), lo16(ni));
-            // Çıplak ('$'sız) ad DEĞER olarak okunuyor. ESKİ HATA: LOAD_GLOBAL çıplak adı
-            // ıskalayınca sessizce null veriyordu ("mod::fn"/çağrı hedefi için gerekli),
-            // dolayısıyla unutulan '$' — `if (is_admin)` — VM'de hatasız YANLIŞ DALA
-            // giriyordu; tree-walk (referans) "Undefined variable: is_admin" fırlatıyordu.
-            // Çağrı hedefi hariç (adı CALL söyler) her çıplak okuma tanımlı olmalı.
+            // A bare (no '$') name is read as a VALUE. OLD BUG: when LOAD_GLOBAL missed a bare name
+            // it silently gave null (needed for "mod::fn"/call targets),
+            // so a forgotten '$' — `if (is_admin)` — entered the WRONG BRANCH in the VM without an error;
+            // tree-walk (the reference) threw "Undefined variable: is_admin".
+            // Except for a call target (CALL names it), every bare read must be defined.
             if (!callee_ctx_ && !e->name.empty() && e->name[0] != '$'
                 && e->name.find("::") == std::string::npos)
                 emit(OpCode::CHECK_DEFINED, r, hi16(ni), lo16(ni));
@@ -1588,14 +1588,14 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
 
     if (auto* e = node_as<AssignmentExpression>(&expr)) {
         if (e->index) {
-            // Eleman/alan ataması: değer, yazılan elemandır (sonek ++/-- için eski değer).
+            // Element/field assignment: the value is the written element (the old value for postfix ++/--).
             uint16_t r = ensure_dest();
             assign_result_reg_ = r;
             compile_assign_expr(*e);
             return r;
         }
         compile_assign_expr(*e);
-        // Atama expression olarak kullanılmış — değeri oku
+        // The assignment is used as an expression — read the value
         auto loc = resolve_var(e->name);
         uint16_t r = ensure_dest();
         if (loc.kind == VarKind::LOCAL) emit_read_local(r, loc.index);
@@ -1611,9 +1611,9 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
     }
 
     if (auto* e = node_as<UnaryExpression>(&expr)) {
-        // ++/-- — VM'de eskiden desteklenmiyordu (compile hatası → interpreter'a
-        // görünmez sapma). Semantik: prefix yeni değeri,
-        // postfix eski değeri döndürür; değişkene geri yazılır.
+        // ++/-- — it used to be unsupported in the VM (a compile error → an invisible
+        // fall to the interpreter). Semantics: prefix returns the new value,
+        // postfix returns the old value; the variable is written back.
         if (e->op == "++" || e->op == "--") {
             auto* var = node_as<Variable>(e->right.get());
             if (!var) throw LookCompileError("++/-- requires a variable");
@@ -1627,11 +1627,11 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
 
             uint16_t r = ensure_dest();
             if (loc.kind == VarKind::LOCAL) {
-                emit_read_local(r, loc.index);              // eski değer (postfix için)
+                emit_read_local(r, loc.index);              // old value (for postfix)
                 uint16_t nv = alloc_temp();
                 emit(delta_op, nv, r, one);
                 emit_write_local(loc.index, nv);
-                if (e->prefix) emit(OpCode::MOVE, r, nv);   // prefix → yeni değer
+                if (e->prefix) emit(OpCode::MOVE, r, nv);   // prefix → new value
                 free_temp(nv);
             } else {
                 // GLOBAL
@@ -1703,16 +1703,16 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
     if (auto* e = node_as<MemberAccessExpression>(&expr)) {
         uint16_t obj = compile_expr(*e->object);
         uint16_t r   = ensure_dest();
-        // Field ismi constant pool'a girer — runtime'da field index çözülür
+        // The field name goes into the constant pool — the field index is resolved at runtime
         uint32_t fi = add_const(Value(e->field));
         if (fi <= REG_LIMIT) {
             emit(OpCode::GET_FIELD, r, obj, u16(fi, "field name index"));
         } else {
-            // 256+ sabitli proto: GET_FIELD'ın sabit operandı 8 bit — eskiden
-            // (fi & 0xFF) kırpılıyordu → BAŞKA bir sabitin adıyla alan okunuyordu
-            // (sessiz yanlış veri / null). CALL_BUILTIN 256 duvarını NOP-hint'le
-            // aşmıştı, GET_FIELD/SET_FIELD kaçmıştı (simetrik yüzey). Alan adını
-            // geniş yükle + genel ARRAY_GET — VM::get_field ≡ array_get, semantik aynı.
+            // Proto with 256+ constants: GET_FIELD's constant operand was 8 bits — it used to be
+            // truncated by (fi & 0xFF) → the field was read with ANOTHER constant's name
+            // (silently wrong data / null). CALL_BUILTIN got past the 256 wall with the NOP hint,
+            // GET_FIELD/SET_FIELD were missed (symmetric surface). Load the field name
+            // wide + a general ARRAY_GET — VM::get_field ≡ array_get, same semantics.
             uint16_t k = alloc_temp();
             emit_load_const(k, Value(e->field), 0);
             emit(OpCode::ARRAY_GET, r, obj, k);
@@ -1737,7 +1737,7 @@ uint16_t FunctionCompiler::compile_expr(const Expression& expr, uint16_t dest) {
 
 // ── compile_binary ────────────────────────────────────────────────────────────
 
-// İkili operatörlerin opcode'ları (&&, ||, ?? ayrı derlenir).
+// Opcodes of the binary operators (&&, ||, ?? are compiled separately).
 static const std::unordered_map<std::string, OpCode>& binary_ops() {
     static const std::unordered_map<std::string, OpCode> OPS = {
         {"+",   OpCode::ADD},   {"-",  OpCode::SUB},  {"*",  OpCode::MUL},
@@ -1754,7 +1754,7 @@ static const std::unordered_map<std::string, OpCode>& binary_ops() {
 }
 
 uint16_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint16_t dest) {
-    // Kritik 2. nokta: && ve || short-circuit
+    // Key point 2: && and || short-circuit
     if (e.op == "&&" || e.op == "||") return compile_logical(e, dest);
 
     // Null coalescing: a ?? b → a if a is not null, else b
@@ -1775,13 +1775,13 @@ uint16_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint16_t de
         return r;
     }
 
-    // Sol omurga DÖNGÜYLE: `a + b + c + …` ((a+b)+c)+… diye sola doğru iç içe bir ağaçtır; her düğüm
-    // için özyineleme 1000 operatörlük zincirde 1000 C++ çerçevesi demekti (ölçüldü: 512 KB yığında
-    // segfault, compile_binary × 580). Sıra aynı: en soldaki terim, sonra içten dışa her düğümün
-    // sağı ve işlemi. Omurga, opcode'lu ikili operatör olmayan ilk düğümde biter (&&, ||, ?? …).
+    // Left spine with a LOOP: `a + b + c + …` is a tree nested to the left like ((a+b)+c)+…; recursing over each node
+    // meant 1000 C++ frames for a 1000-operator chain (measured: segfault on a 512 KB stack,
+    // compile_binary × 580). The order is the same: the leftmost term, then from innermost to outermost the right
+    // side and operation of each node. The spine ends at the first node that is not a binary operator with an opcode (&&, ||, ?? …).
     const auto& OPS = binary_ops();
     if (!OPS.count(e.op)) throw LookCompileError("Unknown binary op: " + e.op, e.loc.line);
-    std::vector<const BinaryExpression*> spine;   // dıştan içe
+    std::vector<const BinaryExpression*> spine;   // outermost to innermost
     const Expression* leftmost = &e;
     while (auto* b = node_as<BinaryExpression>(leftmost)) {
         if (!OPS.count(b->op)) break;
@@ -1800,15 +1800,15 @@ uint16_t FunctionCompiler::compile_binary(const BinaryExpression& e, uint16_t de
     return l;
 }
 
-// ── compile_logical — short-circuit && / || ────────────────────────────────────
+// ── compile_logical — short-circuit && / || ───────────────────────────────────
 
 uint16_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint16_t dest) {
     uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
 
-    // `a && b && c || d …` sola iç içe: omurga DÖNGÜYLE (bkz. compile_binary). Her düğüm, solunun
-    // sonucu r'deyken kendi kısa devre atlamasını yazar, sonra sağını r'ye derler; atlama sağından
-    // sonraya bağlanır — özyinelemeli sürümün ürettiği komutların aynısı.
-    std::vector<const BinaryExpression*> spine;   // dıştan içe
+    // `a && b && c || d …` nested to the left: the spine is walked with a LOOP (see compile_binary). Each node, with its left's
+    // result in r, writes its own short-circuit jump, then compiles its right into r; the jump
+    // is tied to just after its right — the same instructions the recursive version produced.
+    std::vector<const BinaryExpression*> spine;   // outermost to innermost
     const Expression* leftmost = &e;
     while (auto* b = node_as<BinaryExpression>(leftmost)) {
         if (b->op != "&&" && b->op != "||") break;
@@ -1820,7 +1820,7 @@ uint16_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint16_t d
 
     for (size_t k = spine.size(); k-- > 0;) {
         const BinaryExpression& n = *spine[k];
-        // &&: sol false → sonuç false, sağ değerlendirilmez; ||: sol true → sonuç true
+        // &&: left false → result false, right is not evaluated; ||: left true → result true
         int short_circuit = emit_jump(n.op == "&&" ? OpCode::JUMP_IF_FALSE : OpCode::JUMP_IF_TRUE, r);
         uint16_t rhs = compile_expr(*n.right, r);
         if (rhs != r) { emit(OpCode::MOVE, r, rhs); free_temp(rhs); }
@@ -1832,15 +1832,15 @@ uint16_t FunctionCompiler::compile_logical(const BinaryExpression& e, uint16_t d
 // ── compile_call ──────────────────────────────────────────────────────────────
 
 uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) {
-    // Özel fonksiyonlar: parallel, send, receive
+    // Special functions: parallel, send, receive
     if (auto* sr = node_as<ScopeResolution>(e.callee.get())) {
         std::string full = sr->module_name + "::" + sr->member_name;
         int bidx = builtin_index(full);
         if (bidx >= 0) {
-            // Bilinen modül fonksiyonu → CALL_BUILTIN. (LOOK 2: timer::/jobs::worker/jobs::run komut
-            // satırında da VM'e bağlı; ws::/sse:: orada açık hata verir — eskiden bunlar CLI'ı
-            // tree-walk'a düşürüyordu.)
-            // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
+            // Known module function → CALL_BUILTIN. (timer::/jobs::worker/jobs::run are also wired to the VM on the
+            // command line; ws::/sse:: give a clear error there — they used to drop the CLI
+            // to tree-walk.)
+            // Take a consecutive register block with alloc_seq — satisfies the VM's base+k assumption
             check_argc(e);
             uint16_t argc = u16(e.arguments.size(), "argument count");
             uint16_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
@@ -1851,23 +1851,23 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
             check_builtin_index(bidx, full);
             emit(OpCode::CALL_BUILTIN, r, lo16(bidx), base);
-            // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
-            // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
+            // NOP hint: a=argc, b=the HIGH bits of the builtin index (16-bit index).
+            // Bit-compatible: for idx<=255, b=0 = the old encoding. This is how the 256 wall was passed.
             emit(OpCode::NOP, argc, hi16(bidx));
             regs_->release_seq(base, argc);
             return r;
         }
-        // Unknown modül fonksiyonu → genel CALL yolu.
-        // İŞARETLE: bu çağrı derlenir ama RUNTIME'da "Not callable" fırlatır
-        // (LOAD_GLOBAL "mod::fn" → null → CALL). Komut satırı / REPL / lk test bayrağı
-        // görüp çalıştırmadan hata verir (bkz. CompiledProgram::uses_non_builtin_module_fn).
+        // Unknown module function → the general CALL path.
+        // MARK: this call compiles but throws "Not callable" at RUNTIME
+        // (LOAD_GLOBAL "mod::fn" → null → CALL). The command line / REPL / lk test see the flag
+        // and error out without running (see CompiledProgram::uses_non_builtin_module_fn).
         mark_non_builtin_module_fn(full);
     }
     if (auto* var = node_as<Variable>(e.callee.get())) {
-        // LOOK 2: push($hedef, v) / pop($hedef) ilk argümanı olan DEĞİŞKENİ değiştirir. Hedef bir
-        // yol ise (kökü değişken: $a, $m["rows"], $u.tags) PUSH_PATH/POP_PATH kökün kendi yerinde
-        // yazınca-kopyala yapar. Eski builtin paylaşılan vektörü yerinde değiştiriyordu:
-        // `$b = $a; push($a, 1)` $b'yi de büyütüyordu.
+        // push($target, v) / pop($target) modify the VARIABLE that is the first argument. If the target is a
+        // path (root is a variable: $a, $m["rows"], $u.tags), PUSH_PATH/POP_PATH do copy-on-write in the
+        // root's own slot. The old builtin modified the shared vector in place:
+        // `$b = $a; push($a, 1)` grew $b too.
         if ((var->name == "push" && e.arguments.size() == 2) || (var->name == "pop" && e.arguments.size() == 1)) {
             std::vector<std::pair<const Expression*, std::string>> rev;
             const Variable* root = nullptr;
@@ -1942,9 +1942,9 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             return r;
         }
         if (var->name == "close") {
-            // Argüman-sayısı kontrolü YOKTU → close() argümansız çağrılınca e.arguments[0]
-            // boş vektörde null deref → DERLEME-ZAMANI SEGFAULT (tree-walk graceful hata
-            // veriyordu → divergence). send/receive kalıbıyla doğrula.
+            // There was NO argument-count check → calling close() with no arguments dereferenced null on
+            // the empty e.arguments vector → COMPILE-TIME SEGFAULT (tree-walk gave a graceful error
+            // → divergence). Validate with the send/receive pattern.
             if (e.arguments.size() != 1)
                 throw LookCompileError("close() takes 1 argument", e.loc.line);
             uint16_t ch = compile_expr(*e.arguments[0]);
@@ -1963,28 +1963,28 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             free_temp(ch);
             return r;
         }
-        // Global builtin alias'ları → VM builtin karşılığı.
-        // Bu isimler eski yorumlayıcıda inline çözülüyordu ama VM builtin listesinde
-        // yoktu → route çağırınca CALL (bytecode-fn) olarak derlenip runtime'da
-        // "Not callable" fırlatıyor, route KALICI interpreter'a düşüyordu
-        // (O(n²) string dahil tüm VM optimizasyonları o route'ta boşa gidiyordu).
+        // Global builtin aliases → the VM builtin equivalent.
+        // These names were resolved inline in the old interpreter but were not in the VM builtin list
+        // → when a route called them they compiled to CALL (bytecode-fn), threw
+        // "Not callable" at runtime, and the route fell PERMANENTLY to the interpreter
+        // (all VM optimizations, including O(n²) string handling, were wasted on that route).
         static const std::unordered_map<std::string, std::string> BUILTIN_ALIAS = {
             {"len", "count"}, {"intval", "int"}, {"floatval", "float"},
             {"strval", "string"}, {"boolval", "bool"},
             {"json", "json::encode"},
-            // Web: bare header()/redirect() eski yorumlayıcının global'iydi, VM'de fallback
-            // ediyordu. response::header/redirect module fonksiyonları ZATEN var ve
-            // per-request web_ctx_'e bağlanıyor (response::text gibi) + CRLF-sanitize
-            // ediyor (bonus).
+            // Web: bare header()/redirect() were globals of the old interpreter and fell back in the VM.
+            // The response::header/redirect module functions ALREADY exist and are bound to the
+            // per-request web_ctx_ (like response::text) + they do CRLF
+            // sanitizing (a bonus).
             {"header", "response::header"}, {"redirect", "response::redirect"},
         };
         std::string bname = var->name;
         if (auto ai = BUILTIN_ALIAS.find(bname); ai != BUILTIN_ALIAS.end())
             bname = ai->second;
-        // Bilinen built-in?
+        // A known built-in?
         int bidx = builtin_index(bname);
         if (bidx >= 0) {
-            // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
+            // Take a consecutive register block with alloc_seq — satisfies the VM's base+k assumption
             check_argc(e);
             uint16_t argc = u16(e.arguments.size(), "argument count");
             uint16_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
@@ -1995,20 +1995,20 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
             uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
             check_builtin_index(bidx, bname);
             emit(OpCode::CALL_BUILTIN, r, lo16(bidx), base);
-            // NOP hint: a=argc, b=builtin indeksin YUKSEK 8 biti (16-bit indeks).
-            // Bit-uyumlu: idx<=255 icin b=0 = eski kodlama. 256 duvari boyle asildi.
+            // NOP hint: a=argc, b=the HIGH bits of the builtin index (16-bit index).
+            // Bit-compatible: for idx<=255, b=0 = the old encoding. This is how the 256 wall was passed.
             emit(OpCode::NOP, argc, hi16(bidx));
             regs_->release_seq(base, argc);
             return r;
         }
     }
 
-    // Genel CALL: callee'yi register'a al, argümanları sıraya diz
-    // callee_ctx_ yalnız callee doğrudan bir AD iken açılır (iç içe ifadelere sızmasın).
+    // General CALL: put the callee in a register, lay out the arguments in order
+    // callee_ctx_ is turned on only when the callee is directly a NAME (so it does not leak into nested expressions).
     callee_ctx_ = node_as<Variable>(e.callee.get()) != nullptr;
     uint16_t fn = compile_expr(*e.callee);
     callee_ctx_ = false;
-    // alloc_seq ile ardışık register bloğu al — VM base+k varsayımına uyar
+    // Take a consecutive register block with alloc_seq — satisfies the VM's base+k assumption
     check_argc(e);
     uint16_t argc = u16(e.arguments.size(), "argument count");
     uint16_t base = (argc > 0) ? regs_->alloc_seq(argc) : 0;
@@ -2018,16 +2018,16 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
     }
     uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
     emit(OpCode::CALL, r, fn, base);
-    // argc ek byte olarak NOP'a gömülür — VM okur.
-    // Callee basit bir AD ise adın sabit indeksi de (ni+1, 32-bit) NOP'un b/c
-    // alanlarına gömülür — VM hata mesajında adı SÖYLEYEBİLSİN diye.
-    // ESKİ HATA: VM'in CALL noktasında yalnız register değeri vardı, ad yoktu:
-    //   olmayan_fonksiyon(1)
-    //   VM        -> "Not callable (BYTECODE_FN expected)"   (hangi ad?)
-    //   tree-walk -> "Undefined variable: olmayan_fonksiyon"
-    // LOAD_GLOBAL bu adda fırlatamıyor çünkü "mod::fn" isimleri orada ıskalamak
-    // ZORUNDA (genel CALL yoluna düşsünler diye) — o yüzden çözüm adı buraya
-    // taşımak. 0 = ad yok (CALL_BUILTIN'in 16-bit indeks kalıbıyla aynı yöntem).
+    // argc is embedded in the NOP as an extra byte — the VM reads it.
+    // If the callee is a simple NAME, the name's constant index (ni+1, 32-bit) is also embedded
+    // in the NOP's b/c fields — so the VM CAN SAY the name in its error message.
+    // OLD BUG: at the VM's CALL site there was only the register value, no name:
+    //   nonexistent_function(1)
+    //   VM        -> "Not callable (BYTECODE_FN expected)"   (which name?)
+    //   tree-walk -> "Undefined variable: nonexistent_function"
+    // LOAD_GLOBAL cannot throw on this name because "mod::fn" names MUST miss there
+    // (so they fall to the general CALL path) — hence the fix is to carry the name here.
+    // 0 = no name (the same method as CALL_BUILTIN's 16-bit index pattern).
     uint32_t cname = 0;
     if (auto* cv = node_as<Variable>(e.callee.get()))
         cname = u32((long long)add_const(Value(cv->name)) + 1, "constant index");
@@ -2040,18 +2040,18 @@ uint16_t FunctionCompiler::compile_call(const CallExpression& e, uint16_t dest) 
 // ── compile_closure ───────────────────────────────────────────────────────────
 
 uint16_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint16_t dest) {
-    // use() listesindeki capture'ları çözümle
-    // Her capture: parent'tan değer al → Closure.captures[]'e snapshot
+    // Resolve the captures in the use() list
+    // Each capture: take the value from the parent → snapshot into Closure.captures[]
     FunctionCompiler inner("<closure>", e.parameters, e.is_variadic, this);
 
-    // use() listesini inner'a bildir (0..k-1 capture indeksleri).
+    // Tell inner the use() list (capture indices 0..k-1).
     if ((long long)e.captures.size() > REG_LIMIT)
         throw LookCompileError("closure captures more than 65534 variables", e.loc.line);
     for (size_t i = 0; i < e.captures.size(); ++i)
         inner.captures_.push_back({e.captures[i], u16(i, "capture count")});
 
-    // fn($x) => ifade: gövde satırı olmayan tek bir return; satırı closure'ın kendisinden al
-    // (yoksa komutları satırsız kalıyordu — hata ve çağrı zinciri satır göstermiyordu).
+    // fn($x) => expression: a single return with no body line; take the line from the closure itself
+    // (otherwise its instructions had no line — errors and the call chain showed no line).
     inner.cur_line_ = e.loc.line > 0 ? e.loc.line : cur_line_;
     auto proto = inner.compile(*e.body, &e.defaults);
     int fn_idx = (int)proto_.nested.size();
@@ -2059,10 +2059,10 @@ uint16_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint16_t
 
     uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
 
-    // Capture değerlerini MAKE_CLOSURE'dan ÖNCE yükle — VM MAKE_CLOSURE'dan hemen
-    // sonra art arda LOAD_CAPTURE(0, cr) hint'lerini bekler; araya MOVE giremez.
-    // inner.captures_ = explicit use() (0..k-1) + gövde derlenirken keşfedilen
-    // otomatik capture'lar (k..). Hepsini index sırasında parent scope'tan yükle.
+    // Load the capture values BEFORE MAKE_CLOSURE — right after MAKE_CLOSURE the VM
+    // expects consecutive LOAD_CAPTURE(0, cr) hints; a MOVE cannot come in between.
+    // inner.captures_ = explicit use() (0..k-1) + the automatic captures discovered
+    // while compiling the body (k..). Load all of them from the parent scope in index order.
     std::vector<uint16_t> cap_regs;
     for (auto& cap : inner.captures_) {
         const std::string& cap_name = cap.name;
@@ -2079,7 +2079,7 @@ uint16_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint16_t
 
     emit_make_closure(r, fn_idx);
 
-    // MAKE_CLOSURE'dan hemen sonra art arda hint — VM bu pattern'ı okur
+    // Consecutive hints right after MAKE_CLOSURE — the VM reads this pattern
     for (uint16_t cr : cap_regs) {
         emit(OpCode::LOAD_CAPTURE, 0, cr);
         free_temp(cr);
@@ -2089,41 +2089,41 @@ uint16_t FunctionCompiler::compile_closure(const FunctionExpression& e, uint16_t
 
 // ── compile_string_interp ─────────────────────────────────────────────────────
 //
-// "{$name} merhaba {$x+$y}" → CONCAT zinciri
-// TODO: tam expression parser — şimdilik {$var} ve sabit parçalar destekleniyor
+// "{$name} hello {$x+$y}" → CONCAT chain
+// TODO: a full expression parser — for now {$var} and constant parts are supported
 
 uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int line, uint16_t dest) {
-    // Interpolation olmayan string → direkt yükle
+    // A string with no interpolation → load directly
     if (raw.find('{') == std::string::npos) {
         uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
         emit_load_const(r, Value(raw), line);
         return r;
     }
 
-    // Parçalara böl: sabit string + interpolation dönüşümlü. İç içe brace'lere saygı,
-    // fragment TAM expression olarak lex+parse+compile ({$a + $b}, {$arr[1]},
-    // {count($x)}, {mod::f()}...), parse hatasında {…} literal olarak kalır.
-    // Aksi halde VM sessizce "null" üretirdi.
-    // Tetikleyici SADECE '{$' — '$'-önekli formlar kesin interpolation'dır. Dolarsız
-    // '{identifier}' BİLİNÇLİ dışarıda: eski yorumlayıcı onu eval-hatasında literal'e
-    // düşürüyordu, VM derleyip null üretirdi → '{renk}' gibi şablon string'lerinde
-    // web davranışını değiştirir. Güvenli/tutarlı sınır: '{$...}'.
+    // Split into parts: constant string + interpolation, alternating. Respect nested braces;
+    // the fragment is lexed+parsed+compiled as a FULL expression ({$a + $b}, {$arr[1]},
+    // {count($x)}, {mod::f()}...); on a parse error {…} stays literal.
+    // Otherwise the VM would silently produce "null".
+    // The trigger is ONLY '{$' — '$'-prefixed forms are definitely interpolation. '{identifier}'
+    // without a dollar is DELIBERATELY left out: the old interpreter turned it into a literal on an eval error,
+    // while the VM would compile it and produce null → this would change web behavior for template strings
+    // like '{renk}'. A safe/consistent boundary: '{$...}'.
     auto is_interp_start = [](const std::string& s, size_t p) -> bool {
         return s[p] == '{' && p + 1 < s.size() && s[p + 1] == '$';
     };
     std::vector<uint16_t> parts;
-    std::vector<std::unique_ptr<Program>> keepalive; // parse edilen AST'ler compile bitene dek yaşamalı
+    std::vector<std::unique_ptr<Program>> keepalive; // parsed ASTs must live until compile finishes
     size_t i = 0;
     while (i < raw.size()) {
         if (is_interp_start(raw, i)) {
-            // Eşleşen '}' — iç içe brace'lere saygı
+            // Matching '}' — respect nested braces
             size_t depth = 1, j = i + 1;
             while (j < raw.size() && depth > 0) {
                 if (raw[j] == '{') depth++;
                 else if (raw[j] == '}') { if (--depth == 0) break; }
                 ++j;
             }
-            if (depth != 0) {  // kapanmayan brace → '{' literal, ilerle
+            if (depth != 0) {  // unclosed brace → literal '{', move on
                 uint16_t pr = alloc_temp();
                 emit_load_const(pr, Value(std::string(1, raw[i])), line);
                 parts.push_back(pr);
@@ -2131,7 +2131,7 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
                 continue;
             }
             std::string expr_src = raw.substr(i + 1, j - i - 1);
-            const std::string literal_src = raw.substr(i, j - i + 1);  // "{$x}" — hata hâlinde
+            const std::string literal_src = raw.substr(i, j - i + 1);  // "{$x}" — for the error case
             uint16_t pr = NO_REG;
             try {
                 Lexer lex(expr_src + ";");
@@ -2139,36 +2139,36 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
                 auto prog = par.parse();
                 if (!prog->statements.empty()) {
                     if (auto* es = node_as<ExpressionStatement>(prog->statements[0].get())) {
-                        // Fragment RUNTIME try/catch ile sarılır: eval hatası (ör.
-                        // tanımsız değişken → strict LOAD_GLOBAL fırlatır) "{…}" literal
-                        // olarak kalır (eski yorumlayıcının interpolate_string() kuralı).
-                        // Parse hataları zaten aşağıda derleme-zamanı ele
-                        // alınıyor; bu sarmalayıcı EVAL hataları içindir.
+                        // The fragment is wrapped in a RUNTIME try/catch: an eval error (e.g.
+                        // an undefined variable → strict LOAD_GLOBAL throws) leaves "{…}" as a
+                        // literal (the old interpreter's interpolate_string() rule).
+                        // Parse errors are already handled at compile time below;
+                        // this wrapper is for EVAL errors.
                         pr = alloc_temp();
                         int try_push_ip = emit(OpCode::TRY_PUSH, 0, 0, 0);
-                        // Doğal register'a derle (dest=255): CALL sonucu arg-register
-                        // düzenine bağlı, sabit dest zorlamak bozar. Sonra temp'e MOVE
-                        // + TO_STR — local slot dönerse üstüne yazmayız.
+                        // Compile into a natural register (dest=255): the CALL result depends on the arg-register
+                        // layout, forcing a fixed dest would break it. Then MOVE to the temp
+                        // + TO_STR — if a local slot is returned we do not write over it.
                         uint16_t src = compile_expr(*es->expression);
                         emit(OpCode::MOVE, pr, src);
                         emit(OpCode::TO_STR, pr, pr);
                         emit(OpCode::TRY_POP);
                         int jump_end = emit_jump(OpCode::JUMP);
-                        patch_jump(try_push_ip, current_ip());          // catch girişi
-                        emit_load_const(pr, Value(literal_src), line);  // hata → literal
+                        patch_jump(try_push_ip, current_ip());          // catch entry
+                        emit_load_const(pr, Value(literal_src), line);  // error → literal
                         patch_jump(jump_end, current_ip());
                         keepalive.push_back(std::move(prog));
                     }
                 }
             } catch (...) { pr = NO_REG; }
-            if (pr == NO_REG) {  // parse hatası → {…} literal
+            if (pr == NO_REG) {  // parse error → {…} literal
                 pr = alloc_temp();
                 emit_load_const(pr, Value(literal_src), line);
             }
             parts.push_back(pr);
             i = j + 1;
         } else {
-            // Literal — sonraki interpolation tetikleyicisine kadar
+            // Literal — up to the next interpolation trigger
             std::string literal;
             while (i < raw.size() && !is_interp_start(raw, i)) literal += raw[i++];
             if (!literal.empty()) {
@@ -2189,7 +2189,7 @@ uint16_t FunctionCompiler::compile_string_interp(const std::string& raw, int lin
         return parts[0];
     }
 
-    // CONCAT zinciri: r = parts[0] . parts[1] . ...
+    // CONCAT chain: r = parts[0] . parts[1] . ...
     uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
     emit(OpCode::CONCAT, r, parts[0], parts[1]);
     free_temp(parts[0]); free_temp(parts[1]);
@@ -2249,9 +2249,9 @@ uint16_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, 
     uint16_t r = (dest == NO_REG) ? alloc_temp() : dest;
     uint32_t ni = add_const(Value(e.struct_name));
     emit(OpCode::NEW_STRUCT, r, hi16(ni), lo16(ni));
-    // Literal'ın alan adları — VM "Unknown field" doğrulaması için.
-    // NOP(n) + n×LOAD_CONST_W: 16-bit sabit (kırpılmaz); VM NEW_STRUCT
-    // bu bloğu OKUYUP ATLAR, hiçbiri yürütülmez (register 0'a yazmaz).
+    // Field names of the literal — for the VM's "Unknown field" validation.
+    // NOP(n) + n×LOAD_CONST_W: 16-bit constants (not truncated); the VM's NEW_STRUCT
+    // READS this block and SKIPS it, none of it is executed (does not write to register 0).
     if ((long long)e.fields.size() > REG_LIMIT)
         throw std::runtime_error("struct literal '" + e.struct_name + "' has more than 65534 fields");
     emit(OpCode::NOP, u16(e.fields.size(), "struct field count"));
@@ -2265,8 +2265,8 @@ uint16_t FunctionCompiler::compile_struct_lit(const StructLiteralExpression& e, 
         if (fi <= REG_LIMIT) {
             emit(OpCode::SET_FIELD, r, u16(fi, "field name index"), vr);
         } else {
-            // 256+ sabit: SET_FIELD'ın 8-bit operandı taşardı → alan YANLIŞ adla
-            // yazılıyordu ({"c46":11} gibi). GET_FIELD ile simetrik fallback:
+            // 256+ constants: SET_FIELD's 8-bit operand would overflow → the field was
+            // written with the WRONG name (like {"c46":11}). A fallback symmetric with GET_FIELD:
             // VM::set_field ≡ array_set.
             uint16_t k = alloc_temp();
             emit_load_const(k, Value(fname), 0);
@@ -2300,7 +2300,7 @@ CompiledProgram Compiler::compile(const Program& program, const std::string& bas
     g_compile_file.clear();
     g_compile_stack.clear();
     g_compile_stack_names.clear();
-    if (!main_file.empty()) {   // ana betik de yığında: a.lk → b.lk → a.lk döngüdür
+    if (!main_file.empty()) {   // the main script is on the stack too: a.lk → b.lk → a.lk is a cycle
         std::error_code ec;
         const std::string abs = cfs::weakly_canonical(cfs::absolute(main_file), ec).string();
         g_compile_stack.push_back(ec ? main_file : abs);
@@ -2326,7 +2326,7 @@ CompiledProgram Compiler::compile(const Program& program, const std::string& bas
 CompiledProgram Compiler::compile(const Program& program, const std::string& base_dir,
                                   const std::set<std::string>& host_modules) {
     g_host_modules = host_modules;
-    struct Reset { ~Reset() { g_host_modules.clear(); } } reset;   // sonraki derleme etkilenmesin
+    struct Reset { ~Reset() { g_host_modules.clear(); } } reset;   // so the next compilation is not affected
     return compile(program, base_dir);
 }
 

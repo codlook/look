@@ -25,9 +25,9 @@ void CacheStore::evict_expired_locked() {
     }
 }
 
-// Girdi tavanı — sınırsız büyümeyi (saldırgan-etkili anahtarlarla OOM DoS)
-// engeller. LOOK_CACHE_MAX_ENTRIES ile ayarlanır, varsayılan 100k.
-// (Aynı kod tabanında SSE/WS/Redis/JSON/SMTP tavanlarıyla tutarlı.)
+// Entry cap -- prevents unbounded growth (OOM DoS with attacker-influenced keys).
+// Set with LOOK_CACHE_MAX_ENTRIES, default 100k.
+// (Consistent with the SSE/WS/Redis/JSON/SMTP caps in the same code base.)
 static size_t cache_max_entries() {
     static const size_t v = []() -> size_t {
         const char* e = std::getenv("LOOK_CACHE_MAX_ENTRIES");
@@ -39,9 +39,9 @@ static size_t cache_max_entries() {
 
 void CacheStore::set(const std::string& key, Value val, int ttl_seconds) {
     std::lock_guard<std::mutex> lk(mtx_);
-    // Yeni anahtar tavanı aşıyorsa: önce süresi dolanları at; hâlâ doluysa
-    // rastgele eviction (Redis allkeys-random benzeri) — bellek sınırlı kalır.
-    // (Var olan anahtarın güncellenmesi büyümediği için kapıya takılmaz.)
+    // If a new key would exceed the cap: first drop the expired ones; if still full,
+    // random eviction (like Redis allkeys-random) -- memory stays bounded.
+    // (Updating an existing key does not grow the cache, so it does not hit the gate.)
     if (store_.find(key) == store_.end()) {
         size_t cap = cache_max_entries();
         if (store_.size() >= cap) evict_expired_locked();
@@ -49,12 +49,12 @@ void CacheStore::set(const std::string& key, Value val, int ttl_seconds) {
             store_.erase(store_.begin());
     }
     CacheEntry e;
-    // İZOLASYON (parallel deep_clone disiplini ile aynı): cache global + cross-thread.
-    // Value ARRAY/MAP ise shared_ptr<container>'ı PAYLAŞIR → set edilen değişkenin
-    // altındaki vector cache'le aynı kalırdı; get eden her istek de aynı vector'ü
-    // paylaşırdı → (1) tek-thread: get sonrası mutasyon cache'i sessizce bozar
-    // (cross-request kontaminasyon), (2) çok-thread: paylaşımlı vector'e eşzamanlı
-    // push_back → heap data race. deep_clone snapshot alır → caller'dan izole.
+    // ISOLATION (same discipline as parallel deep_clone): the cache is global + cross-thread.
+    // If the Value is an ARRAY/MAP it SHARES the shared_ptr<container> -> the vector under
+    // the variable that was set would stay the same as the cache's; every request that did a get would
+    // share the same vector too -> (1) single thread: a mutation after get silently corrupts the cache
+    // (cross-request contamination), (2) multi-thread: concurrent
+    // push_back to the shared vector -> heap data race. deep_clone takes a snapshot -> isolated from the caller.
     e.value   = val.deep_clone();
     e.has_ttl = (ttl_seconds > 0);
     if (e.has_ttl)
@@ -75,9 +75,9 @@ Value CacheStore::get(const std::string& key) {
     auto it = store_.find(key);
     if (it == store_.end()) return Value();
     if (is_expired(it->second)) { store_.erase(it); return Value(); }
-    // Her okuyucuya İZOLE kopya (kilit altında): getter'lar birbiriyle ve cache'le
-    // aynı container'ı paylaşmaz → get sonrası mutasyon ne cache'i ne diğer okuyucuyu
-    // bozar. Cached vector'e tüm erişim mtx_ altında (set/get deep_clone) → yarış yok.
+    // An ISOLATED copy for every reader (under the lock): getters do not share the same
+    // container with each other or with the cache -> a mutation after get corrupts neither the cache nor another reader.
+    // All access to the cached vector is under mtx_ (set/get deep_clone) -> no race.
     return it->second.value.deep_clone();
 }
 

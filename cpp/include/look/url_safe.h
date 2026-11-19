@@ -1,11 +1,11 @@
 #pragma once
-// installer yönlendirme (redirect) güvenlik-kararı — saf predicate (installer.cpp download_follow
-// "dikişi aç"). Gerçek HTTP/3xx OLMADAN tablo-test edilir; şema-düşürme + host-kaçışı regresyonu
-// ağsız kilitlenir.
+// Security decision for installer redirects -- a pure predicate (installer.cpp download_follow,
+// "seam opened"). Table-tested WITHOUT real HTTP/3xx; the scheme-downgrade + host-escape regression
+// is locked without a network.
 //
-// GitHub zipball'ı codeload/objects alt-alanlarına yönlendirir → allowlist. Reddedilenler:
-// http:// (şema düşürme, 48. bug) ve beklenmeyen host. ".github.com" sonek kontrolü NOKTA'yı
-// zorunlu kılar → "evilgithub.com" ve "github.com.evil.com" reddedilir (öneksiz/yanlış-alan).
+// A GitHub zipball redirects to codeload/objects subdomains -> allowlist. Rejected:
+// http:// (scheme downgrade, bug 48) and an unexpected host. The ".github.com" suffix check REQUIRES
+// the DOT -> "evilgithub.com" and "github.com.evil.com" are rejected (no-prefix/wrong-domain).
 #include <string>
 #include <cstring>
 
@@ -16,7 +16,7 @@ inline bool redirect_allowed(const std::string& next, std::string& err) {
         err = "unsafe redirect (https only): " + next;
         return false;
     }
-    std::string rest = next.substr(8);              // "https://" sonrası
+    std::string rest = next.substr(8);              // after "https://"
     size_t slash = rest.find('/');
     std::string host = (slash == std::string::npos) ? rest : rest.substr(0, slash);
     size_t colon = host.find(':');
