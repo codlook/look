@@ -156,7 +156,9 @@ struct JsonParseError {};
 // {"a" 1}, [1 2 3], [1,], {"a":1,}, 01 were accepted — a gateway and LOOK read the same body
 // differently (JSON parsing discrepancy). Trailing garbage is rejected at the public entry point (json_decode_document).
 static Value json_decode_value(const std::string& s, size_t& i, int depth) {
-    if (depth > JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS defense
+    // The nesting limit counts arrays and objects (a container opened at depth d is level d+1): more
+    // than JSON_MAX_DEPTH levels → null. It used to count scalars too, so 257 empty arrays were accepted
+    // while 256 arrays holding a number were not.
     json_skip_ws(s, i);
     if (i >= s.size()) throw JsonParseError{};
 
@@ -167,6 +169,7 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     }
     // JSON object { } → assoc array
     if (s[i] == '{') {
+        if (depth >= JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS defense
         i++;
         auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value::assoc_marker());
@@ -217,6 +220,7 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     }
 
     if (s[i] == '[') {
+        if (depth >= JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS defense
         i++;
         auto arr = std::make_shared<ValueArray>();
         json_skip_ws(s, i);

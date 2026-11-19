@@ -68,4 +68,25 @@ out="$(cd "$T" && "$LK" utf8.lk 2>&1 | tail -1)"
 want="$(printf '2 "\xef\xbf\xbd"=2 "a\xef\xbf\xbd\xef\xbf\xbdb"')"
 if [ "$out" = "$want" ]; then echo "  OK   invalid UTF-8 in a key or a value becomes U+FFFD per byte (as Go)"
 else echo "  FAIL invalid UTF-8: '$out' (want '$want': the two stray-byte keys are one key holding 2)"; fail=1; fi
+# Nesting: up to 256 levels of arrays/objects decode, 257 are null — whatever the innermost value is.
+python3 - "$T" <<'PY'
+import sys, os
+T = sys.argv[1]
+cases = [("d256e", "[" * 256 + "]" * 256), ("d256n", "[" * 256 + "1" + "]" * 256),
+         ("d256o", '{"a":' * 255 + "[]" + "}" * 255), ("d257e", "[" * 257 + "]" * 257),
+         ("d257n", "[" * 257 + "1" + "]" * 257), ("d257o", '{"a":' * 257 + "1" + "}" * 257)]
+for name, text in cases:
+    open(os.path.join(T, name + ".json"), "w").write(text)
+PY
+cat > "$T/depth.lk" <<'LK'
+use file
+$r = ""
+foreach (["d256e", "d256n", "d256o", "d257e", "d257n", "d257o"] as $n) {
+    $r = $r . (json::decode(file::read($n . ".json")) == null ? "N" : "V")
+}
+print($r)
+LK
+out="$(cd "$T" && "$LK" depth.lk 2>&1 | tail -1)"
+if [ "$out" = "VVVNNN" ]; then echo "  OK   256 levels of arrays/objects decode, 257 are null (empty or holding a value)"
+else echo "  FAIL nesting limit: '$out' (want VVVNNN: 256 levels valid, 257 null)"; fail=1; fi
 [ $fail = 0 ] && echo "PASS: json::decode is strict and linear" || { echo "FAIL: json::decode"; exit 1; }
