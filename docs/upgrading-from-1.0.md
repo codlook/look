@@ -979,5 +979,7 @@ program coming from 1.0.0 meets them at the same time.
 
 - Single-quoted strings are raw: `'{$x}'` is the literal text (1.0.1).
 - Runtime messages are English, and JSON error bodies use the keys `error` and `code`
-  (1.0.6).
+  (1.0.6). When `lk-cgi` or `lk-fcgi` cannot run the script, that body also carries the old keys `hata` and `kod`; they are
+  deprecated and will be removed in the release that turns the `push()`/`pop()` warnings into
+  errors.
 - A custom 404 handler keeps status 404 (1.0.7).

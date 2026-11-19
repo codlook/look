@@ -458,7 +458,8 @@ static bool is_production() {
 static std::string build_error_response(int status, const std::string& title,
                                          const std::string& msg) {
     std::string body = is_production()
-        // "error"/"code" = English keys; "hata"/"kod" stay alongside them throughout 1.x.
+        // "error"/"code" = the keys. "hata"/"kod" are deprecated copies: removed in the release that turns
+        // the push()/pop() warnings into errors (announced in the docs, Error system section).
         ? "{\"ok\":false,\"error\":\"Server error.\",\"code\":" + std::to_string(status)
           + ",\"hata\":\"Server error.\",\"kod\":" + std::to_string(status) + "}\n"
         : "{\"ok\":false,\"error\":\"" + json_escape_str(msg) + "\",\"code\":" + std::to_string(status)

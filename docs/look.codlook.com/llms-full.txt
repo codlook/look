@@ -1136,6 +1136,12 @@ try {
 }
 ```
 
+### When the script cannot run — CGI and FastCGI
+
+When `lk-cgi` or `lk-fcgi` cannot run the script at all (no script given, or the application fails to load), the answer is a JSON body: `{"ok": false, "error": "...", "code": 500}`. Unless `APP_ENV=development` or `APP_DEBUG=true` is set, `error` is a generic message and the details go only to the log. An error inside a route is different: it ends that request with status 500 and is written to the log.
+
+> **Deprecated: `hata` and `kod`.** The same body also carries `"hata"` and `"kod"`, copies of `error` and `code` under their old names. They will be removed in a later release, the one that turns the `push()`/`pop()` warnings into errors; no 1.1.x release removes them. Read `error` and `code`.
+
 ### Stack Overflow Protection
 
 Recursion goes up to 10,000 nested calls and an 8 MB call stack per request (about 3 MB at 10,000 levels). The limit is per request and concurrent requests add up, so it stays near Node's: many endless recursions at once cannot exhaust the server's memory. A function that calls itself through a builtin's

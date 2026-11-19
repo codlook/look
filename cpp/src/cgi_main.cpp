@@ -46,7 +46,8 @@ static void send_error(int status, const std::string& title, const std::string& 
 
     if (is_production()) {
         // Production: generic message to the user, details go only to the log
-        // "error"/"code" = English keys; "hata"/"kod" stay alongside them throughout 1.x.
+        // "error"/"code" = the keys. "hata"/"kod" are deprecated copies: removed in the release that turns
+        // the push()/pop() warnings into errors (announced in the docs, Error system section).
         std::cout << "{\"ok\":false,\"error\":\"Server error. Please try again.\",\"code\":" << status
                   << ",\"hata\":\"Server error. Please try again.\","
                   << "\"kod\":" << status << "}\n";
