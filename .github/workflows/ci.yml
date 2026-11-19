@@ -218,6 +218,14 @@ jobs:
           cd cpp
           bash tests/lk_test_runner_test.sh ./build/lk
 
+      # assert_throws checks the throw wherever it stands in the test (not only as the last
+      # statement) and in its module form assert::throws.
+      - name: lk test assert_throws in every position
+        timeout-minutes: 5
+        run: |
+          cd cpp
+          bash tests/test_runner_test.sh ./build/lk
+
       # lk repl runs on the VM: state between lines, shown values, errors, :vars.
       - name: lk repl
         timeout-minutes: 10

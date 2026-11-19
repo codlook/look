@@ -20,19 +20,19 @@ trap 'rm -rf "$work"' EXIT
 
 # Expectation: assert_throws must FAIL the test if fn does NOT throw.
 cat > "$work/tests/t.lk" <<'EOF'
-test("son ifade, fn firlatmiyor", function() {
+test("last statement, fn does not throw", function() {
     assert_throws(function() { $x = 1 })
 })
-test("son DEGIL, fn firlatmiyor", function() {
+test("NOT the last statement, fn does not throw", function() {
     assert_throws(function() { $x = 1 })
     $y = 2
 })
 use assert;
-test("modul formu, fn firlatmiyor", function() {
+test("module form, fn does not throw", function() {
     assert::throws(function() { $x = 1 })
 })
-test("dogru kullanim, fn firlatiyor => GECMELI", function() {
-    assert_throws(function() { throw "beklenen" })
+test("correct use, fn throws => MUST PASS", function() {
+    assert_throws(function() { throw "expected" })
     $z = 3
 })
 EOF
@@ -42,18 +42,18 @@ out="$(cd "$work" && "$LK" test 2>&1 || true)"
 plain="$(printf '%s' "$out" | sed 's/\x1b\[[0-9;]*m//g')"
 
 # expect 3 failed + 1 of 4 passed
-if ! printf '%s' "$plain" | grep -q "3 başarısız"; then
-    echo "FAIL: assert_throws firlatMAYAN fn'i yakalamiyor (3 basarisiz bekleniyordu)"
-    printf '%s\n' "$plain" | grep -E "❌|✅|geçti|başarısız"
+if ! printf '%s' "$plain" | grep -q "3 failed"; then
+    echo "FAIL: assert_throws does not catch a fn that does NOT throw (expected 3 failed)"
+    printf '%s\n' "$plain" | grep -E "❌|✅|passed|failed"
     fail=1
 fi
-if ! printf '%s' "$plain" | grep -q "1/4 geçti"; then
-    echo "FAIL: dogru assert_throws kullanimi (fn firlatiyor) GECMEDI (1/4 bekleniyordu)"
-    printf '%s\n' "$plain" | grep -E "❌|✅|geçti|başarısız"
+if ! printf '%s' "$plain" | grep -q "1/4 passed"; then
+    echo "FAIL: correct assert_throws use (fn throws) did NOT pass (expected 1/4 passed)"
+    printf '%s\n' "$plain" | grep -E "❌|✅|passed|failed"
     fail=1
 fi
 
 if [ $fail = 0 ]; then
-    echo "PASS: assert_throws/assert::throws — konumdan bagimsiz, HEMEN calisip firlatmayi dogruluyor (50. bug)"
+    echo "PASS: assert_throws/assert::throws runs at once and checks the throw wherever it stands (bug 50)"
 fi
 exit $fail
