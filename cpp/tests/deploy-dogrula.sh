@@ -21,7 +21,7 @@ BASE_URL="${BASE_URL:-}"
 fail=0
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"; [ -n "${SRV_PID:-}" ] && kill "$SRV_PID" 2>/dev/null' EXIT
 
-echo "── deploy doğrulama ─────────────────────────────────────────"
+echo "── deploy verification ─────────────────────────────────────────"
 
 # ── bug 52: json::decode int64 precision — over HTTP (external proof) ────────
 JBIG='9223372036854775809'
@@ -50,11 +50,11 @@ EOF
 fi
 
 if echo "$body" | grep -q "\"$JBIG\""; then
-  echo "  PASS 52 (HTTP): json int64-asan ID string olarak korunuyor (canli binary)"
+  echo "  PASS 52 (HTTP): json ID beyond int64 is kept as a string (live binary)"
 elif echo "$body" | grep -q "9223372036854775808"; then
-  echo "  FAIL 52 (HTTP): ID sessizce ...808'e bozuldu — DUZELTME CANLI DEGIL"; fail=1
+  echo "  FAIL 52 (HTTP): ID was silently corrupted to ...808 — the FIX IS NOT LIVE"; fail=1
 else
-  echo "  FAIL 52 (HTTP): beklenen yanit alinamadi: [$body]"; fail=1
+  echo "  FAIL 52 (HTTP): expected response not received: [$body]"; fail=1
 fi
 
 # ── bug 50: does lk test assert_throws really assert ─────────────────────────
@@ -67,10 +67,10 @@ test("firlatmayan fn => BASARISIZ olmali", function() {
 })
 EOF
   tout=$( cd "$TMP" && "$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")" test 2>&1 | sed 's/\x1b\[[0-9;]*m//g' )
-  if echo "$tout" | grep -q "1 başarısız\|1 basarisiz"; then
-    echo "  PASS 50: assert_throws firlatmayan fn'i yakaliyor (cerceve dogru)"
+  if echo "$tout" | grep -q "1 failed"; then
+    echo "  PASS 50: assert_throws catches a non-throwing fn (framework correct)"
   else
-    echo "  FAIL 50: assert_throws assert ETMIYOR — test cercevesi yalanci yesil:"; echo "$tout" | grep -E "✅|❌|geçti" | sed 's/^/       /'; fail=1
+    echo "  FAIL 50: assert_throws does NOT assert — the test framework is falsely green:"; echo "$tout" | grep -E "✅|❌|passed|failed" | sed 's/^/       /'; fail=1
   fi
 fi
 
@@ -106,9 +106,9 @@ PY
 )
   kill "$SLPID" 2>/dev/null
   if [ "$sl" = "KESILDI" ]; then
-    echo "  PASS 56 (Slowloris): surekli-damla deadline'da kesildi (canli ortam, deadline=3s)"
+    echo "  PASS 56 (Slowloris): continuous slow-drip was cut at the deadline (live environment, deadline=3s)"
   else
-    echo "  FAIL 56 (Slowloris): yavas-damla TUTULDU ($sl) — deadline canli calismiyor"; fail=1
+    echo "  FAIL 56 (Slowloris): slow-drip connection was HELD ($sl) — the deadline is not working live"; fail=1
   fi
 fi
 
@@ -121,11 +121,11 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK" ]; then
   printf 'function r($n){ if($n<=0){return 0} return 1+r($n-1) }\nprint(r(100000))\n' > "$TMP/rec.lk"
   rout=$(timeout 15 "$RECLK" "$TMP/rec.lk" 2>&1 | grep -v "INFO\|Pool" | tr '\n' ' ')
   if echo "$rout" | grep -qi "stack overflow"; then
-    echo "  PASS 57 (VM ozyineleme): derin ozyineleme bounded (graceful stack overflow)"
+    echo "  PASS 57 (VM recursion): deep recursion is bounded (graceful stack overflow)"
   elif echo "$rout" | grep -q "100000"; then
-    echo "  FAIL 57: r(100000) dondu — CALL yolu MAX_CALL_DEPTH atliyor (unbounded/OOM riski)"; fail=1
+    echo "  FAIL 57: r(100000) returned — the CALL path skips MAX_CALL_DEPTH (unbounded/OOM risk)"; fail=1
   else
-    echo "  (57 atlandi: beklenmedik cikti: $rout)"
+    echo "  (57 skipped: unexpected output: $rout)"
   fi
 fi
 
@@ -139,11 +139,11 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf '$fns=[]\n$i=0\nwhile($i<3){ $v=$i; push($fns, fn()=>$v); $i=$i+1 }\nprint($fns[0]() . $fns[1]() . $fns[2]())\n' > "$TMP/clo.lk"
   cout=$(timeout 10 "$RECLK58" "$TMP/clo.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
   if [ "$cout" = "012" ]; then
-    echo "  PASS 58 (closure capture): per-iter cell canli — fns[0..2]()=012"
+    echo "  PASS 58 (closure capture): per-iter cell is live — fns[0..2]()=012"
   elif [ "$cout" = "222" ]; then
-    echo "  FAIL 58: closure=222 — VM by-value snapshot bug'i CANLI DEGIL (fix eksik)"; fail=1
+    echo "  FAIL 58: closure=222 — the fix for the VM by-value snapshot bug is NOT LIVE (fix missing)"; fail=1
   else
-    echo "  (58 atlandi: beklenmedik cikti: [$cout])"
+    echo "  (58 skipped: unexpected output: [$cout])"
   fi
 fi
 
@@ -156,7 +156,7 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   GUARD="$(dirname "$0")/closure_semantics_test.sh"
   if [ -f "$GUARD" ]; then
     if bash "$GUARD" "$RECLK58" >"$TMP/clo_guard.log" 2>&1; then
-      echo "  PASS 58+ (closure guard): 12 vaka parite (A-L, catch/param/foreach/named-fn)"
+      echo "  PASS 58+ (closure guard): 12 cases pass (A-L, catch/param/foreach/named-fn)"
     else
       echo "  FAIL 58+ (closure guard): $(grep -m1 FAIL "$TMP/clo_guard.log")"; fail=1
     fi
@@ -171,9 +171,9 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf '$ch=channel(1)\nsend($ch, 42)\nprint(receive($ch))\n' > "$TMP/ch.lk"
   chout=$(timeout 10 "$RECLK58" "$TMP/ch.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
   if [ "$chout" = "42" ]; then
-    echo "  PASS channel (CLI-VM): channel/send/receive bagli — 42"
+    echo "  PASS channel (CLI-VM): channel/send/receive are wired — 42"
   else
-    echo "  FAIL channel: CLI-VM channel() calismadi (beklenen 42): [$chout]"; fail=1
+    echo "  FAIL channel: CLI-VM channel() did not work (expected 42): [$chout]"; fail=1
   fi
 fi
 
@@ -185,9 +185,9 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf 'close()\n' > "$TMP/cl.lk"
   timeout 10 "$RECLK58" "$TMP/cl.lk" >/dev/null 2>&1; crc=$?
   if [ $crc -lt 128 ]; then
-    echo "  PASS close/chan_size (arg-check): argümansız graceful (exit $crc, segfault yok)"
+    echo "  PASS close/chan_size (arg-check): no-argument call is graceful (exit $crc, no segfault)"
   else
-    echo "  FAIL close(): argümansız SEGFAULT (exit $crc) — arg-sayısı kontrolü eksik"; fail=1
+    echo "  FAIL close(): no-argument call SEGFAULTs (exit $crc) — argument-count check missing"; fail=1
   fi
 fi
 
@@ -199,11 +199,11 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   printf 'print(int(1700000000.0 * 1000.0))\n' > "$TMP/int.lk"
   iout=$(timeout 10 "$RECLK58" "$TMP/int.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
   if [ "$iout" = "1700000000000" ]; then
-    echo "  PASS int(float>1e6): büyük float→int doğru (ms-timestamp 1700000000000)"
+    echo "  PASS int(float>1e6): large float->int is correct (ms-timestamp 1700000000000)"
   elif [ "$iout" = "1" ]; then
-    echo "  FAIL int(): stoll(to_string(float)) bug'ı CANLI — int(1.7e12)=1 (bilimsel-gösterim)"; fail=1
+    echo "  FAIL int(): stoll(to_string(float)) bug is LIVE — int(1.7e12)=1 (scientific notation)"; fail=1
   else
-    echo "  (int atlandi: beklenmedik: [$iout])"
+    echo "  (int skipped: unexpected: [$iout])"
   fi
 fi
 
@@ -218,9 +218,9 @@ if [ -z "$BASE_URL" ] && [ -x "$RECLK58" ]; then
   ( cd "$TMP" && timeout 10 "$RECLK58" "$TMP/ftrav.lk" 2>&1 | grep -v "INFO\|Pool" ) > "$TMP/ftrav.out"
   rm -f "$TMP/_dogrula_rel.txt"
   if grep -q "^ok$" "$TMP/frel.out" && grep -qi "access denied" "$TMP/ftrav.out"; then
-    echo "  PASS file-root: göreli put/read çalışır + ../etc/passwd bloklu"
+    echo "  PASS file-root: relative put/read works + ../etc/passwd is blocked"
   else
-    echo "  FAIL file-root: göreli=[$(cat $TMP/frel.out)] traversal=[$(cat $TMP/ftrav.out)]"; fail=1
+    echo "  FAIL file-root: relative=[$(cat $TMP/frel.out)] traversal=[$(cat $TMP/ftrav.out)]"; fail=1
   fi
 fi
 
@@ -233,25 +233,25 @@ fi
 printf '$a=9007199254740992+1\n$b=9007199254740992\nprint($a==$b)\n' > "$TMP/g_int.lk"
 iv=$("$RECLK58" "$TMP/g_int.lk" 2>&1 | tr -d '[:space:]')
 if [ "$iv" = "false" ]; then
-  echo "  PASS int64-kiyas: 2^53+1 != 2^53 (dis-oracle, differential-gorunmez)"
+  echo "  PASS int64-compare: 2^53+1 != 2^53 (external oracle, invisible to the differential)"
 else
-  echo "  FAIL int64-kiyas: [$iv] beklenen false — d752afe regresyonu"; fail=1
+  echo "  FAIL int64-compare: [$iv] expected false — d752afe regression"; fail=1
 fi
 printf 'use cache\ncache::set("k",[1,2,3])\n$a=cache::get("k")\npush($a,9)\nprint(count(cache::get("k")))\n' > "$TMP/g_cache.lk"
 cv=$("$RECLK58" "$TMP/g_cache.lk" 2>&1 | tr -d '[:space:]')
 if [ "$cv" = "3" ]; then
-  echo "  PASS cache-izolasyon: get+mutate cache'i bozmuyor (c7c7427)"
+  echo "  PASS cache-isolation: get+mutate does not corrupt the cache (c7c7427)"
 else
-  echo "  FAIL cache-izolasyon: [$cv] beklenen 3 — deep_clone regresyonu"; fail=1
+  echo "  FAIL cache-isolation: [$cv] expected 3 — deep_clone regression"; fail=1
 fi
 printf '$ch=channel(1)\n$arr=[1,2,3]\nsend($ch,$arr)\npush($arr,9)\nprint(count(receive($ch)))\n' > "$TMP/g_chan.lk"
 chv=$("$RECLK58" "$TMP/g_chan.lk" 2>&1 | tr -d '[:space:]')
 if [ "$chv" = "3" ]; then
-  echo "  PASS channel-izolasyon: send+mutate paylasmiyor (9670c18)"
+  echo "  PASS channel-isolation: send+mutate does not share (9670c18)"
 else
-  echo "  FAIL channel-izolasyon: [$chv] beklenen 3 — deep_clone regresyonu"; fail=1
+  echo "  FAIL channel-isolation: [$chv] expected 3 — deep_clone regression"; fail=1
 fi
 
 echo "─────────────────────────────────────────────────────────────"
-[ $fail = 0 ] && echo "PASS: deploy dogrulandi — duzeltmeler canli binary'de" || echo "FAIL: deploy dogrulama BASARISIZ"
+[ $fail = 0 ] && echo "PASS: deploy verified — the fixes are in the live binary" || echo "FAIL: deploy verification FAILED"
 exit $fail

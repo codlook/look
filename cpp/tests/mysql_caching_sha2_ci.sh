@@ -17,7 +17,7 @@
 #   bash mysql_caching_sha2_ci.sh <lk_yolu>
 set -u
 LK="${1:-./build/lk}"
-: "${MYDSN:?MYDSN gerekli (ornek: mysql://ci:sifre123@127.0.0.1:3306/testdb)}"
+: "${MYDSN:?MYDSN required (example: mysql://ci:pass123@127.0.0.1:3306/testdb)}"
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 out="$(timeout 60 "$LK" "$DIR/mysql_caching_sha2_ci.lk" 2>&1)"
@@ -31,23 +31,23 @@ fail=0
 # ── EXPECTED-pin: correct credentials + utf8 roundtrip ─────────────────────────
 case "$ok" in
   AUTH_OK\|8.*\|şğü-caching)
-    echo "  PASS caching_sha2 roundtrip (MySQL 8, TAM + HIZLI yol): $ok" ;;
+    echo "  PASS caching_sha2 roundtrip (MySQL 8, FULL + FAST path): $ok" ;;
   AUTH_OK\|*)
-    echo "  FAIL beklenen surum/deger tutmadi (bek: 8.x + 'şğü-caching'): $ok"; fail=1 ;;
+    echo "  FAIL expected version/value did not match (expected: 8.x + 'şğü-caching'): $ok"; fail=1 ;;
   *)
-    echo "  FAIL caching_sha2 baglanti/roundtrip basarisiz"
-    echo "       -> caching_sha2_password auth yolu (scramble/RSA/cleartext) kirik olabilir"
+    echo "  FAIL caching_sha2 connection/roundtrip failed"
+    echo "       -> the caching_sha2_password auth path (scramble/RSA/cleartext) may be broken"
     fail=1 ;;
 esac
 
 # ── POSITIVE CONTROL: was the wrong password rejected? ─────────────────────────
 if [ "$rej" = "AUTH_REJECT" ]; then
-  echo "  PASS pozitif kontrol: yanlis sifre REDDEDILDI (auth gercekten dogruluyor)"
+  echo "  PASS positive control: a wrong password was REJECTED (auth really verifies)"
 else
-  echo "  FAIL pozitif kontrol: yanlis sifre reddedilmedi -> auth-yolu vacuous"
-  echo "       (test dogru kimligi gecse bile scramble/RSA adimini atlyor olabilir)"
+  echo "  FAIL positive control: a wrong password was not rejected -> the auth path is vacuous"
+  echo "       (the test may skip the scramble/RSA step even when it passes the correct credentials)"
   fail=1
 fi
 
-[ $fail = 0 ] && echo "PASS: caching_sha2_password CI guard temiz" || echo "FAIL: caching_sha2_password CI guard"
+[ $fail = 0 ] && echo "PASS: caching_sha2_password CI guard clean" || echo "FAIL: caching_sha2_password CI guard"
 exit $fail

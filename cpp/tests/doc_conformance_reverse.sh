@@ -24,11 +24,11 @@ for n in $names; do
 done
 
 if [ -n "$undoc" ]; then
-  echo "  FAIL: builtin var ama docs'ta YOK (belgele ya da gerekçeyle EXCLUDE'a ekle):"
+  echo "  FAIL: builtins exist but are MISSING from docs (document them, or add them to EXCLUDE with a reason):"
   for u in $undoc; do echo "    $u"; done
   fail=1
 else
-  echo "  OK   tüm namespaced builtin belgeli (veya gerekçeli dışlamada)"
+  echo "  OK   all namespaced builtins are documented (or excluded with a reason)"
 fi
 
 # BARE (non-namespaced) builtins — were a BLIND SPOT: args() could be added undocumented and pass the guard
@@ -44,19 +44,19 @@ for n in $bare; do
   grep -qw "$n" "$DOCS" || undoc_bare="$undoc_bare $n"
 done
 if [ -n "$undoc_bare" ]; then
-  echo "  FAIL: bare builtin var ama docs'ta YOK (belgele ya da gerekçeyle BARE_EXCLUDE'a ekle):"
+  echo "  FAIL: bare builtins exist but are MISSING from docs (document them, or add them to BARE_EXCLUDE with a reason):"
   for u in $undoc_bare; do echo "    $u"; done
   fail=1
 else
-  echo "  OK   tüm bare builtin belgeli (veya gerekçeli dışlamada)"
+  echo "  OK   all bare builtins are documented (or excluded with a reason)"
 fi
 
 # POSITIVE CHECK: when a documented function (session::regenerate) is temporarily removed from docs the guard must go RED.
 if grep -qF "session::regenerate" "$DOCS"; then
-  echo "  OK   pozitif-kontrol referansı mevcut (session::regenerate belgeli)"
+  echo "  OK   positive-control reference present (session::regenerate is documented)"
 else
-  echo "  FAIL pozitif-kontrol: session::regenerate docs'ta yok — guard kalibrasyonu bozuk"; fail=1
+  echo "  FAIL positive control: session::regenerate is missing from docs — guard calibration is broken"; fail=1
 fi
 
-[ $fail = 0 ] && echo "PASS: ters-yön doküman uyumluluğu (kod→docs)" || echo "FAIL: ters-yön doküman uyumluluğu"
+[ $fail = 0 ] && echo "PASS: reverse-direction doc conformance (code->docs)" || echo "FAIL: reverse-direction doc conformance"
 exit $fail

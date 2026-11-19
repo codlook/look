@@ -63,9 +63,9 @@ wait $srv 2>/dev/null || true
 sleep 1
 
 if [ "$ok" = "10" ] && [ "$sum" = "sum=8" ]; then
-  echo "PASS: sızıntı yok (10/10), havuz baskısı OK ($sum)"
+  echo "PASS: no leak (10/10), pool pressure OK ($sum)"
 else
-  echo "FAIL: ardışık=$ok/10 (sızıntı!), 8-paralel=[$sum] (beklenen sum=8)"
+  echo "FAIL: sequential=$ok/10 (leak!), 8-parallel=[$sum] (expected sum=8)"
   fail=1
 fi
 exit $fail

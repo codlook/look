@@ -52,7 +52,7 @@ int main() {
     zchk("20001 entries",                   std::vector<uint64_t>(20001, 0), false);
 
     const int EXPECTED = 15;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (sibling-prefix kaçışı dahil, Zip-Slip kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (including the sibling-prefix escape, Zip-Slip locked in)\n", fails);
     return fails ? 1 : 0;
 }

@@ -57,7 +57,7 @@ static void chkw(const char* dsn, char want, bool legacy_wrong = false) {
 }
 
 int main() {
-    printf("MySQL/Redis DSN TLS-karar tablosu (verify=true GÜVENLİ-VARSAYILAN + ?tls=insecure opt-out):\n");
+    printf("MySQL/Redis DSN TLS decision table (verify=true SAFE DEFAULT + ?tls=insecure opt-out):\n");
     // ── MySQL ──
     chk(MY, "",            false, false, true);  // mysql:// plain → no TLS (verify irrelevant, true)
     chk(MY, "",            true,  true,  true);  // mysqls:// → encrypted + VERIFIED (safe default)
@@ -148,7 +148,7 @@ int main() {
     chkw("rediss://:pa?ss@r:6379",                         'N');
 
     const int EXPECTED = 63;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (verify=true güvenli-varsayılan + ?tls=insecure opt-out kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (verify=true safe default + ?tls=insecure opt-out locked in)\n", fails);
     return fails ? 1 : 0;
 }

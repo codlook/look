@@ -31,5 +31,5 @@ parallel(function() use ($ch3) { send($ch3, "alive") })
 chk("T3 panic sonrasi hayatta", receive($ch3), "alive"); $ran = $ran + 1
 
 const { EXPECTED = 3 }
-if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " asserts ran, " . EXPECTED . " expected") }
 print("=== parallel ran=" . $ran . " ===")

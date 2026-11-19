@@ -1,9 +1,9 @@
 import socket, sys, time
 PORT = int(sys.argv[1])
 fail = 0
-# Variant 1 — SUREKLI damla (idle'i sifirlar). deadline 2s. Damlalar 1s'de bir.
-# FIX: ~3s'de deadline -> sunucu kapatir -> sonraki send BrokenPipe.
-# FIX'siz: tum damlalar gecer (idle sifirlanir), baglanti TUTULUR -> recv HANG.
+# Variant 1 — CONTINUOUS drip (resets idle). deadline 2s. One drip per second.
+# FIX: deadline at ~3s -> the server closes -> the next send raises BrokenPipe.
+# Without the FIX: all drips pass (idle resets), the connection is HELD -> recv HANGS.
 s = socket.socket(); s.connect(("127.0.0.1", PORT))
 drip = [b"POST /e HTTP/1.1\r\n", b"H1: a\r\n", b"H2: b\r\n", b"H3: c\r\n",
         b"H4: d\r\n", b"H5: e\r\n", b"H6: f\r\n", b"H7: g\r\n"]
@@ -12,7 +12,7 @@ try:
     for p in drip:
         s.sendall(p); time.sleep(1.0)
 except (BrokenPipeError, ConnectionResetError, OSError):
-    cut = True                       # sunucu damla ortasinda kapatti (FIX)
+    cut = True                       # the server closed mid-drip (FIX)
 if not cut:
     s.settimeout(2.0)
     try:

@@ -37,5 +37,5 @@ try {
 chk("TX fn hata→rollback", len(db::query($c, "SELECT * FROM u WHERE ad='t3'", [])), 0); $ran = $ran + 1
 
 const { EXPECTED = 9 }
-if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " assert kostu, " . EXPECTED . " bekleniyordu") }
+if ($ran != EXPECTED) { print("FAIL harness: " . $ran . " asserts ran, " . EXPECTED . " expected") }
 print("=== db ran=" . $ran . " ===")

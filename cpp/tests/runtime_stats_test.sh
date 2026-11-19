@@ -11,7 +11,7 @@ APP="$HERE/runtime_stats_app.lk"
 SRV=""
 cleanup(){ [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; sleep 0.3; [ -n "$SRV" ] && kill -9 "$SRV" 2>/dev/null; rm -f "$HERE/_rstats.db"; }
 trap cleanup EXIT
-command -v curl >/dev/null 2>&1 || { echo "  (atlandi: curl gerekli)"; exit 0; }
+command -v curl >/dev/null 2>&1 || { echo "  (skipped: curl required)"; exit 0; }
 
 "$FCGI" --mode http --port "$PORT" "$APP" >/dev/null 2>&1 &
 SRV=$!
@@ -20,7 +20,7 @@ B="http://127.0.0.1:$PORT"
 field(){ curl -s "$B/stats" 2>/dev/null | grep -oE "\"$1\":[0-9.]+" | grep -oE '[0-9.]+$'; }
 
 fail=0
-chk(){ if [ "$2" = "$3" ]; then echo "  OK   $1 ($2)"; else echo "  FAIL $1: $2 beklenen $3"; fail=1; fi; }
+chk(){ if [ "$2" = "$3" ]; then echo "  OK   $1 ($2)"; else echo "  FAIL $1: $2 expected $3"; fail=1; fi; }
 chkge(){ if awk "BEGIN{exit !($2 >= $3)}"; then echo "  OK   $1 ($2 >= $3)"; else echo "  FAIL $1: $2 < $3"; fail=1; fi; }
 
 # baseline
@@ -43,7 +43,7 @@ chkge "db_pool_size > 0"     "$psize" "1"
 # when setup moved to the VM it stayed 0.
 chk   "route_count (4 rota)" "$(field route_count)" "4"
 # vm_disabled_routes must be 0 (no broken route) — VM health canary
-chk   "vm_disabled_routes (VM sağlıklı)" "$(field vm_disabled_routes)" "0"
+chk   "vm_disabled_routes (VM healthy)" "$(field vm_disabled_routes)" "0"
 
 # ── FIELD CONTRACT: the monitor package (look-packages/monitor, a SEPARATE repo) depends on these field names.
 # If one is renamed (as today's vm_fallbacks→vm_disabled_routes) the package silently
@@ -51,9 +51,9 @@ chk   "vm_disabled_routes (VM sağlıklı)" "$(field vm_disabled_routes)" "0"
 # This loop locks the contract in the main repo's CI: core rename → RED here (caught before the package breaks).
 for f in uptime_sec request_count route_count working_mb private_mb \
          vm_disabled_routes errors_5xx latency_last_us latency_avg_us db_pool_size db_pool_busy; do
-  if [ -n "$(field "$f")" ]; then echo "  OK   sözleşme: $f"; else
-    echo "  FAIL sözleşme: '$f' alanı YOK — monitor paketi bu ada bağlı, sessizce kırılır"; fail=1; fi
+  if [ -n "$(field "$f")" ]; then echo "  OK   contract: $f"; else
+    echo "  FAIL contract: field '$f' is MISSING — the monitor package depends on this name and would break silently"; fail=1; fi
 done
 
-[ $fail = 0 ] && echo "PASS: runtime::stats sayaçları + monitor alan sözleşmesi" || echo "FAIL: runtime::stats"
+[ $fail = 0 ] && echo "PASS: runtime::stats counters + monitor field contract" || echo "FAIL: runtime::stats"
 exit $fail

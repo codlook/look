@@ -49,7 +49,7 @@ int main() {
     // --- POSITIVE CHECK: is a valid signature really counted as VALID (otherwise the whole verdict is meaningless) ---
     {
         std::string raw = sig + "\r\n" + signed_from + subj + "\r\n" + body;
-        chk("POZITIF KONTROL (gecerli imza -> TRUE)", dkim_verify_with_key(raw, pub), true);
+        chk("POSITIVE CONTROL (valid signature -> TRUE)", dkim_verify_with_key(raw, pub), true);
     }
 
     // --- Sanity: single From but d= mismatched (From: paypal, d=attacker) -> alignment REJECT ---
@@ -65,26 +65,26 @@ int main() {
         std::string raw = sig + "\r\n" + "From: victim@paypal.com\r\n" + signed_from + subj + "\r\n" + body;
         // If it were a BYPASS it would be TRUE (crypto passes + alignment looks at the wrong From and passes) → SECURITY HOLE
         // If fail-safe it is FALSE (alignment catches the top paypal). Measure:
-        chk("3a-A fake paypal UST, imzali attacker ALT -> FALSE bekleniyor", dkim_verify_with_key(raw, pub), false);
+        chk("3a-A fake paypal ON TOP, signed attacker BELOW -> FALSE expected", dkim_verify_with_key(raw, pub), false);
     }
 
     // --- 3a-B: signed attacker ON TOP, FAKE paypal BELOW ---
     //   crypto rfind->bottom(paypal)->signature DOES NOT match->FAIL → FALSE expected
     {
         std::string raw = sig + "\r\n" + signed_from + "From: victim@paypal.com\r\n" + subj + "\r\n" + body;
-        chk("3a-B imzali attacker UST, fake paypal ALT -> FALSE bekleniyor", dkim_verify_with_key(raw, pub), false);
+        chk("3a-B signed attacker ON TOP, fake paypal BELOW -> FALSE expected", dkim_verify_with_key(raw, pub), false);
     }
 
     // --- 3b-CRITICAL: h= omission — From NOT SIGNED (h= only Subject) ---
     //   The signature does not protect From → an attacker can change From. Does alignment still check the From
     //   in the message against d= (independently of h=)? Measure:
     {
-        std::vector<DkimHeader> h2 = { {"Subject", "hi"} };   // From YOK → h=subject
+        std::vector<DkimHeader> h2 = { {"Subject", "hi"} };   // no From → h=subject
         std::string sig2 = dkim_sign(h2, body, "attacker.com", "sel", priv);
         // ADD From: paypal to raw (unsigned). crypto: subject signed→PASS. alignment: d=attacker vs paypal→?
         std::string raw = sig2 + "\r\n" + "From: victim@paypal.com\r\n" + subj + "\r\n" + body;
         // If it were a BYPASS it would be TRUE (From unsigned + alignment skipped/wrong). If fail-safe it is FALSE.
-        chk("3b h= omission (From imzasiz, d=attacker vs From=paypal) -> FALSE bekleniyor",
+        chk("3b h= omission (From unsigned, d=attacker vs From=paypal) -> FALSE expected",
             dkim_verify_with_key(raw, pub), false);
     }
     // --- 3b: trailing-dot — From: attacker.com. (root dot) d=attacker.com, properly signed ---
@@ -95,10 +95,10 @@ int main() {
         std::string raw = sig3 + "\r\n" + "From: u@attacker.com.\r\n" + subj + "\r\n" + body;
         // NOTE: this is not a SECURITY test (fail-safe direction); it RECORDS the trailing-dot behavior.
         bool r = dkim_verify_with_key(raw, pub);
-        printf("  %-52s got=%d  (kayit: trailing-dot legit From %s)\n",
-               "3b trailing-dot (legit, davranis kaydi)", r, r?"KABUL":"RED-false-negative");
+        printf("  %-52s got=%d  (record: trailing-dot legit From %s)\n",
+               "3b trailing-dot (legit, behavior record)", r, r?"ACCEPTED":"REJECTED-false-negative");
     }
 
-    printf(fails ? "\n%d FAIL — incele\n" : "\nTUM VAKALAR GECTI (② temel+coklu-From+h=omission FAIL-SAFE)\n", fails);
+    printf(fails ? "\n%d FAIL — investigate\n" : "\nALL CASES PASSED (② basic + multiple-From + h=omission FAIL-SAFE)\n", fails);
     return fails ? 1 : 0;
 }

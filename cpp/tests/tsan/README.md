@@ -1,7 +1,7 @@
-# LOOK — güvenlik test paketi
+# LOOK — security test suite
 
-Dış denetimde üretilen, **yeniden çalıştırılabilir** test dosyaları.
-Referans ortam: Ubuntu 24.04 · GCC 13.3 · OpenSSL 3.0.13 · C++23.
+**Re-runnable** test files produced during an external audit.
+Reference environment: Ubuntu 24.04 · GCC 13.3 · OpenSSL 3.0.13 · C++23.
 
 ```bash
 cd cpp
@@ -11,44 +11,41 @@ cmake --build build-asan --target look -j"$(nproc)"
 cmake --build build-tsan --target look -j"$(nproc)"
 ```
 
-## `tsan/` — yarış testleri (bu dizin)
+## `tsan/` — race tests (this directory)
 
-`build-tsan/lk` ile çalıştırın (tek motor: VM).
+Run with `build-tsan/lk` (single engine: VM).
 
-İki gruba ayrıldı — **CI ilk günden yeşil başlasın diye:**
+Originally split into two groups so that **CI would start green from day one**. Every test now lives in
+`enforced/`; the former `known_fail/` group has been removed.
 
-### `enforced/` — yeşil olmalı (kırılırsa CI kırmızı)
-| Dosya | Ne test eder | Beklenen |
+### `enforced/` — must be green (CI goes red if one breaks)
+| File | What it tests | Expected |
 |---|---|---|
-| `t2_cache.lk` | `cache::` 8×200 op | temiz ✅ |
-| `t3_queue.lk` | `queue::` 8×200 op | temiz ✅ |
-| `t4_sqlite_connect.lk` | Her thread kendi SQLite dosyasına `db::connect` | **`SQLITE_THREADSAFE=2` regresyonu** — 0 yarış |
-| `t5_shared_conn.lk` | Tek paylaşılan bağlantı + havuz | temiz ✅ |
+| `t2_cache.lk` | `cache::` 8×200 ops | clean ✅ |
+| `t3_queue.lk` | `queue::` 8×200 ops | clean ✅ |
+| `t4_sqlite_connect.lk` | Each thread calls `db::connect` on its own SQLite file | **`SQLITE_THREADSAFE=2` regression** — 0 races |
+| `t5_shared_conn.lk` | One shared connection + pool | clean ✅ |
 
-### `known_fail/` — bilinen açık (raporlanır, CI'ı kırmaz)
-| Dosya | Ne test eder | Durum |
-|---|---|---|
-| `t1_shared_array.lk` | `parallel()` VM array capture yarışı | R-02 — mimari (S1 masası) |
-| `t6_closure.lk` | `shared_ptr<void>` type-confusion yarışı | R-03 — mimari (S1 masası) |
+The directory now also holds `t1b_contended.lk`, `t6_closure.lk` (both formerly in `known_fail/`, which
+covered the `parallel()` VM array capture race and the `shared_ptr<void>` type-confusion race),
+`t8_nested_closure_capture.lk` and `t9_struct_field_cache.lk`. CI runs every `tests/tsan/enforced/*.lk`.
 
-Her düzeltme = bir testi `known_fail/`'dan `enforced/`'a **terfi** ettirmek. İlerleme ölçülebilir.
-
-> **⚠️ Ölçüm ortamı:** SQLite POSIX kilitleri Docker/Windows **overlayfs/bind-mount**'ta
-> güvenilmez çalışır — kilit testlerini **ext4** (ör. GitHub Actions runner) üzerinde koşun.
-> `t4`/`t5`'in kilit davranışı overlayfs'te hem yanlış-pozitif hem yanlış-negatif verebilir.
+> **⚠️ Measurement environment:** SQLite POSIX locks behave unreliably on Docker/Windows
+> **overlayfs/bind-mounts**; run lock tests on **ext4** (e.g. a GitHub Actions runner).
+> On overlayfs the lock behavior of `t4`/`t5` can give both false positives and false negatives.
 
 ## `../repro/`
 
-| Dosya | İçerik |
+| File | Contents |
 |---|---|
-| `b01_threshold.sh` | Değerlendirme özyineleme sınırını üç yolda tarar (`--check` / VM / interpreter) |
-| `sqli_bind_params.lk` | 12 SQLi vektörü + `bind_params` state-machine kör noktaları (backtick, `#`) + NUL truncation |
-| `traversal_json_crypto.lk` | Path traversal (4 vektör), int/JSON sınır davranışı, `html::escape`, kripto vektörleri |
+| `b01_threshold.sh` | Scans the evaluation recursion limit across three paths (`--check` / VM / interpreter) |
+| `sqli_bind_params.lk` | 12 SQLi vectors + `bind_params` state-machine blind spots (backtick, `#`) + NUL truncation |
+| `traversal_json_crypto.lk` | Path traversal (4 vectors), int/JSON boundary behavior, `html::escape`, crypto vectors |
 
-`repro/*.lk` dosyalarını `build-asan/lk` ile çalıştırın.
+Run the `repro/*.lk` files with `build-asan/lk`.
 
 ## CI
 
-`.github/workflows/sanitizers.yml` bu testleri her push/PR'da koşar (ASan+UBSan job'ı
-regression + B-01'i, TSan job'ı `tsan/*.lk`'yi). Mevcut `ci.yml` yalnız Release derlediği
-için bu sınıftaki hataları göremiyordu.
+`.github/workflows/sanitizers.yml` runs these tests on every push/PR (the ASan+UBSan job runs the
+regression suite + B-01, the TSan job runs `tsan/*.lk`). The existing `ci.yml` only builds Release, so it
+could not see this class of bugs.

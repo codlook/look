@@ -1,6 +1,6 @@
-# LOOK — VSCode eklenti paketi (.vsix) olustur.
-# Calistirma:  powershell -ExecutionPolicy Bypass -File platforms\vscode\build.ps1
-# Gereksinim:  Node.js (npx ile @vscode/vsce indirilir).
+# LOOK — Build the VSCode extension package (.vsix).
+# Usage:       powershell -ExecutionPolicy Bypass -File platforms\vscode\build.ps1
+# Requires:    Node.js (@vscode/vsce is downloaded via npx).
 $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $Here
@@ -12,7 +12,7 @@ try {
 
     Write-Host "vsce package -> $out"
     & npx --yes @vscode/vsce package --no-dependencies --out $out
-    if ($LASTEXITCODE -ne 0) { throw "vsce package basarisiz (exit $LASTEXITCODE)" }
+    if ($LASTEXITCODE -ne 0) { throw "vsce package failed (exit $LASTEXITCODE)" }
 
     $mb = [math]::Round((Get-Item $out).Length / 1KB, 1)
     Write-Host "OK: releases\look-lang-$version.vsix ($mb KB)"

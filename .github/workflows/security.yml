@@ -56,7 +56,7 @@ jobs:
           sleep 3
           curl -s "http://127.0.0.1:7411/" | grep -q '"ok":true'
           # session::has — documented in the docs, once MISSING (dogfooding #1). set→has=true, nonexistent=false.
-          curl -s "http://127.0.0.1:7411/sess" | grep -q '"has":true,"no":false' || { echo "::error::session::has KIRIK"; exit 1; }
+          curl -s "http://127.0.0.1:7411/sess" | grep -q '"has":true,"no":false' || { echo "::error::session::has is BROKEN"; exit 1; }
           curl -s "http://127.0.0.1:7411/yok" > /dev/null           # 404 path
           printf 'GET / HTTP/1.1\r\nContent-Length: abc\r\n\r\n' | curl -s --max-time 3 "http://127.0.0.1:7411/" > /dev/null || true
           # is the server still alive? (an ASan crash would have refused the connection)

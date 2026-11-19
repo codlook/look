@@ -27,27 +27,27 @@ gen_paren() { awk -v n="$1" 'BEGIN{printf "print("; for(i=0;i<n;i++) printf "(";
 
 # Run a source file; return the rc. rc>=128 (POSIX) or
 # 127 (Windows/bash native crash) → means signal/crash → GUARD FAILS.
-run() { # $1=dosya
+run() { # $1=file
   "$LK" "$1" >/dev/null 2>&1
   echo $?
 }
 is_crash() { local rc="$1"; [ "$rc" -ge 128 ] || [ "$rc" = "127" ] || [ "$rc" = "134" ]; }
 
-echo "== Guard: derin girdi TEMİZ hata vermeli (çökme değil) =="
+echo "== Guard: deeply nested input must give a CLEAN error (not a crash) =="
 for kind in chain paren; do
   [ "$kind" = chain ] && gen_chain 20000 > "$TMP/deep.lk" || gen_paren 20000 > "$TMP/deep.lk"
   rc=$(run "$TMP/deep.lk")
-  if is_crash "$rc"; then echo "  FAIL [$kind] ÇÖKTÜ (rc=$rc — sinyal/SIGABRT)"; fail=1
-  elif [ "$rc" = "0" ]; then echo "  FAIL [$kind] guard tetiklenmedi (rc=0)"; fail=1
-  else echo "  OK   [$kind] temiz hata (rc=$rc)"; fi
+  if is_crash "$rc"; then echo "  FAIL [$kind] CRASHED (rc=$rc — signal/SIGABRT)"; fail=1
+  elif [ "$rc" = "0" ]; then echo "  FAIL [$kind] guard did not trigger (rc=0)"; fail=1
+  else echo "  OK   [$kind] clean error (rc=$rc)"; fi
 done
 
-echo "== Regresyon: normal derinlikteki ifade doğru çalışmalı =="
+echo "== Regression: an expression of normal depth must evaluate correctly =="
 gen_chain 500 > "$TMP/ok.lk"   # result 501; far below the guard (1000)
 out=$("$LK" "$TMP/ok.lk" 2>/dev/null)
-if [ "$out" = "501" ]; then echo "  OK   500-terim zincir = 501"; else echo "  FAIL beklenen 501, gelen '$out'"; fail=1; fi
+if [ "$out" = "501" ]; then echo "  OK   500-term chain = 501"; else echo "  FAIL expected 501, got '$out'"; fail=1; fi
 printf 'print(1+2+3*4-5)\n' > "$TMP/sm.lk"
-[ "$("$LK" "$TMP/sm.lk" 2>/dev/null)" = "10" ] && echo "  OK   [VM] karışık küçük ifade = 10" || { echo "  FAIL karışık ifade"; fail=1; }
+[ "$("$LK" "$TMP/sm.lk" 2>/dev/null)" = "10" ] && echo "  OK   [VM] mixed small expression = 10" || { echo "  FAIL mixed expression"; fail=1; }
 
-[ "$fail" = 0 ] && echo "== eval derinlik guard: TÜM TESTLER GEÇTİ ==" || echo "== eval derinlik guard: BAŞARISIZ =="
+[ "$fail" = 0 ] && echo "== eval depth guard: ALL TESTS PASSED ==" || echo "== eval depth guard: FAILED =="
 exit $fail

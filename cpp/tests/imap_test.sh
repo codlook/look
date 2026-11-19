@@ -22,7 +22,7 @@ SRV=""
 cleanup() { [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; sleep 1; [ -n "$SRV" ] && kill -9 "$SRV" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
 fail=0
-command -v python3 >/dev/null 2>&1 || { echo "  (atlandi: python3 gerekli)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "  (skipped: python3 required)"; exit 0; }
 
 echo 'route("GET","/",function(){ return response::text("ok") })' > "$TMP/app.lk"
 mkdir -p "$TMP/md"
@@ -91,13 +91,13 @@ PYEOF
 out=$(timeout 90 python3 "$TMP/p.py" $IMAP_PORT 2>&1 | tail -1)
 bek="NO|NO|NO|OK|OK|NO|NO|NO|NO|NO|BAD|NO|NO|NO|BAD|BAD|OK|OK"
 if [ "$out" = "$bek" ]; then
-  echo "  PASS IMAP: auth zorunlu + mailbox dogrulama + traversal + literal siniri"
+  echo "  PASS IMAP: auth required + mailbox validation + traversal + literal limit"
 else
-  echo "  FAIL IMAP yanit dizisi: [$out]"
-  echo "       beklenen          : [$bek]"
-  echo "       sira: authsuz(SELECT|FETCH|APPEND) login INBOX 'rm-rf' yok-mailbox traversal mutlak literal-2GB literal-negatif UID-veri UID-komut CREATE HEADER.FIELDS PEEK desteklenen INBOX-tekrar"
+  echo "  FAIL IMAP reply sequence: [$out]"
+  echo "       expected          : [$bek]"
+  echo "       order: unauth(SELECT|FETCH|APPEND) login INBOX 'rm-rf' no-such-mailbox traversal absolute literal-2GB literal-negative UID-data UID-command CREATE HEADER.FIELDS PEEK supported INBOX-again"
   fail=1
 fi
 
-[ $fail = 0 ] && echo "PASS: IMAP sunucusu" || echo "FAIL: IMAP sunucusu"
+[ $fail = 0 ] && echo "PASS: IMAP server" || echo "FAIL: IMAP server"
 exit $fail

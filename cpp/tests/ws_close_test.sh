@@ -11,8 +11,8 @@ TMP=$(mktemp -d)
 SRV=""
 cleanup(){ [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; sleep 1; [ -n "$SRV" ] && kill -9 "$SRV" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
-command -v python3 >/dev/null 2>&1 || { echo "  (atlandi: python3 gerekli)"; exit 0; }
-[ -d /proc ] || { echo "  (atlandi: /proc gerekli)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "  (skipped: python3 required)"; exit 0; }
+[ -d /proc ] || { echo "  (skipped: /proc required)"; exit 0; }
 fail=0
 
 cat > "$TMP/app.lk" <<'LKEOF'
@@ -66,11 +66,11 @@ conn=$(echo "$out" | sed -n 's/.*CONN=\([0-9]*\).*/\1/p'); after=$(echo "$out" |
 
 # Sanity (Rule 3): did the handshake + echo really happen (did the test exercise the WS path)
 if [ -z "$ok101" ] || [ -z "$echoed" ] || [ "${conn:-0}" -ne $((base+1)) ]; then
-  echo "  FAIL sanity: WS bağlanmadı/echo yok (fd $base→${conn:-?})"; fail=1
-else echo "  OK handshake 101 + echo:ping + bağlı fd=$conn"; fi
+  echo "  FAIL sanity: WS did not connect / no echo (fd $base->${conn:-?})"; fail=1
+else echo "  OK handshake 101 + echo:ping + connected fd=$conn"; fi
 # The point: did the fd count return to base after close (no leak)
-if [ "${after:-99}" -eq "$base" ]; then echo "  OK close sonrası fd base'e döndü ($after) — sızıntı yok"
-else echo "  FAIL: close sonrası fd=$after (base=$base) — SIZINTI"; fail=1; fi
+if [ "${after:-99}" -eq "$base" ]; then echo "  OK fd returned to base after close ($after) — no leak"
+else echo "  FAIL: fd=$after after close (base=$base) — LEAK"; fail=1; fi
 
 # SERVER-side close (ws::close): the client sends "bye", the SERVER closes → the client gets a close frame
 # (opcode 0x8) and the fd count returns to base (twin of SSE server-close). The client does NOT initiate a close frame.
@@ -104,10 +104,10 @@ echo "  $sout"
 sok101=$(echo "$sout" | grep -o 'OK101=True'); srvclose=$(echo "$sout" | grep -o 'SRVCLOSE=True')
 safter=$(echo "$sout" | sed -n 's/.*AFTER=\([0-9]*\).*/\1/p')
 if [ -z "$sok101" ] || [ -z "$srvclose" ]; then
-  echo "  FAIL server-close: ws::close istemciye close-frame göndermedi"; fail=1
-else echo "  OK ws::close → istemci close-frame aldı (server-başlatan)"; fi
-if [ "${safter:-99}" -eq "$base" ]; then echo "  OK server-close sonrası fd base'e döndü ($safter)"
-else echo "  FAIL: server-close sonrası fd=$safter (base=$base) — SIZINTI"; fail=1; fi
+  echo "  FAIL server-close: ws::close did not send a close frame to the client"; fail=1
+else echo "  OK ws::close -> the client received a close frame (server-initiated)"; fi
+if [ "${safter:-99}" -eq "$base" ]; then echo "  OK fd returned to base after server-close ($safter)"
+else echo "  FAIL: fd=$safter after server-close (base=$base) — LEAK"; fail=1; fi
 
 # A client that does NOT ANSWER after ws::close: the server must close the connection itself (the fd and
 # the connection used to stay open indefinitely until the client sent something).
@@ -132,8 +132,8 @@ print("EOF=%s IN=%.1f" % (eof, time.time() - t0))
 PYEOF
 )
 echo "  $qout"
-if echo "$qout" | grep -q 'EOF=True'; then echo "  OK ws::close: cevap vermeyen istemcinin bağlantısını sunucu kapattı"
-else echo "  FAIL ws::close: sunucu bağlantıyı kapatmadı (istemci cevap vermeyince açık kalıyor)"; fail=1; fi
+if echo "$qout" | grep -q 'EOF=True'; then echo "  OK ws::close: the server closed the connection of a non-responding client"
+else echo "  FAIL ws::close: the server did not close the connection (it stays open when the client does not respond)"; fail=1; fi
 
 # Regression: 3 abrupt disconnects (abandon without a close frame) → no leak/crash
 python3 - "$PORT" <<'PYEOF'
@@ -148,8 +148,8 @@ for _ in range(3):
 PYEOF
 sleep 1
 recyc=$(ls "/proc/$SRV/fd" 2>/dev/null | wc -l)
-if kill -0 "$SRV" 2>/dev/null && [ "$recyc" -le $((base+1)) ]; then echo "  OK ani-kopma 3-döngü: fd=$recyc, server ayakta"
-else echo "  FAIL: ani-kopma regresyonu (fd=$recyc, server $(kill -0 $SRV 2>/dev/null && echo ayakta || echo ÇÖKTÜ))"; fail=1; fi
+if kill -0 "$SRV" 2>/dev/null && [ "$recyc" -le $((base+1)) ]; then echo "  OK abrupt-disconnect 3 cycles: fd=$recyc, server alive"
+else echo "  FAIL: abrupt-disconnect regression (fd=$recyc, server $(kill -0 $SRV 2>/dev/null && echo alive || echo CRASHED))"; fail=1; fi
 
-[ $fail = 0 ] && echo "PASS: WS close + fd-sizintisi" || echo "FAIL: WS close + fd-sizintisi"
+[ $fail = 0 ] && echo "PASS: WS close + fd leak" || echo "FAIL: WS close + fd leak"
 exit $fail

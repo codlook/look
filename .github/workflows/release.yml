@@ -124,7 +124,7 @@ jobs:
           # FAIL-LOUD: the recipe's "cmake | grep" swallows the exit code → verify the binary BY HAND
           # (otherwise a link error looks like success = false-green, the class closed in this round).
           for b in lk lk-fcgi lk-cgi; do
-            test -x "cpp/build-portable/$b" || { echo "LINK FAIL: cpp/build-portable/$b uretilmedi"; exit 1; }
+            test -x "cpp/build-portable/$b" || { echo "LINK FAIL: cpp/build-portable/$b was not produced"; exit 1; }
           done
           docker run --rm -v "$PWD/cpp:/look/cpp" -w /look/cpp look-build \
             bash -c "ldd cpp/build-portable/lk-fcgi 2>&1 || true" || true
@@ -232,14 +232,14 @@ jobs:
       # At 403d2dd Windows was left at 5465074; this step closes that class automatically.
       # rc: no Windows (Tier-2 is separate) → skipped; real v*: Windows is REQUIRED, otherwise FAIL.
       # POSITIVE CONTROL: put an old-stamped binary in an asset → this step goes RED (show it in the rc rehearsal).
-      - name: CONSISTENCY — asset damgaları aynı mı + manifest kapsamı (inline)
+      - name: CONSISTENCY — do the asset stamps match + manifest coverage (inline)
         run: |
           set -e
           cd dist
           unzip -oq look-lang-linux-*.zip -d _linux
           REF=$(_linux/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
-          [ -n "$REF" ] || { echo "::error::linux damgası okunamadı"; exit 1; }
-          echo "REFERANS damga (linux): $REF"
+          [ -n "$REF" ] || { echo "::error::could not read the linux stamp"; exit 1; }
+          echo "REFERENCE stamp (linux): $REF"
           fail=0
           # Version: the number the binary reports must equal the one in the file name.
           _linux/bin/lk --version | grep -q "LOOK $VERSION " \
@@ -257,7 +257,7 @@ jobs:
             chmod +x _plesk/htdocs/bin/lk
             P=$(_plesk/htdocs/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
             [ "$P" = "$REF" ] && echo "  OK   plesk  $P" || { echo "  FAIL plesk  $P != $REF"; fail=1; }
-          else echo "  FAIL plesk: htdocs/bin/lk YOK — paketleme bozuk"; fail=1; fi
+          else echo "  FAIL plesk: htdocs/bin/lk is MISSING — broken packaging"; fail=1; fi
           docker load < look-docker.tar.gz >/dev/null
           D=$(docker run --rm "codlook/look:$VERSION" lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
           [ "$D" = "$REF" ] && echo "  OK   docker $D" || { echo "  FAIL docker $D != $REF"; fail=1; }
@@ -265,23 +265,23 @@ jobs:
           if ls look-lang-windows-*.zip >/dev/null 2>&1; then
             unzip -oq look-lang-windows-*.zip -d _win
             if grep -aq "$REF" _win/lk.exe && grep -aq "$REF" _win/lk-fcgi.exe && grep -aq "$REF" _win/lk-cgi.exe; then
-              echo "  OK   windows (damga $REF .exe içinde)"
-            else echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe/lk-cgi.exe içinde YOK (eski elle-derleme?)"; fail=1; fi
+              echo "  OK   windows (stamp $REF is in the .exe)"
+            else echo "  FAIL windows: $REF is NOT in lk.exe/lk-fcgi.exe/lk-cgi.exe (old manual build?)"; fail=1; fi
             bash ../cpp/tests/package_binaries_guard.sh look-lang-linux-$VERSION.zip look-lang-plesk-$VERSION.zip \
               look-lang-windows-$VERSION.zip || fail=1
           elif [[ "$GITHUB_REF_NAME" == *rc* ]]; then
-            echo "  SKIP windows (rc provası — Windows Tier-2 ayrı derlenir)"
+            echo "  SKIP windows (rc rehearsal — Windows Tier-2 is built separately)"
           else
-            echo "::error::windows asset YOK — gerçek yayında ZORUNLU (elle derlenip yüklenmeli)"; fail=1
+            echo "::error::windows asset is MISSING — REQUIRED in a real release (build it by hand and upload it)"; fail=1
           fi
           # Manifest count lock: is every asset in the release (except SHA256SUMS) in a manifest line
           MAN=$(grep -cE '^[0-9a-f]{64}' SHA256SUMS.txt)
           ASSETS=$(ls *.zip *.tar.gz *.vsix 2>/dev/null | wc -l)
-          echo "  manifest satır=$MAN | asset=$ASSETS"
-          [ "$MAN" = "$ASSETS" ] || { echo "::error::manifest $MAN != asset $ASSETS — bir asset kapsam dışı"; fail=1; }
+          echo "  manifest lines=$MAN | assets=$ASSETS"
+          [ "$MAN" = "$ASSETS" ] || { echo "::error::manifest $MAN != asset $ASSETS — an asset is outside the manifest"; fail=1; }
           echo ""
-          [ "$fail" = 0 ] || { echo "::error::Asset damgaları AYRIŞIYOR — yayın tutarsız"; exit 1; }
-          echo "TUTARLI: tüm binary asset'ler $REF"
+          [ "$fail" = 0 ] || { echo "::error::Asset stamps DIFFER — the release is inconsistent"; exit 1; }
+          echo "CONSISTENT: all binary assets are $REF"
 
       # 7.6) Publish the draft — ONLY after consistency has passed. rc: stays a prerelease.
       - name: Publish the release (only after the consistency check)
@@ -304,7 +304,7 @@ jobs:
       # SKIPPED for rc* tags: Docker Hub has no tag isolation → an rc would overwrite :latest
       # and break the rehearsal's promise of "not overwriting the real release" on the Docker side (a GitHub prerelease is
       # isolated, Docker is not). rc = only a gate+build+asset rehearsal; the real push is only for v* (without rc).
-      - name: Docker Hub push (secret varsa, rc değilse)
+      - name: Docker Hub push (if the secret exists, not for rc)
         if: ${{ env.DOCKERHUB_TOKEN != '' && !contains(github.ref_name, 'rc') }}
         run: |
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin

@@ -55,7 +55,7 @@ int main() {
     chk("valid pong 0xA",        B({0x8A,0x80,0,0,0,0}),          true,  false);
 
     const int EXPECTED = 19;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (ws decode güvenlik + RFC §5.2 konformans kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (ws decode security + RFC §5.2 conformance locked in)\n", fails);
     return fails ? 1 : 0;
 }

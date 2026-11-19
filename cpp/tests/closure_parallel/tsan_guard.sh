@@ -32,14 +32,14 @@ fail=0
 for i in 1 2 3 4 5 6 7 8; do
   o=$(TSAN_OPTIONS="halt_on_error=0" "$LK" "$DIR/np1.lk" 2>&1)
   if echo "$o" | grep -q "data race"; then
-    echo "FAIL np1: closure-içi cell YARIŞI (transitif deep-clone eksik)"; echo "$o" | grep -iE "data race|heap block" | head -2
+    echo "FAIL np1: RACE on a cell inside a closure (transitive deep-clone missing)"; echo "$o" | grep -iE "data race|heap block" | head -2
     fail=1; break
   fi
 done
-[ $fail = 0 ] && echo "PASS np1: closure-capture deep-clone transitif — yarış yok"
+[ $fail = 0 ] && echo "PASS np1: closure-capture deep-clone is transitive — no race"
 # functional isolation (VM): np1=0 (isolated), np2=123 (isolated)
 v1=$("$LK" "$DIR/np1.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
 v2=$("$LK" "$DIR/np2.lk" 2>&1 | grep -v "INFO\|Pool" | tr -d '\n ')
-[ "$v1" = "0" ] && echo "PASS np1 izole: 0" || { echo "FAIL np1 izole: [$v1] (0 beklenir)"; fail=1; }
-[ "$v2" = "123" ] && echo "PASS np2 izole: 123" || { echo "FAIL np2 izole: [$v2] (123 beklenir)"; fail=1; }
+[ "$v1" = "0" ] && echo "PASS np1 isolated: 0" || { echo "FAIL np1 isolated: [$v1] (expected 0)"; fail=1; }
+[ "$v2" = "123" ] && echo "PASS np2 isolated: 123" || { echo "FAIL np2 isolated: [$v2] (expected 123)"; fail=1; }
 exit $fail

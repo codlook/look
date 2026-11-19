@@ -45,8 +45,8 @@ extract_bodies() {
 
 echo "== SSRF pin guard =="
 n_bodies=$(grep -c 'static sock_t tcp_connect' "$SRC")
-echo "tcp_connect tanımı: $n_bodies (Win Schannel + POSIX bekleniyor)"
-if [ "$n_bodies" -lt 1 ]; then echo "FAIL: tcp_connect bulunamadı"; exit 1; fi
+echo "tcp_connect definitions: $n_bodies (Win Schannel + POSIX expected)"
+if [ "$n_bodies" -lt 1 ]; then echo "FAIL: tcp_connect not found"; exit 1; fi
 
 # Check each platform branch separately (separate the awk blocks with >>>)
 bodies=$(awk '/static sock_t tcp_connect/{if(seen)print "<<<SPLIT>>>"; seen=1; c=40} c>0{print; c--}' "$SRC")
@@ -54,9 +54,9 @@ idx=0
 while IFS= read -r -d '' chunk; do
     idx=$((idx+1))
     if check_body "$chunk"; then
-        echo "  gövde #$idx: PIN OK (tek çözüm, res->ai_addr'a bağlanır, ssrf-check var)"
+        echo "  body #$idx: PIN OK (single resolution, connects to res->ai_addr, ssrf-check present)"
     else
-        echo "  gövde #$idx: FAIL — yeniden-çözme veya pin kaybı riski"
+        echo "  body #$idx: FAIL — risk of re-resolution or pin loss"
         fails=$((fails+1))
     fi
 done < <(printf '%s\n<<<SPLIT>>>' "$bodies" | awk 'BEGIN{RS="<<<SPLIT>>>"}{printf "%s%c",$0,0}')
@@ -72,14 +72,14 @@ BAD_BODY='static sock_t tcp_connect(const std::string& host, int port, int t) {
     connect(s, res2->ai_addr, res2->ai_addrlen);
 }'
 if check_body "$BAD_BODY"; then
-    echo "  POZİTİF KONTROL: FAIL — guard rebinding'e-açık gövdeyi KAÇIRDI (test bozuk)"
+    echo "  POSITIVE CONTROL: FAIL — the guard MISSED a rebinding-prone body (the test is broken)"
     fails=$((fails+1))
 else
-    echo "  POZİTİF KONTROL: OK — guard yeniden-çözen gövdeyi yakaladı"
+    echo "  POSITIVE CONTROL: OK — the guard caught the re-resolving body"
 fi
 
 if [ "$fails" -ne 0 ]; then
     echo "GUARD FAIL ($fails)"; exit 1
 fi
-echo "GUARD GEÇTİ — SSRF kontrolü ile connect aynı çözümlenmiş IP'ye pinli (rebinding TOCTOU yok)"
+echo "GUARD PASSED — the SSRF check and connect are pinned to the same resolved IP (no rebinding TOCTOU)"
 exit 0

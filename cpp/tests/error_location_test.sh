@@ -13,10 +13,10 @@ LK="$(cd "$(dirname "${1:?usage: $0 <lk>}")" && pwd)/$(basename "$1")"   # absol
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/lib"
 
-printf '// kütüphane\n\n\n\nfunction boom() {\n    $x = 1\n    $y = $x / 0\n    return $y\n}\n' > "$TMP/lib/util.lk"
-printf '// alt kütüphane\nfunction deep() {\n    return 1 / 0\n}\n' > "$TMP/lib/deep.lk"
+printf '// library\n\n\n\nfunction boom() {\n    $x = 1\n    $y = $x / 0\n    return $y\n}\n' > "$TMP/lib/util.lk"
+printf '// sub-library\nfunction deep() {\n    return 1 / 0\n}\n' > "$TMP/lib/deep.lk"
 printf 'use "deep.lk"\nfunction mid() {\n    return deep()\n}\n' > "$TMP/lib/mid.lk"
-printf '// üst düzeyde hata\n$a = 1\n$b = $a / 0\n' > "$TMP/lib/top.lk"
+printf '// error at top level\n$a = 1\n$b = $a / 0\n' > "$TMP/lib/top.lk"
 
 printf 'use "lib/util.lk"\nprint("start")\nboom()\n' > "$TMP/fn.lk"
 printf 'print("start")\nuse "lib/top.lk"\n' > "$TMP/top.lk"

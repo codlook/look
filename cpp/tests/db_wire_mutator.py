@@ -18,7 +18,7 @@ def next_rng():
         return random.Random(BASE_SEED * 1000003 + _n[0])
 
 def mutate(rng, chunks):
-    """chunks: bayt dizgelerinin listesi (paket/mesaj). Bozulmuş liste döner."""
+    """chunks: a list of byte strings (packets/messages). Returns a corrupted list."""
     chunks = list(chunks)
     for _ in range(rng.choice([0, 1, 1, 2, 3, 5])):
         if not chunks: break

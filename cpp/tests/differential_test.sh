@@ -58,7 +58,7 @@ if "$LK" "$TMP/strict_probe.lk" >/dev/null 2>&1; then
   echo "FAIL: a call to a function that does not exist did not fail on the command line — the CLI-VM column cannot be trusted"; fail=1
 fi
 grep -q "^\[BYTECODE\] OK" "$TMP/web_main.log" \
-  || { echo "FAIL: web-VM sutunu VM'de derlenmedi (log: $(grep -m1 -iE 'error|fallback' "$TMP/web_main.log"))"; fail=1; }
+  || { echo "FAIL: the web-VM column was not compiled in the VM (log: $(grep -m1 -iE 'error|fallback' "$TMP/web_main.log"))"; fail=1; }
 [ -z "$CLIVM" ] && { echo "FAIL: CLI-VM gave no output (script error?)"; fail=1; }
 [ "$CLIVM" = "$WEBVM" ] || { echo "FAIL: CLI-VM != web-VM"; fail=1; }
 
@@ -79,10 +79,10 @@ golden() {   # golden <name> <value> <label>
     case "$GOLDEN_SEEN" in
       *" $1 "*) [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 differs from the other column — golden NOT written"; fail=1; }; return ;;
     esac
-    printf '%s' "$2" > "$f"; GOLDEN_SEEN="$GOLDEN_SEEN$1 "; echo "  (golden yazildi: $1)"; return
+    printf '%s' "$2" > "$f"; GOLDEN_SEEN="$GOLDEN_SEEN$1 "; echo "  (golden written: $1)"; return
   fi
-  if [ ! -f "$f" ]; then echo "FAIL: golden dosyasi yok: $f (UPDATE_GOLDEN=1 ile olustur)"; fail=1; return; fi
-  [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 sabit referanstan ayrisiyor ($f)"; fail=1; }
+  if [ ! -f "$f" ]; then echo "FAIL: golden file missing: $f (create it with UPDATE_GOLDEN=1)"; fail=1; return; fi
+  [ "$(cat "$f")" = "$2" ] || { echo "FAIL: $3 deviates from the fixed reference ($f)"; fail=1; }
 }
 golden run_all "$CLIVM" "run_all (CLI-VM)"
 golden run_all "$WEBVM" "run_all (web-VM)"
@@ -107,7 +107,7 @@ LK
 # compare as shell strings — od is available everywhere (coreutils).
 od -c < "$TMP/io_vm.out"   > "$TMP/io_vm.od"
 io_vm_dump=$(cat "$TMP/io_vm.od")
-golden print_write_bytes "$io_vm_dump"   "print/write baytlari (CLI-VM)"
+golden print_write_bytes "$io_vm_dump"   "print/write bytes (CLI-VM)"
 printf 'print("basla")\nexit(3)\nprint("OLMAMALI")\n' > "$TMP/ex.lk"
 "$LK" "$TMP/ex.lk" >/dev/null 2>&1; v_code=$?
 if [ "$v_code" != "3" ]; then
@@ -142,7 +142,7 @@ print($a . "|" . $n . "|" . $m . "|" . $p . "|" . $q . "|" . $r . "|" . $t)
 LK
 ca_vm=$("$LK" "$TMP/ca.lk" 2>&1)
 ca_bek="xy|3|7|12|3|2|10"
-[ "$ca_vm"   = "$ca_bek" ] || { echo "FAIL: top-level compound CLI-VM: [$ca_vm] (beklenen $ca_bek) — compiler global dalinda e.op yok sayiliyor olabilir"; fail=1; }
+[ "$ca_vm"   = "$ca_bek" ] || { echo "FAIL: top-level compound CLI-VM: [$ca_vm] (expected $ca_bek) — the compiler's global branch may be ignoring e.op"; fail=1; }
 
 # ── TEMPLATE engine: must be IDENTICAL to the language semantics ──────────────────
 # WHY: the template engine had COPIED truthiness and float formatting FROM THE LANGUAGE and
@@ -165,9 +165,9 @@ print("KOD:if0:" . b($s0) . " ifs:" . b($ss) . " f:" . $big)
 print(template::render("tpl", ["s0"=>$s0,"ss"=>$ss,"big"=>$big,"xss"=>$xss]))
 TPLLK
 tpl_out=$(cd "$TMP" && "$LK" tpl.lk 2>&1)
-echo "$tpl_out" | grep -q 'KOD:if0:F ifs:T f:1234567.5' || { echo "FAIL: template guard — KOD satiri beklenmedik: [$tpl_out]"; fail=1; }
-echo "$tpl_out" | grep -q 'if0:F ifs:T f:1234567.5' || { echo "FAIL: TEMPLATE dil semantiginden SAPIYOR (truthiness \"0\" veya float formati): [$tpl_out]"; fail=1; }
-echo "$tpl_out" | grep -q 'esc:&lt;b&gt;&amp;' || { echo "FAIL: template HTML escaping bozuk (XSS riski): [$tpl_out]"; fail=1; }
+echo "$tpl_out" | grep -q 'KOD:if0:F ifs:T f:1234567.5' || { echo "FAIL: template guard — unexpected KOD line: [$tpl_out]"; fail=1; }
+echo "$tpl_out" | grep -q 'if0:F ifs:T f:1234567.5' || { echo "FAIL: TEMPLATE DEVIATES from the language semantics (truthiness of \"0\" or float format): [$tpl_out]"; fail=1; }
+echo "$tpl_out" | grep -q 'esc:&lt;b&gt;&amp;' || { echo "FAIL: template HTML escaping is broken (XSS risk): [$tpl_out]"; fail=1; }
 
 # ── array::set — it DESTROYED data in a NUMERIC array ──────────────────────────────
 # WHY: the "Convert numeric array to assoc" branch did not convert, it REPLACED —
@@ -188,7 +188,7 @@ print(json::encode(array::set([1,2,3], 1, "X")) . "|" .
 LK
 as_vm=$("$LK" "$TMP/aset.lk" 2>&1)
 as_bek='[1,"X",3]|[1,2,3,"X"]|{"0":1,"1":2,"2":3,"k":"X"}|{"k":"X"}|{"a":9,"b":2}'
-[ "$as_vm"   = "$as_bek" ] || { echo "FAIL: array::set CLI-VM: [$as_vm] (beklenen $as_bek) — sayisal dizide veri yok ediliyor olabilir"; fail=1; }
+[ "$as_vm"   = "$as_bek" ] || { echo "FAIL: array::set CLI-VM: [$as_vm] (expected $as_bek) — data may be destroyed in a numeric array"; fail=1; }
 
 # ── $arr["key"] — string key on a NUMERIC list ─────────────────────────────────
 # WHY: both engines were wrong, in different ways (this case was NOT in the guard AT ALL):
@@ -234,11 +234,11 @@ print(t(function(){ $a=[1,2,3]; return $a[-1] }) . "|" .
 LK
 in_bek='3|HATA|HATA|[1,2,"X"]|[1,2,3,"X"]|HATA'
 in_vm=$("$LK" "$TMP/inum.lk" 2>&1)
-[ "$in_vm"   = "$in_bek" ] || { echo "FAIL: \$arr[sayi] uclari CLI-VM: [$in_vm] (beklenen $in_bek) — VM aralik disinda/negatifte SESSIZ olabilir"; fail=1; }
+[ "$in_vm"   = "$in_bek" ] || { echo "FAIL: \$arr[number] edges CLI-VM: [$in_vm] (expected $in_bek) — the VM may be SILENT out of range / on negative indexes"; fail=1; }
 
 ik_vm=$("$LK" "$TMP/ikey.lk" 2>&1)
 ik_bek='{"0":1,"1":2,"2":3,"k":"X"}|X|2|{"k":"X"}|[1,"X",3]|null|2'
-[ "$ik_vm"   = "$ik_bek" ] || { echo "FAIL: \$arr[str] CLI-VM: [$ik_vm] (beklenen $ik_bek) — liste assoc'a cevrilirken elemanlar korunmuyor veya string anahtar sayisal indekse zorlaniyor olabilir"; fail=1; }
+[ "$ik_vm"   = "$ik_bek" ] || { echo "FAIL: \$arr[str] CLI-VM: [$ik_vm] (expected $ik_bek) — elements may not be preserved when a list is converted to an assoc, or a string key may be forced into a numeric index"; fail=1; }
 
 
 # ── string::replace — an EMPTY search string used to HANG (DoS) ───────────────────────────
@@ -258,8 +258,8 @@ print(string::replace("abc", "", "X") . "|" . string::replace("abc", "", "") . "
 LK
 rp_bek='XaXbXcX|abc|-ş-ğ-|X|a-b-c'
 rp_vm=$(timeout 10 "$LK" "$TMP/rep.lk" 2>&1); rp_rc2=$?
-[ $rp_rc2 -eq 124 ] && { echo "FAIL: string::replace CLI-VM ASILDI (bos arama dizesi sonsuz dongu)"; fail=1; }
-[ $rp_rc2 -eq 124 ] || [ "$rp_vm" = "$rp_bek" ] || { echo "FAIL: string::replace CLI-VM: [$rp_vm] (beklenen $rp_bek)"; fail=1; }
+[ $rp_rc2 -eq 124 ] && { echo "FAIL: string::replace CLI-VM HUNG (an empty search string loops forever)"; fail=1; }
+[ $rp_rc2 -eq 124 ] || [ "$rp_vm" = "$rp_bek" ] || { echo "FAIL: string::replace CLI-VM: [$rp_vm] (expected $rp_bek)"; fail=1; }
 
 
 # ── string::pad_* — it PRODUCED INVALID UTF-8 + byte/code-point inconsistency ───
@@ -283,9 +283,9 @@ print(string::pad_left("ş",3,"x") . "|" . string::len(string::pad_left("ş",3,"
 LK
 pd_bek='xxş|3|şxx|şşşa|abcdef|şğü|xxx|ab'
 pd_vm=$(timeout 10 "$LK" "$TMP/pad.lk" 2>&1)
-[ "$pd_vm"   = "$pd_bek" ] || { echo "FAIL: string::pad_* CLI-VM: [$pd_vm] (beklenen $pd_bek) — bayt tabanli genislik veya kirpma geri gelmis olabilir"; fail=1; }
+[ "$pd_vm"   = "$pd_bek" ] || { echo "FAIL: string::pad_* CLI-VM: [$pd_vm] (expected $pd_bek) — byte-based width or truncation may be back"; fail=1; }
 if command -v iconv >/dev/null 2>&1; then
-  printf '%s' "$pd_vm" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || { echo "FAIL: string::pad_* GECERSIZ UTF-8 uretiyor (cok baytli karakter ortadan bolunuyor)"; fail=1; }
+  printf '%s' "$pd_vm" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || { echo "FAIL: string::pad_* produces INVALID UTF-8 (a multi-byte character is split in the middle)"; fail=1; }
 fi
 
 
@@ -307,7 +307,7 @@ print(string::upper("i") . string::lower("I") . string::upper("ı") . string::lo
 LK
 cs_bek='IiIi|ÇĞÖŞÜ|ПРИВЕТ|привет|ΕΛΛΆΔΑ|ŁÓDŹ|ČEŠTINA|привет'
 cs_vm=$(timeout 10 "$LK" "$TMP/case.lk" 2>&1)
-[ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (beklenen $cs_bek) — Turkce locale geri gelmis veya kapsam eksik olabilir"; fail=1; }
+[ "$cs_vm"   = "$cs_bek" ] || { echo "FAIL: string::upper/lower CLI-VM: [$cs_vm] (expected $cs_bek) — the Turkish locale may be back or coverage may be incomplete"; fail=1; }
 
 
 # ── SECURITY: can request::ip() be spoofed? ────────────────────────────────────
@@ -332,10 +332,10 @@ ip_spoof=$(curl -s "http://127.0.0.1:$IP_PORT/ip" -H "X-Forwarded-For: 9.9.9.9")
 ip_chain=$(curl -s "http://127.0.0.1:$IP_PORT/ip" -H "X-Forwarded-For: 1.1.1.1, 2.2.2.2")
 ip_real=$(curl -s "http://127.0.0.1:$IP_PORT/ip" -H "X-Real-IP: 8.8.8.8")
 kill $IPPID 2>/dev/null; wait $IPPID 2>/dev/null
-[ "$ip_plain" = "127.0.0.1" ] || { echo "FAIL: request::ip() baslik yokken gercek peer'i vermiyor: [$ip_plain]"; fail=1; }
-[ "$ip_spoof" = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() SAHTELENEBILIYOR: X-Forwarded-For ile [$ip_spoof] donduruldu (guvenilir proxy tanimli degilken gercek peer olmaliydi)"; fail=1; }
-[ "$ip_chain" = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() XFF zincirine guveniyor: [$ip_chain]"; fail=1; }
-[ "$ip_real"  = "127.0.0.1" ] || { echo "FAIL: GUVENLIK — request::ip() X-Real-IP'ye guveniyor: [$ip_real]"; fail=1; }
+[ "$ip_plain" = "127.0.0.1" ] || { echo "FAIL: request::ip() does not return the real peer when no header is present: [$ip_plain]"; fail=1; }
+[ "$ip_spoof" = "127.0.0.1" ] || { echo "FAIL: SECURITY — request::ip() CAN BE SPOOFED: X-Forwarded-For made it return [$ip_spoof] (with no trusted proxy configured it must be the real peer)"; fail=1; }
+[ "$ip_chain" = "127.0.0.1" ] || { echo "FAIL: SECURITY — request::ip() trusts the XFF chain: [$ip_chain]"; fail=1; }
+[ "$ip_real"  = "127.0.0.1" ] || { echo "FAIL: SECURITY — request::ip() trusts X-Real-IP: [$ip_real]"; fail=1; }
 
 
 # ── SECURITY: can session data be injected? ───────────────────────────
@@ -362,7 +362,7 @@ ss_out=$(curl -s -c "$TMP/ck" -b "$TMP/ck" --get --data-urlencode 'isim=bob
 rol=admin
 admin=1' "http://127.0.0.1:$SS_PORT/s")
 kill $SSPID 2>/dev/null; wait $SSPID 2>/dev/null
-[ "$ss_out" = '"uye"|null' ] || { echo "FAIL: GUVENLIK — session verisi ENJEKTE EDILEBILIYOR: [$ss_out] (beklenen \"uye\"|null; deger icindeki satir sonu yeni alan tanimliyor olabilir)"; fail=1; }
+[ "$ss_out" = '"uye"|null' ] || { echo "FAIL: SECURITY — session data CAN BE INJECTED: [$ss_out] (expected \"uye\"|null; a newline inside a value may define a new field)"; fail=1; }
 
 
 # ── SECURITY: cookie::set attribute injection ─────────────────────────────────
@@ -391,9 +391,9 @@ kill $CKPID 2>/dev/null; wait $CKPID 2>/dev/null
 # the "; HttpOnly" canary collides with the legitimate default, cannot be used. Domain is the INJECTION canary
 # (below) remains (Domain is NOT a default → its presence = injection). For HttpOnly: POSITIVELY verify that the value was
 # ACTUALLY encoded (the ';' inside the value must be %3B).
-echo "$ck_hdr" | grep -qi "; *Domain=" && { echo "FAIL: GUVENLIK — cookie::set OZNITELIK ENJEKTE EDILEBILIYOR: [$ck_hdr]"; fail=1; }
-echo "$ck_hdr" | grep -qi "tercih=x%3b" || { echo "FAIL: GUVENLIK — cookie deger ';' ENCODE EDILMEDI (enjeksiyon acik): [$ck_hdr]"; fail=1; }
-[ "$ck_rt" = '"a;b"' ] || { echo "FAIL: cookie gidis-donus bozuk: [$ck_rt] (beklenen \"a;b\" — kodlama var ama cozme yok olabilir)"; fail=1; }
+echo "$ck_hdr" | grep -qi "; *Domain=" && { echo "FAIL: SECURITY — cookie::set ATTRIBUTES CAN BE INJECTED: [$ck_hdr]"; fail=1; }
+echo "$ck_hdr" | grep -qi "tercih=x%3b" || { echo "FAIL: SECURITY — cookie value ';' was NOT ENCODED (injection is open): [$ck_hdr]"; fail=1; }
+[ "$ck_rt" = '"a;b"' ] || { echo "FAIL: cookie round trip is broken: [$ck_rt] (expected \"a;b\" — there may be encoding but no decoding)"; fail=1; }
 
 
 # ── db:: parameter binding — '?' inside a literal + count mismatch ───────────────
@@ -422,7 +422,7 @@ print($lit[0].s . "|" . $lit[0].p . "|" . count($inj) . "|" . count($hep) . "|" 
 LK
 db_out=$(timeout 20 "$LK" "$TMP/db.lk" 2>&1 | grep -v '^\[20')
 db_bek='Hazir mi?|D|0|1|hata|hata'
-[ "$db_out" = "$db_bek" ] || { echo "FAIL: db:: parametre baglama: [$db_out] (beklenen $db_bek) — literal icindeki '?' placeholder saniliyor veya sayi uyusmazligi SESSIZ olabilir"; fail=1; }
+[ "$db_out" = "$db_bek" ] || { echo "FAIL: db:: parameter binding: [$db_out] (expected $db_bek) — a '?' inside a literal may be taken as a placeholder, or a count mismatch may be SILENT"; fail=1; }
 
 
 # ── ERROR MESSAGE parity — when 'use' is forgotten ───────────────────────────────
@@ -443,9 +443,9 @@ print(string::len("abc"))
 LK
 ue_vm=$("$LK" "$TMP/uerr.lk" 2>&1 | grep -i "error" | head -1)
 uo_vm=$("$LK" "$TMP/uok.lk" 2>&1 | tail -1)
-echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: 'use' unutulunca VM C++ ic istisnasini sizdiriyor: [$ue_vm]"; fail=1; }
-golden use_missing_error "$ue_vm"   "'use' unutulunca hata mesaji (CLI-VM)"
-[ "$uo_vm" = "3" ] || { echo "FAIL: 'use' VARKEN modul cagrisi bozuldu (pozitif kontrol): [$uo_vm]"; fail=1; }
+echo "$ue_vm" | grep -q "bad_function_call" && { echo "FAIL: a forgotten 'use' leaks a VM C++ internal exception: [$ue_vm]"; fail=1; }
+golden use_missing_error "$ue_vm"   "error message when 'use' is forgotten (CLI-VM)"
+[ "$uo_vm" = "3" ] || { echo "FAIL: module call broke WHEN 'use' IS PRESENT (positive control): [$uo_vm]"; fail=1; }
 
 # The NAME that cannot be called — the message must say the name.
 # OLD BUG (both directions): the VM did not know the name ("Not callable (BYTECODE_FN
@@ -457,10 +457,10 @@ printf 'print(olmayan_fonksiyon(1))\n' > "$TMP/c1.lk"
 printf '$x = 5\nprint($x(1))\n'        > "$TMP/c2.lk"
 for cf in c1 c2; do
   cv=$("$LK" "$TMP/$cf.lk" 2>&1 | grep -i error | head -1)
-  echo "$cv" | grep -q "BYTECODE_FN" && { echo "FAIL: cagri hatasi ic terim sizdiriyor (ad soylenmiyor): [$cv]"; fail=1; }
+  echo "$cv" | grep -q "BYTECODE_FN" && { echo "FAIL: call error leaks an internal term (the name is not reported): [$cv]"; fail=1; }
 done
 echo "$("$LK" "$TMP/c2.lk" 2>&1)" | grep -q "is not defined" && {
-  echo "FAIL: tanimli ama cagrilamayan deger icin yaniltici 'is not defined' mesaji"; fail=1; }
+  echo "FAIL: misleading 'is not defined' message for a value that is defined but not callable"; fail=1; }
 
 
 # ── PostgreSQL wire — does a CORRUPT DataRow silently produce wrong data? ──────────
@@ -498,9 +498,9 @@ LK
   done
   # healthy=SONUC, ALL the others must give an error
   pg_bek='SONUC|HATA|HATA|HATA|HATA|'
-  [ "$pg_sonuc" = "$pg_bek" ] || { echo "FAIL: PostgreSQL wire — bozuk DataRow sessizce veri donduruyor olabilir: [$pg_sonuc] (beklenen $pg_bek)"; fail=1; }
+  [ "$pg_sonuc" = "$pg_bek" ] || { echo "FAIL: PostgreSQL wire — a malformed DataRow may silently return data: [$pg_sonuc] (expected $pg_bek)"; fail=1; }
 else
-  echo "  (atlandi: PostgreSQL wire testi python3 gerektirir)"
+  echo "  (skipped: the PostgreSQL wire test needs python3)"
 fi
 
 
@@ -528,8 +528,8 @@ for i in $(seq 1 30); do curl -s -o /dev/null -X PUT "http://127.0.0.1:$MP_PORT/
 mp_out=$(curl -s -X POST "http://127.0.0.1:$MP_PORT/u" -F "dosya=@$TMP/mp.txt" -F "not=merhaba")
 put_out=$(curl -s -X PUT "http://127.0.0.1:$MP_PORT/p" -d "a=putdan")
 kill $MPPID 2>/dev/null; wait $MPPID 2>/dev/null
-[ "$mp_out" = "OK|23|merhaba" ] || { echo "FAIL: --mode http'de multipart/request::file calismiyor: [$mp_out] (beklenen OK|23|merhaba — 23 = "multipart test icerigi" + satir sonu)"; fail=1; }
-[ "$put_out" = '"putdan"' ] || { echo "FAIL: --mode http'de PUT govdesi ayrismiyor (FastCGI ile parite yok): [$put_out]"; fail=1; }
+[ "$mp_out" = "OK|23|merhaba" ] || { echo "FAIL: --mode http: multipart/request::file does not work: [$mp_out] (expected OK|23|merhaba — 23 = "multipart test content" + newline)"; fail=1; }
+[ "$put_out" = '"putdan"' ] || { echo "FAIL: --mode http: the PUT body is not parsed (no parity with FastCGI): [$put_out]"; fail=1; }
 
 
 # ── http:: SSRF + IPv6 URL parsing ────────────────────────────────────────
@@ -559,17 +559,17 @@ sf_out=$(timeout 30 "$LK" "$TMP/ssrf.lk" 2>&1 | tail -1)
 # alternation gives a false alarm (this exact mistake happened while writing this check).
 sf_ok=1
 if echo "$sf_out" | grep -q "DNS resolution failed"; then
-  echo "FAIL: IPv6 literal URL ayristirma bozuk — [::1] icin DNS hatasi doniyor,"
-  echo "      demek ki kosleli parantezler siyrilmiyor (host \"[::1]\" olarak gidiyor)"
+  echo "FAIL: IPv6 literal URL parsing is broken — a DNS error is returned for [::1],"
+  echo "      so the square brackets are not stripped (the host goes as \"[::1]\")"
   sf_ok=0
 fi
 if echo "$sf_out" | grep -q "connection failed"; then
-  echo "FAIL: GUVENLIK TESHISI — SSRF engeli gercek ag hatasindan ayirt edilemiyor"
+  echo "FAIL: SECURITY DIAGNOSIS — the SSRF block cannot be told apart from a real network error"
   sf_ok=0
 fi
 echo "$sf_out" | grep -qi "ipv6" || {
-  echo "FAIL: bozuk IPv6 URL ('[::1:9/') net hata vermiyor"; sf_ok=0; }
-[ $sf_ok = 1 ] || { echo "  cikti: [$sf_out]"; fail=1; }
+  echo "FAIL: a malformed IPv6 URL ('[::1:9/') does not give a clear error"; sf_ok=0; }
+[ $sf_ok = 1 ] || { echo "  output: [$sf_out]"; fail=1; }
 
 
 # ── Is the USER MODULE (`use`) also loaded in the VM? ───────────────────────────
@@ -597,9 +597,9 @@ um_out=$(curl -s "http://127.0.0.1:$UM_PORT/um")
 kill $UMPID 2>/dev/null; wait $UMPID 2>/dev/null
 um_cli=$(cd "$TMP" && HOME="$UM_HOME" "$LK" -c 'use umtest
 print(um_topla(20, 22))' 2>&1 | tail -1)
-[ "$um_out" = "um=42" ] || { echo "FAIL: kullanici modulu web'de calismiyor: [$um_out] (beklenen um=42)"; fail=1; }
+[ "$um_out" = "um=42" ] || { echo "FAIL: the user module does not work on the web: [$um_out] (expected um=42)"; fail=1; }
 if grep -q "VM BUG" "$TMP/um.log" 2>/dev/null; then
-  echo "FAIL: kullanici modulu VM'de yuklenmiyor — route KALICI interpreter'a dustu (yavas yol):"
+  echo "FAIL: the user module does not load in the VM — the route PERMANENTLY fell back to the interpreter (slow path):"
   grep -m1 "VM BUG" "$TMP/um.log" | sed 's/^/       /'
   fail=1
 fi
@@ -613,16 +613,16 @@ fi
 #   combines). All in a single column (the lexer is shared) — two columns not needed.
 lx_fail=0
 printf 'print("acik' > "$TMP/lx_str.lk"
-"$LK" --check "$TMP/lx_str.lk" 2>&1 | grep -qi "Unterminated\|sonland" || { echo "FAIL: lexer sonlanmamis string'i yakalamiyor"; lx_fail=1; }
+"$LK" --check "$TMP/lx_str.lk" 2>&1 | grep -qi "Unterminated" || { echo "FAIL: the lexer does not catch an unterminated string"; lx_fail=1; }
 # deep nesting — not a stack overflow, a clear error
 python3 -c 'open("'"$TMP"'/lx_deep.lk","w").write("print(" + "("*20000 + "1" + ")"*20000 + ")")' 2>/dev/null && {
   dc=$(timeout 10 "$LK" --check "$TMP/lx_deep.lk" 2>&1 | head -1)
-  echo "$dc" | grep -qi "derin\|deep\|max" || { echo "FAIL: derin ic ice parser guard'i yok: [$dc]"; lx_fail=1; }
+  echo "$dc" | grep -qi "derin\|deep\|max" || { echo "FAIL: no deep-nesting parser guard: [$dc]"; lx_fail=1; }
 }
 # unicode surrogate pair -> a single code point
 printf 'use string\nprint(string::len("\\uD83D\\uDE00"))' > "$TMP/lx_emoji.lk"
 em=$("$LK" "$TMP/lx_emoji.lk" 2>&1 | tail -1)
-[ "$em" = "1" ] || { echo "FAIL: surrogate cifti tek kod noktasina birlesmiyor: [$em] (beklenen 1)"; lx_fail=1; }
+[ "$em" = "1" ] || { echo "FAIL: a surrogate pair does not combine into one code point: [$em] (expected 1)"; lx_fail=1; }
 [ $lx_fail = 0 ] || fail=1
 
 
@@ -632,8 +632,8 @@ em=$("$LK" "$TMP/lx_emoji.lk" 2>&1 | tail -1)
 # exactly as a string. json_decode_value is a single source (stdlib) — testing on one engine is enough.
 printf 'use json\n$d = json::decode("{\\"id\\": 9223372036854775809, \\"big\\": 18446744073709551615}")\nprint($d["id"])\nprint($d["big"])' > "$TMP/js_int.lk"
 ji=$("$LK" "$TMP/js_int.lk" 2>&1)
-echo "$ji" | grep -q "9223372036854775809" || { echo "FAIL: json int64-asan id KESINLIK kaybi (beklenen 9223372036854775809): [$ji]"; fail=1; }
-echo "$ji" | grep -q "18446744073709551615" || { echo "FAIL: json uint64-max KESINLIK kaybi (beklenen 18446744073709551615): [$ji]"; fail=1; }
+echo "$ji" | grep -q "9223372036854775809" || { echo "FAIL: json id above int64 LOST PRECISION (expected 9223372036854775809): [$ji]"; fail=1; }
+echo "$ji" | grep -q "18446744073709551615" || { echo "FAIL: json uint64-max LOST PRECISION (expected 18446744073709551615): [$ji]"; fail=1; }
 
 
 # ── Is the dispatch copy REUSED in the worker, is isolation broken? ──
@@ -654,7 +654,7 @@ sleep 2
 iso_all=""
 for i in 1 2 3 4 5; do iso_all="$iso_all$(curl -s --max-time 8 "http://127.0.0.1:$ISO_PORT/inc")"; done
 kill $IS 2>/dev/null; sleep 1; kill -9 $IS 2>/dev/null
-[ "$iso_all" = "s=1s=1s=1s=1s=1" ] || { echo "FAIL: dispatch kopyasi izolasyonu BOZUK (global sizinti): [$iso_all] (beklenen s=1 x5)"; fail=1; }
+[ "$iso_all" = "s=1s=1s=1s=1s=1" ] || { echo "FAIL: dispatch-copy isolation is BROKEN (global leak): [$iso_all] (expected s=1 x5)"; fail=1; }
 
 # ── ODR: client/server type clash (CRASH with LTO) ───────────────────────────
 # look::HttpResponse was defined DIFFERENTLY in BOTH http_client.h AND http_server.h (same
@@ -682,8 +682,8 @@ sleep 1
 odr_alive=no
 curl -s -o /dev/null --max-time 5 "http://127.0.0.1:9615/call" && odr_alive=yes
 kill $OC $OU 2>/dev/null; sleep 1; kill -9 $OC $OU 2>/dev/null
-[ "$odr_r" = '{"st":200}' ] || { echo "FAIL: web route'ta http::get bozuk: [$odr_r] (ODR/crash?)"; fail=1; }
-[ "$odr_alive" = "yes" ] || { echo "FAIL: http::get sonrasi SUNUCU COKTU (look::HttpResponse ODR ihlali geri geldi mi?)"; fail=1; }
+[ "$odr_r" = '{"st":200}' ] || { echo "FAIL: http::get is broken in a web route: [$odr_r] (ODR/crash?)"; fail=1; }
+[ "$odr_alive" = "yes" ] || { echo "FAIL: the SERVER CRASHED after http::get (is the look::HttpResponse ODR violation back?)"; fail=1; }
 if [ $fail -eq 0 ]; then
   echo "PASS: CLI-VM == web-VM == golden (2 columns x 22 categories + CLI print/exit + no silent fallback)"
   echo "  $CLIVM"

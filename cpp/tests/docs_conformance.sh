@@ -18,7 +18,7 @@ ROOT="$(cd "$DIR/../.." && pwd)"
 DOCS="$ROOT/docs/look.codlook.com/docs.html"
 BUILTINS="$ROOT/cpp/src/builtins.cpp"
 FIXTURE="$DIR/docs_api.txt"
-[ -f "$BUILTINS" ] || { echo "builtins.cpp yok: $BUILTINS"; exit 2; }
+[ -f "$BUILTINS" ] || { echo "builtins.cpp missing: $BUILTINS"; exit 2; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
@@ -32,26 +32,26 @@ gen_from_docs() {
 
 # --update: rewrite the fixture from docs
 if [ "${1:-}" = "--update" ]; then
-  [ -f "$DOCS" ] || { echo "--update için docs/index.html gerekli (bulunamadı: $DOCS)"; exit 2; }
+  [ -f "$DOCS" ] || { echo "--update needs docs/index.html (not found: $DOCS)"; exit 2; }
   gen_from_docs > "$FIXTURE"
-  echo "Fixture güncellendi: $FIXTURE ($(wc -l < "$FIXTURE") giriş)"
+  echo "Fixture updated: $FIXTURE ($(wc -l < "$FIXTURE") entries)"
   exit 0
 fi
 
-[ -f "$FIXTURE" ] || { echo "fixture yok: $FIXTURE (önce --update ile üret)"; exit 2; }
+[ -f "$FIXTURE" ] || { echo "fixture missing: $FIXTURE (generate it first with --update)"; exit 2; }
 
 # ── Staleness check (only if docs is accessible — locally) ──
 if [ -f "$DOCS" ]; then
   gen_from_docs > "$TMP/fresh.txt"
   if ! diff -q "$FIXTURE" "$TMP/fresh.txt" >/dev/null; then
-    echo "=== HATA: fixture BAYAT — docs değişti, docs_api.txt güncellenmemiş ==="
-    echo "  Fark (< fixture / > docs):"; diff "$FIXTURE" "$TMP/fresh.txt" | sed 's/^/    /'
-    echo "  Fix: bash cpp/tests/docs_conformance.sh --update  (+ allowlist'i gözden geçir)"
+    echo "=== ERROR: fixture is STALE — docs changed, docs_api.txt was not updated ==="
+    echo "  Diff (< fixture / > docs):"; diff "$FIXTURE" "$TMP/fresh.txt" | sed 's/^/    /'
+    echo "  Fix: bash cpp/tests/docs_conformance.sh --update  (+ review the allowlist)"
     exit 1
   fi
-  echo "(bayatlama kontrolü GEÇTİ — fixture docs ile senkron)"
+  echo "(staleness check PASSED — fixture is in sync with docs)"
 else
-  echo "(docs/ yok — bayatlama kontrolü atlandı; fixture↔builtin_names asıl guard koşuyor)"
+  echo "(no docs/ — staleness check skipped; the main fixture<->builtin_names guard is running)"
 fi
 
 # mod::fn in builtin_names() (the single programmatic source)
@@ -94,7 +94,7 @@ ALLOW
 FIXTURE_MIN=200
 fixture_lines=$(grep -c . "$FIXTURE")
 if [ "$fixture_lines" -lt "$FIXTURE_MIN" ]; then
-  echo "=== HATA: docs_api.txt yalnız $fixture_lines satır (min $FIXTURE_MIN) — boş/kesik fixture, vacuous-green riski ==="
+  echo "=== ERROR: docs_api.txt has only $fixture_lines lines (min $FIXTURE_MIN) — empty/truncated fixture, vacuous-green risk ==="
   exit 1
 fi
 
@@ -104,14 +104,14 @@ comm -23 "$TMP/docs_only.txt" "$TMP/allow.txt" > "$TMP/violations.txt"
 # DIRECTION 2 — in vm, not in fixture → informational (undocumented surface)
 comm -13 "$FIXTURE" "$TMP/vm.txt" > "$TMP/vm_only.txt"
 
-echo "=== YÖN 2 (bilgilendirme) — builtin_names'te VAR, docs'ta YOK ($(wc -l < "$TMP/vm_only.txt")) ==="
+echo "=== DIRECTION 2 (informational) — in builtin_names but NOT in docs ($(wc -l < "$TMP/vm_only.txt")) ==="
 sed 's/^/  /' "$TMP/vm_only.txt"
 echo ""
 if [ -s "$TMP/violations.txt" ]; then
-  echo "=== HATA: docs'ta VAAT edilen ama builtin_names()'te OLMAYAN (kullanıcı 500 alır) ==="
+  echo "=== ERROR: promised in docs but NOT in builtin_names() (users get a 500) ==="
   sed 's/^/  x /' "$TMP/violations.txt"
-  echo "Fix: çekirdeğe ekle (session::has gibi), docs'tan kaldır, ya da gerekçeyle allowlist'e."
+  echo "Fix: add it to the core (like session::has), remove it from docs, or add it to the allowlist with a reason."
   exit 1
 fi
-echo "=== docs-conformance GEÇTİ: fixture'daki her mod::fn çekirdekte karşılanıyor ==="
+echo "=== docs-conformance PASSED: every mod::fn in the fixture is provided by the core ==="
 exit 0

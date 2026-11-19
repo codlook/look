@@ -4,7 +4,7 @@
 # Run: build/lk tests/repro/arith_coercion.lk
 use json
 function ok($l, $g, $w)  { if ($g == $w) { print("OK   " . $l) } else { print("FAIL " . $l . " got[" . $g . "] want[" . $w . "]") } }
-function thr($l, $fn)    { try { $fn(); print("FAIL " . $l . " (hata bekleniyordu, gecti)") } catch ($e) { print("OK   " . $l . " (fail-loud)") } }
+function thr($l, $fn)    { try { $fn(); print("FAIL " . $l . " (an error was expected, it passed)") } catch ($e) { print("OK   " . $l . " (fail-loud)") } }
 
 # --- VALID: numeric strings and numeric types are preserved ---
 ok("\"5\" + 1 = 6",      "5" + 1, 6)
@@ -15,7 +15,7 @@ ok("2 * 3 = 6",          2 * 3, 6)
 # --- FAIL-LOUD: the silent-0 data corruption is closed ---
 thr("\"abc\" + 1",       fn() => "abc" + 1)
 thr("bignum(str) + 1",   fn() => json::decode("{\"n\":123456789012345678901234567890}")["n"] + 1)
-thr("null + 1 (eksik anahtar)", fn() => json::decode("{\"a\":1}")["yok"] + 1)
+thr("null + 1 (missing key)", fn() => json::decode("{\"a\":1}")["yok"] + 1)
 thr("[] + 1",            fn() => [] + 1)
 thr("\" 5 \" + 1 (bosluk)", fn() => " 5 " + 1)
 thr("\"1e-400\" + 1 (underflow)", fn() => "1e-400" + 1)
@@ -26,4 +26,4 @@ thr("\"1e-400\" + 1 (underflow)", fn() => "1e-400" + 1)
 ok("\"inf\" + 1  = 1 (egzotik, pinned)",  "inf" + 1, 1)
 ok("\"nan\" + 1  = 1 (egzotik, pinned)",  "nan" + 1, 1)
 ok("\"0x10\" + 1 = 1 (egzotik, pinned)",  "0x10" + 1, 1)
-print("=== arith_coercion bitti ===")
+print("=== arith_coercion done ===")

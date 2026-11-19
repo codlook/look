@@ -16,13 +16,13 @@ static void chk(const char* label, bool cond) {
 }
 
 int main() {
-    printf("session güvenlik-karar tablosu:\n");
+    printf("session security-decision table:\n");
     // ── valid_sid: 32-hex allowlist ──
-    chk("gecerli 32-hex",       valid_sid("0123456789abcdef0123456789abcdef"));
-    chk("BUYUK harf hex kabul",  valid_sid("0123456789ABCDEF0123456789ABCDEF"));
+    chk("valid 32-hex",       valid_sid("0123456789abcdef0123456789abcdef"));
+    chk("UPPERCASE hex accepted",  valid_sid("0123456789ABCDEF0123456789ABCDEF"));
     chk("31 char RED",          !valid_sid("0123456789abcdef0123456789abcde"));
     chk("33 char RED",          !valid_sid("0123456789abcdef0123456789abcdef0"));
-    chk("bos RED",              !valid_sid(""));
+    chk("empty REJECTED",              !valid_sid(""));
     chk("traversal ../ RED",    !valid_sid("../../../etc/cron.d/pwn00000000000"));
     chk("hex-disi g RED",       !valid_sid("0123456789abcdef0123456789abcdeg"));
     chk("slash RED",            !valid_sid("0123456789abcdef0123456789abc/ef"));
@@ -34,19 +34,19 @@ int main() {
     sess_blob_set(blob, "isim", "bob\nrol=admin\nadmin=1");
 
     std::string out;
-    chk("rol KORUNDU (=uye, admin degil)",
+    chk("role PRESERVED (=uye, not admin)",
         sess_blob_get(blob, "rol", out) && out == "uye");
-    chk("uydurma 'admin' alani YOK",
+    chk("no forged 'admin' field",
         !sess_blob_get(blob, "admin", out));
-    chk("isim degeri gidis-donus AYNEN korunur",
+    chk("name value round-trips unchanged",
         sess_blob_get(blob, "isim", out) && out == "bob\nrol=admin\nadmin=1");
 
     // '=' in the key → data-mixing attempt: set("a=b","X") get("a") must not leak
     std::string b2;
     sess_blob_set(b2, "a=b", "X");
-    chk("anahtar '=' kacirildi (get('a') b=X vermez)",
+    chk("key '=' was escaped (get('a') does not return b=X)",
         !(sess_blob_get(b2, "a", out) && out == "b=X"));
-    chk("gercek anahtar 'a=b' okunur",
+    chk("real key 'a=b' is readable",
         sess_blob_get(b2, "a=b", out) && out == "X");
 
     // overwrite: the same key a second time → a single line, the new value
@@ -63,11 +63,11 @@ int main() {
     chk("backslash + CRLF round-trip",
         sess_blob_get(b4, "p", out) && out == "a\\b\r\nc");
     // backward compat: no backslash in an old blob → unesc is identity
-    chk("eski-blob geriye-uyum (esc'siz duz metin)",
+    chk("old-blob backward compatibility (plain text without escaping)",
         [](){ std::string b="eski=duzmetin\n"; std::string o; return sess_blob_get(b,"eski",o) && o=="duzmetin"; }());
 
     const int EXPECTED = 17;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (SID traversal + blob \\n/= enjeksiyonu kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (SID traversal + blob \\n/= injection locked in)\n", fails);
     return fails ? 1 : 0;
 }

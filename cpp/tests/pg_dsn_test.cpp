@@ -42,7 +42,7 @@ int main() {
     chk("foo=bar",           true,  true,  true);
 
     const int EXPECTED = 13;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (verify-ca dahil, sessiz-plaintext regresyonu kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (including verify-ca, the silent-plaintext regression locked in)\n", fails);
     return fails ? 1 : 0;
 }

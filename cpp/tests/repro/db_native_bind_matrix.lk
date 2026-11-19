@@ -31,7 +31,7 @@ db::exec($c, "INSERT INTO t_bind (i,f,b,s,n) VALUES (?,?,?,?,?)",
     [9223372036854775807, 3.141592653589793, true, "o'zel \" karakter \\ son", null])
 
 $r = db::query($c, "SELECT i, f, b, s, n FROM t_bind", [])
-print("ham satir: " . json::encode($r[0]))
+print("raw row: " . json::encode($r[0]))
 $row = $r[0]
 
 // int64 EXACT (above 2^53 — deliberately preserved) — some drivers may return a string, numeric equality
@@ -41,9 +41,9 @@ chk("float round-trip", "" . $row["f"], "3.141592653589793")
 // bool → 1/true/t (depending on the driver) — one of them must hold
 $bv = "" . $row["b"]
 $bok = ($bv == "1" || $bv == "true" || $bv == "t")
-chk("bool dogru (1/true/t)", $bok, true)
+chk("bool true (1/true/t)", $bok, true)
 // text without quote/backslash corruption
-chk("text ozel-karakter", $row["s"], "o'zel \" karakter \\ son")
+chk("text special-char", $row["s"], "o'zel \" karakter \\ son")
 // null → a REAL null (NOT an empty string)
 chk("null gercek-null", $row["n"] == null, true)
 

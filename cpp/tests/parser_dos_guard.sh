@@ -9,7 +9,7 @@
 #   Usage: bash tests/parser_dos_guard.sh ./build/lk
 set -u
 LK="${1:-./build/lk}"
-command -v python3 >/dev/null 2>&1 || { echo "  (atlandı: python3 gerekli)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "  (skipped: python3 required)"; exit 0; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ran=0
 
@@ -32,7 +32,7 @@ probe() {
   done
 }
 
-echo "LOOK parser DoS-guard (derin-yuvalama → temiz hata, crash/hang YOK; --check + VM):"
+echo "LOOK parser DoS guard (deep nesting -> clean error, NO crash/hang; --check + VM):"
 probe "5000 parens"          "open('$TMP/p.lk','w').write('print('+'('*5000+'1'+')'*5000+')')"
 probe "5000 nested arrays"   "open('$TMP/p.lk','w').write('print('+'['*5000+'1'+']'*5000+')')"
 probe "5000 ** chain (right-assoc)" "open('$TMP/p.lk','w').write('print(1'+'**2'*5000+')')"
@@ -42,4 +42,4 @@ probe "2000 nested calls"    "open('$TMP/p.lk','w').write('f'+'('*2000+')'*2000)
 
 echo ""
 if [ $fails -ne 0 ]; then echo "PARSER DoS-GUARD: $fails/$ran FAIL"; exit 1; fi
-echo "PARSER DoS-GUARD: $ran/$ran PASS (derin-yuvalama her modda temiz-hata, crash yok)"
+echo "PARSER DoS-GUARD: $ran/$ran PASS (deep nesting gives a clean error in every mode, no crash)"

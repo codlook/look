@@ -713,7 +713,7 @@ jobs:
           out="$(./build/lk tests/carried_fixes_test.lk 2>&1)"; echo "$out"
           echo "$out" | grep -q '^=== carried fixes done ===$' && ! echo "$out" | grep -q '^FAIL'
           out="$(./build/lk tests/repro/arith_coercion.lk 2>&1)"; echo "$out"
-          echo "$out" | grep -q 'arith_coercion bitti' && ! echo "$out" | grep -q '^FAIL'
+          echo "$out" | grep -q 'arith_coercion done' && ! echo "$out" | grep -q '^FAIL'
           [ "$(./build/lk tests/closure_parallel/np1.lk 2>/dev/null)" = 0 ]
           [ "$(./build/lk tests/closure_parallel/np2.lk 2>/dev/null)" = 123 ]
 
@@ -1347,7 +1347,7 @@ jobs:
       # DKIM verify table test — seam (dkim_verify_with_key) + (2) multiple-From FAIL-SAFE.
       # Positive control (valid signature→TRUE) + both directions multiple-From→FALSE. RED if a refactor breaks this
       # fail-safe behaviour (find/rfind approaching the same From).
-      - name: DKIM verify table (seam + çoklu-From)
+      - name: DKIM verify table (seam + multiple From)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1425,7 +1425,7 @@ jobs:
 
       # HTTP hardening runtime — request smuggling (double-CL/TE-variant/obs-fold) +
       # slowloris header-deadline. The tests existed but were not in CI.
-      - name: HTTP sertleştirme (smuggling + slowloris)
+      - name: HTTP hardening (smuggling + slowloris)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1448,7 +1448,7 @@ jobs:
       # SSE sse::close() fd leak — found by a bug hunt (957d11e). When the server called sse::close,
       # the fd/epoll/map leaked until the client's TCP dropped (+ the client hung because the socket was not closed).
       # fd-counter guard (TSan is blind to this fd-lifetime race). Positive control: before the fix fd=base+1.
-      - name: SSE sse::close fd-sızıntısı (runtime)
+      - name: SSE sse::close fd leak (runtime)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1457,7 +1457,7 @@ jobs:
       # WS close + fd leak — functional (no TSan), raw-socket handshake (python3 stdlib).
       # handshake 101 → echo → client close-frame → server close + fd freed + abrupt-disconnect
       # regression. WS EWOULDBLOCK (slow-client write-drop) is out of scope (separate load test).
-      - name: WS close fd-sızıntısı (runtime)
+      - name: WS close fd leak (runtime)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1466,7 +1466,7 @@ jobs:
       # Security repros — ReDoS/F-01 thread leak, file-root path-traversal
       # (encoded/double-encoded), i64 overflow. NOTE: msvc_mul_ovf locks the Linux path;
       # the MSVC branch needs Windows CI (maturity audit theme B).
-      - name: Güvenlik repro'ları (ReDoS + traversal + i64)
+      - name: Security repros (ReDoS + traversal + i64)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1483,7 +1483,7 @@ jobs:
       # backend + an in-process thread the core behaviour is PROVEN in CI. db:: CRUD+tx,
       # jobs:: lifecycle+retry, parallel() fan-out+isolation, prepared bind matrix.
       # (mail:: needs an external HTTP provider → outside CI; the MySQL/PG wire dialect is a separate live-DSN check.)
-      - name: Davranışsal (db/jobs/parallel/prepared, SQLite)
+      - name: Behavioral (db/jobs/parallel/prepared, SQLite)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1576,7 +1576,7 @@ jobs:
       # MySQL multi-packet joining — seam (look/mysql_wire_parse.h). read_packet must join the 0xFFFFFF
       # continuation packets (otherwise a pooled connection returns WRONG DATA for payloads of 16MB+).
       # The reader is a memory buffer → NO live MySQL. cap/0-terminator/broken-stream POSITIVE-CONTROLLED.
-      - name: MySQL multi-packet birleştirme (seam tablosu)
+      - name: MySQL multi-packet reassembly (seam table)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1609,7 +1609,7 @@ jobs:
       # PG TLS REAL handshake — mock TLS PG server (python ssl, self-signed cert), NO Docker.
       # verify-full REFUSES an untrusted cert (does SSL_VERIFY_PEER work) + insecure accepts
       # it (positive control: the refusal comes from verify; if verify were broken it would behave like insecure).
-      - name: PG TLS gerçek-handshake verify (mock, Docker'sız)
+      - name: PG TLS real-handshake verify (mock, no Docker)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1632,7 +1632,7 @@ jobs:
       # (github.com only), invalid name, path-traversal (user + subdir). Positive control:
       # a legitimate name must pass the parse. (Zip-slip/redirect need a real download → C++ unit test
       # targeted follow-up; the full installer_test.sh needs a network → manual/nightly.)
-      - name: "installer:: parse-katmanı (host/ad/traversal, ağsız)"
+      - name: "installer:: parse layer (host/name/traversal, no network)"
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1651,7 +1651,7 @@ jobs:
       # installer:: redirect security-decision seam (look/url_safe.h). WITHOUT a real HTTP/3xx:
       # refusal of scheme downgrade (http://) + host escape (evilgithub.com / github.com.evil.com).
       # POSITIVE-CONTROLLED (if the https requirement is removed http:// escapes→FAIL).
-      - name: "installer:: redirect güvenlik-kararı (seam tablosu)"
+      - name: "installer:: redirect security decision (seam table)"
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1673,7 +1673,7 @@ jobs:
       # loop delegates to these predicates. No network/DNS: a decision table from raw bytes
       # (metadata 169.254.169.254 · NAT64 64:ff9b · 6to4 2002 · v4-mapped bypasses).
       # POSITIVE-CONTROLLED (if a branch is deleted the matching row goes RED).
-      - name: SSRF private/özel-blok kararı (seam tablosu)
+      - name: SSRF private/special-block decision (seam table)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1683,7 +1683,7 @@ jobs:
       # int64 overflow detection — seam (look/int_overflow.h). operator+/-/* promotes to float on overflow
       # (NO signed-overflow UB). Table test of the overflow bounds + the INT64_MIN*-1 #DE(SIGFPE) trap.
       # POSITIVE-CONTROLLED. (Linux/CI __builtin branch; the MSVC branch is Tier-2 Windows.)
-      - name: int64 taşma-tespiti (seam tablosu)
+      - name: int64 overflow detection (seam table)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1710,21 +1710,21 @@ jobs:
       # REVERSE DIRECTION: is every namespaced mod::fn in builtin_names() documented in docs/index.html?
       # The missing half of docs_conformance — a new builtin cannot pass CI without being documented.
       # The exclusion list is justified (validator rules + template {#} syntax), not known_fail.
-      - name: docs-conformance TERS-YÖN (builtin_names ↔ docs API)
+      - name: docs-conformance reverse direction (builtin_names ↔ docs API)
         timeout-minutes: 10
         run: bash cpp/tests/doc_conformance_reverse.sh
 
       # SSRF DNS-rebinding pin invariant — measured: is_ssrf_blocked + connect use the SAME resolved
       # res->ai_addr (resolve-once, no re-resolution → rebinding is impossible). This guard
       # locks the source invariant; RED if someone turns connect into a re-resolve. Positive-controlled.
-      - name: SSRF DNS-rebinding pin değişmezi (kaynak guard)
+      - name: SSRF DNS-rebinding pin invariant (source guard)
         timeout-minutes: 10
         run: bash cpp/tests/ssrf_pin_guard.sh
 
       # Plesk installer privesc hardening — network-free, no Plesk. Do the domain/script/svc sanitization
       # (PHP regex + bash tr -cd + case guard) block injection (newline→systemd unit root command)?
       # Positive-controlled (if the sanitization is removed the privesc payload yields a 2-line unit).
-      - name: "Plesk installer enjeksiyon-guard'ları (ağsız)"
+      - name: "Plesk installer injection guards (no network)"
         timeout-minutes: 10
         run: |
           sudo apt-get install -y php-cli
@@ -1812,7 +1812,7 @@ jobs:
       # JWT security table — is the HS256 module SAFE against the classic holes: alg=none refusal,
       # RS256→HS256 key-confusion refusal, exp expiry, signature tampering + positive. verify does NOT
       # read the header alg (unconditional HMAC) → alg-confusion is structurally impossible. Positive-controlled.
-      - name: JWT güvenlik (alg=none / key-confusion / exp / tamper + pozitif)
+      - name: JWT security (alg=none / key-confusion / exp / tamper + positive)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1831,8 +1831,8 @@ jobs:
           timeout 60 /tmp/fcgi_parse_test
           g++ -std=c++17 -Iinclude -DFCGI_POSCTL -fsanitize=address,undefined \
             -fno-sanitize-recover=all tests/fcgi_parse_test.cpp -o /tmp/fcgi_posctl
-          if timeout 30 /tmp/fcgi_posctl; then echo "::error::POSCTL dişsiz"; exit 1; \
-          else echo "POSCTL ASan yakaladı (beklenen)"; fi
+          if timeout 30 /tmp/fcgi_posctl; then echo "::error::POSCTL has no teeth"; exit 1; \
+          else echo "POSCTL caught by ASan (expected)"; fi
 
       # WebSocket frame-decode (seam table, ASan/UBSan) — untrusted-NETWORK surface.
       # Parser adversarial round: decode_frame had no unit guard. Security (mask
@@ -1890,7 +1890,7 @@ jobs:
       # before_route + request::path() prefix (9 hand-written require_login → 1). If it breaks, /admin (/tasks in the dogfood)
       # opens without auth = a silent authorization bypass. Verifies 403/200 + nested against
       # lk-fcgi --mode http. POSITIVE-CONTROLLED: the variant without the guard gives /admin=200 (the test discriminates — sabotage→RED).
-      - name: before_route prefix guard (yetki atlatma regresyonu)
+      - name: before_route prefix guard (authorization bypass regression)
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1899,7 +1899,7 @@ jobs:
       # route::group() — Go/chi-style prefix + middleware inheritance (NO name/namespace, deliberately
       # minimal). Against lk-fcgi --mode http. Self-discriminating: if the prefix
       # breaks bare /solo opens (200, not 404), if mw breaks a no-token request returns 200 → the test goes RED.
-      - name: "route::group prefix + middleware kalıtımı"
+      - name: "route::group prefix + middleware inheritance"
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1908,7 +1908,7 @@ jobs:
       # runtime::stats() observability counters — request_count/errors_5xx/latency/db_pool.
       # request_count was once broken to 0 on the web (setup interpreter vs VM path). Self-discriminating
       # delta assertions: if a counter is broken into a no-op the value stays flat → RED (sabotage→0 delta verified).
-      - name: "runtime::stats sayaçları (sessiz-sorun göstergeleri)"
+      - name: "runtime::stats counters (silent-problem indicators)"
         timeout-minutes: 10
         run: |
           cd cpp
@@ -1929,7 +1929,7 @@ jobs:
   # A fresh mysql:8 = empty cache → the first connection takes the full-auth (RSA) path; the bind matrix exercises the real
   # binary protocol. Embedded drivers (NO libmysqlclient/libpq) → lk only.
   db-live:
-    name: "Canlı DB — caching_sha2 (MySQL 8) + prepared bind (MySQL 8 + PG 16)"
+    name: "Live DB — caching_sha2 (MySQL 8) + prepared bind (MySQL 8 + PG 16)"
     runs-on: ubuntu-latest
     services:
       mysql:
@@ -1967,7 +1967,7 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target look look-fcgi --parallel $(nproc)
       # caching_sha2: root@mysql:8 over TCP without TLS → fresh cache → full-auth RSA path (then fast).
-      - name: "caching_sha2_password — gerçek MySQL 8 (full-auth RSA + fast yol)"
+      - name: "caching_sha2_password — real MySQL 8 (full-auth RSA + fast path)"
         timeout-minutes: 10
         env:
           MYDSN: "mysql://root:rootpw@127.0.0.1:3306/lookci"
@@ -2006,11 +2006,11 @@ jobs:
           for f in db_bind_mysql db_bind_pg; do
             echo "== $f =="
             out="$(timeout 60 ./build/lk tests/behavioral/$f.lk 2>&1)"; echo "$out"
-            echo "$out" | grep -q 'ran='  || { echo "::error::$f erken oldu (ran= yok)"; exit 1; }
+            echo "$out" | grep -q 'ran='  || { echo "::error::$f ended early (no ran=)"; exit 1; }
             echo "$out" | grep -q '^FAIL' && { echo "::error::$f bind assert kirildi"; exit 1; }
             true
           done
-          echo "Native prepared-bind matrisi (MySQL+PG) YESIL."
+          echo "Native prepared-bind matrix (MySQL+PG) GREEN."
       # An INSERT inside a transaction is kept, and db::last_id belongs to that INSERT. The
       # driver used to ask for lastval() after every INSERT: on a table without a sequence that
       # failed, aborted the transaction, and the COMMIT silently rolled back; and lastval() is the
@@ -2129,7 +2129,7 @@ jobs:
   # with initdb (a TLS-on + a TLS-off cluster, CA-signed SAN=localhost cert, scram) and proves the
   # REAL SSLRequest→'S'→TLS→startup→SCRAM-auth→SELECT roundtrip end to end.
   pg-tls-live:
-    name: "PG TLS gerçek-sunucu interop (SSLRequest→TLS→startup→SCRAM)"
+    name: "PG TLS real-server interop (SSLRequest→TLS→startup→SCRAM)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -2148,12 +2148,12 @@ jobs:
           cmake --build build --target look --parallel $(nproc)
       # Vacuous-green guard (Rule-2): if the harness has no postgres/openssl it SKIPS with exit 0;
       # require the real PASS line — if it is skipped the job BREAKS (no silent green).
-      - name: PG TLS gerçek-sunucu interop (6-vaka + pozitif-kontrol)
+      - name: PG TLS real-server interop (6 cases + positive control)
         timeout-minutes: 10
         run: |
           cd cpp
           out="$(bash tests/pg_tls_realserver_test.sh build/lk 54330 54331)"; echo "$out"
-          echo "$out" | grep -q '^PASS: PG TLS' || { echo "::error::PG TLS testi ATLANDI veya kirildi (vacuous-green guard)"; exit 1; }
+          echo "$out" | grep -q '^PASS: PG TLS' || { echo "::error::PG TLS test was SKIPPED or broke (vacuous-green guard)"; exit 1; }
 
   # ── Concurrency hang smoke job (worker-pool + fiber) ──────────────────────
   # A bounded-concurrency guard for the c=100 hang regression (acceptor starvation, D Fix #2): c=50
@@ -2161,7 +2161,7 @@ jobs:
   # alive. Positive-controlled (dead-port + accept-only-hang server → RED). The c=100 upper end is nightly
   # (load is sensitive to machine noise); c=50 reliably exercises logic starvation in CI.
   concurrency-smoke:
-    name: "Eşzamanlılık hang smoke (pool + fiber, c=50)"
+    name: "Concurrency hang smoke (pool + fiber, c=50)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -45,15 +45,15 @@ kontrol() {
     OK\|${bek_surum}*\|şğü)
       echo "  PASS $etiket -> ${out}" ;;
     HATA*)
-      echo "  FAIL $etiket baglanamadi: $out"
+      echo "  FAIL $etiket could not connect: $out"
       case "$out" in
         *"Access denied"*|*"authentication"*|*plugin*)
-          echo "       -> kimlik dogrulama eklentisi ele alinmiyor olabilir"
-          echo "          (sunucunun bildirdigi eklenti okunuyor mu? 0xFE AuthSwitchRequest?)" ;;
+          echo "       -> the authentication plugin may not be handled"
+          echo "          (is the plugin announced by the server being read? 0xFE AuthSwitchRequest?)" ;;
       esac
       fail=1 ;;
     *)
-      echo "  FAIL $etiket beklenmedik cikti: $out"; fail=1 ;;
+      echo "  FAIL $etiket unexpected output: $out"; fail=1 ;;
   esac
 }
 
@@ -87,30 +87,30 @@ print($n1 . "|" . $n2 . "|" . count($rt))
 LK
   out=$(MYDSN="$dsn" timeout 40 "$LK" "$TMP/esc.lk" 2>&1 | grep -E '^[0-9]+\|' | head -1)
   if [ "$out" = "0|0|1" ]; then
-    echo "  PASS kacis SET'ten bagimsiz guvenli (NBE modunda bile enjeksiyon yok, veri korunuyor)"
+    echo "  PASS escaping is safe regardless of SET (no injection even in NBE mode, data preserved)"
   else
-    echo "  FAIL GUVENLIK: kacis NO_BACKSLASH_ESCAPES modunda kiriliyor: [$out] (beklenen 0|0|1)"
-    echo "       -> escape() tirnagi '\\'' ile mi kaciriyor? Standart SQL '' kullanilmali"
+    echo "  FAIL SECURITY: escaping breaks in NO_BACKSLASH_ESCAPES mode: [$out] (expected 0|0|1)"
+    echo "       -> does escape() escape the quote with '\\''? Standard SQL '' must be used"
     fail=1
   fi
 }
 
-echo "MySQL/MariaDB kimlik dogrulama guard'i (surum matrisi)"
+echo "MySQL/MariaDB authentication guard (version matrix)"
 kontrol "MySQL 5.7   (mysql_native_password)"  "$MY57" "5.7"
 kontrol "MySQL 8.0   (caching_sha2_password)"  "$MY8"  "8.0"
 [ -n "${LOOK_MY82_DSN:-}"  ] && kontrol "MySQL 8.2   (caching_sha2)"                "$LOOK_MY82_DSN"  "8.2"
 [ -n "${LOOK_MY84_DSN:-}"  ] && kontrol "MySQL 8.4   (native DISABLED)"             "$LOOK_MY84_DSN"  "8.4"
-[ -n "${LOOK_MY91_DSN:-}"  ] && kontrol "MySQL 9.x   (native KALDIRILDI)"           "$LOOK_MY91_DSN"  "9."
+[ -n "${LOOK_MY91_DSN:-}"  ] && kontrol "MySQL 9.x   (native REMOVED)"           "$LOOK_MY91_DSN"  "9."
 [ -n "${LOOK_MDB_DSN:-}"   ] && kontrol "MariaDB     (native)"                      "$LOOK_MDB_DSN"   "1"
 
 # Second round: on 8.x the server cache is now full -> FAST path (a different code branch).
 # The first round verifies the full RSA path, this round the fast path. BOTH must run:
 # if only the fast path were tested, it would pass even if the RSA path were broken (on a fresh
 # server the first connection ALWAYS goes through RSA).
-kontrol "MySQL 8.0   (hizli yol, onbellek dolu)" "$MY8" "8.0"
+kontrol "MySQL 8.0   (fast path, cache warm)" "$MY8" "8.0"
 
 # Escape safety — independent of authentication, on the same server
 kacis_kontrol "$MY8"
 
-[ $fail = 0 ] && echo "PASS: MySQL/MariaDB auth — surum matrisi temiz" || echo "FAIL: MySQL auth"
+[ $fail = 0 ] && echo "PASS: MySQL/MariaDB auth — version matrix clean" || echo "FAIL: MySQL auth"
 exit $fail

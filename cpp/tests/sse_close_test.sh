@@ -17,8 +17,8 @@ TMP=$(mktemp -d)
 SRV=""; CURL=""
 cleanup(){ [ -n "$CURL" ] && kill "$CURL" 2>/dev/null; [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; sleep 1; [ -n "$SRV" ] && kill -9 "$SRV" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
-command -v curl    >/dev/null 2>&1 || { echo "  (atlandi: curl gerekli)"; exit 0; }
-[ -d /proc ] || { echo "  (atlandi: /proc gerekli — Linux)"; exit 0; }
+command -v curl    >/dev/null 2>&1 || { echo "  (skipped: curl required)"; exit 0; }
+[ -d /proc ] || { echo "  (skipped: /proc required — Linux)"; exit 0; }
 fail=0
 
 cat > "$TMP/app.lk" <<'LKEOF'
@@ -43,26 +43,26 @@ conn=$(ls "/proc/$SRV/fd" 2>/dev/null | wc -l)
 
 # Sanity: was the connection really established (verify the tool ran — Rule 3)
 if [ "$conn" -ne $((base+1)) ] || ! printf '%s' "$got" | grep -q 'greet'; then
-  echo "  FAIL sanity: SSE bağlantısı kurulmadı (fd $base→$conn, curl='$got') — test SSE yolunu egzersiz etmedi"; fail=1
+  echo "  FAIL sanity: SSE connection was not established (fd $base->$conn, curl='$got') — the test did not exercise the SSE path"; fail=1
 else
-  echo "  OK bağlandı: fd $base→$conn, curl 'greet' aldı"
+  echo "  OK connected: fd $base->$conn, curl received 'greet'"
 fi
 
 # After the server's sse::close (2s): fd must return to base + curl must get EOF
 sleep 2
 after=$(ls "/proc/$SRV/fd" 2>/dev/null | wc -l)
-if kill -0 "$CURL" 2>/dev/null; then echo "  FAIL: sse::close sonrası curl HÂLÂ bağlı (soket kapanmadı — istemci asılı)"; fail=1
-else echo "  OK curl EOF aldı (soket gerçekten kapandı)"; fi
-if [ "$after" -eq "$base" ]; then echo "  OK fd base'e döndü ($after) — sse::close fd'yi serbest bıraktı (sızıntı YOK)"
-else echo "  FAIL: sse::close sonrası fd=$after (base=$base) — SIZINTI (fix öncesi davranış)"; fail=1; fi
+if kill -0 "$CURL" 2>/dev/null; then echo "  FAIL: curl is STILL connected after sse::close (socket not closed — client hangs)"; fail=1
+else echo "  OK curl got EOF (socket really closed)"; fi
+if [ "$after" -eq "$base" ]; then echo "  OK fd returned to base ($after) — sse::close freed the fd (NO leak)"
+else echo "  FAIL: fd=$after after sse::close (base=$base) — LEAK (pre-fix behavior)"; fail=1; fi
 
 # Regression: a pure client-disconnect (no server-close) must still clean up, no double-close/crash
 kill "$CURL" 2>/dev/null; CURL=""
 for i in 1 2 3; do curl -sN -H 'Accept: text/event-stream' --max-time 1 "http://127.0.0.1:$PORT/events" >/dev/null 2>&1; done
 sleep 1
 recyc=$(ls "/proc/$SRV/fd" 2>/dev/null | wc -l)
-if kill -0 "$SRV" 2>/dev/null && [ "$recyc" -le $((base+1)) ]; then echo "  OK client-disconnect 3-döngü: fd=$recyc, server ayakta (çift-close/crash yok)"
-else echo "  FAIL: client-disconnect regresyonu (fd=$recyc, server $(kill -0 $SRV 2>/dev/null && echo ayakta || echo ÇÖKTÜ))"; fail=1; fi
+if kill -0 "$SRV" 2>/dev/null && [ "$recyc" -le $((base+1)) ]; then echo "  OK client-disconnect 3 cycles: fd=$recyc, server alive (no double close/crash)"
+else echo "  FAIL: client-disconnect regression (fd=$recyc, server $(kill -0 $SRV 2>/dev/null && echo alive || echo CRASHED))"; fail=1; fi
 
-[ $fail = 0 ] && echo "PASS: SSE sse::close fd-sizintisi" || echo "FAIL: SSE sse::close fd-sizintisi"
+[ $fail = 0 ] && echo "PASS: SSE sse::close fd leak" || echo "FAIL: SSE sse::close fd leak"
 exit $fail

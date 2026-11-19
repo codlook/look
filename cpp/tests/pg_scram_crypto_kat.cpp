@@ -64,8 +64,8 @@ int main(){
           "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"); }
 
     const int EXPECTED = 8;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL — PG kopyası RFC'den AYRIŞIYOR (BULGU)\n"
-                 : "\nPG kopyası RFC'ye pinli — look::crypto_sha256.h ile AYRIŞMIYOR (birleştirme güvenli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL — the PG copy DIVERGES from the RFC (FINDING)\n"
+                 : "\nthe PG copy is pinned to the RFC — does NOT diverge from look::crypto_sha256.h (merging is safe)\n", fails);
     return fails ? 1 : 0;
 }

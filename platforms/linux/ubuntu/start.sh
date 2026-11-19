@@ -38,5 +38,5 @@ a2dismod mpm_event 2>/dev/null; a2enmod mpm_prefork cgi 2>/dev/null
 /usr/local/bin/look-fcgi --port 9000 &
 sleep 1
 apache2ctl start
-echo "=== LOOK çalışıyor — http://localhost:8080/ ==="
+echo "=== LOOK is running — http://localhost:8080/ ==="
 sleep infinity

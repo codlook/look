@@ -29,11 +29,11 @@ int main() {
         "bh=BODYHASHvalue123; h=from:to:subject; b=SIGNATUREvalue456";
 
     // ① CORE: tag("h") must return the signed-header list, NOT the bh= value.
-    check("dkim_tag(h) = from:to:subject (bh degil)",
+    check("dkim_tag(h) = from:to:subject (not bh)",
           look::dkim_tag(hdr, "h") == "from:to:subject");
     check("dkim_tag(bh) = body hash",
           look::dkim_tag(hdr, "bh") == "BODYHASHvalue123");
-    check("dkim_tag(h) != dkim_tag(bh) (ayri)",
+    check("dkim_tag(h) != dkim_tag(bh) (distinct)",
           look::dkim_tag(hdr, "h") != look::dkim_tag(hdr, "bh"));
     check("dkim_tag(d) = example.com",  look::dkim_tag(hdr, "d") == "example.com");
     check("dkim_tag(s) = sel",          look::dkim_tag(hdr, "s") == "sel");
@@ -42,7 +42,7 @@ int main() {
     // POSITIVE CONTROL: the old find() parser must get ① WRONG (tag(h) hits the "h=" inside "bh="
     // and returns the bh value) → old_tag(h)==old_tag(bh). If this PASSES, the test really
     // tells ① apart (with the new parser it is != , passed above).
-    check("pozitif kontrol: ESKI parser ①'de bozuk (old_tag(h)==old_tag(bh))",
+    check("positive control: the OLD parser is broken at ① (old_tag(h)==old_tag(bh))",
           old_tag(hdr, "h") == old_tag(hdr, "bh"));
 
     std::cout << "\n";

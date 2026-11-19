@@ -4,7 +4,7 @@
 try {
   $db = db::connect("mysql://looktest:testpass@look-mysql8/testdb?tls=verify")
   db::query($db, "SELECT 1")
-  print("HATA: self-signed KABUL edildi — verify calismiyor")
+  print("ERROR: self-signed was ACCEPTED — verify is not working")
 } catch($e) {
-  print("OK verify aktif (self-signed reddedildi): " . $e)
+  print("OK verify is active (self-signed rejected): " . $e)
 }

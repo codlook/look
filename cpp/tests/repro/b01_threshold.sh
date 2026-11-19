@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # B-01: degerlendirme ozyinelemesi sinirsiz — cokme esigini bul.
-# Kullanim: ./b01_threshold.sh /yol/lk
-LK="${1:?kullanim: $0 /yol/lk}"
+# Usage: ./b01_threshold.sh /path/to/lk
+LK="${1:?usage: $0 /path/to/lk}"
 gen(){ python3 -c "print('\$x = ' + '+'.join(['1']*$1))" > /tmp/b01.lk; }
 probe(){ gen "$1"
   out=$(env $2 ASAN_OPTIONS=detect_leaks=0:abort_on_error=0 timeout 120 $LK $3 /tmp/b01.lk 2>&1)
@@ -15,5 +15,5 @@ for n in 200 400 500 1000 2000 4000 8000 16000 32000; do
     "$(probe $n '' --check)" "$(probe $n '' '')"
 done
 echo
-echo "Beklenen dogru davranis: her sutun, parser guard'i (max 150) ile TUTARLI bir"
-echo "noktada temiz 'cok derin' hatasi vermeli — hicbir N'de CRASH olmamali."
+echo "Expected correct behavior: every column must, at a point CONSISTENT with the parser guard (max 150),"
+echo "give a clean 'too deep' error — no N may CRASH."

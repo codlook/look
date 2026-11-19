@@ -27,9 +27,9 @@ int main() {
     { std::string t,c,a; imap_parse_command("a1 LOGIN user pass", t,c,a);
       eq("tag",t,"a1"); eq("cmd",c,"LOGIN"); eq("args",a,"user pass"); }
     { std::string t,c,a; imap_parse_command("a2 noop", t,c,a);
-      eq("cmd(upper)",c,"NOOP"); eq("args(bos)",a,""); }
+      eq("cmd(upper)",c,"NOOP"); eq("args(empty)",a,""); }
     { std::string t,c,a; imap_parse_command("justtag", t,c,a);
-      eq("tag-only",t,"justtag"); eq("cmd(bos)",c,""); }
+      eq("tag-only",t,"justtag"); eq("cmd(empty)",c,""); }
 
     printf("IMAP split_two:\n");
     { std::string a,b; imap_split_two("\"john\" \"p@ss word\"", a,b);  // quoted password with spaces
@@ -37,7 +37,7 @@ int main() {
     { std::string a,b; imap_split_two("bob secret", a,b);
       eq("a",a,"bob"); eq("b",b,"secret"); }
 
-    printf("IMAP mailbox_name_ok (GÜVENLİK — traversal/enjeksiyon):\n");
+    printf("IMAP mailbox_name_ok (SECURITY — traversal/injection):\n");
     mb("INBOX",              true,  "INBOX");
     mb("",                   true,  "INBOX");     // empty → INBOX
     mb("\"INBOX\"",          true,  "INBOX");     // quoted
@@ -48,7 +48,7 @@ int main() {
     mb("/etc/passwd",        false, "");          // mutlak yol
     mb("a/b",                false, "");          // separator
     mb("a\\b",               false, "");          // backslash separator
-    mb("bad\ttab",           false, "");          // kontrol karakteri
+    mb("bad\ttab",           false, "");          // control character
 
     // --- ADVERSARIAL: MUST NOT CRASH (ASan) ---
     const char* adv[] = { "", "\"", "\"\"", ";;;;", "\x01\x02", "/", "..", "\\" };
@@ -57,8 +57,8 @@ int main() {
                          std::string x,y; imap_split_two(s,x,y); }
     std::string big(100000,'"'); { std::string c; (void)imap_mailbox_name_ok(big,c);
                                    std::string x,y; imap_split_two(big,x,y); }
-    printf("  adversarial+100K: ÇÖKME YOK\n");
+    printf("  adversarial+100K: NO CRASH\n");
 
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (parse + mailbox guard: 'INBOX; rm -rf /' RED, kilitli)\n", fails);
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (parse + mailbox guard: 'INBOX; rm -rf /' REJECTED, locked in)\n", fails);
     return fails ? 1 : 0;
 }

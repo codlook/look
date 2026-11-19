@@ -39,7 +39,7 @@ jobs:
 
       # The Windows-only branches (NCrypt rs256 · BCrypt random/sha256 · MSVC CRT date) run only on a REAL
       # MSVC binary. If any is red the job fails (no silent hole).
-      - name: Pre-release gate (MSVC binary'sine karşı)
+      - name: Pre-release gate (against the MSVC binary)
         shell: pwsh
         run: |
           $lk = "cpp/build-win/Release/lk.exe"
@@ -68,7 +68,7 @@ jobs:
       # int_overflow_test.cpp is header-only → compiled with cl.exe the MSVC branch (unsigned wraparound +
       # the INT64_MIN*-1 idiv #DE guard) really runs. vswhere+vcvars is self-contained (does not disturb the cmake
       # build's environment — a separate step). NO continue-on-error.
-      - name: int64 taşma-tespiti (MSVC #else dalı)
+      - name: "int64 overflow detection (MSVC #else branch)"
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSPATH=%%i
@@ -82,7 +82,7 @@ jobs:
       # LOOK_HTTP_IDLE_MS=1000 → idle-close ~1s (test speed; default 30s). The process is killed by PID
       # (no broad kill). Positive control: wrong-port refusal + body check + idle alive BEFORE, closed AFTER.
       # NO continue-on-error. (OLD BUG: on Win timeval→30ms; fixed with the DWORD-ms fix.)
-      - name: "--mode http + idle-timeout (Windows HTTP sunucu kanıtı)"
+      - name: "--mode http + idle-timeout (Windows HTTP server proof)"
         shell: pwsh
         env:
           LOOK_HTTP_IDLE_MS: "1000"

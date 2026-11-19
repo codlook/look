@@ -99,7 +99,7 @@ int main() {
     for(int i=0;i<16;i++) buf[i]=0; buf[0]=0x01; buf[7]=1; buf[15]=1; v6("100:0:0:1:: disi", buf, false);
 
     const int EXPECTED = 41;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (metadata/NAT64/6to4/mapped bypass kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (metadata/NAT64/6to4/mapped bypass locked in)\n", fails);
     return fails ? 1 : 0;
 }

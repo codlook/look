@@ -34,18 +34,18 @@ n=$(cat "$CF" 2>/dev/null || echo "?")
 
 fail=0
 if [ "$n" != "1" ]; then
-  echo "  FAIL cift-yazma: INSERT sunucuya $n kez ulasti (1 bekleniyordu) — kor retry statement'i tekrar isliyor"
+  echo "  FAIL double-write: INSERT reached the server $n times (expected 1) — blind retry re-executes the statement"
   fail=1
 else
-  echo "  PASS: post-send kopmada INSERT tek kez ulasti (kor retry yok)"
+  echo "  PASS: INSERT reached the server once after a post-send drop (no blind retry)"
 fi
 # The app must be fail-loud (NOT a silent 'done')
 if echo "$out" | grep -q "done" && ! echo "$out" | grep -qi "connection lost\|error"; then
-  echo "  FAIL fail-loud: app hata gormeden 'done' dedi (sessiz basari — kopma gizlendi)"
+  echo "  FAIL fail-loud: app said 'done' without seeing an error (silent success — the drop was hidden)"
   fail=1
 else
-  echo "  PASS: app kopmayi hata olarak gordu (fail-loud)"
+  echo "  PASS: app saw the drop as an error (fail-loud)"
 fi
 
-[ $fail = 0 ] && echo "PASS: db retry (53 — PG sessiz cift-yazma)" || echo "FAIL: db retry"
+[ $fail = 0 ] && echo "PASS: db retry (53 — PG silent double-write)" || echo "FAIL: db retry"
 exit $fail

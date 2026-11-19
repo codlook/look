@@ -11,7 +11,7 @@
 # that one locks the tested versions, this one tracks the future.
 #
 # Usage:
-#   bash db_latest_test.sh <lk_yolu>
+#   bash db_latest_test.sh <lk_path>
 # DSNs come from the environment (a DB that is not given is skipped with a visible message — not silently):
 #   LOOK_MYSQL_LATEST_DSN   mysql://root:pw@host:3306/db
 #   LOOK_MARIADB_LATEST_DSN mysql://root:pw@host:3306/db
@@ -53,7 +53,7 @@ try {
   db::exec($c, "INSERT INTO look_notx (n) VALUES (1)")
   db::commit($c)
   $kaldi = count(db::query($c, "SELECT n FROM look_notx"))
-  if ($kaldi != 1) { print("HATA|sequence'siz tabloda tx-ici INSERT kayboldu (lastval abort): " . $kaldi . " satir"); return }
+  if ($kaldi != 1) { print("HATA|in-transaction INSERT was lost on a table without a sequence (lastval abort): " . $kaldi . " rows"); return }
   # SERIAL test (last_id + version)
   db::exec($c, "CREATE TABLE IF NOT EXISTS look_lt (id SERIAL PRIMARY KEY, ad TEXT)")
   db::exec($c, "DELETE FROM look_lt")
@@ -76,7 +76,7 @@ LK
 kontrol() {
   etiket="$1"; script="$2"; dsn="${3:-}"
   if [ "$script" != "$TMP/sq.lk" ] && [ -z "$dsn" ]; then
-    echo "  ATLANDI $etiket (DSN verilmedi)"; return
+    echo "  SKIPPED $etiket (no DSN given)"; return
   fi
   out=$(D="$dsn" timeout 45 "$LK" "$script" 2>&1 | grep -E '^(OK|HATA)' | head -1)
   case "$out" in
@@ -85,11 +85,11 @@ kontrol() {
   esac
 }
 
-echo "DB latest surum-farkindalik guard'i"
+echo "DB latest version-awareness guard"
 kontrol "MySQL   latest" "$TMP/my.lk" "${LOOK_MYSQL_LATEST_DSN:-}"
 kontrol "MariaDB latest" "$TMP/my.lk" "${LOOK_MARIADB_LATEST_DSN:-}"
 kontrol "Postgres latest" "$TMP/pg.lk" "${LOOK_PG_LATEST_DSN:-}"
-kontrol "SQLite  (gomulu)" "$TMP/sq.lk"
+kontrol "SQLite  (built-in)" "$TMP/sq.lk"
 
-[ $fail = 0 ] && echo "PASS: DB latest — baglanabilen tum surumler temiz" || echo "FAIL: DB latest"
+[ $fail = 0 ] && echo "PASS: DB latest — every reachable version is clean" || echo "FAIL: DB latest"
 exit $fail

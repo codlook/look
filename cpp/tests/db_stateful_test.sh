@@ -32,12 +32,12 @@ LK
     rc=$?
     kill "$FPS" 2>/dev/null
     if [ "$rc" -ge 128 ]; then
-        echo "  FAIL [$MODE]: istemci ÇÖKTÜ (exit=$rc; 139=segfault, 137=OOM)"; fail=1
+        echo "  FAIL [$MODE]: client CRASHED (exit=$rc; 139=segfault, 137=OOM)"; fail=1
     elif echo "$out" | grep -q "SURVIVED"; then
-        echo "  PASS [$MODE]: nazikçe işlendi (çökme yok)"
+        echo "  PASS [$MODE]: handled gracefully (no crash)"
     else
-        echo "  FAIL [$MODE]: SURVIVED çıktısı yok (exit=$rc): $(echo "$out" | tr '\n' ' ' | head -c 80)"; fail=1
+        echo "  FAIL [$MODE]: no SURVIVED output (exit=$rc): $(echo "$out" | tr '\n' ' ' | head -c 80)"; fail=1
     fi
 done
-[ $fail = 0 ] && echo "PASS: db stateful (kategori 1 — wire-parser durum-dizili dayaniklilik)" || echo "FAIL: db stateful"
+[ $fail = 0 ] && echo "PASS: db stateful (category 1 — wire-parser state-sequence robustness)" || echo "FAIL: db stateful"
 exit $fail

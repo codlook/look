@@ -1,4 +1,4 @@
-name: Release consistency — tüm asset'ler AYNI damga mı?
+name: Release consistency — do all assets carry the SAME stamp?
 
 # Post-release guard: ALL binary assets of a release (linux/plesk/windows/docker)
 # must carry the same git-sha stamp. Because Windows is built BY HAND and uploaded (Tier 2, not in automation)
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Kontrol edilecek release tag'i"
+        description: "Release tag to check"
         required: false
         default: "v1.0"
 
@@ -28,7 +28,7 @@ jobs:
     steps:
       # Repo: for the guard that reads the binaries named in the docs (cpp/tests/package_binaries_guard.sh).
       - uses: actions/checkout@v4
-      - name: Asset'leri indir
+      - name: Download the assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -41,15 +41,15 @@ jobs:
             --dir assets --clobber
           ls -lh assets
 
-      - name: Damgaları çıkar + AYNI mı doğrula (fail-loud)
+      - name: Extract the stamps + verify they MATCH (fail-loud)
         run: |
           set -e
           cd assets
           # --- REFERENCE: Linux binary (CI-built, authoritative) ---
           unzip -oq look-lang-linux-*.zip -d linux
           REF=$(linux/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
-          [ -n "$REF" ] || { echo "::error::Linux damgası okunamadı"; exit 1; }
-          echo "Referans damga (linux): $REF"
+          [ -n "$REF" ] || { echo "::error::Could not read the Linux stamp"; exit 1; }
+          echo "Reference stamp (linux): $REF"
 
           fail=0
           # --- Plesk: the binary is at htdocs/bin/lk (MEASURED -- not 'bin/lk'; the first guard looked at the wrong path
@@ -62,7 +62,7 @@ jobs:
             P=$(plesk/htdocs/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
             [ "$P" = "$REF" ] && echo "  OK   plesk  $P" || { echo "  FAIL plesk  $P != $REF"; fail=1; }
           else
-            echo "  FAIL plesk: htdocs/bin/lk YOK — paketleme bozuk (binary bekleniyordu, sessiz-skip YOK)"; fail=1
+            echo "  FAIL plesk: htdocs/bin/lk is MISSING — broken packaging (a binary was expected, NO silent skip)"; fail=1
           fi
 
           # --- Docker: load + run ---
@@ -73,9 +73,9 @@ jobs:
           # --- Windows: WITHOUT RUNNING -- does the reference stamp appear inside the .exe (strings/grep) ---
           unzip -oq look-lang-windows-*.zip -d win
           if grep -aq "$REF" win/lk.exe && grep -aq "$REF" win/lk-fcgi.exe && grep -aq "$REF" win/lk-cgi.exe; then
-            echo "  OK   windows (damga $REF .exe içinde)"
+            echo "  OK   windows (stamp $REF is in the .exe)"
           else
-            echo "  FAIL windows: $REF lk.exe/lk-fcgi.exe/lk-cgi.exe içinde YOK (eski elle-derleme?)"; fail=1
+            echo "  FAIL windows: $REF is NOT in lk.exe/lk-fcgi.exe/lk-cgi.exe (old manual build?)"; fail=1
           fi
           # Is every binary named in the docs (including lk-cgi) in the package
           bash ../cpp/tests/package_binaries_guard.sh look-lang-linux-[0-9]*.zip look-lang-plesk-[0-9]*.zip \
@@ -83,17 +83,17 @@ jobs:
 
           echo ""
           if [ "$fail" != 0 ]; then
-            echo "::error::Asset damgaları AYRIŞIYOR — yayın tutarsız (Windows elle-adım unutulmuş olabilir)"
+            echo "::error::Asset stamps DIFFER — the release is inconsistent (the manual Windows step may have been forgotten)"
             exit 1
           fi
-          echo "TUTARLI: tüm asset'ler $REF"
+          echo "CONSISTENT: all assets are $REF"
 
       # MANIFEST COVERAGE LOCK: the stamp check verifies that the assets are the SAME but not that ALL of them
       # are in SHA256SUMS. If an asset drops out of the manifest (the vsix did in this round) it is downloaded
       # but cannot be verified -- a silent regression. Count lock: asset count (excluding SHA256SUMS.txt) ==
       # manifest line count. Same as the crypto_vectors EXPECTED_VECTORS pattern (a count lock against empty-green).
       # Positive control: delete a line from the manifest -> assets > lines -> RED.
-      - name: Manifest kapsamı — her asset SHA256SUMS'ta mı (sayı-kilidi)
+      - name: Manifest coverage — is every asset in SHA256SUMS (count lock)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -103,9 +103,9 @@ jobs:
           MANIFEST_LINES=$(grep -cE '^[0-9a-f]{64}' manifest/SHA256SUMS.txt)
           ASSET_COUNT=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets \
             --jq '[.assets[].name | select(. != "SHA256SUMS.txt")] | length')
-          echo "manifest satır: $MANIFEST_LINES | asset (SHA256SUMS hariç): $ASSET_COUNT"
+          echo "manifest lines: $MANIFEST_LINES | assets (excluding SHA256SUMS): $ASSET_COUNT"
           if [ "$MANIFEST_LINES" != "$ASSET_COUNT" ]; then
-            echo "::error::SHA256SUMS $MANIFEST_LINES satır ama $ASSET_COUNT asset var — bir asset manifest KAPSAMI DIŞINDA (indirilir ama doğrulanamaz)"
+            echo "::error::SHA256SUMS has $MANIFEST_LINES lines but there are $ASSET_COUNT assets — an asset is OUTSIDE the manifest (it can be downloaded but not verified)"
             exit 1
           fi
-          echo "MANİFEST TAM: $ASSET_COUNT asset, hepsi SHA256SUMS'ta"
+          echo "MANIFEST COMPLETE: $ASSET_COUNT assets, all in SHA256SUMS"

@@ -9,7 +9,7 @@ FCGI="${1:-./build/lk-fcgi}"
 PORT="${2:-7715}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP="$HERE/route_group_app.lk"
-command -v curl >/dev/null 2>&1 || { echo "  (atlandi: curl gerekli)"; exit 0; }
+command -v curl >/dev/null 2>&1 || { echo "  (skipped: curl required)"; exit 0; }
 fail=0
 
 run_engine() {
@@ -20,7 +20,7 @@ run_engine() {
   for i in $(seq 1 40); do curl -s -o /dev/null "http://127.0.0.1:$port/public" 2>/dev/null && break; sleep 0.2; done
   local B="http://127.0.0.1:$port"
   code(){ curl -s -o /dev/null -w "%{http_code}" ${2:-} "$B$1"; }
-  chk(){ if [ "$2" = "$3" ]; then echo "  OK   [$label] $1 ($2)"; else echo "  FAIL [$label] $1: $2 beklenen $3"; fail=1; fi; }
+  chk(){ if [ "$2" = "$3" ]; then echo "  OK   [$label] $1 ($2)"; else echo "  FAIL [$label] $1: $2 expected $3"; fail=1; fi; }
   chk "/public"                "$(code /public)"                       "200"
   chk "/admin/users no-tok"    "$(code /admin/users)"                  "403"   # mw inherited
   chk "/admin/users tok"       "$(code /admin/users '-H X-Token:sekret')" "200"
@@ -33,5 +33,5 @@ run_engine() {
 
 run_engine "VM"     "$PORT"        ""
 
-[ $fail = 0 ] && echo "PASS: route::group (prefix+mw kalıtımı + nested)" || echo "FAIL: route::group"
+[ $fail = 0 ] && echo "PASS: route::group (prefix+mw inheritance + nested)" || echo "FAIL: route::group"
 exit $fail

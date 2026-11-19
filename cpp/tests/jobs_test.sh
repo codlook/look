@@ -78,24 +78,24 @@ wait
 cat p*.txt | grep -v '^\[' | tr -s ' ' '\n' | grep '[0-9]' | sort -n > all.txt
 toplam=$(wc -l < all.txt); tekil=$(sort -u all.txt | wc -l)
 if [ "$toplam" = "$tekil" ] && [ "$tekil" -gt 0 ]; then
-  echo "  PASS cok-surecli claim: $toplam claim / $tekil tekil (cift isleme yok)"
+  echo "  PASS multi-process claim: $toplam claims / $tekil unique (no double processing)"
 else
-  echo "  FAIL CIFT ISLEME: $toplam claim ama $tekil tekil is"
-  echo "       -> claim atomik degil (SELECT+UPDATE arasi yaris; surec ici mutex yetmez)"
+  echo "  FAIL DOUBLE PROCESSING: $toplam claims but $tekil unique jobs"
+  echo "       -> claim is not atomic (race between SELECT and UPDATE; an in-process mutex is not enough)"
   fail=1
 fi
 if [ "$tekil" -ne 40 ]; then
-  echo "  FAIL is KAYBI: 40 isten $tekil tanesi alinabildi"; fail=1
+  echo "  FAIL JOB LOSS: only $tekil of 40 jobs could be taken"; fail=1
 fi
 
 export JOBS_DB="$TMP/jobs2.db"
 out=$(LOOK_JOBS_RETRY_SECONDS=1 "$LK" akis.lk 2>&1 | grep -v '^\[' | tail -1)
 bek="bekledi|1|bitti|gec|1|kurtarildi|bitti"
 if [ "$out" = "$bek" ]; then
-  echo "  PASS akis: a retry waits, retries end in failed, run_after, recover, done"
+  echo "  PASS flow: a retry waits, retries end in failed, run_after, recover, done"
 else
-  echo "  FAIL jobs akisi: [$out] (beklenen $bek)"
-  echo "       sira: bekledi|failed-sayisi|failed-tekrar-alinmadi|gecikmeli-is|recover-sayisi|kurtarilan-alindi|done-tekrar-alinmadi"
+  echo "  FAIL jobs flow: [$out] (expected $bek)"
+  echo "       order: waited|failed-count|failed-not-retaken|delayed-job|recover-count|recovered-taken|done-not-retaken"
   fail=1
 fi
 
@@ -116,10 +116,10 @@ wait
 kilit=0
 for i in 1 2 3 4 5 6; do grep -qi "locked" "c$i.err" 2>/dev/null && kilit=$((kilit+1)); done
 if [ "$kilit" = "0" ]; then
-  echo "  PASS soguk acilis: 6 surec es zamanli schema olusturdu, kilit hatasi yok"
+  echo "  PASS cold start: 6 processes created the schema concurrently, no lock error"
 else
-  echo "  FAIL soguk acilis: 6 surecten $kilit tanesi 'database is locked' ile coktu"
-  echo "       -> sqlite3_busy_timeout() sqlite3_open'dan HEMEN SONRA cagrilmali (WAL/schema oncesi)"
+  echo "  FAIL cold start: $kilit of 6 processes crashed with 'database is locked'"
+  echo "       -> sqlite3_busy_timeout() must be called RIGHT AFTER sqlite3_open (before WAL/schema)"
   fail=1
 fi
 

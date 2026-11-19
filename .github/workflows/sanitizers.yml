@@ -20,7 +20,7 @@ jobs:
           cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                 -DLOOK_SANITIZE=address,undefined -DLOOK_STATIC_SSL=OFF
           cmake --build build-asan --target look look-fcgi -j"$(nproc)"
-      - name: Regression (zorunlu — yesil olmali)
+      - name: Regression (mandatory — must be green)
         timeout-minutes: 20
         working-directory: cpp
         env:
@@ -47,7 +47,7 @@ jobs:
       # B-01 FIXED (parser MAX_BINOP_CHAIN=1000): a deep binary chain + deep parens now give a CLEAN
       # error in the parser before the AST is built (NOT a crash) — the attacker-controlled deep-input
       # DoS is closed. continue-on-error REMOVED → enforced (if the guard does not trigger/crashes CI goes red).
-      - name: B-01 eval-guard — ENFORCED (derin girdi temiz-hata, çökme değil)
+      - name: B-01 eval-guard — ENFORCED (deep input gives a clean error, not a crash)
         timeout-minutes: 20
         working-directory: cpp
         env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1" }
@@ -135,7 +135,7 @@ jobs:
             grep -h -A30 "WARNING: ThreadSanitizer" /tmp/tsan* | head -200; fail=1
           fi
           exit $fail
-      - name: Yaris testleri — ENFORCED (yesil olmali; kirilirsa CI kirmizi)
+      - name: Race tests — ENFORCED (must be green; if one breaks CI goes red)
         timeout-minutes: 20
         working-directory: cpp
         env:
@@ -162,7 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y clang
-      - name: Fuzz — PG + MySQL + HTTP istek/wire parser (kisa, yesil olmali)
+      - name: Fuzz — PG + MySQL + HTTP request/wire parser (short, must be green)
         timeout-minutes: 20
         working-directory: cpp/tests/fuzz
         env:
@@ -176,13 +176,13 @@ jobs:
                          [fuzz_imap_parse]=corpus_imap \
                          [fuzz_http_request]=corpus_http )
           for h in "${!C[@]}"; do
-            echo "== derle $h =="
+            echo "== build $h =="
             clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
                     -fno-sanitize-recover=all -I../../include "$h.cpp" -o "$h"
-            echo "== kosum $h (30s) =="
+            echo "== run $h (30s) =="
             mkdir -p "${C[$h]}"
             ./"$h" -max_len=8192 -max_total_time=30 "${C[$h]}" || {
-              echo "!!! $h fuzz bulgusu — crash artefakti yukarida"; exit 1; }
+              echo "!!! $h fuzz finding — crash artifact above"; exit 1; }
           done
       # Bundled decoders that take attacker bytes and need their own sources: the gzip response
       # decoder of http:: (miniz tinfl — the client path of the Node2Shell / CVE-2026-111497 class)

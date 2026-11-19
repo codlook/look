@@ -49,5 +49,5 @@ a2dismod mpm_event 2>/dev/null; a2enmod mpm_prefork cgi 2>/dev/null
 /usr/local/bin/look-fcgi --port 9000 &
 sleep 1
 apache2ctl start
-echo "=== QR Menu Ubuntu+Apache hazir — http://localhost:8080/ ==="
+echo "=== QR Menu Ubuntu+Apache ready — http://localhost:8080/ ==="
 sleep infinity

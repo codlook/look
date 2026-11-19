@@ -23,8 +23,8 @@ FAIL=0
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAIL=1; }
 
-[ -f "$ENABLE" ]  || { echo "enable.sh bulunamadı: $ENABLE"; exit 2; }
-[ -f "$DISABLE" ] || { echo "disable.sh bulunamadı: $DISABLE"; exit 2; }
+[ -f "$ENABLE" ]  || { echo "enable.sh not found: $ENABLE"; exit 2; }
+[ -f "$DISABLE" ] || { echo "disable.sh not found: $DISABLE"; exit 2; }
 
 # --- EXTRACT the sanitization charset from the source (so the test stays tied to the source) ---
 # Line pattern:  DOMAIN=$(printf '%s' "$DOMAIN" | tr -cd 'A-Za-z0-9.-')
@@ -36,10 +36,10 @@ DOMAIN_CS="$(extract_charset "$ENABLE" DOMAIN)"
 SCRIPT_CS="$(extract_charset "$ENABLE" SCRIPT)"
 DIS_SVC_CS="$(extract_charset "$DISABLE" SVC_NAME)"
 
-echo "== 1) Sanitizasyon satırları kaynakta MEVCUT mu (sessiz-kaldırma guard'ı) =="
-[ -n "$DOMAIN_CS" ]  && pass "enable.sh DOMAIN tr -cd '$DOMAIN_CS'"   || fail "enable.sh DOMAIN tr -cd satırı YOK (sanitizasyon kaldırılmış?)"
-[ -n "$SCRIPT_CS" ]  && pass "enable.sh SCRIPT tr -cd '$SCRIPT_CS'"   || fail "enable.sh SCRIPT tr -cd satırı YOK"
-[ -n "$DIS_SVC_CS" ] && pass "disable.sh SVC_NAME tr -cd '$DIS_SVC_CS'" || fail "disable.sh SVC_NAME tr -cd satırı YOK"
+echo "== 1) Are the sanitization lines PRESENT in the source (silent-removal guard) =="
+[ -n "$DOMAIN_CS" ]  && pass "enable.sh DOMAIN tr -cd '$DOMAIN_CS'"   || fail "enable.sh DOMAIN tr -cd line MISSING (was sanitization removed?)"
+[ -n "$SCRIPT_CS" ]  && pass "enable.sh SCRIPT tr -cd '$SCRIPT_CS'"   || fail "enable.sh SCRIPT tr -cd line MISSING"
+[ -n "$DIS_SVC_CS" ] && pass "disable.sh SVC_NAME tr -cd '$DIS_SVC_CS'" || fail "disable.sh SVC_NAME tr -cd line MISSING"
 
 # Real payloads containing a newline ("\n") — produced with printf.
 PAYLOADS=(
@@ -63,57 +63,57 @@ has_dangerous() { # <string>  -> 0 (dangerous present), 1 (clean)
     return 1
 }
 
-echo "== 2) enable.sh DOMAIN sanitizasyonu enjeksiyonu ÖLDÜRÜYOR mu =="
+echo "== 2) Does the enable.sh DOMAIN sanitization KILL the injection =="
 for p in "${PAYLOADS[@]}"; do
     clean="$(printf '%s' "$p" | tr -cd "$DOMAIN_CS")"
     # Rendered unit line: Description=LOOK FastCGI - <clean>  (must stay a single line)
     lines="$(printf 'Description=LOOK FastCGI - %s\n' "$clean" | wc -l | tr -d ' ')"
     label="$(printf '%s' "$p" | tr '\n\r' '__')"
     if has_dangerous "$clean"; then
-        fail "DOMAIN temizlenmiş değer hâlâ tehlikeli: [$clean]  <- [$label]"
+        fail "DOMAIN cleaned value is still dangerous: [$clean]  <- [$label]"
     elif [ "$lines" != "1" ]; then
-        fail "DOMAIN satır-sonu enjeksiyonu geçti ($lines satır)  <- [$label]"
+        fail "DOMAIN newline injection got through ($lines lines)  <- [$label]"
     else
-        pass "DOMAIN nötralize: [$label] -> [$clean]"
+        pass "DOMAIN neutralized: [$label] -> [$clean]"
     fi
 done
 
-echo "== 3) enable.sh SCRIPT: tr metakarakteri strip + '..'/prefix case-guard'ları var =="
+echo "== 3) enable.sh SCRIPT: tr strips metacharacters + '..'/prefix case guards exist =="
 # The SCRIPT charset includes '/' and '.' → '..' PASSES tr; an extra case-guard is required.
 grep -Eq 'case[[:space:]]+"\$SCRIPT"[[:space:]]+in[[:space:]]+\*\.\.\*' "$ENABLE" \
-    && pass "SCRIPT '..' traversal case-guard mevcut" \
-    || fail "SCRIPT '..' traversal case-guard KAYIP (tr '..'yi geçirir!)"
+    && pass "SCRIPT '..' traversal case guard present" \
+    || fail "SCRIPT '..' traversal case guard MISSING (tr lets '..' through!)"
 grep -q '/var/www/vhosts/' "$ENABLE" \
-    && pass "SCRIPT /var/www/vhosts prefix zorlaması mevcut" \
-    || fail "SCRIPT prefix zorlaması KAYIP"
+    && pass "SCRIPT /var/www/vhosts prefix enforcement present" \
+    || fail "SCRIPT prefix enforcement MISSING"
 for p in $'x\nExecStart=/evil' 'x;reboot' 'x$(id)' 'x`id`'; do
     clean="$(printf '%s' "$p" | tr -cd "$SCRIPT_CS")"
     label="$(printf '%s' "$p" | tr '\n\r' '__')"
-    has_dangerous "$clean" && fail "SCRIPT tehlikeli kaldı: [$clean] <- [$label]" \
-                           || pass "SCRIPT metakarakter strip: [$label] -> [$clean]"
+    has_dangerous "$clean" && fail "SCRIPT dangerous value remained: [$clean] <- [$label]" \
+                           || pass "SCRIPT metacharacter strip: [$label] -> [$clean]"
 done
 
-echo "== 4) disable.sh: SVC_NAME look-* zorlaması + metakarakter strip =="
+echo "== 4) disable.sh: SVC_NAME look-* enforcement + metacharacter strip =="
 grep -Eq 'look-\*\)' "$DISABLE" \
-    && pass "disable.sh look-* case-guard mevcut" \
-    || fail "disable.sh look-* case-guard KAYIP (arbitrary systemctl stop!)"
+    && pass "disable.sh look-* case guard present" \
+    || fail "disable.sh look-* case guard MISSING (arbitrary systemctl stop!)"
 for p in $'sshd\nreboot' 'look-x;rm' 'look-../../evil' 'mariadb'; do
     clean="$(printf '%s' "$p" | tr -cd "$DIS_SVC_CS")"
     label="$(printf '%s' "$p" | tr '\n\r' '__')"
-    has_dangerous "$clean" && fail "SVC tehlikeli kaldı: [$clean] <- [$label]" \
-                           || pass "SVC metakarakter strip: [$label] -> [$clean]"
+    has_dangerous "$clean" && fail "SVC dangerous value remained: [$clean] <- [$label]" \
+                           || pass "SVC metacharacter strip: [$label] -> [$clean]"
 done
 
 # --- POSITIVE CONTROL: REMOVE the sanitization → the privesc payload PASSES → the guard sees it ---
-echo "== 5) POZİTİF KONTROL (sanitizasyon bozuk olsaydı test kırmızı olurdu) =="
+echo "== 5) POSITIVE CONTROL (the test would be red if sanitization were broken) =="
 evil=$'look.com\nExecStartPre=/bin/touch /tmp/pwn'
 raw_lines="$(printf 'Description=LOOK FastCGI - %s\n' "$evil" | wc -l | tr -d ' ')"
 if has_dangerous "$evil" && [ "$raw_lines" -gt 1 ]; then
-    pass "sanitizasyonsuz payload GERÇEKTEN enjekte ediyor ($raw_lines satır) → guard ayırt edici"
+    pass "an unsanitized payload REALLY injects ($raw_lines lines) -> the guard discriminates"
 else
-    fail "pozitif kontrol beklenen enjeksiyonu üretmedi — test ayırt edici DEĞİL"
+    fail "positive control did not produce the expected injection — the test does NOT discriminate"
 fi
 
 echo
-[ "$FAIL" = 0 ] && { echo "== TÜM ENJEKSİYON GUARD'LARI GEÇTİ =="; exit 0; } \
-               || { echo "== ENJEKSİYON GUARD BAŞARISIZ =="; exit 1; }
+[ "$FAIL" = 0 ] && { echo "== ALL INJECTION GUARDS PASSED =="; exit 0; } \
+               || { echo "== INJECTION GUARD FAILED =="; exit 1; }

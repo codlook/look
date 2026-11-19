@@ -13,8 +13,8 @@ TMP=$(mktemp -d)
 SRV=""
 cleanup(){ [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; sleep 0.5; [ -n "$SRV" ] && kill -9 "$SRV" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
-command -v python3 >/dev/null 2>&1 || { echo "  (atlandi: python3)"; exit 0; }
-command -v openssl >/dev/null 2>&1 || { echo "  (atlandi: openssl)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "  (skipped: python3)"; exit 0; }
+command -v openssl >/dev/null 2>&1 || { echo "  (skipped: openssl)"; exit 0; }
 fail=0
 
 # Self-signed server cert (SAN=127.0.0.1) — UNTRUSTED (not in the client trust store)
@@ -84,13 +84,13 @@ hs_ok=$(grep -c 'HANDSHAKE_OK'   "$TMP/mock.log")
 hs_fail=$(grep -c 'HANDSHAKE_FAIL' "$TMP/mock.log")
 
 # Assert: verify → LOOK rejected AND the mock handshake FAIL (the client aborted on the cert)
-if echo "$vout" | grep -q 'VERIFY_REJECTED=true'; then echo "  OK verify-full untrusted cert'i REDDETTI (LOOK throw)"
-else echo "  FAIL verify-full untrusted cert'i KABUL etti (verify kırık): [$vout]"; fail=1; fi
+if echo "$vout" | grep -q 'VERIFY_REJECTED=true'; then echo "  OK verify-full REJECTED an untrusted cert (LOOK throw)"
+else echo "  FAIL verify-full ACCEPTED an untrusted cert (verify is broken): [$vout]"; fail=1; fi
 if [ "$hs_fail" -ge 1 ]; then echo "  OK mock: verify-case handshake FAIL (client cert-abort)"
-else echo "  FAIL mock: handshake FAIL görülmedi (LOOK cert'i reddetmedi?)"; fail=1; fi
+else echo "  FAIL mock: no handshake FAIL was seen (did LOOK not reject the cert?)"; fail=1; fi
 # Positive control: insecure → the handshake COMPLETED (verify skipped, TLS established)
-if [ "$hs_ok" -ge 1 ]; then echo "  OK pozitif-kontrol: insecure handshake OK (TLS kuruldu, cert doğrulanmadı)"
-else echo "  FAIL pozitif-kontrol: insecure handshake OK görülmedi (TLS hiç kurulmadı? test sağlıksız)"; fail=1; fi
+if [ "$hs_ok" -ge 1 ]; then echo "  OK positive control: insecure handshake OK (TLS established, cert not verified)"
+else echo "  FAIL positive control: no insecure handshake OK was seen (TLS never established? the test is unsound)"; fail=1; fi
 
 [ $fail = 0 ] && echo "PASS: PG TLS verify (untrusted-reject + insecure-accept)" || echo "FAIL: PG TLS verify"
 exit $fail

@@ -50,7 +50,7 @@ bench_one() {   # $1=name $2=container
   local abtime=$(echo "$ab" | awk '/Time taken for tests/{print $5}')
   local abok=$(echo "$ab" | awk '/Complete requests/{print $3}')
   local abfail=$(echo "$ab" | awk '/Failed requests/{print $3}')
-  echo "  100k istek (ab -c200, keep-alive YOK): ${abrps:-NA} req/s, ${abtime:-NA}s toplam, complete=${abok:-NA}, failed=${abfail:-NA}"
+  echo "  100k requests (ab -c200, NO keep-alive): ${abrps:-NA} req/s, ${abtime:-NA}s total, complete=${abok:-NA}, failed=${abfail:-NA}"
   echo
 }
 

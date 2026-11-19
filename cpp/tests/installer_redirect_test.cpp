@@ -18,7 +18,7 @@ static void chk(const char* url, bool want) {
 }
 
 int main() {
-    printf("Redirect güvenlik-karar tablosu:\n");
+    printf("Redirect security-decision table:\n");
     // ALLOW — legitimate GitHub chain
     chk("https://codeload.github.com/u/r/zip", true);
     chk("https://api.github.com/repos/u/r",    true);
@@ -34,7 +34,7 @@ int main() {
     chk("https://api.github.com.attacker.net/x", false);
 
     const int EXPECTED = 10;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (şema-düşürme + host-kaçışı kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (scheme downgrade + host escape locked in)\n", fails);
     return fails ? 1 : 0;
 }

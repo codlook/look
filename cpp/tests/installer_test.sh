@@ -11,7 +11,7 @@
 #  2) Host restriction: parse_pkg must accept only github.com.
 #  3) Zip-Slip: extracted files must not be written OUTSIDE the target directory.
 #
-# The part that needs the network is SKIPPED when there is no network (not silently, printing 'atlandi' = skipped).
+# The part that needs the network is SKIPPED when there is no network (not silently, printing 'skipped').
 set -u
 LK="${1:-./build/lk}"
 LK="$(cd "$(dirname "$LK")" && pwd)/$(basename "$LK")"   # cd is done below: absolute path
@@ -23,17 +23,17 @@ cd "$TMP" || exit 1
 # 1) Host restriction — non-github.com must be rejected (does NOT need the network)
 out=$("$LK" module install evil.com/user/repo 2>&1 | head -3)
 if echo "$out" | grep -qi "only github.com is supported"; then
-  echo "  PASS host kisiti: github.com disi reddediliyor"
+  echo "  PASS host restriction: non-github.com is rejected"
 else
-  echo "  FAIL host kisiti calismiyor: [$out]"; fail=1
+  echo "  FAIL host restriction does not work: [$out]"; fail=1
 fi
 
 # 2) Invalid package name — clear error
 out=$("$LK" module install github.com/tekbasina 2>&1 | head -2)
-if echo "$out" | grep -qi "gecersiz\|geçersiz\|user/repo"; then
-  echo "  PASS bozuk paket adi net hata veriyor"
+if echo "$out" | grep -qi "invalid\|user/repo"; then
+  echo "  PASS a malformed package name gives a clear error"
 else
-  echo "  FAIL bozuk paket adi: [$out]"; fail=1
+  echo "  FAIL malformed package name: [$out]"; fail=1
 fi
 
 # 3) REAL install — legitimate GitHub redirect chain (needs the network)
@@ -41,18 +41,18 @@ if timeout 10 curl -s -o /dev/null https://api.github.com 2>/dev/null; then
   export HOME="$TMP"
   out=$(timeout 120 "$LK" module install github.com/codlook/look-modules/jwt -v 2>&1)
   if echo "$out" | grep -q "codeload.github.com" && echo "$out" | grep -qi "installed"; then
-    echo "  PASS gercek kurulum: api.github.com -> codeload.github.com zinciri calisiyor"
+    echo "  PASS real install: the api.github.com -> codeload.github.com chain works"
   else
-    echo "  FAIL gercek kurulum basarisiz (yonlendirme dogrulamasi mesru akisi bozdu mu?):"
+    echo "  FAIL real install failed (did redirect validation break the legitimate flow?):"
     echo "$out" | head -5 | sed 's/^/       /'
     fail=1
   fi
   # Are the installed files INSIDE the target directory (Zip-Slip)
   disari=$(find "$TMP" -maxdepth 1 -name '*.lk' 2>/dev/null | wc -l)
   if [ "$disari" = "0" ]; then
-    echo "  PASS Zip-Slip: dosyalar modul dizini disina yazilmadi"
+    echo "  PASS Zip-Slip: no files were written outside the module directory"
   else
-    echo "  FAIL Zip-Slip: $disari dosya hedef dizin DISINA yazildi"; fail=1
+    echo "  FAIL Zip-Slip: $disari file(s) were written OUTSIDE the target directory"; fail=1
   fi
   # 4) look.lock SHA-PIN (bug 51): a PACKAGE install writes "ref@sha" to look.lock;
   #    `look install` (install-all) must pin to the recorded commit SHA, not the branch/
@@ -66,19 +66,19 @@ if timeout 10 curl -s -o /dev/null https://api.github.com 2>/dev/null; then
   if [ -n "$sha" ]; then
     allout=$( cd "$pdir" && HOME="$pdir" timeout 120 "$LK" install -v 2>&1 )
     if echo "$allout" | grep -q "zipball/$sha"; then
-      echo "  PASS look.lock sha-pin: install-all kayitli commit'e sabitliyor (${sha:0:12})"
+      echo "  PASS look.lock sha-pin: install-all pins to the recorded commit (${sha:0:12})"
     elif echo "$allout" | grep -q "zipball/main"; then
-      echo "  FAIL look.lock sha-pin: install-all dal HEAD'ini (main) cozuyor — kilit kilitlemiyor"; fail=1
+      echo "  FAIL look.lock sha-pin: install-all resolves the branch HEAD (main) — the lock does not lock"; fail=1
     else
-      echo "  FAIL look.lock sha-pin: beklenen zipball/$sha URL'i verbose ciktida yok:"
-      echo "$allout" | grep -i "zipball\|indir" | head -3 | sed 's/^/       /'
+      echo "  FAIL look.lock sha-pin: expected zipball/$sha URL is missing from the verbose output:"
+      echo "$allout" | grep -i "zipball\|download" | head -3 | sed 's/^/       /'
       fail=1
     fi
   else
-    echo "  (atlandi: paket look.lock'ta sha yok — sha cozumleme calismiyor olabilir)"
+    echo "  (skipped: the package has no sha in look.lock — sha resolution may not be working)"
   fi
 else
-  echo "  (atlandi: gercek kurulum testi ag gerektirir)"
+  echo "  (skipped: the real install test needs the network)"
 fi
 
 [ $fail = 0 ] && echo "PASS: installer::" || echo "FAIL: installer::"

@@ -35,11 +35,11 @@ import time
 
 
 class Invalid(Exception):
-    """Bu program modelde geçersiz (üretici/küçültücü bu adayı atlar)."""
+    """This program is invalid in the model (the generator/shrinker skips this candidate)."""
 
 
 class LookErr(Exception):
-    """LOOK'ta hata vermesi BEKLENEN işlem (try/catch içinde 'ERR' basılır)."""
+    """An operation EXPECTED to raise an error in LOOK ('ERR' is printed inside try/catch)."""
 
 
 # ── value model ──────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ def key_str(k):
 
 
 def list_index(k):
-    """Liste için sayısal indeks ya da None (= tam-sayı olmayan metin)."""
+    """Numeric index for a list, or None (= text that is not an integer)."""
     if isinstance(k, bool):
         raise Invalid()
     if isinstance(k, int):
@@ -108,7 +108,7 @@ def get(c, k):
 
 
 def set_(c, k, v):
-    """Tek düzey yazma; YENİ kabı döndürür (c yerinde de değişebilir)."""
+    """Single-level write; returns the NEW container (c may also change in place)."""
     if c is None:
         c = []
     if isinstance(c, MapV):
@@ -151,7 +151,7 @@ def eq(a, b):
 
 
 def canon(v):
-    """Karşılaştırılabilir kanonik biçim (bool/int karışmasın diye etiketli)."""
+    """Comparable canonical form (tagged so that bool and int are not mixed up)."""
     if isinstance(v, list):
         return ("L", tuple(canon(x) for x in v))
     if isinstance(v, MapV):
@@ -370,7 +370,7 @@ def ustr_index_of(s, t):
 
 
 def model_run(ops):
-    """Beklenen çıktı: kanonik satır listesi. Geçersiz program -> Invalid."""
+    """Expected output: the list of canonical lines. Invalid program -> Invalid."""
     env = {"$a": [], "$b": [], "$c": []}
     out = []
 
@@ -664,7 +664,7 @@ def shrink(lk, ops, eng_env, tmpdir):
 
 
 def gen_program(r, length):
-    """Model-geçerli bir işlem dizisi üret (geçersiz adayları atla)."""
+    """Generate a model-valid operation sequence (skip invalid candidates)."""
     ops = []
     tries = 0
     while len(ops) < length and tries < length * 20:

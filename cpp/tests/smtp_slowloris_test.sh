@@ -19,7 +19,7 @@ SRV=""
 cleanup(){ [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; sleep 1; [ -n "$SRV" ] && kill -9 "$SRV" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
 fail=0
-command -v python3 >/dev/null 2>&1 || { echo "  (atlandi: python3 gerekli)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "  (skipped: python3 required)"; exit 0; }
 
 echo 'route("GET","/",function(){ return response::text("ok") })' > "$TMP/app.lk"
 mkdir -p "$TMP/md"
@@ -84,14 +84,14 @@ no=$(echo "$out" | grep -o 'NEW_OK=True' || true)
 
 # the idle close must be in the IDLE..IDLE+5 range (NOT before — positive control)
 if awk "BEGIN{exit !($ca >= $IDLE-0.5 && $ca <= $IDLE+5)}" 2>/dev/null; then
-  echo "  PASS idle bağlantı ~${ca}s sonra kapandı (timeout=${IDLE}s) — slowloris reap ATEŞLEDİ"
+  echo "  PASS idle connection closed after ~${ca}s (timeout=${IDLE}s) — slowloris reap FIRED"
 else
-  echo "  FAIL idle kapanma zamanı beklenmedik: ${ca}s (timeout ${IDLE}s)"; fail=1
+  echo "  FAIL idle close time unexpected: ${ca}s (timeout ${IDLE}s)"; fail=1
 fi
-[ -n "$aa" ] && echo "  PASS aktif (NOOP) bağlantı timeout'u aşarak açık kaldı — yanlış-pozitif yok" \
-             || { echo "  FAIL aktif bağlantı yanlışlıkla kapandı (yanlış-pozitif reap)"; fail=1; }
-[ -n "$no" ] && echo "  PASS reap sonrası yeni bağlantı kabul (conn_count/fd sızmadı)" \
-             || { echo "  FAIL reap sonrası yeni bağlantı reddedildi (sayaç sızıntısı?)"; fail=1; }
+[ -n "$aa" ] && echo "  PASS active (NOOP) connection stayed open past the timeout — no false positive" \
+             || { echo "  FAIL active connection was closed by mistake (false-positive reap)"; fail=1; }
+[ -n "$no" ] && echo "  PASS new connection accepted after reap (no conn_count/fd leak)" \
+             || { echo "  FAIL new connection refused after reap (counter leak?)"; fail=1; }
 
 [ $fail = 0 ] && echo "PASS: SMTP slowloris idle-timeout" || echo "FAIL: SMTP slowloris idle-timeout"
 exit $fail

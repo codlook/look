@@ -4,7 +4,7 @@
 try {
   $db = db::connect("postgresqls://looktest:testpass@look-pg/testdb")
   db::query($db, "SELECT 1")
-  print("HATA: guvenilmeyen cert KABUL edildi — verify calismiyor")
+  print("ERROR: untrusted cert was ACCEPTED — verify is not working")
 } catch($e) {
-  print("OK reddedildi (guvenilmeyen cert): " . $e)
+  print("OK rejected (untrusted cert): " . $e)
 }

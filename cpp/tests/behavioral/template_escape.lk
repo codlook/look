@@ -16,7 +16,7 @@ chk("backtick",   template::escape("a`b"),   "a&#96;b"); $ran = $ran + 1
 
 # Safe characters that are NOT escaped must pass through unchanged
 chk("safe-plain", template::escape("Merhaba Dunya 123"), "Merhaba Dunya 123"); $ran = $ran + 1
-chk("bos",        template::escape(""), ""); $ran = $ran + 1
+chk("empty",        template::escape(""), ""); $ran = $ran + 1
 
 # XSS PAYLOAD — the script tag must be fully neutralized (< > " ' must all be escaped)
 chk("xss-script", template::escape("<script>alert('x')</script>"),

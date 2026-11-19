@@ -47,7 +47,7 @@ $bad = "mysql://" . $user . ":yanlis_sifre_zzz@" . $host . ":" . $port . "/" . $
 try {
   $bc = db::connect($bad)
   db::query($bc, "SELECT 1")
-  print("AUTH_REJECT_FAIL|yanlis sifre KABUL EDILDI (auth dogrulamiyor)")
+  print("AUTH_REJECT_FAIL|wrong password was ACCEPTED (auth does not verify)")
 } catch ($e) {
   print("AUTH_REJECT")
 }

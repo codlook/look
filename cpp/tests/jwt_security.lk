@@ -51,7 +51,7 @@ $hdr_none = crypto::base64url_encode(json::encode(["alg" => "none", "typ" => "JW
 $pay_none = crypto::base64url_encode(json::encode(["user" => "admin", "exp" => 9999999999]));
 $tok_none = $hdr_none . "." . $pay_none . ".";      # empty signature
 if (jwt_verify_local($tok_none, $SECRET) != null) {
-    print("FAIL 1 (KRITIK): alg=none token KABUL edildi — imza atlanabiliyor"); $fail = $fail + 1;
+    print("FAIL 1 (CRITICAL): alg=none token ACCEPTED — the signature can be bypassed"); $fail = $fail + 1;
 }
 
 # --- 2) RS256→HS256 key-confusion: alg=RS256 header, but signed with HMAC(public_key) ---
@@ -64,14 +64,14 @@ $si_rs = $hdr_rs . "." . $pay_rs;
 $forged = crypto::base64url_encode(crypto::hmac_sha256_raw($si_rs, "PUBLIC-KEY-AS-SECRET"));
 $tok_rs = $si_rs . "." . $forged;
 if (jwt_verify_local($tok_rs, $SECRET) != null) {
-    print("FAIL 2 (KRITIK): RS256->HS256 key-confusion token KABUL edildi"); $fail = $fail + 1;
+    print("FAIL 2 (CRITICAL): RS256->HS256 key-confusion token ACCEPTED"); $fail = $fail + 1;
 }
 
 # --- 3) exp expired → must be REJECTED ---
 $run = $run + 1;
 $tok_exp = jwt_sign_local(["user" => "bob", "exp" => 1000000000], $SECRET);  # 2001 — in the past
 if (jwt_verify_local($tok_exp, $SECRET) != null) {
-    print("FAIL 3: suresi gecmis (exp) token KABUL edildi"); $fail = $fail + 1;
+    print("FAIL 3: expired (exp) token ACCEPTED"); $fail = $fail + 1;
 }
 
 # --- 4) signature tampering: produce a valid token, change the payload, keep the signature → must be REJECTED ---
@@ -81,7 +81,7 @@ $gp = string::split($good, ".");
 $tampered_pay = crypto::base64url_encode(json::encode(["user" => "bob", "rol" => "admin"]));
 $tok_tamper = $gp[0] . "." . $tampered_pay . "." . $gp[2];   # old signature
 if (jwt_verify_local($tok_tamper, $SECRET) != null) {
-    print("FAIL 4 (KRITIK): kurcalanmis payload (rol=admin) eski imzayla KABUL edildi"); $fail = $fail + 1;
+    print("FAIL 4 (CRITICAL): tampered payload (rol=admin) ACCEPTED with the old signature"); $fail = $fail + 1;
 }
 
 # --- 5) POSITIVE: validly signed token ACCEPTED + payload correct ---
@@ -89,24 +89,24 @@ $run = $run + 1;
 $valid = jwt_sign_local(["user" => "alice", "rol" => "user", "exp" => 9999999999], $SECRET);
 $vp = jwt_verify_local($valid, $SECRET);
 if ($vp == null) {
-    print("FAIL 5: gecerli token REDDEDILDI (verify kirik)"); $fail = $fail + 1;
+    print("FAIL 5: valid token REJECTED (verify is broken)"); $fail = $fail + 1;
 } else {
     if ($vp["user"] != "alice") {
-        print("FAIL 5b: payload bozuldu — user=alice bekleniyordu"); $fail = $fail + 1;
+        print("FAIL 5b: payload corrupted — user=alice expected"); $fail = $fail + 1;
     }
 }
 
 # --- Guard 1: empty-green — did all 5 axes run? ---
 const { EXPECTED = 5 }
 if ($run != EXPECTED) {
-    print("FAIL: " . EXPECTED . " eksen beklendi, " . $run . " kostu — bir dal atlandi");
+    print("FAIL: " . EXPECTED . " axes expected, " . $run . " ran — a branch was skipped");
     exit(1);
 }
 
 # --- Guard 2: fail-loud CI gate ---
 if ($fail != 0) {
-    print("FAIL: " . $fail . "/" . $run . " JWT guvenlik ekseni GUVENSIZ");
+    print("FAIL: " . $fail . "/" . $run . " JWT security axes INSECURE");
     exit(1);
 }
 
-print("PASS: JWT guvenlik " . $run . "/" . $run . " (alg=none red, key-confusion red, exp red, tamper red, pozitif kabul)");
+print("PASS: JWT security " . $run . "/" . $run . " (alg=none rejected, key-confusion rejected, exp rejected, tamper rejected, positive accepted)");

@@ -17,7 +17,7 @@ static void chk(const char* in, bool want_ok, const char* want_addr) {
 }
 
 int main() {
-    printf("SMTP extract_addr tablo (geçmiş bug'lar + adversarial):\n");
+    printf("SMTP extract_addr table (past bugs + adversarial):\n");
     // --- legitimate ---
     chk("MAIL FROM:<a@b.com>",        true,  "a@b.com");
     chk("RCPT TO:<x@y.com>",          true,  "x@y.com");
@@ -43,8 +43,8 @@ int main() {
     std::string big(100000, '<'); big = "MAIL FROM:" + big;   // 100K '<' — OOB/quadratic bait
     for (auto s : adv) { std::string a; (void)smtp_extract_addr(s, a); }
     { std::string a; (void)smtp_extract_addr(big, a); }
-    printf("  adversarial+100K: ÇÖKME YOK (ASan temiz)\n");
+    printf("  adversarial+100K: NO CRASH (ASan clean)\n");
 
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (extract_addr sağlam + geçmiş bug'lar kilitli)\n", fails);
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (extract_addr is robust + past bugs locked in)\n", fails);
     return fails ? 1 : 0;
 }

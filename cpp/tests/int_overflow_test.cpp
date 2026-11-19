@@ -26,32 +26,32 @@ static void chk(const char* label, Op op, int64_t a, int64_t b, bool want_ovf, i
 }
 
 int main() {
-    printf("int64 taşma-tespiti tablosu:\n");
-    // ── toplama ──
+    printf("int64 overflow-detection table:\n");
+    // ── addition ──
     chk("add 2+3",            ADD, 2, 3, false, 5);
     chk("add MAX+0",          ADD, INT64_MAX, 0, false, INT64_MAX);
-    chk("add MAX+1 TAŞAR",    ADD, INT64_MAX, 1, true, 0);
-    chk("add MIN+(-1) TAŞAR", ADD, INT64_MIN, -1, true, 0);
+    chk("add MAX+1 OVERFLOWS", ADD, INT64_MAX, 1, true, 0);
+    chk("add MIN+(-1) OVERFLOWS", ADD, INT64_MIN, -1, true, 0);
     chk("add -5+(-3)",        ADD, -5, -3, false, -8);
     // ── subtraction ──
     chk("sub 10-4",           SUB, 10, 4, false, 6);
-    chk("sub MIN-1 TAŞAR",    SUB, INT64_MIN, 1, true, 0);
-    chk("sub MAX-(-1) TAŞAR", SUB, INT64_MAX, -1, true, 0);
+    chk("sub MIN-1 OVERFLOWS", SUB, INT64_MIN, 1, true, 0);
+    chk("sub MAX-(-1) OVERFLOWS", SUB, INT64_MAX, -1, true, 0);
     chk("sub MIN-(-1)",       SUB, INT64_MIN, -1, false, INT64_MIN + 1);
     // ── multiplication ──
     chk("mul 6*7",            MUL, 6, 7, false, 42);
     chk("mul MAX*1",          MUL, INT64_MAX, 1, false, INT64_MAX);
-    chk("mul MAX*2 TAŞAR",    MUL, INT64_MAX, 2, true, 0);
-    chk("mul MIN*-1 TAŞAR",   MUL, INT64_MIN, -1, true, 0);   // #DE trap — the guard must hold
-    chk("mul -1*MIN TAŞAR",   MUL, -1, INT64_MIN, true, 0);
-    chk("mul 0*MIN sıfır",    MUL, 0, INT64_MIN, false, 0);   // the division guard skips at a==0
-    chk("mul MIN*0 sıfır",    MUL, INT64_MIN, 0, false, 0);
-    chk("mul 9e18 sınır-altı",MUL, 3000000000LL, 3000000000LL, false, 9000000000000000000LL); // 9e18 < MAX
-    chk("mul 4e9*4e9 TAŞAR",  MUL, 4000000000LL, 4000000000LL, true, 0);  // 1.6e19 > MAX
+    chk("mul MAX*2 OVERFLOWS", MUL, INT64_MAX, 2, true, 0);
+    chk("mul MIN*-1 OVERFLOWS", MUL, INT64_MIN, -1, true, 0);   // #DE trap — the guard must hold
+    chk("mul -1*MIN OVERFLOWS", MUL, -1, INT64_MIN, true, 0);
+    chk("mul 0*MIN zero",    MUL, 0, INT64_MIN, false, 0);   // the division guard skips at a==0
+    chk("mul MIN*0 zero",    MUL, INT64_MIN, 0, false, 0);
+    chk("mul 9e18 below-limit",MUL, 3000000000LL, 3000000000LL, false, 9000000000000000000LL); // 9e18 < MAX
+    chk("mul 4e9*4e9 OVERFLOWS", MUL, 4000000000LL, 4000000000LL, true, 0);  // 1.6e19 > MAX
     chk("mul -4*3",           MUL, -4, 3, false, -12);
 
     const int EXPECTED = 19;
-    if (ran != EXPECTED) { printf("\nFAIL: %d vaka beklendi, %d koştu\n", EXPECTED, ran); return 1; }
-    printf(fails ? "\n%d FAIL\n" : "\nTÜM VAKALAR GEÇTİ (MIN*-1 #DE tuzağı ve taşma sınırları kilitli)\n", fails);
+    if (ran != EXPECTED) { printf("\nFAIL: %d cases expected, %d ran\n", EXPECTED, ran); return 1; }
+    printf(fails ? "\n%d FAIL\n" : "\nALL CASES PASSED (MIN*-1 #DE trap and overflow boundaries locked in)\n", fails);
     return fails ? 1 : 0;
 }

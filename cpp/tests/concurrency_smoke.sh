@@ -49,7 +49,7 @@ run_mode() {
   local label="$1"; shift
   local env_pfx="$1"; shift
   # env_pfx: "" (pool) or "LOOK_FIBER_DISPATCH=1"
-  echo "[$label] sunucu başlatılıyor..."
+  echo "[$label] starting server..."
   if [ -n "$env_pfx" ]; then export $env_pfx; fi
   "$FCGI" --mode http --port $PORT app.lk >"$TMP/srv.log" 2>&1 &
   local srv=$!
@@ -60,7 +60,7 @@ run_mode() {
     sleep 0.25
   done
   if [ "$up" != "1" ]; then
-    echo "  FAIL [$label]: sunucu ayağa kalkmadı"; sed 's/^/    srv: /' "$TMP/srv.log"
+    echo "  FAIL [$label]: server did not come up"; sed 's/^/    srv: /' "$TMP/srv.log"
     kill $srv 2>/dev/null; wait $srv 2>/dev/null
     if [ -n "$env_pfx" ]; then unset ${env_pfx%%=*}; fi
     return 1
@@ -77,8 +77,8 @@ run_mode "worker-pool" ""                       || fail=1
 run_mode "fiber"       "LOOK_FIBER_DISPATCH=1"  || fail=1
 
 if [ "$fail" = "0" ]; then
-  echo "TÜMÜ PASS: her iki dispatch modu c=$CONC'de hang etmedi."
+  echo "ALL PASS: neither dispatch mode hung at c=$CONC."
 else
-  echo "BAŞARISIZ: en az bir mod hang/eksik-yanıt gösterdi."
+  echo "NOT PASSED: at least one mode hung or returned an incomplete response."
 fi
 exit $fail

@@ -11,16 +11,16 @@ function chk($l, $g, $w) { if ($g == $w) { print("OK   " . $l) } else { print("F
 function vok($data, $rules) { $r = validator::check($data, $rules); return $r["ok"] }
 
 # ── email ──
-chk("email gecerli", vok(["e" => "a@b.com"], ["e" => ["email"]]), true); $ran = $ran + 1
-chk("email nokta-yok", vok(["e" => "a@b"], ["e" => ["email"]]), false); $ran = $ran + 1
-chk("email at-yok", vok(["e" => "ab.com"], ["e" => ["email"]]), false); $ran = $ran + 1
+chk("email valid", vok(["e" => "a@b.com"], ["e" => ["email"]]), true); $ran = $ran + 1
+chk("email no-dot", vok(["e" => "a@b"], ["e" => ["email"]]), false); $ran = $ran + 1
+chk("email no-at", vok(["e" => "ab.com"], ["e" => ["email"]]), false); $ran = $ran + 1
 chk("email bosluk", vok(["e" => "a b@c.com"], ["e" => ["email"]]), false); $ran = $ran + 1
 
 # ── required ── (an empty value must be rejected)
-chk("required bos", vok(["n" => ""], ["n" => ["required"]]), false); $ran = $ran + 1
-chk("required dolu", vok(["n" => "x"], ["n" => ["required"]]), true); $ran = $ran + 1
+chk("required empty", vok(["n" => ""], ["n" => ["required"]]), false); $ran = $ran + 1
+chk("required filled", vok(["n" => "x"], ["n" => ["required"]]), true); $ran = $ran + 1
 # a missing field must not pass required either (get_field returns empty)
-chk("required eksik-alan", vok([], ["n" => ["required"]]), false); $ran = $ran + 1
+chk("required missing-field", vok([], ["n" => ["required"]]), false); $ran = $ran + 1
 
 # ── integer (STRICT — bypass closed) ──
 chk("integer temiz", vok(["a" => "42"], ["a" => ["integer"]]), true); $ran = $ran + 1
@@ -35,23 +35,23 @@ chk("numeric ondalik", vok(["a" => "3.14"], ["a" => ["numeric"]]), true); $ran =
 chk("numeric coplu-RED", vok(["a" => "3.14xx"], ["a" => ["numeric"]]), false); $ran = $ran + 1
 
 # ── min / max (numeric value bound) ──
-chk("min gecerli", vok(["y" => "18"], ["y" => ["min:18"]]), true); $ran = $ran + 1
+chk("min valid", vok(["y" => "18"], ["y" => ["min:18"]]), true); $ran = $ran + 1
 chk("min ihlal", vok(["y" => "17"], ["y" => ["min:18"]]), false); $ran = $ran + 1
-chk("max gecerli", vok(["y" => "99"], ["y" => ["max:100"]]), true); $ran = $ran + 1
+chk("max valid", vok(["y" => "99"], ["y" => ["max:100"]]), true); $ran = $ran + 1
 chk("max ihlal", vok(["y" => "101"], ["y" => ["max:100"]]), false); $ran = $ran + 1
 
 # ── in: (whitelist) ──
-chk("in gecerli", vok(["r" => "admin"], ["r" => ["in:admin,user"]]), true); $ran = $ran + 1
+chk("in valid", vok(["r" => "admin"], ["r" => ["in:admin,user"]]), true); $ran = $ran + 1
 chk("in disinda", vok(["r" => "root"], ["r" => ["in:admin,user"]]), false); $ran = $ran + 1
 
 # ── combined rules + error message surface ──
 chk("required+email zincir", vok(["e" => ""], ["e" => ["required", "email"]]), false); $ran = $ran + 1
 # many fields: if one is wrong, the overall ok=false
-chk("cok-alan biri-hatali",
+chk("multi-field one-invalid",
     vok(["e" => "a@b.com", "y" => "abc"],
         ["e" => ["email"], "y" => ["integer"]]), false); $ran = $ran + 1
 # all valid → ok=true
-chk("cok-alan hepsi-ok",
+chk("multi-field all-ok",
     vok(["e" => "a@b.com", "y" => "30"],
         ["e" => ["email"], "y" => ["integer"]]), true); $ran = $ran + 1
 

@@ -1,4 +1,4 @@
-name: Docker Hub publish (tarball → load → push, rebuild YOK)
+name: Docker Hub publish (tarball → load → push, NO rebuild)
 
 # Publishes Docker Hub from the CURRENT look-docker.tar.gz in GitHub v1.0 -- DOES NOT REBUILD
 # (release.yml's conditional Hub step needs a ~10 min build per tag; this one uses the
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Hangi GitHub release tag'inden çekilsin (varsayılan v1.0)"
+        description: "Which GitHub release tag to download from (default v1.0)"
         required: false
         default: "v1.0"
 
@@ -30,7 +30,7 @@ jobs:
       DOCKERHUB_USERNAME: codlook   # public namespace -- fixed; only the TOKEN is a secret
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
-      - name: look-docker.tar.gz indir (release tarball, güncel)
+      - name: Download look-docker.tar.gz (release tarball, current)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -40,19 +40,19 @@ jobs:
             --pattern 'look-docker.tar.gz' --dir . --clobber
           ls -lh look-docker.tar.gz
 
-      - name: docker load + tag doğrula (secret olmadan da koşar)
+      - name: docker load + verify tag (also runs without the secret)
         run: |
           set -e
           # The image tag is read from inside the tarball (codlook/look:<version>); the version is not embedded here.
           IMG="$(docker load < look-docker.tar.gz | sed -n 's/^Loaded image: //p' | head -1)"
           [ -n "$IMG" ] || { echo "::error::no image in the tarball"; exit 1; }
           echo "IMG=$IMG" >> "$GITHUB_ENV"
-          echo "=== yüklenen imaj ($IMG) + LOOK damgası ==="
+          echo "=== loaded image ($IMG) + LOOK stamp ==="
           docker images codlook/look
           # read the stamp from the image (git-sha; if it is "src"/"docker" the release.yml stamp bug is back)
           docker run --rm "$IMG" lk --version || true
 
-      - name: Docker Hub push (secret varsa; yoksa atla)
+      - name: Docker Hub push (if the secret exists; otherwise skip)
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
         run: |
           set -e
@@ -60,10 +60,10 @@ jobs:
           docker tag "$IMG" codlook/look:latest
           docker push "$IMG"
           docker push codlook/look:latest
-          echo "Docker Hub güncellendi: $IMG + :latest"
+          echo "Docker Hub updated: $IMG + :latest"
 
-      - name: Secret yoksa uyar (kuru-prova sonucu)
+      - name: Warn if the secret is missing (dry-run result)
         if: ${{ env.DOCKERHUB_TOKEN == '' }}
         run: |
-          echo "::warning::DOCKERHUB_TOKEN secret'ı yok — tarball load+tag DOĞRULANDI ama push ATLANDI."
-          echo "Settings → Secrets → Actions: DOCKERHUB_USERNAME + DOCKERHUB_TOKEN ekleyip tekrar çalıştır."
+          echo "::warning::DOCKERHUB_TOKEN secret is missing — tarball load+tag VERIFIED but push SKIPPED."
+          echo "Add DOCKERHUB_USERNAME + DOCKERHUB_TOKEN under Settings → Secrets → Actions and run again."

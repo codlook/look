@@ -40,7 +40,7 @@ cleanup(){
 }
 trap cleanup EXIT
 
-command -v openssl >/dev/null 2>&1 || { echo "  (atlandi: openssl yok)"; exit 0; }
+command -v openssl >/dev/null 2>&1 || { echo "  (skipped: openssl missing)"; exit 0; }
 
 # find the postgres binary directory (apt: /usr/lib/postgresql/<ver>/bin)
 PGBIN=""
@@ -49,7 +49,7 @@ if [ -z "$PGBIN" ]; then
   cand="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1)"
   [ -n "$cand" ] && PGBIN="$cand"
 fi
-[ -n "$PGBIN" ] && [ -x "$PGBIN/initdb" ] || { echo "  (atlandi: postgres server binary yok)"; exit 0; }
+[ -n "$PGBIN" ] && [ -x "$PGBIN/initdb" ] || { echo "  (skipped: postgres server binary missing)"; exit 0; }
 echo "  PGBIN=$PGBIN"
 
 # ── Certificates: our own CA + a CA-signed server cert (SAN=DNS:localhost) ──────
@@ -62,14 +62,14 @@ openssl x509 -req -in "$CERTS/server.csr" -CA "$CERTS/ca.crt" -CAkey "$CERTS/ca.
   -CAcreateserial -days 1 -out "$CERTS/server.crt" \
   -extfile <(printf "subjectAltName=DNS:localhost\n") >/dev/null 2>&1
 chmod 600 "$CERTS/server.key"
-[ -s "$CERTS/server.crt" ] || { echo "  (atlandi: cert uretilemedi)"; exit 0; }
+[ -s "$CERTS/server.crt" ] || { echo "  (skipped: could not generate certs)"; exit 0; }
 
 # ── initdb: two clusters (scram default) ─────────────────────────────────────
 "$PGBIN/initdb" -D "$TLSDIR"   -U postgres --auth=trust --auth-host=scram-sha-256 \
   --pwfile=<(echo postgres) >/dev/null 2>&1
 "$PGBIN/initdb" -D "$PLAINDIR" -U postgres --auth=trust --auth-host=scram-sha-256 \
   --pwfile=<(echo postgres) >/dev/null 2>&1
-[ -f "$TLSDIR/PG_VERSION" ] && [ -f "$PLAINDIR/PG_VERSION" ] || { echo "  (atlandi: initdb basarisiz)"; exit 0; }
+[ -f "$TLSDIR/PG_VERSION" ] && [ -f "$PLAINDIR/PG_VERSION" ] || { echo "  (skipped: initdb failed)"; exit 0; }
 
 # TLS-ON cluster config
 cp "$CERTS/server.crt" "$TLSDIR/server.crt"; cp "$CERTS/server.key" "$TLSDIR/server.key"
@@ -107,7 +107,7 @@ EOF
 "$PGBIN/pg_ctl" -D "$TLSDIR"   -l "$TMP/tls.log"   -w -t 30 start >/dev/null 2>&1 && PGT_PID=1
 "$PGBIN/pg_ctl" -D "$PLAINDIR" -l "$TMP/plain.log" -w -t 30 start >/dev/null 2>&1 && PGP_PID=1
 [ -n "$PGT_PID" ] && [ -n "$PGP_PID" ] || {
-  echo "  (atlandi: postgres baslatilamadi)"; sed -n '1,20p' "$TMP/tls.log" "$TMP/plain.log" 2>/dev/null; exit 0; }
+  echo "  (skipped: postgres could not be started)"; sed -n '1,20p' "$TMP/tls.log" "$TMP/plain.log" 2>/dev/null; exit 0; }
 
 # scram-password app role + db (both clusters)
 for D in "$TLSDIR" "$PLAINDIR"; do
@@ -140,34 +140,34 @@ assert(){ # label expected actual
 # 1) valid — verify PASS + real TLS roundtrip (SCRAM auth + SELECT inside TLS)
 o=$(SSL_CERT_FILE="$CA" DSN="postgresqls://looktest:testpass@localhost:$TLS_PORT/testdb" \
       timeout 20 "$LK" "$TMP/ok.lk" 2>&1)
-assert "valid: CA-guvenilir + SAN eslesir -> SELECT 42 (TLS roundtrip+SCRAM)" "42" "$o"
+assert "valid: trusted CA + SAN matches -> SELECT 42 (TLS roundtrip+SCRAM)" "42" "$o"
 
 # 2) untrusted — no CA, verify default -> REJECT
 o=$(DSN="postgresqls://looktest:testpass@localhost:$TLS_PORT/testdb" \
       timeout 20 "$LK" "$TMP/reject.lk" 2>&1)
-assert "untrusted: CA store'da yok + verify -> REJECTED" "REJECTED" "$o"
+assert "untrusted: not in the CA store + verify -> REJECTED" "REJECTED" "$o"
 
 # 3) mismatch — CA trusted but 127.0.0.1 (SAN=localhost) -> hostname REJECT
 o=$(SSL_CERT_FILE="$CA" DSN="postgresqls://looktest:testpass@127.0.0.1:$TLS_PORT/testdb" \
       timeout 20 "$LK" "$TMP/reject.lk" 2>&1)
-assert "mismatch: gecerli CA ama SAN!=127.0.0.1 -> hostname REJECTED" "REJECTED" "$o"
+assert "mismatch: valid CA but SAN!=127.0.0.1 -> hostname REJECTED" "REJECTED" "$o"
 
 # 4) insecure — POSITIVE CONTROL: connects without verification
 o=$(DSN="postgresqls://looktest:testpass@127.0.0.1:$TLS_PORT/testdb?tls=insecure" \
       timeout 20 "$LK" "$TMP/ok.lk" 2>&1)
-assert "insecure: guvenilmez cert'e RAGMEN baglanir (verify off) -> 42" "42" "$o"
+assert "insecure: connects DESPITE an untrusted cert (verify off) -> 42" "42" "$o"
 
 # 5) reject-tls — ssl=off server, postgresqls:// -> 'N' -> clean error (NO SILENT FALLBACK)
 o=$(DSN="postgresqls://looktest:testpass@localhost:$PLAIN_PORT/testdb" \
       timeout 20 "$LK" "$TMP/reject.lk" 2>&1)
-assert "reject-tls: ssl=off sunucu + postgresqls:// -> REJECTED (plaintext dususu YOK)" "REJECTED" "$o"
+assert "reject-tls: ssl=off server + postgresqls:// -> REJECTED (NO plaintext downgrade)" "REJECTED" "$o"
 
 # 6) plain-ok — POSITIVE CONTROL: postgres:// connects to the ssl=off server
 o=$(DSN="postgres://looktest:testpass@localhost:$PLAIN_PORT/testdb" \
       timeout 20 "$LK" "$TMP/ok.lk" 2>&1)
-assert "plain-ok: postgres:// ssl=off sunucu -> 42 (5'in reddi TLS-refuse, down degil)" "42" "$o"
+assert "plain-ok: postgres:// ssl=off server -> 42 (case 5's rejection is a TLS refusal, not server-down)" "42" "$o"
 
 echo
-[ $fail = 0 ] && echo "PASS: PG TLS gercek-sunucu interop (SSLRequest->TLS->startup->SCRAM->query)" \
-              || echo "FAIL: PG TLS gercek-sunucu interop"
+[ $fail = 0 ] && echo "PASS: PG TLS real-server interop (SSLRequest->TLS->startup->SCRAM->query)" \
+              || echo "FAIL: PG TLS real-server interop"
 exit $fail

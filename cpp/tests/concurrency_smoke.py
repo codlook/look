@@ -106,9 +106,9 @@ def main():
     alive = probe_alive()
     tag = "c=%d x %d req" % (CONC, PERCON)
     if done == want and stuck == 0 and alive:
-        print("  PASS [%s]: %d/%d 200 in %.1fs, sunucu canlı" % (tag, done, want, dt))
+        print("  PASS [%s]: %d/%d 200 in %.1fs, server alive" % (tag, done, want, dt))
         return 0
-    print("  FAIL [%s]: %d/%d 200, %d thread asılı, %.1fs, post-load-alive=%s"
+    print("  FAIL [%s]: %d/%d 200, %d threads hung, %.1fs, post-load-alive=%s"
           % (tag, done, want, stuck, dt, alive), file=sys.stderr)
     for i, e in enumerate(errors):
         if e:

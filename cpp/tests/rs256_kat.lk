@@ -33,26 +33,26 @@ $fail = 0
 # 1) POSITIVE (the external-oracle signature must be accepted). Not SIGN — a fixed signature.
 $run = $run + 1
 if (crypto::rs256_verify($msg, $sig, $pub) != true) {
-    print("FAIL 1: gecerli dis-oracle imzasi REDDEDILDI (verify kirik)"); $fail = $fail + 1
+    print("FAIL 1: valid external-oracle signature REJECTED (verify is broken)"); $fail = $fail + 1
 }
 
 # 2) REJECT: corrupt message → false
 $run = $run + 1
 if (crypto::rs256_verify("DEGISTIRILMIS mesaj", $sig, $pub) != false) {
-    print("FAIL 2: bozuk mesaj KABUL edildi (verify her seye true donuyor)"); $fail = $fail + 1
+    print("FAIL 2: tampered message ACCEPTED (verify returns true for everything)"); $fail = $fail + 1
 }
 
 # 3) REJECT: wrong signature (a valid signature of another message) → false
 $run = $run + 1
 $wrong = crypto::rs256_sign("baska bir mesaj", $priv)
 if (crypto::rs256_verify($msg, $wrong, $pub) != false) {
-    print("FAIL 3: yanlis imza KABUL edildi"); $fail = $fail + 1
+    print("FAIL 3: wrong signature ACCEPTED"); $fail = $fail + 1
 }
 
 # 4) SIGN deterministic: the rs256_sign output must match the external-oracle signature exactly
 $run = $run + 1
 if (crypto::base64_encode(crypto::rs256_sign($msg, $priv)) != $SIG_B64) {
-    print("FAIL 4: rs256_sign dis-oracle imzasindan SAPTI (PKCS#1 v1.5 determinizmi bozuk)"); $fail = $fail + 1
+    print("FAIL 4: rs256_sign DEVIATED from the external-oracle signature (PKCS#1 v1.5 determinism is broken)"); $fail = $fail + 1
 }
 
 # 5) an EC (non-RSA) key MUST BE REJECTED — rs256 = RSA-only. POSIX EVP would sign EC as ECDSA
@@ -63,20 +63,20 @@ $ec = crypto::base64_decode("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JR0hBZ0VBTUJ
 $ec_rejected = false
 try { crypto::rs256_sign($msg, $ec) } catch($e) { $ec_rejected = true }
 if ($ec_rejected != true) {
-    print("FAIL 5: EC key rs256_sign'da REDDEDILMEDI (RSA-only ihlali; POSIX ECDSA / Win bos-imza)"); $fail = $fail + 1
+    print("FAIL 5: EC key was NOT REJECTED in rs256_sign (RSA-only violation; POSIX ECDSA / Win empty signature)"); $fail = $fail + 1
 }
 
 # Guard 1 — empty-green: did all 5 checks run (no branch skipped)?
 const { EXPECTED = 5 }
 if ($run != EXPECTED) {
-    print("FAIL: " . EXPECTED . " kontrol beklendi, " . $run . " kostu — bir dal atlandi")
+    print("FAIL: " . EXPECTED . " checks expected, " . $run . " ran — a branch was skipped")
     exit(1)
 }
 
 # Guard 2 — fail-loud: CI gate.
 if ($fail != 0) {
-    print("FAIL: " . $fail . "/" . $run . " rs256 KAT kontrolu basarisiz")
+    print("FAIL: " . $fail . "/" . $run . " rs256 KAT checks failed")
     exit(1)
 }
 
-print("PASS: rs256 KAT " . $run . "/" . $run . " (verify+reject+sign, dis-oracle openssl'e pinli)")
+print("PASS: rs256 KAT " . $run . "/" . $run . " (verify+reject+sign, pinned to the external openssl oracle)")

@@ -48,18 +48,18 @@ if (date::diff("2024-11-04", "2024-11-01", "day") != 3) {
 # hour: the REAL-time path is not broken (DST-correct seconds)
 $run = $run + 1
 if (date::diff("2024-06-15 14:00:00", "2024-06-15 12:00:00", "hour") != 2) {
-    print("FAIL diff hour: 2 saat farki yanlis -> " . date::diff("2024-06-15 14:00:00", "2024-06-15 12:00:00", "hour")); $fail = $fail + 1
+    print("FAIL diff hour: 2-hour difference is wrong -> " . date::diff("2024-06-15 14:00:00", "2024-06-15 12:00:00", "hour")); $fail = $fail + 1
 }
 
 # Guard 1 — empty-green: did 7 checks run?
 const { EXPECTED = 7 }
 if ($run != EXPECTED) {
-    print("FAIL: " . EXPECTED . " kontrol beklendi, " . $run . " kostu — bir dal atlandi")
+    print("FAIL: " . EXPECTED . " checks expected, " . $run . " ran — a branch was skipped")
     exit(1)
 }
 # Guard 2 — fail-loud.
 if ($fail != 0) {
-    print("FAIL: " . $fail . "/" . $run . " date DST kontrolu basarisiz")
+    print("FAIL: " . $fail . "/" . $run . " date DST checks failed")
     exit(1)
 }
-print("PASS: date DST " . $run . "/" . $run . " (add/sub/diff takvim-tabanli, DST-guvenli)")
+print("PASS: date DST " . $run . "/" . $run . " (add/sub/diff are calendar-based, DST-safe)")

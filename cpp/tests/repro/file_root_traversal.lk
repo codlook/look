@@ -7,7 +7,7 @@ function try_read($label, $path, $should_allow) {
     $ok = false
     try { file::read($path); $ok = true } catch ($e) { $ok = false }
     $verdict = ($ok == $should_allow) ? "PASS" : "FAIL"
-    $act = $ok ? "IZIN" : "RED"
+    $act = $ok ? "ALLOW" : "DENY"
     print("{$verdict}  {$label}: {$act}")
     return ($verdict == "FAIL") ? 1 : 0
 }
@@ -15,14 +15,14 @@ function try_read($label, $path, $should_allow) {
 file::put("ok.txt", "x")
 $fails = 0
 // control: an existing file inside the root -> ALLOW (actually exercises the allow path)
-$fails = $fails + try_read("kontrol kok-ici ok.txt", "ok.txt", true)
+$fails = $fails + try_read("control in-root ok.txt", "ok.txt", true)
 // traversal payloads -> must be REJECTED
 $fails = $fails + try_read("literal ../secret", "../secret.txt", false)
-$fails = $fails + try_read("cift ../../etc/passwd", "../../etc/passwd", false)
-$fails = $fails + try_read("kok-ici .. escape", "sub/../../secret.txt", false)
-$fails = $fails + try_read("mutlak /etc/passwd", "/etc/passwd", false)
+$fails = $fails + try_read("double ../../etc/passwd", "../../etc/passwd", false)
+$fails = $fails + try_read("in-root .. escape", "sub/../../secret.txt", false)
+$fails = $fails + try_read("absolute /etc/passwd", "/etc/passwd", false)
 $fails = $fails + try_read("percent-encoded literal", "%2e%2e%2fsecret.txt", false)
-$fails = $fails + try_read("cift-encoded", "%252e%252e%252fsecret.txt", false)
+$fails = $fails + try_read("double-encoded", "%252e%252e%252fsecret.txt", false)
 // cleanup + final result: exit non-zero if any FAIL (CI catches it).
 file::remove("ok.txt")
 if ($fails > 0) { exit(1) }

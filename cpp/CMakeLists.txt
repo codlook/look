@@ -5,26 +5,26 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# ── Sanitizer build — güvenlik/fuzzing turu ──────────────────────────────────
+# ── Sanitizer build — security/fuzzing round ─────────────────────────────────
 # -DLOOK_SANITIZE=address           → AddressSanitizer (overflow, use-after-free)
 # -DLOOK_SANITIZE=undefined         → UBSan (integer overflow, null deref)
-# -DLOOK_SANITIZE=address,undefined → ikisi birlikte
-# Kullanım: cmake -B build-asan -DLOOK_SANITIZE=address,undefined
+# -DLOOK_SANITIZE=address,undefined → both together
+# Usage: cmake -B build-asan -DLOOK_SANITIZE=address,undefined
 if(LOOK_SANITIZE)
-    message(STATUS "Sanitizer aktif: ${LOOK_SANITIZE}")
+    message(STATUS "Sanitizer enabled: ${LOOK_SANITIZE}")
     if(MSVC)
-        # MSVC AddressSanitizer (VS 2019 16.9+): /fsanitize=address. Yalnız 'address'
-        # desteklenir (UBSan/TSan MSVC'de yok). LTCG(/GL) ile ÇAKIŞIR → bu dalda IPO
-        # zaten açılmıyor (else dalında). ASan runtime DLL'i PATH'te olmalı (MSVC bin).
+        # MSVC AddressSanitizer (VS 2019 16.9+): /fsanitize=address. Only 'address'
+        # is supported (no UBSan/TSan on MSVC). It CONFLICTS with LTCG(/GL) → IPO is
+        # already not enabled in this branch (it is in the else branch). The ASan runtime DLL must be on PATH (MSVC bin).
         add_compile_options(/fsanitize=address)
-        # LTCG'yi Release bayraklarindan cikar (CMake Release default'u /GL koyabilir).
+        # Remove LTCG from the Release flags (CMake's Release default may add /GL).
         string(REPLACE "/GL" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
         string(REPLACE "/GL" "" CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}")
     else()
         add_compile_options(-fsanitize=${LOOK_SANITIZE} -fno-omit-frame-pointer -g)
-        # Sanitizer runtime'ını statik linkle — binary self-contained olur, toolset
-        # kurulu olmayan container/VPS'te de çalışır (libasan.so bağımlılığı olmaz).
-        # TSan ve ASan farklı statik-runtime bayrakları ister (karıştırılamaz).
+        # Link the sanitizer runtime statically — the binary is self-contained and also
+        # runs in a container/VPS without the toolset installed (no libasan.so dependency).
+        # TSan and ASan need different static-runtime flags (they cannot be mixed).
         if(LOOK_SANITIZE MATCHES "thread")
             add_link_options(-fsanitize=${LOOK_SANITIZE} -static-libtsan)
         else()
@@ -32,16 +32,16 @@ if(LOOK_SANITIZE)
         endif()
     endif()
 else()
-    # ── Aşama A1: Link-Time Optimization ─────────────────────────────────────
-    # Sanitizer YOKken LTO aç — modüller arası inline (VM ↔ Value ↔ builtin).
-    # march=native BİLİNÇLİ olarak yok: binary farklı CPU'lara dağıtılıyor.
-    # Sadece Release/RelWithDebInfo'da; Debug'da kapalı (derleme hızı).
+    # ── Stage A1: Link-Time Optimization ────────────────────────────────────
+    # Enable LTO when there is NO sanitizer — cross-module inlining (VM ↔ Value ↔ builtin).
+    # march=native is deliberately NOT used: the binary is distributed to different CPUs.
+    # Release/RelWithDebInfo only; off in Debug (build speed).
     if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         include(CheckIPOSupported)
         check_ipo_supported(RESULT _ipo_ok OUTPUT _ipo_msg)
         if(_ipo_ok)
             set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
-            message(STATUS "LTO (IPO) aktif")
+            message(STATUS "LTO (IPO) enabled")
         else()
             message(STATUS "LTO desteklenmiyor: ${_ipo_msg}")
         endif()
@@ -51,7 +51,7 @@ endif()
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/src)
 
-# sqlite3.c saf C kodudur — C++ kurallarıyla derlenmez
+# sqlite3.c is pure C — it is not built with the C++ rules
 set_source_files_properties(
     src/sqlite3/sqlite-amalgamation-3530400/sqlite3.c
     PROPERTIES LANGUAGE C
@@ -65,21 +65,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/compiler.cpp PROPERTIES COMPILE_OPTIONS "-Werror=conversion")
 endif()
 
-# SQLite: multi-thread modu (2) — çok thread'li worker havuzu ZORUNLU kılıyor.
-# =0 (single-thread) SQLite'ın GLOBAL statiklerinin (sqlite3StatusUp sayaçları,
-# sqlite3_randomness PRNG durumu, sqlite3_initialize, page cache) mutex'lerini de
-# kaldırır. Ayrı bağlantılar per-connection state'i ayırır ama global state'i AYIRMAZ;
-# iki thread eşzamanlı open/query çağırınca bu global statikler yarışır (TSan: 241 rapor,
-# t4_sqlite_connect regresyon testi). =2 "multi-thread" = statikler korunur, per-connection
-# mutex YOK → çalışma zamanı deseni (her bağlantı tek thread'de) korunduğu için perf-nötr.
+# SQLite: multi-thread mode (2) — required because the worker pool is multi-threaded.
+# =0 (single-thread) also removes the mutexes of SQLite's GLOBAL statics (the sqlite3StatusUp counters,
+# the sqlite3_randomness PRNG state, sqlite3_initialize, the page cache). Separate connections
+# separate the per-connection state but NOT the global state;
+# when two threads call open/query at the same time these global statics race (TSan: 241 reports,
+# t4_sqlite_connect regression test). =2 "multi-thread" = the statics stay protected, there is
+# NO per-connection mutex → performance-neutral, since the run-time pattern (each connection in one thread) is kept.
 add_compile_definitions(SQLITE_THREADSAFE=2)
 
-# Build damgası: git kısa SHA → `lk --version`. Ürün sürümü 1.0.0 SABİT; damga "hangi
-# derleme" sorusunu cevaplar (Go'nun `-ldflags -X` felsefesi: sürüm release-anında AÇIKÇA
-# enjekte edilir, her build'e makine yüklenmez). Release yolu `-DLOOK_BUILD=<sha>` geçer +
-# FRESH derler (portable/Docker `rm -rf` yapar → damga doğru). Dev build git'ten okur (ucuz).
-# ÖNEMLİ: release build FRESH olmalı (incremental configure-damgayı bayatlatır) VE artefaktın
-# `--version`'ı paketten çıkarılıp GÖZLENMELİ — asıl güvence "artefaktı ölç", [[look-yayin-kapisi-drift]].
+# Build stamp: short git SHA → `lk --version`. The product version is FIXED in project(VERSION); the stamp answers
+# the "which build" question (Go's `-ldflags -X` approach: the stamp is injected EXPLICITLY at
+# release time, not loaded onto every build). The release path passes `-DLOOK_BUILD=<sha>` and
+# builds FRESH (portable/Docker does `rm -rf`, so the stamp is right). Dev builds read it from git (cheap).
+# IMPORTANT: a release build must be FRESH (an incremental configure leaves a stale stamp) AND the artifact's
+# `--version` must be extracted from the package and OBSERVED — the real guarantee is to "measure the artifact".
 if(NOT DEFINED LOOK_BUILD)
     execute_process(
         COMMAND git rev-parse --short HEAD
@@ -94,16 +94,16 @@ endif()
 add_compile_definitions(LOOK_BUILD="${LOOK_BUILD}")
 message(STATUS "LOOK build damgasi: ${LOOK_BUILD}")
 
-# Ürün sürümü — TEK KAYNAK: project(... VERSION) yukarıda. `lk`/`lk-fcgi` --version
-# ve REPL banner'ı bu compile-def'ten okur (eskiden 3 dosyada elle "1.0.0" gömülüydü;
-# CMake project sürümü 0.1.0'da kalmıştı = drift). Sürüm bump artık tek satır: project().
+# Product version — SINGLE SOURCE: project(... VERSION) above. `lk`/`lk-fcgi` --version
+# and the REPL banner read it from this compile definition (it used to be hard-coded by hand in 3 files,
+# and the CMake project version had stayed at 0.1.0 = drift). A version bump is now one line: project().
 add_compile_definitions(LOOK_VERSION="${PROJECT_VERSION}")
 
 # Platform-specific fiber backend
 if(WIN32)
     set(LOOK_FIBER src/fiber_win.cpp)
-    # Proje-geneli (hedeflerden ÖNCE): NOMINMAX (windows.h min/max makroları
-    # std::min/max'i bozmasın), WIN32_LEAN_AND_MEAN, CRT uyarılarını sustur.
+    # Project-wide (BEFORE the targets): NOMINMAX (so the windows.h min/max macros
+    # do not break std::min/max), WIN32_LEAN_AND_MEAN, silence CRT warnings.
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 else()
     set(LOOK_FIBER src/fiber_posix.cpp)
@@ -111,17 +111,17 @@ endif()
 
 set(LOOK_CORE
     src/token.cpp
-    src/mem_budget.cpp   # bellek bütçesi: operator new/delete sayımı (look/mem_budget.h)
+    src/mem_budget.cpp   # memory budget: operator new/delete accounting (look/mem_budget.h)
     src/lexer.cpp
     src/parser.cpp
-    src/format_src.cpp   # lk fmt — kaynak biçimlendirici (lexer'a bağlı)
-    src/fix_src.cpp      # lk fix — push/pop/array::pop yeni yazıma (ayrıştırıcıya bağlı)
-    src/route_group.cpp  # route::group() setup-zamanı prefix+mw kalıtımı context'i
-    src/value.cpp        # Value, kanal
-    src/runtime_host.cpp # yerleşik modüllerin ev sahibi (LOOK 2: ağaç-yürüten yorumlayıcının yerini aldı)
-    src/builtins.cpp   # derleyici is_reserved_builtin() çağırır → HER target'a lazım
-                       # (look-cgi LOOK_CORE kullanıp builtins'i ayrıca eklemiyordu → link fail,
-                       # yalnız 3-target portatif build'de görüldü; ci/build-win 2-target kaçırdı)
+    src/format_src.cpp   # lk fmt — source formatter (depends on the lexer)
+    src/fix_src.cpp      # lk fix — rewrites push/pop/array::pop to the new form (depends on the parser)
+    src/route_group.cpp  # route::group() — setup-time prefix + middleware inheritance context
+    src/value.cpp        # Value, channel
+    src/runtime_host.cpp # host of the built-in modules (replaced the tree-walking interpreter)
+    src/builtins.cpp   # the compiler calls is_reserved_builtin() → needed by EVERY target
+                       # (look-cgi used LOOK_CORE without adding builtins separately → link failure,
+                       # seen only in the 3-target portable build; ci/build-win's 2 targets missed it)
     src/runtime_init.cpp
     src/stdlib.cpp
     src/web.cpp
@@ -154,9 +154,9 @@ set(LOOK_CORE
     ${LOOK_FIBER}
 )
 
-# OpenSSL'e bağlı sunucu özellikleri (SMTP/IMAP/DKIM/DNS) yalnız POSIX'te.
-# Windows = geliştirme ortamı (XAMPP): mail SUNUCUSU yok, http:: Schannel kullanır,
-# sıfır dış bağımlılık (OpenSSL DLL yok). deliver_maildir Windows'ta mail_win.cpp'de.
+# Server features that depend on OpenSSL (SMTP/IMAP/DKIM/DNS) are POSIX-only.
+# Windows = development environment (XAMPP): no mail SERVER, http:: uses Schannel,
+# minimal external runtime dependencies (no OpenSSL DLL). deliver_maildir lives in mail_win.cpp on Windows.
 if(WIN32)
     list(APPEND LOOK_CORE src/mail_win.cpp)
 else()
@@ -166,19 +166,19 @@ endif()
 add_executable(look
     src/main.cpp
     src/event_loop.cpp
-    src/compiler.cpp   # bytecode derleyici (tek motor: VM)
-    src/vm.cpp         # C9: CLI-VM — bytecode yürütücü
-    src/cli_runtime.cpp # LOOK 2: lk ve lk test aynı VM ortamı
-    src/test_runner.cpp # LOOK 2: lk test VM'de (cli_runtime kullanır)
-    src/repl.cpp        # LOOK 2: REPL VM'de (cli_runtime kullanır)
-    ${LOOK_CORE}       # builtins.cpp artık LOOK_CORE'da (interpreter bağımlılığı)
+    src/compiler.cpp   # bytecode compiler (single engine: VM)
+    src/vm.cpp         # C9: CLI VM — bytecode executor
+    src/cli_runtime.cpp # lk and lk test share the same VM environment
+    src/test_runner.cpp # lk test on the VM (uses cli_runtime)
+    src/repl.cpp        # REPL on the VM (uses cli_runtime)
+    ${LOOK_CORE}       # builtins.cpp is now in LOOK_CORE (interpreter dependency)
 )
 
 add_executable(look-cgi
     src/cgi_main.cpp
-    src/http_main.cpp   # LOOK 2: lk-cgi, lk-fcgi ile aynı web motoru — VM
+    src/http_main.cpp   # lk-cgi — the same web engine as lk-fcgi — VM
     src/http_server.cpp
-    src/shutdown.cpp    # http_main.cpp çağırır; MSVC eksikte bağlamaz (Linux'ta kullanılmayan çağrı atılıyordu)
+    src/shutdown.cpp    # called by http_main.cpp; MSVC does not link without it (on Linux the unused call was dropped)
     src/compiler.cpp
     src/vm.cpp
     src/event_loop.cpp
@@ -208,14 +208,14 @@ add_executable(look-fcgi
     ${LOOK_CORE}
 )
 
-# ── Platform bağımsız linkleme ────────────────────────────────────────────────
+# ── Platform-independent linking ─────────────────────────────────────────────
 if(WIN32)
     target_link_libraries(look      ws2_32 bcrypt)
     target_link_libraries(look-cgi  ws2_32 bcrypt)
     target_link_libraries(look-fcgi ws2_32 bcrypt)
-    # Ana thread + std::thread worker'ları 8 MB stack (Linux varsayılanıyla aynı).
-    # Windows default 1 MB. VM çağrı yığını heap'tedir, ama geri çağırma zinciri (array::map içinde
-    # array::map …) her seviyede VM'e native olarak yeniden girer; 8 MB Linux ile aynı payı verir.
+    # Main thread + std::thread workers get an 8 MB stack (same as the Linux default).
+    # Windows default is 1 MB. The VM call stack is on the heap, but the callback chain (array::map inside
+    # array::map …) re-enters the VM natively at every level; 8 MB gives the same headroom as Linux.
     if(MSVC)
         target_link_options(look      PRIVATE /STACK:8388608)
         target_link_options(look-cgi  PRIVATE /STACK:8388608)
@@ -228,26 +228,26 @@ else()
     # Linux: pthread (std::filesystem, socket), dl (sqlite3 dlopen), ssl+crypto (http:: TLS)
     # resolv: dns_txt_lookup() via res_query() — DKIM + SPF
     find_package(Threads REQUIRED)
-    # Portatif tek binary: OpenSSL'i STATİK linkle (varsayılan AÇIK).
-    # AlmaLinux 8'de (OpenSSL 1.1) derlenen binary, Ubuntu 22.04+ (OpenSSL 3.0)
-    # üzerinde libssl.so.1.1 bulunamadığı için çalışmıyordu. Statik link ile
-    # tek binary tüm dağıtımlarda çalışır ("sıfır bağımlılık" — glibc zaten
-    # 2.28'de derlendiği için ileri-uyumlu). Kapatmak: -DLOOK_STATIC_SSL=OFF
+    # Portable single binary: link OpenSSL STATICALLY (ON by default).
+    # A binary built on AlmaLinux 8 (OpenSSL 1.1) did not run on Ubuntu 22.04+ (OpenSSL 3.0)
+    # because libssl.so.1.1 could not be found. With static linking
+    # one binary runs on all distributions (minimal external runtime dependencies — glibc is already built
+    # at 2.28, so it is forward-compatible). To turn it off: -DLOOK_STATIC_SSL=OFF
     option(LOOK_STATIC_SSL "OpenSSL'i statik linkle (portatif binary)" ON)
     if(LOOK_STATIC_SSL)
         set(OPENSSL_USE_STATIC_LIBS TRUE)
-        # Statik libcrypto.a zlib'e bağlı olabilir; FindOpenSSL bağımlılık olarak
-        # ZLIB::ZLIB IMPORTED target'ını referanslar — find_package(ZLIB) onu yaratmazsa
-        # generate adımı "ALIAS target missing" ile patlar. (Dinamik build'de gerekmez.)
+        # Static libcrypto.a may depend on zlib; FindOpenSSL references the
+        # ZLIB::ZLIB IMPORTED target as a dependency — if find_package(ZLIB) does not create it,
+        # the generate step fails with "ALIAS target missing". (Not needed in a dynamic build.)
         find_package(ZLIB QUIET)
     endif()
     find_package(OpenSSL REQUIRED)
-    # Statik libcrypto'nun kendi bağımlılıkları (libcrypto.pc Libs.private) kurulu mu? Ubuntu 26.04'ün
-    # OpenSSL 3.5'i -l:libjitterentropy.a -lz -lzstd ister; eksikse derleme ancak sonda, anlaşılmaz bir
-    # bağlayıcı hatasıyla düşüyordu ("cannot find -l:libjitterentropy.a"). Şimdi yapılandırmada, hangi
-    # kütüphanenin eksik olduğunu söyleyerek durur. Denetlenen .pc, BULUNAN libcrypto'nun yanındaki dosyadır
-    # (taşınabilir yayın derlemesi kendi OpenSSL'ini verir; sistemin libcrypto.pc'si başka kütüphaneyi anlatır).
-    # O dizinde .pc yoksa denetim yapılmaz.
+    # Are the static libcrypto's own dependencies (libcrypto.pc Libs.private) installed? Ubuntu 26.04's
+    # OpenSSL 3.5 wants -l:libjitterentropy.a -lz -lzstd; if one was missing the build only failed at the end with an unclear
+    # linker error ("cannot find -l:libjitterentropy.a"). Now it stops at configure time, naming which
+    # library is missing. The .pc that is checked is the file next to the libcrypto that was FOUND
+    # (a portable release build supplies its own OpenSSL; the system's libcrypto.pc describes a different library).
+    # If there is no .pc in that directory, no check is made.
     get_filename_component(LOOK_CRYPTO_DIR "${OPENSSL_CRYPTO_LIBRARY}" DIRECTORY)
     if(LOOK_STATIC_SSL AND OPENSSL_CRYPTO_LIBRARY MATCHES "\\.a$" AND EXISTS "${LOOK_CRYPTO_DIR}/pkgconfig/libcrypto.pc")
         find_package(PkgConfig QUIET)
@@ -269,7 +269,7 @@ else()
                         continue()
                     endif()
                     if(lib_file MATCHES "^lib(ssl|crypto|dl|pthread|rt|m|c)\\.a$")
-                        continue()   # OpenSSL'in kendisi ve libc parçaları
+                        continue()   # OpenSSL itself and the libc parts
                     endif()
                     unset(LOOK_DEP_PATH CACHE)
                     find_library(LOOK_DEP_PATH NAMES "${lib_file}")
@@ -289,13 +289,13 @@ else()
             endif()
         endif()
     endif()
-    # Statik libcrypto.a dlopen + zlib gerektirebilir → dl, z ekli
+    # Static libcrypto.a may need dlopen + zlib → dl, z added
     target_link_libraries(look      Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
     target_link_libraries(look-cgi  Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
     target_link_libraries(look-fcgi Threads::Threads dl OpenSSL::SSL OpenSSL::Crypto resolv)
     target_link_libraries(imap-m1-test Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
     if(LOOK_STATIC_SSL)
-        # Statik OpenSSL 1.1 libcrypto zlib sembollerine bağımlı olabilir
+        # Static OpenSSL 1.1 libcrypto may depend on zlib symbols
         find_library(ZLIB_A NAMES libz.a z)
         if(ZLIB_A)
             target_link_libraries(look ${ZLIB_A})
@@ -304,14 +304,14 @@ else()
         endif()
     endif()
 
-    # GCC 8 ve altında filesystem ayrı kütüphane
+    # Before GCC 8, filesystem is a separate library
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
         target_link_libraries(look      stdc++fs)
         target_link_libraries(look-cgi  stdc++fs)
         target_link_libraries(look-fcgi stdc++fs)
     endif()
 
-    # Linux'ta binary adlarında .exe uzantısı olmasın
+    # No .exe extension on binary names on Linux
     set_target_properties(look      PROPERTIES OUTPUT_NAME "lk")
     set_target_properties(look-cgi  PROPERTIES OUTPUT_NAME "lk-cgi")
     set_target_properties(look-fcgi PROPERTIES OUTPUT_NAME "lk-fcgi")
