@@ -1,10 +1,10 @@
 #include "look/value.h"
 #include "look/int_overflow.h"
 #include "look/struct_types.h"
-#include "look/parallel_runtime.h"   // kanal kilitlenmesi (ChanWait)
+#include "look/parallel_runtime.h"   // channel deadlock detection (ChanWait)
 #include "look/assoc_index.h"
-#include "look/mem_budget.h"      // mem_reserve — büyük birleştirmeden önce bütçe
-#include "look/fiber.h"           // kanalda bekleyen fiber (iş parçacığını tutmadan)
+#include "look/mem_budget.h"      // mem_reserve — budget before a large concatenation
+#include "look/fiber.h"           // a fiber waiting on a channel (without holding the thread)
 #include <algorithm>
 #include <cstring>
 #include <random>
@@ -23,18 +23,18 @@ namespace look {
         " levels of arrays/structs inside each other (keep deep data flat, e.g. a list of rows with parent ids)");
 }
 
-// ── Özyinelemesiz bırakma (ValueArray / Closure yıkıcısı) ─────────────────────
-// Derinlik eşiği geçince elemanlar yıkılmaz, listeye TAŞINIR (vektör taşıma O(1)); en dıştaki
-// bırakma (derinlik 0) listeyi döngüyle boşaltır. Liste işaretçi + talep üzerine (thread_local
-// nesne değil): iş parçacığı kapanırken thread_local yıkım sırası, sonradan yıkılan değerlerin
-// ölmüş bir listeye yazmasına yol açabilirdi.
-// fiber-ok: yıkım askıya girmez — sayaç ve liste aynı eşzamanlı bırakmanın içinde yazılıp okunur,
-// arada bekleme yok; bırakma bitince sayaç yine 0, liste boş.
+// ── Non-recursive release (ValueArray / Closure destructor) ──────────────────
+// Past the depth threshold the elements are not destroyed but MOVED to a list (vector move is O(1)); the outermost
+// release (depth 0) drains the list in a loop. The list is a pointer + on demand (not a thread_local
+// object): at thread exit the thread_local destruction order could have made values destroyed later
+// write to a dead list.
+// fiber-ok: destruction does not suspend — the counter and the list are written and read inside the same synchronous release,
+// with no wait in between; when the release finishes the counter is 0 again, the list empty.
 static constexpr int DROP_INLINE_DEPTH = 256;
 static thread_local int t_drop_depth = 0;
 static thread_local std::vector<std::vector<Value>>* t_drop_later = nullptr;
 
-// Nadir yollar satır dışı: içe gömülünce sıcak yol 6 yazmaç kaydetmeye başlıyordu (objdump).
+// Rare paths are out of line: when inlined the hot path started saving 6 registers (objdump).
 #if defined(_MSC_VER)
 #  define LOOK_COLD_FN __declspec(noinline)
 #else
@@ -46,7 +46,7 @@ LOOK_COLD_FN static void drain_deferred() noexcept {
         std::vector<Value> v = std::move(t_drop_later->back());
         t_drop_later->pop_back();
         t_drop_depth = 1;
-        v.clear();   // çocuklar yine en fazla DROP_INLINE_DEPTH iner, fazlası listeye
+        v.clear();   // children still descend at most DROP_INLINE_DEPTH, the rest goes to the list
         t_drop_depth = 0;
     }
     delete t_drop_later;
@@ -67,16 +67,16 @@ void look_release_values(std::vector<Value>& v) noexcept {
     if (d == 0 && t_drop_later) drain_deferred();
 }
 
-// ── Sözlük dizini (look/assoc_index.h) ────────────────────────────────────────
+// ── Dictionary index (look/assoc_index.h) ─────────────────────────────────────
 void look_assoc_index_free(AssocIndex* ix) noexcept { delete ix; }
 
-// Süreç başına rastgele 128 bit tohum. random_device Linux'ta getrandom/urandom, Windows'ta
-// RtlGenRandom okur. Tohum hiçbir yere yazılmaz; yalnız hash'i saldırgan için öngörülemez kılar.
+// Per-process random 128-bit seed. random_device reads getrandom/urandom on Linux, RtlGenRandom on Windows.
+// The seed is written nowhere; it only makes the hash unpredictable to an attacker.
 namespace {
 struct SipKey { uint64_t k0, k1; };
 const SipKey& sip_key() {
-    // Tohum alınamazsa sabit bir değere DÜŞÜLMEZ: öngörülebilir hash = hash flooding geri gelir.
-    // Süreç açık bir mesajla durur (rastgele kaynağı olmayan makine zaten oturum/CSRF üretemez).
+    // If the seed cannot be obtained we DO NOT FALL BACK to a constant: a predictable hash = hash flooding returns.
+    // The process stops with a clear message (a machine without a random source cannot generate sessions/CSRF anyway).
     static const SipKey k = [] {
         try {
             std::random_device rd;
@@ -96,7 +96,7 @@ inline uint64_t rotl(uint64_t x, int b) { return (x << b) | (x >> (64 - b)); }
                            v2 += v1; v1 = rotl(v1, 17); v1 ^= v2; v2 = rotl(v2, 32); } while (0)
 } // namespace
 
-// SipHash-1-3 (Rust'ın HashMap varsayılanı): 1 sıkıştırma, 3 bitiş turu.
+// SipHash-1-3 (Rust's HashMap default): 1 compression, 3 finalization rounds.
 uint64_t look_key_hash(const char* p, size_t n) noexcept {
     const SipKey& key = sip_key();
     uint64_t v0 = 0x736f6d6570736575ULL ^ key.k0, v1 = 0x646f72616e646f6dULL ^ key.k1;
@@ -105,7 +105,7 @@ uint64_t look_key_hash(const char* p, size_t n) noexcept {
     const size_t full = n & ~(size_t)7;
     for (size_t i = 0; i < full; i += 8) {
         uint64_t m;
-        std::memcpy(&m, s + i, 8);   // küçük-endian makineler (x86-64/arm64)
+        std::memcpy(&m, s + i, 8);   // little-endian machines (x86-64/arm64)
         v3 ^= m; LOOK_SIPROUND; v0 ^= m;
     }
     uint64_t b = (uint64_t)n << 56;
@@ -119,15 +119,15 @@ uint64_t look_key_hash(const char* p, size_t n) noexcept {
 
 // ── Value ─────────────────────────────────────────────────────────────────────
 
-// Double → string: kısa ama tam round-trip gösterim (std::to_chars shortest).
-// Varsayilan ostream 6 anlamli basamakla keser ve buyuk/kucuk sayida bilimsel
-// gosterime kacar (123456789.123 → "1.23457e+08") — para/ID icin veri kaybi.
-// to_chars shortest: gereken must be at least basamak, makul buyuklukte sabit gosterim.
-// look_format_double → look/format.h (dilin tek double formatı; DB sürücüleri de kullanır)
+// Double → string: short but full round-trip representation (std::to_chars shortest).
+// The default ostream truncates to 6 significant digits and for large/small numbers
+// escapes to scientific notation (123456789.123 → "1.23457e+08") — data loss for money/IDs.
+// to_chars shortest: only the needed digits, fixed notation at reasonable magnitudes.
+// look_format_double → look/format.h (the language's single double format; DB drivers use it too)
 
-// Liste/sözlük/struct İÇİNDEKİ metin LOOK yazımıyla tırnaklı: [1, "a", "1"], ["k" => 3, "n" => "3"].
-// Tırnaksızken 3 ile "3" aynı görünüyordu (hata ayıklamada tür karışıyordu — Node/Python/Rust da
-// tırnaklar). Tek başına metin (print("x")) tırnaksız kalır: yalnız iç içe gösterim.
+// Text INSIDE a list/dictionary/struct is quoted in LOOK syntax: [1, "a", "1"], ["k" => 3, "n" => "3"].
+// Unquoted, 3 and "3" looked the same (types got confused while debugging — Node/Python/Rust also
+// quote). Standalone text (print("x")) stays unquoted: only nested display.
 static void append_nested(std::string& s, const Value& v) {
     if (v.type() != Value::STRING) { s += v.to_string(); return; }
     const std::string& t = v.str_ref();
@@ -156,8 +156,8 @@ std::string Value::to_string() const {
             NestingGuard g;
             auto arr = as_array();
             std::string s = "[";
-            // Sözlük LOOK'un yazımıyla: ["k" => 3, "ad" => "x"].
-            // Eskiden iç işaret görünüyordu: [__assoc__, k, 3, ad, x].
+            // A dictionary in LOOK's syntax: ["k" => 3, "name" => "x"].
+            // The internal marker used to show: [__assoc__, k, 3, name, x].
             if (!arr->empty() && (*arr)[0].is_assoc_marker()) {
                 for (size_t i = 1; i + 1 < arr->size(); i += 2) {
                     if (i > 1) s += ", ";
@@ -219,16 +219,16 @@ double Value::to_float() const {
 int64_t Value::to_int() const {
     switch (type_) {
         case INT:    return int_val;
-        // Aralık dışı / NaN double → int64 dönüşümü C++'ta TANIMSIZ davranış (eskiden int(1e19) →
-        // INT64_MIN ölçüldü). Tanımlı sınırlama: NaN → 0, aralık dışı → en yakın sınır (Rust `as`).
+        // Out-of-range / NaN double → int64 conversion is UNDEFINED behavior in C++ (previously int(1e19) →
+        // INT64_MIN was measured). Defined clamping: NaN → 0, out of range → nearest bound (Rust `as`).
         case FLOAT:
             if (std::isnan(float_val)) return 0;
             if (float_val >= 9223372036854775808.0) return INT64_MAX;
             if (float_val < -9223372036854775808.0) return INT64_MIN;
             return (int64_t)float_val;
-        // Sayı olmayan metin → 0 (gevşek kural, değişmedi). Ama 64 bite SIĞMAYAN tam sayı metni
-        // eskiden de 0 oluyordu: liste["99999999999999999999"] sessizce 0. elemanı, bit işlemleri
-        // sessizce 0 veriyordu. Artık açık hata (Go strconv: ErrRange; int() ile aynı kural).
+        // Non-numeric text → 0 (lax rule, unchanged). But an integer text that does NOT FIT in 64 bits
+        // also used to give 0: list["99999999999999999999"] silently gave element 0, bit operations
+        // silently gave 0. Now an explicit error (Go strconv: ErrRange; same rule as int()).
         case STRING:
             try { return std::stoll(str_ref()); }
             catch (const std::out_of_range&) {
@@ -241,47 +241,47 @@ int64_t Value::to_int() const {
     }
 }
 
-// int64 aritmetiği taşarsa signed-overflow UB olur (9e18+9e18). Taşma-tespiti
-// look/int_overflow.h'de (saf, tablo-test edilebilir) — taşınca çağıran float'a promote eder.
+// If int64 arithmetic overflows it is signed-overflow UB (9e18+9e18). Overflow detection is
+// in look/int_overflow.h (pure, table-testable) — on overflow the caller promotes to float.
 using look::i64_add_ovf;
 using look::i64_sub_ovf;
 using look::i64_mul_ovf;
-// B-05: aritmetikte sayıya çevrilemeyen string'i SESSİZCE 0 kabul etmek yerine hata ver.
-// LOOK'ta == tip-katı ("5"==5 → false) ama + gevşekti: to_int("abc") catch→0 yüzünden
-// "abc"+1=1 ve (JSON'da int64-taşan sayı STRING olduğundan) bignum-string+1=1 —
-// sessiz VERİ BOZULMASI. Tam sayısal string ("5") çalışmaya devam eder; çöp string atar.
-// to_int/to_float GENEL kalır (başka yerlerde lenient-0 istenir); yalnız aritmetik katı.
+// B-05: in arithmetic, throw an error instead of SILENTLY treating a string that cannot be converted to a number as 0.
+// In LOOK == is type-strict ("5"==5 → false) but + was lax: because of to_int("abc") catch→0
+// "abc"+1=1 and (since an int64-overflowing number in JSON is a STRING) bignum-string+1=1 —
+// silent DATA CORRUPTION. A fully numeric string ("5") keeps working; a garbage string throws.
+// to_int/to_float stay GENERAL (lenient-0 is wanted elsewhere); only arithmetic is strict.
 static void arith_check(const Value& v) {
     switch (v.type()) {
         case Value::INT: case Value::FLOAT: case Value::BOOL:
-            return;                    // sayısal — serbest (true=1/false=0, çoğu dilde böyle)
-        case Value::STRING: break;     // içeriği aşağıda doğrula
+            return;                    // numeric — allowed (true=1/false=0, as in most languages)
+        case Value::STRING: break;     // validate the content below
         default:
-            // NONE(null — EKSİK ASSOC ANAHTARI!), ARRAY, FUNCTION, CHANNEL/WS/SSE:
-            // sayı değil. null+1=1 ve []+1=1, "abc"+1=1 sessiz-0 bug'ının kardeşi —
-            // ve eksik anahtar çok daha yaygın. Fail-loud (== tip-katıyken + de olsun).
+            // NONE(null — MISSING ASSOC KEY!), ARRAY, FUNCTION, CHANNEL/WS/SSE:
+            // not numbers. null+1=1 and []+1=1 are siblings of the "abc"+1=1 silent-0 bug —
+            // and a missing key is far more common. Fail-loud (+ should be so too, as == is type-strict).
             throw std::runtime_error("Arithmetic on a non-numeric value (null/array/object)");
     }
     std::string s = v.to_string();
     if (s.empty())
         throw std::runtime_error("Arithmetic on an empty string");
     size_t pos = 0;
-    // 1) Tam int64 string'i → geçerli (operator+ int yoluyla doğru işler: "5"+1=6)
+    // 1) A full int64 string → valid (operator+ handles it correctly via the int path: "5"+1=6)
     try {
         (void)std::stoll(s, &pos);
         if (pos == s.size()) return;
     } catch (const std::out_of_range&) {
-        // int64'ü AŞAN TAMSAYI string'i (bignum / Snowflake ID / BIGINT UNSIGNED).
-        // JSON int64-taşan sayıyı kesinlik için STRING tutuyor; onunla aritmetik
-        // to_int→0'a düşüp SESSİZCE yanlış sonuç veriyordu ("bignum + 1 = 1"). Reddet.
+        // An INTEGER string EXCEEDING int64 (bignum / Snowflake ID / BIGINT UNSIGNED).
+        // JSON keeps an int64-overflowing number as a STRING for precision; arithmetic with it
+        // fell to to_int→0 and gave a SILENTLY wrong result ("bignum + 1 = 1"). Reject.
         throw std::runtime_error("Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '" + s + "'");
     } catch (...) {}
-    // 2) Ondalık/üslü sayı string'i ("5.5", "1e3") → geçerli (float yolu)
+    // 2) A decimal/exponent number string ("5.5", "1e3") → valid (float path)
     try {
         (void)std::stod(s, &pos);
         if (pos == s.size()) return;
     } catch (...) {}
-    // 3) Sayı değil ("abc", "12x") → reddet (== tip-katıyken + sessiz 0 vermesin)
+    // 3) Not a number ("abc", "12x") → reject (so that + does not give a silent 0 while == is type-strict)
     throw std::runtime_error("Arithmetic on a string that cannot be converted to a number: '" + s + "'");
 }
 Value look_explicit_int(const Value& v) {
@@ -292,26 +292,26 @@ Value look_explicit_int(const Value& v) {
         throw std::runtime_error("int(): \"" + s + "\" does not fit in 64 bits (the range is "
             "-9223372036854775808 to 9223372036854775807); keep a large ID as a string");
     }
-    catch (...) { return Value((int64_t)0); }   // sayı değil: gevşek kural (int("abc") == 0) korunur
+    catch (...) { return Value((int64_t)0); }   // not a number: the lax rule (int("abc") == 0) is preserved
 }
 Value look_explicit_float(const Value& v) {
     if (v.type() != Value::STRING) return Value(v.to_float());
     const std::string& s = v.str_ref();
-    // strtod: taşma ±HUGE_VAL + ERANGE → hata (Go ParseFloat: ±Inf + ErrRange); alttan taşma (1e-400)
-    // en yakın değer (0) — Go'da da hata değil. Eskiden stod her ikisinde de 0 dönüyordu.
+    // strtod: overflow ±HUGE_VAL + ERANGE → error (Go ParseFloat: ±Inf + ErrRange); underflow (1e-400)
+    // is the nearest value (0) — not an error in Go either. stod used to return 0 for both.
     const char* p = s.c_str(); char* end = nullptr;
     errno = 0;
     double d = std::strtod(p, &end);
-    if (end == p) return Value(0.0);            // sayı değil: gevşek kural korunur
+    if (end == p) return Value(0.0);            // not a number: the lax rule is preserved
     if (errno == ERANGE && std::isinf(d))
         throw std::runtime_error("float(): \"" + s + "\" is too large for a 64-bit float");
     return Value(d);
 }
 
-// Tamsayı taşması AÇIK HATA (Swift, Rust hata ayıklama, C# checked). Eskiden sonuç sessizce double'a
-// düşüyordu (PHP/JS modeli): 9223372036854775807 - (-2) gibi bir sonuç kesinliğini kaybediyordu
-// (…810 yerine …808) — para / kimlik hesabında fark edilmeyen yanlış değer. Go sarmalar (o da
-// sessiz yanlış). Yaklaşık sonuç isteyen ondalıkla hesaplar (1.0 * a).
+// Integer overflow is an EXPLICIT ERROR (Swift, Rust debug, C# checked). Previously the result silently
+// fell to double (the PHP/JS model): a result such as 9223372036854775807 - (-2) lost its precision
+// (…808 instead of …810) — an unnoticed wrong value in money / ID computation. Go wraps (that is also a
+// silent wrong). Whoever wants an approximate result computes with a decimal (1.0 * a).
 [[noreturn]] void look_int_overflow(int64_t a, const char* op, int64_t b) {
     throw std::runtime_error("Integer overflow: " + std::to_string(a) + " " + op + " " + std::to_string(b) +
         " does not fit in 64 bits (use a float, e.g. 1.0 * x, if an approximate result is fine)");
@@ -343,16 +343,16 @@ Value Value::operator/(const Value& o) const {
     if (d == 0.0) throw std::runtime_error("Division by zero");  // the caller adds the source location
     if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() / d);
     int64_t i = o.to_int();
-    int64_t self_i = to_int();  // ham int_val değil — STRING/BOOL de doğru çevrilsin ("6"/2=3)
-    // INT64_MIN / -1: tam bölünür ama sonuç (2^63) int64'e sığmaz — taşma (C++'ta UB).
+    int64_t self_i = to_int();  // not the raw int_val — so STRING/BOOL are also converted correctly ("6"/2=3)
+    // INT64_MIN / -1: divides exactly but the result (2^63) does not fit in int64 — overflow (UB in C++).
     if (i == -1 && self_i == INT64_MIN) look_int_overflow(self_i, "/", i);
     if (i != 0 && self_i % i == 0) return Value(self_i / i);
     return Value(to_float() / d);
 }
 Value Value::operator%(const Value& o) const {
     arith_check(*this); arith_check(o);
-    // Ondalık işlenen: kayan noktalı kalan, işareti bölünenden (Go math.Mod, C fmod, JS, Java).
-    // Eskiden iki taraf tamsayıya çevriliyordu: 7.5 % 2 → 1 (PHP modeli; ondalık kısım sessizce gidiyordu).
+    // Decimal operand: floating-point remainder, sign from the dividend (Go math.Mod, C fmod, JS, Java).
+    // Previously both sides were converted to integers: 7.5 % 2 → 1 (the PHP model; the fractional part silently vanished).
     if (type_ == FLOAT || o.type_ == FLOAT) {
         double d = o.to_float();
         if (d == 0.0) throw std::runtime_error("Modulo by zero");
@@ -360,12 +360,12 @@ Value Value::operator%(const Value& o) const {
     }
     int64_t i = o.to_int();
     if (i == 0) throw std::runtime_error("Modulo by zero");
-    if (i == -1) return Value((int64_t)0);  // INT64_MIN % -1 UB; a % -1 daima 0
+    if (i == -1) return Value((int64_t)0);  // INT64_MIN % -1 UB; a % -1 is always 0
     return Value(to_int() % i);
 }
-// Üs: tamsayı ** negatif olmayan tamsayı → TAM tamsayı (Python, Ruby); taşarsa hata (toplama ile aynı
-// kural). Eskiden her zaman double hesaplanıyordu: 2^53 üstünde sonuç sessizce yaklaşıktı. Negatif üs
-// ya da ondalık işlenen → double. 0 ** negatif → sıfıra bölme (Python; eskiden sessizce Infinity).
+// Power: integer ** non-negative integer → EXACT integer (Python, Ruby); an error on overflow (same
+// rule as addition). It used to always compute in double: above 2^53 the result was silently approximate. A negative exponent
+// or a decimal operand → double. 0 ** negative → division by zero (Python; previously silently Infinity).
 Value Value::pow(const Value& o) const {
     arith_check(*this); arith_check(o);
     if (type_ != FLOAT && o.type_ != FLOAT) {
@@ -387,16 +387,16 @@ Value Value::pow(const Value& o) const {
     if (x == 0.0 && y < 0) throw std::runtime_error("Division by zero: 0 ** negative");
     return Value(std::pow(x, y));
 }
-// Yeni metin TAM boyutta (ESKİ: to_string() + … geçici kopyaya eklerken sığa ikiye katlanıyordu:
-// 1 MiB . "x" = 2 MiB). Metin operand kopyalanmadan okunur.
+// The new text is EXACTLY the right size (OLD: while appending to a to_string() + … temporary copy the capacity doubled:
+// 1 MiB . "x" = 2 MiB). The text operand is read without being copied.
 Value Value::concat(const Value& o) const {
     std::string ls, rs;
     const std::string& l = (type_ == STRING && ptr_val) ? *static_cast<const std::string*>(ptr_val.get())
                                                         : (ls = to_string());
     const std::string& r = (o.type_ == STRING && o.ptr_val) ? *static_cast<const std::string*>(o.ptr_val.get())
                                                             : (rs = o.to_string());
-    // Büyük birleştirme bütçeye önceden sorulur: `$s = $s . $s` tek adımda yüz MiB'lerce ayırabilir,
-    // güvenli noktayı beklemeden (look/mem_budget.h).
+    // A large concatenation asks the budget beforehand: `$s = $s . $s` can allocate hundreds of MiB in a single step,
+    // without waiting for a safe point (look/mem_budget.h).
     const size_t n = l.size() + r.size();
     if (n >= (size_t(1) << 20)) mem_reserve((int64_t)n, "joining strings with .");
     std::string out;
@@ -406,46 +406,46 @@ Value Value::concat(const Value& o) const {
 }
 
 void Value::append_in_place(const Value& o) {
-    // o.to_string() önce kopyalanır → `$s .= $s` gibi aliasing güvenli.
+    // o.to_string() is copied first → aliasing such as `$s .= $s` is safe.
     std::string rhs = o.to_string();
     if (type_ != STRING || !ptr_val) {
-        ptr_val = std::make_shared<std::string>(to_string());  // sayı/none → yeni tampon
+        ptr_val = std::make_shared<std::string>(to_string());  // number/none → new buffer
         type_ = STRING;
     } else {
-        // COW: string paylaşılıyorsa (constant pool / aliased register) mutasyondan
-        // önce özel kopya al — B5'te string pointer arkasında, in-place mutasyon
-        // paylaşan diğer Value'ları bozardı. İlk append'ten sonra tekil → amortize O(1).
-        // NOT: ptr_val.use_count() doğrudan kullanılır — ara shared_ptr kopyası
-        // ekstra owner yaratıp use_count'u daima >1 yapar (→ her adım COW = O(n²)).
-        // != 1: sayaçsız sabit metin (sözlük işareti, use_count()==0) de kopyalanır — yerinde
-        // değiştirilirse bütün sözlükler bozulurdu.
+        // COW: if the string is shared (constant pool / aliased register) take a private copy
+        // before mutating — in B5, behind the string pointer, in-place mutation would
+        // corrupt the other Values sharing it. After the first append it is unique → amortized O(1).
+        // NOTE: ptr_val.use_count() is used directly — an intermediate shared_ptr copy
+        // creates an extra owner and makes use_count() always >1 (→ every step COW = O(n²)).
+        // != 1: constant text without a counter (the dictionary marker, use_count()==0) is also copied — if
+        // modified in place all dictionaries would be corrupted.
         if (ptr_val.use_count() != 1)
             ptr_val = std::make_shared<std::string>(*static_cast<std::string*>(ptr_val.get()));
     }
     std::string* buf = static_cast<std::string*>(ptr_val.get());
-    // Büyüme (en çok iki katı) 1 MiB'i geçiyorsa bütçeye önceden sorulur (look/mem_budget.h).
+    // If the growth (at most double) exceeds 1 MiB the budget is asked beforehand (look/mem_budget.h).
     const size_t need = buf->size() + rhs.size();
     if (need > buf->capacity() && need >= (size_t(1) << 20))
         mem_reserve((int64_t)std::max(need, buf->capacity() * 2), "joining strings with .=");
     buf->append(rhs);
 }
 
-// Python-benzeri katı karşılaştırma: türler-arası coercion YOK. (Go değil — Go
-// int↔float'a bile derleme hatası verir; biz sayısal türleri kıyaslarız: 1==1.0.)
-//   0 == "abc"  → false   (eskiden true — "abc"→0 coerce ediyordu; footgun)
-//   "5" == 5    → false   (string ve sayı ayrı tür)
-//   5 == 5.0    → true    (INT/FLOAT tek "sayı" türü — ayırmak dinamik dilde
-//                          daha kötü footgun olurdu: DB 5, hesap 5.0 verir)
-// Form girdisi string gelir; sayıyla karşılaştırmak için önce int()/float() ile
-// dönüştürülür (açık ve güvenli — Go'nun statik tip is requiredluğunun dinamik karşılığı).
+// Python-like strict comparison: NO coercion between types. (Not Go — Go
+// gives a compile error even for int↔float; we compare numeric types: 1==1.0.)
+//   0 == "abc"  → false   (previously true — it coerced "abc"→0; a footgun)
+//   "5" == 5    → false   (string and number are separate types)
+//   5 == 5.0    → true    (INT/FLOAT is a single "number" type — separating them in a dynamic language
+//                          would be a worse footgun: the DB gives 5, a calculation gives 5.0)
+// Form input arrives as a string; to compare it with a number it is first converted with int()/float()
+// (explicit and safe — the dynamic counterpart of Go's static typing requirement).
 static inline bool val_is_number(Value::Type t) { return t == Value::INT || t == Value::FLOAT; }
 
-// LOOK 2: dizi, map ve struct İÇERİĞE göre karşılaştırılır (özyinelemeli). Değer semantiğinde
-// kimlik diye bir şey yok; `$a == $b` "aynı şey mi" değil "aynı değer mi" demektir.
-//   liste  : aynı uzunluk + sırayla eşit elemanlar
-//   map    : aynı anahtarlar + eşit değerler; EKLEME SIRASI önemsiz
-//   struct : aynı ad + eşit alanlar
-// Boş liste ile boş map eşittir ([] henüz anahtar almamış bir map olarak da yazılır).
+// LOOK: arrays, maps and structs are compared by CONTENT (recursively). With value semantics
+// there is no such thing as identity; `$a == $b` means "the same value", not "the same thing".
+//   list   : same length + equal elements in order
+//   map    : same keys + equal values; INSERTION ORDER does not matter
+//   struct : same name + equal fields
+// An empty list and an empty map are equal ([] can also be written as a map that has not yet received a key).
 static bool vec_is_map(const std::vector<Value>& v) {
     return !v.empty() && v[0].is_assoc_marker();
 }
@@ -458,7 +458,7 @@ static bool vec_content_equal(const std::vector<Value>& a, const std::vector<Val
         return true;
     }
     for (size_t i = 1; i + 1 < a.size(); i += 2) {
-        // Hızlı yol: aynı sırada kurulmuş iki map'te anahtar aynı konumdadır.
+        // Fast path: in two maps built in the same order the key is at the same position.
         if (a[i] == b[i]) { if (!(a[i + 1] == b[i + 1])) return false; continue; }
         bool found = false;
         for (size_t j = 1; j + 1 < b.size(); j += 2)
@@ -467,10 +467,10 @@ static bool vec_content_equal(const std::vector<Value>& a, const std::vector<Val
     }
     return true;
 }
-// Sayı ↔ sayı KESİN karşılaştırma: -1 / 0 / 1; NaN varsa unordered=true (hiçbir şeye eşit değil,
-// hiçbir sıralama doğru değil — IEEE / Go). int↔double karışık: double'ın tam kısmı int64 aralığındaysa
-// tamsayı olarak, kalan kesir ayrıca karşılaştırılır (Python modeli). ESKİ: karışık çift double'a
-// çevriliyordu → 2^53 üstünde kesinlik kaybı: 9007199254740993 == 9007199254740992.0 → true (ölçüldü).
+// Number ↔ number EXACT comparison: -1 / 0 / 1; if there is a NaN, unordered=true (equal to nothing,
+// no ordering is true — IEEE / Go). Mixed int↔double: if the integer part of the double is in the int64 range it is
+// compared as an integer and the remaining fraction is compared separately (the Python model). OLD: a mixed pair was converted to
+// double → precision loss above 2^53: 9007199254740993 == 9007199254740992.0 → true (measured).
 static int num_cmp(const Value& a, const Value& b, bool& unordered) {
     unordered = false;
     const bool ai = a.type() == Value::INT, bi = b.type() == Value::INT;
@@ -482,13 +482,13 @@ static int num_cmp(const Value& a, const Value& b, bool& unordered) {
     }
     const int64_t i = ai ? a.as_int() : b.as_int();
     const double  d = ai ? b.to_float() : a.to_float();
-    int r;                                              // i ile d'nin karşılaştırması
+    int r;                                              // comparison of i with d
     if (std::isnan(d)) { unordered = true; return 0; }
-    if (d >= 9223372036854775808.0)       r = -1;      // d her int64'ten büyük (+Inf dahil)
-    else if (d < -9223372036854775808.0)  r = 1;       // d her int64'ten küçük (-Inf dahil)
+    if (d >= 9223372036854775808.0)       r = -1;      // d is greater than every int64 (including +Inf)
+    else if (d < -9223372036854775808.0)  r = 1;       // d is less than every int64 (including -Inf)
     else {
         const double t = std::trunc(d);
-        const int64_t ti = (int64_t)t;                  // aralık içinde: tanımlı dönüşüm
+        const int64_t ti = (int64_t)t;                  // within range: a defined conversion
         if (i != ti) r = i < ti ? -1 : 1;
         else { const double f = d - t; r = f > 0 ? -1 : f < 0 ? 1 : 0; }
     }
@@ -498,22 +498,22 @@ static int num_cmp(const Value& a, const Value& b, bool& unordered) {
 bool Value::operator==(const Value& o) const {
     bool a_num = val_is_number(type_), b_num = val_is_number(o.type_);
     if (a_num && b_num) {
-        // int↔int: KESİN int64 karşılaştır. to_float() ile double'a çevirmek 2^53 üstü
-        // ayrık int64'leri eşitler (9007199254740993==...992, INT64_MAX-1==INT64_MAX →
-        // true) — hem dil-düzeyi == yanlışı (LOOK 1'de her iki motorda, differential-görünmez), hem
-        // VM constant-pool dedup korupsiyonu (compiler.cpp dedup bu =='i kullanır → int
-        // literalleri çakışıp bozulur). Karışık int/float da kesin (num_cmp).
+        // int↔int: compare EXACT int64. Converting to double with to_float() makes distinct int64s
+        // above 2^53 equal (9007199254740993==...992, INT64_MAX-1==INT64_MAX →
+        // true) — both a language-level == mistake (in v1, on both engines, invisible to the differential), and
+        // VM constant-pool dedup corruption (compiler.cpp dedup uses this == → int
+        // literals collide and get corrupted). Mixed int/float is exact too (num_cmp).
         if (type_ == INT && o.type_ == INT) return int_val == o.int_val;
         bool un; int c = num_cmp(*this, o, un);
         return !un && c == 0;
     }
-    if (type_ != o.type_) return false;                     // farklı tür → asla eşit
+    if (type_ != o.type_) return false;                     // different type → never equal
     switch (type_) {
         case STRING: return str_ref() == o.str_ref();
         case BOOL:   return bool_val == o.bool_val;
         case NONE:   return true;                           // null == null
         case ARRAY: {
-            if (ptr_val == o.ptr_val) return true;          // aynı depolama (henüz ayrılmamış kopya)
+            if (ptr_val == o.ptr_val) return true;          // same storage (a copy not yet separated)
             if (!ptr_val || !o.ptr_val) return false;
             NestingGuard g;
             return vec_content_equal(*vec_ptr(), *o.vec_ptr());
@@ -527,18 +527,18 @@ bool Value::operator==(const Value& o) const {
             for (size_t i = 2; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
             return true;
         }
-        default:     return ptr_val == o.ptr_val;           // fn/channel/ws: kimlik (tutamaçlar)
+        default:     return ptr_val == o.ptr_val;           // fn/channel/ws: identity (handles)
     }
 }
-// Sıralama: yalnız sayı↔sayı ve string↔string. Karışık tür → hata (sessizce
-// string'i 0'a coerce edip yanlış sonuç vermek yerine bug'ı yüzeye çıkar).
+// Ordering: only number↔number and string↔string. Mixed type → error (instead of silently
+// coercing the string to 0 and giving a wrong result, surface the bug).
 [[noreturn]] static void cmp_type_error() {
     throw std::runtime_error(
         "Incomparable types: '<'/'>' only for number↔number and string↔string — "
         "convert with int()/float()/string() before comparing different types");
 }
-// Sayısal sıralama: int↔int ve karışık int/float KESİN (num_cmp; 2^53 üstü ayrık değerler
-// double'da eşitlenirdi). NaN ile her sıralama false (IEEE / Go).
+// Numeric ordering: int↔int and mixed int/float are EXACT (num_cmp; distinct values above 2^53
+// would be equal in double). Every ordering with NaN is false (IEEE / Go).
 bool Value::operator<(const Value& o)  const {
     if (type_ == INT && o.type_ == INT) return int_val < o.int_val;
     if (val_is_number(type_) && val_is_number(o.type_)) { bool un; int c = num_cmp(*this, o, un); return !un && c < 0; }
@@ -569,34 +569,34 @@ Value Value::bitwise_and(const Value& o) const { return Value(to_int() & o.to_in
 Value Value::bitwise_or(const Value& o)  const { return Value(to_int() | o.to_int()); }
 Value Value::bitwise_xor(const Value& o) const { return Value(to_int() ^ o.to_int()); }
 Value Value::bitwise_not()               const { return Value(~to_int()); }
-// Shift miktarı [0,63] dışındaysa (1<<64, 1<<-1) UB — aralık dışı → 0.
-// Sol kaydırmada unsigned kullanılır (signed-overflow UB'sini önler).
-// Negatif kaydırma sayısı açık hata (Go: "negative shift amount"). Eskiden sessizce 0 dönüyordu.
+// If the shift amount is outside [0,63] (1<<64, 1<<-1) it is UB — out of range → 0.
+// Unsigned is used for left shifts (avoids signed-overflow UB).
+// A negative shift count is an explicit error (Go: "negative shift amount"). It used to silently return 0.
 [[noreturn]] static void negative_shift(int64_t n) {
     throw std::runtime_error("Negative shift count: " + std::to_string(n));
 }
 Value Value::shift_left(const Value& o)  const {
     int64_t a = to_int(), n = o.to_int();
     if (n < 0) negative_shift(n);
-    if (n >= 64) return Value((int64_t)0);   // Go: tamsayı genişliği kadar ya da fazlası → 0
+    if (n >= 64) return Value((int64_t)0);   // Go: as many as the integer width or more → 0
     return Value((int64_t)((uint64_t)a << n));
 }
 Value Value::shift_right(const Value& o) const {
     int64_t a = to_int(), n = o.to_int();
     if (n < 0) negative_shift(n);
-    // Aritmetik kaydırma: 63'ten büyük kaydırma işaret bitiyle dolar (Go: -8 >> 70 == -1). Eskiden 0
-    // dönüyordu — -8 >> 63 == -1 iken -8 >> 64 == 0 tutarsızdı.
+    // Arithmetic shift: a shift greater than 63 fills with the sign bit (Go: -8 >> 70 == -1). It used to return
+    // 0 — -8 >> 63 == -1 while -8 >> 64 == 0 was inconsistent.
     if (n >= 64) return Value((int64_t)(a < 0 ? -1 : 0));
     return Value((int64_t)(a >> n));
 }
 
 // ── LookChannel methods ───────────────────────────────────────────────────────
 
-// Kanal işlemi watchdog'u — LOOK_CHANNEL_TIMEOUT_MS set edilirse (>0) send/recv
-// bu süreyi aşınca sonsuza asılmak yerine yakalanabilir bir hata fırlatır. Böylece
-// eşleşecek gönderici/alıcı yoksa (mantık hatası kaynaklı deadlock) worker ebediyen
-// kilitlenmez; kurtulur. Unset/0 = sonsuz blok (Go unbuffered rendezvous varsayılanı).
-// Tek noktada — VM (CHAN_SEND/RECV) bu metotları çağırır.
+// Channel operation watchdog — if LOOK_CHANNEL_TIMEOUT_MS is set (>0) send/recv
+// throw a catchable error when this time is exceeded instead of hanging forever. So
+// if there is no sender/receiver to match (a deadlock caused by a logic error) the worker is not
+// locked up forever; it escapes. Unset/0 = block forever (Go unbuffered rendezvous default).
+// In a single place — the VM (CHAN_SEND/RECV) calls these methods.
 static long channel_timeout_ms() {
     static const long v = []() -> long {
         const char* e = std::getenv("LOOK_CHANNEL_TIMEOUT_MS");
@@ -606,11 +606,11 @@ static long channel_timeout_ms() {
     return v;
 }
 
-// Kanal beklemesi (üç yer: dolu tamponda send, tamponsuz send'in teslimi, receive). Hazırsa
-// beklemez; bekliyorsa kilitlenme muhasebesine girer (parallel_runtime.h ChanWait) — betik ve
-// bütün görevler kanalda bekliyorsa hepsi uyanır ve "deadlock" hatası alır, sonsuza dek asılmaz.
+// Channel wait (three places: send on a full buffer, delivery of an unbuffered send, receive). If ready it does not
+// wait; if waiting it enters the deadlock accounting (parallel_runtime.h ChanWait) — if the script and
+// all tasks are waiting on channels they all wake up and get a "deadlock" error, never hanging forever.
 void LookChannel::wake_fibers(std::vector<FiberWaiter>& list) {
-    // Kilit sırası: kanal mtx → planlayıcı mtx_ (resume_fiber). Planlayıcı kanal kilidi almaz.
+    // Lock order: channel mtx → scheduler mtx_ (resume_fiber). The scheduler does not take the channel lock.
     for (auto& w : list) { *w.queued = false; w.sched->resume_fiber(std::move(w.fiber)); }
     list.clear();
 }
@@ -622,10 +622,10 @@ static void chan_wait(LookChannel* ch, std::unique_lock<std::mutex>& lk, std::co
     if (ready()) return;
     if (g_chan_deadlock.load()) throw std::runtime_error(chan_deadlock_message());
     ChanWait w(ch->shared_from_this(), kind, gen);
-    if (w.suspect) { lk.unlock(); chan_deadlock_try(); lk.lock(); }   // karar kanal kilitleri olmadan
+    if (w.suspect) { lk.unlock(); chan_deadlock_try(); lk.lock(); }   // the decision is made without channel locks
     auto pred = [&] { return ready() || g_chan_deadlock.load(); };
 
-    // Fiber içinde: iş parçacığını değil yalnız bu fiber'ı beklet (LookChannel::FiberWaiter).
+    // Inside a fiber: make only this fiber wait, not the thread (LookChannel::FiberWaiter).
     Fiber* cur = Fiber::current();
     FiberScheduler* sched = cur ? get_thread_scheduler() : nullptr;
     std::shared_ptr<Fiber> self = (cur && sched) ? cur->shared_from_this_fiber() : nullptr;
@@ -633,9 +633,9 @@ static void chan_wait(LookChannel* ch, std::unique_lock<std::mutex>& lk, std::co
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(to > 0 ? to : 0);
         while (!pred()) {
             if (to > 0) {
-                // Süreli bekleme (LOOK_CHANNEL_TIMEOUT_MS): kayıt YOK — zamanlayıcıyla askıdaki bir
-                // fiber'ı başka iş parçacığı da devam ettirirse iki kez kuyruğa girerdi. Kısa
-                // aralıklarla (≤ 2 ms) yeniden bakar; yalnız bu ayar açıkken.
+                // Timed wait (LOOK_CHANNEL_TIMEOUT_MS): NO registration — if a fiber suspended with a timer were also resumed by
+                // another thread it would be queued twice. It looks again at short
+                // intervals (≤ 2 ms); only when this setting is on.
                 auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 deadline - std::chrono::steady_clock::now()).count();
                 if (left <= 0) throw std::runtime_error(timeout_msg);
@@ -643,7 +643,7 @@ static void chan_wait(LookChannel* ch, std::unique_lock<std::mutex>& lk, std::co
                 lk.unlock();
                 int r = sched->wait_readable_tmo(self, -1, step);
                 lk.lock();
-                if (r < 0) cv.wait_for(lk, std::chrono::milliseconds(step), pred);   // zamanlayıcı yok
+                if (r < 0) cv.wait_for(lk, std::chrono::milliseconds(step), pred);   // no timer
                 continue;
             }
             bool queued = true;
@@ -652,8 +652,8 @@ static void chan_wait(LookChannel* ch, std::unique_lock<std::mutex>& lk, std::co
             for (;;) {
                 FiberScheduler::suspend_current();
                 lk.lock();
-                if (!queued) break;   // kaydımızı bizi uyandıran sildi
-                lk.unlock();          // sahte erken devam (önceki bir beklemeden kalan): beklemeye devam
+                if (!queued) break;   // whoever woke us removed our registration
+                lk.unlock();          // spurious early resume (left over from an earlier wait): keep waiting
             }
         }
         if (!ready()) throw std::runtime_error(chan_deadlock_message());
@@ -673,7 +673,7 @@ std::shared_ptr<LookChannel> make_channel(const std::vector<Value>& args) {
         throw std::runtime_error("channel(): the size must be a whole number (0 = unbuffered)");
     const int64_t n = args[0].as_int();
     if (n < 0) throw std::runtime_error("channel: capacity cannot be negative");
-    return std::make_shared<LookChannel>((size_t)n);   // 0 → tamponsuz (LookChannel)
+    return std::make_shared<LookChannel>((size_t)n);   // 0 → unbuffered (LookChannel)
 }
 
 void LookChannel::send_val(Value val, std::atomic<int>* phase) {
@@ -682,33 +682,33 @@ void LookChannel::send_val(Value val, std::atomic<int>* phase) {
     chan_wait(this, lk, not_full, fiber_send, to, CHAN_WAIT_ROOM, 0, [this]{ return closed || queue.size() < capacity; },
               "channel send timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
     if (closed) throw std::runtime_error("send on closed channel");
-    // İZOLASYON (cache/parallel deep_clone disiplini ile aynı): channel parallel'in
-    // cross-thread iletişim primitive'i. Value ARRAY/MAP ise shared_ptr<container>'ı
-    // gönderenle PAYLAŞIR — gönderen send sonrası $arr'ı hâlâ tutar (LOOK by-reference),
-    // alıcı da aynı vector'ü alır → gönderen+alıcı aynı vector'e eşzamanlı mutasyon =
-    // heap race (cache'in ikizi; TSan push_back/_M_realloc_insert). deep_clone snapshot
-    // → queue izole değer tutar, gönderen ve alıcı ayrışır. Tek-alıcılı (pop) olduğu için
-    // send'de tek klon yeter (cache multi-reader olduğundan get'te de klonluyordu).
+    // ISOLATION (same as the cache/parallel deep_clone discipline): the channel is parallel's
+    // cross-thread communication primitive. If the Value is an ARRAY/MAP the shared_ptr<container> is SHARED
+    // with the sender — the sender still holds $arr after send (LOOK is by-reference),
+    // and the receiver gets the same vector → sender+receiver mutating the same vector concurrently =
+    // heap race (twin of the cache's; TSan push_back/_M_realloc_insert). A deep_clone snapshot
+    // → the queue holds an isolated value, sender and receiver are decoupled. Since it is single-receiver (pop)
+    // a single clone on send is enough (the cache is multi-reader so it also cloned on get).
     Value item = val.deep_clone();
-    // Teslim anı (parallel_runtime.h): tamponluda alıcı bu push'tan sonra uyanabilir → önce
-    // RUNNING; tamponsuzda gönderici alıcıyı bekler → alıcı alırken RUNNING'e çeker (recv_val).
+    // Delivery moment (parallel_runtime.h): with a buffered channel the receiver may wake after this push → first
+    // RUNNING; with an unbuffered one the sender waits for the receiver → the receiver pulls to RUNNING while receiving (recv_val).
     if (phase) { if (unbuffered) rv_phase = phase; else phase->store(0); }
     queue.push(std::move(item));
     not_empty.notify_one();
     wake_fibers(fiber_recv);
     if (unbuffered) {
-        // Çıkarken (alındı, kapandı ya da süre doldu) bizim durum işaretçimizi bırak: görev
-        // bitince silinir, sonradan öğeyi alan alıcı ona yazmasın.
+        // On exit (received, closed or timed out) release our state pointer: it is deleted when the task
+        // finishes, so a receiver that takes the item later must not write to it.
         struct ClearRv { LookChannel* c; std::atomic<int>* p;
             ~ClearRv() { if (p && c->rv_phase == p) c->rv_phase = nullptr; } } clear_rv{this, phase};
-        // Rendezvous: alıcı BU öğeyi alana dek bloke ol (Go unbuffered channel).
-        // recv_gen ile kendi öğemizin alındığını izleriz; yanlış uyandırmada
-        // (başka gönderici) bekleme sürer.
+        // Rendezvous: block until a receiver takes THIS item (Go unbuffered channel).
+        // We track that our own item was taken via recv_gen; on a spurious wakeup
+        // (another sender) the wait continues.
         uint64_t gen = recv_gen;
         chan_wait(this, lk, not_full, fiber_send, to, CHAN_WAIT_TAKEN, gen, [this, gen]{ return closed || recv_gen > gen; },
                   "channel send (rendezvous) timeout (possible deadlock; LOOK_CHANNEL_TIMEOUT_MS)");
-        // Alınmadan kapandı: değer teslim edilmedi → Go gibi "send on closed channel" (öğe
-        // kuyruktan geri alınır, kapandıktan sonra alıcıya ulaşmaz).
+        // Closed without being taken: the value was not delivered → like Go "send on closed channel" (the item
+        // is taken back from the queue, does not reach a receiver after close).
         if (recv_gen == gen) {
             if (!queue.empty()) queue.pop();
             throw std::runtime_error("send on closed channel");
@@ -724,9 +724,9 @@ Value LookChannel::recv_val() {
     if (queue.empty()) return Value();  // closed + empty → null
     Value v = std::move(queue.front());
     queue.pop();
-    if (rv_phase) { rv_phase->store(0); rv_phase = nullptr; }   // send_val: teslim anı
-    ++recv_gen;                 // rendezvous: bekleyen göndericiyi serbest bırak
-    not_full.notify_all();      // birden çok gönderici bekliyor olabilir
+    if (rv_phase) { rv_phase->store(0); rv_phase = nullptr; }   // send_val: delivery moment
+    ++recv_gen;                 // rendezvous: release the waiting sender
+    not_full.notify_all();      // multiple senders may be waiting
     wake_fibers(fiber_send);
     return v;
 }

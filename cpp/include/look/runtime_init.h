@@ -1,13 +1,13 @@
 #pragma once
 namespace look {
 
-// Süreç başlangıç init'i — TÜM giriş noktaları (lk / lk-fcgi / lk-cgi) bunu çağırır.
-// Yeni bir startup işi buraya eklenir → ÜÇ binary de otomatik alır (üç ayrı yere yazmak yok).
+// Process startup init — ALL entry points (lk / lk-fcgi / lk-cgi) call this.
+// A new startup job is added here → ALL THREE binaries pick it up automatically (no writing in three separate places).
 //
-// NEDEN: aynı "main✅ fcgi✅ cgi❌" deseni İKİ KEZ ısırdı (configure_system_ca_bundle önce,
-// sqlite_global_init sonra) — startup işleri üç giriş noktasına AYRI AYRI ekleniyordu ve her
-// seferinde biri (cgi) atlanıyordu. Bu birleştirme "kavram başına tek yapı"nın uygulaması ve
-// kod azaltır: init listesi tek yerde, üçüncü sapma imkânsız.
+// WHY: the same "main✅ fcgi✅ cgi❌" pattern bit TWICE (configure_system_ca_bundle first,
+// sqlite_global_init later) — startup jobs were added to the three entry points SEPARATELY and every
+// time one of them (cgi) was missed. This consolidation applies "one structure per concept" and
+// reduces code: the init list is in one place, a third divergence is impossible.
 void runtime_init();
 
 } // namespace look

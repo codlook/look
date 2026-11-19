@@ -1,9 +1,9 @@
-// FastCGI wire-protocol saf ayrıştırıcılar — socket'ten AYRI (fuzz + tablo-test hedefi).
-// "Dikişi aç": FCGI record header çözme + FCGI_PARAMS name/value-length okuma mantığı
-// burada. Ağdan (nginx/Apache → FCGI, ya da doğrudan LOOK_FCGI_BIND ile ağa açık) gelen
-// SALDIRGAN-KONTROLLÜ baytlar bu koddan geçer. Tek tanım (fcgi_main.cpp include eder) →
-// drift yok. contentLength uint16 ile, padding uint8 ile, name/value-length ise buffer
-// sonuna (end) clamp'lenerek sınırlanır → OOB yok.
+// FastCGI wire-protocol pure parsers — SEPARATE from the socket (fuzz + table-test target).
+// "Unstitch": FCGI record header decoding + FCGI_PARAMS name/value-length reading logic
+// live here. ATTACKER-CONTROLLED bytes coming from the network (nginx/Apache → FCGI, or exposed to the network directly with LOOK_FCGI_BIND)
+// pass through this code. A single definition (fcgi_main.cpp includes it) →
+// no drift. contentLength is bounded by uint16, padding by uint8, and name/value-length by being clamped to
+// the buffer end (end) → no OOB.
 #pragma once
 #include <cstdint>
 #include <cstddef>
@@ -12,11 +12,11 @@
 
 namespace look {
 
-// ── Record header (8 bayt, sabit düzen) ───────────────────────────────────────
+// ── Record header (8 bytes, fixed layout) ─────────────────────────────────────
 // FastCGI 1.0 record header:
 //   byte0: version, byte1: type, byte2..3: requestId (BE),
 //   byte4..5: contentLength (BE), byte6: paddingLength, byte7: reserved.
-// contentLength uint16 (≤65535), paddingLength uint8 (≤255) → resize güvenli.
+// contentLength uint16 (≤65535), paddingLength uint8 (≤255) → resize is safe.
 struct FcgiRecordHeader {
     uint8_t  version      = 0;
     uint8_t  type         = 0;
@@ -25,7 +25,7 @@ struct FcgiRecordHeader {
     uint8_t  padding_len  = 0;
 };
 
-// 8-baytlık header'ı çöz. Çağıran en az 8 bayt olduğunu garanti etmeli (raw_read(hdr,8)).
+// Decode the 8-byte header. The caller must guarantee at least 8 bytes (raw_read(hdr,8)).
 inline FcgiRecordHeader fcgi_decode_header(const uint8_t hdr[8]) {
     FcgiRecordHeader h;
     h.version     = hdr[0];
@@ -36,16 +36,16 @@ inline FcgiRecordHeader fcgi_decode_header(const uint8_t hdr[8]) {
     return h;
 }
 
-// BEGIN_REQUEST gövdesinden KEEP_CONN bayrağı. content[2] & FCGI_KEEP_CONN(0x01).
-// Çağıran content.size() >= 8 kontrolünü yapmalı (spec BEGIN_REQUEST gövdesi tam 8 bayt).
+// KEEP_CONN flag from the BEGIN_REQUEST body. content[2] & FCGI_KEEP_CONN(0x01).
+// The caller must check content.size() >= 8 (the spec's BEGIN_REQUEST body is exactly 8 bytes).
 inline bool fcgi_begin_keep_conn(const uint8_t* content, size_t len) {
     if (len < 3) return false;
     return (content[2] & 0x01) != 0;
 }
 
-// ── FCGI_PARAMS name/value-length okuma (1 veya 4 bayt, yüksek-bit işaretli) ───
-// TAŞMA-GÜVENLİ: yüksek bit set ise 4 bayt gerekir → p+4>end ise 0. p<end ön-koşulu
-// çağırandan gelir (parse_params `while (p<end)`).
+// ── FCGI_PARAMS name/value-length reading (1 or 4 bytes, high bit flagged) ─────
+// OVERFLOW-SAFE: if the high bit is set 4 bytes are needed → 0 if p+4>end. The p<end precondition
+// comes from the caller (parse_params `while (p<end)`).
 inline uint32_t fcgi_read_len(const uint8_t*& p, const uint8_t* end) {
     if (p >= end) return 0;
     if ((*p >> 7) == 0) return *p++;
@@ -56,15 +56,15 @@ inline uint32_t fcgi_read_len(const uint8_t*& p, const uint8_t* end) {
     return v;
 }
 
-// FCGI_PARAMS içeriğini (name-len, value-len, name, value)* olarak ayrıştır.
-// TAŞMA-GÜVENLİ: nlen/vlen uint32 (≤2^31) olabilir ama `p + nlen + vlen > end` kontrolü
-// (64-bit adres alanında wrap YOK; içerik ≤65535) sınırı aşan kaydı KESER (break) →
-// OOB read imkânsız. Aynı isim tekrarı → son değer kazanır (std::map insert-or-assign).
+// Parse the FCGI_PARAMS content as (name-len, value-len, name, value)*.
+// OVERFLOW-SAFE: nlen/vlen can be uint32 (≤2^31) but the `p + nlen + vlen > end` check
+// (NO wrap in the 64-bit address space; content ≤65535) TRUNCATES (break) a record that exceeds the bound →
+// OOB read is impossible. Same name repeated → the last value wins (std::map insert-or-assign).
 //
-// SONSUZ-DÖNGÜ KORUMASI: uzunluk alanı yüksek-bitli AMA 4 bayt tamamlanmamışsa
-// (kesik record), fcgi_read_len 0 döndürür ve p'yi İLERLETMEZ; koruma olmadan
-// `while (p<end)` p'yi asla ilerletemeyip sonsuza döner → tek kötü-biçimli PARAMS
-// record'u worker thread'i sonsuza kilitler (DoS). `p == q` (ilerleme yok) → break.
+// INFINITE-LOOP PROTECTION: if the length field has the high bit BUT the 4 bytes are not complete
+// (truncated record), fcgi_read_len returns 0 and does NOT ADVANCE p; without the protection
+// `while (p<end)` could never advance p and would loop forever → a single malformed PARAMS
+// record would lock the worker thread forever (DoS). `p == q` (no progress) → break.
 inline void fcgi_parse_params(const uint8_t* p, size_t len,
                               std::map<std::string, std::string>& out) {
     const uint8_t* end = p + len;
@@ -72,7 +72,7 @@ inline void fcgi_parse_params(const uint8_t* p, size_t len,
         const uint8_t* q = p;
         uint32_t nlen = fcgi_read_len(p, end);
         uint32_t vlen = fcgi_read_len(p, end);
-        if (p == q) break;                    // kesik uzunluk alanı → ilerleme yok, DUR
+        if (p == q) break;                    // truncated length field → no progress, STOP
         if (p + nlen + vlen > end) break;
         std::string name (p, p + nlen); p += nlen;
         std::string value(p, p + vlen); p += vlen;

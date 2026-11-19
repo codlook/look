@@ -1,6 +1,6 @@
 // look-fcgi.exe — LOOK FastCGI runtime
 //
-// Iki mod:
+// Two modes:
 //
 //   1. stdin/stdout (mod_fcgid — Windows/XAMPP):
 //      look-fcgi.exe
@@ -8,37 +8,37 @@
 //        FcgidWrapper "C:/xampp/cgi-bin/look-fcgi.exe" .lk
 //        AddHandler fcgid-script .lk
 //
-//   2. TCP (mod_proxy_fcgi — PHP-FPM modeli, her yerde calısır):
+//   2. TCP (mod_proxy_fcgi — PHP-FPM model, works everywhere):
 //      look-fcgi.exe --port 9000
 //      Apache httpd.conf:
 //        ProxyPassMatch "^/(.*\.lk.*)$" "fcgi://127.0.0.1:9000/$1"
 //      Nginx:
 //        fastcgi_pass 127.0.0.1:9000;
 //
-// Gelistirici kodu hic degismez — sadece deployment modeli degisir.
+// Developer code never changes — only the deployment model changes.
 
 #ifndef LOOK_VERSION
-#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#define LOOK_VERSION "1.0.0"   // fallback; normally CMake compile-def provides it (single source)
 #endif
 #include <ctime>
 #include "look/fcgi.h"
-#include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
-#include "look/weak_settings.h" // başlangıçta zayıflatan ayar uyarıları
-#include "look/mem_budget.h"   // bellek bütçesi (LOOK_MEMORY_LIMIT)
-#include "look/health_path.h"  // yerleşik sağlık yolu — tek kaynak (HTTP modu da kullanır)
-#include "look/fcgi_parse.h"   // saf wire-parse dikişi (drift yok — tablo/fuzz test hedefi)
-#include "look/host_port.h"    // --port: Go flag modeli (yalnız rakam, 1-65535)
-#include "look/path_guard.h"   // kanonik symlink/traversal kapisi (string kontrolu yetmez)
+#include "look/shutdown.h"     // graceful shutdown (SIGTERM/SIGINT)
+#include "look/weak_settings.h" // weakening-setting warnings at startup
+#include "look/mem_budget.h"   // memory budget (LOOK_MEMORY_LIMIT)
+#include "look/health_path.h"  // built-in health path — single source (HTTP mode uses it too)
+#include "look/fcgi_parse.h"   // pure wire-parse seam (no drift — table/fuzz test target)
+#include "look/host_port.h"    // --port: Go flag model (digits only, 1-65535)
+#include "look/path_guard.h"   // canonical symlink/traversal gate (a string check is not enough)
 #include "look/http_client.h"
 #include "look/thread_start.h"     // start_pool_threads
-#include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
-#include "look/session_files.h"   // başlangıçta LOOK_SESSION_DIR denetimi
+#include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, process start)
+#include "look/session_files.h"   // LOOK_SESSION_DIR check at startup
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/runtime_host.h"
 #include "look/logger.h"
 #include "look/web.h"
-#include "look/http_server.h"   // http_fiber_dispatch_enabled — varsayılan işçi sayısı
+#include "look/http_server.h"   // http_fiber_dispatch_enabled — default worker count
 
 #include <cstdlib>
 #include <iostream>
@@ -56,7 +56,7 @@
 #include <functional>
 #include <atomic>
 
-#ifndef LOOK_BUILD          // CMake damgası yoksa (ham derleme) güvenli varsayılan
+#ifndef LOOK_BUILD          // if there is no CMake stamp (raw build), a safe default
 #define LOOK_BUILD "src"
 #endif
 
@@ -108,7 +108,7 @@ private:
 
 namespace fs = std::filesystem;
 
-// ── FcgiConn implementasyonu ──────────────────────────────────────────────────
+// ── FcgiConn implementation ───────────────────────────────────────────────────
 
 namespace look {
 
@@ -230,7 +230,7 @@ bool FcgiConn::read_record(uint8_t& type, uint16_t& req_id,
                              std::vector<uint8_t>& content) {
     uint8_t hdr[8];
     if (!raw_read(hdr, 8)) return false;
-    FcgiRecordHeader h = fcgi_decode_header(hdr);  // saf çözme (fcgi_parse.h)
+    FcgiRecordHeader h = fcgi_decode_header(hdr);  // pure decoding (fcgi_parse.h)
     type   = h.type;
     req_id = h.req_id;
 
@@ -264,12 +264,12 @@ void FcgiConn::write_record(uint8_t type, uint16_t req_id,
 }
 
 uint32_t FcgiConn::read_len(const uint8_t*& p, const uint8_t* end) {
-    return fcgi_read_len(p, end);   // saf dikiş (fcgi_parse.h) — drift yok
+    return fcgi_read_len(p, end);   // pure seam (fcgi_parse.h) — no drift
 }
 
 void FcgiConn::parse_params(const uint8_t* p, size_t len,
                               std::map<std::string, std::string>& out) {
-    fcgi_parse_params(p, len, out); // saf dikiş (fcgi_parse.h) — drift yok
+    fcgi_parse_params(p, len, out); // pure seam (fcgi_parse.h) — no drift
 }
 
 bool FcgiConn::accept(FcgiRequest& req) {
@@ -292,8 +292,8 @@ bool FcgiConn::accept(FcgiRequest& req) {
                 break;
             case FCGI_PARAMS:
                 if (in_request && rid == req.id) {
-                    // Toplam PARAMS sınırı = HTTP modundaki başlık sınırı (2 MB). Eskiden sınırsızdı:
-                    // FCGI portuna doğrudan ulaşan biri sonsuz PARAMS kaydıyla belleği doldurabiliyordu.
+                    // Total PARAMS limit = the header limit in HTTP mode (2 MB). It used to be unbounded:
+                    // someone reaching the FCGI port directly could fill memory with endless PARAMS records.
                     params_bytes += content.size();
                     if (params_bytes > 2 * 1024 * 1024) { end_request(rid, 1); return false; }
                     if (!content.empty())
@@ -302,17 +302,17 @@ bool FcgiConn::accept(FcgiRequest& req) {
                 break;
             case FCGI_STDIN:
                 if (in_request && rid == req.id) {
-                    if (content.empty()) return true; // request hazir
-                    // Defense-in-depth: FCGI body cap. Normalde nginx
-                    // client_max_body_size ile keser, ama LOOK doğrudan bir
-                    // FCGI client'a maruz kalırsa sınırsız body = bellek DoS.
+                    if (content.empty()) return true; // request ready
+                    // Defense-in-depth: FCGI body cap. Normally nginx cuts it with
+                    // client_max_body_size, but if LOOK is exposed directly to an
+                    // FCGI client, an unbounded body = memory DoS.
                     static const size_t max_body = []() -> size_t {
                         const char* e = std::getenv("LOOK_MAX_BODY_SIZE");
                         if (e && *e) { long long n = std::atoll(e); if (n > 0) return (size_t)n; }
                         return 10 * 1024 * 1024;
                     }();
                     if (req.body.size() + content.size() > max_body) {
-                        end_request(rid, 1); return false;  // bağlantıyı kes
+                        end_request(rid, 1); return false;  // drop the connection
                     }
                     req.body.append(content.begin(), content.end());
                 }
@@ -372,13 +372,13 @@ FcgiServer::FcgiServer(int port) : port_(port) {
 
     struct sockaddr_in addr{};
     addr.sin_family      = AF_INET;
-    // FastCGI portu YALNIZ yerel web-sunucu (Apache/nginx 127.0.0.1) icindir. 0.0.0.0'a
-    // bind etmek ham FastCGI protokolunu aga acar → front-end filtreleme/auth atlanir ve
-    // FastCGI parametre-injeksiyonu (SCRIPT_FILENAME vb.) uzaktan mumkun olur. Default
-    // loopback; cok-host proxy kurulumu icin acikca opt-in: LOOK_FCGI_BIND.
-    //   (bos/unset)      → 127.0.0.1 (guvenli default)
-    //   "0.0.0.0"/"any"  → tum interface (bilincli acilim)
-    //   "1.2.3.4"        → belirli adres
+    // The FastCGI port is ONLY for the local web server (Apache/nginx on 127.0.0.1). Binding to 0.0.0.0
+    // exposes the raw FastCGI protocol to the network → front-end filtering/auth is bypassed and
+    // FastCGI parameter injection (SCRIPT_FILENAME etc.) becomes possible remotely. Default is
+    // loopback; for a multi-host proxy setup, explicit opt-in: LOOK_FCGI_BIND.
+    //   (empty/unset)   → 127.0.0.1 (safe default)
+    //   "0.0.0.0"/"any"  → all interfaces (deliberate exposure)
+    //   "1.2.3.4"        → a specific address
     const char* bind_env = std::getenv("LOOK_FCGI_BIND");
     if (bind_env && (std::string(bind_env) == "0.0.0.0" || std::string(bind_env) == "any")) {
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -386,7 +386,7 @@ FcgiServer::FcgiServer(int port) : port_(port) {
         if (inet_pton(AF_INET, bind_env, &addr.sin_addr) != 1)
             throw std::runtime_error("look-fcgi: invalid LOOK_FCGI_BIND address: " + std::string(bind_env));
     } else {
-        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 — guvenli default
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 — safe default
     }
     addr.sin_port        = htons((uint16_t)port_);
 
@@ -410,7 +410,7 @@ FcgiServer::~FcgiServer() {
 }
 
 void FcgiServer::stop() {
-    // accept'te bekleyen run() döngüsünü uyandırır (soket kapatılmaz: yıkıcı kapatır).
+    // wakes up the run() loop waiting in accept (the socket is not closed: the destructor closes it).
 #ifdef _WIN32
     if (listen_sock_ != INVALID_SOCKET) ::shutdown(listen_sock_, SD_BOTH);
 #else
@@ -434,7 +434,7 @@ void FcgiServer::run(Handler handler) {
 
 } // namespace look
 
-// ── Yardimci fonksiyonlar ─────────────────────────────────────────────────────
+// ── Helper functions ──────────────────────────────────────────────────────────
 
 static std::string json_escape_str(const std::string& s) {
     std::string out;
@@ -458,7 +458,7 @@ static bool is_production() {
 static std::string build_error_response(int status, const std::string& title,
                                          const std::string& msg) {
     std::string body = is_production()
-        // "error"/"code" = İngilizce anahtarlar; "hata"/"kod" 1.x boyunca yanında kalır, 2.0'da kalkar.
+        // "error"/"code" = English keys; "hata"/"kod" stay alongside them throughout 1.x.
         ? "{\"ok\":false,\"error\":\"Server error.\",\"code\":" + std::to_string(status)
           + ",\"hata\":\"Server error.\",\"kod\":" + std::to_string(status) + "}\n"
         : "{\"ok\":false,\"error\":\"" + json_escape_str(msg) + "\",\"code\":" + std::to_string(status)
@@ -468,72 +468,72 @@ static std::string build_error_response(int status, const std::string& title,
            "Access-Control-Allow-Origin: *\r\n\r\n" + body;
 }
 
-// İstek parametreleri süreç ortamına YAZILMAZ. Eskiden her isteğin bütün parametreleri (istemcinin
-// başlıkları HTTP_* olarak) setenv ile süreç ortamına yazılıyordu, 64 iş parçacığından aynı anda:
-//   * getenv (env(), çok parçalı yüklemede TEMP) eşzamanlı setenv ile yarışıp SIGSEGV veriyordu;
-//   * glibc eski ortam dizgilerini hiç bırakmaz: her yeni başlık değeri kalıcı bellek (+49 MB / 5000
-//     istek), ortam büyüdükçe her getenv yavaşlıyordu;
-//   * bir isteğin başlığı (X-Secret) sonraki isteklerin env("HTTP_X_SECRET")'inde görünüyordu.
-// İsteğin bilgisi request:: ile okunur (make_web_context); env() yapılandırmadır (.env + süreç ortamı).
+// Request parameters are NOT WRITTEN to the process environment. It used to write all of every request's parameters (the client's
+// headers as HTTP_*) into the process environment with setenv, from 64 threads at the same time:
+//   * getenv (env(), TEMP in multipart upload) raced with the concurrent setenv and gave SIGSEGV;
+//   * glibc never releases old environment strings: every new header value was permanent memory (+49 MB / 5000
+//     requests), and every getenv got slower as the environment grew;
+//   * one request's header (X-Secret) was visible in later requests' env("HTTP_X_SECRET").
+// The request's information is read with request::; env() is configuration (.env + process environment).
 
 static std::string resolve_script(const std::map<std::string, std::string>& params) {
     auto get = [&](const std::string& k) {
         auto it = params.find(k); return it != params.end() ? it->second : "";
     };
-    // Path traversal reddi — çözülen yol client-etkili CGI değişkenlerinden
-    // (SCRIPT_NAME/PATH_INFO/PATH_TRANSLATED) türer; LOOK bu .lk dosyasını KOD
-    // olarak yürütür. ".." segmenti doc-root dışına çıkıp arbitrary .lk çalıştırma
-    // (RCE) sağlayabilir. Traversal içeren adayı reddet.
+    // Path traversal rejection — the resolved path derives from client-influenced CGI variables
+    // (SCRIPT_NAME/PATH_INFO/PATH_TRANSLATED); LOOK executes this .lk file as CODE.
+    // A ".." segment escaping the doc root could allow arbitrary .lk execution
+    // (RCE). Reject a candidate containing traversal.
     auto no_traversal = [](const std::string& s) {
         return s.find("../") == std::string::npos &&
                s.find("..\\") == std::string::npos &&
                !(s.size() >= 2 && s.substr(s.size() - 2) == "..");
     };
     auto is_real_lk = [&](const std::string& s) {
-        // proxy:fcgi://... gibi sahte yollar disla
+        // exclude fake paths like proxy:fcgi://...
         if (s.empty()) return false;
         if (s.rfind("proxy:", 0) == 0) return false;
         if (s.rfind("fcgi:",  0) == 0) return false;
-        if (!no_traversal(s)) return false;   // ".." traversal → reddet
+        if (!no_traversal(s)) return false;   // ".." traversal → reject
         return s.size() > 3 && s.substr(s.size() - 3) == ".lk";
     };
 
-    // 1. PATH_TRANSLATED — CGI Action directive modunda gercek yol gelir
+    // 1. PATH_TRANSLATED — in CGI Action directive mode the real path arrives
     std::string pt = get("PATH_TRANSLATED");
     if (is_real_lk(pt)) return pt;
 
-    // 2. SCRIPT_FILENAME — gercek Windows yolu ise kullan
+    // 2. SCRIPT_FILENAME — use it if it is a real Windows path
     std::string sf = get("SCRIPT_FILENAME");
     if (is_real_lk(sf)) return sf;
 
-    // 3. DOCUMENT_ROOT + SCRIPT_NAME — mod_proxy_fcgi RewriteRule [P] modunda
-    //    ornek: SCRIPT_NAME=/index.lk, DOCUMENT_ROOT=C:/xampp/htdocs
+    // 3. DOCUMENT_ROOT + SCRIPT_NAME — in mod_proxy_fcgi RewriteRule [P] mode
+    //    example: SCRIPT_NAME=/index.lk, DOCUMENT_ROOT=C:/xampp/htdocs
     std::string doc = get("DOCUMENT_ROOT");
     std::string sn  = get("SCRIPT_NAME");
     if (!doc.empty() && !sn.empty() && no_traversal(sn) &&
         sn.size() > 3 && sn.substr(sn.size()-3) == ".lk") {
-        // KANONIK KAPI: doc+sn yolunu LOOK kurar, Apache dosyaya dokunmaz (mod_proxy_fcgi
-        // [P]) → SymLinksIfOwnerMatch uygulanmaz. String no_traversal symlink'i goremez;
-        // weakly_canonical symlink+".." cozup doc disina cikan adayi reddeder (cok-kiraci).
+        // CANONICAL GATE: LOOK builds the doc+sn path, Apache does not touch the file (mod_proxy_fcgi
+        // [P]) → SymLinksIfOwnerMatch is not applied. The string no_traversal cannot see a symlink;
+        // weakly_canonical resolves symlink+".." and rejects a candidate that leaves the doc root (multi-tenant).
         std::string cand = doc + sn;
         if (look::path_under_root(doc, cand)) return cand;
     }
 
-    // 4. PATH_INFO'dan .lk coz (Apache Action + PATH_INFO modeli)
+    // 4. Resolve .lk from PATH_INFO (Apache Action + PATH_INFO model)
     std::string pi = get("PATH_INFO");
     if (!doc.empty() && !pi.empty() && no_traversal(pi)) {
         size_t pos = pi.find(".lk");
         if (pos != std::string::npos) {
             std::string cand = doc + pi.substr(0, pos + 3);
-            if (look::path_under_root(doc, cand)) return cand;   // kanonik kapi (symlink)
+            if (look::path_under_root(doc, cand)) return cand;   // canonical gate (symlink)
         }
     }
 
-    // 5. Fallback: DOCUMENT_ROOT/index.lk — RewriteRule [P] ile gelen tum istekler
-    //    REQUEST_URI routing icin WebContext'e gecer, script hep index.lk
+    // 5. Fallback: DOCUMENT_ROOT/index.lk — all requests arriving via RewriteRule [P]:
+    //    REQUEST_URI is passed to WebContext for routing, the script is always index.lk
     if (!doc.empty()) {
         std::string idx = doc;
-        // Windows: ters slash normalize et
+        // Windows: normalize backslashes
         for (char& c : idx) if (c == '\\') c = '/';
         if (idx.back() != '/') idx += '/';
         idx += "index.lk";
@@ -543,7 +543,7 @@ static std::string resolve_script(const std::map<std::string, std::string>& para
     return "";
 }
 
-// FCGI params'tan WebContext doldur (env var bagimsiz)
+// Fill WebContext from FCGI params (independent of env vars)
 static look::WebContext make_web_context(const look::FcgiRequest& req) {
     auto param = [&](const std::string& k) -> std::string {
         auto it = req.params.find(k);
@@ -554,9 +554,9 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
 
     web.method = param("REQUEST_METHOD");
     if (web.method.empty()) web.method = "GET";
-    web.document_root = param("DOCUMENT_ROOT");   // file::store web-kökü denetimi (eskiden setenv ile)
+    web.document_root = param("DOCUMENT_ROOT");   // file::store web-root check (used to be via setenv)
 
-    // Path: REQUEST_URI'dan al
+    // Path: take from REQUEST_URI
     {
         std::string uri = param("REQUEST_URI");
         size_t q = uri.find('?');
@@ -573,13 +573,13 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
 
     web.body         = req.body;
     web.content_type = param("CONTENT_TYPE");
-    web.parse_post_body();   // urlencoded + multipart — tek kaynak (web.cpp)
+    web.parse_post_body();   // urlencoded + multipart — single source (web.cpp)
 
     web.remote_addr = param("REMOTE_ADDR");
     // HTTPS from the FCGI params is set by the web server (Apache/nginx), not the client — trusted.
     { std::string h = param("HTTPS"); for (auto& c : h) c = (char)std::tolower((unsigned char)c);
       web.is_https = (h == "on" || h == "1" || param("REQUEST_SCHEME") == "https"); }
-    web.host = look::WebContext::clean_host(param("HTTP_HOST"));   // aynı: web sunucusunun Host'u
+    web.host = look::WebContext::clean_host(param("HTTP_HOST"));   // same: the web server's Host
     std::string ck  = param("HTTP_COOKIE");
     if (!ck.empty()) web.cookies_in = look::WebContext::parse_cookies(ck);
 
@@ -597,9 +597,9 @@ static look::WebContext make_web_context(const look::FcgiRequest& req) {
     return web;
 }
 
-// ── Request isleme — concurrent dispatch modeli ───────────────────────────────
+// ── Request handling — concurrent dispatch model ──────────────────────────────
 
-// Paylaşılan uygulama motoru — http_main.cpp'de tanımlı
+// Shared application engine — defined in http_main.cpp
 bool look_http_engine_ensure(const std::string& script_path, std::string& err);
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path);
@@ -635,8 +635,8 @@ static void handle_request(look::FcgiRequest& req, look::FcgiConn& conn) {
     }
 
     try {
-        // ── Paylaşılan motor (http_main.cpp) — setup + hot reload + VM ──
-        // FCGI modu HTTP moduyla AYNI dispatch motorunu (bytecode VM) kullanır.
+        // ── Shared engine (http_main.cpp) — setup + hot reload + VM ──
+        // FCGI mode uses the SAME dispatch engine (bytecode VM) as HTTP mode.
         std::string setup_err;
         if (!look_http_engine_ensure(script_path, setup_err)) {
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "FCGI",
@@ -671,25 +671,25 @@ void run_http_mode(int port, int workers, const std::string& script_path);
 
 int main(int argc, char* argv[]) {
 #ifndef _WIN32
-    // tz global state'ini thread'ler başlamadan doldur (localtime_r yarış fix'i)
+    // fill the tz global state before the threads start (localtime_r race fix)
     tzset();
 #endif
-    // Zarif kapanma: SIGTERM/SIGINT ayrı iş parçacığında alınır — HİÇBİR iş parçacığı açılmadan
-    // (runtime_init ve kurulum açabilir; maske kalıtılır). look/shutdown.h
+    // Graceful shutdown: SIGTERM/SIGINT are received on a separate thread — BEFORE any thread is opened
+    // (runtime_init and setup may open them; the mask is inherited). look/shutdown.h
     look::shutdown::install();
-    look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
-    // --port NNNN     → TCP modu (fcgi) veya http modu
-    // --workers N     → concurrent dispatch thread sayısı (default: CPU çekirdeği)
-    // --mode fcgi     → FastCGI modu (default)
-    // --mode http     → HTTP/1.1 modu, Apache bypass, event loop
-    // --bind ADDR     → --mode http dinleme adresi (LOOK_BIND; varsayılan tüm arayüzler)
-    // argumansiz      → stdin/stdout modu (mod_fcgid)
+    look::runtime_init();  // all process-start init (CA probe + SQLite one-time init) — shared by the 3 entry points
+    // --port NNNN     → TCP mode (fcgi) or http mode
+    // --workers N     → number of concurrent dispatch threads (default: CPU cores)
+    // --mode fcgi     → FastCGI mode (default)
+    // --mode http     → HTTP/1.1 mode, Apache bypass, event loop
+    // --bind ADDR     → --mode http listen address (LOOK_BIND; default all interfaces)
+    // no arguments    → stdin/stdout mode (mod_fcgid)
     int         tcp_port = 0;
     int         workers  = 0;
     std::string mode     = "fcgi";
     std::string script   = "index.lk";
 
-    // version / --version / -v → versiyon bas ve çık
+    // version / --version / -v → print the version and exit
     if (argc >= 2 && (std::strcmp(argv[1], "version") == 0 ||
                       std::strcmp(argv[1], "--version") == 0 ||
                       std::strcmp(argv[1], "-v") == 0)) {
@@ -718,8 +718,8 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if ((std::strcmp(argv[i], "--port") == 0 || std::strcmp(argv[i], "-p") == 0)
             && i + 1 < argc) {
-            // Go flag modeli: bozuk değer → hata + çıkış 2. Eskiden atoi: "--port 80a" → 80,
-            // "--port abc" → 0 → http kipinde sessizce 9000, fcgi kipinde sessizce stdin kipi.
+            // Go flag model: a bad value → error + exit 2. It used to use atoi: "--port 80a" → 80,
+            // "--port abc" → 0 → silently 9000 in http mode, silently stdin mode in fcgi mode.
             if (!look::parse_port_number(argv[++i], tcp_port)) {
                 std::cerr << "lk-fcgi: invalid --port value \"" << argv[i]
                           << "\" (expected a number from 1 to 65535)\n";
@@ -734,7 +734,7 @@ int main(int argc, char* argv[]) {
         else if (std::strcmp(argv[i], "--script") == 0 && i + 1 < argc)
             script = argv[++i];
         else if (std::strcmp(argv[i], "--bind") == 0 && i + 1 < argc) {
-            // --mode http dinleme adresi (LOOK_BIND ile aynı; komut satırı ortamı ezer)
+            // --mode http listen address (same as LOOK_BIND; the command line overrides the environment)
 #ifdef _WIN32
             _putenv_s("LOOK_BIND", argv[++i]);
 #else
@@ -749,13 +749,13 @@ int main(int argc, char* argv[]) {
         const char* env = std::getenv("LOOK_WORKERS");
         if (env) workers = std::max(1, std::atoi(env));
         else if (mode == "http" && look::http_fiber_dispatch_enabled()) {
-            // Fiber dağıtımı: işçi veritabanını / ağı beklerken başka isteği çalıştırır — işçi
-            // sayısı kullanılabilir CPU kadar (Go'nun GOMAXPROCS'u gibi). Ölçüm: 8 ve 32 işçi aynı
-            // iş hacmi, p99 16 ms'e karşı 34 ms. Eskiden burada da CPU × 4 vardı.
+            // Fiber dispatch: while a worker waits on the database / network it runs another request — the worker
+            // count equals the available CPUs (like Go's GOMAXPROCS). Measurement: 8 and 32 workers gave the same
+            // throughput, p99 16 ms vs 34 ms. It used to be CPU × 4 here too.
             workers = look::available_cpus();
         } else {
-            // İstek başına iş parçacığı (FastCGI, LOOK_FIBER_DISPATCH=0, Windows): iş parçacığı
-            // beklerken gerçekten durur → CPU × 4, en çok 64.
+            // One thread per request (FastCGI, LOOK_FIBER_DISPATCH=0, Windows): the thread really
+            // blocks while waiting → CPU × 4, at most 64.
             workers = look::available_cpus() * 4;
             if (workers > 64) workers = 64;
         }
@@ -779,8 +779,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Açıkça verilmiş oturum dizini (LOOK_SESSION_DIR) başkasına aitse ya da izinleri gevşekse
-    // başlama: oturumlar o dizinde başkalarınca okunabilir/sahtelenebilir olurdu.
+    // If an explicitly given session directory (LOOK_SESSION_DIR) belongs to someone else or its permissions are loose,
+    // do not start: the sessions in that directory could be read/forged by others.
     {
         std::string why = look::session_dir_startup_problem();
         if (!why.empty()) {
@@ -790,8 +790,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Bellek bütçesi (look/mem_budget.h): süreç sınırı LOOK_MEMORY_LIMIT ya da otomatik (kabın %80'i,
-    // yoksa 1 GiB), istek bütçesi otomatik. Geçersiz değerle başlamaz (Go: GOMEMLIMIT hatası).
+    // Memory budget (look/mem_budget.h): the process limit is LOOK_MEMORY_LIMIT or automatic (80% of the container,
+    // otherwise 1 GiB), the request budget is automatic. It does not start with an invalid value (Go: GOMEMLIMIT error).
     {
         std::string why, describe;
         if (!look::mem_budget_configure(why, describe)) {
@@ -817,8 +817,8 @@ int main(int argc, char* argv[]) {
         try {
             run_http_mode(tcp_port, workers, script);
         } catch (const std::exception& e) {
-            // Kurulumda (ör. veritabani is parcacigi havuzu) baslatilamayan kaynak: nedeni yaz, 1 ile cik
-            // (eskiden yakalanmayan istisna → std::terminate).
+            // A resource that could not be started during setup (e.g. the database thread pool): write the reason, exit with 1
+            // (it used to be an uncaught exception → std::terminate).
             std::cerr << "Error: LOOK could not start: " << e.what() << "\n";
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", std::string("could not start: ") + e.what());
             return 1;
@@ -827,15 +827,15 @@ int main(int argc, char* argv[]) {
     }
 
     {
-        // Havuzun üst sınırı işçi sayısından bağımsız: LOOK_DB_POOL_SIZE verilmişse o, yoksa
-        // varsayılan (db::connect: 4 × CPU, 8..64). Bağlantılar gerektikçe açılır.
+        // The pool's upper limit is independent of the worker count: if LOOK_DB_POOL_SIZE is given, that; otherwise
+        // the default (db::connect: 4 × CPU, 8..64). Connections are opened as needed.
         const char* env = std::getenv("LOOK_DB_POOL_SIZE");
         int pool_sz = (env && env[0]) ? std::max(1, std::min(std::atoi(env), 256)) : 0;
         look::set_db_pool_size(pool_sz);
     }
 
     if (tcp_port > 0) {
-        // ── TCP modu — concurrent dispatch ───────────────────────────────────
+        // ── TCP mode — concurrent dispatch ───────────────────────────────────
         { const char* be = std::getenv("LOOK_FCGI_BIND");
           std::string bindaddr = (be && *be) ? std::string(be) : "127.0.0.1";
           look::Logger::instance().log(look::LogLevel::LOG_INFO, "FCGI",
@@ -845,13 +845,13 @@ int main(int argc, char* argv[]) {
               look::Logger::instance().log(look::LogLevel::LOG_WARN, "SECURITY", w); }
 
         try {
-            // Önce işçiler, SONRA port: kurucu dinlemeye başlar. Eskiden port önce açılıyordu; havuz
-            // (bellek sınırında) kurulamayınca süreç nedenini yazıp çıkarken bağlanan istemci
-            // kabul edilip yanıtsız kalıyordu (HTTP kipindeki başlangıç kapısının karşılığı).
+            // Workers FIRST, THEN the port: the constructor starts listening. The port used to be opened first; when the pool
+            // could not be set up (at the memory limit) and the process wrote its reason and exited, a client that connected
+            // was accepted and left without a response (the counterpart of the startup gate in HTTP mode).
             ThreadPool pool(workers);
             look::FcgiServer server(tcp_port);
-            // Zarif kapanma: kabul durur, run() döner; kapsam sonunda havuz kuyruktaki ve işlenen
-            // istekleri bitirip birleşir (ThreadPool yıkıcısı), sonra aşağıda finish(0).
+            // Graceful shutdown: accepting stops, run() returns; at the end of the scope the pool finishes the queued and in-progress
+            // requests and joins (ThreadPool destructor), then finish(0) below.
             look::shutdown::on_begin([&server] { server.stop(); });
 
             server.run([&pool](look::FcgiConn conn_val) {
@@ -859,9 +859,9 @@ int main(int argc, char* argv[]) {
                 auto conn_ptr = std::make_shared<look::FcgiConn>(std::move(conn_val));
                 pool.submit([conn_ptr]() mutable {
                     look::FcgiRequest req;
-                    // İlk istek için de okuma zaman aşımı = HTTP kipinin boşta süresi (LOOK_HTTP_IDLE_MS,
-                    // varsayılan 30 sn; her recv için, toplam değil). Eskiden yoktu: bağlanıp hiçbir
-                    // şey göndermeyen her bağlantı bir işçi iş parçacığını süresiz tutuyordu.
+                    // The read timeout for the first request too = the idle time of HTTP mode (LOOK_HTTP_IDLE_MS,
+                    // default 30 s; per recv, not total). It did not exist before: every connection that connected and sent
+                    // nothing held a worker thread indefinitely.
                     static const int idle_s = [] {
                         const char* e = std::getenv("LOOK_HTTP_IDLE_MS");
                         long ms = (e && *e) ? std::atol(e) : 30000L;
@@ -871,14 +871,14 @@ int main(int argc, char* argv[]) {
                     while (conn_ptr->accept(req)) {
                         handle_request(req, *conn_ptr);
                         if (!req.keep_conn) break;
-                        if (look::shutdown::requested()) break;   // kapanma: sonraki isteği bekleme
-                        // KEEP_CONN: sonraki istegi beklerken idle timeout —
-                        // bos baglantilar worker thread'leri suresiz pinlemesin
+                        if (look::shutdown::requested()) break;   // shutdown: do not wait for the next request
+                        // KEEP_CONN: idle timeout while waiting for the next request —
+                        // so that idle connections do not pin worker threads indefinitely
                         conn_ptr->set_read_timeout(5);
                     }
                 });
             });
-            look::shutdown::on_begin(nullptr);   // server kapsamdan çıkıyor
+            look::shutdown::on_begin(nullptr);   // the server is leaving scope
         } catch (const std::exception& e) {
             look::shutdown::on_begin(nullptr);
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "FCGI", e.what());
@@ -886,14 +886,14 @@ int main(int argc, char* argv[]) {
         }
         if (look::shutdown::requested()) look::shutdown::finish(0);
     } else {
-        // ── stdin/stdout modu — mod_fcgid, tek thread yeterli ────────────────
+        // ── stdin/stdout mode — mod_fcgid, a single thread is enough ────────────────
         look::Logger::instance().log(look::LogLevel::LOG_INFO, "FCGI",
             "look-fcgi pipe mode — waiting for requests via stdin/stdout");
 
         look::FcgiConn conn;
         look::FcgiRequest req;
-        // Zarif kapanma: istek beklerken gelen sinyal hemen çıkarır; istek işlenirken gelen sinyalde
-        // istek biter, sonra çıkılır (kilit: ikisi arasında yarış yok).
+        // Graceful shutdown: a signal arriving while waiting for a request exits immediately; a signal arriving while a request is being processed
+        // lets the request finish, then exits (lock: there is no race between the two).
         static std::mutex pipe_mtx;
         static bool pipe_busy = false;
         look::shutdown::on_begin([] {

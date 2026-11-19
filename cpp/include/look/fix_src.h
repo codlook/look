@@ -1,33 +1,33 @@
 #pragma once
-// lk fix — kullanımdan kalkan yazımları yeni yazıma çevirir (gofix modeli, SEÇENEK YOK).
+// lk fix — converts deprecated spellings to the new spelling (gofix model, NO OPTIONS).
 //
-//   push(X, v)        (deyim)   → X = array::push(X, v)
-//   pop(X)            (deyim)   → X = array::slice(X, 0, -1)
-//   $v = pop(X)       (deyim)   → $v = X[-1]  +  yeni satırda  X = array::slice(X, 0, -1)
-//   array::pop(X)     (her yer) → X[-1]
+//   push(X, v)        (statement) → X = array::push(X, v)
+//   pop(X)            (statement) → X = array::slice(X, 0, -1)
+//   $v = pop(X)       (statement) → $v = X[-1]  +  on a new line  X = array::slice(X, 0, -1)
+//   array::pop(X)     (anywhere)  → X[-1]
 //
-// X bir değişken ya da indeks/üye yolu ($l, $m["k"], $u.tags) olmalı. Başka her kullanım (daha
-// büyük bir ifadenin içinde push/pop) DEĞİŞMEZ ve nedeniyle raporlanır.
-// Yeniden yazma KAYNAK ARALIKLARIYLA yapılır (token konumları): dokunulmayan satırlar, yorumlar
-// ve biçim olduğu gibi kalır. Sonuç yeniden ayrıştırılır; ayrışmazsa dosya değişmez.
+// X must be a variable or an index/member path ($l, $m["k"], $u.tags). Every other use (push/pop
+// inside a larger expression) is NOT CHANGED and is reported with the reason.
+// The rewrite is done by SOURCE RANGES (token positions): untouched lines, comments
+// and formatting stay as they are. The result is re-parsed; if it does not parse the file is unchanged.
 #include <string>
 #include <vector>
 
 namespace look {
 
 struct FixResult {
-    std::string output;                 // yeniden yazılmış kaynak (hata varsa girdi)
-    // Her satır "<satır>: ..." biçiminde; CLI başına dosya adını ekler.
-    std::vector<std::string> changes;   // "<satır>: eski  ->  yeni"
-    std::vector<std::string> notes;     // "<satır>: NOTE: ..." (boş listede davranış farkı)
-    std::vector<std::string> skipped;   // "<satır>: not rewritten: neden"
-    std::string error;                  // boş değilse dosya işlenemedi (çıktı = girdi)
+    std::string output;                 // rewritten source (the input if there is an error)
+    // Each line has the form "<line>: ..."; the CLI prepends the file name.
+    std::vector<std::string> changes;   // "<line>: old  ->  new"
+    std::vector<std::string> notes;     // "<line>: NOTE: ..." (behaviour difference on an empty list)
+    std::vector<std::string> skipped;   // "<line>: not rewritten: reason"
+    std::string error;                  // if not empty the file could not be processed (output = input)
 };
 
 FixResult look_fix_source(const std::string& src);
 
-// lk fix CLI. files boşsa stdin → stdout. check=true → yazmaz, değişecekleri listeler.
-// Dönüş: 0 temiz; 1 değişecek (check) ya da yeniden yazılamayan çağrı kaldı; 2 hata.
+// lk fix CLI. If files is empty stdin → stdout. check=true → does not write, lists what would change.
+// Returns: 0 clean; 1 something would change (check) or a call that cannot be rewritten remains; 2 error.
 int run_fix(const std::vector<std::string>& files, bool check);
 
 } // namespace look

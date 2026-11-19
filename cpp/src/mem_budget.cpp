@@ -1,4 +1,4 @@
-// Bellek bütçesi — look/mem_budget.h
+// Memory budget — look/mem_budget.h
 #include "look/mem_budget.h"
 #include "look/fiber.h"   // t_preempt_budget, Fiber::current
 #include <cstdio>
@@ -23,31 +23,31 @@
 namespace look {
 
 namespace {
-// fiber-ok: o anki istek hesabı; Fiber::resume her geçişte fiber'ın kendi hesabına çevirir
-// (Fiber::local.mem_acct), dönüşte geri alır — askıdaki başka isteğin hesabı okunmaz.
+// fiber-ok: the current request's account; Fiber::resume switches to the fiber's own account on every transition
+// (Fiber::local.mem_acct) and restores it on return — another suspended request's account is never read.
 thread_local MemAccount* t_acct = nullptr;
-// fiber-ok: süreç sayacına henüz yazılmamış fark; isteğe ait değil, iş parçacığına ait (toplam).
+// fiber-ok: delta not yet written to the process counter; belongs to the thread (total), not to a request.
 thread_local int64_t t_delta = 0;
 
-std::atomic<int64_t> g_bytes{0};        // sayılan canlı bayt (partiler hâlinde)
+std::atomic<int64_t> g_bytes{0};        // live bytes counted (in batches)
 std::atomic<bool>    g_enabled{false};
-std::atomic<bool>    g_over{false};     // süreç sınırı aşıldı: en büyük istek seçilecek
+std::atomic<bool>    g_over{false};     // process limit exceeded: the largest request will be picked
 int64_t g_limit = 0, g_req_limit = 0, g_admit = 0;
 std::mutex  g_list_mtx;
 MemAccount* g_head = nullptr;
 constexpr int64_t kFlush = int64_t(1) << 20;   // 1 MiB
 
-// İstek hesabına da partiyle yazılır (64 KiB): her ayırmada hesabın bellek satırına okuma+yazma
-// yapmak fiber kipinde ayırma ağırlıklı istekte ~%3,5 tutuyordu, parti bunun yarısını geri alır
-// (ölçüldü). Boyut ayırmada ve bırakmada AYNI yoldan sayılır; parti yalnız yazmayı seyreltir.
-// Hesap değişmeden önce (fiber geçişi, istek başı/sonu) ve güvenli noktada boşaltılır.
-// fiber-ok: o anki hesaba (t_acct) henüz yazılmamış fark; t_acct değişmeden önce acct_flush boşaltır.
+// Also written to the request account in batches (64 KiB): reading+writing the account's memory line
+// on every allocation cost ~3.5% in an allocation-heavy request in fiber mode; batching wins back half of that
+// (measured). The size is counted via the SAME path on allocate and free; batching only thins out the writes.
+// Flushed before the account changes (fiber switch, request start/end) and at a safe point.
+// fiber-ok: delta not yet written to the current account (t_acct); acct_flush flushes it before t_acct changes.
 thread_local int64_t t_acct_delta = 0;
 constexpr int64_t kAcctFlush = int64_t(64) << 10;   // 64 KiB
 inline void acct_flush() noexcept {
     if (MemAccount* a = t_acct) {
-        // Başka isteğin ayırdığı (paylaşılan) veriyi bırakmak hesabı sıfırın altına indirmez:
-        // indirseydi istek bütçesinin üstünde bellek kullanabilirdi.
+        // Freeing data allocated by another request (shared data) does not push the account below zero:
+        // if it did, the request could use memory above its budget.
         int64_t b = a->bytes.load(std::memory_order_relaxed) + t_acct_delta;
         if (b < 0) b = 0;
         a->bytes.store(b, std::memory_order_relaxed);
@@ -63,7 +63,7 @@ inline void on_alloc_sz(int64_t sz) noexcept {
         t_delta = 0;
         if (now > g_limit && g_enabled.load(std::memory_order_relaxed)) {
             g_over.store(true, std::memory_order_relaxed);
-            t_preempt_budget = 0;   // bir sonraki güvenli nokta denetlesin
+            t_preempt_budget = 0;   // let the next safe point check
         }
     }
 }
@@ -82,7 +82,7 @@ std::string read_file_trim(const std::string& path) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
     return s;
 }
-// Kabın (cgroup) bellek sınırı: bu sürecin cgroup'u ve üstleri içinde en küçüğü; yoksa 0.
+// Container (cgroup) memory limit: the smallest among this process's cgroup and its ancestors; 0 if none.
 int64_t cgroup_memory_limit() {
 #ifdef __linux__
     std::ifstream cg("/proc/self/cgroup");
@@ -104,7 +104,7 @@ int64_t cgroup_memory_limit() {
         if (ctrl.empty() && line.compare(0, 1, "0") == 0) { base = "/sys/fs/cgroup"; file = "memory.max"; }
         else if (ctrl.find("memory") != std::string::npos) { base = "/sys/fs/cgroup/memory"; file = "memory.limit_in_bytes"; }
         else continue;
-        // kendi cgroup'u ve üstleri (systemd dilimi, kap kökü)
+        // its own cgroup and its ancestors (systemd slice, container root)
         for (std::string p = path;; ) {
             take(read_file_trim(base + (p == "/" ? "" : p) + "/" + file), int64_t(1) << 60);
             if (p.empty() || p == "/") break;
@@ -117,7 +117,7 @@ int64_t cgroup_memory_limit() {
     return 0;
 #endif
 }
-// Go GOMEMLIMIT biçimi: bayt ya da B/KiB/MiB/GiB/TiB son eki; "off" = sınır yok.
+// Go GOMEMLIMIT format: bytes or a B/KiB/MiB/GiB/TiB suffix; "off" = no limit.
 bool parse_limit(const std::string& s, int64_t& out) {
     size_t i = 0;
     while (i < s.size() && s[i] >= '0' && s[i] <= '9') ++i;
@@ -146,11 +146,11 @@ std::string mem_format_bytes(int64_t b) {
 }
 
 namespace {
-// LOOK_MEMORY_LIMIT: 1 = geçerli değer (out), 0 = verilmemiş, 2 = "off", -1 = geçersiz (why).
+// LOOK_MEMORY_LIMIT: 1 = valid value (out), 0 = not given, 2 = "off", -1 = invalid (why).
 int read_env_limit(int64_t& out, std::string& why) {
     const char* env = std::getenv("LOOK_MEMORY_LIMIT");
     if (!env || !*env) return 0;
-    if (std::strcmp(env, "off") == 0) return 2;   // sınır yok — Go GOMEMLIMIT=off
+    if (std::strcmp(env, "off") == 0) return 2;   // no limit — Go GOMEMLIMIT=off
     if (!parse_limit(env, out)) {
         why = std::string("LOOK_MEMORY_LIMIT=") + env + " is not a size: write bytes or a number with "
               "KiB, MiB, GiB or TiB, for example 512MiB or 2GiB (or off)";
@@ -162,17 +162,17 @@ int read_env_limit(int64_t& out, std::string& why) {
     }
     return 1;
 }
-bool g_cli = false;   // komut satırı: hesapsız kod (betiğin kendisi) süreç sınırında durur
+bool g_cli = false;   // command line: unaccounted code (the script itself) stops at the process limit
 } // namespace
 
 bool mem_budget_configure_cli(std::string& why) {
     int64_t limit = 0;
     const int r = read_env_limit(limit, why);
     if (r < 0) return false;
-    if (r != 1) return true;   // verilmemiş ya da off: komut satırında sınır yok
+    if (r != 1) return true;   // not given or off: no limit on the command line
     g_limit = limit;
     g_admit = limit;
-    g_req_limit = 0;   // istek bütçesi yok (MemScope kurulmaz)
+    g_req_limit = 0;   // no request budget (MemScope is not set up)
     g_cli = true;
     g_enabled.store(true, std::memory_order_release);
     return true;
@@ -215,10 +215,10 @@ bool mem_admit() {
 }
 
 MemAccount* mem_current_account() noexcept { return t_acct; }
-void        mem_set_current_account(MemAccount* a) noexcept { acct_flush(); t_acct = a; }   // fark eski hesaba
+void        mem_set_current_account(MemAccount* a) noexcept { acct_flush(); t_acct = a; }   // delta goes to the old account
 
 MemScope::MemScope() {
-    // Kapalıyken ya da istek bütçesi yokken (komut satırı) hesap kurulmaz; yıkıcı limit==0'a bakar.
+    // When disabled or when there is no request budget (command line) no account is set up; the destructor looks at limit==0.
     if (!mem_budget_enabled() || g_req_limit <= 0) return;
     acct_.limit = g_req_limit;
     {
@@ -228,12 +228,12 @@ MemScope::MemScope() {
         g_head = &acct_;
     }
     prev_ = t_acct;
-    acct_flush();   // önceki hesabın farkı ona
+    acct_flush();   // the previous account's delta goes to it
     t_acct = &acct_;
     if (Fiber* f = Fiber::current()) f->local.mem_acct = &acct_;
 }
 MemScope::~MemScope() {
-    if (!acct_.limit) return;   // bütçe kapalıyken kurulmuştu
+    if (!acct_.limit) return;   // had been set up while the budget was disabled
     acct_flush();
     t_acct = prev_;
     if (Fiber* f = Fiber::current()) f->local.mem_acct = prev_;
@@ -251,7 +251,7 @@ namespace {
         mem_format_bytes(g_limit) + ", LOOK_MEMORY_LIMIT), at most 256 MiB; keep large data out of "
         "memory (stream it, page through it, or store it)", false);
 }
-// Yarıda durdurulan istek o ana dek yaptığını (veritabanı yazması …) geri almaz — günlükte açıkça.
+// A request stopped midway does not roll back what it already did (database writes ...) — stated explicitly in the log.
 [[noreturn]] void throw_process_over(const char* what, int64_t used) {
     throw MemoryLimitError((what ? std::string(what) + ": t" : std::string("T")) +
         "he server reached its memory limit (" + mem_format_bytes(g_limit) +
@@ -259,15 +259,15 @@ namespace {
         "), was stopped midway so that the others can finish; what it did before stopping (for example "
         "database writes) is not undone. The client got 503 and may retry", true);
 }
-// Komut satırı (ya da istek dışı kod): süreç sınırı.
+// Command line (or non-request code): process limit.
 [[noreturn]] void throw_program_over(const char* what, int64_t need) {
     throw MemoryLimitError((what ? std::string(what) + " would need " + mem_format_bytes(need) + ", but t"
                                  : std::string("T")) +
         "he program reached its memory limit (" + mem_format_bytes(g_limit) +
         ", LOOK_MEMORY_LIMIT) and was stopped", true);
 }
-// Süreç sınırı: EN ÇOK bellek kullanan istek seçilir (o an ayırma yapan değil). Seçilen
-// döner; kendi güvenli noktasında durur, belleği bırakılınca ötekiler sürer.
+// Process limit: the request using the MOST memory is picked (not the one allocating at that moment). The picked one
+// returns; it stops at its own safe point, and once its memory is released the others carry on.
 MemAccount* kill_biggest() {
     std::lock_guard<std::mutex> lk(g_list_mtx);
     MemAccount* big = nullptr;
@@ -282,8 +282,8 @@ void mem_check() {
     acct_flush();
     MemAccount* a = t_acct;
     if (!a) {
-        // Komut satırı: betiğin kendisi süreç sınırında durur. Web'de hesapsız kod (kurulum,
-        // zamanlayıcı) burada durdurulmaz; süreç sınırında en büyük İSTEK seçilir.
+        // Command line: the script itself stops at the process limit. In the web runtime, unaccounted code (setup,
+        // timer) is not stopped here; the largest REQUEST is picked at the process limit.
         if (g_cli && mem_process_bytes() > g_limit) throw_program_over(nullptr, 0);
         return;
     }
@@ -300,8 +300,8 @@ void mem_reserve(int64_t bytes, const char* what) {
     acct_flush();
     MemAccount* a = t_acct;
     if (a && a->bytes.load(std::memory_order_relaxed) + bytes > a->limit) throw_request_over(what, bytes);
-    // Süreç sınırı: ayırmayı yapan değil, en büyük istek durur (mem_check ile aynı kural).
-    // Çağıran en büyükse ya da hesabı yoksa (istek dışı) ayırma yapılmaz.
+    // Process limit: the largest request stops, not the one that allocates (same rule as mem_check).
+    // If the caller is the largest or has no account (non-request), the allocation is not refused.
     if (mem_process_bytes() + bytes > g_limit) {
         if (!a) throw_program_over(what, bytes);
         if (kill_biggest() == a) throw_process_over(what, a->bytes.load(std::memory_order_relaxed));
@@ -312,11 +312,11 @@ void mem_reserve(int64_t bytes, const char* what) {
 
 } // namespace look
 
-// ── Her ayırma sayılır ───────────────────────────────────────────────────────
-// Sayım istisnasız (noexcept) — hata güvenli noktada verilir. İki giriş yolu (sürümde operator
-// new/delete, TSan/ASan'da ayırıcı kancaları) YALNIZ on_alloc_sz/on_free_sz'yi çağırır: sayaçlar,
-// sınır işaretleri, mem_check ve kill_biggest ortaktır — sanitizer sürümdeki mantığı sınar; fark
-// yalnız boyutun kaynağıdır (malloc_usable_size ↔ istenen boyut).
+// ── Every allocation is counted ───────────────────────────────────────────────────────
+// Counting is exception-free (noexcept) — the error is raised at a safe point. The two entry paths (operator
+// new/delete in release, allocator hooks under TSan/ASan) call ONLY on_alloc_sz/on_free_sz: the counters,
+// limit flags, mem_check and kill_biggest are shared — the sanitizer build tests the release logic; the only difference
+// is the source of the size (malloc_usable_size vs. requested size).
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
 #  define LOOK_MEM_SANITIZER_HOOKS 1
 #elif defined(__has_feature)
@@ -326,11 +326,11 @@ void mem_reserve(int64_t bytes, const char* what) {
 #endif
 
 #ifdef LOOK_MEM_SANITIZER_HOOKS
-// TSan/ASan operator new/delete'i kendi çalışma zamanında (statik) tanımlar: ikinci tanım bağlamayı
-// bozar. Bu derlemelerde sayım çalışma zamanının malloc/free kancalarıyla yapılır — bütçe TSan/ASan
-// altında da gerçekten çalışır (memory_budget_test orada da koşar).
-// Sanitizer'ın kararlı C arayüzü (sanitizer/allocator_interface.h) — başlık her araç zincirinde
-// kurulu değil (gcc-toolset-12'de yok), bildirim burada.
+// TSan/ASan define operator new/delete in their own runtime (statically): a second definition
+// breaks linking. In these builds counting is done through the runtime's malloc/free hooks — the budget really works
+// under TSan/ASan too (memory_budget_test runs there as well).
+// The sanitizer's stable C interface (sanitizer/allocator_interface.h) — the header is not
+// installed in every toolchain (missing in gcc-toolset-12), so it is declared here.
 extern "C" {
 int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(const volatile void*, std::size_t),
                                                void (*free_hook)(const volatile void*));
@@ -348,7 +348,7 @@ struct LookSanHooks {
 } g_look_san_hooks;
 } // namespace
 #else
-// malloc/free üstünde; boyut ayırıcının verdiği gerçek boyuttur (malloc_usable_size).
+// on top of malloc/free; the size is the real size given by the allocator (malloc_usable_size).
 static void* look_counted_new(std::size_t n) {
     void* p = std::malloc(n ? n : 1);
     if (!p) throw std::bad_alloc();

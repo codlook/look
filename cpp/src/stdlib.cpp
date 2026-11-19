@@ -1,7 +1,7 @@
-#include "look/mem_budget.h"   // mem_reserve — büyük ayırmadan önce bütçe
-#include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
+#include "look/mem_budget.h"   // mem_reserve — budget before a large allocation
+#include "look/num_ops.h"   // single definition of abs/floor/ceil/round
 #include "look/stdlib.h"
-#include "look/value_path.h"   // value_list_only — listeye özgü işlem sözlükte hata (tek tanım)
+#include "look/value_path.h"   // value_list_only — a list-specific operation on a dictionary is an error (single definition)
 #include "look/html_escape.h"
 #include "look/charset.h"
 #include "look/parallel_runtime.h"
@@ -38,11 +38,11 @@
 
 namespace look {
 
-// CSPRNG bayt üretimi — string::random gibi token/anahtar üretmeye davetkâr
-// yollar için. std::rand() KRİPTOGRAFİK DEĞİL (saniye-seed + LCG = tahmin
-// edilebilir → API key/reset token üretilirse auth bypass). Fail-closed:
-// güvenli kaynak yoksa zayıf çıktı yaymak yerine hata fırlat. (web.cpp
-// random_hex ve session ID ile aynı disiplin.)
+// CSPRNG byte generation — for paths inviting token/key generation
+// like string::random. std::rand() is NOT CRYPTOGRAPHIC (second-seed + LCG = predictable
+// → if an API key/reset token is generated it is an auth bypass). Fail-closed:
+// if there is no secure source, throw an error instead of emitting weak output. (Same discipline as web.cpp
+// random_hex and the session ID.)
 static void secure_random_fill(uint8_t* buf, size_t n) {
     if (n == 0) return;
 #if defined(_WIN32)
@@ -75,8 +75,8 @@ static Module make_math() {
     m.functions["sqrt"] = [](auto args) {
         check_args("math::sqrt", args.size(), 1);
         double x = args[0].to_float();
-        // Negatif → sessiz NaN yerine net hata. NaN sonradan JSON'a girerse
-        // geçersiz JSON (NaN yasak) üretirdi.
+        // Negative → a clear error instead of a silent NaN. If NaN later got into JSON
+        // it would produce invalid JSON (NaN is forbidden).
         if (x < 0) throw std::runtime_error("math::sqrt: square root of a negative number is undefined");
         return Value(std::sqrt(x));
     };
@@ -86,10 +86,10 @@ static Module make_math() {
     };
     m.functions["abs"] = [](auto args) {
         check_args("math::abs", args.size(), 1);
-        return num_abs(args[0]);      // look/num_ops.h: INT64_MIN → ondalık (eskiden UB)
+        return num_abs(args[0]);      // look/num_ops.h: INT64_MIN → decimal (previously UB)
     };
-    // floor/ceil/round: sığan sonuç tamsayı, sığmayan ondalık (eskiden (int64_t) dönüşümü UB:
-    // floor(1e300) → INT64_MIN). Tamsayı girdi olduğu gibi döner (2^53 üstünde kesinlik korunur).
+    // floor/ceil/round: a result that fits is an integer, one that does not is a decimal (previously the (int64_t) conversion was UB:
+    // floor(1e300) → INT64_MIN). An integer input is returned as is (precision above 2^53 is preserved).
     m.functions["floor"] = [](auto args) {
         check_args("math::floor", args.size(), 1);
         return num_floor(args[0]);
@@ -103,10 +103,10 @@ static Module make_math() {
         return num_round(args[0]);
     };
     m.functions["max"] = [](auto args) -> Value {
-        for (auto& x : args) look::value_list_only(x, "math::max()");   // sözlük: hata (value_path.h)
+        for (auto& x : args) look::value_list_only(x, "math::max()");   // dictionary: error (value_path.h)
         if (args.size() < 2 && !(args.size() == 1 && args[0].type() == Value::ARRAY))
             throw std::runtime_error("math::max() expects 2+ arguments or 1 array");
-        return num_extreme(args, true);   // çekirdek max() ile tek tanım (look/num_ops.h)
+        return num_extreme(args, true);   // single definition with core max() (look/num_ops.h)
     };
     m.functions["min"] = [](auto args) -> Value {
         for (auto& x : args) look::value_list_only(x, "math::min()");
@@ -117,14 +117,14 @@ static Module make_math() {
     m.functions["pi"] = [](auto args) {
         return Value(3.14159265358979323846);
     };
-    // math::random — HER İŞ PARÇACIĞININ kendi üreteci var ve her biri işletim sisteminin güvenli
-    // kaynağından ayrı tohumlanır. Eskiden tek bir C `rand()` kullanılıyordu ve standart kitaplığın
-    // her yeni kopyasında `srand(time)` ile yeniden tohumlanıyordu: aynı saniyede kurulan iş
-    // parçacıkları AYNI diziyi üretiyor (ölçüldü: 16 eşzamanlı istekte 14 farklı sayı), dizi de
-    // saniyeden tahmin edilebiliyordu. Ayrıca `rand() % n` Windows'ta 32767'yi aşamıyordu.
-    // NOT: bu üreteç güvenlik amaçlı DEĞİLDİR (kod/anahtar için crypto::random_string).
+    // math::random — EACH THREAD has its own generator and each is seeded separately from the operating system's secure
+    // source. Previously a single C `rand()` was used and with every new copy of the standard library it was
+    // re-seeded with `srand(time)`: threads created in the same second produced the SAME sequence
+    // (measured: 14 distinct numbers across 16 concurrent requests), and the sequence was
+    // predictable from the second. Also `rand() % n` could not exceed 32767 on Windows.
+    // NOTE: this generator is NOT for security purposes (use crypto::random_string for codes/keys).
     m.functions["random"] = [](auto args) -> Value {
-        // fiber-ok: rastgele üreteç; yazma ile okuma arasında askı yok
+        // fiber-ok: random generator; no suspension between write and read
         static thread_local std::mt19937_64 engine = []() {
             uint8_t seed_bytes[32];
             secure_random_fill(seed_bytes, sizeof(seed_bytes));
@@ -143,8 +143,8 @@ static Module make_math() {
     m.functions["log"] = [](auto args) {
         check_args("math::log", args.size(), 1);
         double x = args[0].to_float();
-        // x ≤ 0 → log(0)=-Inf, log(negatif)=NaN. sqrt gibi net hata ver — aksi
-        // halde NaN/Inf sonradan JSON'a girip geçersiz JSON üretir.
+        // x ≤ 0 → log(0)=-Inf, log(negative)=NaN. Give a clear error like sqrt — otherwise
+        // NaN/Inf later get into JSON and produce invalid JSON.
         if (x <= 0) throw std::runtime_error("math::log: logarithm of a non-positive number is undefined");
         return Value(std::log(x));
     };
@@ -165,10 +165,10 @@ static Module make_math() {
 }
 
 // â"€â"€ string module â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-// ── UTF-8 yardımcıları ──────────────────────────────────────────────────────
-// LOOK string'leri UTF-8. Byte-tabanlı len/upper/substr/reverse çok-byte
-// karakterleri (ç,ğ,İ,ı,ö,ş,ü…) parçalayıp geçersiz UTF-8 üretiyordu.
-// Bu yardımcılar codepoint-farkında çalışır; Türkiye pazarı için kritik.
+// ── UTF-8 helpers ───────────────────────────────────────────────────────────
+// LOOK strings are UTF-8. Byte-based len/upper/substr/reverse split multi-byte
+// characters (ç,ğ,İ,ı,ö,ş,ü…) and produced invalid UTF-8.
+// These helpers are codepoint-aware; critical for the Turkish market.
 static std::vector<uint32_t> utf8_decode(const std::string& s) {
     std::vector<uint32_t> cps;
     size_t i = 0, n = s.size();
@@ -214,44 +214,44 @@ static std::string utf8_encode(const std::vector<uint32_t>& cps) {
     for (uint32_t cp : cps) utf8_encode_cp(cp, out);
     return out;
 }
-// Codepoint büyük/küçük harf — locale-BAĞIMSIZ (klasik diller gibi): i↔I.
-// Türkçe'ye özgü i↔İ / ı↔I locale kuralı YOK (dil globaldir). Türkçe harfler
-// yine standart Unicode karşılığına gider: ç↔Ç, ğ↔Ğ, ö↔Ö, ş↔Ş, ü↔Ü, ı→I, İ→i.
-// KAPSAM: eskiden yalnizca ASCII + Latin-1 + 3 Turkce kod noktasi (ı ğ ş) vardi.
-// Yani KURAL globaldi ama TABLO Turkiye'ye ozeldi: Kiril, Yunan ve Latin Ext-A'nin
-// kalan ~125 karakteri sessizce donusmeden geciyordu —
-//   upper("привет") = "привет"  (hic degismiyor)
+// Codepoint upper/lower case — locale-INDEPENDENT (like classic languages): i↔I.
+// There is NO Turkish-specific i↔İ / ı↔I locale rule (the language is global). Turkish letters
+// still map to their standard Unicode counterparts: ç↔Ç, ğ↔Ğ, ö↔Ö, ş↔Ş, ü↔Ü, ı→I, İ→i.
+// COVERAGE: it used to have only ASCII + Latin-1 + 3 Turkish code points (ı ğ ş).
+// That is, the RULE was global but the TABLE was specific to Turkey: Cyrillic, Greek and the
+// remaining ~125 characters of Latin Ext-A passed through silently unconverted —
+//   upper("привет") = "привет"  (no change at all)
 //   upper("ελλάδα") = "ελλάδα"
-//   upper("łódź")   = "łÓDź"    (YARIM donusum: o,d dondu; ł,ź donmedi)
-// Hata yok, uyari yok: sessiz yanlis/karisik metin. Asagidaki araliklar eklendi.
+//   upper("łódź")   = "łÓDź"    (HALF conversion: o,d converted; ł,ź did not)
+// No error, no warning: silently wrong/mixed text. The ranges below were added.
 //
-// DIKKAT: Latin Ext-A'nin genel cift/tek kurali ı(0x131) -> İ(0x130) verir, yani
-// TURKCE locale davranisini geri getirir. Turkce istisnalari bu yuzden kuraldan
-// ONCE ele aliniyor (dil global kalmali: ı → I, İ → i).
+// ATTENTION: Latin Ext-A's general even/odd rule gives ı(0x131) -> İ(0x130), i.e. it
+// brings back TURKISH locale behavior. So the Turkish exceptions are handled
+// BEFORE the rule (the language must stay global: ı → I, İ → i).
 static uint32_t cp_upper(uint32_t c) {
     if (c >= 'a' && c <= 'z') return c - 32;   // ASCII: i → I
     if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return c - 32; // Latin-1 (à→À, ç→Ç, ö→Ö, ü→Ü…)
     switch (c) {
-        case 0x131: return 'I';   // ı → I (standart Unicode — Turkce'de İ olurdu)
+        case 0x131: return 'I';   // ı → I (standard Unicode — it would be İ in Turkish)
         case 0x11F: return 0x11E; // ğ → Ğ
         case 0x15F: return 0x15E; // ş → Ş
-        case 0x17F: return 'S';   // ſ (uzun s) → S
+        case 0x17F: return 'S';   // ſ (long s) → S
         case 0x3C2: return 0x3A3; // ς (son sigma) → Σ
         case 0x3AC: return 0x386; // ά → Ά
         case 0x3CC: return 0x38C; // ό → Ό
     }
-    // Latin Extended-A (0x100–0x17F): cogunlukla ikili eslesme.
-    // 0x100–0x137 ve 0x14A–0x177: CIFT = buyuk, TEK = kucuk
-    // 0x139–0x148 ve 0x179–0x17E: TEK = buyuk, CIFT = kucuk
+    // Latin Extended-A (0x100–0x17F): mostly paired.
+    // 0x100–0x137 and 0x14A–0x177: EVEN = upper, ODD = lower
+    // 0x139–0x148 and 0x179–0x17E: ODD = upper, EVEN = lower
     if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
         return (c % 2) ? c - 1 : c;
     if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E))
         return (c % 2 == 0) ? c - 1 : c;
-    // Yunan: α–ρ, σ–ϋ  (0x3B1–0x3C1, 0x3C3–0x3CB)
+    // Greek: α–ρ, σ–ϋ  (0x3B1–0x3C1, 0x3C3–0x3CB)
     if ((c >= 0x3B1 && c <= 0x3C1) || (c >= 0x3C3 && c <= 0x3CB)) return c - 0x20;
     if (c >= 0x3AD && c <= 0x3AF) return c - 0x25; // έ ή ί → Έ Ή Ί
     if (c >= 0x3CD && c <= 0x3CE) return c - 0x3F; // ύ ώ → Ύ Ώ
-    // Kiril: а–я (0x430–0x44F), ѐ–џ (0x450–0x45F)
+    // Cyrillic: а–я (0x430–0x44F), ѐ–џ (0x450–0x45F)
     if (c >= 0x430 && c <= 0x44F) return c - 0x20;
     if (c >= 0x450 && c <= 0x45F) return c - 0x50;
     return c;
@@ -260,7 +260,7 @@ static uint32_t cp_lower(uint32_t c) {
     if (c >= 'A' && c <= 'Z') return c + 32;   // ASCII: I → i
     if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32; // Latin-1 (À→à, Ç→ç, Ö→ö, Ü→ü…)
     switch (c) {
-        case 0x130: return 'i';   // İ → i (standart Unicode — Turkce'de ı olurdu)
+        case 0x130: return 'i';   // İ → i (standard Unicode — it would be ı in Turkish)
         case 0x11E: return 0x11F; // Ğ → ğ
         case 0x15E: return 0x15F; // Ş → ş
         case 0x178: return 0xFF;  // Ÿ → ÿ
@@ -279,24 +279,24 @@ static uint32_t cp_lower(uint32_t c) {
     return c;
 }
 
-// Dolgu — Go semantigi (fmt "%Ns"): hedef genislik ASGARI'dir ve KOD NOKTASI
-// sayilir. Metin zaten uzunsa OLDUGU GIBI doner; dolgu fonksiyonu asla kirpmaz.
+// Padding — Go semantics (fmt "%Ns"): the target width is a MINIMUM and COUNTS CODE POINTS.
+// If the text is already longer it is returned AS IS; the padding function never truncates.
 //
-// ESKI HATA 1 (sessiz veri kaybi): uzun metin kirpiliyordu —
-//   pad_left("abcdef", 3, "0") = "def"   (PHP str_pad / Python ljust kirpmaz)
-// ESKI HATA 2 (bozuk cikti): kirpma BAYT tabanliydi, cok baytli karakteri
-//   ortadan boluyordu — pad_left("şğü", 3, "x") = 0x9F 0xC3 0xBC, oksuz devam
-//   baytiyla baslayan GECERSIZ UTF-8. Bu bozuk metin JSON'a, veritabanina ve
-//   HTTP yanitina aynen gidiyordu.
-// ESKI HATA 3 (tutarsizlik): genislik BAYT sayiyordu, oysa len/substr/upper/
-//   reverse hepsi kod noktasi farkindalikli — pad_left("ş", 3, "x") = "xş",
-//   gorunen uzunluk 2 (beklenen 3).
+// OLD BUG 1 (silent data loss): long text was truncated —
+//   pad_left("abcdef", 3, "0") = "def"   (PHP str_pad / Python ljust do not truncate)
+// OLD BUG 2 (corrupt output): the truncation was BYTE based and split a multi-byte character
+//   in the middle — pad_left("şğü", 3, "x") = 0x9F 0xC3 0xBC, INVALID UTF-8 starting
+//   with an orphan continuation byte. This corrupt text went as is into JSON, the database and the
+//   HTTP response.
+// OLD BUG 3 (inconsistency): the width counted BYTES, whereas len/substr/upper/
+//   reverse are all code-point aware — pad_left("ş", 3, "x") = "xş",
+//   visible length 2 (expected 3).
 static std::string pad_to(const std::string& s, int64_t len,
                           const std::string& pad, bool left) {
     int64_t cur = (int64_t)utf8_decode(s).size();
-    if (cur >= len) return s;                 // ASGARI genislik: kirpma YOK
+    if (cur >= len) return s;                 // MINIMUM width: NO truncation
     auto padcps = utf8_decode(pad);
-    if (padcps.empty()) return s;             // bos dolgu -> sonsuz donguye girme
+    if (padcps.empty()) return s;             // empty padding -> do not enter an infinite loop
     std::string fill;
     int64_t need = len - cur;
     while (need > 0)
@@ -312,14 +312,14 @@ static Module make_string() {
     Module m;
     m.name = "string";
 
-    // Karakter (codepoint) sayısı — byte değil. len("İstanbul") = 8.
+    // Character (codepoint) count — not bytes. len("İstanbul") = 8.
     m.functions["len"] = [](auto args) {
         check_args("string::len", args.size(), 1);
         return Value((int64_t)utf8_decode(args[0].to_string()).size());
     };
-    // Bir single-byte charset'i (iso-8859-9, windows-1254, latin1/1252) UTF-8'e çevir.
-    // Bilinmeyen charset → girdi olduğu gibi döner. HTTP istemcisi de aynı fonksiyonu
-    // Content-Type charset'i için otomatik kullanır.
+    // Convert a single-byte charset (iso-8859-9, windows-1254, latin1/1252) to UTF-8.
+    // Unknown charset → the input is returned as is. The HTTP client automatically uses the same function
+    // for the Content-Type charset.
     m.functions["decode"] = [](auto args) -> Value {
         check_args("string::decode", args.size(), 2);
         std::string in = args[0].to_string();
@@ -328,14 +328,14 @@ static Module make_string() {
         if (look::charset_to_utf8(in, cs, out)) return Value(out);
         return Value(in);
     };
-    // Büyük harf — locale-bağımsız (i→I). Çok-byte karakter bozulmaz.
+    // Uppercase — locale-independent (i→I). Multi-byte characters are not corrupted.
     m.functions["upper"] = [](auto args) {
         check_args("string::upper", args.size(), 1);
         auto cps = utf8_decode(args[0].to_string());
         for (auto& c : cps) c = cp_upper(c);
         return Value(utf8_encode(cps));
     };
-    // Küçük harf — locale-bağımsız (I→i).
+    // Lowercase — locale-independent (I→i).
     m.functions["lower"] = [](auto args) {
         check_args("string::lower", args.size(), 1);
         auto cps = utf8_decode(args[0].to_string());
@@ -366,14 +366,14 @@ static Module make_string() {
         std::string s     = args[0].to_string();
         std::string from  = args[1].to_string();
         std::string to    = args[2].to_string();
-        // BOS arama dizesi — Go semantigi (strings.Replace(s, "", new, -1)):
-        // metnin BASINDA ve her UTF-8 dizisinden SONRA eslesir; k kod noktasi icin
-        // k+1 ekleme. "abc" + "X" -> "XaXbXcX". Sinirli ve tanimli.
-        // ESKI HATA: asagidaki dongu bos 'from' ile SONSUZA kadar donuyordu —
-        // s.find("", pos) her zaman pos'u dondurur, her turda araya 'to' eklenir,
-        // string surekli buyur. Sonsuz dongu + SINIRSIZ BELLEK. Web'de
-        // string::replace($metin, $kullaniciGirdisi, $x) cagrisinda kullanici bos
-        // string gonderirse worker kilitleniyordu: tek istekle DoS.
+        // EMPTY search string — Go semantics (strings.Replace(s, "", new, -1)):
+        // matches at the START of the text and AFTER each UTF-8 sequence; k+1 insertions
+        // for k code points. "abc" + "X" -> "XaXbXcX". Bounded and defined.
+        // OLD BUG: the loop below spun FOREVER with an empty 'from' —
+        // s.find("", pos) always returns pos, 'to' is inserted at each turn,
+        // the string keeps growing. Infinite loop + UNBOUNDED MEMORY. On the web, in a
+        // string::replace($text, $userInput, $x) call, if the user sends an empty
+        // string the worker locked up: a DoS with a single request.
         if (from.empty()) {
             auto cps = utf8_decode(s);
             std::string out;
@@ -403,7 +403,7 @@ static Module make_string() {
         std::string s = args[0].to_string(), suffix = args[1].to_string();
         return Value(s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix);
     };
-    // Codepoint-tabanlı: substr("çğü",0,2) = "çğ" (yarım karakter değil).
+    // Codepoint-based: substr("çğü",0,2) = "çğ" (not half a character).
     m.functions["substr"] = [](auto args) {
         check_args_min("string::substr", args.size(), 2);
         std::string src = args[0].to_string();
@@ -431,11 +431,11 @@ static Module make_string() {
         if (start >= n) return Value(std::string(""));
         int64_t count = (args.size() == 3) ? args[2].to_int() : (n - start);
         if (count < 0) count = 0;
-        // TAŞMA önle: count kalan uzunluğa (n-start) kırpılır ÖNCE — aksi halde
-        // start+count int64 taşıp negatif end üretir (vector(first>last) → length_error,
-        // memory-safety değil ama UB iterator aritmetiği). Kırpınca doğru: kalanı döndür.
+        // Prevent OVERFLOW: count is clamped to the remaining length (n-start) FIRST — otherwise
+        // start+count overflows int64 and produces a negative end (vector(first>last) → length_error,
+        // not a memory-safety issue but UB iterator arithmetic). Clamped, it is correct: return the remainder.
         if (count > n - start) count = n - start;
-        int64_t end = start + count;   // artık taşmaz (count ≤ n-start)
+        int64_t end = start + count;   // no longer overflows (count ≤ n-start)
         std::vector<uint32_t> sub(cps.begin() + start, cps.begin() + end);
         return Value(utf8_encode(sub));
     };
@@ -447,13 +447,13 @@ static Module make_string() {
         static constexpr int64_t MAX_REPEAT = 10 * 1024 * 1024; // 10 MB
         if ((int64_t)n * (int64_t)s.size() > MAX_REPEAT)
             throw std::runtime_error("string::repeat: result exceeds the 10 MB limit");
-        look::mem_reserve((int64_t)n * (int64_t)s.size(), "string::repeat()");   // ayırmadan önce bütçe
+        look::mem_reserve((int64_t)n * (int64_t)s.size(), "string::repeat()");   // budget before allocating
         std::string result;
         result.reserve((size_t)n * s.size());
         for (int i = 0; i < n; i++) result += s;
         return Value(result);
     };
-    // Codepoint-tabanlı: reverse("abç") = "çba" (byte değil karakter ters).
+    // Codepoint-based: reverse("abç") = "çba" (characters reversed, not bytes).
     m.functions["reverse"] = [](auto args) {
         check_args("string::reverse", args.size(), 1);
         auto cps = utf8_decode(args[0].to_string());
@@ -503,9 +503,9 @@ static Module make_string() {
         return Value(result);
     };
 
-    // Hedef uzunluk üst sınırı — `pad_left("x", 2000000000, " ")` sınırsız/O(n²)
-    // allocation (her tur `pad + s` yeniden kopyalar) → hang/OOM DoS. string::repeat
-    // (10MB) ve string::random (1MB) ile aynı disiplin.
+    // Upper limit on the target length — `pad_left("x", 2000000000, " ")` is an unbounded/O(n²)
+    // allocation (every turn `pad + s` is recopied) → hang/OOM DoS. Same discipline as string::repeat
+    // (10MB) and string::random (1MB).
     static constexpr int PAD_MAX = 10 * 1024 * 1024;
     m.functions["pad_left"] = [](auto args) -> Value {
         check_args("string::pad_left", args.size(), 3);
@@ -559,13 +559,13 @@ static Module make_string() {
     m.functions["random"] = [](auto args) -> Value {
         int length = args.size() >= 1 ? (int)args[0].to_int() : 8;
         if (length < 0) length = 0;
-        static constexpr int MAX_RANDOM = 1 << 20;   // 1 MB üst sınır (OOM DoS)
+        static constexpr int MAX_RANDOM = 1 << 20;   // 1 MB upper limit (OOM DoS)
         if (length > MAX_RANDOM) length = MAX_RANDOM;
         static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
         std::string result((size_t)length, '\0');
-        // Reddetme örneklemesi: 256, 36'ya tam bölünmez — `bayt % 36` alfabenin ilk 4 karakterini
-        // (a, b, c, d) diğerlerinden ~%14 daha sık üretiyordu. 252'den (7 × 36) küçük baytlar
-        // kullanılır, gerisi atılıp yenisi çekilir; her karakter eşit olasılıklıdır.
+        // Rejection sampling: 256 is not divisible by 36 — `byte % 36` produced the first 4 characters of the alphabet
+        // (a, b, c, d) ~14% more often than the others. Bytes below 252 (7 × 36) are
+        // used, the rest are discarded and a new one is drawn; every character is equally likely.
         static constexpr unsigned ALPHA = sizeof(chars) - 1;          // 36
         static constexpr unsigned LIMIT = (256 / ALPHA) * ALPHA;      // 252
         size_t filled = 0;
@@ -578,7 +578,7 @@ static Module make_string() {
         return Value(result);
     };
 
-    // string::format("Merhaba %s, yaşın %d, ortalama %.2f", $ad, $yas, $ort)
+    // string::format("Hello %s, your age %d, average %.2f", $name, $age, $avg)
     m.functions["format"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("string::format() requires format string");
         std::string fmt = args[0].to_string();
@@ -588,16 +588,16 @@ static Module make_string() {
             if (fmt[i] != '%' || i + 1 >= fmt.size()) { result += fmt[i]; continue; }
             ++i;
             if (fmt[i] == '%') { result += '%'; continue; }
-            // Width/precision üst sınırı — `%2000000000d` gibi devasa genişlik
-            // setw ile yüz-MB'lık dolgu ayırıp bellek-amplifikasyon DoS'u (ve int
-            // taşması UB'si) yapardı. 1M fazlasıyla yeterli; string::repeat 10MB
-            // cap'iyle aynı disiplin.
+            // Width/precision upper limit — a huge width such as `%2000000000d` would
+            // allocate hundreds of MB of padding via setw, causing a memory-amplification DoS (and int
+            // overflow UB). 1M is more than enough; same discipline as the string::repeat 10MB
+            // cap.
             static constexpr int FMT_MAX = 1000000;
             bool zero_pad = (fmt[i] == '0');
             int width = 0;
             while (i < fmt.size() && std::isdigit((unsigned char)fmt[i])) {
                 width = width * 10 + (fmt[i++] - '0');
-                if (width > FMT_MAX) width = FMT_MAX;   // clamp — taşmadan önce
+                if (width > FMT_MAX) width = FMT_MAX;   // clamp — before overflow
             }
             int precision = -1;
             if (i < fmt.size() && fmt[i] == '.') {
@@ -635,8 +635,8 @@ static Module make_string() {
         return Value(result);
     };
 
-    // ReDoS koruma yardımcısı: thread::detach + condition_variable (250ms timeout)
-    // std::async kullanılmaz — destructor bloklayarak timeout'u etkisiz kılar.
+    // ReDoS protection helper: thread::detach + condition_variable (250ms timeout)
+    // std::async is not used — its destructor blocks and makes the timeout ineffective.
     static std::atomic<int> g_regex_threads{0};
     static constexpr int REGEX_MAX_THREADS = 8;
     // Compiled-pattern cache: std::regex construction is expensive (NFA build), and the
@@ -647,7 +647,7 @@ static Module make_string() {
     // pays off: slower compile once, faster match on every reuse.
     // (Routing patterns are already compiled once per route; this covers the string:: API.)
     static auto cached_regex = [](const std::string& pat) -> const std::regex& {
-        // fiber-ok: derlenmiş desen önbelleği; iş regex'in KOPYASINI alır, bekleme cv ile (askı yok)
+        // fiber-ok: compiled pattern cache; the job takes a COPY of the regex, waiting is via cv (no suspension)
         static thread_local std::unordered_map<std::string, std::regex> cache;
         auto it = cache.find(pat);
         if (it != cache.end()) return it->second;
@@ -666,27 +666,27 @@ static Module make_string() {
     // the (N+1)th caller is rejected fail-loud by the g_regex_threads cap below — same bound
     // as the old spawn model. Leaked singleton (process-lifetime) — no static-dtor ordering.
     //
-    // YIGIN: std::regex (libstdc++ ve MSVC) eslestirmeyi ozyinelemeyle yapar, derinlik girdi
-    // uzunluguyla buyur. Varsayilan 8 MB yiginda ~10–20 KB girdi yigini tasirip SURECIN TAMAMINI
-    // dusuruyordu (SIGSEGV) — izin verilen sinir ise 64 KB. Olculdu, LOOK'un KENDI -O3
-    // derlemesinde (ayri bir test programi daha kucuk cerceve verip yaniltiyor), 64 KB girdi:
-    // 64 MB'ta 7 desenin 5'i, 96'da 5'i, 128'de 6'si, 256'da 7'si gecti → 256 MB. Ihtiyac desenin
-    // ic ice grup derinligiyle buyur; 256 MB denenen her deseni karsilar, sinirsizi degil.
-    // Isciler IHTIYAC OLDUKCA birer birer acilir (cogu surecte tek isci). 1.0.34 8'ini birden
-    // aciyordu (≈2 GB sanal): `ulimit -v` sinirinda (paylasimli hosting, ~1 GB) bazilari
-    // acilamiyor ve surec TAKILIYORDU. Simdi acilamayan isci yerine is acik iscilere siralanir;
-    // HIC isci acilamazsa anlasilir bir hata. Isciler surec omru boyunca yasar → detach.
+    // STACK: std::regex (libstdc++ and MSVC) does matching recursively, the depth grows with the input
+    // length. On the default 8 MB stack ~10–20 KB of input overflowed the stack and brought down the WHOLE PROCESS
+    // (SIGSEGV) — while the allowed limit is 64 KB. Measured on LOOK's OWN -O3
+    // build (a separate test program gives smaller frames and misleads), 64 KB input:
+    // at 64 MB 5 of 7 patterns passed, at 96 5, at 128 6, at 256 7 → 256 MB. The need grows with the pattern's
+    // nested group depth; 256 MB covers every pattern tried, not an unbounded one.
+    // Workers are opened one by one AS NEEDED (a single worker in most processes). 1.0.34 opened all 8
+    // at once (≈2 GB virtual): at an `ulimit -v` limit (shared hosting, ~1 GB) some
+    // could not be opened and the process HUNG. Now instead of a worker that cannot be opened the job is queued to the open workers;
+    // if NO worker can be opened, an understandable error. Workers live for the process lifetime → detach.
     static constexpr size_t REGEX_STACK = size_t(256) << 20;
     struct RegexPool {
-        // run: isci calistirir. fail: hic isci kalmadiysa (acilamadi) isi hatayla bitirir — kuyrukta
-        // iscisiz kalan is cagirani 250 ms bekletip yaniltici "timeout" verdirirdi.
+        // run: the worker runs it. fail: if no worker is left (could not be opened) ends the job with an error — a job
+        // left in the queue without a worker would make the caller wait 250 ms and give a misleading "timeout".
         struct Job { std::function<void()> run, fail; };
         std::queue<Job>                   q;
         std::mutex                        m;
         std::condition_variable           cv;
-        int                               started = 0;   // calisan isci
-        int                               pending = 0;   // acilmakta olan isci
-        int                               idle    = 0;   // is bekleyen isci
+        int                               started = 0;   // running workers
+        int                               pending = 0;   // workers being opened
+        int                               idle    = 0;   // workers waiting for a job
         static bool spawn(std::function<void()>* body) {
 #ifdef _WIN32
             HANDLE h = CreateThread(nullptr, REGEX_STACK, [](LPVOID p) -> DWORD {
@@ -721,11 +721,11 @@ static Module make_string() {
                 job.run();   // runs fn(), fills the caller's State, then decrements the slot
             }
         }
-        // Sanal bellek sinirli bir sureçte (ulimit -v / RLIMIT_AS — paylasimli hosting) 256 MB'lik
-        // regex iscileri sunucunun baglanti fiber'lerinin (8 MB yigin) yerini yiyordu: olculdu,
-        // "own size + 1 GB" sinirda 3 regex iscisi acilinca bir baglantinin fiber'i yigin acamadi
-        // ve baglanti dustu. Sinir varsa isci sayisi sinirin 1/8'ine sigacak kadar (en az 1); yoksa 8.
-        // Her buyume kararinda okunur (sinir surec calisirken degisebilir — prlimit).
+        // In a process with limited virtual memory (ulimit -v / RLIMIT_AS — shared hosting) 256 MB
+        // regex workers took the place of the server's connection fibers (8 MB stack): measured,
+        // at an "own size + 1 GB" limit when 3 regex workers were opened a connection's fiber could not allocate a stack
+        // and the connection dropped. If there is a limit the worker count is as many as fit in 1/8 of the limit (at least 1); otherwise 8.
+        // Read at every growth decision (the limit can change while the process runs — prlimit).
         static int worker_cap() {
 #ifndef _WIN32
             struct rlimit rl;
@@ -736,9 +736,9 @@ static Module make_string() {
 #endif
             return REGEX_MAX_THREADS;
         }
-        // Isi kuyruga koy; bos isci yoksa (ve sinir dolmadiysa) yeni isci ac. Acilamazsa ve hic
-        // isci yoksa/acilmiyorsa kuyruktaki TUM isler fail ile hemen biter (iki istek ayni anda
-        // acmayi deneyip ikisi de basarisiz olunca biri iscisiz kuyrukta kaliyordu).
+        // Put the job in the queue; if there is no idle worker (and the limit is not reached) open a new worker. If it cannot be opened and there is no
+        // worker/none can be opened, ALL queued jobs finish immediately with fail (when two requests tried
+        // to open at the same time and both failed, one stayed in the queue without a worker).
         void submit(Job job) {
             bool grow;
             const int cap = worker_cap();
@@ -763,8 +763,8 @@ static Module make_string() {
             for (auto& o : orphans) o.fail();
         }
     };
-    // Havuz nesnesi bos kurulur; isciler ilk regex'te acilir (regex kullanmayan lk / lk-cgi
-    // sureci thread baslatmaz — startup_threads_test).
+    // The pool object is built empty; workers are opened on the first regex (an lk / lk-cgi
+    // process that uses no regex starts no thread — startup_threads_test).
     static auto& regex_pool = *new RegexPool();
 
     static auto regex_with_timeout = [](auto fn) -> decltype(fn()) {
@@ -775,14 +775,14 @@ static Module make_string() {
             std::mutex              mtx;
             std::condition_variable cv;
             bool                    done       = false;
-            bool                    timed_out  = false; // kim sayacı azaltacak
+            bool                    timed_out  = false; // who will decrement the counter
             std::optional<T>        result;
             std::exception_ptr      ex;
         };
         auto state = std::make_shared<State>();
 
         g_regex_threads++;
-        // fail: hic regex iscisi acilamadi — isi hatayla bitir, slotu geri ver (run'daki gibi).
+        // fail: no regex worker could be opened — end the job with an error, give the slot back (as in run).
         auto fail = [state]() {
             {
                 std::lock_guard<std::mutex> lk(state->mtx);
@@ -806,21 +806,21 @@ static Module make_string() {
                 std::lock_guard<std::mutex> lk(state->mtx);
                 state->done = true;
             }
-            // F-01: slot'u HER ZAMAN worker (bu thread) gerçekten bitince serbest bırak —
-            // main-thread timeout'ta DEĞİL. Aksi halde slot boşalır ama kaçak thread fn()'i
-            // (catastrophic regex) yakmaya devam eder → 8 limiti CANLI thread'leri sınırlamaz
-            // (N istek → N yanan thread → uzaktan DoS). Bu satır tek decrement noktası:
-            // main azaltmadığı için çift-azaltma yok, ve worker azalttığı için sızıntı da yok.
+            // F-01: ALWAYS release the slot when the worker (this thread) actually finishes —
+            // NOT on the main-thread timeout. Otherwise the slot frees up but the runaway thread keeps burning fn()
+            // (catastrophic regex) → the limit of 8 does not bound LIVE threads
+            // (N requests → N burning threads → remote DoS). This line is the single decrement point:
+            // main does not decrement so there is no double decrement, and the worker decrements so there is no leak either.
             g_regex_threads--;
             state->cv.notify_one();
         }, fail});
 
         std::unique_lock<std::mutex> lk(state->mtx);
         if (!state->cv.wait_for(lk, std::chrono::milliseconds(250), [&]{ return state->done; })) {
-            // Timeout: isteği hızlıca sonlandır AMA sayacı AZALTMA — kaçak thread hâlâ
-            // çalışıyor; slot yalnız o thread bitince (yukarıda) serbest kalır → aynı anda
-            // must be at most 8 CANLI regex thread'i olur, 9.'su 596'da reddedilir (sistem yavaşlar
-            // ama ölmez). timed_out yalnız sonuç/notify sırasında anlamlı.
+            // Timeout: end the request quickly BUT do NOT decrement the counter — the runaway thread is still
+            // running; the slot is released only when that thread finishes (above) → at the same time
+            // there can be at most 8 LIVE regex threads, the 9th is rejected at the cap check (the system slows down
+            // but does not die). timed_out is meaningful only during result/notify.
             state->timed_out = true;
             throw std::runtime_error("string::regex: execution timeout (ReDoS protection — pattern too complex)");
         }
@@ -857,7 +857,7 @@ static Module make_string() {
           catch (...) { return Value(args[0].to_string()); }
     };
 
-    // string::regex_match_all($str, $pattern) → [[tam_eşleşme, grup1, ...], ...]
+    // string::regex_match_all($str, $pattern) → [[full_match, group1, ...], ...]
     m.functions["regex_match_all"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("string::regex_match_all() requires string and pattern");
         auto result = std::make_shared<ValueArray>();
@@ -902,8 +902,8 @@ static Module make_type() {
             case Value::FLOAT:    return Value(std::string("float"));
             case Value::STRING:   return Value(std::string("string"));
             case Value::BOOL:     return Value(std::string("bool"));
-            // BYTECODE_FN de fonksiyondur (VM closure, adlı fonksiyon). ESKİ HATA: is_function
-            // düzeltilmiş, of unutulmuştu — VM'de her fonksiyon için "unknown" dönüyordu.
+            // BYTECODE_FN is also a function (VM closure, named function). OLD BUG: is_function
+            // was fixed, of was forgotten — in the VM it returned "unknown" for every function.
             case Value::BYTECODE_FN: return Value(std::string("function"));
             case Value::ARRAY:    return Value(std::string("array"));
             case Value::STRUCT:   return Value(std::string("struct"));
@@ -917,11 +917,11 @@ static Module make_type() {
     m.functions["is_float"]    = [](auto a) { check_args("type::is_float",    a.size(),1); return Value(a[0].type()==Value::FLOAT); };
     m.functions["is_bool"]     = [](auto a) { check_args("type::is_bool",     a.size(),1); return Value(a[0].type()==Value::BOOL); };
     m.functions["is_array"]    = [](auto a) { check_args("type::is_array",    a.size(),1); return Value(a[0].type()==Value::ARRAY); };
-    // Sözlük mü (liste değil)? `[]` ve json::decode("[]") liste, json::decode("{}") sözlük; struct ve
-    // null sözlük değildir. type::of ikisine de "array" der (değişmedi: mevcut kodu kırmamak için).
+    // Is it a dictionary (not a list)? `[]` and json::decode("[]") are lists, json::decode("{}") is a dictionary; a struct and
+    // null are not dictionaries. type::of says "array" for both (unchanged: so as not to break existing code).
     m.functions["is_map"]      = [](auto a) { check_args("type::is_map",      a.size(),1); return Value(look::value_is_map(a[0])); };
-    // Fonksiyon değeri BYTECODE_FN'dir (VM closure). TYPE_OF opcode'u da ona "function" der;
-    // is_function onunla hizalı olmalı.
+    // A function value is BYTECODE_FN (VM closure). The TYPE_OF opcode also says "function" for it;
+    // is_function must be aligned with it.
     m.functions["is_function"] = [](auto a) { check_args("type::is_function", a.size(),1);
         return Value(a[0].type()==Value::BYTECODE_FN); };
     m.functions["to_int"]    = [](auto a) { check_args("type::to_int",    a.size(),1); return look_explicit_int(a[0]); };
@@ -940,7 +940,7 @@ static Module make_html() {
 
     m.functions["escape"] = [](auto args) -> Value {
         if (args.empty()) return Value(std::string(""));
-        return Value(look::html_escape(args[0].to_string()));   // tek tanım: look/html_escape.h
+        return Value(look::html_escape(args[0].to_string()));   // single definition: look/html_escape.h
     };
 
     m.functions["attr"] = [](auto args) -> Value {
@@ -948,16 +948,16 @@ static Module make_html() {
         std::string s = args[0].to_string();
         std::string out;
         out.reserve(s.size() * 4);
-        // OWASP attribute-encode: alfanümerik DIŞINDAKİ tüm ASCII karakterleri
-        // &#xHH; ile kodla. html::escape sadece `<>&"'` kaçar — bu TIRNAKSIZ
-        // attribute'ta yetersiz (boşluk/=/backtick/tab enjekte edilerek yeni
-        // event-handler açılabilir → XSS). Burada boşluk/=/backtick dahil her şey
-        // kodlanır → hem tırnaklı hem tırnaksız attribute bağlamında güvenli.
-        // Tarayıcı entity'yi çözdüğü için meşru değer bozulmaz (URL/veri çalışır).
+        // OWASP attribute-encode: encode all ASCII characters OTHER than alphanumerics
+        // as &#xHH;. html::escape only escapes `<>&"'` — this is INSUFFICIENT in an
+        // UNQUOTED attribute (injecting space/=/backtick/tab can open a new
+        // event handler → XSS). Here everything including space/=/backtick is
+        // encoded → safe in both quoted and unquoted attribute contexts.
+        // Since the browser decodes the entity, a legitimate value is not corrupted (URL/data work).
         for (unsigned char c : s) {
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                 (c >= '0' && c <= '9') || c >= 0x80) {
-                out += (char)c;                  // alfanümerik + çok-baytlı UTF-8: güvenli
+                out += (char)c;                  // alphanumeric + multi-byte UTF-8: safe
             } else {
                 char buf[8];
                 snprintf(buf, sizeof(buf), "&#x%02X;", c);
@@ -1016,8 +1016,8 @@ static Module make_log() {
         return Value();
     };
     m.functions["memory"] = [do_log](auto args) -> Value {
-        // Windows'ta working set size
-        // Basit: sadece bir mesaj log'la
+        // working set size on Windows
+        // Simple: just log a message
         return do_log(LogLevel::LOG_INFO, "MEM", args);
     };
     m.functions["configure"] = [](auto args) -> Value {
@@ -1095,12 +1095,12 @@ static Module make_error_module() {
     Module m;
     m.name = "error";
 
-    // error::new(type, message [, code=0]) → fırlatır; catch'teki değer yerleşik STRUCT
-    // Error{type, message, code}: $e.type ve $e["type"] okunur, json::encode sözlük yazar.
-    // Taklit edilemez: error::is tanımın KİMLİĞİNE bakar — json::decode struct üretmez, elle
-    // kurulan sözlük struct değildir, "Error" adıyla kullanıcı struct'ı bildirilemez (parser).
-    // (Eskiden düz liste: $e["type"] null, error::is ["type","admin"] listesini hata sanıyordu.)
-    // Yakalanmazsa ileti "type: message" (çağrı zinciriyle).
+    // error::new(type, message [, code=0]) → throws; the value in catch is the built-in STRUCT
+    // Error{type, message, code}: $e.type and $e["type"] are readable, json::encode writes a dictionary.
+    // Cannot be imitated: error::is looks at the definition's IDENTITY — json::decode does not produce a struct, a hand-built
+    // dictionary is not a struct, a user struct cannot be declared with the name "Error" (parser).
+    // (It used to be a plain list: $e["type"] was null, error::is took a ["type","admin"] list for an error.)
+    // If not caught the message is "type: message" (with the call chain).
     static const Value error_def = [] {
         auto d = std::make_shared<ValueArray>();
         for (const char* f : {"type", "message"}) {
@@ -1124,7 +1124,7 @@ static Module make_error_module() {
         return Value(); // unreachable
     };
 
-    // Hata değerinin alanı: yalnız yerleşik Error struct'ı (tanım kimliği); başka hiçbir değer.
+    // Field of an error value: only the built-in Error struct (definition identity); no other value.
     auto field = [](const Value& e, int i) -> const Value* {
         if (e.type() != Value::STRUCT) return nullptr;
         const auto& sv = *e.as_struct();
@@ -1132,14 +1132,14 @@ static Module make_error_module() {
         return &sv[STRUCT_SLOT0 + i];
     };
 
-    // error::is(e, type) → bool — catch'te tür denetimi
+    // error::is(e, type) → bool — type check in catch
     m.functions["is"] = [field](auto args) -> Value {
         if (args.size() < 2) return Value(false);
         const Value* t = field(args[0], 0);
         return Value(t && t->to_string() == args[1].to_string());
     };
 
-    // error::message(e) → string — hata değerinin iletisi; başka bir değer (throw "metin") kendisi
+    // error::message(e) → string — the message of the error value; another value (throw "text") itself
     m.functions["message"] = [field](auto args) -> Value {
         if (args.empty()) return Value(std::string(""));
         if (const Value* msg = field(args[0], 1)) return Value(msg->to_string());

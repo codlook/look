@@ -20,29 +20,29 @@ Parser::Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
 std::unique_ptr<Program> Parser::parse() {
     auto program = std::make_unique<Program>();
     while (!is_at_end()) {
-        while (match(TokenType::SEMICOLON)) {}  // ASI'den gelen boş ; atla
+        while (match(TokenType::SEMICOLON)) {}  // skip empty ; left by ASI
         if (is_at_end()) break;
         program->statements.push_back(statement());
     }
-    // LOOK 2 closure kuralı (look/capture_check.h): yakalanan değişkene yazma YÜKLEMEDE hatadır
-    // — hiçbir şey çalışmadan, tek yerde. "Bayat değer" durumları uyarı olarak
-    // saklanır; çağıran (CLI, web başlangıcı, --check) gösterir.
+    // LOOK closure rule (look/capture_check.h): writing to a captured variable is an error AT LOAD
+    // — before anything runs, in one place. "Stale value" cases are kept
+    // as warnings; the caller (CLI, web startup, --check) displays them.
     for (auto& w : check_captures(*program)) {
         if (w.kind == "capture-write") throw LookParseError(w.message, w.line, w.column);
         warnings_.push_back(std::move(w));
     }
-    // LOOK 2 parametreye-yazma denetimi (look/param_write_check.h): çağırana ulaşmayan yazma.
+    // LOOK parameter-write check (look/param_write_check.h): a write that never reaches the caller.
     for (auto& w : check_param_writes(*program)) warnings_.push_back(std::move(w));
-    // Kullanımdan kalkan çağrılar (push / pop / array::pop): dosya başına tek satır (ilk çağrının
-    // yeri + toplam) — yüzlerce çağrılı bir uygulama başlangıç günlüğünü doldurmasın.
+    // Deprecated calls (push / pop / array::pop): one line per file (position of the first call
+    // + total) — an app with hundreds of calls must not flood the startup log.
     for (int k = 0; k < DEP_COUNT; ++k)
         if (deps_[k].calls > 1 && deps_[k].warn < warnings_.size())
             warnings_[deps_[k].warn].message = deprecation_message(k, deps_[k].calls);
-    // `$l = array::push($l, $x)` / `$l = array::slice($l, 0, -1)` yerinde derlenir ve çağrıyı
-    // atlar: `use array` olmadan da çalışıyordu, oysa yol biçimi (`$m["k"] = array::push(...)`)
-    // "Module 'array' not loaded." veriyor — gizli kural. Bir sürüm uyarı (lk --check; çalışırken
-    // VM uyarır), sonra push/pop ile birlikte hata. Dahil edilen dosya modülü üst dosyadan alabilir;
-    // bu yüzden yüklemede değil yalnız --check'te gösterilir (kind "use-array-missing").
+    // `$l = array::push($l, $x)` / `$l = array::slice($l, 0, -1)` is compiled in place and skips
+    // the call: it worked without `use array`, yet the path form (`$m["k"] = array::push(...)`)
+    // gives "Module 'array' not loaded." — a hidden rule. One release of warning (lk --check; the VM
+    // warns at run time), then an error together with push/pop. An included file may take the module from the parent file;
+    // so it is reported only in --check, not at load (kind "use-array-missing").
     if (in_place_array_.calls > 0 && !has_use_array_) {
         CaptureWarning w;
         w.line = in_place_array_.line;
@@ -61,9 +61,9 @@ std::unique_ptr<Program> Parser::parse() {
 // ── Statements ────────────────────────────────────────────────────────────────
 
 std::unique_ptr<Statement> Parser::statement() {
-    look_ast_guard(peek().line, peek().column);   // gerçek kalan yığın (sayaç tek başına yetmez)
-    // Recursion guard: derin iç içe blok/if/while ({{{...}}}) parser yığınını
-    // taşırır — ifade guard'ıyla aynı gerekçe. RAII ile sayaç azaltılır.
+    look_ast_guard(peek().line, peek().column);   // actual remaining stack (the counter alone is not enough)
+    // Recursion guard: deeply nested block/if/while ({{{...}}}) overflows the parser stack —
+    // same rationale as the expression guard. The counter is decremented via RAII.
     static constexpr int MAX_STMT_DEPTH = 150;
     struct DepthGuard {
         int& d;
@@ -100,7 +100,7 @@ std::unique_ptr<Statement> Parser::statement() {
 }
 
 // switch($x) { case 1: ... case 2,3: ... default: ... }
-// Go stili: break yok, otomatik çıkış
+// Go style: no break, automatic exit
 std::unique_ptr<Statement> Parser::switch_statement() {
     consume(TokenType::LPAREN, "Expect '(' after 'switch'.");
     auto subject = expression();
@@ -114,7 +114,7 @@ std::unique_ptr<Statement> Parser::switch_statement() {
         SwitchCase sc;
 
         if (match(TokenType::DEFAULT)) {
-            // default: — values listesi boş kalır
+            // default: — the values list stays empty
             consume(TokenType::COLON, "Expect ':' after 'default'.");
         } else {
             consume(TokenType::CASE, "Expect 'case' or 'default' in switch.");
@@ -125,7 +125,7 @@ std::unique_ptr<Statement> Parser::switch_statement() {
             consume(TokenType::COLON, "Expect ':' after case value.");
         }
 
-        // case body — sonraki case/default/} gelene kadar
+        // case body — until the next case/default/} arrives
         while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) &&
                !check(TokenType::RBRACE) && !is_at_end()) {
             sc.body.push_back(statement());
@@ -146,7 +146,7 @@ std::unique_ptr<Statement> Parser::try_statement() {
     consume(TokenType::LBRACE, "Expect '{' after 'try'.");
     stmt->try_block = block();
 
-    // ASI: } sonrası newline catch/finally'yi engellemez
+    // ASI: a newline after } does not block catch/finally
     while (check(TokenType::SEMICOLON)) advance();
 
     // catch ($e) { }
@@ -159,7 +159,7 @@ std::unique_ptr<Statement> Parser::try_statement() {
         stmt->catch_block = block();
     }
 
-    // ASI: } sonrası newline finally'yi engellemez
+    // ASI: a newline after } does not block finally
     while (check(TokenType::SEMICOLON)) advance();
 
     // finally { }
@@ -179,7 +179,7 @@ std::unique_ptr<Statement> Parser::print_statement() {
     return std::make_unique<PrintStatement>(std::move(exprs));
 }
 
-// write(expr, ...)  — parens is required, newline yok
+// write(expr, ...)  — parens is required, no newline
 std::unique_ptr<Statement> Parser::write_statement() {
     consume(TokenType::LPAREN, "Expect '(' after 'write'.");
     auto exprs = argument_list();
@@ -195,7 +195,7 @@ std::unique_ptr<Statement> Parser::expression_statement() {
 }
 
 std::unique_ptr<Statement> Parser::use_statement() {
-    // use "routes/auth.lk"; — dosya modül sistemi
+    // use "routes/auth.lk"; — file module system
     if (check(TokenType::STRING)) {
         if (scope_depth_ > 0) {
             auto& t = peek();
@@ -208,7 +208,7 @@ std::unique_ptr<Statement> Parser::use_statement() {
         consume_semi();
         return std::make_unique<UseFileStatement>(std::move(path));
     }
-    // use module; veya use module as alias;
+    // use module; or use module as alias;
     auto name = consume(TokenType::IDENT, "Expect module name after 'use'.");
     std::string alias;
     if (match(TokenType::AS)) {
@@ -229,7 +229,7 @@ std::unique_ptr<Statement> Parser::if_statement() {
 
     std::unique_ptr<BlockStatement> else_b = nullptr;
 
-    // ASI'den gelen ; atla — } sonrası newline elseif/else'yi engellemez
+    // skip the ; coming from ASI — a newline after } does not block elseif/else
     while (check(TokenType::SEMICOLON)) advance();
 
     if (match(TokenType::ELSEIF)) {
@@ -313,8 +313,8 @@ std::unique_ptr<Statement> Parser::foreach_statement() {
 // struct Urun { ad, fiyat: 0.0, stok: 0 }
 std::unique_ptr<Statement> Parser::struct_declaration() {
     auto name = consume(TokenType::IDENT, "Expect struct name after 'struct'.");
-    // LOOK 2: struct yalnız ÜST DÜZEYDE bildirilir (fonksiyon, closure ya da blok içinde değil).
-    // Bildirimin tek bir yeri olur → aynı adla farklı ikinci tanım her zaman yüklemede yakalanır.
+    // LOOK: a struct is declared only at TOP LEVEL (not inside a function, closure or block).
+    // A declaration has a single place → a second definition with the same name but different content is always caught at load.
     if (scope_depth_ > 0 || stmt_depth_ > 1)
         throw LookParseError("struct '" + name.lexeme + "' must be declared at the top level of a "
             "file, not inside a function or a block", name.line, name.column);
@@ -325,17 +325,17 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
     stmt->name = name.lexeme;
 
     while (!check(TokenType::RBRACE) && !is_at_end()) {
-        while (match(TokenType::SEMICOLON)) {}  // ASI'den gelen boş ; atla
+        while (match(TokenType::SEMICOLON)) {}  // skip empty ; left by ASI
         if (check(TokenType::RBRACE) || is_at_end()) break;
         auto field_tok = consume(TokenType::IDENT, "Expect field name.");
         StructField sf;
         sf.name = field_tok.lexeme;
-        // LOOK 2: bir alanın TEK yazımı vardır:  ad tip [= varsayılan]
-        //   Tip: [?]ad  (int, float, string, bool, array, map, fn, any, StructAdı).
-        // v1'in iki yazımı kaldırıldı (aynı iş için üç yol = anayasa ihlali): tipsiz `ad`
-        // ve `ad: varsayılan`. İkisi de neyin yazılacağını söyleyen bir hatadır; "her değeri
-        // alır" artık açıkça `any` yazılarak söylenir.
-        // `fn` bir anahtar sözcük (FUNCTION token'ı) ama tip adı olarak da geçerli.
+        // LOOK: a field has ONE spelling:  name type [= default]
+        //   Type: [?]name  (int, float, string, bool, array, map, fn, any, StructName).
+        // The two v1 spellings were removed (three ways for the same job violates the single-way rule): untyped `name`
+        // and `name: default`. Both are an error that says what to write; "accepts any value"
+        // is now said explicitly by writing `any`.
+        // `fn` is a keyword (FUNCTION token) but is also valid as a type name.
         if (check(TokenType::COLON))
             throw LookParseError("struct '" + stmt->name + "': field '" + sf.name
                 + "' uses the old 'name: default' form. Write '" + sf.name + " <type> = <default>' "
@@ -355,16 +355,16 @@ std::unique_ptr<Statement> Parser::struct_declaration() {
     }
 
     consume(TokenType::RBRACE, "Expect '}' after struct fields.");
-    // Aynı dosyada aynı ad: tanım birebir aynıysa sorun yok, farklıysa hata (dosyalar arası
-    // durum derleyicide yakalanır — compiler.cpp compile_struct_decl).
+    // Same name in the same file: fine if the definition is identical, an error if different (cross-file
+    // cases are caught in the compiler — compiler.cpp compile_struct_decl).
     {
         std::string sig;
         for (size_t i = sig_from; i < current_; ++i)
             if (tokens_[i].type != TokenType::SEMICOLON && tokens_[i].type != TokenType::COMMA) {
                 sig += tokens_[i].literal.value_or(tokens_[i].lexeme); sig += '\x1f';
             }
-        // Error yerleşik: error::new() onu kurar, error::is yalnız onu tanır (tanımın kimliğiyle).
-        // Aynı adlı bir kullanıcı struct'ı aynı görünüp hata olmayan ikinci bir anlam olurdu.
+        // Error is built in: error::new() builds it, error::is recognizes only it (by the definition's identity).
+        // A user struct with the same name would look the same but be a second meaning that is not an error.
         if (stmt->name == "Error")
             throw LookParseError("struct 'Error' is built in — error::new(type, message, code) makes one; "
                 "give your struct another name", name.line, name.column);
@@ -386,7 +386,7 @@ std::unique_ptr<Statement> Parser::const_block() {
     auto stmt = std::make_unique<ConstBlock>();
 
     while (!check(TokenType::RBRACE) && !is_at_end()) {
-        while (match(TokenType::SEMICOLON)) {}  // ASI'den gelen boş ; atla
+        while (match(TokenType::SEMICOLON)) {}  // skip empty ; left by ASI
         if (check(TokenType::RBRACE) || is_at_end()) break;
         auto name_tok = consume(TokenType::IDENT, "Expect constant name.");
         ConstItem item;
@@ -416,11 +416,11 @@ std::unique_ptr<Statement> Parser::function_declaration() {
                 params.push_back(p.lexeme);
                 defaults.push_back(nullptr);
                 is_variadic = true;
-                break; // variadic son parametre olmak zorunda
+                break; // variadic must be the last parameter
             }
             auto p = consume(TokenType::IDENT, "Expect parameter name.");
             params.push_back(p.lexeme);
-            // Varsayılan değer: $param = <ifade>
+            // Default value: $param = <expr>
             if (match(TokenType::ASSIGN)) defaults.push_back(assignment());
             else                          defaults.push_back(nullptr);
         } while (match(TokenType::COMMA));
@@ -432,7 +432,7 @@ std::unique_ptr<Statement> Parser::function_declaration() {
     scope_depth_--;
     auto fn = std::make_unique<FunctionDeclaration>(name_tok.lexeme, std::move(params), is_variadic, std::move(body));
     fn->defaults = std::move(defaults);
-    // LOOK 2: başka bir fonksiyonun içinde bildirilen adlı fonksiyon da bir closure'dır — aynı kural.
+    // LOOK: a named function declared inside another function is also a closure — same rule.
     if (scope_depth_ > 0) fn->free_names = capture_free_names(fn->parameters, fn->body.get());
     return fn;
 }
@@ -445,8 +445,8 @@ std::unique_ptr<Statement> Parser::return_statement() {
     return std::make_unique<ReturnStatement>(std::move(val));
 }
 
-// throw <ifade>  — kullanıcı iş-mantığı hatası fırlatır; try/catch yakalar.
-//   throw "Yetkisiz"            → catch($e) { $e == "Yetkisiz" }
+// throw <expr>  — throws a user business-logic error; try/catch catches it.
+//   throw "Unauthorized"        → catch($e) { $e == "Unauthorized" }
 //   throw error::new("x","msg") → catch($e) { error::is($e, "x") }
 std::unique_ptr<Statement> Parser::throw_statement() {
     if (check(TokenType::SEMICOLON) || check(TokenType::RBRACE) || is_at_end())
@@ -460,7 +460,7 @@ std::unique_ptr<Statement> Parser::throw_statement() {
 std::unique_ptr<BlockStatement> Parser::block() {
     auto blk = std::make_unique<BlockStatement>();
     while (!check(TokenType::RBRACE) && !is_at_end()) {
-        while (match(TokenType::SEMICOLON)) {}  // ASI'den gelen boş ; atla
+        while (match(TokenType::SEMICOLON)) {}  // skip empty ; left by ASI
         if (check(TokenType::RBRACE) || is_at_end()) break;
         blk->statements.push_back(statement());
     }
@@ -471,14 +471,14 @@ std::unique_ptr<BlockStatement> Parser::block() {
 // ── Expressions ───────────────────────────────────────────────────────────────
 
 std::unique_ptr<Expression> Parser::expression() {
-    look_ast_guard(peek().line, peek().column);   // gerçek kalan yığın (sayaç tek başına yetmez)
-    // Recursion guard: derin iç içe ifade (((((...))))) veya [[[[...]]]]
-    // recursive-descent yığınını taşırıp SIGSEGV/worker crash yapar. Kod
-    // üretici (Looky AI), kullanıcı-yüklenen .lk veya use "dosya.lk" bu yoldan
-    // geçer. Her expression() seviyesi ~14 C++ frame demek; Windows'un 1MB
-    // stack'inde ~250 seviyede fiziksel taşma olur. 150 gerçek kod için
-    // fazlasıyla yeterli (en derin iç içe ifade ~10-20) ve tüm platformlarda
-    // fiziksel stack tükenmeden önce keser.
+    look_ast_guard(peek().line, peek().column);   // actual remaining stack (the counter alone is not enough)
+    // Recursion guard: deeply nested expressions (((((...))))) or [[[[...]]]]
+    // overflow the recursive-descent stack and cause SIGSEGV/worker crash. Code
+    // generators (Looky AI), user-uploaded .lk and use "file.lk" all go through
+    // this path. Each expression() level is ~14 C++ frames; on Windows' 1MB
+    // stack a physical overflow happens at ~250 levels. 150 is more than
+    // enough for real code (deepest nesting ~10-20) and cuts off before the
+    // physical stack runs out on all platforms.
     struct DepthGuard {
         int& d;
         explicit DepthGuard(int& x) : d(x) { ++d; }
@@ -488,8 +488,8 @@ std::unique_ptr<Expression> Parser::expression() {
         throw look::LookParseError("Expression nested too deep (max " +
                                    std::to_string(MAX_EXPR_DEPTH) + ")",
                                    peek().line, peek().column);
-    // En dıştaki ifade girişinde ikili-zincir sayacını sıfırla (her top-level ifade
-    // taze başlar; iç içe paren'lar accumulate ederek toplam sol-spine derinliğini kapsar).
+    // At the outermost expression entry reset the binary-chain counter (each top-level expression
+    // starts fresh; nested parens accumulate and cover the total left-spine depth).
     if (expr_depth_ == 1) binop_depth_ = 0;
     auto loc = cur_loc();
     auto e = assignment();
@@ -505,9 +505,9 @@ void Parser::check_binop_chain() {
                                    peek().line, peek().column);
 }
 
-// `$a[k]++`, `++$a[k]`, `$s.n--`: bir eleman ya da alan üzerinde ++/--. Bileşik atamaya çevrilir
-// (`$a[k] += 1`) — derleyici onu zaten yol olarak yazıyor; anahtarlar bir kez hesaplanır.
-// Sonek biçiminde ifadenin değeri eski değerdir (yield_old). Hedef eleman/alan değilse null.
+// `$a[k]++`, `++$a[k]`, `$s.n--`: ++/-- on an element or field. Converted to a compound assignment
+// (`$a[k] += 1`) — the compiler already writes it as a path; keys are evaluated once.
+// In postfix form the value of the expression is the old value (yield_old). Null if the target is not an element/field.
 static std::unique_ptr<Expression> element_step(std::unique_ptr<Expression>& target, const char* op, bool postfix) {
     std::unique_ptr<AssignmentExpression> a;
     auto one = [] { return std::make_unique<NumberLiteral>(1); };
@@ -549,21 +549,21 @@ std::unique_ptr<Expression> Parser::assignment() {
             std::string op = previous().lexeme;
             auto val = assignment();
 
-            // $arr[i] = val   (i basit değişken VEYA zincir: $a[0][1], $m[k].x'in tabanı)
+            // $arr[i] = val   (i is a simple variable OR a chain: the base of $a[0][1], $m[k].x)
             if (auto* idx = node_as<IndexExpression>(expr.get())) {
                 auto index = std::move(const_cast<std::unique_ptr<Expression>&>(idx->index));
                 if (auto* var = node_as<Variable>(idx->object.get()))
                     return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
-                // Zincirli: object bir ifade ($arr[0], $l.s, ...) — in-place mutasyon
+                // Chained: object is an expression ($arr[0], $l.s, ...) — in-place mutation
                 auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(idx->object));
                 return std::make_unique<AssignmentExpression>("", op, std::move(val), std::move(index), std::move(obj));
             }
-            // $obj.field = val  → $obj["field"] = val  (obj basit değişken VEYA zincir)
+            // $obj.field = val  → $obj["field"] = val  (obj is a simple variable OR a chain)
             if (auto* ma = node_as<MemberAccessExpression>(expr.get())) {
                 auto index = std::make_unique<StringLiteral>(ma->field);
                 if (auto* var = node_as<Variable>(ma->object.get()))
                     return std::make_unique<AssignmentExpression>(var->name, op, std::move(val), std::move(index));
-                // Zincirli: $l.s.x = 9, $arr[0].x = 7, $map["k"].x = 3
+                // Chained: $l.s.x = 9, $arr[0].x = 7, $map["k"].x = 3
                 auto obj = std::move(const_cast<std::unique_ptr<Expression>&>(ma->object));
                 return std::make_unique<AssignmentExpression>("", op, std::move(val), std::move(index), std::move(obj));
             }
@@ -709,9 +709,9 @@ std::unique_ptr<Expression> Parser::multiplication() {
 }
 
 std::unique_ptr<Expression> Parser::power() {
-    // DERİNLİK GUARD'I — power() `**` için sağ-özyinelemeli; unary()'nin guard'ı
-    // power() recurse'den ÖNCE RAII ile çözüldüğünden power zincirini sınırlamaz.
-    // "2**2**…**2" bu yüzden ayrı guard ister (aksi halde stack-overflow).
+    // DEPTH GUARD — power() is right-recursive for `**`; unary()'s guard
+    // does not bound the power chain because it is released via RAII BEFORE power()
+    // recurses. "2**2**…**2" therefore needs its own guard (otherwise stack overflow).
     struct DepthGuard { int& d; explicit DepthGuard(int& x):d(x){++d;} ~DepthGuard(){--d;} } guard(expr_depth_);
     if (expr_depth_ > MAX_EXPR_DEPTH)
         throw look::LookParseError("Expression nested too deep (max " +
@@ -724,16 +724,16 @@ std::unique_ptr<Expression> Parser::power() {
 }
 
 std::unique_ptr<Expression> Parser::unary() {
-    // DERİNLİK GUARD'I — unary() sağ-özyinelemeli (!/~/- kendine unary() çağırır),
-    // expression()'daki guard'ı ATLIYORDU → "~"×N / "!"×N C++ stack'ini fiziksel
-    // taşırıyordu (ASan stack-overflow, parse-zamanı DoS). Aynı expr_depth_ sayacı.
+    // DEPTH GUARD — unary() is right-recursive (!/~/- call unary() on themselves),
+    // and it SKIPPED the guard in expression() → "~"×N / "!"×N physically
+    // overflowed the C++ stack (ASan stack-overflow, parse-time DoS). Same expr_depth_ counter.
     struct DepthGuard { int& d; explicit DepthGuard(int& x):d(x){++d;} ~DepthGuard(){--d;} } guard(expr_depth_);
     if (expr_depth_ > MAX_EXPR_DEPTH)
         throw look::LookParseError("Expression nested too deep (max " +
                                    std::to_string(MAX_EXPR_DEPTH) + ")",
                                    peek().line, peek().column);
-    // Önek ++/--: hedef bir değişken ya da onun bir elemanı/alanıdır (`++$a["n"]`, `--$s.count`),
-    // bu yüzden indeks/alan zinciriyle birlikte okunur (call()).
+    // Prefix ++/--: the target is a variable or an element/field of it (`++$a["n"]`, `--$s.count`),
+    // so it is read together with the index/field chain (call()).
     if (match(TokenType::PLUS_PLUS)) {
         auto right = call();
         if (auto step = element_step(right, "+=", false)) return step;
@@ -747,8 +747,8 @@ std::unique_ptr<Expression> Parser::unary() {
     if (match(TokenType::BANG))  { return std::make_unique<UnaryExpression>("!", std::move(unary()),  true); }
     if (match(TokenType::TILDE)) { return std::make_unique<UnaryExpression>("~", std::move(unary()),  true); }
     if (match(TokenType::MINUS)) {
-        // -9223372036854775808 = INT64_MIN: 9223372036854775808 tek başına int64'e sığmaz, eksiyle sığar
-        // (Java/Go aynı istisnayı tanır). Literal doğrudan INT64_MIN olur, taşma hatası verilmez.
+        // -9223372036854775808 = INT64_MIN: 9223372036854775808 alone does not fit in int64, with the minus it does
+        // (Java/Go recognize the same exception). The literal becomes INT64_MIN directly, no overflow error.
         if (check(TokenType::NUMBER)) {
             std::string lit = peek().literal.value_or("");
             lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());
@@ -787,14 +787,14 @@ std::unique_ptr<Expression> Parser::call() {
                    tokens_[current_ + 1].type == TokenType::IDENT &&
                    !tokens_[current_ + 1].lexeme.empty() &&
                    tokens_[current_ + 1].lexeme[0] != '$' &&
-                   // BUG FIX ('.' concat/üye-erişim ikililiği): '.' sonrası gelen IDENT
-                   // '(' veya '::' ile devam ediyorsa bu ÜYE ERİŞİMİ DEĞİL — string concat +
-                   // fonksiyon çağrısı ($out . helper(...)) ya da modül referansı
-                   // ($out . html::escape(...)). Eskiden bunlar "$out.helper" / "$out.html"
-                   // üye erişimi olarak yutulup parse hatası veriyordu (idiomatik
-                   // "$x = $x . fn(...)" string-building kalıbı BOZUKTU). LOOK'ta metot
-                   // çağrısı ($obj.method()) yok → bu form her zaman concat'tır, dışlamak
-                   // güvenli. Concat'ı üst seviyedeki '.' operatörüne (binary) bırak.
+                   // BUG FIX ('.' concat/member-access ambiguity): if the IDENT after '.'
+                   // continues with '(' or '::' this is NOT MEMBER ACCESS — it is string concat +
+                   // a function call ($out . helper(...)) or a module reference
+                   // ($out . html::escape(...)). Previously these were swallowed as "$out.helper" / "$out.html"
+                   // member access and gave a parse error (the idiomatic
+                   // "$x = $x . fn(...)" string-building pattern was BROKEN). LOOK has no method
+                   // call ($obj.method()) → this form is always concat, so excluding it is
+                   // safe. Leave the concat to the top-level '.' operator (binary).
                    !(current_ + 2 < tokens_.size() &&
                      (tokens_[current_ + 2].type == TokenType::LPAREN ||
                       tokens_[current_ + 2].type == TokenType::COLON_COLON)) &&
@@ -816,8 +816,8 @@ std::unique_ptr<Expression> Parser::call() {
     return expr;
 }
 
-// `$name = array::push($name, v)` ya da `$name = array::slice($name, 0, -1)` mi? (derleyicinin
-// yerinde yolu: compiler.cpp try_compile_push_assign — o yol modül denetimini atlar.)
+// Is it `$name = array::push($name, v)` or `$name = array::slice($name, 0, -1)`? (the compiler's
+// in-place path: compiler.cpp try_compile_push_assign — that path skips the module check.)
 static bool parser_int_literal(const Expression* x, int64_t v) {
     if (!x) return false;
     if (auto* n = node_as<NumberLiteral>(x)) return n->value == v;
@@ -839,7 +839,7 @@ bool Parser::is_in_place_array_call(const std::string& name, const Expression* v
     return first && first->name == name;
 }
 
-// Kullanımdan kalkan çağrının uyarı metni (count > 1: dosyadaki toplam da yazılır).
+// Warning text for a deprecated call (count > 1: the total in the file is also written).
 std::string Parser::deprecation_message(int dep, int count) {
     static const char* const head[DEP_COUNT] = {
         "push($list, $x) changes the variable it is given",
@@ -858,10 +858,10 @@ std::string Parser::deprecation_message(int dep, int count) {
 }
 
 std::unique_ptr<Expression> Parser::finish_call(std::unique_ptr<Expression> callee) {
-    // Çıplak push()/pop() ve array::pop(): bir sürüm uyarı, sonra hata (kullanıcı kararı 2026-11-18).
-    // Tek yazım Go'nun `a = append(a, x)` modeli: `$l = array::push($l, $x)`, son eleman `$l[-1]`,
-    // çıkarma `$l = array::slice($l, 0, -1)` — değer kuralıyla tutarlı, gizli değiştirme yok.
-    // array::pop adı yanıltıcı: son elemanı ÇIKARMADAN döndürür. Konum çağrının başı (ad token'ı).
+    // Bare push()/pop() and array::pop(): one release of warning, then an error.
+    // The single spelling is Go's `a = append(a, x)` model: `$l = array::push($l, $x)`, last element `$l[-1]`,
+    // removal `$l = array::slice($l, 0, -1)` — consistent with the value rule, no hidden mutation.
+    // The name array::pop is misleading: it returns the last element WITHOUT removing it. Position is the call start (name token).
     int dep = -1;
     if (auto* v = node_as<Variable>(callee.get())) {
         if (v->name == "push") dep = DEP_PUSH;
@@ -889,13 +889,13 @@ std::unique_ptr<Expression> Parser::primary() {
     if (match(TokenType::FALSE_KW))      return std::make_unique<BooleanLiteral>(false);
     if (match(TokenType::NULL_TOKEN)) return std::make_unique<NullLiteral>();
     if (match(TokenType::NUMBER)) {
-        // Integer literal — underscore ayırıcıları (1_000) at, hex/binary tabanı çöz.
-        // int64 aralığını aşarsa (99999999999999999999) std::stoll out_of_range
-        // fırlatır → float'a promote (yalnızca ~9.2e18 üstü decimal için).
+        // Integer literal — drop underscore separators (1_000), resolve hex/binary base.
+        // If it exceeds the int64 range (99999999999999999999) std::stoll throws
+        // out_of_range → promote to float (only for decimals above ~9.2e18).
         std::string lit = previous().literal.value();
         lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());
-        // Rakamsız taban öneki ("0x", "0b"): eskiden ondalık dala düşüp stoll("0x") = 0 oluyordu —
-        // sessizce yanlış değer. Go: "hexadecimal literal has no digits".
+        // Base prefix without digits ("0x", "0b"): it used to fall to the decimal branch and stoll("0x") = 0 —
+        // a silently wrong value. Go: "hexadecimal literal has no digits".
         if (lit.size() == 2 && lit[0] == '0' &&
             (lit[1] == 'x' || lit[1] == 'X' || lit[1] == 'b' || lit[1] == 'B')) {
             throw LookParseError(std::string(lit[1] == 'x' || lit[1] == 'X' ? "hexadecimal" : "binary") +
@@ -911,9 +911,9 @@ std::unique_ptr<Expression> Parser::primary() {
                 v = (int64_t)std::stoll(lit);                           // decimal
             return std::make_unique<NumberLiteral>(v);
         } catch (...) {
-            // 64 bite sığmayan tamsayı literali DERLEME HATASI (Go: "constant overflows int64").
-            // Eskiden uyarıyla float'a düşüyordu: ID/telefon gibi büyük bir sayı sessizce kesinlik
-            // kaybediyordu. Ondalık değer isteyen açıkça yazar (…0.0), kimlik metin olarak taşınır.
+            // An integer literal that does not fit in 64 bits is a COMPILE ERROR (Go: "constant overflows int64").
+            // It used to fall to float with a warning: a large number such as an ID/phone silently
+            // lost precision. Whoever wants a decimal value writes it explicitly (…0.0), an identifier is carried as text.
             throw LookParseError("integer literal " + lit + " does not fit in 64 bits (the largest is "
                 "9223372036854775807): write it as a float (" + lit + ".0) if an approximate value is "
                 "fine, or as a string for an ID", previous().line, previous().column);
@@ -922,8 +922,8 @@ std::unique_ptr<Expression> Parser::primary() {
     if (match(TokenType::FLOAT_NUM)) {
         std::string lit = previous().literal.value();
         lit.erase(std::remove(lit.begin(), lit.end(), '_'), lit.end());  // 1_000.5 → 1000.5
-        // `strtod`: `1e309` gibi taşan literal → ±Infinity (stod out_of_range'i
-        // 0.0 yapıyordu → sessizce yanlış/tehlikeli değer). IEEE-754 doğru.
+        // `strtod`: an overflowing literal such as `1e309` → ±Infinity (stod out_of_range
+        // made it 0.0 → a silently wrong/dangerous value). IEEE-754 correct.
         return std::make_unique<FloatLiteral>(std::strtod(lit.c_str(), nullptr));
     }
     if (match(TokenType::STRING))     return std::make_unique<StringLiteral>(previous().literal.value(), previous().raw);
@@ -951,7 +951,7 @@ std::unique_ptr<Expression> Parser::primary() {
         }
         consume(TokenType::RPAREN, "Expect ')' after parameters.");
 
-        // use ($conn, $db) — explicit capture listesi
+        // use ($conn, $db) — explicit capture list
         std::vector<std::string> captures;
         if (match(TokenType::USE)) {
             consume(TokenType::LPAREN, "Expect '(' after 'use'.");
@@ -964,7 +964,7 @@ std::unique_ptr<Expression> Parser::primary() {
             consume(TokenType::RPAREN, "Expect ')' after use(...).");
         }
 
-        // Gövde: ya blok `{ ... }` ya da ifade-gövdeli ok `=> ifade`
+        // Body: either a block `{ ... }` or an expression-bodied arrow `=> expr`
         //   fn($x) => $x * 2   ≡   function($x) { return $x * 2 }
         std::unique_ptr<BlockStatement> body;
         if (match(TokenType::FAT_ARROW)) {
@@ -983,7 +983,7 @@ std::unique_ptr<Expression> Parser::primary() {
         fn->captures    = std::move(captures);
         fn->is_variadic = is_variadic;
         fn->body = std::move(body);
-        fn->free_names = capture_free_names(*fn);   // iç closure'larınki zaten dolu (içten dışa)
+        fn->free_names = capture_free_names(*fn);   // those of inner closures are already filled (inside out)
         return fn;
     }
 
@@ -1042,7 +1042,7 @@ std::unique_ptr<Expression> Parser::primary() {
         if (match(TokenType::COLON_COLON)) {
             auto member = consume(TokenType::IDENT, "Expect member name after '::'.");
             auto sr = std::make_unique<ScopeResolution>(name, member.lexeme);
-            sr->loc.line = id_tok.line; sr->loc.column = id_tok.column;   // uyarı konumu (array::pop)
+            sr->loc.line = id_tok.line; sr->loc.column = id_tok.column;   // warning position (array::pop)
             return sr;
         }
         auto var = std::make_unique<Variable>(name);
@@ -1072,11 +1072,11 @@ std::vector<std::unique_ptr<Expression>> Parser::argument_list() {
 
 bool          Parser::match(TokenType t)       { if (check(t)) { advance(); return true; } return false; }
 
-// ';' tüket — ASI zaten eklediyse consume eder, yoksa } veya EOF'ta sessiz geçer.
-// for(;;) içi dahil olmak üzere explicit ';' gerektiren yerlerde kullanılmaz.
+// consume ';' — if ASI already inserted it, consume it; otherwise pass silently at } or EOF.
+// Not used where an explicit ';' is required, including inside for(;;).
 void          Parser::consume_semi() {
     if (check(TokenType::SEMICOLON)) { advance(); return; }
-    // Implicit terminator: } veya EOF — ASI iş yapmışsa veya inline blok sonundayız
+    // Implicit terminator: } or EOF — ASI did its job or we are at the end of an inline block
     if (check(TokenType::RBRACE) || is_at_end()) return;
     throw look::LookParseError("Expect ';'. (got '" + peek().lexeme + "')",
                                peek().line, peek().column);

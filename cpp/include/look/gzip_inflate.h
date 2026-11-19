@@ -1,11 +1,11 @@
 #pragma once
-// gzip yanıt gövdesi çözme — saf işlev (soket yok): http_client kullanır, fuzz hedefi doğrudan çağırır
-// (tests/fuzz/fuzz_gzip_inflate.cpp). Girdi, http::get'in bağlandığı herhangi bir sunucudan gelir:
-// saldırganın baytlarıdır (Node2Shell / CVE-2026-111497 sınıfı: gömülü çözücüye istemci yolu).
+// gzip response body decoding — a pure function (no socket): used by http_client, the fuzz target calls it directly
+// (tests/fuzz/fuzz_gzip_inflate.cpp). The input comes from whatever server http::get connects to:
+// it is the attacker's bytes (Node2Shell / CVE-2026-111497 class: the client path to an embedded decoder).
 //
-// gzip başlığı elle ayrıştırılır, yük miniz ile ham inflate edilir (window_bits < 0). Çıktı `cap`
-// ile sınırlı (gzip bombası). Bozuk akış "daha fazla veri gerek" ile karıştırılmaz: ilerleme
-// olmadan dönen her tur hatadır (eskiden MZ_BUF_ERROR'da girdi kaldıkça döngü sürüyordu).
+// The gzip header is parsed by hand, the payload is raw-inflated with miniz (window_bits < 0). The output is bounded by `cap`
+// (gzip bomb). A corrupt stream is not confused with "more data needed": every round that returns without
+// progress is an error (it used to keep looping on MZ_BUF_ERROR while input remained).
 #include "miniz/miniz.h"
 #include <cstring>
 #include <string>
@@ -18,7 +18,7 @@ inline bool gzip_inflate(const std::string& in, size_t cap, std::string& out) {
     const unsigned char* p = reinterpret_cast<const unsigned char*>(in.data());
     if (p[0] != 0x1f || p[1] != 0x8b || p[2] != 0x08) return false;  // magic + DEFLATE method
     unsigned char flg = p[3];
-    if (flg & 0xE0) return false;                            // RFC 1952: ayrılmış bayraklar sıfır olmalı
+    if (flg & 0xE0) return false;                            // RFC 1952: reserved flags must be zero
     size_t off = 10;
     if (flg & 0x04) {                                       // FEXTRA
         if (off + 2 > in.size()) return false;
@@ -50,9 +50,9 @@ inline bool gzip_inflate(const std::string& in, size_t cap, std::string& out) {
         if (out.size() > cap) { mz_inflateEnd(&strm); return false; }   // bomb guard
         if (ret == MZ_STREAM_END) break;
         if (ret != MZ_OK && ret != MZ_BUF_ERROR) { mz_inflateEnd(&strm); return false; }
-        // İlerleme yoksa (girdi tüketilmedi, çıktı üretilmedi) akış bozuk ya da eksik: dur.
+        // If there is no progress (no input consumed, no output produced) the stream is corrupt or incomplete: stop.
         if (produced == 0 && strm.avail_in == in_before) { mz_inflateEnd(&strm); return false; }
-        if (strm.avail_in == 0 && produced < sizeof(obuf)) { mz_inflateEnd(&strm); return false; }  // girdi bitti, son yok
+        if (strm.avail_in == 0 && produced < sizeof(obuf)) { mz_inflateEnd(&strm); return false; }  // input ended, no end of stream
     }
     mz_inflateEnd(&strm);
     return true;

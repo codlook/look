@@ -1,18 +1,18 @@
 #pragma once
-// LOOK 2 — closure yakalama kuralı: bir closure yakaladığı şeyin DEĞERİNİ alır (oluşturulduğu
-// andaki) ve onu içeride DEĞİŞTİREMEZ. İki motor da bu başlıktaki tek tanıma uyar.
+// Closure capture rule: a closure takes the VALUE of what it captures (at the moment it is created)
+// and CANNOT CHANGE it inside. Both engines follow the single definition in this header.
 //
-// "Yakalanan" = `use (…)` listesindeki adlar + closure'ın kullandığı, kendi yereli olmayan,
-// saran FONKSİYONUN yereli olan adlar (otomatik yakalama; iç içe closure'lar için geçişli).
-// Üst düzey değişkenler `use` ile verilmedikçe yakalama değil GLOBAL erişimdir: canlı kalır.
+// "Captured" = names in the `use (…)` list + names the closure uses that are not its own locals
+// and are locals of the enclosing FUNCTION (automatic capture; transitive for nested closures).
+// Top-level variables are not captured unless given with `use`, they are GLOBAL access: they stay live.
 //
-// Ayrıştırıcının ağacından iki sınıf çıkarılır:
-//   capture-write    closure yakaladığı değişkene yazıyor ($x = …, $x[i] = …, $x.f = …,
-//                    $x += …, $x++, push($x, …), pop($x))            → YÜKLEMEDE HATA
-//   capture-stale    değişken closure oluşturulduktan SONRA dışarıda değişiyor (ya da closure
-//                    bir döngüde ve değişken o döngüde değişiyor): closure yakaladığı değeri
-//                    tutar. LOOK 1'de sonraki değeri görürdü → UYARI (sessiz fark)
-// Özyineleme: closure kendini yakalayamaz (o an henüz tanımsız) — adlı fonksiyon yazılır.
+// Two classes are derived from the parser's tree:
+//   capture-write    the closure writes to a variable it captured ($x = …, $x[i] = …, $x.f = …,
+//                    $x += …, $x++, push($x, …), pop($x))            → ERROR AT LOAD
+//   capture-stale    the variable changes outside AFTER the closure was created (or the closure
+//                    is in a loop and the variable changes in that loop): the closure keeps the value it captured.
+//                    In 1.x it saw the later value → WARNING (a silent difference)
+// Recursion: a closure cannot capture itself (it is still undefined at that moment) — write a named function.
 #include "look/ast.h"
 #include "look/stack_guard.h"
 #include "look/ast_spine.h"
@@ -29,16 +29,16 @@ namespace capture_check_detail {
 
 struct Write { std::string name; int line; int column; std::string how; };
 
-// Bir ifade/deyim ağacını gezer; iç FunctionExpression gövdelerine İNMEZ (onlar ayrı kapsam),
-// ama onları `closures` listesine ekler.
+// Walks an expression/statement tree; does NOT descend into inner FunctionExpression bodies (they are a separate scope),
+// but adds them to the `closures` list.
 struct Scan {
-    std::set<std::string> reads;                 // okunan değişken adları
-    std::map<std::string, char> first;           // adın İLK kullanımı: 'r' okuma, 'w' düz atama
-    std::map<const FunctionExpression*, int> line_of;   // closure'ın satırı (ifade konumu boşsa deyiminki)
+    std::set<std::string> reads;                 // variable names read
+    std::map<std::string, char> first;           // FIRST use of the name: 'r' read, 'w' plain assignment
+    std::map<const FunctionExpression*, int> line_of;   // line of the closure (the statement's if the expression position is empty)
     int cur_line = 0;
     int ln(const Expression* e) const { return e->loc.line > 0 ? e->loc.line : cur_line; }
-    std::set<std::string> plain_assigned;        // `$x = …` ile yerel yapılan adlar (+ foreach/catch)
-    std::vector<Write> writes;                   // her türlü yazma
+    std::set<std::string> plain_assigned;        // names made local by `$x = …` (+ foreach/catch)
+    std::vector<Write> writes;                   // every kind of write
     std::vector<const FunctionExpression*> closures;
     std::vector<std::pair<const FunctionExpression*, std::string>> closure_assigned_to;  // $f = function…
     std::vector<std::pair<const FunctionExpression*, std::vector<std::string>>> closure_loop_writes;
@@ -54,7 +54,7 @@ struct Scan {
     }
 
     void expr(const Expression* e) {
-        if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+        if (e) look_ast_guard(e->loc.line, e->loc.column);   // deep tree: error instead of a crash (stack_guard.h)
         if (!e) return;
         if (auto* v = node_as<Variable>(e)) { reads.insert(v->name); first.emplace(v->name, 'r'); return; }
         if (auto* f = node_as<FunctionExpression>(e)) {
@@ -99,7 +99,7 @@ struct Scan {
         }
         if (auto* x = node_as<IndexExpression>(e)) { expr(x->object.get()); expr(x->index.get()); return; }
         if (auto* x = node_as<MemberAccessExpression>(e)) { expr(x->object.get()); return; }
-        if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+        if (auto* x = node_as<BinaryExpression>(e)) {   // left spine as a loop (look/ast_spine.h)
             std::vector<const BinaryExpression*> sp; expr(binary_left_spine(x, sp));
             for (size_t k = sp.size(); k-- > 0;) expr(sp[k]->right.get());
             return;
@@ -110,7 +110,7 @@ struct Scan {
         if (auto* x = node_as<StructLiteralExpression>(e)) { for (auto& p : x->fields) expr(p.second.get()); return; }
     }
 
-    // Döngü gövdesi: içindeki closure'lar için "aynı döngüde yazılan adlar" kaydı tutulur.
+    // Loop body: for the closures inside it a record of "names written in the same loop" is kept.
     void loop_body(const std::vector<const Statement*>& parts, const std::vector<const Expression*>& exprs,
                    const std::vector<std::string>& loop_vars) {
         const size_t c0 = closures.size(), w0 = writes.size();
@@ -125,7 +125,7 @@ struct Scan {
     void block(const BlockStatement* b) { if (b) for (auto& s : b->statements) stmt(s.get()); }
 
     void stmt(const Statement* s) {
-        if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+        if (s) look_ast_guard(s->loc.line, s->loc.column);   // deep tree: error instead of a crash (stack_guard.h)
         if (!s) return;
         if (s->loc.line > 0) cur_line = s->loc.line;
         if (auto* x = node_as<ExpressionStatement>(s)) { expr(x->expression.get()); return; }
@@ -160,15 +160,15 @@ struct Scan {
             for (auto& c : x->cases) { for (auto& v : c.values) expr(v.get()); for (auto& b : c.body) stmt(b.get()); }
             return;
         }
-        // FunctionDeclaration ayrı kapsamdır: check_function ile ayrıca gezilir.
+        // FunctionDeclaration is a separate scope: it is walked separately with check_function.
     }
 };
 
 inline std::string bare(const std::string& n) { return (!n.empty() && n[0] == '$') ? n.substr(1) : n; }
 
-// Bir closure gövdesinin adları: `own` = kendi yerelleri (parametreler + ilk kullanımı düz atama
-// olan adlar), `uses` = dışarıdan gelmesi gereken adlar (okunan/yazılan, kendi yereli olmayan;
-// iç closure'ların dışarıdan istedikleri dahil — geçişli).
+// Names of a closure body: `own` = its own locals (parameters + names whose first use
+// is a plain assignment), `uses` = names that must come from outside (read/written, not its own local;
+// including what inner closures need from outside — transitive).
 struct Names { std::set<std::string> own, uses; };
 inline Names names_of(const FunctionExpression& f, const Scan& sc) {
     Names n;
@@ -198,7 +198,7 @@ inline void check_closure(const FunctionExpression* f, const std::set<std::strin
             out.push_back({w.line, w.column, "capture-write",
                 "closure changes captured variable $" + bare(w.name) + " (" + w.how
                 + "); a closure captures the value and cannot change it — return the new value instead"});
-    // İç closure'lar için "saran yereller": bu closure'ın yerelleri + yakaladıkları.
+    // "Enclosing locals" for inner closures: this closure's locals + what it captured.
     std::set<std::string> locals(n.own); locals.insert(caps.begin(), caps.end());
     for (auto& a : sc.plain_assigned) locals.insert(a);
     check_scope(sc, locals, /*is_top_level=*/false, out);
@@ -208,8 +208,8 @@ inline void check_scope(const Scan& sc, const std::set<std::string>& scope_local
                         std::vector<CaptureWarning>& out) {
     for (auto* f : sc.closures) {
         check_closure(f, is_top_level ? std::set<std::string>{} : scope_locals, out);
-        // Bu closure'ın BU kapsamdan yakaladığı adlar: açık liste her yerde; otomatik yakalama
-        // yalnız fonksiyon içinde (üst düzeyde `use`suz ad = global erişim, canlı kalır).
+        // Names THIS closure captured from THIS scope: the explicit list everywhere; automatic capture
+        // only inside a function (a name without `use` at top level = global access, stays live).
         std::set<std::string> caps(f->captures.begin(), f->captures.end());
         if (!is_top_level) for (auto& u : f->free_names) if (scope_locals.count(u)) caps.insert(u);
         if (caps.empty()) continue;
@@ -238,12 +238,12 @@ inline void check_scope(const Scan& sc, const std::set<std::string>& scope_local
 inline void check_function_decls(const std::vector<std::unique_ptr<Statement>>& stmts, std::vector<CaptureWarning>& out);
 
 inline void walk_decls(const Statement* s, std::vector<CaptureWarning>& out, const std::set<std::string>* enclosing = nullptr) {
-    if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+    if (s) look_ast_guard(s->loc.line, s->loc.column);   // deep tree: error instead of a crash (stack_guard.h)
     if (!s) return;
     if (auto* fd = node_as<FunctionDeclaration>(s)) {
         Scan sc; sc.block(fd->body.get());
         std::set<std::string> locals(fd->parameters.begin(), fd->parameters.end());
-        // İÇ adlı fonksiyon (enclosing dolu) bir closure'dır: saran fonksiyonun yereline yazamaz.
+        // An INNER named function (enclosing set) is a closure: it cannot write to the enclosing function's local.
         if (enclosing) {
             FunctionExpression shape; shape.parameters = fd->parameters;
             Names n = names_of(shape, sc);
@@ -268,10 +268,10 @@ inline void check_function_decls(const std::vector<std::unique_ptr<Statement>>& 
 
 } // namespace capture_check_detail
 
-// Closure'ın dışarıdan istediği adlar (geçişli) — ayrıştırıcı düğüme yazar; yukarıdaki
-// denetimler okur. İç closure'ların
-// free_names'i önce dolmuş olmalıdır (ayrıştırıcı içten dışa kurar).
-// Adlı iç fonksiyon için aynı hesap (parametreler + gövde).
+// Names the closure needs from outside (transitive) — the parser writes them to the node; the checks
+// above read them. The inner closures'
+// free_names must be filled first (the parser builds from inside out).
+// The same computation for a named inner function (parameters + body).
 inline std::vector<std::string> capture_free_names(const std::vector<std::string>& params, const BlockStatement* body) {
     using namespace capture_check_detail;
     FunctionExpression shape; shape.parameters = params;

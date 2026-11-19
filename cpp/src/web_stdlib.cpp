@@ -1,13 +1,13 @@
 ﻿#define _CRT_RAND_S
-#include "look/mem_budget.h"   // mem_reserve — büyük ayırmadan önce bütçe
+#include "look/mem_budget.h"   // mem_reserve — budget before a large allocation
 #include "look/stdlib.h"
 #include "look/web.h"
 #include "look/struct_types.h"
-#include "look/db_dsn.h"   // pg_resolve_tls (saf TLS-karar dikişi)
-#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli; saf, tablo-testli)
-#include "look/session_files.h" // dosya sürücüsü: 0700 dizin, 0600 dosya, sahiplik denetimi
+#include "look/db_dsn.h"   // pg_resolve_tls (pure TLS-decision seam)
+#include "look/host_port.h" // host[:port] + port parsing (Go net/url model; pure, table-tested)
+#include "look/session_files.h" // file driver: 0700 directory, 0600 file, ownership check
 #include "look/crypto_sha256.h"  // csrf:: HMAC-SHA256
-#include "look/session_esc.h"   // valid_sid + sess_esc/blob (saf, tablo-test edilebilir)
+#include "look/session_esc.h"   // valid_sid + sess_esc/blob (pure, table-testable)
 #include "look/fiber.h"
 #include "look/request_scope.h"
 #include <cmath>
@@ -41,7 +41,7 @@
 #include <filesystem>
 #include <system_error>
 #include <unordered_map>
-#include "look/json_str_parse.h"   // saf JSON string-unescape (fuzz ile paylasilan tek tanim)
+#include "look/json_str_parse.h"   // pure JSON string-unescape (the single definition shared with fuzz)
 #ifdef _WIN32
   #include <windows.h>
 #else
@@ -77,17 +77,17 @@ static std::string json_encode_string(const std::string& s) {
 }
 
 static std::string json_encode(const Value& v, int depth) {
-    // Derinlik: dizi dalında dilin ortak sınırı (NestingGuard, LOOK_MAX_NESTING = 1000) → açık,
-    // yakalanabilir hata; bir döngüsel yapı da aynı hatayla biter. ESKİ: 256'dan derini sessizce
-    // "null" yazıyordu — veri istemciye bozuk gidiyordu (Go json.Marshal bir değeri asla sessizce
-    // düşürmez; PHP json_encode derinlik aşımında hata). `depth` yalnız imza uyumu için kaldı.
+    // Depth: on the array branch the language's common limit (NestingGuard, LOOK_MAX_NESTING = 1000) → an explicit,
+    // catchable error; a cyclic structure ends with the same error. OLD: anything deeper than 256 silently
+    // wrote "null" — the data reached the client corrupted (Go json.Marshal never silently
+    // drops a value; PHP json_encode errors on exceeding the depth). `depth` remains only for signature compatibility.
     (void)depth;
     switch (v.type()) {
         case Value::INT:    return std::to_string(v.as_int());
         case Value::FLOAT:  {
             double d = v.as_float();
-            // NaN/Infinity JSON'da yok: açık hata (Go json.Marshal: "unsupported value"). Eskiden
-            // sessizce null yazılıyordu — taşan bir hesap (1e308 * 10) istemciye "değer yok" gibi gidiyordu.
+            // NaN/Infinity do not exist in JSON: an explicit error (Go json.Marshal: "unsupported value"). It used to
+            // silently write null — an overflowing computation (1e308 * 10) reached the client as "no value".
             if (!std::isfinite(d))
                 throw std::runtime_error(std::string("json::encode: ") + (std::isnan(d) ? "NaN" : "Infinity") +
                     " cannot be written as JSON (check the calculation, or encode it as a string)");
@@ -96,7 +96,7 @@ static std::string json_encode(const Value& v, int depth) {
         case Value::STRING: return json_encode_string(v.as_string());
         case Value::BOOL:   return v.as_bool() ? "true" : "false";
         case Value::NONE:   return "null";
-        // LOOK 2: struct → alan adlarıyla nesne (bildirim sırası).
+        // struct → an object with field names (declaration order).
         case Value::STRUCT: return json_encode(look::struct_to_map(v), depth);
         case Value::ARRAY: {
             NestingGuard g;
@@ -129,9 +129,9 @@ static std::string json_encode(const Value& v, int depth) {
 }
 
 // Simple JSON decode â€” returns Value
-// Derinlik limiti — derin iç içe JSON ([[[[...]]]] veya {...}) C++ stack'ini
-// taşırıp SIGSEGV/worker crash'e yol açar. request::json() HTTP body'yi decode
-// ettiğinden bu network-facing DoS'tur. 256 gerçek JSON için fazlasıyla yeterli.
+// Depth limit — deeply nested JSON ([[[[...]]]] or {...}) overflows the C++ stack
+// and causes SIGSEGV/a worker crash. Since request::json() decodes the HTTP body
+// this is a network-facing DoS. 256 is more than enough for real JSON.
 static constexpr int JSON_MAX_DEPTH = 256;
 static Value json_decode_value(const std::string& s, size_t& i, int depth = 0);
 
@@ -140,22 +140,22 @@ static void json_skip_ws(const std::string& s, size_t& i) {
 }
 
 
-// Derinlik aşımında TÜM parse iptal edilir (yalnız o dalı null'lamak yetmez:
-// pozisyon i ilerlemediği için dış döngü sonsuza dek null push edip bad_alloc/
-// hang yapardı). Public giriş noktalarında yakalanır → temiz null döner.
+// When the depth is exceeded the WHOLE parse is aborted (nulling only that branch is not enough:
+// since position i does not advance, the outer loop would push null forever and cause bad_alloc/
+// a hang). It is caught at the public entry points → a clean null is returned.
 struct JsonTooDeep {};
-// Bozuk JSON (ilerleme sağlamayan karakter) → parse'ı iptal et. Aksi halde array/
-// object döngüsünde `i` ilerlemez ve SONSUZ DÖNGÜ olur (auth gerektirmeyen uzaktan
-// DoS: tek `[a]` isteği worker'ı %100 CPU'da kilitler). Public giriş noktalarında
-// yakalanır → temiz null döner.
+// Malformed JSON (a character that makes no progress) → abort the parse. Otherwise in the array/
+// object loop `i` does not advance and there is an INFINITE LOOP (a remote DoS
+// that needs no auth: a single `[a]` request locks the worker at 100% CPU). It is
+// caught at the public entry points → a clean null is returned.
 struct JsonParseError {};
 
-// Katı dilbilgisi (RFC 8259, Go encoding/json): ':' ve ',' zorunlu, sondaki virgül yok, sayı
-// -?(0|[1-9]d*)(.d+)?([eE][+-]?d+)?, literal tam "true"/"false"/"null". ESKİ GEVŞEKLİK (ölçüldü):
-// {"a" 1}, [1 2 3], [1,], {"a":1,}, 01 kabul ediliyordu — ağ geçidi ile LOOK aynı gövdeyi farklı
-// okur (JSON ayrışması). Sondaki çöp public giriş noktasında reddedilir (json_decode_document).
+// Strict grammar (RFC 8259, Go encoding/json): ':' and ',' are required, no trailing comma, number
+// -?(0|[1-9]d*)(.d+)?([eE][+-]?d+)?, literals exactly "true"/"false"/"null". OLD LOOSENESS (measured):
+// {"a" 1}, [1 2 3], [1,], {"a":1,}, 01 were accepted — a gateway and LOOK read the same body
+// differently (JSON parsing discrepancy). Trailing garbage is rejected at the public entry point (json_decode_document).
 static Value json_decode_value(const std::string& s, size_t& i, int depth) {
-    if (depth > JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS savunması
+    if (depth > JSON_MAX_DEPTH) throw JsonTooDeep{};  // stack + heap DoS defense
     json_skip_ws(s, i);
     if (i >= s.size()) throw JsonParseError{};
 
@@ -169,20 +169,20 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         i++;
         auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value::assoc_marker());
-        // Anahtar → değer konumu. ESKİ: her anahtarda önceki bütün anahtarlar taranıyordu (O(n²)):
-        // 1 MB'lık 100k anahtarlı gövde tek istekte 50 sn CPU (ölçüldü) — kimliksiz uzak DoS.
-        // Küçük nesnede (gerçek gövdelerin çoğu) doğrusal tarama ucuz ve tahsissiz; indeks yalnız
-        // SMALL anahtarı aşınca kurulur → küçük nesnede eskisi kadar hızlı, büyükte O(n).
+        // Key → value position. OLD: on every key all the previous keys were scanned (O(n²)):
+        // a 1 MB body with 100k keys cost 50 s of CPU in a single request (measured) — an unauthenticated remote DoS.
+        // On a small object (most real bodies) a linear scan is cheap and allocation-free; the index is built only when
+        // the SMALL key count is exceeded → as fast as before on a small object, O(n) on a large one.
         constexpr size_t SMALL = 16;
-        std::unordered_map<std::string, size_t> pos;   // boşken tahsis yok
-        auto find_key = [&](const std::string& key) -> size_t {   // değer konumu; 0 = yok
+        std::unordered_map<std::string, size_t> pos;   // no allocation while empty
+        auto find_key = [&](const std::string& key) -> size_t {   // value position; 0 = absent
             size_t nkeys = (arr->size() - 1) / 2;
             if (nkeys <= SMALL) {
                 for (size_t k = 1; k + 1 < arr->size(); k += 2)
                     if ((*arr)[k].as_string() == key) return k + 1;
                 return 0;
             }
-            if (pos.empty())   // eşik ilk aşıldığında mevcut anahtarlardan kur
+            if (pos.empty())   // when the threshold is first exceeded, build from the existing keys
                 for (size_t k = 1; k + 1 < arr->size(); k += 2) pos.emplace((*arr)[k].as_string(), k + 1);
             auto it = pos.find(key);
             return it == pos.end() ? 0 : it->second;
@@ -198,10 +198,10 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
             if (i >= s.size() || s[i] != ':') throw JsonParseError{};
             i++;
             Value val = json_decode_value(s, i, depth + 1);
-            // B-04: yinelenen anahtar → SON kazanır, anahtar KONUMU korunur
-            // (JS/Go/Python/PHP ile aynı). Eski davranış "ilk kazanır + ikisini de tut"
-            // idi → gateway "user" görüp geçirir, backend "admin" görür (JSON interop
-            // yetki atlatma). Yerinde güncelle: anahtar sona kaymasın (o da uyumsuzluk).
+            // B-04: duplicate key → the LAST wins, the key POSITION is kept
+            // (same as JS/Go/Python/PHP). The old behavior was "the first wins + keep both"
+            // → a gateway sees "user" and lets it through, the backend sees "admin" (JSON interop
+            // authorization bypass). Update in place: so the key does not move to the end (that is a mismatch too).
             if (size_t at = find_key(key)) (*arr)[at] = std::move(val);
             else {
                 if (!pos.empty()) pos.emplace(key, arr->size() + 1);
@@ -232,13 +232,13 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     if (s.compare(i, 4, "true") == 0)  { i += 4; return Value(true); }
     if (s.compare(i, 5, "false") == 0) { i += 5; return Value(false); }
     if (s.compare(i, 4, "null") == 0)  { i += 4; return Value(); }
-    // Sayı: -?(0|[1-9]d*)(.d+)?([eE][+-]?d+)?
+    // Number: -?(0|[1-9]d*)(.d+)?([eE][+-]?d+)?
     size_t start = i;
     bool is_float = false;
     auto digit = [&](size_t k) { return k < s.size() && s[k] >= '0' && s[k] <= '9'; };
     if (i < s.size() && s[i] == '-') i++;
     if (!digit(i)) throw JsonParseError{};
-    if (s[i] == '0') { i++; if (digit(i)) throw JsonParseError{}; }   // baştaki sıfır ("01") yok
+    if (s[i] == '0') { i++; if (digit(i)) throw JsonParseError{}; }   // no leading zero ("01")
     else while (digit(i)) i++;
     if (i < s.size() && s[i] == '.') {
         is_float = true; i++;
@@ -254,34 +254,34 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
     std::string num = s.substr(start, i - start);
     try {
         if (is_float) return Value(std::stod(num));
-        return Value((int64_t)std::stoll(num));   // 32-bit stoi taşıp 0 döndürüyordu
+        return Value((int64_t)std::stoll(num));   // 32-bit stoi overflowed and returned 0
     } catch (...) {
-        // int64 aralığını AŞAN tamsayı: float'a düşmek SESSİZ kesinlik kaybıdır.
-        // 9223372036854775809 → 9223372036854775808 (1 eksik), uint64-max
-        // 18446744073709551615 → ...616 (1 fazla). Snowflake/Discord/Twitter ID,
-        // MySQL BIGINT UNSIGNED anahtar bu aralıkta — ID sessizce bozulur, yanlış
-        // kayıt eşleşir. `...808` makul bir tamsayı gibi göründüğü için `1e+27`den
-        // çok daha tehlikeli. KESİNLİĞİ KORU: orijinal metni STRING olarak döndür
-        // (LOOK'ta uint64/bignum tipi yok; string tam kimliği kayıpsız taşır ve
-        // DB'ye/karşılaştırmaya birebir gider). Float form (is_float) zaten
-        // kesinlik kaybını göze aldığı için double kalır.
+        // An integer BEYOND the int64 range: falling to float is a SILENT loss of precision.
+        // 9223372036854775809 → 9223372036854775808 (1 less), uint64-max
+        // 18446744073709551615 → ...616 (1 more). Snowflake/Discord/Twitter IDs,
+        // MySQL BIGINT UNSIGNED keys are in this range — the ID is silently corrupted, the wrong
+        // record matches. Since `...808` looks like a reasonable integer it is far more
+        // dangerous than `1e+27`. PRESERVE PRECISION: return the original text as a STRING
+        // (LOOK has no uint64/bignum type; a string carries the exact ID losslessly and
+        // goes to the DB/comparison one to one). The float form (is_float) already
+        // accepts the loss of precision, so it stays double.
         if (!is_float) return Value(num);
-        // Ondalık taşma (1e999): eskiden sessizce 0 dönüyordu (yanlış değer). Go: "number out of
-        // range" hatası → belge geçersiz.
+        // Decimal overflow (1e999): it used to silently return 0 (a wrong value). Go: a "number out of
+        // range" error → the document is invalid.
         throw JsonParseError{};
     }
 }
 
-// Belge = tek değer + yalnız boşluk. ESKİ: sondaki çöp yok sayılıyordu ("[1] xyz" → [1]).
-// Geçersiz / aşırı derin belge → null (json::decode ve request::json sözleşmesi).
+// Document = a single value + only whitespace. OLD: trailing garbage was ignored ("[1] xyz" → [1]).
+// Invalid / too deep document → null (the json::decode and request::json contract).
 std::string json_encode_value(const Value& v) { return json_encode(v); }
 
 static Value json_decode_document_here(const std::string& s);
-// Büyük belge fiber içinde ortak havuzda çözülür (fiber.h fiber_offload): bölünemeyen uzun C++ işi
-// iş parçacığını tutarsa aynı iş parçacığındaki öteki istekler bitene dek bekler.
+// A large document is decoded in the shared pool inside a fiber (fiber.h fiber_offload): if long C++ work that cannot be split
+// holds the thread, the other requests on the same thread wait until it finishes.
 static Value json_decode_document(const std::string& s) {
-    // Ölçüldü (16 CPU, 4 × 12 MB decode dönerken): aynı iş parçacığına bağlı keep-alive /ok p99
-    // 99 ms → 0,7 ms. Küçük belge burada çözülür (havuza geçiş maliyeti kazançtan büyük).
+    // Measured (16 CPU, while 4 × 12 MB decodes ran): keep-alive /ok p99 bound to the same thread
+    // 99 ms → 0.7 ms. A small document is decoded here (the cost of moving to the pool is greater than the gain).
     if (s.size() >= (size_t(256) << 10)) return fiber_offload([&] { return json_decode_document_here(s); });
     return json_decode_document_here(s);
 }
@@ -293,8 +293,8 @@ static Value json_decode_document_here(const std::string& s) {
         if (i != s.size()) return Value();
         return v;
     }
-    catch (const JsonTooDeep&) { return Value(); }   // aşırı derin → null (DoS savunması)
-    catch (const JsonParseError&) { return Value(); } // bozuk → null
+    catch (const JsonTooDeep&) { return Value(); }   // too deep → null (DoS defense)
+    catch (const JsonParseError&) { return Value(); } // malformed → null
 }
 
 // â”€â”€ Route matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -330,10 +330,10 @@ static std::regex pattern_to_regex(const std::string& pattern,
 
 // â”€â”€ Web modules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// ── İstek tutamacı (look/request_scope.h) ────────────────────────────────────
-// fiber-ok: yalnız fiber DIŞINDA kullanılır (Fiber::current() varsa fiber'ın kendi alanı)
+// ── Request handle (look/request_scope.h) ───────────────────────────────────
+// fiber-ok: used only OUTSIDE a fiber (if Fiber::current() exists, the fiber's own field)
 static thread_local WebContext*   tl_req_web = nullptr;
-static thread_local std::ostream* tl_req_out = nullptr;   // fiber-ok: yukarıdakiyle aynı kural
+static thread_local std::ostream* tl_req_out = nullptr;   // fiber-ok: same rule as the one above
 
 WebContext* current_request_web() {
     if (Fiber* f = Fiber::current()) return static_cast<WebContext*>(f->local.req_web);
@@ -353,9 +353,9 @@ RequestScope::~RequestScope() {
     else { tl_req_web = prev_web_; tl_req_out = prev_out_; }
 }
 
-// Modüllerin bağlam tutamacı. fixed doluysa o bağlam (komut satırı, kurulum, iş kuyruğu — tek
-// bağlamlı yollar); boşsa çağrı anındaki isteğin bağlamı (web dağıtımı). İstek yokken çağrılırsa
-// açık hata — ölü bir adrese yazmak yerine.
+// The modules' context handle. If fixed is set, that context (command line, setup, job queue — single-
+// context paths); if empty, the context of the request at call time (web dispatch). If called with no request, an
+// explicit error — instead of writing to a dead address.
 struct WebRef {
     WebContext* fixed = nullptr;
     WebContext* get() const {
@@ -387,9 +387,9 @@ static Module make_request(WebRef ctx) {
             return Value(arr);
         }
         auto it = ctx->get_params.find(args[0].to_string());
-        // Ikinci argüman VARSAYILAN deger — env(key,varsayilan) / config(key,varsayilan)
-        // ile ayni kalip. ESKI HATA: ikinci argüman SESSIZCE YOK SAYILIYORDU;
-        // request::get("sayfa", 1) yazan gelistirici null aliyordu.
+        // The second argument is the DEFAULT value — the same pattern as env(key,default) / config(key,default).
+        // OLD BUG: the second argument was SILENTLY IGNORED;
+        // a developer who wrote request::get("page", 1) got null.
         if (it != ctx->get_params.end()) return Value(it->second);
         return args.size() >= 2 ? args[1] : Value();
     };
@@ -401,7 +401,7 @@ static Module make_request(WebRef ctx) {
         }
         auto it = ctx->post_params.find(args[0].to_string());
         if (it != ctx->post_params.end()) return Value(it->second);
-        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
+        return args.size() >= 2 ? args[1] : Value();   // default (env pattern)
     };
     m.functions["body"] = [ctx](auto) -> Value {
         return Value(ctx->body);
@@ -409,18 +409,18 @@ static Module make_request(WebRef ctx) {
     m.functions["ip"] = [ctx](auto) -> Value {
         return Value(ctx->remote_addr);
     };
-    // request::scheme() / request::host() — istemcinin gördüğü adres. X-Forwarded-Proto/-Host yalnız
-    // güvenilen vekilden (LOOK_TRUSTED_PROXY) — request::ip ile aynı kural; uygulama başlığı kendisi
-    // okursa istemci şemayı/ana bilgisayarı seçebilir. host: küçük harf, ad[:port]; geçersizse "".
+    // request::scheme() / request::host() — the address the client sees. X-Forwarded-Proto/-Host only
+    // from a trusted proxy (LOOK_TRUSTED_PROXY) — the same rule as request::ip; if the application reads the header itself
+    // the client can choose the scheme/host. host: lower case, name[:port]; "" if invalid.
     m.functions["scheme"] = [ctx](auto) -> Value {
         return Value(std::string(ctx->is_https ? "https" : "http"));
     };
     m.functions["host"] = [ctx](auto) -> Value {
         return Value(ctx->host);
     };
-    // request::header("Authorization") — gelen HTTP header'ını oku.
-    // Anahtar case-insensitive (headers_in lowercase saklanır: Authorization,
-    // X-Api-Key, User-Agent hepsi çalışır). Yoksa null döner.
+    // request::header("Authorization") — read an incoming HTTP header.
+    // The key is case-insensitive (headers_in is stored lowercase: Authorization,
+    // X-Api-Key, User-Agent all work). Returns null if absent.
     m.functions["header"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value();
         std::string key = args[0].to_string();
@@ -428,13 +428,13 @@ static Module make_request(WebRef ctx) {
         if (key == "cookie") csrf_exempt_cookie_guard(ctx.get(), "request::header(\"Cookie\")");
         auto it = ctx->headers_in.find(key);
         if (it != ctx->headers_in.end()) return Value(it->second);
-        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
+        return args.size() >= 2 ? args[1] : Value();   // default (env pattern)
     };
-    // request::headers() — tüm header'ları assoc array olarak döner
+    // request::headers() — returns all headers as an assoc array
     m.functions["headers"] = [ctx](auto) -> Value {
         auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value::assoc_marker());
-        // csrf::exempt ile muaf istekte çerez başlığı verilmez (csrf_exempt_cookie_guard)
+        // a cookie header is not given on a request exempted with csrf::exempt (csrf_exempt_cookie_guard)
         const bool no_cookie = !ctx->csrf_exempt_rule.empty();
         for (auto& [k, v] : ctx->headers_in) {
             if (no_cookie && k == "cookie") continue;
@@ -449,12 +449,12 @@ static Module make_request(WebRef ctx) {
     m.functions["is_patch"]   = [ctx](auto) -> Value { return Value(ctx->method == "PATCH");   };
     m.functions["is_head"]    = [ctx](auto) -> Value { return Value(ctx->method == "HEAD");    };
     m.functions["is_options"] = [ctx](auto) -> Value { return Value(ctx->method == "OPTIONS"); };
-    // request::json() â€” parse JSON body otomatik
+    // request::json() — parse the JSON body automatically
     m.functions["json"] = [ctx](auto) -> Value {
         if (ctx->body.empty()) return Value();
         return json_decode_document(ctx->body);
     };
-    // request::all() â€” GET + POST params birleÅŸik
+    // request::all() — GET + POST params combined
     m.functions["all"] = [ctx](auto) -> Value {
         auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value::assoc_marker());
@@ -468,32 +468,32 @@ static Module make_request(WebRef ctx) {
         return it != ctx->route_params.end() ? Value(it->second) : Value();
     };
 
-    // request::file(name) veya request::file(name, options_array)
+    // request::file(name) or request::file(name, options_array)
     // options keys: max_size (int bytes), allow_mime (array), allow_svg (bool)
-    // Varsayılan limit: 1MB
+    // Default limit: 1MB
     m.functions["file"] = [ctx](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("request::file() requires field name");
 
-        // multipart/form-data DEĞİLSE dosya YOK demektir → docs sözleşmesi: null döner
-        // (kullanıcı `if ($f == null)` ile ele alır). ESKİ HATA: throw ediyordu → docs
-        // "null döner" derken kod exception atıyordu; dokümanı takip eden `if($f==null)`
-        // dalına HİÇ ulaşamıyordu (dogfooding #3-A, session::has'ın kardeşi). Ayrıca ileride
-        // multipart --mode http'ye tam bağlanınca da doğru sözleşme: dosya-yoksa-null.
-        // Yüklenen dosya yalnız multipart gövdede olur (web.cpp ortam türünü tam ayrıştırır). Eskiden
-        // content_type'ta küçük harfli alt dize aranıyordu: "Multipart/Form-Data" gövdesinde alanlar
-        // okunurken request::file null dönüyordu.
+        // if it is NOT multipart/form-data there is NO file → docs contract: returns null
+        // (the user handles it with `if ($f == null)`). OLD BUG: it threw → while the docs
+        // said "returns null", the code threw an exception; the `if($f==null)` branch that follows the documentation
+        // could NEVER be reached (dogfooding #3-A, the sibling of session::has). Also when later
+        // multipart is fully wired to --mode http it is the right contract too: no file → null.
+        // An uploaded file exists only in a multipart body (web.cpp fully parses the environment type). It used to
+        // search for a lowercase substring in content_type: with a "Multipart/Form-Data" body the fields were
+        // read while request::file returned null.
         if (ctx->uploaded_files.empty())
-            return Value();  // null — dosya yok
+            return Value();  // null — no file
 
         std::string field = args[0].to_string();
         auto it = ctx->uploaded_files.find(field);
         if (it == ctx->uploaded_files.end() || !it->second.valid)
-            return Value(); // dosya seçilmemişse null döndür
+            return Value(); // return null if no file was selected
 
         const UploadedFile& uf = it->second;
 
-        // Seçenekleri oku
-        size_t    max_size   = 1 * 1024 * 1024; // varsayılan 1MB
+        // Read the options
+        size_t    max_size   = 1 * 1024 * 1024; // default 1MB
         bool      allow_svg  = false;
         std::vector<std::string> allow_mime;
 
@@ -516,16 +516,16 @@ static Module make_request(WebRef ctx) {
             }
         }
 
-        // Boyut kontrolü
+        // Size check
         if (uf.size > max_size)
             throw std::runtime_error("Uploaded file exceeds max_size limit (" +
                                      std::to_string(max_size) + " bytes)");
 
-        // SVG kontrolü — allow_mime içinde SVG varsa allow_svg de is required
+        // SVG check — if allow_mime contains SVG, allow_svg is required too
         if (uf.mime == "image/svg+xml" && !allow_svg)
             throw std::runtime_error("SVG upload requires allow_svg: true option");
 
-        // MIME kontrolü — allow_mime belirtilmişse listede olmalı
+        // MIME check — if allow_mime is specified it must be in the list
         if (!allow_mime.empty()) {
             bool found = false;
             for (auto& m : allow_mime) if (m == uf.mime) { found = true; break; }
@@ -533,7 +533,7 @@ static Module make_request(WebRef ctx) {
                 throw std::runtime_error("File type not allowed: " + uf.mime);
         }
 
-        // Dönüş değeri — assoc array
+        // Return value — assoc array
         auto result = std::make_shared<ValueArray>();
         result->push_back(Value::assoc_marker());
         result->push_back(Value(std::string("path")));     result->push_back(Value(uf.temp_path));
@@ -547,14 +547,14 @@ static Module make_request(WebRef ctx) {
     return m;
 }
 
-// HTTP response header CRLF injection savunması: header adı/değerindeki CR/LF
-// (ve diğer kontrol karakterleri) response splitting / Set-Cookie enjeksiyonu /
-// open-redirect+CRLF sağlar. İlk CR/LF/NUL'da kes — sonrası enjeksiyon yükü.
-// (Serileştirme katmanında da tekrar uygulanır — defense-in-depth.)
+// HTTP response header CRLF injection defense: CR/LF in the header name/value
+// (and other control characters) enable response splitting / Set-Cookie injection /
+// open-redirect+CRLF. Cut at the first CR/LF/NUL — what follows is the injection payload.
+// (It is applied again in the serialization layer too — defense-in-depth.)
 static std::string sanitize_header(const std::string& s) {
     size_t cut = s.find_first_of("\r\n");
     std::string v = (cut == std::string::npos) ? s : s.substr(0, cut);
-    // Kalan CR/LF/NUL'ları da temizle (paranoya) — normalde cut zaten kesti.
+    // Also strip the remaining CR/LF/NUL (paranoia) — normally the cut already cut it.
     v.erase(std::remove_if(v.begin(), v.end(),
         [](unsigned char c){ return c == '\r' || c == '\n' || c == '\0'; }), v.end());
     return v;
@@ -585,9 +585,9 @@ static Module make_response_module(WebRef ctx) {
         ctx->headers_out["Location"] = sanitize_header(args[0].to_string());
         return Value();
     };
-    // response::json/text/html — body'yi ctx->response_body'ye yazar (web.h sözleşmesi).
-    // Return değeri expression statement olarak çağrıldığında kaybolur;
-    // FCGI/HTTP çıkış katmanları body'yi response_body'den okur.
+    // response::json/text/html — write the body to ctx->response_body (the web.h contract).
+    // The return value is lost when called as an expression statement;
+    // the FCGI/HTTP output layers read the body from response_body.
     m.functions["json"] = [ctx](auto args) -> Value {
         ctx->headers_out["Content-Type"] = "application/json; charset=utf-8";
         if (args.size() >= 2) ctx->set_status(args[1].to_int());   // response::json($d, 201)
@@ -598,9 +598,9 @@ static Module make_response_module(WebRef ctx) {
         }
         return Value();
     };
-    // response::error(kod, mesaj) — durum kodu + {"ok":false,"hata":mesaj} JSON gövdesi.
-    // Tek satırda hata dönüşü: return response::error(404, "Not found")
-    // 3 satırlık status+json+return kalıbının yerine geçer.
+    // response::error(code, message) — status code + a {"ok":false,"error":message} JSON body.
+    // Error return in a single line: return response::error(404, "Not found")
+    // Replaces the 3-line status+json+return pattern.
     m.functions["error"] = [ctx](auto args) -> Value {
         int code = args.empty() ? 500 : args[0].to_int();
         std::string msg = args.size() >= 2 ? args[1].to_string() : "Error";
@@ -638,8 +638,8 @@ static Module make_json_module() {
     };
     m.functions["decode"] = [](auto args) -> Value {
         if (args.empty()) return Value();
-        // Bellek bütçesi: çözülen değerler metinden büyüktür (her değer 32 bayt + metinler) — kabaca
-        // 4 katı önceden sorulur (look/mem_budget.h); dev bir belge güvenli noktaya varmadan bitirmesin.
+        // Memory budget: decoded values are larger than the text (32 bytes per value + texts) — roughly
+        // 4 times is asked in advance (look/mem_budget.h); so that a huge document does not finish before reaching a safe point.
         if (args[0].type() == Value::STRING) look::mem_reserve((int64_t)args[0].str_ref().size() * 4, "json::decode()");
         return json_decode_document(args[0].to_string());
     };
@@ -647,20 +647,20 @@ static Module make_json_module() {
     return m;
 }
 
-// Cerez adi/degeri icin yuzde-kodlama.
+// Percent-encoding for a cookie name/value.
 //
-// ESKI HATA: sanitize_header() yalnizca CR/LF/NUL temizliyordu — genel basliklar
-// icin dogru, ama cerezde ';' YAPISAL AYRACTIR. Kullanici kontrolundeki deger
-// cereze yazilinca (dil/tema tercihi gibi cok yaygin kalip) saldirgan CEREZ
-// OZNITELIKLERINI kontrol edebiliyordu:
+// OLD BUG: sanitize_header() cleaned only CR/LF/NUL — correct for general headers,
+// but in a cookie ';' is a STRUCTURAL SEPARATOR. When a user-controlled value
+// was written to a cookie (a very common pattern like a language/theme preference) an attacker could control the COOKIE
+// ATTRIBUTES:
 //   ?v=x; HttpOnly; Domain=evil.com
-//   -> Set-Cookie: tercih=x; HttpOnly; Domain=evil.com; Path=/
-// Etki: Domain'i ust alan adina cekip cerezi TUM alt alan adlarina sizdirmak,
-// Max-Age ile kalicilastirmak, Path/Secure ile uygulamanin niyetini degistirmek.
-// (CRLF enjeksiyonu zaten engelliydi — bu ondan farkli bir kanal.)
+//   -> Set-Cookie: preference=x; HttpOnly; Domain=evil.com; Path=/
+// Effect: pulling Domain up to the parent domain to leak the cookie to ALL subdomains,
+// making it persistent with Max-Age, changing the application's intent with Path/Secure.
+// (CRLF injection was already blocked — this is a different channel from that.)
 //
-// Cozum PHP setcookie() ile ayni: yazarken kodla, okurken coz. Mesru veri
-// (';' iceren bir deger) gidis-donuste korunur ama yapi anlami tasiyamaz.
+// The fix is the same as PHP setcookie(): encode when writing, decode when reading. Legitimate data
+// (a value containing ';') is preserved on a round trip but cannot carry structural meaning.
 static std::string cookie_enc(const std::string& s) {
     static const char* hex = "0123456789ABCDEF";
     std::string o; o.reserve(s.size());
@@ -698,24 +698,24 @@ static Module make_cookie_module(WebRef ctx) {
         if (args.empty()) return Value();
         auto it = ctx->cookies_in.find(args[0].to_string());
         if (it != ctx->cookies_in.end()) return Value(cookie_dec(it->second));
-        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
+        return args.size() >= 2 ? args[1] : Value();   // default (env pattern)
     };
     m.functions["set"] = [ctx](auto args) -> Value {
         if (args.size() < 2) return Value();
-        // Yuzde-kodla: ';' ve diger yapisal karakterler oznitelik enjekte edemesin.
+        // Percent-encode: so that ';' and other structural characters cannot inject an attribute.
         std::string name    = cookie_enc(args[0].to_string());
         std::string value   = cookie_enc(args[1].to_string());
 
-        // GÜVENLİ-VARSAYILAN (2026-08 flip): HttpOnly + SameSite=Lax VARSAYILAN — session:: ile
-        // hizalı (o üçünü zaten hardcoded alıyordu; cookie:: hiçbirini almıyordu → tutarsızlık,
-        // "LOOK cookie'leri güvenli" öğrenen kullanıcı cookie::set ile yanılıyordu). Secure DEĞİL
-        // varsayılan (düz-HTTP dev'i sessizce kırardı). Opt-out: options assoc'u ["httponly"=>false].
+        // SECURE-BY-DEFAULT (2026-08 flip): HttpOnly + SameSite=Lax are the DEFAULT — aligned with session:: (it
+        // already took those three hardcoded; cookie:: took none of them → an inconsistency,
+        // a user who learned "LOOK cookies are secure" was mistaken with cookie::set). Secure is NOT
+        // the default (it would silently break plain-HTTP dev). Opt-out: the options assoc ["httponly"=>false].
         int expires = 0;
         std::string path_c = "/";
         bool httponly = true, secure = false;
         std::string samesite = "Lax";
-        // Kalan argümanlar TİP-BAZLI: ARRAY=options assoc · int=expires · string=path.
-        // Böylece set(k,v) · set(k,v,3600) · set(k,v,3600,"/") · set(k,v,["httponly"=>false]) çalışır.
+        // The remaining arguments are TYPE-BASED: ARRAY=options assoc · int=expires · string=path.
+        // So set(k,v) · set(k,v,3600) · set(k,v,3600,"/") · set(k,v,["httponly"=>false]) all work.
         for (size_t i = 2; i < args.size(); ++i) {
             if (args[i].type() == Value::ARRAY) {
                 auto& a = *args[i].as_array();
@@ -724,7 +724,7 @@ static Module make_cookie_module(WebRef ctx) {
                     std::string k = a[j].to_string();
                     if      (k == "httponly") httponly = a[j+1].is_truthy();
                     else if (k == "secure")   secure   = a[j+1].is_truthy();
-                    else if (k == "samesite") samesite = a[j+1].to_string(); // "" / "false" → atla
+                    else if (k == "samesite") samesite = a[j+1].to_string(); // "" / "false" → skip
                 }
             } else if (args[i].type() == Value::INT) {
                 expires = (int)args[i].to_int();
@@ -732,9 +732,9 @@ static Module make_cookie_module(WebRef ctx) {
                 path_c = args[i].to_string();
             }
         }
-        // Yol ve SameSite öznitelik olarak Set-Cookie'ye girer: ';' yeni öznitelik açardı
-        // (yoldan "; Domain=evil.example; Max-Age=…" — kullanıcı girdisi yol olursa). RFC 6265
-        // path-av: kontrol karakteri ve ';' yok. Sessiz temizlik değil, açık hata.
+        // Path and SameSite go into Set-Cookie as attributes: ';' would open a new attribute
+        // (from the path "; Domain=evil.example; Max-Age=…" — if user input becomes the path). RFC 6265
+        // path-av: no control characters and no ';'. An explicit error, not a silent cleanup.
         for (unsigned char c : path_c)
             if (c == ';' || c < 0x20 || c == 0x7f)
                 throw std::runtime_error("cookie::set() path must not contain ';' or control characters");
@@ -752,7 +752,7 @@ static Module make_cookie_module(WebRef ctx) {
         if (expires > 0) {
             time_t exp = std::time(nullptr) + expires;
             char buf[64];
-            // gmtime paylaşılan statik buffer döndürür (thread race) — gmtime_r
+            // gmtime returns a shared static buffer (thread race) — gmtime_r
             struct tm tm_buf{};
 #ifdef _WIN32
             gmtime_s(&tm_buf, &exp);
@@ -762,12 +762,12 @@ static Module make_cookie_module(WebRef ctx) {
             strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_buf);
             cookie += "; Expires=" + std::string(buf);
         }
-        // Güvenlik öznitelikleri (varsayılan HttpOnly+SameSite=Lax; opt-out ile kapatılır).
+        // Security attributes (default HttpOnly+SameSite=Lax; turned off with opt-out).
         if (httponly) cookie += "; HttpOnly";
         if (secure)   cookie += "; Secure";
         if (!samesite.empty() && samesite != "false" && samesite != "0")
             cookie += "; SameSite=" + samesite;
-        // Her çerez ayrı Set-Cookie satırı — std::map tek anahtarı ezerdi.
+        // Each cookie is a separate Set-Cookie line — std::map would overwrite the single key.
         ctx->set_cookies_out.push_back(cookie);
         return Value();
     };
@@ -782,11 +782,11 @@ static Module make_cookie_module(WebRef ctx) {
         return Value(ctx->cookies_in.count(args[0].to_string()) > 0);
     };
 
-    // csrf::exempt ile muaf geçen istekte çerez YOK (session:: ile aynı kural — make_session_module).
-    // ESKİ: session:: hata veriyordu ama cookie:: açıktı → muaf rota çerezle kimlik doğrulayabiliyordu
-    // (CSRF açığı); çerez YAZMAK da başka siteden tetiklenebilir (login CSRF: kurbanı saldırganın
-    // hesabına sokmak), SİLMEK kurbanı oturumdan atar. Muaf rota çereze hiç dokunmaz. Muafiyet yalnız
-    // güvenli olmayan yöntemlerde işler: GET'te ve muaf olmayan rotada çerez her zamanki gibi.
+    // No cookie on a request exempted with csrf::exempt (same rule as session:: — make_session_module).
+    // OLD: session:: gave an error but cookie:: was open → an exempt route could authenticate with a cookie
+    // (a CSRF hole); WRITING a cookie can also be triggered from another site (login CSRF: getting the victim into the attacker's
+    // account), DELETING logs the victim out of the session. An exempt route never touches the cookie. The exemption works only on
+    // unsafe methods: on GET and on a non-exempt route cookies are as usual.
     for (auto& [name, fn] : m.functions) {
         auto inner = fn;
         fn = [ctx, inner, name = name](std::vector<Value> args) -> Value {
@@ -797,10 +797,10 @@ static Module make_cookie_module(WebRef ctx) {
     return m;
 }
 
-// csrf::exempt ile muaf geçen istekte çerez HİÇBİR yoldan okunmaz/yazılmaz — cookie::, request::header
-// ("Cookie"), response::header("Set-Cookie"), CGI'de env("HTTP_COOKIE"). ESKİ: yalnız cookie:: kapalıydı;
-// aynı çerez başlıktan okunabiliyordu (ölçüldü: Cookie: sid=VICTIM → yanıt sid=VICTIM). request::headers()
-// muaf istekte çerez başlığını hiç vermez. Mesaj tek yerde.
+// On a request exempted with csrf::exempt the cookie is NEITHER read NOR written by ANY path — cookie::, request::header
+// ("Cookie"), response::header("Set-Cookie"), env("HTTP_COOKIE") in CGI. OLD: only cookie:: was closed;
+// the same cookie could be read from the header (measured: Cookie: sid=VICTIM → response sid=VICTIM). request::headers()
+// never gives the cookie header on an exempt request. The message is in one place.
 void csrf_exempt_cookie_guard(const WebContext* w, const char* what) {
     if (w && !w->csrf_exempt_rule.empty())
         throw std::runtime_error(std::string(what) + " in a request exempted from the CSRF check by csrf::exempt(\"" +
@@ -808,10 +808,10 @@ void csrf_exempt_cookie_guard(const WebContext* w, const char* what) {
             "do not exempt it (send the CSRF token); a webhook verifies its signature instead");
 }
 
-// ── Session depolama backend'i ────────────────────────────────────────────────
+// ── Session storage backend ───────────────────────────────────────────────────
 // LOOK_SESSION_DRIVER=redis + LOOK_REDIS_URL → Redis (multi-server session —
-// load balancer arkasında session'lar paylaşılır). Aksi halde dosya (tek sunucu).
-// Blob formatı iki backend'de de aynı: "key=value\n" satırları.
+// sessions are shared behind a load balancer). Otherwise a file (single server).
+// The blob format is the same in both backends: "key=value\n" lines.
 static bool session_use_redis() {
     static const bool v = []() {
         const char* d = std::getenv("LOOK_SESSION_DRIVER");
@@ -824,17 +824,17 @@ static int session_ttl() {
     static const int v = []() {
         const char* t = std::getenv("LOOK_SESSION_TTL");
         int n = t ? std::atoi(t) : 0;
-        return n > 0 ? n : 86400;   // varsayılan 1 gün
+        return n > 0 ? n : 86400;   // default 1 day
     }();
     return v;
 }
-// Redis oturum bağlantıları havuzdan: istek bir bağlantı alır, komut biter bitmez geri verir;
-// boşta bağlantı yoksa yenisi açılır (tembel). Eskiden iş parçacığı başına TEK bağlantı vardı:
-// fiber Redis'i beklerken aynı iş parçacığındaki başka bir istek aynı bağlantıya komut yazıp
-// öbürünün yanıtını okuyabiliyordu — A kullanıcısının oturumu B'ye gidiyordu
-// (tests/redis_session_isolation_test.sh). Hata ya da süre dolmasında RespClient bağlantıyı
-// kapatır; kapalı bağlantı havuza dönmez, sıradaki istek yenisini açar. Hata isteğe ulaşır:
-// eskiden yutuluyordu (Redis yanıt vermeyince oturum sessizce boş, yazılan veri sessizce kayıp).
+// Redis session connections come from a pool: a request takes a connection and gives it back as soon as the command finishes;
+// if there is no idle connection a new one is opened (lazy). It used to be ONE connection per thread:
+// while a fiber waited on Redis another request on the same thread could write a command to the same connection
+// and read the other's reply — user A's session went to B
+// (tests/redis_session_isolation_test.sh). On an error or a timeout RespClient closes the connection;
+// a closed connection does not return to the pool, the next request opens a new one. The error reaches the request:
+// it used to be swallowed (when Redis did not answer the session was silently empty, written data silently lost).
 static void with_session_redis(const std::function<void(RespClient&)>& op) {
     static std::mutex mu;
     static std::vector<std::unique_ptr<RespClient>> idle;
@@ -845,19 +845,19 @@ static void with_session_redis(const std::function<void(RespClient&)>& op) {
             if (idle.empty()) break;
             c = std::move(idle.back()); idle.pop_back();
         }
-        // Redis yeniden başladıysa havuzdaki her bağlantı ölüdür: gönderimden önce anlaşılır,
-        // atılır, sıradaki denenir (yoksa yenisi açılır). Hiçbir komut tekrarlanmaz.
+        // If Redis restarted every connection in the pool is dead: it is noticed before sending,
+        // dropped, the next one is tried (or a new one is opened if none). No command is repeated.
         if (c->usable_when_idle()) break;
         c.reset();
     }
     try {
-        if (!c) {   // kilit dışında: bağlanırken fiber askıya alınabilir
+        if (!c) {   // outside the lock: the fiber may be suspended while connecting
             const char* u = std::getenv("LOOK_REDIS_URL");
             c = std::make_unique<RespClient>(u ? std::string(u) : std::string("redis://127.0.0.1:6379"));
         }
         op(*c);
     } catch (const std::exception& e) {
-        // Yakalanmazsa 503 + günlük (uygulama hatası değil, oturum deposu kesintisi).
+        // If not caught: 503 + a log (not an application error, an outage of the session store).
         throw look::ServiceUnavailable(std::string("session: ") + e.what());
     }
     if (c->is_connected()) {
@@ -865,30 +865,30 @@ static void with_session_redis(const std::function<void(RespClient&)>& op) {
         if (idle.size() < 256) idle.push_back(std::move(c));
     }
 }
-// GÜVENLİK: Session ID doğrulama — üretilen format TAM 32 hex karakter. sid
-// client'ın LOOK_SESSION cookie'sinden gelir ve doğrudan dosya yoluna girer
-// (oturum dosyası yolu). Doğrulanmazsa "x/../../../etc/cron.d/pwn" gibi bir değer
-// path traversal → arbitrary file read (session::get) ve write/truncate
-// (session::set → ofstream trunc) sağlar. Katı allowlist: yalnız 32 hex kabul.
+// SECURITY: Session ID validation — the generated format is EXACTLY 32 hex characters. The sid
+// comes from the client's LOOK_SESSION cookie and goes directly into the file path
+// (the session file path). If not validated, a value like "x/../../../etc/cron.d/pwn" gives
+// path traversal → arbitrary file read (session::get) and write/truncate
+// (session::set → ofstream trunc). Strict allowlist: only 32 hex accepted.
 using look::valid_sid;
-// Session blob'u satir tabanli "key=value\n" formatinda. Anahtar/deger HIC
-// KACIRILMIYORDU: degerin icindeki \n YENI BIR ALAN tanimliyordu.
+// The session blob is in a line-based "key=value\n" format. Keys/values were NOT
+// ESCAPED AT ALL: a \n inside a value defined A NEW FIELD.
 //
-// OLCULEN SALDIRI (uygulama kullanici verisini oturuma yaziyorsa — cok yaygin):
-//   session::set("rol", "uye")                    // once yetki
-//   session::set("isim", request::get("isim"))    // sonra kullanici verisi
-//   ?isim=bob\nrol=admin\nadmin=1
-//   -> blob: rol=uye / isim=bob / rol=admin / admin=1
-//   -> session::get("admin") = "1"   HIC VAR OLMAYAN YETKI ALANI ENJEKTE EDILDI
-// Saldirgan login oncesi bir istekte admin/user_id/is_admin gibi alanlari
-// uydurabiliyordu. Anahtarda '=' de veriyi karistiriyordu:
+// MEASURED ATTACK (if the application writes user data into the session — very common):
+//   session::set("role", "member")                // privilege first
+//   session::set("name", request::get("name"))    // then user data
+//   ?name=bob\nrole=admin\nadmin=1
+//   -> blob: role=member / name=bob / role=admin / admin=1
+//   -> session::get("admin") = "1"   A PRIVILEGE FIELD THAT DID NOT EXIST AT ALL WAS INJECTED
+// The attacker could forge fields like admin/user_id/is_admin in a request before login. A '=' in the key also confused the data:
+//   set("a=b","X") -> get("a") = "b=X"
 //   set("a=b","X") -> get("a") = "b=X"
 //
-// Cozum: yaz/oku sirasinda kacir. Degerdeki satir sonu MESRU kullanici verisi
-// olabilir (textarea), o yuzden reddetmek degil kacirmak dogru — veri
-// gidis-donuste aynen korunur, ayrac anlami tasimaz.
-// Geriye donuk uyumlu: eski blob'larda ters bolu yok, unescape kimlik islevi gorur.
-// sess_esc/unesc/blob_get/blob_set → look/session_esc.h (saf, tablo-test edilebilir).
+// The fix: escape when writing/reading. A line ending in a value can be LEGITIMATE user data
+// (a textarea), so escaping, not rejecting, is right — the data is
+// preserved on a round trip, the separator carries no meaning.
+// Backward compatible: old blobs have no backslash, unescape acts as the identity function.
+// sess_esc/unesc/blob_get/blob_set → look/session_esc.h (pure, table-testable).
 using look::sess_esc;
 using look::sess_unesc;
 using look::sess_blob_get;
@@ -900,13 +900,13 @@ static std::string sess_load(const std::string& sid) {
         return blob;
     }
     bool foreign = false;
-    std::string blob = look::session_file_read(sid, &foreign, session_ttl());   // süresi dolmuşsa boş
-    if (foreign)   // bu sürecin yazmadığı bir dosya: asla oturum olmaz
+    std::string blob = look::session_file_read(sid, &foreign, session_ttl());   // empty if expired
+    if (foreign)   // a file this process did not write: never a session
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "SESSION",
             "ignored a session file not written by this process (wrong owner, permissions or a link): " + look::session_file(sid));
     return blob;
 }
-// Bir oturumun en büyük boyutu (bayt). LOOK_SESSION_MAX_BYTES; varsayılan 1 MB.
+// The maximum size of a session (bytes). LOOK_SESSION_MAX_BYTES; default 1 MB.
 static size_t session_max_bytes() {
     static const size_t v = [] {
         const char* e = std::getenv("LOOK_SESSION_MAX_BYTES");
@@ -920,10 +920,10 @@ static void sess_store(const std::string& sid, const std::string& blob) {
         with_session_redis([&](RespClient& r) { r.set("look_sess:" + sid, blob, session_ttl()); });
         return;
     }
-    look::session_file_write(sid, blob);   // 0600, bağlantı izlenmez
-    look::session_files_gc(session_ttl());  // süresi dolanları arka planda sil
+    look::session_file_write(sid, blob);   // 0600, links are not followed
+    look::session_files_gc(session_ttl());  // delete the expired ones in the background
 }
-// Var olan oturumu güncelle; false = oturum bu arada silindi (session_file_update'e bakın).
+// Update an existing session; false = the session was deleted in the meantime (see session_file_update).
 static bool sess_update(const std::string& sid, const std::string& blob) {
     if (session_use_redis()) {
         bool ok = false;
@@ -949,9 +949,9 @@ static void sess_remove(const std::string& sid) {
     }
     look::session_file_remove(sid);
 }
-// 32-hex CSPRNG session ID üret (fail-closed) — session::start ve regenerate
-// paylaşır. /dev/urandom (Linux) veya rand_s (Windows). Güvenli kaynak yoksa
-// zayıf ID yaymak yerine hata fırlat.
+// Generate a 32-hex CSPRNG session ID (fail-closed) — shared by session::start and regenerate.
+// /dev/urandom (Linux) or rand_s (Windows). If there is no secure source
+// throw an error instead of emitting a weak ID.
 static std::string gen_session_id() {
     char id[33];
 #if defined(_WIN32)
@@ -996,15 +996,15 @@ static std::string session_secure_attr(WebContext* ctx) {
     return "";
 }
 
-// ── csrf:: — sunucuda durum yok: imzalı çift-gönderim çerezi ─────────────────────
-// (gorilla/csrf, OWASP "signed double-submit"; LookPress src/security.lk ile aynı algoritma)
-//   çerez look_csrf = taban . "." . HMAC(LOOK_SECRET, "csrf|" . taban)   HTTPS'te __Host-look_csrf (Secure)
-//   form  _csrf     = nonce . "." . HMAC(taban, nonce)   — her çağrıda farklı (BREACH)
-// Anahtarı oturuma yazmak, form gören her ziyaretçiye sunucuda bir oturum dosyası açtırıyordu
-// (çerezsiz istekler diski doldurabiliyordu). Doğrulama: çerez imzası LOOK_SECRET ya da
-// LOOK_SECRET_PREVIOUS ile geçerli, gönderilen değerin MAC'i tabanla tutar, Origin varsa bu site.
-// session::regenerate/destroy (giriş/çıkış) yeni taban verir: girişten önce ele geçirilmiş ya da
-// dayatılmış bir anahtar sonra geçmez. __Host- öneki: alt alan adından çerez dayatılamaz.
+// ── csrf:: — no state on the server: a signed double-submit cookie ──────────────
+// (gorilla/csrf, OWASP "signed double-submit"; the same algorithm as LookPress src/security.lk)
+//   cookie look_csrf = base . "." . HMAC(LOOK_SECRET, "csrf|" . base)   on HTTPS __Host-look_csrf (Secure)
+//   form  _csrf     = nonce . "." . HMAC(base, nonce)   — different on every call (BREACH)
+// Writing the key to the session made every visitor who saw a form open a session file on the server
+// (cookieless requests could fill the disk). Verification: the cookie signature is valid with LOOK_SECRET or
+// LOOK_SECRET_PREVIOUS, the MAC of the submitted value matches the base, and Origin, if present, is this site.
+// session::regenerate/destroy (login/logout) gives a new base: a key captured or
+// imposed before login does not pass afterwards. __Host- prefix: a cookie cannot be imposed from a subdomain.
 static std::string csrf_hex(const std::vector<uint8_t>& b) {
     static const char* hx = "0123456789abcdef";
     std::string o; o.reserve(b.size() * 2);
@@ -1015,14 +1015,14 @@ static std::string csrf_mac(const std::string& key, const std::string& msg) {
     return csrf_hex(look::hmac_sha256(std::vector<uint8_t>(key.begin(), key.end()),
                                       std::vector<uint8_t>(msg.begin(), msg.end())));
 }
-static bool csrf_equal(const std::string& a, const std::string& b) {   // sabit süreli
+static bool csrf_equal(const std::string& a, const std::string& b) {   // constant-time
     if (a.size() != b.size()) return false;
     unsigned char d = 0;
     for (size_t i = 0; i < a.size(); ++i) d |= (unsigned char)(a[i] ^ b[i]);
     return d == 0;
 }
-// İmza anahtarları: önce güncel, sonra (varsa) önceki — anahtar değişirken açık formlar 403 almasın.
-// require: anahtar yoksa fırlat (csrf:: çağrıları) ya da boş dön (session:: içinden yenileme).
+// Signing keys: the current one first, then (if any) the previous one — so open forms do not get 403 while the key changes.
+// require: throw if there is no key (csrf:: calls) or return empty (refresh from inside session::).
 static std::vector<std::string> csrf_secrets(bool require) {
     const char* cur = std::getenv("LOOK_SECRET");
     std::string c = cur ? cur : "";
@@ -1032,14 +1032,14 @@ static std::vector<std::string> csrf_secrets(bool require) {
             "random value, the same on every server (e.g. openssl rand -hex 32): CSRF tokens are signed with it");
     }
     std::vector<std::string> v{c};
-    // Önceki anahtar da aynı kurala uyar (≥ 32): kısa bir önceki anahtar ("x") tahmin edilip geçerli
-    // CSRF çerezi imzalanabilirdi — güncel anahtarın uzunluk kuralı bu yoldan aşılıyordu. Kısa olan
-    // hiç kullanılmaz; başlangıç denetimi (csrf_secret_problem) uygulamayı nedeniyle durdurur.
+    // The previous key obeys the same rule (≥ 32): a short previous key ("x") could be guessed and a valid
+    // CSRF cookie signed — the length rule of the current key was bypassed this way. A short one
+    // is never used; the startup check (csrf_secret_problem) stops the application with the reason.
     const char* p = std::getenv("LOOK_SECRET_PREVIOUS");
     if (p && std::strlen(p) >= 32) v.push_back(p);
     return v;
 }
-// Secure: oturum çereziyle aynı karar (LOOK_SESSION_SECURE 1/0 zorlar; yoksa gerçek HTTPS).
+// Secure: the same decision as the session cookie (LOOK_SESSION_SECURE 1/0 forces; otherwise real HTTPS).
 static bool csrf_secure(WebContext* ctx) {
     const char* e = std::getenv("LOOK_SESSION_SECURE");
     if (e) return std::string(e) != "0";
@@ -1048,7 +1048,7 @@ static bool csrf_secure(WebContext* ctx) {
 static std::string csrf_cookie_name(WebContext* ctx) {
     return csrf_secure(ctx) ? "__Host-look_csrf" : "look_csrf";
 }
-// Çerezdeki taban: imzası anahtarlardan biriyle (0..max_key) geçerliyse taban, değilse "".
+// The base in the cookie: the base if its signature is valid with one of the keys (0..max_key), otherwise "".
 static std::string csrf_cookie_base(WebContext* ctx, size_t max_key) {
     auto it = ctx->cookies_in.find(csrf_cookie_name(ctx));
     if (it == ctx->cookies_in.end()) return "";
@@ -1064,15 +1064,15 @@ static std::string csrf_cookie_base(WebContext* ctx, size_t max_key) {
 }
 static void csrf_set_cookie(WebContext* ctx, const std::string& base) {
     std::string name = csrf_cookie_name(ctx);
-    auto& out = ctx->set_cookies_out;   // aynı istekte ikinci kez (yenileme): eski satır gider
+    auto& out = ctx->set_cookies_out;   // second time in the same request (refresh): the old line goes
     out.erase(std::remove_if(out.begin(), out.end(),
         [&](const std::string& s) { return s.rfind(name + "=", 0) == 0; }), out.end());
     out.push_back(name + "=" + base + "." + csrf_mac(csrf_secrets(true)[0], "csrf|" + base) +
                   "; Path=/; HttpOnly" + (csrf_secure(ctx) ? "; Secure" : "") + "; SameSite=Lax");
     ctx->csrf_base = base;
 }
-// Bu isteğin tabanı: geçerli çerez varsa o (önceki anahtarla imzalıysa güncel anahtarla yeniden
-// imzalanır), yoksa yeni taban + çerez. Bir istekte hep aynı taban.
+// This request's base: the current cookie if valid (if signed with the previous key it is re-signed
+// with the current key), otherwise a new base + cookie. Always the same base within a request.
 static std::string csrf_base(WebContext* ctx) {
     if (!ctx->csrf_base.empty()) return ctx->csrf_base;
     std::string b = csrf_cookie_base(ctx, 0);
@@ -1082,21 +1082,21 @@ static std::string csrf_base(WebContext* ctx) {
     csrf_set_cookie(ctx, b);
     return b;
 }
-// session::regenerate / session::destroy: uygulama csrf:: kullanıyorsa (bu istekte ya da çerezi
-// geldiyse) yeni taban. Kullanmayan uygulamada hiçbir şey yapmaz (LOOK_SECRET de istemez).
+// session::regenerate / session::destroy: a new base if the application uses csrf:: (in this request or if its cookie
+// came). Does nothing in an application that does not use it (does not ask for LOOK_SECRET either).
 static void csrf_rotate_if_used(WebContext* ctx) {
     bool used = !ctx->csrf_base.empty() || ctx->cookies_in.count("look_csrf") ||
                 ctx->cookies_in.count("__Host-look_csrf");
     if (!used || csrf_secrets(false).empty()) return;
     csrf_set_cookie(ctx, csrf_hex(look::secure_random_bytes(32)));
 }
-// Origin başlığı varsa bu siteden mi (request::host — X-Forwarded-Host yalnız güvenilen vekilden).
+// If there is an Origin header, is it from this site (request::host — X-Forwarded-Host only from a trusted proxy).
 static bool csrf_origin_ok(WebContext* ctx) {
     auto it = ctx->headers_in.find("origin");
-    if (it == ctx->headers_in.end() || it->second.empty()) return true;   // eski tarayıcı: yalnız anahtar
+    if (it == ctx->headers_in.end() || it->second.empty()) return true;   // old browser: key only
     std::string o = it->second;
     for (auto& c : o) c = (char)std::tolower((unsigned char)c);
-    if (o == "null") return false;                                           // opak köken (sandbox, data:)
+    if (o == "null") return false;                                           // opaque origin (sandbox, data:)
     auto p = o.find("://");
     if (p == std::string::npos) return false;
     std::string oh = o.substr(p + 3);
@@ -1108,29 +1108,29 @@ static bool csrf_origin_ok(WebContext* ctx) {
 static Module make_csrf_module(WebRef ctx) {
     Module m;
     m.name = "csrf";
-    // csrf::token() — forma ya da X-CSRF-Token başlığına konan değer; her çağrıda yeni nonce.
+    // csrf::token() — the value put in a form or the X-CSRF-Token header; a new nonce on every call.
     m.functions["token"] = [ctx](auto) -> Value {
         std::string base = csrf_base(ctx);
         std::string nonce = csrf_hex(look::secure_random_bytes(16));
         return Value(nonce + "." + csrf_mac(base, nonce));
     };
-    // csrf::field() — formun içine konan gizli alan (değer yalnız [0-9a-f.] — kaçış gerekmez).
+    // csrf::field() — a hidden field put inside a form (the value is only [0-9a-f.] — no escaping needed).
     m.functions["field"] = [ctx](auto) -> Value {
         std::string base = csrf_base(ctx);
         std::string nonce = csrf_hex(look::secure_random_bytes(16));
         return Value("<input type=\"hidden\" name=\"_csrf\" value=\"" + nonce + "." + csrf_mac(base, nonce) + "\">");
     };
-    // csrf::exempt(yol) — yalnız üst düzeyde (http_main kurulum tablosu kaydeder); burada çağrılırsa
-    // istek sırasındadır: açık hata.
+    // csrf::exempt(path) — only at top level (http_main's setup table registers it); if called here
+    // it is during a request: an explicit error.
     m.functions["exempt"] = [](auto) -> Value {
         throw std::runtime_error("csrf::exempt() is called at the top level of the program, next to route(), not inside a route");
     };
     return m;
 }
 
-// ── Varsayılan CSRF kapısı (http_main: üç mod aynı motordan) ─────────────────────
-// Kural: çerez kullanan her uygulama korunur — programda session::/csrf::/cookie:: varsa
-// GET/HEAD/OPTIONS dışındaki her istek rotadan ve before_route'tan ÖNCE burada denetlenir.
+// ── Default CSRF gate (http_main: three modes from the same engine) ──────────────
+// Rule: every application that uses cookies is protected — if the program has session::/csrf::/cookie::
+// every request other than GET/HEAD/OPTIONS is checked HERE, BEFORE the route and before_route.
 std::string csrf_secret_problem() {
     const char* cur = std::getenv("LOOK_SECRET");
     const char* prev = std::getenv("LOOK_SECRET_PREVIOUS");
@@ -1148,9 +1148,9 @@ std::string csrf_secret_problem() {
            "docker run -e LOOK_SECRET=<value> … or --env-file <file>";
 }
 bool csrf_request_ok(WebContext* ctx, std::string& why) {
-    // Sec-Fetch-Site (tarayıcı kendisi yazar, sayfa değiştiremez): başka siteden ya da kardeş alt
-    // alan adından gelen istek reddedilir (Go 1.25 CrossOriginProtection). "same-origin" ve "none"
-    // (adres çubuğu, yer imi) geçer; başlık yoksa (eski tarayıcı, sunucudan sunucuya) Origin + token.
+    // Sec-Fetch-Site (the browser writes it itself, the page cannot change it): a request from another site or a sibling subdomain
+    // is rejected (Go 1.25 CrossOriginProtection). "same-origin" and "none"
+    // (address bar, bookmark) pass; if the header is absent (old browser, server to server) Origin + token.
     {
         auto sf = ctx->headers_in.find("sec-fetch-site");
         if (sf != ctx->headers_in.end()) {
@@ -1184,14 +1184,14 @@ bool csrf_request_ok(WebContext* ctx, std::string& why) {
     return true;
 }
 
-// Bu isteğin oturum kimliği — yalnız bu sunucunun VERDİĞİ ve süresi dolmamış bir kimlik (katı mod).
-// Çerez yoksa, biçimi bozuksa ya da depoda böyle bir oturum yoksa yeni CSPRNG kimlik verilir,
-// depoya boş kayıt yazılır ve çerez gönderilir. Eskiden yalnız biçim denetleniyordu: saldırgan
-// kurbanın tarayıcısına "LOOK_SESSION=<32 hex>" yerleştirirse (kardeş alt alan, düz HTTP) kurban
-// giriş yapınca saldırgan aynı kimlikle onun oturumunu kullanıyordu (oturum sabitleme).
-// Bir istekte bir kez karar verilir: yeni kimlik cookies_in'e yazıldığı için ikinci çağrı onu bulur.
-// regenerate'in eski kimliğe bıraktığı kısa ömürlü "taşındı" işareti (120 sn). destroy bırakmaz:
-// eşzamanlı bir regenerate, işaret varsa isteğin başındaki kopyayı taşır, yoksa (çıkış) taşımaz.
+// This request's session id — only an id this server ISSUED and that has not expired (strict mode).
+// If there is no cookie, its format is broken, or there is no such session in the store, a new CSPRNG id is issued,
+// an empty record is written to the store and the cookie is sent. It used to check only the format: if an attacker
+// planted "LOOK_SESSION=<32 hex>" in the victim's browser (a sibling subdomain, plain HTTP) then when the victim
+// logged in the attacker used their session with the same id (session fixation).
+// It is decided once per request: since the new id is written to cookies_in, the second call finds it.
+// The short-lived "moved" marker (120 s) that regenerate leaves on the old id. destroy leaves none:
+// a concurrent regenerate carries the copy from the start of the request if the marker exists, and does not (logout) if not.
 static constexpr int SESS_MOVED_TTL = 120;
 static void sess_mark_moved(const std::string& sid) {
     if (session_use_redis()) {
@@ -1209,7 +1209,7 @@ static bool sess_was_moved(const std::string& sid) {
     return look::session_file_exists("moved_" + sid, SESS_MOVED_TTL);
 }
 
-// Varlık + içerik, tek tur (Redis GET / tek dosya açılışı) — sess_exists ile aynı maliyet.
+// Existence + content, in one round (Redis GET / a single file open) — the same cost as sess_exists.
 static bool sess_load_if_exists(const std::string& sid, std::string& blob) {
     if (session_use_redis()) {
         bool e = false;
@@ -1222,10 +1222,10 @@ static bool sess_load_if_exists(const std::string& sid, std::string& blob) {
 static std::string session_issued_sid(WebContext* ctx) {
     auto it = ctx->cookies_in.find("LOOK_SESSION");
     if (it != ctx->cookies_in.end() && valid_sid(it->second)) {
-        // İsteğin başındaki veri saklanır: aynı anda başka istek regenerate edip eski kaydı silerse bu
-        // isteğin regenerate'i veriyi kaybetmesin (ölçüldü: 20 eşzamanlı regenerate'ten 19'u boş oturum
-        // veriyordu → kullanıcı çıkış yapmış gibi). Kayıt silindikten SONRA başlayan istek (saldırganın
-        // sabitlediği eski kimlik dahil) hiçbir şey almaz: kopya yalnız var olan kimlikte dolar.
+        // The data at the start of the request is kept: so that if another request regenerates at the same time and deletes the old record, this
+        // request's regenerate does not lose the data (measured: of 20 concurrent regenerates 19 gave
+        // an empty session → as if the user had logged out). A request that starts AFTER the record is deleted (including the old id
+        // the attacker fixed) gets nothing: the copy is filled only for an existing id.
         if (ctx->sess_snap_sid == it->second) return it->second;
         std::string blob;
         if (sess_load_if_exists(it->second, blob)) {
@@ -1246,26 +1246,26 @@ static Module make_session_module(WebRef ctx) {
     m.name = "session";
 
     m.functions["start"] = [ctx](auto) -> Value {
-        // Çerezdeki kimliğe asla güvenme: yalnız bu sunucunun verdiği kimlik (session_issued_sid).
+        // Never trust the id in the cookie: only an id this server issued (session_issued_sid).
         return Value(session_issued_sid(ctx));
     };
-    // session::regenerate() — session fixation koruması. Login / yetki değişiminde
-    // çağrılır: mevcut session verisini KORUYARAK yeni bir SID'e taşır, eskisini
-    // siler, yeni cookie set eder. Saldırganın önceden sabitlediği (fixation) SID
-    // login sonrası geçersiz kalır. OWASP: privilege change'de SID yenile.
+    // session::regenerate() — session fixation protection. Called on login / a
+    // privilege change: moves to a new SID WHILE KEEPING the current session data, deletes the old one,
+    // sets a new cookie. A SID the attacker fixed in advance
+    // becomes invalid after login. OWASP: renew the SID on a privilege change.
     m.functions["regenerate"] = [ctx](auto) -> Value {
         std::string blob;
         auto it = ctx->cookies_in.find("LOOK_SESSION");
         if (it != ctx->cookies_in.end() && valid_sid(it->second)) {
             const std::string old = it->second;
-            bool found = sess_load_if_exists(old, blob);   // mevcut veriyi al (bu arada yazılanlar dahil)
+            bool found = sess_load_if_exists(old, blob);   // take the current data (including what was written in the meantime)
             if (found) {
-                sess_mark_moved(old);       // önce işaret, sonra sil: eşzamanlı regenerate işareti görür
-                sess_remove(old);           // eski session'ı geçersizleştir
+                sess_mark_moved(old);       // marker first, then delete: a concurrent regenerate sees the marker
+                sess_remove(old);           // invalidate the old session
             } else if (ctx->sess_snap_sid == old && sess_was_moved(old)) {
-                // Eşzamanlı bir regenerate eski kaydı bu istek başladıktan sonra taşıdı → isteğin
-                // başındaki kopya taşınır. destroy (çıkış) silmişse işaret yok → kopya KULLANILMAZ:
-                // çıkış geri alınmaz. Kopya yalnız istek başında var olan kimlikte doludur.
+                // A concurrent regenerate moved the old record after this request started → the copy
+                // from the start of the request is carried. If destroy (logout) deleted it there is no marker → the copy is NOT USED:
+                // a logout is not undone. The copy is filled only for an id that existed at the start of the request.
                 blob = ctx->sess_snap;
             }
         }
@@ -1273,8 +1273,8 @@ static Module make_session_module(WebRef ctx) {
         std::string sid = gen_session_id();
         ctx->cookies_in["LOOK_SESSION"] = sid;
         ctx->set_cookies_out.push_back("LOOK_SESSION=" + sid + "; Path=/; HttpOnly" + session_secure_attr(ctx) + "; SameSite=Lax");
-        sess_store(sid, blob);   // veriyi yeni SID'e taşı (boşsa da: katı modda "verilmiş" sayılsın)
-        csrf_rotate_if_used(ctx);                   // giriş: yeni CSRF tabanı (csrf:: kullanılıyorsa)
+        sess_store(sid, blob);   // move the data to the new SID (even if empty: so it counts as "issued" in strict mode)
+        csrf_rotate_if_used(ctx);                   // login: a new CSRF base (if csrf:: is used)
         return Value(sid);
     };
     m.functions["set"] = [ctx](auto args) -> Value {
@@ -1290,24 +1290,24 @@ static Module make_session_module(WebRef ctx) {
             default:
                 throw std::runtime_error("session::set() — session values must be a string or number");
         }
-        // Yazma, verilmiş bir oturuma olur: çerezdeki kimlik geçersiz ya da bu sunucunun vermediği
-        // bir kimlikse yeni kimlik verilir (eskiden set, start'sız bile, çerezdeki herhangi bir
-        // 32 hex kimliğe yazıp onu "var" yapıyordu — sabitleme bu yoldan da işliyordu).
+        // The write goes to an issued session: if the id in the cookie is invalid or an id this server did not issue,
+        // a new id is issued (it used to be that set, even without start, wrote to any
+        // 32-hex id in the cookie and made it "exist" — fixation worked through this path too).
         const std::string sid = session_issued_sid(ctx);
         std::string blob = sess_load(sid);
         sess_blob_set(blob, args[0].to_string(), args[1].to_string());
-        // Oturumun üst sınırı (Redis ve dosya sürücüsünde aynı): eskiden yoktu — bir ziyaretçi
-        // kendi oturumunu megabaytlarca büyütüp her istekte o kadar okutabiliyor, birkaç
-        // ziyaretçiyle Redis belleğini doldurabiliyordu. Aşılınca veri yazılmaz, sessizce de
-        // kesilmez: açık hata. Önceki oturum olduğu gibi kalır.
+        // The upper limit of a session (the same in the Redis and file drivers): it did not exist before — a visitor
+        // could grow their own session by megabytes and make it be read that much on every request, and with a few
+        // visitors fill Redis memory. When exceeded the data is not written, and not silently
+        // truncated either: an explicit error. The previous session stays as it was.
         if (blob.size() > session_max_bytes())
             throw std::runtime_error("session::set() — the session would be " + std::to_string(blob.size()) +
                 " bytes, more than the limit of " + std::to_string(session_max_bytes()) +
                 " (LOOK_SESSION_MAX_BYTES); keep large data in the database and store its id in the session");
         if (!sess_update(sid, blob)) {
-            // Bu istek sürerken oturum silindi (başka sekmede çıkış / regenerate): eski veri geri
-            // YAZILMAZ — eskiden yazılıyordu ve çıkış geri alınıyordu. Yeni, boş bir oturuma
-            // yalnız bu anahtar yazılır.
+            // The session was deleted while this request was running (logout in another tab / regenerate): the old data is NOT
+            // WRITTEN back — it used to be written and the logout was undone. Only this key
+            // is written to a new, empty session.
             ctx->cookies_in.erase("LOOK_SESSION");
             const std::string nsid = session_issued_sid(ctx);
             std::string fresh;
@@ -1322,10 +1322,10 @@ static Module make_session_module(WebRef ctx) {
         if (it == ctx->cookies_in.end() || !valid_sid(it->second)) return Value();  // traversal guard
         std::string blob = sess_load(it->second), out;
         if (sess_blob_get(blob, args[0].to_string(), out)) return Value(out);
-        return args.size() >= 2 ? args[1] : Value();   // varsayilan (env kalibi)
+        return args.size() >= 2 ? args[1] : Value();   // default (env pattern)
     };
-    // session::has(key) — anahtar oturumda var mı? (docs'ta belgeli; get default'undan
-    // ayrı: değeri boş string olan anahtar da VAR sayılır)
+    // session::has(key) — does the key exist in the session? (documented in the docs; separate from the get default:
+    // a key whose value is an empty string also counts as PRESENT)
     m.functions["has"] = [ctx](auto args) -> Value {
         if (args.empty()) return Value(false);
         auto it = ctx->cookies_in.find("LOOK_SESSION");
@@ -1336,16 +1336,16 @@ static Module make_session_module(WebRef ctx) {
     m.functions["destroy"] = [ctx](auto) -> Value {
         auto it = ctx->cookies_in.find("LOOK_SESSION");
         if (it != ctx->cookies_in.end() && valid_sid(it->second)) sess_remove(it->second);
-        ctx->cookies_in.erase("LOOK_SESSION");  // Sonraki session::start() yeni ID üretsin
-        ctx->sess_snap_sid.clear(); ctx->sess_snap.clear();   // çıkıştan sonra kopya taşınmaz
+        ctx->cookies_in.erase("LOOK_SESSION");  // so the next session::start() generates a new ID
+        ctx->sess_snap_sid.clear(); ctx->sess_snap.clear();   // the copy is not carried after logout
         ctx->set_cookies_out.push_back(
             std::string("LOOK_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly") + session_secure_attr(ctx) + "; SameSite=Lax");
-        csrf_rotate_if_used(ctx);                   // çıkış: yeni CSRF tabanı
+        csrf_rotate_if_used(ctx);                   // logout: a new CSRF base
         return Value();
     };
 
-    // csrf::exempt ile muaf geçen istekte oturum YOK: muafiyet yalnız çereze dayanmayan uçlar içindir
-    // (imzalı webhook, token'lı API). "Muaf tut ama oturumla doğrula" CSRF açığıdır — yazılamasın.
+    // NO session on a request exempted with csrf::exempt: the exemption is only for endpoints that do not rely on a cookie
+    // (signed webhook, token API). "Exempt but verify with the session" is a CSRF hole — it must not be possible to write it.
     for (auto& [name, fn] : m.functions) {
         auto inner = fn;
         fn = [ctx, inner, name = name](std::vector<Value> args) -> Value {
@@ -1405,14 +1405,14 @@ static std::string parse_dsn_part(const std::string& dsn,
         if (colon != std::string::npos) { user = userinfo.substr(0, colon); pass = userinfo.substr(colon + 1); }
         else user = userinfo;
     }
-    // Yetki bölümü ilk '/' ya da '?' ile biter (Go net/url). Yolsuz "h:3306?tls=1" eskiden
-    // sorguyu port metnine katıyordu → ?tls sessizce kayboluyordu. db, sorguyu taşır ("?tls=1").
+    // The authority section ends at the first '/' or '?' (Go net/url). Without a path "h:3306?tls=1" used to
+    // put the query into the port text → ?tls silently vanished. db carries the query ("?tls=1").
     size_t slash = rest.find_first_of("/?");
     std::string hostport = (slash != std::string::npos) ? rest.substr(0, slash) : rest;
     db = (slash == std::string::npos) ? "" : rest[slash] == '/' ? rest.substr(slash + 1) : rest.substr(slash);
-    // host[:port] — Go net/url modeli (look/host_port.h): yalnız rakam, 1-65535, boş port =
-    // varsayılan, IPv6 köşeli parantezde. Eskiden stoi: "3306x" → 3306, "abc" → çıplak "stoi".
-    // Hata metni DSN'in tamamını İÇERMEZ (parola sızmasın) — yalnız host:port kısmı.
+    // host[:port] — Go net/url model (look/host_port.h): digits only, 1-65535, an empty port =
+    // the default, IPv6 in square brackets. It used to be stoi: "3306x" → 3306, "abc" → a bare "stoi".
+    // The error text does NOT CONTAIN the whole DSN (so the password does not leak) — only the host:port part.
     std::string err = look::split_host_port(hostport, host, port);
     if (!err.empty()) throw std::runtime_error("db::connect(): invalid DSN: " + err);
 
@@ -1437,9 +1437,9 @@ struct ConnPool {
     std::vector<std::shared_ptr<DbConnection>> available;
     std::mutex                                 mtx;
     std::condition_variable                    cv;
-    // Tembel havuz (Go database/sql gibi): db::connect bir bağlantı açar; gerisi istekler
-    // gerektirdikçe max_size'a kadar. Eskiden bütün havuz (işçi sayısı kadar) db::connect'te
-    // peşin açılıyordu. opening = şu an açılmakta olan (kilit dışında) bağlantı sayısı.
+    // Lazy pool (like Go database/sql): db::connect opens one connection; the rest as requests
+    // need them, up to max_size. It used to open the whole pool (as many as the worker count) up front in db::connect.
+    // opening = the number of connections currently being opened (outside the lock).
     int                                        max_size = 1;
     int                                        opening  = 0;
     std::function<std::shared_ptr<DbConnection>()> opener;
@@ -1449,26 +1449,26 @@ struct ConnPool {
         look::FiberScheduler* sched = look::get_thread_scheduler();
         std::shared_ptr<look::Fiber> shared_fiber;
         if (fiber && sched) shared_fiber = fiber->shared_from_this_fiber();
-        // Doğrudan teslim yuvası: release() bekleyen fiber'a bağlantıyı listeye koymadan BURAYA
-        // verir. Eskiden bağlantı listeye konup bekleyen uyandırılıyordu; uyanan fiber sırası
-        // gelene dek yeni gelen bir istek onu kapıyor, uyanan kuyruğun SONUNA dönüyordu — yük
-        // altında aynı istek defalarca sıra kaybediyordu (c=1000'de p99 kuyruğu). Fiber askıdayken
-        // yığını yerinde durur, yuva geçerlidir.
+        // Direct handoff slot: release() gives the connection to the waiting fiber HERE without putting it in the list.
+        // It used to put the connection in the list and wake the waiter; until the woken fiber's
+        // turn came a newly arrived request grabbed it, and the woken one went to the END of the queue — under load
+        // the same request lost its turn again and again (the p99 tail at c=1000). While a fiber is suspended its
+        // stack stays in place, the slot is valid.
         std::shared_ptr<DbConnection> handed;
-        // Kuyrukta mıyız (g_fiber_waiters_mtx altında; release/notify kaydı silerken false yapar).
-        // Sahte uyanma (başka bir beklemeden kalan erken devam — pending_resume_) kaydımız hâlâ
-        // kuyruktayken askıdan döndürür: eskiden döngü kendini İKİNCİ kez kuyruğa ekliyordu, eski
-        // kayıt kalıyordu ve acquire döndükten sonra bir release bağlantıyı o kayıttaki ölü yığın
-        // yuvasına yazıp ilgisiz bir fiber'ı uyandırabiliyordu. Şimdi kuyruktaysak beklemeye devam.
+        // Are we in the queue (under g_fiber_waiters_mtx; release/notify sets it false when removing the record).
+        // A spurious wakeup (an early resume left over from another wait — pending_resume_) returns from suspension while our record is still
+        // in the queue: it used to be that the loop added itself to the queue a SECOND time, the old
+        // record stayed, and after acquire returned a release could write the connection to the dead stack
+        // slot in that record and wake an unrelated fiber. Now if we are in the queue we keep waiting.
         bool queued = false;
 
         while (true) {
             bool grow = false;
             {
-                // Karar AYNI havuz kilidi altında: boşta bağlantı → al; yer varsa → yer ayır, kilit
-                // dışında aç; yoksa bekle. Bekleyen fiber'ın kuyruğa girişi de bu kilit altında: arada
-                // gelen release() onu görmeyip uyandırmayı kaybetmesin. Kilit sırası mtx →
-                // g_fiber_waiters_mtx (release() de aynı sırayla alır).
+                // The decision is under the SAME pool lock: an idle connection → take it; if there is room → reserve a place, open it outside the lock;
+                // otherwise wait. The waiting fiber's entry to the queue is under this lock too: so that a release()
+                // arriving in between does not miss it and lose the wakeup. Lock order mtx →
+                // g_fiber_waiters_mtx (release() takes them in the same order).
                 std::unique_lock<std::mutex> lk(mtx);
                 if (!available.empty()) {
                     auto c = available.back(); available.pop_back();
@@ -1481,7 +1481,7 @@ struct ConnPool {
                     g_fiber_waiters.push_back({shared_fiber, sched, this, &handed, &queued});
                     queued = true;
                 } else {
-                    // İş parçacığı bağlamı: engelleyen bekleme (cv.wait burada güvenli)
+                    // Thread context: a blocking wait (cv.wait is safe here)
                     cv.wait(lk, [this] {
                         return !available.empty() || (opener && (int)all.size() + opening < max_size);
                     });
@@ -1491,10 +1491,10 @@ struct ConnPool {
             if (grow) {
                 std::shared_ptr<DbConnection> c;
                 try {
-                    c = opener();   // ağ G/Ç'si: kilit dışında (fiber burada askıya girebilir)
+                    c = opener();   // network I/O: outside the lock (the fiber may be suspended here)
                 } catch (...) {
                     { std::lock_guard<std::mutex> lk(mtx); --opening; }
-                    notify_fiber_waiters(this);   // ayrılan yer boşaldı: bekleyen biri kendisi denesin
+                    notify_fiber_waiters(this);   // the reserved place is free again: let a waiter try itself
                     cv.notify_one();
                     throw;
                 }
@@ -1504,12 +1504,12 @@ struct ConnPool {
                 return c;
             }
             for (;;) {
-                look::FiberScheduler::suspend_current();   // release() ya da başarısız açılış uyandırır
+                look::FiberScheduler::suspend_current();   // release() or a failed open wakes it
                 std::lock_guard<std::mutex> wl(g_fiber_waiters_mtx);
-                if (!queued) break;                        // kaydımızı bizi uyandıran sildi
+                if (!queued) break;                        // whoever woke us removed our record
             }
-            if (handed) return std::move(handed);      // bağlantı doğrudan bize teslim edildi
-            // Teslim yoksa başarısız bir açılış uyandırdı (ayrılan yer boşaldı): baştan dene.
+            if (handed) return std::move(handed);      // the connection was handed directly to us
+            // If there is no handoff a failed open woke us (the reserved place is free): try again from the start.
         }
     }
 
@@ -1517,15 +1517,15 @@ struct ConnPool {
         std::shared_ptr<look::Fiber> wake;
         look::FiberScheduler* wake_sched = nullptr;
         {
-            // Kilit sırası acquire ile aynı: mtx → g_fiber_waiters_mtx.
+            // The lock order is the same as acquire: mtx → g_fiber_waiters_mtx.
             std::lock_guard<std::mutex> lk(mtx);
             {
                 std::lock_guard<std::mutex> wl(g_fiber_waiters_mtx);
-                // En uzun bekleyene (FIFO). Ölçüldü: önce aynı iş parçacığındaki bekleyene vermek
-                // daha kötü (o fiber ancak bırakan fiber sırayı bırakınca koşar) — sade FIFO.
+                // To the longest waiter (FIFO). Measured: giving first to the waiter on the same thread
+                // is worse (that fiber runs only when the releasing fiber yields) — plain FIFO.
                 for (auto it = g_fiber_waiters.begin(); it != g_fiber_waiters.end(); ++it) {
                     if (it->pool != this) continue;
-                    *it->slot  = std::move(c);   // doğrudan teslim
+                    *it->slot  = std::move(c);   // direct handoff
                     *it->queued = false;
                     wake       = std::move(it->fiber);
                     wake_sched = it->sched;
@@ -1536,7 +1536,7 @@ struct ConnPool {
             if (!wake) available.push_back(std::move(c));
         }
         if (wake) { wake_sched->resume_fiber(std::move(wake)); return; }
-        cv.notify_one();   // bekleyen fiber yok: engelleyen iş parçacığı bekleyenini uyandır
+        cv.notify_one();   // no waiting fiber: wake the waiter of the blocking thread
     }
 
 private:
@@ -1547,8 +1547,8 @@ private:
         std::shared_ptr<look::Fiber>  fiber;
         look::FiberScheduler*          sched;
         ConnPool*                      pool;
-        std::shared_ptr<DbConnection>* slot;   // release() bağlantıyı buraya teslim eder
-        bool*                          queued; // kaydı silen false yapar (g_fiber_waiters_mtx altında)
+        std::shared_ptr<DbConnection>* slot;   // release() hands the connection over here
+        bool*                          queued; // whoever removes the record sets it to false (under g_fiber_waiters_mtx)
     };
 
     static std::mutex               g_fiber_waiters_mtx;
@@ -1557,7 +1557,7 @@ private:
     static void notify_fiber_waiters(ConnPool* pool) {
         // Wake the first waiter OF THIS POOL — the fiber's while(true) acquire
         // loop re-queues itself if the slot is stolen before it runs.
-        // (Başka havuzun bekleyenini uyandırmak bu havuzun bekleyenini sonsuza dek uyutur.)
+        // (Waking another pool's waiter would put this pool's waiter to sleep forever.)
         std::lock_guard<std::mutex> lk(g_fiber_waiters_mtx);
         for (auto it = g_fiber_waiters.begin(); it != g_fiber_waiters.end(); ++it) {
             if (it->pool != pool) continue;
@@ -1589,7 +1589,7 @@ static std::atomic<int>                                  g_pool_size{0}; // 0 = 
 // when multiple fibers shared a thread (fiber A sets conn, yields, fiber B
 // overwrites it — fiber A resumes with wrong connection).
 
-// fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::conns
+// fiber-ok: only a backup outside a fiber; inside a fiber FiberLocal::conns
 static thread_local std::map<std::string, std::shared_ptr<DbConnection>> tl_conns;
 
 // Returns the active connection map for the current execution context.
@@ -1602,8 +1602,8 @@ static inline std::map<std::string, std::shared_ptr<DbConnection>>& active_conns
 
 void set_db_pool_size(int n) { g_pool_size.store(n > 0 ? n : 0); }
 
-// runtime::stats için: tüm DB havuzlarının toplam bağlantı sayısı + meşgul (checked-out) sayısı.
-// busy = all - available (havuz mutex'i altında anlık). Salt-okunur gözlemlenebilirlik.
+// For runtime::stats: the total connection count of all DB pools + the busy (checked-out) count.
+// busy = all - available (instantaneous under the pool mutex). Read-only observability.
 void db_pool_stats(int& total_size, int& busy) {
     total_size = 0; busy = 0;
     std::vector<std::shared_ptr<ConnPool>> snap;
@@ -1620,15 +1620,15 @@ void db_pool_stats(int& total_size, int& busy) {
     }
 }
 
-// Kullanılabilir CPU — cgroup CPU limitini dikkate alır (container/systemd CPUQuota).
-// hardware_concurrency() fizikseldir; 8-core makinede 2-CPU cgroup'ta 32 worker
-// açmak yerine 8 açar (benchmark'ta bulunan optimum) → kısıtlı ortamda az RAM + doğru CPU.
+// Available CPUs — takes the cgroup CPU limit into account (container/systemd CPUQuota).
+// hardware_concurrency() is physical; on a 2-CPU cgroup on an 8-core machine it opens 8 instead of
+// 32 workers (the optimum found in the benchmark) → less RAM + the right CPU in a constrained environment.
 int available_cpus() {
     int hw = (int)std::thread::hardware_concurrency();
     if (hw < 1) hw = 1;
 #ifdef __linux__
-    // Sürecin çalışabileceği CPU'lar (taskset, systemd CPUAffinity=, container cpuset): Go'nun
-    // GOMAXPROCS'u gibi. hardware_concurrency() makinedeki bütün CPU'ları sayar.
+    // The CPUs the process may run on (taskset, systemd CPUAffinity=, container cpuset): like Go's
+    // GOMAXPROCS. hardware_concurrency() counts all the CPUs on the machine.
     {
         cpu_set_t set;
         CPU_ZERO(&set);
@@ -1638,7 +1638,7 @@ int available_cpus() {
         }
     }
     double c = -1.0;
-    // cgroup v2: /sys/fs/cgroup/cpu.max = "quota period" (quota="max" → limit yok)
+    // cgroup v2: /sys/fs/cgroup/cpu.max = "quota period" (quota="max" → no limit)
     {
         std::ifstream f("/sys/fs/cgroup/cpu.max");
         std::string a, b;
@@ -1658,16 +1658,16 @@ int available_cpus() {
         if (q > 0 && p > 0) c = (double)q / (double)p;
     }
     if (c > 0) {
-        int lim = (int)(c + 0.5);       // en yakın tam CPU'ya yuvarla
+        int lim = (int)(c + 0.5);       // round to the nearest whole CPU
         if (lim < 1) lim = 1;
-        if (lim < hw) hw = lim;          // fiziksel ile cgroup'un küçüğü
+        if (lim < hw) hw = lim;          // the smaller of the physical and the cgroup
     }
 #endif
     return hw;
 }
 
-// CFS kotası kaç CPU (yuvarlanmış), kota yoksa/limitsizse -1. available_cpus()'un
-// kota-okuma kısmının ayrık hali — startup uyarısı "workers > kota" tespiti için.
+// How many CPUs the CFS quota is (rounded), -1 if there is no quota/unlimited. A separate form of the quota-reading part of
+// available_cpus() — for the startup warning's "workers > quota" detection.
 int cfs_quota_cpus() {
 #ifdef __linux__
     double c = -1.0;
@@ -1693,18 +1693,18 @@ int cfs_quota_cpus() {
     return -1;
 }
 
-// Bağlantı istek başında PEŞİN alınmaz: ilk db:: çağrısında get_conn() havuzdan alır ve
-// istek bitene dek (release_thread_connections) o isteğe bağlı kalır — aynı işlem aynı
-// bağlantıda. Eskiden her istek başında her havuzdan bir bağlantı alınıyordu: havuz doluyken
-// veritabanına HİÇ dokunmayan bir rota da bağlantı bekliyordu (4 uzun sorgu + havuz 4 →
-// düz metin dönen rota ~1 sn).
+// The connection is NOT taken up front at the start of a request: on the first db:: call get_conn() takes it from the pool and
+// it stays bound to that request until it ends (release_thread_connections) — the same operation on the same
+// connection. It used to take a connection from every pool at the start of every request: when the pool was full
+// even a route that did NOT TOUCH the database waited for a connection (4 long queries + pool 4 →
+// a route returning plain text ~1 s).
 void release_thread_connections() {
     auto& conns = active_conns();
-    // İstek açık bir işlemle bittiyse (db::begin sonra hata, ya da commit unutuldu) bağlantı havuza
-    // O İŞLEMLE dönüyordu: sonraki istek onun içinde çalışıyor, kendi "commit"iyle başarısız
-    // isteğin yazdıklarını da kalıcı yapıyordu; SQLite'ta yazma kapısı tutulu kalıp diğer yazmalar
-    // 10 sn sonra düşüyordu. Şimdi geri alınır; geri alınamazsa bağlantı kapatılır (havuz yenisini
-    // açar). Kilitten ÖNCE: ROLLBACK ağ çağrısıdır, fiber askıya alınabilir.
+    // If a request ended with an open transaction (db::begin then an error, or a commit was forgotten) the connection went back to the pool
+    // WITH THAT TRANSACTION: the next request ran inside it, with its own "commit" it made
+    // what the failed request wrote permanent; on SQLite the write gate stayed held and other writes
+    // dropped after 10 s. Now it is rolled back; if it cannot be rolled back the connection is closed (the pool opens
+    // a new one). BEFORE the lock: ROLLBACK is a network call, the fiber may be suspended.
     for (auto& [key, conn] : conns) {
         if (!conn || !conn->is_connected() || !conn->in_transaction()) { if (conn) conn->tx_depth = 0; continue; }
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "DB",
@@ -1724,11 +1724,11 @@ void release_thread_connections() {
 }
 
 void clear_db_pools() {
-    // Hot reload öncesi çağrılır — tüm poolları kapat (exclusive lock altında)
+    // Called before a hot reload — close all pools (under the exclusive lock)
     std::lock_guard<std::mutex> lk(g_pools_mtx);
     g_pools.clear();
-    // g_pool_seq sıfırlanmaz: yeni pool'lar yeni key alır, eski closure'lar stale olmaz
-    // (route_registry yeniden kurulur zaten)
+    // g_pool_seq is not reset: new pools get new keys, old closures do not go stale
+    // (route_registry is rebuilt anyway)
 }
 
 // get_conn — returns the active connection for this request/fiber
@@ -1762,8 +1762,8 @@ static std::string make_pool_key() {
     return "__pool_" + std::to_string(g_pool_seq++);
 }
 
-// LOOK_DB_REQUIRE_TLS — opt-in operatör politikası (bkz. db_dsn.h db_refuse_plaintext).
-// Süreç başı bir kez okunur; "1"/"true"/dolu = açık, "0"/"false"/boş = kapalı.
+// LOOK_DB_REQUIRE_TLS — an opt-in operator policy (see db_dsn.h db_refuse_plaintext).
+// Read once per process; "1"/"true"/non-empty = on, "0"/"false"/empty = off.
 static bool db_require_tls() {
     static const bool v = [] {
         const char* e = std::getenv("LOOK_DB_REQUIRE_TLS");
@@ -1796,11 +1796,11 @@ static std::shared_ptr<DbConnection> open_one_connection(
         std::string user, pass, host = "127.0.0.1", db_name;
         int port = 5432;
         std::string scheme = parse_dsn_part(dsn, user, pass, host, port, db_name);
-        // TLS: postgresqls:// şeması VEYA db-adında ?tls=... sorgu paramı.
-        // PG'de TLS YENİ → verify DOĞRU VARSAYILAN (postgresqls:// / ?tls=verify → doğrulanmış,
-        // ?tls=insecure → şifreli ama doğrulanmamış). mysql/redis'in tersine güvenli başlar.
-        // TLS kararı saf dikişe taşındı (look/db_dsn.h) → tablo-testi (pg_dsn_test) ağsız
-        // kilitler; verify-ca sessiz-plaintext regresyonu (558d735) o testte pozitif-kontrollü.
+        // TLS: the postgresqls:// scheme OR the ?tls=... query param in the db name.
+        // TLS is NEW in PG → verify is the RIGHT DEFAULT (postgresqls:// / ?tls=verify → verified,
+        // ?tls=insecure → encrypted but not verified). Unlike mysql/redis it starts secure.
+        // The TLS decision was moved to a pure seam (look/db_dsn.h) → the table test (pg_dsn_test) locks it
+        // without a network; the verify-ca silent-plaintext regression (558d735) is positive-controlled in that test.
         bool tls = (scheme == "postgresqls");
         bool tls_verify = true;
         bool insecure_pt = false;
@@ -1821,8 +1821,8 @@ static std::shared_ptr<DbConnection> open_one_connection(
     std::string user, pass, host = "127.0.0.1", db_name;
     int port = 3306;
     std::string scheme = parse_dsn_part(dsn, user, pass, host, port, db_name);
-    // TLS: mysqls://.../mariadbs:// şeması VEYA db-adında ?tls=1 / ?ssl=... sorgu paramı.
-    // ?tls=verify / ?ssl=verify → ayrıca sertifika+hostname doğrulaması (MITM'e karşı).
+    // TLS: the mysqls://.../mariadbs:// scheme OR the ?tls=1 / ?ssl=... query param in the db name.
+    // ?tls=verify / ?ssl=verify → additionally certificate+hostname verification (against MITM).
     bool tls = (scheme == "mysqls" || scheme == "mariadbs");
     bool tls_verify = false;
     bool insecure_pt = false;
@@ -1830,9 +1830,9 @@ static std::shared_ptr<DbConnection> open_one_connection(
       std::string query;
       if (q != std::string::npos) {
         query = db_name.substr(q + 1);
-        db_name = db_name.substr(0, q);   // sorgu dizisini db adından ayıkla
+        db_name = db_name.substr(0, q);   // strip the query string from the db name
       }
-      // TLS-karar look/db_dsn.h'de (saf, tablo-test edilebilir).
+      // The TLS decision is in look/db_dsn.h (pure, table-testable).
       look::mysql_resolve_tls(query, tls, tls, tls_verify);
       insecure_pt = look::db_insecure_plaintext_opt(query); }
     if (look::db_refuse_plaintext(db_require_tls(), tls, host, insecure_pt))
@@ -1879,11 +1879,11 @@ static bool mysql_is_int(uint8_t t) {
 static bool mysql_is_float(uint8_t t) {
     return t == 0x04 || t == 0x05 || t == 0xF6;
 }
-// SQLite type sabitleri
+// SQLite type constants
 static bool sqlite_is_int(uint8_t t)   { return t == sqlite_type::INTEGER; }
 static bool sqlite_is_float(uint8_t t) { return t == sqlite_type::FLOAT; }
 static bool sqlite_is_null(uint8_t t)  { return t == sqlite_type::NUL; }
-// PostgreSQL type sabitleri
+// PostgreSQL type constants
 static bool pg_is_int(uint8_t t)       { return t == pg_type::INT; }
 static bool pg_is_float(uint8_t t)     { return t == pg_type::FLOAT; }
 static bool pg_is_null(uint8_t t)      { return t == pg_type::NUL; }
@@ -1917,11 +1917,11 @@ static Value rows_to_value(const std::vector<DbRow>& rows) {
     return Value(result);
 }
 
-// SQL injection koruması — driver'a göre doğru escape
+// SQL injection protection — the right escape per driver
 static std::string escape_str(const std::string& s, const char* driver) {
     if (strcmp(driver, "mysql") == 0 || strcmp(driver, "mariadb") == 0)
         return MySQLClient::escape(s);
-    // SQLite ve PostgreSQL: standart SQL, tek tırnak '' ile escape
+    // SQLite and PostgreSQL: standard SQL, escape with a single quote ''
     std::string out;
     out.reserve(s.size());
     for (char c : s) {
@@ -1931,10 +1931,10 @@ static std::string escape_str(const std::string& s, const char* driver) {
     return out;
 }
 
-// Value listesi → DbParam listesi — GERÇEK native binding (bind_params escape-enterpolasyonunun
-// yerine). Veri SQL metnine HİÇ girmez; driver protokol-seviye bind eder (sqlite3_bind_* / MySQL
-// COM_STMT / PG extended-query). Tip eşlemesi bind_params'ınkiyle aynı. Placeholder SAYIM kontrolü
-// artık driver-native (sqlite3_bind_parameter_count / PG-mysql server) → backtick/'#' kör-noktası yok.
+// Value list → DbParam list — REAL native binding (instead of bind_params' escape-interpolation).
+// The data NEVER enters the SQL text; the driver binds at the protocol level (sqlite3_bind_* / MySQL
+// COM_STMT / PG extended-query). The type mapping is the same as bind_params'. The placeholder COUNT check is
+// now driver-native (sqlite3_bind_parameter_count / PG-mysql server) → no backtick/'#' blind spot.
 static std::vector<DbParam> values_to_db_params(const std::vector<Value>& params) {
     std::vector<DbParam> out;
     out.reserve(params.size());
@@ -1944,9 +1944,9 @@ static std::vector<DbParam> values_to_db_params(const std::vector<Value>& params
             case Value::INT:   out.push_back(DbParam::from_int(p.as_int()));  break;
             case Value::FLOAT: {
                 double d = p.as_float();
-                // NaN/Infinity: sqlite/pg SESSIZCE null yapar, mysql "Out of range" verir —
-                // üçü tutarsız + ikisi sessiz-veri-kaybı (Cephe 2). LOOK 0.0/0.0'da fail-loud;
-                // DB bind'de de fail-loud + TUTARLI: temiz hata (sessiz-null yerine).
+                // NaN/Infinity: sqlite/pg SILENTLY make it null, mysql gives "Out of range" —
+                // the three are inconsistent + two are silent data loss (Front 2). LOOK is fail-loud on 0.0/0.0;
+                // in a DB bind it is fail-loud too + CONSISTENT: a clean error (instead of a silent null).
                 if (!std::isfinite(d))
                     throw std::runtime_error("db: cannot bind NaN/Infinity float as a parameter");
                 out.push_back(DbParam::from_float(d));
@@ -1970,11 +1970,11 @@ static Module make_db_module(ModuleHost* interp) {
         if (args.empty()) throw std::runtime_error("db::connect() requires DSN string");
         std::string dsn = args[0].to_string();
 
-        // İdempotency: aynı DSN için mevcut pool'un key'ini döndür.
-        // Bu olmadan route içindeki db::connect() HER İSTEKTE yeni pool açar
-        // (istek başına N bağlantı) → MySQL max_connections tükenir.
-        // (Regresyon suite'i tarafından yakalandı: 24 istekte 14'ü başarısız.)
-        static std::map<std::string, std::string> dsn_to_key;  // g_pools_mtx korur
+        // Idempotency: return the existing pool's key for the same DSN.
+        // Without this a db::connect() inside a route opens a new pool ON EVERY REQUEST
+        // (N connections per request) → MySQL max_connections is exhausted.
+        // (Caught by the regression suite: 14 of 24 requests failed.)
+        static std::map<std::string, std::string> dsn_to_key;  // protected by g_pools_mtx
         {
             std::lock_guard<std::mutex> lk(g_pools_mtx);
             auto it = dsn_to_key.find(dsn);
@@ -1983,29 +1983,29 @@ static Module make_db_module(ModuleHost* interp) {
         }
 
         bool is_sqlite = (dsn.substr(0, 9) == "sqlite://");
-        // Havuzun ÜST SINIRI — işçi sayısından bağımsız. LOOK_DB_POOL_SIZE verilmişse o (aynen);
-        // yoksa 4 × kullanılabilir CPU, 8..64 (fiber dağıtımında bir işçi aynı anda çok sayıda
-        // sorguyu bekletebilir; bağlantılar tembel açıldığı için kullanılmayan sınır bedava).
+        // The pool's UPPER LIMIT — independent of the worker count. If LOOK_DB_POOL_SIZE is given, that (as is);
+        // otherwise 4 × usable CPUs, 8..64 (under fiber dispatch one worker can make many queries
+        // wait at once; since connections are opened lazily an unused limit is free).
         int sz = g_pool_size.load();
         if (sz <= 0) sz = std::max(8, std::min(64, look::available_cpus() * 4));
-        if (is_sqlite) { if (sz > 4) sz = 4; }   // SQLite: WAL eşzamanlı okuma, en çok 4
+        if (is_sqlite) { if (sz > 4) sz = 4; }   // SQLite: WAL concurrent reads, at most 4
 
-        // SQLite `:memory:` her bağlantıya özeldir — çok bağlantılı pool'da
-        // (ve her worker thread'in kendi bağlantısını sabitlediği modelde) setup'ta
-        // bir bağlantıda yaratılan tablo diğerlerinde YOK ("no such table").
-        // Çözüm: :memory:'yi süreç-ömürlü geçici bir DOSYAYA yönlendir — tüm pool
-        // bağlantıları aynı DB'yi paylaşır (tablo görünür), pool=N korunur. Thread
-        // güvenliği per-connection ayrımdan DEĞİL, SQLITE_THREADSAFE=2'nin koruduğu
-        // global statiklerden gelir (bkz. CMakeLists; eski =0 yorumu yanlıştı).
-        // Kullanıcının :memory:'den beklediği "tek paylaşımlı geçici DB" davranışı budur.
-        // İdempotency anahtarı ORİJİNAL dsn kalır; sadece açılan yol değişir.
-        // S3: yol süreç-ömürlü ÖZEL bir dizinin içinde. Eski look_mem_<pid>.db yolu
-        // öngörülebilir + dünya-yazılabilir /tmp'deydi → yerel saldırgan önceden symlink
-        // koyup TOCTOU (std::remove sonra open) ile başka dosyaya yazdırabilirdi (paylaşımlı
-        // hosting). Fix: dizini mkdtemp (POSIX, atomik 0700 + yalnız-sahip) / tahmin-edilemez
-        // ad (Windows, temp zaten kullanıcıya-özel ACL'li) ile aç, DB'yi İÇİNE koy. Dizin
-        // bize ait ve 0700 olduğu için içindeki dosya O_EXCL|O_NOFOLLOW gerektirmez —
-        // saldırgan var olmayan özel dizine symlink koyamaz. Bir kez oluştur, pool paylaşır.
+        // SQLite `:memory:` is private to each connection — in a multi-connection pool
+        // (and in the model where each worker thread pins its own connection) a table created
+        // on one connection at setup does NOT EXIST on the others ("no such table").
+        // The fix: redirect :memory: to a process-lifetime temporary FILE — all pool
+        // connections share the same DB (the table is visible), pool=N is kept. Thread
+        // safety comes NOT from per-connection separation but from the global statics protected by
+        // SQLITE_THREADSAFE=2 (see CMakeLists; the old =0 comment was wrong).
+        // This is the "single shared temporary DB" behavior the user expects from :memory:.
+        // The idempotency key stays the ORIGINAL dsn; only the path that is opened changes.
+        // S3: the path is inside a process-lifetime PRIVATE directory. The old look_mem_<pid>.db path
+        // was in a predictable + world-writable /tmp → a local attacker could plant a symlink in advance
+        // and use TOCTOU (std::remove then open) to make it write to another file (shared
+        // hosting). Fix: open the directory with mkdtemp (POSIX, atomic 0700 + owner-only) / an unpredictable
+        // name (Windows, temp already has a user-private ACL), put the DB INSIDE it. Since the directory
+        // is ours and 0700, the file inside does not need O_EXCL|O_NOFOLLOW —
+        // an attacker cannot plant a symlink in a private directory that does not exist. Create once, the pool shares it.
         std::string effective_dsn = dsn;
         if (is_sqlite && dsn.find(":memory:") != std::string::npos) {
             static std::mutex memdb_mtx;
@@ -2040,10 +2040,10 @@ static Module make_db_module(ModuleHost* interp) {
         auto pool = std::make_shared<ConnPool>();
         pool->dsn = effective_dsn;
         pool->max_size = sz;
-        // Gerisi gerektikçe aynı DSN ve seçeneklerle açılır.
+        // The rest are opened as needed with the same DSN and options.
         pool->opener = [effective_dsn, args]() { return open_one_connection(effective_dsn, args); };
-        // İlk bağlantı ŞİMDİ: yanlış parola / ulaşılamayan sunucu uygulamanın açılışını durdursun
-        // (ilk istekte değil). Go'daki sql.Open + Ping gibi.
+        // The first connection NOW: let a wrong password / an unreachable server stop the application's startup
+        // (not on the first request). Like sql.Open + Ping in Go.
         {
             auto c = open_one_connection(effective_dsn, args);
             pool->all.push_back(c);
@@ -2053,8 +2053,8 @@ static Module make_db_module(ModuleHost* interp) {
         std::string key = make_pool_key();
         {
             std::lock_guard<std::mutex> lk(g_pools_mtx);
-            // Yarış: başka thread aynı DSN'i bizden önce kaydettiyse onunkini
-            // kullan — bizim yeni açtığımız bağlantılar scope sonunda kapanır.
+            // Race: if another thread registered the same DSN before us use its
+            // — the connections we just opened are closed at the end of the scope.
             auto it = dsn_to_key.find(dsn);
             if (it != dsn_to_key.end() && g_pools.count(it->second))
                 return Value(it->second);
@@ -2064,11 +2064,11 @@ static Module make_db_module(ModuleHost* interp) {
         Logger::instance().log(LogLevel::LOG_INFO, "DB",
             "Pool created (up to " + std::to_string(sz) + " connections, opened as needed): " + look::db_dsn_redact(dsn));
 
-        // S4: DB-TLS güvenlik uyarısı — POOL BASINA BİR KEZ (sorgu başına değil → spam yok).
-        // El-yazması wire parser'a ağdaki herkes bayt besliyor; kullanıcı şifreleme/doğrulama
-        // durumunu bilmeli ve NE YAPACAĞINI görmeli. 2026-08-11 flip sonrası: MySQL/Redis'te
-        // verify=true GÜVENLİ-VARSAYILAN → yalnız AÇIK plaintext'te veya ?tls=insecure opt-out'ta uyar.
-        // Karar saf dikişte (look/db_dsn.h db_tls_warning) — gerçek TLS resolver'larıyla birebir.
+        // S4: DB-TLS security warning — ONCE PER POOL (not per query → no spam).
+        // Everyone on the network feeds bytes to the hand-written wire parser; the user must know the encryption/verification
+        // state and see WHAT TO DO. After the 2026-08-11 flip: for MySQL/Redis
+        // verify=true is SECURE-BY-DEFAULT → warn only on EXPLICIT plaintext or the ?tls=insecure opt-out.
+        // The decision is in the pure seam (look/db_dsn.h db_tls_warning) — one to one with the real TLS resolvers.
         {
             std::string w = look::db_tls_warning(dsn);
             if (!w.empty())
@@ -2095,7 +2095,7 @@ static Module make_db_module(ModuleHost* interp) {
         std::vector<Value> params;
         if (args.size() >= 3 && args[2].type() == Value::ARRAY)
             params = *args[2].as_array();
-        auto rows = conn->execute(sql, values_to_db_params(params));   // gerçek native binding
+        auto rows = conn->execute(sql, values_to_db_params(params));   // real native binding
         return rows_to_value(rows);
     };
 
@@ -2107,7 +2107,7 @@ static Module make_db_module(ModuleHost* interp) {
         std::vector<Value> params;
         if (args.size() >= 3 && args[2].type() == Value::ARRAY)
             params = *args[2].as_array();
-        conn->execute(sql, values_to_db_params(params));   // gerçek native binding
+        conn->execute(sql, values_to_db_params(params));   // real native binding
         return Value((int64_t)conn->affected_rows());
     };
 
@@ -2130,11 +2130,11 @@ static Module make_db_module(ModuleHost* interp) {
         return Value(std::string(get_conn(args[0])->driver_name()));
     };
 
-    // db::escape($conn, $str) — DRIVER-AWARE. Eskiden HER sürücü için MySQL
-    // backslash escaping (`\'`) kullanıyordu; ama SQLite/PostgreSQL standart
-    // SQL'de backslash'i escape saymaz → `\'` içindeki `'` string'i kapatıp
-    // INJECTION açardı. escape_str sürücüye göre doğru escaper'ı seçer
-    // (MySQL: backslash; SQLite/PG: `''` ikilemesi).
+    // db::escape($conn, $str) — DRIVER-AWARE. It used to use MySQL
+    // backslash escaping (`\'`) for EVERY driver; but in standard SQL on SQLite/PostgreSQL
+    // a backslash is not an escape → the `'` in `\'` would close the string and open an
+    // INJECTION. escape_str picks the right escaper per driver
+    // (MySQL: backslash; SQLite/PG: `''` doubling).
     m.functions["escape"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("db::escape() requires connection and string");
         return Value(escape_str(args[1].to_string(), get_conn(args[0])->driver_name()));
@@ -2148,7 +2148,7 @@ static Module make_db_module(ModuleHost* interp) {
         return Value();
     };
 
-    // db::begin/commit/rollback — manuel transaction kontrolü
+    // db::begin/commit/rollback — manual transaction control
     m.functions["begin"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("db::begin() requires connection");
         auto c = get_conn(args[0]);
@@ -2166,7 +2166,7 @@ static Module make_db_module(ModuleHost* interp) {
         return Value();
     };
 
-    // db::transaction($conn, fn) — nested SAVEPOINT destekli wrapper
+    // db::transaction($conn, fn) — a wrapper with nested SAVEPOINT support
     m.functions["transaction"] = [interp](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("db::transaction() requires connection and function");
         auto conn = get_conn(args[0]);
@@ -2179,12 +2179,12 @@ static Module make_db_module(ModuleHost* interp) {
         }
         conn->tx_depth++;
         try {
-            // invoke() FUNCTION'ı da VM closure'ını da (BYTECODE_FN → köprü) ele alır.
-            // Eski "sadece FUNCTION" koruması VM closure'ını SESSİZCE atlayıp COMMIT
-            // ediyordu (transaction gövdesi hiç çalışmadan commit → veri kaybı). Şu an
-            // fallback maskeliyor (db::transaction builtin değildi) ama builtin olarak
-            // eklenince tetiklenirdi. Fonksiyon olmayan argüman invoke içinde hata
-            // fırlatır → aşağıdaki catch → ROLLBACK (sessiz commit yerine).
+            // invoke() handles both a FUNCTION and a VM closure (BYTECODE_FN → bridge).
+            // The old "FUNCTION only" guard SILENTLY skipped the VM closure and did COMMIT
+            // (commit without the transaction body ever running → data loss). Right now
+            // the fallback masks it (db::transaction was not a builtin) but it would have triggered when
+            // added as a builtin. A non-function argument throws an error inside invoke
+            // → the catch below → ROLLBACK (instead of a silent commit).
             Value result = interp->invoke(args[1], {});
             conn->tx_depth--;
             if (nested) {
@@ -2207,12 +2207,12 @@ static Module make_db_module(ModuleHost* interp) {
         }
     };
 
-    // db::col($conn, $sql, $params) → ilk satırın ilk kolonu
-    // db::col($row, $index_or_name) → row'dan kolon değeri
+    // db::col($conn, $sql, $params) → the first column of the first row
+    // db::col($row, $index_or_name) → a column value from a row
     m.functions["col"] = [](auto args) -> Value {
         if (args.size() < 2) return Value();
 
-        // Bağlantı + SQL çalıştırma modu
+        // Connection + SQL execution mode
         auto is_pool_handle = [](const Value& v) {
             if (v.type() != Value::STRING) return false;
             const auto& s = v.as_string();
@@ -2224,9 +2224,9 @@ static Module make_db_module(ModuleHost* interp) {
             std::vector<Value> params;
             if (args.size() >= 3 && args[2].type() == Value::ARRAY)
                 params = *args[2].as_array();
-            auto rows = conn->execute(sql, values_to_db_params(params));   // gerçek native binding
+            auto rows = conn->execute(sql, values_to_db_params(params));   // real native binding
             if (rows.empty() || rows[0].empty()) return Value();
-            // İlk satırın ilk kolonunu dön
+            // Return the first column of the first row
             const auto& dv = rows[0][0].second;
             if (dv.is_null || sqlite_is_null(dv.type) || pg_is_null(dv.type)) return Value();
             if (mysql_is_int(dv.type) || sqlite_is_int(dv.type) || pg_is_int(dv.type)) {
@@ -2269,7 +2269,7 @@ static Module make_db_module(ModuleHost* interp) {
 // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 std::map<std::string, Module> make_web_modules(WebContext* fixed_ctx, ModuleHost* interp) {
-    WebRef ctx{fixed_ctx};   // nullptr: çağrı anındaki istek (look/request_scope.h)
+    WebRef ctx{fixed_ctx};   // nullptr: the request at call time (look/request_scope.h)
     std::map<std::string, Module> mods;
     auto add = [&](Module mod) { mods[mod.name] = std::move(mod); };
     add(make_request(ctx));

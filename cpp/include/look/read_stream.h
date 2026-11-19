@@ -1,9 +1,9 @@
 #pragma once
-// Bir akışın kalanını tek seferde dizgiye okur (filebuf'tan toplu kopya).
+// Reads the rest of a stream into a string in one go (a bulk copy from the filebuf).
 //
-// istreambuf_iterator ile okumak dosyayı karakter karakter alıp dizgiyi defalarca büyütüyordu:
-// ölçüm, qr-menu CGI isteğinin komutlarının %7'si (kaynak + dahil edilen dosyalar). Akışın
-// kipi aynen korunur — metin kipinde açılmış dosyada Windows'un \r\n → \n çevirisi eskisi gibi.
+// reading with istreambuf_iterator took the file character by character and grew the string many times:
+// measured, 7% of the commands of a qr-menu CGI request (the source + included files). The stream's
+// mode is preserved exactly — on a file opened in text mode Windows' \r\n → \n translation is as before.
 #include <istream>
 #include <sstream>
 #include <string>

@@ -1,14 +1,14 @@
 #pragma once
-// Güvenliği zayıflatan ayarlar — sunucu başlarken her biri için bir WARN satırı (davranış değişmez).
-// Eskiden bu ayarlar sessizdi: geliştirme/test için açılan bir ayar üretimde unutulunca hiçbir
-// iz bırakmıyordu. Saf işlev (ortam okuyucusu parametre) — tablo testi yapılabilir; çağıran yazar.
+// Settings that weaken security — one WARN line for each at server start (behavior does not change).
+// These settings used to be silent: when a setting turned on for development/test was forgotten in production it left no
+// trace. Pure function (the environment reader is a parameter) — table-testable; the caller writes.
 #include <cstdlib>
 #include <string>
 #include <vector>
 
 namespace look {
 
-// IPv4 "a.b.c.d/N": N < 8 ya da 0.0.0.0 → sıradan istemci adreslerini kapsar.
+// IPv4 "a.b.c.d/N": N < 8 or 0.0.0.0 → covers ordinary client addresses.
 inline bool weak_proxy_entry(const std::string& e) {
     if (e == "0.0.0.0" || e == "::/0" || e == "*") return true;
     auto slash = e.find('/');
@@ -26,7 +26,7 @@ inline std::vector<std::string> split_list(const std::string& s) {
     return out;
 }
 
-// get: const char* döndüren okuyucu (std::getenv ya da testte bir tablo).
+// get: reader returning const char* (std::getenv, or a table in a test).
 template <class Get>
 inline std::vector<std::string> weak_setting_warnings(Get get, bool fastcgi) {
     std::vector<std::string> w;

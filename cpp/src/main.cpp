@@ -1,4 +1,4 @@
-#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
+#include "look/read_stream.h"   // read_stream — read the file in one go
 #include "look/stack_guard.h"
 #include "look/ast_spine.h"
 #include "look/lexer.h"
@@ -10,8 +10,8 @@
 #include "look/runtime_host.h"
 #include "look/array_count.h"
 #include "look/http_client.h"
-#include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
-#include "look/mem_budget.h"      // komut satırı: yalnız LOOK_MEMORY_LIMIT verilirse süreç sınırı
+#include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, process start)
+#include "look/mem_budget.h"      // command line: process limit only if LOOK_MEMORY_LIMIT is given
 #include "look/test_runner.h"
 #include "look/repl.h"
 #include "look/web.h"
@@ -21,9 +21,9 @@
 #include "look/builtins.h"
 #include "look/compiler.h"
 #include "look/vm.h"
-#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ve lk test aynı ortam
-#include "look/timer.h"         // TimerManager — komut satırında timer:: VM closure'ı kurar
-#include "look/vm_closure_runner.h" // vm_closure_runner — jobs::run işleyicilerini VM'de koşturur
+#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk and lk test share the same environment
+#include "look/timer.h"         // TimerManager — sets up the timer:: VM closure on the command line
+#include "look/vm_closure_runner.h" // vm_closure_runner — runs jobs::run handlers in the VM
 #include <memory>
 #include <unordered_map>
 #include <cmath>
@@ -38,9 +38,9 @@
 #include <functional>
 
 #ifndef LOOK_VERSION
-#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#define LOOK_VERSION "1.0.0"   // fallback; normally CMake supplies the compile-def (single source)
 #endif
-#ifndef LOOK_BUILD          // CMake damgası yoksa (ham derleme) güvenli varsayılan
+#ifndef LOOK_BUILD          // if there is no CMake stamp (raw build), a safe default
 #define LOOK_BUILD "src"
 #endif
 
@@ -93,11 +93,11 @@ static std::string read_file(const std::filesystem::path& path) {
     return look::read_stream(input);
 }
 
-// ── Semantik kontrol (yalniz --check) — tanimsiz bare fonksiyon cagrilari ──────
-// Guvenli/yanlis-pozitifsiz olmak icin: yalniz CallExpression'in callee'si bare
-// ($'siz, ::'siz) Variable olanlari; gecerli kume = dilin bare yerlesikleri
-// (derleyicinin ozel ele aldiklari dahil) + builtin_names() + dosyadaki fn/struct/const adlari. Dosyada
-// `use` importu varsa (cross-file isimler bilinemez) hic kontrol edilmez.
+// ── Semantic check (--check only) — undefined bare function calls ──────
+// To be safe / free of false positives: only those whose CallExpression callee is a bare
+// Variable (no $, no ::); the valid set = the language's bare built-ins
+// (including those the compiler handles specially) + builtin_names() + the fn/struct/const names in the file. If the file has a
+// `use` import (cross-file names cannot be known) nothing is checked at all.
 namespace {
 using namespace look;
 
@@ -105,7 +105,7 @@ void walk_expr(const Expression* e, const std::function<void(const Expression*)>
 void walk_block(const BlockStatement* b, const std::function<void(const Expression*)>& v);
 
 void walk_stmt(const Statement* s, const std::function<void(const Expression*)>& v) {
-    if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+    if (s) look_ast_guard(s->loc.line, s->loc.column);   // deep tree: an error instead of a crash (stack_guard.h)
     if (!s) return;
     if (auto* x = node_as<ExpressionStatement>(s)) walk_expr(x->expression.get(), v);
     else if (auto* x = node_as<PrintStatement>(s)) { for (auto& e : x->expressions) walk_expr(e.get(), v); }
@@ -127,7 +127,7 @@ void walk_block(const BlockStatement* b, const std::function<void(const Expressi
 }
 
 void walk_expr(const Expression* e, const std::function<void(const Expression*)>& v) {
-    if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+    if (e) look_ast_guard(e->loc.line, e->loc.column);   // deep tree: an error instead of a crash (stack_guard.h)
     if (!e) return;
     v(e);
     if (auto* x = node_as<ArrayLiteral>(e)) { for (auto& el : x->elements) walk_expr(el.get(), v); }
@@ -135,9 +135,9 @@ void walk_expr(const Expression* e, const std::function<void(const Expression*)>
     else if (auto* x = node_as<FunctionExpression>(e)) walk_block(x->body.get(), v);
     else if (auto* x = node_as<IndexExpression>(e)) { walk_expr(x->object.get(), v); walk_expr(x->index.get(), v); }
     else if (auto* x = node_as<UnaryExpression>(e)) walk_expr(x->right.get(), v);
-    else if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+    else if (auto* x = node_as<BinaryExpression>(e)) {   // left spine with a loop (look/ast_spine.h)
         std::vector<const BinaryExpression*> sp; const Expression* lm = binary_left_spine(x, sp);
-        for (size_t k = 1; k < sp.size(); ++k) v(sp[k]);   // iç düğümler, özyinelemedeki sırayla
+        for (size_t k = 1; k < sp.size(); ++k) v(sp[k]);   // inner nodes, in the order of the recursion
         walk_expr(lm, v);
         for (size_t k = sp.size(); k-- > 0;) walk_expr(sp[k]->right.get(), v);
     }
@@ -165,10 +165,10 @@ void collect_decls(const Statement* s, std::set<std::string>& d) {
 bool find_undefined_call(const Program& prog, std::string& name, int& line, int& col) {
     for (auto& s : prog.statements)
         if (node_as<UseStatement>(s.get()) || node_as<UseFileStatement>(s.get()))
-            return false;   // import var → cross-file isimler bilinemez, kontrol etme
+            return false;   // there is an import -> cross-file names cannot be known, do not check
 
-    // Gecerli bare cagri isimleri: dilin bare yerlesikleri +
-    // builtin_names() bare girdileri + comert ekstralar (yanlis pozitif olmasin).
+    // Valid bare call names: the language's bare built-ins +
+    // bare entries of builtin_names() + generous extras (to avoid false positives).
     std::set<std::string> valid = {
         "abs","args","before_route","bool","boolval","chan_size","channel","close","config","count",
         "die","env","exit","float","floatval","header","int","intval","join","json","len","max",
@@ -197,16 +197,16 @@ bool find_undefined_call(const Program& prog, std::string& name, int& line, int&
     for (auto& s : prog.statements) walk_stmt(s.get(), visit);
     return found;
 }
-// LOOK 2: betik bitince süreç biter (Go/Rust modeli: programın ömrünü üst düzey belirler, beklemek
-// açıkça yazılır). Sessizce değil: kurulu kalan zamanlayıcılar ve bitmemiş parallel() görevleri
-// söylenir, beklemek için ne yazılacağıyla. (Eskiden parallel() görevleri örtük 5 sn bekleniyor,
-// zamanlayıcılar sessizce kayboluyordu — iki ayrı kural; artık tek kural.)
+// LOOK 2: the process ends when the script ends (Go/Rust model: the top level determines the program's lifetime, waiting
+// is written explicitly). Not silently: timers left set up and unfinished parallel() tasks are
+// reported, together with what to write in order to wait. (Previously parallel() tasks were implicitly waited for 5 s and
+// timers silently vanished — two separate rules; now a single rule.)
 static void warn_pending_timers();
 static int finish_script(int code) {
-    look::chan_deadlock_main(false);   // betik bitti: bekleyen görevler artık kilitlenme değil
-    // Yalnız İŞİ KALMIŞ görevler sayılır: çalışan görev dönene ya da dışarıda iz bırakan bir işe
-    // başlayana dek ilerler (zaman yok, beklenmez — parallel_runtime.h). send()'den sonra yalnız
-    // dönüşü kalan görev artık "still running" sayılmıyor (eskiden her koşuda yanlış uyarı).
+    look::chan_deadlock_main(false);   // script finished: waiting tasks are no longer a deadlock
+    // Only tasks that STILL HAVE WORK are counted: a running task makes progress until it returns or starts
+    // an operation that leaves a trace outside (no time, no waiting — parallel_runtime.h). A task that has only its
+    // return left after send() is no longer counted as "still running" (previously a false warning on every run).
     const int running = look::task_settle_for_exit();
     if (running > 0)
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "parallel",
@@ -214,7 +214,7 @@ static int finish_script(int code) {
             " still running when the script ended and stopped with it. To wait for them, call parallel::wait() before the script ends.");
     warn_pending_timers();
     if (running > 0) {
-        // Çalışan görevler süreç belleğini kullanırken statik yıkıcılar çalışmasın: doğrudan çık.
+        // Static destructors must not run while running tasks use process memory: exit directly.
         std::cout.flush();
         std::cerr.flush();
         std::_Exit(code);
@@ -222,7 +222,7 @@ static int finish_script(int code) {
     return code;
 }
 static void warn_pending_timers() {
-    if (!look::TimerManager::exists()) return;   // zamanlayıcı hiç kurulmadı — iş parçacığı başlatma
+    if (!look::TimerManager::exists()) return;   // no timer was ever set up — thread start
     const auto p = look::TimerManager::instance().pending();
     if (p.once > 0)
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "timer",
@@ -236,11 +236,11 @@ static void warn_pending_timers() {
 
 
 #ifndef _WIN32
-// runtime_init SIGPIPE'i yok sayar (kapanan DB soketi sureci oldurmesin). Ama `lk x.lk | head`
-// gibi bir kullanimda betik, cikti borusu kapaninca eskisi gibi sonlanmali — yoksa print sessizce
-// basarisiz olur ve sonsuz bir dongu sonsuza kadar calisir. Bu sarmalayici std::cout/cerr'in
-// onune gecer (tamponlamayi degistirmez); alttaki yazma EPIPE ile donerse varsayilan SIGPIPE ile
-// sonlanir — 1.0.34'e kadarki davranisin aynisi, yalniz stdout/stderr icin.
+// runtime_init ignores SIGPIPE (a closed DB socket must not kill the process). But in usage like `lk x.lk | head`
+// the script must terminate as before when the output pipe closes — otherwise print silently
+// fails and an infinite loop runs forever. This wrapper sits in front of std::cout/cerr
+// (it does not change buffering); if the underlying write returns EPIPE, the process
+// terminates with the default SIGPIPE — identical to the behavior up to 1.0.34, for stdout/stderr only.
 struct PipeGuard : std::streambuf {
     std::streambuf* inner;
     explicit PipeGuard(std::streambuf* in) : inner(in) {}
@@ -268,9 +268,9 @@ struct PipeGuard : std::streambuf {
 } // namespace
 
 int main(int argc, char* argv[]) {
-    look::runtime_init();  // tüm süreç-başı init (CA probe + SQLite bir-kez init) — 3 giriş noktası ortak
-    // Bellek (look/mem_budget.h): komut satırında varsayılan sınır YOK (Go gibi); yalnız LOOK_MEMORY_LIMIT
-    // açıkça verilirse süreç sınırı. İstek bütçesi (256 MiB) yalnız web isteklerinindir.
+    look::runtime_init();  // all process-start init (CA probe + one-time SQLite init) — shared by the 3 entry points
+    // Memory (look/mem_budget.h): no default limit on the command line (like Go); a process limit only if LOOK_MEMORY_LIMIT
+    // is given explicitly. The request budget (256 MiB) belongs to web requests only.
     {
         std::string why;
         if (!look::mem_budget_configure_cli(why)) {
@@ -279,8 +279,8 @@ int main(int argc, char* argv[]) {
         }
     }
 #ifndef _WIN32
-    // Hic yok edilmez: cikista std::cout bu sarmalayici uzerinden bosaltilir (static olsaydi once o
-    // yikilir, ardindan ios_base::Init olu nesneye yazardi).
+    // Never destroyed: at exit std::cout is flushed through this wrapper (if it were static it would be
+    // destroyed first, and then ios_base::Init would write to a dead object).
     std::cout.rdbuf(new PipeGuard(std::cout.rdbuf()));
     std::cerr.rdbuf(new PipeGuard(std::cerr.rdbuf()));
 #endif
@@ -289,8 +289,8 @@ int main(int argc, char* argv[]) {
 
         std::string cmd = argv[1];
 
-        // ── lk --check <file> : yalnizca parse et (CALISTIRMA), hatalari
-        //    makine-okunur bicimde bildir. Editor diagnostics icin — yan etki yok.
+        // ── lk --check <file> : only parse (DO NOT RUN), report errors
+        //    in a machine-readable form. For editor diagnostics — no side effects.
         bool check_only = false;
         if (cmd == "--check") {
             check_only = true;
@@ -350,8 +350,8 @@ int main(int argc, char* argv[]) {
             return look::run_test_mode(pattern, verbose);
         }
 
-        // ── lk fmt <file...> [--check] : kaynağı kanonik biçime getir (gofmt modeli) ──
-        // --check → CI modu: biçimsiz dosya varsa exit 1, yazMAZ. Dosyasız → stdin/stdout.
+        // ── lk fmt <file...> [--check] : bring the source to the canonical form (gofmt model) ──
+        // --check -> CI mode: exit 1 if a file is unformatted, does NOT write. No files -> stdin/stdout.
         if (cmd == "fmt") {
             bool fmt_check = false;
             std::vector<std::string> files;
@@ -363,7 +363,7 @@ int main(int argc, char* argv[]) {
             return look::run_fmt(files, fmt_check);
         }
 
-        // ── lk fix <file...> [--check] : push/pop/array::pop → yeni yazım (look/fix_src.h) ──
+        // ── lk fix <file...> [--check] : push/pop/array::pop -> new syntax (look/fix_src.h) ──
         if (cmd == "fix") {
             bool fix_check = false;
             std::vector<std::string> files;
@@ -430,7 +430,7 @@ int main(int argc, char* argv[]) {
             for (int i = 3; i < argc; i++) look::script_args().push_back(argv[i]);
         } else {
             source = read_file(cmd);
-            // `lk file.lk <args...>` — script'ten sonraki kelimeler args()'a gider.
+            // `lk file.lk <args...>` — the words after the script go to args().
             for (int i = 2; i < argc; i++) look::script_args().push_back(argv[i]);
         }
 
@@ -459,8 +459,8 @@ int main(int argc, char* argv[]) {
 
         if (!check_only) look::log_param_writes(parser.warnings(), filename);
 
-        // Parse basarili — --check modunda: tanimsiz cagri semantik kontrolu,
-        // sonra calistirmadan cik (yan etki yok).
+        // Parse succeeded — in --check mode: semantic check for undefined calls,
+        // then exit without running (no side effects).
         if (check_only) {
             std::string bad; int bl = 0, bc = 0;
             if (find_undefined_call(*program, bad, bl, bc)) {
@@ -468,15 +468,15 @@ int main(int argc, char* argv[]) {
                           << " Undefined function: " << bad << "\n";
                 return 1;
             }
-            // LOOK 2 geçiş denetimi: closure yakalama kuralının kıracağı yerler (şimdilik uyarı;
-            // çıkış kodu değişmez, editör eklentisi yalnız "CHECK" satırına bakar).
+            // LOOK 2 transition check: places the closure-capture rule would break (a warning for now;
+            // exit code does not change, the editor extension only looks at the "CHECK" line).
             for (const auto& w : look::check_captures(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [" << w.kind << "] " << w.message << "\n";
-            // LOOK 2 geçiş denetimi: adlı fonksiyona yanlış sayıda argümanla çağrı (1.0.x'te iki
-            // motor ayrışıyordu; kural kesinleşmeden önce sayım için).
-            // push($l, $x) → $l = array::push($l, $x); pop($l) / array::pop($l) → $l[-1] +
-            // $l = array::slice($l, 0, -1): bir sürüm uyarı (sonra hata). `lk fix` yeniden yazar.
+            // LOOK 2 transition check: a call to a named function with the wrong number of arguments (in 1.0.x the two
+            // engines diverged; counted before the rule is finalized).
+            // push($l, $x) -> $l = array::push($l, $x); pop($l) / array::pop($l) -> $l[-1] +
+            // $l = array::slice($l, 0, -1): a warning for one release (then an error). `lk fix` rewrites it.
             for (const auto& w : parser.warnings())
                 if (w.kind == "push-deprecated" || w.kind == "pop-deprecated" || w.kind == "array-pop-deprecated" ||
                     w.kind == "use-array-missing")
@@ -485,7 +485,7 @@ int main(int argc, char* argv[]) {
             for (const auto& w : look::check_arg_counts(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [arg-count] " << w.message << "\n";
-            // LOOK 2: parametreye yazıp döndürmeyen fonksiyon — burada HATA (CI için); yüklemede uyarı.
+            // LOOK 2: a function that writes to a parameter without returning it — an ERROR here (for CI); a warning at load time.
             {
                 bool bad_param = false;
                 for (const auto& w : parser.warnings()) {
@@ -496,13 +496,13 @@ int main(int argc, char* argv[]) {
                 }
                 if (bad_param) return 1;
             }
-            // VM bu dosyayı derleyebiliyor mu? LOOK 2'de derlenemeyen program ÇALIŞMAZ (komut satırı ve
-            // web) — burada adıyla söylenir, hata. Çalıştırma yok.
-            // Temel dizin web yolundaki gibi verilir: `use "dosya.lk"` dahil edilenler de derlenir.
+            // Can the VM compile this file? In LOOK 2 a program that cannot be compiled does NOT RUN (command line and
+            // web) — said here by name, as an error. Nothing is run.
+            // The base directory is given as on the web path: files included with `use "file.lk"` are compiled too.
             try {
                 auto checked = look::Compiler::compile(*program, std::filesystem::absolute(filename).parent_path().string(), filename);
-                // Var olmayan modül fonksiyonu: `string::uper(...)`. Yalnız ÇEKİRDEK modüller için söylenir
-                // (adı yerleşik tablosunda geçen modüller) — paket modüllerinin fonksiyonları burada bilinmez.
+                // A nonexistent module function: `string::uper(...)`. Reported only for CORE modules
+                // (modules whose name appears in the built-in table) — package module functions are not known here.
                 std::set<std::string> core_modules;
                 for (const auto& n : look::builtin_names()) { auto p = n.find("::"); if (p != std::string::npos) core_modules.insert(n.substr(0, p)); }
                 bool unknown_fn = false;
@@ -515,8 +515,8 @@ int main(int argc, char* argv[]) {
                 if (unknown_fn) return 1;
             }
             catch (const std::exception& ex) {
-                // Tek başına denetlenen bir alt dosyada `use "../x.lk"` uygulama kökü bilinmeden
-                // çözülemez (kök, giriş dosyasının dizinidir) — bu VM eksiği değil, raporlanmaz.
+                // In a sub-file checked on its own, `use "../x.lk"` cannot be resolved without knowing
+                // the application root (the root is the entry file's directory) — this is not a VM gap, not reported.
                 const std::string why = ex.what();
                 if (why.find("the file cannot be opened") == std::string::npos &&
                     why.find("outside the application directory") == std::string::npos) {
@@ -539,11 +539,11 @@ int main(int argc, char* argv[]) {
         interpreter.set_file(filename);
 
         try {
-            // LOOK 2 tek motor: komut satırı YALNIZ VM'de çalışır. Eskiden derleme hatası, paket
-            // modülü, timer::/jobs::worker ya da VM'de olmayan bir mod::fn betiği sessizce (sonra
-            // bir uyarıyla) ~40× yavaş tree-walk'a düşürüyordu; LOOK_CLI_VM=0 onu seçtiriyordu.
-            // Artık: derlenemeyen program ÇALIŞMAZ (nedeni yazılır, çıkış 1); LOOK_CLI_VM=0 ve
-            // LOOK_BYTECODE=0 bir uyarıyla yok sayılır (web sunucusuyla aynı).
+            // LOOK 2 single engine: the command line runs ONLY in the VM. Previously a compile error, a package
+            // module, timer::/jobs::worker or a mod::fn missing from the VM silently (and then with
+            // a warning) dropped the script to a ~40x slower tree-walk; LOOK_CLI_VM=0 selected it.
+            // Now: a program that cannot be compiled does NOT RUN (the reason is printed, exit 1); LOOK_CLI_VM=0 and
+            // LOOK_BYTECODE=0 are ignored with a warning (same as the web server).
             for (const char* var : {"LOOK_CLI_VM", "LOOK_BYTECODE"}) {
                 const char* v = std::getenv(var);
                 if (v && v[0] == '0')
@@ -558,19 +558,19 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: " << ex.what() << "\n  File: " << filename << std::endl;
                 return 1;
             }
-            // Yalnız `use` edilen stdlib modülleri açılır — derleyicinin topladığı liste (web ile aynı;
-            // dahil edilen dosyalarınkiler dahil). Paket modülü stdlib değildir: derleyici derler.
+            // Only `use`d stdlib modules are opened — the list collected by the compiler (same as the web;
+            // including those of included files). A package module is not stdlib: the compiler compiles it.
             for (const auto& m : compiled.use_modules) interpreter.load_stdlib_module(m);
-            // VM'de karşılığı olmayan bir mod::fn adı yazım hatasıdır (web'deki "does not exist"
-            // kuralıyla aynı) — çalıştırmadan söylenir.
+            // A mod::fn name with no counterpart in the VM is a typo (same as the web's "does not exist"
+            // rule) — reported without running.
             if (compiled.uses_non_builtin_module_fn) {
                 for (const auto& n : compiled.non_builtin_module_fns)
                     std::cerr << "Error: " << n << "() does not exist — check the spelling of the module and the function.\n";
                 std::cerr << "  File: " << filename << std::endl;
                 return 1;
             }
-            // Yerleşik tablo ve paylaşılan durum SÜREÇ ÖMRÜ: zamanlayıcı betik bittikten sonra da
-            // (parallel görevleri beklenirken) tetiklenebilir.
+            // The built-in table and shared state are PROCESS-LIFETIME: a timer can fire after the script has ended too
+            // (while parallel tasks are being waited for).
             static std::vector<look::BuiltinFn> cli_builtins;
             static look::VM::SharedState sh;
             cli_builtins = look::build_cli_builtins(interpreter, std::cout);
@@ -582,15 +582,15 @@ int main(int argc, char* argv[]) {
             vm.set_web_context(&web_ctx);
             callbacks->main_vm = &vm;
             struct MainVmGone { std::shared_ptr<look::CliCallbacks> c; ~MainVmGone() { c->main_vm = nullptr; } } main_vm_gone{callbacks};
-            // Yakalanmamış hata "Runtime Error ... File/Line" biçiminde raporlanır: VM'in kaydettiği satır
-            // (proto.lines) LookRuntimeError'a sarılır. ExitException/RouteMatched kontrol akışıdır.
-            look::chan_deadlock_main(true);   // kanal kilitlenmesi: betik + görevler (parallel_runtime.h)
+            // An uncaught error is reported in the "Runtime Error ... File/Line" form: the line the VM recorded
+            // (proto.lines) is wrapped into a LookRuntimeError. ExitException/RouteMatched are control flow.
+            look::chan_deadlock_main(true);   // channel deadlock: script + tasks (parallel_runtime.h)
             try {
                 vm.execute(compiled);
             } catch (const look::ExitException&)         { throw; }
               catch (const look::RouteMatchedException&) { throw; }
               catch (const look::LookRuntimeError& e) {
-                // error::new() değeri konumsuz gelir: satırı ve çağrı zincirini VM'den tamamla.
+                // an error::new() value arrives without a position: complete the line and call chain from the VM.
                 if (!e.stack.empty() || vm.last_error_stack().empty()) throw;
                 auto err = e;
                 if (err.location.line <= 0) {
@@ -603,8 +603,8 @@ int main(int argc, char* argv[]) {
             }
               catch (const std::exception& ex) {
                 look::SourceLocation loc;
-                // Dahil edilen dosyadaki hata o dosyanın adıyla (ESKİ HATA: ana betiğin adı + dahil
-                // edilen dosyanın satırı — "main.lk, Line: 7" beş satırlık bir main.lk için).
+                // An error in an included file is reported with that file's name (OLD BUG: the main script's name + the included
+                // file's line — "main.lk, Line: 7" for a five-line main.lk).
                 const std::string& ef = vm.last_error_file();
                 loc.file = ef.empty() ? filename : (std::filesystem::path(filename).parent_path() / ef).generic_string();
                 loc.line = vm.last_error_line();
@@ -613,9 +613,9 @@ int main(int argc, char* argv[]) {
         } catch (const look::RouteMatchedException&) {
             // route() flow control — normal
         } catch (const look::ExitException& e) {
-            // exit()/die() — NORMAL sonlanma, hata değil. Yakalanmıyordu: dıştaki genel
-            // catch'e düşüp "Error: exit" basıyor ve kodu 1 döndürüyordu (exit(3) → 1).
-            // cgi_main/fcgi_main zaten yakalıyordu — CLI eksikti.
+            // exit()/die() — NORMAL termination, not an error. It was not being caught: it fell into the outer generic
+            // catch, printed "Error: exit" and returned code 1 (exit(3) -> 1).
+            // cgi_main/fcgi_main already caught it — the CLI was missing it.
             return finish_script(e.code());
         } catch (const look::LookRuntimeError& e) {
             auto err = e;

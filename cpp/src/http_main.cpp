@@ -1,21 +1,21 @@
 // look-fcgi --mode http
 //
-// HTTP/1.1 modunda doğrudan TCP dinler — Apache/FastCGI bypass.
-// Nginx opsiyonel reverse proxy olarak önünde durabilir.
+// In HTTP/1.1 mode it listens directly on TCP — bypasses Apache/FastCGI.
+// Nginx can optionally sit in front as a reverse proxy.
 //
-// Mevcut --mode fcgi (default) hiç değişmez.
-// Aynı .lk kodu her iki modda çalışır.
+// The existing --mode fcgi (default) does not change at all.
+// The same .lk code runs in both modes.
 
-#include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
-#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
+#include "look/num_ops.h"   // abs/floor/ceil/round single definition
+#include "look/read_stream.h"   // read_stream — read the file in one go
 #include "look/builtins.h"
-#include "look/weak_settings.h"   // başlangıçta zayıflatan ayar uyarıları
-#include "look/value_path.h"   // value_push_not_map — sözlüğe push hatası (tek tanım)
-#include "look/shutdown.h"     // zarif kapanma (SIGTERM/SIGINT)
-#include "look/mem_budget.h"   // bellek bütçesi: istek hesabı + %90'da 503
+#include "look/weak_settings.h"   // warnings for weakening settings at startup
+#include "look/value_path.h"   // value_push_not_map — error for push onto a dict (single definition)
+#include "look/shutdown.h"     // graceful shutdown (SIGTERM/SIGINT)
+#include "look/mem_budget.h"   // memory budget: request account + 503 at 90%
 #include <optional>
 #include "look/route_group.h"
-#include "look/host_port.h"   // LOOK_SMTP_PORT / LOOK_IMAP_PORT doğrulama
+#include "look/host_port.h"   // LOOK_SMTP_PORT / LOOK_IMAP_PORT validation
 #include "look/metrics.h"
 #include "look/array_count.h"
 #include "look/http_server.h"
@@ -29,7 +29,7 @@
 #include "look/service_error.h"
 #include "look/logger.h"
 #include "look/web.h"
-#include "look/stdlib.h"   // csrf_secret_problem / csrf_request_ok (varsayılan CSRF kapısı)
+#include "look/stdlib.h"   // csrf_secret_problem / csrf_request_ok (the default CSRF gate)
 #include "look/sse.h"
 #include "look/websocket.h"
 #include "look/smtp_server.h"
@@ -38,10 +38,10 @@
 #include "look/request_scope.h"
 #include <set>
 #include "look/timer.h"
-#include "look/vm_closure_runner.h"   // vm_closure_runner (jobs::run VM işleyicilerini çalıştırır)
-#include "look/health_path.h"     // yerleşik sağlık yolu — istek + başlangıç çakışma denetimi
-#include "look/route_params.h"    // route_check_handler — rota parametre adları kayıtta denetlenir
-#include "look/struct_types.h"    // struct_check_type_known — kurulum sonrası alan tipi denetimi
+#include "look/vm_closure_runner.h"   // vm_closure_runner (jobs::run runs the VM handlers)
+#include "look/health_path.h"     // built-in health path — request + startup collision check
+#include "look/route_params.h"    // route_check_handler — route parameter names are checked at registration
+#include "look/struct_types.h"    // struct_check_type_known — field type check after setup
 
 #include <cctype>
 #include <cmath>
@@ -69,12 +69,12 @@
 namespace fs = std::filesystem;
 
 // ── HTTP rate limiter (token bucket, per-IP + global) ────────────────────────
-// LOOK_RATE_LIMIT_RPM        per-IP  dakika limiti     (0 = devre dışı)
-// LOOK_RATE_LIMIT_BURST      per-IP  anlık burst        (varsayılan = RPM)
-// LOOK_RATE_LIMIT_GLOBAL_RPM global  dakika limiti     (0 = devre dışı)
-// LOOK_RATE_LIMIT_GLOBAL_BURST global anlık burst      (varsayılan = GLOBAL_RPM)
+// LOOK_RATE_LIMIT_RPM        per-IP  per-minute limit     (0 = disabled)
+// LOOK_RATE_LIMIT_BURST      per-IP  instantaneous burst        (default = RPM)
+// LOOK_RATE_LIMIT_GLOBAL_RPM global  per-minute limit     (0 = disabled)
+// LOOK_RATE_LIMIT_GLOBAL_BURST global instantaneous burst      (default = GLOBAL_RPM)
 //
-// Önce global bucket kontrol edilir; dolu ise per-IP'ye bakılmaz (CPU tasarrufu).
+// The global bucket is checked first; if it is full, per-IP is not looked at (saves CPU).
 // On limit: returns true (caller should send 429).
 
 static int rl_env(const char* name) {
@@ -220,7 +220,7 @@ static bool is_trusted_proxy(const std::string& ip) {
         std::string base = (slash != std::string::npos) ? entry.substr(0, slash) : entry;
         if (slash == std::string::npos) { if (ip == base) return true; continue; }
         int prefix = 0;
-        try { prefix = std::stoi(entry.substr(slash + 1)); } catch (...) { continue; }  // bozuk CIDR → atla
+        try { prefix = std::stoi(entry.substr(slash + 1)); } catch (...) { continue; }  // bad CIDR -> skip
         if (prefix < 0 || prefix > 32) continue;
         uint32_t mask = prefix ? (~0u << (32 - prefix)) : 0;
         auto to_int = [](const std::string& s) -> uint32_t {
@@ -236,26 +236,26 @@ static bool is_trusted_proxy(const std::string& ip) {
     return false;
 }
 
-// İstemci IP'sini çöz — GERÇEK TCP peer'dan başla, proxy başlıklarına yalnız
-// bağlanan IP LOOK_TRUSTED_PROXY listesindeyse güven.
+// Resolve the client IP — start from the REAL TCP peer and trust the proxy headers only
+// if the connecting IP is in the LOOK_TRUSTED_PROXY list.
 //
-// ESKİ HATA: bu mantık rate limiter yolunda DOĞRU yazılmıştı ama request::ip()'yi
-// besleyen yerlerde (ctx.remote_addr) KOPYALANMAMIŞ, yerine tek satır konmuştu:
-//     if (req.headers.count("x-forwarded-for")) ctx.remote_addr = <baslik>;
-// Sonucu (--mode http, ölçüldü):
-//   başlık yok                  -> request::ip() = ""        (gerçek peer yok sayılıyor)
-//   X-Forwarded-For: 9.9.9.9    -> request::ip() = "9.9.9.9" (İSTEMCİ KENDİ IP'SİNİ SEÇİYOR)
-//   X-Forwarded-For: a, b       -> zincir ayrıştırılmıyor
-//   X-Forwarded-For: <çöp>      -> doğrulanmadan log'a/sorguya/ban listesine
-// IP'ye dayalı yetkilendirme, ban ve denetim kaydı güvenilmez hale geliyordu.
-// Artık tek kaynak: üç çağrı yeri de bu fonksiyonu kullanıyor (S2 — kopya sapar).
+// OLD BUG: this logic was written CORRECTLY in the rate limiter path but was NOT copied to the places that
+// feed request::ip() (ctx.remote_addr); a single line was put there instead:
+//     if (req.headers.count("x-forwarded-for")) ctx.remote_addr = <header>;
+// Result (--mode http, measured):
+//   no header                  -> request::ip() = ""        (the real peer is ignored)
+//   X-Forwarded-For: 9.9.9.9    -> request::ip() = "9.9.9.9" (THE CLIENT CHOOSES ITS OWN IP)
+//   X-Forwarded-For: a, b       -> the chain is not parsed
+//   X-Forwarded-For: <garbage>      -> goes into the log/query/ban list without validation
+// IP-based authorization, bans and audit records became untrustworthy.
+// Now a single source: all three call sites use this function (a copy drifts).
 static std::string trim_sp(std::string s) {
     s.erase(0, s.find_first_not_of(" \t"));
     auto last = s.find_last_not_of(" \t");
     s.erase(last == std::string::npos ? 0 : last + 1);
     return s;
 }
-// IPv4 (dört sekizli) ya da IPv6 (onaltılık, ':' içerir) biçimi — başlıktaki çöp adres olmasın.
+// IPv4 (four octets) or IPv6 (hexadecimal, contains ':') form — so that a garbage address in the header is not accepted.
 static bool looks_like_ip(const std::string& s) {
     if (s.empty() || s.size() > 45) return false;
     if (s.find(':') != std::string::npos) {
@@ -272,22 +272,22 @@ static bool looks_like_ip(const std::string& s) {
     }
     return parts == 4;
 }
-// Virgüllü bir yönlendirme başlığının EN SAĞDAKİ değeri — en yakın vekilin eklediği/yazdığı.
+// The RIGHTMOST value of a comma-separated forwarding header — the one added/written by the nearest proxy.
 static std::string last_list_value(const std::string& h) {
     auto comma = h.rfind(',');
     return trim_sp(comma == std::string::npos ? h : h.substr(comma + 1));
 }
 
-// İstemci adresi (güvenilir vekil arkasında): X-Forwarded-For SAĞDAN sola okunur, güvenilir vekiller
-// atlanır, ilk güvenilmeyen adres istemcidir. Eskiden önce X-Real-IP, sonra XFF'nin EN SOLDAKİ girdisi
-// alınıyordu: ekleyen bir vekilin (Apache mod_proxy, nginx $proxy_add_x_forwarded_for) arkasında en
-// soldaki değeri istemci yazar (X-Forwarded-For: 6.6.6.6 → request::ip() = 6.6.6.6; hız sınırı, ban ve
-// denetim kaydı aşılıyordu); Apache X-Real-IP koymaz, istemcinin gönderdiği aynen geçerdi. X-Real-IP
-// yalnız XFF hiç yoksa kullanılır. Biçimi bozuk girdi istemci sayılmaz: vekilin kendi adresi döner.
+// Client address (behind a trusted proxy): X-Forwarded-For is read from RIGHT to left, trusted proxies are
+// skipped, the first untrusted address is the client. Previously X-Real-IP was taken first, then the LEFTMOST entry of XFF:
+// behind a proxy that appends (Apache mod_proxy, nginx $proxy_add_x_forwarded_for) the
+// client writes the leftmost value (X-Forwarded-For: 6.6.6.6 -> request::ip() = 6.6.6.6; the rate limit, ban and
+// audit record were bypassed); Apache does not set X-Real-IP, so whatever the client sent would pass as is. X-Real-IP
+// is used only if there is no XFF at all. A malformed entry is not counted as the client: the proxy's own address is returned.
 template <typename Req>
 static std::string resolve_client_ip(const Req& req) {
-    std::string ip = req.remote_addr;              // gerçek TCP peer
-    if (!is_trusted_proxy(ip)) return ip;          // güvenilmeyen kaynak: başlıklara BAKMA
+    std::string ip = req.remote_addr;              // real TCP peer
+    if (!is_trusted_proxy(ip)) return ip;          // untrusted source: do NOT look at the headers
     auto ixff = req.headers.find("x-forwarded-for");
     if (ixff != req.headers.end()) {
         std::vector<std::string> hops;
@@ -297,7 +297,7 @@ static std::string resolve_client_ip(const Req& req) {
             if (!looks_like_ip(*it)) return ip;
             if (!is_trusted_proxy(*it)) return *it;
         }
-        return (!hops.empty() && looks_like_ip(hops.front())) ? hops.front() : ip;   // hepsi güvenilir vekil
+        return (!hops.empty() && looks_like_ip(hops.front())) ? hops.front() : ip;   // all are trusted proxies
     }
     auto ireal = req.headers.find("x-real-ip");
     if (ireal != req.headers.end()) {
@@ -316,7 +316,7 @@ static bool resolve_is_https(const Req& req) {
     if (!is_trusted_proxy(req.remote_addr)) return false;
     auto it = req.headers.find("x-forwarded-proto");
     if (it == req.headers.end()) return false;
-    std::string p = last_list_value(it->second);   // en yakın vekilin değeri (en soldakini istemci yazabilir)
+    std::string p = last_list_value(it->second);   // the nearest proxy's value (the leftmost can be written by the client)
     for (auto& c : p) c = (char)std::tolower((unsigned char)c);
     return p == "https";
 }
@@ -328,8 +328,8 @@ static std::string resolve_host(const Req& req) {
     if (is_trusted_proxy(req.remote_addr)) {
         auto it = req.headers.find("x-forwarded-host");
         if (it != req.headers.end()) {
-            // En sağdaki: Apache mod_proxy ekler ("istemcinin, gerçek"); en soldakini istemci yazar.
-            // (nginx kendiliğinden koymaz: yapılandırma X-Forwarded-Host $host ile YAZMALI — belge.)
+            // The rightmost: Apache mod_proxy appends ("client's, real"); the leftmost is written by the client.
+            // (nginx does not set it on its own: the configuration MUST write X-Forwarded-Host with $host — documented.)
             std::string h = last_list_value(it->second);
             std::string c = look::WebContext::clean_host(h);
             if (!c.empty()) return c;
@@ -342,62 +342,62 @@ static std::string resolve_host(const Req& req) {
 // ── Shared hot-reload state (mirrors WarmApp in fcgi_main) ───────────────────
 
 struct HttpApp {
-    // Setup/hot-reload sayacı — her yeniden kurulumda artar. Worker'lardaki
-    // thread_local dispatch kopyası bunu görüp kendini tazeler (bkz. per-request
-    // yolundaki tl_copy). Sayaç olmadan hot-reload sonrası eski kopya kullanılırdı.
+    // Setup/hot-reload counter — increments on every re-setup. The thread_local dispatch copy in the workers
+    // sees it and refreshes itself (see tl_copy in the per-request
+    // path). Without the counter the old copy would be used after a hot-reload.
     std::atomic<uint64_t>                    generation{0};
 
-    // ── Modül ev sahibi (RuntimeHost) + program ───────────────────────────────
-    // shared_ptr: nesil görüntüsü (Snap) da tutar — sıcak yeniden yükleme yenisini kurarken eski
-    // nesli kullanan istekler bitene dek eskisi yaşar.
+    // ── Module host (RuntimeHost) + program ───────────────────────────────
+    // shared_ptr: the generation image (Snap) holds it too — while hot reload sets up the new one, the old one lives
+    // until the requests using the old generation finish.
     std::shared_ptr<look::RuntimeHost>       interp;
     std::shared_ptr<look::Program>           program;
     std::ostringstream                       setup_out;
 
-    // ── Bytecode VM (tek motor — derlenemezse uygulama başlamaz) ──────────────
+    // ── Bytecode VM (single engine — the app does not start if it cannot be compiled) ──────────────
     std::shared_ptr<look::CompiledProgram>   compiled;
 
-    // VM route registry: setup fazında VM çalıştırılarak doldurulur.
+    // VM route registry: filled by running the VM in the setup phase.
     // pattern = "GET:/path/{id}", closure = compiled closure ptr (BYTECODE_FN value)
     struct VmRouteRaw { std::string pattern; look::Value fn; std::vector<look::Value> middlewares; };
     std::vector<VmRouteRaw>                          vm_routes;
-    // VM'nin dispatch için hazır olduğunu gösterir.
+    // indicates that the VM is ready for dispatch.
     bool                                     vm_routes_ready = false;
-    // Rota kaydetmeyen betik (PHP gibi): her istek programın tamamını baştan çalıştırır (VM'de).
+    // A script that registers no routes (like PHP): every request runs the whole program from the start (in the VM).
     bool                                     script_mode = false;
-    // before_route() middleware listesi (setup fazında kaydedilir, dispatch'ten önce çalışır)
+    // before_route() middleware list (registered in the setup phase, runs before dispatch)
     std::vector<look::Value>                 vm_before_routes;
-    // Varsayılan CSRF denetimi: program çerez kullanıyorsa (session::/csrf::/cookie::) açık;
-    // csrf::exempt("/yol" | "/önek/*") kuralları kurulumda kaydedilir.
+    // Default CSRF check: on if the program uses cookies (session::/csrf::/cookie::);
+    // csrf::exempt("/path" | "/prefix/*") rules are registered at setup.
     bool                                     csrf_on = false;
     std::vector<std::string>                 csrf_exempt;
-    // Setup VM globals: db_check/json_ok/json_hata/admin_kontrol closure'ları + $conn pool key
+    // Setup VM globals: db_check/json_ok/json_error/admin_check closures + $conn pool key
     std::unordered_map<std::string, look::Value> vm_setup_globals;
 
     fs::path                                 script_path;
     fs::file_time_type                       mtime;
 
-    // ── Nesil görüntüsü: bir isteğin kullandığı her şey, değişmez ──────────────
-    // İstek g_http_mutex altında yalnız bu shared_ptr'ı kopyalar, kilidi bırakır ve bundan sonra
-    // YALNIZ bu görüntüden okur. Sıcak yeniden yükleme yeni bir görüntü yayınlar; eskisi (program,
-    // closure'lar, ana makine) onu kullanan son istek bitince serbest kalır.
-    // Eskiden istek kilidi rota çalışmadan önce bırakıp g_http_app'e ham işaretçilerle devam
-    // ediyordu: istek bir sorguda / http::get'te beklerken dosya değişince yeniden yükleme eski bayt
-    // kodunu serbest bırakıyor, istek dönünce süreç SIGSEGV ile düşüyordu (ASan: heap-use-after-free
-    // VM::run; fiber ve iş parçacığı modunda). Kilidi istek boyunca tutmak çözüm değil: askıdaki bir
-    // fiber okuma kilidini tutarken aynı iş parçacığında yazma kilidi beklenirse iş parçacığı kilitlenir.
+    // ── Generation image: everything a request uses, immutable ──────────────
+    // Under g_http_mutex a request only copies this shared_ptr, releases the lock and from then on reads
+    // ONLY from this image. Hot reload publishes a new image; the old one (program,
+    // closures, host) is freed when the last request using it finishes.
+    // Previously the request released the lock before running the route and continued with raw pointers to g_http_app:
+    // if the file changed while the request waited in a query / http::get, the reload freed the old bytecode,
+    // and when the request returned the process died with SIGSEGV (ASan: heap-use-after-free in
+    // VM::run; in both fiber and thread mode). Holding the lock for the whole request is not a fix: if a suspended
+    // fiber holds the read lock while a write lock is awaited on the same thread, the thread deadlocks.
     struct Snap {
         std::shared_ptr<look::RuntimeHost>             interp;
         std::shared_ptr<look::Program>                 program;
         std::shared_ptr<look::CompiledProgram>         compiled;
-        std::vector<VmRouteRaw>                        vm_routes;          // closure'ların sahibi
+        std::vector<VmRouteRaw>                        vm_routes;          // owner of the closures
         std::vector<look::Value>                       vm_before_routes;
         std::unordered_map<std::string, look::Value>   vm_setup_globals;
         std::vector<std::string>                       csrf_exempt;
         bool                                           csrf_on = false;
         bool                                           script_mode = false;
         bool                                           vm_routes_ready = false;
-        // Rota listesi (statikler önce) — vm_routes'taki closure'lara ham işaretçi; bu görüntü yaşadıkça geçerli.
+        // Route list (statics first) — raw pointers to the closures in vm_routes; valid as long as this image lives.
         std::shared_ptr<std::vector<look::VmRoute>>    route_closures;
     };
     std::shared_ptr<const Snap>                      snap;
@@ -407,8 +407,8 @@ static HttpApp                  g_http_app;
 static std::shared_mutex        g_http_mutex;
 static std::atomic<bool>        g_http_ready{false};
 
-// Kurulumun bıraktığı durumdan değişmez görüntü yayınla (g_http_mutex YAZMA kilidi altında çağrılır).
-// Başarısız yükleme de yayınlanır (vm_routes_ready=false → istek 500), bugünkü davranışla aynı.
+// Publish an immutable image from the state left by setup (called under the g_http_mutex WRITE lock).
+// A failed load is also published (vm_routes_ready=false -> request 500), same as today's behavior.
 static void publish_http_snapshot() {
     auto s = std::make_shared<HttpApp::Snap>();
     s->interp           = g_http_app.interp;
@@ -421,7 +421,7 @@ static void publish_http_snapshot() {
     s->csrf_on          = g_http_app.csrf_on;
     s->script_mode      = g_http_app.script_mode;
     s->vm_routes_ready  = g_http_app.vm_routes_ready;
-    // Rota listesi bir kez, yüklemede (eskiden her iş parçacığında, nesil değişince).
+    // The route list once, at load (previously on every thread, when the generation changed).
     auto rc = std::make_shared<std::vector<look::VmRoute>>();
     rc->reserve(s->vm_routes.size());
     for (auto& r : s->vm_routes) {
@@ -433,34 +433,34 @@ static void publish_http_snapshot() {
             if (mw.type() == look::Value::BYTECODE_FN) vr.middlewares.push_back(mw.as_bytecode_fn().get());
         rc->push_back(std::move(vr));
     }
-    // Statik route'ları ({param} içermeyenler) dinamiklerden ÖNCE: /user/new, /user/{id}'den önce eşleşsin.
+    // Static routes (those without {param}) BEFORE the dynamic ones: so that /user/new matches before /user/{id}.
     std::stable_partition(rc->begin(), rc->end(),
         [](const look::VmRoute& r) { return r.pattern.find('{') == std::string::npos; });
     s->route_closures = std::move(rc);
     g_http_app.snap = std::move(s);
 }
 
-// LOOK 2: bu iş parçacığı bir zamanlayıcı geri çağırması koşturuyorsa çağrılacak closure.
-// look_app_dispatch bunu görünce rota eşleştirmez, closure'ı istek VM'inde doğrudan çağırır.
-// Fiber içinde FİBERE özeldir (FiberLocal::http_direct): işleyici bir sorguda askıya alınınca
-// aynı iş parçacığındaki başka bir fiber bunun üstüne yazmasın. Fiber dışında iş parçacığına özel.
+// LOOK 2: the closure to call if this thread is running a timer callback.
+// When look_app_dispatch sees this it does not match routes, it calls the closure directly in the request VM.
+// Inside a fiber it is FIBER-specific (FiberLocal::http_direct): so that when the handler is suspended in a query
+// another fiber on the same thread does not overwrite it. Outside a fiber it is thread-specific.
 struct DirectState {
     const look::Closure* closure = nullptr;
-    // ... ve ona verilecek argümanlar (WebSocket mesajı gibi); yoksa argümansız çağrılır.
+    // ... and the arguments to pass it (like a WebSocket message); if absent it is called without arguments.
     const std::vector<look::Value>* args = nullptr;
-    // Bir WebSocket/SSE BAĞLANTISININ rota işleyicisi koşuyorsa o bağlantı (WEBSOCKET / SSE_CONN
-    // değeri). İstek VM'i bunu görünce işleyiciye ilk argüman olarak verir.
+    // The WebSocket/SSE CONNECTION, if its route handler is running (the WEBSOCKET / SSE_CONN
+    // value). The request VM sees this and passes it to the handler as the first argument.
     look::Value conn;
-    // Doğrudan çağrılan geri çağırmanın log etiketi ("message handler" …): hata bu adla loglanır.
+    // Log label of the directly called callback ("message handler" ...): errors are logged under this name.
     const char* what = nullptr;
-    // Doğrudan çağrının sonucu ve hata durumu (iş işleyicisi dönüş değerine bakar).
+    // Result and error state of the direct call (the job handler looks at the return value).
     look::Value result;
     bool failed = false;
-    // WS/SSE geri çağrısının bağlantısının kurulduğu nesil (program + kurulum değerleri). Varsa
-    // dispatch güncel nesil yerine bunu kullanır: geri çağrı kendi programının bytecode'udur.
+    // The generation in which the WS/SSE callback's connection was established (program + setup values). If present,
+    // dispatch uses this instead of the current generation: the callback is the bytecode of its own program.
     std::shared_ptr<const HttpApp::Snap> gen;
 };
-// fiber-ok: yalnız fiber dışı yedek; fiber içinde direct() FiberLocal::http_direct döner
+// fiber-ok: non-fiber fallback only; inside a fiber direct() returns FiberLocal::http_direct
 static thread_local DirectState t_direct_thread;
 static DirectState& direct() {
     if (look::Fiber* f = look::Fiber::current()) {
@@ -469,29 +469,29 @@ static DirectState& direct() {
     }
     return t_direct_thread;
 }
-// Bu iş parçacığında şu an bir dağıtım sürüyor mu (iç içe "yeni istek" ayrı iş parçacığında koşar).
-// fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::dispatch_depth
+// Is a dispatch currently in progress on this thread (a nested "new request" runs on a separate thread).
+// fiber-ok: non-fiber fallback only; inside a fiber FiberLocal::dispatch_depth
 static thread_local int t_dispatch_depth = 0;
 static look::Value run_closure_as_request(const look::Value& fnv, std::vector<look::Value> args, const char* what, bool& ok);
 
-// 1.0.8 — Bir rota VM'in SAĞLAMADIĞI bir yerleşik fonksiyona ulaşıyor mu? (rota içinde
-// timer::after, jobs::worker ... — derleyici bunları `LOAD_GLOBAL "mod::fn"` + genel CALL olarak
-// derler, VM'de değer null olur ve çağrı "Not callable" ile düşer.) Eskiden bu rotalar yalnızca
-// "hata olunca aynı isteği yorumlayıcıda yeniden çalıştır" ağı sayesinde çalışıyordu; o ağ
-// işleyiciyi İKİ KEZ çalıştırdığı için kalktı. Karar artık ÇALIŞMADAN ÖNCE, kurulumda verilir:
-// rotanın proto'su, iç proto'ları ve adıyla çağırdığı global fonksiyonlar (geçişli) taranır;
-// VM global'lerinde karşılığı olmayan bir "mod::fn" adı yükleniyorsa uygulama başlamaz (LOOK 2;
-// 1.0.8'de rota baştan yorumlayıcıya sabitleniyordu). Değişken üzerinden yapılan dinamik çağrı
-// görülemez: o durumda istek 500 alır.
-// Saf (isteğe bağlı olmayan) yalın yerleşikler: bool, string, strlen, abs, max, min, sqrt, strtoupper,
+// 1.0.8 — Does a route reach a built-in function the VM DOES NOT PROVIDE? (inside a route
+// timer::after, jobs::worker ... — the compiler compiles them as `LOAD_GLOBAL "mod::fn"` + a generic CALL,
+// in the VM the value is null and the call fails with "Not callable".) Previously these routes only worked
+// thanks to the "if an error occurs re-run the same request in the interpreter" net; that net was removed because it ran the
+// handler TWICE. The decision is now made BEFORE running, at setup:
+// the route's proto, its inner protos and the global functions it calls by name (transitively) are scanned;
+// if a "mod::fn" name with no counterpart in the VM globals is loaded the app does not start (LOOK 2;
+// in 1.0.8 the route was pinned to the interpreter from the start). A dynamic call through a variable
+// cannot be seen: in that case the request gets a 500.
+// Pure (non-request) bare built-ins: bool, string, strlen, abs, max, min, sqrt, strtoupper,
 // strtolower, join.
-// İSTEK tablosu ve KURULUM tablosu aynı tanımı kullanır. Eskiden yalnız istek tablosunda vardılar:
-// VM kurulum geçişinde boş değer dönüyor, üst düzeyde `$x = strtoupper("a")` ile hesaplanan
-// değişken rotalarda null oluyordu (yorumlayıcıda doğruydu) — sessiz yanlış değer.
-// Web'de yakalanmamış hatanın YERİ günlüğe yazılır: " (line 3)" / " (line 3 in lib/x.lk)". Komut
-// satırı bunu VM'in son hata satırından alıyordu (main.cpp); web günlüğü yalnız mesajı yazıyordu
-// ("Dispatch error: boom" — hangi satır?). Nesne VM'le aynı kapsamda kurulur; hata VM'den çıkıp
-// kapsamı terk ederken (yığın açılırken) yeri kaydeder — catch bloğunda VM artık yoktur.
+// The REQUEST table and the SETUP table use the same definition. Previously they existed only in the request table:
+// the VM setup pass returned an empty value, and a variable computed at top level with `$x = strtoupper("a")`
+// was null in routes (correct in the interpreter) — a silent wrong value.
+// On the web the LOCATION of an uncaught error is written to the log: " (line 3)" / " (line 3 in lib/x.lk)". The command
+// line took this from the VM's last error line (main.cpp); the web log only wrote the message
+// ("Dispatch error: boom" — which line?). The object is set up in the same scope as the VM; when the error leaves the VM and
+// leaves the scope (while the stack unwinds) it records the location — the VM no longer exists in the catch block.
 struct VmErrorPlace {
     const look::VM& vm;
     std::string& out;
@@ -514,7 +514,7 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
         if (v.type() == look::Value::NONE) return look::Value(false);
         return look::Value(true);
     };
-    t[BI("string")] = [](std::vector<look::Value>& args) -> look::Value {   // str ile aynı
+    t[BI("string")] = [](std::vector<look::Value>& args) -> look::Value {   // same as str
         return look::Value(args.empty() ? "" : args[0].to_string());
     };
     t[BI("strlen")] = [](std::vector<look::Value>& args) -> look::Value {
@@ -522,11 +522,11 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
     };
     t[BI("abs")] = [](std::vector<look::Value>& args) -> look::Value {
         if (args.empty()) return look::Value(0);
-        return look::num_abs(args[0]);   // look/num_ops.h (INT64_MIN tanımlı)
+        return look::num_abs(args[0]);   // look/num_ops.h (INT64_MIN is defined)
     };
     t[BI("max")] = [](std::vector<look::Value>& args) -> look::Value {
-        for (auto& x : args) look::value_list_only(x, "max()");   // sözlük: hata (value_path.h)
-        return look::num_extreme(args, true);                     // tek tanım (look/num_ops.h)
+        for (auto& x : args) look::value_list_only(x, "max()");   // dict: error (value_path.h)
+        return look::num_extreme(args, true);                     // single definition (look/num_ops.h)
     };
     t[BI("min")] = [](std::vector<look::Value>& args) -> look::Value {
         for (auto& x : args) look::value_list_only(x, "min()");
@@ -545,7 +545,7 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
         for (char& c : s) c = (char)std::tolower((unsigned char)c);
         return look::Value(s);
     };
-    // bare join(arr, sep="") — global builtin (use gerektirmez).
+    // bare join(arr, sep="") — global builtin (no `use` needed).
     t[BI("join")] = [](std::vector<look::Value>& args) -> look::Value {
         if (args.empty() || args[0].type() != look::Value::ARRAY)
             return look::Value(args.empty() ? std::string() : args[0].to_string());
@@ -558,8 +558,8 @@ static void bind_scalar_builtins(std::vector<look::BuiltinFn>& t) {
     };
 }
 
-// Program çerez kullanıyor mu: session::, csrf:: ya da cookie:: çağrısı (CALL_BUILTIN ya da ad olarak
-// yüklenen modül fonksiyonu). Kural tek cümle: çerez kullanan her uygulama CSRF'e karşı korunur.
+// Does the program use cookies: a session::, csrf:: or cookie:: call (CALL_BUILTIN or a module function
+// loaded by name). The rule is one sentence: every app that uses cookies is protected against CSRF.
 static bool cookie_api(const std::string& n) {
     return n.rfind("session::", 0) == 0 || n.rfind("csrf::", 0) == 0 || n.rfind("cookie::", 0) == 0;
 }
@@ -583,7 +583,7 @@ static bool proto_uses_cookies(const look::FunctionProto* p, std::unordered_set<
         if (proto_uses_cookies(n.get(), seen)) return true;
     return false;
 }
-// csrf::exempt kuralı: "/yol" (route() gibi {ad} parçalı) ya da "/önek/*".
+// csrf::exempt rule: "/path" (with {name} parts like route()) or "/prefix/*".
 static bool csrf_exempt_match(const std::string& rule, const std::string& path) {
     if (!rule.empty() && rule.back() == '*') return path.rfind(rule.substr(0, rule.size() - 1), 0) == 0;
     size_t i = 0, j = 0;
@@ -627,10 +627,10 @@ static bool proto_needs_interpreter(const look::FunctionProto* p,
     return false;
 }
 
-// Açılış bilgi satırları ([BYTECODE] …, "VM dispatch ready") — uzun ömürlü sunucu için anlamlı.
-// lk-cgi her istekte yeni süreçtir: stderr Apache'nin hata günlüğüne gider → orada her istekte
-// gürültü olurdu (eski lk-cgi başarılı istekte stderr'e hiçbir şey yazmıyordu). CGI kapatır;
-// uyarı ve hatalar her zaman yazılır.
+// Startup info lines ([BYTECODE] ..., "VM dispatch ready") — meaningful for a long-lived server.
+// lk-cgi is a new process on every request: stderr goes to Apache's error log -> there it would
+// be noise on every request (the old lk-cgi wrote nothing to stderr on a successful request). CGI turns it off;
+// warnings and errors are always written.
 static bool g_http_quiet_startup = false;
 void look_http_engine_set_quiet(bool quiet) { g_http_quiet_startup = quiet; }
 static void startup_note(const std::string& stderr_line, const std::string& log_line = "") {
@@ -639,13 +639,13 @@ static void startup_note(const std::string& stderr_line, const std::string& log_
     if (!log_line.empty()) look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", log_line);
 }
 
-// LOOK 2 tek motor: program derlenemiyorsa uygulama BAŞLAMAZ (eskiden bütün uygulama sessizce
-// ~40× yavaş yorumlayıcıya düşüyordu; LOOK_VM_STRICT yalnız bunu reddetmenin yoluydu — artık
-// tek davranış budur). Derleme hatası programın hatasıdır (eksik dosya, bilinmeyen modül, sınır
-// aşımı) — mesaj olduğu gibi iletilir; "VM çalıştıramıyor" çerçevesi motoru suçlu gösteriyordu.
-// İstisna fırlatır: başlangıçta çağıran mesajı yazıp 1 koduyla çıkar; sıcak yeniden yüklemede
-// hata loglanır, sunucu kapanmaz (uygulama hazır değil → istekler 500 alır, dosya düzeltilince
-// sonraki yükleme toparlar).
+// LOOK 2 single engine: if the program cannot be compiled the app DOES NOT START (previously the whole app silently
+// fell to a ~40x slower interpreter; LOOK_VM_STRICT was only a way to reject this — now
+// this is the only behavior). A compile error is the program's error (missing file, unknown module, limit
+// exceeded) — the message is passed on as it is; the "the VM cannot run it" framing blamed the engine.
+// Throws an exception: at startup the caller writes the message and exits with code 1; on hot reload
+// the error is logged, the server does not shut down (the app is not ready -> requests get 500, the next load
+// recovers once the file is fixed).
 [[noreturn]] static void refuse_start(const std::string& why) {
     g_http_app.vm_routes_ready = false;
     throw std::runtime_error(why);
@@ -661,12 +661,12 @@ static std::string read_file(const fs::path& p) {
 
 static void run_setup_http(const fs::path& script) {
     look::clear_db_pools();
-    // Kurulumun (üst düzey kod) aldığı veritabanı bağlantıları kurulum bitince havuza döner.
-    // Eskiden kurulum iş parçacığında kalıyordu: üst düzeyde bir db::exec (CREATE TABLE gibi)
-    // havuzdan bir bağlantıyı süreç ömrü boyunca tutuyordu — LOOK_DB_POOL_SIZE=1 iken her DB
-    // isteği sonsuza dek bekliyordu (v2'nin tembel havuzuyla gelen gerileme). Hata ile çıkışta da.
+    // The database connections taken by setup (top-level code) return to the pool when setup ends.
+    // Previously they stayed with the setup thread: a top-level db::exec (like CREATE TABLE)
+    // held a connection from the pool for the lifetime of the process — with LOOK_DB_POOL_SIZE=1 every DB
+    // request waited forever (a regression that came with v2's lazy pool). Also on exit with an error.
     struct SetupConnRelease { ~SetupConnRelease() { look::release_thread_connections(); } } setup_conn_release;
-    // Kurulum nasıl biterse bitsin (başarı / hata) istekler için yeni değişmez görüntü yayınlanır.
+    // However setup ends (success / error), a new immutable image is published for requests.
     struct SnapPublish { ~SnapPublish() { publish_http_snapshot(); } } snap_publish;
 
     auto src = read_file(script);
@@ -685,21 +685,21 @@ static void run_setup_http(const fs::path& script) {
     setup_ctx        = look::WebContext{};
     setup_ctx.method = "__SETUP__";
 
-    // LOOK 2 tek motor: üst düzey kod (kurulum) YALNIZ VM'de, bir kez çalışır. Bu nesne LOOK kodu
-    // ÇALIŞTIRMAZ — yalnız yerleşik modüllerin deposu (ModuleHost): modül fonksiyonları ondan
-    // alınır, web modülleri kurulum bağlamına (setup_ctx) bağlanır, setup modu bayrağını taşır.
-    // (Eskiden üst düzey önce burada yorumlayıcıda koşuyor, sonra VM aynı kodu kayıttan geri
-    // oynatıyordu: iki geçiş, iki motor.)
+    // LOOK 2 single engine: top-level code (setup) runs ONLY in the VM, once. This object does NOT RUN
+    // LOOK code — it is only the store of the built-in modules (ModuleHost): module functions are taken
+    // from it, web modules are bound to the setup context (setup_ctx), it carries the setup-mode flag.
+    // (Previously top level ran here first in the interpreter, then the VM replayed the same code from the
+    // record: two passes, two engines.)
     auto interp = std::make_unique<look::RuntimeHost>(g_http_app.setup_out);
     interp->set_file(script.string());
     interp->set_web_context(&setup_ctx);
-    // Modüller derlemeden SONRA açılır (aşağıda, CompiledProgram::use_modules).
+    // Modules are opened AFTER compilation (below, CompiledProgram::use_modules).
     g_http_app.program     = std::move(program);
     g_http_app.interp      = std::move(interp);
     g_http_app.script_path = script;
 
-    // ── Bytecode compile — LOOK 2: tek motor, yedek yok ───────────────────────
-    // LOOK_BYTECODE=0 eskiden bütün uygulamayı yorumlayıcıda çalıştırırdı; artık anlamı yok.
+    // ── Bytecode compile — LOOK 2: single engine, no fallback ───────────────────────
+    // LOOK_BYTECODE=0 used to run the whole app in the interpreter; it no longer has any meaning.
     {
         static bool warned = false;
         const char* e = std::getenv("LOOK_BYTECODE");
@@ -716,10 +716,10 @@ static void run_setup_http(const fs::path& script) {
             auto compiled = std::make_unique<look::CompiledProgram>(
                 look::Compiler::compile(*g_http_app.program,
                                         g_http_app.script_path.parent_path().string(), g_http_app.script_path.string()));
-            // Yalnız programın `use` ettiği stdlib modülleri açılır (dahil edilen dosyalarınkiler de —
-            // derleyici zaten okuduğu `use` satırlarından toplar; CLI ile aynı liste). `use` edilmeyen
-            // modülün yuvası boş kalır → VM "Module 'x' not loaded." verir. Paket modülü
-            // (~/.look/modules) stdlib değildir: derleyici derler.
+            // Only the stdlib modules the program `use`s are opened (those of included files too —
+            // the compiler collects them from the `use` lines it already read; the same list as the CLI). The slot of a
+            // module that is not `use`d stays empty -> the VM gives "Module 'x' not loaded." A package module
+            // (~/.look/modules) is not stdlib: the compiler compiles it.
             for (const auto& m : compiled->use_modules) g_http_app.interp->load_stdlib_module(m);
             g_http_app.compiled     = std::move(compiled);
             startup_note("[BYTECODE] OK — VM mode active", "Bytecode compile OK — VM mode active");
@@ -729,7 +729,7 @@ static void run_setup_http(const fs::path& script) {
             refuse_start("the program could not be compiled");
         }
 
-    // ── VM Setup Fazı: bytecode'u çalıştır, route'ları kaydet ────────────────
+    // ── VM Setup Phase: run the bytecode, register the routes ────────────────
     g_http_app.vm_routes.clear();
     g_http_app.vm_before_routes.clear();
     g_http_app.csrf_on = false;
@@ -737,15 +737,15 @@ static void run_setup_http(const fs::path& script) {
     g_http_app.vm_routes_ready = false;
     g_http_app.script_mode     = false;
     if (g_http_app.compiled) {
-        std::string setup_err_place;   // kurulum hatasının satırı (VmErrorPlace)
+        std::string setup_err_place;   // line of the setup error (VmErrorPlace)
         try {
-            // Setup builtins: route() (index 22) ve temel veri fonksiyonları
-            // Diğer builtin'ler setup'ta çağrılmaz (db::query vb. HTTP context ister)
+            // Setup builtins: route() (index 22) and the basic data functions
+            // The other builtins are not called at setup (db::query etc. need an HTTP context)
             auto vm_routes_ptr        = &g_http_app.vm_routes;
             auto vm_before_routes_ptr = &g_http_app.vm_before_routes;
             std::vector<look::BuiltinFn> setup_builtins(look::builtin_names().size());
 
-            // print/write — setup çıktısı için (0, 1)
+            // print/write — for setup output (0, 1)
             auto* setup_out_ptr = &g_http_app.setup_out;
             setup_builtins[0] = [setup_out_ptr](std::vector<look::Value>& args) -> look::Value {
                 for (auto& a : args) *setup_out_ptr << a.to_string();
@@ -755,15 +755,15 @@ static void run_setup_http(const fs::path& script) {
 
             // count (2)
             setup_builtins[2] = [](std::vector<look::Value>& args) -> look::Value {  // count/len
-                return look::Value(args.empty() ? 0 : look::look_count(args[0]));  // tek tanım (array_count.h)
+                return look::Value(args.empty() ? 0 : look::look_count(args[0]));  // single definition (array_count.h)
             };
 
-            // push (3) — setup'ta $routes_list push'ları için
+            // push (3) — for $routes_list pushes in setup
             setup_builtins[3] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                     return look::Value();
                 look::value_push_not_map(args[0], "push()");
-                args[0].detach();   // LOOK 2: paylaşılan depoyu yerinde değiştirme (değişken yolu PUSH_PATH ile gelir)
+                args[0].detach();   // LOOK 2: do not modify the shared store in place (the variable path comes via PUSH_PATH)
                 args[0].as_array()->push_back(args[1]);
                 return look::Value();
             };
@@ -785,24 +785,24 @@ static void run_setup_http(const fs::path& script) {
             // int (6)
             setup_builtins[6] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value(0);
-                // to_int() KULLAN — stoll(to_string(float)) BOZUK: to_string büyük float'ı
-                // bilimsel gösterime çevirir ("1e+06"), stoll 'e'de durup 1 döndürür →
-                // int(float>~1e6) sessizce yanlış. to_int() FLOAT'ı doğrudan (int64_t) cast
-                // eder, STRING'i aynı stoll ile parse eder.
-                return look::look_explicit_int(args[0]);   // aralık dışı sayısal metin → hata (Go ErrRange)
+                // USE to_int() — stoll(to_string(float)) is BROKEN: to_string turns a large float
+                // into scientific notation ("1e+06"), stoll stops at 'e' and returns 1 ->
+                // int(float>~1e6) is silently wrong. to_int() casts a FLOAT directly to (int64_t)
+                // and parses a STRING with the same stoll.
+                return look::look_explicit_int(args[0]);   // out-of-range numeric text -> error (Go ErrRange)
             };
             // float (7)
             setup_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
                 if (args.empty()) return look::Value(0.0);
-                // to_float(): int()'teki gibi to_string() round-trip'i ele (FLOAT doğrudan,
-                // string round-trip hassasiyet kaybı yok).
+                // to_float(): handle to_string() round-trip as in int() (FLOAT directly,
+                // no precision loss from a string round-trip).
                 return look::look_explicit_float(args[0]);
             };
 
-            bind_scalar_builtins(setup_builtins);   // strlen, abs, max, min, sqrt, strtoupper, strtolower, join — istek tablosuyla aynı tanım
+            bind_scalar_builtins(setup_builtins);   // strlen, abs, max, min, sqrt, strtoupper, strtolower, join — same definition as the request table
 
-            // before_route() — setup'ta middleware closure'ı kaydet. İndeks İSİMDEN
-            // (builtin_index) — hard-coded sayı builtin listesi büyüyünce kayıyordu.
+            // before_route() — register the middleware closure at setup. The index is FROM THE NAME
+            // (builtin_index) — a hard-coded number drifted when the builtin list grew.
             setup_builtins[(size_t)look::builtin_index("before_route")] =
                 [vm_before_routes_ptr](std::vector<look::Value>& args) -> look::Value {
                 if (!args.empty() && args[0].type() == look::Value::BYTECODE_FN)
@@ -810,14 +810,14 @@ static void run_setup_http(const fs::path& script) {
                 return look::Value();
             };
 
-            // stop() — setup'ta no-op (sadece dispatch'te anlamlı)
+            // stop() — a no-op at setup (only meaningful at dispatch)
             setup_builtins[(size_t)look::builtin_index("stop")] =
                 [](std::vector<look::Value>&) -> look::Value {
                 return look::Value();
             };
 
-            // route::group(prefix, [mw], fn) — grup context'ini it, closure'ı çağır (invoke aktif
-            // setup VM'e köprüler), çıkar. İçindeki route() çağrıları prefix+mw miras alır.
+            // route::group(prefix, [mw], fn) — push the group context, call the closure (invoke bridges
+            // to the active setup VM), pop. route() calls inside inherit the prefix+mw.
             setup_builtins[(size_t)look::builtin_index("route::group")] =
                 [](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() < 2) return look::Value();
@@ -837,7 +837,7 @@ static void run_setup_http(const fs::path& script) {
                 return look::Value();
             };
 
-            // route() — index 22: pattern + closure kaydet
+            // route() — index 22: register pattern + closure
             setup_builtins[22] = [vm_routes_ptr](std::vector<look::Value>& args) -> look::Value {
                 // route("GET", "/path", fn) — 3-arg form
                 // route("GET", "/path", [mw...], fn) — 4-arg form
@@ -846,7 +846,7 @@ static void run_setup_http(const fs::path& script) {
                     // 4-arg: method, pattern, middlewares, fn
                     std::string method  = args[0].to_string();
                     std::string pattern = look::route_group_prefix() + args[1].to_string();
-                    // grup middleware'leri (dış→iç) ÖNE, sonra route'un kendi mw'leri
+                    // group middlewares (outer->inner) FIRST, then the route's own mw's
                     std::vector<look::Value> middlewares = look::route_group_middlewares();
                     if (args[2].type() == look::Value::ARRAY) {
                         auto& own = *args[2].as_array();
@@ -877,13 +877,13 @@ static void run_setup_http(const fs::path& script) {
                 return look::Value();
             };
 
-            // KRİTİK: override'lar İSİMDEN indekslenir (builtin_index). Eskiden hard-coded sayılardı;
-            // builtin_names()'e giriş eklenince indeksler kayıyordu (sessiz yanlış fonksiyon).
-            // db::connect ve diğer modül fonksiyonları aşağıdaki genel döngüde GERÇEK modül
-            // fonksiyonuna bağlanır (kurulum tek geçiş: havuz bir kez açılır).
+            // CRITICAL: overrides are indexed BY NAME (builtin_index). They used to be hard-coded numbers;
+            // when an entry was added to builtin_names() the indexes drifted (silently the wrong function).
+            // db::connect and the other module functions are bound to the REAL module
+            // function in the general loop below (setup is a single pass: the pool is opened once).
             auto SBI = [](const char* n) { return (size_t)look::builtin_index(n); };
             setup_builtins[SBI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
-                return look::Value(look::make_channel(args));   // value.h: komut satırıyla aynı kural
+                return look::Value(look::make_channel(args));   // value.h: same rule as the command line
             };
             setup_builtins[SBI("args")] = [](std::vector<look::Value>&) -> look::Value {
                 return look::Value(std::make_shared<look::ValueArray>());
@@ -917,8 +917,8 @@ static void run_setup_http(const fs::path& script) {
                     std::vector<look::Value> a = args; return f(a);
                 };
             }
-            // app:: — servis kaydi setup'ta cagrilir (app::set("db", $conn)).
-            // Index isimden alinir (builtin_index) — append-only, hizasizlik yok.
+            // app:: — service registration is called at setup (app::set("db", $conn)).
+            // The index is taken by name (builtin_index) — append-only, no misalignment.
             for (auto& [name, mod, fn] : std::vector<std::tuple<std::string,std::string,std::string>>{
                 {"app::set","app","set"},{"app::get","app","get"},
                 {"app::has","app","has"},{"app::db","app","db"}
@@ -930,19 +930,19 @@ static void run_setup_http(const fs::path& script) {
                 };
             }
 
-            // ── Kalan yerleşikler: GERÇEK modül fonksiyonları (LOOK 2: kurulum TEK geçiş) ─────────
-            // Üst düzey yalnız burada, VM'de, bir kez çalışır: modül fonksiyonlarının yan etkileri
-            // (db::exec, file::put, cache::set, http::get …) bir kez gerçekleşir, dönüşleri gerçektir.
-            // Eskiden yorumlayıcı geçişi bunları çalıştırıyor, VM geçişi sonuçları kayıttan geri
-            // oynatıyordu (1.0.9) — iki geçiş, iki motor; artık ikisi de yok.
+            // ── Remaining built-ins: REAL module functions (LOOK 2: setup is a SINGLE pass) ─────────
+            // Top level runs only here, in the VM, once: the side effects of module functions
+            // (db::exec, file::put, cache::set, http::get ...) happen once, their returns are real.
+            // Previously the interpreter pass ran them and the VM pass replayed the results from the
+            // record (1.0.9) — two passes, two engines; neither exists any more.
             {
                 const auto& bnames = look::builtin_names();
                 look::RuntimeHost* host = g_http_app.interp.get();
                 for (size_t i = 0; i < setup_builtins.size() && i < bnames.size(); ++i) {
-                    if (setup_builtins[i]) continue;           // yukarıda özel olarak bağlandı
+                    if (setup_builtins[i]) continue;           // specially bound above
                     const std::string& name = bnames[i];
-                    // Üst düzeyde kurulan zamanlayıcı: geri çağırma VM closure'ı, her tetiklenişte
-                    // yeni bir istek gibi kurulan VM'de çalışır (rotada kurulanla aynı yol).
+                    // A timer set at top level: the callback is a VM closure, and on every fire it runs in a VM
+                    // set up like a new request (the same path as one set in a route).
                     if (name == "timer::after" || name == "timer::every") {
                         const bool repeat = (name == "timer::every");
                         setup_builtins[i] = [name, repeat](std::vector<look::Value>& args) -> look::Value {
@@ -971,7 +971,7 @@ static void run_setup_http(const fs::path& script) {
                         };
                         continue;
                     }
-                    // jobs::run — işleyicileri çalıştırır (VM işleyicileri vm_closure_runner ile).
+                    // jobs::run — runs the handlers (VM handlers via vm_closure_runner).
                     if (name == "jobs::run") {
                         setup_builtins[i] = [host](std::vector<look::Value>& args) -> look::Value {
                             return host->jobs_run(args.empty() ? 5000 : (int)args[0].to_float());
@@ -979,12 +979,12 @@ static void run_setup_http(const fs::path& script) {
                         continue;
                     }
                     auto colon = name.find("::");
-                    // `use` edilmemiş modül: yuva boş kalır, VM "Module 'x' not loaded." der.
+                    // A module that is not `use`d: the slot stays empty, the VM says "Module 'x' not loaded."
                     if (colon != std::string::npos && host->module_not_used(name.substr(0, colon))) continue;
                     if (colon != std::string::npos) {
                         auto f = host->get_module_fn(name.substr(0, colon), name.substr(colon + 2));
                         if (f) {
-                            // jobs::worker: işleyici başka iş parçacıklarında çağrılır → closure'u kopyala.
+                            // jobs::worker: the handler is called on other threads -> copy the closure.
                             const bool clone_fn_arg = (name == "jobs::worker");
                             setup_builtins[i] = [f, clone_fn_arg](std::vector<look::Value>& args) -> look::Value {
                                 std::vector<look::Value> a = args;
@@ -995,14 +995,14 @@ static void run_setup_http(const fs::path& script) {
                             continue;
                         }
                     }
-                    // Kurulumda anlamı olmayan yerleşik (ws::on, istek sırasında var olan bağlam …):
-                    // açık hata — eskiden sessizce null dönüyordu.
+                    // Built-in with no meaning at setup (ws::on, context that exists during a request ...):
+                    // explicit error — it used to silently return null.
                     setup_builtins[i] = [name](std::vector<look::Value>&) -> look::Value {
                         throw look::LookVmError(name + "() cannot be used at the top level of a web application");
                     };
                 }
             }
-            // csrf::exempt("/yol" | "/önek/*") — kurulumda muafiyet kaydı (modül sürümü istekte hata verir).
+            // csrf::exempt("/path" | "/prefix/*") — exemption registered at setup (the module version errors in a request).
             {
                 auto* ex = &g_http_app.csrf_exempt;
                 setup_builtins[(size_t)look::builtin_index("csrf::exempt")] =
@@ -1015,7 +1015,7 @@ static void run_setup_http(const fs::path& script) {
                     return look::Value();
                 };
             }
-            // jobs::run kurulumda çağrılırsa VM işleyicilerini çalıştırabilsin (kurulumdan ÖNCE kur).
+            // so that jobs::run, if called at setup, can run the VM handlers (set up BEFORE setup).
             look::vm_closure_runner() = run_closure_as_request;
 
             look::VM::SharedState setup_sh;
@@ -1023,17 +1023,17 @@ static void run_setup_http(const fs::path& script) {
             std::ostringstream vm_setup_out;
             look::VM setup_vm(setup_sh, vm_setup_out);
             VmErrorPlace setup_place{setup_vm, setup_err_place};
-            // Kurulum sürüyor: db::query gibi modüller bunu ModuleHost::is_setup_mode ile görür.
+            // Setup is in progress: modules like db::query see this via ModuleHost::is_setup_mode.
             struct SetupMode { look::RuntimeHost* h; SetupMode(look::RuntimeHost* x) : h(x) { h->set_setup_mode(true); }
                                ~SetupMode() { h->set_setup_mode(false); } } setup_mode{g_http_app.interp.get()};
             setup_vm.execute(*g_http_app.compiled);
 
-            // Setup globals'ı sakla: db_check/json_ok/json_hata gibi named fn closure'lar +
-            // $conn pool key — dispatch VM'e set_globals() ile verilecek
+            // Keep the setup globals: named fn closures like db_check/json_ok/json_error +
+            // $conn pool key — will be given to the dispatch VM with set_globals()
             g_http_app.vm_setup_globals = setup_vm.get_globals();
 
-            // Varsayılan CSRF denetimi: program çerez kullanıyorsa açık. Anahtar yoksa uygulama
-            // BAŞLAMAZ (Go modeli: eksik kaynak açılışta nedenli hata; çalışırken rastgele 403 değil).
+            // Default CSRF check: on if the program uses cookies. If the key is missing the app DOES NOT
+            // START (Go model: a missing resource is a reasoned error at startup; not a random 403 while running).
             {
                 std::unordered_set<const look::FunctionProto*> seen;
                 g_http_app.csrf_on = proto_uses_cookies(g_http_app.compiled->main_proto.get(), seen);
@@ -1049,10 +1049,10 @@ static void run_setup_http(const fs::path& script) {
                     : "CSRF protection: off (the program does not use cookies)");
             }
 
-            // LOOK 2: tüm dosyalar yüklendi, bütün struct'lar biliniyor → alan tip adlarını ŞİMDİ
-            // denetle. Yazım hatası (`strng`) uygulama BAŞLARKEN hata verir; yoksa ancak o struct'ı
-            // kuran (belki nadiren çağrılan) rota çalıştığında, üretimde ortaya çıkardı. Tanımlar
-            // VM global'lerinde "__sdef:<ad>" altında [alan, varsayılan, tip] üçlüleri olarak durur.
+            // LOOK 2: all files are loaded, all structs are known -> check the field type names NOW.
+            // A typo (`strng`) gives an error when the app STARTS; otherwise it would only show up in production
+            // when the route that builds that struct (perhaps rarely called) runs. The definitions
+            // are held in the VM globals under "__sdef:<name>" as [field, default, type] triples.
             {
                 const std::string pre = "__sdef:";
                 auto known = [&](const std::string& t) {
@@ -1066,15 +1066,15 @@ static void run_setup_http(const fs::path& script) {
                 }
             }
 
-            // runtime::stats()["routes"]. ESKİ HATA (4b'den beri): sayı yorumlayıcının rota kaydından
-            // okunuyordu; kurulum VM'e geçince o kayıt boş kaldı ve stats web'de 0 rota diyordu.
+            // runtime::stats()["routes"]. OLD BUG (since 4b): the count was
+            // read from the interpreter's route registry; when setup moved to the VM that registry stayed empty and stats said 0 routes on the web.
             g_http_app.interp->set_route_count((int)g_http_app.vm_routes.size());
             if (!g_http_app.vm_routes.empty()) {
                 g_http_app.vm_routes_ready = true;
-                // LOOK 2 (tek motor): bir rota ya da before_route VAR OLMAYAN bir modül fonksiyonuna
-                // ulaşıyorsa uygulama BAŞLAMAZ. Her modül fonksiyonu VM'de vardır (`lk --vm-report`, CI
-                // kapısı); VM'in tanımadığı bir `mod::fn` adı yazım hatasıdır. Eskiden böyle bir rota
-                // sessizce yorumlayıcıya alınıyor, hata ancak o rotaya ilk istek geldiğinde çıkıyordu.
+                // LOOK 2 (single engine): if a route or before_route reaches a module function that DOES NOT EXIST
+                // the app DOES NOT START. Every module function exists in the VM (`lk --vm-report`, the CI
+                // gate); a `mod::fn` name the VM does not recognize is a typo. Previously such a route
+                // was silently moved to the interpreter and the error only appeared when the first request hit that route.
                 {
                     auto needs = [&](const look::Value& fn, std::string& which) {
                         if (fn.type() != look::Value::BYTECODE_FN) return false;
@@ -1092,9 +1092,9 @@ static void run_setup_http(const fs::path& script) {
                         for (const auto& mw : g_http_app.vm_routes[i].middlewares)
                             if (!n && needs(mw, which)) n = true;
                         if (!n) continue;
-                        // İstisna — std::exit DEĞİL: ilk açılışta çağıran yazıp 1 koduyla çıkar; sıcak
-                        // yeniden yüklemede sunucu ayakta kalır (istekler 500); lk-cgi bir hata yanıtı
-                        // yazar. ESKİ HATA: exit(1) yeniden yüklemede bütün sunucuyu öldürüyordu.
+                        // Exception — NOT std::exit: on first startup the caller writes it and exits with code 1; on hot
+                        // reload the server stays up (requests get 500); lk-cgi writes an error
+                        // response. OLD BUG: exit(1) on reload killed the whole server.
                         g_http_app.vm_routes_ready = false;
                         throw std::runtime_error("route " + g_http_app.vm_routes[i].pattern + " calls " + which +
                             "(), which does not exist — check the spelling of the module and the function.");
@@ -1103,15 +1103,15 @@ static void run_setup_http(const fs::path& script) {
                 startup_note("[BYTECODE] VM routes: " + std::to_string(g_http_app.vm_routes.size()) + " registered",
                              "VM dispatch ready — " + std::to_string(g_http_app.vm_routes.size()) + " route");
             } else {
-                // Rota kaydetmeyen betik (PHP gibi): her istek programın tamamını VM'de baştan çalıştırır.
+                // A script that registers no routes (like PHP): every request runs the whole program from the start in the VM.
                 g_http_app.vm_routes_ready = true;
                 g_http_app.script_mode     = true;
                 startup_note("[BYTECODE] no routes — each request runs the whole script on the VM");
             }
         } catch (const std::exception& e) {
-            // Kurulum yalnız VM'de koşuyor: buradaki hata programın KENDİ hatasıdır (eksik argüman,
-            // throw, `use` edilmemiş modül …), "VM bu programı çalıştıramıyor" değil — mesaj olduğu
-            // gibi iletilir (çağıran "Setup error: …" diye yazar, uygulama başlamaz).
+            // Setup runs only in the VM: the error here is the program's OWN error (missing argument,
+            // throw, a module that is not `use`d ...), not "the VM cannot run this program" — the message is passed
+            // on as it is (the caller writes "Setup error: ...", the app does not start).
             g_http_app.vm_routes_ready = false;
             throw std::runtime_error(e.what() + setup_err_place);
         }
@@ -1119,21 +1119,21 @@ static void run_setup_http(const fs::path& script) {
     }
     g_http_app.mtime       = fs::last_write_time(script);
 
-    // Kurulum/hot-reload tamamlandı → worker'lardaki thread_local dispatch kopyaları
-    // bu artışı görüp kendilerini yeniden kuracak (eski interp'e asılı kalmasınlar).
+    // Setup/hot-reload completed -> the thread_local dispatch copies in the workers
+    // will see this increment and rebuild themselves (so they do not stay hooked to the old interp).
     g_http_app.generation.fetch_add(1, std::memory_order_release);
 
     g_http_ready = true;
 }
 
-// ── Paylaşılan uygulama motoru API'si ─────────────────────────────────────────
-// FCGI modu (fcgi_main.cpp) ile HTTP modu aynı setup + dispatch motorunu
-// paylaşır — VM dispatch TEK yerde yaşar. (Borç 5: FCGI interpreter'a
-// mahkumdu; artık her iki mod da bytecode VM kullanır.)
+// ── Shared application engine API ─────────────────────────────────────────
+// FCGI mode (fcgi_main.cpp) and HTTP mode share the same setup + dispatch engine
+// — VM dispatch lives in ONE place. (FCGI used to be
+// stuck with the interpreter; now both modes use the bytecode VM.)
 //
-// NOT: motor tek script tutar. FCGI'da SCRIPT_FILENAME istekten isteğe
-// değişirse her değişimde tam re-setup olur — servis-başına-tek-app
-// kurulumunda (production modeli) bu hiç tetiklenmez.
+// NOTE: the engine holds a single script. In FCGI, if SCRIPT_FILENAME changes
+// from request to request, a full re-setup happens on every change — with
+// one app per service (the production model) this is never triggered.
 
 bool look_http_engine_ensure(const std::string& script_path_str, std::string& err) {
     fs::path script = fs::absolute(script_path_str);
@@ -1160,10 +1160,10 @@ bool look_http_engine_ensure(const std::string& script_path_str, std::string& er
 
 // ── WebContext from HttpRequest ───────────────────────────────────────────────
 
-// Dağıtım modeli (1.0.20): Linux'ta VARSAYILAN fiber — bağlantı beklerken işçiyi tutmaz.
-// Eski model (bağlantı başına bir işçi) yalnız LOOK_FIBER_DISPATCH=0 ile seçilir. O modelde
-// işçi sayısı kadar açık bağlantı (boşta bekleyen tarayıcı bağlantıları dahil) sunucuyu
-// zaman aşımı dolana dek kilitliyordu. Linux dışında fiber dağıtımı yok: yalnız "1" açar.
+// Dispatch model (1.0.20): on Linux the DEFAULT is fiber — waiting for a connection does not hold a worker.
+// The old model (one worker per connection) is selected only with LOOK_FIBER_DISPATCH=0. In that model
+// as many open connections as workers (including idle browser connections) would lock the server
+// until the timeout expired. There is no fiber dispatch outside Linux: only "1" enables it.
 static bool look_fiber_dispatch_on(const char* v) {
 #ifdef __linux__
     return !(v && std::string(v) == "0");
@@ -1194,21 +1194,21 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
     auto ict = req.headers.find("content-type");
     if (ict != req.headers.end()) ctx.content_type = ict->second;
 
-    // Remote addr — request::ip() bunu okur. Gerçek peer'dan başlar, proxy
-    // başlıklarına yalnız güvenilir proxy arkasındaysa güvenir (bkz.
-    // resolve_client_ip: eskiden burada başlık KOŞULSUZ kabul ediliyordu).
+    // Remote addr — request::ip() reads this. It starts from the real peer and trusts
+    // proxy headers only behind a trusted proxy (see
+    // resolve_client_ip: previously the header was accepted UNCONDITIONALLY here).
     ctx.remote_addr = resolve_client_ip(req);
     ctx.is_https    = resolve_is_https(req);
     ctx.host        = resolve_host(req);
 
-    // Gövde ayrıştırma — urlencoded VE multipart, tek kaynaktan (web.cpp).
-    // ESKİ HATA: burada yalnızca urlencoded dalı vardı, multipart hiç yoktu →
-    // `request::file()` FastCGI'de çalışıyor, `--mode http`'de "requires
-    // multipart/form-data request" hatası veriyordu. Aynı uygulama moda göre
-    // farklı davranıyordu (S12 — moda özgü boşluk); README'de "bilinen sınır"
-    // diye yazılmıştı, oysa unutulmuş bir daldı.
-    // Method kapısı da kaldırıldı: FastCGI tarafı hiç method kontrol etmiyordu,
-    // bu yüzden PUT/PATCH gövdeleri iki modda farklı davranıyordu.
+    // Body parsing — urlencoded AND multipart, from a single source (web.cpp).
+    // OLD BUG: only the urlencoded branch existed here, multipart did not at all ->
+    // `request::file()` worked in FastCGI, but in `--mode http` gave the "requires
+    // multipart/form-data request" error. The same app
+    // behaved differently depending on the mode (a mode-specific gap); the README listed it as a "known limit",
+    // but it was in fact a forgotten branch.
+    // The method gate was also removed: the FastCGI side never checked the method,
+    // so PUT/PATCH bodies behaved differently in the two modes.
     if (!req.body.empty()) ctx.parse_post_body();
 
     return ctx;
@@ -1216,13 +1216,13 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
 
 // ── Request handler called by HttpServer worker threads ───────────────────────
 
-// İleri bildirim — tanım http_handler'dan sonra (paylaşılan motor)
+// Forward declaration — the definition comes after http_handler (shared engine)
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path);
 
-// LOOK 2 — bir VM closure'ını YENİ BİR İSTEK gibi çalıştırır: kendi VM'i, kendi builtin'leri,
-// global'lerin bildirilen değerleri (üst düzeyde kaydedilen zamanlayıcı ve iş işleyicileri için).
-// Hata loglanır (what + " error: …"), ok=false döner; hiçbir şey yeniden çalıştırılmaz.
+// LOOK 2 — runs a VM closure LIKE A NEW REQUEST: its own VM, its own builtins,
+// the declared values of the globals (for timers and job handlers registered at top level).
+// The error is logged (what + " error: ..."), ok=false is returned; nothing is re-run.
 static look::Value run_closure_here(const look::Value& fnv, std::vector<look::Value>& args,
                                     const char* what, bool& ok) {
     look::WebContext ctx;
@@ -1254,10 +1254,10 @@ static look::Value run_closure_here(const look::Value& fnv, std::vector<look::Va
 }
 static look::Value run_closure_as_request(const look::Value& fnv, std::vector<look::Value> args,
                                           const char* what, bool& ok) {
-    // Bu iş parçacığında zaten bir istek dağıtılıyorsa (ör. bir rota jobs::run çağırdı) iç içe
-    // dağıtım look_app_dispatch'te ele alınır: dış isteğin önbellekleri ve veritabanı
-    // bağlantıları korunur. (Ayrı iş parçacığı açmak, her tüketicinin bir bağlantı tuttuğu
-    // durumda havuzu tüketip kilitleniyordu — tests/jobs_concurrent_test.sh.)
+    // If a request is already being dispatched on this thread (e.g. a route called jobs::run), the nested
+    // dispatch is handled in look_app_dispatch: the outer request's caches and database
+    // connections are preserved. (Spawning a separate thread would exhaust the pool and deadlock when
+    // every consumer holds a connection — tests/jobs_concurrent_test.sh.)
     return run_closure_here(fnv, args, what, ok);
 }
 
@@ -1323,14 +1323,14 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
 
     // ── Rate limit check ─────────────────────────────────────────────────────
     {
-        // Gerçek TCP peer'dan başla; proxy başlıklarına yalnız bağlanan IP
-        // LOOK_TRUSTED_PROXY listesindeyse güven. Bu mantık burada DOĞRUYDU ama
-        // request::ip() yolunda kopyalanmamıştı ve o kopya sapmıştı — artık her
-        // ikisi de tek kaynağı (resolve_client_ip) kullanıyor.
+        // Start from the real TCP peer; trust proxy headers only if the connecting IP
+        // is in the LOOK_TRUSTED_PROXY list. This logic was CORRECT here but
+        // was not copied to the request::ip() path and that copy drifted — now both
+        // use the single source (resolve_client_ip).
         std::string client_ip = resolve_client_ip(req);
         const auto& rlc = rl_config();
 
-        // Global limit — önce kontrol et, dolu ise per-IP'ye bakma.
+        // Global limit — check first, if full do not look at per-IP.
         if (rlc.global_rpm > 0) {
             static std::once_flag g_init;
             std::call_once(g_init, [&]() {
@@ -1369,7 +1369,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
         }
     }
 
-    // Dispatch — paylaşılan motor (FCGI modu da aynı fonksiyonu kullanır)
+    // Dispatch — shared engine (FCGI mode uses the same function)
     look::WebContext web = make_web_ctx(req);
     std::ostringstream output;
     look_app_dispatch(web, output, req.path);
@@ -1378,7 +1378,7 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
     resp.status_code = web.status_code;
     resp.status_text = web.status_text;
     for (auto& [k, v] : web.headers_out) resp.headers[k] = v;
-    resp.set_cookies = web.set_cookies_out;   // her çerez ayrı Set-Cookie satırı
+    resp.set_cookies = web.set_cookies_out;   // each cookie on its own Set-Cookie line
     resp.body = web.response_body.empty() ? output.str() : web.response_body;
 
     // Content-Type default
@@ -1386,19 +1386,19 @@ static void http_handler(const look::HttpRequest& req, look::HttpResponse& resp)
         resp.headers["Content-Type"] = "text/html; charset=utf-8";
 }
 
-// Paylaşılan istek motoru — web ctx hazırlanmış olmalı; VM ile dispatch eder,
-// çıktıyı output/web.response_body'ye yazar.
+// Shared request engine — the web ctx must be prepared; dispatches with the VM,
+// writes the output to output/web.response_body.
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path) {
-    // İÇ İÇE dağıtım: bir istek sürerken aynı iş parçacığında bir VM closure'ı "yeni istek"
-    // olarak koşuyor (rota jobs::run çağırdı → iş işleyicisi). Dış isteğin iş parçacığına özgü
-    // durumu korunur: builtin tablosu yerel kurulur (önbelleğe dokunulmaz), veritabanı
-    // bağlantıları dıştakinden kullanılır (yeniden alınmaz/bırakılmaz — havuzu tüketip
-    // kilitlenmesin), çıkışta kopyanın çıktısı ve bağlamı dış isteğe geri bağlanır.
-    // Fiber modunda derinlik ve dış bağlam FIBER'a aittir: bir iş parçacığı birçok isteği
-    // fiber olarak sırayla askıya alıp sürdürür; thread_local sayaç askıdaki başka isteği
-    // "dış istek" sanıyordu (bkz. FiberLocal::dispatch_depth).
-    // fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::dispatch_web/out
+    // NESTED dispatch: while a request is in progress a VM closure runs as a "new request"
+    // on the same thread (a route called jobs::run -> job handler). The outer request's thread-specific
+    // state is preserved: the builtin table is set up locally (the cache is not touched), the database
+    // connections of the outer one are used (not re-acquired/released — would exhaust the pool and
+    // deadlock), on exit the copy's output and context are bound back to the outer request.
+    // In fiber mode the depth and the outer context belong to the FIBER: one thread suspends and resumes many requests
+    // as fibers in turn; a thread_local counter took another suspended request
+    // for the "outer request" (see FiberLocal::dispatch_depth).
+    // fiber-ok: non-fiber fallback only; inside a fiber FiberLocal::dispatch_web/out
     static thread_local look::WebContext*   t_cur_web = nullptr;
     static thread_local std::ostringstream* t_cur_out = nullptr;
     look::Fiber* const cur_fiber = look::Fiber::current();
@@ -1426,18 +1426,18 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         }
     } cur_guard{cur_web, cur_out, outer_web, outer_out, cur_fiber == nullptr};
 
-    // Bu isteğin nesli: kilit altında yalnız görüntü kopyalanır; istek bitene dek görüntü (ve onun
-    // programı, closure'ları, ana makinesi) yaşar — bkz. HttpApp::Snap.
+    // This request's generation: only the image is copied under the lock; until the request ends the image (and its
+    // program, closures, host) lives — see HttpApp::Snap.
     std::shared_ptr<const HttpApp::Snap> snap;
     if (direct().closure && direct().gen)
-        // Açık bir WS/SSE bağlantısının geri çağrısı: bağlantının nesli. Eskiden güncel nesil
-        // alınıyordu → sıcak yeniden yüklemeden sonra eski geri çağrı yeni programın değerleri
-        // ve işlevleriyle karışık çalışıyordu (tests/hot_reload_ws_callback_test.sh).
+        // The callback of an open WS/SSE connection: the connection's generation. Previously the current generation
+        // was taken -> after a hot reload the old callback ran mixed with the new program's values
+        // and functions (tests/hot_reload_ws_callback_test.sh).
         snap = direct().gen;
     else { std::shared_lock<std::shared_mutex> sl(g_http_mutex); snap = g_http_app.snap; }
-    // vm_routes_ready: VM'nin dispatch_routes() kullanabilmesi için
-    // native function wiring tamamlanmış olmalı (Phase 16.5 Adım 5.5)
-    bool use_bc = snap && snap->compiled && snap->vm_routes_ready;   // başarısız yüklemede vm_routes_ready false
+    // vm_routes_ready: the native function wiring must be complete
+    // for the VM to use dispatch_routes() (Phase 16.5 Step 5.5)
+    bool use_bc = snap && snap->compiled && snap->vm_routes_ready;   // vm_routes_ready is false on a failed load
 
     auto t_copy_start    = std::chrono::steady_clock::now();
     auto t_copy_end      = t_copy_start;
@@ -1445,69 +1445,69 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
     if (use_bc) {
         // ── VM path ───────────────────────────────────────────────────────────
-        // ── Dispatch kopyası: worker thread başına BİR KEZ (per-request DEĞİL) ────
-        // Ölçüm (docker, 2 worker): make_dispatch_copy() her istekte 30µs (global'siz
-        // app) — route'u ÇALIŞTIRMAKTAN (12µs) 2.5× pahalı; global-ağır app'te 63µs ve
-        // throughput 21.2k→12.8k düşüyordu (route AYNI olmasına rağmen). Sebep:
-        // make_dispatch_copy → make_unique<RuntimeHost>() TÜM stdlib'i (yüzlerce
-        // std::function) her istekte yeniden kuruyor + globals_ deep-clone.
-        // PHP-FPM istek başına böyle bir bedel ödemez — "PHP'yi geç" hedefinin önündeki
-        // asıl engel buydu, motor hızı değil.
+        // ── Dispatch copy: ONCE per worker thread (NOT per request) ────
+        // Measurement (docker, 2 workers): make_dispatch_copy() was 30µs on every request (app without
+        // globals) — 2.5x more expensive than RUNNING the route (12µs); in a global-heavy app it was 63µs and
+        // throughput dropped 21.2k->12.8k (even though the route was THE SAME). Cause:
+        // make_dispatch_copy -> make_unique<RuntimeHost>() rebuilds the WHOLE stdlib (hundreds of
+        // std::function) on every request + a deep clone of globals_.
+        // PHP-FPM does not pay such a cost per request — this was the real obstacle in front of the goal of passing PHP,
+        // not the engine speed.
         //
-        // Güvenlik: her worker tek isteği aynı anda işler → thread_local kopya güvenli.
-        // Hot-reload'da generation artar → kopya tazelenir.
-        // İZOLASYON: RuntimeHost LOOK global'i tutmaz (VM kendi globals'ını her istekte
-        // snap->vm_setup_globals'tan alır) → klon gereksiz.
+        // Safety: each worker handles a single request at a time -> a thread_local copy is safe.
+        // On hot-reload the generation increases -> the copy is refreshed.
+        // ISOLATION: RuntimeHost holds no LOOK global (the VM takes its own globals on every request
+        // from snap->vm_setup_globals) -> a clone is unnecessary.
         t_copy_start = std::chrono::steady_clock::now();
-        // fiber-ok: nesil-sabit dağıtım kopyası; isteğe özgü bağlam her istekte bağlanır, fiber modunda istek tablosu istek-başına kurulur (tests/fiber_request_isolation_test.sh askı boyunca ölçer)
-        // Önbellekler hangi görüntüden kurulduysa ona bağlıdır (tl_*_of). shared_ptr: bu istek
-        // kullandığını tutar — aynı iş parçacığındaki başka bir istek yeni nesle geçip önbelleği
-        // yeniden kurarsa, askıdaki bu istek eski kopyayı kullanmaya devam eder (eskiden yerinde
-        // yeniden kuruluyordu: askıdaki istek serbest bırakılmış ana makineye/tabloya dönüyordu).
+        // fiber-ok: generation-fixed dispatch copy; request-specific context is bound on every request, in fiber mode the request table is built per request (tests/fiber_request_isolation_test.sh measures it across suspension)
+        // The caches depend on whichever image they were built from (tl_*_of). shared_ptr: this request
+        // holds what it uses — if another request on the same thread moves to the new generation and
+        // rebuilds the cache, this suspended request keeps using the old copy (previously it was
+        // rebuilt in place: the suspended request returned to a freed host/table).
         static thread_local std::shared_ptr<look::RuntimeHost> tl_copy;
-        // Görüntünün kendisi de tutulur: yalnız adres saklansaydı, eski görüntü serbest kalıp yenisi aynı
-        // adrese ayrılınca eski kopya "güncel" sanılırdı (ABA).
-        static thread_local std::shared_ptr<const HttpApp::Snap> tl_copy_of;   // fiber-ok: nesil anahtarı
+        // The image itself is held too: if only the address were stored, the old image would be freed and when the new one was allocated at the same
+        // address the old copy would be taken as "current" (ABA).
+        static thread_local std::shared_ptr<const HttpApp::Snap> tl_copy_of;   // fiber-ok: generation key
         if (!tl_copy || tl_copy_of != snap) {
             tl_copy = std::shared_ptr<look::RuntimeHost>(snap->interp->make_dispatch_copy());
-            tl_copy->bind_web_to_current_request();   // web modülleri bir kez; bağlam çağrı anında
+            tl_copy->bind_web_to_current_request();   // web modules once; the context at call time
             tl_copy_of = snap;
         }
         std::shared_ptr<look::RuntimeHost> copy_hold = tl_copy;
         look::RuntimeHost* copy = copy_hold.get();
         t_copy_end = std::chrono::steady_clock::now();
         copy->set_output(output);
-        // İstek tutamacı: modüller ve print bu isteğin bağlamını/çıktısını buradan okur (fiber'ın
-        // kendi alanı). Kapsam bitince önceki değer geri gelir — iç içe dağıtım dış isteği bozmaz.
+        // Request handle: modules and print read this request's context/output from here (the fiber's
+        // own field). When the scope ends the previous value comes back — nested dispatch does not break the outer request.
         look::RequestScope req_scope(&web, &output);
         if (nested && outer_web && outer_out)
             depth_guard.restore = [copy, outer_out]() { copy->set_output(*outer_out); };
 
-        // Rota listesi görüntüyle birlikte bir kez kurulur (publish_http_snapshot); closure'lara
-        // ham işaretçiler bu görüntü yaşadıkça geçerli (snap isteğin sonuna dek tutuluyor).
+        // The route list is built once with the image (publish_http_snapshot); raw pointers to the closures
+        // are valid as long as this image lives (snap is held until the end of the request).
         std::vector<look::VmRoute>& route_closures = *snap->route_closures;
 
-        // Builtin tablosu: modül fonksiyonları dağıtım kopyasından (RuntimeHost) alınır; kopya web
-        // modüllerini çağrı anındaki isteğe bağlamıştır (bind_web_to_current_request).
-        // fiber-ok: tablodaki hiçbir giriş isteğe özgü değil (bağlam/çıktı istek tutamacından, fiber-başına) — tests/fiber_request_isolation_test.sh askı boyunca ölçer
+        // Builtin table: module functions are taken from the dispatch copy (RuntimeHost); the copy binds the web
+        // modules to the request at call time (bind_web_to_current_request).
+        // fiber-ok: no entry in the table is request-specific (context/output come from the request handle, per fiber) — tests/fiber_request_isolation_test.sh measures it across suspension
         static thread_local std::shared_ptr<std::vector<look::BuiltinFn>> tl_req_builtins;
-        static thread_local std::shared_ptr<const HttpApp::Snap> tl_builtins_of;   // fiber-ok: nesil anahtarı (ABA yok)
-        // Tablo artık fiber modunda da iş parçacığı başına bir kez kurulur: isteğe özgü hiçbir şey
-        // yakalanmaz — print çıktıyı, web modülleri bağlamı çağrı anında istek tutamacından okur
-        // (look/request_scope.h, fiber'ın kendi alanı). Eskiden fiber modunda her istekte ~190
-        // girişlik tablo yeniden kuruluyordu (ölçüm: isteğin en büyük maliyeti, VM'in kendisi %2).
-        // İç içe dağıtım (zamanlayıcı/WS geri çağırması) dış isteğin tablosuna dokunmaz: kendi tablosu.
+        static thread_local std::shared_ptr<const HttpApp::Snap> tl_builtins_of;   // fiber-ok: generation key (no ABA)
+        // The table is now built once per thread in fiber mode too: nothing request-specific
+        // is captured — print reads the output, web modules read the context at call time from the request handle
+        // (look/request_scope.h, the fiber's own field). Previously in fiber mode a ~190-entry
+        // table was rebuilt on every request (measured: the largest cost of the request, the VM itself 2%).
+        // Nested dispatch (timer/WS callback) does not touch the outer request's table: it has its own table.
         std::vector<look::BuiltinFn> nested_req_builtins;
         const bool local_table = nested;
         const bool need_build = local_table || !tl_req_builtins || (tl_builtins_of != snap);
-        // Yeni nesil: YENİ tablo (askıdaki istekler eskisini tutar — yerinde yeniden kurulmaz).
+        // New generation: a NEW table (suspended requests keep the old one — it is not rebuilt in place).
         if (need_build && !local_table) tl_req_builtins = std::make_shared<std::vector<look::BuiltinFn>>();
         std::shared_ptr<std::vector<look::BuiltinFn>> builtins_hold = local_table ? nullptr : tl_req_builtins;
         std::vector<look::BuiltinFn>& req_builtins = local_table ? nested_req_builtins : *builtins_hold;
         if (need_build) {
         req_builtins.assign(look::builtin_names().size(), look::BuiltinFn{});
 
-        // print/write (0, 1): çıktı çağrı anındaki isteğin akışı
+        // print/write (0, 1): the output is the stream of the request at call time
         req_builtins[0] = [](std::vector<look::Value>& args) -> look::Value {
             std::ostream* out = look::current_request_out();
             if (!out) throw std::runtime_error("print: no output here (this runs outside a request)");
@@ -1518,7 +1518,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         // count (2)
         req_builtins[2] = [](std::vector<look::Value>& args) -> look::Value {  // count/len
-            return look::Value(args.empty() ? 0 : look::look_count(args[0]));  // tek tanım (array_count.h)
+            return look::Value(args.empty() ? 0 : look::look_count(args[0]));  // single definition (array_count.h)
         };
 
         // str/int/float/bool (5-8)
@@ -1527,29 +1527,29 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         };
         req_builtins[6] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0);
-            // to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + (int) int32 daralması
-            // ikisini de kapatır. Bkz. setup_builtins[6].
-            return look::look_explicit_int(args[0]);   // aralık dışı sayısal metin → hata (Go ErrRange)
+            // to_int(): closes both the stoll(to_string(float)) scientific-notation bug + the (int) int32 narrowing.
+            // See setup_builtins[6].
+            return look::look_explicit_int(args[0]);   // out-of-range numeric text -> error (Go ErrRange)
         };
         req_builtins[7] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value(0.0);
-            return look::look_explicit_float(args[0]);  // aralık dışı → hata
+            return look::look_explicit_float(args[0]);  // out of range -> error
         };
-        // bool (8) ve string (9): bind_scalar_builtins (kurulum tablosuyla tek tanım)
+        // bool (8) and string (9): bind_scalar_builtins (single definition with the setup table)
 
-        // route() dispatch'te no-op (22)
+        // route() is a no-op at dispatch (22)
         req_builtins[22] = [](std::vector<look::Value>&) -> look::Value { return look::Value(); };
 
-        // ── Modül builtin'leri: TEK kaynaktan otomatik wiring ────────────────
-        // builtin_names() (look/builtins.h) içindeki her "mod::fn" ismi
-        // RuntimeHost'un modül fonksiyonuna bağlanır. Yeni "mod::fn" builtin'i
-        // eklemek için SADECE builtins.cpp listesine eklemek yeterli —
-        // elle senkron yok (strlen bug'ının kökü elle senkron kopukluğuydu).
+        // ── Module builtins: automatic wiring from a SINGLE source ────────────────
+        // Every "mod::fn" name in builtin_names() (look/builtins.h) is bound
+        // to RuntimeHost's module function. To add a new "mod::fn" builtin
+        // it is ENOUGH to add it to the builtins.cpp list —
+        // no manual sync (the root of the strlen bug was a manual-sync gap).
         {
             const auto& names = look::builtin_names();
             for (size_t idx = 0; idx < names.size(); ++idx) {
                 auto pos = names[idx].find("::");
-                if (pos == std::string::npos) continue;  // özel isim — elle bağlanır
+                if (pos == std::string::npos) continue;  // special name — bound by hand
                 auto f = copy->get_module_fn(names[idx].substr(0, pos),
                                              names[idx].substr(pos + 2));
                 if (f) {
@@ -1561,19 +1561,19 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             }
         }
 
-        // KRİTİK: manuel override indeksleri artık İSİMDEN çözülüyor (builtin_index).
-        // Eskiden hard-coded sayılardı; builtin_names() listesine bir giriş eklenince
-        // tüm indeksler kayıyor ve bu override'lar YANLIŞ builtin'i eziyordu
-        // (ör. before_route no-op'u response::json'ı ezip JSON API'lerini boş
-        // döndürüyordu). İsim-tabanlı çözüm bu senkron-kopukluğu sınıfını kapatır.
+        // CRITICAL: the manual override indexes are now resolved BY NAME (builtin_index).
+        // They used to be hard-coded numbers; when an entry was added to the builtin_names() list
+        // all indexes drifted and these overrides overwrote the WRONG builtin
+        // (e.g. the before_route no-op overwrote response::json and JSON APIs
+        // returned empty). The name-based resolution closes this class of sync gaps.
         auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
 
         // timer::after / timer::every / timer::cancel — LOOK 2.
-        // Geri çağırma istekten SONRA, zamanlayıcı iş parçacığında çalışır. Orada yeni bir istek
-        // gibi kurulur (look_app_dispatch + direct().closure): kendi VM'i, kendi builtin'leri,
-        // kurulum global'lerinin temiz hali. Yani bir geri çağırmanın global'e yazdığı şey ne
-        // onu kuran isteğe ne sonraki isteklere ulaşır (tests/realtime_isolation_test.sh).
-        // Closure iş parçacığı sınırını geçerken klonlanır (yakaladığı değerlerle birlikte).
+        // The callback runs AFTER the request, on the timer thread. There it is set up like a new request
+        // (look_app_dispatch + direct().closure): its own VM, its own builtins,
+        // a clean copy of the setup globals. So what a callback writes to a global reaches neither
+        // the request that set it up nor later requests (tests/realtime_isolation_test.sh).
+        // The closure is cloned when it crosses the thread boundary (together with the values it captured).
         {
             auto arm = [](std::vector<look::Value>& args, bool repeat) -> look::Value {
                 const char* nm = repeat ? "timer::every" : "timer::after";
@@ -1606,18 +1606,18 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 look::TimerManager::instance().cancel((int)args[0].to_int());
                 return look::Value();
             };
-            // timer::wait yalnız komut satırında: bir istek zamanlayıcı beklerse iş parçacığını tutar.
-            // (Bağlanmasaydı VM "Module 'timer' not loaded" derdi — yanlış neden.)
+            // timer::wait only on the command line: a request that waits on a timer holds the thread.
+            // (If it were not bound the VM would say "Module 'timer' not loaded" — the wrong reason.)
             req_builtins[BI("timer::wait")] = [](std::vector<look::Value>&) -> look::Value {
                 throw std::runtime_error("timer::wait() can be used only on the command line: a web request does not wait for timers");
             };
-            // jobs::run — LOOK 2: TEK tanım (RuntimeHost::jobs_run). İşleyici (BYTECODE_FN)
-            // vm_closure_runner ile yeni bir istek gibi kendi VM'inde çalışır.
+            // jobs::run — LOOK 2: SINGLE definition (RuntimeHost::jobs_run). The handler (BYTECODE_FN)
+            // runs in its own VM like a new request via vm_closure_runner.
             req_builtins[BI("jobs::run")] = [copy](std::vector<look::Value>& args) -> look::Value {
                 return copy->jobs_run(args.empty() ? 5000 : (int)args[0].to_float());
             };
-            // ws:: / sse:: — LOOK 2: bağlantı tutamacı üzerindeki işlemler (geri çağırma almayanlar).
-            // Denetimler ve hata metinleri eski yorumlayıcıdaki satır içi tanımlarla aynı.
+            // ws:: / sse:: — LOOK 2: operations on the connection handle (those that take no callback).
+            // The checks and error texts are the same as the old inline definitions in the interpreter.
             auto ws_of = [](const look::Value& v, const char* what) {
                 if (v.type() != look::Value::WEBSOCKET || !v.as_websocket())
                     throw std::runtime_error(std::string(what));
@@ -1628,15 +1628,15 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     throw std::runtime_error(std::string(what));
                 return v.as_sse();
             };
-            // ws::on / sse::on — geri çağırma, bağlantının iş parçacığında, zamanlayıcı gibi YENİ BİR
-            // İSTEK olarak kurulur (kendi VM'i, global'lerin bildirilen değerleri); hata loglanır,
-            // hiçbir şey yeniden çalıştırılmaz.
-            // handshake: ws geri cagrisinda el sikisma isteginin kopyasi — request::get ws adresinin
-            // parametrelerini dondurur (v1 ile ayni kural); diger olaylarda bos istek.
-            // Saklama biçimi: el sıkışma isteğinin İSTEK alanları tek bir dizgide (uzunluk önekli).
-            // Açık bağlantı başına tam bir WebContext tutmak (~10 string + ~9 map, boş olsalar da)
-            // bağlantı başına ~0,7 KB ediyordu (700k WS: ~618 MB -> ~1156 MB). Yanıt alanları ve
-            // yüklenen dosyalar el sıkışmaya aittir; geri çağrının yanıtı zaten hiçbir yere gitmez.
+            // ws::on / sse::on — the callback is set up as a NEW REQUEST on the connection's thread, like a
+            // timer (its own VM, the declared values of the globals); the error is logged,
+            // nothing is re-run.
+            // handshake: in the ws callback a copy of the handshake request — request::get freezes the ws address's
+            // parameters (same rule as v1); an empty request for other events.
+            // Storage format: the handshake request's REQUEST fields in a single string (length-prefixed).
+            // Keeping a full WebContext per open connection (~10 strings + ~9 maps, even when empty)
+            // cost ~0.7 KB per connection (700k WS: ~618 MB -> ~1156 MB). The response fields and
+            // uploaded files belong to the handshake; the callback's response goes nowhere anyway.
             auto pack_req = [](const look::WebContext& w) {
                 std::string b;
                 auto s = [&b](const std::string& v) { uint32_t n = (uint32_t)v.size(); b.append((const char*)&n, 4); b.append(v); };
@@ -1663,9 +1663,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 w.is_https = b[i++] != 0; w.route_matched = b[i++] != 0;
                 m(w.get_params); m(w.post_params); m(w.cookies_in); m(w.headers_in); m(w.route_params);
             };
-            // Geri çağrının kökeni: el sıkışma isteği (paketli; SSE'de boş) + kaydedildiği nesil.
-            // Nesil tutulur: geri çağrı o programın bytecode'udur, hep onun değerleriyle çalışır;
-            // eski nesil son bağlantısı kapanınca serbest kalır (çalışan HTTP isteğiyle aynı kural).
+            // Origin of the callback: the handshake request (packed; empty for SSE) + the generation it was registered in.
+            // The generation is held: the callback is that program's bytecode and always runs with its values;
+            // the old generation is freed when its last connection closes (same rule as a running HTTP request).
             struct CbOrigin { std::string req; std::shared_ptr<const HttpApp::Snap> gen; };
             auto run_cb = [unpack_req](const look::Value& fnv, std::vector<look::Value> cb_args, const char* tag, const char* kind,
                              const CbOrigin* origin) {
@@ -1688,8 +1688,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 direct().what    = nullptr;
                 direct().gen.reset();
             };
-            // ws::on el sikisma istegi icinde cagrilir: baglami SIMDI (istek canliyken) kopyala.
-            // Geri cagri istek bittikten sonra baska thread'de calisir; her olay kendi taze kopyasini alir.
+            // ws::on is called inside the handshake request: copy the context NOW (while the request is alive).
+            // The callback runs on another thread after the request is over; each event gets its own fresh copy.
             req_builtins[BI("ws::on")] = [ws_of, run_cb, pack_req, snap](std::vector<look::Value>& args) -> look::Value {
                 const look::WebContext* web_now = look::current_request_web();
                 if (!web_now) throw std::runtime_error("ws::on() runs only inside a request");
@@ -1702,7 +1702,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 auto handshake = std::make_shared<const CbOrigin>(CbOrigin{pack_req(*web_now), snap});
                 if (ev == "message")
                     conn->set_on_message([fnv, run_cb, handshake](const std::string& msg, bool binary) {
-                        // fn($data) ya da fn($data, $binary): fazla argümanı çağrı yok sayar (eski işleyiciler aynı)
+                        // fn($data) or fn($data, $binary): the call ignores the extra argument (old handlers are the same)
                         run_cb(fnv, { look::Value(msg), look::Value(binary) }, "ws", "ws message callback", handshake.get()); });
                 else if (ev == "close")
                     conn->set_on_close([fnv, run_cb, handshake]() { run_cb(fnv, {}, "ws", "ws close callback", handshake.get()); });
@@ -1719,8 +1719,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                     conn->set_on_close_cb([fnv, run_cb, origin]() { run_cb(fnv, {}, "sse", "sse close callback", origin.get()); });
                 return look::Value();
             };
-            // Metin çerçevesi geçerli UTF-8 olmalı (RFC 6455 §8.1). ESKİ: ikili veri metin çerçevesiyle
-            // sessizce gidiyor, tarayıcı bağlantıyı kapatıyordu (uygulama nedenini göremiyordu).
+            // A text frame must be valid UTF-8 (RFC 6455 §8.1). OLD: binary data went silently with a text frame
+            // and the browser closed the connection (the application could not see the reason).
             req_builtins[BI("ws::send")] = [ws_of](std::vector<look::Value>& args) -> look::Value {
                 if (args.size() != 2) throw std::runtime_error("ws::send() takes 2 arguments");
                 auto conn = ws_of(args[0], "ws::send() first argument must be a websocket");
@@ -1771,18 +1771,18 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         // channel()
         req_builtins[BI("channel")] = [](std::vector<look::Value>& args) -> look::Value {
-            return look::Value(look::make_channel(args));   // value.h: komut satırıyla aynı kural
+            return look::Value(look::make_channel(args));   // value.h: same rule as the command line
         };
-        // args() — web/CGI'de CLI argümanı yok → boş dizi (CLI-only anlamlı).
+        // args() — no CLI arguments on web/CGI -> empty array (meaningful only for the CLI).
         req_builtins[BI("args")] = [](std::vector<look::Value>&) -> look::Value {
             return look::Value(std::make_shared<look::ValueArray>());
         };
-        // env() ve config()
+        // env() and config()
         req_builtins[BI("env")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.empty()) return look::Value();
             std::string key = args[0].to_string();
             std::string def = (args.size() >= 2) ? args[1].to_string() : "";
-            // lk-cgi: istek başlıkları süreç ortamındadır — muaf istekte çerez buradan da okunmaz
+            // lk-cgi: request headers are in the process environment — on an exempt request the cookie is not read from here either
             if (key == "HTTP_COOKIE") look::csrf_exempt_cookie_guard(look::current_request_web(), "env(\"HTTP_COOKIE\")");
             return look::Value(look::look_get_env(key, def));
         };
@@ -1793,17 +1793,17 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             };
         }
 
-        // before_route() — dispatch'te no-op (setup'ta kaydedildi)
+        // before_route() — a no-op at dispatch (registered at setup)
         req_builtins[BI("before_route")] = [](std::vector<look::Value>&) -> look::Value { return look::Value(); };
 
-        // stop() — before_route middleware içinden route execution'ı iptal et
+        // stop() — cancel route execution from inside before_route middleware
         req_builtins[BI("stop")] = [](std::vector<look::Value>&) -> look::Value {
             throw look::RouteStopException();
         };
 
-        // exit()/die() — komut satırıyla aynı semantik (ExitException). Bağlanmazsa
-        // builtin slot'u boş kalır → std::bad_function_call (eskiden route KALICI
-        // yorumlayıcıya düşüyordu). Web'de exit() zaten nadir.
+        // exit()/die() — same semantics as the command line (ExitException). If it is not bound
+        // the builtin slot stays empty -> std::bad_function_call (previously the route was PERMANENTLY
+        // dropped to the interpreter). exit() is rare on the web anyway.
         {
             auto do_exit = [](std::vector<look::Value>& a) -> look::Value {
                 int code = 0;
@@ -1814,17 +1814,17 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             req_builtins[BI("die")]  = do_exit;
         }
 
-        // skaler core builtins — tek tanım (bind_scalar_builtins); kurulum tablosu da onu kullanır
+        // scalar core builtins — single definition (bind_scalar_builtins); the setup table uses it too
         bind_scalar_builtins(req_builtins);
-        // push/pop: builtin_names'de vardı ama req_builtins'de bağlı DEĞİLDİ →
-        // route içinde bare push/pop "bad function call" fırlatıp interpreter'a
-        // düşürüyordu. In-place mutasyon: args[0] çağıranın $arr'ıyla shared_ptr
-        // paylaşır (kopya olsa da aynı vector) → $arr yerinde büyür/küçülür.
+        // push/pop: they were in builtin_names but were NOT bound in req_builtins ->
+        // a bare push/pop inside a route threw "bad function call" and dropped
+        // to the interpreter. In-place mutation: args[0] shares a shared_ptr with
+        // the caller's $arr (the same vector even if copied) -> $arr grows/shrinks in place.
         req_builtins[BI("push")] = [](std::vector<look::Value>& args) -> look::Value {
             if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                 throw std::runtime_error("push() requires array and value");
             look::value_push_not_map(args[0], "push()");
-            args[0].detach();   // LOOK 2: paylaşılan depoyu yerinde değiştirme (değişken yolu PUSH_PATH ile gelir)
+            args[0].detach();   // LOOK 2: do not modify the shared store in place (the variable path comes via PUSH_PATH)
             args[0].as_array()->push_back(args[1]);
             return args[0];
         };
@@ -1840,10 +1840,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             return last;
         };
 
-        if (!local_table) tl_builtins_of = snap;   // geçerli: bir sonraki sıcak yeniden yüklemeye dek
-        }   // end if(need_build) — iş parçacığı başına nesilde bir kez (iç içe dağıtım: kendi tablosu)
+        if (!local_table) tl_builtins_of = snap;   // valid: until the next hot reload
+        }   // end if(need_build) — once per generation per thread (nested dispatch: its own table)
 
-        // before_route closures: route_closures ile aynı yapıda
+        // before_route closures: same structure as route_closures
         std::vector<look::Closure*> before_closures;
         before_closures.reserve(snap->vm_before_routes.size());
         for (auto& val : snap->vm_before_routes)
@@ -1852,12 +1852,12 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
         t_dispatch_start = std::chrono::steady_clock::now();
         bool vm_ok = false;
-        bool stopped_direct = false;   // zamanlayıcı geri çağırması doğrudan çağrıldı
-        std::string err_place;         // hatanın satırı — günlük satırına eklenir
+        bool stopped_direct = false;   // timer callback was called directly
+        std::string err_place;         // the line of the error — appended to the log line
         try {
-            // Bellek (look/mem_budget.h): süreç sınırının %90'ı doluysa yeni istek 503 alır (yarıdakiler
-            // sürer); istek hesabı VM'den önce kurulur, sonra yıkılır. İç içe dağıtım (rota içinden
-            // jobs::run) dış isteğin hesabını kullanır.
+            // Memory (look/mem_budget.h): if 90% of the process limit is used a new request gets 503 (those in
+            // progress continue); the request account is set up before the VM and torn down after. Nested dispatch (from inside a route
+            // jobs::run) uses the outer request's account.
             if (!nested && !look::mem_admit())
                 throw look::ServiceUnavailable("request refused: the server is near its memory limit (" +
                     look::mem_format_bytes(look::mem_process_bytes()) + " of " +
@@ -1869,29 +1869,29 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             sh.builtins       = &req_builtins;
             look::VM vm(sh, output);
             VmErrorPlace vm_place{vm, err_place};
-            // Kurulum global'leri istekle paylaşılır (harita istek başına kopyalanır, değerler
-            // paylaşılır); istek birine yazarsa yazma yolu önce kendi kopyasını alır.
+            // The setup globals are shared with the request (the map is copied per request, the values
+            // are shared); if the request writes to one, the write path takes its own copy first.
             vm.set_globals(snap->vm_setup_globals);
             vm.set_web_context(&web);
-            // LOOK 2: bağlantı işleyicisi (WS/SSE rotası) VM'de — bağlantı işleyiciye ilk argüman olarak gider.
+            // LOOK 2: the connection handler (WS/SSE route) is in the VM — the connection goes to the handler as the first argument.
             if (direct().conn.type() == look::Value::WEBSOCKET) vm.set_ws_connection(direct().conn.as_websocket());
             else if (direct().conn.type() == look::Value::SSE_CONN) vm.set_sse_connection(direct().conn.as_sse());
 
-            // LOOK 2 — zamanlayıcı geri çağırması: rota eşleştirme ve before_route yok; closure,
-            // yeni bir istek gibi kurulmuş bu VM'de (temiz kurulum değerleri, kendi builtin'leri)
-            // doğrudan çağrılır. Hata aşağıdaki ortak yakalayıcıya düşer (log + yeniden çalıştırma yok).
+            // LOOK 2 — timer callback: no route matching and no before_route; the closure
+            // is called directly in this VM set up like a new request (clean setup values, its own builtins).
+            // The error falls to the common catcher below (log + no re-run).
             if (direct().closure) {
                 direct().result = vm.call_closure(*direct().closure,
                                 direct().args ? *direct().args : std::vector<look::Value>{});
                 stopped_direct = true;
             }
-            // before_route middleware'leri sırayla çalıştır
-            // stop() throw ettiğinde RouteStopException yakalanır → route atlanır
+            // run the before_route middlewares in order
+            // when stop() throws, RouteStopException is caught -> the route is skipped
             bool stopped = stopped_direct;
-            // Varsayılan CSRF kapısı — rotadan ve before_route'tan ÖNCE, üç modda aynı yer. Bağlantı
-            // işleyicisi (WS/SSE) ve zamanlayıcı geri çağırması istek değildir.
-            // Ayrıştırılamayan gövde (geçersiz multipart sınırı, parça sınırı aşıldı): rotadan önce açık
-            // yanıt — eskiden alanlar sessizce boştu ve uygulama "eksik alan" sanıyordu.
+            // Default CSRF gate — BEFORE the route and before_route, the same place in all three modes. The connection
+            // handler (WS/SSE) and the timer callback are not requests.
+            // A body that cannot be parsed (invalid multipart boundary, part limit exceeded): an explicit response
+            // before the route — previously the fields were silently empty and the application thought "missing field".
             if (!stopped && web.body_error_status != 0 && direct().conn.type() == look::Value::NONE) {
                 stopped = true;
                 web.status_code = web.body_error_status;
@@ -1901,9 +1901,9 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                 look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
                     web.method + " " + web.path + " refused: " + web.body_error);
             }
-            // Güvenli yöntemler (GET/HEAD/OPTIONS) DIŞINDA her yöntem (Go 1.25 CrossOriginProtection).
-            // Eskiden liste POST/PUT/PATCH/DELETE'ti: route("PROPFIND"/"PURGE", …) gibi rotalar kapıdan
-            // hiç geçmiyordu (ölçüldü) — yeni bir yöntem sessizce korumasız kalıyordu.
+            // Every method OTHER THAN the safe ones (GET/HEAD/OPTIONS) (Go 1.25 CrossOriginProtection).
+            // The list used to be POST/PUT/PATCH/DELETE: routes like route("PROPFIND"/"PURGE", ...) never
+            // went through the gate (measured) — a new method silently stayed unprotected.
             if (!stopped && snap->csrf_on && direct().conn.type() == look::Value::NONE &&
                 web.method != "GET" && web.method != "HEAD" && web.method != "OPTIONS") {
                 for (const auto& rule : snap->csrf_exempt)
@@ -1934,7 +1934,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
             if (!stopped) {
                 if (snap->script_mode) {
-                    // Rotasız betik (PHP gibi): programın tamamı bu istekte, taze global'lerle çalışır.
+                    // A script without routes (like PHP): the whole program runs in this request, with fresh globals.
                     look::VM script_vm(sh, output);
                     VmErrorPlace script_place{script_vm, err_place};
                     script_vm.set_web_context(&web);
@@ -1945,61 +1945,61 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             }
             vm_ok = true;
         } catch (const look::RouteStopException&) {
-            vm_ok = true;  // stop() route handler içinde çağrıldı — normal akış
+            vm_ok = true;  // stop() was called inside the route handler — normal flow
         } catch (const look::ExitException&) {
-            // exit()/die() — script'i sonlandırır, VM hatası DEĞİL. Genel catch'e
-            // düşerse 500 + hata logu olurdu (yanlış suçlama).
-            // O ana dek yazılmış çıktı yanıt olur.
+            // exit()/die() — terminates the script, NOT a VM error. If it fell into the generic catch
+            // it would be 500 + an error log (a false accusation).
+            // The output written up to that point becomes the response.
             vm_ok = true;
         } catch (const std::exception& vm_e) {
-            // Çalışma zamanı hatası: 500 + log. LOOK 2: yorumlayıcı yok — rota sabitleme de yok.
+            // Runtime error: 500 + log. LOOK 2: there is no interpreter — no route pinning either.
             //
-            // Tarihçe — C9: eskiden ilk hatada route kalıcı olarak yorumlayıcıya sabitleniyordu.
-            // Bu güvenlik ağı yıllarca BUG MASKELEDİ — route sessizce yavaş yola düşüp DOĞRU sonuç
-            // döndüğü için kimse fark etmiyordu (2026-07-16 turunda bulunan 10 bug'ın çoğu böyle
-            // saklanmıştı); log seviyesi ERROR'a çekilmişti, LOOK_VM_STRICT=1 ağı kapatıyordu.
+            // History — C9: previously on the first error the route was permanently pinned to the interpreter.
+            // This safety net MASKED BUGS for years — since the route silently dropped to the slow path and returned the CORRECT result
+            // nobody noticed (most of the 10 bugs found in the 2026-07-16 round were hidden
+            // this way); the log level had been lowered to ERROR, LOOK_VM_STRICT=1 closed the net.
             //
-            // 1.0.8 — İŞLEYİCİ ASLA YENİDEN ÇALIŞTIRILMAZ. Yukarıdaki "güvenlik ağı" her hatayı
-            // (düz `throw`, veritabanı hatası, tanımsız değişken) "VM hatası" sayıp AYNI isteği
-            // yorumlayıcıda baştan çalıştırıyordu: hatadan önce yapılan her yan etki (INSERT,
-            // jobs::push, dış HTTP isteği) tek istekte İKİ KEZ gerçekleşiyordu, ve rota kalıcı
-            // olarak yavaş yola sabitleniyordu (kullanıcı girdisiyle tetiklenebilir). Ölçüm:
-            // "INSERT; sonra hata" yapan rota tek istekte 2 satır yazıyordu.
-            // LOOK_VM_STRICT=1 eskiden burada yeniden fırlatıyordu: istisna worker'dan çıkıyor,
-            // bağlantılar bırakılmıyor ve worker sayısı kadar hatadan sonra sunucu asılıyordu.
+            // 1.0.8 — THE HANDLER IS NEVER RE-RUN. The "safety net" above counted every error
+            // (a plain `throw`, a database error, an undefined variable) as a "VM error" and ran the SAME request
+            // again from the start in the interpreter: every side effect done before the error (INSERT,
+            // jobs::push, an outside HTTP request) happened TWICE in one request, and the route was permanently
+            // pinned to the slow path (triggerable by user input). Measured:
+            // a route doing "INSERT; then error" wrote 2 rows in a single request.
+            // LOOK_VM_STRICT=1 used to rethrow here: the exception escaped the worker,
+            // connections were not released and after as many errors as workers the server hung.
             const std::string what = vm_e.what();
             const auto* mem_e = dynamic_cast<const look::MemoryLimitError*>(&vm_e);
             if (dynamic_cast<const look::ServiceUnavailable*>(&vm_e) || (mem_e && mem_e->server_full)) {
-                // Sunucu dolu olduğu için durdurulan istek (look/mem_budget.h) de 503: kendi hatası değil.
-                // Bağımlı servis kesintisi (ör. oturum deposu Redis): uygulama hatası değil →
-                // 503 ve yarım kalmış sayfa yerine kısa bir açıklama. Hata yine günlüğe yazılır.
+                // A request stopped because the server is full (look/mem_budget.h) is also 503: it is not its own error.
+                // A dependent service outage (e.g. the Redis session store): not an application error ->
+                // 503 and a short explanation instead of a half-finished page. The error is still written to the log.
                 web.status_code = 503;
                 web.status_text = "Service Unavailable";
                 output.str("");
                 output.clear();
                 web.response_body = "Service temporarily unavailable. Please try again shortly.";
                 web.headers_out["Content-Type"] = "text/plain; charset=utf-8";
-                web.headers_out["Retry-After"] = "1";   // geçici: istemci kısa süre sonra yeniden denesin
+                web.headers_out["Retry-After"] = "1";   // temporary: the client should retry shortly
             } else if (web.status_code < 400) {
-                // Hata = 500. Eskiden yalnız 200 ise: rota hatadan önce response::status(201) / 302
-                // dediyse başarısız istek "201 Created" ile gidiyordu — istemci başarısız işlemi
-                // başarılı sanıyordu. Uygulamanın kendi koyduğu 4xx/5xx korunur.
+                // Error = 500. Previously only if it was 200: if the route had said response::status(201) / 302
+                // before the error, the failed request went out as "201 Created" — the client
+                // thought the failed operation succeeded. A 4xx/5xx the application set itself is preserved.
                 web.status_code = 500;
                 web.status_text = "Internal Server Error";
             }
             look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
                 (direct().what ? std::string(direct().what) + " error: " : std::string("Dispatch error: ")) + what + err_place);
             if (direct().closure) direct().failed = true;
-            vm_ok = true;   // yanıt hazır (500) — yorumlayıcıda YENİDEN ÇALIŞTIRMA yok
+            vm_ok = true;   // response ready (500) — NO RE-RUN in the interpreter
         }
 
-        // İstek boyunca tembel alınan bağlantılar burada iade edilir — başarılı ve
-        // hatalı her iki akışı kapsar. Eksik release, pool_size istek
-        // sonrası tüm worker'ların deadlock olmasına neden oluyordu.
+        // Connections acquired lazily during the request are returned here — covers both the successful and
+        // the failed flow. A missing release made all workers deadlock
+        // after pool_size requests.
         if (!nested) look::release_thread_connections();
     } else {
-        // Uygulama yüklenemedi (sıcak yeniden yükleme başarısız: VM derleyemedi/kuramadı). LOOK 2:
-        // yorumlayıcı yedeği yok — istek açık bir 500 alır; dosya düzeltilince sonraki yükleme toparlar.
+        // The application could not be loaded (hot reload failed: the VM could not compile/set up). LOOK 2:
+        // no interpreter fallback — the request gets an explicit 500; the next load recovers once the file is fixed.
         t_dispatch_start = std::chrono::steady_clock::now();
         web.status_code = 500;
         web.status_text = "Internal Server Error";
@@ -2011,10 +2011,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     auto t_dispatch_end = std::chrono::steady_clock::now();
     auto us_dispatch = std::chrono::duration_cast<std::chrono::microseconds>(t_dispatch_end - t_dispatch_start).count();
 
-    // Süreç-global sayaçlar (runtime::stats için, salt-okunur gözlemlenebilirlik). RuntimeHost istek
-    // saymaz → bu global'ler gerçek HTTP durumunu taşır. Clock'lar
-    // zaten çağrıldı → latency toplama sıcak yola yeni clock EKLEMEZ (sadece relaxed atomik).
-    // zamanlayıcı/bağlantı geri çağırması ve bağlantı işleyicisi bir HTTP isteği değildir: sayaçlara girmez
+    // Process-global counters (for runtime::stats, read-only observability). RuntimeHost does not
+    // count requests -> these globals carry the real HTTP state. The clocks
+    // were already called -> latency accumulation ADDS no new clock to the hot path (only a relaxed atomic).
+    // timer/connection callbacks and the connection handler are not HTTP requests: they do not enter the counters
     if (direct().closure || direct().conn.type() != look::Value::NONE) return;
     look::g_http_request_count().fetch_add(1, std::memory_order_relaxed);
     look::g_latency_us_sum().fetch_add((uint64_t)(us_dispatch < 0 ? 0 : us_dispatch), std::memory_order_relaxed);
@@ -2022,7 +2022,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
     if (web.status_code >= 500)
         look::g_error_5xx_count().fetch_add(1, std::memory_order_relaxed);
 
-    // İlk 200 istekte zamanlama logla — profiling için
+    // log timing for the first 200 requests — for profiling
     static std::atomic<int> prof_count{0};
     int n = ++prof_count;
     if (n <= 200) {
@@ -2038,10 +2038,10 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
 
 void run_http_mode(int port, int workers, const std::string& script_path_str) {
 #ifndef _WIN32
-    // Client erken bağlantıyı kapatırsa write() SIGPIPE gönderir — varsayılan davranış process'i sonlandırır
+    // If the client closes the connection early write() sends SIGPIPE — the default behavior terminates the process
     signal(SIGPIPE, SIG_IGN);
-    // tz global state'ini worker thread'ler başlamadan bir kez doldur —
-    // localtime_r içindeki tzset erişimini yarışsız kılar (TSan date race fix).
+    // fill the tz global state once before the worker threads start —
+    // makes the tzset access inside localtime_r race-free (TSan date race fix).
     tzset();
 #endif
 
@@ -2059,14 +2059,14 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
 #endif
 
     {
-        // Havuzun üst sınırı işçi sayısından bağımsız: LOOK_DB_POOL_SIZE verilmişse o, yoksa
-        // varsayılan (db::connect: 4 × CPU, 8..64). Bağlantılar gerektikçe açılır.
+        // The upper bound of the pool is independent of the worker count: LOOK_DB_POOL_SIZE if given, otherwise
+        // the default (db::connect: 4 x CPU, 8..64). Connections are opened as needed.
         const char* env = std::getenv("LOOK_DB_POOL_SIZE");
         int pool_sz = (env && env[0]) ? std::max(1, std::min(std::atoi(env), 256)) : 0;
         look::set_db_pool_size(pool_sz);
 
-        // LOOK_DB_ASYNC_THREADS kaldırıldı (AsyncDbPool hiç kullanılmıyordu; yalnız boş thread
-        // açıyordu). Ayarlı bırakan görsün diye uyarı — sessizce yok sayılmasın.
+        // LOOK_DB_ASYNC_THREADS was removed (AsyncDbPool was never used; it only
+        // spawned idle threads). A warning so that whoever left it set sees it — it must not be silently ignored.
         const char* ath_env = std::getenv("LOOK_DB_ASYNC_THREADS");
         if (ath_env && ath_env[0])
             look::Logger::instance().log(look::LogLevel::LOG_WARN, "HTTP",
@@ -2082,14 +2082,14 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         std::cerr << "[look-fcgi --mode http] Setup error: " << e.what() << "\n";
         look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP",
             std::string("Setup error: ") + e.what() + " — the application does not start.");
-        std::exit(1);   // başlamayan uygulama başarı koduyla çıkmasın (eskiden 0 dönüyordu)
+        std::exit(1);   // an application that does not start must not exit with a success code (it used to return 0)
     }
 
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP",
         "look-fcgi --mode http port=" + std::to_string(port) + " workers=" + std::to_string(workers));
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Script: " + script.string());
     look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", "Apache bypass — use nginx or a direct connection.");
-    // Güvenliği zayıflatan ayarlar: her biri bir WARN satırı (look/weak_settings.h).
+    // Settings that weaken security: one WARN line each (look/weak_settings.h).
     for (const auto& w : look::weak_setting_warnings(std::getenv, false))
         look::Logger::instance().log(look::LogLevel::LOG_WARN, "SECURITY", w);
 
@@ -2121,20 +2121,20 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.path   = req.path;
         web.query_string = req.query_string;
         web.get_params   = look::WebContext::parse_query(req.query_string);
-        web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
+        web.remote_addr = resolve_client_ip(req);   // WS/SSE: same contract (see resolve_client_ip)
         web.is_https    = resolve_is_https(req);
         web.host        = resolve_host(req);
-        // Başlıklar ve çerezler sıradan istekteki gibi: request::header / session:: / cookie:: WS
-        // rotasında ve geri çağrılarında çalışır (eskiden boştu → çerezle WS kimlik doğrulaması
-        // yapılamıyordu, sessizce null).
+        // Headers and cookies as in an ordinary request: request::header / session:: / cookie:: work in the WS
+        // route and in callbacks (previously empty -> WS authentication with a cookie
+        // was impossible, silently null).
         web.headers_in = req.headers;
         if (auto ck = req.headers.find("cookie"); ck != req.headers.end())
             web.cookies_in = look::WebContext::parse_cookies(ck->second);
-        // CSWSH (başka sitenin ziyaretçi çereziyle WS açması) el sıkışmadan ÖNCE http_server.cpp'de
-        // reddedilir (handle_ws_upgrade): varsayılan aynı köken, LOOK_WS_ORIGINS izin listesi.
+        // CSWSH (another site opening a WS with the visitor's cookie) is rejected BEFORE the handshake in http_server.cpp
+        // (handle_ws_upgrade): same origin by default, the LOOK_WS_ORIGINS allow list.
 
-        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
-        // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
+        // LOOK 2: the connection handler is dispatched in the VM like an ordinary request.
+        // The connection is carried with direct().conn and given to the handler as the first argument.
         std::ostringstream sink;
         direct().conn = look::Value(conn);
         try {
@@ -2154,17 +2154,17 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         web.path   = req.path;
         web.query_string = req.query_string;
         web.get_params   = look::WebContext::parse_query(req.query_string);
-        web.remote_addr = resolve_client_ip(req);   // WS/SSE: ayni sozlesme (bkz. resolve_client_ip)
+        web.remote_addr = resolve_client_ip(req);   // WS/SSE: same contract (see resolve_client_ip)
         web.is_https    = resolve_is_https(req);
         web.host        = resolve_host(req);
-        // WS ile aynı: başlıklar ve çerezler. (Origin denetimi gerekmez: EventSource bir GET'tir ve
-        // başka bir sitenin akışı okuması CORS ile engellenir.)
+        // Same as WS: headers and cookies. (No Origin check needed: EventSource is a GET and
+        // another site reading the stream is blocked by CORS.)
         web.headers_in = req.headers;
         if (auto ck = req.headers.find("cookie"); ck != req.headers.end())
             web.cookies_in = look::WebContext::parse_cookies(ck->second);
 
-        // LOOK 2: bağlantı işleyicisi sıradan bir istek gibi VM'de dağıtılır.
-        // Bağlantı direct().conn ile taşınır ve işleyiciye ilk argüman olarak verilir.
+        // LOOK 2: the connection handler is dispatched in the VM like an ordinary request.
+        // The connection is carried with direct().conn and given to the handler as the first argument.
         std::ostringstream sink;
         direct().conn = look::Value(conn);
         try {
@@ -2176,11 +2176,11 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         direct().conn = look::Value();
     };
 
-#ifndef _WIN32   // Gömülü mail sunucuları POSIX-only (OpenSSL). Windows = XAMPP dev.
-    // SMTP server — LOOK_SMTP_PORT env var set edilirse HTTP ile birlikte başlar
-    // Port ortam değişkeni: yalnız rakam, 1-65535 (look/host_port.h). Eskiden atoi: "25x" → 25,
-    // "abc" → 0 → sunucu hiçbir iz bırakmadan başlamıyordu. Bozuk değer → açık ERROR, o sunucu başlamaz.
-    // Boş/tanımsız isteğe bağlı değişken → 0 (yok).
+#ifndef _WIN32   // The embedded mail servers are POSIX-only (OpenSSL). Windows = XAMPP dev.
+    // SMTP server — starts together with HTTP if the LOOK_SMTP_PORT env var is set
+    // Port environment variable: digits only, 1-65535 (look/host_port.h). Previously atoi: "25x" -> 25,
+    // "abc" -> 0 -> the server silently did not start without leaving any trace. A bad value -> an explicit ERROR, that server does not start.
+    // An empty/undefined optional variable -> 0 (none).
     auto env_port = [](const char* name, int& out) -> bool {
         out = 0;
         const char* e = std::getenv(name);
@@ -2202,14 +2202,14 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
             smtp_srv = std::make_unique<look::SmtpServer>(
                 smtp_port, sub_port, 0, workers,
                 [](const look::SmtpMessage& msg) -> bool {
-                    // Varsayılan handler: her yerel alıcının Maildir'ine yaz.
-                    // Yol: <base>/<alıcı>/inbox — IMAP LOGIN'in okuduğu yerle aynı
-                    // (mail_user_auth ile hizalı). Alıcı adı e-posta = LOGIN kullanıcı adı.
+                    // Default handler: write to every local recipient's Maildir.
+                    // Path: <base>/<recipient>/inbox — the same place IMAP LOGIN reads
+                    // (aligned with mail_user_auth). Recipient name email = LOGIN user name.
                     const char* base = std::getenv("LOOK_MAIL_DIR");
                     if (!base || !*base) base = "/var/mail/look";
                     bool any = false;
                     for (const std::string& rcpt : msg.rcpt_to) {
-                        // GÜVENLİK: alıcıyı dizin bileşeni yapmadan traversal ele
+                        // SECURITY: handle traversal without making the recipient a directory component
                         bool unsafe = rcpt.empty() || rcpt.find("..") != std::string::npos;
                         for (unsigned char c : rcpt)
                             if (c == '/' || c == '\\' || c == '\0' || c < 0x20) unsafe = true;
@@ -2229,11 +2229,11 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
                     return any;
                 }
             );
-            // "started" logu GERÇEK duruma bağlı olmalı. Eskiden koşulsuzdu:
-            // bind başarısız olduğunda log şöyle görünüyordu (ölçüldü) —
-            //   [ERROR] port 7171 dinlenemedi
-            //   [INFO ] IMAP server started on port 7171   ← yanıltıcı
-            // Kullanıcı log'a bakıp çalıştığını sanıyordu; sessiz başarısızlık.
+            // The "started" log must depend on the REAL state. Previously it was unconditional:
+            // when bind failed the log looked like this (measured) —
+            //   [ERROR] port 7171 could not be listened on
+            //   [INFO ] IMAP server started on port 7171   <- misleading
+            // The user looked at the log and thought it was running; a silent failure.
             if (smtp_srv->listening()) {
                 smtp_thread = std::thread([&smtp_srv] { smtp_srv->run(); });
                 look::Logger::instance().log(look::LogLevel::LOG_INFO, "smtp",
@@ -2247,9 +2247,9 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         }
     }
 
-    // IMAP server — LOOK_IMAP_PORT set edilirse HTTP+SMTP ile birlikte başlar.
-    // Kimlik: mail_user_auth (SMTP AUTH ile aynı model). INBOX = SMTP'nin yazdığı
-    // <LOOK_MAIL_DIR>/<user>/inbox. STARTTLS/IMAPS için LOOK_IMAP_CERT/KEY.
+    // IMAP server — starts together with HTTP+SMTP if LOOK_IMAP_PORT is set.
+    // Identity: mail_user_auth (same model as SMTP AUTH). INBOX = what SMTP wrote to
+    // <LOOK_MAIL_DIR>/<user>/inbox. LOOK_IMAP_CERT/KEY for STARTTLS/IMAPS.
     std::unique_ptr<look::ImapServer> imap_srv;
     const char* imap_port_env = std::getenv("LOOK_IMAP_PORT");
     if (imap_port_env && *imap_port_env) {
@@ -2268,8 +2268,8 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
                     }
                     return r;
                 });
-            // start() artık bool döner — "started" logu gerçek duruma bağlı
-            // (bkz. SMTP'deki aynı düzeltme: bind hatasından sonra "started" yazıyordu).
+            // start() now returns bool — the "started" log depends on the real state
+            // (see the same fix in SMTP: "started" was written after a bind error).
             if (imap_srv->start()) {
                 look::Logger::instance().log(look::LogLevel::LOG_INFO, "imap",
                     std::string("IMAP server started on port ") + imap_port_env);
@@ -2281,14 +2281,14 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
             }
         }
     }
-#endif  // _WIN32 — mail sunucuları
+#endif  // _WIN32 — mail servers
 
     try {
         look::HttpServer server(port, workers, http_handler, ws_handler, sse_handler);
-        // Zarif kapanma (look/shutdown.h): SIGTERM/SIGINT yeni bağlantıyı durdurur, işlenenler biter,
-        // run() işçiler bitince döner.
+        // Graceful shutdown (look/shutdown.h): SIGTERM/SIGINT stop new connections, those in progress finish,
+        // run() returns when the workers finish.
         look::shutdown::on_begin([&server] { server.begin_shutdown(); });
-        server.run();   // "Listening on …" run() yazar — port gerçekten dinlendiğinde (işçiler hazır)
+        server.run();   // "Listening on ..." is written by run() — when the port is really being listened on (workers ready)
         if (look::shutdown::requested()) {
 #ifndef _WIN32
             if (imap_srv) { imap_srv->stop(); }
@@ -2298,8 +2298,8 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
             look::shutdown::finish(0);
         }
     } catch (const std::exception& e) {
-        // Sunucu kurulamadi/calisamadi: hata koduyla CIK. Eskiden loglayip normal donuyordu →
-        // surec 0 ile bitiyor, systemd Restart=on-failure bunu basari sayip yeniden baslatmiyordu.
+        // The server could not be set up/run: EXIT with an error code. Previously it logged and returned normally ->
+        // the process ended with 0, systemd Restart=on-failure counted this as success and did not restart.
         std::cerr << "[look-fcgi --mode http] " << e.what() << "\n";
         look::Logger::instance().log(look::LogLevel::LOG_ERROR, "HTTP", e.what());
         std::fflush(nullptr);

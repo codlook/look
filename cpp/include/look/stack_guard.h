@@ -1,30 +1,30 @@
 #pragma once
-// Kalan yerel (C++) yığın. Geri çağırma zinciri (map/filter/sort… içinden LOOK fonksiyonu → VM
-// yeniden girişi) her seviyede C++ yığını harcar; sabit sayaç (VM::MAX_NATIVE_DEPTH) normal
-// derlemede yeter ama yığın küçükse (ulimit -s, küçük fiber yığını, ASan'ın büyük çerçeveleri)
-// sayaçtan önce taşabilir. Bu denetim gerçek kalan yığına bakar: süreç asla çökmez, istek temiz
-// "Stack overflow" alır. Go yığını büyütür ve 1 GB'ta süreci öldürür; burada süreç ayakta kalır.
+// Remaining native (C++) stack. The callback chain (a LOOK function from within map/filter/sort… → VM
+// re-entry) spends C++ stack at every level; the fixed counter (VM::MAX_NATIVE_DEPTH) is enough in a normal
+// build but, if the stack is small (ulimit -s, small fiber stack, ASan's large frames), it may
+// overflow before the counter. This check looks at the real remaining stack: the process never crashes, the request gets a clean
+// "Stack overflow". Go grows the stack and kills the process at 1 GB; here the process stays alive.
 //
-// Yığın aralığı: fiber içindeyse fiber'ın kendi yığını (Fiber::stack_range), değilse iş parçacığının
-// (pthread_getattr_np; Windows'ta TIB + VirtualQuery — Windows fiber'ı TIB'i kendisi günceller).
-// Aralık önbelleklenir; o anki yığın işaretçisi aralığın dışındaysa (fiber değişti) yeniden okunur.
+// Stack range: inside a fiber it is the fiber's own stack (Fiber::stack_range), otherwise the thread's
+// (pthread_getattr_np; on Windows TIB + VirtualQuery — a Windows fiber updates the TIB itself).
+// The range is cached; if the current stack pointer is outside the range (the fiber changed) it is re-read.
 #include <cstddef>
 #include <cstdint>
 #if defined(_MSC_VER)
-#  include <intrin.h>   // _AddressOfReturnAddress (windows.h burada YOK: min/max/DELETE makroları)
+#  include <intrin.h>   // _AddressOfReturnAddress (windows.h is NOT included here: min/max/DELETE macros)
 #endif
 
 namespace look {
 
-// Bir geri çağırma seviyesi daha açmadan önce kalması gereken yığın: yığının 1/8'i, 64 KB ile
-// 256 KB arasına sıkıştırılmış. Sabit 1 MB pay ölçüldü ve YANLIŞTI: 1 MB'lık yığında (Windows iş
-// parçacığı varsayılanı) ilk geri çağırma bile hata veriyordu. 8 MB'ta 256 KB: 4.000 seviye (~6 MB)
-// sayacı asıl sınır kalır, pay son seviyedeki değer dolaşımına (1000 iç içe to_string ~190 KB,
-// ölçüldü) yeter. Alt sınır 64 KB: 128 KB'lık yığında 1/8 (16 KB) ASan'ın büyük çerçeveli tek bir
-// seviyesine yetmiyor, süreç aralıklı çöküyordu (ölçüldü, 3'te 2).
-// AddressSanitizer her çerçeveye koruma bölgesi ekler (çerçeveler ~4 kat): pay aynı oranda büyür.
-// Ölçüldü: ASan'da 64 KB pay, 128–256 KB yığında iki denetim arası kodu (iç içe atama derlemesi,
-// ayrıştırıcının öncelik zinciri) karşılamıyordu → ASan yığın taşması; normal derleme etkilenmez.
+// Stack that must remain before opening one more callback level: 1/8 of the stack, clamped between 64 KB and
+// 256 KB. A fixed 1 MB reserve was measured and was WRONG: on a 1 MB stack (Windows thread
+// default) even the first callback failed. At 256 KB on 8 MB: the 4,000-level (~6 MB)
+// counter remains the real limit; the reserve is enough for value traffic at the last level (1000 nested to_string ~190 KB,
+// measured). Lower bound 64 KB: on a 128 KB stack 1/8 (16 KB) was not enough for a single level of ASan's
+// large frames, and the process crashed intermittently (measured, 2 out of 3).
+// AddressSanitizer adds a redzone to every frame (frames ~4x): the reserve grows by the same ratio.
+// Measured: under ASan a 64 KB reserve did not cover the code between two checks on a 128–256 KB stack (nested assignment compilation,
+// the parser's precedence chain) → ASan stack overflow; the normal build is unaffected.
 #if defined(__SANITIZE_ADDRESS__)
 constexpr size_t LOOK_STACK_FRAME_SCALE = 4;
 #elif defined(__has_feature)
@@ -47,24 +47,24 @@ inline const char* look_stack_pointer() noexcept {
 #endif
 }
 
-// fiber-ok: yalnız o anki yığının aralığını önbellekler; her çağrıda yığın işaretçisi aralıkla
-// karşılaştırılır, fiber değişince (işaretçi dışarıda) yeniden okunur — askı ile bozulmaz.
+// fiber-ok: caches only the current stack's range; on every call the stack pointer is
+// compared with the range, and if the fiber changed (pointer outside) it is re-read — not broken by suspension.
 struct LookStackRange { const char* lo = nullptr; const char* hi = nullptr; size_t reserve = 0; };
 inline LookStackRange& look_stack_range_cache() noexcept { thread_local LookStackRange r; return r; }
 
-// O anki yığının aralığı (fiber içindeyse fiber'ın, değilse iş parçacığının). Platforma özgü:
+// The range of the current stack (the fiber's if inside a fiber, otherwise the thread's). Platform-specific:
 // fiber_posix.cpp / fiber_win.cpp.
 bool look_read_stack_range(const char*& lo, const char*& hi) noexcept;
 
-// Kalan yığın payın altındaysa true. Aralık bilinmiyorsa false (denetim yok, sayaç kalır).
+// True if the remaining stack is below the reserve. If the range is unknown, false (no check, the counter remains).
 inline bool look_native_stack_low() noexcept {
     const char* sp = look_stack_pointer();
     LookStackRange& r = look_stack_range_cache();
     if (sp < r.lo || sp >= r.hi) {
         const char* lo = nullptr; const char* hi = nullptr;
         if (!look_read_stack_range(lo, hi) || sp < lo || sp >= hi) {
-            // Okunamadı: aralığı tüm adres alanı say, pay 0 → her çağrıda yeniden okuma (pahalı)
-            // yok; bu iş parçacığında denetim kapalı, VM::MAX_NATIVE_DEPTH sayacı geçerli kalır.
+            // Could not be read: treat the range as the whole address space, reserve 0 → no re-reading on every call (expensive);
+            // the check is off on this thread, the VM::MAX_NATIVE_DEPTH counter stays in effect.
             r.lo = nullptr; r.hi = reinterpret_cast<const char*>(UINTPTR_MAX); r.reserve = 0;
             return false;
         }
@@ -74,14 +74,14 @@ inline bool look_native_stack_low() noexcept {
         r.reserve = eighth < LOOK_STACK_RESERVE_MIN ? LOOK_STACK_RESERVE_MIN
                   : eighth > LOOK_STACK_RESERVE_MAX ? LOOK_STACK_RESERVE_MAX : eighth;
     }
-    return static_cast<size_t>(sp - r.lo) < r.reserve;   // yığın aşağı doğru büyür
+    return static_cast<size_t>(sp - r.lo) < r.reserve;   // the stack grows downward
 }
 
-// Sözdizimi ağacını özyinelemeyle gezen her yer (ayrıştırıcı, yakalama / parametre / argüman
-// denetimleri, tanımsız çağrı arama) girişte bunu çağırır: yığın azaldıysa ayrıştırma hatası
-// (satır/sütunlu), çökme değil. Ayrıştırıcının sayaçları (iç içe 150, zincir 1000) gerçek yığına
-// bakmaz: iç içe her parantez ~15 C++ çerçevesi harcar → 128 KB'ta 140 parantez, 256 KB'ta 140
-// iç içe blok (yakalama denetimi) çöküyordu (ölçüldü). Gövde parser.cpp'de (LookParseError).
+// Everywhere that walks the syntax tree recursively (parser, capture / parameter / argument
+// checks, undefined-call lookup) calls this on entry: if the stack is low, a parse error
+// (with line/column), not a crash. The parser's counters (nesting 150, chain 1000) do not look at the real stack:
+// every nested parenthesis spends ~15 C++ frames → at 128 KB 140 parentheses, at 256 KB 140
+// nested blocks (capture check) crashed (measured). The body is in parser.cpp (LookParseError).
 [[noreturn]] void look_throw_nested_too_deep(int line, int col);
 inline void look_ast_guard(int line = 0, int col = 0) {
     if (look_native_stack_low()) look_throw_nested_too_deep(line, col);

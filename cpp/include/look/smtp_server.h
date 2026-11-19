@@ -52,9 +52,9 @@ public:
     ~SmtpServer();
 
     void run();
-    // En az bir port gerçekten dinlemede mi? Constructor bind başarısız olsa da
-    // nesne kurulur; çağıranın "started" logu basmadan önce bunu sorması gerekir
-    // (aksi hâlde bind hatasından SONRA "SMTP server started" yazılıyordu).
+    // Is at least one port really listening? The object is built even if the constructor's
+    // bind fails; the caller must ask this before printing a "started" log
+    // (otherwise "SMTP server started" was written AFTER a bind error).
     bool listening() const;
     void stop();
 
@@ -70,14 +70,14 @@ std::string deliver_maildir(const std::string& base_dir,
                             const std::string& mailbox,
                             const SmtpMessage& msg);
 
-// ── Ortak mail kimlik doğrulama (SMTP AUTH ile aynı model) ───────────────────
-// mail_users tablosuna (pbkdf2 constant-time) veya dev fallback'e karşı doğrular;
-// IMAP LOGIN ve diğer mail servisleri paylaşır — kripto tek yerde.
-//   Backend seçimi env ile:
-//     LOOK_MAIL_USER_DB / LOOK_SMTP_USER_DB  → mysql://... (mail_users tablosu)
-//     LOOK_MAIL_USER + LOOK_MAIL_PASS        → tek kullanıcı (dev/basit deployment)
-//   maildir_out = LOOK_MAIL_DIR/<user>/inbox  (SMTP teslimatıyla aynı yer).
-// Dönen: true = doğrulandı (maildir_out doldurulur), false = ret.
+// ── Shared mail authentication (same model as SMTP AUTH) ─────────────────────
+// Verifies against the mail_users table (pbkdf2 constant-time) or the dev fallback;
+// IMAP LOGIN and other mail services share it — crypto in one place.
+//   Backend choice via env:
+//     LOOK_MAIL_USER_DB / LOOK_SMTP_USER_DB  → mysql://... (mail_users table)
+//     LOOK_MAIL_USER + LOOK_MAIL_PASS        → a single user (dev/simple deployment)
+//   maildir_out = LOOK_MAIL_DIR/<user>/inbox  (the same place as SMTP delivery).
+// Returns: true = verified (maildir_out is filled), false = rejected.
 bool mail_user_auth(const std::string& user, const std::string& pass,
                     std::string& maildir_out);
 

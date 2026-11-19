@@ -47,11 +47,11 @@ struct FdEntry {
     std::string write_buf;
     size_t      write_pos = 0;
     std::mutex  mtx;
-    std::atomic<bool> closed{false};   // close_fd sonrası read-loop'un tekrar okumasını/çift-close'u önler
-    std::atomic<bool> read_paused{false};   // geri basınç: okuma döngüsü okumaz (pause_read / async_read)
+    std::atomic<bool> closed{false};   // after close_fd, prevents the read loop from reading again / a double close
+    std::atomic<bool> read_paused{false};   // backpressure: the read loop does not read (pause_read / async_read)
 
-    // Idle/slowloris takibi (opt-in). idle_timeout_sec>0 ise loop bu fd'yi tarar.
-    // last_activity yalnız loop thread'inde (accept + her read) yazılır → kilit yok.
+    // Idle/slowloris tracking (opt-in). If idle_timeout_sec>0 the loop scans this fd.
+    // last_activity is written only on the loop thread (accept + every read) → no lock.
     int idle_timeout_sec = 0;
     std::chrono::steady_clock::time_point last_activity{};
 };
@@ -67,8 +67,8 @@ struct EpollEventLoop::Impl {
     std::queue<TaskFn> tasks;
     std::mutex tasks_mtx;
 
-    // Kaç fd idle-timeout izliyor. 0 ise epoll_wait sonsuz bekler (HTTP-only
-    // dağıtımda ekstra wakeup yok — regresyonsuz); >0 ise sonlu tick + tarama.
+    // How many fds are tracked for idle-timeout. If 0, epoll_wait waits forever (no extra
+    // wakeup in an HTTP-only deployment — no regression); if >0, a finite tick + scan.
     std::atomic<int> idle_watch_count{0};
 
     std::shared_ptr<FdEntry> get(int fd) {
@@ -154,8 +154,8 @@ void EpollEventLoop::async_read(int fd, ReadCb cb) {
         std::lock_guard<std::mutex> lk(entry->mtx);
         entry->read_cb = std::move(cb);
     }
-    // Duraklatılmışsa sürdür. EPOLL_CTL_MOD hazır olma durumunu yeniden değerlendirir: duraklama
-    // sırasında gelmiş veri için olay yeniden gelir (kenar tetiklemede kaybolmaz).
+    // Resume if paused. EPOLL_CTL_MOD re-evaluates readiness: for data that arrived
+    // during the pause the event fires again (not lost with edge triggering).
     entry->read_paused.store(false);
     epoll_event ev{};
     ev.events  = EPOLLIN | EPOLLET;
@@ -179,9 +179,9 @@ void EpollEventLoop::async_write(int fd, std::string data, WriteCb cb) {
 }
 
 void EpollEventLoop::close_fd(int fd) {
-    // İdempotent: fd map'ten çıkarılmış (zaten kapalı) ise erken dön — çift
-    // ::close(fd)'yi önle. Çok-thread'li sunucuda araya giren accept aynı fd
-    // numarasını yeniden kullanmışsa, ikinci ::close YANLIŞ bağlantıyı kapatırdı.
+    // Idempotent: if the fd was already removed from the map (already closed), return early — avoids a double
+    // ::close(fd). In a multi-threaded server, if an intervening accept reused the same fd
+    // number, the second ::close would close the WRONG connection.
     std::shared_ptr<FdEntry> entry;
     {
         std::lock_guard<std::mutex> lk(impl_->map_mtx);
@@ -227,8 +227,8 @@ void EpollEventLoop::run() {
     char read_buf[65536];
 
     while (impl_->running) {
-        // idle-timeout izleyen fd varsa sonlu tick (1 sn) — her wakeup'ta tara.
-        // Hiç yoksa -1 (sonsuz): HTTP-only dağıtımda ekstra wakeup yok.
+        // If there are fds tracked for idle-timeout, a finite tick (1 s) — scan on every wakeup.
+        // If there are none, -1 (infinite): no extra wakeup in an HTTP-only deployment.
         int wait_ms = impl_->idle_watch_count.load() > 0 ? 1000 : -1;
         int n = epoll_wait(impl_->epfd, events, MAX_EVENTS, wait_ms);
         if (n < 0) {
@@ -236,9 +236,9 @@ void EpollEventLoop::run() {
             break;
         }
 
-        // ── Idle tarama (loop thread — I/O cb'siyle aynı thread → yarışmaz) ──
-        // Timeout wakeup'ta (n==0) veya normal wakeup'ta çalışır. idle_timeout_sec>0
-        // olan CLIENT fd'lerden son aktiviteden bu yana süresi dolmuş olanları kapat.
+        // ── Idle scan (loop thread — same thread as the I/O cb → no race) ──
+        // Runs on a timeout wakeup (n==0) or a normal wakeup. Among CLIENT fds with idle_timeout_sec>0,
+        // close those whose time since the last activity has expired.
         if (impl_->idle_watch_count.load() > 0) {
             auto now = std::chrono::steady_clock::now();
             std::vector<int> expired;
@@ -257,8 +257,8 @@ void EpollEventLoop::run() {
                 if (!e) continue;
                 ReadCb cb;
                 { std::lock_guard<std::mutex> lk(e->mtx); cb = e->read_cb; }
-                if (cb) cb(read_buf, 0);   // üst katmana disconnect bildir (cleanup)
-                close_fd(efd);             // fd+conn_count temizliği üst katmanda
+                if (cb) cb(read_buf, 0);   // notify the upper layer of the disconnect (cleanup)
+                close_fd(efd);             // fd+conn_count cleanup is in the upper layer
             }
         }
 
@@ -306,25 +306,25 @@ void EpollEventLoop::run() {
                 ReadCb cb;
                 { std::lock_guard<std::mutex> lk(entry->mtx); cb = entry->read_cb; }
                 while (true) {
-                    if (entry->read_paused.load()) break;   // geri basınç: async_read sürdürür
+                    if (entry->read_paused.load()) break;   // backpressure: async_read resumes
                     ssize_t r = read(fd, read_buf, sizeof(read_buf));
                     if (r > 0) {
                         if (entry->idle_timeout_sec > 0)
                             entry->last_activity = std::chrono::steady_clock::now();
                         if (cb) cb(read_buf, (size_t)r);
-                        // cb kendi fd'sini kapatmış olabilir (ör. WS close frame).
-                        // Kapalıysa döngüyü kes: kapalı/yeniden-açılmış fd'den
-                        // tekrar okuyup başka bağlantıya veri teslimini önle.
+                        // cb may have closed its own fd (e.g. WS close frame).
+                        // If closed, break out of the loop: avoid reading again from a closed/reopened fd
+                        // and delivering data to another connection.
                         if (entry->closed.load()) break;
                     } else if (r == 0) {
-                        // Temiz FIN — callback'e len==0 bildir ki üst katman
-                        // (WS/SSE) registry+buffer cleanup'ını yapsın (aksi halde
-                        // her disconnect'te sızıntı → cap-hit DoS + stale-fd).
+                        // Clean FIN — notify the callback with len==0 so the upper layer
+                        // (WS/SSE) does its registry+buffer cleanup (otherwise every
+                        // disconnect leaks → cap-hit DoS + stale-fd).
                         if (cb) cb(read_buf, 0);
                         close_fd(fd); break;
                     } else {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-                        if (cb) cb(read_buf, 0);   // hata da disconnect — cleanup bildir
+                        if (cb) cb(read_buf, 0);   // an error is also a disconnect — report cleanup
                         close_fd(fd); break;
                     }
                 }
@@ -406,12 +406,12 @@ struct SockState {
     AcceptCb accept_cb;
     ReadCb   read_cb;
     std::mutex mtx;
-    // Geri basınç (Linux EpollEventLoop::pause_read ile aynı anlam): duraklatılınca tamamlanan okuma
-    // yeniden kurulmaz; async_read devam ettirir. read_pending: havada bir WSARecv var (mtx altında).
+    // Backpressure (same meaning as Linux EpollEventLoop::pause_read): when paused, a completed read
+    // is not re-armed; async_read resumes it. read_pending: a WSARecv is in flight (under mtx).
     bool     read_paused  = false;
     bool     read_pending = false;
 
-    // Idle/slowloris takibi (opt-in) — Linux EpollEventLoop ile paralel.
+    // Idle/slowloris tracking (opt-in) — parallel to Linux EpollEventLoop.
     int idle_timeout_sec = 0;
     std::chrono::steady_clock::time_point last_activity{};
 };
@@ -426,7 +426,7 @@ struct IocpEventLoop::Impl {
     std::queue<TaskFn> tasks;
     std::mutex tasks_mtx;
 
-    // Idle-timeout izleyen soket sayısı — 0 ise GQCS INFINITE, >0 ise sonlu tick.
+    // Number of sockets tracked for idle-timeout — if 0 GQCS is INFINITE, if >0 a finite tick.
     std::atomic<int> idle_watch_count{0};
 
     LPFN_ACCEPTEX fn_acceptex = nullptr;
@@ -578,8 +578,8 @@ void IocpEventLoop::async_read(int fd, ReadCb cb) {
     {
         std::lock_guard<std::mutex> lk(st->mtx);
         st->read_cb = std::move(cb);
-        // Havada WSARecv varsa tamamlanması yeni geri çağrıyı kullanır; duraklatılmışsa (geri
-        // basınç) okuma burada yeniden kurulur.
+        // If a WSARecv is in flight, its completion uses the new callback; if paused (backpressure)
+        // the read is re-armed here.
         if (st->read_paused) { st->read_paused = false; repost = !st->read_pending && !st->closed; }
     }
     if (repost) impl_->post_read(st);
@@ -589,7 +589,7 @@ void IocpEventLoop::pause_read(int fd) {
     auto st = impl_->get_state(static_cast<SOCKET>(fd));
     if (!st) return;
     std::lock_guard<std::mutex> lk(st->mtx);
-    st->read_paused = true;   // havadaki okuma tamamlanır, sonra yeniden kurulmaz
+    st->read_paused = true;   // the in-flight read completes, then is not re-armed
 }
 
 void IocpEventLoop::async_write(int fd, std::string data, WriteCb cb) {
@@ -656,13 +656,13 @@ void IocpEventLoop::run() {
         ULONG_PTR  key   = 0;
         OVERLAPPED* pov  = nullptr;
 
-        // idle-timeout izleyen soket varsa sonlu tick (1 sn), yoksa INFINITE.
+        // If there are sockets tracked for idle-timeout, a finite tick (1 s), otherwise INFINITE.
         DWORD wait_ms = impl_->idle_watch_count.load() > 0 ? 1000 : INFINITE;
         BOOL ok = GetQueuedCompletionStatus(impl_->iocp, &bytes, &key, &pov, wait_ms);
 
-        // ── Idle tarama (loop thread — I/O cb'siyle aynı thread → yarışmaz) ──
-        // GQCS zaman aşımı (ok==FALSE, pov==NULL, WAIT_TIMEOUT) veya normal
-        // wakeup sonrası çalışır. Süresi dolan soketleri kapat.
+        // ── Idle scan (loop thread — same thread as the I/O cb → no race) ──
+        // Runs after a GQCS timeout (ok==FALSE, pov==NULL, WAIT_TIMEOUT) or a normal
+        // wakeup. Close sockets whose time has expired.
         if (impl_->idle_watch_count.load() > 0) {
             auto now = std::chrono::steady_clock::now();
             std::vector<SOCKET> expired;
@@ -682,13 +682,13 @@ void IocpEventLoop::run() {
                 if (!st) continue;
                 ReadCb cb;
                 { std::lock_guard<std::mutex> slk(st->mtx); cb = st->read_cb; }
-                if (cb) cb(nullptr, 0);      // üst katmana disconnect bildir
+                if (cb) cb(nullptr, 0);      // notify the upper layer of the disconnect
                 impl_->close_internal(es);
             }
         }
 
         if (!ok && pov == nullptr) {
-            // Zaman aşımı (WAIT_TIMEOUT) veya sahipsiz tamamlanma — döngüye dön.
+            // Timeout (WAIT_TIMEOUT) or an orphaned completion — go back to the loop.
             if (GetLastError() == WAIT_TIMEOUT) continue;
         }
 
@@ -800,7 +800,7 @@ std::unique_ptr<EventLoop> EventLoop::create() {
 
 // ── Thread-local EventLoop accessor ─────────────────────────────────────────
 
-// fiber-ok: iş parçacığının kendi olay döngüsü (iş parçacığı yapısı)
+// fiber-ok: the thread's own event loop (thread structure)
 static thread_local EventLoop* tl_event_loop = nullptr;
 
 EventLoop* get_thread_event_loop() noexcept { return tl_event_loop; }

@@ -1,12 +1,12 @@
 #pragma once
-// Ağ istemcilerinin (MySQL, PostgreSQL, Redis, SMTP, HTTP) bağlantı kurma, DNS, TLS el sıkışması
-// ve gönderme adımları için ortak yol. fiber_io.h okumayı çözmüştü; bu adımlar hâlâ İŞ
-// PARÇACIĞINI tutuyordu: getaddrinfo yavaş bir çözücüde saniyelerce, engelleyen connect uzak
-// sunucu SYN'e yanıt vermezse dakikalarca, SSL_connect her tur yolculuğunda, dolu gönderme
-// tamponunda send/SSL_write karşı taraf okuyana dek. Fiber içinde bunların hepsinde yalnız fiber
-// bekler; fiber dışında (komut satırı, kurulum, zamanlayıcı iş parçacıkları) eski engelleyen
-// davranış korunur (SO_RCVTIMEO/SO_SNDTIMEO ile sınırlı).
-// Yalnız POSIX: Windows'ta fiber yok, istemcilerin _WIN32 dalları kendi yolunu kullanır.
+// A common path for the network clients' (MySQL, PostgreSQL, Redis, SMTP, HTTP) connect, DNS, TLS handshake
+// and send steps. fiber_io.h had solved reading; these steps still held the THREAD:
+// getaddrinfo for seconds on a slow resolver, a blocking connect for minutes if the remote
+// server does not answer the SYN, SSL_connect on every round trip, send/SSL_write on a full send
+// buffer until the other side reads. Inside a fiber only the fiber waits in all of these;
+// outside a fiber (command line, setup, timer threads) the old blocking
+// behaviour is kept (bounded by SO_RCVTIMEO/SO_SNDTIMEO).
+// POSIX only: Windows has no fibers, the clients' _WIN32 branches use their own path.
 #ifndef _WIN32
 #include "look/fiber_io.h"
 #include <cerrno>
@@ -24,29 +24,29 @@ namespace look {
 
 inline bool in_fiber() { return Fiber::current() && get_thread_scheduler(); }
 
-// DNS çözümleme. Sayısal adres (127.0.0.1, ::1) çözücüye gitmez → doğrudan. Ad çözümlemesi
-// fiber içinde ortak iş havuzunda (fiber_offload) koşar: çözücü yanıt vermese de iş parçacığı
-// öteki isteklere bakar.
+// DNS resolution. A numeric address (127.0.0.1, ::1) does not go to the resolver → direct. Name resolution
+// runs in the shared job pool (fiber_offload) inside a fiber: even if the resolver does not answer the thread
+// keeps serving other requests.
 inline int fiber_getaddrinfo(const char* node, const char* service,
                              const struct addrinfo* hints, struct addrinfo** res) {
     unsigned char tmp[sizeof(struct in6_addr)];
     if (!node || inet_pton(AF_INET, node, tmp) == 1 || inet_pton(AF_INET6, node, tmp) == 1)
-        return ::getaddrinfo(node, service, hints, res);   // fiber-safe: sayısal, çözücü yok
-    return fiber_offload([&] { return ::getaddrinfo(node, service, hints, res); });   // fiber-safe: havuzda
+        return ::getaddrinfo(node, service, hints, res);   // fiber-safe: numeric, no resolver
+    return fiber_offload([&] { return ::getaddrinfo(node, service, hints, res); });   // fiber-safe: on the pool
 }
 
-// Bağlan; en çok timeout_ms bekle (<= 0 → çekirdeğin kendi sınırı). Soket geçici engellemesiz:
-// fiber içinde yalnız fiber bekler. Dönüş 0 = bağlandı; -1 = hata (errno; süre doldu → ETIMEDOUT).
-// Soketin önceki kipi (engelleyen) geri yüklenir.
+// Connect; wait at most timeout_ms (<= 0 → the kernel's own limit). The socket is temporarily non-blocking:
+// inside a fiber only the fiber waits. Returns 0 = connected; -1 = error (errno; time ran out → ETIMEDOUT).
+// The socket's previous (blocking) mode is restored.
 inline int fiber_connect(int fd, const struct sockaddr* addr, socklen_t len, int timeout_ms) {
     int fl = ::fcntl(fd, F_GETFL, 0);
     ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-    int rc = ::connect(fd, addr, len);   // fiber-safe: engellemesiz
+    int rc = ::connect(fd, addr, len);   // fiber-safe: non-blocking
     if (rc != 0 && errno == EINPROGRESS) {
         int w = fiber_wait_writable(fd, timeout_ms);
-        if (w < 0) {   // fiber yok → poll ile bekle (blocking-ok: fiber yok)
+        if (w < 0) {   // no fiber → wait with poll (blocking-ok: no fiber)
             struct pollfd p{}; p.fd = fd; p.events = POLLOUT;
-            w = ::poll(&p, 1, timeout_ms > 0 ? timeout_ms : -1);   // blocking-ok: fiber yok
+            w = ::poll(&p, 1, timeout_ms > 0 ? timeout_ms : -1);   // blocking-ok: no fiber
         }
         if (w == 0) { errno = ETIMEDOUT; rc = -1; }
         else if (w > 0) {
@@ -61,15 +61,15 @@ inline int fiber_connect(int fd, const struct sockaddr* addr, socklen_t len, int
     return rc;
 }
 
-// TLS el sıkışması. Dönüş 1 = tamam; 0 = süre doldu; -1 = TLS hatası (OpenSSL hata kuyruğu dolu).
-// Fiber dışında eski engelleyen SSL_connect (SO_RCVTIMEO/SO_SNDTIMEO ile sınırlı).
+// TLS handshake. Returns 1 = done; 0 = time ran out; -1 = TLS error (OpenSSL error queue is filled).
+// Outside a fiber the old blocking SSL_connect (bounded by SO_RCVTIMEO/SO_SNDTIMEO).
 inline int fiber_ssl_connect(SSL* s, int fd, int timeout_ms) {
-    if (!in_fiber()) return SSL_connect(s) == 1 ? 1 : -1;   // blocking-ok: fiber yok
+    if (!in_fiber()) return SSL_connect(s) == 1 ? 1 : -1;   // blocking-ok: no fiber
     int fl = ::fcntl(fd, F_GETFL, 0);
     ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     int out;
     for (;;) {
-        int r = SSL_connect(s);   // fiber-safe: engellemesiz
+        int r = SSL_connect(s);   // fiber-safe: non-blocking
         if (r == 1) { out = 1; break; }
         int e = SSL_get_error(s, r), w;
         if (e == SSL_ERROR_WANT_READ)       w = fiber_wait_readable(fd, timeout_ms);
@@ -81,9 +81,9 @@ inline int fiber_ssl_connect(SSL* s, int fd, int timeout_ms) {
     return out;
 }
 
-// Tamamını gönder (kısmi yazmada kalanı da). Dönüş true = hepsi gitti; false = hata / süre doldu
-// (errno ETIMEDOUT). Fiber içinde: düz sokette MSG_DONTWAIT, TLS'te soket geçici engellemesiz —
-// tampon doluysa yalnız fiber bekler. SIGPIPE yok (kapalı sokette EPIPE).
+// Send everything (the remainder too after a partial write). Returns true = all went out; false = error / time ran out
+// (errno ETIMEDOUT). Inside a fiber: MSG_DONTWAIT on a plain socket, on TLS the socket is temporarily non-blocking —
+// if the buffer is full only the fiber waits. No SIGPIPE (EPIPE on a closed socket).
 inline bool fiber_send_all(int fd, SSL* ssl, const void* buf, size_t len, int timeout_ms) {
     const char* p = static_cast<const char*>(buf);
     const bool fib = in_fiber();
@@ -92,10 +92,10 @@ inline bool fiber_send_all(int fd, SSL* ssl, const void* buf, size_t len, int ti
     bool ok = true;
     while (len > 0) {
         size_t chunk = len > (size_t)INT_MAX ? (size_t)INT_MAX : len;
-        int w = 1;   // 1 = yazıldı, 2 = yazılabilir bekle, 3 = okunabilir bekle
+        int w = 1;   // 1 = written, 2 = wait for writable, 3 = wait for readable
         ssize_t n;
         if (ssl) {
-            n = SSL_write(ssl, p, (int)chunk);   // fiber-safe: fiber içinde soket engellemesiz
+            n = SSL_write(ssl, p, (int)chunk);   // fiber-safe: the socket is non-blocking inside a fiber
             if (n <= 0) {
                 int e = SSL_get_error(ssl, (int)n);
                 if (fib && e == SSL_ERROR_WANT_WRITE) w = 2;
@@ -117,7 +117,7 @@ inline bool fiber_send_all(int fd, SSL* ssl, const void* buf, size_t len, int ti
 }
 
 } // namespace look
-#else  // _WIN32: fiber yok — çağıran kod iki platformda aynı adı kullansın diye
+#else  // _WIN32: no fiber — so that the calling code uses the same name on both platforms
 #include <winsock2.h>
 #include <ws2tcpip.h>
 namespace look {
@@ -138,11 +138,11 @@ using dial_sock_t = int;
 constexpr dial_sock_t DIAL_INVALID = -1;
 #endif
 
-// Go net.Dial modeli: adı AF_UNSPEC ile çözümle, dönen adresleri (IPv4 ve IPv6) sırayla dene, ilk
-// bağlananı döndür. Eskiden MySQL/PG istemcileri yalnız AF_INET çözüyordu → "[::1]:5432" ya da
-// yalnız AAAA kaydı olan bir sunucuya hiç bağlanılamıyordu. Her deneme en çok timeout_ms.
-// Dönüş: bağlı (engelleyen kipte) soket ya da DIAL_INVALID; resolved=false → ad çözülemedi;
-// timed_out → en az bir deneme süre aşımına uğradı.
+// Go net.Dial model: resolve the name with AF_UNSPEC, try the returned addresses (IPv4 and IPv6) in order, return the first
+// one that connects. MySQL/PG clients used to resolve only AF_INET → a server with "[::1]:5432" or
+// only an AAAA record could never be connected to. Each attempt at most timeout_ms.
+// Returns: a connected (blocking-mode) socket or DIAL_INVALID; resolved=false → the name could not be resolved;
+// timed_out → at least one attempt timed out.
 inline dial_sock_t tcp_dial(const std::string& host, int port, int timeout_ms,
                             bool& resolved, bool& timed_out) {
     resolved = false; timed_out = false;
@@ -179,7 +179,7 @@ inline dial_sock_t tcp_dial(const std::string& host, int port, int timeout_ms,
     return s;
 }
 
-// Hata metninde adres: IPv6 köşeli parantezde ("[::1]:5432"), Go net.JoinHostPort gibi.
+// Address in the error text: IPv6 in square brackets ("[::1]:5432"), like Go's net.JoinHostPort.
 inline std::string join_host_port(const std::string& host, int port) {
     return (host.find(':') != std::string::npos ? "[" + host + "]" : host) + ":" + std::to_string(port);
 }

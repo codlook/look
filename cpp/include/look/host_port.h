@@ -1,15 +1,15 @@
-// host[:port] ve port ayrıştırma — TEK tanım (DSN, Redis URL, http:: URL, proxy, --port, *_PORT env).
-// Model Go: net/url (boş port = varsayılan), net.SplitHostPort (IPv6 köşeli parantezde),
-// strconv.ParseUint(s, 10, 16) (yalnız rakam, taşma = hata). Eskiden her yer kendi stoi/atoi'sini
-// kullanıyordu: "3306x" → 3306 (stoi ilk harfte durur), "99999" kabul, "abc" → çıplak "stoi" hatası
-// ya da sessizce varsayılan port, "[::1]:5432" → host "[" — IPv6 adresle hiç bağlanılamıyordu.
-// Saf (ağsız) — tests/host_port_test.cpp tablo testi.
+// host[:port] and port parsing — a SINGLE definition (DSN, Redis URL, http:: URL, proxy, --port, *_PORT env).
+// Go model: net/url (empty port = default), net.SplitHostPort (IPv6 in square brackets),
+// strconv.ParseUint(s, 10, 16) (digits only, overflow = error). Every place used to have its own stoi/atoi:
+// "3306x" → 3306 (stoi stops at the first letter), "99999" accepted, "abc" → a bare "stoi" error
+// or silently the default port, "[::1]:5432" → host "[" — an IPv6 address could never be connected to.
+// Pure (no network) — table test in tests/host_port_test.cpp.
 #pragma once
 #include <string>
 
 namespace look {
 
-// Port metni: yalnız ASCII rakam, 1..65535. Hata → false.
+// Port text: ASCII digits only, 1..65535. Error → false.
 inline bool parse_port_number(const std::string& s, int& out) {
     if (s.empty() || s.size() > 5) return false;
     int v = 0;
@@ -22,14 +22,14 @@ inline bool parse_port_number(const std::string& s, int& out) {
     return true;
 }
 
-// Kullanıcıya giden açıklama (İngilizce): "invalid port \"3306x\" (expected 1-65535)".
+// The explanation shown to the user (English): "invalid port \"3306x\" (expected 1-65535)".
 inline std::string port_error(const std::string& s) {
     return "invalid port \"" + s + "\" (expected a number from 1 to 65535)";
 }
 
-// "host", "host:port", "host:" (boş port = varsayılan), "[v6]", "[v6]:port".
-// host: parantezsiz; boş kalırsa çağıranın varsayılanı korunur. port: girişte varsayılan.
-// Dönüş "" = başarı; aksi halde İngilizce hata (port/adres metnini içerir, parola içermez).
+// "host", "host:port", "host:" (empty port = default), "[v6]", "[v6]:port".
+// host: without brackets; if it stays empty the caller's default is kept. port: default on entry.
+// Returns "" = success; otherwise an English error (contains the port/address text, never the password).
 inline std::string split_host_port(const std::string& hp, std::string& host, int& port) {
     std::string h, p;
     bool has_port = false;

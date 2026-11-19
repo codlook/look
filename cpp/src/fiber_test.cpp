@@ -1,5 +1,5 @@
 // fiber_test.cpp — minimal POC: fiber yield/resume + FiberLocal
-// Sadece test için, LOOK_CORE'a dahil değil.
+// Only for testing, not included in LOOK_CORE.
 
 #include "look/fiber.h"
 #include <cassert>
@@ -8,7 +8,7 @@
 
 using namespace look;
 
-// Test 1: Temel yield/resume
+// Test 1: Basic yield/resume
 void test_basic() {
     int step = 0;
     auto f = Fiber::create([&] {
@@ -27,12 +27,12 @@ void test_basic() {
     std::cout << "PASS Test 1: basic yield/resume\n";
 }
 
-// Test 2: FiberLocal izolasyonu — aynı thread, farklı fiber'lar
+// Test 2: FiberLocal isolation — same thread, different fibers
 void test_fiber_local() {
     std::string val_a, val_b;
 
     auto fa = Fiber::create([&] {
-        // fiber A kendi local'ına yazar
+        // fiber A writes to its own local
         Fiber::current()->local.conns["key"] = nullptr;
         val_a = (Fiber::current()->local.conns.count("key") ? "A_set" : "A_miss");
         Fiber::yield();
@@ -40,14 +40,14 @@ void test_fiber_local() {
     });
 
     auto fb = Fiber::create([&] {
-        // fiber B kendi local'ına erişir — A'nın değerini görmemeli
+        // fiber B accesses its own local — must not see A's value
         val_b = (Fiber::current()->local.conns.count("key") ? "B_sees_A" : "B_isolated");
         Fiber::yield();
     });
 
-    fa->resume();  // A çalışır, yield
-    fb->resume();  // B çalışır, yield — A'nın local'ını görmemeli
-    fa->resume();  // A devam — kendi local'ı intact olmalı
+    fa->resume();  // A runs, yields
+    fb->resume();  // B runs, yields — must not see A's local
+    fa->resume();  // A continues — its own local must be intact
 
     assert(val_a == "A_set+A_kept");
     assert(val_b == "B_isolated");
@@ -70,10 +70,10 @@ void test_scheduler() {
     set_thread_scheduler(nullptr);
 }
 
-// Test 4: Guard page var mı (stack overflow yakalanıyor mu) — sadece Linux
+// Test 4: Is there a guard page (is a stack overflow caught) — Linux only
 #ifndef _WIN32
 void test_guard_page_exists() {
-    // Fiber oluştu mu kontrol — guard page kurulumu başarılı mı?
+    // Check that the fiber was created — was the guard page set up successfully?
     auto f = Fiber::create([] { Fiber::yield(); });
     f->resume();
     assert(!f->done());
@@ -83,9 +83,9 @@ void test_guard_page_exists() {
 }
 #endif
 
-// Test 5: done() fiber tamamlanınca true
+// Test 5: done() is true once the fiber has completed
 void test_done_flag() {
-    auto f = Fiber::create([] { /* hemen biter */ });
+    auto f = Fiber::create([] { /* finishes immediately */ });
     assert(!f->done());
     f->resume();
     assert(f->done());

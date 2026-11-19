@@ -3,10 +3,10 @@
 #include "look/logger.h"
 #include "look/dns.h"
 #include "look/dkim.h"
-#include "look/smtp_parse.h"   // smtp_extract_addr + smtp_verb (dikişi aç — saf, fuzz'lanır)
+#include "look/smtp_parse.h"   // smtp_extract_addr + smtp_verb (exposes the seam — pure, fuzzed)
 #include "look/mysql_client.h"
-#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli)
-#include "look/db_dsn.h"   // mysql_resolve_tls (db::connect ile aynı TLS kararı)
+#include "look/host_port.h" // host[:port] + port parsing (Go net/url model)
+#include "look/db_dsn.h"   // mysql_resolve_tls (the same TLS decision as db::connect)
 
 #include <sstream>
 #include <thread>
@@ -127,14 +127,14 @@ static int smtp_max_conns_per_ip() {
     }();
     return v;
 }
-// Slowloris koruması: bağlantı bu süre boyunca hiç veri göndermezse EventLoop
-// onu kapatır (IMAP LOOK_IMAP_IDLE_TIMEOUT ile paralel). SMTP oturumları IMAP'e
-// göre çok daha kısa ömürlü olduğundan default 300 sn (5 dk) makul; RFC 5321
-// §4.5.3.2 komut/veri timeout tavanları da bu aralıkta. <=0 → devre dışı.
+// Slowloris protection: if a connection sends no data for this long the EventLoop
+// closes it (parallel to IMAP LOOK_IMAP_IDLE_TIMEOUT). Since SMTP sessions are much
+// shorter-lived than IMAP, a default of 300 s (5 min) is reasonable; the RFC 5321
+// §4.5.3.2 command/data timeout ceilings are in this range too. <=0 → disabled.
 static int smtp_idle_timeout() {
     static int v = []() {
         const char* e = std::getenv("LOOK_SMTP_IDLE_TIMEOUT");
-        if (e && *e) { int x = std::atoi(e); return x; }  // 0/negatif = kapalı
+        if (e && *e) { int x = std::atoi(e); return x; }  // 0/negative = off
         return 300;
     }();
     return v;
@@ -174,8 +174,8 @@ static std::string smtp_b64_decode(const std::string& s) {
     return out;
 }
 
-// PBKDF2-HMAC-SHA256 — pbkdf2$sha256$iterations$salt_b64$hash_b64 formatini dogrular
-// auth::hash() ile ayni format, constant-time karsilastirma.
+// PBKDF2-HMAC-SHA256 — verifies the pbkdf2$sha256$iterations$salt_b64$hash_b64 format;
+// same format as auth::hash(), constant-time comparison.
 static std::vector<uint8_t> smtp_hmac_sha256(const std::vector<uint8_t>& key,
                                               const std::vector<uint8_t>& data) {
     // Inner/outer hash — HMAC-SHA256 (portable, no dependency)
@@ -240,7 +240,7 @@ static std::vector<uint8_t> smtp_b64_decode_bytes(const std::string& s) {
     return out;
 }
 
-// pbkdf2$sha256$<iter>$<salt_b64>$<hash_b64> formatindaki hash'i dogrular
+// verifies a hash in the pbkdf2$sha256$<iter>$<salt_b64>$<hash_b64> format
 static bool smtp_pbkdf2_verify(const std::string& password, const std::string& stored_hash) {
     std::vector<std::string> parts;
     std::istringstream ss(stored_hash);
@@ -248,8 +248,8 @@ static bool smtp_pbkdf2_verify(const std::string& password, const std::string& s
     while (std::getline(ss, tok, '$')) parts.push_back(tok);
     if (parts.size() < 5 || parts[0] != "pbkdf2") return false;
     uint32_t iter = 0;
-    try { iter = (uint32_t)std::stoul(parts[2]); } catch (...) { return false; }  // bozuk hash → doğrulama başarısız
-    // DoS koruması: kötü niyetli/bozuk hash aşırı iterasyonla CPU'yu kilitleyebilir.
+    try { iter = (uint32_t)std::stoul(parts[2]); } catch (...) { return false; }  // malformed hash → verification fails
+    // DoS protection: a malicious/malformed hash with excessive iterations could pin the CPU.
     if (iter == 0 || iter > 1000000) return false;
     auto     salt   = smtp_b64_decode_bytes(parts[3]);
     auto     stored = smtp_b64_decode_bytes(parts[4]);
@@ -260,8 +260,8 @@ static bool smtp_pbkdf2_verify(const std::string& password, const std::string& s
     return diff == 0;
 }
 
-// Sabit-zamanlı string eşitlik — erken çıkış yok. Auth token/parola karşılaştırmada
-// düz `==` (ilk farklı byte'ta döner) timing attack ile byte-byte tahmine açıktır.
+// Constant-time string equality — no early exit. In auth token/password comparison
+// a plain `==` (returns at the first differing byte) is open to byte-by-byte guessing via a timing attack.
 static bool smtp_ct_equal(const std::string& a, const std::string& b) {
     uint8_t diff = (uint8_t)(a.size() ^ b.size());
     size_t n = a.size() > b.size() ? a.size() : b.size();
@@ -270,11 +270,11 @@ static bool smtp_ct_equal(const std::string& a, const std::string& b) {
     return diff == 0;
 }
 
-// DSN'den MySQL baglantisi olustur — smtp_validate_auth icin
+// Create a MySQL connection from the DSN — for smtp_validate_auth
 static std::shared_ptr<MySQLClient> smtp_make_db_conn(const std::string& dsn) {
     std::string user, pass, host = "127.0.0.1", db;
     int port = 3306;
-    // mysql://user:pass@host:port/db?tls=...  — db::connect ile aynı bölme (son '@', ilk '/' ya da '?')
+    // mysql://user:pass@host:port/db?tls=...  — same split as db::connect (last '@', first '/' or '?')
     size_t se = dsn.find("://");
     if (se == std::string::npos) throw std::runtime_error("invalid DSN");
     const std::string scheme = dsn.substr(0, se);
@@ -289,11 +289,11 @@ static std::shared_ptr<MySQLClient> smtp_make_db_conn(const std::string& dsn) {
     size_t sl = rest.find_first_of("/?");
     std::string hp = (sl != std::string::npos) ? rest.substr(0, sl) : rest;
     db = (sl == std::string::npos) ? "" : rest[sl] == '/' ? rest.substr(sl + 1) : rest.substr(sl);
-    // Go net/url modeli; eskiden stoi: "3306x" → 3306, bozuk port → sessizce 3306.
+    // Go net/url model; previously stoi: "3306x" → 3306, a malformed port → silently 3306.
     std::string err = look::split_host_port(hp, host, port);
     if (!err.empty()) throw std::runtime_error("invalid DSN: " + err);
-    // Sorgu: eskiden veritabanı adına karışıyordu ("mail?tls=1" adlı veritabanı) ve ?tls yok
-    // sayılıyordu. db::connect ile aynı TLS kararı (look/db_dsn.h).
+    // Query: it used to bleed into the database name (a database named "mail?tls=1") and ?tls was
+    // treated as absent. The same TLS decision as db::connect (look/db_dsn.h).
     std::string query;
     { size_t q = db.find('?'); if (q != std::string::npos) { query = db.substr(q + 1); db = db.substr(0, q); } }
     bool tls = (scheme == "mysqls" || scheme == "mariadbs"), tls_verify = false;
@@ -326,17 +326,17 @@ static bool smtp_validate_auth(const std::string& b64) {
     std::string username = (parts.size() >= 3) ? parts[parts.size()-2] : parts[0];
     if (passwd.empty()) return false;
 
-    // DB dogrulama: LOOK_SMTP_USER_DB set edilmisse DB'den sorgula
+    // DB verification: if LOOK_SMTP_USER_DB is set, query the DB
     const char* db_dsn = std::getenv("LOOK_SMTP_USER_DB");
     if (db_dsn && *db_dsn) {
         try {
             auto conn = smtp_make_db_conn(db_dsn);
-            // Hazir sorgu: email ve active kontrolu
+            // Prepared query: check email and active
             auto rows = conn->execute(
                 "SELECT password FROM mail_users WHERE email=? AND active=1",
                 {DbParam::from_text(username)});
             if (rows.empty()) return false;
-            // DbRow = vector<pair<string, DbValue>>, DbValue.str = string deger
+            // DbRow = vector<pair<string, DbValue>>, DbValue.str = string value
             for (auto& col : rows[0]) {
                 if (col.first == "password")
                     return smtp_pbkdf2_verify(passwd, col.second.str);
@@ -345,23 +345,23 @@ static bool smtp_validate_auth(const std::string& b64) {
         } catch (const std::exception& e) {
             Logger::instance().log(LogLevel::LOG_ERROR, "smtp",
                 std::string("auth DB error: ") + e.what());
-            return false; // DB hatasi → reddet (guvenli taraf)
+            return false; // DB error → reject (safe side)
         }
     }
 
-    // Fallback: tek token (gelistirme / basit deployment)
+    // Fallback: single token (development / simple deployment)
     const char* token = std::getenv("LOOK_SMTP_AUTH_TOKEN");
-    if (token && *token) return smtp_ct_equal(passwd, std::string(token));  // sabit-zaman
+    if (token && *token) return smtp_ct_equal(passwd, std::string(token));  // constant-time
     return false;
 }
 
-// ── Ortak mail kimlik doğrulama (IMAP LOGIN + gelecekteki servisler) ─────────
+// ── Shared mail authentication (IMAP LOGIN + future services) ─────────────
 bool mail_user_auth(const std::string& user, const std::string& pass,
                     std::string& maildir_out) {
     maildir_out.clear();
     if (user.empty() || pass.empty()) return false;
-    // GÜVENLİK: kullanıcı adı Maildir yol bileşeni olacak — traversal/kontrol
-    // karakterlerini baştan reddet (doğrulanmış olsa bile defense-in-depth).
+    // SECURITY: the username becomes a Maildir path component — reject traversal/control
+    // characters up front (defense-in-depth even if authenticated).
     for (unsigned char c : user)
         if (c == '/' || c == '\\' || c == '\0' || c < 0x20) return false;
     if (user.find("..") != std::string::npos) return false;
@@ -381,10 +381,10 @@ bool mail_user_auth(const std::string& user, const std::string& pass,
         } catch (const std::exception& e) {
             Logger::instance().log(LogLevel::LOG_ERROR, "imap",
                 std::string("auth DB error: ") + e.what());
-            return false;   // DB hatası → reddet (güvenli taraf)
+            return false;   // DB error → reject (safe side)
         }
     } else {
-        // Fallback: tek kullanıcı (dev / basit deployment) — sabit-zamanlı karşılaştırma
+        // Fallback: single user (dev / simple deployment) — constant-time comparison
         const char* du = std::getenv("LOOK_MAIL_USER");
         const char* dp = std::getenv("LOOK_MAIL_PASS");
         if (du && dp && *du && *dp) {
@@ -399,17 +399,17 @@ bool mail_user_auth(const std::string& user, const std::string& pass,
 
     const char* base = std::getenv("LOOK_MAIL_DIR");
     if (!base || !*base) base = "/var/mail/look";
-    // INBOX = SMTP teslimatıyla aynı yol: <base>/<user>/inbox
+    // INBOX = the same path as SMTP delivery: <base>/<user>/inbox
     maildir_out = (fs::path(base) / user / "inbox").string();
     return true;
 }
 
 // ── Local domain check for open relay prevention ─────────────────────────────
-// RFC 5321 §2.4: domain adları case-INSENSITIVE; FQDN sonundaki nokta
-// (example.com.) geçerli. Katı case-sensitive + trim'siz eşleşme, meşru inbound
-// maili (user@EXAMPLE.COM / user@example.com.) yanlışlıkla reddedip bounce
-// ettiriyordu (availability/interop — güvenlik değil, fail-closed korunuyor).
-// İki tarafı da normalize et.
+// RFC 5321 §2.4: domain names are case-INSENSITIVE; a trailing dot on an FQDN
+// (example.com.) is valid. A strict case-sensitive, untrimmed match wrongly rejected
+// legitimate inbound mail (user@EXAMPLE.COM / user@example.com.) and
+// caused a bounce (availability/interop — not security, fail-closed is preserved).
+// Normalize both sides.
 static std::string smtp_norm_domain(std::string d) {
     size_t s = d.find_first_not_of(" \t");
     d = (s == std::string::npos) ? "" : d.substr(s);
@@ -453,8 +453,8 @@ struct SmtpSession {
     int         fd       = -1;
     SmtpState   state    = SmtpState::GREETING;
     std::string buf;           // raw read buffer (may span multiple reads)
-    // Bir yanıt yolda ya da mesaj worker'da: o bitene dek buf'taki sıradaki satırlar İŞLENMEZ.
-    // Yalnız event-loop thread'inde okunur ve yazılır.
+    // A reply is in flight or the message is in a worker: until that finishes the next lines in buf are NOT PROCESSED.
+    // Read and written only on the event-loop thread.
     bool        waiting  = false;
     SmtpMessage msg;           // in-progress message
     std::string ehlo_domain;   // client EHLO domain
@@ -466,9 +466,9 @@ struct SmtpSession {
     SSL*        ssl      = nullptr;
     bool        tls_active = false;
 
-    // close_session bu oturumu kapattı. Yalnız event-loop thread'inde okunur ve
-    // yazılır. fd NUMARASI kimlik değildir: kapanan fd'yi sonraki accept aynı
-    // numarayla alır; worker'dan dönen iş "oturum hâlâ açık mı" diye buna bakar.
+    // close_session closed this session. Read and written only on the event-loop thread.
+    // The fd NUMBER is not an identity: the next accept gets a closed fd
+    // with the same number; work returning from a worker checks this for "is the session still open".
     bool        closed   = false;
 
     ~SmtpSession() {
@@ -484,14 +484,14 @@ struct SmtpSession {
     }
 };
 
-// ── TLS (STARTTLS) — bellek BIO'ları ile olay döngüsünde ─────────────────────
-// Soket olay döngüsünde kalır: döngünün okuduğu ham baytlar SSL'in okuma BIO'suna yazılır,
-// SSL'in ürettiği şifreli baytlar yazma BIO'sundan alınıp döngünün normal yazma yoluyla
-// (async_write) gönderilir. İşçi iş parçacığı beklemez, soket el değiştirmez.
-// 1.0.17'ye dek el sıkışma işçide soket üzerinde yapılıyor, sonra döngü ham baytları kendisi
-// okuyup SSL_read'e soketten TEKRAR okumasını söylüyordu (baytlar tüketilmişti) ve yanıtlar
-// şifresiz yazılıyordu: TLS'li gönderen hiçbir yanıt alamıyordu (ölçüldü). epoll'de bir fd için
-// tek bekleyen yazma vardır: bir adımın bütün şifreli çıktısı TEK async_write'ta gider.
+// ── TLS (STARTTLS) — in the event loop with memory BIOs ──────────────────────
+// The socket stays in the event loop: the raw bytes the loop reads are written to SSL's read BIO,
+// the encrypted bytes SSL produces are taken from the write BIO and sent through the loop's normal write path
+// (async_write). The worker thread does not wait, the socket does not change hands.
+// Up to 1.0.17 the handshake was done on the socket in the worker, then the loop read the raw bytes itself
+// and told SSL_read to read from the socket AGAIN (the bytes were already consumed) and replies
+// were written unencrypted: a TLS sender got no reply at all (measured). In epoll there is
+// a single pending write per fd: the whole encrypted output of a step goes in ONE async_write.
 static std::string smtp_tls_drain(SSL* ssl) {
     std::string out;
     BIO* w = SSL_get_wbio(ssl);
@@ -501,30 +501,30 @@ static std::string smtp_tls_drain(SSL* ssl) {
     return out;
 }
 
-// Oturuma gidecek yanıt: TLS etkinse şifreli, değilse olduğu gibi.
+// The reply that goes to the session: encrypted if TLS is active, as is otherwise.
 static std::string smtp_wire(SmtpSession* s, const std::string& plain) {
     if (!s->ssl || !s->tls_active) return plain;
-    if (!plain.empty()) SSL_write(s->ssl, plain.data(), (int)plain.size());   // bellek BIO: tam yazılır
+    if (!plain.empty()) SSL_write(s->ssl, plain.data(), (int)plain.size());   // memory BIO: written in full
     return smtp_tls_drain(s->ssl);
 }
 
 // ── Address extraction ─────────────────────────────────────────────────────────
 // Extract <addr> from "MAIL FROM:<addr>" or "RCPT TO:<addr>".
-// "MAIL FROM:<addr>" / "RCPT TO:<addr>" parametresini ayrıştır (RFC 5321 §4.1.2).
-// Dönüş: sözdizimi geçerli mi. `addr` boş + geçerli = null sender (`<>`).
+// Parse the "MAIL FROM:<addr>" / "RCPT TO:<addr>" parameter (RFC 5321 §4.1.2).
+// Returns: whether the syntax is valid. `addr` empty + valid = null sender (`<>`).
 //
-// ESKİ HATA — ölçüldü, çöp veri DİSKE yazılıyordu:
-//   `MAIL FROM:`            → ilk boşluktan sonrası alınıyordu → adres "FROM:"
-//                             → Return-Path: <FROM:>   (maildir'e böyle yazıldı)
-//   `MAIL FROM: bare@x.com` → adres "FROM: bare@x.com"  (bare adres desteği KIRIK)
-//   `MAIL FROM:<a@b<c>`     → bozuk adres olduğu gibi kabul
-//   `MAIL FROM:<>`          → boş döndüğü için REDDEDİLİYORDU — oysa null sender
-//                             RFC 5321 §4.5.5'te bounce/DSN için ZORUNLU kabul edilir
-// Yani ayrıştırma ters yönde gevşekti: çöpü alıyor, meşru olanı reddediyordu.
-// Bozuk Return-Path bounce'ları yanlış yönlendirir ve başlığı ayrıştıran alıcı
-// yazılımları şaşırtır (adres içinde boşluk/`<` olabiliyordu).
-// smtp_extract_addr() → look/smtp_parse.h ("dikişi aç": saf parser, fuzz + tablo test edilir).
-// Yukarıdaki yorum bloğu extract davranışının/geçmiş bug'larının kaydı olarak kaldı.
+// OLD BUG — measured, garbage data was WRITTEN TO DISK:
+//   `MAIL FROM:`            → everything after the first space was taken → address "FROM:"
+//                             → Return-Path: <FROM:>   (this is how it was written to maildir)
+//   `MAIL FROM: bare@x.com` → address "FROM: bare@x.com"  (bare address support BROKEN)
+//   `MAIL FROM:<a@b<c>`     → malformed address accepted as is
+//   `MAIL FROM:<>`          → it was REJECTED because it returned empty — yet the null sender
+//                             is REQUIRED to be accepted for bounce/DSN in RFC 5321 §4.5.5
+// That is, parsing was lax in the wrong direction: it accepted garbage and rejected the legitimate.
+// A broken Return-Path misroutes bounces and confuses receiving
+// software that parses the header (the address could contain spaces/`<`).
+// smtp_extract_addr() → look/smtp_parse.h (exposes the seam: pure parser, fuzz + table tested).
+// The comment block above remains as a record of the extract behavior / past bugs.
 
 // ── SMTP command tokenizer → look/smtp_parse.h (smtp_verb) ─────────────────────
 
@@ -660,7 +660,7 @@ struct WorkItem {
     SmtpHandler handler;
     EventLoop*  loop;
     std::shared_ptr<SmtpSession> session;
-    std::function<void()> resume;   // event-loop thread'inde: tamponda bekleyen satırlara dön
+    std::function<void()> resume;   // on the event-loop thread: go back to lines waiting in the buffer
 };
 
 struct SmtpWorkerPool {
@@ -776,14 +776,14 @@ private:
                 : "550 5.7.1 Message rejected by policy\r\n";
             item.loop->post([loop = item.loop, fd = item.fd, reply, session = item.session,
                              resume = std::move(item.resume)]() mutable {
-                // İstemci worker meşgulken (SPF DNS'i ~10 sn sürebilir) koptuysa
-                // fd kapanmış, araya giren yeni bağlantı aynı numarayı almış
-                // olabilir. Ölçüldü: yanıt o İLGİSİZ bağlantıya, 220 banner'ının
-                // ardından yazılıyordu. Oturum kapandıysa yanıtın alıcısı yok.
+                // If the client dropped while the worker was busy (SPF DNS can take ~10 s)
+                // the fd is closed, and a new connection that came in between may have taken the same number.
+                // Measured: the reply was written to that UNRELATED connection, after its
+                // 220 banner. If the session closed, the reply has no recipient.
                 if (session->closed) return;
                 loop->async_write(fd, smtp_wire(session.get(), reply), [loop, fd, session, resume = std::move(resume)](bool ok) {
                     session->reset_envelope();
-                    // Yanıt yazıldı: noktadan sonra art arda gönderilmiş komutlar tamponda bekliyor.
+                    // Reply written: commands sent back-to-back after the dot are waiting in the buffer.
                     if (ok && !session->closed && resume) resume();
                 });
             });
@@ -791,8 +791,8 @@ private:
     }
 };
 
-// Bağlantı aynı makineden mi? remote_ip getpeername'den gelir; IPv4-eşlemeli IPv6
-// (::ffff:127.0.0.1) orada IPv4'e çevrilmiştir. 127.0.0.0/8 ve ::1.
+// Is the connection from the same machine? remote_ip comes from getpeername; an IPv4-mapped IPv6
+// (::ffff:127.0.0.1) has been converted to IPv4 there. 127.0.0.0/8 and ::1.
 static bool smtp_is_loopback(const std::string& ip) {
     return ip.rfind("127.", 0) == 0 || ip == "::1";
 }
@@ -833,13 +833,13 @@ struct SmtpServer::Impl {
 
     // Per-connection session map (fd → session), guarded by loop thread
     std::unordered_map<int, std::shared_ptr<SmtpSession>> sessions;
-    int bound_ports = 0;   // kac port GERCEKTEN dinlemede (yaniltici "started" logunu onler)
+    int bound_ports = 0;   // how many ports are ACTUALLY listening (prevents a misleading "started" log)
 
     // ── Server socket helpers ────────────────────────────────────────────────
-    // ESKİ HATA: yalnız AF_INET6 deneniyordu. IPv6 desteği derlenmemiş/kapalı
-    // ortamlarda socket() EAFNOSUPPORT verir ve SMTP HİÇ BAŞLAMAZ — http_main
-    // "started" logunu bastığı için sessizce. HTTP AF_INET kullandığından o
-    // ortamlarda çalışıyordu; fark buradan geliyordu. IPv4 yedeği eklendi.
+    // OLD BUG: only AF_INET6 was tried. In environments where IPv6 support is not compiled in/disabled
+    // socket() gives EAFNOSUPPORT and SMTP NEVER STARTS — silently, because http_main
+    // printed the "started" log. HTTP uses AF_INET so it worked in those
+    // environments; the difference came from here. An IPv4 fallback was added.
     static int make_server_fd_v4(int port) {
 #if defined(_WIN32)
         int fd = (int)socket(AF_INET, SOCK_STREAM, 0);
@@ -864,7 +864,7 @@ struct SmtpServer::Impl {
 #else
         int fd = socket(AF_INET6, SOCK_STREAM, 0);
 #endif
-        if (fd < 0) return make_server_fd_v4(port);   // IPv6 yok → IPv4
+        if (fd < 0) return make_server_fd_v4(port);   // no IPv6 → IPv4
         int yes = 1;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, sizeof(yes));
         // Dual-stack: accept both IPv4 and IPv6
@@ -876,7 +876,7 @@ struct SmtpServer::Impl {
         addr.sin6_port   = htons((uint16_t)port);
         addr.sin6_addr   = in6addr_any;
         if (::bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            close(fd); return make_server_fd_v4(port);   // IPv6 arayüzü kapalı → IPv4
+            close(fd); return make_server_fd_v4(port);   // IPv6 interface down → IPv4
         }
         if (::listen(fd, 128) < 0) { close(fd); return -1; }
         return fd;
@@ -934,8 +934,8 @@ struct SmtpServer::Impl {
         sess->msg.remote_ip = remote_ip;
         sessions[fd]        = sess;
 
-        // Slowloris koruması: bağlantıyı idle-timeout takibine al. Non-blocking
-        // ET soketinde SO_RCVTIMEO çalışmadığından koruma EventLoop katmanında.
+        // Slowloris protection: put the connection under idle-timeout tracking. SO_RCVTIMEO does not work on a non-blocking
+        // ET socket, so the protection is in the EventLoop layer.
         if (smtp_idle_timeout() > 0)
             loop->set_idle_timeout(fd, smtp_idle_timeout());
 
@@ -947,7 +947,7 @@ struct SmtpServer::Impl {
         });
     }
 
-    // Sonraki okumayı kur: TLS başladıysa ham baytlar önce SSL'den geçer.
+    // Set up the next read: once TLS has started raw bytes go through SSL first.
     void read_more(int fd, std::shared_ptr<SmtpSession> sess) {
         loop->async_read(fd, [this, fd, sess](const char* data, size_t len) {
             if (sess->ssl) on_raw_tls(fd, sess, data, len);
@@ -983,17 +983,17 @@ struct SmtpServer::Impl {
         if (len == 0) { close_session(fd); return; }
         sess->buf.append(data, len);
         if (sess->waiting) {
-            // Yanıt/worker bitmeden gelen satırlar sırada bekler (PIPELINING). Eskiden burada
-            // işleniyordu: DATA durumundayken gelen sonraki komutlar mesaj gövdesine eklenip
-            // atılıyor, bir yanıt yazılırken tamponda kalanlar ise yeni veri gelene dek hiç
-            // işlenmiyordu — art arda gönderen istemcinin postası sessizce kayboluyordu.
+            // Lines arriving before the reply/worker finishes wait in the queue (PIPELINING). It used to be processed here:
+            // in the DATA state the following commands were appended to the message body and
+            // discarded, and whatever stayed in the buffer while a reply was written was never
+            // processed until new data arrived — the mail of a client sending back-to-back silently disappeared.
             if (sess->buf.size() > smtp_max_msg() + SMTP_PENDING_SLACK) close_session(fd);
             return;
         }
         pump(fd, sess);
     }
 
-    // Yanıt yazıldı / worker bitti: tamponda bekleyen satırlardan devam et.
+    // Reply written / worker finished: continue from the lines waiting in the buffer.
     void resume(int fd, std::shared_ptr<SmtpSession> sess) {
         if (sess->closed) return;
         sess->waiting = false;
@@ -1005,9 +1005,9 @@ struct SmtpServer::Impl {
         // Line-by-line processing from accumulated buffer.
         // Handles ".\r\n" split across chunks correctly: we only extract a line
         // when '\n' is present in buf — partial lines stay in buf until next read.
-        // RFC 5321 §4.5.3.1: satır uzunluğu sınırlıdır. Newline gelmeden buf'ın
-        // sınırsız büyümesi = kimlik doğrulamasız OOM DoS. Tek satır tavanı 64 KB
-        // (meşru uzun başlık/base64 satırlarına bol gelir; RFC min. 1000 oktet).
+        // RFC 5321 §4.5.3.1: line length is limited. Unbounded growth of buf without a newline
+        // = unauthenticated OOM DoS. A single-line ceiling of 64 KB
+        // (ample for legitimate long headers/base64 lines; the RFC minimum is 1000 octets).
         static constexpr size_t SMTP_LINE_MAX = 64 * 1024;
 
         while (true) {
@@ -1025,9 +1025,9 @@ struct SmtpServer::Impl {
             sess->buf.erase(0, nl + 1);
             if (!line.empty() && line.back() == '\r') line.pop_back();
 
-            sess->waiting = true;   // dispatch bir yanıt/worker başlatırsa o bitene dek dur
+            sess->waiting = true;   // if dispatch starts a reply/worker, stop until it finishes
             bool keep_reading = dispatch_line(fd, sess, line);
-            if (!keep_reading) return; // yanıt yolda, worker'da ya da oturum kapandı — resume() sürdürür
+            if (!keep_reading) return; // a reply is in flight, in a worker, or the session closed — resume() continues
             sess->waiting = false;
         }
 
@@ -1092,13 +1092,13 @@ struct SmtpServer::Impl {
                         "250-8BITMIME\r\n"
                         "250-PIPELINING\r\n"
                         "250-SMTPUTF8\r\n";
-        // STARTTLS: sertifika tanımlıysa ve oturum henüz şifreli değilse ilan edilir (bellek BIO'lu
-        // TLS, yukarıda). 1.0.18–bu sürüm arası ilan edilmiyordu: o zamanki uygulama el sıkışmadan
-        // sonra hiç yanıt vermiyordu.
+        // STARTTLS: advertised if a certificate is defined and the session is not yet encrypted (TLS with memory
+        // BIOs, above). It was not advertised between 1.0.18 and this release: the implementation of that time never
+        // replied after the handshake.
         if (ssl_ctx && !sess->tls_active) r += "250-STARTTLS\r\n";
-        // AUTH PLAIN/LOGIN parolayı yalnız base64 ile KODLAR, şifrelemez. Sertifika varsa AUTH
-        // yalnız TLS içinde sunulur; sertifika yoksa yalnız aynı makineden gelen bağlantıya (1.0.19):
-        // ağdan parola açık gitmez. Adres getpeername'den gelir (on_accept), hiçbir başlığa güvenilmez.
+        // AUTH PLAIN/LOGIN only ENCODE the password with base64, they do not encrypt it. If there is a certificate AUTH
+        // is offered only inside TLS; if there is no certificate only to connections from the same machine (1.0.19):
+        // the password does not travel in the clear over the network. The address comes from getpeername (on_accept), no header is trusted.
         if (sess->submission &&
             (sess->tls_active || (!ssl_ctx && smtp_is_loopback(sess->msg.remote_ip))))
             r += "250-AUTH PLAIN LOGIN\r\n";
@@ -1130,7 +1130,7 @@ struct SmtpServer::Impl {
                 return error_reply(fd, sess, "530 5.7.0 Must issue a STARTTLS command first\r\n");
             }
             if (!sess->tls_active && !smtp_is_loopback(sess->msg.remote_ip)) {
-                // Parola okunmadan reddedilir (satırdaki base64 çözülmez).
+                // Rejected without reading the password (the base64 on the line is not decoded).
                 return error_reply(fd, sess, "530 5.7.0 AUTH without encryption is accepted from this machine only (127.0.0.1 / ::1)\r\n");
             }
             // Extract mechanism and optional initial response
@@ -1160,7 +1160,7 @@ struct SmtpServer::Impl {
             if (sess->submission && !sess->tls_active && ssl_ctx) {
                 return error_reply(fd, sess, "530 5.7.0 Must issue a STARTTLS command first\r\n");
             }
-            // SIZE (RFC 1870): ilan edilen tavanı aşan bildirimi gövdeyi okumadan reddet.
+            // SIZE (RFC 1870): reject a declaration exceeding the advertised ceiling without reading the body.
             {
                 std::string up = line;
                 for (char& c : up) c = (char)std::toupper((unsigned char)c);
@@ -1176,8 +1176,8 @@ struct SmtpServer::Impl {
                 return error_reply(fd, sess, "530 5.7.0 Authentication required\r\n");
             }
             std::string addr;
-            // Sözdizimi geçersizse reddet. BOŞ ama geçerli = null sender (`<>`),
-            // RFC 5321 §4.5.5 gereği bounce/DSN için kabul edilmeli.
+            // Reject if the syntax is invalid. EMPTY but valid = null sender (`<>`),
+            // must be accepted for bounce/DSN per RFC 5321 §4.5.5.
             if (!smtp_extract_addr(line, addr)) {
                 return error_reply(fd, sess, "501 5.1.7 Bad sender address\r\n");
             }
@@ -1193,21 +1193,21 @@ struct SmtpServer::Impl {
         return error_reply(fd, sess, "503 5.5.1 Need MAIL command\r\n");
     }
 
-    // STARTTLS (RFC 3207): "220 Ready" düz metinle gider; yazıldıktan sonra oturum TLS'e geçer.
+    // STARTTLS (RFC 3207): "220 Ready" goes out in plaintext; after it is written the session switches to TLS.
     void start_tls(int fd, std::shared_ptr<SmtpSession> sess) {
         send_reply(fd, sess, "220 2.0.0 Ready to start TLS\r\n", [this, fd, sess] {
             if (sess->closed) return;
-            // GÜVENLİK (RFC 3207 §4): STARTTLS'ten sonra, el sıkışmadan ÖNCE tamponda kalan düz
-            // metin ATILIR. Aksi halde saldırgan `STARTTLS\r\nMAIL FROM:<x>\r\n`'i tek düz metin
-            // parçasında yollayıp o satırların TLS içinde gelmiş gibi işlenmesini sağlar (STARTTLS
-            // komut enjeksiyonu — CVE-2011-0411 sınıfı). Sonradan gelen düz metin de el sıkışmayı
-            // bozar ve bağlantı kapanır.
+            // SECURITY (RFC 3207 §4): plaintext left in the buffer after STARTTLS, BEFORE the handshake,
+            // is DISCARDED. Otherwise an attacker sends `STARTTLS\r\nMAIL FROM:<x>\r\n` in a single plaintext
+            // chunk and gets those lines processed as if they had arrived inside TLS (STARTTLS
+            // command injection — CVE-2011-0411 class). Plaintext arriving later also
+            // breaks the handshake and the connection closes.
             sess->buf.clear();
             sess->reset_envelope();
-            // pump() STARTTLS satırından önce waiting=true yaptı; normalde resume() kapatır, burada
-            // özel devam kullanıldığı için biz kapatırız (yoksa TLS'te gelen her satır bekler).
+            // pump() set waiting=true before the STARTTLS line; normally resume() clears it, here
+            // a special continuation is used so we clear it (otherwise every line arriving in TLS would wait).
             sess->waiting = false;
-            // RFC 3207 §4.2: TLS'ten önceki bilgi unutulur — istemci yeniden EHLO göndermeli.
+            // RFC 3207 §4.2: pre-TLS knowledge is forgotten — the client must send EHLO again.
             sess->state       = SmtpState::EHLO;
             sess->ehlo_domain.clear();
             sess->auth_ok     = false;
@@ -1222,17 +1222,17 @@ struct SmtpServer::Impl {
                 close_session(fd);
                 return;
             }
-            SSL_set_bio(ssl, rb, wb);   // BIO'lar artık SSL'in (SSL_free bırakır)
+            SSL_set_bio(ssl, rb, wb);   // the BIOs now belong to SSL (SSL_free releases them)
             SSL_set_accept_state(ssl);
             sess->ssl = ssl;
             read_more(fd, sess);
         });
     }
 
-    // TLS başladıktan sonra döngünün okuduğu ham baytlar buraya gelir.
+    // Raw bytes the loop reads after TLS has started arrive here.
     void on_raw_tls(int fd, std::shared_ptr<SmtpSession> sess, const char* data, size_t len) {
-        // len==0 = döngünün "bağlantı bitti" sinyali (FIN / hata / idle-timeout): üst katman
-        // temizliği (ip_release, sessions.erase, conn_count--) her yolda çalışsın.
+        // len==0 = the loop's "connection ended" signal (FIN / error / idle-timeout): so the upper layer
+        // cleanup (ip_release, sessions.erase, conn_count--) runs on every path.
         if (len == 0) { close_session(fd); return; }
         BIO_write(SSL_get_rbio(sess->ssl), data, (int)len);
         bool fatal = false;
@@ -1256,17 +1256,17 @@ struct SmtpServer::Impl {
                 int n = SSL_read(sess->ssl, b, (int)sizeof(b));
                 if (n > 0) { plain.append(b, (size_t)n); continue; }
                 int e = SSL_get_error(sess->ssl, n);
-                if (e != SSL_ERROR_WANT_READ) fatal = true;   // close_notify ya da hata
+                if (e != SSL_ERROR_WANT_READ) fatal = true;   // close_notify or error
                 break;
             }
         }
-        // El sıkışma mesajları, uyarılar, oturum biletleri: hepsi tek yazmada (bkz. smtp_tls_drain).
+        // Handshake messages, alerts, session tickets: all in a single write (see smtp_tls_drain).
         std::string out = smtp_tls_drain(sess->ssl);
         auto next = [this, fd, sess, plain = std::move(plain), fatal]() {
             if (sess->closed) return;
             if (fatal && plain.empty()) { close_session(fd); return; }
             if (plain.empty()) read_more(fd, sess);
-            else on_data(fd, sess, plain.data(), plain.size());   // satırlar düz metin yoluyla aynı
+            else on_data(fd, sess, plain.data(), plain.size());   // lines take the same path as plaintext
         };
         if (out.empty()) { next(); return; }
         loop->async_write(fd, std::move(out), [this, fd, next](bool ok) {
@@ -1306,7 +1306,7 @@ struct SmtpServer::Impl {
             return error_reply(fd, sess, "503 5.5.1 Need RCPT TO\r\n");
         }
         std::string addr;
-        smtp_extract_addr(line, addr);   // bozuk sözdizimi → addr boş → validate_rcpt 501 verir
+        smtp_extract_addr(line, addr);   // malformed syntax → addr empty → validate_rcpt gives 501
         if (!validate_rcpt(fd, sess, addr)) return false;
         sess->msg.rcpt_to.push_back(addr);
         sess->state = SmtpState::RCPT_TO;
@@ -1318,7 +1318,7 @@ struct SmtpServer::Impl {
                                const std::string& verb, const std::string& line) {
         if (verb == "RCPT") {
             std::string addr;
-            smtp_extract_addr(line, addr);   // bozuk sözdizimi → addr boş → 501
+            smtp_extract_addr(line, addr);   // malformed syntax → addr empty → 501
             if (!validate_rcpt(fd, sess, addr)) return false;
             sess->msg.rcpt_to.push_back(addr);
             send_reply(fd, sess, "250 2.1.5 OK\r\n");
@@ -1428,7 +1428,7 @@ SmtpServer::SmtpServer(int port_smtp, int port_sub, int port_smtps,
         impl_->loop->listen(fd, [this, sub](int client_fd) {
             impl_->on_accept(client_fd, sub);
         });
-        impl_->bound_ports++;   // gerçekten dinlemede — listening() bunu raporlar
+        impl_->bound_ports++;   // actually listening — listening() reports this
         Logger::instance().log(LogLevel::LOG_INFO, "smtp",
             "listening on :" + std::to_string(port));
     };
@@ -1455,11 +1455,11 @@ void SmtpServer::stop() { impl_->loop->stop(); }
 std::string deliver_maildir(const std::string& base_dir,
                             const std::string& mailbox,
                             const SmtpMessage& msg) {
-    // GÜVENLİK: mailbox base_dir'e yol bileşeni olarak ekleniyor ve bu fonksiyon
-    // userland'den de çağrılabiliyor (mail::deliver_maildir). Doğrulanmazsa
-    // "../../etc/..." veya mutlak yol → hedef dizin DIŞINA Maildir + mesaj yazma
-    // (arbitrary file write). Çağırana güvenme; burada zorla (mail_user_auth'un
-    // user doğrulamasıyla aynı disiplin).
+    // SECURITY: mailbox is added to base_dir as a path component and this function
+    // can also be called from userland (mail::deliver_maildir). If not validated,
+    // "../../etc/..." or an absolute path → Maildir + message written OUTSIDE the target directory
+    // (arbitrary file write). Do not trust the caller; enforce here (the same discipline as
+    // mail_user_auth's user validation).
     if (mailbox.empty() || mailbox.find("..") != std::string::npos)
         throw std::runtime_error("deliver_maildir: invalid mailbox (traversal)");
     for (unsigned char c : mailbox)
@@ -1524,8 +1524,8 @@ std::string deliver_maildir(const std::string& base_dir,
 
     fs::rename(tmp_path, new_path); // atomic on POSIX
 #if !defined(_WIN32)
-    // Dosyanın içeriği yukarıda diske eşitlendi; ADI (rename) ise dizin girdisidir ve ayrıca
-    // eşitlenmezse "250 kabul edildi"den hemen sonraki bir güç kesintisinde kaybolabilir.
+    // The file's content was synced to disk above; its NAME (the rename) is a directory entry and, if not
+    // synced separately, can be lost in a power failure right after the "250 accepted".
     {
         int dfd = ::open(new_path.parent_path().c_str(), O_RDONLY | O_DIRECTORY);
         if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }

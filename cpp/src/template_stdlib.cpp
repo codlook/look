@@ -1,5 +1,5 @@
-#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
-#include "look/mem_budget.h"    // MemoryLimitError — include içinden geçerken türü korunur
+#include "look/read_stream.h"   // read_stream — read the file in one go
+#include "look/mem_budget.h"    // MemoryLimitError — its type is preserved when passing through an include
 #include "look/template.h"
 #include "look/struct_types.h"
 #include "look/stdlib.h"
@@ -34,17 +34,17 @@ static std::string tpl_trim(const std::string& s) {
 }
 
 std::string TemplateEngine::html_escape(const std::string& s) {
-    return look::html_escape(s);   // tek tanım: look/html_escape.h (member forwarder)
+    return look::html_escape(s);   // single definition: look/html_escape.h (member forwarder)
 }
 
 std::string TemplateEngine::to_str(const Value& v) {
     switch (v.type()) {
         case Value::INT:    return std::to_string(v.as_int());
-        // BUG FIX: buradaki elle-yazılmış float biçimlemesi dilden SAPIYORDU. Tam-sayı
-        // olmayan büyük değerlerde `oss << d` varsayılan 6 anlamlı basamağa düşüp
-        // BİLİMSEL gösterime geçiyordu: 1234567.5 → "1.23457e+06" (dil: "1234567.5").
-        // Yani şablonda basılan fiyat/toplam hem okunamaz hem YANLIŞ (1.23457e+06 =
-        // 1234570). Dilin biçimleyicisine delege et — tek kaynak, ayrışma imkânsız.
+        // BUG FIX: the hand-written float formatting here DIVERGED from the language. For non-integer
+        // large values `oss << d` dropped to the default 6 significant digits and
+        // switched to SCIENTIFIC notation: 1234567.5 → "1.23457e+06" (language: "1234567.5").
+        // So a price/total printed in a template was both unreadable and WRONG (1.23457e+06 =
+        // 1234570). Delegate to the language's formatter — single source, divergence impossible.
         case Value::FLOAT: return look_format_double(v.as_float());
         case Value::BOOL:   return v.as_bool() ? "true" : "false";
         case Value::STRING: return v.as_string();
@@ -53,12 +53,12 @@ std::string TemplateEngine::to_str(const Value& v) {
 }
 
 bool TemplateEngine::is_truthy(const Value& v) {
-    // BUG FIX: burada dilin truthiness'i KOPYALANMIŞTI ve bir kural atlanmıştı —
-    // STRING dalı `!empty()` diyordu, oysa dil (Value::is_truthy) `!empty() && != "0"`
-    // uygular. Sonuç: `{#if $x}` ile `if ($x)` string "0" için ZIT karar veriyordu
-    // (DB'den string dönen stock="0" / active="0" alanları kodda falsy, şablonda truthy
-    // → sessizce yanlış dal render ediliyordu). Kopya semantik = kaçınılmaz ayrışma;
-    // tek kaynağa delege et ki dilin truthiness'i değişirse şablon otomatik hizalansın.
+    // BUG FIX: the language's truthiness was COPIED here and one rule was dropped —
+    // the STRING branch said `!empty()`, whereas the language (Value::is_truthy)
+    // applies `!empty() && != "0"`. Result: `{#if $x}` and `if ($x)` gave OPPOSITE decisions
+    // for the string "0" (stock="0" / active="0" fields returned as strings from the DB were falsy in code and truthy in a template
+    // → the wrong branch was silently rendered). A copy = inevitable divergence;
+    // delegate to the single source so that if the language's truthiness changes the template aligns automatically.
     return v.is_truthy();
 }
 
@@ -81,7 +81,7 @@ Value TemplateEngine::resolve(const std::string& path, const TplContext& ctx) {
     Value v = it->second;
 
     for (size_t i = 1; i < parts.size(); ++i) {
-        // LOOK 2: struct alanı ({$user.name}) → alanların map görünümü üzerinden çöz.
+        // LOOK: a struct field ({$user.name}) → resolve via the fields' map view.
         if (v.type() == Value::STRUCT) v = look::struct_to_map(v);
         if (v.type() != Value::ARRAY || !v.as_array()) return Value();
         const auto& arr = *v.as_array();
@@ -147,10 +147,10 @@ bool TemplateEngine::eval_cond(const std::string& cond, const TplContext& ctx) {
     if (!s.empty() && s[0] == '$') s = s.substr(1);
 
     // Look for comparison operators (order matters: >= before >, etc.)
-    // ESKİ HATA: her operatör tüm metinde sırayla alt-dizgi olarak aranıyordu → tırnak
-    // içindeki operatör de eşleşiyordu: {#if $s == "a>=b"} ">=" üzerinden bölünüp sayısal
-    // 0 >= 0 karşılaştırmasına dönüyor, koşul HER ZAMAN doğru çıkıyordu. Şimdi: soldan
-    // sağa, tırnak DIŞINDAKİ ilk operatör; aynı konumda uzun olan (>= , >'den önce).
+    // OLD BUG: each operator was searched in the whole text in order as a substring → an operator
+    // inside quotes also matched: {#if $s == "a>=b"} was split on ">=" and turned into a numeric
+    // 0 >= 0 comparison, the condition came out ALWAYS true. Now: left to
+    // right, the first operator OUTSIDE quotes; at the same position the longer one (>= before >).
     static const char* ops[] = { ">=", "<=", "!=", "==", ">", "<", nullptr };
     size_t op_pos = std::string::npos;
     std::string found_op;
@@ -435,9 +435,9 @@ std::vector<TplNode> TemplateEngine::parse(const std::string& src, const std::st
     return nodes;
 }
 
-// Ayırıcı-sınırlı containment: f, b'nin kendisi VEYA altında mı. Düz string-prefix
-// YETMEZ — "/proj" öneki "/proj-evil" ile de eşleşir (sibling-prefix escape).
-// (installer zip-slip ve file:: ile aynı disiplin.)
+// Separator-bounded containment: is f equal to b OR under b. A plain string-prefix
+// is NOT ENOUGH — the prefix "/proj" also matches "/proj-evil" (sibling-prefix escape).
+// (Same discipline as the installer zip-slip and file::.)
 static bool tpl_within(const std::string& b, const std::string& f) {
     return f.size() >= b.size() && f.compare(0, b.size(), b) == 0 &&
            (f.size() == b.size() || f[b.size()] == '/' || f[b.size()] == '\\');
@@ -448,10 +448,10 @@ std::string TemplateEngine::resolve_path(const std::string& path) {
     // Add .html extension if no extension given
     if (!p.has_extension()) p += ".html";
 
-    // İzinli kökler: çalışma dizini + (varsa) TEMPLATE_DIR. Çözülen yol bunlardan
-    // birinin ALTINDA olmalı — aksi halde template::render(user_input) ile
-    // "../.." veya mutlak yol üzerinden arbitrary .html file read (içerik client'a
-    // döner → bilgi sızıntısı). Mutlak yol da containment'tan muaf DEĞİL.
+    // Permitted roots: working directory + (if any) TEMPLATE_DIR. The resolved path must be
+    // UNDER one of them — otherwise with template::render(user_input) an
+    // "../.." or absolute path gives an arbitrary .html file read (the content
+    // returns to the client → information leak). An absolute path is NOT exempt from containment either.
     std::vector<fs::path> roots;
     roots.push_back(fs::current_path());
     const char* tdir = std::getenv("TEMPLATE_DIR");
@@ -465,13 +465,13 @@ std::string TemplateEngine::resolve_path(const std::string& path) {
             return cand.string();
     }
 
-    // Hiçbir izinli kök altında bulunamadı. Yolun bir kök içinde KALIP kalmadığını
-    // kontrol et: kalıyorsa "bulunamadı" (best-guess), çıkıyorsa güvenlik hatası.
+    // Not found under any permitted root. Check whether the path STAYS within a root:
+    // if it does, "not found" (best-guess), if it escapes, a security error.
     fs::path base = fs::current_path();
     std::string base_str = fs::weakly_canonical(base).string();
     std::string full_str = fs::weakly_canonical(base / p).string();
     if (!p.is_absolute() && tpl_within(base_str, full_str))
-        return (base / p).string();   // kök içinde ama yok → açılışta net hata
+        return (base / p).string();   // inside the root but missing → clear error on open
 
     throw std::runtime_error("Template security error: escape outside the allowed directory blocked: " + path);
 }
@@ -487,26 +487,26 @@ void TemplateEngine::collect_blocks(const std::vector<TplNode>& nodes, TplBlocks
     }
 }
 
-// ── Ayrıştırılmış şablon önbelleği ───────────────────────────────────────────────
-// Eskiden her render (ve her {#include} / {#extends}) dosyayı yeniden çözüyor, açıyor,
-// okuyor ve ayrıştırıyordu: 23 dosyalı gerçekçi bir sayfa ~400 µs, tek dosyalı sayfa
-// ~30 µs (cpp/bench/tpl/micro.lk) — maliyetin neredeyse tamamı dosya-başı sabit işti.
+// ── Parsed template cache ───────────────────────────────────────────────────────
+// Previously every render (and every {#include} / {#extends}) re-resolved, opened,
+// read and parsed the file: a realistic page with 23 files ~400 µs, a single-file page
+// ~30 µs (cpp/bench/tpl/micro.lk) — almost all of the cost was per-file fixed work.
 //
-// • thread_local: kilit yok; her worker kendi önbelleğini tutar.
-// • Anahtar = çalışma dizini + TEMPLATE_DIR + İSTENEN yol (resolve_path'in girdileri).
-// • Her kullanımda mtime+boyut kontrolü → dosya değişince yeniden çözülür/ayrıştırılır:
-//   HOT-RELOAD korunur ve resolve_path'in dizin-dışı-kaçış kontrolü her yenilemede tekrar
-//   uygulanır. Yeni bir yol string'i ilk kullanımında her zaman resolve_path'ten geçer →
-//   template::render(kullanıcı_girdisi) korumasında değişiklik yok.
-// • mtime dosya OKUNMADAN ÖNCE alınır: okuma sırasında dosya değişirse eski mtime ile yeni
-//   içerik saklanır → sonraki çağrı farkı görüp yeniler (tersi kalıcı bayat içerik olurdu).
-// • 1024 girdi sınırı: yol kullanıcıdan geliyorsa ("views/./././a" gibi sonsuz eş-anlamlı
-//   varyant) sınırsız önbellek bellek-tüketme saldırısı olurdu.
-// • shared_ptr: render sürerken girdi yenilense bile kullanılan düğüm ağacı yaşar.
-// • Değişiklik damgası = inode + mtime + boyut, POSIX'te TEK stat çağrısıyla. Linux dosya
-//   zaman damgaları kaba saatle tutulur (birkaç ms): aynı boyutta içerik aynı dilimde iki
-//   kez yazılırsa mtime+boyut ayırt edemez. Geçici-dosya + rename ile yapılan dağıtımda
-//   inode değişir → yakalanır. (Windows'ta inode yok: mtime + boyut.)
+// • thread_local: no lock; each worker keeps its own cache.
+// • Key = working directory + TEMPLATE_DIR + the REQUESTED path (the inputs of resolve_path).
+// • mtime+size is checked on every use → when the file changes it is re-resolved/re-parsed:
+//   HOT-RELOAD is preserved and resolve_path's out-of-directory-escape check is applied again on every refresh.
+//   A new path string always passes through resolve_path on its first use →
+//   no change to the template::render(user_input) protection.
+// • mtime is taken BEFORE the file is READ: if the file changes during the read, the new content would be stored
+//   with the old mtime → the next call sees the difference and refreshes (the opposite would be permanently stale content).
+// • 1024-entry limit: if the path comes from the user (infinite synonymous variants such as "views/./././a")
+//   an unbounded cache would be a memory-exhaustion attack.
+// • shared_ptr: even if the entry is refreshed while a render is in progress, the node tree in use stays alive.
+// • Change stamp = inode + mtime + size, with a SINGLE stat call on POSIX. Linux file
+//   timestamps are kept with a coarse clock (a few ms): if content of the same size is written twice in the same
+//   slice, mtime+size cannot tell them apart. In a deployment done with temp-file + rename
+//   the inode changes → it is caught. (Windows has no inode: mtime + size.)
 namespace {
 struct TplStamp {
     bool               ok    = false;
@@ -545,25 +545,25 @@ struct TplCacheEntry {
     unsigned long long                            checked_epoch = 0;
 };
 
-// Üst-seviye render kapsamı. Tek bir sayfa render'ı boyunca (a) her dosya EN FAZLA BİR KEZ
-// doğrulanır — 20 kez {#include} edilen bir partial eskiden aynı sayfada 20 kez stat'lanıyordu;
-// ayrıca bir sayfa aynı partial'ın iki farklı sürümünü karıştırarak üretilmemeli — ve (b)
-// çalışma dizini + TEMPLATE_DIR bir kez okunur. İkisi süreç boyunca sabit VARSAYILMAZ (FastCGI
-// modunda istek başına değişebilirler); yalnız tek render içinde değişmezler.
+// Top-level render scope. During a single page render (a) each file is validated AT MOST ONCE
+// — a partial {#include}d 20 times used to be stat'ed 20 times in the same page;
+// also a page must not be produced by mixing two different versions of the same partial — and (b)
+// the working directory + TEMPLATE_DIR are read once. Neither is ASSUMED constant over the process (in FastCGI
+// mode they can change per request); they are constant only within a single render.
 //
-// FIBER GÜVENLİĞİ: kapsam thread-local DEĞİL, çağrı zinciri boyunca parametre olarak taşınır.
-// Bugün render hiç beklemeye geçmez (dosya okuma bloklayan çağrılarla, şablondan DB/I-O yok),
-// ama bunu varsayıma bırakmıyoruz: thread-local bir "şu anki render" durumu, render'a ileride
-// yield eden bir çağrı eklenirse aynı thread'deki iki fiber'ın birbirinin çalışma dizinini/
-// doğrulama kümesini ezmesine (siteler-arası şablon sızıntısı) yol açardı. Thread-local kalan
-// tek şey epoch SAYACI (yalnız benzersiz numara üretir) ve önbelleğin kendisidir; önbelleğe
-// erişim tek bir load_nodes çağrısı içinde başlar ve biter, arada bekleme noktası yoktur.
+// FIBER SAFETY: the scope is NOT thread-local, it is carried as a parameter along the call chain.
+// Today render never yields (file reads are blocking calls, no DB/I-O from a template),
+// but we do not leave this to an assumption: a thread-local "current render" state would, if a call that
+// yields were added to render later, let two fibers on the same thread overwrite each other's working directory/
+// validation set (cross-site template leak). The only thread-local things left are the epoch COUNTER (only
+// produces a unique number) and the cache itself; cache access
+// starts and ends within a single load_nodes call, with no wait point in between.
 struct TplEnv {
     unsigned long long epoch = 0;
-    std::string        prefix;   // çalışma dizini + '\n' + TEMPLATE_DIR + '\n'
+    std::string        prefix;   // working directory + '\n' + TEMPLATE_DIR + '\n'
 };
 TplEnv tpl_make_env() {
-    // fiber-ok: yalnız benzersiz numara üretir
+    // fiber-ok: only produces a unique number
     thread_local unsigned long long counter = 0;
     TplEnv env;
     env.epoch = ++counter;
@@ -578,7 +578,7 @@ TplEnv tpl_make_env() {
 
 static std::shared_ptr<const std::vector<TplNode>> load_nodes(const std::string& path,
                                                                const TplEnv& env) {
-    // fiber-ok: erişim tek load_nodes çağrısında başlar ve biter (askı yok); düğümler shared_ptr ile çıkar
+    // fiber-ok: access starts and ends in a single load_nodes call (no suspension); nodes leave via shared_ptr
     thread_local std::unordered_map<std::string, TplCacheEntry> cache;
     const unsigned long long epoch = env.epoch;
     std::string key = env.prefix;
@@ -586,18 +586,18 @@ static std::shared_ptr<const std::vector<TplNode>> load_nodes(const std::string&
 
     auto it = cache.find(key);
     if (it != cache.end()) {
-        if (it->second.checked_epoch == epoch)          // bu render'da zaten doğrulandı
+        if (it->second.checked_epoch == epoch)          // already validated in this render
             return it->second.nodes;
         if (tpl_stamp(it->second.full) == it->second.stamp) {
             it->second.checked_epoch = epoch;
             return it->second.nodes;
         }
-        cache.erase(it);   // değişti ya da kayboldu → baştan
+        cache.erase(it);   // changed or disappeared → start over
     }
 
     TplCacheEntry e;
     e.full  = TemplateEngine::resolve_path(path);
-    e.stamp = tpl_stamp(e.full);          // OKUMADAN ÖNCE (yukarıdaki nota bakın)
+    e.stamp = tpl_stamp(e.full);          // BEFORE READING (see the note above)
     e.checked_epoch = epoch;
     std::ifstream f(e.full, std::ios::binary);
     if (!f.is_open())
@@ -605,7 +605,7 @@ static std::shared_ptr<const std::vector<TplNode>> load_nodes(const std::string&
     std::string src = look::read_stream(f);
     e.nodes = std::make_shared<const std::vector<TplNode>>(TemplateEngine::parse(src, path));
     auto nodes = e.nodes;
-    if (e.stamp.ok) {                 // stat alınamadıysa önbelleğe koyma (her seferinde oku)
+    if (e.stamp.ok) {                 // if stat failed do not cache (read every time)
         if (cache.size() >= 1024) cache.clear();
         cache[std::move(key)] = std::move(e);
     }
@@ -613,10 +613,10 @@ static std::shared_ptr<const std::vector<TplNode>> load_nodes(const std::string&
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────────
-// Tek çıktı tamponu: iç bloklar (if/each/block/include) eskiden ayrı bir string üretip
-// üstteki string'e kopyalıyordu (derinlik × boyut kadar kopya); artık hepsi aynı `out`'a
-// yazar. {#extends} blokları da KOPYALANMAZ — düğüm ağaçları önbellekte yaşadığı için
-// işaretçiyle taşınır (eskiden her istekte blokların alt ağaçları derin kopyalanıyordu).
+// Single output buffer: inner blocks (if/each/block/include) used to produce a separate string and
+// copy it into the upper string (copies of depth × size); now all write to the same `out`.
+// {#extends} blocks are also NOT COPIED — since node trees live in the cache they are
+// carried by pointer (previously the blocks' subtrees were deep-copied on every request).
 using TplBlockPtrs = std::map<std::string, const std::vector<TplNode>*>;
 
 static void collect_block_ptrs(const std::vector<TplNode>& nodes, TplBlockPtrs& out) {
@@ -633,9 +633,9 @@ static void collect_block_ptrs(const std::vector<TplNode>& nodes, TplBlockPtrs& 
 static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx,
                         const TplBlockPtrs* blocks, std::string& out, const TplEnv& env);
 
-// {#extends} varsa: çocuğun bloklarını topla, ebeveyni render et. `nodes` çağıranın elinde
-// yaşamalı (blok işaretçileri onun içine bakar). Ebeveynin kendi {#extends}'i izlenmez —
-// tek seviye kalıtım, önceki davranışla aynı.
+// If there is an {#extends}: collect the child's blocks, render the parent. `nodes` must live in the caller's
+// hands (block pointers look into it). The parent's own {#extends} is not followed —
+// single-level inheritance, same as the previous behavior.
 static bool render_extends(const std::vector<TplNode>& nodes, const TplContext& ctx,
                            std::string& out, const TplEnv& env) {
     for (const auto& n : nodes) {
@@ -744,9 +744,9 @@ static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx
                     render_into(n.alt, ctx, blocks, out, env);
                     break;
                 }
-                // Context döngü başına BİR kez kopyalanır; her yinelemede yalnız döngü
-                // değişkeni yeniden atanır (eskiden tüm harita her yinelemede kopyalanıyordu).
-                // Gövde ctx'i const görür → yinelemeler arası sızıntı yok.
+                // The context is copied ONCE per loop; on each iteration only the loop
+                // variable is reassigned (previously the whole map was copied on every iteration).
+                // The body sees ctx as const → no leakage between iterations.
                 TplContext child = ctx;
                 Value& slot = child[n.extra];
                 for (const Value* elem : elems) {
@@ -776,7 +776,7 @@ static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx
             case TplNodeKind::Include: {
                 // Build include context
                 TplContext inc_ctx;
-                const TplContext* use_ctx = &ctx;   // inherit parent context (kopyasız)
+                const TplContext* use_ctx = &ctx;   // inherit parent context (no copy)
                 if (!n.extra.empty()) {
                     // data=$var → use that var as context (assoc array → k/v pairs)
                     Value data = TemplateEngine::resolve(n.extra, ctx);
@@ -798,7 +798,7 @@ static void render_into(const std::vector<TplNode>& nodes, const TplContext& ctx
                 try {
                     render_file_into(n.text, *use_ctx, out, env);
                 } catch (const MemoryLimitError&) {
-                    throw;   // bellek durdurması türünü korur (yakalanamaz, 500/503 ayrımı)
+                    throw;   // preserves the memory-stop type (cannot be caught, 500/503 distinction)
                 } catch (const std::exception& e) {
                     throw std::runtime_error(
                         std::string("Template include error (") + n.text + "): " + e.what());

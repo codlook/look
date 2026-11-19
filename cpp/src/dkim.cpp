@@ -1,6 +1,6 @@
 #include "look/dkim.h"
 #include "look/dns.h"
-#include "look/dkim_tag.h"   // ① fix: RFC-uyumlu tag ayrıştırma (saf, testlenebilir)
+#include "look/dkim_tag.h"   // ① fix: RFC-compliant tag parsing (pure, testable)
 #include <stdexcept>
 #include <sstream>
 #include <algorithm>
@@ -209,9 +209,9 @@ std::string dkim_sign(const std::vector<DkimHeader>& headers,
 
 // ── dkim_verify ───────────────────────────────────────────────────────────────
 
-// SEAM (2026-08-06): DNS crypto'dan ayrıldı. dkim_verify_with_key public key'i DOĞRUDAN alır
-// (DNS yok) → test/bypass-tablosu gerçek DNS olmadan, sabit anahtarla imza kurup doğrulayabilir.
-// dkim_verify (aşağıda) d=/s parse edip DNS'ten key çeker, buraya delege eder.
+// SEAM (2026-08-06): separated from DNS crypto. dkim_verify_with_key takes the public key DIRECTLY
+// (no DNS) → a test/bypass table can build a signature with a fixed key and verify it without real DNS.
+// dkim_verify (below) parses d=/s, fetches the key from DNS, and delegates here.
 bool dkim_verify_with_key(const std::string& raw_message, const std::string& pubkey_pem) {
     // Parse DKIM-Signature header from raw message
     size_t sig_start = raw_message.find("DKIM-Signature:");
@@ -229,9 +229,9 @@ bool dkim_verify_with_key(const std::string& raw_message, const std::string& pub
         : raw_message.substr(sig_start);
 
     // Extract tags: d=, s=, b=, bh=, h=
-    // ① FIX: RFC-uyumlu tag ayrıştırma (look/dkim_tag.h). Eski find(name+"=") tag adını
-    // ALT DİZE olarak arıyordu → tag("h") "bh=" içindeki "h="e çarpardı (bh= önce gelince
-    // From: imza kapsamı dışı). Artık ';' ile böl, tag adını TAM eşleştir. Çağrı yerleri aynı.
+    // ① FIX: RFC-compliant tag parsing (look/dkim_tag.h). The old find(name+"=") searched for the tag name
+    // as a SUBSTRING → tag("h") would hit the "h=" inside "bh=" (when bh= came first,
+    // the From: signature scope was bypassed). Now split on ';' and match the tag name EXACTLY. Call sites are unchanged.
     auto tag = [&](const std::string& name) -> std::string {
         return dkim_tag(dkim_hdr_raw, name);
     };
@@ -254,12 +254,12 @@ bool dkim_verify_with_key(const std::string& raw_message, const std::string& pub
                 size_t end = raw_message.find_first_of(" \t\r\n>", at + 1);
                 std::string from_domain = raw_message.substr(at + 1,
                     end != std::string::npos ? end - at - 1 : std::string::npos);
-                // Case-insensitive: d= from_domain ile AYNI ya da onun PARENT'i
-                // (From: sub.example.com, d=example.com geçerli). Eski boyut-kapisi
-                // (fd.size() > dd.size()+1) suffix kontrolunu ESIT/YAKIN uzunlukta
-                // atliyordu → saldirgan kendi d=evildom.co ile From: paypal.com'u
-                // (ayni uzunluk) imzalayip alignment'i geçiriyordu (spoofing). Katı:
-                // ya tam eşit, ya da fd, "."+dd ile bitmeli (dd, fd'nin gerçek üst-domaini).
+                // Case-insensitive: d= is the SAME as from_domain or its PARENT
+                // (From: sub.example.com, d=example.com is valid). The old size gate
+                // (fd.size() > dd.size()+1) skipped the suffix check for EQUAL/CLOSE lengths
+                // → an attacker could sign From: paypal.com (same length) with their own d=evildom.co
+                // and pass alignment (spoofing). Strict:
+                // either exactly equal, or fd must end with "."+dd (dd is a real parent domain of fd).
                 std::string fd = from_domain, dd = domain;
                 for (char& c : fd) c = (char)std::tolower((unsigned char)c);
                 for (char& c : dd) c = (char)std::tolower((unsigned char)c);
@@ -284,7 +284,7 @@ bool dkim_verify_with_key(const std::string& raw_message, const std::string& pub
         if (bh_actual_b64 != bh_b64) return false;
     }
 
-    // pubkey_pem PARAMETRE olarak geldi — DNS çekimi dkim_verify'a taşındı (seam).
+    // pubkey_pem arrives as a PARAMETER — the DNS fetch moved to dkim_verify (seam).
     if (pubkey_pem.empty()) return false;
 
     // Decode signature
@@ -390,7 +390,7 @@ bool dkim_verify_with_key(const std::string& raw_message, const std::string& pub
     return ok;
 }
 
-// ── DNS'ten public key çek (seam'in DNS-bağlı yarısı) ─────────────────────────
+// ── Fetch the public key from DNS (the DNS-bound half of the seam) ─────────────────────────
 static std::string dkim_pubkey_from_dns(const std::string& domain, const std::string& selector) {
     std::string dns_name = selector + "._domainkey." + domain;
     std::vector<std::string> txts;
@@ -411,7 +411,7 @@ static std::string dkim_pubkey_from_dns(const std::string& domain, const std::st
     return "";
 }
 
-// ── dkim_verify — DNS-bağlı giriş (üretim yolu): d=/s parse → DNS → with_key ──
+// ── dkim_verify — DNS-bound entry (production path): d=/s parse → DNS → with_key ──
 bool dkim_verify(const std::string& raw_message) {
     size_t sig_start = raw_message.find("DKIM-Signature:");
     if (sig_start == std::string::npos) return false;

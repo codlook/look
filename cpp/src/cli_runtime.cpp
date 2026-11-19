@@ -1,9 +1,9 @@
-// cli_runtime.cpp — komut satırı VM ortamı: yerleşik tablo + geri çağırma bağlamaları.
-// `lk` (main.cpp) ve `lk test` (test_runner.cpp) AYNI tabloyu kullanır — testler programın
-// gerçekte koştuğu ortamı sınar (LOOK 2 tek motor, adım 6).
-#include "look/num_ops.h"   // abs/floor/ceil/round tek tanım
+// cli_runtime.cpp — command-line VM environment: builtin table + callback bindings.
+// `lk` (main.cpp) and `lk test` (test_runner.cpp) use the SAME table — tests exercise the environment
+// the program actually runs in (single engine, step 6).
+#include "look/num_ops.h"   // abs/floor/ceil/round single definition
 #include "look/cli_runtime.h"
-#include "look/value_path.h"   // value_push_not_map — sözlüğe push hatası (tek tanım)
+#include "look/value_path.h"   // value_push_not_map — push-to-dictionary error (single definition)
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/capture_check.h"
@@ -11,15 +11,15 @@
 #include "look/runtime_host.h"
 #include "look/array_count.h"
 #include "look/http_client.h"
-#include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, süreç başı)
+#include "look/runtime_init.h"    // runtime_init (CA probe + SQLite init, process start)
 #include "look/web.h"
 #include "look/parallel_runtime.h"
 #include "look/ast.h"
 #include "look/builtins.h"
 #include "look/compiler.h"
 #include "look/vm.h"
-#include "look/timer.h"         // TimerManager — komut satırında timer:: VM closure'ı kurar
-#include "look/vm_closure_runner.h" // vm_closure_runner — jobs::run işleyicilerini VM'de koşturur
+#include "look/timer.h"         // TimerManager — sets up a timer:: VM closure on the command line
+#include "look/vm_closure_runner.h" // vm_closure_runner — runs jobs::run handlers in the VM
 #include <memory>
 #include <unordered_map>
 #include <cmath>
@@ -32,21 +32,21 @@
 
 namespace look {
 
-// ── CLI-VM — komut satırı / REPL / lk test betiğini bytecode VM'de çalıştırmak için
-// builtin tablosu. http_main req_builtins ile aynı semantik; çıktı `out`'a gider.
-// Modül fn'leri RuntimeHost'un YÜKLÜ modüllerinden auto-wire olur (use gerektirir).
+// ── CLI-VM — builtin table for running a command-line / REPL / lk test script on the bytecode VM.
+// Same semantics as http_main req_builtins; output goes to `out`.
+// Module fns are auto-wired from the LOADED modules of RuntimeHost (requires use).
 std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::ostream& out) {
     using look::Value;
     std::vector<look::BuiltinFn> b(look::builtin_names().size());
     auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
     b[0] = [&out](std::vector<Value>& a) -> Value { for (auto& x : a) out << x.to_string(); return Value(); };
     b[1] = b[0];  // print/write
-    b[2] = [](std::vector<Value>& a) -> Value {   // count/len — tek tanım (array_count.h)
-        return Value(a.empty() ? 0 : look_count(a[0]));   // assoc: (size-1)/2 (sentinel atlanır)
+    b[2] = [](std::vector<Value>& a) -> Value {   // count/len — single definition (array_count.h)
+        return Value(a.empty() ? 0 : look_count(a[0]));   // assoc: (size-1)/2 (sentinel skipped)
     };
     b[5] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? std::string() : a[0].to_string()); };  // str
-    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return look_explicit_int(a[0]); };  // int — to_int(): stoll(to_string(float)) bilimsel-gösterim bug'ı + int32 daralması kapandı
-    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); return look_explicit_float(a[0]); };  // float — to_float(): to_string() round-trip yok
+    b[6] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return look_explicit_int(a[0]); };  // int — to_int(): the stoll(to_string(float)) scientific-notation bug + int32 narrowing are closed
+    b[7] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0.0); return look_explicit_float(a[0]); };  // float — to_float(): no to_string() round-trip
     b[8] = [](std::vector<Value>& a) -> Value {   // bool
         if (a.empty()) return Value(false);
         auto& v = a[0];
@@ -58,7 +58,7 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
         return Value(true);
     };
     b[9] = b[5];  // string alias
-    b[22] = [](std::vector<Value>&) -> Value { return Value(); };  // route — CLI'da dispatch yok
+    b[22] = [](std::vector<Value>&) -> Value { return Value(); };  // route — no dispatch in the CLI
     b[BI("strlen")] = [](std::vector<Value>& a) -> Value { return Value(a.empty() ? 0 : (int)a[0].to_string().size()); };
     b[BI("abs")] = [](std::vector<Value>& a) -> Value { if (a.empty()) return Value(0); return num_abs(a[0]); };   // look/num_ops.h
     b[BI("max")] = [](std::vector<Value>& a) -> Value { for (auto& x : a) look::value_list_only(x, "max()"); return num_extreme(a, true); };    // look/num_ops.h
@@ -70,8 +70,8 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
     b[BI("pop")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) throw std::runtime_error("pop() requires array"); look::value_list_only(a[0], "pop()"); auto ar=a[0].as_array(); if (ar->empty()) return Value(); Value l=ar->back(); ar->pop_back(); return l; };
     b[BI("join")] = [](std::vector<Value>& a) -> Value { if (a.empty()||a[0].type()!=Value::ARRAY) return Value(a.empty()?std::string():a[0].to_string()); look::value_list_only(a[0], "join()"); std::string sep=a.size()>=2?a[1].to_string():""; std::string r; auto& ar=*a[0].as_array(); for(size_t i=0;i<ar.size();++i){ if(i)r+=sep; r+=ar[i].to_string(); } return Value(r); };
     b[BI("stop")] = [](std::vector<Value>&) -> Value { return Value(); };
-    // exit()/die() — CLI-VM'de bağlı değildi ("Not callable" fırlatıyordu).
-    // Kural: ilk argüman INT ise çıkış kodu, yoksa 0.
+    // exit()/die() — were not bound in CLI-VM (they threw "Not callable").
+    // Rule: exit code if the first argument is an INT, otherwise 0.
     {
         auto do_exit = [](std::vector<Value>& a) -> Value {
             int code = 0;
@@ -89,17 +89,17 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
             for (const auto& s : look::script_args()) arr->push_back(Value(s));
             return Value(arr);
         };
-    // channel() — CLI-VM'de BAĞLI DEĞİLDİ: send/receive'in CHAN_* opcode'ları var ama
-    // kanal OLUŞTURMA düz builtin çağrısı → VM tablosunda boş → "kullanilamiyor
-    // (baglanmamis)". Eski tree-walk inline hallettiği için CLI'da
-    // parallel+channel tree-walk'ta çalışıp VM'de (DEFAULT) çöküyordu. Semantik:
-    // default 128, n<0 hata, n==0 → unbuffered ((size_t)-1).
+    // channel() — was NOT BOUND in CLI-VM: send/receive have CHAN_* opcodes but
+    // channel CREATION is a plain builtin call → empty in the VM table → an "unavailable
+    // (not bound)" error. Since the old tree-walk handled it inline,
+    // parallel+channel worked in tree-walk on the CLI but crashed in the VM (DEFAULT). Semantics:
+    // default 128, n<0 error, n==0 → unbuffered ((size_t)-1).
     if (look::builtin_index("channel") >= 0)
         b[BI("channel")] = [](std::vector<Value>& a) -> Value { return Value(look::make_channel(a)); };   // value.h
-    // config() — channel ile AYNI SINIF: web'de (http_main) bağlı, CLI-VM'de eksikti →
-    // tree-walk "def" dönerken VM "kullanilamiyor" veriyordu. Kural: "section.key" →
-    // "SECTION_KEY" env anahtarı, g_env_vars+getenv'e bakılır (look_get_env AYNI kaynağı
-    // kullanır). Bulunamaz+default-yok → null (sentinel ile ayırt).
+    // config() — the SAME CLASS as channel: bound on the web (http_main), missing in CLI-VM →
+    // tree-walk returned "def" while the VM gave "unavailable". Rule: "section.key" →
+    // the "SECTION_KEY" env key, g_env_vars+getenv are consulted (look_get_env uses the SAME source).
+    // Not found + no default → null (distinguished with a sentinel).
     if (look::builtin_index("config") >= 0)
         b[BI("config")] = [](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value();
@@ -112,10 +112,10 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
             std::string v = look::look_get_env(ek, NF);
             return v == NF ? Value() : Value(v);
         };
-    // Modül fn'leri: builtin_names'deki her "mod::fn" → RuntimeHost'un YÜKLÜ modülü.
-    // YALNIZCA `use` edilmiş modüller auto-wire olur: string::/math::/array:: `use`
-    // gerektirir (json:: gibi her-zaman-açık olanlar ayrı, index-tabanlı wire edilir).
-    // Preload YOK — aksi halde `use`'suz program çalışırdı.
+    // Module fns: every "mod::fn" in builtin_names → the LOADED module of RuntimeHost.
+    // ONLY modules that were `use`d are auto-wired: string::/math::/array:: require `use`
+    // (always-on ones like json:: are wired separately, index-based).
+    // NO preload — otherwise a program without `use` would work.
     const auto& names = look::builtin_names();
     for (size_t i = 0; i < names.size(); ++i) {
         auto pos = names[i].find("::");
@@ -126,13 +126,13 @@ std::vector<look::BuiltinFn> build_cli_builtins(look::RuntimeHost& interp, std::
     return b;
 }
 
-// ── LOOK 2: komut satırında geri çağırmalar da VM'de koşar ────────────────────────────────────
-// timer::after/every ve jobs::worker işleyicisi eskiden betiği bütünüyle tree-walk'a düşürüyordu.
-// Şimdi her çağrı kendi VM'inde koşar (web'deki gibi: istek başına yeni VM), aynı yerleşik tabloyla.
-//   * iş işleyicisi jobs::run içinde, AYNI iş parçacığında koşar → ana VM'in GÜNCEL global'lerini görür
-//   * zamanlayıcı başka iş parçacığında koşar → kurulduğu andaki global'lerin kopyasını görür
-// Çıktı stdout'a gider. ESKİ HATA: yorumlayıcı işleyicinin/zamanlayıcının çıktısını ayrı bir tampona
-// yazıp atıyordu — komut satırındaki bir iş betiğinde `print` sessizce kayboluyordu.
+// ── On the command line, callbacks run in the VM too ────────────────────────────────────
+// timer::after/every and the jobs::worker handler used to drop the whole script to tree-walk.
+// Now each call runs in its own VM (like on the web: a new VM per request), with the same builtin table.
+//   * the job handler runs inside jobs::run, on the SAME thread → it sees the main VM's CURRENT globals
+//   * the timer runs on another thread → it sees a copy of the globals as of when it was set up
+// Output goes to stdout. OLD BUG: the interpreter wrote the handler's/timer's output to a separate buffer
+// and discarded it — `print` in a job script on the command line silently vanished.
 look::Value run_cli_closure(const CliCallbacks& cc, const look::Value& fnv, std::vector<look::Value> args,
                                    const std::unordered_map<std::string, look::Value>* globals,
                                    const char* method, const char* what, bool& ok) {
@@ -161,7 +161,7 @@ void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::RuntimeHost& inte
                                std::shared_ptr<CliCallbacks> cc) {
     using look::Value;
     auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
-    // jobs::run işleyicileri vm_closure_runner üzerinden çağırır (BYTECODE_FN).
+    // jobs::run calls handlers through vm_closure_runner (BYTECODE_FN).
     look::vm_closure_runner() = [cc](const Value& fn, std::vector<Value> args, const char* what, bool& ok) {
         return run_cli_closure(*cc, fn, std::move(args), nullptr, "__JOB__", what, ok);
     };
@@ -180,7 +180,7 @@ void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::RuntimeHost& inte
         b[BI(name)] = [cc, repeat, nm](std::vector<Value>& a) -> Value {
             if (a.size() < 2) throw std::runtime_error(nm + "() takes 2 arguments");
             if (a[1].type() != Value::BYTECODE_FN) throw std::runtime_error(nm + "() second argument must be a function");
-            // Zamanlayıcı başka iş parçacığında koşar: global'lerin o anki kopyası (paylaşım yok).
+            // The timer runs on another thread: a copy of the globals as of now (no sharing).
             auto snap = std::make_shared<std::unordered_map<std::string, Value>>();
             if (cc->main_vm)
                 for (const auto& [k, v] : cc->main_vm->get_globals()) snap->emplace(k, v.clone_for_thread());
@@ -199,14 +199,14 @@ void wire_cli_callbacks(std::vector<look::BuiltinFn>& b, look::RuntimeHost& inte
         look::TimerManager::instance().cancel((int)a[0].to_int());
         return Value();
     };
-    // timer::wait([ms=5000]) — parallel::wait ile aynı biçim: tek seferlik zamanlayıcılar tetiklenip
-    // geri çağırmaları bitene kadar bekler; true = hepsi bitti, false = süre doldu.
+    // timer::wait([ms=5000]) — same form as parallel::wait: waits until one-shot timers have fired and
+    // their callbacks have finished; true = all finished, false = timed out.
     b[BI("timer::wait")] = [](std::vector<Value>& a) -> Value {
         int ms = 5000;
         if (!a.empty() && a[0].type() == Value::INT) ms = (int)a[0].as_int();
         return Value(look::TimerManager::instance().wait_one_shots(ms));
     };
-    // ws::/sse:: yalnız bir web uygulamasının bağlantı rotasında anlamlı — açık hata.
+    // ws::/sse:: only make sense on a web app's connection route — explicit error.
     for (const auto& n : look::builtin_names()) {
         if (n.rfind("ws::", 0) != 0 && n.rfind("sse::", 0) != 0) continue;
         b[BI(n.c_str())] = [n](std::vector<Value>&) -> Value {

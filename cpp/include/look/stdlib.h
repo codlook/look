@@ -16,12 +16,12 @@ std::map<std::string, Module> make_extra_stdlib(ModuleHost* interp);
 Module make_file_module();
 Module make_date_module();
 Module make_template_module(ModuleHost* interp);
-// İşletim sisteminin kriptografik rastgele kaynağı (urandom / BCrypt); okunamazsa fırlatır.
+// The operating system's cryptographic random source (urandom / BCrypt); throws if it cannot be read.
 std::vector<uint8_t> secure_random_bytes(size_t n);
-// Varsayılan CSRF kapısı (web_stdlib.cpp): LOOK_SECRET sorunu ("" = tamam) ve istek denetimi (neden why'a).
+// Default CSRF gate (web_stdlib.cpp): the LOOK_SECRET problem ("" = ok) and the request check (reason goes into why).
 std::string csrf_secret_problem();
 bool csrf_request_ok(WebContext* ctx, std::string& why);
-// json::encode ile AYNI kodlayıcı (web_stdlib.cpp) — http::post_json gibi JSON yazan her yer bunu kullanır.
+// The SAME encoder as json::encode (web_stdlib.cpp) — everything that writes JSON, such as http::post_json, uses it.
 std::string json_encode_value(const Value& v);
 
 } // namespace look

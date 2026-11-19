@@ -1,8 +1,8 @@
-// Sayısal yerleşiklerin ortak çekirdeği — abs / floor / ceil / round TEK tanım (önce üç ayrı kopya
-// vardı: stdlib.cpp math::, cli_runtime.cpp, http_main.cpp). abs(INT64_MIN) taşma hatası (aritmetikle
-// aynı kural); floor/ceil/round ondalık girdide int64'e sığan sonucu tamsayı, sığmayanı ondalık verir.
-// ESKİ (UBSan ile ölçüldü): std::abs(INT64_MIN) negatif taşma, (int64_t)std::floor(1e300) aralık dışı
-// dönüşüm — ikisi de C++'ta TANIMSIZ davranış.
+// Common core of the numeric built-ins — abs / floor / ceil / round in ONE definition (there used to be three separate copies:
+// stdlib.cpp math::, cli_runtime.cpp, http_main.cpp). abs(INT64_MIN) is an overflow error (same rule
+// as arithmetic); floor/ceil/round give an integer for a float input if the result fits int64, otherwise a float.
+// OLD (measured with UBSan): std::abs(INT64_MIN) negative overflow, (int64_t)std::floor(1e300) out-of-range
+// conversion — both are UNDEFINED behaviour in C++.
 #pragma once
 #include <cmath>
 #include <cstdint>
@@ -10,7 +10,7 @@
 
 namespace look {
 
-// Tam sayıya yuvarlanmış double → int64'e sığıyorsa INT, sığmıyorsa (ya da NaN/Inf) FLOAT.
+// A double rounded to an integer: INT if it fits int64, FLOAT if not (or NaN/Inf).
 inline Value num_integral_value(double d) {
     if (std::isfinite(d) && d >= -9223372036854775808.0 && d < 9223372036854775808.0)
         return Value((int64_t)d);
@@ -20,7 +20,7 @@ inline Value num_integral_value(double d) {
 inline Value num_abs(const Value& v) {
     if (v.type() == Value::FLOAT) return Value(std::fabs(v.as_float()));
     int64_t i = v.to_int();
-    if (i == INT64_MIN) look_int_overflow(0, "-", i);   // -INT64_MIN int64'e sığmaz: taşma (aritmetikle aynı kural)
+    if (i == INT64_MIN) look_int_overflow(0, "-", i);   // -INT64_MIN does not fit int64: overflow (same rule as arithmetic)
     return Value(i < 0 ? -i : i);
 }
 
@@ -28,10 +28,10 @@ inline Value num_floor(const Value& v) { return v.type() == Value::INT ? v : num
 inline Value num_ceil(const Value& v)  { return v.type() == Value::INT ? v : num_integral_value(std::ceil(v.to_float())); }
 inline Value num_round(const Value& v) { return v.type() == Value::INT ? v : num_integral_value(std::round(v.to_float())); }
 
-// max/min'in TEK tanımı (çekirdek max()/min() ve math::max/min). Tek liste → en büyük/küçük eleman,
-// boş liste → null. ESKİ: çekirdek max([3,9,2]) listenin KENDİSİNİ döndürüyordu (math::max 9) —
-// sessiz yanlış sonuç. Birden çok argüman: aralarından seçer. Eşitlikte ilk değil SON geçen döner
-// (max: >=, min: <=) — math::max'in eski davranışı korunur. Sözlük çağıranın denetimindedir
+// The SINGLE definition of max/min (core max()/min() and math::max/min). A single list → the largest/smallest element,
+// an empty list → null. OLD: core max([3,9,2]) returned the list ITSELF (math::max gave 9) —
+// a silent wrong result. Several arguments: picks among them. On a tie the LAST one is returned, not the first
+// (max: >=, min: <=) — math::max's old behaviour is preserved. The map is under the caller's control
 // (value_list_only).
 inline Value num_extreme(const std::vector<Value>& args, bool want_max) {
     auto better = [want_max](const Value& a, const Value& best) { return want_max ? a >= best : a <= best; };

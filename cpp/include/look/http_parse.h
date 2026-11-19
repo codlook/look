@@ -1,13 +1,13 @@
-// HTTP/1.1 istek/başlık saf ayrıştırıcısı — socket'ten AYRI (fuzz + test hedefi).
-// "Dikişi aç": ham istek tamponu → HttpRequest yorumlama mantığı burada; I/O (recv,
-// timeout, chunked gövde) http_server.cpp'de. Tek tanım (http_server.cpp bunu include
-// eder) → drift yok. Bu yüzey PRE-AUTH: ağdaki herkes bu baytları besler.
+// HTTP/1.1 request/header pure parser — SEPARATE from the socket (fuzz + test target).
+// "Unstitch": the logic that interprets a raw request buffer → HttpRequest lives here; I/O (recv,
+// timeout, chunked body) is in http_server.cpp. A single definition (http_server.cpp includes it)
+// → no drift. This surface is PRE-AUTH: anyone on the network feeds these bytes.
 //
-// Referans: Go net/http (1.27) sunucusunun davranışı — aynı ham istekler Go'ya ve LOOK'a
-// gönderilerek ölçüldü (tests/http_rfc9112_test.py tablosu). Go'dan GEVŞEK olduğumuz her yer
-// Go'ya getirildi (çift Host, Host'suz 1.1, başlık adı/değeri doğrulaması, başlık sınırı, sürüm,
-// istek hedefi, reddedilene yanıt). Go'dan KATI olduğumuz yerler (çıplak LF, obs-fold, CL+TE,
-// chunk satırı) request smuggling savunmasıdır → katı kalır, yalnız artık 400 yanıtı yazılır.
+// Reference: the behaviour of the Go net/http (1.27) server — the same raw requests were sent to Go and to LOOK
+// and measured (tests/http_rfc9112_test.py table). Wherever we were LOOSER than Go we were
+// brought to Go (double Host, 1.1 without Host, header name/value validation, header limit, version,
+// request target, response to a rejected request). Where we are STRICTER than Go (bare LF, obs-fold, CL+TE,
+// chunk line) it is request smuggling defence → stays strict, only now a 400 response is written.
 #pragma once
 #include <string>
 #include <algorithm>
@@ -17,14 +17,14 @@
 
 namespace look {
 
-// Go: MaxHeaderBytes varsayılanı 1 MB (+4096 pay); başlık alanı sayısı 500'ü aşınca 431 (ölçüldü).
+// Go: MaxHeaderBytes default is 1 MB (+4096 margin); more than 500 header fields gives 431 (measured).
 constexpr size_t HTTP_MAX_HEADER_BYTES  = 1024 * 1024 + 4096;
 constexpr size_t HTTP_MAX_HEADER_FIELDS = 500;
 
-// Karakter sınıfları — 256'lık tablo (bayt başına tek okuma; sıcak yol: her istekte her başlık baytı).
-//   1 = tchar (RFC 9110 §5.6.2: başlık adı, yöntem)
-//   2 = alan değeri baytı (HTAB dışında CTL yok; ≥0x80 serbest — Go)
-//   4 = Host baytı (Go httpguts.ValidHostHeader kümesi)
+// Character classes — a 256-entry table (one read per byte; hot path: every header byte of every request).
+//   1 = tchar (RFC 9110 §5.6.2: header name, method)
+//   2 = field value byte (no CTL except HTAB; ≥0x80 free — Go)
+//   4 = Host byte (the Go httpguts.ValidHostHeader set)
 struct HttpCharTable {
     unsigned char t[256];
     constexpr HttpCharTable() : t{} {
@@ -49,9 +49,9 @@ inline bool http_span_is(const char* p, size_t n, unsigned char cls) {
     return true;
 }
 inline bool http_token(const std::string& s) { return !s.empty() && http_span_is(s.data(), s.size(), 1); }
-// Alan değeri: HTAB dışında kontrol karakteri (NUL, CR, LF, DEL…) yok. ≥0x80 serbest (Go).
+// Field value: no control character other than HTAB (NUL, CR, LF, DEL…). ≥0x80 free (Go).
 inline bool http_field_value_ok(const std::string& v) { return http_span_is(v.data(), v.size(), 2); }
-// Host değeri: Go httpguts.ValidHostHeader karakter kümesi (boş değer geçerli).
+// Host value: the Go httpguts.ValidHostHeader character set (an empty value is valid).
 inline bool http_host_ok(const std::string& h) { return http_span_is(h.data(), h.size(), 4); }
 
 inline const char* http_status_reason(int code) {
@@ -63,26 +63,26 @@ inline const char* http_status_reason(int code) {
     }
 }
 
-// Ham istek baytlarını (request-line + header bloğu, "\r\n\r\n"e kadar) ayrıştır.
-// Gövde okuma çağırana aittir (Content-Length / Transfer-Encoding).
-// Dönüş 0 = geçerli; aksi halde yanıt durum kodu (400 / 431 / 505) — çağıran o yanıtı yazıp
-// bağlantıyı kapatır (eskiden yanıtsız kapatılıyordu: istemci yalnız "bağlantı kesildi" görüyordu).
-// Erişimler saldırgan-kontrollü.
+// Parse the raw request bytes (request-line + header block, up to "\r\n\r\n").
+// Reading the body belongs to the caller (Content-Length / Transfer-Encoding).
+// Returns 0 = valid; otherwise the response status code (400 / 431 / 505) — the caller writes that response and
+// closes the connection (it used to close without a response: the client only saw "connection lost").
+// Accesses are attacker-controlled.
 inline int http_parse_request(const std::string& raw, HttpRequest& req) {
     size_t header_end = raw.find("\r\n\r\n");
     if (header_end == std::string::npos) return 400;
     if (header_end + 4 > HTTP_MAX_HEADER_BYTES) return 431;
 
-    // RFC 9112 §2.2 KATI CRLF: başlık bloğunda \r\n çifti DIŞINDA çıplak \n veya \r → 400
-    // (request smuggling: parser \r\n'de böler, çıplak \n value'da korunur → gömülü ikinci CL/TE
-    // yutulur; LF-toleranslı front-end onu ayrı header sayar → gövde-çerçeve desync). Go çıplak
-    // LF'yi satır sonu sayar; biz katı kalırız. Ayrı bir tam tarama GEREKMEZ: satırlar "\r\n"de
-    // bölündüğünden çıplak CR/LF ancak yöntem, hedef, sürüm, ad ya da değerin İÇİNDE kalabilir ve
-    // her birinin doğrulaması CR/LF'yi reddeder (yöntem/ad = tchar, hedef > 0x20, sürüm sabit
-    // biçim, değer = CTL yok). Eskiden ayrı bir döngü bloğu baştan sona bir kez daha tarıyordu.
+    // RFC 9112 §2.2 STRICT CRLF: a bare \n or \r OUTSIDE a \r\n pair in the header block → 400
+    // (request smuggling: the parser splits at \r\n, a bare \n is kept in the value → an embedded second CL/TE
+    // is swallowed; an LF-tolerant front-end counts it as a separate header → body-framing desync). Go counts a bare
+    // LF as a line end; we stay strict. A separate full scan is NOT NEEDED: since lines are
+    // split at "\r\n", a bare CR/LF can only remain INSIDE the method, target, version, name or value, and
+    // the validation of each rejects CR/LF (method/name = tchar, target > 0x20, version fixed
+    // format, value = no CTL). A separate loop block used to scan from start to end once more.
 
-    // ── İstek satırı: method SP request-target SP HTTP-version (Go: tek boşluk ayraç) ──
-    // Baştaki boş satır (CRLF) Go'da olduğu gibi 400: istek satırı boş.
+    // ── Request line: method SP request-target SP HTTP-version (Go: a single space separator) ──
+    // A leading blank line (CRLF) is 400 as in Go: the request line is empty.
     size_t line_end = raw.find("\r\n");
     const std::string rl = raw.substr(0, line_end);
     size_t s1 = rl.find(' ');
@@ -93,28 +93,28 @@ inline int http_parse_request(const std::string& raw, HttpRequest& req) {
     std::string target = rl.substr(s1 + 1, s2 - s1 - 1);
     std::string version = rl.substr(s2 + 1);
 
-    // Sürüm: tam olarak "HTTP/d.d" (Go ParseHTTPVersion); 1.x dışı → 505.
+    // Version: exactly "HTTP/d.d" (Go ParseHTTPVersion); anything other than 1.x → 505.
     if (version.size() != 8 || version.compare(0, 5, "HTTP/") != 0 ||
         version[5] < '0' || version[5] > '9' || version[6] != '.' || version[7] < '0' || version[7] > '9')
         return 400;
     if (version[5] != '1') return 505;
-    // 1.1 ve üstü 1.x aynı anlamda (Go ProtoAtLeast(1,1)): keep-alive varsayılanı, Host zorunluluğu.
+    // 1.1 and later 1.x mean the same (Go ProtoAtLeast(1,1)): keep-alive default, Host requirement.
     req.version = (version[7] == '0') ? "HTTP/1.0" : "HTTP/1.1";
     const bool http11 = (req.version == "HTTP/1.1");
 
     if (!http_token(req.method)) return 400;
     if (target.empty()) return 400;
-    for (unsigned char c : target) if (c < 0x21 || c == 0x7f) return 400;   // CTL / boşluk
+    for (unsigned char c : target) if (c < 0x21 || c == 0x7f) return 400;   // CTL / space
 
-    // ── İstek hedefi biçimleri (RFC 9112 §3.2) ─────────────────────────────────
-    std::string abs_authority;   // absolute-form'un yetki bölümü (Host'un yerine geçer)
+    // ── Request-target forms (RFC 9112 §3.2) ────────────────────────────────────
+    std::string abs_authority;   // the authority part of absolute-form (replaces Host)
     bool absolute_form = false;
     if (target[0] == '/') {
         // origin-form
     } else if (target == "*") {
-        if (req.method != "OPTIONS") return 400;          // asterisk-form yalnız OPTIONS
+        if (req.method != "OPTIONS") return 400;          // asterisk-form only for OPTIONS
     } else if (req.method == "CONNECT") {
-        // authority-form — LOOK vekil değil; rota eşleşmez (404), Go da işleyiciye verir
+        // authority-form — LOOK is not a proxy; the route does not match (404), Go also passes it to the handler
     } else {
         // absolute-form: scheme "://" authority [path]
         size_t se = target.find("://");
@@ -143,7 +143,7 @@ inline int http_parse_request(const std::string& raw, HttpRequest& req) {
         req.path = target;
     }
 
-    // ── Başlık alanları ────────────────────────────────────────────────────────
+    // ── Header fields ───────────────────────────────────────────────────────────
     size_t pos = line_end + 2;
     size_t fields = 0;
     bool have_host = false;
@@ -152,32 +152,32 @@ inline int http_parse_request(const std::string& raw, HttpRequest& req) {
         size_t end = raw.find("\r\n", pos);
         if (end == std::string::npos || end > header_end) break;
         if (++fields > HTTP_MAX_HEADER_FIELDS) return 431;
-        const size_t ls = pos, le = end;   // satır [ls, le) — ara kopya yok (sıcak yol)
+        const size_t ls = pos, le = end;   // line [ls, le) — no intermediate copy (hot path)
         pos = end + 2;
-        // RFC 9112 §5.2: obs-fold (SP/HTAB ile başlayan devam satırı) istekte YASAK. Katlanmış
-        // bir çerçeve başlığını (CL/TE) katı bir front-end farklı çözerse desync. Go kabul eder;
-        // biz katı kalırız.
+        // RFC 9112 §5.2: obs-fold (a continuation line starting with SP/HTAB) is FORBIDDEN in a request. If a strict
+        // front-end resolves a folded framing header (CL/TE) differently there is desync. Go accepts it;
+        // we stay strict.
         if (ls < le && (d[ls] == ' ' || d[ls] == '\t')) return 400;
         const void* cp = std::memchr(d + ls, ':', le - ls);
-        if (!cp) return 400;                                  // ':'siz satır (Go: 400)
+        if (!cp) return 400;                                  // a line without ':' (Go: 400)
         const size_t colon = (size_t)((const char*)cp - d);
-        // Ad = token: boş ad, addaki boşluk ("X Y"), ':' öncesi boşluk ("Content-Length : 5" —
-        // katı bir front-end reddedip LOOK kabul edince smuggling) hepsi 400.
+        // Name = token: an empty name, whitespace in the name ("X Y"), whitespace before ':' ("Content-Length : 5" —
+        // smuggling when a strict front-end rejects and LOOK accepts) are all 400.
         if (colon == ls || !http_span_is(d + ls, colon - ls, 1)) return 400;
         size_t vs = colon + 1, ve = le;
         while (vs < ve && (d[vs] == ' ' || d[vs] == '\t')) ++vs;
         while (ve > vs && (d[ve - 1] == ' ' || d[ve - 1] == '\t')) --ve;
-        if (!http_span_is(d + vs, ve - vs, 2)) return 400;   // NUL, CR, LF, DEL, diğer CTL
+        if (!http_span_is(d + vs, ve - vs, 2)) return 400;   // NUL, CR, LF, DEL, other CTL
         std::string key(d + ls, colon - ls);
         for (auto& ch : key) if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
         std::string val(d + vs, ve - vs);
-        // RFC 9112 §6.3: çift/tutarsız Content-Length request smuggling'e yol açar.
+        // RFC 9112 §6.3: a double/inconsistent Content-Length leads to request smuggling.
         if (key == "content-length") {
             auto ex = req.headers.find("content-length");
             if (ex != req.headers.end() && ex->second != val) return 400;
         }
-        // RFC 9112 §3.2: Host tam bir kez (Go: "too many Host headers" → 400). İki Host'un hangisinin
-        // kullanılacağı vekil ile LOOK arasında farklı seçilirse sanal-host / önbellek zehirlenmesi.
+        // RFC 9112 §3.2: Host exactly once (Go: "too many Host headers" → 400). If the proxy and LOOK pick different ones of the two Hosts
+        // it leads to virtual-host / cache poisoning.
         if (key == "host") {
             if (have_host) return 400;
             have_host = true;
@@ -186,9 +186,9 @@ inline int http_parse_request(const std::string& raw, HttpRequest& req) {
         req.headers[std::move(key)] = std::move(val);
     }
 
-    // HTTP/1.1'de Host zorunlu (RFC 9112 §3.2, Go "missing required Host header").
+    // Host is required in HTTP/1.1 (RFC 9112 §3.2, Go "missing required Host header").
     if (http11 && !have_host && req.method != "CONNECT") return 400;
-    // absolute-form'da Host başlığı yok sayılır, yetki bölümü kullanılır (RFC 9112 §3.2.2, Go r.Host).
+    // in absolute-form the Host header is ignored, the authority part is used (RFC 9112 §3.2.2, Go r.Host).
     if (absolute_form && !abs_authority.empty()) req.headers["host"] = abs_authority;
 
     // WebSocket upgrade

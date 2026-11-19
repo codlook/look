@@ -1,24 +1,24 @@
 #pragma once
-// lk fmt — LOOK kaynak biçimlendirici (gofmt modeli: SEÇENEK YOK, tek kanonik biçim).
+// lk fmt — LOOK source formatter (gofmt model: NO OPTIONS, a single canonical form).
 //
-// V1 = yeniden-girinti: girinti = süslü-parantez/köşeli/parantez derinliği × 4; sondaki
-// boşluk kırpılır; ardışık boş satırlar tek boşluğa indirilir. Token İÇERİĞİNE dokunmaz
-// (yalnız baştaki/sondaki boşluk) → anlam inşaen korunur. Yorumlar korunur (char-tabanlı).
+// V1 = re-indent: indent = brace/bracket/parenthesis depth × 4; trailing
+// whitespace is trimmed; consecutive blank lines are reduced to one. Does NOT touch token CONTENT
+// (only leading/trailing whitespace) → meaning is preserved by construction. Comments are preserved (char-based).
 //
-// GÜVENCE: biçimlenmiş çıktı yeniden lex'lenip trivia-dışı token dizisi girdiyle
-// karşılaştırılır; UYMAZSA biçimleme İPTAL edilir (dosya değişmez). Bu, edge-case'lerde
-// (çok-satırlı string vb.) bozma yerine güvenli-geri-çekilme garantisi verir.
+// GUARANTEE: the formatted output is re-lexed and its non-trivia token sequence is
+// compared with the input; if it does NOT match formatting is CANCELLED (the file is unchanged). In edge cases
+// (multi-line strings etc.) this gives a safe-fallback guarantee instead of corruption.
 #include <string>
 #include <vector>
 
 namespace look {
 
-// Kaynağı kanonik biçime getir. Anlam-değiştirmezse formatted döner; string tracking bir
-// edge-case'e takılırsa (verify başarısız) orijinali AYNEN döndürür (ok=false ile bildirir).
+// Bring the source to canonical form. Returns formatted if the meaning is unchanged; if string tracking trips on an
+// edge case (verify fails) it returns the original UNCHANGED (reports it with ok=false).
 std::string look_format_source(const std::string& src, bool* ok = nullptr);
 
-// lk fmt CLI. files boşsa stdin. check=true → CI modu: biçimsiz dosya varsa exit 1 (yazMAZ).
-// Aksi halde dosyaları yerinde biçimler. Dönüş: 0 temiz, 1 check'te biçimsiz, 2 hata.
+// lk fmt CLI. If files is empty stdin. check=true → CI mode: exit 1 if an unformatted file exists (does NOT write).
+// Otherwise formats files in place. Returns: 0 clean, 1 unformatted in check, 2 error.
 int run_fmt(const std::vector<std::string>& files, bool check);
 
 } // namespace look

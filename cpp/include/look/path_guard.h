@@ -1,13 +1,13 @@
-// Kanonik path-altında-kök kontrolü — string tabanlı traversal kontrolünün göremediği
-// SYMLINK'i ve upstream-decode varsayımını ortadan kaldırır. Tek tanım; cgi_main.cpp,
-// fcgi_main.cpp (ve konsept olarak file_stdlib.cpp assert_in_file_root) aynı deseni paylaşır.
+// Canonical path-under-root check — removes the SYMLINK and the upstream-decode assumption
+// that a string-based traversal check cannot see. A single definition; cgi_main.cpp,
+// fcgi_main.cpp (and conceptually file_stdlib.cpp assert_in_file_root) share the same pattern.
 //
-// String kontrolu ("../" ara) iki sebeple yetersiz:
-//  1. symlink: doc/rapor.lk -> /baska-kiraci/config.lk yolunda ".." YOK ama doc disina cikar.
-//  2. upstream-decode: guard'a %2e mi ".." mi ulastigi Apache/nginx/IIS'e gore degisir.
-// weakly_canonical hem symlink'i cozer hem yolu normalize eder -> kodlama/symlink ne olursa
-// olsun karar KANONIK yola gore verilir. Bilesen-bazli karsilastirma "/srv/app" vs
-// "/srv/app-evil" string-prefix atlatmasini da kapatir.
+// A string check (looking for "../") is insufficient for two reasons:
+//  1. symlink: the path doc/report.lk -> /other-tenant/config.lk has NO ".." but escapes doc.
+//  2. upstream-decode: whether %2e or ".." reaches the guard differs between Apache/nginx/IIS.
+// weakly_canonical both resolves the symlink and normalizes the path -> whatever the encoding/symlink,
+// the decision is made on the CANONICAL path. Component-based comparison also closes the
+// string-prefix bypass of "/srv/app" vs "/srv/app-evil".
 #pragma once
 #include <filesystem>
 #include <string>
@@ -25,7 +25,7 @@ inline bool path_under_root(const std::string& root, const std::string& cand) {
     auto ri = r.begin();
     auto ci = c.begin();
     for (; ri != r.end(); ++ri, ++ci)
-        if (ci == c.end() || *ci != *ri) return false;   // bilesen bazli prefix
+        if (ci == c.end() || *ci != *ri) return false;   // component-based prefix
     return true;
 }
 

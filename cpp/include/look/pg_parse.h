@@ -1,6 +1,6 @@
-// PostgreSQL wire-protocol saf ayrıştırıcılar — socket'ten AYRI (fuzz + test hedefi).
-// "Dikişi aç": bayt-yorumlama mantığı burada, I/O postgres_client.cpp'de. Tek tanım
-// (postgres_client.cpp bunu include eder) → drift yok.
+// PostgreSQL wire-protocol pure parsers — SEPARATE from the socket (fuzz + test target).
+// "Unstitch": the byte-interpretation logic is here, I/O is in postgres_client.cpp. A single definition
+// (postgres_client.cpp includes it) → no drift.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -8,9 +8,9 @@
 
 namespace look {
 
-// ErrorResponse gövdesini ayrıştır: (field-type byte, NUL-terminated değer)* dizisi,
-// çift-NUL ile biter. 'M' (human-readable message) alanını döndür, yoksa "unknown error".
-// Saldırgan-kontrollü baytlar (sunucu ERR paketi) → her erişim p<end ile sınırlı.
+// Parse the ErrorResponse body: a sequence of (field-type byte, NUL-terminated value)*,
+// ending with a double NUL. Returns the 'M' (human-readable message) field, "unknown error" if absent.
+// Attacker-controlled bytes (the server's ERR packet) → every access is bounded by p<end.
 inline std::string pg_parse_error(const std::vector<uint8_t>& body) {
     const uint8_t* p = body.data();
     const uint8_t* end = p + body.size();

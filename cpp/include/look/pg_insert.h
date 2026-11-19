@@ -1,20 +1,20 @@
 #pragma once
-// PostgreSQL INSERT'in kimliği (db::last_id) — saf SQL yardımcıları (sunucusuz tablo testi:
+// The identity of a PostgreSQL INSERT (db::last_id) — pure SQL helpers (server-less table test:
 // tests/pg_insert_test.cpp).
 //
-// ESKİ HATA (sessiz veri kaybı + yanlış kimlik): her INSERT'ten sonra `SELECT lastval()`
-// soruluyordu. Dizisiz tabloda bu hata verir; transaction içinde hata transaction'ı iptal eder
-// ve ardından gelen COMMIT sessizce ROLLBACK olur — satırlar hatasız kayboluyordu. lastval()
-// ayrıca OTURUMUN son dizi değeridir, tablonun değil: dizisiz tabloya INSERT'ten sonra önceki
-// tablonun (havuzdan gelen bağlantıda başka bir isteğin) kimliğini veriyordu.
-// Şimdi: hedef tablonun dizi/IDENTITY kolonu katalogdan sorulur (hata veremez), INSERT'e
-// `RETURNING "<kolon>"` eklenir, kimlik eklenen satırdan okunur.
+// OLD BUG (silent data loss + wrong id): `SELECT lastval()` was asked after every
+// INSERT. On a table without a sequence this errors; inside a transaction the error aborts the transaction
+// and the COMMIT that follows silently becomes a ROLLBACK — rows vanished without an error. lastval()
+// is also the SESSION's last sequence value, not the table's: after an INSERT into a table without a sequence it gave
+// the id of the previous table (on a pooled connection, of another request).
+// Now: the target table's sequence/IDENTITY column is asked from the catalog (cannot error), `RETURNING
+// "<column>"` is added to the INSERT, and the id is read from the inserted row.
 #include <cctype>
 #include <string>
 
 namespace look {
 
-// İlk sözcüğü INSERT mi (baştaki boşluk atlanır).
+// Is the first word INSERT (leading whitespace is skipped).
 inline bool pg_is_insert(const std::string& sql) {
     size_t i = 0;
     while (i < sql.size() && std::isspace((unsigned char)sql[i])) ++i;
@@ -36,9 +36,9 @@ inline bool keyword(const std::string& s, size_t& i, const char* kw) {
 }
 } // namespace pg_insert_detail
 
-// "INSERT INTO <tablo>" — tablo adı SQL'de yazıldığı gibi ([şema.]ad; her parça tırnaksız
-// tanımlayıcı ya da "tırnaklı"). Sözdizimi tanınmazsa "" (o zaman kimlik aranmaz, last_id 0).
-// Ad katalog sorgusuna yalnız bu biçimdeyse gider → to_regclass sözdizimi hatası veremez.
+// "INSERT INTO <table>" — the table name as written in the SQL ([schema.]name; each part an unquoted
+// identifier or "quoted"). If the syntax is not recognized "" (then no id is looked up, last_id 0).
+// The name goes to the catalog query only in this form → to_regclass cannot raise a syntax error.
 inline std::string pg_insert_target(const std::string& sql) {
     using namespace pg_insert_detail;
     size_t i = 0; skip_ws(sql, i);
@@ -65,7 +65,7 @@ inline std::string pg_insert_target(const std::string& sql) {
     return sql.substr(start, i - start);
 }
 
-// Kullanıcının SQL'inde (tırnak ve yorum dışında) RETURNING sözcüğü var mı.
+// Does the user's SQL contain the word RETURNING (outside quotes and comments).
 inline bool pg_has_returning(const std::string& sql) {
     using namespace pg_insert_detail;
     for (size_t i = 0; i < sql.size(); ) {
@@ -90,14 +90,14 @@ inline bool pg_has_returning(const std::string& sql) {
     return false;
 }
 
-// SQL'in sonuna RETURNING "<kolon>" (sondaki boşluk ve ; atılır; kolon adı tırnaklanır).
+// Add RETURNING "<column>" to the end of the SQL (trailing whitespace and ; dropped; the column name is quoted).
 inline std::string pg_with_returning(const std::string& sql, const std::string& col) {
     size_t end = sql.size();
     while (end > 0 && (std::isspace((unsigned char)sql[end - 1]) || sql[end - 1] == ';')) --end;
     std::string q = "\"";
     for (char c : col) { if (c == '"') q += '"'; q += c; }
     q += '"';
-    // Yeni satırda: SQL bir -- yorumuyla bitiyorsa RETURNING yorumun içinde kalmasın.
+    // On a new line: if the SQL ends with a -- comment, RETURNING must not stay inside the comment.
     return sql.substr(0, end) + "\nRETURNING " + q;
 }
 

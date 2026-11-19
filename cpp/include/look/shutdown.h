@@ -1,34 +1,34 @@
 #pragma once
-// Zarif kapanma (lk-fcgi: HTTP kipi, FastCGI TCP ve pipe kipi).
+// Graceful shutdown (lk-fcgi: HTTP mode, FastCGI TCP and pipe modes).
 //
-// ESKİ: SIGTERM/SIGINT için işleyici yoktu — systemd stop/restart (Plesk sürüm geçişi, deploy) süreci
-// anında öldürüyordu: yarıdaki istekler kesiliyor, istemci yarım yanıt ya da bağlantı hatası
-// görüyordu, veritabanı bağlantıları kapatılmadan bırakılıyordu.
+// OLD: there was no handler for SIGTERM/SIGINT — systemd stop/restart (Plesk release switch, deploy) killed the process
+// instantly: requests in progress were cut, the client saw a half response or a connection error,
+// database connections were left unclosed.
 //
-// Model (Go http.Server.Shutdown): ilk sinyalde yeni bağlantı kabulü durur, boşta bekleyen
-// bağlantılar kapanır, işlenen istekler biter (yanıtları "Connection: close" ile), veritabanı
-// havuzları kapatılır, süreç 0 ile çıkar. Üst sınır sabit 30 sn (ayar yok — tek seçenek); bitmeyen
-// istek kalırsa nedeni yazılıp 1 ile çıkılır. İkinci sinyal hemen çıkarır.
+// Model (Go http.Server.Shutdown): on the first signal accepting new connections stops, idle
+// connections are closed, requests in progress finish (answered with "Connection: close"), the database
+// pools are closed, the process exits with 0. The upper bound is a fixed 30 s (no setting — a single option); if a request
+// does not finish the reason is written and it exits with 1. A second signal exits immediately.
 //
-// Sinyaller ayrı bir iş parçacığında sigwait ile alınır: install() süreçte HİÇBİR iş parçacığı
-// açılmadan çağrılmalıdır (engelleme maskesi iş parçacıklarına kalıtılır; aksi halde sinyal
-// veritabanı iş parçacığı gibi rastgele birine düşer ve varsayılan eylem süreci öldürür).
+// Signals are received in a separate thread with sigwait: install() must be called with NO thread
+// opened in the process yet (the blocking mask is inherited by threads; otherwise the signal
+// lands on a random one such as the database thread and the default action kills the process).
 #include <functional>
 
 namespace look::shutdown {
 
-// Süreç başında (main'in ilk işi). Windows: hiçbir şey yapmaz (varsayılan davranış sürer).
+// At process start (main's first job). Windows: does nothing (the default behaviour continues).
 void install();
 
-// Kapanma başlayınca çağrılacak iş (sunucu kurulduktan sonra kaydedilir). Kayıttan ÖNCE gelen
-// sinyalde işlenen istek yoktur: süreç hemen finish(0) ile çıkar.
+// The job to call when shutdown starts (registered after the server is set up). For a signal that arrives BEFORE registration
+// there is no request in progress: the process exits immediately with finish(0).
 void on_begin(std::function<void()> fn);
 
-// Kapanma istendi mi (döngüler yeni iş almamak için bakar).
+// Was shutdown requested (loops check this so as not to take new work).
 bool requested();
 
-// Bitiş: veritabanı havuzlarını kapatır, günlüğe yazar, çıkar (yıkıcılar koşmaz — çıkışta
-// kilit bekleyen bir statik yıkıcı süreci asmasın).
+// Finish: closes the database pools, writes to the log, exits (destructors do not run — so that a static
+// destructor waiting for a lock at exit does not hang the process).
 [[noreturn]] void finish(int code);
 
 } // namespace look::shutdown

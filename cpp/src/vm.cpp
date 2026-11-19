@@ -1,24 +1,24 @@
 // LOOK Bytecode VM
 //
-// Dispatch döngüsü: switch(opcode) → GCC/Clang jump table.
-// Value tipi: look/value.h. Struct: Value::STRUCT (look/struct_types.h).
+// Dispatch loop: switch(opcode) → GCC/Clang jump table.
+// Value type: look/value.h. Struct: Value::STRUCT (look/struct_types.h).
 
 #include <atomic>
 #include <climits>
 #include "look/vm.h"
 #include "look/index_error.h"
-#include "look/fiber.h"         // Fiber::current — aktif VM fibere özel (active_vm_slot)
+#include "look/fiber.h"         // Fiber::current — specific to the active VM fiber (active_vm_slot)
 #include "look/bytecode.h"
 #include "look/web.h"
 #include "look/value_path.h"
-#include "look/runtime_host.h"   // ExitException — CALL_BUILTIN (modül NativeFn) fırlatabilir
+#include "look/runtime_host.h"   // ExitException — CALL_BUILTIN (module NativeFn) may throw it
 #include "look/parallel_runtime.h"
 #include "look/logger.h"
-#include "look/builtins.h"      // builtin_names() — hata mesajinda modul/fonksiyon adi
-#include "look/int_overflow.h"  // i64_add_ovf — INT+INT aritmetik fast-path
-#include "look/route_params.h"   // LOOK 2: yol parametreleri ada göre
-#include "look/stack_guard.h"   // look_native_stack_low — geri çağırmada gerçek kalan yığın
-#include "look/mem_budget.h"    // mem_check — güvenli noktada bellek bütçesi
+#include "look/builtins.h"      // builtin_names() — module/function name in the error message
+#include "look/int_overflow.h"  // i64_add_ovf — INT+INT arithmetic fast path
+#include "look/route_params.h"   // route parameters by name
+#include "look/stack_guard.h"   // look_native_stack_low — the actual remaining stack in a callback
+#include "look/mem_budget.h"    // mem_check — memory budget at a safe point
 #include <algorithm>
 
 #include <sstream>
@@ -32,8 +32,8 @@
 #include <set>
 
 namespace {
-// LOOK_WARN_UNDEF=1 → tanımsız değişken okumalarını logla (davranışı DEĞİŞTİRMEZ).
-// Bir kez okunur; LOAD_GLOBAL'in yalnız ıska dalında bakılır → sıcak yola maliyeti yok.
+// LOOK_WARN_UNDEF=1 → log undefined-variable reads (does NOT CHANGE behavior).
+// Read once; checked only on LOAD_GLOBAL's miss branch → no cost on the hot path.
 const bool g_warn_undef = [] {
     const char* e = std::getenv("LOOK_WARN_UNDEF");
     return e && e[0] == '1';
@@ -42,35 +42,35 @@ const bool g_warn_undef = [] {
 
 namespace look {
 
-// VM'in güvenli noktası (geriye atlama, çağrı): sıra bırakma (fiber.h preempt_point) + bellek bütçesi
-// (look/mem_budget.h). Hızlı yolda tek sayaç azaltma; bütçeyi aşan ayırma sayacı sıfırlar, yavaş yol
-// burada hemen denetler. preempt_point noexcept'tir — bellek hatası ancak buradan fırlatılabilir.
+// The VM's safe point (backward jump, call): yielding (fiber.h preempt_point) + the memory budget
+// (look/mem_budget.h). On the fast path a single counter decrement; an allocation that exceeds the budget resets the counter, the slow path
+// checks here right away. preempt_point is noexcept — a memory error can only be thrown from here.
 static inline void vm_safe_point() {
     if (--t_preempt_budget <= 0) { preempt_slow(); mem_check(); }
 }
 
-// parallel transitif deep-clone hook'u. value.h Closure'ı göremez (bytecode.h
-// onu sonra tanımlar) → deep_clone_impl BYTECODE_FN görünce burada kayıtlı cloner'ı çağırır.
-// Bir Closure klonlanırken yakaladığı değerler VE iç closure'lar özyineli klonlanır; aksi
-// halde parallel task'ın yakaladığı closure'ın içindeki dizi/map parent'la paylaşımlı kalır
-// (np1 veri yarışı). Channel/scalar capture'lar paylaşımlı kalır (deep_clone_impl *this).
+// parallel transitive deep-clone hook. value.h cannot see Closure (bytecode.h
+// defines it later) → when deep_clone_impl sees BYTECODE_FN it calls the cloner registered here.
+// When a Closure is cloned, the values it captured AND inner closures are cloned recursively; otherwise
+// the array/map inside a closure captured by a parallel task stays shared with the parent
+// (np1 data race). Channel/scalar captures stay shared (deep_clone_impl *this).
 static Value clone_bytecode_fn(const Value& v, std::unordered_set<const void*>& visited) {
     auto src = v.as_bytecode_fn();
     if (!src) return v;
-    if (visited.count(src.get())) return Value(); // döngü kır
+    if (visited.count(src.get())) return Value(); // break the cycle
     visited.insert(src.get());
     auto nc = std::make_shared<Closure>(src->proto);
-    nc->native   = src->native;                    // ev sahibi fonksiyonu (varsa) aynen
-    nc->captures = src->captures;                  // sığ; aşağıda handle olmayanlar derinleşir
-    // R-02: parallel task'a verilen closure'un capture izolasyonu — İZİN LİSTESİ
-    // (fail-open) yerine YASAK LİSTESİ (fail-safe). Paylaşımı KASITLI olan handle tipleri
-    // (channel/ws/sse — cross-thread iletişim primitifleri) DIŞINDA her capture deep_clone
-    // edilir. Böylece `use ($dizi)` gibi düz ARRAY capture'ı da izole olur (eski hâl yalnız
-    // iç-closure klonluyordu; düz dizi sığ shared_ptr'la PAYLAŞILIP parallel task'lar
-    // aynı vector'ü eşzamanlı mutasyona uğratıp YARIŞIYORDU — t1, TSan). Kritik: Value'ya
-    // yeni bir tip eklendiğinde otomatik GÜVENLİ tarafta başlar — izin listesi olsaydı her
-    // yeni tip sessiz-paylaşım bug'ı olurdu (bu sınıfın 3. yaması). deep_clone_impl her tipi
-    // doğru ele alır: ARRAY özyineli klon, closure hook'la klon, scalar/string *this (ucuz,
+    nc->native   = src->native;                    // host function (if any) as is
+    nc->captures = src->captures;                  // shallow; below, non-handles are deep-copied
+    // R-02: capture isolation of a closure given to a parallel task — DENY LIST
+    // (fail-safe) instead of an ALLOW LIST (fail-open). Every capture is deep_cloned EXCEPT
+    // handle types whose sharing is INTENTIONAL (channel/ws/sse — cross-thread communication primitives).
+    // So a plain ARRAY capture like `use ($array)` is isolated too (the old state only
+    // cloned inner closures; a plain array was SHARED through a shallow shared_ptr and parallel tasks
+    // mutated the same vector concurrently and RACED — t1, TSan). Critical: when a new type is added to
+    // Value it starts automatically on the SAFE side — with an allow list every
+    // new type would be a silent-sharing bug (the 3rd patch of this class). deep_clone_impl handles every type
+    // correctly: ARRAY recursive clone, closure clone via the hook, scalar/string *this (cheap,
     // immutable).
     for (size_t j = 0; j < nc->captures.size(); ++j) {
         Value::Type t = nc->captures[j].type();
@@ -87,25 +87,25 @@ static const bool s_bc_cloner_registered = [] {
     return true;
 }();
 
-// ── VM callback köprüsü (hook tarafı) ─────────────────────────────────────────
-// Bridge fonksiyonları runtime_host.cpp'de; VM burada
-// yalnızca hook'unu kaydeder. Aktif VM run() içinde kaydedilir: fiber içinde FİBERE özel
-// (FiberLocal::active_vm), fiber dışında iş parçacığına özel. Eskiden yalnız thread_local'di:
-// istek bir sorguda / http::get'te askıya alınınca aynı iş parçacığındaki başka bir isteğin
-// VM'i onu eziyordu; askıdan dönen istekteki array::map closure'ı ÖTEKİ isteğin VM'inde çalışıp
-// onun başlığını/parametresini okuyor, sonra süreç çöküyordu (1.0.20–1.0.23, fiber modu).
-// fiber-ok: yalnız fiber dışı yedek; fiber içinde FiberLocal::active_vm
+// ── VM callback bridge (hook side) ─────────────────────────────────────────
+// The bridge functions are in runtime_host.cpp; here the VM
+// only registers its hook. The active VM is registered inside run(): inside a fiber it is SPECIFIC TO THE FIBER
+// (FiberLocal::active_vm), outside a fiber specific to the thread. It used to be only thread_local:
+// when a request was suspended in a query / http::get, another request's
+// VM on the same thread overwrote it; the array::map closure of the resumed request ran in the OTHER request's VM,
+// read its header/parameter, and then the process crashed (1.0.20–1.0.23, fiber mode).
+// fiber-ok: only a backup outside a fiber; inside a fiber FiberLocal::active_vm
 static thread_local VM* t_active_vm = nullptr;
 static VM*& active_vm_slot() {
     if (Fiber* f = Fiber::current()) return reinterpret_cast<VM*&>(f->local.active_vm);
     return t_active_vm;
 }
 
-// ── argüman sayısı (LOOK 2) ───────────────────────────────────────────────────
-// Kullanıcı çağrısı ve çalışma zamanının geri çağırması tam tutmalı: fazla argüman da,
-// varsayılanı olmayan parametrenin eksik kalması da HATA (yorumlayıcı hep böyleydi; VM sessizce
-// kabul ediyordu, eksik parametre null oluyordu). Metinler eski yorumlayıcınınkiyle aynı.
-// Rota dağıtımı bu denetimden GEÇMEZ: işleyici yol parametrelerinden istediği kadarını alır.
+// ── argument count ───────────────────────────────────────────────────────────
+// A user call and a runtime callback must match exactly: both an extra argument and
+// a missing parameter that has no default are an ERROR (the interpreter always did this; the VM silently
+// accepted it, a missing parameter became null). The messages are the same as the old interpreter's.
+// Route dispatch does NOT pass through this check: the handler takes as many of the route parameters as it wants.
 static inline void check_argc(const FunctionProto* p, int argc) {
     const int fixed = p->variadic ? p->arity - 1 : p->arity;
     if (argc >= p->required && (p->variadic || argc <= fixed)) return;
@@ -123,11 +123,11 @@ static Value vm_bridge_hook(const Value& fn, std::vector<Value>& args) {
         throw LookVmError("vm_bridge_hook: no active VM");
     if (fn.type() != Value::BYTECODE_FN)
         throw LookVmError("vm_bridge_hook: BYTECODE_FN expected");
-    check_argc(fn.as_bytecode_fn()->proto.get(), (int)args.size());   // geri çağırma: sayı tam tutmalı
+    check_argc(fn.as_bytecode_fn()->proto.get(), (int)args.size());   // callback: the count must match exactly
     return vm->call_closure(*fn.as_bytecode_fn(), args);
 }
 
-// ── VM ctor ───────────────────────────────────────────────────────────────────
+// ── VM ctor ───────────────────────────────────────────────────────────────
 
 VM::VM(SharedState shared, std::ostream& output)
     : shared_(shared), output_(output)
@@ -138,7 +138,7 @@ VM::VM(SharedState shared, std::ostream& output)
 
 void VM::set_globals(std::unordered_map<std::string, Value> g) {
     globals_ = std::move(g);
-    global_cache_.clear();   // A2: globals_ tümden değişti → önbelleklenen Value*'lar geçersiz
+    global_cache_.clear();   // A2: globals_ changed entirely → cached Value*'s are invalid
 }
 void VM::set_web_context(WebContext* ctx)                        { web_ctx_ = ctx; }
 void VM::set_ws_connection(std::shared_ptr<WsConnection> ws)    { ws_conn_ = ws; }
@@ -157,7 +157,7 @@ Value VM::execute(const CompiledProgram& prog) {
 Value make_native_fn(const std::string& name, BuiltinFn fn) {
     auto p = std::make_shared<FunctionProto>();
     p->name     = name;
-    p->variadic = true;   // her argüman sayısı kabul — denetimi fonksiyonun kendisi yapar
+    p->variadic = true;   // accepts any argument count — the function itself does the check
     p->arity    = 1;
     p->required = 0;
     p->reg_count = 0;
@@ -166,14 +166,14 @@ Value make_native_fn(const std::string& name, BuiltinFn fn) {
     return Value(cl);
 }
 
-// Nadir yollar satır dışı: run() içine gömülünce onun C++ çerçevesini büyütüp her geri çağırma
-// seviyesinin yığın payını artırıyordu (objdump: run() 0x218 → 0x4e8).
+// Rare paths are out of line: embedding them in run() grew its C++ frame and increased the stack share
+// of every callback level (objdump: run() 0x218 → 0x4e8).
 #if defined(_MSC_VER)
 #  define LOOK_VM_COLD __declspec(noinline)
 #else
 #  define LOOK_VM_COLD __attribute__((noinline, cold))
 #endif
-// ── Yığın sınırları (look/vm.h MAX_* açıklaması) ──────────────────────────────
+// ── Stack limits (explanation of MAX_* in look/vm.h) ──────────────────────
 [[noreturn]] LOOK_VM_COLD static void stack_overflow_calls() {
     throw LookVmError("Stack overflow: more than 10000 nested calls (endless recursion?)");
 }
@@ -188,9 +188,9 @@ Value make_native_fn(const std::string& name, BuiltinFn fn) {
     throw LookVmError("Stack overflow: the native stack is nearly full (too many nested callbacks)");
 }
 
-// Hata yolu (soğuk): run()'ın çerçevesi = tabanı `base`, proto'su `proto` olan EN ALTTAKİ çerçeve.
-// Üstündekiler (iç içe çağrıların bıraktıkları) tabanı ≥ base olanlardır; tabanı küçük olana
-// gelince dur. Bulunamazsa satır kaydedilmez (eskisi gibi 0 kalır).
+// Error path (cold): the frame of run() = the BOTTOM-MOST frame whose base is `base` and proto is `proto`.
+// The ones above it (left by nested calls) are those with base ≥ base; stop when you
+// reach one with a smaller base. If not found the line is not recorded (stays 0 as before).
 LOOK_VM_COLD void VM::note_error_line_for(int base, const FunctionProto* proto) {
     const Frame* found = nullptr;
     for (size_t i = call_stack_.size(); i-- > 0;) {
@@ -201,13 +201,13 @@ LOOK_VM_COLD void VM::note_error_line_for(int base, const FunctionProto* proto) 
     if (found) note_error_line(*found, proto);
 }
 
-// Çağrı zinciri: call_stack_[k] (k ≥ 1) bir çağrıdır — adı kendi proto'sunun, satırı çağıranın
-// (call_stack_[k-1]) o anki komutunun (ip-1 = çağrı komutu; geri çağırmada array::map gibi
-// yerleşiğin çağrıldığı satır). Eski yorumlayıcıyla aynı: en içteki önce. Derin özyinelemede
-// (10 000 çağrı) en içteki ve en dıştaki 50'si yazılır, arası tek satır — Go da ortayı atlar.
-// `$l = array::push($l, $x)` / `$l = array::slice($l, 0, -1)` yerinde derlenir ve çağrıyı atlar;
-// `use array` yokken de çalışıyordu (yol biçimi ise "Module 'array' not loaded." veriyor). Bir sürüm
-// uyarı, sonra hata (push/pop ile aynı takvim). Yer başına bir kez (süreç ömrü) — döngü günlüğü doldurmasın.
+// Call chain: call_stack_[k] (k ≥ 1) is a call — its name is its own proto's, its line is the caller's
+// (call_stack_[k-1]) current instruction (ip-1 = the call instruction; in a callback the line
+// where a built-in like array::map was called). Same as the old interpreter: innermost first. In deep recursion
+// (10 000 calls) the innermost and outermost 50 are written, one line in between — Go also skips the middle.
+// `$l = array::push($l, $x)` / `$l = array::slice($l, 0, -1)` are compiled in place and skip the call;
+// it worked without `use array` too (the path form gives "Module 'array' not loaded."). One release
+// a warning, then an error (same schedule as push/pop). Once per place (process lifetime) — so the loop does not fill the log.
 static LOOK_VM_COLD void warn_in_place_without_use_array(const FunctionProto* proto, int ip, const char* fn) {
     static std::mutex mu;
     static std::set<std::pair<const FunctionProto*, int>> seen;
@@ -218,7 +218,7 @@ static LOOK_VM_COLD void warn_in_place_without_use_array(const FunctionProto* pr
     int line = 0;
     std::string file;
     if (proto && ip >= 0 && ip < (int)proto->lines.size()) { line = proto->lines[ip]; file = proto->file_at(ip); }
-    // "" = ana betik (bytecode.h file_runs) → yalnız satır; dahil edilen dosyada dosya:satır
+    // "" = main script (bytecode.h file_runs) → line only; in an included file file:line
     std::string where = line <= 0 ? std::string()
                       : file.empty() ? "line " + std::to_string(line) + ": " : file + ":" + std::to_string(line) + ": ";
     Logger::instance().log(LogLevel::LOG_WARN, "check",
@@ -236,7 +236,7 @@ LOOK_VM_COLD void VM::capture_error_stack() {
         const Frame& callee = call_stack_[k];
         const Frame& caller = call_stack_[k - 1];
         sf.function = callee.proto ? callee.proto->name : std::string();
-        // Satırsız komut (ör. fn($v) => f($v) gövdesindeki çağrı) → önceki en yakın satır.
+        // A command without a line (e.g. a call in the body of fn($v) => f($v)) → the nearest previous line.
         int i = caller.ip - 1;
         if (caller.proto) {
             const auto& ln = caller.proto->lines;
@@ -259,8 +259,8 @@ LOOK_VM_COLD void VM::capture_error_stack() {
     for (size_t k = n - kEdge; k < n; ++k) add(k);
 }
 
-// parallel() görevi: dışarıda iz bırakan yerleşik mi (etki sınıfı Effect ya da sınıfsız)?
-// Pure/Reads/ThrowCheck/Callback betik bittikten sonra da çalışır (parallel_runtime.h).
+// parallel() task: is it a built-in that leaves a trace outside (effect class Effect or unclassified)?
+// Pure/Reads/ThrowCheck/Callback also run after the script ends (parallel_runtime.h).
 static const std::vector<char>& builtin_leaves_trace() {
     static const std::vector<char> t = [] {
         const auto& names = builtin_names();
@@ -273,7 +273,7 @@ static const std::vector<char>& builtin_leaves_trace() {
     }();
     return t;
 }
-// Görevin etki noktası sonu: yerleşik/kanal dönünce (ya da fırlatınca) yeniden RUNNING.
+// End of the task's effect point: when the built-in/channel returns (or throws) RUNNING again.
 struct TaskEffectEnd {
     TaskExit* t;
     ~TaskEffectEnd() { if (t) task_effect_end(t); }
@@ -284,15 +284,15 @@ LOOK_VM_COLD void VM::reserve_regs(size_t n) {
                   MAX_STACK_VALUES * sizeof(Value) == 8u * 1024 * 1024,
                   "the Stack overflow messages above name these limits: update them together");
     if (n > MAX_STACK_VALUES) stack_overflow_memory();
-    // İki katına büyü ama bütçeyi geçme: geçici tahsis (eski + yeni) en fazla bütçe kadar kalır.
+    // Grow to double but do not exceed the budget: the temporary allocation (old + new) stays at most the budget.
     regs_.reserve(std::min(MAX_STACK_VALUES, std::max(n, regs_.capacity() * 2)));
 }
 
 Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
-    if (closure.native) return closure.native(args);   // ev sahibi fonksiyonu
+    if (closure.native) return closure.native(args);   // host function
     if ((int)call_stack_.size() >= MAX_CALL_DEPTH) stack_overflow_calls();
-    // Geri çağırma iç içeliği: her seviye C++ yığını harcar (run() yeniden girişi). Sayaç her
-    // ortamda aynı davranışı, gerçek yığın denetimi küçük yığında bile çökmemeyi sağlar.
+    // Callback nesting: every level uses C++ stack (run() re-entry). The counter gives the same behavior in every
+    // environment, and the real stack check prevents crashing even on a small stack.
     if (native_depth_ >= MAX_NATIVE_DEPTH) stack_overflow_callbacks();
     if (look_native_stack_low()) stack_overflow_native();
     struct NativeDepth { int& d; explicit NativeDepth(int& x) : d(x) { ++d; } ~NativeDepth() { --d; } } nd(native_depth_);
@@ -300,9 +300,9 @@ Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
     auto* proto = closure.proto.get();
     int base = push_frame(&closure, proto->reg_count, -1);
 
-    // Argümanları register'lara yaz
+    // Write the arguments to registers
     int argc = (int)args.size();
-    call_stack_.back().argc = argc;   // varsayılan param prologue'u için
+    call_stack_.back().argc = argc;   // for the default-param prologue
     if (!proto->variadic) {
         for (int i = 0; i < proto->arity && i < argc; ++i)
             regs_[base + i] = std::move(args[i]);
@@ -310,7 +310,7 @@ Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
         int fixed = proto->arity - 1;
         for (int i = 0; i < fixed && i < argc; ++i)
             regs_[base + i] = std::move(args[i]);
-        // Variadic: kalan args → ARRAY
+        // Variadic: remaining args → ARRAY
         auto varr = std::make_shared<ValueArray>();
         for (int i = fixed; i < argc; ++i) varr->push_back(std::move(args[i]));
         if (fixed >= 0 && proto->arity > 0)
@@ -320,7 +320,7 @@ Value VM::call_closure(const Closure& closure, std::vector<Value> args) {
     return run();
 }
 
-// ── push_frame ────────────────────────────────────────────────────────────────
+// ── push_frame ────────────────────────────────────────────────────────────
 
 int VM::push_frame(const Closure* cl, int reg_count, int ret_reg) {
     int base = (int)regs_.size();
@@ -330,7 +330,7 @@ int VM::push_frame(const Closure* cl, int reg_count, int ret_reg) {
 }
 
 
-// ── dispatch_routes ───────────────────────────────────────────────────────────
+// ── dispatch_routes ───────────────────────────────────────────────────────
 
 void VM::dispatch_routes(const std::string& method, const std::string& path) {
     if (!shared_.routes) return;
@@ -342,16 +342,16 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
         if (m != method && m != "*") continue;
         std::vector<Value> params;
         if (route_match(p, path, params)) {
-            // Route-level middleware'leri çalıştır
+            // Run the route-level middlewares
             bool stopped = false;
             for (auto* mw : entry.middlewares) {
                 try { call_closure(*mw, {}); }
                 catch (const RouteStopException&) { stopped = true; break; }
             }
             if (!stopped) {
-                // LOOK 2: yol parametreleri işleyiciye ADA göre verilir (look/route_params.h).
+                // route parameters are passed to the handler BY NAME (look/route_params.h).
                 std::vector<Value> named_args;
-                // WS / SSE rotasında ilk parametre bağlantıdır.
+                // On a WS / SSE route the first parameter is the connection.
                 if (m == "WS" && ws_conn_)        named_args.push_back(Value(ws_conn_));
                 else if (m == "SSE" && sse_conn_) named_args.push_back(Value(sse_conn_));
                 if (web_ctx_) look::route_args_by_name(m, p, entry.fn->proto->params, named_args.size(), web_ctx_->route_params, named_args);
@@ -361,10 +361,10 @@ void VM::dispatch_routes(const std::string& method, const std::string& path) {
             return;
         }
     }
-    // Eşleşen rota yok → durum 404, HANDLER'DAN ÖNCE ayarlanır.
-    // ESKİ HATA: durum yalnız varsayılan gövdede ayarlanıyordu; uygulama route("404", ...)
-    // tanımlamışsa handler çağrılıp dönülüyor ve özel 404 sayfası 200 ile gidiyordu.
-    // Handler isterse response::status ile değiştirebilir.
+    // No matching route → status 404, set BEFORE THE HANDLER.
+    // OLD BUG: the status was set only in the default body; if the application defined route("404", ...)
+    // the handler was called and returned, and the custom 404 page went out with 200.
+    // The handler can change it with response::status if it wants.
     if (web_ctx_) { web_ctx_->status_code = 404; web_ctx_->status_text = "Not Found"; }
     for (auto& entry : *shared_.routes) {
         size_t colon = entry.pattern.find(':');
@@ -389,8 +389,8 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
     };
     auto pp = split(pattern), rp = split(path);
     if (pp.size() != rp.size()) return false;
-    // İsimli param'ları topla; yalnız TAM eşleşmede web_ctx_'e yaz (kısmi
-    // eşleşme route_params'ı kirletmesin).
+    // Collect the named params; write to web_ctx_ only on a FULL match (a partial
+    // match must not pollute route_params).
     std::vector<std::pair<std::string, std::string>> named;
     for (size_t i = 0; i < pp.size(); ++i) {
         if (pp[i].size() > 2 && pp[i].front() == '{' && pp[i].back() == '}') {
@@ -401,24 +401,24 @@ bool VM::route_match(const std::string& pattern, const std::string& path,
             named.emplace_back(pp[i].substr(1, pp[i].size() - 2), dv);
         } else if (pp[i] != rp[i]) return false;
     }
-    // request::param("id") / route::param("id") VM yolunda da çalışsın
-    // (eski yorumlayıcı route_params'ı dolduruyordu — divergence giderildi).
+    // so that request::param("id") / route::param("id") work on the VM path too
+    // (the old interpreter filled route_params — the divergence is fixed).
     if (web_ctx_)
         for (auto& [k, v] : named) web_ctx_->route_params[k] = v;
     return true;
 }
 
-// ── Value helpers ─────────────────────────────────────────────────────────────
+// ── Value helpers ─────────────────────────────────────────────────────────
 
-// "12" / "-3" gibi TAM SAYI metni mi? Dizi anahtari sayisal indeks mi yoksa
-// assoc anahtari mi diye ayirmak icin (tek tanim: look/value_path.h).
+// Is it a WHOLE-NUMBER text like "12" / "-3"? To tell whether an array key is a numeric index or
+// an assoc key (single definition: look/value_path.h).
 static bool look_is_int_key(const std::string& s) { return look::value_is_int_key(s); }
 
 bool VM::val_truthy(const Value& v) { return v.is_truthy(); }
 
 std::string VM::val_to_str(const Value& v) { return v.to_string(); }
 
-// look/struct_types.h std::runtime_error fırlatır; VM hataları LookVmError olarak taşır.
+// look/struct_types.h throws std::runtime_error; VM errors are carried as LookVmError.
 template <class F> static auto vm_struct(F&& f) -> decltype(f()) {
     try { return f(); }
     catch (const LookVmError&) { throw; }
@@ -426,45 +426,45 @@ template <class F> static auto vm_struct(F&& f) -> decltype(f()) {
 }
 
 Value VM::array_get(const Value& arr, const Value& key) {
-    // LOOK 2: struct alanı ($u.age, $u["age"]). Struct bir dizi değildir: sayısal indeks yok.
+    // struct field ($u.age, $u["age"]). A struct is not an array: there is no numeric index.
     if (arr.type() == Value::STRUCT) {
         if (key.type() != Value::STRING)
             throw LookVmError("a struct is not an array: use a field name ('"
                               + look::struct_name(*arr.as_struct()) + "' has no numeric index)");
         return vm_struct([&]() -> Value { return look::struct_get_named(*arr.as_struct(), key.str_ref()); });
     }
-    // LOOK 2: dizi olmayan değeri indekslemek hatadır (look/index_error.h).
-    // Eskiden sessizce null dönüyordu.
-    if (arr.type() == Value::NONE) return Value();   // null boş bir map gibi okunur (Go: nil map okumak hata değildir)
+    // indexing a non-array value is an error (look/index_error.h).
+    // It used to silently return null.
+    if (arr.type() == Value::NONE) return Value();   // null reads like an empty map (Go: reading a nil map is not an error)
     if (arr.type() != Value::ARRAY) throw LookVmError(look::index_error_message(arr, key));
     auto& vec = *arr.as_array();
 
     // Assoc: ["__assoc__", k0, v0, k1, v1, ...] — sentinel at position 0
-    // str_ref(): B5'te string pointer arkasında — as_string()/to_string() her erişimde
-    // kopya döndürür. Sentinel ve key karşılaştırmaları kopyasız (nesne-lookup sıcak yolu).
+    // str_ref(): behind a string pointer since B5 — as_string()/to_string() return a
+    // copy on every access. Sentinel and key comparisons are copy-free (object-lookup hot path).
     if (!vec.empty() && vec[0].is_assoc_marker()) {
-        // Lookup-key kopyasız: STRING anahtar (sıcak yol, $row["name"]) doğrudan
-        // str_ref(); sayısal anahtar ($a[5]) yine "5"e coerce edilir (semantik korunur).
+        // Copy-free lookup key: a STRING key (hot path, $row["name"]) goes directly through
+        // str_ref(); a numeric key ($a[5]) is still coerced to "5" (semantics preserved).
         std::string ktmp;
         const std::string& k = (key.type() == Value::STRING) ? key.str_ref()
                                                              : (ktmp = key.to_string());
-        // Büyük sözlükte dizinli (look/assoc_index.h); küçükte ve eski __struct__ etiketinde doğrusal.
+        // Indexed on a large map (look/assoc_index.h); linear on a small one and on the old __struct__ tag.
         size_t pos = look::assoc_find(vec, k);
         return pos ? vec[pos + 1] : Value();
     }
-    // Liste + tam-sayi-olmayan string anahtar: boyle bir anahtar yok (assoc'ta
-    // bulunamayan anahtarla ayni sozlesme). $obj.alan erisimi de buraya duser.
+    // List + a non-integer string key: there is no such key (same contract as
+    // a key not found in an assoc). The $obj.field access falls here too.
     if (key.type() == Value::STRING && !look_is_int_key(key.str_ref())) return Value();
 
-    // Sayisal indeks — REFERANS SEMANTIGI (eski tree-walk'takiyle ayni):
-    // negatif = sondan, aralik disi = HATA.
-    // ESKI HATA: VM aralik disinda ve negatifte SESSIZCE null donuyordu, oysa
-    // interpreter hata firlatiyor/sondan sayiyordu — ayni program iki motorda iki
-    // farkli sonuc veriyordu:
-    //   $a=[1,2,3]; $a[99]  ->  VM null   / tree-walk HATA
-    //   $a=[1,2,3]; $a[-1]  ->  VM null   / tree-walk 3 (sondan)
-    // Sessiz null, yanlis veriyi gizleyen sinifin ta kendisi (tanimsiz degisken
-    // STRICT karariyla ayni gerekce): dongude siniri asan erisim hata vermeli.
+    // Numeric index — REFERENCE SEMANTICS (same as the old tree-walk):
+    // negative = from the end, out of range = ERROR.
+    // OLD BUG: the VM SILENTLY returned null when out of range and for negatives, while the
+    // interpreter threw an error/counted from the end — the same program gave two
+    // different results on two engines:
+    //   $a=[1,2,3]; $a[99]  ->  VM null   / tree-walk ERROR
+    //   $a=[1,2,3]; $a[-1]  ->  VM null   / tree-walk 3 (from the end)
+    // A silent null is the very class that hides wrong data (same reasoning as the undefined-variable
+    // STRICT decision): an access that exceeds the bound in a loop must give an error.
     int64_t i = key.to_int();
     if (i < 0) i += (int64_t)vec.size();
     if (i < 0 || i >= (int64_t)vec.size())
@@ -472,7 +472,7 @@ Value VM::array_get(const Value& arr, const Value& key) {
     return vec[(size_t)i];
 }
 
-// ── LOOK 2: yazınca-kopyala yol ataması (kurallar: look/value_path.h) ──
+// ── copy-on-write path assignment (rules: look/value_path.h) ──
 Value* VM::array_slot(Value& arr, const Value& key) {
     return vm_struct([&] { return look::value_slot(arr, key); });
 }
@@ -495,8 +495,8 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
     // precondition for the string-view representation: strings never change under a view.)
     if (arr.type() == Value::STRING)
         throw LookVmError("Strings are immutable; cannot assign to a string index");
-    // LOOK 2: struct alanına yazma — şekil sabit, tip denetimli. Literal kurulumu da
-    // (SET_FIELD) buradan geçer; kurallar look/struct_types.h'ta.
+    // writing to a struct field — fixed shape, type-checked. Literal construction (SET_FIELD)
+    // also goes through here; the rules are in look/struct_types.h.
     if (arr.type() == Value::STRUCT) {
         if (key.type() != Value::STRING)
             throw LookVmError("a struct is not an array: use a field name ('"
@@ -509,21 +509,21 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
 
     // Assoc: ["__assoc__", k0, v0, ...] — sentinel at position 0
     bool is_assoc = !vec.empty() && vec[0].is_assoc_marker();
-    // "12"/"-3" gibi tam sayi METNI sayisal indekstir, assoc anahtari degil
-    // (yorumlayici bu metinleri hep sayisal indeks sayiyordu — motorlar ayrisiyordu).
+    // A TEXT like "12"/"-3" is a numeric index, not an assoc key
+    // (the interpreter always counted these texts as a numeric index — the engines diverged).
     bool str_key = key.type() == Value::STRING && !look_is_int_key(key.str_ref());
     if (is_assoc || str_key) {
-        // Lookup-key kopyasız (array_get ile aynı): STRING anahtar str_ref();
-        // sayısal anahtar "5"e coerce. Yeni giriş Value(k) yine kopyalar.
+        // Copy-free lookup key (same as array_get): a STRING key via str_ref();
+        // a numeric key is coerced to "5". A new entry Value(k) copies again.
         std::string ktmp;
         const std::string& k = (key.type() == Value::STRING) ? key.str_ref()
                                                              : (ktmp = key.to_string());
-        // ESKI HATA: liste henuz assoc DEGILKEN asagidaki dongu onu cift listesi
-        // sanip tariyor (start=0), sonra basina yalnizca sentinel ekliyordu:
+        // OLD BUG: while the list was NOT yet an assoc, the loop below took it for a pair list
+        // and scanned it (start=0), then only prepended the sentinel:
         //   $a=[1,2,3]; $a["k"]="X"  ->  ["__assoc__",1,2,3,"k","X"]
-        // cift olarak okununca 1->2, 3->"k" cikiyor: TUM VERI YOK OLUYOR ve yeni
-        // deger de erisilemiyor. Once elemanlari SAYISAL INDEKSLERIYLE anahtarlayarak
-        // donustur (array::set ile ayni sozlesme).
+        // read as pairs this gives 1->2, 3->"k": ALL DATA DISAPPEARS and the new
+        // value is unreachable too. First convert by keying the elements with their NUMERIC INDEXES
+        // (same contract as array::set).
         if (!is_assoc) {
             std::vector<Value> conv;
             conv.reserve(vec.size() * 2 + 1);
@@ -534,7 +534,7 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
             }
             vec.swap(conv);
         }
-        // Var olan anahtar: değeri yerinde değiştir (büyük sözlükte dizinli arama).
+        // Existing key: replace the value in place (indexed lookup on a large map).
         if (size_t pos = look::assoc_find_for_write(vec, k)) { vec[pos + 1] = val; return; }
         // New entry — append key, value at end. When the key is already a STRING Value,
         // store it directly (shared_ptr copy) instead of re-materializing it with a fresh
@@ -547,13 +547,13 @@ void VM::array_set(Value& arr, const Value& key, const Value& val) {
         look::assoc_appended(vec);
         return;
     }
-    // Sayisal indeks — REFERANS SEMANTIGI (eski tree-walk'takiyle ayni):
-    // negatif = sondan, size'a esit = sona ekleme, digerleri HATA.
-    // ESKI HATA: VM aralik disinda ve negatifte YAZMAYI SESSIZCE ATLIYORDU —
-    // atama hicbir sey yapmiyor, hata da vermiyordu:
-    //   $a=[1,2,3]; $a[99]="X"  ->  VM [1,2,3] (atama kayboldu) / tree-walk HATA
-    //   $a=[1,2,3]; $a[-1]="X"  ->  VM [1,2,3] (atama kayboldu) / tree-walk [1,2,"X"]
-    // "Yazdim ama yazilmadi" en sinsi sinif: veri kaybi, hata yok.
+    // Numeric index — REFERENCE SEMANTICS (same as the old tree-walk):
+    // negative = from the end, equal to size = append, anything else is an ERROR.
+    // OLD BUG: the VM SILENTLY SKIPPED THE WRITE when out of range and for negatives —
+    // the assignment did nothing and gave no error either:
+    //   $a=[1,2,3]; $a[99]="X"  ->  VM [1,2,3] (the assignment vanished) / tree-walk ERROR
+    //   $a=[1,2,3]; $a[-1]="X"  ->  VM [1,2,3] (the assignment vanished) / tree-walk [1,2,"X"]
+    // "I wrote it but it was not written" is the most insidious class: data loss, no error.
     int64_t idx = key.to_int();
     if (idx < 0) idx += (int64_t)vec.size();
     if (idx == (int64_t)vec.size()) { vec.push_back(val); return; }
@@ -570,22 +570,22 @@ void VM::set_field(Value& obj, const std::string& field, const Value& val) {
     array_set(obj, Value(field), val);
 }
 
-// ── run — dispatch döngüsü ────────────────────────────────────────────────────
+// ── run — dispatch loop ───────────────────────────────────────────────────
 
 Value VM::run() {
-    // Callback köprüsü: bu VM'i aktif olarak kaydet (RAII ile geri al). Nested
-    // run() aynı VM'e set eder — zararsız. array::map gibi builtin'ler callback'i
-    // RuntimeHost::invoke → vm_bridge_invoke → bu VM'in call_closure'ıyla çalıştırır.
-    // Yuva girişte bir kez alınır: run() boyunca aynı fiber'dayız, geri alma aynı yuvaya yazar.
+    // Callback bridge: register this VM as active (restore with RAII). A nested
+    // run() sets the same VM — harmless. Built-ins like array::map run the callback
+    // through RuntimeHost::invoke → vm_bridge_invoke → this VM's call_closure.
+    // The slot is taken once on entry: during run() we stay in the same fiber, the restore writes to the same slot.
     VM*& _active = active_vm_slot();
     VM* _prev_active = _active;
     _active = this;
-    register_vm_bridge(&vm_bridge_hook);   // thread-local hook'u kaydet (idempotent)
+    register_vm_bridge(&vm_bridge_hook);   // register the thread-local hook (idempotent)
     struct ActiveGuard { VM*& slot; VM* prev; ~ActiveGuard() { slot = prev; } } _ag{_active, _prev_active};
 
-    // Try tabanı: bu run() yalnız kendi push ettiği handler'ları kullanır. İç içe
-    // run() (köprüden gelen closure çağrısı) dış handler'a atlayamaz → LookVmThrow ile
-    // C++ sınırından propagate eder. Çıkışta taban ve artık handler'lar geri alınır.
+    // Try base: this run() uses only the handlers it pushed itself. A nested
+    // run() (a closure call coming from the bridge) cannot jump to an outer handler → it propagates
+    // across the C++ boundary with LookVmThrow. On exit the base and leftover handlers are restored.
     struct FloorGuard {
         VM* vm; size_t prev_floor; size_t entry_size;
         ~FloorGuard() {
@@ -598,22 +598,22 @@ Value VM::run() {
 call_dispatch:
     while (!call_stack_.empty()) {
         Frame& frame = call_stack_.back();
-        // Hata yolu `frame` referansını KULLANMAZ: geri çağırma (map/sort… → call_closure) VM'e
-        // yeniden girip call_stack_'i büyütünce vektör taşınır ve referans serbest bırakılmış
-        // belleği gösterir (ASan: heap-use-after-free). Çerçeve (base, proto) ile yeniden bulunur
-        // (note_error_line_for). Ek canlı değişken (indeks) denendi: run()'ın C++ çerçevesini
-        // 0x218'den 0x4e8'e büyütüp her geri çağırma seviyesini pahalılaştırdı (ölçüldü).
+        // The error path does NOT USE the `frame` reference: when a callback (map/sort… → call_closure) re-enters
+        // the VM and grows call_stack_, the vector moves and the reference points to freed
+        // memory (ASan: heap-use-after-free). The frame is found again by (base, proto)
+        // (note_error_line_for). An extra live variable (an index) was tried: it grew run()'s C++ frame
+        // from 0x218 to 0x4e8 and made every callback level more expensive (measured).
         const FunctionProto* proto = frame.proto;
         int base = frame.base;
 
-        // A2: bu proto'nun global inline cache vektörü (frame girişinde bir kez — frame'ler
-        // instruction'lardan çok daha seyrek değişir). unordered_map rehash mapped-value
-        // referansını geçersiz kılmaz → gcache pointer'ı frame boyunca stabildir.
+        // A2: this proto's global inline cache vector (once on frame entry — frames change
+        // far less often than instructions). An unordered_map rehash does not invalidate a mapped-value
+        // reference → the gcache pointer is stable for the whole frame.
         std::vector<Value*>* gcache = &global_cache_[proto];
         if (gcache->size() != proto->constants.size())
             gcache->assign(proto->constants.size(), nullptr);
-        // LOOK 2: struct alan erişimi için talimat başına önbellek (tanım işaretçisi → slot).
-        // Tembel: struct alanına dokunmayan fonksiyon bunu hiç ayırmaz.
+        // per-instruction cache for struct field access (definition pointer → slot).
+        // Lazy: a function that does not touch a struct field never allocates it.
         std::vector<FieldCache>* fcache_p = nullptr;
         auto field_cache = [&]() -> std::vector<FieldCache>& {
             if (!fcache_p) {
@@ -623,8 +623,8 @@ call_dispatch:
             return *fcache_p;
         };
 
-        // LOOK 2: yol atamalarının kökü — değişkenin KENDİ yeri (bkz. SET_PATH/PUSH_PATH).
-        //   0 yerel · 4 global (yakalanan değişkene yazılamaz: derleyici reddeder)
+        // the root of path assignments — the variable's OWN place (see SET_PATH/PUSH_PATH).
+        //   0 local · 4 global (a captured variable cannot be written: the compiler rejects it)
         auto path_root = [&](const Instruction& h) -> Value* {
             const uint32_t ix = h.bx();
             switch (h.a) {
@@ -642,9 +642,9 @@ call_dispatch:
         while (frame.ip < (int)proto->code.size()) {
             const Instruction& ins = proto->code[frame.ip++];
 
-// A1: Sıcak yol register erişimi. Compiler register indekslerini derleme-zamanı
-// garanti ettiği için release'de bounds-check ölü maliyet → operator[]. Debug/ASan
-// build'de .at() korunur (bytecode üretimi bug'ı taşarsa yakalanır, sessiz UB olmaz).
+// A1: Hot-path register access. Since the compiler guarantees register indexes at compile time,
+// the bounds check is dead cost in release → operator[]. In debug/ASan
+// builds .at() is kept (if a bytecode generation bug overflows it is caught, no silent UB).
 #ifdef NDEBUG
 #define R(x) regs_[(size_t)(base + (x))]
 #else
@@ -671,25 +671,25 @@ call_dispatch:
 
             case OpCode::LOAD_GLOBAL: {
                 uint32_t ni = ins.bx();
-                // A2 inline cache: bu ni için çivilenmiş slot varsa doğrudan oku (register hızı).
+                // A2 inline cache: if there is a slot pinned for this ni, read it directly (register speed).
                 if (Value* hit = (*gcache)[ni]) { R(ins.a) = *hit; break; }
-                // str_ref(): as_string() kopyasını önle (B5'te string pointer arkasında;
-                // her global erişimi bir string kopyası ödemeliydi). find const& alır.
+                // str_ref(): avoid the as_string() copy (behind a string pointer since B5;
+                // every global access would have had to pay a string copy). find takes const&.
                 const std::string& gname = CONST(ni).str_ref();
                 auto it = globals_.find(gname);
                 if (it != globals_.end()) {
-                    // LOOK 2: kurulumdan gelen dizi istekle PAYLAŞILIR — kopya yok. İstek ona yazarsa
-                    // yazma yolu (SET_PATH / PUSH_PATH / detach) önce kendi kopyasını alır.
-                    (*gcache)[ni] = &it->second;   // slot'u çivile — sonraki erişimler ıskasız
+                    // an array coming from setup is SHARED with the request — no copy. If the request writes to it, the
+                    // write path (SET_PATH / PUSH_PATH / detach) takes its own copy first.
+                    (*gcache)[ni] = &it->second;   // pin the slot — later accesses without a miss
                     R(ins.a) = it->second;
                 } else if (!gname.empty() && gname[0] == '$') {
-                    // Tanımsız DEĞİŞKEN — STRICT (mesajı testler grep'liyor).
-                    // Karar gerekçesi: hedef bandın iki ucu da strict (Go: derleme hatası,
-                    // Node: ReferenceError); PHP'den yalnız dağıtım/kitle alınıyor, semantik
-                    // değil. Yorumlayıcı (o zamanki referans motor) zaten strict'ti — sapan taraf
-                    // VM'di ve sessiz null üretiyordu (bu turun tüm bug'ları o sınıftandı).
-                    // LOOK_WARN_UNDEF=1 → GEÇİŞ MODU: eski lenient davranış + uyarı
-                    // (yalnız migration için, kalıcı kullanım için değildir).
+                    // Undefined VARIABLE — STRICT (the tests grep the message).
+                    // Reasoning: both ends of the target band are strict (Go: compile error,
+                    // Node: ReferenceError); from PHP only the distribution/audience is taken, not the
+                    // semantics. The interpreter (the reference engine at the time) was already strict — the deviating side
+                    // was the VM, which produced a silent null (all the bugs of this round were of that class).
+                    // LOOK_WARN_UNDEF=1 → TRANSITION MODE: the old lenient behavior + a warning
+                    // (for migration only, not for permanent use).
                     if (g_warn_undef) {
                         R(ins.a) = Value();
                         Logger::instance().log(LogLevel::LOG_WARN, "VM",
@@ -698,8 +698,8 @@ call_dispatch:
                         throw LookVmError("Undefined variable: " + gname);
                     }
                 } else {
-                    // "mod::fn" gibi değişken-olmayan isimler: burada ıskalamak NORMAL
-                    // (genel CALL yoluna düşer) → fırlatmak yanlış olurdu.
+                    // names that are not variables like "mod::fn": a miss here is NORMAL
+                    // (falls to the general CALL path) → throwing would be wrong.
                     R(ins.a) = Value();
                 }
                 break;
@@ -707,26 +707,26 @@ call_dispatch:
             case OpCode::STORE_GLOBAL: {
                 // a=src_reg, b=name_hi, c=name_lo (16-bit constant pool index)
                 uint32_t ni = ins.bx();
-                // A2: çivilenmiş slot varsa doğrudan yaz (hash yok). Yalnız MEVCUT slot'a
-                // yazar (cache ilk find/insert'ten sonra doldurulur → daima geçerli adres).
+                // A2: if there is a pinned slot write directly (no hash). Writes ONLY to an EXISTING slot
+                // (the cache is filled after the first find/insert → always a valid address).
                 if (Value* hit = (*gcache)[ni]) { *hit = R(ins.a); break; }
-                const std::string& name = CONST(ni).str_ref();  // kopyasız
-                Value& slot = globals_[name];   // yoksa oluştur, varsa bul
+                const std::string& name = CONST(ni).str_ref();  // copy-free
+                Value& slot = globals_[name];   // create if missing, find if present
                 slot = R(ins.a);
-                (*gcache)[ni] = &slot;          // sonraki yazma/okuma için çivile
+                (*gcache)[ni] = &slot;          // pin for later writes/reads
                 break;
             }
             case OpCode::APPEND_GLOBAL: {
-                // `$s .= x` / `$s = $s . x` üst düzeyde: global'in KENDİ yuvasına yerinde ekle (amortize
-                // O(1); paylaşılıyorsa append_in_place bir kez kopyalar). ESKİ: oku → yeni metin → yaz,
-                // her adımda bütün metnin kopyası (döngüde karesel).
+                // `$s .= x` / `$s = $s . x` at top level: append in place to the global's OWN slot (amortized
+                // O(1); if shared, append_in_place copies once). OLD: read → new text → write,
+                // a copy of the whole text at every step (quadratic in a loop).
                 uint32_t ni = ins.bx();
                 Value* slot = (*gcache)[ni];
                 if (!slot) {
                     const std::string& gname = CONST(ni).str_ref();
                     auto it = globals_.find(gname);
                     if (it == globals_.end()) {
-                        // LOAD_GLOBAL ile aynı kural: STRICT; geçiş kipinde null'dan başlar (uyarıyla)
+                        // same rule as LOAD_GLOBAL: STRICT; in transition mode it starts from null (with a warning)
                         if (!g_warn_undef) throw LookVmError("Undefined variable: " + gname);
                         Logger::instance().log(LogLevel::LOG_WARN, "VM",
                             "Undefined variable read (LOOK_WARN_UNDEF transition mode, returned null): " + gname);
@@ -739,7 +739,7 @@ call_dispatch:
                 break;
             }
 
-            // ── Aritmetik — Value'nun operatörlerini kullan ───────────────────
+            // ── Arithmetic — use Value's operators ───────────────────────────
             case OpCode::ADD: {
                 // INT+INT fast-path: skip Value::operator+ machinery (arith_check×2,
                 // to_int×2, FLOAT-checks) for the common case — measured ~8.5ns/add,
@@ -779,11 +779,11 @@ call_dispatch:
                 if (b.type()==Value::FLOAT) {
                     R(ins.a) = Value(-b.as_float());
                 } else {
-                    // İ ile aynı: INT dışı (STRING/BOOL/NONE) tip to_int ile çevrilir.
-                    // Eski `-b.as_float()` ham float_val(0.0)'ı okuyup `-"5"`→-0
-                    // veriyordu (İ ile divergence). to_int → -"5"=-5, -true=-1.
+                    // Same as the other arithmetic operators: a non-INT (STRING/BOOL/NONE) type is converted with to_int.
+                    // The old `-b.as_float()` read the raw float_val (0.0) and gave `-"5"`→-0
+                    // (divergence from the other operators). to_int → -"5"=-5, -true=-1.
                     int64_t v = b.to_int();
-                    // -INT64_MIN int64'e sığmaz: taşma hatası (eskiden sessizce double).
+                    // -INT64_MIN does not fit in int64: overflow error (it used to silently become a double).
                     if (v == INT64_MIN) look::look_int_overflow(0, "-", v);
                     R(ins.a) = Value(-v);
                 }
@@ -796,13 +796,13 @@ call_dispatch:
             case OpCode::SHL:    R(ins.a) = R(ins.b).shift_left(R(ins.c));  break;
             case OpCode::SHR:    R(ins.a) = R(ins.b).shift_right(R(ins.c)); break;
             case OpCode::CONCAT:
-                // B7: dst==sol operand ise akümülatöre yerinde ekle (amortize O(1)).
-                // `.=` ve `$s=$s.x` bu yolu üretir; genel `a.b` (a!=b) eski yolda.
+                // B7: if dst==left operand, append in place to the accumulator (amortized O(1)).
+                // `.=` and `$s=$s.x` produce this path; the general `a.b` (a!=b) takes the old path.
                 if (ins.a == ins.b) R(ins.a).append_in_place(R(ins.c));
                 else                R(ins.a) = R(ins.b).concat(R(ins.c));
                 break;
 
-            // ── Karşılaştırma ─────────────────────────────────────────────────
+            // ── Comparison ────────────────────────────────────────────────────
             case OpCode::EQ:  R(ins.a) = Value(R(ins.b) == R(ins.c)); break;
             case OpCode::NEQ: R(ins.a) = Value(!(R(ins.b) == R(ins.c))); break;
             case OpCode::LT:  R(ins.a) = Value(R(ins.b) <  R(ins.c)); break;
@@ -858,8 +858,8 @@ call_dispatch:
                 break;
             }
             case OpCode::CHECK_DEFINED: {
-                // Çıplak ad değer olarak okundu ve LOAD_GLOBAL null verdi: ad gerçekten
-                // tanımsız mı (null değerli const değil mi) → "Undefined variable" hatası.
+                // A bare name was read as a value and LOAD_GLOBAL gave null: is the name really
+                // undefined (not a const with a null value) → an "Undefined variable" error.
                 if (R(ins.a).type() == Value::NONE) {
                     const std::string& nm = CONST(ins.bx()).str_ref();
                     if (globals_.find(nm) == globals_.end())
@@ -885,39 +885,39 @@ call_dispatch:
                 break;
             }
 
-            // ── Struct — Value::STRUCT, slotlar [ad, tanım, alan0, alan1, ...] ─────────
+            // ── Struct — Value::STRUCT, slots [name, definition, field0, field1, ...] ─────────
             case OpCode::NEW_STRUCT: {
                 uint32_t ni = ins.bx();
                 const std::string& sname = CONST(ni).str_ref();
-                // Literal alan-adı bloğu: NOP(n) + n×LOAD_CONST_W (compile_struct_lit üretir).
+                // Literal field-name block: NOP(n) + n×LOAD_CONST_W (produced by compile_struct_lit).
                 const bool has_names = frame.ip < (int)proto->code.size()
                                     && proto->code[frame.ip].op == OpCode::NOP;
                 const int  fc = has_names ? proto->code[frame.ip].a : 0;
-                // Tanım: bildirimin kendi konumunda yazılan gizli global "__sdef:Name"
-                // (compile_struct_decl), üçlüler [alan, varsayılan, tip]. Örnek, tanımı slot
-                // 1'de taşır; literal değerleri ardından SET_FIELD ile yerine konur.
+                // Definition: the hidden global "__sdef:Name" written at the declaration's own position
+                // (compile_struct_decl), triples [field, default, type]. The instance carries the definition in slot
+                // 1; the literal values are then put in place with SET_FIELD.
                 auto dit = globals_.find("__sdef:" + sname);
                 if (dit == globals_.end() || dit->second.type() != Value::ARRAY)
-                    throw LookVmError("Unknown struct '" + sname + "'");   // metni testler grep'liyor
+                    throw LookVmError("Unknown struct '" + sname + "'");   // the tests grep this text
                 const auto& def = *dit->second.as_array();
                 for (int k = 0; k < fc; ++k) {
                     const auto& li = proto->code[frame.ip + 1 + k];
                     const std::string& fname = CONST(li.bx()).str_ref();
-                    if (look::struct_field_index(def, fname) < 0)   // metni testler grep'liyor
+                    if (look::struct_field_index(def, fname) < 0)   // the tests grep this text
                         throw LookVmError("Unknown field '" + fname + "' in struct '" + sname + "'");
                 }
                 R(ins.a) = vm_struct([&] {
                     return look::struct_new(sname, dit->second,
                         [&](const std::string& t) { return globals_.count("__sdef:" + t) != 0; });
                 });
-                if (has_names) frame.ip += 1 + fc;   // alan-adı bloğunu atla (yürütme)
+                if (has_names) frame.ip += 1 + fc;   // skip the field-name block (execution)
                 break;
             }
             case OpCode::GET_FIELD: {
                 const Value& obj = R(ins.b);
-                const std::string& fname = CONST(ins.c).str_ref();   // kopyasız (as_string kopyalıyordu)
+                const std::string& fname = CONST(ins.c).str_ref();   // copy-free (as_string used to copy)
                 if (obj.type() == Value::STRUCT) {
-                    // Sıcak yol: bu talimat en son hangi tanımda hangi slotu bulduysa onu dene.
+                    // Hot path: try whichever slot this instruction last found in whichever definition.
                     auto& sv = *obj.vec_ptr();
                     FieldCache& fc = field_cache()[(size_t)(frame.ip - 1)];
                     const void* def = sv[1].vec_ptr();
@@ -951,22 +951,22 @@ call_dispatch:
                 break;
             }
             case OpCode::SET_PATH: {
-                // a = değer, b = anahtarların ilk yazmacı, c = anahtar sayısı; sonraki NOP kökü söyler.
+                // a = value, b = first register of the keys, c = number of keys; the next NOP names the root.
                 Value* root = path_root(proto->code[frame.ip++]);
-                // Değer, hedefle aynı depoyu taşıyor olabilir ($a[0] = $a): önce kopyasını tut.
+                // The value may carry the same store as the target ($a[0] = $a): keep its copy first.
                 Value v = R(ins.a);
                 set_path(*root, &R(ins.b), ins.c, v);
                 break;
             }
             case OpCode::PUSH_PATH: case OpCode::POP_PATH: {
-                // push/pop ilk argümanı olan DEĞİŞKENİ değiştirir: hedef, kökün kendi yerinde tek
-                // sahipli hale getirilir (yazınca-kopyala), sonra yerinde büyür/küçülür.
+                // push/pop change the VARIABLE that is the first argument: the target is made single-
+                // owner in the root's own place (copy-on-write), then grows/shrinks in place.
                 const int ins_ip = frame.ip - 1;
                 Value* root = path_root(proto->code[frame.ip++]);
                 const bool is_push = ins.op == OpCode::PUSH_PATH;
                 const Instruction* vh = is_push ? &proto->code[frame.ip++] : nullptr;
                 Value pv = is_push ? R(vh->a) : Value();
-                if (is_push && vh->b) {   // `$a = array::push($a, v)` — `use array` yoksa uyar (sonra hata)
+                if (is_push && vh->b) {   // `$a = array::push($a, v)` — warn if there is no `use array` (then an error)
                     static const int push_ix = builtin_index("array::push");
                     if (push_ix >= 0 && !(*shared_.builtins)[push_ix])
                         warn_in_place_without_use_array(proto, ins_ip, "array::push()");
@@ -974,9 +974,9 @@ call_dispatch:
                 R(ins.a) = vm_struct([&] {
                     Value& target = look::value_path_slot(*root, &R(ins.b), ins.c,
                         [&](Value& c, const Value& k, const Value* forced) { array_set(c, k, *forced); });
-                    // `$a = array::push($a, v)` yerinde derlendi (compiler try_compile_push_assign): aynı mesaj.
+                    // `$a = array::push($a, v)` was compiled in place (compiler try_compile_push_assign): the same message.
                     if (is_push && vh->b && target.type() != Value::ARRAY) {
-                        if (target.type() == Value::STRUCT)   // extra_stdlib.cpp array:: sarmalayıcısıyla aynı
+                        if (target.type() == Value::STRUCT)   // same as the array:: wrapper in extra_stdlib.cpp
                             throw std::runtime_error("array::push() does not take a struct ('"
                                 + (*target.as_struct())[0].str_ref() + "'): a struct is not an array, use its fields");
                         throw std::runtime_error("array::push() requires array and value");
@@ -987,12 +987,12 @@ call_dispatch:
                 break;
             }
             case OpCode::SHRINK_PATH: {
-                // `$a = array::slice($a, 0, -1)` yerinde (compiler try_compile_push_assign): son eleman
-                // değişkenin kendi yerinde atılır (paylaşılıyorsa bir kez kopya). Hatalar çağrınınkiyle
-                // aynı sırada ve metinde (extra_stdlib.cpp array:: sarmalayıcısı + slice gövdesi).
+                // `$a = array::slice($a, 0, -1)` in place (compiler try_compile_push_assign): the last element
+                // is dropped in the variable's own place (one copy if shared). Errors in the same order and
+                // text as the call's (the array:: wrapper in extra_stdlib.cpp + the slice body).
                 const int ins_ip = frame.ip - 1;
                 Value* root = path_root(proto->code[frame.ip++]);
-                {   // `use array` yoksa uyar (PUSH_PATH'teki gibi; sonra hata)
+                {   // warn if there is no `use array` (as in PUSH_PATH; then an error)
                     static const int slice_ix = builtin_index("array::slice");
                     if (slice_ix >= 0 && !(*shared_.builtins)[slice_ix])
                         warn_in_place_without_use_array(proto, ins_ip, "array::slice()");
@@ -1004,7 +1004,7 @@ call_dispatch:
                             + (*t.as_struct())[0].str_ref() + "'): a struct is not an array, use its fields");
                     look::value_list_only(t, "array::slice()");
                     if (t.type() != Value::ARRAY) throw std::runtime_error("array::slice() requires array");
-                    if (t.vec_ptr()->empty()) return;   // [] → [] (yeni boş liste ile aynı değer)
+                    if (t.vec_ptr()->empty()) return;   // [] → [] (same value as a new empty list)
                     t.detach();
                     t.vec_ptr()->pop_back();
                 });
@@ -1012,7 +1012,7 @@ call_dispatch:
             }
 
             // ── Jump ──────────────────────────────────────────────────────────
-            // Geriye atlama = döngünün yeni turu → sıra bırakma noktası (fiber.h preempt_point).
+            // Backward jump = a new turn of the loop → yield point (fiber.h preempt_point).
 #define LOOK_VM_JUMP_TO(target) do { const int _t = (target); \
                 if (_t < frame.ip) vm_safe_point(); frame.ip = _t; } while (0)
             case OpCode::JUMP:
@@ -1031,10 +1031,10 @@ call_dispatch:
 
             // ── CALL ──────────────────────────────────────────────────────────
             case OpCode::CALL: {
-                // a=ret_reg, b=fn_reg, c=args_base; sonraki NOP(argc)
-                vm_safe_point();   // özyineleme döngüsüz de uzun sürebilir (fiber.h)
+                // a=ret_reg, b=fn_reg, c=args_base; next NOP(argc)
+                vm_safe_point();   // recursion can run long even without a loop (fiber.h)
                 uint16_t argc = 0;
-                uint32_t cname = 0;   // callee adinin sabit indeksi + 1 (0 = ad yok)
+                uint32_t cname = 0;   // constant index of the callee's name + 1 (0 = no name)
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
                     argc  = proto->code[frame.ip].a;
@@ -1043,10 +1043,10 @@ call_dispatch:
                 }
                 const Value& fn_val = R(ins.b);
                 if (fn_val.type() != Value::BYTECODE_FN) {
-                    // ESKI HATA: mesaj adi soylemiyordu — "Cagrilabilir degil
-                    // (BYTECODE_FN bekleniyor)". Hangi ad? tree-walk (REFERANS)
-                    // "Undefined variable: <ad>" diyordu; motorlar hem mesajda hem
-                    // teshis edilebilirlikte ayrisiyordu (S3).
+                    // OLD BUG: the message did not name it — "Not callable
+                    // (BYTECODE_FN expected)". Which name? tree-walk (REFERENCE) said
+                    // "Undefined variable: <name>"; the engines diverged both in the message and in
+                    // diagnosability (S3).
                     if (cname) {
                         const std::string& nm = CONST(cname - 1).str_ref();
                         if (fn_val.type() == Value::NONE)
@@ -1056,12 +1056,12 @@ call_dispatch:
                     throw LookVmError("Not callable (function expected)");
                 }
                 auto cl = fn_val.as_bytecode_fn();
-                if (cl->native) {   // ev sahibi fonksiyonu: yerleşik çağrısı gibi
+                if (cl->native) {   // host function: like a built-in call
                     std::vector<Value> nargs;
                     nargs.reserve(argc);
                     for (int i = 0; i < argc; ++i) nargs.push_back(R(ins.c + i));
                     R(ins.a) = cl->native(nargs);
-                    goto call_dispatch;   // geri çağırma VM'e yeniden girip yığını büyütmüş olabilir
+                    goto call_dispatch;   // a callback may have re-entered the VM and grown the stack
                 }
                 auto* cp = cl->proto.get();
                 check_argc(cp, argc);
@@ -1071,8 +1071,8 @@ call_dispatch:
                     for (int i = 0; i < argc && i < cp->arity; ++i)
                         regs_[new_base + i] = R(ins.c + i);
                 } else {
-                    // Variadic: sabit paramları bağla, kalanları rest ARRAY'ine topla
-                    // (call_closure ile aynı — CALL yolunda eksikti).
+                    // Variadic: bind the fixed params, collect the rest into the rest ARRAY
+                    // (same as call_closure — it was missing on the CALL path).
                     int vfixed = cp->arity - 1;
                     for (int i = 0; i < vfixed && i < argc; ++i)
                         regs_[new_base + i] = R(ins.c + i);
@@ -1081,22 +1081,22 @@ call_dispatch:
                     if (vfixed >= 0 && cp->arity > 0)
                         regs_[new_base + vfixed] = look::Value(varr);
                 }
-                // MAX_CALL_DEPTH bytecode CALL yolunda da zorlanmalı (57. bug):
-                // eskiden yalnız call_closure (host→VM) kontrol ediyordu; doğrudan
-                // LOOK özyinelemesi (CALL opcode) SINIRSIZDI → runaway/derin
-                // özyineleme graceful hata yerine bellek tükenene dek gidiyordu
-                // (OOM DoS) ve tree-walk'un 256 sınırından ayrışıyordu.
+                // MAX_CALL_DEPTH must be enforced on the bytecode CALL path too (bug 57):
+                // it used to be checked only by call_closure (host→VM); direct
+                // LOOK recursion (the CALL opcode) was UNBOUNDED → runaway/deep
+                // recursion went on until memory ran out instead of a graceful error
+                // (OOM DoS) and diverged from tree-walk's limit of 256.
                 if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
                     stack_overflow_calls();
                 int ret_abs = base + ins.a;
                 call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, ret_abs, (int)argc});
-                goto call_dispatch; // callee frame'e geç
+                goto call_dispatch; // switch to the callee frame
             }
 
             case OpCode::CALL_BUILTIN: {
-                // Builtin indeksi: düşük yarısı ins.b'de, yüksek yarısı takip eden NOP hint'inin
-                // b alanında (a=argc) — Instruction::builtin_index. 8-bit'ken 256. giriş SESSİZCE
-                // kırpılıp yanlış builtin'i çağırıyordu (index 256 → 0 → print).
+                // Builtin index: the low half is in ins.b, the high half in the b field of the following
+                // NOP hint (a=argc) — Instruction::builtin_index. When it was 8-bit, the 256th entry was SILENTLY
+                // truncated and called the wrong builtin (index 256 → 0 → print).
                 uint16_t argc2 = 1;
                 uint32_t bidx = ins.b;
                 if (frame.ip < (int)proto->code.size()
@@ -1110,14 +1110,14 @@ call_dispatch:
                 std::vector<Value> args;
                 args.reserve(argc2);
                 for (int i = 0; i < argc2; ++i) args.push_back(R(ins.c + i));
-                // Modul 'use' edilmemisse tablodaki giris BOS std::function'dir ve
-                // cagirmak C++ std::bad_function_call firlatir.
-                // ESKI HATA: bu istisna kullaniciya oldugu gibi ciktiyordu:
+                // If the module was not 'use'd, the entry in the table is an EMPTY std::function and
+                // calling it throws C++ std::bad_function_call.
+                // OLD BUG: this exception reached the user as is:
                 //   print(string::len("abc"))   ->  "Runtime Error: bad_function_call"
-                // Ne modulu ne fonksiyonu soyluyor, ustelik bir C++ ic terimi. Oysa
-                // tree-walk (REFERANS) dogru mesaji veriyordu: "Module 'string' not
-                // loaded." — 'use' unutmak LOOK'ta en sik yapilan hata oldugu icin
-                // varsayilan motor en kotu mesaji veriyordu. Ayni metin kullaniliyor (S3).
+                // It names neither the module nor the function, and it is a C++ internal term at that. Meanwhile
+                // tree-walk (REFERENCE) gave the right message: "Module 'string' not
+                // loaded." — since forgetting 'use' is the most common mistake in LOOK,
+                // the default engine gave the worst message. The same text is used (S3).
                 {
                     const auto& bfn = (*shared_.builtins)[bidx];
                     if (!bfn) {
@@ -1129,7 +1129,7 @@ call_dispatch:
                         throw LookVmError("Built-in '" + (nm.empty() ? std::to_string(bidx) : nm) +
                                           "' unavailable (not linked)");
                     }
-                    // parallel() görevi (betik sonu): iz bırakan yerleşik bir etki noktasıdır.
+                    // parallel() task (end of script): a built-in that leaves a trace is an effect point.
                     bool in_effect = false;
                     if (task_) {
                         const auto& lt = builtin_leaves_trace();
@@ -1138,10 +1138,10 @@ call_dispatch:
                     TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
                     R(ins.a) = bfn(args);
                 }
-                // Re-entrancy güvenliği: builtin (ör. array::map) callback aracılığıyla
-                // call_closure ile VM'e geri girip call_stack_'i realloc etmiş olabilir
-                // → dıştaki frame/proto referansları geçersizleşir. call_dispatch'e
-                // dönerek yeniden bağla (frame.ip zaten builtin+NOP'un ötesinde).
+                // Re-entrancy safety: a builtin (e.g. array::map) may have re-entered the VM through a callback
+                // via call_closure and reallocated call_stack_
+                // → the outer frame/proto references become invalid. Rebind by going back to
+                // call_dispatch (frame.ip is already past the builtin+NOP).
                 goto call_dispatch;
             }
 
@@ -1152,7 +1152,7 @@ call_dispatch:
                 call_stack_.pop_back();
                 if (!call_stack_.empty() && ret_reg >= 0) {
                     regs_[ret_reg] = std::move(ret);
-                    goto call_dispatch; // caller frame'e dön
+                    goto call_dispatch; // return to the caller frame
                 } else {
                     return ret;
                 }
@@ -1163,14 +1163,14 @@ call_dispatch:
                 call_stack_.pop_back();
                 if (!call_stack_.empty() && ret_reg >= 0) {
                     regs_[ret_reg] = Value();
-                    goto call_dispatch; // caller frame'e dön
+                    goto call_dispatch; // return to the caller frame
                 } else {
                     return Value();
                 }
             }
             case OpCode::TAIL_CALL: {
-                // Aynı CALL mantığı — frame yeniden kullan (tail call opt)
-                // Şimdilik normal CALL gibi davran — optimize edilmemiş
+                // The same CALL logic — reuse the frame (tail call opt)
+                // For now behave like a normal CALL — not optimized
                 uint16_t argc3 = 0;
                 if (frame.ip < (int)proto->code.size()
                     && proto->code[frame.ip].op == OpCode::NOP) {
@@ -1180,7 +1180,7 @@ call_dispatch:
                 if (fn_val.type() != Value::BYTECODE_FN)
                     throw LookVmError("TAIL_CALL: BYTECODE_FN expected");
                 auto cl = fn_val.as_bytecode_fn();
-                if (cl->native) {   // ev sahibi fonksiyonu: sonucu R(a)'ya, ardından gelen RETURN döndürür
+                if (cl->native) {   // host function: the result goes to R(a), the RETURN that follows returns it
                     std::vector<Value> nargs;
                     nargs.reserve(argc3);
                     for (int i = 0; i < argc3; ++i) nargs.push_back(R(ins.c + i));
@@ -1200,19 +1200,19 @@ call_dispatch:
                     for (int i = vfixed; i < argc3; ++i) varr->push_back(R(ins.c+i));
                     if (vfixed >= 0 && cp->arity > 0) regs_[new_base+vfixed] = look::Value(varr);
                 }
-                // MAX_CALL_DEPTH — CALL_METHOD/ikinci CALL yolu (57. bug, bkz. yukarı)
+                // MAX_CALL_DEPTH — CALL_METHOD/second CALL path (bug 57, see above)
                 if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
                     stack_overflow_calls();
                 call_stack_.push_back({cp, cl.get(), 0, new_base, base+ins.a, (int)argc3});
-                goto call_dispatch; // callee frame'e geç
+                goto call_dispatch; // switch to the callee frame
             }
 
             // ── Closure ───────────────────────────────────────────────────────
             case OpCode::MAKE_CLOSURE: {
-                // 32-bit indeks: b = düşük, c = yüksek yarı — Instruction::bx_lohi (v1: yalnız b → 256. closure 0.'a sarıyordu).
+                // 32-bit index: b = low, c = high half — Instruction::bx_lohi (v1: only b → the 256th closure wrapped to the 0th).
                 auto& nested_proto = proto->nested[ins.bx_lohi()];
                 auto cl = std::make_shared<Closure>(nested_proto);
-                // Capture hint'leri oku: LOAD_CAPTURE(0, cr) pattern
+                // Read the capture hints: LOAD_CAPTURE(0, cr) pattern
                 while (frame.ip < (int)proto->code.size()) {
                     const auto& h = proto->code[frame.ip];
                     if (h.op != OpCode::LOAD_CAPTURE || h.a != 0) break;
@@ -1232,7 +1232,7 @@ call_dispatch:
             // ── Foreach ───────────────────────────────────────────────────────
             case OpCode::FOR_PREP:
                 // r_iter = array copy, r_iter+1 = index 0
-                // LOOK 2: struct üzerinde foreach alanları (ad => değer) gezer → map görünümü.
+                // foreach over a struct walks the fields (name => value) → a map view.
                 R(ins.a)   = R(ins.b).type() == Value::STRUCT ? look::struct_to_map(R(ins.b)) : R(ins.b);
                 R(ins.a+1) = Value(0);
                 break;
@@ -1279,9 +1279,9 @@ call_dispatch:
                 break;
             case OpCode::THROW: {
                 current_exception_ = R(ins.a);
-                // Bu run()'a ait handler yoksa: değeri C++ sınırından propagate et.
-                // (Dış run()'ın handler'ına atlamak call stack'i bozar ve aradaki
-                //  C++ katmanının catch'ini — ör. db::transaction ROLLBACK — atlar.)
+                // If there is no handler belonging to this run(): propagate the value across the C++ boundary.
+                // (Jumping to the outer run()'s handler corrupts the call stack and skips the catch of the
+                //  C++ layer in between — e.g. the db::transaction ROLLBACK.)
                 if (try_stack_.size() <= try_floor_)
                     throw LookVmThrow(current_exception_);
                 auto entry = try_stack_.back(); try_stack_.pop_back();
@@ -1290,9 +1290,9 @@ call_dispatch:
                     call_stack_.pop_back();
                 }
                 call_stack_.back().ip = entry.catch_ip;
-                // frame/proto/base'i catch'in bulunduğu frame'e YENİDEN BAĞLA (RETURN ile
-                // aynı). Salt `break` inner loop'u bayat `proto` + sarkan `frame` referansıyla
-                // sürdürüyordu (fonksiyon-sınırını geçen throw → sessiz duruş/UB; VM≠interpreter).
+                // REBIND frame/proto/base to the frame where the catch is (same as RETURN).
+                // A bare `break` continued the inner loop with a stale `proto` + a dangling `frame` reference
+                // (a throw crossing a function boundary → silent stop/UB; VM≠interpreter).
                 goto call_dispatch;
             }
             case OpCode::LOAD_EXC:
@@ -1302,33 +1302,33 @@ call_dispatch:
                 R(ins.a) = Value((int64_t)frame.argc);
                 break;
 
-            // ── LOOK'a özgü ───────────────────────────────────────────────────
+            // ── LOOK-specific ─────────────────────────────────────────────────
             case OpCode::PARALLEL_CALL: {
                 if (R(ins.a).type() != Value::BYTECODE_FN)
                     throw LookVmError("parallel(): BYTECODE_FN expected");
-                const bool in_effect = task_ && task_point(task_, true);   // görev içinden görev
+                const bool in_effect = task_ && task_point(task_, true);   // a task from inside a task
                 TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
                 task_acquire(); // THROW mode: throws if LOOK_PARALLEL_LIMIT reached
                 auto src_cl = R(ins.a).as_bytecode_fn();
-                // Yakalanan değerler thread'e taşınırken klonlanır: closure ile
-                // çağıran aynı dizi/map depolamasını paylaşmasın (paylaşım = yarış).
+                // Captured values are cloned when carried to the thread: so the closure and
+                // the caller do not share the same array/map storage (sharing = a race).
                 std::shared_ptr<Closure> cl_copy = src_cl;
                 {
-                    // Yakalanan closure (BYTECODE_FN) da klonlanır: deep_clone onu
-                    // transitif klonlar (bc_fn_cloner hook, aşağıda kayıtlı).
+                    // A captured closure (BYTECODE_FN) is cloned too: deep_clone clones it
+                    // transitively (bc_fn_cloner hook, registered below).
 #ifdef LOOK_NO_TRANSITIVE_CLONE
-                    constexpr bool CLONE_CLOSURES = false; // TSan pozitif kontrol: eski (yarışlı) hâl
+                    constexpr bool CLONE_CLOSURES = false; // TSan positive control: the old (racy) state
 #else
                     constexpr bool CLONE_CLOSURES = true;
 #endif
-                    // R-02: capture izolasyonu — İZİN LİSTESİ (yalnız closure klonla)
-                    // yerine YASAK LİSTESİ (fail-safe). Paylaşımı KASITLI handle'lar
-                    // (CHANNEL/WS/SSE — cross-thread iletişim) DIŞINDA her capture klonlanır.
-                    // Eski hâl düz ARRAY capture'ı sığ paylaşıyordu → parallel task'lar aynı
-                    // vector'ü mutasyona uğratıp YARIŞIYORDU (t1b VM, TSan). deep_clone_impl
-                    // her tipi doğru ele alır (array özyineli, handle *this). Yeni Value tipi
-                    // eklenince otomatik güvenli tarafta başlar. (CLONE_CLOSURES=false =
-                    // LOOK_NO_TRANSITIVE_CLONE pozitif-kontrol: eski yarışlı hâl.)
+                    // R-02: capture isolation — instead of an ALLOW LIST (clone only closures)
+                    // a DENY LIST (fail-safe). Every capture is cloned EXCEPT the handles whose sharing is INTENTIONAL
+                    // (CHANNEL/WS/SSE — cross-thread communication).
+                    // The old state shared a plain ARRAY capture shallowly → parallel tasks mutated the same
+                    // vector and RACED (t1b VM, TSan). deep_clone_impl
+                    // handles every type correctly (array recursive, handle *this). When a new Value type is
+                    // added it starts automatically on the safe side. (CLONE_CLOSURES=false =
+                    // LOOK_NO_TRANSITIVE_CLONE positive control: the old racy state.)
                     auto must_clone = [](Value::Type t) {
                         return t != Value::CHANNEL && t != Value::WEBSOCKET && t != Value::SSE_CONN;
                     };
@@ -1338,7 +1338,7 @@ call_dispatch:
                     }
                     if (needs) {
                         cl_copy = std::make_shared<Closure>(src_cl->proto);
-                        cl_copy->captures = src_cl->captures;   // sığ (shared_ptr paylaşır)
+                        cl_copy->captures = src_cl->captures;   // shallow (shared_ptr shares)
                         for (size_t i = 0; i < cl_copy->captures.size(); ++i) {
                             if (CLONE_CLOSURES && must_clone(cl_copy->captures[i].type()))
                                 cl_copy->captures[i] = cl_copy->captures[i].clone_for_thread();
@@ -1347,26 +1347,26 @@ call_dispatch:
                 }
                 SharedState sh = shared_;
                 std::unordered_map<std::string, Value> g_copy = globals_;
-                // builtins ve routes local pointer'lara işaret eder — parallel task için deep copy
+                // builtins and routes point to local pointers — deep copy for the parallel task
                 std::vector<BuiltinFn> builtins_copy = sh.builtins ? *sh.builtins : std::vector<BuiltinFn>{};
                 sh.builtins = nullptr;
-                sh.routes   = nullptr; // parallel task dispatch_routes çağırmaz
-                // Betik-sonu kaydı iş parçacığı BAŞLAMADAN: betik hemen biterse görev de sayılır.
+                sh.routes   = nullptr; // a parallel task does not call dispatch_routes
+                // The end-of-script registration BEFORE the thread STARTS: if the script ends right away the task is counted too.
                 TaskExit* texit = task_exit_new();
                 try {
                 std::thread([cl_copy, sh, g_copy, builtins_copy = std::move(builtins_copy), texit]() mutable {
                     TaskGuard _guard; // task_release() on scope exit
-                    // DB bağlantısı iadesi: task
-                    // içinde db::query çağrılırsa get_conn bu thread'e tembel bir conn
-                    // alır; bırakılmazsa havuzdan KALICI sızar (birkaç istek sonra
-                    // havuz tükenir, endpoint sonsuza dek asılır).
+                    // Returning the DB connection: if db::query is called
+                    // inside the task, get_conn takes a lazy conn for this thread;
+                    // if it is not released it leaks PERMANENTLY from the pool (after a few requests
+                    // the pool is exhausted, the endpoint hangs forever).
                     struct DbGuard { ~DbGuard() { look::release_thread_connections(); } } _db;
                     std::ostringstream sink;
                     VM tvm(sh, sink);
                     tvm.set_globals(std::move(g_copy));
                     tvm.set_builtins(&builtins_copy);
                     tvm.set_task(texit);
-                    task_exit_enter(texit);   // bu iş parçacığının görev kaydı (preempt denetimi)
+                    task_exit_enter(texit);   // this thread's task registration (preempt check)
                     struct ExitDone { TaskExit* t; ~ExitDone() { task_exit_done(t); } } _done{texit};
                     try { tvm.call_closure(*cl_copy, {}); }
                     catch (const std::exception& e) {
@@ -1377,14 +1377,14 @@ call_dispatch:
                             "parallel() panic: unknown error");
                     }
                 }).detach();
-                } catch (...) { task_exit_done(texit); throw; }   // iş parçacığı açılamadı
+                } catch (...) { task_exit_done(texit); throw; }   // the thread could not be started
                 break;
             }
-            // CHAN_* — TİP KONTROLÜ ŞART: as_channel() type_ bakmadan static_pointer_cast
-            // yapar; argüman ARRAY/STRING/FN ise (compiler send/receive/close/chan_size'ı
-            // tipe bakmadan üretir) o nesnenin belleği LookChannel sanılır → TYPE CONFUSION
-            // → heap-buffer-overflow (ASan-kanıtlı). Eski yorumlayıcı zaten kontrol
-            // ediyordu; VM'de yoktu (motor ayrışması, S3). send([1,2,3],42) gibi.
+            // CHAN_* — TYPE CHECK REQUIRED: as_channel() does a static_pointer_cast without
+            // looking at type_; if the argument is ARRAY/STRING/FN (the compiler produces send/receive/close/chan_size
+            // without looking at the type) that object's memory is taken for a LookChannel → TYPE CONFUSION
+            // → heap-buffer-overflow (ASan-proven). The old interpreter already
+            // checked it; the VM did not (engine divergence, S3). e.g. send([1,2,3],42).
             case OpCode::CHAN_SEND: {
                 if (R(ins.a).type() != Value::CHANNEL)
                     throw LookVmError("send(): argument is not a channel");
@@ -1406,9 +1406,9 @@ call_dispatch:
                     throw LookVmError("close(): argument is not a channel");
                 const bool in_effect = task_ && task_point(task_, true);
                 TaskEffectEnd eff_end{in_effect ? task_ : nullptr};
-                // close_chan: alıcıları VE bekleyen göndericileri uyandırır (gönderici "send on
-                // closed channel" alır). Eskiden yalnız alıcılar uyanıyordu → dolu kanalda
-                // bekleyen send sonsuza dek asılı kalıyordu.
+                // close_chan: wakes the receivers AND the waiting senders (the sender gets "send on
+                // closed channel"). It used to wake only the receivers → a send
+                // waiting on a full channel stayed hung forever.
                 R(ins.a).as_channel()->close_chan();
                 break;
             }
@@ -1420,7 +1420,7 @@ call_dispatch:
             }
 
             // ── Cast / Type ───────────────────────────────────────────────────
-            case OpCode::TO_INT:   R(ins.a) = look::look_explicit_int(R(ins.b));   break;   // aralık dışı sayısal metin → hata
+            case OpCode::TO_INT:   R(ins.a) = look::look_explicit_int(R(ins.b));   break;   // out-of-range numeric text → error
             case OpCode::TO_FLOAT: R(ins.a) = look::look_explicit_float(R(ins.b)); break;
             case OpCode::TO_STR:   R(ins.a) = Value(R(ins.b).to_string()); break;
             case OpCode::TO_BOOL:  R(ins.a) = Value(R(ins.b).is_truthy()); break;
@@ -1447,21 +1447,21 @@ call_dispatch:
             } // switch
         } // inner while
         }
-        // ── C++ exception → LOOK try/catch köprüsü ────────────────────────────
-        // Operatör/builtin'lerin fırlattığı runtime hatası (bölme sıfıra, tip
-        // hatası...) try_stack_'e yönlendirilir:
-        // kontrol-akışı exception'ları (exit/route/stop) sızdırılır,
-        // geri kalan std::exception mesajıyla catch bloğuna düşer. try_stack_ boşsa
-        // yukarı iletilir (web'de hata yanıtı, CLI-VM'de üst seviye hata).
+        // ── C++ exception → LOOK try/catch bridge ─────────────────────────────
+        // A runtime error thrown by operators/builtins (division by zero, type
+        // error...) is routed to try_stack_:
+        // control-flow exceptions (exit/route/stop) are let through,
+        // the rest of the std::exception falls into the catch block with its message. If try_stack_ is empty it is
+        // passed up (an error response on the web, a top-level error in the CLI-VM).
         catch (const RouteStopException&)   { throw; }
         catch (const RouteMatchedException&){ throw; }
         catch (const ExitException&)        { throw; }
-        // Bellek durdurması LOOK try/catch'ine verilmez (look/mem_budget.h): verilseydi
-        // `try { … } catch` döngüsü durdurmayı yutup büyümeyi sürdürürdü. Satırı günlük için kaydedilir.
+        // A memory stop is not given to LOOK try/catch (look/mem_budget.h): if it were, a
+        // `try { … } catch` loop would swallow the stop and keep growing. The line is recorded for the log.
         catch (const MemoryLimitError&)     { note_error_line_for(base, proto); throw; }
         catch (const LookVmThrow& t) {
-            // C++ sınırını geçmiş LOOK throw (iç run() → builtin → buraya).
-            // DEĞER korunur (error::new gibi tipli değerler dahil) — e.what() değil.
+            // A LOOK throw that crossed the C++ boundary (inner run() → builtin → here).
+            // The VALUE is preserved (including typed values like error::new) — not e.what().
             if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = t.value;
@@ -1473,11 +1473,11 @@ call_dispatch:
             goto call_dispatch;
         }
         catch (const LookRuntimeError& e) {
-            // error::new() DEĞER DÖNDÜRMEZ — doğrudan LookRuntimeError(payload) fırlatır.
-            // Tipli payload'ı korumak ZORUNLU: e.what() string'ine düşürmek catch
-            // değişkenini "[type, E_DB, message, ...]" string'i yapar → error::is()
-            // false döner, error::message() tüm nesneyi verir (sessizce yanlış hata
-            // yönetimi). Kural: has_value ? value : message.
+            // error::new() DOES NOT RETURN A VALUE — it throws LookRuntimeError(payload) directly.
+            // Preserving the typed payload is MANDATORY: reducing it to the e.what() string makes the catch
+            // variable a "[type, E_DB, message, ...]" string → error::is()
+            // returns false, error::message() gives the whole object (silently wrong error
+            // handling). Rule: has_value ? value : message.
             if (try_stack_.size() <= try_floor_) { note_error_line_for(base, proto); throw; }
             auto entry = try_stack_.back(); try_stack_.pop_back();
             current_exception_ = e.has_value ? e.value : Value(e.message);

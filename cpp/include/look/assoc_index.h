@@ -1,51 +1,51 @@
 #pragma once
-// Sözlük anahtar araması — büyük sözlükte O(1).
+// Map key lookup — O(1) on a large map.
 //
-// Sözlük depolaması değişmez: ["<işaret>", k0, v0, k1, v1, …] (sıra = ekleme sırası; foreach,
-// json, array:: hepsi bu düzeni okur). ESKİ: her okuma ve her yazma listeyi baştan tarıyordu —
-// 40 000 anahtarlı gövdeyi döngüde kopyalamak 4,3 sn (karesel); tek istek süreci meşgul ediyordu.
+// Map storage is unchanged: ["<marker>", k0, v0, k1, v1, …] (order = insertion order; foreach,
+// json, array:: all read this layout). OLD: every read and every write scanned the list from the start —
+// copying a 40,000-key body in a loop took 4.3 s (quadratic); a single request kept the process busy.
 //
-// Dizin: anahtar KONUMLARINDAN oluşan açık adresli tablo (uint32; anahtar metni kopyalanmaz).
-// Hash süreç başına rastgele tohumlu SipHash-1-3 (Rust/Python'daki gibi): tohum bilinmeden aynı
-// hücreye düşen anahtarlar üretilemez (hash flooding).
+// Index: an open-addressed table made of key POSITIONS (uint32; the key text is not copied).
+// The hash is SipHash-1-3 with a per-process random seed (as in Rust/Python): keys that land in the same
+// cell cannot be produced without knowing the seed (hash flooding).
 //
-// Geçerlilik: dizin, kurulduğu andaki depo boyunu (seen) bilir.
-//   * Okuma yolu dizini YALNIZ boştan kurar (CAS) ve hiç değiştirmez; boy farklıysa doğrusal tarar.
-//   * Yazma yolu (assoc_sync) depoyu tek sahipli tutar: uca eklenenleri dizine katar, boy
-//     küçüldüyse yeniden kurar.
-//   * Her isabet anahtar metniyle doğrulanır; tutmazsa (sıralama gibi ortadan değişiklik) yazma
-//     yolunda yeniden kurulur, okuma yolunda doğrusal taranır.
-// Ortadan anahtar silen/değiştiren ve boyu koruyan bir yol, dizini bırakmalıdır (drop_index).
-// LOOK_ASSOC_INDEX_VERIFY ile derlenince her dizinli arama doğrusal taramayla karşılaştırılır
-// (tests/assoc_index_test.sh tüm testleri bu kipte koşar).
+// Validity: the index knows the store length (seen) at the time it was built.
+//   * The read path builds the index ONLY from empty (CAS) and never changes it; if the length differs it scans linearly.
+//   * The write path (assoc_sync) keeps the store single-owner: it folds appended pairs into the index, and
+//     rebuilds if the length shrank.
+//   * Every hit is verified against the key text; if it does not match (a mid-store change such as sorting) the write
+//     path rebuilds, the read path scans linearly.
+// A path that deletes/changes a key in the middle and keeps the length must drop the index (drop_index).
+// When built with LOOK_ASSOC_INDEX_VERIFY every indexed lookup is compared with a linear scan
+// (tests/assoc_index_test.sh runs all tests in this mode).
 #include "look/value.h"
 #include <cstdlib>
 #include <cstdio>
 
 namespace look {
 
-uint64_t look_key_hash(const char* p, size_t n) noexcept;   // value.cpp (SipHash-1-3, süreç tohumu)
+uint64_t look_key_hash(const char* p, size_t n) noexcept;   // value.cpp (SipHash-1-3, process seed)
 
 struct AssocIndex {
-    std::vector<uint32_t> slots;   // 0 = boş; diğerleri anahtarın depodaki konumu (tek sayı ≥ 1)
-    size_t  seen = 0;              // dizinin kapsadığı depo boyu
-    size_t  next = 1;              // dizine katılacak sıradaki anahtar konumu
+    std::vector<uint32_t> slots;   // 0 = empty; others are the key's position in the store (odd number ≥ 1)
+    size_t  seen = 0;              // store length the index covers
+    size_t  next = 1;              // position of the next key to join the index
     size_t  count = 0;
-    bool    unusable = false;      // metin olmayan anahtar / eski __struct__ etiketi → doğrusal
+    bool    unusable = false;      // non-text key / old __struct__ marker → linear
 };
 
-// Dizin bu boydan küçük sözlükte kurulmaz: birkaç metin karşılaştırması tablodan hızlıdır.
+// The index is not built on a map smaller than this length: a few text comparisons are faster than the table.
 constexpr size_t LOOK_ASSOC_INDEX_MIN_PAIRS = 8;
 
 namespace assoc_detail {
 
 inline ValueArray& va(const std::vector<Value>& v) {
-    // Her dizi/sözlük depolaması ValueArray'dir (look_new_array / make_shared<ValueArray>;
-    // tests/value_release_test.sh düz std::vector<Value> kuran satırı reddeder).
+    // Every array/map store is a ValueArray (look_new_array / make_shared<ValueArray>;
+    // tests/value_release_test.sh rejects a line that builds a plain std::vector<Value>).
     return static_cast<ValueArray&>(const_cast<std::vector<Value>&>(v));
 }
 
-// Okuma eski "__struct__" etiketini atlar (start 3); yazma her zaman 1'den tarar (değişmeyen davranış).
+// Reading skips the old "__struct__" marker (start 3); writing always scans from 1 (behaviour unchanged).
 inline size_t linear(const std::vector<Value>& vec, const std::string& k, bool for_write = false) {
     size_t start = 1;
     if (!for_write && vec.size() > 2 && vec[1].type() == Value::STRING && vec[1].str_ref() == "__struct__") start = 3;
@@ -60,7 +60,7 @@ inline void place(AssocIndex& ix, const std::vector<Value>& vec, size_t pos) {
     for (size_t h = (size_t)look_key_hash(k.data(), k.size()) & mask;; h = (h + 1) & mask) {
         uint32_t s = ix.slots[h];
         if (s == 0) { ix.slots[h] = (uint32_t)pos; ++ix.count; return; }
-        if (vec[s].str_ref() == k) return;   // yinelenen anahtar: ilk geçen kazanır (doğrusal tarama gibi)
+        if (vec[s].str_ref() == k) return;   // duplicate key: the first occurrence wins (as in a linear scan)
     }
 }
 
@@ -75,7 +75,7 @@ inline void grow(AssocIndex& ix, const std::vector<Value>& vec, size_t want_pair
     for (uint32_t s : old) if (s) place(ix, vec, s);
 }
 
-// Uca eklenen çiftleri dizine kat (seen/next ilerler). Metin olmayan anahtar → kullanılmaz.
+// Fold pairs appended at the end into the index (seen/next advance). Non-text key → not usable.
 inline void extend(AssocIndex& ix, const std::vector<Value>& vec) {
     size_t i = ix.next;
     if (vec.size() > ix.seen) grow(ix, vec, ix.count + (vec.size() - ix.seen) / 2 + 1);
@@ -103,8 +103,8 @@ inline size_t probe(const AssocIndex& ix, const std::vector<Value>& vec, const s
         uint32_t s = ix.slots[h];
         if (s == 0) return 0;
         if (s < vec.size() && vec[s].type() == Value::STRING && vec[s].str_ref() == k) return s;
-        if (s >= vec.size() || vec[s].type() != Value::STRING) return SIZE_MAX;   // bayat
-        // aynı hücreye düşen başka anahtar: sonraki hücre
+        if (s >= vec.size() || vec[s].type() != Value::STRING) return SIZE_MAX;   // stale
+        // another key that fell in the same cell: next cell
     }
 }
 
@@ -124,8 +124,8 @@ inline size_t verified(const std::vector<Value>&, const std::string&, size_t got
 
 } // namespace assoc_detail
 
-// Sözlükte k anahtarının KONUMU (değer konum+1'de); yoksa 0. vec bir sözlük olmalı (vec[0] işaret).
-// Depoyu değiştirmez (okuma yolu; paylaşılan sözlükte birden çok iş parçacığı çağırabilir).
+// POSITION of key k in the map (value at position+1); 0 if absent. vec must be a map (vec[0] is the marker).
+// Does not change the store (read path; several threads may call it on a shared map).
 inline size_t assoc_find(const std::vector<Value>& vec, const std::string& k) {
     using namespace assoc_detail;
     if (vec.size() < 1 + 2 * LOOK_ASSOC_INDEX_MIN_PAIRS) return linear(vec, k);
@@ -144,7 +144,7 @@ inline size_t assoc_find(const std::vector<Value>& vec, const std::string& k) {
     return verified(vec, k, p);
 }
 
-// Yazma yolu: depo tek sahipli (yazınca-kopyala). Dizini depoyla eşitler, sonra arar.
+// Write path: the store is single-owner (copy on write). Syncs the index with the store, then searches.
 inline size_t assoc_find_for_write(std::vector<Value>& vec, const std::string& k) {
     using namespace assoc_detail;
     if (vec.size() < 1 + 2 * LOOK_ASSOC_INDEX_MIN_PAIRS) return linear(vec, k, true);
@@ -155,17 +155,17 @@ inline size_t assoc_find_for_write(std::vector<Value>& vec, const std::string& k
     else if (vec.size() != ix->seen && !ix->unusable) extend(*ix, vec);
     if (ix->unusable) return linear(vec, k, true);
     size_t p = probe(*ix, vec, k);
-    if (p == SIZE_MAX) {   // ortadan değişmiş: yeniden kur
+    if (p == SIZE_MAX) {   // changed in the middle: rebuild
         a.drop_index();
         ix = build(vec); a.assoc_idx.store(ix, std::memory_order_release);
         if (ix->unusable) return linear(vec, k, true);
         p = probe(*ix, vec, k);
         if (p == SIZE_MAX) return linear(vec, k, true);
     }
-    return verified(vec, k, p);   // dizin kullanılabiliyorsa __struct__ etiketi yok → iki tarama aynı
+    return verified(vec, k, p);   // if the index is usable there is no __struct__ marker → both scans are the same
 }
 
-// Yazma yolu: assoc_find_for_write 0 döndükten sonra çağıran k'yi ve değeri uca ekledi.
+// Write path: after assoc_find_for_write returned 0 the caller appended k and the value at the end.
 inline void assoc_appended(std::vector<Value>& vec) {
     AssocIndex* ix = assoc_detail::va(vec).assoc_idx.load(std::memory_order_relaxed);
     if (ix && !ix->unusable && ix->seen + 2 == vec.size()) assoc_detail::extend(*ix, vec);

@@ -35,7 +35,7 @@ std::string dkim_sign(const std::vector<DkimHeader>& headers,
 // Uses dns_txt_lookup() to fetch the public key.
 bool dkim_verify(const std::string& raw_message);
 
-// SEAM: public key'i DOĞRUDAN alır (DNS yok) — test/bypass-tablosu için. dkim_verify buna delege eder.
+// SEAM: takes the public key DIRECTLY (no DNS) — for the test/bypass table. dkim_verify delegates to this.
 bool dkim_verify_with_key(const std::string& raw_message, const std::string& pubkey_pem);
 
 } // namespace look

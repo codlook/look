@@ -1,5 +1,5 @@
-// lk fix — kullanımdan kalkan push/pop/array::pop yazımlarını yeni yazıma çevirir.
-// Tasarım ve güvence: look/fix_src.h.
+// lk fix — converts the deprecated push/pop/array::pop spellings to the new spelling.
+// Design and guarantee: look/fix_src.h.
 #include "look/fix_src.h"
 #include "look/lexer.h"
 #include "look/parser.h"
@@ -18,13 +18,13 @@ namespace look {
 
 namespace {
 
-using Key = std::pair<int, int>;   // (satır, sütun) — deyimin / çağrının ilk token'ı
+using Key = std::pair<int, int>;   // (line, column) — the first token of the statement / call
 
-// AST'den: hangi push/pop çağrısı DEYİM olarak duruyor, hangi array::pop nerede.
+// From the AST: which push/pop call stands as a STATEMENT, and where each array::pop is.
 struct AstIndex {
-    std::map<Key, const CallExpression*> stmt_calls;          // deyim: push(...) / pop(...)
-    std::map<Key, const AssignmentExpression*> assign_pops;   // deyim: $v = pop(...)
-    std::map<Key, const CallExpression*> array_pops;          // array::pop(...) (callee konumu)
+    std::map<Key, const CallExpression*> stmt_calls;          // statement: push(...) / pop(...)
+    std::map<Key, const AssignmentExpression*> assign_pops;   // statement: $v = pop(...)
+    std::map<Key, const CallExpression*> array_pops;          // array::pop(...) (callee position)
 };
 
 const Variable* bare_callee(const CallExpression* c) {
@@ -38,7 +38,7 @@ struct Walker {
         if (b) for (const auto& s : b->statements) stmt(s.get(), true);
     }
 
-    // rewritable=false: for başlığındaki deyim (oraya yeni satır konamaz).
+    // rewritable=false: a statement in a for header (a new line cannot be placed there).
     void stmt(const Statement* s, bool rewritable) {
         if (!s) return;
         look_ast_guard(s->loc.line, s->loc.column);
@@ -90,7 +90,7 @@ struct Walker {
         else if (auto* x = node_as<FunctionExpression>(e)) { for (auto& d : x->defaults) expr(d.get()); block(x->body.get()); }
         else if (auto* x = node_as<IndexExpression>(e)) { expr(x->object.get()); expr(x->index.get()); }
         else if (auto* x = node_as<UnaryExpression>(e)) expr(x->right.get());
-        else if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+        else if (auto* x = node_as<BinaryExpression>(e)) {   // left spine with a loop (look/ast_spine.h)
             std::vector<const BinaryExpression*> sp;
             expr(binary_left_spine(x, sp));
             for (size_t k = sp.size(); k-- > 0;) expr(sp[k]->right.get());
@@ -102,7 +102,7 @@ struct Walker {
     }
 };
 
-// İndeks/üye yolunun anahtarı yan etkisiz mi (iki kez okunabilir mi)?
+// Is the key of an index/member path free of side effects (can it be read twice)?
 bool pure_key(const Expression* e) {
     if (!e) return false;
     switch (e->kind) {
@@ -111,7 +111,7 @@ bool pure_key(const Expression* e) {
             return true;
         case NodeKind::StringLiteral: {
             const auto& s = static_cast<const StringLiteral&>(*e);
-            return s.raw || s.value.find('{') == std::string::npos;   // {$…} parçası: temkinli
+            return s.raw || s.value.find('{') == std::string::npos;   // {$…} part: conservative
         }
         case NodeKind::UnaryExpression: {
             const auto& u = static_cast<const UnaryExpression&>(*e);
@@ -132,7 +132,7 @@ bool pure_key(const Expression* e) {
     }
 }
 
-// Yan etkisiz anahtardaki değişken adları.
+// Variable names in a side-effect-free key.
 void collect_vars(const Expression* e, std::set<std::string>& names) {
     if (!e) return;
     if (auto* v = node_as<Variable>(e)) names.insert(v->name);
@@ -142,7 +142,7 @@ void collect_vars(const Expression* e, std::set<std::string>& names) {
     else if (auto* m = node_as<MemberAccessExpression>(e)) collect_vars(m->object.get(), names);
 }
 
-// X bir değişken ya da yan etkisiz anahtarlı indeks/üye yolu mu? names: yolda okunan değişkenler.
+// Is X a variable or an index/member path with a side-effect-free key? names: the variables read along the path.
 bool list_path(const Expression* e, std::set<std::string>& names) {
     std::vector<const Expression*> keys;
     for (const Expression* cur = e; cur; ) {
@@ -162,7 +162,7 @@ bool list_path(const Expression* e, std::set<std::string>& names) {
     return false;
 }
 
-// Değer ifadesi bir değişkeni değiştiriyor mu (atama, ++/--, push/pop)? Closure gövdesine inilmez.
+// Does the value expression change a variable (assignment, ++/--, push/pop)? Closure bodies are not descended into.
 bool changes_vars(const Expression* e) {
     if (!e) return false;
     if (node_as<AssignmentExpression>(e)) return true;
@@ -192,7 +192,7 @@ bool changes_vars(const Expression* e) {
     return false;
 }
 
-// Ham kaynak aralığında (string dışında) yorum var mı? Yeniden yazma onu kodun ortasına taşırdı.
+// Is there a comment in the raw source range (outside strings)? Rewriting would move it into the middle of the code.
 bool has_comment(const std::string& s, size_t a, size_t b) {
     char q = 0;
     for (size_t i = a; i < b; ++i) {
@@ -216,7 +216,7 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
-// Gösterim için tek satır: satır sonu + girinti → ayraç.
+// Single line for display: line break + indentation → separator.
 std::string one_line(const std::string& s, const char* sep) {
     std::string out;
     for (size_t i = 0; i < s.size(); ++i) {
@@ -231,25 +231,25 @@ std::string one_line(const std::string& s, const char* sep) {
 enum Kind { K_PUSH, K_POP, K_POP_ASSIGN, K_ARRAY_POP };
 
 struct Edit {
-    size_t start = 0, end = 0;                        // değiştirilen kaynak aralığı [start, end)
+    size_t start = 0, end = 0;                        // the source range being replaced [start, end)
     Kind kind = K_PUSH;
-    std::vector<std::pair<size_t, size_t>> args;      // argümanların ham aralıkları
+    std::vector<std::pair<size_t, size_t>> args;      // raw ranges of the arguments
     std::string var;                                  // K_POP_ASSIGN: $v
-    std::string indent;                               // K_POP_ASSIGN: satır sonu (CRLF dosyada CRLF) + ikinci satırın girintisi
-    bool paren = false;                               // K_ARRAY_POP: X'i parantezle
+    std::string indent;                               // K_POP_ASSIGN: line ending (CRLF in a CRLF file) + the indentation of the second line
+    bool paren = false;                               // K_ARRAY_POP: wrap X in parentheses
     int line = 0;
 };
 
 struct Rewriter {
     const std::string& src;
-    std::vector<Edit> edits;   // başa göre artan; aynı başta dıştaki önce
+    std::vector<Edit> edits;   // ascending by start; at the same start the outer one first
 
     std::string render(size_t s, size_t e) const {
         std::string out;
         size_t pos = s;
         for (const auto& E : edits) {
             if (E.start >= e) break;
-            if (E.start < pos || E.end > e) continue;   // aralık dışı ya da işlenmiş bir düzenlemenin içi
+            if (E.start < pos || E.end > e) continue;   // outside the range, or inside an already-processed edit
             out.append(src, pos, E.start - pos);
             out += render_edit(E);
             pos = E.end;
@@ -299,16 +299,16 @@ FixResult look_fix_source(const std::string& src) {
         return r;
     }
 
-    // Token → bayt konumu: kaynağı token sırasıyla yürü (boşluk ve yorumları atla, token metni
-    // kaynaktaki ham metindir). Token sütunu buna yetmez (satır içinde kayabiliyor). ASI'nin eklediği
-    // sanal ';' kaynakta yoktur (-1). Metin uymazsa o noktadan sonrası bilinmez (-1): oradaki çağrı
-    // yeniden yazılmaz (bozma yok).
+    // Token → byte position: walk the source in token order (skip whitespace and comments; the token text
+    // is the raw text in the source). The token column is not enough for this (it can shift within a line). The
+    // virtual ';' inserted by ASI does not exist in the source (-1). If the text does not match, everything after that point is unknown (-1): the call
+    // there is not rewritten (no corruption).
     std::vector<long> offs(toks.size(), -1);
     {
         size_t pos = (src.size() >= 3 && (unsigned char)src[0] == 0xEF && (unsigned char)src[1] == 0xBB &&
                       (unsigned char)src[2] == 0xBF) ? 3 : 0;
         for (size_t k = 0; k < toks.size(); ++k) {
-            for (;;) {   // boşluk ve yorum
+            for (;;) {   // whitespace and comments
                 while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\r' || src[pos] == '\n')) ++pos;
                 if (pos < src.size() && (src[pos] == '#' || src.compare(pos, 2, "//") == 0)) {
                     while (pos < src.size() && src[pos] != '\n') ++pos;
@@ -323,7 +323,7 @@ FixResult look_fix_source(const std::string& src) {
                 offs[k] = (long)pos;
                 pos += t.lexeme.size();
             } else if (t.type != TokenType::SEMICOLON) {
-                break;   // beklenmeyen: geri kalan bilinmiyor
+                break;   // unexpected: the rest is unknown
             }
         }
     }
@@ -337,7 +337,7 @@ FixResult look_fix_source(const std::string& src) {
         const Token& t = toks[i];
         if (t.type != TokenType::IDENT) continue;
         bool bare = false, apop = false;
-        size_t lp = 0;   // '(' token'ı
+        size_t lp = 0;   // the '(' token
         if ((t.lexeme == "push" || t.lexeme == "pop") && toks[i + 1].type == TokenType::LPAREN &&
             !(i > 0 && (toks[i - 1].type == TokenType::COLON_COLON || toks[i - 1].type == TokenType::FUNCTION))) {
             bare = true; lp = i + 1;
@@ -349,7 +349,7 @@ FixResult look_fix_source(const std::string& src) {
         if (!bare && !apop) continue;
         const std::string name = apop ? "array::pop()" : t.lexeme + "()";
 
-        // Eşleşen ')' ve üst düzey virgüller.
+        // Matching ')' and top-level commas.
         size_t rp = 0; int depth = 0;
         std::vector<size_t> commas;
         for (size_t k = lp; k < toks.size(); ++k) {
@@ -411,11 +411,11 @@ FixResult look_fix_source(const std::string& src) {
                     const long vs = offs[i - 2];
                     if (vs < 0) { skip(t.line, "could not locate the pop() call in the source"); continue; }
                     E.start = (size_t)vs;
-                    size_t ls = (size_t)vs;   // satırın başı (girinti ikinci satıra da)
+                    size_t ls = (size_t)vs;   // start of the line (the indentation goes to the second line too)
                     while (ls > 0 && src[ls - 1] != '\n') --ls;
                     size_t le = ls;
                     while (le < src.size() && (src[le] == ' ' || src[le] == '\t')) ++le;
-                    const size_t nl = src.find('\n', (size_t)vs);   // dosyanın satır sonu biçimi korunur
+                    const size_t nl = src.find('\n', (size_t)vs);   // the file's line-ending style is preserved
                     E.indent = std::string(nl != std::string::npos && nl > 0 && src[nl - 1] == '\r' ? "\r\n" : "\n") +
                                src.substr(ls, le - ls);
                 }
@@ -452,7 +452,7 @@ FixResult look_fix_source(const std::string& src) {
         return a.start != b.start ? a.start < b.start : a.end > b.end;
     });
     Rewriter rw{src, edits};
-    // Gösterim: yalnız en dıştaki düzenlemeler (içtekiler onların metninde).
+    // Display: only the outermost edits (the inner ones are in their text).
     size_t outer_end = 0;
     for (const auto& E : rw.edits) {
         if (E.kind == K_ARRAY_POP)
@@ -469,8 +469,8 @@ FixResult look_fix_source(const std::string& src) {
     if (edits.empty()) return r;
 
     std::string out = rw.render(0, src.size());
-    // push()/pop() global fonksiyonlardı; yeni yazım array:: kullanır → `use array` yoksa ekle (yoksa
-    // dönüştürülen dosya "Module 'array' not loaded." ile durur). array::pop → X[-1] modül gerektirmez.
+    // push()/pop() were global functions; the new spelling uses array:: → add `use array` if it is missing (otherwise
+    // the converted file stops with "Module 'array' not loaded."). array::pop → X[-1] needs no module.
     bool needs_array = false;
     for (const auto& E : rw.edits) needs_array |= E.kind != K_ARRAY_POP;
     bool has_use_array = false;
@@ -480,7 +480,7 @@ FixResult look_fix_source(const std::string& src) {
     if (needs_array && !has_use_array) {
         const std::string nl = src.find("\r\n") != std::string::npos ? "\r\n" : "\n";
         size_t at = 0;
-        if (out.rfind("#!", 0) == 0) {   // shebang ilk satırda kalmalı
+        if (out.rfind("#!", 0) == 0) {   // the shebang must stay on the first line
             size_t e = out.find('\n');
             at = e == std::string::npos ? out.size() : e + 1;
             if (e == std::string::npos) out += nl, at = out.size();
@@ -488,7 +488,7 @@ FixResult look_fix_source(const std::string& src) {
         out.insert(at, "use array" + nl);
         r.changes.push_back("1: (no use array)  ->  use array");
     }
-    // Güvence: sonuç ayrışmalı. Ayrışmazsa hiçbir şey yazılmaz.
+    // Guarantee: the result must parse. If it does not parse, nothing is written.
     try {
         Parser p(Lexer(out).scan_tokens());
         p.parse();
@@ -511,7 +511,7 @@ int run_fix(const std::vector<std::string>& files, bool check) {
         for (const auto& s : r.skipped) os << file << ":" << s << "\n";
     };
 
-    if (files.empty()) {   // stdin → stdout; raporlar stderr'e
+    if (files.empty()) {   // stdin → stdout; reports go to stderr
         std::stringstream ss; ss << std::cin.rdbuf();
         FixResult r = look_fix_source(ss.str());
         if (!r.error.empty()) {

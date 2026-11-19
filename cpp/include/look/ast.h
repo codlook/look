@@ -13,10 +13,10 @@ struct SourceLocation {
     int column = 0;
 };
 
-// Düğüm türü etiketi. Derleyici ve yükleme denetimleri her düğümde "hangi tür?" sorar;
-// dynamic_cast zinciri (10–20 deneme) yerine etiket karşılaştırması: node_as<T>(p).
-// Her somut düğüm `final` ve doğrudan Expression/Statement'tan türer → etiket eşitliği
-// dynamic_cast ile aynı sonucu verir.
+// Node kind tag. The compiler and load-time checks ask "which kind?" at every node;
+// a tag comparison instead of a dynamic_cast chain (10–20 attempts): node_as<T>(p).
+// Every concrete node is `final` and derives directly from Expression/Statement → tag equality
+// gives the same result as dynamic_cast.
 enum class NodeKind : uint8_t {
     StringLiteral, NumberLiteral, FloatLiteral, BooleanLiteral, NullLiteral, ArrayLiteral,
     AssocArrayLiteral, FunctionExpression, Variable, IndexExpression, UnaryExpression,
@@ -44,11 +44,11 @@ protected:
     explicit Statement(NodeKind k) : kind(k) {}
 };
 
-// Somut düğümün tabanı: etiketi yapıcıda koyar, türün etiketini KIND olarak taşır.
+// Base of a concrete node: sets the tag in the constructor, carries the type's tag as KIND.
 template <NodeKind K> struct ExprNode : Expression { static constexpr NodeKind KIND = K; ExprNode() : Expression(K) {} };
 template <NodeKind K> struct StmtNode : Statement  { static constexpr NodeKind KIND = K; StmtNode() : Statement(K) {} };
 
-// p T türündeyse T*, değilse (ya da p boşsa) nullptr — dynamic_cast<const T*>(p) ile aynı.
+// T* if p is of type T, nullptr otherwise (or if p is null) — same as dynamic_cast<const T*>(p).
 template <class T, class B> inline const T* node_as(const B* p) {
     return (p && p->kind == T::KIND) ? static_cast<const T*>(p) : nullptr;
 }
@@ -97,12 +97,12 @@ struct BlockStatement;
 // function($a, $b) use ($conn, $db) { ... }  — closure with explicit capture
 struct FunctionExpression final : ExprNode<NodeKind::FunctionExpression> {
     std::vector<std::string> parameters;
-    std::vector<std::unique_ptr<Expression>> defaults;  // paralel; nullptr = varsayılan yok
+    std::vector<std::unique_ptr<Expression>> defaults;  // parallel; nullptr = no default
     std::vector<std::string> captures;   // use ($conn, $db) listesi
-    bool is_variadic = false;            // son param ...$args ise true
+    bool is_variadic = false;            // true if the last param is ...$args
     std::unique_ptr<BlockStatement> body;
-    // LOOK 2: closure'ın dışarıdan istediği adlar (ayrıştırıcı doldurur — look/capture_check.h).
-    // Yakalama denetimleri (capture_check.h, param_write_check.h) okur.
+    // Names the closure needs from outside (filled by the parser — look/capture_check.h).
+    // Read by the capture checks (capture_check.h, param_write_check.h).
     std::vector<std::string> free_names;
 };
 
@@ -141,12 +141,12 @@ struct BinaryExpression final : ExprNode<NodeKind::BinaryExpression> {
 struct AssignmentExpression final : ExprNode<NodeKind::AssignmentExpression> {
     std::string name;
     std::string op;
-    std::unique_ptr<Expression> object;  // nullable — zincirli lvalue container
+    std::unique_ptr<Expression> object;  // nullable — chained lvalue container
                                          // ($l.s.x → object=$l.s, index="x").
-                                         // set ise `name` kullanılmaz.
+                                         // if set, `name` is not used.
     std::unique_ptr<Expression> index;   // nullable — set for $arr[i] = ...
     std::unique_ptr<Expression> value;
-    // `$a[k]++` / `$a[k]--` (sonek): ifadenin değeri yazmadan ÖNCEKİ değerdir (değişkendeki ++ gibi).
+    // `$a[k]++` / `$a[k]--` (postfix): the value of the expression is the value BEFORE the write (like ++ on a variable).
     bool yield_old = false;
     AssignmentExpression(std::string name, std::string op,
                          std::unique_ptr<Expression> val,
@@ -208,7 +208,7 @@ struct ReturnStatement final : StmtNode<NodeKind::ReturnStatement> {
 };
 
 struct ThrowStatement final : StmtNode<NodeKind::ThrowStatement> {
-    std::unique_ptr<Expression> expression;   // fırlatılan değer (string, error::new, vb.)
+    std::unique_ptr<Expression> expression;   // thrown value (string, error::new, etc.)
     explicit ThrowStatement(std::unique_ptr<Expression> e) : expression(std::move(e)) {}
 };
 
@@ -222,10 +222,10 @@ struct UseStatement final : StmtNode<NodeKind::UseStatement> {
         : module_name(std::move(name)), alias(std::move(alias)) {}
 };
 
-// use "routes/auth.lk"; — dosya modül sistemi (Phase 18.5)
-// Sadece function ve const tanımları caller scope'a aktarılır; $var paylaşılmaz.
+// use "routes/auth.lk"; — file module system (Phase 18.5)
+// Only function and const definitions are carried into the caller scope; $var is not shared.
 struct UseFileStatement final : StmtNode<NodeKind::UseFileStatement> {
-    std::string path;   // "routes/auth.lk" gibi — tırnak içindeki değer
+    std::string path;   // like "routes/auth.lk" — the value inside the quotes
     explicit UseFileStatement(std::string p) : path(std::move(p)) {}
 };
 
@@ -296,24 +296,24 @@ struct MemberAccessExpression final : ExprNode<NodeKind::MemberAccessExpression>
         : object(std::move(obj)), field(std::move(f)) {}
 };
 
-// struct Kullanici { ad, yas, aktif }
-// struct Urun { ad, fiyat: 0.0, stok: 0 }
+// struct User { name, age, active }
+// struct Product { name, price: 0.0, stock: 0 }
 struct StructField {
     std::string name;
-    std::string type;                         // LOOK 2: "" = tipsiz, "int", "?string", "User"
+    std::string type;                         // "" = untyped, "int", "?string", "User"
     std::unique_ptr<Expression> default_expr; // nullable
 };
 
 struct StructDeclaration final : StmtNode<NodeKind::StructDeclaration> {
     std::string name;
     std::vector<StructField> fields;
-    // Tanımın imzası (alan adları, tipler, varsayılan ifadelerin metni): aynı adla ikinci bir
-    // bildirimin BİREBİR aynı olup olmadığını karşılaştırmak için. Ayrıştırıcı doldurur.
+    // Definition signature (field names, types, text of the default expressions): to compare whether a second
+    // declaration with the same name is EXACTLY the same. Filled by the parser.
     std::string signature;
     int decl_line = 0;
 };
 
-// Kullanici{ad: "Ali", yas: 30}
+// User{name: "Ali", age: 30}
 struct StructLiteralExpression final : ExprNode<NodeKind::StructLiteralExpression> {
     std::string struct_name;
     std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields;
@@ -332,11 +332,11 @@ struct ConstBlock final : StmtNode<NodeKind::ConstBlock> {
 struct FunctionDeclaration final : StmtNode<NodeKind::FunctionDeclaration> {
     std::string name;
     std::vector<std::string> parameters;
-    std::vector<std::unique_ptr<Expression>> defaults;  // paralel; nullptr = varsayılan yok
-    bool is_variadic = false;            // son param ...$args ise true
+    std::vector<std::unique_ptr<Expression>> defaults;  // parallel; nullptr = no default
+    bool is_variadic = false;            // true if the last param is ...$args
     std::unique_ptr<BlockStatement> body;
-    // LOOK 2: yalnız İÇ (başka bir fonksiyonun içinde bildirilen) fonksiyonda dolu — o da bir
-    // closure'dır ve saran fonksiyonun yerellerinin DEĞERİNİ alır (look/capture_check.h).
+    // Filled ONLY for an INNER function (declared inside another function) — that is also a
+    // closure and takes the VALUE of the enclosing function's locals (look/capture_check.h).
     std::vector<std::string> free_names;
     FunctionDeclaration(std::string name, std::vector<std::string> params, bool variadic, std::unique_ptr<BlockStatement> body)
         : name(std::move(name)), parameters(std::move(params)), is_variadic(variadic), body(std::move(body)) {}

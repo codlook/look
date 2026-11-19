@@ -1,11 +1,11 @@
 #include "look/postgres_client.h"
-#include "look/sock_idle.h"   // idle_socket_unusable: gondermeden once oluluk yoklamasi
-#include "look/pg_parse.h"   // saf pg_parse_error (fuzz/test ile paylasilan tek tanim)
-#include "look/pg_insert.h"  // INSERT kimliği: hedef tablo, RETURNING (saf, tablo testli)
-#include "look/format.h"     // look_format_double (dilin tek double formati)
-#include "look/crypto_sha256.h" // SCRAM primitifleri: look::sha256/hmac_sha256/pbkdf2_sha256 (tek impl)
-#include "look/fiber_io.h"      // fiber içinde bekleme: iş parçacığı değil yalnız fiber bekler
-#include "look/fiber_net.h"     // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
+#include "look/sock_idle.h"   // idle_socket_unusable: liveness probe before sending
+#include "look/pg_parse.h"   // pure pg_parse_error (the single definition shared with fuzz/tests)
+#include "look/pg_insert.h"  // INSERT identity: target table, RETURNING (pure, table-tested)
+#include "look/format.h"     // look_format_double (the language's single double format)
+#include "look/crypto_sha256.h" // SCRAM primitives: look::sha256/hmac_sha256/pbkdf2_sha256 (single impl)
+#include "look/fiber_io.h"      // waiting inside a fiber: only the fiber waits, not the thread
+#include "look/fiber_net.h"     // DNS/connect/TLS/send must not hold the thread inside a fiber
 #include <cerrno>
 #include <cstring>
 #include <cctype>
@@ -21,21 +21,21 @@
   #include <netinet/tcp.h>
   #include <poll.h>
   #include <fstream>
-  // DB-TLS: PostgreSQL SSLRequest → TLS upgrade (Linux; Windows OpenSSL'siz derlenir).
+  // DB-TLS: PostgreSQL SSLRequest → TLS upgrade (Linux; Windows builds without OpenSSL).
   #include <openssl/ssl.h>
   #include <openssl/err.h>
-#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
+#include "look/tls_peer.h"   // SNI + name verification (IP → IP SAN), handshake failure reason
 #endif
 
 #ifndef MSG_NOSIGNAL
-#  define MSG_NOSIGNAL 0   // Windows/macOS: bayrak yok (Windows'ta SIGPIPE de yok)
+#  define MSG_NOSIGNAL 0   // Windows/macOS: no such flag (Windows has no SIGPIPE either)
 #endif
 
 namespace look {
 
-// SCRAM-SHA-256 client nonce'u KRİPTOGRAFİK olmalı (RFC 5802 §5.1: nonce
-// unpredictable olmalı). std::mt19937 tahmin edilebilir (32-bit random_device
-// seed) → CSPRNG değil. Fail-closed güvenli kaynak kullan.
+// The SCRAM-SHA-256 client nonce must be CRYPTOGRAPHIC (RFC 5802 §5.1: the nonce
+// must be unpredictable). std::mt19937 is predictable (32-bit random_device
+// seed) → not a CSPRNG. Use a fail-closed secure source.
 static void pg_secure_random(uint8_t* buf, size_t n) {
 #ifdef _WIN32
     if (BCryptGenRandom(nullptr, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
@@ -50,17 +50,17 @@ static void pg_secure_random(uint8_t* buf, size_t n) {
 
 #ifndef _WIN32
 // ── DB-TLS: client SSL_CTX ───────────────────────────────────────────────────
-// PostgreSQL'de TLS YENİ (kırılacak kullanıcı yok) → per-SSL verify DOĞRU varsayılanla
-// (SSL_VERIFY_PEER + SSL_set1_host) açılır. CTX yalnız trust store'u yükler; verify modu
-// bağlantı başına set edilir (mysql_client:601 deseni, :55'in VERIFY_NONE'ı DEĞİL).
+// TLS is NEW in PostgreSQL (no users to break) → per-SSL verify is enabled with the CORRECT default
+// (SSL_VERIFY_PEER + SSL_set1_host). The CTX only loads the trust store; the verify mode
+// is set per connection (the mysql_client:601 pattern, NOT the VERIFY_NONE of :55).
 static SSL_CTX* pg_ssl_ctx() {
     static SSL_CTX* ctx = [] {
         SSL_library_init();
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         SSL_CTX* c = SSL_CTX_new(TLS_client_method());
-        look::tls_client_defaults(c);   // en az TLS 1.2, makineden bağımsız
-        if (c) SSL_CTX_set_default_verify_paths(c);   // sistem CA'ları (verify modu için)
+        look::tls_client_defaults(c);   // at least TLS 1.2, independent of the machine
+        if (c) SSL_CTX_set_default_verify_paths(c);   // system CAs (for the verify mode)
         return c;
     }();
     return ctx;
@@ -146,11 +146,11 @@ std::string PostgresClient::pg_md5_password(const std::string& password,
 }
 
 // ── SHA-256 (FIPS 180-4) ──────────────────────────────────────────────────────
-// BİRLEŞTİRİLDİ: SCRAM primitifleri artık look::crypto_sha256.h'deki TEK impl'e delege eder.
-// Önceden burada PARALEL bir sha256/hmac/pbkdf2 kopyası vardı ("aynı kural iki yerde"); RFC-KAT
-// (tests/pg_scram_crypto_kat.cpp) iki kopyanın AYRIŞMADIĞINI kanıtladıktan sonra kaldırıldı →
-// tek tanım → drift yok. Bu üç metot yalnız array<32>↔vector adaptörü; do_scram_sha256'nın
-// birleştirme mantığı (canlı auth yolu) DEĞİŞMEDİ (hâlâ array<32> alır). Ayrıntı: crypto_sha256.h.
+// MERGED: the SCRAM primitives now delegate to the SINGLE impl in look::crypto_sha256.h.
+// A PARALLEL copy of sha256/hmac/pbkdf2 used to live here ("same rule in two places"); it was removed after the RFC KAT
+// (tests/pg_scram_crypto_kat.cpp) proved the two copies DO NOT DIVERGE →
+// single definition → no drift. These three methods are only an array<32>↔vector adapter; the merge logic of do_scram_sha256
+// (the live auth path) did NOT CHANGE (it still takes array<32>). Details: crypto_sha256.h.
 
 static inline std::array<uint8_t,32> to_arr32(const std::vector<uint8_t>& v) {
     std::array<uint8_t,32> out{};
@@ -170,8 +170,8 @@ std::array<uint8_t,32> PostgresClient::hmac_sha256(const uint8_t* key, size_t kl
 
 std::array<uint8_t,32> PostgresClient::pbkdf2_sha256(const std::string& pass,
                                                        const uint8_t* salt, size_t slen, int iters) {
-    // PRF = HMAC-SHA-256; PG SCRAM tek-block (dkLen=32). look::pbkdf2 çok-block'u da bilir ama
-    // burada 32 istenir → tek-block yol (INT(1) big-endian) birebir.
+    // PRF = HMAC-SHA-256; PG SCRAM is single-block (dkLen=32). look::pbkdf2 also knows multi-block but
+    // 32 is requested here → the single-block path (INT(1) big-endian) exactly.
     return to_arr32(look::pbkdf2_sha256(pass, std::vector<uint8_t>(salt, salt + slen),
                                         (uint32_t)iters, 32));
 }
@@ -217,7 +217,7 @@ std::vector<uint8_t> PostgresClient::base64_dec(const std::string& s) {
 // ── SCRAM-SHA-256 (RFC 7677) ──────────────────────────────────────────────────
 
 void PostgresClient::do_scram_sha256(const std::vector<uint8_t>& /*mechanisms_body*/) {
-    // 18-byte CSPRNG nonce (RFC 5802: unpredictable olmalı — mt19937 değil)
+    // 18-byte CSPRNG nonce (RFC 5802: must be unpredictable — not mt19937)
     std::vector<uint8_t> nonce_raw(18);
     pg_secure_random(nonce_raw.data(), nonce_raw.size());
     std::string c_nonce = base64_enc(nonce_raw.data(), nonce_raw.size());
@@ -260,16 +260,16 @@ void PostgresClient::do_scram_sha256(const std::vector<uint8_t>& /*mechanisms_bo
             if (tok.size() > 2 && tok[0]=='r' && tok[1]=='=') s_nonce   = tok.substr(2);
             if (tok.size() > 2 && tok[0]=='s' && tok[1]=='=') s_salt_b64= tok.substr(2);
             if (tok.size() > 2 && tok[0]=='i' && tok[1]=='=') {
-                // SCRAM iter server'dan gelir — bozuk değer → 0, aşağıda iter<=0 reddedilir
+                // the SCRAM iteration count comes from the server — a bad value → 0, rejected below as iter<=0
                 try { iter = std::stoi(tok.substr(2)); } catch (...) { iter = 0; }
             }
         }
     }
     if (s_nonce.empty() || s_salt_b64.empty() || iter <= 0)
         throw std::runtime_error("db postgres: malformed SASLContinue");
-    // Yineleme sayısını sunucu verir: kötü niyetli sunucu (ya da araya giren) i=2147483647 ile
-    // bağlantıyı açan iş parçacığını dakikalarca PBKDF2'de tutabilirdi. PG varsayılanı 4096;
-    // OWASP önerisi 600 000 — 1 000 000 üstü reddedilir (nedeniyle).
+    // The server supplies the iteration count: a malicious (or intercepting) server could keep the thread opening
+    // the connection in PBKDF2 for minutes with i=2147483647. The PG default is 4096;
+    // OWASP recommends 600 000 — anything above 1 000 000 is rejected (with a reason).
     if (iter > 1000000)
         throw std::runtime_error("db postgres: the server asks for " + std::to_string(iter) +
                                  " SCRAM iterations (limit 1000000) — refusing to connect");
@@ -362,16 +362,16 @@ void PostgresClient::write_u32_be(uint8_t* p, uint32_t v) {
 // ── OID → LOOK type code ──────────────────────────────────────────────────────
 
 uint8_t PostgresClient::oid_to_type(int32_t oid) {
-    // INTEGER türleri
+    // INTEGER types
     if (oid == 20 || oid == 21 || oid == 23 || oid == 26 || oid == 16000)
         return pg_type::INT;
-    // FLOAT / NUMERIC türleri
+    // FLOAT / NUMERIC types
     if (oid == 700 || oid == 701 || oid == 1700)
         return pg_type::FLOAT;
     // BOOL
     if (oid == 16)
         return pg_type::BOOL;
-    // NULL ve bilinmeyenler → string
+    // NULL and unknown → string
     return 0xFE;
 }
 
@@ -394,7 +394,7 @@ PostgresClient::~PostgresClient() {
 
 void PostgresClient::disconnect() {
     if (sock_ != PG_SOCK_INVALID) {
-        // Terminate mesajı gönder (best effort) — TLS aktifse send_bytes SSL üstünden yollar
+        // send the Terminate message (best effort) — if TLS is active send_bytes goes through SSL
         try {
             uint8_t msg[5] = {'X', 0, 0, 0, 4};
             send_bytes(msg, 5);
@@ -417,10 +417,10 @@ void PostgresClient::disconnect() {
 bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
     size_t received = 0;
 #ifndef _WIN32
-    if (ssl_) {   // TLS aktif → SSL_read
+    if (ssl_) {   // TLS active → SSL_read
         SSL* s = (SSL*)ssl_;
         while (received < len) {
-            // Fiber içinde: TLS tamponu boşsa soket okunabilir olana dek yalnız fiber bekler.
+            // Inside a fiber: if the TLS buffer is empty only the fiber waits until the socket is readable.
             if (SSL_pending(s) == 0) {
                 int w = fiber_wait_readable(sock_, rcv_tmo_ms_);
                 if (w == 0) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID; return false; }
@@ -432,10 +432,10 @@ bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
         return true;
     }
 #endif
-    // ── Düz TCP: tamponlu okuma (MySQL ile aynı yol) ─────────────────────────
-    // Bir recv tamponu doldurur, mesajlar (tür + uzunluk + gövde) tampondan verilir. Eskiden her
-    // mesaj üç recv'di: tek satırlık bir SELECT ~18 sistem çağrısı. Tampondan büyük istek tampon
-    // boşken doğrudan hedefe okunur.
+    // ── Plain TCP: buffered read (same path as MySQL) ────────────────────────
+    // One recv fills the buffer; messages (type + length + body) are served from the buffer. It used to be three recvs per
+    // message: a single-row SELECT took ~18 system calls. A request larger than the buffer is read
+    // directly into the target when the buffer is empty.
     if (!rbuf_) rbuf_.reset(new uint8_t[RBUF_SIZE]);
     while (received < len) {
         size_t avail = rbuf_len_ - rbuf_pos_;
@@ -459,10 +459,10 @@ bool PostgresClient::recv_bytes(uint8_t* buf, size_t len) {
     return true;
 }
 
-// Düz TCP soketten en az 1, en çok cap bayt. <=0: bağlantı bitti (soket kapatıldı).
+// At least 1, at most cap bytes from the plain TCP socket. <=0: connection ended (socket closed).
 int PostgresClient::recv_some(uint8_t* buf, size_t cap) {
 #ifndef _WIN32
-    // Fiber yolu: beklemeden oku; veri yoksa fiber'ı askıya al (MySQL ile aynı yol).
+    // Fiber path: read without waiting; if there is no data suspend the fiber (same path as MySQL).
     if (Fiber::current()) {
         for (;;) {
             ssize_t r = ::recv(sock_, (char*)buf, cap, MSG_DONTWAIT);
@@ -470,7 +470,7 @@ int PostgresClient::recv_some(uint8_t* buf, size_t cap) {
             if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                 int w = fiber_wait_readable(sock_, rcv_tmo_ms_);
                 if (w == 1) continue;
-                if (w < 0) {   // zamanlayıcı yok → bloklayarak oku
+                if (w < 0) {   // no timer → blocking read
                     r = ::recv(sock_, (char*)buf, cap, 0);
                     if (r > 0) return (int)r;
                 }
@@ -481,7 +481,7 @@ int PostgresClient::recv_some(uint8_t* buf, size_t cap) {
         }
     }
 #endif
-    // Fiber dışı yol (Windows, komut satırı) — blocking-ok: fiber yok
+    // Non-fiber path (Windows, command line) — blocking-ok: no fiber
     int r = recv(sock_, (char*)buf, (int)cap, 0);
     if (r <= 0) {
         pg_close_sock(sock_);
@@ -491,20 +491,20 @@ int PostgresClient::recv_some(uint8_t* buf, size_t cap) {
     return r;
 }
 
-// İstek SUNUCUYA ULAŞMADAN kopmayı ("at-most-once güvenli") yanıt-okuma
-// aşamasındaki kopmadan ayıran özel tip. query()/execute() YALNIZCA bu tipte
-// retry eder — gönderilemeyen istek sunucuda işlenMEMİŞtir, tekrar güvenlidir.
-// Yanıt okunurken kopma bu tipte DEĞİLdir → retry edilmez (sunucu INSERT'i
-// işlemiş olabilir; kör retry sessiz çift-yazma üretir — 53. bug, sahte-sunucu
-// "commit_kopar" ile kanıtlandı).
+// A dedicated type that separates a drop BEFORE THE REQUEST REACHED THE SERVER ("at-most-once safe") from a drop
+// during response reading. query()/execute() retry ONLY on this type —
+// a request that could not be sent was NOT processed by the server, retrying is safe.
+// A drop while reading the response is NOT this type → it is not retried (the server may have
+// processed the INSERT; a blind retry produces a silent double write — proven with the fake server
+// "commit_kopar").
 struct PgSendError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
 void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
 #ifndef _WIN32
-    // Gönderme tamponu doluysa fiber içinde yalnız fiber bekler (fiber dışı: SO_SNDTIMEO).
-    // Hata yolu read yollarıyla simetrik: soket kapanır, sock_ INVALID (aşağıdaki not).
+    // If the send buffer is full only the fiber waits inside a fiber (outside a fiber: SO_SNDTIMEO).
+    // The error path is symmetric with the read paths: the socket is closed, sock_ INVALID (note below).
     if (!look::fiber_send_all(sock_, (SSL*)ssl_, buf, len, rcv_tmo_ms_)) {
         bool tls = ssl_ != nullptr;
         pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
@@ -514,15 +514,15 @@ void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
 #else
     size_t sent = 0;
     while (sent < len) {
-        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), MSG_NOSIGNAL);   // SIGPIPE yok: kapali sokette EPIPE
+        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), MSG_NOSIGNAL);   // no SIGPIPE: EPIPE on a closed socket
         if (r <= 0) {
-            // read yollariyla SIMETRIK: gonderim kopmasinda soketi kapat ve sock_'u
-            // INVALID yap ki "kapali ama gecerli gorunen fd" havuza donup sonraki
-            // sorguda zehirlemesin. (query()/execute() basindaki
-            // `if sock_==INVALID → do_connect()` bunu otomatik yakalar.) Analizci
-            // kaynak denetiminde bu asimetriyi buldu; gozlemlenebilir bug
-            // uretilemedi — PgSendError retry'i kurtarilabilir vakalari zaten
-            // kurtariyor — ama simetri savunma-derinligi.
+            // SYMMETRIC with the read paths: when the send drops close the socket and make sock_
+            // INVALID so that an fd that is "closed but looks valid" does not go back to the pool and
+            // poison the next query. (The `if sock_==INVALID → do_connect()` at the start of
+            // query()/execute() catches this automatically.) A source audit
+            // found this asymmetry; no observable bug could be
+            // produced — the PgSendError retry already recovers the recoverable cases —
+            // but the symmetry is defense in depth.
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
             throw PgSendError("db postgres: send failed — connection lost");
         }
@@ -533,7 +533,7 @@ void PostgresClient::send_bytes(const uint8_t* buf, size_t len) {
 
 void PostgresClient::set_socket_timeout(int ms) {
     if (sock_ == PG_SOCK_INVALID) return;
-    rcv_tmo_ms_ = ms;   // fiber beklemesi de aynı süreyle sınırlanır (SO_RCVTIMEO fiber'da işlemez)
+    rcv_tmo_ms_ = ms;   // the fiber wait is bounded by the same duration (SO_RCVTIMEO does not work in a fiber)
 #ifdef _WIN32
     DWORD t = (DWORD)ms;
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof(t));
@@ -549,7 +549,7 @@ void PostgresClient::set_socket_timeout(int ms) {
 
 // ── Message I/O ───────────────────────────────────────────────────────────────
 
-// Backend → type(1) + len(4, len içinde kendisi var ama type yok) + body
+// Backend → type(1) + len(4, len includes itself but not the type) + body
 PostgresClient::PgMsg PostgresClient::read_message() {
     uint8_t type_byte;
     if (!recv_bytes(&type_byte, 1))
@@ -560,9 +560,9 @@ PostgresClient::PgMsg PostgresClient::read_message() {
     uint32_t len = read_u32_be(lb);
     if (len < 4) throw std::runtime_error("db postgres: invalid message length");
     size_t body_len = len - 4;
-    // Sunucu-kontrollü len ~4GB'a kadar olabilir → std::vector(body_len) sınırsız
-    // allocation → OOM/crash (kötü niyetli/MITM sunucu, TLS yok). Makul üst sınır
-    // (varsayılan 256MB, LOOK_PG_MAX_MSG ile ayarlanır).
+    // A server-controlled len can be up to ~4GB → std::vector(body_len) is an unbounded
+    // allocation → OOM/crash (malicious/MITM server, no TLS). A reasonable upper limit
+    // (default 256MB, set with LOOK_PG_MAX_MSG).
     static const size_t PG_MAX_MSG = []() -> size_t {
         const char* e = std::getenv("LOOK_PG_MAX_MSG");
         if (e && *e) { long long n = std::atoll(e); if (n > 0) return (size_t)n; }
@@ -576,13 +576,13 @@ PostgresClient::PgMsg PostgresClient::read_message() {
     return PgMsg{(char)type_byte, std::move(body)};
 }
 
-// Frontend → type(1) + len(4, len içinde kendisi var) + body
+// Frontend → type(1) + len(4, len includes itself) + body
 void PostgresClient::send_message(char type, const std::vector<uint8_t>& body) {
     queue_message(type, body);
     flush_out();
 }
 
-// Mesajı gönderme kuyruğuna ekle (flush_out tek send ile yollar).
+// Append the message to the send queue (flush_out sends it with a single send).
 void PostgresClient::queue_message(char type, const std::vector<uint8_t>& body) {
     uint32_t len = 4 + (uint32_t)body.size();
     uint8_t hdr[5];
@@ -595,9 +595,9 @@ void PostgresClient::queue_message(char type, const std::vector<uint8_t>& body) 
 void PostgresClient::flush_out() {
     if (out_.empty()) return;
     std::vector<uint8_t> o;
-    o.swap(out_);   // gönderim hata atsa bile kuyruk boş kalır (yarım mesaj sonraki sorguya karışmaz)
+    o.swap(out_);   // even if the send throws the queue stays empty (a half message does not leak into the next query)
     send_bytes(o.data(), o.size());
-    if (o.capacity() <= 65536) { o.clear(); out_.swap(o); }   // küçük tamponu yeniden kullan (büyüğü bırak)
+    if (o.capacity() <= 65536) { o.clear(); out_.swap(o); }   // reuse a small buffer (drop a large one)
 }
 
 // ── Connect ───────────────────────────────────────────────────────────────────
@@ -612,21 +612,21 @@ void PostgresClient::connect(const std::string& host, int port,
 
 void PostgresClient::do_connect() {
 #ifndef _WIN32
-    // Eski TLS oturumu serbest birakilmiyordu: yeniden baglanmada SSLRequest eski oturumun
-    // ustunden sifreli gidiyor, sunucu anlamiyor → TLS baglantisi bir daha kurulamiyordu (+ sizinti).
+    // The old TLS session was not released: on reconnect the SSLRequest went encrypted over the
+    // old session, the server did not understand → a TLS connection could never be established again (+ a leak).
     if (ssl_) { SSL_free((SSL*)ssl_); ssl_ = nullptr; }
 #endif
     if (sock_ != PG_SOCK_INVALID) {
         pg_close_sock(sock_);
         sock_ = PG_SOCK_INVALID;
     }
-    // Yeni oturum: eski bağlantıdan kalan okunmamış baytlar ve gönderilmemiş mesajlar o oturuma
-    // aitti — yeni bağlantıda okunsalar cevaplar kayar (başka sorgunun satırları gelirdi).
+    // New session: unread bytes and unsent messages left from the old connection belonged to that session —
+    // if read on the new connection the replies would shift (rows of another query would arrive).
     rbuf_pos_ = rbuf_len_ = 0;
     out_.clear();
 
-    // Go net.Dial modeli (IPv4 + IPv6, adresleri sırayla dene) — look/fiber_net.h tcp_dial.
-    // Fiber içinde bağlanırken ve ad çözerken yalnız fiber bekler.
+    // Go net.Dial model (IPv4 + IPv6, try addresses in order) — look/fiber_net.h tcp_dial.
+    // While connecting and resolving names inside a fiber only the fiber waits.
     {
         bool resolved = false, timed_out = false;
         auto s = tcp_dial(host_, port_, connect_timeout_ms_, resolved, timed_out);
@@ -638,7 +638,7 @@ void PostgresClient::do_connect() {
         sock_ = s;
     }
 
-    // Nagle algoritmasını kapat — küçük paketlerde 40ms gecikmeyi önler
+    // Turn off Nagle's algorithm — avoids a 40ms delay on small packets
     {
         int nd = 1;
 #ifdef _WIN32
@@ -653,19 +653,19 @@ void PostgresClient::do_connect() {
 #ifndef _WIN32
     if (tls_) {
         // ── SSLRequest → TLS upgrade ─────────────────────────────────────────
-        // SSLRequest (len=8, code=80877103=0x04D2162F) → sunucu 1 bayt: 'S' kabul / 'N' yok.
-        // 'N' ise SESSİZCE DÜZ METNE DÜŞME — TLS'i hiç eklememekten kötü olur (kullanıcı
-        // şifreli sanır). tls_ istendiyse temiz hata ver.
+        // SSLRequest (len=8, code=80877103=0x04D2162F) → the server answers 1 byte: 'S' accept / 'N' no.
+        // On 'N' DO NOT SILENTLY FALL BACK TO PLAINTEXT — worse than never adding TLS (the user
+        // thinks it is encrypted). If tls_ was requested, give a clean error.
         uint8_t sslreq[8] = {0,0,0,8, 0x04,0xD2,0x16,0x2F};
-        send_bytes(sslreq, 8);   // ssl_ henüz yok → plaintext
+        send_bytes(sslreq, 8);   // ssl_ does not exist yet → plaintext
         uint8_t resp = 0;
         if (!recv_bytes(&resp, 1)) {
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
             throw std::runtime_error("db postgres: could not read SSLRequest response");
         }
-        // 'S'den sonra tamponda bayt kaldıysa reddet: sunucu (ya da araya giren biri) TLS'ten önce
-        // düz metin göndermiş; o baytlar şifreli oturumun ilk cevabıymış gibi okunurdu
-        // (PostgreSQL'deki CVE-2021-23222 sınıfı). Dürüst sunucu 'S'den sonra TLS'i bekler.
+        // If bytes remain in the buffer after 'S', reject: the server (or an interceptor) sent plaintext
+        // before TLS; those bytes would be read as if they were the first reply of the encrypted session
+        // (the CVE-2021-23222 class in PostgreSQL). An honest server waits for TLS after 'S'.
         if (resp == 'S' && rbuf_len_ != rbuf_pos_) {
             pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
             throw std::runtime_error("db postgres: the server sent data before TLS started — connection refused");
@@ -681,8 +681,8 @@ void PostgresClient::do_connect() {
         if (!s) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
                   throw std::runtime_error("db postgres: SSL_new failed (TLS)"); }
         SSL_set_fd(s, (int)sock_);
-        // SNI + ad doğrulaması (IP → IP SAN, ad → DNS adı; look/tls_peer.h). Kurulamazsa ad
-        // kontrolü sessizce kapanırdı → "geçerli CA + yanlış host" MITM'i açılır → reddet.
+        // SNI + name verification (IP → IP SAN, name → DNS name; look/tls_peer.h). If it cannot be set up, name
+        // checking would silently turn off → "valid CA + wrong host" MITM opens → reject.
         if (tls_verify_) SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
         if (!tls_set_peer(s, host_, tls_verify_)) {
             SSL_free(s); pg_close_sock(sock_); sock_ = PG_SOCK_INVALID;
@@ -695,7 +695,7 @@ void PostgresClient::do_connect() {
             throw std::runtime_error(hs == 0 ? std::string("db postgres: TLS handshake timed out")
                                              : "db postgres: TLS handshake failed: " + why);
         }
-        ssl_ = s;   // bundan sonra send/recv_bytes SSL üstünden (startup+auth+sorgu dahil)
+        ssl_ = s;   // from now on send/recv_bytes go over SSL (including startup+auth+query)
     }
 #else
     if (tls_)
@@ -725,15 +725,15 @@ void PostgresClient::send_startup() {
     append_param("user", user_);
     append_param("database", database_);
     append_param("client_encoding", "UTF8");
-    // GÜVENLİK: string literal escape'i (bind_params → '' ile tek-tırnak) yalnız
-    // standard_conforming_strings=on iken TAM güvenlidir; kapalıysa backslash bir
-    // escape karakteri olur ve `\'` ile injection mümkün olur. Bağlantı düzeyinde
-    // zorla (PG 9.1+ varsayılanı on ama enforce etmek MySQL'in NO_BACKSLASH_ESCAPES
-    // temizlemesiyle aynı disiplin — server/rol config'inden bağımsız güvence).
+    // SECURITY: string literal escaping (bind_params → single quote with '') is FULLY
+    // safe only when standard_conforming_strings=on; if off, backslash becomes an
+    // escape character and injection is possible with `\'`. Enforce at the connection level
+    // (the PG 9.1+ default is on, but enforcing it is the same discipline as MySQL's NO_BACKSLASH_ESCAPES
+    // clearing — a guarantee independent of server/role config).
     append_param("standard_conforming_strings", "on");
-    body.push_back('\0'); // param list sonu
+    body.push_back('\0'); // end of param list
 
-    // Startup mesajı: type byte YOK, sadece len + body
+    // Startup message: NO type byte, only len + body
     uint32_t total = 4 + (uint32_t)body.size();
     uint8_t lb[4];
     write_u32_be(lb, total);
@@ -743,7 +743,7 @@ void PostgresClient::send_startup() {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-// pg_parse_error → look/pg_parse.h (saf, fuzz ile paylasilir)
+// pg_parse_error → look/pg_parse.h (pure, shared with fuzz)
 
 void PostgresClient::do_auth() {
     while (true) {
@@ -755,7 +755,7 @@ void PostgresClient::do_auth() {
             uint32_t auth_type = read_u32_be(msg.body.data());
 
             if (auth_type == 0) {
-                // AuthenticationOk — devam
+                // AuthenticationOk — continue
             } else if (auth_type == 3) {
                 // Cleartext
                 std::vector<uint8_t> body(password_.begin(), password_.end());
@@ -781,26 +781,26 @@ void PostgresClient::do_auth() {
         } else if (msg.type == 'E') {
             throw std::runtime_error("db postgres: " + pg_parse_error(msg.body));
         } else if (msg.type == 'Z') {
-            // ReadyForQuery — auth tamamlandı (taze baglanti: transaction yok)
+            // ReadyForQuery — auth complete (fresh connection: no transaction)
             in_txn_ = false;
             return;
         }
-        // 'S' (ParameterStatus), 'K' (BackendKeyData), 'N' (Notice) → yoksay
+        // 'S' (ParameterStatus), 'K' (BackendKeyData), 'N' (Notice) → ignore
     }
 }
 
 // ── Query ─────────────────────────────────────────────────────────────────────
 
-// Sorgudan ONCE. Sunucu bosta bekleyen baglantiyi kapattiysa (pg_terminate_backend, yeniden
-// baslatma, idle timeout) bunu hicbir sey GONDERMEDEN anla ve yenile. Transaction icinde kopan
-// baglantinin yerine yenisi ACILMAZ: sunucu transaction'i geri aldi; eskiden yeni baglantida
-// sonraki komutlar transaction DISINDA kalici yaziliyordu (olculdu: sessiz tutarsizlik).
+// BEFORE the query. If the server closed the idle connection (pg_terminate_backend, restart,
+// idle timeout) detect it WITHOUT SENDING anything and renew it. A connection that drops inside a transaction is NOT
+// replaced by a new one: the server rolled the transaction back; previously the following commands on the new connection
+// were written permanently OUTSIDE the transaction (measured: silent inconsistency).
 static const char* const kPgTxLost = "db postgres: the connection was closed inside a transaction; "
                                      "the server rolled the transaction back and nothing of it was kept";
 bool PostgresClient::unread_reply_bytes() const {
-    // Sorgu gönderilmeden önce okunmamış cevap baytı kalmış olmamalı: kalmışsa önceki bir cevap
-    // yarıda bırakılmıştır ve bu bağlantıda okunan her şey bir sorgu geriden gelir. Soketteki
-    // baytı idle_socket_unusable görür; okuma tamponundakini (ve TLS tamponundakini) bu görür.
+    // Before a query is sent no unread reply bytes may remain: if they do, an earlier reply
+    // was abandoned halfway and everything read on this connection is one query behind. A byte on the
+    // socket is seen by idle_socket_unusable; this sees what is in the read buffer (and the TLS buffer).
     if (rbuf_len_ != rbuf_pos_) return true;
 #ifndef _WIN32
     if (ssl_ && SSL_pending((SSL*)ssl_) > 0) return true;
@@ -822,29 +822,29 @@ std::vector<DbRow> PostgresClient::query(const std::string& sql) {
     try {
         return simple_query(sql);
     } catch (const PgSendError&) {
-        // Yalnız GÖNDERİM başarısızsa retry — istek sunucuya ulaşmadı, güvenli.
-        // Yanıt-okuma aşamasındaki kopma buraya DÜŞMEZ (std::runtime_error) →
-        // propagate eder, retry edilmez (sunucu işlemiş olabilir → çift-yazma).
-        // Transaction icindeyse retry YOK (yeni baglanti transaction disinda kalirdi).
+        // Retry only if the SEND failed — the request did not reach the server, safe.
+        // A drop during response reading does NOT land here (std::runtime_error) →
+        // it propagates, no retry (the server may have processed it → double write).
+        // No retry inside a transaction (the new connection would be outside the transaction).
         if (in_txn_) { in_txn_ = false; throw std::runtime_error(kPgTxLost); }
         try { do_connect(); } catch (...) { throw; }
         return simple_query(sql);
     }
 }
 
-// COPY ... FROM STDIN / TO STDOUT: db:: veri akışı taşımaz. Eskiden FROM STDIN'de sunucu istemciden
-// veri, istemci sunucudan cevap bekliyordu → okuma zaman aşımına (30 sn) kadar asılıp ilgisiz bir
-// hata; TO STDOUT satırları sessizce atıp boş sonuç dönüyordu. Şimdi ikisi de hemen, nedenli hata.
+// COPY ... FROM STDIN / TO STDOUT: db:: does not carry a data stream. Previously on FROM STDIN the server waited for
+// data from the client and the client for a reply from the server → it hung until the read timeout (30 s) with an unrelated
+// error; TO STDOUT silently discarded the rows and returned an empty result. Now both fail immediately, with a reasoned error.
 static std::vector<uint8_t> pg_copy_fail_body() {
     static const char m[] = "COPY FROM STDIN is not supported by db:: (send the rows with INSERT)";
-    return std::vector<uint8_t>(m, m + sizeof(m));   // NUL dahil
+    return std::vector<uint8_t>(m, m + sizeof(m));   // including NUL
 }
 static std::string pg_copy_out_unsupported() {
     return "db postgres: COPY TO STDOUT is not supported by db:: (read the rows with SELECT)";
 }
 
 std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
-    // Query mesajı: 'Q' + sql + '\0'
+    // Query message: 'Q' + sql + '\0'
     std::vector<uint8_t> body(sql.begin(), sql.end());
     body.push_back('\0');
     send_message('Q', body);
@@ -854,12 +854,12 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
     std::vector<ColInfo> columns;
 
     affected_rows_  = 0;
-    // last_insert_id_ DOKUNULMAZ: bu yol yalnız BEGIN/COMMIT/ROLLBACK/SAVEPOINT içindir (kullanıcı
-    // SQL'i extended_query'den geçer); COMMIT'ten sonra da db::last_id INSERT'inkini verir.
+    // last_insert_id_ is NOT TOUCHED: this path is only for BEGIN/COMMIT/ROLLBACK/SAVEPOINT (user
+    // SQL goes through extended_query); after COMMIT db::last_id still gives that of the INSERT.
 
-    // Cevap sonuna (ReadyForQuery) kadar okunmadan hata atılırsa bağlantı kapanır: okunmamış
-    // mesajlar sonraki sorgunun cevabı sanılırdı (her sonuç bir sorgu geriden; hata yok —
-    // tests/pg_malformed_desync_test.sh). Sunucu hatası ('E') 'Z'ye kadar okunur, bağlantı kalır.
+    // If an error is thrown before the reply is read to its end (ReadyForQuery) the connection is closed: unread
+    // messages would be taken for the reply to the next query (every result one query behind; no error —
+    // tests/pg_malformed_desync_test.sh). A server error ('E') is read up to 'Z', the connection stays.
     bool reply_done = false;
     bool copy_out = false;
     try {
@@ -876,7 +876,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
             const uint8_t* p = msg.body.data() + 2;
             const uint8_t* end = msg.body.data() + msg.body.size();
             for (int i = 0; i < (int)ncols && p < end; i++) {
-                // col name (null-term)
+                // col name (null-terminated)
                 std::string name;
                 while (p < end && *p) name += (char)*p++;
                 if (p < end) p++; // null
@@ -897,16 +897,16 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
             const uint8_t* p = msg.body.data() + 2;
             const uint8_t* end = msg.body.data() + msg.body.size();
             DbRow row;
-            // Bozuk DataRow SESSIZCE yanlis veri uretiyordu (sahte sunucuyla olculdu):
-            //   uzunluk 100 der, 2 bayt gonderir  -> alan "" (bos string), hata YOK
-            //   int32-max uzunluk                 -> alan "" , hata YOK
-            //   3 alan vaat eder, 1 tane gonderir -> satir 1 sutunla doner, hata YOK
-            // Uygulama bos degeri gercek veri sanip ona gore davraniyordu (bos yetki
-            // dizesi, bos bakiye...). Cokme yoktu — sinir kontrolu tutuyordu — ama
-            // sessiz yanlis veri bu projede cokmeden daha tehlikeli sayilir.
-            // Ayrica 'p + field_len <= end' isaretci TASMASINA acikti (field_len
-            // int32-max iken p+field_len tanimsiz davranis); 'field_len > end - p'
-            // tasma-guvenli bicim.
+            // A malformed DataRow SILENTLY produced wrong data (measured with a fake server):
+            //   declares length 100, sends 2 bytes  -> field "" (empty string), NO error
+            //   int32-max length                    -> field "" , NO error
+            //   promises 3 fields, sends 1          -> row returns with 1 column, NO error
+            // The application took the empty value for real data and behaved accordingly (empty authorization
+            // string, empty balance...). There was no crash — the bounds check held — but
+            // silently wrong data is considered more dangerous than a crash in this project.
+            // Also 'p + field_len <= end' was open to pointer OVERFLOW (undefined behavior when field_len
+            // is int32-max); 'field_len > end - p' is the
+            // overflow-safe form.
             for (int i = 0; i < (int)ncols; i++) {
                 if (end - p < 4)
                     throw std::runtime_error("db postgres: malformed DataRow — " +
@@ -915,7 +915,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
                 std::string val;
                 bool is_null = false;
                 if (field_len == -1) {
-                    is_null = true;                       // protokolde NULL yalnizca -1
+                    is_null = true;                       // in the protocol NULL is only -1
                 } else if (field_len < 0) {
                     throw std::runtime_error("db postgres: malformed DataRow — invalid field length " +
                                              std::to_string(field_len));
@@ -942,24 +942,24 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
                 try { affected_rows_ = std::stoll(tag.substr(sp + 1)); } catch (...) {}
             }
         } else if (msg.type == 'Z') {
-            // ReadyForQuery — bitti.
+            // ReadyForQuery — done.
             in_txn_ = !msg.body.empty() && msg.body[0] != 'I';
             reply_done = true;
             if (copy_out) throw std::runtime_error(pg_copy_out_unsupported());
             break;
         } else if (msg.type == 'G' || msg.type == 'W') {
-            send_message('f', pg_copy_fail_body());   // CopyFail → sunucu 'E' + 'Z' gönderir
+            send_message('f', pg_copy_fail_body());   // CopyFail → the server sends 'E' + 'Z'
         } else if (msg.type == 'H') {
-            copy_out = true;                          // 'd'/'c' yutulur, 'Z'de hata
+            copy_out = true;                          // 'd'/'c' are swallowed, error at 'Z'
         } else if (msg.type == 'E') {
             std::string err = "db postgres: " + pg_parse_error(msg.body);
-            // ReadyForQuery'ye kadar drain et
+            // drain up to ReadyForQuery
             while (true) {
                 try { auto m = read_message(); if (m.type == 'Z') { in_txn_ = !m.body.empty() && m.body[0] != 'I'; reply_done = true; break; } } catch (...) { break; }
             }
             throw std::runtime_error(err);
         }
-        // 'N' (Notice), 'I' (EmptyQuery) → yoksay
+        // 'N' (Notice), 'I' (EmptyQuery) → ignore
     }
     } catch (...) {
         if (!reply_done && sock_ != PG_SOCK_INVALID) { pg_close_sock(sock_); sock_ = PG_SOCK_INVALID; }
@@ -973,7 +973,7 @@ std::vector<DbRow> PostgresClient::simple_query(const std::string& sql) {
 
 std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
                                                     const std::vector<DbParam>& params) {
-    // ? → $1, $2, ... dönüşümü
+    // ? → $1, $2, ... conversion
     std::string pg_sql;
     int param_idx = 0;
     bool in_str = false; char str_ch = 0;
@@ -981,8 +981,8 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
         char c = sql[i];
         if (!in_str && (c == '\'' || c == '"')) { in_str = true; str_ch = c; pg_sql += c; continue; }
         if (in_str && c == str_ch) {
-            // SQL kaçışı: '' (veya "") = literal tırnak — string KAPANMAZ. Aksi halde
-            // 'it''s ? here' içindeki ? yanlışlıkla parametre sanılıp bind kayardı.
+            // SQL escape: '' (or "") = literal quote — the string does NOT close. Otherwise
+            // the ? inside 'it''s ? here' would be mistaken for a parameter and the bind would shift.
             if (i + 1 < sql.size() && sql[i + 1] == str_ch) { pg_sql += c; pg_sql += sql[++i]; continue; }
             in_str = false; pg_sql += c; continue;
         }
@@ -999,7 +999,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
         body.insert(body.end(), pg_sql.begin(), pg_sql.end());
         body.push_back('\0'); // query
         body.push_back(0); body.push_back(0); // num_param_types = 0 (server infers)
-        queue_message('P', body);   // Parse … Sync: tek send (flush Sync'te)
+        queue_message('P', body);   // Parse … Sync: a single send (flush at Sync)
     }
 
     // Bind ('B') — bind params as text format
@@ -1019,7 +1019,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
                 std::string vs;
                 switch (params[i].kind) {
                     case DbParam::INT_VAL:   vs = std::to_string(params[i].i); break;
-                    case DbParam::FLOAT_VAL: vs = look_format_double(params[i].d); break;  // dilin tek double formatı
+                    case DbParam::FLOAT_VAL: vs = look_format_double(params[i].d); break;  // the language's single double format
                     case DbParam::BOOL_VAL:  vs = params[i].b ? "true" : "false"; break;
                     default:                 vs = params[i].s; break;
                 }
@@ -1039,7 +1039,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
     // Execute ('E')
     { std::vector<uint8_t> body; body.push_back('\0'); for(int b=0;b<4;b++) body.push_back(0); queue_message('E', body); }
 
-    // Sync ('S') — kuyruktaki beş mesaj tek send ile gider
+    // Sync ('S') — the five queued messages go out with a single send
     { send_message('S', {}); }
 
     // Drain responses
@@ -1048,7 +1048,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
     std::vector<ColInfo> columns;
     affected_rows_ = 0;
 
-    // simple_query ile aynı kural: cevap 'Z'ye kadar okunmadan hata atılırsa bağlantı kapanır.
+    // same rule as simple_query: if an error is thrown before the reply is read up to 'Z' the connection is closed.
     bool reply_done = false;
     bool copy_out = false;
     try {
@@ -1057,7 +1057,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
         try { msg = read_message(); } catch (...) { pg_close_sock(sock_); sock_=PG_SOCK_INVALID; throw; }
 
         if (msg.type == '1' || msg.type == '2') {
-            // ParseComplete / BindComplete — devam
+            // ParseComplete / BindComplete — continue
         } else if (msg.type == 'T') {
             columns.clear();
             if (msg.body.size() < 2) continue;
@@ -1075,9 +1075,9 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
                 columns.push_back({std::move(name), oid_to_type(oid)});
             }
         } else if (msg.type == 'D') {
-            // DataRow — simple_query ile AYNI guard'lar (bozuk DataRow sessizce yanlis
-            // veri uretmesin). db::query/exec/one artik bu extended yolu kullaniyor;
-            // guard'lar yalniz simple_query'deydi → burada da (differential yakaladi).
+            // DataRow — the SAME guards as simple_query (a malformed DataRow must not silently
+            // produce wrong data). db::query/exec/one now use this extended path;
+            // the guards were only in simple_query → added here too (the differential caught it).
             if (msg.body.size() < 2) continue;
             uint16_t ncols = read_u16_be(msg.body.data());
             const uint8_t* p = msg.body.data() + 2;
@@ -1091,11 +1091,11 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
                 std::string val;
                 bool is_null = false;
                 if (field_len == -1) {
-                    is_null = true;                       // protokolde NULL yalnizca -1
+                    is_null = true;                       // in the protocol NULL is only -1
                 } else if (field_len < 0) {
                     throw std::runtime_error("db postgres: malformed DataRow — invalid field length " +
                                              std::to_string(field_len));
-                } else if ((size_t)field_len > (size_t)(end - p)) {   // tasma-guvenli
+                } else if ((size_t)field_len > (size_t)(end - p)) {   // overflow-safe
                     throw std::runtime_error("db postgres: malformed DataRow — field length " +
                         std::to_string(field_len) + " govdede kalan " +
                         std::to_string(end - p) + " bayti asiyor");
@@ -1121,7 +1121,7 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
             if (copy_out) throw std::runtime_error(pg_copy_out_unsupported());
             break;
         } else if (msg.type == 'G' || msg.type == 'W') {
-            // Kopyalama kipinde sunucu önceki Sync'i yok saydı: CopyFail'den sonra yeni Sync gerekir
+            // In copy mode the server ignored the previous Sync: a new Sync is needed after CopyFail
             queue_message('f', pg_copy_fail_body());
             send_message('S', {});
         } else if (msg.type == 'H') {
@@ -1139,9 +1139,9 @@ std::vector<DbRow> PostgresClient::extended_query_raw(const std::string& sql,
     return rows;
 }
 
-// Kullanıcının SQL'i. INSERT ise kimlik eklenen satırdan okunur (look/pg_insert.h — eski lastval
-// yolunun sessiz veri kaybı ve yanlış kimlik hatası orada anlatılıyor). Ek sorgu yalnız katalog
-// sorgusu: hata veremez, transaction'ı bozamaz.
+// The user's SQL. If it is an INSERT the id is read from the inserted row (look/pg_insert.h — the silent data loss and wrong id
+// bug of the old lastval path is described there). The extra query is only a catalog
+// query: it cannot error, it cannot break the transaction.
 std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
                                                     const std::vector<DbParam>& params) {
     if (!pg_is_insert(sql)) {
@@ -1151,31 +1151,31 @@ std::vector<DbRow> PostgresClient::extended_query(const std::string& sql,
     }
     const std::string table = pg_insert_target(sql);
     const std::string col   = table.empty() ? std::string() : serial_column(table);
-    if (col.empty()) {                       // dizisiz tablo (ya da tanınmayan biçim) → kimlik yok
+    if (col.empty()) {                       // table without a sequence (or unrecognized form) → no id
         auto rows = extended_query_raw(sql, params);
         last_insert_id_ = 0;
         return rows;
     }
-    // Eklenen satırların sonuncusunun kimliği (SQLite last_insert_rowid gibi).
+    // The id of the last of the inserted rows (like SQLite last_insert_rowid).
     auto id_of = [&](const std::vector<DbRow>& rows) -> int64_t {
         if (rows.empty()) return 0;
         for (const auto& f : rows.back())
             if (f.first == col && !f.second.is_null) { try { return std::stoll(f.second.str); } catch (...) { return 0; } }
         return 0;
     };
-    if (pg_has_returning(sql)) {             // kullanıcının kendi RETURNING'i — SQL'e dokunma
+    if (pg_has_returning(sql)) {             // the user's own RETURNING — do not touch the SQL
         auto rows = extended_query_raw(sql, params);
         last_insert_id_ = id_of(rows);
         return rows;
     }
     auto rows = extended_query_raw(pg_with_returning(sql, col), params);
     last_insert_id_ = id_of(rows);
-    return {};                               // eklenen RETURNING'in satırları kullanıcıya gitmez
+    return {};                               // the rows of the added RETURNING do not go to the user
 }
 
 std::string PostgresClient::serial_column(const std::string& table) {
-    // to_regclass: tablo yoksa NULL (hata değil); ad pg_insert_target'tan geçtiği için sözdizimi
-    // geçerli. pg_get_serial_sequence hem SERIAL hem IDENTITY kolonunu tanır.
+    // to_regclass: NULL if the table does not exist (not an error); since the name passed through pg_insert_target the syntax is
+    // valid. pg_get_serial_sequence knows both SERIAL and IDENTITY columns.
     auto rows = extended_query_raw(
         "SELECT a.attname FROM pg_catalog.pg_attribute a "
         "WHERE a.attrelid = to_regclass(?) AND a.attnum > 0 AND NOT a.attisdropped "
@@ -1190,8 +1190,8 @@ std::vector<DbRow> PostgresClient::execute(const std::string& sql, const std::ve
     try {
         return extended_query(sql, params);
     } catch (const PgSendError&) {
-        // Yalnız gönderim başarısızsa retry (bkz. query()/53. bug). Yanıt-okuma
-        // kopması retry EDİLMEZ — sunucu statement'ı işlemiş olabilir.
+        // Retry only if the send failed (see query()). A drop during response reading
+        // is NOT retried — the server may have processed the statement.
         if (in_txn_) { in_txn_ = false; throw std::runtime_error(kPgTxLost); }
         try { do_connect(); } catch (...) { throw; }
         return extended_query(sql, params);

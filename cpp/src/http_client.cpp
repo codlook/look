@@ -4,11 +4,11 @@
 
 #include "look/http_client.h"
 #ifndef LOOK_VERSION
-#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#define LOOK_VERSION "1.0.0"   // fallback; normally CMake compile-def provides it (single source)
 #endif
-#include "look/ssrf_safe.h"   // SSRF private/özel-blok kararı (saf, tablo-test edilebilir)
+#include "look/ssrf_safe.h"   // SSRF private/special-block decision (pure, table-testable)
 #include "look/gzip_inflate.h"   // gzip response decode (pure, fuzzed)
-#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli)
+#include "look/host_port.h" // host[:port] + port parsing (Go net/url model)
 #include "look/charset.h"     // single-byte charset → UTF-8 (iso-8859-9 etc.)
 #include <stdexcept>
 #include <sstream>
@@ -22,10 +22,10 @@
 #  include <sys/stat.h>
 #endif
 #ifdef __linux__
-#  include "look/fiber.h"   // fiber-aware recv (Go netpoller) — yalnız Linux --mode http
+#  include "look/fiber.h"   // fiber-aware recv (Go netpoller) — Linux --mode http only
 #endif
 #ifndef _WIN32
-#  include "look/fiber_net.h"   // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
+#  include "look/fiber_net.h"   // so that DNS/connect/TLS/send inside a fiber do not hold the thread
 #endif
 
 #ifdef _WIN32
@@ -46,7 +46,7 @@ static const sock_t INVALID = INVALID_SOCKET;
 #  include <unistd.h>
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
-#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
+#include "look/tls_peer.h"   // SNI + name verification (IP → IP SAN), handshake failure reason
 typedef int sock_t;
 static const sock_t INVALID = -1;
 #endif
@@ -55,11 +55,11 @@ static const sock_t INVALID = -1;
 namespace look {
 
 #ifdef _WIN32
-// İsteğin TAMAMINI gönder (Windows; POSIX yolu look::fiber_send_all kullanır). Tek send() kısmi
-// yazabilir: soketin gönderme süre sınırı ("timeout" seçeneği, SO_SNDTIMEO) yavaş okuyan sunucuda
-// dolunca yazılabilen kadarını gönderip döner ve kalan hiç gitmiyordu — hata da verilmiyordu
-// (ölçüldü: 8 MB POST'un 2,6 MB'ı, error=null). Her send aynı süre sınırıyla bekler.
-// Dönüş: true = hepsi gitti; false = hata, *timed_out = süre doldu.
+// Send the WHOLE request (Windows; the POSIX path uses look::fiber_send_all). A single send() may write
+// partially: when the socket's send time limit (the "timeout" option, SO_SNDTIMEO) expires on a slow-reading server,
+// it sent what it could write and returned, and the rest never went — and no error was given either
+// (measured: 2.6 MB of an 8 MB POST, error=null). Every send waits with the same time limit.
+// Return: true = all of it went; false = error, *timed_out = time expired.
 static bool send_all(sock_t s, const char* p, size_t n, bool* timed_out) {
     *timed_out = false;
     while (n > 0) {
@@ -73,11 +73,11 @@ static bool send_all(sock_t s, const char* p, size_t n, bool* timed_out) {
 }
 #endif
 
-// ── Sistem CA bundle'ını bul (statik OpenSSL için — her iki platformda tanımlı) ──
-// Statik OpenSSL derleme-prefix'indeki CA dizinini arar (hedefte YOK) → https
-// doğrulaması sessizce başarısız olur. Standart yolları probe edip SSL_CERT_FILE/DIR
-// ayarlarız. Zaten set ise dokunmayız (OS/crypto-policies). Windows: Schannel sistem
-// cert store'u kullanır → no-op.
+// ── Find the system CA bundle (for static OpenSSL — defined on both platforms) ──
+// Static OpenSSL looks for the CA directory in the build prefix (ABSENT on the target) → https
+// verification silently fails. We probe the standard paths and set SSL_CERT_FILE/DIR.
+// If it is already set we do not touch it (OS/crypto-policies). Windows: Schannel uses the system
+// cert store → no-op.
 void configure_system_ca_bundle() {
 #ifndef _WIN32
     if (!std::getenv("SSL_CERT_FILE")) {
@@ -103,12 +103,12 @@ void configure_system_ca_bundle() {
 #endif
 }
 
-// ── SSRF koruması — private/loopback IP'lere bağlantı engeli ─────────────────
+// ── SSRF protection — blocks connections to private/loopback IPs ─────────────────
 
-// Karar mantığı look/ssrf_safe.h'de (saf, tablo-test edilebilir). Buradaki
-// döngü yalnız addrinfo → (family, ham byte) çıkarımı yapıp predikata delege eder.
+// The decision logic is in look/ssrf_safe.h (pure, table-testable). The loop
+// here only derives (family, raw bytes) from addrinfo and delegates to the predicate.
 static bool is_ssrf_blocked(const struct addrinfo* res) {
-    // LOOK_ALLOW_SSRF=1 ile devre dışı bırakılabilir (iç ağ test ortamı için)
+    // can be disabled with LOOK_ALLOW_SSRF=1 (for an internal-network test environment)
     static const bool allow = (std::getenv("LOOK_ALLOW_SSRF") != nullptr &&
                                std::string(std::getenv("LOOK_ALLOW_SSRF")) == "1");
     if (allow) return false;
@@ -125,14 +125,14 @@ static bool is_ssrf_blocked(const struct addrinfo* res) {
     return false;
 }
 
-// Bağlantı hatasının NEDENİ — tcp_connect'ten çağırana taşınır.
-// ESKİ HATA: tcp_connect DNS hatası, SSRF engeli, socket hatası ve gerçek bağlantı
-// hatası için AYNI INVALID'i döndürüyordu; çağıran taraf da hepsine "connection
-// failed" diyordu. Sonuç: SSRF ENGELİ ile GERÇEK AĞ HATASI ayırt edilemiyordu —
-// iç servisine ulaşamayan geliştirici isteği bir güvenlik politikasının
-// engellediğini göremiyor, boşuna ağ/DNS/firewall araştırıyordu.
-// (33. bug ile aynı sınıf: davranış doğru, mesaj teşhis ettirmiyor.)
-// fiber-ok: yalnız tcp_connect'in son askı noktasından SONRA yazılır, çağıran hemen okur
+// The REASON for a connection failure — carried from tcp_connect to the caller.
+// OLD BUG: tcp_connect returned the SAME INVALID for a DNS error, an SSRF block, a socket error and a real connection
+// error; the caller called all of them "connection
+// failed". Result: an SSRF BLOCK and a REAL NETWORK ERROR could not be told apart —
+// a developer who could not reach an internal service could not see that a security policy
+// blocked the request, and investigated network/DNS/firewall in vain.
+// (Same class as bug 33: the behavior is right, the message does not allow diagnosis.)
+// fiber-ok: written only AFTER tcp_connect's last suspension point, and the caller reads it immediately
 static thread_local const char* t_conn_error = nullptr;
 
 // ── URL parser ────────────────────────────────────────────────────────────────
@@ -171,13 +171,13 @@ static std::string hc_base64(const std::string& in) {
     return o;
 }
 
-// Go net/url modeli:
-//   * şema büyük/küçük harf duyarsız ("HTTPS://" geçerli);
-//   * yetki bölümü ilk '/', '?' ya da '#' ile biter — eskiden yalnız '/': "http://h?q=1" → host "h?q=1";
-//   * parça (#...) sunucuya gönderilmez (RFC 9110 §4.2.4);
-//   * "user:pass@" → Basic kimlik (yüzde kodu çözülür; Go Request.URL.User); eskiden host'a karışıyordu;
-//   * port: yalnız rakam, 1-65535, boş = varsayılan; IPv6 köşeli parantezde (look/host_port.h).
-//     Eskiden bozuk port sessizce 80/443'e düşüyordu ("http://h:8O80/" → 80'e bağlan).
+// Go net/url model:
+//   * the scheme is case-insensitive ("HTTPS://" is valid);
+//   * the authority ends at the first '/', '?' or '#' — it used to be only '/': "http://h?q=1" → host "h?q=1";
+//   * the fragment (#...) is not sent to the server (RFC 9110 §4.2.4);
+//   * "user:pass@" → Basic credentials (percent-decoded; Go Request.URL.User); it used to get mixed into the host;
+//   * port: digits only, 1-65535, empty = default; IPv6 in square brackets (look/host_port.h).
+//     A malformed port used to silently fall back to 80/443 ("http://h:8O80/" → connect to 80).
 ParsedUrl parse_url(const std::string& url) {
     ParsedUrl r;
     size_t se = url.find("://");
@@ -213,18 +213,18 @@ ParsedUrl parse_url(const std::string& url) {
 
 // ── Request builder ───────────────────────────────────────────────────────────
 
-// CRLF sıyırma — giden isteğe request-splitting / header injection engeli.
-// Kullanıcı-kontrollü URL yolu, host veya header değeri \r\n içerirse sahte
-// header ya da istek sınırı enjekte edemesin (sunucu tarafı response header'da
-// aynı savunmayı yapıyor; client de aynı disiplini uygular).
+// CRLF stripping — prevents request-splitting / header injection in the outgoing request.
+// If a user-controlled URL path, host or header value contains \r\n, it must not inject a fake
+// header or request boundary (the server side does the same defense in the response
+// header; the client applies the same discipline).
 static std::string hc_strip_crlf(const std::string& s) {
     std::string r; r.reserve(s.size());
     for (char c : s) if (c != '\r' && c != '\n') r += c;
     return r;
 }
 
-// Host başlığı / CONNECT hedefi: IPv6 köşeli parantezde ("[::1]:8080"); eskiden parantezsiz yazılıyordu
-// ("Host: ::1:8080" — sunucu bozuk Host görür). with_port=false → varsayılan port yazılmaz.
+// Host header / CONNECT target: IPv6 in square brackets ("[::1]:8080"); it used to be written without brackets
+// ("Host: ::1:8080" — the server sees a broken Host). with_port=false → the default port is not written.
 static std::string url_authority(const ParsedUrl& u, bool with_port) {
     std::string h = hc_strip_crlf(u.host);
     if (h.find(':') != std::string::npos) h = "[" + h + "]";
@@ -233,9 +233,9 @@ static std::string url_authority(const ParsedUrl& u, bool with_port) {
 }
 
 // Parse a proxy spec ("http://host:port", "host:port", "host", "[::1]:3128") into host + port.
-// Go modeli (http.ProxyURL + canonicalAddr): port yoksa 80; IPv6 köşeli parantezde.
-// "https://" vekil: LOOK vekile TLS ile bağlanmaz — eskiden şema sessizce atılıp düz metin
-// konuşuluyordu (TLS bekleyen vekil bağlantıyı bozar). Artık açık hata.
+// Go model (http.ProxyURL + canonicalAddr): 80 if there is no port; IPv6 in square brackets.
+// "https://" proxy: LOOK does not connect to the proxy with TLS — the scheme used to be silently dropped and plain text
+// spoken (a proxy expecting TLS breaks the connection). Now an explicit error.
 static bool parse_proxy(const std::string& spec, std::string& host, int& port) {
     std::string s = spec;
     std::string low = s.substr(0, 8);
@@ -262,9 +262,9 @@ static std::string build_request(const std::string& method,
         target = std::string(url.tls ? "https://" : "http://") + url_authority(url, false) + hc_strip_crlf(url.path);
     req << hc_strip_crlf(method) << " " << target << " HTTP/1.1\r\n";
     req << "Host: " << url_authority(url, false) << "\r\n";
-    // Eskiden sabit "LOOK/0.19" yazıyordu (sürümle birlikte güncellenmemişti).
+    // It used to write a fixed "LOOK/0.19" (it was not updated with the version).
     req << "User-Agent: LOOK/" LOOK_VERSION "\r\n";
-    // URL'deki "user:pass@" → Basic kimlik (Go): çağıran kendi Authorization'ını verdiyse o kazanır.
+    // "user:pass@" in the URL → Basic credentials (Go): if the caller supplied its own Authorization, that wins.
     if (!url.basic_auth.empty()) {
         bool has_auth = false;
         for (auto& [k, v] : extra_headers) {
@@ -299,11 +299,11 @@ static std::string build_request(const std::string& method,
 // fuzzed: tests/fuzz/fuzz_gzip_inflate.cpp). Bounded output: a gzip bomb cannot exhaust memory.
 using look::gzip_inflate;
 
-// Tamponlanan (akışsız) yanıtın üst sınırı — LOOK_HTTP_MAX_RESPONSE bayt, varsayılan 64 MB (gzip
-// çözmenin sınırıyla aynı). Eskiden sınırsızdı: sonsuz gövde gönderen tek bir sunucuya yapılan
-// tek http::get, LOOK sürecini 25 sn'de 15 GB'a çıkardı (makine süreci, yani bütün siteyi öldürür).
-// Kullanıcının verdiği adresi çeken her özellik (önizleme, webhook, içe aktarma) buna açıktı.
-// Büyük indirmeler için akış (geri çağrılı) yol tampon tutmaz, sınırdan etkilenmez.
+// Upper limit of a buffered (non-streaming) response — LOOK_HTTP_MAX_RESPONSE bytes, default 64 MB (the same as the gzip
+// decode limit). It used to be unbounded: a single http::get to a server sending an endless body
+// grew the LOOK process to 15 GB in 25 s (a machine-level process, i.e. it kills the whole site).
+// Every feature that fetches a user-supplied address (preview, webhook, import) was exposed to this.
+// For large downloads the streaming (callback) path holds no buffer and is not affected by the limit.
 static size_t http_max_response() {
     static const size_t v = [] {
         const char* e = std::getenv("LOOK_HTTP_MAX_RESPONSE");
@@ -423,9 +423,9 @@ static HttpClientResponse parse_response(const std::string& raw) {
     return resp;
 }
 
-// ── Streaming: artimli chunked-decoder + sink ────────────────────────────────
-// Govde baytlari geldikce (recv/decrypt/SSL_read) bu sink'e beslenir. Once
-// basliklar tamamlanana kadar biriktirir, sonra chunked'i cozup callback'e verir.
+// ── Streaming: incremental chunked decoder + sink ────────────────────────────
+// As body bytes arrive (recv/decrypt/SSL_read) they are fed to this sink. It accumulates until
+// the headers are complete, then decodes the chunked encoding and gives it to the callback.
 
 struct ChunkedDecoder {
     std::string buf;
@@ -434,15 +434,15 @@ struct ChunkedDecoder {
         buf += data;
         while (!done) {
             size_t cr = buf.find("\r\n");
-            if (cr == std::string::npos) return;               // boyut satiri henuz tam degil
+            if (cr == std::string::npos) return;               // size line is not complete yet
             std::string hex = buf.substr(0, cr);
             size_t semi = hex.find(';');
-            if (semi != std::string::npos) hex = hex.substr(0, semi);  // chunk-extension at
+            if (semi != std::string::npos) hex = hex.substr(0, semi);  // cut the chunk-extension
             while (!hex.empty() && (hex.back() == ' ' || hex.back() == '\t')) hex.pop_back();
             size_t sz = 0;
             try { sz = std::stoul(hex, nullptr, 16); } catch (...) { done = true; return; }
-            if (sz == 0) { done = true; return; }              // son chunk
-            if (buf.size() < cr + 2 + sz + 2) return;          // tum chunk + CRLF henuz yok
+            if (sz == 0) { done = true; return; }              // last chunk
+            if (buf.size() < cr + 2 + sz + 2) return;          // the whole chunk + CRLF is not here yet
             emit(buf.substr(cr + 2, sz));
             buf.erase(0, cr + 2 + sz + 2);
         }
@@ -463,9 +463,9 @@ struct StreamSink {
         if (headers_done) { emit(std::string(data, n)); return; }
         head.append(data, n);
         size_t he = head.find("\r\n\r\n");
-        if (he == std::string::npos) return;                   // basliklar henuz tam degil
+        if (he == std::string::npos) return;                   // headers are not complete yet
         headers_done = true;
-        // Baslik blogunu (bos govdeyle) parse_response ile coz — status + headers.
+        // Parse the header block (with an empty body) using parse_response — status + headers.
         HttpClientResponse hp = parse_response(head.substr(0, he + 4));
         resp.status  = hp.status;
         resp.headers = hp.headers;
@@ -598,7 +598,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
 
     if (via_proxy) {
         // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
-        std::string tgt = url_authority(url, true);   // IPv6 köşeli parantezde
+        std::string tgt = url_authority(url, true);   // IPv6 in square brackets
         std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
         bool ctmo = false;
         if (!send_all(s, creq.data(), creq.size(), &ctmo)) { closesocket(s); resp.error = "proxy CONNECT send failed"; return resp; }
@@ -726,8 +726,8 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         enc_bufs[3].BufferType = SECBUFFER_EMPTY;
         SecBufferDesc enc_desc{ SECBUFFER_VERSION, 4, enc_bufs };
 
-        // Şifreleme ve gönderme sonucu denetlenir: eskiden ikisi de yok sayılıyordu (başarısız
-        // şifreleme ya da kısmi gönderim sessizce geçip yanıt bekleniyordu).
+        // The result of encryption and sending is checked: both used to be ignored (a failed
+        // encryption or a partial send passed silently and a response was awaited).
         if (EncryptMessage(&ctx_handle, 0, &enc_desc, 0) != SEC_E_OK) {
             resp.error = "TLS encrypt failed"; goto cleanup2;
         }
@@ -813,9 +813,9 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
     char port_str[16];
     snprintf(port_str, sizeof(port_str), "%d", port);
 
-    // t_conn_error YALNIZ son askı noktasından sonra yazılır: DNS ve connect fiber'ı askıya alır,
-    // bu sırada aynı iş parçacığındaki başka bir istek t_conn_error'a kendi nedenini yazabilir.
-    // Dönüşle çağıranın okuması arasında askı yok → okunan değer bu isteğin.
+    // t_conn_error is written ONLY after the last suspension point: DNS and connect suspend the fiber,
+    // and meanwhile another request on the same thread may write its own reason into t_conn_error.
+    // There is no suspension between the return and the caller's read → the value read is this request's.
     if (look::fiber_getaddrinfo(host.c_str(), port_str, &hints, &res) != 0) {
         t_conn_error = "DNS resolution failed";
         return INVALID;
@@ -828,8 +828,8 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
         return INVALID;
     }
 
-    // Çözülen adresler sırayla denenir: "localhost" önce ::1 döner; yalnız IPv4'te dinleyen
-    // servise eskiden bağlanılamıyordu (yalnız ilk adres deneniyordu).
+    // The resolved addresses are tried in order: "localhost" returns ::1 first; a service listening only on IPv4
+    // used to be unreachable (only the first address was tried).
     sock_t s = INVALID;
     for (struct addrinfo* p = res; p; p = p->ai_next) {
         s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
@@ -839,7 +839,7 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
         tv.tv_usec = (timeout_ms % 1000) * 1000;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-        // Fiber içinde bağlantı kurulurken yalnız fiber bekler (en çok timeout_ms).
+        // While a connection is being established inside a fiber only the fiber waits (at most timeout_ms).
         if (look::fiber_connect(s, p->ai_addr, p->ai_addrlen, timeout_ms) == 0) break;
         close(s); s = INVALID;
     }
@@ -852,15 +852,15 @@ static sock_t tcp_connect(const std::string& host, int port, int timeout_ms) {
 struct SslCtxGuard {
     SSL_CTX* ctx = nullptr;
     SslCtxGuard() {
-        configure_system_ca_bundle();   // statik OpenSSL için sistem CA'sını bul
+        configure_system_ca_bundle();   // find the system CA for static OpenSSL
         SSL_library_init();
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         ctx = SSL_CTX_new(TLS_client_method());
-        look::tls_client_defaults(ctx);   // en az TLS 1.2, makineden bağımsız
+        look::tls_client_defaults(ctx);   // at least TLS 1.2, machine-independent
         if (ctx) {
             SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
-            SSL_CTX_set_default_verify_paths(ctx);   // SSL_CERT_FILE/DIR'i okur
+            SSL_CTX_set_default_verify_paths(ctx);   // reads SSL_CERT_FILE/DIR
         }
     }
     ~SslCtxGuard() { if (ctx) SSL_CTX_free(ctx); }
@@ -871,15 +871,15 @@ static SSL_CTX* get_ssl_ctx() {
     return guard.ctx;
 }
 
-// ── Fiber-aware bekleme (Go netpoller) ──────────────────────────────────────────
-// http::get bir web route'undan çağrıldığında, YAVAŞ dış API'nin yanıtını beklerken
-// (recv/SSL_read) worker thread'ini bloklamamalı: fiber içindeysek fd okunabilir olana
-// dek YIELD ederiz (scheduler başka goroutine koşturur), veri gelince epoll resume eder.
-// Bu, fiber'in tek gerçek değer önerisi olan "eşzamanlı dış I/O"yu açar (bkz. PROJE_DURUMU
-// §9). DNS, connect, TLS el sıkışması ve gönderme look/fiber_net.h yardımcılarıyla aynı
-// şekilde yalnız fiber'ı bekletir. Soket blocking kalır → yield'den sonraki okuma anında döner.
-// Dönüş: 1 = okunabilir (oku), 0 = timeout (dış API yanıt vermedi), -1 = fiber/epoll yok
-// (caller mevcut düz-blocking davranışına düşer → DEFAULT pool yolu birebir korunur).
+// ── Fiber-aware waiting (Go netpoller) ──────────────────────────────────────────
+// When http::get is called from a web route, while waiting for a SLOW external API's response
+// (recv/SSL_read) it must not block the worker thread: if we are inside a fiber we YIELD until the fd is
+// readable (the scheduler runs another goroutine), and epoll resumes when data arrives.
+// This opens up the fiber's one real value proposition, "concurrent external I/O".
+// DNS, connect, the TLS handshake and sending only make the fiber wait, in the same way as the look/fiber_net.h helpers.
+// The socket stays blocking → the read after the yield returns immediately.
+// Return: 1 = readable (read), 0 = timeout (the external API did not respond), -1 = no fiber/epoll
+// (the caller falls back to the existing plain-blocking behavior → the DEFAULT pool path is preserved exactly).
 static int client_wait_readable(int fd, int timeout_ms) {
 #ifdef __linux__
     look::FiberScheduler* sched = look::get_thread_scheduler();
@@ -891,7 +891,7 @@ static int client_wait_readable(int fd, int timeout_ms) {
 #else
     (void)fd; (void)timeout_ms;
 #endif
-    return -1;  // fiber dışı → caller blocking okur (mevcut davranış)
+    return -1;  // outside a fiber → the caller does a blocking read (existing behavior)
 }
 
 static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& url,
@@ -909,7 +909,7 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     if (s == INVALID) { resp.error = t_conn_error ? t_conn_error : "connection failed"; return resp; }
 
     std::string req = build_request(method, url, body, hdrs, /*want_gzip=*/ on_chunk == nullptr, /*absolute_uri=*/ via_proxy);
-    // Tamamı gider (eskiden tek send: kısmi yazmada isteğin geri kalanı sessizce gönderilmiyordu).
+    // All of it is sent (it used to be a single send: on a partial write the rest of the request was silently not sent).
     if (!look::fiber_send_all(s, nullptr, req.data(), req.size(), opts.timeout_ms)) {
         close(s); resp.error = "send failed"; return resp;
     }
@@ -920,8 +920,8 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
     char buf[8192];
     ssize_t n;
     for (;;) {
-        // Fiber içindeysek: veriyi beklerken YIELD et (worker'ı bloklama). Fiber dışında
-        // client_wait_readable -1 döner → doğrudan blocking recv (mevcut davranış birebir).
+        // If we are inside a fiber: YIELD while waiting for data (do not block the worker). Outside a fiber
+        // client_wait_readable returns -1 → straight blocking recv (existing behavior exactly).
         int w = client_wait_readable(s, opts.timeout_ms);
         if (w == 0) { resp.error = "timeout"; break; }
         n = recv(s, buf, sizeof(buf), 0);
@@ -959,7 +959,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
 
     if (via_proxy) {
         // CONNECT tunnel to the target through the proxy, then run TLS over the tunnel.
-        std::string tgt = url_authority(url, true);   // IPv6 köşeli parantezde
+        std::string tgt = url_authority(url, true);   // IPv6 in square brackets
         std::string creq = "CONNECT " + tgt + " HTTP/1.1\r\nHost: " + tgt + "\r\n\r\n";
         if (!look::fiber_send_all(s, nullptr, creq.data(), creq.size(), opts.timeout_ms)) { close(s); resp.error = "proxy CONNECT send failed"; return resp; }
         std::string pr; char pb[1024];
@@ -981,7 +981,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     if (!ssl) { close(s); resp.error = "SSL_new failed"; return resp; }
 
     SSL_set_fd(ssl, s);
-    // SNI + ad doğrulaması (IP → IP SAN, SNI yok — Go crypto/tls); kurulamazsa bağlanma.
+    // SNI + name verification (IP → IP SAN, no SNI — Go crypto/tls); if it cannot be set up, do not connect.
     if (!look::tls_set_peer(ssl, url.host, true)) {
         SSL_free(ssl); close(s);
         resp.error = "http:: could not set up TLS name verification for " + url.host;
@@ -989,8 +989,8 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     }
 
     if (int hs = look::fiber_ssl_connect(ssl, s, opts.timeout_ms); hs != 1) {
-        // Neden kullanıcıya gider (eskiden yalnız "TLS handshake failed": süresi dolmuş, yanlış ad,
-        // bilinmeyen CA ayırt edilemiyordu).
+        // The reason goes to the user (it used to be only "TLS handshake failed": an expired certificate, a wrong name,
+        // an unknown CA could not be told apart).
         std::string why = hs == 0 ? std::string("timeout") : look::tls_failure_reason(ssl);
         SSL_free(ssl); close(s);
         resp.error = "TLS handshake failed" + (why.empty() ? std::string() : ": " + why);
@@ -1009,10 +1009,10 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
     char buf[8192];
     int n;
     for (;;) {
-        // Fiber-aware yield: SSL_pending>0 ise OpenSSL'in tamponunda çözülmüş bayt var →
-        // fd okunabilir olmayabilir, BEKLEME (yoksa kilitlenir). Tampon boşsa fd okunabilir
-        // olana dek yield et. Soket blocking kaldığı için SSL_read yield sonrası okur;
-        // SO_RCVTIMEO ile sınırlı. Fiber dışında client_wait_readable -1 → hemen SSL_read.
+        // Fiber-aware yield: if SSL_pending>0 there are decrypted bytes in OpenSSL's buffer →
+        // the fd may not be readable, DO NOT WAIT (otherwise it deadlocks). If the buffer is empty, yield until the fd is
+        // readable. Since the socket stays blocking, SSL_read reads after the yield;
+        // bounded by SO_RCVTIMEO. Outside a fiber client_wait_readable is -1 → SSL_read immediately.
         if (SSL_pending(ssl) == 0) {
             int w = client_wait_readable(s, opts.timeout_ms);
             if (w == 0) { resp.error = "timeout"; break; }
@@ -1026,7 +1026,7 @@ static HttpClientResponse do_tls(const std::string& method, const ParsedUrl& url
         }
         if (n < 0) {
             int err = SSL_get_error(ssl, n);
-            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) continue;  // devam et → yield
+            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) continue;  // continue → yield
             if (err == SSL_ERROR_SYSCALL) resp.error = "timeout";
         }
         break;
@@ -1069,7 +1069,7 @@ static std::string resolve_url(const std::string& base, const std::string& loc) 
 }
 
 // scheme + lowercased host[:port] of a URL — the "origin" for credential-scoping.
-// parse_url ile (şema + küçük harf host + port): kimlik bilgisi, '?' ya da '#' kökene karışmaz.
+// via parse_url (scheme + lowercase host + port): credentials, '?' or '#' do not get mixed into the origin.
 static std::string url_origin(const std::string& u) {
     try {
         ParsedUrl p = parse_url(u);

@@ -1,6 +1,6 @@
 #include "look/parallel_runtime.h"
 #include "look/fiber.h"
-#include "look/value.h"   // LookChannel (kilitlenmede uyandırma)
+#include "look/value.h"   // LookChannel (wake-up on deadlock)
 #include <stdexcept>
 #include <string>
 #include <cstdlib>
@@ -8,16 +8,16 @@
 
 namespace look {
 
-// Senkronizasyon primitifleri KASITLI leak edilir (asla yok edilmez). parallel()
-// task'ları detached (vm.cpp: std::thread(...).detach()). main()
-// task_wait ile drain etse de iki delik kalır: (1) task_wait timeout'unu aşan task
-// TERK edilir → çıkışta hâlâ çalışırken statikler yok edilir; (2) son task_release()
-// s_cv.notify_all()/s_mtx.lock içindeyken, waiter predicate (s_count<=0) fetch_sub'dan
-// hemen sonra true olup uyanır → main çıkar → static destructor pthread_cond_destroy'u
-// notify ile YARIŞTIRIR (TSan: "Location is global look::s_cv"). Heap'te leak → destructor
-// hiç çalışmaz, terk edilen task süreç sonuna dek güvenle dokunur; OS belleği süreçle alır.
-// (Abseil/Google global mutex idiomu — süreç-ömürlü singleton'ı çıkışta yok etme.)
-#ifdef LOOK_PR_STATIC_TEST   // yalnız TSan pozitif kontrol: eski (yarışlı) statik hâl
+// Synchronization primitives are DELIBERATELY leaked (never destroyed). parallel()
+// tasks are detached (vm.cpp: std::thread(...).detach()). Even though main()
+// drains with task_wait, two holes remain: (1) a task that exceeds the task_wait timeout is
+// ABANDONED -> the statics are destroyed at exit while it is still running; (2) the last task_release()
+// is still inside s_cv.notify_all()/s_mtx.lock when the waiter predicate (s_count<=0) becomes true
+// right after fetch_sub and wakes up -> main exits -> the static destructor RACES pthread_cond_destroy
+// with notify (TSan: "Location is global look::s_cv"). Leaked on the heap -> the destructor
+// never runs, the abandoned task can safely touch it until the process ends; the OS reclaims the memory with the process.
+// (Abseil/Google global mutex idiom — do not destroy process-lifetime singletons at exit.)
+#ifdef LOOK_PR_STATIC_TEST   // TSan positive control only: the old (racy) static form
 static std::atomic<int>        s_count{0};
 static std::mutex              s_mtx;
 static std::condition_variable s_cv;
@@ -105,16 +105,16 @@ bool task_wait(int timeout_ms) {
         []{ return s_count.load() <= 0; });
 }
 
-// ── Betik sonu (parallel_runtime.h) ── kayıt da KASITLI sızdırılır (yukarıdaki gerekçe).
+// ── Script end (parallel_runtime.h) ── the registry is also DELIBERATELY leaked (reason above).
 static std::mutex&                     s_exit_mtx = *new std::mutex();
 static std::condition_variable&        s_exit_cv  = *new std::condition_variable();
-static std::condition_variable&        s_park_cv  = *new std::condition_variable();  // hiç uyandırılmaz
+static std::condition_variable&        s_park_cv  = *new std::condition_variable();  // never woken up
 static std::vector<TaskExit*>&         s_exit_reg = *new std::vector<TaskExit*>();
-std::atomic<bool> g_task_script_ending{false};   // betik sonu (main.cpp finish_script)
-// fiber-ok: parallel() görevinin kendi iş parçacığı (fiber değil); istek verisi değil
+std::atomic<bool> g_task_script_ending{false};   // script end (main.cpp finish_script)
+// fiber-ok: the parallel() task's own thread (not a fiber); not request data
 thread_local TaskExit* t_task_exit = nullptr;
 
-static std::atomic<int> s_live_tasks{0};   // kayıtlı, bitmemiş görev (kanal kilitlenmesi sayımı)
+static std::atomic<int> s_live_tasks{0};   // registered, unfinished task (channel deadlock count)
 static void chan_deadlock_recheck() noexcept;
 
 TaskExit* task_exit_new() {
@@ -138,7 +138,7 @@ void task_exit_done(TaskExit* t) noexcept {
     }
     delete t;
     s_live_tasks.fetch_sub(1);
-    chan_deadlock_recheck();   // betiğin beklediği son görev göndermeden bittiyse
+    chan_deadlock_recheck();   // if the last task the script is waiting for finished without sending
 }
 
 
@@ -146,7 +146,7 @@ void task_stop_here(TaskExit* t) noexcept {
     std::unique_lock<std::mutex> lk(s_exit_mtx);
     t->phase.store(TASK_STOPPED);
     s_exit_cv.notify_all();
-    for (;;) s_park_cv.wait(lk);   // süreç _Exit ile biter; bu iş parçacığı bir daha ilerlemez
+    for (;;) s_park_cv.wait(lk);   // the process ends with _Exit; this thread never makes progress again
 }
 
 bool task_point_slow(TaskExit* t, bool effect) noexcept {
@@ -155,26 +155,26 @@ bool task_point_slow(TaskExit* t, bool effect) noexcept {
         return false;
     }
     if (!effect) return false;
-    // Dekker: önce durumu yaz, sonra işarete bak (ikisi de seq_cst). Ana iş parçacığı işareti
-    // yazıp durumu okur → biri ötekini mutlaka görür.
+    // Dekker: write the state first, then look at the flag (both seq_cst). The main thread writes the flag
+    // and reads the state -> one of them is guaranteed to see the other.
     t->phase.store(TASK_IN_EFFECT);
     if (g_task_script_ending.load()) task_stop_here(t);
     return true;
 }
 
-// fiber.h kancası: preempt yavaş yolu (her 1024 noktada bir) betik sonunda görevi sınırlar.
+// fiber.h hook: the preempt slow path (once every 1024 points) bounds the task at script end.
 [[maybe_unused]] static const bool s_preempt_hook_set = (g_preempt_hook = &task_preempt_check, true);
 
 void task_preempt_check() noexcept {
     if (TaskExit* t = t_task_exit; t && g_task_script_ending.load()) task_point_slow(t, false);
 }
 
-// ── Kanal kilitlenmesi (parallel_runtime.h) ── kayıt da sızdırılır (yukarıdaki gerekçe).
+// ── Channel deadlock (parallel_runtime.h) ── the registry is also leaked (reason above).
 struct DlWaiter { ChanWait* w; std::shared_ptr<LookChannel> ch; int kind; uint64_t gen; };
 static std::mutex&            s_dl_mtx     = *new std::mutex();
 static std::vector<DlWaiter>& s_dl_waiting = *new std::vector<DlWaiter>();
-static bool     s_dl_main  = false;  // s_dl_mtx altında: komut satırı betiği çalışıyor (ana iş parçacığı canlı)
-static uint64_t s_dl_epoch = 0;      // s_dl_mtx altında: her giriş/çıkış/görev bitişinde artar
+static bool     s_dl_main  = false;  // under s_dl_mtx: the command-line script is running (main thread alive)
+static uint64_t s_dl_epoch = 0;      // under s_dl_mtx: incremented on every entry/exit/task finish
 std::atomic<bool> g_chan_deadlock{false};
 TimersActiveFn    g_timers_active = nullptr;
 
@@ -183,7 +183,7 @@ const char* chan_deadlock_message() noexcept {
            "is left that could send or receive";
 }
 
-// s_dl_mtx tutulurken: sayılar kilitlenme gösteriyor mu (şüphe)?
+// while holding s_dl_mtx: do the counts indicate a deadlock (suspicion)?
 static bool dl_suspect_locked() {
     return s_dl_main && !g_chan_deadlock.load() &&
            (int)s_dl_waiting.size() == 1 + s_live_tasks.load();
@@ -203,7 +203,7 @@ ChanWait::~ChanWait() {
     ++s_dl_epoch;
 }
 
-// Bekleyen artık ilerleyebilir mi (kanalın kilidiyle okunur).
+// Can the waiter make progress now (read under the channel's lock)?
 static bool dl_waiter_ready(const DlWaiter& d) {
     std::lock_guard<std::mutex> lk(d.ch->mtx);
     if (d.ch->closed) return true;
@@ -223,18 +223,18 @@ void chan_deadlock_try() noexcept {
         snap = s_dl_waiting;
         epoch = s_dl_epoch;
     }
-    if (g_timers_active && g_timers_active()) return;      // geri çağırma gönderebilir
-    for (const auto& d : snap) if (dl_waiter_ready(d)) return;   // biri ilerleyebiliyor
+    if (g_timers_active && g_timers_active()) return;      // may deliver a callback
+    for (const auto& d : snap) if (dl_waiter_ready(d)) return;   // one of them can make progress
     {
         std::lock_guard<std::mutex> lk(s_dl_mtx);
-        if (s_dl_epoch != epoch || !dl_suspect_locked()) return;   // arada değişti: değiştiren yineler
+        if (s_dl_epoch != epoch || !dl_suspect_locked()) return;   // changed in the meantime: the one that changed it iterates again
         g_chan_deadlock.store(true);
     }
-    for (const auto& d : snap) {   // kaybolan uyandırma olmasın: kilitle, sonra bildir
+    for (const auto& d : snap) {   // no lost wake-up: lock, then notify
         std::lock_guard<std::mutex> lk(d.ch->mtx);
         d.ch->not_empty.notify_all();
         d.ch->not_full.notify_all();
-        LookChannel::wake_fibers(d.ch->fiber_recv);   // fiber'da bekleyenler de hatayı görsün
+        LookChannel::wake_fibers(d.ch->fiber_recv);   // so that waiters on fibers also see the error
         LookChannel::wake_fibers(d.ch->fiber_send);
     }
 }

@@ -1,7 +1,7 @@
-#include "look/mem_budget.h"   // mem_reserve — büyük ayırmadan önce bütçe
+#include "look/mem_budget.h"   // mem_reserve — budget before a large allocation
 #include "look/stdlib.h"
 #include "look/web.h"
-#include "look/request_scope.h"   // current_request_web: isteğin DOCUMENT_ROOT değeri
+#include "look/request_scope.h"   // current_request_web: the request's DOCUMENT_ROOT value
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -14,8 +14,8 @@ namespace fs = std::filesystem;
 
 #ifndef _WIN32
 #  include <sys/stat.h>
-// Süreç umask'ı — statik başlatmada (main'den önce, tek iş parçacığı) bir kez okunur: umask()
-// okuma-yazma birlikte yapar, istek sırasında çağırmak başka iş parçacığının dosyasını etkilerdi.
+// Process umask — read once during static initialization (before main, single thread): umask()
+// does read-and-write together, so calling it during a request would affect another thread's file.
 static const mode_t g_process_umask = [] { mode_t m = ::umask(0); ::umask(m); return m; }();
 #endif
 
@@ -26,7 +26,7 @@ namespace look {
 static std::string get_upload_root() {
     const char* ud = std::getenv("UPLOAD_DIR");
     if (ud && *ud) return ud;
-    // Varsayılan: çalışma dizininin yanında storage/uploads
+    // Default: storage/uploads next to the working directory
     return (fs::current_path() / "storage" / "uploads").string();
 }
 
@@ -35,16 +35,16 @@ static std::string get_upload_url() {
     return uu ? uu : "";
 }
 
-// Web root tespiti — isteğin DOCUMENT_ROOT'u (FastCGI parametresi / CGI ortamı), yoksa süreç ortamı.
-// FastCGI'de istek parametreleri artık süreç ortamına yazılmıyor (fcgi_main.cpp): değer isteğin
-// bağlamından okunur, yoksa bu denetim FastCGI'de sessizce devre dışı kalırdı.
+// Web root detection — the request's DOCUMENT_ROOT (FastCGI parameter / CGI environment), otherwise the process environment.
+// In FastCGI the request parameters are no longer written to the process environment (fcgi_main.cpp): the value is read from the request's
+// context; otherwise this check would silently be disabled in FastCGI.
 static std::string get_web_root() {
     if (auto* w = look::current_request_web(); w && !w->document_root.empty()) return w->document_root;
     const char* dr = std::getenv("DOCUMENT_ROOT");
     return dr ? dr : "";
 }
 
-// Güvenlik: upload path web root altında mı?
+// Security: is the upload path under the web root?
 static bool is_under_web_root(const std::string& path) {
     std::string wr = get_web_root();
     if (wr.empty()) return false;
@@ -54,24 +54,24 @@ static bool is_under_web_root(const std::string& path) {
     return it == wr_p.end();
 }
 
-// ── Path traversal guard — GÜVENLİ VARSAYILAN ────────────────────────────────
-// file:: işlemleri bir dizin ağacına kısıtlanır (kullanıcı girdisiyle
-// `../../etc/passwd` okunmasını engeller). "PHP gibi dağıtılan ama Go gibi
-// düşünen" bir dilde varsayılan güvenli olmalı:
-//   • LOOK_FILE_ROOT set DEĞİLSE → çalışma dizinine (cwd) kısıtla (güvenli).
-//   • LOOK_FILE_ROOT=<yol>       → o dizine kısıtla (genişletme, opt-in).
-//   • LOOK_FILE_ROOT=*           → kısıtsız (açık opt-out; tüm sorumluluk sizde).
-// (İç modüller — session/cache/jobs — file:: kullanmaz, bu kısıttan etkilenmez.)
+// ── Path traversal guard — SAFE DEFAULT ──────────────────────────────────────
+// file:: operations are restricted to a directory tree (prevents reading
+// `../../etc/passwd` via user input). In a language that is "distributed like PHP but
+// thinks like Go" the default must be safe:
+//   • if LOOK_FILE_ROOT is NOT set → restrict to the working directory (cwd) (safe).
+//   • LOOK_FILE_ROOT=<path>       → restrict to that directory (widening, opt-in).
+//   • LOOK_FILE_ROOT=*           → unrestricted (explicit opt-out; all responsibility is yours).
+// (Internal modules — session/cache/jobs — do not use file::, they are not affected by this restriction.)
 static std::string get_file_root() {
     static std::string root = []() -> std::string {
         const char* r = std::getenv("LOOK_FILE_ROOT");
-        if (r && std::string(r) == "*") return "";     // açık kısıtsız
+        if (r && std::string(r) == "*") return "";     // explicitly unrestricted
         std::string base;
-        if (r && *r) base = r;                          // kullanıcı kökü
-        else {                                          // VARSAYILAN: cwd
+        if (r && *r) base = r;                          // user root
+        else {                                          // DEFAULT: cwd
             std::error_code ec;
             base = fs::current_path(ec).string();
-            if (ec) return "";                          // cwd alınamadı → kısıtsız
+            if (ec) return "";                          // cwd could not be obtained → unrestricted
         }
         std::error_code ec;
         auto p = fs::weakly_canonical(fs::path(base), ec);
@@ -80,11 +80,11 @@ static std::string get_file_root() {
     return root;
 }
 
-// Yolu bileşen bileşen çöz; karşılaşılan HER symlink izlenir — hedefi var olmasa bile (Go 1.24
-// os.Root modeli: kök dışını gösteren bağlantı hiçbir koşulda izlenmez). ESKİ AÇIK: weakly_canonical
-// var olmayan hedefi çözemediği için sarkan bir bağlantıyı ("dangle" → /dışarı/yeni.txt) kök içinde
-// sanıyordu → file::put kök DIŞINDA dosya yaratıyordu (ölçüldü). ".." bağlantı izlendikten sonra
-// uygulanır (POSIX çözümüyle aynı). 40 bağlantı sınırı (Linux ELOOP).
+// Resolve the path component by component; EVERY symlink encountered is followed — even if its target does not exist (Go 1.24
+// os.Root model: a link pointing outside the root is never followed). OLD HOLE: weakly_canonical
+// could not resolve a nonexistent target, so it took a dangling link ("dangle" → /outside/new.txt) to be inside the root
+// → file::put created a file OUTSIDE the root (measured). ".." is applied after the link is followed
+// (same as POSIX resolution). 40-link limit (Linux ELOOP).
 static fs::path resolve_all_links(const fs::path& abs, int depth = 0) {
     if (depth > 40) throw std::runtime_error("file: too many levels of symbolic links: " + abs.string());
     fs::path cur = abs.root_path();
@@ -111,13 +111,13 @@ static void assert_in_file_root(const std::string& path) {
     std::string root = get_file_root();
     if (root.empty()) return; // unrestricted
     std::error_code ec;
-    // Yol ÖNCE cwd-tabanlı mutlağa çevrilir (göreli "out.txt" cwd'ye göre — OS ile aynı çözüm),
-    // sonra her bileşen ve her symlink (sarkan dahil) çözülür.
+    // The path is FIRST made absolute relative to the cwd (relative "out.txt" is relative to the cwd — same resolution as the OS),
+    // then every component and every symlink (including dangling) is resolved.
     fs::path abs = fs::absolute(fs::path(path), ec);
     if (ec) throw std::runtime_error("file: invalid path: " + path);
     fs::path resolved = resolve_all_links(abs);
-    // Kökle AYNI biçime getir (kök weakly_canonical ile hesaplandı): Windows'ta sürücü harfi/büyük-küçük
-    // harf farkı ("c:" ↔ "C:") meşru erişimi reddettirirdi. resolved'da artık bağlantı yok, güvenli.
+    // Bring it to the SAME form as the root (the root was computed with weakly_canonical): on Windows, a drive letter / case
+    // difference ("c:" ↔ "C:") would reject legitimate access. There is no link left in resolved, so it is safe.
     resolved = fs::weakly_canonical(resolved, ec);
     if (ec) throw std::runtime_error("file: invalid path: " + path);
     // Store root as a named variable — iterators from temporaries dangle.
@@ -142,8 +142,8 @@ Module make_file_module() {
         assert_in_file_root(path);
         std::ifstream f(path, std::ios::binary);
         if (!f) throw std::runtime_error("file::read(): cannot open: " + path);
-        // Bellek bütçesi: dosya okunmadan ÖNCE boyutu sorulur (look/mem_budget.h) — büyük dosya
-        // güvenli noktaya varmadan belleği bitirmesin. Okuma birkaç kopya yapar (ostringstream + değer).
+        // Memory budget: the size is asked BEFORE the file is read (look/mem_budget.h) — so that a large file
+        // does not exhaust memory before reaching a safe point. Reading makes several copies (ostringstream + value).
         {
             std::error_code ec;
             auto sz = std::filesystem::file_size(path, ec);
@@ -242,13 +242,13 @@ Module make_file_module() {
     };
 
     // file::store(file_array, subdir) → assoc array {path, url, sha256}
-    // file_array: request::file() dönüş değeri
-    // subdir: "avatars", "documents" gibi alt klasör adı — path olamaz
+    // file_array: the return value of request::file()
+    // subdir: a subfolder name such as "avatars", "documents" — cannot be a path
     m.functions["store"] = [](auto args) -> Value {
         if (args.size() < 2)
             throw std::runtime_error("file::store() requires file and subdir");
 
-        // file_array doğrula
+        // validate file_array
         if (args[0].type() != Value::ARRAY)
             throw std::runtime_error("file::store(): first argument must be a file from request::file()");
 
@@ -257,7 +257,7 @@ Module make_file_module() {
         if (!is_assoc)
             throw std::runtime_error("file::store(): invalid file argument");
 
-        // Dosya bilgilerini çıkar
+        // Extract the file information
         std::string temp_path, mime, sha256;
         for (size_t i = 1; i + 1 < arr.size(); i += 2) {
             std::string key = arr[i].to_string();
@@ -267,27 +267,27 @@ Module make_file_module() {
         }
         if (temp_path.empty()) throw std::runtime_error("file::store(): missing temp path");
 
-        // Alt klasör adı — path karakteri içeremez
+        // Subfolder name — cannot contain path characters
         std::string subdir = args[1].to_string();
         if (subdir.find('/') != std::string::npos ||
             subdir.find('\\') != std::string::npos ||
             subdir.find("..") != std::string::npos)
             throw std::runtime_error("file::store(): subdir must be a simple name, not a path");
 
-        // Hedef klasörü oluştur
+        // Create the target folder
         std::string upload_root = get_upload_root();
         fs::path dest_dir = fs::path(upload_root) / subdir;
 
-        // Web root altına yazma güvenlik kontrolü
-        // UPLOAD_DIR açıkça set edilmişse (allow_mime zaten MIME doğrulaması yaptı) geç
+        // Security check for writing under the web root
+        // Skip if UPLOAD_DIR is explicitly set (allow_mime already did MIME validation)
         bool upload_dir_explicit = (std::getenv("UPLOAD_DIR") && *std::getenv("UPLOAD_DIR"));
         if (!upload_dir_explicit && is_under_web_root(dest_dir.string()))
             throw std::runtime_error("file::store(): upload dir cannot be under web root — set UPLOAD_DIR to a path outside web root");
 
-        // Yalnız BU isteğin request::file() ile aldığı geçici dosya saklanır; yol, sha256 ve mime
-        // LOOK'un kendi kaydından alınır, çağıranın dizisinden DEĞİL. ESKİ AÇIK: dizi elle kurulursa
-        // "path" sunucudaki herhangi bir dosyayı (.env) yükleme klasörüne taşıyıp UPLOAD_URL'den
-        // sunduruyordu; "sha256" alanı dosya adına girdiği için "../../" ile klasör dışına yazılıyordu.
+        // Only the temporary file this request received via request::file() is stored; the path, sha256 and mime
+        // are taken from LOOK's own record, NOT from the caller's array. OLD HOLE: if the array was built by hand,
+        // "path" could move any file on the server (.env) into the upload folder and have it served from UPLOAD_URL;
+        // since the "sha256" field enters the file name, "../../" could write outside the folder.
         {
             const UploadedFile* own = nullptr;
             if (auto* w = look::current_request_web())
@@ -300,24 +300,24 @@ Module make_file_module() {
 
         fs::create_directories(dest_dir);
 
-        // Uzantıyı MIME'dan belirle (temp dosyada zaten doğru uzantı var)
+        // Determine the extension from the MIME (the temp file already has the right extension)
         fs::path tmp = fs::path(temp_path);
         std::string ext = tmp.extension().string();
 
-        // sha256'nın ilk 32 karakterini dosya adı olarak kullan
+        // use the first 32 characters of the sha256 as the file name
         std::string safe_name = sha256.substr(0, 32) + ext;
         fs::path dest = dest_dir / safe_name;
 
-        // Taşı (aynı dosya zaten varsa — deduplication)
+        // Move (if the same file already exists — deduplication)
         if (!fs::exists(dest)) {
             fs::rename(temp_path, dest);
 #ifndef _WIN32
-            // Geçici yükleme dosyası 0600 açılır (paylaşımlı /tmp'de başkası okumasın). Saklanan
-            // dosya ise UPLOAD_URL ile web sunucusunca sunulur: normal dosya izni (0666 & ~umask).
+            // The temporary upload file is opened 0600 (so nobody else can read it in the shared /tmp). The stored
+            // file is served by the web server via UPLOAD_URL: normal file permission (0666 & ~umask).
             ::chmod(dest.c_str(), 0666 & ~g_process_umask);
 #endif
         } else
-            fs::remove(temp_path);  // duplicate — temp sil
+            fs::remove(temp_path);  // duplicate — delete temp
 
         // Public URL
         std::string base_url = get_upload_url();
@@ -327,7 +327,7 @@ Module make_file_module() {
             url = base_url + subdir + "/" + safe_name;
         }
 
-        // Dönüş değeri
+        // Return value
         auto result = std::make_shared<ValueArray>();
         result->push_back(Value::assoc_marker());
         result->push_back(Value(std::string("path")));   result->push_back(Value(dest.string()));
@@ -338,7 +338,7 @@ Module make_file_module() {
         return Value(result);
     };
 
-    // file::upload_dir() → upload root string (bilgi amaçlı)
+    // file::upload_dir() → upload root string (informational)
     m.functions["upload_dir"] = [](auto) -> Value {
         return Value(get_upload_root());
     };

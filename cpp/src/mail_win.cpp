@@ -1,7 +1,7 @@
-// Windows: deliver_maildir — OpenSSL'siz, taşınabilir (std::ofstream + filesystem).
-// XAMPP geliştirme ortamında mail:: modülü deliver_maildir'i çağırabilir; SMTP/IMAP
-// SUNUCULARI Windows'ta yoktur (POSIX-only, OpenSSL'e bağlı). Bu dosya yalnız o tek
-// fonksiyonu Windows için sağlar; Linux'ta smtp_server.cpp'deki gerçek impl kullanılır.
+// Windows: deliver_maildir — portable, without OpenSSL (std::ofstream + filesystem).
+// In the XAMPP development environment the mail:: module may call deliver_maildir; the SMTP/IMAP
+// SERVERS do not exist on Windows (POSIX-only, tied to OpenSSL). This file only provides that
+// single function for Windows; on Linux the real implementation in smtp_server.cpp is used.
 #include "look/smtp_server.h"
 
 #include <fstream>
@@ -18,9 +18,9 @@ namespace look {
 std::string deliver_maildir(const std::string& base_dir,
                             const std::string& mailbox,
                             const SmtpMessage& msg) {
-    // GÜVENLİK: mailbox doğrulaması — smtp_server.cpp'deki Linux ikizi ile AYNI.
-    // userland mail::deliver_maildir üzerinden kullanıcı girdisi gelirse
-    // "../.." / mutlak yol → hedef DIŞINA yazma (arbitrary file write) engellenir.
+    // SECURITY: mailbox validation — SAME as the Linux twin in smtp_server.cpp.
+    // If user input reaches us through userland mail::deliver_maildir,
+    // "../.." / an absolute path would write OUTSIDE the target (arbitrary file write); this blocks it.
     if (mailbox.empty() || mailbox.find("..") != std::string::npos)
         throw std::runtime_error("deliver_maildir: invalid mailbox (traversal)");
     for (unsigned char c : mailbox)
@@ -32,7 +32,7 @@ std::string deliver_maildir(const std::string& base_dir,
     fs::create_directories(mbox / "cur", ec);
     fs::create_directories(mbox / "tmp", ec);
 
-    // Benzersiz Maildir dosya adı: <epoch>.<hex-random>
+    // Unique Maildir file name: <epoch>.<hex-random>
     auto now = std::chrono::system_clock::now();
     long long ts = std::chrono::duration_cast<std::chrono::seconds>(
                        now.time_since_epoch()).count();

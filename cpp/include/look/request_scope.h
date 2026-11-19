@@ -1,22 +1,22 @@
 #pragma once
-// İstek tutamacı — şu an çalışan isteğin bağlamı ve çıktısı.
+// Request handle — the context and output of the request running right now.
 //
-// Web modülleri (request::, response::, cookie::, session::, csrf::, route::) ve print bağlamı
-// yakalamaz; çağrıldıkları anda buradan okur. Böylece modüller ve builtin tablosu iş parçacığı
-// başına bir kez kurulur. Eskiden her istekte yeniden kuruluyordu (fiber yığınında bağlamın
-// adresi istek başına değiştiği için) — ölçüm: istek maliyetinin büyük kısmı, VM'in kendisi %2.
+// The web modules (request::, response::, cookie::, session::, csrf::, route::) and print do not capture the
+// context; they read it from here at the moment they are called. So the modules and the builtin table are set up once per
+// thread. They used to be set up again on every request (because the context's address on the fiber
+// stack changed per request) — measured: most of the request cost, the VM itself 2%.
 //
-// Saklama yeri: fiber içinde Fiber::current()->local (her fiber'ın kendi isteği — askıya alınan
-// istek, aynı iş parçacığında sonra başlayan isteği görmez); fiber dışında (işçi havuzu, FastCGI,
-// CGI, zamanlayıcı iş parçacığı) iş parçacığı yereli. RequestScope önceki değeri saklar ve geri
-// yükler — iç içe dağıtım (zamanlayıcı/WS geri çağırması) dış isteği bozmaz.
+// Where it is stored: inside a fiber Fiber::current()->local (each fiber's own request — a suspended
+// request does not see a request that later starts on the same thread); outside a fiber (worker pool, FastCGI,
+// CGI, timer thread) thread-local. RequestScope saves the previous value and restores it —
+// nested dispatch (timer/WS callback) does not disturb the outer request.
 #include <ostream>
 
 namespace look {
 
 struct WebContext;
 
-// Şu anki isteğin bağlamı / çıktısı; istek yoksa nullptr.
+// The current request's context / output; nullptr if there is no request.
 WebContext*   current_request_web();
 std::ostream* current_request_out();
 

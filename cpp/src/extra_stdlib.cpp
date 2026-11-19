@@ -3,9 +3,9 @@
 #include "look/assoc_index.h"
 #include "look/value_path.h"   // value_push_not_map
 #include "look/ast_spine.h"
-#include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (saf, RFC-KAT edilebilir)
-#include "look/fiber.h"           // fiber_offload — uzun PBKDF2 ortak havuzda
-#include "look/metrics.h"         // g_http_request_count() — web dispatch istek sayacı
+#include "look/crypto_sha256.h"   // sha256/hmac_sha256/pbkdf2_sha256 (pure, RFC-KAT testable)
+#include "look/fiber.h"           // fiber_offload — long PBKDF2 on the shared pool
+#include "look/metrics.h"         // g_http_request_count() — web dispatch request counter
 #include "look/runtime_host.h"
 #include "look/logger.h"
 #include <cstdint>
@@ -45,7 +45,7 @@
 
 namespace look {
 
-// ── Base64 (auth icin) ────────────────────────────────────────────────────────
+// ── Base64 (for auth) ─────────────────────────────────────────────────────────
 
 static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -83,13 +83,13 @@ static std::vector<uint8_t> b64_decode(const std::string& s) {
     return out;
 }
 
-// ── SHA-256 / HMAC / PBKDF2 → look/crypto_sha256.h (saf, RFC-KAT edilebilir) ─────
-// Bu üçlü JWT/DKIM/session/auth'u besler; tanım tek noktada (drift yok).
+// ── SHA-256 / HMAC / PBKDF2 → look/crypto_sha256.h (pure, RFC-KAT testable) ─────
+// This trio feeds JWT/DKIM/session/auth; the definition is in one place (no drift).
 using look::sha256;
 using look::hmac_sha256;
 using look::pbkdf2_sha256;
 
-// ── Kriptografik rastgele bayt — cross-platform ───────────────────────────────
+// ── Cryptographic random bytes — cross-platform ───────────────────────────────
 
 static std::vector<uint8_t> random_bytes(size_t n) {
     std::vector<uint8_t> buf(n);
@@ -106,7 +106,7 @@ static std::vector<uint8_t> random_bytes(size_t n) {
 #endif
     return buf;
 }
-// csrf:: (web_stdlib) da aynı kaynağı kullanır.
+// csrf:: (web_stdlib) uses the same source too.
 std::vector<uint8_t> secure_random_bytes(size_t n) { return random_bytes(n); }
 
 // ── auth module ───────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ static Module make_auth() {
         uint32_t iter = args.size() >= 2 ? (uint32_t)args[1].to_int() : 100000;
 
         auto salt = random_bytes(32);
-        // ~100 ms bölünemeyen C++ hesabı: fiber içinde ortak havuzda (fiber.h fiber_offload)
+        // ~100 ms indivisible C++ computation: inside a fiber, on the shared pool (fiber.h fiber_offload)
         auto dk   = fiber_offload([&] { return pbkdf2_sha256(pwd, salt, iter, 32); });
 
         std::string result = "pbkdf2$sha256$" + std::to_string(iter) + "$"
@@ -145,12 +145,12 @@ static Module make_auth() {
 
         if (parts.size() < 5 || parts[0] != "pbkdf2") return Value(false);
 
-        // İterasyon sayısı hash string'inden gelir. Kötü niyetli/bozuk bir hash
-        // devasa değer koyarsa milyarlarca PBKDF2 turu worker'ı kilitler (DoS);
-        // stoi geçersiz/taşan girdide exception fırlatır. Güvenli parse + sınır.
+        // The iteration count comes from the hash string. A malicious/corrupt hash
+        // that puts in a huge value would lock the worker with billions of PBKDF2 rounds (DoS);
+        // stoi throws an exception on invalid/overflowing input. Safe parse + limit.
         uint32_t iter = 0;
         try { iter = (uint32_t)std::stoul(parts[2]); } catch (...) { return Value(false); }
-        static constexpr uint32_t MAX_PBKDF2_ITER = 10'000'000;  // makul üst sınır
+        static constexpr uint32_t MAX_PBKDF2_ITER = 10'000'000;  // reasonable upper limit
         if (iter == 0 || iter > MAX_PBKDF2_ITER) return Value(false);
         auto     salt    = b64_decode(parts[3]);
         auto     stored  = b64_decode(parts[4]);
@@ -167,31 +167,31 @@ static Module make_auth() {
 }
 
 // ── validator module ──────────────────────────────────────────────────────────
-// validator::check($data, ["email" => ["required","email"], "yas" => ["integer","min:0"]])
+// validator::check($data, ["email" => ["required","email"], "age" => ["integer","min:0"]])
 // Returns: ["ok" => bool, "errors" => ["field" => "message", ...]]
 
 static std::string get_field(const Value& data, const std::string& key) {
     if (data.type() != Value::ARRAY) return "";
     auto& arr = *data.as_array();
     if (!arr.empty() && arr[0].is_assoc_marker()) {
-        // Kural başına bir arama; büyük gövdede dizinli (look/assoc_index.h).
+        // One lookup per rule; indexed on a large body (look/assoc_index.h).
         if (size_t pos = look::assoc_find(arr, key)) return arr[pos + 1].to_string();
     }
     return "";
 }
 
 static bool is_email(const std::string& s) {
-    // RFC 5321 azami e-posta uzunluğu 254; uzun girdiyi baştan reddet (regex'e
-    // devasa string sokup yavaşlatmayı da engeller — defense-in-depth).
+    // RFC 5321 maximum e-mail length is 254; reject longer input up front (this also prevents
+    // feeding a huge string to the regex and slowing it down — defense-in-depth).
     if (s.empty() || s.size() > 254) return false;
     static const std::regex re(R"([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})");
     return std::regex_match(s, re);
 }
 
-// Katı tam-sayı/sayı kontrolü — std::stoi/stod baştaki rakamları alıp kalıntıyı
-// yok sayar ("123abc"→123, "5; DROP TABLE"→5). Doğrulamada bu bir BYPASS'tır:
-// değer "integer"/"numeric" geçer ama içinde çöp/enjeksiyon kalır. TÜM string
-// (sondaki boşluk hariç) tüketilmeli.
+// Strict integer/number check — std::stoi/stod take the leading digits and ignore the
+// remainder ("123abc"→123, "5; DROP TABLE"→5). In validation this is a BYPASS:
+// the value passes "integer"/"numeric" but garbage/injection remains inside. The WHOLE string
+// (except trailing whitespace) must be consumed.
 static bool str_is_integer(const std::string& s) {
     if (s.empty()) return false;
     size_t pos = 0;
@@ -309,7 +309,7 @@ Module make_array_module(ModuleHost* interp) {
     Module m;
     m.name = "array";
 
-    // push($arr, $val) → yeni array döner
+    // push($arr, $val) → returns a new array
     m.functions["push"] = [](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::push() requires array and value");
@@ -319,7 +319,7 @@ Module make_array_module(ModuleHost* interp) {
         return Value(result);
     };
 
-    // pop($arr) → son elemanı döner
+    // pop($arr) → returns the last element
     m.functions["pop"] = [](auto args) -> Value {
         if (args.empty() || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::pop() requires array");
@@ -328,26 +328,26 @@ Module make_array_module(ModuleHost* interp) {
         return arr.back();
     };
 
-    // sort($arr) veya sort($arr, function($a,$b){return $a<=>$b;})
+    // sort($arr) or sort($arr, function($a,$b){return $a<=>$b;})
     m.functions["sort"] = [interp](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("array::sort() requires array");
         if (args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::sort() requires array as first argument");
         auto result = std::make_shared<ValueArray>(*args[0].as_array());
-        // Comparator bir VM closure'ıdır (BYTECODE_FN); interp->invoke() onu VM köprüsüyle çalıştırır.
-        // ESKİ HATA: yalnız yorumlayıcının fonksiyon türüne bakılıyordu → VM'de comparator SESSİZCE
-        // yok sayılıp varsayılan sırayla sıralanıyordu.
+        // The comparator is a VM closure (BYTECODE_FN); interp->invoke() runs it through the VM bridge.
+        // OLD BUG: only the interpreter's function type was checked → in the VM the comparator was SILENTLY
+        // ignored and the sort used the default order.
         if (args.size() >= 2 && args[1].type() == Value::BYTECODE_FN) {
             auto fn = args[1];
             auto less = [&](const Value& a, const Value& b) {
                 return interp->invoke(fn, {a, b}).to_int() < 0;
             };
-            // Kullanıcı comparator'ı strict-weak-ordering sağlamayabilir (random/NaN/
-            // buggy). std::sort böyle bir comparator'da UB → libstdc++ insertion-sort
-            // dizinin başının ötesine taşar (ASan: heap-buffer-overflow, extra_stdlib:416).
-            // Bottom-up stable merge sort her erişimi geçerli alt-aralıkta tutar —
-            // tutarsız comparator OOB YAPAMAZ, must be at most yanlış-ama-güvenli sıra üretir
-            // (Python timsort / Java / düzeltilmiş V8 ile aynı güvenlik garantisi).
+            // The user's comparator may not satisfy strict-weak-ordering (random/NaN/
+            // buggy). std::sort is UB with such a comparator → libstdc++'s insertion-sort
+            // runs past the start of the array (ASan: heap-buffer-overflow, extra_stdlib:416).
+            // Bottom-up stable merge sort keeps every access within a valid sub-range —
+            // an inconsistent comparator CANNOT go out of bounds, at most it produces a wrong-but-safe order
+            // (the same safety guarantee as Python timsort / Java / fixed V8).
             std::vector<Value>& v = *result;
             size_t n = v.size();
             if (n > 1) {
@@ -381,8 +381,8 @@ Module make_array_module(ModuleHost* interp) {
         auto fn = args[1];
         const auto& src = *args[0].as_array();
         if (look::value_is_map(args[0])) {
-            // Sözlük: geri çağrı DEĞERİ alır; geçen çiftler anahtarlarıyla, sırayla kalır.
-            // ESKİ: düz düzen liste sanılıyordu — iç işaret ve anahtarlar da geri çağrıya gidiyordu.
+            // Dictionary: the callback receives the VALUE; passing pairs stay with their keys, in order.
+            // OLD: it was taken for a plain list — the internal marker and the keys also went to the callback.
             result->push_back(Value::assoc_marker());
             for (size_t i = 1; i + 1 < src.size(); i += 2)
                 if (interp->invoke(fn, {src[i + 1]}).is_truthy()) { result->push_back(src[i]); result->push_back(src[i + 1]); }
@@ -404,8 +404,8 @@ Module make_array_module(ModuleHost* interp) {
         auto fn = args[1];
         const auto& src = *args[0].as_array();
         if (look::value_is_map(args[0])) {
-            // Sözlük: aynı anahtarlar, yeni değerler (geri çağrı yalnız değeri alır). ESKİ: iç işaret
-            // ve anahtarlar da geri çağrıya gidiyordu (fn($v) => $v * 10 → '__assoc__' hatası).
+            // Dictionary: same keys, new values (the callback receives only the value). OLD: the internal marker
+            // and the keys also went to the callback (fn($v) => $v * 10 → '__assoc__' error).
             result->reserve(src.size());
             result->push_back(Value::assoc_marker());
             for (size_t i = 1; i + 1 < src.size(); i += 2) {
@@ -427,7 +427,7 @@ Module make_array_module(ModuleHost* interp) {
         auto fn  = args[1];
         Value acc = args[2];
         const auto& src = *args[0].as_array();
-        if (look::value_is_map(args[0])) {   // sözlük: yalnız değerler, sırayla
+        if (look::value_is_map(args[0])) {   // dictionary: values only, in order
             for (size_t i = 1; i + 1 < src.size(); i += 2) acc = interp->invoke(fn, {acc, src[i + 1]});
             return acc;
         }
@@ -446,19 +446,19 @@ Module make_array_module(ModuleHost* interp) {
         int64_t offset = args.size() >= 2 ? (int64_t)args[1].to_int() : 0;
         int64_t length = args.size() >= 3 ? (int64_t)args[2].to_int() : n;
         if (offset < 0) offset = n + offset;
-        // -n'den daha negatif offset → tekrar clamp yoksa `begin()+negatif` OOB
-        // (segfault). Negatif length → end<offset geçersiz iterator aralığı.
+        // An offset more negative than -n → without another clamp `begin()+negative` is OOB
+        // (segfault). A negative length → end<offset invalid iterator range.
         if (offset < 0) offset = 0;
         if (offset > n) offset = n;
-        // Eksi uzunluk = sondan o kadar eleman HARİÇ (PHP array_slice): slice([1,2,3], 0, -1) =
-        // [1,2]. ESKİ: eksi uzunluk sessizce 0 sayılıp BOŞ liste dönüyordu — $l = array::slice($l,
-        // 0, -1) listeyi sessizce boşaltırdı.
+        // A negative length = that many elements EXCLUDED from the end (PHP array_slice): slice([1,2,3], 0, -1) =
+        // [1,2]. OLD: a negative length was silently treated as 0 and an EMPTY list was returned — $l = array::slice($l,
+        // 0, -1) would silently empty the list.
         if (length < 0) { length = (n + length) - offset; if (length < 0) length = 0; }
-        // TAŞMA önle: length kalan uzunluğa (n-offset) kırpılır ÖNCE — aksi halde
-        // offset+length int64 taşıp negatif end üretir (>n kontrolü negatifi yakalamaz →
-        // vector(first>last) → length_error). Kırpınca doğru: kalanı döndür.
+        // PREVENT OVERFLOW: length is clamped to the remaining length (n-offset) FIRST — otherwise
+        // offset+length overflows int64 and produces a negative end (the >n check does not catch a negative →
+        // vector(first>last) → length_error). After clamping it is correct: return the remainder.
         if (length > n - offset) length = n - offset;
-        int64_t end = offset + length;        // artık taşmaz; end ∈ [offset, n]
+        int64_t end = offset + length;        // no longer overflows; end ∈ [offset, n]
         auto result = std::make_shared<ValueArray>(
             src.begin() + offset, src.begin() + end);
         return Value(result);
@@ -469,8 +469,8 @@ Module make_array_module(ModuleHost* interp) {
         if (args.size() < 2 || args[0].type() != Value::ARRAY) return Value(false);
         const auto& src = *args[0].as_array();
         if (look::value_is_map(args[0])) {
-            // Sözlük: yalnız DEĞERLER. GÜVENLİK — ESKİ: anahtarlarda da arıyordu:
-            // array::contains($body["roles"], "admin") liste beklerken {"admin": 0} ile geçiyordu.
+            // Dictionary: only VALUES. SECURITY — OLD: it searched the keys too:
+            // array::contains($body["roles"], "admin") expecting a list passed with {"admin": 0}.
             for (size_t i = 1; i + 1 < src.size(); i += 2)
                 if (src[i + 1] == args[1]) return Value(true);
             return Value(false);
@@ -514,17 +514,17 @@ Module make_array_module(ModuleHost* interp) {
             result->push_back(Value(key));
             result->push_back(val);
         } else {
-            // Sayisal liste.
-            // ESKI HATA: bu dal yalniz yeni anahtar/degeri iceren YEPYENI bir assoc
-            // kuruyor, orijinal elemanlari atiyordu — gecerli indekste bile:
-            //   array::set([1,2,3], 1, "X") = {"1":"X"}   (beklenen [1,"X",3])
-            // Sessiz veri kaybi; hata yok.
-            // Sozlesme: gecerli indeks → yerinde degistir, size'a esit → sona ekle
-            // ($arr[i] = v ile ayni).
-            // Tam sayı metni ("1") de indekstir, negatif sondan sayar — `$l[k] = v` ile aynı kural
-            // (look/value_path.h). ESKİ: "1" anahtar sayılıp listeyi sözlüğe çeviriyordu ve "1" İKİ KEZ
-            // yer alıyordu: array::set([1,2,3], "1", "X") = {"0":1,"1":2,"2":3,"1":"X"}, count 4
-            // (rastgele karşılaştırmalı test buldu).
+            // Numeric list.
+            // OLD BUG: this branch built a BRAND-NEW assoc containing only the new key/value
+            // and dropped the original elements — even at a valid index:
+            //   array::set([1,2,3], 1, "X") = {"1":"X"}   (expected [1,"X",3])
+            // Silent data loss; no error.
+            // Contract: valid index → replace in place, equal to size → append
+            // (same as $arr[i] = v).
+            // An integer text ("1") is an index too, negative counts from the end — the same rule as `$l[k] = v`
+            // (look/value_path.h). OLD: "1" was taken as a key, turning the list into a dictionary, and "1" appeared
+            // TWICE: array::set([1,2,3], "1", "X") = {"0":1,"1":2,"2":3,"1":"X"}, count 4
+            // (found by a randomized comparison test).
             const bool int_key = args[1].type() == Value::INT ||
                 (args[1].type() == Value::STRING && look::value_is_int_key(args[1].str_ref()));
             if (int_key) {
@@ -539,8 +539,8 @@ Module make_array_module(ModuleHost* interp) {
                     return Value(result);
                 }
             }
-            // String anahtar / aralik disi indeks → assoc'a donustur, ama mevcut
-            // elemanlari sayisal indeksleriyle anahtarlayarak KORU.
+            // String key / out-of-range index → convert to assoc, but PRESERVE the existing
+            // elements by keying them with their numeric indexes.
             auto assoc = std::make_shared<ValueArray>();
             assoc->reserve(result->size() * 2 + 3);
             assoc->push_back(Value::assoc_marker());
@@ -588,13 +588,13 @@ Module make_array_module(ModuleHost* interp) {
         return Value(result);
     };
 
-    // find($arr, function($x) { return $x > 3; }) → ilk eşleşen eleman, null döner bulamazsa
+    // find($arr, function($x) { return $x > 3; }) → the first matching element, null if not found
     m.functions["find"] = [interp](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::find() requires array and callback");
         auto& arr = *args[0].as_array();
         auto fn = args[1];
-        // assoc array: değerler üzerinde iterate
+        // assoc array: iterate over values
         bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
         if (is_assoc) {
             for (size_t i = 1; i + 1 < arr.size(); i += 2) {
@@ -607,7 +607,7 @@ Module make_array_module(ModuleHost* interp) {
         return Value(); // null
     };
 
-    // any($arr, function($x) { return $x > 0; }) → must be at least biri eşleşirse true
+    // any($arr, function($x) { return $x > 0; }) → true if at least one matches
     m.functions["any"] = [interp](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::any() requires array and callback");
@@ -624,7 +624,7 @@ Module make_array_module(ModuleHost* interp) {
         return Value(false);
     };
 
-    // all($arr, function($x) { return $x > 0; }) → hepsi eşleşirse true
+    // all($arr, function($x) { return $x > 0; }) → true if all match
     m.functions["all"] = [interp](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::all() requires array and callback");
@@ -641,18 +641,18 @@ Module make_array_module(ModuleHost* interp) {
         return Value(true);
     };
 
-    // flatten($arr [, $depth]) → düzleştirilmiş dizi
+    // flatten($arr [, $depth]) → flattened array
     m.functions["flatten"] = [](auto args) -> Value {
         if (args.empty() || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::flatten() requires array");
-        int depth = args.size() >= 2 ? args[1].to_int() : -1; // -1 = sonsuz
+        int depth = args.size() >= 2 ? args[1].to_int() : -1; // -1 = infinite
         auto result = std::make_shared<ValueArray>();
-        // Açık yığınla (özyinelemesiz): çerçeve = (dizi, sıradaki indeks, kalan derinlik). ESKİ:
-        // özyinelemeli lambda ~100k iç içe dizide C++ yığınını taşırıp süreci çökertiyordu (ölçüldü).
-        // Düzleştirme derinlikten bağımsız çalışabildiği için sınır yerine döngü; sıra aynı (soldan
-        // sağa, önce derin). Dış dizi her zaman açılır; her eleman kalan derinlikle denetlenir.
+        // With an explicit stack (no recursion): frame = (array, next index, remaining depth). OLD:
+        // a recursive lambda overflowed the C++ stack on ~100k nested arrays and crashed the process (measured).
+        // Since flattening can run independent of depth, a loop instead of a limit; the order is the same (left to
+        // right, deep first). The outer array is always opened; each element is checked with the remaining depth.
         struct Frame { const std::vector<Value>* arr; size_t i; int d; };
-        std::vector<Frame> st;   // alt diziler ebeveynlerince yaşatılır (args[0] çağrı boyunca sabit)
+        std::vector<Frame> st;   // sub-arrays are kept alive by their parents (args[0] is constant for the duration of the call)
         st.push_back({args[0].vec_ptr(), 0, depth});
         while (!st.empty()) {
             Frame& f = st.back();
@@ -663,12 +663,12 @@ Module make_array_module(ModuleHost* interp) {
             const auto& arr = *v.vec_ptr();
             bool is_assoc = !arr.empty() && arr[0].is_assoc_marker();
             if (is_assoc || d == 0) { result->push_back(v); continue; }
-            st.push_back({&arr, 0, d > 0 ? d - 1 : -1});   // f bundan sonra kullanılmaz (geçersiz olabilir)
+            st.push_back({&arr, 0, d > 0 ? d - 1 : -1});   // f is not used after this (it may be invalid)
         }
         return Value(result);
     };
 
-    // chunk($arr, $size) → [[a,b],[c,d],...] şeklinde parçalar
+    // chunk($arr, $size) → splits into the form [[a,b],[c,d],...]
     m.functions["chunk"] = [](auto args) -> Value {
         if (args.size() < 2 || args[0].type() != Value::ARRAY)
             throw std::runtime_error("array::chunk() requires array and size");
@@ -706,12 +706,12 @@ Module make_array_module(ModuleHost* interp) {
         return Value(result);
     };
 
-    // LOOK 2: struct bir dizi değildir. array:: fonksiyonları onu eskiden "dizi değil" sayıp
-    // sessizce boş sonuç veriyordu (array::keys($s) → []); artık hata. Yalnız İLK argümana
-    // bakılır: struct bir listenin ELEMANI olarak verilebilir (array::contains($list, $s)).
-    // Listeye özgü fonksiyonlar sözlükte hatadır (look/value_path.h value_list_only); zip her
-    // argümanına bakar. Sözlükte anlamı olanlar kendi gövdelerinde yalnız DEĞERLERE bakar:
-    // contains/any/all/find/reduce; map/filter anahtarları korur; keys/values/set sözlüğe özgü.
+    // A struct is not an array. array:: functions used to treat it as "not an array" and
+    // silently return an empty result (array::keys($s) → []); now an error. Only the FIRST argument
+    // is examined: a struct can be given as an ELEMENT of a list (array::contains($list, $s)).
+    // List-specific functions are an error on a dictionary (look/value_path.h value_list_only); zip examines every
+    // argument. Those that have a meaning on a dictionary look only at VALUES in their own bodies:
+    // contains/any/all/find/reduce; map/filter keep the keys; keys/values/set are dictionary-specific.
     static const std::unordered_set<std::string> list_only = {
         "pop", "sort", "slice", "unique", "reverse", "flatten", "chunk", "zip" };
     for (auto& entry : m.functions) {
@@ -834,9 +834,9 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
 
     BCRYPT_PKCS1_PADDING_INFO pad = { BCRYPT_SHA256_ALGORITHM };
     DWORD sigLen = 0;
-    // NCryptSignHash SECURITY_STATUS'u KONTROL ET: eskiden yok sayılıyordu → RSA-olmayan
-    // key (ör. EC) PKCS8 olarak import olup PKCS1-RSA sign başarısız oluyor, sigLen 0 kalıp
-    // SESSİZCE BOŞ imza dönüyordu (POSIX throw eder). Fail-loud: hata/boş → throw.
+    // CHECK NCryptSignHash's SECURITY_STATUS: it used to be ignored → a non-RSA
+    // key (e.g. EC) was imported as PKCS8 and the PKCS1-RSA sign failed, sigLen stayed 0 and an
+    // EMPTY signature was SILENTLY returned (POSIX throws). Fail-loud: error/empty → throw.
     SECURITY_STATUS ss = NCryptSignHash(hKey, &pad, hash.data(), (DWORD)hash.size(),
                                         NULL, 0, &sigLen, BCRYPT_PAD_PKCS1);
     if (ss != ERROR_SUCCESS || sigLen == 0) {
@@ -861,7 +861,7 @@ static bool rs256_verify_impl(const std::string& data,
                                const std::vector<uint8_t>& sig,
                                const std::string& pem_pub) {
     // SPKI public PEM → DER → CERT_PUBLIC_KEY_INFO → BCRYPT_KEY_HANDLE → BCryptVerifySignature.
-    // RSASSA-PKCS#1 v1.5 + SHA-256 (RS256), POSIX EVP_DigestVerify ile davranış-özdeş.
+    // RSASSA-PKCS#1 v1.5 + SHA-256 (RS256), behavior-identical to POSIX EVP_DigestVerify.
     auto der  = pem_to_der_rsa(pem_pub);
     if (der.empty()) return false;
     auto hash = rs256_sha256_hash(data);
@@ -871,7 +871,7 @@ static bool rs256_verify_impl(const std::string& data,
     if (!CryptDecodeObjectEx(X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO,
                              der.data(), (DWORD)der.size(),
                              CRYPT_DECODE_ALLOC_FLAG, nullptr, &pki, &pkiLen)) {
-        return false;                          // geçersiz/parse edilemeyen public key
+        return false;                          // invalid/unparseable public key
     }
 
     BCRYPT_KEY_HANDLE hKey = nullptr;
@@ -885,7 +885,7 @@ static bool rs256_verify_impl(const std::string& data,
                         (PBYTE)sig.data(),  (ULONG)sig.size(),
                         BCRYPT_PAD_PKCS1);
     BCryptDestroyKey(hKey);
-    return st == 0;                            // STATUS_SUCCESS; geçersiz imza → nonzero → false
+    return st == 0;                            // STATUS_SUCCESS; invalid signature → nonzero → false
 }
 
 #else
@@ -896,9 +896,9 @@ static std::vector<uint8_t> rs256_sign_impl(const std::string& data, const std::
     EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
     BIO_free(bio);
     if (!pkey) { ERR_clear_error(); throw std::runtime_error("crypto::rs256_sign() — PEM key parse error"); }
-    // rs256 = RSA-only. EC/uyumsuz key'i REDDET (yoksa EVP EC'yi ECDSA-SHA256 olarak imzalar
-    // → yanlış-alg, boş-olmayan sig, sessiz). Windows dalı (NCryptSignHash status) da reddeder
-    // → çapraz-platform simetri (2026-08-11 bug-avı).
+    // rs256 = RSA-only. REJECT an EC/incompatible key (otherwise EVP signs EC as ECDSA-SHA256
+    // → wrong alg, non-empty sig, silent). The Windows branch (NCryptSignHash status) rejects too
+    // → cross-platform symmetry (2026-08-11 bug hunt).
     if (EVP_PKEY_base_id(pkey) != EVP_PKEY_RSA) {
         EVP_PKEY_free(pkey);
         throw std::runtime_error("crypto::rs256_sign() — RSA key required (EC/incompatible key rejected)");
@@ -962,7 +962,7 @@ static Module make_crypto_module() {
         return Value(to_hex(hmac_sha256(key, data)));
     };
 
-    // crypto::hmac_sha256_raw($data, $key) → raw bytes as string (JWT imzası için)
+    // crypto::hmac_sha256_raw($data, $key) → raw bytes as string (for the JWT signature)
     m.functions["hmac_sha256_raw"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("crypto::hmac_sha256_raw() — data and key required");
         std::string d = args[0].to_string();
@@ -987,7 +987,7 @@ static Module make_crypto_module() {
         return Value(std::string(v.begin(), v.end()));
     };
 
-    // crypto::base64url_encode($data) → URL-safe base64, padding yok (JWT için)
+    // crypto::base64url_encode($data) → URL-safe base64, no padding (for JWT)
     m.functions["base64url_encode"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("crypto::base64url_encode() — data required");
         std::string s = args[0].to_string();
@@ -1016,14 +1016,14 @@ static Module make_crypto_module() {
         return Value(std::string(v.begin(), v.end()));
     };
 
-    // crypto::random_bytes($n) → hex string (n bayt)
+    // crypto::random_bytes($n) → hex string (n bytes)
     m.functions["random_bytes"] = [](auto args) -> Value {
         int n = args.empty() ? 16 : args[0].to_int();
         if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_bytes() — must be 1-4096");
         return Value(to_hex(random_bytes((size_t)n)));
     };
 
-    // crypto::random_string($n) → URL-safe rastgele string (n bayt entropi)
+    // crypto::random_string($n) → URL-safe random string (n bytes of entropy)
     m.functions["random_string"] = [](auto args) -> Value {
         int n = args.empty() ? 16 : args[0].to_int();
         if (n <= 0 || n > 4096) throw std::runtime_error("crypto::random_string() — must be 1-4096");
@@ -1048,7 +1048,7 @@ static Module make_crypto_module() {
         return Value(uuid);
     };
 
-    // crypto::rs256_sign($data, $pem_private_key) → raw imza bytes (string)
+    // crypto::rs256_sign($data, $pem_private_key) → raw signature bytes (string)
     m.functions["rs256_sign"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign() — data and PEM key required");
         std::string data = args[0].to_string();
@@ -1057,7 +1057,7 @@ static Module make_crypto_module() {
         return Value(std::string(sig.begin(), sig.end()));
     };
 
-    // crypto::rs256_sign_b64url($data, $pem_private_key) → base64url imza (JWT için hazır)
+    // crypto::rs256_sign_b64url($data, $pem_private_key) → base64url signature (ready for JWT)
     m.functions["rs256_sign_b64url"] = [](auto args) -> Value {
         if (args.size() < 2) throw std::runtime_error("crypto::rs256_sign_b64url() — data and PEM key required");
         std::string data = args[0].to_string();
@@ -1076,7 +1076,7 @@ static Module make_crypto_module() {
         return Value(rs256_verify_impl(data, sig, pem));
     };
 
-    // crypto::constant_compare($a, $b) → timing-safe string karşılaştırma
+    // crypto::constant_compare($a, $b) → timing-safe string comparison
     m.functions["constant_compare"] = [](auto args) -> Value {
         if (args.size() < 2) return Value(false);
         std::string a = args[0].to_string();
@@ -1107,7 +1107,7 @@ static Module make_runtime_module(ModuleHost* interp) {
     mod.functions["stats"] = [interp](std::vector<Value> args) -> Value {
         long uptime  = interp->get_uptime_sec();
         int  routes  = interp->get_route_count();
-        // İstekleri süreç-global HTTP sayacı taşır (web dispatch artırır).
+        // The requests are carried by the process-global HTTP counter (web dispatch increments it).
         int  reqs    = (int)look::g_http_request_count().load(std::memory_order_relaxed);
 
         double working_mb = 0.0;
@@ -1130,9 +1130,9 @@ static Module make_runtime_module(ModuleHost* interp) {
                 long kb = 0; sscanf(line.c_str(), "VmRSS: %ld", &kb);
                 working_mb = kb / 1024.0;
             }
-            // private_mb = private RESIDENT (anonim) bellek. Eskiden VmSize (SANAL adres alanı)
-            // okunuyordu → çok-thread'li süreçte ~9.5GB gibi inandırıcı-ama-yanlış değer. RssAnon
-            // gerçek private-resident (Windows PrivateUsage analoğu).
+            // private_mb = private RESIDENT (anonymous) memory. It used to read VmSize (VIRTUAL address
+            // space) → a plausible-but-wrong value like ~9.5GB in a multi-threaded process. RssAnon is the
+            // real private-resident (analogue of Windows PrivateUsage).
             if (line.find("RssAnon:") == 0) {
                 long kb = 0; sscanf(line.c_str(), "RssAnon: %ld", &kb);
                 private_mb = kb / 1024.0;
@@ -1153,7 +1153,7 @@ static Module make_runtime_module(ModuleHost* interp) {
         arr->push_back(Value(std::string("working_mb")));   arr->push_back(Value(working_mb));
         arr->push_back(Value(std::string("private_mb")));   arr->push_back(Value(private_mb));
 
-        // ── Gözlemlenebilirlik sayaçları (sessiz-sorun göstergeleri) ──
+        // ── Observability counters (indicators of silent problems) ──
         uint64_t http_reqs = look::g_http_request_count().load(std::memory_order_relaxed);
         uint64_t lat_sum   = look::g_latency_us_sum().load(std::memory_order_relaxed);
         int      lat_avg   = http_reqs ? (int)(lat_sum / http_reqs) : 0;
@@ -1169,7 +1169,7 @@ static Module make_runtime_module(ModuleHost* interp) {
         return Value(arr);
     };
 
-    // runtime::gc() → no-op şimdilik, ileride cycle sweep buraya
+    // runtime::gc() → no-op for now, a cycle sweep will go here later
     mod.functions["gc"] = [](std::vector<Value>) -> Value {
         return Value(std::string("ok"));
     };
@@ -1177,15 +1177,15 @@ static Module make_runtime_module(ModuleHost* interp) {
     return mod;
 }
 
-// ── look:: — dilin kendi sozdizimi kontrolu (in-process; `lk --check` esdegeri) ──
-// LOOKY gibi araclarin, alt-surece ihtiyac duymadan LOOK kodunu dogrulayabilmesi
-// icin. main.cpp'deki --check mantiginin birebir ayni AST tabanli kopyasi.
+// ── look:: — the language's own syntax check (in-process; equivalent of `lk --check`) ──
+// So that tools like LOOKY can validate LOOK code without needing a subprocess.
+// An exactly identical AST-based copy of the --check logic in main.cpp.
 
 static void chk_walk_expr(const Expression* e, const std::function<void(const Expression*)>& v);
 static void chk_walk_block(const BlockStatement* b, const std::function<void(const Expression*)>& v);
 
 static void chk_walk_stmt(const Statement* s, const std::function<void(const Expression*)>& v) {
-    if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+    if (s) look_ast_guard(s->loc.line, s->loc.column);   // deep tree: an error instead of a crash (stack_guard.h)
     if (!s) return;
     if (auto* x = node_as<ExpressionStatement>(s)) chk_walk_expr(x->expression.get(), v);
     else if (auto* x = node_as<PrintStatement>(s)) { for (auto& e : x->expressions) chk_walk_expr(e.get(), v); }
@@ -1207,7 +1207,7 @@ static void chk_walk_block(const BlockStatement* b, const std::function<void(con
 }
 
 static void chk_walk_expr(const Expression* e, const std::function<void(const Expression*)>& v) {
-    if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+    if (e) look_ast_guard(e->loc.line, e->loc.column);   // deep tree: an error instead of a crash (stack_guard.h)
     if (!e) return;
     v(e);
     if (auto* x = node_as<ArrayLiteral>(e)) { for (auto& el : x->elements) chk_walk_expr(el.get(), v); }
@@ -1215,9 +1215,9 @@ static void chk_walk_expr(const Expression* e, const std::function<void(const Ex
     else if (auto* x = node_as<FunctionExpression>(e)) chk_walk_block(x->body.get(), v);
     else if (auto* x = node_as<IndexExpression>(e)) { chk_walk_expr(x->object.get(), v); chk_walk_expr(x->index.get(), v); }
     else if (auto* x = node_as<UnaryExpression>(e)) chk_walk_expr(x->right.get(), v);
-    else if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+    else if (auto* x = node_as<BinaryExpression>(e)) {   // left spine with a loop (look/ast_spine.h)
         std::vector<const BinaryExpression*> sp; const Expression* lm = binary_left_spine(x, sp);
-        for (size_t k = 1; k < sp.size(); ++k) v(sp[k]);   // iç düğümler, özyinelemedeki sırayla
+        for (size_t k = 1; k < sp.size(); ++k) v(sp[k]);   // inner nodes, in the same order as the recursion
         chk_walk_expr(lm, v);
         for (size_t k = sp.size(); k-- > 0;) chk_walk_expr(sp[k]->right.get(), v);
     }
@@ -1245,7 +1245,7 @@ static void chk_collect_decls(const Statement* s, std::set<std::string>& d) {
 static bool chk_find_undefined(const Program& prog, std::string& name, int& line, int& col) {
     for (auto& s : prog.statements)
         if (node_as<UseStatement>(s.get()) || node_as<UseFileStatement>(s.get()))
-            return false;   // import var → cross-file isimler bilinemez
+            return false;   // import present → cross-file names cannot be known
     std::set<std::string> valid = {
         "abs","before_route","bool","boolval","chan_size","channel","close","config","count",
         "die","env","exit","float","floatval","header","int","intval","join","json","len","max",
@@ -1279,7 +1279,7 @@ static Module make_look_module() {
     mod.name = "look";
 
     // look::check($src) → ["ok"=>bool, "line"=>int, "col"=>int, "msg"=>string]
-    // Kodu CALISTIRMAZ — yalniz lex + parse + tanimsiz-cagri kontrolu. Guvenli.
+    // Does NOT RUN the code — only lex + parse + undefined-call check. Safe.
     mod.functions["check"] = [](std::vector<Value> args) -> Value {
         std::string src = args.empty() ? std::string() : args[0].to_string();
 

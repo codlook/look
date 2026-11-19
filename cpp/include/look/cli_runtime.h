@@ -1,6 +1,6 @@
 #pragma once
-// Komut satırı VM ortamı — `lk` ve `lk test` AYNI yerleşik tabloyu ve geri çağırma bağlamalarını
-// kullanır (src/cli_runtime.cpp). Testler programın gerçekte koştuğu ortamı sınasın diye tek kaynak.
+// Command-line VM environment — `lk` and `lk test` use the SAME built-in table and callback bindings
+// (src/cli_runtime.cpp). A single source so that tests exercise the environment the program really runs in.
 #include "look/runtime_host.h"
 #include "look/vm.h"
 #include <memory>
@@ -11,21 +11,21 @@
 
 namespace look {
 
-// Yerleşik tablo: `use` edilmiş modüllerin fonksiyonları (interp'ten) + çıplak yerleşikler; print/write → out.
+// Built-in table: functions of the `use`d modules (from interp) + bare built-ins; print/write → out.
 std::vector<BuiltinFn> build_cli_builtins(RuntimeHost& interp, std::ostream& out);
 
-// İş işleyicisi / zamanlayıcı / parallel geri çağırmaları için paylaşılan durum.
+// Shared state for job handler / timer / parallel callbacks.
 struct CliCallbacks {
-    VM::SharedState* shared  = nullptr;   // yerleşik tablo (süreç ömrü)
-    VM*              main_vm = nullptr;   // jobs::run anında güncel global'ler
+    VM::SharedState* shared  = nullptr;   // built-in table (process lifetime)
+    VM*              main_vm = nullptr;   // globals current at jobs::run time
 };
 
-// Bir VM closure'ını kendi VM'inde çalıştırır (hata loglanır, ok=false). globals boşsa ana VM'inkiler.
+// Runs a VM closure on its own VM (an error is logged, ok=false). If globals is empty, the main VM's are used.
 Value run_cli_closure(const CliCallbacks& cc, const Value& fnv, std::vector<Value> args,
                       const std::unordered_map<std::string, Value>* globals,
                       const char* method, const char* what, bool& ok);
 
-// timer::/jobs::worker/jobs::run komut satırında VM'e; ws::/sse:: açık hata.
+// timer::/jobs::worker/jobs::run on the command line go to the VM; ws::/sse:: give an explicit error.
 void wire_cli_callbacks(std::vector<BuiltinFn>& b, RuntimeHost& interp, std::shared_ptr<CliCallbacks> cc);
 
 } // namespace look

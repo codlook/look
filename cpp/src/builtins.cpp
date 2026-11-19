@@ -1,4 +1,4 @@
-// builtins.cpp — VM builtin tablosunun tek kaynağı (bkz. builtins.h)
+// builtins.cpp — the single source of the VM builtin table (see builtins.h)
 
 #include "look/builtins.h"
 
@@ -13,11 +13,11 @@ const std::vector<std::string>& builtin_names() {
         "print", "write", "count", "push", "pop", "str", "int", "float", "bool", "string",
         // 10-15: type check
         "is_null", "is_int", "is_float", "is_string", "is_bool", "is_array",
-        // 16-19: channel (special opcodes — CHAN_SEND/RECV — ama fallback için listede)
+        // 16-19: channel (special opcodes — CHAN_SEND/RECV — but listed for the fallback)
         "send", "receive", "close", "chan_size",
-        // 20-21: json (eski isimlendirme — geriye dönük uyumluluk)
+        // 20-21: json (old naming — backward compatibility)
         "json_encode", "json_decode",
-        // 22: route — setup'ta closure kaydeder, dispatch'te no-op
+        // 22: route — registers a closure at setup, no-op at dispatch
         "route",
         // 23-24: json module
         "json::encode", "json::decode",
@@ -35,11 +35,11 @@ const std::vector<std::string>& builtin_names() {
         "session::start", "session::get", "session::set", "session::destroy", "session::regenerate",
         // 52-55: cookie
         "cookie::get", "cookie::set", "cookie::delete", "cookie::has",
-        // 56: db::connect (setup'ta çalışır — pool oluşturur, key string döner)
+        // 56: db::connect (runs at setup — creates the pool, returns a key string)
         "db::connect",
-        // 57: channel() — LookChannel oluşturur
+        // 57: channel() — creates a LookChannel
         "channel",
-        // 58: env() — setup'ta da çağrılır (DB DSN oluşturma)
+        // 58: env() — also called at setup (building the DB DSN)
         "env",
         // 59: config()
         "config",
@@ -68,20 +68,20 @@ const std::vector<std::string>& builtin_names() {
         "file::remove", "file::size", "file::store", "file::list",
         // 113-119: http:: client
         "http::get", "http::post", "http::put", "http::delete",
-        "http::patch",   // http::head/request HAYALET KALDIRILDI (impl yok; get/post/... kapsar)
+        "http::patch",   // http::head/request PHANTOMS REMOVED (no impl; get/post/... covers them)
         // 120-123: template::
         "template::render", "template::include", "template::block", "template::extends",
         // 124-128: cache::
         "cache::get", "cache::set", "cache::has", "cache::delete", "cache::flush",
         // 129-132: queue::
-        "queue::push", "queue::pop", "queue::size",   // queue::flush HAYALET KALDIRILDI (gerçeği queue::clear)
+        "queue::push", "queue::pop", "queue::size",   // queue::flush PHANTOM REMOVED (the real one is queue::clear)
         // 133-134: mail::
         "mail::send", "mail::deliver_maildir",
-        // crypto:: — HAYALET KALDIRILDI (docs-conformance/ölçüm): sha512/md5/hmac/random_hex
-        // builtin listesindeydi ama crypto modülünde implementasyonu YOK (çağrılınca "no function").
-        // Gerçek karşılıkları: sha256 var; hmac→hmac_sha256; random_hex→random_bytes+hex_encode.
-        // base64::encode/decode de HAYALET'ti (base64 modülü YOK → json modülüyle karışıyordu);
-        // gerçek base64 crypto::base64_encode/decode. uuid::v4 HAYALET → gerçeği crypto::uuid.
+        // crypto:: — PHANTOMS REMOVED (docs-conformance/measurement): sha512/md5/hmac/random_hex
+        // were in the builtin list but have NO implementation in the crypto module ("no function" when called).
+        // Real counterparts: sha256 exists; hmac→hmac_sha256; random_hex→random_bytes+hex_encode.
+        // base64::encode/decode were PHANTOMS too (there is NO base64 module → it was confused with the json module);
+        // the real base64 is crypto::base64_encode/decode. uuid::v4 PHANTOM → the real one is crypto::uuid.
         "crypto::sha256", "crypto::random_bytes",
         // 144-147: parallel:: observability
         "parallel::active", "parallel::wait", "parallel::limit", "parallel::at_capacity",
@@ -89,78 +89,78 @@ const std::vector<std::string>& builtin_names() {
         "error::new", "error::is", "error::message", "error::code",
         // 152: response::json
         "response::json",
-        // 153: before_route() — global middleware kayıt
+        // 153: before_route() — global middleware registration
         "before_route",
-        // 154: stop() — middleware'den route execution'ı iptal et
+        // 154: stop() — cancel route execution from middleware
         "stop",
-        // 155-161: skaler core builtins
+        // 155-161: scalar core builtins
         "strlen", "abs", "max", "min", "sqrt", "strtoupper", "strtolower",
-        // 162-163: request:: gelen header okuma (headers_in'den)
+        // 162-163: request:: reading incoming headers (from headers_in)
         "request::header", "request::headers",
-        // 164: response::error — durum kodu + hata JSON (tek satir)
+        // 164: response::error — status code + error JSON (single line)
         "response::error",
-        // 165-168: app:: — servis kaydi (app::set/get/has/db)
+        // 165-168: app:: — service registry (app::set/get/has/db)
         "app::set", "app::get", "app::has", "app::db",
-        // 169-170: response:: govde yardimcilari (VM-native dispatch)
+        // 169-170: response:: body helpers (VM-native dispatch)
         "response::text", "response::html",
-        // 171+: array:: modulu — eskiden builtin_names'de HIC yoktu → route icinde
-        // array::map/keys/sort vb. cagirinca compiler CALL_BUILTIN uretemeyip genel
-        // CALL'a dusuyor, runtime'da "Not callable" firlatiyor ve route KALICI
-        // interpreter'a dusuyordu (veri-agirlikli route'lar tamamen yavas yolda).
-        // Sona eklendi (mevcut indexler kaymaz); `use array` ile auto-wire olur.
+        // 171+: array:: module — it used to be ABSENT from builtin_names → when a route called
+        // array::map/keys/sort etc. the compiler could not emit CALL_BUILTIN and fell back to the generic
+        // CALL, threw "Not callable" at runtime and the route PERMANENTLY dropped to the
+        // interpreter (data-heavy routes ended up entirely on the slow path).
+        // Appended at the end (existing indexes do not shift); auto-wired with `use array`.
         "array::map", "array::filter", "array::reduce", "array::find", "array::keys",
         "array::values", "array::sort", "array::reverse", "array::slice", "array::contains",
         "array::unique", "array::flatten", "array::chunk", "array::zip", "array::all",
         "array::any", "array::push", "array::pop", "array::set", "array::new_assoc",
-        // NOT: array::random_bytes/random_string/hex_encode/hex_decode/constant_compare/uuid
-        // KALDIRILDI (docs-conformance taraması buldu) — bunlar crypto:: fonksiyonlarının
-        // array:: namespace'ine yanlış kopyasıydı; array modülünde karşılıkları YOK →
-        // çağrılınca "'array' has no function" / "Module not loaded" (fantom builtin).
-        // Kaldırma güvenli: bytecode diske serileştirilmiyor (eski .lkc cache kaldırıldı,
-        // bkz. cgi_main.cpp), index'ler process-içi geçici; VM her başlangıçta yeniden derler.
-        // bare join — global (use gerektirmez; eski yorumlayıcıda inline'dı); VM'de
-        // yoktu → route içinde CALL'a düşüp fallback ediyordu. Global builtin olarak
-        // bağlanır (string::join'e alias DEĞİL — o `use string` gerektirir → divergence).
+        // NOTE: array::random_bytes/random_string/hex_encode/hex_decode/constant_compare/uuid
+        // REMOVED (found by the docs-conformance scan) — they were wrong copies of the crypto:: functions
+        // in the array:: namespace; the array module has NO counterparts →
+        // calling them gave "'array' has no function" / "Module not loaded" (phantom builtin).
+        // Removal is safe: bytecode is not serialized to disk (the old .lkc cache was removed,
+        // see cgi_main.cpp), indexes are transient within the process; the VM recompiles on every start.
+        // bare join — global (needs no use; it was inline in the old interpreter); it was missing
+        // in the VM → inside a route it fell to CALL and used the fallback. It is bound as a global
+        // builtin (NOT an alias of string::join — that needs `use string` → divergence).
         "join",
-        // math:: tamamlama — math modülünde vardı ama builtin_names'de
-        // YOKTU → route içinde CALL'a düşüp KALICI interpreter'a iniyordu (array:: ile
-        // aynı fallback landmine; math-yoğun route sessizce yavaş yola/koda düşüyordu).
-        // Sona eklendi (mevcut indexler kaymaz); auto-wire math modülünden bağlar.
+        // math:: completion — it existed in the math module but was MISSING from builtin_names
+        // → inside a route it fell to CALL and PERMANENTLY dropped to the interpreter (same fallback
+        // landmine as array::; math-heavy routes silently ended up on the slow path).
+        // Appended at the end (existing indexes do not shift); auto-wire binds from the math module.
         "math::round", "math::pow", "math::sqrt", "math::min", "math::max",
         "math::sin", "math::cos", "math::tan", "math::log", "math::pi", "math::random",
-        // string:: tamamlama — format + regex (aynı landmine; regex/format'lı route'lar
-        // fallback ediyordu). Auto-wire string modülünden bağlar.
+        // string:: completion — format + regex (same landmine; routes using regex/format
+        // used the fallback). Auto-wire binds from the string module.
         "string::format", "string::regex_match", "string::regex_replace", "string::regex_match_all",
         "string::decode",  // charset → UTF-8 (iso-8859-9 etc.)
-        // type:: modülü — builtin_names'de HİÇ yoktu (bare is_int/is_string ayrı, index
-        // 10-15). `use type` ile type::is_int/of/to_int çağıran route fallback ediyordu.
+        // type:: module — it was ABSENT from builtin_names altogether (bare is_int/is_string are separate, index
+        // 10-15). A route calling type::is_int/of/to_int via `use type` used the fallback.
         "type::is_null", "type::is_int", "type::is_float", "type::is_string", "type::is_bool",
         "type::is_array", "type::is_function", "type::of",
         "type::to_int", "type::to_float", "type::to_string", "type::to_bool",
-        // crypto:: tamamlama — base64/hex/hmac_sha256/constant_compare/random_string/
-        // uuid/rs256 (JWT imzalama). Hepsi crypto modülünde DOĞRULANDI.
+        // crypto:: completion — base64/hex/hmac_sha256/constant_compare/random_string/
+        // uuid/rs256 (JWT signing). All VERIFIED in the crypto module.
         "crypto::base64_encode", "crypto::base64_decode",
         "crypto::base64url_encode", "crypto::base64url_decode",
         "crypto::hex_encode", "crypto::hex_decode",
         "crypto::hmac_sha256", "crypto::hmac_sha256_raw", "crypto::constant_compare",
         "crypto::random_string", "crypto::uuid",
         "crypto::rs256_sign", "crypto::rs256_sign_b64url", "crypto::rs256_verify",
-        // request:: tamamlama — is_get/is_post/... method kısayolları + file (upload).
-        // Yoktular → bunları kullanan her route KALICI interpreter'a düşüyordu.
+        // request:: completion — is_get/is_post/... method shortcuts + file (upload).
+        // They were missing → every route using them PERMANENTLY dropped to the interpreter.
         "request::is_get", "request::is_post", "request::is_put", "request::is_delete",
         "request::is_head", "request::is_options", "request::is_patch", "request::file",
-        // db:: tamamlama — transaction/begin/commit/rollback/escape. transaction()
-        // closure alır: VM'den BYTECODE_FN gelir, interp->invoke() köprüyle çalıştırır.
+        // db:: completion — transaction/begin/commit/rollback/escape. transaction()
+        // takes a closure: BYTECODE_FN arrives from the VM, interp->invoke() runs it through the bridge.
         "db::transaction", "db::begin", "db::commit", "db::rollback", "db::escape",
-        // exit()/die() — VM'de YOKTU: CLI-VM'de "Not callable" fırlatıyordu (CLI
-        // script'lerinde exit kodu yaygın), web'de route'u kalıcı interpreter'a düşürüyordu.
-        // ExitException'a bağlanır.
+        // exit()/die() — were MISSING in the VM: in CLI-VM they threw "Not callable" (exit codes
+        // are common in CLI scripts), on the web they dropped the route to the interpreter permanently.
+        // Bound to ExitException.
         "exit", "die",
-        // ── 256+ bölge: CALL_BUILTIN indeksi artık 16-bit (NOP hint'in b alanı yüksek
-        // 8 biti taşır) — 8-bit duvar kalktı. Aşağıdakiler modüllerde vardı
-        // ama builtin_names'de yoktu → kullanan route KALICI interpreter'a düşüyordu
-        // (çıktı doğru ama ~40× yavaş; CLI-VM'de execution-öncesi tree-walk'a düşüyordu).
-        // Denetlendi: callback alan yalnız http::stream (BYTECODE_FN'i zaten tanır).
+        // ── 256+ region: the CALL_BUILTIN index is now 16-bit (the b field of the NOP hint carries the high
+        // 8 bits) — the 8-bit wall is gone. The ones below existed in the modules
+        // but not in builtin_names → a route using them PERMANENTLY dropped to the interpreter
+        // (output correct but ~40× slower; in CLI-VM it fell to tree-walk before execution).
+        // Audited: the only one taking a callback is http::stream (it already recognizes BYTECODE_FN).
         "cache::keys", "cache::size",
         "queue::clear", "queue::names", "queue::peek",
         "template::escape", "template::render_string",
@@ -172,64 +172,64 @@ const std::vector<std::string>& builtin_names() {
         "route::matched", "route::param",
         "runtime::gc", "runtime::stats",
         "look::check",
-        // jobs:: — worker HARİÇ: jobs::worker($q,$fn) setup'ta handler kaydeder, job'lar
-        // istek/VM bağlamı DIŞINDA çalışır → VM closure kaydedilirse "no active VM".
+        // jobs:: — EXCEPT worker: jobs::worker($q,$fn) registers a handler at setup, jobs run
+        // OUTSIDE the request/VM context → if a VM closure were registered, "no active VM".
         "jobs::push", "jobs::next", "jobs::done", "jobs::fail", "jobs::failed",
         "jobs::list", "jobs::stats", "jobs::retry", "jobs::purge", "jobs::recover",
-        // session::has — docs'ta belgeliydi ama eksikti (dogfooding #1). Auto-wire
-        // name→index dinamik, konum önemsiz; bytecode diske yazılmadığından (bkz. yukarı)
-        // araya da eklenebilirdi — sona eklemek yalnızca diff temizliği için.
+        // session::has — it was documented in the docs but missing (dogfooding #1). Auto-wire
+        // name→index is dynamic, position does not matter; since bytecode is not written to disk (see above)
+        // it could have been inserted in the middle — appending is only for a clean diff.
         "session::has",
-        // route::group — setup-zamanı prefix+middleware kalıtımı (Go/chi tarzı). Closure alır,
-        // içindeki route() çağrıları grup prefix'ini/mw'lerini miras alır. Bkz. route_group.h.
+        // route::group — setup-time prefix+middleware inheritance (Go/chi style). Takes a closure,
+        // route() calls inside it inherit the group's prefix/middlewares. See route_group.h.
         "route::group",
-        // args — CLI argümanları (bare builtin). `lk x.lk a b` → args() == ["a","b"].
-        // Web/CGI'de boş dizi. Sona eklendi (indeks kayması yok).
+        // args — CLI arguments (bare builtin). `lk x.lk a b` → args() == ["a","b"].
+        // Empty array on Web/CGI. Appended at the end (no index shift).
         "args",
-        // db::driver — bağlı sürücü ("sqlite"/"mysql"/"postgres"); lehçe-farkında
-        // kod (migrate şema→DDL) için. mod::fn → http_main otomatik wire eder.
+        // db::driver — the connected driver ("sqlite"/"mysql"/"postgres"); for dialect-aware
+        // code (migrate schema→DDL). mod::fn → http_main wires it automatically.
         "db::driver",
         // date::mono_us — monotonic microsecond clock (benchmark timing). Appended at
         // end (no index shift). Without it the compiler treats it as an unknown module
         // function (before LOOK 2 that sent the whole script to tree-walk).
         "date::mono_us",
-        // timer:: — LOOK 2: bir rotada kurulan zamanlayıcı VM'de çalışır (geri çağırma, yeni bir
-        // istek gibi kendi VM'inde ve temiz kurulum değerleriyle koşar — http_main.cpp). Eskiden
-        // yalnız yorumlayıcının içindeydi; bunu kullanan rota yorumlayıcıya verilmek zorundaydı.
+        // timer:: — a timer set up in a route runs in the VM (the callback runs, like a new
+        // request, in its own VM and with clean setup values — http_main.cpp). It used to exist
+        // only inside the interpreter; a route using it had to be handed to the interpreter.
         "timer::after",
         "timer::every",
         "timer::cancel",
-        // jobs::worker / jobs::run — LOOK 2: kuyruk işleyicisi kaydı ve çalıştırıcı VM'de de var.
-        // (jobs::worker eskiden builtin değildi → üst düzeyde onu çağıran her web uygulaması
-        // bütünüyle yorumlayıcıya düşüyordu.)
+        // jobs::worker / jobs::run — queue handler registration and the runner exist in the VM too.
+        // (jobs::worker used not to be a builtin → every web app calling it at top level
+        // fell entirely to the interpreter.)
         "jobs::worker",
         "jobs::run",
-        // ws:: / sse:: — LOOK 2: bağlantı tutamacı üzerinde çalışan, geri çağırma almayan fonksiyonlar.
-        // Eskiden bunlar yüzünden sıradan bir rota (ör. POST /notify içinde ws::broadcast) yorumlayıcıya
-        // veriliyordu. ws::on / sse::on geri çağırma alır — aşağıda ayrı.
+        // ws:: / sse:: — functions that work on a connection handle and take no callback.
+        // Because of these an ordinary route (e.g. ws::broadcast inside POST /notify) used to be handed
+        // to the interpreter. ws::on / sse::on take a callback — separately below.
         "ws::send", "ws::close", "ws::broadcast", "ws::clients",
         "sse::send", "sse::close", "sse::clients",
-        // ws::on / sse::on — bağlantı işleyicileri de VM'de: geri çağırma yeni bir istek gibi kurulur.
+        // ws::on / sse::on — connection handlers are in the VM too: the callback is set up like a new request.
         "ws::on", "sse::on",
-        // timer::wait([ms]) — komut satırında tek seferlik zamanlayıcıları bekler (parallel::wait ile
-        // aynı biçim). Betik bitince süreç biter; beklemek açıkça yazılır.
+        // timer::wait([ms]) — waits for one-shot timers on the command line (same form as parallel::wait).
+        // The process ends when the script ends; waiting is written explicitly.
         "timer::wait",
-        // request::scheme/host — istemcinin gördüğü şema ve ana bilgisayar (güvenilen vekil kuralıyla).
+        // request::scheme/host — the scheme and host as the client saw them (with the trusted-proxy rule).
         "request::scheme", "request::host",
-        // csrf:: — sunucuda durumsuz CSRF koruması (imzalı çift-gönderim çerezi, LOOK_SECRET). Denetim
-        // varsayılan: çerez kullanan uygulamada GET/HEAD/OPTIONS dışındaki her istek (http_main kapısı); exempt muafiyet.
+        // csrf:: — stateless CSRF protection on the server (signed double-submit cookie, LOOK_SECRET). Check is
+        // default: in an app using cookies, every request other than GET/HEAD/OPTIONS (the http_main gate); exempt is an exemption.
         "csrf::token", "csrf::field", "csrf::exempt",
-        // type::is_map — liste mi sözlük mü (type::of ikisine de "array" der). Listeye özgü
-        // fonksiyonlar sözlükte hata verdiğinden gelen veri denetlenebilmeli. Sona eklendi.
+        // type::is_map — list or dictionary (type::of says "array" for both). List-specific
+        // functions error on a dictionary, so incoming data must be checkable. Appended at the end.
         "type::is_map",
-        // ws::send_binary / ws::broadcast_binary — ikili çerçeve (opcode 0x2); ws::send geçerli UTF-8 ister.
-        // Sona eklendi.
+        // ws::send_binary / ws::broadcast_binary — binary frame (opcode 0x2); ws::send requires valid UTF-8.
+        // Appended at the end.
         "ws::send_binary", "ws::broadcast_binary",
     };
     return NAMES;
 }
 
-// CLI argümanları — süreç-global, main() doldurur. Varsayılan boş (web/CGI).
+// CLI arguments — process-global, filled by main(). Empty by default (web/CGI).
 std::vector<std::string>& script_args() {
     static std::vector<std::string> ARGS;
     return ARGS;
@@ -246,10 +246,10 @@ int builtin_index(const std::string& name) {
     return it == INDEX.end() ? -1 : it->second;
 }
 
-// ── Yerleşik etkileri (builtins.h: BuiltinEffect) ─────────────────────────────────────────────
-// YENİ YERLEŞİK EKLEYİNCE buraya da ekle — sınıfsız ad CI'da kırmızı (builtin_effect_table_test).
-// Sınıf ÖLÇÜLEREK verilir: ör. global push/pop diziyi yerinde değiştirir (Effect), array::push
-// yeni dizi döndürür (Pure) — tahminle değil, denenerek.
+// ── Builtin effects (builtins.h: BuiltinEffect) ─────────────────────────────────────────────
+// WHEN ADDING A NEW BUILTIN add it here too — a name with no class turns CI red (builtin_effect_table_test).
+// The class is given by MEASUREMENT: e.g. global push/pop change the array in place (Effect), array::push
+// returns a new array (Pure) — by trying, not by guessing.
 namespace {
 struct EffectRow { BuiltinEffect e; std::vector<const char*> names; };
 const std::vector<EffectRow>& effect_rows() {
@@ -286,7 +286,7 @@ const std::vector<EffectRow>& effect_rows() {
         { BuiltinEffect::Reads, {
             "chan_size", "env", "config", "args",
             "app::get", "app::has", "app::db",
-            "auth::hash",   // rastgele tuz
+            "auth::hash",   // random salt
             "cache::get", "cache::has", "cache::keys", "cache::size",
             "cookie::get", "cookie::has",
             "crypto::random_bytes", "crypto::random_string", "crypto::uuid",
@@ -309,15 +309,15 @@ const std::vector<EffectRow>& effect_rows() {
         { BuiltinEffect::Effect, {
             "print", "write", "push", "pop", "send", "receive", "close", "route", "channel",
             "before_route", "stop", "exit", "die",
-            // error::new HER ZAMAN fırlatır (throw gerekmez — belgeli kullanım); Pure sanılıp tek
-            // başına satırda "sonucu kullanılmıyor" derleme hatası veriyordu.
+            // error::new ALWAYS throws (no throw needed — documented usage); it was taken for Pure and, alone
+            // on a line, produced a "result unused" compile error.
             "error::new",
             "app::set",
             "cache::set", "cache::delete", "cache::flush",
             "cookie::set", "cookie::delete",
-            "csrf::token", "csrf::field",   // çerezi kurar/yeniler
-            "csrf::exempt",                 // kurulumda muafiyet kaydı
-            "crypto::rs256_sign", "crypto::rs256_sign_b64url",   // anahtar yükler, hatalı anahtarda fırlatır
+            "csrf::token", "csrf::field",   // sets/renews the cookie
+            "csrf::exempt",                 // exemption registration at setup
+            "crypto::rs256_sign", "crypto::rs256_sign_b64url",   // loads a key, throws on a bad key
             "db::query", "db::exec", "db::col", "db::close", "db::connect", "db::transaction",
             "db::begin", "db::commit", "db::rollback",
             "file::put", "file::append", "file::remove", "file::store",
@@ -377,8 +377,8 @@ std::vector<std::string> builtin_effect_strays() {
 }
 
 bool is_reserved_builtin(const std::string& name) {
-    // Rezerve = builtin_names()'in bare (":: içermeyen") girdileri. Tek kaynak,
-    // el-listesi yok → yeni bare builtin eklenince otomatik dahil olur.
+    // Reserved = the bare (no "::") entries of builtin_names(). Single source,
+    // no hand list → included automatically when a new bare builtin is added.
     static const std::unordered_set<std::string> RESERVED = [] {
         std::unordered_set<std::string> s;
         for (const auto& n : builtin_names())

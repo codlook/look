@@ -9,17 +9,17 @@
 #include <unordered_map>
 #include <vector>
 
-// Forward declare — sqlite3.h'ı include etmiyoruz, header kirliliği önlemek için
+// Forward declare — we do not include sqlite3.h, to avoid header pollution
 struct sqlite3;
 struct sqlite3_stmt;
 
 namespace look {
 
-// SQLite'in bir-kez global init'ini (sqlite3_initialize) SÜREÇ BAŞINDA, thread'lerden
-// ÖNCE serialize et. Aksi halde iki worker aynı anda ilk sqlite3_open'ı çağırınca
-// sqlite3_initialize içindeki isInit bayrağı üzerinde TSan DATA RACE oluşur (t4 enforced
-// guard'ı CI'da bunu yakaladı). Startup'ta bir kez çağrılırsa, isInit yazımı tüm worker
-// okumalarından happens-before olur → yarış yok. Idempotent (tekrar çağrı zararsız).
+// Serialize SQLite's once-only global init (sqlite3_initialize) AT PROCESS START, BEFORE
+// threads. Otherwise when two workers call the first sqlite3_open at the same time there is a TSan DATA RACE
+// on the isInit flag inside sqlite3_initialize (the t4 enforced
+// guard caught this in CI). If called once at startup, the isInit write happens-before all worker
+// reads → no race. Idempotent (a repeated call is harmless).
 void sqlite_global_init();
 
 class SqliteClient : public DbConnection {
@@ -27,10 +27,10 @@ public:
     SqliteClient();
     ~SqliteClient() override;
 
-    // path: dosya yolu veya ":memory:"
+    // path: file path or ":memory:"
     void open(const std::string& path);
 
-    // DbConnection arayüzü
+    // DbConnection interface
     std::vector<DbRow> query(const std::string& sql) override;
     std::vector<DbRow> execute(const std::string& sql, const std::vector<DbParam>& params) override;
     int64_t last_insert_id() const override { return last_insert_id_; }
@@ -46,28 +46,28 @@ private:
     int64_t  last_insert_id_ = 0;
     int64_t  affected_rows_  = 0;
 
-    // Aynı dosyaya yazan bağlantılar bu süreçte SIRAYLA (ilk gelen ilk) yazar; bkz. .cpp.
+    // Connections writing to the same file in this process write IN TURN (first come, first served); see .cpp.
     std::shared_ptr<struct SqliteWriteGate> gate_;
     bool gate_held_ = false;
     void gate_before(::sqlite3_stmt* stmt, const std::string& sql);
     void gate_after();
 
-    // Fiber içinde bekleyen sorgu iş parçacığını değil fiber'ı bekletir (bkz. .cpp).
-    bool in_fiber_ = false;                               // sorgu şu an fiber içinde, bu iş parçacığında
-    std::chrono::steady_clock::time_point slice_start_;   // son sıra bırakma anı
+    // A query waiting inside a fiber makes the fiber wait, not the thread (see .cpp).
+    bool in_fiber_ = false;                               // the query is currently inside a fiber, on this thread
+    std::chrono::steady_clock::time_point slice_start_;   // moment of the last give-up of the turn
     int  busy_waited_ms_ = 0;
     static int on_progress(void* self);
     static int on_busy(void* self, int count);
-    std::unique_ptr<struct SqliteRunner> runner_;         // yazma kapısı doluyken: bağlantının iş parçacığı
+    std::unique_ptr<struct SqliteRunner> runner_;         // while the write gate is full: the connection's thread
     template <class Fn> std::vector<DbRow> run(Fn&& fn);
     template <class Fn> std::vector<DbRow> on_own_thread(Fn&& fn);
     std::vector<DbRow> query_here(const std::string& sql);
     std::vector<DbRow> execute_here(const std::string& sql, const std::vector<DbParam>& params);
 
-    // Hazırlanmış-ifade önbelleği (bağlantı başına): aynı SQL her sorguda yeniden ayrıştırılmaz.
-    // Kullanılan ifade önbellekten ÇIKARILIR, bitince sıfırlanıp geri konur — iki kullanım aynı
-    // ifadeyi paylaşmaz ve sıfırlanmamış ifade okuma işlemini açık tutmaz. Şema değişince SQLite
-    // ifadeyi kendisi yeniden hazırlar (prepare_v2).
+    // Prepared-statement cache (per connection): the same SQL is not re-parsed on every query.
+    // The statement in use is TAKEN OUT of the cache, and when finished it is reset and put back — two uses do not share the same
+    // statement, and an unreset statement does not keep a read open. When the schema changes SQLite
+    // re-prepares the statement itself (prepare_v2).
     struct CachedStmt { ::sqlite3_stmt* stmt; uint64_t used; };
     std::unordered_map<std::string, CachedStmt> stmt_cache_;
     uint64_t stmt_tick_ = 0;

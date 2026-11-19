@@ -1,6 +1,6 @@
 // repl.cpp — `look repl` interactive session
 #ifndef LOOK_VERSION
-#define LOOK_VERSION "1.0.0"   // fallback; normalde CMake compile-def sağlar (tek kaynak)
+#define LOOK_VERSION "1.0.0"   // fallback; normally CMake provides it as a compile-def (single source)
 #endif
 #include "look/repl.h"
 #include "look/runtime_host.h"
@@ -8,7 +8,7 @@
 #include "look/parser.h"
 #include "look/web.h"
 #include "look/ast.h"
-#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ile aynı VM ortamı
+#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — same VM environment as lk
 #include "look/compiler.h"
 #include "look/vm.h"
 #include <filesystem>
@@ -56,9 +56,9 @@ static std::string gray(const std::string& s)   { return colored("90", s); }
 
 // ── Open-delimiter counter — determines if input is complete ─────────────
 // Returns > 0 if there are unclosed {} [] () — the REPL keeps collecting
-// lines until all are balanced. Eskiden yalnız {} sayılırdı; çok satırlı
-// paren/bracket ifadeleri (foo(\n...\n) veya dizi literali) ilk satırda erken
-// çalıştırılıp parse hatası veriyordu. Parantez/köşeli de aynı mantıkla sayılır.
+// lines until all are balanced. Previously only {} were counted; multi-line
+// paren/bracket expressions (foo(\n...\n) or an array literal) were run
+// early on the first line and gave a parse error. Parens/brackets are now counted with the same logic.
 static int open_braces(const std::string& src) {
     int depth = 0;
     bool in_str = false;
@@ -139,8 +139,8 @@ static std::string repl_display(const Value& v) {
 static void print_vars(const std::unordered_map<std::string, Value>& globals) {
     std::vector<std::string> vars;
     for (const auto& [name, v] : globals) {
-        if (name.empty() || name.rfind("__", 0) == 0) continue;   // derleyicinin iç adları (__sdef: …)
-        // Değişkenler "$ad", adlı fonksiyonlar "ad" olarak tutulur → fonksiyon "ad()" gösterilir.
+        if (name.empty() || name.rfind("__", 0) == 0) continue;   // the compiler's internal names (__sdef: …)
+        // Variables are stored as "$name", named functions as "name" → a function is shown as "name()".
         vars.push_back(name[0] == '$' ? name : name + "()");
     }
     if (vars.empty()) { std::cout << gray("  (no variables yet)") << "\n"; return; }
@@ -199,29 +199,29 @@ int run_repl() {
     std::cout << cyan("LOOK v" LOOK_VERSION " REPL") << "\n";
     std::cout << gray("Type :exit or Ctrl+C to quit") << "\n\n";
 
-    // LOOK 2 (tek motor, adım 6): REPL VM'de koşar. Her satır ayrı derlenir ve YENİ bir VM'de
-    // çalışır; önceki satırların global'leri (değişkenler, fonksiyonlar) aktarılır — bir satır
-    // hatayla bitse de o ana kadar atananlar kalır. Yerleşik tablo komut satırıyla aynı (cli_runtime).
-    RuntimeHost interp;   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
+    // LOOK (single engine, step 6): the REPL runs on the VM. Each line is compiled separately and runs in a NEW VM;
+    // the globals of earlier lines (variables, functions) are carried over — even if a line
+    // ends in an error, what was assigned up to that point stays. The builtin table is the same as the command line (cli_runtime).
+    RuntimeHost interp;   // module store (ModuleHost) — does not run LOOK code
     WebContext  web_ctx;
     web_ctx.method = "GET";
     web_ctx.path   = "/";
     interp.set_web_context(&web_ctx);
     interp.set_file("<repl>");
-    // Standart modüller baştan açık — REPL'de `use X` yazmak gerekmez (eskisi gibi).
+    // Standard modules are open from the start — no need to write `use X` in the REPL (as before).
     for (const char* m : {"math", "string", "array", "type", "date", "file", "auth", "validator",
                           "html", "http", "template"})
         interp.load_stdlib_module(m);
 
-    static std::vector<BuiltinFn> builtins;   // zamanlayıcı geri çağırmaları satırdan uzun yaşayabilir
+    static std::vector<BuiltinFn> builtins;   // timer callbacks may outlive the line
     static VM::SharedState sh;
     sh.builtins = &builtins;
     auto callbacks = std::make_shared<CliCallbacks>();
     callbacks->shared = &sh;
-    std::unordered_map<std::string, Value> globals;   // satırlar arası durum
+    std::unordered_map<std::string, Value> globals;   // state across lines
 
     std::string pending;  // accumulated multi-line buffer
-    // Programlar yaşar: dahil edilen dosyaların AST'si derlenmiş koda bağlı kalabilir.
+    // Programs live on: the AST of included files may stay bound to compiled code.
     std::vector<std::unique_ptr<Program>> owned_programs;
 
     while (true) {
@@ -295,9 +295,9 @@ int run_repl() {
             continue;
         }
 
-        // Son cümle bir ifadeyse (atama değil) değeri gösterilir: `return <ifade>` olarak derlenir.
-        // (Böylece REPL'de `strtoupper("a")` "sonuç kullanılmıyor" hatası vermez — sonuç gösteriliyor.)
-        // Son cümle düz bir değişkene atamaysa (`$x = 5`) çalıştıktan sonra o değişken gösterilir.
+        // If the last statement is an expression (not an assignment) its value is shown: it is compiled as `return <expr>`.
+        // (So in the REPL `strtoupper("a")` does not give a "result unused" error — the result is shown.)
+        // If the last statement is an assignment to a plain variable (`$x = 5`) that variable is shown after it runs.
         std::string shown_var;
         if (!program->statements.empty()) {
             if (auto* es = node_as<ExpressionStatement>(program->statements.back().get())) {
@@ -321,8 +321,8 @@ int run_repl() {
             std::cout << red("Error: ") << e.what() << "\n";
             continue;
         }
-        // Satırın `use` ettiği modüller açılır (derleyicinin listesi); yerleşik tablo bu satırın
-        // çıktısına bağlanır.
+        // The modules the line `use`s are opened (the compiler's list); the builtin table is bound to the output
+        // of this line.
         for (const auto& m : compiled.use_modules) interp.load_stdlib_module(m);
         std::ostringstream captured;
         builtins = build_cli_builtins(interp, captured);
@@ -352,7 +352,7 @@ int run_repl() {
                 std::cout << captured.str() << red("Error: ") << e.what() << "\n";
                 failed = true;
             }
-            globals = vm.get_globals();   // hata olsa da o ana kadar atananlar kalır
+            globals = vm.get_globals();   // even on error, what was assigned up to that point stays
             callbacks->main_vm = nullptr;
         }
         if (failed) continue;

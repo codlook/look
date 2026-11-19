@@ -1,12 +1,12 @@
 // test_runner.cpp — `look test` subcommand implementation
-#include "look/read_stream.h"   // read_stream — dosyayı tek seferde oku
+#include "look/read_stream.h"   // read_stream — read the file in one go
 #include "look/test_runner.h"
 #include "look/runtime_host.h"
 #include "look/lexer.h"
 #include "look/parser.h"
 #include "look/web.h"
 #include "look/websocket.h"
-#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — lk ile aynı VM ortamı
+#include "look/cli_runtime.h"   // build_cli_builtins / wire_cli_callbacks — same VM environment as lk
 #include "look/compiler.h"
 #include "look/vm.h"
 #include <unordered_map>
@@ -157,10 +157,10 @@ static Module make_assert_module(CallFn call) {
     m.functions["throws"] = [fail, call](auto args) -> Value {
         if (args.empty() || args[0].type() != Value::BYTECODE_FN)
             fail("assert::throws() expects a function");
-        // Fonksiyonu HEMEN çağır ve hata fırlatmasını bekle. (Eskiden bir marker
-        // array döndürüp runner'ın kontrol etmesini beklerdi — ama LOOK son ifadeyi
-        // örtük DÖNDÜRMEDIĞI için marker atılıyordu; assert::throws() son ifade
-        // olsa bile hiçbir zaman assert etmiyordu → sessiz yalancı geçiş.)
+        // Call the function IMMEDIATELY and expect it to throw. (It used to return a marker
+        // array for the runner to check — but since LOOK does not implicitly RETURN the last expression
+        // the marker was discarded; assert::throws() never asserted even when it was the last
+        // expression → a silent false pass.)
         bool threw = false;
         try { call(args[0]); } catch (...) { threw = true; }
         if (!threw)
@@ -289,28 +289,28 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     try { program = parser.parse(); }
     catch (std::exception& e) { return one("(parse error)", e.what()); }
 
-    // LOOK 2 (tek motor, adım 6): test dosyası VM'de koşar — komut satırıyla AYNI yerleşik tablo
-    // (cli_runtime). Eskiden yorumlayıcıda koşuyordu; testler programın gerçekte koştuğu motoru
-    // sınamıyordu. Test yardımcıları (test, assert_*, assert::*) yerleşik tabloda DEĞİL — `test`
-    // adını bütün programlar için ayırırdı — global'e konan ev sahibi fonksiyonlarıdır.
-    std::ostringstream out;   // test dosyasının çıktısı (eskisi gibi gösterilmez)
+    // LOOK (single engine, step 6): the test file runs on the VM — the SAME builtin table as the command line
+    // (cli_runtime). It used to run in the interpreter; tests did not
+    // exercise the engine the program actually runs on. The test helpers (test, assert_*, assert::*) are NOT in the builtin table — it would
+    // reserve the name `test` for all programs — they are host functions placed in the globals.
+    std::ostringstream out;   // output of the test file (not shown, as before)
     look::WebContext web_ctx;
     web_ctx.method = "GET";
     web_ctx.path   = "/";
 
-    look::RuntimeHost interp(out);   // modül deposu (ModuleHost) — LOOK kodu çalıştırmaz
+    look::RuntimeHost interp(out);   // module store (ModuleHost) — does not run LOOK code
     interp.set_web_context(&web_ctx);
     interp.set_file(file_path.string());
     const fs::path dir = fs::absolute(file_path).parent_path();
-    // Modüller derlemeden sonra açılır (CompiledProgram::use_modules — aşağıda).
+    // Modules are opened after compilation (CompiledProgram::use_modules — below).
 
-    // ── Ev sahibi fonksiyonları ─────────────────────────────────────────────
+    // ── Host functions ──────────────────────────────────────────────────────
     struct Case { std::string name; Value fn; };
     std::vector<Case> cases;
     Value before_each_fn, after_each_fn;
     std::unordered_map<std::string, Value> host;
     auto host_fn = [&](const std::string& name, look::BuiltinFn fn) { host[name] = look::make_native_fn(name, std::move(fn)); };
-    // Verilen LOOK fonksiyonunu o an testi koşturan VM'de çağırır.
+    // Calls the given LOOK function on the VM that is running the test right now.
     CallFn call = [](const Value& fn) { std::vector<Value> none; look::vm_bridge_invoke(fn, none); };
 
     host_fn("test", [&](std::vector<Value>& args) -> Value {
@@ -334,10 +334,10 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         return Value();
     });
 
-    // `use assert` + assert::eq(...) — modül biçimi
+    // `use assert` + assert::eq(...) — module form
     for (auto& [fname, fn] : make_assert_module(call).functions)
         host_fn("assert::" + fname, [fn = fn](std::vector<Value>& a) -> Value { return fn(a); });
-    // Test kancaları: ws::decode_frame (WS çerçeve DoS testleri), html::sanitize_svg (SVG XSS testleri)
+    // Test hooks: ws::decode_frame (WS frame DoS tests), html::sanitize_svg (SVG XSS tests)
     for (auto& [fname, fn] : make_ws_test_module().functions)
         host_fn("ws::" + fname, [fn = fn](std::vector<Value>& a) -> Value { return fn(a); });
     for (auto& [fname, fn] : make_html_test_module().functions)
@@ -415,9 +415,9 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
     host_fn("assert_throws", [fail, call](std::vector<Value>& args) -> Value {
         if (args.empty() || args[0].type() != Value::BYTECODE_FN)
             fail("assert_throws() expects a function");
-        // Fonksiyonu HEMEN çağır ve hata fırlatmasını bekle. Eski marker mekanizması yalnız testin
-        // DÖNÜŞ değeriyken çalışıyordu; LOOK son ifadeyi örtük döndürmediği için belgelenen kullanım
-        // dahil hiçbir zaman assert etmiyordu (sessiz yalancı geçiş).
+        // Call the function IMMEDIATELY and expect it to throw. The old marker mechanism only worked when it was the test's
+        // RETURN value; since LOOK does not implicitly return the last expression it never
+        // asserted, including the documented usage (a silent false pass).
         bool threw = false;
         try { call(args[0]); } catch (...) { threw = true; }
         if (!threw)
@@ -435,18 +435,18 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         return Value();
     });
 
-    // ── Derle ───────────────────────────────────────────────────────────────
+    // ── Compile ─────────────────────────────────────────────────────────────
     look::CompiledProgram compiled;
     try { compiled = look::Compiler::compile(*program, dir.string(), std::set<std::string>{"assert", "ws"}); }
     catch (std::exception& e) { return one("(load error)", e.what()); }
-    for (const auto& m : compiled.use_modules) interp.load_stdlib_module(m);   // derleyicinin listesi
-    // Yerleşik de ev sahibi fonksiyonu da olmayan mod::fn → yazım hatası (komut satırındaki kural).
+    for (const auto& m : compiled.use_modules) interp.load_stdlib_module(m);   // the compiler's list
+    // mod::fn that is neither a builtin nor a host function → a typo (the rule on the command line).
     for (const auto& n : compiled.non_builtin_module_fns)
         if (!host.count(n))
             return one("(load error)", n + "() does not exist — check the spelling of the module and the function");
 
-    // ── Üst düzeyi bir kez çalıştır: test()'ler kaydolur ────────────────────
-    static std::vector<look::BuiltinFn> builtins;   // geri çağırmalar dosyadan uzun yaşayabilir
+    // ── Run the top level once: test()s register ────────────────────────────
+    static std::vector<look::BuiltinFn> builtins;   // callbacks may outlive the file
     static look::VM::SharedState sh;
     builtins = look::build_cli_builtins(interp, out);
     sh.builtins = &builtins;
@@ -471,7 +471,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
         callbacks->main_vm = nullptr;
     }
 
-    // ── Her test: üst düzeyin durumundan başlayan kendi VM'i ────────────────
+    // ── Each test: its own VM starting from the state of the top level ──────
     auto run_in_fresh_vm = [&](const Value& fn, std::ostream& sink) {
         look::VM sub(sh, sink);
         sub.set_web_context(&web_ctx);
@@ -485,8 +485,8 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
 
         auto t0 = std::chrono::steady_clock::now();
         try {
-            // Her test yalıtılmış: kendi VM'i, üst düzeyin bıraktığı global'ler (değer semantiği:
-            // bir testin değiştirdiği dizi sonrakine geçmez).
+            // Each test is isolated: its own VM, the globals left by the top level (value semantics:
+            // an array a test modifies does not pass to the next).
             look::VM sub(sh, out);
             sub.set_web_context(&web_ctx);
             sub.set_globals(snapshot);
@@ -509,7 +509,7 @@ static std::vector<TestResult> run_file(const fs::path& file_path, bool verbose)
                 std::ostringstream dummy;
                 run_in_fresh_vm(after_each_fn, dummy);
             }
-        } catch (...) { /* after_each hataları sessizce yutulur */ }
+        } catch (...) { /* after_each errors are silently swallowed */ }
 
         auto t1 = std::chrono::steady_clock::now();
         res.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();

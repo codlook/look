@@ -1,15 +1,15 @@
 #pragma once
-// İkili operatör zincirinin sol omurgası. `a + b + c + …` ((a+b)+c)+… diye sola doğru iç içedir;
-// ayrıştırıcı 1.000 operatöre kadar izin verir. Ağacı gezen kod sol dala özyinelemeyle inerse zincir
-// uzunluğu kadar C++ çerçevesi harcar (ölçüldü: 512 KB yığında 1.000 terim ayrıştırma sonrası
-// denetimde durdu, derleyicide çöktü). Gezen kod omurgayı bununla DÖNGÜYLE dolaşır; sıra özyinelemeli
-// gezintiyle aynıdır: en soldaki terim, sonra içten dışa her düğümün sağı.
+// Left spine of a binary operator chain. `a + b + c + …` nests to the left as ((a+b)+c)+…;
+// the parser allows up to 1,000 operators. If code that walks the tree descends the left branch recursively it uses
+// as many C++ frames as the chain length (measured: on a 512 KB stack a 1,000-term chain passed parsing, stopped
+// in the check and crashed in the compiler). Walking code goes around the spine with a LOOP; the order is the same as a recursive
+// walk: the leftmost term, then from inside out the right side of each node.
 #include "look/ast.h"
 #include <vector>
 
 namespace look {
 
-// spine: dıştan içe ikili düğümler (spine[0] == b). Dönüş: en soldaki (ikili olmayan) terim.
+// spine: binary nodes from outside in (spine[0] == b). Returns: the leftmost (non-binary) term.
 inline const Expression* binary_left_spine(const BinaryExpression* b, std::vector<const BinaryExpression*>& spine) {
     const Expression* cur = b;
     while (auto* x = node_as<BinaryExpression>(cur)) { spine.push_back(x); cur = x->left.get(); }

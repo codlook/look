@@ -8,7 +8,7 @@
 // The thread must be converted to a fiber before switching to any fiber.
 
 #include "look/fiber.h"
-#include "look/mem_budget.h"   // fiber geçişinde istek bellek hesabı
+#include "look/mem_budget.h"   // request memory accounting at fiber switch
 #include "look/logger.h"
 #include "look/stack_guard.h"
 
@@ -35,7 +35,7 @@ struct Fiber::Impl {
 
 // ── Thread-local state ────────────────────────────────────────────────────────
 
-// fiber-ok: zamanlayıcının kendisi (Windows'ta istek fiber'ı yok)
+// fiber-ok: the scheduler itself (there is no request fiber on Windows)
 static thread_local Fiber*          tl_current_fiber = nullptr;
 static thread_local FiberScheduler* tl_scheduler     = nullptr;
 
@@ -55,13 +55,13 @@ static LPVOID ensure_thread_fiber() {
 
 Fiber* Fiber::current() noexcept { return tl_current_fiber; }
 
-// Windows fiber'ı değiştiğinde işletim sistemi TIB'deki yığın sınırlarını da değiştirir;
-// look/stack_guard.h o anki (fiber) yığını TIB + VirtualQuery ile okur.
+// When a Windows fiber changes, the operating system also changes the stack bounds in the TIB;
+// look/stack_guard.h reads the current (fiber) stack with TIB + VirtualQuery.
 bool Fiber::stack_range(const char*&, const char*&) const noexcept { return false; }
 
-// look/stack_guard.h: o anki yığın. Üst sınır TIB'deki StackBase (fiber değişince işletim sistemi
-// günceller), alt sınır yığın rezervasyonunun başı (VirtualQuery). GetCurrentThreadStackLimits
-// Windows 8 API'si ve _WIN32_WINNT'ye bağlı — bu yol her sürümde var.
+// look/stack_guard.h: the current stack. The upper bound is StackBase in the TIB (the operating system updates it
+// when the fiber changes), the lower bound is the start of the stack reservation (VirtualQuery). GetCurrentThreadStackLimits
+// is a Windows 8 API and depends on _WIN32_WINNT — this path exists in every version.
 bool look_read_stack_range(const char*& lo, const char*& hi) noexcept {
     MEMORY_BASIC_INFORMATION mbi{};
     const char* sp = look_stack_pointer();
@@ -73,8 +73,8 @@ bool look_read_stack_range(const char*& lo, const char*& hi) noexcept {
 
 FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
 
-// Sıra bırakma (fiber.h preempt_point): Windows'ta fiber dağıtımı yok — yalnız sayaç tazelenir.
-// fiber-ok: iş parçacığının preempt sayacı
+// Yielding the turn (fiber.h preempt_point): there is no fiber dispatch on Windows — only the counter is refreshed.
+// fiber-ok: the thread's preempt counter
 thread_local int t_preempt_budget = 1024;
 PreemptHook g_preempt_hook = nullptr;
 void preempt_slow() noexcept { if (PreemptHook h = g_preempt_hook) h(); t_preempt_budget = 1024; }
@@ -153,7 +153,7 @@ void Fiber::resume() {
 
     Fiber* prev      = tl_current_fiber;
     tl_current_fiber = this;
-    // Bellek hesabı fiber'la birlikte geçer (look/mem_budget.h)
+    // Memory accounting passes along with the fiber (look/mem_budget.h)
     MemAccount* prev_acct = mem_current_account();
     mem_set_current_account(static_cast<MemAccount*>(local.mem_acct));
 
@@ -197,7 +197,7 @@ bool FiberScheduler::run_one() {
     f->sched_state_.store(Fiber::SchedState::RUNNING, std::memory_order_release);
     f->resume();
 
-    // Yield dönüşü — fiber'ın akıbetine tek yetkili burası (posix ile aynı protokol)
+    // Yield return — ONLY this place decides the fiber's fate (same protocol as posix)
     std::lock_guard<std::mutex> lk(mtx_);
     if (f->done()) {
         f->sched_state_.store(Fiber::SchedState::DONE, std::memory_order_release);
@@ -240,7 +240,7 @@ bool FiberScheduler::wait_readable(std::shared_ptr<Fiber> f, int fd) {
 }
 
 int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
-    // Windows: epoll yok — desteklenmiyor (çağıran blocking yola düşer).
+    // Windows: no epoll — unsupported (the caller falls back to the blocking path).
     (void)f; (void)fd; (void)timeout_ms;
     return -1;
 }
@@ -278,7 +278,7 @@ void FiberScheduler::suspend_current() {
         sched->waiting_.push_back(sp);
         cur->sched_state_.store(Fiber::SchedState::SUSPENDING, std::memory_order_release);
     }
-    // Erken resume'u run_one() pending_resume_ ile işler — ön-kontrol yok
+    // An early resume is handled by run_one() via pending_resume_ — no pre-check
     Fiber::yield();
 }
 
@@ -326,14 +326,14 @@ void FiberScheduler::resume_fiber(std::shared_ptr<Fiber> f) {
         return;
     }
 
-    // SUSPENDING/RUNNING: ready_'ye dokunma — run_one() yield dönüşünde işler
+    // SUSPENDING/RUNNING: do not touch ready_ — run_one() handles it at the yield return
     f->pending_resume_.store(true, std::memory_order_release);
     cv_.notify_one();
 }
 
 void FiberScheduler::wake() {
-    // Windows backend'de run_until_complete cv_ üzerinde bekler —
-    // resume_fiber zaten notify ediyor, ek uyandırma gerekmez.
+    // In the Windows backend run_until_complete waits on cv_ —
+    // resume_fiber already notifies, no extra wake-up is needed.
     cv_.notify_one();
 }
 

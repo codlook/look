@@ -1,24 +1,24 @@
 #pragma once
-// LOOK 2 — parametreye yazma denetimi.
+// Parameter write check.
 //
-// Diziler ve struct'lar DEĞERDİR: fonksiyona verilen dizi çağıranınkinin kopyası gibi davranır,
-// fonksiyonun içine yazdığı şey çağırana ULAŞMAZ. LOOK 1'de ulaşıyordu. Bu fark hata vermez,
-// kod çalışır ve çağıran değişikliği görmez — sessiz davranış değişikliği. Bu denetim onu
-// yüksek sesle söyler:
+// Arrays and structs are VALUES: an array given to a function behaves like a copy of the caller's,
+// what the function writes into it does NOT REACH the caller. In 1.x it did. This difference raises no error,
+// the code runs and the caller does not see the change — a silent behaviour change. This check
+// says it out loud:
 //
-//   param-write   fonksiyon bir parametresinin İÇİNE yazıyor ($p[i] = …, $p.f = …, $p[i]++,
-//                 push($p, …), pop($p)) ve o parametreyi sonra ne döndürüyor ne de bir yere
-//                 veriyor → yazılan şey kayboluyor.
+//   param-write   the function writes INTO one of its parameters ($p[i] = …, $p.f = …, $p[i]++,
+//                 push($p, …), pop($p)) and afterwards neither returns that parameter nor hands it
+//                 anywhere → what was written is lost.
 //
-// "Döndürüyor / bir yere veriyor" = parametre BÜTÜN olarak (bir elemanı değil) ilk yazmadan
-// sonra şu yerlerden birinde geçiyor: return ifadesi, bir atamanın sağ tarafı, bir çağrının
-// argümanı (yalnız okuyan count/len/empty/… hariç), dizi/map/struct literali, print/write/throw,
-// ya da bir iç closure onu yakalıyor. Yazma bir döngüdeyse aynı döngüdeki kullanım da sayılır
-// (sonraki turda yazmadan sonra çalışır).
+// "Returns / hands it somewhere" = the parameter as a WHOLE (not one element), after the first write,
+// appears in one of these places: a return expression, the right side of an assignment, an
+// argument of a call (except read-only count/len/empty/…), an array/map/struct literal, print/write/throw,
+// or an inner closure captures it. If the write is in a loop a use in the same loop also counts
+// (it runs after the write on the next round).
 //
-// Bilinçli olarak dar: parametre fonksiyonda düz atanıyorsa (`$p = …`) artık çağıranın değeri
-// değildir — LOOK 1'de de öyleydi — denetlenmez. Değişken sayıda argüman parametresi (`...$a`)
-// her zaman yeni bir dizidir, denetlenmez. Yanlış alarm vermektense kaçırmayı seçer.
+// Deliberately narrow: if the parameter is plainly assigned in the function (`$p = …`) it is no longer the caller's value
+// — it was so in 1.x too — and it is not checked. A variadic parameter (`...$a`)
+// is always a new array and is not checked. It chooses to miss rather than give a false alarm.
 #include "look/ast.h"
 #include "look/stack_guard.h"
 #include "look/ast_spine.h"
@@ -38,12 +38,12 @@ using capture_check_detail::bare;
 struct Event { int seq; int line; int column; std::string how; std::vector<int> loops; };
 
 struct Walk {
-    std::set<std::string> params;                       // çıplak adlar
-    std::map<std::string, std::vector<Event>> writes;   // parametrenin İÇİNE yazmalar
-    std::map<std::string, std::vector<Event>> uses;     // bütün olarak döndürme / verme
-    std::set<std::string> rebound;                      // düz atanan parametreler
-    std::vector<const FunctionExpression*> closures;    // iç closure'lar (ayrıca denetlenir)
-    std::vector<const FunctionDeclaration*> inner_fns;  // iç adlı fonksiyonlar
+    std::set<std::string> params;                       // bare names
+    std::map<std::string, std::vector<Event>> writes;   // writes INTO the parameter
+    std::map<std::string, std::vector<Event>> uses;     // returning / handing over as a whole
+    std::set<std::string> rebound;                      // parameters that are plainly assigned
+    std::vector<const FunctionExpression*> closures;    // inner closures (checked separately)
+    std::vector<const FunctionDeclaration*> inner_fns;  // inner named functions
     std::vector<int> loop_stack;
     int seq = 0, next_loop = 0, cur_line = 0;
 
@@ -66,15 +66,15 @@ struct Walk {
         return false;
     }
 
-    // `value` = bu ifadenin DEĞERİ bir yere akıyor mu (döndürülüyor, atanıyor, veriliyor).
+    // `value` = does the VALUE of this expression flow somewhere (returned, assigned, handed over).
     void expr(const Expression* e, bool value) {
-        if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+        if (e) look_ast_guard(e->loc.line, e->loc.column);   // deep tree: error instead of a crash (stack_guard.h)
         if (!e) return;
         if (auto* v = node_as<Variable>(e)) { if (value) use(v->name); return; }
         if (auto* f = node_as<FunctionExpression>(e)) {
             closures.push_back(f);
             for (auto& d : f->defaults) expr(d.get(), false);
-            // Closure parametreyi yakalıyorsa değeri onunla birlikte gider.
+            // If a closure captures the parameter its value goes along with it.
             for (auto& n : f->free_names) use(n);
             for (auto& n : f->captures)   use(n);
             return;
@@ -94,7 +94,7 @@ struct Walk {
         if (auto* u = node_as<UnaryExpression>(e)) {
             if (u->op == "++" || u->op == "--") {
                 if (auto* v = node_as<Variable>(u->right.get())) {
-                    if (is_param(v->name)) rebound.insert(bare(v->name));   // sayı: değer zaten kopya
+                    if (is_param(v->name)) rebound.insert(bare(v->name));   // number: the value is already a copy
                 } else if (auto* r = root_of(u->right.get())) {
                     write(r->name, e, "an element or field of it is changed with " + u->op);
                 }
@@ -122,7 +122,7 @@ struct Walk {
         }
         if (auto* x = node_as<IndexExpression>(e)) { expr(x->object.get(), false); expr(x->index.get(), false); return; }
         if (auto* x = node_as<MemberAccessExpression>(e)) { expr(x->object.get(), false); return; }
-        if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+        if (auto* x = node_as<BinaryExpression>(e)) {   // left spine as a loop (look/ast_spine.h)
             std::vector<const BinaryExpression*> sp; expr(binary_left_spine(x, sp), false);
             for (size_t k = sp.size(); k-- > 0;) expr(sp[k]->right.get(), false);
             return;
@@ -142,7 +142,7 @@ struct Walk {
     }
 
     void stmt(const Statement* s) {
-        if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+        if (s) look_ast_guard(s->loc.line, s->loc.column);   // deep tree: error instead of a crash (stack_guard.h)
         if (!s) return;
         if (s->loc.line > 0) cur_line = s->loc.line;
         if (auto* x = node_as<ExpressionStatement>(s)) { expr(x->expression.get(), false); return; }
@@ -181,7 +181,7 @@ struct Walk {
         }
         if (auto* x = node_as<FunctionDeclaration>(s)) {
             inner_fns.push_back(x);
-            for (auto& n : x->free_names) use(n);   // iç fonksiyon parametreyi yakalıyorsa
+            for (auto& n : x->free_names) use(n);   // if an inner function captures the parameter
             return;
         }
     }
@@ -201,7 +201,7 @@ inline void check_fn(const std::string& label, const std::vector<std::string>& p
         if (it != w.uses.end()) {
             for (const Event& u : it->second) {
                 if (u.seq > first.seq) { kept = true; break; }
-                // aynı döngüde bir yazma varsa, döngünün başındaki kullanım sonraki turda yazmayı görür
+                // if there is a write in the same loop, a use at the start of the loop sees the write on the next round
                 for (const Event& wr : ws)
                     for (int l : wr.loops)
                         for (int ul : u.loops) if (l == ul) kept = true;
@@ -221,11 +221,11 @@ inline void check_fn(const std::string& label, const std::vector<std::string>& p
 
 } // namespace param_write_detail
 
-// Programdaki her fonksiyon ve closure için parametreye-yazma bulguları (satır sırasıyla).
+// Parameter-write findings for every function and closure in the program (in line order).
 inline std::vector<CaptureWarning> check_param_writes(const Program& program) {
     std::vector<CaptureWarning> out;
-    // Üst düzey: parametresi olmayan bir "fonksiyon" gibi gezilir — içindeki fonksiyonlar ve
-    // closure'lar check_fn'in özyinelemesiyle denetlenir.
+    // Top level: walked like a "function" with no parameters — the functions and
+    // closures inside it are checked by check_fn's recursion.
     param_write_detail::Walk top;
     for (auto& s : program.statements) top.stmt(s.get());
     for (auto* f : top.closures)
@@ -237,8 +237,8 @@ inline std::vector<CaptureWarning> check_param_writes(const Program& program) {
     return out;
 }
 
-// Yüklemede göster: her bulgu için bir WARN satırı (dosya:satır). CLI, web başlangıcı ve `use`
-// ile yüklenen dosyalar aynı yoldan geçer.
+// Show at load: one WARN line per finding (file:line). The CLI, web startup and files loaded with `use`
+// all go through the same path.
 inline void log_param_writes(const std::vector<CaptureWarning>& ws, const std::string& file) {
     for (const auto& w : ws)
         if (w.kind == "param-write" || w.kind == "push-deprecated" || w.kind == "pop-deprecated" ||

@@ -1,13 +1,13 @@
 #pragma once
-// LOOK 2 — argüman sayısı denetimi (şimdilik yalnız UYARI; `lk --check` basar).
+// Argument count check (for now only a WARNING; `lk --check` prints it).
 //
-// 1.0.x'te iki motor ayrışıyordu: adlı bir fonksiyon fazla ya da eksik argümanla çağrılınca
-// yorumlayıcı hata veriyordu, VM sessizce kabul ediyordu (eksik parametre null olur).
-// Kural kesinleşmeden önce, kaç yerin etkileneceği ayrıştırıcının ağacından sayılır.
+// In 1.0.x the two engines diverged: when a named function was called with too many or too few arguments
+// the interpreter raised an error, the VM silently accepted it (a missing parameter becomes null).
+// Before the rule is finalized, how many places it would affect is counted from the parser's tree.
 //
-// Kapsam: aynı dosyada bildirilen ADLI fonksiyona, adıyla yapılan çağrılar. Değişkendeki
-// closure'ın çağrısı ($f(...)) ve çalışma zamanının geri çağırmaya verdiği argümanlar
-// (array::map, http::stream ...) statik olarak bilinemez; onlar bu denetimin dışındadır.
+// Scope: calls made by name to a NAMED function declared in the same file. Calls of a closure
+// held in a variable ($f(...)) and arguments the runtime passes to callbacks
+// (array::map, http::stream ...) cannot be known statically; they are outside this check.
 #include "look/ast.h"
 #include "look/stack_guard.h"
 #include "look/ast_spine.h"
@@ -38,7 +38,7 @@ struct Walk {
             if (!has_default && !rest) s.required = i + 1;
         }
         auto it = sigs.find(f.name);
-        if (it != sigs.end()) it->second.dup = true;   // aynı ad iki kez: hangisi çağrılacağı belirsiz
+        if (it != sigs.end()) it->second.dup = true;   // same name twice: it is ambiguous which one is called
         else sigs.emplace(f.name, s);
     }
 
@@ -60,13 +60,13 @@ struct Walk {
     }
 
     void expr(const Expression* e) {
-        if (e) look_ast_guard(e->loc.line, e->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+        if (e) look_ast_guard(e->loc.line, e->loc.column);   // deep tree: error instead of a crash (stack_guard.h)
         if (!e) return;
         if (auto* x = node_as<CallExpression>(e)) { call(*x); expr(x->callee.get()); for (auto& a : x->arguments) expr(a.get()); return; }
         if (auto* x = node_as<FunctionExpression>(e)) { for (auto& d : x->defaults) expr(d.get()); block(x->body.get()); return; }
         if (auto* x = node_as<AssignmentExpression>(e)) { expr(x->object.get()); expr(x->index.get()); expr(x->value.get()); return; }
         if (auto* x = node_as<UnaryExpression>(e)) { expr(x->right.get()); return; }
-        if (auto* x = node_as<BinaryExpression>(e)) {   // sol omurga döngüyle (look/ast_spine.h)
+        if (auto* x = node_as<BinaryExpression>(e)) {   // left spine as a loop (look/ast_spine.h)
             std::vector<const BinaryExpression*> sp; expr(binary_left_spine(x, sp));
             for (size_t k = sp.size(); k-- > 0;) expr(sp[k]->right.get());
             return;
@@ -80,7 +80,7 @@ struct Walk {
     }
     void block(const BlockStatement* b) { if (b) for (auto& s : b->statements) stmt(s.get()); }
     void stmt(const Statement* s) {
-        if (s) look_ast_guard(s->loc.line, s->loc.column);   // derin ağaç: çökme yerine hata (stack_guard.h)
+        if (s) look_ast_guard(s->loc.line, s->loc.column);   // deep tree: error instead of a crash (stack_guard.h)
         if (!s) return;
         if (s->loc.line > 0) cur_line = s->loc.line;
         if (auto* x = node_as<FunctionDeclaration>(s)) { decl(*x); for (auto& d : x->defaults) expr(d.get()); block(x->body.get()); return; }
@@ -109,9 +109,9 @@ struct Walk {
 
 inline std::vector<ArgWarning> check_arg_counts(const Program& program) {
     arg_check_detail::Walk w;
-    for (auto& s : program.statements) w.stmt(s.get());    // 1. geçiş: bildirimler
+    for (auto& s : program.statements) w.stmt(s.get());    // pass 1: declarations
     w.collecting = false;
-    for (auto& s : program.statements) w.stmt(s.get());    // 2. geçiş: çağrılar
+    for (auto& s : program.statements) w.stmt(s.get());    // pass 2: calls
     return std::move(w.out);
 }
 

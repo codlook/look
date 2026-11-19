@@ -1,14 +1,14 @@
-// session_esc.h — Session SID doğrulama + blob kaçış/enjeksiyon savunması (SAF, tablo-test).
-// web_stdlib.cpp session:: bunları çağırır. İki güvenlik-kararı burada tek noktada:
-//   1) valid_sid: 32-hex allowlist — path-traversal (sid → dosya yolu) reddi.
-//   2) sess_esc/unesc + blob_get/set: "anahtar=deger\n" formatına \n / = enjeksiyonu engeli
-//      (kullanıcı verisi oturuma yazılırsa uydurma yetki-alanı enjeksiyonunu keser).
+// session_esc.h — Session SID validation + blob escape/injection defence (PURE, table-test).
+// web_stdlib.cpp session:: calls these. Two security decisions at a single point here:
+//   1) valid_sid: 32-hex allowlist — rejects path traversal (sid → file path).
+//   2) sess_esc/unesc + blob_get/set: blocks \n / = injection into the "key=value\n" format
+//      (cuts off injection of a forged privilege field if user data is written to the session).
 #pragma once
 #include <string>
 
 namespace look {
 
-// SID = üretilen format TAM 32 hex. Client cookie'sinden gelir, dosya yoluna girer.
+// SID = the generated format is EXACTLY 32 hex. It comes from the client's cookie and enters the file path.
 inline bool valid_sid(const std::string& s) {
     if (s.size() != 32) return false;
     for (char c : s) {
@@ -18,9 +18,9 @@ inline bool valid_sid(const std::string& s) {
     return true;
 }
 
-// Değerdeki \n MEŞRU kullanıcı verisi olabilir (textarea) → reddetme, KAÇIR.
-// Anahtarda '=' de kaçırılır (ayraç anlamı taşımasın). Geriye uyumlu: eski
-// blob'larda ters-bölü yok → unescape kimlik işlevi görür.
+// A \n in a value can be LEGITIMATE user data (textarea) → do not reject, ESCAPE it.
+// '=' in a key is also escaped (so that it does not act as a delimiter). Backward compatible: old
+// blobs have no backslash → unescape acts as the identity function.
 inline std::string sess_esc(const std::string& s, bool is_key) {
     std::string o; o.reserve(s.size());
     for (char c : s) {
@@ -63,11 +63,11 @@ inline bool sess_blob_get(const std::string& blob, const std::string& key, std::
     return false;
 }
 
-// key'i güncelle (varsa değiştir, yoksa ekle) — dosya backend'inin "append edip
-// get ilk eşleşmeyi döndürme" nedeniyle set'in overwrite etmeme bug'ını da giderir.
+// update key (replace if present, add if not) — also fixes the set-does-not-overwrite bug caused by the file backend's "append and
+// get returns the first match".
 inline void sess_blob_set(std::string& blob, const std::string& key, const std::string& val) {
-    const std::string ek = sess_esc(key, true);    // ayraç anlamı taşıyamaz
-    const std::string ev = sess_esc(val, false);   // \n enjeksiyonu burada olurdu
+    const std::string ek = sess_esc(key, true);    // cannot act as a delimiter
+    const std::string ev = sess_esc(val, false);   // a \n injection would be here
     std::string out; size_t pos = 0; bool replaced = false;
     while (pos < blob.size()) {
         size_t nl = blob.find('\n', pos);

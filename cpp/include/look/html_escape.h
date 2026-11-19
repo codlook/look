@@ -1,8 +1,8 @@
-// HTML metin-içerik kaçışı — tek tanım (html::escape + TemplateEngine ikisi de kullanır).
-// B-08: backtick (`` ` ``) da kaçırılır — JS template-literal `${...}` XSS'ini kapatır.
-// NOT: html::attr AYRI bir kavramdır (izin-listesi: alfanümerik+UTF-8 dışında her şeyi kaçırır,
-// öznitelik bağlamı için daha sağlam) — buraya birleştirilmez. "Tek yapı" AYNI kavramın iki
-// kopyası içindir; escape ve attr iki farklı kavram.
+// HTML text-content escaping — a single definition (html::escape and TemplateEngine both use it).
+// B-08: backtick (`` ` ``) is also escaped — closes the JS template-literal `${...}` XSS.
+// NOTE: html::attr is a SEPARATE concept (allowlist: escapes everything except alphanumerics+UTF-8,
+// more robust for the attribute context) — it is not merged here. "Single structure" is for two
+// copies of the SAME concept; escape and attr are two different concepts.
 #pragma once
 #include <string>
 

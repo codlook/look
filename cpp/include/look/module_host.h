@@ -1,29 +1,29 @@
 #pragma once
-// Yerleşik modüllerin çalışma zamanından istediği her şey — ve yalnız bu kadarı.
+// Everything the built-in modules need from the runtime — and only this much.
 //
-// Modül fabrikaları (make_stdlib, make_extra_stdlib, make_web_modules, …) eskiden
-// yorumlayıcı nesnesini (bugünkü RuntimeHost) alıyordu; oysa modüller ondan yalnız şu dört
-// şeyi kullanıyor. LOOK 2 tek motora (VM) geçerken modül tablosunu yorumlayıcı nesnesi
-// olmadan kurabilmek için bağımlılık bu arayüze indirildi. Bugün RuntimeHost uygular; VM
-// kendi ana makinesini getirdiğinde modüllere dokunmak gerekmez.
+// The module factories (make_stdlib, make_extra_stdlib, make_web_modules, …) used to take
+// the interpreter object (today's RuntimeHost); yet the modules use only these four things from it. When moving
+// to a single engine (the VM), the dependency was reduced to this interface so that the module table
+// can be built without the interpreter object. Today RuntimeHost implements it; when the VM brings
+// its own host the modules need not be touched.
 #include <vector>
 
 namespace look {
 
-class Value;   // value.h (ileri bildirim — bu başlık her yerden ucuzca dahil edilebilsin)
+class Value;   // value.h (forward declaration — so that this header can be included cheaply from anywhere)
 
 class ModuleHost {
 public:
     virtual ~ModuleHost() = default;
 
-    // Bir LOOK fonksiyon değerini çağırır (array::map/filter/…, db::transaction, http::stream
-    // geri çağırmaları). Değer VM closure'ıysa etkin VM'de çalışır.
+    // Calls a LOOK function value (array::map/filter/…, db::transaction, http::stream
+    // callbacks). If the value is a VM closure it runs in the active VM.
     virtual Value invoke(const Value& fn, std::vector<Value> args) = 0;
 
-    // Üst düzey kurulum (setup) sürüyor mu — db::query kurulumdaki yan etkiyi buna göre ele alır.
+    // Is top-level setup in progress — db::query handles the side effect during setup accordingly.
     virtual bool is_setup_mode() const = 0;
 
-    // runtime::stats sayaçları.
+    // runtime::stats counters.
     virtual int  get_route_count()   const = 0;
     virtual long get_uptime_sec()    const = 0;
 };

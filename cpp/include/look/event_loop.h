@@ -41,17 +41,17 @@ public:
     // Register server socket — calls cb with each accepted client fd.
     virtual void listen(int server_fd, AcceptCb cb) = 0;
 
-    // Register client fd for reading — calls cb when data arrives. Duraklatılmış okumayı da sürdürür.
+    // Register client fd for reading — calls cb when data arrives. Also resumes a paused read.
     virtual void async_read(int fd, ReadCb cb) = 0;
 
-    // Geri basınç: bu fd'den okumayı durdur (yalnız loop iş parçacığında, okuma geri çağrısının içinden
-    // de). Okuma geri çağrısı kalıcıdır; durdurmanın tek yolu bu — async_read ile sürer. Kenar
-    // tetiklemeli okuma EAGAIN'e dek okur: duraksız veri gönderen bir istemci onu hiç durdurmazdı.
-    // Varsayılan: yok (Windows IOCP — geliştirme ortamı).
+    // Back pressure: stop reading from this fd (only on the loop thread, also from inside the
+    // read callback). The read callback is persistent; the only way to pause it is this — async_read resumes it. An edge-
+    // triggered read goes on until EAGAIN: a client that sends data without pause would never be stopped.
+    // Default: none (Windows IOCP — development environment).
     virtual void pause_read(int /*fd*/) {}
 
-    // Yeni (blocking) fd'yi loop'a ekle: set_nonblocking + EPOLL_CTL_ADD + read kaydı.
-    // WS/SSE upgrade: worker thread'deki blocking fd'yi async loop'a devretmek için.
+    // Add a new (blocking) fd to the loop: set_nonblocking + EPOLL_CTL_ADD + read registration.
+    // WS/SSE upgrade: to hand a blocking fd on a worker thread over to the async loop.
     virtual void add_client(int fd, ReadCb cb) = 0;
 
     // Write data to fd — calls cb when done (or on error, ok=false).
@@ -60,12 +60,12 @@ public:
     // Remove fd from the loop and close it.
     virtual void close_fd(int fd) = 0;
 
-    // Idle/slowloris koruması: bu fd `seconds` boyunca hiç veri göndermezse loop
-    // onu kendisi kapatır (close_fd → üst katmanın read cb'sine len==0 gelir).
-    // OPT-IN: yalnız bu çağrıyı yapan fd'ler taranır; HTTP/WS/SSE gibi meşru
-    // uzun-idle bağlantılar etkilenmez. seconds<=0 → devre dışı (varsayılan).
-    // Epoll ET + non-blocking soketlerde SO_RCVTIMEO çalışmadığı için timeout
-    // mantığı bu katmanda (loop thread'inde, I/O cb'siyle aynı thread → yarışmaz).
+    // Idle/slowloris protection: if this fd sends no data for `seconds` the loop
+    // closes it itself (close_fd → len==0 reaches the upper layer's read cb).
+    // OPT-IN: only fds that make this call are scanned; legitimately long-idle
+    // connections such as HTTP/WS/SSE are not affected. seconds<=0 → disabled (default).
+    // Because SO_RCVTIMEO does not work with epoll ET + non-blocking sockets the timeout
+    // logic lives in this layer (on the loop thread, the same thread as the I/O cb → no race).
     virtual void set_idle_timeout(int fd, int seconds) = 0;
 
     // Remove fd from the loop WITHOUT closing the socket.
@@ -81,7 +81,7 @@ public:
 
 #if defined(__linux__)
 
-// Linux: epoll-based, edge-triggered, sıfır bağımlılık.
+// Linux: epoll-based, edge-triggered, minimal external runtime dependencies.
 class EpollEventLoop : public EventLoop {
 public:
     EpollEventLoop();
@@ -117,7 +117,7 @@ public:
     void post(TaskFn fn) override;
     void listen(int server_fd, AcceptCb cb) override;
     void async_read(int fd, ReadCb cb) override;
-    void pause_read(int fd) override;   // geri basınç: tamamlanan okuma yeniden kurulmaz (async_read sürdürür)
+    void pause_read(int fd) override;   // back pressure: a completed read is not re-armed (async_read resumes it)
     void add_client(int fd, ReadCb cb) override;
     void async_write(int fd, std::string data, WriteCb cb) override;
     void close_fd(int fd) override;

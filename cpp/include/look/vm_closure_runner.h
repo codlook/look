@@ -1,7 +1,7 @@
 #pragma once
-// Bir VM closure'ını YENİ BİR İSTEK gibi çalıştırır (kendi VM'i, global'lerin bildirilen
-// değerleri): zamanlayıcı geri çağırmaları ve jobs::run işleyicileri bunu kullanır. Web sunucusu
-// ve komut satırı (cli_runtime) kurar. ok=false ise hata loglanmıştır. Kurulmamışsa boştur.
+// Runs a VM closure like a NEW REQUEST (its own VM, the declared values of the globals):
+// timer callbacks and jobs::run handlers use it. The web server and the command line
+// (cli_runtime) install it. If ok=false the error has been logged. Empty if not installed.
 #include "look/value.h"
 #include <functional>
 #include <vector>

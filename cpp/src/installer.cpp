@@ -4,9 +4,9 @@
 #include <cstring>
 #include "look/installer.h"
 #include "look/http_client.h"
-#include "look/zip_safe.h"   // zip_entry_inside_dest (Zip-Slip containment dikişi)
-#include "look/url_safe.h"   // redirect_allowed (yönlendirme güvenlik-kararı dikişi)
-#include "look/crypto_sha256.h"  // içerik özeti (look.lock "h1:" — Go dirhash Hash1 eşdeğeri)
+#include "look/zip_safe.h"   // zip_entry_inside_dest (Zip-Slip containment seam)
+#include "look/url_safe.h"   // redirect_allowed (redirect security decision seam)
+#include "look/crypto_sha256.h"  // content digest (look.lock "h1:" — equivalent of Go's dirhash Hash1)
 #include "miniz/miniz.h"
 
 #include <chrono>
@@ -32,12 +32,12 @@ namespace look {
 struct LockEntry {
     std::string ref;    // "main", "v1.2", commit sha
     std::string sha;    // resolved commit sha (or "" if unknown)
-    std::string hash;   // içerik özeti "h1:<base64>" (eski kilitte yok → "")
+    std::string hash;   // content digest "h1:<base64>" (absent in old locks -> "")
 };
 
-// Satır biçimi:  "user/repo[/subdir]" = "ref@sha h1:<base64>"
-// Özet, değerin SON boşluktan sonraki "h1:" parçasıdır; eski satırlarda (özetsiz) yoktur ve
-// aynen eskisi gibi ayrışır. Ref'ler (git) boşluk içeremez → ayırıcı belirsiz değil.
+// Line format:  "user/repo[/subdir]" = "ref@sha h1:<base64>"
+// The digest is the "h1:" part after the LAST space of the value; old lines (without a digest) lack it and
+// parse exactly as before. Refs (git) cannot contain spaces -> the separator is unambiguous.
 static void split_lock_hash(std::string& val, std::string& hash) {
     auto sp = val.rfind(' ');
     if (sp == std::string::npos) return;
@@ -99,13 +99,13 @@ static void write_lock(const fs::path& lock_path,
 
 // ── Content checksum (look.lock "h1:") ────────────────────────────────────────
 //
-// NEDEN ZIP baytları değil de İÇERİK: GitHub zipball'ı her istekte yeniden üretebilir (sıkıştırma
-// ayarı / zaman damgası / kök klasör adı değişebilir; GitHub arşiv bayt kararlılığını garanti
-// etmiyor, 2023'te git-archive değişikliği yüzünden dünya çapında checksum'lar kırıldı). Aynı
-// commit'in ZIP özeti sahte uyuşmazlık verebilir. Bunun yerine Go'nun dirhash "h1" algoritması:
-// her dosya için "sha256hex  yol\n" (yollar sıralı, '/' ayırıcılı, kurulum köküne göreli), sonra
-// bu özet metninin SHA-256'sı, base64. Dosya sistemine değil ARŞİVDEN okunan baytlara uygulanır
-// (Windows'ta büyük/küçük harf duyarsız disk aynı içeriğe farklı özet vermesin).
+// WHY content and not the ZIP bytes: GitHub may regenerate the zipball on every request (compression
+// settings / timestamps / the root folder name may change; GitHub does not guarantee archive byte stability,
+// and in 2023 a git-archive change broke checksums worldwide). The ZIP digest of the same
+// commit could therefore give a false mismatch. Instead, Go's dirhash "h1" algorithm:
+// for each file "sha256hex  path\n" (paths sorted, '/'-separated, relative to the install root), then
+// the SHA-256 of that digest text, base64. It is applied to the bytes read from the ARCHIVE, not the file system
+// (so a case-insensitive disk on Windows cannot give a different digest for the same content).
 static std::string base64_std(const std::vector<uint8_t>& in) {
     static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
@@ -131,7 +131,7 @@ static std::string hex_lower(const std::vector<uint8_t>& in) {
     return s;
 }
 
-// files: (göreli yol, dosya sha256 hex) — sıralanır, yani arşiv içi sıra özeti etkilemez.
+// files: (relative path, file sha256 hex) — sorted, so the order inside the archive does not affect the digest.
 static std::string content_hash_h1(std::vector<std::pair<std::string, std::string>> files) {
     std::sort(files.begin(), files.end());
     std::string summary;
@@ -141,9 +141,9 @@ static std::string content_hash_h1(std::vector<std::pair<std::string, std::strin
 
 // ── Atomic replace (temp dir next to the target, then rename) ─────────────────
 //
-// Eskiden önce eski paket remove_all ile siliniyor, sonra yeni açılıyordu: indirme sonrası her
-// hata (bozuk ZIP, disk dolu, özet uyuşmazlığı) projeyi paketsiz bırakıyordu. Şimdi: hedefin
-// YANINDA (aynı dosya sistemi → rename atomik) geçici dizine aç, doğrula, sonra yer değiştir.
+// Previously the old package was deleted with remove_all first and then the new one extracted: any
+// error after the download (corrupt ZIP, disk full, digest mismatch) left the project without the package. Now: extract into a temp
+// directory NEXT TO the target (same file system -> rename is atomic), verify, then swap.
 static fs::path temp_sibling(const fs::path& dest, const char* tag) {
     static std::mt19937_64 rng(std::random_device{}() ^
         (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count());
@@ -152,7 +152,7 @@ static fs::path temp_sibling(const fs::path& dest, const char* tag) {
     return dest.parent_path() / name;
 }
 
-// tmp → dest. Başarısızlıkta eski paket yerinde kalır ve tmp silinir.
+// tmp -> dest. On failure the old package stays in place and tmp is removed.
 static bool swap_into_place(const fs::path& tmp, const fs::path& dest, std::string& err) {
     std::error_code ec;
     fs::path backup;
@@ -249,11 +249,11 @@ static PkgSpec parse_pkg(const std::string& input) {
     if (p.host != "github.com")
         throw std::runtime_error("Only github.com is supported at the moment.");
 
-    // Path-traversal koruması: user/repo/subdir doğrudan yerel hedef yola akıyor
-    // (pkg_dir()="pkg/"+subdir, modules_dir()/mod_name). Kötü niyetli look.lock (klonlanmış
-    // güvenilmeyen proje) veya CLI arg'ında `../` → dest_dir proje/modül kökünün DIŞINA
-    // kaçar; extract_zip'in Zip-Slip kontrolü kaçmış dest_dir'i güvenli-taban sayar →
-    // proje-dışına attacker-içerikli dosya yazımı. Her bileşeni katı doğrula.
+    // Path-traversal protection: user/repo/subdir flows straight into the local destination path
+    // (pkg_dir()="pkg/"+subdir, modules_dir()/mod_name). With a malicious look.lock (a cloned
+    // untrusted project) or `../` in a CLI arg, dest_dir escapes OUTSIDE the project/module root;
+    // extract_zip's Zip-Slip check treats the escaped dest_dir as the safe base ->
+    // a file with attacker content written outside the project. Validate every component strictly.
     auto validate_component = [&input](const std::string& c, const char* what) {
         if (c.empty())
             throw std::runtime_error(std::string("Invalid package (empty ") + what + "): " + input);
@@ -266,7 +266,7 @@ static PkgSpec parse_pkg(const std::string& input) {
     };
     validate_component(p.user, "user");
     validate_component(p.repo, "repo");
-    // subdir çok-seviyeli olabilir (a/b) — her segmenti ayrı doğrula
+    // subdir can be multi-level (a/b) — validate each segment separately
     if (!p.subdir.empty()) {
         size_t seg = 0, nx;
         do {
@@ -313,12 +313,12 @@ static bool extract_zip(const std::vector<char>& data,
     // subdir filter prefix: after stripping GitHub prefix, files must start with "subdir/"
     std::string subdir_prefix = subdir_filter.empty() ? "" : (subdir_filter + "/");
 
-    // ZIP bombası sınırı: açılmış toplam boyut (merkez dizindeki bildirilen boyutlar — miniz açarken
-    // gerçek boyutu ve CRC'yi bildirilene karşı doğrular). Eskiden sınır yoktu: birkaç KB'lık arşiv
-    // bellekte ve diskte GB'larca yer açtırabiliyordu. Karar saf dikişte (look/zip_safe.h).
+    // ZIP bomb limit: total extracted size (sizes declared in the central directory — miniz verifies the
+    // real size and CRC against the declared ones while extracting). Previously there was no limit: an archive of a few KB
+    // could take up GBs of memory and disk. The decision is in the pure seam (look/zip_safe.h).
     {
         std::vector<uint64_t> sizes;
-        // girdi sayısı önce: zip64 milyarlarca girdi bildirebilir — vektörü onlarla doldurma
+        // entry count first: zip64 can declare billions of entries — do not fill the vector with them
         int upto = n > (int)look::ZIP_MAX_ENTRIES ? (int)look::ZIP_MAX_ENTRIES + 1 : n;
         for (int i = 0; i < upto; ++i) {
             mz_zip_archive_file_stat st;
@@ -353,8 +353,8 @@ static bool extract_zip(const std::vector<char>& data,
             if (filename.empty()) continue;
         }
 
-        // Zip Slip koruması → saf dikişe taşındı (look/zip_safe.h; installer_zipslip_test
-        // ağsız tablo-test eder, sibling-prefix kaçışı dahil pozitif-kontrollü).
+        // Zip Slip protection -> moved to the pure seam (look/zip_safe.h; installer_zipslip_test
+        // tests it as a network-free table, positive-controlled, including the sibling-prefix escape).
         fs::path out_path = fs::weakly_canonical(dest_dir / filename);
         if (!look::zip_entry_inside_dest(filename, dest_dir)) {
             if (verbose) std::cerr << "  SKIPPED (security): " << filename << "\n";
@@ -368,8 +368,8 @@ static bool extract_zip(const std::vector<char>& data,
 
         fs::create_directories(out_path.parent_path());
 
-        // Açılamayan girdi (CRC/boyut uyuşmazlığı = bozuk/tahrif edilmiş arşiv) veya yazılamayan
-        // dosya artık KURULUMU durdurur — eskiden atlanıyordu ve eksik paket "kuruldu" sayılıyordu.
+        // An entry that cannot be extracted (CRC/size mismatch = corrupt/tampered archive) or a file that cannot be written
+        // now STOPS THE INSTALL — previously it was skipped and an incomplete package counted as "installed".
         size_t out_size = 0;
         void* buf = mz_zip_reader_extract_to_heap(&zip, i, &out_size, 0);
         if (!buf) {
@@ -430,19 +430,19 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
                 resp.error = "redirect has no location header";
                 return resp;
             }
-            // Yönlendirme HEDEFİ doğrulanmalı — eskiden körlemesine takip ediliyordu.
-            // İlk istek güvenli (zip_url() https sabit, parse_pkg host'u github.com'a
-            // kısıtlı, TLS'te SSL_VERIFY_PEER + SSL_set1_host var). Ama yönlendirme
-            // zinciri korumasızdı:
-            //   * `Location: http://…`  → ŞEMA DÜŞÜRME: sonraki istek düz metin,
-            //     yani TLS'in sağladığı bütünlük garantisi kaybolur (MITM penceresi).
-            //   * `Location: https://baska-host/…` → tamamen farklı bir kaynaktan
-            //     indirme.
-            // Paket = ÇALIŞTIRILABİLİR LOOK KODU olduğu için bu bir tedarik zinciri
-            // riski; savunma katmanı ucuz, bedeli ağır (asimetri).
+            // The redirect TARGET must be validated — it used to be followed blindly.
+            // The first request is safe (zip_url() is fixed https, parse_pkg restricts the host to github.com,
+            // TLS has SSL_VERIFY_PEER + SSL_set1_host). But the redirect
+            // chain was unprotected:
+            //   * `Location: http://…`  -> SCHEME DOWNGRADE: the next request is plaintext,
+            //     so the integrity guarantee TLS provides is lost (MITM window).
+            //   * `Location: https://other-host/…` -> download from an entirely
+            //     different source.
+            // Since a package = EXECUTABLE LOOK CODE this is a supply-chain
+            // risk; the defense layer is cheap, the cost of not having it is heavy (asymmetry).
             std::string next = it->second;
-            // Redirect güvenlik-kararı → saf dikişe taşındı (look/url_safe.h; installer_redirect_test
-            // ağsız tablo-test eder, şema-düşürme + host-kaçışı pozitif-kontrollü).
+            // Redirect security decision -> moved to the pure seam (look/url_safe.h; installer_redirect_test
+            // tests it as a network-free table, scheme-downgrade + host-escape positive-controlled).
             if (!look::redirect_allowed(next, resp.error)) return resp;
             current = next;
             continue;
@@ -455,11 +455,11 @@ static HttpClientResponse download_follow(const std::string& url, bool verbose, 
     return r;
 }
 
-// Ağsız test dikişi: LOOK_INSTALL_ARCHIVE_DIR ayarlıysa arşiv GitHub yerine
-// <dir>/<user>/<repo>/<ref>.zip dosyasından okunur. Commit sha'sı GitHub'ın
-// Content-Disposition başlığı gibi taklit edilir: <ref>.sha dosyası varsa o, ref 40 hex ise ref.
-// (tests/installer_integrity_test.sh). Kullanıcı ortamı zaten güvenilir; yine de her
-// kullanımda stderr'e yazılır — sessiz kaynak değişimi olmasın.
+// Network-free test seam: if LOOK_INSTALL_ARCHIVE_DIR is set, the archive is read from
+// <dir>/<user>/<repo>/<ref>.zip instead of GitHub. The commit sha is mimicked like GitHub's
+// Content-Disposition header: the <ref>.sha file if present, otherwise the ref if it is 40 hex.
+// (tests/installer_integrity_test.sh). The user's environment is trusted anyway; still, it is written to stderr on every
+// use — so there is no silent source swap.
 static const char* archive_dir_override() {
     const char* d = std::getenv("LOOK_INSTALL_ARCHIVE_DIR");
     return (d && *d) ? d : nullptr;
@@ -494,7 +494,7 @@ static std::string resolve_sha(const PkgSpec& spec, bool verbose) {
     // GET https://api.github.com/repos/{user}/{repo}/commits/{ref}
     std::string url = "https://api.github.com/repos/" + spec.user + "/" + spec.repo
                     + "/commits/" + spec.ref;
-    if (archive_dir_override()) return "";   // test dikişi: ağa çıkma
+    if (archive_dir_override()) return "";   // test seam: do not go to the network
     if (verbose) std::cout << "  resolving SHA...\n";
 
     std::map<std::string, std::string> hdrs;
@@ -526,25 +526,25 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
         return 1;
     }
 
-    // look.lock'u ÖNCE oku: --locked için kayıtlı sha'ya sabitle, ve normal kurulumda
-    // ref'in kilitten bu yana kayıp kaymadığını (etiket taşındı / dal ilerledi) göster.
+    // Read look.lock FIRST: for --locked pin to the recorded sha, and in a normal install show
+    // whether the ref has drifted since the lock (tag moved / branch advanced).
     auto lock_path = fs::current_path() / "look.lock";
     auto lock      = read_lock(lock_path);
     auto lock_it   = lock.find(spec.lock_key());
     std::string locked_sha = (lock_it != lock.end()) ? lock_it->second.sha : "";
 
     if (locked) {
-        // Reprodüksiyon + tahrif-kanıtı: kayıtlı commit sha'sını AYNEN indir. Ref
-        // (dal/etiket) o sha'dan başka bir şeye çözülse bile sha sabittir → GitHub
-        // o sha için tam olarak o ağacı verir, sessiz ikame imkansız.
+        // Reproduction + tamper evidence: download the recorded commit sha EXACTLY. Even if the ref
+        // (branch/tag) resolves to something other than that sha, the sha is fixed -> GitHub
+        // serves exactly that tree for that sha, a silent substitution is impossible.
         if (locked_sha.empty()) {
             std::cerr << "Error: no locked version for " << spec.lock_key()
                       << " in look.lock — run 'lk install " << pkg << "' first.\n";
             return 1;
         }
-        // --locked look.lock'a HİÇ yazmaz ve doğrulanamayanı kurmaz (Go -mod=readonly: go.sum
-        // kaydı yoksa hata). Eskiden özetsiz eski satırda ilk görülen içerik sorgusuz kurulup
-        // özeti kilide yazılıyordu — CI/üretimde ele geçirilmiş bir paket ilk kurulumda kabul olurdu.
+        // --locked NEVER writes to look.lock and does not install what cannot be verified (Go -mod=readonly: an error if there is no
+        // go.sum record). Previously, for an old line without a digest, the first content seen was installed unquestioned and
+        // its digest written to the lock — in CI/production a hijacked package would be accepted on first install.
         if (lock_it->second.hash.empty()) {
             std::cerr << "Error: look.lock has no checksum for " << spec.lock_key()
                       << " — --locked installs only what it can verify and never writes look.lock.\n"
@@ -574,9 +574,9 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
 
     std::cout << "  " << (resp.body.size() / 1024) << " KB downloaded\n";
 
-    // look.lock zaten yukarıda okundu (lock_path/lock/locked_sha).
-    // Commit sha'sı ÇIKARMADAN ÖNCE belirlenir: özet doğrulaması ve --locked sha kontrolü
-    // eski paket yerinden oynamadan yapılmalı.
+    // look.lock was already read above (lock_path/lock/locked_sha).
+    // The commit sha is determined BEFORE extraction: the digest verification and the --locked sha check
+    // must happen without disturbing the old package.
     // Try to extract commit SHA from Content-Disposition or URL
     // GitHub sends: attachment; filename=user-repo-{sha}.zip
     std::string sha;
@@ -605,8 +605,8 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
     // Try to resolve exact commit SHA if not already extracted from zip filename
     if (sha.empty()) sha = resolve_sha(spec, verbose);
 
-    // Kilitli kurulum: içeriğin gerçekten kilitli sha olduğunu doğrula (GitHub sha URL'i
-    // için bunu garanti eder; yine de tahrif-kanıtı olarak kontrol et). Eski paket henüz yerinde.
+    // Locked install: verify that the content really is the locked sha (a GitHub sha URL
+    // guarantees this; still check it as tamper evidence). The old package is still in place.
     if (locked && !sha.empty() && !locked_sha.empty() && sha != locked_sha) {
         std::cerr << "Error: locked install integrity check failed for "
                   << spec.lock_key() << " — expected " << locked_sha
@@ -629,8 +629,8 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
     }
     const std::string hash = content_hash_h1(digests);
 
-    // go.sum gibi: look.lock bu commit için bir içerik özeti kaydetmişse indirilen içerik ONA
-    // eşit olmalı. Aynı commit = kilitteki sha (sha bilinmiyorsa: ref'in kendisi kilitteki sha).
+    // Like go.sum: if look.lock recorded a content digest for this commit, the downloaded content MUST
+    // equal IT. Same commit = the sha in the lock (if the sha is unknown: the ref itself is the sha in the lock).
     const std::string locked_hash = (lock_it != lock.end()) ? lock_it->second.hash : "";
     const bool same_commit = !locked_sha.empty() &&
                              (sha == locked_sha || (sha.empty() && spec.ref == locked_sha));
@@ -656,19 +656,19 @@ int cmd_install(const std::string& pkg, bool verbose, bool locked) {
         std::cout << "  checksum verified (" << hash << ")\n";
 
     if (locked) {
-        // --locked look.lock'a dokunmaz (özetsiz satır yukarıda reddedildi).
+        // --locked does not touch look.lock (the line without a digest was rejected above).
         std::cout << "  --locked: verified " << locked_sha << "\n";
     } else {
-        // Sessiz-ikame görünürlüğü: kullanıcı bir dal/etiket kurdu ve o ref kilitten
-        // bu yana FARKLI bir commit'e çözüldüyse (etiket taşındı / dal ilerledi) bunu
-        // AÇIKÇA bildir — normal kurulum güncellemeyi amaçlar ama sessiz olmamalı.
+        // Silent-substitution visibility: if the user installed a branch/tag and that ref has resolved to a
+        // DIFFERENT commit since the lock (tag moved / branch advanced), say so
+        // EXPLICITLY — a normal install is meant to update, but it must not be silent.
         if (!locked_sha.empty() && !sha.empty() && sha != locked_sha) {
             std::cout << "  NOTE: '" << spec.ref << "' moved since look.lock: "
                       << locked_sha.substr(0, 10) << " -> " << sha.substr(0, 10)
                       << "  (updating; use --locked to pin to the recorded commit)\n";
         }
         LockEntry entry;
-        // `lk install` (argümansız) kilitteki sha'yı kurar: kayıtlı ref'i (ör. "main") sha ile ezme.
+        // `lk install` (no argument) installs the sha in the lock: do not overwrite the recorded ref (e.g. "main") with the sha.
         entry.ref = (lock_it != lock.end() && spec.ref == locked_sha && !lock_it->second.ref.empty())
                         ? lock_it->second.ref : spec.ref;
         entry.sha = sha;
@@ -710,11 +710,11 @@ int cmd_install_all(bool verbose, bool locked) {
     std::cout << lock.size() << " installing package...\n";
     int failed = 0;
     for (auto& [key, entry] : lock) {
-        // Kilit dosyasının amacı YENİDEN-ÜRETİLEBİLİRLİK: kayıtlı commit sha'sına
-        // sabitle. Eskiden entry.ref (dal/etiket) kullanılıyordu → `look install`
-        // her koşumda ref'i yeniden çözüyordu; dal HEAD'i ilerlerse (veya etiket
-        // yeniden basılırsa) look.lock'ta sha yazılı olmasına rağmen FARKLI kod
-        // kurulurdu — yani kilit hiç kilitlemiyordu. sha yoksa (eski lock) ref'e düş.
+        // The purpose of the lock file is REPRODUCIBILITY: pin to the recorded
+        // commit sha. Previously entry.ref (branch/tag) was used -> `look install`
+        // re-resolved the ref on every run; if the branch HEAD advanced (or the tag
+        // was re-pushed) DIFFERENT code would be installed even though look.lock had the sha written
+        // — i.e. the lock did not lock at all. If there is no sha (old lock) fall back to the ref.
         if (locked && entry.sha.empty()) {
             std::cerr << "  " << key << ": no locked sha in look.lock (--locked is strict)\n";
             ++failed; continue;
@@ -782,8 +782,8 @@ int cmd_module_install(const std::string& pkg_url, bool verbose) {
 
     std::cout << "  " << (resp.body.size() / 1024) << " KB downloaded\n";
 
-    // Extract to ~/.look/modules/<mod_name>/ — temp dir next to it, then swap (paketle aynı).
-    // Modüllerin kilit dosyası yok: özet kaydı/doğrulaması yalnız proje paketlerinde (look.lock).
+    // Extract to ~/.look/modules/<mod_name>/ — temp dir next to it, then swap (same as packages).
+    // Modules have no lock file: digest recording/verification only applies to project packages (look.lock).
     fs::path dest_dir;
     try { dest_dir = modules_dir() / mod_name; }
     catch (const std::exception& e) { std::cerr << "Error: " << e.what() << "\n"; return 1; }

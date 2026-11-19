@@ -1,22 +1,22 @@
 #include "look/mysql_client.h"
-#include "look/mysql_wire_parse.h"   // saf ayristirici tek tanim (member'lar forward eder)
-#include "look/sock_idle.h"         // idle_socket_unusable: gondermeden once oluluk yoklamasi
+#include "look/mysql_wire_parse.h"   // pure parser, single definition (members forward to it)
+#include "look/sock_idle.h"         // idle_socket_unusable: liveness probe before sending
 #include "look/fiber.h"
 #include "look/fiber_io.h"
-#include "look/fiber_net.h"   // DNS/connect/TLS/gönderme fiber içinde iş parçacığını tutmasın
-#include "look/format.h"   // look_format_double (dilin tek double formati)
+#include "look/fiber_net.h"   // DNS/connect/TLS/send must not hold the thread inside a fiber
+#include "look/format.h"   // look_format_double (the language's single double format)
 #include "look/logger.h"
 #ifndef _WIN32
-// caching_sha2_password (MySQL 8+ varsayilan): SHA-256 + RSA-OAEP.
-// OpenSSL zaten linkli (POSIX); Windows'ta yalniz ws2_32+bcrypt linkleniyor —
-// oradaki durum do_handshake icinde acikca ele aliniyor.
+// caching_sha2_password (MySQL 8+ default): SHA-256 + RSA-OAEP.
+// OpenSSL is already linked (POSIX); on Windows only ws2_32+bcrypt are linked —
+// that case is handled explicitly inside do_handshake.
 #  include <openssl/sha.h>
 #  include <openssl/evp.h>
 #  include <openssl/pem.h>
 #  include <openssl/rsa.h>
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
-#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
+#include "look/tls_peer.h"   // SNI + name verification (IP -> IP SAN), handshake failure reason
 #endif
 #include <cstring>
 #include <cstdio>
@@ -27,8 +27,8 @@
 
 #ifdef _WIN32
   #pragma comment(lib, "ws2_32.lib")
-  // MSG_DONTWAIT POSIX'e özgü — Windows'ta yok. Fiber path'inde kullanılır (fiber
-  // Windows'ta zaten kapalı). Derleme için 0; soket blocking modda kalır.
+  // MSG_DONTWAIT is POSIX-specific — it does not exist on Windows. Used on the fiber path (fibers are
+  // already disabled on Windows). 0 for the build; the socket stays in blocking mode.
   #ifndef MSG_DONTWAIT
     #define MSG_DONTWAIT 0
   #endif
@@ -38,35 +38,35 @@
 #endif
 
 #ifndef MSG_NOSIGNAL
-#  define MSG_NOSIGNAL 0   // Windows/macOS: bayrak yok (Windows'ta SIGPIPE de yok)
+#  define MSG_NOSIGNAL 0   // Windows/macOS: no flag (there is no SIGPIPE on Windows)
 #endif
 
 namespace look {
 
-// Sunucu-verili sütun sayısı üst sınırı — kötü niyetli/MITM sunucunun devasa
-// col_count'la kaynak tükettiği DoS'a karşı. Gerçek query'ler ≪65535 sütun.
+// Upper bound on the server-supplied column count — against the DoS where a malicious/MITM server
+// exhausts resources with a huge col_count. Real queries are far below 65535 columns.
 static constexpr uint64_t MYSQL_MAX_COLUMNS = 65535;
 
 #ifndef _WIN32
 // ── DB-TLS: client SSL_CTX ───────────────────────────────────────────────────
-// MySQL protokolünde SSL, initial handshake'ten SONRA / auth'tan ÖNCE kurulur
-// (SSLRequest paketi → TLS upgrade → auth artık şifreli). Amaç kablo şifreleme
-// (--ssl-mode=REQUIRED): DB sertifikaları çoğu kez self-signed olduğundan PEER
-// doğrulaması YAPMIYORUZ (aksi halde tipik kurulumda bağlantı kırılır); pasif
-// dinlemeye karşı korur. Sertifika doğrulama gelecekte ayrı bir mod olabilir.
+// In the MySQL protocol, SSL is set up AFTER the initial handshake / BEFORE auth
+// (SSLRequest packet -> TLS upgrade -> auth is now encrypted). The goal is wire encryption
+// (--ssl-mode=REQUIRED): since DB certificates are often self-signed we do NOT do PEER
+// verification (otherwise the connection breaks in a typical setup); it protects against passive
+// eavesdropping. Certificate verification could become a separate mode in the future.
 static SSL_CTX* mysql_ssl_ctx() {
     static SSL_CTX* ctx = [] {
         SSL_library_init();
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         SSL_CTX* c = SSL_CTX_new(TLS_client_method());
-        look::tls_client_defaults(c);   // en az TLS 1.2, makineden bağımsız
+        look::tls_client_defaults(c);   // at least TLS 1.2, independent of the machine
         if (c) {
-            // CTX default: doğrulama YOK. verify modu (?tls=verify) per-SSL açılır.
+            // CTX default: NO verification. verify mode (?tls=verify) is enabled per SSL.
             SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr);
-            // Trust store'u yükle ki verify modu sistem CA'larına karşı doğrulayabilsin
-            // (SSL_CERT_FILE/DIR env'i de okur — statik OpenSSL için configure_system_ca_bundle
-            // http_client'ta yapılıyor; burada default paths yeterli).
+            // Load the trust store so verify mode can verify against the system CAs
+            // (it also reads the SSL_CERT_FILE/DIR env — for static OpenSSL configure_system_ca_bundle
+            // is done in http_client; the default paths are enough here).
             SSL_CTX_set_default_verify_paths(c);
         }
         return c;
@@ -75,7 +75,7 @@ static SSL_CTX* mysql_ssl_ctx() {
 }
 #endif
 
-// ── Pure C++ SHA1 — platform bagimsiz ────────────────────────────────────────
+// ── Pure C++ SHA1 — platform independent ────────────────────────────────────────
 
 std::vector<uint8_t> MySQLClient::sha1(const std::vector<uint8_t>& data) {
     uint32_t h[5] = {0x67452301,0xEFCDAB89,0x98BADCFE,0x10325476,0xC3D2E1F0};
@@ -136,13 +136,13 @@ MySQLClient::~MySQLClient() {
 }
 
 void MySQLClient::disconnect() {
-    // COM_QUIT (best effort): sunucuya "çıkıyorum" de. ESKİ HAL: soket doğrudan kapatılıyordu →
-    // MySQL her bağlantıyı "aborted" sayıp hata günlüğüne uyarı yazıyordu (ER_NET_READ_ERROR,
-    // Aborted_clients — ölçüm: tek sorgu yapan bir betik havuzun 16 bağlantısının 16'sını da).
-    // send_bytes hata verirse kendisi disconnect() çağırır → quitting_ özyinelemeyi keser.
+    // COM_QUIT (best effort): tell the server "I am leaving". OLD BEHAVIOR: the socket was closed directly ->
+    // MySQL counted every connection as "aborted" and wrote a warning to the error log (ER_NET_READ_ERROR,
+    // Aborted_clients — measured: a script running a single query did so for all 16 connections of the pool).
+    // If send_bytes fails it calls disconnect() itself -> quitting_ breaks the recursion.
     if (sock_ != SOCK_INVALID && !quitting_) {
         quitting_ = true;
-        const uint8_t quit[5] = {1, 0, 0, 0, 0x01};   // uzunluk 1, sıra 0, COM_QUIT
+        const uint8_t quit[5] = {1, 0, 0, 0, 0x01};   // length 1, sequence 0, COM_QUIT
         try { send_bytes(quit, sizeof(quit)); } catch (...) {}
         quitting_ = false;
     }
@@ -150,7 +150,7 @@ void MySQLClient::disconnect() {
     if (ssl_) {
         SSL* s = (SSL*)ssl_;
         SSL_shutdown(s);   // TLS close_notify (best-effort)
-        SSL_free(s);       // socket'i kapatmaz — sock_ ayrıca kapatılır
+        SSL_free(s);       // does not close the socket — sock_ is closed separately
         ssl_ = nullptr;
     }
 #endif
@@ -158,20 +158,20 @@ void MySQLClient::disconnect() {
         close_sock(sock_);
         sock_ = SOCK_INVALID;
     }
-    // Oturum bitti: tampondaki baytlar ve ifade kimlikleri o oturuma aitti. Yeni bağlantıda
-    // eski kimlikle EXECUTE başka (ya da hiçbir) ifadeyi çalıştırırdı.
+    // The session is over: the bytes in the buffer and the statement ids belonged to that session. On a new connection,
+    // EXECUTE with the old id would run another statement (or none).
     rbuf_pos_ = rbuf_len_ = 0;
     clear_stmt_cache(false);
 }
 
 void MySQLClient::clear_stmt_cache(bool close_on_server) {
-    // Önce haritayı devral: stmt_close gönderimi başarısız olursa disconnect() → buraya
-    // (false) yeniden girer ve stmt_cache_'i döngü ortasında temizlerdi → yineleyici UAF.
+    // Take over the map first: if sending stmt_close fails, disconnect() re-enters here
+    // (false) and would clear stmt_cache_ in the middle of the loop -> iterator UAF.
     auto old = std::move(stmt_cache_);
     stmt_cache_.clear();
     if (close_on_server)
         for (auto& kv : old) {
-            if (sock_ == SOCK_INVALID) break;   // bağlantı koptu: sunucu ifadeleri zaten bıraktı
+            if (sock_ == SOCK_INVALID) break;   // connection lost: the server already released the statements
             stmt_close(kv.second.meta.id);
         }
 }
@@ -185,9 +185,9 @@ void MySQLClient::clear_stmt_cache(bool close_on_server) {
     throw std::runtime_error(std::string(prefix) + std::string(p, end));
 }
 
-// CALL bir sonuç kümesinin ardından en az bir OK daha gönderir (durum bayrağı 0x0008,
-// SERVER_MORE_RESULTS_EXISTS). Okunmazsa bağlantıda kalır ve SONRAKİ sorgu — havuzda başka
-// bir isteğin sorgusu — onu kendi cevabı sanar. Hepsi son OK'a kadar okunur; ilk küme döner.
+// CALL sends at least one more OK after a result set (status flag 0x0008,
+// SERVER_MORE_RESULTS_EXISTS). If it is not read it stays on the connection and the NEXT query — another
+// request's query in the pool — takes it as its own answer. Everything is read up to the last OK; the first set is returned.
 void MySQLClient::drain_more_results(uint16_t status, uint8_t& seq) {
     while (status & 0x0008) {
         auto r = read_packet(seq);
@@ -222,7 +222,7 @@ void MySQLClient::drain_more_results(uint16_t status, uint8_t& seq) {
 
 void MySQLClient::set_socket_timeout(int ms) {
     if (sock_ == SOCK_INVALID) return;
-    rcv_tmo_ms_ = ms;   // fiber beklemesi de aynı süreyle sınırlanır
+    rcv_tmo_ms_ = ms;   // the fiber wait is bounded by the same duration
 #ifdef _WIN32
     DWORD timeout = (DWORD)ms;
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
@@ -254,8 +254,8 @@ void MySQLClient::connect(const DbConfig& cfg) {
 void MySQLClient::do_connect() {
     if (sock_ != SOCK_INVALID) disconnect();
 
-    // Go net.Dial modeli (IPv4 + IPv6, adresleri sırayla dene) — look/fiber_net.h tcp_dial.
-    // Fiber içinde bağlanırken ve ad çözerken yalnız fiber bekler.
+    // Go net.Dial model (IPv4 + IPv6, try the addresses in order) — look/fiber_net.h tcp_dial.
+    // When connecting and resolving names inside a fiber only the fiber waits.
     {
         bool resolved = false, timed_out = false;
         auto s = look::tcp_dial(cfg_.host, cfg_.port, cfg_.connect_timeout_ms, resolved, timed_out);
@@ -267,7 +267,7 @@ void MySQLClient::do_connect() {
         sock_ = s;
     }
 
-    // Nagle algoritmasını kapat — küçük paketlerde 40ms gecikmeyi önler
+    // Disable the Nagle algorithm — avoids a 40ms delay on small packets
     {
         int nd = 1;
 #ifdef _WIN32
@@ -279,10 +279,10 @@ void MySQLClient::do_connect() {
 
     set_socket_timeout(cfg_.query_timeout_ms);
     do_handshake(cfg_.user, cfg_.password, cfg_.database);
-    // NO_BACKSLASH_ESCAPES modunu devre dışı bırak — aksi hâlde escape() güvensiz olur
-    // Yalnız NO_BACKSLASH_ESCAPES'i çıkarır; katı kipi (STRICT_*) KURMAZ — sunucunun kipi korunur.
-    // Kaçış güvenliği buna bağlı değil (db::escape '' ikiler, sorgular gerçek parametre bağlar),
-    // ama başarısızlık eskiden tamamen yutuluyordu: günlüğe yaz, bağlantı sürer.
+    // Disable NO_BACKSLASH_ESCAPES mode — otherwise escape() becomes unsafe
+    // Only removes NO_BACKSLASH_ESCAPES; it does NOT set strict mode (STRICT_*) — the server's mode is preserved.
+    // Escape safety does not depend on this (db::escape doubles '', queries bind real parameters),
+    // but the failure used to be swallowed entirely: log it, the connection continues.
     try { query("SET SESSION sql_mode = REPLACE(@@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES', '')"); }
     catch (const std::exception& e) {
         Logger::instance().log(LogLevel::LOG_WARN, "db",
@@ -306,20 +306,20 @@ bool MySQLClient::ping() {
 // ── ensure_connected ──────────────────────────────────────────────────────────
 
 void MySQLClient::ensure_connected() {
-    // Sunucu bosta bekleyen baglantiyi kapattiysa (wait_timeout, yeniden baslatma, KILL) bunu
-    // sorguyu GONDERMEDEN anla: eskiden ilk sorgu kapali sokete gidip hata veriyordu (sabahin ilk
-    // istegi 500). Gonderilmis bir sorgu asla tekrarlanmaz — bu yalniz gonderimden onceki yoklama.
-    // Okuma tamponunda (ya da TLS tamponunda) okunmamış bayt kaldıysa önceki bir cevap yarıda
-    // bırakılmıştır (ayrıştırma hatası): bu bağlantıda okunan her şey bir sorgu geriden gelirdi.
-    // Soketteki artığı idle_socket_unusable görür; tampondakini o göremez.
+    // If the server closed an idle waiting connection (wait_timeout, restart, KILL), detect it
+    // WITHOUT SENDING the query: previously the first query went to the closed socket and failed (the first
+    // request of the morning was a 500). A query that has been sent is never repeated — this is only the probe before sending.
+    // If unread bytes remain in the read buffer (or the TLS buffer), an earlier answer
+    // was left half-read (parse error): everything read on this connection would be one query behind.
+    // idle_socket_unusable sees the leftover on the socket; it cannot see what is in the buffer.
     bool unread = rbuf_len_ != rbuf_pos_;
 #ifndef _WIN32
     if (ssl_ && SSL_pending((SSL*)ssl_) > 0) unread = true;
 #endif
     if (sock_ != SOCK_INVALID && (unread || idle_socket_unusable(sock_))) disconnect();
-    if (sock_ != SOCK_INVALID) return;  // socket alive — skip round-trip ping
-    // Transaction icinde kopan baglantinin yerine yenisi ACILMAZ: sunucu transaction'i geri aldi;
-    // yeni baglantida sonraki komutlar transaction DISINDA kalici yazilirdi (sessiz tutarsizlik).
+    if (sock_ != SOCK_INVALID) return;  // socket alive — skip the round-trip ping
+    // A connection that drops inside a transaction is NOT replaced with a new one: the server rolled the transaction back;
+    // on a new connection the following commands would be written permanently OUTSIDE the transaction (silent inconsistency).
     if (in_txn_) {
         in_txn_ = false;
         throw std::runtime_error("db: the connection was closed inside a transaction; "
@@ -341,9 +341,9 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
 
 #ifndef _WIN32
     // ── TLS path: SSL_read ────────────────────────────────────────────────────
-    // Fiber içinde TLS tamponu boşsa soket okunabilir olana dek yalnız fiber bekler.
-    // (Eskiden burada düz bloklayan okuma vardı: uzak/yönetilen veritabanı = TLS, ve
-    // yavaş bir sorgu o iş parçacığındaki bütün istekleri bekletiyordu.)
+    // Inside a fiber, if the TLS buffer is empty only the fiber waits until the socket is readable.
+    // (Previously there was a plain blocking read here: remote/managed database = TLS, and
+    // one slow query held up all requests on that thread.)
     if (ssl_) {
         SSL* s = (SSL*)ssl_;
         while (received < len) {
@@ -358,10 +358,10 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
     }
 #endif
 
-    // ── Düz TCP: tamponlu okuma ───────────────────────────────────────────────
-    // Bir recv tamponu doldurur, paketler (başlık + gövde) tampondan verilir. Eskiden her paket
-    // iki recv'di (4 bayt başlık, sonra gövde): tek satırlık bir SELECT ~30 sistem çağrısı.
-    // Tampondan büyük istek (büyük satır/BLOB) tampon boşken doğrudan hedefe okunur.
+    // ── Plain TCP: buffered read ───────────────────────────────────────────────
+    // One recv fills the buffer, packets (header + body) are served from the buffer. Previously each packet was
+    // two recvs (4-byte header, then body): a one-line SELECT took ~30 system calls.
+    // A request larger than the buffer (big row/BLOB) is read directly into the destination when the buffer is empty.
     if (!rbuf_) rbuf_.reset(new uint8_t[RBUF_SIZE]);
     while (received < len) {
         size_t avail = rbuf_len_ - rbuf_pos_;
@@ -385,7 +385,7 @@ bool MySQLClient::recv_bytes(uint8_t* buf, size_t len) {
     return true;
 }
 
-// Düz TCP soketten en az 1, en çok cap bayt. <=0: bağlantı bitti (disconnect edildi).
+// From the plain TCP socket at least 1, at most cap bytes. <=0: connection ended (disconnected).
 int MySQLClient::recv_some(uint8_t* buf, size_t cap) {
     // ── Fiber path: non-blocking recv + cooperative yield ─────────────────────
     if (Fiber::current()) {
@@ -397,19 +397,19 @@ int MySQLClient::recv_some(uint8_t* buf, size_t cap) {
             int e = errno;
             if (e != EAGAIN && e != EWOULDBLOCK) { disconnect(); return -1; }
 
-            // Kısa poll + askı (bkz. fiber_io.h). Süre sınırı query_timeout'tur: SO_RCVTIMEO
-            // fiber beklemesinde işlemez — eskiden yanıt vermeyen sunucu isteği süresiz tutuyordu.
+            // Short poll + suspend (see fiber_io.h). The time limit is query_timeout: SO_RCVTIMEO
+            // does not work while a fiber waits — previously an unresponsive server held the request indefinitely.
             int w = fiber_wait_readable((int)sock_, rcv_tmo_ms_);
-            if (w == 1) continue;              // okunabilir — recv'e dön
-            if (w == 0) { disconnect(); return -1; }   // süre doldu
-            // Zamanlayıcı yok / desteklenmiyor — bloklayan recv
+            if (w == 1) continue;              // readable — go back to recv
+            if (w == 0) { disconnect(); return -1; }   // time is up
+            // No timer / not supported — blocking recv
             int rb = ::recv(sock_, (char*)buf, (int)cap, 0);
             if (rb <= 0) { disconnect(); return -1; }
             return rb;
         }
     }
 
-    // ── Thread path: blocking recv — blocking-ok: fiber yok (komut satırı, kurulum) ──
+    // ── Thread path: blocking recv — blocking-ok: no fibers (command line, setup) ──
     int r = ::recv(sock_, (char*)buf, (int)cap, 0);
     if (r <= 0) { disconnect(); return -1; }
     return r;
@@ -417,7 +417,7 @@ int MySQLClient::recv_some(uint8_t* buf, size_t cap) {
 
 void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
 #ifndef _WIN32
-    // Gönderme tamponu doluysa fiber içinde yalnız fiber bekler (fiber dışı: SO_SNDTIMEO).
+    // If the send buffer is full, only the fiber waits inside a fiber (outside a fiber: SO_SNDTIMEO).
     if (!look::fiber_send_all((int)sock_, (SSL*)ssl_, buf, len, rcv_tmo_ms_)) {
         bool tls = ssl_ != nullptr;
         disconnect();
@@ -426,7 +426,7 @@ void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
 #else
     size_t sent = 0;
     while (sent < len) {
-        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), MSG_NOSIGNAL);   // SIGPIPE yok: kapali sokette EPIPE
+        int r = send(sock_, (const char*)(buf + sent), (int)(len - sent), MSG_NOSIGNAL);   // No SIGPIPE: EPIPE on a closed socket
         if (r <= 0) { disconnect(); throw std::runtime_error("db: send failed — connection lost"); }
         sent += r;
     }
@@ -434,17 +434,17 @@ void MySQLClient::send_bytes(const uint8_t* buf, size_t len) {
 }
 
 std::vector<uint8_t> MySQLClient::read_packet(uint8_t& seq) {
-    // Multi-packet devam (0xFFFFFF): 16 MB'i asan payload sunucu tarafindan TAM-0xFFFFFF
-    // paketlere bolunur; alici, uzunlugu 0xFFFFFF'ten KUCUK bir paket gelene kadar okuyup
-    // BIRLESTIRMELI. Bu mantik olmadan read_packet ilk 16 MB'i tam paket sanip doner,
-    // sonraki cagri ayni payload'in devam baytlarini BASLIK okur -> akis desenkronize ->
-    // havuzdaki baglanti sessizce YANLIS VERI doner (LONGBLOB / genis SELECT * / buyuk
-    // GROUP_CONCAT ile tetiklenir). Normal <0xFFFFFF paket: donguyu bir kez doner, break
-    // -> davranis onceki tek-paket haliyle ayni.
-    // Toplam cap: multi-packet ile 24-bit alan artik ust sinir DEGIL -> WS disiplini gibi
-    // acik cap (yoksa kotu niyetli sunucu sonsuz 0xFFFFFF devamiyla bellek tuketir).
-    // Birleştirme mantığı look/mysql_wire_parse.h'de (saf, tablo-test edilebilir). Buradaki
-    // reader yalnız socket recv'i sağlar; cap + 0xFFFFFF devam kararı header'da tek noktada.
+    // Multi-packet continuation (0xFFFFFF): a payload over 16 MB is split by the server into EXACTLY-0xFFFFFF
+    // packets; the receiver MUST keep reading and JOIN until a packet whose length is LESS than 0xFFFFFF
+    // arrives. Without this logic read_packet would take the first 16 MB for a complete packet and return,
+    // the next call would read the continuation bytes of the same payload as a HEADER -> the stream desynchronizes ->
+    // the pooled connection silently returns WRONG DATA (triggered by LONGBLOB / wide SELECT * / large
+    // GROUP_CONCAT). A normal <0xFFFFFF packet: goes around the loop once, break
+    // -> behavior is the same as the earlier single-packet form.
+    // Total cap: with multi-packet the 24-bit field is no longer an upper bound -> an explicit cap like the WS discipline
+    // (otherwise a malicious server would exhaust memory with endless 0xFFFFFF continuations).
+    // The joining logic is in look/mysql_wire_parse.h (pure, table-testable). The reader here
+    // only provides the socket recv; the cap + 0xFFFFFF continuation decision is in one place, in the header.
     return look::mysql_reassemble(
         [this](uint8_t* buf, size_t n) { return recv_bytes(buf, n); }, seq);
 }
@@ -452,9 +452,9 @@ std::vector<uint8_t> MySQLClient::read_packet(uint8_t& seq) {
 void MySQLClient::send_packet(const std::vector<uint8_t>& data, uint8_t seq) {
     uint32_t len = (uint32_t)data.size();
     uint8_t hdr[4] = {(uint8_t)len,(uint8_t)(len>>8),(uint8_t)(len>>16),seq};
-    // Küçük paket başlıkla tek send (eskiden iki: her biri ayrı sistem çağrısı + sunucuyu ayrı
-    // uyandırma). Büyük paket (BLOB) kopyalanmaz — iki send. Tampon 4 KB: fiber yığınında
-    // daha büyük bir çerçeve her fiber için sayfa işler.
+    // A small packet goes out with its header in a single send (previously two: each a separate system call + a separate
+    // wake-up of the server). A large packet (BLOB) is not copied — two sends. The buffer is 4 KB: a
+    // larger frame on a fiber stack touches pages for every fiber.
     if (data.size() <= 4092) {
         uint8_t one[4096];
         std::memcpy(one, hdr, 4);
@@ -468,26 +468,26 @@ void MySQLClient::send_packet(const std::vector<uint8_t>& data, uint8_t seq) {
 
 // ── MySQL authentication ───────────────────────────────────────────────────────
 
-// ── caching_sha2_password (MySQL 8.0+ VARSAYILAN eklentisi) ──────────────────
+// ── caching_sha2_password (the MySQL 8.0+ DEFAULT plugin) ──────────────────
 //
-// ESKİ DURUM: yalnızca `mysql_native_password` uygulanmıştı ve eklenti adı
-// handshake yanıtına SABİT yazılıyordu. Sunucunun bildirdiği eklenti okunmuyor,
-// AuthSwitchRequest (0xFE) hiç ele alınmıyordu. Sonuç:
-//   MySQL 5.7 / MariaDB  → çalışıyor
-//   MySQL 8.0 (2018'den beri VARSAYILAN caching_sha2_password) → BAĞLANAMIYOR
-//   MySQL 8.4 (native eklenti kapalı) / 9.x (kaldırıldı)       → BAĞLANAMIYOR
-// Yani dil pratikte MySQL 5.7 dilindeydi.
+// OLD STATE: only `mysql_native_password` was implemented and the plugin name was
+// WRITTEN FIXED in the handshake response. The plugin announced by the server was not read and
+// AuthSwitchRequest (0xFE) was not handled at all. Result:
+//   MySQL 5.7 / MariaDB  -> works
+//   MySQL 8.0 (DEFAULT caching_sha2_password since 2018) -> CANNOT CONNECT
+//   MySQL 8.4 (native plugin disabled) / 9.x (removed)       -> CANNOT CONNECT
+// That is, the language effectively spoke MySQL 5.7.
 //
-// Hızlı yol:  XOR( SHA256(şifre), SHA256( SHA256(SHA256(şifre)) + nonce ) )
-// Tam yol:    sunucu 0x04 ister → TLS yoksa sunucudan RSA açık anahtarı istenir
-//             (0x02) ve (şifre+NUL) XOR nonce, RSA-OAEP ile şifrelenir.
-// Taze sunucuda önbellek boş olduğu için İLK bağlantı daima tam yoldan geçer.
+// Fast path:  XOR( SHA256(password), SHA256( SHA256(SHA256(password)) + nonce ) )
+// Full path:  the server asks for 0x04 -> without TLS the RSA public key is requested from the server
+//             (0x02) and (password+NUL) XOR nonce is encrypted with RSA-OAEP.
+// On a fresh server the cache is empty, so the FIRST connection always takes the full path.
 //
-// Kripto OpenSSL'den alınıyor — kod tabanında SHA-256'nın 8 ayrı kopyası var
-// (S2 kümesi, haritada kayıtlı); dokuzuncuyu eklemiyoruz.
+// The crypto comes from OpenSSL — the code base has 8 separate copies of SHA-256
+// (the S2 cluster); we do not add a ninth.
 #ifndef _WIN32
-// OpenSSL 3.0 low-level SHA256_* API'sini kullanımdan kaldırdı; EVP tek geçitli
-// SHA-256 yardımcı — biri d2+nonce zincirlenmiş, diğeri tek bloklu.
+// OpenSSL 3.0 deprecated the low-level SHA256_* API; EVP single-shot
+// SHA-256 helper — one chains d2+nonce, the other is single-block.
 static void evp_sha256(const unsigned char* a, size_t alen,
                        const unsigned char* b, size_t blen,
                        unsigned char out[SHA256_DIGEST_LENGTH]) {
@@ -514,7 +514,7 @@ static std::vector<uint8_t> caching_sha2_scramble(const std::string& password,
     return out;
 }
 
-// (şifre + NUL) XOR nonce → sunucunun RSA açık anahtarıyla OAEP şifrele.
+// (password + NUL) XOR nonce -> encrypt with OAEP using the server's RSA public key.
 static std::vector<uint8_t> caching_sha2_rsa_encrypt(const std::string& password,
                                                      const std::string& nonce,
                                                      const std::string& pem) {
@@ -577,10 +577,10 @@ void MySQLClient::do_handshake(const std::string& user,
 
     p++; // protocol version
     while (p < end && *p) p++; if (p < end) p++; // server version (null-terminated)
-    // Sınır-güvenli: kısa/kötü niyetli handshake paketi kontrolsüz okumalarla
-    // (challenge 8 bayt, auth_len, cap flags) buffer sonrasını overread edebilirdi
-    // (MITM/kötü sunucu — TLS yok). Sabit blok = thread(4)+challenge(8)+filler(1)+
-    // cap1(2)+charset+status(3)+cap2(2)+auth_len(1)+reserved(10) = 31 bayt.
+    // Bounds-safe: a short/malicious handshake packet could overread past the buffer with unchecked reads
+    // (challenge 8 bytes, auth_len, cap flags)
+    // (MITM/malicious server — no TLS). Fixed block = thread(4)+challenge(8)+filler(1)+
+    // cap1(2)+charset+status(3)+cap2(2)+auth_len(1)+reserved(10) = 31 bytes.
     if (end - p < 31) throw std::runtime_error("db: malformed handshake packet (too short)");
     p += 4; // thread id
 
@@ -597,10 +597,10 @@ void MySQLClient::do_handshake(const std::string& user,
     int part2_len = ((int)auth_len - 8) > 13 ? (int)auth_len - 8 : 13;
     if (p + part2_len <= end) { challenge += std::string(p, p + part2_len - 1); p += part2_len; }
 
-    // Sunucunun bildirdiği kimlik doğrulama eklentisi (CLIENT_PLUGIN_AUTH ile gelir).
-    // ESKİ HATA: bu alan HİÇ okunmuyordu; cevap her zaman mysql_native_password
-    // olarak gönderiliyordu. MySQL 8'in varsayılanı caching_sha2_password olduğu
-    // için bağlantı kurulamıyordu.
+    // The authentication plugin announced by the server (comes with CLIENT_PLUGIN_AUTH).
+    // OLD BUG: this field was NOT READ at all; the answer was always sent as mysql_native_password.
+    // Since MySQL 8's default is caching_sha2_password
+    // the connection could not be established.
     std::string srv_plugin;
     while (p < end && *p) srv_plugin.push_back((char)*p++);
     if (srv_plugin.empty()) srv_plugin = "mysql_native_password";
@@ -622,21 +622,21 @@ void MySQLClient::do_handshake(const std::string& user,
     };
 
     std::string cur_plugin = srv_plugin;
-    // CLIENT_MULTI_STATEMENTS (0x10000) ve CLIENT_LOCAL_FILES (0x80) İSTENMEZ: kullanıcı SQL'i
-    // yalnız hazırlanmış ifadeyle gider (ikisini de kullanamaz); metin sorgusu yalnız sabit
-    // BEGIN/COMMIT/SAVEPOINT. Bayrak açıkken "a; b" metin sorgusu ikinci sonucu bağlantıda
-    // bırakır, kötü niyetli sunucu da LOCAL INFILE isteğiyle dosya isteyebilirdi.
+    // CLIENT_MULTI_STATEMENTS (0x10000) and CLIENT_LOCAL_FILES (0x80) are NOT REQUESTED: user SQL
+    // goes only as a prepared statement (it can use neither); the text query is only the fixed
+    // BEGIN/COMMIT/SAVEPOINT. With the flag on, an "a; b" text query would leave the second result on the connection,
+    // and a malicious server could ask for a file with a LOCAL INFILE request.
     uint32_t client_flags = 0x000EA605;
     if (!database.empty()) client_flags |= 0x00000008;
 
     uint8_t auth_seq = 1;
     if (cfg_.tls) {
 #ifndef _WIN32
-        // ── MySQL SSLRequest → TLS upgrade (SIRA KRİTİK) ─────────────────────────
-        // Sıra: initial handshake (yukarıda okundu, plaintext) → SSLRequest (CLIENT_SSL
-        // flag, auth verisi YOK, seq 1) → SSL_connect (upgrade) → auth artık TLS üstünde
-        // (seq 2). Auth KESİNLİKLE SSL_connect'ten SONRA gönderilir (ssl_ set edilince
-        // send_bytes SSL_write'a geçer) — aksi halde credentials plaintext sızardı.
+        // ── MySQL SSLRequest -> TLS upgrade (ORDER IS CRITICAL) ─────────────────────────
+        // Order: initial handshake (read above, plaintext) -> SSLRequest (CLIENT_SSL
+        // flag, NO auth data, seq 1) -> SSL_connect (upgrade) -> auth now over TLS
+        // (seq 2). Auth is sent STRICTLY AFTER SSL_connect (once ssl_ is set
+        // send_bytes switches to SSL_write) — otherwise credentials would leak in plaintext.
         client_flags |= 0x00000800;  // CLIENT_SSL
         std::vector<uint8_t> ssl_req;
         ssl_req.push_back(client_flags&0xFF); ssl_req.push_back((client_flags>>8)&0xFF);
@@ -644,10 +644,10 @@ void MySQLClient::do_handshake(const std::string& user,
         ssl_req.insert(ssl_req.end(), {0xFF,0xFF,0xFF,0x00}); // max packet size
         ssl_req.push_back(45);                                // charset (utf8mb4)
         ssl_req.insert(ssl_req.end(), 23, 0);                 // reserved
-        send_packet(ssl_req, 1);                              // plaintext — henüz ssl_ yok
-        // Okuma tamponunda TLS'ten önce gelmiş fazladan düz metin varsa reddet: o baytlar
-        // şifreli oturumun ilk cevabıymış gibi okunurdu (STARTTLS komut enjeksiyonu sınıfı).
-        // Dürüst sunucu, istemcinin TLS el sıkışmasını beklerken hiçbir şey göndermez.
+        send_packet(ssl_req, 1);                              // plaintext — there is no ssl_ yet
+        // If the read buffer has extra plaintext that arrived before TLS, reject: those bytes would be
+        // read as if they were the first reply of the encrypted session (the STARTTLS command-injection class).
+        // An honest server sends nothing while waiting for the client's TLS handshake.
         if (rbuf_len_ != rbuf_pos_) {
             disconnect();
             throw std::runtime_error("db mysql: the server sent data before TLS started — connection refused");
@@ -657,10 +657,10 @@ void MySQLClient::do_handshake(const std::string& user,
         SSL* s = SSL_new(ctx);
         if (!s) throw std::runtime_error("db mysql: SSL_new failed (TLS)");
         SSL_set_fd(s, (int)sock_);
-        // SNI (adla bağlanınca) + verify modunda ad doğrulaması: IP → IP SAN, ad → DNS adı
-        // (look/tls_peer.h, Go crypto/tls). SSL_VERIFY_PEER kötü/güvenilmez cert'te SSL_connect'i
-        // başarısız kılar. Ad doğrulaması kurulamazsa (nadir — bellek/bozuk string) bağlanılmaz:
-        // yoksa zincir doğrulanır ama ad SESSİZCE denetlenmez ("geçerli CA + yanlış host" MITM).
+        // SNI (when connecting by name) + name verification in verify mode: IP -> IP SAN, name -> DNS name
+        // (look/tls_peer.h, Go crypto/tls). SSL_VERIFY_PEER makes SSL_connect fail
+        // on a bad/untrusted cert. If name verification cannot be set up (rare — memory/corrupt string) do not connect:
+        // otherwise the chain is verified but the name is SILENTLY not checked ("valid CA + wrong host" MITM).
         if (cfg_.tls_verify) SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
         if (!look::tls_set_peer(s, cfg_.host, cfg_.tls_verify)) {
             SSL_free(s);
@@ -673,8 +673,8 @@ void MySQLClient::do_handshake(const std::string& user,
             throw std::runtime_error(hs == 0 ? std::string("db mysql: TLS handshake timed out")
                                              : "db mysql: TLS handshake failed: " + why);
         }
-        ssl_     = s;   // bundan sonra send/recv_bytes SSL üstünden (auth dahil)
-        auth_seq = 2;   // auth paketi TLS içinde, SSLRequest'ten sonraki seq
+        ssl_     = s;   // from here on send/recv_bytes go over SSL (including auth)
+        auth_seq = 2;   // the auth packet is inside TLS, with the seq after SSLRequest
 #else
         throw std::runtime_error("db mysql: TLS (mysqls://) is not supported in this build "
                                  "(the Windows build is compiled without OpenSSL). Use the Linux build.");
@@ -697,29 +697,29 @@ void MySQLClient::do_handshake(const std::string& user,
 
     send_packet(auth_pkt, auth_seq);
 
-    // Kimlik doğrulama diyaloğu. ESKİ HATA: yalnızca 0xFF (hata) kontrol ediliyor,
-    // 0xFE (AuthSwitchRequest) ve 0x01 (AuthMoreData) HİÇ ele alınmıyordu — oysa
-    // CLIENT_PLUGIN_AUTH bayrağı set edildiği için sunucu bunları göndermeye
-    // yetkiliydi. MySQL 8 tam olarak bunu yapıyor ve diyalog kopuyordu.
+    // Authentication dialog. OLD BUG: only 0xFF (error) was checked,
+    // 0xFE (AuthSwitchRequest) and 0x01 (AuthMoreData) were NOT handled at all — yet
+    // since the CLIENT_PLUGIN_AUTH flag is set the server was
+    // entitled to send them. MySQL 8 does exactly this and the dialog broke.
     auto auth_error = [&](const std::vector<uint8_t>& r) {
         std::string msg = "db: authentication failed";
         if (r.size() > 3) {
             size_t off = 3;
             if (r[off] == '#') off += 6;
-            if (off > r.size()) off = r.size();   // kısa hata paketi: aralık dışına çıkma (R24)
+            if (off > r.size()) off = r.size();   // short error packet: do not go out of range (R24)
             msg = "db: " + std::string(r.begin() + off, r.end());
         }
         throw std::runtime_error(msg);
     };
 
-    for (int round = 0; round < 5; ++round) {   // sonsuz diyaloğa karşı tavan
+    for (int round = 0; round < 5; ++round) {   // ceiling against an endless dialog
         auto resp = read_packet(seq);
         if (resp.empty()) throw std::runtime_error("db: empty authentication response");
         if (resp[0] == 0xFF) auth_error(resp);
-        if (resp[0] == 0x00) return;            // OK — doğrulandı
+        if (resp[0] == 0x00) return;            // OK — authenticated
 
         if (resp[0] == 0xFE) {
-            // AuthSwitchRequest: [0xFE][plugin adı NUL][yeni nonce]
+            // AuthSwitchRequest: [0xFE][plugin name NUL][new nonce]
             size_t i = 1;
             std::string np;
             while (i < resp.size() && resp[i]) np.push_back((char)resp[i++]);
@@ -734,23 +734,23 @@ void MySQLClient::do_handshake(const std::string& user,
         }
 
         if (resp[0] == 0x01) {
-            // AuthMoreData — caching_sha2_password akışı
+            // AuthMoreData — caching_sha2_password flow
             uint8_t code = resp.size() > 1 ? resp[1] : 0;
-            if (code == 0x03) continue;         // fast auth başarılı → sıradaki paket OK
+            if (code == 0x03) continue;         // fast auth succeeded -> the next packet is OK
             if (code == 0x04) {
-                // Tam kimlik doğrulama (önbellek boş → ilk bağlantı).
+                // Full authentication (cache empty -> first connection).
 #ifndef _WIN32
                 if (ssl_) {
-                    // TLS AKTİF → kanal zaten şifreli; şifre CLEARTEXT (NUL-sonlu) gönderilir.
-                    // RSA açık-anahtar dansı YAPILMAZ (sunucu TLS'te RSA vermez → eski kod
-                    // "did not provide an RSA public key" ile çökerdi). MySQL protokolü tam bunu ister.
+                    // TLS ACTIVE -> the channel is already encrypted; the password is sent in CLEARTEXT (NUL-terminated).
+                    // The RSA public-key dance is NOT done (the server gives no RSA over TLS -> the old code
+                    // would have crashed with "did not provide an RSA public key"). The MySQL protocol requires exactly this.
                     std::vector<uint8_t> cleartext(password.begin(), password.end());
                     cleartext.push_back(0x00);
                     send_packet(cleartext, (uint8_t)(seq + 1));
                     continue;
                 }
 #endif
-                // TLS yok → sunucudan RSA açık anahtarı istenir (0x02), şifre RSA-OAEP ile.
+                // No TLS -> the RSA public key is requested from the server (0x02), the password goes RSA-OAEP encrypted.
 #ifdef _WIN32
                 throw std::runtime_error(
                     "db mysql: caching_sha2_password full authentication is not supported in this build "
@@ -797,10 +797,10 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     const uint8_t* end = p + resp.size();
 
     if (resp[0] == 0xFF) {
-        // BOUNDS: kötü/MITM sunucu kısa hata paketi ({0xFF} veya kırpık) gönderirse
-        // read_u16 (guard'sız p[0]|p[1]) buffer sonrasını OKUR (OOB) — handshake yolu
-        // (:505) korunmuş ama query yolu değildi (denetçi #6). p+=6 ve std::string(p,end)
-        // de aşabilir. Hepsini sınırla.
+        // BOUNDS: if a malicious/MITM server sends a short error packet ({0xFF} or truncated)
+        // read_u16 (unguarded p[0]|p[1]) READS past the buffer (OOB) — the handshake path
+        // (:505) was protected but the query path was not. p+=6 and std::string(p,end)
+        // can also overrun. Bound all of them.
         p++;
         uint16_t code = (p + 2 <= end) ? read_u16(p) : 0;
         if (p < end && *p == '#') { p += 6; if (p > end) p = end; }
@@ -816,8 +816,8 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     }
 
     uint64_t col_count = read_lenenc(p, end);
-    // Sunucu-verili col_count sanity cap — kötü niyetli sunucu 2^64 verirse
-    // kolon-okuma döngüsü kaynak tüketir/asılır. Gerçek query'ler ≪65535 sütun.
+    // Server-supplied col_count sanity cap — if a malicious server gives 2^64
+    // the column-read loop exhausts resources/hangs. Real queries are far below 65535 columns.
     if (col_count > MYSQL_MAX_COLUMNS)
         throw std::runtime_error("db mysql: column count limit exceeded (malicious server?)");
     struct ColInfo { std::string name; uint8_t type; };
@@ -844,11 +844,11 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
     uint16_t st = 0;
     while (true) {
         auto row_pkt = read_packet(seq);
-        // Satırlar arasında hata (sorgu yarıda kesildi: zaman aşımı, KILL, dönüşüm hatası) →
-        // eskiden döngü sessizce biter, EKSİK sonuç tam sonuç gibi dönerdi.
+        // Error between rows (query cut off midway: timeout, KILL, conversion error) ->
+        // previously the loop ended silently and an INCOMPLETE result was returned as if complete.
         if (!row_pkt.empty() && row_pkt[0] == 0xFF) throw_err_packet(row_pkt, "db: query error: ");
         if (row_pkt.empty() || (row_pkt[0] == 0xFE && row_pkt.size() < 9)) {
-            if (row_pkt.size() >= 5) {   // EOF: [FE][uyari 2][durum 2]
+            if (row_pkt.size() >= 5) {   // EOF: [FE][warnings 2][status 2]
                 st = (uint16_t)(row_pkt[3] | (row_pkt[4] << 8));
                 in_txn_ = (st & 0x01) != 0;
             }
@@ -860,7 +860,7 @@ std::vector<DbRow> MySQLClient::query(const std::string& sql) {
         for (const auto& col : columns) {
             DbValue dv;
             if (rp < re && *rp == 0xFB) {
-                rp++;             // NULL marker'ı tüket
+                rp++;             // consume the NULL marker
                 dv.is_null = true;
             } else {
                 dv.str  = read_lenenc_str(rp, re);
@@ -889,12 +889,12 @@ MySQLClient::StmtMeta MySQLClient::stmt_prepare(const std::string& sql) {
     if (resp[0] == 0xFF) {
         const uint8_t* p = resp.data() + 1;
         const uint8_t* end = resp.data() + resp.size();
-        // Sınır-güvenli: kısa 0xFF paketinde (sadece FF) memcpy 2-bayt overread
-        // yapıp p'yi end'in ötesine taşırdı → std::string(p,end) UB. Kötü niyetli/
-        // MITM sunucu tetikler. error-code (2) ve '#SQLSTATE' (6) sınır-kontrollü atla.
+        // Bounds-safe: on a short 0xFF packet (just FF) memcpy would overread 2 bytes
+        // and move p past end -> std::string(p,end) UB. Triggered by a malicious/
+        // MITM server. Skip error-code (2) and '#SQLSTATE' (6) with bounds checks.
         last_error_code_ = 0;
-        if (p + 2 <= end) { last_error_code_ = (uint16_t)(p[0] | (p[1] << 8)); p += 2; } else p = end;   // hata kodu (1243/1461 ayrımı)
-        if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE' işareti
+        if (p + 2 <= end) { last_error_code_ = (uint16_t)(p[0] | (p[1] << 8)); p += 2; } else p = end;   // error code (1243/1461 distinction)
+        if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE' marker
         throw std::runtime_error("db: " + std::string(p, end));
     }
     if (resp[0] != 0x00 || resp.size() < 12)
@@ -925,7 +925,7 @@ void MySQLClient::stmt_close(uint32_t stmt_id) {
 
 std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                                               const std::vector<DbParam>& params) {
-    // max_allowed_packet koruması: varsayılan 64 MB
+    // max_allowed_packet protection: default 64 MB
     static constexpr size_t MYSQL_MAX_PACKET = 64 * 1024 * 1024;
     size_t total_str = 0;
     for (const auto& p : params)
@@ -957,7 +957,7 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
             uint8_t tc = 0xFE; // BLOB → string
             if (params[i].kind == DbParam::INT_VAL)   tc = 0x08; // LONGLONG
             if (params[i].kind == DbParam::FLOAT_VAL) tc = 0x05; // DOUBLE
-            if (params[i].kind == DbParam::BOOL_VAL)  tc = 0x01; // MYSQL_TYPE_TINY (0x10=BIT'ti — YANLIŞ; BIT lenenc bekler, deger 1-bayt gonderiliyordu → "Incorrect arguments")
+            if (params[i].kind == DbParam::BOOL_VAL)  tc = 0x01; // MYSQL_TYPE_TINY (0x10=BIT was WRONG; BIT expects lenenc, the value was being sent as 1 byte -> "Incorrect arguments")
             pkt.push_back(tc); pkt.push_back(0x00); // unsigned_flag=0
         }
 
@@ -1001,10 +1001,10 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     if (resp[0] == 0xFF) {
         const uint8_t* p = resp.data() + 1;
         const uint8_t* end = resp.data() + resp.size();
-        // Sınır-güvenli (stmt_prepare error-path ile aynı): kısa 0xFF paketinde
-        // memcpy 2-bayt overread + std::string(p,end) UB'sini önle.
+        // Bounds-safe (same as the stmt_prepare error path): prevent the
+        // 2-byte memcpy overread + std::string(p,end) UB on a short 0xFF packet.
         last_error_code_ = 0;
-        if (p + 2 <= end) { last_error_code_ = (uint16_t)(p[0] | (p[1] << 8)); p += 2; } else p = end;   // hata kodu (1243/1461 ayrımı)
+        if (p + 2 <= end) { last_error_code_ = (uint16_t)(p[0] | (p[1] << 8)); p += 2; } else p = end;   // error code (1243/1461 distinction)
         if (p < end && *p == '#' && p + 6 <= end) p += 6;   // '#SQLSTATE'
         throw std::runtime_error("db: " + std::string(p, end));
     }
@@ -1023,8 +1023,8 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     const uint8_t* p = resp.data();
     const uint8_t* end = p + resp.size();
     uint64_t col_count = read_lenenc(p, end);
-    // Sanity cap — kötü niyetli sunucu 2^64 col_count verirse döngü + `(int)col_count`
-    // null-bitmap boyutu (satır ~657) taşar/kaynak tüketir.
+    // Sanity cap — if a malicious server gives a 2^64 col_count the loop + the `(int)col_count`
+    // null-bitmap size (line ~657) overflows/exhausts resources.
     if (col_count > MYSQL_MAX_COLUMNS)
         throw std::runtime_error("db mysql: column count limit exceeded (malicious server?)");
 
@@ -1050,10 +1050,10 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
     uint16_t st = 0;
     while (true) {
         auto row_pkt = read_packet(seq);
-        // Satırlar arasında hata → eksik sonuç sessizce dönerdi (bkz. query()).
+        // Error between rows -> an incomplete result would silently be returned (see query()).
         if (!row_pkt.empty() && row_pkt[0] == 0xFF) throw_err_packet(row_pkt, "db: ");
-        if (row_pkt.empty() || row_pkt[0] == 0xFE) {   // ikili satır 0x00 ile başlar
-            if (row_pkt.size() >= 5) {   // EOF: [FE][uyari 2][durum 2]
+        if (row_pkt.empty() || row_pkt[0] == 0xFE) {   // a binary row starts with 0x00
+            if (row_pkt.size() >= 5) {   // EOF: [FE][warnings 2][status 2]
                 st = (uint16_t)(row_pkt[3] | (row_pkt[4] << 8));
                 in_txn_ = (st & 0x01) != 0;
             }
@@ -1080,15 +1080,15 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                     for (int b=0; b<bytes && rp<re; b++,rp++) v |= ((uint64_t)*rp << (b*8));
                     return (int64_t)v;
                 };
-                // MySQL binary temporal decode. Eskiden DATE/DATETIME/TIMESTAMP/TIME
-                // `default`→read_lenenc_str'e düşüyordu → ham wire baytları dönüyordu
-                // (DATETIME 7, DATE 4 bayt) → docs "string YYYY-MM-DD..." diyor, İHLAL.
-                // Binary format: 1 uzunluk baytı, sonra L veri baytı. KRİTİK: her dal
-                // TAM L bayt tüketmeli, yoksa cursor kayar ve SONRAKİ sütun bozulur
-                // (sessiz bozulma) — bu yüzden sonda rp = p0 + L ile kesin hizalanır.
+                // MySQL binary temporal decode. Previously DATE/DATETIME/TIMESTAMP/TIME
+                // fell into `default`->read_lenenc_str -> raw wire bytes were returned
+                // (DATETIME 7, DATE 4 bytes) -> the docs say "string YYYY-MM-DD...", VIOLATION.
+                // Binary format: 1 length byte, then L data bytes. CRITICAL: each branch
+                // must consume EXACTLY L bytes, otherwise the cursor drifts and the NEXT column is corrupted
+                // (silent corruption) — so at the end rp = p0 + L aligns it exactly.
                 auto read_temporal = [&](bool is_time) -> std::string {
-                    int L = (int)read_le(1);                 // uzunluk baytı (rp bir ilerledi)
-                    const uint8_t* p0 = rp;                  // veri başı
+                    int L = (int)read_le(1);                 // length byte (rp advanced by one)
+                    const uint8_t* p0 = rp;                  // start of data
                     auto g = [&](int off)->int { return (p0+off < re) ? p0[off] : 0; };
                     char buf[48]; buf[0]=0;
                     if (is_time) {
@@ -1120,7 +1120,7 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                             }
                         }
                     }
-                    rp = p0 + L; if (rp > re) rp = re;       // TAM L bayt: cursor hizası garantili
+                    rp = p0 + L; if (rp > re) rp = re;       // EXACTLY L bytes: cursor alignment guaranteed
                     return std::string(buf);
                 };
                 switch(ct) {
@@ -1128,14 +1128,14 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
                     case 0x02: case 0x0D: dv.str = std::to_string(read_le(2)); break;
                     case 0x03: case 0x09: dv.str = std::to_string(read_le(4)); break;
                     case 0x08:            dv.str = std::to_string(read_le(8)); break;
-                    // Dilin tek double formatı (look/format.h) — NaN/Inf + kısa round-trip, her
-                    // sürücüde AYNI metin. (Eski to_string=%f 6-hane hassasiyet kaybı yapardı.)
-                    // Kırpık paket: değer başlatılmamış yığın belleği olarak dönmez (R24)
+                    // The language's single double format (look/format.h) — NaN/Inf + short round-trip, the SAME text
+                    // in every driver. (The old to_string=%f lost precision beyond 6 digits.)
+                    // Truncated packet: the value is not returned as uninitialized stack memory (R24)
                     case 0x04: { float f = 0;  if(rp+4<=re){memcpy(&f,rp,4);rp+=4;} else rp=re; dv.str=look_format_double(f); break; }
                     case 0x05: { double d = 0; if(rp+8<=re){memcpy(&d,rp,8);rp+=8;} else rp=re; dv.str=look_format_double(d); break; }
                     case 0x10:            dv.str = std::to_string(read_le(1)); break;
-                    // Temporal: DATE(0x0A)/NEWDATE(0x0E)/TIMESTAMP(0x07)/DATETIME(0x0C) → tarih,
-                    // TIME(0x0B) → saat. L uzunluğu (0/4/7/11, TIME 0/8/12) formatı belirler.
+                    // Temporal: DATE(0x0A)/NEWDATE(0x0E)/TIMESTAMP(0x07)/DATETIME(0x0C) -> date,
+                    // TIME(0x0B) -> time. The length L (0/4/7/11, TIME 0/8/12) determines the format.
                     case 0x0A: case 0x0E:
                     case 0x07: case 0x0C: dv.str = read_temporal(false); break;
                     case 0x0B:            dv.str = read_temporal(true);  break;
@@ -1152,22 +1152,22 @@ std::vector<DbRow> MySQLClient::stmt_execute(const StmtMeta& m,
 
 std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vector<DbParam>& params) {
     ensure_connected();
-    // USE bugün hazırlanmış-ifade protokolünde reddedilir; desteklenirse veritabanı değişir ve
-    // önbellekteki ifadeler eski veritabanının tablolarına bağlı kalırdı → önbellek boşalır.
+    // USE is rejected in the prepared-statement protocol today; if it were supported the database would change and
+    // cached statements would stay bound to the old database's tables -> the cache is cleared.
     if (sql.size() >= 4 && (sql[0] | 0x20) == 'u' && (sql[1] | 0x20) == 's' && (sql[2] | 0x20) == 'e' &&
         (sql[3] == ' ' || sql[3] == '\t' || sql[3] == '\n'))
         clear_stmt_cache(true);
 
-    last_error_code_ = 0;   // önceki bir hatanın kodu aşağıdaki ayrımı yanıltmasın
+    last_error_code_ = 0;   // so that the code of an earlier error does not mislead the distinction below
     auto it = stmt_cache_.find(sql);
     if (it != stmt_cache_.end()) {
         it->second.used = ++stmt_tick_;
         try {
             return stmt_execute(it->second.meta, params);
         } catch (const std::runtime_error&) {
-            // 1243: ifade sunucuda yok (bağlantı paylaştırıcısı — ProxySQL vb. — başka arka uca
-            // geçti). Sorgu ÇALIŞMADI → yeniden hazırlayıp bir kez denemek güvenli. Başka her hata
-            // olduğu gibi çağırana gider.
+            // 1243: the statement does not exist on the server (a connection multiplexer — ProxySQL etc. — switched to another
+            // backend). The query DID NOT RUN -> re-preparing and trying once is safe. Any other error
+            // goes to the caller as is.
             if (last_error_code_ != 1243 || !is_connected()) throw;
             stmt_cache_.erase(it);
         }
@@ -1178,8 +1178,8 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
     try {
         meta = stmt_prepare(sql);
     } catch (const std::runtime_error&) {
-        // 1461: sunucunun toplam ifade sınırı (max_prepared_stmt_count, bütün istemciler için)
-        // doldu. Bizim önbelleğimizi boşalt ve bu sorguyu önbelleksiz yürüt — sorgu hata vermez.
+        // 1461: the server's total statement limit (max_prepared_stmt_count, for all clients)
+        // is full. Empty our cache and run this query without caching — the query does not fail.
         if (last_error_code_ != 1461 || !is_connected()) throw;
         clear_stmt_cache(true);
         auto m = stmt_prepare(sql);
@@ -1187,12 +1187,12 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
         stmt_close(m.id);
         return rows;
     }
-    if (stmt_cache_.size() >= STMT_CACHE_MAX) {   // en uzun süredir kullanılmayanı kapat
+    if (stmt_cache_.size() >= STMT_CACHE_MAX) {   // close the least recently used one
         auto old = stmt_cache_.begin();
         for (auto i = stmt_cache_.begin(); i != stmt_cache_.end(); ++i)
             if (i->second.used < old->second.used) old = i;
         uint32_t old_id = old->second.meta.id;
-        stmt_cache_.erase(old);   // ÖNCE sil: stmt_close başarısızsa disconnect() haritayı boşaltır
+        stmt_cache_.erase(old);   // Delete FIRST: if stmt_close fails, disconnect() empties the map
         stmt_close(old_id);
         if (!is_connected()) throw std::runtime_error("db: send failed — connection lost");
     }
@@ -1200,8 +1200,8 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
     try {
         return stmt_execute(meta, params);
     } catch (const std::runtime_error&) {
-        // Önbellek yolunun aynası: hazırlama ile yürütme arasında paylaştırıcı arka uç değiştirdiyse
-        // (1243) sorgu ÇALIŞMADI — bir kez yeniden hazırla ve dene. Başka her hata çağırana.
+        // Mirror of the cache path: if the multiplexer switched backend between prepare and execute
+        // (1243) the query DID NOT RUN — re-prepare and try once. Any other error goes to the caller.
         if (last_error_code_ != 1243 || !is_connected()) throw;
         stmt_cache_.erase(sql);
         last_error_code_ = 0;
@@ -1213,34 +1213,34 @@ std::vector<DbRow> MySQLClient::execute(const std::string& sql, const std::vecto
 
 // ── Escape ────────────────────────────────────────────────────────────────────
 
-// Tırnak kaçışı `''` (STANDART SQL) — `\'` DEĞİL.
+// Quote escape is `''` (STANDARD SQL) — NOT `\'`.
 //
-// ESKİ HATA: `'` → `\'` yazılıyordu. MySQL `NO_BACKSLASH_ESCAPES` modunda ters
-// bölüyü kaçış karakteri SAYMAZ; o modda `\'` = "ters bölü + tırnak" demektir →
-// TIRNAK KAPANIR → SQL enjeksiyonu. ÖLÇÜLDÜ (gerçek sunucu, oturum o moda
-// alınarak): `' OR 1=1 -- ` yükü **tüm tabloyu** returned (3/3 satır).
+// OLD BUG: `'` was written as `\'`. In MySQL `NO_BACKSLASH_ESCAPES` mode the backslash
+// is NOT treated as an escape character; in that mode `\'` means "backslash + quote" ->
+// THE QUOTE CLOSES -> SQL injection. MEASURED (real server, with the session put
+// into that mode): the payload `' OR 1=1 -- ` returned the **whole table** (3/3 rows).
 //
-// Bunu tutan tek şey do_connect()'teki `SET SESSION sql_mode = REPLACE(...)`
-// komutunun BAŞARILI olmasıydı. Bu yeterli bir güvenlik zemini değil:
-//   * ProxySQL / bağlantı çoklayıcıları arka uç bağlantılarını multiplex eder —
-//     SET başarılı olur, sonra oturum durumu sessizce kaybolabilir; bağlantı
-//     bozulmaz, yalnızca koruma yok olur.
-//   * Bir ifadenin reddedilmesi bağlantının bozuk olduğu anlamına gelmez
-//     (vekil filtresi, audit eklentisi, governor tek ifadeyi reddedebilir).
-// Asimetri belirleyici: düzeltme tek satır, yanılmanın bedeli SQL enjeksiyonu.
+// The only thing holding this was the SUCCESS of the `SET SESSION sql_mode = REPLACE(...)`
+// command in do_connect(). That is not a sufficient security floor:
+//   * ProxySQL / connection multiplexers multiplex the backend connections —
+//     the SET succeeds, then the session state can be silently lost; the connection
+//     is not broken, only the protection disappears.
+//   * The rejection of a statement does not mean the connection is broken
+//     (a proxy filter, an audit plugin, a governor can reject a single statement).
+// The asymmetry decides: the fix is one line, the cost of being wrong is SQL injection.
 //
-// `''` HER İKİ modda da güvenlidir (standart SQL; MySQL normal modda da kabul
-// eder) → güvenlik artık `SET`'in başarısına BAĞLI DEĞİL. PostgreSQL tarafı
-// zaten `''` kullanıyordu; bu değişiklik iki sürücüyü aynı zemine getirir.
+// `''` is safe in BOTH modes (standard SQL; MySQL accepts it in normal mode too)
+// -> security is no longer DEPENDENT on the success of `SET`. The PostgreSQL side
+// already used `''`; this change brings the two drivers to the same footing.
 //
-// `SET SESSION` KALIYOR — ama artık güvenlik için değil, VERİ SADAKATİ için:
-// NBE modunda aşağıdaki `\\` ikilemesi veriyi bozar (iki ters bölü saklanır).
-// O bir doğruluk meselesi, güvenlik değil.
+// `SET SESSION` STAYS — but no longer for security, for DATA FIDELITY:
+// in NBE mode the `\\` doubling below corrupts data (two backslashes are stored).
+// That is a correctness matter, not a security one.
 std::string MySQLClient::escape(const std::string& s) {
     std::string out; out.reserve(s.size() * 2);
     for (char c : s) {
         switch (c) {
-            case '\'': out += "''";   break;   // standart SQL — NBE modunda da güvenli
+            case '\'': out += "''";   break;   // standard SQL — safe in NBE mode too
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
             case '\n': out += "\\n";  break;
@@ -1254,8 +1254,8 @@ std::string MySQLClient::escape(const std::string& s) {
 
 // ── Packet readers ────────────────────────────────────────────────────────────
 
-// Bu ayrıştırıcılar look/mysql_wire_parse.h'a çıkarıldı (saf, fuzz ile paylaşılan tek
-// tanım). Member'lar tek-satır forwarder — çağrı yerleri değişmez, drift yok.
+// These parsers were extracted to look/mysql_wire_parse.h (pure, the single definition shared with fuzzing).
+// The members are one-line forwarders — call sites do not change, no drift.
 uint64_t    MySQLClient::read_lenenc(const uint8_t*& p, const uint8_t* end) { return mysql_read_lenenc(p, end); }
 std::string MySQLClient::read_lenenc_str(const uint8_t*& p, const uint8_t* end) { return mysql_read_lenenc_str(p, end); }
 uint16_t    MySQLClient::read_u16(const uint8_t*& p) { return mysql_read_u16(p); }

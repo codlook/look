@@ -12,7 +12,7 @@
 //   If this becomes a problem, replace with asm context switch (50 lines).
 
 #include "look/fiber.h"
-#include "look/mem_budget.h"   // fiber geçişinde istek bellek hesabı
+#include "look/mem_budget.h"   // request memory accounting at fiber switch
 #include "look/logger.h"
 #include "look/stack_guard.h"
 
@@ -35,11 +35,11 @@
 #include <unistd.h>
 #include <pthread.h>
 
-// ASan derlemesinde fiber geçişleri ASan'a bildirilir. Bildirilmezse ASan fiber yığınını
-// tanımaz: istisna fırlatılınca (__asan_handle_no_return) yanlış yığını temizler, ve
-// use-after-return denetiminin iş parçacığı başına "sahte yığını" fiberler bir çağrının
-// ortasında askıya alınıp birbirinin arasına girince bozulur → yanlış alarmlar. Yayın
-// derlemesinde bu blok yoktur.
+// In an ASan build fiber switches are reported to ASan. If not reported, ASan does not recognize the fiber
+// stack: when an exception is thrown (__asan_handle_no_return) it cleans the wrong stack, and the
+// per-thread "fake stack" of the use-after-return check gets corrupted when fibers are suspended in the
+// middle of a call and interleave with each other → false alarms. In a release
+// build this block does not exist.
 #if defined(__SANITIZE_ADDRESS__)
 #  define LOOK_ASAN_FIBER 1
 #elif defined(__has_feature)
@@ -50,9 +50,9 @@
 #ifdef LOOK_ASAN_FIBER
 #  include <sanitizer/common_interface_defs.h>
 #endif
-// TSan derlemesinde de geçişler bildirilir: bildirilmezse TSan ucontext geçişini görmez, bir
-// fiber'ın yığınını başka "iş parçacığının" sanır → yanlış yarış raporları / çökme. Her fiber bir
-// TSan fiber'ı; geçişte (flags=0) sıralama ilişkisi kurulur (aynı iş parçacığında sıralı koşar).
+// In a TSan build the switches are reported too: if not, TSan does not see the ucontext switch and takes one
+// fiber's stack for another "thread's" → false race reports / crash. Each fiber is a
+// TSan fiber; at a switch (flags=0) an ordering relation is established (they run sequentially on the same thread).
 #if defined(__SANITIZE_THREAD__)
 #  define LOOK_TSAN_FIBER 1
 #elif defined(__has_feature)
@@ -78,19 +78,19 @@ struct Fiber::Impl {
     size_t stack_size  = 0;        // usable stack size (without guard page)
     void*  usable_stack = nullptr; // usable stack bottom (after the guard page)
 #ifdef LOOK_ASAN_FIBER
-    void*       fake_stack    = nullptr;   // fiber'ın askıdaki sahte yığını
-    const void* caller_bottom = nullptr;   // dönülecek (iş parçacığı) yığın sınırları
+    void*       fake_stack    = nullptr;   // the fiber's suspended fake stack
+    const void* caller_bottom = nullptr;   // the (thread) stack bounds to return to
     size_t      caller_size   = 0;
 #endif
 #ifdef LOOK_TSAN_FIBER
-    void* tsan_fiber  = nullptr;   // bu fiber'ın TSan kimliği
-    void* tsan_caller = nullptr;   // resume() eden (iş parçacığının) TSan fiber'ı
+    void* tsan_fiber  = nullptr;   // this fiber's TSan identity
+    void* tsan_caller = nullptr;   // the TSan fiber of the (thread) that called resume()
 #endif
 };
 
 // ── Thread-local state ────────────────────────────────────────────────────────
 
-// fiber-ok: zamanlayıcının kendisi — hangi fiber'ın koştuğunu tutar
+// fiber-ok: the scheduler itself — holds which fiber is running
 static thread_local Fiber*           tl_current_fiber   = nullptr;
 static thread_local FiberScheduler*  tl_scheduler       = nullptr;
 
@@ -103,7 +103,7 @@ bool Fiber::stack_range(const char*& lo, const char*& hi) const noexcept {
     return true;
 }
 
-// look/stack_guard.h: o anki yığın — fiber'ınki ya da iş parçacığınınki.
+// look/stack_guard.h: the current stack — the fiber's or the thread's.
 bool look_read_stack_range(const char*& lo, const char*& hi) noexcept {
     if (Fiber* f = Fiber::current()) { if (f->stack_range(lo, hi)) return true; }
 #if defined(__APPLE__)
@@ -125,11 +125,11 @@ bool look_read_stack_range(const char*& lo, const char*& hi) noexcept {
 
 FiberScheduler* get_thread_scheduler() noexcept { return tl_scheduler; }
 
-// ── Sıra bırakma (bkz. fiber.h preempt_point) ─────────────────────────────────
+// ── Yielding the turn (see fiber.h preempt_point) ─────────────────────────────
 static constexpr int PREEMPT_CHECK_EVERY = 1024;
-// fiber-ok: zaman dilimi sayacı/başlangıcı iş parçacığına ait; fiber geçişinde yeniden kurulur
+// fiber-ok: the time-slice counter/start belongs to the thread; re-established at a fiber switch
 thread_local int t_preempt_budget = PREEMPT_CHECK_EVERY;
-// Bu iş parçacığında şu an çalışan fiber'ın en son devraldığı an (run_one resume öncesi yazar).
+// The moment the fiber currently running on this thread last took over (run_one writes it before resume).
 static thread_local std::chrono::steady_clock::time_point tl_slice_start;
 
 static bool preempt_every_point() {
@@ -140,20 +140,20 @@ static bool preempt_every_point() {
     return v;
 }
 
-PreemptHook g_preempt_hook = nullptr;   // parallel_runtime.cpp kurar (statik başlatmada)
+PreemptHook g_preempt_hook = nullptr;   // set by parallel_runtime.cpp (during static initialization)
 void preempt_slow() noexcept {
-    if (PreemptHook h = g_preempt_hook) h();   // betik sonu: parallel() görevinin saf hesabı sınırlı
+    if (PreemptHook h = g_preempt_hook) h();   // end of script: the pure computation of a parallel() task is bounded
     const bool every = preempt_every_point();
     t_preempt_budget = every ? 1 : PREEMPT_CHECK_EVERY;
-    if (!tl_current_fiber || !tl_scheduler) return;   // fiber dışında: sıra bırakılmaz
+    if (!tl_current_fiber || !tl_scheduler) return;   // outside a fiber: no turn is yielded
     if (!every && std::chrono::steady_clock::now() - tl_slice_start < std::chrono::milliseconds(1))
         return;
-    Fiber::yield();   // gönüllü: zamanlayıcı fiber'ı hazır kuyruğunun sonuna koyar
+    Fiber::yield();   // voluntary: the scheduler puts the fiber at the end of the ready queue
 }
 
-// ── Uzun C++ işleri için ortak havuz (bkz. fiber.h fiber_offload) ─────────────
-// Sabit boyut (çekirdek sayısı, en az 2): giriş denemesi seli sınırsız iş parçacığı açmaz,
-// fazlası kuyrukta bekler (fiber'lar askıda — iş parçacıkları öteki isteklere açık).
+// ── Shared pool for long C++ jobs (see fiber.h fiber_offload) ─────────────────
+// Fixed size (core count, at least 2): a flood of entry attempts does not open unbounded threads,
+// the excess waits in the queue (fibers are suspended — threads stay open to other requests).
 namespace {
 struct OffloadPool {
     std::mutex                        m;
@@ -174,14 +174,14 @@ struct OffloadPool {
                     }
                     j();
                 }
-            }).detach();   // süreç ömrü boyunca yaşar
+            }).detach();   // lives for the whole process lifetime
     }
     void post(std::function<void()> j) {
         { std::lock_guard<std::mutex> lk(m); q.push_back(std::move(j)); }
         cv.notify_one();
     }
 };
-OffloadPool& offload_pool() { static OffloadPool* p = new OffloadPool(); return *p; }   // kasıtlı sızıntı: çıkışta yıkım yarışı yok
+OffloadPool& offload_pool() { static OffloadPool* p = new OffloadPool(); return *p; }   // intentional leak: no destruction race at exit
 }
 
 void fiber_offload_run(const std::function<void()>& job) {
@@ -191,8 +191,8 @@ void fiber_offload_run(const std::function<void()>& job) {
     if (!sp) { job(); return; }
     std::exception_ptr err;
     std::atomic<bool> done{false};
-    // İsteğin bellek hesabı işle birlikte havuza geçer (look/mem_budget.h): havuzdaki ayırmalar
-    // isteğin bütçesinden düşer. Tek yazar korunur — fiber iş bitene dek askıda.
+    // The request's memory accounting passes to the pool with the job (look/mem_budget.h): allocations in the pool
+    // are charged to the request's budget. Single writer is preserved — the fiber is suspended until the job finishes.
     MemAccount* acct = mem_current_account();
     offload_pool().post([&, sched, sp, acct] {
         MemAccount* prev = mem_current_account();
@@ -202,8 +202,8 @@ void fiber_offload_run(const std::function<void()>& job) {
         done.store(true, std::memory_order_release);
         sched->resume_fiber(sp);
     });
-    // En az bir kez askıya gir (erken uyandırma pending_resume_ ile bu askıda tüketilir);
-    // iş bitmeden gelen beklenmedik uyanmada yeniden askıya gir (bkz. sqlite_client on_own_thread).
+    // Suspend at least once (an early wake-up is consumed in this suspend via pending_resume_);
+    // on an unexpected wake-up before the job finishes, suspend again (see sqlite_client on_own_thread).
     do { FiberScheduler::suspend_current(); } while (!done.load(std::memory_order_acquire));
     if (err) std::rethrow_exception(err);
 }
@@ -258,7 +258,7 @@ void fiber_trampoline(uint32_t hi, uint32_t lo) noexcept {
     // CRITICAL: swap back to caller — uc_link=nullptr means we must do this
     // manually, otherwise the thread exits when the fiber function returns.
 #ifdef LOOK_ASAN_FIBER
-    __sanitizer_start_switch_fiber(nullptr, f->impl_->caller_bottom, f->impl_->caller_size);   // son çıkış
+    __sanitizer_start_switch_fiber(nullptr, f->impl_->caller_bottom, f->impl_->caller_size);   // final exit
 #endif
 #ifdef LOOK_TSAN_FIBER
     __tsan_switch_to_fiber(f->impl_->tsan_caller, 0);
@@ -267,37 +267,37 @@ void fiber_trampoline(uint32_t hi, uint32_t lo) noexcept {
     // This line is never reached — swapcontext does not return here.
 }
 
-// ── Yığın önbelleği ───────────────────────────────────────────────────────────
-// Her bağlantı bir fiber; yığını mmap + mprotect ile açılıp munmap ile kapanıyordu. Ölçüm
-// (gdb örnekleme, WS bağlantı yağmuru): fiber iş parçacıklarının zamanının çoğu Fiber::Fiber
-// içinde — mmap, mprotect ve yeni sayfanın ilk dokunuşu (makecontext). Biten yığın (koruma
-// sayfası yerinde) SÜREÇ GENELİ bir önbelleğe döner (fiber çoğu zaman onu açan iş parçacığında
-// değil başka birinde yıkılır). Ölçüm (160k WS yağmuru, 16 çekirdek): önbelleksiz 15k bağlantı/sn;
-// tavan 256 → 40k; 1024 → 53k; 4096 → 86k; 16384 → 95k.
-// Bellek: önbellek yeni bellek ayırmaz; aynı anda çalışmış fiber'ların bıraktığı yığınları tutar
-// (tepe eşzamanlılık kadar, en fazla 4096). Her yığından en fazla KEEP kadarı dokunulmuş kalır.
+// ── Stack cache ───────────────────────────────────────────────────────────────
+// Every connection is a fiber; its stack was opened with mmap + mprotect and closed with munmap. Measurement
+// (gdb sampling, WS connection storm): most of the fiber threads' time is in Fiber::Fiber
+// — mmap, mprotect and the first touch of the new page (makecontext). A finished stack (guard
+// page in place) returns to a PROCESS-WIDE cache (a fiber is most often destroyed on a thread other than
+// the one that opened it). Measurement (160k WS storm, 16 cores): without cache 15k connections/s;
+// cap 256 → 40k; 1024 → 53k; 4096 → 86k; 16384 → 95k.
+// Memory: the cache allocates no new memory; it holds the stacks left behind by fibers that ran at the same time
+// (as many as peak concurrency, at most 4096). At most KEEP of each stack stays touched.
 namespace {
 struct StackCache {
     static constexpr size_t MAX = 4096;
     std::mutex m;
-    std::vector<std::pair<void*, size_t>> free_;   // (taban, toplam boy)
+    std::vector<std::pair<void*, size_t>> free_;   // (base, total size)
     void* take(size_t n) {
         std::lock_guard<std::mutex> lk(m);
         for (size_t i = free_.size(); i-- > 0;)
             if (free_[i].second == n) { void* p = free_[i].first; free_[i] = free_.back(); free_.pop_back(); return p; }
         return nullptr;
     }
-    // KEEP: yığının üstünden (yüksek adres; yığın aşağı büyür) bu kadarı önbellekte dokunulmuş
-    // kalabilir, altı madvise ile geri verilir: derin özyineleme yapmış bir fiber'ın megabaytları
-    // önbellekte tutulmaz (yoksa 4096 × 8 MB'a kadar bellek kalabilirdi). Her dönüşte madvise
-    // kabul hızını üçte birine indiriyordu (84k → 29k/sn), bu yüzden yalnız gerekince: yığın
-    // KEEP'in altına indiyse hemen altındaki BAND yazılmıştır (yığın kesintisiz büyür). Bandı
-    // okumak sistem çağrısı değildir (hiç yazılmamış sayfa sıfır sayfaya eşlenir); madvise
-    // sonrası bant yine sıfırdır. 96 KB: bağlantı işleyicisinin yığınında 64 KB okuma tamponu
-    // var — ölçümde sıradan bir WS bağlantısı 64 KB'ın altına iniyor, 72 KB'ın altına inmiyor.
+    // KEEP: from the top of the stack (high address; the stack grows downward) this much may stay touched
+    // in the cache, the part below is returned with madvise: the megabytes of a fiber that did deep recursion
+    // are not held in the cache (otherwise up to 4096 × 8 MB of memory could remain). madvise on every return
+    // cut the accept rate to a third (84k → 29k/s), so only when needed: if the stack went
+    // below KEEP, the BAND just below it has been written (the stack grows contiguously). Reading the band
+    // is not a system call (a never-written page maps to the zero page); after madvise
+    // the band is zero again. 96 KB: the connection handler's stack has a 64 KB read buffer
+    // — in measurement an ordinary WS connection goes below 64 KB, but not below 72 KB.
     static constexpr size_t KEEP = 96 * 1024;
     static constexpr size_t BAND = 16 * 1024;
-    // Ölü fiber'ın yığınını okur: ASan'ın yığın kırmızı bölgeleri orada kalmış olabilir.
+    // Reads the dead fiber's stack: ASan's stack redzones may have remained there.
 #if defined(__SANITIZE_ADDRESS__)
     __attribute__((no_sanitize_address))
 #endif
@@ -322,7 +322,7 @@ struct StackCache {
         return true;
     }
 };
-// Süreç ömrü boyunca yaşar (sızdırılmış tekil): çıkışta yıkıcı sırası sorunu yok.
+// Lives for the whole process lifetime (leaked singleton): no destructor-order problem at exit.
 StackCache& stack_cache() { static StackCache* c = new StackCache(); return *c; }
 }
 
@@ -340,7 +340,7 @@ Fiber::Fiber(Fn fn, size_t stack_size)
     const size_t aligned_stack = (stack_size + page_size - 1) / page_size * page_size;
     const size_t total_alloc   = guard_bytes + aligned_stack;
 
-    // Önbellekte aynı boyda yığın varsa onu al (koruma sayfası zaten kurulu).
+    // If there is a stack of the same size in the cache, take it (the guard page is already set up).
     void* mem = stack_cache().take(total_alloc);
     const bool reused = mem != nullptr;
     // Allocate stack with mmap (necessary for mprotect)
@@ -410,7 +410,7 @@ void Fiber::resume() {
 
     Fiber* prev        = tl_current_fiber;
     tl_current_fiber   = this;
-    // Bellek hesabı fiber'la birlikte geçer (look/mem_budget.h)
+    // Memory accounting passes along with the fiber (look/mem_budget.h)
     MemAccount* prev_acct = mem_current_account();
     mem_set_current_account(static_cast<MemAccount*>(local.mem_acct));
 
@@ -456,11 +456,11 @@ void Fiber::yield() {
 
 FiberScheduler::FiberScheduler() {
     epfd_ = epoll_create1(EPOLL_CLOEXEC);
-    // Cross-thread wakeup: resume_fiber() yazar, epoll anında uyanır
+    // Cross-thread wakeup: resume_fiber() writes, epoll wakes immediately
     evfd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (epfd_ >= 0 && evfd_ >= 0) {
         epoll_event ev{};
-        ev.events  = EPOLLIN;      // level-triggered — drain edilene kadar uyandırır
+        ev.events  = EPOLLIN;      // level-triggered — wakes until drained
         ev.data.fd = evfd_;
         epoll_ctl(epfd_, EPOLL_CTL_ADD, evfd_, &ev);
     }
@@ -487,19 +487,19 @@ bool FiberScheduler::run_one() {
     }
 
     f->sched_state_.store(Fiber::SchedState::RUNNING, std::memory_order_release);
-    tl_slice_start = std::chrono::steady_clock::now();   // sıra bırakma ölçüsü bu andan başlar
+    tl_slice_start = std::chrono::steady_clock::now();   // the yield-the-turn measurement starts from this moment
     running_since_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
         tl_slice_start.time_since_epoch()).count(), std::memory_order_relaxed);
     f->resume();
     running_since_ns_.store(0, std::memory_order_relaxed);
 
-    // Yield dönüşü — fiber'ın akıbetine TEK yetkili burası karar verir.
-    // resume_fiber() başka thread'den yalnızca WAITING durumundaki fiber'ı
-    // taşıyabilir; SUSPENDING penceresinde sadece pending_resume_ bırakır.
+    // Yield return — ONLY this place decides the fiber's fate.
+    // resume_fiber() from another thread can move only a fiber in the WAITING state;
+    // in the SUSPENDING window it only leaves pending_resume_.
     std::lock_guard<std::mutex> lk(mtx_);
     if (f->done()) {
         f->sched_state_.store(Fiber::SchedState::DONE, std::memory_order_release);
-        // Olası artık kayıtları temizle (ör. suspend sonrası tamamlanma)
+        // Clean up possible leftover records (e.g. completion after suspend)
         auto wit = std::find(waiting_.begin(), waiting_.end(), f);
         if (wit != waiting_.end()) waiting_.erase(wit);
         auto pit = std::find(pool_waiters_.begin(), pool_waiters_.end(), f);
@@ -511,7 +511,7 @@ bool FiberScheduler::run_one() {
     auto st = f->sched_state_.load(std::memory_order_acquire);
     if (st == Fiber::SchedState::SUSPENDING) {
         if (f->pending_resume_.exchange(false, std::memory_order_acq_rel)) {
-            // Resume, fiber yield etmeden geldi — waiting_'den çıkar, ready_'ye al
+            // Resume came without the fiber yielding — remove it from waiting_, put it in ready_
             auto wit = std::find(waiting_.begin(), waiting_.end(), f);
             if (wit != waiting_.end()) waiting_.erase(wit);
             auto pit = std::find(pool_waiters_.begin(), pool_waiters_.end(), f);
@@ -519,11 +519,11 @@ bool FiberScheduler::run_one() {
             f->sched_state_.store(Fiber::SchedState::READY, std::memory_order_release);
             ready_.push_back(std::move(f));
         } else {
-            // Suspend tamamlandı — artık resume_fiber taşıyabilir
+            // Suspend completed — resume_fiber can now move it
             f->sched_state_.store(Fiber::SchedState::WAITING, std::memory_order_release);
         }
     } else {
-        // Gönüllü yield (suspend çağrılmadı) — sıraya geri koy
+        // Voluntary yield (suspend not called) — put it back in the queue
         f->pending_resume_.store(false, std::memory_order_relaxed);
         f->sched_state_.store(Fiber::SchedState::READY, std::memory_order_release);
         ready_.push_back(std::move(f));
@@ -539,14 +539,14 @@ bool FiberScheduler::wait_readable(std::shared_ptr<Fiber> f, int fd) {
     return wait_readable_tmo(std::move(f), fd, -1) == 1;
 }
 
-// D Fix #2: süre sınırlı bekleme. fd>=0 → epoll + (ops.) deadline; fd<0 → saf
-// zamanlayıcı (sentetik anahtar, epoll kaydı yok — acceptor backpressure uykusu).
-// Dönüş: 1 okunabilir, 0 süre doldu, -1 desteklenmiyor.
+// D Fix #2: time-limited wait. fd>=0 → epoll + (optional) deadline; fd<0 → pure
+// timer (synthetic key, no epoll registration — the acceptor's backpressure sleep).
+// Return: 1 readable, 0 timed out, -1 unsupported.
 int FiberScheduler::wait_readable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
     return wait_fd_tmo(std::move(f), fd, timeout_ms, EPOLLIN);
 }
 
-// Yazılabilir olana dek (ör. engellemesiz connect'in bitmesi) yalnız fiber'ı askıya al.
+// Only suspend the fiber until it is writable (e.g. until a non-blocking connect finishes).
 int FiberScheduler::wait_writable_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms) {
     if (fd < 0) return -1;
     return wait_fd_tmo(std::move(f), fd, timeout_ms, EPOLLOUT);
@@ -554,11 +554,11 @@ int FiberScheduler::wait_writable_tmo(std::shared_ptr<Fiber> f, int fd, int time
 
 int FiberScheduler::wait_fd_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms, uint32_t events) {
     if (epfd_ < 0) return -1;
-    if (fd < 0 && timeout_ms < 0) return -1;   // fd'siz süresiz bekleme anlamsız
+    if (fd < 0 && timeout_ms < 0) return -1;   // fd-less indefinite wait is meaningless
     int key = fd;
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        if (fd < 0) key = timer_key_seq_--;    // saf zamanlayıcı: çakışmasız anahtar
+        if (fd < 0) key = timer_key_seq_--;    // pure timer: a non-colliding key
         fd_to_fiber_[key] = f;
         if (timeout_ms >= 0)
             fd_deadline_[key] = std::chrono::steady_clock::now()
@@ -574,7 +574,7 @@ int FiberScheduler::wait_fd_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms
         if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) < 0 && errno == EEXIST)
             epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev);
     }
-    Fiber::yield();  // suspend — epoll event YA DA deadline expiry resume eder
+    Fiber::yield();  // suspend — an epoll event OR a deadline expiry resumes it
     Fiber* cur = Fiber::current();
     bool timed_out = cur && cur->io_timed_out_;
     if (cur) cur->io_timed_out_ = false;
@@ -583,12 +583,12 @@ int FiberScheduler::wait_fd_tmo(std::shared_ptr<Fiber> f, int fd, int timeout_ms
 
 void FiberScheduler::run_until_complete() {
     while (true) {
-        // Hazır fiber'ları koştur — ama en fazla 1 ms, sonra epoll'u yokla. Sınırsız "kuyruk
-        // boşalana dek koştur" yazılamaz: gönüllü sıra bırakan fiber (uzun SQLite hesabı,
-        // on_progress) kuyruğa geri girer, kuyruk hiç boşalmaz ve yeni bağlantı / okunabilir soket
-        // sorgu bitene dek fark edilmezdi (1.0.22: 1 sn'lik hesap sırasında sıradan istek ~0,8 sn
-        // bekledi). Süreyle sınırlı (tur sayısıyla değil): normal yükte kuyruk 1 ms dolmadan
-        // boşalır ve ek epoll çağrısı olmaz (her turdan sonra yoklamak PG yükünü ~%2 düşürdü).
+        // Run ready fibers — but at most 1 ms, then poll epoll. An unbounded "run until the queue
+        // is empty" cannot be written: a fiber voluntarily yielding its turn (a long SQLite computation,
+        // on_progress) re-enters the queue, the queue never empties, and a new connection / readable socket
+        // would go unnoticed until the query finished (1.0.22: during a 1 s computation an ordinary request waited
+        // ~0.8 s). Bounded by time (not by round count): under normal load the queue
+        // empties before 1 ms is up and there is no extra epoll call (polling after every round lowered PG load by ~2%).
         const auto slice_start = std::chrono::steady_clock::now();
         while (run_one()) {
             if (std::chrono::steady_clock::now() - slice_start >= std::chrono::milliseconds(1)) break;
@@ -599,10 +599,10 @@ void FiberScheduler::run_until_complete() {
             if (waiting_.empty() && ready_.empty()) break;
         }
 
-        // Ready varsa bekleme — hemen işle. Yoksa event bekle:
-        // eventfd (cross-thread resume) veya DB soketi bizi anında uyandırır.
-        // 20ms güvenlik ağı; en yakın wait_readable_tmo deadline'ı daha yakınsa
-        // ona kadar kısalt (deadline hassasiyeti ≤20ms — idle timeout için bol).
+        // If there is anything ready, do not wait — process it right away. Otherwise wait for an event:
+        // the eventfd (cross-thread resume) or a DB socket wakes us immediately.
+        // 20ms safety net; if the nearest wait_readable_tmo deadline is closer
+        // shorten to it (deadline precision ≤20ms — ample for idle timeout).
         int timeout_ms;
         {
             std::lock_guard<std::mutex> lk(mtx_);
@@ -622,7 +622,7 @@ void FiberScheduler::run_until_complete() {
             int fd = events[i].data.fd;
 
             if (fd == evfd_) {
-                // Cross-thread wakeup — sayacı boşalt, ready_ döngü başında işlenir
+                // Cross-thread wakeup — drain the counter, ready_ is processed at the start of the loop
                 uint64_t drain;
                 while (::read(evfd_, &drain, sizeof(drain)) > 0) {}
                 continue;
@@ -638,13 +638,13 @@ void FiberScheduler::run_until_complete() {
                     f = it->second;
                     fd_to_fiber_.erase(it);
                 }
-                fd_deadline_.erase(fd);   // event geldi → deadline iptal
+                fd_deadline_.erase(fd);   // event arrived → cancel the deadline
             }
             if (f) resume_fiber(std::move(f));
         }
 
-        // Deadline süpürmesi (D Fix #2): süresi dolanları io_timed_out_ ile resume et.
-        // Event yukarıda geldiyse girdileri zaten silindi → çifte-resume imkansız.
+        // Deadline sweep (D Fix #2): resume the expired ones with io_timed_out_.
+        // If the event arrived above, their entries were already deleted → a double resume is impossible.
         {
             std::vector<std::pair<int, std::shared_ptr<Fiber>>> expired;
             {
@@ -665,7 +665,7 @@ void FiberScheduler::run_until_complete() {
                 }
             }
             for (auto& [key, f] : expired) {
-                if (key >= 0) epoll_ctl(epfd_, EPOLL_CTL_DEL, key, nullptr); // saf zamanlayıcıda kayıt yok
+                if (key >= 0) epoll_ctl(epfd_, EPOLL_CTL_DEL, key, nullptr); // a pure timer has no registration
                 f->io_timed_out_ = true;
                 resume_fiber(std::move(f));
             }
@@ -687,8 +687,8 @@ void FiberScheduler::suspend_current() {
         sched->waiting_.push_back(sp);
         cur->sched_state_.store(Fiber::SchedState::SUSPENDING, std::memory_order_release);
     }
-    // Erken gelen resume'u run_one() yield dönüşünde pending_resume_ ile işler —
-    // burada ön-kontrol YOK: çift-enqueue penceresi tamamen kapalı.
+    // An early resume is handled by run_one() at the yield return via pending_resume_ —
+    // there is NO pre-check here: the double-enqueue window is completely closed.
     Fiber::yield();
 }
 
@@ -726,7 +726,7 @@ void FiberScheduler::resume_fiber(std::shared_ptr<Fiber> f) {
     auto st = f->sched_state_.load(std::memory_order_acquire);
 
     if (st == Fiber::SchedState::WAITING) {
-        // Suspend tamamlanmış — tek güvenli taşıma yolu.
+        // Suspend completed — the only safe way to move it.
         auto it = std::find(waiting_.begin(), waiting_.end(), f);
         if (it != waiting_.end()) waiting_.erase(it);
         if (!f->done()) {
@@ -738,28 +738,28 @@ void FiberScheduler::resume_fiber(std::shared_ptr<Fiber> f) {
         return;
     }
 
-    // SUSPENDING (yield dönüşü işlenmedi) veya RUNNING (suspend henüz kayıtsız):
-    // ready_'ye DOKUNMA — bayrağı bırak, run_one() yield dönüşünde işlesin.
-    // READY/DONE durumlarında bayrak zararsızdır (dönüşte temizlenir).
+    // SUSPENDING (yield return not yet processed) or RUNNING (suspend not yet recorded):
+    // DO NOT TOUCH ready_ — leave the flag, let run_one() process it at the yield return.
+    // In READY/DONE states the flag is harmless (cleared at the return).
     f->pending_resume_.store(true, std::memory_order_release);
     cv_.notify_one();
     wake_if_other_thread();
 }
 
-// Uyandırma (eventfd yazımı) yalnız BAŞKA iş parçacığından gerekir: bu planlayıcının kendi iş
-// parçacığı o an burada kod çalıştırıyor, epoll_wait'te uyuyor olamaz; döngü hazır kuyruğunu
-// beklemeden işler (ready_ doluyken zaman aşımı 0). Eskiden soket olayıyla devam ettirilen her
-// fiber için kendine bir write + iki read yapıyordu — istek başına üç gereksiz sistem çağrısı.
+// Waking (eventfd write) is needed only from ANOTHER thread: this scheduler's own
+// thread is running code here at that moment, it cannot be asleep in epoll_wait; the loop processes the ready queue
+// without waiting (timeout 0 while ready_ is non-empty). It used to do a write + two reads to itself
+// for every fiber resumed by a socket event — three unnecessary system calls per request.
 void FiberScheduler::wake_if_other_thread() {
     if (get_thread_scheduler() != this) wake();
 }
 
-// epoll_wait'te uyuyan scheduler thread'ini anında uyandır (cross-thread çağrı)
+// wake the scheduler thread sleeping in epoll_wait immediately (cross-thread call)
 void FiberScheduler::wake() {
     if (evfd_ >= 0) {
         uint64_t one = 1;
         ssize_t n = ::write(evfd_, &one, sizeof(one));
-        (void)n;  // EAGAIN = sayaç dolu = zaten uyanacak
+        (void)n;  // EAGAIN = counter full = it will wake anyway
     }
 }
 

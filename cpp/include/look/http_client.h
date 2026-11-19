@@ -5,16 +5,16 @@
 
 namespace look {
 
-// Streaming: govde parcalari (chunked cozulmus) geldikce cagrilir.
+// Streaming: called as body chunks (chunked decoded) arrive.
 using HttpChunkCallback = std::function<void(const std::string&)>;
 
-// ODR KRITIK: bu tip ISTEMCI tarafina aittir ve adi http_server.hdeki
-// look::HttpResponse ile ASLA ayni olmamali. Eskiden ikisi de "look::HttpResponse"
-// idi → look-fcgi ikisini de linkledigi icin (look/CLI yalnizca istemciyi linkler)
-// TANIMSIZ DAVRANIS; LTO acikken iki farkli layout tek tip sanilip birlestiriliyor,
-// nesne bir duzenle kurulup digeriyle yikiliyordu → "free(): invalid pointer" /
-// segfault. Web routeundan http::get cagirmak sunucuyu COKERTIYORDU (CLIde degil,
-// ASanda degil — ASan buildinde LTO kapali oldugu icin gizleniyordu).
+// ODR CRITICAL: this type belongs to the CLIENT side and its name must NEVER be the same as
+// look::HttpResponse in http_server.h. Both used to be "look::HttpResponse"
+// → since look-fcgi links both (look/CLI link only the client) this was
+// UNDEFINED BEHAVIOUR; with LTO on, two different layouts were taken for one type and merged,
+// an object was built with one layout and destroyed with the other → "free(): invalid pointer" /
+// segfault. Calling http::get from a web route CRASHED the server (not in the CLI,
+// not under ASan — it was hidden because LTO is off in the ASan build).
 struct HttpClientResponse {
     int         status  = 0;
     std::string body;
@@ -47,8 +47,8 @@ HttpClientResponse http_request(
     const HttpOptions& opts
 );
 
-// Streaming istek: govde parcalari geldikce on_chunk cagrilir (SSE/token akisi).
-// Doner: status + headers (body genelde bostur — parcalar callback'e gitti).
+// Streaming request: on_chunk is called as body chunks arrive (SSE/token stream).
+// Returns: status + headers (body is usually empty — the chunks went to the callback).
 HttpClientResponse http_request_stream(
     const std::string& method,
     const std::string& url,
@@ -58,8 +58,8 @@ HttpClientResponse http_request_stream(
     const HttpChunkCallback& on_chunk
 );
 
-// Sistem CA bundle'ını (SSL_CERT_FILE/DIR) tespit et — statik OpenSSL binary'nin
-// https doğrulaması için. main() başında bir kez çağrılır. Zaten set ise dokunmaz.
+// Detect the system CA bundle (SSL_CERT_FILE/DIR) — for the static OpenSSL binary's
+// https verification. Called once at the start of main(). Does not touch it if already set.
 void configure_system_ca_bundle();
 
 } // namespace look

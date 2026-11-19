@@ -9,9 +9,9 @@
 
 namespace look {
 
-// Thread-safe localtime — std::localtime paylaşılan statik buffer döndürür ve
-// içindeki tzset global tz state'ini yarıştırır (TSan data race, date_stdlib:128).
-// localtime_r/localtime_s caller buffer'ına yazar; her thread kendi tm'ini alır.
+// Thread-safe localtime — std::localtime returns a shared static buffer and its
+// internal tzset races on the global tz state (TSan data race, date_stdlib:128).
+// localtime_r/localtime_s write to the caller's buffer; each thread gets its own tm.
 static inline std::tm look_localtime(std::time_t t) {
     std::tm out{};
 #ifdef _WIN32
@@ -24,7 +24,7 @@ static inline std::tm look_localtime(std::time_t t) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// "YYYY-MM-DD HH:MM:SS" veya "YYYY-MM-DD" → tm
+// "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD" → tm
 static std::tm parse_iso(const std::string& s) {
     std::tm t{};
     if (s.size() >= 19) {
@@ -57,11 +57,11 @@ static std::string tm_to_iso(const std::tm& t, bool with_time = false) {
     return buf;
 }
 
-// Özel format tokenlarını uygula — PHP benzeri ama sade
+// Apply custom format tokens — PHP-like but simple
 // d=01-31  m=01-12  Y=2026  y=26  H=00-23  i=00-59  s=00-59
 // D=Mon-Sun  l=Monday-Sunday  M=Jan-Dec  F=January-December
-// N=1-7(Pzt=1)  j=1-31(leading yok)  n=1-12(leading yok)  G=0-23
-// t=ayın günü sayısı  W=ISO hafta no  U=timestamp
+// N=1-7(Mon=1)  j=1-31(no leading zero)  n=1-12(no leading zero)  G=0-23
+// t=number of days in the month  W=ISO week no  U=timestamp
 static std::string format_date(const std::string& fmt, const std::tm& t) {
     static const char* short_days[]  = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
     static const char* long_days[]   = {"Sunday","Monday","Tuesday","Wednesday",
@@ -71,7 +71,7 @@ static std::string format_date(const std::string& fmt, const std::tm& t) {
     static const char* long_months[] = {"January","February","March","April","May","June",
                                         "July","August","September","October","November","December"};
 
-    // ayın gün sayısı
+    // number of days in the month
     auto days_in_month = [](int m, int y) -> int {
         static const int dim[] = {31,28,31,30,31,30,31,31,30,31,30,31};
         if (m == 1 && ((y%4==0 && y%100!=0) || y%400==0)) return 29;
@@ -116,7 +116,7 @@ static std::string format_date(const std::string& fmt, const std::tm& t) {
     return out;
 }
 
-// birim string → saniye çarpanı (-1 = özel işlem gerekir: month/year)
+// unit string → seconds multiplier (-1 = special handling required: month/year)
 static long unit_to_seconds(const std::string& unit) {
     if (unit == "second" || unit == "seconds") return 1;
     if (unit == "minute" || unit == "minutes") return 60;
@@ -129,10 +129,10 @@ static long unit_to_seconds(const std::string& unit) {
                              "' (second/minute/hour/day/week/month/year)");
 }
 
-// 1970-01-01'den bu yana TAKVİM gün sayısı (proleptik Gregoryen, Howard Hinnant
-// days_from_civil). TZ/DST'den TAMAMEN bağımsız — date::diff'in gün/hafta farkı
-// bununla hesaplanır; eski (mktime-mktime)/86400 yolu spring-forward'ı kapsayan
-// farkı 1 eksik veriyordu (3 gün → 2). y=tam yıl, m=1..12, d=1..31.
+// CALENDAR day count since 1970-01-01 (proleptic Gregorian, Howard Hinnant
+// days_from_civil). COMPLETELY independent of TZ/DST — date::diff's day/week difference
+// is computed with it; the old (mktime-mktime)/86400 path returned a difference spanning
+// spring-forward one short (3 days → 2). y=full year, m=1..12, d=1..31.
 static long days_from_civil(int y, int m, int d) {
     y -= (m <= 2);
     long era = (y >= 0 ? y : y - 399) / 400;
@@ -163,7 +163,7 @@ Module make_date_module() {
         return Value(tm_to_iso(*tm, false));
     };
 
-    // date::timestamp() → int (Unix epoch saniye)
+    // date::timestamp() → int (Unix epoch seconds)
     m.functions["timestamp"] = [](auto) -> Value {
         return Value((int64_t)std::time(nullptr));
     };
@@ -176,12 +176,12 @@ Module make_date_module() {
         return Value((int64_t)std::chrono::duration_cast<std::chrono::microseconds>(now).count());
     };
 
-    // date::format(tarih, format_str) → string
-    // tarih: Unix timestamp (int) VEYA "YYYY-MM-DD [HH:MM:SS]" ISO string.
-    //   DB/API'den gelen en yaygın format Unix timestamp'tir — INT/FLOAT ise
-    //   doğrudan zaman damgası olarak yorumlanır (önceden sessizce "1699..." gibi
-    //   yanlış tarih üretiyordu). String ise ISO olarak parse edilir.
-    // format: "d.m.Y", "Y/m/d H:i:s", vb. (PHP-tarzı).
+    // date::format(date, format_str) → string
+    // date: Unix timestamp (int) OR "YYYY-MM-DD [HH:MM:SS]" ISO string.
+    //   The most common format coming from a DB/API is a Unix timestamp — if INT/FLOAT it is
+    //   interpreted directly as a timestamp (before, it silently produced a wrong date such as "1699...").
+    //   If it is a string, it is parsed as ISO.
+    // format: "d.m.Y", "Y/m/d H:i:s", etc. (PHP-style).
     m.functions["format"] = [](auto args) -> Value {
         if (args.size() < 2)
             throw std::runtime_error("date::format() requires (date, format)");
@@ -190,13 +190,13 @@ Module make_date_module() {
             t = look_localtime((std::time_t)args[0].to_int());  // Unix timestamp
         } else {
             t = parse_iso(args[0].to_string());                 // ISO string
-            mktime(&t);  // tm_wday, tm_yday normalize et
+            mktime(&t);  // normalize tm_wday, tm_yday
         }
         return Value(format_date(args[1].to_string(), t));
     };
 
-    // date::parse(tarih_str, format_str) → "YYYY-MM-DD" veya "YYYY-MM-DD HH:MM:SS"
-    // Desteklenen format tokenları: d m Y y H i s (diğerleri literal)
+    // date::parse(date_str, format_str) → "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
+    // Supported format tokens: d m Y y H i s (others are literal)
     m.functions["parse"] = [](auto args) -> Value {
         if (args.size() < 2)
             throw std::runtime_error("date::parse() requires (date_string, format)");
@@ -229,31 +229,31 @@ Module make_date_module() {
                     val = val * 10 + (input[si++] - '0');
                 t.tm_year = (val >= 70 ? 1900 + val : 2000 + val) - 1900;
             } else {
-                // literal karakter — eşleştir ve atla
+                // literal character — match and skip
                 si++;
             }
         }
 
-        // Alan doğrulama — eskiden hiç kontrol yoktu: parse("2023-60-99") sessizce
-        // "2023-60-99" (ay 60, gün 99), parse("hello") → "0000-00-00" döndürüyordu
-        // (tm_to_iso normalize etmez). Bozuk tarih sessizce aritmetiğe akıp
-        // expiry/abonelik mantığını bozuyordu. Şimdi net hata fırlatır (is_valid ile tutarlı).
+        // Field validation — there was no check before: parse("2023-60-99") silently returned
+        // "2023-60-99" (month 60, day 99), parse("hello") → "0000-00-00"
+        // (tm_to_iso does not normalize). A broken date silently flowed into arithmetic and
+        // broke expiry/subscription logic. Now it throws a clear error (consistent with is_valid).
         if (t.tm_mon  < 0  || t.tm_mon  > 11 ||
             t.tm_mday < 1  || t.tm_mday > 31 ||
             t.tm_hour < 0  || t.tm_hour > 23 ||
             t.tm_min  < 0  || t.tm_min  > 59 ||
-            t.tm_sec  < 0  || t.tm_sec  > 60)  // 60: artık saniye
+            t.tm_sec  < 0  || t.tm_sec  > 60)  // 60: leap second
             throw std::runtime_error("date::parse(): invalid date — '" + input + "'");
 
-        // TAKVIM doğrulaması — yukarıdaki aralık kontrolü KABA: "gün ≤ 31" olduğu için
-        // 2024-04-31 (Nisan 30 çeker) ve 2023-02-29 (artık değil) geçiyordu, sonra
-        // mktime bunları sessizce 1 Mayıs / 1 Mart'a KAYDIRIYORDU. Yani parse başarılı
-        // dönüp YANLIŞ tarih veriyordu — üstelik is_valid aynı girdilere false diyor
-        // (bu bloğun kendi yorumu "is_valid ile tutarlı" olmayı hedefliyordu ama
-        // ay-özgü gün sınırları kontrol edilmediği için hedefe ulaşmamıştı).
-        // is_valid'in tekniğini uygula: mktime ile normalize et, alanlar DEĞİŞTİYSE
-        // girdi takvimsel olarak imkânsızdı → hata. (Ay/gün/yıl karşılaştırılır; saat
-        // DST nedeniyle kayabileceği için karşılaştırmaya dahil edilmez.)
+        // CALENDAR validation — the range check above is COARSE: since it only requires "day ≤ 31",
+        // 2024-04-31 (April has 30) and 2023-02-29 (not a leap year) passed, then
+        // mktime silently SHIFTED them to 1 May / 1 March. So parse returned successfully
+        // with a WRONG date — and is_valid says false for the same inputs
+        // (this block's own comment aimed at being "consistent with is_valid" but
+        // it did not reach the goal because month-specific day limits were not checked).
+        // Apply is_valid's technique: normalize with mktime, if the fields CHANGED
+        // the input was calendrically impossible → error. (Month/day/year are compared; the hour
+        // is not included in the comparison because it may shift due to DST.)
         {
             std::tm chk = t;
             chk.tm_isdst = -1;
@@ -268,7 +268,7 @@ Module make_date_module() {
         return Value(tm_to_iso(t, has_time));
     };
 
-    // date::add(tarih, miktar, birim) → "YYYY-MM-DD" veya "YYYY-MM-DD HH:MM:SS"
+    // date::add(date, amount, unit) → "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
     m.functions["add"] = [](auto args) -> Value {
         if (args.size() < 3)
             throw std::runtime_error("date::add() requires (date, amount, unit)");
@@ -281,19 +281,19 @@ Module make_date_module() {
 
         if (unit == "month" || unit == "months") {
             t.tm_mon += amount;
-            // mktime ay taşmasını normalize eder (örn. ay=13 → yıl+1, ay=1)
+            // mktime normalizes month overflow (e.g. month=13 → year+1, month=1)
         } else if (unit == "year" || unit == "years") {
             t.tm_year += amount;
         } else if (unit == "day" || unit == "days") {
-            // TAKVİM günü — DST-güvenli. Eski 86400-saniye yolu DST fall-back'te
-            // (25 saatlik gün) +1 günü AYNI güne kaydırıyordu (sessiz 1-gün hatası:
-            // abonelik/rezervasyon/hatırlatma). "1 gün" = 1 takvim günü; mktime
-            // (tm_isdst=-1) normalizasyonu DST'den bağımsız doğru sonucu verir.
+            // CALENDAR day — DST-safe. The old 86400-second path on a DST fall-back
+            // (25-hour day) moved +1 day to the SAME day (a silent 1-day error:
+            // subscription/reservation/reminder). "1 day" = 1 calendar day; mktime
+            // (tm_isdst=-1) normalization gives the correct result independent of DST.
             t.tm_mday += amount;
         } else if (unit == "week" || unit == "weeks") {
             t.tm_mday += amount * 7;
         } else {
-            // hour/minute/second: GERÇEK süre → saniye ekleme DST-doğru.
+            // hour/minute/second: REAL duration → adding seconds is DST-correct.
             long secs = (long)amount * unit_to_seconds(unit);
             std::time_t ts = mktime(&t) + secs;
             std::tm _r = look_localtime(ts); std::tm* r = &_r;
@@ -303,7 +303,7 @@ Module make_date_module() {
         return Value(tm_to_iso(t, has_time));
     };
 
-    // date::sub(tarih, miktar, birim) → "YYYY-MM-DD" veya "YYYY-MM-DD HH:MM:SS"
+    // date::sub(date, amount, unit) → "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
     m.functions["sub"] = [](auto args) -> Value {
         if (args.size() < 3)
             throw std::runtime_error("date::sub() requires (date, amount, unit)");
@@ -319,11 +319,11 @@ Module make_date_module() {
         } else if (unit == "year" || unit == "years") {
             t.tm_year -= amount;
         } else if (unit == "day" || unit == "days") {
-            t.tm_mday -= amount;                 // TAKVİM günü — DST-güvenli (bkz. add)
+            t.tm_mday -= amount;                 // CALENDAR day — DST-safe (see add)
         } else if (unit == "week" || unit == "weeks") {
             t.tm_mday -= amount * 7;
         } else {
-            // hour/minute/second: gerçek süre → saniye çıkarma DST-doğru.
+            // hour/minute/second: real duration → subtracting seconds is DST-correct.
             long secs = (long)amount * unit_to_seconds(unit);
             std::time_t ts = mktime(&t) - secs;
             std::tm _r = look_localtime(ts); std::tm* r = &_r;
@@ -333,22 +333,22 @@ Module make_date_module() {
         return Value(tm_to_iso(t, has_time));
     };
 
-    // date::diff(tarih1, tarih2, birim) → int
-    // tarih1 - tarih2 (pozitif veya negatif)
+    // date::diff(date1, date2, unit) → int
+    // date1 - date2 (positive or negative)
     m.functions["diff"] = [](auto args) -> Value {
         if (args.size() < 3)
             throw std::runtime_error("date::diff() requires (date1, date2, unit)");
         std::string unit = args[2].to_string();
         std::tm t1 = parse_iso(args[0].to_string());
         std::tm t2 = parse_iso(args[1].to_string());
-        // day/week: TAKVİM farkı — DST-bağımsız (civil-day). Saniye/86400 yolu
-        // spring-forward'ı (23s gün) kapsayan farkı 1 eksik veriyordu.
+        // day/week: CALENDAR difference — DST-independent (civil-day). The seconds/86400 path
+        // returned a difference spanning spring-forward (23-hour day) one short.
         if (unit == "day" || unit == "days" || unit == "week" || unit == "weeks") {
             long days = days_from_civil(t1.tm_year + 1900, t1.tm_mon + 1, t1.tm_mday)
                       - days_from_civil(t2.tm_year + 1900, t2.tm_mon + 1, t2.tm_mday);
             return Value((int64_t)(unit[0] == 'w' ? days / 7 : days));
         }
-        // hour/minute/second: gerçek süre → saniye farkı DST-doğru.
+        // hour/minute/second: real duration → seconds difference is DST-correct.
         t1.tm_isdst = -1; t2.tm_isdst = -1;
         int64_t secs = (int64_t)(mktime(&t1) - mktime(&t2));
         int64_t div  = (int64_t)unit_to_seconds(unit);
@@ -364,7 +364,7 @@ Module make_date_module() {
         return Value(tm_to_iso(*t, true));
     };
 
-    // date::is_valid(tarih) → bool — "YYYY-MM-DD" formatı geçerli mi?
+    // date::is_valid(date) → bool — is the "YYYY-MM-DD" format valid?
     m.functions["is_valid"] = [](auto args) -> Value {
         if (args.empty()) return Value(false);
         std::string s = args[0].to_string();
@@ -374,7 +374,7 @@ Module make_date_module() {
             t.tm_isdst = -1;
             std::time_t ts = mktime(&t);
             if (ts == -1) return Value(false);
-            // Normalize kontrol — ay/gün sınır aşıldıysa mktime düzeltir
+            // Normalize check — mktime corrects it if a month/day limit was exceeded
             std::tm _check = look_localtime(ts); std::tm* check = &_check;
             int y = std::stoi(s.substr(0,4));
             int mo = std::stoi(s.substr(5,2));
@@ -383,23 +383,23 @@ Module make_date_module() {
         } catch (...) { return Value(false); }
     };
 
-    // date::weekday(tarih) → int (1=Pazartesi ... 7=Pazar, ISO 8601)
+    // date::weekday(date) → int (1=Monday ... 7=Sunday, ISO 8601)
     m.functions["weekday"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("date::weekday() requires date");
         std::tm t = parse_iso(args[0].to_string());
         t.tm_isdst = -1;
         mktime(&t);
-        int wday = t.tm_wday;  // 0=Pazar
+        int wday = t.tm_wday;  // 0=Sunday
         return Value(wday == 0 ? 7 : wday);
     };
 
-    // date::week(tarih) → int (ISO hafta numarası 1-53)
+    // date::week(date) → int (ISO week number 1-53)
     m.functions["week"] = [](auto args) -> Value {
         if (args.empty()) throw std::runtime_error("date::week() requires date");
         std::tm t = parse_iso(args[0].to_string());
         t.tm_isdst = -1;
         mktime(&t);
-        // ISO 8601 hafta numarası
+        // ISO 8601 week number
         char buf[4];
         strftime(buf, sizeof(buf), "%V", &t);
         return Value(std::stoi(buf));

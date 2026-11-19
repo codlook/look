@@ -11,7 +11,7 @@
 
 namespace look {
 
-// --mode http fiber dağıtımıyla mı çalışıyor (Linux varsayılanı; LOOK_FIBER_DISPATCH=0 kapatır).
+// Is --mode http running with fiber dispatch (the Linux default; LOOK_FIBER_DISPATCH=0 turns it off).
 bool http_fiber_dispatch_enabled();
 
 // ── Parsed HTTP request (minimal — only what dispatch needs) ──────────────────
@@ -35,7 +35,7 @@ struct HttpResponse {
     int status_code       = 200;
     std::string status_text = "OK";
     std::map<std::string, std::string> headers;
-    std::vector<std::string> set_cookies;  // her çerez ayrı Set-Cookie satırı
+    std::vector<std::string> set_cookies;  // each cookie is a separate Set-Cookie line
     std::string body;
     bool keep_alive = false;
 
@@ -80,13 +80,13 @@ public:
     // Stop the server.
     void stop();
 
-    // Zarif kapanma (look/shutdown.h): yeni bağlantı kabulü durur, boşta bekleyen bağlantılar
-    // kapanır, işlenen istekler biter ve "Connection: close" ile yanıtlanır; run() işçiler
-    // bitince döner. Herhangi bir iş parçacığından çağrılabilir.
+    // Graceful shutdown (look/shutdown.h): accepting new connections stops, idle connections
+    // are closed, requests in progress finish and are answered with "Connection: close"; run() returns
+    // when the workers are done. Can be called from any thread.
     void begin_shutdown();
 
 private:
-    static void ws_close_hook(int fd);   // ws::close sonrası fd kapatma (g_ws_server_close_hook)
+    static void ws_close_hook(int fd);   // closing the fd after ws::close (g_ws_server_close_hook)
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

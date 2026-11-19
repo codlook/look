@@ -25,9 +25,9 @@ private:
     int paren_depth_   = 0;  // ( )
     int bracket_depth_ = 0;  // [ ]
     int brace_depth_   = 0;  // { }
-    // ( açıldığında o anki brace_depth kaydedilir. ASI: brace_depth > stack.back() ise
-    // ( içindeyiz ama bir { bloğunun içindeyiz → closure body → ASI tetikle.
-    std::vector<int> paren_brace_stack_;  // her ( için brace_depth snapshot
+    // When ( opens the current brace_depth is saved. ASI: if brace_depth > stack.back()
+    // we are inside ( but also inside a { block → closure body → trigger ASI.
+    std::vector<int> paren_brace_stack_;  // brace_depth snapshot for each (
 
     bool is_at_end() const;
     char advance();
@@ -36,13 +36,13 @@ private:
     void scan_token();
     void add_token(TokenType type, std::optional<std::string> literal = std::nullopt);
     void string(char quote);
-    void check_quote_inside_placeholder(const std::string& value);   // "{$u["name"]}" → nedenli hata
+    void check_quote_inside_placeholder(const std::string& value);   // "{$u["name"]}" → error with the cause
     void raw_string();
     void number();
     void identifier();
 
     static bool should_insert_semicolon(TokenType t);
-    bool is_continuation_ahead() const;  // sonraki satır devam operatörüyle başlıyorsa ASI bastır
+    bool is_continuation_ahead() const;  // suppress ASI if the next line starts with a continuation operator
 };
 
 } // namespace look

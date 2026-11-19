@@ -32,7 +32,7 @@
 
 namespace look {
 
-// PostgreSQL type code sabitleri (MySQL/SQLite ile çakışmaz)
+// PostgreSQL type code constants (do not clash with MySQL/SQLite)
 namespace pg_type {
     static constexpr uint8_t INT   = 0x30;
     static constexpr uint8_t FLOAT = 0x31;
@@ -50,12 +50,12 @@ public:
                  const std::string& database);
     void disconnect();
 
-    // TLS iste (postgresqls:// / ?tls=). verify=true (DOĞRU VARSAYILAN): sertifika +
-    // hostname doğrula. connect()'ten ÖNCE çağrılır. Yeni özellik olduğu için PG'de
-    // kırılacak TLS kullanıcısı yok → doğrudan güvenli varsayılanla başlanır.
+    // Request TLS (postgresqls:// / ?tls=). verify=true (THE RIGHT DEFAULT): verify the certificate +
+    // hostname. Called BEFORE connect(). Since it is a new feature there is no TLS user in PG
+    // to break → we start directly with the safe default.
     void set_tls(bool enable, bool verify) { tls_ = enable; tls_verify_ = verify; }
 
-    // DbConnection arayüzü
+    // DbConnection interface
     std::vector<DbRow> query(const std::string& sql) override;
     std::vector<DbRow> execute(const std::string& sql, const std::vector<DbParam>& params) override;
     int64_t last_insert_id() const override { return last_insert_id_; }
@@ -76,27 +76,27 @@ private:
     int64_t     affected_rows_      = 0;
     bool        wsock_init_         = false;
     int         connect_timeout_ms_ = 5000;
-    // Son ReadyForQuery durum bayti != 'I': transaction icinde. Kopan baglanti transaction icindeyse
-    // yeni baglanti ACILMAZ ve gonderim hatasi tekrar denenmez (bkz. ready_to_send).
+    // Last ReadyForQuery status byte != 'I': inside a transaction. If a dropped connection was inside a transaction
+    // a new connection is NOT OPENED and a send error is not retried (see ready_to_send).
     bool        in_txn_             = false;
     int         query_timeout_ms_   = 30000;
-    int         rcv_tmo_ms_         = -1;        // son set_socket_timeout değeri (fiber beklemesi için)
-    void*       ssl_               = nullptr;   // SSL* — TLS aktifse (void*: header OpenSSL'siz kalır)
-    bool        tls_                = false;     // TLS iste
-    bool        tls_verify_         = true;      // sertifika+hostname doğrula (doğru varsayılan)
+    int         rcv_tmo_ms_         = -1;        // last set_socket_timeout value (for the fiber wait)
+    void*       ssl_               = nullptr;   // SSL* — if TLS is active (void*: the header stays free of OpenSSL)
+    bool        tls_                = false;     // request TLS
+    bool        tls_verify_         = true;      // verify certificate+hostname (the right default)
 
     void do_connect();
     void set_socket_timeout(int ms);
-    void ready_to_send();   // sorgudan once: olu bosta baglantiyi yenile / transaction icindeyse hata
-    bool unread_reply_bytes() const;   // önceki cevaptan okunmamış bayt (tampon / TLS)
+    void ready_to_send();   // before a query: renew a dead idle connection / error if inside a transaction
+    bool unread_reply_bytes() const;   // unread bytes from the previous reply (buffer / TLS)
     bool recv_bytes(uint8_t* buf, size_t len);
-    // Okuma tamponu: bir recv ile birden çok mesaj (eskiden mesaj başına tür + uzunluk + gövde =
-    // üç recv). Her yeni bağlantıda boşalır (do_connect).
+    // Read buffer: several messages per recv (it used to be type + length + body per message =
+    // three recvs). Emptied on every new connection (do_connect).
     std::unique_ptr<uint8_t[]> rbuf_;
     size_t rbuf_pos_ = 0, rbuf_len_ = 0;
     static constexpr size_t RBUF_SIZE = 16384;
-    int  recv_some(uint8_t* buf, size_t cap);   // düz TCP: en az 1 bayt; <=0 → bağlantı bitti
-    // Gönderme kuyruğu: bir sorgunun Parse/Bind/Describe/Execute/Sync mesajları tek send ile.
+    int  recv_some(uint8_t* buf, size_t cap);   // plain TCP: at least 1 byte; <=0 → connection ended
+    // Send queue: the Parse/Bind/Describe/Execute/Sync messages of one query in a single send.
     std::vector<uint8_t> out_;
     void queue_message(char type, const std::vector<uint8_t>& body);
     void flush_out();
@@ -110,10 +110,10 @@ private:
     void  do_scram_sha256(const std::vector<uint8_t>& mechanisms_body);
 
     std::vector<DbRow> simple_query(const std::string& sql);
-    // Kullanıcı SQL'i: INSERT ise kimliği eklenen satırdan alır (look/pg_insert.h), sonra _raw.
+    // User SQL: if it is an INSERT it takes the id from the inserted row (look/pg_insert.h), then _raw.
     std::vector<DbRow> extended_query(const std::string& sql, const std::vector<DbParam>& params);
     std::vector<DbRow> extended_query_raw(const std::string& sql, const std::vector<DbParam>& params);
-    // Tablonun dizi/IDENTITY kolonu (yoksa ""). Katalog sorgusu — hata veremez (tablo yoksa boş).
+    // The table's sequence/IDENTITY column ("" if none). A catalog query — cannot error (empty if the table does not exist).
     std::string serial_column(const std::string& table);
     struct ColInfo_ { std::string name; uint8_t type_code; };
 
@@ -130,7 +130,7 @@ private:
                                                    const std::string& user,
                                                    const uint8_t salt[4]);
 
-    // SCRAM-SHA-256 primitifleri (sıfır bağımlılık)
+    // SCRAM-SHA-256 primitives (minimal external runtime dependencies)
     static std::array<uint8_t,32> sha256(const uint8_t* data, size_t len);
     static std::array<uint8_t,32> hmac_sha256(const uint8_t* key, size_t klen,
                                                const uint8_t* msg, size_t mlen);

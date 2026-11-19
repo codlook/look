@@ -1,6 +1,6 @@
 #include "look/resp_client.h"
-#include "look/db_dsn.h"   // redis_resolve_tls (saf TLS-karar dikişi)
-#include "look/host_port.h" // host[:port] + port ayrıştırma (Go net/url modeli)
+#include "look/db_dsn.h"   // redis_resolve_tls (pure TLS decision seam)
+#include "look/host_port.h" // host[:port] + port parsing (Go net/url model)
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
@@ -26,29 +26,29 @@
 #ifndef _WIN32
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
-#include "look/tls_peer.h"   // SNI + ad doğrulaması (IP → IP SAN), el sıkışma hata nedeni
+#include "look/tls_peer.h"   // SNI + name verification (IP → IP SAN), handshake failure reason
 #endif
-#include "look/sock_idle.h"   // idle_socket_unusable: havuzdan alınan bağlantının oluluk yoklaması
-#include "look/fiber_net.h"   // fiber içinde Redis beklenirken (DNS/connect/TLS/yazma/okuma) iş parçacığı serbest kalır
+#include "look/sock_idle.h"   // idle_socket_unusable: liveness probe of a connection taken from the pool
+#include "look/fiber_net.h"   // while waiting on Redis inside a fiber (DNS/connect/TLS/write/read) the thread is released
 
 #ifndef MSG_NOSIGNAL
-#  define MSG_NOSIGNAL 0   // Windows/macOS: bayrak yok (Windows'ta SIGPIPE de yok)
+#  define MSG_NOSIGNAL 0   // Windows/macOS: no such flag (Windows has no SIGPIPE either)
 #endif
 
 namespace look {
 
 #ifndef _WIN32
-// ── Redis TLS: client SSL_CTX (mysql_client ile aynı kalıp) ──────────────────
-// rediss:// / ?tls=1 → şifreleme (VERIFY_NONE, self-signed dostu); ?tls=verify →
-// SSL_VERIFY_PEER + hostname (MITM'e karşı). Managed Redis (Upstash/ElastiCache/Redis
-// Cloud) TLS ZORUNLU tutar — eski stub-throw hepsini blokluyordu.
+// ── Redis TLS: client SSL_CTX (same pattern as mysql_client) ─────────────────
+// rediss:// / ?tls=1 → encryption (VERIFY_NONE, self-signed friendly); ?tls=verify →
+// SSL_VERIFY_PEER + hostname (against MITM). Managed Redis (Upstash/ElastiCache/Redis
+// Cloud) REQUIRES TLS — the old stub-throw blocked all of them.
 static SSL_CTX* redis_ssl_ctx() {
     static SSL_CTX* ctx = [] {
         SSL_library_init();
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
         SSL_CTX* c = SSL_CTX_new(TLS_client_method());
-        look::tls_client_defaults(c);   // en az TLS 1.2, makineden bağımsız
+        look::tls_client_defaults(c);   // at least TLS 1.2, independent of the machine
         if (c) { SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr); SSL_CTX_set_default_verify_paths(c); }
         return c;
     }();
@@ -58,7 +58,7 @@ static SSL_CTX* redis_ssl_ctx() {
 
 // ── URL parser ───────────────────────────────────────────────────────────────
 // redis://[:password@]host[:port][/db]
-// rediss://...   (TLS — socket kurulduktan sonra OpenSSL handshake; şimdilik stub)
+// rediss://...   (TLS — OpenSSL handshake after the socket is set up; stub for now)
 
 static void parse_url(const std::string& url,
                       std::string& host, int& port,
@@ -72,17 +72,17 @@ static void parse_url(const std::string& url,
     tls_verify = false;
 
     std::string rest;
-    // ESKİ HATA: substr(0,8)=="rediss://" — "rediss://" 9 karakter → 8-karakter substr ASLA
-    // eşleşmezdi (rediss:// TLS'i hiç tetiklenmiyordu; stub-throw olduğu için gizli kaldı).
-    // rfind(...,0)==0 = doğru "başlıyor mu" kontrolü.
+    // OLD BUG: substr(0,8)=="rediss://" — "rediss://" is 9 characters → an 8-character substr could NEVER
+    // match (rediss:// never triggered TLS; it stayed hidden because it was a stub-throw).
+    // rfind(...,0)==0 = the correct "starts with" check.
     if (url.rfind("rediss://", 0) == 0) { tls = true; rest = url.substr(9); }
     else if (url.rfind("redis://", 0) == 0)             rest = url.substr(8);
     else                                                 rest = url;
 
-    // ?tls=verify / ?ssl=verify → şifreleme + sertifika/hostname doğrulaması (MITM'e karşı).
-    // ?tls=1 → yalnız şifreleme. Sorgu dizisini rest'ten ayıkla.
-    // Bölme look/db_dsn.h'de (saf, tablo-test edilebilir): önce son '@', sonra '?'.
-    // Eskiden '?' önce aranıyordu → parolada '?' varsa host ve sorgu yanlış çıkıyordu.
+    // ?tls=verify / ?ssl=verify → encryption + certificate/hostname verification (against MITM).
+    // ?tls=1 → encryption only. Extract the query string from rest.
+    // The split is in look/db_dsn.h (pure, table-testable): last '@' first, then '?'.
+    // '?' used to be searched first → a '?' in the password gave a wrong host and query.
     { std::string userinfo, hostpart, query;
       look::redis_split_url(rest, userinfo, hostpart, query);
       look::redis_resolve_tls(query, tls, tls, tls_verify);
@@ -92,8 +92,8 @@ static void parse_url(const std::string& url,
       rest = hostpart; }
 
     // /db
-    // Go-redis ParseURL modeli: bozuk veritabanı numarası ya da port HATA. Eskiden ikisi de sessizce
-    // varsayılana düşüyordu ("/abc" → db 0: başka uygulamanın anahtarlarına yazmak; ":63799" kabul).
+    // Go-redis ParseURL model: a malformed database number or port is an ERROR. Both used to silently
+    // fall back to the default ("/abc" → db 0: writing to another application's keys; ":63799" accepted).
     auto slash = rest.find('/');
     if (slash != std::string::npos) {
         const std::string ds = rest.substr(slash + 1);
@@ -105,15 +105,15 @@ static void parse_url(const std::string& url,
         rest = rest.substr(0, slash);
     }
 
-    // host:port — IPv6 köşeli parantezde ("[::1]:6379"); eskiden rfind(':') ile "[::1]" → host "[:"
+    // host:port — IPv6 in square brackets ("[::1]:6379"); with the old rfind(':') "[::1]" gave host "[:"
     std::string err = look::split_host_port(rest, host, port);
     if (!err.empty()) throw std::runtime_error("Redis: invalid URL: " + err);
 }
 
 // ── Constructor / Destructor ─────────────────────────────────────────────────
 
-// Redis yanıtı (ve bağlantı kurma, el sıkışma, gönderme) için süre sınırı. Eskiden sınır yoktu:
-// kabul edip yanıt vermeyen bir Redis isteği sonsuza dek asıyordu. LOOK_REDIS_TIMEOUT_MS (ms).
+// Time limit for the Redis reply (and connecting, handshake, sending). There used to be no limit:
+// a Redis that accepted but never answered hung the request forever. LOOK_REDIS_TIMEOUT_MS (ms).
 static int redis_timeout_ms() {
     static const int v = [] {
         const char* e = std::getenv("LOOK_REDIS_TIMEOUT_MS");
@@ -126,9 +126,9 @@ static int redis_timeout_ms() {
 RespClient::RespClient(const std::string& url) {
     tmo_ms_ = redis_timeout_ms();
     parse_url(url, host_, port_, pass_, db_, tls_, tls_verify_);
-    // LOOK_DB_REQUIRE_TLS — uzak host'a düz metin bağlantıyı reddet (loopback serbest,
-    // bkz. db_dsn.h db_refuse_plaintext). Redis'te EKSTRA kritik: AUTH şifreyi cleartext
-    // gönderir (challenge-response yok) → düz metin uzak Redis = şifre tel üstünde açık.
+    // LOOK_DB_REQUIRE_TLS — reject a plaintext connection to a remote host (loopback is allowed,
+    // see db_dsn.h db_refuse_plaintext). EXTRA critical for Redis: AUTH sends the password in cleartext
+    // (no challenge-response) → plaintext remote Redis = the password is exposed on the wire.
     {
         const char* e = std::getenv("LOOK_DB_REQUIRE_TLS");
         bool require_tls = e && *e && std::string(e) != "0" && std::string(e) != "false";
@@ -145,20 +145,20 @@ RespClient::RespClient(const std::string& url) {
 
 RespClient::~RespClient() { drop(); }
 
-// Bağlantıyı kapat. Yarıda kalan bir komuttan sonra akışın neresinde olunduğu bilinmez
-// (gelmemiş yanıt sonradan gelir, sıradaki komutun yanıtı sanılır) → her hata ve süre
-// dolmasında bağlantı atılır; bir daha kullanılmaz (is_connected false).
+// Close the connection. After a command left halfway it is unknown where in the stream we are
+// (a reply that has not arrived comes later and is taken for the reply to the next command) → on every error and
+// timeout the connection is dropped; it is never used again (is_connected false).
 void RespClient::drop() {
 #ifndef _WIN32
     if (ssl_) { SSL_free((SSL*)ssl_); ssl_ = nullptr; }
 #endif
     if (fd_ >= 0) { CLOSESOCKET(fd_); fd_ = -1; }
-    rpos_ = rlen_ = 0;   // eski bağlantıdan kalan okunmamış veri yeni bağlantıya taşınmasın
+    rpos_ = rlen_ = 0;   // unread data left from the old connection must not carry over to the new one
 }
 
-// Havuzda bekleyen bağlantı hâlâ kullanılabilir mi — HİÇBİR ŞEY GÖNDERMEDEN (MySQL/PG ile aynı
-// yoklama). Redis yeniden başladıysa ya da timeout ile kapattıysa soket okunabilir (EOF) olur;
-// eskiden ilk komut ölü sokete gidip oturum isteği 503 alıyordu.
+// Is a connection waiting in the pool still usable — WITHOUT SENDING ANYTHING (same probe as
+// MySQL/PG). If Redis restarted or closed it on timeout the socket becomes readable (EOF);
+// previously the first command went to the dead socket and the session request got a 503.
 bool RespClient::usable_when_idle() {
     bool ok = fd_ >= 0 && rpos_ == rlen_;
 #ifndef _WIN32
@@ -200,7 +200,7 @@ void RespClient::connect() {
         sock = (int)socket(r->ai_family, r->ai_socktype, r->ai_protocol);
         if (sock < 0) continue;
 #ifndef _WIN32
-        // Fiber dışında da okuma/yazma süre sınırlı (fiber içinde beklemeler tmo_ms_ ile).
+        // Reads/writes are time-limited outside a fiber too (waits inside a fiber use tmo_ms_).
         struct timeval tv; tv.tv_sec = tmo_ms_ / 1000; tv.tv_usec = (tmo_ms_ % 1000) * 1000;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -219,7 +219,7 @@ void RespClient::connect() {
     if (sock < 0) throw std::runtime_error("Redis: cannot connect to " + host_ + ":" + std::to_string(port_));
     fd_ = sock;
 
-    // Nagle algoritmasını kapat — küçük paketlerde 40ms gecikmeyi önler
+    // Turn off Nagle's algorithm — avoids a 40ms delay on small packets
     {
         int nd = 1;
 #ifdef _WIN32
@@ -231,15 +231,15 @@ void RespClient::connect() {
 
     if (tls_) {
 #ifndef _WIN32
-        // TLS: TCP kurulduktan hemen sonra SSL handshake (MySQL'in aksine mid-stream
-        // SSLRequest YOK — Redis TLS bağlantı başında). ssl_ set edilince tüm I/O SSL'den.
+        // TLS: SSL handshake right after TCP is established (unlike MySQL there is no mid-stream
+        // SSLRequest — Redis TLS is at the start of the connection). Once ssl_ is set all I/O goes through SSL.
         SSL_CTX* ctx = redis_ssl_ctx();
         if (!ctx) throw std::runtime_error("Redis: could not create SSL_CTX (TLS)");
         SSL* s = SSL_new(ctx);
         if (!s) throw std::runtime_error("Redis: SSL_new failed (TLS)");
         SSL_set_fd(s, fd_);
-        // SNI + ad doğrulaması (IP → IP SAN, ad → DNS adı; look/tls_peer.h). Kurulamazsa ad
-        // kontrolü sessizce kapanmasın diye bağlanılmaz (bkz mysql_client).
+        // SNI + name verification (IP → IP SAN, name → DNS name; look/tls_peer.h). If it cannot be set up we do not connect,
+        // so name checking does not silently turn off (see mysql_client).
         if (tls_verify_) SSL_set_verify(s, SSL_VERIFY_PEER, nullptr);
         if (!tls_set_peer(s, host_, tls_verify_)) {
             SSL_free(s);
@@ -252,7 +252,7 @@ void RespClient::connect() {
             SSL_free(s);
             fail("Redis: TLS handshake failed: " + why);
         }
-        ssl_ = s;   // bundan sonra send_command/read_* SSL üstünden
+        ssl_ = s;   // from now on send_command/read_* go over SSL
 #else
         throw std::runtime_error("Redis TLS (rediss://) is not supported in this build "
                                  "(the Windows build is compiled without OpenSSL). Use the Linux build.");
@@ -299,11 +299,11 @@ void RespClient::send_command(const std::vector<std::string>& args) {
 
 // ── RESP2 reader ─────────────────────────────────────────────────────────────
 
-// Tek okuma noktası: tampona en çok 16 KB okur. Eskiden recv/SSL_read doğrudan engelliyordu
-// (fiber içinde Redis yanıtı gelene dek İŞ PARÇACIĞI başka isteğe bakamıyordu) ve satırlar bayt
-// bayt okunuyordu (her bayt bir sistem çağrısı). Veri hazırsa hemen okunur; değilse yalnız fiber
-// en çok tmo_ms_ bekler. Fiber dışında okuma SO_RCVTIMEO (tmo_ms_) ile sınırlı engeller.
-// Süre dolarsa ya da bağlantı koparsa bağlantı atılır ve açık bir hata fırlatılır.
+// Single read point: reads at most 16 KB into the buffer. Previously recv/SSL_read blocked directly
+// (inside a fiber the THREAD could not serve another request until the Redis reply arrived) and lines were read byte
+// by byte (every byte a system call). If data is ready it is read at once; otherwise only the fiber
+// waits at most tmo_ms_. Outside a fiber the read blocks, bounded by SO_RCVTIMEO (tmo_ms_).
+// If the time runs out or the connection drops, the connection is dropped and a clear error is thrown.
 void RespClient::fill() {
     if (fd_ < 0) throw std::runtime_error("Redis: not connected");
     rbuf_.resize(16384);
@@ -313,7 +313,7 @@ void RespClient::fill() {
     if (!(ssl_ && SSL_pending((SSL*)ssl_) > 0) && fiber_wait_readable(fd_, tmo_ms_) == 0)
         fail_timeout("waiting for a reply from");
     errno = 0;
-    // Fiber içinde yukarıda beklendi (veri hazır); fiber dışı → blocking-ok: SO_RCVTIMEO ile sınırlı.
+    // Waited above inside the fiber (data is ready); outside a fiber → blocking-ok: bounded by SO_RCVTIMEO.
     if (ssl_) n = SSL_read((SSL*)ssl_, &rbuf_[0], (int)rbuf_.size());
     else      n = (int)::recv(fd_, &rbuf_[0], rbuf_.size(), 0);
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) fail_timeout("waiting for a reply from");
@@ -326,8 +326,8 @@ void RespClient::fill() {
 }
 
 std::string RespClient::read_line() {
-    // RESP2 kontrol satırları kısadır (+OK, :123, $<len>). Kötü niyetli/bozuk
-    // sunucu '\n' göndermezse sınırsız büyümeyi (OOM) önlemek için üst sınır.
+    // RESP2 control lines are short (+OK, :123, $<len>). An upper limit to prevent unbounded growth (OOM)
+    // if a malicious/malformed server never sends '\n'.
     static constexpr size_t RESP_MAX_LINE = 64 * 1024;
     std::string line;
     while (true) {
@@ -342,9 +342,9 @@ std::string RespClient::read_line() {
     return line;
 }
 
-// Redis bulk yanıt için üst sınır — kötü niyetli/bozuk sunucu $2000000000
-// döndürüp sınırsız allocation (OOM DoS) tetiklemesin. LOOK_REDIS_MAX_BULK
-// (byte) ile ayarlanır, varsayılan 64 MB.
+// Upper limit for a Redis bulk reply — so a malicious/malformed server does not return $2000000000
+// and trigger an unbounded allocation (OOM DoS). Set with LOOK_REDIS_MAX_BULK
+// (bytes), default 64 MB.
 static size_t resp_max_bulk() {
     static const size_t v = []() -> size_t {
         const char* e = std::getenv("LOOK_REDIS_MAX_BULK");
@@ -356,8 +356,8 @@ static size_t resp_max_bulk() {
 
 std::string RespClient::read_bulk(long len) {
     if (len < 0) return "";  // null bulk
-    // Sınır kontrolü int'e DARALTMADAN önce — $5000000000 gibi >INT_MAX değer
-    // (int)len ile negatife taşıp sessizce null dönüp socket'i desync ederdi.
+    // Bounds check BEFORE narrowing to int — a value > INT_MAX such as $5000000000
+    // would wrap negative in (int)len, silently return null and desync the socket.
     if ((size_t)len > resp_max_bulk())
         fail("Redis: bulk response limit exceeded (LOOK_REDIS_MAX_BULK)");
     std::string buf((size_t)len, '\0');
@@ -373,8 +373,8 @@ std::string RespClient::read_bulk(long len) {
 }
 
 std::string RespClient::read_response(int depth) {
-    // Derin iç içe dizi (*1\r\n*1\r\n...) recursive parse'ı stack'i taşırabilir —
-    // kötü niyetli/bozuk sunucuya karşı derinlik sınırı.
+    // A deeply nested array (*1\r\n*1\r\n...) can overflow the stack in the recursive parse —
+    // depth limit against a malicious/malformed server.
     static constexpr int RESP_MAX_DEPTH = 64;
     if (depth > RESP_MAX_DEPTH)
         fail("Redis: response nested too deep (array)");
@@ -387,14 +387,14 @@ std::string RespClient::read_response(int depth) {
     switch (type) {
         case '+': return payload;                        // Simple string
         case '-':                                        // Error
-            // Üst düzeyde akış hizalı (yanıt bitti) → bağlantı sağlam kalır; dizi içindeyse
-            // kalan elemanlar okunmadan çıkılıyor → bağlantı atılır.
+            // At top level the stream is aligned (reply finished) → the connection stays intact; inside an array
+            // we exit without reading the remaining elements → the connection is dropped.
             if (depth > 0) fail("Redis: " + payload);
             throw std::runtime_error("Redis: " + payload);
         case ':': return payload;                        // Integer (as string)
         case '$': {                                      // Bulk string
             long len = 0;
-            try { len = std::stol(payload); }            // bozuk uzunluk → protokol hatası
+            try { len = std::stol(payload); }            // malformed length → protocol error
             catch (...) { fail("Redis: invalid bulk length"); }
             if (len == -1) return "";                    // nil
             return read_bulk(len);
@@ -404,10 +404,10 @@ std::string RespClient::read_response(int depth) {
             try { count = std::stol(payload); }
             catch (...) { fail("Redis: invalid array count"); }
             if (count <= 0) return "";
-            // Sunucu-verili count sanity cap — kötü niyetli/MITM sunucu (TLS yok)
-            // `*2000000000` verirse döngü kaynak tüketir. Session subset'i küçük
-            // dizilerle çalışır; makul üst sınır. (MySQL col_count / RESP_MAX_DEPTH
-            // ile tutarlı.)
+            // Server-supplied count sanity cap — if a malicious/MITM server (no TLS) gives
+            // `*2000000000` the loop consumes resources. The session subset works with small
+            // arrays; a reasonable upper limit. (Consistent with MySQL col_count /
+            // RESP_MAX_DEPTH.)
             static constexpr long RESP_MAX_ARRAY = 1024 * 1024;
             if (count > RESP_MAX_ARRAY)
                 fail("Redis: array element count limit exceeded");
@@ -425,7 +425,7 @@ std::string RespClient::read_response(int depth) {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-// SET ... XX: yalnız anahtar varsa yazar (tek komut, atomik). Yanıt +OK ya da nil.
+// SET ... XX: writes only if the key exists (single command, atomic). The reply is +OK or nil.
 bool RespClient::set_if_exists(const std::string& key, const std::string& val, int ttl_sec) {
     if (ttl_sec > 0)
         send_command({"SET", key, val, "EX", std::to_string(ttl_sec), "XX"});
@@ -447,13 +447,13 @@ std::string RespClient::get(const std::string& key) {
     return read_response();  // "" if nil
 }
 
-// GET, ama "yok" (nil, $-1) ile "boş değer" ($0) ayrı: true = anahtar var. EXISTS ile aynı tek tur.
+// GET, but "missing" (nil, $-1) is distinguished from "empty value" ($0): true = the key exists. One round trip, same as EXISTS.
 bool RespClient::get_if_exists(const std::string& key, std::string& out) {
     out.clear();
     send_command({"GET", key});
     auto line = read_line();
     if (line.empty()) fail("Redis: empty response");
-    if (line[0] == '-') throw std::runtime_error("Redis: " + line.substr(1));   // akış hizalı
+    if (line[0] == '-') throw std::runtime_error("Redis: " + line.substr(1));   // stream aligned
     if (line[0] != '$') fail("Redis: unexpected reply to GET");
     long len = 0;
     try { len = std::stol(line.substr(1)); } catch (...) { fail("Redis: invalid bulk length"); }

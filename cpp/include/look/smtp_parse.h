@@ -1,37 +1,37 @@
 #pragma once
-// SMTP saf ayrıştırıcılar — "dikişi aç" (pg_parse.h / dkim_tag.h deseni): ağdan-beslenen,
-// PRE-AUTH parse mantığını I/O'dan ayır → tek tanım (drift yok), fuzz + tablo testi mümkün.
-// smtp_server.cpp bu header'ı include eder; ayrı .cpp/.static tanım YOK.
+// SMTP pure parsers — "unstitch" (the pg_parse.h / dkim_tag.h pattern): separate the network-fed,
+// PRE-AUTH parse logic from I/O → a single definition (no drift), fuzz + table test possible.
+// smtp_server.cpp includes this header; there is NO separate .cpp/.static definition.
 //
-// extract_addr: `MAIL FROM:<addr>` / `RCPT TO:<addr>` parametresinden adresi çıkar (RFC 5321 §4.1.2).
-//   Geçmiş bug'lar (kodda belgeli): `MAIL FROM:` bare adres KIRIK'ti, `<>` null-sender reddediliyordu,
-//   iç içe `<`/boşluk çöp adres kabul ediliyordu. Şimdi bounds-checked + katı. Ağa açık → fuzz hedefi.
+// extract_addr: extract the address from the `MAIL FROM:<addr>` / `RCPT TO:<addr>` parameter (RFC 5321 §4.1.2).
+//   Past bugs (documented in the code): a bare address in `MAIL FROM:` was BROKEN, the `<>` null-sender was rejected,
+//   a nested `<`/space garbage address was accepted. Now bounds-checked + strict. Network-facing → fuzz target.
 #include <string>
 #include <cctype>
 
 namespace look {
 
 // "MAIL FROM:<a@b.com>" → addr="a@b.com", true.  "<>" → addr="", true (null sender).
-// Bozuk (kapanmamış '<', iç içe '<', adreste boşluk, parametre yok) → false.
+// Malformed (unclosed '<', nested '<', space in the address, no parameter) → false.
 inline bool smtp_extract_addr(const std::string& line, std::string& addr) {
     addr.clear();
     size_t colon = line.find(':');
-    if (colon == std::string::npos) return false;          // "MAIL FROM" — parametre yok
+    if (colon == std::string::npos) return false;          // "MAIL FROM" — no parameter
     std::string rest = line.substr(colon + 1);
     size_t b = rest.find_first_not_of(" \t");
-    if (b == std::string::npos) return false;              // "MAIL FROM:" — adres yok
+    if (b == std::string::npos) return false;              // "MAIL FROM:" — no address
     rest = rest.substr(b);
 
     if (rest[0] == '<') {
         size_t gt = rest.find('>');
-        if (gt == std::string::npos) return false;         // kapanmamış açı parantezi
+        if (gt == std::string::npos) return false;         // unclosed angle bracket
         addr = rest.substr(1, gt - 1);
-        // İç içe '<' veya boşluk = bozuk adres (RFC'de yol/adres içinde olamaz)
+        // Nested '<' or space = malformed address (cannot be inside a path/address in the RFC)
         if (addr.find('<') != std::string::npos ||
             addr.find(' ') != std::string::npos) { addr.clear(); return false; }
-        return true;                                       // addr boş olabilir → null sender
+        return true;                                       // addr may be empty → null sender
     }
-    // Açı parantezsiz (bare) adres — ESMTP parametrelerinden (SIZE=, BODY=) önceki ilk token
+    // Address without angle brackets (bare) — the first token before the ESMTP parameters (SIZE=, BODY=)
     size_t sp = rest.find_first_of(" \t");
     addr = (sp == std::string::npos) ? rest : rest.substr(0, sp);
     if (addr.empty() ||
@@ -40,7 +40,7 @@ inline bool smtp_extract_addr(const std::string& line, std::string& addr) {
     return true;
 }
 
-// Komut satırından fiili (verb) çıkar: ilk boşluk/CR/LF'e kadar, upper-case.
+// Extract the verb from the command line: up to the first space/CR/LF, upper-case.
 inline std::string smtp_verb(const std::string& line) {
     std::string v;
     for (char c : line) {
