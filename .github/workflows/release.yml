@@ -311,3 +311,22 @@ jobs:
           # Yalnız :$VERSION ve :latest. Eski sürüm etiketlerine (ör. :1.0.0) DOKUNULMAZ.
           docker push "codlook/look:$VERSION"
           if [ "$IS_NEWEST" = 1 ]; then docker push codlook/look:latest; else echo "codlook/look:latest not moved (not the newest release)"; fi
+
+      # 9) main en yeni yayını göstermeli. 1.1.2'de unutuldu: GitHub'da depoyu açan 1.1.1'in kodunu
+      # gördü. İş akışı main'i kendisi taşımaz (açık dal; elle ileri sarma), yalnız geride kaldığını
+      # uyarı + özet olarak yazar. rc ve eski çizgi (IS_NEWEST=0) yayınlarında main'e bakılmaz.
+      - name: Check that main points at the newest release
+        if: ${{ !contains(github.ref_name, 'rc') && env.IS_NEWEST == '1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ST="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status 2>/dev/null || echo unknown)"
+          case "$ST" in
+            identical) echo "main points at ${GITHUB_REF_NAME}" ;;
+            ahead) MSG="main is behind ${GITHUB_REF_NAME}: fast-forward it with  git push origin ${GITHUB_REF_NAME}^{}:refs/heads/main" ;;
+            *) MSG="main and ${GITHUB_REF_NAME} are not in a fast-forward relation (compare status: $ST); check main by hand" ;;
+          esac
+          if [ -n "${MSG:-}" ]; then
+            echo "::warning::$MSG"
+            echo "### ⚠️ $MSG" >> "$GITHUB_STEP_SUMMARY"
+          fi
