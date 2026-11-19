@@ -827,6 +827,7 @@ struct HttpServer::Impl {
             } catch (...) {
                 resp.status_code = 500;
                 resp.status_text = "Internal Server Error";
+                // "hata" is a deprecated copy of "error": removed together with the CGI/FastCGI "hata"/"kod".
                 resp.body        = "{\"ok\":false,\"error\":\"Server error\",\"hata\":\"Server error\"}";
                 resp.keep_alive  = false;
             }

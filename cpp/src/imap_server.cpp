@@ -1047,7 +1047,7 @@ bool ImapServer::start() {
     impl_->listen_fd = Impl::make_server_fd(impl_->port_imap);
     if (impl_->listen_fd < 0) {
         Logger::instance().log(LogLevel::LOG_ERROR, "IMAP",
-            "port " + std::to_string(impl_->port_imap) + " dinlenemedi");
+            "cannot bind port " + std::to_string(impl_->port_imap));
         return false;
     }
     impl_->ssl_ctx = Impl::make_ssl_ctx();   // null = no certificate env (plaintext dev)

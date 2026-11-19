@@ -25,7 +25,7 @@ cleanup() { [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; sleep 1; [ -n "$SRV" ] && 
 trap cleanup EXIT
 fail=0
 
-command -v python3 >/dev/null 2>&1 || { echo "  (atlandi: python3 gerekli)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "  (skipped: python3 required)"; exit 0; }
 
 echo 'route("GET","/",function(){ return response::text("ok") })' > "$TMP/app.lk"
 mkdir -p "$TMP/maildir"
@@ -70,11 +70,11 @@ PYEOF
 out=$(timeout 90 python3 "$TMP/probe.py" $PORT 2>&1 | tail -1)
 bek="250|501|501|250|250|501|550|503"
 if [ "$out" = "$bek" ]; then
-  echo "  PASS SMTP: adres ayristirma + relay + komut sirasi + satir siniri"
+  echo "  PASS SMTP: address parsing + relay + command order + line limit"
 else
-  echo "  FAIL SMTP yanit dizisi: [$out]"
-  echo "       beklenen           : [$bek]"
-  echo "       sira: gecerli|adressiz|bozuk|null-sender|bare|rcpt-yok|relay|sirasiz"
+  echo "  FAIL SMTP reply sequence: [$out]"
+  echo "       expected           : [$bek]"
+  echo "       order: valid|no-address|malformed|null-sender|bare|no-rcpt|relay|out-of-order"
   fail=1
 fi
 
@@ -107,10 +107,10 @@ for i in $(seq 1 90); do
   sleep 0.5
 done
 case "$rp" in
-  *"<bare@t.com>"*) echo "  PASS Return-Path temiz: $rp" ;;
-  *"FROM:"*)        echo "  FAIL Return-Path'e COP yazildi: $rp (bare adres ayristirma kirik)"; fail=1 ;;
-  "")               echo "  FAIL mesaj teslim edilmedi (Return-Path bulunamadi)"; fail=1 ;;
-  *)                echo "  FAIL Return-Path beklenmedik: $rp"; fail=1 ;;
+  *"<bare@t.com>"*) echo "  PASS Return-Path is clean: $rp" ;;
+  *"FROM:"*)        echo "  FAIL garbage was written to Return-Path: $rp (bare-address parsing is broken)"; fail=1 ;;
+  "")               echo "  FAIL message was not delivered (Return-Path not found)"; fail=1 ;;
+  *)                echo "  FAIL unexpected Return-Path: $rp"; fail=1 ;;
 esac
 
 # ── EVENT LOOP: fd lifecycle + per-IP limit ────────────────────────────────
@@ -160,17 +160,17 @@ if [ -d /proc ]; then
   fdout=$(timeout 120 python3 "$TMP/fd.py" $PORT $SRV 2>&1 | tail -1)
   sz=$(echo "$fdout" | cut -d'|' -f1); kb=$(echo "$fdout" | cut -d'|' -f2); rd=$(echo "$fdout" | cut -d'|' -f3)
   if [ "${sz:-99}" -le 2 ] 2>/dev/null; then
-    echo "  PASS event loop: 80 anormal kopma sonrasi fd sizintisi yok (fark ${sz})"
+    echo "  PASS event loop: no fd leak after 80 abnormal disconnects (diff ${sz})"
   else
-    echo "  FAIL event loop fd SIZINTISI: +${sz} fd (RST/yarim komut sonrasi temizlenmiyor)"; fail=1
+    echo "  FAIL event loop fd LEAK: +${sz} fd (not cleaned up after an RST / a half-sent command)"; fail=1
   fi
   if [ "${kb:-0}" -gt 0 ] && [ "${rd:-0}" -gt 0 ]; then
-    echo "  PASS per-IP limiti: ${kb} kabul (220) / ${rd} red (421)"
+    echo "  PASS per-IP limit: ${kb} accepted (220) / ${rd} refused (421)"
   else
-    echo "  FAIL per-IP limiti uygulanmiyor: kabul=${kb} red=${rd} (hepsi kabul mu?)"; fail=1
+    echo "  FAIL the per-IP limit is not enforced: accepted=${kb} refused=${rd} (were all accepted?)"; fail=1
   fi
 else
-  echo "  (atlandi: fd sayimi /proc gerektirir)"
+  echo "  (skipped: fd counting needs /proc)"
 fi
 
 # A "started" LIE must not be printed when bind FAILS (bug 45).
@@ -194,16 +194,16 @@ BSRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$BUSY_HTTP/" 2>/dev/null && break; sleep 0.5; done
 sleep 1
 kill $BSRV 2>/dev/null; kill $BLK 2>/dev/null
-if grep -qi "cannot bind\|dinlenemedi\|BAŞLATILAMADI" "$TMP/busy.log"; then
+if grep -qi "cannot bind" "$TMP/busy.log"; then
   if grep -q "SMTP server started" "$TMP/busy.log"; then
-    echo "  FAIL bind BASARISIZ oldugu halde 'SMTP server started' yazildi (yaniltici log)"
+    echo "  FAIL 'SMTP server started' was logged although the bind FAILED (misleading log)"
     fail=1
   else
-    echo "  PASS bind hatasinda yaniltici 'started' logu yok"
+    echo "  PASS no misleading 'started' log on a bind error"
   fi
 else
-  echo "  (atlandi: bind hatasi tetiklenemedi)"
+  echo "  (skipped: could not trigger a bind error)"
 fi
 
-[ $fail = 0 ] && echo "PASS: SMTP sunucusu" || echo "FAIL: SMTP sunucusu"
+[ $fail = 0 ] && echo "PASS: SMTP server" || echo "FAIL: SMTP server"
 exit $fail
