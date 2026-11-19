@@ -84,5 +84,21 @@ math::floor(9007199254740993)|9007199254740993
 int(1e19)|9223372036854775807
 int(-1e300)|-9223372036854775808
 int(2.9)|2
+"2.5" + 1|3.5
+1 + "0.5"|1.5
+"1e3" + 1|1001
+"2.5" * 2|5
+"7.5" % 2|1.5
+"2.5" ** 2|6.25
+"5" + 1|6
+"10" / "4"|2.5
+"1e-400" + 1|1
+-"2.5"|-2.5
+-"5"|-5
+-true|-1
+-null|ERR:Arithmetic on a non-numeric value
+-"abc"|ERR:cannot be converted to a number
+"0x10" + 1|ERR:cannot be converted to a number
+"inf" + 1|ERR:cannot be converted to a number
 EOF
 [ $fail = 0 ] && echo "PASS: numeric rules hold at their edges ($n cases)" || { echo "FAIL: numeric edge cases"; exit 1; }

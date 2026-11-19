@@ -617,6 +617,7 @@ look-fcgi --mode http --port 8080</code></pre>
       <li>Division or modulo by zero is an error. Floats follow IEEE 754 otherwise (<code>1e308 * 10</code> is <code>Infinity</code>), but <code>json::encode</code> refuses <code>Infinity</code> and <code>NaN</code> (JSON has no such values).</li>
       <li>Comparing an int with a float is exact (<code>9007199254740993 == 9007199254740992.0</code> is <code>false</code>).</li>
       <li><code>int()</code> / <code>float()</code> of a numeric string out of range is an error (<code>int("99999999999999999999")</code>); a non-numeric string still gives <code>0</code> (<code>int("abc") == 0</code>). <code>int(2.9) == 2</code>; <code>int()</code> of a float beyond the range gives the nearest limit.</li>
+      <li>A string holding a number takes part in arithmetic as that number: <code>"5" + 1 == 6</code>, <code>"2.5" + 1 == 3.5</code>, <code>"1e3" + 1 == 1001</code>, <code>-"2.5" == -2.5</code>. Any other string, <code>null</code>, a list or a map is an error (<code>"abc" + 1</code>, <code>-null</code>); hex (<code>"0x10"</code>), <code>"inf"</code> and <code>"nan"</code> are not numbers here.</li>
     </ul>
   </div>
 

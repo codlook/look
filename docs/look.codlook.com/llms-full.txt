@@ -472,6 +472,9 @@ $a ** $b   # power (2**10 = 1024)
 > - `int()` / `float()` of a numeric string out of range is an error (`int("99999999999999999999")`);
 >   a non-numeric string still gives `0` (`int("abc") == 0`). `int(2.9) == 2`; `int()` of a float
 >   beyond the range gives the nearest limit.
+> - A string holding a number takes part in arithmetic as that number: `"5" + 1 == 6`,
+>   `"2.5" + 1 == 3.5`, `"1e3" + 1 == 1001`, `-"2.5" == -2.5`. Any other string, `null`, a list or
+>   a map is an error (`"abc" + 1`, `-null`); hex (`"0x10"`), `"inf"` and `"nan"` are not numbers here.
 
 ### String Concatenation
 

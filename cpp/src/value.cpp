@@ -252,10 +252,16 @@ using look::i64_mul_ovf;
 // "abc"+1=1 and (since an int64-overflowing number in JSON is a STRING) bignum-string+1=1 —
 // silent DATA CORRUPTION. A fully numeric string ("5") keeps working; a garbage string throws.
 // to_int/to_float stay GENERAL (lenient-0 is wanted elsewhere); only arithmetic is strict.
-static void arith_check(const Value& v) {
+// Checks one operand of + - * / % ** and says which path it takes: true = the float path. A string holding a
+// decimal or exponent number ("2.5", "1e3") takes the float path, like a float. It used to be checked as a
+// number and then read with to_int: "2.5" + 1 was 3 and "1e3" + 1 was 2 — a silently wrong result for any
+// form field or query parameter holding a decimal.
+static bool arith_float(const Value& v) {
     switch (v.type()) {
-        case Value::INT: case Value::FLOAT: case Value::BOOL:
-            return;                    // numeric — allowed (true=1/false=0, as in most languages)
+        case Value::INT: case Value::BOOL:
+            return false;              // numeric — allowed (true=1/false=0, as in most languages)
+        case Value::FLOAT:
+            return true;
         case Value::STRING: break;     // validate the content below
         default:
             // NONE(null — MISSING ASSOC KEY!), ARRAY, FUNCTION, CHANNEL/WS/SSE:
@@ -267,20 +273,21 @@ static void arith_check(const Value& v) {
     if (s.empty())
         throw std::runtime_error("Arithmetic on an empty string");
     size_t pos = 0;
-    // 1) A full int64 string → valid (operator+ handles it correctly via the int path: "5"+1=6)
+    // 1) A full int64 string → the int path ("5"+1=6)
     try {
         (void)std::stoll(s, &pos);
-        if (pos == s.size()) return;
+        if (pos == s.size()) return false;
     } catch (const std::out_of_range&) {
         // An INTEGER string EXCEEDING int64 (bignum / Snowflake ID / BIGINT UNSIGNED).
         // JSON keeps an int64-overflowing number as a STRING for precision; arithmetic with it
         // fell to to_int→0 and gave a SILENTLY wrong result ("bignum + 1 = 1"). Reject.
         throw std::runtime_error("Arithmetic on a numeric string exceeding the int64 limit (bignum/ID): '" + s + "'");
     } catch (...) {}
-    // 2) A decimal/exponent number string ("5.5", "1e3") → valid (float path)
-    {
+    // 2) A decimal/exponent number string ("5.5", "1e3") → the float path. Only decimal notation: strtod also
+    //    reads hex ("0x10"), "inf" and "nan", which are not numbers here.
+    if (s.find_first_of("xXiInN") == std::string::npos) {
         double d;
-        if (parse_double(s, d, &pos) && pos == s.size()) return;
+        if (parse_double(s, d, &pos) && pos == s.size()) return true;
     }
     // 3) Not a number ("abc", "12x") → reject (so that + does not give a silent 0 while == is type-strict)
     throw std::runtime_error("Arithmetic on a string that cannot be converted to a number: '" + s + "'");
@@ -318,31 +325,31 @@ Value look_explicit_float(const Value& v) {
         " does not fit in 64 bits (use a float, e.g. 1.0 * x, if an approximate result is fine)");
 }
 Value Value::operator+(const Value& o) const {
-    arith_check(*this); arith_check(o);
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() + o.to_float());
+    const bool fl = arith_float(*this) | arith_float(o);   // | : both operands are checked
+    if (fl) return Value(to_float() + o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_add_ovf(a, b, &r)) look_int_overflow(a, "+", b);
     return Value(r);
 }
 Value Value::operator-(const Value& o) const {
-    arith_check(*this); arith_check(o);
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() - o.to_float());
+    const bool fl = arith_float(*this) | arith_float(o);   // | : both operands are checked
+    if (fl) return Value(to_float() - o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_sub_ovf(a, b, &r)) look_int_overflow(a, "-", b);
     return Value(r);
 }
 Value Value::operator*(const Value& o) const {
-    arith_check(*this); arith_check(o);
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() * o.to_float());
+    const bool fl = arith_float(*this) | arith_float(o);   // | : both operands are checked
+    if (fl) return Value(to_float() * o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_mul_ovf(a, b, &r)) look_int_overflow(a, "*", b);
     return Value(r);
 }
 Value Value::operator/(const Value& o) const {
-    arith_check(*this); arith_check(o);
+    const bool fl = arith_float(*this) | arith_float(o);
     double d = o.to_float();
     if (d == 0.0) throw std::runtime_error("Division by zero");  // the caller adds the source location
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() / d);
+    if (fl) return Value(to_float() / d);
     int64_t i = o.to_int();
     int64_t self_i = to_int();  // not the raw int_val — so STRING/BOOL are also converted correctly ("6"/2=3)
     // INT64_MIN / -1: divides exactly but the result (2^63) does not fit in int64 — overflow (UB in C++).
@@ -351,10 +358,10 @@ Value Value::operator/(const Value& o) const {
     return Value(to_float() / d);
 }
 Value Value::operator%(const Value& o) const {
-    arith_check(*this); arith_check(o);
+    const bool fl = arith_float(*this) | arith_float(o);
     // Decimal operand: floating-point remainder, sign from the dividend (Go math.Mod, C fmod, JS, Java).
     // Previously both sides were converted to integers: 7.5 % 2 → 1 (the PHP model; the fractional part silently vanished).
-    if (type_ == FLOAT || o.type_ == FLOAT) {
+    if (fl) {
         double d = o.to_float();
         if (d == 0.0) throw std::runtime_error("Modulo by zero");
         return Value(std::fmod(to_float(), d));
@@ -368,8 +375,8 @@ Value Value::operator%(const Value& o) const {
 // rule as addition). It used to always compute in double: above 2^53 the result was silently approximate. A negative exponent
 // or a decimal operand → double. 0 ** negative → division by zero (Python; previously silently Infinity).
 Value Value::pow(const Value& o) const {
-    arith_check(*this); arith_check(o);
-    if (type_ != FLOAT && o.type_ != FLOAT) {
+    const bool fl = arith_float(*this) | arith_float(o);
+    if (!fl) {
         int64_t base = to_int(), e = o.to_int();
         if (e < 0) {
             if (base == 0) throw std::runtime_error("Division by zero: 0 ** " + std::to_string(e));

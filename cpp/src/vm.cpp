@@ -778,14 +778,16 @@ call_dispatch:
                 const Value& b = R(ins.b);
                 if (b.type()==Value::FLOAT) {
                     R(ins.a) = Value(-b.as_float());
-                } else {
-                    // Same as the other arithmetic operators: a non-INT (STRING/BOOL/NONE) type is converted with to_int.
-                    // The old `-b.as_float()` read the raw float_val (0.0) and gave `-"5"`→-0
-                    // (divergence from the other operators). to_int → -"5"=-5, -true=-1.
-                    int64_t v = b.to_int();
+                } else if (b.type()==Value::INT) {
+                    int64_t v = b.as_int();
                     // -INT64_MIN does not fit in int64: overflow error (it used to silently become a double).
                     if (v == INT64_MIN) look::look_int_overflow(0, "-", v);
                     R(ins.a) = Value(-v);
+                } else {
+                    // Any other operand follows the binary operators' rules (0 - x): -"5" = -5, -"2.5" = -2.5,
+                    // -true = -1, and -null / -"abc" are errors. It used to read everything with to_int:
+                    // -"2.5" was -2, and -null and -"abc" were a silent 0.
+                    R(ins.a) = Value((int64_t)0) - b;
                 }
                 break;
             }
