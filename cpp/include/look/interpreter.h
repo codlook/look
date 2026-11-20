@@ -216,6 +216,10 @@ private:
     std::shared_ptr<void> ptr_val;
 };
 
+// A string holding a decimal or exponent number ("2.5", "1e3"): arithmetic and unary minus take the
+// float path for it (interpreter.cpp).
+bool look_decimal_string(const Value& v);
+
 // ── LookChannel — Go-style channel (defined after Value — queue<Value> needs complete type)
 struct LookChannel {
     std::queue<Value>       queue;

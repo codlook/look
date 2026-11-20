@@ -600,8 +600,8 @@ call_dispatch:
             case OpCode::POW:    R(ins.a) = R(ins.b).pow(R(ins.c));     break;
             case OpCode::UNM: {
                 const Value& b = R(ins.b);
-                if (b.type()==Value::FLOAT) {
-                    R(ins.a) = Value(-b.as_float());
+                if (b.type()==Value::FLOAT || look_decimal_string(b)) {   // -"2.5" = -2.5 (was -2)
+                    R(ins.a) = Value(-b.to_float());
                 } else {
                     // İ ile aynı: INT dışı (STRING/BOOL/NONE) tip to_int ile çevrilir.
                     // Eski `-b.as_float()` ham float_val(0.0)'ı okuyup `-"5"`→-0

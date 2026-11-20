@@ -160,23 +160,38 @@ static void arith_check(const Value& v) {
     // 3) Sayı değil ("abc", "12x") → reddet (== tip-katıyken + sessiz 0 vermesin)
     throw std::runtime_error("Arithmetic on a string that cannot be converted to a number: '" + s + "'");
 }
+// A string holding a decimal or exponent number ("2.5", "1e3") takes the float path, like a float.
+// It used to be checked as a number and then read with to_int: "2.5" + 1 was 3 and "1e3" + 1 was 2 —
+// a silently wrong result for a form field or a query parameter holding a decimal. Only decimal
+// notation: hex, "inf" and "nan" keep their 1.0 behaviour.
+bool look_decimal_string(const Value& v) {
+    if (v.type() != Value::STRING) return false;
+    const std::string s = v.to_string();
+    if (s.empty() || s.find_first_of("xXiInN") != std::string::npos) return false;
+    size_t pos = 0;
+    try { (void)std::stoll(s, &pos); if (pos == s.size()) return false; } catch (...) {}
+    try { (void)std::stod(s, &pos); return pos == s.size(); } catch (...) { return false; }
+}
+static bool arith_is_float(const Value& a, const Value& b) {
+    return a.type() == Value::FLOAT || b.type() == Value::FLOAT || look_decimal_string(a) || look_decimal_string(b);
+}
 Value Value::operator+(const Value& o) const {
     arith_check(*this); arith_check(o);
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() + o.to_float());
+    if (arith_is_float(*this, o)) return Value(to_float() + o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_add_ovf(a, b, &r)) return Value((double)a + (double)b);
     return Value(r);
 }
 Value Value::operator-(const Value& o) const {
     arith_check(*this); arith_check(o);
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() - o.to_float());
+    if (arith_is_float(*this, o)) return Value(to_float() - o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_sub_ovf(a, b, &r)) return Value((double)a - (double)b);
     return Value(r);
 }
 Value Value::operator*(const Value& o) const {
     arith_check(*this); arith_check(o);
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() * o.to_float());
+    if (arith_is_float(*this, o)) return Value(to_float() * o.to_float());
     int64_t a = to_int(), b = o.to_int(), r;
     if (i64_mul_ovf(a, b, &r)) return Value((double)a * (double)b);
     return Value(r);
@@ -185,7 +200,7 @@ Value Value::operator/(const Value& o) const {
     arith_check(*this); arith_check(o);
     double d = o.to_float();
     if (d == 0.0) throw std::runtime_error("Division by zero");  // caught and enriched by interpreter
-    if (type_ == FLOAT || o.type_ == FLOAT) return Value(to_float() / d);
+    if (arith_is_float(*this, o)) return Value(to_float() / d);
     int64_t i = o.to_int();
     int64_t self_i = to_int();  // ham int_val değil — STRING/BOOL de doğru çevrilsin ("6"/2=3)
     // INT64_MIN / -1 signed-overflow UB — float'a promote
@@ -1396,7 +1411,7 @@ Value Interpreter::evaluate_expression(const Expression& expr) {
         }
         Value right = evaluate_expression(*e->right);
         if (op == "-") {
-            if (right.type()==Value::FLOAT) return Value(-right.as_float());
+            if (right.type()==Value::FLOAT || look_decimal_string(right)) return Value(-right.to_float());
             int64_t v = right.to_int();   // int(32-bit) DEĞİL: -9999999999 gibi büyük
             // negatif sayı 32-bit'e taşıp sessizce bozuluyordu (int64 ailesinin
             // kaçmış üyesi). -INT64_MIN taşması → float'a promote.
