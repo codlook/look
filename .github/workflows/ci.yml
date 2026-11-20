@@ -460,6 +460,14 @@ jobs:
           cd cpp
           bash tests/http_stream_state_test.sh ./build/lk
 
+      # http:: reads a chunked response as strictly as the server reads a chunked request: a malformed
+      # size, chunk data without CRLF or a cut body is an error, never a shorter body.
+      - name: http:: chunked responses are read strictly
+        timeout-minutes: 5
+        run: |
+          cd cpp
+          bash tests/http_client_chunked_test.sh ./build/lk
+
       # Block scope on the web path: a variable first assigned in a top-level block is not a
       # global, so no route sees it (the command-line case is the step above).
       - name: Block scope on the web path

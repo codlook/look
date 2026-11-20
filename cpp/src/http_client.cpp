@@ -319,6 +319,29 @@ static std::string http_max_response_error() {
 
 // ── Response parser ───────────────────────────────────────────────────────────
 
+// A chunk-size line: hex digits, optionally followed by spaces/tabs and a ";" chunk extension.
+// Exactly what the server accepts in a chunked request, plus the optional whitespace (RFC 9112 BWS).
+// std::stoul used to read "1g" as 1 and "-1" as a huge size, so a malformed or hostile response was
+// framed differently from a strict reader (response smuggling through a LOOK proxy). At most 15 hex
+// digits: a size below 2^60, so `size + 2` cannot overflow.
+static bool chunk_size_parse(std::string line, size_t& out) {
+    size_t semi = line.find(';');
+    if (semi != std::string::npos) line.erase(semi);
+    while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) line.pop_back();
+    if (line.empty()) return false;
+    size_t lead = line.find_first_not_of('0');                     // leading zeros are allowed
+    if (lead != std::string::npos && line.size() - lead > 15) return false;
+    size_t v = 0;
+    for (char c : line) {
+        int d = (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10
+              : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+        if (d < 0) return false;
+        v = v * 16 + (size_t)d;
+    }
+    out = v;
+    return true;
+}
+
 static HttpClientResponse parse_response(const std::string& raw) {
     HttpClientResponse resp;
     if (raw.empty()) { resp.error = "empty response"; return resp; }
@@ -361,25 +384,33 @@ static HttpClientResponse parse_response(const std::string& raw) {
     std::transform(te.begin(), te.end(), te.begin(), [](unsigned char c){ return std::tolower(c); });
 
     if (te.find("chunked") != std::string::npos) {
-        // Decode chunked body
+        // Decode the chunked body as strictly as the server reads a chunked request (http_server.cpp):
+        // a malformed size line, chunk data not followed by CRLF, or a body that ends before the last
+        // chunk is an error — it used to give a shorter body silently.
         std::string body_raw = raw.substr(pos);
-        std::ostringstream body_out;
+        std::string body_out;
         size_t p = 0;
-        while (p < body_raw.size()) {
-            auto cr = body_raw.find("\r\n", p);
-            if (cr == std::string::npos) break;
-            std::string hex = body_raw.substr(p, cr - p);
-            // strip chunk extensions
-            auto semi = hex.find(';');
-            if (semi != std::string::npos) hex = hex.substr(0, semi);
+        bool complete = false;
+        for (;;) {
+            size_t cr = body_raw.find("\r\n", p);
+            if (cr == std::string::npos) break;                            // ended mid size line
             size_t chunk_size = 0;
-            try { chunk_size = std::stoul(hex, nullptr, 16); } catch (...) { break; }
-            if (chunk_size == 0) break;
+            if (!chunk_size_parse(body_raw.substr(p, cr - p), chunk_size)) {
+                resp.error = "malformed chunked response: invalid chunk size";
+                break;
+            }
             p = cr + 2;
-            body_out << body_raw.substr(p, chunk_size);
+            if (chunk_size == 0) { complete = true; break; }                // last chunk (trailers ignored)
+            if (body_raw.size() - p < chunk_size + 2) break;                // ended mid chunk
+            if (body_raw.compare(p + chunk_size, 2, "\r\n") != 0) {
+                resp.error = "malformed chunked response: chunk data is not followed by CRLF";
+                break;
+            }
+            body_out.append(body_raw, p, chunk_size);
             p += chunk_size + 2;
         }
-        resp.body = body_out.str();
+        if (!complete && resp.error.empty()) resp.error = "truncated chunked response";
+        resp.body = std::move(body_out);
     } else {
         resp.body = raw.substr(pos);
     }
@@ -429,20 +460,21 @@ static HttpClientResponse parse_response(const std::string& raw) {
 
 struct ChunkedDecoder {
     std::string buf;
-    bool done = false;
+    bool done = false;        // the last chunk arrived
+    std::string error;        // malformed stream (the caller reports it; empty = fine so far)
     void feed(const std::string& data, const HttpChunkCallback& emit) {
         buf += data;
-        while (!done) {
+        while (!done && error.empty()) {
             size_t cr = buf.find("\r\n");
             if (cr == std::string::npos) return;               // size line is not complete yet
-            std::string hex = buf.substr(0, cr);
-            size_t semi = hex.find(';');
-            if (semi != std::string::npos) hex = hex.substr(0, semi);  // cut the chunk-extension
-            while (!hex.empty() && (hex.back() == ' ' || hex.back() == '\t')) hex.pop_back();
             size_t sz = 0;
-            try { sz = std::stoul(hex, nullptr, 16); } catch (...) { done = true; return; }
+            if (!chunk_size_parse(buf.substr(0, cr), sz)) { error = "malformed chunked response: invalid chunk size"; return; }
             if (sz == 0) { done = true; return; }              // last chunk
-            if (buf.size() < cr + 2 + sz + 2) return;          // the whole chunk + CRLF is not here yet
+            if (buf.size() - (cr + 2) < sz + 2) return;        // the whole chunk + CRLF is not here yet
+            if (buf.compare(cr + 2 + sz, 2, "\r\n") != 0) {
+                error = "malformed chunked response: chunk data is not followed by CRLF";
+                return;
+            }
             emit(buf.substr(cr + 2, sz));
             buf.erase(0, cr + 2 + sz + 2);
         }
@@ -483,6 +515,10 @@ struct StreamSink {
     }
     void finalize() {
         if (!headers_done && resp.error.empty()) resp.error = "no response";
+        if (headers_done && is_chunked && resp.error.empty()) {
+            if (!chunked.error.empty()) resp.error = chunked.error;
+            else if (!chunked.done) resp.error = "truncated chunked response";
+        }
     }
 };
 
@@ -576,7 +612,9 @@ static HttpClientResponse do_plain(const std::string& method, const ParsedUrl& u
         return resp;
     }
     closesocket(s);
-    if (sink) { sink->finalize(); sink->resp.error = resp.error; return sink->resp; }
+    // The stream's own error ("no response", a malformed or truncated chunked body) is kept; it used to be
+    // overwritten here with resp.error, which is always empty on this path.
+    if (sink) { sink->finalize(); if (!resp.error.empty()) sink->resp.error = resp.error; return sink->resp; }
     return parse_response(raw);
 }
 
