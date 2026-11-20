@@ -462,7 +462,7 @@ jobs:
 
       # http:: reads a chunked response as strictly as the server reads a chunked request: a malformed
       # size, chunk data without CRLF or a cut body is an error, never a shorter body.
-      - name: http:: chunked responses are read strictly
+      - name: "http:: chunked responses are read strictly"
         timeout-minutes: 5
         run: |
           cd cpp
