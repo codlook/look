@@ -1655,6 +1655,21 @@ jobs:
           cd cpp
           python3 tests/form_differential_test.py ./build/lk-fcgi
 
+      # HTTP request parsing: random and malformed requests, request-smuggling shapes included, go as raw
+      # bytes to lk-fcgi --mode http and to Go's net/http (tests/input_fuzz/http_referee.go), each followed
+      # by a second request on the same connection. LOOK accepting what Go refuses, or framing a request
+      # differently, fails; LOOK refusing more is allowed only for the smuggling defences and for requests
+      # the RFCs make invalid. The referee needs a recent Go (1.27): older versions accept requests that
+      # Go now refuses (an empty field name, more than 500 header fields).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - name: HTTP request parsing differential fuzz (Go net/http as the referee)
+        timeout-minutes: 15
+        run: |
+          cd cpp
+          python3 tests/http_differential_test.py ./build/lk-fcgi
+
       # installer:: parse layer — NETWORK-FREE (parse_pkg rejections happen BEFORE the download): host restriction
       # (github.com only), invalid name, path-traversal (user + subdir). Positive control:
       # a legitimate name must pass the parse. (Zip-slip/redirect need a real download → C++ unit test
