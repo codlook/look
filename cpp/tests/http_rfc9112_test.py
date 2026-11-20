@@ -90,9 +90,13 @@ ROWS = [
     ("Expect: foo",               P + H + b"Expect: foo\r\nContent-Length: 3\r\n\r\nabc", "417", "go"),
     ("two pipelined",             G + H + b"\r\n" + G + H + b"\r\n",                      "200|200", "go"),
     ("pipelined, bad second",     G + H + b"\r\nGARBAGE\r\n\r\n",                         "200|400", "go"),
+    ("two TE lines",              P + H + TE + TE + b"\r\n3\r\nabc\r\n0\r\n\r\n",           "501", "go"),
+    ("POST, CRLF, next request",  P + H + b"Content-Length: 3\r\n\r\nabc\r\n" + G + H + b"\r\n", "200|200", "go"),
+    ("GET, CRLF, next request",   G + H + b"\r\n\r\n" + G + H + b"\r\n",                    "200|400", "go"),
     # Smuggling defences: Go accepts these, LOOK refuses — a front proxy may frame them differently.
     ("bare LF line end",          b"GET / HTTP/1.1\n" + H + b"\r\n",                      "400", "strict"),
     ("obs-fold",                  G + H + b"X: a\r\n b\r\n\r\n",                          "400", "strict"),
+    ("HTTP/1.0 with TE",          b"POST / HTTP/1.0\r\n" + TE + b"\r\n3\r\nabc\r\n0\r\n\r\n", "400", "strict"),
     ("CL and TE together",        P + H + b"Content-Length: 3\r\n" + TE + b"\r\n3\r\nabc\r\n0\r\n\r\n", "400", "strict"),
     ("bare LF in chunk ext",      P + H + TE + b"\r\n3;a\nb\r\nabc\r\n0\r\n\r\n",         "400", "strict"),
     ("bare LF after chunk size",  P + H + TE + b"\r\n3\nabc\r\n0\r\n\r\n",                "400", "strict"),

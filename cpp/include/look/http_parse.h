@@ -176,6 +176,14 @@ inline int http_parse_request(const std::string& raw, HttpRequest& req) {
             auto ex = req.headers.find("content-length");
             if (ex != req.headers.end() && ex->second != val) return 400;
         }
+        // Several Transfer-Encoding lines are one list (RFC 9110 §5.3): they are joined, so two "chunked"
+        // lines are "chunked, chunked" — chunked applied twice, which the server refuses with 501 as Go does.
+        // The map used to keep only the last line, so LOOK read the body as chunked once while a front-end
+        // that joins the lines refused it or framed it differently.
+        if (key == "transfer-encoding") {
+            auto ex = req.headers.find("transfer-encoding");
+            if (ex != req.headers.end()) { ex->second += ", " + val; continue; }
+        }
         // RFC 9112 §3.2: Host exactly once (Go: "too many Host headers" → 400). If the proxy and LOOK pick different ones of the two Hosts
         // it leads to virtual-host / cache poisoning.
         if (key == "host") {
@@ -186,6 +194,10 @@ inline int http_parse_request(const std::string& raw, HttpRequest& req) {
         req.headers[std::move(key)] = std::move(val);
     }
 
+    // RFC 9112 §6.1: an HTTP/1.0 message with Transfer-Encoding MUST be treated as having faulty framing.
+    // LOOK decoded it as chunked; Go ignores the header and reads no body — two readers, two framings.
+    // Rejecting it is the smuggling-safe reading (stricter than Go, like Content-Length + Transfer-Encoding).
+    if (!http11 && req.headers.count("transfer-encoding")) return 400;
     // Host is required in HTTP/1.1 (RFC 9112 §3.2, Go "missing required Host header").
     if (http11 && !have_host && req.method != "CONNECT") return 400;
     // in absolute-form the Host header is ignored, the authority part is used (RFC 9112 §3.2.2, Go r.Host).

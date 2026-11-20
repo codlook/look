@@ -647,6 +647,7 @@ struct HttpServer::Impl {
         // the client writes the second request without waiting for the response). Previously every request started with a fresh buffer
         // → the second request was silently dropped, and the client hung until the idle timeout waiting for a response.
         std::string carry;
+        bool after_post = false;   // the previous request on this connection was a POST
         while (true) {
             // Read blocking until headers arrive
             std::string buf = std::move(carry);
@@ -656,6 +657,19 @@ struct HttpServer::Impl {
             // The terminator is searched only in the NEWLY arrived part (+3 bytes overlap): previously on every recv
             // the whole buffer was rescanned from the start → a 2 MB header in 64 B pieces cost ~3 CPU-seconds (quadratic).
             size_t scan = 0, hdr_pos;
+            // After a POST, up to 4 CR/LF bytes before the next request line are skipped — Go's tolerance for
+            // clients that end a POST body with an extra CRLF (net/http conn.readRequest). Such a client used
+            // to get its NEXT request answered with 400. Nowhere else: a request that starts with an empty
+            // line is 400, as in Go (the same framing as a Go front end).
+            size_t crlf_budget = after_post ? 4 : 0;
+            after_post = false;
+            auto skip_empty_lines = [&]() {
+                size_t k = 0;
+                while (crlf_budget && k < buf.size() && (buf[k] == '\r' || buf[k] == '\n')) { ++k; --crlf_budget; }
+                if (k) { buf.erase(0, k); scan = 0; }
+                if (!buf.empty()) crlf_budget = 0;          // the request line has started
+            };
+            skip_empty_lines();
             while ((hdr_pos = buf.find("\r\n\r\n", scan)) == std::string::npos) {
                 scan = buf.size() >= 3 ? buf.size() - 3 : 0;
                 // Waiting for the next request (no bytes yet): this wait is cut short on graceful shutdown.
@@ -667,6 +681,7 @@ struct HttpServer::Impl {
                 if (rd_start == std::chrono::steady_clock::time_point{})
                     rd_start = std::chrono::steady_clock::now();
                 buf.append(tmp, (size_t)r);
+                skip_empty_lines();
                 // Go MaxHeaderBytes (1 MB) → 431. Previously closed without a response at 2 MB. The loop ceiling is
                 // one read allowance wider (the last read can bring the start of the body too); the exact limit is
                 // enforced by the parser against the end of the headers.
@@ -685,6 +700,7 @@ struct HttpServer::Impl {
             if (int st = parse_request(buf, req)) {
                 send_simple(fd, st, http_status_reason(st)); ::close(fd); return;
             }
+            after_post = (req.method == "POST");
 
             size_t header_end  = hdr_pos + 4;
             size_t body_in_buf = buf.size() - header_end;
