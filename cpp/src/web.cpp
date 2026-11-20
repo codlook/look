@@ -294,15 +294,15 @@ std::string WebContext::url_decode(const std::string& s, bool plus_is_space) {
     for (size_t i = 0; i < s.size(); ++i) {
         if (s[i] == '+') {
             result += plus_is_space ? ' ' : '+';
-        } else if (s[i] == '%' && i + 2 < s.size()) {
-            try {
-                int h = std::stoi(s.substr(i + 1, 2), nullptr, 16);
-                result += (char)h;
-                i += 2;
-            } catch (...) {
-                result += s[i];  // invalid %xx → leave a literal '%'
-            }
+        } else if (s[i] == '%' && i + 2 < s.size() && std::isxdigit((unsigned char)s[i + 1]) &&
+                   std::isxdigit((unsigned char)s[i + 2])) {
+            // Exactly two hex digits. std::stoi used to read a partial or signed number:
+            // "%4g" became \x04 and dropped the 'g', "%-1" became \xFF, "% 1" became \x01.
+            auto hv = [](char c) { return c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10; };
+            result += (char)(hv(s[i + 1]) * 16 + hv(s[i + 2]));
+            i += 2;
         } else {
+            // Anything else, an invalid "%xx" included, is kept as it is.
             result += s[i];
         }
     }
@@ -314,6 +314,7 @@ std::map<std::string, std::string> WebContext::parse_query(const std::string& qs
     std::istringstream ss(qs);
     std::string pair;
     while (std::getline(ss, pair, '&')) {
+        if (pair.empty()) continue;   // "a=1&&b=2": an empty piece is no parameter (Go); it used to add the key ""
         auto eq = pair.find('=');
         if (eq == std::string::npos) {
             result[url_decode(pair)] = "";

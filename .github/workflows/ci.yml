@@ -1638,6 +1638,15 @@ jobs:
           cd cpp
           python3 tests/json_differential_test.py ./build/lk
 
+      # Query strings, form bodies and route parameters: random requests to a real lk-fcgi --mode http
+      # server, what request::all() / request::param() see compared with a small model of the
+      # documented decoding rules. Fixed seed; LOOK_FORM_FUZZ_CASES=N runs more.
+      - name: Form and URL decoding differential fuzz
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          python3 tests/form_differential_test.py ./build/lk-fcgi
+
       # installer:: parse layer — NETWORK-FREE (parse_pkg rejections happen BEFORE the download): host restriction
       # (github.com only), invalid name, path-traversal (user + subdir). Positive control:
       # a legitimate name must pass the parse. (Zip-slip/redirect need a real download → C++ unit test

@@ -444,11 +444,19 @@ static Module make_request(WebRef ctx) {
         return json_decode_document(ctx->body);
     };
     // request::all() — GET + POST params combined
+    // A name in both the query string and the form body appears once, with the body's value (Go's
+    // Request.Form: body parameters take precedence). It used to be written twice into the same map —
+    // count() said 2 for one name and $all["k"] gave the query string's value.
     m.functions["all"] = [ctx](auto) -> Value {
         auto arr = std::make_shared<ValueArray>();
         arr->push_back(Value::assoc_marker());
-        for (auto& [k, v] : ctx->get_params)  { arr->push_back(Value(k)); arr->push_back(Value(v)); }
-        for (auto& [k, v] : ctx->post_params) { arr->push_back(Value(k)); arr->push_back(Value(v)); }
+        for (auto& [k, v] : ctx->get_params) {
+            auto p = ctx->post_params.find(k);
+            arr->push_back(Value(k));
+            arr->push_back(Value(p != ctx->post_params.end() ? p->second : v));
+        }
+        for (auto& [k, v] : ctx->post_params)
+            if (!ctx->get_params.count(k)) { arr->push_back(Value(k)); arr->push_back(Value(v)); }
         return Value(arr);
     };
     m.functions["param"] = [ctx](auto args) -> Value {
