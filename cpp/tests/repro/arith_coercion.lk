@@ -18,6 +18,9 @@ thr("bignum(str) + 1",   fn() => json::decode("{\"n\":12345678901234567890123456
 thr("null + 1 (missing key)", fn() => json::decode("{\"a\":1}")["missing"] + 1)
 thr("[] + 1",            fn() => [] + 1)
 thr("\" 5 \" + 1 (spaces)", fn() => " 5 " + 1)
+thr("\" 5\" + 1 (leading space)", fn() => " 5" + 1)
+thr("\"5 \" + 1 (trailing space)", fn() => "5 " + 1)
+thr("\" 2.5\" + 1 (leading space)", fn() => " 2.5" + 1)
 
 # --- a string holding a decimal takes part as that number (it was cut to an integer: "2.5" + 1 was 3) ---
 ok("\"2.5\" + 1 = 3.5",   "2.5" + 1, 3.5)

@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <cerrno>
+#include <cctype>
 #include "look/parse_double.h"
 
 namespace look {
@@ -272,6 +273,11 @@ static bool arith_float(const Value& v) {
     std::string s = v.to_string();
     if (s.empty())
         throw std::runtime_error("Arithmetic on an empty string");
+    // No space around the number, at either end (Go's strconv): " 5" + 1 used to be 6 (stoll skips leading
+    // space) while "5 " + 1 was an error. A form value with spaces needs string::trim first.
+    if (std::isspace((unsigned char)s.front()) || std::isspace((unsigned char)s.back()))
+        throw std::runtime_error("Arithmetic on a string with spaces around the number: '" + s +
+                                 "' (use string::trim first)");
     size_t pos = 0;
     // 1) A full int64 string → the int path ("5"+1=6)
     try {

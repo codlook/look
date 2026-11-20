@@ -100,5 +100,7 @@ int(2.9)|2
 -"abc"|ERR:cannot be converted to a number
 "0x10" + 1|ERR:cannot be converted to a number
 "inf" + 1|ERR:cannot be converted to a number
+" 5" + 1|ERR:spaces around the number
+"5 " + 1|ERR:spaces around the number
 EOF
 [ $fail = 0 ] && echo "PASS: numeric rules hold at their edges ($n cases)" || { echo "FAIL: numeric edge cases"; exit 1; }
