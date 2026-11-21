@@ -134,6 +134,9 @@ public:
     std::shared_ptr<WsConnection>        as_websocket()  const { return std::static_pointer_cast<WsConnection>(ptr_val); }
     std::shared_ptr<SseConnection>       as_sse()        const { return std::static_pointer_cast<SseConnection>(ptr_val); }
     std::shared_ptr<Closure>             as_bytecode_fn()const { return std::static_pointer_cast<Closure>(ptr_val); }
+    // Without the shared_ptr copy (two atomic refcount operations): for the VM's CALL, where the value
+    // in the register keeps the closure alive for the whole call setup.
+    Closure*                             bytecode_fn_ptr() const { return static_cast<Closure*>(ptr_val.get()); }
 
     std::string to_string() const;
     double      to_float()  const;

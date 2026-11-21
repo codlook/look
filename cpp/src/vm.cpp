@@ -45,8 +45,19 @@ namespace look {
 // The VM's safe point (backward jump, call): yielding (fiber.h preempt_point) + the memory budget
 // (look/mem_budget.h). On the fast path a single counter decrement; an allocation that exceeds the budget resets the counter, the slow path
 // checks here right away. preempt_point is noexcept — a memory error can only be thrown from here.
-static inline void vm_safe_point() {
-    if (--t_preempt_budget <= 0) { preempt_slow(); mem_check(); }
+// The fast path is forced inline and the work is out of line: as two plain `static inline` functions both
+// stayed out-of-line calls on every call and every loop turn (callgrind, 300k calls: vm_safe_point and
+// check_argc 9.6M instructions each, about half of the +10% against 1.0).
+#if defined(_MSC_VER)
+#  define LOOK_VM_HOT_INLINE __forceinline
+#  define LOOK_VM_SLOW __declspec(noinline)
+#else
+#  define LOOK_VM_HOT_INLINE inline __attribute__((always_inline))
+#  define LOOK_VM_SLOW __attribute__((noinline, cold))
+#endif
+LOOK_VM_SLOW static void vm_safe_point_slow() { preempt_slow(); mem_check(); }
+static LOOK_VM_HOT_INLINE void vm_safe_point() {
+    if (--t_preempt_budget <= 0) vm_safe_point_slow();
 }
 
 // parallel transitive deep-clone hook. value.h cannot see Closure (bytecode.h
@@ -106,15 +117,19 @@ static VM*& active_vm_slot() {
 // a missing parameter that has no default are an ERROR (the interpreter always did this; the VM silently
 // accepted it, a missing parameter became null). The messages are the same as the old interpreter's.
 // Route dispatch does NOT pass through this check: the handler takes as many of the route parameters as it wants.
-static inline void check_argc(const FunctionProto* p, int argc) {
+[[noreturn]] LOOK_VM_SLOW static void check_argc_fail(const FunctionProto* p, int argc) {
     const int fixed = p->variadic ? p->arity - 1 : p->arity;
-    if (argc >= p->required && (p->variadic || argc <= fixed)) return;
     const std::string nm = (p->name.empty() || p->name == "<closure>") ? "__anonymous__" : p->name;
     if (!p->variadic && argc > fixed)
         throw LookVmError("Function '" + nm + "' expects at most " + std::to_string(fixed)
                           + " args, got " + std::to_string(argc));
     throw LookVmError("Function '" + nm + "' expects " + std::string(p->variadic ? "at least " : "")
                       + std::to_string(fixed) + " args, got " + std::to_string(argc));
+}
+static LOOK_VM_HOT_INLINE void check_argc(const FunctionProto* p, int argc) {
+    const int fixed = p->variadic ? p->arity - 1 : p->arity;
+    if (argc >= p->required && (p->variadic || argc <= fixed)) return;
+    check_argc_fail(p, argc);
 }
 
 static Value vm_bridge_hook(const Value& fn, std::vector<Value>& args) {
@@ -1057,12 +1072,16 @@ call_dispatch:
                     }
                     throw LookVmError("Not callable (function expected)");
                 }
-                auto cl = fn_val.as_bytecode_fn();
+                // A raw pointer: the register keeps the closure alive while the frame is set up (grow_regs
+                // moves the Value, not the closure), and the frame stores a raw pointer anyway. The old
+                // shared_ptr copy cost two atomic refcount operations on every call.
+                Closure* cl = fn_val.bytecode_fn_ptr();
                 if (cl->native) {   // host function: like a built-in call
+                    auto hold = fn_val.as_bytecode_fn();   // the host call may re-enter the VM and reuse registers
                     std::vector<Value> nargs;
                     nargs.reserve(argc);
                     for (int i = 0; i < argc; ++i) nargs.push_back(R(ins.c + i));
-                    R(ins.a) = cl->native(nargs);
+                    R(ins.a) = hold->native(nargs);
                     goto call_dispatch;   // a callback may have re-entered the VM and grown the stack
                 }
                 auto* cp = cl->proto.get();
@@ -1091,7 +1110,7 @@ call_dispatch:
                 if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
                     stack_overflow_calls();
                 int ret_abs = base + ins.a;
-                call_stack_.push_back({cl->proto.get(), cl.get(), 0, new_base, ret_abs, (int)argc});
+                call_stack_.push_back({cl->proto.get(), cl, 0, new_base, ret_abs, (int)argc});
                 goto call_dispatch; // switch to the callee frame
             }
 
@@ -1181,12 +1200,13 @@ call_dispatch:
                 const Value& fn_val = R(ins.b);
                 if (fn_val.type() != Value::BYTECODE_FN)
                     throw LookVmError("TAIL_CALL: BYTECODE_FN expected");
-                auto cl = fn_val.as_bytecode_fn();
+                Closure* cl = fn_val.bytecode_fn_ptr();   // raw: see CALL
                 if (cl->native) {   // host function: the result goes to R(a), the RETURN that follows returns it
+                    auto hold = fn_val.as_bytecode_fn();
                     std::vector<Value> nargs;
                     nargs.reserve(argc3);
                     for (int i = 0; i < argc3; ++i) nargs.push_back(R(ins.c + i));
-                    R(ins.a) = cl->native(nargs);
+                    R(ins.a) = hold->native(nargs);
                     goto call_dispatch;
                 }
                 auto* cp = cl->proto.get();
@@ -1205,7 +1225,7 @@ call_dispatch:
                 // MAX_CALL_DEPTH — CALL_METHOD/second CALL path (bug 57, see above)
                 if ((int)call_stack_.size() >= MAX_CALL_DEPTH)
                     stack_overflow_calls();
-                call_stack_.push_back({cp, cl.get(), 0, new_base, base+ins.a, (int)argc3});
+                call_stack_.push_back({cp, cl, 0, new_base, base+ins.a, (int)argc3});
                 goto call_dispatch; // switch to the callee frame
             }
 
