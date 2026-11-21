@@ -12,7 +12,7 @@ jobs:
   actionlint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install actionlint (pinned version and SHA-256)
         run: |
           V=1.7.12

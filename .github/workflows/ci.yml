@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build dependencies
         timeout-minutes: 10
@@ -1627,7 +1627,7 @@ jobs:
 
       # http:: TLS like Go's crypto/tls: IP SAN, no SNI for an IP, wrong name / expired /
       # self-signed / TLS 1.1 / unknown CA refused with the reason. Test servers are Go.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.22"
       - name: "http:: TLS verification (Go test servers)"
@@ -1661,7 +1661,7 @@ jobs:
       # differently, fails; LOOK refusing more is allowed only for the smuggling defences and for requests
       # the RFCs make invalid. The referee needs a recent Go (1.27): older versions accept requests that
       # Go now refuses (an empty field name, more than 500 header fields).
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
       - name: HTTP request parsing differential fuzz (Go net/http as the referee)
@@ -1994,7 +1994,7 @@ jobs:
           --health-cmd="pg_isready -U lookci -d lookci"
           --health-interval=5s --health-timeout=5s --health-retries=20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build dependencies
         timeout-minutes: 10
         run: |
@@ -2174,7 +2174,7 @@ jobs:
     name: "PG TLS real-server interop (SSLRequest→TLS→startup→SCRAM)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build + postgres + openssl
         timeout-minutes: 10
         run: |
@@ -2206,7 +2206,7 @@ jobs:
     name: "Concurrency hang smoke (pool + fiber, c=50)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build dependencies
         timeout-minutes: 10
         run: |

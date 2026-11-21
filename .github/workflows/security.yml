@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 20   # safety net: if a curl without --max-time hangs on a deadlock in the ASan HTTP smoke, cut early
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # safety net: if it hangs, cut early instead of the 6-hour GitHub default
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install deps
         run: |
           sudo apt-get update -qq

@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Repo: for the guard that reads the binaries named in the docs (cpp/tests/package_binaries_guard.sh).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Download the assets
         env:
           GH_TOKEN: ${{ github.token }}

@@ -44,7 +44,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The stamp is 7 characters: same as the Linux binaries (the consistency step looks for this stamp inside the Windows .exe).
       - name: MSVC Release build (lk, lk-fcgi, lk-cgi)
         shell: pwsh
@@ -63,7 +63,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           & platforms/windows/build.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-package
           path: platforms/windows/look-lang-windows-*.zip
@@ -78,7 +78,7 @@ jobs:
       DOCKERHUB_USERNAME: codlook   # public namespace — fixed; only the TOKEN is a secret
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 0) Version — the single source is CMakeLists. The tag must be v<version> or v<version>-rc<N>:
       # a release tagged with the wrong number would carry another version's file names.
@@ -169,7 +169,7 @@ jobs:
           docker save "codlook/look:$VERSION" | gzip > look-docker.tar.gz
 
       # 5b) Windows package — produced by the `windows` job (same commit, same stamp).
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: windows-package
           path: winpkg

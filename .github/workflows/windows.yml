@@ -18,7 +18,7 @@ jobs:
   msvc-gate:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # look-cgi too: the Windows package contains lk-cgi.exe (build.ps1); because CI did not build it
       # the failure to link on MSVC was seen only in the release build (shutdown.cpp was missing).
@@ -57,7 +57,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           & platforms/windows/build.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-package
           path: platforms/windows/look-lang-windows-*.zip

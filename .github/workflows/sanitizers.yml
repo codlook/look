@@ -11,7 +11,7 @@ jobs:
   asan-ubsan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
       - name: Build (ASan+UBSan)
         timeout-minutes: 20
@@ -91,7 +91,7 @@ jobs:
   tsan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
       - name: Build (TSan)
         timeout-minutes: 20
@@ -160,7 +160,7 @@ jobs:
     # nightly/manual. The targets are pure parsers (look/*_parse.h) — no sockets.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y clang
       - name: Fuzz — PG + MySQL + HTTP request/wire parser (short, must be green)
         timeout-minutes: 20
