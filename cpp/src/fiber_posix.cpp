@@ -429,6 +429,7 @@ Fiber::Fiber(Fn fn, size_t stack_size)
     impl_->stack_base  = mem;
     impl_->stack_alloc = total_alloc;
     impl_->stack_size  = aligned_stack;
+    mem_stacks_add((int64_t)StackCache::KEEP);   // a running stack counts in the memory budget (mem_budget.h)
 
     // Guard page at bottom (lowest address)
     if (!reused) install_guard_page();
@@ -463,6 +464,7 @@ Fiber::~Fiber() {
     if (impl_ && impl_->tsan_fiber) { __tsan_destroy_fiber(impl_->tsan_fiber); impl_->tsan_fiber = nullptr; }
 #endif
     if (impl_ && impl_->stack_base) {
+        mem_stacks_add(-(int64_t)StackCache::KEEP);
         if (stack_cache().give(impl_->stack_base, impl_->stack_alloc)) { impl_->stack_base = nullptr; return; }
         remove_guard_page();
         ::munmap(impl_->stack_base, impl_->stack_alloc);

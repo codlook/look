@@ -101,6 +101,18 @@ void mem_held_set(int64_t bytes) noexcept;
 bool mem_can_hold(int64_t more) noexcept;
 void mem_set_release_hook(MemReleaseHook fn) noexcept;
 
+// The stacks of running fibers (one per open connection) are memory too — Go counts goroutine stacks in
+// GOMEMLIMIT. Each is counted at the same upper bound as a cached stack (96 KiB: the connection handler's
+// read buffer and frames). Without it a storm of connections at once (1,500 × ~64 KB touched) passed a
+// container limit before any request reached the budget's check.
+// Requests are still admitted against the counted heap alone (an accepted connection's stack is paid for).
+void    mem_stacks_add(int64_t bytes) noexcept;
+// Counted heap + running stacks are over the admit line while the heap alone is under it: new connections
+// wait (the acceptor pauses, idle kept-alive connections are closed) instead of being accepted. When the heap
+// alone is over it, connections are accepted and their requests get 503 as before. Cached stacks are given
+// back first (the release hook) — they never make a connection wait.
+bool    mem_stacks_over();
+
 std::string mem_format_bytes(int64_t b);   // "256 MiB"
 
 } // namespace look

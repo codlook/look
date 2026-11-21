@@ -264,6 +264,11 @@ fastest run, milliseconds):
   when the memory budget needs it (in a 160 MiB container a storm of 1,500 connections followed by a
   request holding 60 MiB: the old build was killed by the kernel, exit 137; the new one answered and
   peaked at 71 MB). Accepting connections is as fast as before (20,855–23,639/s, old 20,953–21,453/s).
+  The stacks of open connections now count in the budget too (96 KiB each): in an 80 MiB container
+  (limit 64 MiB) a storm of 1,500 connections at once killed the old build before any answer (exit
+  137); the new one answered all 1,500 and peaked at 50 MB — new connections wait a moment when the
+  open ones would pass 90% of the limit. With a 512 MiB limit, c=5000 keep-alive: 74,027 req/s against
+  76,196, no errors.
   The database figure was not re-measured; the same mechanism is the likely cause.
 
 ## Results — 2026-11-05 (tests 8 and 12, six runtimes)

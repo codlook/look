@@ -10,7 +10,11 @@
 #      during a 5 s period, is given back);
 #   2) budget: LOOK_MEMORY_LIMIT=128MiB. A storm of 1500 connections, each touching ~64 KB of its stack (a
 #      60 KB request body), leaves ~100 MB in the cache in the old build. A request then holds 60 MiB of heap: the
-#      cache gives way at once (no idle wait), the process stays under its limit and the request is answered.
+#      cache gives way at once (no idle wait), the process stays under its limit and the request is answered;
+#   3) storm: LOOK_MEMORY_LIMIT=64MiB and 1500 connections at once (~100 MB of running stacks in the old build,
+#      before any request reached the budget). The running stacks count in the budget: over its line the server
+#      stops accepting for a moment and closes idle kept-alive connections; every connection is answered and the
+#      process stays under its limit during the storm.
 # Under a sanitizer (LOOK_TEST_NO_TIMING=1) the memory figures mean nothing (shadow memory): the same
 # paths run — storm, idle give-back, the budget giving way — and only the answers are checked.
 # Usage: fiber_stack_cache_trim_test.sh <lk-fcgi> [port]
@@ -89,12 +93,14 @@ start() {
     for _ in $(seq 100); do curl -s -o /dev/null -X POST "http://127.0.0.1:$P/p" && return 0; sleep 0.1; done
     echo "  FAIL the server did not start"; cat "$T/srv.log"; exit 1
 }
-# storm <n>: prints "<answered> <rss with all open, MB> <rss right after they closed, MB>"
+# storm <n>: prints "<answered> <highest rss while the storm ran, MB> <rss right after they closed, MB>"
 storm() {
     python3 "$T/storm.py" "$P" "$1" "$T/sig" > "$T/storm.out" &
-    local sp=$!
-    for _ in $(seq 600); do [ -f "$T/sig/open" ] && break; sleep 0.1; done
-    local live; live=$(rss)
+    local sp=$! live=0 r
+    for _ in $(seq 1200); do
+        r=$(rss 2>/dev/null) || break; [ "${r:-0}" -gt "$live" ] && live=$r
+        [ -f "$T/sig/open" ] && break; sleep 0.05
+    done
     touch "$T/sig/close"; wait $sp
     sleep 1   # the connections end, their stacks go to the cache
     echo "$(cat "$T/storm.out") $live $(rss)"
@@ -127,6 +133,16 @@ check "the 60 MiB request was answered" "$([ "$(cat "$T/big.code")" = 200 ] && [
     "status $(cat "$T/big.code"), body $(head -c 80 "$T/big.out")"
 mcheck "the process stayed under its limit while it ran (base ${base} MB, cache ${after} MB, peak ${peak} MB)" \
     "$([ "$peak" -lt 128 ] && echo ok)" "peak ${peak} MB ≥ 128 MiB"
+kill -0 $pid 2>/dev/null; check "the server is alive" "$([ $? = 0 ] && echo ok)" "it exited"
+kill $pid; wait $pid 2>/dev/null; pid=""
+
+echo "== 3) storm: under LOOK_MEMORY_LIMIT=64MiB 1500 connections at once stay under the limit"
+start LOOK_MEMORY_LIMIT=64MiB
+base=$(rss)
+read -r answered live after < <(storm 1500)
+check "1500 connections answered" "$([ "$answered" = 1500 ] && echo ok)" "$answered answered"
+mcheck "the process stayed under its limit during the storm (base ${base} MB, highest ${live} MB)" \
+    "$([ "$live" -lt 64 ] && echo ok)" "highest ${live} MB ≥ 64 MiB"
 kill -0 $pid 2>/dev/null; check "the server is alive" "$([ $? = 0 ] && echo ok)" "it exited"
 kill $pid; wait $pid 2>/dev/null; pid=""
 

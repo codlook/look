@@ -5,6 +5,7 @@
 #include "look/event_loop.h"
 #include "look/fiber.h"
 #include "look/logger.h"
+#include "look/mem_budget.h"   // the acceptor waits while the open connections' stacks are over the memory line
 #include "look/thread_start.h"   // start_pool_threads: if it cannot start, stop + join + error with a reason
 
 #include <sstream>
@@ -290,13 +291,23 @@ struct HttpServer::Impl {
     // Registration/removal and shutdown are under the same lock: a closed fd cannot be a reused fd of another connection.
     std::atomic<bool> draining{false};
     std::mutex idle_mtx;
-    std::unordered_set<int> idle_fds;
+    std::unordered_map<int, bool> idle_fds;   // fd -> it has answered a request (a kept-alive connection)
     // register the fd as idle-waiting; false if shutdown has begun (the caller closes the connection)
-    bool idle_enter(int fd) {
+    bool idle_enter(int fd, bool kept_alive) {
         std::lock_guard<std::mutex> lk(idle_mtx);
         if (draining.load(std::memory_order_acquire)) return false;
-        idle_fds.insert(fd);
+        idle_fds[fd] = kept_alive;
         return true;
+    }
+    // Memory (look/mem_budget.h): when the stacks of open connections push the process over the admit line,
+    // kept-alive connections waiting for their next request are closed (their read side: recv returns 0 and
+    // the connection ends, its stack is freed) — HTTP lets a server close an idle connection at any time.
+    // A new connection waiting for its first request is left alone: its client is about to send one.
+    void close_idle_kept_alive() {
+        std::lock_guard<std::mutex> lk(idle_mtx);
+#ifndef _WIN32
+        for (const auto& kv : idle_fds) if (kv.second) ::shutdown(kv.first, SHUT_RD);
+#endif
     }
     void idle_leave(int fd) {
         std::lock_guard<std::mutex> lk(idle_mtx);
@@ -648,7 +659,8 @@ struct HttpServer::Impl {
         // → the second request was silently dropped, and the client hung until the idle timeout waiting for a response.
         std::string carry;
         bool after_post = false;   // the previous request on this connection was a POST
-        while (true) {
+        bool kept_alive = false;   // this connection has answered a request
+        for (;; kept_alive = true) {
             // Read blocking until headers arrive
             std::string buf = std::move(carry);
             carry.clear();
@@ -674,7 +686,7 @@ struct HttpServer::Impl {
                 scan = buf.size() >= 3 ? buf.size() - 3 : 0;
                 // Waiting for the next request (no bytes yet): this wait is cut short on graceful shutdown.
                 const bool waiting = buf.empty();
-                if (waiting && !idle_enter(fd)) { ::close(fd); return; }
+                if (waiting && !idle_enter(fd, kept_alive)) { ::close(fd); return; }
                 ssize_t r = fiber_aware_recv(fd, tmp, sizeof(tmp));
                 if (waiting) idle_leave(fd);
                 if (r <= 0) { ::close(fd); return; }
@@ -1521,6 +1533,15 @@ void HttpServer::run() {
                                 sched->wait_readable_tmo(self, -1, 5);
                                 continue;
                             }
+                            // Memory: the open connections' stacks push the process over the admit line
+                            // (look/mem_budget.h). A storm of connections at once used to pass a container
+                            // limit before any request reached the budget (killed by the kernel). Wait the
+                            // same way; idle kept-alive connections are closed to free their stacks.
+                            if (look::mem_stacks_over()) {
+                                impl_->close_idle_kept_alive();
+                                sched->wait_readable_tmo(self, -1, 5);
+                                continue;
+                            }
                             sockaddr_storage peer{};
                             socklen_t peer_len = sizeof(peer);
                             int client = accept4(worker_fd,
@@ -1760,7 +1781,7 @@ void HttpServer::begin_shutdown() {
         impl_->running = false;
 #ifndef _WIN32
         // Connections waiting idle: the read side is closed → recv 0 → the connection closes.
-        for (int fd : impl_->idle_fds) ::shutdown(fd, SHUT_RD);
+        for (const auto& kv : impl_->idle_fds) ::shutdown(kv.first, SHUT_RD);
 #endif
     }
 #ifndef _WIN32
