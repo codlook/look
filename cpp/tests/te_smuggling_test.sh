@@ -4,7 +4,7 @@
 # never a second run on the tree-walk interpreter — tests/vm_fallback_test.sh), so there is one engine here:
 #   * two Transfer-Encoding lines are one list ("chunked, chunked") and are refused — they were read as a
 #     single chunked body while a front-end that joins the lines refuses or frames them differently;
-#   * an HTTP/1.0 request with Transfer-Encoding is refused (RFC 9112 §6.1: faulty framing) — it was decoded
+#   * an HTTP/1.0 request with Transfer-Encoding is answered with 400 (RFC 9112 §6.1: faulty framing) — it was decoded
 #     as chunked, while Go ignores the header and reads no body;
 #   * after a refused request the connection is closed: a second request sent behind it gets no answer.
 # A valid chunked request and a valid HTTP/1.0 request with Content-Length still work (positive control).
@@ -38,7 +38,7 @@ def send(data):
     return [c.decode() for c in re.findall(rb"HTTP/1\.[01] (\d{3})", out)], out
 cases = [
     ("two TE lines are refused",      b"POST /e HTTP/1.1\r\nHost: x\r\n" + TE + TE + b"\r\n3\r\nabc\r\n0\r\n\r\n" + SENT, ["400"], False),
-    ("HTTP/1.0 with TE is refused",   b"POST /e HTTP/1.0\r\n" + TE + b"\r\n3\r\nabc\r\n0\r\n\r\n" + SENT, [], False),
+    ("HTTP/1.0 with TE is refused",   b"POST /e HTTP/1.0\r\n" + TE + b"\r\n3\r\nabc\r\n0\r\n\r\n" + SENT, ["400"], False),
     ("valid chunked request",         b"POST /e HTTP/1.1\r\nHost: x\r\n" + TE + b"\r\n3\r\nabc\r\n0\r\n\r\n", ["200"], True),
     ("valid HTTP/1.0 Content-Length", b"POST /e HTTP/1.0\r\nContent-Length: 3\r\n\r\nabc", ["200"], True),
 ]

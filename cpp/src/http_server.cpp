@@ -505,6 +505,12 @@ struct HttpServer::Impl {
             if (te_it != req.headers.end() && clen_it != req.headers.end()) {
                 send_simple(fd, 400, "Bad Request"); ::close(fd); return;
             }
+            // RFC 9112 §6.1: an HTTP/1.0 message with Transfer-Encoding has faulty framing. LOOK decoded it as
+            // chunked while Go ignores the header and reads no body — two readers, two framings. 400, then
+            // the connection is closed.
+            if (te_it != req.headers.end() && req.version == "HTTP/1.0") {
+                send_simple(fd, 400, "Bad Request"); ::close(fd); return;
+            }
 
             // ── Transfer-Encoding: chunked gövde çözme ────────────────────────
             if (te_it != req.headers.end()) {
