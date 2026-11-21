@@ -1291,6 +1291,12 @@ jobs:
         timeout-minutes: 10
         run: bash cpp/tests/docs_no_unsafe_examples.sh
 
+      # The measurements are published twice (BENCHMARK.md and the website's benchmarks page);
+      # both are edited by hand, so the page could keep numbers the record no longer holds.
+      - name: The benchmarks page shows the numbers of BENCHMARK.md
+        timeout-minutes: 5
+        run: python3 cpp/tests/benchmark_page_sync_check.py BENCHMARK.md docs/look.codlook.com/benchmarks.html
+
       # JSON error bodies carry "error" (with "hata" beside it for 1.x); 'use timer' and
       # other built-in namespaces explain themselves instead of suggesting an install.
       - name: Error bodies and module messages
