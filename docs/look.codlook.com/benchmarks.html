@@ -127,7 +127,7 @@
       <div class="kpi"><div class="v">~200<span class="r">µs</span></div><div class="l">p99 latency, flat from 1k to 20k connections</div></div>
       <div class="kpi"><div class="v">0</div><div class="l">crashes · restarts · OOM kills, in every run</div></div>
     </div>
-    <p class="note">Environment: 16-core host, Docker; each server hard-capped to <span class="tag">--cpus=2 --memory=4g</span>. The load generator (<b>wrk</b>) runs uncapped on the remaining cores so it is never the bottleneck. All results are best-of-3. Harness: <span class="tag">cpp/bench/race.sh</span> in the repo — one command, fully reproducible.</p>
+    <p class="note">Environment: 16-core host, Docker; each server hard-capped to <span class="tag">--cpus=2 --memory=4g</span>. The load generator (<b>wrk</b>) runs uncapped on the remaining cores so it is never the bottleneck. Workloads 0–2 were measured on <b>2026-11-21</b> with the published <b>LOOK 1.1.4</b> (<code>36fb8dc</code>) against Go, Node.js, Elixir and PHP; every number is the <b>median of five runs</b>. The four figures above come from the tail, ceiling and endurance runs further down, made on an earlier build (<code>f2c2230</code>) and not repeated this cycle. Harness: <span class="tag">cpp/bench/race2.sh</span> and <span class="tag">cpp/bench/micro/compare.sh</span> in the repo — fully reproducible.</p>
   </div>
 
   <!-- METHODOLOGY -->
@@ -155,85 +155,85 @@
     <table class="btable">
       <thead><tr><th>benchmark</th><th>LOOK</th><th>Node</th><th>PHP</th><th>LOOK ÷ Node</th></tr></thead>
       <tbody>
-        <tr class="row-look"><td class="rt">exception</td><td class="mono">103 ms</td><td class="mono">2732 ms</td><td class="mono">209 ms</td><td class="win">0.04× — 26× faster</td></tr>
-        <tr><td class="rt">json_parse</td><td class="mono">690 ms</td><td class="mono">346 ms</td><td class="mono">444 ms</td><td>2.0×</td></tr>
-        <tr><td class="rt">json_serialize</td><td class="mono">602 ms</td><td class="mono">144 ms</td><td class="mono">91 ms</td><td>4.2×</td></tr>
-        <tr><td class="rt">assoc_access</td><td class="mono">1400 ms</td><td class="mono">192 ms</td><td class="mono">130 ms</td><td>7.3×</td></tr>
-        <tr><td class="rt">loop</td><td class="mono">2781 ms</td><td class="mono">360 ms</td><td class="mono">478 ms</td><td>7.7×</td></tr>
-        <tr><td class="rt">int_arith</td><td class="mono">634 ms</td><td class="mono">78 ms</td><td class="mono">106 ms</td><td>8.1×</td></tr>
-        <tr><td class="rt">fn_call</td><td class="mono">1139 ms</td><td class="mono">72 ms</td><td class="mono">91 ms</td><td>15.9×</td></tr>
-        <tr><td class="rt">recursion</td><td class="mono">316 ms</td><td class="mono">14 ms</td><td class="mono">22 ms</td><td>22.5×</td></tr>
-        <tr><td class="rt">array_push_pop</td><td class="mono">2282 ms</td><td class="mono">80 ms</td><td class="mono">233 ms</td><td>28.5×</td></tr>
-        <tr><td class="rt">float_arith</td><td class="mono">932 ms</td><td class="mono">32 ms</td><td class="mono">32 ms</td><td>29.1×</td></tr>
-        <tr><td class="rt">string_concat</td><td class="mono">1739 ms</td><td class="mono">54 ms</td><td class="mono">128 ms</td><td>32.5×</td></tr>
-        <tr><td class="rt">nested_fn</td><td class="mono">1328 ms</td><td class="mono">36 ms</td><td class="mono">81 ms</td><td>37.0×</td></tr>
-        <tr><td class="rt">string_search</td><td class="mono">149 ms</td><td class="mono">3.6 ms</td><td class="mono">4.7 ms</td><td>41.4×</td></tr>
-        <tr><td class="rt">array_create_iterate</td><td class="mono">1868 ms</td><td class="mono">37 ms</td><td class="mono">55 ms</td><td>50.4×</td></tr>
-        <tr><td class="rt">object_create</td><td class="mono">1467 ms</td><td class="mono">18 ms</td><td class="mono">141 ms</td><td class="bad">81.8×</td></tr>
-        <tr><td class="rt">string_slice</td><td class="mono">1156 ms</td><td class="mono">8.7 ms</td><td class="mono">19 ms</td><td class="bad">132.9×</td></tr>
-        <tr><td class="rt">regex</td><td class="mono">17018 ms</td><td class="mono">113 ms</td><td class="mono">65 ms</td><td class="bad">151×</td></tr>
+        <tr class="row-look"><td class="rt">exception</td><td class="mono">112 ms</td><td class="mono">2785 ms</td><td class="mono">210 ms</td><td class="win">0.04× — 25× faster</td></tr>
+        <tr><td class="rt">json_parse</td><td class="mono">654 ms</td><td class="mono">350 ms</td><td class="mono">442 ms</td><td>1.9×</td></tr>
+        <tr><td class="rt">assoc_access</td><td class="mono">581 ms</td><td class="mono">203 ms</td><td class="mono">132 ms</td><td>2.9×</td></tr>
+        <tr><td class="rt">json_serialize</td><td class="mono">685 ms</td><td class="mono">148 ms</td><td class="mono">91 ms</td><td>4.6×</td></tr>
+        <tr><td class="rt">loop</td><td class="mono">3203 ms</td><td class="mono">368 ms</td><td class="mono">484 ms</td><td>8.7×</td></tr>
+        <tr><td class="rt">int_arith</td><td class="mono">762 ms</td><td class="mono">82 ms</td><td class="mono">105 ms</td><td>9.3×</td></tr>
+        <tr><td class="rt">string_concat</td><td class="mono">593 ms</td><td class="mono">58 ms</td><td class="mono">130 ms</td><td>10.1×</td></tr>
+        <tr><td class="rt">array_push_pop</td><td class="mono">1149 ms</td><td class="mono">81 ms</td><td class="mono">235 ms</td><td>14.1×</td></tr>
+        <tr><td class="rt">fn_call</td><td class="mono">1355 ms</td><td class="mono">72 ms</td><td class="mono">93 ms</td><td>18.8×</td></tr>
+        <tr><td class="rt">recursion</td><td class="mono">348 ms</td><td class="mono">14 ms</td><td class="mono">23 ms</td><td>24.6×</td></tr>
+        <tr><td class="rt">array_create_iterate</td><td class="mono">1219 ms</td><td class="mono">37 ms</td><td class="mono">55 ms</td><td>32.6×</td></tr>
+        <tr><td class="rt">float_arith</td><td class="mono">1074 ms</td><td class="mono">32 ms</td><td class="mono">32 ms</td><td>33.9×</td></tr>
+        <tr><td class="rt">nested_fn</td><td class="mono">1610 ms</td><td class="mono">36 ms</td><td class="mono">82 ms</td><td>44.8×</td></tr>
+        <tr><td class="rt">string_search</td><td class="mono">175 ms</td><td class="mono">3.6 ms</td><td class="mono">4.8 ms</td><td>48.4×</td></tr>
+        <tr><td class="rt">object_create</td><td class="mono">1451 ms</td><td class="mono">18 ms</td><td class="mono">141 ms</td><td class="bad">80.7×</td></tr>
+        <tr><td class="rt">string_slice</td><td class="mono">1235 ms</td><td class="mono">8.8 ms</td><td class="mono">19 ms</td><td class="bad">139.8×</td></tr>
+        <tr><td class="rt">regex</td><td class="mono">17458 ms</td><td class="mono">113 ms</td><td class="mono">66 ms</td><td class="bad">154.6×</td></tr>
       </tbody>
     </table>
     </div>
-    <p><b>Node's JIT wins the compute microbenchmarks, mostly by 8–40×</b> — that is structural: it compiles each hot loop to machine code, LOOK interprets it. Two honest caveats keep the table fair. <b>exception</b> is the one LOOK wins outright — <b>26× faster than Node</b> — because throwing is cheap in LOOK and expensive in V8; real request-handling code throws far more than it runs tight arithmetic loops. And <b>regex</b> is not an engine-speed number: ~95% of that time is a ReDoS safety guard (a per-call thread bounding catastrophic backtracking), not matching — the raw match is ~1.9 µs/call.</p>
+    <p><b>Node's JIT wins every compute microbenchmark but one, mostly by 2–50×</b> — that is structural: it compiles each hot loop to machine code, LOOK interprets it. Two honest caveats keep the table fair. <b>exception</b> is the one LOOK wins outright — <b>25× faster than Node</b> — because throwing is cheap in LOOK and expensive in V8; real request-handling code throws far more than it runs tight arithmetic loops. And <b>regex</b> is not an engine-speed number: ~95% of that time is a ReDoS safety guard (a per-call thread bounding catastrophic backtracking), not matching — the raw match is ~1.9 µs/call.</p>
     <p class="note">Why this rarely shows on the web: the VM's per-instruction dispatch is about <b>0.5%</b> of a real request's cost (≈0.4 µs of ~90 µs) — the rest is HTTP parse, routing and response building. A microbenchmark magnifies the one layer that barely moves the needle in production (Workloads 1–2 below). It is published because hiding your worst arena is not measurement-first.</p>
-    <p class="note"><b>Re-verified this cycle.</b> A fresh three-way run reproduced every row — all <b>17/17 checksums matched</b> and the LOOK÷Node ratios held. The only movement was a few-percent rise on the arithmetic rows (<code>int_arith</code>, <code>loop</code>, <code>float_arith</code>), which tracked the test laptop's thermal state under sustained load (the numbers climbed monotonically across back-to-back runs while the engine was unchanged) — machine drift, not a language change. So the representative numbers above stand rather than being overwritten with warm-machine noise.</p>
+    <p class="note">LOOK 1.1.4 (<code>36fb8dc</code>), Node 22, PHP 8.3 CLI with OPcache + JIT; each suite run five times in isolation, median per benchmark; all <b>17/17 checksums matched</b>. Raw output: <code>cpp/bench/results/2026-11-21-micro.txt</code>.</p>
 
     <h3>Where it improved — and where it regressed</h3>
-    <p>The question "did the language get faster or slower?" is only answerable by comparing the <b>previous build against the current one in the same run</b> (drift cancels; a correctness suite can't see speed). We do exactly that every cycle. This one moved four numbers:</p>
+    <p>The question "did the language get faster or slower?" is only answerable by comparing builds <b>on the same machine in the same session</b> (drift cancels; a correctness suite can't see speed). Against the previous table and against LOOK 1.0:</p>
     <div class="stab" style="grid-template-columns:1fr 1fr;">
-      <div class="scard"><div class="big" style="color:#0a7d3c;">2 faster</div><div class="sub">this cycle's allocation fixes</div>
-        <ul><li><b>string_slice</b> +49% — substr stopped decoding the whole input per call</li><li><b>object_create</b> +28% — assoc literals stopped re-allocating constants</li></ul></div>
-      <div class="scard"><div class="big" style="color:var(--red);">1 caught</div><div class="sub">found &amp; fixed by the same scan</div>
-        <ul><li>a new opcode inserted mid-enum silently taxed the hot dispatch path — <b>int_arith / loop ~13% slower</b>, on code we never touched</li><li>moving the opcode to the enum end recovered it in one line; the arithmetic numbers above are the fixed values</li></ul></div>
+      <div class="scard"><div class="big" style="color:#0a7d3c;">1.5–2.9× faster</div><div class="sub">maps, strings and arrays</div>
+        <ul><li><b>string_concat</b> 2.9× — appending in place instead of copying the string</li><li><b>assoc_access</b> 2.4× · <b>array_push_pop</b> 2× · <b>array_create_iterate</b> 1.5×</li></ul></div>
+      <div class="scard"><div class="big" style="color:var(--red);">10–19% slower</div><div class="sub">function calls and arithmetic, against 1.0</div>
+        <ul><li><b>fn_call</b>, <b>nested_fn</b> +15%, <b>recursion</b> +19%, <b>int_arith</b> +12%, <b>loop</b> +10% (fastest of five runs each, same machine)</li><li>cause found with callgrind: two per-call checks added in 1.1 (the memory-budget safe point and the argument-count check) ran as out-of-line calls, and every call copied a reference-counted pointer; the fix is on the development line (not in 1.1.4) and brings <b>recursion</b> and <b>nested_fn</b> back to the 1.0 figures; part of the gap is still open</li></ul></div>
     </div>
-    <p class="note">No functional test — not even our three-engine differential suite — catches a codegen-layout regression like that; only an old-vs-new speed scan does. So it became a permanent rule in the harness: any change to the opcode set or the dispatch loop must ship with an old/new regression scan. This was the fourth time this session a real defect lived in a behavior no test was asserting.</p>
+    <p class="note">No functional test catches a speed regression — only an old-vs-new scan on one machine does. That is how this one was found, and why the harness keeps the old build next to the new one.</p>
   </section>
 
   <!-- WORKLOAD 1 -->
   <section class="bsec">
     <h2>Workload 1 — trivial JSON <span class="r">(CPU-bound)</span></h2>
-    <div class="callout" style="background:linear-gradient(135deg,#3a4a2a,#4a5f38);">
-      <h3>Measured on build <code>f2c2230</code> — still representative, with one open number</h3>
-      <p>Workloads 1–2, the tail chart, the ceiling table and the endurance run were measured on a 16-core Linux host. We re-checked this cycle's changes against them the drift-immune way (counting allocations per request, which hardware can't distort): the framework request path was <b>unchanged</b> (193 → 193 allocations), and the string/map fixes moved it <b>−4%</b> — so the throughput, tail and RAM below still hold. One change is <b>not</b> yet reflected: a new per-request cache cut framework allocations <b>201 → 94</b> (2.1×), which can only <b>raise</b> throughput and can't hurt the tail — so these numbers are a conservative floor for the current build, not stale. A faithful re-run to capture that gain is queued for an isolated Linux box (never the production VPS, whose live sites share its CPU). Workload 0 above is on the current build.</p>
-    </div>
-    <p>A route that returns <span class="tag mono">{"ok":true,"msg":"hello"}</span> — no I/O, pure runtime overhead. This is LOOK's <b>worst case</b>: nothing amortizes the interpreter, so a JIT (V8) has the largest possible edge. We show LOOK both at its default worker count (throttled) and correctly tuned.</p>
+    <p>A route that returns <span class="tag mono">{"ok":true,"msg":"hello"}</span> — no I/O, pure runtime overhead. This is LOOK's <b>worst case</b>: nothing amortizes the interpreter, so a JIT (V8) and a compiled language (Go) have the largest possible edge. Every runtime runs as shipped; the only setting is <code>GOMAXPROCS=2</code> for Go.</p>
     <div class="tbl-scroll">
     <table class="btable">
-      <thead><tr><th>runtime</th><th>c=50 req/s</th><th>c=100 req/s</th><th>c=1000 req/s</th><th>p99 @100</th><th>p99 @1000</th><th>RAM</th><th>throttled</th></tr></thead>
+      <thead><tr><th>runtime</th><th>c=50 req/s</th><th>c=100 req/s</th><th>c=1000 req/s</th><th>p99 @100</th><th>p99 @1000</th><th>RAM @1000</th></tr></thead>
       <tbody>
-        <tr class="row-look"><td class="rt">LOOK <span class="tag">default w=8</span></td><td>19,809</td><td>17,554</td><td>16,139</td><td class="bad">45 ms</td><td>1.56 ms</td><td>9.9 MB</td><td class="bad">182</td></tr>
-        <tr class="row-look"><td class="rt">LOOK <span class="tag">tuned w=2</span></td><td>21,483</td><td>21,752</td><td>22,163</td><td class="win">228 µs</td><td class="win">212 µs</td><td class="win">1.85 MB</td><td class="win">0</td></tr>
-        <tr><td class="rt">Node.js <span class="tag">cluster×2</span></td><td class="win">91,591</td><td class="win">93,336</td><td>73,949</td><td>2.16 ms</td><td class="bad">1.17 s</td><td>91 MB</td><td>88</td></tr>
-        <tr><td class="rt">PHP <span class="tag">fpm+nginx</span></td><td>4,352</td><td>4,431</td><td>4,455</td><td>64 ms</td><td>488 ms</td><td>93 MB</td><td>162</td></tr>
+        <tr class="row-look"><td class="rt">LOOK <span class="tag">1.1.4</span></td><td>103,045</td><td>105,520</td><td>96,803</td><td class="win">1.5 ms</td><td class="win">13.6 ms</td><td class="win">23.6 MB</td></tr>
+        <tr class="row-look"><td class="rt">LOOK <span class="tag">1.0.52</span></td><td>15,479</td><td>16,223</td><td>14,658</td><td>83 ms</td><td>315 ms</td><td>9.7 MB</td></tr>
+        <tr><td class="rt">Go 1.22 <span class="tag">net/http</span></td><td class="win">119,868</td><td class="win">119,293</td><td class="win">108,282</td><td>2.3 ms</td><td>15 ms</td><td>35 MB</td></tr>
+        <tr><td class="rt">Node.js 22 <span class="tag">cluster×2</span></td><td>100,002</td><td>101,035</td><td>86,645</td><td>2.1 ms</td><td class="bad">1.06 s</td><td>124 MB</td></tr>
+        <tr><td class="rt">Elixir 1.16 <span class="tag">Bandit</span></td><td>54,568</td><td>53,556</td><td>48,140</td><td>3.1 ms</td><td>44 ms</td><td>128 MB</td></tr>
+        <tr><td class="rt">PHP 8.5 <span class="tag">fpm+nginx</span></td><td>4,908</td><td>5,082</td><td>5,263</td><td>65 ms</td><td>486 ms</td><td>125 MB</td></tr>
       </tbody>
     </table>
     </div>
-    <p><b>Node wins raw throughput ~4×</b> — V8's JIT compiles the trivial handler to near-native code; LOOK's bytecode VM interprets it. That's structural and expected. But look at <b>p99 @ c=1000</b>: Node's tail collapses to <b>1.17 s</b> while LOOK (tuned) holds <b>212 µs</b> — and LOOK does it in <b>1.85 MB</b> of RAM against Node's 91 MB.</p>
+    <p>LOOK 1.1.4 serves <b>88–89% of Go</b> and is <b>ahead of Node</b> at both concurrencies, with the <b>lowest p99 of the six</b> — 1.5 ms at c=100 and 13.6 ms at c=1000, where Node's tail reaches 1.06 s. Against LOOK 1.0.52 that is <b>6.5×</b> the requests. One number moved the wrong way: LOOK's memory at 1,000 connections is <b>23.6 MB</b>, against 4.4 MB on the development build two weeks earlier — still the smallest of the six, and being investigated.</p>
   </section>
 
   <!-- WORKLOAD 2 -->
   <section class="bsec">
     <h2>Workload 2 — database endpoint <span class="r">(I/O-bound)</span></h2>
-    <p>The real web workload: <span class="tag mono">SELECT id,name,email FROM users WHERE id=?</span> → JSON, against MySQL 8.4 (kept at 0.5–1% CPU, so the database is never the bottleneck). LOOK uses its embedded driver + async pool; Node uses mysql2; PHP uses mysqli — each in its production shape.</p>
+    <p>The real web workload: <span class="tag mono">SELECT id,name,email FROM users WHERE id=42</span> → JSON, against MySQL 8.4. LOOK uses its built-in driver and pool; Go <code>database/sql</code> with go-sql-driver/mysql; Node <code>mysql2</code>; Elixir MyXQL; PHP <code>mysqli</code> with persistent connections — each in its production shape.</p>
     <div class="tbl-scroll">
     <table class="btable">
-      <thead><tr><th>runtime</th><th>c=50 req/s</th><th>c=100 req/s</th><th>c=1000 req/s</th><th>p99 @100</th><th>p99 @1000</th><th>RAM</th></tr></thead>
+      <thead><tr><th>runtime</th><th>c=50 req/s</th><th>c=100 req/s</th><th>c=1000 req/s</th><th>p99 @100</th><th>p99 @1000</th><th>RAM @1000</th></tr></thead>
       <tbody>
-        <tr class="row-look"><td class="rt">LOOK <span class="tag">default w=8</span></td><td>4,999</td><td>3,544</td><td>3,230</td><td class="bad">55 ms</td><td class="bad">55 ms</td><td>4.2 MB</td></tr>
-        <tr class="row-look"><td class="rt">LOOK <span class="tag">tuned w=4</span></td><td>10,243</td><td>10,277</td><td>9,460</td><td class="win">697 µs</td><td class="win">0.87 ms</td><td class="win">2.5 MB</td></tr>
-        <tr><td class="rt">Node.js <span class="tag">×2 + mysql2</span></td><td class="win">14,616</td><td class="win">16,106</td><td class="win">12,468</td><td>12 ms</td><td>383 ms</td><td>234 MB</td></tr>
-        <tr><td class="rt">PHP <span class="tag">fpm+nginx+mysqli</span></td><td>2,360</td><td>2,360</td><td>2,526</td><td>271 ms</td><td>698 ms</td><td>97 MB</td></tr>
+        <tr class="row-look"><td class="rt">LOOK <span class="tag">1.1.4</span></td><td class="win">35,562</td><td class="win">34,512</td><td class="win">30,514</td><td class="win">3.8 ms</td><td class="win">49 ms</td><td>52 MB</td></tr>
+        <tr class="row-look"><td class="rt">LOOK <span class="tag">1.0.52</span></td><td>5,297</td><td>6,331</td><td>4,563</td><td>154 ms</td><td>1.20 s</td><td>58 MB</td></tr>
+        <tr><td class="rt">Go 1.22 <span class="tag">net/http</span></td><td>21,913</td><td>25,196</td><td>24,002</td><td>50 ms</td><td class="bad">1.06 s</td><td class="win">51 MB</td></tr>
+        <tr><td class="rt">Node.js 22 <span class="tag">cluster×2</span></td><td>14,601</td><td>14,790</td><td>11,421</td><td>14 ms</td><td>403 ms</td><td>289 MB</td></tr>
+        <tr><td class="rt">Elixir 1.16 <span class="tag">Bandit</span></td><td>13,794</td><td>14,480</td><td>13,662</td><td>12 ms</td><td>91 ms</td><td>189 MB</td></tr>
+        <tr><td class="rt">PHP 8.5 <span class="tag">fpm+nginx</span></td><td>2,667</td><td>2,252</td><td>2,742</td><td>284 ms</td><td>761 ms</td><td>129 MB</td></tr>
       </tbody>
     </table>
     </div>
-    <p>With real I/O the gap narrows — <b>Node ~1.6× LOOK's throughput</b>, LOOK ~4× PHP's. And again the tail inverts under load: at c=1000 LOOK's p99 is <b>0.87 ms</b> vs Node's <b>383 ms</b>, in <b>2.5 MB</b> vs <b>234 MB</b> of RAM.</p>
-    <p class="note">Worker sweep (the data behind LOOK's default): I/O-bound peak is <b>w=4</b> (9,487 req/s, p99 0.87 ms). w=2 leaves throughput on the table (6,607); w=8 over-throttles (7,240, p99 44 ms). The optimum is workload-dependent — CPU-bound wants ≈ the quota, I/O-bound a little more.</p>
+    <p>With real I/O LOOK serves the <b>most requests of the six</b> — <b>1.4× Go</b> and <b>2.3× Node</b> at c=100 — with the steadiest tail: p99 <b>49 ms at c=1000</b>, where Go reaches 1.06 s. Memory is level with Go (52 vs 51 MB). Elixir had 146 non-2xx responses at c=1000 and Go 78 timeouts; LOOK had none.</p>
   </section>
 
   <!-- TAIL LATENCY CHART -->
   <section class="bsec">
     <h2>The real story — <span class="r">tail latency under load</span></h2>
+    <p class="note">This section, the ceiling table and the endurance run below were measured on an earlier build (<code>f2c2230</code>, LOOK with 2 workers against Node) and have not been repeated this cycle; the tables above are current.</p>
     <p>Production isn't measured by "requests per second" alone; it's measured by <b>what your worst user waits</b>. This is where the two designs diverge most. As concurrency climbs, Node's p99 curves sharply upward — it is buying throughput by queueing. LOOK (tuned) stays a flat line.</p>
     <div class="chartcard">
       <svg viewBox="0 0 720 340" width="100%" role="img" aria-label="p99 latency vs concurrency: LOOK flat, Node rising">
@@ -317,19 +317,20 @@
     <table class="btable">
       <thead><tr><th>axis</th><th>winner</th><th>by how much</th></tr></thead>
       <tbody>
-        <tr><td class="rt">Raw compute (CPU micro)</td><td class="rt">Node.js</td><td>8–40× on arithmetic/strings (JIT vs bytecode VM) — except <b>exceptions</b>, where LOOK is 26× faster</td></tr>
-        <tr><td class="rt">Raw throughput</td><td class="rt">Node.js</td><td>~4× (CPU-bound), ~1.6× (DB) over tuned LOOK</td></tr>
-        <tr class="row-look"><td class="rt">p99 tail latency under load</td><td class="rt">LOOK</td><td>flat sub-ms to 20k conns; Node curves to 1.17 s</td></tr>
-        <tr class="row-look"><td class="rt">Memory</td><td class="rt">LOOK</td><td>7 MB vs 91–234 MB — 13–95× less</td></tr>
-        <tr class="row-look"><td class="rt">Stability / endurance</td><td class="rt">LOOK</td><td>10.5M requests, no crash · no leak · no OOM</td></tr>
+        <tr><td class="rt">Raw compute (CPU micro)</td><td class="rt">Node.js</td><td>2–50× on most tests (JIT vs bytecode VM) — except <b>exceptions</b>, where LOOK is 25× faster</td></tr>
+        <tr><td class="rt">Raw throughput, trivial JSON</td><td class="rt">Go</td><td>~1.12× LOOK; LOOK 1.04–1.12× Node</td></tr>
+        <tr class="row-look"><td class="rt">Raw throughput, database</td><td class="rt">LOOK</td><td>1.4× Go, 2.3× Node, 2.4× Elixir</td></tr>
+        <tr class="row-look"><td class="rt">p99 tail latency under load</td><td class="rt">LOOK</td><td>lowest of six at c=100 and c=1000 on both workloads; Node reaches 1.06 s, Go 1.06 s (DB)</td></tr>
+        <tr class="row-look"><td class="rt">Memory</td><td class="rt">LOOK · Go</td><td>LOOK smallest on JSON (24 MB vs 35–128 MB), level with Go on the database test (52 vs 51 MB)</td></tr>
+        <tr class="row-look"><td class="rt">Stability / endurance</td><td class="rt">LOOK</td><td>10.5M requests, no crash · no leak · no OOM (earlier build)</td></tr>
         <tr><td class="rt">Deployment</td><td class="rt">LOOK</td><td>one static binary, no runtime, no package tree</td></tr>
       </tbody>
     </table>
     </div>
-    <p>If your metric is <b>maximum requests per second</b> on a trivial CPU-bound path, Node's JIT wins. If your metric is <b>what your worst user waits under load</b>, <b>how much memory a fleet costs</b>, or <b>whether it's still standing after ten million requests</b>, LOOK is the design that holds — predictable, tiny, and it doesn't fall over. PHP trails on throughput in both workloads.</p>
+    <p>If your metric is <b>tight compute loops</b>, a JIT or a compiled language wins, and on a trivial handler Go stays about 12% ahead. If your metric is <b>a request that reads a database</b>, <b>what your worst user waits under load</b>, or <b>how much memory a fleet costs</b>, LOOK leads or is level with the best — predictable, small, and it doesn't fall over. PHP trails on throughput in both workloads.</p>
     <div class="callout">
       <h3>Reproduce every number</h3>
-      <p>Nothing here is hand-typed. The whole suite — the apps, the runners, and the eight measurement-hygiene rules learned the hard way — is in the repository under <code>cpp/bench/</code>. Run <code>bash cpp/bench/race.sh &lt;repo&gt;</code> for the web workloads, and <code>bash cpp/bench/micro/compare.sh</code> for the language core, on your own hardware. Web workloads (1–2) measured on build <code>f2c2230</code>; the language core (Workload 0) on the current build with the dispatch fix applied.</p>
+      <p>Nothing here is hand-typed. The whole suite — the apps, the runners, and the eight measurement-hygiene rules learned the hard way — is in the repository under <code>cpp/bench/</code>. Run <code>RUNS=5 bash cpp/bench/race2.sh &lt;repo&gt; &lt;LOOK bin&gt; &lt;older LOOK bin&gt; "LOOK &lt;version&gt;"</code> for the web workloads and <code>LK_BIN=&lt;LOOK bin&gt; RUNS=5 bash cpp/bench/micro/compare.sh</code> for the language core, on your own hardware. Workloads 0–2: LOOK 1.1.4 (<code>36fb8dc</code>), 2026-11-21, raw output in <code>cpp/bench/results/</code>; the method and every runtime version are in <code>BENCHMARK.md</code>. The tail, ceiling and endurance sections: build <code>f2c2230</code>.</p>
     </div>
   </section>
 

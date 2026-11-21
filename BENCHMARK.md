@@ -244,8 +244,15 @@ fastest run, milliseconds):
 | loop | 2,798 | 2,918 | 3,088 (+10%) |
 
 - **Function calls and arithmetic** are 10–19% slower in 1.1 than in 1.0 (on the same machine; the
-  same source built twice differs by about 5%, so this is beyond the noise). The cause is not yet
-  found; it is recorded here until it is.
+  same source built twice differs by about 5%, so this is beyond the noise). **Cause found, partly
+  fixed on the development line (de17e08, not in 1.1.4).** Counted with callgrind, which no machine
+  noise affects — 300,000 calls of a two-argument function: 1.0.52 357.3M instructions, 1.1.4 403.2M
+  (+12.8%), with the fix 383.7M (+7.4%). Two checks added in 1.1 (the memory-budget safe point and
+  the argument-count check) ran as out-of-line calls on every call and loop turn, and every call
+  copied the closure's reference-counted pointer; the checks are kept, their fast path is now inline.
+  Fastest of five runs, 1.1.4 → with the fix: `recursion` 348 → 296 ms and `nested_fn` 1,561 →
+  1,358 ms (both back to the 1.0 figures), `fn_call` 1,328 → 1,228, `int_arith` 775 → 736, `loop`
+  3,298 → 3,137. The rest (about 60 instructions per call inside the dispatch loop) is still open.
 - **Memory at 1,000 connections:** LOOK's RSS was 4.4 MB on trivial JSON and 25 MB on the database
   test on 2026-11-05; it is 23.6 MB and 52 MB now. Still the smallest or close to it, but five times
   the earlier JSON figure. Not yet explained.
