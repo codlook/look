@@ -5,8 +5,8 @@ one place. Each entry says what goes away, what to write instead, whether `lk fi
 and how you find it in your code now.
 
 **When:** none of these are removed or turned into errors in any 1.1.x release. They change
-together in one later release; its version will be announced in advance, here and in the release
-notes. Until then each one only warns.
+together in **LOOK 1.2.0, planned for 5 January 2027**; the release notes of every release before it
+repeat the date. Until then each one only warns. If the date moves, it moves later, never earlier.
 
 **Finding them:** run `lk --check` on your code. Every deprecated use in this list except the
 JSON keys prints a `WARN … [kind]` line naming the file and line (the kind is given below). At run
